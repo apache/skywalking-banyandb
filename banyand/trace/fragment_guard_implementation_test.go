@@ -709,6 +709,10 @@ func TestRuntimeTraceFragmentGuardUsesFragmentGapForSegmentInterior(t *testing.T
 	filter := tst.buildHotMergeFilter(parts)
 	require.NotNil(t, filter, "the 2h maturity grace must not be reused as the 1ms boundary expansion")
 	require.NotNil(t, filter.guard)
+	require.Equal(t, resolveStageBudget(tst.option), filter.stagingHardLimit)
+	require.Positive(t, filter.decisionBatchLimit)
+	require.LessOrEqual(t, filter.decisionBatchLimit, filter.stagingHardLimit)
+	require.Equal(t, maxStagedTraceCountFromBudget(filter.decisionBatchLimit), filter.maxTraceCount)
 	filter.guard.Close()
 
 	tst.option.maxTraceFragmentGap = 2 * time.Second

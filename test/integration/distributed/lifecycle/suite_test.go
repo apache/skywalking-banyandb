@@ -22,9 +22,11 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	integration_distributed "github.com/apache/skywalking-banyandb/test/integration/distributed"
 )
 
 func TestPropertyLifecycle(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Distributed Property Lifecycle Suite")
+	RunSpecs(t, "Distributed Property Lifecycle Suite", Label(integration_distributed.Labels...))
 }

@@ -46,6 +46,8 @@ const (
 
 type mergeSamplingReason string
 
+type mergeStagingFlushReason string
+
 const (
 	mergeReasonPipelineDisabled mergeSamplingReason = "pipeline_disabled"
 	mergeReasonNoSampler        mergeSamplingReason = "no_sampler"
@@ -57,6 +59,14 @@ const (
 	mergeReasonLosslessRetry    mergeSamplingReason = "lossless_retry"
 	mergeReasonEmptyInput       mergeSamplingReason = "empty_input"
 	mergeReasonOther            mergeSamplingReason = "other"
+)
+
+const (
+	mergeStagingFlushEndOfMerge        mergeStagingFlushReason = "end_of_merge"
+	mergeStagingFlushByteLimit         mergeStagingFlushReason = "byte_limit"
+	mergeStagingFlushTraceLimit        mergeStagingFlushReason = "trace_limit"
+	mergeStagingFlushByteAndTraceLimit mergeStagingFlushReason = "byte_and_trace_limit"
+	mergeStagingFlushOversizedTrace    mergeStagingFlushReason = "oversized_trace"
 )
 
 type mergeBenchmarkPhase string
@@ -74,10 +84,14 @@ type (
 	BenchmarkMergeReason = mergeSamplingReason
 	// BenchmarkMergePhase identifies the benchmark phase in which a merge began.
 	BenchmarkMergePhase = mergeBenchmarkPhase
+	// BenchmarkMergeStagingFlushReason identifies why a complete-trace staging batch was flushed.
+	BenchmarkMergeStagingFlushReason = mergeStagingFlushReason
 	// BenchmarkMergeChild records a secondary-index merge linked to its core merge.
 	BenchmarkMergeChild = mergeBenchmarkChild
 	// BenchmarkMergeResources records process resource deltas attributed to a merge.
 	BenchmarkMergeResources = mergeBenchmarkResources
+	// BenchmarkMergeStagingBatch records one complete-trace staging flush.
+	BenchmarkMergeStagingBatch = mergeBenchmarkStagingBatch
 	// BenchmarkMergeEvent records one core merge and its secondary-index children.
 	BenchmarkMergeEvent = mergeBenchmarkEvent
 	// BenchmarkMergeAggregate groups merge measurements by phase, sampling state, reason, and lane.
@@ -99,6 +113,16 @@ const (
 	BenchmarkMergeSamplingEnabledNoEvaluation BenchmarkMergeSampling = mergeSamplingEnabledNoEvaluation
 	// BenchmarkMergeSamplingNotExecuted means sampling was ineligible for the merge.
 	BenchmarkMergeSamplingNotExecuted BenchmarkMergeSampling = mergeSamplingNotExecuted
+	// BenchmarkMergeStagingFlushEndOfMerge means the final complete-trace batch was flushed when input ended.
+	BenchmarkMergeStagingFlushEndOfMerge BenchmarkMergeStagingFlushReason = mergeStagingFlushEndOfMerge
+	// BenchmarkMergeStagingFlushByteLimit means the charged staging-byte limit triggered the flush.
+	BenchmarkMergeStagingFlushByteLimit BenchmarkMergeStagingFlushReason = mergeStagingFlushByteLimit
+	// BenchmarkMergeStagingFlushTraceLimit means the logical trace-count limit triggered the flush.
+	BenchmarkMergeStagingFlushTraceLimit BenchmarkMergeStagingFlushReason = mergeStagingFlushTraceLimit
+	// BenchmarkMergeStagingFlushByteAndTraceLimit means both staging limits were reached at the flush boundary.
+	BenchmarkMergeStagingFlushByteAndTraceLimit BenchmarkMergeStagingFlushReason = mergeStagingFlushByteAndTraceLimit
+	// BenchmarkMergeStagingFlushOversizedTrace means an oversized trace forced the preceding complete batch to flush.
+	BenchmarkMergeStagingFlushOversizedTrace BenchmarkMergeStagingFlushReason = mergeStagingFlushOversizedTrace
 	// BenchmarkMergeReasonPipelineDisabled means the native pipeline was disabled.
 	BenchmarkMergeReasonPipelineDisabled BenchmarkMergeReason = mergeReasonPipelineDisabled
 	// BenchmarkMergeReasonNoSampler means the group had no sampler.
@@ -165,44 +189,58 @@ type mergeBenchmarkResources struct {
 	Overlapped       bool   `json:"overlapped"`
 }
 
+type mergeBenchmarkStagingBatch struct {
+	Reason mergeStagingFlushReason `json:"reason"`
+	Bytes  uint64                  `json:"bytes"`
+	Traces uint64                  `json:"traces"`
+}
+
 type mergeBenchmarkEvent struct {
-	Sampling         mergeSamplingClassification `json:"sampling"`
-	Reason           mergeSamplingReason         `json:"reason,omitempty"`
-	InitialReason    mergeSamplingReason         `json:"initialReason,omitempty"`
-	Phase            mergeBenchmarkPhase         `json:"phase"`
-	Type             string                      `json:"type"`
-	Lane             string                      `json:"lane"`
-	Error            string                      `json:"error,omitempty"`
-	RecordingError   string                      `json:"recordingError,omitempty"`
-	SelectionSHA256  string                      `json:"selectionSHA256"`
-	InputPartIDs     []uint64                    `json:"inputPartIDs"`
-	Children         []mergeBenchmarkChild       `json:"children,omitempty"`
-	Resources        mergeBenchmarkResources     `json:"resources"`
-	QueueNanos       int64                       `json:"queueNanos"`
-	Sequence         uint64                      `json:"sequence"`
-	OutputPartID     uint64                      `json:"outputPartID,omitempty"`
-	InputBytes       uint64                      `json:"inputBytes"`
-	OutputBytes      uint64                      `json:"outputBytes"`
-	InputRows        uint64                      `json:"inputRows"`
-	OutputRows       uint64                      `json:"outputRows"`
-	HotInputRows     uint64                      `json:"hotInputRows"`
-	MatureInputRows  uint64                      `json:"matureInputRows"`
-	MinTimestamp     int64                       `json:"minTimestamp"`
-	MaxTimestamp     int64                       `json:"maxTimestamp"`
-	LogicalNow       int64                       `json:"logicalNow"`
-	MaturityFrontier int64                       `json:"maturityFrontier"`
-	PluginCalls      uint64                      `json:"pluginCalls"`
-	TracesEvaluated  uint64                      `json:"tracesEvaluated"`
-	TracesRetained   uint64                      `json:"tracesRetained"`
-	TracesDropped    uint64                      `json:"tracesDropped"`
-	OversizedTraces  uint64                      `json:"oversizedTraces"`
-	HotInputParts    uint32                      `json:"hotInputParts"`
-	MatureInputParts uint32                      `json:"matureInputParts"`
-	InputMinDepth    uint32                      `json:"inputMinDepth"`
-	InputMaxDepth    uint32                      `json:"inputMaxDepth"`
-	OutputDepth      uint32                      `json:"outputDepth"`
-	Version          uint32                      `json:"version"`
-	LosslessRetry    bool                        `json:"losslessRetry"`
+	Error                 string                       `json:"error,omitempty"`
+	Reason                mergeSamplingReason          `json:"reason,omitempty"`
+	InitialReason         mergeSamplingReason          `json:"initialReason,omitempty"`
+	Phase                 mergeBenchmarkPhase          `json:"phase"`
+	Type                  string                       `json:"type"`
+	Lane                  string                       `json:"lane"`
+	Sampling              mergeSamplingClassification  `json:"sampling"`
+	RecordingError        string                       `json:"recordingError,omitempty"`
+	SelectionSHA256       string                       `json:"selectionSHA256"`
+	InputPartIDs          []uint64                     `json:"inputPartIDs"`
+	Children              []mergeBenchmarkChild        `json:"children,omitempty"`
+	StagingBatches        []mergeBenchmarkStagingBatch `json:"stagingBatches,omitempty"`
+	Resources             mergeBenchmarkResources      `json:"resources"`
+	OutputRows            uint64                       `json:"outputRows"`
+	TracesEvaluated       uint64                       `json:"tracesEvaluated"`
+	InputBytes            uint64                       `json:"inputBytes"`
+	OutputBytes           uint64                       `json:"outputBytes"`
+	InputRows             uint64                       `json:"inputRows"`
+	Sequence              uint64                       `json:"sequence"`
+	HotInputRows          uint64                       `json:"hotInputRows"`
+	MatureInputRows       uint64                       `json:"matureInputRows"`
+	MinTimestamp          int64                        `json:"minTimestamp"`
+	MaxTimestamp          int64                        `json:"maxTimestamp"`
+	LogicalNow            int64                        `json:"logicalNow"`
+	MaturityFrontier      int64                        `json:"maturityFrontier"`
+	PluginCalls           uint64                       `json:"pluginCalls"`
+	OutputPartID          uint64                       `json:"outputPartID,omitempty"`
+	TracesRetained        uint64                       `json:"tracesRetained"`
+	TracesDropped         uint64                       `json:"tracesDropped"`
+	OversizedTraces       uint64                       `json:"oversizedTraces"`
+	EstimatedStagingBytes uint64                       `json:"estimatedStagingBytes"`
+	StagingHardLimit      uint64                       `json:"stagingHardLimit"`
+	DecisionBatchLimit    uint64                       `json:"decisionBatchLimit"`
+	PlannedStagingBatches uint64                       `json:"plannedStagingBatches"`
+	ChargedStagingBytes   uint64                       `json:"chargedStagingBytes"`
+	PeakStagedBytes       uint64                       `json:"peakStagedBytes"`
+	QueueNanos            int64                        `json:"queueNanos"`
+	HotInputParts         uint32                       `json:"hotInputParts"`
+	MatureInputParts      uint32                       `json:"matureInputParts"`
+	InputMinDepth         uint32                       `json:"inputMinDepth"`
+	InputMaxDepth         uint32                       `json:"inputMaxDepth"`
+	OutputDepth           uint32                       `json:"outputDepth"`
+	Version               uint32                       `json:"version"`
+	DecisionMaxTraceCount int                          `json:"decisionMaxTraceCount"`
+	LosslessRetry         bool                         `json:"losslessRetry"`
 }
 
 type mergeBenchmarkAggregate struct {
@@ -230,9 +268,10 @@ type mergeBenchmarkAggregate struct {
 }
 
 type mergeBenchmarkSnapshot struct {
-	Error      string                    `json:"error,omitempty"`
-	Events     []mergeBenchmarkEvent     `json:"events"`
-	Aggregates []mergeBenchmarkAggregate `json:"aggregates"`
+	Error                     string                    `json:"error,omitempty"`
+	Events                    []mergeBenchmarkEvent     `json:"events"`
+	Aggregates                []mergeBenchmarkAggregate `json:"aggregates"`
+	PeakConcurrentStagedBytes uint64                    `json:"peakConcurrentStagedBytes"`
 }
 
 type mergeBenchmarkAggregateKey struct {
@@ -243,16 +282,18 @@ type mergeBenchmarkAggregateKey struct {
 }
 
 type mergeBenchmarkObserver struct {
-	writer      io.Writer
-	recordErr   error
-	aggregates  map[mergeBenchmarkAggregateKey]*mergeBenchmarkAggregate
-	phase       mergeBenchmarkPhase
-	events      []mergeBenchmarkEvent
-	sequence    atomic.Uint64
-	active      atomic.Int64
-	overlapGen  atomic.Uint64
-	mu          sync.Mutex
-	attribution bool
+	writer                    io.Writer
+	recordErr                 error
+	aggregates                map[mergeBenchmarkAggregateKey]*mergeBenchmarkAggregate
+	phase                     mergeBenchmarkPhase
+	events                    []mergeBenchmarkEvent
+	sequence                  atomic.Uint64
+	active                    atomic.Int64
+	currentStagedBytes        atomic.Int64
+	peakConcurrentStagedBytes atomic.Uint64
+	overlapGen                atomic.Uint64
+	mu                        sync.Mutex
+	attribution               bool
 }
 
 func newMergeBenchmarkObserver(writer io.Writer, options mergeBenchmarkObserverOptions) *mergeBenchmarkObserver {
@@ -345,7 +386,10 @@ func (mbo *mergeBenchmarkObserver) snapshot() mergeBenchmarkSnapshot {
 	}
 	mbo.mu.Lock()
 	defer mbo.mu.Unlock()
-	snapshot := mergeBenchmarkSnapshot{Events: append([]mergeBenchmarkEvent(nil), mbo.events...)}
+	snapshot := mergeBenchmarkSnapshot{
+		Events:                    append([]mergeBenchmarkEvent(nil), mbo.events...),
+		PeakConcurrentStagedBytes: mbo.peakConcurrentStagedBytes.Load(),
+	}
 	if mbo.recordErr != nil {
 		snapshot.Error = mbo.recordErr.Error()
 	}
@@ -364,11 +408,54 @@ func (mbo *mergeBenchmarkObserver) snapshot() mergeBenchmarkSnapshot {
 }
 
 type mergeEvaluationObservation struct {
-	pluginCalls atomic.Uint64
-	evaluated   atomic.Uint64
-	retained    atomic.Uint64
-	dropped     atomic.Uint64
-	oversized   atomic.Uint64
+	observer           *mergeBenchmarkObserver
+	stagingBatches     []mergeBenchmarkStagingBatch
+	pluginCalls        atomic.Uint64
+	evaluated          atomic.Uint64
+	retained           atomic.Uint64
+	dropped            atomic.Uint64
+	oversized          atomic.Uint64
+	currentStagedBytes atomic.Uint64
+	peakStagedBytes    atomic.Uint64
+	mu                 sync.Mutex
+}
+
+func (meo *mergeEvaluationObservation) observeStagedBytes(value uint64) {
+	if meo == nil {
+		return
+	}
+	previous := meo.currentStagedBytes.Swap(value)
+	updateAtomicMaximum(&meo.peakStagedBytes, value)
+	if meo.observer == nil || previous == value {
+		return
+	}
+	var concurrent int64
+	if value > previous {
+		concurrent = meo.observer.currentStagedBytes.Add(int64(value - previous))
+	} else {
+		concurrent = meo.observer.currentStagedBytes.Add(-int64(previous - value))
+	}
+	if concurrent > 0 {
+		updateAtomicMaximum(&meo.observer.peakConcurrentStagedBytes, uint64(concurrent))
+	}
+}
+
+func (meo *mergeEvaluationObservation) recordStagingBatch(reason mergeStagingFlushReason, bytes, traces uint64) {
+	if meo == nil || traces == 0 {
+		return
+	}
+	meo.mu.Lock()
+	meo.stagingBatches = append(meo.stagingBatches, mergeBenchmarkStagingBatch{Reason: reason, Bytes: bytes, Traces: traces})
+	meo.mu.Unlock()
+}
+
+func (meo *mergeEvaluationObservation) stagingSnapshot() []mergeBenchmarkStagingBatch {
+	if meo == nil {
+		return nil
+	}
+	meo.mu.Lock()
+	defer meo.mu.Unlock()
+	return append([]mergeBenchmarkStagingBatch(nil), meo.stagingBatches...)
 }
 
 type mergeBenchmarkOperation struct {
@@ -498,7 +585,7 @@ func (mbo *mergeBenchmarkObserver) beginSeed(seed *mergeBenchmarkSeed, reason me
 	}
 	startedAt := time.Now()
 	operation := &mergeBenchmarkOperation{
-		observer: mbo, evaluation: &mergeEvaluationObservation{}, initialReason: reason, startedAt: startedAt, event: seed.event,
+		observer: mbo, evaluation: &mergeEvaluationObservation{observer: mbo}, initialReason: reason, startedAt: startedAt, event: seed.event,
 	}
 	operation.event.InitialReason = reason
 	operation.event.QueueNanos = startedAt.Sub(seed.dispatched).Nanoseconds()
@@ -523,6 +610,12 @@ func (mbo *mergeBenchmarkObserver) finish(operation *mergeBenchmarkOperation, ou
 	event.TracesRetained = operation.evaluation.retained.Load()
 	event.TracesDropped = operation.evaluation.dropped.Load()
 	event.OversizedTraces = operation.evaluation.oversized.Load()
+	event.PeakStagedBytes = operation.evaluation.peakStagedBytes.Load()
+	event.StagingBatches = operation.evaluation.stagingSnapshot()
+	for batchIdx := range event.StagingBatches {
+		event.ChargedStagingBytes = saturatingAddUint64(event.ChargedStagingBytes, event.StagingBatches[batchIdx].Bytes)
+	}
+	operation.evaluation.observeStagedBytes(0)
 	event.LosslessRetry = losslessRetry
 	overlapped := operation.startedOverlap || mbo.active.Load() > 1 || mbo.overlapGen.Load() != operation.overlapGen
 	mbo.active.Add(-1)

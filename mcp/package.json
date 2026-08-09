@@ -41,13 +41,14 @@
     "semver": "^7.8.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.59.2",
+    "typescript-eslint": "^8.66.0",
     "vitest": "^3.2.6"
   },
   "engines": {
     "node": ">=24.6.0"
   },
   "overrides": {
-    "@hono/node-server": "^2.0.5"
+    "@hono/node-server": "^2.1.0",
+    "fast-uri": "^4.1.2"
   }
 }

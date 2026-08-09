@@ -648,3 +648,38 @@ func TestConcurrentUpdateHeartbeat(t *testing.T) {
 	require.NoError(t, getErr)
 	assert.Equal(t, AgentStatusOnline, agentInfo.Status)
 }
+
+func TestUpdateAgentRole_UpgradesFromUnspecified(t *testing.T) {
+	ar := newTestRegistry(t, time.Minute, 2*time.Minute, 10)
+	defer ar.Stop()
+	id, err := ar.RegisterAgent(context.Background(), AgentIdentity{Role: roleUnspecified, PodName: "liaison-0"})
+	require.NoError(t, err)
+	require.Empty(t, ar.ListAgentsByRole("ROLE_LIAISON"), "an unresolved role is not yet a liaison")
+
+	// A later heartbeat carries the resolved role.
+	ar.UpdateAgentRole(id, "ROLE_LIAISON", map[string]string{"k": "v"})
+
+	liaisons := ar.ListAgentsByRole("ROLE_LIAISON")
+	require.Len(t, liaisons, 1, "the resolved role is picked up from the heartbeat")
+	assert.Equal(t, id, liaisons[0].AgentID)
+	assert.Equal(t, "v", liaisons[0].AgentIdentity.Labels["k"])
+}
+
+func TestUpdateAgentRole_BlankOrUnspecifiedNeverRegresses(t *testing.T) {
+	ar := newTestRegistry(t, time.Minute, 2*time.Minute, 10)
+	defer ar.Stop()
+	id, err := ar.RegisterAgent(context.Background(), AgentIdentity{Role: "ROLE_LIAISON", PodName: "liaison-0"})
+	require.NoError(t, err)
+
+	ar.UpdateAgentRole(id, "", nil)              // blank: ignored
+	ar.UpdateAgentRole(id, roleUnspecified, nil) // unspecified: ignored
+
+	assert.Len(t, ar.ListAgentsByRole("ROLE_LIAISON"), 1,
+		"a resolved role is never regressed by a transient blank/unspecified heartbeat")
+}
+
+func TestUpdateAgentRole_UnknownAgentIsNoop(t *testing.T) {
+	ar := newTestRegistry(t, time.Minute, 2*time.Minute, 10)
+	defer ar.Stop()
+	ar.UpdateAgentRole("missing-agent", "ROLE_LIAISON", nil) // must not panic
+}

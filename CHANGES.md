@@ -87,6 +87,8 @@ Release Notes.
 - Introduce positional parameter binding (`?` placeholders) into BydbQL to eliminate QL injection.
 - Add reusable BydbQL binding: Prepare a query once, then Bind it many times without re-parsing or mutating the template. The liaison caches prepared statements on the gRPC query path (LRU bounded by entry count and bytes, on by default; `--bydbql-prepared-cache-size`/`--bydbql-prepared-cache-max-bytes`, `bydbql_prepared_cache_*` metrics) so repeated templates skip parsing. To pinpoint un-cacheable and slow queries without high-cardinality labels, the query access log tags each entry by cache outcome (`bydbql-hit`/`bydbql-miss`/`bydbql-bypass`), slow queries over `--bydbql-slow-query-threshold` increment `bydbql_slow_query_total`, and a periodic top-10 log (`--bydbql-topk-log-interval`) surfaces the worst cache-miss and slow queries.
 - Expire BydbQL top-K entries not seen within their TTL (`--bydbql-topk-slow-ttl` / `--bydbql-topk-reparse-ttl`, default `24h`), and log `last_seen` / `max_latency_at`.
+- Add FODC schema consistency check comparing registry, cache, and runtime fingerprints across all nodes via lifecycle inspect.
+- Log the latest slow BydbQL query's bound parameters as `last_params`, redacted per `--bydbql-topk-param-mode` (default `fingerprint`).
 
 ### Bug Fixes
 
@@ -152,6 +154,8 @@ Release Notes.
 - Clear a trace subject's index when its last index rule or binding is removed.
 - Allow `*` as a non-initial character in BydbQL identifiers, so resources named with `*` become queryable, not just writable.
 - Enable periodic health checks on the queue client (`--<prefix>-client-health-check-interval`, default `10s`), evicting dead data nodes proactively.
+- Build the plugin `.so` with `-tags slim` to match the host binary's ABI. Without this, `pkg/pool` has build-tag-dependent code (`tracker.go` vs `tracker_stub.go`) and the plugin-sidecar E2E failed with "plugin was built with a different version of package `pkg/pool`".
+- Make the trace merge loop survive a persistently failing merge instead of destroying the node. A production cluster wedged when a few unreadable parts made every merge selection fail: each failed attempt leaked its partially-written output directory (the block writer creates it before the merge runs), which exhausted the volume's inodes at 8% byte usage; the resulting disk-full panic then killed the merge lane workers, which are recovered but never respawned, so the dispatcher blocked on the lane channel forever and the parts stayed pinned in flight. Four layered fixes: (1) `mergeParts` removes the output directory on any error return or panic, in trace, stream, measure, and sidx; (2) merge-read failures are wrapped in a typed error carrying the failing part's identity, and a part accumulating three consecutive attributable failures is excluded from both the hot merge selector and the finalize-round selector — it stays in the snapshot (queryable, TTL-deleted as usual) and the registry is swept when parts leave the snapshot; (3) merge dispatch backs off exponentially from 1s to a 60s cap after consecutive failures, reset on any success, with wave mode (operator-driven controlled merges) bypassing it; (4) merge-execution panics are converted to ordinary merge errors at the lane worker and the dispatch cycle, so the semaphore release, in-flight unpin, and failure accounting always run and the goroutine survives. New metrics: `total_merge_part_quarantined`, `merge_quarantined_parts`, `total_merge_backoff_seconds`, and `total_merge_panic_recovered`.
 
 ### Document
 
@@ -168,6 +172,7 @@ Release Notes.
 - Strip macOS AppleDouble (`._*`) and `__MACOSX/` metadata from every release tarball (src, banyand, bydbctl, fodc-agent, fodc-proxy) so downstream users running `make generate` from a downloaded source tarball no longer hit "invalid control character" errors when `buf generate` walks the resource-fork files; export `COPYFILE_DISABLE=1` and filter `._*` files at the source.
 - Bump Go and ui/mcp dependencies to clear Dependabot advisories: `golang.org/x/net` v0.52.0→v0.56.0 (CVE-2026-25680), `opencontainers/runc` v1.3.3→v1.3.6 (CVE-2026-41579). Refresh mcp/ui lockfiles and license attribution.
 - Defer the sw-trace-sampler tag-array decode to first use: 60% per-trace cost reduction on the realistic-mix path (`duration+err+tag` 2,710 → 1,015 ns/trace, 2,380 → 664 allocs/op on the SkyWalking schema).
+- Alias decoded entry strings via `pkg/convert.BytesToString`: 408 → 1 alloc/op on SkyWalking tag paths and 1,536 → 1 on Zipkin tag paths (the realistic 3-row × 8-entry trace); 24-40% ns/trace reduction on tag-using paths. Also fixes a pre-existing nil-deref in `keepTrace` when the array column is absent.
 
 ## 0.10.0
 

@@ -50,6 +50,9 @@ type agentConnection struct {
 	lifecycleStream        fodcv1.FODCService_StreamLifecycleServer
 	crashDiagnosticsStream fodcv1.FODCService_StreamCrashDiagnosticsServer
 	pressureProfilesStream fodcv1.FODCService_StreamPressureProfilesServer
+	schemaRegistryStream   fodcv1.FODCService_StreamSchemaRegistryServer
+	schemaRegistryCh       chan *fodcv1.StreamSchemaRegistryRequest
+	schemaRegistryDone     chan struct{}
 	pendingFetches         map[string]*fetchWaiter
 	lastActivity           time.Time
 	agentID                string
@@ -164,6 +167,122 @@ func (ac *agentConnection) sendLifecycleDataRequest() error {
 		return fmt.Errorf("failed to send lifecycle data request: %w", err)
 	}
 	return nil
+}
+
+// setSchemaRegistryStream sets the schema registry stream.
+func (ac *agentConnection) setSchemaRegistryStream(stream fodcv1.FODCService_StreamSchemaRegistryServer) {
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
+	ac.schemaRegistryStream = stream
+}
+
+// schemaRegistryChanBuffer bounds the in-flight chunk backlog between the stream
+// receive loop and the fetch consumer; the consumer drains far faster than the
+// network delivers, so this is headroom, not a hard limit.
+const schemaRegistryChanBuffer = 16
+
+// fetchSchemaRegistry asks this agent to read the authoritative registry and
+// reassembles its streamed reply into a single result. Each group's objects
+// arrive across one or more chunks that share a group name; they are merged here.
+// fetchMu (shared with pressure-profile downloads) serializes fetches so the
+// response channel is unambiguous. The wait ends on the done marker in the normal
+// case and on ctx (the caller's collection deadline) otherwise, so a stalled or
+// disconnected agent cannot hang the collection.
+func (ac *agentConnection) fetchSchemaRegistry(ctx context.Context) ([]*fodcv1.SchemaRegistryGroup, error) {
+	ac.fetchMu.Lock()
+	defer ac.fetchMu.Unlock()
+
+	ch := make(chan *fodcv1.StreamSchemaRegistryRequest, schemaRegistryChanBuffer)
+	done := make(chan struct{})
+	ac.mu.Lock()
+	stream := ac.schemaRegistryStream
+	if stream == nil {
+		ac.mu.Unlock()
+		return nil, fmt.Errorf("schema registry stream not established for agent ID: %s", ac.agentID)
+	}
+	ac.schemaRegistryCh = ch
+	ac.schemaRegistryDone = done
+	ac.mu.Unlock()
+	defer func() {
+		ac.mu.Lock()
+		ac.schemaRegistryCh = nil
+		ac.schemaRegistryDone = nil
+		close(done)
+		ac.mu.Unlock()
+	}()
+
+	if sendErr := stream.Send(&fodcv1.StreamSchemaRegistryResponse{RequestRegistry: true}); sendErr != nil {
+		return nil, fmt.Errorf("failed to send schema registry request: %w", sendErr)
+	}
+
+	groups := make(map[string]*fodcv1.SchemaRegistryGroup)
+	order := make([]string, 0)
+	fatalErr := ""
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case msg := <-ch:
+			if chunk := msg.GetGroup(); chunk != nil {
+				name := chunk.GetGroup()
+				switch {
+				case name == "" && chunk.GetError() != "":
+					// Sentinel: the agent's fatal whole-read failure.
+					fatalErr = chunk.GetError()
+				case groups[name] == nil:
+					groups[name] = &fodcv1.SchemaRegistryGroup{Group: name, Objects: chunk.GetObjects(), Error: chunk.GetError()}
+					order = append(order, name)
+				default:
+					existing := groups[name]
+					existing.Objects = append(existing.Objects, chunk.GetObjects()...)
+					if chunk.GetError() != "" {
+						existing.Error = chunk.GetError()
+					}
+				}
+			}
+			if msg.GetDone() {
+				if fatalErr != "" {
+					return nil, fmt.Errorf("agent %s registry read failed: %s", ac.agentID, fatalErr)
+				}
+				result := make([]*fodcv1.SchemaRegistryGroup, 0, len(order))
+				for _, name := range order {
+					result = append(result, groups[name])
+				}
+				return result, nil
+			}
+		}
+	}
+}
+
+// deliverSchemaRegistry routes one received registry chunk to the waiting fetch.
+// It blocks until the consumer takes the chunk (so a full buffer never drops a
+// group and silently loses fingerprints) but abandons delivery once the fetch is
+// over, so a chunk arriving after a timed-out round cannot stall the stream's
+// receive loop.
+func (ac *agentConnection) deliverSchemaRegistry(msg *fodcv1.StreamSchemaRegistryRequest) {
+	ac.mu.RLock()
+	ch := ac.schemaRegistryCh
+	done := ac.schemaRegistryDone
+	ac.mu.RUnlock()
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- msg:
+	case <-done:
+	}
+}
+
+// cancelSchemaRegistryFetch wakes an in-flight schema registry fetch on agent
+// disconnect by delivering a fatal terminal, so the collection fails over to the
+// next liaison immediately instead of waiting out its deadline -- the schema
+// registry counterpart to cancelPendingFetches for pressure-profile downloads. It
+// is a no-op when no fetch is in flight.
+func (ac *agentConnection) cancelSchemaRegistryFetch() {
+	ac.deliverSchemaRegistry(&fodcv1.StreamSchemaRegistryRequest{
+		Group: &fodcv1.SchemaRegistryGroup{Error: "agent disconnected during registry read"},
+		Done:  true,
+	})
 }
 
 // setCrashDiagnosticsStream sets the crash diagnostics stream.
@@ -478,6 +597,10 @@ func (s *FODCService) RegisterAgent(stream fodcv1.FODCService_RegisterAgentServe
 				s.logger.Error().Err(updateErr).Str("agent_id", agentID).Msg("Failed to update heartbeat")
 				return updateErr
 			}
+			// The heartbeat carries the agent's current node_role, which can resolve
+			// after the initial registration (e.g. a liaison whose gRPC came up late),
+			// so upgrade the stored role from it.
+			s.registry.UpdateAgentRole(agentID, req.GetNodeRole(), req.GetLabels())
 
 			if agentConn != nil {
 				agentConn.updateActivity()
@@ -603,6 +726,7 @@ func (s *FODCService) cleanupConnection(agentID string) {
 
 	if conn != nil {
 		conn.cancelPendingFetches()
+		conn.cancelSchemaRegistryFetch()
 	}
 	s.ackDepartedAgent(agentID)
 	if s.pressureAggregator != nil {
@@ -809,6 +933,73 @@ func (s *FODCService) RequestLifecycleData(agentID string) error {
 		return fmt.Errorf("agent connection not found for agent ID: %s", agentID)
 	}
 	return agentConn.sendLifecycleDataRequest()
+}
+
+// StreamSchemaRegistry handles the bi-directional schema registry stream. The
+// agent opens it and blocks; the proxy drives only the one agent it selects,
+// which replies with the authoritative registry fingerprints.
+func (s *FODCService) StreamSchemaRegistry(stream fodcv1.FODCService_StreamSchemaRegistryServer) error {
+	ctx := stream.Context()
+	agentID := s.getAgentIDFromContext(ctx)
+	if agentID == "" {
+		agentID = s.getAgentIDFromPeer(ctx)
+		if agentID != "" {
+			s.logger.Warn().
+				Str("agent_id", agentID).
+				Msg("Agent ID not found in metadata, using peer address fallback (this may be unreliable)")
+		}
+	}
+	if agentID == "" {
+		s.logger.Error().Msg("Agent ID not found in context metadata or peer address for schema registry stream")
+		return status.Errorf(codes.Unauthenticated, "agent ID not found in context or peer address")
+	}
+
+	s.connectionsMu.Lock()
+	agentConn, exists := s.connections[agentID]
+	if exists {
+		agentConn.setSchemaRegistryStream(stream)
+		agentConn.updateActivity()
+	} else {
+		agentConn = &agentConnection{
+			agentID:              agentID,
+			schemaRegistryStream: stream,
+			lastActivity:         time.Now(),
+		}
+		s.connections[agentID] = agentConn
+	}
+	s.connectionsMu.Unlock()
+
+	for {
+		req, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			s.logger.Debug().Str("agent_id", agentID).Msg("Schema registry stream closed by agent")
+			return nil
+		}
+		if err != nil {
+			if st, ok := status.FromError(err); ok && (st.Code() == codes.Canceled || st.Code() == codes.DeadlineExceeded) {
+				s.logger.Debug().Err(err).Str("agent_id", agentID).Msg("Schema registry stream closed")
+			} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				s.logger.Debug().Err(err).Str("agent_id", agentID).Msg("Schema registry stream closed")
+			} else {
+				s.logger.Error().Err(err).Str("agent_id", agentID).Msg("Error receiving schema registry data")
+			}
+			return err
+		}
+		agentConn.deliverSchemaRegistry(req)
+	}
+}
+
+// FetchSchemaRegistry asks the given agent to read the authoritative registry and
+// returns its per-group fingerprints. The lifecycle manager calls it on the one
+// agent it selects by role, so the registry is read once per collection cycle.
+func (s *FODCService) FetchSchemaRegistry(ctx context.Context, agentID string) ([]*fodcv1.SchemaRegistryGroup, error) {
+	s.connectionsMu.RLock()
+	agentConn, exists := s.connections[agentID]
+	s.connectionsMu.RUnlock()
+	if !exists {
+		return nil, fmt.Errorf("agent connection not found for agent ID: %s", agentID)
+	}
+	return agentConn.fetchSchemaRegistry(ctx)
 }
 
 // HasCrashDiagnosticsStream reports whether the given agent has a crash diagnostics stream.

@@ -342,6 +342,28 @@ func BenchmarkDecide_LazyDecodeSkip(b *testing.B) {
 	}
 }
 
+// BenchmarkDecide_SampleFractionFloor isolates the healthy-sample cost. The
+// config carries only healthySampleRate, so no duration, error, or tag rule
+// runs and the lazy tag decode never fires: every trace falls straight
+// through to sampleFraction. That makes this the floor for the sample path
+// and the reference for judging whether hashing is worth optimizing.
+//
+// It is not: on Go 1.25 the fnv.New64a hash and the []byte(traceID)
+// conversion in sampleFraction both stay on the stack, so this benchmark
+// reports 1 alloc/op for the whole batch — the make([]bool, traces) verdict
+// mask in Decide — and none from the hash itself. Pooling the hash makes it
+// strictly worse: sync.Pool forces the hash to escape, turning a 0-alloc
+// call into a 1-alloc one.
+func BenchmarkDecide_SampleFractionFloor(b *testing.B) {
+	const traces = 64
+	for _, p := range benchPlugins() {
+		b.Run(p.name+"/realisticMix", func(b *testing.B) {
+			s := mustSampler(b, `{"healthySampleRate":0.1}`, p.schema)
+			runDecide(b, s, benchRealisticMixBatch(b, p, traces))
+		})
+	}
+}
+
 // TODO(call-site-labels): Layer 1.5 should add runtime
 // pprof.SetGoroutineLabels inside hasSlowTrace, hasErrorColumn,
 // matchEntries, sampleFraction, and the make([]bool, ...) call site in

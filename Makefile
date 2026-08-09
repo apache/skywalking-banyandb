@@ -274,10 +274,8 @@ include scripts/build/vuln.mk
 vuln-check: $(GOVULNCHECK)
 	$(GOVULNCHECK) -show color,verbose ./...	
 
-check: ## Check that the status is consistent with CI
-	$(MAKE) license-check
+check-format: ## Check that generated and formatted files are consistent with CI
 	$(MAKE) format
-	$(MAKE) tidy
 	git add --renormalize .
 	mkdir -p /tmp/artifacts
 	git diff >/tmp/artifacts/check.diff 2>&1
@@ -287,6 +285,10 @@ check: ## Check that the status is consistent with CI
 		cat /tmp/artifacts/check.diff; \
 		exit 1; \
 	fi
+
+check: ## Check that the status is consistent with CI
+	$(MAKE) license-check
+	$(MAKE) check-format
 
 pre-push: ## Check source files before pushing to the remote repo
 	$(MAKE) check-req
@@ -374,7 +376,7 @@ PUSH_RELEASE_SCRIPTS := $(mk_dir)/scripts/push-release.sh
 release-push-candidate: ## Push release candidate
 	${PUSH_RELEASE_SCRIPTS}
 	
-.PHONY: all $(PROJECTS) clean build  default nuke
+.PHONY: all $(PROJECTS) clean build check-format default nuke
 .PHONY: lint check tidy format pre-push generate-test-cases capture-test-cases generate-trace-test-cases capture-trace-test-cases generate-stream-test-cases capture-stream-test-cases check-import-boundaries
 .PHONY: test test-race test-coverage test-ci test-docker
 .PHONY: build-trace-pipeline-plugin build-trace-pipeline-telemetry-plugins build-trace-pipeline-server test-trace-pipeline

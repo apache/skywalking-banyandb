@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -38,10 +39,10 @@ func topKByKey(slots []topKSlot) map[string]topKSlot {
 
 func TestTopKCountsAndMaxDur(t *testing.T) {
 	tk := newTopK(4, 0, nil)
-	tk.observe("a", 5*time.Millisecond)
-	tk.observe("a", 8*time.Millisecond) // largest, observed in the middle
-	tk.observe("a", 3*time.Millisecond) // smaller and last: maxDur must stay 8ms, not 3ms
-	tk.observe("b", time.Millisecond)
+	tk.observe("a", 5*time.Millisecond, "")
+	tk.observe("a", 8*time.Millisecond, "") // largest, observed in the middle
+	tk.observe("a", 3*time.Millisecond, "") // smaller and last: maxDur must stay 8ms, not 3ms
+	tk.observe("b", time.Millisecond, "")
 
 	byKey := topKByKey(tk.snapshot())
 	assert.Equal(t, uint64(3), byKey["a"].count)
@@ -51,14 +52,14 @@ func TestTopKCountsAndMaxDur(t *testing.T) {
 
 func TestTopKEvictsMinAndInheritsCount(t *testing.T) {
 	tk := newTopK(2, 0, nil)
-	tk.observe("a", 0)
-	tk.observe("a", 0)
-	tk.observe("a", 0) // a.count = 3
-	tk.observe("b", 0) // b.count = 1; now full {a:3, b:1}
+	tk.observe("a", 0, "")
+	tk.observe("a", 0, "")
+	tk.observe("a", 0, "") // a.count = 3
+	tk.observe("b", 0, "") // b.count = 1; now full {a:3, b:1}
 
 	// A new key evicts the least-frequent (b) and inherits its count + 1, so it is
 	// not immediately evicted again (Space-Saving) — this is what lets new keys in.
-	tk.observe("c", 0)
+	tk.observe("c", 0, "")
 
 	byKey := topKByKey(tk.snapshot())
 	assert.Len(t, byKey, 2)
@@ -70,9 +71,9 @@ func TestTopKEvictsMinAndInheritsCount(t *testing.T) {
 
 func TestTopKSnapshotSortedAndCumulative(t *testing.T) {
 	tk := newTopK(4, 0, nil)
-	tk.observe("hi", 0)
-	tk.observe("hi", 0)
-	tk.observe("lo", 0)
+	tk.observe("hi", 0, "")
+	tk.observe("hi", 0, "")
+	tk.observe("lo", 0, "")
 
 	snap := tk.snapshot()
 	assert.Equal(t, "hi", snap[0].key, "snapshot is sorted by count descending")
@@ -83,10 +84,10 @@ func TestTopKSnapshotSortedAndCumulative(t *testing.T) {
 
 func TestTopKSnapshotByLatency(t *testing.T) {
 	tk := newTopK(bydbqlTopKSize, 0, nil)
-	tk.observe("frequent", time.Millisecond) // high count, low latency
-	tk.observe("frequent", time.Millisecond)
-	tk.observe("frequent", time.Millisecond)
-	tk.observe("rare-but-slow", time.Second) // count 1, catastrophic latency
+	tk.observe("frequent", time.Millisecond, "") // high count, low latency
+	tk.observe("frequent", time.Millisecond, "")
+	tk.observe("frequent", time.Millisecond, "")
+	tk.observe("rare-but-slow", time.Second, "") // count 1, catastrophic latency
 
 	assert.Equal(t, "frequent", tk.snapshot()[0].key, "snapshot ranks by count")
 	assert.Equal(t, "rare-but-slow", tk.snapshotByLatency()[0].key,
@@ -100,10 +101,10 @@ func TestTopKDeterministicTieBreak(t *testing.T) {
 	a := newTopK(bydbqlTopKSize, 0, clockA.Now)
 	b := newTopK(bydbqlTopKSize, 0, clockB.Now)
 	for _, k := range []string{"c", "a", "b"} {
-		a.observe(k, 0)
+		a.observe(k, 0, "")
 	}
 	for _, k := range []string{"b", "c", "a"} {
-		b.observe(k, 0)
+		b.observe(k, 0, "")
 	}
 	assert.Equal(t, a.snapshot(), b.snapshot(), "same entries yield the same order regardless of insertion")
 	snap := a.snapshot()
@@ -113,7 +114,7 @@ func TestTopKDeterministicTieBreak(t *testing.T) {
 func TestTopKExpiresUnobservedEntry(t *testing.T) {
 	mc := timestamp.NewMockClock()
 	tk := newTopK(4, time.Hour, mc.Now)
-	tk.observe("stale", time.Second)
+	tk.observe("stale", time.Second, "")
 
 	mc.Add(time.Hour - time.Minute)
 	assert.Len(t, tk.snapshot(), 1, "still within the TTL")
@@ -125,13 +126,13 @@ func TestTopKExpiresUnobservedEntry(t *testing.T) {
 func TestTopKObserveRefreshesTTL(t *testing.T) {
 	mc := timestamp.NewMockClock()
 	tk := newTopK(4, time.Hour, mc.Now)
-	tk.observe("recurring", 0)
+	tk.observe("recurring", 0, "")
 
 	// Re-observing before expiry must reset the clock on the entry, so a query that
 	// keeps happening is never dropped no matter how long the process has run.
 	for i := 0; i < 5; i++ {
 		mc.Add(50 * time.Minute)
-		tk.observe("recurring", 0)
+		tk.observe("recurring", 0, "")
 	}
 	mc.Add(50 * time.Minute)
 
@@ -143,7 +144,7 @@ func TestTopKObserveRefreshesTTL(t *testing.T) {
 func TestTopKZeroTTLKeepsEntriesForever(t *testing.T) {
 	mc := timestamp.NewMockClock()
 	tk := newTopK(4, 0, mc.Now)
-	tk.observe("kept", 0)
+	tk.observe("kept", 0, "")
 
 	mc.Add(365 * 24 * time.Hour)
 	assert.Len(t, tk.snapshot(), 1, "ttl <= 0 restores the cumulative behavior")
@@ -152,13 +153,13 @@ func TestTopKZeroTTLKeepsEntriesForever(t *testing.T) {
 func TestTopKPurgesExpiredBeforeEvictingLiveEntry(t *testing.T) {
 	mc := timestamp.NewMockClock()
 	tk := newTopK(2, time.Hour, mc.Now)
-	tk.observe("expiring", 0)
-	tk.observe("expiring", 0)
-	tk.observe("expiring", 0) // count 3: the most frequent, so never the evict-min victim
+	tk.observe("expiring", 0, "")
+	tk.observe("expiring", 0, "")
+	tk.observe("expiring", 0, "") // count 3: the most frequent, so never the evict-min victim
 
-	mc.Add(2 * time.Hour)  // "expiring" is now stale
-	tk.observe("fresh", 0) // fills the second slot
-	tk.observe("newcomer", 0)
+	mc.Add(2 * time.Hour)      // "expiring" is now stale
+	tk.observe("fresh", 0, "") // fills the second slot
+	tk.observe("newcomer", 0, "")
 
 	byKey := topKByKey(tk.snapshot())
 	assert.Len(t, byKey, 2)
@@ -172,12 +173,12 @@ func TestTopKMaxDurAtTracksPeakNotLastObserve(t *testing.T) {
 	mc := timestamp.NewMockClock()
 	tk := newTopK(4, time.Hour, mc.Now)
 
-	tk.observe("q", time.Millisecond)
+	tk.observe("q", time.Millisecond, "")
 	mc.Add(time.Minute)
-	tk.observe("q", time.Second) // the peak
+	tk.observe("q", time.Second, "") // the peak
 	peakAt := mc.Now()
 	mc.Add(time.Minute)
-	tk.observe("q", time.Millisecond) // slower observation must not move maxDurAt
+	tk.observe("q", time.Millisecond, "") // slower observation must not move maxDurAt
 
 	snap := tk.snapshot()
 	assert.Equal(t, time.Second, snap[0].maxDur)
@@ -194,10 +195,35 @@ func TestTopKConcurrentObserve(t *testing.T) {
 		go func(n int) {
 			defer wg.Done()
 			for i := 0; i < iters; i++ {
-				tk.observe(fmt.Sprintf("q%d", (n*iters+i)%50), time.Duration(i)*time.Microsecond)
+				tk.observe(fmt.Sprintf("q%d", (n*iters+i)%50), time.Duration(i)*time.Microsecond, "")
 			}
 		}(w)
 	}
 	wg.Wait()
 	assert.LessOrEqual(t, len(tk.snapshot()), bydbqlTopKSize)
+}
+
+// The slot reports the parameters of the LATEST occurrence, not the slowest one: a
+// recurring slow query's current parameters are what an operator acts on.
+func TestTopKKeepsTheLatestParamsSample(t *testing.T) {
+	tk := newTopK(4, 0, nil)
+	tk.observe("q", 5*time.Millisecond, "str(len=3)")
+	tk.observe("q", 9*time.Millisecond, "str(len=7)") // slowest, but not last
+	tk.observe("q", time.Millisecond, "str(len=9)")   // last
+
+	snap := tk.snapshot()
+	require.Len(t, snap, 1)
+	assert.Equal(t, "str(len=9)", snap[0].params, "the newest sample must replace the previous one")
+	assert.Equal(t, 9*time.Millisecond, snap[0].maxDur, "the peak latency must still be the running maximum")
+}
+
+func TestTopKCarriesParamsOntoAnEvictionInheritedSlot(t *testing.T) {
+	tk := newTopK(1, 0, nil)
+	tk.observe("old", time.Millisecond, "str(len=1)")
+	tk.observe("new", time.Millisecond, "str(len=2)")
+
+	snap := tk.snapshot()
+	require.Len(t, snap, 1)
+	assert.Equal(t, "new", snap[0].key)
+	assert.Equal(t, "str(len=2)", snap[0].params, "a slot created by eviction must carry its own params")
 }

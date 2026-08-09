@@ -112,6 +112,11 @@ verify:
     # 2) Asserts the FODC dashboard metrics on the fodc-proxy /metrics endpoint.
     - query: bash test/e2e-v2/cases/fodc/check-metrics.sh
       expected: expected/metrics-status.yml
+    # 3) Steady-state guard for the schema consistency checker: this cluster is
+    #    healthy, so any INCONSISTENT verdict on /cluster/lifecycle is a false
+    #    positive in the checker -- a class of bug unit tests cannot surface.
+    - query: bash test/e2e-v2/cases/fodc/check-schema-consistency.sh
+      expected: expected/schema-consistency.yml
 
 cleanup:
   on: always

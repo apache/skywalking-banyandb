@@ -151,7 +151,7 @@ func TestBydbQLDumpTopK(t *testing.T) {
 	d := newTestDumper(logger.GetLogger("test-bydbql"))
 	d.observeReparse("q-reparse")
 	d.observeReparse("q-reparse") // a second re-parse of the same template
-	d.slow.observe("q-slow", time.Millisecond)
+	d.slow.observe("q-slow", time.Millisecond, "str(len=4):fp=cafebabe")
 	d.dump() // must not panic; the cumulative trackers keep their entries
 	assert.NotEmpty(t, d.reparse.snapshot())
 	assert.NotEmpty(t, d.slow.snapshot())
@@ -184,6 +184,69 @@ func TestFormatTopKAppliesItsMinCount(t *testing.T) {
 	assert.Equal(t, []string{"frequent"}, formatTopK(entries, 2, func(s topKSlot) string { return s.key }))
 	// The dumps pass 1, i.e. no filtering: every tracked entry is already meaningful.
 	assert.Equal(t, []string{"frequent", "once"}, formatTopK(entries, 1, func(s topKSlot) string { return s.key }))
+}
+
+func TestDumpSlowLineCarriesTheLatestParams(t *testing.T) {
+	d := newTestDumper(logger.GetLogger("test-bydbql"))
+	d.observeSlow("SELECT * FROM m WHERE svc = ?", time.Second, "str(len=3):fp=deadbeef")
+
+	lines := formatTopK(d.slow.snapshotByLatency(), 1, formatSlowTopKLine)
+	require.Len(t, lines, 1)
+	assert.Contains(t, lines[0], "last_params=[str(len=3):fp=deadbeef]")
+	assert.Contains(t, lines[0], "max_latency=1s", "the existing fields must survive")
+}
+
+func TestDumpSlowLineOmitsTheParamsFieldWhenThereAreNone(t *testing.T) {
+	d := newTestDumper(logger.GetLogger("test-bydbql"))
+	d.observeSlow("SELECT * FROM m", time.Second, "")
+
+	lines := formatTopK(d.slow.snapshotByLatency(), 1, formatSlowTopKLine)
+	require.Len(t, lines, 1)
+	assert.NotContains(t, lines[0], "last_params",
+		"mode=none and parameterless queries must not leave an empty field behind")
+}
+
+// The formatting tests above cannot tell whether the service actually redacts: they feed
+// the tracker directly. This one goes through the real Query path. It selects raw, the one
+// mode whose output differs visibly from the default, so a service that ignored its
+// paramMode field and fell back to the default would fail here rather than pass by luck.
+//
+// The query carries two placeholders against one param so binding fails and Query returns
+// before the transformer, which this harness does not wire. Slow-query recording happens
+// in a defer off req.Params, so it is unaffected by how far the query got.
+func TestBydbQLQuery_AppliesTheServiceParamMode(t *testing.T) {
+	svc := newTestBydbQLService()
+	svc.slowThreshold = time.Nanosecond // any query exceeds it
+	svc.paramMode = paramModeRaw
+	attachTestDumper(svc)
+	_, err := svc.Query(context.Background(), &bydbqlv1.QueryRequest{
+		Query:  "SELECT * FROM STREAM sw IN default WHERE service_id = ? AND instance_id = ?",
+		Params: []*modelv1.TagValue{bydbqlStrParam("checkout-svc")},
+	})
+	require.Error(t, err, "the deliberate arity mismatch must fail binding")
+
+	snap := svc.dumper.slow.snapshot()
+	require.Len(t, snap, 1)
+	assert.Equal(t, `"checkout-svc"`, snap[0].params, "raw must reach the tracker when the service selects it")
+}
+
+// The redaction must hold on the path that actually reaches the tracker with a value the
+// default mode is supposed to digest rather than print.
+func TestBydbQLQuery_DefaultFingerprintModeNeverRecordsTheRawValue(t *testing.T) {
+	svc := newTestBydbQLService()
+	svc.slowThreshold = time.Nanosecond
+	svc.paramMode = paramModeFingerprint
+	attachTestDumper(svc)
+	_, err := svc.Query(context.Background(), &bydbqlv1.QueryRequest{
+		Query:  "SELECT * FROM STREAM sw IN default WHERE service_id = ? AND instance_id = ?",
+		Params: []*modelv1.TagValue{bydbqlStrParam("checkout-svc")},
+	})
+	require.Error(t, err)
+
+	snap := svc.dumper.slow.snapshot()
+	require.Len(t, snap, 1)
+	assert.NotContains(t, snap[0].params, "checkout-svc", "fingerprint must not leak the raw value")
+	assert.Contains(t, snap[0].params, ":fp=", "fingerprint must attach a digest")
 }
 
 // captureAccessLog records the service tag of every WriteQuery call.

@@ -249,7 +249,19 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	br := generateBlockReader()
 	br.init(pii)
 	bw := generateBlockWriter()
+	outputPublished := false
 	bw.mustInitForFilePart(fileSystem, dstPath, shouldCache)
+	// Remove the partially-written output on any failure or panic so failed merges never leak part directories.
+	defer func() {
+		if outputPublished {
+			return
+		}
+		if panicVal := recover(); panicVal != nil {
+			fileSystem.MustRMAll(dstPath)
+			panic(panicVal)
+		}
+		fileSystem.MustRMAll(dstPath)
+	}()
 
 	pm, mergedTagType, err := mergeBlocks(closeCh, bw, br, conflictTags)
 	releaseBlockWriter(bw)
@@ -265,6 +277,7 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	// No SyncPath: mustWriteMetadata goes through WriteAtomic which already
 	// fsyncs the parent directory after rename.
 	p := mustOpenFilePart(partID, root, fileSystem)
+	outputPublished = true
 
 	return newPartWrapper(nil, p), nil
 }

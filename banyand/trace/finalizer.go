@@ -72,7 +72,7 @@ func (tst *tsTable) runFinalizeRound(samplers []sdk.Sampler, graceNs int64) (boo
 	defer cur.decRef()
 
 	gNext := tst.finalizeGenCached.Load() + 1
-	now := time.Now().UnixNano()
+	now := tst.mergeNow().UnixNano()
 	// Snapshot the counter at round start. On commit we subtract exactly this much
 	// rather than storing 0, so bytes that a concurrent flush accounts DURING the round
 	// (late arrivals not part of this round's merge) are preserved for the next round.
@@ -100,6 +100,9 @@ func (tst *tsTable) runFinalizeRound(samplers []sdk.Sampler, graceNs int64) (boo
 			continue
 		}
 		if _, inFlight := tst.inFlight[pw.ID()]; inFlight {
+			continue
+		}
+		if tst.isPartQuarantined(pw.ID()) {
 			continue
 		}
 		if pw.p.partMetadata.FinalizeGen >= gNext {
@@ -139,8 +142,9 @@ func (tst *tsTable) runFinalizeRound(samplers []sdk.Sampler, graceNs int64) (boo
 		return false, nil
 	}
 
-	stageBudget := resolveStageBudget(tst.option)
-	guard := tst.newTraceFragmentGuardSession(parts, guardGrace, stageBudget)
+	stagingHardLimit := resolveStageBudget(tst.option)
+	stagingPlan := planAdaptiveDecisionBatch(parts, stagingHardLimit)
+	guard := tst.newTraceFragmentGuardSession(parts, guardGrace, stagingHardLimit)
 	if guard == nil {
 		tst.incPipelineGuardBypassed()
 		return false, nil
@@ -150,15 +154,18 @@ func (tst *tsTable) runFinalizeRound(samplers []sdk.Sampler, graceNs int64) (boo
 	// fragment gap. The chain fails open on any Decide error.
 	chain := newMergeChain(tst.group, "", samplers, tst.option.decideTimeoutCircuitBreak)
 	filter := &mergeFilter{
-		chain:         chain,
-		guard:         guard,
-		ctx:           tst.loopCloser.Ctx(),
-		owner:         tst,
-		timeout:       tst.option.decideTimeout,
-		stageBudget:   stageBudget,
-		traceBudget:   resolveTraceBudget(tst.option),
-		maxTraceCount: maxStagedTraceCountFromBudget(stageBudget),
-		forceSlow:     projectionRequiresSlowPath(chain.projection),
+		chain:                 chain,
+		guard:                 guard,
+		ctx:                   tst.loopCloser.Ctx(),
+		owner:                 tst,
+		timeout:               tst.option.decideTimeout,
+		stagingHardLimit:      stagingHardLimit,
+		decisionBatchLimit:    stagingPlan.BatchLimit,
+		estimatedStagingBytes: stagingPlan.EstimatedBytes,
+		plannedStagingBatches: stagingPlan.PlannedBatches,
+		traceBudget:           resolveTraceBudget(tst.option),
+		maxTraceCount:         maxStagedTraceCountFromBudget(stagingPlan.BatchLimit),
+		forceSlow:             projectionRequiresSlowPath(chain.projection),
 	}
 
 	merged := make(map[uint64]struct{}, len(parts))

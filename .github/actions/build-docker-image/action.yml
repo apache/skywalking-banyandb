@@ -35,16 +35,20 @@ runs:
   steps:
     - name: Build binary
       shell: bash
-      run: make release
+      run: |
+        make -C banyand banyand-server-static banyand-lifecycle-static
+        make -C bydbctl bydbctl-cli-static
 
     - name: Build docker image
-      shell: bash
-      run: |
-        make -C test/docker build
-        docker image ls
-      env:
-        TAG: ${{ inputs.tag }}
-        HUB: ${{ inputs.hub }}
+      uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+      with:
+        context: .
+        file: test/docker/Dockerfile
+        load: true
+        tags: ${{ inputs.hub }}/skywalking-banyandb:${{ inputs.tag }}-testing
+        provenance: false
+        cache-from: type=gha,scope=banyandb-testing-${{ runner.arch }}
+        cache-to: type=gha,mode=max,scope=banyandb-testing-${{ runner.arch }},ignore-error=true
 
     - name: Package docker image
       shell: bash

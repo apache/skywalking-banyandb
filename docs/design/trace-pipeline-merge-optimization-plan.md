@@ -4,22 +4,22 @@
 
 Proposed for review. Do not treat the targets in this document as frozen acceptance gates until they are approved.
 
-## Current Result (Baseline)
+## Opening Baseline (Before Adaptive Batching)
 
-The controlled mature-merge comparison uses the same frozen production selection for the pipeline-disabled and native
+The opening controlled mature-merge comparison used the same frozen production selection for the pipeline-disabled and native
 retain-all variants. Each variant ran in five fresh resource-limited Docker processes. All ten runs passed the selection,
 maturity, row-count, secondary-index, and logical-ledger correctness gates.
 
-Each retain-all run made two plugin calls, evaluated and retained 33,353 complete trace IDs, dropped no traces, and
+In that pre-adaptive baseline, each retain-all run made one plugin call, evaluated and retained 33,353 complete trace IDs, dropped no traces, and
 preserved all 147,126 span rows. Compressed logical write amplification over the core and both secondary indexes remained
 identical at 1.0009 times.
 
 Compared with the pipeline-disabled medians, the native retain-all path currently adds approximately:
 
-- 121.9 MiB of allocated bytes, an increase of 56.2%;
-- 1.07 million allocations, an increase of 38.0%;
-- 91.5 MiB of peak Go heap, an increase of 83.4%; and
-- 98.4 MiB of peak RSS, an increase of 72.8%.
+- 113.5 MiB of allocated bytes, an increase of 59.6%;
+- 466,941 allocations, an increase of 16.6%;
+- 87.1 MiB of peak Go heap, an increase of 108.9%; and
+- 85.8 MiB of peak RSS, an increase of 75.3%.
 
 The differential allocation profile points primarily to `stageRawTrace`, `blockMetadata.copyFrom`,
 `traceEvaluationStager.stage`, and `assembleStagedEvaluationBatch`. Profile values overlap and must not be added together.
@@ -174,27 +174,73 @@ performance gate.
 
 ---
 
-### Phase 4 — Batch Size Tuning
+### Phase 4 — Adaptive Budget Validation
 
-**Scope.** Empirically select the smallest staging batch size that meets memory and throughput goals without excess
-plugin-call overhead.
+**Scope.** Validate the existing resource-derived staging budget under cold, steady-state, and naturally varying merge
+sizes. The budget is a memory-safety ceiling rather than a calibrated performance knob; this phase does not add an
+operator or benchmark override.
 
 **Entries from original plan.** P5.
 
-**Hard invariants.** Logical evaluated trace count, per-trace verdict, and merged output byte-identical across batch
-sizes. Both byte and trace-count limits enforced.
+**Hard invariants.** The production budget formula remains derived solely from the detected cgroup memory and CPU
+limits. Logical evaluated trace count, per-trace verdict, and merged output remain correct when natural input variation
+causes complete-trace batch boundaries. Both byte and trace-count limits remain enforced.
 
 **Exit gate.**
 
-- [ ] 16 / 32 / 64 / 128 / 256 / 512 MiB sweep completed against the unchanged frozen seed.
-- [ ] Each run reports peak heap, peak RSS, allocated bytes, allocation count, plugin calls, traces per call, CPU time,
-  wall time, logical write amplification.
-- [ ] Selected batch size documented with both byte and trace-count limits; alternative sizes ruled out with evidence.
+- [x] Every sampled merge reports peak charged staging bytes, batch bytes and trace count, flush reason, and peak
+  concurrent staged bytes.
+- [x] Cold first-merge cost and subsequent same-process reuse are reported separately without changing the budget.
+- [ ] The serialized 24-hour workload validates naturally varying merge sizes under the canonical two-CPU, 4 GiB
+  container and its resource-derived 256 MiB budget.
+- [ ] At least one naturally budget-limited merge, or explicit evidence that the production-shaped workload never
+  reaches the limit, is documented without manufacturing smaller batches.
+- [ ] Core and secondary-index ledgers, complete-trace decisions, peak heap, peak RSS, allocations, plugin calls, CPU
+  time, wall time, and logical write amplification remain reported.
 
 **Dependencies.** Phase 3.
 
-**Boundary rationale.** Cannot tune a knob whose dependent structure is still changing. Phase 3 must be stable before
-doing a controlled sweep.
+**Boundary rationale.** A fixed budget selected from one seed would not generalize to varying production inputs or
+container sizes. Phase 3 must be stable before its resource-derived ceiling and cross-merge reuse can be validated.
+
+**Adaptive decision-batch implementation.** The resource-derived staging and per-trace limits remain hard safety
+ceilings. Each MERGE or FINALIZE selection now derives a separate preferred decision-batch limit from the selected core
+parts' `CompressedSizeBytes`, `UncompressedSpanSizeBytes`, and `BlocksCount`. The estimator uses the greater of compressed
+and uncompressed payload bytes plus a runtime-structure estimate per stored block. It then balances the estimated input
+around a nominal reusable window derived from the hard limit and the bounded BanyanDB staging-arena pool. A two-CPU,
+4 GiB process therefore keeps its 256 MiB hard ceiling while targeting approximately 32 MiB decision batches. Small
+estimated merges remain a single call; larger merges are split only at complete-trace boundaries. Exact runtime charged
+bytes remain authoritative, and the oversized single-trace fail-open limit is unchanged.
+
+The fragment guard continues to receive the hard ceiling rather than the preferred decision limit. The per-decision
+trace-count bound is derived from the preferred limit. Benchmark events report the metadata estimate, hard ceiling,
+preferred limit, planned batch count, effective trace-count limit, actual batch sizes and reasons, and peak staged bytes.
+The metadata estimate is advisory: an underestimate causes additional complete-trace batches, while the runtime byte
+accounting and hard per-trace bypass preserve safety and correctness.
+
+An initial two-CPU, 4 GiB controlled diagnostic estimated 85,716,327 bytes from the frozen selection and resolved a
+28,572,109-byte preferred limit under the unchanged 268,435,456-byte hard ceiling. Runtime accounting produced five
+complete-trace batches, peaked at 28,575,614 staged bytes, evaluated and retained all 33,353 traces, and preserved every
+core and secondary-index ledger. Compared with the preceding five-run retain-all medians, this single diagnostic reduced
+peak heap from 167.1 MiB to 106.8 MiB and peak RSS from 199.7 MiB to 151.6 MiB. It is evidence that adaptive batching
+controls the live set, not a replacement for the required alternating acceptance series.
+
+The balanced DR/RD acceptance series subsequently ran five fresh Docker processes per mode against the same selection.
+All ten runs preserved 147,126 rows, all three logical ledgers, the mature-only selection, and complete-trace decisions.
+The retain-all runs consistently made five sampler calls and peaked at 27.25 MiB of charged staged memory. Their median
+was 266.32 MiB allocated, 3,200,439 allocations, 109.28 MiB peak heap, and 158.93 MiB peak RSS. Relative to the previous
+one-call retain-all medians, this is a 12.4% allocated-byte reduction, 2.3% allocation-count reduction, 34.6% peak-heap
+reduction, and 20.4% peak-RSS reduction. Correctness and live-heap control pass, but the allocated-byte,
+allocation-count, and RSS targets remain open. The measured wall and CPU deltas remain non-blocking and are not credited
+as a pipeline speedup.
+
+A separate five-merge retain-all diagnostic used five identical seed clones sequentially in one two-CPU, 4 GiB process,
+without changing the 256 MiB hard ceiling or the metadata-derived preferred limit. The cold merge allocated 263.10 MiB.
+The four reuse merges allocated 225.93-238.53 MiB while CPU time stayed between 6.56 and 6.64 seconds. Reused arena
+capacities are included in the authoritative runtime charge, so the warm merges used six complete-trace sampler calls
+instead of the cold merge's five. Peak staged memory remained 27.25 MiB and every ledger remained correct. Absolute RSS
+in this diagnostic includes the history of earlier merges in the same process and must not be interpreted as an isolated
+per-merge RSS delta.
 
 ---
 

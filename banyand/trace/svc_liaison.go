@@ -272,7 +272,7 @@ func (l *liaison) PreRun(ctx context.Context) error {
 			Msg("handoff controller initialized")
 	}
 
-	l.schemaRepo = newLiaisonSchemaRepo(l.dataPath, l, traceDataNodeRegistry)
+	l.schemaRepo = newLiaisonSchemaRepo(l.dataPath, l, traceDataNodeRegistry, val.(common.Node).NodeID)
 	l.writeListener = setUpWriteQueueCallback(l.l, &l.schemaRepo, l.maxDiskUsagePercent, l.option.tire2Client)
 
 	// Register chunked sync handler for trace and sidx data
@@ -284,6 +284,7 @@ func (l *liaison) PreRun(ctx context.Context) error {
 
 	if metaSvc, ok := l.metadata.(metadata.Service); ok {
 		metaSvc.RegisterLiaisonCollector(commonv1.Catalog_CATALOG_TRACE, l)
+		metaSvc.RegisterSchemaSnapshotCollector(commonv1.Catalog_CATALOG_TRACE, &l.schemaRepo)
 		metaSvc.RegisterGroupDropHandler(commonv1.Catalog_CATALOG_TRACE, l)
 	}
 
@@ -338,7 +339,8 @@ func (l *liaison) CollectDataInfo(_ context.Context, _ string) (*databasev1.Data
 	return nil, errors.New("collect data info is not supported on liaison node")
 }
 
-// CollectLiaisonInfo collects liaison node info.
+// CollectLiaisonInfo collects liaison node info. When includeSchemaState is set it
+// also attaches this node's schema consistency evidence.
 func (l *liaison) CollectLiaisonInfo(_ context.Context, group string) (*databasev1.LiaisonInfo, error) {
 	info := &databasev1.LiaisonInfo{
 		PendingWriteDataCount:       0,

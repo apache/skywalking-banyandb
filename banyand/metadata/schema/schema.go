@@ -58,6 +58,18 @@ type LiaisonInfoCollector interface {
 	CollectLiaisonInfo(ctx context.Context, group string) (*databasev1.LiaisonInfo, error)
 }
 
+// SnapshotCollector streams a node's cached and materialized schema BODIES
+// for a group so the FODC agent can fingerprint them on receive. Registered per
+// catalog by each banyand service; the data path itself computes no fingerprints.
+type SnapshotCollector interface {
+	// CollectSchemaSnapshot returns this node's cache/runtime bodies for the group
+	// plus the group's deduplicated index-rule table that its bodies reference.
+	CollectSchemaSnapshot(group string) ([]*databasev1.ObjectSnapshot, []*databasev1.IndexRule, error)
+	// CachedGroups lists the groups of this catalog the node currently caches, so
+	// an all-groups request can enumerate without a roster.
+	CachedGroups() []string
+}
+
 // UnimplementedOnInitHandler is a placeholder for unimplemented OnInitHandler.
 type UnimplementedOnInitHandler struct{}
 

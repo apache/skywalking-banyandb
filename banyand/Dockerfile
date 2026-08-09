@@ -147,7 +147,7 @@ RUN set -e; \
       [ -f "$dir/main.go" ] || continue; \
       name=$(basename "$dir"); \
       echo "building $name.so from $dir"; \
-      go build -buildmode=plugin -trimpath -o /out/plugins/"$name".so ./"$dir"; \
+      go build -buildmode=plugin -trimpath -tags slim -o /out/plugins/"$name".so ./"$dir"; \
     done
 
 # final-plugins is the plugin-capable HOST image ("-plugins" variant):

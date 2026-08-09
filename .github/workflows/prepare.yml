@@ -33,7 +33,7 @@ jobs:
         id: cache-tool
         with:
           path: bin
-          key: ${{ runner.os }}-generate-tool-${{ hashFiles('**/version.mk') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-generate-tool-${{ hashFiles('scripts/build/version.mk') }}
       - uses: actions/setup-node@v6
         with:
           node-version: 24.6.0
@@ -49,11 +49,7 @@ jobs:
       - name: Generate codes
         run: make generate
       - name: Build UI
-        run: |
-          cd ui
-          npm ci
-          npm run build
-          cd ..
+        run: make -C ui build
       - name: Upload generated files
         uses: actions/upload-artifact@v7
         with:

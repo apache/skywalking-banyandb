@@ -61,8 +61,8 @@ MIT licenses
 
     @babel/helper-string-parser 7.29.7 MIT
     @babel/helper-validator-identifier 7.29.7 MIT
-    @babel/parser 7.29.7 MIT
-    @babel/types 7.29.7 MIT
+    @babel/parser 7.29.8 MIT
+    @babel/types 7.29.8 MIT
     @ctrl/tinycolor 4.2.0 MIT
     @element-plus/icons-vue 2.3.2 MIT
     @floating-ui/core 1.8.0 MIT
@@ -76,19 +76,22 @@ MIT licenses
     @tanstack/match-sorter-utils 8.19.4 MIT
     @tanstack/query-core 5.101.4 MIT
     @tanstack/vue-query 5.101.4 MIT
-    @types/lodash 4.17.24 MIT
+    @types/lodash 4.17.25 MIT
     @types/lodash-es 4.17.12 MIT
     @types/web-bluetooth 0.0.21 MIT
-    @vue/compiler-core 3.5.40 MIT
-    @vue/compiler-dom 3.5.40 MIT
-    @vue/compiler-sfc 3.5.40 MIT
-    @vue/compiler-ssr 3.5.40 MIT
+    @vue/compiler-core 3.5.41 MIT
+    @vue/compiler-core/node_modules/estree-walker 2.0.2 MIT
+    @vue/compiler-dom 3.5.41 MIT
+    @vue/compiler-sfc 3.5.41 MIT
+    @vue/compiler-sfc/node_modules/estree-walker 2.0.2 MIT
+    @vue/compiler-sfc/node_modules/magic-string 0.30.21 MIT
+    @vue/compiler-ssr 3.5.41 MIT
     @vue/devtools-api 6.6.4 MIT
-    @vue/reactivity 3.5.40 MIT
-    @vue/runtime-core 3.5.40 MIT
-    @vue/runtime-dom 3.5.40 MIT
-    @vue/server-renderer 3.5.40 MIT
-    @vue/shared 3.5.40 MIT
+    @vue/reactivity 3.5.41 MIT
+    @vue/runtime-core 3.5.41 MIT
+    @vue/runtime-dom 3.5.41 MIT
+    @vue/server-renderer 3.5.41 MIT
+    @vue/shared 3.5.41 MIT
     @vueuse/core 14.3.0 MIT
     @vueuse/metadata 14.3.0 MIT
     @vueuse/shared 14.3.0 MIT
@@ -98,30 +101,28 @@ MIT licenses
     core-util-is 1.0.3 MIT
     csstype 3.2.3 MIT
     dayjs 1.11.21 MIT
-    element-plus 2.14.3 MIT
-    estree-walker 2.0.2 MIT
+    element-plus 2.14.4 MIT
     immediate 3.0.6 MIT
     immutable 5.1.9 MIT
     is-extglob 2.1.1 MIT
     is-glob 4.0.3 MIT
     isarray 1.0.0 MIT
-    js-yaml 4.3.0 MIT
+    js-yaml 5.2.3 MIT
     jsonfile 6.2.1 MIT
     lie 3.3.0 MIT
     lodash 4.18.1 MIT
     lodash-es 4.18.1 MIT
     lodash-unified 1.0.3 MIT
-    magic-string 0.30.21 MIT
     memoize-one 6.0.0 MIT
     mitt 3.0.1 MIT
-    nanoid 3.3.16 MIT
+    nanoid 3.3.18 MIT
     node-addon-api 7.1.1 MIT
     picomatch 4.0.5 MIT
     pinia 2.3.1 MIT
-    postcss 8.5.23 MIT
+    postcss 8.5.26 MIT
     process-nextick-args 2.0.1 MIT
     readable-stream 2.3.8 MIT
-    readdirp 5.0.0 MIT
+    readdirp 5.1.1 MIT
     remove-accents 0.5.0 MIT
     safe-buffer 5.1.2 MIT
     sass 1.102.0 MIT
@@ -129,8 +130,8 @@ MIT licenses
     string_decoder 1.1.1 MIT
     universalify 2.0.1 MIT
     util-deprecate 1.0.2 MIT
-    vue 3.5.40 MIT
-    vue-component-type-helpers 3.3.8 MIT
+    vue 3.5.41 MIT
+    vue-component-type-helpers 3.3.9 MIT
     vue-demi 0.14.10 MIT
     vue-router 4.6.4 MIT
 

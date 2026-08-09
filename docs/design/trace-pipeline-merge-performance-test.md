@@ -95,6 +95,41 @@ Only six size windows bridge into mature data, at logical times `05:44:00`, `08:
 `12:21:14` (10 mature plus 5 hot inputs) and `21:55:11` (11 mature plus 4 hot inputs); the latter contains only previous
 merge outputs and no raw part. It is still hot because four of those outputs carry data newer than the frontier.
 
+### Full-Day Adaptive-Budget Validation
+
+The first retain-all full-day replay confirmed that the serialized production MERGE trajectory alone cannot validate
+adaptive batching: all 286 selections contained at least one hot part, so the whole-selection grace guard correctly made
+zero plugin calls. Advancing the logical clock by two hours did not create another size-policy selection because the
+ordinary merges had already reduced the shard to 20 parts. Treating that zero-call run as plugin coverage would be a test
+defect.
+
+The harness now has an explicit, opt-in cooldown FINALIZE round for plugin-enabled integration runs. It first completes
+the unchanged 24-hour serialized MERGE replay and its day-boundary drain, advances the benchmark logical clock to
+`day_end + 2h`, and then invokes one real production finalization round over the cooled active snapshot. The round uses
+the production fragment guard, adaptive decision planner, trace assembly, plugin ABI, core writer, secondary-index
+mergers, snapshot introduction, and finalization-generation commit. It does not alter the production picker or make
+FINALIZE part of the pipeline-disabled baseline. The benchmark fails rather than silently succeeding if no finalization
+round commits.
+
+The 2-core, 4-GiB AlwaysKeep validation passed. The primary phase published 3,219 parts, preserved the exact ordered 286
+MERGE selections from the pipeline-disabled run, and made zero plugin calls because every selection was hot. The cooldown
+FINALIZE round selected all 20 mature core parts, processed 325,570 rows and 74,576 complete traces, invoked the plugin 10
+times, retained every trace, and produced one core part plus one part for each secondary index. All three logical ledgers
+matched; there were no dropped or oversized traces, lossless retries, or recording errors.
+
+For the 82,584,217-byte core selection, metadata estimated 190,169,855 staging bytes. The 4-GiB cgroup produced a
+268,435,456-byte staging hard limit and the adaptive planner chose a 31,694,976-byte decision limit with six planned
+batches. Actual complete-trace charging totaled 306,951,501 bytes, resulting in nine byte-limit flushes and one final
+flush. Peak staged bytes were 31,697,078, only 2,102 bytes above the decision target because the boundary trace is
+indivisible, and 11.8% of the hard limit. Process cgroup peak was 277,794,816 bytes, 6.5% of the container limit. The
+cooldown round took 14.44 seconds wall and 14.51 CPU seconds and allocated 487,021,344 bytes cumulatively; allocation
+traffic is not live memory.
+
+This is a framework and adaptive-budget validation, not the completed SkyWalking result. The actual SkyWalking
+configuration and its independently frozen deletion ledger still need a full MERGE-plus-FINALIZE run. Repeated processes
+are also required before drawing timing-regression conclusions; the single disabled and retain-all primary runs are used
+only to prove identical selection trajectories and outputs.
+
 ### Revised Two-Track Test Strategy
 
 The primary performance comparison uses one frozen, production-shaped mature merge rather than requiring the continuously
@@ -168,11 +203,9 @@ cost; the unit benchmark isolates the sampler algorithm itself.
 
 The 24-hour serialized write-and-merge replay remains the final SkyWalking-settings integration test, not the primary
 performance comparison. It validates real publication, repeated policy selection, hot bypass, secondary-index updates,
-trace correctness, and end-to-end resource behavior. Its acceptance gate must require actual SkyWalking plugin calls;
-otherwise the current whole-selection grace guard can bypass all six mixed mature selections and the test can pass
-without exercising SkyWalking sampling. If the final replay starts from an empty shard, it therefore needs either an
-explicit mature controlled opening round or a sampling policy that evaluates mature data inside mixed selections. This
-choice must be fixed before treating the final replay as plugin integration coverage.
+trace correctness, and end-to-end resource behavior. Its acceptance gate requires actual SkyWalking plugin calls. The
+empty-shard replay therefore completes one explicit FINALIZE round after the two-hour cooldown; the controlled mature
+MERGE round remains the identical-input framework comparison.
 
 This two-track strategy replaces the unstable ten-mature-round requirement as the performance-comparison gate. Mature
 selection counts in the full replay remain an integration diagnostic rather than a prerequisite for comparing plugin
@@ -252,7 +285,8 @@ seed decoding, fixture generation, plugin compilation, or plugin loading in the 
 
 - Network ingestion and WAL work.
 - Liaison raw-write conversion, part transfer, and data-node receipt.
-- Query load, retention deletion, finalization, handoff, and segment-level series-index work.
+- Query load, retention deletion, background finalization scheduling, handoff, and segment-level series-index work. The
+  final plugin integration includes exactly one explicitly triggered cooldown FINALIZE round.
 - Plugin compilation and initial `plugin.Open` cost.
 - Fixture cloning and logical-output verification.
 - Performance of a future query-time trace-latency field.
@@ -276,9 +310,9 @@ controller is pinned away from the data-node CPUs and reports its own scheduling
 
 The canonical container profile is:
 
-- four pinned logical CPUs with a four-CPU quota;
-- `GOMAXPROCS=4`;
-- 8 GiB memory limit;
+- two pinned logical CPUs with a two-CPU quota;
+- `GOMAXPROCS=2`;
+- 4 GiB memory limit;
 - memory swap limit equal to the memory limit, preventing additional swap use;
 - a fixed PID limit of 512;
 - the same read-only seed mount and a new writable fixture volume for every run;
@@ -289,7 +323,7 @@ must have identical limits. Every report records both the requested Docker limit
 inside the container. A mismatch invalidates the run because merge concurrency and staging budgets are derived from the
 detected cgroup resources.
 
-The four-CPU limit is an upper resource envelope, not a utilization target. Low utilization from the single shard is a
+The two-CPU limit is an upper resource envelope, not a utilization target. Low utilization from the single shard is a
 valid result and must not be corrected by cloning the workload, increasing shard count, or forcing extra merges. This
 design measures plugin impact on the downloaded shard; it does not establish whole-node saturation capacity.
 
@@ -897,8 +931,10 @@ Fix plugin-local performance problems and repeat until stable.
 ### Phase 4: SkyWalking Integration
 
 Configure the actual SkyWalking pipeline, projections, thresholds, merge grace, fragment-gap contract, core indexes, and
-secondary indexes. Run the serialized 24-hour publication schedule with production-derived merge concurrency inside the
-same Docker resource envelope. This is the final one-shard integration result, not a whole-data-node capacity claim.
+secondary indexes, with both MERGE and FINALIZE enabled. Run the serialized 24-hour publication schedule with
+production-derived merge concurrency inside the same Docker resource envelope, then trigger exactly one FINALIZE round
+at `day_end + 2h`. Report the primary MERGE phase and cooldown FINALIZE phase independently. This is the final one-shard
+integration result, not a whole-data-node capacity claim.
 
 Every optimization iteration preserves the fixture and environment checksums and reruns all earlier phases affected by
 the change. A final integration improvement is not accepted if it regresses the pipeline-disabled baseline.
@@ -929,8 +965,8 @@ barrier is released and stops after the day-boundary merge-idle barrier. The coo
 two-hour logical advance and stops after the second merge-idle barrier. Every merged introduction must be durable at its
 phase boundary.
 
-Both timed phases include their publication or trigger notification, policy selection, queueing, core and
-secondary-index merge I/O, plugin execution, fragment guard work, and merged-part introduction. They exclude fixture
+Both timed phases include their publication or trigger notification, policy or finalization selection, queueing, core
+and secondary-index merge I/O, plugin execution, fragment guard work, and merged-part introduction. They exclude fixture
 generation, directory cloning, plugin loading, result scanning, and checksum verification. Report primary and cooldown
 profiles and metrics independently; report their sum only as the secondary end-to-end total.
 
@@ -973,7 +1009,9 @@ independently in addition to their combined totals.
 - traces retained by duration, error, tag, and healthy-hash rules, plus traces reaching each rule;
 - plugin calls and traces per call;
 - grace-bypassed merge and trace counts;
-- staged bytes and peak staged bytes;
+- metadata-estimated staging bytes, resource-derived staging hard limit, adaptive decision-batch limit, planned batch
+  count, and effective trace-count limit;
+- actual batch bytes, traces, flush reason, peak staged bytes, and peak concurrent staged bytes;
 - fragment-guard candidate parts, Bloom probes, deferrals, and budget exhaustion;
 - plugin errors, panics, timeouts, and malformed verdicts;
 - sampled and unsampled merge counts, including every unsampled reason.
@@ -1010,9 +1048,9 @@ The performance result is rejected unless all gates pass:
 4. No trace ID is emitted in more than one logical block inside a merged output part.
 5. The plugin receives exactly one batch entry per trace ID for each merge in which that trace participates.
 6. The plugin's `MinTS` and `MaxTS` equal bounds independently reconstructed from all selected fragments of the trace.
-7. No plugin call occurs for a hot selection. During the measured publication interval, at least ten core merges are
-   classified `merge_grace` and at least ten are classified `executed`; every `executed` input has merge depth of at
-   least one. Cooldown-only executions do not count toward this coverage gate.
+7. No plugin call occurs for a hot selection. The controlled all-mature MERGE round must execute the plugin. In the
+   full-day integration run, the cooldown FINALIZE round must execute the plugin over at least one cooled part and report
+   only mature inputs; a replay containing only grace bypasses is invalid.
 8. There are no plugin failures, timeouts, malformed verdicts, oversized-trace bypasses, or guard-budget failures unless
    a separate fault scenario intentionally requests them.
 9. The merge loop reaches the defined idle state without leaked in-flight parts or references.
@@ -1033,8 +1071,9 @@ The performance result is rejected unless all gates pass:
 16. Every scheduled part moves exactly once from the staging directory through an atomic same-filesystem rename. Its
     checksum is unchanged, the external controller never appears in data-node profiles or cgroup counters, and all
     controller lag and errors are reported separately.
-17. Pipeline-disabled and AlwaysKeep runs have identical ordered selection fingerprints and logical outputs. Dropping
-    variants may diverge, but their first point and subsequent trajectories are recorded.
+17. Pipeline-disabled and AlwaysKeep runs have identical ordered primary-phase MERGE selection fingerprints and logical
+    outputs. The plugin-only FINALIZE event is excluded from this fingerprint comparison. Dropping variants may diverge,
+    but their first point and subsequent trajectories are recorded.
 
 ## Comparison and Acceptance
 

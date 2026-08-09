@@ -24,12 +24,13 @@ import (
 	"github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/local"
+	integration_distributed "github.com/apache/skywalking-banyandb/test/integration/distributed"
 	"github.com/apache/skywalking-banyandb/test/integration/distributed/backup"
 )
 
 func TestBackup(t *testing.T) {
 	gomega.RegisterFailHandler(ginkgo.Fail)
-	ginkgo.RunSpecs(t, "Distributed Backup Suite")
+	ginkgo.RunSpecs(t, "Distributed Backup Suite", ginkgo.Label(integration_distributed.Labels...))
 }
 
 var testVars *backup.CommonTestVars

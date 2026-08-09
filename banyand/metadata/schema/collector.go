@@ -68,6 +68,7 @@ type InfoCollectorRegistry struct {
 	groupGetter        GroupGetter
 	dataCollectors     map[commonv1.Catalog]DataInfoCollector
 	liaisonCollectors  map[commonv1.Catalog]LiaisonInfoCollector
+	snapshotCollectors map[commonv1.Catalog]SnapshotCollector
 	dropHandlers       map[commonv1.Catalog]GroupDropHandler
 	dataBroadcaster    bus.Broadcaster
 	liaisonBroadcaster bus.Broadcaster
@@ -78,11 +79,12 @@ type InfoCollectorRegistry struct {
 // NewInfoCollectorRegistry creates a new InfoCollectorRegistry.
 func NewInfoCollectorRegistry(l *logger.Logger, groupGetter GroupGetter) *InfoCollectorRegistry {
 	return &InfoCollectorRegistry{
-		groupGetter:       groupGetter,
-		dataCollectors:    make(map[commonv1.Catalog]DataInfoCollector),
-		liaisonCollectors: make(map[commonv1.Catalog]LiaisonInfoCollector),
-		dropHandlers:      make(map[commonv1.Catalog]GroupDropHandler),
-		l:                 l,
+		groupGetter:        groupGetter,
+		dataCollectors:     make(map[commonv1.Catalog]DataInfoCollector),
+		liaisonCollectors:  make(map[commonv1.Catalog]LiaisonInfoCollector),
+		snapshotCollectors: make(map[commonv1.Catalog]SnapshotCollector),
+		dropHandlers:       make(map[commonv1.Catalog]GroupDropHandler),
+		l:                  l,
 	}
 }
 
@@ -136,7 +138,8 @@ func (icr *InfoCollectorRegistry) CollectDataInfo(ctx context.Context, group str
 }
 
 func (icr *InfoCollectorRegistry) broadcastCollectDataInfo(topic bus.Topic, group string) ([]*databasev1.DataInfo, []string) {
-	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.GroupRegistryServiceInspectRequest{Group: group})
+	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()),
+		&databasev1.GroupRegistryServiceInspectRequest{Group: group})
 	futures, broadcastErr := icr.dataBroadcaster.Broadcast(inspectBroadcastTimeout, topic, message)
 	if broadcastErr != nil {
 		icr.l.Warn().Err(broadcastErr).Str("group", group).Msg("failed to broadcast collect data info request")
@@ -166,7 +169,9 @@ func (icr *InfoCollectorRegistry) broadcastCollectDataInfo(topic bus.Topic, grou
 	return dataInfoList, collectionErrors
 }
 
-func (icr *InfoCollectorRegistry) collectDataInfoLocal(ctx context.Context, catalog commonv1.Catalog, group string) (*databasev1.DataInfo, error) {
+func (icr *InfoCollectorRegistry) collectDataInfoLocal(
+	ctx context.Context, catalog commonv1.Catalog, group string,
+) (*databasev1.DataInfo, error) {
 	icr.mux.RLock()
 	collector, hasCollector := icr.dataCollectors[catalog]
 	icr.mux.RUnlock()
@@ -214,12 +219,17 @@ func (icr *InfoCollectorRegistry) CollectLiaisonInfo(ctx context.Context, group 
 	default:
 		return nil, fmt.Errorf("unsupported catalog type: %v", g.Catalog)
 	}
+	// Include this node's own liaison info alongside the broadcast. The liaison
+	// collect broadcast targets the pub's registered peers (ActiveRegisteredNodes)
+	// and never loops back to the local node, so the broadcast alone omits the
+	// self-entry -- and in a single-liaison cluster loses it entirely (0 results).
 	remoteInfo := icr.broadcastCollectLiaisonInfo(topic, group)
 	return append(localInfoList, remoteInfo...), nil
 }
 
 func (icr *InfoCollectorRegistry) broadcastCollectLiaisonInfo(topic bus.Topic, group string) []*databasev1.LiaisonInfo {
-	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()), &databasev1.GroupRegistryServiceInspectRequest{Group: group})
+	message := bus.NewMessage(bus.MessageID(time.Now().UnixNano()),
+		&databasev1.GroupRegistryServiceInspectRequest{Group: group})
 	futures, broadcastErr := icr.liaisonBroadcaster.Broadcast(inspectBroadcastTimeout, topic, message)
 	if broadcastErr != nil {
 		icr.l.Warn().Err(broadcastErr).Str("group", group).Msg("failed to broadcast collect liaison info request")
@@ -246,7 +256,9 @@ func (icr *InfoCollectorRegistry) broadcastCollectLiaisonInfo(topic bus.Topic, g
 	return liaisonInfoList
 }
 
-func (icr *InfoCollectorRegistry) collectLiaisonInfoLocal(ctx context.Context, catalog commonv1.Catalog, group string) (*databasev1.LiaisonInfo, error) {
+func (icr *InfoCollectorRegistry) collectLiaisonInfoLocal(
+	ctx context.Context, catalog commonv1.Catalog, group string,
+) (*databasev1.LiaisonInfo, error) {
 	icr.mux.RLock()
 	collector, hasCollector := icr.liaisonCollectors[catalog]
 	icr.mux.RUnlock()
@@ -341,6 +353,53 @@ func (icr *InfoCollectorRegistry) RegisterGroupDropHandler(catalog commonv1.Cata
 	icr.mux.Lock()
 	defer icr.mux.Unlock()
 	icr.dropHandlers[catalog] = handler
+}
+
+// RegisterSchemaSnapshotCollector registers a schema snapshot collector for a catalog.
+func (icr *InfoCollectorRegistry) RegisterSchemaSnapshotCollector(catalog commonv1.Catalog, collector SnapshotCollector) {
+	icr.mux.Lock()
+	defer icr.mux.Unlock()
+	icr.snapshotCollectors[catalog] = collector
+}
+
+// CollectGroupSchemaSnapshot returns this node's cache/runtime schema bodies for
+// one group plus its deduplicated index-rule table, dispatched to the catalog
+// that owns the group. found is false when the node caches no collector for the
+// group's catalog (it does not serve that group).
+func (icr *InfoCollectorRegistry) CollectGroupSchemaSnapshot(
+	ctx context.Context, group string,
+) (objects []*databasev1.ObjectSnapshot, ruleTable []*databasev1.IndexRule, found bool, err error) {
+	g, getErr := icr.groupGetter.GetGroup(ctx, group)
+	if getErr != nil {
+		return nil, nil, false, getErr
+	}
+	icr.mux.RLock()
+	collector, ok := icr.snapshotCollectors[g.Catalog]
+	icr.mux.RUnlock()
+	if !ok || collector == nil {
+		return nil, nil, false, nil
+	}
+	objs, rules, collectErr := collector.CollectSchemaSnapshot(group)
+	if collectErr != nil {
+		return nil, nil, true, collectErr
+	}
+	return objs, rules, true, nil
+}
+
+// AllCachedGroups returns every group cached across the node's snapshot
+// collectors, for an all-groups snapshot request that carries no roster.
+func (icr *InfoCollectorRegistry) AllCachedGroups() []string {
+	icr.mux.RLock()
+	collectors := make([]SnapshotCollector, 0, len(icr.snapshotCollectors))
+	for _, c := range icr.snapshotCollectors {
+		collectors = append(collectors, c)
+	}
+	icr.mux.RUnlock()
+	var groups []string
+	for _, c := range collectors {
+		groups = append(groups, c.CachedGroups()...)
+	}
+	return groups
 }
 
 // SetDataBroadcaster sets the broadcaster for data info collection.

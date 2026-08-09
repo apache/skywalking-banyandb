@@ -24,9 +24,11 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	integration_distributed "github.com/apache/skywalking-banyandb/test/integration/distributed"
 )
 
 func TestTracePipelineDistributedIntegration(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Distributed Trace Pipeline Integration Suite")
+	RunSpecs(t, "Distributed Trace Pipeline Integration Suite", Label(integration_distributed.Labels...))
 }

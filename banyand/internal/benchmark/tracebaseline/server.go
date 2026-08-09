@@ -36,6 +36,8 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/benchmark/controller"
 	"github.com/apache/skywalking-banyandb/banyand/internal/benchmark/tracefixture"
 	storagetrace "github.com/apache/skywalking-banyandb/banyand/trace"
+	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 // ServerOptions configures the measured data-node process.
@@ -59,10 +61,13 @@ type ServerOptions struct {
 	Mode              string
 	OutputPath        string
 	SocketPath        string
+	PluginPath        string
+	SegmentTimeRange  timestamp.TimeRange
 	Acceleration      float64
 	ExpectedRows      uint64
 	MaxInputPartID    uint64
 	Attribution       bool
+	RunFinalize       bool
 }
 
 type benchmarkServer struct {
@@ -84,6 +89,9 @@ func Serve(ctx context.Context, options ServerOptions) (serveResultErr error) {
 	if options.Root == "" || options.SocketPath == "" || options.OutputPath == "" {
 		return fmt.Errorf("root, socket path, and output path are required")
 	}
+	if options.RunFinalize && options.PluginPath == "" {
+		return fmt.Errorf("finalize requires a sampler plugin")
+	}
 	if mkdirErr := os.MkdirAll(options.ProfileDir, 0o755); mkdirErr != nil {
 		return fmt.Errorf("cannot create profile directory: %w", mkdirErr)
 	}
@@ -92,13 +100,21 @@ func Serve(ctx context.Context, options ServerOptions) (serveResultErr error) {
 	if eventErr != nil {
 		return fmt.Errorf("cannot create merge event file: %w", eventErr)
 	}
+	sampler, samplerErr := openServerSampler(options)
+	if samplerErr != nil {
+		return errors.Join(samplerErr, eventFile.Close())
+	}
 	receiver, receiverErr := storagetrace.NewBenchmarkMergeReceiver( //nolint:contextcheck // The storage constructor has no context parameter.
 		options.Root, storagetrace.BenchmarkMergeReceiverOptions{
 			LogicalNow: time.Unix(0, 1), MergeGrace: 2 * time.Hour, EventWriter: eventFile, MaxInputPartID: options.MaxInputPartID,
-			Attribution: options.Attribution,
+			Attribution: options.Attribution, Sampler: sampler, SegmentTimeRange: options.SegmentTimeRange,
 		})
 	if receiverErr != nil {
-		return errors.Join(fmt.Errorf("cannot open measured merge receiver: %w", receiverErr), eventFile.Close())
+		var samplerCloseErr error
+		if sampler != nil {
+			samplerCloseErr = sampler.Close()
+		}
+		return errors.Join(fmt.Errorf("cannot open measured merge receiver: %w", receiverErr), samplerCloseErr, eventFile.Close())
 	}
 	server := &benchmarkServer{receiver: receiver, options: options}
 	defer func() {
@@ -144,6 +160,29 @@ func Serve(ctx context.Context, options ServerOptions) (serveResultErr error) {
 		}
 	}
 	return nil
+}
+
+func openServerSampler(options ServerOptions) (sdk.Sampler, error) {
+	if options.PluginPath == "" {
+		return nil, nil
+	}
+	if options.SegmentTimeRange.Start.IsZero() || options.SegmentTimeRange.End.IsZero() ||
+		!options.SegmentTimeRange.Start.Before(options.SegmentTimeRange.End) {
+		return nil, fmt.Errorf("valid segment time range is required when the merge benchmark plugin is enabled")
+	}
+	sampler, openErr := sdk.OpenSampler(options.PluginPath, "NewSampler", nil)
+	if openErr != nil {
+		return nil, fmt.Errorf("cannot load merge benchmark sampler: %w", openErr)
+	}
+	pluginSHA256, shaErr := fileSHA256(options.PluginPath)
+	if shaErr != nil {
+		return nil, errors.Join(shaErr, sampler.Close())
+	}
+	if options.ExecutionIdentity.PluginSHA256 != "" && options.ExecutionIdentity.PluginSHA256 != pluginSHA256 {
+		return nil, errors.Join(fmt.Errorf("merge benchmark plugin checksum %s does not match expected %s",
+			pluginSHA256, options.ExecutionIdentity.PluginSHA256), sampler.Close())
+	}
+	return sampler, nil
 }
 
 func (bs *benchmarkServer) health(responseWriter http.ResponseWriter, _ *http.Request) {
@@ -263,6 +302,19 @@ func (bs *benchmarkServer) runCooldown(responseWriter http.ResponseWriter, reque
 		http.Error(responseWriter, errors.Join(advanceErr, stopProfileErr).Error(), http.StatusInternalServerError)
 		return
 	}
+	if bs.options.RunFinalize {
+		finalized, finalizeErr := bs.receiver.RunFinalizeRound(request.Context(), boundary.LogicalNow, 2*time.Hour)
+		if finalizeErr != nil {
+			stopProfileErr := bs.stopCooldownProfile()
+			http.Error(responseWriter, errors.Join(finalizeErr, stopProfileErr).Error(), http.StatusInternalServerError)
+			return
+		}
+		if !finalized {
+			stopProfileErr := bs.stopCooldownProfile()
+			http.Error(responseWriter, errors.Join(fmt.Errorf("benchmark finalize round did not commit"), stopProfileErr).Error(), http.StatusConflict)
+			return
+		}
+	}
 	bs.mu.Lock()
 	profileErr = bs.cooldownProfile.stop()
 	bs.cooldownProfile = nil
@@ -308,8 +360,12 @@ func (bs *benchmarkServer) writeReport(responseWriter http.ResponseWriter, reque
 		bs.report.SamplingCalls += event.PluginCalls
 	}
 	bs.report.HotMerges, bs.report.MatureMerges = countMergeTemperatures(mergeReport.Events)
+	samplingCorrect := bs.report.SamplingCalls == 0
+	if bs.options.RunFinalize {
+		samplingCorrect = retainAllFinalizeOutputCorrect(mergeReport.Events)
+	}
 	bs.report.Correct = inventory.CoreRows == bs.report.ExpectedRows && inventory.IndexRows[LedgerLatency] == bs.report.ExpectedRows &&
-		inventory.IndexRows[LedgerStartTime] == bs.report.ExpectedRows && bs.report.SamplingCalls == 0 && bs.report.LedgerVerified
+		inventory.IndexRows[LedgerStartTime] == bs.report.ExpectedRows && samplingCorrect && bs.report.LedgerVerified
 	bs.report.LogicalWriteAmplification = logicalWriteAmplification(mergeReport)
 	report := bs.report
 	bs.mu.Unlock()
@@ -336,6 +392,32 @@ func countMergeTemperatures(events []storagetrace.BenchmarkMergeEvent) (hotMerge
 		}
 	}
 	return hotMerges, matureMerges
+}
+
+func retainAllFinalizeOutputCorrect(events []storagetrace.BenchmarkMergeEvent) bool {
+	finalizeExecuted := false
+	for eventIdx := range events {
+		event := &events[eventIdx]
+		if event.Error != "" || event.RecordingError != "" || event.LosslessRetry || event.TracesDropped > 0 || event.OversizedTraces > 0 {
+			return false
+		}
+		if event.HotInputParts > 0 && (event.Sampling != storagetrace.BenchmarkMergeSamplingNotExecuted ||
+			event.Reason != storagetrace.BenchmarkMergeReasonGrace || event.PluginCalls > 0 || event.TracesEvaluated > 0 || event.TracesRetained > 0) {
+			return false
+		}
+		if event.TracesEvaluated > 0 && event.TracesRetained != event.TracesEvaluated {
+			return false
+		}
+		if event.Type != "finalize" {
+			continue
+		}
+		if event.Phase != storagetrace.BenchmarkMergePhaseCooldown || event.Sampling != storagetrace.BenchmarkMergeSamplingExecuted ||
+			event.PluginCalls == 0 || event.TracesEvaluated == 0 || event.MatureInputParts == 0 {
+			return false
+		}
+		finalizeExecuted = true
+	}
+	return finalizeExecuted
 }
 
 // logicalWriteAmplification reports logical compressed bytes written by core
