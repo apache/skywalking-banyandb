@@ -361,12 +361,66 @@ fixes are kept separate from framework fixes.
 
 - [ ] Independent measurements for projected tag/span decoding, complete-trace latency calculation, error and status
   rules, trace-ID hashing, regex/tag rules, verdict allocation, decision throughput across representative batch sizes.
-- [ ] Each plugin-local cost attributed to a specific function call site.
+  *Every axis is measured (table below), but on SYNTHETIC batches, not the mature seed — see "Remaining gap".*
+- [x] Each plugin-local cost attributed to a specific function call site.
 
 **Dependencies.** None (parallel workstream).
 
 **Boundary rationale.** Outside the merge framework; can run any time after the mature seed is frozen. Parallel
 workstream.
+
+**Per-axis measurements.** All figures are ns per logical trace from
+`plugins/skywalking/internal/tracesampler` (`BenchmarkDecide*`), median of 3 runs at `-benchtime 2000x`, taken after
+the escape-free decode work landed. Both first-party schemas are reported because they exercise different paths: the
+segment schema reads a dedicated `is_error` column, while Zipkin has none and detects errors inside the flattened tag
+array.
+
+| Axis | Benchmark | sw | zipkin |
+| --- | --- | ---: | ---: |
+| Projected tag decoding, 2 / 8 / 32 entries | `_ArrayEntries` (unescaped) | 70 / 149 / 496 | 67 / 147 / 491 |
+| Same, escaped values | `_ArrayEntries` (escaped) | 157 / 377 / 1261 | 159 / 380 / 1265 |
+| Complete-trace latency envelope | `durationOnly` | 238 | 241 |
+| Same, per row count 1 / 4 / 16 / 64 | `_RowCount` | 342 / 1176 / 4405 / 17333 | 494 / 1718 / 6632 / 25917 |
+| Error rule, dedicated column vs in-array | `errorsOnly` | 123 | 382 |
+| Trace-ID hashing | `sampleOnly` | 17 | 15 |
+| Tag rules: equals / regex / 5xx regex | `_RegexRule` | 373 / 384 / 387 | 376 / 386 / 385 |
+| Tag rules by match position 0 / 16 / 31 | `_TagMatchPosition` | 971 / 1038 / 1106 | 1034 / 1194 / 1327 |
+| Verdict allocation, 1 / 16 / 64 / 256 traces | `_KeepSliceAllocation` | 204 / 135 / 135 / 127 | 517 / 384 / 381 / 384 |
+| Decision throughput, 1 / 16 / 64 / 128 / 256 | `_BatchSize` | 1136 / 922 / 902 / 897 / 905 | 1655 / 1327 / 1315 / 1325 / 1332 |
+
+Two shape facts fall out. Verdict allocation is one `allocs/op` at every batch size — the `make([]bool, len(batch.Traces))`
+in `Decide` — with `B/op` equal to the trace count, so it is already at its floor and per-trace cost only falls as the
+batch amortizes it. Decision throughput is flat from 16 traces upward; the `traces=1` column is that same fixed cost
+divided by one, not a batching penalty.
+
+**Cost attribution to call sites.** From `-cpuprofile` at `-benchtime 30000x`, one profile per axis. Percentages are
+flat unless marked cumulative.
+
+| Axis | Dominant call site | Share |
+| --- | --- | ---: |
+| Latency envelope | `runtime.duffcopy` under `sdk.(*TagColumn).At` (`hasSlowTrace` 91.8% cum) | 57.1% |
+| Error rule, dedicated column | `runtime.duffcopy` under `sdk.(*TagColumn).At` (`At` 51.9% cum) | 44.4% |
+| Error rule, in-array | `indexbytebody` (`arrayEntries` 55.3% cum, `matchEntries` 39.5% cum) | 39.5% |
+| Tag rules | `indexbytebody` (`arrayEntries` 66.7% cum, `matchEntries` 21.3% cum) | 40.0% |
+| Trace-ID hashing | `hash/fnv.(*sum64a).Write` | 60.0% |
+| Verdict allocation | `make([]bool, …)` in `Decide` | 1 alloc/op |
+
+The `duffcopy` entries are one finding, not two: `sdk.Value` is **112 bytes** and `TagColumn.At` returns it by value, so
+every per-row column read on the duration and dedicated-error paths copies 112 bytes. That copy — not the decode — is
+the majority cost of both, and it is an SDK-side shape, so fixing it (an `AtInto(*Value)`, or accessors that avoid
+materializing the struct) is a framework change rather than a plugin-local one and belongs outside this workstream.
+
+On the array paths the remaining cost is the delimiter scan itself plus the string comparisons in `matchEntries`; the
+decode overhead that used to dominate here was removed by the escape-free path (`tagRulesOnly` 68.4 → 24.4 µs per
+3000-trace batch, -64%).
+
+**Remaining gap (why this phase is not closed).** The hard invariant requires plugins to be measured "against
+representative complete-trace batches from the mature seed". These benchmarks build their batches synthetically in
+`benchBatch`/`benchEntries` — realistic in SHAPE (production tag keys, both first-party configs, complete traces) but
+not drawn from the frozen selection. The machinery to close this exists — `tracefixture.EvaluateSampler` already drives
+a sampler over complete generated traces via `buildSamplerBlock` — so the work is to add a seed-backed benchmark
+alongside the synthetic ones, not to build a fixture. Until then the first exit-gate item stays open and no
+production-ratio claim should be made from the numbers above.
 
 ---
 
