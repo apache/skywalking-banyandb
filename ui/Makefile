@@ -18,6 +18,7 @@
 
 NAME := ui
 DIST_INDEX := dist/index.html
+NODE_MODULES_STAMP := node_modules/.package-lock.json
 
 include ../scripts/build/version.mk
 include ../scripts/build/base.mk
@@ -29,8 +30,11 @@ check-version: install
 	@node tools/checkversion
 
 .PHONY: install
-install:
-	npm install 
+install: $(NODE_MODULES_STAMP)
+
+$(NODE_MODULES_STAMP): package.json package-lock.json
+	npm ci --include=dev
+	touch $@
 
 .PHONY: all
 all: build
@@ -38,7 +42,7 @@ all: build
 .PHONY: generate
 generate: install
 
-$(DIST_INDEX): install
+$(DIST_INDEX): $(NODE_MODULES_STAMP)
 	@echo "Building $(NAME)"
 	npm run build
 	@echo "Done building $(NAME)"

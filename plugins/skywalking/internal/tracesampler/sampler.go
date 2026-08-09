@@ -42,8 +42,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/encoding/vararray"
 	"github.com/apache/skywalking-banyandb/pkg/pb/v1/valuetype"
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
 // Schema captures the per-plugin storage facts the shared engine needs: where a
@@ -525,18 +528,20 @@ func (s *Sampler) Decide(batch *sdk.TraceBatch) (sdk.Verdict, error) {
 // trace (fail open), never drops it.
 //
 // The flattened-tag-array decode is deferred until a rule that needs it is
-// reached: getEntries runs at most once per call, caches the result (or the
-// error), and never fires when no rule asks for it. For a realistic-mix
+// reached: arrayEntries runs at most once per call, cached via the entriesPtr
+// nil-check, and never fires when no rule asks for it. For a realistic-mix
 // workload where the error rule keeps most traces, this skips the decode for
 // every error-kept trace and is the dominant cost on the hot path.
 //
 // The single-call guarantee is an optimization, not a correctness requirement.
 // arrayEntries already copies each row before decoding (see its per-row copy
-// comment), so repeated calls would not corrupt the engine buffer. The closure
-// exists to avoid repeated decode work and the per-row allocations it triggers,
-// and to keep failure semantics consistent across every rule in the trace.
+// comment), so repeated calls would not corrupt the engine buffer. The
+// inlined lazy decode exists to avoid repeated decode work and the per-row
+// allocations it triggers, and to keep failure semantics consistent across
+// every rule in the trace.
 func (s *Sampler) keepTrace(b *sdk.TraceBlock) bool {
 	// Duration keep: the trace's end-to-end envelope reaches the threshold.
+	// The early return keeps entriesPtr nil, so no pool release is needed.
 	if s.durationThresholdMs > 0 {
 		hit, durErr := s.hasSlowTrace(b)
 		if durErr != nil || hit {
@@ -547,52 +552,79 @@ func (s *Sampler) keepTrace(b *sdk.TraceBlock) bool {
 	// every subsequent rule in this trace, so a multi-rule config still pays
 	// the decode cost exactly once. A decode error is cached and returned to
 	// every caller, preserving fail-open semantics at every call site.
+	//
+	// The entries slice is acquired from entriesSlicePool inside arrayEntries
+	// and released back at the single exit below. The lazy decode is inlined
+	// (not factored into a closure) so the captures — entriesPtr and the err —
+	// stay on the stack: a closure value that captures variables forces those
+	// variables onto the heap even when the closure itself never escapes the
+	// function. The two call sites stay in sync via the nil-check on
+	// entriesPtr, which the inlined blocks both perform.
+	//
+	// entriesPtr is a *[]string: the pool element itself. Storing a pointer
+	// (rather than a []string whose address would have to be taken for the
+	// release) keeps this variable on the stack — the pool owns the backing
+	// storage, so taking the pointer's address is unnecessary.
+	//
+	// stableBufPtr is the *[]byte that backs the per-row entry strings. The
+	// strings alias its backing array via convert.BytesToString, so the array
+	// must outlive every matchEntries call below. The lazy decode acquires
+	// both pointers on the first call site that needs them; both are released
+	// at the single exit below. A nil stableBufPtr means no entries were
+	// decoded (skip path) and there is nothing to release.
 	var (
-		entriesCached []string
-		entriesErr    error
-		entriesDone   bool
+		entriesPtr   *[]string
+		stableBufPtr *[]byte
+		entriesErr   error
 	)
-	getEntries := func() ([]string, error) {
-		if entriesDone {
-			return entriesCached, entriesErr
-		}
-		entriesCached, entriesErr = arrayEntries(b.Tag(s.arrayColumn))
-		entriesDone = true
-		return entriesCached, entriesErr
-	}
+	keep := false
 	// Error keep.
 	if s.keepErrors {
 		if s.errorTagInArray {
-			entries, entriesGetErr := getEntries()
-			if entriesGetErr != nil || matchEntries(entries, &s.errorRule, s.arrayColumn) {
-				return true
+			if entriesPtr == nil {
+				stableBufPtr = acquireStableBuf()
+				entriesPtr, entriesErr = arrayEntries(b.Tag(s.arrayColumn), stableBufPtr)
+			}
+			if entriesErr != nil || matchEntries(*entriesPtr, &s.errorRule, s.arrayColumn) {
+				keep = true
 			}
 		} else {
 			hit, errColErr := s.hasErrorColumn(b)
 			if errColErr != nil || hit {
-				return true
+				keep = true
 			}
 		}
 	}
 	// Sure-keep tag rules. The decode is hoisted out of the loop so the
-	// closure is called exactly once even when multiple rules are configured.
-	if len(s.rules) > 0 {
-		entries, entriesGetErr := getEntries()
-		if entriesGetErr != nil {
-			return true
+	// lazy fetch fires exactly once even when multiple rules are configured.
+	if !keep && len(s.rules) > 0 {
+		if entriesPtr == nil {
+			stableBufPtr = acquireStableBuf()
+			entriesPtr, entriesErr = arrayEntries(b.Tag(s.arrayColumn), stableBufPtr)
 		}
-		for i := range s.rules {
-			if matchEntries(entries, &s.rules[i], s.arrayColumn) {
-				return true
+		if entriesErr != nil {
+			keep = true
+		} else {
+			for i := range s.rules {
+				if matchEntries(*entriesPtr, &s.rules[i], s.arrayColumn) {
+					keep = true
+					break
+				}
 			}
 		}
 	}
 	// Healthy remainder: deterministic hash(trace_id) < rate, stable across
 	// re-evaluation at merge and finalization.
-	if s.healthySampleRate > 0 && sampleFraction(b.TraceID) < s.healthySampleRate {
-		return true
+	if !keep && s.healthySampleRate > 0 && sampleFraction(b.TraceID) < s.healthySampleRate {
+		keep = true
 	}
-	return false
+	if entriesPtr != nil {
+		releaseEntries(entriesPtr)
+	}
+	if stableBufPtr != nil {
+		releaseStableBuf(stableBufPtr)
+	}
+	return keep
 }
 
 // nanosPerMillis converts the millisecond threshold to nanoseconds for the
@@ -671,13 +703,145 @@ func (s *Sampler) hasSlowTrace(b *sdk.TraceBlock) (bool, error) {
 	return maxEnd-minStart >= s.durationThresholdMs*nanosPerMillis, nil
 }
 
+// entriesSlicePool reuses the result slice of arrayEntries across calls so the
+// per-trace make([]string, 0, ...) is paid once, not on every Decide call.
+// Bounded by aggregate capacity: each retained slice's cap is counted at 8 bytes
+// per string header, so a 64 KiB cap supports ~8000 cap-1 slices or ~340 cap-24
+// slices (the realistic 3-row × 8-entry trace). The pool is checked-out at
+// arrayEntries entry and released by keepTrace once matchEntries is done with
+// it; the call site owns the slice for the lifetime of the rule evaluation.
+//
+// Bounded[T] requires T to be comparable, so the pool element is *[]string
+// rather than []string: the slice header pointer is comparable and pooling the
+// pointer avoids copying the slice header on every checkout/release. The
+// dereferenced slice is what the caller appends into.
+var entriesSlicePool = pool.RegisterBounded[*[]string](
+	"sw-trace-sampler-entries",
+	64*1024,
+	func() *[]string { s := []string(nil); return &s },
+	func(s *[]string) int64 { return int64(cap(*s)) * 8 },
+)
+
+// copyBufPool reuses the per-row copy buffer that arrayEntries sizes to the
+// longest row of the column. Each call grows the buffer on demand (append
+// doubles), so the steady-state cap converges to the longest row the schema
+// produces; for the realistic 3-row × 8-entry trace that lands in the low
+// hundreds of bytes. The 16 KiB cap is well above what fits a single SkyWalking
+// or Zipkin trace row while keeping the aggregate footprint negligible.
+var copyBufPool = pool.RegisterBounded[*[]byte](
+	"sw-trace-sampler-copy-buf",
+	16*1024,
+	func() *[]byte { b := []byte(nil); return &b },
+	func(b *[]byte) int64 { return int64(cap(*b)) },
+)
+
+// stableBufPool backs the cumulative decoded-entry bytes that the per-row
+// strings alias via convert.BytesToString. The strings live across rows (the
+// caller consumes them after the whole column is decoded), so the backing must
+// not be reset between rows — only appended to. Each call grows the buffer
+// once on demand; for the realistic 3-row × 8-entry trace that lands near 500
+// bytes, well within the 16 KiB cap. The pool element is *[]byte for the same
+// reason as entriesSlicePool: Bounded[T] requires T comparable and pooling the
+// pointer avoids copying the slice header on every checkout/release.
+var stableBufPool = pool.RegisterBounded[*[]byte](
+	"sw-trace-sampler-stable-buf",
+	16*1024,
+	func() *[]byte { b := []byte(nil); return &b },
+	func(b *[]byte) int64 { return int64(cap(*b)) },
+)
+
+// acquireEntries returns a pooled slice pointer with length zero. The cap
+// reflects the largest slice ever returned to the pool, so a steady-state trace
+// acquires a slice that fits without growing. releaseEntries is the symmetric
+// counterpart.
+func acquireEntries() *[]string {
+	p := entriesSlicePool.Get()
+	*p = (*p)[:0]
+	return p
+}
+
+// releaseEntries returns the slice pointer to the pool with length reset to
+// zero so the next caller does not see stale entries from the prior decode. nil
+// pointers and zero-cap slices are dropped on the floor rather than stored,
+// since they carry no backing array to reuse.
+func releaseEntries(p *[]string) {
+	if p == nil || cap(*p) == 0 {
+		return
+	}
+	*p = (*p)[:0]
+	entriesSlicePool.Put(p)
+}
+
+// acquireCopyBuf returns a pooled byte slice pointer with length zero. The
+// caller is expected to grow the slice via append; releaseCopyBuf returns the
+// (possibly grown) backing array to the pool.
+func acquireCopyBuf() *[]byte {
+	b := copyBufPool.Get()
+	*b = (*b)[:0]
+	return b
+}
+
+// releaseCopyBuf returns the byte slice pointer to the pool with length reset
+// to zero so the next caller starts from a clean slice. nil pointers and zero-
+// cap slices are dropped, since they carry no backing array to reuse.
+func releaseCopyBuf(b *[]byte) {
+	if b == nil || cap(*b) == 0 {
+		return
+	}
+	*b = (*b)[:0]
+	copyBufPool.Put(b)
+}
+
+// acquireStableBuf returns a pooled byte slice pointer with length zero. The
+// caller grows the slice via append; the backing array stays stable for the
+// lifetime of the returned slice, which is what makes convert.BytesToString of
+// the appended segments safe. releaseStableBuf is the symmetric counterpart.
+func acquireStableBuf() *[]byte {
+	b := stableBufPool.Get()
+	*b = (*b)[:0]
+	return b
+}
+
+// releaseStableBuf returns the byte slice pointer to the pool with length
+// reset to zero so the next caller starts from a clean slice. nil pointers
+// and zero-cap slices are dropped, since they carry no backing array to
+// reuse. Callers MUST only release after every convert.BytesToString-derived
+// string into the backing array has been consumed — the strings alias it.
+func releaseStableBuf(b *[]byte) {
+	if b == nil || cap(*b) == 0 {
+		return
+	}
+	*b = (*b)[:0]
+	stableBufPool.Put(b)
+}
+
 // arrayEntries decodes every entry of the flattened tag array, flattened across
 // rows. All tag predicates are existential over rows and entries, so collapsing
 // the rows loses nothing — and decoding once is what keeps the in-place string
 // array decode from corrupting later reads (see keepTrace).
-func arrayEntries(col *sdk.TagColumn) ([]string, error) {
+//
+// The returned *[]string is a pool-managed slice. The pointer is what the
+// caller stores; passing it by value (not by address) keeps the caller's
+// variable on the stack, avoiding the per-call heap allocation that taking
+// the address of a []string local would impose. releaseEntries takes the
+// pointer by value too.
+//
+// The stableBuf pointer is the caller-owned backing buffer for the decoded
+// entry strings. Each entry's bytes are appended to *stableBuf and then
+// aliased via convert.BytesToString: the string header allocation that
+// string(buf[idx:end]) would impose is skipped, but only because *stableBuf
+// is never reset — only appended to — across the lifetime of the strings.
+// releaseStableBuf is the caller's responsibility, called after the strings
+// are no longer needed. arrayEntries returns without touching stableBuf's
+// pool lifecycle; passing nil for stableBuf falls back to the safe-but-
+// allocating string() conversion, which the tests rely on for the no-column
+// path that never produces any entry.
+func arrayEntries(col *sdk.TagColumn, stableBuf *[]byte) (*[]string, error) {
 	if col == nil {
-		return nil, nil
+		// Always return a non-nil pool element so the caller can dereference
+		// without a nil check. matchEntries on an empty slice returns false,
+		// which matches the pre-pool behavior of "no entries" → no match.
+		return acquireEntries(), nil
 	}
 	// Size the copy buffer to the longest row up front so it is allocated exactly once
 	// and never grows mid-loop. This needs no decode — only the raw byte lengths.
@@ -688,45 +852,69 @@ func arrayEntries(col *sdk.TagColumn) ([]string, error) {
 		}
 	}
 	if widest == 0 {
-		return nil, nil
+		return acquireEntries(), nil
 	}
-	var (
-		out     []string
-		scratch = sdk.TagColumn{Name: col.Name, ValueType: col.ValueType, Values: make([][]byte, 1)}
-		buf     = make([]byte, 0, widest)
-	)
+	// Acquire the result slice from the pool. The backing array is reused across
+	// calls; the length is reset to zero so stale entries from the previous decode
+	// never leak into the new one (matchEntries iterates whatever the length says).
+	//
+	// Ownership note: arrayEntries returns the pool pointer to its caller
+	// (keepTrace), which calls releaseEntries after matchEntries no longer
+	// references it. The error path here releases locally because the slice
+	// never escapes to keepTrace.
+	out := acquireEntries()
+	// Acquire the per-row copy buffer from the pool. If its cap is smaller than
+	// the longest row of this trace, append will allocate a fresh backing array;
+	// the pool then sees a larger buffer on release and the steady-state cap
+	// converges to the widest row the schema produces.
+	bufPtr := acquireCopyBuf()
+	defer releaseCopyBuf(bufPtr)
+	buf := *bufPtr
+	stable := *stableBuf
 	for row := range col.Values {
 		if col.Values[row] == nil {
 			continue
 		}
-		// Decode a COPY of the row, never the engine's buffer. The SDK's string-array
-		// decode rewrites its source in place (vararray.UnmarshalVarArray shifts bytes
-		// left past every escape), TraceBlock slices are documented read-only, and the
-		// engine hands the SAME TraceBatch to every link of a chain (sdk.applyChainLink).
-		// Decoding in place would therefore corrupt the value for every later link, making
-		// a rule's verdict depend on its position in the chain. Only values containing "|"
-		// or "\" carry an escape, so the damage is silent and data-dependent.
+		// Decode a COPY of the row, never the engine's buffer. vararray.UnmarshalVarArray
+		// shifts bytes left past every escape in place, TraceBlock slices are documented
+		// read-only, and the engine hands the SAME TraceBatch to every link of a chain
+		// (sdk.applyChainLink). Decoding in place would therefore corrupt the value for
+		// every later link, making a rule's verdict depend on its position in the chain.
+		// Only values containing "|" or "\" carry an escape, so the damage is silent and
+		// data-dependent.
 		//
-		// Reusing buf across rows is safe because the decoder builds each entry with a
-		// string(...) conversion, which copies rather than aliasing the buffer.
+		// The decoded entries cannot alias buf: buf is reused across rows
+		// (append(buf[:0], ...)) and is mutated by the in-place decode above. The
+		// strings produced below therefore append the decoded bytes into stable
+		// (which is only ever appended to, never reset, so prior bytes stay valid)
+		// and then alias stable via convert.BytesToString — skipping the per-entry
+		// string-header allocation that string(buf[idx:end]) would impose.
 		buf = append(buf[:0], col.Values[row]...)
-		scratch.Values[0] = buf
-		v, err := scratch.At(0)
-		if err != nil {
-			return nil, err
+		idx := 0
+		for idx < len(buf) {
+			end, next, err := vararray.UnmarshalVarArray(buf, idx)
+			if err != nil {
+				releaseEntries(out)
+				return nil, fmt.Errorf("str array: %w", err)
+			}
+			start := len(stable)
+			stable = append(stable, buf[idx:end]...)
+			if stableBuf != nil {
+				*out = append(*out, convert.BytesToString(stable[start:]))
+			} else {
+				// Defensive fallback: copy out of stable when the caller did not
+				// provide a stable buffer. Tests pass nil for the no-column path,
+				// which never reaches this branch.
+				*out = append(*out, string(stable[start:]))
+			}
+			idx = next
 		}
-		if v.IsNull() {
-			continue
-		}
-		entries := entriesOf(v)
-		if out == nil && len(entries) > 0 {
-			// Size from the first decoded row. Rows of one trace carry comparable tag
-			// counts, so this normally reaches the final capacity in a single allocation
-			// instead of growing through every power of two.
-			out = make([]string, 0, len(entries)*len(col.Values))
-		}
-		out = append(out, entries...)
 	}
+	// Persist any growth of buf and stable into their pool pointers so the next
+	// caller sees the wider cap. Without this the growth would be lost when the
+	// local variables were reassigned only via append.
+	*bufPtr = buf
+	*stableBuf = stable
 	return out, nil
 }
 
@@ -822,20 +1010,6 @@ func matchValue(r *rule, candidate string) bool {
 		return r.re.MatchString(candidate)
 	default:
 		return false
-	}
-}
-
-// entriesOf returns the string entries of a value: the array elements for a
-// string array, or the single string for a plain string tag. Other types have
-// no string entries.
-func entriesOf(v sdk.Value) []string {
-	switch v.ValueType() {
-	case valuetype.ValueTypeStrArr:
-		return v.StrArr()
-	case valuetype.ValueTypeStr:
-		return []string{v.Str()}
-	default:
-		return nil
 	}
 }
 

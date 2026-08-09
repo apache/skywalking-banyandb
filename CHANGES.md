@@ -154,6 +154,7 @@ Release Notes.
 - Clear a trace subject's index when its last index rule or binding is removed.
 - Allow `*` as a non-initial character in BydbQL identifiers, so resources named with `*` become queryable, not just writable.
 - Enable periodic health checks on the queue client (`--<prefix>-client-health-check-interval`, default `10s`), evicting dead data nodes proactively.
+- Build the plugin `.so` with `-tags slim` to match the host binary's ABI. Without this, `pkg/pool` has build-tag-dependent code (`tracker.go` vs `tracker_stub.go`) and the plugin-sidecar E2E failed with "plugin was built with a different version of package `pkg/pool`".
 
 ### Document
 
@@ -170,6 +171,7 @@ Release Notes.
 - Strip macOS AppleDouble (`._*`) and `__MACOSX/` metadata from every release tarball (src, banyand, bydbctl, fodc-agent, fodc-proxy) so downstream users running `make generate` from a downloaded source tarball no longer hit "invalid control character" errors when `buf generate` walks the resource-fork files; export `COPYFILE_DISABLE=1` and filter `._*` files at the source.
 - Bump Go and ui/mcp dependencies to clear Dependabot advisories: `golang.org/x/net` v0.52.0→v0.56.0 (CVE-2026-25680), `opencontainers/runc` v1.3.3→v1.3.6 (CVE-2026-41579). Refresh mcp/ui lockfiles and license attribution.
 - Defer the sw-trace-sampler tag-array decode to first use: 60% per-trace cost reduction on the realistic-mix path (`duration+err+tag` 2,710 → 1,015 ns/trace, 2,380 → 664 allocs/op on the SkyWalking schema).
+- Alias decoded entry strings via `pkg/convert.BytesToString`: 408 → 1 alloc/op on SkyWalking tag paths and 1,536 → 1 on Zipkin tag paths (the realistic 3-row × 8-entry trace); 24-40% ns/trace reduction on tag-using paths. Also fixes a pre-existing nil-deref in `keepTrace` when the array column is absent.
 
 ## 0.10.0
 
