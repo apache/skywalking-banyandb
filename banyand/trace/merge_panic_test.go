@@ -198,43 +198,39 @@ func TestMergeWorkerSurvivesPanic(t *testing.T) {
 // TestDispatchCyclePanicEngagesBackoff asserts a panicking selection cycle is not just
 // recovered and logged but also recorded as a failure. Without that, a dispatch cycle
 // that panics every time would be retried at trigger cadence forever -- the retry storm
-// the backoff exists to stop. The panic is injected by nil-ing the merge policy, so
-// getPartsToMergeUpTo dereferences a nil receiver inside the real dispatch path.
+// the backoff exists to stop. The panic is injected with a nil merge policy, which
+// getPartsToMergeUpTo dereferences inside the real dispatch path. The table is built
+// without its background loops (as in quarantine_test.go) so the nil policy is never
+// read concurrently: starting the loops and then nil-ing the field would race with the
+// dispatcher's own selection under -race.
 func TestDispatchCyclePanicEngagesBackoff(t *testing.T) {
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
 	fileSystem := fs.NewLocalFileSystem()
-	tmpPath, cleanup := test.Space(require.New(t))
-	t.Cleanup(cleanup)
-
-	tableRoot := filepath.Join(tmpPath, "table")
-	fileSystem.MkdirPanicIfExist(tableRoot, 0o755)
-	tst, tableErr := newTSTable(
-		fileSystem,
-		tableRoot,
-		common.Position{Database: "dispatch-panic-backoff"},
-		logger.GetLogger("dispatch-panic-backoff"),
-		timestamp.TimeRange{},
-		option{
-			flushTimeout: 0,
-			mergePolicy:  newDefaultMergePolicyForTesting(),
-			protector:    protector.Nop{},
-		},
-		nil,
-	)
-	require.NoError(t, tableErr)
-	t.Cleanup(func() { require.NoError(t, tst.Close()) })
 
 	// Two parts: the policy short-circuits on a single candidate before it touches the
 	// receiver, so one part would never reach the nil dereference.
-	const partIDA, partIDB = uint64(1), uint64(2)
-	tst.observePartID(partIDB)
-	flushFilePart(t, fileSystem, tableRoot, partIDA, singleTraceSet("trace-a", 1))
-	flushFilePart(t, fileSystem, tableRoot, partIDB, singleTraceSet("trace-b", 2))
-	tst.mustAddFilePart(partIDA, nil)
-	tst.mustAddFilePart(partIDB, nil)
+	var parts []*partWrapper
+	for _, partID := range []uint64{1, 2} {
+		p := mustCreateFilePart(t, fileSystem, tmpPath, partID, tsTS1)
+		parts = append(parts, newPartWrapper(nil, p))
+	}
+	snp := &snapshot{parts: parts, epoch: 1}
+	snp.incRef()
+	defer snp.decRef()
 
-	// Drive one cycle directly rather than through the loop: the loop's goroutine owns the
-	// dispatcher and injecting the panic under it would race with its own selection.
-	tst.option.mergePolicy = nil
+	tst := &tsTable{
+		pm:           protector.Nop{},
+		fileSystem:   fileSystem,
+		root:         tmpPath,
+		l:            logger.GetLogger("dispatch-panic-backoff"),
+		curPartID:    1000,
+		snapshot:     snp,
+		mergeControl: newMergeLoopControl(),
+		option:       option{mergePolicy: nil},
+	}
+	snp.incRef()
+
 	require.NotPanics(t, func() {
 		require.False(t, tst.runDispatchCycle(computeSmallMergeThreshold(), nil, nil),
 			"a recovered dispatch panic must not signal loop shutdown")
