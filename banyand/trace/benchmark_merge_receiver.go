@@ -31,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
@@ -141,7 +142,7 @@ func NewBenchmarkMergeReceiver(root string, options BenchmarkMergeReceiverOption
 		logger.GetLogger("trace-merge-benchmark"), options.SegmentTimeRange, option{
 			flushTimeout: 0, mergePolicy: newDefaultMergePolicy(), protector: memoryProtector,
 			nativePipelineEnabled: options.Sampler != nil, maxTraceFragmentGap: time.Minute, mergeGraceDefault: options.MergeGrace,
-			benchmarkMergeBlocked: options.BlockMerges,
+			decideTimeout: 5 * time.Second, decideTimeoutCircuitBreak: 3, benchmarkMergeBlocked: options.BlockMerges,
 		}, nil)
 	if tableErr != nil {
 		return nil, fmt.Errorf("cannot open merge benchmark table %q: %w", absoluteRoot, tableErr)
@@ -224,6 +225,45 @@ func (bpr *BenchmarkPartReceiver) ActivePartIDs() ([]uint64, error) {
 	}
 	sort.Slice(partIDs, func(leftIdx, rightIdx int) bool { return partIDs[leftIdx] < partIDs[rightIdx] })
 	return partIDs, nil
+}
+
+// TraceFragmentMaybeOutsideSelection reports whether the persisted fragment guard would defer dropping a trace because an outside candidate part may contain it.
+func (bpr *BenchmarkPartReceiver) TraceFragmentMaybeOutsideSelection(selectedPartIDs []uint64, traceID string,
+	minTimestamp, maxTimestamp int64, grace time.Duration,
+) (bool, error) {
+	if bpr == nil || bpr.table == nil {
+		return false, fmt.Errorf("benchmark receiver is not open")
+	}
+	if traceID == "" || minTimestamp > maxTimestamp || grace < 0 {
+		return false, fmt.Errorf("invalid benchmark trace fragment query")
+	}
+	selected := make(map[uint64]struct{}, len(selectedPartIDs))
+	for _, partID := range selectedPartIDs {
+		selected[partID] = struct{}{}
+	}
+	guardMin := traceFragmentSaturatingSub(minTimestamp, int64(grace))
+	guardMax := traceFragmentSaturatingAdd(maxTimestamp, int64(grace))
+	snapshot := bpr.table.currentSnapshot()
+	if snapshot == nil {
+		return false, fmt.Errorf("benchmark trace fragment snapshot is unavailable")
+	}
+	defer snapshot.decRef()
+	for _, partData := range snapshot.parts {
+		if partData == nil || partData.p == nil {
+			return true, nil
+		}
+		if _, isSelected := selected[partData.ID()]; isSelected {
+			continue
+		}
+		metadata := &partData.p.partMetadata
+		if metadata.TotalCount == 0 || metadata.MaxTimestamp < guardMin || metadata.MinTimestamp > guardMax {
+			continue
+		}
+		if partData.p.traceIDFilter.filter == nil || partData.p.traceIDFilter.filter.MightContain(convert.StringToBytes(traceID)) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (bpr *BenchmarkPartReceiver) restoreMergeDepths(depths map[uint64]uint32) error {

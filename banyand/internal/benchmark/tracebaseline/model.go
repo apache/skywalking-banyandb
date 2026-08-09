@@ -45,12 +45,13 @@ const (
 // when the harness does not provide them. Fields remain optional for local
 // debugging; the SAME TEST BOUNDARY gate enforces them in benchmark suites.
 type ExecutionIdentity struct {
-	ImageDigest   string `json:"imageDigest,omitempty"`
-	Filesystem    string `json:"filesystem,omitempty"`
-	StorageDevice string `json:"storageDevice,omitempty"`
-	CloneMethod   string `json:"cloneMethod,omitempty"`
-	BinarySHA256  string `json:"binarySHA256,omitempty"`
-	PluginSHA256  string `json:"pluginSHA256,omitempty"`
+	ImageDigest        string `json:"imageDigest,omitempty"`
+	Filesystem         string `json:"filesystem,omitempty"`
+	StorageDevice      string `json:"storageDevice,omitempty"`
+	CloneMethod        string `json:"cloneMethod,omitempty"`
+	BinarySHA256       string `json:"binarySHA256,omitempty"`
+	PluginSHA256       string `json:"pluginSHA256,omitempty"`
+	PluginConfigSHA256 string `json:"pluginConfigSHA256,omitempty"`
 }
 
 // PublishRequest introduces one already-renamed fixture part at its logical publication time.
@@ -109,26 +110,45 @@ type PhaseResult struct {
 // and StorageDevice fall back to live mount detection when omitted. SAME TEST
 // BOUNDARY enforces complete and comparable identities for managed suites.
 type Environment struct {
-	Filesystem       string `json:"filesystem,omitempty"`
-	GoVersion        string `json:"goVersion"`
-	Kernel           string `json:"kernel"`
-	CgroupVersion    string `json:"cgroupVersion"`
-	CPUSet           string `json:"cpuSet"`
-	MemoryMax        string `json:"memoryMax"`
-	MemorySwapMax    string `json:"memorySwapMax"`
-	PIDsMax          string `json:"pidsMax"`
-	PluginSHA256     string `json:"pluginSHA256,omitempty"`
-	BinarySHA256     string `json:"binarySHA256,omitempty"`
-	ControllerCgroup string `json:"controllerCgroup"`
-	CloneMethod      string `json:"cloneMethod,omitempty"`
-	StorageDevice    string `json:"storageDevice,omitempty"`
-	DataNodeCgroup   string `json:"dataNodeCgroup"`
-	ImageDigest      string `json:"imageDigest,omitempty"`
-	Commit           string `json:"commit"`
-	ControllerPID    int    `json:"controllerPID"`
-	DataNodePID      int    `json:"dataNodePID"`
-	GOMAXPROCS       int    `json:"gomaxprocs"`
-	OneShardOnly     bool   `json:"oneShardOnly"`
+	Filesystem         string `json:"filesystem,omitempty"`
+	GoVersion          string `json:"goVersion"`
+	Kernel             string `json:"kernel"`
+	CgroupVersion      string `json:"cgroupVersion"`
+	CPUSet             string `json:"cpuSet"`
+	MemoryMax          string `json:"memoryMax"`
+	MemorySwapMax      string `json:"memorySwapMax"`
+	PIDsMax            string `json:"pidsMax"`
+	PluginSHA256       string `json:"pluginSHA256,omitempty"`
+	PluginConfigSHA256 string `json:"pluginConfigSHA256,omitempty"`
+	BinarySHA256       string `json:"binarySHA256,omitempty"`
+	ControllerCgroup   string `json:"controllerCgroup"`
+	CloneMethod        string `json:"cloneMethod,omitempty"`
+	StorageDevice      string `json:"storageDevice,omitempty"`
+	DataNodeCgroup     string `json:"dataNodeCgroup"`
+	ImageDigest        string `json:"imageDigest,omitempty"`
+	Commit             string `json:"commit"`
+	ControllerPID      int    `json:"controllerPID"`
+	DataNodePID        int    `json:"dataNodePID"`
+	GOMAXPROCS         int    `json:"gomaxprocs"`
+	OneShardOnly       bool   `json:"oneShardOnly"`
+}
+
+// SamplingOracleArtifact records independently calculated sampler output.
+type SamplingOracleArtifact struct {
+	ExpectedLedger      map[string]string `json:"expectedLedgerSHA256"`
+	ExpectedRows        map[string]uint64 `json:"expectedRows"`
+	PluginSHA256        string            `json:"pluginSHA256"`
+	ConfigSHA256        string            `json:"configSHA256"`
+	VerdictSHA256       string            `json:"verdictSHA256"`
+	ExpectedSamplerSHA  string            `json:"expectedSamplerSHA256,omitempty"`
+	Evaluated           uint64            `json:"evaluated"`
+	Retained            uint64            `json:"retained"`
+	Dropped             uint64            `json:"dropped"`
+	PluginRetained      uint64            `json:"pluginRetained"`
+	PluginDropped       uint64            `json:"pluginDropped"`
+	DeletionRatio       float64           `json:"deletionRatio"`
+	PluginDeletionRatio float64           `json:"pluginDeletionRatio"`
+	Version             uint32            `json:"version"`
 }
 
 // RunReport is the machine-readable result of one fresh data-node process.
@@ -136,6 +156,7 @@ type RunReport struct {
 	ActualLedger              map[string]string                    `json:"actualLedgerSHA256"`
 	ExpectedLedger            map[string]string                    `json:"expectedLedgerSHA256"`
 	Environment               Environment                          `json:"environment"`
+	SamplingOracle            *SamplingOracleArtifact              `json:"samplingOracle,omitempty"`
 	Merges                    storagetrace.BenchmarkMergeReport    `json:"merges"`
 	ScheduleSHA256            string                               `json:"scheduleSHA256"`
 	FixtureSHA256             string                               `json:"fixtureSHA256"`
@@ -149,12 +170,14 @@ type RunReport struct {
 	Acceleration              float64                              `json:"acceleration"`
 	Published                 int                                  `json:"published"`
 	ExpectedRows              uint64                               `json:"expectedRows"`
+	InputRows                 uint64                               `json:"inputRows"`
 	HotMerges                 int                                  `json:"hotMerges"`
 	MatureMerges              int                                  `json:"matureMerges"`
 	SamplingCalls             uint64                               `json:"samplingCalls"`
 	LogicalWriteAmplification float64                              `json:"logicalWriteAmplification,omitempty"`
 	Version                   uint32                               `json:"version"`
 	LedgerVerified            bool                                 `json:"ledgerVerified"`
+	SamplingVerified          bool                                 `json:"samplingVerified"`
 	Correct                   bool                                 `json:"correct"`
 }
 
@@ -180,6 +203,7 @@ type SuiteReport struct {
 	Sweep                      []SweepPoint               `json:"sweep"`
 	SerialRuns                 []RunReport                `json:"serialRuns"`
 	DisabledEnabledAlternating []ControlledMergeRunReport `json:"disabledEnabledAlternating,omitempty"`
+	DeterministicDropMatrix    []ControlledMergeRunReport `json:"deterministicDropMatrix,omitempty"`
 	MaximumRate                float64                    `json:"maximumSustainableAcceleration"`
 	FrozenRate                 float64                    `json:"frozenAcceleration"`
 	WriteIntensity             int                        `json:"writeIntensity"`

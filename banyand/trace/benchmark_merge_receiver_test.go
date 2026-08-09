@@ -60,6 +60,17 @@ func TestBenchmarkMergeReceiverUsesFiniteStagingMemoryLimit(t *testing.T) {
 	require.Equal(t, maxStagedTraceCountFromBudget(limits.StageBytes), limits.MaxTraceCount)
 }
 
+func TestBenchmarkMergeReceiverUsesProductionDecisionTimeout(t *testing.T) {
+	receiver, receiverErr := NewBenchmarkMergeReceiver(t.TempDir(), BenchmarkMergeReceiverOptions{
+		MergeGrace: 2 * time.Hour, MemoryLimit: 8 << 30, Sampler: retainAllBenchmarkSampler{},
+	})
+	require.NoError(t, receiverErr)
+	t.Cleanup(func() { require.NoError(t, receiver.Close()) })
+
+	require.Equal(t, 5*time.Second, receiver.table.option.decideTimeout)
+	require.Equal(t, 3, receiver.table.option.decideTimeoutCircuitBreak)
+}
+
 func TestBenchmarkMergeReceiverPublishesAndDrainsProductionMerges(t *testing.T) {
 	fileSystem := fs.NewLocalFileSystem()
 	workspace := t.TempDir()
@@ -291,6 +302,16 @@ func TestBenchmarkMergeReceiverRunsRetainAllSamplerDuringFinalize(t *testing.T) 
 		}
 		require.NoError(t, receiver.PublishExistingPart(partID, corePath, indexPaths, logicalBase.Add(time.Duration(partID)*time.Minute)))
 	}
+	maybeOutside, outsideErr := receiver.TraceFragmentMaybeOutsideSelection(
+		[]uint64{2, 3}, "trace-1", logicalBase.UnixNano(), logicalBase.UnixNano(), time.Minute,
+	)
+	require.NoError(t, outsideErr)
+	require.True(t, maybeOutside)
+	maybeOutside, outsideErr = receiver.TraceFragmentMaybeOutsideSelection(
+		partIDs, "trace-1", logicalBase.UnixNano(), logicalBase.UnixNano(), time.Minute,
+	)
+	require.NoError(t, outsideErr)
+	require.False(t, maybeOutside)
 
 	finalized, finalizeErr := receiver.RunFinalizeRound(context.Background(), logicalBase.Add(time.Hour), 2*time.Hour)
 	require.NoError(t, finalizeErr)
