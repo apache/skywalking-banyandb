@@ -51,7 +51,7 @@ require (
 	google.golang.org/api v0.290.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20260724162435-b2f20204f0df
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260724162435-b2f20204f0df
-	google.golang.org/grpc v1.82.1
+	google.golang.org/grpc v1.83.0
 	google.golang.org/protobuf v1.36.11
 	sigs.k8s.io/yaml v1.6.0
 	skywalking.apache.org/repo/goapi v0.0.0-20260521015734-5c05525a3cce
