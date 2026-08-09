@@ -469,6 +469,32 @@ func (sr *schemaRepo) LoadResource(metadata *commonv1.Metadata) (Resource, bool)
 	return s.(Resource), true
 }
 
+// LoadAllResources returns every cached resource belonging to the group.
+// The schema consistency collector needs to enumerate a group's resources;
+// LoadResource only answers for a name the caller already knows.
+func (sr *schemaRepo) LoadAllResources(group string) []Resource {
+	var result []Resource
+	sr.resourceMap.Range(func(key, value any) bool {
+		if path.Dir(key.(string)) == group {
+			result = append(result, value.(Resource))
+		}
+		return true
+	})
+	return result
+}
+
+// LoadAllIndexRules returns every cached index rule belonging to the group.
+func (sr *schemaRepo) LoadAllIndexRules(group string) []*databasev1.IndexRule {
+	var result []*databasev1.IndexRule
+	sr.indexRuleMap.Range(func(key, value any) bool {
+		if path.Dir(key.(string)) == group {
+			result = append(result, value.(*databasev1.IndexRule))
+		}
+		return true
+	})
+	return result
+}
+
 func (sr *schemaRepo) storeResource(resourceSchema ResourceSchema) error {
 	sr.resourceMutex.Lock()
 	defer sr.resourceMutex.Unlock()
@@ -488,7 +514,7 @@ func (sr *schemaRepo) storeResource(resourceSchema ResourceSchema) error {
 	if err != nil {
 		return errors.WithMessage(err, "fails to open the resource")
 	}
-	sm.OnIndexUpdate(sr.indexRules(resourceSchema))
+	sm.OnIndexUpdate(sr.IndexRules(resourceSchema))
 	resource.delegated = sm
 	sr.resourceMap.Store(key, resource)
 	sr.updateLatestModRevision(resourceSchema.GetMetadata().GetModRevision())
@@ -567,11 +593,13 @@ func (sr *schemaRepo) updateIndex(binding *databasev1.IndexRuleBinding) {
 		Name:  binding.Subject.GetName(),
 		Group: binding.GetMetadata().GetGroup(),
 	}); ok {
-		r.Delegated().OnIndexUpdate(sr.indexRules(r.Schema()))
+		r.Delegated().OnIndexUpdate(sr.IndexRules(r.Schema()))
 	}
 }
 
-func (sr *schemaRepo) indexRules(schema ResourceSchema) []*databasev1.IndexRule {
+// IndexRules derives the index rules bound to a resource -- exactly what the
+// runtime is fed on OnIndexUpdate and what the consistency collector fingerprints.
+func (sr *schemaRepo) IndexRules(schema ResourceSchema) []*databasev1.IndexRule {
 	n := schema.GetMetadata().GetName()
 	g := schema.GetMetadata().GetGroup()
 	col, _ := sr.bindingForwardMap.Load(getKey(&commonv1.Metadata{

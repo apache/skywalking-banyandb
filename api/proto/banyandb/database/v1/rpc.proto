@@ -23,6 +23,7 @@ import "banyandb/common/v1/common.proto";
 import "banyandb/database/v1/database.proto";
 import "banyandb/database/v1/schema.proto";
 import "google/api/annotations.proto";
+import "google/protobuf/any.proto";
 import "google/protobuf/timestamp.proto";
 import "protoc-gen-openapiv2/options/annotations.proto";
 
@@ -523,6 +524,106 @@ message DataInfo {
   repeated SegmentInfo segment_info = 2;
   // data_size_bytes is the total size of data on this node in bytes.
   int64 data_size_bytes = 3;
+}
+
+// NodeSchemaStateService streams a node's cached and materialized schema bodies
+// for one group. FODC's sidecar agent fingerprints them on receive; the data
+// path itself ships no fingerprints. Every data node and liaison that owns a
+// group cache implements it.
+service NodeSchemaStateService {
+  // StreamGroupSchemaState returns this node's snapshot for one group as a
+  // sequence of ObjectSnapshot events terminated by one SchemaSnapshotTrailer.
+  // The server snapshots its cache under a read lock, then streams from that
+  // consistent view without holding the lock for the network round-trip; the
+  // trailer's object_count lets the agent detect a torn read.
+  //
+  // An empty stream (zero object events, just the trailer) is a normal
+  // termination: the agent reads it as "this node does not cache this group",
+  // never as an error.
+  rpc StreamGroupSchemaState(StreamGroupSchemaStateRequest) returns (stream StreamGroupSchemaStateResponse);
+}
+
+// StreamGroupSchemaStateRequest asks one node for its schema snapshot. An empty group
+// requests every group the node caches (each object and trailer is tagged with
+// its group), so a data-node agent -- which has no group roster of its own --
+// can collect its whole node in one call.
+message StreamGroupSchemaStateRequest {
+  string group = 1;
+}
+
+// StreamGroupSchemaStateResponse is the streaming element. Wire-extensible via the oneof so
+// new event kinds do not break older agents. Per group the server sends one
+// SchemaRuleTable, then that group's ObjectSnapshot events, then one
+// SchemaSnapshotTrailer (clean termination) or a non-EOF status (transport
+// error).
+message StreamGroupSchemaStateResponse {
+  oneof event {
+    ObjectSnapshot object = 1;
+    SchemaSnapshotTrailer trailer = 2;
+    SchemaRuleTable rule_table = 3;
+  }
+}
+
+// SchemaRuleTable carries a slice of a group's content-deduplicated index-rule
+// bodies. Every SchemaBody.bound_index_rule_refs in the group indexes into the
+// full table, so a rule bound to many resources -- and folded into both the
+// cache and runtime layers -- travels the wire once instead of once per
+// (resource, layer). A runtime-stale rule body differs in content from its cache
+// counterpart, so the two occupy distinct entries and the cache-vs-runtime
+// fingerprint divergence stays observable.
+//
+// A group with hundreds of rules would overflow a single gRPC message, so the
+// table is split across multiple SchemaRuleTable events (all preceding the
+// group's object events); the agent concatenates them in arrival order, which
+// preserves every ref's index.
+message SchemaRuleTable {
+  string group = 1;
+  repeated banyandb.database.v1.IndexRule rules = 2;
+}
+
+// SchemaBody is a schema object's proto body plus the index rules it is hashed
+// against. payload holds the object itself as an Any: FODC never discriminates
+// the catalog type -- it only needs GetMetadata() (via interface, to clear the
+// volatile identity fields) and a deterministic marshal -- so a single Any
+// replaces a per-type oneof and keeps the hash algorithm out of the data path.
+// bound_index_rule_refs indexes into the group's SchemaRuleTable, naming the
+// derived rule set the agent hashes with the body without shipping each rule
+// body per resource.
+message SchemaBody {
+  google.protobuf.Any payload = 1;
+  repeated uint32 bound_index_rule_refs = 2;
+}
+
+// ObjectSnapshot carries a schema object as two layers so the agent can compute
+// both fingerprints: cache is what the node stored, runtime is what it has
+// materialized and is actually serving. runtime is omitted when it equals cache
+// (group and indexRule have no derived structure) or when nothing is
+// materialized yet -- the agent then takes the runtime fingerprint from cache.
+message ObjectSnapshot {
+  // group the object belongs to. Always set, so an all-groups stream (empty
+  // request group) is self-describing.
+  string group = 1;
+  string kind = 2;
+  string name = 3;
+  SchemaBody cache = 4;
+  SchemaBody runtime = 5;
+}
+
+// SchemaSnapshotTrailer terminates one group's objects. A single-group stream
+// sends one trailer before EOF; an all-groups stream sends one trailer per group
+// (each following that group's object events), then EOF.
+message SchemaSnapshotTrailer {
+  // group these objects belong to.
+  string group = 1;
+  // node echoes the responding node id so the agent can detect a misrouted
+  // response in a mixed-version cluster.
+  string node = 2;
+  // object_count is the number of object events sent for this group; the agent
+  // verifies it against what it received and retries once on a mismatch.
+  uint32 object_count = 4;
+  // errors are failures observed collecting this group. They surface on
+  // GroupLifecycleInfo.errors but do not fail the stream.
+  repeated string errors = 5;
 }
 
 // SegmentInfo contains information about a specific time segment.

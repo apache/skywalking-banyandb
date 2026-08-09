@@ -260,7 +260,9 @@ type partMergeIter struct {
 	primaryBlockMetadata []primaryBlockMetadata
 	compressedPrimaryBuf []byte
 	primaryBuf           []byte
+	partPath             string
 	block                blockPointer
+	partID               uint64
 	primaryMetadataIdx   int
 }
 
@@ -273,6 +275,8 @@ func (pmi *partMergeIter) reset() {
 	pmi.primaryBuf = pmi.primaryBuf[:0]
 	pmi.compressedPrimaryBuf = pmi.compressedPrimaryBuf[:0]
 	pmi.block.reset()
+	pmi.partID = 0
+	pmi.partPath = ""
 }
 
 func (pmi *partMergeIter) mustInitFromPart(p *part) {
@@ -280,6 +284,8 @@ func (pmi *partMergeIter) mustInitFromPart(p *part) {
 	pmi.seqReaders.init(p)
 	pmi.tagType = p.tagType
 	pmi.primaryBlockMetadata = p.primaryBlockMetadata
+	pmi.partID = p.partMetadata.ID
+	pmi.partPath = p.path
 }
 
 func (pmi *partMergeIter) error() error {
@@ -296,15 +302,25 @@ func (pmi *partMergeIter) nextBlockMetadata() bool {
 	pmi.block.reset()
 	if len(pmi.primaryBuf) == 0 {
 		if err := pmi.loadPrimaryBuf(); err != nil {
-			pmi.err = err
+			pmi.err = pmi.attributeReadErr(err)
 			return false
 		}
 	}
 	if err := pmi.loadBlockMetadata(); err != nil {
-		pmi.err = err
+		pmi.err = pmi.attributeReadErr(err)
 		return false
 	}
 	return true
+}
+
+// attributeReadErr wraps a read-side failure in *unreadablePartError so the merge loop can
+// recover the failing part's identity. io.EOF marks a clean end of iteration, not a failure,
+// so it is left unwrapped: error() filters it out.
+func (pmi *partMergeIter) attributeReadErr(err error) error {
+	if errors.Is(err, io.EOF) {
+		return err
+	}
+	return &unreadablePartError{err: err, partID: pmi.partID, partPath: pmi.partPath}
 }
 
 func (pmi *partMergeIter) loadPrimaryBuf() error {

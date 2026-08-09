@@ -150,48 +150,61 @@ jobs:
           fi
 
           echo "should_run=${should_run}" >> "${GITHUB_OUTPUT}"
+  test-gate:
+    name: Enable Tests
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'Tests enabled'
   test-banyand:
     name: Test Banyand
-    needs: [prepare]
+    needs: [prepare, test-gate]
     uses: ./.github/workflows/test-banyand.yml
   test-bydbctl:
     name: Test Bydbctl
-    needs: [prepare]
+    needs: [prepare, test-gate]
     uses: ./.github/workflows/test-bydbctl.yml
   test-fodc:
     name: Test FODC
-    needs: [prepare]
+    needs: [prepare, test-gate]
     uses: ./.github/workflows/test-fodc.yml
   test-fodc-e2e:
     name: Test FODC E2E
-    needs: [prepare, detect_fodc_e2e_changes]
+    needs: [prepare, detect_fodc_e2e_changes, test-gate]
     uses: ./.github/workflows/test-fodc-e2e.yml
     with:
       should_run: ${{ github.event_name != 'pull_request' || needs.detect_fodc_e2e_changes.outputs.should_run == 'true' }}
   test-pkg:
     name: Test Pkg
-    needs: [prepare]
+    needs: [prepare, test-gate]
     uses: ./.github/workflows/test-pkg.yml
   test-integration-standalone:
     name: Test Integration Standalone
-    needs: [prepare]
+    needs: [prepare, test-gate]
     uses: ./.github/workflows/test-integration-standalone.yml
   test-integration-distributed:
     name: Test Integration Distributed
-    needs: [prepare]
+    needs: [prepare, test-gate]
     uses: ./.github/workflows/test-integration-distributed.yml
   e2e:
     name: E2E Tests
-    needs: [prepare]
+    needs: [prepare, test-gate]
     uses: ./.github/workflows/e2e.yml
 
   result:
     name: Continuous Integration
     runs-on: ubuntu-24.04
+    if: |
+      always() &&
+      needs.check.result == 'success' &&
+      needs.vuln-check.result == 'success' &&
+      needs.detect_fodc_e2e_changes.result == 'success' &&
+      (needs.test-gate.result == 'skipped' || success())
     needs:
       - check
       - vuln-check
       - detect_fodc_e2e_changes
+      - test-gate
       - test-banyand
       - test-bydbctl
       - test-fodc

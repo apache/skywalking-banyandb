@@ -166,6 +166,38 @@ func (ar *AgentRegistry) UpdateHeartbeat(agentID string) error {
 	return nil
 }
 
+// roleUnspecified is the node-role string an agent reports before its node role
+// has resolved; it must never overwrite an already-resolved role.
+const roleUnspecified = "ROLE_UNSPECIFIED"
+
+// UpdateAgentRole refreshes an agent's node role (and labels) from a heartbeat.
+// The node_role can resolve only after the initial registration -- e.g. a liaison
+// whose client gRPC comes up later than the agent's role-resolution budget, so the
+// agent first registers as ROLE_UNSPECIFIED -- and every heartbeat carries the
+// agent's current value. A blank or unspecified incoming role never overwrites an
+// already-resolved one, so a transient resolution failure cannot regress the role.
+func (ar *AgentRegistry) UpdateAgentRole(agentID, role string, labels map[string]string) {
+	if role == "" || role == roleUnspecified {
+		return
+	}
+	ar.mu.Lock()
+	defer ar.mu.Unlock()
+	agentInfo, exists := ar.agents[agentID]
+	if !exists || agentInfo.AgentIdentity.Role == role {
+		return
+	}
+	ar.logger.Info().
+		Str("agent_id", agentID).
+		Str("old_role", agentInfo.AgentIdentity.Role).
+		Str("new_role", role).
+		Msg("Agent role refreshed from heartbeat")
+	agentInfo.AgentIdentity.Role = role
+	if labels != nil {
+		agentInfo.AgentIdentity.Labels = labels
+		agentInfo.Labels = labels
+	}
+}
+
 // GetAgent retrieves agent information by primary containerNames + role + labels.
 func (ar *AgentRegistry) GetAgent(podName string, role string, labels map[string]string) (*AgentInfo, error) {
 	ar.mu.RLock()

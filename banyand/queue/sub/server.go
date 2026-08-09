@@ -82,6 +82,7 @@ type server struct {
 	databasev1.UnimplementedClusterStateServiceServer
 	clusterv1.UnimplementedServiceServer
 	fodcv1.UnimplementedGroupLifecycleServiceServer
+	databasev1.UnimplementedNodeSchemaStateServiceServer
 	omr                   observability.MetricsRegistry
 	creds                 credentials.TransportCredentials
 	metadataRepo          metadata.Repo
@@ -300,6 +301,7 @@ func (s *server) Serve() run.StopNotify {
 	tracev1.RegisterTraceServiceServer(s.ser, &traceService{ser: s})
 	if s.metadataRepo != nil {
 		fodcv1.RegisterGroupLifecycleServiceServer(s.ser, s)
+		databasev1.RegisterNodeSchemaStateServiceServer(s.ser, s)
 	}
 	if s.nodeSchemaStatusRepo != nil {
 		// The registry is resolved per request (closure) so the service

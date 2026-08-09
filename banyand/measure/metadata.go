@@ -124,12 +124,13 @@ func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, n
 	return sr
 }
 
-func newLiaisonSchemaRepo(path string, svc *liaison, measureDataNodeRegistry grpc.NodeRegistry, pipeline queue.Client) *schemaRepo {
+func newLiaisonSchemaRepo(path string, svc *liaison, measureDataNodeRegistry grpc.NodeRegistry, pipeline queue.Client, nodeID string) *schemaRepo {
 	ctx, cancel := context.WithCancel(context.Background())
 	sr := &schemaRepo{
 		path:          path,
 		l:             svc.l,
 		metadata:      svc.metadata,
+		nodeID:        nodeID,
 		pipeline:      pipeline,
 		closingGroups: make(map[string]struct{}),
 		role:          databasev1.Role_ROLE_LIAISON,
@@ -413,7 +414,36 @@ func (sr *schemaRepo) loadQueue(groupName string) (*wqueue.Queue[*tsTable, optio
 	return db.(*wqueue.Queue[*tsTable, option]), nil
 }
 
-// CollectDataInfo collects data info for a specific group.
+// measureResourceView reaches the runtime view of a measure. IndexListener exposes
+// only OnIndexUpdate, so the assertion must happen here -- the same pattern the
+// resource loader in this package uses.
+func measureResourceView(res resourceSchema.Resource) (resourceSchema.ResourceView, bool) {
+	cached, ok := res.Schema().(*databasev1.Measure)
+	if !ok {
+		return resourceSchema.ResourceView{}, false
+	}
+	view := resourceSchema.ResourceView{Name: cached.GetMetadata().GetName(), Cached: cached}
+	if r, isTyped := res.Delegated().(*measure); isTyped {
+		view.Runtime = r.GetSchema()
+		view.RuntimeRules = r.GetIndexRules()
+	}
+	return view, true
+}
+
+// CollectSchemaSnapshot returns this node's cache/runtime schema bodies for the
+// group so the FODC agent can fingerprint them on receive.
+func (sr *schemaRepo) CollectSchemaSnapshot(group string) ([]*databasev1.ObjectSnapshot, []*databasev1.IndexRule, error) {
+	return resourceSchema.CollectSchemaSnapshot(sr.Repository, group,
+		schema.KindMeasure.String(), measureResourceView)
+}
+
+// CachedGroups lists the measure groups this node currently caches.
+func (sr *schemaRepo) CachedGroups() []string {
+	return resourceSchema.CachedGroupNames(sr.Repository)
+}
+
+// CollectDataInfo collects data info for a specific group. When includeSchemaState
+// is set it also attaches this node's schema consistency evidence.
 func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string) (*databasev1.DataInfo, error) {
 	if sr.nodeID == "" {
 		return nil, nil

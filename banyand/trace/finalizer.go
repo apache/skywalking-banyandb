@@ -102,6 +102,9 @@ func (tst *tsTable) runFinalizeRound(samplers []sdk.Sampler, graceNs int64) (boo
 		if _, inFlight := tst.inFlight[pw.ID()]; inFlight {
 			continue
 		}
+		if tst.isPartQuarantined(pw.ID()) {
+			continue
+		}
 		if pw.p.partMetadata.FinalizeGen >= gNext {
 			continue
 		}

@@ -21,29 +21,43 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 var errMergeLoopUnavailable = errors.New("merge loop is unavailable")
 
+// mergeBackoffBase is the initial backoff delay applied after the first consecutive
+// merge failure; mergeBackoffCap is the maximum delay the exponential schedule reaches.
+// mergeBackoffMaxShift bounds the doubling exponent so the shift never overflows;
+// consecutive failures beyond it are clamped directly to mergeBackoffCap.
+const (
+	mergeBackoffBase     = time.Second
+	mergeBackoffCap      = 60 * time.Second
+	mergeBackoffMaxShift = 7
+)
+
 type mergeLoopControl struct {
-	changed            chan struct{}
-	trigger            chan struct{}
-	version            uint64
-	workVersion        uint64
-	emptyEpoch         uint64
-	emptyWorkVersion   uint64
-	waveMaxPartID      uint64
-	queued             int
-	running            int
-	triggerPending     bool
-	dispatcherActive   bool
-	emptyEpochObserved bool
-	stopped            bool
-	waveMode           bool
-	waveBlocked        bool
-	waveDispatchLimit  int
-	waveDispatches     int
-	mu                 sync.Mutex
+	changed             chan struct{}
+	trigger             chan struct{}
+	nowFunc             func() time.Time
+	backoffUntil        time.Time
+	version             uint64
+	workVersion         uint64
+	emptyEpoch          uint64
+	emptyWorkVersion    uint64
+	waveMaxPartID       uint64
+	queued              int
+	running             int
+	consecutiveFailures int
+	triggerPending      bool
+	dispatcherActive    bool
+	emptyEpochObserved  bool
+	stopped             bool
+	waveMode            bool
+	waveBlocked         bool
+	waveDispatchLimit   int
+	waveDispatches      int
+	mu                  sync.Mutex
 }
 
 type mergeLoopState struct {
@@ -73,6 +87,55 @@ func (mc *mergeLoopControl) notifyLocked() {
 	mc.version++
 	close(mc.changed)
 	mc.changed = make(chan struct{})
+}
+
+// now returns nowFunc's value, or time.Now if nowFunc is unset; a testability seam for
+// deterministic backoff assertions.
+func (mc *mergeLoopControl) now() time.Time {
+	if mc.nowFunc != nil {
+		return mc.nowFunc()
+	}
+	return time.Now()
+}
+
+// recordOutcome reports the result of one merge attempt. A success clears the backoff
+// state; a failure extends it exponentially, doubling from mergeBackoffBase up to
+// mergeBackoffCap.
+func (mc *mergeLoopControl) recordOutcome(success bool) {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	if success {
+		mc.consecutiveFailures = 0
+		mc.backoffUntil = time.Time{}
+		mc.notifyLocked()
+		return
+	}
+	mc.consecutiveFailures++
+	delay := mergeBackoffCap
+	if mc.consecutiveFailures <= mergeBackoffMaxShift {
+		delay = min(mergeBackoffBase<<uint(mc.consecutiveFailures-1), mergeBackoffCap)
+	}
+	mc.backoffUntil = mc.now().Add(delay)
+	mc.notifyLocked()
+}
+
+// backoffRemaining reports how long the dispatcher should still sleep before dispatching
+// another selection cycle. Wave mode always bypasses backoff: waves are operator-driven
+// and must fail visibly and immediately.
+func (mc *mergeLoopControl) backoffRemaining() time.Duration {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	if mc.waveMode {
+		return 0
+	}
+	if mc.backoffUntil.IsZero() {
+		return 0
+	}
+	now := mc.now()
+	if !mc.backoffUntil.After(now) {
+		return 0
+	}
+	return mc.backoffUntil.Sub(now)
 }
 
 func (mc *mergeLoopControl) enqueue(closeCh <-chan struct{}) error {
