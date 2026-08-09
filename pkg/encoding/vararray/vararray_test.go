@@ -61,6 +61,63 @@ func unmarshalReference(src []byte, idx int) (int, int, error) {
 	return 0, 0, errors.New("invalid variable array")
 }
 
+// unmarshalRestartAtIdx is the rejected fast-path variant: it takes the same
+// escape-free shortcut, but on an escaped entry it restarts the in-place loop at
+// idx instead of resuming at the first escape, so the two scans buy it nothing.
+// Kept so the choice between the two shapes stays measurable in ONE process
+// (BenchmarkUnmarshalVarArray_AB) rather than resting on a comparison across
+// benchmark runs, which is what first led to picking the wrong one.
+func unmarshalRestartAtIdx(src []byte, idx int) (int, int, error) {
+	if idx >= len(src) {
+		return 0, 0, errors.New("empty entity value")
+	}
+	if src[idx] == EntityDelimiter {
+		return idx, idx + 1, nil
+	}
+	if rel := bytes.IndexByte(src[idx:], EntityDelimiter); rel >= 0 &&
+		bytes.IndexByte(src[idx:idx+rel], Escape) < 0 {
+		return idx + rel, idx + rel + 1, nil
+	}
+	writeIdx := idx
+	for readIdx := idx; readIdx < len(src); readIdx++ {
+		b := src[readIdx]
+		switch {
+		case b == Escape:
+			if readIdx+1 >= len(src) {
+				return 0, 0, errors.New("invalid escape character")
+			}
+			readIdx++
+			src[writeIdx] = src[readIdx]
+			writeIdx++
+		case b == EntityDelimiter:
+			return writeIdx, readIdx + 1, nil
+		default:
+			src[writeIdx] = b
+			writeIdx++
+		}
+	}
+	return 0, 0, errors.New("invalid variable array")
+}
+
+// TestUnmarshalRestartAtIdx_MatchesReference keeps the rejected variant honest:
+// it must stay a valid implementation, otherwise benchmarking against it is
+// meaningless.
+func TestUnmarshalRestartAtIdx_MatchesReference(t *testing.T) {
+	enumerate(6, func(src []byte) {
+		for idx := 0; idx <= len(src); idx++ {
+			got := append([]byte(nil), src...)
+			want := append([]byte(nil), src...)
+			gotEnd, gotNext, gotErr := unmarshalRestartAtIdx(got, idx)
+			wantEnd, wantNext, wantErr := unmarshalReference(want, idx)
+			input := fmt.Sprintf("src=%q idx=%d", src, idx)
+			require.Equal(t, wantErr == nil, gotErr == nil, input)
+			require.Equal(t, wantEnd, gotEnd, input)
+			require.Equal(t, wantNext, gotNext, input)
+			require.True(t, bytes.Equal(want, got), input)
+		}
+	})
+}
+
 func TestUnmarshalVarArray_Table(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -279,48 +336,86 @@ func FuzzVarArrayRoundTrip(f *testing.F) {
 }
 
 // benchEntry builds a var-array holding one entry of the requested payload length.
-// When escaped is set every fourth byte is a delimiter, so the payload cannot be
-// decoded without shifting bytes left.
-func benchEntry(payloadLen int, escaped bool) []byte {
+// escapeEvery controls escape density: 0 means none (the common case for trace tag
+// values, which rarely contain '|' or '\'), 1 means a single escape near the end
+// (a realistic worst case for a value that does), and n>1 puts a delimiter at every
+// nth byte (a pathological density that maximizes in-place shifting).
+func benchEntry(payloadLen, escapeEvery int) []byte {
 	payload := make([]byte, payloadLen)
 	for i := range payload {
-		if escaped && i%4 == 3 {
-			payload[i] = EntityDelimiter
-			continue
-		}
 		payload[i] = 'a'
+	}
+	switch {
+	case escapeEvery == 1:
+		payload[payloadLen-1] = EntityDelimiter
+	case escapeEvery > 1:
+		for i := escapeEvery - 1; i < payloadLen; i += escapeEvery {
+			payload[i] = EntityDelimiter
+		}
 	}
 	return MarshalVarArray(nil, payload)
 }
 
+// benchKinds are the escape densities the A/B benchmark sweeps.
+var benchKinds = []struct {
+	name        string
+	escapeEvery int
+}{
+	{name: "clean", escapeEvery: 0},
+	{name: "oneEscape", escapeEvery: 1},
+	{name: "escapeDense", escapeEvery: 4},
+}
+
+// BenchmarkUnmarshalVarArray_AB runs the current implementation and the frozen
+// reference over the same inputs inside ONE process, so the comparison cannot be
+// confounded by machine drift between two separate benchmark runs.
+func BenchmarkUnmarshalVarArray_AB(b *testing.B) {
+	impls := []struct {
+		fn   func([]byte, int) (int, int, error)
+		name string
+	}{
+		{name: "ref", fn: unmarshalReference},
+		{name: "fast", fn: UnmarshalVarArray},
+		{name: "restartAtIdx", fn: unmarshalRestartAtIdx},
+	}
+	for _, payloadLen := range []int{8, 16, 64, 256} {
+		for _, kind := range benchKinds {
+			src := benchEntry(payloadLen, kind.escapeEvery)
+			for _, impl := range impls {
+				b.Run(fmt.Sprintf("%s/len=%d/%s", kind.name, payloadLen, impl.name), func(b *testing.B) {
+					scratch := make([]byte, len(src))
+					b.ReportAllocs()
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						copy(scratch, src)
+						if _, _, err := impl.fn(scratch, 0); err != nil {
+							b.Fatal(err)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
 func BenchmarkUnmarshalVarArray(b *testing.B) {
 	for _, payloadLen := range []int{8, 16, 64, 256} {
-		// The escape-free arm needs no per-iteration restore: decoding an entry
-		// with no escape only ever writes each byte back over itself.
-		b.Run(fmt.Sprintf("clean/len=%d", payloadLen), func(b *testing.B) {
-			src := benchEntry(payloadLen, false)
-			b.ReportAllocs()
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				if _, _, err := UnmarshalVarArray(src, 0); err != nil {
-					b.Fatal(err)
+		for _, kind := range benchKinds {
+			// The per-iteration restore is inside the timed region. It is a
+			// constant across implementations, so the arm still compares like
+			// for like; it is required because an escaped entry mutates src.
+			src := benchEntry(payloadLen, kind.escapeEvery)
+			b.Run(fmt.Sprintf("%s/len=%d", kind.name, payloadLen), func(b *testing.B) {
+				scratch := make([]byte, len(src))
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					copy(scratch, src)
+					if _, _, err := UnmarshalVarArray(scratch, 0); err != nil {
+						b.Fatal(err)
+					}
 				}
-			}
-		})
-		// The escaped arm mutates src, so it must be restored every iteration.
-		// The restore is inside the timed region and is identical before and
-		// after any decoder change, so the arm still compares like for like.
-		b.Run(fmt.Sprintf("escaped/len=%d", payloadLen), func(b *testing.B) {
-			src := benchEntry(payloadLen, true)
-			scratch := make([]byte, len(src))
-			b.ReportAllocs()
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				copy(scratch, src)
-				if _, _, err := UnmarshalVarArray(scratch, 0); err != nil {
-					b.Fatal(err)
-				}
-			}
-		})
+			})
+		}
 	}
 }
