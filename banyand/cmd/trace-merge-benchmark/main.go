@@ -179,6 +179,7 @@ func serve(ctx context.Context, arguments []string) {
 	flags.StringVar(&expectedStartTimeLedger, "expected-start-time-ledger", "", "expected logical start-time-index ledger checksum")
 	flags.Uint64Var(&options.MaxInputPartID, "max-input-part-id", 0, "highest scheduled raw part ID")
 	flags.BoolVar(&options.Attribution, "attribution", false, "serialize active merges for per-merge resource attribution")
+	flags.BoolVar(&options.RunFinalize, "finalize", false, "run one production finalization round after the two-hour cooldown")
 	flags.StringVar(&options.ExecutionIdentity.ImageDigest, "image-digest", "", "Docker image digest recorded in the environment envelope")
 	flags.StringVar(&options.ExecutionIdentity.Filesystem, "filesystem", "", "data-root filesystem recorded in the environment envelope")
 	flags.StringVar(&options.ExecutionIdentity.StorageDevice, "storage-device", "", "data-root storage device recorded in the environment envelope")

@@ -67,6 +67,7 @@ type ServerOptions struct {
 	ExpectedRows      uint64
 	MaxInputPartID    uint64
 	Attribution       bool
+	RunFinalize       bool
 }
 
 type benchmarkServer struct {
@@ -87,6 +88,9 @@ type phaseProfiler struct {
 func Serve(ctx context.Context, options ServerOptions) (serveResultErr error) {
 	if options.Root == "" || options.SocketPath == "" || options.OutputPath == "" {
 		return fmt.Errorf("root, socket path, and output path are required")
+	}
+	if options.RunFinalize && options.PluginPath == "" {
+		return fmt.Errorf("finalize requires a sampler plugin")
 	}
 	if mkdirErr := os.MkdirAll(options.ProfileDir, 0o755); mkdirErr != nil {
 		return fmt.Errorf("cannot create profile directory: %w", mkdirErr)
@@ -298,6 +302,19 @@ func (bs *benchmarkServer) runCooldown(responseWriter http.ResponseWriter, reque
 		http.Error(responseWriter, errors.Join(advanceErr, stopProfileErr).Error(), http.StatusInternalServerError)
 		return
 	}
+	if bs.options.RunFinalize {
+		finalized, finalizeErr := bs.receiver.RunFinalizeRound(request.Context(), boundary.LogicalNow, 2*time.Hour)
+		if finalizeErr != nil {
+			stopProfileErr := bs.stopCooldownProfile()
+			http.Error(responseWriter, errors.Join(finalizeErr, stopProfileErr).Error(), http.StatusInternalServerError)
+			return
+		}
+		if !finalized {
+			stopProfileErr := bs.stopCooldownProfile()
+			http.Error(responseWriter, errors.Join(fmt.Errorf("benchmark finalize round did not commit"), stopProfileErr).Error(), http.StatusConflict)
+			return
+		}
+	}
 	bs.mu.Lock()
 	profileErr = bs.cooldownProfile.stop()
 	bs.cooldownProfile = nil
@@ -343,8 +360,12 @@ func (bs *benchmarkServer) writeReport(responseWriter http.ResponseWriter, reque
 		bs.report.SamplingCalls += event.PluginCalls
 	}
 	bs.report.HotMerges, bs.report.MatureMerges = countMergeTemperatures(mergeReport.Events)
+	samplingCorrect := bs.report.SamplingCalls == 0
+	if bs.options.RunFinalize {
+		samplingCorrect = retainAllFinalizeOutputCorrect(mergeReport.Events)
+	}
 	bs.report.Correct = inventory.CoreRows == bs.report.ExpectedRows && inventory.IndexRows[LedgerLatency] == bs.report.ExpectedRows &&
-		inventory.IndexRows[LedgerStartTime] == bs.report.ExpectedRows && bs.report.SamplingCalls == 0 && bs.report.LedgerVerified
+		inventory.IndexRows[LedgerStartTime] == bs.report.ExpectedRows && samplingCorrect && bs.report.LedgerVerified
 	bs.report.LogicalWriteAmplification = logicalWriteAmplification(mergeReport)
 	report := bs.report
 	bs.mu.Unlock()
@@ -371,6 +392,32 @@ func countMergeTemperatures(events []storagetrace.BenchmarkMergeEvent) (hotMerge
 		}
 	}
 	return hotMerges, matureMerges
+}
+
+func retainAllFinalizeOutputCorrect(events []storagetrace.BenchmarkMergeEvent) bool {
+	finalizeExecuted := false
+	for eventIdx := range events {
+		event := &events[eventIdx]
+		if event.Error != "" || event.RecordingError != "" || event.LosslessRetry || event.TracesDropped > 0 || event.OversizedTraces > 0 {
+			return false
+		}
+		if event.HotInputParts > 0 && (event.Sampling != storagetrace.BenchmarkMergeSamplingNotExecuted ||
+			event.Reason != storagetrace.BenchmarkMergeReasonGrace || event.PluginCalls > 0 || event.TracesEvaluated > 0 || event.TracesRetained > 0) {
+			return false
+		}
+		if event.TracesEvaluated > 0 && event.TracesRetained != event.TracesEvaluated {
+			return false
+		}
+		if event.Type != "finalize" {
+			continue
+		}
+		if event.Phase != storagetrace.BenchmarkMergePhaseCooldown || event.Sampling != storagetrace.BenchmarkMergeSamplingExecuted ||
+			event.PluginCalls == 0 || event.TracesEvaluated == 0 || event.MatureInputParts == 0 {
+			return false
+		}
+		finalizeExecuted = true
+	}
+	return finalizeExecuted
 }
 
 // logicalWriteAmplification reports logical compressed bytes written by core

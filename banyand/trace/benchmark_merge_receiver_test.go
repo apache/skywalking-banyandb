@@ -254,3 +254,65 @@ func TestBenchmarkMergeReceiverRunsRetainAllSamplerForControlledMatureMerge(t *t
 	require.Zero(t, event.TracesDropped)
 	require.Equal(t, event.InputRows, event.OutputRows)
 }
+
+func TestBenchmarkMergeReceiverRunsRetainAllSamplerDuringFinalize(t *testing.T) {
+	fileSystem := fs.NewLocalFileSystem()
+	workspace := t.TempDir()
+	sourceRoot := filepath.Join(workspace, "source")
+	tableRoot := filepath.Join(workspace, "table")
+	for _, root := range []string{sourceRoot, tableRoot} {
+		for _, indexName := range []string{"latency", "start_time"} {
+			require.NoError(t, os.MkdirAll(filepath.Join(root, sidxDirName, indexName), 0o755))
+		}
+	}
+	partIDs := []uint64{1, 2, 3}
+	logicalBase := time.Date(2200, time.January, 1, 0, 0, 0, 0, time.UTC)
+	buildExternalCoreParts(t, fileSystem, sourceRoot, partIDs, logicalBase)
+	for _, indexName := range []string{"latency", "start_time"} {
+		buildExternalIndexParts(t, fileSystem, filepath.Join(sourceRoot, sidxDirName, indexName), partIDs, logicalBase)
+	}
+	receiver, receiverErr := NewBenchmarkMergeReceiver(tableRoot, BenchmarkMergeReceiverOptions{
+		LogicalNow: logicalBase, MergeGrace: 2 * time.Hour, MaxInputPartID: partIDs[len(partIDs)-1], BlockMerges: true,
+		MemoryLimit: 8 << 30,
+		Sampler:     retainAllBenchmarkSampler{}, SegmentTimeRange: timestamp.NewInclusiveTimeRange(logicalBase.Add(-24*time.Hour), logicalBase.Add(24*time.Hour)),
+	})
+	require.NoError(t, receiverErr)
+	t.Cleanup(func() { require.NoError(t, receiver.Close()) })
+	for _, partID := range partIDs {
+		partName := formatExternalPartID(partID)
+		corePath := filepath.Join(tableRoot, partName)
+		require.NoError(t, os.Rename(filepath.Join(sourceRoot, partName), corePath))
+		indexPaths := map[string]string{
+			"latency":    filepath.Join(tableRoot, sidxDirName, "latency", partName),
+			"start_time": filepath.Join(tableRoot, sidxDirName, "start_time", partName),
+		}
+		for indexName, indexPath := range indexPaths {
+			require.NoError(t, os.Rename(filepath.Join(sourceRoot, sidxDirName, indexName, partName), indexPath))
+		}
+		require.NoError(t, receiver.PublishExistingPart(partID, corePath, indexPaths, logicalBase.Add(time.Duration(partID)*time.Minute)))
+	}
+
+	finalized, finalizeErr := receiver.RunFinalizeRound(context.Background(), logicalBase.Add(time.Hour), 2*time.Hour)
+	require.NoError(t, finalizeErr)
+	require.False(t, finalized)
+	hotReport, hotReportErr := receiver.MergeRecordingReport()
+	require.NoError(t, hotReportErr)
+	require.Empty(t, hotReport.Events)
+
+	finalized, finalizeErr = receiver.RunFinalizeRound(context.Background(), logicalBase.Add(3*time.Hour), 2*time.Hour)
+	require.NoError(t, finalizeErr)
+	require.True(t, finalized)
+	report, reportErr := receiver.MergeRecordingReport()
+	require.NoError(t, reportErr)
+	require.Len(t, report.Events, 1)
+	event := report.Events[0]
+	require.Equal(t, "finalize", event.Type)
+	require.Equal(t, BenchmarkMergePhaseCooldown, event.Phase)
+	require.Equal(t, BenchmarkMergeSamplingExecuted, event.Sampling)
+	require.Positive(t, event.PluginCalls)
+	require.Positive(t, event.TracesEvaluated)
+	require.Equal(t, event.TracesEvaluated, event.TracesRetained)
+	require.Zero(t, event.TracesDropped)
+	require.Equal(t, event.InputRows, event.OutputRows)
+	require.Len(t, event.Children, 2)
+}
