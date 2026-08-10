@@ -1065,6 +1065,25 @@ func TestAssembleTraceFragmentGuardTraceIncludesEveryStagedBlock(t *testing.T) {
 	}, got)
 }
 
+func TestAssembleTraceFragmentGuardTraceReusesCallerStorage(t *testing.T) {
+	staged := []stagedTrace{{
+		traceID: "trace-a",
+		slowBlock: &blockPointer{bm: blockMetadata{
+			traceID: "trace-a", timestamps: timestampsMetadata{min: 100, max: 110, known: true},
+		}},
+	}}
+	storage := make([]traceFragmentGuardBlock, 0, len(staged))
+
+	got := assembleTraceFragmentGuardTraceInto("trace-a", staged, storage)
+
+	require.Len(t, got.Blocks, 1)
+	require.Equal(t, &storage[:cap(storage)][0], &got.Blocks[0])
+	allocations := testing.AllocsPerRun(100, func() {
+		got = assembleTraceFragmentGuardTraceInto("trace-a", staged, got.Blocks[:0])
+	})
+	require.Zero(t, allocations)
+}
+
 func TestMergeTwoBlocksPreservesTraceTimestampBoundsForGuard(t *testing.T) {
 	left := &blockPointer{
 		block: block{

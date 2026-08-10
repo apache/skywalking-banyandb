@@ -704,6 +704,9 @@ func (tst *tsTable) mergePartsThenSendIntroductionObserved(creator snapshotCreat
 		filter, initialReason = tst.buildHotMergeFilterDecisionAt(parts, logicalNow)
 	}
 	operation.setInitialReason(initialReason)
+	if filter != nil && filter.chain != nil {
+		defer filter.chain.close()
+	}
 	if filter != nil && operation != nil {
 		filter.observation = operation.evaluation
 		operation.event.EstimatedStagingBytes = filter.estimatedStagingBytes
@@ -1287,6 +1290,7 @@ type stagedEvaluationVectors struct {
 	traceBlocks  []sdk.TraceBlock
 	traceIDs     []string
 	guardRanges  []stagedTraceRange
+	guardBlocks  []traceFragmentGuardBlock
 	decisionMask []bool
 }
 
@@ -1296,10 +1300,12 @@ func (vectors *stagedEvaluationVectors) reset() {
 	}
 	clear(vectors.traceIDs)
 	clear(vectors.guardRanges)
+	clear(vectors.guardBlocks)
 	clear(vectors.decisionMask)
 	vectors.traceBlocks = vectors.traceBlocks[:0]
 	vectors.traceIDs = vectors.traceIDs[:0]
 	vectors.guardRanges = vectors.guardRanges[:0]
+	vectors.guardBlocks = vectors.guardBlocks[:0]
 	vectors.decisionMask = vectors.decisionMask[:0]
 }
 
@@ -1417,7 +1423,8 @@ func releaseStagedEvaluationVectors(vectors *stagedEvaluationVectors, reusable b
 	}
 	vectors.reset()
 	if cap(vectors.traceBlocks) > maxPooledEvaluationTraces || cap(vectors.traceIDs) > maxPooledEvaluationTraces ||
-		cap(vectors.guardRanges) > maxPooledEvaluationTraces || cap(vectors.decisionMask) > maxPooledEvaluationTraces {
+		cap(vectors.guardRanges) > maxPooledEvaluationTraces || cap(vectors.guardBlocks) > maxPooledStagedBlocks ||
+		cap(vectors.decisionMask) > maxPooledEvaluationTraces {
 		stagedEvaluationPool.Discard(vectors)
 		return false
 	}
@@ -1844,7 +1851,10 @@ func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatc
 			continue
 		}
 		guardRange := assembledBatch.vectors.guardRanges[traceIdx]
-		guardTrace := assembleTraceFragmentGuardTrace(traceID, staged[guardRange.start:guardRange.end])
+		guardTrace := assembleTraceFragmentGuardTraceInto(
+			traceID, staged[guardRange.start:guardRange.end], assembledBatch.vectors.guardBlocks,
+		)
+		assembledBatch.vectors.guardBlocks = guardTrace.Blocks[:0]
 		decision := filter.guard.guard.Resolve(filter.guardContext(), guardTrace, traceFragmentSamplerActionDrop)
 		if filter.owner != nil {
 			filter.owner.incPipelineGuardBloomProbes(decision.BloomProbes)
