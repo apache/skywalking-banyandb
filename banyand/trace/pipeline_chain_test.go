@@ -137,6 +137,9 @@ func newTestChain(dropIDs map[string]struct{}) *mergeChain {
 // block trace ids in order plus the dropped set.
 func mergeWithFilter(t *testing.T, parts []*traces, filter *mergeFilter) ([]string, map[string]struct{}) {
 	t.Helper()
+	if filter != nil && filter.chain != nil {
+		defer filter.chain.close()
+	}
 	tmpPath, defFn := test.Space(require.New(t))
 	defer defFn()
 	fileSystem := fs.NewLocalFileSystem()
@@ -729,6 +732,69 @@ func TestMergeChain_ProjectionUnion(t *testing.T) {
 
 type sleepSampler struct {
 	d time.Duration
+}
+
+type reusableVerdictSampler struct {
+	keep []bool
+}
+
+func (rvs *reusableVerdictSampler) Kind() sdk.Kind          { return sdk.KindSampler }
+func (rvs *reusableVerdictSampler) Project() sdk.Projection { return sdk.Projection{} }
+func (rvs *reusableVerdictSampler) Close() error            { return nil }
+func (rvs *reusableVerdictSampler) Decide(*sdk.TraceBatch) (sdk.Verdict, error) {
+	return sdk.Verdict{Keep: rvs.keep}, nil
+}
+
+func BenchmarkMergeChainRunObserved(b *testing.B) {
+	const traceCount = 512
+	batch := &sdk.TraceBatch{Traces: make([]sdk.TraceBlock, traceCount)}
+	chain := newMergeChain("g", "s", []sdk.Sampler{&reusableVerdictSampler{keep: make([]bool, traceCount)}}, 0)
+	observation := &mergeEvaluationObservation{}
+	decisionMask := make([]bool, traceCount)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		chain.runChain(batch, observation, decisionMask)
+	}
+}
+
+func BenchmarkMergeChainExecuteObserved(b *testing.B) {
+	const traceCount = 512
+	batch := &sdk.TraceBatch{Traces: make([]sdk.TraceBlock, traceCount)}
+	chain := newMergeChain("g", "s", []sdk.Sampler{&reusableVerdictSampler{keep: make([]bool, traceCount)}}, 0)
+	b.Cleanup(chain.close)
+	observation := &mergeEvaluationObservation{}
+	decisionMask := make([]bool, traceCount)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		_, reusable, executeErr := chain.executeObservedInto(batch, time.Minute, observation, decisionMask)
+		if executeErr != nil || !reusable {
+			b.Fatalf("unexpected decision result: reusable=%t err=%v", reusable, executeErr)
+		}
+	}
+}
+
+func TestMergeChainObservedDecisionPathReusesExecutionStorage(t *testing.T) {
+	const traceCount = 16
+	batch := &sdk.TraceBatch{Traces: make([]sdk.TraceBlock, traceCount)}
+	chain := newMergeChain("g", "s", []sdk.Sampler{&reusableVerdictSampler{keep: make([]bool, traceCount)}}, 0)
+	t.Cleanup(chain.close)
+	observation := &mergeEvaluationObservation{}
+	decisionMask := make([]bool, traceCount)
+	_, reusable, executeErr := chain.executeObservedInto(batch, time.Minute, observation, decisionMask)
+	require.NoError(t, executeErr)
+	require.True(t, reusable)
+
+	var measuredErr error
+	allocations := testing.AllocsPerRun(100, func() {
+		_, reusable, measuredErr = chain.executeObservedInto(batch, time.Minute, observation, decisionMask)
+		if !reusable {
+			measuredErr = fmt.Errorf("decision storage was not reusable")
+		}
+	})
+	require.NoError(t, measuredErr)
+	require.LessOrEqual(t, allocations, 1.0, "healthy decisions should reuse the worker, timer, mask, and observation path")
 }
 
 func (s *sleepSampler) Kind() sdk.Kind          { return sdk.KindSampler }

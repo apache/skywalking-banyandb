@@ -32,6 +32,7 @@ import (
 // wrong-length verdict to exercise the three bypass reasons.
 type chainFakeSampler struct {
 	dropIDs   map[string]struct{}
+	calls     int
 	panicNow  bool
 	errNow    bool
 	wrongSize bool
@@ -42,6 +43,7 @@ func (f *chainFakeSampler) Project() sdk.Projection { return sdk.Projection{} }
 func (f *chainFakeSampler) Close() error            { return nil }
 
 func (f *chainFakeSampler) Decide(batch *sdk.TraceBatch) (sdk.Verdict, error) {
+	f.calls++
 	if f.panicNow {
 		panic("boom")
 	}
@@ -82,6 +84,37 @@ func TestEvaluateChainIntoReusesCallerMask(t *testing.T) {
 
 	require.Equal(t, []bool{true, false, true}, verdict.Keep)
 	require.Equal(t, &mask[0], &verdict.Keep[0])
+}
+
+func TestEvaluateChainIntoSingleSamplerBypassCallsOnce(t *testing.T) {
+	batch := batchOf("a", "b")
+	sampler := &chainFakeSampler{errNow: true}
+	verdict := sdk.EvaluateChainInto([]sdk.Sampler{sampler}, batch, make([]bool, len(batch.Traces)), nil)
+
+	require.Equal(t, []bool{true, true}, verdict.Keep)
+	require.Equal(t, 1, sampler.calls)
+}
+
+type reusableChainBenchmarkSampler struct {
+	keep []bool
+}
+
+func (rcbs *reusableChainBenchmarkSampler) Kind() sdk.Kind          { return sdk.KindSampler }
+func (rcbs *reusableChainBenchmarkSampler) Project() sdk.Projection { return sdk.Projection{} }
+func (rcbs *reusableChainBenchmarkSampler) Close() error            { return nil }
+func (rcbs *reusableChainBenchmarkSampler) Decide(*sdk.TraceBatch) (sdk.Verdict, error) {
+	return sdk.Verdict{Keep: rcbs.keep}, nil
+}
+
+func BenchmarkEvaluateChainIntoSingleSampler(b *testing.B) {
+	const traceCount = 512
+	batch := &sdk.TraceBatch{Traces: make([]sdk.TraceBlock, traceCount)}
+	sampler := &reusableChainBenchmarkSampler{keep: make([]bool, traceCount)}
+	mask := make([]bool, traceCount)
+	b.ReportAllocs()
+	for range b.N {
+		sdk.EvaluateChainInto([]sdk.Sampler{sampler}, batch, mask, nil)
+	}
 }
 
 func TestEvaluateChain_NilSamplerSkipped(t *testing.T) {

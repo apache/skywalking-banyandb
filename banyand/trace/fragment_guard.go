@@ -195,9 +195,13 @@ func newTraceFragmentGuard(config traceFragmentGuardConfig, catalog traceFragmen
 }
 
 func assembleTraceFragmentGuardTrace(traceID string, staged []stagedTrace) traceFragmentGuardTrace {
+	return assembleTraceFragmentGuardTraceInto(traceID, staged, make([]traceFragmentGuardBlock, 0, len(staged)))
+}
+
+func assembleTraceFragmentGuardTraceInto(traceID string, staged []stagedTrace, blocks []traceFragmentGuardBlock) traceFragmentGuardTrace {
 	assembled := traceFragmentGuardTrace{
 		TraceID: traceID,
-		Blocks:  make([]traceFragmentGuardBlock, 0, len(staged)),
+		Blocks:  blocks[:0],
 	}
 	matched := false
 	complete := traceID != ""

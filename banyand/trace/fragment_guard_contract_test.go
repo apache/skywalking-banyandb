@@ -1065,6 +1065,45 @@ func TestAssembleTraceFragmentGuardTraceIncludesEveryStagedBlock(t *testing.T) {
 	}, got)
 }
 
+func TestAssembleTraceFragmentGuardTraceReusesCallerStorage(t *testing.T) {
+	staged := []stagedTrace{{
+		traceID: "trace-a",
+		slowBlock: &blockPointer{bm: blockMetadata{
+			traceID: "trace-a", timestamps: timestampsMetadata{min: 100, max: 110, known: true},
+		}},
+	}}
+	storage := make([]traceFragmentGuardBlock, 0, len(staged))
+
+	got := assembleTraceFragmentGuardTraceInto("trace-a", staged, storage)
+
+	require.Len(t, got.Blocks, 1)
+	require.Equal(t, &storage[:cap(storage)][0], &got.Blocks[0])
+	allocations := testing.AllocsPerRun(100, func() {
+		got = assembleTraceFragmentGuardTraceInto("trace-a", staged, got.Blocks[:0])
+	})
+	require.Zero(t, allocations)
+}
+
+func TestAssembleTraceFragmentGuardTracePreallocatesStandaloneStorage(t *testing.T) {
+	const blockCount = 8
+	staged := make([]stagedTrace, blockCount)
+	for stagedIdx := range staged {
+		staged[stagedIdx] = stagedTrace{
+			traceID: "trace-a",
+			slowBlock: &blockPointer{bm: blockMetadata{
+				traceID: "trace-a", timestamps: timestampsMetadata{min: 100, max: 110, known: true},
+			}},
+		}
+	}
+
+	var got traceFragmentGuardTrace
+	allocations := testing.AllocsPerRun(100, func() {
+		got = assembleTraceFragmentGuardTrace("trace-a", staged)
+	})
+	require.Len(t, got.Blocks, blockCount)
+	require.LessOrEqual(t, allocations, 1.0, "the standalone helper should allocate its block vector once")
+}
+
 func TestMergeTwoBlocksPreservesTraceTimestampBoundsForGuard(t *testing.T) {
 	left := &blockPointer{
 		block: block{

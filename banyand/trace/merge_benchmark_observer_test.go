@@ -39,6 +39,7 @@ func TestMergeBenchmarkCountsActualSamplerInvocations(t *testing.T) {
 	first := &durationEnvelopeSampler{}
 	second := &durationEnvelopeSampler{}
 	chain := newMergeChain("group", "schema", []sdk.Sampler{first, second}, 1)
+	t.Cleanup(chain.close)
 	batch := &sdk.TraceBatch{Traces: []sdk.TraceBlock{{TraceID: "a"}, {TraceID: "b"}}}
 	observation := &mergeEvaluationObservation{}
 	_, executeErr := chain.executeObserved(batch, time.Second, observation)
