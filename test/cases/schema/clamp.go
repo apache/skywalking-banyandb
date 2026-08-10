@@ -255,19 +255,35 @@ var _ = g.Describe("Schema time-range clamp", func() {
 			"write at T_data1 must return STATUS_SUCCEED")
 
 		g.By("Sanity-checking that querying group1 alone returns the datum (legacy unclamped baseline — pass modRevision=0)")
-		// In distributed mode the write→query path is asynchronous: the
-		// data-node ack returns when mustAddMemPart's applied channel
-		// fires, but the query fan-out can still race the new memPart
-		// becoming visible. Mirrors the deletion.go retry pattern.
-		test.EventuallyConsistently(func() int {
+		// TWO distinct races have to settle before this query can succeed, and the
+		// budget has to cover both of them, not just the second:
+		//
+		//  1. Topology. AwaitRevision confirms the schema CACHE has the group; it
+		//     does NOT confirm that the distributed query coordinator has resolved
+		//     it, which is a separate path. Until it does, the query fails outright
+		//     with "group ... not found" — even though the write to that same group
+		//     has already been acked.
+		//  2. Visibility. The data-node ack fires when mustAddMemPart's applied
+		//     channel does, but the query fan-out can still race the new memPart
+		//     becoming visible.
+		//
+		// The probe carries the error instead of collapsing it to a sentinel. A
+		// swallowed error made a topology failure report as "Expected 0 to equal 1",
+		// which blames visibility and hides the real cause — the "group not found"
+		// only showed up by reading interleaved server logs in the CI output.
+		type baselineProbe struct {
+			Err   string
+			Count int
+		}
+		test.EventuallyConsistently(func() baselineProbe {
 			baselineResp, baselineErr := queryMeasureRange(ctx, clients.MeasureWriteClient, group1, measureName,
 				tData1.Add(-time.Hour), time.Now().Add(time.Hour), 0)
 			if baselineErr != nil {
-				return -1
+				return baselineProbe{Err: baselineErr.Error()}
 			}
-			return len(baselineResp.GetDataPoints())
-		}, 5*time.Second, 50*time.Millisecond).Should(gm.Equal(1),
-			"baseline single-group query must return the written datum — otherwise  is not falsifying anything")
+			return baselineProbe{Count: len(baselineResp.GetDataPoints())}
+		}, 10*time.Second, 200*time.Millisecond).Should(gm.Equal(baselineProbe{Count: 1}),
+			"baseline single-group query must return the written datum — otherwise the clamp assertion below is not falsifying anything")
 
 		g.By("Creating newer group2 and measure (CreatedAt2 > T_data1)")
 		_, createGroup2Err := clients.GroupClient.Create(ctx, &databasev1.GroupRegistryServiceCreateRequest{
