@@ -782,3 +782,73 @@ func Test_mergeParts_withKeepPredicate(t *testing.T) {
 	require.Len(t, retained, 2, "exactly traceA and traceC retained")
 	require.Equal(t, uint64(2), merged.p.partMetadata.TotalCount, "partMetadata TotalCount == retained count")
 }
+
+func TestMergePartsWithKeepPredicatePreservesInterleavedInt64Tags(t *testing.T) {
+	encodeID := func(id string) []byte { return append([]byte{0x01}, []byte(id)...) }
+	newPart := func(rows ...struct {
+		id    string
+		key   int64
+		value int64
+	},
+	) *partWrapper {
+		elements := generateElements()
+		for _, row := range rows {
+			elements.mustAppend(1, row.key, encodeID(row.id), []Tag{{Name: "number", Value: convert.Int64ToBytes(row.value), ValueType: pbv1.ValueTypeInt64}})
+		}
+		memoryPart := GenerateMemPart()
+		memoryPart.mustInitFromElements(elements)
+		return newPartWrapper(memoryPart, openMemPart(memoryPart))
+	}
+	left := newPart(
+		struct {
+			id    string
+			key   int64
+			value int64
+		}{"traceA", 100, 1},
+		struct {
+			id    string
+			key   int64
+			value int64
+		}{"traceC", 300, 3},
+	)
+	right := newPart(
+		struct {
+			id    string
+			key   int64
+			value int64
+		}{"traceB", 200, 2},
+		struct {
+			id    string
+			key   int64
+			value int64
+		}{"traceD", 400, 4},
+	)
+	defer left.release()
+	defer right.release()
+
+	tmpPath, cleanup := test.Space(require.New(t))
+	defer cleanup()
+	fileSystem := fs.NewLocalFileSystem()
+	keep := func(data []byte) bool { return string(data[1:]) != "traceB" }
+	merged, mergeErr := (&sidx{pm: protector.Nop{}}).mergeParts(fileSystem, make(chan struct{}), []*partWrapper{left, right}, 99, tmpPath, keep)
+	require.NoError(t, mergeErr)
+	defer merged.release()
+	require.Equal(t, uint64(3), merged.p.partMetadata.TotalCount)
+
+	partIterator := &partMergeIter{}
+	partIterator.mustInitFromPart(merged.p)
+	reader := &blockReader{}
+	reader.init([]*partMergeIter{partIterator})
+	decoder := generateTagValuesDecoder()
+	defer releaseTagValuesDecoder(decoder)
+	actual := make(map[string]int64)
+	for reader.nextBlockMetadata() {
+		reader.loadBlockData(decoder)
+		numbers := reader.block.tags["number"].values
+		for rowIdx, data := range reader.block.data {
+			actual[string(data[1:])] = convert.BytesToInt64(numbers[rowIdx].value)
+		}
+	}
+	require.NoError(t, reader.error())
+	require.Equal(t, map[string]int64{"traceA": 1, "traceC": 3, "traceD": 4}, actual)
+}

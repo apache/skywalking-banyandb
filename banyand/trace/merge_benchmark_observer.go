@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"runtime"
 	"sort"
@@ -208,6 +209,7 @@ type mergeBenchmarkEvent struct {
 	InputPartIDs          []uint64                     `json:"inputPartIDs"`
 	Children              []mergeBenchmarkChild        `json:"children,omitempty"`
 	StagingBatches        []mergeBenchmarkStagingBatch `json:"stagingBatches,omitempty"`
+	GuardDeferred         map[string]uint64            `json:"guardDeferred,omitempty"`
 	Resources             mergeBenchmarkResources      `json:"resources"`
 	OutputRows            uint64                       `json:"outputRows"`
 	TracesEvaluated       uint64                       `json:"tracesEvaluated"`
@@ -409,6 +411,7 @@ func (mbo *mergeBenchmarkObserver) snapshot() mergeBenchmarkSnapshot {
 
 type mergeEvaluationObservation struct {
 	observer           *mergeBenchmarkObserver
+	guardDeferred      map[string]uint64
 	stagingBatches     []mergeBenchmarkStagingBatch
 	pluginCalls        atomic.Uint64
 	evaluated          atomic.Uint64
@@ -456,6 +459,27 @@ func (meo *mergeEvaluationObservation) stagingSnapshot() []mergeBenchmarkStaging
 	meo.mu.Lock()
 	defer meo.mu.Unlock()
 	return append([]mergeBenchmarkStagingBatch(nil), meo.stagingBatches...)
+}
+
+func (meo *mergeEvaluationObservation) recordGuardDeferred(reason traceFragmentGuardReason) {
+	if meo == nil {
+		return
+	}
+	meo.mu.Lock()
+	if meo.guardDeferred == nil {
+		meo.guardDeferred = make(map[string]uint64)
+	}
+	meo.guardDeferred[string(reason)]++
+	meo.mu.Unlock()
+}
+
+func (meo *mergeEvaluationObservation) guardDeferredSnapshot() map[string]uint64 {
+	if meo == nil {
+		return nil
+	}
+	meo.mu.Lock()
+	defer meo.mu.Unlock()
+	return maps.Clone(meo.guardDeferred)
 }
 
 type mergeBenchmarkOperation struct {
@@ -612,6 +636,7 @@ func (mbo *mergeBenchmarkObserver) finish(operation *mergeBenchmarkOperation, ou
 	event.OversizedTraces = operation.evaluation.oversized.Load()
 	event.PeakStagedBytes = operation.evaluation.peakStagedBytes.Load()
 	event.StagingBatches = operation.evaluation.stagingSnapshot()
+	event.GuardDeferred = operation.evaluation.guardDeferredSnapshot()
 	for batchIdx := range event.StagingBatches {
 		event.ChargedStagingBytes = saturatingAddUint64(event.ChargedStagingBytes, event.StagingBatches[batchIdx].Bytes)
 	}

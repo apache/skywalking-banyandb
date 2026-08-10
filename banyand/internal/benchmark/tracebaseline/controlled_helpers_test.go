@@ -119,6 +119,59 @@ func TestBuildControlledMergeReportRecordsInventoryAndPluginIdentity(t *testing.
 	require.Equal(t, "abc123", report.Environment.Commit)
 }
 
+func TestBuildControlledMergeReportVerifiesDeterministicDrops(t *testing.T) {
+	oracle := &SamplingOracleArtifact{
+		ExpectedLedger: map[string]string{LedgerCore: "after-core", LedgerLatency: "after-latency", LedgerStartTime: "after-start"},
+		ExpectedRows:   map[string]uint64{LedgerCore: 7, LedgerLatency: 7, LedgerStartTime: 7},
+		Evaluated:      4, Retained: 3, Dropped: 1,
+	}
+	options := ControlledMergeRunOptions{
+		RunID: "drop-25", DataRoot: t.TempDir(), Mode: string(ControlledMergePipelineDeterministicDrop), SamplingOracle: oracle,
+	}
+	manifest := ControlledMergeSeedManifest{
+		Snapshot: benchmark.Manifest{SHA256: "snap"}, Selection: ControlledMergeSelection{SHA256: "selection"},
+		MatureLogicalNow: time.Unix(0, 0),
+	}
+	event := storagetrace.BenchmarkMergeEvent{
+		SelectionSHA256: "selection", InputPartIDs: []uint64{1, 2}, MatureInputParts: 2, InputRows: 10, OutputRows: 7,
+		Sampling: storagetrace.BenchmarkMergeSamplingExecuted, PluginCalls: 1, TracesEvaluated: 4, TracesRetained: 3, TracesDropped: 1,
+		Children: []storagetrace.BenchmarkMergeChild{{Name: LedgerLatency}, {Name: LedgerStartTime}},
+	}
+	inventory := storagetrace.BenchmarkMergeInventory{
+		CoreRows: 7, IndexRows: map[string]uint64{LedgerLatency: 7, LedgerStartTime: 7},
+	}
+	afterLedger := map[string]string{LedgerCore: "after-core", LedgerLatency: "after-latency", LedgerStartTime: "after-start"}
+	report, reportErr := buildControlledMergeReport(options, ControlledMergePipelineDeterministicDrop, manifest, event, inventory,
+		storagetrace.BenchmarkMergeStagingLimits{}, "plugin-sha", map[string]string{}, afterLedger, false)
+
+	require.NoError(t, reportErr)
+	require.True(t, report.Correct)
+	require.Same(t, oracle, report.SamplingOracle)
+}
+
+func TestBuildControlledMergeReportRejectsWrongDeterministicOutputLedger(t *testing.T) {
+	oracle := &SamplingOracleArtifact{
+		ExpectedLedger: map[string]string{LedgerCore: "expected", LedgerLatency: "latency", LedgerStartTime: "start"},
+		ExpectedRows:   map[string]uint64{LedgerCore: 7, LedgerLatency: 7, LedgerStartTime: 7},
+		Evaluated:      4, Retained: 3, Dropped: 1,
+	}
+	options := ControlledMergeRunOptions{DataRoot: t.TempDir(), SamplingOracle: oracle}
+	manifest := ControlledMergeSeedManifest{Selection: ControlledMergeSelection{SHA256: "selection"}}
+	event := storagetrace.BenchmarkMergeEvent{
+		SelectionSHA256: "selection", InputPartIDs: []uint64{1}, MatureInputParts: 1,
+		Sampling: storagetrace.BenchmarkMergeSamplingExecuted, PluginCalls: 1, TracesEvaluated: 4, TracesRetained: 3, TracesDropped: 1,
+		Children: []storagetrace.BenchmarkMergeChild{{Name: LedgerLatency}, {Name: LedgerStartTime}},
+	}
+	inventory := storagetrace.BenchmarkMergeInventory{
+		CoreRows: 7, IndexRows: map[string]uint64{LedgerLatency: 7, LedgerStartTime: 7},
+	}
+	_, reportErr := buildControlledMergeReport(options, ControlledMergePipelineDeterministicDrop, manifest, event, inventory,
+		storagetrace.BenchmarkMergeStagingLimits{}, "plugin-sha", map[string]string{},
+		map[string]string{LedgerCore: "wrong", LedgerLatency: "latency", LedgerStartTime: "start"}, false)
+
+	require.ErrorContains(t, reportErr, "controlled merge correctness gate failed")
+}
+
 func TestWriteControlledMergeReportWritesJSON(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/report.json"

@@ -125,10 +125,55 @@ indivisible, and 11.8% of the hard limit. Process cgroup peak was 277,794,816 by
 cooldown round took 14.44 seconds wall and 14.51 CPU seconds and allocated 487,021,344 bytes cumulatively; allocation
 traffic is not live memory.
 
-This is a framework and adaptive-budget validation, not the completed SkyWalking result. The actual SkyWalking
-configuration and its independently frozen deletion ledger still need a full MERGE-plus-FINALIZE run. Repeated processes
-are also required before drawing timing-regression conclusions; the single disabled and retain-all primary runs are used
-only to prove identical selection trajectories and outputs.
+That run was a framework and adaptive-budget validation, not the SkyWalking result. The first actual SkyWalking
+MERGE-plus-FINALIZE pilot is recorded below. Repeated processes are still required before drawing timing-regression
+conclusions; single runs prove integration and correctness rather than stable performance deltas.
+
+### Dropping-Output Oracle and Selectivity Matrix
+
+Dropping variants no longer reuse the lossless ledger gate. Before the measured data-node process starts, a separate
+resource-limited process loads the exact plugin and configuration, assembles complete traces from the immutable seed,
+records a canonical verdict digest, and calculates the expected core, `latency`, and `start_time` ledgers after deletion.
+The measured process receives only this compact oracle artifact. Plugin construction, trace assembly, and ledger materialization
+for the oracle are therefore excluded from the measured merge resource interval.
+
+For the frozen controlled picker selection, the oracle also models the fragment boundary. It probes the persisted trace-ID
+filters of timestamp-conjunction parts with the same one-minute fragment window used by the benchmark receiver. The report
+separates raw plugin verdicts from effective deletions after guard deferral. This matters at very high selectivity: the 99%
+case produced 33,044 plugin drops, while 12 Bloom-filter positives were correctly deferred, leaving 33,032 effective drops.
+
+The first 2-core, 4-GiB deterministic matrix exposed and fixed two benchmark-path correctness defects before producing valid
+numbers. The benchmark receiver had left the Decide timeout at zero instead of the production five seconds, causing a race
+between every plugin call and an immediate timeout. After decisions began deleting rows, the secondary-index merge's in-place
+row compaction corrupted tag-to-row alignment. Filtering each decoded source block into a fresh BanyanDB-pooled block before
+multi-block merging now keeps user keys, trace-ID payloads, and every tag column aligned while reducing work passed to the
+merge.
+
+All three controlled matrix points now use the same 15-part production-picker selection and independently reconcile core and
+both secondary indexes:
+
+| Target | Plugin deletion | Effective deletion | Guard deferrals | Output rows in selected merge | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 1% | 0.9744% | 0.9744% | 0 | 145,649 | PASS |
+| 35% | 35.3162% | 35.3132% | 1 | 96,385 | PASS |
+| 99% | 99.0736% | 99.0376% | 12 | 1,260 | PASS |
+
+These are selectivity stress points, not a reweighting of production. The SkyWalking integration remains calibrated to the
+fixture's natural 35.3733% full-day deletion ratio.
+
+### First SkyWalking Integration Pilot
+
+The first configured SkyWalking pilot passed in the 2-core, 4-GiB container. The primary phase published all 3,219 parts,
+completed the same 286 ordinary MERGE rounds without premature sampling, and then executed one cooled FINALIZE round.
+The independent oracle and the measured output agreed on all 74,576 trace decisions: 48,196 traces retained, 26,380
+dropped, and a 35.3733% deletion ratio. Core, `latency`, and `start_time` each contained exactly 89,157 retained rows and
+matched their expected logical-ledger SHA-256.
+
+The 24-hour serialized primary replay took 98.08 seconds wall. The SkyWalking FINALIZE round took 14.56 seconds wall and
+14.88 CPU seconds, made 20 plugin calls, allocated 981.4 MiB cumulatively, and reached 168.9 MiB peak RSS. Its adaptive
+decision limit was 30.23 MiB and measured peak staging was 30.25 MiB. There were no oversized traces, guard deferrals,
+lossless retries, merge errors, or OOMs. Treat these resource values as pilot evidence only; the next performance conclusion
+requires repeated fresh processes under the same cache policy.
 
 ### Revised Two-Track Test Strategy
 
@@ -902,6 +947,14 @@ shorter results reveal a nonlinear cost or correctness anomaly. Phase 4 separate
 After framework and plugin-unit optimization, run the actual SkyWalking plugins and settings, including their real
 projections and sampling rules. Dropped output reduces write I/O, so compare this result using retained bytes and work
 normalized by input traces, spans, and bytes rather than interpreting a lower elapsed time as lower framework overhead.
+
+The full-loop harness selects this variant with `FULL_PIPELINE=skywalking`. It builds the production
+`sw-trace-sampler`, loads its JSON configuration from `SKYWALKING_PLUGIN_CONFIG`, and passes those exact bytes to the
+native plugin constructor. The default harness configuration is the calibrated 500 ms duration threshold, error
+retention, and 10% deterministic healthy sampling policy. Every report records independent SHA-256 identities for the
+plugin binary and configuration so a result cannot silently mix policies. Custom configuration files are allowed, but
+they must remain inside the read-only repository mount and their observed verdict ratios must be reported as observed
+SkyWalking ratios rather than as the controlled 35% DeterministicDrop case.
 
 ## Iterative Execution Phases
 
