@@ -998,3 +998,126 @@ func TestHasSlowTrace_TypeMismatchKeepsSlowPath(t *testing.T) {
 		assert.ErrorIs(t, slowErr, errNoDurationEnvelope, "a start with no usable duration leaves the right edge unknown")
 	})
 }
+
+// TestHasErrorColumn_TypeCoverage covers all three branches the error-column
+// reader now has: the two fast paths for the types that actually carry an error
+// signal, and the At-based fallback for every other type.
+//
+// The fallback matters precisely because it is the one that can still surface a
+// decode error: Float64 and Timestamp are 8-byte-checked by DecodeTagValue, so a
+// malformed cell in such a column must keep failing open rather than being
+// skipped as "no error signal this schema understands".
+func TestHasErrorColumn_TypeCoverage(t *testing.T) {
+	s, err := New([]byte(`{"keepErrors":true,"healthySampleRate":0}`), segmentSchema)
+	require.NoError(t, err)
+	sampler := s.(*Sampler)
+
+	block := func(vt valuetype.ValueType, cells ...[]byte) *sdk.TraceBlock {
+		return &sdk.TraceBlock{
+			TraceID: "t",
+			Tags:    []sdk.TagColumn{{Name: "is_error", ValueType: vt, Values: cells}},
+		}
+	}
+
+	t.Run("int64 fast path", func(t *testing.T) {
+		hit, hitErr := sampler.hasErrorColumn(block(valuetype.ValueTypeInt64, convert.Int64ToBytes(0), convert.Int64ToBytes(1)))
+		require.NoError(t, hitErr)
+		assert.True(t, hit, "a non-zero int64 is an error")
+
+		none, noneErr := sampler.hasErrorColumn(block(valuetype.ValueTypeInt64, convert.Int64ToBytes(0), nil))
+		require.NoError(t, noneErr)
+		assert.False(t, none, "zero and null carry no error signal")
+	})
+
+	t.Run("str fast path", func(t *testing.T) {
+		for _, truthy := range []string{"true", "1"} {
+			hit, hitErr := sampler.hasErrorColumn(block(valuetype.ValueTypeStr, []byte(truthy)))
+			require.NoError(t, hitErr)
+			assert.True(t, hit, "%q is an error", truthy)
+		}
+		for _, falsy := range []string{"false", "0", "", "TRUE"} {
+			none, noneErr := sampler.hasErrorColumn(block(valuetype.ValueTypeStr, []byte(falsy)))
+			require.NoError(t, noneErr)
+			assert.False(t, none, "%q is not an error — the comparison is exact", falsy)
+		}
+		none, noneErr := sampler.hasErrorColumn(block(valuetype.ValueTypeStr, nil))
+		require.NoError(t, noneErr)
+		assert.False(t, none, "a null cell carries no error signal")
+	})
+
+	t.Run("fallback propagates a decode error", func(t *testing.T) {
+		_, errColErr := sampler.hasErrorColumn(block(valuetype.ValueTypeFloat64, []byte{0x01}))
+		require.Error(t, errColErr, "a malformed cell in a length-checked column must not be skipped as an unknown type")
+		assert.Contains(t, errColErr.Error(), "float64: expected 8 bytes")
+	})
+
+	t.Run("fallback reports no signal for a well-formed unknown type", func(t *testing.T) {
+		hit, hitErr := sampler.hasErrorColumn(block(valuetype.ValueTypeFloat64, make([]byte, 8)))
+		require.NoError(t, hitErr)
+		assert.False(t, hit, "no other type carries an error signal this schema understands")
+	})
+
+	t.Run("decode error in the fallback fails open through Decide", func(t *testing.T) {
+		verdict, decideErr := sampler.Decide(&sdk.TraceBatch{Traces: []sdk.TraceBlock{*block(valuetype.ValueTypeFloat64, []byte{0x01})}})
+		require.NoError(t, decideErr)
+		assert.Equal(t, []bool{true}, verdict.Keep, "a decode error must fail open (keep), never drop")
+	})
+}
+
+// TestHasSlowTrace_NullCells pins how null cells shape the duration envelope on
+// the fast scalar path. Both skips are load-bearing in a way that decides whether
+// a trace is KEPT or DROPPED:
+//
+//   - a null start must not contribute to minStart, or the envelope is measured
+//     from zero and every trace looks slow enough to keep;
+//   - a null duration must leave the right edge unknown, which is a can't-tell
+//     that fails open — treating it as a zero-length end instead reports "not
+//     slow" and drops the trace.
+func TestHasSlowTrace_NullCells(t *testing.T) {
+	s, err := New([]byte(`{"durationThresholdMs":500}`), segmentSchema)
+	require.NoError(t, err)
+	sampler := s.(*Sampler)
+
+	// segmentSchema scales latency by 1e6 (milliseconds -> nanoseconds).
+	const sixHundredMillisInNanos = 600 * 1_000_000
+	rows := func(starts, durations [][]byte) *sdk.TraceBlock {
+		return &sdk.TraceBlock{
+			TraceID: "t",
+			Tags: []sdk.TagColumn{
+				{Name: "start_time", ValueType: valuetype.ValueTypeTimestamp, Values: starts},
+				{Name: "latency", ValueType: valuetype.ValueTypeInt64, Values: durations},
+			},
+		}
+	}
+
+	t.Run("null start does not drag minStart to zero", func(t *testing.T) {
+		// One null row and one real row 600ms in. Counting the null row's start as
+		// 0 would measure a 600ms envelope and call the trace slow.
+		slow, slowErr := sampler.hasSlowTrace(rows(
+			[][]byte{nil, convert.Int64ToBytes(sixHundredMillisInNanos)},
+			[][]byte{nil, convert.Int64ToBytes(1)},
+		))
+		require.NoError(t, slowErr)
+		assert.False(t, slow, "the envelope spans only the rows that carry a start, so it is 1ms, not 600ms")
+	})
+
+	t.Run("null duration leaves the right edge unknown", func(t *testing.T) {
+		_, slowErr := sampler.hasSlowTrace(rows(
+			[][]byte{convert.Int64ToBytes(sixHundredMillisInNanos)},
+			[][]byte{nil},
+		))
+		assert.ErrorIs(t, slowErr, errNoDurationEnvelope,
+			"a start with no duration cannot bound the end; that is a can't-tell, which fails open")
+	})
+
+	t.Run("a start without duration still bounds the left edge", func(t *testing.T) {
+		// Row 0 carries only a start, 600ms before row 1's start+duration. The
+		// envelope must span from row 0's start, making the trace slow.
+		slow, slowErr := sampler.hasSlowTrace(rows(
+			[][]byte{convert.Int64ToBytes(0), convert.Int64ToBytes(sixHundredMillisInNanos)},
+			[][]byte{nil, convert.Int64ToBytes(1)},
+		))
+		require.NoError(t, slowErr)
+		assert.True(t, slow, "min start comes from the duration-less row, so the envelope is ~601ms")
+	})
+}
