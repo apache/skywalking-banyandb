@@ -831,6 +831,43 @@ func TestArrayEntries_SplitPathMatchesCodec(t *testing.T) {
 	}
 }
 
+// TestArrayEntries_ErrorAfterGrownStableBuffer drives the error path in the state
+// that makes buffer bookkeeping easy to get wrong: an escaped row has already
+// appended to (and possibly reallocated) the stable buffer when a later row turns
+// out to be malformed, so the local slice header has diverged from the pooled one
+// and must be written back before the buffer is released.
+//
+// The assertions here only pin the observable contract — the error surfaces and
+// nothing panics or double-releases. That the grown header is persisted is
+// structural: the persist and the release both live in one deferred block, so an
+// error site cannot skip it.
+func TestArrayEntries_ErrorAfterGrownStableBuffer(t *testing.T) {
+	escaped := vararray.MarshalVarArray(nil, []byte(`db.statement=SELECT a|b`))
+	col := &sdk.TagColumn{
+		Name: "tags", ValueType: valuetype.ValueTypeStrArr,
+		Values: [][]byte{
+			escaped,                // grows the stable buffer
+			[]byte("unterminated"), // no trailing delimiter -> error
+		},
+	}
+	got, stablePtr, err := arrayEntries(col)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid variable array")
+	assert.Nil(t, got, "the entries slice is released on the error path")
+	assert.Nil(t, stablePtr, "the stable buffer is released here, not handed to the caller")
+
+	// The same shape must also fail open through the public path rather than drop.
+	s, newErr := New([]byte(`{"keepTagRules":[{"tagKey":"db.statement","exists":true}]}`), segmentSchema)
+	require.NoError(t, newErr)
+	batch := &sdk.TraceBatch{Traces: []sdk.TraceBlock{{
+		TraceID: "malformed-after-escaped",
+		Tags:    []sdk.TagColumn{*col},
+	}}}
+	verdict, decideErr := s.Decide(batch)
+	require.NoError(t, decideErr)
+	assert.Equal(t, []bool{true}, verdict.Keep, "a decode error must fail open (keep), never drop")
+}
+
 // TestDecide_FailOpenOnDecodeError proves a malformed tag value keeps the trace
 // (fail open) rather than dropping it or erroring the whole batch: an is_error
 // column whose raw int64 is not 8 bytes fails to decode, and keepErrors keeps

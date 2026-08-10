@@ -908,22 +908,33 @@ func arrayEntries(col *sdk.TagColumn) (*[]string, *[]byte, error) {
 	// being copied, append allocates a fresh backing array; the pool then sees a
 	// larger buffer on release and the steady-state cap converges to the widest
 	// escaped row the schema produces.
+	// The stable buffer is acquired lazily too, and only an escaped row needs it.
 	var (
-		bufPtr *[]byte
-		buf    []byte
+		bufPtr    *[]byte
+		buf       []byte
+		stablePtr *[]byte
+		stable    []byte
 	)
+	// failed distinguishes the two owners of the stable buffer: on success the
+	// CALLER releases it (the returned strings still alias it), on failure this
+	// function does. Either way the grown slice header has to be written back
+	// first, or the pool takes back the pre-append header and the growth is lost
+	// — so both the persist and the release live here rather than at each of the
+	// error sites, where the persist was previously missed.
+	failed := false
 	defer func() {
 		if bufPtr != nil {
 			// Persist any growth so the next caller sees the wider cap.
 			*bufPtr = buf
 			releaseCopyBuf(bufPtr)
 		}
+		if stablePtr != nil {
+			*stablePtr = stable
+			if failed {
+				releaseStableBuf(stablePtr)
+			}
+		}
 	}()
-	// The stable buffer is acquired lazily too, and only an escaped row needs it.
-	var (
-		stablePtr *[]byte
-		stable    []byte
-	)
 	for row := range col.Values {
 		if col.Values[row] == nil {
 			continue
@@ -960,7 +971,7 @@ func arrayEntries(col *sdk.TagColumn) (*[]string, *[]byte, error) {
 					// Same condition, and the same message, that
 					// UnmarshalVarArray reports for an unterminated entry.
 					releaseEntries(out)
-					releaseStableBuf(stablePtr)
+					failed = true
 					return nil, nil, fmt.Errorf("str array: %w", errInvalidVarArray)
 				}
 				*out = append(*out, convert.BytesToString(raw[idx:idx+rel]))
@@ -994,7 +1005,7 @@ func arrayEntries(col *sdk.TagColumn) (*[]string, *[]byte, error) {
 			end, next, err := vararray.UnmarshalVarArray(buf, idx)
 			if err != nil {
 				releaseEntries(out)
-				releaseStableBuf(stablePtr)
+				failed = true
 				return nil, nil, fmt.Errorf("str array: %w", err)
 			}
 			start := len(stable)
@@ -1003,12 +1014,8 @@ func arrayEntries(col *sdk.TagColumn) (*[]string, *[]byte, error) {
 			idx = next
 		}
 	}
-	// Persist any growth so the next caller sees the wider cap; without this the
-	// growth would be lost when the local was reassigned only via append. Both
-	// pointers stay nil when no row carried an escape, which is the common case.
-	if stablePtr != nil {
-		*stablePtr = stable
-	}
+	// Both pointers stay nil when no row carried an escape, which is the common
+	// case; the deferred block above persists whatever growth did happen.
 	return out, stablePtr, nil
 }
 
