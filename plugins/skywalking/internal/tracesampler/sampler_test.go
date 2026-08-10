@@ -1121,3 +1121,58 @@ func TestHasSlowTrace_NullCells(t *testing.T) {
 		assert.True(t, slow, "min start comes from the duration-less row, so the envelope is ~601ms")
 	})
 }
+
+// TestHasSlowTrace_RaggedColumns pins the bounds discipline that the fast scalar
+// reader depends on. scalarInt64 does not bounds-check — that is the point, since
+// TagColumn.At's check is part of what it avoids — so hasSlowTrace must never
+// index past the shorter of the two columns.
+//
+// A ragged block is malformed input, not a programming error, so the outcome has
+// to be a verdict rather than a panic: it must fail open like any other
+// can't-tell. Losing the clamp would turn that into a panic inside a merge.
+func TestHasSlowTrace_RaggedColumns(t *testing.T) {
+	s, err := New([]byte(`{"durationThresholdMs":500}`), segmentSchema)
+	require.NoError(t, err)
+	sampler := s.(*Sampler)
+
+	ragged := func(starts, durations [][]byte) *sdk.TraceBlock {
+		return &sdk.TraceBlock{
+			TraceID: "ragged",
+			Tags: []sdk.TagColumn{
+				{Name: "start_time", ValueType: valuetype.ValueTypeTimestamp, Values: starts},
+				{Name: "latency", ValueType: valuetype.ValueTypeInt64, Values: durations},
+			},
+		}
+	}
+	three := [][]byte{convert.Int64ToBytes(1), convert.Int64ToBytes(2), convert.Int64ToBytes(3)}
+	one := [][]byte{convert.Int64ToBytes(1)}
+
+	for _, tc := range []struct {
+		name      string
+		starts    [][]byte
+		durations [][]byte
+	}{
+		{"more starts than durations", three, one},
+		{"more durations than starts", one, three},
+		{"no durations at all", three, nil},
+		{"no starts at all", nil, three},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.NotPanics(t, func() {
+				_, _ = sampler.hasSlowTrace(ragged(tc.starts, tc.durations))
+			}, "a ragged block must produce a verdict, not an index panic")
+		})
+	}
+
+	// Through the public entry point: clamping to zero rows leaves the envelope
+	// unmeasurable, which is a can't-tell and must fail open.
+	noOverlap, decideErr := sampler.Decide(&sdk.TraceBatch{Traces: []sdk.TraceBlock{*ragged(three, nil)}})
+	require.NoError(t, decideErr)
+	assert.Equal(t, []bool{true}, noOverlap.Keep, "no row carries both edges, so the envelope is unmeasurable and fails open")
+
+	// Where the clamp still leaves a complete row, the verdict is real rather than
+	// fail-open: that row's envelope is 1ms, far below the 500ms threshold.
+	measurable, measurableErr := sampler.Decide(&sdk.TraceBatch{Traces: []sdk.TraceBlock{*ragged(three, one)}})
+	require.NoError(t, measurableErr)
+	assert.Equal(t, []bool{false}, measurable.Keep, "a clamped-but-complete row still yields a genuine not-slow verdict")
+}

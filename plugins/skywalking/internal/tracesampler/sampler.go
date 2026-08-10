@@ -691,6 +691,13 @@ var errNoDurationEnvelope = errors.New("no row carries both a start-time and a d
 //
 // Callers must have checked col.ValueType themselves; see the narrow-gating note
 // at each call site for why the type check cannot simply be hoisted.
+//
+// PRECONDITION: row must be in range. Unlike TagColumn.At this does NOT
+// bounds-check — an out-of-range row panics rather than returning an error. Both
+// callers guarantee it, one by clamping to the shorter of the two columns and
+// the other by ranging over the column it reads; TestHasSlowTrace_RaggedColumns
+// pins the clamp, because losing it would turn a malformed block into a panic
+// inside a merge rather than a fail-open keep.
 func scalarInt64(col *sdk.TagColumn, row int, typeName string) (int64, bool, error) {
 	raw := col.Values[row]
 	if raw == nil {
