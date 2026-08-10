@@ -432,6 +432,16 @@ On the array paths the remaining cost is the delimiter scan itself plus the stri
 decode overhead that used to dominate here was removed by the escape-free path (`tagRulesOnly` 68.4 → 24.4 µs per
 3000-trace batch, -64%).
 
+**Why the remaining gap is not closable inside the plugin.** Go's `internal` rule makes the two halves mutually
+unreachable: `plugins/skywalking/internal/tracesampler` is importable only from `plugins/skywalking/**`, and the fixture
+that holds the seed (`banyand/internal/benchmark/tracefixture`, plus the catalog parser in `.../sourcecatalog`) only
+from `banyand/**`. The framework side sidesteps this because `EvaluateSampler` takes the sampler as an `sdk.Sampler`
+and reads `pluginPath` only for a checksum — it never imports the plugin. A plugin-local benchmark has no such escape.
+Closing this therefore needs either a committed golden fixture under the plugin's `testdata/` (exported once from the
+real capture, at the cost of drifting from the seed) or making the loader reachable outside `banyand/internal` (a
+framework change). Both are out of scope for the plugin-local workstream, so the item stays open deliberately rather
+than being closed on synthetic data.
+
 **Remaining gap (why this phase is not closed).** The hard invariant requires plugins to be measured "against
 representative complete-trace batches from the mature seed". These benchmarks build their batches synthetically in
 `benchBatch`/`benchEntries` — realistic in SHAPE (production tag keys, both first-party configs, complete traces) but
