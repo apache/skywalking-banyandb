@@ -139,9 +139,19 @@ var _ = g.Describe("Schema time-range clamp", func() {
 		g.By("Querying with Begin in the far past and End in the near future")
 		epoch := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 		now := time.Now()
-		resp, queryErr := sendStreamQueryWithRange(ctx, clients.StreamWriteClient, groupName, streamName,
-			epoch, now.Add(time.Hour), streamRev)
-		gm.Expect(queryErr).ShouldNot(gm.HaveOccurred(),
+		// In distributed mode the newly created group's topology can still race the
+		// query fan-out even after AwaitRevision/AwaitApplied confirm the schema
+		// cache — the data node transiently reports "group not found". Retry until
+		// the query resolves, mirroring the multi-group retry below. Retrying only
+		// on error is safe: a genuine clamp regression surfaces as a non-empty
+		// successful response, which the assertion below still catches.
+		var resp *streamv1.QueryResponse
+		gm.Eventually(func() error {
+			var queryErr error
+			resp, queryErr = sendStreamQueryWithRange(ctx, clients.StreamWriteClient, groupName, streamName,
+				epoch, now.Add(time.Hour), streamRev)
+			return queryErr
+		}, 10*time.Second, 200*time.Millisecond).ShouldNot(gm.HaveOccurred(),
 			"query spanning schema CreatedAt must succeed after Begin is clamped")
 		// No data was written; expect zero elements (not an error).
 		gm.Expect(resp.GetElements()).Should(gm.BeEmpty(),
