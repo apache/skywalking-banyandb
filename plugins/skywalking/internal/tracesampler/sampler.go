@@ -1160,18 +1160,32 @@ func (s *Sampler) hasErrorColumn(b *sdk.TraceBlock) (bool, error) {
 // two cannot drift apart.
 func matchEntries(entries []string, r *rule) bool {
 	prefix := r.prefix
+	if prefix == "" {
+		// A rule naming the array column itself matches the whole entry, so there
+		// is no prefix to strip and no bare-key case distinct from it.
+		for _, entry := range entries {
+			if r.Exists || matchValue(r, entry) {
+				return true
+			}
+		}
+		return false
+	}
+	// Most entries belong to some other tag, so the common outcome is rejection.
+	// Reject on length and first byte before HasPrefix's memequal call. The bare-key
+	// test must stay ahead of that guard: prefix is TagKey+"=", so a bare key is one
+	// byte too short and the length check would skip it.
+	first, plen := prefix[0], len(prefix)
 	for _, entry := range entries {
 		if r.Exists && entry == r.TagKey {
 			return true
 		}
-		candidate := entry
-		if prefix != "" {
-			if !strings.HasPrefix(entry, prefix) {
-				continue
-			}
-			candidate = entry[len(prefix):]
+		if len(entry) < plen || entry[0] != first {
+			continue
 		}
-		if r.Exists || matchValue(r, candidate) {
+		if !strings.HasPrefix(entry, prefix) {
+			continue
+		}
+		if r.Exists || matchValue(r, entry[plen:]) {
 			return true
 		}
 	}
