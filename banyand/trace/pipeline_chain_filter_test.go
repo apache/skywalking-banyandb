@@ -451,7 +451,8 @@ func TestInMergeFilter_Instant_Standalone(t *testing.T) {
 // chunked path yields the same drop/keep outcome as a single-batch flush and
 // keeps each surviving trace's span payload intact across chunk boundaries,
 // guarding the per-chunk deep-copy lifetime, the ascending-order write
-// requirement, and the cross-chunk droppedSet that drives sidx pruning.
+// requirement, and the cross-chunk exact dropped-ID collector that drives SIDX
+// pruning.
 func TestInMergeFilter_ChunkedStaging_TinyBudget(t *testing.T) {
 	// Force a 1-byte staging budget so a chunk flushes at every trace boundary
 	// (one trace per chunk) — the maximal-churn case. testStageBudgetOverride is

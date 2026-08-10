@@ -343,17 +343,71 @@ filtering and secondary-index pruning costs reported separately.
 
 **Exit gate.**
 
-- [ ] Duplication between per-batch mature-drop set and merge-wide dropped-ID set removed.
-- [ ] Each dropped trace ID stored once.
-- [ ] Compact exact lookup representation for secondary-index pruning evaluated and selected.
-- [ ] Bounded drop-set storage reused between batches.
-- [ ] Guard confirmation objects constructed only when plugin proposes a drop.
-- [ ] Sweep at 1% / 35% / 99% deletion ratios completed; fixed cost and nonlinear behavior documented.
+- [x] Duplication between per-batch mature-drop set and merge-wide dropped-ID set removed.
+- [x] Each dropped trace ID stored once.
+- [x] Compact exact lookup representation for secondary-index pruning evaluated and selected.
+- [x] Bounded drop-set storage reused between batches.
+- [x] Guard confirmation objects constructed only when plugin proposes a drop.
+- [x] Sweep at 1% / 35% / 99% deletion ratios completed; fixed cost and nonlinear behavior documented.
 
 **Dependencies.** Phase 4, Phase 5.
 
 **Boundary rationale.** Different workload characteristic from retain-all. The original plan explicitly defers this
 until retain-all overhead is controlled; honoring that deferral keeps the comparison meaningful.
+
+**Implementation.** An effective decision mask now replaces the temporary per-batch drop map. A confirmed drop is
+appended directly to one merge-wide collector, while a guard-deferred proposal is changed to retain in the same mask.
+The sorted staged groups and sorted decision trace IDs are then walked together, eliminating a second lookup during core
+output. The collector records each trace ID once in core merge order and is acquired lazily on the first confirmed drop.
+Its ID and lookup storage is returned after SIDX publication to a 4 MiB aggregate-bounded BanyanDB internal pool; this is
+a reuse bound, not a limit on a live merge. Oversized collectors remain correct and are discarded instead of pooled.
+
+SIDX pruning lazily builds an open-addressed exact index over the collected IDs. Each slot stores a 32-bit hash
+fingerprint and an ID-vector offset, but a fingerprint match is always followed by an exact byte comparison. Therefore a
+collision cannot authorize deletion. Unknown or malformed encodings fail open. The predicate compares encoded bytes
+without constructing a string per SIDX row. The fragment guard is still entered only for a plugin-proposed drop, and
+only a confirmed guard decision reaches the collector.
+
+**Exact-lookup evaluation.** A five-sample microbenchmark used 33,353 service-prefixed IDs and 33,353 lookups per
+operation. All candidates performed zero measured allocations during lookup. Median times were:
+
+| Deletion ratio | Go map | Sorted slice | Selected compact hash |
+| ---: | ---: | ---: | ---: |
+| 1% | 0.707 ms | 2.581 ms | 1.136 ms |
+| 35% | 1.271 ms | 5.973 ms | 1.711 ms |
+| 99% | 1.443 ms | 8.923 ms | 2.492 ms |
+
+The Go map is the fastest isolated lookup, but it has bucket overhead and previously participated in duplicate
+per-batch and merge-wide storage. The sorted vector has the smallest auxiliary representation but is 2.3-3.6 times
+slower than the compact hash. The compact hash was selected because it keeps one ordered ID vector, uses packed slots,
+preserves exactness, and its full-merge results below reduce both CPU and allocation cost. Evidence is in
+`.scratch/trace-pipeline-merge-performance/phase6-drop-set-benchmark-v2.txt`.
+
+**Controlled deletion sweep.** Before and after results are medians of five fresh two-CPU, 4 GiB Docker processes over
+the immutable 15-part mature selection. The 1%, 35%, and 99% configurations produced 325, 11,778, and 33,032 effective
+drops; the fragment guard deferred 0, 1, and 12 plugin proposals respectively. Every run matched the exact core,
+`latency`, and `start_time` oracles.
+
+| Effective deletion | Wall | CPU | Allocated bytes | Allocations | Peak heap | SIDX time |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.974% | -1.21% | -1.96% | -4.60% | -8.40% | -2.91% | -3.78% |
+| 35.313% | -0.72% | -0.61% | -4.68% | -9.64% | -1.13% | -4.30% |
+| 99.038% | -2.81% | -2.11% | -7.75% | -13.48% | -7.40% | -3.43% |
+
+Peak RSS changed by -3.17%, +2.86%, and +6.77%; unlike peak heap, this process-level high-water mark did not track the
+drop-set live storage and is not credited as an improvement. One low wall-time outlier made the after 1% wall-time
+coefficient of variation 8.17%, and a low baseline outlier made the before 35% coefficient 7.59%; the resource and
+correctness conclusions do not depend on those timing samples. Baseline and optimized reports are in
+`.scratch/trace-pipeline-merge-performance/phase6-before-v1` and
+`.scratch/trace-pipeline-merge-performance/phase6-after-v1`.
+
+The fixed component is the 294,252 SIDX predicate invocations across two indexes: removing the escaping decode string
+eliminated approximately 294,000 allocations at every ratio. The nonlinear components are the collector/index size and
+probe cost, which grow with confirmed drops, while core and SIDX output writes shrink as more traces are removed. No
+pathological growth appeared at 99%: allocated bytes and wall/CPU time were lowest there. A final one-run diagnostic
+reported core versus combined SIDX elapsed time as 2,207.5/401.7 ms at 1%, 2,138.1/374.0 ms at 35%, and
+1,936.0/206.5 ms at 99%. Its reports are in
+`.scratch/trace-pipeline-merge-performance/phase6-breakdown-v1`.
 
 ---
 

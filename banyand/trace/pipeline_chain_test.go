@@ -194,6 +194,14 @@ func mergeWithFilter(t *testing.T, parts []*traces, filter *mergeFilter) ([]stri
 
 	pm, tf, tagTypes, dropped, err := mergeBlocks(closeCh, bw, br, nil, filter)
 	require.NoError(t, err)
+	var droppedSet map[string]struct{}
+	if dropped != nil {
+		droppedSet = make(map[string]struct{}, dropped.len())
+		for _, traceID := range dropped.ids {
+			droppedSet[traceID] = struct{}{}
+		}
+		releaseDroppedTraceIDs(dropped)
+	}
 	releaseBlockWriter(bw)
 	releaseBlockReader(br)
 	for _, iter := range pmi {
@@ -217,7 +225,7 @@ func mergeWithFilter(t *testing.T, parts []*traces, filter *mergeFilter) ([]stri
 	require.NoError(t, reader.error())
 	releaseBlockReader(reader)
 	releasePartMergeIter(mergedIter)
-	return got, dropped
+	return got, droppedSet
 }
 
 func singleTraceParts(ids []string) []*traces {
@@ -706,7 +714,9 @@ func TestTimedOutProjectionBatchNeverRecyclesArena(t *testing.T) {
 	assembled, valid := assembleStagedEvaluationBatch(filter, staged, groups)
 	require.True(t, valid)
 
-	_, reusable := resolveStagedDrops(filter, staged, assembled)
+	var dropped *droppedTraceIDs
+	_, reusable := resolveStagedDrops(filter, staged, assembled, &dropped)
+	require.Nil(t, dropped)
 	require.False(t, reusable)
 	<-sampler.entered
 	require.False(t, releaseStagedEvaluationVectors(assembled.vectors, reusable))
@@ -985,9 +995,9 @@ func (s *sleepSampler) Decide(batch *sdk.TraceBatch) (sdk.Verdict, error) {
 }
 
 func TestMergeFilter_CoupledSidxPrune(t *testing.T) {
-	// Verify the keepFn constructed from dropped set (as merger.go does) correctly
-	// filters sidx-encoded data: retained traces pass, dropped trace is filtered,
-	// corrupt data is fail-open.
+	// Verify the compact exact lookup used by the merger filters SIDX-encoded
+	// data: retained traces pass, dropped traces are filtered, and corrupt data
+	// fails open.
 	filter := &mergeFilter{
 		chain:   newTestChain(map[string]struct{}{"traceB": {}}),
 		timeout: time.Second,
@@ -995,18 +1005,10 @@ func TestMergeFilter_CoupledSidxPrune(t *testing.T) {
 	_, dropped := mergeWithFilter(t, singleTraceParts([]string{"traceA", "traceB", "traceC"}), filter)
 	require.Contains(t, dropped, "traceB")
 
-	var keepFn func([]byte) bool
-	if len(dropped) > 0 {
-		keepFn = func(data []byte) bool {
-			id, decErr := decodeTraceID(data)
-			if decErr != nil {
-				return true
-			}
-			_, isDropped := dropped[id]
-			return !isDropped
-		}
-	}
-	require.NotNil(t, keepFn)
+	exactDropped := acquireDroppedTraceIDs()
+	t.Cleanup(func() { releaseDroppedTraceIDs(exactDropped) })
+	exactDropped.add("traceB")
+	keepFn := exactDropped.keepEncoded
 
 	encodeID := func(id string) []byte { return append([]byte{byte(idFormatV1)}, []byte(id)...) }
 

@@ -823,29 +823,25 @@ func (tst *tsTable) mergePartsThenIntroduceAttempt(creator snapshotCreator, part
 	if err != nil {
 		return mergeAttemptResult{}, err
 	}
+	defer releaseDroppedTraceIDs(dropped)
 	if operation != nil {
 		newPart.mergeDepth = operation.event.OutputDepth
 	}
 	elapsed := time.Since(start)
+	if operation != nil {
+		operation.event.CoreElapsedNanos = elapsed.Nanoseconds()
+	}
 	tst.observeCoreMerge(parts, newPart, elapsed, creator, typ, lane)
 	partIDMap := make(map[uint64]struct{})
 	for _, pw := range parts {
 		partIDMap[pw.ID()] = struct{}{}
 	}
-	// When the core merge dropped any trace, prune the same trace ids from every
-	// sibling sidx part via an opaque per-element predicate. The trace layer owns
-	// the encoding (decodeTraceID); sidx stays encoding-agnostic. Undecodable
-	// elements fail open (retain).
+	// When the core merge dropped any trace, prune the same trace IDs from every
+	// sibling SIDX part via an opaque per-element predicate. The trace layer owns
+	// the encoding; SIDX stays encoding-agnostic. Undecodable elements fail open.
 	var keepFn func([]byte) bool
-	if len(dropped) > 0 {
-		keepFn = func(data []byte) bool {
-			id, decErr := decodeTraceID(data)
-			if decErr != nil {
-				return true
-			}
-			_, isDropped := dropped[id]
-			return !isDropped
-		}
+	if dropped.len() > 0 {
+		keepFn = dropped.keepEncoded
 	}
 	mergerIntroductionMap := make(map[string]*sidx.MergerIntroduction)
 	sidxInstances := tst.getAllSidx()
@@ -927,7 +923,7 @@ func (tst *tsTable) mergePartsThenIntroduceAttempt(creator snapshotCreator, part
 
 	var revalidation traceFragmentGuardRevalidation
 	hasRevalidation := false
-	if len(dropped) > 0 && filter != nil && filter.guard != nil {
+	if dropped.len() > 0 && filter != nil && filter.guard != nil {
 		revalidation = filter.guard.revalidate(tst)
 		hasRevalidation = true
 		tst.incPipelineGuardBloomProbes(revalidation.BloomProbes)
@@ -1091,7 +1087,7 @@ func (tst *tsTable) removeSidxPartOnFailure(sidxName string, partID uint64) {
 
 func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*partWrapper, partID uint64, root string,
 	filter *mergeFilter, finalizeGenOverride *uint64,
-) (*partWrapper, map[string]struct{}, error) {
+) (*partWrapper, *droppedTraceIDs, error) {
 	if len(parts) == 0 {
 		return nil, nil, errNoPartToMerge
 	}
@@ -1142,6 +1138,12 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	}
 
 	pm, tf, tt, dropped, err := mergeBlocks(closeCh, bw, br, conflictTags, filter)
+	droppedTransferred := false
+	defer func() {
+		if !droppedTransferred {
+			releaseDroppedTraceIDs(dropped)
+		}
+	}()
 	releaseBlockWriter(bw)
 	releaseBlockReader(br)
 	for i := range pii {
@@ -1178,6 +1180,7 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	// metadata write covers all prior dirent changes (data file creations).
 	p := mustOpenFilePart(partID, root, fileSystem)
 	outputPublished = true
+	droppedTransferred = true
 	return newPartWrapper(nil, p), dropped, nil
 }
 
@@ -1916,7 +1919,9 @@ func assembleStagedEvaluationBatch(filter *mergeFilter, staged []stagedTrace, gr
 	return assembledBatch, true
 }
 
-func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatch stagedEvaluationBatch) (map[string]struct{}, bool) {
+func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatch stagedEvaluationBatch,
+	droppedSet **droppedTraceIDs,
+) ([]bool, bool) {
 	if len(assembledBatch.vectors.traceBlocks) == 0 {
 		return nil, true
 	}
@@ -1937,7 +1942,6 @@ func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatc
 	if filter.owner != nil {
 		filter.owner.incPipelineTracesEvaluated(len(assembledBatch.vectors.traceIDs))
 	}
-	var dropMature map[string]struct{}
 	for traceIdx, traceID := range assembledBatch.vectors.traceIDs {
 		if keepMask[traceIdx] {
 			if filter.observation != nil {
@@ -1949,10 +1953,7 @@ func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatc
 			continue
 		}
 		if filter.guard == nil {
-			if dropMature == nil {
-				dropMature = make(map[string]struct{})
-			}
-			dropMature[traceID] = struct{}{}
+			recordDroppedTraceID(droppedSet, traceID)
 			if filter.observation != nil {
 				filter.observation.dropped.Add(1)
 			}
@@ -1971,10 +1972,7 @@ func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatc
 			filter.owner.incPipelineGuardBloomProbes(decision.BloomProbes)
 		}
 		if decision.Action == traceFragmentGuardActionDrop && decision.ConfirmedDrop != nil {
-			if dropMature == nil {
-				dropMature = make(map[string]struct{})
-			}
-			dropMature[traceID] = struct{}{}
+			recordDroppedTraceID(droppedSet, traceID)
 			if filter.observation != nil {
 				filter.observation.dropped.Add(1)
 			}
@@ -1994,14 +1992,15 @@ func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatc
 			filter.observation.recordGuardDeferred(decision.Reason)
 			filter.observation.retained.Add(1)
 		}
+		keepMask[traceIdx] = true
 	}
-	return dropMature, reusable
+	return keepMask, reusable
 }
 
 // flushStaged evaluates staged traces and writes them in ascending trace-ID order.
 // Chain failures retain the whole batch, and allocated slow blocks are released.
 func flushStaged(bw *blockWriter, filter *mergeFilter, staged []stagedTrace, groups []stagedTraceGroup, validBatch bool,
-	droppedSet map[string]struct{},
+	droppedSet **droppedTraceIDs,
 ) {
 	if len(staged) == 0 {
 		return
@@ -2009,18 +2008,26 @@ func flushStaged(bw *blockWriter, filter *mergeFilter, staged []stagedTrace, gro
 	// Build one Decide entry per trace ID. A trace split across physical blocks is
 	// assembled completely, decided once, and dropped as a unit.
 	assembledBatch, validOrder := assembleStagedEvaluationBatch(filter, staged, groups)
-	var dropMature map[string]struct{}
+	var effectiveKeepMask []bool
 	reusable := true
 	if validBatch && validOrder {
-		dropMature, reusable = resolveStagedDrops(filter, staged, assembledBatch)
+		effectiveKeepMask, reusable = resolveStagedDrops(filter, staged, assembledBatch, droppedSet)
 	}
-	for i := range staged {
-		if _, isDropped := dropMature[staged[i].traceID]; isDropped {
-			droppedSet[staged[i].traceID] = struct{}{}
-		} else {
-			writeStagedKeep(bw, &staged[i])
+	decisionIdx := 0
+	for groupIdx := range groups {
+		group := &groups[groupIdx]
+		keep := true
+		if validBatch && validOrder && decisionIdx < len(assembledBatch.vectors.traceIDs) &&
+			group.traceID == assembledBatch.vectors.traceIDs[decisionIdx] {
+			keep = len(effectiveKeepMask) == 0 || effectiveKeepMask[decisionIdx]
+			decisionIdx++
 		}
-		releaseStagedTrace(&staged[i])
+		for stagedIdx := group.start; stagedIdx < group.end; stagedIdx++ {
+			if keep {
+				writeStagedKeep(bw, &staged[stagedIdx])
+			}
+			releaseStagedTrace(&staged[stagedIdx])
+		}
 	}
 	if validOrder {
 		releaseStagedEvaluationVectors(assembledBatch.vectors, reusable)
@@ -2043,7 +2050,7 @@ func rawFastPathEligible(filter *mergeFilter, nextB, b *blockPointer) bool {
 type traceEvaluationStager struct {
 	bw                *blockWriter
 	filter            *mergeFilter
-	droppedSet        map[string]struct{}
+	droppedSet        *droppedTraceIDs
 	traceBuffer       *stagedTraceBuffer
 	groupBuffer       *stagedTraceGroupBuffer
 	lastStagedTraceID string
@@ -2084,6 +2091,8 @@ func (tes *traceEvaluationStager) releaseBuffers() {
 		tes.groupBuffer.values = tes.groups
 		releaseStagedTraceGroupBuffer(tes.groupBuffer)
 	}
+	releaseDroppedTraceIDs(tes.droppedSet)
+	tes.droppedSet = nil
 	tes.traceBuffer = nil
 	tes.groupBuffer = nil
 	tes.staged = nil
@@ -2097,7 +2106,7 @@ func (tes *traceEvaluationStager) flush(reason mergeStagingFlushReason) {
 	if tes.filter.observation != nil {
 		tes.filter.observation.recordStagingBatch(reason, tes.stagedBytes, uint64(len(tes.groups)))
 	}
-	flushStaged(tes.bw, tes.filter, tes.staged, tes.groups, !tes.invalidOrder && !tes.invalidMetadata, tes.droppedSet)
+	flushStaged(tes.bw, tes.filter, tes.staged, tes.groups, !tes.invalidOrder && !tes.invalidMetadata, &tes.droppedSet)
 	clear(tes.staged)
 	tes.staged = tes.staged[:0]
 	clear(tes.groups)
@@ -2200,7 +2209,7 @@ func (tes *traceEvaluationStager) stage(st stagedTrace) {
 			tes.filter.observation.recordStagingBatch(mergeStagingFlushOversizedTrace, prefixBytes, uint64(len(tes.groups)-1))
 		}
 		flushStaged(tes.bw, tes.filter, tes.staged[:tes.currentTraceStart], tes.groups[:len(tes.groups)-1],
-			!tes.invalidOrder && !tes.invalidMetadata, tes.droppedSet)
+			!tes.invalidOrder && !tes.invalidMetadata, &tes.droppedSet)
 	}
 	tes.writeBypassed(tes.staged[tes.currentTraceStart:])
 	tes.bypassedTraceID = st.traceID
@@ -2265,7 +2274,7 @@ func (tes *traceEvaluationStager) batchBudgetReached() bool {
 
 func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conflictTags map[string]struct{},
 	filter *mergeFilter,
-) (*partMetadata, *traceIDFilter, *tagType, map[string]struct{}, error) {
+) (*partMetadata, *traceIDFilter, *tagType, *droppedTraceIDs, error) {
 	pendingBlockIsEmpty := true
 	pendingBlock := generateBlockPointer()
 	defer releaseBlockPointer(pendingBlock)
@@ -2292,14 +2301,11 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 		br.mustReadRaw(&rawBlk, bm)
 		renameRawConflictTags(&rawBlk, conflictTags)
 	}
-	var droppedSet map[string]struct{}
 	var evaluationStager *traceEvaluationStager
 	if filter != nil {
-		droppedSet = make(map[string]struct{})
 		evaluationStager = &traceEvaluationStager{
-			bw:         bw,
-			filter:     filter,
-			droppedSet: droppedSet,
+			bw:     bw,
+			filter: filter,
 		}
 		defer evaluationStager.releaseBuffers()
 	}
@@ -2426,8 +2432,10 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 	var tf traceIDFilter
 	tt := make(tagType)
 	bw.Flush(&pm, &tf, &tt)
-	if len(droppedSet) == 0 {
-		droppedSet = nil
+	var droppedSet *droppedTraceIDs
+	if evaluationStager != nil {
+		droppedSet = evaluationStager.droppedSet
+		evaluationStager.droppedSet = nil
 	}
 	return &pm, &tf, &tt, droppedSet, nil
 }

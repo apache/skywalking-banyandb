@@ -211,6 +211,7 @@ type mergeBenchmarkEvent struct {
 	StagingBatches        []mergeBenchmarkStagingBatch `json:"stagingBatches,omitempty"`
 	GuardDeferred         map[string]uint64            `json:"guardDeferred,omitempty"`
 	Resources             mergeBenchmarkResources      `json:"resources"`
+	CoreElapsedNanos      int64                        `json:"coreElapsedNanos"`
 	OutputRows            uint64                       `json:"outputRows"`
 	TracesEvaluated       uint64                       `json:"tracesEvaluated"`
 	InputBytes            uint64                       `json:"inputBytes"`
