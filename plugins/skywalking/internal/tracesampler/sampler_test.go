@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/pkg/encoding/vararray"
 	"github.com/apache/skywalking-banyandb/pkg/pb/v1/valuetype"
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk/sdktest"
@@ -716,6 +717,155 @@ func TestDecide_HealthySampleRate(t *testing.T) {
 	require.NoError(t, e)
 	verdict, _ := sdktest.Run(none, sdktest.Batch(block))
 	assert.Equal(t, []bool{false}, verdict.Keep)
+}
+
+// TestArrayEntries_LeavesBlockBytesIntact pins the precondition that lets
+// arrayEntries alias the block's own bytes instead of copying every row: the
+// decode must leave col.Values byte-identical.
+//
+// An escape-free row is decoded in place and the entries alias it, which is only
+// sound because UnmarshalVarArray does not write when there is no escape to
+// remove. An escaped row is still copied first, because that decode DOES write.
+// If either half regresses, the engine hands the SAME batch to every link of a
+// chain, so a later rule would read rewritten bytes and its verdict would depend
+// on its position in the chain — silent and data-dependent.
+//
+// The mixed column is deliberate: the choice is per row, not per column.
+func TestArrayEntries_LeavesBlockBytesIntact(t *testing.T) {
+	rows := [][]string{
+		{"db.type=PostgreSQL", "http.method=GET"}, // escape-free
+		{`db.statement=SELECT a|b`, `url=C:\tmp`}, // both bytes needing an escape
+		{"plain"}, // escape-free, single entry
+	}
+	col := &sdk.TagColumn{Name: "tags", ValueType: valuetype.ValueTypeStrArr}
+	for _, entries := range rows {
+		var encoded []byte
+		for _, e := range entries {
+			encoded = vararray.MarshalVarArray(encoded, []byte(e))
+		}
+		col.Values = append(col.Values, encoded)
+	}
+	before := make([][]byte, len(col.Values))
+	for i, v := range col.Values {
+		before[i] = append([]byte(nil), v...)
+	}
+
+	entriesPtr, stablePtr, err := arrayEntries(col)
+	require.NoError(t, err)
+	defer releaseEntries(entriesPtr)
+	defer releaseStableBuf(stablePtr)
+
+	assert.Equal(t, []string{
+		"db.type=PostgreSQL", "http.method=GET",
+		`db.statement=SELECT a|b`, `url=C:\tmp`,
+		"plain",
+	}, *entriesPtr, "every row's entries must decode, escaped or not")
+
+	for i := range col.Values {
+		assert.Equal(t, before[i], col.Values[i],
+			"row %d was rewritten; a later chain link would read corrupted bytes", i)
+	}
+}
+
+// TestArrayEntries_SplitPathMatchesCodec pins the one place the sampler assumes
+// the var-array encoding. The escape-free branch splits on the delimiter itself
+// instead of calling UnmarshalVarArray, to skip that function's redundant
+// per-entry escape scan. It must therefore agree with the codec exactly — same
+// entries, same error — on every row shape, or a rule's verdict would depend on
+// which branch decoded the row.
+func TestArrayEntries_SplitPathMatchesCodec(t *testing.T) {
+	rows := []struct {
+		name    string
+		encoded []byte
+	}{
+		{"empty", nil},
+		{"single entry", []byte("abc|")},
+		{"two entries", []byte("a|b|")},
+		{"empty entry first", []byte("|a|")},
+		{"empty entry last", []byte("a||")},
+		{"all empty entries", []byte("|||")},
+		{"unterminated", []byte("abc")},
+		{"unterminated after a good entry", []byte("a|bc")},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			// Reference: decode via the codec, which is what the escaped branch does.
+			var (
+				want    []string
+				wantErr error
+			)
+			ref := append([]byte(nil), row.encoded...)
+			for idx := 0; idx < len(ref); {
+				end, next, err := vararray.UnmarshalVarArray(ref, idx)
+				if err != nil {
+					wantErr = err
+					break
+				}
+				want = append(want, string(ref[idx:end]))
+				idx = next
+			}
+
+			col := &sdk.TagColumn{
+				Name: "tags", ValueType: valuetype.ValueTypeStrArr,
+				Values: [][]byte{append([]byte(nil), row.encoded...)},
+			}
+			got, stablePtr, err := arrayEntries(col)
+
+			if wantErr != nil {
+				require.Error(t, err, "codec rejected this row, so the split path must too")
+				assert.Contains(t, err.Error(), wantErr.Error(), "both paths must report the same condition")
+				return
+			}
+			require.NoError(t, err)
+			defer releaseEntries(got)
+			defer releaseStableBuf(stablePtr)
+			// Compared by content: a row yielding nothing gives the codec a nil
+			// slice and arrayEntries a zero-length pooled one, which is the same
+			// value to every caller (matchEntries iterates the length).
+			if len(want) == 0 {
+				assert.Empty(t, *got)
+				return
+			}
+			assert.Equal(t, want, *got)
+		})
+	}
+}
+
+// TestArrayEntries_ErrorAfterGrownStableBuffer drives the error path in the state
+// that makes buffer bookkeeping easy to get wrong: an escaped row has already
+// appended to (and possibly reallocated) the stable buffer when a later row turns
+// out to be malformed, so the local slice header has diverged from the pooled one
+// and must be written back before the buffer is released.
+//
+// The assertions here only pin the observable contract — the error surfaces and
+// nothing panics or double-releases. That the grown header is persisted is
+// structural: the persist and the release both live in one deferred block, so an
+// error site cannot skip it.
+func TestArrayEntries_ErrorAfterGrownStableBuffer(t *testing.T) {
+	escaped := vararray.MarshalVarArray(nil, []byte(`db.statement=SELECT a|b`))
+	col := &sdk.TagColumn{
+		Name: "tags", ValueType: valuetype.ValueTypeStrArr,
+		Values: [][]byte{
+			escaped,                // grows the stable buffer
+			[]byte("unterminated"), // no trailing delimiter -> error
+		},
+	}
+	got, stablePtr, err := arrayEntries(col)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid variable array")
+	assert.Nil(t, got, "the entries slice is released on the error path")
+	assert.Nil(t, stablePtr, "the stable buffer is released here, not handed to the caller")
+
+	// The same shape must also fail open through the public path rather than drop.
+	s, newErr := New([]byte(`{"keepTagRules":[{"tagKey":"db.statement","exists":true}]}`), segmentSchema)
+	require.NoError(t, newErr)
+	batch := &sdk.TraceBatch{Traces: []sdk.TraceBlock{{
+		TraceID: "malformed-after-escaped",
+		Tags:    []sdk.TagColumn{*col},
+	}}}
+	verdict, decideErr := s.Decide(batch)
+	require.NoError(t, decideErr)
+	assert.Equal(t, []bool{true}, verdict.Keep, "a decode error must fail open (keep), never drop")
 }
 
 // TestDecide_FailOpenOnDecodeError proves a malformed tag value keeps the trace
