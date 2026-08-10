@@ -676,6 +676,32 @@ var errNoDurationEnvelope = errors.New("no row carries both a start-time and a d
 // from DurationTag (scaled to ns by DurationTagNanosPerUnit). This is the true
 // trace duration — it catches traces slow only through sequential segments —
 // and reads two cheap tag columns, never the span bodies.
+// scalarInt64 reads one cell of an 8-byte-encoded column WITHOUT materializing
+// the sdk.Value that TagColumn.At returns. That value is 112 bytes and is
+// returned by value, so reading a column per row through At cost more in
+// runtime.duffcopy than in decoding: 54.4% of the duration path, 37.5% of the
+// dedicated-error path, and 22.3% of the full realistic scenario.
+//
+// It reproduces sdk.DecodeTagValue's contract exactly, including the error text,
+// because a malformed cell must keep failing open with the same message the
+// engine would have logged:
+//
+//	nil cell        -> (0, false, nil)   — null, the caller skips the row
+//	non-8-byte cell -> (0, false, error) — malformed
+//
+// Callers must have checked col.ValueType themselves; see the narrow-gating note
+// at each call site for why the type check cannot simply be hoisted.
+func scalarInt64(col *sdk.TagColumn, row int, typeName string) (int64, bool, error) {
+	raw := col.Values[row]
+	if raw == nil {
+		return 0, false, nil
+	}
+	if len(raw) != 8 {
+		return 0, false, fmt.Errorf("%s: expected 8 bytes, got %d", typeName, len(raw))
+	}
+	return convert.BytesToInt64(raw), true, nil
+}
+
 func (s *Sampler) hasSlowTrace(b *sdk.TraceBlock) (bool, error) {
 	startCol := b.Tag(s.startTimeTag)
 	durCol := b.Tag(s.durationTag)
@@ -686,9 +712,41 @@ func (s *Sampler) hasSlowTrace(b *sdk.TraceBlock) (bool, error) {
 	if len(startCol.Values) < rows {
 		rows = len(startCol.Values)
 	}
+	// The fast path is gated NARROWLY on both columns carrying exactly the type
+	// this rule accepts, rather than hoisting the per-row type checks below out
+	// of the loop. The checks look hoistable — ValueType is a property of the
+	// COLUMN, not the row — but a wrong-typed column can still hold a malformed
+	// cell that DecodeTagValue rejects on length (Float64 and Timestamp are both
+	// 8-byte-checked), and that error currently propagates. Skipping such a row
+	// on type alone would swallow it. Anything not matching both expected types
+	// keeps the original At-based loop, so every edge case stays bit-identical.
+	fastScalars := startCol.ValueType == valuetype.ValueTypeTimestamp && durCol.ValueType == valuetype.ValueTypeInt64
 	var minStart, maxEnd int64
 	haveStart, haveEnd := false, false
 	for row := 0; row < rows; row++ {
+		if fastScalars {
+			start, startOK, startErr := scalarInt64(startCol, row, "timestamp")
+			if startErr != nil {
+				return false, startErr
+			}
+			dur, durOK, durErr := scalarInt64(durCol, row, "int64")
+			if durErr != nil {
+				return false, durErr
+			}
+			if !startOK {
+				continue
+			}
+			if !haveStart || start < minStart {
+				minStart, haveStart = start, true
+			}
+			if !durOK {
+				continue
+			}
+			if end := start + dur*s.durationTagNanosPerUnit; !haveEnd || end > maxEnd {
+				maxEnd, haveEnd = end, true
+			}
+			continue
+		}
 		sv, sErr := startCol.At(row)
 		if sErr != nil {
 			return false, sErr
@@ -1036,6 +1094,36 @@ func (s *Sampler) hasErrorColumn(b *sdk.TraceBlock) (bool, error) {
 	col := b.Tag(s.errorTag)
 	if col == nil {
 		return false, errNoErrorColumn
+	}
+	// Both fast paths are gated on the column's exact type, for the same reason
+	// as hasSlowTrace: only a type this rule actually reads may skip At.
+	switch col.ValueType {
+	case valuetype.ValueTypeInt64:
+		for row := range col.Values {
+			v, ok, err := scalarInt64(col, row, "int64")
+			if err != nil {
+				return false, err
+			}
+			if ok && v != 0 {
+				return true, nil
+			}
+		}
+		return false, nil
+	case valuetype.ValueTypeStr:
+		// DecodeTagValue would allocate a string per row via string(raw) purely
+		// to compare it against two literals. Aliasing the bytes compares the
+		// same characters with no allocation; the strings never outlive the loop.
+		for row := range col.Values {
+			raw := col.Values[row]
+			if raw == nil {
+				continue
+			}
+			if str := convert.BytesToString(raw); str == "true" || str == "1" {
+				return true, nil
+			}
+		}
+		return false, nil
+	default:
 	}
 	for row := range col.Values {
 		v, err := col.At(row)

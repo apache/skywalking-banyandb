@@ -20,11 +20,13 @@
 package tracesampler
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding/vararray"
 	"github.com/apache/skywalking-banyandb/pkg/pb/v1/valuetype"
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
@@ -913,4 +915,86 @@ func TestDecide_MissingTagArrayColumn(t *testing.T) {
 	require.NoError(t, report.Err)
 	assert.Equal(t, []bool{false, false}, verdict.Keep,
 		"missing/empty tag arrays must not crash and must drop (no rule matches)")
+}
+
+// TestScalarInt64_MatchesDecodeTagValue is the oracle for the fast scalar reader.
+// scalarInt64 exists to avoid materializing sdk.Value, so it must agree with the
+// SDK decode it replaces on every cell shape — value, null-ness, AND error text,
+// since a malformed cell fails open and the message is what gets logged.
+func TestScalarInt64_MatchesDecodeTagValue(t *testing.T) {
+	cells := [][]byte{
+		nil,
+		{},
+		{0x01},
+		make([]byte, 7),
+		convert.Int64ToBytes(0),
+		convert.Int64ToBytes(1),
+		convert.Int64ToBytes(-1),
+		convert.Int64ToBytes(1 << 62),
+		make([]byte, 9),
+	}
+	for _, vt := range []struct {
+		typeName string
+		valueTyp valuetype.ValueType
+	}{
+		{"int64", valuetype.ValueTypeInt64},
+		{"timestamp", valuetype.ValueTypeTimestamp},
+	} {
+		for i, cell := range cells {
+			t.Run(fmt.Sprintf("%s/cell=%d", vt.typeName, i), func(t *testing.T) {
+				col := &sdk.TagColumn{Name: "c", ValueType: vt.valueTyp, Values: [][]byte{cell}}
+
+				wantVal, wantErr := col.At(0)
+				gotVal, gotOK, gotErr := scalarInt64(col, 0, vt.typeName)
+
+				if wantErr != nil {
+					require.Error(t, gotErr, "SDK rejected this cell, so the fast reader must too")
+					assert.Equal(t, wantErr.Error(), gotErr.Error(), "error text must match: it is logged verbatim")
+					return
+				}
+				require.NoError(t, gotErr)
+				assert.Equal(t, !wantVal.IsNull(), gotOK, "null-ness must match")
+				if !wantVal.IsNull() {
+					assert.Equal(t, wantVal.Int64(), gotVal)
+				}
+			})
+		}
+	}
+}
+
+// TestHasSlowTrace_TypeMismatchKeepsSlowPath pins the narrow gating. The per-row
+// type checks look hoistable — ValueType is a column property — but a wrong-typed
+// column can still hold a cell that DecodeTagValue rejects on length, and that
+// error must keep propagating rather than being skipped as "wrong type".
+func TestHasSlowTrace_TypeMismatchKeepsSlowPath(t *testing.T) {
+	s, err := New([]byte(`{"durationThresholdMs":500}`), segmentSchema)
+	require.NoError(t, err)
+	sampler := s.(*Sampler)
+
+	block := func(startType, durType valuetype.ValueType, startCell, durCell []byte) *sdk.TraceBlock {
+		return &sdk.TraceBlock{
+			TraceID: "t",
+			Tags: []sdk.TagColumn{
+				{Name: "start_time", ValueType: startType, Values: [][]byte{startCell}},
+				{Name: "latency", ValueType: durType, Values: [][]byte{durCell}},
+			},
+		}
+	}
+	good := convert.Int64ToBytes(1)
+
+	t.Run("malformed cell in a float-typed start column still errors", func(t *testing.T) {
+		_, slowErr := sampler.hasSlowTrace(block(valuetype.ValueTypeFloat64, valuetype.ValueTypeInt64, []byte{0x01}, good))
+		require.Error(t, slowErr, "a length-checked wrong type must not be silently skipped")
+		assert.Contains(t, slowErr.Error(), "float64: expected 8 bytes")
+	})
+
+	t.Run("well-formed float start column is a can't-tell, not slow", func(t *testing.T) {
+		_, slowErr := sampler.hasSlowTrace(block(valuetype.ValueTypeFloat64, valuetype.ValueTypeInt64, make([]byte, 8), good))
+		assert.ErrorIs(t, slowErr, errNoDurationEnvelope, "a non-timestamp start carries no unit, so it cannot bound the envelope")
+	})
+
+	t.Run("str-typed duration column bounds only the left edge", func(t *testing.T) {
+		_, slowErr := sampler.hasSlowTrace(block(valuetype.ValueTypeTimestamp, valuetype.ValueTypeStr, good, []byte("nope")))
+		assert.ErrorIs(t, slowErr, errNoDurationEnvelope, "a start with no usable duration leaves the right edge unknown")
+	})
 }
