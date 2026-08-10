@@ -95,10 +95,21 @@ func TestEvaluateChainIntoSingleSamplerBypassCallsOnce(t *testing.T) {
 	require.Equal(t, 1, sampler.calls)
 }
 
+type reusableChainBenchmarkSampler struct {
+	keep []bool
+}
+
+func (rcbs *reusableChainBenchmarkSampler) Kind() sdk.Kind          { return sdk.KindSampler }
+func (rcbs *reusableChainBenchmarkSampler) Project() sdk.Projection { return sdk.Projection{} }
+func (rcbs *reusableChainBenchmarkSampler) Close() error            { return nil }
+func (rcbs *reusableChainBenchmarkSampler) Decide(*sdk.TraceBatch) (sdk.Verdict, error) {
+	return sdk.Verdict{Keep: rcbs.keep}, nil
+}
+
 func BenchmarkEvaluateChainIntoSingleSampler(b *testing.B) {
 	const traceCount = 512
 	batch := &sdk.TraceBatch{Traces: make([]sdk.TraceBlock, traceCount)}
-	sampler := &chainFakeSampler{}
+	sampler := &reusableChainBenchmarkSampler{keep: make([]bool, traceCount)}
 	mask := make([]bool, traceCount)
 	b.ReportAllocs()
 	for range b.N {
