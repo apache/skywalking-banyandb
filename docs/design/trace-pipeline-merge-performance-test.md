@@ -129,6 +129,56 @@ That run was a framework and adaptive-budget validation, not the SkyWalking resu
 MERGE-plus-FINALIZE pilot is recorded below. Repeated processes are still required before drawing timing-regression
 conclusions; single runs prove integration and correctness rather than stable performance deltas.
 
+### Final Phase 1 and Phase 4 Acceptance
+
+The final controlled measurement suite is
+`.scratch/trace-pipeline-merge-performance/phase1-phase4-final-2c4g-v1/suite.json`; its diagram-first HTML report is in
+the same directory as `report.html`. The suite identifies source commit `7f685a1d`, source-patch SHA-256
+`6164eb5146b350a90c4d1beba153e31e534cd9ceedf8f3b5a48a32adcc7b7a0f`, benchmark binary SHA-256
+`76fbfec2817b338ed42ae125a6e3b57f6b75a7c101a006772922c768413b8fae`, fixture SHA-256
+`8c9289bed26d7696a44b4937c5670b2709707b03904cf9de3241d279d4081438`, and schedule SHA-256
+`f7b651db0fe965362696139d19bc9ec452269868bba236e3e3b5615830652bcd`.
+
+All five serialized disabled runs and all ten controlled alternating runs passed. The environment was the canonical
+two-CPU, 4 GiB Docker envelope with data CPU set `0-1`, `GOMAXPROCS=2`, swap disabled, a separate controller cgroup, one
+shard, and complete image, kernel, filesystem, storage-device, clone-method, plugin, and binary identities. Each
+controlled run captured pre-dispatch and post-introduction heap, allocation, block, and mutex profiles plus a controlled
+CPU profile. No required profile or environment field was missing.
+
+The controlled results are:
+
+| Variant | Wall median | Wall CV | CPU median | CPU CV | Allocated median | Allocations median | Peak heap median | Peak RSS median |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Disabled | 7.312 s | 0.729% | 7.340 s | 0.782% | 203,043,568 B | 2,811,223 | 83,148,744 B | 125,186,048 B |
+| Retain-all | 6.640 s | 1.220% | 6.778 s | 0.592% | 278,189,568 B | 3,200,466 | 118,567,352 B | 172,855,296 B |
+
+Both series are stable enough to expose resource deltas. Retain-all remains 37.01% higher in allocated bytes, 13.85%
+higher in allocation count, 42.60% higher in peak heap, and 38.08% higher in peak RSS than the current disabled mode.
+The lower retain-all wall and CPU medians are not claimed as a speedup: filesystem work remains a confounding component,
+and this benchmark credits only attributable structural and resource changes.
+
+Against the opening retain-all medians, the final series reduced allocated bytes by 20.62%, allocation count by 17.45%,
+peak heap by 36.09%, and peak RSS by 9.94%. The original 50% allocation goals and 30% RSS goal were not met; the 30% heap
+goal was met. This is a quantified target disposition, not a reweighted pass. The remaining cold payload ownership,
+projection/decode, writer, and common merge work is assigned to the later projection and common-I/O phases.
+
+The exact-current-commit full-day retain-all report is
+`.scratch/trace-pipeline-merge-performance/phase4-final-2c4g-v2/pilot/report.json` at commit `742c2dc8`. It published
+all 3,219 writes, reproduced 286 ordinary MERGE rounds, and then completed one cooled FINALIZE. Ordinary input selections
+ranged from 8 to 15 parts, 8 to 147,126 rows, and 5,631 to 36,948,453 compressed bytes; 281 of the 286 selections had
+distinct byte sizes. All ordinary rounds contained hot input and made no sampler call. The cooled round selected 20
+mature parts, evaluated and retained all 74,576 complete traces and 325,570 rows in ten calls, and reconciled the core,
+`latency`, and `start_time` ledgers with zero drops, oversized bypasses, or lossless retries.
+
+The cooled selection's 190,169,855-byte metadata estimate retained the resource-derived 268,435,456-byte hard ceiling.
+The adaptive planner chose a 31,694,976-byte preferred decision limit and six planned batches. Runtime charging totaled
+307,138,095 bytes across decisions and peaked at 31,698,325 simultaneously staged bytes. This naturally triggers
+preferred byte-limit batching while demonstrating that the hard ceiling is not approached for this production-shaped
+day. Primary wall/CPU time was 96.27/55.68 seconds with 963,196,888 allocated bytes. Cooldown wall/CPU time was
+15.04/15.14 seconds with 480,141,576 allocated bytes. Cgroup peak memory was 296,116,224 bytes, or 6.9% of the 4 GiB
+container limit, and logical write amplification was 0.9639. Primary and cooldown CPU, heap, allocation, block, and mutex
+profiles are stored separately beside the report.
+
 ### Dropping-Output Oracle and Selectivity Matrix
 
 Dropping variants no longer reuse the lossless ledger gate. Before the measured data-node process starts, a separate
