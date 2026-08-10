@@ -256,19 +256,37 @@ must not weaken publication-time revalidation.
 
 **Exit gate.**
 
-- [ ] Sampler-wrapper slice built once per batch (or per worker) rather than per batch.
-- [ ] Chain conjunction mask reused within bounded lifetime.
-- [ ] Single retain mask for single-sampler chains.
-- [ ] Reusable decision worker (or empirical evidence that the current goroutine/channel/timer pattern is cheaper)
+- [x] Sampler-wrapper slice built once per batch (or per worker) rather than per batch.
+- [x] Chain conjunction mask reused within bounded lifetime.
+- [x] Single retain mask for single-sampler chains.
+- [x] Reusable decision worker (or empirical evidence that the current goroutine/channel/timer pattern is cheaper)
   selected.
-- [ ] Fragment-guard ranges stored in compact integers; bounded guard-range vectors pooled; drop-specific probe state
+- [x] Fragment-guard ranges stored in compact integers; bounded guard-range vectors pooled; drop-specific probe state
   allocated lazily.
-- [ ] AlwaysKeep verification: with no fragment-guard confirmations, no throughput regression.
+- [x] AlwaysKeep verification: with no fragment-guard confirmations, no throughput regression.
 
 **Dependencies.** Phase 3.
 
 **Boundary rationale.** Lower priority than raw staging because the opening controlled round only makes two plugin
 calls. Following Phase 3 keeps the structural changes from masking any decision-path gains.
+
+**Implementation and measurement note.** The chain now filters and stores its active samplers once, records observation
+metrics without constructing per-batch wrappers, and lets a single-sampler chain copy its verdict directly into the
+pooled decision mask. Healthy decisions reuse one worker and timer for the merge lifetime. A timeout abandons that worker
+and its caller-owned storage rather than risking reuse while plugin code may still read it, preserving fail-open ownership
+and circuit-breaker behavior. Fragment-guard trace ranges remain compact pooled integer pairs, while their block scratch
+is populated lazily only for plugin-proposed drops and is retained only within the existing bounded staging-vector pool.
+
+The focused 512-trace benchmarks reduced `BenchmarkMergeChainRunObserved` from approximately 613 ns/op, 48 B/op, and
+2 allocs/op to 539-617 ns/op, 0 B/op, and 0 allocs/op. `BenchmarkMergeChainExecuteObserved` fell from approximately
+2.24-2.36 us/op, 496 B/op, and 8 allocs/op to 1.80-1.87 us/op, 0 B/op, and 0 allocs/op.
+
+Five fresh two-CPU, 4 GiB Docker runs used the frozen 15-part mature selection and AlwaysKeep plugin. Every run made five
+plugin calls, evaluated and retained 33,353 traces, wrote 147,126 rows, and preserved the core and two secondary-index
+ledgers. Against the preceding adaptive-batch acceptance medians, wall time changed by +2.97%, CPU time by +2.34%,
+allocated bytes by -4.10%, allocation count by +0.009%, peak heap by -1.93%, and peak RSS by +3.61%. Wall-time and CPU
+coefficients of variation remained below 1.6%. The full-merge result therefore shows no regression beyond the 5%
+tolerance; only the focused measurements are credited as a decision-path improvement.
 
 ---
 

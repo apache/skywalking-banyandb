@@ -86,6 +86,19 @@ func EvaluateChainInto(samplers []Sampler, batch *TraceBatch, mask []bool, onByp
 	} else {
 		mask = mask[:len(batch.Traces)]
 	}
+	if len(samplers) == 1 {
+		if samplers[0] != nil {
+			verdict, valid := evaluateChainLink(0, samplers[0], batch, onBypass)
+			if valid {
+				copy(mask, verdict.Keep)
+				return Verdict{Keep: mask}
+			}
+		}
+		for traceIdx := range mask {
+			mask[traceIdx] = true
+		}
+		return Verdict{Keep: mask}
+	}
 	for i := range mask {
 		mask[i] = true
 	}
@@ -102,6 +115,16 @@ func EvaluateChainInto(samplers []Sampler, batch *TraceBatch, mask []bool, onByp
 // into mask. On panic, error, or length mismatch the link is bypassed (mask
 // unchanged) and onBypass, if non-nil, is invoked with the classified reason.
 func applyChainLink(idx int, sampler Sampler, batch *TraceBatch, mask []bool, onBypass func(idx int, info BypassInfo)) {
+	verdict, valid := evaluateChainLink(idx, sampler, batch, onBypass)
+	if !valid {
+		return
+	}
+	for i := range mask {
+		mask[i] = mask[i] && verdict.Keep[i]
+	}
+}
+
+func evaluateChainLink(idx int, sampler Sampler, batch *TraceBatch, onBypass func(idx int, info BypassInfo)) (Verdict, bool) {
 	var (
 		verdict   Verdict
 		decErr    error
@@ -124,15 +147,13 @@ func applyChainLink(idx int, sampler Sampler, batch *TraceBatch, mask []bool, on
 			}
 			onBypass(idx, BypassInfo{Reason: reason, Err: decErr})
 		}
-		return
+		return Verdict{}, false
 	}
 	if len(verdict.Keep) != len(batch.Traces) {
 		if onBypass != nil {
 			onBypass(idx, BypassInfo{Reason: BypassReasonLengthMismatch, Got: len(verdict.Keep), Want: len(batch.Traces)})
 		}
-		return
+		return Verdict{}, false
 	}
-	for i := range mask {
-		mask[i] = mask[i] && verdict.Keep[i]
-	}
+	return verdict, true
 }
