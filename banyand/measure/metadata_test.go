@@ -508,14 +508,27 @@ var _ = Describe("Schema Change", func() {
 		It("querying data should return correct values after parts with different types are merged", func() {
 			measureName := "schema_change_tag_type_merge"
 			now := timestamp.NowMilli()
+			// Both batches have to land in the same segment. A merge only ever combines
+			// parts within one segment, and sw_metric uses a 1-day segment aligned to
+			// local midnight, so a run starting within two hours of midnight would put
+			// the -2h batch in yesterday's segment and the -1h batch in today's. The
+			// part count could then never drop and the merge wait below would burn its
+			// whole budget waiting for a merge that is not possible. When that little of
+			// the day has elapsed, compress both offsets into it, preserving their order;
+			// they stay well inside the -3h query window used further down.
+			firstOffset, secondOffset := 2*time.Hour, time.Hour
+			midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+			if elapsed := now.Sub(midnight); elapsed <= firstOffset {
+				firstOffset, secondOffset = elapsed/2, elapsed/4
+			}
 
 			env := setupSchemaChangeMeasure(svcs, measureName, measureSetupOptions{withExtraTag: true})
-			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-2*time.Hour), 5,
+			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-firstOffset), 5,
 				measureWriteDataOptions{withExtraTag: true})
 			filePartCountAfterFirstBatch, filePartCountErr := getMeasureFilePartCount(svcs, groupName)
 			Expect(filePartCountErr).ShouldNot(HaveOccurred())
 			changeExtraMeasureTagType(svcs, measureName)
-			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-1*time.Hour), 3,
+			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-secondOffset), 3,
 				measureWriteDataOptions{withExtraTagString: true, entityIDPrefix: "entity_new_"})
 			// Wait for the second batch to flush to disk, creating additional
 			// file parts that the merge loop can pick up. Without this gate the
@@ -531,13 +544,12 @@ var _ = Describe("Schema Change", func() {
 			// The background merge runs asynchronously; under the full parallel -race
 			// suite on CI its goroutine competes for CPU and snapshot locks with every
 			// other test. Poll on a relaxed interval (rather than Gomega's ~10ms
-			// default) so this wait does not starve the merge it is waiting for, with a
-			// generous, environment-scaled budget for merge latency. The post-merge
-			// part count is stable (no further writes), so slow polling never misses it.
-			// The previous 10* budget occasionally timed out under recent CI runners
-			// where the merger goroutine is starved by the rest of the suite; raise to
-			// 20* so the budget accommodates that contention without changing the
-			// intent of the assertion.
+			// default) so this wait does not starve the merge it is waiting for. The
+			// post-merge part count is stable (no further writes), so slow polling
+			// never misses it. The budget was raised twice (to 10*, then 20*) chasing
+			// timeouts blamed on merger starvation; the real cause was the batches
+			// straddling the day-segment boundary, fixed by the offsets computed above,
+			// which no budget could have cured. It stays generous purely as margin.
 			Eventually(func(innerGm Gomega) int64 {
 				currentPartCount, currentPartCountErr := getTotalMeasurePartCount(svcs, groupName)
 				innerGm.Expect(currentPartCountErr).ShouldNot(HaveOccurred())
