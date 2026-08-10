@@ -249,6 +249,9 @@ func controlledSeriesStability(runs []ControlledMergeRunReport) controlledStabil
 				retainAllWall = append(retainAllWall, wallNanos)
 				retainAllCPU = append(retainAllCPU, cpuNanos)
 			}
+		case ControlledMergePipelineDeterministicDrop:
+			// The deletion matrix is diagnostic and does not contribute to the
+			// disabled-versus-retain-all stability gate.
 		}
 	}
 	return controlledStability{

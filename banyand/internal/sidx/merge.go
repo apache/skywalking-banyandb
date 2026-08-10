@@ -169,18 +169,17 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 			decoder = nil
 		}
 	}
-	loadAndRename := func() {
+	loadAndRename := func() bool {
 		br.loadBlockData(getDecoder())
 		renameConflictTags(&br.block.block, conflictTags)
-	}
-	// writeBlock applies the optional keep predicate before persisting; when keep
-	// is nil it writes the block unchanged (lossless bulk path).
-	writeBlock := func(bp *blockPointer) {
 		if keep != nil {
-			filterBlockPointer(bp, keep)
-			if len(bp.userKeys) == 0 {
-				return
-			}
+			filterBlockPointer(br.block, keep)
+		}
+		return len(br.block.userKeys) > 0
+	}
+	writeBlock := func(bp *blockPointer) {
+		if len(bp.userKeys) == 0 {
+			return
 		}
 		bw.mustWriteBlock(bp.bm.seriesID, &bp.block)
 	}
@@ -193,7 +192,9 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 		b := br.block
 
 		if pendingBlockIsEmpty {
-			loadAndRename()
+			if !loadAndRename() {
+				continue
+			}
 			pendingBlock.copyFrom(b)
 			pendingBlockIsEmpty = false
 			continue
@@ -204,7 +205,11 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 			pendingBlock.block.uncompressedSizeBytes() >= maxUncompressedBlockSize {
 			writeBlock(pendingBlock)
 			releaseDecoder()
-			loadAndRename()
+			if !loadAndRename() {
+				pendingBlock.reset()
+				pendingBlockIsEmpty = true
+				continue
+			}
 			pendingBlock.copyFrom(b)
 			continue
 		}
@@ -215,7 +220,9 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 		}
 		tmpBlock.reset()
 		tmpBlock.bm.seriesID = b.bm.seriesID
-		loadAndRename()
+		if !loadAndRename() {
+			continue
+		}
 		mergeTwoBlocks(tmpBlock, pendingBlock, b)
 		if len(tmpBlock.userKeys) <= maxBlockLength && tmpBlock.block.uncompressedSizeBytes() <= maxUncompressedBlockSize {
 			if len(tmpBlock.userKeys) == 0 {
@@ -250,29 +257,29 @@ func filterBlockPointer(bp *blockPointer, keep func([]byte) bool) {
 	if n == 0 {
 		return
 	}
-	w := 0
-	for r := 0; r < n; r++ {
-		if !keep(bp.data[r]) {
+	var filtered *blockPointer
+	retainedStart := 0
+	for rowIdx := range n {
+		if keep(bp.data[rowIdx]) {
 			continue
 		}
-		if w != r {
-			bp.userKeys[w] = bp.userKeys[r]
-			bp.data[w] = bp.data[r]
-			for _, td := range bp.tags {
-				td.values[w] = td.values[r]
-			}
+		if filtered == nil {
+			filtered = generateBlockPointer()
+			filtered.bm.copyFrom(&bp.bm)
 		}
-		w++
+		bp.idx = retainedStart
+		filtered.append(bp, rowIdx)
+		retainedStart = rowIdx + 1
 	}
-	if w == n {
+	if filtered == nil {
 		return
 	}
-	bp.userKeys = bp.userKeys[:w]
-	bp.data = bp.data[:w]
-	for _, td := range bp.tags {
-		td.values = td.values[:w]
-	}
-	bp.updateMetadata()
+	bp.idx = retainedStart
+	filtered.append(bp, n)
+	filtered.bm.count = uint64(len(filtered.userKeys))
+	filtered.updateMetadata()
+	*bp, *filtered = *filtered, *bp
+	releaseBlockPointer(filtered)
 }
 
 func collectConflictTags(parts []*partWrapper) map[string]struct{} {
