@@ -20,11 +20,14 @@
 package tracesampler
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/encoding/vararray"
 	"github.com/apache/skywalking-banyandb/pkg/pb/v1/valuetype"
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk/sdktest"
@@ -718,6 +721,155 @@ func TestDecide_HealthySampleRate(t *testing.T) {
 	assert.Equal(t, []bool{false}, verdict.Keep)
 }
 
+// TestArrayEntries_LeavesBlockBytesIntact pins the precondition that lets
+// arrayEntries alias the block's own bytes instead of copying every row: the
+// decode must leave col.Values byte-identical.
+//
+// An escape-free row is decoded in place and the entries alias it, which is only
+// sound because UnmarshalVarArray does not write when there is no escape to
+// remove. An escaped row is still copied first, because that decode DOES write.
+// If either half regresses, the engine hands the SAME batch to every link of a
+// chain, so a later rule would read rewritten bytes and its verdict would depend
+// on its position in the chain — silent and data-dependent.
+//
+// The mixed column is deliberate: the choice is per row, not per column.
+func TestArrayEntries_LeavesBlockBytesIntact(t *testing.T) {
+	rows := [][]string{
+		{"db.type=PostgreSQL", "http.method=GET"}, // escape-free
+		{`db.statement=SELECT a|b`, `url=C:\tmp`}, // both bytes needing an escape
+		{"plain"}, // escape-free, single entry
+	}
+	col := &sdk.TagColumn{Name: "tags", ValueType: valuetype.ValueTypeStrArr}
+	for _, entries := range rows {
+		var encoded []byte
+		for _, e := range entries {
+			encoded = vararray.MarshalVarArray(encoded, []byte(e))
+		}
+		col.Values = append(col.Values, encoded)
+	}
+	before := make([][]byte, len(col.Values))
+	for i, v := range col.Values {
+		before[i] = append([]byte(nil), v...)
+	}
+
+	entriesPtr, stablePtr, err := arrayEntries(col)
+	require.NoError(t, err)
+	defer releaseEntries(entriesPtr)
+	defer releaseStableBuf(stablePtr)
+
+	assert.Equal(t, []string{
+		"db.type=PostgreSQL", "http.method=GET",
+		`db.statement=SELECT a|b`, `url=C:\tmp`,
+		"plain",
+	}, *entriesPtr, "every row's entries must decode, escaped or not")
+
+	for i := range col.Values {
+		assert.Equal(t, before[i], col.Values[i],
+			"row %d was rewritten; a later chain link would read corrupted bytes", i)
+	}
+}
+
+// TestArrayEntries_SplitPathMatchesCodec pins the one place the sampler assumes
+// the var-array encoding. The escape-free branch splits on the delimiter itself
+// instead of calling UnmarshalVarArray, to skip that function's redundant
+// per-entry escape scan. It must therefore agree with the codec exactly — same
+// entries, same error — on every row shape, or a rule's verdict would depend on
+// which branch decoded the row.
+func TestArrayEntries_SplitPathMatchesCodec(t *testing.T) {
+	rows := []struct {
+		name    string
+		encoded []byte
+	}{
+		{"empty", nil},
+		{"single entry", []byte("abc|")},
+		{"two entries", []byte("a|b|")},
+		{"empty entry first", []byte("|a|")},
+		{"empty entry last", []byte("a||")},
+		{"all empty entries", []byte("|||")},
+		{"unterminated", []byte("abc")},
+		{"unterminated after a good entry", []byte("a|bc")},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			// Reference: decode via the codec, which is what the escaped branch does.
+			var (
+				want    []string
+				wantErr error
+			)
+			ref := append([]byte(nil), row.encoded...)
+			for idx := 0; idx < len(ref); {
+				end, next, err := vararray.UnmarshalVarArray(ref, idx)
+				if err != nil {
+					wantErr = err
+					break
+				}
+				want = append(want, string(ref[idx:end]))
+				idx = next
+			}
+
+			col := &sdk.TagColumn{
+				Name: "tags", ValueType: valuetype.ValueTypeStrArr,
+				Values: [][]byte{append([]byte(nil), row.encoded...)},
+			}
+			got, stablePtr, err := arrayEntries(col)
+
+			if wantErr != nil {
+				require.Error(t, err, "codec rejected this row, so the split path must too")
+				assert.Contains(t, err.Error(), wantErr.Error(), "both paths must report the same condition")
+				return
+			}
+			require.NoError(t, err)
+			defer releaseEntries(got)
+			defer releaseStableBuf(stablePtr)
+			// Compared by content: a row yielding nothing gives the codec a nil
+			// slice and arrayEntries a zero-length pooled one, which is the same
+			// value to every caller (matchEntries iterates the length).
+			if len(want) == 0 {
+				assert.Empty(t, *got)
+				return
+			}
+			assert.Equal(t, want, *got)
+		})
+	}
+}
+
+// TestArrayEntries_ErrorAfterGrownStableBuffer drives the error path in the state
+// that makes buffer bookkeeping easy to get wrong: an escaped row has already
+// appended to (and possibly reallocated) the stable buffer when a later row turns
+// out to be malformed, so the local slice header has diverged from the pooled one
+// and must be written back before the buffer is released.
+//
+// The assertions here only pin the observable contract — the error surfaces and
+// nothing panics or double-releases. That the grown header is persisted is
+// structural: the persist and the release both live in one deferred block, so an
+// error site cannot skip it.
+func TestArrayEntries_ErrorAfterGrownStableBuffer(t *testing.T) {
+	escaped := vararray.MarshalVarArray(nil, []byte(`db.statement=SELECT a|b`))
+	col := &sdk.TagColumn{
+		Name: "tags", ValueType: valuetype.ValueTypeStrArr,
+		Values: [][]byte{
+			escaped,                // grows the stable buffer
+			[]byte("unterminated"), // no trailing delimiter -> error
+		},
+	}
+	got, stablePtr, err := arrayEntries(col)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid variable array")
+	assert.Nil(t, got, "the entries slice is released on the error path")
+	assert.Nil(t, stablePtr, "the stable buffer is released here, not handed to the caller")
+
+	// The same shape must also fail open through the public path rather than drop.
+	s, newErr := New([]byte(`{"keepTagRules":[{"tagKey":"db.statement","exists":true}]}`), segmentSchema)
+	require.NoError(t, newErr)
+	batch := &sdk.TraceBatch{Traces: []sdk.TraceBlock{{
+		TraceID: "malformed-after-escaped",
+		Tags:    []sdk.TagColumn{*col},
+	}}}
+	verdict, decideErr := s.Decide(batch)
+	require.NoError(t, decideErr)
+	assert.Equal(t, []bool{true}, verdict.Keep, "a decode error must fail open (keep), never drop")
+}
+
 // TestDecide_FailOpenOnDecodeError proves a malformed tag value keeps the trace
 // (fail open) rather than dropping it or erroring the whole batch: an is_error
 // column whose raw int64 is not 8 bytes fails to decode, and keepErrors keeps
@@ -763,4 +915,264 @@ func TestDecide_MissingTagArrayColumn(t *testing.T) {
 	require.NoError(t, report.Err)
 	assert.Equal(t, []bool{false, false}, verdict.Keep,
 		"missing/empty tag arrays must not crash and must drop (no rule matches)")
+}
+
+// TestScalarInt64_MatchesDecodeTagValue is the oracle for the fast scalar reader.
+// scalarInt64 exists to avoid materializing sdk.Value, so it must agree with the
+// SDK decode it replaces on every cell shape — value, null-ness, AND error text,
+// since a malformed cell fails open and the message is what gets logged.
+func TestScalarInt64_MatchesDecodeTagValue(t *testing.T) {
+	cells := [][]byte{
+		nil,
+		{},
+		{0x01},
+		make([]byte, 7),
+		convert.Int64ToBytes(0),
+		convert.Int64ToBytes(1),
+		convert.Int64ToBytes(-1),
+		convert.Int64ToBytes(1 << 62),
+		make([]byte, 9),
+	}
+	for _, vt := range []struct {
+		typeName string
+		valueTyp valuetype.ValueType
+	}{
+		{"int64", valuetype.ValueTypeInt64},
+		{"timestamp", valuetype.ValueTypeTimestamp},
+	} {
+		for i, cell := range cells {
+			t.Run(fmt.Sprintf("%s/cell=%d", vt.typeName, i), func(t *testing.T) {
+				col := &sdk.TagColumn{Name: "c", ValueType: vt.valueTyp, Values: [][]byte{cell}}
+
+				wantVal, wantErr := col.At(0)
+				gotVal, gotOK, gotErr := scalarInt64(col, 0, vt.typeName)
+
+				if wantErr != nil {
+					require.Error(t, gotErr, "SDK rejected this cell, so the fast reader must too")
+					assert.Equal(t, wantErr.Error(), gotErr.Error(), "error text must match: it is logged verbatim")
+					return
+				}
+				require.NoError(t, gotErr)
+				assert.Equal(t, !wantVal.IsNull(), gotOK, "null-ness must match")
+				if !wantVal.IsNull() {
+					assert.Equal(t, wantVal.Int64(), gotVal)
+				}
+			})
+		}
+	}
+}
+
+// TestHasSlowTrace_TypeMismatchKeepsSlowPath pins the narrow gating. The per-row
+// type checks look hoistable — ValueType is a column property — but a wrong-typed
+// column can still hold a cell that DecodeTagValue rejects on length, and that
+// error must keep propagating rather than being skipped as "wrong type".
+func TestHasSlowTrace_TypeMismatchKeepsSlowPath(t *testing.T) {
+	s, err := New([]byte(`{"durationThresholdMs":500}`), segmentSchema)
+	require.NoError(t, err)
+	sampler := s.(*Sampler)
+
+	block := func(startType, durType valuetype.ValueType, startCell, durCell []byte) *sdk.TraceBlock {
+		return &sdk.TraceBlock{
+			TraceID: "t",
+			Tags: []sdk.TagColumn{
+				{Name: "start_time", ValueType: startType, Values: [][]byte{startCell}},
+				{Name: "latency", ValueType: durType, Values: [][]byte{durCell}},
+			},
+		}
+	}
+	good := convert.Int64ToBytes(1)
+
+	t.Run("malformed cell in a float-typed start column still errors", func(t *testing.T) {
+		_, slowErr := sampler.hasSlowTrace(block(valuetype.ValueTypeFloat64, valuetype.ValueTypeInt64, []byte{0x01}, good))
+		require.Error(t, slowErr, "a length-checked wrong type must not be silently skipped")
+		assert.Contains(t, slowErr.Error(), "float64: expected 8 bytes")
+	})
+
+	t.Run("well-formed float start column is a can't-tell, not slow", func(t *testing.T) {
+		_, slowErr := sampler.hasSlowTrace(block(valuetype.ValueTypeFloat64, valuetype.ValueTypeInt64, make([]byte, 8), good))
+		assert.ErrorIs(t, slowErr, errNoDurationEnvelope, "a non-timestamp start carries no unit, so it cannot bound the envelope")
+	})
+
+	t.Run("str-typed duration column bounds only the left edge", func(t *testing.T) {
+		_, slowErr := sampler.hasSlowTrace(block(valuetype.ValueTypeTimestamp, valuetype.ValueTypeStr, good, []byte("nope")))
+		assert.ErrorIs(t, slowErr, errNoDurationEnvelope, "a start with no usable duration leaves the right edge unknown")
+	})
+}
+
+// TestHasErrorColumn_TypeCoverage covers all three branches the error-column
+// reader now has: the two fast paths for the types that actually carry an error
+// signal, and the At-based fallback for every other type.
+//
+// The fallback matters precisely because it is the one that can still surface a
+// decode error: Float64 and Timestamp are 8-byte-checked by DecodeTagValue, so a
+// malformed cell in such a column must keep failing open rather than being
+// skipped as "no error signal this schema understands".
+func TestHasErrorColumn_TypeCoverage(t *testing.T) {
+	s, err := New([]byte(`{"keepErrors":true,"healthySampleRate":0}`), segmentSchema)
+	require.NoError(t, err)
+	sampler := s.(*Sampler)
+
+	block := func(vt valuetype.ValueType, cells ...[]byte) *sdk.TraceBlock {
+		return &sdk.TraceBlock{
+			TraceID: "t",
+			Tags:    []sdk.TagColumn{{Name: "is_error", ValueType: vt, Values: cells}},
+		}
+	}
+
+	t.Run("int64 fast path", func(t *testing.T) {
+		hit, hitErr := sampler.hasErrorColumn(block(valuetype.ValueTypeInt64, convert.Int64ToBytes(0), convert.Int64ToBytes(1)))
+		require.NoError(t, hitErr)
+		assert.True(t, hit, "a non-zero int64 is an error")
+
+		none, noneErr := sampler.hasErrorColumn(block(valuetype.ValueTypeInt64, convert.Int64ToBytes(0), nil))
+		require.NoError(t, noneErr)
+		assert.False(t, none, "zero and null carry no error signal")
+	})
+
+	t.Run("str fast path", func(t *testing.T) {
+		for _, truthy := range []string{"true", "1"} {
+			hit, hitErr := sampler.hasErrorColumn(block(valuetype.ValueTypeStr, []byte(truthy)))
+			require.NoError(t, hitErr)
+			assert.True(t, hit, "%q is an error", truthy)
+		}
+		for _, falsy := range []string{"false", "0", "", "TRUE"} {
+			none, noneErr := sampler.hasErrorColumn(block(valuetype.ValueTypeStr, []byte(falsy)))
+			require.NoError(t, noneErr)
+			assert.False(t, none, "%q is not an error — the comparison is exact", falsy)
+		}
+		none, noneErr := sampler.hasErrorColumn(block(valuetype.ValueTypeStr, nil))
+		require.NoError(t, noneErr)
+		assert.False(t, none, "a null cell carries no error signal")
+	})
+
+	t.Run("fallback propagates a decode error", func(t *testing.T) {
+		_, errColErr := sampler.hasErrorColumn(block(valuetype.ValueTypeFloat64, []byte{0x01}))
+		require.Error(t, errColErr, "a malformed cell in a length-checked column must not be skipped as an unknown type")
+		assert.Contains(t, errColErr.Error(), "float64: expected 8 bytes")
+	})
+
+	t.Run("fallback reports no signal for a well-formed unknown type", func(t *testing.T) {
+		hit, hitErr := sampler.hasErrorColumn(block(valuetype.ValueTypeFloat64, make([]byte, 8)))
+		require.NoError(t, hitErr)
+		assert.False(t, hit, "no other type carries an error signal this schema understands")
+	})
+
+	t.Run("decode error in the fallback fails open through Decide", func(t *testing.T) {
+		verdict, decideErr := sampler.Decide(&sdk.TraceBatch{Traces: []sdk.TraceBlock{*block(valuetype.ValueTypeFloat64, []byte{0x01})}})
+		require.NoError(t, decideErr)
+		assert.Equal(t, []bool{true}, verdict.Keep, "a decode error must fail open (keep), never drop")
+	})
+}
+
+// TestHasSlowTrace_NullCells pins how null cells shape the duration envelope on
+// the fast scalar path. Both skips are load-bearing in a way that decides whether
+// a trace is KEPT or DROPPED:
+//
+//   - a null start must not contribute to minStart, or the envelope is measured
+//     from zero and every trace looks slow enough to keep;
+//   - a null duration must leave the right edge unknown, which is a can't-tell
+//     that fails open — treating it as a zero-length end instead reports "not
+//     slow" and drops the trace.
+func TestHasSlowTrace_NullCells(t *testing.T) {
+	s, err := New([]byte(`{"durationThresholdMs":500}`), segmentSchema)
+	require.NoError(t, err)
+	sampler := s.(*Sampler)
+
+	// segmentSchema scales latency by 1e6 (milliseconds -> nanoseconds).
+	const sixHundredMillisInNanos = 600 * 1_000_000
+	rows := func(starts, durations [][]byte) *sdk.TraceBlock {
+		return &sdk.TraceBlock{
+			TraceID: "t",
+			Tags: []sdk.TagColumn{
+				{Name: "start_time", ValueType: valuetype.ValueTypeTimestamp, Values: starts},
+				{Name: "latency", ValueType: valuetype.ValueTypeInt64, Values: durations},
+			},
+		}
+	}
+
+	t.Run("null start does not drag minStart to zero", func(t *testing.T) {
+		// One null row and one real row 600ms in. Counting the null row's start as
+		// 0 would measure a 600ms envelope and call the trace slow.
+		slow, slowErr := sampler.hasSlowTrace(rows(
+			[][]byte{nil, convert.Int64ToBytes(sixHundredMillisInNanos)},
+			[][]byte{nil, convert.Int64ToBytes(1)},
+		))
+		require.NoError(t, slowErr)
+		assert.False(t, slow, "the envelope spans only the rows that carry a start, so it is 1ms, not 600ms")
+	})
+
+	t.Run("null duration leaves the right edge unknown", func(t *testing.T) {
+		_, slowErr := sampler.hasSlowTrace(rows(
+			[][]byte{convert.Int64ToBytes(sixHundredMillisInNanos)},
+			[][]byte{nil},
+		))
+		assert.ErrorIs(t, slowErr, errNoDurationEnvelope,
+			"a start with no duration cannot bound the end; that is a can't-tell, which fails open")
+	})
+
+	t.Run("a start without duration still bounds the left edge", func(t *testing.T) {
+		// Row 0 carries only a start, 600ms before row 1's start+duration. The
+		// envelope must span from row 0's start, making the trace slow.
+		slow, slowErr := sampler.hasSlowTrace(rows(
+			[][]byte{convert.Int64ToBytes(0), convert.Int64ToBytes(sixHundredMillisInNanos)},
+			[][]byte{nil, convert.Int64ToBytes(1)},
+		))
+		require.NoError(t, slowErr)
+		assert.True(t, slow, "min start comes from the duration-less row, so the envelope is ~601ms")
+	})
+}
+
+// TestHasSlowTrace_RaggedColumns pins the bounds discipline that the fast scalar
+// reader depends on. scalarInt64 does not bounds-check — that is the point, since
+// TagColumn.At's check is part of what it avoids — so hasSlowTrace must never
+// index past the shorter of the two columns.
+//
+// A ragged block is malformed input, not a programming error, so the outcome has
+// to be a verdict rather than a panic: it must fail open like any other
+// can't-tell. Losing the clamp would turn that into a panic inside a merge.
+func TestHasSlowTrace_RaggedColumns(t *testing.T) {
+	s, err := New([]byte(`{"durationThresholdMs":500}`), segmentSchema)
+	require.NoError(t, err)
+	sampler := s.(*Sampler)
+
+	ragged := func(starts, durations [][]byte) *sdk.TraceBlock {
+		return &sdk.TraceBlock{
+			TraceID: "ragged",
+			Tags: []sdk.TagColumn{
+				{Name: "start_time", ValueType: valuetype.ValueTypeTimestamp, Values: starts},
+				{Name: "latency", ValueType: valuetype.ValueTypeInt64, Values: durations},
+			},
+		}
+	}
+	three := [][]byte{convert.Int64ToBytes(1), convert.Int64ToBytes(2), convert.Int64ToBytes(3)}
+	one := [][]byte{convert.Int64ToBytes(1)}
+
+	for _, tc := range []struct {
+		name      string
+		starts    [][]byte
+		durations [][]byte
+	}{
+		{"more starts than durations", three, one},
+		{"more durations than starts", one, three},
+		{"no durations at all", three, nil},
+		{"no starts at all", nil, three},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.NotPanics(t, func() {
+				_, _ = sampler.hasSlowTrace(ragged(tc.starts, tc.durations))
+			}, "a ragged block must produce a verdict, not an index panic")
+		})
+	}
+
+	// Through the public entry point: clamping to zero rows leaves the envelope
+	// unmeasurable, which is a can't-tell and must fail open.
+	noOverlap, decideErr := sampler.Decide(&sdk.TraceBatch{Traces: []sdk.TraceBlock{*ragged(three, nil)}})
+	require.NoError(t, decideErr)
+	assert.Equal(t, []bool{true}, noOverlap.Keep, "no row carries both edges, so the envelope is unmeasurable and fails open")
+
+	// Where the clamp still leaves a complete row, the verdict is real rather than
+	// fail-open: that row's envelope is 1ms, far below the 500ms threshold.
+	measurable, measurableErr := sampler.Decide(&sdk.TraceBatch{Traces: []sdk.TraceBlock{*ragged(three, one)}})
+	require.NoError(t, measurableErr)
+	assert.Equal(t, []bool{false}, measurable.Keep, "a clamped-but-complete row still yields a genuine not-slow verdict")
 }

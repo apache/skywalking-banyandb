@@ -35,7 +35,7 @@ var (
 	verify        = func(args helpers.Args) {
 		gm.Eventually(func(innerGm gm.Gomega) {
 			topNTestData.VerifyFn(innerGm, SharedContext, args)
-		}, flags.EventuallyTimeout).WithTimeout(10 * time.Second).WithPolling(2 * time.Second).Should(gm.Succeed())
+		}, flags.EventuallyTimeout, 2*time.Second).Should(gm.Succeed())
 		gm.Consistently(func(innerGm gm.Gomega) {
 			topNTestData.VerifyFn(innerGm, SharedContext, args)
 		}, flags.ConsistentlyTimeout).Should(gm.Succeed())

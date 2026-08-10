@@ -169,7 +169,13 @@ func (s Schema) firstClassColumn(tagKey, errorColumn string) string {
 // rule is one sure-keep tag predicate. Exactly one matcher is honored, checked
 // in the order exists, equals, in, regex.
 type rule struct {
-	re     *regexp.Regexp
+	re *regexp.Regexp
+	// prefix is the "tagKey=" that an entry must carry for this rule to apply,
+	// precomputed at admission because matchEntries runs per rule per trace and
+	// the concatenation showed up as runtime.concatstrings in the tag-rule
+	// profile. Empty when the rule targets the array column itself, which is the
+	// case that matches a bare entry rather than a "key=value" one.
+	prefix string
 	Regex  string   `json:"regex"`
 	TagKey string   `json:"tagKey"`
 	Equals string   `json:"equals"`
@@ -400,7 +406,10 @@ func New(configJSON []byte, schema Schema) (sdk.Sampler, error) {
 		s.errorTagInArray = schema.ErrorTagInArray
 		// The in-array error signal is just an exists rule on the error key, evaluated
 		// by the same matcher as keepTagRules so the two can never diverge.
+		// Built here rather than through validateRules, so its prefix has to be
+		// set explicitly — matchEntries reads the precomputed field for every rule.
 		s.errorRule = rule{TagKey: s.errorTag, Exists: true}
+		s.errorRule.setPrefix(s.arrayColumn)
 	}
 	if c.DurationThresholdMs < 0 {
 		return nil, fmt.Errorf("tracesampler: durationThresholdMs must be >= 0, got %d", c.DurationThresholdMs)
@@ -484,8 +493,18 @@ func validateRules(rs []rule, schema Schema, errorColumn string) error {
 			}
 			r.re = re
 		}
+		r.setPrefix(schema.ArrayTagColumn)
 	}
 	return nil
+}
+
+// setPrefix precomputes the rule's entry prefix against the flattened array
+// column. A rule naming the array column itself matches a bare entry, so it has
+// no prefix; every other rule matches "tagKey=value" entries.
+func (r *rule) setPrefix(arrayColumn string) {
+	if r.TagKey != arrayColumn {
+		r.prefix = r.TagKey + "="
+	}
 }
 
 // Kind reports the sampler kind, satisfying the generic sdk.Plugin interface
@@ -566,26 +585,33 @@ func (s *Sampler) keepTrace(b *sdk.TraceBlock) bool {
 	// release) keeps this variable on the stack — the pool owns the backing
 	// storage, so taking the pointer's address is unnecessary.
 	//
-	// stableBufPtr is the *[]byte that backs the per-row entry strings. The
-	// strings alias its backing array via convert.BytesToString, so the array
-	// must outlive every matchEntries call below. The lazy decode acquires
-	// both pointers on the first call site that needs them; both are released
-	// at the single exit below. A nil stableBufPtr means no entries were
-	// decoded (skip path) and there is nothing to release.
+	// stableBufPtr is the *[]byte that backs the entry strings of any ESCAPED
+	// row, which arrayEntries acquires and hands back only when it needed one.
+	// Those strings alias its backing array via convert.BytesToString, so the
+	// array must outlive every matchEntries call below; it is released at the
+	// single exit. A nil stableBufPtr means no row needed unescaping (the
+	// common case) or nothing was decoded at all, and there is nothing to
+	// release.
+	//
+	// decoded, not a nil-check on entriesPtr, is what makes the decode fire
+	// once: arrayEntries returns a nil entriesPtr on error, so keying the
+	// second call site off entriesPtr would decode twice — and overwrite (leak)
+	// the stable buffer of the first attempt.
 	var (
 		entriesPtr   *[]string
 		stableBufPtr *[]byte
 		entriesErr   error
+		decoded      bool
 	)
 	keep := false
 	// Error keep.
 	if s.keepErrors {
 		if s.errorTagInArray {
-			if entriesPtr == nil {
-				stableBufPtr = acquireStableBuf()
-				entriesPtr, entriesErr = arrayEntries(b.Tag(s.arrayColumn), stableBufPtr)
+			if !decoded {
+				decoded = true
+				entriesPtr, stableBufPtr, entriesErr = arrayEntries(b.Tag(s.arrayColumn))
 			}
-			if entriesErr != nil || matchEntries(*entriesPtr, &s.errorRule, s.arrayColumn) {
+			if entriesErr != nil || matchEntries(*entriesPtr, &s.errorRule) {
 				keep = true
 			}
 		} else {
@@ -598,15 +624,15 @@ func (s *Sampler) keepTrace(b *sdk.TraceBlock) bool {
 	// Sure-keep tag rules. The decode is hoisted out of the loop so the
 	// lazy fetch fires exactly once even when multiple rules are configured.
 	if !keep && len(s.rules) > 0 {
-		if entriesPtr == nil {
-			stableBufPtr = acquireStableBuf()
-			entriesPtr, entriesErr = arrayEntries(b.Tag(s.arrayColumn), stableBufPtr)
+		if !decoded {
+			decoded = true
+			entriesPtr, stableBufPtr, entriesErr = arrayEntries(b.Tag(s.arrayColumn))
 		}
 		if entriesErr != nil {
 			keep = true
 		} else {
 			for i := range s.rules {
-				if matchEntries(*entriesPtr, &s.rules[i], s.arrayColumn) {
+				if matchEntries(*entriesPtr, &s.rules[i]) {
 					keep = true
 					break
 				}
@@ -618,10 +644,11 @@ func (s *Sampler) keepTrace(b *sdk.TraceBlock) bool {
 	if !keep && s.healthySampleRate > 0 && sampleFraction(b.TraceID) < s.healthySampleRate {
 		keep = true
 	}
-	if entriesPtr != nil {
+	// Release only what a decode acquired. Keying this off decoded rather than
+	// off the pointers is what keeps the flag honest: it is the same flag both
+	// call sites above test, so a future third site cannot quietly skip it.
+	if decoded {
 		releaseEntries(entriesPtr)
-	}
-	if stableBufPtr != nil {
 		releaseStableBuf(stableBufPtr)
 	}
 	return keep
@@ -649,6 +676,39 @@ var errNoDurationEnvelope = errors.New("no row carries both a start-time and a d
 // from DurationTag (scaled to ns by DurationTagNanosPerUnit). This is the true
 // trace duration — it catches traces slow only through sequential segments —
 // and reads two cheap tag columns, never the span bodies.
+// scalarInt64 reads one cell of an 8-byte-encoded column WITHOUT materializing
+// the sdk.Value that TagColumn.At returns. That value is 112 bytes and is
+// returned by value, so reading a column per row through At cost more in
+// runtime.duffcopy than in decoding: 54.4% of the duration path, 37.5% of the
+// dedicated-error path, and 22.3% of the full realistic scenario.
+//
+// It reproduces sdk.DecodeTagValue's contract exactly, including the error text,
+// because a malformed cell must keep failing open with the same message the
+// engine would have logged:
+//
+//	nil cell        -> (0, false, nil)   — null, the caller skips the row
+//	non-8-byte cell -> (0, false, error) — malformed
+//
+// Callers must have checked col.ValueType themselves; see the narrow-gating note
+// at each call site for why the type check cannot simply be hoisted.
+//
+// PRECONDITION: row must be in range. Unlike TagColumn.At this does NOT
+// bounds-check — an out-of-range row panics rather than returning an error. Both
+// callers guarantee it, one by clamping to the shorter of the two columns and
+// the other by ranging over the column it reads; TestHasSlowTrace_RaggedColumns
+// pins the clamp, because losing it would turn a malformed block into a panic
+// inside a merge rather than a fail-open keep.
+func scalarInt64(col *sdk.TagColumn, row int, typeName string) (int64, bool, error) {
+	raw := col.Values[row]
+	if raw == nil {
+		return 0, false, nil
+	}
+	if len(raw) != 8 {
+		return 0, false, fmt.Errorf("%s: expected 8 bytes, got %d", typeName, len(raw))
+	}
+	return convert.BytesToInt64(raw), true, nil
+}
+
 func (s *Sampler) hasSlowTrace(b *sdk.TraceBlock) (bool, error) {
 	startCol := b.Tag(s.startTimeTag)
 	durCol := b.Tag(s.durationTag)
@@ -659,9 +719,41 @@ func (s *Sampler) hasSlowTrace(b *sdk.TraceBlock) (bool, error) {
 	if len(startCol.Values) < rows {
 		rows = len(startCol.Values)
 	}
+	// The fast path is gated NARROWLY on both columns carrying exactly the type
+	// this rule accepts, rather than hoisting the per-row type checks below out
+	// of the loop. The checks look hoistable — ValueType is a property of the
+	// COLUMN, not the row — but a wrong-typed column can still hold a malformed
+	// cell that DecodeTagValue rejects on length (Float64 and Timestamp are both
+	// 8-byte-checked), and that error currently propagates. Skipping such a row
+	// on type alone would swallow it. Anything not matching both expected types
+	// keeps the original At-based loop, so every edge case stays bit-identical.
+	fastScalars := startCol.ValueType == valuetype.ValueTypeTimestamp && durCol.ValueType == valuetype.ValueTypeInt64
 	var minStart, maxEnd int64
 	haveStart, haveEnd := false, false
 	for row := 0; row < rows; row++ {
+		if fastScalars {
+			start, startOK, startErr := scalarInt64(startCol, row, "timestamp")
+			if startErr != nil {
+				return false, startErr
+			}
+			dur, durOK, durErr := scalarInt64(durCol, row, "int64")
+			if durErr != nil {
+				return false, durErr
+			}
+			if !startOK {
+				continue
+			}
+			if !haveStart || start < minStart {
+				minStart, haveStart = start, true
+			}
+			if !durOK {
+				continue
+			}
+			if end := start + dur*s.durationTagNanosPerUnit; !haveEnd || end > maxEnd {
+				maxEnd, haveEnd = end, true
+			}
+			continue
+		}
 		sv, sErr := startCol.At(row)
 		if sErr != nil {
 			return false, sErr
@@ -826,25 +918,36 @@ func releaseStableBuf(b *[]byte) {
 // the address of a []string local would impose. releaseEntries takes the
 // pointer by value too.
 //
-// The stableBuf pointer is the caller-owned backing buffer for the decoded
-// entry strings. Each entry's bytes are appended to *stableBuf and then
-// aliased via convert.BytesToString: the string header allocation that
-// string(buf[idx:end]) would impose is skipped, but only because *stableBuf
-// is never reset — only appended to — across the lifetime of the strings.
-// releaseStableBuf is the caller's responsibility, called after the strings
-// are no longer needed. arrayEntries returns without touching stableBuf's
-// pool lifecycle; passing nil for stableBuf falls back to the safe-but-
-// allocating string() conversion, which the tests rely on for the no-column
-// path that never produces any entry.
-func arrayEntries(col *sdk.TagColumn, stableBuf *[]byte) (*[]string, error) {
+// The second return value is the stable buffer backing the decoded entry
+// strings, or nil when no row needed one. Only an ESCAPED row needs it: its
+// bytes are unescaped into a scratch copy, so the resulting strings cannot alias
+// either that scratch (it is reused per row) or the block (it still holds the
+// escaped form), and are instead appended to the stable buffer and aliased via
+// convert.BytesToString — skipping the string header allocation that
+// string(buf[idx:end]) would impose. The buffer is only ever appended to, never
+// reset, so earlier strings stay valid. An escape-free row aliases the block
+// directly and needs no buffer at all, which is the common case, so the buffer
+// is acquired lazily and a whole column of unescaped rows returns nil here.
+//
+// The caller MUST releaseStableBuf whatever is returned, and only after the
+// strings are no longer read — they alias it.
+//
+// errInvalidVarArray mirrors the error vararray.UnmarshalVarArray returns for an
+// entry with no terminating delimiter. The escape-free split path reports the
+// same condition, so it must read identically in logs whichever path decoded
+// the row.
+var errInvalidVarArray = errors.New("invalid variable array")
+
+func arrayEntries(col *sdk.TagColumn) (*[]string, *[]byte, error) {
 	if col == nil {
 		// Always return a non-nil pool element so the caller can dereference
 		// without a nil check. matchEntries on an empty slice returns false,
 		// which matches the pre-pool behavior of "no entries" → no match.
-		return acquireEntries(), nil
+		return acquireEntries(), nil, nil
 	}
-	// Size the copy buffer to the longest row up front so it is allocated exactly once
-	// and never grows mid-loop. This needs no decode — only the raw byte lengths.
+	// Early exit for a column whose every row is empty: it can yield no entry, so
+	// the row loop below would do nothing. This needs no decode — only the raw
+	// byte lengths.
 	widest := 0
 	for _, raw := range col.Values {
 		if len(raw) > widest {
@@ -852,7 +955,7 @@ func arrayEntries(col *sdk.TagColumn, stableBuf *[]byte) (*[]string, error) {
 		}
 	}
 	if widest == 0 {
-		return acquireEntries(), nil
+		return acquireEntries(), nil, nil
 	}
 	// Acquire the result slice from the pool. The backing array is reused across
 	// calls; the length is reset to zero so stale entries from the previous decode
@@ -863,19 +966,85 @@ func arrayEntries(col *sdk.TagColumn, stableBuf *[]byte) (*[]string, error) {
 	// references it. The error path here releases locally because the slice
 	// never escapes to keepTrace.
 	out := acquireEntries()
-	// Acquire the per-row copy buffer from the pool. If its cap is smaller than
-	// the longest row of this trace, append will allocate a fresh backing array;
-	// the pool then sees a larger buffer on release and the steady-state cap
-	// converges to the widest row the schema produces.
-	bufPtr := acquireCopyBuf()
-	defer releaseCopyBuf(bufPtr)
-	buf := *bufPtr
-	stable := *stableBuf
+	// The per-row copy buffer is acquired LAZILY, on the first row that actually
+	// carries an escape. A column whose rows are all escape-free never needs one,
+	// and the pool checkout/release is not free: releaseCopyBuf's Bounded.Put was
+	// 8.7% flat in the tag-rule CPU profile. If its cap is smaller than the row
+	// being copied, append allocates a fresh backing array; the pool then sees a
+	// larger buffer on release and the steady-state cap converges to the widest
+	// escaped row the schema produces.
+	// The stable buffer is acquired lazily too, and only an escaped row needs it.
+	var (
+		bufPtr    *[]byte
+		buf       []byte
+		stablePtr *[]byte
+		stable    []byte
+	)
+	// failed distinguishes the two owners of the stable buffer: on success the
+	// CALLER releases it (the returned strings still alias it), on failure this
+	// function does. Either way the grown slice header has to be written back
+	// first, or the pool takes back the pre-append header and the growth is lost
+	// — so both the persist and the release live here rather than at each of the
+	// error sites, where the persist was previously missed.
+	failed := false
+	defer func() {
+		if bufPtr != nil {
+			// Persist any growth so the next caller sees the wider cap.
+			*bufPtr = buf
+			releaseCopyBuf(bufPtr)
+		}
+		if stablePtr != nil {
+			*stablePtr = stable
+			if failed {
+				releaseStableBuf(stablePtr)
+			}
+		}
+	}()
 	for row := range col.Values {
 		if col.Values[row] == nil {
 			continue
 		}
-		// Decode a COPY of the row, never the engine's buffer. vararray.UnmarshalVarArray
+		// A row with no escape byte is decoded straight out of the block, with the
+		// entries aliasing it — no row copy, no stable-buffer append.
+		//
+		// Two facts make that safe, and BOTH are required:
+		//
+		//  1. No write. vararray.UnmarshalVarArray only shifts bytes when it
+		//     consumes an escape; with none present it does not touch the buffer,
+		//     so the corruption hazard described below cannot arise.
+		//  2. No recycling. assembleTraceBlock (banyand/trace/pipeline_chain.go)
+		//     deep-copies every value into block-owned storage precisely "so the
+		//     merge loop may recycle/overwrite those buffers while an abandoned
+		//     Decide goroutine still reads the block". The bytes therefore outlive
+		//     this call even on the timeout path, so aliasing them cannot observe
+		//     recycled memory.
+		//
+		// The escape check is per row and must stay that way: it is a property of
+		// the DATA, not of the column or the schema.
+		if raw := col.Values[row]; bytes.IndexByte(raw, vararray.Escape) < 0 {
+			// The row is known escape-free, so entries are exactly the
+			// delimiter-separated runs and UnmarshalVarArray's own escape scan
+			// would be redundant work on every entry — it was 34.6% flat in the
+			// tag-rule profile. Split on the delimiter directly instead. This is
+			// the ONE place that may assume the encoding, and only because the
+			// check above proves no escape can be present: with an escape, a
+			// delimiter byte may be escaped and this loop would split mid-value.
+			idx := 0
+			for idx < len(raw) {
+				rel := bytes.IndexByte(raw[idx:], vararray.EntityDelimiter)
+				if rel < 0 {
+					// Same condition, and the same message, that
+					// UnmarshalVarArray reports for an unterminated entry.
+					releaseEntries(out)
+					failed = true
+					return nil, nil, fmt.Errorf("str array: %w", errInvalidVarArray)
+				}
+				*out = append(*out, convert.BytesToString(raw[idx:idx+rel]))
+				idx += rel + 1
+			}
+			continue
+		}
+		// Escaped row: decode a COPY, never the block's buffer. vararray.UnmarshalVarArray
 		// shifts bytes left past every escape in place, TraceBlock slices are documented
 		// read-only, and the engine hands the SAME TraceBatch to every link of a chain
 		// (sdk.applyChainLink). Decoding in place would therefore corrupt the value for
@@ -889,33 +1058,30 @@ func arrayEntries(col *sdk.TagColumn, stableBuf *[]byte) (*[]string, error) {
 		// (which is only ever appended to, never reset, so prior bytes stay valid)
 		// and then alias stable via convert.BytesToString — skipping the per-entry
 		// string-header allocation that string(buf[idx:end]) would impose.
+		if bufPtr == nil {
+			bufPtr = acquireCopyBuf()
+			buf = *bufPtr
+			stablePtr = acquireStableBuf()
+			stable = *stablePtr
+		}
 		buf = append(buf[:0], col.Values[row]...)
 		idx := 0
 		for idx < len(buf) {
 			end, next, err := vararray.UnmarshalVarArray(buf, idx)
 			if err != nil {
 				releaseEntries(out)
-				return nil, fmt.Errorf("str array: %w", err)
+				failed = true
+				return nil, nil, fmt.Errorf("str array: %w", err)
 			}
 			start := len(stable)
 			stable = append(stable, buf[idx:end]...)
-			if stableBuf != nil {
-				*out = append(*out, convert.BytesToString(stable[start:]))
-			} else {
-				// Defensive fallback: copy out of stable when the caller did not
-				// provide a stable buffer. Tests pass nil for the no-column path,
-				// which never reaches this branch.
-				*out = append(*out, string(stable[start:]))
-			}
+			*out = append(*out, convert.BytesToString(stable[start:]))
 			idx = next
 		}
 	}
-	// Persist any growth of buf and stable into their pool pointers so the next
-	// caller sees the wider cap. Without this the growth would be lost when the
-	// local variables were reassigned only via append.
-	*bufPtr = buf
-	*stableBuf = stable
-	return out, nil
+	// Both pointers stay nil when no row carried an escape, which is the common
+	// case; the deferred block above persists whatever growth did happen.
+	return out, stablePtr, nil
 }
 
 // errNoErrorColumn reports that the schema's error column is absent from the block.
@@ -935,6 +1101,36 @@ func (s *Sampler) hasErrorColumn(b *sdk.TraceBlock) (bool, error) {
 	col := b.Tag(s.errorTag)
 	if col == nil {
 		return false, errNoErrorColumn
+	}
+	// Both fast paths are gated on the column's exact type, for the same reason
+	// as hasSlowTrace: only a type this rule actually reads may skip At.
+	switch col.ValueType {
+	case valuetype.ValueTypeInt64:
+		for row := range col.Values {
+			v, ok, err := scalarInt64(col, row, "int64")
+			if err != nil {
+				return false, err
+			}
+			if ok && v != 0 {
+				return true, nil
+			}
+		}
+		return false, nil
+	case valuetype.ValueTypeStr:
+		// DecodeTagValue would allocate a string per row via string(raw) purely
+		// to compare it against two literals. Aliasing the bytes compares the
+		// same characters with no allocation; the strings never outlive the loop.
+		for row := range col.Values {
+			raw := col.Values[row]
+			if raw == nil {
+				continue
+			}
+			if str := convert.BytesToString(raw); str == "true" || str == "1" {
+				return true, nil
+			}
+		}
+		return false, nil
+	default:
 	}
 	for row := range col.Values {
 		v, err := col.At(row)
@@ -969,23 +1165,34 @@ func (s *Sampler) hasErrorColumn(b *sdk.TraceBlock) (bool, error) {
 // no "="). The comparison is exact, so a longer key such as "error_rate=0" never
 // satisfies an exists rule on "error". keepErrors routes through here too, so the
 // two cannot drift apart.
-func matchEntries(entries []string, r *rule, arrayColumn string) bool {
-	prefix := ""
-	if r.TagKey != arrayColumn {
-		prefix = r.TagKey + "="
+func matchEntries(entries []string, r *rule) bool {
+	prefix := r.prefix
+	if prefix == "" {
+		// A rule naming the array column itself matches the whole entry, so there
+		// is no prefix to strip and no bare-key case distinct from it.
+		for _, entry := range entries {
+			if r.Exists || matchValue(r, entry) {
+				return true
+			}
+		}
+		return false
 	}
+	// Most entries belong to some other tag, so the common outcome is rejection.
+	// Reject on length and first byte before HasPrefix's memequal call. The bare-key
+	// test must stay ahead of that guard: prefix is TagKey+"=", so a bare key is one
+	// byte too short and the length check would skip it.
+	first, plen := prefix[0], len(prefix)
 	for _, entry := range entries {
 		if r.Exists && entry == r.TagKey {
 			return true
 		}
-		candidate := entry
-		if prefix != "" {
-			if !strings.HasPrefix(entry, prefix) {
-				continue
-			}
-			candidate = entry[len(prefix):]
+		if len(entry) < plen || entry[0] != first {
+			continue
 		}
-		if r.Exists || matchValue(r, candidate) {
+		if !strings.HasPrefix(entry, prefix) {
+			continue
+		}
+		if r.Exists || matchValue(r, entry[plen:]) {
 			return true
 		}
 	}

@@ -139,9 +139,19 @@ var _ = g.Describe("Schema time-range clamp", func() {
 		g.By("Querying with Begin in the far past and End in the near future")
 		epoch := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 		now := time.Now()
-		resp, queryErr := sendStreamQueryWithRange(ctx, clients.StreamWriteClient, groupName, streamName,
-			epoch, now.Add(time.Hour), streamRev)
-		gm.Expect(queryErr).ShouldNot(gm.HaveOccurred(),
+		// In distributed mode the newly created group's topology can still race the
+		// query fan-out even after AwaitRevision/AwaitApplied confirm the schema
+		// cache — the data node transiently reports "group not found". Retry until
+		// the query resolves, mirroring the multi-group retry below. Retrying only
+		// on error is safe: a genuine clamp regression surfaces as a non-empty
+		// successful response, which the assertion below still catches.
+		var resp *streamv1.QueryResponse
+		gm.Eventually(func() error {
+			var queryErr error
+			resp, queryErr = sendStreamQueryWithRange(ctx, clients.StreamWriteClient, groupName, streamName,
+				epoch, now.Add(time.Hour), streamRev)
+			return queryErr
+		}, 10*time.Second, 200*time.Millisecond).ShouldNot(gm.HaveOccurred(),
 			"query spanning schema CreatedAt must succeed after Begin is clamped")
 		// No data was written; expect zero elements (not an error).
 		gm.Expect(resp.GetElements()).Should(gm.BeEmpty(),
@@ -245,19 +255,35 @@ var _ = g.Describe("Schema time-range clamp", func() {
 			"write at T_data1 must return STATUS_SUCCEED")
 
 		g.By("Sanity-checking that querying group1 alone returns the datum (legacy unclamped baseline — pass modRevision=0)")
-		// In distributed mode the write→query path is asynchronous: the
-		// data-node ack returns when mustAddMemPart's applied channel
-		// fires, but the query fan-out can still race the new memPart
-		// becoming visible. Mirrors the deletion.go retry pattern.
-		test.EventuallyConsistently(func() int {
+		// TWO distinct races have to settle before this query can succeed, and the
+		// budget has to cover both of them, not just the second:
+		//
+		//  1. Topology. AwaitRevision confirms the schema CACHE has the group; it
+		//     does NOT confirm that the distributed query coordinator has resolved
+		//     it, which is a separate path. Until it does, the query fails outright
+		//     with "group ... not found" — even though the write to that same group
+		//     has already been acked.
+		//  2. Visibility. The data-node ack fires when mustAddMemPart's applied
+		//     channel does, but the query fan-out can still race the new memPart
+		//     becoming visible.
+		//
+		// The probe carries the error instead of collapsing it to a sentinel. A
+		// swallowed error made a topology failure report as "Expected 0 to equal 1",
+		// which blames visibility and hides the real cause — the "group not found"
+		// only showed up by reading interleaved server logs in the CI output.
+		type baselineProbe struct {
+			Err   string
+			Count int
+		}
+		test.EventuallyConsistently(func() baselineProbe {
 			baselineResp, baselineErr := queryMeasureRange(ctx, clients.MeasureWriteClient, group1, measureName,
 				tData1.Add(-time.Hour), time.Now().Add(time.Hour), 0)
 			if baselineErr != nil {
-				return -1
+				return baselineProbe{Err: baselineErr.Error()}
 			}
-			return len(baselineResp.GetDataPoints())
-		}, 5*time.Second, 50*time.Millisecond).Should(gm.Equal(1),
-			"baseline single-group query must return the written datum — otherwise  is not falsifying anything")
+			return baselineProbe{Count: len(baselineResp.GetDataPoints())}
+		}, 10*time.Second, 200*time.Millisecond).Should(gm.Equal(baselineProbe{Count: 1}),
+			"baseline single-group query must return the written datum — otherwise the clamp assertion below is not falsifying anything")
 
 		g.By("Creating newer group2 and measure (CreatedAt2 > T_data1)")
 		_, createGroup2Err := clients.GroupClient.Create(ctx, &databasev1.GroupRegistryServiceCreateRequest{
