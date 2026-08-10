@@ -41,9 +41,11 @@ type localFileSystem struct {
 
 // LocalFile implements the File interface.
 type LocalFile struct {
-	file   *os.File
-	ioSize int
-	cached bool // Caching decision from upper layer
+	file      *os.File
+	ioSize    int
+	cached    bool // Caching decision from upper layer
+	writable  bool
+	seqSynced bool
 }
 
 // NewLocalFileSystem is used to create the Local File system.
@@ -76,6 +78,12 @@ func NewLocalFileSystemWithLoggerAndLimit(parent *logger.Logger, limit uint64) F
 func limit2IOSize(limit uint64) int {
 	ioSize := limit / 1024 / 10
 	return max(4*1024, min(256*1024, int(ioSize)))
+}
+
+func applyFadviseBestEffort(file *os.File, offset, length int64) {
+	if adviseErr := applyFadviseToFD(file.Fd(), offset, length); adviseErr != nil {
+		return
+	}
 }
 
 func readErrorHandle(operation string, err error, name string, size int) (int, error) {
@@ -150,8 +158,9 @@ func (fs *localFileSystem) CreateFile(name string, permission Mode) (File, error
 	switch {
 	case err == nil:
 		return &LocalFile{
-			file:   file,
-			ioSize: fs.ioSize,
+			file:     file,
+			ioSize:   fs.ioSize,
+			writable: true,
 		}, nil
 	case os.IsExist(err):
 		return nil, &FileSystemError{
@@ -520,6 +529,9 @@ func (fs *localFileSystem) CreateHardLink(srcPath, destPath string, filter func(
 // Write adds new data to the end of a file.
 func (file *LocalFile) Write(buffer []byte) (int, error) {
 	size, err := file.file.Write(buffer)
+	if size > 0 {
+		file.seqSynced = false
+	}
 	switch {
 	case err == nil:
 		return size, nil
@@ -547,6 +559,9 @@ func (file *LocalFile) Writev(iov *[][]byte) (int, error) {
 	var size int
 	for _, buffer := range *iov {
 		wsize, err := file.file.Write(buffer)
+		if wsize > 0 {
+			file.seqSynced = false
+		}
 		switch {
 		case err == nil:
 			size += wsize
@@ -573,8 +588,9 @@ func (file *LocalFile) Writev(iov *[][]byte) (int, error) {
 
 // SequentialWrite supports appending consecutive buffers to the end of the file.
 func (file *LocalFile) SequentialWrite() SeqWriter {
+	file.seqSynced = false
 	writer := generateWriter(file.file, file.ioSize)
-	return &seqWriter{writer: writer, file: file.file, fileName: file.file.Name(), skipFadvise: file.cached}
+	return &seqWriter{writer: writer, file: file.file, owner: file, fileName: file.file.Name(), skipFadvise: file.cached}
 }
 
 // SequentialRead is used to read the entire file using streaming read.
@@ -588,7 +604,7 @@ func (file *LocalFile) SequentialRead() SeqReader {
 	_, _ = file.file.Seek(0, 0)
 
 	reader := generateReader(file.file, file.ioSize)
-	return &seqReader{reader: reader, file: file.file, fileName: file.file.Name(), length: 0, skipFadvise: file.cached}
+	return &seqReader{reader: reader, file: file.file, fileName: file.file.Name(), skipFadvise: file.cached}
 }
 
 // Read is used to read a specified location of file.
@@ -647,8 +663,10 @@ func (file *LocalFile) Path() string {
 
 // Close is used to close File.
 func (file *LocalFile) Close() error {
-	if err := syncFile(file.file); err != nil {
-		return err
+	if file.writable && !file.seqSynced {
+		if err := syncFile(file.file); err != nil {
+			return err
+		}
 	}
 
 	if err := file.file.Close(); err != nil {
@@ -670,12 +688,10 @@ type seqReader struct {
 
 func (i *seqReader) Read(p []byte) (int, error) {
 	rsize, err := i.reader.Read(p)
-	if rsize > 0 && i.file != nil && !i.skipFadvise {
-		offset := i.length
-		// Apply fadvise directly without threshold checking since decision was made at upper layer
-		_ = applyFadviseToFD(i.file.Fd(), offset, int64(rsize))
-		i.length += int64(rsize)
-	} else if rsize > 0 {
+	if rsize > 0 {
+		if i.file != nil && !i.skipFadvise {
+			applyFadviseBestEffort(i.file, i.length, int64(rsize))
+		}
 		i.length += int64(rsize)
 	}
 	if err != nil {
@@ -692,7 +708,7 @@ func (i *seqReader) Path() string {
 func (i *seqReader) Close() error {
 	if i.file != nil {
 		if !i.skipFadvise {
-			_ = applyFadviseToFD(i.file.Fd(), 0, 0)
+			applyFadviseBestEffort(i.file, 0, 0)
 		}
 	}
 	releaseReader(i.reader)
@@ -702,6 +718,7 @@ func (i *seqReader) Close() error {
 type seqWriter struct {
 	writer      *bufio.Writer
 	file        *os.File
+	owner       *LocalFile
 	fileName    string
 	length      int64
 	skipFadvise bool
@@ -709,22 +726,9 @@ type seqWriter struct {
 
 func (w *seqWriter) Write(p []byte) (n int, err error) {
 	n, err = w.writer.Write(p)
-	if n > 0 && w.file != nil && !w.skipFadvise {
-		if flushErr := w.writer.Flush(); flushErr != nil {
-			return n, &FileSystemError{
-				Code:    flushError,
-				Message: fmt.Sprintf("Flush File error, directory: %s, error: %s", w.fileName, flushErr),
-			}
-		}
-
-		offset := w.length
-		// Apply fadvise directly without threshold checking since decision was made at upper layer
-		_ = applyFadviseToFD(w.file.Fd(), offset, int64(n))
-		w.length += int64(n)
-	} else if n > 0 {
+	if n > 0 {
 		w.length += int64(n)
 	}
-
 	if err != nil {
 		return n, &FileSystemError{
 			Code:    writeError,
@@ -761,6 +765,9 @@ func (w *seqWriter) Close() error {
 			Code:    flushError,
 			Message: fmt.Sprintf("Sync File error, directory name: %s, error message: %s", w.fileName, syncErr),
 		}
+	}
+	if w.owner != nil {
+		w.owner.seqSynced = true
 	}
 	return nil
 }

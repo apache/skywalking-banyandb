@@ -517,13 +517,10 @@ func (s *Sampler) Kind() sdk.Kind { return sdk.KindSampler }
 // error signal lives there), plus the span-id column only when a span-count rule
 // is configured.
 //
-// Spans stays false, so the verdict never reads span bodies. That is a bound on
-// what this plugin inspects, NOT on what the merge decodes: the engine sets
-// forceSlow whenever a projection names any tag (merger.go, finalizer.go), which
-// disables the raw-copy fast path, and the resulting decode reads the whole block
-// — span bodies and every tag, not just the projected ones. Enabling a sampler
-// therefore costs a full block decode per merge; keeping the projection small
-// bounds only this plugin's own work.
+// Spans stays false, so the verdict never reads span bodies. The merge can copy
+// a unique raw block unchanged while decoding only these projected columns for
+// evaluation. A trace split across physical blocks still takes the ordinary
+// decoded path because compaction must consolidate its output blocks.
 func (s *Sampler) Project() sdk.Projection {
 	return sdk.Projection{Tags: s.requiredTags}
 }
@@ -688,14 +685,13 @@ func (s *Sampler) hasSlowTrace(b *sdk.TraceBlock) (bool, error) {
 	}
 	var minStart, maxEnd int64
 	haveStart, haveEnd := false, false
+	var startValue, durationValue sdk.Value
 	for row := 0; row < rows; row++ {
-		sv, sErr := startCol.At(row)
-		if sErr != nil {
-			return false, sErr
+		if startErr := startCol.AtInto(row, &startValue); startErr != nil {
+			return false, startErr
 		}
-		dv, dErr := durCol.At(row)
-		if dErr != nil {
-			return false, dErr
+		if durationErr := durCol.AtInto(row, &durationValue); durationErr != nil {
+			return false, durationErr
 		}
 		// StartTimeTag must be a timestamp column, which BanyanDB stores as unix ns
 		// (write_standalone.go: GetTimestamp().AsTime().UnixNano()) — that is what makes
@@ -703,22 +699,22 @@ func (s *Sampler) hasSlowTrace(b *sdk.TraceBlock) (bool, error) {
 		// it carries no unit, and unlike DurationTag there is no nanos-per-unit to scale
 		// it by, so treating it as ns would silently mis-measure a millisecond column.
 		// Skipping the row instead makes it a can't-tell, which fails open.
-		if sv.IsNull() || sv.ValueType() != valuetype.ValueTypeTimestamp {
+		if startValue.IsNull() || startValue.ValueType() != valuetype.ValueTypeTimestamp {
 			continue
 		}
 		// A start with no duration still bounds the envelope's LEFT edge. Zipkin's
 		// duration is optional (incomplete and one-way spans carry none), so requiring
 		// both would let the earliest span drop out of minStart and measure the trace
 		// from a later one — understating the envelope and under-keeping slow traces.
-		start := sv.Int64()
+		start := startValue.Int64()
 		if !haveStart || start < minStart {
 			minStart, haveStart = start, true
 		}
 		// Duration is an int in the tag's own unit, scaled to ns here.
-		if dv.IsNull() || dv.ValueType() != valuetype.ValueTypeInt64 {
+		if durationValue.IsNull() || durationValue.ValueType() != valuetype.ValueTypeInt64 {
 			continue
 		}
-		if end := start + dv.Int64()*s.durationTagNanosPerUnit; !haveEnd || end > maxEnd {
+		if end := start + durationValue.Int64()*s.durationTagNanosPerUnit; !haveEnd || end > maxEnd {
 			maxEnd, haveEnd = end, true
 		}
 	}
@@ -1037,21 +1033,21 @@ func (s *Sampler) hasErrorColumn(b *sdk.TraceBlock) (bool, error) {
 	if col == nil {
 		return false, errNoErrorColumn
 	}
+	var value sdk.Value
 	for row := range col.Values {
-		v, err := col.At(row)
-		if err != nil {
-			return false, err
+		if decodeErr := col.AtInto(row, &value); decodeErr != nil {
+			return false, decodeErr
 		}
-		if v.IsNull() {
+		if value.IsNull() {
 			continue
 		}
-		switch v.ValueType() {
+		switch value.ValueType() {
 		case valuetype.ValueTypeInt64:
-			if v.Int64() != 0 {
+			if value.Int64() != 0 {
 				return true, nil
 			}
 		case valuetype.ValueTypeStr:
-			if str := v.Str(); str == "true" || str == "1" {
+			if str := value.Str(); str == "true" || str == "1" {
 				return true, nil
 			}
 		default:

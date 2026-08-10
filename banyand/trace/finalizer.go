@@ -165,7 +165,6 @@ func (tst *tsTable) runFinalizeRound(samplers []sdk.Sampler, graceNs int64) (boo
 		plannedStagingBatches: stagingPlan.PlannedBatches,
 		traceBudget:           resolveTraceBudget(tst.option),
 		maxTraceCount:         maxStagedTraceCountFromBudget(stagingPlan.BatchLimit),
-		forceSlow:             projectionRequiresSlowPath(chain.projection),
 	}
 
 	merged := make(map[uint64]struct{}, len(parts))

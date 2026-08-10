@@ -104,6 +104,14 @@ func (s *implementationDropSampler) Decide(batch *sdk.TraceBatch) (sdk.Verdict, 
 	return sdk.Verdict{Keep: keep}, nil
 }
 
+func assembleStagedTraceBlockForTest(t *testing.T, group stagedTraceGroup, staged []stagedTrace, projection sdk.Projection) (sdk.TraceBlock, bool) {
+	t.Helper()
+	vectors := acquireStagedEvaluationVectors(1, false)
+	prepareStagedProjectionVectors(vectors, staged, []stagedTraceGroup{group}, projection)
+	t.Cleanup(func() { releaseStagedEvaluationVectors(vectors, true) })
+	return assembleStagedTraceBlockInto(vectors, group, staged, projection)
+}
+
 func TestAssembleStagedTraceBlockAggregatesMetadataOnlyBlocks(t *testing.T) {
 	staged := []stagedTrace{
 		{
@@ -125,7 +133,7 @@ func TestAssembleStagedTraceBlockAggregatesMetadataOnlyBlocks(t *testing.T) {
 	}
 
 	group := stagedTraceGroup{traceID: "trace-a", start: 0, end: 2, minTS: 100, maxTS: 210, validMetadata: true}
-	assembled, complete := assembleStagedTraceBlock(group, staged, sdk.Projection{})
+	assembled, complete := assembleStagedTraceBlockForTest(t, group, staged, sdk.Projection{})
 
 	require.True(t, complete)
 	assert.Equal(t, "trace-a", assembled.TraceID)
@@ -177,7 +185,7 @@ func TestAssembleStagedTraceBlockAggregatesEveryProjectedRow(t *testing.T) {
 	}
 
 	group := stagedTraceGroup{traceID: "trace-a", start: 0, end: 2, minTS: 100, maxTS: 210, validMetadata: true}
-	assembled, complete := assembleStagedTraceBlock(group, staged, sdk.Projection{
+	assembled, complete := assembleStagedTraceBlockForTest(t, group, staged, sdk.Projection{
 		Tags:    []string{"service", "status"},
 		SpanIDs: true,
 		Spans:   true,
@@ -206,7 +214,7 @@ func TestAssembleStagedTraceBlockFailsOpenForUnknownBounds(t *testing.T) {
 	}}
 
 	group := stagedTraceGroup{traceID: "trace-a", start: 0, end: 1, minTS: 100, maxTS: 110}
-	_, complete := assembleStagedTraceBlock(group, staged, sdk.Projection{})
+	_, complete := assembleStagedTraceBlockForTest(t, group, staged, sdk.Projection{})
 
 	assert.False(t, complete)
 }

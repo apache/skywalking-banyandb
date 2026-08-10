@@ -2,9 +2,9 @@
 
 ## Status
 
-Execution record. Phases 1 through 5 are closed. The original Phase 3 resource targets are retained below as historical
-goals, together with their measured disposition; they are not reported as passed. The remaining projection, drop-path,
-common-I/O, plugin-local, and final SkyWalking work stays in Phases 6 through 10.
+Execution record. Phases 1 through 5 and the parallel Phase 7 through Phase 9 work are closed. The original Phase 3
+resource targets are retained below as historical goals, together with their measured disposition; they are not reported
+as passed. The deterministic drop path and final SkyWalking integration remain in Phase 6 and Phase 10.
 
 ## Opening Baseline (Before Adaptive Batching)
 
@@ -369,16 +369,53 @@ Deep-copy lifetime protection retained unless an equally safe ownership mechanis
 
 **Exit gate.**
 
-- [ ] Copied tag values and span bodies packed into column arenas.
-- [ ] Aggregate block and column vectors reused.
-- [ ] Columns decoded only when requested by the combined plugin projection.
-- [ ] Ref-counted immutable batch buffers (if adopted) demonstrated safe with timed-out plugins.
-- [ ] Real-policy benchmark (e.g. error/status rules + regex/tag rules) shows measurable improvement.
+- [x] Copied tag values and span bodies packed into column arenas.
+- [x] Aggregate block and column vectors reused.
+- [x] Unique raw blocks decode only columns requested by the combined plugin projection; fragmented traces retain the
+  existing full decode required to consolidate their physical blocks into one output block.
+- [x] Ref-counting was not adopted. Timed-out batches discard their immutable arenas rather than resetting or pooling
+  them, and a blocking-plugin test proves that their bytes remain unchanged after the merge returns.
+- [x] The default SkyWalking real-policy workload shows a measurable improvement on the frozen mature fixture.
 
 **Dependencies.** Phase 3.
 
 **Boundary rationale.** Fundamentally different code path from the retain-all work. Separate phase keeps the diff
 reviewable and prevents attribution confusion in the final integration report.
+
+**Implementation and evidence.** `TagColumn.AtInto` lets a plugin reuse one decoded `sdk.Value`; the SkyWalking duration
+and dedicated-error paths use it. The merge no longer disables raw output merely because a projection is present. A
+unique physical trace block is kept in raw output form while only requested tag/span columns are decoded into an owned
+per-trace `pkg/bytes.Buffer`. Aggregate trace-block, tag-column, tag-value, span, and span-ID vectors are bounded and
+reused. A fragmented trace still takes the decoded consolidation path because its physical blocks must become one
+ordered output block, but only projected data is copied into the decision batch. Both paths preserve the read-only SDK
+contract. Normal completion resets the arenas; timeout completion discards them so a late plugin cannot observe recycled
+memory.
+
+The focused five-run SDK comparison reduced the median SkyWalking duration-rule cost from 247.5 to 154.4 ns/trace
+(-37.6%) and the dedicated-error cost from 126.6 to 88.86 ns/trace (-29.8%). The Zipkin duration path fell from 240.5 to
+154.6 ns/trace (-35.7%); its in-array error path does not use `AtInto` and remained statistically unchanged.
+
+The 24-hour accelerated default-policy check used the same two-CPU, 4 GiB container, full two-times fixture, default
+SkyWalking configuration, and frozen ledgers before and after the implementation. Both runs evaluated 74,576 complete
+traces, dropped exactly 26,380, retained 48,196, reproduced verdict SHA
+`e1be6f66e676dc95d33223585f59a648da7556f6c98af1f13801978fd2b19107`, and preserved all core and secondary-index
+ledgers at a 35.3733104484% deletion ratio. For the sampling cooldown, wall time changed from 14.862 to 4.828 seconds
+(-67.5%), CPU from 15.116 to 4.664 seconds (-69.1%), allocated bytes from 1,022,124,168 to 636,793,768 (-37.7%), and
+allocations from 16,046,788 to 8,254,193 (-48.6%). Physical write bytes fell 96.5% primarily because Phase 8 removed
+pathological common writer flushes; that reduction is not credited to projection work. The single-run cgroup peak rose
+7.5% (240,168,960 to 258,064,384 bytes), so Phase 10 must remeasure resident memory as a multi-run integration series
+rather than treating this one run as a memory improvement. Evidence is under
+`.scratch/trace-pipeline-merge-performance/phase789-before-skywalking` and `phase789-final-skywalking`.
+
+A second acceptance series exercised one frozen mature production-picker selection in ten fresh Docker processes,
+strictly alternating five base and five optimized runs. Every run evaluated 33,353 complete traces, dropped 11,598
+after exact fragment-guard confirmation, and reproduced all three expected ledgers. The base and optimized coefficients
+of variation were 0.80%/0.78% for wall time and 0.75%/1.07% for CPU. Median wall time changed from 6.304 to 2.598 seconds
+(-58.8%), CPU from 6.551 to 2.638 seconds (-59.7%), allocated bytes from 524,554,048 to 343,743,000 (-34.5%), and
+allocations from 7,279,373 to 3,720,275 (-48.9%). Peak RSS rose 7.4%, within the 10% controlled tolerance; peak Go heap
+rose 22.1% and is carried into Phase 10 rather than hidden. The combined timing includes Phase 8 common-I/O gains, while
+the SDK microbench and allocation profile isolate the projection contribution. Alternating evidence is under
+`.scratch/trace-pipeline-merge-performance/phase7-controlled-alternating-v1`.
 
 ---
 
@@ -397,13 +434,47 @@ plugin-framework optimization.
 
 **Exit gate.**
 
-- [ ] Each axis profiled with before/after evidence.
-- [ ] Disabled-mode baseline regression test passing within tolerance.
+- [x] Each axis profiled with before/after evidence.
+- [x] Disabled-mode baseline correctness and resource regression gates pass within the 10% median tolerance.
 
 **Dependencies.** None (parallel workstream).
 
 **Boundary rationale.** Independent of the plugin framework. Runs as a workstream that may overlap with any core
 phase. The "not credited as plugin optimization" invariant prevents scope-creep across phases.
+
+**Implementation and evidence.** The uncached sequential writer now buffers small writes and performs its durability
+sync plus cache-drop at close instead of flushing and advising the kernel after every `Write`. Sequential readers retain
+per-read cache advice because batching it produced a repeatable resident-memory regression; they also advise the whole
+file at close. Read-only files no longer issue an fsync on `Close`, and a file already synchronized by its sequential
+writer is not synchronized a second time. Trace and SIDX block writers now close both the sequential wrapper and the
+retained base file, making descriptor ownership explicit. The core and SIDX atomic publication barriers remain
+unchanged.
+
+Five fresh disabled-mode runs before and after the change used the identical selection SHA
+`45aa16460d7ca36fc0ddaa1bc1d2e73f45109dbaab86328012798d5011e60b7b`, 147,126 rows, byte-identical core/latency/
+start-time ledgers, and the two-CPU, 4 GiB container:
+
+| Metric | Before median | After median | Change | After CV |
+| --- | ---: | ---: | ---: | ---: |
+| Wall time | 7.312 s | 2.432 s | -66.7% | 0.53% |
+| CPU time | 7.340 s | 2.384 s | -67.5% | 0.48% |
+| Allocated bytes | 203,043,568 | 195,628,368 | -3.7% | 1.43% |
+| Allocations | 2,811,223 | 2,798,380 | -0.5% | 0.005% |
+| Physical write bytes | 958,722,048 | 40,251,392 | -95.8% | 0.0% |
+| Peak Go heap | 83,148,744 | 79,303,784 | -4.6% | 24.00% |
+| Peak RSS | 125,186,048 | 132,263,936 | +5.7% | 16.70% |
+
+The peak series contains one Go-GC outlier, but both medians remain within the fixed 10% regression tolerance; end RSS
+also fell 4.4%. An earlier 256 KiB read-advice batching attempt produced a +27.8% peak-RSS median and was rejected. The
+accepted implementation restores per-read advice, trading some syscall reduction for bounded residency.
+
+Syscall evidence isolates the accepted mechanism: `fadvise64` calls fell from 1,135,840 to 635,093 (-44.1%), writes from
+500,772 to 8,960 (-98.2%), and fsync calls from 1,356 to 15 (-98.9%), while the 49 `fdatasync` calls and six publication
+renames were unchanged. The remaining advice calls are the intentionally retained reader behavior. Before profiles
+attributed 61–69% cumulative CPU to `seqWriter.Write`, 42–44% to `Fadvise`, and 27–31% to `Flush`; the accepted five-run
+series still cuts CPU 67.5%. The two SIDX children retained approximately the same absolute time, so no SIDX-specific
+storage rewrite was justified. Evidence is under `.scratch/trace-pipeline-merge-performance/phase8-disabled-final-v5`
+and `phase8-strace-final-v3`.
 
 ---
 
@@ -419,9 +490,9 @@ fixes are kept separate from framework fixes.
 
 **Exit gate.**
 
-- [ ] Independent measurements for projected tag/span decoding, complete-trace latency calculation, error and status
-  rules, trace-ID hashing, regex/tag rules, verdict allocation, decision throughput across representative batch sizes.
-  *Every axis is measured (table below), but on SYNTHETIC batches, not the mature seed — see "Remaining gap".*
+- [x] Independent measurements for projected tag/span decoding, complete-trace latency calculation, error and status
+  rules, trace-ID hashing, regex/tag rules, verdict allocation, and decision throughput across representative batch
+  sizes use complete traces from the frozen mature seed.
 - [x] Each plugin-local cost attributed to a specific function call site.
 
 **Dependencies.** None (parallel workstream).
@@ -474,13 +545,44 @@ On the array paths the remaining cost is the delimiter scan itself plus the stri
 decode overhead that used to dominate here was removed by the escape-free path (`tagRulesOnly` 68.4 → 24.4 µs per
 3000-trace batch, -64%).
 
-**Remaining gap (why this phase is not closed).** The hard invariant requires plugins to be measured "against
-representative complete-trace batches from the mature seed". These benchmarks build their batches synthetically in
-`benchBatch`/`benchEntries` — realistic in SHAPE (production tag keys, both first-party configs, complete traces) but
-not drawn from the frozen selection. The machinery to close this exists — `tracefixture.EvaluateSampler` already drives
-a sampler over complete generated traces via `buildSamplerBlock` — so the work is to add a seed-backed benchmark
-alongside the synthetic ones, not to build a fixture. Until then the first exit-gate item stays open and no
-production-ratio claim should be made from the numbers above.
+**Mature-seed benchmark.** `SamplerBatchBuilder` materializes complete logical traces in schedule order with only the
+requested projection. The opt-in benchmark reads the immutable mature source, frozen catalog/schedule, expected sampler
+artifact, and real plugin. Its preflight rejects malformed verdict lengths, nondeterministic decisions, input mutation,
+missing source traces, cancellation, and default-policy verdict drift. The test reproduces 74,576 evaluated traces,
+26,380 drops, and the authoritative 35.3733104484% ratio before any timing begins.
+
+The following values are medians of five runs at three full-fixture decisions per run on two CPUs. The normal policy
+cases use 512-trace complete batches; bytes and allocations are the verdict slices only (74,592 B/op and 146 allocs/op).
+
+| Mature-seed axis | Median ns/trace |
+| --- | ---: |
+| Complete-trace duration envelope | 305.2 |
+| Dedicated error column | 169.1 |
+| Trace-ID hash/sample | 40.24 |
+| Tag equals | 196.5 |
+| Tag regex | 240.8 |
+| HTTP status regex | 254.2 |
+| Default SkyWalking policy | 473.4 |
+| Projected span-body traversal | 17.12 |
+| Projected span-ID traversal | 13.64 |
+
+Batch-size evidence separates policy work from verdict allocation:
+
+| Complete traces/batch | 1 | 16 | 64 | 256 | 512 | 4,096 | 8,192 | 16,384 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Default policy, ns/trace | 531.9 | 508.1 | 499.8 | 493.9 | 482.9 | 500.2 | 483.0 | 462.9 |
+| Verdict-only, ns/trace | 20.52 | 6.261 | 5.614 | 5.314 | 5.419 | 5.195 | 5.252 | 5.158 |
+| Verdict allocations/op | 74,576 | 4,661 | 1,166 | 292 | 146 | 19 | 10 | 5 |
+
+The verdict buffer remains one boolean per trace and one allocation per batch; there is no hidden per-trace allocation.
+SkyWalking's default sampler deliberately requests no span bodies, so there is no honest plugin-local span parser to
+time. The two span rows above build the real seed with `Spans` or `SpanIDs` projection and measure traversal of every
+projected value; raw-column decode and arena ownership are measured at the Phase 7 merge boundary. This separation avoids
+inventing a non-production parser merely to populate a benchmark cell.
+The default-policy CPU profile attributes the real-seed work to `Sampler.hasSlowTrace`, `TagColumn.AtInto`,
+`DecodeTagValueInto`, `Sampler.hasErrorColumn`, and `hash/fnv.(*sum64a).Write`, matching the synthetic call-site study.
+Raw results, medians, and profiles are under
+`.scratch/trace-pipeline-merge-performance/phase9-seed-benchmark`.
 
 ---
 

@@ -466,7 +466,29 @@ Below are two operational scenarios represented as complete `TracePipelineConfig
 }
 ```
 
-> Each plugin link's `config` is a structured `google.protobuf.Struct` set directly in the pipeline config (not an opaque blob); the engine does not interpret its keys — it serializes the object to JSON and hands the bytes to the plugin's constructor, which unmarshals them into its own typed config. The gating chain here is a single `sampler` link whose `Project()` returns `Projection{ Tags: ["start_time", "latency", "is_error", "tags"], SpanIDs: false, Spans: false }`, so the verdict itself reads only those tag columns (plus the intrinsic `trace_id` / `MinTS` / `MaxTS`) and never a span body. Note this bounds what the *plugin* inspects, not what the merge decodes: per point 1 of [Filter contract and what the merge already gives us for free](#filter-contract-and-what-the-merge-already-gives-us-for-free), projecting any tag forces the decoded slow path, so the raw-copy fast path is skipped and the block is decoded in full. Note the searchable tags (`db.type`, `mq.queue`) are **not** separate columns: SkyWalking flattens them into one `tags` string array of `key=value` entries, so every `keepTagRules` entry resolves to that single column. "Keep errors" is satisfied by the projected `is_error` tag rather than by reading spans, and the duration test is the trace envelope `max(start_time + latency) - min(start_time)` — computed from two cheap tag columns, **not** from `MaxTS - MinTS`, which is the spread of per-row *start* timestamps (and 0 for a single-segment trace) rather than a duration. The `sw-trace-sampler.so` link is implemented at [`plugins/skywalking/sw-trace-sampler`](../../plugins/skywalking/sw-trace-sampler); a teaching example of the same SDK contract lives at [`pkg/pipeline/sdk/_example/segment-tail-sampler`](../../pkg/pipeline/sdk/_example/segment-tail-sampler) (§2.5). Each `StageRule.plugins` chain is the same shape — here a single shared `sw-trace-sampler.so` sampler whose config tightens from Hot (`durationThresholdMs` 100 / `keepErrors` / the `db.type` + `mq.queue` keep-tag-rules) to Warm (`keepErrors` only), each projecting just the tags its config references, `Spans: false`.
+> Each plugin link's `config` is a structured `google.protobuf.Struct` set directly in the pipeline config, not an opaque
+> blob. The engine does not interpret its keys: it serializes the object to JSON and hands the bytes to the plugin's
+> constructor, which unmarshals them into its own typed config.
+>
+> The gating chain here is a single `sampler` link whose `Project()` returns tags `start_time`, `latency`, `is_error`, and
+> `tags`, with `SpanIDs` and `Spans` false. The verdict therefore reads only those tag columns, plus the intrinsic
+> `trace_id`, `MinTS`, and `MaxTS`, and never a span body. For a unique physical trace block, the merge keeps encoded
+> output on its raw-copy path and decodes only these projected columns into an immutable evaluation arena. A trace split
+> across physical blocks still uses the ordinary full decode because compaction must consolidate its output.
+>
+> The searchable tags (`db.type`, `mq.queue`) are **not** separate columns. SkyWalking flattens them into one `tags`
+> string array of `key=value` entries, so every `keepTagRules` entry resolves to that single column. "Keep errors" is
+> satisfied by the projected `is_error` tag rather than by reading spans. The duration test is the trace envelope
+> `max(start_time + latency) - min(start_time)`, computed from two cheap tag columns. It does **not** use
+> `MaxTS - MinTS`, which is the spread of per-row *start* timestamps (and zero for a single-segment trace), not a duration.
+>
+> The `sw-trace-sampler.so` link is implemented at
+> [`plugins/skywalking/sw-trace-sampler`](../../plugins/skywalking/sw-trace-sampler). A teaching example of the same SDK
+> contract lives at
+> [`pkg/pipeline/sdk/_example/segment-tail-sampler`](../../pkg/pipeline/sdk/_example/segment-tail-sampler) (§2.5). Each
+> `StageRule.plugins` chain has the same shape: one shared sampler whose config tightens from Hot (`durationThresholdMs`
+> 100, `keepErrors`, and the `db.type` plus `mq.queue` keep-tag rules) to Warm (`keepErrors` only), with each link projecting
+> only the tags its config references and keeping `Spans` false.
 
 - **Retention Dynamics** (real `sw_trace` traces; gating runs in Hot, owned by the gating chain; per-stage retention owned by each stage's `plugins` chain):
 

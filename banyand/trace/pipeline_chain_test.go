@@ -20,6 +20,7 @@ package trace
 import (
 	"fmt"
 	"runtime"
+	"sort"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -27,7 +28,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
+	pkgbytes "github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
@@ -58,6 +62,27 @@ type durationEnvelopeSampler struct {
 	calls     atomic.Int64
 	minTS     atomic.Int64
 	maxTS     atomic.Int64
+}
+
+type blockingProjectionSampler struct {
+	entered  chan struct{}
+	release  chan struct{}
+	observed chan string
+}
+
+func (s *blockingProjectionSampler) Kind() sdk.Kind { return sdk.KindSampler }
+
+func (s *blockingProjectionSampler) Project() sdk.Projection {
+	return sdk.Projection{Tags: []string{"status"}, Spans: true}
+}
+
+func (s *blockingProjectionSampler) Close() error { return nil }
+
+func (s *blockingProjectionSampler) Decide(batch *sdk.TraceBatch) (sdk.Verdict, error) {
+	close(s.entered)
+	<-s.release
+	s.observed <- string(batch.Traces[0].Tags[0].Values[0]) + "/" + string(batch.Traces[0].Spans[0])
+	return sdk.Verdict{Keep: []bool{true}}, nil
 }
 
 func (s *durationEnvelopeSampler) Kind() sdk.Kind          { return sdk.KindSampler }
@@ -239,6 +264,47 @@ func appendTrace(parts []*traces, traceID, status string) []*traces {
 	parts[0].spans = append(parts[0].spans, []byte("span-"+traceID))
 	parts[0].spanIDs = append(parts[0].spanIDs, "span-"+traceID)
 	return parts
+}
+
+func projectedSingleTraceParts(statuses map[string]string) []*traces {
+	parts := make([]*traces, 0, len(statuses))
+	traceIDs := make([]string, 0, len(statuses))
+	for traceID := range statuses {
+		traceIDs = append(traceIDs, traceID)
+	}
+	sort.Strings(traceIDs)
+	for _, traceID := range traceIDs {
+		parts = append(parts, &traces{
+			traceIDs:   []string{traceID},
+			timestamps: []int64{1},
+			tags: [][]*tagValue{{
+				{tag: "status", valueType: pbv1.ValueTypeStr, value: convert.StringToBytes(statuses[traceID])},
+				{tag: "unrequested", valueType: pbv1.ValueTypeStr, value: convert.StringToBytes("ignored")},
+			}},
+			spans:   [][]byte{[]byte("span-" + traceID)},
+			spanIDs: []string{"span-" + traceID},
+		})
+	}
+	return parts
+}
+
+func TestMergeFilter_ProjectsUniqueRawTraceWithoutSlowMerge(t *testing.T) {
+	sampler := &wholeTraceErrorSampler{}
+	filter := &mergeFilter{
+		chain:   newMergeChain("g", "s", []sdk.Sampler{sampler}, 0),
+		timeout: time.Second,
+	}
+
+	got, dropped := mergeWithFilter(t, projectedSingleTraceParts(map[string]string{
+		"trace-error": "error",
+		"trace-ok":    "success",
+	}), filter)
+
+	require.Equal(t, []string{"trace-error"}, got)
+	require.Equal(t, map[string]struct{}{"trace-ok": {}}, dropped)
+	require.Equal(t, int64(1), sampler.calls.Load())
+	require.Equal(t, int64(2), sampler.traceCount.Load())
+	require.Equal(t, int64(2), sampler.rowCount.Load())
 }
 
 func TestMergeFilter_AssemblesEveryPhysicalBlockBeforeDecide(t *testing.T) {
@@ -432,6 +498,49 @@ func TestTraceEvaluationStagerReservesProjectedEvaluationCopies(t *testing.T) {
 		"the budget must reserve transient TraceBlock vectors and copied projected values")
 }
 
+func TestRawProjectionBudgetCoversSparseColumnsAndDecodedPayload(t *testing.T) {
+	tagBuffer := pkgbytes.Buffer{}
+	_, encodeErr := internalencoding.EncodeTagValues(&tagBuffer, [][]byte{[]byte("error")}, pbv1.ValueTypeStr)
+	require.NoError(t, encodeErr)
+	spanID := []byte("a-compressible-span-id-a-compressible-span-id")
+	span := []byte("span-body")
+	encodedSpans := encoding.EncodeBytesBlock(nil, [][]byte{spanID})
+	encodedSpans = encoding.EncodeBytesBlock(encodedSpans, [][]byte{span})
+	stagedBlock := stagedTrace{
+		isRaw: true, traceID: "trace-projected", rawBM: &blockMetadata{
+			traceID: "trace-projected", count: 1, spans: &dataBlock{},
+			timestamps: timestampsMetadata{min: 1, max: 2, known: true},
+			tags:       map[string]*dataBlock{"status": {}}, tagType: map[string]pbv1.ValueType{"status": pbv1.ValueTypeStr},
+		},
+		rawTags: map[string][]byte{"status": tagBuffer.Buf}, rawSpans: encodedSpans,
+	}
+	projection := sdk.Projection{Tags: []string{"missing-a", "status", "missing-b"}, SpanIDs: true, Spans: true}
+	charged := stagedBlock.approxEvaluationBytes(projection)
+	vectors := &stagedEvaluationVectors{}
+	prepareStagedProjectionVectors(vectors, []stagedTrace{stagedBlock}, []stagedTraceGroup{{
+		traceID: "trace-projected", start: 0, end: 1, minTS: 1, maxTS: 2, validMetadata: true,
+	}}, projection)
+	assembled, valid := assembleRawTraceBlockInto(vectors, &stagedBlock, projection)
+	require.True(t, valid)
+	defer func() {
+		for _, arena := range vectors.projectionArenas {
+			releaseStagedByteArena(arena)
+		}
+	}()
+	require.Equal(t, spanID, []byte(assembled.SpanIDs[0]))
+	require.Equal(t, span, assembled.Spans[0])
+
+	actual := uint64(cap(vectors.tagColumns))*uint64(unsafe.Sizeof(sdk.TagColumn{})) +
+		uint64(cap(vectors.tagValues))*uint64(unsafe.Sizeof([]byte{})) +
+		uint64(cap(vectors.spanIDs))*uint64(unsafe.Sizeof("")) +
+		uint64(cap(vectors.spans))*uint64(unsafe.Sizeof([]byte{}))
+	for _, arena := range vectors.projectionArenas {
+		actual += uint64(len(arena.Buf))
+	}
+	require.GreaterOrEqual(t, charged, actual,
+		"the hard staging estimate must cover sparse projection vectors and decoded span-ID, span, and tag bytes")
+}
+
 func TestMergeFilter_TraceCountBudgetBoundsDecideBatch(t *testing.T) {
 	sampler := &wholeTraceErrorSampler{}
 	filter := &mergeFilter{
@@ -543,6 +652,72 @@ func TestEvaluationVectorPoolDiscardsUnsafeAndOversizedBatches(t *testing.T) {
 	require.True(t, releaseStagedEvaluationVectors(reusableVectors, true))
 	require.Empty(t, reusableVectors.traceIDs)
 	require.Empty(t, reusableVectors.decisionMask)
+}
+
+func projectedStagedTrace(traceID, status, span string) ([]stagedTrace, []stagedTraceGroup) {
+	block := &blockPointer{}
+	block.bm.traceID = traceID
+	block.bm.count = 1
+	block.bm.timestamps = timestampsMetadata{min: 1, max: 2, known: true}
+	block.block.minTS = 1
+	block.block.maxTS = 2
+	block.block.spanIDs = []string{"span-id"}
+	block.block.spans = [][]byte{[]byte(span)}
+	block.block.tags = []tag{{name: "status", valueType: pbv1.ValueTypeStr, values: [][]byte{[]byte(status)}}}
+	return []stagedTrace{{traceID: traceID, slowBlock: block}}, []stagedTraceGroup{{
+		traceID: traceID, start: 0, end: 1, minTS: 1, maxTS: 2, validMetadata: true,
+	}}
+}
+
+func TestStagedEvaluationBatchPacksProjectedPayloadIntoArena(t *testing.T) {
+	staged, groups := projectedStagedTrace("trace-arena", "error", "span-body")
+	filter := &mergeFilter{chain: newMergeChain("g", "s", []sdk.Sampler{&fakeSampler{proj: sdk.Projection{
+		Tags: []string{"status"}, SpanIDs: true, Spans: true,
+	}}}, 0)}
+	defer filter.chain.close()
+
+	assembled, valid := assembleStagedEvaluationBatch(filter, staged, groups)
+	require.True(t, valid)
+	require.Len(t, assembled.vectors.projectionArenas, 1)
+	require.Len(t, assembled.vectors.traceBlocks, 1)
+	traceBlock := &assembled.vectors.traceBlocks[0]
+	require.Equal(t, []byte("error"), traceBlock.Tags[0].Values[0])
+	require.Equal(t, []byte("span-body"), traceBlock.Spans[0])
+	require.Equal(t, "span-id", traceBlock.SpanIDs[0])
+
+	staged[0].slowBlock.block.tags[0].values[0][0] = 'X'
+	staged[0].slowBlock.block.spans[0][0] = 'X'
+	staged[0].slowBlock.block.spanIDs[0] = "changed"
+	require.Equal(t, []byte("error"), traceBlock.Tags[0].Values[0])
+	require.Equal(t, []byte("span-body"), traceBlock.Spans[0])
+	require.Equal(t, "span-id", traceBlock.SpanIDs[0])
+	require.True(t, releaseStagedEvaluationVectors(assembled.vectors, true))
+}
+
+func TestTimedOutProjectionBatchNeverRecyclesArena(t *testing.T) {
+	sampler := &blockingProjectionSampler{
+		entered: make(chan struct{}), release: make(chan struct{}), observed: make(chan string, 1),
+	}
+	filter := &mergeFilter{
+		chain: newMergeChain("g", "s", []sdk.Sampler{sampler}, 0), timeout: 10 * time.Millisecond,
+	}
+	defer filter.chain.close()
+	staged, groups := projectedStagedTrace("trace-timeout", "error", "span-body")
+	assembled, valid := assembleStagedEvaluationBatch(filter, staged, groups)
+	require.True(t, valid)
+
+	_, reusable := resolveStagedDrops(filter, staged, assembled)
+	require.False(t, reusable)
+	<-sampler.entered
+	require.False(t, releaseStagedEvaluationVectors(assembled.vectors, reusable))
+
+	replacement := acquireStagedByteArena(len("error") + len("span-body"))
+	for byteIdx := range replacement.Buf {
+		replacement.Buf[byteIdx] = 'X'
+	}
+	releaseStagedByteArena(replacement)
+	close(sampler.release)
+	require.Equal(t, "error/span-body", <-sampler.observed)
 }
 
 func TestStagedByteArenaCacheBoundsAggregateRetention(t *testing.T) {

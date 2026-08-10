@@ -31,6 +31,7 @@ import (
 
 	"github.com/dustin/go-humanize"
 
+	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	pkgbytes "github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
@@ -646,7 +647,6 @@ func (tst *tsTable) buildHotMergeFilterDecisionAt(parts []*partWrapper, logicalN
 		plannedStagingBatches: stagingPlan.PlannedBatches,
 		traceBudget:           resolveTraceBudget(tst.option),
 		maxTraceCount:         maxStagedTraceCountFromBudget(stagingPlan.BatchLimit),
-		forceSlow:             projectionRequiresSlowPath(chain.projection),
 	}, ""
 }
 
@@ -1287,22 +1287,37 @@ func (buffer *stagedTraceGroupBuffer) reset() {
 }
 
 type stagedEvaluationVectors struct {
-	traceBlocks  []sdk.TraceBlock
-	traceIDs     []string
-	guardRanges  []stagedTraceRange
-	guardBlocks  []traceFragmentGuardBlock
-	decisionMask []bool
+	projectionArenas []*pkgbytes.Buffer
+	traceBlocks      []sdk.TraceBlock
+	tagColumns       []sdk.TagColumn
+	tagValues        [][]byte
+	spans            [][]byte
+	spanIDs          []string
+	traceIDs         []string
+	guardRanges      []stagedTraceRange
+	guardBlocks      []traceFragmentGuardBlock
+	decisionMask     []bool
 }
 
 func (vectors *stagedEvaluationVectors) reset() {
 	for traceIdx := range vectors.traceBlocks {
 		vectors.traceBlocks[traceIdx] = sdk.TraceBlock{}
 	}
+	clear(vectors.projectionArenas)
+	clear(vectors.tagColumns)
+	clear(vectors.tagValues)
+	clear(vectors.spans)
+	clear(vectors.spanIDs)
 	clear(vectors.traceIDs)
 	clear(vectors.guardRanges)
 	clear(vectors.guardBlocks)
 	clear(vectors.decisionMask)
+	vectors.projectionArenas = vectors.projectionArenas[:0]
 	vectors.traceBlocks = vectors.traceBlocks[:0]
+	vectors.tagColumns = vectors.tagColumns[:0]
+	vectors.tagValues = vectors.tagValues[:0]
+	vectors.spans = vectors.spans[:0]
+	vectors.spanIDs = vectors.spanIDs[:0]
 	vectors.traceIDs = vectors.traceIDs[:0]
 	vectors.guardRanges = vectors.guardRanges[:0]
 	vectors.guardBlocks = vectors.guardBlocks[:0]
@@ -1413,18 +1428,56 @@ func acquireStagedEvaluationVectors(traceCount int, withGuard bool) *stagedEvalu
 	return vectors
 }
 
+func prepareStagedProjectionVectors(vectors *stagedEvaluationVectors, staged []stagedTrace, groups []stagedTraceGroup, projection sdk.Projection) {
+	rowCount := 0
+	for groupIdx := range groups {
+		group := &groups[groupIdx]
+		for stagedIdx := group.start; stagedIdx < group.end && stagedIdx < len(staged); stagedIdx++ {
+			metadata := staged[stagedIdx].metadata()
+			if metadata != nil {
+				rowCount += int(metadata.count)
+			}
+		}
+	}
+	tagColumnCount := len(groups) * len(projection.Tags)
+	tagValueCount := rowCount * len(projection.Tags)
+	if cap(vectors.projectionArenas) < len(groups) {
+		vectors.projectionArenas = make([]*pkgbytes.Buffer, 0, len(groups))
+	}
+	if cap(vectors.tagColumns) < tagColumnCount {
+		vectors.tagColumns = make([]sdk.TagColumn, 0, tagColumnCount)
+	}
+	if cap(vectors.tagValues) < tagValueCount {
+		vectors.tagValues = make([][]byte, 0, tagValueCount)
+	}
+	if projection.Spans && cap(vectors.spans) < rowCount {
+		vectors.spans = make([][]byte, 0, rowCount)
+	}
+	if projection.SpanIDs && cap(vectors.spanIDs) < rowCount {
+		vectors.spanIDs = make([]string, 0, rowCount)
+	}
+}
+
 func releaseStagedEvaluationVectors(vectors *stagedEvaluationVectors, reusable bool) bool {
 	if vectors == nil {
 		return false
 	}
 	if !reusable {
+		for _, arena := range vectors.projectionArenas {
+			stagedByteArenas.pool.Discard(arena)
+		}
 		stagedEvaluationPool.Discard(vectors)
 		return false
+	}
+	for _, arena := range vectors.projectionArenas {
+		releaseStagedByteArena(arena)
 	}
 	vectors.reset()
 	if cap(vectors.traceBlocks) > maxPooledEvaluationTraces || cap(vectors.traceIDs) > maxPooledEvaluationTraces ||
 		cap(vectors.guardRanges) > maxPooledEvaluationTraces || cap(vectors.guardBlocks) > maxPooledStagedBlocks ||
-		cap(vectors.decisionMask) > maxPooledEvaluationTraces {
+		cap(vectors.decisionMask) > maxPooledEvaluationTraces || cap(vectors.projectionArenas) > maxPooledEvaluationTraces ||
+		cap(vectors.tagColumns) > maxPooledStagedBlocks || cap(vectors.tagValues) > maxPooledStagedBlocks ||
+		cap(vectors.spans) > maxPooledStagedBlocks || cap(vectors.spanIDs) > maxPooledStagedBlocks {
 		stagedEvaluationPool.Discard(vectors)
 		return false
 	}
@@ -1488,7 +1541,7 @@ type mergeFilter struct {
 	plannedStagingBatches uint64 // estimated number of balanced decision batches
 	traceBudget           uint64 // hard cap on one trace's staged bytes; exceeding it retains the trace without evaluation (0 disables bypass)
 	maxTraceCount         int    // hard cap on logical traces sent to one Decide call (0 disables the count cap)
-	forceSlow             bool   // forces the slow assembly path when the chain projects row data
+	forceSlow             bool   // test seam that forces decoded staging instead of projected raw staging
 }
 
 func (st *stagedTrace) metadata() *blockMetadata {
@@ -1564,7 +1617,65 @@ func (st *stagedTrace) approxBytes() uint64 {
 }
 
 func (st *stagedTrace) approxEvaluationBytes(projection sdk.Projection) uint64 {
-	if st.slowBlock == nil || !projectionRequiresSlowPath(projection) {
+	if !projectionRequiresSlowPath(projection) {
+		return 0
+	}
+	if st.isRaw {
+		if st.rawBM == nil {
+			return 0
+		}
+		rowCount := st.rawBM.count
+		n := uint64(unsafe.Sizeof(sdk.TraceBlock{})) + uint64(unsafe.Sizeof((*pkgbytes.Buffer)(nil)))
+		n += uint64(len(projection.Tags)) * (uint64(unsafe.Sizeof(sdk.TagColumn{})) + rowCount*uint64(unsafe.Sizeof([]byte{})))
+		if projection.SpanIDs {
+			n += rowCount * uint64(unsafe.Sizeof(""))
+		}
+		if projection.Spans {
+			n += rowCount * uint64(unsafe.Sizeof([]byte{}))
+		}
+		decoder := generateColumnValuesDecoder()
+		defer releaseColumnValuesDecoder(decoder)
+		for _, projectedTag := range projection.Tags {
+			encodedName, exists := projectedRawTagName(st.rawBM, projectedTag)
+			if !exists {
+				continue
+			}
+			encodedValues, exists := st.rawTags[encodedName]
+			if !exists {
+				continue
+			}
+			valueBuffer := pkgbytes.Buffer{Buf: encodedValues}
+			values, decodeErr := internalencoding.DecodeTagValues(nil, decoder, &valueBuffer, st.rawBM.tagType[encodedName], int(st.rawBM.count))
+			if decodeErr != nil {
+				return n
+			}
+			for _, value := range values {
+				n += uint64(len(value))
+			}
+		}
+		if projection.Spans || projection.SpanIDs {
+			spanIDs, spanTail, decodeErr := decoder.DecodeWithTail(nil, st.rawSpans, st.rawBM.count)
+			if decodeErr != nil {
+				return n
+			}
+			if projection.SpanIDs {
+				for _, spanID := range spanIDs {
+					n += uint64(len(spanID))
+				}
+			}
+			if projection.Spans {
+				spans, spansErr := decoder.Decode(nil, spanTail, st.rawBM.count)
+				if spansErr != nil {
+					return n
+				}
+				for _, span := range spans {
+					n += uint64(len(span))
+				}
+			}
+		}
+		return n
+	}
+	if st.slowBlock == nil {
 		return 0
 	}
 	block := &st.slowBlock.block
@@ -1575,6 +1686,7 @@ func (st *stagedTrace) approxEvaluationBytes(projection sdk.Projection) uint64 {
 	for tagIdx := range block.tags {
 		n += uint64(len(block.tags[tagIdx].values)) * uint64(unsafe.Sizeof([]byte{}))
 	}
+	n += uint64(len(projection.Tags)) * (uint64(unsafe.Sizeof(sdk.TagColumn{})) + uint64(len(block.spans))*uint64(unsafe.Sizeof([]byte{})))
 	if projection.Spans {
 		n += uint64(len(block.spans)) * uint64(unsafe.Sizeof([]byte{}))
 		for _, span := range block.spans {
@@ -1590,8 +1702,6 @@ func (st *stagedTrace) approxEvaluationBytes(projection sdk.Projection) uint64 {
 			if decodeTypedTag(stagedTag.name) != projectedTag {
 				continue
 			}
-			n += uint64(unsafe.Sizeof(sdk.TagColumn{}))
-			n += uint64(len(stagedTag.values)) * uint64(unsafe.Sizeof([]byte{}))
 			for _, value := range stagedTag.values {
 				n += uint64(len(value))
 			}
@@ -1779,6 +1889,7 @@ type stagedEvaluationBatch struct {
 
 func assembleStagedEvaluationBatch(filter *mergeFilter, staged []stagedTrace, groups []stagedTraceGroup) (stagedEvaluationBatch, bool) {
 	vectors := acquireStagedEvaluationVectors(len(groups), filter.guard != nil)
+	prepareStagedProjectionVectors(vectors, staged, groups, filter.chain.projection)
 	assembledBatch := stagedEvaluationBatch{vectors: vectors}
 	expectedStart := 0
 	for groupIdx := range groups {
@@ -1788,7 +1899,7 @@ func assembleStagedEvaluationBatch(filter *mergeFilter, staged []stagedTrace, gr
 			releaseStagedEvaluationVectors(vectors, true)
 			return stagedEvaluationBatch{}, false
 		}
-		stagedTraceBlock, assembled := assembleStagedTraceBlock(*group, staged[group.start:group.end], filter.chain.projection)
+		stagedTraceBlock, assembled := assembleStagedTraceBlockInto(vectors, *group, staged[group.start:group.end], filter.chain.projection)
 		if assembled {
 			vectors.traceIDs = append(vectors.traceIDs, group.traceID)
 			vectors.traceBlocks = append(vectors.traceBlocks, stagedTraceBlock)
@@ -1917,8 +2028,7 @@ func flushStaged(bw *blockWriter, filter *mergeFilter, staged []stagedTrace, gro
 }
 
 // rawFastPathEligible reports whether the current block can be copied raw
-// (without unmarshaling): raw merge is not force-disabled, the active retention
-// filter does not require the slow tag-projecting path, and this is the only
+// (without unmarshaling): raw merge is not force-disabled and this is the only
 // block for its traceID (the next block, if any, has a different traceID).
 func rawFastPathEligible(filter *mergeFilter, nextB, b *blockPointer) bool {
 	if forceSlowMerge {
