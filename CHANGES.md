@@ -172,6 +172,7 @@ Release Notes.
 
 - Upgrade Go and npm dependencies including etcd to v3.6.10, OpenTelemetry to v1.43.0, AWS SDK, and Google Cloud libraries.
 - Regenerate expired TLS test certificate with 100-year validity.
+- Regenerate the shared self-signed TLS test certificate, which expired at `Aug 10 06:54:23 2026 GMT` and broke every PR: the standalone TLS integration specs, the DNS discovery TLS specs, and the bydbctl health-check specs all load it. Same subject and SANs (`localhost`, `example.com`, `www.example.com`), now valid for 100 years. The earlier regeneration covered `banyand/metadata/schema/property/testdata/certs` but missed this pair, which is copied into both `test/integration/standalone/other/testdata` and `banyand/metadata/discovery/dns/testdata`.
 - Set Ginkgo `--repeat` to 0 in the flaky-test workflow so the hourly run completes within the 50-minute timeout.
 - Refactor the dump tool into a reusable `banyand/dump` parser library.
 - Strip macOS AppleDouble (`._*`) and `__MACOSX/` metadata from every release tarball (src, banyand, bydbctl, fodc-agent, fodc-proxy) so downstream users running `make generate` from a downloaded source tarball no longer hit "invalid control character" errors when `buf generate` walks the resource-fork files; export `COPYFILE_DISABLE=1` and filter `._*` files at the source.
