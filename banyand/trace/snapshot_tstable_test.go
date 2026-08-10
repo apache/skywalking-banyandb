@@ -27,7 +27,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -189,16 +188,17 @@ func TestTraceTolerantLoaderFallbackToOlderSnapshot(t *testing.T) {
 		timestamp.TimeRange{}, traceSnapshotOption(), nil)
 	require.NoError(t, err)
 	tst.mustAddTraces(tsTS1, nil)
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the flusher to persist a snapshot (.snp) file. The part directory
+	// is introduced before the flusher writes the snapshot, so waiting only for
+	// the part races the async snapshot write and can observe zero snapshots.
 	require.Eventually(t, func() bool {
-		dd := fileSystem.ReadDir(tabDir)
-		for _, d := range dd {
-			if d.IsDir() && d.Name() != sidxDirName && d.Name() != storage.FailedPartsDirName {
+		for _, e := range fileSystem.ReadDir(tabDir) {
+			if filepath.Ext(e.Name()) == snapshotSuffix {
 				return true
 			}
 		}
 		return false
-	}, flags.EventuallyTimeout, time.Millisecond, "wait for part")
+	}, flags.EventuallyTimeout, time.Millisecond, "wait for snapshot")
 	tst.Close()
 	snapshots := make([]uint64, 0)
 	for _, e := range fileSystem.ReadDir(tabDir) {
@@ -234,16 +234,17 @@ func TestTraceInitTSTableDeletesMultipleFailedSnapshotsOnFallback(t *testing.T) 
 		timestamp.TimeRange{}, traceSnapshotOption(), nil)
 	require.NoError(t, err)
 	tst.mustAddTraces(tsTS1, nil)
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the flusher to persist a snapshot (.snp) file. The part directory
+	// is introduced before the flusher writes the snapshot, so waiting only for
+	// the part races the async snapshot write and can observe zero snapshots.
 	require.Eventually(t, func() bool {
-		dd := fileSystem.ReadDir(tabDir)
-		for _, d := range dd {
-			if d.IsDir() && d.Name() != sidxDirName && d.Name() != storage.FailedPartsDirName {
+		for _, e := range fileSystem.ReadDir(tabDir) {
+			if filepath.Ext(e.Name()) == snapshotSuffix {
 				return true
 			}
 		}
 		return false
-	}, flags.EventuallyTimeout, time.Millisecond, "wait for part")
+	}, flags.EventuallyTimeout, time.Millisecond, "wait for snapshot")
 	tst.Close()
 	snapshots := make([]uint64, 0)
 	for _, e := range fileSystem.ReadDir(tabDir) {
