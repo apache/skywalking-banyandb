@@ -2,9 +2,9 @@
 
 ## Status
 
-Execution record. Phases 1 through 5 and the parallel Phase 7 through Phase 9 work are closed. The original Phase 3
-resource targets are retained below as historical goals, together with their measured disposition; they are not reported
-as passed. The deterministic drop path and final SkyWalking integration remain in Phase 6 and Phase 10.
+Execution record. Phases 1 through 9 are closed. The original Phase 3 resource targets are retained below as historical
+goals, together with their measured disposition; they are not reported as passed. Phase 10, the final serialized
+SkyWalking integration and acceptance run, is the only remaining phase.
 
 ## Opening Baseline (Before Adaptive Batching)
 
@@ -638,6 +638,13 @@ The default-policy CPU profile attributes the real-seed work to `Sampler.hasSlow
 Raw results, medians, and profiles are under
 `.scratch/trace-pipeline-merge-performance/phase9-seed-benchmark`.
 
+**Follow-up optimization disposition.** The plugin-local optimization follow-up is complete. It measured and rejected
+two additional rewrites: replacing the existing per-entry SIMD-assisted `IndexByte` calls with one scalar scan regressed
+the representative paths by 47-73%, while changing tag matching from rules-outer to entries-outer regressed them by
+28-34%. Refining the latter with precomputed rule operands did not recover the lost inlining. Both experiments were
+reverted, leaving the measured faster implementation unchanged. No plugin optimization or plugin branch remains to be
+integrated before Phase 10.
+
 ---
 
 ### Phase 10 — Final Integration
@@ -660,7 +667,7 @@ merge grace unchanged. No unfinished queued, running, or in-flight merge work.
 - [ ] No regression in pipeline-disabled baseline.
 - [ ] All proposed targets met (or explicitly accepted with quantified impact).
 
-**Dependencies.** Phase 4, Phase 6, Phase 7 (and Phase 8 / Phase 9 if those axes feed into the final run).
+**Dependencies.** Phases 4, 6, 7, 8, and 9; all are closed.
 
 **Boundary rationale.** Final acceptance gate. Only the targets frozen here become blocking.
 
