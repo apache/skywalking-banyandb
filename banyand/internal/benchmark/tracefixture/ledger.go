@@ -34,12 +34,31 @@ import (
 
 type ledgerHashes map[string][][sha256.Size]byte
 
+// LogicalLedgerSnapshot holds layout-independent core and secondary-index rows grouped by trace ID.
+type LogicalLedgerSnapshot struct {
+	ledgers map[string]ledgerHashes
+}
+
+// LogicalLedgerSelection summarizes a filtered logical ledger.
+type LogicalLedgerSelection struct {
+	Checksums map[string]string
+	Rows      map[string]uint64
+}
+
 // LogicalLedgerChecksums calculates layout-independent checksums for core and secondary-index rows.
 func LogicalLedgerChecksums(ctx context.Context, receiver *storagetrace.BenchmarkPartReceiver) (map[string]string, error) {
+	snapshot, snapshotErr := CaptureLogicalLedgerSnapshot(ctx, receiver)
+	if snapshotErr != nil {
+		return nil, snapshotErr
+	}
+	return snapshot.Excluding(nil).Checksums, nil
+}
+
+// CaptureLogicalLedgerSnapshot reads core and secondary-index rows into an immutable logical snapshot.
+func CaptureLogicalLedgerSnapshot(ctx context.Context, receiver *storagetrace.BenchmarkPartReceiver) (*LogicalLedgerSnapshot, error) {
 	if receiver == nil {
 		return nil, fmt.Errorf("benchmark receiver is required")
 	}
-	checksums := make(map[string]string, len(fixtureIndexNames)+1)
 	partIDs, partIDsErr := receiver.ActivePartIDs()
 	if partIDsErr != nil {
 		return nil, fmt.Errorf("cannot list active core ledger parts: %w", partIDsErr)
@@ -48,15 +67,35 @@ func LogicalLedgerChecksums(ctx context.Context, receiver *storagetrace.Benchmar
 	if coreErr != nil {
 		return nil, coreErr
 	}
-	checksums["core"] = canonicalLedgerChecksum(core)
+	ledgers := map[string]ledgerHashes{"core": core}
 	for _, indexName := range fixtureIndexNames {
 		indexLedger, indexErr := scanIndexLedger(ctx, receiver, indexName)
 		if indexErr != nil {
 			return nil, indexErr
 		}
-		checksums[indexName] = canonicalLedgerChecksum(indexLedger)
+		ledgers[indexName] = indexLedger
 	}
-	return checksums, nil
+	return &LogicalLedgerSnapshot{ledgers: ledgers}, nil
+}
+
+// Excluding calculates checksums and row counts after removing the supplied trace IDs.
+func (lls *LogicalLedgerSnapshot) Excluding(traceIDs map[string]struct{}) LogicalLedgerSelection {
+	selection := LogicalLedgerSelection{
+		Checksums: make(map[string]string, len(lls.ledgers)),
+		Rows:      make(map[string]uint64, len(lls.ledgers)),
+	}
+	for ledgerName, ledger := range lls.ledgers {
+		selected := make(ledgerHashes, len(ledger))
+		for traceID, rows := range ledger {
+			if _, excluded := traceIDs[traceID]; excluded {
+				continue
+			}
+			selected[traceID] = rows
+			selection.Rows[ledgerName] += uint64(len(rows))
+		}
+		selection.Checksums[ledgerName] = canonicalLedgerChecksum(selected)
+	}
+	return selection
 }
 
 func reconcileLogicalLedgers(ctx context.Context, receiver *storagetrace.BenchmarkPartReceiver, plan Plan, lookup sourceLookup, offsets []int64) error {

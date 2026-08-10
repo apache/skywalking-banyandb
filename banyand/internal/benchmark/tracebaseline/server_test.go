@@ -19,10 +19,12 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	storagetrace "github.com/apache/skywalking-banyandb/banyand/trace"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 func TestServeRejectsFinalizeWithoutSampler(t *testing.T) {
@@ -32,6 +34,38 @@ func TestServeRejectsFinalizeWithoutSampler(t *testing.T) {
 		ProfileDir: filepath.Join(root, "profiles"), RunFinalize: true,
 	})
 	require.ErrorContains(t, serveErr, "finalize requires a sampler plugin")
+}
+
+func TestServeRejectsSamplerConfigWithoutPlugin(t *testing.T) {
+	root := t.TempDir()
+	serveErr := Serve(context.Background(), ServerOptions{
+		Root: root, SocketPath: filepath.Join(root, "control.sock"), OutputPath: filepath.Join(root, "report.json"),
+		ProfileDir: filepath.Join(root, "profiles"), PluginConfig: []byte(`{"healthySampleRate":"0.1"}`),
+	})
+	require.ErrorContains(t, serveErr, "sampler config requires a sampler plugin")
+}
+
+func TestServeRejectsUnexpectedSamplerConfigChecksum(t *testing.T) {
+	root := t.TempDir()
+	serveErr := Serve(context.Background(), ServerOptions{
+		Root: root, SocketPath: filepath.Join(root, "control.sock"), OutputPath: filepath.Join(root, "report.json"),
+		ProfileDir: filepath.Join(root, "profiles"), PluginPath: filepath.Join(root, "sampler.so"),
+		PluginConfig: []byte(`{"healthySampleRate":"0.1"}`),
+		ExecutionIdentity: ExecutionIdentity{
+			PluginConfigSHA256: "unexpected",
+		},
+		SegmentTimeRange: timestamp.NewInclusiveTimeRange(time.Unix(0, 1), time.Unix(0, 2)),
+	})
+	require.ErrorContains(t, serveErr, "sampler config checksum")
+}
+
+func TestServeRejectsSamplingOracleWithoutPlugin(t *testing.T) {
+	root := t.TempDir()
+	serveErr := Serve(context.Background(), ServerOptions{
+		Root: root, SocketPath: filepath.Join(root, "control.sock"), OutputPath: filepath.Join(root, "report.json"),
+		ProfileDir: filepath.Join(root, "profiles"), SamplingOracle: &SamplingOracleArtifact{Version: 1},
+	})
+	require.ErrorContains(t, serveErr, "sampling oracle requires a sampler plugin")
 }
 
 func TestPhaseProfilerStopsAndClosesIdempotently(t *testing.T) {
@@ -124,4 +158,31 @@ func TestRetainAllFinalizeOutputRequiresExecutedLosslessFinalize(t *testing.T) {
 	failedFinalize := baseEvent
 	failedFinalize.Error = "merge failed"
 	require.False(t, retainAllFinalizeOutputCorrect([]storagetrace.BenchmarkMergeEvent{failedFinalize}))
+}
+
+func TestSamplingOracleOutputRequiresExpectedMatureDecisions(t *testing.T) {
+	oracle := SamplingOracleArtifact{Evaluated: 10, Retained: 6, Dropped: 4}
+	events := []storagetrace.BenchmarkMergeEvent{
+		{
+			Type: "file", Phase: storagetrace.BenchmarkMergePhasePrimary,
+			Sampling: storagetrace.BenchmarkMergeSamplingNotExecuted, Reason: storagetrace.BenchmarkMergeReasonGrace,
+			HotInputParts: 2,
+		},
+		{
+			Type: "finalize", Phase: storagetrace.BenchmarkMergePhaseCooldown,
+			Sampling: storagetrace.BenchmarkMergeSamplingExecuted, PluginCalls: 1,
+			TracesEvaluated: 10, TracesRetained: 6, TracesDropped: 4, MatureInputParts: 2,
+		},
+	}
+
+	require.True(t, samplingOracleOutputCorrect(events, oracle))
+
+	wrongTotals := append([]storagetrace.BenchmarkMergeEvent(nil), events...)
+	wrongTotals[1].TracesDropped--
+	require.False(t, samplingOracleOutputCorrect(wrongTotals, oracle))
+
+	hotEvaluation := append([]storagetrace.BenchmarkMergeEvent(nil), events...)
+	hotEvaluation[0].Sampling = storagetrace.BenchmarkMergeSamplingExecuted
+	hotEvaluation[0].PluginCalls = 1
+	require.False(t, samplingOracleOutputCorrect(hotEvaluation, oracle))
 }
