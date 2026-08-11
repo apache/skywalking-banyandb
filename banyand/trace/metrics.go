@@ -84,8 +84,32 @@ type metrics struct {
 	pipelineGuardPublicationRejected meter.Counter
 	pipelineGuardLosslessRetry       meter.Counter
 	pipelineGuardBypassed            meter.Counter
+	// pipelineTracesRetainedByCeiling and pipelineMergesCeilingReached carry the
+	// shard dimension, unlike the group-scoped pipeline counters above: the
+	// deletion bound they report against is per shard (spec section 5.2), so
+	// without seg/shard an operator can see that a group is under-deleting but not
+	// where. Both are deleted per tsTable in deleteMetrics, so their cardinality is
+	// bounded by live segments rather than growing with rotation.
+	pipelineTracesRetainedByCeiling meter.Counter
+	pipelineMergesCeilingReached    meter.Counter
+	// pipelineDropSetBudgetBytes is the resolved ceiling every merge in this group
+	// is charged. It is the denominator for the two counters above: without it a
+	// dashboard cannot tell a capped merge from a merge that had room to spare.
+	pipelineDropSetBudgetBytes meter.Gauge
+	// pipelineDropSetEntries distributes the dropped-ID count each merge finished
+	// with, so headroom is observable *before* the ceiling is reached. The counters
+	// above only fire once deletion has already been lost, which makes them a
+	// lagging indicator on their own.
+	pipelineDropSetEntries meter.Histogram
 
 	tbMetrics
+}
+
+// dropSetEntryBuckets spans a single dropped trace ID to well past the ceiling a
+// 16 GiB node derives (~671k entries, spec section 3.4), so a dashboard can watch
+// the distribution climb toward whatever ceiling resolveDropSetBudget produced.
+var dropSetEntryBuckets = meter.Buckets{
+	1, 100, 1_000, 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 2_000_000,
 }
 
 func (tst *tsTable) incTotalWritten(delta int) {
@@ -330,6 +354,38 @@ func (tst *tsTable) incPipelineTracesRetained(delta int) {
 	tst.metrics.pipelineTracesRetained.Inc(float64(delta))
 }
 
+// incPipelineTracesRetainedByCeiling counts a trace retained because the
+// merge's drop-set ceiling was reached, distinct from retained-by-verdict.
+// Every such trace also increments incPipelineTracesRetained.
+func (tst *tsTable) incPipelineTracesRetainedByCeiling(delta int) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.pipelineTracesRetainedByCeiling.Inc(float64(delta), tst.p.ShardLabelValues()...)
+}
+
+// incPipelineMergesCeilingReached counts one merge whose drop-set ceiling was
+// reached, split by lane.
+func (tst *tsTable) incPipelineMergesCeilingReached(lane string) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.pipelineMergesCeilingReached.Inc(1, append(tst.p.ShardLabelValues(), lane)...)
+}
+
+// observeDropSetUsage publishes what one merge's drop set cost against the
+// ceiling it was charged: the resolved budget as a gauge, and the number of IDs
+// the merge finished holding as a distribution. Called once per merge, for capped
+// and uncapped merges alike — an uncapped observation is what makes headroom
+// visible before the ceiling bites.
+func (tst *tsTable) observeDropSetUsage(budget uint64, entries int, lane string) {
+	if tst == nil || tst.metrics == nil || budget == 0 {
+		return
+	}
+	tst.metrics.pipelineDropSetBudgetBytes.Set(float64(budget))
+	tst.metrics.pipelineDropSetEntries.Observe(float64(entries), append(tst.p.ShardLabelValues(), lane)...)
+}
+
 //nolint:unused
 func (tst *tsTable) incPipelineTracesImmature(delta int) {
 	if tst == nil || tst.metrics == nil {
@@ -488,6 +544,10 @@ func (m *metrics) DeleteAll() {
 	m.pipelineGuardPublicationRejected.Delete()
 	m.pipelineGuardLosslessRetry.Delete()
 	m.pipelineGuardBypassed.Delete()
+	m.pipelineDropSetBudgetBytes.Delete()
+	// The ceiling counters and the entry histogram are shard-labeled, so they are
+	// deleted per tsTable in deleteMetrics rather than here — a group-level Delete()
+	// with no label values would not match their series.
 }
 
 func (s *supplier) newMetrics(p common.Position) storage.Metrics {
@@ -537,6 +597,11 @@ func (s *supplier) newMetrics(p common.Position) storage.Metrics {
 		pipelineGuardPublicationRejected: factory.NewCounter("pipeline_guard_publication_rejected"),
 		pipelineGuardLosslessRetry:       factory.NewCounter("pipeline_guard_lossless_retry"),
 		pipelineGuardBypassed:            factory.NewCounter("pipeline_guard_bypassed"),
+		pipelineTracesRetainedByCeiling:  factory.NewCounter("pipeline_traces_retained_by_ceiling", common.ShardLabelNames()...),
+		pipelineMergesCeilingReached:     factory.NewCounter("pipeline_merges_ceiling_reached", append(common.ShardLabelNames(), "lane")...),
+		pipelineDropSetBudgetBytes:       factory.NewGauge("pipeline_drop_set_budget_bytes"),
+		pipelineDropSetEntries: factory.NewHistogram("pipeline_drop_set_entries", dropSetEntryBuckets,
+			append(common.ShardLabelNames(), "lane")...),
 		tbMetrics: tbMetrics{
 			totalMemParts:                  factory.NewGauge("total_mem_part", common.ShardLabelNames()...),
 			totalMemElements:               factory.NewGauge("total_mem_elements", common.ShardLabelNames()...),
@@ -602,6 +667,11 @@ func (qs *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observa
 		pipelineGuardPublicationRejected: factory.NewCounter("pipeline_guard_publication_rejected"),
 		pipelineGuardLosslessRetry:       factory.NewCounter("pipeline_guard_lossless_retry"),
 		pipelineGuardBypassed:            factory.NewCounter("pipeline_guard_bypassed"),
+		pipelineTracesRetainedByCeiling:  factory.NewCounter("pipeline_traces_retained_by_ceiling", common.ShardLabelNames()...),
+		pipelineMergesCeilingReached:     factory.NewCounter("pipeline_merges_ceiling_reached", append(common.ShardLabelNames(), "lane")...),
+		pipelineDropSetBudgetBytes:       factory.NewGauge("pipeline_drop_set_budget_bytes"),
+		pipelineDropSetEntries: factory.NewHistogram("pipeline_drop_set_entries", dropSetEntryBuckets,
+			append(common.ShardLabelNames(), "lane")...),
 		tbMetrics: tbMetrics{
 			totalMemParts:                  factory.NewGauge("total_mem_part", common.ShardLabelNames()...),
 			totalMemElements:               factory.NewGauge("total_mem_elements", common.ShardLabelNames()...),
@@ -687,6 +757,15 @@ func (tst *tsTable) deleteMetrics() {
 	tst.metrics.tbMetrics.totalFilePartUncompressedBytes.Delete(tst.p.ShardLabelValues()...)
 	tst.metrics.tbMetrics.pendingDataCount.Delete(tst.p.ShardLabelValues()...)
 	tst.metrics.tbMetrics.mergeQuarantinedParts.Delete(tst.p.ShardLabelValues()...)
+	tst.metrics.pipelineTracesRetainedByCeiling.Delete(tst.p.ShardLabelValues()...)
+	// Mem merges carry an empty lane label (flusher.go passes ""), so that series
+	// needs deleting too, exactly as the "mem" rows in DeleteAll do for the
+	// totalMerge* families.
+	for _, lane := range []string{"", mergeLaneFast, mergeLaneSlow, mergeLaneFinalize} {
+		laneValues := append(tst.p.ShardLabelValues(), lane)
+		tst.metrics.pipelineMergesCeilingReached.Delete(laneValues...)
+		tst.metrics.pipelineDropSetEntries.Delete(laneValues...)
+	}
 	tst.metrics.indexMetrics.DeleteAll(tst.p.SegLabelValues()...)
 }
 

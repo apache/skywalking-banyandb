@@ -714,9 +714,9 @@ func TestTimedOutProjectionBatchNeverRecyclesArena(t *testing.T) {
 	assembled, valid := assembleStagedEvaluationBatch(filter, staged, groups)
 	require.True(t, valid)
 
-	var dropped *droppedTraceIDs
-	_, reusable := resolveStagedDrops(filter, staged, assembled, &dropped)
-	require.Nil(t, dropped)
+	tracker := &dropTracker{}
+	_, reusable := resolveStagedDrops(filter, staged, assembled, tracker)
+	require.Nil(t, tracker.exact)
 	require.False(t, reusable)
 	<-sampler.entered
 	require.False(t, releaseStagedEvaluationVectors(assembled.vectors, reusable))

@@ -18,6 +18,8 @@
 package trace
 
 import (
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
@@ -110,7 +112,7 @@ func (sr *schemaRepo) scanGroup(group string, samplers []sdk.Sampler, graceNs, m
 		}
 		// Only fully-mature segments; and skip (without reopening) any whose shards are
 		// all terminal / in-cooldown / max-rounds per their on-disk finalize state.
-		if peek.End.UnixNano() > coolEnd || !segmentMayWarrant(lfs, peek.ShardPaths, cfg) {
+		if peek.End.UnixNano() > coolEnd || !sr.segmentMayWarrantObserved(group, lfs, peek.ShardPaths, cfg) {
 			continue
 		}
 		// This segment may warrant work: reopen just its range and finalize warranting
@@ -162,6 +164,34 @@ func segmentMayWarrant(lfs fs.FileSystem, shardPaths []string, cfg finalizeConfi
 		}
 	}
 	return false
+}
+
+// segmentMayWarrantObserved is segmentMayWarrant plus per-shard finalize-state
+// telemetry. The decision is unchanged — it still returns true as soon as one
+// shard warrants — but every shard's state is read and published first, because
+// this pre-filter is the only place a *terminal* shard is still visited: once a
+// segment is skipped, warrantsFinalize never runs for it again, so metrics emitted
+// deeper in the scan would go silent on exactly the shards that can no longer
+// delete anything (spec section 5.2).
+func (sr *schemaRepo) segmentMayWarrantObserved(group string, lfs fs.FileSystem, shardPaths []string, cfg finalizeConfig) bool {
+	warrants := false
+	for _, shardPath := range shardPaths {
+		st := readFinalizeState(lfs, shardPath)
+		sr.samplerMeter.observeFinalizeState(group, shardLabelFromPath(shardPath), st.FinalizeRounds,
+			st.Terminal || st.FinalizeRounds >= cfg.maxRounds)
+		if shardMayWarrant(st, cfg) {
+			warrants = true
+		}
+	}
+	return warrants
+}
+
+// shardLabelFromPath extracts the shard-id label from an on-disk shard directory
+// path (storage writes them as "shard-<id>"). An unrecognized layout yields the
+// raw base name rather than an empty label, so a series is still emitted.
+func shardLabelFromPath(shardPath string) string {
+	base := filepath.Base(shardPath)
+	return strings.TrimPrefix(base, "shard-")
 }
 
 // shardMayWarrant is the reopen pre-filter for one shard. It skips only the cases that

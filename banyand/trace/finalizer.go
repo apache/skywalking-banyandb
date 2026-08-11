@@ -165,6 +165,9 @@ func (tst *tsTable) runFinalizeRound(samplers []sdk.Sampler, graceNs int64) (boo
 		plannedStagingBatches: stagingPlan.PlannedBatches,
 		traceBudget:           resolveTraceBudget(tst.option),
 		maxTraceCount:         maxStagedTraceCountFromBudget(stagingPlan.BatchLimit),
+		// Same budget as the hot filter (spec section 3.4: finalize is not
+		// special-cased). A finalize round is treated as one more merge.
+		budget: resolveDropSetBudget(tst.option),
 	}
 
 	merged := make(map[uint64]struct{}, len(parts))
@@ -179,6 +182,15 @@ func (tst *tsTable) runFinalizeRound(samplers []sdk.Sampler, graceNs int64) (boo
 	); err != nil {
 		// Fail-open: leave the segment intact; the scanner retries on a later tick.
 		return false, err
+	}
+	// A capped round is the one condition an operator can act on (raise memory),
+	// so it gets exactly one warning here — not per batch, not per trace.
+	if retainedByCeiling := filter.retainedByCeiling.Load(); retainedByCeiling > 0 {
+		tst.l.Warn().
+			Str("group", tst.group).
+			Uint32("shard", uint32(tst.shardID)).
+			Uint64("retainedByCeiling", retainedByCeiling).
+			Msg("finalize round reached the drop-set ceiling; some traces were retained instead of dropped")
 	}
 
 	// Commit the per-shard finalize state AFTER the introduction (DD6 ordering). The
