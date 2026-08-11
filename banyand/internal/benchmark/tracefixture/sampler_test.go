@@ -16,6 +16,7 @@
 package tracefixture
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -61,6 +62,38 @@ func TestBuildSamplerBlockUsesCompleteTrace(t *testing.T) {
 	require.Equal(t, int64(40), block.MaxTS)
 	require.Equal(t, []string{"one", "two"}, block.SpanIDs)
 	require.Equal(t, [][]byte{{1}, {2}}, block.Tags[0].Values)
+}
+
+func TestSamplerBatchBuilderBuildsCompleteProjectedTraces(t *testing.T) {
+	source := Source{Mature: []LoadedTrace{{
+		SourceID: "source",
+		Fragments: []LoadedFragment{
+			{Fragment: Fragment{MinTimestamp: 10, MaxTimestamp: 20}, Rows: []Row{{
+				SpanID: "one", Span: []byte("span-one"), Tags: map[string][]byte{"latency": {1}},
+				TagTypes: map[string]pbv1.ValueType{"latency": pbv1.ValueTypeInt64},
+			}}},
+			{Fragment: Fragment{MinTimestamp: 30, MaxTimestamp: 40}, Rows: []Row{{
+				SpanID: "two", Span: []byte("span-two"), Tags: map[string][]byte{}, TagTypes: map[string]pbv1.ValueType{},
+			}}},
+		},
+	}}}
+	builder := NewSamplerBatchBuilder(source)
+	batch, buildErr := builder.Build(context.Background(), []Instance{
+		{SourceID: "source", GeneratedID: "generated-a"},
+		{SourceID: "source", GeneratedID: "generated-b"},
+	}, sdk.Projection{Tags: []string{"latency"}, SpanIDs: true, Spans: true})
+	require.NoError(t, buildErr)
+	require.Equal(t, []string{"generated-a", "generated-b"}, []string{batch.Traces[0].TraceID, batch.Traces[1].TraceID})
+	require.Equal(t, [][]byte{{1}, nil}, batch.Traces[0].Tags[0].Values)
+	require.Equal(t, []string{"one", "two"}, batch.Traces[0].SpanIDs)
+	require.Equal(t, [][]byte{[]byte("span-one"), []byte("span-two")}, batch.Traces[0].Spans)
+
+	_, missingErr := builder.Build(context.Background(), []Instance{{SourceID: "missing", GeneratedID: "generated"}}, sdk.Projection{})
+	require.ErrorContains(t, missingErr, `source trace "missing" is missing`)
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, canceledErr := builder.Build(canceledCtx, []Instance{{SourceID: "source", GeneratedID: "generated"}}, sdk.Projection{})
+	require.ErrorIs(t, canceledErr, context.Canceled)
 }
 
 func TestValidateDefaultSamplerVerdict(t *testing.T) {

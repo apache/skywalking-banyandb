@@ -202,6 +202,7 @@ func TestBenchmarkMergeReceiverRunsExactlyOneMatureProductionSelection(t *testin
 	require.Zero(t, event.HotInputParts)
 	require.Equal(t, event.InputRows, event.MatureInputRows)
 	require.Len(t, event.Children, 2)
+	require.Greater(t, event.CoreElapsedNanos, int64(0), "core filtering time must be reported separately from SIDX children")
 
 	report, reportErr := receiver.MergeRecordingReport()
 	require.NoError(t, reportErr)

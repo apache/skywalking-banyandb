@@ -321,6 +321,35 @@ var _ = ginkgo.Describe("Local File System", func() {
 			gomega.Expect(closeErr).To(gomega.HaveOccurred())
 		})
 
+		ginkgo.It("SeqWriter buffers writes and synchronizes its owner once", func() {
+			localFile, ok := file.(*LocalFile)
+			gomega.Expect(ok).To(gomega.BeTrue())
+			seqWriter := file.SequentialWrite()
+			_, writeErr := seqWriter.Write([]byte("a"))
+			gomega.Expect(writeErr).ToNot(gomega.HaveOccurred())
+			gomega.Expect(localFile.seqSynced).To(gomega.BeFalse())
+			sizeBeforeClose, sizeErr := file.Size()
+			gomega.Expect(sizeErr).ToNot(gomega.HaveOccurred())
+			gomega.Expect(sizeBeforeClose).To(gomega.Equal(int64(0)), "small sequential writes must remain buffered")
+			gomega.Expect(seqWriter.Close()).To(gomega.Succeed())
+			gomega.Expect(localFile.seqSynced).To(gomega.BeTrue())
+			gomega.Expect(file.Close()).To(gomega.Succeed(), "base close must not repeat the sequential-writer sync")
+			persisted, readErr := os.ReadFile(fileName)
+			gomega.Expect(readErr).ToNot(gomega.HaveOccurred())
+			gomega.Expect(persisted).To(gomega.Equal([]byte("a")))
+		})
+
+		ginkgo.It("Read-only close does not enter the writable sync path", func() {
+			readPath := filepath.Join(dirName, "read-only")
+			gomega.Expect(os.WriteFile(readPath, []byte("data"), 0o600)).To(gomega.Succeed())
+			readFile, openErr := fs.OpenFile(readPath)
+			gomega.Expect(openErr).ToNot(gomega.HaveOccurred())
+			localReadFile, ok := readFile.(*LocalFile)
+			gomega.Expect(ok).To(gomega.BeTrue())
+			gomega.Expect(localReadFile.writable).To(gomega.BeFalse())
+			gomega.Expect(readFile.Close()).To(gomega.Succeed())
+		})
+
 		ginkgo.It("WriteAtomic leaves no .tmp on success", func() {
 			target := filepath.Join(dirName, "metadata.json")
 			n, err := fs.WriteAtomic([]byte(`{"v":1}`), target, 0o600)

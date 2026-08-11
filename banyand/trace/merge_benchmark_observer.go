@@ -211,6 +211,7 @@ type mergeBenchmarkEvent struct {
 	StagingBatches        []mergeBenchmarkStagingBatch `json:"stagingBatches,omitempty"`
 	GuardDeferred         map[string]uint64            `json:"guardDeferred,omitempty"`
 	Resources             mergeBenchmarkResources      `json:"resources"`
+	CoreElapsedNanos      int64                        `json:"coreElapsedNanos"`
 	OutputRows            uint64                       `json:"outputRows"`
 	TracesEvaluated       uint64                       `json:"tracesEvaluated"`
 	InputBytes            uint64                       `json:"inputBytes"`
@@ -234,15 +235,28 @@ type mergeBenchmarkEvent struct {
 	PlannedStagingBatches uint64                       `json:"plannedStagingBatches"`
 	ChargedStagingBytes   uint64                       `json:"chargedStagingBytes"`
 	PeakStagedBytes       uint64                       `json:"peakStagedBytes"`
-	QueueNanos            int64                        `json:"queueNanos"`
-	HotInputParts         uint32                       `json:"hotInputParts"`
-	MatureInputParts      uint32                       `json:"matureInputParts"`
-	InputMinDepth         uint32                       `json:"inputMinDepth"`
-	InputMaxDepth         uint32                       `json:"inputMaxDepth"`
-	OutputDepth           uint32                       `json:"outputDepth"`
-	Version               uint32                       `json:"version"`
-	DecisionMaxTraceCount int                          `json:"decisionMaxTraceCount"`
-	LosslessRetry         bool                         `json:"losslessRetry"`
+	// DropSetBudget is the resolved drop-set ceiling this merge's filter carried,
+	// from resolveDropSetBudget. Zero means unlimited, which a production merge no
+	// longer reports: a zero here indicates a filter built without a budget.
+	DropSetBudget uint64 `json:"dropSetBudget"`
+	// TracesRetainedByCeiling is the number of traces this merge retained because
+	// the drop-set ceiling was reached. These traces are a subset of
+	// TracesRetained, not a separate category: a ceiling retention increments both,
+	// which is what keeps retained+dropped == evaluated true for consumers of that
+	// invariant. Subtract this field from TracesRetained for the verdict-only count.
+	TracesRetainedByCeiling uint64 `json:"tracesRetainedByCeiling"`
+	QueueNanos              int64  `json:"queueNanos"`
+	HotInputParts           uint32 `json:"hotInputParts"`
+	MatureInputParts        uint32 `json:"matureInputParts"`
+	InputMinDepth           uint32 `json:"inputMinDepth"`
+	InputMaxDepth           uint32 `json:"inputMaxDepth"`
+	OutputDepth             uint32 `json:"outputDepth"`
+	Version                 uint32 `json:"version"`
+	DecisionMaxTraceCount   int    `json:"decisionMaxTraceCount"`
+	LosslessRetry           bool   `json:"losslessRetry"`
+	// DropSetCapped is true when this merge's drop-set ceiling was reached at
+	// least once (equivalent to TracesRetainedByCeiling > 0).
+	DropSetCapped bool `json:"dropSetCapped"`
 }
 
 type mergeBenchmarkAggregate struct {

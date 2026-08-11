@@ -63,6 +63,7 @@ func (w *writer) MustWrite(data []byte) {
 // MustClose closes the sequential writer.
 func (w *writer) MustClose() {
 	fs.MustClose(w.sw)
+	fs.MustClose(w.w)
 	w.reset()
 }
 

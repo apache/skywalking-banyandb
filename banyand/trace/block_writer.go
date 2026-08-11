@@ -55,6 +55,7 @@ func (w *writer) MustWrite(data []byte) {
 
 func (w *writer) MustClose() {
 	fs.MustClose(w.sw)
+	fs.MustClose(w.w)
 	w.reset()
 }
 

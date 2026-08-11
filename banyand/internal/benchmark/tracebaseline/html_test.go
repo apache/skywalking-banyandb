@@ -52,7 +52,7 @@ func TestRenderHTMLUsesDiagramsAsPrimaryReportSurface(t *testing.T) {
 	require.Contains(t, html, "disabledEnabledAlternating")
 	require.Contains(t, html, "SAME TEST BOUNDARY")
 	require.Contains(t, html, "CORRECT OUTPUT")
-	require.Contains(t, html, "MATURE MERGE ROUNDS")
+	require.Contains(t, html, "CONTROLLED MATURE MERGE")
 	require.Contains(t, html, "SUSTAINABLE EXECUTION")
 	require.Contains(t, html, "production write intensity")
 	require.Contains(t, html, "Mixed selections may appear in both hot and mature counts")

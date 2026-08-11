@@ -25,17 +25,24 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/trace"
 )
 
-func TestEvaluateBaselineReadinessUsesMatureMergeRounds(t *testing.T) {
+func TestEvaluateBaselineReadinessUsesFrozenControlledMatureMerge(t *testing.T) {
 	suite := readyTestSuite()
 	readiness := EvaluateBaselineReadiness(suite)
 	require.True(t, readiness.Ready)
 	require.Len(t, readiness.Gates, 6)
-	require.True(t, gateByName(t, readiness, "MATURE MERGE ROUNDS").Passed)
+	require.True(t, gateByName(t, readiness, "CONTROLLED MATURE MERGE").Passed)
 
-	suite.SerialRuns[2].MatureMerges = minimumMatureMergeRounds - 1
+	for runIdx := range suite.SerialRuns {
+		suite.SerialRuns[runIdx].MatureMerges = 0
+	}
+	readiness = EvaluateBaselineReadiness(suite)
+	require.True(t, readiness.Ready, "serialized maturity count is diagnostic after the frozen mature seed replaces it")
+
+	suite.DisabledEnabledAlternating[2].Event.HotInputParts = 1
+	suite.DisabledEnabledAlternating[2].Event.MatureInputParts = 1
 	readiness = EvaluateBaselineReadiness(suite)
 	require.False(t, readiness.Ready)
-	require.False(t, gateByName(t, readiness, "MATURE MERGE ROUNDS").Passed)
+	require.False(t, gateByName(t, readiness, "CONTROLLED MATURE MERGE").Passed)
 }
 
 func TestEvaluateBaselineReadinessRequiresLogicalWriteAmplification(t *testing.T) {
@@ -223,7 +230,7 @@ func TestEvaluateBaselineReadinessRequiresControlledAttribution(t *testing.T) {
 
 func TestEvaluateBaselineReadinessRequiresContainerDerivedStagingLimit(t *testing.T) {
 	suite := readyTestSuite()
-	suite.DisabledEnabledAlternating[0].StagingLimits.MemoryLimit = 4 << 30
+	suite.DisabledEnabledAlternating[0].StagingLimits.MemoryLimit = 8 << 30
 
 	require.False(t, gateByName(t, readinessFixture(t, suite), "DISABLED/ENABLED SERIES STABILITY").Passed)
 }
@@ -283,13 +290,13 @@ func readyTestSuite() SuiteReport {
 	for runIdx := range runs {
 		run := RunReport{
 			RunID: fmt.Sprintf("run-%d", runIdx), Mode: ModeSerial, FixtureSHA256: fixtureHash, ScheduleSHA256: scheduleHash,
-			ExpectedRows: 100, LedgerVerified: true, Correct: true, MatureMerges: minimumMatureMergeRounds,
+			ExpectedRows: 100, LedgerVerified: true, Correct: true,
 			LogicalWriteAmplification: 1.0009,
 			Primary:                   PhaseResult{InputBytes: 100, DrainNanos: int64(100 * time.Millisecond)},
 			Environment: Environment{
 				Commit: "abc123", GoVersion: "go1.25.12", Kernel: "5.15.0",
-				GOMAXPROCS: 4, MemoryMax: "8589934592", MemorySwapMax: "0", PIDsMax: "512", OneShardOnly: true,
-				DataNodeCgroup: "/data", ControllerCgroup: "/controller", CPUSet: "0-3",
+				GOMAXPROCS: 2, MemoryMax: "4294967296", MemorySwapMax: "0", PIDsMax: "512", OneShardOnly: true,
+				DataNodeCgroup: "/data", ControllerCgroup: "/controller", CPUSet: "0-1",
 				Filesystem: "ext4", StorageDevice: "/dev/sda1", ImageDigest: "sha256:image",
 				CloneMethod: "os.CopyFS", BinarySHA256: "sha256:bin",
 			},
@@ -316,10 +323,11 @@ func readyTestSuite() SuiteReport {
 			Correct: true, PipelineMode: mode, PluginSHA256: pluginSHA256,
 			SeedSnapshotSHA256: "seed", SelectionSHA256: "selection", MatureLogicalNow: time.Unix(100, 0), Environment: runEnvironment,
 			StagingLimits: trace.BenchmarkMergeStagingLimits{
-				MemoryLimit: 8 << 30, StageBytes: 64 << 20, TraceBytes: 64 << 20, MaxTraceCount: 64 * 1024,
+				MemoryLimit: 4 << 30, StageBytes: 64 << 20, TraceBytes: 64 << 20, MaxTraceCount: 64 * 1024,
 			},
 			Event: trace.BenchmarkMergeEvent{
-				SelectionSHA256: "selection",
+				SelectionSHA256: "selection", InputPartIDs: []uint64{1, 2}, MatureInputParts: 2,
+				Children: []trace.BenchmarkMergeChild{{}, {}},
 				Resources: trace.BenchmarkMergeResources{
 					AttributionValid: true, ElapsedNanos: int64(time.Second), CPUNanos: int64(500 * time.Millisecond),
 				},

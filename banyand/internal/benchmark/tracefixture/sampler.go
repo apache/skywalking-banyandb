@@ -62,6 +62,32 @@ type samplerVerdict struct {
 	keep    bool
 }
 
+// SamplerBatchBuilder assembles complete logical traces for offline sampler evaluation.
+type SamplerBatchBuilder struct {
+	lookup sourceLookup
+}
+
+// NewSamplerBatchBuilder creates a complete-trace batch builder over an immutable source.
+func NewSamplerBatchBuilder(source Source) *SamplerBatchBuilder {
+	return &SamplerBatchBuilder{lookup: buildSourceLookup(source)}
+}
+
+// Build assembles instances in input order and materializes only the requested projection.
+func (builder *SamplerBatchBuilder) Build(ctx context.Context, instances []Instance, projection sdk.Projection) (sdk.TraceBatch, error) {
+	batch := sdk.TraceBatch{Traces: make([]sdk.TraceBlock, 0, len(instances))}
+	for instanceIdx := range instances {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return sdk.TraceBatch{}, fmt.Errorf("sampler batch build canceled: %w", contextErr)
+		}
+		block, blockErr := buildSamplerBlock(instances[instanceIdx], builder.lookup, projection)
+		if blockErr != nil {
+			return sdk.TraceBatch{}, fmt.Errorf("cannot build sampler trace %d (%q): %w", instanceIdx, instances[instanceIdx].GeneratedID, blockErr)
+		}
+		batch.Traces = append(batch.Traces, block)
+	}
+	return batch, nil
+}
+
 // EvaluateSampler runs a sampler over complete generated logical traces and enforces the production ratio gate.
 func EvaluateSampler(ctx context.Context, source Source, plan Plan, sampler sdk.Sampler, pluginPath string,
 	config []byte,
@@ -69,7 +95,8 @@ func EvaluateSampler(ctx context.Context, source Source, plan Plan, sampler sdk.
 	if sampler == nil {
 		return SamplerArtifact{}, fmt.Errorf("sampler is required")
 	}
-	lookup := buildSourceLookup(source)
+	builder := NewSamplerBatchBuilder(source)
+	lookup := builder.lookup
 	projection := sampler.Project()
 	verdicts := make([]samplerVerdict, 0, len(plan.Instances))
 	for batchStart := 0; batchStart < len(plan.Instances); batchStart += samplerBatchSize {
@@ -77,13 +104,9 @@ func EvaluateSampler(ctx context.Context, source Source, plan Plan, sampler sdk.
 			return SamplerArtifact{}, fmt.Errorf("sampler evaluation canceled: %w", contextErr)
 		}
 		batchEnd := min(batchStart+samplerBatchSize, len(plan.Instances))
-		batch := sdk.TraceBatch{Traces: make([]sdk.TraceBlock, 0, batchEnd-batchStart)}
-		for instanceIdx := batchStart; instanceIdx < batchEnd; instanceIdx++ {
-			block, blockErr := buildSamplerBlock(plan.Instances[instanceIdx], lookup, projection)
-			if blockErr != nil {
-				return SamplerArtifact{}, blockErr
-			}
-			batch.Traces = append(batch.Traces, block)
+		batch, buildErr := builder.Build(ctx, plan.Instances[batchStart:batchEnd], projection)
+		if buildErr != nil {
+			return SamplerArtifact{}, fmt.Errorf("cannot build sampler batch starting at trace %d: %w", batchStart, buildErr)
 		}
 		verdict, decideErr := sampler.Decide(&batch)
 		if decideErr != nil {
