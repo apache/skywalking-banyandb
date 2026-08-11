@@ -599,6 +599,16 @@ On the array paths the remaining cost is the delimiter scan itself plus the stri
 decode overhead that used to dominate here was removed by the escape-free path (`tagRulesOnly` 68.4 → 24.4 µs per
 3000-trace batch, -64%).
 
+**Why the remaining gap is not closable inside the plugin.** Go's `internal` rule makes the two halves mutually
+unreachable: `plugins/skywalking/internal/tracesampler` is importable only from `plugins/skywalking/**`, and the fixture
+that holds the seed (`banyand/internal/benchmark/tracefixture`, plus the catalog parser in `.../sourcecatalog`) only
+from `banyand/**`. The framework side sidesteps this because `EvaluateSampler` takes the sampler as an `sdk.Sampler`
+and reads `pluginPath` only for a checksum — it never imports the plugin. A plugin-local benchmark has no such escape.
+Closing this therefore needs either a committed golden fixture under the plugin's `testdata/` (exported once from the
+real capture, at the cost of drifting from the seed) or making the loader reachable outside `banyand/internal` (a
+framework change). Both are out of scope for the plugin-local workstream, so the item stays open deliberately rather
+than being closed on synthetic data.
+
 **Mature-seed benchmark.** `SamplerBatchBuilder` materializes complete logical traces in schedule order with only the
 requested projection. The opt-in benchmark reads the immutable mature source, frozen catalog/schedule, expected sampler
 artifact, and real plugin. Its preflight rejects malformed verdict lengths, nondeterministic decisions, input mutation,
@@ -644,6 +654,7 @@ the representative paths by 47-73%, while changing tag matching from rules-outer
 28-34%. Refining the latter with precomputed rule operands did not recover the lost inlining. Both experiments were
 reverted, leaving the measured faster implementation unchanged. No plugin optimization or plugin branch remains to be
 integrated before Phase 10.
+
 
 ---
 

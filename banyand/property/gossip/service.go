@@ -21,7 +21,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"runtime/debug"
 	"strconv"
 	"sync"
 	"time"
@@ -30,9 +29,7 @@ import (
 	grpc_validator "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/validator"
 	"github.com/pkg/errors"
 	grpclib "google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/status"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -238,15 +235,7 @@ func (s *service) Serve(closer *run.Closer) {
 	if s.tls {
 		opts = []grpclib.ServerOption{grpclib.Creds(s.creds)}
 	}
-	grpcPanicRecoveryHandler := func(ctx context.Context, p any) (err error) {
-		breadcrumbs := panicdiag.BreadcrumbsFromContext(ctx)
-		stages := make([]string, len(breadcrumbs))
-		for idx, bc := range breadcrumbs {
-			stages[idx] = bc.Stage
-		}
-		s.log.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Strs("breadcrumbs", stages).Msg("recovered from panic")
-		return status.Errorf(codes.Internal, "%s", p)
-	}
+	grpcPanicRecoveryHandler := panicdiag.GRPCRecoveryHandler(s.log, "grpc.property-gossip")
 	streamChain := []grpclib.StreamServerInterceptor{
 		panicdiag.BreadcrumbStreamInterceptor(),
 		recovery.StreamServerInterceptor(recovery.WithRecoveryHandlerContext(grpcPanicRecoveryHandler)),

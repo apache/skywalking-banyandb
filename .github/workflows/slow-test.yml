@@ -35,6 +35,9 @@ jobs:
     with:
       test-name: Slow Tests
       options: --label-filter slow
+      pkg: >-
+        ./test/integration/load
+        ./test/integration/replication/benchmark
       timeout-minutes: 120
       load-test-minutes: "4320"
 
