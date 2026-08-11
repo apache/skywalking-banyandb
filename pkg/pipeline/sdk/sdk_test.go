@@ -126,6 +126,29 @@ func TestTagColumnAt(t *testing.T) {
 	require.Error(t, err, "row out of range must error")
 }
 
+func TestTagColumnAtIntoReusesAndResetsDestination(t *testing.T) {
+	arrayColumn := sdk.TagColumn{
+		Name:      "numbers",
+		ValueType: pbv1.ValueTypeInt64Arr,
+		Values:    [][]byte{int64Arr(7, 9)},
+	}
+	var value sdk.Value
+	require.NoError(t, arrayColumn.AtInto(0, &value))
+	assert.Equal(t, []int64{7, 9}, value.Int64Arr())
+
+	nullColumn := sdk.TagColumn{
+		Name:      "status",
+		ValueType: pbv1.ValueTypeStr,
+		Values:    [][]byte{nil},
+	}
+	require.NoError(t, nullColumn.AtInto(0, &value))
+	assert.True(t, value.IsNull())
+	assert.Empty(t, value.Int64Arr(), "reused destinations must not expose the preceding decoded value")
+
+	require.Error(t, nullColumn.AtInto(1, &value), "row out of range must error")
+	require.Error(t, nullColumn.AtInto(0, nil), "nil destinations must error")
+}
+
 func TestTraceBlockHelpers(t *testing.T) {
 	b := sdk.TraceBlock{
 		TraceID: "t-1",

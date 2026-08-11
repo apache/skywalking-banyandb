@@ -21,7 +21,6 @@ import (
 )
 
 const (
-	minimumMatureMergeRounds = 10
 	minimumSerialRepetitions = 5
 	minimumAlternatingRuns   = 10
 	minimumRunsPerVariant    = 5
@@ -37,6 +36,8 @@ const (
 	// 9.87% for the disabled mode; 10% allows for legitimate variance while
 	// still rejecting dispersion that would mask any real speedup signal.
 	maximumAlternatingWallNanosCV = 0.10
+	canonicalGOMAXPROCS           = 2
+	canonicalMemoryMax            = "4294967296"
 )
 
 // BaselineGate is one report readiness decision.
@@ -56,14 +57,15 @@ type BaselineReadiness struct {
 func EvaluateBaselineReadiness(suite SuiteReport) BaselineReadiness {
 	medianWA := serialRunMedianLogicalWriteAmplification(suite.SerialRuns)
 	sameBoundary, correctOutput, referenceEnvironment := evaluateSerialRuns(suite)
-	matureRounds, sustainable := evaluateSerialMergeLifecycle(suite.SerialRuns)
+	sustainable := evaluateSerialMergeLifecycle(suite.SerialRuns)
+	controlledMature := evaluateControlledMatureMerge(suite.DisabledEnabledAlternating)
 	logicalWAGate := evaluateLogicalWriteAmplification(suite, medianWA)
 	stability := controlledSeriesStability(suite.DisabledEnabledAlternating)
 	alternating := evaluateControlledSeries(suite.DisabledEnabledAlternating, referenceEnvironment, stability)
 	readiness := BaselineReadiness{Gates: []BaselineGate{
 		{
 			Name: "SAME TEST BOUNDARY", Passed: sameBoundary,
-			Detail: "Commit, GoVersion, Kernel, GOMAXPROCS=4, MemoryMax, PIDsMax, OneShardOnly, " +
+			Detail: "Commit, GoVersion, Kernel, GOMAXPROCS=2, MemoryMax=4 GiB, PIDsMax, OneShardOnly, " +
 				"distinct data/controller cgroups, CPUSet, Filesystem, StorageDevice, ImageDigest, " +
 				"CloneMethod, BinarySHA256, fixture and schedule SHA, and serial mode agree across five serial runs",
 		},
@@ -73,9 +75,9 @@ func EvaluateBaselineReadiness(suite SuiteReport) BaselineReadiness {
 			Detail: "Core and secondary-index ledgers reconcile with expected sampling behavior",
 		},
 		{
-			Name:   "MATURE MERGE ROUNDS",
-			Passed: matureRounds,
-			Detail: "At least ten mature merge rounds complete in every serialized run",
+			Name:   "CONTROLLED MATURE MERGE",
+			Passed: controlledMature,
+			Detail: "Every frozen controlled run selects the same all-mature production-picker input and completes both secondary-index children",
 		},
 		{
 			Name:   "SUSTAINABLE EXECUTION",
@@ -124,15 +126,27 @@ func evaluateSerialRuns(suite SuiteReport) (sameBoundary, correctOutput bool, re
 	return sameBoundary, correctOutput, referenceEnvironment
 }
 
-func evaluateSerialMergeLifecycle(runs []RunReport) (matureRounds, sustainable bool) {
-	matureRounds = len(runs) >= minimumSerialRepetitions
-	sustainable = len(runs) >= minimumSerialRepetitions
+func evaluateSerialMergeLifecycle(runs []RunReport) bool {
+	sustainable := len(runs) >= minimumSerialRepetitions
 	for runIdx := range runs {
 		run := &runs[runIdx]
-		matureRounds = matureRounds && run.MatureMerges >= minimumMatureMergeRounds
 		sustainable = sustainable && runIsSerialSustainable(run)
 	}
-	return matureRounds, sustainable
+	return sustainable
+}
+
+func evaluateControlledMatureMerge(runs []ControlledMergeRunReport) bool {
+	if len(runs) < minimumAlternatingRuns {
+		return false
+	}
+	for runIdx := range runs {
+		run := &runs[runIdx]
+		if !run.Correct || len(run.Event.InputPartIDs) < 2 || run.Event.HotInputParts != 0 ||
+			int(run.Event.MatureInputParts) != len(run.Event.InputPartIDs) || len(run.Event.Children) != 2 {
+			return false
+		}
+	}
+	return true
 }
 
 func evaluateLogicalWriteAmplification(suite SuiteReport, medianWA float64) bool {
@@ -150,7 +164,7 @@ func evaluateControlledSeries(runs []ControlledMergeRunReport, referenceEnvironm
 }
 
 func serialEnvironmentComplete(environment Environment) bool {
-	return environment.GOMAXPROCS == 4 && environment.MemoryMax == "8589934592" && environment.MemorySwapMax == "0" &&
+	return environment.GOMAXPROCS == canonicalGOMAXPROCS && environment.MemoryMax == canonicalMemoryMax && environment.MemorySwapMax == "0" &&
 		environment.PIDsMax == "512" && environment.OneShardOnly && environment.DataNodeCgroup != "" &&
 		environment.ControllerCgroup != "" && environment.DataNodeCgroup != environment.ControllerCgroup &&
 		environment.CPUSet != "" && environment.GoVersion != "" && environment.Kernel != "" && environment.Commit != "" &&
@@ -159,7 +173,7 @@ func serialEnvironmentComplete(environment Environment) bool {
 }
 
 func controlledEnvironmentComplete(environment Environment) bool {
-	return environment.GOMAXPROCS == 4 && environment.MemoryMax == "8589934592" && environment.MemorySwapMax == "0" &&
+	return environment.GOMAXPROCS == canonicalGOMAXPROCS && environment.MemoryMax == canonicalMemoryMax && environment.MemorySwapMax == "0" &&
 		environment.PIDsMax == "512" && environment.OneShardOnly && environment.DataNodeCgroup != "" && environment.CPUSet != "" &&
 		environment.GoVersion != "" && environment.Kernel != "" && environment.Commit != "" && environment.Filesystem != "" &&
 		environment.StorageDevice != "" && environment.ImageDigest != "" && environment.CloneMethod != "" && environment.BinarySHA256 != ""

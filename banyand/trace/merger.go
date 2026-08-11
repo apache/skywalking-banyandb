@@ -31,6 +31,7 @@ import (
 
 	"github.com/dustin/go-humanize"
 
+	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	pkgbytes "github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
@@ -212,6 +213,86 @@ func resolveTraceBudget(opt option) uint64 {
 		limit = opt.protector.GetLimit()
 	}
 	return stageBudgetFromLimit(limit)
+}
+
+// testDropSetBudgetOverride forces the drop-set ceiling when non-zero. Test-only
+// seam (mirrors testStageBudgetOverride): resolveDropSetBudget consults it before
+// the memory limit, so a test can force a ceiling through the same call both
+// production construction sites make. There is no operator flag.
+var testDropSetBudgetOverride uint64
+
+const (
+	// dropSetAggregateDivisor bounds the aggregate bytes a merge's drop set may
+	// hold across all concurrent merges to ~memLimit/divisor: each of up to
+	// CPUs() concurrent merges (the hot lanes plus the serialized finalize round)
+	// gets memLimit/(divisor*CPUs). Settling this constant is spec section 14's
+	// first open question; it sets both the memory bound and, through spec
+	// section 5.2, the lifetime deletion bound.
+	dropSetAggregateDivisor = 16
+	// defaultDropSetBudget is the limit==0 (protector disabled) fallback, mirroring
+	// stageBudgetFromLimit's defaultSmallMergeThreshold fallback.
+	defaultDropSetBudget = 16 << 20
+	// minimumDropSetBudget keeps a divided budget from collapsing to a ceiling so
+	// small that sampling stops making useful progress. It is deliberately far
+	// below defaultStageBudgetFloor's 16MB, because a generous floor is what would
+	// break the aggregate bound above on a small node: this floor only binds when
+	// limit < 16MB*CPUs, and the aggregate then stays a small share of any
+	// plausible limit (128MB/16 CPUs: 10MB, under 8%). It does dominate the bound
+	// on implausibly small limits (32MB/16 CPUs: 31%), which is accepted and
+	// pinned by TestDropSetAggregateBoundHolds rather than left to chance.
+	minimumDropSetBudget = 1 << 20
+)
+
+// resolveDropSetBudget returns the per-merge drop-set ceiling. It mirrors
+// resolveStageBudget/stageBudgetFromLimit: divide the memory limit by CPUs() so
+// the aggregate across concurrent merges stays near memLimit/
+// dropSetAggregateDivisor. Every merge is charged the same — hot lane, slow
+// lane, and finalize round alike (spec section 3.4):
+//
+//   - No independent entry cap. stageBudgetFromLimit needs
+//     defaultMaxStagedTraceCount because its per-trace byte estimate is coarse;
+//     the drop-set accounting in maxIDsForBudget is already a fixed, exact
+//     bytes/entry conversion, so a second cap would only duplicate the budget
+//     with a coarser unit.
+//   - No larger ceiling for finalize despite the finalize scanner being
+//     concurrency-1 node-wide (banyand/trace/finalize_scanner.go). A per-lane
+//     finalize ceiling is deferred (spec section 9.1): it needs evidence — a
+//     non-zero retained-by-ceiling count on real shards — that the shared
+//     budget's lifetime deletion bound (spec section 5.2) is actually being
+//     hit before adding a second resolver and a second constant that can drift
+//     apart from this one.
+//
+// Both merge-filter construction sites — the hot one in
+// buildHotMergeFilterDecisionAt and the finalize one in runFinalizeRound — call
+// this and nothing else, so the two can never resolve different ceilings;
+// TestFiltersCarryResolvedDropSetBudget asserts that equality.
+//
+// A node whose protector is disabled (no --allowed-bytes and no valid cgroup
+// limit, i.e. GetLimit()==0) gets the flat defaultDropSetBudget rather than a
+// ceiling proportional to its RAM, so on such a node the operator lever on spec
+// section 5.2's deletion bound is the protector limit, not the machine's memory.
+// This mirrors stageBudgetFromLimit's flat limit==0 fallback; the difference is
+// that a flat staging budget only slows a merge while a flat drop-set ceiling
+// bounds deletion, which is why it is called out here and in spec section 5.2.
+func resolveDropSetBudget(opt option) uint64 {
+	if testDropSetBudgetOverride > 0 {
+		return testDropSetBudgetOverride
+	}
+	var limit uint64
+	if opt.protector != nil {
+		limit = opt.protector.GetLimit()
+	}
+	return dropSetBudgetFromLimit(limit, cgroups.CPUs())
+}
+
+// dropSetBudgetFromLimit is resolveDropSetBudget's CPU-count-parameterized
+// core, split out so it is testable across a CPU matrix without depending on
+// the host's real cgroups.CPUs() value.
+func dropSetBudgetFromLimit(limit uint64, cpus int) uint64 {
+	if limit == 0 {
+		return defaultDropSetBudget
+	}
+	return max(limit/(dropSetAggregateDivisor*uint64(max(1, cpus))), minimumDropSetBudget)
 }
 
 // stageBudgetFromLimit derives the per-merge staged-byte budget from the memory
@@ -646,7 +727,9 @@ func (tst *tsTable) buildHotMergeFilterDecisionAt(parts []*partWrapper, logicalN
 		plannedStagingBatches: stagingPlan.PlannedBatches,
 		traceBudget:           resolveTraceBudget(tst.option),
 		maxTraceCount:         maxStagedTraceCountFromBudget(stagingPlan.BatchLimit),
-		forceSlow:             projectionRequiresSlowPath(chain.projection),
+		// The drop-set ceiling is active (spec section 3.4): every merge, hot or
+		// finalize, resolves the same budget from the same function.
+		budget: resolveDropSetBudget(tst.option),
 	}, ""
 }
 
@@ -714,9 +797,27 @@ func (tst *tsTable) mergePartsThenSendIntroductionObserved(creator snapshotCreat
 		operation.event.DecisionBatchLimit = filter.decisionBatchLimit
 		operation.event.PlannedStagingBatches = filter.plannedStagingBatches
 		operation.event.DecisionMaxTraceCount = filter.maxTraceCount
+		operation.event.DropSetBudget = filter.budget
 	}
 	losslessRetry := false
 	defer func() {
+		// filter.retainedByCeiling is read here, after every merge attempt has
+		// run, rather than through the optional benchmark observation: the
+		// capped-merge counter must fire even when no benchmark observer is
+		// installed, which is the normal case for a production finalize round.
+		if filter != nil {
+			// Published unconditionally, capped or not: the counter below only fires
+			// once deletion has already been lost, so an uncapped observation is the
+			// only thing that lets an operator watch headroom shrink beforehand.
+			tst.observeDropSetUsage(filter.budget, int(filter.dropSetEntries.Load()), lane)
+			if retainedByCeiling := filter.retainedByCeiling.Load(); retainedByCeiling > 0 {
+				tst.incPipelineMergesCeilingReached(lane)
+				if operation != nil {
+					operation.event.TracesRetainedByCeiling = retainedByCeiling
+					operation.event.DropSetCapped = true
+				}
+			}
+		}
 		observer.finish(operation, mergedPart, resultErr, losslessRetry)
 	}()
 	var guardSession *traceFragmentGuardSession
@@ -749,6 +850,17 @@ func (tst *tsTable) mergePartsThenSendIntroductionObserved(creator snapshotCreat
 	}
 	tst.incPipelineGuardLosslessRetry(1)
 	losslessRetry = true
+	// The rejected attempt's ceiling retentions describe an output that was
+	// discarded: the retry runs with no filter, so the part that actually gets
+	// published drops nothing and retains nothing by ceiling. Clear the counter so
+	// neither the deferred capped-merge counter and benchmark event above nor
+	// runFinalizeRound's operator warning reports a ceiling for a merge whose
+	// published output never hit one. Nothing re-increments it: the retry passes a
+	// nil filter.
+	if filter != nil {
+		filter.retainedByCeiling.Store(0)
+		filter.dropSetEntries.Store(0)
+	}
 	losslessResult, losslessErr := tst.mergePartsThenIntroduceAttempt(
 		creator, parts, merged, merges, closeCh, typ, lane, nil, finalizeGenOverride, operation, 2,
 	)
@@ -823,29 +935,26 @@ func (tst *tsTable) mergePartsThenIntroduceAttempt(creator snapshotCreator, part
 	if err != nil {
 		return mergeAttemptResult{}, err
 	}
+	defer releaseDroppedTraceIDs(dropped)
+	filter.recordDropSetSize(dropped)
 	if operation != nil {
 		newPart.mergeDepth = operation.event.OutputDepth
 	}
 	elapsed := time.Since(start)
+	if operation != nil {
+		operation.event.CoreElapsedNanos = elapsed.Nanoseconds()
+	}
 	tst.observeCoreMerge(parts, newPart, elapsed, creator, typ, lane)
 	partIDMap := make(map[uint64]struct{})
 	for _, pw := range parts {
 		partIDMap[pw.ID()] = struct{}{}
 	}
-	// When the core merge dropped any trace, prune the same trace ids from every
-	// sibling sidx part via an opaque per-element predicate. The trace layer owns
-	// the encoding (decodeTraceID); sidx stays encoding-agnostic. Undecodable
-	// elements fail open (retain).
+	// When the core merge dropped any trace, prune the same trace IDs from every
+	// sibling SIDX part via an opaque per-element predicate. The trace layer owns
+	// the encoding; SIDX stays encoding-agnostic. Undecodable elements fail open.
 	var keepFn func([]byte) bool
-	if len(dropped) > 0 {
-		keepFn = func(data []byte) bool {
-			id, decErr := decodeTraceID(data)
-			if decErr != nil {
-				return true
-			}
-			_, isDropped := dropped[id]
-			return !isDropped
-		}
+	if dropped.len() > 0 {
+		keepFn = dropped.keepEncoded
 	}
 	mergerIntroductionMap := make(map[string]*sidx.MergerIntroduction)
 	sidxInstances := tst.getAllSidx()
@@ -927,7 +1036,7 @@ func (tst *tsTable) mergePartsThenIntroduceAttempt(creator snapshotCreator, part
 
 	var revalidation traceFragmentGuardRevalidation
 	hasRevalidation := false
-	if len(dropped) > 0 && filter != nil && filter.guard != nil {
+	if dropped.len() > 0 && filter != nil && filter.guard != nil {
 		revalidation = filter.guard.revalidate(tst)
 		hasRevalidation = true
 		tst.incPipelineGuardBloomProbes(revalidation.BloomProbes)
@@ -1091,7 +1200,7 @@ func (tst *tsTable) removeSidxPartOnFailure(sidxName string, partID uint64) {
 
 func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*partWrapper, partID uint64, root string,
 	filter *mergeFilter, finalizeGenOverride *uint64,
-) (*partWrapper, map[string]struct{}, error) {
+) (*partWrapper, *droppedTraceIDs, error) {
 	if len(parts) == 0 {
 		return nil, nil, errNoPartToMerge
 	}
@@ -1142,6 +1251,12 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	}
 
 	pm, tf, tt, dropped, err := mergeBlocks(closeCh, bw, br, conflictTags, filter)
+	droppedTransferred := false
+	defer func() {
+		if !droppedTransferred {
+			releaseDroppedTraceIDs(dropped)
+		}
+	}()
 	releaseBlockWriter(bw)
 	releaseBlockReader(br)
 	for i := range pii {
@@ -1178,6 +1293,7 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	// metadata write covers all prior dirent changes (data file creations).
 	p := mustOpenFilePart(partID, root, fileSystem)
 	outputPublished = true
+	droppedTransferred = true
 	return newPartWrapper(nil, p), dropped, nil
 }
 
@@ -1287,22 +1403,37 @@ func (buffer *stagedTraceGroupBuffer) reset() {
 }
 
 type stagedEvaluationVectors struct {
-	traceBlocks  []sdk.TraceBlock
-	traceIDs     []string
-	guardRanges  []stagedTraceRange
-	guardBlocks  []traceFragmentGuardBlock
-	decisionMask []bool
+	projectionArenas []*pkgbytes.Buffer
+	traceBlocks      []sdk.TraceBlock
+	tagColumns       []sdk.TagColumn
+	tagValues        [][]byte
+	spans            [][]byte
+	spanIDs          []string
+	traceIDs         []string
+	guardRanges      []stagedTraceRange
+	guardBlocks      []traceFragmentGuardBlock
+	decisionMask     []bool
 }
 
 func (vectors *stagedEvaluationVectors) reset() {
 	for traceIdx := range vectors.traceBlocks {
 		vectors.traceBlocks[traceIdx] = sdk.TraceBlock{}
 	}
+	clear(vectors.projectionArenas)
+	clear(vectors.tagColumns)
+	clear(vectors.tagValues)
+	clear(vectors.spans)
+	clear(vectors.spanIDs)
 	clear(vectors.traceIDs)
 	clear(vectors.guardRanges)
 	clear(vectors.guardBlocks)
 	clear(vectors.decisionMask)
+	vectors.projectionArenas = vectors.projectionArenas[:0]
 	vectors.traceBlocks = vectors.traceBlocks[:0]
+	vectors.tagColumns = vectors.tagColumns[:0]
+	vectors.tagValues = vectors.tagValues[:0]
+	vectors.spans = vectors.spans[:0]
+	vectors.spanIDs = vectors.spanIDs[:0]
 	vectors.traceIDs = vectors.traceIDs[:0]
 	vectors.guardRanges = vectors.guardRanges[:0]
 	vectors.guardBlocks = vectors.guardBlocks[:0]
@@ -1413,18 +1544,56 @@ func acquireStagedEvaluationVectors(traceCount int, withGuard bool) *stagedEvalu
 	return vectors
 }
 
+func prepareStagedProjectionVectors(vectors *stagedEvaluationVectors, staged []stagedTrace, groups []stagedTraceGroup, projection sdk.Projection) {
+	rowCount := 0
+	for groupIdx := range groups {
+		group := &groups[groupIdx]
+		for stagedIdx := group.start; stagedIdx < group.end && stagedIdx < len(staged); stagedIdx++ {
+			metadata := staged[stagedIdx].metadata()
+			if metadata != nil {
+				rowCount += int(metadata.count)
+			}
+		}
+	}
+	tagColumnCount := len(groups) * len(projection.Tags)
+	tagValueCount := rowCount * len(projection.Tags)
+	if cap(vectors.projectionArenas) < len(groups) {
+		vectors.projectionArenas = make([]*pkgbytes.Buffer, 0, len(groups))
+	}
+	if cap(vectors.tagColumns) < tagColumnCount {
+		vectors.tagColumns = make([]sdk.TagColumn, 0, tagColumnCount)
+	}
+	if cap(vectors.tagValues) < tagValueCount {
+		vectors.tagValues = make([][]byte, 0, tagValueCount)
+	}
+	if projection.Spans && cap(vectors.spans) < rowCount {
+		vectors.spans = make([][]byte, 0, rowCount)
+	}
+	if projection.SpanIDs && cap(vectors.spanIDs) < rowCount {
+		vectors.spanIDs = make([]string, 0, rowCount)
+	}
+}
+
 func releaseStagedEvaluationVectors(vectors *stagedEvaluationVectors, reusable bool) bool {
 	if vectors == nil {
 		return false
 	}
 	if !reusable {
+		for _, arena := range vectors.projectionArenas {
+			stagedByteArenas.pool.Discard(arena)
+		}
 		stagedEvaluationPool.Discard(vectors)
 		return false
+	}
+	for _, arena := range vectors.projectionArenas {
+		releaseStagedByteArena(arena)
 	}
 	vectors.reset()
 	if cap(vectors.traceBlocks) > maxPooledEvaluationTraces || cap(vectors.traceIDs) > maxPooledEvaluationTraces ||
 		cap(vectors.guardRanges) > maxPooledEvaluationTraces || cap(vectors.guardBlocks) > maxPooledStagedBlocks ||
-		cap(vectors.decisionMask) > maxPooledEvaluationTraces {
+		cap(vectors.decisionMask) > maxPooledEvaluationTraces || cap(vectors.projectionArenas) > maxPooledEvaluationTraces ||
+		cap(vectors.tagColumns) > maxPooledStagedBlocks || cap(vectors.tagValues) > maxPooledStagedBlocks ||
+		cap(vectors.spans) > maxPooledStagedBlocks || cap(vectors.spanIDs) > maxPooledStagedBlocks {
 		stagedEvaluationPool.Discard(vectors)
 		return false
 	}
@@ -1488,7 +1657,10 @@ type mergeFilter struct {
 	plannedStagingBatches uint64 // estimated number of balanced decision batches
 	traceBudget           uint64 // hard cap on one trace's staged bytes; exceeding it retains the trace without evaluation (0 disables bypass)
 	maxTraceCount         int    // hard cap on logical traces sent to one Decide call (0 disables the count cap)
-	forceSlow             bool   // forces the slow assembly path when the chain projects row data
+	budget                uint64 // drop-set ceiling in bytes for this merge, from resolveDropSetBudget; 0 means unlimited
+	retainedByCeiling     atomic.Uint64
+	dropSetEntries        atomic.Uint64 // dropped IDs the published attempt finished holding; feeds the headroom histogram
+	forceSlow             bool          // test seam that forces decoded staging instead of projected raw staging
 }
 
 func (st *stagedTrace) metadata() *blockMetadata {
@@ -1506,6 +1678,18 @@ func (f *mergeFilter) guardContext() context.Context {
 		return context.Background()
 	}
 	return f.ctx
+}
+
+// recordDropSetSize stores how many dropped IDs a merge attempt finished holding,
+// for the headroom histogram observeDropSetUsage publishes once the published
+// attempt is known. Nil-safe on both receiver and argument so the caller needs no
+// branch: an unfiltered merge has no filter, and a merge that dropped nothing has
+// no set.
+func (f *mergeFilter) recordDropSetSize(dropped *droppedTraceIDs) {
+	if f == nil {
+		return
+	}
+	f.dropSetEntries.Store(uint64(dropped.len()))
 }
 
 // approxBytes estimates the deep-copied heap a staged trace holds so mergeBlocks
@@ -1564,7 +1748,65 @@ func (st *stagedTrace) approxBytes() uint64 {
 }
 
 func (st *stagedTrace) approxEvaluationBytes(projection sdk.Projection) uint64 {
-	if st.slowBlock == nil || !projectionRequiresSlowPath(projection) {
+	if !projectionRequiresSlowPath(projection) {
+		return 0
+	}
+	if st.isRaw {
+		if st.rawBM == nil {
+			return 0
+		}
+		rowCount := st.rawBM.count
+		n := uint64(unsafe.Sizeof(sdk.TraceBlock{})) + uint64(unsafe.Sizeof((*pkgbytes.Buffer)(nil)))
+		n += uint64(len(projection.Tags)) * (uint64(unsafe.Sizeof(sdk.TagColumn{})) + rowCount*uint64(unsafe.Sizeof([]byte{})))
+		if projection.SpanIDs {
+			n += rowCount * uint64(unsafe.Sizeof(""))
+		}
+		if projection.Spans {
+			n += rowCount * uint64(unsafe.Sizeof([]byte{}))
+		}
+		decoder := generateColumnValuesDecoder()
+		defer releaseColumnValuesDecoder(decoder)
+		for _, projectedTag := range projection.Tags {
+			encodedName, exists := projectedRawTagName(st.rawBM, projectedTag)
+			if !exists {
+				continue
+			}
+			encodedValues, exists := st.rawTags[encodedName]
+			if !exists {
+				continue
+			}
+			valueBuffer := pkgbytes.Buffer{Buf: encodedValues}
+			values, decodeErr := internalencoding.DecodeTagValues(nil, decoder, &valueBuffer, st.rawBM.tagType[encodedName], int(st.rawBM.count))
+			if decodeErr != nil {
+				return n
+			}
+			for _, value := range values {
+				n += uint64(len(value))
+			}
+		}
+		if projection.Spans || projection.SpanIDs {
+			spanIDs, spanTail, decodeErr := decoder.DecodeWithTail(nil, st.rawSpans, st.rawBM.count)
+			if decodeErr != nil {
+				return n
+			}
+			if projection.SpanIDs {
+				for _, spanID := range spanIDs {
+					n += uint64(len(spanID))
+				}
+			}
+			if projection.Spans {
+				spans, spansErr := decoder.Decode(nil, spanTail, st.rawBM.count)
+				if spansErr != nil {
+					return n
+				}
+				for _, span := range spans {
+					n += uint64(len(span))
+				}
+			}
+		}
+		return n
+	}
+	if st.slowBlock == nil {
 		return 0
 	}
 	block := &st.slowBlock.block
@@ -1575,6 +1817,7 @@ func (st *stagedTrace) approxEvaluationBytes(projection sdk.Projection) uint64 {
 	for tagIdx := range block.tags {
 		n += uint64(len(block.tags[tagIdx].values)) * uint64(unsafe.Sizeof([]byte{}))
 	}
+	n += uint64(len(projection.Tags)) * (uint64(unsafe.Sizeof(sdk.TagColumn{})) + uint64(len(block.spans))*uint64(unsafe.Sizeof([]byte{})))
 	if projection.Spans {
 		n += uint64(len(block.spans)) * uint64(unsafe.Sizeof([]byte{}))
 		for _, span := range block.spans {
@@ -1590,8 +1833,6 @@ func (st *stagedTrace) approxEvaluationBytes(projection sdk.Projection) uint64 {
 			if decodeTypedTag(stagedTag.name) != projectedTag {
 				continue
 			}
-			n += uint64(unsafe.Sizeof(sdk.TagColumn{}))
-			n += uint64(len(stagedTag.values)) * uint64(unsafe.Sizeof([]byte{}))
 			for _, value := range stagedTag.values {
 				n += uint64(len(value))
 			}
@@ -1779,6 +2020,7 @@ type stagedEvaluationBatch struct {
 
 func assembleStagedEvaluationBatch(filter *mergeFilter, staged []stagedTrace, groups []stagedTraceGroup) (stagedEvaluationBatch, bool) {
 	vectors := acquireStagedEvaluationVectors(len(groups), filter.guard != nil)
+	prepareStagedProjectionVectors(vectors, staged, groups, filter.chain.projection)
 	assembledBatch := stagedEvaluationBatch{vectors: vectors}
 	expectedStart := 0
 	for groupIdx := range groups {
@@ -1788,7 +2030,7 @@ func assembleStagedEvaluationBatch(filter *mergeFilter, staged []stagedTrace, gr
 			releaseStagedEvaluationVectors(vectors, true)
 			return stagedEvaluationBatch{}, false
 		}
-		stagedTraceBlock, assembled := assembleStagedTraceBlock(*group, staged[group.start:group.end], filter.chain.projection)
+		stagedTraceBlock, assembled := assembleStagedTraceBlockInto(vectors, *group, staged[group.start:group.end], filter.chain.projection)
 		if assembled {
 			vectors.traceIDs = append(vectors.traceIDs, group.traceID)
 			vectors.traceBlocks = append(vectors.traceBlocks, stagedTraceBlock)
@@ -1805,7 +2047,9 @@ func assembleStagedEvaluationBatch(filter *mergeFilter, staged []stagedTrace, gr
 	return assembledBatch, true
 }
 
-func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatch stagedEvaluationBatch) (map[string]struct{}, bool) {
+func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatch stagedEvaluationBatch,
+	tracker *dropTracker,
+) ([]bool, bool) {
 	if len(assembledBatch.vectors.traceBlocks) == 0 {
 		return nil, true
 	}
@@ -1826,7 +2070,6 @@ func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatc
 	if filter.owner != nil {
 		filter.owner.incPipelineTracesEvaluated(len(assembledBatch.vectors.traceIDs))
 	}
-	var dropMature map[string]struct{}
 	for traceIdx, traceID := range assembledBatch.vectors.traceIDs {
 		if keepMask[traceIdx] {
 			if filter.observation != nil {
@@ -1837,11 +2080,26 @@ func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatc
 			}
 			continue
 		}
-		if filter.guard == nil {
-			if dropMature == nil {
-				dropMature = make(map[string]struct{})
+		// The ceiling converts a proposed drop into a retention before either
+		// recording site below and before the guard: a trace that will be kept
+		// needs no guard confirmation, and skipping it saves the guard's bloom
+		// probes (spec section 3.1/3.2). Recording and dropping stop at the same
+		// instant, so the drop set stays complete with respect to the drops it
+		// actually performs.
+		if !tracker.canAccept() {
+			keepMask[traceIdx] = true
+			filter.retainedByCeiling.Add(1)
+			if filter.observation != nil {
+				filter.observation.retained.Add(1)
 			}
-			dropMature[traceID] = struct{}{}
+			if filter.owner != nil {
+				filter.owner.incPipelineTracesRetained(1)
+				filter.owner.incPipelineTracesRetainedByCeiling(1)
+			}
+			continue
+		}
+		if filter.guard == nil {
+			tracker.record(traceID)
 			if filter.observation != nil {
 				filter.observation.dropped.Add(1)
 			}
@@ -1860,10 +2118,7 @@ func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatc
 			filter.owner.incPipelineGuardBloomProbes(decision.BloomProbes)
 		}
 		if decision.Action == traceFragmentGuardActionDrop && decision.ConfirmedDrop != nil {
-			if dropMature == nil {
-				dropMature = make(map[string]struct{})
-			}
-			dropMature[traceID] = struct{}{}
+			tracker.record(traceID)
 			if filter.observation != nil {
 				filter.observation.dropped.Add(1)
 			}
@@ -1883,14 +2138,15 @@ func resolveStagedDrops(filter *mergeFilter, staged []stagedTrace, assembledBatc
 			filter.observation.recordGuardDeferred(decision.Reason)
 			filter.observation.retained.Add(1)
 		}
+		keepMask[traceIdx] = true
 	}
-	return dropMature, reusable
+	return keepMask, reusable
 }
 
 // flushStaged evaluates staged traces and writes them in ascending trace-ID order.
 // Chain failures retain the whole batch, and allocated slow blocks are released.
 func flushStaged(bw *blockWriter, filter *mergeFilter, staged []stagedTrace, groups []stagedTraceGroup, validBatch bool,
-	droppedSet map[string]struct{},
+	tracker *dropTracker,
 ) {
 	if len(staged) == 0 {
 		return
@@ -1898,18 +2154,26 @@ func flushStaged(bw *blockWriter, filter *mergeFilter, staged []stagedTrace, gro
 	// Build one Decide entry per trace ID. A trace split across physical blocks is
 	// assembled completely, decided once, and dropped as a unit.
 	assembledBatch, validOrder := assembleStagedEvaluationBatch(filter, staged, groups)
-	var dropMature map[string]struct{}
+	var effectiveKeepMask []bool
 	reusable := true
 	if validBatch && validOrder {
-		dropMature, reusable = resolveStagedDrops(filter, staged, assembledBatch)
+		effectiveKeepMask, reusable = resolveStagedDrops(filter, staged, assembledBatch, tracker)
 	}
-	for i := range staged {
-		if _, isDropped := dropMature[staged[i].traceID]; isDropped {
-			droppedSet[staged[i].traceID] = struct{}{}
-		} else {
-			writeStagedKeep(bw, &staged[i])
+	decisionIdx := 0
+	for groupIdx := range groups {
+		group := &groups[groupIdx]
+		keep := true
+		if validBatch && validOrder && decisionIdx < len(assembledBatch.vectors.traceIDs) &&
+			group.traceID == assembledBatch.vectors.traceIDs[decisionIdx] {
+			keep = len(effectiveKeepMask) == 0 || effectiveKeepMask[decisionIdx]
+			decisionIdx++
 		}
-		releaseStagedTrace(&staged[i])
+		for stagedIdx := group.start; stagedIdx < group.end; stagedIdx++ {
+			if keep {
+				writeStagedKeep(bw, &staged[stagedIdx])
+			}
+			releaseStagedTrace(&staged[stagedIdx])
+		}
 	}
 	if validOrder {
 		releaseStagedEvaluationVectors(assembledBatch.vectors, reusable)
@@ -1917,8 +2181,7 @@ func flushStaged(bw *blockWriter, filter *mergeFilter, staged []stagedTrace, gro
 }
 
 // rawFastPathEligible reports whether the current block can be copied raw
-// (without unmarshaling): raw merge is not force-disabled, the active retention
-// filter does not require the slow tag-projecting path, and this is the only
+// (without unmarshaling): raw merge is not force-disabled and this is the only
 // block for its traceID (the next block, if any, has a different traceID).
 func rawFastPathEligible(filter *mergeFilter, nextB, b *blockPointer) bool {
 	if forceSlowMerge {
@@ -1933,13 +2196,13 @@ func rawFastPathEligible(filter *mergeFilter, nextB, b *blockPointer) bool {
 type traceEvaluationStager struct {
 	bw                *blockWriter
 	filter            *mergeFilter
-	droppedSet        map[string]struct{}
 	traceBuffer       *stagedTraceBuffer
 	groupBuffer       *stagedTraceGroupBuffer
 	lastStagedTraceID string
 	bypassedTraceID   string
 	staged            []stagedTrace
 	groups            []stagedTraceGroup
+	tracker           dropTracker
 	stagedBytes       uint64
 	currentTraceBytes uint64
 	currentTraceStart int
@@ -1974,6 +2237,8 @@ func (tes *traceEvaluationStager) releaseBuffers() {
 		tes.groupBuffer.values = tes.groups
 		releaseStagedTraceGroupBuffer(tes.groupBuffer)
 	}
+	releaseDroppedTraceIDs(tes.tracker.exact)
+	tes.tracker.exact = nil
 	tes.traceBuffer = nil
 	tes.groupBuffer = nil
 	tes.staged = nil
@@ -1987,7 +2252,7 @@ func (tes *traceEvaluationStager) flush(reason mergeStagingFlushReason) {
 	if tes.filter.observation != nil {
 		tes.filter.observation.recordStagingBatch(reason, tes.stagedBytes, uint64(len(tes.groups)))
 	}
-	flushStaged(tes.bw, tes.filter, tes.staged, tes.groups, !tes.invalidOrder && !tes.invalidMetadata, tes.droppedSet)
+	flushStaged(tes.bw, tes.filter, tes.staged, tes.groups, !tes.invalidOrder && !tes.invalidMetadata, &tes.tracker)
 	clear(tes.staged)
 	tes.staged = tes.staged[:0]
 	clear(tes.groups)
@@ -2090,7 +2355,7 @@ func (tes *traceEvaluationStager) stage(st stagedTrace) {
 			tes.filter.observation.recordStagingBatch(mergeStagingFlushOversizedTrace, prefixBytes, uint64(len(tes.groups)-1))
 		}
 		flushStaged(tes.bw, tes.filter, tes.staged[:tes.currentTraceStart], tes.groups[:len(tes.groups)-1],
-			!tes.invalidOrder && !tes.invalidMetadata, tes.droppedSet)
+			!tes.invalidOrder && !tes.invalidMetadata, &tes.tracker)
 	}
 	tes.writeBypassed(tes.staged[tes.currentTraceStart:])
 	tes.bypassedTraceID = st.traceID
@@ -2155,7 +2420,7 @@ func (tes *traceEvaluationStager) batchBudgetReached() bool {
 
 func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conflictTags map[string]struct{},
 	filter *mergeFilter,
-) (*partMetadata, *traceIDFilter, *tagType, map[string]struct{}, error) {
+) (*partMetadata, *traceIDFilter, *tagType, *droppedTraceIDs, error) {
 	pendingBlockIsEmpty := true
 	pendingBlock := generateBlockPointer()
 	defer releaseBlockPointer(pendingBlock)
@@ -2182,14 +2447,12 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 		br.mustReadRaw(&rawBlk, bm)
 		renameRawConflictTags(&rawBlk, conflictTags)
 	}
-	var droppedSet map[string]struct{}
 	var evaluationStager *traceEvaluationStager
 	if filter != nil {
-		droppedSet = make(map[string]struct{})
 		evaluationStager = &traceEvaluationStager{
-			bw:         bw,
-			filter:     filter,
-			droppedSet: droppedSet,
+			bw:      bw,
+			filter:  filter,
+			tracker: dropTracker{budget: filter.budget},
 		}
 		defer evaluationStager.releaseBuffers()
 	}
@@ -2316,8 +2579,10 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 	var tf traceIDFilter
 	tt := make(tagType)
 	bw.Flush(&pm, &tf, &tt)
-	if len(droppedSet) == 0 {
-		droppedSet = nil
+	var droppedSet *droppedTraceIDs
+	if evaluationStager != nil {
+		droppedSet = evaluationStager.tracker.exact
+		evaluationStager.tracker.exact = nil
 	}
 	return &pm, &tf, &tt, droppedSet, nil
 }

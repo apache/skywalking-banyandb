@@ -22,6 +22,9 @@ import (
 	"sync"
 	"time"
 
+	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
+	pkgbytes "github.com/apache/skywalking-banyandb/pkg/bytes"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
 )
@@ -256,98 +259,181 @@ func (mc *mergeChain) runChain(batch *sdk.TraceBatch, observation *mergeEvaluati
 	return sdk.EvaluateChainInto(mc.samplers, batch, decisionMask, onBypass)
 }
 
-// assembleTraceBlock builds a COPY-backed sdk.TraceBlock from a loaded merge
-// block, name-selecting only the columns named in proj. Every returned slice is
-// owned by the block (deep-copied from the engine's pooled buffers) so the merge
-// loop may recycle/overwrite those buffers while an abandoned Decide goroutine
-// still reads the block.
-func assembleTraceBlock(traceID string, bp *blockPointer, proj sdk.Projection) sdk.TraceBlock {
-	tb := sdk.TraceBlock{
-		TraceID: traceID,
-		MinTS:   bp.bm.timestamps.min,
-		MaxTS:   bp.bm.timestamps.max,
-	}
-	if len(proj.Tags) > 0 {
-		for _, name := range proj.Tags {
-			for i := range bp.block.tags {
-				if decodeTypedTag(bp.block.tags[i].name) != name {
-					continue
-				}
-				src := bp.block.tags[i].values
-				values := make([][]byte, len(src))
-				for j, v := range src {
-					if v != nil {
-						values[j] = append([]byte(nil), v...)
-					}
-				}
-				tb.Tags = append(tb.Tags, sdk.TagColumn{
-					Name:      name,
-					Values:    values,
-					ValueType: bp.block.tags[i].valueType,
-				})
-				break
-			}
-		}
-	}
-	if proj.SpanIDs {
-		spanIDs := make([]string, len(bp.block.spanIDs))
-		copy(spanIDs, bp.block.spanIDs)
-		tb.SpanIDs = spanIDs
-	}
-	if proj.Spans {
-		spans := make([][]byte, len(bp.block.spans))
-		for i, s := range bp.block.spans {
-			if s != nil {
-				spans[i] = append([]byte(nil), s...)
-			}
-		}
-		tb.Spans = spans
-	}
-	return tb
-}
-
 func projectionRequiresSlowPath(projection sdk.Projection) bool {
 	return len(projection.Tags) > 0 || projection.SpanIDs || projection.Spans
 }
 
-func assembleStagedTraceBlock(group stagedTraceGroup, staged []stagedTrace, projection sdk.Projection) (sdk.TraceBlock, bool) {
+func projectedRawTagName(metadata *blockMetadata, projectedName string) (string, bool) {
+	if _, exists := metadata.tags[projectedName]; exists {
+		return projectedName, true
+	}
+	selectedName := ""
+	for encodedName := range metadata.tags {
+		if decodeTypedTag(encodedName) == projectedName && (selectedName == "" || encodedName < selectedName) {
+			selectedName = encodedName
+		}
+	}
+	return selectedName, selectedName != ""
+}
+
+func appendProjectedTraceBlock(vectors *stagedEvaluationVectors, traceID string, minTS, maxTS int64, source *block,
+	projection sdk.Projection,
+) sdk.TraceBlock {
+	arenaSize := 0
+	for _, projectedName := range projection.Tags {
+		for tagIdx := range source.tags {
+			sourceTag := &source.tags[tagIdx]
+			if decodeTypedTag(sourceTag.name) != projectedName {
+				continue
+			}
+			for _, value := range sourceTag.values {
+				arenaSize += len(value)
+			}
+			break
+		}
+	}
+	if projection.Spans {
+		for _, span := range source.spans {
+			arenaSize += len(span)
+		}
+	}
+	if projection.SpanIDs {
+		for _, spanID := range source.spanIDs {
+			arenaSize += len(spanID)
+		}
+	}
+	var arena *pkgbytes.Buffer
+	if arenaSize > 0 {
+		arena = acquireStagedByteArena(arenaSize)
+		vectors.projectionArenas = append(vectors.projectionArenas, arena)
+	}
+	offset := 0
+	copyBytes := func(sourceBytes []byte) []byte {
+		if sourceBytes == nil {
+			return nil
+		}
+		if len(sourceBytes) == 0 {
+			return []byte{}
+		}
+		target := arena.Buf[offset : offset+len(sourceBytes) : offset+len(sourceBytes)]
+		copy(target, sourceBytes)
+		offset += len(sourceBytes)
+		return target
+	}
+	traceBlock := sdk.TraceBlock{TraceID: traceID, MinTS: minTS, MaxTS: maxTS}
+	columnStart := len(vectors.tagColumns)
+	for _, projectedName := range projection.Tags {
+		for tagIdx := range source.tags {
+			sourceTag := &source.tags[tagIdx]
+			if decodeTypedTag(sourceTag.name) != projectedName {
+				continue
+			}
+			valueStart := len(vectors.tagValues)
+			for _, value := range sourceTag.values {
+				vectors.tagValues = append(vectors.tagValues, copyBytes(value))
+			}
+			values := vectors.tagValues[valueStart:len(vectors.tagValues):len(vectors.tagValues)]
+			vectors.tagColumns = append(vectors.tagColumns, sdk.TagColumn{
+				Name: projectedName, ValueType: sourceTag.valueType, Values: values,
+			})
+			break
+		}
+	}
+	traceBlock.Tags = vectors.tagColumns[columnStart:len(vectors.tagColumns):len(vectors.tagColumns)]
+	if projection.SpanIDs {
+		spanIDStart := len(vectors.spanIDs)
+		for _, spanID := range source.spanIDs {
+			vectors.spanIDs = append(vectors.spanIDs, convert.BytesToString(copyBytes(convert.StringToBytes(spanID))))
+		}
+		traceBlock.SpanIDs = vectors.spanIDs[spanIDStart:len(vectors.spanIDs):len(vectors.spanIDs)]
+	}
+	if projection.Spans {
+		spanStart := len(vectors.spans)
+		for _, span := range source.spans {
+			vectors.spans = append(vectors.spans, copyBytes(span))
+		}
+		traceBlock.Spans = vectors.spans[spanStart:len(vectors.spans):len(vectors.spans)]
+	}
+	return traceBlock
+}
+
+func assembleRawTraceBlockInto(vectors *stagedEvaluationVectors, stagedBlock *stagedTrace, projection sdk.Projection) (sdk.TraceBlock, bool) {
+	metadata := stagedBlock.rawBM
+	if metadata == nil || metadata.traceID != stagedBlock.traceID || !metadata.timestamps.known || metadata.timestamps.min > metadata.timestamps.max {
+		return sdk.TraceBlock{}, false
+	}
+	decoder := generateColumnValuesDecoder()
+	defer releaseColumnValuesDecoder(decoder)
+	projectedBlock := block{minTS: metadata.timestamps.min, maxTS: metadata.timestamps.max}
+	if len(projection.Tags) > 0 {
+		for _, projectedName := range projection.Tags {
+			encodedName, exists := projectedRawTagName(metadata, projectedName)
+			if !exists {
+				continue
+			}
+			valueType := metadata.tagType[encodedName]
+			encodedValues, exists := stagedBlock.rawTags[encodedName]
+			if !exists {
+				return sdk.TraceBlock{}, false
+			}
+			valueBuffer := pkgbytes.Buffer{Buf: encodedValues}
+			values, decodeErr := internalencoding.DecodeTagValues(nil, decoder, &valueBuffer, valueType, int(metadata.count))
+			if decodeErr != nil {
+				return sdk.TraceBlock{}, false
+			}
+			projectedBlock.tags = append(projectedBlock.tags, tag{name: projectedName, valueType: valueType, values: values})
+		}
+	}
+	if projection.SpanIDs || projection.Spans {
+		spanIDBytes, spanTail, decodeErr := decoder.DecodeWithTail(nil, stagedBlock.rawSpans, metadata.count)
+		if decodeErr != nil {
+			return sdk.TraceBlock{}, false
+		}
+		if projection.SpanIDs {
+			projectedBlock.spanIDs = make([]string, len(spanIDBytes))
+			for spanIdx, spanID := range spanIDBytes {
+				projectedBlock.spanIDs[spanIdx] = convert.BytesToString(spanID)
+			}
+		}
+		if projection.Spans {
+			spans, spansErr := decoder.Decode(nil, spanTail, metadata.count)
+			if spansErr != nil {
+				return sdk.TraceBlock{}, false
+			}
+			projectedBlock.spans = spans
+		}
+	}
+	return appendProjectedTraceBlock(vectors, stagedBlock.traceID, metadata.timestamps.min, metadata.timestamps.max, &projectedBlock, projection), true
+}
+
+func assembleStagedTraceBlockInto(vectors *stagedEvaluationVectors, group stagedTraceGroup, staged []stagedTrace,
+	projection sdk.Projection,
+) (sdk.TraceBlock, bool) {
 	if group.traceID == "" || len(staged) == 0 || !group.validMetadata || group.minTS > group.maxTS {
 		return sdk.TraceBlock{}, false
 	}
-	requiresSlowPath := projectionRequiresSlowPath(projection)
-	if !requiresSlowPath {
+	if !projectionRequiresSlowPath(projection) {
 		return sdk.TraceBlock{TraceID: group.traceID, MinTS: group.minTS, MaxTS: group.maxTS}, true
+	}
+	if len(staged) == 1 && staged[0].isRaw {
+		return assembleRawTraceBlockInto(vectors, &staged[0], projection)
 	}
 	aggregate := generateBlockPointer()
 	defer releaseBlockPointer(aggregate)
 	aggregate.bm.traceID = group.traceID
 	for stagedIdx := range staged {
 		stagedBlock := &staged[stagedIdx]
-		if stagedBlock.traceID != group.traceID {
+		if stagedBlock.traceID != group.traceID || stagedBlock.isRaw || stagedBlock.slowBlock == nil {
 			return sdk.TraceBlock{}, false
 		}
-		var metadata *blockMetadata
-		switch {
-		case stagedBlock.isRaw:
-			return sdk.TraceBlock{}, false
-		case stagedBlock.slowBlock != nil:
-			metadata = &stagedBlock.slowBlock.bm
-			aggregate.appendAll(stagedBlock.slowBlock)
-		default:
+		metadata := &stagedBlock.slowBlock.bm
+		if metadata.traceID != group.traceID || !metadata.timestamps.known || metadata.timestamps.min > metadata.timestamps.max {
 			return sdk.TraceBlock{}, false
 		}
-		if metadata.traceID != group.traceID || !metadata.timestamps.known ||
-			metadata.timestamps.min > metadata.timestamps.max {
-			return sdk.TraceBlock{}, false
-		}
+		aggregate.appendAll(stagedBlock.slowBlock)
 	}
 	if aggregate.Len() == 0 || aggregate.timestampBoundsUnknown {
 		return sdk.TraceBlock{}, false
 	}
-	aggregate.bm.timestamps = timestampsMetadata{
-		min:   group.minTS,
-		max:   group.maxTS,
-		known: true,
-	}
-	return assembleTraceBlock(group.traceID, aggregate, projection), true
+	return appendProjectedTraceBlock(vectors, group.traceID, group.minTS, group.maxTS, &aggregate.block, projection), true
 }
