@@ -93,6 +93,7 @@ Release Notes.
 
 ### Bug Fixes
 
+- Fix flaky trace snapshot-fallback tests (`TestTraceInitTSTableDeletesMultipleFailedSnapshotsOnFallback`, `TestTraceTolerantLoaderFallbackToOlderSnapshot`) that raced the async snapshot flush: they gated on the part directory, which is created at the start of the flush, so `Close()` could run before the snapshot manifest was persisted and observe zero `.snp` files. The tests now wait for the persisted `.snp` file itself, matching the measure/stream sibling tests.
 - Prevent merge-time trace sampling from dropping fragments when the same trace ID may remain in unselected parts. Provisional drops are now checked against time bounds and
   trace-ID Bloom filters in candidate outside parts whose time bounds intersect the trace's max-fragment-gap-expanded range, revalidated before publication, and retained on
   uncertainty; the default merge grace is two hours.
