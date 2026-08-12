@@ -41,6 +41,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+const pluginMetricResultSuccess = "success"
+
 // ServerOptions configures the measured data-node process.
 //
 // ExecutionIdentity holds the harness-recorded fields forwarded by the
@@ -64,6 +66,7 @@ type ServerOptions struct {
 	OutputPath        string
 	Commit            string
 	PluginPath        string
+	PluginName        string
 	ScheduleSHA256    string
 	PluginConfig      []byte
 	Acceleration      float64
@@ -126,7 +129,7 @@ func Serve(ctx context.Context, options ServerOptions) (serveResultErr error) {
 	receiver, receiverErr := storagetrace.NewBenchmarkMergeReceiver( //nolint:contextcheck // The storage constructor has no context parameter.
 		options.Root, storagetrace.BenchmarkMergeReceiverOptions{
 			LogicalNow: time.Unix(0, 1), MergeGrace: 2 * time.Hour, EventWriter: eventFile, MaxInputPartID: options.MaxInputPartID,
-			Attribution: options.Attribution, Sampler: sampler, SegmentTimeRange: options.SegmentTimeRange,
+			Attribution: options.Attribution, Sampler: sampler, SamplerName: resolvedPluginName(options), SegmentTimeRange: options.SegmentTimeRange,
 		})
 	if receiverErr != nil {
 		var samplerCloseErr error
@@ -140,7 +143,7 @@ func Serve(ctx context.Context, options ServerOptions) (serveResultErr error) {
 		serveResultErr = errors.Join(serveResultErr, server.stopProfiles(), receiver.Close(), eventFile.Close())
 	}()
 	server.report = RunReport{
-		Version: 1, RunID: options.RunID, Mode: options.Mode, Acceleration: options.Acceleration,
+		Version: 2, RunID: options.RunID, Mode: options.Mode, Acceleration: options.Acceleration,
 		FixtureSHA256: options.FixtureSHA256, ScheduleSHA256: options.ScheduleSHA256, ExpectedRows: options.ExpectedRows,
 		ExpectedLedger: options.ExpectedLedger, InputRows: inputRows, SamplingOracle: options.SamplingOracle,
 	}
@@ -179,6 +182,17 @@ func Serve(ctx context.Context, options ServerOptions) (serveResultErr error) {
 		}
 	}
 	return nil
+}
+
+func resolvedPluginName(options ServerOptions) string {
+	if options.PluginName != "" {
+		return options.PluginName
+	}
+	if options.PluginPath == "" {
+		return ""
+	}
+	base := filepath.Base(options.PluginPath)
+	return strings.TrimSuffix(base, filepath.Ext(base))
 }
 
 func openServerSampler(options ServerOptions) (sdk.Sampler, error) {
@@ -391,12 +405,13 @@ func (bs *benchmarkServer) writeReport(responseWriter http.ResponseWriter, reque
 		samplingCorrect = retainAllFinalizeOutputCorrect(mergeReport.Events)
 	}
 	bs.report.SamplingVerified = samplingCorrect
+	bs.report.PluginMetricsVerified = pluginExecutionMetricsCorrect(mergeReport, bs.options.PluginPath != "")
 	rowsCorrect := inventory.CoreRows == bs.report.ExpectedRows && inventory.IndexRows[LedgerLatency] == bs.report.ExpectedRows &&
 		inventory.IndexRows[LedgerStartTime] == bs.report.ExpectedRows
 	if bs.options.SamplingOracle != nil {
 		rowsCorrect = samplingOracleRowsCorrect(inventory, *bs.options.SamplingOracle)
 	}
-	bs.report.Correct = rowsCorrect && samplingCorrect && bs.report.LedgerVerified
+	bs.report.Correct = rowsCorrect && samplingCorrect && bs.report.PluginMetricsVerified && bs.report.LedgerVerified
 	bs.report.LogicalWriteAmplification = logicalWriteAmplification(mergeReport)
 	report := bs.report
 	bs.mu.Unlock()
@@ -410,6 +425,71 @@ func (bs *benchmarkServer) writeReport(responseWriter http.ResponseWriter, reque
 		return
 	}
 	writeJSON(responseWriter, report)
+}
+
+func pluginExecutionMetricsCorrect(report storagetrace.BenchmarkMergeReport, pluginEnabled bool) bool {
+	var recordedCalls uint64
+	var recordedBatches, recordedBatchTraces, expectedCalls, expectedBatches, expectedBatchTraces uint64
+	for eventIdx := range report.Events {
+		event := &report.Events[eventIdx]
+		if !pluginExecutionEventCorrect(pluginEnabled, *event) {
+			return false
+		}
+		expectedCalls += event.PluginCalls
+		for batchIdx := range event.PluginBatches {
+			expectedBatches += event.PluginBatches[batchIdx].Batches
+			expectedBatchTraces += event.PluginBatches[batchIdx].Traces
+		}
+	}
+	for executionIdx := range report.PluginExecutions {
+		execution := &report.PluginExecutions[executionIdx]
+		if execution.PluginName == "" || execution.Calls == 0 || execution.ElapsedNanos < 0 || execution.MaxElapsedNanos < 0 ||
+			execution.Result != pluginMetricResultSuccess || execution.BypassReason != "" {
+			return false
+		}
+		recordedCalls += execution.Calls
+	}
+	for batchIdx := range report.PluginBatches {
+		batch := &report.PluginBatches[batchIdx]
+		if batch.Result != pluginMetricResultSuccess || batch.Batches == 0 || batch.Traces == 0 {
+			return false
+		}
+		recordedBatches += batch.Batches
+		recordedBatchTraces += batch.Traces
+	}
+	if !pluginEnabled {
+		return expectedCalls == 0 && recordedCalls == 0 && recordedBatches == 0 && len(report.PluginExecutions) == 0 &&
+			len(report.PluginBatches) == 0
+	}
+	return expectedCalls > 0 && recordedCalls == expectedCalls && recordedBatches == expectedBatches &&
+		recordedBatchTraces == expectedBatchTraces
+}
+
+func pluginExecutionEventCorrect(pluginEnabled bool, event storagetrace.BenchmarkMergeEvent) bool {
+	if event.PluginCalls == 0 {
+		return len(event.PluginExecutions) == 0 && len(event.PluginBatches) == 0
+	}
+	if !pluginEnabled || len(event.PluginExecutions) == 0 || len(event.PluginBatches) == 0 {
+		return false
+	}
+	var executionCalls, batches, batchTraces uint64
+	for executionIdx := range event.PluginExecutions {
+		execution := &event.PluginExecutions[executionIdx]
+		if execution.PluginName == "" || execution.Calls == 0 || execution.ElapsedNanos < 0 || execution.MaxElapsedNanos < 0 ||
+			execution.Result != pluginMetricResultSuccess || execution.BypassReason != "" {
+			return false
+		}
+		executionCalls += execution.Calls
+	}
+	for batchIdx := range event.PluginBatches {
+		batch := &event.PluginBatches[batchIdx]
+		if batch.Result != pluginMetricResultSuccess || batch.Batches == 0 || batch.Traces == 0 {
+			return false
+		}
+		batches += batch.Batches
+		batchTraces += batch.Traces
+	}
+	return executionCalls == event.PluginCalls && batches > 0 && batchTraces == event.TracesEvaluated
 }
 
 func countMergeTemperatures(events []storagetrace.BenchmarkMergeEvent) (hotMerges, matureMerges int) {

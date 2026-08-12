@@ -1111,6 +1111,10 @@ independently in addition to their combined totals.
 - traces evaluated, retained, dropped, and oversized-bypassed;
 - traces retained by duration, error, tag, and healthy-hash rules, plus traces reaching each rule;
 - plugin calls and traces per call;
+- chain decision batches and batch trace-count distribution by `success`, `timeout`, or `circuit_open`;
+- per-plugin execution calls, total/mean/maximum wall time, p99 distribution, and time per evaluated trace, keyed by the
+  configured `plugin_name` rather than combined across the chain;
+- per-plugin fail-open bypasses by `decide_error`, `length_mismatch`, or `panic`, plus late completions after timeout;
 - grace-bypassed merge and trace counts;
 - metadata-estimated staging bytes, resource-derived staging hard limit, adaptive decision-batch limit, planned batch
   count, and effective trace-count limit;
@@ -1121,6 +1125,14 @@ independently in addition to their combined totals.
 
 The benchmark plugins must export final call, evaluated-trace, and decision checksums so the monitor can reconcile their
 work with engine counters and the compiler cannot eliminate benchmark-only decision calculations.
+
+Phase 10 records the production-equivalent plugin measurements directly in the merge observer as well as exposing the
+runtime metric families. Each merge event contains chain batch count/result/trace totals plus execution call count, total
+duration, maximum duration, result, and bypass reason per `plugin_name`; the run report aggregates the same dimensions by
+phase. The HTML report uses those records for its plugin cost diagram and chain/link health tables. This avoids running a
+Prometheus scraper inside the constrained
+benchmark container while preserving the same dimensions used by production dashboards. Duration is wall time inside
+`Decide`, so it is diagnostic attribution, not a substitute for process CPU profiles.
 
 ## Profiles
 
@@ -1177,6 +1189,11 @@ The performance result is rejected unless all gates pass:
 17. Pipeline-disabled and AlwaysKeep runs have identical ordered primary-phase MERGE selection fingerprints and logical
     outputs. The plugin-only FINALIZE event is excluded from this fingerprint comparison. Dropping variants may diverge,
     but their first point and subsequent trajectories are recorded.
+18. Pipeline-disabled runs contain no plugin-execution records. For each plugin-enabled run, every configured plugin has
+    a stable nonempty name, every execution result is `success`, no bypass reason is present, and the sum of per-plugin
+    execution calls equals the existing merge-observer `pluginCalls` total. Any `decide_error`, `length_mismatch`, `panic`,
+    `late`, `timeout`, or `circuit_open` result rejects the run. The report must retain per-plugin total and maximum time;
+    latency itself is compared with the healthy baseline and is not assigned a universal absolute pass threshold.
 
 ## Comparison and Acceptance
 

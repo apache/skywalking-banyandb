@@ -46,6 +46,7 @@ type BenchmarkMergeReceiverOptions struct {
 	LogicalNow       time.Time
 	EventWriter      io.Writer
 	Sampler          sdk.Sampler
+	SamplerName      string
 	PartMergeDepths  map[uint64]uint32
 	SegmentTimeRange timestamp.TimeRange
 	IndexNames       []string
@@ -162,7 +163,7 @@ func NewBenchmarkMergeReceiver(root string, options BenchmarkMergeReceiverOption
 		table.mustGetOrCreateSidx(indexName)
 	}
 	if options.Sampler != nil {
-		deregister := registerSampler(group, options.Sampler)
+		deregister := registerNamedSampler(group, options.SamplerName, options.Sampler)
 		receiver.closeCallbacks = append(receiver.closeCallbacks, func() error {
 			deregister()
 			return options.Sampler.Close()
@@ -367,7 +368,7 @@ func (bpr *BenchmarkPartReceiver) RunFinalizeRound(ctx context.Context, logicalN
 	}
 	bpr.table.setMergeNow(logicalNow)
 	// A dispatched finalization is owned by the table lifecycle so its durable introduction is not interrupted by an HTTP disconnect.
-	finalized, finalizeErr := bpr.table.runFinalizeRound(lookupSamplers(bpr.table.group), int64(grace)) //nolint:contextcheck
+	finalized, finalizeErr := bpr.table.runFinalizeRoundNamed(lookupNamedSamplers(bpr.table.group), int64(grace)) //nolint:contextcheck
 	if finalizeErr != nil {
 		return false, fmt.Errorf("cannot run benchmark finalize round: %w", finalizeErr)
 	}

@@ -120,6 +120,32 @@ func TestLogicalWriteAmplificationUsesSelectedMergeBytes(t *testing.T) {
 	require.Zero(t, logicalWriteAmplification(storagetrace.BenchmarkMergeReport{}))
 }
 
+func TestPluginExecutionMetricsCorrect(t *testing.T) {
+	report := storagetrace.BenchmarkMergeReport{
+		Events: []storagetrace.BenchmarkMergeEvent{{
+			PluginCalls: 4, TracesEvaluated: 6,
+			PluginBatches: []storagetrace.BenchmarkMergePluginBatch{{Result: "success", Batches: 2, Traces: 6}},
+			PluginExecutions: []storagetrace.BenchmarkMergePluginExecution{
+				{PluginName: "latency", Result: "success", Calls: 2, ElapsedNanos: 10, MaxElapsedNanos: 10},
+				{PluginName: "probabilistic", Result: "success", Calls: 2, ElapsedNanos: 20, MaxElapsedNanos: 20},
+			},
+		}},
+		PluginBatches: []storagetrace.BenchmarkMergePluginBatch{{Result: "success", Batches: 2, Traces: 6}},
+		PluginExecutions: []storagetrace.BenchmarkMergePluginExecution{
+			{PluginName: "latency", Result: "success", Calls: 2, ElapsedNanos: 10, MaxElapsedNanos: 10},
+			{PluginName: "probabilistic", Result: "success", Calls: 2, ElapsedNanos: 20, MaxElapsedNanos: 20},
+		},
+	}
+	require.True(t, pluginExecutionMetricsCorrect(report, true))
+
+	report.PluginExecutions[1].Result = "late"
+	require.False(t, pluginExecutionMetricsCorrect(report, true))
+	report.PluginExecutions[1].Result = "success"
+	report.PluginBatches[0].Result = "timeout"
+	require.False(t, pluginExecutionMetricsCorrect(report, true))
+	require.True(t, pluginExecutionMetricsCorrect(storagetrace.BenchmarkMergeReport{}, false))
+}
+
 func TestRetainAllFinalizeOutputRequiresExecutedLosslessFinalize(t *testing.T) {
 	baseEvent := storagetrace.BenchmarkMergeEvent{
 		Type: "finalize", Phase: storagetrace.BenchmarkMergePhaseCooldown,

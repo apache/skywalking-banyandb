@@ -336,7 +336,7 @@ The engine publishes a bounded metric catalog for plugin cost and health. Chain-
 - p99 successful execution latency by plugin: `histogram_quantile(0.99, sum by (group, plugin_name, le) (rate(banyandb_trace_tst_pipeline_plugin_execution_duration_seconds_bucket{result="success"}[5m])))`.
 - Plugin failure pressure: compare each plugin's `decide_error`, `length_mismatch`, `panic`, and `late` execution rates with its all-result execution rate. Separately compare chain-level `timeout` and `circuit_open` batch rates with the all-result batch rate.
 
-The duration is wall time inside `Decide`, not process CPU time. A timed-out native Go plugin cannot be forcibly stopped; if the abandoned call eventually returns, it is recorded as `late` with its full duration. CPU and allocation attribution requires independent profiling.
+The duration is wall time inside `Decide`, not process CPU time. A timed-out native Go plugin cannot be forcibly stopped; if the abandoned call eventually returns, it is recorded as `late` with its full duration. CPU and allocation attribution still belongs in the plugin's independent benchmark.
 
 ## Retention-Decision Timing & Trace Completeness
 

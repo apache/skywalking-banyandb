@@ -244,6 +244,7 @@ run_once() {
   local finalize_flag=()
   if [[ "$FULL_PIPELINE" != "disabled" ]]; then
     plugin_flag=(--plugin=/workspace/${FULL_PLUGIN#"$ROOT/"} --plugin-sha256="$FULL_PLUGIN_SHA" \
+      --plugin-name="$FULL_PIPELINE" \
       --segment-min-time-nanos="$SEGMENT_MIN_TIME_NANOS" --segment-max-time-nanos="$SEGMENT_MAX_TIME_NANOS")
     if [[ "$FULL_PIPELINE" == "skywalking" || "$FULL_PIPELINE" == deterministic-* ]]; then
       plugin_flag+=(--plugin-config=/workspace/${FULL_PLUGIN_CONFIG#"$ROOT/"} \
