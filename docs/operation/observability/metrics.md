@@ -14,12 +14,14 @@ BanyanDB exposes metrics for monitoring and analysis.
 
 ## Dashboards
 
-The metrics are presented through **two complementary Grafana dashboards**, split by aggregation dimension (see [Metrics Providers](providers.md)):
+The metrics are presented through **two core Grafana dashboards**, split by aggregation dimension (see [Metrics Providers](providers.md)):
 
 - **[BanyanDB Cluster — Nodes](../grafana-fodc-nodes.json)** — node/pod-level health and resources, aggregated by **`pod_name`**: *Fleet Overview*, *Per-node Health*, *Resources*, *Disk by Path*, and *Go Runtime*.
 - **[BanyanDB Cluster — Workload](../grafana-fodc-workload.json)** — business/data-level throughput and latency, aggregated by **`group`**: *Cluster Workload Summary*, *Liaison: Ingestion, Query & Publish*, *Data: Storage*, *Data: Inverted Index*, and *Data: Internal Queue*.
 
-The sections below mirror the two dashboards row-for-row; each metric entry corresponds to one panel and uses that panel's expression, except the explicitly marked [Trace Plugin Execution](#trace-plugin-execution-reference) operational reference. A standalone [Internal queue metrics reference](#internal-queue-metrics-reference-queue_sub--queue_pub) at the end documents the `queue_sub` / `queue_pub` model in depth.
+When trace sampling plugins are enabled, additionally install **[BanyanDB — Trace Sampling Plugins](../grafana-fodc-trace-plugin.json)**. It separates optional plugin execution, sampling outcomes, drop-set capacity, and finalization panels from the core workload dashboard.
+
+The sections below mirror the two core dashboards row-for-row; the [Trace Plugin Metrics](#trace-plugin-metrics-reference) section is the complete reference behind the optional dashboard. A standalone [Internal queue metrics reference](#internal-queue-metrics-reference-queue_sub--queue_pub) at the end documents the `queue_sub` / `queue_pub` model in depth.
 
 ---
 

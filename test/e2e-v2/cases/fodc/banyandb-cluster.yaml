@@ -130,6 +130,7 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - --poll-metrics-ports=2121
+            - --container-names=data
             - --poll-metrics-interval=2s
             - --cluster-state-ports=17912
             - --cluster-state-poll-interval=10s
@@ -213,6 +214,7 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - --poll-metrics-ports=2121
+            - --container-names=liaison
             - --poll-metrics-interval=2s
             - --cluster-state-ports=17912
             - --cluster-state-poll-interval=10s

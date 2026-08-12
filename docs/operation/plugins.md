@@ -103,6 +103,10 @@ block), `PUT /api/v1/group/schema/{group}`, or the gRPC `GroupRegistryService.Up
 (see `test/cases/tracepipeline/ops.go`). Verify with
 `banyandb_trace_pipeline_sampler_active_count{group=…}` `>0` (metrics port `2121`);
 a bad `.so` fails open + loud (`…_sampler_load_failed`), leaving the node healthy.
+After activation, import the optional
+[Trace Sampling Plugins Grafana dashboard](grafana-fodc-trace-plugin.json) to monitor
+execution latency, sampling outcomes, fail-open retention, drop-set capacity, and
+finalization through the FODC proxy.
 
 ## Delivering the carrier (first-party) and third-party plugins
 

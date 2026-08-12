@@ -1,7 +1,9 @@
 # FODC Dashboard Metrics E2E (Kind)
 
 This case verifies that **every metric consumed by the FODC Grafana dashboards**
-(`docs/operation/grafana-fodc-nodes.json`, `docs/operation/grafana-fodc-workload.json`)
+(`docs/operation/grafana-fodc-nodes.json`, `docs/operation/grafana-fodc-workload.json`,
+`docs/operation/grafana-fodc-migration.json`, and the optional
+`docs/operation/grafana-fodc-trace-plugin.json`)
 is exported by the **fodc-proxy `/metrics`** endpoint when a realistic SkyWalking
 pipeline drives write **and** query traffic through a BanyanDB cluster.
 
@@ -23,6 +25,8 @@ consumer ─POST /users─▶ provider ──▶ OAP ──┬─ writes ─▶ 
 - Each BanyanDB pod carries a **fodc-agent sidecar**. The agent scrapes the local
   observability endpoint (`127.0.0.1:2121`), resolves its node role from the local
   cluster-state gRPC, and pushes metrics to the proxy.
+  `--container-names` identifies the co-located BanyanDB role so the proxy output
+  carries the `container_name` label consumed by every dashboard selector.
   - **Critical wiring:** the agent must receive `--cluster-state-ports=17912`.
     Without it the cluster collector never starts, the node role stays empty, and
     the proxy client is disabled (no metrics ever reach the proxy).
@@ -36,16 +40,17 @@ consumer ─POST /users─▶ provider ──▶ OAP ──┬─ writes ─▶ 
 
 ## What is asserted
 
-The metric universe (62 distinct names, extracted mechanically from the dashboard
-panel `expr` fields) is partitioned into three checked-in lists under `metrics/`:
+The metric universe (106 distinct names, extracted mechanically from dashboard
+panel `expr` fields) is partitioned into four checked-in lists under `metrics/`:
 
 | List | Meaning | check-metrics.sh action |
 |------|---------|-------------------------|
-| `presence.txt` (38) | reliably exported by a 1:1 OAP cluster; value may be 0 | assert ≥ 1 exported series |
-| `non_empty.txt` (12) | always-on core through OAP traffic | assert a sample value > 0 (histogram families via the companion `_count`) |
-| `documented_gap.txt` (12) | need a specific event (an error, or a completed part-merge) to materialise | reported only, never asserted |
+| `presence.txt` (44) | reliably exported by a 1:1 OAP cluster; value may be 0 | assert ≥ 1 exported series |
+| `non_empty.txt` (14) | always-on core through OAP traffic | assert a sample value > 0 (histogram families via the companion `_count`) |
+| `documented_gap.txt` (20) | need a specific event or an undeployed lifecycle service | reported only, never asserted |
+| `optional_plugin.txt` (28) | used only by the separately installed trace-plugin dashboard | excluded from the base run; validate in a plugin-enabled cluster |
 
-The three lists are disjoint and their union is exactly the 62 dashboard metrics —
+The four lists are disjoint and their union is exactly the 106 dashboard metrics —
 nothing is silently dropped. `check-metrics.sh` additionally asserts that the two
 agents registered with **distinct `node_role` labels** and that the dashboard's
 query-throughput series `banyandb_queue_sub_*{operation="query"}` is present on the
@@ -56,7 +61,7 @@ the OAP→liaison→data query fan-out is observable.
 
 The split was calibrated against a live run; the recorded findings:
 
-- **`documented_gap.txt` holds two groups (12 names), reported but never asserted.**
+- **`documented_gap.txt` holds event-driven and undeployed-service families (20 names), reported but never asserted.**
   *Error counters* (`*_grpc_total_err`, `*_grpc_total_stream_msg_received_err`, four
   `*_total_sync_loop_err`, `queue_pub_total_err`): a labelled Prometheus counter is
   not exported until first incremented, so on a healthy run they never appear.
@@ -66,8 +71,8 @@ The split was calibrated against a live run; the recorded findings:
   for every data type. The `*_total_merge_loop_started` counters (merge loop start)
   remain presence-asserted.
 - **`banyandb_trace_tst_*` is present, not a gap.** OAP *does* write the BanyanDB
-  `trace` model at the pinned `SW_OAP_COMMIT`, so the eight non-error `trace_tst`
-  metrics are presence-asserted; only `trace_tst_total_sync_loop_err` is a gap.
+  `trace` model at the pinned `SW_OAP_COMMIT`, so its non-error core `trace_tst`
+  metrics are presence-asserted; event-driven errors remain documented gaps.
 - **`banyandb_stream_storage_*` and `banyandb_stream_tst_*`** are both produced and
   presence-asserted.
 - **`operation="query"` appears on `banyandb_queue_sub_*` (data side) only.** The
@@ -75,10 +80,16 @@ The split was calibrated against a live run; the recorded findings:
   informationally, not asserted.
 
 > **Calibration is intentional, not a loophole.** The classification reflects what a
-> realistic OAP-driven 1:1 cluster actually exports; the only un-asserted dashboard
-> metrics are error counters that require a failure to materialise. To re-calibrate
+> realistic OAP-driven 1:1 cluster actually exports; event-driven and lifecycle metrics
+> remain explicitly classified rather than silently skipped. To re-calibrate
 > after an OAP/BanyanDB bump, run `DUMP=1 check-metrics.sh` against a live cluster and
 > move any newly-absent name into `documented_gap.txt` with the scrape as evidence.
+
+The optional [Trace Sampling Plugins dashboard](../../../../docs/operation/grafana-fodc-trace-plugin.json)
+is intentionally not enabled by this base case. Its families are isolated in
+`optional_plugin.txt` because the dashboard is installed only when a trace sampler
+plugin is enabled; they are validated with a plugin-capable data image, carrier-mounted
+sampler, and mature trace merges.
 
 ## Relationship to `test/fodc/`
 

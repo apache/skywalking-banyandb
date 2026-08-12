@@ -18,7 +18,8 @@
 # For histogram families (names ending in _bucket) check-metrics.sh asserts the
 # companion _count/_sum > 0 (the bare _bucket carries no scalar value).
 # This set is intentionally the always-on core; every other reachable metric is
-# presence-checked in presence.txt. Disjoint from presence.txt and documented_gap.txt.
+# presence-checked in presence.txt. Disjoint from presence.txt,
+# documented_gap.txt, and optional_plugin.txt.
 banyandb_system_cpu_num
 banyandb_system_up_time
 go_goroutines
