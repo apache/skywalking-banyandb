@@ -54,21 +54,20 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-tags: true
       - name: Set timezone
         run: sudo timedatectl set-timezone ${{ inputs.timezone || 'UTC' }}
       - name: Setup build environment
         uses: ./.github/actions/setup-build-env
         with:
           download-artifacts: 'true'
+          setup-node: 'false'
           setup-docker: 'false'
       - name: Cache tools
         uses: actions/cache@v4
         id: cache-tool
         with:
           path: bin
-          key: ${{ runner.os }}-test-tool-${{ hashFiles('**version.mk') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-test-tool-${{ hashFiles('scripts/build/version.mk') }}
       - name: Test integration and banyand
         env:
           LOAD_TEST_MINUTES: ${{ inputs.load-test-minutes }}

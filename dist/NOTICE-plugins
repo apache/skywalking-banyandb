@@ -1,0 +1,51 @@
+Apache SkyWalking BanyanDB - plugin images addendum
+================================================================
+
+This file documents the ADDITIONAL third-party components carried by the two
+opt-in plugin images, on top of what the default (CGO_ENABLED=0 static,
+busybox:stable-glibc-based) image already covers via NOTICE and dist/LICENSE
+(see `make license-dep`):
+
+  - HOST image    apache/skywalking-banyandb:<tag>-plugins
+  - CARRIER image apache/skywalking-banyandb:<tag>-plugins-carrier
+
+Both are tags on the same apache/skywalking-banyandb repository.
+
+HOST image (adds a distroless glibc layer)
+------------------------------------------
+The host image's runtime layer is `gcr.io/distroless/base-debian12` (required
+because its banyand-server is CGO_ENABLED=1 and dynamically linked against
+glibc, so it can host Go plugins via plugin.Open — see
+docs/operation/plugins.md). distroless base-debian12 is a minimal Debian
+"bookworm" base carrying glibc + ca-certificates + a few runtime libs, with NO
+shell, apt, or package manager — chosen over debian:bookworm-slim to minimize
+the standing CVE surface. It still adds a glibc runtime not present in the
+default busybox-based image.
+
+The authoritative, up-to-date package/library manifest for a given build is
+NOT hand-maintained in this file (versions move with the upstream distroless
+base image); regenerate it from the actual built host image with:
+
+    BINARYTYPE=plugins make -C banyand license-plugins-report
+
+At the time this addendum was written, the base was dominated by the LGPL-2.1+
+glibc runtime family (libc6 and its supporting libraries) plus MPL-2.0-licensed
+`ca-certificates` (Mozilla's CA bundle). distroless ships the corresponding
+license/copyright files under /usr/share/doc; consult the distroless
+base-debian12 image's published attribution for the authoritative
+per-component license text.
+
+CARRIER image (no new base components)
+--------------------------------------
+The carrier image is `busybox:stable-glibc` — the SAME base as the default
+banyand image — plus only the first-party plugin `.so` files that this repo
+itself builds from `plugins/`. It therefore introduces NO third-party base
+components beyond what the default image's NOTICE/dist/LICENSE already cover;
+its only added content is Apache-2.0 first-party code compiled to `.so`.
+
+Operational consequence (see docs/operation/plugins.md and the plan's DD7):
+the host image is a permanent, heavier, glibc-CVE-tracked artifact relative to
+the default image, and both plugin images are standing, published artifacts.
+Track BOTH in the same CVE scan/patch matrix as the default image, not as an
+afterthought — `BINARYTYPE=plugins make -C banyand license-plugins-report` is
+also a convenient input to that scan for the host image.

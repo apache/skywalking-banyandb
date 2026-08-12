@@ -83,6 +83,10 @@ func (s *server) inspectGroup(ctx context.Context, group *commonv1.Group) *fodcv
 	// means DataInfo is populated and collectionErrs may carry per-node
 	// broadcast failures. The two paths never overlap, so the top-level
 	// branch sets a fresh single-element Errors slice.
+	//
+	// Schema consistency is no longer computed here: each node's schema is
+	// streamed to its co-located FODC agent via NodeSchemaStateService, the agent
+	// fingerprints it, and the proxy runs the checker across the cluster.
 	dataInfo, collectionErrs, err := s.metadataRepo.CollectDataInfo(ctx, groupName)
 	if err != nil {
 		s.log.Warn().Err(err).Str("group", groupName).Msg("Failed to collect data info")

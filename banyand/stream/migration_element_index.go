@@ -561,7 +561,7 @@ func rebuildOneStreamPartIntoDocs(r rebuildOnePartInput) (missingRows, missingSe
 			}
 			bm.tagProjection = in.tagProjection
 			b := generateBlock()
-			b.mustReadFrom(in.decoder, p, *bm)
+			b.mustReadFrom(in.decoder, p, *bm, nil)
 			for k := uint64(0); k < bm.count; k++ {
 				appendStreamElementIndexDoc(streamElementIndexRowInput{
 					in:              in,

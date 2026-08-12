@@ -18,6 +18,7 @@
 package schema
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -208,6 +209,10 @@ func (s *fakeResourceSupplier) OpenDB(_ *commonv1.Group) (DB, error) {
 	return fakeDB{}, nil
 }
 
+func (s *fakeResourceSupplier) ResolveResourceOpts(groupSchema *commonv1.Group) *commonv1.ResourceOpts {
+	return groupSchema.GetResourceOpts()
+}
+
 func buildGroup(name string) *commonv1.Group {
 	return &commonv1.Group{
 		Metadata: &commonv1.Metadata{Name: name},
@@ -294,4 +299,98 @@ func TestInitGroup_AlreadyInit_NoReopen(t *testing.T) {
 	_, err = repo.initGroup(gs)
 	require.NoError(t, err)
 	assert.Equal(t, 1, supplier.openCalls, "already-initialized group must not re-invoke OpenDB")
+}
+
+// recordingListener captures the rules from the most recent OnIndexUpdate so a test can
+// assert whether a delete re-indexed the resource.
+type recordingListener struct {
+	rules *[]*databasev1.IndexRule
+}
+
+func (r recordingListener) OnIndexUpdate(rules []*databasev1.IndexRule) { *r.rules = rules }
+
+type recordingSupplier struct {
+	lis recordingListener
+}
+
+func (recordingSupplier) ResourceSchema(_ *commonv1.Metadata) (ResourceSchema, error) {
+	return nil, nil
+}
+
+func (s recordingSupplier) OpenResource(_ Resource) (IndexListener, error) { return s.lis, nil }
+
+// TestDeleteIndexRule_ReindexesBoundResource asserts that deleting an index rule
+// re-indexes resources bound to it so the deleted rule is dropped from their in-memory
+// index. The add path already refreshed; the delete path previously left it stale.
+func TestDeleteIndexRule_ReindexesBoundResource(t *testing.T) {
+	var applied []*databasev1.IndexRule
+	sr := &schemaRepo{
+		l:                      testLogger(),
+		resourceSchemaSupplier: recordingSupplier{lis: recordingListener{rules: &applied}},
+	}
+	require.NoError(t, sr.storeResource(buildMeasure("m", 1)))
+	rule := &databasev1.IndexRule{Metadata: &commonv1.Metadata{Group: "g", Name: "r", ModRevision: 1}}
+	sr.storeIndexRule(rule)
+	sr.storeIndexRuleBinding(&databasev1.IndexRuleBinding{
+		Metadata: &commonv1.Metadata{Group: "g", Name: "b", ModRevision: 1},
+		Subject:  &databasev1.Subject{Catalog: commonv1.Catalog_CATALOG_MEASURE, Name: "m"},
+		Rules:    []string{"r"},
+	})
+	require.Len(t, applied, 1, "binding must apply the rule to the resource")
+
+	require.NoError(t, sr.processEvent(context.Background(), MetadataEvent{
+		Typ: EventDelete, Kind: EventKindIndexRule, Metadata: rule,
+	}))
+	require.Empty(t, applied, "deleting the index rule must re-index the resource without it")
+}
+
+// TestDeleteIndexRuleBinding_ReindexesSubject asserts that deleting a binding re-indexes
+// the subject so the now-unbound rule stops being applied.
+func TestDeleteIndexRuleBinding_ReindexesSubject(t *testing.T) {
+	var applied []*databasev1.IndexRule
+	sr := &schemaRepo{
+		l:                      testLogger(),
+		resourceSchemaSupplier: recordingSupplier{lis: recordingListener{rules: &applied}},
+	}
+	require.NoError(t, sr.storeResource(buildMeasure("m", 1)))
+	sr.storeIndexRule(&databasev1.IndexRule{Metadata: &commonv1.Metadata{Group: "g", Name: "r", ModRevision: 1}})
+	binding := &databasev1.IndexRuleBinding{
+		Metadata: &commonv1.Metadata{Group: "g", Name: "b", ModRevision: 1},
+		Subject:  &databasev1.Subject{Catalog: commonv1.Catalog_CATALOG_MEASURE, Name: "m"},
+		Rules:    []string{"r"},
+	}
+	sr.storeIndexRuleBinding(binding)
+	require.Len(t, applied, 1)
+
+	require.NoError(t, sr.processEvent(context.Background(), MetadataEvent{
+		Typ: EventDelete, Kind: EventKindIndexRuleBinding, Metadata: binding,
+	}))
+	require.Empty(t, applied, "deleting the binding must re-index the subject without the unbound rule")
+}
+
+// TestDeleteGroup_PurgesChildCaches asserts that deleting a group purges its child
+// resource/index-rule/binding entries so nothing dangles after the group is gone.
+func TestDeleteGroup_PurgesChildCaches(t *testing.T) {
+	sr := newTestSchemaRepo()
+	// A portable (nil supplier) group so deleteGroup proceeds past its lookup and
+	// close() is a no-op.
+	sr.groupMap.Store("g", newGroup(nil, nil, nil))
+	require.NoError(t, sr.storeResource(buildMeasure("m", 1)))
+	sr.storeIndexRule(&databasev1.IndexRule{Metadata: &commonv1.Metadata{Group: "g", Name: "r", ModRevision: 1}})
+	sr.storeIndexRuleBinding(&databasev1.IndexRuleBinding{
+		Metadata: &commonv1.Metadata{Group: "g", Name: "b", ModRevision: 1},
+		Subject:  &databasev1.Subject{Catalog: commonv1.Catalog_CATALOG_MEASURE, Name: "m"},
+		Rules:    []string{"r"},
+	})
+
+	require.NoError(t, sr.deleteGroup(&commonv1.Metadata{Name: "g"}))
+
+	_, hasResource := sr.resourceMap.Load("g/m")
+	_, hasRule := sr.indexRuleMap.Load("g/r")
+	_, hasForward := sr.bindingForwardMap.Load("g/m")
+	_, hasBackward := sr.bindingBackwardMap.Load("g/r")
+	require.False(t, hasResource, "resource entry must be purged")
+	require.False(t, hasRule, "index rule entry must be purged")
+	require.False(t, hasForward, "forward binding entry must be purged")
+	require.False(t, hasBackward, "backward binding entry must be purged")
 }

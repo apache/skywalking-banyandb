@@ -229,16 +229,8 @@ func tagValOrder(v *modelv1.TagValue) int {
 func verifyQLWithRequest(ctx context.Context, innerGm gm.Gomega, args helpers.Args, yamlQuery *measurev1.TopNRequest, conn *grpclib.ClientConn) {
 	qlContent, err := qlFS.ReadFile("input/" + args.Input + ".ql")
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
-	var qlQueryStr string
-	for _, line := range strings.Split(string(qlContent), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
-			if qlQueryStr != "" {
-				qlQueryStr += " "
-			}
-			qlQueryStr += trimmed
-		}
-	}
+	qlQueryStr, qlParams, err := helpers.ExtractQL(string(qlContent))
+	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 
 	// Auto-inject stages clause if args.Stages is not empty
 	if len(args.Stages) > 0 {
@@ -277,6 +269,7 @@ func verifyQLWithRequest(ctx context.Context, innerGm gm.Gomega, args helpers.Ar
 	// parse QL to QueryRequest
 	query, errStrs := bydbql.ParseQuery(qlQueryStr)
 	innerGm.Expect(errStrs).To(gm.BeNil())
+	innerGm.Expect(bydbql.BindParams(query, qlParams)).To(gm.Succeed())
 	transformer := bydbql.NewTransformer(mockRepo)
 	transform, err := transformer.Transform(ctx, query)
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
@@ -296,7 +289,8 @@ func verifyQLWithRequest(ctx context.Context, innerGm gm.Gomega, args helpers.Ar
 	// simple check the QL can be executed
 	client := bydbqlv1.NewBydbQLServiceClient(conn)
 	bydbqlResp, err := client.Query(ctx, &bydbqlv1.QueryRequest{
-		Query: qlQueryStr,
+		Query:  qlQueryStr,
+		Params: qlParams,
 	})
 	if args.WantErr {
 		innerGm.Expect(err).To(gm.HaveOccurred())

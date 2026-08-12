@@ -74,8 +74,20 @@ interface TopNResult {
   lists?: unknown[];
 }
 
+/**
+ * A single BydbQL parameter in protojson TagValue form,
+ * bound to a `?` placeholder by order of appearance.
+ */
+export type TagValueParam =
+  | { str: { value: string } }
+  | { int: { value: string } }
+  | { strArray: { value: string[] } }
+  | { intArray: { value: string[] } }
+  | { null: null };
+
 export interface QueryRequest {
   query: string;
+  params?: TagValueParam[];
 }
 
 export interface QueryResponse {

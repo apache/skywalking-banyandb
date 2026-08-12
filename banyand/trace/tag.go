@@ -50,6 +50,13 @@ var (
 		"int_arr": pbv1.ValueTypeInt64Arr,
 		"ts":      pbv1.ValueTypeTimestamp,
 	}
+	typedTagSuffixes = func() []string {
+		suffixes := make([]string, 0, len(suffixToValueType))
+		for suffix := range suffixToValueType {
+			suffixes = append(suffixes, typedTagSeparator+suffix)
+		}
+		return suffixes
+	}()
 )
 
 func encodeTypedTag(name string, vt pbv1.ValueType) string {
@@ -61,18 +68,17 @@ func encodeTypedTag(name string, vt pbv1.ValueType) string {
 }
 
 func decodeTypedTag(key string) string {
-	for suffix := range suffixToValueType {
-		sepSuffix := typedTagSeparator + suffix
-		if strings.HasSuffix(key, sepSuffix) {
-			return key[:len(key)-len(sepSuffix)]
+	for _, suffix := range typedTagSuffixes {
+		if strings.HasSuffix(key, suffix) {
+			return key[:len(key)-len(suffix)]
 		}
 	}
 	return key
 }
 
 func hasTypeSuffix(key string) bool {
-	for suffix := range suffixToValueType {
-		if strings.HasSuffix(key, typedTagSeparator+suffix) {
+	for _, suffix := range typedTagSuffixes {
+		if strings.HasSuffix(key, suffix) {
 			return true
 		}
 	}

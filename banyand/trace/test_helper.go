@@ -21,56 +21,27 @@ import (
 	"fmt"
 	"time"
 
-	"google.golang.org/protobuf/types/known/timestamppb"
-
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 )
 
 // Timestamp marks a DumpTag value as a ValueType=Timestamp tag carrying nanos
 // since the epoch (trace stores its per-span time in such a tag).
-type Timestamp int64
+type Timestamp = EncodedTimestamp
 
 // DumpTag describes one (flat) tag of a trace span for the dump test builder.
 // Value is a Go-native value: string, int64, []string, []int64, []byte or
-// Timestamp.
-type DumpTag struct {
-	Value any
-	Name  string
-}
+// Timestamp. RawValue and ValueType preserve an already-marshaled storage value.
+type DumpTag = PartEncoderTag
 
-// DumpRow is one trace span for BuildPartForDump. SeriesID is derived from the
-// tags by the parser, so it is not specified here.
-type DumpRow struct {
-	TraceID   string
-	SpanID    string
-	Span      []byte
-	Tags      []DumpTag
-	Timestamp int64
-}
+// DumpRow is one trace span for BuildPartForDump. IndexSeries is ignored by the
+// core encoder and carries source index-series identity for fixture generation.
+type DumpRow = PartEncoderRow
 
 // BuildPartForDump writes spans into a trace part at root/<partID>, returning the
 // part directory, the rows for verification and a cleanup func.
 func BuildPartForDump(tmpPath string, fileSystem fs.FileSystem, partID uint64, rows []DumpRow) (string, []DumpRow, func()) {
-	ts := generateTraces()
-	for i := range rows {
-		r := &rows[i]
-		ts.traceIDs = append(ts.traceIDs, r.TraceID)
-		ts.timestamps = append(ts.timestamps, r.Timestamp)
-		ts.spanIDs = append(ts.spanIDs, r.SpanID)
-		ts.spans = append(ts.spans, r.Span)
-		ts.tags = append(ts.tags, buildDumpTags(r.Tags))
-	}
-
-	mp := &memPart{}
-	mp.mustInitFromTraces(ts)
-	path := partPath(tmpPath, partID)
-	mp.mustFlush(fileSystem, path)
-
-	return path, rows, func() {
-		releaseTraces(ts)
-	}
+	path, cleanup := EncodePart(tmpPath, fileSystem, partID, rows)
+	return path, rows, cleanup
 }
 
 // StandardDumpRows returns the canonical trace fixture: three spans across two
@@ -136,32 +107,4 @@ func EntityDumpRows(entities []string) []DumpRow {
 		})
 	}
 	return rows
-}
-
-func buildDumpTags(tags []DumpTag) []*tagValue {
-	out := make([]*tagValue, 0, len(tags))
-	for _, tg := range tags {
-		out = append(out, encodeDumpTag(tg.Name, tg.Value))
-	}
-	return out
-}
-
-func encodeDumpTag(name string, value any) *tagValue {
-	switch v := value.(type) {
-	case string:
-		return encodeTagValue(name, databasev1.TagType_TAG_TYPE_STRING, &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: v}}})
-	case int64:
-		return encodeTagValue(name, databasev1.TagType_TAG_TYPE_INT, &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: v}}})
-	case Timestamp:
-		tv := &modelv1.TagValue{Value: &modelv1.TagValue_Timestamp{Timestamp: timestamppb.New(time.Unix(0, int64(v)))}}
-		return encodeTagValue(name, databasev1.TagType_TAG_TYPE_TIMESTAMP, tv)
-	case []string:
-		return encodeTagValue(name, databasev1.TagType_TAG_TYPE_STRING_ARRAY, &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: v}}})
-	case []int64:
-		return encodeTagValue(name, databasev1.TagType_TAG_TYPE_INT_ARRAY, &modelv1.TagValue{Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: v}}})
-	case []byte:
-		return encodeTagValue(name, databasev1.TagType_TAG_TYPE_DATA_BINARY, &modelv1.TagValue{Value: &modelv1.TagValue_BinaryData{BinaryData: v}})
-	default:
-		panic(fmt.Sprintf("unsupported dump tag value type %T", value))
-	}
 }

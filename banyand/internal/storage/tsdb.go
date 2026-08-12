@@ -299,6 +299,13 @@ func (d *database[T, O]) SelectSegments(timeRange timestamp.TimeRange, reopenClo
 	return kept, nil
 }
 
+func (d *database[T, O]) PeekSegments(timeRange timestamp.TimeRange) []SegmentPeek {
+	if d.closed.Load() {
+		return nil
+	}
+	return d.segmentController.peekSegments(timeRange)
+}
+
 func (d *database[T, O]) SegmentInterval() IntervalRule {
 	return d.segmentController.getSegmentInterval()
 }

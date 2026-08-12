@@ -22,7 +22,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
-	"plugin"
 	"strings"
 	"sync"
 
@@ -181,60 +180,7 @@ func loadSamplerPlugin(sp *commonv1.SamplerPlugin, trustedDir, group string, bin
 // newSamplerFromPlugin opens the .so, verifies its ABIVersion symbol, and calls
 // the constructor. It is a package var so tests can substitute a Go sampler and
 // exercise the cache/keying/bindHost logic under -race without a real .so. The
-// default implementation is behavior-preserving: it is the exact plugin.Open +
-// ABI check + constructor sequence that loadSamplerPlugin ran inline before the
-// seam was introduced.
-var newSamplerFromPlugin = func(resolvedPath, symbol string, cfgJSON []byte) (sdk.Sampler, error) {
-	var p *plugin.Plugin
-	var openErr error
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				openErr = fmt.Errorf("panic opening plugin %q: %v", resolvedPath, r)
-			}
-		}()
-		p, openErr = plugin.Open(resolvedPath)
-	}()
-	if openErr != nil {
-		return nil, fmt.Errorf("cannot open plugin %q: %w", resolvedPath, openErr)
-	}
-
-	abiSym, lookupErr := p.Lookup("ABIVersion")
-	if lookupErr != nil {
-		return nil, fmt.Errorf("plugin %q missing ABIVersion symbol: %w", resolvedPath, lookupErr)
-	}
-	pluginABI, ok := abiSym.(*int)
-	if !ok {
-		return nil, fmt.Errorf("plugin %q ABIVersion has wrong type", resolvedPath)
-	}
-	if *pluginABI != sdk.ABIVersion {
-		return nil, fmt.Errorf("plugin %q ABI version %d does not match engine %d", resolvedPath, *pluginABI, sdk.ABIVersion)
-	}
-
-	ctorSym, lookupErr := p.Lookup(symbol)
-	if lookupErr != nil {
-		return nil, fmt.Errorf("plugin %q missing symbol %q: %w", resolvedPath, symbol, lookupErr)
-	}
-	ctor, ok := ctorSym.(func([]byte) (sdk.Sampler, error))
-	if !ok {
-		return nil, fmt.Errorf("plugin %q symbol %q has wrong type", resolvedPath, symbol)
-	}
-
-	var sampler sdk.Sampler
-	var ctorErr error
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				ctorErr = fmt.Errorf("panic in plugin %q constructor: %v", resolvedPath, r)
-			}
-		}()
-		sampler, ctorErr = ctor(cfgJSON)
-	}()
-	if ctorErr != nil {
-		return nil, fmt.Errorf("plugin %q constructor failed: %w", resolvedPath, ctorErr)
-	}
-	if sampler == nil {
-		return nil, fmt.Errorf("plugin %q constructor returned nil sampler", resolvedPath)
-	}
-	return sampler, nil
-}
+// default implementation delegates to sdk.OpenSampler — the single shared
+// loader-contract implementation also used by sdktest.LoadSO — so the host and
+// the offline dev toolkit never drift.
+var newSamplerFromPlugin = sdk.OpenSampler

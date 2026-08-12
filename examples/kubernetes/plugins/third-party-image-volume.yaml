@@ -1,0 +1,86 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Data-node StatefulSet fragment: FIRST-PARTY + THIRD-PARTY plugins together
+# via OCI image volumes (Kubernetes >=1.31, beta in 1.33). See
+# docs/operation/plugins.md.
+#
+# The -plugins HOST image ships /plugins EMPTY. Here we mount:
+#   - the first-party CARRIER image read-only at /plugins           (SamplerPlugin.path=<name>.so)
+#   - the operator's third-party image read-only, NESTED at         (SamplerPlugin.path=thirdparty/<name>.so)
+#     /plugins/thirdparty
+# Mounting the carrier at /plugins is correct now — the host's /plugins is
+# empty, so there is nothing to shadow. The nested third-party mount overlays
+# only the subdirectory.
+#
+# PARITY: the first-party carrier tag MUST equal the host image tag (built in
+# lockstep). Third-party .so parity is the OPERATOR's responsibility — build
+# against the pkg/pipeline/sdk + Go toolchain matching the target BanyanDB
+# release. A skewed .so is rejected loudly (fail-open: ERROR log +
+# sampler_load_failed; that group keeps its previous sampler set), never
+# silently.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: banyandb-data
+  labels:
+    app.kubernetes.io/name: banyandb
+    app.kubernetes.io/component: data
+spec:
+  serviceName: banyandb-data
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: banyandb
+      app.kubernetes.io/component: data
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: banyandb
+        app.kubernetes.io/component: data
+    spec:
+      containers:
+        - name: banyandb-data
+          image: apache/skywalking-banyandb:<TAG>-plugins
+          args:
+            - data
+            - -trace-pipeline-native-plugin-enabled=true
+            - -trace-pipeline-trusted-plugin-dir=/plugins
+          ports:
+            - name: grpc
+              containerPort: 17912
+            - name: http
+              containerPort: 17913
+          volumeMounts:
+            - name: firstparty-plugins
+              mountPath: /plugins
+              readOnly: true
+            - name: thirdparty-plugins
+              # Nested subdirectory mount; overlays only /plugins/thirdparty.
+              mountPath: /plugins/thirdparty
+              readOnly: true
+      volumes:
+        - name: firstparty-plugins
+          image:
+            # First-party carrier, at the SAME tag as the host image above.
+            reference: apache/skywalking-banyandb:<TAG>-plugins-carrier
+            pullPolicy: IfNotPresent
+        - name: thirdparty-plugins
+          image:
+            # Operator's own plugin image; may be scratch-based (.so only)
+            # because an image volume is mounted directly, never `cp`-ed.
+            reference: registry.example.com/acme/banyandb-plugins:1.0.0
+            pullPolicy: IfNotPresent

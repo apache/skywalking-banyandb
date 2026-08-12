@@ -92,6 +92,12 @@ type ResourceSchemaSupplier interface {
 type ResourceSupplier interface {
 	ResourceSchemaSupplier
 	OpenDB(groupSchema *commonv1.Group) (DB, error)
+	// ResolveResourceOpts returns the ResourceOpts that should drive the tsdb for this
+	// supplier's node: a data supplier resolves the matched lifecycle stage's
+	// interval/ttl/shardNum, a liaison/queue supplier returns the group default. It lets
+	// a group UpdateOptions apply the same stage-resolved values that OpenDB used, instead
+	// of silently overwriting them with the group default.
+	ResolveResourceOpts(groupSchema *commonv1.Group) *commonv1.ResourceOpts
 }
 
 // DB is the interface of a tsdb.
@@ -109,6 +115,10 @@ type Repository interface {
 	LoadGroup(name string) (Group, bool)
 	LoadAllGroups() []Group
 	LoadResource(metadata *commonv1.Metadata) (Resource, bool)
+	LoadAllResources(group string) []Resource
+	LoadAllIndexRules(group string) []*databasev1.IndexRule
+	IndexRules(resourceSchema ResourceSchema) []*databasev1.IndexRule
+	LatestModRevision() int64
 	Close()
 	StopCh() <-chan struct{}
 	DropGroup(groupName string) error

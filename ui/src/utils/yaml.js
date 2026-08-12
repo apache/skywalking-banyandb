@@ -18,7 +18,7 @@
  */
 
 import YAML from 'yaml';
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 
 export function jsonToYaml(jsonData) {
   try {

@@ -62,20 +62,54 @@ type metrics struct {
 	totalFlushIntroLatency   meter.Counter
 	totalFlushLatency        meter.Counter
 
-	totalMergedParts       meter.Counter
-	totalMergeLatency      meter.Counter
-	totalMerged            meter.Counter
-	totalMergeQueueLatency meter.Counter
+	totalMergedParts          meter.Counter
+	totalMergeLatency         meter.Counter
+	totalMerged               meter.Counter
+	totalMergeQueueLatency    meter.Counter
+	totalMergePartQuarantined meter.Counter
+	totalMergeBackoffSeconds  meter.Counter
+	totalMergePanicRecovered  meter.Counter
 
-	pipelineTracesEvaluated meter.Counter
-	pipelineTracesDropped   meter.Counter
-	pipelineTracesRetained  meter.Counter
-	pipelineTracesImmature  meter.Counter
-	pipelinePluginErrors    meter.Counter
-	pipelineAmbiguous       meter.Counter
-	pipelineSidxPruned      meter.Counter
+	pipelineTracesEvaluated          meter.Counter
+	pipelineTracesDropped            meter.Counter
+	pipelineTracesRetained           meter.Counter
+	pipelineTracesImmature           meter.Counter
+	pipelineOversizedTracesBypassed  meter.Counter
+	pipelinePluginErrors             meter.Counter
+	pipelineAmbiguous                meter.Counter
+	pipelineSidxPruned               meter.Counter
+	pipelineGuardBloomProbes         meter.Counter
+	pipelineGuardDeferred            meter.Counter
+	pipelineGuardBudgetExhausted     meter.Counter
+	pipelineGuardPublicationRejected meter.Counter
+	pipelineGuardLosslessRetry       meter.Counter
+	pipelineGuardBypassed            meter.Counter
+	// pipelineTracesRetainedByCeiling and pipelineMergesCeilingReached carry the
+	// shard dimension, unlike the group-scoped pipeline counters above: the
+	// deletion bound they report against is per shard (spec section 5.2), so
+	// without seg/shard an operator can see that a group is under-deleting but not
+	// where. Both are deleted per tsTable in deleteMetrics, so their cardinality is
+	// bounded by live segments rather than growing with rotation.
+	pipelineTracesRetainedByCeiling meter.Counter
+	pipelineMergesCeilingReached    meter.Counter
+	// pipelineDropSetBudgetBytes is the resolved ceiling every merge in this group
+	// is charged. It is the denominator for the two counters above: without it a
+	// dashboard cannot tell a capped merge from a merge that had room to spare.
+	pipelineDropSetBudgetBytes meter.Gauge
+	// pipelineDropSetEntries distributes the dropped-ID count each merge finished
+	// with, so headroom is observable *before* the ceiling is reached. The counters
+	// above only fire once deletion has already been lost, which makes them a
+	// lagging indicator on their own.
+	pipelineDropSetEntries meter.Histogram
 
 	tbMetrics
+}
+
+// dropSetEntryBuckets spans a single dropped trace ID to well past the ceiling a
+// 16 GiB node derives (~671k entries, spec section 3.4), so a dashboard can watch
+// the distribution climb toward whatever ceiling resolveDropSetBudget produced.
+var dropSetEntryBuckets = meter.Buckets{
+	1, 100, 1_000, 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 2_000_000,
 }
 
 func (tst *tsTable) incTotalWritten(delta int) {
@@ -267,6 +301,32 @@ func (tst *tsTable) incTotalMergeQueueLatency(delta float64, typ, lane string) {
 	tst.metrics.totalMergeQueueLatency.Inc(delta, typ, lane)
 }
 
+// incTotalMergePartQuarantined counts a part newly crossing the quarantine threshold.
+func (tst *tsTable) incTotalMergePartQuarantined(delta int) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.totalMergePartQuarantined.Inc(float64(delta))
+}
+
+// incTotalMergeBackoffSeconds accumulates the time the dispatcher spent sleeping due to
+// repeated merge failures (Fix C).
+func (tst *tsTable) incTotalMergeBackoffSeconds(delta float64) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.totalMergeBackoffSeconds.Inc(delta)
+}
+
+// incTotalMergePanicRecovered counts a panic caught and converted into an ordinary merge
+// failure by the Fix D backstop (worker or dispatcher).
+func (tst *tsTable) incTotalMergePanicRecovered(delta int) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.totalMergePanicRecovered.Inc(float64(delta))
+}
+
 // The pipeline metric increment helpers below are wired into the merge filter by
 // the config-driven activation story.
 
@@ -294,12 +354,52 @@ func (tst *tsTable) incPipelineTracesRetained(delta int) {
 	tst.metrics.pipelineTracesRetained.Inc(float64(delta))
 }
 
+// incPipelineTracesRetainedByCeiling counts a trace retained because the
+// merge's drop-set ceiling was reached, distinct from retained-by-verdict.
+// Every such trace also increments incPipelineTracesRetained.
+func (tst *tsTable) incPipelineTracesRetainedByCeiling(delta int) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.pipelineTracesRetainedByCeiling.Inc(float64(delta), tst.p.ShardLabelValues()...)
+}
+
+// incPipelineMergesCeilingReached counts one merge whose drop-set ceiling was
+// reached, split by lane.
+func (tst *tsTable) incPipelineMergesCeilingReached(lane string) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.pipelineMergesCeilingReached.Inc(1, append(tst.p.ShardLabelValues(), lane)...)
+}
+
+// observeDropSetUsage publishes what one merge's drop set cost against the
+// ceiling it was charged: the resolved budget as a gauge, and the number of IDs
+// the merge finished holding as a distribution. Called once per merge, for capped
+// and uncapped merges alike — an uncapped observation is what makes headroom
+// visible before the ceiling bites.
+func (tst *tsTable) observeDropSetUsage(budget uint64, entries int, lane string) {
+	if tst == nil || tst.metrics == nil || budget == 0 {
+		return
+	}
+	tst.metrics.pipelineDropSetBudgetBytes.Set(float64(budget))
+	tst.metrics.pipelineDropSetEntries.Observe(float64(entries), append(tst.p.ShardLabelValues(), lane)...)
+}
+
 //nolint:unused
 func (tst *tsTable) incPipelineTracesImmature(delta int) {
 	if tst == nil || tst.metrics == nil {
 		return
 	}
 	tst.metrics.pipelineTracesImmature.Inc(float64(delta))
+}
+
+//nolint:unused
+func (tst *tsTable) incPipelineOversizedTracesBypassed(delta int) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.pipelineOversizedTracesBypassed.Inc(float64(delta))
 }
 
 //nolint:unused
@@ -324,6 +424,48 @@ func (tst *tsTable) incPipelineSidxPruned(delta int) {
 		return
 	}
 	tst.metrics.pipelineSidxPruned.Inc(float64(delta))
+}
+
+func (tst *tsTable) incPipelineGuardBloomProbes(delta int) {
+	if tst == nil || tst.metrics == nil || delta <= 0 {
+		return
+	}
+	tst.metrics.pipelineGuardBloomProbes.Inc(float64(delta))
+}
+
+func (tst *tsTable) incPipelineGuardDeferred(delta int) {
+	if tst == nil || tst.metrics == nil || delta <= 0 {
+		return
+	}
+	tst.metrics.pipelineGuardDeferred.Inc(float64(delta))
+}
+
+func (tst *tsTable) incPipelineGuardBudgetExhausted(delta int) {
+	if tst == nil || tst.metrics == nil || delta <= 0 {
+		return
+	}
+	tst.metrics.pipelineGuardBudgetExhausted.Inc(float64(delta))
+}
+
+func (tst *tsTable) incPipelineGuardPublicationRejected(delta int) {
+	if tst == nil || tst.metrics == nil || delta <= 0 {
+		return
+	}
+	tst.metrics.pipelineGuardPublicationRejected.Inc(float64(delta))
+}
+
+func (tst *tsTable) incPipelineGuardLosslessRetry(delta int) {
+	if tst == nil || tst.metrics == nil || delta <= 0 {
+		return
+	}
+	tst.metrics.pipelineGuardLosslessRetry.Inc(float64(delta))
+}
+
+func (tst *tsTable) incPipelineGuardBypassed() {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.pipelineGuardBypassed.Inc(1)
 }
 
 func (tst *tsTable) addPendingDataCount(delta int64) {
@@ -385,52 +527,81 @@ func (m *metrics) DeleteAll() {
 	m.totalMerged.Delete("file", "slow")
 	m.totalMergeQueueLatency.Delete("file", "fast")
 	m.totalMergeQueueLatency.Delete("file", "slow")
+	m.totalMergePartQuarantined.Delete()
+	m.totalMergeBackoffSeconds.Delete()
+	m.totalMergePanicRecovered.Delete()
 
 	m.pipelineTracesEvaluated.Delete()
 	m.pipelineTracesDropped.Delete()
 	m.pipelineTracesRetained.Delete()
 	m.pipelineTracesImmature.Delete()
+	m.pipelineOversizedTracesBypassed.Delete()
 	m.pipelineAmbiguous.Delete()
 	m.pipelineSidxPruned.Delete()
+	m.pipelineGuardBloomProbes.Delete()
+	m.pipelineGuardDeferred.Delete()
+	m.pipelineGuardBudgetExhausted.Delete()
+	m.pipelineGuardPublicationRejected.Delete()
+	m.pipelineGuardLosslessRetry.Delete()
+	m.pipelineGuardBypassed.Delete()
+	m.pipelineDropSetBudgetBytes.Delete()
+	// The ceiling counters and the entry histogram are shard-labeled, so they are
+	// deleted per tsTable in deleteMetrics rather than here — a group-level Delete()
+	// with no label values would not match their series.
 }
 
 func (s *supplier) newMetrics(p common.Position) storage.Metrics {
 	factory := s.omr.With(tbScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues())))
 	return &metrics{
-		totalWritten:               factory.NewCounter("total_written"),
-		totalBatch:                 factory.NewCounter("total_batch"),
-		totalBatchIntroLatency:     factory.NewCounter("total_batch_intro_time"),
-		totalIntroduceLoopStarted:  factory.NewCounter("total_introduce_loop_started", "phase"),
-		totalIntroduceLoopFinished: factory.NewCounter("total_introduce_loop_finished", "phase"),
-		totalFlushLoopStarted:      factory.NewCounter("total_flush_loop_started"),
-		totalFlushLoopFinished:     factory.NewCounter("total_flush_loop_finished"),
-		totalFlushLoopErr:          factory.NewCounter("total_flush_loop_err"),
-		totalMergeLoopStarted:      factory.NewCounter("total_merge_loop_started"),
-		totalMergeLoopFinished:     factory.NewCounter("total_merge_loop_finished"),
-		totalMergeLoopErr:          factory.NewCounter("total_merge_loop_err"),
-		totalSyncLoopStarted:       factory.NewCounter("total_sync_loop_started"),
-		totalSyncLoopFinished:      factory.NewCounter("total_sync_loop_finished"),
-		totalSyncLoopErr:           factory.NewCounter("total_sync_loop_err"),
-		totalSyncLoopLatency:       factory.NewCounter("total_sync_loop_latency"),
-		totalSyncLoopBytes:         factory.NewCounter("total_sync_loop_bytes"),
-		totalFlushLoopProgress:     factory.NewCounter("total_flush_loop_progress"),
-		totalFlushed:               factory.NewCounter("total_flushed"),
-		totalFlushedMemParts:       factory.NewCounter("total_flushed_mem_parts"),
-		totalFlushPauseCompleted:   factory.NewCounter("total_flush_pause_completed"),
-		totalFlushPauseBreak:       factory.NewCounter("total_flush_pause_break"),
-		totalFlushIntroLatency:     factory.NewCounter("total_flush_intro_latency"),
-		totalFlushLatency:          factory.NewCounter("total_flush_latency"),
-		totalMergedParts:           factory.NewCounter("total_merged_parts", "type", "lane"),
-		totalMergeLatency:          factory.NewCounter("total_merge_latency", "type", "lane"),
-		totalMerged:                factory.NewCounter("total_merged", "type", "lane"),
-		totalMergeQueueLatency:     factory.NewCounter("total_merge_queue_latency", "type", "lane"),
-		pipelineTracesEvaluated:    factory.NewCounter("pipeline_traces_evaluated"),
-		pipelineTracesDropped:      factory.NewCounter("pipeline_traces_dropped"),
-		pipelineTracesRetained:     factory.NewCounter("pipeline_traces_retained"),
-		pipelineTracesImmature:     factory.NewCounter("pipeline_traces_immature"),
-		pipelinePluginErrors:       factory.NewCounter("pipeline_plugin_errors", "reason"),
-		pipelineAmbiguous:          factory.NewCounter("pipeline_ambiguous"),
-		pipelineSidxPruned:         factory.NewCounter("pipeline_sidx_pruned"),
+		totalWritten:                     factory.NewCounter("total_written"),
+		totalBatch:                       factory.NewCounter("total_batch"),
+		totalBatchIntroLatency:           factory.NewCounter("total_batch_intro_time"),
+		totalIntroduceLoopStarted:        factory.NewCounter("total_introduce_loop_started", "phase"),
+		totalIntroduceLoopFinished:       factory.NewCounter("total_introduce_loop_finished", "phase"),
+		totalFlushLoopStarted:            factory.NewCounter("total_flush_loop_started"),
+		totalFlushLoopFinished:           factory.NewCounter("total_flush_loop_finished"),
+		totalFlushLoopErr:                factory.NewCounter("total_flush_loop_err"),
+		totalMergeLoopStarted:            factory.NewCounter("total_merge_loop_started"),
+		totalMergeLoopFinished:           factory.NewCounter("total_merge_loop_finished"),
+		totalMergeLoopErr:                factory.NewCounter("total_merge_loop_err"),
+		totalSyncLoopStarted:             factory.NewCounter("total_sync_loop_started"),
+		totalSyncLoopFinished:            factory.NewCounter("total_sync_loop_finished"),
+		totalSyncLoopErr:                 factory.NewCounter("total_sync_loop_err"),
+		totalSyncLoopLatency:             factory.NewCounter("total_sync_loop_latency"),
+		totalSyncLoopBytes:               factory.NewCounter("total_sync_loop_bytes"),
+		totalFlushLoopProgress:           factory.NewCounter("total_flush_loop_progress"),
+		totalFlushed:                     factory.NewCounter("total_flushed"),
+		totalFlushedMemParts:             factory.NewCounter("total_flushed_mem_parts"),
+		totalFlushPauseCompleted:         factory.NewCounter("total_flush_pause_completed"),
+		totalFlushPauseBreak:             factory.NewCounter("total_flush_pause_break"),
+		totalFlushIntroLatency:           factory.NewCounter("total_flush_intro_latency"),
+		totalFlushLatency:                factory.NewCounter("total_flush_latency"),
+		totalMergedParts:                 factory.NewCounter("total_merged_parts", "type", "lane"),
+		totalMergeLatency:                factory.NewCounter("total_merge_latency", "type", "lane"),
+		totalMerged:                      factory.NewCounter("total_merged", "type", "lane"),
+		totalMergeQueueLatency:           factory.NewCounter("total_merge_queue_latency", "type", "lane"),
+		totalMergePartQuarantined:        factory.NewCounter("total_merge_part_quarantined"),
+		totalMergeBackoffSeconds:         factory.NewCounter("total_merge_backoff_seconds"),
+		totalMergePanicRecovered:         factory.NewCounter("total_merge_panic_recovered"),
+		pipelineTracesEvaluated:          factory.NewCounter("pipeline_traces_evaluated"),
+		pipelineTracesDropped:            factory.NewCounter("pipeline_traces_dropped"),
+		pipelineTracesRetained:           factory.NewCounter("pipeline_traces_retained"),
+		pipelineTracesImmature:           factory.NewCounter("pipeline_traces_immature"),
+		pipelineOversizedTracesBypassed:  factory.NewCounter("pipeline_oversized_traces_bypassed"),
+		pipelinePluginErrors:             factory.NewCounter("pipeline_plugin_errors", "reason"),
+		pipelineAmbiguous:                factory.NewCounter("pipeline_ambiguous"),
+		pipelineSidxPruned:               factory.NewCounter("pipeline_sidx_pruned"),
+		pipelineGuardBloomProbes:         factory.NewCounter("pipeline_guard_bloom_probes"),
+		pipelineGuardDeferred:            factory.NewCounter("pipeline_guard_deferred"),
+		pipelineGuardBudgetExhausted:     factory.NewCounter("pipeline_guard_budget_exhausted"),
+		pipelineGuardPublicationRejected: factory.NewCounter("pipeline_guard_publication_rejected"),
+		pipelineGuardLosslessRetry:       factory.NewCounter("pipeline_guard_lossless_retry"),
+		pipelineGuardBypassed:            factory.NewCounter("pipeline_guard_bypassed"),
+		pipelineTracesRetainedByCeiling:  factory.NewCounter("pipeline_traces_retained_by_ceiling", common.ShardLabelNames()...),
+		pipelineMergesCeilingReached:     factory.NewCounter("pipeline_merges_ceiling_reached", append(common.ShardLabelNames(), "lane")...),
+		pipelineDropSetBudgetBytes:       factory.NewGauge("pipeline_drop_set_budget_bytes"),
+		pipelineDropSetEntries: factory.NewHistogram("pipeline_drop_set_entries", dropSetEntryBuckets,
+			append(common.ShardLabelNames(), "lane")...),
 		tbMetrics: tbMetrics{
 			totalMemParts:                  factory.NewGauge("total_mem_part", common.ShardLabelNames()...),
 			totalMemElements:               factory.NewGauge("total_mem_elements", common.ShardLabelNames()...),
@@ -443,6 +614,7 @@ func (s *supplier) newMetrics(p common.Position) storage.Metrics {
 			totalFilePartBytes:             factory.NewGauge("total_file_part_bytes", common.ShardLabelNames()...),
 			totalFilePartUncompressedBytes: factory.NewGauge("total_file_part_uncompressed_bytes", common.ShardLabelNames()...),
 			pendingDataCount:               factory.NewGauge("pending_data_count", common.ShardLabelNames()...),
+			mergeQuarantinedParts:          factory.NewGauge("merge_quarantined_parts", common.ShardLabelNames()...),
 		},
 		indexMetrics: inverted.NewMetrics(factory, common.SegLabelNames()...),
 	}
@@ -451,40 +623,55 @@ func (s *supplier) newMetrics(p common.Position) storage.Metrics {
 func (qs *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observability.Factory) {
 	factory := qs.omr.With(tbScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues())))
 	return &metrics{
-		totalWritten:               factory.NewCounter("total_written"),
-		totalBatch:                 factory.NewCounter("total_batch"),
-		totalBatchIntroLatency:     factory.NewCounter("total_batch_intro_time"),
-		totalIntroduceLoopStarted:  factory.NewCounter("total_introduce_loop_started", "phase"),
-		totalIntroduceLoopFinished: factory.NewCounter("total_introduce_loop_finished", "phase"),
-		totalFlushLoopStarted:      factory.NewCounter("total_flush_loop_started"),
-		totalFlushLoopFinished:     factory.NewCounter("total_flush_loop_finished"),
-		totalFlushLoopErr:          factory.NewCounter("total_flush_loop_err"),
-		totalMergeLoopStarted:      factory.NewCounter("total_merge_loop_started"),
-		totalMergeLoopFinished:     factory.NewCounter("total_merge_loop_finished"),
-		totalMergeLoopErr:          factory.NewCounter("total_merge_loop_err"),
-		totalSyncLoopStarted:       factory.NewCounter("total_sync_loop_started"),
-		totalSyncLoopFinished:      factory.NewCounter("total_sync_loop_finished"),
-		totalSyncLoopErr:           factory.NewCounter("total_sync_loop_err"),
-		totalSyncLoopLatency:       factory.NewCounter("total_sync_loop_latency"),
-		totalSyncLoopBytes:         factory.NewCounter("total_sync_loop_bytes"),
-		totalFlushLoopProgress:     factory.NewCounter("total_flush_loop_progress"),
-		totalFlushed:               factory.NewCounter("total_flushed"),
-		totalFlushedMemParts:       factory.NewCounter("total_flushed_mem_parts"),
-		totalFlushPauseCompleted:   factory.NewCounter("total_flush_pause_completed"),
-		totalFlushPauseBreak:       factory.NewCounter("total_flush_pause_break"),
-		totalFlushIntroLatency:     factory.NewCounter("total_flush_intro_latency"),
-		totalFlushLatency:          factory.NewCounter("total_flush_latency"),
-		totalMergedParts:           factory.NewCounter("total_merged_parts", "type", "lane"),
-		totalMergeLatency:          factory.NewCounter("total_merge_latency", "type", "lane"),
-		totalMerged:                factory.NewCounter("total_merged", "type", "lane"),
-		totalMergeQueueLatency:     factory.NewCounter("total_merge_queue_latency", "type", "lane"),
-		pipelineTracesEvaluated:    factory.NewCounter("pipeline_traces_evaluated"),
-		pipelineTracesDropped:      factory.NewCounter("pipeline_traces_dropped"),
-		pipelineTracesRetained:     factory.NewCounter("pipeline_traces_retained"),
-		pipelineTracesImmature:     factory.NewCounter("pipeline_traces_immature"),
-		pipelinePluginErrors:       factory.NewCounter("pipeline_plugin_errors", "reason"),
-		pipelineAmbiguous:          factory.NewCounter("pipeline_ambiguous"),
-		pipelineSidxPruned:         factory.NewCounter("pipeline_sidx_pruned"),
+		totalWritten:                     factory.NewCounter("total_written"),
+		totalBatch:                       factory.NewCounter("total_batch"),
+		totalBatchIntroLatency:           factory.NewCounter("total_batch_intro_time"),
+		totalIntroduceLoopStarted:        factory.NewCounter("total_introduce_loop_started", "phase"),
+		totalIntroduceLoopFinished:       factory.NewCounter("total_introduce_loop_finished", "phase"),
+		totalFlushLoopStarted:            factory.NewCounter("total_flush_loop_started"),
+		totalFlushLoopFinished:           factory.NewCounter("total_flush_loop_finished"),
+		totalFlushLoopErr:                factory.NewCounter("total_flush_loop_err"),
+		totalMergeLoopStarted:            factory.NewCounter("total_merge_loop_started"),
+		totalMergeLoopFinished:           factory.NewCounter("total_merge_loop_finished"),
+		totalMergeLoopErr:                factory.NewCounter("total_merge_loop_err"),
+		totalSyncLoopStarted:             factory.NewCounter("total_sync_loop_started"),
+		totalSyncLoopFinished:            factory.NewCounter("total_sync_loop_finished"),
+		totalSyncLoopErr:                 factory.NewCounter("total_sync_loop_err"),
+		totalSyncLoopLatency:             factory.NewCounter("total_sync_loop_latency"),
+		totalSyncLoopBytes:               factory.NewCounter("total_sync_loop_bytes"),
+		totalFlushLoopProgress:           factory.NewCounter("total_flush_loop_progress"),
+		totalFlushed:                     factory.NewCounter("total_flushed"),
+		totalFlushedMemParts:             factory.NewCounter("total_flushed_mem_parts"),
+		totalFlushPauseCompleted:         factory.NewCounter("total_flush_pause_completed"),
+		totalFlushPauseBreak:             factory.NewCounter("total_flush_pause_break"),
+		totalFlushIntroLatency:           factory.NewCounter("total_flush_intro_latency"),
+		totalFlushLatency:                factory.NewCounter("total_flush_latency"),
+		totalMergedParts:                 factory.NewCounter("total_merged_parts", "type", "lane"),
+		totalMergeLatency:                factory.NewCounter("total_merge_latency", "type", "lane"),
+		totalMerged:                      factory.NewCounter("total_merged", "type", "lane"),
+		totalMergeQueueLatency:           factory.NewCounter("total_merge_queue_latency", "type", "lane"),
+		totalMergePartQuarantined:        factory.NewCounter("total_merge_part_quarantined"),
+		totalMergeBackoffSeconds:         factory.NewCounter("total_merge_backoff_seconds"),
+		totalMergePanicRecovered:         factory.NewCounter("total_merge_panic_recovered"),
+		pipelineTracesEvaluated:          factory.NewCounter("pipeline_traces_evaluated"),
+		pipelineTracesDropped:            factory.NewCounter("pipeline_traces_dropped"),
+		pipelineTracesRetained:           factory.NewCounter("pipeline_traces_retained"),
+		pipelineTracesImmature:           factory.NewCounter("pipeline_traces_immature"),
+		pipelineOversizedTracesBypassed:  factory.NewCounter("pipeline_oversized_traces_bypassed"),
+		pipelinePluginErrors:             factory.NewCounter("pipeline_plugin_errors", "reason"),
+		pipelineAmbiguous:                factory.NewCounter("pipeline_ambiguous"),
+		pipelineSidxPruned:               factory.NewCounter("pipeline_sidx_pruned"),
+		pipelineGuardBloomProbes:         factory.NewCounter("pipeline_guard_bloom_probes"),
+		pipelineGuardDeferred:            factory.NewCounter("pipeline_guard_deferred"),
+		pipelineGuardBudgetExhausted:     factory.NewCounter("pipeline_guard_budget_exhausted"),
+		pipelineGuardPublicationRejected: factory.NewCounter("pipeline_guard_publication_rejected"),
+		pipelineGuardLosslessRetry:       factory.NewCounter("pipeline_guard_lossless_retry"),
+		pipelineGuardBypassed:            factory.NewCounter("pipeline_guard_bypassed"),
+		pipelineTracesRetainedByCeiling:  factory.NewCounter("pipeline_traces_retained_by_ceiling", common.ShardLabelNames()...),
+		pipelineMergesCeilingReached:     factory.NewCounter("pipeline_merges_ceiling_reached", append(common.ShardLabelNames(), "lane")...),
+		pipelineDropSetBudgetBytes:       factory.NewGauge("pipeline_drop_set_budget_bytes"),
+		pipelineDropSetEntries: factory.NewHistogram("pipeline_drop_set_entries", dropSetEntryBuckets,
+			append(common.ShardLabelNames(), "lane")...),
 		tbMetrics: tbMetrics{
 			totalMemParts:                  factory.NewGauge("total_mem_part", common.ShardLabelNames()...),
 			totalMemElements:               factory.NewGauge("total_mem_elements", common.ShardLabelNames()...),
@@ -497,6 +684,7 @@ func (qs *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observa
 			totalFilePartBytes:             factory.NewGauge("total_file_part_bytes", common.ShardLabelNames()...),
 			totalFilePartUncompressedBytes: factory.NewGauge("total_file_part_uncompressed_bytes", common.ShardLabelNames()...),
 			pendingDataCount:               factory.NewGauge("pending_data_count", common.ShardLabelNames()...),
+			mergeQuarantinedParts:          factory.NewGauge("merge_quarantined_parts", common.ShardLabelNames()...),
 		},
 		indexMetrics: inverted.NewMetrics(factory, common.SegLabelNames()...),
 	}, factory
@@ -541,6 +729,16 @@ func (tst *tsTable) Collect(m storage.Metrics) {
 	metrics.totalFileBlocks.Set(float64(totalFileBlocks), tst.p.ShardLabelValues()...)
 	metrics.totalFilePartBytes.Set(float64(totalFilePartBytes), tst.p.ShardLabelValues()...)
 	metrics.totalFilePartUncompressedBytes.Set(float64(totalFilePartUncompressedBytes), tst.p.ShardLabelValues()...)
+
+	tst.quarantineMu.Lock()
+	var quarantinedParts int
+	for _, fails := range tst.quarantineFails {
+		if fails >= quarantineThreshold {
+			quarantinedParts++
+		}
+	}
+	tst.quarantineMu.Unlock()
+	metrics.mergeQuarantinedParts.Set(float64(quarantinedParts), tst.p.ShardLabelValues()...)
 }
 
 func (tst *tsTable) deleteMetrics() {
@@ -558,6 +756,16 @@ func (tst *tsTable) deleteMetrics() {
 	tst.metrics.tbMetrics.totalFilePartBytes.Delete(tst.p.ShardLabelValues()...)
 	tst.metrics.tbMetrics.totalFilePartUncompressedBytes.Delete(tst.p.ShardLabelValues()...)
 	tst.metrics.tbMetrics.pendingDataCount.Delete(tst.p.ShardLabelValues()...)
+	tst.metrics.tbMetrics.mergeQuarantinedParts.Delete(tst.p.ShardLabelValues()...)
+	tst.metrics.pipelineTracesRetainedByCeiling.Delete(tst.p.ShardLabelValues()...)
+	// Mem merges carry an empty lane label (flusher.go passes ""), so that series
+	// needs deleting too, exactly as the "mem" rows in DeleteAll do for the
+	// totalMerge* families.
+	for _, lane := range []string{"", mergeLaneFast, mergeLaneSlow, mergeLaneFinalize} {
+		laneValues := append(tst.p.ShardLabelValues(), lane)
+		tst.metrics.pipelineMergesCeilingReached.Delete(laneValues...)
+		tst.metrics.pipelineDropSetEntries.Delete(laneValues...)
+	}
 	tst.metrics.indexMetrics.DeleteAll(tst.p.SegLabelValues()...)
 }
 
@@ -575,4 +783,6 @@ type tbMetrics struct {
 	totalFilePartUncompressedBytes meter.Gauge
 
 	pendingDataCount meter.Gauge
+
+	mergeQuarantinedParts meter.Gauge
 }

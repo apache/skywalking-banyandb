@@ -30,7 +30,9 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
+	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	vstream "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -56,6 +58,7 @@ type option struct {
 	syncInterval                 time.Duration
 	memWaitTimeout               time.Duration
 	failedPartsMaxTotalSizeBytes uint64
+	vectorized                   vstream.VectorizedConfig
 }
 
 // Query allow to retrieve elements in a series of streams.
@@ -70,6 +73,8 @@ type Stream interface {
 	GetSchema() *databasev1.Stream
 	GetIndexRules() []*databasev1.IndexRule
 	Query(ctx context.Context, opts model.StreamQueryOptions) (model.StreamQueryResult, error)
+	QueryVectorized(ctx context.Context, opts model.StreamQueryOptions) (executor.StreamVecScanSource, error)
+	VectorizedConfig() vstream.VectorizedConfig
 }
 
 type indexSchema struct {
@@ -99,6 +104,7 @@ type stream struct {
 	schemaRepo  *schemaRepo
 	name        string
 	group       string
+	vectorized  vstream.VectorizedConfig
 }
 
 func (s *stream) GetSchema() *databasev1.Stream {
@@ -132,14 +138,38 @@ type streamSpec struct {
 }
 
 func openStream(spec streamSpec,
-	l *logger.Logger, pm protector.Memory, schemaRepo *schemaRepo,
+	l *logger.Logger, pm protector.Memory, schemaRepo *schemaRepo, vectorized vstream.VectorizedConfig,
 ) *stream {
 	s := &stream{
 		schema:     spec.schema,
 		l:          l,
 		pm:         pm,
 		schemaRepo: schemaRepo,
+		vectorized: vectorized,
 	}
 	s.parseSpec()
 	return s
+}
+
+// VectorizedConfig returns the per-Stream vectorized query configuration.
+func (s *stream) VectorizedConfig() vstream.VectorizedConfig {
+	return s.vectorized
+}
+
+// QueryVectorized returns a pull-based columnar scan source for the vec path.
+// It is the exported executor-facing wrapper over queryVectorized; the returned
+// vecScanSource already satisfies executor.StreamVecScanSource structurally.
+func (s *stream) QueryVectorized(ctx context.Context, opts model.StreamQueryOptions) (executor.StreamVecScanSource, error) {
+	return s.queryVectorized(ctx, opts)
+}
+
+// bindVectorizedFlags wires VectorizedConfig fields to a run.FlagSet.
+func bindVectorizedFlags(flagS *run.FlagSet, cfg *vstream.VectorizedConfig) {
+	defaults := vstream.DefaultConfig()
+	flagS.BoolVar(&cfg.Enabled, "stream-vectorized-enabled", defaults.Enabled,
+		"enable the vectorized stream query path")
+	flagS.IntVar(&cfg.BatchSize, "stream-vectorized-batch-size", defaults.BatchSize,
+		"row count per vectorized stream batch")
+	flagS.IntVar(&cfg.QueryMemoryMiB, "stream-vectorized-query-memory-mib", defaults.QueryMemoryMiB,
+		"per-query memory budget for the vectorized stream path, in MiB")
 }

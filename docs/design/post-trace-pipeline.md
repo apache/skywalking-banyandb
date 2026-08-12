@@ -94,7 +94,9 @@ The proto pins bounds with PGV so a malformed config is rejected at parse time r
 
 **PGV-enforced bounds** (rejected at proto parse / `Write` time):
 
-- `TracePipelineConfig.merge_grace`, `TracePipelineConfig.finalize_grace` — strictly positive when set; unset means engine default (30s and 5m respectively). Each is consulted only when its corresponding `PipelineEvent` is in `enabled_events`.
+- `TracePipelineConfig.merge_grace`, `TracePipelineConfig.finalize_grace` — strictly positive when set; unset means
+  engine default (2h and 5m respectively). Each is consulted only when its corresponding `PipelineEvent` is in
+  `enabled_events`.
 - `TracePipelineConfig.enabled_events` — each element must be a defined, non-`UNSPECIFIED` enum value (`repeated.items.enum = {defined_only: true, not_in: [0]}`).
 - `TracePipelineConfig.schema_names` — each element non-empty (`repeated.items.string.min_len = 1`).
 - `StageRule.stage` — non-empty (`min_len: 1`); `Plugin.name` — non-empty (`min_len: 1`); `SamplerPlugin.path` — non-empty (`min_len: 1`); `SamplerPlugin.abi_version` — `gte: 1`.
@@ -124,7 +126,7 @@ The contract is designed around three hard requirements.
 - The plugin re-exports an `ABIVersion` constant; the engine refuses to load on mismatch with its own compiled `sdk.ABIVersion`, turning a silent miscompile into a clear, fail-fast error. Configuration is a structured `google.protobuf.Struct` (`SamplerPlugin.config`) set directly in the pipeline config; the engine serializes it to canonical JSON and the plugin unmarshals those `[]byte` into its own typed config — so the wire form is structured and inspectable while the `.so` boundary stays a plain `[]byte`, with no shared config struct.
 - **Distribution:** operators build plugins against the released, version-tagged `pkg/pipeline/sdk` using the **same CI image / Go version / `-trimpath` / CGO flags** as the data node. (Background constraints, well-documented but outside this design's verified scope: Go plugins are **Linux/macOS only**, **cannot be unloaded** — so changing a plugin requires a node restart, there is no hot-reload — and a plugin **panic crashes the host** unless contained; see fail-open below.)
 
-**(3) Projection / column selection — spans optional, more than tags.** The plugin declares the columns it needs up front via `Project()`, which returns a `Projection{ Tags []string; SpanIDs bool; Spans bool }`. The engine turns `Tags` into the **same `model.TagProjection`** the block reader already honors (`blockMetadata.tagProjection`), so only those tag columns are decoded into `block.tags` — literally the query engine's tag-projection path (`trace/v1/query.proto`), not a new mechanism. Two things are **opt-in and default off**: the span-id column (`Projection.SpanIDs`) and the heavy span-body column (`Projection.Spans`). A subtlety in the native layout makes this matter: `spanIDs` and `spans` are encoded **together** in one data block (`mustWriteSpansTo`/`mustReadSpansFrom`, `banyand/trace/block.go`), so reading span ids is **not** free — requesting either one forces a read of the spans stream. Only `trace_id` and `MinTS`/`MaxTS` are genuinely intrinsic (they come from `blockMetadata` with no decode). So the tiers are: intrinsic-always (`trace_id`, `minTS`/`maxTS`), opt-in-by-name (tags), and opt-in-and-default-off (the spans stream — span ids and/or span bodies) — which is what makes spans *more* optional than tags. The declare-up-front handshake matches the projection-pushdown contracts in [DuckDB's C table API](https://duckdb.org/docs/stable/clients/c/table_functions) (`duckdb_init_get_column_index`) and [DataFusion's `TableProvider::scan`](https://datafusion.apache.org/library-user-guide/custom-table-providers.html) (`projection: Option<&Vec<usize>>`). `min_duration`-style checks are free from `minTS`/`maxTS`, and an error predicate is just a projected tag (e.g. `is_error`), so a plugin that requests neither tags, span ids, nor span bodies stays on the merge raw fast path (`mustReadRaw` → `mustWriteRawBlock`, §7.1) and pays no decode at all.
+**(3) Projection / column selection — spans optional, more than tags.** The plugin declares the columns it needs up front via `Project()`, which returns a `Projection{ Tags []string; SpanIDs bool; Spans bool }`. The engine turns `Tags` into the **same `model.TagProjection`** the block reader already honors (`blockMetadata.tagProjection`), so only those tag columns are decoded into `block.tags` — literally the query engine's tag-projection path (`trace/v1/query.proto`), not a new mechanism. Two things are **opt-in and default off**: the span-id column (`Projection.SpanIDs`) and the heavy span-body column (`Projection.Spans`). A subtlety in the native layout makes this matter: `spanIDs` and `spans` are encoded **together** in one data block (`mustWriteSpansTo`/`mustReadSpansFrom`, `banyand/trace/block.go`), so reading span ids is **not** free — requesting either one forces a read of the spans stream. Only `trace_id` and `MinTS`/`MaxTS` are genuinely intrinsic (they come from `blockMetadata` with no decode). So the tiers are: intrinsic-always (`trace_id`, `minTS`/`maxTS`), opt-in-by-name (tags), and opt-in-and-default-off (the spans stream — span ids and/or span bodies) — which is what makes spans *more* optional than tags. The declare-up-front handshake matches the projection-pushdown contracts in [DuckDB's C table API](https://duckdb.org/docs/stable/clients/c/table_functions) (`duckdb_init_get_column_index`) and [DataFusion's `TableProvider::scan`](https://datafusion.apache.org/library-user-guide/custom-table-providers.html) (`projection: Option<&Vec<usize>>`). An error predicate is just a projected tag (e.g. `is_error`), while a duration predicate is **not** free: `minTS`/`maxTS` are the spread of per-row *start* timestamps, not a trace duration (they are 0 for a single-row trace), so it has to project the schema's own start and duration tags. A plugin that requests neither tags, span ids, nor span bodies stays on the merge raw fast path (`mustReadRaw` → `mustWriteRawBlock`, §7.1) and pays no decode at all.
 
 **Go SDK (`pkg/pipeline/sdk`).** The batch types mirror the native trace `block`/`tag` (`banyand/trace/block.go`); the engine fills them with the block's own slices, shared **read-only** (not copied) — see the read-only contract below:
 
@@ -232,7 +234,7 @@ type Verdict struct {
 }
 ```
 
-These types are real and live in [`pkg/pipeline/sdk`](../../pkg/pipeline/sdk); the block above is the conceptual layout, and the canonical definitions plus the value-decode helpers (`TagColumn.At`, `DecodeTagValue`) are in that package. A complete reference plugin implementing the Scenario 6.1 sampler — config parsing, `Project()`, and tag/span extraction — lives at [`pkg/pipeline/sdk/_example/segment-tail-sampler`](../../pkg/pipeline/sdk/_example/segment-tail-sampler).
+These types are real and live in [`pkg/pipeline/sdk`](../../pkg/pipeline/sdk); the block above is the conceptual layout, and the canonical definitions plus the value-decode helpers (`TagColumn.At`, `DecodeTagValue`) are in that package. The shipped first-party samplers live at [`plugins/skywalking/sw-trace-sampler`](../../plugins/skywalking/sw-trace-sampler) and [`plugins/skywalking/zipkin-trace-sampler`](../../plugins/skywalking/zipkin-trace-sampler); a standalone teaching example of the same contract — config parsing, `Project()`, and tag/span extraction — lives at [`pkg/pipeline/sdk/_example/segment-tail-sampler`](../../pkg/pipeline/sdk/_example/segment-tail-sampler) (note the example predates the shipped plugins and still uses snake_case config keys).
 
 **Verdict shape — boolean keep-mask.** `Decide` returns a `[]bool` aligned to `batch.Traces`: `Keep[i]` retains trace `i`. This is the simplest fully-vectorized contract and makes the alignment invariant trivial to check (the engine rejects a verdict whose length ≠ `len(batch.Traces)`). The keep/drop is per `trace_id`, matching the merger's per-`trace_id` write granularity (§7.1).
 
@@ -323,12 +325,18 @@ Both the plugin gating policy (§1.1) and the per-stage retention plugin (§1.2)
 Retention decisions are therefore **not** made at write time. They are made by the post-trace passes that re-assemble a trace by `trace_id`:
 
 - **In-merge filter, during Hot-phase compaction** — when `PIPELINE_EVENT_MERGE` is enabled (the default), the plugin gating policy is evaluated in-line during Hot-phase LSM compaction (Warm/Cold compactions stay lossless). Compaction is part-count-driven, so it can fire while a trace is still growing; per-trace drops are deferred until `traceMaxTs < now − merge_grace` (§7.1).
-- **Plugin gating, at finalization** — when `PIPELINE_EVENT_FINALIZE` is enabled, the plugin gating policy is evaluated once per **Hot** segment after it has **settled**: its event-time window has closed *and* the event-time watermark has advanced past it by the `finalize_grace` period (§7.3). BanyanDB has no hard "segment sealed" event — `create()` pre-creates the next segment up to an hour *before* the current window ends, and late data keeps routing to an old segment by event time — so "settled" is a watermark heuristic, not a guarantee.
+- **Plugin gating, at finalization** — when `PIPELINE_EVENT_FINALIZE` is enabled, the plugin gating policy is evaluated on a
+  **Hot** segment only after its event-time window has closed and it is older than both the configured `finalize_grace`
+  and the resolved `merge_grace` (§7.3). A destructive decision additionally requires the maximum-fragment-gap guard.
+  BanyanDB has no hard "segment sealed" event, so maturity remains a heuristic rather than a completeness guarantee.
 - **Per-stage retention, at migration-out** — by the time a segment is migrated to the next stage (≥ its stage's TTL, orders of magnitude longer than `finalize_grace`), every trace it holds has settled, so per-stage plugin evaluation is final.
 
 Two completeness caveats follow from event-time segmentation:
 
-1. **Spans arriving after finalization.** A span whose `start_time` falls in an already-finalized segment is still accepted (while the segment is within retention) but is missed by the finalization-time evaluation. The `finalize_grace` period bounds how often this happens; a late span that arrives after the gate has run does not retroactively change the verdict for already-dropped traces.
+1. **Spans arriving after finalization.** A span whose `start_time` falls in an already-finalized segment is still accepted
+   while the segment is within retention. Finalization may run another bounded round after enough new data arrives, but it
+   cannot retroactively restore a trace already dropped before a future fragment was visible. The fragment guard protects
+   the currently visible snapshot; strict future-arrival protection still requires sealing or late-write rejection.
 
 2. **Traces spanning multiple segments.** A trace longer than `segment_interval`, or one that straddles a boundary, is physically split across two segments, and each segment's pass evaluates only its own fragment (`D_total` and the indicators are fragment-local). BanyanDB performs no cross-segment trace assembly at the storage layer. Where trace duration is far below `segment_interval` (e.g. the showcase's ≈2.8 s max trace against 1-day segments) the fragment equals the whole trace and this is a non-issue; for long-running traces it is a known limitation.
 
@@ -370,7 +378,7 @@ Both showcase trace groups (`sw_trace`, `sw_zipkinTrace`) declare a Hot → Warm
 
 - The migration engine runs the source stage's retention `plugins` chain against every trace in the partition.
 
-- **No dynamic splitting is performed:** all retained data is written to the next stage's node group. Traces the source stage's plugin drops are omitted from the target write stream, reducing the physical size of the migrated partition. With Scenario 6.1's hot retention plugin (config `min_duration: 100ms`) a healthy `/homepage` trace (2802 ms) is kept and migrates to Warm; a PostgreSQL-touching trace is kept by the config's tag rule and migrates too; a healthy fast trace (6 ms) matches nothing and is dropped.
+- **No dynamic splitting is performed:** all retained data is written to the next stage's node group. Traces the source stage's plugin drops are omitted from the target write stream, reducing the physical size of the migrated partition. With Scenario 6.1's hot retention plugin (config `durationThresholdMs: 100`) a healthy `/homepage` trace (2802 ms) is kept and migrates to Warm; a PostgreSQL-touching trace is kept by the config's tag rule and migrates too; a healthy fast trace (6 ms) matches nothing and is dropped.
 
 - When the partition matures past the Warm 7-day ttl, the Warm stage's retention plugin runs at this Warm→Cold boundary — the gate that decides what enters Cold (typically the strictest config; in Scenario 6.1 it keeps errors only). Only the traces it keeps are written into the Cold parts and then retained for the full Cold TTL; everything else is dropped here. Cold itself does no further sampling — Cold compactions are lossless.
 
@@ -394,7 +402,7 @@ Below are two operational scenarios represented as complete `TracePipelineConfig
 
 ```Plain Text
 {
-  "metadata": { "group": "sw_trace", "name": "segment-tail-sampler" },
+  "metadata": { "group": "sw_trace", "name": "sw-trace-sampler" },
   "enabled": true,
   "stages": [
     {
@@ -403,14 +411,14 @@ Below are two operational scenarios represented as complete `TracePipelineConfig
         {
           "name": "hot-retention",
           "sampler": {
-            "path": "segment-stage-retention.so",
+            "path": "sw-trace-sampler.so",
             "abi_version": 1,
             "config": {
-              "min_duration": "0.100s",
-              "keep_errors": true,
-              "keep_tag_rules": [
-                { "tag_key": "db.type",  "equals": "PostgreSQL" },
-                { "tag_key": "mq.queue", "equals": "queue-songs-ping" }
+              "durationThresholdMs": 100,
+              "keepErrors": true,
+              "keepTagRules": [
+                { "tagKey": "db.type",  "equals": "PostgreSQL" },
+                { "tagKey": "mq.queue", "equals": "queue-songs-ping" }
               ]
             }
           }
@@ -423,10 +431,10 @@ Below are two operational scenarios represented as complete `TracePipelineConfig
         {
           "name": "warm-retention",
           "sampler": {
-            "path": "segment-stage-retention.so",
+            "path": "sw-trace-sampler.so",
             "abi_version": 1,
             "config": {
-              "keep_errors": true
+              "keepErrors": true
             }
           }
         }
@@ -436,49 +444,71 @@ Below are two operational scenarios represented as complete `TracePipelineConfig
   "schema_names": ["segment"],
   "plugins": [
     {
-      "name": "segment-tail-sampler",
+      "name": "sw-trace-sampler",
       "sampler": {
-        "path": "segment-tail-sampler.so",
+        "path": "sw-trace-sampler.so",
         "abi_version": 1,
         "config": {
-          "duration_threshold": "0.500s",
-          "keep_errors": true,
-          "healthy_sample_rate": 0.1,
-          "keep_tag_rules": [
-            { "tag_key": "db.type",  "equals": "PostgreSQL" },
-            { "tag_key": "mq.queue", "equals": "queue-songs-ping" }
+          "durationThresholdMs": 500,
+          "keepErrors": true,
+          "healthySampleRate": 0.1,
+          "keepTagRules": [
+            { "tagKey": "db.type",  "equals": "PostgreSQL" },
+            { "tagKey": "mq.queue", "equals": "queue-songs-ping" }
           ]
         }
       }
     }
   ],
   "enabled_events": ["PIPELINE_EVENT_MERGE", "PIPELINE_EVENT_FINALIZE"],
-  "merge_grace": "30s",
+  "merge_grace": "7200s",
   "finalize_grace": "300s"
 }
 ```
 
-> Each plugin link's `config` is a structured `google.protobuf.Struct` set directly in the pipeline config (not an opaque blob); the engine does not interpret its keys — it serializes the object to JSON and hands the bytes to the plugin's constructor, which unmarshals them into its own typed config. The gating chain here is a single `sampler` link whose `Project()` returns `Projection{ Tags: ["is_error", "db.type", "mq.queue"], SpanIDs: false, Spans: false }`, so only those three tag columns (plus the intrinsic `trace_id` / `MinTS` / `MaxTS`) are decoded and the spans stream is never read — the merge fast path (`mustReadRaw`) decodes no span ids or bodies for the gating verdict. Duration comes free from `MinTS`/`MaxTS`, and "keep errors" is satisfied by the projected `is_error` tag rather than by reading spans. The `segment-tail-sampler.so` link is implemented as a real reference plugin at [`pkg/pipeline/sdk/_example/segment-tail-sampler`](../../pkg/pipeline/sdk/_example/segment-tail-sampler) (§2.5). Each `StageRule.plugins` chain is the same shape — here a single shared `segment-stage-retention.so` sampler whose config tightens from Hot (`min_duration` 100 ms / `keep_errors` / the `db.type` + `mq.queue` keep-tag-rules) to Warm (`keep_errors` only), each projecting just the tags its config references, `Spans: false`.
+> Each plugin link's `config` is a structured `google.protobuf.Struct` set directly in the pipeline config, not an opaque
+> blob. The engine does not interpret its keys: it serializes the object to JSON and hands the bytes to the plugin's
+> constructor, which unmarshals them into its own typed config.
+>
+> The gating chain here is a single `sampler` link whose `Project()` returns tags `start_time`, `latency`, `is_error`, and
+> `tags`, with `SpanIDs` and `Spans` false. The verdict therefore reads only those tag columns, plus the intrinsic
+> `trace_id`, `MinTS`, and `MaxTS`, and never a span body. For a unique physical trace block, the merge keeps encoded
+> output on its raw-copy path and decodes only these projected columns into an immutable evaluation arena. A trace split
+> across physical blocks still uses the ordinary full decode because compaction must consolidate its output.
+>
+> The searchable tags (`db.type`, `mq.queue`) are **not** separate columns. SkyWalking flattens them into one `tags`
+> string array of `key=value` entries, so every `keepTagRules` entry resolves to that single column. "Keep errors" is
+> satisfied by the projected `is_error` tag rather than by reading spans. The duration test is the trace envelope
+> `max(start_time + latency) - min(start_time)`, computed from two cheap tag columns. It does **not** use
+> `MaxTS - MinTS`, which is the spread of per-row *start* timestamps (and zero for a single-segment trace), not a duration.
+>
+> The `sw-trace-sampler.so` link is implemented at
+> [`plugins/skywalking/sw-trace-sampler`](../../plugins/skywalking/sw-trace-sampler). A teaching example of the same SDK
+> contract lives at
+> [`pkg/pipeline/sdk/_example/segment-tail-sampler`](../../pkg/pipeline/sdk/_example/segment-tail-sampler) (§2.5). Each
+> `StageRule.plugins` chain has the same shape: one shared sampler whose config tightens from Hot (`durationThresholdMs`
+> 100, `keepErrors`, and the `db.type` plus `mq.queue` keep-tag rules) to Warm (`keepErrors` only), with each link projecting
+> only the tags its config references and keeping `Spans` false.
 
 - **Retention Dynamics** (real `sw_trace` traces; gating runs in Hot, owned by the gating chain; per-stage retention owned by each stage's `plugins` chain):
 
-    - The error trace `5fcdb353-…` (`POST /test`, `agent::app`, `is_error=1`, 4 ms) is a sure-keep at gating: the gating plugin keeps it because its config sets `keep_errors`. At Hot→Warm, the hot retention plugin keeps it (config `keep_errors`) → migrated. At Warm→Cold, the warm retention plugin (errors-only) keeps it → migrated into Cold, where it is retained for the full 30-day Cold TTL (Cold does no further sampling).
+    - The error trace `5fcdb353-…` (`POST /test`, `agent::app`, `is_error=1`, 4 ms) is a sure-keep at gating: the gating plugin keeps it because its config sets `keepErrors`. At Hot→Warm, the hot retention plugin keeps it (config `keepErrors`) → migrated. At Warm→Cold, the warm retention plugin (errors-only) keeps it → migrated into Cold, where it is retained for the full 30-day Cold TTL (Cold does no further sampling).
 
-    - The slow healthy trace `b03bb932-…` (`/homepage`, `agent::ui` → `agent::frontend`, 2802 ms) is a sure-keep at gating: the gating plugin keeps it because 2802 ms > 500 ms `duration_threshold` in its config (from `MaxTS - MinTS`, no span decode). At Hot→Warm: the hot plugin keeps it (2802 ms ≥ its 100 ms `min_duration`) → kept through Warm. At Warm→Cold: the warm plugin (errors-only) drops it (no error) → **dropped at Warm→Cold; never enters Cold**.
+    - The slow healthy trace `b03bb932-…` (`/homepage`, `agent::ui` → `agent::frontend`, 2802 ms) is a sure-keep at gating: the gating plugin keeps it because its 2802 ms envelope > the 500 ms `durationThresholdMs` in its config (from the `start_time`/`latency` tags, no span decode). At Hot→Warm: the hot plugin keeps it (2802 ms ≥ its 100 ms `durationThresholdMs`) → kept through Warm. At Warm→Cold: the warm plugin (errors-only) drops it (no error) → **dropped at Warm→Cold; never enters Cold**.
 
     - A PostgreSQL-touching trace (e.g. `b31e4be8-…`, `agent::songs` `UndertowDispatch`, 3 ms, `db.type=PostgreSQL`) is sure-kept at gating via the gating plugin's `db.type` keep-tag-rule. At Hot→Warm: the hot plugin keeps it (its config's `db.type` rule) → kept through Warm. At Warm→Cold: the warm plugin (errors-only) drops it (no error) → **dropped at Warm→Cold; never enters Cold**.
 
-    - A healthy fast trace such as `GET:/songs` at 6 ms (`agent::songs`, `http.status_code=200`) is only kept at gating if the gating plugin's `healthy_sample_rate` (`0.1`) hash retains it (deterministic `hash(trace_id) < 0.1`, since it matches no sure-keep rule). If kept, at Hot→Warm the hot plugin drops it (6 ms < 100 ms, no error, no tag match) → **dropped at Hot→Warm migration**.
+    - A healthy fast trace such as `GET:/songs` at 6 ms (`agent::songs`, `http.status_code=200`) is only kept at gating if the gating plugin's `healthySampleRate` (`0.1`) hash retains it (deterministic `hash(trace_id) < 0.1`, since it matches no sure-keep rule). If kept, at Hot→Warm the hot plugin drops it (6 ms < 100 ms, no error, no tag match) → **dropped at Hot→Warm migration**.
 
 ### 6.2 Scenario 2: Istio / Zipkin Mesh Edge Sampling (`sw_zipkinTrace`)
 
-- **Objective**: On the showcase `sw_zipkinTrace` group (schema `zipkin_span`), apply a lower-cost edge sampler to the Istio service-mesh spans. The Zipkin schema has no first-class `is_error` column, so server errors are caught with a tag rule on the flattened `query` attributes rather than `keep_errors`; mesh gateway spans are kept by tag. Targets the group's Warm and Cold stages. As in §6.1 the gating verdict is owned by a native Go plugin chain (a single sampler link, §2.5); per-stage retention is the `StageRule.plugins` chain below.
+- **Objective**: On the showcase `sw_zipkinTrace` group (schema `zipkin_span`), apply a lower-cost edge sampler to the Istio service-mesh spans. The Zipkin schema has no first-class `is_error` column: `keepErrors` detects Zipkin's conventional `error` span tag inside the flattened `query` attributes, and 5xx-only failures are caught with an explicit `query` tag rule. Targets the group's Warm and Cold stages. As in §6.1 the gating verdict is owned by a native Go plugin chain (a single sampler link, §2.5); per-stage retention is the `StageRule.plugins` chain below.
 
 - **Configuration JSON**:
 
 ```Plain Text
 {
-  "metadata": { "group": "sw_zipkinTrace", "name": "zipkin-edge-sampler" },
+  "metadata": { "group": "sw_zipkinTrace", "name": "zipkin-trace-sampler" },
   "enabled": true,
   "stages": [
     {
@@ -487,13 +517,12 @@ Below are two operational scenarios represented as complete `TracePipelineConfig
         {
           "name": "warm-retention",
           "sampler": {
-            "path": "zipkin-stage-retention.so",
+            "path": "zipkin-trace-sampler.so",
             "abi_version": 1,
             "config": {
-              "min_duration": "1s",
-              "keep_tag_rules": [
-                { "tag_key": "query", "regex": "http\\.status_code=5\\d\\d" },
-                { "tag_key": "local_endpoint_service_name", "equals": "gateway.sample-services" }
+              "durationThresholdMs": 1000,
+              "keepTagRules": [
+                { "tagKey": "query", "regex": "http\\.status_code=5\\d\\d" }
               ]
             }
           }
@@ -504,32 +533,32 @@ Below are two operational scenarios represented as complete `TracePipelineConfig
   "schema_names": ["zipkin_span"],
   "plugins": [
     {
-      "name": "zipkin-edge-sampler",
+      "name": "zipkin-trace-sampler",
       "sampler": {
-        "path": "zipkin-edge-sampler.so",
+        "path": "zipkin-trace-sampler.so",
         "abi_version": 1,
         "config": {
-          "duration_threshold": "1.000s",
-          "keep_errors": false,
-          "healthy_sample_rate": 0.05,
-          "keep_tag_rules": [
-            { "tag_key": "query", "regex": "http\\.status_code=5\\d\\d" }
+          "durationThresholdMs": 1000,
+          "keepErrors": true,
+          "healthySampleRate": 0.05,
+          "keepTagRules": [
+            { "tagKey": "query", "regex": "http\\.status_code=5\\d\\d" }
           ]
         }
       }
     }
   ],
-  "merge_grace": "30s"
+  "merge_grace": "7200s"
 }
 ```
 
-> Each link's `config` is a structured `google.protobuf.Struct` set directly in the pipeline config (not an opaque blob); the engine does not interpret its keys — it serializes the object to JSON and hands the bytes to the plugin's constructor, which unmarshals them into its own typed config. The gating chain's single `sampler` link `Project()` returns `Projection{ Tags: ["query"], SpanIDs: false, Spans: false }`, so only the `query` tag column (plus the intrinsic `trace_id` / `MinTS` / `MaxTS`) is decoded and the spans stream is never read; the merge fast path (`mustReadRaw`) skips the spans-stream decode entirely. There is no `keep_errors` here because the Zipkin schema has no `is_error` column — the 5xx check is a `query` tag-regex rule the projection already covers. The Warm `StageRule.plugins` chain (`zipkin-stage-retention.so`) has the same shape: its config carries `min_duration: 1s` plus the `query` 5xx and gateway keep-tag-rules, and its `Project()` requests `Tags: ["query", "local_endpoint_service_name"], SpanIDs: false, Spans: false`.
+> Each link's `config` is a structured `google.protobuf.Struct` set directly in the pipeline config (not an opaque blob); the engine does not interpret its keys — it serializes the object to JSON and hands the bytes to the plugin's constructor, which unmarshals them into its own typed config. The gating chain's single `sampler` link `Project()` returns `Projection{ Tags: ["timestamp_millis", "duration", "query"], SpanIDs: false, Spans: false }`, so the verdict itself reads only those tag columns (plus the intrinsic `trace_id` / `MinTS` / `MaxTS`) and never a span body — with the same caveat as §6.1: projecting any tag forces the decoded slow path, so the block is decoded in full regardless. As in §6.1 the duration test is the envelope `max(timestamp_millis + duration) - min(timestamp_millis)` (Zipkin `duration` is microseconds, scaled to match the millisecond threshold), not `MaxTS - MinTS`. The Zipkin schema has no `is_error` column, so `keepErrors` instead detects Zipkin's conventional `error` span tag, which OAP writes into `query` as both a bare key and `error=<message>`; that is a tag convention rather than an authoritative field, so failures signalled only by a 5xx status still need the explicit `query` regex rule shown above. The Warm `StageRule.plugins` chain (`zipkin-trace-sampler.so`) has the same shape: its config carries `durationThresholdMs: 1000` plus the `query` 5xx keep-tag-rule, so its `Project()` requests `Tags: ["timestamp_millis", "duration", "query"], SpanIDs: false, Spans: false` — the same set as the gating link, since it reads the same two rules. Note a rule can only target the flattened tag array — matching a first-class column such as `local_endpoint_service_name` is **not** supported, so "keep everything from service X" has to come from a tag the instrumentation emits.
 
 - **Retention Dynamics** (real `sw_zipkinTrace` spans; gating runs in Hot, owned by the gating chain; per-stage retention owned by the Warm `plugins` chain):
 
-    - The slowest mesh call observed — `trace_id 0961e077…`, a 30.7 s `istio.skywalking-showcase` client span to Grafana's live-WS endpoint (`http.status_code=101`) — is a sure-keep at gating: the gating plugin keeps it because 30.7 s > 1 s `duration_threshold` in its config (from `MaxTS - MinTS`, no span decode). At Warm→Cold: the warm retention plugin keeps it (30.7 s ≥ its 1 s `min_duration`) → migrated into Cold, where it is retained for the full Cold TTL (Cold does no further sampling).
+    - The slowest mesh call observed — `trace_id 0961e077…`, a 30.7 s `istio.skywalking-showcase` client span to Grafana's live-WS endpoint (`http.status_code=101`) — is a sure-keep at gating: the gating plugin keeps it because its 30.7 s envelope > the 1 s `durationThresholdMs` in its config (from the `timestamp_millis`/`duration` tags, no span decode). At Warm→Cold: the warm retention plugin keeps it (30.7 s ≥ its 1 s `durationThresholdMs`) → migrated into Cold, where it is retained for the full Cold TTL (Cold does no further sampling).
 
-    - A gateway span on `gateway.sample-services` at the mesh p90 (~19 ms): the gating plugin passes it only via the `0.05` `healthy_sample_rate` hash (19 ms < 1 s, no 5xx, so it matches no sure-keep rule). If kept, at Warm→Cold the warm plugin keeps it (19 ms < 1 s, but its `local_endpoint_service_name = gateway.sample-services` rule matches) → migrated into Cold, where it is retained for the full Cold TTL.
+    - A gateway span on `gateway.sample-services` at the mesh p90 (~19 ms): the gating plugin passes it only via the `0.05` `healthySampleRate` hash (19 ms < 1 s, no 5xx, so it matches no sure-keep rule). If kept, at Warm→Cold the warm plugin drops it (19 ms < 1 s and no 5xx, so it matches no sure-keep rule) → **dropped at Warm→Cold**.
 
     - A typical p50 mesh span (~2 ms) is kept at gating only via the gating plugin's `0.05` sample. At Warm→Cold the warm plugin drops it (2 ms < 1 s, not a gateway span, no 5xx) → **dropped at Warm→Cold**.
 
@@ -563,13 +592,15 @@ The hook is injected into `mergeBlocks` (`banyand/trace/merger.go`), which is th
 
 ```mermaid
 flowchart TD
-    IP["Immature Parts"] --> BR["blockReader.nextBlockMetadata<br/>streams blocks ordered by trace_id"]
+    IP["Selected Parts"] --> MG{"Merge eligible?<br/>newest selected part at or before now − merge_grace"}
+    MG -->|"NO (whole merge is hot)"| LR["Merge losslessly; defer every verdict"]
+    MG -->|"YES"| BR["blockReader.nextBlockMetadata<br/>streams blocks ordered by trace_id"]
     BR --> PA["Per-trace assembly<br/>existing pending-block accumulation in mergeBlocks"]
-    PA --> M{"Mature?<br/>traceMaxTs (timestampsMetadata.max) older than now − merge_grace"}
-    M -->|"NO (trace may still grow)"| RET["RETAIN unchanged"]
-    M -->|"YES (stopped growing)"| CHK["plugin gating policy check"]
+    PA --> CHK["plugin gating policy check"]
     CHK -->|"KEEP"| WB["mustWriteBlock / mustWriteRawBlock"]
-    CHK -->|"DROP"| SK["blocks skipped; spans, tags, primary entries never written<br/>(space reclaimed in-stream, no delete mutation)"]
+    CHK -->|"provisional DROP"| BG["fragment boundary guard"]
+    BG -->|"uncertain or possible outside fragment"| RET["RETAIN unchanged"]
+    BG -->|"confirmed DROP"| SK["blocks skipped; spans, tags, primary entries never written<br/>(space reclaimed in-stream, no delete mutation)"]
 ```
 
 #### Filter contract and what the merge already gives us for free
@@ -578,13 +609,34 @@ flowchart TD
 
 2. **Decisions are per `trace_id`, not per block.** A single trace may be emitted as multiple blocks when its accumulated span size crosses `maxUncompressedSpanSize`. The filter computes one keep/drop verdict per `trace_id` and applies it to every block carrying that id, so a trace is never partially written.
 
-3. **A trace is dropped only after it stops growing (per-trace `merge_grace`).** Compaction is part-count-driven (`getPartsToMerge`), not time-driven — so a merge routinely runs on the active write window while a trace's remaining spans are still seconds away. Dropping such a trace on its partial spans would orphan the late ones. The filter therefore evaluates a trace only once its latest span timestamp is older than `now − merge_grace` (the trace's max timestamp is read for free from `timestampsMetadata.max`, point 1); traces newer than that frontier are passed through the merge unchanged. The engine default for `merge_grace` is 30s if unset on the config.
+3. **Filtering waits for `merge_grace`, but age is not completeness proof.** Compaction is part-count-driven
+   (`getPartsToMerge`), not time-driven, so a merge routinely runs on the active write window while more fragments may
+   arrive. The current runtime conservatively tests the selected parts as a whole: if any selected part's maximum
+   timestamp is newer than `now − merge_grace`, the entire merge remains lossless. The engine default is 2h when the
+   group does not set `merge_grace`; an explicit group value still wins. No timer reruns a skipped merge, so actual
+   filtering latency is at least the grace plus the wait for a later eligible compaction. A future per-trace maturity
+   check may reduce this delay after complete trace assembly.
+
+   Passing this age check does not prove that a trace has stopped growing and must not make a DROP final by itself. A
+   destructive DROP also requires the fragment boundary guard and its independently enforced maximum-fragment-gap,
+   segment-coverage, and snapshot contracts. The resolved per-group merge grace controls maturity; the separately
+   declared maximum fragment gap controls guard-range expansion and publication revalidation. The runtime receives the
+   external gap contract through
+   `trace-pipeline-max-fragment-gap`. Its default is zero, which keeps in-merge sampling disabled; a positive value must
+   not exceed the resolved merge grace.
 
 4. **Derived part state reflects only retained traces.** When a trace is dropped, its entries are excluded from `partMetadata` counts, the `traceIDFilter` bloom filter (`mustWriteTraceIDFilter`), and the `tagType` set written at `Flush`. The filter runs before these are finalized so the consolidated part stays self-consistent.
 
-5. **Secondary indexes must be pruned in lockstep — this is net-new engine work.** Today `mergePartsThenSendIntroduction` merges sidx parts via `sidxInstance.Merge(closeCh, partIDMap, newPartID)` — a **part-ID-based** merge with no per-`trace_id` predicate, so a core trace drop would leave **dangling sidx entries** pointing at traces no longer in the reduced part. Closing this gap is a required, not-yet-existing contract: the trace filter must surface the set of dropped `trace_id`s, and the sidx merge/rewrite must be extended to accept that predicate and skip the dropped ids when emitting the new sidx part. Until that sidx-filtering contract exists, in-merge dropping cannot ship without index inconsistency; the implementation must land both halves together.
+5. **Secondary indexes are pruned in lockstep.** The core merge surfaces only guard-confirmed dropped trace IDs. Each
+   sibling sidx merge receives a trace-ID predicate derived from that set and omits matching entries. Core and sidx
+   outputs are introduced atomically, so neither side can publish a destructive decision without the other.
 
-6. **Drops are final and the merge is crash-safe.** Because a trace is dropped only after `merge_grace` has elapsed since its last span (point 3), the verdict acts on a trace that has stopped growing, so the drop is final rather than premature. The merge writes the new part atomically and only retires source parts after the introduction is applied, so a crash mid-merge leaves the immature parts intact for retry; re-running compaction on an already-filtered part is a no-op.
+6. **Confirmed drops are publication-safe; maturity alone is not final.** The boundary guard turns a provisional DROP
+   into a confirmed DROP only within its documented visibility, time-gap, and late-arrival contracts. The merge writes
+   the new part atomically and retires source parts only after introduction is applied, so a crash mid-merge leaves the
+   input parts authoritative for retry. Expensive delta-part Bloom revalidation runs before the serialized introducer;
+   the introducer performs a constant-time epoch check. A rejected filtered output is removed and the same inputs are
+   retried once without sampling. Maturity grace alone cannot rule out a later or farther-away fragment.
 
 ### 7.2 Hot-to-Warm Tier Migration (Pre-Migration Filter Rewrite)
 
@@ -618,18 +670,26 @@ Why there is no seal event (grounding in `banyand/internal/storage/rotation.go`)
 - **`closeIdleSegments` is not a seal.** It only releases idle in-memory handles after an idle timeout (`banyand/internal/storage/segment.go`) and reopens them on the next access; it says nothing about window completeness.
 - **The only definitive boundary is TTL removal** (`retentionTask`, cron `5 0`), which deletes the whole segment — far too late to be a finalization trigger.
 
-> **Design decision (accepted):** Drive the gating pass from an **event-time watermark plus a settling grace period**, not from a (non-existent) seal event. The rotation path already tracks the maximum observed event time (`latestTickTime`, fed by `Tick`, `rotation.go`). A segment is treated as **settled** once `watermark > segment.End + finalize_grace`, where `finalize_grace` is `TracePipelineConfig.finalize_grace` — a configured expected-late-arrival lag (engine default `5m` if unset). A new post-trace scheduler — registered on `pkg/timestamp.Scheduler` (cron-backed, like `retentionTask`) — periodically scans for settled-but-unfinalized **Hot** segments and runs the gating policy once per segment. The gating policy is the plugin verdict over a projected `TraceBatch` of the settled segment's traces (§2.5). It is **best-effort final**, not a hard guarantee: data arriving after `finalize_grace` is missed (§3.1, caveat 1). The gating policy is the **only** filter at this pass; per-stage `StageRule` plugins fire later, at the stage's migration-out boundary (§7.2).
+> **Design decision (accepted):** Drive finalization from an event-time maturity threshold, not from a non-existent seal
+> event. A segment is eligible only after its end is older than the greater of `finalize_grace` and resolved
+> `merge_grace`. The scanner periodically finds mature Hot segments and runs bounded per-shard rounds. Destructive DROP
+> still requires the same maximum-fragment-gap, outside-part, and publication checks as an ordinary merge. This is
+> best-effort snapshot protection, not proof against fragments that arrive after publication. Per-stage `StageRule`
+> plugins fire later at migration-out (§7.2).
 
 ```mermaid
 flowchart TD
     WM["Event-time watermark (latestTickTime) advances"]
-    WM -->|"post-trace scheduler cron tick"| SEG["For each segment with watermark past segment.End + finalize_grace, not yet finalized<br/>walk each (segment, shard) tsTable's parts via the trace Visitor<br/>apply pipeline filter once: trace treated as complete, verdict final"]
-    SEG --> RW["Rewrite to reduced parts + mark segment finalized"]
+    WM -->|"scanner tick"| SEG["For each mature segment<br/>select a bounded shard round<br/>apply sampler and fragment guard"]
+    SEG --> RW["Publish guarded reduced parts, or retry losslessly on conflict<br/>persist bounded-round state"]
 ```
 
 1. The scheduler runs the pipeline's plugin gating policy across the settled segment's per-shard `tsTable` parts (a `tsTable` is scoped per `(segment, shard)`).
 
-2. Because the watermark is past `segment.End + finalize_grace`, the segment is very unlikely to gain more spans, so the verdict is stable: this pass decides whether a trace survives at all. Surviving traces continue through the lifecycle and are filtered again at each migration-out boundary by the relevant `StageRule` (§7.2).
+2. Finalization maturity is the greater of `finalize_grace` and `merge_grace`; with the defaults, destructive sampling
+   therefore waits at least 2h rather than becoming eligible after 5m. The independently declared maximum fragment gap
+   controls boundary expansion. A positive value no greater than merge grace is required, otherwise the round remains
+   lossless. Surviving traces continue through the lifecycle and may be filtered again at later rounds or migration-out.
 
 3. The `finalize_grace` period trades latency for completeness: a larger `finalize_grace` catches more late spans before finalizing but delays space reclamation. The cron tick doubles as a catch-up sweep — after a node restart it still finds settled-but-unfinalized segments and applies the filter, after which normal retention/GC proceeds.
 
@@ -640,22 +700,79 @@ To illustrate the relationship, here is the complete processing loop executed by
 ```mermaid
 flowchart TD
     subgraph A["A. In-merge filter at HOT-PHASE LSM COMPACTION (PIPELINE_EVENT_MERGE enabled)"]
-        A1["1. mergeBlocks streams blocks ordered by trace_id (banyand/trace/merger.go).<br/>Maturity check: traceMaxTs (= timestampsMetadata.max) older than now − merge_grace (30s)?"]
+        A1["1. mergeBlocks streams by trace_id.<br/>Are all selected parts older than merge_grace (default 2h)?"]
         A1 -->|"NO"| A2["Pass blocks through unchanged; defer the verdict"]
-        A1 -->|"YES (stopped growing)"| A3["Engine builds a projected TraceBatch; plugin Decide returns a keep-mask.<br/>The §6.1 segment-tail-sampler keeps this trace because is_error is set (config keeps errors);<br/>a healthy trace below the 0.500s threshold with no matching tag would fall to the 0.1 sample.<br/>Verdict for 5fcdb353-…: KEEP (drops here reclaim space during routine compaction)"]
+        A1 -->|"YES (settled parts)"| A3["Engine builds a projected TraceBatch; plugin Decide returns a keep-mask.<br/>The §6.1 sw-trace-sampler keeps this trace because is_error is set (config keeps errors).<br/>A provisional DROP passes through the fragment guard; only a confirmed DROP reclaims space."]
     end
     subgraph B["B. Plugin gating pass at HOT FINALIZATION (PIPELINE_EVENT_FINALIZE enabled, once per settled Hot segment)"]
-        B2["2. Post-trace scheduler tick observes a segment with watermark past segment.End + finalize_grace (300s), not yet finalized"]
+        B2["2. Post-trace scanner observes a segment older than max(finalize_grace, merge_grace), not terminal"]
         B2 --> B3["3. Pick the active TracePipelineConfig for (group, schema, stage); match targeting fields (schema_names / schema_name_regex). No match? Skip."]
         B3 --> B4["4. For each surviving trace_id (not already dropped at A), evaluate the plugin gating policy — same as step 1.<br/>Surviving traces continue into the stage lifecycle; failures are dropped from the segment."]
     end
     subgraph C["C. Per-stage retention at MIGRATION-OUT (once per stage boundary, when a StageRule has a plugin)"]
-        C5["5. Source stage migrates to the next stage (e.g. Hot → Warm after the 1-day TTL). Pre-migration rewrite reads each source part with blockReader and runs the source stage's retention plugin, returning a keep-mask per trace_id:<br/>Hot → Warm (hot StageRule.plugins, config min_duration 0.100s): duration ≥ 0.100s? (no, only 4ms); keep_errors AND is_error? YES → Keep, migrate<br/>Warm → Cold (warm StageRule.plugins, config keep_errors only): keep_errors AND is_error? YES → Keep, migrate into Cold"]
-        C5 --> C6["6. RETENTION OUTCOME: the error trace survives the gating plugin at A and B, then the stage retention plugin keeps it (keep_errors) at every migration boundary in C.<br/>Retained Hot → Warm → Cold; written into the Cold (type=cold) parts. Cold stage TTL = 30 days (per the group's ResourceOpts.stages)."]
+        C5["5. Source stage migrates to the next stage (e.g. Hot → Warm after the 1-day TTL). Pre-migration rewrite reads each source part with blockReader and runs the source stage's retention plugin, returning a keep-mask per trace_id:<br/>Hot → Warm (hot StageRule.plugins, config durationThresholdMs 100): duration ≥ 0.100s? (no, only 4ms); keepErrors AND is_error? YES → Keep, migrate<br/>Warm → Cold (warm StageRule.plugins, config keepErrors only): keepErrors AND is_error? YES → Keep, migrate into Cold"]
+        C5 --> C6["6. RETENTION OUTCOME: the error trace survives the gating plugin at A and B, then the stage retention plugin keeps it (keepErrors) at every migration boundary in C.<br/>Retained Hot → Warm → Cold; written into the Cold (type=cold) parts. Cold stage TTL = 30 days (per the group's ResourceOpts.stages)."]
     end
     A3 --> B2
     B4 --> C5
 ```
+
+## Implementation: finalization sampling (PIPELINE_EVENT_FINALIZE, v1)
+
+Finalization sampling is the background backstop for the in-merge filter. The in-merge
+sampler (`PIPELINE_EVENT_MERGE`) only drops traces during opportunistic merges of parts
+older than `merge_grace`; when hot writing rotates to the next segment, the just-cooled
+segment can be left with parts the in-merge sampler never revisited. The finalize pass
+sweeps those cooled parts through the **same** registered sampler chain.
+
+**Semantics — best-effort, misses accepted.** Coverage is best-effort-when-resources-allow,
+**not guaranteed**. The pass yields under memory pressure and never blocks the hot
+write/merge/query path, so a segment can be born → cool → never-finalized → TTL-deleted
+un-sampled. That is an accepted outcome (there is no finalize-before-delete gate).
+
+**Model (per-shard, trace-owned scanner).**
+- A single node-wide scanner goroutine ticks (every `defaultFinalizeScanInterval`, 10m)
+  and, for each group with the FINALIZE event enabled, selects cooled segments via
+  `tsdb.SelectSegments(range, reopenClosed=true)` — reopening idle-closed segments so the
+  common cooled-and-reclaimed case is still covered — then evaluates each shard.
+- Finalize compute is **serialized (concurrency-1)** and reuses the hot merge path
+  (`mergePartsThenSendIntroduction` → `mergeParts` + per-sidx `Merge` + the shard's
+  introducer loop), so core and sidx follow exactly the code a hot merge uses. It never
+  acquires the hot merge semaphore (`mergeMaxConcurrencyCh`).
+- Each cooled part carries a per-part `finalizeGen` stamp; a round force-merges the
+  cooled, non-hot parts through the sampler and the same fragment boundary guard used by
+  ordinary merges, then stamps the output at the shard's next generation. The stamp is
+  written to disk **before** the part's metadata is persisted so a crash cannot cause a
+  double-sample on replay. A round re-samples the cooled set (like the in-merge filter
+  re-samples on every merge); re-sampling already-kept survivors through a deterministic
+  sampler is idempotent, and rounds are hard-capped.
+- Per-shard finalize state (`finalize.json`) records the generation, cooldown clock,
+  round count, terminal flag, and an arrival-based unsampled-bytes counter (incremented
+  O(1) on the flush path only once the shard has been finalized).
+
+**Knobs** (the proto carries `finalize_grace`; the rest are engine defaults in v1):
+- `finalize_grace` (default **5m**) — per-segment settling and cooldown window. For a
+  destructive round, segment and part maturity uses the greater of `finalize_grace` and
+  resolved `merge_grace`; the default therefore remains 2h. The independently enforced
+  maximum fragment gap controls guard-range expansion rather than maturity.
+- `--trace-pipeline-max-fragment-gap` — required for both merge and finalization sampling.
+  Zero disables destructive sampling, and a value greater than resolved `merge_grace`
+  fails open.
+- `--trace-pipeline-finalize-grace-default` — node default when a group sets no
+  `finalize_grace`.
+- **FLOOR** (default **8 MiB** uncompressed) — absolute minimum newly-arrived unsampled
+  bytes to warrant a re-round; smaller trickles are left (accepted miss).
+- **RATIO** (default **0.10**) — for large segments, re-round only when new unsampled
+  bytes reach this fraction of the segment total.
+- **finalize_cooldown** (default = `finalize_grace`) — at most one round per window.
+- **max_finalize_rounds** (default **8**) — hard per-shard lifetime cap; after it the
+  shard is marked terminal and never re-scanned.
+
+**Observability.** Finalize rounds emit the existing merge metrics under
+`type="finalize"`/`lane="finalize"` (`total_merged`, `total_merge_latency`,
+`total_merged_parts`), distinct from the hot-merge labels. Guard bypass, Bloom probes,
+deferrals, budget exhaustion, publication rejection, and lossless retries have dedicated
+bounded counters shared with ordinary merge sampling.
 
 ## References
 

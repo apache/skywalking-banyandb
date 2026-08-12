@@ -30,6 +30,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	metadataschema "github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
@@ -237,8 +238,15 @@ func (f *fakeRepository) LoadGroup(name string) (resourceSchema.Group, bool) {
 	return g, ok
 }
 func (f *fakeRepository) LoadAllGroups() []resourceSchema.Group { return nil }
+
+func (f *fakeRepository) LatestModRevision() int64 { return 0 }
 func (f *fakeRepository) LoadResource(_ *commonv1.Metadata) (resourceSchema.Resource, bool) {
 	return nil, false
+}
+func (f *fakeRepository) LoadAllResources(_ string) []resourceSchema.Resource { return nil }
+func (f *fakeRepository) LoadAllIndexRules(_ string) []*databasev1.IndexRule  { return nil }
+func (f *fakeRepository) IndexRules(_ resourceSchema.ResourceSchema) []*databasev1.IndexRule {
+	return nil
 }
 func (f *fakeRepository) Close()                   {}
 func (f *fakeRepository) StopCh() <-chan struct{}  { return nil }

@@ -21,7 +21,6 @@ import (
 	"context"
 	"net"
 	"net/http"
-	"runtime/debug"
 	"strconv"
 	"sync"
 	"time"
@@ -32,12 +31,10 @@ import (
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/pkg/errors"
 	grpclib "google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
-	"google.golang.org/grpc/status"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
@@ -82,6 +79,7 @@ type server struct {
 	databasev1.UnimplementedClusterStateServiceServer
 	clusterv1.UnimplementedServiceServer
 	fodcv1.UnimplementedGroupLifecycleServiceServer
+	databasev1.UnimplementedNodeSchemaStateServiceServer
 	omr                   observability.MetricsRegistry
 	creds                 credentials.TransportCredentials
 	metadataRepo          metadata.Repo
@@ -264,15 +262,7 @@ func (s *server) Serve() run.StopNotify {
 			opts = []grpclib.ServerOption{grpclib.Creds(creds)}
 		}
 	}
-	grpcPanicRecoveryHandler := func(ctx context.Context, p any) (err error) {
-		breadcrumbs := panicdiag.BreadcrumbsFromContext(ctx)
-		stages := make([]string, len(breadcrumbs))
-		for idx, bc := range breadcrumbs {
-			stages[idx] = bc.Stage
-		}
-		s.log.Error().Interface("panic", p).Str("stack", string(debug.Stack())).Strs("breadcrumbs", stages).Msg("recovered from panic")
-		return status.Errorf(codes.Internal, "%s", p)
-	}
+	grpcPanicRecoveryHandler := panicdiag.GRPCRecoveryHandler(s.log, "grpc.queue-sub")
 
 	streamChain := []grpclib.StreamServerInterceptor{
 		panicdiag.BreadcrumbStreamInterceptor(),
@@ -300,6 +290,7 @@ func (s *server) Serve() run.StopNotify {
 	tracev1.RegisterTraceServiceServer(s.ser, &traceService{ser: s})
 	if s.metadataRepo != nil {
 		fodcv1.RegisterGroupLifecycleServiceServer(s.ser, s)
+		databasev1.RegisterNodeSchemaStateServiceServer(s.ser, s)
 	}
 	if s.nodeSchemaStatusRepo != nil {
 		// The registry is resolved per request (closure) so the service

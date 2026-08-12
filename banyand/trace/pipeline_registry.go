@@ -49,6 +49,145 @@ func lookupMergeGrace(group string) int64 {
 	return localMergeGraceRegistry.m[group]
 }
 
+// localMergeEventRegistry records, per group, whether the MERGE pipeline event is
+// enabled. The sampler set is shared by MERGE and FINALIZE (DD11), so the presence of
+// samplers alone does NOT mean hot merges should be filtered: a FINALIZE-only group
+// registers samplers for the background pass but must not touch the hot merge path.
+// buildHotMergeFilter consults this flag so enabled_events reliably gates MERGE-time
+// filtering independently of FINALIZE.
+var localMergeEventRegistry = struct {
+	m  map[string]bool
+	mu sync.RWMutex
+}{m: make(map[string]bool)}
+
+// setMergeEventForGroup records whether the MERGE event is enabled for group.
+// enabled == false removes the entry.
+func setMergeEventForGroup(group string, enabled bool) {
+	localMergeEventRegistry.mu.Lock()
+	if enabled {
+		localMergeEventRegistry.m[group] = true
+	} else {
+		delete(localMergeEventRegistry.m, group)
+	}
+	localMergeEventRegistry.mu.Unlock()
+}
+
+// mergeEventEnabledForGroup reports whether the MERGE-time retention filter should run
+// for group (false when only FINALIZE is enabled, or nothing is configured).
+func mergeEventEnabledForGroup(group string) bool {
+	localMergeEventRegistry.mu.RLock()
+	defer localMergeEventRegistry.mu.RUnlock()
+	return localMergeEventRegistry.m[group]
+}
+
+// Finalization-sampling threshold defaults (see .omc/plans/trace-finalize-sampling.md
+// DD2). They bound whether a cooled segment warrants another finalize round.
+const (
+	// finalizeFloorBytesDefault is the absolute minimum newly-arrived uncompressed
+	// span bytes since the last round that justifies re-finalizing a segment. Below
+	// this a trickle of late writes is left unsampled (an accepted miss).
+	finalizeFloorBytesDefault uint64 = 8 << 20 // 8 MiB
+	// finalizeRatioDefault gates large segments: re-finalize only when new unsampled
+	// bytes reach this fraction of the segment's total, so a proportionally-tiny
+	// addition to a big segment does not trigger a full rewrite.
+	finalizeRatioDefault = 0.10
+	// finalizeMaxRoundsDefault is the hard per-segment lifetime cap on finalize
+	// rounds; after this the segment is marked terminal and never re-scanned.
+	finalizeMaxRoundsDefault = 8
+)
+
+// localFinalizeGraceRegistry stores per-group finalize_grace in nanoseconds as set
+// by reconcilePipeline. A zero value means "use option.finalizeGraceDefault". It
+// mirrors localMergeGraceRegistry.
+var localFinalizeGraceRegistry = struct {
+	m  map[string]int64
+	mu sync.RWMutex
+}{m: make(map[string]int64)}
+
+// setFinalizeGraceForGroup stores graceNs for group. graceNs == 0 removes the entry.
+func setFinalizeGraceForGroup(group string, graceNs int64) {
+	localFinalizeGraceRegistry.mu.Lock()
+	if graceNs > 0 {
+		localFinalizeGraceRegistry.m[group] = graceNs
+	} else {
+		delete(localFinalizeGraceRegistry.m, group)
+	}
+	localFinalizeGraceRegistry.mu.Unlock()
+}
+
+// lookupFinalizeGrace returns the per-group finalize_grace in nanoseconds, or 0 if
+// none is configured (caller falls back to option.finalizeGraceDefault).
+func lookupFinalizeGrace(group string) int64 {
+	localFinalizeGraceRegistry.mu.RLock()
+	defer localFinalizeGraceRegistry.mu.RUnlock()
+	return localFinalizeGraceRegistry.m[group]
+}
+
+// finalizeConfig holds the per-group finalize threshold knobs. A zero value is
+// never stored directly; lookupFinalizeConfig fills unset fields with defaults.
+type finalizeConfig struct {
+	floorBytes uint64  // absolute floor; 0 => finalizeFloorBytesDefault
+	ratio      float64 // fraction of segment total; <=0 => finalizeRatioDefault
+	cooldownNs int64   // min ns between rounds; 0 => the group's finalize_grace
+	maxRounds  int     // hard lifetime cap; <=0 => finalizeMaxRoundsDefault
+}
+
+// localFinalizeConfigRegistry stores per-group finalize threshold overrides. The
+// proto carries no override fields today (v1), so reconcilePipeline stores defaults;
+// tests may inject custom values via setFinalizeConfigForGroup.
+var localFinalizeConfigRegistry = struct {
+	m  map[string]finalizeConfig
+	mu sync.RWMutex
+}{m: make(map[string]finalizeConfig)}
+
+// listFinalizeGroups returns the groups that have finalization sampling enabled (a
+// finalize config entry exists). The background finalize scanner iterates these.
+func listFinalizeGroups() []string {
+	localFinalizeConfigRegistry.mu.RLock()
+	defer localFinalizeConfigRegistry.mu.RUnlock()
+	if len(localFinalizeConfigRegistry.m) == 0 {
+		return nil
+	}
+	groups := make([]string, 0, len(localFinalizeConfigRegistry.m))
+	for group := range localFinalizeConfigRegistry.m {
+		groups = append(groups, group)
+	}
+	return groups
+}
+
+// setFinalizeConfigForGroup stores cfg for group. A nil cfg removes the entry.
+func setFinalizeConfigForGroup(group string, cfg *finalizeConfig) {
+	localFinalizeConfigRegistry.mu.Lock()
+	if cfg != nil {
+		localFinalizeConfigRegistry.m[group] = *cfg
+	} else {
+		delete(localFinalizeConfigRegistry.m, group)
+	}
+	localFinalizeConfigRegistry.mu.Unlock()
+}
+
+// lookupFinalizeConfig returns the group's finalize threshold config with any unset
+// field filled from the package defaults. graceNs is the resolved finalize_grace for
+// the group and is used as the cooldown when no explicit cooldown is configured.
+func lookupFinalizeConfig(group string, graceNs int64) finalizeConfig {
+	localFinalizeConfigRegistry.mu.RLock()
+	cfg := localFinalizeConfigRegistry.m[group]
+	localFinalizeConfigRegistry.mu.RUnlock()
+	if cfg.floorBytes == 0 {
+		cfg.floorBytes = finalizeFloorBytesDefault
+	}
+	if cfg.ratio <= 0 {
+		cfg.ratio = finalizeRatioDefault
+	}
+	if cfg.cooldownNs <= 0 {
+		cfg.cooldownNs = graceNs
+	}
+	if cfg.maxRounds <= 0 {
+		cfg.maxRounds = finalizeMaxRoundsDefault
+	}
+	return cfg
+}
+
 // namedSampler pairs a sampler instance with its stable identity. The identity is the
 // plugin name plus everything that selects which code runs: the config hash AND the
 // plugin reference (path, symbol, ABI version). reconcilePipeline compares this identity
@@ -100,6 +239,10 @@ func registerSampler(group string, s sdk.Sampler) func() {
 	localSamplerRegistry.mu.Lock()
 	localSamplerRegistry.m[group] = append(localSamplerRegistry.m[group], namedSampler{sampler: s})
 	localSamplerRegistry.mu.Unlock()
+	// Direct registration models an active MERGE-filter sampler (the production reconcile
+	// path sets this from mergeEventEnabled); without it buildHotMergeFilter would treat
+	// the group as MERGE-disabled and skip filtering.
+	setMergeEventForGroup(group, true)
 	return func() {
 		localSamplerRegistry.mu.Lock()
 		defer localSamplerRegistry.mu.Unlock()
@@ -112,6 +255,7 @@ func registerSampler(group string, s sdk.Sampler) func() {
 		}
 		if len(localSamplerRegistry.m[group]) == 0 {
 			delete(localSamplerRegistry.m, group)
+			setMergeEventForGroup(group, false)
 		}
 	}
 }

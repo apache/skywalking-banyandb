@@ -260,7 +260,9 @@ type partMergeIter struct {
 	primaryBlockMetadata []primaryBlockMetadata
 	compressedPrimaryBuf []byte
 	primaryBuf           []byte
+	partPath             string
 	block                blockPointer
+	partID               uint64
 	primaryMetadataIdx   int
 }
 
@@ -273,6 +275,8 @@ func (pmi *partMergeIter) reset() {
 	pmi.primaryBuf = pmi.primaryBuf[:0]
 	pmi.compressedPrimaryBuf = pmi.compressedPrimaryBuf[:0]
 	pmi.block.reset()
+	pmi.partID = 0
+	pmi.partPath = ""
 }
 
 func (pmi *partMergeIter) mustInitFromPart(p *part) {
@@ -280,6 +284,8 @@ func (pmi *partMergeIter) mustInitFromPart(p *part) {
 	pmi.seqReaders.init(p)
 	pmi.tagType = p.tagType
 	pmi.primaryBlockMetadata = p.primaryBlockMetadata
+	pmi.partID = p.partMetadata.ID
+	pmi.partPath = p.path
 }
 
 func (pmi *partMergeIter) error() error {
@@ -296,15 +302,25 @@ func (pmi *partMergeIter) nextBlockMetadata() bool {
 	pmi.block.reset()
 	if len(pmi.primaryBuf) == 0 {
 		if err := pmi.loadPrimaryBuf(); err != nil {
-			pmi.err = err
+			pmi.err = pmi.attributeReadErr(err)
 			return false
 		}
 	}
 	if err := pmi.loadBlockMetadata(); err != nil {
-		pmi.err = err
+		pmi.err = pmi.attributeReadErr(err)
 		return false
 	}
 	return true
+}
+
+// attributeReadErr wraps a read-side failure in *unreadablePartError so the merge loop can
+// recover the failing part's identity. io.EOF marks a clean end of iteration, not a failure,
+// so it is left unwrapped: error() filters it out.
+func (pmi *partMergeIter) attributeReadErr(err error) error {
+	if errors.Is(err, io.EOF) {
+		return err
+	}
+	return &unreadablePartError{err: err, partID: pmi.partID, partPath: pmi.partPath}
 }
 
 func (pmi *partMergeIter) loadPrimaryBuf() error {
@@ -336,7 +352,21 @@ func (pmi *partMergeIter) loadBlockMetadata() error {
 
 func (pmi *partMergeIter) peekBlockMetadata() (*blockMetadata, bool) {
 	if len(pmi.primaryBuf) == 0 {
-		return nil, false
+		// At a primary-block (granule) boundary the current primaryBuf is
+		// exhausted, but more blocks may exist in the next granule. Look ahead
+		// using the granule index, whose traceID is the first traceID of that
+		// granule. Returning false here would let the fast path treat the
+		// current block as the unique tail of its traceID even when the same
+		// traceID continues in the next granule, producing split blocks and,
+		// after a re-merge, the "offset must equal bytesRead" panic. Only the
+		// traceID is needed by the caller to decide fast vs slow path.
+		if pmi.primaryMetadataIdx >= len(pmi.primaryBlockMetadata) {
+			return nil, false
+		}
+		bm := generateBlockMetadata()
+		bm.reset()
+		bm.traceID = pmi.primaryBlockMetadata[pmi.primaryMetadataIdx].traceID
+		return bm, true
 	}
 	bm := generateBlockMetadata()
 	_, err := bm.unmarshal(pmi.primaryBuf, pmi.tagType)

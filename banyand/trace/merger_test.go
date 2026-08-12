@@ -41,6 +41,10 @@ import (
 )
 
 func Test_mergeTwoBlocks(t *testing.T) {
+	unknownConventionalBlock := conventionalBlock
+	unknownConventionalBlock.timestampBoundsUnknown = true
+	unknownMergedBlock := mergedBlock
+	unknownMergedBlock.timestampBoundsUnknown = true
 	tests := []struct {
 		left  *blockPointer
 		right *blockPointer
@@ -57,13 +61,13 @@ func Test_mergeTwoBlocks(t *testing.T) {
 			name:  "Merge left is non-empty right is empty",
 			left:  &blockPointer{block: conventionalBlock},
 			right: &blockPointer{},
-			want:  &blockPointer{block: conventionalBlock, bm: blockMetadata{}},
+			want:  &blockPointer{block: unknownConventionalBlock, bm: blockMetadata{}},
 		},
 		{
 			name:  "Merge left is empty right is non-empty",
 			left:  &blockPointer{},
 			right: &blockPointer{block: conventionalBlock},
-			want:  &blockPointer{block: conventionalBlock, bm: blockMetadata{}},
+			want:  &blockPointer{block: unknownConventionalBlock, bm: blockMetadata{}},
 		},
 		{
 			name: "Merge two non-empty blocks without overlap",
@@ -91,7 +95,7 @@ func Test_mergeTwoBlocks(t *testing.T) {
 					},
 				},
 			},
-			want: &blockPointer{block: mergedBlock, bm: blockMetadata{}},
+			want: &blockPointer{block: unknownMergedBlock, bm: blockMetadata{}},
 		},
 	}
 
@@ -966,7 +970,7 @@ func Test_multipleRoundMerges(t *testing.T) {
 
 				// Merge all parts for this round
 				closeCh := make(chan struct{})
-				mergedPart, _, err := tst.mergeParts(fileSystem, closeCh, partsToMerge, partID, tmpPath, nil)
+				mergedPart, _, err := tst.mergeParts(fileSystem, closeCh, partsToMerge, partID, tmpPath, nil, nil)
 				close(closeCh)
 				require.NoError(t, err, "Round %d merge failed", roundIdx+1)
 				require.NotNil(t, mergedPart, "Round %d produced nil merged part", roundIdx+1)
@@ -1239,7 +1243,7 @@ func Test_mergeParts(t *testing.T) {
 				closeCh := make(chan struct{})
 				defer close(closeCh)
 				tst := &tsTable{pm: protector.Nop{}}
-				p, _, err := tst.mergeParts(fileSystem, closeCh, pp, partID, root, nil)
+				p, _, err := tst.mergeParts(fileSystem, closeCh, pp, partID, root, nil, nil)
 				if tt.wantErr != nil {
 					if !errors.Is(err, tt.wantErr) {
 						t.Fatalf("Unexpected error: got %v, want %v", err, tt.wantErr)
@@ -1392,7 +1396,7 @@ func Test_mergePartsThenSendIntroduction_cleansUpOnSidxMergeError(t *testing.T) 
 	merges := make(chan *mergerIntroduction, 1)
 	closeCh := make(chan struct{})
 
-	_, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMerger, parts, merged, merges, closeCh, mergeTypeFile, mergeLaneFast)
+	_, err := tst.mergePartsThenSendIntroduction(snapshotCreatorMerger, parts, merged, merges, closeCh, mergeTypeFile, mergeLaneFast, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "sidx merge failed")
 
@@ -1506,7 +1510,7 @@ func Test_getPartsToMerge_skipsInFlightParts(t *testing.T) {
 	defer snp.decRef()
 
 	// Without inFlight: all parts should be eligible
-	dst, _ := tst.getPartsToMerge(snp, uint64(1<<30), nil)
+	dst, _ := tst.getPartsToMerge(snp, uint64(1<<30))
 	require.GreaterOrEqual(t, len(dst), 2, "should find parts to merge when none are in-flight")
 
 	// Mark part 100 and 101 as in-flight
@@ -1515,7 +1519,7 @@ func Test_getPartsToMerge_skipsInFlightParts(t *testing.T) {
 	tst.inFlight[101] = struct{}{}
 
 	// With inFlight: parts 100 and 101 should be skipped
-	dst2, _ := tst.getPartsToMerge(snp, uint64(1<<30), nil)
+	dst2, _ := tst.getPartsToMerge(snp, uint64(1<<30))
 	if len(dst2) > 0 {
 		for _, pw := range dst2 {
 			require.NotEqual(t, uint64(100), pw.ID(), "part 100 should be skipped (in-flight)")
@@ -1526,7 +1530,7 @@ func Test_getPartsToMerge_skipsInFlightParts(t *testing.T) {
 	// Mark all parts as in-flight: no parts should be eligible
 	tst.inFlight[102] = struct{}{}
 	tst.inFlight[103] = struct{}{}
-	dst3, _ := tst.getPartsToMerge(snp, uint64(1<<30), nil)
+	dst3, _ := tst.getPartsToMerge(snp, uint64(1<<30))
 	require.Nil(t, dst3, "no parts should be eligible when all are in-flight")
 }
 

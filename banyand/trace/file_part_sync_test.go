@@ -37,6 +37,41 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+type writeOrderFileSystem struct {
+	fs.FileSystem
+	atomicWrites []string
+}
+
+func (wofs *writeOrderFileSystem) WriteAtomic(buffer []byte, name string, permission fs.Mode) (int, error) {
+	wofs.atomicWrites = append(wofs.atomicWrites, filepath.Base(name))
+	return wofs.FileSystem.WriteAtomic(buffer, name, permission)
+}
+
+func TestMemPartFlushPublishesMetadataLast(t *testing.T) {
+	tmpPath, deferFn := test.Space(require.New(t))
+	defer deferFn()
+	fileSystem := &writeOrderFileSystem{FileSystem: fs.NewLocalFileSystem()}
+
+	// Use a local fixture so the ordering assertion is independent of the package-level
+	// test fixture; the contract under test is the atomic-write ordering, not the trace content.
+	now := int64(1_000_000_000)
+	localTS := &traces{
+		traceIDs:   []string{"ordering-tid"},
+		timestamps: []int64{now},
+		spanIDs:    []string{"ordering-sid"},
+		spans:      [][]byte{[]byte("ordering-span")},
+		tags:       [][]*tagValue{{}},
+	}
+	mp := generateMemPart()
+	defer releaseMemPart(mp)
+	mp.mustInitFromTraces(localTS)
+	mp.mustFlush(fileSystem, partPath(tmpPath, 1))
+
+	require.NotEmpty(t, fileSystem.atomicWrites)
+	require.Equal(t, metadataFilename, fileSystem.atomicWrites[len(fileSystem.atomicWrites)-1],
+		"metadata.json must be the final atomic write that publishes a complete part")
+}
+
 func TestMustAddFilePart_FilesOnDisk(t *testing.T) {
 	require.NoError(t, logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel}))
 
@@ -55,7 +90,7 @@ func TestMustAddFilePart_FilesOnDisk(t *testing.T) {
 
 	// Build a memPart with sample traces, flush it to disk to get valid binary files.
 	now := int64(1_000_000_000)
-	ts := &traces{
+	localTS := &traces{
 		traceIDs:   []string{"tid-1", "tid-2"},
 		timestamps: []int64{now, now + 1000},
 		spanIDs:    []string{"s1", "s2"},
@@ -63,7 +98,7 @@ func TestMustAddFilePart_FilesOnDisk(t *testing.T) {
 		tags:       [][]*tagValue{{}, {}},
 	}
 	mp := generateMemPart()
-	mp.mustInitFromTraces(ts)
+	mp.mustInitFromTraces(localTS)
 
 	// Flush the memPart to a temporary directory to get valid binary files.
 	srcDir := filepath.Join(tmpPath, "src")
@@ -129,7 +164,7 @@ func TestMustAddFilePart_SurvivesReopenViaMustOpenFilePart(t *testing.T) {
 
 	// Build and flush a memPart.
 	now := int64(2_000_000_000)
-	ts := &traces{
+	localTS := &traces{
 		traceIDs:   []string{"trace-x"},
 		timestamps: []int64{now},
 		spanIDs:    []string{"sx"},
@@ -137,7 +172,7 @@ func TestMustAddFilePart_SurvivesReopenViaMustOpenFilePart(t *testing.T) {
 		tags:       [][]*tagValue{{}},
 	}
 	mp := generateMemPart()
-	mp.mustInitFromTraces(ts)
+	mp.mustInitFromTraces(localTS)
 
 	partID := uint64(42)
 	destPath := partPath(tabDir, partID)
@@ -171,7 +206,7 @@ func TestIntroduceMemPart_NilMpGuard(t *testing.T) {
 	}()
 
 	now := int64(3_000_000_000)
-	ts := &traces{
+	localTS := &traces{
 		traceIDs:   []string{"trace-nil-guard"},
 		timestamps: []int64{now},
 		spanIDs:    []string{"s0"},
@@ -179,7 +214,7 @@ func TestIntroduceMemPart_NilMpGuard(t *testing.T) {
 		tags:       [][]*tagValue{{}},
 	}
 	mp := generateMemPart()
-	mp.mustInitFromTraces(ts)
+	mp.mustInitFromTraces(localTS)
 	partID := uint64(7)
 	destPath := partPath(tabDir, partID)
 	mp.mustFlush(fileSystem, destPath)
@@ -235,14 +270,14 @@ func TestFilePart_DirectWrite_ProducesCorrectFiles(t *testing.T) {
 	// Build a valid on-disk part in a temporary source directory (simulates the sender).
 	srcDir := filepath.Join(tmpPath, "src")
 	now := int64(5_000_000_000)
-	ts := &traces{
+	localTS := &traces{
 		traceIDs:   []string{"tid-direct-1", "tid-direct-2"},
 		timestamps: []int64{now, now + 500},
 		spanIDs:    []string{"sd1", "sd2"},
 		spans:      [][]byte{[]byte("span-x"), []byte("span-y")},
 		tags:       [][]*tagValue{{}, {}},
 	}
-	totalCount := buildAndFlushMemPart(t, fileSystem, ts, srcDir)
+	totalCount := buildAndFlushMemPart(t, fileSystem, localTS, srcDir)
 	require.Greater(t, totalCount, uint64(0))
 
 	// Open the on-disk files as a reader (simulates sender reading them for transfer).
@@ -497,14 +532,14 @@ func TestFilePart_FlusherSkipsFileParts(t *testing.T) {
 	partID := uint64(400)
 	destPath := partPath(tabDir, partID)
 	now := int64(8_000_000_000)
-	ts := &traces{
+	localTS := &traces{
 		traceIDs:   []string{"flusher-skip-tid"},
 		timestamps: []int64{now},
 		spanIDs:    []string{"fs1"},
 		spans:      [][]byte{[]byte("span-fs")},
 		tags:       [][]*tagValue{{}},
 	}
-	buildAndFlushMemPart(t, fileSystem, ts, destPath)
+	buildAndFlushMemPart(t, fileSystem, localTS, destPath)
 	tst.mustAddFilePart(partID, nil)
 
 	// Confirm the part is in the snapshot with nil mp before the flusher runs.

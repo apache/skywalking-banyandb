@@ -63,6 +63,15 @@ type metrics struct {
 	schemaBarrierLaggards              meter.Counter
 	schemaStatusNotApplied             meter.Counter
 	schemaStatusExpired                meter.Counter
+
+	// BydbQL prepared-statement cache. bydbqlPreparedCacheTotal counts lookups by
+	// `result` ("hit"/"miss"); the gauges track the live hit ratio and the cache's
+	// current entry count and approximate byte size.
+	bydbqlPreparedCacheTotal    meter.Counter
+	bydbqlPreparedCacheHitRatio meter.Gauge
+	bydbqlPreparedCacheCount    meter.Gauge
+	bydbqlPreparedCacheBytes    meter.Gauge
+	bydbqlSlowQueryTotal        meter.Counter
 }
 
 func newMetrics(factory observability.Factory) *metrics {
@@ -93,6 +102,11 @@ func newMetrics(factory observability.Factory) *metrics {
 		schemaBarrierLaggards:              factory.NewCounter("schema_barrier_laggard_nodes_total", "barrier", "role", "node"),
 		schemaStatusNotApplied:             factory.NewCounter("schema_status_schema_not_applied_total", "rpc", "group", "reason"),
 		schemaStatusExpired:                factory.NewCounter("schema_status_expired_schema_total", "rpc", "group"),
+		bydbqlPreparedCacheTotal:           factory.NewCounter("bydbql_prepared_cache_total", "result"),
+		bydbqlPreparedCacheHitRatio:        factory.NewGauge("bydbql_prepared_cache_hit_ratio"),
+		bydbqlPreparedCacheCount:           factory.NewGauge("bydbql_prepared_cache_count"),
+		bydbqlPreparedCacheBytes:           factory.NewGauge("bydbql_prepared_cache_bytes"),
+		bydbqlSlowQueryTotal:               factory.NewCounter("bydbql_slow_query_total"),
 	}
 }
 

@@ -17,7 +17,7 @@
  * under the License.
  */
 
-import type { QueryRequest, QueryResponse, Group, ResourceMetadata } from './types.js';
+import type { QueryRequest, QueryResponse, Group, ResourceMetadata, TagValueParam } from './types.js';
 import { httpFetch } from '../utils/http.js';
 
 const maxErrorBodyLength = 2048;
@@ -69,10 +69,13 @@ export class BanyanDBClient {
   /**
    * Execute a BydbQL query and return the result as a formatted string.
    */
-  async query(bydbqlQuery: string): Promise<string> {
+  async query(bydbqlQuery: string, params?: TagValueParam[]): Promise<string> {
     const request: QueryRequest = {
       query: bydbqlQuery,
     };
+    if (params && params.length > 0) {
+      request.params = params;
+    }
 
     const url = `${this.baseUrl}/v1/bydbql/query`;
 

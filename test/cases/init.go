@@ -27,7 +27,6 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
-	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	casesmeasuredata "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 	caseproperty "github.com/apache/skywalking-banyandb/test/cases/property/data"
@@ -42,47 +41,7 @@ func Initialize(addr string, now time.Time) {
 	defer conn.Close()
 	interval := 500 * time.Millisecond
 	// stream
-	casesstreamdata.Write(conn, "sw", now, interval)
-	// Seed stream data in a fully expired segment, well past the "default"
-	// group's 3-day TTL. It must never surface in query results: it backs the
-	// "excludes data expired beyond TTL" case, which fails without the retention
-	// filter that drops fully expired segments.
-	casesstreamdata.WriteToGroup(conn, "sw", "default", "sw", now.AddDate(0, 0, -6), interval)
-	casesstreamdata.Write(conn, "duplicated", now, 0)
-	casesstreamdata.WriteDeduplicationTest(conn, "deduplication_test", now, time.Millisecond)
-	casesstreamdata.WriteToGroup(conn, "sw", "updated", "sw_updated", now.Add(time.Minute), interval)
-	casesstreamdata.WriteMixed(conn, now.Add(2*time.Minute), interval,
-		casesstreamdata.WriteSpec{
-			Metadata: &commonv1.Metadata{Name: "sw", Group: "default-spec"},
-			DataFile: "sw_schema_order.json",
-		},
-		casesstreamdata.WriteSpec{
-			Spec: []*streamv1.TagFamilySpec{
-				{
-					Name:     "data",
-					TagNames: []string{"data_binary"},
-				},
-				{
-					Name:     "searchable",
-					TagNames: []string{"trace_id", "state", "service_id", "service_instance_id", "endpoint_id", "duration", "start_time", "http.method", "status_code", "span_id"},
-				},
-			},
-			DataFile: "sw_spec_order.json",
-		},
-		casesstreamdata.WriteSpec{
-			Metadata: &commonv1.Metadata{Name: "sw", Group: "default-spec2"},
-			Spec: []*streamv1.TagFamilySpec{
-				{
-					Name:     "searchable",
-					TagNames: []string{"span_id", "status_code", "http.method", "duration", "state", "endpoint_id", "service_instance_id", "start_time", "service_id", "trace_id"},
-				},
-				{
-					Name:     "data",
-					TagNames: []string{"data_binary"},
-				},
-			},
-			DataFile: "sw_spec_order2.json",
-		})
+	casesstreamdata.SeedAll(conn, now, interval)
 	// measure
 	interval = time.Minute
 	casesmeasuredata.Write(conn, "service_traffic", "index_mode", "service_traffic_data_old.json", now.AddDate(0, 0, -2), interval)

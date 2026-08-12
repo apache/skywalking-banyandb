@@ -659,7 +659,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Streaming pod-to-pod flows (excludes tier-migration edges; see the Migration Flows panel below for those). Each row is one directed source\u2192target per (group, operation). Pub side is the publisher container; Sub side is the receiver. Units are per-second (rate over $__range). Pub msg/s and Sub msg/s should match side-to-side; a populated Pub cell with an empty Sub cell is signal \u2014 an uninstrumented side or missing scrape target. p99 latencies are histogram-quantile over the visible window. Errors and bytes are also per-second.",
+      "description": "Streaming pod-to-pod flows (excludes tier-migration edges; see the Migration Flows panel below for those). Each row is one directed source→target per (group, operation). Pub side is the publisher container; Sub side is the receiver. Units are per-second (rate over $__range). Pub msg/s and Sub msg/s should match side-to-side; a populated Pub cell with an empty Sub cell is signal — an uninstrumented side or missing scrape target. p99 latencies are histogram-quantile over the visible window. Errors and bytes are also per-second.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2375,6 +2375,95 @@
       ],
       "title": "Heap Next-GC / Alloc Rate",
       "type": "timeseries"
+    },
+    {
+      "id": 62,
+      "type": "stat",
+      "title": "Schema Consistency (per group)",
+      "description": "FODC schema consistency verdict per group from the proxy's checker. Value: 1=CONSISTENT, 2=INCONSISTENT, 3=UNKNOWN. Exported at /metrics as banyandb_fodc_schema_consistency_status{group}.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 89
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "banyandb_fodc_schema_consistency_status",
+          "instant": true,
+          "legendFormat": "{{group}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "value_and_name",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "CONSISTENT",
+                  "index": 0
+                },
+                "2": {
+                  "text": "INCONSISTENT",
+                  "index": 1
+                },
+                "3": {
+                  "text": "UNKNOWN",
+                  "index": 2
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 2
+              },
+              {
+                "color": "yellow",
+                "value": 3
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
     }
   ],
   "schemaVersion": 39,
@@ -2477,7 +2566,7 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "BanyanDB Cluster \u2014 Nodes (FODC Proxy)",
+  "title": "BanyanDB Cluster — Nodes (FODC Proxy)",
   "uid": "banyandb-fodc-nodes",
   "version": 1,
   "weekStart": ""

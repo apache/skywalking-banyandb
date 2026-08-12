@@ -184,18 +184,8 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 func verifyQLWithRequest(innerGm gm.Gomega, args helpers.Args, yamlQuery *tracev1.QueryRequest, conn *grpclib.ClientConn) {
 	qlContent, err := qlFS.ReadFile("input/" + args.Input + ".ql")
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
-
-	var qlQueryStr string
-	for _, line := range strings.Split(string(qlContent), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		if qlQueryStr != "" {
-			qlQueryStr += " "
-		}
-		qlQueryStr += trimmed
-	}
+	qlQueryStr, qlParams, err := helpers.ExtractQL(string(qlContent))
+	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 
 	// Auto-inject stages clause if args.Stages is not empty
 	if len(args.Stages) > 0 {
@@ -223,6 +213,7 @@ func verifyQLWithRequest(innerGm gm.Gomega, args helpers.Args, yamlQuery *tracev
 
 	parsed, errStrs := bydbql.ParseQuery(qlQueryStr)
 	innerGm.Expect(errStrs).To(gm.BeNil())
+	innerGm.Expect(bydbql.BindParams(parsed, qlParams)).To(gm.Succeed())
 
 	transformer := bydbql.NewTransformer(mockRepo)
 	transformCtx, transformCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -246,7 +237,8 @@ func verifyQLWithRequest(innerGm gm.Gomega, args helpers.Args, yamlQuery *tracev
 	qlCtx, qlCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer qlCancel()
 	bydbqlResp, err := bydbqlClient.Query(qlCtx, &bydbqlv1.QueryRequest{
-		Query: qlQueryStr,
+		Query:  qlQueryStr,
+		Params: qlParams,
 	})
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
 	innerGm.Expect(bydbqlResp).NotTo(gm.BeNil())

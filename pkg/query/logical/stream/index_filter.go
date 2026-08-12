@@ -54,6 +54,10 @@ func buildLocalFilter(criteria *modelv1.Criteria, schema logical.Schema,
 		if parsedEntity != nil {
 			return nil, parsedEntity, nil
 		}
+		if _, isEntity := entityDict[cond.Name]; isEntity {
+			return nil, nil, errors.WithMessagef(logical.ErrUnsupportedConditionOp,
+				"operation %s on entity tag %q is not supported: only EQ and IN are supported", cond.Op, cond.Name)
+		}
 		if schema != nil {
 			if ok, indexRule := schema.IndexDefined(cond.Name); ok && indexRule.Type == indexRuleType {
 				return parseConditionToFilter(cond, indexRule, expr, entity, schema)

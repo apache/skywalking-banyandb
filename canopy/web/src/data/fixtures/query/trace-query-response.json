@@ -1,0 +1,76 @@
+{
+  "description": "Hand-authored trace query response matching the BanyanDB monorepo's current wire shape (api/proto/banyandb/trace/v1/query.proto). Wire shape: trace.v1.QueryResponse { elements: [Span] }; each Span carries { span_id, trace_id, name, timestamp, duration, tag_families } (with optional opaque bytes for the decoder). The result-view flattens this into { trace_id, span_id, name, timestamp, duration, bytes? } for rendering. See implement-m4-note.md decision #24.",
+  "capturedAt": "2026-06-29T14:00:00Z",
+  "banyandbVersion": "monorepo-current",
+  "wireShape": "trace.v1.QueryResponse",
+  "elements": [
+    {
+      "trace_id": "trace-001",
+      "span_id": "span-01",
+      "name": "GET /api/orders",
+      "timestamp": "2026-06-29T11:55:00Z",
+      "duration": 1800,
+      "tag_families": []
+    },
+    {
+      "trace_id": "trace-001",
+      "span_id": "span-02",
+      "name": "validate-cart",
+      "timestamp": "2026-06-29T11:55:00.020Z",
+      "duration": 12,
+      "tag_families": []
+    },
+    {
+      "trace_id": "trace-001",
+      "span_id": "span-03",
+      "name": "payment.authorize",
+      "timestamp": "2026-06-29T11:55:00.040Z",
+      "duration": 2400,
+      "tag_families": [
+        { "tags": [
+          { "key": "bytes", "value": "eyJwYXlsb2FkIjoiZGVjbGluZWQifQ==" }
+        ] }
+      ]
+    },
+    {
+      "trace_id": "trace-001",
+      "span_id": "span-04",
+      "name": "stock.reserve",
+      "timestamp": "2026-06-29T11:55:00.060Z",
+      "duration": 32,
+      "tag_families": []
+    },
+    {
+      "trace_id": "trace-002",
+      "span_id": "span-05",
+      "name": "GET /api/users/42",
+      "timestamp": "2026-06-29T11:56:00Z",
+      "duration": 56,
+      "tag_families": []
+    },
+    {
+      "trace_id": "trace-002",
+      "span_id": "span-06",
+      "name": "db.query",
+      "timestamp": "2026-06-29T11:56:00.010Z",
+      "duration": 18,
+      "tag_families": []
+    },
+    {
+      "trace_id": "trace-003",
+      "span_id": "span-07",
+      "name": "POST /api/checkout",
+      "timestamp": "2026-06-29T11:57:00Z",
+      "duration": 412,
+      "tag_families": []
+    },
+    {
+      "trace_id": "trace-003",
+      "span_id": "span-08",
+      "name": "saga.start",
+      "timestamp": "2026-06-29T11:57:00.020Z",
+      "duration": 8,
+      "tag_families": []
+    }
+  ]
+}

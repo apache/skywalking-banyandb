@@ -20,6 +20,7 @@ package measure_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -408,7 +409,7 @@ var _ = Describe("Schema Change", func() {
 
 				for _, dp := range dataPoints {
 					for _, tf := range dp.TagFamilies {
-						if tf.Name == "default" {
+						if tf.Name == defaultTagFamily {
 							for _, tag := range tf.Tags {
 								innerGm.Expect(tag.Key).NotTo(Equal("extra_tag"),
 									"deleted tag should not be returned in query results")
@@ -441,7 +442,7 @@ var _ = Describe("Schema Change", func() {
 				newDataCount := 0
 				for _, dp := range dataPoints {
 					for _, tf := range dp.TagFamilies {
-						if tf.Name == "default" {
+						if tf.Name == defaultTagFamily {
 							for _, tag := range tf.Tags {
 								if tag.Key == "extra_tag" {
 									if tag.Value.GetInt() != nil {
@@ -481,7 +482,7 @@ var _ = Describe("Schema Change", func() {
 				stringCount := 0
 				for _, dp := range dataPoints {
 					for _, tf := range dp.TagFamilies {
-						if tf.Name == "default" {
+						if tf.Name == defaultTagFamily {
 							for _, tag := range tf.Tags {
 								if tag.Key == "extra_tag" {
 									switch tag.Value.GetValue().(type) {
@@ -497,6 +498,92 @@ var _ = Describe("Schema Change", func() {
 				}
 				innerGm.Expect(nullCount).To(Equal(5), "old data with INT type should return null after schema changed to STRING")
 				innerGm.Expect(stringCount).To(Equal(3), "new data should have STRING extra_tag values")
+			}, flags.EventuallyTimeout).Should(Succeed())
+
+			env.cleanup()
+		})
+	})
+
+	Context("Measure schema with changed tag type after merge", func() {
+		It("querying data should return correct values after parts with different types are merged", func() {
+			measureName := "schema_change_tag_type_merge"
+			now := timestamp.NowMilli()
+			// Both batches have to land in the same segment. A merge only ever combines
+			// parts within one segment, and sw_metric uses a 1-day segment aligned to
+			// local midnight, so a run starting within two hours of midnight would put
+			// the -2h batch in yesterday's segment and the -1h batch in today's. The
+			// part count could then never drop and the merge wait below would burn its
+			// whole budget waiting for a merge that is not possible. When that little of
+			// the day has elapsed, compress both offsets into it, preserving their order;
+			// they stay well inside the -3h query window used further down.
+			firstOffset, secondOffset := 2*time.Hour, time.Hour
+			midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+			if elapsed := now.Sub(midnight); elapsed <= firstOffset {
+				firstOffset, secondOffset = elapsed/2, elapsed/4
+			}
+
+			env := setupSchemaChangeMeasure(svcs, measureName, measureSetupOptions{withExtraTag: true})
+			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-firstOffset), 5,
+				measureWriteDataOptions{withExtraTag: true})
+			filePartCountAfterFirstBatch, filePartCountErr := getMeasureFilePartCount(svcs, groupName)
+			Expect(filePartCountErr).ShouldNot(HaveOccurred())
+			changeExtraMeasureTagType(svcs, measureName)
+			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-secondOffset), 3,
+				measureWriteDataOptions{withExtraTagString: true, entityIDPrefix: "entity_new_"})
+			// Wait for the second batch to flush to disk, creating additional
+			// file parts that the merge loop can pick up. Without this gate the
+			// merge Eventually below also has to absorb flush latency, which can
+			// exceed 30 s on resource-constrained CI runners with -race.
+			Eventually(func(innerGm Gomega) int64 {
+				currentFilePartCount, currentFilePartCountErr := getMeasureFilePartCount(svcs, groupName)
+				innerGm.Expect(currentFilePartCountErr).ShouldNot(HaveOccurred())
+				return currentFilePartCount
+			}, flags.EventuallyTimeout).Should(BeNumerically(">", filePartCountAfterFirstBatch))
+			partCountBeforeMerge, partCountErr := getTotalMeasurePartCount(svcs, groupName)
+			Expect(partCountErr).ShouldNot(HaveOccurred())
+			// The background merge runs asynchronously; under the full parallel -race
+			// suite on CI its goroutine competes for CPU and snapshot locks with every
+			// other test. Poll on a relaxed interval (rather than Gomega's ~10ms
+			// default) so this wait does not starve the merge it is waiting for. The
+			// post-merge part count is stable (no further writes), so slow polling
+			// never misses it. The budget was raised twice (to 10*, then 20*) chasing
+			// timeouts blamed on merger starvation; the real cause was the batches
+			// straddling the day-segment boundary, fixed by the offsets computed above,
+			// which no budget could have cured. It stays generous purely as margin.
+			Eventually(func(innerGm Gomega) int64 {
+				currentPartCount, currentPartCountErr := getTotalMeasurePartCount(svcs, groupName)
+				innerGm.Expect(currentPartCountErr).ShouldNot(HaveOccurred())
+				return currentPartCount
+			}, 20*flags.EventuallyTimeout, 500*time.Millisecond).Should(BeNumerically("<", partCountBeforeMerge))
+
+			Eventually(func(innerGm Gomega) {
+				dataPoints := querySchemaChangeMeasureData(svcs, measureName,
+					now.Add(-3*time.Hour), now,
+					[]string{"id", "entity_id", "extra_tag"}, []string{"total"})
+				innerGm.Expect(dataPoints).To(HaveLen(8))
+
+				nullCount := 0
+				stringCount := 0
+				for _, dp := range dataPoints {
+					for _, tf := range dp.TagFamilies {
+						if tf.Name == defaultTagFamily {
+							for _, tag := range tf.Tags {
+								if tag.Key == "extra_tag" {
+									switch tag.Value.GetValue().(type) {
+									case *modelv1.TagValue_Null:
+										nullCount++
+									case *modelv1.TagValue_Str:
+										stringCount++
+									}
+								}
+							}
+						}
+					}
+				}
+				innerGm.Expect(nullCount).To(Equal(5),
+					"old data with int type should return null after schema changed to STRING and parts merged")
+				innerGm.Expect(stringCount).To(Equal(3),
+					"new data should have string extra_tag values after merge")
 			}, flags.EventuallyTimeout).Should(Succeed())
 
 			env.cleanup()
@@ -1036,4 +1123,38 @@ func queryMeasureWithDeletedFieldProjection(svcs *services, measureName string, 
 	default:
 		return errors.New("unexpected data type")
 	}
+}
+
+func getTotalMeasurePartCount(svcs *services, group string) (int64, error) {
+	dataInfo, err := svcs.measure.CollectDataInfo(context.TODO(), group)
+	if err != nil {
+		return 0, fmt.Errorf("collect measure data info: %w", err)
+	}
+	if dataInfo == nil {
+		return 0, errors.New("measure data info is nil")
+	}
+	var total int64
+	for _, seg := range dataInfo.SegmentInfo {
+		for _, shard := range seg.ShardInfo {
+			total += shard.PartCount
+		}
+	}
+	return total, nil
+}
+
+func getMeasureFilePartCount(svcs *services, group string) (int64, error) {
+	dataInfo, err := svcs.measure.CollectDataInfo(context.TODO(), group)
+	if err != nil {
+		return 0, fmt.Errorf("collect measure data info: %w", err)
+	}
+	if dataInfo == nil {
+		return 0, errors.New("measure data info is nil")
+	}
+	var total int64
+	for _, seg := range dataInfo.SegmentInfo {
+		for _, shard := range seg.ShardInfo {
+			total += shard.FilePartCount
+		}
+	}
+	return total, nil
 }

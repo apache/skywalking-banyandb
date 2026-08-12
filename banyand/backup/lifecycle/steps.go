@@ -101,23 +101,39 @@ func (l *lifecycleService) getSnapshots(ctx context.Context, groups []*commonv1.
 // its banyandb_queue_sub_total_* family with non-empty remote_node and
 // remote_tier.
 //
-// Resolution: the lifecycle sidecar's own pod hostname is the stable
-// identifier the receiver will see as the sender. It comes from
-// POD_NAME (K8s downward API) and falls back to os.Hostname() — the
-// same precedence as nativeNodeContext at service.go:160-165. The
-// function then looks the host up directly in the data-node registry,
-// matching against the host portion of GrpcAddress (the registry may
-// carry an IP, a headless-service FQDN, or a loopback alias, depending
-// on which bind address the data pod registered with). The first
-// registry entry whose host matches (with loopback-alias and
-// IP-literal normalization via hostMatches) is the co-located data
-// pod; its Metadata.Name is the SenderNode and its Labels["type"] is
-// the SenderTier.
+// Resolution runs in two passes and re-runs on every parseGroup call (no
+// caching), so a data-pod restart, re-registration, or new host is
+// picked up by the next cycle:
 //
-// Re-runs on every parseGroup call (no caching) so a data-pod
-// restart, re-registration, or new host is picked up by the next
-// cycle. Returns ok=false when no registry entry matches.
-func resolveSelfIdentity(selfPodHost string, nodes []*databasev1.Node) (senderNode, senderTier string, ok bool) {
+//   - Pass 1 (--grpc-addr): the lifecycle already knows the exact
+//     co-located data node it snapshots from — its --grpc-addr. Matching
+//     that against the registry's GrpcAddress via grpcAddrEqual compares
+//     the full host:port, so when several data nodes share a host (e.g.
+//     127.0.0.1 in the integration harness, or a shared node IP) the
+//     co-located node is still resolved unambiguously. Hostname matching
+//     alone strips the port and would pick whichever same-host node the
+//     registry listing happens to return first.
+//   - Pass 2 (pod hostname): falls back to the sidecar's own pod
+//     hostname (POD_NAME → os.Hostname(), same precedence as
+//     nativeNodeContext at service.go:160-165) matched against the host
+//     portion of GrpcAddress via hostMatches. This covers the K8s case
+//     where --grpc-addr is a loopback or service alias that does not
+//     string-match the pod's registered GrpcAddress.
+//
+// The first matching registry entry is the co-located data pod; its
+// Metadata.Name is the SenderNode and its Labels["type"] is the
+// SenderTier. Returns ok=false when no registry entry matches.
+func resolveSelfIdentity(selfGRPCAddr, selfPodHost string, nodes []*databasev1.Node) (senderNode, senderTier string, ok bool) {
+	if selfGRPCAddr != "" {
+		for _, n := range nodes {
+			if n == nil || n.Metadata == nil {
+				continue
+			}
+			if grpcAddrEqual(n.GrpcAddress, selfGRPCAddr) {
+				return n.Metadata.Name, n.Labels["type"], true
+			}
+		}
+	}
 	if selfPodHost == "" {
 		return "", "", false
 	}
@@ -269,7 +285,7 @@ func cloneIntervalRule(ir *commonv1.IntervalRule) *commonv1.IntervalRule {
 
 //nolint:contextcheck // health check goroutine uses context.Background()
 func parseGroup(
-	g *commonv1.Group, nodeLabels map[string]string, nodes []*databasev1.Node,
+	g *commonv1.Group, selfGRPCAddr string, nodeLabels map[string]string, nodes []*databasev1.Node,
 	l *logger.Logger, metadata metadata.Repo, clusterStateMgr *clusterStateManager,
 	omr observability.MetricsRegistry,
 ) (group *GroupConfig, senderNode, senderRole, senderTier string, err error) {
@@ -348,16 +364,18 @@ func parseGroup(
 	// Stamp the lifecycle's self identity onto the publisher so the wire
 	// SenderNode / SenderRole / SenderTier fields and the parallel
 	// banyandb_lifecycle_migration_* labels are populated. The
-	// resolveSelfIdentity algorithm matches the lifecycle's own pod
-	// hostname (POD_NAME -> os.Hostname(), same precedence as
-	// nativeNodeContext at service.go:160-165) against the
-	// data-node registry's GrpcAddress with loopback-alias and
-	// port-strip normalization. The first matching registry entry is
-	// the co-located data pod; its Metadata.Name is the BanyanDB
-	// NodeID the receiver records as remote_node, and its
-	// Labels["type"] is the receiver's remote_tier. SenderRole is
-	// hard-coded to "lifecycle" to mirror the liaison's
-	// "liaison" pattern at pkg/cmdsetup/liaison.go:170-171.
+	// resolveSelfIdentity algorithm first matches the lifecycle's
+	// --grpc-addr against the data-node registry's GrpcAddress
+	// (full host:port, so co-located nodes sharing a host are still
+	// disambiguated), then falls back to the sidecar's own pod hostname
+	// (POD_NAME -> os.Hostname(), same precedence as nativeNodeContext
+	// at service.go:160-165) with loopback-alias and port-strip
+	// normalization. The first matching registry entry is the
+	// co-located data pod; its Metadata.Name is the BanyanDB NodeID the
+	// receiver records as remote_node, and its Labels["type"] is the
+	// receiver's remote_tier. SenderRole is hard-coded to "lifecycle" to
+	// mirror the liaison's "liaison" pattern at
+	// pkg/cmdsetup/liaison.go:170-171.
 	//
 	// The (senderNode, "lifecycle", senderTier) tuple returned here is
 	// consumed by three downstream emissions, all sharing the same
@@ -374,7 +392,7 @@ func parseGroup(
 	// the struct comment in service.go and CHANGES.md for the
 	// asymmetry.
 	selfHost := selfPodHostname()
-	senderNode, senderTier, resolvedOK := resolveSelfIdentity(selfHost, nodes)
+	senderNode, senderTier, resolvedOK := resolveSelfIdentity(selfGRPCAddr, selfHost, nodes)
 	if resolvedOK {
 		senderRole = lifecycleRoleName
 		client.SetSelfNode(senderNode, senderRole, senderTier)

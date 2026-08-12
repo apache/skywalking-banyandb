@@ -28,6 +28,8 @@ const (
 	RoleShardID
 	RoleTag
 	RoleField
+	RoleElementID
+	RoleOrderKey
 )
 
 // ColumnDef describes one column in a BatchSchema.
@@ -67,6 +69,8 @@ type BatchSchema struct {
 	versionIdx      int
 	seriesIDIdx     int
 	shardIDIdx      int
+	elementIDIdx    int
+	orderKeyIdx     int
 }
 
 // NewBatchSchema builds a BatchSchema and precomputes lookup indices.
@@ -77,6 +81,8 @@ func NewBatchSchema(cols []ColumnDef) *BatchSchema {
 		versionIdx:   -1,
 		seriesIDIdx:  -1,
 		shardIDIdx:   -1,
+		elementIDIdx: -1,
+		orderKeyIdx:  -1,
 		tagByPath:    make(map[tagKey]int),
 		fieldByName:  make(map[string]int),
 	}
@@ -103,6 +109,10 @@ func NewBatchSchema(cols []ColumnDef) *BatchSchema {
 		case RoleField:
 			s.fieldByName[c.Name] = i
 			s.FieldColumns = append(s.FieldColumns, i)
+		case RoleElementID:
+			s.elementIDIdx = i
+		case RoleOrderKey:
+			s.orderKeyIdx = i
 		}
 	}
 	return s
@@ -119,6 +129,12 @@ func (s *BatchSchema) SeriesIDIndex() int { return s.seriesIDIdx }
 
 // ShardIDIndex returns the shard-id column index, or -1 if absent.
 func (s *BatchSchema) ShardIDIndex() int { return s.shardIDIdx }
+
+// ElementIDIndex returns the element-id column index, or -1 if absent.
+func (s *BatchSchema) ElementIDIndex() int { return s.elementIDIdx }
+
+// OrderKeyIndex returns the order-key column index, or -1 if absent.
+func (s *BatchSchema) OrderKeyIndex() int { return s.orderKeyIdx }
 
 // TagIndex returns the column index for a (family, name) tag.
 // Lookup uses a struct key, so it does not allocate.

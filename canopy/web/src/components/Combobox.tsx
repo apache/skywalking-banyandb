@@ -119,7 +119,7 @@ interface MultiProps extends BaseProps {
 function DropdownPanel({
   popRef, rect, children,
 }: {
-  popRef: React.RefObject<HTMLDivElement>;
+  popRef: React.RefObject<HTMLDivElement | null>;
   rect: { left: number; top: number; width: number };
   children: React.ReactNode;
 }) {
@@ -132,7 +132,7 @@ function DropdownPanel({
   );
 }
 
-function usePopoverPosition(open: boolean, anchorRef: React.RefObject<HTMLElement>): {
+function usePopoverPosition(open: boolean, anchorRef: React.RefObject<HTMLElement | null>): {
   rect: { left: number; top: number; width: number } | null;
 } {
   const [rect, setRect] = useState<{ left: number; top: number; width: number } | null>(null);
@@ -154,7 +154,7 @@ function usePopoverPosition(open: boolean, anchorRef: React.RefObject<HTMLElemen
 }
 
 // Reusable outside-click + Escape-close behavior for the combobox.
-function useDismiss(open: boolean, onClose: () => void, wrapRef: React.RefObject<HTMLElement>, popRef: React.RefObject<HTMLElement>) {
+function useDismiss(open: boolean, onClose: () => void, wrapRef: React.RefObject<HTMLElement | null>, popRef: React.RefObject<HTMLElement | null>) {
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {

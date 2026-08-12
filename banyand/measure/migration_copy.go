@@ -829,7 +829,7 @@ func slowCopyOnePart(in processPartInput, srcPartID uint64) (processPartResult, 
 			bm := &bms[j]
 			bm.tagProjection = in.tagProjection
 			b := generateBlock()
-			b.mustReadFrom(in.decoder, p, *bm)
+			b.mustReadFrom(in.decoder, p, *bm, nil)
 			liveBlocks = append(liveBlocks, b)
 
 			for k := uint64(0); k < bm.count; k++ {

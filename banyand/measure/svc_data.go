@@ -283,6 +283,11 @@ func (s *dataSVC) PreRun(ctx context.Context) error {
 	}
 	node := val.(common.Node)
 	s.schemaRepo = newDataSchemaRepo(s.dataPath, s, node.Labels, node.NodeID)
+	// Register the snapshot collector so this data node serves its local schema
+	// to the co-located FODC agent via NodeSchemaStateService.
+	if metaSvc, ok := s.metadata.(metadata.Service); ok {
+		metaSvc.RegisterSchemaSnapshotCollector(commonv1.Catalog_CATALOG_MEASURE, s.schemaRepo)
+	}
 
 	s.cm = newCacheMetrics(s.omr)
 	obsservice.MetricsCollector.Register("measure_cache", s.collectCacheMetrics)

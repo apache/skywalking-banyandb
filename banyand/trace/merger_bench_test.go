@@ -18,6 +18,7 @@
 package trace
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -26,6 +27,81 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
+
+func BenchmarkStageRawTrace(b *testing.B) {
+	metadata := &blockMetadata{
+		traceID: "trace-stage-benchmark",
+		spans:   &dataBlock{offset: 1, size: 8 << 10},
+		timestamps: timestampsMetadata{
+			min:   1,
+			max:   2,
+			known: true,
+		},
+	}
+	raw := rawBlock{
+		bm: metadata, spans: make([]byte, 8<<10),
+		tags: make(map[string][]byte, 32), tagMetadata: make(map[string][]byte, 32),
+	}
+	for tagIdx := 0; tagIdx < 32; tagIdx++ {
+		tagName := fmt.Sprintf("tag-%02d", tagIdx)
+		metadata.tags = ensureDataBlock(metadata.tags, tagName, uint64(tagIdx))
+		metadata.tagType = ensureTagType(metadata.tagType, tagName)
+		raw.tags[tagName] = make([]byte, 64)
+		raw.tagMetadata[tagName] = make([]byte, 16)
+	}
+
+	b.Run("arena", func(b *testing.B) {
+		b.ReportAllocs()
+		for iteration := 0; iteration < b.N; iteration++ {
+			staged := stageRawTrace(&raw)
+			releaseStagedTrace(&staged)
+		}
+	})
+	b.Run("legacy-per-value-copy", func(b *testing.B) {
+		b.ReportAllocs()
+		for iteration := 0; iteration < b.N; iteration++ {
+			staged := legacyStageRawTraceForBenchmark(&raw)
+			consumeStagedTraceForBenchmark(staged)
+		}
+	})
+}
+
+func ensureDataBlock(blocks map[string]*dataBlock, tagName string, offset uint64) map[string]*dataBlock {
+	if blocks == nil {
+		blocks = make(map[string]*dataBlock)
+	}
+	blocks[tagName] = &dataBlock{offset: offset, size: 64}
+	return blocks
+}
+
+func ensureTagType(tagTypes map[string]pbv1.ValueType, tagName string) map[string]pbv1.ValueType {
+	if tagTypes == nil {
+		tagTypes = make(map[string]pbv1.ValueType)
+	}
+	tagTypes[tagName] = pbv1.ValueTypeStr
+	return tagTypes
+}
+
+func legacyStageRawTraceForBenchmark(rawBlk *rawBlock) stagedTrace {
+	staged := stagedTrace{isRaw: true, traceID: rawBlk.bm.traceID, rawBM: &blockMetadata{}}
+	staged.rawBM.copyFrom(rawBlk.bm)
+	staged.rawSpans = append([]byte(nil), rawBlk.spans...)
+	staged.rawTags = make(map[string][]byte, len(rawBlk.tags))
+	for tagName, value := range rawBlk.tags {
+		staged.rawTags[tagName] = append([]byte(nil), value...)
+	}
+	staged.rawTagMetadata = make(map[string][]byte, len(rawBlk.tagMetadata))
+	for tagName, value := range rawBlk.tagMetadata {
+		staged.rawTagMetadata[tagName] = append([]byte(nil), value...)
+	}
+	return staged
+}
+
+func consumeStagedTraceForBenchmark(staged stagedTrace) {
+	if staged.traceID == "" || staged.rawBM == nil || len(staged.rawSpans) == 0 {
+		panic("invalid staged trace")
+	}
+}
 
 // Benchmark_mergeBlocks_FastRawMerge benchmarks the fast path where trace IDs don't overlap.
 // This uses br.mustReadRaw and bw.mustWriteRawBlock to copy blocks without unmarshaling.

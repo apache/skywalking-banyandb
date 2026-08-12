@@ -42,6 +42,11 @@ type partMetadata struct {
 	MinTimestamp              int64  `json:"minTimestamp"`
 	MaxTimestamp              int64  `json:"maxTimestamp"`
 	ID                        uint64 `json:"-"`
+	// FinalizeGen is the finalization-sampling generation stamp: 0/absent means the
+	// part was never touched by a finalize round. On merge it is min-propagated from
+	// the inputs; a finalize round overrides it to the round's generation. Unlike ID
+	// it carries a real JSON tag so it survives on disk (see mergeParts/finalizeGenOverride).
+	FinalizeGen uint64 `json:"finalizeGen,omitempty"`
 }
 
 func (pm *partMetadata) reset() {
@@ -52,6 +57,7 @@ func (pm *partMetadata) reset() {
 	pm.MinTimestamp = 0
 	pm.MaxTimestamp = 0
 	pm.ID = 0
+	pm.FinalizeGen = 0
 }
 
 func (pm *partMetadata) fillFromSyncContext(ctx *queue.ChunkedSyncPartContext) {

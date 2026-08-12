@@ -33,6 +33,11 @@ Before upgrading the cluster, you should check CHANGELOG.md](https://github.com/
 - Upgrade "data" nodes first, then "liaison" nodes.
 - After upgrading all nodes, the cluster will be running the new version.
 
+> **Exception — upgrading to 0.11 or later.** The vectorized query paths change the
+> liaison<->data wire format, and a data node must never have a vectorized path enabled
+> that the liaison it answers cannot decode. For 0.11 the order is **reversed**: upgrade
+> "liaison" nodes first, then "data" nodes. See [Vectorized query paths enabled by default](#vectorized-query-paths-enabled-by-default-breaking-for-rolling-upgrades).
+
 To ensure this strategy works, you should have a minimum of one node for each role of node in the cluster. For example, if you have a 2-node cluster, you should have at least one "liaison" and one "data" node.
 
 The cluster should also have enough capacity to handle the load when one node is down for upgrade.
@@ -49,6 +54,40 @@ If the new version has breaking changes, you can use the following strategy to u
 The data ingestion and retrieval will be stopped during the upgrade process. The downtime will be the sum of the time taken to stop and start the nodes. All these steps should be running in parallel to minimize the downtime.
 
 If you don't have enough resource to perform a rolling upgrade or you have a large cluster with many nodes, you can use the minimum downtime strategy.
+
+## Upgrading to 0.11
+
+This section describes breaking changes and important behavioral changes when upgrading to BanyanDB 0.11.0.
+
+### Vectorized query paths enabled by default (breaking for rolling upgrades)
+
+The vectorized **stream** and **trace** query paths are now enabled by default, joining **measure** (default-on since 0.10). `--stream-vectorized-enabled`, `--trace-vectorized-enabled` and `--measure-vectorized-enabled` all default to `true`.
+
+**This changes the required rolling-upgrade order. Upgrade "liaison" nodes BEFORE "data" nodes.**
+
+The reason is that each flag selects the liaison<->data wire format as well as the query engine. A flag-on distributed **data** node emits a native columnar frame instead of protobuf. Liaison nodes on 0.11 accept both — they dispatch per message on the frame's leading magic byte and fall back to protobuf — but a liaison still running an older binary has **no frame decoder at all** and will fail to deserialize the response.
+
+The two orders behave differently:
+
+| Upgrade order | Result |
+| --- | --- |
+| Liaison first, then data | **Safe.** New liaisons decode both frames and protobuf; old data nodes keep sending protobuf until upgraded. |
+| Data first, then liaison | **Queries fail** for the duration of the rollout. New data nodes emit frames that old liaisons cannot decode. |
+
+This is the opposite of the general rolling strategy documented above, which applies to all other upgrades.
+
+If you cannot control node ordering, either use the [Minimum Downtime Strategy](#minimum-downtime-strategy-to-upgrade-a-cluster), or start the new data nodes with the vectorized paths explicitly disabled and enable them after every liaison is upgraded:
+
+```shell
+banyand data \
+  --stream-vectorized-enabled=false \
+  --trace-vectorized-enabled=false \
+  --measure-vectorized-enabled=false
+```
+
+Standalone deployments are unaffected: the frame is only emitted on a distributed data node, so a standalone server always uses the protobuf path regardless of the flag.
+
+**Rollback.** Pass `--stream-vectorized-enabled=false` / `--trace-vectorized-enabled=false` / `--measure-vectorized-enabled=false` on the standalone or data-node command line and restart. The row path and the protobuf wire format resume immediately; no data migration is involved, because the flags affect only the query and wire paths, never the on-disk format.
 
 ## Upgrading to 0.10
 

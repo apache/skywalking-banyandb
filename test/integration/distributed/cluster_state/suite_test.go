@@ -22,9 +22,11 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	integration_distributed "github.com/apache/skywalking-banyandb/test/integration/distributed"
 )
 
 func TestPropertyClusterState(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Distributed Property Get Cluster State Suite")
+	RunSpecs(t, "Distributed Property Get Cluster State Suite", Label(integration_distributed.Labels...))
 }

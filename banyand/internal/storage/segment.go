@@ -597,6 +597,13 @@ func (sc *segmentController[T, O]) updateOptions(resourceOpts *commonv1.Resource
 		sc.l.Panic().Msg("segment interval unit cannot be changed")
 		return
 	}
+	// A live segment-interval change is legitimate (e.g. a stage was re-timed) but
+	// rare; surface it so an unexpected change -- such as a stage node being fed the
+	// group default -- is visible instead of silent.
+	if sc.opts.SegmentInterval.Num != si.Num {
+		sc.l.Info().Int("from", sc.opts.SegmentInterval.Num).Int("to", si.Num).
+			Msg("segment interval number changed on options update; existing segments keep their span, new segments use the new interval")
+	}
 	sc.opts.SegmentInterval = si
 	sc.opts.TTL = MustToIntervalRule(resourceOpts.Ttl)
 	sc.opts.ShardNum = resourceOpts.ShardNum
@@ -617,6 +624,12 @@ func (sc *segmentController[T, O]) selectSegments(timeRange timestamp.TimeRange,
 			if reopenClosed {
 				// Real read: reopen if closed and mark as accessed.
 				if err = s.incRef(ctx); err != nil {
+					// Release the segments already pinned in earlier iterations so a
+					// mid-loop incRef failure does not leak refs (which would block
+					// idle-close and retention-delete for them indefinitely).
+					for _, pinned := range tt {
+						pinned.DecRef()
+					}
 					return nil, err
 				}
 				s.lastAccessed.Store(now)
@@ -636,6 +649,39 @@ func (sc *segmentController[T, O]) selectSegments(timeRange timestamp.TimeRange,
 		}
 	}
 	return tt, nil
+}
+
+// peekSegments returns lightweight descriptors of the segments overlapping timeRange
+// WITHOUT opening (incRef-ing) any of them. It snapshots the matching segments' time
+// ranges and locations under the read lock, then lists each segment's on-disk shard
+// directories outside the lock (a cheap readdir, no index reopen or loop spawn).
+func (sc *segmentController[T, O]) peekSegments(timeRange timestamp.TimeRange) []SegmentPeek {
+	type loc struct {
+		start    time.Time
+		end      time.Time
+		location string
+	}
+	sc.RLock()
+	var locs []loc
+	for _, s := range sc.lst {
+		if s.Overlapping(timeRange) {
+			locs = append(locs, loc{start: s.Start, end: s.End, location: s.location})
+		}
+	}
+	sc.RUnlock()
+
+	out := make([]SegmentPeek, 0, len(locs))
+	for _, l := range locs {
+		peek := SegmentPeek{Start: l.start, End: l.end}
+		_ = walkDir(l.location, shardPathPrefix, func(suffix string) error {
+			if id, convErr := strconv.Atoi(suffix); convErr == nil {
+				peek.ShardPaths = append(peek.ShardPaths, filepath.Join(l.location, fmt.Sprintf(shardTemplate, id)))
+			}
+			return nil
+		})
+		out = append(out, peek)
+	}
+	return out
 }
 
 func (sc *segmentController[T, O]) createSegment(ts time.Time) (*segment[T, O], error) {

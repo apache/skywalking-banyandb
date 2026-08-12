@@ -229,6 +229,7 @@ Processing Rules:
   - LIMIT clause: Extract ONLY when requesting number of data points/results (NOT time ranges)
   - AGGREGATE BY: Extract from keywords or preserve explicit clauses
   - ORDER BY: Extract ONLY when explicitly requested, BUT MUST validate field name against indexed fields list
+- Parameter Binding: BydbQL supports "?" placeholders in value positions (TIME values, WHERE/HAVING comparison values, IN/MATCH/HAVING value lists, and LIMIT/OFFSET/TOP N counts as int). When the query embeds untrusted or user-provided values, prefer placeholders and pass the values through the "params" argument of list_resources_bydbql instead of concatenating them into the query string.
 - CRITICAL Rules:
   - Do NOT add ORDER BY or LIMIT unless explicitly requested in the description
   - If description only mentions a time range (e.g., "list the last 3 days"), use ONLY TIME clause, no ORDER BY, no LIMIT

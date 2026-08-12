@@ -61,11 +61,14 @@ type option struct {
 	syncInterval                 time.Duration
 	memWaitTimeout               time.Duration
 	mergeGraceDefault            time.Duration
+	maxTraceFragmentGap          time.Duration
+	finalizeGraceDefault         time.Duration
 	decideTimeout                time.Duration
 	failedPartsMaxTotalSizeBytes uint64
 	vectorized                   vtrace.VectorizedConfig
 	decideTimeoutCircuitBreak    int
 	nativePipelineEnabled        bool
+	benchmarkMergeBlocked        bool
 	isHot                        bool
 }
 
@@ -132,9 +135,9 @@ func (t *trace) GetIndexRules() []*databasev1.IndexRule {
 }
 
 func (t *trace) OnIndexUpdate(index []*databasev1.IndexRule) {
-	if len(index) == 0 {
-		return
-	}
+	// Store unconditionally (matching measure/stream): an empty index must clear a
+	// previously-applied set, otherwise deleting a subject's last index rule/binding
+	// would leave the stale rules in effect.
 	var is indexSchema
 	is.indexRules = index
 	is.parse(t.schema)

@@ -104,6 +104,19 @@ func (r *coldTierRepo) CollectDataInfo(_ context.Context, group string) (out []*
 	return coldTierEmptyDataInfo(), nil, nil
 }
 
+// CollectLiaisonInfo models a cold-tier data node, which serves no liaison
+// schema. inspectGroup now always asks, so the stub must answer rather than
+// fall through to the nil embedded Repo and panic.
+func (r *coldTierRepo) CollectLiaisonInfo(_ context.Context, _ string) ([]*databasev1.LiaisonInfo, error) {
+	return nil, nil
+}
+
+func (r *coldTierRepo) CollectGroupSchemaSnapshot(_ context.Context, _ string) ([]*databasev1.ObjectSnapshot, []*databasev1.IndexRule, bool, error) {
+	return nil, nil, false, nil
+}
+
+func (r *coldTierRepo) AllCachedGroups() []string { return nil }
+
 // coldTierEmptyDataInfo mirrors the DataInfo shape the fixed schemaRepo
 // returns when every selected segment is in the idle-closed residual state
 // (s.index = nil): non-nil top-level DataInfo with one SegmentInfo entry whose

@@ -34,7 +34,7 @@
   import 'codemirror/theme/dracula.css';
   import './bydbql-mode.js';
   import './bydbql-hint.js';
-  import jsYaml from 'js-yaml';
+  import * as jsYaml from 'js-yaml';
   window.jsyaml = jsYaml;
   export default {
     components: {},

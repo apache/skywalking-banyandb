@@ -74,6 +74,9 @@ type schemaRepo struct {
 	path                   string
 	nodeID                 string
 	trustedPluginDir       string
+	mergeGraceDefault      time.Duration
+	maxTraceFragmentGap    time.Duration
+	finalizeGraceDefault   time.Duration
 	role                   databasev1.Role
 	nativePipelineEnabled  bool
 }
@@ -88,6 +91,9 @@ func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, n
 		role:                   databasev1.Role_ROLE_DATA,
 		nativePipelineEnabled:  svc.option.nativePipelineEnabled,
 		trustedPluginDir:       svc.option.trustedPluginDir,
+		mergeGraceDefault:      svc.option.mergeGraceDefault,
+		maxTraceFragmentGap:    svc.option.maxTraceFragmentGap,
+		finalizeGraceDefault:   svc.option.finalizeGraceDefault,
 		samplerMeter:           newSamplerMetrics(pipelineFactory),
 		pluginTelemetryFactory: pipelineFactory,
 		Repository: resourceSchema.NewRepository(
@@ -102,12 +108,13 @@ func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, n
 	return sr
 }
 
-func newLiaisonSchemaRepo(path string, svc *liaison, traceDataNodeRegistry grpc.NodeRegistry) schemaRepo {
+func newLiaisonSchemaRepo(path string, svc *liaison, traceDataNodeRegistry grpc.NodeRegistry, nodeID string) schemaRepo {
 	pipelineFactory := svc.omr.With(pipelineScope)
 	sr := schemaRepo{
 		l:                      svc.l,
 		path:                   path,
 		metadata:               svc.metadata,
+		nodeID:                 nodeID,
 		role:                   databasev1.Role_ROLE_LIAISON,
 		samplerMeter:           newSamplerMetrics(pipelineFactory),
 		pluginTelemetryFactory: pipelineFactory,
@@ -253,6 +260,9 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 			removeSamplersForGroup(g.Metadata.Name)
 			teardownGroupTelemetry(g.Metadata.Name)
 			setMergeGraceForGroup(g.Metadata.Name, 0)
+			setMergeEventForGroup(g.Metadata.Name, false)
+			setFinalizeGraceForGroup(g.Metadata.Name, 0)
+			setFinalizeConfigForGroup(g.Metadata.Name, nil)
 			sr.samplerMeter.setActiveCount(g.Metadata.Name, 0)
 			sr.samplerMeter.incRemoveTotal(g.Metadata.Name)
 		}
@@ -298,6 +308,14 @@ func mergeEventEnabled(cfg *commonv1.TracePipelineConfig) bool {
 	return slices.Contains(events, commonv1.PipelineEvent_PIPELINE_EVENT_MERGE)
 }
 
+// finalizeEventEnabled reports whether cfg applies to the scheduled finalization
+// pass. Unlike MERGE, an empty enabled_events list does NOT default finalize on:
+// finalization is an extra background procedure and must be opted into explicitly
+// (empty list keeps only the backward-compatible MERGE default).
+func finalizeEventEnabled(cfg *commonv1.TracePipelineConfig) bool {
+	return slices.Contains(cfg.GetEnabledEvents(), commonv1.PipelineEvent_PIPELINE_EVENT_FINALIZE)
+}
+
 // samplerLoadFailReason maps a plugin load error to a small, stable set of reason
 // codes for the sampler_load_failed metric label, keeping label cardinality bounded
 // (the full error is logged separately). Unrecognized errors fall back to "load_error".
@@ -334,14 +352,19 @@ func samplerLoadFailReason(err error) string {
 // merge_grace. If any plugin fails to load, the previous good set is kept intact
 // (fail-open) and an ERROR log is emitted.
 func (sr *schemaRepo) reconcilePipeline(group string, cfg *commonv1.TracePipelineConfig) {
-	// A nil/disabled config, or one that does not enable the merge event, clears the
-	// group's samplers (retain all). enabled_events is honored here so merge filtering
-	// can be disabled without removing the config.
-	if cfg == nil || !cfg.GetEnabled() || !mergeEventEnabled(cfg) {
+	// A nil/disabled config, or one that enables NEITHER the merge nor the finalize
+	// event, clears the group's samplers (retain all). The sampler set is shared by
+	// both events (DD11: finalize reuses the group's registered samplers), so it is
+	// cleared only when both are off. enabled_events is honored here so filtering can
+	// be disabled without removing the config.
+	if cfg == nil || !cfg.GetEnabled() || (!mergeEventEnabled(cfg) && !finalizeEventEnabled(cfg)) {
 		hadSamplers := len(lookupSamplers(group)) > 0
 		removeSamplersForGroup(group)
 		teardownGroupTelemetry(group)
 		setMergeGraceForGroup(group, 0)
+		setMergeEventForGroup(group, false)
+		setFinalizeGraceForGroup(group, 0)
+		setFinalizeConfigForGroup(group, nil)
 		sr.samplerMeter.setActiveCount(group, 0)
 		if hadSamplers {
 			sr.samplerMeter.incRemoveTotal(group)
@@ -449,6 +472,23 @@ func (sr *schemaRepo) reconcilePipeline(group string, cfg *commonv1.TracePipelin
 		graceNs = gd.AsDuration().Nanoseconds()
 	}
 	setMergeGraceForGroup(group, graceNs)
+	setMergeEventForGroup(group, mergeEventEnabled(cfg))
+	// Store finalize_grace + threshold config ONLY when the FINALIZE event is enabled;
+	// a finalize config entry is what marks a group for the background finalize scanner
+	// (a merge-only group must not be scanned). The proto carries no threshold-override
+	// fields in v1, so the config registry holds defaults (filled by lookupFinalizeConfig).
+	// finalize_grace falls back to option.finalizeGraceDefault at lookup time when unset.
+	if finalizeEventEnabled(cfg) {
+		var finalizeGraceNs int64
+		if fg := cfg.GetFinalizeGrace(); fg != nil {
+			finalizeGraceNs = fg.AsDuration().Nanoseconds()
+		}
+		setFinalizeGraceForGroup(group, finalizeGraceNs)
+		setFinalizeConfigForGroup(group, &finalizeConfig{})
+	} else {
+		setFinalizeGraceForGroup(group, 0)
+		setFinalizeConfigForGroup(group, nil)
+	}
 	sr.samplerMeter.setActiveCount(group, len(newSet))
 	if isUpdate {
 		sr.samplerMeter.incUpdateTotal(group, "success")
@@ -481,7 +521,36 @@ func (sr *schemaRepo) loadTSDB(groupName string) (storage.TSDB[*tsTable, option]
 	return db.(storage.TSDB[*tsTable, option]), nil
 }
 
-// CollectDataInfo collects data info for a specific group.
+// CollectSchemaSnapshot returns this node's cache/runtime schema bodies for the
+// group so the FODC agent can fingerprint them on receive.
+func (sr *schemaRepo) CollectSchemaSnapshot(group string) ([]*databasev1.ObjectSnapshot, []*databasev1.IndexRule, error) {
+	return resourceSchema.CollectSchemaSnapshot(sr.Repository, group,
+		schema.KindTrace.String(), traceResourceView)
+}
+
+// CachedGroups lists the trace groups this node currently caches.
+func (sr *schemaRepo) CachedGroups() []string {
+	return resourceSchema.CachedGroupNames(sr.Repository)
+}
+
+// traceResourceView reaches the runtime view of a trace. IndexListener exposes
+// only OnIndexUpdate, so the assertion must happen here -- the same pattern the
+// resource loader in this package uses.
+func traceResourceView(res resourceSchema.Resource) (resourceSchema.ResourceView, bool) {
+	cached, ok := res.Schema().(*databasev1.Trace)
+	if !ok {
+		return resourceSchema.ResourceView{}, false
+	}
+	view := resourceSchema.ResourceView{Name: cached.GetMetadata().GetName(), Cached: cached}
+	if r, isTyped := res.Delegated().(*trace); isTyped {
+		view.Runtime = r.GetSchema()
+		view.RuntimeRules = r.GetIndexRules()
+	}
+	return view, true
+}
+
+// CollectDataInfo collects data info for a specific group. When includeSchemaState
+// is set it also attaches this node's schema consistency evidence.
 func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string) (*databasev1.DataInfo, error) {
 	if sr.nodeID == "" {
 		return nil, fmt.Errorf("node ID is empty")
@@ -782,65 +851,29 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 	if ro == nil {
 		return nil, fmt.Errorf("no resource opts in group %s", name)
 	}
-	shardNum := ro.ShardNum
-	ttl := ro.Ttl
-	segInterval := ro.SegmentInterval
-	// Non-zero default so the idle-segment reclaimer ticker actually starts
-	// (storage/rotation.go gates it on >=1s). Staged Close paths override below.
-	segmentIdleTimeout := time.Hour
-	disableRetention := false
-	disableRotation := false
-	foundMatched := false
-	if len(ro.Stages) > 0 && len(s.nodeLabels) > 0 {
-		var ttlNum uint32
-		for i, st := range ro.Stages {
-			if st.Ttl.Unit != ro.Ttl.Unit {
-				return nil, fmt.Errorf("ttl unit %s is not consistent with stage %s", ro.Ttl.Unit, st.Ttl.Unit)
-			}
-			selector, err := pub.ParseLabelSelector(st.NodeSelector)
-			if err != nil {
-				return nil, errors.WithMessagef(err, "failed to parse node selector %s", st.NodeSelector)
-			}
-			ttlNum += st.Ttl.Num
-			if !selector.Matches(s.nodeLabels) {
-				continue
-			}
-			foundMatched = true
-			ttl.Num += ttlNum
-			shardNum = st.ShardNum
-			segInterval = st.SegmentInterval
-			if st.Close {
-				segmentIdleTimeout = 5 * time.Minute
-			}
-			disableRetention = i+1 < len(ro.Stages)
-			disableRotation = true
-			break
-		}
-		if !foundMatched {
-			disableRetention = true
-			disableRotation = true
-		}
+	res, err := pub.ResolveStage(s.l, name, ro, s.nodeLabels)
+	if err != nil {
+		return nil, err
 	}
 	// isHot marks the Hot stage: a group with no staging at all, a node with no
 	// labels (so staging cannot apply), or a node that matched no stage selector.
-	isHot := len(ro.Stages) == 0 || len(s.nodeLabels) == 0 || !foundMatched
 	opt := s.option
-	opt.isHot = isHot
+	opt.isHot = !res.Matched
 	group := groupSchema.Metadata.Name
 	opts := storage.TSDBOpts[*tsTable, option]{
-		ShardNum:                       shardNum,
+		ShardNum:                       res.ResourceOpts.ShardNum,
 		Location:                       path.Join(s.path, group),
 		TSTableCreator:                 newTSTable,
 		TableMetrics:                   s.newMetrics(p),
-		SegmentInterval:                storage.MustToIntervalRule(segInterval),
-		TTL:                            storage.MustToIntervalRule(ttl),
+		SegmentInterval:                storage.MustToIntervalRule(res.ResourceOpts.SegmentInterval),
+		TTL:                            storage.MustToIntervalRule(res.ResourceOpts.Ttl),
 		Option:                         opt,
 		SeriesIndexFlushTimeoutSeconds: s.option.flushTimeout.Nanoseconds() / int64(time.Second),
 		SeriesIndexCacheMaxBytes:       int(s.option.seriesCacheMaxSize),
 		StorageMetricsFactory:          s.omr.With(storageScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues()))),
-		SegmentIdleTimeout:             segmentIdleTimeout,
-		DisableRetention:               disableRetention,
-		DisableRotation:                disableRotation,
+		SegmentIdleTimeout:             res.SegmentIdleTimeout,
+		DisableRetention:               res.DisableRetention,
+		DisableRotation:                res.DisableRotation,
 		MemoryLimit:                    s.pm.GetLimit(),
 	}
 	return storage.OpenTSDB(
@@ -849,6 +882,12 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 		}),
 		opts, nil, group,
 	)
+}
+
+// ResolveResourceOpts returns the stage-resolved ResourceOpts so a group UpdateOptions
+// applies the matched stage's interval/ttl/shardNum instead of the group default.
+func (s *supplier) ResolveResourceOpts(groupSchema *commonv1.Group) *commonv1.ResourceOpts {
+	return pub.ResolveResourceOptsForUpdate(s.l, groupSchema, s.nodeLabels)
 }
 
 // queueSupplier is the supplier for liaison service.
@@ -896,6 +935,12 @@ func (qs *queueSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.R
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return qs.metadata.TraceRegistry().GetTrace(ctx, md)
+}
+
+// ResolveResourceOpts returns the group opts unchanged: the liaison write queue has no
+// lifecycle stages to resolve.
+func (qs *queueSupplier) ResolveResourceOpts(groupSchema *commonv1.Group) *commonv1.ResourceOpts {
+	return groupSchema.GetResourceOpts()
 }
 
 func (qs *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error) {

@@ -27,17 +27,56 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/iter"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
+	vstream "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream"
 )
 
 // StreamExecutionContext allows retrieving data through the stream module.
+//
+// QueryVectorized and VectorizedConfig are the vec-path additions: the former
+// yields a pull-based columnar scan source (the M3 vecScanSource), the latter
+// surfaces the engine-side --stream-vectorized-* configuration so the vec
+// dispatch can decide whether the flag is on.
 type StreamExecutionContext interface {
 	Query(ctx context.Context, opts model.StreamQueryOptions) (model.StreamQueryResult, error)
+	QueryVectorized(ctx context.Context, opts model.StreamQueryOptions) (StreamVecScanSource, error)
+	VectorizedConfig() vstream.VectorizedConfig
+}
+
+// StreamVecScanSource is the pull contract the vec scan source exposes: one
+// columnar batch per NextBatch, (nil, nil) at exhaustion, Release to free
+// resources. It mirrors banyand/stream's vecScanSource without importing it, so
+// the executor package stays free of a data-node dependency cycle.
+type StreamVecScanSource interface {
+	NextBatch(ctx context.Context) (*vectorized.RecordBatch, error)
+	// Schema returns the batch schema the source stamps on every batch it emits.
+	// The M4 SortedMerge validates batch.Schema by pointer identity, so the merge
+	// pipeline MUST be built with this exact schema, not a freshly-built one.
+	Schema() *vectorized.BatchSchema
+	Release()
 }
 
 // StreamExecutable allows querying in the stream schema.
 type StreamExecutable interface {
 	Execute(context.Context) ([]*streamv1.Element, error)
 	Close()
+}
+
+// StreamVecExecutable is the optional capability a stream plan node exposes when
+// it can be executed through the native columnar (vectorized) path. The data-node
+// processor type-asserts the analyzed plan to this interface; a plan shape that
+// cannot be vectorized (multi-group merge, skipping filter, tag filter, etc.)
+// simply does not implement it, so the assertion fails and the row path runs.
+//
+// ExecuteVectorized returns the fully merged/deduped/limited columnar batches
+// (the M4 pipeline already applied) plus the batch schema, so both the
+// standalone egress and the data-node frame emit consume a single columnar
+// result.
+type StreamVecExecutable interface {
+	ExecuteVectorized(ctx context.Context) ([]*vectorized.RecordBatch, *vectorized.BatchSchema, error)
+	// ProjectionTags returns the projected tag families/names in projection order,
+	// so the egress builds the same tag families/tags the row path would.
+	ProjectionTags() []model.TagProjection
 }
 
 // MeasureExecutionContext allows retrieving data through the measure module.

@@ -73,57 +73,83 @@ func (c *TagColumn) At(row int) (Value, error) {
 	return DecodeTagValue(c.ValueType, c.Values[row])
 }
 
+// AtInto decodes the value at the given span row into dst. Callers may reuse
+// dst across rows to avoid copying the Value and reallocating array storage.
+func (c *TagColumn) AtInto(row int, dst *Value) error {
+	if dst == nil {
+		return fmt.Errorf("tag %q: destination is nil", c.Name)
+	}
+	if row < 0 || row >= len(c.Values) {
+		return fmt.Errorf("tag %q: row %d out of range [0,%d)", c.Name, row, len(c.Values))
+	}
+	return DecodeTagValueInto(dst, c.ValueType, c.Values[row])
+}
+
 // DecodeTagValue decodes one marshaled tag value, as stored in the native trace
 // block, into a typed Value. It mirrors the engine's own per-row decode so a
 // plugin never needs to import banyand/trace internals. A nil raw value yields
 // a null Value.
 func DecodeTagValue(valueType valuetype.ValueType, raw []byte) (Value, error) {
+	var value Value
+	if err := DecodeTagValueInto(&value, valueType, raw); err != nil {
+		return Value{}, err
+	}
+	return value, nil
+}
+
+// DecodeTagValueInto decodes one marshaled tag value into dst. Existing array
+// capacity in dst is reused; all fields from a preceding value are reset.
+func DecodeTagValueInto(dst *Value, valueType valuetype.ValueType, raw []byte) error {
+	if dst == nil {
+		return fmt.Errorf("destination is nil")
+	}
+	strArr := dst.strArr[:0]
+	intArr := dst.intArr[:0]
+	*dst = Value{valueType: valueType, strArr: strArr, intArr: intArr}
 	if raw == nil {
-		return Value{valueType: valueType, null: true}, nil
+		dst.null = true
+		return nil
 	}
 	switch valueType {
 	case valuetype.ValueTypeStr:
-		return Value{valueType: valueType, str: string(raw)}, nil
+		dst.str = string(raw)
 	case valuetype.ValueTypeInt64:
 		if len(raw) != 8 {
-			return Value{}, fmt.Errorf("int64: expected 8 bytes, got %d", len(raw))
+			return fmt.Errorf("int64: expected 8 bytes, got %d", len(raw))
 		}
-		return Value{valueType: valueType, int64Val: convert.BytesToInt64(raw)}, nil
+		dst.int64Val = convert.BytesToInt64(raw)
 	case valuetype.ValueTypeFloat64:
 		if len(raw) != 8 {
-			return Value{}, fmt.Errorf("float64: expected 8 bytes, got %d", len(raw))
+			return fmt.Errorf("float64: expected 8 bytes, got %d", len(raw))
 		}
-		return Value{valueType: valueType, floatVal: convert.BytesToFloat64(raw)}, nil
+		dst.floatVal = convert.BytesToFloat64(raw)
 	case valuetype.ValueTypeBinaryData:
-		return Value{valueType: valueType, bytes: raw}, nil
+		dst.bytes = raw
 	case valuetype.ValueTypeTimestamp:
 		if len(raw) != 8 {
-			return Value{}, fmt.Errorf("timestamp: expected 8 bytes, got %d", len(raw))
+			return fmt.Errorf("timestamp: expected 8 bytes, got %d", len(raw))
 		}
-		return Value{valueType: valueType, int64Val: convert.BytesToInt64(raw)}, nil
+		dst.int64Val = convert.BytesToInt64(raw)
 	case valuetype.ValueTypeInt64Arr:
 		if len(raw)%8 != 0 {
-			return Value{}, fmt.Errorf("int64 array: length %d is not a multiple of 8", len(raw))
+			return fmt.Errorf("int64 array: length %d is not a multiple of 8", len(raw))
 		}
-		values := make([]int64, 0, len(raw)/8)
-		for i := 0; i < len(raw); i += 8 {
-			values = append(values, convert.BytesToInt64(raw[i:i+8]))
+		for offset := 0; offset < len(raw); offset += 8 {
+			dst.intArr = append(dst.intArr, convert.BytesToInt64(raw[offset:offset+8]))
 		}
-		return Value{valueType: valueType, intArr: values}, nil
 	case valuetype.ValueTypeStrArr:
-		var values []string
 		for idx := 0; idx < len(raw); {
 			end, next, err := vararray.UnmarshalVarArray(raw, idx)
 			if err != nil {
-				return Value{}, fmt.Errorf("str array: %w", err)
+				return fmt.Errorf("str array: %w", err)
 			}
-			values = append(values, string(raw[idx:end]))
+			dst.strArr = append(dst.strArr, string(raw[idx:end]))
 			idx = next
 		}
-		return Value{valueType: valueType, strArr: values}, nil
 	case valuetype.ValueTypeUnknown:
-		return Value{valueType: valueType, null: true}, nil
+		dst.null = true
 	default:
-		return Value{}, fmt.Errorf("unsupported value type: %d", valueType)
+		return fmt.Errorf("unsupported value type: %d", valueType)
 	}
+	return nil
 }

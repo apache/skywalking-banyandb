@@ -1,0 +1,205 @@
+[
+  {
+    "id": "stream_by_time_svc0",
+    "request": {
+      "groups": [
+        "bench-stream-fixture"
+      ],
+      "name": "sw",
+      "limit": 50,
+      "criteria": {
+        "condition": {
+          "name": "service_id",
+          "op": "BINARY_OP_EQ",
+          "value": {
+            "str": {
+              "value": "svc-0"
+            }
+          }
+        }
+      },
+      "projection": {
+        "tagFamilies": [
+          {
+            "name": "searchable",
+            "tags": [
+              "service_id",
+              "state",
+              "duration"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "stream_newest_svc0",
+    "request": {
+      "groups": [
+        "bench-stream-fixture"
+      ],
+      "name": "sw",
+      "limit": 20,
+      "orderBy": {
+        "sort": "SORT_DESC"
+      },
+      "criteria": {
+        "condition": {
+          "name": "service_id",
+          "op": "BINARY_OP_EQ",
+          "value": {
+            "str": {
+              "value": "svc-0"
+            }
+          }
+        }
+      },
+      "projection": {
+        "tagFamilies": [
+          {
+            "name": "searchable",
+            "tags": [
+              "service_id",
+              "state",
+              "duration"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "stream_by_duration_svc0",
+    "request": {
+      "groups": [
+        "bench-stream-fixture"
+      ],
+      "name": "sw",
+      "limit": 20,
+      "orderBy": {
+        "indexRuleName": "duration",
+        "sort": "SORT_DESC"
+      },
+      "criteria": {
+        "condition": {
+          "name": "service_id",
+          "op": "BINARY_OP_EQ",
+          "value": {
+            "str": {
+              "value": "svc-0"
+            }
+          }
+        }
+      },
+      "projection": {
+        "tagFamilies": [
+          {
+            "name": "searchable",
+            "tags": [
+              "service_id",
+              "state",
+              "duration"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "stream_filter_state_svc0",
+    "request": {
+      "groups": [
+        "bench-stream-fixture"
+      ],
+      "name": "sw",
+      "limit": 30,
+      "criteria": {
+        "le": {
+          "op": "LOGICAL_OP_AND",
+          "left": {
+            "condition": {
+              "name": "service_id",
+              "op": "BINARY_OP_EQ",
+              "value": {
+                "str": {
+                  "value": "svc-0"
+                }
+              }
+            }
+          },
+          "right": {
+            "condition": {
+              "name": "state",
+              "op": "BINARY_OP_EQ",
+              "value": {
+                "int": {
+                  "value": "0"
+                }
+              }
+            }
+          }
+        }
+      },
+      "projection": {
+        "tagFamilies": [
+          {
+            "name": "searchable",
+            "tags": [
+              "service_id",
+              "state",
+              "duration"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "stream_all_unfiltered",
+    "request": {
+      "groups": [
+        "bench-stream-fixture"
+      ],
+      "name": "sw",
+      "limit": 50,
+      "projection": {
+        "tagFamilies": [
+          {
+            "name": "searchable",
+            "tags": [
+              "service_id",
+              "state",
+              "duration"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "stream_all_by_duration",
+    "request": {
+      "groups": [
+        "bench-stream-fixture"
+      ],
+      "name": "sw",
+      "limit": 20,
+      "orderBy": {
+        "indexRuleName": "duration",
+        "sort": "SORT_DESC"
+      },
+      "projection": {
+        "tagFamilies": [
+          {
+            "name": "searchable",
+            "tags": [
+              "service_id",
+              "state",
+              "duration"
+            ]
+          }
+        ]
+      }
+    }
+  }
+]

@@ -76,6 +76,9 @@ func TestDecodeTracePartFormat(t *testing.T) {
 		require.NoError(t, parseErr, "should parse all block metadata from primary block %d", blockIdx)
 
 		for _, bm := range blockMetadatas {
+			assert.True(t, bm.timestampBoundsKnown, "new trace parts persist timestamp bounds")
+			assert.LessOrEqual(t, bm.minTimestamp, bm.maxTimestamp, "block timestamp bounds must be ordered")
+
 			spans, spanIDs, spanErr := readSpans(decoder, bm.spans, int(bm.count), p.spans)
 			require.NoError(t, spanErr, "should read spans for trace %s", bm.traceID)
 			assert.Len(t, spans, int(bm.count))
@@ -90,6 +93,30 @@ func TestDecodeTracePartFormat(t *testing.T) {
 		}
 	}
 	assert.Equal(t, int(p.partMetadata.TotalCount), totalSpans, "should have parsed all spans from metadata")
+}
+
+func TestParseLegacyBlockMetadata(t *testing.T) {
+	encoded := encoding.EncodeBytes(nil, []byte("trace-legacy"))
+	encoded = encoding.VarUint64ToBytes(encoded, 1024)
+	encoded = encoding.VarUint64ToBytes(encoded, 3)
+	encoded = encoding.VarUint64ToBytes(encoded, 11)
+	encoded = encoding.VarUint64ToBytes(encoded, 22)
+	encoded = encoding.VarUint64ToBytes(encoded, 1)
+	encoded = encoding.EncodeBytes(encoded, []byte("timestamp"))
+	encoded = encoding.VarUint64ToBytes(encoded, 33)
+	encoded = encoding.VarUint64ToBytes(encoded, 44)
+
+	blocks, parseErr := parseAllBlockMetadataWithFormat(encoded, map[string]pbv1.ValueType{
+		"timestamp": pbv1.ValueTypeTimestamp,
+	}, PartFormatLegacy)
+	require.NoError(t, parseErr)
+	require.Len(t, blocks, 1)
+	assert.Equal(t, "trace-legacy", blocks[0].traceID)
+	assert.Equal(t, uint64(1024), blocks[0].uncompressedSpanSizeBytes)
+	assert.Equal(t, uint64(3), blocks[0].count)
+	assert.Equal(t, &dataBlock{offset: 11, size: 22}, blocks[0].spans)
+	assert.Equal(t, &dataBlock{offset: 33, size: 44}, blocks[0].tags["timestamp"])
+	assert.False(t, blocks[0].timestampBoundsKnown)
 }
 
 // TestTraceIteratorAllRows walks every span of the part and verifies, keyed by

@@ -108,6 +108,14 @@ func (p *part) ID() uint64 {
 // It opens all standard files and discovers tag files automatically.
 // Panics if any required file cannot be opened.
 func mustOpenPart(partID uint64, path string, fileSystem fs.FileSystem) *part {
+	return mustOpenPartMode(partID, path, fileSystem, true)
+}
+
+func mustOpenPartReadOnly(partID uint64, path string, fileSystem fs.FileSystem) *part {
+	return mustOpenPartMode(partID, path, fileSystem, false)
+}
+
+func mustOpenPartMode(partID uint64, path string, fileSystem fs.FileSystem, cleanLeftovers bool) *part {
 	p := &part{
 		path:       path,
 		fileSystem: fileSystem,
@@ -117,7 +125,9 @@ func mustOpenPart(partID uint64, path string, fileSystem fs.FileSystem) *part {
 	// before opening any of the part's files. A .tmp without its final stays
 	// in place so the existing panic-on-missing-metadata fires for operator
 	// intervention.
-	fs.CleanupLeftoverTmp(fileSystem, path)
+	if cleanLeftovers {
+		fs.CleanupLeftoverTmp(fileSystem, path)
+	}
 
 	// Open standard files.
 	p.primary = mustOpenReader(filepath.Join(path, primaryFilename), fileSystem)

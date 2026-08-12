@@ -20,6 +20,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -699,6 +700,10 @@ func (m *mockLifecycleDataRequester) RequestLifecycleData(agentID string) error 
 		m.lifecycleMgr.UpdateLifecycle(agentID, podName, data)
 	}
 	return nil
+}
+
+func (m *mockLifecycleDataRequester) FetchSchemaRegistry(_ context.Context, _ string) ([]*fodcv1.SchemaRegistryGroup, error) {
+	return nil, fmt.Errorf("no schema registry configured")
 }
 
 func TestFormatPrometheusText_SortedMetrics(t *testing.T) {

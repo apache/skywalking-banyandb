@@ -17,24 +17,34 @@
 #
 
 NAME := canopy
+IMG_NAME := skywalking-banyandb
+DIST_INDEX := server/dist/src/index.js
 
 mk_path  := $(abspath $(lastword $(MAKEFILE_LIST)))
 mk_dir   := $(dir $(mk_path))
 tool_bin := $(mk_dir)../bin
+repo_root := $(abspath $(mk_dir)../)
 
+include ../scripts/build/docker.mk
 include ../scripts/build/license.mk
 
 .PHONY: install
 install:
 	npm install
 
-.PHONY: build
-build: install
+$(DIST_INDEX): install
 	npm run build
+
+.PHONY: build
+build: $(DIST_INDEX)
 
 .PHONY: clean-build
 clean-build:
 	rm -rf web/dist server/dist
+
+.PHONY: typecheck
+typecheck: install
+	npm run typecheck
 
 .PHONY: lint
 lint: install
@@ -44,10 +54,31 @@ lint: install
 test: install
 	npm run test
 
+.PHONY: e2e
+e2e: build
+	npm run e2e
+
+.PHONY: release
+release: build
+
+# docker / docker.push come from docker.mk. Unlike mcp, they do NOT depend on
+# the host-side build: the Dockerfile runs the full npm ci + build in-container
+# (and the CI image-build job has no Node setup), so a host toolchain is never
+# required for the image.
+
+# license-check / license-fix delegate to the ROOT .licenserc.yaml instead of
+# canopy/.licenserc.yaml, so the OMC runtime state + handoff / playwright
+# artefacts (which live outside this directory but inside the repo) are
+# excluded by patterns defined ONCE in the root config. This avoids editing
+# ui/ or any other subproject's .licenserc.yaml.
 .PHONY: license-check
 license-check: $(LICENSE_EYE) ## Check license header
-	$(LICENSE_EYE) header check
+	$(LICENSE_EYE) -c $(repo_root)/.licenserc.yaml header check
 
 .PHONY: license-fix
 license-fix: $(LICENSE_EYE) ## Fix license header issues
-	$(LICENSE_EYE) header fix
+	$(LICENSE_EYE) -c $(repo_root)/.licenserc.yaml header fix
+
+.PHONY: vendor-update
+vendor-update: ## Update all workspace dependencies
+	npm update

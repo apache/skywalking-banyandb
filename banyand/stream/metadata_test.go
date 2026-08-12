@@ -19,6 +19,8 @@ package stream_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -126,7 +128,7 @@ var _ = Describe("Metadata", func() {
 				})
 				Expect(err).ShouldNot(HaveOccurred())
 				Expect(streamSchema).ShouldNot(BeNil())
-				writeData(svcs, size, nil, false)
+				writeData(svcs, size, 0, nil, false)
 				_ = queryAllMeasurements(svcs, size, nil, "")
 
 				l := len(streamSchema.TagFamilies)
@@ -178,7 +180,7 @@ var _ = Describe("Metadata", func() {
 					}
 				})
 				It("get new values for the new added tags", func() {
-					writeData(svcs, size, []string{"test1", "test2", "test3"}, independentFamily)
+					writeData(svcs, size, size, []string{"test1", "test2", "test3"}, independentFamily)
 					dp := queryAllMeasurements(svcs, size*2, []string{"new_tag"}, "")
 					for i := 0; i < size; i++ {
 						Expect(dp[i].TagFamilies[0].Tags[3].Key).Should(Equal("new_tag"))
@@ -209,7 +211,7 @@ var _ = Describe("Metadata", func() {
 					}
 				})
 				It("get new values for the new added tags", func() {
-					writeData(svcs, size, []string{"test1", "test2", "test3"}, independentFamily)
+					writeData(svcs, size, size, []string{"test1", "test2", "test3"}, independentFamily)
 					dp := queryAllMeasurements(svcs, size*2, []string{"new_tag"}, "independent_family")
 
 					for i := 0; i < size; i++ {
@@ -234,7 +236,11 @@ var _ = Describe("Metadata", func() {
 	})
 })
 
-func writeData(svcs *services, expectedSize int, newTag []string, independentFamily bool) {
+// writeData writes expectedSize elements. idOffset shifts the element ids so a
+// second call does not reuse the ids of the first: an element_id identifies an
+// element globally, so reusing one makes the two writes the same element and the
+// query layer is free to collapse them.
+func writeData(svcs *services, expectedSize, idOffset int, newTag []string, independentFamily bool) {
 	bp := svcs.pipeline.NewBatchPublisher(5 * time.Second)
 	defer bp.Close()
 	for i := 0; i < expectedSize; i++ {
@@ -246,7 +252,7 @@ func writeData(svcs *services, expectedSize int, newTag []string, independentFam
 			},
 			Element: &streamv1.ElementValue{
 				Timestamp: timestamppb.New(timestamp.NowMilli()),
-				ElementId: "element" + iStr,
+				ElementId: "element" + strconv.Itoa(idOffset+i),
 				TagFamilies: []*modelv1.TagFamilyForWrite{
 					{
 						Tags: []*modelv1.TagValue{
@@ -394,7 +400,7 @@ var _ = Describe("Schema Change", func() {
 			env := setupSchemaChangeStream(svcs, streamName, groupName, streamSetupOptions{withExtraTag: true})
 			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-2*time.Hour), 5, writeDataOptions{extraTag: extraTagInt})
 			deleteExtraTag(svcs, streamName, groupName)
-			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3, writeDataOptions{})
+			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3, writeDataOptions{elementIDOffset: 5})
 
 			test.EventuallyConsistently(func(innerGm Gomega) {
 				elements := querySchemaChangeData(svcs, streamName, groupName, now.Add(-3*time.Hour), now,
@@ -403,7 +409,7 @@ var _ = Describe("Schema Change", func() {
 
 				for _, elem := range elements {
 					for _, tf := range elem.TagFamilies {
-						if tf.Name == "searchable" {
+						if tf.Name == searchableTagFamily {
 							for _, tag := range tf.Tags {
 								innerGm.Expect(tag.Key).NotTo(Equal("extra_tag"),
 									"deleted tag should not be returned in query results")
@@ -425,7 +431,7 @@ var _ = Describe("Schema Change", func() {
 			env := setupSchemaChangeStream(svcs, streamName, groupName, streamSetupOptions{})
 			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-2*time.Hour), 5, writeDataOptions{})
 			addExtraTag(svcs, streamName, groupName)
-			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3, writeDataOptions{extraTag: extraTagInt})
+			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3, writeDataOptions{extraTag: extraTagInt, elementIDOffset: 5})
 
 			Eventually(func(innerGm Gomega) {
 				elements := querySchemaChangeData(svcs, streamName, groupName, now.Add(-3*time.Hour), now,
@@ -436,7 +442,7 @@ var _ = Describe("Schema Change", func() {
 				newDataCount := 0
 				for _, elem := range elements {
 					for _, tf := range elem.TagFamilies {
-						if tf.Name == "searchable" {
+						if tf.Name == searchableTagFamily {
 							for _, tag := range tf.Tags {
 								if tag.Key == "extra_tag" {
 									if tag.Value.GetInt() != nil {
@@ -465,7 +471,8 @@ var _ = Describe("Schema Change", func() {
 			env := setupSchemaChangeStream(svcs, streamName, groupName, streamSetupOptions{withExtraTag: true})
 			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-2*time.Hour), 5, writeDataOptions{extraTag: extraTagInt})
 			changeExtraTagType(svcs, streamName, groupName)
-			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3, writeDataOptions{extraTag: extraTagString, traceIDPrefix: "trace_new_"})
+			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3,
+				writeDataOptions{extraTag: extraTagString, traceIDPrefix: "trace_new_", elementIDOffset: 5})
 
 			Eventually(func(innerGm Gomega) {
 				elements := querySchemaChangeData(svcs, streamName, groupName, now.Add(-3*time.Hour), now,
@@ -476,7 +483,7 @@ var _ = Describe("Schema Change", func() {
 				stringCount := 0
 				for _, elem := range elements {
 					for _, tf := range elem.TagFamilies {
-						if tf.Name == "searchable" {
+						if tf.Name == searchableTagFamily {
 							for _, tag := range tf.Tags {
 								if tag.Key == "extra_tag" {
 									switch tag.Value.GetValue().(type) {
@@ -498,6 +505,65 @@ var _ = Describe("Schema Change", func() {
 		})
 	})
 
+	Context("Stream schema with changed tag type after merge", func() {
+		It("querying data should return correct values after parts with different types are merged", func() {
+			streamName := "schema_change_tag_type_merge"
+			now := timestamp.NowMilli()
+
+			env := setupSchemaChangeStream(svcs, streamName, groupName, streamSetupOptions{withExtraTag: true})
+			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-2*time.Hour), 5,
+				writeDataOptions{extraTag: extraTagInt})
+			changeExtraTagType(svcs, streamName, groupName)
+			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3,
+				writeDataOptions{extraTag: extraTagString, traceIDPrefix: "trace_new_", elementIDOffset: 5})
+			partCountBeforeMerge, partCountErr := getTotalStreamPartCount(svcs, groupName)
+			Expect(partCountErr).ShouldNot(HaveOccurred())
+			// The background merge runs asynchronously; under the full parallel -race
+			// suite on CI its goroutine competes for CPU and snapshot locks with every
+			// other test. Poll on a relaxed interval (rather than Gomega's ~10ms
+			// default) so this wait does not starve the merge it is waiting for, with a
+			// generous, environment-scaled budget for merge latency. The post-merge
+			// part count is stable (no further writes), so slow polling never misses it.
+			Eventually(func(innerGm Gomega) int64 {
+				currentPartCount, currentPartCountErr := getTotalStreamPartCount(svcs, groupName)
+				innerGm.Expect(currentPartCountErr).ShouldNot(HaveOccurred())
+				return currentPartCount
+			}, 10*flags.EventuallyTimeout, 500*time.Millisecond).Should(BeNumerically("<", partCountBeforeMerge))
+
+			Eventually(func(innerGm Gomega) {
+				elements := querySchemaChangeData(svcs, streamName, groupName,
+					now.Add(-3*time.Hour), now,
+					[]string{"trace_id", "service_id", "duration", "extra_tag"}, nil)
+				innerGm.Expect(elements).To(HaveLen(8))
+
+				nullCount := 0
+				stringCount := 0
+				for _, elem := range elements {
+					for _, tf := range elem.TagFamilies {
+						if tf.Name == searchableTagFamily {
+							for _, tag := range tf.Tags {
+								if tag.Key == "extra_tag" {
+									switch tag.Value.GetValue().(type) {
+									case *modelv1.TagValue_Null:
+										nullCount++
+									case *modelv1.TagValue_Str:
+										stringCount++
+									}
+								}
+							}
+						}
+					}
+				}
+				innerGm.Expect(nullCount).To(Equal(5),
+					"old data with int type should return null after schema changed to STRING and parts merged")
+				innerGm.Expect(stringCount).To(Equal(3),
+					"new data should have string extra_tag values after merge")
+			}, flags.EventuallyTimeout).Should(Succeed())
+
+			env.cleanup()
+		})
+	})
+
 	Context("Stream schema with deleted tag in query", func() {
 		It("querying data should fail if the condition includes a deleted tag", func() {
 			streamName := "schema_change_filter_deleted"
@@ -506,7 +572,7 @@ var _ = Describe("Schema Change", func() {
 			env := setupSchemaChangeStream(svcs, streamName, groupName, streamSetupOptions{withExtraTag: true})
 			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-2*time.Hour), 5, writeDataOptions{extraTag: extraTagInt})
 			deleteExtraTag(svcs, streamName, groupName)
-			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3, writeDataOptions{})
+			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3, writeDataOptions{elementIDOffset: 5})
 
 			test.EventuallyConsistently(func(innerGm Gomega) {
 				err := queryWithDeletedTagCondition(svcs, streamName, groupName, now)
@@ -524,7 +590,7 @@ var _ = Describe("Schema Change", func() {
 			env := setupSchemaChangeStream(svcs, streamName, groupName, streamSetupOptions{withExtraTag: true})
 			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-2*time.Hour), 5, writeDataOptions{extraTag: extraTagInt})
 			deleteExtraTag(svcs, streamName, groupName)
-			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3, writeDataOptions{})
+			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3, writeDataOptions{elementIDOffset: 5})
 
 			test.EventuallyConsistently(func(innerGm Gomega) {
 				err := queryWithDeletedTagProjection(svcs, streamName, groupName, now)
@@ -608,6 +674,8 @@ var _ = Describe("Schema Change", func() {
 		})
 	})
 })
+
+const searchableTagFamily = "searchable"
 
 type extraTagType int
 
@@ -908,4 +976,21 @@ func querySchemaChangeData(svcs *services, name, group string, begin, end time.T
 		return false
 	}).WithTimeout(flags.EventuallyTimeout).Should(BeTrue())
 	return resp.Elements
+}
+
+func getTotalStreamPartCount(svcs *services, group string) (int64, error) {
+	dataInfo, err := svcs.stream.CollectDataInfo(context.TODO(), group)
+	if err != nil {
+		return 0, fmt.Errorf("collect stream data info: %w", err)
+	}
+	if dataInfo == nil {
+		return 0, errors.New("stream data info is nil")
+	}
+	var total int64
+	for _, seg := range dataInfo.SegmentInfo {
+		for _, shard := range seg.ShardInfo {
+			total += shard.PartCount
+		}
+	}
+	return total, nil
 }

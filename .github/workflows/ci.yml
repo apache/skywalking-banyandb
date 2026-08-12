@@ -31,6 +31,10 @@ on:
 env:
   SEGMENT_DOWNLOAD_TIMEOUT_MINS: 5
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   prepare:
     name: Prepare (Generate)
@@ -54,11 +58,11 @@ jobs:
         id: cache-tool
         with:
           path: bin
-          key: ${{ runner.os }}-generate-tool-${{ hashFiles('**/version.mk') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-generate-tool-${{ hashFiles('scripts/build/version.mk') }}
       - name: npm ci and format
         run: |
+          make -C ui install
           cd ui
-          npm ci
           npm run format
           cd ../
       - name: Run consistency check
@@ -88,11 +92,31 @@ jobs:
       - name: Generate dependencies licenses
         run: make license-dep
       - name: Check
-        run: make check
+        run: make check-format
+  vuln-check:
+    name: Vulnerability Scan
+    runs-on: ubuntu-latest
+    needs: [prepare]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
+        with:
+          download-artifacts: 'true'
+          setup-node: 'false'
+          setup-docker: 'false'
+      - name: Cache Tools
+        uses: actions/cache@v4
+        with:
+          path: bin
+          key: ${{ runner.os }}-${{ runner.arch }}-vuln-tool-${{ hashFiles('scripts/build/version.mk') }}
+      - name: Run govulncheck (stdlib + dependency CVEs)
+        run: make vuln-check
   detect_fodc_e2e_changes:
     name: Detect FODC E2E Changes
     runs-on: ubuntu-latest
-    needs: [check]
+    needs: [prepare]
     outputs:
       should_run: ${{ steps.filter.outputs.should_run }}
     steps:
@@ -126,45 +150,68 @@ jobs:
           fi
 
           echo "should_run=${should_run}" >> "${GITHUB_OUTPUT}"
+  test-gate:
+    name: Enable Tests
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'Tests enabled'
   test-banyand:
     name: Test Banyand
-    needs: [check]
+    needs: [prepare, test-gate]
     uses: ./.github/workflows/test-banyand.yml
   test-bydbctl:
     name: Test Bydbctl
-    needs: [check]
+    needs: [prepare, test-gate]
     uses: ./.github/workflows/test-bydbctl.yml
   test-fodc:
     name: Test FODC
-    needs: [check]
+    needs: [prepare, test-gate]
     uses: ./.github/workflows/test-fodc.yml
   test-fodc-e2e:
     name: Test FODC E2E
-    needs: [check, detect_fodc_e2e_changes]
+    needs: [prepare, detect_fodc_e2e_changes, test-gate]
     uses: ./.github/workflows/test-fodc-e2e.yml
     with:
       should_run: ${{ github.event_name != 'pull_request' || needs.detect_fodc_e2e_changes.outputs.should_run == 'true' }}
   test-pkg:
     name: Test Pkg
-    needs: [check]
+    needs: [prepare, test-gate]
     uses: ./.github/workflows/test-pkg.yml
   test-integration-standalone:
     name: Test Integration Standalone
-    needs: [check]
+    needs: [prepare, test-gate]
     uses: ./.github/workflows/test-integration-standalone.yml
   test-integration-distributed:
     name: Test Integration Distributed
-    needs: [check]
+    needs: [prepare, test-gate]
     uses: ./.github/workflows/test-integration-distributed.yml
   e2e:
     name: E2E Tests
-    needs: [check]
+    needs: [prepare, test-gate]
     uses: ./.github/workflows/e2e.yml
 
   result:
     name: Continuous Integration
     runs-on: ubuntu-24.04
+    if: |
+      always() &&
+      needs.check.result == 'success' &&
+      needs.vuln-check.result == 'success' &&
+      needs.detect_fodc_e2e_changes.result == 'success' &&
+      (needs.test-gate.result == 'skipped' || success())
     needs:
-      [detect_fodc_e2e_changes, test-banyand, test-bydbctl, test-fodc, test-fodc-e2e, test-pkg, test-integration-standalone, test-integration-distributed, e2e]
+      - check
+      - vuln-check
+      - detect_fodc_e2e_changes
+      - test-gate
+      - test-banyand
+      - test-bydbctl
+      - test-fodc
+      - test-fodc-e2e
+      - test-pkg
+      - test-integration-standalone
+      - test-integration-distributed
+      - e2e
     steps:
       - run: echo 'success'

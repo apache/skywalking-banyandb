@@ -244,6 +244,69 @@ func TestDiskMonitor_StartStop(t *testing.T) {
 	assert.False(t, dm.isActive.Load())
 }
 
+func TestDiskMonitor_StopDoesNotHangWhenActive(t *testing.T) {
+	service := NewMockRetentionService()
+	config := RetentionConfig{
+		HighWatermark:       80.0,
+		LowWatermark:        60.0,
+		CheckInterval:       time.Hour, // long interval so no cleanup cycle races the test
+		Cooldown:            time.Millisecond,
+		ForceCleanupEnabled: true,
+	}
+	registry := createMockMetricsRegistry()
+
+	dm := NewDiskMonitor(service, config, registry)
+	dm.Start()
+
+	// Simulate a forced cleanup that is still active when the monitor is
+	// stopped. Previously Stop() polled isActive, which the monitor loop only
+	// clears from within a cleanup cycle; closing stopCh made the loop exit
+	// without clearing it, hanging Stop() forever.
+	dm.isActive.Store(true)
+
+	stopped := make(chan struct{})
+	go func() {
+		dm.Stop()
+		close(stopped)
+	}()
+
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop() hung while a forced cleanup was active")
+	}
+	assert.False(t, dm.isActive.Load())
+}
+
+func TestDiskMonitor_StopBeforeStartDoesNotHang(t *testing.T) {
+	service := NewMockRetentionService()
+	config := RetentionConfig{
+		HighWatermark:       80.0,
+		LowWatermark:        60.0,
+		CheckInterval:       time.Hour,
+		Cooldown:            time.Millisecond,
+		ForceCleanupEnabled: true,
+	}
+	registry := createMockMetricsRegistry()
+
+	dm := NewDiskMonitor(service, config, registry)
+
+	// Stop() must be safe on a constructed-but-unstarted monitor. Stop() waits
+	// on doneCh, which only Start()/monitorLoop close, so calling it before
+	// Start() previously blocked forever.
+	stopped := make(chan struct{})
+	go func() {
+		dm.Stop()
+		close(stopped)
+	}()
+
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop() hung when called before Start()")
+	}
+}
+
 func TestDiskMonitor_StartWithZeroInterval(t *testing.T) {
 	service := NewMockRetentionService()
 	config := RetentionConfig{

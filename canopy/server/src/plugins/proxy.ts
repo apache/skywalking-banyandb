@@ -130,17 +130,8 @@ async function forwardRequest(
     return;
   }
 
-  // Upstream 5xx → wrap as 502
-  if (upstreamRes.statusCode >= 500) {
-    await upstreamRes.body.dump();
-    await reply.status(502).send({
-      error: 'upstream_error',
-      message: `Upstream returned ${upstreamRes.statusCode}`,
-    });
-    return;
-  }
-
-  // Forward the response
+  // Forward the response (including 5xx) so the UI can surface the upstream's
+  // own error details rather than a generic BFF-wrapped message.
   const forwardHeaders: Record<string, string | string[]> = {};
   for (const [k, v] of Object.entries(upstreamRes.headers)) {
     const lower = k.toLowerCase();

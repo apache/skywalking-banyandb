@@ -173,7 +173,7 @@ func Test_merger_tornSpansBin_stillPanics(t *testing.T) {
 	mergedPart, _, mergeErr := tst.mergeParts(fileSystem, closeCh, []*partWrapper{
 		newPartWrapper(nil, p1),
 		newPartWrapper(nil, p2),
-	}, 99, tmpPath, nil)
+	}, 99, tmpPath, nil, nil)
 	_, _ = mergedPart, mergeErr
 
 	t.Fatal("mergeParts returned without panicking — torn-part fail-fast contract is broken")

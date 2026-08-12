@@ -304,12 +304,12 @@ func (mp *memPart) mustFlush(fileSystem fs.FileSystem, path string) {
 		fs.MustFlushAtomic(fileSystem, mp.seriesMetadata.Buf, filepath.Join(path, seriesMetadataFilename), storage.FilePerm)
 	}
 
-	mp.partMetadata.mustWriteMetadata(fileSystem, path)
 	mp.tagType.mustWriteTagType(fileSystem, path)
 	mp.traceIDFilter.mustWriteTraceIDFilter(fileSystem, path)
+	mp.partMetadata.mustWriteMetadata(fileSystem, path)
 	// No SyncPath: each mustWrite* helper uses WriteAtomic which fsyncs the
-	// parent directory after rename, covering all prior dirent changes
-	// (data file creations).
+	// parent directory after rename. Writing metadata last makes it the
+	// publication marker for all data and sidecar files.
 }
 
 func generateMemPart() *memPart {
@@ -328,10 +328,11 @@ func releaseMemPart(mp *memPart) {
 var memPartPool = pool.Register[*memPart]("trace-memPart")
 
 type partWrapper struct {
-	mp        *memPart
-	p         *part
-	ref       int32
-	removable atomic.Bool
+	mp         *memPart
+	p          *part
+	mergeDepth uint32
+	ref        int32
+	removable  atomic.Bool
 }
 
 func newPartWrapper(mp *memPart, p *part) *partWrapper {

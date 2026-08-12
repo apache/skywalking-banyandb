@@ -277,7 +277,36 @@ func (sr *schemaRepo) loadTSDB(groupName string) (storage.TSDB[*tsTable, option]
 	return db.(storage.TSDB[*tsTable, option]), nil
 }
 
-// CollectDataInfo collects data info for a specific group.
+// CollectSchemaSnapshot returns this node's cache/runtime schema bodies for the
+// group so the FODC agent can fingerprint them on receive.
+func (sr *schemaRepo) CollectSchemaSnapshot(group string) ([]*databasev1.ObjectSnapshot, []*databasev1.IndexRule, error) {
+	return resourceSchema.CollectSchemaSnapshot(sr.Repository, group,
+		schema.KindStream.String(), streamResourceView)
+}
+
+// CachedGroups lists the stream groups this node currently caches.
+func (sr *schemaRepo) CachedGroups() []string {
+	return resourceSchema.CachedGroupNames(sr.Repository)
+}
+
+// streamResourceView reaches the runtime view of a stream. IndexListener exposes
+// only OnIndexUpdate, so the assertion must happen here -- the same pattern the
+// resource loader in this package uses.
+func streamResourceView(res resourceSchema.Resource) (resourceSchema.ResourceView, bool) {
+	cached, ok := res.Schema().(*databasev1.Stream)
+	if !ok {
+		return resourceSchema.ResourceView{}, false
+	}
+	view := resourceSchema.ResourceView{Name: cached.GetMetadata().GetName(), Cached: cached}
+	if r, isTyped := res.Delegated().(*stream); isTyped {
+		view.Runtime = r.GetSchema()
+		view.RuntimeRules = r.GetIndexRules()
+	}
+	return view, true
+}
+
+// CollectDataInfo collects data info for a specific group. When includeSchemaState
+// is set it also attaches this node's schema consistency evidence.
 func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string) (*databasev1.DataInfo, error) {
 	if sr.nodeID == "" {
 		return nil, fmt.Errorf("node ID is empty")
@@ -545,7 +574,7 @@ func (s *supplier) OpenResource(spec resourceSchema.Resource) (resourceSchema.In
 	streamSchema := spec.Schema().(*databasev1.Stream)
 	return openStream(streamSpec{
 		schema: streamSchema,
-	}, s.l, s.pm, s.schemaRepo), nil
+	}, s.l, s.pm, s.schemaRepo, s.option.vectorized), nil
 }
 
 func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
@@ -564,60 +593,25 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 	if ro == nil {
 		return nil, fmt.Errorf("no resource opts in group %s", name)
 	}
-	shardNum := ro.ShardNum
-	ttl := ro.Ttl
-	segInterval := ro.SegmentInterval
-	// Non-zero default so the idle-segment reclaimer ticker actually starts
-	// (storage/rotation.go gates it on >=1s). Staged Close paths override below.
-	segmentIdleTimeout := time.Hour
-	disableRetention := false
-	disableRotation := false
-	if len(ro.Stages) > 0 && len(s.nodeLabels) > 0 {
-		var ttlNum uint32
-		foundMatched := false
-		for i, st := range ro.Stages {
-			if st.Ttl.Unit != ro.Ttl.Unit {
-				return nil, fmt.Errorf("ttl unit %s is not consistent with stage %s", ro.Ttl.Unit, st.Ttl.Unit)
-			}
-			selector, err := pub.ParseLabelSelector(st.NodeSelector)
-			if err != nil {
-				return nil, errors.WithMessagef(err, "failed to parse node selector %s", st.NodeSelector)
-			}
-			ttlNum += st.Ttl.Num
-			if !selector.Matches(s.nodeLabels) {
-				continue
-			}
-			foundMatched = true
-			ttl.Num += ttlNum
-			shardNum = st.ShardNum
-			segInterval = st.SegmentInterval
-			if st.Close {
-				segmentIdleTimeout = 5 * time.Minute
-			}
-			disableRetention = i+1 < len(ro.Stages)
-			disableRotation = true
-			break
-		}
-		if !foundMatched {
-			disableRetention = true
-			disableRotation = true
-		}
+	res, err := pub.ResolveStage(s.l, name, ro, s.nodeLabels)
+	if err != nil {
+		return nil, err
 	}
 	group := groupSchema.Metadata.Name
 	opts := storage.TSDBOpts[*tsTable, option]{
-		ShardNum:                       shardNum,
+		ShardNum:                       res.ResourceOpts.ShardNum,
 		Location:                       path.Join(s.path, group),
 		TSTableCreator:                 newTSTable,
 		TableMetrics:                   s.newMetrics(p),
-		SegmentInterval:                storage.MustToIntervalRule(segInterval),
-		TTL:                            storage.MustToIntervalRule(ttl),
+		SegmentInterval:                storage.MustToIntervalRule(res.ResourceOpts.SegmentInterval),
+		TTL:                            storage.MustToIntervalRule(res.ResourceOpts.Ttl),
 		Option:                         s.option,
 		SeriesIndexFlushTimeoutSeconds: s.option.flushTimeout.Nanoseconds() / int64(time.Second),
 		SeriesIndexCacheMaxBytes:       int(s.option.seriesCacheMaxSize),
 		StorageMetricsFactory:          s.omr.With(storageScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues()))),
-		SegmentIdleTimeout:             segmentIdleTimeout,
-		DisableRetention:               disableRetention,
-		DisableRotation:                disableRotation,
+		SegmentIdleTimeout:             res.SegmentIdleTimeout,
+		DisableRetention:               res.DisableRetention,
+		DisableRotation:                res.DisableRotation,
 		MemoryLimit:                    s.pm.GetLimit(),
 	}
 	return storage.OpenTSDB(
@@ -626,6 +620,12 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 		}),
 		opts, nil, group,
 	)
+}
+
+// ResolveResourceOpts returns the stage-resolved ResourceOpts so a group UpdateOptions
+// applies the matched stage's interval/ttl/shardNum instead of the group default.
+func (s *supplier) ResolveResourceOpts(groupSchema *commonv1.Group) *commonv1.ResourceOpts {
+	return pub.ResolveResourceOptsForUpdate(s.l, groupSchema, s.nodeLabels)
 }
 
 var _ resourceSchema.ResourceSupplier = (*queueSupplier)(nil)
@@ -668,13 +668,19 @@ func (s *queueSupplier) OpenResource(spec resourceSchema.Resource) (resourceSche
 	streamSchema := spec.Schema().(*databasev1.Stream)
 	return openStream(streamSpec{
 		schema: streamSchema,
-	}, s.l, s.pm, s.schemaRepo), nil
+	}, s.l, s.pm, s.schemaRepo, s.option.vectorized), nil
 }
 
 func (s *queueSupplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return s.metadata.StreamRegistry().GetStream(ctx, md)
+}
+
+// ResolveResourceOpts returns the group opts unchanged: the liaison write queue has no
+// lifecycle stages to resolve.
+func (s *queueSupplier) ResolveResourceOpts(groupSchema *commonv1.Group) *commonv1.ResourceOpts {
+	return groupSchema.GetResourceOpts()
 }
 
 func (s *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error) {

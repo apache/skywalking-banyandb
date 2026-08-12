@@ -271,3 +271,33 @@ export function IconEmpty({ size = 18 }: IconProps) {
     </Ic>
   );
 }
+
+// Ranked-bars glyph — used for the Pipelines/TopN surfaces (rank badges,
+// list rows, the TopN pipeline-type card). Matches the outline already used
+// locally in TopNResultView.tsx's leaderboard toolbar.
+export function IconTopN({ size = 18 }: IconProps) {
+  return (
+    <Ic size={size}>
+      <rect x="3.5" y="5" width="4.2" height="15" rx="1" />
+      <rect x="9.9" y="9.5" width="4.2" height="10.5" rx="1" />
+      <rect x="16.3" y="14" width="4.2" height="6" rx="1" />
+    </Ic>
+  );
+}
+
+export function IconSort({ size = 18 }: IconProps) {
+  return (
+    <Ic size={size}>
+      <path d="M7 4v16M7 20l-3-3M7 20l3-3" />
+      <path d="M17 20V4M17 4l-3 3M17 4l3 3" />
+    </Ic>
+  );
+}
+
+export function IconFilter({ size = 18 }: IconProps) {
+  return (
+    <Ic size={size}>
+      <path d="M4 5h16l-6 7.5V18l-4 2v-7.5L4 5Z" />
+    </Ic>
+  );
+}

@@ -203,7 +203,7 @@ describe('5. validateMeasure', () => {
     isEdit: false,
     name: 'sw_metric',
     families: goodStreamFamilies,
-    fields: [{ name: 'value', fieldType: 'FIELD_TYPE_INT64' }],
+    fields: [{ name: 'value', fieldType: 'FIELD_TYPE_INT' }],
     entityTagNames: ['host'],
     indexMode: false,
     interval: '1d',

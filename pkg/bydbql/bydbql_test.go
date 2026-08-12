@@ -3794,6 +3794,69 @@ var _ = Describe("Parser", func() {
 			})
 		})
 	})
+
+	Describe("Identifier Character Set", func() {
+		// The schema layer accepts resource names containing `-` and `*` at creation time, so
+		// the query layer must be able to name them; otherwise a resource can be written but
+		// never read. `*` is confined to non-initial positions to keep `SELECT *` unambiguous.
+		It("parses a measure name containing a star", func() {
+			grammar, err := ParseQuery("SHOW TOP 5 FROM MEASURE endpoint_avg-cluster-excludes-* IN default")
+			Expect(err).To(BeNil())
+			Expect(grammar).NotTo(BeNil())
+
+			stmt := grammar.TopN
+			Expect(stmt.From.ResourceName).To(Equal("endpoint_avg-cluster-excludes-*"))
+		})
+
+		It("parses a stream name containing a star", func() {
+			grammar, err := ParseQuery("SELECT * FROM STREAM sw-excludes-* IN default")
+			Expect(err).To(BeNil())
+
+			stmt := grammar.Select
+			Expect(stmt.From.ResourceName).To(Equal("sw-excludes-*"))
+		})
+
+		// A group name that begins with a reserved word (e.g. `group-a`) is rejected by the
+		// keyword rule regardless of the star, so this uses a non-reserved prefix.
+		It("parses a group name containing a star", func() {
+			grammar, err := ParseQuery("SELECT * FROM MEASURE m IN mygroup-*")
+			Expect(err).To(BeNil())
+
+			stmt := grammar.Select
+			Expect(stmt.From.In.Groups).To(Equal([]string{"mygroup-*"}))
+		})
+
+		It("keeps the star projection working alongside a starred resource name", func() {
+			grammar, err := ParseQuery("SELECT * FROM MEASURE endpoint_avg-cluster-excludes-* IN default")
+			Expect(err).To(BeNil())
+
+			stmt := grammar.Select
+			Expect(stmt.Projection.All).To(BeTrue())
+			Expect(stmt.From.ResourceName).To(Equal("endpoint_avg-cluster-excludes-*"))
+		})
+
+		It("still parses the bare star projection as a projection, not an identifier", func() {
+			grammar, err := ParseQuery("SELECT * FROM STREAM sw IN default")
+			Expect(err).To(BeNil())
+
+			stmt := grammar.Select
+			Expect(stmt.Projection.All).To(BeTrue())
+			Expect(stmt.Projection.Columns).To(BeEmpty())
+		})
+
+		It("rejects an identifier starting with a star", func() {
+			_, err := ParseQuery("SELECT * FROM MEASURE *bad IN default")
+			Expect(err).NotTo(BeNil())
+		})
+
+		It("parses a starred column reference in a condition", func() {
+			grammar, err := ParseQuery("SELECT * FROM MEASURE m IN default WHERE col-* = 'v'")
+			Expect(err).To(BeNil())
+
+			stmt := grammar.Select
+			Expect(stmt.Where).NotTo(BeNil())
+		})
+	})
 })
 
 func BenchmarkParser(b *testing.B) {

@@ -1,0 +1,157 @@
+# Licensed to Apache Software Foundation (ASF) under one or more contributor
+# license agreements. See the NOTICE file distributed with
+# this work for additional information regarding copyright
+# ownership. Apache Software Foundation (ASF) licenses this file to you under
+# the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Distributed soak topology: 1 liaison + 2 data nodes.
+#
+# The standalone compose (docker-compose.soak.yaml) cannot exercise the native
+# columnar wire frame at all: a data node only emits a frame when it is
+# distributed (streamVecEmitAsFrame requires `distributed`), so a single-node
+# run always falls back to protobuf however the vectorized flags are set. This
+# file exists to close that gap — the frame is encoded on the data nodes,
+# crosses a real gRPC hop, and is decoded and merged on the liaison.
+#
+# Two data nodes is the minimum that exercises the cross-node k-way merge,
+# global ordering, and offset/limit across nodes; it matches the topology the
+# distributed integration suite uses.
+#
+# Usage (driven by scripts/soak-vectorized.sh with SOAK_TOPOLOGY=distributed):
+#   BANYANDB_VEC_ENABLED=false docker compose -f docker-compose.soak-distributed.yaml up -d
+#   BANYANDB_VEC_ENABLED=true  docker compose -f docker-compose.soak-distributed.yaml up -d
+#
+# No host ports are published for the nodes. The driver reaches them by service
+# name over the soak network, which keeps the stack from colliding with any
+# BanyanDB already running on the host's standard ports.
+
+x-banyandb-build: &banyandb_build
+  context: ../..
+  dockerfile: test/soak/Dockerfile.banyand
+
+services:
+  soak-liaison:
+    build: *banyandb_build
+    container_name: ${SOAK_LIAISON_CONTAINER:-soak-liaison}
+    user: "${SOAK_UID:-1000}:${SOAK_GID:-1000}"
+    depends_on:
+      soak-data-1:
+        condition: service_healthy
+      soak-data-2:
+        condition: service_healthy
+    command:
+      - liaison
+      # The liaison's own vectorized flags set its per-process wire mode, which
+      # is what lets it DECODE a frame. A liaison that is flag-off cannot read a
+      # frame body at all — the ordering rule in docs/operation/upgrade.md.
+      - --measure-vectorized-enabled=${BANYANDB_VEC_ENABLED:-false}
+      - --trace-vectorized-enabled=${BANYANDB_VEC_ENABLED:-false}
+      - --stream-vectorized-enabled=${BANYANDB_VEC_ENABLED:-false}
+      - --observability-modes=prometheus
+      - --observability-listener-addr=:2121
+      - --node-discovery-mode=file
+      - --node-discovery-file-path=/etc/banyandb/nodes.yaml
+      - --measure-root-path=/data
+      - --stream-root-path=/data
+      - --trace-root-path=/data
+    volumes:
+      - ./nodes-distributed.yaml:/etc/banyandb/nodes.yaml:ro
+      - type: bind
+        source: ${SOAK_LIAISON_DATA_DIR:-./data-distributed/liaison}
+        target: /data
+    networks:
+      - soaknet
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -qO- http://127.0.0.1:17913/api/healthz >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 120s
+      retries: 120
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2"
+
+  soak-data-1: &data_node
+    build: *banyandb_build
+    container_name: ${SOAK_DATA1_CONTAINER:-soak-data-1}
+    user: "${SOAK_UID:-1000}:${SOAK_GID:-1000}"
+    command:
+      - data
+      - --measure-vectorized-enabled=${BANYANDB_VEC_ENABLED:-false}
+      - --trace-vectorized-enabled=${BANYANDB_VEC_ENABLED:-false}
+      - --stream-vectorized-enabled=${BANYANDB_VEC_ENABLED:-false}
+      - --observability-modes=prometheus
+      - --observability-listener-addr=:2121
+      - --node-discovery-mode=file
+      - --node-discovery-file-path=/etc/banyandb/nodes.yaml
+      - --measure-root-path=/data
+      - --stream-root-path=/data
+      - --property-root-path=/data
+      - --trace-root-path=/data
+      # The data nodes carry ROLE_META, so the schema server lives here. Without
+      # this the registry writes to the image's /tmp and every definition is lost
+      # on restart — the Phase 0 -> Phase 1 restart then queries a cluster that
+      # reports "stream doesn't exist".
+      - --schema-server-root-path=/data
+    volumes:
+      - ./nodes-distributed.yaml:/etc/banyandb/nodes.yaml:ro
+      - type: bind
+        source: ${SOAK_DATA1_DATA_DIR:-./data-distributed/data-1}
+        target: /data
+    networks:
+      - soaknet
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -qO- http://127.0.0.1:17913/api/healthz >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 120s
+      retries: 120
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2"
+
+  soak-data-2:
+    <<: *data_node
+    container_name: ${SOAK_DATA2_CONTAINER:-soak-data-2}
+    volumes:
+      - ./nodes-distributed.yaml:/etc/banyandb/nodes.yaml:ro
+      - type: bind
+        source: ${SOAK_DATA2_DATA_DIR:-./data-distributed/data-2}
+        target: /data
+
+  soak-driver:
+    build:
+      context: ../..
+      dockerfile: test/soak/Dockerfile.soak-driver
+    # No default command: every invocation is `docker compose run --rm
+    # soak-driver <subcommand> ...`, so the entrypoint receives the subcommand
+    # as argv. Declaring it here puts it on the soak network with the right
+    # limits and the host UID, so artifacts under /artifacts stay host-readable.
+    user: "${SOAK_UID:-1000}:${SOAK_GID:-1000}"
+    networks:
+      - soaknet
+    volumes:
+      - type: bind
+        source: ${SOAK_DIST_DIR:-/tmp/soak-dist}
+        target: /artifacts
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1"
+
+networks:
+  soaknet:

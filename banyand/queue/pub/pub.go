@@ -54,6 +54,12 @@ import (
 
 var queuePubScope = observability.RootScope.SubScope("queue_pub")
 
+// defaultHealthCheckInterval is how often the queue client re-checks the nodes it considers
+// active, matching the property schema client's default. Without it the active set is only
+// validated on admission and then by a request failing on it, so a dead node keeps absorbing
+// queries — each paying the full broadcast timeout — until one of them evicts it.
+const defaultHealthCheckInterval = 10 * time.Second
+
 // ChunkedSyncClientConfig configures chunked sync client behavior.
 type ChunkedSyncClientConfig struct {
 	ChunkSize        uint32        // Size of each chunk in bytes
@@ -72,26 +78,27 @@ var (
 
 type pub struct {
 	schema.UnimplementedOnInitHandler
-	metadata         metadata.Repo
-	handlers         map[bus.Topic]schema.EventHandler
-	log              *logger.Logger
-	metrics          *pubMetrics
-	migrationMetrics *pubMigrationMetrics
-	connMgr          *grpchelper.ConnManager[*client]
-	closer           *run.Closer
-	writableProbe    map[string]map[string]struct{}
-	nodeCache        map[string]nodeInfo
-	caCertPath       string
-	caCertReloader   *pkgtls.Reloader
-	prefix           string
-	retryPolicy      string
-	selfNode         string
-	selfRole         string
-	selfTier         string
-	allowedRoles     []databasev1.Role
-	writableProbeMu  sync.Mutex
-	nodeCacheMu      sync.RWMutex
-	tlsEnabled       bool
+	metadata            metadata.Repo
+	handlers            map[bus.Topic]schema.EventHandler
+	log                 *logger.Logger
+	metrics             *pubMetrics
+	migrationMetrics    *pubMigrationMetrics
+	connMgr             *grpchelper.ConnManager[*client]
+	closer              *run.Closer
+	writableProbe       map[string]map[string]struct{}
+	nodeCache           map[string]nodeInfo
+	caCertPath          string
+	caCertReloader      *pkgtls.Reloader
+	prefix              string
+	retryPolicy         string
+	selfNode            string
+	selfRole            string
+	selfTier            string
+	allowedRoles        []databasev1.Role
+	healthCheckInterval time.Duration
+	writableProbeMu     sync.Mutex
+	nodeCacheMu         sync.RWMutex
+	tlsEnabled          bool
 }
 
 // nodeInfo caches the resolved role and tier for a remote node.
@@ -227,6 +234,8 @@ func (p *pub) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("queue-client")
 	fs.BoolVar(&p.tlsEnabled, prefixFlag("client-tls"), false, fmt.Sprintf("enable client TLS for %s", p.prefix))
 	fs.StringVar(&p.caCertPath, prefixFlag("client-ca-cert"), "", fmt.Sprintf("CA certificate file to verify the %s server", p.prefix))
+	fs.DurationVar(&p.healthCheckInterval, prefixFlag("client-health-check-interval"), defaultHealthCheckInterval,
+		fmt.Sprintf("how often to re-check active %s nodes and evict the unreachable ones; 0 disables the periodic check", p.prefix))
 	return fs
 }
 
@@ -489,6 +498,10 @@ func NewWithoutMetadata(omr observability.MetricsRegistry) queue.Client {
 	p := New(nil, databasev1.Role_ROLE_DATA)
 	pp := p.(*pub)
 	pp.log = logger.GetLogger("queue-client")
+	// No HealthCheckInterval here, unlike PreRun: this constructor skips FlagSet, and its
+	// callers (lifecycle migration, tests) are short-lived and do not all reach GracefulStop.
+	// Starting a background prober they never stop would leak a goroutine, and the reactive
+	// failover path already covers a batch job's much narrower exposure.
 	pp.connMgr = grpchelper.NewConnManager(grpchelper.ConnManagerConfig[*client]{
 		Handler:        pp,
 		Logger:         pp.log,
@@ -526,10 +539,11 @@ func (p *pub) PreRun(context.Context) error {
 
 	// Initialize connection manager with the pub as the handler
 	p.connMgr = grpchelper.NewConnManager(grpchelper.ConnManagerConfig[*client]{ //nolint:contextcheck // health check runs in background goroutine
-		Handler:        p,
-		Logger:         p.log,
-		RetryPolicy:    p.retryPolicy,
-		MaxRecvMsgSize: maxReceiveMessageSize,
+		Handler:             p,
+		Logger:              p.log,
+		RetryPolicy:         p.retryPolicy,
+		MaxRecvMsgSize:      maxReceiveMessageSize,
+		HealthCheckInterval: p.healthCheckInterval,
 	})
 
 	// Initialize CA certificate reloader if TLS is enabled and CA cert path is provided

@@ -59,6 +59,12 @@ generate-trace-test-cases:  ## Regenerate trace query test cases (input/*.ql, in
 capture-trace-test-cases:  ## Capture trace query want fixtures (data/want/*.yml) against a standalone server
 	CAPTURE_TRACE_WANT_FIXTURES=1 go test -count=1 -timeout 5m -run TestCaptureTrace ./test/cases/trace/cmd/capture/
 
+generate-stream-test-cases:  ## Regenerate stream query test cases (input/*.ql, input/*.yaml)
+	go run ./test/cases/stream/cmd/generate generate test/cases/stream/data
+
+capture-stream-test-cases:  ## Capture stream query want fixtures (data/want/*.yaml) against a standalone server
+	CAPTURE_STREAM_WANT_FIXTURES=1 go test ./test/cases/stream/cmd/capture/ -args test/cases/stream/data
+
 build: TARGET=all
 build: default  ## Build all projects
 
@@ -149,6 +155,23 @@ build-trace-pipeline-telemetry-plugins: ## Build telemetrysampler.so and faultys
 		-o $(PLUGIN_OUTPUT_DIR)/faultysampler.so \
 		./test/plugins/_faultysampler
 	@echo "Built $(PLUGIN_OUTPUT_DIR)/faultysampler.so"
+
+.PHONY: build-plugins
+build-plugins: ## Build every plugins/<vendor>/<name> sampler into $(PLUGIN_OUTPUT_DIR) (Linux/macOS only; requires a C toolchain)
+	@if ! command -v gcc > /dev/null 2>&1 && ! command -v clang > /dev/null 2>&1; then \
+		echo "ERROR: build-plugins requires a C toolchain (gcc or clang) but neither was found in PATH."; \
+		exit 1; \
+	fi
+	@mkdir -p $(PLUGIN_OUTPUT_DIR)
+	@set -e; for dir in plugins/*/*/; do \
+		[ -f "$$dir/main.go" ] || continue; \
+		name=$$(basename "$$dir"); \
+		echo "Building $(PLUGIN_OUTPUT_DIR)/$$name.so from $$dir"; \
+		CGO_ENABLED=1 go build -buildmode=plugin -trimpath \
+			-o $(PLUGIN_OUTPUT_DIR)/$$name.so \
+			./$$dir; \
+	done
+	@echo "Built plugins into $(PLUGIN_OUTPUT_DIR)"
 
 .PHONY: build-trace-pipeline-server
 build-trace-pipeline-server: ## Build banyand-server with explicit CGO_ENABLED=1 for plugin hosting (Linux/macOS only)
@@ -251,10 +274,8 @@ include scripts/build/vuln.mk
 vuln-check: $(GOVULNCHECK)
 	$(GOVULNCHECK) -show color,verbose ./...	
 
-check: ## Check that the status is consistent with CI
-	$(MAKE) license-check
+check-format: ## Check that generated and formatted files are consistent with CI
 	$(MAKE) format
-	$(MAKE) tidy
 	git add --renormalize .
 	mkdir -p /tmp/artifacts
 	git diff >/tmp/artifacts/check.diff 2>&1
@@ -264,6 +285,10 @@ check: ## Check that the status is consistent with CI
 		cat /tmp/artifacts/check.diff; \
 		exit 1; \
 	fi
+
+check: ## Check that the status is consistent with CI
+	$(MAKE) license-check
+	$(MAKE) check-format
 
 pre-push: ## Check source files before pushing to the remote repo
 	$(MAKE) check-req
@@ -277,16 +302,19 @@ pre-push: ## Check source files before pushing to the remote repo
 
 include scripts/build/license.mk
 
-license-check: $(LICENSE_EYE)
-license-check: TARGET=license-check
-license-check: PROJECTS:=ui mcp canopy
-license-check: default ## Check license header
+# License-check / license-fix run a SINGLE license-eye invocation from the
+# repo root with the root .licenserc.yaml. This avoids:
+#   - editing ui/.licenserc.yaml (forbidden by plan §Principle 3),
+#   - the per-subdir loop over PROJECTS (each subdir would otherwise load
+#     its own .licenserc.yaml and miss the root config's OMC-runtime-state
+#     / handoff-import / playwright-mcp exclusions).
+# The root config already includes 'ui' in paths-ignore so the Vue app is
+# not double-scanned; canopy files are scanned from the root, which is the
+# desired surface for the license header check.
+license-check: $(LICENSE_EYE) ## Check license header
 	$(LICENSE_EYE) header check
 
-license-fix: $(LICENSE_EYE)
-license-fix: TARGET=license-fix
-license-fix: PROJECTS:=ui mcp canopy
-license-fix: default ## Fix license header issues
+license-fix: $(LICENSE_EYE) ## Fix license header issues
 	$(LICENSE_EYE) header fix
 
 license-dep: $(LICENSE_EYE)
@@ -348,8 +376,8 @@ PUSH_RELEASE_SCRIPTS := $(mk_dir)/scripts/push-release.sh
 release-push-candidate: ## Push release candidate
 	${PUSH_RELEASE_SCRIPTS}
 	
-.PHONY: all $(PROJECTS) clean build  default nuke
-.PHONY: lint check tidy format pre-push generate-test-cases capture-test-cases generate-trace-test-cases capture-trace-test-cases check-import-boundaries
+.PHONY: all $(PROJECTS) clean build check-format default nuke
+.PHONY: lint check tidy format pre-push generate-test-cases capture-test-cases generate-trace-test-cases capture-trace-test-cases generate-stream-test-cases capture-stream-test-cases check-import-boundaries
 .PHONY: test test-race test-coverage test-ci test-docker
 .PHONY: build-trace-pipeline-plugin build-trace-pipeline-telemetry-plugins build-trace-pipeline-server test-trace-pipeline
 .PHONY: license-check license-fix license-dep

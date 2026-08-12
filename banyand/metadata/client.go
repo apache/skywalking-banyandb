@@ -526,6 +526,18 @@ func (s *clientService) DropGroup(ctx context.Context, catalog commonv1.Catalog,
 	return s.infoCollectorRegistry.DropGroup(ctx, catalog, group)
 }
 
+func (s *clientService) CollectGroupSchemaSnapshot(ctx context.Context, group string) ([]*databasev1.ObjectSnapshot, []*databasev1.IndexRule, bool, error) {
+	return s.infoCollectorRegistry.CollectGroupSchemaSnapshot(ctx, group)
+}
+
+func (s *clientService) AllCachedGroups() []string {
+	return s.infoCollectorRegistry.AllCachedGroups()
+}
+
+func (s *clientService) RegisterSchemaSnapshotCollector(catalog commonv1.Catalog, collector schema.SnapshotCollector) {
+	s.infoCollectorRegistry.RegisterSchemaSnapshotCollector(catalog, collector)
+}
+
 func (s *clientService) RegisterDataCollector(catalog commonv1.Catalog, collector schema.DataInfoCollector) {
 	s.infoCollectorRegistry.RegisterDataCollector(catalog, collector)
 }

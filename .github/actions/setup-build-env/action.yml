@@ -26,6 +26,14 @@ inputs:
     description: 'Whether to setup Docker Buildx'
     required: false
     default: 'false'
+  setup-node:
+    description: 'Whether to setup Node.js'
+    required: false
+    default: 'true'
+  setup-qemu:
+    description: 'Whether to setup QEMU when Docker is enabled'
+    required: false
+    default: 'true'
 
 runs:
   using: composite
@@ -37,6 +45,7 @@ runs:
         name: build-artifacts
 
     - name: Setup Node.js
+      if: inputs.setup-node == 'true'
       uses: actions/setup-node@v6
       with:
         node-version: 24.6.0
@@ -60,7 +69,7 @@ runs:
       run: echo "GOTOOLCHAIN=auto" >> "$GITHUB_ENV"
 
     - name: Set up QEMU
-      if: inputs.setup-docker == 'true'
+      if: inputs.setup-docker == 'true' && inputs.setup-qemu == 'true'
       uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3
 
     - name: Set up Docker Buildx

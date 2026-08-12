@@ -25,7 +25,7 @@ import { registerProxy } from '../src/plugins/proxy.js';
 import { registerStatic } from '../src/plugins/static.js';
 import type { Config } from '../src/config.js';
 import bcrypt from 'bcryptjs';
-import { MockAgent, setGlobalDispatcher } from 'undici';
+import { getGlobalDispatcher, MockAgent, setGlobalDispatcher } from 'undici';
 
 // Mock DNS so SSRF check passes for test hostnames (no real DNS in unit tests)
 vi.mock('node:dns/promises', () => ({
@@ -88,9 +88,25 @@ async function loginAs(app: FastifyInstance, username: string, password: string)
 
 describe('Auth routes', () => {
   let app: FastifyInstance;
+  let mockAgent: MockAgent;
+  let previousDispatcher: ReturnType<typeof getGlobalDispatcher>;
 
-  beforeEach(async () => { app = await buildTestApp(); });
-  afterEach(async () => { await app.close(); });
+  beforeEach(async () => {
+    previousDispatcher = getGlobalDispatcher();
+    mockAgent = new MockAgent();
+    mockAgent.disableNetConnect();
+    setGlobalDispatcher(mockAgent);
+    mockAgent.get('http://upstream-a.test:17913')
+      .intercept({ path: '/api/v1/common/api/version', method: 'GET' })
+      .reply(200, { version: { version: 'test-version' } });
+    app = await buildTestApp();
+  });
+
+  afterEach(async () => {
+    await app.close();
+    setGlobalDispatcher(previousDispatcher);
+    await mockAgent.close();
+  });
 
   it('POST /auth/login with valid credentials sets session', async () => {
     const res = await app.inject({
@@ -442,7 +458,7 @@ describe('Upstream error envelopes', () => {
     expect(body.upstream).toBeDefined();
   });
 
-  it('upstream 5xx → 502 upstream_error envelope', async () => {
+  it('upstream 5xx is forwarded verbatim', async () => {
     const pool = mockAgent.get('http://upstream-a.test:17913');
     pool.intercept({ path: /.*/, method: 'GET' }).reply(500, 'Internal Error')
       .times(2); // loginAs triggers fetchBanyanVersion (consumes 1); actual test request consumes 2nd
@@ -451,8 +467,8 @@ describe('Upstream error envelopes', () => {
     const res = await app.inject({
       method: 'GET', url: '/api/v1/group/schema/lists', headers: { cookie },
     });
-    expect(res.statusCode).toBe(502);
-    expect(JSON.parse(res.body).error).toBe('upstream_error');
+    expect(res.statusCode).toBe(500);
+    expect(res.body).toBe('Internal Error');
   });
 });
 
