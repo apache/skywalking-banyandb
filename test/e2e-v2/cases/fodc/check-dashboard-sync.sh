@@ -15,9 +15,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# check-dashboard-sync.sh verifies that the union of the three metric lists
-# (presence.txt, non_empty.txt, documented_gap.txt) exactly matches the set of
-# metrics referenced in "expr" fields of the FODC Grafana dashboard JSON files.
+# check-dashboard-sync.sh verifies that the union of the four metric lists
+# (presence.txt, non_empty.txt, documented_gap.txt, optional_plugin.txt) exactly
+# matches the metrics referenced in the FODC Grafana dashboard JSON files.
 #
 # Run this locally or in CI without a cluster -- it only reads files.
 # Exit 0 = in sync. Exit 1 = drift detected (printed to stderr).
@@ -68,19 +68,26 @@ def load_list(name):
 presence     = load_list('presence.txt')
 non_empty    = load_list('non_empty.txt')
 gap          = load_list('documented_gap.txt')
+optional     = load_list('optional_plugin.txt')
 
 # Check for duplicates across lists.
 overlap_pn = presence & non_empty
 overlap_pg = presence & gap
 overlap_ng = non_empty & gap
-if overlap_pn or overlap_pg or overlap_ng:
+overlap_po = presence & optional
+overlap_no = non_empty & optional
+overlap_go = gap & optional
+if overlap_pn or overlap_pg or overlap_ng or overlap_po or overlap_no or overlap_go:
     print("ERROR: metrics appear in more than one list:", file=sys.stderr)
     for m in sorted(overlap_pn): print(f"  presence ∩ non_empty : {m}", file=sys.stderr)
     for m in sorted(overlap_pg): print(f"  presence ∩ gap       : {m}", file=sys.stderr)
     for m in sorted(overlap_ng): print(f"  non_empty ∩ gap      : {m}", file=sys.stderr)
+    for m in sorted(overlap_po): print(f"  presence ∩ optional  : {m}", file=sys.stderr)
+    for m in sorted(overlap_no): print(f"  non_empty ∩ optional : {m}", file=sys.stderr)
+    for m in sorted(overlap_go): print(f"  gap ∩ optional       : {m}", file=sys.stderr)
     sys.exit(1)
 
-test_metrics = presence | non_empty | gap
+test_metrics = presence | non_empty | gap | optional
 
 in_dash_not_test = sorted(dash_metrics - test_metrics)
 in_test_not_dash = sorted(test_metrics - dash_metrics)
@@ -89,7 +96,7 @@ ok = True
 if in_dash_not_test:
     ok = False
     print(f"FAIL: {len(in_dash_not_test)} dashboard metric(s) missing from test lists"
-          " -- add to presence.txt, non_empty.txt, or documented_gap.txt:", file=sys.stderr)
+          " -- add to presence.txt, non_empty.txt, documented_gap.txt, or optional_plugin.txt:", file=sys.stderr)
     for m in in_dash_not_test:
         print(f"  {m}", file=sys.stderr)
 
@@ -102,7 +109,8 @@ if in_test_not_dash:
 
 if ok:
     print(f"OK: {len(dash_metrics)} dashboard metrics == union of {len(presence)} presence"
-          f" + {len(non_empty)} non_empty + {len(gap)} documented_gap")
+          f" + {len(non_empty)} non_empty + {len(gap)} documented_gap"
+          f" + {len(optional)} optional_plugin")
     sys.exit(0)
 else:
     sys.exit(1)

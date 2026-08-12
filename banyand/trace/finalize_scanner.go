@@ -18,13 +18,10 @@
 package trace
 
 import (
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -66,7 +63,7 @@ func (sr *schemaRepo) runFinalizeScan(closeCh <-chan struct{}) {
 			return
 		default:
 		}
-		samplers := lookupSamplers(group)
+		samplers := lookupNamedSamplers(group)
 		if len(samplers) == 0 {
 			continue
 		}
@@ -94,7 +91,7 @@ func (sr *schemaRepo) runFinalizeScan(closeCh <-chan struct{}) {
 // reopened (this is what keeps a backstop from perturbing the hot node with a reopen
 // storm over cold segments), and only reopens the segments that may warrant a round —
 // then applies the precise threshold and finalizes warranting shards sequentially.
-func (sr *schemaRepo) scanGroup(group string, samplers []sdk.Sampler, graceNs, maturityGraceNs int64,
+func (sr *schemaRepo) scanGroup(group string, samplers []namedSampler, graceNs, maturityGraceNs int64,
 	cfg finalizeConfig, lfs fs.FileSystem, closeCh <-chan struct{},
 ) {
 	tsdb, err := sr.loadTSDB(group)
@@ -104,6 +101,10 @@ func (sr *schemaRepo) scanGroup(group string, samplers []sdk.Sampler, graceNs, m
 	now := time.Now().UnixNano()
 	coolEnd := traceFragmentSaturatingSub(now, maturityGraceNs)
 	coolRange := timestamp.TimeRange{Start: time.Unix(0, 0), End: time.Unix(0, coolEnd)}
+	groupSummary := finalizeStateSummary{}
+	defer func() {
+		sr.samplerMeter.observeFinalizeState(group, groupSummary.maxRounds, groupSummary.terminal)
+	}()
 	for _, peek := range tsdb.PeekSegments(coolRange) {
 		select {
 		case <-closeCh:
@@ -112,7 +113,12 @@ func (sr *schemaRepo) scanGroup(group string, samplers []sdk.Sampler, graceNs, m
 		}
 		// Only fully-mature segments; and skip (without reopening) any whose shards are
 		// all terminal / in-cooldown / max-rounds per their on-disk finalize state.
-		if peek.End.UnixNano() > coolEnd || !sr.segmentMayWarrantObserved(group, lfs, peek.ShardPaths, cfg) {
+		if peek.End.UnixNano() > coolEnd {
+			continue
+		}
+		segmentWarrants, segmentSummary := segmentMayWarrantSummary(lfs, peek.ShardPaths, cfg)
+		groupSummary.merge(segmentSummary)
+		if !segmentWarrants {
 			continue
 		}
 		// This segment may warrant work: reopen just its range and finalize warranting
@@ -130,7 +136,7 @@ func (sr *schemaRepo) scanGroup(group string, samplers []sdk.Sampler, graceNs, m
 // finalizeReopened runs bounded finalize rounds on the warranting shards of the reopened
 // segments, then DecRefs every segment on all paths.
 func (sr *schemaRepo) finalizeReopened(group string, segs []storage.Segment[*tsTable, option],
-	samplers []sdk.Sampler, graceNs int64, cfg finalizeConfig, coolEnd int64,
+	samplers []namedSampler, graceNs int64, cfg finalizeConfig, coolEnd int64,
 ) {
 	defer func() {
 		for _, seg := range segs {
@@ -147,7 +153,7 @@ func (sr *schemaRepo) finalizeReopened(group string, segs []storage.Segment[*tsT
 			if !warrantsFinalize(tst, cfg) {
 				continue
 			}
-			if _, ferr := tst.runFinalizeRound(samplers, graceNs); ferr != nil {
+			if _, ferr := tst.runFinalizeRoundNamed(samplers, graceNs); ferr != nil {
 				sr.l.Warn().Err(ferr).Str("group", group).Msg("finalize round failed (fail-open)")
 			}
 		}
@@ -158,40 +164,35 @@ func (sr *schemaRepo) finalizeReopened(group string, segs []storage.Segment[*tsT
 // judged purely from on-disk finalize state (no segment reopen). It is a conservative
 // superset of warrantsFinalize: it never skips a shard that would actually warrant.
 func segmentMayWarrant(lfs fs.FileSystem, shardPaths []string, cfg finalizeConfig) bool {
-	for _, shardPath := range shardPaths {
-		if shardMayWarrant(readFinalizeState(lfs, shardPath), cfg) {
-			return true
-		}
-	}
-	return false
+	warrants, _ := segmentMayWarrantSummary(lfs, shardPaths, cfg)
+	return warrants
 }
 
-// segmentMayWarrantObserved is segmentMayWarrant plus per-shard finalize-state
-// telemetry. The decision is unchanged — it still returns true as soon as one
-// shard warrants — but every shard's state is read and published first, because
-// this pre-filter is the only place a *terminal* shard is still visited: once a
-// segment is skipped, warrantsFinalize never runs for it again, so metrics emitted
-// deeper in the scan would go silent on exactly the shards that can no longer
-// delete anything (spec section 5.2).
-func (sr *schemaRepo) segmentMayWarrantObserved(group string, lfs fs.FileSystem, shardPaths []string, cfg finalizeConfig) bool {
+type finalizeStateSummary struct {
+	maxRounds int
+	terminal  bool
+}
+
+func (fss *finalizeStateSummary) merge(other finalizeStateSummary) {
+	fss.maxRounds = max(fss.maxRounds, other.maxRounds)
+	fss.terminal = fss.terminal || other.terminal
+}
+
+// segmentMayWarrantSummary is segmentMayWarrant plus the group-rollup input
+// derived from every shard in the segment. It must read all shard states even
+// after finding one that warrants so terminal state is not hidden.
+func segmentMayWarrantSummary(lfs fs.FileSystem, shardPaths []string, cfg finalizeConfig) (bool, finalizeStateSummary) {
 	warrants := false
+	summary := finalizeStateSummary{}
 	for _, shardPath := range shardPaths {
 		st := readFinalizeState(lfs, shardPath)
-		sr.samplerMeter.observeFinalizeState(group, shardLabelFromPath(shardPath), st.FinalizeRounds,
-			st.Terminal || st.FinalizeRounds >= cfg.maxRounds)
+		summary.maxRounds = max(summary.maxRounds, st.FinalizeRounds)
+		summary.terminal = summary.terminal || st.Terminal || st.FinalizeRounds >= cfg.maxRounds
 		if shardMayWarrant(st, cfg) {
 			warrants = true
 		}
 	}
-	return warrants
-}
-
-// shardLabelFromPath extracts the shard-id label from an on-disk shard directory
-// path (storage writes them as "shard-<id>"). An unrecognized layout yields the
-// raw base name rather than an empty label, so a series is still emitted.
-func shardLabelFromPath(shardPath string) string {
-	base := filepath.Base(shardPath)
-	return strings.TrimPrefix(base, "shard-")
+	return warrants, summary
 }
 
 // shardMayWarrant is the reopen pre-filter for one shard. It skips only the cases that

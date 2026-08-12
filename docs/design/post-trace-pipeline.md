@@ -316,6 +316,28 @@ type Logger interface {
 
 Reference plugins demonstrating well-behaved and adversarial use of the façade live at [`test/plugins/_telemetrysampler`](../../test/plugins/_telemetrysampler) (keeps all traces, emits bounded counter + sparse Info log) and [`test/plugins/_faultysampler`](../../test/plugins/_faultysampler) (panic in UseHost, log flood, cardinality explosion — verifies host bounds hold). Build them with `make build-trace-pipeline-telemetry-plugins`.
 
+### Host-provided plugin execution metrics
+
+The engine publishes a bounded metric catalog for plugin cost and health. Chain-level metrics are emitted once per decision batch; execution metrics are emitted once per plugin link. Every series carries the database `group`, while link metrics also carry the configured `plugin_name` so a chain containing several plugins can be diagnosed independently. They deliberately have no segment, shard, or schema labels. The plugin count and names are bounded by `TracePipelineConfig`; result and reason values are closed constants. Plugin-specific business metrics remain the responsibility of the bounded `Host.Meter` façade above.
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `banyandb_trace_tst_pipeline_plugin_batches` | Counter | `group`, `result` | Decision batches presented to the chain. `result` is `success`, `timeout`, or `circuit_open`. A successful chain may still have failed-open links. |
+| `banyandb_trace_tst_pipeline_plugin_executions` | Counter | `group`, `plugin_name`, `result` | Calls to each plugin's `Decide`. `result` is `success`, `decide_error`, `length_mismatch`, `panic`, or `late`. `late` means the call completed only after the host had timed out and abandoned that worker. |
+| `banyandb_trace_tst_pipeline_plugin_execution_duration_seconds` | Histogram | `group`, `plugin_name`, `result` | Wall time inside that plugin's `Decide` call. A late call records its complete eventual duration rather than truncating at the host timeout. |
+| `banyandb_trace_tst_pipeline_plugin_batch_traces` | Histogram | `group`, `result` | Trace count offered in each decision batch, including batches bypassed by an open circuit. |
+| `banyandb_trace_tst_pipeline_plugin_link_bypasses` | Counter | `group`, `plugin_name`, `reason` | Individual chain links bypassed with `decide_error`, `length_mismatch`, or `panic`. The rest of the chain still runs and the failed link retains its input. |
+
+`pipeline_traces_evaluated` remains the trace-level denominator: it increments only after the chain completes with a valid batch-aligned verdict. The following PromQL relationships turn the batch metrics into directly comparable overhead signals:
+
+- Successful time per evaluated trace, split by plugin: `sum by (group, plugin_name) (rate(banyandb_trace_tst_pipeline_plugin_execution_duration_seconds_sum{result="success"}[5m])) / on (group) group_left sum by (group) (rate(banyandb_trace_tst_pipeline_traces_evaluated[5m]))`.
+- Calls per evaluated trace, split by plugin: `sum by (group, plugin_name) (rate(banyandb_trace_tst_pipeline_plugin_executions[5m])) / on (group) group_left sum by (group) (rate(banyandb_trace_tst_pipeline_traces_evaluated[5m]))`.
+- Mean successful batch size: `sum by (group) (rate(banyandb_trace_tst_pipeline_traces_evaluated[5m])) / sum by (group) (rate(banyandb_trace_tst_pipeline_plugin_batches{result="success"}[5m]))`.
+- p99 successful execution latency by plugin: `histogram_quantile(0.99, sum by (group, plugin_name, le) (rate(banyandb_trace_tst_pipeline_plugin_execution_duration_seconds_bucket{result="success"}[5m])))`.
+- Plugin failure pressure: compare each plugin's `decide_error`, `length_mismatch`, `panic`, and `late` execution rates with its all-result execution rate. Separately compare chain-level `timeout` and `circuit_open` batch rates with the all-result batch rate.
+
+The duration is wall time inside `Decide`, not process CPU time. A timed-out native Go plugin cannot be forcibly stopped; if the abandoned call eventually returns, it is recorded as `late` with its full duration. CPU and allocation attribution requires independent profiling.
+
 ## Retention-Decision Timing & Trace Completeness
 
 Both the plugin gating policy (§1.1) and the per-stage retention plugin (§1.2) operate on the **whole** trace, not on individual spans as they arrive: `D_total` needs the earliest start and latest end, `has_error` scans all spans, and tag matchers scan all spans. Spans of one trace, however, arrive at the storage node anywhere from milliseconds to hours apart, and BanyanDB writes each span into the segment selected by its **event time** (the `start_time` tag), not its arrival time (`banyand/trace/write_standalone.go`). There is no live partial-trace buffer; a trace exists only as spans co-located by `trace_id` inside a segment's parts.

@@ -5,8 +5,8 @@ This document outlines the observability features of BanyanDB, which include met
 This guide is split into:
 
 - [Logging](logging.md) — log levels, per-module levels, and slow-query logging.
-- [Metrics](metrics.md) — the full metric catalog (stats, resource usage, storage, inverted index, internal queue) with PromQL.
-- [Metrics Providers](providers.md) — scraping metrics with Prometheus (through the FODC proxy), the Grafana dashboard, and native self-observability.
+- [Metrics](metrics.md) — the full metric catalog (stats, resource usage, storage, trace plugins, inverted index, internal queue) with PromQL.
+- [Metrics Providers](providers.md) — scraping metrics with Prometheus (through the FODC proxy), Grafana dashboards, and native self-observability.
 - [Profiling](profiling.md) — `pprof` endpoints.
 - [Query Tracing](tracing.md) — per-query execution traces.
 
@@ -26,7 +26,32 @@ If you watch nothing else, watch these. They are organized with the two canonica
 | 8 | **Merge / compaction health** (LSM) | Merge File Rate/Latency/Partitions (`banyandb_*_total_merge_loop_started`, `_merge_latency`, `_merged_parts`), part counts (`*_total_file_parts`) | merge-latency spikes correlated with write-latency spikes; steadily growing part/partition counts | a compaction storm or backlog → write-latency spikes, query slowdown, oversized/broken parts [6] |
 | 9 | **Cardinality / series growth** | Total Series (`banyandb_*_inverted_index_total_doc_count`), `_total_updates` (churn), `_total_term_searchers_started` | rapid `doc_count` growth, high churn, or high term-search rate | a cardinality explosion → memory pressure, inverted-index bloat, and slow queries |
 | 10 | **Node liveness / membership** | Active Instances (`count(banyandb_system_up_time)` by `container_name`), per-node `banyandb_system_up_time` | reporting-node count below expected; a node's uptime dropping to ~0 (restart) or its series disappearing (gone) | lost capacity, under-replication, and query gaps |
+| 11 | **Trace plugin pressure** (RED) | [Plugin latency and drop-set cap](metrics.md#trace-plugin-metrics-reference) | p99 growth or any merge reaching the drop-set cap | slow merges or requested drops being retained |
 
-**Priority order:** 1–3 (RED) tell you whether users are affected *right now*; 4–7 (USE/backpressure) are the **leading indicators** that catch trouble before it becomes user-visible; 8–10 catch the classic slow-burn database failures (compaction backlog, cardinality blow-up, node loss). A practical first alert set: query p99 latency, error rate, disk > 85%, memory near `--allowed-percent`, and sustained wqueue/`queue_pub` backlog.
+**Priority order:** 1–3 (RED) tell you whether users are affected *right now*; 4–7 (USE/backpressure) are the
+**leading indicators** that catch trouble before it becomes user-visible; 8–11 catch classic slow-burn database and
+optional trace-pipeline failures. A practical first alert set is query p99 latency, error rate, disk > 85%, memory near
+`--allowed-percent`, and sustained wqueue/`queue_pub` backlog. When trace plugins are enabled, also alert on sustained
+plugin-latency growth and any merge reaching the drop-set cap.
+
+## Trace Plugin Monitoring
+
+Trace plugins execute during mature trace merges and finalization, so their traffic is naturally bursty and may be zero
+during the merge-grace window. Use rates over a suitable window and compare latency with a healthy baseline for each
+`(group, plugin_name)` pair rather than applying one global latency threshold.
+
+Install the optional [Trace Sampling Plugins dashboard](../grafana-fodc-trace-plugin.json) when this feature is enabled.
+It keeps plugin-only panels out of the core workload dashboard while providing execution, sampling-outcome,
+drop-set-capacity, and finalization diagnostics.
+
+The critical day-two signals are:
+
+| Signal | Metric | Watch for |
+| --- | --- | --- |
+| **Latency** | `banyandb_trace_tst_pipeline_plugin_execution_duration_seconds` | per-plugin p99 rising above its healthy baseline |
+| **Drop-set cap** | `banyandb_trace_tst_pipeline_merges_ceiling_reached` | any non-zero increase; requested drops are now being retained |
+
+See the [complete trace plugin metric reference](metrics.md#trace-plugin-metrics-reference) for all lifecycle, execution,
+retention-safety, telemetry-host, finalization, and plugin-defined metrics.
 
 > Sources: [1] Google SRE — *Monitoring Distributed Systems* (Four Golden Signals) <https://sre.google/sre-book/monitoring-distributed-systems/> · [2] B. Gregg — *The USE Method* <https://www.brendangregg.com/usemethod.html> · [3] *The RED Method* (Grafana / T. Wilkie) <https://grafana.com/blog/the-red-method-how-to-instrument-your-services/> · [4] Elasticsearch disk watermarks 85/90/95% <https://www.elastic.co/docs/troubleshoot/elasticsearch/fix-watermark-errors> · [5] Prometheus remote-write backpressure <https://prometheus.io/docs/practices/remote_write/> · [6] Grafana Mimir — scaling to 1B active series (compaction/flush latency) <https://grafana.com/blog/2022/04/08/how-we-scaled-our-new-prometheus-tsdb-grafana-mimir-to-1-billion-active-series/>

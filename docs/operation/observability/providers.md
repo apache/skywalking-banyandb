@@ -31,12 +31,14 @@ scrape_configs:
 
 The proxy adds the `pod_name` and `container_name` labels used throughout this document. Without the FODC proxy, scrape each BanyanDB pod directly on port `2121` instead and use the Kubernetes `pod`/`instance` target labels in place of `pod_name`.
 
-### Grafana Dashboard
+### Grafana Dashboards
 
-Two complementary dashboards monitor BanyanDB metrics, both built for the deployment where Prometheus scrapes the [FODC proxy](../fodc/overview.md) `/metrics` endpoint — the single scrape target — rather than each BanyanDB pod (per-node identity is carried in the `pod_name` and `container_name` labels, so `job`/`pod`/`up` no longer distinguish nodes). They are split by aggregation dimension:
+The two core dashboards monitor every BanyanDB deployment. They are built for Prometheus scraping the [FODC proxy](../fodc/overview.md) `/metrics` endpoint — the single scrape target — rather than each BanyanDB pod (per-node identity is carried in the `pod_name` and `container_name` labels, so `job`/`pod`/`up` no longer distinguish nodes):
 
 - [BanyanDB Cluster — Nodes (FODC Proxy)](../grafana-fodc-nodes.json) — node/pod-level health and resources, aggregated by `pod_name`: fleet overview (node counts, CPU/memory/disk capacity, uptime), a per-node health table, resources (CPU, RSS, system memory %, disk %, network), disk-by-path, and Go runtime.
 - [BanyanDB Cluster — Workload (FODC Proxy)](../grafana-fodc-workload.json) — business/data-level throughput and latency, aggregated by `group`: cluster workload summary (write/query/error rate), liaison ingestion/query/publish plus write-queue (wqueue) backlog, data storage, inverted-index, and the internal queue (per-operation throughput & p99 by group).
+
+Install the optional [BanyanDB — Trace Sampling Plugins (FODC Proxy)](../grafana-fodc-trace-plugin.json) dashboard when trace sampling plugins are enabled. It covers plugin latency and batching, sampling outcomes, fail-open retention, drop-set capacity, and finalization without adding empty panels to the core workload dashboard.
 
 ## Native
 

@@ -18,8 +18,9 @@
 # exported by a 1:1 OAP-driven cluster within the verify window. The
 # always-positive core lives in non_empty.txt; metrics that need a specific
 # event to materialise (error counters, completed part-merges) live in
-# documented_gap.txt. The three lists are disjoint and their union is exactly
-# the 78 distinct names referenced by the FODC Grafana dashboards.
+# documented_gap.txt. The four lists, including optional_plugin.txt, are
+# disjoint and their union is exactly the 106 distinct names referenced by the
+# FODC Grafana dashboards.
 #
 # Calibrated against a live run: OAP writes the BanyanDB trace model, so the
 # banyandb_trace_tst_* family is present; stream_storage_* and stream_tst_* are
