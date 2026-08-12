@@ -141,7 +141,7 @@ func (os *observedSampler) observe(started time.Time, result, bypassReason strin
 func newMergeChain(group, schema string, samplers []sdk.Sampler, circuitBreakN int) *mergeChain {
 	named := make([]namedSampler, len(samplers))
 	for idx, sampler := range samplers {
-		named[idx] = namedSampler{name: defaultSamplerMetricName(idx), sampler: sampler}
+		named[idx] = namedSampler{sampler: sampler}
 	}
 	return newNamedMergeChain(group, schema, named, circuitBreakN)
 }
@@ -155,7 +155,7 @@ func newNamedMergeChain(group, schema string, samplers []namedSampler, circuitBr
 	seen := make(map[string]struct{})
 	activeSamplers := make([]sdk.Sampler, 0, len(samplers))
 	activeNames := make([]string, 0, len(samplers))
-	for idx, named := range samplers {
+	for _, named := range samplers {
 		if named.sampler == nil {
 			continue
 		}
@@ -163,7 +163,7 @@ func newNamedMergeChain(group, schema string, samplers []namedSampler, circuitBr
 		activeSamplers = append(activeSamplers, sampler)
 		name := named.name
 		if name == "" {
-			name = defaultSamplerMetricName(idx)
+			name = defaultSamplerMetricName(len(activeNames))
 		}
 		activeNames = append(activeNames, name)
 		proj := sampler.Project()

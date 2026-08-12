@@ -30,6 +30,18 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
 )
 
+type releaseThenPanicSampler struct {
+	release <-chan struct{}
+}
+
+func (rtps *releaseThenPanicSampler) Kind() sdk.Kind          { return sdk.KindSampler }
+func (rtps *releaseThenPanicSampler) Project() sdk.Projection { return sdk.Projection{} }
+func (rtps *releaseThenPanicSampler) Close() error            { return nil }
+func (rtps *releaseThenPanicSampler) Decide(*sdk.TraceBatch) (sdk.Verdict, error) {
+	<-rtps.release
+	panic("late panic")
+}
+
 func newPluginExecutionMetricsForTest(reg *prometheus.Registry) *metrics {
 	factory := services.NewFactory(prom.NewProvider(tbScope.ConstLabels(meter.LabelPairs{"group": "g1"}), reg), nil, nil)
 	return &metrics{
@@ -93,6 +105,21 @@ func TestPluginExecutionMetricsObserveSuccessfulBatch(t *testing.T) {
 	require.Equal(t, float64(3), batchTraces[0].GetHistogram().GetSampleSum())
 }
 
+func TestPluginExecutionMetricsDefaultNamesSkipInactiveSamplers(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	tst := &tsTable{metrics: newPluginExecutionMetricsForTest(reg)}
+	chain := newMergeChain("g1", "", []sdk.Sampler{nil, &fakeSampler{}}, 3)
+	chain.observeLinkExecution = tst.observePipelinePluginLinkExecution
+	defer chain.close()
+
+	_, executeErr := chain.Execute(&sdk.TraceBatch{Traces: []sdk.TraceBlock{{}}}, time.Second)
+	require.NoError(t, executeErr)
+
+	executions := gatherMetric(t, reg, "pipeline_plugin_executions")
+	require.Len(t, executions, 1)
+	require.Equal(t, "plugin_1", metricLabelValue(executions[0], "plugin_name"))
+}
+
 func TestPluginExecutionMetricsClassifyTimeoutAndLinkBypass(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	tst := &tsTable{metrics: newPluginExecutionMetricsForTest(reg)}
@@ -138,4 +165,67 @@ func TestPluginExecutionMetricsClassifyTimeoutAndLinkBypass(t *testing.T) {
 	}
 	require.Equal(t, pluginExecutionResultDecideError, linkResults["broken"])
 	require.Equal(t, pluginExecutionResultLate, linkResults["slow"])
+}
+
+func TestPluginExecutionMetricsClassifyLinkFailures(t *testing.T) {
+	testCases := []struct {
+		sampler sdk.Sampler
+		name    string
+		result  string
+		reason  string
+	}{
+		{name: "panic", sampler: &fakeSampler{panicNow: true}, result: pluginExecutionResultPanic, reason: sdk.BypassReasonPanic},
+		{name: "length mismatch", sampler: &fakeSampler{wrongSize: true}, result: pluginExecutionResultMismatch, reason: sdk.BypassReasonLengthMismatch},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			reg := prometheus.NewRegistry()
+			tst := &tsTable{metrics: newPluginExecutionMetricsForTest(reg)}
+			chain := newNamedMergeChain("g1", "", []namedSampler{{name: "broken", sampler: testCase.sampler}}, 3)
+			chain.observeLinkExecution = tst.observePipelinePluginLinkExecution
+			defer chain.close()
+
+			_, executeErr := chain.Execute(&sdk.TraceBatch{Traces: make([]sdk.TraceBlock, 2)}, time.Second)
+			require.NoError(t, executeErr, "a failed link must fail open without failing the whole chain")
+
+			executions := gatherMetric(t, reg, "pipeline_plugin_executions")
+			require.Len(t, executions, 1)
+			require.Equal(t, testCase.result, metricLabelValue(executions[0], "result"))
+			bypasses := gatherMetric(t, reg, "pipeline_plugin_link_bypasses")
+			require.Len(t, bypasses, 1)
+			require.Equal(t, testCase.reason, metricLabelValue(bypasses[0], "reason"))
+		})
+	}
+}
+
+func TestPluginExecutionMetricsLatePanicKeepsBothDimensions(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	tst := &tsTable{metrics: newPluginExecutionMetricsForTest(reg)}
+	release := make(chan struct{})
+	observed := make(chan pluginLinkExecutionObservation, 1)
+	chain := newNamedMergeChain("g1", "", []namedSampler{{name: "slow-panic", sampler: &releaseThenPanicSampler{release: release}}}, 3)
+	chain.observeLinkExecution = func(observation pluginLinkExecutionObservation) {
+		tst.observePipelinePluginLinkExecution(observation)
+		observed <- observation
+	}
+	defer chain.close()
+
+	_, executeErr := chain.Execute(&sdk.TraceBatch{Traces: []sdk.TraceBlock{{}}}, time.Millisecond)
+	require.Error(t, executeErr)
+	close(release)
+
+	select {
+	case observation := <-observed:
+		require.Equal(t, pluginExecutionResultLate, observation.result)
+		require.Equal(t, sdk.BypassReasonPanic, observation.bypassReason)
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for the abandoned plugin call to finish")
+	}
+
+	executions := gatherMetric(t, reg, "pipeline_plugin_executions")
+	require.Len(t, executions, 1)
+	require.Equal(t, pluginExecutionResultLate, metricLabelValue(executions[0], "result"))
+	bypasses := gatherMetric(t, reg, "pipeline_plugin_link_bypasses")
+	require.Len(t, bypasses, 1)
+	require.Equal(t, sdk.BypassReasonPanic, metricLabelValue(bypasses[0], "reason"))
 }

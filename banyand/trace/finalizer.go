@@ -48,7 +48,7 @@ import (
 func (tst *tsTable) runFinalizeRound(samplers []sdk.Sampler, graceNs int64) (bool, error) {
 	named := make([]namedSampler, len(samplers))
 	for idx, sampler := range samplers {
-		named[idx] = namedSampler{name: defaultSamplerMetricName(idx), sampler: sampler}
+		named[idx] = namedSampler{sampler: sampler}
 	}
 	return tst.runFinalizeRoundNamed(named, graceNs)
 }
