@@ -354,26 +354,27 @@ On `banyand_trace_tst_`, per merge:
 
 | Instrument | Labels | Answers |
 | --- | --- | --- |
-| `pipeline_traces_retained_by_ceiling` (counter) | `group,seg,shard` | How much deletion was lost, and where. Distinct from retained-by-verdict; both also increment `pipeline_traces_retained` |
-| `pipeline_merges_ceiling_reached` (counter) | `group,seg,shard,lane` | Which lane is capping — `finalize` is the one that matters |
+| `pipeline_traces_retained_by_ceiling` (counter) | `group` | How much deletion was lost. Distinct from retained-by-verdict; both also increment `pipeline_traces_retained` |
+| `pipeline_merges_ceiling_reached` (counter) | `group,lane` | Which lane is capping — `finalize` is the one that matters |
 | `pipeline_drop_set_budget_bytes` (gauge) | `group` | The resolved ceiling: the denominator for the two above |
-| `pipeline_drop_set_entries` (histogram) | `group,seg,shard,lane` | How close merges are running to that ceiling |
+| `pipeline_drop_set_entries` (histogram) | `group,lane` | How close merges are running to that ceiling |
 
 The histogram is emitted **whether or not a merge caps**, and that is the point: the two counters only fire once
 deletion has already been lost, so on their own they are a lagging indicator. Watching the upper buckets approach
 `pipeline_drop_set_budget_bytes / dropSetBytesPerEntry` is what gives an operator warning *before* the ceiling bites. A
 zero budget emits nothing rather than a zero gauge, so "no ceiling" never reads as "a zero-byte ceiling".
 
-The shard dimension is carried because the deletion bound is per shard (§5.2); without it a dashboard shows that a group
-is under-deleting but not where. These series are deleted per tsTable in `deleteMetrics`, so cardinality is bounded by
-live segments rather than growing with rotation.
+The storage boundary remains per merge, but observability is deliberately rolled up to the group. Segment and shard
+labels would multiply long-lived series with storage rotation and are not needed to decide whether the group needs more
+protector headroom. The lane label remains where it distinguishes ordinary and finalize work. These series are deleted
+with the group-level table metrics rather than when an individual segment or shard closes.
 
-On `banyand_trace_pipeline_`, per shard, published by the scan pre-filter (§7):
+On `banyand_trace_pipeline_`, per group, published once after a complete scan (§7):
 
 | Instrument | Labels | Answers |
 | --- | --- | --- |
-| `finalize_rounds` (gauge) | `group,shard` | How much of the shard's lifetime round budget is spent |
-| `finalize_terminal` (gauge) | `group,shard` | Whether the loss is now permanent — this shard can never delete another trace |
+| `finalize_rounds` (gauge) | `group` | Highest round count among the group's cooled shards |
+| `finalize_terminal` (gauge) | `group` | Whether any cooled shard is terminal and can never delete another trace |
 
 - The resolved budget, the `full` flag, and the retained-by-ceiling count in the benchmark event, next to
   `StagingHardLimit` (`banyand/trace/merger.go:712-716`).

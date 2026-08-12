@@ -236,8 +236,12 @@ func removeSamplersForGroup(group string) {
 // Callers must invoke the returned function (e.g., via t.Cleanup) to remove
 // the sampler when the test ends.
 func registerSampler(group string, s sdk.Sampler) func() {
+	return registerNamedSampler(group, "", s)
+}
+
+func registerNamedSampler(group, name string, sampler sdk.Sampler) func() {
 	localSamplerRegistry.mu.Lock()
-	localSamplerRegistry.m[group] = append(localSamplerRegistry.m[group], namedSampler{sampler: s})
+	localSamplerRegistry.m[group] = append(localSamplerRegistry.m[group], namedSampler{name: name, sampler: sampler})
 	localSamplerRegistry.mu.Unlock()
 	// Direct registration models an active MERGE-filter sampler (the production reconcile
 	// path sets this from mergeEventEnabled); without it buildHotMergeFilter would treat
@@ -248,7 +252,7 @@ func registerSampler(group string, s sdk.Sampler) func() {
 		defer localSamplerRegistry.mu.Unlock()
 		samplers := localSamplerRegistry.m[group]
 		for idx, existing := range samplers {
-			if existing.sampler == s {
+			if existing.sampler == sampler {
 				localSamplerRegistry.m[group] = append(samplers[:idx], samplers[idx+1:]...)
 				break
 			}
@@ -299,15 +303,27 @@ func currentSamplerIdentity(group string) []nameHash {
 // order, or nil if none. The snapshot is safe for the caller to hold across a merge
 // without being torn by concurrent registry mutations.
 func lookupSamplers(group string) []sdk.Sampler {
+	named := lookupNamedSamplers(group)
+	if len(named) == 0 {
+		return nil
+	}
+	out := make([]sdk.Sampler, len(named))
+	for idx, item := range named {
+		out[idx] = item.sampler
+	}
+	return out
+}
+
+// lookupNamedSamplers returns an immutable snapshot that retains each plugin's
+// configured name for per-plugin execution observability.
+func lookupNamedSamplers(group string) []namedSampler {
 	localSamplerRegistry.mu.RLock()
 	defer localSamplerRegistry.mu.RUnlock()
 	ns := localSamplerRegistry.m[group]
 	if len(ns) == 0 {
 		return nil
 	}
-	out := make([]sdk.Sampler, len(ns))
-	for idx, item := range ns {
-		out[idx] = item.sampler
-	}
+	out := make([]namedSampler, len(ns))
+	copy(out, ns)
 	return out
 }

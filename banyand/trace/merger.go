@@ -681,10 +681,10 @@ func (tst *tsTable) buildHotMergeFilterDecisionAt(parts []*partWrapper, logicalN
 	if !tst.option.nativePipelineEnabled {
 		return nil, mergeReasonPipelineDisabled
 	}
-	samplers := lookupSamplers(tst.group)
+	samplers := lookupNamedSamplers(tst.group)
 	hasSampler := false
 	for _, sampler := range samplers {
-		if sampler != nil {
+		if sampler.sampler != nil {
 			hasSampler = true
 			break
 		}
@@ -714,7 +714,9 @@ func (tst *tsTable) buildHotMergeFilterDecisionAt(parts []*partWrapper, logicalN
 		tst.incPipelineGuardBypassed()
 		return nil, mergeReasonGuardUnavailable
 	}
-	chain := newMergeChain(tst.group, "", samplers, tst.option.decideTimeoutCircuitBreak)
+	chain := newNamedMergeChain(tst.group, "", samplers, tst.option.decideTimeoutCircuitBreak)
+	chain.observeExecution = tst.observePipelinePluginExecution
+	chain.observeLinkExecution = tst.observePipelinePluginLinkExecution
 	return &mergeFilter{
 		chain:                 chain,
 		guard:                 guard,

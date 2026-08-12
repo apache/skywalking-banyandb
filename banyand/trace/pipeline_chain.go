@@ -31,6 +31,28 @@ import (
 
 var chainLog = logger.GetLogger("trace").Named("pipeline-chain")
 
+const (
+	pluginExecutionResultSuccess     = "success"
+	pluginExecutionResultTimeout     = "timeout"
+	pluginExecutionResultCircuitOpen = "circuit_open"
+	pluginExecutionResultDecideError = sdk.BypassReasonDecideError
+	pluginExecutionResultMismatch    = sdk.BypassReasonLengthMismatch
+	pluginExecutionResultPanic       = sdk.BypassReasonPanic
+	pluginExecutionResultLate        = "late"
+)
+
+type pluginExecutionObservation struct {
+	result      string
+	batchTraces int
+}
+
+type pluginLinkExecutionObservation struct {
+	pluginName   string
+	result       string
+	bypassReason string
+	elapsed      time.Duration
+}
+
 // mergeChain runs an ordered sampler chain over a vectorized TraceBatch and
 // returns the conjunction keep-mask. The whole chain runs in a worker goroutine
 // under a hard timeout so a slow plugin cannot stall compaction; every failure
@@ -38,17 +60,20 @@ var chainLog = logger.GetLogger("trace").Named("pipeline-chain")
 // consecutive-timeout circuit breaker disables the chain after circuitBreakN
 // timeouts.
 type mergeChain struct {
-	worker         *mergeDecisionWorker
-	timer          *time.Timer
-	samplers       []sdk.Sampler
-	group          string
-	schema         string
-	projection     sdk.Projection
-	circuitOpen    bool
-	circuitBreakN  int
-	consecutiveTOs int
-	executionMu    sync.Mutex
-	mu             sync.Mutex
+	observeExecution     func(pluginExecutionObservation)
+	timer                *time.Timer
+	worker               *mergeDecisionWorker
+	observeLinkExecution func(pluginLinkExecutionObservation)
+	group                string
+	schema               string
+	samplers             []sdk.Sampler
+	samplerNames         []string
+	projection           sdk.Projection
+	consecutiveTOs       int
+	circuitBreakN        int
+	executionMu          sync.Mutex
+	mu                   sync.Mutex
+	circuitOpen          bool
 }
 
 type mergeDecisionRequest struct {
@@ -61,7 +86,51 @@ type mergeDecisionWorker struct {
 	requests chan mergeDecisionRequest
 	results  chan sdk.Verdict
 	stopCh   chan struct{}
+	samplers []sdk.Sampler
 	stopOnce sync.Once
+}
+
+type observedSampler struct {
+	sdk.Sampler
+	chain      *mergeChain
+	worker     *mergeDecisionWorker
+	pluginName string
+}
+
+func (os *observedSampler) Decide(batch *sdk.TraceBatch) (verdict sdk.Verdict, decideErr error) {
+	started := time.Now()
+	result := pluginExecutionResultSuccess
+	bypassReason := ""
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			os.observe(started, pluginExecutionResultPanic, sdk.BypassReasonPanic)
+			panic(recovered)
+		}
+		if decideErr != nil {
+			result = pluginExecutionResultDecideError
+			bypassReason = sdk.BypassReasonDecideError
+		} else if len(verdict.Keep) != len(batch.Traces) {
+			result = pluginExecutionResultMismatch
+			bypassReason = sdk.BypassReasonLengthMismatch
+		}
+		os.observe(started, result, bypassReason)
+	}()
+	return os.Sampler.Decide(batch)
+}
+
+func (os *observedSampler) observe(started time.Time, result, bypassReason string) {
+	select {
+	case <-os.worker.stopCh:
+		result = pluginExecutionResultLate
+	default:
+	}
+	observation := pluginLinkExecutionObservation{
+		pluginName: os.pluginName, result: result, bypassReason: bypassReason,
+		elapsed: time.Since(started),
+	}
+	if os.chain.observeLinkExecution != nil {
+		os.chain.observeLinkExecution(observation)
+	}
 }
 
 // newMergeChain builds a chain from the ordered samplers and computes the union
@@ -70,14 +139,33 @@ type mergeDecisionWorker struct {
 //
 //nolint:unparam
 func newMergeChain(group, schema string, samplers []sdk.Sampler, circuitBreakN int) *mergeChain {
+	named := make([]namedSampler, len(samplers))
+	for idx, sampler := range samplers {
+		named[idx] = namedSampler{name: defaultSamplerMetricName(idx), sampler: sampler}
+	}
+	return newNamedMergeChain(group, schema, named, circuitBreakN)
+}
+
+func defaultSamplerMetricName(idx int) string {
+	return fmt.Sprintf("plugin_%d", idx+1)
+}
+
+func newNamedMergeChain(group, schema string, samplers []namedSampler, circuitBreakN int) *mergeChain {
 	var union sdk.Projection
 	seen := make(map[string]struct{})
 	activeSamplers := make([]sdk.Sampler, 0, len(samplers))
-	for _, sampler := range samplers {
-		if sampler == nil {
+	activeNames := make([]string, 0, len(samplers))
+	for idx, named := range samplers {
+		if named.sampler == nil {
 			continue
 		}
+		sampler := named.sampler
 		activeSamplers = append(activeSamplers, sampler)
+		name := named.name
+		if name == "" {
+			name = defaultSamplerMetricName(idx)
+		}
+		activeNames = append(activeNames, name)
 		proj := sampler.Project()
 		for _, name := range proj.Tags {
 			if _, ok := seen[name]; ok {
@@ -96,6 +184,7 @@ func newMergeChain(group, schema string, samplers []sdk.Sampler, circuitBreakN i
 	return &mergeChain{
 		projection:    union,
 		samplers:      activeSamplers,
+		samplerNames:  activeNames,
 		group:         group,
 		schema:        schema,
 		circuitBreakN: circuitBreakN,
@@ -126,6 +215,9 @@ func (mc *mergeChain) executeObservedInto(batch *sdk.TraceBatch, timeout time.Du
 	mc.mu.Lock()
 	if mc.circuitOpen {
 		mc.mu.Unlock()
+		mc.observe(pluginExecutionObservation{
+			result: pluginExecutionResultCircuitOpen, batchTraces: len(batch.Traces),
+		})
 		return retainAllVerdict(len(batch.Traces), decisionMask), true, nil
 	}
 	mc.mu.Unlock()
@@ -140,6 +232,9 @@ func (mc *mergeChain) executeObservedInto(batch *sdk.TraceBatch, timeout time.Du
 		mc.mu.Lock()
 		mc.consecutiveTOs = 0
 		mc.mu.Unlock()
+		mc.observe(pluginExecutionObservation{
+			result: pluginExecutionResultSuccess, batchTraces: len(batch.Traces),
+		})
 		return verdict, true, nil
 	case <-timeoutCh:
 		mc.abandonWorker(worker)
@@ -151,10 +246,22 @@ func (mc *mergeChain) executeObservedInto(batch *sdk.TraceBatch, timeout time.Du
 			opened = true
 		}
 		mc.mu.Unlock()
+		mc.observe(pluginExecutionObservation{
+			result: pluginExecutionResultTimeout, batchTraces: len(batch.Traces),
+		})
 		if opened {
 			return retainAllVerdict(len(batch.Traces), nil), false, fmt.Errorf("circuit_open")
 		}
 		return retainAllVerdict(len(batch.Traces), nil), false, fmt.Errorf("timeout")
+	}
+}
+
+func (mc *mergeChain) observe(observation pluginExecutionObservation) {
+	if len(mc.samplers) == 0 {
+		return
+	}
+	if mc.observeExecution != nil {
+		mc.observeExecution(observation)
 	}
 }
 
@@ -179,6 +286,12 @@ func (mc *mergeChain) acquireWorker() *mergeDecisionWorker {
 		results:  make(chan sdk.Verdict),
 		stopCh:   make(chan struct{}),
 	}
+	worker.samplers = make([]sdk.Sampler, len(mc.samplers))
+	for idx, sampler := range mc.samplers {
+		worker.samplers[idx] = &observedSampler{
+			Sampler: sampler, chain: mc, worker: worker, pluginName: mc.samplerNames[idx],
+		}
+	}
 	mc.worker = worker
 	go worker.run(mc)
 	return worker
@@ -188,9 +301,9 @@ func (mdw *mergeDecisionWorker) run(chain *mergeChain) {
 	for {
 		select {
 		case request := <-mdw.requests:
-			verdict := chain.runChain(request.batch, request.observation, request.decisionMask)
+			result := chain.runChainWithSamplers(mdw.samplers, request.batch, request.observation, request.decisionMask)
 			select {
-			case mdw.results <- verdict:
+			case mdw.results <- result:
 			case <-mdw.stopCh:
 				return
 			}
@@ -242,6 +355,12 @@ func (mc *mergeChain) close() {
 // reproduces the pre-refactor WARN logs (same fields, same messages) so this
 // change is behavior-preserving.
 func (mc *mergeChain) runChain(batch *sdk.TraceBatch, observation *mergeEvaluationObservation, decisionMask []bool) sdk.Verdict {
+	return mc.runChainWithSamplers(mc.samplers, batch, observation, decisionMask)
+}
+
+func (mc *mergeChain) runChainWithSamplers(samplers []sdk.Sampler, batch *sdk.TraceBatch, observation *mergeEvaluationObservation,
+	decisionMask []bool,
+) sdk.Verdict {
 	onBypass := func(_ int, info sdk.BypassInfo) {
 		if info.Reason == sdk.BypassReasonLengthMismatch {
 			chainLog.Warn().Int("got", info.Got).Int("want", info.Want).
@@ -256,7 +375,7 @@ func (mc *mergeChain) runChain(batch *sdk.TraceBatch, observation *mergeEvaluati
 			observation.evaluated.Add(uint64(len(batch.Traces)))
 		}
 	}
-	return sdk.EvaluateChainInto(mc.samplers, batch, decisionMask, onBypass)
+	return sdk.EvaluateChainInto(samplers, batch, decisionMask, onBypass)
 }
 
 func projectionRequiresSlowPath(projection sdk.Projection) bool {

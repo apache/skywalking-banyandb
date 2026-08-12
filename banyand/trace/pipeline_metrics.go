@@ -50,14 +50,11 @@ type samplerMetrics struct {
 	// pluginTelemetryPanicTotal{group,plugin_name} counts panics recovered inside
 	// the host telemetry adapter.
 	pluginTelemetryPanicTotal meter.Counter
-	// finalizeRounds{group,shard} and finalizeTerminal{group,shard} publish the
-	// per-shard finalize state that bounds how much a shard can ever delete
-	// (spec section 5.2): once rounds reach max_finalize_rounds the shard is marked
-	// terminal and never sampled again, so any traces the drop-set ceiling spared
-	// are undeleted permanently. They live here, on the scanner-reachable pipeline
-	// factory rather than on the per-group storage metrics, because the scanner
-	// reads this state for every shard — including terminal ones — without
-	// reopening the segment, which is exactly the case that has to stay visible.
+	// finalizeRounds{group} is the maximum round count observed across the
+	// group's cooled shards, and finalizeTerminal{group} reports whether any such
+	// shard is terminal. They live on the scanner-reachable pipeline factory
+	// rather than per-table storage metrics so terminal state remains visible
+	// without segment or shard metric cardinality.
 	finalizeRounds   meter.Gauge
 	finalizeTerminal meter.Gauge
 }
@@ -77,25 +74,23 @@ func newSamplerMetrics(factory observability.Factory) *samplerMetrics {
 		pluginTelemetrySeriesRejectedTotal: factory.NewCounter("plugin_telemetry_series_rejected_total", "group", "plugin_name"),
 		pluginLogDroppedTotal:              factory.NewCounter("plugin_log_dropped_total", "group", "plugin_name"),
 		pluginTelemetryPanicTotal:          factory.NewCounter("plugin_telemetry_panic_total", "group", "plugin_name"),
-		finalizeRounds:                     factory.NewGauge("finalize_rounds", "group", "shard"),
-		finalizeTerminal:                   factory.NewGauge("finalize_terminal", "group", "shard"),
+		finalizeRounds:                     factory.NewGauge("finalize_rounds", "group"),
+		finalizeTerminal:                   factory.NewGauge("finalize_terminal", "group"),
 	}
 }
 
-// observeFinalizeState publishes one shard's finalize round count and terminal
-// flag. Called from the scan pre-filter, which reads this state from disk for
-// every cooled shard on every tick, so a shard that has gone terminal keeps
-// reporting instead of falling silent the moment it stops being finalized.
-func (m *samplerMetrics) observeFinalizeState(group, shard string, rounds int, terminal bool) {
+// observeFinalizeState publishes the group-level worst-case finalize state from
+// one complete scan: the highest round count and whether any shard is terminal.
+func (m *samplerMetrics) observeFinalizeState(group string, rounds int, terminal bool) {
 	if m == nil {
 		return
 	}
-	m.finalizeRounds.Set(float64(rounds), group, shard)
+	m.finalizeRounds.Set(float64(rounds), group)
 	terminalValue := float64(0)
 	if terminal {
 		terminalValue = 1
 	}
-	m.finalizeTerminal.Set(terminalValue, group, shard)
+	m.finalizeTerminal.Set(terminalValue, group)
 }
 
 func (m *samplerMetrics) setActiveCount(group string, n int) {

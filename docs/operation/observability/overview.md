@@ -5,7 +5,7 @@ This document outlines the observability features of BanyanDB, which include met
 This guide is split into:
 
 - [Logging](logging.md) — log levels, per-module levels, and slow-query logging.
-- [Metrics](metrics.md) — the full metric catalog (stats, resource usage, storage, inverted index, internal queue) with PromQL.
+- [Metrics](metrics.md) — the full metric catalog (stats, resource usage, storage, trace plugins, inverted index, internal queue) with PromQL.
 - [Metrics Providers](providers.md) — scraping metrics with Prometheus (through the FODC proxy), the Grafana dashboard, and native self-observability.
 - [Profiling](profiling.md) — `pprof` endpoints.
 - [Query Tracing](tracing.md) — per-query execution traces.
@@ -26,7 +26,38 @@ If you watch nothing else, watch these. They are organized with the two canonica
 | 8 | **Merge / compaction health** (LSM) | Merge File Rate/Latency/Partitions (`banyandb_*_total_merge_loop_started`, `_merge_latency`, `_merged_parts`), part counts (`*_total_file_parts`) | merge-latency spikes correlated with write-latency spikes; steadily growing part/partition counts | a compaction storm or backlog → write-latency spikes, query slowdown, oversized/broken parts [6] |
 | 9 | **Cardinality / series growth** | Total Series (`banyandb_*_inverted_index_total_doc_count`), `_total_updates` (churn), `_total_term_searchers_started` | rapid `doc_count` growth, high churn, or high term-search rate | a cardinality explosion → memory pressure, inverted-index bloat, and slow queries |
 | 10 | **Node liveness / membership** | Active Instances (`count(banyandb_system_up_time)` by `container_name`), per-node `banyandb_system_up_time` | reporting-node count below expected; a node's uptime dropping to ~0 (restart) or its series disappearing (gone) | lost capacity, under-replication, and query gaps |
+| 11 | **Trace plugins** (RED) | [Plugin health and cost](metrics.md#trace-plugin-metrics-reference) | failures or p99 growth | sampling bypass or slow merges |
 
-**Priority order:** 1–3 (RED) tell you whether users are affected *right now*; 4–7 (USE/backpressure) are the **leading indicators** that catch trouble before it becomes user-visible; 8–10 catch the classic slow-burn database failures (compaction backlog, cardinality blow-up, node loss). A practical first alert set: query p99 latency, error rate, disk > 85%, memory near `--allowed-percent`, and sustained wqueue/`queue_pub` backlog.
+**Priority order:** 1–3 (RED) tell you whether users are affected *right now*; 4–7 (USE/backpressure) are the
+**leading indicators** that catch trouble before it becomes user-visible; 8–11 catch classic slow-burn database and
+optional trace-pipeline failures. A practical first alert set is query p99 latency, error rate, disk > 85%, memory near
+`--allowed-percent`, and sustained wqueue/`queue_pub` backlog. When trace plugins are enabled, also alert immediately on
+plugin panic, verdict mismatch, late completion, or an open circuit.
+
+## Trace Plugin Monitoring
+
+Trace plugins execute during mature trace merges and finalization, so their traffic is naturally bursty and may be zero
+during the merge-grace window. Use rates over a suitable window and compare latency with a healthy baseline for each
+`(group, plugin_name)` pair rather than applying one global latency threshold.
+
+Start with these signals:
+
+1. **Availability:** confirm the configured sampler count and watch registration, update, removal, and load failures in
+   [Plugin lifecycle and loading](metrics.md#plugin-lifecycle-and-loading).
+2. **Fail-open health:** alert on `panic`, `length_mismatch`, or `late` plugin executions and on `circuit_open` chain
+   batches. Monitor sustained `decide_error` and `timeout` rates in
+   [Plugin execution and batching](metrics.md#plugin-execution-and-batching).
+3. **Cost:** graph successful p99 execution duration and successful execution time per evaluated trace by `plugin_name`.
+   Use batch trace count to distinguish a slower plugin from a change in batch shape.
+4. **Sampling effect:** monitor evaluated, retained, dropped, immature, and safety-bypassed traces in
+   [Trace retention outcomes and safety](metrics.md#trace-retention-outcomes-and-safety).
+5. **Host safety:** watch rejected plugin-defined series, dropped plugin log lines, and recovered telemetry panics in
+   [Plugin telemetry host health](metrics.md#plugin-telemetry-host-health).
+6. **Finalization:** watch the group-level round and terminal gauges in [Finalization state](metrics.md#finalization-state).
+
+The [complete trace plugin metric reference](metrics.md#trace-plugin-metrics-reference) lists every host-provided plugin
+and supporting trace-pipeline metric, its labels, and its interpretation. Metrics created by a plugin through
+`Host.Meter` use the bounded prefix and labels documented under
+[Plugin-defined business metrics](metrics.md#plugin-defined-business-metrics).
 
 > Sources: [1] Google SRE — *Monitoring Distributed Systems* (Four Golden Signals) <https://sre.google/sre-book/monitoring-distributed-systems/> · [2] B. Gregg — *The USE Method* <https://www.brendangregg.com/usemethod.html> · [3] *The RED Method* (Grafana / T. Wilkie) <https://grafana.com/blog/the-red-method-how-to-instrument-your-services/> · [4] Elasticsearch disk watermarks 85/90/95% <https://www.elastic.co/docs/troubleshoot/elasticsearch/fix-watermark-errors> · [5] Prometheus remote-write backpressure <https://prometheus.io/docs/practices/remote_write/> · [6] Grafana Mimir — scaling to 1B active series (compaction/flush latency) <https://grafana.com/blog/2022/04/08/how-we-scaled-our-new-prometheus-tsdb-grafana-mimir-to-1-billion-active-series/>
