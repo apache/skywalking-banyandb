@@ -25,11 +25,11 @@ import (
 
 func TestResolveSegmentTimeRange(t *testing.T) {
 	tests := []struct {
-		name          string
-		arguments     []string
 		expectedStart time.Time
 		expectedEnd   time.Time
+		name          string
 		errorContains string
+		arguments     []string
 	}{
 		{name: "omitted"},
 		{
