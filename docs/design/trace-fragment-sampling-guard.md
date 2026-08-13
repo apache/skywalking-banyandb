@@ -2,7 +2,7 @@
 
 ## Status
 
-Core enforcement implemented behind an opt-in maximum-fragment-gap safety contract.
+Core enforcement implemented using the resolved merge-grace safety contract.
 
 ## Context and Problem Statement
 
@@ -54,9 +54,9 @@ strictly safe only when grace is at least an enforced maximum separation between
 an event-time range prevents future arrivals, but does not prove that an already-visible same-trace fragment is absent
 from a part farther than grace.
 
-This document calls the value used for interval expansion guard grace. The implementation sources it from the separately
-enforced `trace-pipeline-max-fragment-gap`; merge grace remains only the whole-selection maturity delay. A strict
-deployment must establish the maximum-gap guarantee independently because configuring the flag does not enforce it.
+This document calls the value used for interval expansion guard grace. The implementation uses the resolved per-group
+`merge_grace` for both interval expansion and the whole-selection maturity delay. A deployment must ensure fragments of
+one trace do not arrive farther apart than this grace; the engine cannot infer or enforce that ingestion property.
 
 The engine default for merge grace is 2h when a group does not configure a positive override. A merge must resolve the
 group override or engine default once and carry that immutable value through filtering and publication revalidation.
@@ -65,19 +65,10 @@ makes the entire merge lossless. Because compaction is part-count-driven rather 
 is not guaranteed to run again at the two-hour frontier. Its effective filtering delay is at least two hours plus the
 wait for a later eligible compaction; finalization is an independent backstop.
 
-Keeping these values separate prevents the 2h maturity default from unnecessarily expanding every trace range by two
-hours. It also permits an early whole-merge bypass when a segment is too narrow to contain any trace range expanded by
-the enforced maximum gap, avoiding projection, staging, sampler, and Bloom work when no DROP could be authorized.
-
-Without that contract, enforcement defers provisional DROP traces. Shadow mode may still calculate and report the
-best-effort result based on observed workload behavior, but it must not use that result for destructive deletion. A
-future fallback may instead probe every outside Bloom filter without temporal pruning.
-
-The runtime defaults the maximum-fragment-gap declaration to zero. At zero, or when the declaration is greater than the
-resolved merge grace, it does not construct the merge or finalization sampler and guard, so rewriting remains lossless
-without paying projection, staging, or Bloom-probe costs. A positive declaration no greater than the resolved grace
-enables the guarded path. The declaration is an operator assertion about the ingestion contract; the flag itself does
-not enforce late-write rejection.
+Using one value makes the configured maturity contract match the boundary checked before a destructive DROP. It also
+permits an early whole-merge bypass when a segment is too narrow to contain any trace range expanded by merge grace,
+avoiding projection, staging, sampler, and Bloom work when no DROP could be authorized. Without a trustworthy
+fragment-arrival contract, operators should not enable destructive sampling for that group.
 
 The design uses symmetric time expansion because the size-based picker can select an arbitrary temporal subset. An
 outside fragment may be earlier or later than the selected fragment.
@@ -166,12 +157,11 @@ being evaluated in a later merge or finalization pass.
 The merge request captures and pins the selected inputs, the base snapshot epoch, the event-time coverage of the pinned
 catalog, and lightweight metadata for every outside part. Outside metadata consists of the part identity, minimum and
 maximum event timestamps, segment identity, availability state, and a reference to its trace-ID Bloom filter. The
-catalog also records the enforced maximum fragment gap; the guard refuses temporal pruning when configured grace is
-smaller.
+catalog also records the enforced fragment gap, which is the same resolved merge grace used by the maturity gate.
 
 Before incurring sampler work, the runtime also checks that native sampling is enabled, a sampler exists, the relevant
-event is enabled, the maximum-fragment-gap declaration is positive and no greater than merge grace, the segment has a
-non-empty guardable interior, and every selected part is old enough for the whole-selection maturity gate. Finalization
+event is enabled, the segment has a non-empty merge-grace-expanded interior, and every selected part is old enough for
+the whole-selection maturity gate. Finalization
 uses the greater of merge grace and finalize grace for maturity. Failure of any check leaves the lossless path unchanged.
 
 The merge assembles selected blocks by trace ID and computes one selected trace range. The sampler evaluates the
@@ -415,7 +405,7 @@ probe count. Per-reason trace-level labels are intentionally avoided.
 2. Verify inclusive grace-boundary behavior.
 3. Verify overflow-safe handling near minimum and maximum timestamp values.
 4. Verify nested outside intervals and non-contiguous selected parts.
-5. Verify temporal pruning is rejected when guard grace is smaller than the enforced maximum fragment gap.
+5. Verify temporal pruning is rejected when guard grace is smaller than the catalog's enforced gap.
 6. Verify that sampler KEEP performs no Bloom probes.
 7. Verify that provisional DROP with no time candidate is dropped.
 8. Verify that all-negative candidate filters permit DROP.
@@ -432,8 +422,7 @@ probe count. Per-reason trace-level labels are intentionally avoided.
 19. Verify that closing a guard releases its pinned catalog exactly once.
 20. Verify that an unset group value resolves to the 2h engine default and an explicit group value takes precedence.
 21. Verify whole-merge maturity at one nanosecond before, exactly at, and one nanosecond after the 2h frontier.
-22. Verify exact earlier and later 2h guard boundaries and reject temporal pruning when the enforced maximum gap is
-    2h plus one nanosecond.
+22. Verify exact earlier and later 2h guard boundaries.
 23. Verify that finalization applies the same outside-part guard and defers a trace found in a skipped part.
 24. Verify that a segment with no guardable interior bypasses projection, sampler, and Bloom work.
 
@@ -515,11 +504,11 @@ probe count. Per-reason trace-level labels are intentionally avoided.
 4. Core and secondary-index snapshots agree on every confirmed DROP.
 5. Snapshot conflicts fail open without losing input data.
 6. The captured-shard regression has zero false negatives against the exact placement oracle.
-7. With 2h merge grace and an explicitly declared 2h maximum fragment gap, the cooled captured-shard case produces
+7. With 2h merge grace used for both maturity and boundary expansion, the cooled captured-shard case produces
    exactly 6,652 time-candidate pairs and Bloom probes, versus 629,241 probes for all-Bloom confirmation.
 8. Missing timestamp metadata and segment-boundary ambiguity never produce destructive deletion.
 9. Benchmarks show no increase in selected merge bytes or merge fan-out.
-10. Probe-budget exhaustion and lack of a positive maximum-fragment-gap contract retain affected traces.
+10. Probe-budget exhaustion retains affected traces.
 11. Any selected part newer than the maturity frontier causes zero sampler calls, guard calls, Bloom probes, and drops.
 12. Finalization cannot publish a DROP that the ordinary merge guard would defer for the same visible catalog.
 13. Publication rejection leaves the selected inputs authoritative and completes one lossless retry.
@@ -530,7 +519,7 @@ probe count. Per-reason trace-level labels are intentionally avoided.
    block merges.
 2. Assemble every selected physical block for one trace into a complete sampler and guard input.
 3. Build and pin the outside catalog with conservative coverage, fallible membership adapters, the base epoch, and an
-   explicit enforced maximum fragment gap.
+   enforced gap equal to resolved merge grace.
 4. Implement provisional DROP resolution, including validation, saturating expansion, interval candidate discovery,
    tri-state membership checks, cumulative probe budgets, and guard-owned confirmed DROP tokens.
 5. Drive core and secondary-index pruning only from those tokens.
@@ -545,8 +534,8 @@ The feature should first run in shadow mode. Shadow mode records provisional sam
 outcomes, and the final action that enforcement would take, but it does not drop traces.
 
 After captured-shard replay and production shadow metrics confirm acceptable candidate and deferral rates, enforcement
-can be enabled for a limited set of trace groups by declaring a verified positive maximum fragment gap no greater than
-their resolved merge grace. Rollout should monitor Bloom probes, deferred traces, epoch conflicts, merge latency, sampler
+can be enabled for a limited set of trace groups whose verified fragment-arrival bound fits within their resolved merge
+grace. Rollout should monitor Bloom probes, deferred traces, epoch conflicts, merge latency, sampler
 effectiveness, and finalization backlog.
 
 Rollback disables boundary-aware destructive filtering and returns merges to fail-open retention without changing the

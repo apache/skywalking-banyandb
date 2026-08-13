@@ -125,13 +125,13 @@ func TestTraceFragmentGuardResolveContract(t *testing.T) {
 			want: contractDecision(traceFragmentGuardActionDefer, traceFragmentGuardReasonTemporalSafetyUnknown, 42, 0, 0),
 		},
 		{
-			name:   "grace below the enforced maximum fragment gap defers",
+			name:   "grace below the catalog enforced gap defers",
 			config: &insufficientGraceConfig,
 			input:  contractDropInput(),
 			want:   contractDecision(traceFragmentGuardActionDefer, traceFragmentGuardReasonTemporalSafetyUnknown, 42, 0, 0),
 		},
 		{
-			name: "negative enforced maximum fragment gap defers",
+			name: "negative catalog enforced gap defers",
 			input: func() traceFragmentGuardResolveInput {
 				input := contractDropInput()
 				input.catalog.EnforcedMaxFragmentGap = -time.Nanosecond

@@ -54,7 +54,6 @@ const (
 	mergeReasonNoSampler        mergeSamplingReason = "no_sampler"
 	mergeReasonEventDisabled    mergeSamplingReason = "event_disabled"
 	mergeReasonGrace            mergeSamplingReason = "merge_grace"
-	mergeReasonFragmentGap      mergeSamplingReason = "fragment_gap_contract"
 	mergeReasonGuardUnavailable mergeSamplingReason = "guard_unavailable"
 	mergeReasonAllOversized     mergeSamplingReason = "all_traces_oversized"
 	mergeReasonLosslessRetry    mergeSamplingReason = "lossless_retry"
@@ -136,8 +135,6 @@ const (
 	BenchmarkMergeReasonEventDisabled BenchmarkMergeReason = mergeReasonEventDisabled
 	// BenchmarkMergeReasonGrace means the selected parts were inside merge grace.
 	BenchmarkMergeReasonGrace BenchmarkMergeReason = mergeReasonGrace
-	// BenchmarkMergeReasonFragmentGap means the configured fragment gap was incompatible.
-	BenchmarkMergeReasonFragmentGap BenchmarkMergeReason = mergeReasonFragmentGap
 	// BenchmarkMergeReasonGuardUnavailable means the fragment guard could not be created.
 	BenchmarkMergeReasonGuardUnavailable BenchmarkMergeReason = mergeReasonGuardUnavailable
 	// BenchmarkMergeReasonAllOversized means every trace bypassed evaluation due to its size.

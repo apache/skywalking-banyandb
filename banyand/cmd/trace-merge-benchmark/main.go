@@ -96,11 +96,14 @@ func buildOracle(ctx context.Context, arguments []string) {
 	flags := flag.NewFlagSet("build-oracle", flag.ExitOnError)
 	var options tracebaseline.BuildSamplingOracleOptions
 	var pluginConfigPath, selectionManifestPath, outputPath string
+	var segmentMinTimeNanos, segmentMaxTimeNanos int64
 	flags.StringVar(&options.SourceRoot, "source", "", "immutable source shard copy")
 	flags.StringVar(&options.PluginPath, "plugin", "", "native sampler plugin .so path")
 	flags.StringVar(&pluginConfigPath, "plugin-config", "", "sampler configuration JSON file")
 	flags.StringVar(&options.ExpectedSamplerPath, "expected-sampler", "", "optional frozen sampler artifact")
 	flags.StringVar(&selectionManifestPath, "selection-manifest", "", "optional controlled seed selection manifest")
+	flags.Int64Var(&segmentMinTimeNanos, "segment-min-time-nanos", 0, "inclusive minimum fixture timestamp for sampler coverage")
+	flags.Int64Var(&segmentMaxTimeNanos, "segment-max-time-nanos", 0, "inclusive maximum fixture timestamp for sampler coverage")
 	flags.StringVar(&outputPath, "output", "", "sampling oracle JSON output")
 	_ = flags.Parse(arguments)
 	if pluginConfigPath != "" {
@@ -116,6 +119,9 @@ func buildOracle(ctx context.Context, arguments []string) {
 			fatalf("cannot read sampling oracle selection: %v", readErr)
 		}
 		options.EvaluationPartIDs = append(options.EvaluationPartIDs, manifest.Selection.InputPartIDs...)
+	}
+	if segmentMinTimeNanos != 0 || segmentMaxTimeNanos != 0 {
+		options.SegmentTimeRange = timestamp.NewInclusiveTimeRange(time.Unix(0, segmentMinTimeNanos), time.Unix(0, segmentMaxTimeNanos))
 	}
 	artifact, buildErr := tracebaseline.BuildSamplingOracle(ctx, options)
 	if buildErr != nil {

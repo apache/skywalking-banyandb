@@ -75,7 +75,6 @@ type schemaRepo struct {
 	nodeID                 string
 	trustedPluginDir       string
 	mergeGraceDefault      time.Duration
-	maxTraceFragmentGap    time.Duration
 	finalizeGraceDefault   time.Duration
 	role                   databasev1.Role
 	nativePipelineEnabled  bool
@@ -92,7 +91,6 @@ func newSchemaRepo(path string, svc *standalone, nodeLabels map[string]string, n
 		nativePipelineEnabled:  svc.option.nativePipelineEnabled,
 		trustedPluginDir:       svc.option.trustedPluginDir,
 		mergeGraceDefault:      svc.option.mergeGraceDefault,
-		maxTraceFragmentGap:    svc.option.maxTraceFragmentGap,
 		finalizeGraceDefault:   svc.option.finalizeGraceDefault,
 		samplerMeter:           newSamplerMetrics(pipelineFactory),
 		pluginTelemetryFactory: pipelineFactory,
@@ -477,7 +475,7 @@ func (sr *schemaRepo) reconcilePipeline(group string, cfg *commonv1.TracePipelin
 	// a finalize config entry is what marks a group for the background finalize scanner
 	// (a merge-only group must not be scanned). The proto carries no threshold-override
 	// fields in v1, so the config registry holds defaults (filled by lookupFinalizeConfig).
-	// finalize_grace falls back to option.finalizeGraceDefault at lookup time when unset.
+	// finalize_grace falls back to the fixed engine default at lookup time when unset.
 	if finalizeEventEnabled(cfg) {
 		var finalizeGraceNs int64
 		if fg := cfg.GetFinalizeGrace(); fg != nil {

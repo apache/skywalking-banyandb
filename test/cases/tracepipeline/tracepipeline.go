@@ -136,7 +136,7 @@ const soakDefaultDuration = 3 * time.Minute
 // soakGracePad is the minimum age for soak timestamps relative to now.
 // Writes are placed this far in the past so isMergeHot returns false when the
 // effective grace is explicitly configured at or below this value. The integration
-// harnesses use a 1ns merge grace and matching maximum-fragment-gap contract; variants
+// harnesses use a 1ns merge grace for maturity and boundary guarding; variants
 // exercising a larger grace must configure one no greater than this pad rather than
 // waiting for the production default.
 const soakGracePad = 2 * time.Minute

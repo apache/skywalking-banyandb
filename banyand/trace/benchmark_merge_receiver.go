@@ -57,6 +57,9 @@ type BenchmarkMergeReceiverOptions struct {
 	BlockMerges      bool
 }
 
+// BenchmarkDefaultMergeGrace is the production trace-pipeline merge-grace fallback used by benchmark workloads.
+const BenchmarkDefaultMergeGrace = defaultTracePipelineMergeGrace
+
 // BenchmarkMergeStagingLimits reports the effective limits used by the trace sampler staging path.
 type BenchmarkMergeStagingLimits struct {
 	MemoryLimit   uint64 `json:"memoryLimit"`
@@ -142,7 +145,7 @@ func NewBenchmarkMergeReceiver(root string, options BenchmarkMergeReceiverOption
 	table, tableErr := newTSTable(fileSystem, absoluteRoot, common.Position{Database: group},
 		logger.GetLogger("trace-merge-benchmark"), options.SegmentTimeRange, option{
 			flushTimeout: 0, mergePolicy: newDefaultMergePolicy(), protector: memoryProtector,
-			nativePipelineEnabled: options.Sampler != nil, maxTraceFragmentGap: time.Minute, mergeGraceDefault: options.MergeGrace,
+			nativePipelineEnabled: options.Sampler != nil, mergeGraceDefault: options.MergeGrace,
 			decideTimeout: 5 * time.Second, decideTimeoutCircuitBreak: 3, benchmarkMergeBlocked: options.BlockMerges,
 		}, nil)
 	if tableErr != nil {
@@ -244,6 +247,14 @@ func (bpr *BenchmarkPartReceiver) TraceFragmentMaybeOutsideSelection(selectedPar
 	}
 	guardMin := traceFragmentSaturatingSub(minTimestamp, int64(grace))
 	guardMax := traceFragmentSaturatingAdd(maxTimestamp, int64(grace))
+	segmentRange := bpr.table.segmentTimeRange
+	if !segmentRange.Start.IsZero() && !segmentRange.End.IsZero() {
+		coverageMin := segmentRange.Start.UnixNano()
+		coverageMax := segmentRange.End.UnixNano()
+		if guardMin < coverageMin || guardMax > coverageMax {
+			return true, nil
+		}
+	}
 	snapshot := bpr.table.currentSnapshot()
 	if snapshot == nil {
 		return false, fmt.Errorf("benchmark trace fragment snapshot is unavailable")

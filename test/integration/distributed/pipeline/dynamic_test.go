@@ -317,8 +317,6 @@ var _ = ginkgo.Describe("Dynamic sampler registration (distributed)", ginkgo.Ord
 				setup.BuildDataNodeFlags(clusterConfig, clusterDataDir0, clusterDN0Ports),
 				"--trace-pipeline-native-plugin-enabled=true",
 				"--trace-pipeline-trusted-plugin-dir="+clusterTrustedDir,
-				"--trace-pipeline-merge-grace-default=1ns",
-				"--trace-pipeline-max-fragment-gap=1ns",
 				"--trace-max-merge-parts=2",
 				"--trace-flush-timeout=500ms",
 			)
@@ -402,8 +400,6 @@ var _ = ginkgo.Describe("Dynamic sampler registration (distributed)", ginkgo.Ord
 				ljPorts,
 				"--trace-pipeline-native-plugin-enabled=true",
 				"--trace-pipeline-trusted-plugin-dir="+clusterTrustedDir,
-				"--trace-pipeline-merge-grace-default=1ns",
-				"--trace-pipeline-max-fragment-gap=1ns",
 				"--trace-max-merge-parts=2",
 				"--trace-flush-timeout=500ms",
 			)

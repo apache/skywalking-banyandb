@@ -54,7 +54,6 @@ spec:
         - --trace-pipeline-native-plugin-enabled=true
         - --trace-pipeline-trusted-plugin-dir=/plugins
         # merge grace 0 (harmless for the load assertion).
-        - --trace-pipeline-merge-grace-default=0
         # Shorten the data node's property-schema sync interval (default 30s) so
         # that once its schema client finishes its (~60s hardcoded) init-wait,
         # the registered group pipeline reconciles promptly on the next sync.

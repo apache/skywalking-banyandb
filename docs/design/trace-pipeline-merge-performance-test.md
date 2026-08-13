@@ -890,7 +890,6 @@ Every event has a low-cardinality `sampling` classification:
 - `no_sampler`;
 - `event_disabled`;
 - `merge_grace`;
-- `fragment_gap_contract`;
 - `guard_unavailable`;
 - `all_traces_oversized`;
 - `lossless_retry`;

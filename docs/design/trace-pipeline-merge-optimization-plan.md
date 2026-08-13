@@ -702,12 +702,13 @@ two-hour merge grace period, and the same publication schedule. The fixture SHA-
 `8c9289bed26d7696a44b4937c5670b2709707b03904cf9de3241d279d4081438`; the schedule SHA-256 was
 `f7b651db0fe965362696139d19bc9ec452269868bba236e3e3b5615830652bcd`.
 
-All ten runs passed their row, core-ledger, secondary-index-ledger, sampling, and plugin-observability gates and reached
+All ten measured runs passed their row, core-ledger, secondary-index-ledger, sampling, and plugin-observability gates and reached
 an idle boundary. The 24-hour primary phase produced the same 286 merge rounds and no sampler calls in either mode
 because the selected data remained inside the two-hour grace window. Each SkyWalking run then performed one sampled
-finalize merge. It made 12 calls, evaluated 74,576 complete traces, retained 48,196, and dropped 26,380. The resulting
-35.3733% deletion ratio matched the independent verdict oracle. Core, latency-index, and start-time-index output each
-reconciled to 89,157 rows. No run reported a timeout, circuit-open result, plugin bypass, oversized-trace bypass, lossless
+finalize merge. It made 12 calls and evaluated 74,576 complete traces. The plugin proposed retaining 48,196 and dropping
+26,380; the two-hour boundary guard retained four additional edge traces, so 26,376 were dropped. The resulting effective
+35.3679% deletion ratio matched the independent fragment-aware oracle. Core, latency-index, and start-time-index output each
+reconciled to 89,265 rows. No run reported a timeout, circuit-open result, plugin bypass, oversized-trace bypass, lossless
 retry, malformed verdict, panic, or OOM.
 
 The like-for-like primary phase measures the common merge path before the intentional sampled finalize work. Medians are
@@ -715,11 +716,11 @@ over five fresh processes.
 
 | Primary metric | Pipeline disabled | SkyWalking | Delta | Disposition |
 | --- | ---: | ---: | ---: | --- |
-| Wall time | 77.201 s | 79.048 s | +2.39% | Accepted |
-| CPU time | 28.974 s | 28.371 s | -2.08% | No regression claimed |
-| Allocated bytes | 975.6 MB | 967.5 MB | -0.83% | No regression claimed |
-| Allocation count | 18,115,242 | 18,115,605 | +0.002% | Passed |
-| Cgroup memory peak | 160.5 MiB | 160.6 MiB | +0.06% | Passed |
+| Wall time | 76.994 s | 81.519 s | +5.88% | Accepted |
+| CPU time | 28.332 s | 27.976 s | -1.25% | No regression claimed |
+| Allocated bytes | 931.5 MiB | 925.4 MiB | -0.66% | No regression claimed |
+| Allocation count | 18,112,812 | 18,115,022 | +0.01% | Passed |
+| Cgroup memory peak | 160.5 MiB | 160.8 MiB | +0.14% | Passed |
 | Logical write amplification | 0.947236 | 0.947236 | 0.00% | Passed |
 
 The end-to-end comparison includes the extra sampled finalize merge and therefore quantifies both its cost and its
@@ -727,22 +728,21 @@ storage benefit rather than treating that work as an ordinary-path regression.
 
 | End-to-end metric | Pipeline disabled | SkyWalking | Delta |
 | --- | ---: | ---: | ---: |
-| Wall time | 77.403 s | 83.768 s | +8.22% |
-| CPU time | 28.976 s | 32.828 s | +13.30% |
-| Allocated bytes | 932.8 MiB | 1,500.6 MiB | +60.88% |
-| Cgroup memory peak | 160.5 MiB | 242.2 MiB | +50.91% |
-| Active merge time | 50.116 s | 52.789 s | +5.33% |
-| Final core plus secondary-index bytes | 85.13 MiB | 40.18 MiB | -52.80% |
-| Logical write amplification | 0.947236 | 0.801949 | -15.34% |
+| Wall time | 77.196 s | 86.237 s | +11.71% |
+| CPU time | 28.333 s | 32.449 s | +14.53% |
+| Allocated bytes | 933.8 MiB | 1,499.3 MiB | +60.55% |
+| Cgroup memory peak | 160.5 MiB | 250.5 MiB | +56.02% |
+| Final core plus secondary-index bytes | 85.13 MiB | 40.19 MiB | -52.79% |
+| Logical write amplification | 0.947236 | 0.801995 | -15.33% |
 
-The plugin itself accounted for a median 16.980 ms of `Decide` wall time per SkyWalking run, 227.7 ns per evaluated
-trace, with a median maximum call of 3.514 ms. Across all five runs, the exact histogram reconciled all 60 calls: one at
-or below 0.25 ms, four at or below 0.5 ms, 25 at or below 1 ms, 25 at or below 2.5 ms, and five at or below 5 ms. There
+The plugin itself accounted for a median 17.025 ms of `Decide` wall time per SkyWalking run, 228.3 ns per evaluated
+trace, with a median maximum call of 3.543 ms. Across all five runs, the exact histogram reconciled all 60 calls: one at
+or below 0.25 ms, four at or below 0.5 ms, 25 at or below 1 ms, 24 at or below 2.5 ms, and six at or below 5 ms. There
 were no overflows. Most sampled-finalize cost therefore belongs to trace reconstruction, filtering, and rewriting rather
 than plugin execution.
 
 The paired suites, raw merge events, profiles, and standalone comparison report are under
-`.scratch/trace-pipeline-merge-performance/phase10-paired-v2`. This closes Phase 10 without adding a production budget or
+`.scratch/trace-pipeline-merge-performance/phase10-paired-merge-grace-v6`. This closes Phase 10 without adding a production budget or
 configuration flag.
 
 ---

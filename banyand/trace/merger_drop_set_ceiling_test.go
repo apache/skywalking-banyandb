@@ -509,12 +509,11 @@ func TestCappedFinalizeRoundLeavesStateUnchanged(t *testing.T) {
 		logger.GetLogger("capped-finalize-test"),
 		timestamp.NewInclusiveTimeRange(time.Unix(-1, 0), time.Unix(1, 0)),
 		option{
-			flushTimeout:        0,
-			mergePolicy:         newDefaultMergePolicyForTesting(),
-			protector:           protector.Nop{},
-			decideTimeout:       time.Second,
-			mergeGraceDefault:   time.Millisecond,
-			maxTraceFragmentGap: time.Nanosecond,
+			flushTimeout:      0,
+			mergePolicy:       newDefaultMergePolicyForTesting(),
+			protector:         protector.Nop{},
+			decideTimeout:     time.Second,
+			mergeGraceDefault: time.Millisecond,
 		},
 		nil,
 	)
@@ -573,12 +572,11 @@ func TestCappedFinalizeRoundWarnsOnce(t *testing.T) {
 			&logger.Logger{Logger: &zl},
 			timestamp.NewInclusiveTimeRange(time.Unix(-1, 0), time.Unix(1, 0)),
 			option{
-				flushTimeout:        0,
-				mergePolicy:         newDefaultMergePolicyForTesting(),
-				protector:           protector.Nop{},
-				decideTimeout:       time.Second,
-				mergeGraceDefault:   time.Millisecond,
-				maxTraceFragmentGap: time.Nanosecond,
+				flushTimeout:      0,
+				mergePolicy:       newDefaultMergePolicyForTesting(),
+				protector:         protector.Nop{},
+				decideTimeout:     time.Second,
+				mergeGraceDefault: time.Millisecond,
 			},
 			nil,
 		)
@@ -691,7 +689,6 @@ func TestFiltersCarryResolvedDropSetBudget(t *testing.T) {
 		protector:             fixedLimitProtector{limit: 4 << 30},
 		decideTimeout:         time.Second,
 		mergeGraceDefault:     time.Millisecond,
-		maxTraceFragmentGap:   time.Microsecond,
 		nativePipelineEnabled: true,
 	}
 	tmpPath, cleanupFn := test.Space(require.New(t))

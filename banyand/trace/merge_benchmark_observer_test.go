@@ -207,11 +207,6 @@ func TestBuildHotMergeFilterDecisionReportsBoundedReasons(t *testing.T) {
 	require.Nil(t, filter)
 	require.Equal(t, mergeReasonEventDisabled, reason)
 	setMergeEventForGroup(group, true)
-	table.option.maxTraceFragmentGap = 2 * time.Millisecond
-	filter, reason = table.buildHotMergeFilterDecision(parts)
-	require.Nil(t, filter)
-	require.Equal(t, mergeReasonFragmentGap, reason)
-	table.option.maxTraceFragmentGap = time.Millisecond
 	maxTimestamp := parts[0].p.partMetadata.MaxTimestamp
 	for partIdx := 1; partIdx < len(parts); partIdx++ {
 		maxTimestamp = max(maxTimestamp, parts[partIdx].p.partMetadata.MaxTimestamp)
@@ -266,7 +261,7 @@ func TestMergeBenchmarkObserverMaturesProductionSelectedHotOutputs(t *testing.T)
 	segmentRange := timestamp.NewInclusiveTimeRange(base.Add(-24*time.Hour), base.Add(24*time.Hour))
 	table, tableErr := newTSTable(fileSystem, root, common.Position{Database: group}, logger.GetLogger(group), segmentRange, option{
 		flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting(), protector: protector.Nop{}, nativePipelineEnabled: true,
-		maxTraceFragmentGap: time.Minute, mergeGraceDefault: 2 * time.Hour,
+		mergeGraceDefault: 2 * time.Hour,
 	}, nil)
 	require.NoError(t, tableErr)
 	t.Cleanup(func() { require.NoError(t, table.Close()) })
@@ -368,7 +363,6 @@ func runObservedBenchmarkMerge(t *testing.T, mature bool) (mergeBenchmarkEvent, 
 		mergePolicy:           newDefaultMergePolicyForTesting(),
 		protector:             protector.Nop{},
 		nativePipelineEnabled: true,
-		maxTraceFragmentGap:   time.Minute,
 		mergeGraceDefault:     2 * time.Hour,
 	}, nil)
 	require.NoError(t, tableErr)

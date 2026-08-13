@@ -128,7 +128,7 @@ func Serve(ctx context.Context, options ServerOptions) (serveResultErr error) {
 	}
 	receiver, receiverErr := storagetrace.NewBenchmarkMergeReceiver( //nolint:contextcheck // The storage constructor has no context parameter.
 		options.Root, storagetrace.BenchmarkMergeReceiverOptions{
-			LogicalNow: time.Unix(0, 1), MergeGrace: 2 * time.Hour, EventWriter: eventFile, MaxInputPartID: options.MaxInputPartID,
+			LogicalNow: time.Unix(0, 1), MergeGrace: storagetrace.BenchmarkDefaultMergeGrace, EventWriter: eventFile, MaxInputPartID: options.MaxInputPartID,
 			Attribution: options.Attribution, Sampler: sampler, SamplerName: resolvedPluginName(options), SegmentTimeRange: options.SegmentTimeRange,
 		})
 	if receiverErr != nil {
@@ -341,7 +341,7 @@ func (bs *benchmarkServer) runCooldown(responseWriter http.ResponseWriter, reque
 		return
 	}
 	if bs.options.RunFinalize {
-		finalized, finalizeErr := bs.receiver.RunFinalizeRound(request.Context(), boundary.LogicalNow, 2*time.Hour)
+		finalized, finalizeErr := bs.receiver.RunFinalizeRound(request.Context(), boundary.LogicalNow, storagetrace.BenchmarkDefaultMergeGrace)
 		if finalizeErr != nil {
 			stopProfileErr := bs.stopCooldownProfile()
 			http.Error(responseWriter, errors.Join(finalizeErr, stopProfileErr).Error(), http.StatusInternalServerError)

@@ -349,7 +349,7 @@ Retention decisions are therefore **not** made at write time. They are made by t
 - **In-merge filter, during Hot-phase compaction** — when `PIPELINE_EVENT_MERGE` is enabled (the default), the plugin gating policy is evaluated in-line during Hot-phase LSM compaction (Warm/Cold compactions stay lossless). Compaction is part-count-driven, so it can fire while a trace is still growing; per-trace drops are deferred until `traceMaxTs < now − merge_grace` (§7.1).
 - **Plugin gating, at finalization** — when `PIPELINE_EVENT_FINALIZE` is enabled, the plugin gating policy is evaluated on a
   **Hot** segment only after its event-time window has closed and it is older than both the configured `finalize_grace`
-  and the resolved `merge_grace` (§7.3). A destructive decision additionally requires the maximum-fragment-gap guard.
+  and the resolved `merge_grace` (§7.3). A destructive decision additionally requires the fragment-boundary guard.
   BanyanDB has no hard "segment sealed" event, so maturity remains a heuristic rather than a completeness guarantee.
 - **Per-stage retention, at migration-out** — by the time a segment is migrated to the next stage (≥ its stage's TTL, orders of magnitude longer than `finalize_grace`), every trace it holds has settled, so per-stage plugin evaluation is final.
 
@@ -640,12 +640,10 @@ flowchart TD
    check may reduce this delay after complete trace assembly.
 
    Passing this age check does not prove that a trace has stopped growing and must not make a DROP final by itself. A
-   destructive DROP also requires the fragment boundary guard and its independently enforced maximum-fragment-gap,
-   segment-coverage, and snapshot contracts. The resolved per-group merge grace controls maturity; the separately
-   declared maximum fragment gap controls guard-range expansion and publication revalidation. The runtime receives the
-   external gap contract through
-   `trace-pipeline-max-fragment-gap`. Its default is zero, which keeps in-merge sampling disabled; a positive value must
-   not exceed the resolved merge grace.
+   destructive DROP also requires the fragment boundary guard plus its segment-coverage and snapshot contracts. The
+   resolved per-group merge grace controls both maturity and guard-range expansion through publication revalidation.
+   The engine assumes fragments of one trace do not arrive farther apart than this grace. When the group omits a
+   positive `merge_grace`, the fixed engine default is 2h; there is no separate node flag for either value.
 
 4. **Derived part state reflects only retained traces.** When a trace is dropped, its entries are excluded from `partMetadata` counts, the `traceIDFilter` bloom filter (`mustWriteTraceIDFilter`), and the `tagType` set written at `Flush`. The filter runs before these are finalized so the consolidated part stays self-consistent.
 
@@ -695,7 +693,7 @@ Why there is no seal event (grounding in `banyand/internal/storage/rotation.go`)
 > **Design decision (accepted):** Drive finalization from an event-time maturity threshold, not from a non-existent seal
 > event. A segment is eligible only after its end is older than the greater of `finalize_grace` and resolved
 > `merge_grace`. The scanner periodically finds mature Hot segments and runs bounded per-shard rounds. Destructive DROP
-> still requires the same maximum-fragment-gap, outside-part, and publication checks as an ordinary merge. This is
+> still requires the same merge-grace boundary, outside-part, and publication checks as an ordinary merge. This is
 > best-effort snapshot protection, not proof against fragments that arrive after publication. Per-stage `StageRule`
 > plugins fire later at migration-out (§7.2).
 
@@ -709,9 +707,8 @@ flowchart TD
 1. The scheduler runs the pipeline's plugin gating policy across the settled segment's per-shard `tsTable` parts (a `tsTable` is scoped per `(segment, shard)`).
 
 2. Finalization maturity is the greater of `finalize_grace` and `merge_grace`; with the defaults, destructive sampling
-   therefore waits at least 2h rather than becoming eligible after 5m. The independently declared maximum fragment gap
-   controls boundary expansion. A positive value no greater than merge grace is required, otherwise the round remains
-   lossless. Surviving traces continue through the lifecycle and may be filtered again at later rounds or migration-out.
+   therefore waits at least 2h rather than becoming eligible after 5m. Resolved merge grace also controls boundary
+   expansion. Surviving traces continue through the lifecycle and may be filtered again at later rounds or migration-out.
 
 3. The `finalize_grace` period trades latency for completeness: a larger `finalize_grace` catches more late spans before finalizing but delays space reclamation. The cron tick doubles as a catch-up sweep — after a node restart it still finds settled-but-unfinalized segments and applies the filter, after which normal retention/GC proceeds.
 
@@ -773,15 +770,10 @@ un-sampled. That is an accepted outcome (there is no finalize-before-delete gate
   O(1) on the flush path only once the shard has been finalized).
 
 **Knobs** (the proto carries `finalize_grace`; the rest are engine defaults in v1):
-- `finalize_grace` (default **5m**) — per-segment settling and cooldown window. For a
+- `finalize_grace` (fixed engine default **5m**) — per-segment settling and cooldown window. For a
   destructive round, segment and part maturity uses the greater of `finalize_grace` and
-  resolved `merge_grace`; the default therefore remains 2h. The independently enforced
-  maximum fragment gap controls guard-range expansion rather than maturity.
-- `--trace-pipeline-max-fragment-gap` — required for both merge and finalization sampling.
-  Zero disables destructive sampling, and a value greater than resolved `merge_grace`
-  fails open.
-- `--trace-pipeline-finalize-grace-default` — node default when a group sets no
-  `finalize_grace`.
+  resolved `merge_grace`; the default therefore remains 2h. Resolved `merge_grace` also
+  controls fragment-guard range expansion.
 - **FLOOR** (default **8 MiB** uncompressed) — absolute minimum newly-arrived unsampled
   bytes to warrant a re-round; smaller trickles are left (accepted miss).
 - **RATIO** (default **0.10**) — for large segments, re-round only when new unsampled
@@ -789,6 +781,11 @@ un-sampled. That is an accepted outcome (there is no finalize-before-delete gate
 - **finalize_cooldown** (default = `finalize_grace`) — at most one round per window.
 - **max_finalize_rounds** (default **8**) — hard per-shard lifetime cap; after it the
   shard is marked terminal and never re-scanned.
+
+The only node flags for the native pipeline are `--trace-pipeline-native-plugin-enabled`,
+`--trace-pipeline-trusted-plugin-dir`, `--trace-pipeline-decide-timeout`, and
+`--trace-pipeline-decide-timeout-circuit-break`. Grace values belong to the group pipeline configuration and use fixed
+engine fallbacks when omitted.
 
 **Observability.** Finalize rounds emit the existing merge metrics under
 `type="finalize"`/`lane="finalize"` (`total_merged`, `total_merge_latency`,

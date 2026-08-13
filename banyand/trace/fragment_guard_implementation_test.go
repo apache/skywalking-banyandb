@@ -663,50 +663,14 @@ func TestRuntimeTraceFragmentGuardRetriesLosslesslyWhenPublicationEpochChanges(t
 	waitForImplementationFilePartCount(t, tst, 2)
 }
 
-func TestRuntimeTraceFragmentGuardBypassesSamplingWithoutGapProof(t *testing.T) {
-	const group = "runtime-no-gap-proof"
-	resetRegistries()
-	t.Cleanup(resetRegistries)
-	sampler := &implementationDropSampler{dropID: "trace-a"}
-	deregister := registerSampler(group, sampler)
-	t.Cleanup(deregister)
-	tst := newImplementationGuardTableWithMaxGap(t, group, 0)
-
-	tst.mustAddTraces(tracesWithIDs("trace-a"), nil)
-	waitForImplementationFilePartCount(t, tst, 1)
-	tst.mustAddTraces(tracesWithIDs("trace-b"), nil)
-	parts := waitForImplementationFileParts(t, tst, 2)
-	defer releaseImplementationParts(parts)
-
-	assert.Nil(t, tst.buildHotMergeFilter(parts))
-	tst.option.maxTraceFragmentGap = 2 * time.Millisecond
-	assert.Nil(t, tst.buildHotMergeFilter(parts), "a fragment-gap contract larger than merge grace cannot authorize pruning")
-	tst.option.maxTraceFragmentGap = time.Millisecond
-	segmentTimeRange := tst.segmentTimeRange
-	tst.segmentTimeRange = timestamp.TimeRange{}
-	assert.Nil(t, tst.buildHotMergeFilter(parts), "unknown segment coverage must bypass sampler staging")
-	tst.segmentTimeRange = segmentTimeRange
-	tst.option.maxTraceFragmentGap = 0
-
-	closeCh := make(chan struct{})
-	defer close(closeCh)
-	_, mergeErr := tst.mergePartsThenSendIntroduction(
-		snapshotCreatorMerger, parts, implementationPartIDs(parts), tst.mergeCh, closeCh, mergeTypeFile, mergeLaneFast, nil,
-	)
-	require.NoError(t, mergeErr)
-	assert.Zero(t, sampler.calls.Load())
-	assert.Equal(t, uint64(2), snapshotTotalCount(tst))
-}
-
-func TestRuntimeTraceFragmentGuardUsesFragmentGapForSegmentInterior(t *testing.T) {
-	const group = "runtime-guard-gap"
+func TestRuntimeTraceFragmentGuardUsesMergeGrace(t *testing.T) {
+	const group = "runtime-merge-grace"
 	resetRegistries()
 	t.Cleanup(resetRegistries)
 	sampler := &implementationDropSampler{dropID: "trace-a"}
 	deregister := registerSampler(group, sampler)
 	t.Cleanup(deregister)
 	tst := newImplementationGuardTable(t, group)
-	tst.option.mergeGraceDefault = 2 * time.Hour
 
 	tst.mustAddTraces(tracesWithIDs("trace-a"), nil)
 	waitForImplementationFilePartCount(t, tst, 1)
@@ -715,24 +679,43 @@ func TestRuntimeTraceFragmentGuardUsesFragmentGapForSegmentInterior(t *testing.T
 	defer releaseImplementationParts(parts)
 
 	filter := tst.buildHotMergeFilter(parts)
-	require.NotNil(t, filter, "the 2h maturity grace must not be reused as the 1ms boundary expansion")
-	require.NotNil(t, filter.guard)
-	require.Equal(t, resolveStageBudget(tst.option), filter.stagingHardLimit)
-	require.Positive(t, filter.decisionBatchLimit)
-	require.LessOrEqual(t, filter.decisionBatchLimit, filter.stagingHardLimit)
-	require.Equal(t, maxStagedTraceCountFromBudget(filter.decisionBatchLimit), filter.maxTraceCount)
+	require.NotNil(t, filter)
 	filter.guard.Close()
 
-	tst.option.maxTraceFragmentGap = 2 * time.Second
-	assert.Nil(t, tst.buildHotMergeFilter(parts), "sampling must bypass when the guarded segment has no safe interior")
+	segmentTimeRange := tst.segmentTimeRange
+	tst.segmentTimeRange = timestamp.TimeRange{}
+	assert.Nil(t, tst.buildHotMergeFilter(parts), "unknown segment coverage must bypass sampler staging")
+	tst.segmentTimeRange = segmentTimeRange
+}
+
+func TestRuntimeTraceFragmentGuardUsesMergeGraceForSegmentInterior(t *testing.T) {
+	const group = "runtime-guard-merge-grace"
+	resetRegistries()
+	t.Cleanup(resetRegistries)
+	sampler := &implementationDropSampler{dropID: "trace-a"}
+	deregister := registerSampler(group, sampler)
+	t.Cleanup(deregister)
+	tst := newImplementationGuardTable(t, group)
+	tst.option.mergeGraceDefault = 2 * time.Hour
+	tst.segmentTimeRange = timestamp.NewInclusiveTimeRange(time.Unix(-12*60*60, 0), time.Unix(12*60*60, 0))
+
+	tst.mustAddTraces(tracesWithIDs("trace-a"), nil)
+	waitForImplementationFilePartCount(t, tst, 1)
+	tst.mustAddTraces(tracesWithIDs("trace-b"), nil)
+	parts := waitForImplementationFileParts(t, tst, 2)
+	defer releaseImplementationParts(parts)
+
+	filter := tst.buildHotMergeFilter(parts)
+	require.NotNil(t, filter)
+	require.NotNil(t, filter.guard)
+	guard, ok := filter.guard.guard.(*defaultTraceFragmentGuard)
+	require.True(t, ok)
+	assert.Equal(t, 2*time.Hour, guard.config.Grace)
+	assert.Equal(t, 2*time.Hour, guard.catalog.EnforcedMaxFragmentGap)
+	filter.guard.Close()
 }
 
 func newImplementationGuardTable(t *testing.T, group string) *tsTable {
-	t.Helper()
-	return newImplementationGuardTableWithMaxGap(t, group, time.Millisecond)
-}
-
-func newImplementationGuardTableWithMaxGap(t *testing.T, group string, maxTraceFragmentGap time.Duration) *tsTable {
 	t.Helper()
 	tmpPath, cleanup := test.Space(require.New(t))
 	t.Cleanup(cleanup)
@@ -749,7 +732,6 @@ func newImplementationGuardTableWithMaxGap(t *testing.T, group string, maxTraceF
 			decideTimeout:             time.Second,
 			decideTimeoutCircuitBreak: 3,
 			mergeGraceDefault:         time.Millisecond,
-			maxTraceFragmentGap:       maxTraceFragmentGap,
 			nativePipelineEnabled:     true,
 		},
 		nil,

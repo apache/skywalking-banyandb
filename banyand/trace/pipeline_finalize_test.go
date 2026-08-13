@@ -52,7 +52,6 @@ func TestBuildHotMergeFilter_MergeEventGate(t *testing.T) {
 		option: option{
 			nativePipelineEnabled: true,
 			mergeGraceDefault:     time.Second,
-			maxTraceFragmentGap:   time.Second,
 		},
 	}
 
@@ -92,7 +91,6 @@ func TestBuildHotMergeFilter_UsesMergeClock(t *testing.T) {
 		option: option{
 			nativePipelineEnabled: true,
 			mergeGraceDefault:     2 * time.Hour,
-			maxTraceFragmentGap:   time.Hour,
 		},
 	}
 

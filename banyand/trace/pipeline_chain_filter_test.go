@@ -207,6 +207,8 @@ func setupFilterTestGroup(t *testing.T, svcs *filterTestServices, groupName, tra
 		_, loadErr := svcs.trace.Trace(&commonv1.Metadata{Name: traceName, Group: groupName})
 		return loadErr == nil
 	}, flags.EventuallyTimeout, 100*time.Millisecond)
+	setMergeGraceForGroup(groupName, int64(time.Nanosecond))
+	t.Cleanup(func() { setMergeGraceForGroup(groupName, 0) })
 }
 
 type traceSpec struct {
@@ -403,8 +405,6 @@ func instantFilterSpecs() []traceSpec {
 func TestInMergeFilter_Instant_Standalone(t *testing.T) {
 	svcs, teardown := setUpWithPipelineFlags(t,
 		"--trace-pipeline-native-plugin-enabled=true",
-		"--trace-pipeline-merge-grace-default=1ns",
-		"--trace-pipeline-max-fragment-gap=1ns",
 		"--trace-pipeline-decide-timeout=5s",
 		"--trace-pipeline-decide-timeout-circuit-break=0",
 	)
@@ -463,8 +463,6 @@ func TestInMergeFilter_ChunkedStaging_TinyBudget(t *testing.T) {
 
 	svcs, teardown := setUpWithPipelineFlags(t,
 		"--trace-pipeline-native-plugin-enabled=true",
-		"--trace-pipeline-merge-grace-default=1ns",
-		"--trace-pipeline-max-fragment-gap=1ns",
 		"--trace-pipeline-decide-timeout=5s",
 		"--trace-pipeline-decide-timeout-circuit-break=0",
 	)
@@ -621,9 +619,7 @@ func TestAdaptiveDecisionBatchPlanChargesBlockStructure(t *testing.T) {
 }
 
 func TestInMergeFilter_DisabledFlag_LegacyIdentity(t *testing.T) {
-	svcs, teardown := setUpWithPipelineFlags(t,
-		"--trace-pipeline-merge-grace-default=0",
-	)
+	svcs, teardown := setUpWithPipelineFlags(t)
 	defer teardown()
 
 	const (
@@ -660,8 +656,6 @@ func TestInMergeFilter_DisabledFlag_LegacyIdentity(t *testing.T) {
 func TestInMergeFilter_FailOpenNegativeControl(t *testing.T) {
 	svcs, teardown := setUpWithPipelineFlags(t,
 		"--trace-pipeline-native-plugin-enabled=true",
-		"--trace-pipeline-merge-grace-default=1ns",
-		"--trace-pipeline-max-fragment-gap=1ns",
 		"--trace-pipeline-decide-timeout=5s",
 		"--trace-pipeline-decide-timeout-circuit-break=0",
 	)

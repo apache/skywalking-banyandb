@@ -699,17 +699,13 @@ func (tst *tsTable) buildHotMergeFilterDecisionAt(parts []*partWrapper, logicalN
 		return nil, mergeReasonEventDisabled
 	}
 	graceNs := tst.effectiveMergeGraceNs()
-	if tst.option.maxTraceFragmentGap <= 0 || time.Duration(graceNs) < tst.option.maxTraceFragmentGap {
-		tst.incPipelineGuardBypassed()
-		return nil, mergeReasonFragmentGap
-	}
 	if isMergeHot(parts, graceNs, logicalNow) {
 		tst.incPipelineGuardBypassed()
 		return nil, mergeReasonGrace
 	}
 	stagingHardLimit := resolveStageBudget(tst.option)
 	stagingPlan := planAdaptiveDecisionBatch(parts, stagingHardLimit)
-	guard := tst.newTraceFragmentGuardSession(parts, tst.option.maxTraceFragmentGap, stagingHardLimit)
+	guard := tst.newTraceFragmentGuardSession(parts, time.Duration(graceNs), stagingHardLimit)
 	if guard == nil {
 		tst.incPipelineGuardBypassed()
 		return nil, mergeReasonGuardUnavailable
@@ -750,6 +746,9 @@ func (tst *tsTable) effectiveMergeGraceNs() int64 {
 	graceNs := lookupMergeGrace(tst.group)
 	if graceNs <= 0 {
 		graceNs = int64(tst.option.mergeGraceDefault)
+	}
+	if graceNs <= 0 {
+		graceNs = int64(defaultTracePipelineMergeGrace)
 	}
 	return graceNs
 }

@@ -186,12 +186,11 @@ func TestRunFinalizeRound_DropsAndStamps(t *testing.T) {
 		logger.GetLogger("finalize-round-test"),
 		timestamp.NewInclusiveTimeRange(time.Unix(-1, 0), time.Unix(1, 0)),
 		option{
-			flushTimeout:        0,
-			mergePolicy:         newDefaultMergePolicyForTesting(),
-			protector:           protector.Nop{},
-			decideTimeout:       time.Second,
-			mergeGraceDefault:   time.Millisecond,
-			maxTraceFragmentGap: time.Nanosecond,
+			flushTimeout:      0,
+			mergePolicy:       newDefaultMergePolicyForTesting(),
+			protector:         protector.Nop{},
+			decideTimeout:     time.Second,
+			mergeGraceDefault: time.Millisecond,
 		},
 		nil,
 	)
@@ -245,12 +244,11 @@ func TestRunFinalizeRound_ReplayExcludesStampedParts(t *testing.T) {
 		fileSystem, tmpPath, common.Position{Database: "rp"},
 		logger.GetLogger("finalize-replay-test"), timestamp.NewInclusiveTimeRange(time.Unix(-1, 0), time.Unix(1, 0)),
 		option{
-			flushTimeout:        0,
-			mergePolicy:         newDefaultMergePolicyForTesting(),
-			protector:           protector.Nop{},
-			decideTimeout:       time.Second,
-			mergeGraceDefault:   time.Millisecond,
-			maxTraceFragmentGap: time.Nanosecond,
+			flushTimeout:      0,
+			mergePolicy:       newDefaultMergePolicyForTesting(),
+			protector:         protector.Nop{},
+			decideTimeout:     time.Second,
+			mergeGraceDefault: time.Millisecond,
 		},
 		nil,
 	)
@@ -325,9 +323,9 @@ func TestRunFinalizeRoundDefersTracePresentInSkippedPart(t *testing.T) {
 	assert.Equal(t, uint64(3), snapshotTotalCount(tst), "the selected fragment must survive while the trace exists in a skipped part")
 }
 
-func TestRunFinalizeRoundBypassesWithoutFragmentGapProof(t *testing.T) {
-	const group = "finalize-no-gap-proof"
-	tst := newImplementationGuardTableWithMaxGap(t, group, 0)
+func TestRunFinalizeRoundUsesMergeGraceForFragmentGuard(t *testing.T) {
+	const group = "finalize-merge-grace"
+	tst := newImplementationGuardTable(t, group)
 	sampler := &implementationDropSampler{dropID: "trace-a"}
 
 	tst.mustAddTraces(tracesWithIDs("trace-a", "trace-b"), nil)
@@ -335,10 +333,10 @@ func TestRunFinalizeRoundBypassesWithoutFragmentGapProof(t *testing.T) {
 
 	finalized, finalizeErr := tst.runFinalizeRound([]sdk.Sampler{sampler}, int64(time.Millisecond))
 	require.NoError(t, finalizeErr)
-	assert.False(t, finalized)
-	assert.Zero(t, sampler.calls.Load())
-	assert.Equal(t, uint64(2), snapshotTotalCount(tst))
-	assert.Zero(t, tst.finalizeGenCached.Load())
+	assert.True(t, finalized)
+	assert.Positive(t, sampler.calls.Load())
+	assert.Equal(t, uint64(1), snapshotTotalCount(tst))
+	assert.Equal(t, uint64(1), tst.finalizeGenCached.Load())
 }
 
 // TestFinalizeAndMerge_Compose proves the in-merge filter (PIPELINE_EVENT_MERGE) and
@@ -373,8 +371,7 @@ func TestFinalizeAndMerge_Compose(t *testing.T) {
 			decideTimeout:             time.Second,
 			decideTimeoutCircuitBreak: 3,
 			mergeGraceDefault:         time.Millisecond, // ancient parts are never hot
-			maxTraceFragmentGap:       time.Millisecond,
-			nativePipelineEnabled:     true, // activates the in-merge MERGE filter
+			nativePipelineEnabled:     true,             // activates the in-merge MERGE filter
 		},
 		nil,
 	)
