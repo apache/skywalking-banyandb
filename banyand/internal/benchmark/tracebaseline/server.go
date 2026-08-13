@@ -506,18 +506,15 @@ func countMergeTemperatures(events []storagetrace.BenchmarkMergeEvent) (hotMerge
 }
 
 func retainAllFinalizeOutputCorrect(events []storagetrace.BenchmarkMergeEvent) bool {
+	ordinaryExecuted := false
 	finalizeExecuted := false
 	for eventIdx := range events {
 		event := &events[eventIdx]
-		if event.Error != "" || event.RecordingError != "" || event.LosslessRetry || event.TracesDropped > 0 || event.OversizedTraces > 0 {
+		if !samplingEventCorrect(*event) || event.TracesDropped > 0 || event.TracesRetained != event.TracesEvaluated {
 			return false
 		}
-		if event.HotInputParts > 0 && (event.Sampling != storagetrace.BenchmarkMergeSamplingNotExecuted ||
-			event.Reason != storagetrace.BenchmarkMergeReasonGrace || event.PluginCalls > 0 || event.TracesEvaluated > 0 || event.TracesRetained > 0) {
-			return false
-		}
-		if event.TracesEvaluated > 0 && event.TracesRetained != event.TracesEvaluated {
-			return false
+		if event.Type == "file" && event.Sampling == storagetrace.BenchmarkMergeSamplingExecuted {
+			ordinaryExecuted = true
 		}
 		if event.Type != "finalize" {
 			continue
@@ -528,28 +525,20 @@ func retainAllFinalizeOutputCorrect(events []storagetrace.BenchmarkMergeEvent) b
 		}
 		finalizeExecuted = true
 	}
-	return finalizeExecuted
+	return ordinaryExecuted && finalizeExecuted
 }
 
 func samplingOracleOutputCorrect(events []storagetrace.BenchmarkMergeEvent, oracle SamplingOracleArtifact) bool {
-	var evaluated, retained, dropped uint64
+	ordinaryExecuted := false
 	finalizeExecuted := false
 	for eventIdx := range events {
 		event := &events[eventIdx]
-		if event.Error != "" || event.RecordingError != "" || event.LosslessRetry || event.OversizedTraces > 0 {
+		if !samplingEventCorrect(*event) {
 			return false
 		}
-		if event.HotInputParts > 0 && (event.Sampling != storagetrace.BenchmarkMergeSamplingNotExecuted ||
-			event.Reason != storagetrace.BenchmarkMergeReasonGrace || event.PluginCalls > 0 || event.TracesEvaluated > 0 ||
-			event.TracesRetained > 0 || event.TracesDropped > 0) {
-			return false
+		if event.Type == "file" && event.Sampling == storagetrace.BenchmarkMergeSamplingExecuted {
+			ordinaryExecuted = true
 		}
-		if event.TracesRetained+event.TracesDropped != event.TracesEvaluated {
-			return false
-		}
-		evaluated += event.TracesEvaluated
-		retained += event.TracesRetained
-		dropped += event.TracesDropped
 		if event.Type == "finalize" {
 			if event.Phase != storagetrace.BenchmarkMergePhaseCooldown || event.Sampling != storagetrace.BenchmarkMergeSamplingExecuted ||
 				event.PluginCalls == 0 || event.TracesEvaluated == 0 || event.MatureInputParts == 0 {
@@ -558,7 +547,24 @@ func samplingOracleOutputCorrect(events []storagetrace.BenchmarkMergeEvent, orac
 			finalizeExecuted = true
 		}
 	}
-	return finalizeExecuted && evaluated == oracle.Evaluated && retained == oracle.Retained && dropped == oracle.Dropped
+	return oracle.Evaluated > 0 && oracle.Retained+oracle.Dropped == oracle.Evaluated && ordinaryExecuted && finalizeExecuted
+}
+
+func samplingEventCorrect(event storagetrace.BenchmarkMergeEvent) bool {
+	if event.Error != "" || event.RecordingError != "" || event.LosslessRetry || event.OversizedTraces > 0 ||
+		event.TracesRetained+event.TracesDropped != event.TracesEvaluated {
+		return false
+	}
+	switch event.Sampling {
+	case storagetrace.BenchmarkMergeSamplingExecuted:
+		return event.Reason == "" && event.PluginCalls > 0 && event.TracesEvaluated > 0
+	case storagetrace.BenchmarkMergeSamplingEnabledNoEvaluation:
+		return event.PluginCalls == 0 && event.TracesEvaluated == 0 && event.TracesImmature > 0
+	case storagetrace.BenchmarkMergeSamplingNotExecuted:
+		return event.Reason != "" && event.PluginCalls == 0 && event.TracesEvaluated == 0 && event.TracesImmature == 0
+	default:
+		return false
+	}
 }
 
 func samplingOracleRowsCorrect(inventory storagetrace.BenchmarkMergeInventory, oracle SamplingOracleArtifact) bool {

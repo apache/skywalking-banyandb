@@ -43,7 +43,7 @@ import (
 )
 
 // dynSeedOffset places dynamic-spec timestamps well in the past so
-// isMergeHot (grace=0) returns false at merge time.
+// mergeMayContainMatureTrace (merge grace 1ns) returns true at merge time.
 const dynSeedOffset = -2 * time.Hour
 
 // queryByTraceID queries the "filter" trace for a single trace_id over a window
@@ -100,10 +100,10 @@ func assertTracePresent(conn *grpc.ClientConn, traceID string, baseTime time.Tim
 }
 
 // writeTwoPartMerge writes two batches to trigger a filtering merge
-// (max-merge-parts=2, grace=0).  It writes rowA as part-1, asserts rowA is
+// (max-merge-parts=2, merge grace 1ns).  It writes rowA as part-1, asserts rowA is
 // visible (one part, no merge yet), then writes rowB as part-2 to trigger
-// the merge.  Both rows share the same base time offset so isMergeHot is
-// false.
+// the merge.  Both rows share the same base time offset so mergeMayContainMatureTrace is
+// true.
 func writeTwoPartMerge(
 	conn *grpc.ClientConn,
 	rowA tracepipelinedata.TraceRow, rowB tracepipelinedata.TraceRow,
@@ -153,7 +153,7 @@ func makeDynRow(traceID string, durationMs int64, status string) tracepipelineda
 //  4. InvalidConfig: assert fail-open — node alive, traces retained.
 //  5. Restart: assert config re-applied from schema store on reboot.
 var _ = ginkgo.Describe("Dynamic sampler registration (standalone)", ginkgo.Ordered, func() {
-	// dynBase anchors all dynamic-spec timestamps in the past (grace=0 → isMergeHot=false).
+	// dynBase anchors all dynamic-spec timestamps in the past (merge grace 1ns → mergeMayContainMatureTrace=true).
 	var dynBase time.Time
 
 	ginkgo.BeforeAll(func() {
@@ -212,7 +212,7 @@ var _ = ginkgo.Describe("Dynamic sampler registration (standalone)", ginkgo.Orde
 	//
 	// After RemoveSamplerRuntime the registry for the group is empty.
 	// Traces written after removal that WOULD be dropped (dur < 200, success)
-	// must be retained in the next merge.  With grace=0, STOP latency is at most
+	// must be retained in the next merge.  With merge grace 1ns, STOP latency is at most
 	// one merge pass — no nudge needed (Correction C).
 	ginkgo.Describe("Remove: stop dropping within merge_grace+one cycle", ginkgo.Ordered, func() {
 		const retainedID = "dyn-rem-retained-100ms"
@@ -235,7 +235,7 @@ var _ = ginkgo.Describe("Dynamic sampler registration (standalone)", ginkgo.Orde
 
 		ginkgo.It("previously-dropped shape (dur=100 success) is RETAINED after remove", func() {
 			// Correction-C measurement AC: STOP latency ≤ merge_grace + one merge cycle.
-			// With grace=0: after the first merge pass following removal, the trace must
+			// With merge grace 1ns: after the first merge pass following removal, the trace must
 			// be present.  We assert eventual presence (no nudge, no time bound beyond
 			// EventuallyTimeout which exceeds the merge cycle).
 			assertTracePresent(connection, retainedID, dynBase)

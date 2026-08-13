@@ -51,13 +51,13 @@ func TestDefaultMergeGraceMaturityBoundary(t *testing.T) {
 	const now = int64(10 * time.Hour)
 	frontier := now - int64(defaultTracePipelineMergeGrace)
 	testCases := []struct {
-		name         string
-		maxTimestamp int64
-		wantHot      bool
+		name       string
+		timestamp  int64
+		wantMature bool
 	}{
-		{name: "one nanosecond inside grace", maxTimestamp: frontier + 1, wantHot: true},
-		{name: "exactly at grace", maxTimestamp: frontier},
-		{name: "one nanosecond beyond grace", maxTimestamp: frontier - 1},
+		{name: "one nanosecond inside grace", timestamp: frontier + 1},
+		{name: "exactly at grace", timestamp: frontier, wantMature: true},
+		{name: "one nanosecond beyond grace", timestamp: frontier - 1, wantMature: true},
 	}
 
 	for testCaseIdx := range testCases {
@@ -66,12 +66,12 @@ func TestDefaultMergeGraceMaturityBoundary(t *testing.T) {
 			parts := []*partWrapper{
 				{
 					p: &part{
-						partMetadata: partMetadata{MaxTimestamp: testCase.maxTimestamp},
+						partMetadata: partMetadata{MinTimestamp: testCase.timestamp, MaxTimestamp: testCase.timestamp},
 					},
 				},
 			}
 
-			require.Equal(t, testCase.wantHot, isMergeHot(parts, int64(defaultTracePipelineMergeGrace), now))
+			require.Equal(t, testCase.wantMature, mergeMayContainMatureTrace(parts, frontier))
 		})
 	}
 }

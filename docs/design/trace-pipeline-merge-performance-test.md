@@ -63,8 +63,9 @@ The six mature selections processed 224,788 mature input rows across their merge
 
 This definition is deliberately independent of whether sampling executes. The event's mature/hot input-part and row
 counters describe the selected data, while its sampling classification, bypass reason, and plugin-call count describe
-what the pipeline did. Under the current whole-selection grace guard, a mixed merge is mature for workload coverage but
-still bypasses sampling because it also contains a hot part.
+what the pipeline did. Under the whole-selection grace guard used by this historical run, a mixed merge was mature for
+workload coverage but still bypassed sampling because it also contained a hot part. The runtime now gates eligibility
+per complete trace group; these measurements must not be reused as post-fix performance results.
 
 The corrected report with per-input maturity counters confirms six mature-containing selections, so the pilot is below
 the unchanged ten-mature-round gate but does not establish that the empty-shard topology produces no mature work. Do not
@@ -98,7 +99,7 @@ merge outputs and no raw part. It is still hot because four of those outputs car
 ### Full-Day Adaptive-Budget Validation
 
 The first retain-all full-day replay confirmed that the serialized production MERGE trajectory alone cannot validate
-adaptive batching: all 286 selections contained at least one hot part, so the whole-selection grace guard correctly made
+adaptive batching: all 286 selections contained at least one hot part, so the whole-selection grace guard then in use made
 zero plugin calls. Advancing the logical clock by two hours did not create another size-policy selection because the
 ordinary merges had already reduced the shard to 20 parts. Treating that zero-call run as plugin coverage would be a test
 defect.

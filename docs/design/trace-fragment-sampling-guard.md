@@ -55,18 +55,19 @@ an event-time range prevents future arrivals, but does not prove that an already
 from a part farther than grace.
 
 This document calls the value used for interval expansion guard grace. The implementation uses the resolved per-group
-`merge_grace` for both interval expansion and the whole-selection maturity delay. A deployment must ensure fragments of
-one trace do not arrive farther apart than this grace; the engine cannot infer or enforce that ingestion property.
+`merge_grace` for both interval expansion and the per-trace maturity delay. A deployment must ensure fragments of one
+trace do not arrive farther apart than this grace; the engine cannot infer or enforce that ingestion property.
 
 The engine default for merge grace is 2h when a group does not configure a positive override. A merge must resolve the
 group override or engine default once and carry that immutable value through filtering and publication revalidation.
-The current runtime uses merge grace as a whole-selection maturity gate: one selected part newer than `now − grace`
-makes the entire merge lossless. Because compaction is part-count-driven rather than timer-driven, an ineligible merge
-is not guaranteed to run again at the two-hour frontier. Its effective filtering delay is at least two hours plus the
-wait for a later eligible compaction; finalization is an independent backstop.
+The runtime uses selected-part minimum timestamps only to avoid building a filter when no selected part can contain a
+mature trace. Once staging groups by `trace_id`, it sends only groups whose maximum timestamp is at or before
+`now − grace` to the sampler; newer groups are retained unchanged. Because compaction is part-count-driven rather than
+timer-driven, an ineligible trace is not guaranteed to be reconsidered at the two-hour frontier. Finalization remains
+an independent backstop.
 
 Using one value makes the configured maturity contract match the boundary checked before a destructive DROP. It also
-permits an early whole-merge bypass when a segment is too narrow to contain any trace range expanded by merge grace,
+permits an early whole-merge bypass when no selected part can contain a mature trace,
 avoiding projection, staging, sampler, and Bloom work when no DROP could be authorized. Without a trustworthy
 fragment-arrival contract, operators should not enable destructive sampling for that group.
 
@@ -160,9 +161,9 @@ maximum event timestamps, segment identity, availability state, and a reference 
 catalog also records the enforced fragment gap, which is the same resolved merge grace used by the maturity gate.
 
 Before incurring sampler work, the runtime also checks that native sampling is enabled, a sampler exists, the relevant
-event is enabled, the segment has a non-empty merge-grace-expanded interior, and every selected part is old enough for
-the whole-selection maturity gate. Finalization
-uses the greater of merge grace and finalize grace for maturity. Failure of any check leaves the lossless path unchanged.
+event is enabled, the segment has a non-empty merge-grace-expanded interior, and at least one selected part may contain
+a mature trace. Trace-ID staging then applies the maturity boundary to each assembled trace. Finalization uses the
+greater of merge grace and finalize grace for maturity. Failure of any check leaves the lossless path unchanged.
 
 The merge assembles selected blocks by trace ID and computes one selected trace range. The sampler evaluates the
 assembled trace. Sampler KEEP traces are written immediately according to normal ordered-output rules. For each
@@ -380,7 +381,7 @@ The implementation must expose bounded-cardinality metrics for:
 - invalid timestamp deferrals;
 - segment-boundary deferrals;
 - boundary-check budget deferrals;
-- whole-merge maturity deferrals and age past the eligibility frontier;
+- immature traces retained past the eligibility frontier;
 - confirmed drops;
 - snapshot revalidation attempts and failures;
 - discarded provisional outputs;
@@ -421,7 +422,7 @@ probe count. Per-reason trace-level labels are intentionally avoided.
 18. Verify that cancellation and every boundary-check budget limit fail open.
 19. Verify that closing a guard releases its pinned catalog exactly once.
 20. Verify that an unset group value resolves to the 2h engine default and an explicit group value takes precedence.
-21. Verify whole-merge maturity at one nanosecond before, exactly at, and one nanosecond after the 2h frontier.
+21. Verify per-trace maturity at one nanosecond before, exactly at, and one nanosecond after the 2h frontier.
 22. Verify exact earlier and later 2h guard boundaries.
 23. Verify that finalization applies the same outside-part guard and defers a trace found in a skipped part.
 24. Verify that a segment with no guardable interior bypasses projection, sampler, and Bloom work.
@@ -471,13 +472,15 @@ probe count. Per-reason trace-level labels are intentionally avoided.
 1. Replay all 26 captured parts and their 37,288 unique trace IDs at the deterministic active-ingestion clock.
 2. Verify that the default picker dispatches no merge from the frozen snapshot; do not label a scoring candidate as an
    ordinary merge selection.
-3. Verify that the recent twelve-part small-file window bypasses the sampler and guard with zero drops and Bloom probes.
+3. Verify that the recent twelve-part small-file window contains no mature trace, so it bypasses the sampler and guard
+   with zero drops and Bloom probes.
 4. Derive the six cooled inputs from the 2h frontier, assert their exact identities and 34,856,465-byte total, and retain
    all 20 other parts in the outside catalog.
 5. Compare every selected/outside decision with the exact trace-placement oracle and require zero false negatives.
 6. Assert 6,652 candidate pairs and Bloom probes, 34 retained traces, 31,798 drops, and three false deferrals for the
    hybrid guard.
-7. Add one recent small part to the cooled selection and verify that the whole merge bypasses sampling.
+7. Add one recent small part to the cooled selection and verify that mature traces are sampled while traces newer than
+   the frontier pass through unchanged.
 8. Verify the observed 71.225s fragment gap and document that fixture observation is not a maximum-gap proof.
 9. Add a synthetic narrow outside part whose same-trace fragment is beyond grace and document that it falls outside the
    time-safety contract.
@@ -509,7 +512,8 @@ probe count. Per-reason trace-level labels are intentionally avoided.
 8. Missing timestamp metadata and segment-boundary ambiguity never produce destructive deletion.
 9. Benchmarks show no increase in selected merge bytes or merge fan-out.
 10. Probe-budget exhaustion retains affected traces.
-11. Any selected part newer than the maturity frontier causes zero sampler calls, guard calls, Bloom probes, and drops.
+11. A selected part newer than the maturity frontier does not suppress eligible traces; only trace groups whose maximum
+    timestamp is newer than the frontier bypass sampler and guard calls.
 12. Finalization cannot publish a DROP that the ordinary merge guard would defer for the same visible catalog.
 13. Publication rejection leaves the selected inputs authoritative and completes one lossless retry.
 

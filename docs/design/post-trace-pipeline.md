@@ -614,11 +614,13 @@ The hook is injected into `mergeBlocks` (`banyand/trace/merger.go`), which is th
 
 ```mermaid
 flowchart TD
-    IP["Selected Parts"] --> MG{"Merge eligible?<br/>newest selected part at or before now − merge_grace"}
-    MG -->|"NO (whole merge is hot)"| LR["Merge losslessly; defer every verdict"]
+    IP["Selected Parts"] --> MG{"Can any selected part contain<br/>data at or before now − merge_grace?"}
+    MG -->|"NO"| LR["Merge losslessly; defer every verdict"]
     MG -->|"YES"| BR["blockReader.nextBlockMetadata<br/>streams blocks ordered by trace_id"]
     BR --> PA["Per-trace assembly<br/>existing pending-block accumulation in mergeBlocks"]
-    PA --> CHK["plugin gating policy check"]
+    PA --> TM{"trace max timestamp<br/>at or before frontier?"}
+    TM -->|"NO"| RET["RETAIN unchanged"]
+    TM -->|"YES"| CHK["plugin gating policy check"]
     CHK -->|"KEEP"| WB["mustWriteBlock / mustWriteRawBlock"]
     CHK -->|"provisional DROP"| BG["fragment boundary guard"]
     BG -->|"uncertain or possible outside fragment"| RET["RETAIN unchanged"]
@@ -633,11 +635,12 @@ flowchart TD
 
 3. **Filtering waits for `merge_grace`, but age is not completeness proof.** Compaction is part-count-driven
    (`getPartsToMerge`), not time-driven, so a merge routinely runs on the active write window while more fragments may
-   arrive. The current runtime conservatively tests the selected parts as a whole: if any selected part's maximum
-   timestamp is newer than `now − merge_grace`, the entire merge remains lossless. The engine default is 2h when the
-   group does not set `merge_grace`; an explicit group value still wins. No timer reruns a skipped merge, so actual
-   filtering latency is at least the grace plus the wait for a later eligible compaction. A future per-trace maturity
-   check may reduce this delay after complete trace assembly.
+   arrive. Part minimum timestamps provide only an early shortcut: the runtime bypasses the whole filter when no
+   selected part can contain data at or before `now − merge_grace`. Otherwise it assembles complete trace-ID groups and
+   offers only groups whose maximum timestamp is at or before that frontier to the plugin. Newer groups pass through
+   unchanged. The engine default is 2h when the group does not set `merge_grace`; an explicit group value still wins.
+   No timer reruns an immature trace exactly when it crosses the frontier, so actual filtering latency includes the wait
+   for a later eligible compaction.
 
    Passing this age check does not prove that a trace has stopped growing and must not make a DROP final by itself. A
    destructive DROP also requires the fragment boundary guard plus its segment-coverage and snapshot contracts. The
@@ -719,9 +722,9 @@ To illustrate the relationship, here is the complete processing loop executed by
 ```mermaid
 flowchart TD
     subgraph A["A. In-merge filter at HOT-PHASE LSM COMPACTION (PIPELINE_EVENT_MERGE enabled)"]
-        A1["1. mergeBlocks streams by trace_id.<br/>Are all selected parts older than merge_grace (default 2h)?"]
-        A1 -->|"NO"| A2["Pass blocks through unchanged; defer the verdict"]
-        A1 -->|"YES (settled parts)"| A3["Engine builds a projected TraceBatch; plugin Decide returns a keep-mask.<br/>The §6.1 sw-trace-sampler keeps this trace because is_error is set (config keeps errors).<br/>A provisional DROP passes through the fragment guard; only a confirmed DROP reclaims space."]
+        A1["1. mergeBlocks streams and assembles complete trace_id groups.<br/>Is this trace's maximum timestamp at or before now − merge_grace (default 2h)?"]
+        A1 -->|"NO"| A2["Pass this trace through unchanged; defer its verdict"]
+        A1 -->|"YES"| A3["Engine adds the trace to a projected TraceBatch; plugin Decide returns a keep-mask.<br/>The §6.1 sw-trace-sampler keeps this trace because is_error is set (config keeps errors).<br/>A provisional DROP passes through the fragment guard; only a confirmed DROP reclaims space."]
     end
     subgraph B["B. Plugin gating pass at HOT FINALIZATION (PIPELINE_EVENT_FINALIZE enabled, once per settled Hot segment)"]
         B2["2. Post-trace scanner observes a segment older than max(finalize_grace, merge_grace), not terminal"]

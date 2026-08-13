@@ -261,6 +261,7 @@ type mergeBenchmarkEvent struct {
 	OutputPartID          uint64                          `json:"outputPartID,omitempty"`
 	TracesRetained        uint64                          `json:"tracesRetained"`
 	TracesDropped         uint64                          `json:"tracesDropped"`
+	TracesImmature        uint64                          `json:"tracesImmature"`
 	OversizedTraces       uint64                          `json:"oversizedTraces"`
 	EstimatedStagingBytes uint64                          `json:"estimatedStagingBytes"`
 	StagingHardLimit      uint64                          `json:"stagingHardLimit"`
@@ -312,6 +313,7 @@ type mergeBenchmarkAggregate struct {
 	TracesEvaluated   uint64                      `json:"tracesEvaluated"`
 	TracesRetained    uint64                      `json:"tracesRetained"`
 	TracesDropped     uint64                      `json:"tracesDropped"`
+	TracesImmature    uint64                      `json:"tracesImmature"`
 	OversizedTraces   uint64                      `json:"oversizedTraces"`
 	ElapsedNanos      int64                       `json:"elapsedNanos"`
 }
@@ -575,6 +577,7 @@ type mergeEvaluationObservation struct {
 	pluginCalls        atomic.Uint64
 	retained           atomic.Uint64
 	dropped            atomic.Uint64
+	immature           atomic.Uint64
 	oversized          atomic.Uint64
 	currentStagedBytes atomic.Uint64
 	peakStagedBytes    atomic.Uint64
@@ -868,6 +871,7 @@ func (mbo *mergeBenchmarkObserver) finish(operation *mergeBenchmarkOperation, ou
 	event.TracesEvaluated = operation.evaluation.evaluated.Load()
 	event.TracesRetained = operation.evaluation.retained.Load()
 	event.TracesDropped = operation.evaluation.dropped.Load()
+	event.TracesImmature = operation.evaluation.immature.Load()
 	event.OversizedTraces = operation.evaluation.oversized.Load()
 	event.PeakStagedBytes = operation.evaluation.peakStagedBytes.Load()
 	event.StagingBatches = operation.evaluation.stagingSnapshot()
@@ -957,6 +961,7 @@ func (mbo *mergeBenchmarkObserver) record(event mergeBenchmarkEvent) {
 	aggregate.TracesEvaluated += event.TracesEvaluated
 	aggregate.TracesRetained += event.TracesRetained
 	aggregate.TracesDropped += event.TracesDropped
+	aggregate.TracesImmature += event.TracesImmature
 	aggregate.OversizedTraces += event.OversizedTraces
 	aggregate.ElapsedNanos += event.Resources.ElapsedNanos
 	if mbo.writer != nil {

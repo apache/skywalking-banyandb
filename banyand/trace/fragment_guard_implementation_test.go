@@ -107,7 +107,7 @@ func (s *implementationDropSampler) Decide(batch *sdk.TraceBatch) (sdk.Verdict, 
 func assembleStagedTraceBlockForTest(t *testing.T, group stagedTraceGroup, staged []stagedTrace, projection sdk.Projection) (sdk.TraceBlock, bool) {
 	t.Helper()
 	vectors := acquireStagedEvaluationVectors(1, false)
-	prepareStagedProjectionVectors(vectors, staged, []stagedTraceGroup{group}, projection)
+	prepareStagedProjectionVectors(vectors, nil, staged, []stagedTraceGroup{group}, projection)
 	t.Cleanup(func() { releaseStagedEvaluationVectors(vectors, true) })
 	return assembleStagedTraceBlockInto(vectors, group, staged, projection)
 }
