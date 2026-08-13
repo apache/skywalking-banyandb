@@ -120,9 +120,11 @@ func buildOracle(ctx context.Context, arguments []string) {
 		}
 		options.EvaluationPartIDs = append(options.EvaluationPartIDs, manifest.Selection.InputPartIDs...)
 	}
-	if segmentMinTimeNanos != 0 || segmentMaxTimeNanos != 0 {
-		options.SegmentTimeRange = timestamp.NewInclusiveTimeRange(time.Unix(0, segmentMinTimeNanos), time.Unix(0, segmentMaxTimeNanos))
+	segmentTimeRange, segmentRangeErr := resolveSegmentTimeRange(flags, segmentMinTimeNanos, segmentMaxTimeNanos)
+	if segmentRangeErr != nil {
+		fatalf("invalid sampling oracle segment time range: %v", segmentRangeErr)
 	}
+	options.SegmentTimeRange = segmentTimeRange
 	artifact, buildErr := tracebaseline.BuildSamplingOracle(ctx, options)
 	if buildErr != nil {
 		fatalf("cannot build sampling oracle: %v", buildErr)
@@ -318,9 +320,11 @@ func serve(ctx context.Context, arguments []string) {
 		}
 		options.SamplingOracle = &oracle
 	}
-	if segmentMinTimeNanos != 0 || segmentMaxTimeNanos != 0 {
-		options.SegmentTimeRange = timestamp.NewInclusiveTimeRange(time.Unix(0, segmentMinTimeNanos), time.Unix(0, segmentMaxTimeNanos))
+	segmentTimeRange, segmentRangeErr := resolveSegmentTimeRange(flags, segmentMinTimeNanos, segmentMaxTimeNanos)
+	if segmentRangeErr != nil {
+		fatalf("invalid merge benchmark segment time range: %v", segmentRangeErr)
 	}
+	options.SegmentTimeRange = segmentTimeRange
 	options.ExpectedLedger = map[string]string{
 		tracebaseline.LedgerCore: expectedCoreLedger, tracebaseline.LedgerLatency: expectedLatencyLedger,
 		tracebaseline.LedgerStartTime: expectedStartTimeLedger,
@@ -328,6 +332,28 @@ func serve(ctx context.Context, arguments []string) {
 	if serveErr := tracebaseline.Serve(ctx, options); serveErr != nil {
 		fatalf("serve failed: %v", serveErr)
 	}
+}
+
+func resolveSegmentTimeRange(flags *flag.FlagSet, minTimeNanos, maxTimeNanos int64) (timestamp.TimeRange, error) {
+	var minSet, maxSet bool
+	flags.Visit(func(flagValue *flag.Flag) {
+		switch flagValue.Name {
+		case "segment-min-time-nanos":
+			minSet = true
+		case "segment-max-time-nanos":
+			maxSet = true
+		}
+	})
+	if minSet != maxSet {
+		return timestamp.TimeRange{}, fmt.Errorf("segment-min-time-nanos and segment-max-time-nanos must be provided together")
+	}
+	if !minSet {
+		return timestamp.TimeRange{}, nil
+	}
+	if minTimeNanos >= maxTimeNanos {
+		return timestamp.TimeRange{}, fmt.Errorf("segment-min-time-nanos must be less than segment-max-time-nanos")
+	}
+	return timestamp.NewInclusiveTimeRange(time.Unix(0, minTimeNanos), time.Unix(0, maxTimeNanos)), nil
 }
 
 func drive(ctx context.Context, arguments []string) {
