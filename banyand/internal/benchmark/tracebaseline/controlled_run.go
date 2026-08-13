@@ -106,7 +106,7 @@ func RunControlledMerge(ctx context.Context, options ControlledMergeRunOptions) 
 		}()
 	}
 	receiver, receiverErr := openControlledMergeReceiver( //nolint:contextcheck // The storage constructor has no context parameter.
-		options.DataRoot, manifest, sampler, segmentTimeRange,
+		options.DataRoot, manifest, sampler, string(pipelineMode), segmentTimeRange,
 	)
 	if receiverErr != nil {
 		return ControlledMergeRunReport{}, receiverErr
@@ -261,12 +261,12 @@ func loadControlledMergePlugin(pipelineMode ControlledMergePipelineMode, options
 
 // openControlledMergeReceiver constructs the receiver the controlled merge
 // runs against. Resource cleanup remains the responsibility of the caller.
-func openControlledMergeReceiver(dataRoot string, manifest ControlledMergeSeedManifest, sampler sdk.Sampler,
+func openControlledMergeReceiver(dataRoot string, manifest ControlledMergeSeedManifest, sampler sdk.Sampler, samplerName string,
 	segmentTimeRange timestamp.TimeRange,
 ) (*storagetrace.BenchmarkPartReceiver, error) {
 	receiver, receiverErr := storagetrace.NewBenchmarkMergeReceiver(dataRoot, storagetrace.BenchmarkMergeReceiverOptions{
 		LogicalNow: manifest.MatureLogicalNow, MergeGrace: manifest.MergeGrace, PartMergeDepths: manifest.PartMergeDepths,
-		Attribution: true, BlockMerges: true, Sampler: sampler, SegmentTimeRange: segmentTimeRange,
+		Attribution: true, BlockMerges: true, Sampler: sampler, SamplerName: samplerName, SegmentTimeRange: segmentTimeRange,
 	})
 	if receiverErr != nil {
 		return nil, fmt.Errorf("cannot open controlled merge seed clone: %w", receiverErr)
@@ -348,7 +348,7 @@ func buildControlledMergeReport(options ControlledMergeRunOptions, pipelineMode 
 		environmentOptions.ExecutionIdentity.PluginConfigSHA256 = configSHA256
 	}
 	report := ControlledMergeRunReport{
-		Version: 5, RunID: options.RunID, PipelineMode: pipelineMode, PluginSHA256: pluginSHA256, SeedSnapshotSHA256: manifest.Snapshot.SHA256,
+		Version: 6, RunID: options.RunID, PipelineMode: pipelineMode, PluginSHA256: pluginSHA256, SeedSnapshotSHA256: manifest.Snapshot.SHA256,
 		PluginConfigSHA256: configSHA256, SamplingOracle: options.SamplingOracle,
 		SelectionSHA256:  manifest.Selection.SHA256,
 		MatureLogicalNow: manifest.MatureLogicalNow, Event: event, Inventory: inventory, StagingLimits: stagingLimits,
@@ -402,6 +402,9 @@ func controlledMergePipelineMode(mode string) (ControlledMergePipelineMode, erro
 func controlledMergePipelineCorrect(mode ControlledMergePipelineMode, event storagetrace.BenchmarkMergeEvent,
 	oracle *SamplingOracleArtifact,
 ) bool {
+	if !controlledPluginExecutionMetricsCorrect(mode, event) {
+		return false
+	}
 	switch mode {
 	case ControlledMergePipelineDisabled:
 		return event.Sampling == storagetrace.BenchmarkMergeSamplingNotExecuted &&
@@ -415,6 +418,13 @@ func controlledMergePipelineCorrect(mode ControlledMergePipelineMode, event stor
 	default:
 		return false
 	}
+}
+
+func controlledPluginExecutionMetricsCorrect(mode ControlledMergePipelineMode, event storagetrace.BenchmarkMergeEvent) bool {
+	if mode == ControlledMergePipelineDisabled {
+		return pluginExecutionEventCorrect(false, event)
+	}
+	return pluginExecutionEventCorrect(true, event)
 }
 
 func fileSHA256(path string) (string, error) {

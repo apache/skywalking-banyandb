@@ -41,6 +41,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
+const pluginMetricResultSuccess = "success"
+
 // ServerOptions configures the measured data-node process.
 //
 // ExecutionIdentity holds the harness-recorded fields forwarded by the
@@ -64,6 +66,7 @@ type ServerOptions struct {
 	OutputPath        string
 	Commit            string
 	PluginPath        string
+	PluginName        string
 	ScheduleSHA256    string
 	PluginConfig      []byte
 	Acceleration      float64
@@ -125,8 +128,8 @@ func Serve(ctx context.Context, options ServerOptions) (serveResultErr error) {
 	}
 	receiver, receiverErr := storagetrace.NewBenchmarkMergeReceiver( //nolint:contextcheck // The storage constructor has no context parameter.
 		options.Root, storagetrace.BenchmarkMergeReceiverOptions{
-			LogicalNow: time.Unix(0, 1), MergeGrace: 2 * time.Hour, EventWriter: eventFile, MaxInputPartID: options.MaxInputPartID,
-			Attribution: options.Attribution, Sampler: sampler, SegmentTimeRange: options.SegmentTimeRange,
+			LogicalNow: time.Unix(0, 1), MergeGrace: storagetrace.BenchmarkDefaultMergeGrace, EventWriter: eventFile, MaxInputPartID: options.MaxInputPartID,
+			Attribution: options.Attribution, Sampler: sampler, SamplerName: resolvedPluginName(options), SegmentTimeRange: options.SegmentTimeRange,
 		})
 	if receiverErr != nil {
 		var samplerCloseErr error
@@ -140,7 +143,7 @@ func Serve(ctx context.Context, options ServerOptions) (serveResultErr error) {
 		serveResultErr = errors.Join(serveResultErr, server.stopProfiles(), receiver.Close(), eventFile.Close())
 	}()
 	server.report = RunReport{
-		Version: 1, RunID: options.RunID, Mode: options.Mode, Acceleration: options.Acceleration,
+		Version: 2, RunID: options.RunID, Mode: options.Mode, Acceleration: options.Acceleration,
 		FixtureSHA256: options.FixtureSHA256, ScheduleSHA256: options.ScheduleSHA256, ExpectedRows: options.ExpectedRows,
 		ExpectedLedger: options.ExpectedLedger, InputRows: inputRows, SamplingOracle: options.SamplingOracle,
 	}
@@ -179,6 +182,17 @@ func Serve(ctx context.Context, options ServerOptions) (serveResultErr error) {
 		}
 	}
 	return nil
+}
+
+func resolvedPluginName(options ServerOptions) string {
+	if options.PluginName != "" {
+		return options.PluginName
+	}
+	if options.PluginPath == "" {
+		return ""
+	}
+	base := filepath.Base(options.PluginPath)
+	return strings.TrimSuffix(base, filepath.Ext(base))
 }
 
 func openServerSampler(options ServerOptions) (sdk.Sampler, error) {
@@ -327,7 +341,7 @@ func (bs *benchmarkServer) runCooldown(responseWriter http.ResponseWriter, reque
 		return
 	}
 	if bs.options.RunFinalize {
-		finalized, finalizeErr := bs.receiver.RunFinalizeRound(request.Context(), boundary.LogicalNow, 2*time.Hour)
+		finalized, finalizeErr := bs.receiver.RunFinalizeRound(request.Context(), boundary.LogicalNow, storagetrace.BenchmarkDefaultMergeGrace)
 		if finalizeErr != nil {
 			stopProfileErr := bs.stopCooldownProfile()
 			http.Error(responseWriter, errors.Join(finalizeErr, stopProfileErr).Error(), http.StatusInternalServerError)
@@ -391,12 +405,13 @@ func (bs *benchmarkServer) writeReport(responseWriter http.ResponseWriter, reque
 		samplingCorrect = retainAllFinalizeOutputCorrect(mergeReport.Events)
 	}
 	bs.report.SamplingVerified = samplingCorrect
+	bs.report.PluginMetricsVerified = pluginExecutionMetricsCorrect(mergeReport, bs.options.PluginPath != "")
 	rowsCorrect := inventory.CoreRows == bs.report.ExpectedRows && inventory.IndexRows[LedgerLatency] == bs.report.ExpectedRows &&
 		inventory.IndexRows[LedgerStartTime] == bs.report.ExpectedRows
 	if bs.options.SamplingOracle != nil {
 		rowsCorrect = samplingOracleRowsCorrect(inventory, *bs.options.SamplingOracle)
 	}
-	bs.report.Correct = rowsCorrect && samplingCorrect && bs.report.LedgerVerified
+	bs.report.Correct = rowsCorrect && samplingCorrect && bs.report.PluginMetricsVerified && bs.report.LedgerVerified
 	bs.report.LogicalWriteAmplification = logicalWriteAmplification(mergeReport)
 	report := bs.report
 	bs.mu.Unlock()
@@ -410,6 +425,71 @@ func (bs *benchmarkServer) writeReport(responseWriter http.ResponseWriter, reque
 		return
 	}
 	writeJSON(responseWriter, report)
+}
+
+func pluginExecutionMetricsCorrect(report storagetrace.BenchmarkMergeReport, pluginEnabled bool) bool {
+	var recordedCalls uint64
+	var recordedBatches, recordedBatchTraces, expectedCalls, expectedBatches, expectedBatchTraces uint64
+	for eventIdx := range report.Events {
+		event := &report.Events[eventIdx]
+		if !pluginExecutionEventCorrect(pluginEnabled, *event) {
+			return false
+		}
+		expectedCalls += event.PluginCalls
+		for batchIdx := range event.PluginBatches {
+			expectedBatches += event.PluginBatches[batchIdx].Batches
+			expectedBatchTraces += event.PluginBatches[batchIdx].Traces
+		}
+	}
+	for executionIdx := range report.PluginExecutions {
+		execution := &report.PluginExecutions[executionIdx]
+		if execution.PluginName == "" || execution.Calls == 0 || execution.ElapsedNanos < 0 || execution.MaxElapsedNanos < 0 ||
+			execution.Result != pluginMetricResultSuccess || execution.BypassReason != "" {
+			return false
+		}
+		recordedCalls += execution.Calls
+	}
+	for batchIdx := range report.PluginBatches {
+		batch := &report.PluginBatches[batchIdx]
+		if batch.Result != pluginMetricResultSuccess || batch.Batches == 0 || batch.Traces == 0 {
+			return false
+		}
+		recordedBatches += batch.Batches
+		recordedBatchTraces += batch.Traces
+	}
+	if !pluginEnabled {
+		return expectedCalls == 0 && recordedCalls == 0 && recordedBatches == 0 && len(report.PluginExecutions) == 0 &&
+			len(report.PluginBatches) == 0
+	}
+	return expectedCalls > 0 && recordedCalls == expectedCalls && recordedBatches == expectedBatches &&
+		recordedBatchTraces == expectedBatchTraces
+}
+
+func pluginExecutionEventCorrect(pluginEnabled bool, event storagetrace.BenchmarkMergeEvent) bool {
+	if event.PluginCalls == 0 {
+		return len(event.PluginExecutions) == 0 && len(event.PluginBatches) == 0
+	}
+	if !pluginEnabled || len(event.PluginExecutions) == 0 || len(event.PluginBatches) == 0 {
+		return false
+	}
+	var executionCalls, batches, batchTraces uint64
+	for executionIdx := range event.PluginExecutions {
+		execution := &event.PluginExecutions[executionIdx]
+		if execution.PluginName == "" || execution.Calls == 0 || execution.ElapsedNanos < 0 || execution.MaxElapsedNanos < 0 ||
+			execution.Result != pluginMetricResultSuccess || execution.BypassReason != "" {
+			return false
+		}
+		executionCalls += execution.Calls
+	}
+	for batchIdx := range event.PluginBatches {
+		batch := &event.PluginBatches[batchIdx]
+		if batch.Result != pluginMetricResultSuccess || batch.Batches == 0 || batch.Traces == 0 {
+			return false
+		}
+		batches += batch.Batches
+		batchTraces += batch.Traces
+	}
+	return executionCalls == event.PluginCalls && batches > 0 && batchTraces == event.TracesEvaluated
 }
 
 func countMergeTemperatures(events []storagetrace.BenchmarkMergeEvent) (hotMerges, matureMerges int) {
@@ -426,18 +506,15 @@ func countMergeTemperatures(events []storagetrace.BenchmarkMergeEvent) (hotMerge
 }
 
 func retainAllFinalizeOutputCorrect(events []storagetrace.BenchmarkMergeEvent) bool {
+	ordinaryExecuted := false
 	finalizeExecuted := false
 	for eventIdx := range events {
 		event := &events[eventIdx]
-		if event.Error != "" || event.RecordingError != "" || event.LosslessRetry || event.TracesDropped > 0 || event.OversizedTraces > 0 {
+		if !samplingEventCorrect(*event) || event.TracesDropped > 0 || event.TracesRetained != event.TracesEvaluated {
 			return false
 		}
-		if event.HotInputParts > 0 && (event.Sampling != storagetrace.BenchmarkMergeSamplingNotExecuted ||
-			event.Reason != storagetrace.BenchmarkMergeReasonGrace || event.PluginCalls > 0 || event.TracesEvaluated > 0 || event.TracesRetained > 0) {
-			return false
-		}
-		if event.TracesEvaluated > 0 && event.TracesRetained != event.TracesEvaluated {
-			return false
+		if event.Type == "file" && event.Sampling == storagetrace.BenchmarkMergeSamplingExecuted {
+			ordinaryExecuted = true
 		}
 		if event.Type != "finalize" {
 			continue
@@ -448,28 +525,20 @@ func retainAllFinalizeOutputCorrect(events []storagetrace.BenchmarkMergeEvent) b
 		}
 		finalizeExecuted = true
 	}
-	return finalizeExecuted
+	return ordinaryExecuted && finalizeExecuted
 }
 
 func samplingOracleOutputCorrect(events []storagetrace.BenchmarkMergeEvent, oracle SamplingOracleArtifact) bool {
-	var evaluated, retained, dropped uint64
+	ordinaryExecuted := false
 	finalizeExecuted := false
 	for eventIdx := range events {
 		event := &events[eventIdx]
-		if event.Error != "" || event.RecordingError != "" || event.LosslessRetry || event.OversizedTraces > 0 {
+		if !samplingEventCorrect(*event) {
 			return false
 		}
-		if event.HotInputParts > 0 && (event.Sampling != storagetrace.BenchmarkMergeSamplingNotExecuted ||
-			event.Reason != storagetrace.BenchmarkMergeReasonGrace || event.PluginCalls > 0 || event.TracesEvaluated > 0 ||
-			event.TracesRetained > 0 || event.TracesDropped > 0) {
-			return false
+		if event.Type == "file" && event.Sampling == storagetrace.BenchmarkMergeSamplingExecuted {
+			ordinaryExecuted = true
 		}
-		if event.TracesRetained+event.TracesDropped != event.TracesEvaluated {
-			return false
-		}
-		evaluated += event.TracesEvaluated
-		retained += event.TracesRetained
-		dropped += event.TracesDropped
 		if event.Type == "finalize" {
 			if event.Phase != storagetrace.BenchmarkMergePhaseCooldown || event.Sampling != storagetrace.BenchmarkMergeSamplingExecuted ||
 				event.PluginCalls == 0 || event.TracesEvaluated == 0 || event.MatureInputParts == 0 {
@@ -478,7 +547,24 @@ func samplingOracleOutputCorrect(events []storagetrace.BenchmarkMergeEvent, orac
 			finalizeExecuted = true
 		}
 	}
-	return finalizeExecuted && evaluated == oracle.Evaluated && retained == oracle.Retained && dropped == oracle.Dropped
+	return oracle.Evaluated > 0 && oracle.Retained+oracle.Dropped == oracle.Evaluated && ordinaryExecuted && finalizeExecuted
+}
+
+func samplingEventCorrect(event storagetrace.BenchmarkMergeEvent) bool {
+	if event.Error != "" || event.RecordingError != "" || event.LosslessRetry || event.OversizedTraces > 0 ||
+		event.TracesRetained+event.TracesDropped != event.TracesEvaluated {
+		return false
+	}
+	switch event.Sampling {
+	case storagetrace.BenchmarkMergeSamplingExecuted:
+		return event.Reason == "" && event.PluginCalls > 0 && event.TracesEvaluated > 0
+	case storagetrace.BenchmarkMergeSamplingEnabledNoEvaluation:
+		return event.PluginCalls == 0 && event.TracesEvaluated == 0 && event.TracesImmature > 0
+	case storagetrace.BenchmarkMergeSamplingNotExecuted:
+		return event.Reason != "" && event.PluginCalls == 0 && event.TracesEvaluated == 0 && event.TracesImmature == 0
+	default:
+		return false
+	}
 }
 
 func samplingOracleRowsCorrect(inventory storagetrace.BenchmarkMergeInventory, oracle SamplingOracleArtifact) bool {

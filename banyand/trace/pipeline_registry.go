@@ -24,7 +24,7 @@ import (
 )
 
 // localMergeGraceRegistry stores per-group merge_grace in nanoseconds as set by
-// reconcilePipeline. A zero value means "use option.mergeGraceDefault".
+// reconcilePipeline. A zero value means "use the fixed engine default".
 var localMergeGraceRegistry = struct {
 	m  map[string]int64
 	mu sync.RWMutex
@@ -42,7 +42,7 @@ func setMergeGraceForGroup(group string, graceNs int64) {
 }
 
 // lookupMergeGrace returns the per-group merge_grace in nanoseconds, or 0 if
-// no per-group grace is configured (caller falls back to mergeGraceDefault).
+// no per-group grace is configured (caller falls back to the fixed engine default).
 func lookupMergeGrace(group string) int64 {
 	localMergeGraceRegistry.mu.RLock()
 	defer localMergeGraceRegistry.mu.RUnlock()
@@ -97,7 +97,7 @@ const (
 )
 
 // localFinalizeGraceRegistry stores per-group finalize_grace in nanoseconds as set
-// by reconcilePipeline. A zero value means "use option.finalizeGraceDefault". It
+// by reconcilePipeline. A zero value means "use the fixed engine default". It
 // mirrors localMergeGraceRegistry.
 var localFinalizeGraceRegistry = struct {
 	m  map[string]int64
@@ -116,7 +116,7 @@ func setFinalizeGraceForGroup(group string, graceNs int64) {
 }
 
 // lookupFinalizeGrace returns the per-group finalize_grace in nanoseconds, or 0 if
-// none is configured (caller falls back to option.finalizeGraceDefault).
+// none is configured (caller falls back to the fixed engine default).
 func lookupFinalizeGrace(group string) int64 {
 	localFinalizeGraceRegistry.mu.RLock()
 	defer localFinalizeGraceRegistry.mu.RUnlock()

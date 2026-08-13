@@ -59,7 +59,10 @@ var (
 
 var _ Service = (*standalone)(nil)
 
-const defaultTracePipelineMergeGrace = 2 * time.Hour
+const (
+	defaultTracePipelineMergeGrace    = 2 * time.Hour
+	defaultTracePipelineFinalizeGrace = 5 * time.Minute
+)
 
 type standalone struct {
 	pm                 protector.Memory
@@ -103,14 +106,10 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	fs.IntVar(&s.option.mergePolicy.maxParts, "trace-max-merge-parts", s.option.mergePolicy.maxParts, "the maximum number of parts to merge at once")
 	fs.VarP(&s.option.mergePolicy.maxFanOutSize, "trace-max-fan-out-size", "", "the upper bound of a single file size after merge of trace")
 	bindVectorizedFlags(fs, &s.option.vectorized)
+	s.option.mergeGraceDefault = defaultTracePipelineMergeGrace
+	s.option.finalizeGraceDefault = defaultTracePipelineFinalizeGrace
 	fs.BoolVar(&s.option.nativePipelineEnabled, "trace-pipeline-native-plugin-enabled", false, "enable the native plugin pipeline for in-merge trace retention")
 	fs.StringVar(&s.option.trustedPluginDir, "trace-pipeline-trusted-plugin-dir", "", "trusted directory for native trace pipeline plugins")
-	fs.DurationVar(&s.option.mergeGraceDefault, "trace-pipeline-merge-grace-default", defaultTracePipelineMergeGrace,
-		"default merge_grace for in-merge trace retention filter")
-	fs.DurationVar(&s.option.maxTraceFragmentGap, "trace-pipeline-max-fragment-gap", 0,
-		"externally enforced maximum gap between fragments of one trace; zero disables destructive merge and finalization sampling")
-	fs.DurationVar(&s.option.finalizeGraceDefault, "trace-pipeline-finalize-grace-default", 5*time.Minute,
-		"default finalize_grace (per-segment settling window) for finalization sampling")
 	fs.DurationVar(&s.option.decideTimeout, "trace-pipeline-decide-timeout", 5*time.Second, "hard per-batch Decide timeout for trace pipeline plugins")
 	fs.IntVar(&s.option.decideTimeoutCircuitBreak, "trace-pipeline-decide-timeout-circuit-break", 3,
 		"consecutive-timeout threshold to disable a (group,schema) pipeline chain")
@@ -137,12 +136,6 @@ func (s *standalone) Validate() error {
 	}
 	if s.retentionConfig.Cooldown <= 0 {
 		return errors.New("trace-retention-cooldown must be greater than 0")
-	}
-	if s.option.mergeGraceDefault < 0 {
-		return errors.New("trace-pipeline-merge-grace-default must not be negative")
-	}
-	if s.option.maxTraceFragmentGap < 0 {
-		return errors.New("trace-pipeline-max-fragment-gap must not be negative")
 	}
 	return s.option.vectorized.Validate()
 }

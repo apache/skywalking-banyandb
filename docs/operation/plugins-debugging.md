@@ -96,7 +96,7 @@ rules out a cause.
    once as its span-set grows. This is a property of the merge grace window
    (`TracePipelineConfig.merge_grace`, default 2h) and how the merge
    scheduler groups parts, not of any single sampler. Destructive in-merge
-   merge and finalization sampling also require a positive
-   `trace-pipeline-max-fragment-gap` no greater than the resolved merge grace;
-   its default of zero keeps both paths lossless. Merge grace controls maturity,
-   while the maximum fragment gap controls boundary-range expansion.
+   merge and finalization sampling use the resolved group `merge_grace` for both
+   maturity and fragment-boundary range expansion. The fixed fallback is 2h when
+   the group omits a positive value. Verify that the deployment's maximum delay
+   between fragments of one trace fits within that grace.

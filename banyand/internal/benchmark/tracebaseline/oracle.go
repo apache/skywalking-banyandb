@@ -26,19 +26,22 @@ import (
 	"maps"
 	"os"
 	"sort"
-	"time"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/benchmark/tracefixture"
 	dumptrace "github.com/apache/skywalking-banyandb/banyand/internal/dump/trace"
 	storagetrace "github.com/apache/skywalking-banyandb/banyand/trace"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-const samplingOracleBatchSize = 512
+const (
+	samplingOracleBatchSize = 512
+)
 
 // BuildSamplingOracleOptions configures an independent sampler evaluation over an immutable shard copy.
 type BuildSamplingOracleOptions struct {
+	SegmentTimeRange    timestamp.TimeRange
 	SourceRoot          string
 	PluginPath          string
 	ExpectedSamplerPath string
@@ -62,7 +65,9 @@ func BuildSamplingOracle(ctx context.Context, options BuildSamplingOracleOptions
 	}
 	defer func() { buildErr = errors.Join(buildErr, sampler.Close()) }()
 	receiver, receiverErr := storagetrace.NewBenchmarkMergeReceiver( //nolint:contextcheck // The storage constructor has no context parameter.
-		options.SourceRoot, storagetrace.BenchmarkMergeReceiverOptions{BlockMerges: true, MergeGrace: 2 * time.Hour},
+		options.SourceRoot, storagetrace.BenchmarkMergeReceiverOptions{
+			BlockMerges: true, MergeGrace: storagetrace.BenchmarkDefaultMergeGrace, SegmentTimeRange: options.SegmentTimeRange,
+		},
 	)
 	if receiverErr != nil {
 		return SamplingOracleArtifact{}, fmt.Errorf("cannot open sampling oracle source: %w", receiverErr)
@@ -81,9 +86,16 @@ func BuildSamplingOracle(ctx context.Context, options BuildSamplingOracleOptions
 		return SamplingOracleArtifact{}, evaluateErr
 	}
 	effectiveDroppedIDs := droppedIDs
-	if len(options.EvaluationPartIDs) > 0 {
+	if len(options.EvaluationPartIDs) > 0 || samplingOracleHasSegmentCoverage(options.SegmentTimeRange) {
+		selectedPartIDs := options.EvaluationPartIDs
+		if len(selectedPartIDs) == 0 {
+			selectedPartIDs, receiverErr = receiver.ActivePartIDs()
+			if receiverErr != nil {
+				return SamplingOracleArtifact{}, fmt.Errorf("cannot list sampling oracle selected parts: %w", receiverErr)
+			}
+		}
 		var outsideErr error
-		effectiveDroppedIDs, outsideErr = effectiveSamplingDrops(ctx, receiver, blocks, droppedIDs, options.EvaluationPartIDs)
+		effectiveDroppedIDs, outsideErr = effectiveSamplingDrops(ctx, receiver, blocks, droppedIDs, selectedPartIDs)
 		if outsideErr != nil {
 			return SamplingOracleArtifact{}, outsideErr
 		}
@@ -111,6 +123,10 @@ func BuildSamplingOracle(ctx context.Context, options BuildSamplingOracleOptions
 	return artifact, nil
 }
 
+func samplingOracleHasSegmentCoverage(segmentRange timestamp.TimeRange) bool {
+	return !segmentRange.Start.IsZero() && !segmentRange.End.IsZero() && segmentRange.Start.Before(segmentRange.End)
+}
+
 func effectiveSamplingDrops(ctx context.Context, receiver *storagetrace.BenchmarkPartReceiver, blocks []sdk.TraceBlock,
 	pluginDropped map[string]struct{}, selectedPartIDs []uint64,
 ) (map[string]struct{}, error) {
@@ -124,7 +140,7 @@ func effectiveSamplingDrops(ctx context.Context, receiver *storagetrace.Benchmar
 			return nil, fmt.Errorf("sampling oracle fragment check canceled: %w", contextErr)
 		}
 		maybeOutside, outsideErr := receiver.TraceFragmentMaybeOutsideSelection(
-			selectedPartIDs, block.TraceID, block.MinTS, block.MaxTS, time.Minute,
+			selectedPartIDs, block.TraceID, block.MinTS, block.MaxTS, storagetrace.BenchmarkDefaultMergeGrace,
 		)
 		if outsideErr != nil {
 			return nil, fmt.Errorf("cannot evaluate sampling oracle fragment boundary for %q: %w", block.TraceID, outsideErr)

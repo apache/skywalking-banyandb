@@ -83,11 +83,12 @@ type mergeDecisionRequest struct {
 }
 
 type mergeDecisionWorker struct {
-	requests chan mergeDecisionRequest
-	results  chan sdk.Verdict
-	stopCh   chan struct{}
-	samplers []sdk.Sampler
-	stopOnce sync.Once
+	observation *mergeEvaluationObservation
+	requests    chan mergeDecisionRequest
+	results     chan sdk.Verdict
+	stopCh      chan struct{}
+	samplers    []sdk.Sampler
+	stopOnce    sync.Once
 }
 
 type observedSampler struct {
@@ -130,6 +131,9 @@ func (os *observedSampler) observe(started time.Time, result, bypassReason strin
 	}
 	if os.chain.observeLinkExecution != nil {
 		os.chain.observeLinkExecution(observation)
+	}
+	if os.worker.observation != nil {
+		os.worker.observation.recordPluginExecution(observation)
 	}
 }
 
@@ -217,7 +221,7 @@ func (mc *mergeChain) executeObservedInto(batch *sdk.TraceBatch, timeout time.Du
 		mc.mu.Unlock()
 		mc.observe(pluginExecutionObservation{
 			result: pluginExecutionResultCircuitOpen, batchTraces: len(batch.Traces),
-		})
+		}, observation)
 		return retainAllVerdict(len(batch.Traces), decisionMask), true, nil
 	}
 	mc.mu.Unlock()
@@ -234,7 +238,7 @@ func (mc *mergeChain) executeObservedInto(batch *sdk.TraceBatch, timeout time.Du
 		mc.mu.Unlock()
 		mc.observe(pluginExecutionObservation{
 			result: pluginExecutionResultSuccess, batchTraces: len(batch.Traces),
-		})
+		}, observation)
 		return verdict, true, nil
 	case <-timeoutCh:
 		mc.abandonWorker(worker)
@@ -248,7 +252,7 @@ func (mc *mergeChain) executeObservedInto(batch *sdk.TraceBatch, timeout time.Du
 		mc.mu.Unlock()
 		mc.observe(pluginExecutionObservation{
 			result: pluginExecutionResultTimeout, batchTraces: len(batch.Traces),
-		})
+		}, observation)
 		if opened {
 			return retainAllVerdict(len(batch.Traces), nil), false, fmt.Errorf("circuit_open")
 		}
@@ -256,13 +260,14 @@ func (mc *mergeChain) executeObservedInto(batch *sdk.TraceBatch, timeout time.Du
 	}
 }
 
-func (mc *mergeChain) observe(observation pluginExecutionObservation) {
+func (mc *mergeChain) observe(observation pluginExecutionObservation, evaluation *mergeEvaluationObservation) {
 	if len(mc.samplers) == 0 {
 		return
 	}
 	if mc.observeExecution != nil {
 		mc.observeExecution(observation)
 	}
+	evaluation.recordPluginBatch(observation)
 }
 
 func retainAllVerdict(traceCount int, mask []bool) sdk.Verdict {
@@ -301,7 +306,9 @@ func (mdw *mergeDecisionWorker) run(chain *mergeChain) {
 	for {
 		select {
 		case request := <-mdw.requests:
+			mdw.observation = request.observation
 			result := chain.runChainWithSamplers(mdw.samplers, request.batch, request.observation, request.decisionMask)
+			mdw.observation = nil
 			select {
 			case mdw.results <- result:
 			case <-mdw.stopCh:

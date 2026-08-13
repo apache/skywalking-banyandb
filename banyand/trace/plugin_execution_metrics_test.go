@@ -229,3 +229,56 @@ func TestPluginExecutionMetricsLatePanicKeepsBothDimensions(t *testing.T) {
 	require.Len(t, bypasses, 1)
 	require.Equal(t, sdk.BypassReasonPanic, metricLabelValue(bypasses[0], "reason"))
 }
+
+func TestPluginExecutionMetricsFeedBenchmarkReport(t *testing.T) {
+	chain := newNamedMergeChain("g1", "", []namedSampler{
+		{name: "latency", sampler: &fakeSampler{}},
+		{name: "probabilistic", sampler: &fakeSampler{}},
+	}, 3)
+	defer chain.close()
+	observation := &mergeEvaluationObservation{}
+
+	_, executeErr := chain.executeObserved(&sdk.TraceBatch{Traces: make([]sdk.TraceBlock, 5)}, time.Second, observation)
+	require.NoError(t, executeErr)
+	executions := observation.pluginExecutionSnapshot(mergePhaseCooldown)
+	require.Len(t, executions, 2)
+	require.Equal(t, "latency", executions[0].PluginName)
+	require.Equal(t, "probabilistic", executions[1].PluginName)
+	for executionIdx := range executions {
+		require.Equal(t, mergePhaseCooldown, executions[executionIdx].Phase)
+		require.Equal(t, pluginExecutionResultSuccess, executions[executionIdx].Result)
+		require.Equal(t, uint64(1), executions[executionIdx].Calls)
+		require.GreaterOrEqual(t, executions[executionIdx].ElapsedNanos, int64(0))
+	}
+	batches := observation.pluginBatchSnapshot(mergePhaseCooldown)
+	require.Equal(t, []mergeBenchmarkPluginBatch{{
+		Phase: mergePhaseCooldown, Result: pluginExecutionResultSuccess, Batches: 1, Traces: 5,
+	}}, batches)
+}
+
+func TestBenchmarkPluginExecutionRecordsExactLatencyHistogram(t *testing.T) {
+	observation := &mergeEvaluationObservation{}
+	for _, elapsed := range []time.Duration{50 * time.Microsecond, 100 * time.Microsecond, 3 * time.Millisecond, 11 * time.Second} {
+		observation.recordPluginExecution(pluginLinkExecutionObservation{
+			pluginName: "skywalking", result: pluginExecutionResultSuccess, elapsed: elapsed,
+		})
+	}
+	executions := observation.pluginExecutionSnapshot(mergePhaseCooldown)
+	require.Len(t, executions, 1)
+	execution := executions[0]
+	require.Equal(t, uint64(4), execution.Calls)
+	require.Equal(t, uint64(1), execution.DurationOverflow)
+	require.Equal(t, uint64(2), execution.DurationBuckets[0].Calls)
+	require.Equal(t, int64(100*time.Microsecond), execution.DurationBuckets[0].UpperBoundNanos)
+	require.Equal(t, uint64(1), execution.DurationBuckets[5].Calls)
+	require.Equal(t, int64(5*time.Millisecond), execution.DurationBuckets[5].UpperBoundNanos)
+	require.Equal(t, execution.Calls, execution.DurationOverflow+sumPluginDurationBucketCalls(execution.DurationBuckets))
+}
+
+func sumPluginDurationBucketCalls(buckets []mergeBenchmarkDurationBucket) uint64 {
+	var calls uint64
+	for bucketIdx := range buckets {
+		calls += buckets[bucketIdx].Calls
+	}
+	return calls
+}

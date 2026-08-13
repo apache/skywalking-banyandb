@@ -27,7 +27,7 @@ import (
 //
 // The soak reuses the SharedContext (and therefore the same external standalone server)
 // set up by common.go's SynchronizedBeforeSuite. The instant suite configures a 1ns merge
-// grace and matching maximum-fragment-gap contract. Writing all soak timestamps
+// grace, which also controls the fragment-boundary guard. Writing all soak timestamps
 // soakGracePad (2 min) in the past also supports variants that explicitly configure a
 // non-zero grace no greater than 2 min; the soak does not wait for the production default.
 //

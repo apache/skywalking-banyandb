@@ -84,12 +84,12 @@ const PluginSOName = "latencystatussampler.so"
 
 // DefaultMergeGrace is the merge_grace used by the base fixture. It is
 // intentionally short so integration tests do not wait long for parts to cool.
-const DefaultMergeGrace = 0 * time.Second
+const DefaultMergeGrace = time.Nanosecond
 
 // NewBasePipelineConfig returns the base TracePipelineConfig used by
 // RegisterSamplerRuntime in suite setup. It points at pluginSOName with
 // thresholdMs=500 (the canonical latency-status sampler threshold) and
-// merge_grace=graceOverride. Pass 0 to use the instantaneous grace path.
+// merge_grace=graceOverride. The default fixture uses one nanosecond so merges mature immediately.
 //
 // The .so must already be staged in the trusted plugin dir under the same name.
 func NewBasePipelineConfig(soPath string, mergeGrace time.Duration) *commonv1.TracePipelineConfig {

@@ -392,7 +392,6 @@ func (tst *tsTable) observeDropSetUsage(budget uint64, entries int, lane string)
 	tst.metrics.pipelineDropSetEntries.Observe(float64(entries), lane)
 }
 
-//nolint:unused
 func (tst *tsTable) incPipelineTracesImmature(delta int) {
 	if tst == nil || tst.metrics == nil {
 		return

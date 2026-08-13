@@ -653,7 +653,7 @@ func (tst *tsTable) releaseDispatchRequest(req *mergeDispatchRequest) {
 }
 
 // mergeOverrides lets the finalize round drive mergePartsThenSendIntroduction with a
-// pre-built sampler filter (bypassing the hot-path isMergeHot/merge_grace build) and a
+// pre-built sampler filter (bypassing the hot-path merge_grace filter build) and a
 // finalize-generation stamp for the output part. A nil *mergeOverrides means the hot /
 // flusher path: build the filter from merge-time rules and min-propagate finalizeGen.
 type mergeOverrides struct {
@@ -664,7 +664,7 @@ type mergeOverrides struct {
 // buildHotMergeFilter builds the in-merge retention filter for the hot / flusher merge
 // path from the merge-time rules (registered samplers + merge_grace maturity). It
 // returns nil when the native pipeline is off, no samplers are registered, or the merge
-// is still hot (parts younger than merge_grace), in which case the merge runs unfiltered.
+// cannot contain a mature trace, in which case the merge runs unfiltered.
 func (tst *tsTable) buildHotMergeFilter(parts []*partWrapper) *mergeFilter {
 	filter, _ := tst.buildHotMergeFilterDecision(parts)
 	return filter
@@ -699,17 +699,14 @@ func (tst *tsTable) buildHotMergeFilterDecisionAt(parts []*partWrapper, logicalN
 		return nil, mergeReasonEventDisabled
 	}
 	graceNs := tst.effectiveMergeGraceNs()
-	if tst.option.maxTraceFragmentGap <= 0 || time.Duration(graceNs) < tst.option.maxTraceFragmentGap {
-		tst.incPipelineGuardBypassed()
-		return nil, mergeReasonFragmentGap
-	}
-	if isMergeHot(parts, graceNs, logicalNow) {
+	maturityFrontier := traceFragmentSaturatingSub(logicalNow, graceNs)
+	if !mergeMayContainMatureTrace(parts, maturityFrontier) {
 		tst.incPipelineGuardBypassed()
 		return nil, mergeReasonGrace
 	}
 	stagingHardLimit := resolveStageBudget(tst.option)
 	stagingPlan := planAdaptiveDecisionBatch(parts, stagingHardLimit)
-	guard := tst.newTraceFragmentGuardSession(parts, tst.option.maxTraceFragmentGap, stagingHardLimit)
+	guard := tst.newTraceFragmentGuardSession(parts, time.Duration(graceNs), stagingHardLimit)
 	if guard == nil {
 		tst.incPipelineGuardBypassed()
 		return nil, mergeReasonGuardUnavailable
@@ -729,6 +726,8 @@ func (tst *tsTable) buildHotMergeFilterDecisionAt(parts []*partWrapper, logicalN
 		plannedStagingBatches: stagingPlan.PlannedBatches,
 		traceBudget:           resolveTraceBudget(tst.option),
 		maxTraceCount:         maxStagedTraceCountFromBudget(stagingPlan.BatchLimit),
+		maturityFrontier:      maturityFrontier,
+		filterImmature:        true,
 		// The drop-set ceiling is active (spec section 3.4): every merge, hot or
 		// finalize, resolves the same budget from the same function.
 		budget: resolveDropSetBudget(tst.option),
@@ -750,6 +749,9 @@ func (tst *tsTable) effectiveMergeGraceNs() int64 {
 	graceNs := lookupMergeGrace(tst.group)
 	if graceNs <= 0 {
 		graceNs = int64(tst.option.mergeGraceDefault)
+	}
+	if graceNs <= 0 {
+		graceNs = int64(defaultTracePipelineMergeGrace)
 	}
 	return graceNs
 }
@@ -1546,10 +1548,17 @@ func acquireStagedEvaluationVectors(traceCount int, withGuard bool) *stagedEvalu
 	return vectors
 }
 
-func prepareStagedProjectionVectors(vectors *stagedEvaluationVectors, staged []stagedTrace, groups []stagedTraceGroup, projection sdk.Projection) {
+func prepareStagedProjectionVectors(vectors *stagedEvaluationVectors, filter *mergeFilter, staged []stagedTrace,
+	groups []stagedTraceGroup, projection sdk.Projection,
+) {
 	rowCount := 0
+	eligibleGroupCount := 0
 	for groupIdx := range groups {
 		group := &groups[groupIdx]
+		if !stagedTraceGroupEligible(filter, group) {
+			continue
+		}
+		eligibleGroupCount++
 		for stagedIdx := group.start; stagedIdx < group.end && stagedIdx < len(staged); stagedIdx++ {
 			metadata := staged[stagedIdx].metadata()
 			if metadata != nil {
@@ -1557,10 +1566,10 @@ func prepareStagedProjectionVectors(vectors *stagedEvaluationVectors, staged []s
 			}
 		}
 	}
-	tagColumnCount := len(groups) * len(projection.Tags)
+	tagColumnCount := eligibleGroupCount * len(projection.Tags)
 	tagValueCount := rowCount * len(projection.Tags)
-	if cap(vectors.projectionArenas) < len(groups) {
-		vectors.projectionArenas = make([]*pkgbytes.Buffer, 0, len(groups))
+	if cap(vectors.projectionArenas) < eligibleGroupCount {
+		vectors.projectionArenas = make([]*pkgbytes.Buffer, 0, eligibleGroupCount)
 	}
 	if cap(vectors.tagColumns) < tagColumnCount {
 		vectors.tagColumns = make([]sdk.TagColumn, 0, tagColumnCount)
@@ -1658,10 +1667,12 @@ type mergeFilter struct {
 	estimatedStagingBytes uint64 // selected-part metadata estimate used to plan decision batches
 	plannedStagingBatches uint64 // estimated number of balanced decision batches
 	traceBudget           uint64 // hard cap on one trace's staged bytes; exceeding it retains the trace without evaluation (0 disables bypass)
-	maxTraceCount         int    // hard cap on logical traces sent to one Decide call (0 disables the count cap)
+	maturityFrontier      int64  // inclusive trace timestamp boundary for merge-time sampler eligibility
 	budget                uint64 // drop-set ceiling in bytes for this merge, from resolveDropSetBudget; 0 means unlimited
 	retainedByCeiling     atomic.Uint64
 	dropSetEntries        atomic.Uint64 // dropped IDs the published attempt finished holding; feeds the headroom histogram
+	maxTraceCount         int           // hard cap on logical traces sent to one Decide call (0 disables the count cap)
+	filterImmature        bool          // retain trace groups newer than maturityFrontier without calling Decide
 	forceSlow             bool          // test seam that forces decoded staging instead of projected raw staging
 }
 
@@ -1894,16 +1905,16 @@ func stagedEvaluationSlotBytes(hasGuard bool) uint64 {
 	return slotBytes
 }
 
-// isMergeHot reports true when any part being merged contains data written
-// within graceNs of now. A hot merge means some traces may still have in-flight
-// spans arriving in newer parts, so the caller should skip filter evaluation.
-func isMergeHot(parts []*partWrapper, graceNs int64, now int64) bool {
-	if graceNs < 0 {
-		return true
-	}
-	maturityFrontier := traceFragmentSaturatingSub(now, graceNs)
+func stagedTraceGroupEligible(filter *mergeFilter, group *stagedTraceGroup) bool {
+	return filter == nil || !filter.filterImmature || group.maxTS <= filter.maturityFrontier
+}
+
+// mergeMayContainMatureTrace reports whether a selected part can contain a trace
+// eligible for merge-time sampling. Part metadata is only a selection shortcut;
+// the trace group maximum timestamp is the final eligibility boundary.
+func mergeMayContainMatureTrace(parts []*partWrapper, maturityFrontier int64) bool {
 	for _, pw := range parts {
-		if pw.p.partMetadata.MaxTimestamp > maturityFrontier {
+		if pw != nil && pw.p != nil && pw.p.partMetadata.MinTimestamp <= maturityFrontier {
 			return true
 		}
 	}
@@ -2021,8 +2032,14 @@ type stagedEvaluationBatch struct {
 }
 
 func assembleStagedEvaluationBatch(filter *mergeFilter, staged []stagedTrace, groups []stagedTraceGroup) (stagedEvaluationBatch, bool) {
-	vectors := acquireStagedEvaluationVectors(len(groups), filter.guard != nil)
-	prepareStagedProjectionVectors(vectors, staged, groups, filter.chain.projection)
+	eligibleGroupCount := 0
+	for groupIdx := range groups {
+		if stagedTraceGroupEligible(filter, &groups[groupIdx]) {
+			eligibleGroupCount++
+		}
+	}
+	vectors := acquireStagedEvaluationVectors(eligibleGroupCount, filter.guard != nil)
+	prepareStagedProjectionVectors(vectors, filter, staged, groups, filter.chain.projection)
 	assembledBatch := stagedEvaluationBatch{vectors: vectors}
 	expectedStart := 0
 	for groupIdx := range groups {
@@ -2031,6 +2048,16 @@ func assembleStagedEvaluationBatch(filter *mergeFilter, staged []stagedTrace, gr
 			group.minTS > group.maxTS || groupIdx > 0 && group.traceID <= groups[groupIdx-1].traceID {
 			releaseStagedEvaluationVectors(vectors, true)
 			return stagedEvaluationBatch{}, false
+		}
+		if !stagedTraceGroupEligible(filter, group) {
+			if filter.owner != nil {
+				filter.owner.incPipelineTracesImmature(1)
+			}
+			if filter.observation != nil {
+				filter.observation.immature.Add(1)
+			}
+			expectedStart = group.end
+			continue
 		}
 		stagedTraceBlock, assembled := assembleStagedTraceBlockInto(vectors, *group, staged[group.start:group.end], filter.chain.projection)
 		if assembled {

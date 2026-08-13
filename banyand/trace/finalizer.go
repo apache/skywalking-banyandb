@@ -58,11 +58,11 @@ func (tst *tsTable) runFinalizeRoundNamed(samplers []namedSampler, graceNs int64
 		return false, nil
 	}
 	mergeGraceNs := tst.effectiveMergeGraceNs()
-	guardGrace := tst.option.maxTraceFragmentGap
-	if graceNs < 0 || guardGrace <= 0 || mergeGraceNs < int64(guardGrace) {
+	if graceNs < 0 || mergeGraceNs <= 0 {
 		tst.incPipelineGuardBypassed()
 		return false, nil
 	}
+	guardGrace := time.Duration(mergeGraceNs)
 	maturityGraceNs := max(graceNs, mergeGraceNs)
 	// Resource gate: never run finalize compute under memory pressure (constraint 1).
 	if tst.pm != nil && tst.pm.State() == protector.StateHigh {

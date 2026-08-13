@@ -51,9 +51,6 @@ func (sr *schemaRepo) finalizeScanLoop(closer *run.Closer, interval time.Duratio
 // runFinalizeScan performs one scan pass over all finalize-enabled groups. It is safe
 // to call directly (tests do) without the surrounding loop.
 func (sr *schemaRepo) runFinalizeScan(closeCh <-chan struct{}) {
-	if sr.maxTraceFragmentGap <= 0 {
-		return
-	}
 	// A local filesystem to read per-shard finalize.json during the pre-filter, without
 	// reopening the segment. finalize.json is always on local disk.
 	lfs := fs.NewLocalFileSystem()
@@ -72,14 +69,17 @@ func (sr *schemaRepo) runFinalizeScan(closeCh <-chan struct{}) {
 			graceNs = int64(sr.finalizeGraceDefault)
 		}
 		if graceNs <= 0 {
+			graceNs = int64(defaultTracePipelineFinalizeGrace)
+		}
+		if graceNs <= 0 {
 			continue
 		}
 		mergeGraceNs := lookupMergeGrace(group)
 		if mergeGraceNs <= 0 {
 			mergeGraceNs = int64(sr.mergeGraceDefault)
 		}
-		if mergeGraceNs < int64(sr.maxTraceFragmentGap) {
-			continue
+		if mergeGraceNs <= 0 {
+			mergeGraceNs = int64(defaultTracePipelineMergeGrace)
 		}
 		maturityGraceNs := max(graceNs, mergeGraceNs)
 		sr.scanGroup(group, samplers, graceNs, maturityGraceNs, lookupFinalizeConfig(group, graceNs), lfs, closeCh)

@@ -32,7 +32,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fatalf("usage: trace-merge-benchmark <serve|drive|build-oracle|capture-seed|run-controlled|render|validate> [flags]")
+		fatalf("usage: trace-merge-benchmark <serve|drive|build-oracle|capture-seed|run-controlled|render|render-comparison|validate> [flags]")
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -49,6 +49,8 @@ func main() {
 		runControlled(ctx, os.Args[2:])
 	case "render":
 		render(os.Args[2:])
+	case "render-comparison":
+		renderComparison(os.Args[2:])
 	case "validate":
 		validate(os.Args[2:])
 	default:
@@ -56,15 +58,52 @@ func main() {
 	}
 }
 
+func renderComparison(arguments []string) {
+	flags := flag.NewFlagSet("render-comparison", flag.ExitOnError)
+	baselinePath := flags.String("baseline", "", "pipeline-disabled suite report JSON")
+	skyWalkingPath := flags.String("skywalking", "", "full SkyWalking suite report JSON")
+	outputPath := flags.String("output", "", "standalone comparison HTML output")
+	_ = flags.Parse(arguments)
+	baseline := readSuite(*baselinePath, "pipeline-disabled")
+	skyWalking := readSuite(*skyWalkingPath, "SkyWalking")
+	output, createErr := os.Create(*outputPath)
+	if createErr != nil {
+		fatalf("cannot create comparison HTML report: %v", createErr)
+	}
+	comparison := tracebaseline.ComparisonReport{GeneratedAt: time.Now().UTC(), Baseline: baseline, SkyWalking: skyWalking}
+	if renderErr := tracebaseline.RenderComparisonHTML(output, comparison); renderErr != nil {
+		_ = output.Close()
+		fatalf("cannot render comparison HTML report: %v", renderErr)
+	}
+	if closeErr := output.Close(); closeErr != nil {
+		fatalf("cannot close comparison HTML report: %v", closeErr)
+	}
+}
+
+func readSuite(path, name string) tracebaseline.SuiteReport {
+	suiteData, readErr := os.ReadFile(path)
+	if readErr != nil {
+		fatalf("cannot read %s suite report: %v", name, readErr)
+	}
+	var suite tracebaseline.SuiteReport
+	if decodeErr := json.Unmarshal(suiteData, &suite); decodeErr != nil {
+		fatalf("cannot decode %s suite report: %v", name, decodeErr)
+	}
+	return suite
+}
+
 func buildOracle(ctx context.Context, arguments []string) {
 	flags := flag.NewFlagSet("build-oracle", flag.ExitOnError)
 	var options tracebaseline.BuildSamplingOracleOptions
 	var pluginConfigPath, selectionManifestPath, outputPath string
+	var segmentMinTimeNanos, segmentMaxTimeNanos int64
 	flags.StringVar(&options.SourceRoot, "source", "", "immutable source shard copy")
 	flags.StringVar(&options.PluginPath, "plugin", "", "native sampler plugin .so path")
 	flags.StringVar(&pluginConfigPath, "plugin-config", "", "sampler configuration JSON file")
 	flags.StringVar(&options.ExpectedSamplerPath, "expected-sampler", "", "optional frozen sampler artifact")
 	flags.StringVar(&selectionManifestPath, "selection-manifest", "", "optional controlled seed selection manifest")
+	flags.Int64Var(&segmentMinTimeNanos, "segment-min-time-nanos", 0, "inclusive minimum fixture timestamp for sampler coverage")
+	flags.Int64Var(&segmentMaxTimeNanos, "segment-max-time-nanos", 0, "inclusive maximum fixture timestamp for sampler coverage")
 	flags.StringVar(&outputPath, "output", "", "sampling oracle JSON output")
 	_ = flags.Parse(arguments)
 	if pluginConfigPath != "" {
@@ -81,6 +120,11 @@ func buildOracle(ctx context.Context, arguments []string) {
 		}
 		options.EvaluationPartIDs = append(options.EvaluationPartIDs, manifest.Selection.InputPartIDs...)
 	}
+	segmentTimeRange, segmentRangeErr := resolveSegmentTimeRange(flags, segmentMinTimeNanos, segmentMaxTimeNanos)
+	if segmentRangeErr != nil {
+		fatalf("invalid sampling oracle segment time range: %v", segmentRangeErr)
+	}
+	options.SegmentTimeRange = segmentTimeRange
 	artifact, buildErr := tracebaseline.BuildSamplingOracle(ctx, options)
 	if buildErr != nil {
 		fatalf("cannot build sampling oracle: %v", buildErr)
@@ -252,6 +296,7 @@ func serve(ctx context.Context, arguments []string) {
 	flags.StringVar(&options.ExecutionIdentity.PluginSHA256, "plugin-sha256", "", "sampler plugin .so checksum")
 	flags.StringVar(&options.ExecutionIdentity.PluginConfigSHA256, "plugin-config-sha256", "", "sampler configuration checksum")
 	flags.StringVar(&options.PluginPath, "plugin", "", "native sampler plugin .so path")
+	flags.StringVar(&options.PluginName, "plugin-name", "", "stable sampler name used by execution metrics")
 	flags.StringVar(&pluginConfigPath, "plugin-config", "", "sampler configuration JSON file")
 	flags.StringVar(&samplingOraclePath, "sampling-oracle", "", "independent expected sampling output JSON file")
 	flags.Int64Var(&segmentMinTimeNanos, "segment-min-time-nanos", 0, "inclusive minimum fixture timestamp for sampler coverage")
@@ -275,9 +320,11 @@ func serve(ctx context.Context, arguments []string) {
 		}
 		options.SamplingOracle = &oracle
 	}
-	if segmentMinTimeNanos != 0 || segmentMaxTimeNanos != 0 {
-		options.SegmentTimeRange = timestamp.NewInclusiveTimeRange(time.Unix(0, segmentMinTimeNanos), time.Unix(0, segmentMaxTimeNanos))
+	segmentTimeRange, segmentRangeErr := resolveSegmentTimeRange(flags, segmentMinTimeNanos, segmentMaxTimeNanos)
+	if segmentRangeErr != nil {
+		fatalf("invalid merge benchmark segment time range: %v", segmentRangeErr)
 	}
+	options.SegmentTimeRange = segmentTimeRange
 	options.ExpectedLedger = map[string]string{
 		tracebaseline.LedgerCore: expectedCoreLedger, tracebaseline.LedgerLatency: expectedLatencyLedger,
 		tracebaseline.LedgerStartTime: expectedStartTimeLedger,
@@ -285,6 +332,28 @@ func serve(ctx context.Context, arguments []string) {
 	if serveErr := tracebaseline.Serve(ctx, options); serveErr != nil {
 		fatalf("serve failed: %v", serveErr)
 	}
+}
+
+func resolveSegmentTimeRange(flags *flag.FlagSet, minTimeNanos, maxTimeNanos int64) (timestamp.TimeRange, error) {
+	var minSet, maxSet bool
+	flags.Visit(func(flagValue *flag.Flag) {
+		switch flagValue.Name {
+		case "segment-min-time-nanos":
+			minSet = true
+		case "segment-max-time-nanos":
+			maxSet = true
+		}
+	})
+	if minSet != maxSet {
+		return timestamp.TimeRange{}, fmt.Errorf("segment-min-time-nanos and segment-max-time-nanos must be provided together")
+	}
+	if !minSet {
+		return timestamp.TimeRange{}, nil
+	}
+	if minTimeNanos >= maxTimeNanos {
+		return timestamp.TimeRange{}, fmt.Errorf("segment-min-time-nanos must be less than segment-max-time-nanos")
+	}
+	return timestamp.NewInclusiveTimeRange(time.Unix(0, minTimeNanos), time.Unix(0, maxTimeNanos)), nil
 }
 
 func drive(ctx context.Context, arguments []string) {

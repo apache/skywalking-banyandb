@@ -1520,7 +1520,7 @@ Identity comes from the carrying Group; there is one config per group by constru
 | ----- | ---- | ----- | ----------- |
 | enabled | [bool](#bool) |  | enabled activates the pipeline. |
 | plugins | [Plugin](#banyandb-common-v1-Plugin) | repeated | plugins is the ordered chain of plugins evaluated by enabled events. |
-| merge_grace | [google.protobuf.Duration](#google-protobuf-Duration) |  | merge_grace is the whole-selection maturity delay for destructive in-merge sampling. Sampling is deferred when any selected part extends beyond now - merge_grace; this is not a per-trace completeness guarantee. Strictly positive if set; engine default 2h if unset. |
+| merge_grace | [google.protobuf.Duration](#google-protobuf-Duration) |  | merge_grace is the per-trace maturity delay for destructive in-merge sampling. The sampler receives only traces whose maximum timestamp is at or before now - merge_grace; newer traces are retained. Strictly positive if set; engine default 2h if unset. |
 | finalize_grace | [google.protobuf.Duration](#google-protobuf-Duration) |  | finalize_grace is the per-segment settling window for the scheduled finalization pass. Strictly positive if set; engine default 5m if unset. |
 | stages | [StageRule](#banyandb-common-v1-StageRule) | repeated | stages declares per-stage retention rules. |
 | schema_names | [string](#string) | repeated | schema_names lists explicit schema names to target within the Group. |

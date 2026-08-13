@@ -313,6 +313,11 @@ func TestBenchmarkMergeReceiverRunsRetainAllSamplerDuringFinalize(t *testing.T) 
 	)
 	require.NoError(t, outsideErr)
 	require.False(t, maybeOutside)
+	maybeOutside, outsideErr = receiver.TraceFragmentMaybeOutsideSelection(
+		partIDs, "trace-1", logicalBase.Add(-23*time.Hour).UnixNano(), logicalBase.Add(-23*time.Hour).UnixNano(), 2*time.Hour,
+	)
+	require.NoError(t, outsideErr)
+	require.True(t, maybeOutside, "the oracle helper must match the runtime segment-boundary guard")
 
 	finalized, finalizeErr := receiver.RunFinalizeRound(context.Background(), logicalBase.Add(time.Hour), 2*time.Hour)
 	require.NoError(t, finalizeErr)
