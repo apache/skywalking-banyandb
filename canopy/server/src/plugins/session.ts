@@ -37,7 +37,9 @@ export async function registerSession(app: FastifyInstance, config: Config): Pro
       path: '/',
       httpOnly: true,
       sameSite: 'strict',
-      secure: process.env.NODE_ENV === 'production',
+      // Preserve Secure cookies over HTTPS while allowing an HTTP-only
+      // deployment to establish a session.
+      secure: 'auto',
       maxAge: 8 * 60 * 60, // 8 hours TTL
     },
   });
