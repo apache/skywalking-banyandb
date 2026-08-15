@@ -18,18 +18,27 @@
 name: Canopy
 
 on:
+  # No `paths:` filter on push — deliberately. The canopy image is tagged with
+  # the commit sha (<sha>-canopy) and is meant to pair with the other images
+  # publish-docker.yml pushes for that same sha (<sha>, <sha>-testing). A paths
+  # filter would only publish it for commits that happen to touch canopy/**,
+  # leaving every Go-only main commit without a matching -canopy tag. Mirrors
+  # publish-docker.yml's `push: branches: [main]`.
   push:
-    paths:
-      - 'canopy/**'
-      - '.github/workflows/canopy.yml'
+    branches:
+      - main
   pull_request:
     paths:
       - 'canopy/**'
       - '.github/workflows/canopy.yml'
 
 jobs:
+  # Verification is a PR-time concern. A push to main is a fast-forward of an
+  # already-green PR head, so re-running the suite there would only re-prove
+  # what the PR proved; main just builds and publishes the image.
   build-test:
     name: Build & Test
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -96,6 +105,10 @@ jobs:
     name: Image build (canopy)
     runs-on: ubuntu-latest
     needs: build-test
+    # On a PR, build-test gates the image. On main it is skipped, and a skipped
+    # dependency would skip this job too — so accept 'skipped' explicitly.
+    # always() is required for the `if` to be evaluated at all in that state.
+    if: always() && (needs.build-test.result == 'success' || needs.build-test.result == 'skipped')
     permissions:
       contents: read
       packages: write
@@ -113,24 +126,32 @@ jobs:
           download-artifacts: 'false'
           setup-docker: 'true'
 
+      # PR-only: the single-arch local build exists solely to feed the
+      # integration test below. On main the push step builds dual-arch
+      # directly, so doing this first would just be a discarded rebuild.
       - name: Build canopy image
+        if: github.event_name == 'pull_request'
         run: TAG=${{ github.sha }} PLATFORMS=linux/amd64 make -C canopy docker
 
       - name: Save image for the integration test
+        if: github.event_name == 'pull_request'
         run: docker save "ghcr.io/apache/skywalking-banyandb:${{ github.sha }}-canopy" -o /tmp/canopy-image.tar
 
       - uses: actions/upload-artifact@v4
+        if: github.event_name == 'pull_request'
         with:
           name: canopy-image
           path: /tmp/canopy-image.tar
           retention-days: 1
 
+      # Forks push to their own ghcr namespace at best and fail at worst, so
+      # the publish is upstream-only (same guard publish-docker.yml uses).
       - name: Login to ghcr (main only)
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && github.repository == 'apache/skywalking-banyandb'
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
       - name: Push canopy image (main only)
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && github.repository == 'apache/skywalking-banyandb'
         run: TAG=${{ github.sha }} PLATFORMS=linux/amd64,linux/arm64 make -C canopy docker.push
 
   # ── Integration test: canopy image vs BanyanDB, both topologies ─────────────
@@ -139,6 +160,7 @@ jobs:
   # resolution) that a standalone never hits.
   integration-test:
     name: Integration test (${{ matrix.mode }})
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     needs: image-build
     permissions:
@@ -210,14 +232,22 @@ jobs:
   # GitHub's documented pattern for required checks behind path filters. A PR that
   # also touches Go code triggers the real workflows, which report these contexts
   # for real.
+  #
+  # Restricted to pull_request: on a push to main this workflow runs for EVERY
+  # commit, and so do the real ci.yml / publish-docker.yml. Two workflows
+  # reporting the same check context on one commit would let these no-op jobs
+  # mask a genuine failure of the real ones. Branch protection only evaluates
+  # required checks on PRs, so gating here costs nothing.
   continuous-integration:
     name: Continuous Integration
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - run: echo "Canopy-only change — Go CI (ci.yml) skipped via paths-ignore; required check satisfied."
 
   push-banyandb-image:
     name: push-banyandb-image
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - run: echo "Canopy-only change — docker image build (publish-docker.yml) skipped via paths-ignore; required check satisfied."
