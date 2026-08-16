@@ -107,6 +107,9 @@ progress.txt
 # Playwright MCP server runtime artefacts (per-session screenshots / traces).
 .playwright-mcp/
 
+# Scratch space for throwaway notes and screenshots during dev.
+.scratch/
+
 # One-off verification / debug screenshots left at repo root during dev.
 # Naming convention: `verify-*.png`, `sw-tiered-*.png`, `handoff-login.png`, etc.
 verify-*.png
