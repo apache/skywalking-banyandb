@@ -265,7 +265,6 @@ tools="${tools}\"mcp__bydbctl-controlled-tools__list_groups_schemas\","
 tools="${tools}\"mcp__bydbctl-controlled-tools__describe_schema\","
 tools="${tools}\"mcp__bydbctl-controlled-tools__propose_query_plan\","
 tools="${tools}\"mcp__bydbctl-controlled-tools__validate_bydbql\","
-tools="${tools}\"mcp__bydbctl-controlled-tools__probe_bydbql\","
 tools="${tools}\"mcp__bydbctl-controlled-tools__execute_bydbql\"]"
 status=connected
 if [ "$CLAUDE_FAKE_MODE" = invalid-inventory ]; then

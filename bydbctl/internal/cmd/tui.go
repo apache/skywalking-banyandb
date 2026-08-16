@@ -33,7 +33,6 @@ import (
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent/codex"
 	tuiapp "github.com/apache/skywalking-banyandb/bydbctl/internal/tui/app"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/applog"
-	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/approval"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/bridge"
 	tuibysql "github.com/apache/skywalking-banyandb/bydbctl/internal/tui/bydbql"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tools"
@@ -97,9 +96,7 @@ func newAgentCmd() *cobra.Command {
 				Cert:      cert,
 				Timeout:   queryTimeout,
 			})
-			approvals := approval.NewController()
 			toolBridge := bridge.New(bridge.Config{
-				Approvals: approvals,
 				Executor:  executor,
 				Validator: tuibysql.NewSemanticValidator(),
 			})
@@ -146,7 +143,6 @@ func newAgentCmd() *cobra.Command {
 			model := tuiapp.NewModel(tuiapp.Config{
 				AgentGateway: agentGateway,
 				Executor:     executor,
-				Approvals:    approvals,
 				ToolBridge:   toolBridge,
 				SessionLog:   sessionLog,
 				Provider:     provider,
@@ -154,11 +150,13 @@ func newAgentCmd() *cobra.Command {
 				Start:        initialStart,
 				End:          initialEnd,
 			})
-			program := tea.NewProgram(model, tea.WithAltScreen())
+			program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 			if _, programErr := program.Run(); programErr != nil {
 				return fmt.Errorf("failed to run agent TUI: %w", programErr)
 			}
-			if _, writeErr := fmt.Fprintf(os.Stderr, "agent session log: %s\n", sessionLog.Path()); writeErr != nil {
+			// Reported after the alt screen is restored, so the path is the last thing left on screen.
+			if _, writeErr := fmt.Fprintf(os.Stderr,
+				"\nagent session log: %s\nreplay it with: tail -n +1 %s\n", sessionLog.Path(), sessionLog.Path()); writeErr != nil {
 				return fmt.Errorf("failed to report agent session log path: %w", writeErr)
 			}
 			return nil

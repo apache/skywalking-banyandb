@@ -22,14 +22,10 @@ import (
 	"strings"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
-	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/approval"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 )
 
-const (
-	maxActivityEntries             = 200
-	trustSessionCleanReadThreshold = 3
-)
+const maxActivityEntries = 200
 
 type activityEntry struct {
 	category string
@@ -89,10 +85,8 @@ func activityCategory(event agent.Event) string {
 		return "candidate"
 	case agent.EventKindClarification:
 		return "clarification"
-	case agent.EventKindApproval:
-		return "approval"
 	case agent.EventKindCancelled:
-		return "cancelled"
+		return "canceled"
 	case agent.EventKindPlanUpdate:
 		return "plan"
 	case agent.EventKindMessageDelta:
@@ -118,10 +112,8 @@ func activityTitle(event agent.Event) string {
 		return "candidate: validated"
 	case agent.EventKindClarification:
 		return "agent question: " + fallback(singleLine(event.Message), "clarification needed")
-	case agent.EventKindApproval:
-		return "approval: waiting for user"
 	case agent.EventKindCancelled:
-		return "cancelled: " + fallback(singleLine(event.Message), "agent action")
+		return "canceled: " + fallback(singleLine(event.Message), "agent action")
 	case agent.EventKindPlanUpdate:
 		if strings.TrimSpace(event.Message) != "" {
 			return "plan: " + singleLine(event.Message)
@@ -193,42 +185,4 @@ func (m *Model) recordExecutionActivity(querySession *session.QuerySession) {
 		detailParts = append(detailParts, "hint="+executionResult.Hint)
 	}
 	m.recordActivity("execution", title, strings.Join(detailParts, "\n"))
-}
-
-func (m *Model) recordCleanReadExecution() {
-	if m.querySession == nil || m.querySession.ExecutionResult.Error != "" {
-		return
-	}
-	query := m.querySession.ExecutionResult.Query
-	if strings.TrimSpace(query) == "" {
-		if currentCandidate := m.querySession.CurrentCandidate(); currentCandidate != nil {
-			query = currentCandidate.Query
-		}
-	}
-	if !approval.IsReadOnlyBYDBQL(query) {
-		return
-	}
-	m.cleanReadExecutions++
-	if m.cleanReadExecutions == trustSessionCleanReadThreshold && m.executionPolicy != approval.PolicyTrustSession {
-		m.trustSessionSuggested = true
-		m.addUIEvent(fmt.Sprintf(
-			"trust suggestion: %d clean read executions — Ctrl+P can enable trust session",
-			trustSessionCleanReadThreshold,
-		))
-	}
-}
-
-func (m *Model) scrollSchemaDetail(delta int, viewportHeight int) {
-	if viewportHeight <= 0 {
-		return
-	}
-	m.detailScroll += delta
-	lines := schemaDetailLines(m.selectedSchema)
-	maxScroll := maxInt(len(lines)-viewportHeight, 0)
-	if m.detailScroll < 0 {
-		m.detailScroll = 0
-	}
-	if m.detailScroll > maxScroll {
-		m.detailScroll = maxScroll
-	}
 }

@@ -33,8 +33,9 @@ func schemaDetailLines(snapshot session.SchemaSnapshot) []string {
 		"Group: " + strings.Join(snapshot.Groups, ","),
 	}
 	if !snapshot.Loaded {
-		lines = append(lines, warnStyle.Render("Schema detail not loaded from BanyanDB API"))
-		lines = append(lines, mutedStyle.Render("Check --addr and press enter again on the resource"))
+		lines = append(lines,
+			warnStyle.Render("Schema detail not loaded from BanyanDB API"),
+			mutedStyle.Render("Check --addr and press enter again on the resource"))
 		return lines
 	}
 	if len(snapshot.Columns) > 0 {

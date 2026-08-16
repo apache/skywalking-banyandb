@@ -81,6 +81,9 @@ func repairHintForDiagnostic(diagnostic planner.Diagnostic) string {
 		return "Replace unknown columns with names from columns or indexed_fields in the latest describe_schema result."
 	case "ORDER_INDEX_NOT_SORTABLE":
 		return "Use TIME or a rule_name from sortable_indexes for order_by.index_rule, or omit order_by."
+	case "TRACE_SCAN_UNBOUNDED":
+		return "Add order_by with a sortable_indexes rule_name, or filter the trace ID tag with = or IN. " +
+			"See plan_constraints.trace_scan_requirement for the tag names."
 	case "UNSUPPORTED_FILTER_OPERATOR":
 		return "Use =, !=, >, >=, <, <=, IN, or NOT IN for filter.operator."
 	case "PLAN_SHAPE_INVALID":
@@ -161,7 +164,7 @@ func minInt(left, right int) int {
 func planRepairLimitMessage() string {
 	return fmt.Sprintf(
 		"automatic query plan repair limit reached after %d attempts; call describe_schema to reset the repair budget, "+
-			"submit one corrected plan, and do not call validate_bydbql, probe_bydbql, or execute_bydbql until "+
+			"submit one corrected plan, and do not call validate_bydbql or execute_bydbql until "+
 			"propose_query_plan returns valid=true",
 		MaxPlanRepairAttempts,
 	)

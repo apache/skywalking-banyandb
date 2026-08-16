@@ -23,9 +23,8 @@ import (
 	"strings"
 	"time"
 
-	corebydbql "github.com/apache/skywalking-banyandb/pkg/bydbql"
-
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
+	corebydbql "github.com/apache/skywalking-banyandb/pkg/bydbql"
 )
 
 // ParserValidator validates BYDBQL syntax with the shared parser.

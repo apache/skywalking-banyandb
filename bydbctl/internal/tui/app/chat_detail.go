@@ -28,127 +28,82 @@ import (
 
 var structuredDetailKeyPattern = regexp.MustCompile(`^(?i)(plan|workflow|query|parameters|input|output|candidate|message|hint|command|path|rows|summary|error)\s*[:=]\s*`)
 
-var (
-	inlineCodePattern = regexp.MustCompile("`([^`]+)`")
-	boldPattern       = regexp.MustCompile(`\*\*([^*]+)\*\*`)
-	headerPattern     = regexp.MustCompile(`^#{1,3}\s+`)
-	tableRowPattern   = regexp.MustCompile(`^\|.*\|$`)
-)
+var headerPattern = regexp.MustCompile(`^#{1,3}\s+`)
 
-var (
-	codeDetailStyle = lipgloss.NewStyle().Foreground(amberColor)
-	boldDetailStyle = lipgloss.NewStyle().Bold(true).Foreground(tealColor)
-)
+var codeDetailStyle = lipgloss.NewStyle().Foreground(amberColor)
 
 func chatDetailViewportHeight(panelHeight int) int {
 	return clamp(panelHeight/3, 6, 14)
 }
 
+// formatChatDetailLines renders one agent message body into styled, width-bounded lines.
+//
+// A tool argument or result arrives as labeled JSON rather than prose, so it keeps its own
+// key-and-body layout; everything else is agent markdown and goes through the shared renderer.
 func formatChatDetailLines(content string, width int) []string {
-	content = strings.TrimSpace(workflow.NormalizeAgentDisplayText(content))
+	return formatDetailLines(normalizeDetailContent(content), width)
+}
+
+// formatExactDetailLines renders a body bydbctl composed itself, without repairing its text.
+//
+// The repair applied to agent prose rejoins tokens it reads as fragmented, which would silently
+// rewrite an exact BanyanDB identifier such as a column whose name contains a space.
+func formatExactDetailLines(content string, width int) []string {
+	return formatDetailLines(strings.TrimSpace(content), width)
+}
+
+// formatDetailLines renders one already-prepared detail body.
+func formatDetailLines(content string, width int) []string {
 	if content == "" || width <= 0 {
 		return nil
 	}
 	if structuredLines := formatStructuredDetailContent(content, width); len(structuredLines) > 0 {
 		return structuredLines
 	}
-	var lines []string
-	inCodeBlock := false
-	var codeBlockLang string
-	var codeBlockLines []string
-	for _, rawLine := range strings.Split(content, "\n") {
-		trimmedLine := strings.TrimSpace(rawLine)
-		if strings.HasPrefix(trimmedLine, "```") {
-			if inCodeBlock {
-				lines = append(lines, renderCodeBlock(codeBlockLang, codeBlockLines, width)...)
-				codeBlockLang = ""
-				codeBlockLines = nil
-				inCodeBlock = false
-				continue
-			}
-			inCodeBlock = true
-			codeBlockLang = strings.TrimPrefix(trimmedLine, "```")
-			continue
-		}
-		if inCodeBlock {
-			codeBlockLines = append(codeBlockLines, rawLine)
-			continue
-		}
-		if trimmedLine == "" {
-			lines = append(lines, "")
-			continue
-		}
-		if tableRowPattern.MatchString(trimmedLine) || strings.HasPrefix(trimmedLine, "|---") {
-			lines = append(lines, mutedStyle.Render(truncate(trimmedLine, width)))
-			continue
-		}
-		lines = append(lines, renderMarkdownLine(trimmedLine, width)...)
-	}
-	if inCodeBlock && len(codeBlockLines) > 0 {
-		lines = append(lines, renderCodeBlock(codeBlockLang, codeBlockLines, width)...)
-	}
-	return compactDetailLines(lines)
+	return compactDetailLines(renderMarkdownDetail(content, width))
 }
 
-func renderMarkdownLine(line string, width int) []string {
-	prefix := ""
-	styledPrefix := ""
-	switch {
-	case headerPattern.MatchString(line):
-		line = headerPattern.ReplaceAllString(line, "")
-		styledPrefix = titleStyle.Render("## ")
-	case strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* "):
-		line = strings.TrimSpace(line[2:])
-		styledPrefix = mutedStyle.Render("• ")
-	case len(line) > 2 && line[0] >= '0' && line[0] <= '9' && strings.Contains(line, ". "):
-		if dotIdx := strings.Index(line, ". "); dotIdx > 0 && dotIdx < 4 {
-			prefix = line[:dotIdx+2]
-			line = strings.TrimSpace(line[dotIdx+2:])
-			styledPrefix = mutedStyle.Render(prefix)
-		}
-	}
-	plainLine := stripInlineMarkdown(line)
-	wrapped := wrapRunes(plainLine, maxInt(width-lipgloss.Width(styledPrefix), 8))
-	if len(wrapped) == 0 {
-		return nil
-	}
-	rendered := make([]string, 0, len(wrapped))
-	for lineIdx, wrappedLine := range wrapped {
-		styledLine := renderInlineMarkdown(wrappedLine)
-		if lineIdx == 0 {
-			rendered = append(rendered, styledPrefix+styledLine)
+// normalizeDetailContent tidies agent text without collapsing the line structure.
+//
+// The shared normalizer joins every line into one, which would flatten code fences and headings
+// into the body text before the markdown parser below could recognize them.
+func normalizeDetailContent(content string) string {
+	lines := strings.Split(content, "\n")
+	normalized := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			normalized = append(normalized, "")
 			continue
 		}
-		rendered = append(rendered, strings.Repeat(" ", lipgloss.Width(styledPrefix))+styledLine)
+		marker, body := splitLineMarker(line)
+		normalized = append(normalized, marker+workflow.NormalizeAgentDisplayText(body))
 	}
-	return rendered
+	return strings.TrimSpace(strings.Join(normalized, "\n"))
 }
 
-func renderInlineMarkdown(line string) string {
-	line = inlineCodePattern.ReplaceAllStringFunc(line, func(match string) string {
-		innerText := strings.Trim(match, "`")
-		return codeDetailStyle.Render(innerText)
-	})
-	line = boldPattern.ReplaceAllStringFunc(line, func(match string) string {
-		innerText := strings.Trim(match, "*")
-		return boldDetailStyle.Render(innerText)
-	})
-	return line
+// listMarkerPattern matches the bullet or number that opens a markdown list item.
+var listMarkerPattern = regexp.MustCompile(`^\s*(?:[-*+]|\d{1,3}[.)])\s+`)
+
+// splitLineMarker separates a leading list or heading marker from the text it introduces.
+//
+// The shared normalizer rejoins fragmented tokens by deleting spaces around hyphens, which would
+// otherwise consume a "- " bullet and turn the list item into part of the previous word.
+func splitLineMarker(line string) (string, string) {
+	if headerMatch := headerPattern.FindString(line); headerMatch != "" {
+		return headerMatch, line[len(headerMatch):]
+	}
+	if listMatch := listMarkerPattern.FindString(line); listMatch != "" {
+		return listMatch, line[len(listMatch):]
+	}
+	return "", line
 }
 
-func stripInlineMarkdown(line string) string {
-	line = inlineCodePattern.ReplaceAllString(line, "$1")
-	line = boldPattern.ReplaceAllString(line, "$1")
-	line = strings.ReplaceAll(line, "**", "")
-	return strings.TrimSpace(line)
-}
-
+// renderCodeBlock renders a fenced block, labeling it only when the language adds information.
 func renderCodeBlock(language string, codeLines []string, width int) []string {
-	label := strings.TrimSpace(language)
-	if label == "" {
-		label = "code"
+	var rows []string
+	if label := strings.TrimSpace(language); label != "" && !strings.EqualFold(label, "bydbql") {
+		rows = append(rows, titleStyle.Render(label))
 	}
-	rows := []string{titleStyle.Render(label)}
 	for _, codeLine := range codeLines {
 		for _, wrappedLine := range wrapRunes(strings.TrimRight(codeLine, " "), maxInt(width-2, 8)) {
 			rows = append(rows, codeDetailStyle.Render(" "+wrappedLine))

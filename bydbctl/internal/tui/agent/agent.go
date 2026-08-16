@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent/prompt"
-	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/approval"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 )
 
@@ -116,7 +115,6 @@ type RequestPayload struct {
 	QueryHints       QueryHints                `json:"query_hints"`
 	TimeRange        TimeRangePayload          `json:"time_range"`
 	ExecutionSummary *ExecutionSummary         `json:"execution_summary,omitempty"`
-	ProbeSummary     *ProbeSummaryPayload      `json:"probe_summary,omitempty"`
 	ValidationError  *string                   `json:"validation_error,omitempty"`
 	Conversation     []ConversationTurnPayload `json:"conversation,omitempty"`
 	Intent           TurnIntent                `json:"intent"`
@@ -130,14 +128,12 @@ type RequestPayload struct {
 
 // Constraints are hard safety constraints owned by bydbctl.
 type Constraints struct {
-	ExecutionPolicy                    string `json:"execution_policy"`
-	FinalArtifact                      string `json:"final_artifact"`
-	ReadOnly                           bool   `json:"read_only"`
-	MustUseSchema                      bool   `json:"must_use_schema"`
-	UserMustEditOrConfirmBeforeExecute bool   `json:"user_must_edit_or_confirm_before_execute"`
-	MustNotExecuteTools                bool   `json:"must_not_execute_tools"`
-	AgentMayProbeData                  bool   `json:"agent_may_probe_data"`
-	AgentMayExecuteWithoutPrompt       bool   `json:"agent_may_execute_without_prompt"`
+	FinalArtifact string `json:"final_artifact"`
+	ReadOnly      bool   `json:"read_only"`
+	MustUseSchema bool   `json:"must_use_schema"`
+	// ExecuteOnlyWhenUserAsksForData keeps schema questions from reading data.
+	ExecuteOnlyWhenUserAsksForData bool `json:"execute_only_when_user_asks_for_data"`
+	MustNotExecuteTools            bool `json:"must_not_execute_tools"`
 }
 
 // SchemaSummary is the schema subset exposed to an agent.
@@ -215,15 +211,6 @@ type ExecutionSummary struct {
 	Duration     string     `json:"duration,omitempty"`
 	Query        string     `json:"query"`
 	Error        string     `json:"error,omitempty"`
-}
-
-// ProbeSummaryPayload is the bounded probe feedback exposed to the agent.
-type ProbeSummaryPayload struct {
-	Rows    int        `json:"rows"`
-	Columns []string   `json:"columns,omitempty"`
-	Preview [][]string `json:"preview,omitempty"`
-	Query   string     `json:"query,omitempty"`
-	Error   string     `json:"error,omitempty"`
 }
 
 // BuildBydbqlPrompt renders the provider prompt for BYDBQL generation.
@@ -320,13 +307,12 @@ func (event Event) IsTerminal() bool {
 
 // BuildAgentTurnRequest builds the structured request for one user-facing agent turn.
 func BuildAgentTurnRequest(querySession *session.QuerySession, hints QueryHints, templateHint, turnHint string) RequestPayload {
-	payload := buildRequestPayload(querySession, hints, templateHint, querySession.ExecutionPolicy)
+	payload := buildRequestPayload(querySession, hints, templateHint)
 	payload.TurnHint = strings.TrimSpace(turnHint)
 	payload.Conversation = conversationSummary(querySession.Conversation)
 	if querySession.CandidateSuperseded {
 		payload.Candidate = ""
 		payload.ValidationError = nil
-		payload.ProbeSummary = nil
 	}
 	payload.Intent = classifyTurnIntent(querySession, payload)
 	payload.Task = taskForIntent(payload.Intent)
@@ -335,7 +321,7 @@ func BuildAgentTurnRequest(querySession *session.QuerySession, hints QueryHints,
 
 // BuildReviseRequest builds the structured request used by the BYDBQL refinement workflow.
 func BuildReviseRequest(querySession *session.QuerySession, hints QueryHints, templateHint string) RequestPayload {
-	payload := buildRequestPayload(querySession, hints, templateHint, querySession.ExecutionPolicy)
+	payload := buildRequestPayload(querySession, hints, templateHint)
 	payload.Intent = TurnIntentRefine
 	if payload.ValidationError != nil {
 		payload.Intent = TurnIntentRepair
@@ -345,6 +331,10 @@ func BuildReviseRequest(querySession *session.QuerySession, hints QueryHints, te
 }
 
 func classifyTurnIntent(querySession *session.QuerySession, payload RequestPayload) TurnIntent {
+	turnHint := strings.TrimSpace(payload.TurnHint)
+	if IsInformationalRequest(turnHint) {
+		return TurnIntentAnswer
+	}
 	if querySession.CandidateSuperseded {
 		return TurnIntentNewQuery
 	}
@@ -354,7 +344,7 @@ func classifyTurnIntent(querySession *session.QuerySession, payload RequestPaylo
 	if strings.TrimSpace(payload.Candidate) == "" {
 		return TurnIntentNewQuery
 	}
-	if strings.TrimSpace(payload.TurnHint) == "" {
+	if turnHint == "" {
 		return TurnIntentNextStep
 	}
 	return TurnIntentRefine
@@ -375,8 +365,7 @@ func taskForIntent(intent TurnIntent) string {
 	}
 }
 
-func buildRequestPayload(querySession *session.QuerySession, hints QueryHints, templateHint string, executionPolicy approval.ExecutionPolicy) RequestPayload {
-	normalizedPolicy := approval.NormalizeExecutionPolicy(string(executionPolicy))
+func buildRequestPayload(querySession *session.QuerySession, hints QueryHints, templateHint string) RequestPayload {
 	var candidate string
 	if currentCandidate := querySession.CurrentCandidate(); currentCandidate != nil {
 		candidate = currentCandidate.Query
@@ -398,18 +387,6 @@ func buildRequestPayload(querySession *session.QuerySession, hints QueryHints, t
 			Error:        providerExecutionError(querySession.ExecutionResult.Error),
 		}
 	}
-	var probeSummary *ProbeSummaryPayload
-	if currentCandidate := querySession.CurrentCandidate(); currentCandidate != nil && currentCandidate.Probe != nil {
-		probe := currentCandidate.Probe
-		probeSummary = &ProbeSummaryPayload{
-			Rows:    probe.Rows,
-			Columns: append([]string(nil), probe.Columns...),
-			Preview: previewForProvider(probe.Preview),
-			Query:   probe.Query,
-			Error:   providerExecutionError(probe.Error),
-		}
-	}
-	readOnlyCandidate := approval.IsReadOnlyBYDBQL(candidate)
 	typedColumnsReady := querySession.SchemaSnapshot.Loaded && len(querySession.SchemaSnapshot.Columns) > 0
 	return RequestPayload{
 		Goal:         querySession.UserGoal,
@@ -426,16 +403,11 @@ func buildRequestPayload(querySession *session.QuerySession, hints QueryHints, t
 			End:   strings.TrimSpace(querySession.TimeRange.End),
 		},
 		Constraints: Constraints{
-			ExecutionPolicy: string(normalizedPolicy),
-			FinalArtifact:   "structured_query_plan",
-			ReadOnly:        true,
-			MustUseSchema:   true,
-			UserMustEditOrConfirmBeforeExecute: candidate != "" &&
-				!normalizedPolicy.AutoApprove(approval.SourceAgentTool, false, candidate),
-			MustNotExecuteTools: false,
-			AgentMayProbeData:   true,
-			AgentMayExecuteWithoutPrompt: candidate != "" && readOnlyCandidate &&
-				normalizedPolicy.AutoApprove(approval.SourceAgentTool, false, candidate),
+			FinalArtifact:                  "structured_query_plan",
+			ReadOnly:                       true,
+			MustUseSchema:                  true,
+			MustNotExecuteTools:            false,
+			ExecuteOnlyWhenUserAsksForData: true,
 		},
 		Schema: SchemaSummary{
 			Columns:            columnSummary(querySession.SchemaSnapshot.Columns),
@@ -456,7 +428,6 @@ func buildRequestPayload(querySession *session.QuerySession, hints QueryHints, t
 			TypedColumnsReady:  typedColumnsReady,
 		},
 		ExecutionSummary: executionSummary,
-		ProbeSummary:     probeSummary,
 		ValidationError:  validationError,
 	}
 }

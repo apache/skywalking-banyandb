@@ -202,6 +202,9 @@ func Compile(plan QueryPlan, schema session.SchemaSnapshot) (CompiledQuery, erro
 	if shapeErr := validateSelectShape(plan); shapeErr != nil {
 		return CompiledQuery{}, shapeErr
 	}
+	if traceErr := validateTraceScanBounds(plan, schema); traceErr != nil {
+		return CompiledQuery{}, traceErr
+	}
 	query, selectErr := compileSelect(plan, schema)
 	if selectErr != nil {
 		return CompiledQuery{}, selectErr
@@ -258,6 +261,75 @@ func validateSelectShape(plan QueryPlan) error {
 		return fmt.Errorf("projection_mode NONE cannot be combined with an aggregate")
 	}
 	return nil
+}
+
+// validateTraceScanBounds rejects a TRACE plan that BanyanDB cannot plan a scan for.
+//
+// A TRACE scan starts from an ORDER BY index rule or from an equality filter on the trace-ID tag.
+// A plan with neither compiles into valid BYDBQL that fails at execution as an opaque internal
+// error, so it is refused here where the agent still has a structured diagnostic to repair.
+func validateTraceScanBounds(plan QueryPlan, schema session.SchemaSnapshot) error {
+	if plan.Resource.Type != session.ResourceTypeTrace {
+		return nil
+	}
+	if plan.OrderBy != nil {
+		return nil
+	}
+	traceIDTag := traceIDTagName(schema)
+	if traceIDTag != "" && predicatePinsColumn(plan.Filter, traceIDTag) {
+		return nil
+	}
+	allowed := make([]string, 0, len(schema.SortableIndexes)+1)
+	for _, sortableIndex := range schema.SortableIndexes {
+		allowed = append(allowed, sortableIndex.RuleName)
+	}
+	if traceIDTag != "" {
+		allowed = append(allowed, traceIDTag)
+	}
+	return diagnosticError(
+		"TRACE_SCAN_UNBOUNDED",
+		"/order_by",
+		"a TRACE plan requires order_by.index_rule from sortable_indexes, "+
+			"or an equality or IN filter on the trace ID tag",
+		allowed...,
+	)
+}
+
+// traceIDTagName reports the trace-ID tag, falling back to the name every shipped trace schema uses.
+func traceIDTagName(schema session.SchemaSnapshot) string {
+	if traceIDTag := strings.TrimSpace(schema.TraceIDTag); traceIDTag != "" {
+		return traceIDTag
+	}
+	for _, column := range schema.Columns {
+		if strings.EqualFold(strings.TrimSpace(column.Name), conventionalTraceIDTag) {
+			return strings.TrimSpace(column.Name)
+		}
+	}
+	return ""
+}
+
+// conventionalTraceIDTag is the trace-ID tag name used by the trace schemas BanyanDB ships.
+const conventionalTraceIDTag = "trace_id"
+
+// predicatePinsColumn reports whether the filter tree constrains columnName to specific values.
+//
+// The server collects trace IDs from either branch of AND and OR alike, so both are accepted.
+func predicatePinsColumn(predicate *Predicate, columnName string) bool {
+	if predicate == nil {
+		return false
+	}
+	if predicate.Operator == OperatorAnd || predicate.Operator == OperatorOr {
+		for _, child := range predicate.Children {
+			if predicatePinsColumn(&child, columnName) {
+				return true
+			}
+		}
+		return false
+	}
+	if predicate.Operator != OperatorEqual && predicate.Operator != OperatorIn {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(predicate.Column), columnName)
 }
 
 func compileSelect(plan QueryPlan, schema session.SchemaSnapshot) (string, error) {

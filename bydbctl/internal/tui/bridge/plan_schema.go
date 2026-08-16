@@ -290,7 +290,7 @@ func planConstraintsForSnapshot(snapshot session.SchemaSnapshot) map[string]any 
 			"tags":      append([]string(nil), sortableIndex.Tags...),
 		})
 	}
-	return map[string]any{
+	constraints := map[string]any{
 		"resource": map[string]any{
 			"type":   snapshot.Type,
 			"name":   snapshot.Name,
@@ -306,6 +306,23 @@ func planConstraintsForSnapshot(snapshot session.SchemaSnapshot) map[string]any 
 		"topn_field_sort":    snapshot.FieldValueSort,
 		"schema_fingerprint": snapshot.Fingerprint,
 		"limit_maximum":      1000,
+	}
+	if snapshot.Type == session.ResourceTypeTrace {
+		constraints["trace_scan_requirement"] = traceScanRequirement(snapshot)
+	}
+	return constraints
+}
+
+// traceScanRequirement states the entry point a TRACE scan needs, since omitting it fails at execution.
+//
+// BanyanDB plans a TRACE scan from either an ORDER BY index rule or an equality filter on the
+// trace-ID tag, and rejects a query with neither as an internal error rather than a bad request.
+func traceScanRequirement(snapshot session.SchemaSnapshot) map[string]any {
+	return map[string]any{
+		"rule": "A TRACE plan must set order_by.index_rule to a sortable_indexes rule_name, " +
+			"or filter the trace_id_tag with an equality or IN criteria. A plan with neither fails at execution.",
+		"trace_id_tag":  snapshot.TraceIDTag,
+		"timestamp_tag": snapshot.TimestampTag,
 	}
 }
 

@@ -117,6 +117,6 @@ func testControlledMCPServer(t *testing.T) agent.ControlledMCPServer {
 		Name:         "bydbctl-controlled-tools",
 		Command:      "/path/to/bydbctl",
 		Args:         []string{"agent-tool-bridge", "--socket", "/tmp/tools.sock"},
-		EnabledTools: []string{"list_groups_schemas", "describe_schema", "propose_query_plan", "validate_bydbql", "probe_bydbql", "execute_bydbql"},
+		EnabledTools: []string{"list_groups_schemas", "describe_schema", "propose_query_plan", "validate_bydbql", "execute_bydbql"},
 	}
 }

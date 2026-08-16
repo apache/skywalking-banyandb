@@ -36,8 +36,8 @@ func TestBuildInitialPrompt(t *testing.T) {
 		"sortable_indexes.rule_name",
 		"Use only the provided bydbctl tools",
 		"query workspace assistant",
-		"probe_bydbql",
-		"controlled bridge enforces the active execution policy",
+		"execute_bydbql",
+		"Compiling a plan never executes it",
 		"<untrusted_context_json>",
 	} {
 		if !strings.Contains(promptText, expected) {

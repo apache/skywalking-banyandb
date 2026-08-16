@@ -28,7 +28,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
-	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/approval"
+	tuibydbql "github.com/apache/skywalking-banyandb/bydbctl/internal/tui/bydbql"
 	tuicatalog "github.com/apache/skywalking-banyandb/bydbctl/internal/tui/catalog"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/planner"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
@@ -38,12 +38,10 @@ import (
 const (
 	eventBufferSize       = 64
 	maxSchemaDescriptions = agent.DefaultMaxSchemaDescriptions
-	maxProbePreviewRows   = 50
 	ToolListGroupsSchemas = "list_groups_schemas"
 	ToolDescribeSchema    = "describe_schema"
 	ToolProposeQueryPlan  = "propose_query_plan"
 	ToolValidateBydbQL    = "validate_bydbql"
-	ToolProbeBydbQL       = "probe_bydbql"
 	ToolExecuteBydbQL     = "execute_bydbql"
 )
 
@@ -54,7 +52,6 @@ type Validator interface {
 
 // Config creates a private tool bridge.
 type Config struct {
-	Approvals *approval.Controller
 	Executor  tools.Executor
 	Validator Validator
 }
@@ -71,50 +68,31 @@ type Result struct {
 	Err     error
 }
 
-// ToolBridge holds all tool policy, execution, and visible lifecycle events behind a small interface.
+// ToolBridge holds all tool execution and visible lifecycle events behind a small interface.
 type ToolBridge struct {
-	approvals *approval.Controller
 	executor  tools.Executor
 	validator Validator
 	now       func() time.Time
 	events    chan agent.Event
 
+	querySession       *session.QuerySession
+	cancelQuery        context.CancelFunc
+	rankedCandidates   []session.CatalogEntry
 	mu                 sync.RWMutex
 	callMu             sync.Mutex
-	querySession       *session.QuerySession
-	activePolicy       approval.ExecutionPolicy
+	executionMu        sync.Mutex
 	planAttempts       int
 	schemaDescriptions int
-	rankedCandidates   []session.CatalogEntry
-	executionMu        sync.Mutex
-	cancelQuery        context.CancelFunc
 }
 
 // New creates a private tool bridge. The bridge never receives server credentials.
 func New(config Config) *ToolBridge {
-	approvals := config.Approvals
-	if approvals == nil {
-		approvals = approval.NewController()
-	}
 	return &ToolBridge{
-		approvals: approvals,
 		executor:  config.Executor,
 		validator: config.Validator,
 		now:       time.Now,
 		events:    make(chan agent.Event, eventBufferSize),
 	}
-}
-
-// SetExecutionPolicy stores the active execution policy for tool calls.
-func (toolBridge *ToolBridge) SetExecutionPolicy(policy approval.ExecutionPolicy) {
-	if toolBridge == nil {
-		return
-	}
-	normalizedPolicy := approval.NormalizeExecutionPolicy(string(policy))
-	toolBridge.mu.Lock()
-	toolBridge.activePolicy = normalizedPolicy
-	toolBridge.mu.Unlock()
-	toolBridge.approvals.SetPolicy(normalizedPolicy)
 }
 
 // SetSession copies the current workspace session for subsequent tool calls.
@@ -151,12 +129,11 @@ func (toolBridge *ToolBridge) Events() <-chan agent.Event {
 	return toolBridge.events
 }
 
-// Cancel rejects pending approvals and makes a best effort to cancel the active query request.
+// Cancel makes a best effort to cancel the active query request.
 func (toolBridge *ToolBridge) Cancel() {
 	if toolBridge == nil {
 		return
 	}
-	toolBridge.approvals.Cancel()
 	toolBridge.executionMu.Lock()
 	cancelQuery := toolBridge.cancelQuery
 	toolBridge.executionMu.Unlock()
@@ -190,10 +167,8 @@ func (toolBridge *ToolBridge) Call(ctx context.Context, call Call) Result {
 		result = toolBridge.proposeQueryPlan(ctx, callID, call.Arguments)
 	case ToolValidateBydbQL:
 		result = toolBridge.validateBydbQL(ctx, callID, call.Arguments)
-	case ToolProbeBydbQL:
-		result = toolBridge.probeBydbQL(ctx, callID, call.Arguments)
 	case ToolExecuteBydbQL:
-		result = toolBridge.executeBydbQL(ctx, callID, call.Arguments)
+		result = toolBridge.executeBydbQL(ctx, call.Arguments)
 	default:
 		result = Result{Err: fmt.Errorf("tool %q is not registered", toolName)}
 	}
@@ -281,6 +256,10 @@ func (toolBridge *ToolBridge) describeSchema(ctx context.Context, arguments map[
 		"sortable_indexes":   snapshot.SortableIndexes,
 		"schema_fingerprint": snapshot.Fingerprint,
 		"plan_constraints":   planConstraintsForSnapshot(snapshot),
+	}
+	if snapshot.Type == session.ResourceTypeTrace {
+		response["trace_id_tag"] = snapshot.TraceIDTag
+		response["timestamp_tag"] = snapshot.TimestampTag
 	}
 	if planExample := buildDescribePlanExample(snapshot); planExample != nil {
 		response["plan_example"] = planExample
@@ -467,28 +446,6 @@ func (toolBridge *ToolBridge) proposeQueryPlan(ctx context.Context, callID strin
 		"resource":     firstQuery.Resource,
 		"next_step_id": firstQuery.ID,
 	}
-	if toolBridge.shouldAutoProbeAfterPlan(firstQuery.Query) {
-		probeSummary := toolBridge.probePlannedQuery(ctx, querySession, firstQuery.Query, plannedQueries[0])
-		if probeSummary != nil {
-			querySession.SetPendingProbe(probeSummary)
-			response["probe"] = probeSummaryPayload(probeSummary)
-			if probeSummary.Error != "" {
-				response["valid"] = false
-				response["message"] = probeSummary.Error
-				toolBridge.emitProposeCandidate(callID, firstQuery.Query, true, probeSummary.Error)
-				return jsonResult(response)
-			}
-			toolBridge.emit(agent.Event{
-				ID:            uuid.NewString(),
-				Kind:          agent.EventKindToolResult,
-				ToolName:      ToolProbeBydbQL,
-				Message:       fmt.Sprintf("workflow probe returned %d rows", probeSummary.Rows),
-				OutputSummary: probeOutputSummary(probeSummary),
-				Status:        agent.EventStatusSucceeded,
-				CompletedAt:   toolBridge.now(),
-			})
-		}
-	}
 	toolBridge.emitProposeCandidate(callID, firstQuery.Query, false, "query plan compiled through controlled tool")
 	return jsonResult(response)
 }
@@ -593,59 +550,7 @@ func (toolBridge *ToolBridge) validateBydbQL(ctx context.Context, _ string, argu
 	})
 }
 
-func (toolBridge *ToolBridge) probeBydbQL(ctx context.Context, callID string, arguments map[string]any) Result {
-	if toolBridge.validator == nil || toolBridge.executor == nil {
-		return Result{Err: fmt.Errorf("BYDBQL probe bridge is not configured")}
-	}
-	querySession := toolBridge.session()
-	if querySession == nil {
-		return Result{Err: fmt.Errorf("query session is not configured")}
-	}
-	query := stringArgument(arguments, "query")
-	if !approval.IsReadOnlyBYDBQL(query) {
-		return Result{Err: fmt.Errorf("probe_bydbql accepts only one read-only SELECT or SHOW TOP statement")}
-	}
-	plannedQuery := querySession.CurrentPlannedQuery()
-	if plannedQuery == nil || plannedQuery.Query != query {
-		return Result{Err: fmt.Errorf("probe_bydbql requires propose_query_plan to return valid=true first; validate_bydbql alone does not register a candidate")}
-	}
-	schemaSnapshot, schemaErr := toolBridge.refreshPlannedSchema(ctx, querySession, *plannedQuery)
-	if schemaErr != nil {
-		return Result{Err: fmt.Errorf("failed to refresh planned query schema: %w", schemaErr)}
-	}
-	validation, validationErr := toolBridge.validator.Validate(ctx, query, &schemaSnapshot)
-	if validationErr != nil {
-		return Result{Err: fmt.Errorf("failed to validate probe query: %w", validationErr)}
-	}
-	if !validation.Valid {
-		return jsonResult(map[string]any{"valid": false, "message": validation.Message})
-	}
-	if !toolBridge.executionPolicy().AutoApprove(approval.SourceAgentProbe, true, query) {
-		toolBridge.emit(agent.Event{
-			ID:           callID,
-			Kind:         agent.EventKindApproval,
-			ToolName:     ToolProbeBydbQL,
-			Message:      "probe approval required",
-			InputSummary: "read-only probe awaiting user decision",
-			Status:       agent.EventStatusWaiting,
-			StartedAt:    toolBridge.now(),
-		})
-	}
-	probeSummary, probeErr := toolBridge.runApprovedProbe(ctx, querySession, query, plannedQuery)
-	if probeErr != nil {
-		return Result{Err: probeErr}
-	}
-	return jsonResult(map[string]any{
-		"valid":   true,
-		"rows":    probeSummary.Rows,
-		"columns": probeSummary.Columns,
-		"preview": probeSummary.Preview,
-		"error":   probeSummary.Error,
-		"summary": probeOutputSummary(probeSummary),
-	})
-}
-
-func (toolBridge *ToolBridge) executeBydbQL(ctx context.Context, callID string, arguments map[string]any) Result {
+func (toolBridge *ToolBridge) executeBydbQL(ctx context.Context, arguments map[string]any) Result {
 	if toolBridge.validator == nil || toolBridge.executor == nil {
 		return Result{Err: fmt.Errorf("BYDBQL execution bridge is not configured")}
 	}
@@ -654,7 +559,7 @@ func (toolBridge *ToolBridge) executeBydbQL(ctx context.Context, callID string, 
 		return Result{Err: fmt.Errorf("query session is not configured")}
 	}
 	query := stringArgument(arguments, "query")
-	if !approval.IsReadOnlyBYDBQL(query) {
+	if !tuibydbql.IsReadOnly(query) {
 		return Result{Err: fmt.Errorf("execute_bydbql accepts only one read-only SELECT or SHOW TOP statement")}
 	}
 	plannedQuery := querySession.CurrentPlannedQuery()
@@ -671,50 +576,6 @@ func (toolBridge *ToolBridge) executeBydbQL(ctx context.Context, callID string, 
 	}
 	if !validation.Valid {
 		return jsonResult(map[string]any{"valid": false, "message": validation.Message})
-	}
-	if !toolBridge.executionPolicy().AutoApprove(approval.SourceAgentTool, false, query) {
-		toolBridge.emit(agent.Event{
-			ID:           callID,
-			Kind:         agent.EventKindApproval,
-			ToolName:     ToolExecuteBydbQL,
-			Message:      "execution approval required",
-			InputSummary: "exact BYDBQL statement awaiting user decision",
-			Status:       agent.EventStatusWaiting,
-			StartedAt:    toolBridge.now(),
-		})
-	}
-	limits := tools.Limits(toolBridge.executor)
-	request := approval.WithLimits(
-		approval.NewRequest(
-			query,
-			fmt.Sprintf("%s/%s", querySession.ResourceType, querySession.ResourceName),
-			querySession.Groups,
-			approval.SourceAgentTool,
-		),
-		limits.Timeout,
-		limits.PreviewRows,
-	)
-	decision, approvalErr := toolBridge.approvals.Request(ctx, request)
-	if approvalErr != nil {
-		return Result{Err: fmt.Errorf("execution approval did not complete: %w", approvalErr)}
-	}
-	if !decision.Approved {
-		toolBridge.emit(agent.Event{
-			ID:          callID,
-			Kind:        agent.EventKindCancelled,
-			ToolName:    ToolExecuteBydbQL,
-			Message:     "execution rejected",
-			Status:      agent.EventStatusCancelled,
-			CompletedAt: toolBridge.now(),
-		})
-		return Result{Err: fmt.Errorf("execution rejected")}
-	}
-	validation, validationErr = toolBridge.validator.Validate(ctx, query, &querySession.SchemaSnapshot)
-	if validationErr != nil {
-		return Result{Err: fmt.Errorf("failed to revalidate approved query: %w", validationErr)}
-	}
-	if !validation.Valid {
-		return Result{Err: fmt.Errorf("approved query failed revalidation: %s", validation.Message)}
 	}
 	executionCtx, cancelQuery := context.WithCancel(ctx)
 	toolBridge.setExecutionCancel(cancelQuery)
@@ -817,7 +678,6 @@ func cloneQuerySession(querySession *session.QuerySession) *session.QuerySession
 	clonedSession.ExecutionResult = cloneExecutionResult(querySession.ExecutionResult)
 	clonedSession.Transcript = append([]session.TranscriptEntry(nil), querySession.Transcript...)
 	clonedSession.ChatMessages = cloneChatMessages(querySession.ChatMessages)
-	clonedSession.PendingProbe = cloneProbeSummary(querySession.PendingProbe)
 	return &clonedSession
 }
 
@@ -856,11 +716,7 @@ func cloneSortableIndexes(indexes []session.SortableIndex) []session.SortableInd
 }
 
 func cloneCandidates(candidates []session.BydbqlCandidate) []session.BydbqlCandidate {
-	clonedCandidates := append([]session.BydbqlCandidate(nil), candidates...)
-	for candidateIdx := range clonedCandidates {
-		clonedCandidates[candidateIdx].Probe = cloneProbeSummary(candidates[candidateIdx].Probe)
-	}
-	return clonedCandidates
+	return append([]session.BydbqlCandidate(nil), candidates...)
 }
 
 func clonePlannedQueries(queries []session.PlannedQuery) []session.PlannedQuery {
@@ -888,16 +744,6 @@ func cloneChatMessages(messages []session.ChatMessage) []session.ChatMessage {
 		clonedMessages[messageIdx].Validation = &clonedValidation
 	}
 	return clonedMessages
-}
-
-func cloneProbeSummary(probe *session.ProbeSummary) *session.ProbeSummary {
-	if probe == nil {
-		return nil
-	}
-	clonedProbe := *probe
-	clonedProbe.Columns = append([]string(nil), probe.Columns...)
-	clonedProbe.Preview = clonePreview(probe.Preview)
-	return &clonedProbe
 }
 
 func clonePreview(preview [][]string) [][]string {
@@ -1056,150 +902,6 @@ func summarizeResult(result Result) string {
 	return fmt.Sprintf("result=%d characters", len([]rune(result.Content)))
 }
 
-func (toolBridge *ToolBridge) executionPolicy() approval.ExecutionPolicy {
-	toolBridge.mu.RLock()
-	defer toolBridge.mu.RUnlock()
-	if toolBridge.activePolicy == "" {
-		return approval.PolicyAskEveryTime
-	}
-	return toolBridge.activePolicy
-}
-
-func (toolBridge *ToolBridge) shouldAutoProbeAfterPlan(query string) bool {
-	return toolBridge.executor != nil && toolBridge.validator != nil &&
-		toolBridge.executionPolicy().AutoApprove(approval.SourceAgentProbe, true, query)
-}
-
-func probeSummaryPayload(probeSummary *session.ProbeSummary) map[string]any {
-	if probeSummary == nil {
-		return nil
-	}
-	return map[string]any{
-		"rows":    probeSummary.Rows,
-		"columns": probeSummary.Columns,
-		"preview": probeSummary.Preview,
-		"error":   probeSummary.Error,
-		"summary": probeOutputSummary(probeSummary),
-	}
-}
-
-func (toolBridge *ToolBridge) probePlannedQuery(
-	ctx context.Context,
-	querySession *session.QuerySession,
-	query string,
-	plannedQuery session.PlannedQuery,
-) *session.ProbeSummary {
-	probeSummary, probeErr := toolBridge.runWorkflowProbe(ctx, querySession, query, &plannedQuery)
-	if probeErr != nil {
-		return &session.ProbeSummary{Query: query, Error: agent.SanitizeExecutionErrorForProvider(probeErr.Error())}
-	}
-	return probeSummary
-}
-
-func (toolBridge *ToolBridge) runWorkflowProbe(
-	ctx context.Context,
-	querySession *session.QuerySession,
-	query string,
-	plannedQuery *session.PlannedQuery,
-) (*session.ProbeSummary, error) {
-	if toolBridge.validator == nil || toolBridge.executor == nil || querySession == nil || plannedQuery == nil {
-		return nil, fmt.Errorf("probe bridge is not configured")
-	}
-	schemaSnapshot, schemaErr := toolBridge.refreshPlannedSchema(ctx, querySession, *plannedQuery)
-	if schemaErr != nil {
-		return nil, fmt.Errorf("failed to refresh planned query schema: %w", schemaErr)
-	}
-	validation, validationErr := toolBridge.validator.Validate(ctx, query, &schemaSnapshot)
-	if validationErr != nil {
-		return nil, fmt.Errorf("failed to validate probe query: %w", validationErr)
-	}
-	if !validation.Valid {
-		return nil, fmt.Errorf("probe query failed validation: %s", validation.Message)
-	}
-	executionCtx, cancelQuery := context.WithCancel(ctx)
-	toolBridge.setExecutionCancel(cancelQuery)
-	executionResult, executeErr := toolBridge.executor.Execute(executionCtx, querySession, query)
-	cancelQuery()
-	toolBridge.clearExecutionCancel()
-	probeSummary := executionResultToProbe(query, executionResult, executeErr)
-	if executeErr != nil {
-		return &probeSummary, fmt.Errorf("%s", probeSummary.Error)
-	}
-	if probeSummary.Error != "" {
-		return &probeSummary, fmt.Errorf("%s", probeSummary.Error)
-	}
-	return &probeSummary, nil
-}
-
-func (toolBridge *ToolBridge) runApprovedProbe(
-	ctx context.Context,
-	querySession *session.QuerySession,
-	query string,
-	plannedQuery *session.PlannedQuery,
-) (*session.ProbeSummary, error) {
-	if toolBridge.validator == nil || toolBridge.executor == nil || querySession == nil || plannedQuery == nil {
-		return nil, fmt.Errorf("probe bridge is not configured")
-	}
-	limits := tools.Limits(toolBridge.executor)
-	request := approval.WithLimits(
-		approval.NewRequest(
-			query,
-			fmt.Sprintf("%s/%s", plannedQuery.ResourceType, plannedQuery.Name),
-			plannedQuery.Groups,
-			approval.SourceAgentProbe,
-		),
-		limits.Timeout,
-		maxProbePreviewRows,
-	)
-	decision, approvalErr := toolBridge.approvals.Request(ctx, request)
-	if approvalErr != nil {
-		return nil, fmt.Errorf("probe approval did not complete: %w", approvalErr)
-	}
-	if !decision.Approved {
-		return nil, fmt.Errorf("probe rejected")
-	}
-	validation, validationErr := toolBridge.validator.Validate(ctx, query, &querySession.SchemaSnapshot)
-	if validationErr != nil {
-		return nil, fmt.Errorf("failed to revalidate probe query: %w", validationErr)
-	}
-	if !validation.Valid {
-		return nil, fmt.Errorf("probe query failed revalidation: %s", validation.Message)
-	}
-	executionCtx, cancelQuery := context.WithCancel(ctx)
-	toolBridge.setExecutionCancel(cancelQuery)
-	executionResult, executeErr := toolBridge.executor.Execute(executionCtx, querySession, query)
-	cancelQuery()
-	toolBridge.clearExecutionCancel()
-	probeSummary := executionResultToProbe(query, executionResult, executeErr)
-	return &probeSummary, nil
-}
-
-func executionResultToProbe(query string, executionResult session.ExecutionResult, executeErr error) session.ProbeSummary {
-	probeSummary := session.ProbeSummary{
-		Query:   query,
-		Rows:    executionResult.Rows,
-		Columns: append([]string(nil), executionResult.Columns...),
-	}
-	previewLength := len(executionResult.Preview)
-	if previewLength > maxProbePreviewRows {
-		previewLength = maxProbePreviewRows
-	}
-	for _, row := range executionResult.Preview[:previewLength] {
-		probeSummary.Preview = append(probeSummary.Preview, append([]string(nil), row...))
-	}
-	if executeErr != nil || executionResult.Error != "" {
-		rawError := executionResult.Error
-		if executeErr != nil {
-			rawError = executeErr.Error()
-		}
-		probeSummary.Error = agent.SanitizeExecutionErrorForProvider(rawError)
-		if probeSummary.Error == "" {
-			probeSummary.Error = "BYDBQL probe failed"
-		}
-	}
-	return probeSummary
-}
-
 func schemaNotReadyMessage(step int, resource planner.Resource) string {
 	groupLabel := strings.Join(resource.Groups, ", ")
 	if groupLabel == "" {
@@ -1212,14 +914,4 @@ func schemaNotReadyMessage(step int, resource planner.Resource) string {
 		resource.Name,
 		groupLabel,
 	)
-}
-
-func probeOutputSummary(probeSummary *session.ProbeSummary) string {
-	if probeSummary == nil {
-		return "no probe result"
-	}
-	if probeSummary.Error != "" {
-		return probeSummary.Error
-	}
-	return fmt.Sprintf("rows=%d columns=%d", probeSummary.Rows, len(probeSummary.Columns))
 }

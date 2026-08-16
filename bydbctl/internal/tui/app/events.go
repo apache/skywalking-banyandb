@@ -18,16 +18,14 @@
 package app
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
 )
 
 const (
-	maxVisibleEvents = 4
-	maxUIEventRunes  = 72
-	maxUIErrorRunes  = 88
+	maxUIEventRunes = 72
+	maxUIErrorRunes = 88
 )
 
 func summarizeAgentEvent(event agent.Event) string {
@@ -45,7 +43,7 @@ func summarizeAgentEvent(event agent.Event) string {
 	case agent.EventKindApproval:
 		return "execution approval required"
 	case agent.EventKindCancelled:
-		return "agent action cancelled"
+		return "agent action canceled"
 	case agent.EventKindMessageDelta:
 		return "agent: drafting"
 	case agent.EventKindFinalResponse:
@@ -104,11 +102,4 @@ func formatInvalidCandidateHint(query string) string {
 		return ""
 	}
 	return truncateRunes("invalid candidate (see log)", maxUIEventRunes)
-}
-
-func formatLogHint(logPath string) string {
-	if strings.TrimSpace(logPath) == "" {
-		return ""
-	}
-	return fmt.Sprintf("log: %s", logPath)
 }

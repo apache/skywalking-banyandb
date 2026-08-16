@@ -82,6 +82,9 @@ func (validator *SemanticValidator) semanticMessage(query string, schema *sessio
 	if identifierMessage := validateSchemaIdentifiers(query, schema); identifierMessage != "" {
 		return identifierMessage
 	}
+	if traceMessage := validateTraceScanBounds(query, schema); traceMessage != "" {
+		return traceMessage
+	}
 	return ""
 }
 

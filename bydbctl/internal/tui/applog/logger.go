@@ -217,6 +217,63 @@ func (sessionLogger *Logger) WriteQuerySession(querySession *session.QuerySessio
 	}
 }
 
+// WriteSchemaSnapshot appends the resource description a schema lookup or discovery produced.
+//
+// The columns are named rather than counted, so a lookup that returned the wrong resource, or an
+// empty one, is identifiable from the log without reproducing the run.
+func (sessionLogger *Logger) WriteSchemaSnapshot(category string, snapshot session.SchemaSnapshot) {
+	if sessionLogger == nil {
+		return
+	}
+	columnNames := make([]string, 0, len(snapshot.Columns))
+	for _, column := range snapshot.Columns {
+		columnNames = append(columnNames, fmt.Sprintf("%s:%s/%s", column.Name, column.Kind, column.Type))
+	}
+	sessionLogger.Write(category, fmt.Sprintf(
+		"type=%s name=%s groups=%v loaded=%t columns=%d tags=%d fields=%d entity=%v indexed=%v sortable=%d trace_id=%s timestamp=%s source_measure=%s column_list=%s",
+		snapshot.Type,
+		snapshot.Name,
+		snapshot.Groups,
+		snapshot.Loaded,
+		len(snapshot.Columns),
+		len(snapshot.Tags),
+		len(snapshot.Fields),
+		snapshot.EntityTags,
+		snapshot.IndexedFields,
+		len(snapshot.SortableIndexes),
+		snapshot.TraceIDTag,
+		snapshot.TimestampTag,
+		snapshot.SourceMeasure,
+		truncateLogField(strings.Join(columnNames, ",")),
+	))
+}
+
+// WriteChatMessages appends one line per conversation entry, so a message that never rendered is
+// still distinguishable from one that was never recorded.
+func (sessionLogger *Logger) WriteChatMessages(messages []session.ChatMessage) {
+	if sessionLogger == nil || len(messages) == 0 {
+		return
+	}
+	for messageIndex, message := range messages {
+		sessionLogger.Write("chat", fmt.Sprintf("#%d role=%s kind=%s tool=%s content=%q detail_bytes=%d",
+			messageIndex,
+			message.Role,
+			message.Kind,
+			message.ToolName,
+			truncateLogField(message.Content),
+			len(message.Detail),
+		))
+	}
+}
+
+// WriteViewState appends the panel state a frame would render from.
+//
+// Rendering is derived state, so a panel that appears and then vanishes is diagnosed by comparing
+// these lines across the frames around it rather than by reading the view itself.
+func (sessionLogger *Logger) WriteViewState(state string) {
+	sessionLogger.Write("view", state)
+}
+
 // DisplayPath shortens the log path for the TUI, preferring ~/ when possible.
 func DisplayPath(path string) string {
 	trimmedPath := strings.TrimSpace(path)

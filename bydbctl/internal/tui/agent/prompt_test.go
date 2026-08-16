@@ -55,7 +55,7 @@ func TestBuildBydbqlPromptIncludesOutputContract(t *testing.T) {
 		"<untrusted_context_json>",
 		"top slow endpoints",
 		"Use only the provided bydbctl tools",
-		"probe_bydbql",
+		"execute_bydbql",
 		"time_range",
 	} {
 		if !strings.Contains(prompt, expected) {
@@ -188,7 +188,7 @@ func TestBuildBydbqlPromptAllowsConversationBeforeAPlan(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"A normal conversational response is valid when no query is ready.",
-		"Submit a typed query plan only when the user asks for a query and the request is specific enough.",
+		"Submit a typed query plan only when the user asks for data and the request is specific enough.",
 	} {
 		if !strings.Contains(prompt, expected) {
 			t.Fatalf("prompt does not contain %q:\n%s", expected, prompt)

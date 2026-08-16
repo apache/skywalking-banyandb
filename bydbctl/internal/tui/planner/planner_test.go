@@ -263,6 +263,7 @@ func TestCompileSupportsPropertyIDAndEmptyTraceProjection(t *testing.T) {
 	traceQuery, traceErr := Compile(QueryPlan{
 		Resource:       Resource{Type: session.ResourceTypeTrace, Name: "traces", Groups: []string{"production"}},
 		ProjectionMode: ProjectionModeNone,
+		Filter:         &Predicate{Column: "trace_id", Operator: OperatorEqual, Value: "abc123"},
 		TimeRange:      TimeRange{Start: "-30m"},
 	}, traceSchema)
 	if traceErr != nil || !strings.HasPrefix(traceQuery.Query, "SELECT () FROM TRACE") {

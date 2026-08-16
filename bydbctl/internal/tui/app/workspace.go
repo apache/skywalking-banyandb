@@ -50,14 +50,41 @@ const (
 	minWorkspaceChatHeight      = 4
 	minWorkspaceEditorHeight    = 1
 	previewHorizontalScrollStep = 8
+	// minEditorWidth keeps a textarea usable on the narrowest terminal the workspace renders in.
+	minEditorWidth = 18
 )
 
 type evidenceMode int
 
 const (
 	evidenceModeData evidenceMode = iota
+	// evidenceModeSchema is a schema the composer is previewing while an @ search is open.
 	evidenceModeSchema
+	// evidenceModeSchemaPinned is a schema a completed turn looked up, which outlives that search.
+	//
+	// Closing the search clears a preview, but the answer to a describe turn has to stay on screen:
+	// the composer keeps ticking its cursor after the turn, and each tick reaches updateSchemaSearch.
+	evidenceModeSchemaPinned
 )
+
+// showsSchema reports whether the mode puts a schema in the evidence slot, however it got there.
+func (mode evidenceMode) showsSchema() bool {
+	return mode == evidenceModeSchema || mode == evidenceModeSchemaPinned
+}
+
+// String names the mode for the session log.
+func (mode evidenceMode) String() string {
+	switch mode {
+	case evidenceModeSchema:
+		return "schema-preview"
+	case evidenceModeSchemaPinned:
+		return "schema-pinned"
+	case evidenceModeData:
+		return "data"
+	default:
+		return "unknown"
+	}
+}
 
 // applyTurnEvidenceMode selects the evidence panel that matches the last completed controlled tool.
 func (m *Model) applyTurnEvidenceMode() {
@@ -72,12 +99,12 @@ func (m *Model) applyTurnEvidenceMode() {
 			if m.querySession != nil && strings.TrimSpace(m.querySession.SchemaSnapshot.Name) != "" {
 				m.selectedSchema = m.querySession.SchemaSnapshot
 			}
-			m.evidenceMode = evidenceModeSchema
+			m.evidenceMode = evidenceModeSchemaPinned
 			if m.focus == focusExecution {
 				m.focus = focusChat
 			}
 			return
-		case bridge.ToolProposeQueryPlan, bridge.ToolProbeBydbQL, bridge.ToolExecuteBydbQL:
+		case bridge.ToolProposeQueryPlan, bridge.ToolExecuteBydbQL:
 			m.evidenceMode = evidenceModeData
 			return
 		}
@@ -105,7 +132,6 @@ const (
 	turnProgressStageDescribeSchema
 	turnProgressStageCompilePlan
 	turnProgressStageValidate
-	turnProgressStagePreview
 	turnProgressStageExecute
 	turnProgressStageCount
 )
@@ -116,8 +142,8 @@ const (
 	progressOperationPreparing progressOperation = iota
 	progressOperationCatalog
 	progressOperationValidate
-	progressOperationPreview
 	progressOperationExecute
+	progressOperationSchema
 )
 
 func (operation progressOperation) label() string {
@@ -126,10 +152,10 @@ func (operation progressOperation) label() string {
 		return "catalog"
 	case progressOperationValidate:
 		return "validate"
-	case progressOperationPreview:
-		return "preview"
 	case progressOperationExecute:
 		return "execute"
+	case progressOperationSchema:
+		return "describe schema"
 	default:
 		return "preparing"
 	}
@@ -144,7 +170,6 @@ func (m Model) renderTurnProgress() string {
 		turnProgressStageDescribeSchema: {label: "describe schema"},
 		turnProgressStageCompilePlan:    {label: "compile plan"},
 		turnProgressStageValidate:       {label: "validate"},
-		turnProgressStagePreview:        {label: "preview"},
 		turnProgressStageExecute:        {label: "execute"},
 	}
 	observedStages := [turnProgressStageCount]bool{}
@@ -182,8 +207,6 @@ func progressStageForEvent(event agent.Event) (turnProgressStageID, bool) {
 		return turnProgressStageCompilePlan, true
 	case bridge.ToolValidateBydbQL:
 		return turnProgressStageValidate, true
-	case bridge.ToolProbeBydbQL:
-		return turnProgressStagePreview, true
 	case bridge.ToolExecuteBydbQL:
 		return turnProgressStageExecute, true
 	default:
@@ -265,11 +288,11 @@ func (m Model) coldStartGuidance(width int) []string {
 }
 
 type previewData struct {
-	columns   []string
-	preview   [][]string
 	resource  string
 	query     string
 	errorText string
+	columns   []string
+	preview   [][]string
 	totalRows int
 	truncated bool
 }
@@ -286,16 +309,24 @@ type schemaSearchResult struct {
 	score int
 }
 
+// stackedLayoutWidth is the content width below which the evidence panel stacks under the left column.
+const stackedLayoutWidth = 100
+
 func workspaceWidths(width int) (int, int) {
-	if width < 100 {
+	if width < stackedLayoutWidth {
 		return width, width
 	}
 	leftWidth := clamp(width*52/100, 52, 104)
 	return leftWidth, width - leftWidth - 2
 }
 
+// workspaceIsStacked reports whether the evidence panel sits under the left column instead of beside it.
+func workspaceIsStacked(width int) bool {
+	return width < stackedLayoutWidth
+}
+
 func (m Model) focusOrder() []int {
-	return []int{focusChat, focusMessage, focusStart, focusEnd, focusLimit, focusQuery, focusExecution, focusActivity}
+	return []int{focusChat, focusMessage, focusStart, focusEnd, focusLimit, focusQuery, focusExecution}
 }
 
 func (m *Model) cycleFocus(delta int) {
@@ -317,44 +348,189 @@ func (m *Model) cycleFocus(delta int) {
 	m.focus = order[nextIndex]
 }
 
+// renderWorkspaceHeader names the tool and provider on a single row.
+//
+// A bordered provider chip would cost three rows of the height budget to show one word.
 func (m Model) renderWorkspaceHeader(width int) string {
-	phase := m.currentPhaseLabel()
-	return lipgloss.NewStyle().Width(width).Render(lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		titleStyle.Render("bydbctl · text2bydbQL"),
-		"  ",
-		chipStyle.Render("provider "+m.provider),
-		"  ",
-		mutedStyle.Render(phase),
-		"  ",
-		mutedStyle.Render("@ local schema search"),
-	))
+	header := titleStyle.Render("bydbctl · text2bydbQL") +
+		mutedStyle.Render("   provider "+m.provider)
+	if resourceLabel := m.headerResourceLabel(); resourceLabel != "" {
+		header += mutedStyle.Render("   " + resourceLabel)
+	}
+	return lipgloss.NewStyle().Width(width).Render(truncate(header, maxInt(width, 8)))
 }
 
-func (m Model) renderWorkspace(width, height int) string {
+// headerResourceLabel names the resource the session is working against, when one is known.
+func (m Model) headerResourceLabel() string {
+	if m.querySession == nil {
+		return ""
+	}
+	resourceName := strings.TrimSpace(m.querySession.ResourceName)
+	if resourceName == "" {
+		return ""
+	}
+	if resourceType := strings.TrimSpace(string(m.querySession.ResourceType)); resourceType != "" {
+		return resourceType + " " + resourceName
+	}
+	return resourceName
+}
+
+// renderWorkspaceWithRegions renders the workspace and reports where each panel landed on screen.
+//
+// originY is the first screen row occupied by the workspace body, so click coordinates map directly to panels.
+func (m Model) renderWorkspaceWithRegions(width, height, originY int) (string, []panelRegion) {
+	if workspaceIsStacked(width) {
+		return m.renderStackedWorkspace(width, height, originY)
+	}
+	return m.renderSideBySideWorkspace(width, height, originY)
+}
+
+// renderSideBySideWorkspace places the evidence panel beside the left column, both bounded by height.
+//
+// A turn that answered in words has no evidence to show, so the conversation takes the full width
+// rather than reading in half of it beside an empty panel.
+func (m Model) renderSideBySideWorkspace(width, height, originY int) (string, []panelRegion) {
+	if !m.evidencePanelHasContent() && m.focus != focusExecution {
+		left, layout := m.renderWorkspaceLeft(width, height)
+		return left, m.leftPanelRegions(width, layout, originY)
+	}
 	leftWidth, rightWidth := workspaceWidths(width)
-	left := m.renderWorkspaceLeft(leftWidth, height)
+	left, layout := m.renderWorkspaceLeft(leftWidth, height)
 	right := m.renderEvidencePanel(rightWidth, height)
-	if width < 100 {
-		return lipgloss.JoinVertical(lipgloss.Left, left, right)
+	regions := m.leftPanelRegions(leftWidth, layout, originY)
+	if right != "" {
+		regions = append(regions, panelRegion{
+			focus:  focusExecution,
+			top:    originY,
+			bottom: originY + lipgloss.Height(right) - 1,
+			left:   leftWidth + 2,
+			right:  leftWidth + 2 + rightWidth - 1,
+		})
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right)
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right), regions
 }
 
-func (m Model) renderWorkspaceLeft(width, height int) string {
-	schemaSearchResultLimit := schemaSearchViewportLimit(height, len(m.schemaSearchEntries()))
-	layout := workspaceLeftLayout{
-		chatHeight:        clamp(height-24, minWorkspaceChatHeight, 16),
-		queryHeight:       m.query.Height(),
-		messageHeight:     m.message.Height(),
-		schemaResultLimit: schemaSearchResultLimit,
+// renderStackedWorkspace shows one column at a time on a narrow terminal.
+//
+// Splitting the height between two stacked columns leaves both too short to use, so the focused
+// evidence panel takes the whole body and the left column takes it back when focus leaves.
+func (m Model) renderStackedWorkspace(width, height, originY int) (string, []panelRegion) {
+	if m.focus == focusExecution && m.evidencePanelHasContent() {
+		evidence := m.renderEvidencePanel(width, height-1)
+		if evidence != "" {
+			return lipgloss.JoinVertical(lipgloss.Left, evidence, m.stackedReturnHint(width)), []panelRegion{{
+				focus:  focusExecution,
+				top:    originY,
+				bottom: originY + lipgloss.Height(evidence) - 1,
+				left:   0,
+				right:  width - 1,
+			}}
+		}
 	}
+	left, layout := m.renderWorkspaceLeft(width, height-1)
+	regions := m.leftPanelRegions(width, layout, originY)
+	return lipgloss.JoinVertical(lipgloss.Left, left, m.stackedEvidenceHint(width)), regions
+}
+
+// stackedReturnHint tells the user how to get back to the conversation from a full-screen panel.
+func (m Model) stackedReturnHint(width int) string {
+	return lipgloss.NewStyle().Width(width).Render(
+		keyStyle.Render("1") + mutedStyle.Render(" back to the conversation"))
+}
+
+// stackedEvidenceHint points at the results panel that the narrow layout keeps off screen.
+func (m Model) stackedEvidenceHint(width int) string {
+	hint := mutedStyle.Render("no results yet")
+	if m.evidencePanelHasContent() {
+		// This hint is the only way to reach the panel on a narrow terminal, so it names what is in it.
+		hint = keyStyle.Render("4") + mutedStyle.Render(" open "+m.evidencePanelLabel())
+	}
+	return lipgloss.NewStyle().Width(width).Render(hint)
+}
+
+// evidencePanelLabel describes the waiting panel by its contents, not just by its kind.
+func (m Model) evidencePanelLabel() string {
+	if !m.evidenceMode.showsSchema() {
+		return "results"
+	}
+	if schemaName := strings.TrimSpace(m.selectedSchema.Name); schemaName != "" {
+		return "schema " + schemaName
+	}
+	return "schema"
+}
+
+// evidencePanelHasContent reports whether the evidence panel has anything worth reserving rows for.
+func (m Model) evidencePanelHasContent() bool {
+	if _, ok := m.currentPreviewData(); ok {
+		return true
+	}
+	return len(schemaDetailLines(m.selectedSchema)) > 0
+}
+
+// leftPanelRegions measures the stacked left-column panels in render order.
+func (m Model) leftPanelRegions(width int, layout workspaceLeftLayout, originY int) []panelRegion {
+	sections := m.leftSections(width, layout)
+	regions := make([]panelRegion, 0, len(sections))
+	row := originY
+	for _, section := range sections {
+		if section.content == "" {
+			continue
+		}
+		sectionHeight := lipgloss.Height(section.content)
+		if section.focus >= 0 {
+			regions = append(regions, panelRegion{
+				focus:  section.focus,
+				top:    row,
+				bottom: row + sectionHeight - 1,
+				left:   0,
+				right:  width - 1,
+			})
+		}
+		row += sectionHeight
+	}
+	return regions
+}
+
+// leftSection is one stacked panel of the left column and the focus target it owns.
+//
+// A focus of noPanelFocus means the panel occupies rows but cannot be focused.
+type leftSection struct {
+	content string
+	focus   int
+}
+
+// noPanelFocus marks a rendered section that is not a focus target.
+const noPanelFocus = -1
+
+// leftSections renders the left column once, in order, under the resolved layout.
+//
+// Both the visible view and the click regions are derived from this list so they cannot drift apart.
+// The receiver is a value, so sizing the editors to the column stays local to this render.
+func (m Model) leftSections(width int, layout workspaceLeftLayout) []leftSection {
+	editorWidth := maxInt(width-panelStyle.GetHorizontalFrameSize()-2, minEditorWidth)
+	m.query.SetWidth(editorWidth)
+	m.message.SetWidth(editorWidth)
+	m.query.SetHeight(layout.queryHeight)
+	m.message.SetHeight(layout.messageHeight)
+	return []leftSection{
+		{focus: focusChat, content: m.renderChat(width, layout.chatHeight)},
+		{focus: focusQuery, content: m.renderCandidateCard(width)},
+		{focus: focusMessage, content: m.renderSchemaSearch(width, layout.schemaResultLimit)},
+		{focus: focusMessage, content: m.renderMessage(width)},
+		{focus: noPanelFocus, content: m.renderStatusLine(width)},
+	}
+}
+
+func (m Model) renderWorkspaceLeft(width, height int) (string, workspaceLeftLayout) {
+	schemaSearchResultLimit := schemaSearchViewportLimit(height, len(m.schemaSearchEntries()))
+	layout := m.allocateLeftColumn(height)
+	layout.schemaResultLimit = schemaSearchResultLimit
 	for {
 		left := m.renderWorkspaceLeftWithLayout(width, layout)
 		heightOverflow := lipgloss.Height(left) - height
 		if heightOverflow <= 0 {
 			layout.chatHeight -= heightOverflow
-			return m.renderWorkspaceLeftWithLayout(width, layout)
+			return m.renderWorkspaceLeftWithLayout(width, layout), layout
 		}
 		if layout.queryHeight > minWorkspaceEditorHeight {
 			layout.queryHeight -= minInt(heightOverflow, layout.queryHeight-minWorkspaceEditorHeight)
@@ -372,9 +548,74 @@ func (m Model) renderWorkspaceLeft(width, height int) string {
 			layout.schemaResultLimit--
 			continue
 		}
-		return left
+		// Every panel is at its minimum, so drop the trailing rows rather than overflow the terminal.
+		return strings.Join(fitRows(strings.Split(left, "\n"), height), "\n"), layout
 	}
 }
+
+// allocateLeftColumn divides the body height between the conversation, the QL editor, and the composer.
+//
+// The conversation is the primary content, so the editors give up their optional rows to it first.
+func (m Model) allocateLeftColumn(height int) workspaceLeftLayout {
+	messageHeight := clamp(m.message.Height(), minWorkspaceEditorHeight, maxComposerHeight)
+	if m.candidateCardIsCollapsed() {
+		// The collapsed card renders one row inside its frame, so the editor and slot rows come back.
+		chatHeight := height - messageHeight - fixedLeftColumnRows + minCandidateEditorHeight + 1
+		return workspaceLeftLayout{
+			chatHeight:    maxInt(chatHeight, minWorkspaceChatHeight),
+			queryHeight:   minCandidateEditorHeight,
+			messageHeight: messageHeight,
+		}
+	}
+	queryHeight := m.candidateEditorHeight()
+	chatHeight := height - queryHeight - messageHeight - fixedLeftColumnRows
+	for chatHeight < preferredChatHeight {
+		switch {
+		case queryHeight > minCandidateEditorHeight:
+			queryHeight--
+		case messageHeight > minWorkspaceEditorHeight:
+			messageHeight--
+		default:
+			return workspaceLeftLayout{
+				chatHeight:    maxInt(chatHeight, minWorkspaceChatHeight),
+				queryHeight:   queryHeight,
+				messageHeight: messageHeight,
+			}
+		}
+		chatHeight++
+	}
+	return workspaceLeftLayout{chatHeight: chatHeight, queryHeight: queryHeight, messageHeight: messageHeight}
+}
+
+// Left-column sizing preferences.
+const (
+	// preferredChatHeight is the conversation height the layout tries to protect.
+	preferredChatHeight = 12
+	// maxComposerHeight caps the composer so it never crowds out the conversation.
+	maxComposerHeight = 4
+)
+
+// candidateEditorHeight sizes the QL editor to the query it holds, plus room to keep typing.
+//
+// A fixed tall editor spends the height budget on blank rows the conversation panel needs.
+func (m Model) candidateEditorHeight() int {
+	editorWidth := maxInt(m.query.Width(), 1)
+	lineCount := 1
+	for _, queryLine := range strings.Split(m.query.Value(), "\n") {
+		lineCount += maxInt((lipgloss.Width(queryLine)-1)/editorWidth, 0)
+		lineCount++
+	}
+	return clamp(lineCount, minCandidateEditorHeight, maxCandidateEditorHeight)
+}
+
+// Candidate editor sizing bounds, and the rows the left column spends outside the chat and QL panels.
+const (
+	minCandidateEditorHeight = 3
+	maxCandidateEditorHeight = 10
+	// fixedLeftColumnRows counts the three panel frames, the candidate title and slot rows,
+	// the composer title, and the status bar.
+	fixedLeftColumnRows = 10
+)
 
 func schemaSearchViewportLimit(height, resultCount int) int {
 	if resultCount == 0 {
@@ -384,57 +625,120 @@ func schemaSearchViewportLimit(height, resultCount int) int {
 }
 
 func (m Model) renderWorkspaceLeftWithLayout(width int, layout workspaceLeftLayout) string {
-	m.query.SetHeight(layout.queryHeight)
-	m.message.SetHeight(layout.messageHeight)
-	return lipgloss.JoinVertical(lipgloss.Left,
-		m.renderChat(width, layout.chatHeight),
-		m.renderCandidateCard(width),
-		m.renderSchemaSearch(width, layout.schemaResultLimit),
-		m.renderMessage(width),
-		m.renderStatusLine(width),
-	)
+	sections := m.leftSections(width, layout)
+	rendered := make([]string, 0, len(sections))
+	for _, section := range sections {
+		if section.content == "" {
+			continue
+		}
+		rendered = append(rendered, section.content)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, rendered...)
 }
 
+// renderCandidateCard renders the BYDBQL editor, or a single collapsed row while there is no query.
+//
+// Not every turn produces a query, so an empty editor would otherwise hold rows the conversation
+// needs in order to show an answer.
 func (m Model) renderCandidateCard(width int) string {
-	report := session.ValidationReport{Message: "not checked"}
-	versionLabel := "v0"
+	if m.candidateCardIsCollapsed() {
+		return m.renderCollapsedCandidateCard(width)
+	}
+	report := session.ValidationReport{Message: statusNotChecked}
 	if m.querySession != nil {
 		report = m.querySession.Validation
-		if selectedCandidate := m.querySession.SelectedCandidateIndex(); selectedCandidate >= 0 {
-			versionLabel = fmt.Sprintf("v%d", selectedCandidate+1)
-			if currentCandidate := m.querySession.CurrentCandidate(); currentCandidate != nil && currentCandidate.Source == session.CandidateSourceManual {
-				versionLabel += " (edited)"
-			}
-		}
 	}
 	status := report.Status()
 	statusStyle := badStyle
 	if report.Valid {
 		statusStyle = okStyle
-	} else if status == "not checked" {
+	} else if status == statusNotChecked {
 		statusStyle = mutedStyle
 	}
+	titleRow := m.panelTitle(focusQuery, "Candidate QL ") + statusStyle.Render(statusGlyphFor(report)+" "+status)
+	if m.editingQuery {
+		titleRow += warnStyle.Render("  edited locally")
+	}
 	rows := []string{
-		titleStyle.Render("Candidate QL " + versionLabel + " " + statusStyle.Render(status)),
+		titleRow,
 		m.query.View(),
 		lipgloss.JoinHorizontal(lipgloss.Top,
-			mutedStyle.Render("Time "),
+			m.slotLabel(focusStart, "Time"),
 			m.start.View(),
 			mutedStyle.Render(" → "),
 			m.end.View(),
+			m.slotLabel(focusLimit, "  Limit"),
+			m.limit.View(),
 		),
-		lipgloss.JoinHorizontal(lipgloss.Top, mutedStyle.Render("Limit "), m.limit.View()),
-		mutedStyle.Render(fmt.Sprintf(
-			"edit inline · validation pauses %s · Ctrl+←/→ history",
-			queryValidationDebounce,
-		)),
-		mutedStyle.Render("Ctrl+Y refresh preview · Ctrl+E full execute"),
 	}
-	if !report.Valid && report.Message != "" && report.Message != "not checked" {
-		rows = append(rows, badStyle.Render("Validation: "+truncate(report.Message, width-16)))
-		rows = append(rows, warnStyle.Render("[Ctrl+G let Agent fix]"))
+	if !report.Valid && report.Message != "" && report.Message != statusNotChecked {
+		rows = append(rows,
+			badStyle.Render(glyphFailed+" "+truncate(report.Message, width-16)),
+			mutedStyle.Render("Ctrl+G let Agent fix"),
+		)
 	}
-	return panelStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
+	return m.candidatePanelStyle().Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
+}
+
+// candidateCardIsCollapsed reports whether the editor is empty and not being used.
+//
+// Focus expands it again, so a query can still be written by hand at any point.
+func (m Model) candidateCardIsCollapsed() bool {
+	switch m.focus {
+	case focusQuery, focusStart, focusEnd, focusLimit:
+		return false
+	}
+	if strings.TrimSpace(m.query.Value()) != "" {
+		return false
+	}
+	return m.querySession == nil || len(m.querySession.Candidates) == 0
+}
+
+// renderCollapsedCandidateCard states why there is no query and how to get one.
+func (m Model) renderCollapsedCandidateCard(width int) string {
+	label := "Candidate QL"
+	hint := "  no query yet · ask for data, or press "
+	if m.querySession != nil && m.querySession.Phase == session.PhaseClarifying {
+		hint = "  waiting on your reply · or press "
+	}
+	if m.querySession != nil && m.querySession.Phase == session.PhaseSchema {
+		hint = "  schema lookup only · ask for data, or press "
+	}
+	row := titleStyle.Render("  "+label) + mutedStyle.Render(hint) +
+		keyStyle.Render("Alt+2") + mutedStyle.Render(" to write one")
+	return panelStyle.Width(width).Render(truncate(row, maxInt(width-panelStyle.GetHorizontalFrameSize(), 8)))
+}
+
+// statusGlyphFor pairs the validation status with a glyph so it reads without color.
+func statusGlyphFor(report session.ValidationReport) string {
+	switch {
+	case report.Valid:
+		return glyphOK
+	case report.Message == "" || report.Message == statusNotChecked:
+		return glyphPending
+	default:
+		return glyphFailed
+	}
+}
+
+// candidatePanelStyle highlights the candidate card while any of its editable slots holds focus.
+func (m Model) candidatePanelStyle() lipgloss.Style {
+	switch m.focus {
+	case focusQuery, focusStart, focusEnd, focusLimit:
+		return activePanelStyle
+	default:
+		return panelStyle
+	}
+}
+
+// slotLabel highlights an individual time or limit slot label when it holds focus.
+//
+// The marker stays on one line so moving focus between slots never changes the card height.
+func (m Model) slotLabel(slotFocus int, label string) string {
+	if m.focus == slotFocus {
+		return focusStyle.Render(label) + " "
+	}
+	return mutedStyle.Render(label) + " "
 }
 
 func (m Model) renderSchemaSearch(width, resultLimit int) string {
@@ -447,7 +751,7 @@ func (m Model) renderSchemaSearch(width, resultLimit int) string {
 		rows = append(rows, mutedStyle.Render("No group or resource matches · continue typing"))
 		return panelStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 	}
-	labelWidth := maxInt(width-panelStyle.GetHorizontalFrameSize(), minSchemaSearchLabelWidth)
+	labelWidth := maxInt(width-panelStyle.GetHorizontalFrameSize()-selectionPrefixWidth, minSchemaSearchLabelWidth)
 	visibleStart := 0
 	if resultLimit < len(entries) && m.schemaSearchCursor >= resultLimit {
 		visibleStart = m.schemaSearchCursor - resultLimit + 1
@@ -455,17 +759,17 @@ func (m Model) renderSchemaSearch(width, resultLimit int) string {
 	visibleEnd := minInt(visibleStart+maxInt(resultLimit, 1), len(entries))
 	for entryIndex := visibleStart; entryIndex < visibleEnd; entryIndex++ {
 		entry := entries[entryIndex]
-		label := fmt.Sprintf("%s/%s · %s", entry.Group, entry.Name, shortTypeLabel(entry.Type))
+		label := truncateSchemaSearchLabel(
+			fmt.Sprintf("%s/%s · %s", entry.Group, entry.Name, shortTypeLabel(entry.Type)), labelWidth)
 		if entryIndex == m.schemaSearchCursor {
-			selectedLabelWidth := maxInt(labelWidth-lipgloss.Width(schemaSearchSelectionPrefix), minSchemaSearchLabelWidth)
-			rows = append(rows, titleStyle.Render(schemaSearchSelectionPrefix+truncateSchemaSearchLabel(label, selectedLabelWidth)))
+			rows = append(rows, focusStyle.Render(glyphSelected+" "+label))
 			continue
 		}
-		rows = append(rows, mutedStyle.Render(truncateSchemaSearchLabel(label, labelWidth)))
+		rows = append(rows, mutedStyle.Render("  "+label))
 	}
-	searchHint := "↑↓ preview schema · Enter insert resource"
+	searchHint := "↑↓ preview · Enter insert · Esc close"
 	if visibleEnd-visibleStart < len(entries) {
-		searchHint = fmt.Sprintf("results %d-%d/%d · %s", visibleStart+1, visibleEnd, len(entries), searchHint)
+		searchHint = fmt.Sprintf("%d-%d/%d · %s", visibleStart+1, visibleEnd, len(entries), searchHint)
 	}
 	rows = append(rows, mutedStyle.Render(searchHint))
 	return panelStyle.Width(width).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
@@ -482,89 +786,142 @@ func truncateSchemaSearchLabel(label string, maxWidth int) string {
 }
 
 func (m Model) renderEvidencePanel(width, height int) string {
-	approvalPanel := ""
-	evidenceHeight := height
-	if m.pendingApproval != nil {
-		approvalPanel = m.renderApproval(width)
-		evidenceHeight -= lipgloss.Height(approvalPanel)
+	if height <= panelStyle.GetVerticalFrameSize() {
+		return ""
 	}
-	var evidence string
-	if evidenceHeight > panelStyle.GetVerticalFrameSize() {
-		if m.focus != focusExecution && (m.schemaSearchOpen() || m.evidenceMode == evidenceModeSchema) {
-			evidence = m.renderSchemaEvidence(width, evidenceHeight)
-		} else {
-			evidence = m.renderDataPreview(width, evidenceHeight)
-		}
+	if m.showsSchemaEvidence() {
+		return m.renderSchemaEvidence(width, height)
 	}
-	if approvalPanel == "" {
-		return evidence
+	return m.renderDataPreview(width, height)
+}
+
+// showsSchemaEvidence decides which evidence panel occupies the slot.
+//
+// Focusing the slot dismisses the live preview of an open schema search, but a schema the turn
+// actually looked up stays until the next data tool, so it can be focused and scrolled.
+func (m Model) showsSchemaEvidence() bool {
+	if m.schemaSearchOpen() {
+		return m.focus != focusExecution
 	}
-	if evidence == "" {
-		return approvalPanel
-	}
-	return lipgloss.JoinVertical(lipgloss.Left, evidence, approvalPanel)
+	return m.evidenceMode.showsSchema()
 }
 
 func (m Model) renderDataPreview(width, height int) string {
+	panel := m.panelStyleFor(focusExecution)
+	contentHeight := panelContentHeight(height)
+	rows := []string{m.panelTitle(focusExecution, "Data Preview")}
 	data, ok := m.currentPreviewData()
-	panel := panelStyle
-	title := "Data Preview"
-	hint := "Ctrl+F focus preview · then ←/→ horizontal scroll"
-	if m.focus == focusExecution {
-		panel = activePanelStyle
-		title = "Data Preview · focused"
-		hint = "←/→ horizontal scroll · ↑↓ select row · Tab next focus"
-	}
-	rows := []string{titleStyle.Render(title), mutedStyle.Render(hint)}
 	if !ok {
-		rows = append(rows, mutedStyle.Render("A validated query probe or execution result will appear here."))
-		return panel.Width(width).Height(panelContentHeight(height)).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
+		rows = append(rows, m.renderPreviewEmptyState(width)...)
+		return panel.Width(width).Height(contentHeight).
+			Render(lipgloss.JoinVertical(lipgloss.Left, fitRows(rows, contentHeight)...))
 	}
-	resource := fallback(data.resource, "current query")
-	previewCount := len(data.preview)
-	rows = append(rows, fmt.Sprintf("%s · %s · %d/%s rows", resource, previewLabel(data.query), previewCount, formatCount(data.totalRows)))
-	if data.errorText != "" {
-		rows = append(rows, badStyle.Render("Probe: "+truncate(data.errorText, width-12)))
-	} else if previewCount == 0 {
-		rows = append(rows, mutedStyle.Render("The query returned no preview rows."))
-	} else {
-		tableLines := m.dataPreviewTableLines()
-		visibleTableLines, _ := previewTableViewport(tableLines, width-4, m.executionPreviewOffset)
-		rows = append(rows, visibleTableLines...)
+	rows = append(rows, mutedStyle.Render(fmt.Sprintf("%s · %s · %d/%s rows",
+		fallback(data.resource, "current query"), previewLabel(data.query), len(data.preview), formatCount(data.totalRows))))
+	switch {
+	case data.errorText != "":
+		rows = append(rows, badStyle.Render(glyphFailed+" "+truncate(data.errorText, width-12)))
+		if m.executionExportPath != "" {
+			rows = append(rows, mutedStyle.Render("exported "+m.executionExportPath))
+		}
+	case len(data.preview) == 0:
+		rows = append(rows,
+			mutedStyle.Render("The query matched no rows in this time range."),
+			mutedStyle.Render("Widen the time range in the candidate card, then Ctrl+E to run again."))
+	default:
+		rows = append(rows, m.renderPreviewBody(data, width, contentHeight-len(rows))...)
 	}
-	if data.truncated {
-		rows = append(rows, mutedStyle.Render("… preview is truncated; total row count shown above"))
-	}
-	if m.showExecutionRaw && m.querySession != nil && !m.preferCandidateProbe &&
-		strings.TrimSpace(m.querySession.ExecutionResult.Response) != "" &&
-		strings.TrimSpace(data.query) == strings.TrimSpace(m.querySession.ExecutionResult.Query) {
-		rows = append(rows, titleStyle.Render("Full response"))
-		rows = append(rows, formatJSONResponsePreview(m.querySession.ExecutionResult.Response, width-4, maxExecutionResponseLines)...)
-	}
-	rows = append(rows, mutedStyle.Render("Ctrl+O export · Ctrl+J see full response · ↑↓ row"))
-	return panel.Width(width).Height(panelContentHeight(height)).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
+	return panel.Width(width).Height(contentHeight).
+		Render(lipgloss.JoinVertical(lipgloss.Left, fitRows(rows, contentHeight)...))
 }
 
+// renderPreviewEmptyState explains what will appear here and how to get it.
+func (m Model) renderPreviewEmptyState(width int) []string {
+	rows := []string{mutedStyle.Render("No results yet.")}
+	if m.querySession != nil && m.querySession.Validation.Valid {
+		return append(rows, mutedStyle.Render(wrapText("The candidate is valid. Press Ctrl+E to run it.", width-4)))
+	}
+	return append(rows, mutedStyle.Render(wrapText(
+		"Ask the agent for data in the composer, or write a query in the candidate card and press Ctrl+E.", width-4)))
+}
+
+// renderPreviewBody renders the result table and, below it, the detail of the selected row.
+func (m Model) renderPreviewBody(data previewData, width, availableHeight int) []string {
+	tableLines := m.dataPreviewTableLines()
+	visibleTableLines := previewTableViewport(tableLines, width-4, m.executionPreviewOffset)
+	rows := append([]string(nil), visibleTableLines...)
+	if data.truncated {
+		rows = append(rows, mutedStyle.Render(glyphTruncate+" preview truncated; total row count shown above"))
+	}
+	detailLines := m.executionRowDetailLines(width - 4)
+	if len(detailLines) == 0 {
+		return rows
+	}
+	detailHeight := maxInt(availableHeight-len(rows)-1, 0)
+	if detailHeight < minPreviewDetailHeight {
+		return rows
+	}
+	rows = append(rows, titleStyle.Render("Row detail · pgup/pgdn scroll"))
+	detailEnd := minInt(m.executionDetailScroll+detailHeight, len(detailLines))
+	for lineIndex := m.executionDetailScroll; lineIndex < detailEnd; lineIndex++ {
+		rows = append(rows, mutedStyle.Render(truncate(detailLines[lineIndex], width-4)))
+	}
+	if len(detailLines) > detailHeight {
+		rows = append(rows, mutedStyle.Render(fmt.Sprintf("detail %d-%d/%d lines",
+			m.executionDetailScroll+1, detailEnd, len(detailLines))))
+	}
+	return rows
+}
+
+// minPreviewDetailHeight is the smallest row-detail viewport worth rendering.
+const minPreviewDetailHeight = 3
+
 func (m Model) renderSchemaEvidence(width, height int) string {
-	rows := []string{titleStyle.Render("Schema")}
+	contentHeight := panelContentHeight(height)
+	rows := []string{m.panelTitle(focusExecution, "Schema") + m.schemaEvidenceSourceLabel()}
 	detailLines := schemaDetailLines(m.selectedSchema)
 	if len(detailLines) == 0 {
-		rows = append(rows, mutedStyle.Render("Use @ in the composer to search groups and resources."))
-		return panelStyle.Width(width).Height(panelContentHeight(height)).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
+		rows = append(rows,
+			mutedStyle.Render("No resource selected."),
+			mutedStyle.Render(wrapText("Type @ in the composer to search groups and resources.", width-4)))
+		return m.panelStyleFor(focusExecution).Width(width).Height(contentHeight).
+			Render(lipgloss.JoinVertical(lipgloss.Left, fitRows(rows, contentHeight)...))
 	}
-	viewportHeight := maxInt(height-4, 6)
-	endIndex := minInt(m.detailScroll+viewportHeight, len(detailLines))
-	for lineIndex := m.detailScroll; lineIndex < endIndex; lineIndex++ {
+	footerRows := m.schemaEvidenceFooter(len(detailLines), contentHeight)
+	viewportHeight := maxInt(contentHeight-len(rows)-len(footerRows), 1)
+	scroll := clamp(m.schemaDetailScroll, 0, maxInt(len(detailLines)-viewportHeight, 0))
+	endIndex := minInt(scroll+viewportHeight, len(detailLines))
+	for lineIndex := scroll; lineIndex < endIndex; lineIndex++ {
 		rows = append(rows, truncate(detailLines[lineIndex], width-4))
 	}
+	return m.panelStyleFor(focusExecution).Width(width).Height(contentHeight).
+		Render(lipgloss.JoinVertical(lipgloss.Left, fitRows(append(rows, footerRows...), contentHeight)...))
+}
+
+// schemaEvidenceSourceLabel credits the catalog when the panel answers a schema lookup.
+//
+// Both this panel and Data Preview render columns, so the title says which one the user is reading.
+func (m Model) schemaEvidenceSourceLabel() string {
+	if m.querySession == nil || m.querySession.Phase != session.PhaseSchema {
+		return ""
+	}
+	return mutedStyle.Render("  read from the catalog · no query run")
+}
+
+// schemaEvidenceFooter reports load state and, when the schema overflows, the visible line range.
+func (m Model) schemaEvidenceFooter(lineCount, contentHeight int) []string {
+	var footerRows []string
 	if !m.selectedSchema.Loaded {
 		if m.schemaSearchLoading() {
-			rows = append(rows, mutedStyle.Render("Loading typed columns from BanyanDB…"))
+			footerRows = append(footerRows, warnStyle.Render(glyphRunning+" loading typed columns from BanyanDB"))
 		} else {
-			rows = append(rows, mutedStyle.Render("Typed columns are not available from BanyanDB for this resource."))
+			footerRows = append(footerRows, mutedStyle.Render("Typed columns are not available for this resource."))
 		}
 	}
-	return panelStyle.Width(width).Height(panelContentHeight(height)).Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
+	if lineCount > contentHeight-len(footerRows)-1 {
+		footerRows = append(footerRows, mutedStyle.Render(fmt.Sprintf("%d lines · pgup/pgdn scroll", lineCount)))
+	}
+	return footerRows
 }
 
 func panelContentHeight(totalHeight int) int {
@@ -589,39 +946,18 @@ func (m Model) currentPreviewData() (previewData, bool) {
 		return previewData{}, false
 	}
 	executionResult := m.querySession.ExecutionResult
-	currentCandidate := m.querySession.CurrentCandidate()
-	hasExecutionResult := executionResult.Summary != "" || len(executionResult.Preview) > 0
-	if currentCandidate != nil && currentCandidate.Probe != nil &&
-		(m.preferCandidateProbe || strings.TrimSpace(executionResult.Query) != strings.TrimSpace(currentCandidate.Query)) {
-		return previewDataFromProbe(m.querySession.ResourceName, currentCandidate.Probe), true
-	}
-	if hasExecutionResult && (currentCandidate == nil || strings.TrimSpace(executionResult.Query) == strings.TrimSpace(currentCandidate.Query)) {
-		return previewData{
-			columns:   executionResult.Columns,
-			preview:   executionResult.Preview,
-			resource:  m.querySession.ResourceName,
-			query:     executionResult.Query,
-			errorText: executionResult.Error,
-			totalRows: executionResult.Rows,
-			truncated: executionResult.Truncated || len(executionResult.Preview) < executionResult.Rows,
-		}, true
-	}
-	if currentCandidate == nil || currentCandidate.Probe == nil {
+	if executionResult.Summary == "" && len(executionResult.Preview) == 0 && executionResult.Error == "" {
 		return previewData{}, false
 	}
-	return previewDataFromProbe(m.querySession.ResourceName, currentCandidate.Probe), true
-}
-
-func previewDataFromProbe(resource string, probe *session.ProbeSummary) previewData {
 	return previewData{
-		columns:   probe.Columns,
-		preview:   probe.Preview,
-		resource:  resource,
-		query:     probe.Query,
-		errorText: probe.Error,
-		totalRows: probe.Rows,
-		truncated: len(probe.Preview) < probe.Rows,
-	}
+		columns:   executionResult.Columns,
+		preview:   executionResult.Preview,
+		resource:  m.querySession.ResourceName,
+		query:     executionResult.Query,
+		errorText: executionResult.Error,
+		totalRows: executionResult.Rows,
+		truncated: executionResult.Truncated || len(executionResult.Preview) < executionResult.Rows,
+	}, true
 }
 
 func previewLabel(query string) string {
@@ -655,7 +991,11 @@ func (m *Model) updateSchemaSearch() {
 		m.schemaSearchDismissed = false
 	}
 	if !m.schemaSearchOpen() {
-		m.evidenceMode = evidenceModeData
+		// Only a preview is retracted here. This runs on every composer message, cursor blinks
+		// included, so clearing a pinned schema would drop a describe answer a blink after it lands.
+		if m.evidenceMode == evidenceModeSchema {
+			m.evidenceMode = evidenceModeData
+		}
 		m.schemaSearchCursor = 0
 		return
 	}
@@ -852,6 +1192,7 @@ func (m *Model) moveSchemaSearchCursor(delta int) {
 }
 
 func (m *Model) previewSchemaSearchEntry(entry session.CatalogEntry) {
+	// A preview replaces a pinned schema, since the user is now steering the panel by hand.
 	m.evidenceMode = evidenceModeSchema
 	if sameSchemaResource(m.selectedSchema, entry) {
 		return

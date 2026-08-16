@@ -19,13 +19,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
-	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/approval"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/bridge"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/workflow"
@@ -34,23 +32,26 @@ import (
 func TestWorkspaceShowsConversationCandidateAndPreviewWithoutTabs(t *testing.T) {
 	model := NewModel(Config{})
 	model.resize(160, 42)
-	querySession := &session.QuerySession{}
+	querySession := &session.QuerySession{
+		ExecutionResult: session.ExecutionResult{
+			Query:   "SELECT error_rate FROM MEASURE service_cpm IN sw_metrics",
+			Summary: "execution complete",
+			Rows:    1240,
+			Columns: []string{"time", "service", "error_rate"},
+			Preview: [][]string{{"12:01", "checkout", "0.02"}},
+		},
+	}
 	querySession.AddCandidate(session.BydbqlCandidate{
 		Query: "SELECT error_rate FROM MEASURE service_cpm IN sw_metrics",
 		Validation: session.ValidationReport{
 			Valid: true,
-		},
-		Probe: &session.ProbeSummary{
-			Rows:    1240,
-			Columns: []string{"time", "service", "error_rate"},
-			Preview: [][]string{{"12:01", "checkout", "0.02"}},
 		},
 	})
 	model.querySession = querySession
 	model.syncQuerySession()
 
 	view := model.View()
-	for _, expected := range []string{"Conversation", "Candidate QL v1", "Data Preview", "1/1,240 rows"} {
+	for _, expected := range []string{"Conversation", "Candidate QL", "Data Preview", "1/1,240 rows"} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("expected %q in workspace:\n%s", expected, view)
 		}
@@ -62,39 +63,48 @@ func TestWorkspaceShowsConversationCandidateAndPreviewWithoutTabs(t *testing.T) 
 	}
 }
 
-func TestRefreshedProbeTakesPrecedenceOverEarlierFullExecution(t *testing.T) {
-	query := "SELECT * FROM MEASURE service_cpm IN sw_metrics TIME > '-30m' LIMIT 10"
+func TestPreviewAndExportUseTheLatestExecutionResult(t *testing.T) {
+	query := testMeasureQuery
 	model := NewModel(Config{})
 	querySession := &session.QuerySession{
 		ResourceName: "service_cpm",
 		ExecutionResult: session.ExecutionResult{
 			Query:   query,
-			Summary: "earlier full execution",
+			Summary: "execution complete",
 			Columns: []string{"value"},
-			Preview: [][]string{{"old"}},
+			Preview: [][]string{{"executed"}},
 			Rows:    1,
 		},
 	}
 	querySession.AddCandidate(session.BydbqlCandidate{
 		Query:      query,
 		Validation: session.ValidationReport{Valid: true},
-		Probe: &session.ProbeSummary{
-			Query:   query,
-			Columns: []string{"value"},
-			Preview: [][]string{{"refreshed"}},
-			Rows:    1,
-		},
 	})
 	model.querySession = querySession
-	model.preferCandidateProbe = true
 
 	preview, ok := model.currentPreviewData()
-	if !ok || len(preview.preview) != 1 || preview.preview[0][0] != "refreshed" {
-		t.Fatalf("expected refreshed probe, got %+v", preview)
+	if !ok || len(preview.preview) != 1 || preview.preview[0][0] != "executed" {
+		t.Fatalf("expected the execution result, got %+v", preview)
 	}
 	exportResult, ok := model.exportResult()
-	if !ok || len(exportResult.Preview) != 1 || exportResult.Preview[0][0] != "refreshed" {
-		t.Fatalf("expected export of visible refreshed probe, got %+v", exportResult)
+	if !ok || len(exportResult.Preview) != 1 || exportResult.Preview[0][0] != "executed" {
+		t.Fatalf("expected export of the execution result, got %+v", exportResult)
+	}
+}
+
+func TestPreviewIsEmptyBeforeAnyExecution(t *testing.T) {
+	model := NewModel(Config{})
+	querySession := &session.QuerySession{ResourceName: "service_cpm"}
+	querySession.AddCandidate(session.BydbqlCandidate{
+		Query:      testMeasureQuery,
+		Validation: session.ValidationReport{Valid: true},
+	})
+	model.querySession = querySession
+	if _, ok := model.currentPreviewData(); ok {
+		t.Fatal("a compiled candidate must not surface preview rows before execution")
+	}
+	if _, ok := model.exportResult(); ok {
+		t.Fatal("a compiled candidate must not be exportable before execution")
 	}
 }
 
@@ -172,7 +182,7 @@ func TestWorkspaceExplainsCandidateActionsAndProgress(t *testing.T) {
 	}
 
 	view := model.View()
-	for _, expected := range []string{"Ctrl+G let Agent fix", "Ctrl+Y refresh preview", "Ctrl+E full execute", "Steps", "catalog", "describe schema"} {
+	for _, expected := range []string{"Ctrl+G let Agent fix", "Steps", "catalog", "describe schema"} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("expected %q in workspace:\n%s", expected, view)
 		}
@@ -219,24 +229,27 @@ func TestWorkspaceShowsColdStartGuidanceAfterCatalogLoads(t *testing.T) {
 func TestDataPreviewScrollsHorizontallyWhenFocused(t *testing.T) {
 	model := NewModel(Config{})
 	model.resize(120, 42)
-	querySession := &session.QuerySession{}
+	querySession := &session.QuerySession{
+		ExecutionResult: session.ExecutionResult{
+			Query:   "SELECT * FROM TRACE segment IN sw_trace TIME > '-30m' LIMIT 10",
+			Summary: "execution complete",
+			Rows:    1,
+			Columns: []string{"spans", "traceId"},
+			Preview: [][]string{{"spans-begin-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-right-edge", "trace-1"}},
+		},
+	}
 	querySession.AddCandidate(session.BydbqlCandidate{
 		Query: "SELECT * FROM TRACE segment IN sw_trace TIME > '-30m' LIMIT 10",
 		Validation: session.ValidationReport{
 			Valid: true,
-		},
-		Probe: &session.ProbeSummary{
-			Rows:    1,
-			Columns: []string{"spans", "traceId"},
-			Preview: [][]string{{"spans-begin-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-right-edge", "trace-1"}},
 		},
 	})
 	model.querySession = querySession
 	model.syncQuerySession()
 	model.focus = focusExecution
 
-	if initialView := model.View(); strings.Contains(initialView, "right-edge") {
-		t.Fatalf("expected the right edge to be outside the initial preview viewport:\n%s", initialView)
+	if initialTable := model.visiblePreviewTable(); strings.Contains(initialTable, "right-edge") {
+		t.Fatalf("expected the right edge to be outside the initial table viewport:\n%s", initialTable)
 	}
 
 	updatedModel := tea.Model(model)
@@ -244,41 +257,50 @@ func TestDataPreviewScrollsHorizontallyWhenFocused(t *testing.T) {
 		updatedModel, _ = updatedModel.Update(tea.KeyMsg{Type: tea.KeyRight})
 	}
 	scrolledModel := updatedModel.(Model)
-	scrolledView := scrolledModel.View()
-	if !strings.Contains(scrolledView, "right-edge") {
-		t.Fatalf("expected horizontal scrolling to reveal the right edge:\n%s", scrolledView)
+	scrolledTable := scrolledModel.visiblePreviewTable()
+	if !strings.Contains(scrolledTable, "right-edge") {
+		t.Fatalf("expected horizontal scrolling to reveal the right edge:\n%s", scrolledTable)
 	}
-	if !strings.Contains(scrolledView, "│ > ") {
-		t.Fatalf("expected the selected-row marker to remain visible while scrolling:\n%s", scrolledView)
+	if !strings.Contains(scrolledModel.View(), "│ > ") {
+		t.Fatalf("expected the selected-row marker to remain visible while scrolling:\n%s", scrolledModel.View())
 	}
 }
 
-func TestCtrlFShowsDataPreviewWhenSchemaSearchIsOpen(t *testing.T) {
+// visiblePreviewTable returns just the horizontally scrolled table rows of the preview panel.
+func (m Model) visiblePreviewTable() string {
+	visibleLines := previewTableViewport(m.dataPreviewTableLines(), m.dataPreviewViewportWidth(), m.executionPreviewOffset)
+	return strings.Join(visibleLines, "\n")
+}
+
+func TestFocusingThePreviewOverridesAnOpenSchemaSearch(t *testing.T) {
 	model := NewModel(Config{})
+	model.resize(160, 42)
 	model.catalog.setCatalog(session.SchemaCatalog{Entries: []session.CatalogEntry{
 		{Group: "sw_trace", Type: session.ResourceTypeTrace, Name: "segment"},
 	}})
 	model.message.SetValue("@segment")
 	model.updateSchemaSearch()
-	querySession := &session.QuerySession{}
+	querySession := &session.QuerySession{
+		ExecutionResult: session.ExecutionResult{
+			Query:   "SELECT * FROM TRACE segment IN sw_trace TIME > '-30m' LIMIT 10",
+			Summary: "execution complete",
+			Rows:    1,
+			Columns: []string{"traceId"},
+			Preview: [][]string{{"trace-1"}},
+		},
+	}
 	querySession.AddCandidate(session.BydbqlCandidate{
 		Query: "SELECT * FROM TRACE segment IN sw_trace TIME > '-30m' LIMIT 10",
 		Validation: session.ValidationReport{
 			Valid: true,
 		},
-		Probe: &session.ProbeSummary{
-			Rows:    1,
-			Columns: []string{"traceId"},
-			Preview: [][]string{{"trace-1"}},
-		},
 	})
 	model.querySession = querySession
 	model.syncQuerySession()
+	model.focus = focusExecution
 
-	updatedModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
-	typedModel := updatedModel.(Model)
-	if !strings.Contains(typedModel.View(), "Data Preview · focused") {
-		t.Fatalf("expected Ctrl+F to show the focused Data Preview:\n%s", typedModel.View())
+	if view := model.View(); !strings.Contains(view, "Data Preview") || !strings.Contains(view, "Focus: data preview") {
+		t.Fatalf("expected the focused Data Preview to win over the schema search:\n%s", view)
 	}
 }
 
@@ -286,6 +308,13 @@ func TestWorkspaceFitsTerminalWithProviderVisible(t *testing.T) {
 	const terminalHeight = 42
 	model := NewModel(Config{Provider: "claude"})
 	model.resize(160, terminalHeight)
+	// The evidence column only appears once a turn has produced schema or result rows.
+	model.querySession = &session.QuerySession{ExecutionResult: session.ExecutionResult{
+		Query:   testMeasureQuery,
+		Columns: []string{"service_id"},
+		Preview: [][]string{{"payment"}},
+		Rows:    1,
+	}}
 
 	assertWorkspaceFitsTerminal(
 		t,
@@ -295,9 +324,9 @@ func TestWorkspaceFitsTerminalWithProviderVisible(t *testing.T) {
 		"Conversation",
 		"Candidate QL",
 		"Data Preview",
-		"Message · Enter to send",
+		"Message",
 		"Status: ready",
-		"Esc stop/quit",
+		"Esc quit",
 	)
 }
 
@@ -305,7 +334,7 @@ func TestFooterWrapsBetweenShortcutLabels(t *testing.T) {
 	model := NewModel(Config{})
 	model.resize(160, 42)
 	view := model.View()
-	for _, shortcut := range []string{"Tab focus", "Esc stop/quit"} {
+	for _, shortcut := range []string{"Tab focus", "Alt+1-4 panel", "? help", "Esc quit"} {
 		if !strings.Contains(view, shortcut) {
 			t.Fatalf("expected complete shortcut label %q in workspace:\n%s", shortcut, view)
 		}
@@ -332,36 +361,91 @@ func TestWorkspaceFitsTerminalWithSelectedChatDetail(t *testing.T) {
 	model.querySession = querySession
 	model.chatCursor = len(querySession.ChatMessages) - 1
 
-	assertWorkspaceFitsTerminal(t, model.View(), terminalHeight, "provider claude", "Detail · pgup/pgdn scroll", "4/20 messages")
+	// The visible window must contain the cursor, which sits on the last message.
+	assertWorkspaceFitsTerminal(t, model.View(), terminalHeight, "provider claude", "Detail · pgup/pgdn scroll", "20/20 messages")
 }
 
-func TestWorkspaceFitsTerminalWithExecutionApproval(t *testing.T) {
+func TestPanelRegionsStayInsideTheRenderedViewWhenCompressed(t *testing.T) {
+	for _, size := range []struct {
+		width  int
+		height int
+	}{
+		{width: 160, height: 42},
+		{width: 120, height: 24},
+		{width: 90, height: 20},
+	} {
+		model := NewModel(Config{Provider: "claude"})
+		model.resize(size.width, size.height)
+		model.refreshPanelRegions()
+		view, regions := model.renderView()
+		viewHeight := lipgloss.Height(view)
+		if len(regions) == 0 {
+			t.Fatalf("%dx%d produced no clickable regions", size.width, size.height)
+		}
+		seen := make(map[int]bool, len(regions))
+		for _, region := range regions {
+			if region.top < 0 || region.bottom < region.top {
+				t.Fatalf("%dx%d produced an inverted region: %+v", size.width, size.height, region)
+			}
+			if region.bottom >= viewHeight {
+				t.Fatalf("%dx%d region %+v falls outside the %d-row view:\n%s",
+					size.width, size.height, region, viewHeight, view)
+			}
+			seen[region.focus] = true
+		}
+		for _, requiredFocus := range []int{focusChat, focusQuery, focusMessage} {
+			if !seen[requiredFocus] {
+				t.Fatalf("%dx%d left focus %d unclickable: %+v", size.width, size.height, requiredFocus, regions)
+			}
+		}
+	}
+}
+
+func TestPanelRegionsDoNotOverlap(t *testing.T) {
+	model := NewModel(Config{Provider: "claude"})
+	model.resize(160, 42)
+	model.refreshPanelRegions()
+	for firstIndex, first := range model.panelRegions {
+		for _, second := range model.panelRegions[firstIndex+1:] {
+			rowsOverlap := first.top <= second.bottom && second.top <= first.bottom
+			columnsOverlap := first.left <= second.right && second.left <= first.right
+			if rowsOverlap && columnsOverlap {
+				t.Fatalf("regions overlap so a click is ambiguous: %+v and %+v", first, second)
+			}
+		}
+	}
+}
+
+func TestWorkspaceFitsTerminalWhileRunning(t *testing.T) {
 	const terminalHeight = 42
 	model := NewModel(Config{Provider: "claude"})
 	model.resize(180, terminalHeight)
 	model.busy = true
-	model.status = "execution approval required"
-	model.pendingApproval = &approval.Request{
-		Query:       "SELECT * FROM MEASURE endpoint_traffic_minute IN sw_metadata TIME > '-30m' LIMIT 10",
-		Resource:    "MEASURE/endpoint_traffic_minute",
-		Groups:      []string{"sw_metadata"},
-		TimeRange:   "TIME > '-30m'",
-		Limit:       "10",
-		Timeout:     3 * time.Second,
-		PreviewRows: 50,
-		Source:      approval.SourceManual,
-	}
+	model.status = "executing full query"
 
 	assertWorkspaceFitsTerminal(
 		t,
 		model.View(),
 		terminalHeight,
 		"provider claude",
-		"Execution approval required",
-		"execution waiting for approval",
-		"y execute once · n reject · e copy to editor and revise",
+		"Stop",
+		"executing full query",
 		"Esc",
-		"stop/quit",
+	)
+}
+
+func TestWorkspaceFitsTerminalWithQuitConfirmation(t *testing.T) {
+	const terminalHeight = 42
+	model := NewModel(Config{Provider: "claude"})
+	model.resize(180, terminalHeight)
+	model.quitConfirmPending = true
+
+	assertWorkspaceFitsTerminal(
+		t,
+		model.View(),
+		terminalHeight,
+		"provider claude",
+		"Quit bydbctl agent?",
 	)
 }
 
@@ -389,9 +473,9 @@ func TestWorkspaceFitsTerminalWithSchemaSearchOpen(t *testing.T) {
 		"Conversation",
 		"Candidate QL",
 		"@ search · local catalog",
-		"Message · Enter to send",
+		"Message",
 		"Status: ready",
-		"Esc stop/quit",
+		"Esc quit",
 	)
 }
 
@@ -424,7 +508,7 @@ func TestSchemaSearchKeepsAllMatchesAndScrollsVisibleResults(t *testing.T) {
 	}
 
 	view := model.renderSchemaSearch(100, 3)
-	for _, expected := range []string{"match_05", "match_06", "match_07", "results 5-7/8"} {
+	for _, expected := range []string{"match_05", "match_06", "match_07", "5-7/8"} {
 		if !strings.Contains(view, expected) {
 			t.Fatalf("expected %q in scrolled schema search:\n%s", expected, view)
 		}
@@ -564,9 +648,9 @@ func assertWorkspaceFitsTerminal(t *testing.T, view string, terminalHeight int, 
 	}
 }
 
-func TestWorkspaceStacksEvidenceBelowConversationOnNarrowTerminals(t *testing.T) {
+func TestNarrowWorkspaceDrillsIntoTheEvidencePanelInsteadOfStackingIt(t *testing.T) {
 	model := NewModel(Config{})
-	model.resize(80, 42)
+	model.resize(80, 30)
 	model.querySession = &session.QuerySession{ExecutionResult: session.ExecutionResult{
 		Rows:    1,
 		Columns: []string{"service"},
@@ -574,14 +658,106 @@ func TestWorkspaceStacksEvidenceBelowConversationOnNarrowTerminals(t *testing.T)
 		Summary: "query complete",
 	}}
 
-	view := model.View()
-	conversationAt := strings.Index(view, "Conversation")
-	previewAt := strings.Index(view, "Data Preview")
-	if conversationAt < 0 || previewAt < 0 {
-		t.Fatalf("expected conversation and preview in narrow workspace:\n%s", view)
+	conversationView := model.View()
+	if !strings.Contains(conversationView, "Conversation") {
+		t.Fatalf("expected the conversation to own a narrow terminal by default:\n%s", conversationView)
 	}
-	if conversationAt >= previewAt {
-		t.Fatalf("expected the evidence panel after the conversation on narrow terminals:\n%s", view)
+	if strings.Contains(conversationView, "Data Preview") {
+		t.Fatalf("a narrow terminal must not stack both columns into one screen:\n%s", conversationView)
+	}
+	if !strings.Contains(conversationView, "open results") {
+		t.Fatalf("expected a hint pointing at the off-screen results:\n%s", conversationView)
+	}
+
+	model.focus = focusExecution
+	previewView := model.View()
+	if !strings.Contains(previewView, "Data Preview") {
+		t.Fatalf("focusing the preview must show it full screen:\n%s", previewView)
+	}
+	if !strings.Contains(previewView, "back to the conversation") {
+		t.Fatalf("expected a way back from the full-screen preview:\n%s", previewView)
+	}
+}
+
+func TestNarrowWorkspaceFitsTheTerminalInBothDrillDownStates(t *testing.T) {
+	for _, size := range []struct{ width, height int }{{80, 30}, {70, 24}, {99, 20}, {60, 18}} {
+		for _, focusTarget := range []int{focusMessage, focusExecution} {
+			model := NewModel(Config{})
+			model.resize(size.width, size.height)
+			model.querySession = &session.QuerySession{ExecutionResult: session.ExecutionResult{
+				Rows:    2,
+				Columns: []string{"timestamp", "service"},
+				Preview: [][]string{{"2026-08-16T12:00:00Z", "checkout"}, {"2026-08-16T12:01:00Z", "cart"}},
+				Summary: "query complete",
+			}}
+			model.focus = focusTarget
+			view := model.View()
+			if viewHeight := lipgloss.Height(view); viewHeight > size.height {
+				t.Fatalf("%dx%d focus %d rendered %d rows:\n%s", size.width, size.height, focusTarget, viewHeight, view)
+			}
+			for _, line := range strings.Split(view, "\n") {
+				if lineWidth := lipgloss.Width(line); lineWidth > size.width {
+					t.Fatalf("%dx%d focus %d rendered a %d-column line:\n%s", size.width, size.height, focusTarget, lineWidth, view)
+				}
+			}
+		}
+	}
+}
+
+func TestWorkspaceFitsEveryTerminalSizeAndState(t *testing.T) {
+	for _, size := range []struct{ width, height int }{{200, 50}, {160, 44}, {120, 36}, {100, 30}, {96, 30}, {80, 24}, {60, 18}} {
+		for _, state := range []string{"empty", "loaded", "busy", "help"} {
+			model := NewModel(Config{Provider: "claude"})
+			model.resize(size.width, size.height)
+			if state != "empty" {
+				querySession := &session.QuerySession{ResourceName: "service_cpm", ExecutionResult: session.ExecutionResult{
+					Rows:    9,
+					Columns: []string{"timestamp", "service", "error_rate"},
+					Preview: [][]string{{"2026-08-16T12:00:00Z", "checkout", "0.02"}},
+					Summary: "query complete",
+				}}
+				querySession.AddCandidate(session.BydbqlCandidate{
+					Query:      "SELECT error_rate FROM MEASURE service_cpm IN sw_metrics TIME > '-30m' LIMIT 10",
+					Validation: session.ValidationReport{Valid: true},
+				})
+				for messageIndex := 0; messageIndex < 12; messageIndex++ {
+					querySession.AddChatMessage(session.ChatMessage{Role: session.ChatRoleAssistant, Content: "candidate discussion"})
+				}
+				model.querySession = querySession
+				model.syncQuerySession()
+			}
+			switch state {
+			case "busy":
+				model.busy = true
+				model.status = "asking agent"
+			case "help":
+				model.helpVisible = true
+			}
+			view := model.View()
+			if viewHeight := lipgloss.Height(view); viewHeight > size.height {
+				t.Fatalf("%dx%d %s rendered %d rows:\n%s", size.width, size.height, state, viewHeight, view)
+			}
+			for _, line := range strings.Split(view, "\n") {
+				if lineWidth := lipgloss.Width(line); lineWidth > size.width {
+					t.Fatalf("%dx%d %s rendered a %d-column line:\n%s", size.width, size.height, state, lineWidth, view)
+				}
+			}
+		}
+	}
+}
+
+func TestTerminalBelowTheMinimumSizeExplainsItselfInsteadOfBreaking(t *testing.T) {
+	model := NewModel(Config{})
+	model.resize(48, 12)
+	view := model.View()
+	if !strings.Contains(view, "Terminal too small") {
+		t.Fatalf("expected a minimum-size message:\n%s", view)
+	}
+	if !strings.Contains(view, "Need 60×18") {
+		t.Fatalf("expected the required size in the message:\n%s", view)
+	}
+	if viewHeight := lipgloss.Height(view); viewHeight > 12 {
+		t.Fatalf("the minimum-size screen rendered %d rows:\n%s", viewHeight, view)
 	}
 }
 

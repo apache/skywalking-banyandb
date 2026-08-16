@@ -29,3 +29,10 @@
 - SELECT plans use an exact `sortable_indexes.rule_name`, or `TIME`
 - If no exact sortable rule supports the request, omit ORDER BY or ask one clarification; never substitute a close field
 - TOPN queries: `ORDER BY DESC` or `ORDER BY ASC` only (no field name)
+
+## TRACE scan bounds
+
+- A TRACE plan is only executable with a scan entry point: `order_by` on a `sortable_indexes.rule_name` (or `TIME`), or an `=`/`IN` filter on the trace ID tag
+- `describe_schema` reports the trace ID tag as `trace_id_tag`, and `plan_constraints.trace_scan_requirement` restates the rule
+- Without either, BanyanDB cannot plan the scan and the query fails at execution, so `propose_query_plan` rejects it first
+- "recent traces" or "slow traces" is `ORDER BY <rule> DESC`; "this trace" is `WHERE <trace_id_tag> = '<id>'`

@@ -99,7 +99,6 @@ func (socketServer *SocketServer) MCPServerConfig(executable string) agent.Contr
 			ToolDescribeSchema,
 			ToolProposeQueryPlan,
 			ToolValidateBydbQL,
-			ToolProbeBydbQL,
 			ToolExecuteBydbQL,
 		},
 	}
@@ -257,17 +256,9 @@ func toolDefinitions() []map[string]any {
 			},
 		},
 		{
-			"name":        ToolProbeBydbQL,
-			"description": "Run a bounded read-only probe for the exact query returned by the latest successful propose_query_plan.",
-			"inputSchema": map[string]any{
-				"type":       "object",
-				"required":   []string{"query"},
-				"properties": map[string]any{"query": map[string]string{"type": "string"}},
-			},
-		},
-		{
-			"name":        ToolExecuteBydbQL,
-			"description": "Request one-time user approval and execute exactly one validated BYDBQL statement.",
+			"name": ToolExecuteBydbQL,
+			"description": "Execute exactly one validated read-only BYDBQL statement returned by the latest successful propose_query_plan. " +
+				"Call this only when the user asked for data.",
 			"inputSchema": map[string]any{
 				"type":       "object",
 				"required":   []string{"query"},

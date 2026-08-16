@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 )
 
 func TestNewWritesSessionLog(t *testing.T) {
@@ -62,5 +63,44 @@ func TestNewWritesSessionLog(t *testing.T) {
 	}
 	if fileInfo.Mode().Perm() != 0o600 {
 		t.Fatalf("unexpected session log permissions: %o", fileInfo.Mode().Perm())
+	}
+}
+
+// A schema that appeared and vanished has to be diagnosable from the log, so the snapshot, the
+// conversation entries, and the panel state that decides what renders are all recorded.
+func TestWritesSchemaAndViewDiagnostics(t *testing.T) {
+	tempDir := t.TempDir()
+	sessionLog, createErr := New(tempDir)
+	if createErr != nil {
+		t.Fatalf("failed to create session log: %v", createErr)
+	}
+	defer func() {
+		_ = sessionLog.Close()
+	}()
+	sessionLog.WriteSchemaSnapshot("schema_answer", session.SchemaSnapshot{
+		Loaded: true, Type: session.ResourceTypeTrace, Name: "segment", Groups: []string{"sw_trace"},
+		Columns: []session.SchemaColumn{
+			{Name: "trace_id", Kind: session.SchemaColumnTag, Type: session.SchemaValueTypeString, Indexed: true},
+		},
+		EntityTags: []string{"trace_id"},
+	})
+	sessionLog.WriteChatMessages([]session.ChatMessage{
+		{Role: session.ChatRoleAssistant, Kind: session.ChatMessageKindSchema, Content: "schema TRACE segment in sw_trace", Detail: "## TRACE segment"},
+	})
+	sessionLog.WriteViewState("schema answer applied · evidence=schema-pinned")
+
+	logBytes, readErr := os.ReadFile(sessionLog.Path())
+	if readErr != nil {
+		t.Fatalf("failed to read log file: %v", readErr)
+	}
+	logContent := string(logBytes)
+	for _, expected := range []string{
+		"schema_answer", "name=segment", "loaded=true", "trace_id:tag/string",
+		"chat", "kind=schema", "detail_bytes=16",
+		"view", "evidence=schema-pinned",
+	} {
+		if !strings.Contains(logContent, expected) {
+			t.Fatalf("expected log to contain %q:\n%s", expected, logContent)
+		}
 	}
 }

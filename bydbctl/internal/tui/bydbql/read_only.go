@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package approval
+package bydbql
 
 import (
 	"strings"
@@ -23,13 +23,17 @@ import (
 	corebydbql "github.com/apache/skywalking-banyandb/pkg/bydbql"
 )
 
-// IsReadOnlyBYDBQL reports whether a statement is a read-only SELECT or SHOW TOP query.
-func IsReadOnlyBYDBQL(query string) bool {
+var mutatingKeywords = []string{
+	" CREATE ", " UPDATE ", " DELETE ", " DROP ", " APPLY ", " INSERT ", " ALTER ",
+}
+
+// IsReadOnly reports whether a statement is a read-only SELECT or SHOW TOP query.
+func IsReadOnly(query string) bool {
 	trimmedQuery := strings.TrimSpace(query)
 	if trimmedQuery == "" {
 		return false
 	}
-	if containsMutatingBYDBQLKeyword(trimmedQuery) {
+	if containsMutatingKeyword(trimmedQuery) {
 		return false
 	}
 	grammar, parseErr := corebydbql.ParseQuery(trimmedQuery)
@@ -39,11 +43,8 @@ func IsReadOnlyBYDBQL(query string) bool {
 	return grammar.Select != nil || grammar.TopN != nil
 }
 
-func containsMutatingBYDBQLKeyword(query string) bool {
+func containsMutatingKeyword(query string) bool {
 	normalizedQuery := " " + strings.ToUpper(strings.Join(strings.Fields(query), " ")) + " "
-	mutatingKeywords := []string{
-		" CREATE ", " UPDATE ", " DELETE ", " DROP ", " APPLY ", " INSERT ", " ALTER ",
-	}
 	for _, keyword := range mutatingKeywords {
 		if strings.Contains(normalizedQuery, keyword) {
 			return true

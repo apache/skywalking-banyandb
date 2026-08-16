@@ -30,7 +30,6 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
-	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/approval"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/bridge"
 	tuibysql "github.com/apache/skywalking-banyandb/bydbctl/internal/tui/bydbql"
 	tuicatalog "github.com/apache/skywalking-banyandb/bydbctl/internal/tui/catalog"
@@ -44,7 +43,6 @@ const (
 	defaultTimeStart    = "-30m"
 	defaultLimit        = 10
 	defaultTopN         = 10
-	maxManualProbeRows  = 50
 )
 
 var fragmentedTimeRangePattern = regexp.MustCompile(`'-\s*(\d+)\s*m\s*'`)
@@ -97,7 +95,6 @@ type Runner struct {
 	agentGateway agent.Gateway
 	validator    Validator
 	executor     tools.Executor
-	approvals    *approval.Controller
 	toolBridge   *bridge.ToolBridge
 	now          func() time.Time
 }
@@ -107,7 +104,6 @@ type Config struct {
 	AgentGateway agent.Gateway
 	Validator    Validator
 	Executor     tools.Executor
-	Approvals    *approval.Controller
 	ToolBridge   *bridge.ToolBridge
 }
 
@@ -121,47 +117,13 @@ func NewRunner(config Config) *Runner {
 	if executor == nil {
 		executor = tools.NewReadOnlyExecutor()
 	}
-	approvals := config.Approvals
-	if approvals == nil {
-		approvals = approval.NewController()
-	}
 	return &Runner{
 		agentGateway: config.AgentGateway,
 		validator:    validator,
 		executor:     executor,
-		approvals:    approvals,
 		toolBridge:   config.ToolBridge,
 		now:          time.Now,
 	}
-}
-
-// SetExecutionPolicy stores the execution policy on the runner approval controller and tool bridge.
-func (runner *Runner) SetExecutionPolicy(policy approval.ExecutionPolicy) {
-	if runner == nil {
-		return
-	}
-	normalizedPolicy := approval.NormalizeExecutionPolicy(string(policy))
-	if runner.approvals != nil {
-		runner.approvals.SetPolicy(normalizedPolicy)
-	}
-	if runner.toolBridge != nil {
-		runner.toolBridge.SetExecutionPolicy(normalizedPolicy)
-	}
-}
-
-// ApprovalRequests returns execution approvals that require a user decision.
-func (runner *Runner) ApprovalRequests() <-chan approval.Request {
-	return runner.approvals.Requests()
-}
-
-// ResolveApproval records a one-time user decision for an execution request.
-func (runner *Runner) ResolveApproval(requestID string, approved bool) error {
-	return runner.approvals.Resolve(requestID, approval.Decision{Approved: approved})
-}
-
-// CancelApprovals rejects all pending execution requests.
-func (runner *Runner) CancelApprovals() {
-	runner.approvals.Cancel()
 }
 
 // TurnUpdate is one real-time agent or controlled-tool event, or the completed turn result.
@@ -174,15 +136,14 @@ type TurnUpdate struct {
 
 // StartOptions contains user-provided session slots.
 type StartOptions struct {
-	ResourceType    session.ResourceType
-	TimeRange       session.TimeRange
-	Goal            string
-	ResourceName    string
-	Groups          []string
-	ExecutionPolicy approval.ExecutionPolicy
-	NameProvided    bool
-	GroupsProvided  bool
-	TypeProvided    bool
+	ResourceType   session.ResourceType
+	TimeRange      session.TimeRange
+	Goal           string
+	ResourceName   string
+	Groups         []string
+	NameProvided   bool
+	GroupsProvided bool
+	TypeProvided   bool
 }
 
 // StartSession creates a session and discovers a schema summary.
@@ -206,17 +167,16 @@ func (runner *Runner) StartSession(ctx context.Context, options StartOptions) (*
 	schemaSnapshot.AvailableGroups = append([]string(nil), catalog.Groups...)
 	schemaSnapshot.Catalog = append([]session.CatalogEntry(nil), catalog.Entries...)
 	querySession := &session.QuerySession{
-		ID:              uuid.NewString(),
-		Phase:           session.PhaseIntent,
-		UserGoal:        resolved.Goal,
-		ResourceType:    resolved.ResourceType,
-		ResourceName:    resolved.ResourceName,
-		Groups:          append([]string(nil), resolved.Groups...),
-		TimeRange:       resolved.TimeRange,
-		SchemaSnapshot:  schemaSnapshot,
-		SlotsPinned:     resolved.SlotsPinned,
-		AutoMatched:     resolved.AutoMatched,
-		ExecutionPolicy: approval.NormalizeExecutionPolicy(string(options.ExecutionPolicy)),
+		ID:             uuid.NewString(),
+		Phase:          session.PhaseIntent,
+		UserGoal:       resolved.Goal,
+		ResourceType:   resolved.ResourceType,
+		ResourceName:   resolved.ResourceName,
+		Groups:         append([]string(nil), resolved.Groups...),
+		TimeRange:      resolved.TimeRange,
+		SchemaSnapshot: schemaSnapshot,
+		SlotsPinned:    resolved.SlotsPinned,
+		AutoMatched:    resolved.AutoMatched,
 	}
 	querySession.ActivateSchema(schemaSnapshot)
 	querySession.AddTranscript("workflow", "created BYDBQL agent session", runner.now())
@@ -281,12 +241,11 @@ func (runner *Runner) SyncSession(ctx context.Context, querySession *session.Que
 
 func newAutonomousSession(options StartOptions, catalog session.SchemaCatalog, now time.Time) *session.QuerySession {
 	querySession := &session.QuerySession{
-		ID:              uuid.NewString(),
-		Phase:           session.PhaseIntent,
-		UserGoal:        strings.TrimSpace(options.Goal),
-		TimeRange:       applyTimeDefaults(options.TimeRange),
-		AutoMatched:     false,
-		ExecutionPolicy: approval.NormalizeExecutionPolicy(string(options.ExecutionPolicy)),
+		ID:          uuid.NewString(),
+		Phase:       session.PhaseIntent,
+		UserGoal:    strings.TrimSpace(options.Goal),
+		TimeRange:   applyTimeDefaults(options.TimeRange),
+		AutoMatched: false,
 		SchemaSnapshot: session.SchemaSnapshot{
 			UpdatedAt:       catalog.UpdatedAt,
 			AvailableGroups: append([]string(nil), catalog.Groups...),
@@ -369,9 +328,6 @@ func (runner *Runner) StartAgentTurn(ctx context.Context, querySession *session.
 	if runner.agentGateway == nil {
 		return nil, errors.New("agent gateway is not configured")
 	}
-	if runner.toolBridge != nil {
-		runner.toolBridge.SetExecutionPolicy(querySession.ExecutionPolicy)
-	}
 	if bootstrapErr := runner.refreshDiscoveryForTurn(ctx, querySession, strings.TrimSpace(turnHint)); bootstrapErr != nil {
 		querySession.AddTranscript("workflow", "schema bootstrap: "+bootstrapErr.Error(), runner.now())
 	}
@@ -441,9 +397,8 @@ func (runner *Runner) StartAgentTurn(ctx context.Context, querySession *session.
 	return updates, nil
 }
 
-// StopAgentTurn cancels approvals and asks the provider to interrupt the active turn.
+// StopAgentTurn asks the provider to interrupt the active turn and cancels in-flight queries.
 func (runner *Runner) StopAgentTurn(ctx context.Context, querySession *session.QuerySession) error {
-	runner.CancelApprovals()
 	if runner.toolBridge != nil {
 		runner.toolBridge.Cancel()
 	}
@@ -645,7 +600,6 @@ func (runner *Runner) syncToolBridgeSession(querySession *session.QuerySession) 
 	querySession.PlannedQueries = append([]session.PlannedQuery(nil), bridgeSession.PlannedQueries...)
 	querySession.ActivePlanStep = bridgeSession.ActivePlanStep
 	querySession.ExecutionResult = bridgeSession.ExecutionResult
-	querySession.SetPendingProbe(bridgeSession.PendingProbe)
 }
 
 func drainBridgeEvents(
@@ -713,7 +667,6 @@ func (runner *Runner) completeAgentTurn(ctx context.Context, querySession *sessi
 		Source:      session.CandidateSourceAgent,
 		CreatedAt:   runner.now(),
 		Validation:  validation,
-		Probe:       querySession.TakePendingProbe(),
 	})
 	querySession.AddConversationTurn(session.ConversationTurn{
 		Hint:      turnHint,
@@ -741,6 +694,10 @@ func (runner *Runner) completeAgentTurn(ctx context.Context, querySession *sessi
 	return nil
 }
 
+// recordConversation stores a turn that answered in words instead of proposing a query.
+//
+// The message keeps its original line breaks so the conversation panel can format the body, and it
+// records whether the turn is finished or waiting on the user.
 func (runner *Runner) recordConversation(querySession *session.QuerySession, turnHint, response string, phase session.Phase) {
 	displayResponse := NormalizeAgentDisplayText(response)
 	querySession.Phase = phase
@@ -751,10 +708,20 @@ func (runner *Runner) recordConversation(querySession *session.QuerySession, tur
 	})
 	querySession.AddChatMessage(session.ChatMessage{
 		Role:      session.ChatRoleAssistant,
+		Kind:      chatMessageKindForPhase(phase),
 		Content:   displayResponse,
+		Detail:    strings.TrimSpace(response),
 		CreatedAt: runner.now(),
 	})
 	querySession.AddTranscript("agent", displayResponse, runner.now())
+}
+
+// chatMessageKindForPhase reports what a candidate-free turn is waiting on.
+func chatMessageKindForPhase(phase session.Phase) session.ChatMessageKind {
+	if phase == session.PhaseClarifying {
+		return session.ChatMessageKindClarification
+	}
+	return session.ChatMessageKindAnswer
 }
 
 // ValidateManualQuery validates an edited BYDBQL query and records it as a manual candidate.
@@ -785,7 +752,7 @@ func (runner *Runner) ValidateManualQuery(ctx context.Context, querySession *ses
 	return nil
 }
 
-// ExecuteCurrent asks for approval and then runs the exact current BYDBQL candidate once.
+// ExecuteCurrent runs the exact current BYDBQL candidate once.
 func (runner *Runner) ExecuteCurrent(ctx context.Context, querySession *session.QuerySession) error {
 	if querySession == nil {
 		return errors.New("query session is required")
@@ -821,26 +788,16 @@ func (runner *Runner) ExecuteCurrent(ctx context.Context, querySession *session.
 		}
 		querySession.ActivateSchema(schemaSnapshot)
 	}
-	decision, approvalErr := runner.approvals.Request(ctx, runner.executionApproval(querySession, query, approval.SourceManual))
-	if approvalErr != nil {
-		querySession.Phase = session.PhaseReady
-		return fmt.Errorf("execution approval did not complete: %w", approvalErr)
-	}
-	if !decision.Approved {
-		querySession.Phase = session.PhaseReady
-		querySession.AddTranscript("workflow", "execution rejected", runner.now())
-		return errors.New("execution rejected")
-	}
 	validation, validationErr := runner.validator.Validate(ctx, query, &querySession.SchemaSnapshot)
 	if validationErr != nil {
 		querySession.Phase = session.PhaseError
-		return fmt.Errorf("failed to revalidate approved query: %w", validationErr)
+		return fmt.Errorf("failed to revalidate query before execution: %w", validationErr)
 	}
 	currentCandidate.Validation = validation
 	querySession.Validation = validation
 	if !validation.Valid {
 		querySession.Phase = session.PhaseValidate
-		return fmt.Errorf("approved query failed revalidation: %s", validation.Message)
+		return fmt.Errorf("query failed revalidation: %s", validation.Message)
 	}
 	executionResult, executeErr := runner.executor.Execute(ctx, querySession, query)
 	if executeErr != nil {
@@ -865,121 +822,6 @@ func (runner *Runner) ExecuteCurrent(ctx context.Context, querySession *session.
 	}
 	querySession.Phase = session.PhaseExecuted
 	return nil
-}
-
-// ProbeCurrent refreshes the bounded preview for the exact current read-only candidate.
-func (runner *Runner) ProbeCurrent(ctx context.Context, querySession *session.QuerySession) error {
-	if querySession == nil {
-		return errors.New("query session is required")
-	}
-	currentCandidate := querySession.CurrentCandidate()
-	if currentCandidate == nil {
-		return errors.New("query candidate is required")
-	}
-	if !currentCandidate.Validation.Valid {
-		querySession.Phase = session.PhaseValidate
-		return errors.New("only a valid BYDBQL candidate can be previewed")
-	}
-	query := currentCandidate.Query
-	if !approval.IsReadOnlyBYDBQL(query) {
-		querySession.Phase = session.PhaseValidate
-		return errors.New("only a read-only BYDBQL candidate can be previewed")
-	}
-	plannedQuery := querySession.CurrentPlannedQuery()
-	if plannedQuery != nil && plannedQuery.Query != query {
-		querySession.Phase = session.PhaseValidate
-		return errors.New("only the current compiled workflow statement can be previewed")
-	}
-	if plannedQuery != nil && runner.executor != nil {
-		schemaSnapshot, schemaErr := runner.executor.DiscoverSchema(ctx, tools.SchemaRequest{
-			Type:   plannedQuery.ResourceType,
-			Name:   plannedQuery.Name,
-			Groups: plannedQuery.Groups,
-		})
-		if schemaErr != nil {
-			querySession.Phase = session.PhaseError
-			return fmt.Errorf("failed to refresh schema before preview: %w", schemaErr)
-		}
-		preserveDiscoveryContext(&schemaSnapshot, querySession.SchemaSnapshot)
-		schemaSnapshot = querySession.CacheSchema(schemaSnapshot)
-		if plannedQuery.SchemaFingerprint != "" && plannedQuery.SchemaFingerprint != schemaSnapshot.Fingerprint {
-			querySession.Phase = session.PhaseValidate
-			return errors.New("resource schema changed after plan compilation; regenerate the query plan")
-		}
-		querySession.ActivateSchema(schemaSnapshot)
-	}
-	previewRows := tools.Limits(runner.executor).PreviewRows
-	if previewRows <= 0 || previewRows > maxManualProbeRows {
-		previewRows = maxManualProbeRows
-	}
-	approvalRequest := runner.executionApproval(querySession, query, approval.SourceManualProbe)
-	approvalRequest.PreviewRows = previewRows
-	decision, approvalErr := runner.approvals.Request(ctx, approvalRequest)
-	if approvalErr != nil {
-		querySession.Phase = session.PhaseReady
-		return fmt.Errorf("preview approval did not complete: %w", approvalErr)
-	}
-	if !decision.Approved {
-		querySession.Phase = session.PhaseReady
-		querySession.AddTranscript("workflow", "preview rejected", runner.now())
-		return errors.New("preview rejected")
-	}
-	validation, validationErr := runner.validator.Validate(ctx, query, &querySession.SchemaSnapshot)
-	if validationErr != nil {
-		querySession.Phase = session.PhaseError
-		return fmt.Errorf("failed to revalidate preview query: %w", validationErr)
-	}
-	currentCandidate.Validation = validation
-	querySession.Validation = validation
-	if !validation.Valid {
-		querySession.Phase = session.PhaseValidate
-		return fmt.Errorf("approved query failed revalidation: %s", validation.Message)
-	}
-	executionResult, executeErr := runner.executor.Execute(ctx, querySession, query)
-	probe := probeSummaryFromExecution(query, executionResult, executeErr, previewRows)
-	currentCandidate.Probe = &probe
-	if executeErr != nil {
-		querySession.Phase = session.PhaseError
-		querySession.AddTranscript("workflow", "preview failed: "+probe.Error, runner.now())
-		return fmt.Errorf("failed to refresh preview: %w", executeErr)
-	}
-	if probe.Error != "" {
-		querySession.Phase = session.PhaseError
-		querySession.AddTranscript("workflow", "preview failed: "+probe.Error, runner.now())
-		return fmt.Errorf("failed to refresh preview: %s", probe.Error)
-	}
-	querySession.Phase = session.PhaseReady
-	querySession.AddTranscript("workflow", fmt.Sprintf("preview refreshed: %d rows", probe.Rows), runner.now())
-	return nil
-}
-
-func probeSummaryFromExecution(
-	query string,
-	executionResult session.ExecutionResult,
-	executeErr error,
-	previewRows int,
-) session.ProbeSummary {
-	probe := session.ProbeSummary{
-		Query:   query,
-		Rows:    executionResult.Rows,
-		Columns: append([]string(nil), executionResult.Columns...),
-	}
-	if previewRows < 0 {
-		previewRows = 0
-	}
-	previewLength := min(len(executionResult.Preview), previewRows)
-	for _, row := range executionResult.Preview[:previewLength] {
-		probe.Preview = append(probe.Preview, append([]string(nil), row...))
-	}
-	rawError := executionResult.Error
-	if executeErr != nil {
-		rawError = executeErr.Error()
-	}
-	probe.Error = agent.SanitizeExecutionErrorForProvider(rawError)
-	if probe.Error == "" && rawError != "" {
-		probe.Error = "BYDBQL preview failed"
-	}
-	return probe
 }
 
 func (runner *Runner) prepareNextPlanStep(
@@ -1016,7 +858,7 @@ func (runner *Runner) prepareNextPlanStep(
 		CreatedAt:   runner.now(),
 		Validation:  validation,
 	})
-	querySession.AddTranscript("workflow", "next workflow statement is ready for individual approval", runner.now())
+	querySession.AddTranscript("workflow", "next workflow statement is ready", runner.now())
 	if !validation.Valid {
 		querySession.Phase = session.PhaseValidate
 		return fmt.Errorf("next workflow statement failed validation: %s", validation.Message)
@@ -1032,12 +874,6 @@ func preserveDiscoveryContext(target *session.SchemaSnapshot, existing session.S
 	if len(target.Catalog) == 0 {
 		target.Catalog = append([]session.CatalogEntry(nil), existing.Catalog...)
 	}
-}
-
-func (runner *Runner) executionApproval(querySession *session.QuerySession, query string, source approval.Source) approval.Request {
-	resource := fmt.Sprintf("%s/%s", querySession.ResourceType, querySession.ResourceName)
-	limits := tools.Limits(runner.executor)
-	return approval.WithLimits(approval.NewRequest(query, resource, querySession.Groups, source), limits.Timeout, limits.PreviewRows)
 }
 
 func buildStructuredPlanExample(querySession *session.QuerySession, hints agent.QueryHints) map[string]any {
@@ -1114,9 +950,10 @@ func (runner *Runner) sendAgentTurn(ctx context.Context, agentSessionID string, 
 	case agent.TurnIntentRefine:
 		taskPrompt = "Refine the current typed query plan according to turn_hint while preserving correct constraints."
 	case agent.TurnIntentRepair:
-		taskPrompt = "Repair the current typed query plan using the structured validation, probe, or execution diagnostic."
+		taskPrompt = "Repair the current typed query plan using the structured validation or execution diagnostic."
 	case agent.TurnIntentAnswer:
-		taskPrompt = "Answer the current question using known session context; submit a plan only if the user asks for one."
+		taskPrompt = "Answer this schema or usage question in plain language. " +
+			"Use list_groups_schemas and describe_schema only. Do not call propose_query_plan or execute_bydbql, and do not read stored rows."
 	case agent.TurnIntentNextStep:
 		taskPrompt = "Continue the next independently compiled workflow step using prior bounded results as data."
 	default:
@@ -1196,11 +1033,15 @@ func finalProposeCandidateEvent(events []agent.Event) *agent.Event {
 	return nil
 }
 
+// agentOutputText collects the readable output of a turn that produced no candidate.
+//
+// The text keeps its line breaks: the conversation panel formats headings and lists from them, and
+// the caller normalizes a single-line copy for the message headline.
 func agentOutputText(events []agent.Event) string {
 	for eventIdx := len(events) - 1; eventIdx >= 0; eventIdx-- {
 		event := events[eventIdx]
 		if event.Origin != agent.EventOriginToolBridge && event.Kind == agent.EventKindFinalResponse && strings.TrimSpace(event.Message) != "" {
-			return NormalizeAgentDisplayText(event.Message)
+			return strings.TrimSpace(event.Message)
 		}
 	}
 	var messages []string
@@ -1209,7 +1050,7 @@ func agentOutputText(events []agent.Event) string {
 			continue
 		}
 		if strings.TrimSpace(event.Message) != "" {
-			messages = append(messages, NormalizeAgentDisplayText(event.Message))
+			messages = append(messages, strings.TrimSpace(event.Message))
 		}
 	}
 	return strings.Join(messages, "\n")

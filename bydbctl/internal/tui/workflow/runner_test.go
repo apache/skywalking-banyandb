@@ -20,13 +20,11 @@ package workflow
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent/fake"
-	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/approval"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/bridge"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tools"
@@ -163,105 +161,7 @@ func TestExecuteCurrentRejectsInvalidCandidateBeforeApproval(t *testing.T) {
 	}
 }
 
-func TestProbeCurrentRefreshesBoundedCandidatePreview(t *testing.T) {
-	query := "SELECT * FROM MEASURE service_latency IN production TIME > '-30m' LIMIT 10"
-	previewRows := make([][]string, tools.DefaultExecutionLimits().PreviewRows+1)
-	for rowIndex := range previewRows {
-		previewRows[rowIndex] = []string{fmt.Sprintf("row-%d", rowIndex)}
-	}
-	schemaSnapshot := session.SchemaSnapshot{
-		Type:   session.ResourceTypeMeasure,
-		Name:   "service_latency",
-		Groups: []string{"production"},
-	}
-	schemaSnapshot.EnsureFingerprint()
-	executor := &catalogExecutor{schema: schemaSnapshot, result: session.ExecutionResult{
-		Rows:    len(previewRows),
-		Columns: []string{"value"},
-		Preview: previewRows,
-	}}
-	runner := NewRunner(Config{
-		Executor:  executor,
-		Validator: &sequenceValidator{reports: []session.ValidationReport{{Valid: true}}},
-	})
-	runner.SetExecutionPolicy(approval.PolicyAutoProbe)
-	querySession := &session.QuerySession{
-		Phase:           session.PhaseReady,
-		ResourceType:    session.ResourceTypeMeasure,
-		ResourceName:    "service_latency",
-		Groups:          []string{"production"},
-		SchemaSnapshot:  schemaSnapshot,
-		ExecutionResult: session.ExecutionResult{Query: query, Summary: "old full execution"},
-		PlannedQueries: []session.PlannedQuery{{
-			ID:                "first",
-			Query:             query,
-			ResourceType:      session.ResourceTypeMeasure,
-			Name:              "service_latency",
-			Groups:            []string{"production"},
-			SchemaFingerprint: schemaSnapshot.Fingerprint,
-		}},
-	}
-	querySession.AddCandidate(session.BydbqlCandidate{
-		Query:      query,
-		Validation: session.ValidationReport{Valid: true},
-	})
-
-	if probeErr := runner.ProbeCurrent(context.Background(), querySession); probeErr != nil {
-		t.Fatalf("ProbeCurrent returned error: %v", probeErr)
-	}
-	currentCandidate := querySession.CurrentCandidate()
-	if currentCandidate == nil || currentCandidate.Probe == nil {
-		t.Fatalf("expected a refreshed candidate probe, got %+v", currentCandidate)
-	}
-	if len(currentCandidate.Probe.Preview) != maxManualProbeRows {
-		t.Fatalf("expected bounded preview, got %d rows", len(currentCandidate.Probe.Preview))
-	}
-	if querySession.ExecutionResult.Summary != "old full execution" {
-		t.Fatalf("preview refresh must preserve full execution evidence: %+v", querySession.ExecutionResult)
-	}
-	if executor.executeCount != 1 {
-		t.Fatalf("expected one preview execution, got %d", executor.executeCount)
-	}
-	if executor.discoverSchemaCount != 1 {
-		t.Fatalf("expected one schema refresh, got %d", executor.discoverSchemaCount)
-	}
-	if querySession.ActivePlanStep != 0 || querySession.PlannedQueries[0].Completed {
-		t.Fatalf("preview refresh must not advance the execution plan: %+v", querySession.PlannedQueries)
-	}
-}
-
-func TestProbeCurrentKeepsPreviewErrorForRetry(t *testing.T) {
-	executor := &catalogExecutor{executeErr: errors.New("gateway unavailable")}
-	runner := NewRunner(Config{
-		Executor:  executor,
-		Validator: &sequenceValidator{reports: []session.ValidationReport{{Valid: true}}},
-	})
-	runner.SetExecutionPolicy(approval.PolicyAutoProbe)
-	querySession := &session.QuerySession{
-		ResourceType: session.ResourceTypeMeasure,
-		ResourceName: "service_latency",
-		Groups:       []string{"production"},
-		SchemaSnapshot: session.SchemaSnapshot{
-			Type:   session.ResourceTypeMeasure,
-			Name:   "service_latency",
-			Groups: []string{"production"},
-		},
-	}
-	querySession.AddCandidate(session.BydbqlCandidate{
-		Query:      "SELECT * FROM MEASURE service_latency IN production TIME > '-30m' LIMIT 10",
-		Validation: session.ValidationReport{Valid: true},
-	})
-
-	if probeErr := runner.ProbeCurrent(context.Background(), querySession); probeErr == nil {
-		t.Fatal("expected preview execution error")
-	}
-	currentCandidate := querySession.CurrentCandidate()
-	if currentCandidate == nil || currentCandidate.Probe == nil || currentCandidate.Probe.Error != "gateway unavailable" {
-		t.Fatalf("expected retained preview error, got %+v", currentCandidate)
-	}
-}
-
-func TestExecuteCurrentRevalidatesAfterApproval(t *testing.T) {
+func TestExecuteCurrentRevalidatesBeforeRunning(t *testing.T) {
 	validator := &sequenceValidator{reports: []session.ValidationReport{
 		{Valid: true, Message: "initial validation", QueryType: "MEASURE"},
 		{Valid: false, Message: "schema changed", QueryType: "MEASURE"},
@@ -878,6 +778,42 @@ func TestStopAgentTurnPreservesSessionID(t *testing.T) {
 	}
 }
 
+func TestSchemaQuestionTurnForbidsDataToolsInTheProviderPrompt(t *testing.T) {
+	var requests []agent.TurnRequest
+	gateway := scriptedGateway{
+		events: []agent.Event{{
+			Kind:    agent.EventKindFinalResponse,
+			Message: "service_cpm exposes the service tag and a value field.",
+		}},
+		requests: &requests,
+	}
+	runner := NewRunner(Config{AgentGateway: gateway})
+	querySession, startErr := runner.StartSession(context.Background(), StartOptions{
+		ResourceType: session.ResourceTypeMeasure,
+		ResourceName: "service_cpm",
+		Groups:       []string{"sw_metrics"},
+	})
+	if startErr != nil {
+		t.Fatalf("StartSession returned error: %v", startErr)
+	}
+	querySession.AgentSessionID = "scripted"
+	if _, turnErr := runner.RunAgentTurn(context.Background(), querySession, "what fields does service_cpm have?"); turnErr != nil {
+		t.Fatalf("RunAgentTurn returned error: %v", turnErr)
+	}
+	if len(requests) == 0 {
+		t.Fatal("expected one agent request")
+	}
+	turnRequest := requests[0]
+	if turnRequest.Payload.Intent != agent.TurnIntentAnswer {
+		t.Fatalf("expected an answer turn, got intent %q", turnRequest.Payload.Intent)
+	}
+	for _, expected := range []string{"Do not call propose_query_plan or execute_bydbql", "do not read stored rows"} {
+		if !strings.Contains(turnRequest.Prompt, expected) {
+			t.Fatalf("expected %q in the answer prompt, got:\n%s", expected, turnRequest.Prompt)
+		}
+	}
+}
+
 func TestReviseWithAgentIncludesExecutionSummary(t *testing.T) {
 	var requests []agent.TurnRequest
 	gateway := scriptedGateway{
@@ -930,11 +866,8 @@ func TestReviseWithAgentIncludesExecutionSummary(t *testing.T) {
 	if payload.ExecutionSummary.ResourceType != "" || len(payload.ExecutionSummary.Columns) != 0 {
 		t.Fatalf("unexpected data-bearing execution summary: %+v", payload.ExecutionSummary)
 	}
-	if !payload.Constraints.UserMustEditOrConfirmBeforeExecute {
-		t.Fatal("ask_every_time should require execution confirmation")
-	}
-	if payload.Constraints.AgentMayExecuteWithoutPrompt {
-		t.Fatal("ask_every_time should not allow agent execution without a prompt")
+	if !payload.Constraints.ReadOnly || !payload.Constraints.ExecuteOnlyWhenUserAsksForData {
+		t.Fatalf("expected read-only, data-request-gated constraints: %+v", payload.Constraints)
 	}
 }
 
@@ -1044,22 +977,7 @@ func (gateway scriptedGateway) MaintainsConversationHistory() bool {
 
 func executeAfterApproval(t *testing.T, runner *Runner, querySession *session.QuerySession) error {
 	t.Helper()
-	executeErrCh := make(chan error, 1)
-	go func() {
-		executeErrCh <- runner.ExecuteCurrent(context.Background(), querySession)
-	}()
-	needsInteractiveApproval := true
-	if currentCandidate := querySession.CurrentCandidate(); currentCandidate != nil {
-		policy := approval.NormalizeExecutionPolicy(string(querySession.ExecutionPolicy))
-		needsInteractiveApproval = !policy.AutoApprove(approval.SourceManual, false, currentCandidate.Query)
-	}
-	if needsInteractiveApproval {
-		request := <-runner.ApprovalRequests()
-		if resolveErr := runner.ResolveApproval(request.ID, true); resolveErr != nil {
-			t.Fatalf("failed to approve execution: %v", resolveErr)
-		}
-	}
-	return <-executeErrCh
+	return runner.ExecuteCurrent(context.Background(), querySession)
 }
 
 type catalogExecutor struct {
@@ -1123,6 +1041,41 @@ func TestCompleteAgentTurnKeepsClarificationWithoutCandidate(t *testing.T) {
 	}
 	if len(querySession.ChatMessages) != 1 || querySession.ChatMessages[0].Role != session.ChatRoleAssistant {
 		t.Fatalf("expected assistant clarification message, got %+v", querySession.ChatMessages)
+	}
+	if querySession.ChatMessages[0].Kind != session.ChatMessageKindClarification {
+		t.Fatalf("a clarification must be marked as waiting on the user, got kind %q", querySession.ChatMessages[0].Kind)
+	}
+}
+
+func TestCompleteAgentTurnMarksAnAnsweredQuestionAndKeepsItsStructure(t *testing.T) {
+	runner := NewRunner(Config{Validator: &sequenceValidator{}})
+	querySession := &session.QuerySession{UserGoal: "describe the sw_trace schema"}
+	const answer = "sw_trace is a TRACE resource.\n\n## Tags\n\n- trace_id (string)\n- span_id (string)"
+
+	completeErr := runner.completeAgentTurn(context.Background(), querySession, "describe the sw_trace schema", []agent.Event{
+		{Kind: agent.EventKindFinalResponse, Message: answer},
+	})
+	if completeErr != nil {
+		t.Fatalf("completeAgentTurn returned error: %v", completeErr)
+	}
+	if querySession.Phase != session.PhaseConversation {
+		t.Fatalf("an answered question must land in the conversation phase, got %s", querySession.Phase)
+	}
+	if querySession.CurrentCandidate() != nil {
+		t.Fatalf("an answered question must not produce a candidate: %+v", querySession.CurrentCandidate())
+	}
+	if len(querySession.ChatMessages) != 1 {
+		t.Fatalf("expected one assistant message, got %+v", querySession.ChatMessages)
+	}
+	message := querySession.ChatMessages[0]
+	if message.Kind != session.ChatMessageKindAnswer {
+		t.Fatalf("an answer must be marked as carrying no query, got kind %q", message.Kind)
+	}
+	if !strings.Contains(message.Detail, "\n- trace_id (string)") {
+		t.Fatalf("the detail must keep its line structure for the conversation panel: %q", message.Detail)
+	}
+	if strings.Contains(message.Content, "\n") {
+		t.Fatalf("the headline content must stay on one line: %q", message.Content)
 	}
 }
 

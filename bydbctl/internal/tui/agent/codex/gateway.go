@@ -54,7 +54,6 @@ var controlledToolNames = []string{
 	"describe_schema",
 	"propose_query_plan",
 	"validate_bydbql",
-	"probe_bydbql",
 	"execute_bydbql",
 }
 

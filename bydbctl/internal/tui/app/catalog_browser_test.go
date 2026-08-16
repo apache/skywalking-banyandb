@@ -23,55 +23,42 @@ import (
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 )
 
-func TestCatalogBrowserFilterAndSelect(t *testing.T) {
+func TestCatalogBrowserTracksLoadedResources(t *testing.T) {
 	browser := newCatalogBrowser()
+	browser.setLoading()
+	if !browser.loading {
+		t.Fatal("expected the browser to report a load in progress")
+	}
 	browser.setCatalog(session.SchemaCatalog{
+		Groups: []string{"sw_metrics", "default"},
 		Entries: []session.CatalogEntry{
 			{Group: "sw_metrics", Type: session.ResourceTypeMeasure, Name: "service_endpoint_latency"},
 			{Group: "sw_metrics", Type: session.ResourceTypeMeasure, Name: "service_cpm"},
 			{Group: "default", Type: session.ResourceTypeStream, Name: "access_log"},
 		},
 	})
-	browser.setFilter("endpoint")
-	if browser.resourceCount() != 1 {
-		t.Fatalf("expected one filtered resource, got %d", browser.resourceCount())
+	if browser.loading {
+		t.Fatal("a loaded catalog must clear the loading flag")
 	}
-	browser.moveCursor(1, 8)
-	entry, ok := browser.selectedEntry()
-	if !ok || entry.Name != "service_endpoint_latency" {
-		t.Fatalf("unexpected selected entry: %+v ok=%v", entry, ok)
+	if browser.resourceCount() != 3 {
+		t.Fatalf("expected three resources, got %d", browser.resourceCount())
 	}
-}
-
-func TestCatalogBrowserTypeFilterDelta(t *testing.T) {
-	browser := newCatalogBrowser()
-	browser.setCatalog(session.SchemaCatalog{
-		Entries: []session.CatalogEntry{
-			{Group: "g", Type: session.ResourceTypeMeasure, Name: "a"},
-			{Group: "g", Type: session.ResourceTypeStream, Name: "b"},
-		},
-	})
-	browser.cycleTypeFilterDelta(1)
-	if browser.typeFilter != session.ResourceTypeMeasure {
-		t.Fatalf("expected MEASURE, got %s", browser.typeFilter)
-	}
-	browser.cycleTypeFilterDelta(-1)
-	if browser.typeFilter != "" {
-		t.Fatalf("expected ALL, got %s", browser.typeFilter)
+	if browser.groupCount() != 2 {
+		t.Fatalf("expected two groups, got %d", browser.groupCount())
 	}
 }
 
-func TestCatalogBrowserTypeFilter(t *testing.T) {
+func TestCatalogBrowserLoadErrorClearsStaleEntries(t *testing.T) {
 	browser := newCatalogBrowser()
 	browser.setCatalog(session.SchemaCatalog{
-		Entries: []session.CatalogEntry{
-			{Group: "sw_metrics", Type: session.ResourceTypeMeasure, Name: "service_cpm"},
-			{Group: "default", Type: session.ResourceTypeStream, Name: "access_log"},
-		},
+		Groups:  []string{"sw_metrics"},
+		Entries: []session.CatalogEntry{{Group: "sw_metrics", Type: session.ResourceTypeMeasure, Name: "service_cpm"}},
 	})
-	browser.typeFilter = session.ResourceTypeStream
-	browser.rebuildRows()
-	if browser.resourceCount() != 1 {
-		t.Fatalf("expected one stream resource, got %d", browser.resourceCount())
+	browser.setLoadError("connection refused")
+	if browser.loadError != "connection refused" {
+		t.Fatalf("unexpected load error: %q", browser.loadError)
+	}
+	if browser.resourceCount() != 0 {
+		t.Fatalf("a failed load must not leave stale resources, got %d", browser.resourceCount())
 	}
 }

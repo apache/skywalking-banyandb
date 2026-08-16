@@ -16,8 +16,6 @@ package app
 
 import (
 	"testing"
-
-	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/approval"
 )
 
 func TestStartOptionsDoNotExposeManualSchemaSlots(t *testing.T) {
@@ -31,9 +29,12 @@ func TestStartOptionsDoNotExposeManualSchemaSlots(t *testing.T) {
 	}
 }
 
-func TestNewModelDefaultsToAutoProbe(t *testing.T) {
+func TestNewModelStartsIdleWithoutQuitPrompt(t *testing.T) {
 	model := NewModel(Config{})
-	if model.executionPolicy != approval.PolicyAutoProbe {
-		t.Fatalf("unexpected default execution policy: %s", model.executionPolicy)
+	if model.busy {
+		t.Fatal("a new model must not start busy")
+	}
+	if model.quitConfirmPending {
+		t.Fatal("a new model must not start with a pending quit confirmation")
 	}
 }

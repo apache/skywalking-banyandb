@@ -231,10 +231,20 @@ func TestE2EDerivedGoldenPlans(t *testing.T) {
 			"SELECT * FROM STREAM logs IN production TIME > '-30m' ORDER BY service DESC LIMIT 10",
 		},
 		{
+			// A TRACE scan needs an entry point, so the plainest trace plan still orders by TIME.
 			"trace/all",
-			QueryPlan{Resource: traceResource, TimeRange: defaultRange, Limit: 10},
+			QueryPlan{
+				Resource: traceResource, OrderBy: &Order{IndexRule: "TIME", Direction: OrderDescending},
+				TimeRange: defaultRange, Limit: 10,
+			},
 			trace,
-			"SELECT * FROM TRACE traces IN production TIME > '-30m' LIMIT 10",
+			"SELECT * FROM TRACE traces IN production TIME > '-30m' ORDER BY TIME DESC LIMIT 10",
+		},
+		{
+			"trace/eq_trace_id_without_order",
+			QueryPlan{Resource: traceResource, Filter: equal("trace_id", "abc123"), TimeRange: defaultRange, Limit: 10},
+			trace,
+			"SELECT * FROM TRACE traces IN production TIME > '-30m' WHERE trace_id = 'abc123' LIMIT 10",
 		},
 		{
 			"trace/eq_service_order_timestamp_desc",
@@ -257,10 +267,11 @@ func TestE2EDerivedGoldenPlans(t *testing.T) {
 		{
 			"trace/gen_leaf_in_service_id",
 			QueryPlan{
-				Resource: traceResource, Filter: in("service_id", OperatorIn, "payment", "checkout"), TimeRange: defaultRange, Limit: 10,
+				Resource: traceResource, Filter: in("service_id", OperatorIn, "payment", "checkout"),
+				OrderBy: &Order{IndexRule: "TIME", Direction: OrderDescending}, TimeRange: defaultRange, Limit: 10,
 			},
 			trace,
-			"SELECT * FROM TRACE traces IN production TIME > '-30m' WHERE service_id IN ('payment', 'checkout') LIMIT 10",
+			"SELECT * FROM TRACE traces IN production TIME > '-30m' WHERE service_id IN ('payment', 'checkout') ORDER BY TIME DESC LIMIT 10",
 		},
 		{
 			"property/all",
@@ -320,8 +331,8 @@ func TestE2EDerivedGoldenPlans(t *testing.T) {
 			"SHOW TOP 3 FROM MEASURE service_latency_topn IN production TIME > '-30m' AGGREGATE BY COUNT ORDER BY DESC",
 		},
 	}
-	if len(goldens) != 40 {
-		t.Fatalf("expected 40 e2e-derived golden cases, got %d", len(goldens))
+	if len(goldens) != 41 {
+		t.Fatalf("expected 41 e2e-derived golden cases, got %d", len(goldens))
 	}
 	for _, golden := range goldens {
 		t.Run(golden.name, func(t *testing.T) {
@@ -376,11 +387,13 @@ func goldenMultiGroupMeasureSchema() session.SchemaSnapshot {
 
 func goldenTraceSchema() session.SchemaSnapshot {
 	return session.SchemaSnapshot{
-		Type:   session.ResourceTypeTrace,
-		Name:   "traces",
-		Groups: []string{"production"},
-		Loaded: true,
+		Type:       session.ResourceTypeTrace,
+		Name:       "traces",
+		Groups:     []string{"production"},
+		Loaded:     true,
+		TraceIDTag: "trace_id",
 		Columns: []session.SchemaColumn{
+			{Name: "trace_id", Kind: session.SchemaColumnTag, Type: session.SchemaValueTypeString},
 			{Name: "service_id", Kind: session.SchemaColumnTag, Type: session.SchemaValueTypeString},
 			{Name: "duration", Kind: session.SchemaColumnTag, Type: session.SchemaValueTypeInt},
 		},

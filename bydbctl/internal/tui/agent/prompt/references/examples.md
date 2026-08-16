@@ -27,5 +27,9 @@ SELECT * FROM TRACE zipkin_span IN default TIME > '-30m' ORDER BY timestamp_mill
 ```
 
 ```bydbql
+SELECT * FROM TRACE sw_trace IN default TIME > '-30m' WHERE trace_id = 'abc123' LIMIT 30
+```
+
+```bydbql
 SELECT * FROM PROPERTY server_metadata IN default LIMIT 10
 ```

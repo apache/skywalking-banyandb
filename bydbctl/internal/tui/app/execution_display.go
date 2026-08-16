@@ -33,7 +33,6 @@ import (
 
 const (
 	maxExecutionResponseLines = 40
-	maxActivityDetailLines    = 18
 	maxDisplayStringRunes     = 120
 	maxDisplayArrayItems      = 3
 	maxExecutionTableColumns  = 5
@@ -74,8 +73,9 @@ func executionDetailLines(executionResult session.ExecutionResult, opts executio
 	}
 	if len(executionResult.Preview) > 0 {
 		displayColumns := selectDisplayColumns(executionResult.Columns)
-		lines = append(lines, "Table preview · ↑↓ row · Ctrl+O export · Ctrl+J raw JSON")
-		lines = append(lines, formatPreviewTable(displayColumns, projectPreviewRows(executionResult.Preview, executionResult.Columns, displayColumns), opts.width, opts.selectedRow)...)
+		projectedRows := projectPreviewRows(executionResult.Preview, executionResult.Columns, displayColumns)
+		lines = append(lines, "Table preview · ↑↓ row · Ctrl+O export")
+		lines = append(lines, formatPreviewTable(displayColumns, projectedRows, opts.width, opts.selectedRow)...)
 		if len(executionResult.Columns) > len(displayColumns) {
 			lines = append(lines, fmt.Sprintf("… %d more columns in row detail below", len(executionResult.Columns)-len(displayColumns)))
 		}
@@ -97,7 +97,7 @@ func executionDetailLines(executionResult session.ExecutionResult, opts executio
 	}
 	if len(executionResult.Preview) > 0 && !opts.showRaw {
 		lines = append(lines, fmt.Sprintf(
-			"Full JSON hidden (%s). Ctrl+J show · Ctrl+O export to file.",
+			"Full JSON hidden (%s). Ctrl+O exports it to a file.",
 			formatByteCount(len(executionResult.Response)),
 		))
 		return lines
@@ -177,9 +177,7 @@ func formatExecutionRowDetail(columns []string, row []string, rowNumber, rowTota
 		if idx < len(row) {
 			value = row[idx]
 		}
-		for _, wrappedLine := range wrapRunes(column+": "+value, maxInt(width-2, 24)) {
-			lines = append(lines, wrappedLine)
-		}
+		lines = append(lines, wrapRunes(column+": "+value, maxInt(width-2, 24))...)
 	}
 	return lines
 }
@@ -272,16 +270,16 @@ func padDisplayWidth(value string, width int) string {
 	return value + strings.Repeat(" ", maxInt(width-valueWidth, 0))
 }
 
-func previewTableViewport(lines []string, width, offset int) ([]string, int) {
-	maxOffset := previewTableMaxHorizontalOffset(lines, width)
-	offset = clamp(offset, 0, maxOffset)
+// previewTableViewport clamps the horizontal offset and returns the visible slice of each table row.
+func previewTableViewport(lines []string, width, offset int) []string {
+	offset = clamp(offset, 0, previewTableMaxHorizontalOffset(lines, width))
 	visible := make([]string, 0, len(lines))
 	for _, line := range lines {
 		prefix, content := previewTableLinePrefix(line)
 		visibleWidth := maxInt(width-lipgloss.Width(prefix), 1)
 		visible = append(visible, prefix+horizontalViewport(content, offset, visibleWidth))
 	}
-	return visible, maxOffset
+	return visible
 }
 
 func previewTableMaxHorizontalOffset(lines []string, width int) int {
@@ -394,23 +392,6 @@ func truncateLines(lines []string, maxLines int) []string {
 	truncated := append([]string{}, lines[:maxLines-1]...)
 	truncated = append(truncated, fmt.Sprintf("… %d more lines", remaining))
 	return truncated
-}
-
-func formatActivityDetailText(detail string, width int) []string {
-	if strings.TrimSpace(detail) == "" {
-		return nil
-	}
-	lines := strings.Split(detail, "\n")
-	formatted := make([]string, 0, len(lines))
-	for _, line := range lines {
-		trimmedLine := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmedLine, "{") || strings.HasPrefix(trimmedLine, "[") {
-			formatted = append(formatted, formatJSONResponsePreview(trimmedLine, width, maxActivityDetailLines)...)
-			continue
-		}
-		formatted = append(formatted, wrapRunes(line, width)...)
-	}
-	return truncateLines(formatted, maxActivityDetailLines)
 }
 
 func formatByteCount(size int) string {

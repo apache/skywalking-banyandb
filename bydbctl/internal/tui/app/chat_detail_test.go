@@ -87,12 +87,34 @@ func TestFormatChatDetailLinesFormatsToolPlanJSON(t *testing.T) {
 func TestFormatChatDetailLinesFormatsQueryArgument(t *testing.T) {
 	content := "query:\nSELECT endpoint, MEAN(latency) FROM MEASURE service_latency IN production TIME > '-30m' LIMIT 10"
 	lines := formatChatDetailLines(content, 80)
-	joined := strings.Join(lines, "\n")
-	if !strings.Contains(stripANSI(joined), "bydbql") {
-		t.Fatalf("expected bydbql code block label, got:\n%s", joined)
+	joined := stripANSI(strings.Join(lines, "\n"))
+	if !strings.Contains(joined, "query") {
+		t.Fatalf("expected the query section header, got:\n%s", joined)
 	}
-	if !strings.Contains(stripANSI(joined), "SELECT endpoint") {
+	if !strings.Contains(joined, "SELECT endpoint") {
 		t.Fatalf("expected query body, got:\n%s", joined)
+	}
+	// The section header already says this is the query, so a "bydbql" fence label would repeat it.
+	if strings.Contains(joined, "bydbql") {
+		t.Fatalf("expected no redundant code fence label, got:\n%s", joined)
+	}
+}
+
+func TestChatDetailKeepsCodeFencesOutOfTheProseText(t *testing.T) {
+	entry := chatEntryFromMessage(session.ChatMessage{
+		Role:      session.ChatRoleAssistant,
+		Content:   "Here is a candidate query.",
+		Candidate: "SELECT error_rate FROM MEASURE service_cpm IN sw_metrics",
+	})
+	joined := stripANSI(strings.Join(formatChatDetailLines(entry.detail, 70), "\n"))
+	if strings.Contains(joined, "`") {
+		t.Fatalf("markdown fence characters must not leak into the rendered detail:\n%s", joined)
+	}
+	if !strings.Contains(joined, "SELECT error_rate") {
+		t.Fatalf("expected the candidate body in the detail:\n%s", joined)
+	}
+	if !strings.Contains(joined, "BYDBQL candidate") {
+		t.Fatalf("expected the candidate heading in the detail:\n%s", joined)
 	}
 }
 

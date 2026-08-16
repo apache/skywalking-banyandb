@@ -24,8 +24,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/approval"
 )
 
 // Phase is the deterministic workflow phase owned by bydbctl.
@@ -41,6 +39,8 @@ const (
 	PhaseReady        Phase = "ready"
 	PhaseExecuted     Phase = "executed"
 	PhaseError        Phase = "error"
+	// PhaseSchema is a turn answered from the schema catalog, without any BYDBQL candidate.
+	PhaseSchema Phase = "schema"
 )
 
 // String returns the phase name.
@@ -142,10 +142,15 @@ type SchemaSnapshot struct {
 	SourceMeasureGroup string
 	FieldValueSort     string
 	Fingerprint        string
-	ResourceNames      []string
-	AvailableGroups    []string
-	Catalog            []CatalogEntry
-	Loaded             bool
+	// TraceIDTag names the TRACE tag that identifies a trace, which is the only tag whose equality
+	// filter lets a TRACE query run without ORDER BY.
+	TraceIDTag string
+	// TimestampTag names the TRACE tag that carries the span timestamp.
+	TimestampTag    string
+	ResourceNames   []string
+	AvailableGroups []string
+	Catalog         []CatalogEntry
+	Loaded          bool
 }
 
 // EnsureFingerprint computes a deterministic schema identity when one is not already set.
@@ -294,24 +299,29 @@ const (
 	ChatRoleSystem    ChatRole = "system"
 )
 
+// ChatMessageKind distinguishes what an assistant message is asking of the user.
+type ChatMessageKind string
+
+// Chat message kinds. An empty kind carries no extra meaning.
+const (
+	// ChatMessageKindAnswer is a reply that completes the turn without proposing a query.
+	ChatMessageKindAnswer ChatMessageKind = "answer"
+	// ChatMessageKindClarification is a reply that waits on the user before any query can be built.
+	ChatMessageKindClarification ChatMessageKind = "clarification"
+	// ChatMessageKindSchema is a resource description read straight from the schema catalog.
+	ChatMessageKindSchema ChatMessageKind = "schema"
+)
+
 // ChatMessage is one user-visible chat entry in the agent conversation.
 type ChatMessage struct {
 	CreatedAt  time.Time
 	Validation *ValidationReport
 	Role       ChatRole
+	Kind       ChatMessageKind
 	Content    string
 	Detail     string
 	Candidate  string
 	ToolName   string
-}
-
-// ProbeSummary stores a bounded read-only probe execution for a candidate.
-type ProbeSummary struct {
-	Columns []string
-	Preview [][]string
-	Query   string
-	Error   string
-	Rows    int
 }
 
 // Candidate sources.
@@ -324,7 +334,6 @@ const (
 type BydbqlCandidate struct {
 	CreatedAt   time.Time
 	Validation  ValidationReport
-	Probe       *ProbeSummary
 	ID          string
 	Query       string
 	Explanation string
@@ -419,8 +428,6 @@ type QuerySession struct {
 	ExecutionResult     ExecutionResult
 	Transcript          []TranscriptEntry
 	ChatMessages        []ChatMessage
-	ExecutionPolicy     approval.ExecutionPolicy
-	PendingProbe        *ProbeSummary
 }
 
 // SchemaKey returns a normalized identity for a resource schema.
@@ -542,7 +549,7 @@ func (qs *QuerySession) SetPlannedQueries(queries []PlannedQuery) {
 	qs.ActivePlanStep = 0
 }
 
-// CurrentPlannedQuery returns the next query that must receive individual approval.
+// CurrentPlannedQuery returns the next query in the compiled workflow.
 func (qs *QuerySession) CurrentPlannedQuery() *PlannedQuery {
 	if qs == nil || qs.ActivePlanStep < 0 || qs.ActivePlanStep >= len(qs.PlannedQueries) {
 		return nil
@@ -596,26 +603,6 @@ func (qs *QuerySession) AddChatMessage(message ChatMessage) {
 		return
 	}
 	qs.ChatMessages = append(qs.ChatMessages, message)
-}
-
-// SetPendingProbe stores a probe result for the next candidate publication.
-func (qs *QuerySession) SetPendingProbe(probe *ProbeSummary) {
-	if probe == nil {
-		qs.PendingProbe = nil
-		return
-	}
-	copiedProbe := *probe
-	qs.PendingProbe = &copiedProbe
-}
-
-// TakePendingProbe returns and clears the probe result waiting for candidate publication.
-func (qs *QuerySession) TakePendingProbe() *ProbeSummary {
-	if qs == nil || qs.PendingProbe == nil {
-		return nil
-	}
-	probe := qs.PendingProbe
-	qs.PendingProbe = nil
-	return probe
 }
 
 // AddTranscript appends a visible workflow or agent event.

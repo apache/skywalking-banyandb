@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
-	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/approval"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tools"
 )
@@ -159,51 +158,7 @@ func TestBridgeCompilesStructuredQueryPlanBeforePublishingCandidate(t *testing.T
 	}
 }
 
-func TestProposalAutoProbeFollowsExecutionPolicy(t *testing.T) {
-	testCases := []struct {
-		name           string
-		policy         approval.ExecutionPolicy
-		expectedProbes int
-	}{
-		{name: "ask every time", policy: approval.PolicyAskEveryTime, expectedProbes: 0},
-		{name: "auto probe", policy: approval.PolicyAutoProbe, expectedProbes: 1},
-	}
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			schema := session.SchemaSnapshot{
-				Type:    session.ResourceTypeMeasure,
-				Name:    "service_latency",
-				Groups:  []string{"production"},
-				Loaded:  true,
-				Columns: []session.SchemaColumn{{Name: "latency", Kind: session.SchemaColumnField, Type: session.SchemaValueTypeFloat}},
-			}
-			executor := &stubExecutor{schema: schema, result: session.ExecutionResult{Rows: 1}}
-			toolBridge := New(Config{
-				Executor:  executor,
-				Validator: &stubValidator{report: session.ValidationReport{Valid: true, QueryType: "MEASURE"}},
-			})
-			toolBridge.SetExecutionPolicy(testCase.policy)
-			toolBridge.SetSession(querySessionWithSchema(schema))
-			result := toolBridge.Call(context.Background(), Call{
-				Name: ToolProposeQueryPlan,
-				Arguments: map[string]any{"plan": map[string]any{
-					"resource":   map[string]any{"type": "MEASURE", "name": "service_latency", "groups": []any{"production"}},
-					"projection": []any{map[string]any{"column": "latency"}},
-					"limit":      10,
-				}},
-			})
-			if result.Err != nil || !strings.Contains(result.Content, `"valid":true`) {
-				t.Fatalf("proposal failed: %+v", result)
-			}
-			if executor.executeCount != testCase.expectedProbes {
-				t.Fatalf("expected %d automatic probes, got %d", testCase.expectedProbes, executor.executeCount)
-			}
-		})
-	}
-}
-
-func TestAskEveryTimeRequiresApprovalForExplicitProbe(t *testing.T) {
-	approvals := approval.NewController()
+func TestProposalCompilesWithoutReadingData(t *testing.T) {
 	schema := session.SchemaSnapshot{
 		Type:    session.ResourceTypeMeasure,
 		Name:    "service_latency",
@@ -213,12 +168,11 @@ func TestAskEveryTimeRequiresApprovalForExplicitProbe(t *testing.T) {
 	}
 	executor := &stubExecutor{schema: schema, result: session.ExecutionResult{Rows: 1}}
 	toolBridge := New(Config{
-		Approvals: approvals,
 		Executor:  executor,
 		Validator: &stubValidator{report: session.ValidationReport{Valid: true, QueryType: "MEASURE"}},
 	})
 	toolBridge.SetSession(querySessionWithSchema(schema))
-	proposal := toolBridge.Call(context.Background(), Call{
+	result := toolBridge.Call(context.Background(), Call{
 		Name: ToolProposeQueryPlan,
 		Arguments: map[string]any{"plan": map[string]any{
 			"resource":   map[string]any{"type": "MEASURE", "name": "service_latency", "groups": []any{"production"}},
@@ -226,30 +180,28 @@ func TestAskEveryTimeRequiresApprovalForExplicitProbe(t *testing.T) {
 			"limit":      10,
 		}},
 	})
-	if proposal.Err != nil {
-		t.Fatalf("proposal failed: %v", proposal.Err)
+	if result.Err != nil || !strings.Contains(result.Content, `"valid":true`) {
+		t.Fatalf("proposal failed: %+v", result)
 	}
-	plannedQuery := toolBridge.SessionSnapshot().CurrentPlannedQuery()
-	if plannedQuery == nil {
-		t.Fatal("expected compiled query")
+	if executor.executeCount != 0 {
+		t.Fatalf("compiling a plan must not read data, got %d executions", executor.executeCount)
 	}
-	resultChannel := make(chan Result, 1)
-	go func() {
-		resultChannel <- toolBridge.Call(context.Background(), Call{
-			Name:      ToolProbeBydbQL,
-			Arguments: map[string]any{"query": plannedQuery.Query},
-		})
-	}()
-	request := receiveRequest(t, approvals.Requests())
-	if request.Source != approval.SourceAgentProbe {
-		t.Fatalf("expected probe approval, got %+v", request)
+}
+
+func TestProbeToolIsNoLongerRegistered(t *testing.T) {
+	toolBridge := New(Config{
+		Executor:  &stubExecutor{},
+		Validator: &stubValidator{report: session.ValidationReport{Valid: true}},
+	})
+	result := toolBridge.Call(context.Background(), Call{
+		Name:      "probe_bydbql",
+		Arguments: map[string]any{"query": "SELECT latency FROM MEASURE service_latency IN production TIME > '-30m' LIMIT 10"},
+	})
+	if result.Err == nil {
+		t.Fatalf("expected the probe tool to be rejected, got %+v", result)
 	}
-	if resolveErr := approvals.Resolve(request.ID, approval.Decision{Approved: true}); resolveErr != nil {
-		t.Fatalf("failed to approve probe: %v", resolveErr)
-	}
-	result := <-resultChannel
-	if result.Err != nil || executor.executeCount != 1 {
-		t.Fatalf("approved probe failed: result=%+v calls=%d", result, executor.executeCount)
+	if !strings.Contains(result.Err.Error(), "not registered") {
+		t.Fatalf("unexpected probe rejection: %v", result.Err)
 	}
 }
 
@@ -303,7 +255,7 @@ func TestBridgeAllowsSchemaInspectionOutsideRankedCandidatesWhenCataloged(t *tes
 	}
 }
 
-func TestBridgeCompilesWorkflowPlanIntoIndividuallyApprovedSteps(t *testing.T) {
+func TestBridgeCompilesWorkflowPlanIntoIndividualSteps(t *testing.T) {
 	schema := session.SchemaSnapshot{
 		Type:   session.ResourceTypeStream,
 		Name:   "logs",
@@ -412,7 +364,6 @@ func TestBridgeCompilesWorkflowAcrossMultipleResources(t *testing.T) {
 }
 
 func TestBridgeAdvancesOnlyOneWorkflowStepAtATime(t *testing.T) {
-	approvals := approval.NewController()
 	schema := session.SchemaSnapshot{
 		Type:   session.ResourceTypeStream,
 		Name:   "logs",
@@ -425,11 +376,9 @@ func TestBridgeAdvancesOnlyOneWorkflowStepAtATime(t *testing.T) {
 	}
 	executor := &stubExecutor{schema: schema, result: session.ExecutionResult{Rows: 1, Columns: []string{"service"}, Preview: [][]string{{"payment"}}}}
 	toolBridge := New(Config{
-		Approvals: approvals,
 		Executor:  executor,
 		Validator: &stubValidator{report: session.ValidationReport{Valid: true, QueryType: "STREAM"}},
 	})
-	toolBridge.SetExecutionPolicy(approval.PolicyTrustSession)
 	querySession := querySessionWithSchema(schema)
 	toolBridge.SetSession(querySession)
 	proposal := toolBridge.Call(context.Background(), Call{
@@ -460,8 +409,8 @@ func TestBridgeAdvancesOnlyOneWorkflowStepAtATime(t *testing.T) {
 	if result.Err != nil {
 		t.Fatalf("first workflow execution failed: %v", result.Err)
 	}
-	if executor.executeCount != 2 {
-		t.Fatalf("expected workflow probe plus one read execution, got %d", executor.executeCount)
+	if executor.executeCount != 1 {
+		t.Fatalf("expected exactly one read execution for the first step, got %d", executor.executeCount)
 	}
 	if !strings.Contains(result.Content, "next_query") {
 		t.Fatalf("expected the next exact query, got %s", result.Content)
@@ -472,11 +421,9 @@ func TestBridgeAdvancesOnlyOneWorkflowStepAtATime(t *testing.T) {
 	}
 }
 
-func TestBridgeRejectsMutatingExecutionBeforeApproval(t *testing.T) {
-	approvals := approval.NewController()
+func TestBridgeRejectsMutatingExecution(t *testing.T) {
 	executor := &stubExecutor{result: session.ExecutionResult{Rows: 1}}
 	toolBridge := New(Config{
-		Approvals: approvals,
 		Executor:  executor,
 		Validator: &stubValidator{report: session.ValidationReport{Valid: true, Message: "valid", QueryType: "MEASURE"}},
 	})
@@ -494,8 +441,7 @@ func TestBridgeRejectsMutatingExecutionBeforeApproval(t *testing.T) {
 	}
 }
 
-func TestBridgeTrustSessionExecutesReadWithoutApprovalAndBoundsRows(t *testing.T) {
-	approvals := approval.NewController()
+func TestBridgeExecutesReadAndBoundsRows(t *testing.T) {
 	executor := &stubExecutor{result: session.ExecutionResult{
 		Rows:     3,
 		Columns:  []string{"endpoint"},
@@ -504,11 +450,9 @@ func TestBridgeTrustSessionExecutesReadWithoutApprovalAndBoundsRows(t *testing.T
 		Response: "secret result row",
 	}}
 	toolBridge := New(Config{
-		Approvals: approvals,
 		Executor:  executor,
 		Validator: &stubValidator{report: session.ValidationReport{Valid: true, Message: "valid", QueryType: "MEASURE"}},
 	})
-	toolBridge.SetExecutionPolicy(approval.PolicyTrustSession)
 	query := readOnlyMeasureQuery
 	toolBridge.SetSession(&session.QuerySession{
 		ResourceType: session.ResourceTypeMeasure,
@@ -774,15 +718,116 @@ func TestBridgeDescribeSchemaUpdatesSession(t *testing.T) {
 	}
 }
 
-func TestBridgeAutoProbeRequiresApprovalForFullExecution(t *testing.T) {
-	approvals := approval.NewController()
+// traceBridgeSchema is the TRACE schema used by the scan-bound bridge tests.
+func traceBridgeSchema() session.SchemaSnapshot {
+	return session.SchemaSnapshot{
+		Type:       session.ResourceTypeTrace,
+		Name:       "sw_trace",
+		Groups:     []string{"sw_trace"},
+		Loaded:     true,
+		TraceIDTag: "trace_id",
+		Columns: []session.SchemaColumn{
+			{Name: "trace_id", Kind: session.SchemaColumnTag, Type: session.SchemaValueTypeString},
+			{Name: "status", Kind: session.SchemaColumnTag, Type: session.SchemaValueTypeString},
+			{Name: "start_time", Kind: session.SchemaColumnTag, Type: session.SchemaValueTypeInt, Indexed: true},
+		},
+		SortableIndexes: []session.SortableIndex{{RuleName: "start_time", Tags: []string{"start_time"}}},
+	}
+}
+
+func TestBridgeRejectsAnUnboundedTraceScanAsRepairable(t *testing.T) {
+	schema := traceBridgeSchema()
+	toolBridge := New(Config{
+		Executor:  &stubExecutor{schema: schema},
+		Validator: &stubValidator{report: session.ValidationReport{Valid: true}},
+	})
+	toolBridge.SetSession(querySessionWithSchema(schema))
+
+	result := toolBridge.Call(context.Background(), Call{Name: ToolProposeQueryPlan, Arguments: map[string]any{
+		"plan": map[string]any{
+			"resource":   map[string]any{"type": "TRACE", "name": "sw_trace", "groups": []any{"sw_trace"}},
+			"time_range": map[string]any{"start": "-30m"},
+			"limit":      10,
+		},
+	}})
+	if result.Err != nil {
+		t.Fatalf("an unbounded TRACE plan must be repairable rather than a tool error: %v", result.Err)
+	}
+	if !strings.Contains(result.Content, `"valid":false`) {
+		t.Fatalf("expected the proposal to be rejected: %s", result.Content)
+	}
+	if !strings.Contains(result.Content, "TRACE_SCAN_UNBOUNDED") {
+		t.Fatalf("expected a stable diagnostic code: %s", result.Content)
+	}
+	if !strings.Contains(result.Content, "trace ID tag") {
+		t.Fatalf("expected the repair hint to name the trace ID tag: %s", result.Content)
+	}
+	if !strings.Contains(result.Content, "start_time") {
+		t.Fatalf("expected the allowed values to list the sortable index rule: %s", result.Content)
+	}
+}
+
+func TestBridgeAcceptsATraceScanBoundByOrderOrTraceID(t *testing.T) {
+	schema := traceBridgeSchema()
+	boundedPlans := []map[string]any{
+		{
+			"resource":   map[string]any{"type": "TRACE", "name": "sw_trace", "groups": []any{"sw_trace"}},
+			"time_range": map[string]any{"start": "-30m"},
+			"order_by":   map[string]any{"index_rule": "start_time", "direction": "DESC"},
+			"limit":      10,
+		},
+		{
+			"resource":   map[string]any{"type": "TRACE", "name": "sw_trace", "groups": []any{"sw_trace"}},
+			"time_range": map[string]any{"start": "-30m"},
+			"filter":     map[string]any{"column": "trace_id", "operator": "=", "value": "abc123"},
+			"limit":      10,
+		},
+	}
+	for planIndex, plan := range boundedPlans {
+		toolBridge := New(Config{
+			Executor:  &stubExecutor{schema: schema},
+			Validator: &stubValidator{report: session.ValidationReport{Valid: true}},
+		})
+		toolBridge.SetSession(querySessionWithSchema(schema))
+		result := toolBridge.Call(context.Background(), Call{Name: ToolProposeQueryPlan, Arguments: map[string]any{"plan": plan}})
+		if result.Err != nil || !strings.Contains(result.Content, `"valid":true`) {
+			t.Fatalf("bounded TRACE plan %d must compile: err=%v content=%s", planIndex+1, result.Err, result.Content)
+		}
+	}
+}
+
+func TestBridgeDescribeSchemaReportsTheTraceScanRequirement(t *testing.T) {
+	schema := traceBridgeSchema()
+	toolBridge := New(Config{Executor: &stubExecutor{schema: schema}})
+	toolBridge.SetSession(&session.QuerySession{UserGoal: "recent traces", SchemaSnapshot: session.SchemaSnapshot{
+		Catalog: []session.CatalogEntry{{Group: "sw_trace", Type: session.ResourceTypeTrace, Name: "sw_trace"}},
+	}})
+
+	result := toolBridge.Call(context.Background(), Call{
+		Name: ToolDescribeSchema,
+		Arguments: map[string]any{
+			"type":   "TRACE",
+			"name":   "sw_trace",
+			"groups": []any{"sw_trace"},
+		},
+	})
+	if result.Err != nil {
+		t.Fatalf("describe_schema failed: %v", result.Err)
+	}
+	if !strings.Contains(result.Content, `"trace_id_tag":"trace_id"`) {
+		t.Fatalf("expected the trace ID tag in the schema response: %s", result.Content)
+	}
+	if !strings.Contains(result.Content, "trace_scan_requirement") {
+		t.Fatalf("expected the scan requirement in plan_constraints: %s", result.Content)
+	}
+}
+
+func TestBridgeExecutesFullQueryImmediately(t *testing.T) {
 	executor := &stubExecutor{result: session.ExecutionResult{Rows: 1}}
 	toolBridge := New(Config{
-		Approvals: approvals,
 		Executor:  executor,
 		Validator: &stubValidator{report: session.ValidationReport{Valid: true, QueryType: "MEASURE"}},
 	})
-	toolBridge.SetExecutionPolicy(approval.PolicyAutoProbe)
 	query := readOnlyMeasureQuery
 	toolBridge.SetSession(&session.QuerySession{
 		ResourceType: session.ResourceTypeMeasure,
@@ -796,32 +841,20 @@ func TestBridgeAutoProbeRequiresApprovalForFullExecution(t *testing.T) {
 		}},
 		SchemaSnapshot: session.SchemaSnapshot{Type: session.ResourceTypeMeasure},
 	})
-	resultChannel := make(chan Result, 1)
-	go func() {
-		resultChannel <- toolBridge.Call(context.Background(), Call{Name: ToolExecuteBydbQL, Arguments: map[string]any{"query": query}})
-	}()
-	request := receiveRequest(t, approvals.Requests())
-	if request.Source != approval.SourceAgentTool {
-		t.Fatalf("expected full execution approval, got %+v", request)
-	}
-	if resolveErr := approvals.Resolve(request.ID, approval.Decision{Approved: true}); resolveErr != nil {
-		t.Fatalf("failed to approve execution: %v", resolveErr)
-	}
-	result := <-resultChannel
+	result := toolBridge.Call(context.Background(), Call{Name: ToolExecuteBydbQL, Arguments: map[string]any{"query": query}})
 	if result.Err != nil {
 		t.Fatalf("read-only execution failed: %v", result.Err)
 	}
 	if executor.executeCount != 1 {
-		t.Fatalf("expected one approved execution, got %d", executor.executeCount)
+		t.Fatalf("expected exactly one execution, got %d", executor.executeCount)
 	}
 }
 
-func TestBridgeTrustSessionDoesNotReportAnApprovalWait(t *testing.T) {
+func TestBridgeDoesNotReportAnApprovalWait(t *testing.T) {
 	toolBridge := New(Config{
 		Executor:  &stubExecutor{result: session.ExecutionResult{Rows: 1}},
 		Validator: &stubValidator{report: session.ValidationReport{Valid: true, QueryType: "MEASURE"}},
 	})
-	toolBridge.SetExecutionPolicy(approval.PolicyTrustSession)
 	query := readOnlyMeasureQuery
 	toolBridge.SetSession(&session.QuerySession{
 		ResourceType: session.ResourceTypeMeasure,
@@ -848,7 +881,7 @@ func TestBridgeTrustSessionDoesNotReportAnApprovalWait(t *testing.T) {
 	}
 }
 
-func TestBridgeDoesNotRequestApprovalForMutation(t *testing.T) {
+func TestBridgeRefusesMutationOutright(t *testing.T) {
 	executor := &stubExecutor{}
 	toolBridge := New(Config{
 		Executor:  executor,
@@ -878,7 +911,6 @@ func TestBridgeReturnsSafeExecutionFailureForAgentRepair(t *testing.T) {
 		Executor:  executor,
 		Validator: &stubValidator{report: session.ValidationReport{Valid: true, QueryType: "MEASURE"}},
 	})
-	toolBridge.SetExecutionPolicy(approval.PolicyTrustSession)
 	toolBridge.SetSession(&session.QuerySession{
 		PlannedQueries: []session.PlannedQuery{{
 			Query:        query,
@@ -902,7 +934,6 @@ func TestBridgeCancelsAnAlreadySentQuery(t *testing.T) {
 		Executor:  executor,
 		Validator: &stubValidator{report: session.ValidationReport{Valid: true, Message: "valid", QueryType: "MEASURE"}},
 	})
-	toolBridge.SetExecutionPolicy(approval.PolicyTrustSession)
 	query := readOnlyMeasureQuery
 	toolBridge.SetSession(&session.QuerySession{
 		PlannedQueries: []session.PlannedQuery{{Query: query}},
@@ -986,17 +1017,6 @@ func receiveEvent(t *testing.T, events <-chan agent.Event) agent.Event {
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for bridge event")
 		return agent.Event{}
-	}
-}
-
-func receiveRequest(t *testing.T, requests <-chan approval.Request) approval.Request {
-	t.Helper()
-	select {
-	case request := <-requests:
-		return request
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for approval request")
-		return approval.Request{}
 	}
 }
 

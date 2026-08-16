@@ -32,7 +32,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/applog"
-	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/approval"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/bridge"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tools"
@@ -46,15 +45,12 @@ const (
 )
 
 const (
-	focusCatalog = iota
-	focusCatalogFilter
-	focusChat
+	focusChat = iota
 	focusMessage
 	focusStart
 	focusEnd
 	focusLimit
 	focusQuery
-	focusActivity
 	focusExecution
 	focusCount
 )
@@ -63,7 +59,6 @@ const (
 type Config struct {
 	AgentGateway agent.Gateway
 	Executor     tools.Executor
-	Approvals    *approval.Controller
 	ToolBridge   *bridge.ToolBridge
 	SessionLog   *applog.Logger
 	LogDir       string
@@ -75,60 +70,53 @@ type Config struct {
 
 // Model is the Bubble Tea state for the bydbctl agent TUI.
 type Model struct {
-	runner                 *workflow.Runner
-	executor               tools.Executor
-	querySession           *session.QuerySession
-	catalog                catalogBrowser
-	selectedSchema         session.SchemaSnapshot
-	schemaCache            map[string]session.SchemaSnapshot
-	schemaLoads            map[string]struct{}
-	catalogFilter          textinput.Model
 	message                textarea.Model
 	query                  textarea.Model
-	start                  textinput.Model
-	end                    textinput.Model
-	limit                  textinput.Model
+	turnStartedAt          time.Time
+	executor               tools.Executor
 	composerReference      *session.CatalogEntry
+	querySession           *session.QuerySession
+	runner                 *workflow.Runner
+	schemaCache            map[string]session.SchemaSnapshot
+	schemaLoads            map[string]struct{}
+	turnCancel             context.CancelFunc
+	sessionLog             *applog.Logger
+	queuedMessage          string
+	schemaSearchValue      string
 	provider               string
 	status                 string
-	events                 []string
-	sessionLog             *applog.Logger
-	logPathDisplay         string
-	width                  int
-	height                 int
-	catalogHeight          int
-	activityLog            []activityEntry
-	activityScroll         int
-	activityCursor         int
-	activityDetailScroll   int
-	executionDetailScroll  int
-	executionRowCursor     int
-	executionPreviewOffset int
-	preferCandidateProbe   bool
-	showExecutionRaw       bool
 	executionExportPath    string
-	detailScroll           int
-	chatScroll             int
-	chatCursor             int
-	chatDetailScroll       int
-	focus                  int
-	busy                   bool
-	showLiveOutput         bool
-	progressOperation      progressOperation
-	executionPolicy        approval.ExecutionPolicy
-	pendingApproval        *approval.Request
-	turnCancel             context.CancelFunc
-	turnEvents             []agent.Event
-	queuedMessage          string
 	liveResponse           string
-	queryRevision          int
+	turnEvents             []agent.Event
+	activityLog            []activityEntry
+	panelRegions           []panelRegion
+	messageHistory         editorHistory
+	limit                  textinput.Model
+	end                    textinput.Model
+	start                  textinput.Model
+	selectedSchema         session.SchemaSnapshot
+	catalog                catalogBrowser
+	focus                  int
 	schemaSearchCursor     int
-	schemaSearchDismissed  bool
-	schemaSearchValue      string
+	chatDetailScroll       int
+	chatScroll             int
+	helpScroll             int
+	progressOperation      progressOperation
+	schemaDetailScroll     int
+	executionPreviewOffset int
+	executionRowCursor     int
+	executionDetailScroll  int
+	queryRevision          int
+	chatCursor             int
+	height                 int
 	evidenceMode           evidenceMode
-	turnStartedAt          time.Time
-	cleanReadExecutions    int
-	trustSessionSuggested  bool
+	width                  int
+	regionsStale           bool
+	busy                   bool
+	helpVisible            bool
+	quitConfirmPending     bool
+	editingQuery           bool
+	schemaSearchDismissed  bool
 }
 
 // NewModel creates a TUI model with the configured agent gateway.
@@ -138,8 +126,6 @@ func NewModel(config Config) Model {
 	if provider == "" {
 		provider = "unconfigured"
 	}
-	catalogFilter := newTextInput("", "filter groups/resources")
-	catalogFilter.Width = 24
 	message := textarea.New()
 	message.Placeholder = "Ask about schemas or describe the query you need…"
 	message.ShowLineNumbers = false
@@ -163,123 +149,72 @@ func NewModel(config Config) Model {
 		runner: workflow.NewRunner(workflow.Config{
 			AgentGateway: agentGateway,
 			Executor:     config.Executor,
-			Approvals:    config.Approvals,
 			ToolBridge:   config.ToolBridge,
 		}),
-		executor:        config.Executor,
-		catalog:         newCatalogBrowser(),
-		schemaCache:     make(map[string]session.SchemaSnapshot),
-		schemaLoads:     make(map[string]struct{}),
-		catalogFilter:   catalogFilter,
-		message:         message,
-		query:           query,
-		start:           start,
-		end:             end,
-		limit:           limit,
-		provider:        provider,
-		status:          "ready",
-		sessionLog:      sessionLog,
-		logPathDisplay:  applog.DisplayPath(sessionLogPath(sessionLog)),
-		executionPolicy: approval.PolicyAutoProbe,
-		width:           defaultWidth,
-		height:          defaultHeight,
-		focus:           focusMessage,
-		showLiveOutput:  true,
+		executor:    config.Executor,
+		catalog:     newCatalogBrowser(),
+		schemaCache: make(map[string]session.SchemaSnapshot),
+		schemaLoads: make(map[string]struct{}),
+		message:     message,
+		query:       query,
+		start:       start,
+		end:         end,
+		limit:       limit,
+		provider:    provider,
+		status:      "ready",
+		sessionLog:  sessionLog,
+		width:       defaultWidth,
+		height:      defaultHeight,
+		focus:       focusMessage,
 	}
 	if sessionLog != nil {
 		sessionLog.Write("session", fmt.Sprintf("provider=%s addr=workflow", provider))
 	}
 	model.addEvent("ready: use @ to browse the local schema catalog, then Enter to ask the agent")
+	if logPath := applog.DisplayPath(sessionLog.Path()); logPath != "" {
+		model.addEvent("session log: " + logPath)
+	}
 	model.resize(defaultWidth, defaultHeight)
 	model.syncFocus()
-	model.syncExecutionPolicy()
 	return model
 }
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.loadCatalogCmd(), m.waitApprovalCmd())
+	return m.loadCatalogCmd()
 }
 
 // Update implements tea.Model.
+//
+// Click regions are marked stale rather than recomputed here, so one keystroke renders the view once.
 func (m Model) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
+	previousEvidence := m.showsSchemaEvidence()
+	updatedModel, command := m.update(teaMsg)
+	updatedModel.regionsStale = true
+	// A schema leaving the slot is logged with the message that took it, since the panel is derived
+	// state: nothing else in the log would say which update dropped it.
+	if previousEvidence != updatedModel.showsSchemaEvidence() {
+		updatedModel.logViewState(fmt.Sprintf("evidence panel changed on %T", teaMsg))
+	}
+	return updatedModel, command
+}
+
+func (m Model) update(teaMsg tea.Msg) (Model, tea.Cmd) {
 	switch typedMsg := teaMsg.(type) {
 	case tea.WindowSizeMsg:
 		m.resize(typedMsg.Width, typedMsg.Height)
 		return m, nil
-	case approvalMsg:
-		m.pendingApproval = &typedMsg.request
-		m.status = "execution approval required"
-		m.recordActivity("approval", "approval required", formatApprovalRequest(typedMsg.request))
-		m.logWrite("approval", formatApprovalAudit(typedMsg.request))
-		return m, m.waitApprovalCmd()
+	case tea.MouseMsg:
+		command, _ := m.handleMouse(typedMsg)
+		return m, command
+	case tea.KeyMsg:
+		if command, handled := m.handleKey(typedMsg); handled {
+			return m, command
+		}
 	case agentStartedMsg:
-		if typedMsg.startErr != nil {
-			m.busy = false
-			m.turnStartedAt = time.Time{}
-			m.turnCancel = nil
-			m.status = typedMsg.startErr.Error()
-			m.addUIEvent(summarizeError("agent", typedMsg.startErr.Error()))
-			m.logWriteError("agent", typedMsg.startErr)
-			return m, nil
-		}
-		if typedMsg.querySession != nil {
-			m.querySession = typedMsg.querySession
-			m.syncQuerySession()
-			m.queuedMessage = ""
-		}
-		m.message.SetValue("")
-		m.composerReference = nil
-		m.evidenceMode = evidenceModeData
-		m.preferCandidateProbe = false
-		m.progressOperation = progressOperationPreparing
-		m.turnEvents = nil
-		m.liveResponse = ""
-		return m, m.nextAgentUpdateCmd(typedMsg.updates)
+		return m.applyAgentStarted(typedMsg)
 	case agentTurnUpdateMsg:
-		if typedMsg.update.Event != nil {
-			event := *typedMsg.update.Event
-			m.turnEvents = append(m.turnEvents, event)
-			if typedMsg.update.QuerySession != nil {
-				m.querySession = typedMsg.update.QuerySession
-				m.syncQuerySession()
-			}
-			m.applyTurnEvidenceMode()
-			m.recordAgentActivities([]agent.Event{event})
-			if event.Kind == agent.EventKindMessageDelta {
-				if m.showLiveOutput {
-					m.liveResponse += event.Message
-					m.status = "agent output streaming"
-					m.syncChatCursor(true)
-				}
-			} else if summary := summarizeAgentEvent(event); summary != "" {
-				m.addUIEvent(summary)
-			}
-		}
-		if !typedMsg.update.Done {
-			return m, m.nextAgentUpdateCmd(typedMsg.updates)
-		}
-		m.busy = false
-		m.turnStartedAt = time.Time{}
-		m.turnCancel = nil
-		m.querySession = typedMsg.update.QuerySession
-		m.executionPreviewOffset = 0
-		m.syncQuerySession()
-		m.applyTurnEvidenceMode()
-		m.applyTurnPreviewPreference()
-		m.logAgentTurn(m.turnEvents)
-		m.liveResponse = ""
-		if typedMsg.update.Err != nil {
-			m.status = typedMsg.update.Err.Error()
-			m.addUIEvent(summarizeError("agent", typedMsg.update.Err.Error()))
-			m.logWriteError("agent", typedMsg.update.Err)
-			return m, nil
-		}
-		m.message.SetValue("")
-		m.status = "agent turn complete"
-		m.addUIEvent("agent: turn complete")
-		m.logQuerySession(m.querySession)
-		return m, nil
+		return m.applyAgentTurnUpdate(typedMsg)
 	case queryDebounceMsg:
 		if typedMsg.revision != m.queryRevision || m.busy || strings.TrimSpace(m.query.Value()) == "" {
 			return m, nil
@@ -288,162 +223,306 @@ func (m Model) Update(teaMsg tea.Msg) (tea.Model, tea.Cmd) {
 		m.progressOperation = progressOperationValidate
 		m.status = "validating edited query"
 		return m, m.validateCmd()
-	case tea.KeyMsg:
-		command, handled := m.handleKey(typedMsg)
-		if handled {
-			return m, command
-		}
 	case catalogMsg:
-		m.busy = false
-		if typedMsg.loadErr != nil {
-			m.catalog.setLoadError(typedMsg.loadErr.Error())
-			m.status = "BanyanDB connection failed: " + typedMsg.loadErr.Error()
-			m.addUIEvent(m.status)
-			m.logWriteError("catalog", typedMsg.loadErr)
-			return m, nil
-		}
-		m.catalog.setCatalog(typedMsg.catalog)
-		m.status = fmt.Sprintf("catalog loaded: %d resources in %d groups", len(typedMsg.catalog.Entries), len(typedMsg.catalog.Groups))
-		m.addUIEvent(m.status)
-		m.logWrite("catalog", m.status)
-		return m, nil
+		return m.applyCatalog(typedMsg)
 	case schemaDetailMsg:
-		m.clearSchemaLoad(typedMsg.entry)
-		if typedMsg.loadErr != nil {
-			m.addUIEvent("schema detail: " + typedMsg.loadErr.Error())
-			m.logWriteError("schema", typedMsg.loadErr)
-			return m, nil
-		}
-		m.cacheSchema(typedMsg.snapshot)
-		if !m.schemaSearchOpen() || m.isCurrentSchemaSearchEntry(typedMsg.entry) {
-			m.selectedSchema = typedMsg.snapshot
-		}
-		if typedMsg.snapshot.Loaded {
-			m.detailScroll = 0
-		}
-		return m, nil
+		return m.applySchemaDetail(typedMsg)
 	case workflowMsg:
-		m.busy = false
-		m.turnStartedAt = time.Time{}
-		m.turnCancel = nil
-		if typedMsg.querySession != nil {
-			m.querySession = typedMsg.querySession
-			m.syncQuerySession()
-		}
-		m.addAgentEvents(typedMsg.events)
-		m.recordAgentActivities(typedMsg.events)
-		if typedMsg.clearTurnHint {
-			m.message.SetValue("")
-		}
-		if m.querySession != nil {
-			if validationHint := formatValidationHint(m.querySession.Validation.Message); validationHint != "" {
-				m.addUIEvent(validationHint)
-				m.logWrite("validation", m.querySession.Validation.Message)
-			}
-			if currentCandidate := m.querySession.CurrentCandidate(); currentCandidate != nil && strings.TrimSpace(currentCandidate.Query) != "" {
-				if !m.querySession.Validation.Valid {
-					if invalidHint := formatInvalidCandidateHint(currentCandidate.Query); invalidHint != "" {
-						m.addUIEvent(invalidHint)
-					}
-					m.logWrite("candidate", currentCandidate.Query)
-				}
-			}
-			m.logQuerySession(m.querySession)
-			if typedMsg.status == "execution complete" {
-				m.executionDetailScroll = 0
-				m.executionPreviewOffset = 0
-				m.preferCandidateProbe = false
-				m.showExecutionRaw = false
-				m.executionExportPath = ""
-				if len(m.querySession.ExecutionResult.Preview) > 0 {
-					m.executionRowCursor = 0
-				} else {
-					m.executionRowCursor = -1
-				}
-				m.recordExecutionActivity(m.querySession)
-				m.recordCleanReadExecution()
-				m.focus = focusExecution
-			}
-			if typedMsg.previewRefresh {
-				m.executionPreviewOffset = 0
-				m.evidenceMode = evidenceModeData
-				m.preferCandidateProbe = true
-				m.showExecutionRaw = false
-				m.focus = focusExecution
-				if currentCandidate := m.querySession.CurrentCandidate(); currentCandidate != nil && currentCandidate.Probe != nil &&
-					len(currentCandidate.Probe.Preview) > 0 {
-					m.executionRowCursor = 0
-				} else {
-					m.executionRowCursor = -1
-				}
-			}
-		}
-		if typedMsg.err != nil {
-			m.status = typedMsg.err.Error()
-			m.addUIEvent(summarizeError("error", typedMsg.err.Error()))
-			m.logWriteError("workflow", typedMsg.err)
-			return m, nil
-		}
-		if typedMsg.status != "" {
-			m.addUIEvent(summarizeStatusEvent(typedMsg.status))
-			m.logWrite("workflow", typedMsg.status)
-			m.status = typedMsg.status
-		} else if m.querySession != nil && !m.querySession.Validation.Valid && m.querySession.CurrentCandidate() != nil {
-			m.status = "invalid candidate — Ctrl+G lets Agent fix it, or send a message"
-			m.addUIEvent("validation: Ctrl+G lets Agent fix the candidate")
-		}
-		return m, nil
+		return m.applyWorkflow(typedMsg)
 	case turnTimeoutMsg:
 		if !m.busy || typedMsg.startedAt != m.turnStartedAt {
 			return m, nil
 		}
-		if m.pendingApproval != nil {
-			return m, m.turnTimeoutCmd(typedMsg.startedAt)
-		}
-		m.status = "still working — Enter waits, Esc cancels"
+		m.status = "still working — Esc stops the run"
 		m.addUIEvent("workflow: still working")
 		return m, m.turnTimeoutCmd(typedMsg.startedAt)
 	}
-	inputCmd := m.updateFocused(teaMsg)
-	return m, inputCmd
+	return m, m.updateFocused(teaMsg)
+}
+
+// applyAgentStarted records the session created for a new agent turn.
+func (m Model) applyAgentStarted(startedMsg agentStartedMsg) (Model, tea.Cmd) {
+	if startedMsg.startErr != nil {
+		m.finishTurn()
+		m.status = startedMsg.startErr.Error()
+		m.addUIEvent(summarizeError("agent", startedMsg.startErr.Error()))
+		m.logWriteError("agent", startedMsg.startErr)
+		return m, nil
+	}
+	if startedMsg.querySession != nil {
+		m.querySession = startedMsg.querySession
+		m.syncQuerySession()
+		m.queuedMessage = ""
+	}
+	m.message.SetValue("")
+	m.composerReference = nil
+	m.evidenceMode = evidenceModeData
+	m.progressOperation = progressOperationPreparing
+	m.turnEvents = nil
+	m.liveResponse = ""
+	return m, m.nextAgentUpdateCmd(startedMsg.updates)
+}
+
+// applyAgentTurnUpdate folds one streamed agent event, or the turn result, into the workspace.
+func (m Model) applyAgentTurnUpdate(updateMsg agentTurnUpdateMsg) (Model, tea.Cmd) {
+	if updateMsg.update.Event != nil {
+		event := *updateMsg.update.Event
+		m.turnEvents = append(m.turnEvents, event)
+		if updateMsg.update.QuerySession != nil {
+			m.querySession = updateMsg.update.QuerySession
+			m.syncQuerySession()
+		}
+		m.applyTurnEvidenceMode()
+		m.recordAgentActivities([]agent.Event{event})
+		if event.Kind == agent.EventKindMessageDelta {
+			m.liveResponse += event.Message
+			m.status = "agent output streaming"
+			m.syncChatCursor()
+		} else if summary := summarizeAgentEvent(event); summary != "" {
+			m.addUIEvent(summary)
+		}
+	}
+	if !updateMsg.update.Done {
+		return m, m.nextAgentUpdateCmd(updateMsg.updates)
+	}
+	m.finishTurn()
+	m.querySession = updateMsg.update.QuerySession
+	m.executionPreviewOffset = 0
+	m.syncQuerySession()
+	m.applyTurnEvidenceMode()
+	m.logAgentTurn(m.turnEvents)
+	m.liveResponse = ""
+	if updateMsg.update.Err != nil {
+		m.status = updateMsg.update.Err.Error()
+		m.addUIEvent(summarizeError("agent", updateMsg.update.Err.Error()))
+		m.logWriteError("agent", updateMsg.update.Err)
+		return m, nil
+	}
+	m.message.SetValue("")
+	m.status = "agent turn complete"
+	m.addUIEvent("agent: turn complete")
+	m.logQuerySession(m.querySession)
+	return m, nil
+}
+
+// applyCatalog records a catalog refresh or its connection failure.
+func (m Model) applyCatalog(catalogResult catalogMsg) (Model, tea.Cmd) {
+	m.busy = false
+	if catalogResult.loadErr != nil {
+		m.catalog.setLoadError(catalogResult.loadErr.Error())
+		m.status = "BanyanDB connection failed: " + catalogResult.loadErr.Error()
+		m.addUIEvent(m.status)
+		m.logWriteError("catalog", catalogResult.loadErr)
+		return m, nil
+	}
+	m.catalog.setCatalog(catalogResult.catalog)
+	m.status = fmt.Sprintf("catalog loaded: %d resources in %d groups", len(catalogResult.catalog.Entries), len(catalogResult.catalog.Groups))
+	m.addUIEvent(m.status)
+	m.logWrite("catalog", m.status)
+	return m, nil
+}
+
+// applySchemaDetail caches one discovered resource schema for the evidence panel.
+func (m Model) applySchemaDetail(detailMsg schemaDetailMsg) (Model, tea.Cmd) {
+	m.clearSchemaLoad(detailMsg.entry)
+	if detailMsg.loadErr != nil {
+		m.addUIEvent("schema detail: " + detailMsg.loadErr.Error())
+		m.logWriteError("schema", detailMsg.loadErr)
+		return m, nil
+	}
+	m.cacheSchema(detailMsg.snapshot)
+	if !m.schemaSearchOpen() || m.isCurrentSchemaSearchEntry(detailMsg.entry) {
+		m.selectedSchema = detailMsg.snapshot
+	}
+	if detailMsg.snapshot.Loaded {
+		m.schemaDetailScroll = 0
+	}
+	return m, nil
+}
+
+// applyWorkflow folds a completed validation or execution into the workspace.
+func (m Model) applyWorkflow(workflowResult workflowMsg) (Model, tea.Cmd) {
+	m.finishTurn()
+	if workflowResult.querySession != nil {
+		m.querySession = workflowResult.querySession
+		m.syncQuerySession()
+	}
+	m.addAgentEvents(workflowResult.events)
+	m.recordAgentActivities(workflowResult.events)
+	if workflowResult.clearTurnHint {
+		m.message.SetValue("")
+	}
+	// A schema lookup carries no candidate, so the validation bookkeeping below has nothing to report.
+	if m.querySession != nil && !workflowResult.schemaAnswer {
+		m.recordWorkflowSessionState(workflowResult.status)
+	}
+	if workflowResult.err != nil {
+		m.status = workflowResult.err.Error()
+		m.addUIEvent(summarizeError("error", workflowResult.err.Error()))
+		m.logWriteError("workflow", workflowResult.err)
+		return m, nil
+	}
+	if workflowResult.schemaAnswer {
+		m.applySchemaAnswer()
+		// The reference belonged to the sent message; leaving it set would pin the next turn too.
+		m.composerReference = nil
+	}
+	if workflowResult.status != "" {
+		m.addUIEvent(summarizeStatusEvent(workflowResult.status))
+		m.logWrite("workflow", workflowResult.status)
+		m.status = workflowResult.status
+	} else if m.querySession != nil && !m.querySession.Validation.Valid && m.querySession.CurrentCandidate() != nil {
+		m.status = "invalid candidate — Ctrl+G lets Agent fix it, or send a message"
+		m.addUIEvent("validation: Ctrl+G lets Agent fix the candidate")
+	}
+	return m, nil
+}
+
+// recordWorkflowSessionState logs validation hints and focuses fresh execution results.
+func (m *Model) recordWorkflowSessionState(status string) {
+	if validationHint := formatValidationHint(m.querySession.Validation.Message); validationHint != "" {
+		m.addUIEvent(validationHint)
+		m.logWrite("validation", m.querySession.Validation.Message)
+	}
+	currentCandidate := m.querySession.CurrentCandidate()
+	if currentCandidate != nil && strings.TrimSpace(currentCandidate.Query) != "" && !m.querySession.Validation.Valid {
+		if invalidHint := formatInvalidCandidateHint(currentCandidate.Query); invalidHint != "" {
+			m.addUIEvent(invalidHint)
+		}
+		m.logWrite("candidate", currentCandidate.Query)
+	}
+	m.logQuerySession(m.querySession)
+	if status != "execution complete" {
+		return
+	}
+	m.executionDetailScroll = 0
+	m.executionPreviewOffset = 0
+	m.executionExportPath = ""
+	m.evidenceMode = evidenceModeData
+	m.executionRowCursor = -1
+	if len(m.querySession.ExecutionResult.Preview) > 0 {
+		m.executionRowCursor = 0
+	}
+	m.recordExecutionActivity(m.querySession)
+	m.focus = focusExecution
+}
+
+// applySchemaAnswer points the workspace at the schema a direct lookup just read.
+//
+// The turn produced no rows, so leaving focus on Data Preview would show a stale result beside a
+// message describing something else.
+func (m *Model) applySchemaAnswer() {
+	if m.querySession == nil {
+		return
+	}
+	m.selectedSchema = m.querySession.SchemaSnapshot
+	m.evidenceMode = evidenceModeSchemaPinned
+	m.schemaDetailScroll = 0
+	m.schemaSearchDismissed = true
+	// The placeholder that showed the message while the turn ran is now a duplicate of the recorded
+	// one, and it holds the cursor on an entry with no detail instead of on the description.
+	m.queuedMessage = ""
+	m.syncChatCursor()
+	if m.focus == focusExecution {
+		m.focus = focusChat
+	}
+	m.logSchemaAnswer()
+	m.logQuerySession(m.querySession)
+}
+
+// focusEvidencePanel enters the evidence slot without changing which panel occupies it.
+//
+// Focusing is how a schema gets read and scrolled, and on a narrow terminal it is the only way to
+// reach one at all, so it closes the live search preview but keeps a schema the turn looked up.
+func (m *Model) focusEvidencePanel() {
+	m.schemaSearchDismissed = true
+	if m.evidenceMode == evidenceModeSchema {
+		m.evidenceMode = evidenceModeData
+	}
+}
+
+// finishTurn clears the bookkeeping shared by every way a turn can end.
+func (m *Model) finishTurn() {
+	m.busy = false
+	m.turnStartedAt = time.Time{}
+	m.turnCancel = nil
 }
 
 // View implements tea.Model.
 func (m Model) View() string {
-	contentWidth := clamp(m.width-4, 48, 200)
+	view, _ := m.renderView()
+	return view
+}
+
+// renderView renders the whole screen and reports the click target of every visible panel.
+func (m Model) renderView() (string, []panelRegion) {
+	if m.width < minTerminalWidth || m.height < minTerminalHeight {
+		return m.renderTooSmall(), nil
+	}
+	contentWidth := clamp(m.width-4, minTerminalWidth-4, 200)
 	header := m.renderWorkspaceHeader(contentWidth)
 	if m.catalog.loadError != "" {
-		connectionError := truncate("BanyanDB connection failed: "+singleLine(m.catalog.loadError), contentWidth)
-		header = lipgloss.JoinVertical(lipgloss.Left, header, badStyle.Render(connectionError))
+		connectionError := truncate(glyphFailed+" BanyanDB connection failed: "+singleLine(m.catalog.loadError), contentWidth)
+		header = lipgloss.JoinVertical(lipgloss.Left, header,
+			badStyle.Render(connectionError),
+			mutedStyle.Render("Ctrl+L retries the catalog load"))
 	}
 	footer := m.renderFooter(contentWidth)
-	bodyHeight := maxInt(m.height-lipgloss.Height(header)-lipgloss.Height(footer), 1)
-	body := m.renderWorkspace(contentWidth, bodyHeight)
-	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+	headerHeight := lipgloss.Height(header)
+	bodyHeight := maxInt(m.height-headerHeight-lipgloss.Height(footer), 1)
+	if m.helpVisible {
+		return lipgloss.JoinVertical(lipgloss.Left,
+			header, m.renderHelpOverlay(contentWidth, bodyHeight), footer), nil
+	}
+	body, regions := m.renderWorkspaceWithRegions(contentWidth, bodyHeight, headerHeight)
+	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer), regions
+}
+
+// Minimum terminal size below which the workspace cannot render legibly.
+const (
+	minTerminalWidth  = 60
+	minTerminalHeight = 18
+)
+
+// renderTooSmall replaces the workspace with an actionable message instead of a broken layout.
+func (m Model) renderTooSmall() string {
+	width := maxInt(m.width, 1)
+	rows := []string{
+		titleStyle.Render(truncate("bydbctl · text2bydbQL", width)),
+		warnStyle.Render(truncate(glyphWarn+" Terminal too small", width)),
+		mutedStyle.Render(truncate(fmt.Sprintf("Need %d×%d, have %d×%d",
+			minTerminalWidth, minTerminalHeight, m.width, m.height), width)),
+		mutedStyle.Render(truncate("Resize, or press Esc twice to quit", width)),
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, fitRows(rows, maxInt(m.height, 1))...)
+}
+
+// refreshPanelRegions recomputes click targets so a click maps to what the user currently sees.
+func (m *Model) refreshPanelRegions() {
+	_, regions := m.renderView()
+	m.panelRegions = regions
+	m.regionsStale = false
 }
 
 type catalogMsg struct {
-	catalog session.SchemaCatalog
 	loadErr error
+	catalog session.SchemaCatalog
 }
 
 type schemaDetailMsg struct {
-	snapshot session.SchemaSnapshot
-	entry    session.CatalogEntry
 	loadErr  error
+	entry    session.CatalogEntry
+	snapshot session.SchemaSnapshot
 }
 
 type workflowMsg struct {
-	querySession   *session.QuerySession
-	events         []agent.Event
-	err            error
-	status         string
-	clearTurnHint  bool
-	previewRefresh bool
-}
-
-type approvalMsg struct {
-	request approval.Request
+	err           error
+	querySession  *session.QuerySession
+	status        string
+	events        []agent.Event
+	clearTurnHint bool
+	// schemaAnswer marks a turn answered from the schema catalog rather than by running a query.
+	schemaAnswer bool
 }
 
 type agentStartedMsg struct {
@@ -465,14 +544,6 @@ type turnTimeoutMsg struct {
 	startedAt time.Time
 }
 
-func (m Model) waitApprovalCmd() tea.Cmd {
-	requests := m.runner.ApprovalRequests()
-	return func() tea.Msg {
-		request := <-requests
-		return approvalMsg{request: request}
-	}
-}
-
 func (m Model) nextAgentUpdateCmd(updates <-chan workflow.TurnUpdate) tea.Cmd {
 	return func() tea.Msg {
 		update, open := <-updates
@@ -489,21 +560,21 @@ func (m Model) queryDebounceCmd(revision int) tea.Cmd {
 	})
 }
 
+// syncQuerySession mirrors session state into the editor without discarding an in-progress manual edit.
 func (m *Model) syncQuerySession() {
 	if m.querySession == nil {
 		return
 	}
-	if m.querySession.CandidateSuperseded {
-		m.query.SetValue("")
-		m.limit.SetValue("")
-		return
-	}
-	if currentCandidate := m.querySession.CurrentCandidate(); currentCandidate != nil {
-		m.query.SetValue(currentCandidate.Query)
-		m.limit.SetValue(extractCandidateLimit(currentCandidate.Query))
-		start, end := extractCandidateTimeRange(currentCandidate.Query)
-		m.start.SetValue(start)
-		m.end.SetValue(end)
+	if !m.editingQuery {
+		if m.querySession.CandidateSuperseded {
+			m.query.SetValue("")
+			m.limit.SetValue("")
+			m.syncChatCursor()
+			return
+		}
+		if currentCandidate := m.querySession.CurrentCandidate(); currentCandidate != nil {
+			m.setQueryValue(currentCandidate.Query)
+		}
 	}
 	if strings.TrimSpace(m.querySession.SchemaSnapshot.Name) != "" {
 		m.cacheSchema(m.querySession.SchemaSnapshot)
@@ -512,26 +583,19 @@ func (m *Model) syncQuerySession() {
 		}
 		m.selectedSchema = m.querySession.SchemaSnapshot
 	}
-	m.syncChatCursor(true)
+	m.syncChatCursor()
 }
 
-func (m *Model) applyTurnPreviewPreference() {
-	currentCandidate := m.querySession.CurrentCandidate()
-	for _, event := range m.turnEvents {
-		if event.Status != agent.EventStatusSucceeded {
-			continue
-		}
-		switch event.ToolName {
-		case bridge.ToolProbeBydbQL:
-			m.preferCandidateProbe = true
-		case bridge.ToolExecuteBydbQL:
-			m.preferCandidateProbe = false
-		case bridge.ToolProposeQueryPlan:
-			if event.Kind == agent.EventKindCandidate && currentCandidate != nil && currentCandidate.Probe != nil {
-				m.preferCandidateProbe = true
-			}
-		}
+// setQueryValue replaces the editor contents and refreshes the derived time and limit slots.
+func (m *Model) setQueryValue(query string) {
+	if m.query.Value() == query {
+		return
 	}
+	m.query.SetValue(query)
+	m.limit.SetValue(extractCandidateLimit(query))
+	start, end := extractCandidateTimeRange(query)
+	m.start.SetValue(start)
+	m.end.SetValue(end)
 }
 
 var (
@@ -602,24 +666,6 @@ func (m *Model) applyCandidateTimeRange() {
 	m.query.SetValue(candidateTimePattern.ReplaceAllString(query, timeClause))
 }
 
-func formatApprovalRequest(request approval.Request) string {
-	return strings.Join([]string{
-		"statement: " + request.Query,
-		"resource: " + fallback(request.Resource, "-"),
-		"groups: " + fallback(strings.Join(request.Groups, ", "), "-"),
-		"time range: " + fallback(request.TimeRange, "-"),
-		"limit: " + fallback(request.Limit, "-"),
-		"timeout: " + request.Timeout.String(),
-		fmt.Sprintf("preview rows: %d", request.PreviewRows),
-		"source: " + string(request.Source),
-	}, "\n")
-}
-
-func formatApprovalAudit(request approval.Request) string {
-	return fmt.Sprintf("source=%s resource=%s groups=%s time_range=%s limit=%s timeout=%s preview_rows=%d query=%q",
-		request.Source, request.Resource, strings.Join(request.Groups, ","), request.TimeRange, request.Limit, request.Timeout, request.PreviewRows, request.Query)
-}
-
 func newTextInput(value, placeholder string) textinput.Model {
 	input := textinput.New()
 	input.Placeholder = placeholder
@@ -629,37 +675,227 @@ func newTextInput(value, placeholder string) textinput.Model {
 	return input
 }
 
+// statusAskingAgent is the status shown while a turn is in flight.
+const statusAskingAgent = "asking agent"
+
+// statusSchemaComplete is the status of a turn answered straight from the schema catalog.
+const statusSchemaComplete = "schema lookup complete"
+
+const (
+	keyPageUp        = "pgup"
+	keyArrowUp       = "up"
+	pageScrollStep   = 8
+	chatPanelPadding = 8
+)
+
+// chatPanelChrome counts the non-message rows of the conversation panel: title, activity, progress,
+// the message counter, and the panel frame.
+const chatPanelChrome = 6
+
+// handleKey dispatches one key press, resolving overlays before navigation and workspace actions.
 func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
-	if m.pendingApproval != nil {
-		switch keyMsg.String() {
-		case "y":
-			return m.resolvePendingApproval(true)
-		case "n":
-			return m.resolvePendingApproval(false)
-		case "e":
-			request := *m.pendingApproval
-			if _, handled := m.resolvePendingApproval(false); handled {
-				m.cancelActive()
-				m.query.SetValue(request.Query)
-				m.status = "editing rejected statement"
-				m.focus = focusQuery
-				return m.syncFocus(), true
-			}
-		}
+	key := keyMsg.String()
+	if m.quitConfirmPending {
+		return m.resolveQuitConfirm(key)
 	}
-	switch keyMsg.String() {
-	case "ctrl+c", "esc":
-		if m.busy || m.pendingApproval != nil {
-			m.cancelActive()
-			return nil, true
-		}
-		return tea.Quit, true
+	if m.helpVisible {
+		return m.resolveHelpKey(key)
+	}
+	if command, handled := m.handleNavigationKey(key); handled {
+		return command, true
+	}
+	return m.handleActionKey(key)
+}
+
+// resolveHelpKey keeps the help overlay modal, closing it on the keys a user expects to dismiss with.
+func (m *Model) resolveHelpKey(key string) (tea.Cmd, bool) {
+	switch key {
+	case "?", "esc", "q", "enter":
+		m.helpVisible = false
+		m.helpScroll = 0
+		return nil, true
+	case keyPageUp:
+		m.scrollHelp(-pageScrollStep)
+		return nil, true
+	case "pgdown":
+		m.scrollHelp(pageScrollStep)
+		return nil, true
+	case keyArrowUp, "k":
+		m.scrollHelp(-1)
+		return nil, true
+	case "down", "j":
+		m.scrollHelp(1)
+		return nil, true
+	default:
+		return nil, true
+	}
+}
+
+// handleNavigationKey moves focus, selection, and scroll position without starting work.
+func (m *Model) handleNavigationKey(key string) (tea.Cmd, bool) {
+	switch key {
 	case "tab":
 		m.cycleFocus(1)
 		return m.syncFocus(), true
 	case "shift+tab":
 		m.cycleFocus(-1)
 		return m.syncFocus(), true
+	case "1", "2", "3", "4":
+		if m.acceptsTextInput() {
+			return nil, false
+		}
+		return m.focusPanelByNumber(key)
+	case "alt+1", "alt+2", "alt+3", "alt+4":
+		return m.focusPanelByNumber(strings.TrimPrefix(key, "alt+"))
+	case "j", "k":
+		if m.acceptsTextInput() {
+			return nil, false
+		}
+		if key == "k" {
+			return m.handleVerticalKey(keyArrowUp)
+		}
+		return m.handleVerticalKey("down")
+	case "left", "right":
+		if m.focus != focusExecution {
+			return nil, false
+		}
+		delta := previewHorizontalScrollStep
+		if key == "left" {
+			delta = -previewHorizontalScrollStep
+		}
+		m.moveExecutionPreviewOffset(delta)
+		return nil, true
+	case keyArrowUp, "down":
+		return m.handleVerticalKey(key)
+	case keyPageUp, "pgdown":
+		return m.handlePageKey(key)
+	default:
+		return nil, false
+	}
+}
+
+// acceptsTextInput reports whether the focused control consumes plain characters.
+//
+// Vim-style navigation must not steal letters from an editor the user is typing into.
+func (m Model) acceptsTextInput() bool {
+	switch m.focus {
+	case focusMessage, focusQuery, focusStart, focusEnd, focusLimit:
+		return true
+	default:
+		return false
+	}
+}
+
+// focusPanelByNumber jumps straight to a panel so no feature is more than one keypress away.
+//
+// A bare digit only reaches here outside an editor; Alt+digit works from anywhere.
+func (m *Model) focusPanelByNumber(key string) (tea.Cmd, bool) {
+	panelFocus, ok := map[string]int{
+		"1": focusChat,
+		"2": focusQuery,
+		"3": focusMessage,
+		"4": focusExecution,
+	}[key]
+	if !ok {
+		return nil, false
+	}
+	m.focus = panelFocus
+	if panelFocus == focusExecution {
+		m.focusEvidencePanel()
+	}
+	m.status = m.focusLabel() + " focused"
+	return m.syncFocus(), true
+}
+
+// handleVerticalKey moves the cursor of whichever list owns the focus.
+func (m *Model) handleVerticalKey(key string) (tea.Cmd, bool) {
+	delta := 1
+	if key == keyArrowUp {
+		delta = -1
+	}
+	if m.focus == focusMessage && m.schemaSearchOpen() {
+		m.moveSchemaSearchCursor(delta)
+		return m.loadSchemaDetailForSearch(), true
+	}
+	switch m.focus {
+	case focusExecution:
+		m.moveExecutionRowCursor(delta)
+		return nil, true
+	case focusChat:
+		m.moveChatCursor(delta, m.chatListViewportHeight())
+		return nil, true
+	case focusMessage:
+		return m.recallMessageHistory(key)
+	default:
+		return nil, false
+	}
+}
+
+// recallMessageHistory restores an earlier composer message once the cursor leaves the draft.
+func (m *Model) recallMessageHistory(key string) (tea.Cmd, bool) {
+	recalled, ok := recallHistoryValue(&m.messageHistory, m.message, key)
+	if !ok {
+		return nil, false
+	}
+	m.message.SetValue(recalled)
+	m.message.CursorEnd()
+	m.updateSchemaSearch()
+	m.status = m.messageHistory.statusLabel("message")
+	return m.loadSchemaDetailForSearch(), true
+}
+
+// handlePageKey scrolls the detail view of whichever panel owns the focus.
+func (m *Model) handlePageKey(key string) (tea.Cmd, bool) {
+	delta := pageScrollStep
+	if key == keyPageUp {
+		delta = -pageScrollStep
+	}
+	switch m.focus {
+	case focusExecution:
+		if m.evidenceMode.showsSchema() {
+			m.scrollSchemaDetail(delta)
+			return nil, true
+		}
+		m.scrollExecutionDetail(delta, m.executionDetailViewportHeight())
+		return nil, true
+	case focusChat:
+		m.moveChatDetailScroll(delta, chatDetailViewportHeight(m.chatPanelHeight(clamp(m.height-chatPanelPadding, 18, 40))))
+		return nil, true
+	default:
+		if m.evidenceMode.showsSchema() {
+			m.scrollSchemaDetail(delta)
+			return nil, true
+		}
+		return nil, false
+	}
+}
+
+// scrollSchemaDetail moves the schema evidence viewport, which can be taller than the panel.
+func (m *Model) scrollSchemaDetail(delta int) {
+	lineCount := len(schemaDetailLines(m.selectedSchema))
+	if lineCount == 0 {
+		m.schemaDetailScroll = 0
+		return
+	}
+	m.schemaDetailScroll = clamp(m.schemaDetailScroll+delta, 0, maxInt(lineCount-1, 0))
+}
+
+// handleActionKey runs workspace commands that can start or stop work.
+func (m *Model) handleActionKey(key string) (tea.Cmd, bool) {
+	switch key {
+	case "ctrl+c", "esc":
+		return m.handleEscape()
+	case "?":
+		if m.acceptsTextInput() {
+			return nil, false
+		}
+		m.helpVisible = true
+		return nil, true
+	case "/":
+		if m.acceptsTextInput() {
+			return nil, false
+		}
+		return m.openCatalogFilter()
 	case "ctrl+l":
 		if m.busy {
 			return nil, true
@@ -669,205 +905,130 @@ func (m *Model) handleKey(keyMsg tea.KeyMsg) (tea.Cmd, bool) {
 		m.progressOperation = progressOperationCatalog
 		m.status = "refreshing catalog"
 		return m.loadCatalogCmd(), true
-	case "ctrl+f":
-		m.focus = focusExecution
-		m.evidenceMode = evidenceModeData
-		m.status = "data preview focused"
-		return m.syncFocus(), true
 	case "ctrl+left", "ctrl+right":
-		if m.querySession == nil || len(m.querySession.Candidates) == 0 {
-			return nil, true
-		}
-		delta := -1
-		if keyMsg.String() == "ctrl+right" {
-			delta = 1
-		}
-		if m.querySession.SelectCandidate(m.querySession.SelectedCandidateIndex() + delta) {
-			m.syncQuerySession()
-			m.status = "selected candidate version"
-		}
-		return nil, true
-	case "left", "right":
-		if m.focus != focusExecution {
-			return nil, false
-		}
-		delta := previewHorizontalScrollStep
-		if keyMsg.String() == "left" {
-			delta = -previewHorizontalScrollStep
-		}
-		m.moveExecutionPreviewOffset(delta)
-		return nil, true
-	case "up", "down":
-		if m.focus == focusMessage && m.schemaSearchOpen() {
-			delta := 1
-			if keyMsg.String() == "up" {
-				delta = -1
-			}
-			m.moveSchemaSearchCursor(delta)
-			return m.loadSchemaDetailForSearch(), true
-		}
-		if m.focus == focusExecution {
-			delta := 1
-			if keyMsg.String() == "up" {
-				delta = -1
-			}
-			m.moveExecutionRowCursor(delta)
-			return nil, true
-		}
-		if m.focus == focusActivity {
-			delta := 1
-			if keyMsg.String() == "up" {
-				delta = -1
-			}
-			m.moveActivityCursor(delta, 8)
-			return nil, true
-		}
-		if m.focus == focusChat {
-			delta := 1
-			if keyMsg.String() == "up" {
-				delta = -1
-			}
-			m.moveChatCursor(delta, m.chatListViewportHeight())
-			return nil, true
-		}
-		return nil, false
-	case "pgup", "pgdown":
-		if m.focus == focusExecution {
-			delta := 8
-			if keyMsg.String() == "pgup" {
-				delta = -8
-			}
-			m.scrollExecutionDetail(delta, m.executionDetailViewportHeight())
-			return nil, true
-		}
-		if m.focus == focusActivity {
-			delta := 8
-			if keyMsg.String() == "pgup" {
-				delta = -8
-			}
-			if m.scrollActivityDetail(delta, 8) {
-				return nil, true
-			}
-			if m.scrollExecutionDetail(delta, m.executionDetailViewportHeight()) {
-				return nil, true
-			}
-			m.moveActivityCursor(delta, 8)
-			return nil, true
-		}
-		if m.focus == focusChat {
-			delta := 8
-			if keyMsg.String() == "pgup" {
-				delta = -8
-			}
-			m.moveChatDetailScroll(delta, chatDetailViewportHeight(m.chatPanelHeight(clamp(m.height-8, 18, 40))))
-			return nil, true
-		}
-		return nil, false
+		return m.selectCandidateVersion(key)
 	case "enter":
-		if m.focus == focusMessage && m.schemaSearchOpen() {
-			m.insertSchemaReference()
-			return nil, true
-		}
-		if m.focus == focusMessage {
-			return m.sendComposerMessage()
-		}
-		if m.busy && strings.Contains(m.status, "still working") {
-			m.status = "still working — Esc cancels"
-			return nil, true
-		}
-		return nil, false
+		return m.handleEnterKey()
 	case "ctrl+e":
-		if m.busy {
-			return nil, true
-		}
-		m.busy = true
-		m.turnEvents = nil
-		m.progressOperation = progressOperationExecute
-		m.status = "executing full query"
-		m.turnStartedAt = time.Now()
-		m.logWrite("action", "ctrl+e full execute query")
-		executeCtx, cancelExecute := context.WithCancel(context.Background())
-		m.turnCancel = cancelExecute
-		return tea.Batch(m.executeCmd(executeCtx), m.turnTimeoutCmd(m.turnStartedAt)), true
+		return m.executeCurrentCandidate()
 	case "ctrl+g":
 		return m.repairCurrentCandidate()
-	case "ctrl+y":
-		return m.refreshPreview()
-	case "ctrl+p":
-		nextPolicy := m.executionPolicy.Next()
-		if nextPolicy == approval.PolicyTrustSession && m.cleanReadExecutions < trustSessionCleanReadThreshold {
-			m.status = fmt.Sprintf("trust session requires %d clean read executions", trustSessionCleanReadThreshold)
-			return nil, true
-		}
-		m.executionPolicy = nextPolicy
-		m.syncExecutionPolicy()
-		m.status = "execution policy: " + m.executionPolicy.Label()
-		m.addUIEvent("policy: " + m.executionPolicy.Label())
-		return nil, true
-	case "ctrl+r":
-		m.showLiveOutput = !m.showLiveOutput
-		if m.showLiveOutput {
-			m.status = "agent live output visible"
-		} else {
-			m.status = "agent live output hidden"
-		}
-		m.syncChatCursor(true)
-		return nil, true
 	case "ctrl+o":
-		exportResult, ok := m.exportResult()
-		if !ok {
-			return nil, false
-		}
-		exportPath, exportErr := exportExecutionResult(exportResult)
-		if exportErr != nil {
-			m.status = exportErr.Error()
-			m.addUIEvent("export failed: " + exportErr.Error())
-			return nil, true
-		}
-		m.executionExportPath = exportPath
-		m.status = "exported preview"
-		m.addUIEvent("exported: " + exportPath)
-		return nil, true
-	case "ctrl+j":
-		preview, hasPreview := m.currentPreviewData()
-		if m.querySession != nil && !m.preferCandidateProbe && hasPreview &&
-			strings.TrimSpace(m.querySession.ExecutionResult.Response) != "" &&
-			strings.TrimSpace(preview.query) == strings.TrimSpace(m.querySession.ExecutionResult.Query) {
-			m.showExecutionRaw = !m.showExecutionRaw
-			m.executionDetailScroll = 0
-			if m.showExecutionRaw {
-				m.status = "showing raw JSON response"
-			} else {
-				m.status = "hiding raw JSON response"
-			}
-			return nil, true
-		}
-		m.status = "full response is available after a complete execution"
-		return nil, true
+		return m.exportCurrentResult()
 	default:
 		return nil, false
 	}
 }
 
-func (m *Model) resolvePendingApproval(approved bool) (tea.Cmd, bool) {
-	if m.pendingApproval == nil {
-		return nil, false
-	}
-	request := *m.pendingApproval
-	m.pendingApproval = nil
-	if resolveErr := m.runner.ResolveApproval(request.ID, approved); resolveErr != nil {
-		m.status = resolveErr.Error()
-		m.addUIEvent(summarizeError("approval", resolveErr.Error()))
+// handleEscape unwinds one layer at a time so Esc never quits while something is still open.
+func (m *Model) handleEscape() (tea.Cmd, bool) {
+	if m.schemaSearchOpen() {
+		m.schemaSearchDismissed = true
+		// A search that matched nothing never took the slot, so a pinned schema still owns it.
+		if m.evidenceMode == evidenceModeSchema {
+			m.evidenceMode = evidenceModeData
+		}
+		m.status = "schema search closed"
 		return nil, true
 	}
-	decision := "rejected"
-	if approved {
-		decision = "approved"
+	if m.busy {
+		m.cancelActive()
+		return nil, true
 	}
-	m.status = "execution " + decision
-	m.recordActivity("approval", "execution "+decision, formatApprovalRequest(request))
-	m.logWrite("approval", fmt.Sprintf("id=%s decision=%s", request.ID, decision))
+	m.quitConfirmPending = true
+	m.status = "quit? y confirms · any other key keeps working"
 	return nil, true
+}
+
+// openCatalogFilter focuses the composer on a fresh schema search, the conventional filter entry point.
+func (m *Model) openCatalogFilter() (tea.Cmd, bool) {
+	m.focus = focusMessage
+	m.schemaSearchDismissed = false
+	if !strings.HasSuffix(m.message.Value(), "@") {
+		m.message.SetValue(m.message.Value() + "@")
+	}
+	m.updateSchemaSearch()
+	m.status = "searching the local catalog"
+	return tea.Batch(m.syncFocus(), m.loadSchemaDetailForSearch()), true
+}
+
+// selectCandidateVersion steps back to a query the session recorded earlier.
+func (m *Model) selectCandidateVersion(key string) (tea.Cmd, bool) {
+	if m.querySession == nil || len(m.querySession.Candidates) == 0 {
+		return nil, true
+	}
+	delta := -1
+	if key == "ctrl+right" {
+		delta = 1
+	}
+	if m.querySession.SelectCandidate(m.querySession.SelectedCandidateIndex() + delta) {
+		m.editingQuery = false
+		m.syncQuerySession()
+		m.status = "loaded a previous query"
+	}
+	return nil, true
+}
+
+// handleEnterKey inserts a schema reference or sends the composed message.
+func (m *Model) handleEnterKey() (tea.Cmd, bool) {
+	if m.focus == focusMessage && m.schemaSearchOpen() {
+		m.insertSchemaReference()
+		return nil, true
+	}
+	if m.focus == focusMessage {
+		return m.sendComposerMessage()
+	}
+	if m.busy && strings.Contains(m.status, "still working") {
+		m.status = "still working — Esc stops the run"
+		return nil, true
+	}
+	return nil, false
+}
+
+// executeCurrentCandidate runs the editor contents immediately.
+func (m *Model) executeCurrentCandidate() (tea.Cmd, bool) {
+	if m.busy {
+		return nil, true
+	}
+	m.busy = true
+	m.turnEvents = nil
+	m.progressOperation = progressOperationExecute
+	m.status = "executing full query"
+	m.turnStartedAt = time.Now()
+	m.logWrite("action", "ctrl+e full execute query")
+	executeCtx, cancelExecute := context.WithCancel(context.Background())
+	m.turnCancel = cancelExecute
+	return tea.Batch(m.executeCmd(executeCtx), m.turnTimeoutCmd(m.turnStartedAt)), true
+}
+
+// exportCurrentResult writes the visible execution result to a local file.
+func (m *Model) exportCurrentResult() (tea.Cmd, bool) {
+	exportResult, ok := m.exportResult()
+	if !ok {
+		return nil, false
+	}
+	exportPath, exportErr := exportExecutionResult(exportResult)
+	if exportErr != nil {
+		m.status = exportErr.Error()
+		m.addUIEvent("export failed: " + exportErr.Error())
+		return nil, true
+	}
+	m.executionExportPath = exportPath
+	m.status = "exported preview"
+	m.addUIEvent("exported: " + exportPath)
+	return nil, true
+}
+
+// resolveQuitConfirm answers the exit confirmation prompt.
+func (m *Model) resolveQuitConfirm(key string) (tea.Cmd, bool) {
+	switch key {
+	case "y", "Y", "ctrl+c":
+		return tea.Quit, true
+	default:
+		m.quitConfirmPending = false
+		m.status = "quit canceled"
+		return nil, true
+	}
 }
 
 func (m *Model) cancelActive() {
@@ -875,15 +1036,13 @@ func (m *Model) cancelActive() {
 		m.turnCancel()
 		m.turnCancel = nil
 	}
-	m.runner.CancelApprovals()
 	if stopErr := m.runner.StopAgentTurn(context.Background(), m.querySession); stopErr != nil {
 		m.logWriteError("agent", stopErr)
 	}
-	m.pendingApproval = nil
-	m.status = "cancelled"
+	m.status = "stopped"
 	m.busy = false
 	m.turnStartedAt = time.Time{}
-	m.addUIEvent("workflow: cancelled")
+	m.addUIEvent("workflow: stopped by user")
 }
 
 func (m *Model) sendComposerMessage() (tea.Cmd, bool) {
@@ -895,21 +1054,53 @@ func (m *Model) sendComposerMessage() (tea.Cmd, bool) {
 		m.addUIEvent("message required before asking agent")
 		return nil, true
 	}
-	m.syncExecutionPolicy()
+	describeRequest, describesSchema := m.resolveDescribeTarget(messageValue)
 	m.queuedMessage = messageValue
+	m.messageHistory.record(messageValue)
 	m.turnEvents = nil
 	m.liveResponse = ""
+	m.editingQuery = false
 	m.message.SetValue("")
 	m.updateSchemaSearch()
-	m.syncChatCursor(true)
+	m.syncChatCursor()
 	m.busy = true
-	m.progressOperation = progressOperationPreparing
-	m.status = "asking agent"
 	m.turnStartedAt = time.Now()
-	m.logWrite("action", fmt.Sprintf("send agent message=%q", messageValue))
 	turnCtx, cancelTurn := context.WithCancel(context.Background())
 	m.turnCancel = cancelTurn
+	if describesSchema {
+		m.progressOperation = progressOperationSchema
+		m.status = "reading schema from BanyanDB"
+		m.logWrite("action", fmt.Sprintf("describe schema=%s/%s type=%s question=%q",
+			describeRequest.Group, describeRequest.Name, describeRequest.ResourceType, messageValue))
+		return tea.Batch(m.describeCmd(turnCtx, describeRequest, messageValue), m.turnTimeoutCmd(m.turnStartedAt)), true
+	}
+	m.progressOperation = progressOperationPreparing
+	m.status = statusAskingAgent
+	m.logWrite("action", fmt.Sprintf("send agent message=%q reference=%s", messageValue, describeReferenceLabel(m.composerReference)))
 	return tea.Batch(m.agentCmd(turnCtx, messageValue), m.turnTimeoutCmd(m.turnStartedAt)), true
+}
+
+// describeReferenceLabel names the composer reference for the session log, or reports its absence.
+func describeReferenceLabel(reference *session.CatalogEntry) string {
+	if reference == nil {
+		return "none"
+	}
+	return reference.Group + "/" + reference.Name
+}
+
+// resolveDescribeTarget reports whether the composed message is a schema lookup bydbctl can serve.
+//
+// A question about the shape of one named resource is answered by the same BanyanDB schema call the
+// agent would make, so it is served directly: no provider round trip, and no BYDBQL candidate.
+func (m Model) resolveDescribeTarget(messageValue string) (workflow.DescribeRequest, bool) {
+	if m.executor == nil {
+		return workflow.DescribeRequest{}, false
+	}
+	entries := m.catalog.catalog.Entries
+	if len(entries) == 0 && m.querySession != nil {
+		entries = m.querySession.SchemaSnapshot.Catalog
+	}
+	return workflow.ResolveDescribeTarget(messageValue, m.composerReference, entries)
 }
 
 func (m *Model) repairCurrentCandidate() (tea.Cmd, bool) {
@@ -926,11 +1117,11 @@ func (m *Model) repairCurrentCandidate() (tea.Cmd, bool) {
 		return nil, true
 	}
 	const repairRequest = "Repair the current invalid BYDBQL candidate using the validation error."
-	m.syncExecutionPolicy()
+	m.editingQuery = false
 	m.queuedMessage = repairRequest
 	m.turnEvents = nil
 	m.liveResponse = ""
-	m.syncChatCursor(true)
+	m.syncChatCursor()
 	m.busy = true
 	m.progressOperation = progressOperationPreparing
 	m.status = "asking Agent to repair candidate"
@@ -941,66 +1132,24 @@ func (m *Model) repairCurrentCandidate() (tea.Cmd, bool) {
 	return tea.Batch(m.agentCmd(turnCtx, repairRequest), m.turnTimeoutCmd(m.turnStartedAt)), true
 }
 
-func (m *Model) refreshPreview() (tea.Cmd, bool) {
-	if m.busy {
-		return nil, true
-	}
-	if m.querySession == nil {
-		m.status = "a valid candidate is required before preview refresh"
-		return nil, true
-	}
-	currentCandidate := m.querySession.CurrentCandidate()
-	if currentCandidate == nil || !currentCandidate.Validation.Valid {
-		m.status = "a valid candidate is required before preview refresh"
-		return nil, true
-	}
-	m.syncExecutionPolicy()
-	m.busy = true
-	m.turnEvents = nil
-	m.evidenceMode = evidenceModeData
-	m.progressOperation = progressOperationPreview
-	m.status = "refreshing preview"
-	m.turnStartedAt = time.Now()
-	m.logWrite("action", "ctrl+y refresh preview")
-	previewCtx, cancelPreview := context.WithCancel(context.Background())
-	m.turnCancel = cancelPreview
-	return tea.Batch(m.previewCmd(previewCtx), m.turnTimeoutCmd(m.turnStartedAt)), true
-}
-
 func (m Model) exportResult() (session.ExecutionResult, bool) {
 	if m.querySession == nil {
 		return session.ExecutionResult{}, false
 	}
 	executionResult := m.querySession.ExecutionResult
-	preview, ok := m.currentPreviewData()
-	if !ok {
+	if strings.TrimSpace(executionResult.Response) == "" && len(executionResult.Preview) == 0 {
 		return session.ExecutionResult{}, false
 	}
-	if !m.preferCandidateProbe && (strings.TrimSpace(executionResult.Response) != "" || len(executionResult.Preview) > 0) &&
-		strings.TrimSpace(executionResult.Query) == strings.TrimSpace(preview.query) {
-		return executionResult, true
-	}
-	return session.ExecutionResult{
-		Rows:    preview.totalRows,
-		Columns: append([]string(nil), preview.columns...),
-		Preview: append([][]string(nil), preview.preview...),
-		Query:   preview.query,
-		Summary: "BYDBQL probe preview",
-	}, true
+	return executionResult, true
 }
 
 func (m *Model) syncFocus() tea.Cmd {
 	m.message.Blur()
-	m.catalogFilter.Blur()
 	m.start.Blur()
 	m.end.Blur()
 	m.limit.Blur()
 	m.query.Blur()
 	switch m.focus {
-	case focusCatalog:
-		return nil
-	case focusCatalogFilter:
-		return m.catalogFilter.Focus()
 	case focusChat:
 		return nil
 	case focusMessage:
@@ -1013,8 +1162,6 @@ func (m *Model) syncFocus() tea.Cmd {
 		return m.limit.Focus()
 	case focusQuery:
 		return m.query.Focus()
-	case focusActivity:
-		return nil
 	case focusExecution:
 		return nil
 	default:
@@ -1022,20 +1169,13 @@ func (m *Model) syncFocus() tea.Cmd {
 	}
 }
 
+// updateFocused routes input to the focused control.
+//
+// Editing stays live while a background turn runs so a validation or agent round trip never swallows keystrokes.
 func (m *Model) updateFocused(teaMsg tea.Msg) tea.Cmd {
-	if m.busy {
-		return nil
-	}
 	var updateCmd tea.Cmd
 	previousQuery := m.query.Value()
 	switch m.focus {
-	case focusCatalog:
-		return nil
-	case focusCatalogFilter:
-		m.catalogFilter, updateCmd = m.catalogFilter.Update(teaMsg)
-		if strings.TrimSpace(m.catalogFilter.Value()) != m.catalog.filter {
-			m.catalog.setFilter(m.catalogFilter.Value())
-		}
 	case focusChat:
 		return nil
 	case focusMessage:
@@ -1061,13 +1201,12 @@ func (m *Model) updateFocused(teaMsg tea.Msg) tea.Cmd {
 			m.start.SetValue(start)
 			m.end.SetValue(end)
 		}
-	case focusActivity:
-		return nil
 	case focusExecution:
 		return nil
 	}
 	if (m.focus == focusStart || m.focus == focusEnd || m.focus == focusLimit || m.focus == focusQuery) && previousQuery != m.query.Value() {
 		m.queryRevision++
+		m.editingQuery = true
 		return tea.Batch(updateCmd, m.queryDebounceCmd(m.queryRevision))
 	}
 	return updateCmd
@@ -1077,11 +1216,8 @@ func (m *Model) resize(width, height int) {
 	m.width = width
 	m.height = height
 	contentWidth := clamp(width-4, 48, 200)
-	catalogWidth := clamp(contentWidth*28/100, 28, 44)
 	queryLeftWidth, _ := workspaceWidths(contentWidth)
 	timeInputWidth := maxInt(10, (queryLeftWidth-24)/2)
-	m.catalogHeight = clamp(height-6, 20, 40)
-	m.catalogFilter.Width = maxInt(12, catalogWidth-8)
 	m.message.SetWidth(maxInt(18, queryLeftWidth-4))
 	m.query.SetWidth(maxInt(18, queryLeftWidth-4))
 	m.start.Width = timeInputWidth
@@ -1106,13 +1242,13 @@ func (m Model) chatPanelHeight(totalHeight int) int {
 }
 
 func (m Model) chatListViewportHeight() int {
-	panelHeight := m.chatPanelHeight(clamp(m.height-8, 18, 40))
+	panelHeight := m.chatPanelHeight(clamp(m.height-chatPanelPadding, 18, 40))
 	detailBudget := 0
-	if entries := chatEntries(m.querySession, m.showLiveOutput, m.liveResponse, m.queuedMessage); m.chatCursor >= 0 &&
+	if entries := chatEntries(m.querySession, m.liveResponse, m.queuedMessage); m.chatCursor >= 0 &&
 		m.chatCursor < len(entries) && strings.TrimSpace(entries[m.chatCursor].detail) != "" {
-		detailBudget = chatDetailViewportHeight(panelHeight) + 2
+		detailBudget = chatDetailViewportHeight(panelHeight)
 	}
-	return maxInt(panelHeight-8-detailBudget, 4)
+	return maxInt(panelHeight-chatPanelChrome-detailBudget, 3)
 }
 
 func (m Model) agentCmd(ctx context.Context, messageValue string) tea.Cmd {
@@ -1127,6 +1263,29 @@ func (m Model) agentCmd(ctx context.Context, messageValue string) tea.Cmd {
 		}
 		updates, startErr := runner.StartAgentTurn(ctx, updatedSession, messageValue)
 		return agentStartedMsg{querySession: updatedSession, updates: updates, startErr: startErr}
+	}
+}
+
+// describeCmd reads one resource schema and records it as a direct catalog answer.
+func (m Model) describeCmd(ctx context.Context, request workflow.DescribeRequest, messageValue string) tea.Cmd {
+	runner := m.runner
+	options := m.startOptions()
+	query := m.query.Value()
+	querySession := m.querySession
+	return func() tea.Msg {
+		updatedSession, ensureErr := ensureSession(ctx, runner, querySession, options, query)
+		if ensureErr != nil {
+			return workflowMsg{err: ensureErr}
+		}
+		if describeErr := runner.DescribeResource(ctx, updatedSession, request, messageValue); describeErr != nil {
+			return workflowMsg{querySession: updatedSession, err: describeErr}
+		}
+		return workflowMsg{
+			querySession:  updatedSession,
+			status:        statusSchemaComplete,
+			clearTurnHint: true,
+			schemaAnswer:  true,
+		}
 	}
 }
 
@@ -1181,39 +1340,13 @@ func (m Model) executeCmd(ctx context.Context) tea.Cmd {
 	}
 }
 
-func (m Model) previewCmd(ctx context.Context) tea.Cmd {
-	runner := m.runner
-	options := m.startOptions()
-	query := m.query.Value()
-	querySession := m.querySession
-	return func() tea.Msg {
-		updatedSession, ensureErr := ensureSession(ctx, runner, querySession, options, query)
-		if ensureErr != nil {
-			return workflowMsg{err: ensureErr}
-		}
-		if previewErr := runner.ProbeCurrent(ctx, updatedSession); previewErr != nil {
-			return workflowMsg{
-				querySession:   updatedSession,
-				err:            previewErr,
-				previewRefresh: true,
-			}
-		}
-		return workflowMsg{
-			querySession:   updatedSession,
-			status:         "preview refreshed",
-			previewRefresh: true,
-		}
-	}
-}
-
 func (m *Model) startOptions() workflow.StartOptions {
 	options := workflow.StartOptions{
 		TimeRange: session.TimeRange{
 			Start: m.start.Value(),
 			End:   m.end.Value(),
 		},
-		Goal:            m.currentGoal(),
-		ExecutionPolicy: m.executionPolicy,
+		Goal: m.currentGoal(),
 	}
 	if m.composerReference != nil {
 		options.ResourceType = m.composerReference.Type
@@ -1234,13 +1367,6 @@ func (m Model) currentGoal() string {
 		return queuedMessage
 	}
 	return strings.TrimSpace(m.message.Value())
-}
-
-func (m *Model) syncExecutionPolicy() {
-	m.runner.SetExecutionPolicy(m.executionPolicy)
-	if m.querySession != nil {
-		m.querySession.ExecutionPolicy = m.executionPolicy
-	}
 }
 
 func (m Model) loadCatalogCmd() tea.Cmd {
@@ -1273,33 +1399,6 @@ func (m Model) loadSchemaDetailCmd(entry session.CatalogEntry) tea.Cmd {
 		}
 		return schemaDetailMsg{entry: entry, snapshot: snapshot}
 	}
-}
-
-func (m Model) catalogListHeight() int {
-	return clamp(m.catalogHeight-16, 8, 22)
-}
-
-func (m *Model) scrollActivityDetail(delta, viewportHeight int) bool {
-	if m.activityCursor < 0 || m.activityCursor >= len(m.activityLog) {
-		return false
-	}
-	selected := m.activityLog[m.activityCursor]
-	if strings.TrimSpace(selected.detail) == "" {
-		return false
-	}
-	detailLines := formatActivityDetailText(selected.detail, clamp(m.width-8, 48, 200))
-	maxScroll := maxInt(len(detailLines)-viewportHeight, 0)
-	if maxScroll == 0 {
-		return false
-	}
-	m.activityDetailScroll += delta
-	if m.activityDetailScroll < 0 {
-		m.activityDetailScroll = 0
-	}
-	if m.activityDetailScroll > maxScroll {
-		m.activityDetailScroll = maxScroll
-	}
-	return true
 }
 
 func (m Model) executionDetailViewportHeight() int {
@@ -1374,46 +1473,38 @@ func (m Model) executionBodyLines(width int) []string {
 	return executionDetailLines(m.querySession.ExecutionResult, executionDisplayOptions{
 		width:       width,
 		selectedRow: m.executionRowCursor,
-		showRaw:     m.showExecutionRaw,
 	})
 }
 
-func (m Model) schemaDetailHeight() int {
-	return clamp(m.height-14, 10, 28)
+// executionRowDetailLines renders the field-by-field detail of the selected result row.
+//
+// Without this the row cursor moves but the columns dropped from the table stay invisible.
+func (m Model) executionRowDetailLines(width int) []string {
+	data, ok := m.currentPreviewData()
+	if !ok || m.executionRowCursor < 0 || m.executionRowCursor >= len(data.preview) {
+		return nil
+	}
+	lines := []string{fmt.Sprintf("row %d/%d · %s",
+		m.executionRowCursor+1, len(data.preview), fallback(data.resource, "result"))}
+	for columnIndex, column := range data.columns {
+		value := ""
+		if columnIndex < len(data.preview[m.executionRowCursor]) {
+			value = data.preview[m.executionRowCursor][columnIndex]
+		}
+		lines = append(lines, wrapRunes(column+": "+value, maxInt(width-2, 24))...)
+	}
+	return lines
 }
 
-func (m *Model) moveActivityCursor(delta, viewportHeight int) {
-	if len(m.activityLog) == 0 {
-		m.activityCursor = 0
-		m.activityScroll = 0
-		return
-	}
-	m.activityCursor += delta
-	if m.activityCursor < 0 {
-		m.activityCursor = 0
-	}
-	if m.activityCursor >= len(m.activityLog) {
-		m.activityCursor = len(m.activityLog) - 1
-	}
-	if m.activityCursor < m.activityScroll {
-		m.activityScroll = m.activityCursor
-	}
-	if m.activityCursor >= m.activityScroll+viewportHeight {
-		m.activityScroll = m.activityCursor - viewportHeight + 1
-	}
-	m.activityDetailScroll = 0
-}
-
-func (m *Model) syncChatCursor(scrollToEnd bool) {
-	entryCount := chatEntryCount(m.querySession, m.showLiveOutput, m.liveResponse, m.queuedMessage)
+// syncChatCursor selects the newest message and resets its detail scroll.
+func (m *Model) syncChatCursor() {
+	entryCount := chatEntryCount(m.querySession, m.liveResponse, m.queuedMessage)
 	if entryCount == 0 {
 		m.chatCursor = 0
 		m.chatScroll = 0
 		return
 	}
-	if scrollToEnd {
-		m.chatCursor = entryCount - 1
-	}
+	m.chatCursor = entryCount - 1
 	m.chatDetailScroll = 0
 	if m.chatCursor < 0 {
 		m.chatCursor = 0
@@ -1424,7 +1515,7 @@ func (m *Model) syncChatCursor(scrollToEnd bool) {
 }
 
 func (m *Model) moveChatCursor(delta, viewportHeight int) {
-	entryCount := chatEntryCount(m.querySession, m.showLiveOutput, m.liveResponse, m.queuedMessage)
+	entryCount := chatEntryCount(m.querySession, m.liveResponse, m.queuedMessage)
 	if entryCount == 0 {
 		m.chatCursor = 0
 		m.chatScroll = 0
@@ -1447,11 +1538,11 @@ func (m *Model) moveChatCursor(delta, viewportHeight int) {
 }
 
 func (m *Model) moveChatDetailScroll(delta, viewportHeight int) {
-	entries := chatEntries(m.querySession, m.showLiveOutput, m.liveResponse, m.queuedMessage)
+	entries := chatEntries(m.querySession, m.liveResponse, m.queuedMessage)
 	if m.chatCursor < 0 || m.chatCursor >= len(entries) {
 		return
 	}
-	detailLines := formatChatDetailLines(entries[m.chatCursor].detail, maxInt(m.width/2, 40))
+	detailLines := entries[m.chatCursor].detailLines(maxInt(m.width/2, 40))
 	if len(detailLines) == 0 {
 		m.chatDetailScroll = 0
 		return
@@ -1464,14 +1555,6 @@ func (m *Model) moveChatDetailScroll(delta, viewportHeight int) {
 	if m.chatDetailScroll > maxScroll {
 		m.chatDetailScroll = maxScroll
 	}
-}
-
-func (m Model) loadSchemaDetailCmdForCursor() tea.Cmd {
-	entry, ok := m.catalog.selectedEntry()
-	if !ok {
-		return nil
-	}
-	return m.loadSchemaDetailCmd(entry)
 }
 
 func ensureSession(
@@ -1533,11 +1616,7 @@ func (m *Model) addUIEvent(event string) {
 	if strings.TrimSpace(event) == "" {
 		return
 	}
-	m.events = append(m.events, event)
 	m.recordActivity("workflow", event, "")
-	if len(m.events) > maxVisibleEvents {
-		m.events = m.events[len(m.events)-maxVisibleEvents:]
-	}
 }
 
 func (m *Model) logWrite(category, message string) {
@@ -1566,13 +1645,43 @@ func (m *Model) logQuerySession(querySession *session.QuerySession) {
 		return
 	}
 	m.sessionLog.WriteQuerySession(querySession)
+	m.sessionLog.WriteSchemaSnapshot("schema_snapshot", querySession.SchemaSnapshot)
+	m.sessionLog.WriteChatMessages(querySession.ChatMessages)
 }
 
-func sessionLogPath(sessionLog *applog.Logger) string {
-	if sessionLog == nil {
-		return ""
+// logSchemaAnswer records the schema a direct lookup put on screen, and the state that keeps it there.
+func (m *Model) logSchemaAnswer() {
+	if m.sessionLog == nil {
+		return
 	}
-	return sessionLog.Path()
+	m.sessionLog.WriteSchemaSnapshot("schema_answer", m.selectedSchema)
+	m.logViewState("schema answer applied")
+}
+
+// logViewState records which evidence panel owns the slot, and why.
+//
+// A panel that renders once and disappears leaves two of these lines with different owners, which
+// names the transition that dropped it.
+func (m *Model) logViewState(reason string) {
+	if m.sessionLog == nil {
+		return
+	}
+	m.sessionLog.WriteViewState(fmt.Sprintf(
+		"%s · evidence=%s shows_schema=%t search_open=%t search_dismissed=%t search_value=%q focus=%s selected_schema=%s/%s loaded=%t schema_lines=%d phase=%s busy=%t",
+		reason,
+		m.evidenceMode,
+		m.showsSchemaEvidence(),
+		m.schemaSearchOpen(),
+		m.schemaSearchDismissed,
+		m.schemaSearchValue,
+		m.focusLabel(),
+		strings.Join(m.selectedSchema.Groups, "|"),
+		m.selectedSchema.Name,
+		m.selectedSchema.Loaded,
+		len(schemaDetailLines(m.selectedSchema)),
+		m.currentPhaseLabel(),
+		m.busy,
+	))
 }
 
 func singleLine(value string) string {

@@ -358,6 +358,12 @@ func mergeGroupSchemas(req SchemaRequest, snapshots []session.SchemaSnapshot) (s
 		if current.SourceMeasureGroup != merged.SourceMeasureGroup {
 			merged.SourceMeasureGroup = ""
 		}
+		if current.TraceIDTag != merged.TraceIDTag {
+			merged.TraceIDTag = ""
+		}
+		if current.TimestampTag != merged.TimestampTag {
+			merged.TimestampTag = ""
+		}
 		merged.Tags = intersectStrings(merged.Tags, current.Tags)
 		merged.EntityTags = intersectStrings(merged.EntityTags, current.EntityTags)
 		merged.Fields = intersectStrings(merged.Fields, current.Fields)
@@ -895,6 +901,8 @@ func summarizeSchema(req SchemaRequest, body []byte, updatedAt time.Time) (sessi
 		}
 		base.Tags = traceTagNames(trace.GetTags())
 		base.Columns = traceTagColumns(trace.GetTags())
+		base.TraceIDTag = strings.TrimSpace(trace.GetTraceIdTagName())
+		base.TimestampTag = strings.TrimSpace(trace.GetTimestampTagName())
 		return base, nil
 	case session.ResourceTypeProperty:
 		property, parseErr := parsePropertySchema(body)
