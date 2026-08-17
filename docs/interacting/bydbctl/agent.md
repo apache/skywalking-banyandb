@@ -110,9 +110,10 @@ a query candidate.
 
 ## Execution and safety
 
-There is no approval policy and no execution preview step. A query runs when it is asked for: `Ctrl+E` executes the current candidate immediately,
-and `execute_bydbql` runs the compiled statement as soon as the provider calls it. Compiling a plan never reads data on its own, so a candidate can
-appear in the editor without touching the cluster.
+There is no approval policy and no execution preview step. A valid generated candidate runs automatically when the agent turn completes unless
+`execute_bydbql` already ran the same statement during that turn. `execute_bydbql` runs the compiled statement as soon as the provider calls it.
+After a user edits the candidate, only `Ctrl+E` executes that exact editor contents. Compiling a plan does not itself read data; automatic execution is
+a separate workspace step after compilation.
 
 Only read-only statements can execute. Exactly one `SELECT` or `SHOW TOP` is accepted, and `CREATE`, `UPDATE`, `DELETE`, `DROP`, `APPLY`, `INSERT`,
 and `ALTER` are rejected before reaching BanyanDB. bydbctl validates the exact statement again immediately before running it; failed revalidation
@@ -229,9 +230,9 @@ replaced by a message naming the required size, rather than a layout that cannot
 The conversation includes a compact aggregated step line such as `✓ catalog · ✓ describe schema · ⟳ compile plan`. It shows only the controlled-tool
 stages observed in the current or most recent turn, marked as completed, active, or failed. This is workflow progress, not private model reasoning.
 
-The generated QL is editable. Focus the candidate editor and type: the edit creates a manual candidate, and `Ctrl+E` runs exactly what is in the editor.
-The editor performs a short debounced local validation but never invokes the agent or runs a query automatically, and it stays responsive while that
-validation or an agent turn is in flight. A local edit is marked `edited locally` and is never overwritten by a background turn; it is released when the
+The generated QL is editable. Focus the candidate editor and type: the edit is marked as local, but the editor does not validate or run it while typing.
+`Ctrl+E` validates and executes exactly what is in the editor. The editor stays responsive while an agent turn is in flight. A local edit is marked
+`edited locally` and is never overwritten by a background turn; it is released when the
 message is sent, when `Ctrl+G` asks the Agent to repair it, or when an earlier query is loaded with `Ctrl+←` / `Ctrl+→`. An invalid editor shows
 `[Ctrl+G let Agent fix]`. A conversational answer or clarification can complete without changing the current QL candidate.
 
@@ -241,8 +242,8 @@ Data Preview shows resource type, row count, and a bounded structured table prev
 field by field below the table, including the columns the table drops to stay narrow; `←`/`→` scrolls the table horizontally. The raw HTTP response stays
 in the current process and is not written to the normal session log.
 
-Before the first execution, Data Preview names the next step instead of leaving the panel blank: it points at `Ctrl+E` once a candidate is valid, and at
-the composer otherwise. An execution that matches no rows says so and suggests widening the time range.
+Before the first execution, Data Preview names the next step instead of leaving the panel blank: a locally edited candidate points at `Ctrl+E`, while an
+empty candidate points at the composer. An execution that matches no rows says so and suggests widening the time range.
 
 When a user asks a later question, or when a workflow advances to a dependent planned query, bydbctl supplies the provider the current statement, result type, row
 count, duration, column summary, sanitized error, and up to 50 preview rows. Preview values are explicitly treated as untrusted data. Stable BYDBQL rules

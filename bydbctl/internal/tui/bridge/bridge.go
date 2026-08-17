@@ -30,8 +30,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
-	tuibydbql "github.com/apache/skywalking-banyandb/bydbctl/internal/tui/bydbql"
 	tuicatalog "github.com/apache/skywalking-banyandb/bydbctl/internal/tui/catalog"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/execution"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/planner"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tools"
@@ -40,22 +40,17 @@ import (
 const (
 	eventBufferSize       = 64
 	maxSchemaDescriptions = agent.DefaultMaxSchemaDescriptions
-	ToolListGroupsSchemas = "list_groups_schemas"
-	ToolDescribeSchema    = "describe_schema"
-	ToolProposeQueryPlan  = "propose_query_plan"
-	ToolValidateBydbQL    = "validate_bydbql"
-	ToolExecuteBydbQL     = "execute_bydbql"
+	ToolListGroupsSchemas = agent.ToolListGroupsSchemas
+	ToolDescribeSchema    = agent.ToolDescribeSchema
+	ToolProposeQueryPlan  = agent.ToolProposeQueryPlan
+	ToolValidateBydbQL    = agent.ToolValidateBydbQL
+	ToolExecuteBydbQL     = agent.ToolExecuteBydbQL
 )
-
-// Validator checks a BYDBQL query without executing it.
-type Validator interface {
-	Validate(ctx context.Context, query string, schema *session.SchemaSnapshot) (session.ValidationReport, error)
-}
 
 // Config creates a private tool bridge.
 type Config struct {
 	Executor  tools.Executor
-	Validator Validator
+	Validator execution.Validator
 }
 
 // Call is one structured MCP tool request.
@@ -73,7 +68,8 @@ type Result struct {
 // ToolBridge holds all tool execution and visible lifecycle events behind a small interface.
 type ToolBridge struct {
 	executor  tools.Executor
-	validator Validator
+	validator execution.Validator
+	execution *execution.Engine
 	now       func() time.Time
 	events    chan agent.Event
 
@@ -92,6 +88,7 @@ func New(config Config) *ToolBridge {
 	return &ToolBridge{
 		executor:  config.Executor,
 		validator: config.Validator,
+		execution: execution.New(config.Executor, config.Validator),
 		now:       time.Now,
 		events:    make(chan agent.Event, eventBufferSize),
 	}
@@ -188,8 +185,7 @@ func (toolBridge *ToolBridge) listGroupsSchemas(ctx context.Context) Result {
 	}
 	goal := ""
 	if querySession := toolBridge.session(); querySession != nil {
-		querySession.SchemaSnapshot.AvailableGroups = append([]string(nil), catalog.Groups...)
-		querySession.SchemaSnapshot.Catalog = append([]session.CatalogEntry(nil), catalog.Entries...)
+		querySession.SchemaSnapshot.SetCatalog(catalog)
 		goal = strings.TrimSpace(querySession.DiscoveryGoal)
 		if goal == "" {
 			goal = querySession.UserGoal
@@ -284,13 +280,14 @@ func (toolBridge *ToolBridge) rankedCatalogCandidates() []session.CatalogEntry {
 }
 
 func resourceIsRanked(candidates []session.CatalogEntry, resourceType session.ResourceType, resourceName string, groups []string) bool {
-	if len(candidates) == 0 {
-		return false
-	}
+	return len(candidates) > 0 && catalogIncludesResource(candidates, resourceType, resourceName, groups)
+}
+
+func catalogIncludesResource(entries []session.CatalogEntry, resourceType session.ResourceType, resourceName string, groups []string) bool {
 	for _, group := range groups {
 		found := false
-		for _, entry := range candidates {
-			if catalogTypesCompatible(resourceType, entry.Type) &&
+		for _, entry := range entries {
+			if resourceType == entry.Type &&
 				entry.Name == resourceName &&
 				entry.Group == group {
 				found = true
@@ -304,15 +301,11 @@ func resourceIsRanked(candidates []session.CatalogEntry, resourceType session.Re
 	return true
 }
 
-func catalogTypesCompatible(planType, catalogType session.ResourceType) bool {
-	return planType == catalogType
-}
-
 func catalogContainsResource(entries []session.CatalogEntry, resourceType session.ResourceType, resourceName string, groups []string) bool {
 	if len(entries) == 0 {
 		return true
 	}
-	return resourceIsRanked(entries, resourceType, resourceName, groups)
+	return catalogIncludesResource(entries, resourceType, resourceName, groups)
 }
 
 func (toolBridge *ToolBridge) reserveSchemaDescription() bool {
@@ -388,9 +381,6 @@ func (toolBridge *ToolBridge) proposeQueryPlan(ctx context.Context, callID strin
 	plannedQueries := make([]session.PlannedQuery, 0, len(plans))
 	var selectedSnapshot session.SchemaSnapshot
 	for planIndex, plan := range plans {
-		if !resourceIsDiscoverable(querySession.SchemaSnapshot.Catalog, plan.Resource) {
-			return Result{Err: fmt.Errorf("query plan step %d selects a resource outside the discovered catalog", planIndex+1)}
-		}
 		snapshot, cached := querySession.CachedSchema(plan.Resource.Type, plan.Resource.Name, plan.Resource.Groups)
 		if !cached {
 			var schemaErr error
@@ -461,24 +451,7 @@ func schemaRequestForPlan(plan planner.QueryPlan) tools.SchemaRequest {
 }
 
 func resourceIsDiscoverable(catalog []session.CatalogEntry, resource planner.Resource) bool {
-	if len(catalog) == 0 {
-		return true
-	}
-	for _, group := range resource.Groups {
-		found := false
-		for _, entry := range catalog {
-			if catalogTypesCompatible(resource.Type, entry.Type) &&
-				entry.Name == resource.Name &&
-				entry.Group == group {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
+	return catalogContainsResource(catalog, resource.Type, resource.Name, resource.Groups)
 }
 
 func (toolBridge *ToolBridge) reservePlanAttempt() (int, bool) {
@@ -553,92 +526,54 @@ func (toolBridge *ToolBridge) validateBydbQL(ctx context.Context, _ string, argu
 }
 
 func (toolBridge *ToolBridge) executeBydbQL(ctx context.Context, arguments map[string]any) Result {
-	if toolBridge.validator == nil || toolBridge.executor == nil {
-		return Result{Err: fmt.Errorf("BYDBQL execution bridge is not configured")}
-	}
 	querySession := toolBridge.session()
 	if querySession == nil {
 		return Result{Err: fmt.Errorf("query session is not configured")}
 	}
 	query := stringArgument(arguments, "query")
-	if !tuibydbql.IsReadOnly(query) {
-		return Result{Err: fmt.Errorf("execute_bydbql accepts only one read-only SELECT or SHOW TOP statement")}
-	}
-	plannedQuery := querySession.CurrentPlannedQuery()
-	if plannedQuery == nil || plannedQuery.Query != query {
-		return Result{Err: fmt.Errorf("execute_bydbql requires propose_query_plan to return valid=true first; validate_bydbql alone does not register a candidate")}
-	}
-	schemaSnapshot, schemaErr := toolBridge.refreshPlannedSchema(ctx, querySession, *plannedQuery)
-	if schemaErr != nil {
-		return Result{Err: fmt.Errorf("failed to refresh planned query schema: %w", schemaErr)}
-	}
-	validation, validationErr := toolBridge.validator.Validate(ctx, query, &schemaSnapshot)
-	if validationErr != nil {
-		return Result{Err: fmt.Errorf("failed to validate execution query: %w", validationErr)}
-	}
-	if !validation.Valid {
-		return jsonResult(map[string]any{"valid": false, "message": validation.Message})
-	}
 	executionCtx, cancelQuery := context.WithCancel(ctx)
 	toolBridge.setExecutionCancel(cancelQuery)
-	executionResult, executeErr := toolBridge.executor.Execute(executionCtx, querySession, query)
+	outcome, executeErr := toolBridge.execution.ExecutePlanned(executionCtx, querySession, query)
 	executionCancelled := executionCtx.Err() != nil
 	cancelQuery()
 	toolBridge.clearExecutionCancel()
-	querySession.ExecutionResult = executionResult
 	if executeErr != nil {
 		if executionCancelled {
 			return Result{Err: fmt.Errorf("BYDBQL execution failed")}
 		}
+		if !outcome.Executed {
+			return Result{Err: executeErr}
+		}
 		return jsonResult(map[string]any{
-			"rows":    executionResult.Rows,
+			"rows":    outcome.Result.Rows,
 			"summary": "BYDBQL execution failed",
 			"error":   "BYDBQL execution failed",
 		})
 	}
-	nextPlannedQuery := querySession.CompletePlannedQuery(query)
-	response := map[string]any{
-		"rows":      executionResult.Rows,
-		"summary":   executionResult.Summary,
-		"error":     providerError(executionResult.Error),
-		"columns":   executionResult.Columns,
-		"preview":   executionResult.Preview,
-		"truncated": executionResult.Truncated,
+	if !outcome.Validation.Valid {
+		return jsonResult(map[string]any{"valid": false, "message": outcome.Validation.Message})
 	}
-	if nextPlannedQuery != nil {
-		response["next_query"] = nextPlannedQuery.Query
+	response := map[string]any{
+		"rows":      outcome.Result.Rows,
+		"summary":   outcome.Result.Summary,
+		"error":     providerError(outcome.Result.Error),
+		"columns":   outcome.Result.Columns,
+		"preview":   outcome.Result.Preview,
+		"truncated": outcome.Result.Truncated,
+	}
+	if outcome.Next != nil {
+		response["next_query"] = outcome.Next.Query
 		toolBridge.emit(agent.Event{
 			ID:          uuid.NewString(),
 			Kind:        agent.EventKindCandidate,
 			ToolName:    ToolProposeQueryPlan,
-			Candidate:   nextPlannedQuery.Query,
+			Candidate:   outcome.Next.Query,
 			Message:     "next planned query ready for individual approval",
 			Status:      agent.EventStatusSucceeded,
 			CompletedAt: toolBridge.now(),
 		})
 	}
 	return jsonResult(response)
-}
-
-func (toolBridge *ToolBridge) refreshPlannedSchema(
-	ctx context.Context,
-	querySession *session.QuerySession,
-	plannedQuery session.PlannedQuery,
-) (session.SchemaSnapshot, error) {
-	schemaSnapshot, schemaErr := toolBridge.executor.DiscoverSchema(ctx, tools.SchemaRequest{
-		Type:   plannedQuery.ResourceType,
-		Name:   plannedQuery.Name,
-		Groups: plannedQuery.Groups,
-	})
-	if schemaErr != nil {
-		return session.SchemaSnapshot{}, schemaErr
-	}
-	schemaSnapshot.EnsureFingerprint()
-	if plannedQuery.SchemaFingerprint != "" && plannedQuery.SchemaFingerprint != schemaSnapshot.Fingerprint {
-		return session.SchemaSnapshot{}, fmt.Errorf("resource schema changed after plan compilation; regenerate the query plan")
-	}
-	querySession.ActivateSchema(schemaSnapshot)
-	return schemaSnapshot, nil
 }
 
 func providerError(executionError string) string {

@@ -40,7 +40,7 @@ import (
 
 const (
 	defaultCommand          = "codex"
-	controlledMCPServerName = "bydbctl-controlled-tools"
+	controlledMCPServerName = agent.ControlledMCPServerName
 	minimumCodexMajor       = 0
 	minimumCodexMinor       = 144
 	minimumCodexPatch       = 5
@@ -51,13 +51,7 @@ var (
 	mcpServerNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 )
 
-var controlledToolNames = []string{
-	"list_groups_schemas",
-	"describe_schema",
-	"propose_query_plan",
-	"validate_bydbql",
-	"execute_bydbql",
-}
+var controlledToolNames = agent.ControlledToolNames()
 
 var disabledFeatures = []string{
 	"apps",
@@ -255,15 +249,8 @@ func validateConfig(config Config) error {
 	if !filepath.IsAbs(config.WorkingDirectory) {
 		return errors.New("isolated Codex working directory must be absolute")
 	}
-	server := config.ControlledMCPServer
-	if server.Name != controlledMCPServerName {
-		return fmt.Errorf("controlled MCP server must be named %q", controlledMCPServerName)
-	}
-	if !filepath.IsAbs(server.Command) {
-		return errors.New("controlled MCP server command must be absolute")
-	}
-	if !agent.SameToolSet(server.EnabledTools, controlledToolNames) {
-		return fmt.Errorf("controlled MCP tool allowlist must contain exactly %s", strings.Join(controlledToolNames, ", "))
+	if serverErr := agent.ValidateControlledMCPServer(config.ControlledMCPServer); serverErr != nil {
+		return serverErr
 	}
 	return nil
 }

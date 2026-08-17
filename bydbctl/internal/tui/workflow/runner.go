@@ -29,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/bridge"
 	tuibysql "github.com/apache/skywalking-banyandb/bydbctl/internal/tui/bydbql"
 	tuicatalog "github.com/apache/skywalking-banyandb/bydbctl/internal/tui/catalog"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/execution"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tools"
 )
@@ -41,24 +42,20 @@ const (
 	defaultTopN         = 10
 )
 
-// Validator validates a BYDBQL candidate.
-type Validator interface {
-	Validate(ctx context.Context, query string, schema *session.SchemaSnapshot) (session.ValidationReport, error)
-}
-
 // Runner coordinates deterministic workflow phases and agent turns.
 type Runner struct {
 	agentGateway agent.Gateway
-	validator    Validator
+	validator    execution.Validator
 	executor     tools.Executor
 	toolBridge   *bridge.ToolBridge
+	execution    *execution.Engine
 	now          func() time.Time
 }
 
 // Config configures a Runner.
 type Config struct {
 	AgentGateway agent.Gateway
-	Validator    Validator
+	Validator    execution.Validator
 	Executor     tools.Executor
 	ToolBridge   *bridge.ToolBridge
 }
@@ -78,6 +75,7 @@ func NewRunner(config Config) *Runner {
 		validator:    validator,
 		executor:     executor,
 		toolBridge:   config.ToolBridge,
+		execution:    execution.New(executor, validator),
 		now:          time.Now,
 	}
 }
@@ -102,7 +100,6 @@ type StartOptions struct {
 	TypeProvided   bool
 }
 
-// StartSession creates a session and discovers a schema summary.
 // ReviseWithAgent asks the configured agent to revise the current BYDBQL candidate.
 func (runner *Runner) ReviseWithAgent(ctx context.Context, querySession *session.QuerySession) ([]agent.Event, error) {
 	return runner.RunAgentTurn(ctx, querySession, "")
@@ -263,8 +260,6 @@ func (runner *Runner) refreshDiscoveryForTurn(ctx context.Context, querySession 
 	if schemaErr != nil {
 		return fmt.Errorf("failed to refresh matched schema: %w", schemaErr)
 	}
-	schemaSnapshot.AvailableGroups = append([]string(nil), querySession.SchemaSnapshot.AvailableGroups...)
-	schemaSnapshot.Catalog = append([]session.CatalogEntry(nil), querySession.SchemaSnapshot.Catalog...)
 	querySession.ActivateSchema(schemaSnapshot)
 	querySession.AutoMatched = true
 	querySession.CandidateSuperseded = true
@@ -316,8 +311,6 @@ func (runner *Runner) bootstrapAutonomousSchema(ctx context.Context, querySessio
 	if schemaErr != nil {
 		return fmt.Errorf("failed to preload matched schema: %w", schemaErr)
 	}
-	schemaSnapshot.AvailableGroups = append([]string(nil), querySession.SchemaSnapshot.AvailableGroups...)
-	schemaSnapshot.Catalog = append([]session.CatalogEntry(nil), querySession.SchemaSnapshot.Catalog...)
 	querySession.ActivateSchema(schemaSnapshot)
 	querySession.AutoMatched = true
 	querySession.AddTranscript(
@@ -461,14 +454,7 @@ func (runner *Runner) completeAgentTurn(ctx context.Context, querySession *sessi
 		return fmt.Errorf("failed to validate agent candidate: %w", validationErr)
 	}
 	explanation := NormalizeAgentDisplayText(finalExplanation(turnEvents))
-	querySession.AddCandidate(session.BydbqlCandidate{
-		ID:          fmt.Sprintf("candidate-%d", len(querySession.Candidates)+1),
-		Query:       candidate,
-		Explanation: explanation,
-		Source:      session.CandidateSourceAgent,
-		CreatedAt:   runner.now(),
-		Validation:  validation,
-	})
+	querySession.AddCandidateVersion(candidate, explanation, session.CandidateSourceAgent, validation, runner.now())
 	querySession.AddConversationTurn(session.ConversationTurn{
 		Hint:      turnHint,
 		Response:  explanation,
@@ -536,14 +522,13 @@ func (runner *Runner) ValidateManualQuery(ctx context.Context, querySession *ses
 		return fmt.Errorf("failed to validate manual query: %w", validationErr)
 	}
 	querySession.SetPlannedQueries(nil)
-	querySession.AddCandidate(session.BydbqlCandidate{
-		ID:          fmt.Sprintf("candidate-%d", len(querySession.Candidates)+1),
-		Query:       strings.TrimSpace(query),
-		Explanation: "manual edit from TUI",
-		Source:      session.CandidateSourceManual,
-		CreatedAt:   runner.now(),
-		Validation:  validation,
-	})
+	querySession.AddCandidateVersion(
+		strings.TrimSpace(query),
+		"manual edit from TUI",
+		session.CandidateSourceManual,
+		validation,
+		runner.now(),
+	)
 	querySession.AddTranscript("workflow", "validated manual BYDBQL edit", runner.now())
 	if validation.Valid {
 		querySession.Phase = session.PhaseReady
@@ -555,71 +540,22 @@ func (runner *Runner) ValidateManualQuery(ctx context.Context, querySession *ses
 
 // ExecuteCurrent runs the exact current BYDBQL candidate once.
 func (runner *Runner) ExecuteCurrent(ctx context.Context, querySession *session.QuerySession) error {
-	if querySession == nil {
-		return errors.New("query session is required")
+	outcome, executeErr := runner.execution.ExecuteCurrent(ctx, querySession)
+	if querySession != nil && outcome.Phase != "" {
+		querySession.Phase = outcome.Phase
 	}
-	currentCandidate := querySession.CurrentCandidate()
-	if currentCandidate == nil {
-		return errors.New("query candidate is required")
-	}
-	if !currentCandidate.Validation.Valid {
-		querySession.Phase = session.PhaseValidate
-		return errors.New("only a valid BYDBQL candidate can be executed")
-	}
-	query := currentCandidate.Query
-	plannedQuery := querySession.CurrentPlannedQuery()
-	if plannedQuery != nil && plannedQuery.Query != query {
-		querySession.Phase = session.PhaseValidate
-		return errors.New("only the current compiled workflow statement can be executed")
-	}
-	if plannedQuery != nil && runner.executor != nil {
-		schemaSnapshot, schemaErr := runner.executor.DiscoverSchema(ctx, tools.SchemaRequest{
-			Type:   plannedQuery.ResourceType,
-			Name:   plannedQuery.Name,
-			Groups: plannedQuery.Groups,
-		})
-		if schemaErr != nil {
-			querySession.Phase = session.PhaseError
-			return fmt.Errorf("failed to refresh schema before execution: %w", schemaErr)
-		}
-		schemaSnapshot = querySession.CacheSchema(schemaSnapshot)
-		if plannedQuery.SchemaFingerprint != "" && plannedQuery.SchemaFingerprint != schemaSnapshot.Fingerprint {
-			querySession.Phase = session.PhaseValidate
-			return errors.New("resource schema changed after plan compilation; regenerate the query plan")
-		}
-		querySession.ActivateSchema(schemaSnapshot)
-	}
-	validation, validationErr := runner.validator.Validate(ctx, query, &querySession.SchemaSnapshot)
-	if validationErr != nil {
-		querySession.Phase = session.PhaseError
-		return fmt.Errorf("failed to revalidate query before execution: %w", validationErr)
-	}
-	currentCandidate.Validation = validation
-	querySession.Validation = validation
-	if !validation.Valid {
-		querySession.Phase = session.PhaseValidate
-		return fmt.Errorf("query failed revalidation: %s", validation.Message)
-	}
-	executionResult, executeErr := runner.executor.Execute(ctx, querySession, query)
 	if executeErr != nil {
-		querySession.Phase = session.PhaseError
-		executionResult.Error = executeErr.Error()
-		if executionResult.Summary == "" {
-			executionResult.Summary = executeErr.Error()
-		}
-		querySession.ExecutionResult = executionResult
-		return fmt.Errorf("failed to execute query: %w", executeErr)
+		return executeErr
 	}
-	querySession.ExecutionResult = executionResult
-	if executionResult.Hint != "" {
-		querySession.AddTranscript("workflow", executionResult.Hint, runner.now())
+	if !outcome.Validation.Valid {
+		return fmt.Errorf("query failed revalidation: %s", outcome.Validation.Message)
 	}
-	querySession.AddTranscript("workflow", executionResult.Summary, runner.now())
-	if plannedQuery != nil {
-		nextPlanStep := querySession.CompletePlannedQuery(query)
-		if nextPlanStep != nil {
-			return runner.prepareNextPlanStep(ctx, querySession, *nextPlanStep)
-		}
+	if outcome.Result.Hint != "" {
+		querySession.AddTranscript("workflow", outcome.Result.Hint, runner.now())
+	}
+	querySession.AddTranscript("workflow", outcome.Result.Summary, runner.now())
+	if outcome.Next != nil {
+		return runner.prepareNextPlanStep(ctx, querySession, *outcome.Next)
 	}
 	querySession.Phase = session.PhaseExecuted
 	return nil
@@ -639,7 +575,6 @@ func (runner *Runner) prepareNextPlanStep(
 		querySession.Phase = session.PhaseError
 		return fmt.Errorf("failed to refresh next workflow schema: %w", schemaErr)
 	}
-	preserveDiscoveryContext(&schemaSnapshot, querySession.SchemaSnapshot)
 	schemaSnapshot = querySession.CacheSchema(schemaSnapshot)
 	if nextPlanStep.SchemaFingerprint != "" && nextPlanStep.SchemaFingerprint != schemaSnapshot.Fingerprint {
 		querySession.Phase = session.PhaseValidate
@@ -651,14 +586,13 @@ func (runner *Runner) prepareNextPlanStep(
 		querySession.Phase = session.PhaseError
 		return fmt.Errorf("failed to validate next workflow statement: %w", validationErr)
 	}
-	querySession.AddCandidate(session.BydbqlCandidate{
-		ID:          fmt.Sprintf("candidate-%d", len(querySession.Candidates)+1),
-		Query:       nextPlanStep.Query,
-		Explanation: "next independently approved workflow statement",
-		Source:      session.CandidateSourceAgent,
-		CreatedAt:   runner.now(),
-		Validation:  validation,
-	})
+	querySession.AddCandidateVersion(
+		nextPlanStep.Query,
+		"next independently approved workflow statement",
+		session.CandidateSourceAgent,
+		validation,
+		runner.now(),
+	)
 	querySession.AddTranscript("workflow", "next workflow statement is ready", runner.now())
 	if !validation.Valid {
 		querySession.Phase = session.PhaseValidate
@@ -666,15 +600,6 @@ func (runner *Runner) prepareNextPlanStep(
 	}
 	querySession.Phase = session.PhaseReady
 	return nil
-}
-
-func preserveDiscoveryContext(target *session.SchemaSnapshot, existing session.SchemaSnapshot) {
-	if len(target.AvailableGroups) == 0 {
-		target.AvailableGroups = append([]string(nil), existing.AvailableGroups...)
-	}
-	if len(target.Catalog) == 0 {
-		target.Catalog = append([]session.CatalogEntry(nil), existing.Catalog...)
-	}
 }
 
 func buildStructuredPlanExample(querySession *session.QuerySession, hints agent.QueryHints) map[string]any {

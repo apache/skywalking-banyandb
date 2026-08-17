@@ -93,16 +93,10 @@ func (socketServer *SocketServer) MCPServerConfig(executable string) agent.Contr
 		return agent.ControlledMCPServer{}
 	}
 	return agent.ControlledMCPServer{
-		Name:    "bydbctl-controlled-tools",
-		Command: executable,
-		Args:    []string{"agent-tool-bridge", "--socket", socketServer.Path()},
-		EnabledTools: []string{
-			ToolListGroupsSchemas,
-			ToolDescribeSchema,
-			ToolProposeQueryPlan,
-			ToolValidateBydbQL,
-			ToolExecuteBydbQL,
-		},
+		Name:         agent.ControlledMCPServerName,
+		Command:      executable,
+		Args:         []string{"agent-tool-bridge", "--socket", socketServer.Path()},
+		EnabledTools: agent.ControlledToolNames(),
 	}
 }
 
@@ -174,7 +168,7 @@ func ServeMCP(socketPath string, input io.Reader, output io.Writer) error {
 		case "initialize":
 			response.Result = map[string]any{
 				"protocolVersion": mcpProtocolVersion,
-				"serverInfo":      map[string]string{"name": "bydbctl-controlled-tools", "version": "1"},
+				"serverInfo":      map[string]string{"name": agent.ControlledMCPServerName, "version": "1"},
 				"capabilities":    map[string]any{"tools": map[string]any{}},
 			}
 		case "tools/list":

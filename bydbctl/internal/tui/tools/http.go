@@ -207,16 +207,6 @@ func interleaveCatalogEntries(resourcesByGroup [][]session.CatalogEntry, limit i
 	return entries
 }
 
-func catalogResourceTypes() []session.ResourceType {
-	return []session.ResourceType{
-		session.ResourceTypeMeasure,
-		session.ResourceTypeStream,
-		session.ResourceTypeTrace,
-		session.ResourceTypeProperty,
-		session.ResourceTypeTopN,
-	}
-}
-
 func (executor *HTTPExecutor) listGroups(ctx context.Context) ([]string, error) {
 	request := executor.client.R().
 		SetContext(ctx).
@@ -433,21 +423,6 @@ func boundRuleNamesForResource(
 	return boundRuleNames
 }
 
-func resourceCatalog(resourceType session.ResourceType) commonv1.Catalog {
-	switch resourceType {
-	case session.ResourceTypeStream:
-		return commonv1.Catalog_CATALOG_STREAM
-	case session.ResourceTypeMeasure:
-		return commonv1.Catalog_CATALOG_MEASURE
-	case session.ResourceTypeProperty:
-		return commonv1.Catalog_CATALOG_PROPERTY
-	case session.ResourceTypeTrace:
-		return commonv1.Catalog_CATALOG_TRACE
-	default:
-		return commonv1.Catalog_CATALOG_UNSPECIFIED
-	}
-}
-
 func (executor *HTTPExecutor) listIndexRules(ctx context.Context, group string) ([]*databasev1.IndexRule, error) {
 	request := executor.client.R().
 		SetContext(ctx).
@@ -557,77 +532,6 @@ func (executor *HTTPExecutor) authHeader() string {
 		return ""
 	}
 	return auth.GenerateBasicAuthHeader(executor.config.Username, executor.config.Password)
-}
-
-func schemaPath(resourceType session.ResourceType) (string, error) {
-	switch resourceType {
-	case session.ResourceTypeMeasure:
-		return measureSchemaPath, nil
-	case session.ResourceTypeStream:
-		return streamSchemaPath, nil
-	case session.ResourceTypeTrace:
-		return traceSchemaPath, nil
-	case session.ResourceTypeProperty:
-		return propertySchemaPath, nil
-	case session.ResourceTypeTopN:
-		return topnSchemaPath, nil
-	default:
-		return "", fmt.Errorf("unsupported resource type: %s", resourceType)
-	}
-}
-
-func resourceListPath(resourceType session.ResourceType) (string, error) {
-	switch resourceType {
-	case session.ResourceTypeMeasure:
-		return measureListPath, nil
-	case session.ResourceTypeStream:
-		return streamListPath, nil
-	case session.ResourceTypeTrace:
-		return traceListPath, nil
-	case session.ResourceTypeProperty:
-		return propertyListPath, nil
-	case session.ResourceTypeTopN:
-		return topnListPath, nil
-	default:
-		return "", fmt.Errorf("unsupported resource type: %s", resourceType)
-	}
-}
-
-func resourceNamesFromList(resourceType session.ResourceType, body []byte) ([]string, error) {
-	switch resourceType {
-	case session.ResourceTypeMeasure:
-		listResponse := new(databasev1.MeasureRegistryServiceListResponse)
-		if unmarshalErr := protojson.Unmarshal(body, listResponse); unmarshalErr != nil {
-			return nil, unmarshalErr
-		}
-		return metadataNames(extractMeasureMetadata(listResponse.GetMeasure())), nil
-	case session.ResourceTypeStream:
-		listResponse := new(databasev1.StreamRegistryServiceListResponse)
-		if unmarshalErr := protojson.Unmarshal(body, listResponse); unmarshalErr != nil {
-			return nil, unmarshalErr
-		}
-		return metadataNames(extractStreamMetadata(listResponse.GetStream())), nil
-	case session.ResourceTypeTrace:
-		listResponse := new(databasev1.TraceRegistryServiceListResponse)
-		if unmarshalErr := protojson.Unmarshal(body, listResponse); unmarshalErr != nil {
-			return nil, unmarshalErr
-		}
-		return metadataNames(extractTraceMetadata(listResponse.GetTrace())), nil
-	case session.ResourceTypeProperty:
-		listResponse := new(databasev1.PropertyRegistryServiceListResponse)
-		if unmarshalErr := protojson.Unmarshal(body, listResponse); unmarshalErr != nil {
-			return nil, unmarshalErr
-		}
-		return metadataNames(extractPropertyMetadata(listResponse.GetProperties())), nil
-	case session.ResourceTypeTopN:
-		listResponse := new(databasev1.TopNAggregationRegistryServiceListResponse)
-		if unmarshalErr := protojson.Unmarshal(body, listResponse); unmarshalErr != nil {
-			return nil, unmarshalErr
-		}
-		return metadataNames(extractTopNMetadata(listResponse.GetTopNAggregation())), nil
-	default:
-		return nil, fmt.Errorf("unsupported resource type: %s", resourceType)
-	}
 }
 
 func extractMeasureMetadata(measures []*databasev1.Measure) []*commonv1.Metadata {

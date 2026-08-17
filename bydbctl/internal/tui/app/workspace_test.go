@@ -293,6 +293,35 @@ func TestDataPreviewDownArrowScrollsSelectedRowIntoView(t *testing.T) {
 	}
 }
 
+func TestDataPreviewKeepsSelectedRowDetailVisibleWhenTableOverflows(t *testing.T) {
+	model := NewModel(Config{})
+	model.resize(120, 24)
+	preview := make([][]string, 30)
+	for rowIndex := range preview {
+		preview[rowIndex] = []string{fmt.Sprintf("row-%d", rowIndex), fmt.Sprintf("detail-%d", rowIndex)}
+	}
+	model.querySession = &session.QuerySession{ExecutionResult: session.ExecutionResult{
+		Query:   testMeasureQuery,
+		Summary: "execution complete",
+		Rows:    len(preview),
+		Columns: []string{"value", "extra"},
+		Preview: preview,
+	}}
+	model.focus = focusExecution
+	model.executionRowCursor = -1
+
+	updatedModel := tea.Model(model)
+	for range 20 {
+		updatedModel, _ = updatedModel.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	view := updatedModel.(Model).View()
+	for _, expected := range []string{"> row-20", "Row detail", "extra: detail-20"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("overflowing previews must keep %q visible for the selected row:\n%s", expected, view)
+		}
+	}
+}
+
 func TestDataPreviewPageKeysOnlyScrollSelectedRowDetail(t *testing.T) {
 	model := NewModel(Config{})
 	model.resize(120, 60)

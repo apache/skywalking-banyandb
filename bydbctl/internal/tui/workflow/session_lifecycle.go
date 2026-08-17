@@ -29,9 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tools"
 )
 
-// A session is created on the first turn and resynced on every later one, so a slot the user edited
-// between turns takes effect without discarding the conversation.
-
+// StartSession creates a session and discovers its initial schema context.
 func (runner *Runner) StartSession(ctx context.Context, options StartOptions) (*session.QuerySession, error) {
 	catalog, catalogErr := runner.executor.DiscoverCatalog(ctx)
 	if catalogErr != nil {
@@ -40,17 +38,10 @@ func (runner *Runner) StartSession(ctx context.Context, options StartOptions) (*
 	if usesAutonomousDiscovery(options) {
 		return newAutonomousSession(options, catalog, runner.now()), nil
 	}
-	resolved := ResolveSessionSlots(options, catalog)
-	schemaSnapshot, schemaErr := runner.executor.DiscoverSchema(ctx, tools.SchemaRequest{
-		Type:   resolved.ResourceType,
-		Name:   resolved.ResourceName,
-		Groups: resolved.Groups,
-	})
+	resolved, schemaSnapshot, schemaErr := runner.discoverSessionSchema(ctx, options, catalog)
 	if schemaErr != nil {
 		return nil, fmt.Errorf("failed to discover schema: %w", schemaErr)
 	}
-	schemaSnapshot.AvailableGroups = append([]string(nil), catalog.Groups...)
-	schemaSnapshot.Catalog = append([]session.CatalogEntry(nil), catalog.Entries...)
 	querySession := &session.QuerySession{
 		ID:             uuid.NewString(),
 		Phase:          session.PhaseIntent,
@@ -90,24 +81,16 @@ func (runner *Runner) SyncSession(ctx context.Context, querySession *session.Que
 	if usesAutonomousDiscovery(options) {
 		querySession.UserGoal = strings.TrimSpace(options.Goal)
 		querySession.TimeRange = applyTimeDefaults(options.TimeRange)
-		querySession.SchemaSnapshot.AvailableGroups = append([]string(nil), catalog.Groups...)
-		querySession.SchemaSnapshot.Catalog = append([]session.CatalogEntry(nil), catalog.Entries...)
+		querySession.SchemaSnapshot.SetCatalog(catalog)
 		querySession.SlotsPinned = false
 		querySession.AutoMatched = false
 		querySession.AddTranscript("workflow", "refreshed catalog for autonomous schema discovery", runner.now())
 		return querySession, nil
 	}
-	resolved := ResolveSessionSlots(options, catalog)
-	schemaSnapshot, schemaErr := runner.executor.DiscoverSchema(ctx, tools.SchemaRequest{
-		Type:   resolved.ResourceType,
-		Name:   resolved.ResourceName,
-		Groups: resolved.Groups,
-	})
+	resolved, schemaSnapshot, schemaErr := runner.discoverSessionSchema(ctx, options, catalog)
 	if schemaErr != nil {
 		return nil, fmt.Errorf("failed to refresh schema: %w", schemaErr)
 	}
-	schemaSnapshot.AvailableGroups = append([]string(nil), catalog.Groups...)
-	schemaSnapshot.Catalog = append([]session.CatalogEntry(nil), catalog.Entries...)
 	querySession.UserGoal = resolved.Goal
 	querySession.ActivateSchema(schemaSnapshot)
 	querySession.TimeRange = resolved.TimeRange
@@ -125,20 +108,36 @@ func (runner *Runner) SyncSession(ctx context.Context, querySession *session.Que
 }
 
 func newAutonomousSession(options StartOptions, catalog session.SchemaCatalog, now time.Time) *session.QuerySession {
+	schemaSnapshot := session.SchemaSnapshot{UpdatedAt: catalog.UpdatedAt}
+	schemaSnapshot.SetCatalog(catalog)
 	querySession := &session.QuerySession{
-		ID:          uuid.NewString(),
-		Phase:       session.PhaseIntent,
-		UserGoal:    strings.TrimSpace(options.Goal),
-		TimeRange:   applyTimeDefaults(options.TimeRange),
-		AutoMatched: false,
-		SchemaSnapshot: session.SchemaSnapshot{
-			UpdatedAt:       catalog.UpdatedAt,
-			AvailableGroups: append([]string(nil), catalog.Groups...),
-			Catalog:         append([]session.CatalogEntry(nil), catalog.Entries...),
-		},
+		ID:             uuid.NewString(),
+		Phase:          session.PhaseIntent,
+		UserGoal:       strings.TrimSpace(options.Goal),
+		TimeRange:      applyTimeDefaults(options.TimeRange),
+		AutoMatched:    false,
+		SchemaSnapshot: schemaSnapshot,
 	}
 	querySession.AddTranscript("workflow", "created autonomous BYDBQL agent session", now)
 	return querySession
+}
+
+func (runner *Runner) discoverSessionSchema(
+	ctx context.Context,
+	options StartOptions,
+	catalog session.SchemaCatalog,
+) (ResolvedSlots, session.SchemaSnapshot, error) {
+	resolved := ResolveSessionSlots(options, catalog)
+	schemaSnapshot, schemaErr := runner.executor.DiscoverSchema(ctx, tools.SchemaRequest{
+		Type:   resolved.ResourceType,
+		Name:   resolved.ResourceName,
+		Groups: resolved.Groups,
+	})
+	if schemaErr != nil {
+		return ResolvedSlots{}, session.SchemaSnapshot{}, schemaErr
+	}
+	schemaSnapshot.SetCatalog(catalog)
+	return resolved, schemaSnapshot, nil
 }
 
 func usesAutonomousDiscovery(options StartOptions) bool {

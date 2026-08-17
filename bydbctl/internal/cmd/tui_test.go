@@ -114,9 +114,9 @@ func TestNewAgentGatewayRejectsUnknownProvider(t *testing.T) {
 func testControlledMCPServer(t *testing.T) agent.ControlledMCPServer {
 	t.Helper()
 	return agent.ControlledMCPServer{
-		Name:         "bydbctl-controlled-tools",
+		Name:         agent.ControlledMCPServerName,
 		Command:      "/path/to/bydbctl",
 		Args:         []string{"agent-tool-bridge", "--socket", "/tmp/tools.sock"},
-		EnabledTools: []string{"list_groups_schemas", "describe_schema", "propose_query_plan", "validate_bydbql", "execute_bydbql"},
+		EnabledTools: agent.ControlledToolNames(),
 	}
 }

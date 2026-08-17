@@ -21,6 +21,7 @@ package session
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -457,6 +458,15 @@ type QuerySession struct {
 	CandidateSuperseded bool
 }
 
+// SetCatalog replaces the discovery context attached to a schema snapshot.
+func (snapshot *SchemaSnapshot) SetCatalog(catalog SchemaCatalog) {
+	if snapshot == nil {
+		return
+	}
+	snapshot.AvailableGroups = append([]string(nil), catalog.Groups...)
+	snapshot.Catalog = append([]CatalogEntry(nil), catalog.Entries...)
+}
+
 // SchemaKey returns a normalized identity for a resource schema.
 func SchemaKey(resourceType ResourceType, name string, groups []string) string {
 	normalizedGroups := make([]string, 0, len(groups))
@@ -570,6 +580,23 @@ func (qs *QuerySession) AddCandidate(candidate BydbqlCandidate) {
 	qs.SelectedCandidate = len(qs.Candidates) - 1
 	qs.Validation = candidate.Validation
 	qs.CandidateSuperseded = false
+}
+
+// AddCandidateVersion appends one versioned query candidate and selects it.
+func (qs *QuerySession) AddCandidateVersion(
+	query, explanation string,
+	source CandidateSource,
+	validation ValidationReport,
+	createdAt time.Time,
+) {
+	qs.AddCandidate(BydbqlCandidate{
+		ID:          fmt.Sprintf("candidate-%d", len(qs.Candidates)+1),
+		Query:       query,
+		Explanation: explanation,
+		Source:      source,
+		CreatedAt:   createdAt,
+		Validation:  validation,
+	})
 }
 
 // SetPlannedQueries replaces the active agent workflow with compiled, exact statements.

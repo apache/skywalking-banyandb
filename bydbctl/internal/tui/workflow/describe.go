@@ -134,7 +134,6 @@ func (runner *Runner) DescribeResource(ctx context.Context, querySession *sessio
 		querySession.Phase = session.PhaseError
 		return fmt.Errorf("failed to describe %s %s: %w", request.ResourceType, request.Name, schemaErr)
 	}
-	preserveDiscoveryContext(&snapshot, querySession.SchemaSnapshot)
 	querySession.ActivateSchema(snapshot)
 	querySession.CandidateSuperseded = true
 	querySession.Validation = session.ValidationReport{}

@@ -133,11 +133,19 @@ func previewBodyLayoutFor(tableLineCount, detailLineCount, availableHeight int, 
 	if truncated {
 		footerHeight++
 	}
-	tableHeight := max(availableHeight-footerHeight, previewTableHeaderLines+1)
+	detailReserve := 0
+	if detailLineCount > 0 {
+		detailLineReserve := min(detailLineCount, minPreviewDetailHeight)
+		detailReserve = detailLineReserve + 1
+		if detailLineCount > detailLineReserve {
+			detailReserve++
+		}
+	}
+	tableHeight := max(availableHeight-footerHeight-detailReserve, previewTableHeaderLines+1)
 	tableOverflows := tableLineCount > tableHeight
 	if tableOverflows {
 		footerHeight++
-		tableHeight = max(availableHeight-footerHeight, previewTableHeaderLines+1)
+		tableHeight = max(availableHeight-footerHeight-detailReserve, previewTableHeaderLines+1)
 	}
 	layout := previewBodyLayout{tableHeight: tableHeight, tableOverflows: tableOverflows}
 	if detailLineCount == 0 {

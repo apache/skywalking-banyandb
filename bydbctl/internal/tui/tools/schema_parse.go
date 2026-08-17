@@ -31,70 +31,89 @@ import (
 // messages into the type-neutral snapshot the planner and the TUI read.
 
 func summarizeSchema(req SchemaRequest, body []byte, updatedAt time.Time) (session.SchemaSnapshot, error) {
-	base := session.SchemaSnapshot{
+	codec, codecErr := resourceCodecFor(req.Type)
+	if codecErr != nil {
+		return session.SchemaSnapshot{}, codecErr
+	}
+	return codec.summarize(req, body, updatedAt)
+}
+
+func baseSchemaSnapshot(req SchemaRequest, updatedAt time.Time) session.SchemaSnapshot {
+	return session.SchemaSnapshot{
 		UpdatedAt: updatedAt,
 		Type:      req.Type,
 		Name:      req.Name,
 		Groups:    append([]string(nil), req.Groups...),
 	}
-	switch req.Type {
-	case session.ResourceTypeMeasure:
-		measure, parseErr := parseMeasureSchema(body)
-		if parseErr != nil {
-			return session.SchemaSnapshot{}, parseErr
-		}
-		base.Tags = tagFamilies(measure.GetTagFamilies())
-		base.EntityTags = entityTagNames(measure.GetEntity())
-		base.Fields = fieldNames(measure.GetFields())
-		base.Columns = append(tagFamilyColumns(measure.GetTagFamilies()), fieldColumns(measure.GetFields())...)
-		return base, nil
-	case session.ResourceTypeStream:
-		stream, parseErr := parseStreamSchema(body)
-		if parseErr != nil {
-			return session.SchemaSnapshot{}, parseErr
-		}
-		base.Tags = tagFamilies(stream.GetTagFamilies())
-		base.EntityTags = entityTagNames(stream.GetEntity())
-		base.Columns = tagFamilyColumns(stream.GetTagFamilies())
-		return base, nil
-	case session.ResourceTypeTrace:
-		trace, parseErr := parseTraceSchema(body)
-		if parseErr != nil {
-			return session.SchemaSnapshot{}, parseErr
-		}
-		base.Tags = traceTagNames(trace.GetTags())
-		base.Columns = traceTagColumns(trace.GetTags())
-		base.TraceIDTag = strings.TrimSpace(trace.GetTraceIdTagName())
-		base.TimestampTag = strings.TrimSpace(trace.GetTimestampTagName())
-		return base, nil
-	case session.ResourceTypeProperty:
-		property, parseErr := parsePropertySchema(body)
-		if parseErr != nil {
-			return session.SchemaSnapshot{}, parseErr
-		}
-		base.Tags = tagNames(property.GetTags())
-		base.Columns = tagColumns(property.GetTags(), session.SchemaColumnTag)
-		return base, nil
-	case session.ResourceTypeTopN:
-		topN, parseErr := parseTopNSchema(body)
-		if parseErr != nil {
-			return session.SchemaSnapshot{}, parseErr
-		}
-		base.Tags = append([]string(nil), topN.GetGroupByTagNames()...)
-		base.Fields = compactStrings([]string{topN.GetFieldName()})
-		base.SourceMeasure = strings.TrimSpace(topN.GetSourceMeasure().GetName())
-		base.SourceMeasureGroup = strings.TrimSpace(topN.GetSourceMeasure().GetGroup())
-		base.FieldValueSort = topN.GetFieldValueSort().String()
-		for _, tagName := range base.Tags {
-			base.Columns = append(base.Columns, session.SchemaColumn{Name: tagName, Kind: session.SchemaColumnTag})
-		}
-		if fieldName := strings.TrimSpace(topN.GetFieldName()); fieldName != "" {
-			base.Columns = append(base.Columns, session.SchemaColumn{Name: fieldName, Kind: session.SchemaColumnField})
-		}
-		return base, nil
-	default:
-		return session.SchemaSnapshot{}, fmt.Errorf("unsupported resource type: %s", req.Type)
+}
+
+func summarizeMeasureSchema(req SchemaRequest, body []byte, updatedAt time.Time) (session.SchemaSnapshot, error) {
+	measure, parseErr := parseMeasureSchema(body)
+	if parseErr != nil {
+		return session.SchemaSnapshot{}, parseErr
 	}
+	snapshot := baseSchemaSnapshot(req, updatedAt)
+	snapshot.Tags = tagFamilies(measure.GetTagFamilies())
+	snapshot.EntityTags = entityTagNames(measure.GetEntity())
+	snapshot.Fields = fieldNames(measure.GetFields())
+	snapshot.Columns = append(tagFamilyColumns(measure.GetTagFamilies()), fieldColumns(measure.GetFields())...)
+	return snapshot, nil
+}
+
+func summarizeStreamSchema(req SchemaRequest, body []byte, updatedAt time.Time) (session.SchemaSnapshot, error) {
+	stream, parseErr := parseStreamSchema(body)
+	if parseErr != nil {
+		return session.SchemaSnapshot{}, parseErr
+	}
+	snapshot := baseSchemaSnapshot(req, updatedAt)
+	snapshot.Tags = tagFamilies(stream.GetTagFamilies())
+	snapshot.EntityTags = entityTagNames(stream.GetEntity())
+	snapshot.Columns = tagFamilyColumns(stream.GetTagFamilies())
+	return snapshot, nil
+}
+
+func summarizeTraceSchema(req SchemaRequest, body []byte, updatedAt time.Time) (session.SchemaSnapshot, error) {
+	trace, parseErr := parseTraceSchema(body)
+	if parseErr != nil {
+		return session.SchemaSnapshot{}, parseErr
+	}
+	snapshot := baseSchemaSnapshot(req, updatedAt)
+	snapshot.Tags = traceTagNames(trace.GetTags())
+	snapshot.Columns = traceTagColumns(trace.GetTags())
+	snapshot.TraceIDTag = strings.TrimSpace(trace.GetTraceIdTagName())
+	snapshot.TimestampTag = strings.TrimSpace(trace.GetTimestampTagName())
+	return snapshot, nil
+}
+
+func summarizePropertySchema(req SchemaRequest, body []byte, updatedAt time.Time) (session.SchemaSnapshot, error) {
+	property, parseErr := parsePropertySchema(body)
+	if parseErr != nil {
+		return session.SchemaSnapshot{}, parseErr
+	}
+	snapshot := baseSchemaSnapshot(req, updatedAt)
+	snapshot.Tags = tagNames(property.GetTags())
+	snapshot.Columns = tagColumns(property.GetTags(), session.SchemaColumnTag)
+	return snapshot, nil
+}
+
+func summarizeTopNSchema(req SchemaRequest, body []byte, updatedAt time.Time) (session.SchemaSnapshot, error) {
+	topN, parseErr := parseTopNSchema(body)
+	if parseErr != nil {
+		return session.SchemaSnapshot{}, parseErr
+	}
+	snapshot := baseSchemaSnapshot(req, updatedAt)
+	snapshot.Tags = append([]string(nil), topN.GetGroupByTagNames()...)
+	snapshot.Fields = compactStrings([]string{topN.GetFieldName()})
+	snapshot.SourceMeasure = strings.TrimSpace(topN.GetSourceMeasure().GetName())
+	snapshot.SourceMeasureGroup = strings.TrimSpace(topN.GetSourceMeasure().GetGroup())
+	snapshot.FieldValueSort = topN.GetFieldValueSort().String()
+	for _, tagName := range snapshot.Tags {
+		snapshot.Columns = append(snapshot.Columns, session.SchemaColumn{Name: tagName, Kind: session.SchemaColumnTag})
+	}
+	if fieldName := strings.TrimSpace(topN.GetFieldName()); fieldName != "" {
+		snapshot.Columns = append(snapshot.Columns, session.SchemaColumn{Name: fieldName, Kind: session.SchemaColumnField})
+	}
+	return snapshot, nil
 }
 
 func parseMeasureSchema(body []byte) (*databasev1.Measure, error) {

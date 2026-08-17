@@ -37,19 +37,13 @@ const (
 	defaultCommand          = "claude"
 	defaultModel            = "sonnet"
 	defaultMaxTurns         = 12
-	controlledMCPServerName = "bydbctl-controlled-tools"
+	controlledMCPServerName = agent.ControlledMCPServerName
 	agentEventBuffer        = 64
 )
 
 var (
 	claudeVersionPattern = regexp.MustCompile(`^\d+\.\d+\.\d+ \(Claude Code\)$`)
-	controlledToolNames  = []string{
-		"list_groups_schemas",
-		"describe_schema",
-		"propose_query_plan",
-		"validate_bydbql",
-		"execute_bydbql",
-	}
+	controlledToolNames  = agent.ControlledToolNames()
 )
 
 // Config configures one Claude CLI gateway.
@@ -268,15 +262,8 @@ func validateConfig(config Config) error {
 	if !filepath.IsAbs(config.WorkingDirectory) {
 		return errors.New("isolated Claude working directory must be absolute")
 	}
-	server := config.ControlledMCPServer
-	if server.Name != controlledMCPServerName {
-		return fmt.Errorf("controlled MCP server must be named %q", controlledMCPServerName)
-	}
-	if !filepath.IsAbs(server.Command) {
-		return errors.New("controlled MCP server command must be absolute")
-	}
-	if !agent.SameToolSet(server.EnabledTools, controlledToolNames) {
-		return fmt.Errorf("controlled MCP tool allowlist must contain exactly %s", strings.Join(controlledToolNames, ", "))
+	if serverErr := agent.ValidateControlledMCPServer(config.ControlledMCPServer); serverErr != nil {
+		return serverErr
 	}
 	return nil
 }
