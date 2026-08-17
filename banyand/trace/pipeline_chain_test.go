@@ -975,6 +975,29 @@ func TestMergeChain_TimeoutDoesNotRecycleDecisionStorage(t *testing.T) {
 	require.False(t, reusable, "the timed-out worker may still access the caller-owned decision storage")
 }
 
+func TestMergeChain_EmptyChainSkipsExecutionLimit(t *testing.T) {
+	executionSlots := make(chan struct{}, 1)
+	executionSlots <- struct{}{}
+	chain := newMergeChain("g", "s", []sdk.Sampler{nil}, 1)
+	chain.executionSlots = executionSlots
+	batch := &sdk.TraceBatch{Traces: []sdk.TraceBlock{{TraceID: "trace-a"}}}
+	decisionMask := []bool{false}
+
+	verdict, reusable, executeErr := chain.executeObservedInto(batch, time.Nanosecond, nil, decisionMask)
+
+	require.NoError(t, executeErr)
+	require.True(t, reusable)
+	require.Equal(t, []bool{true}, verdict.Keep)
+	require.Len(t, executionSlots, 1, "an empty chain must not consume an execution slot")
+	require.Nil(t, chain.worker, "an empty chain must not create a worker")
+	chain.mu.Lock()
+	circuitOpen := chain.circuitOpen
+	consecutiveTimeouts := chain.consecutiveTOs
+	chain.mu.Unlock()
+	require.False(t, circuitOpen)
+	require.Zero(t, consecutiveTimeouts)
+}
+
 func TestMergeChain_FreshChainsShareStuckExecutionLimit(t *testing.T) {
 	executionSlots := make(chan struct{}, 1)
 	firstRelease := make(chan struct{})

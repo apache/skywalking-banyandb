@@ -224,6 +224,10 @@ func (mc *mergeChain) executeObservedInto(batch *sdk.TraceBatch, timeout time.Du
 	mc.executionMu.Lock()
 	defer mc.executionMu.Unlock()
 
+	if len(mc.samplers) == 0 {
+		return retainAllVerdict(len(batch.Traces), decisionMask), true, nil
+	}
+
 	mc.mu.Lock()
 	if mc.circuitOpen {
 		mc.mu.Unlock()
