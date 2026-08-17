@@ -39,27 +39,32 @@ func (m Model) chatListViewportHeight() int {
 	return max(panelHeight-chatPanelChrome-detailBudget, 3)
 }
 
-func (m Model) executionDetailViewportHeight() int {
-	return min(max(m.height/2, 10), 22)
+func (m *Model) scrollExecutionDetail(delta int) bool {
+	data, ok := m.currentPreviewData()
+	if !ok {
+		m.executionDetailScroll = 0
+		return false
+	}
+	width, availableHeight := m.executionPreviewBodyDimensions()
+	detailLines := m.executionRowDetailLines(width - 4)
+	layout := previewBodyLayoutFor(len(m.dataPreviewTableLines()), len(detailLines), availableHeight, data.truncated)
+	maxScroll := max(len(detailLines)-layout.detailViewportHeight, 0)
+	if maxScroll == 0 {
+		m.executionDetailScroll = 0
+		return false
+	}
+	m.executionDetailScroll = clamp(m.executionDetailScroll+delta, 0, maxScroll)
+	return true
 }
 
-func (m *Model) scrollExecutionDetail(delta, viewportHeight int) bool {
-	if m.querySession == nil || m.querySession.ExecutionResult.Summary == "" {
-		return false
+// executionPreviewBodyDimensions returns the exact space available to the data table and row detail.
+func (m Model) executionPreviewBodyDimensions() (int, int) {
+	_, _, contentWidth, bodyHeight := m.workspaceFrame()
+	if workspaceIsStacked(contentWidth) {
+		return contentWidth, max(panelContentHeight(bodyHeight-1)-2, 0)
 	}
-	bodyLines := m.executionBodyLines(clamp(m.width-8, 48, 200))
-	maxScroll := max(len(bodyLines)-viewportHeight, 0)
-	if maxScroll == 0 {
-		return false
-	}
-	m.executionDetailScroll += delta
-	if m.executionDetailScroll < 0 {
-		m.executionDetailScroll = 0
-	}
-	if m.executionDetailScroll > maxScroll {
-		m.executionDetailScroll = maxScroll
-	}
-	return true
+	_, previewWidth := workspaceWidths(contentWidth)
+	return previewWidth, max(panelContentHeight(bodyHeight)-2, 0)
 }
 
 func (m *Model) moveExecutionRowCursor(delta int) {
@@ -102,16 +107,6 @@ func (m Model) dataPreviewViewportWidth() int {
 	contentWidth := clamp(m.width-4, 48, 200)
 	_, previewWidth := workspaceWidths(contentWidth)
 	return max(previewWidth-4, 1)
-}
-
-func (m Model) executionBodyLines(width int) []string {
-	if m.querySession == nil {
-		return nil
-	}
-	return executionDetailLines(m.querySession.ExecutionResult, executionDisplayOptions{
-		width:       width,
-		selectedRow: m.executionRowCursor,
-	})
 }
 
 // executionRowDetailLines renders the field-by-field detail of the selected result row.

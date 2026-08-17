@@ -36,6 +36,7 @@ const (
 	maxDisplayStringRunes     = 120
 	maxDisplayArrayItems      = 3
 	maxExecutionTableColumns  = 5
+	previewTableHeaderLines   = 2
 )
 
 var executionTableColumnOrder = []string{
@@ -201,6 +202,27 @@ func formatPreviewTable(columns []string, preview [][]string, width, selectedRow
 		lines = append(lines, line)
 	}
 	return lines
+}
+
+// previewTableVerticalViewport keeps the table header visible while showing the selected result row.
+func previewTableVerticalViewport(lines []string, height, selectedRow int) ([]string, int, int) {
+	if len(lines) == 0 || height <= 0 {
+		return nil, 0, 0
+	}
+	headerLineCount := min(previewTableHeaderLines, len(lines))
+	rowCount := len(lines) - headerLineCount
+	if rowCount == 0 || len(lines) <= height {
+		return append([]string(nil), lines...), 0, rowCount
+	}
+	visibleRowCount := max(height-headerLineCount, 1)
+	firstRow := 0
+	if selectedRow >= visibleRowCount {
+		firstRow = selectedRow - visibleRowCount + 1
+	}
+	firstRow = clamp(firstRow, 0, max(rowCount-visibleRowCount, 0))
+	lastRow := min(firstRow+visibleRowCount, rowCount)
+	visible := append([]string(nil), lines[:headerLineCount]...)
+	return append(visible, lines[headerLineCount+firstRow:headerLineCount+lastRow]...), firstRow, lastRow
 }
 
 func previewColumnWidths(columns []string, preview [][]string, totalWidth int) []int {

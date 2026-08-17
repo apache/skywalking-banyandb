@@ -16,6 +16,7 @@
 package app
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -263,6 +264,93 @@ func TestDataPreviewScrollsHorizontallyWhenFocused(t *testing.T) {
 	}
 	if !strings.Contains(scrolledModel.View(), "│ > ") {
 		t.Fatalf("expected the selected-row marker to remain visible while scrolling:\n%s", scrolledModel.View())
+	}
+}
+
+func TestDataPreviewDownArrowScrollsSelectedRowIntoView(t *testing.T) {
+	model := NewModel(Config{})
+	model.resize(120, 18)
+	preview := make([][]string, 30)
+	for rowIndex := range preview {
+		preview[rowIndex] = []string{fmt.Sprintf("row-%d", rowIndex)}
+	}
+	model.querySession = &session.QuerySession{ExecutionResult: session.ExecutionResult{
+		Query:   testMeasureQuery,
+		Summary: "execution complete",
+		Rows:    len(preview),
+		Columns: []string{"value"},
+		Preview: preview,
+	}}
+	model.focus = focusExecution
+	model.executionRowCursor = -1
+
+	updatedModel := tea.Model(model)
+	for range 20 {
+		updatedModel, _ = updatedModel.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if view := updatedModel.(Model).View(); !strings.Contains(view, "> row-20") {
+		t.Fatalf("Down must scroll the selected row into view:\n%s", view)
+	}
+}
+
+func TestDataPreviewPageKeysOnlyScrollSelectedRowDetail(t *testing.T) {
+	model := NewModel(Config{})
+	model.resize(120, 60)
+	columns := make([]string, 35)
+	previewRow := make([]string, len(columns))
+	for columnIndex := range columns {
+		columns[columnIndex] = fmt.Sprintf("field_%02d", columnIndex)
+		previewRow[columnIndex] = fmt.Sprintf("value-%02d", columnIndex)
+	}
+	model.querySession = &session.QuerySession{ExecutionResult: session.ExecutionResult{
+		Query:   testMeasureQuery,
+		Summary: "execution complete",
+		Rows:    1,
+		Columns: columns,
+		Preview: [][]string{previewRow},
+	}}
+	model.focus = focusExecution
+	model.executionRowCursor = 0
+
+	updatedModel := tea.Model(model)
+	for range 6 {
+		updatedModel, _ = updatedModel.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	}
+	scrolledModel := updatedModel.(Model)
+	if scrolledModel.executionDetailScroll != 0 {
+		t.Fatalf("pgdn must not scroll past the selected row detail, got offset %d", scrolledModel.executionDetailScroll)
+	}
+	if view := scrolledModel.View(); !strings.Contains(view, "field_00: value-00") {
+		t.Fatalf("the selected row detail must remain at its first line when it fits:\n%s", view)
+	}
+}
+
+func TestDataPreviewPageKeysReachLastDetailLineWithCatalogError(t *testing.T) {
+	model := NewModel(Config{})
+	model.resize(120, 42)
+	columns := make([]string, 50)
+	previewRow := make([]string, len(columns))
+	for columnIndex := range columns {
+		columns[columnIndex] = fmt.Sprintf("field_%02d", columnIndex)
+		previewRow[columnIndex] = fmt.Sprintf("value-%02d", columnIndex)
+	}
+	model.querySession = &session.QuerySession{ExecutionResult: session.ExecutionResult{
+		Query:   testMeasureQuery,
+		Summary: "execution complete",
+		Rows:    1,
+		Columns: columns,
+		Preview: [][]string{previewRow},
+	}}
+	model.catalog.loadError = "BanyanDB is unavailable"
+	model.focus = focusExecution
+	model.executionRowCursor = 0
+
+	updatedModel := tea.Model(model)
+	for range 20 {
+		updatedModel, _ = updatedModel.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	}
+	if view := updatedModel.(Model).View(); !strings.Contains(view, "field_49: value-49") {
+		t.Fatalf("pgdn must reach the final selected-row detail line with a catalog error:\n%s", view)
 	}
 }
 

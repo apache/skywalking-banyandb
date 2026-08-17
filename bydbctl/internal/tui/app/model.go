@@ -513,6 +513,17 @@ func (m Model) renderView() (string, []panelRegion) {
 	if m.width < minTerminalWidth || m.height < minTerminalHeight {
 		return m.renderTooSmall(), nil
 	}
+	header, footer, contentWidth, bodyHeight := m.workspaceFrame()
+	if m.helpVisible {
+		return lipgloss.JoinVertical(lipgloss.Left,
+			header, m.renderHelpOverlay(contentWidth, bodyHeight), footer), nil
+	}
+	body, regions := m.renderWorkspaceWithRegions(contentWidth, bodyHeight, lipgloss.Height(header))
+	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer), regions
+}
+
+// workspaceFrame renders the persistent chrome and returns the space left for the workspace panels.
+func (m Model) workspaceFrame() (string, string, int, int) {
 	contentWidth := clamp(m.width-4, minTerminalWidth-4, 200)
 	header := m.renderWorkspaceHeader(contentWidth)
 	if m.catalog.loadError != "" {
@@ -522,14 +533,8 @@ func (m Model) renderView() (string, []panelRegion) {
 			mutedStyle.Render("Ctrl+L retries the catalog load"))
 	}
 	footer := m.renderFooter(contentWidth)
-	headerHeight := lipgloss.Height(header)
-	bodyHeight := max(m.height-headerHeight-lipgloss.Height(footer), 1)
-	if m.helpVisible {
-		return lipgloss.JoinVertical(lipgloss.Left,
-			header, m.renderHelpOverlay(contentWidth, bodyHeight), footer), nil
-	}
-	body, regions := m.renderWorkspaceWithRegions(contentWidth, bodyHeight, headerHeight)
-	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer), regions
+	bodyHeight := max(m.height-lipgloss.Height(header)-lipgloss.Height(footer), 1)
+	return header, footer, contentWidth, bodyHeight
 }
 
 // Minimum terminal size below which the workspace cannot render legibly.

@@ -200,7 +200,7 @@ func (m *Model) handlePageKey(key string) (tea.Cmd, bool) {
 			m.scrollSchemaDetail(delta)
 			return nil, true
 		}
-		m.scrollExecutionDetail(delta, m.executionDetailViewportHeight())
+		m.scrollExecutionDetail(delta)
 		return nil, true
 	case focusChat:
 		m.moveChatDetailScroll(delta, chatDetailViewportHeight(m.chatPanelHeight(clamp(m.height-chatPanelPadding, 18, 40))))

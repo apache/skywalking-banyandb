@@ -90,33 +90,74 @@ func (m Model) renderPreviewEmptyState(width int) []string {
 // renderPreviewBody renders the result table and, below it, the detail of the selected row.
 func (m Model) renderPreviewBody(data previewData, width, availableHeight int) []string {
 	tableLines := m.dataPreviewTableLines()
-	visibleTableLines := previewTableViewport(tableLines, width-4, m.executionPreviewOffset)
+	detailLines := m.executionRowDetailLines(width - 4)
+	layout := previewBodyLayoutFor(len(tableLines), len(detailLines), availableHeight, data.truncated)
+	verticalTableLines, firstRow, lastRow := previewTableVerticalViewport(tableLines, layout.tableHeight, m.executionRowCursor)
+	visibleTableLines := previewTableViewport(verticalTableLines, width-4, m.executionPreviewOffset)
 	rows := append([]string(nil), visibleTableLines...)
+	if layout.tableOverflows {
+		rows = append(rows, mutedStyle.Render(fmt.Sprintf("rows %d-%d/%d · ↑↓ row", firstRow+1, lastRow, len(data.preview))))
+	}
 	if data.truncated {
 		rows = append(rows, mutedStyle.Render(glyphTruncate+" preview truncated; total row count shown above"))
 	}
-	detailLines := m.executionRowDetailLines(width - 4)
-	if len(detailLines) == 0 {
-		return rows
-	}
-	detailHeight := max(availableHeight-len(rows)-1, 0)
-	if detailHeight < minPreviewDetailHeight {
+	if layout.detailViewportHeight == 0 {
 		return rows
 	}
 	rows = append(rows, titleStyle.Render("Row detail · pgup/pgdn scroll"))
-	detailEnd := min(m.executionDetailScroll+detailHeight, len(detailLines))
-	for lineIndex := m.executionDetailScroll; lineIndex < detailEnd; lineIndex++ {
+	detailScroll := clamp(m.executionDetailScroll, 0, max(len(detailLines)-layout.detailViewportHeight, 0))
+	detailEnd := min(detailScroll+layout.detailViewportHeight, len(detailLines))
+	for lineIndex := detailScroll; lineIndex < detailEnd; lineIndex++ {
 		rows = append(rows, mutedStyle.Render(truncate(detailLines[lineIndex], width-4)))
 	}
-	if len(detailLines) > detailHeight {
+	if layout.detailOverflows {
 		rows = append(rows, mutedStyle.Render(fmt.Sprintf("detail %d-%d/%d lines",
-			m.executionDetailScroll+1, detailEnd, len(detailLines))))
+			detailScroll+1, detailEnd, len(detailLines))))
 	}
 	return rows
 }
 
 // minPreviewDetailHeight is the smallest row-detail viewport worth rendering.
 const minPreviewDetailHeight = 3
+
+type previewBodyLayout struct {
+	tableHeight          int
+	tableOverflows       bool
+	detailViewportHeight int
+	detailOverflows      bool
+}
+
+// previewBodyLayoutFor divides the available panel rows between table rows, their footers, and selected-row detail.
+func previewBodyLayoutFor(tableLineCount, detailLineCount, availableHeight int, truncated bool) previewBodyLayout {
+	footerHeight := 0
+	if truncated {
+		footerHeight++
+	}
+	tableHeight := max(availableHeight-footerHeight, previewTableHeaderLines+1)
+	tableOverflows := tableLineCount > tableHeight
+	if tableOverflows {
+		footerHeight++
+		tableHeight = max(availableHeight-footerHeight, previewTableHeaderLines+1)
+	}
+	layout := previewBodyLayout{tableHeight: tableHeight, tableOverflows: tableOverflows}
+	if detailLineCount == 0 {
+		return layout
+	}
+	renderedTableHeight := min(tableLineCount, tableHeight)
+	detailViewportHeight := availableHeight - renderedTableHeight - footerHeight - 1
+	if detailViewportHeight < minPreviewDetailHeight {
+		return layout
+	}
+	if detailLineCount > detailViewportHeight {
+		detailViewportHeight--
+		if detailViewportHeight < minPreviewDetailHeight {
+			return layout
+		}
+		layout.detailOverflows = true
+	}
+	layout.detailViewportHeight = detailViewportHeight
+	return layout
+}
 
 func (m Model) renderSchemaEvidence(width, height int) string {
 	contentHeight := panelContentHeight(height)
