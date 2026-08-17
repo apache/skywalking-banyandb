@@ -257,16 +257,25 @@ func (snapshot *SchemaSnapshot) EnsureFingerprint() string {
 
 // Column returns a typed schema column by its case-insensitive name.
 func (snapshot SchemaSnapshot) Column(name string) (SchemaColumn, bool) {
+	return snapshot.findColumn(name, strings.EqualFold)
+}
+
+// ExactColumn resolves a schema column without changing identifier case.
+func (snapshot SchemaSnapshot) ExactColumn(name string) (SchemaColumn, bool) {
+	return snapshot.findColumn(name, exactColumnName)
+}
+
+func (snapshot SchemaSnapshot) findColumn(name string, namesEqual func(string, string) bool) (SchemaColumn, bool) {
 	trimmedName := strings.TrimSpace(name)
 	for _, column := range snapshot.Columns {
-		if strings.EqualFold(column.Name, trimmedName) {
+		if namesEqual(column.Name, trimmedName) {
 			return column, true
 		}
 	}
 	var suffixMatch SchemaColumn
 	matchCount := 0
 	for _, column := range snapshot.Columns {
-		if strings.EqualFold(column.Name[strings.LastIndex(column.Name, ".")+1:], trimmedName) {
+		if namesEqual(column.Name[strings.LastIndex(column.Name, ".")+1:], trimmedName) {
 			suffixMatch = column
 			matchCount++
 		}
@@ -277,26 +286,8 @@ func (snapshot SchemaSnapshot) Column(name string) (SchemaColumn, bool) {
 	return SchemaColumn{}, false
 }
 
-// ExactColumn resolves a schema column without changing identifier case.
-func (snapshot SchemaSnapshot) ExactColumn(name string) (SchemaColumn, bool) {
-	trimmedName := strings.TrimSpace(name)
-	for _, column := range snapshot.Columns {
-		if column.Name == trimmedName {
-			return column, true
-		}
-	}
-	var suffixMatch SchemaColumn
-	matchCount := 0
-	for _, column := range snapshot.Columns {
-		if column.Name[strings.LastIndex(column.Name, ".")+1:] == trimmedName {
-			suffixMatch = column
-			matchCount++
-		}
-	}
-	if matchCount == 1 {
-		return suffixMatch, true
-	}
-	return SchemaColumn{}, false
+func exactColumnName(left, right string) bool {
+	return left == right
 }
 
 // CatalogEntry is one discoverable BanyanDB resource in a group.

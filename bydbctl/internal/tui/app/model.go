@@ -345,15 +345,7 @@ func (m Model) agentExecutedCandidate(query string) bool {
 func (m *Model) executeGeneratedCandidate() tea.Cmd {
 	m.autoExecutedCandidateIndex = m.querySession.SelectedCandidateIndex()
 	m.hasAutoExecutedCandidate = true
-	m.busy = true
-	m.turnEvents = nil
-	m.progressOperation = progressOperationExecute
-	m.status = "executing generated query"
-	m.turnStartedAt = time.Now()
-	m.logWrite("action", "automatically execute generated query")
-	executeCtx, cancelExecute := context.WithCancel(context.Background())
-	m.turnCancel = cancelExecute
-	return tea.Batch(m.executeGeneratedCmd(executeCtx), m.turnTimeoutCmd(m.turnStartedAt))
+	return m.startOperation(progressOperationExecute, "executing generated query", "automatically execute generated query", m.executeGeneratedCmd)
 }
 
 // applyCatalog records a catalog refresh or its connection failure.
@@ -587,6 +579,18 @@ func (m *Model) cancelActive() {
 	m.addUIEvent("workflow: stopped by user")
 }
 
+func (m *Model) startOperation(operation progressOperation, status, logMessage string, command func(context.Context) tea.Cmd) tea.Cmd {
+	m.busy = true
+	m.turnEvents = nil
+	m.progressOperation = operation
+	m.status = status
+	m.turnStartedAt = time.Now()
+	m.logWrite("action", logMessage)
+	operationCtx, cancelOperation := context.WithCancel(context.Background())
+	m.turnCancel = cancelOperation
+	return tea.Batch(command(operationCtx), m.turnTimeoutCmd(m.turnStartedAt))
+}
+
 func (m *Model) sendComposerMessage() (tea.Cmd, bool) {
 	if m.busy {
 		return nil, true
@@ -599,27 +603,24 @@ func (m *Model) sendComposerMessage() (tea.Cmd, bool) {
 	describeRequest, describesSchema := m.resolveDescribeTarget(messageValue)
 	m.queuedMessage = messageValue
 	m.messageHistory.record(messageValue)
-	m.turnEvents = nil
 	m.liveResponse = ""
 	m.editingQuery = false
 	m.message.SetValue("")
 	m.updateSchemaSearch()
 	m.syncChatCursor()
-	m.busy = true
-	m.turnStartedAt = time.Now()
-	turnCtx, cancelTurn := context.WithCancel(context.Background())
-	m.turnCancel = cancelTurn
 	if describesSchema {
-		m.progressOperation = progressOperationSchema
-		m.status = "reading schema from BanyanDB"
-		m.logWrite("action", fmt.Sprintf("describe schema=%s/%s type=%s question=%q",
-			describeRequest.Group, describeRequest.Name, describeRequest.ResourceType, messageValue))
-		return tea.Batch(m.describeCmd(turnCtx, describeRequest, messageValue), m.turnTimeoutCmd(m.turnStartedAt)), true
+		logMessage := fmt.Sprintf("describe schema=%s/%s type=%s question=%q",
+			describeRequest.Group, describeRequest.Name, describeRequest.ResourceType, messageValue)
+		command := func(operationCtx context.Context) tea.Cmd {
+			return m.describeCmd(operationCtx, describeRequest, messageValue)
+		}
+		return m.startOperation(progressOperationSchema, "reading schema from BanyanDB", logMessage, command), true
 	}
-	m.progressOperation = progressOperationPreparing
-	m.status = statusAskingAgent
-	m.logWrite("action", fmt.Sprintf("send agent message=%q reference=%s", messageValue, describeReferenceLabel(m.composerReference)))
-	return tea.Batch(m.agentCmd(turnCtx, messageValue), m.turnTimeoutCmd(m.turnStartedAt)), true
+	logMessage := fmt.Sprintf("send agent message=%q reference=%s", messageValue, describeReferenceLabel(m.composerReference))
+	command := func(operationCtx context.Context) tea.Cmd {
+		return m.agentCmd(operationCtx, messageValue)
+	}
+	return m.startOperation(progressOperationPreparing, statusAskingAgent, logMessage, command), true
 }
 
 // describeReferenceLabel names the composer reference for the session log, or reports its absence.
@@ -661,17 +662,12 @@ func (m *Model) repairCurrentCandidate() (tea.Cmd, bool) {
 	const repairRequest = "Repair the current invalid BYDBQL candidate using the validation error."
 	m.editingQuery = false
 	m.queuedMessage = repairRequest
-	m.turnEvents = nil
 	m.liveResponse = ""
 	m.syncChatCursor()
-	m.busy = true
-	m.progressOperation = progressOperationPreparing
-	m.status = "asking Agent to repair candidate"
-	m.turnStartedAt = time.Now()
-	m.logWrite("action", "ctrl+g repair invalid candidate")
-	turnCtx, cancelTurn := context.WithCancel(context.Background())
-	m.turnCancel = cancelTurn
-	return tea.Batch(m.agentCmd(turnCtx, repairRequest), m.turnTimeoutCmd(m.turnStartedAt)), true
+	command := func(operationCtx context.Context) tea.Cmd {
+		return m.agentCmd(operationCtx, repairRequest)
+	}
+	return m.startOperation(progressOperationPreparing, "asking Agent to repair candidate", "ctrl+g repair invalid candidate", command), true
 }
 
 func (m Model) exportResult() (session.ExecutionResult, bool) {

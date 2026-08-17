@@ -18,9 +18,7 @@
 package app
 
 import (
-	"context"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -334,15 +332,7 @@ func (m *Model) executeCurrentCandidate() (tea.Cmd, bool) {
 	if m.busy {
 		return nil, true
 	}
-	m.busy = true
-	m.turnEvents = nil
-	m.progressOperation = progressOperationExecute
-	m.status = "executing full query"
-	m.turnStartedAt = time.Now()
-	m.logWrite("action", "ctrl+e full execute query")
-	executeCtx, cancelExecute := context.WithCancel(context.Background())
-	m.turnCancel = cancelExecute
-	return tea.Batch(m.executeCmd(executeCtx), m.turnTimeoutCmd(m.turnStartedAt)), true
+	return m.startOperation(progressOperationExecute, "executing full query", "ctrl+e full execute query", m.executeCmd), true
 }
 
 // exportCurrentResult writes the visible execution result to a local file.

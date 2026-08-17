@@ -40,7 +40,7 @@ func ResolveSessionSlots(options StartOptions, catalog session.SchemaCatalog) Re
 	goal := strings.TrimSpace(options.Goal)
 	resourceType := options.ResourceType
 	if resourceType == "" {
-		resourceType = inferResourceType(goal)
+		resourceType = tuicatalog.InferResourceType(goal)
 	}
 	resourceName := strings.TrimSpace(options.ResourceName)
 	groups := normalizeGroupsIfProvided(options.Groups)
@@ -64,7 +64,7 @@ func ResolveSessionSlots(options StartOptions, catalog session.SchemaCatalog) Re
 	if !options.TypeProvided && resourceName != "" {
 		matchType = ""
 	}
-	match := matchResourceFromGoal(goal, catalog, matchType, resourceName, groups)
+	match := tuicatalog.MatchGoal(goal, catalog, matchType, resourceName, groups)
 	if !match.Matched {
 		return finalizeResolvedSlots(resolved, catalog)
 	}
@@ -81,33 +81,6 @@ func ResolveSessionSlots(options StartOptions, catalog session.SchemaCatalog) Re
 		resolved.AutoMatched = true
 	}
 	return finalizeResolvedSlots(resolved, catalog)
-}
-
-type catalogMatch struct {
-	Group     string
-	Name      string
-	Type      session.ResourceType
-	Score     int
-	Matched   bool
-	Ambiguous bool
-}
-
-func matchResourceFromGoal(
-	goal string,
-	catalog session.SchemaCatalog,
-	preferredType session.ResourceType,
-	preferredName string,
-	preferredGroups []string,
-) catalogMatch {
-	matchedEntry := tuicatalog.MatchGoal(goal, catalog, preferredType, preferredName, preferredGroups)
-	return catalogMatch{
-		Matched:   matchedEntry.Matched,
-		Ambiguous: matchedEntry.Ambiguous,
-		Group:     matchedEntry.Group,
-		Name:      matchedEntry.Name,
-		Type:      matchedEntry.Type,
-		Score:     matchedEntry.Score,
-	}
 }
 
 const maxPromptCatalogCandidates = 10
@@ -128,16 +101,6 @@ func CatalogRankingGoal(userGoal, turnHint string) string {
 // FindExplicitResourceMention matches a catalog entry named directly in the user text.
 func FindExplicitResourceMention(goal string, entries []session.CatalogEntry) *session.CatalogEntry {
 	return tuicatalog.FindExplicit(RepairFragmentedQuery(goal), entries)
-}
-
-// RankCatalogCandidates returns the highest-scoring catalog entries for a goal.
-func RankCatalogCandidates(goal string, entries []session.CatalogEntry, limit int) []session.CatalogEntry {
-	return tuicatalog.Rank(goal, entries, limit)
-}
-
-// EnsureCatalogEntry includes entry in candidates when missing, keeping the shortest list possible.
-func EnsureCatalogEntry(candidates []session.CatalogEntry, entry session.CatalogEntry, limit int) []session.CatalogEntry {
-	return tuicatalog.Ensure(candidates, entry, limit)
 }
 
 func normalizeGroupsIfProvided(groups []string) []string {

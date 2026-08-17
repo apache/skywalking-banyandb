@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	tuicatalog "github.com/apache/skywalking-banyandb/bydbctl/internal/tui/catalog"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 )
 
@@ -39,7 +40,7 @@ func TestRankCatalogCandidatesCPUGoal(t *testing.T) {
 		{Group: "sw_metricsMinute", Type: session.ResourceTypeMeasure, Name: "mq_endpoint_consume_latency_minute"},
 		{Group: "sw_metricsMinute", Type: session.ResourceTypeMeasure, Name: "meter_vm_cpu_average_used_minute"},
 	}
-	ranked := RankCatalogCandidates("帮我查询cpu指标", catalog, 2)
+	ranked := tuicatalog.Rank("帮我查询cpu指标", catalog, 2)
 	if len(ranked) == 0 || ranked[0].Name != "meter_vm_cpu_average_used_minute" {
 		t.Fatalf("expected cpu resource first, got %+v", ranked)
 	}
@@ -90,7 +91,7 @@ func TestMatchResourceFromGoalRejectsAmbiguousCandidates(t *testing.T) {
 			{Group: "metrics_b", Type: session.ResourceTypeMeasure, Name: "service_cpu_minute"},
 		},
 	}
-	match := matchResourceFromGoal("query service_cpu_minute", catalog, session.ResourceTypeMeasure, "", nil)
+	match := tuicatalog.MatchGoal("query service_cpu_minute", catalog, session.ResourceTypeMeasure, "", nil)
 	if match.Matched || !match.Ambiguous {
 		t.Fatalf("expected ambiguous match, got %+v", match)
 	}
@@ -115,7 +116,7 @@ func TestRankCatalogCandidatesPaymentEndpoints(t *testing.T) {
 		{Group: "sw_metrics", Type: session.ResourceTypeMeasure, Name: "service_endpoint_latency"},
 		{Group: "sw_metrics", Type: session.ResourceTypeMeasure, Name: "service_endpoint_cpm"},
 	}
-	ranked := RankCatalogCandidates("top 10 slow payment endpoints in last 30 minutes", catalog, 3)
+	ranked := tuicatalog.Rank("top 10 slow payment endpoints in last 30 minutes", catalog, 3)
 	if len(ranked) == 0 {
 		t.Fatal("expected ranked catalog candidates")
 	}
@@ -132,7 +133,7 @@ func TestMatchResourceFromGoalEndpointLatency(t *testing.T) {
 			{Group: "default", Type: session.ResourceTypeStream, Name: "access_log"},
 		},
 	}
-	match := matchResourceFromGoal(
+	match := tuicatalog.MatchGoal(
 		"top 10 slow payment endpoints in last 30 minutes",
 		catalog,
 		session.ResourceTypeMeasure,

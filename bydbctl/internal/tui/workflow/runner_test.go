@@ -452,13 +452,6 @@ func TestDrainBridgeEventsRetainsProposalAfterAgentStreamCloses(t *testing.T) {
 	}
 }
 
-func TestAgentTurnForwardsReasoningDeltas(t *testing.T) {
-	event := agent.Event{Kind: agent.EventKindMessageDelta, Message: "thinking"}
-	if !shouldForwardAgentTurnEvent(event) {
-		t.Fatal("reasoning deltas must reach the TUI while the turn is active")
-	}
-}
-
 func TestReviseWithAgentRejectsCandidateEmbeddedInJSONMessage(t *testing.T) {
 	gateway := scriptedGateway{
 		events: []agent.Event{

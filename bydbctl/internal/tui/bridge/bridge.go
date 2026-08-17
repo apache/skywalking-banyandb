@@ -238,7 +238,7 @@ func (toolBridge *ToolBridge) describeSchema(ctx context.Context, arguments map[
 	}
 	snapshot.EnsureFingerprint()
 	if querySession != nil {
-		setSessionSchema(querySession, snapshot)
+		querySession.ActivateSchema(snapshot)
 	}
 	toolBridge.mu.Lock()
 	toolBridge.planAttempts = 0
@@ -277,10 +277,6 @@ func (toolBridge *ToolBridge) rankedCatalogCandidates() []session.CatalogEntry {
 	toolBridge.mu.RLock()
 	defer toolBridge.mu.RUnlock()
 	return append([]session.CatalogEntry(nil), toolBridge.rankedCandidates...)
-}
-
-func resourceIsRanked(candidates []session.CatalogEntry, resourceType session.ResourceType, resourceName string, groups []string) bool {
-	return len(candidates) > 0 && catalogIncludesResource(candidates, resourceType, resourceName, groups)
 }
 
 func catalogIncludesResource(entries []session.CatalogEntry, resourceType session.ResourceType, resourceName string, groups []string) bool {
@@ -334,10 +330,6 @@ func columnsForProvider(columns []session.SchemaColumn) []map[string]any {
 	return result
 }
 
-func setSessionSchema(querySession *session.QuerySession, schemaSnapshot session.SchemaSnapshot) {
-	querySession.ActivateSchema(schemaSnapshot)
-}
-
 func (toolBridge *ToolBridge) proposeQueryPlan(ctx context.Context, callID string, arguments map[string]any) Result {
 	if toolBridge.executor == nil || toolBridge.validator == nil {
 		return Result{Err: fmt.Errorf("query plan bridge is not configured")}
@@ -373,7 +365,7 @@ func (toolBridge *ToolBridge) proposeQueryPlan(ctx context.Context, callID strin
 		return jsonResult(planFailurePayload(querySession, diagnostic, 0, attempt, ""))
 	}
 	for planIndex, plan := range plans {
-		if !resourceIsDiscoverable(querySession.SchemaSnapshot.Catalog, plan.Resource) {
+		if !catalogContainsResource(querySession.SchemaSnapshot.Catalog, plan.Resource.Type, plan.Resource.Name, plan.Resource.Groups) {
 			return Result{Err: fmt.Errorf("query plan step %d selects a resource outside the discovered catalog", planIndex+1)}
 		}
 	}
@@ -428,7 +420,7 @@ func (toolBridge *ToolBridge) proposeQueryPlan(ctx context.Context, callID strin
 			Groups:            append([]string(nil), compiled.Resource.Groups...),
 		})
 	}
-	setSessionSchema(querySession, selectedSnapshot)
+	querySession.ActivateSchema(selectedSnapshot)
 	querySession.SetPlannedQueries(plannedQueries)
 	firstQuery := compiledQueries[0]
 	response := map[string]any{
@@ -448,10 +440,6 @@ func schemaRequestForPlan(plan planner.QueryPlan) tools.SchemaRequest {
 		Name:   plan.Resource.Name,
 		Groups: plan.Resource.Groups,
 	}
-}
-
-func resourceIsDiscoverable(catalog []session.CatalogEntry, resource planner.Resource) bool {
-	return catalogContainsResource(catalog, resource.Type, resource.Name, resource.Groups)
 }
 
 func (toolBridge *ToolBridge) reservePlanAttempt() (int, bool) {

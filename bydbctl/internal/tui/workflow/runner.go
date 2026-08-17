@@ -139,7 +139,7 @@ func (runner *Runner) StartAgentTurn(ctx context.Context, querySession *session.
 	querySession.DiscoveryGoal = rankingGoal
 	if runner.toolBridge != nil {
 		runner.toolBridge.SetSession(querySession)
-		runner.toolBridge.SetRankedCandidates(RankCatalogCandidates(rankingGoal, querySession.SchemaSnapshot.Catalog, 5))
+		runner.toolBridge.SetRankedCandidates(tuicatalog.Rank(rankingGoal, querySession.SchemaSnapshot.Catalog, 5))
 	}
 	querySession.Phase = session.PhaseAgentDraft
 	agentSessionID := strings.TrimSpace(querySession.AgentSessionID)
@@ -174,7 +174,7 @@ func (runner *Runner) StartAgentTurn(ctx context.Context, querySession *session.
 		)
 	}
 	hints := ClassifyIntent(querySession)
-	rankedCatalog := RankCatalogCandidates(rankingGoal, querySession.SchemaSnapshot.Catalog, maxPromptCatalogCandidates)
+	rankedCatalog := tuicatalog.Rank(rankingGoal, querySession.SchemaSnapshot.Catalog, maxPromptCatalogCandidates)
 	payload := agent.BuildAgentTurnRequest(querySession, hints, templateHint, trimmedTurnHint)
 	payload.Schema.CatalogTotal = len(querySession.SchemaSnapshot.Catalog)
 	if len(rankedCatalog) > 0 {
@@ -221,9 +221,9 @@ func (runner *Runner) refreshDiscoveryForTurn(ctx context.Context, querySession 
 	if strings.TrimSpace(turnHint) == "" {
 		return runner.bootstrapAutonomousSchema(ctx, querySession, rankingGoal)
 	}
-	var match catalogMatch
+	var match tuicatalog.Match
 	if explicitEntry := FindExplicitResourceMention(rankingGoal, querySession.SchemaSnapshot.Catalog); explicitEntry != nil {
-		match = catalogMatch{
+		match = tuicatalog.Match{
 			Matched: true,
 			Group:   explicitEntry.Group,
 			Name:    explicitEntry.Name,
@@ -231,7 +231,7 @@ func (runner *Runner) refreshDiscoveryForTurn(ctx context.Context, querySession 
 			Score:   100,
 		}
 	} else {
-		match = matchResourceFromGoal(
+		match = tuicatalog.MatchGoal(
 			rankingGoal,
 			session.SchemaCatalog{Entries: querySession.SchemaSnapshot.Catalog},
 			"",
@@ -271,8 +271,8 @@ func (runner *Runner) refreshDiscoveryForTurn(ctx context.Context, querySession 
 	)
 	if runner.toolBridge != nil {
 		runner.toolBridge.SetSession(querySession)
-		runner.toolBridge.SetRankedCandidates(EnsureCatalogEntry(
-			RankCatalogCandidates(rankingGoal, querySession.SchemaSnapshot.Catalog, 5),
+		runner.toolBridge.SetRankedCandidates(tuicatalog.Ensure(
+			tuicatalog.Rank(rankingGoal, querySession.SchemaSnapshot.Catalog, 5),
 			session.CatalogEntry{Group: match.Group, Type: match.Type, Name: match.Name},
 			5,
 		))
@@ -293,7 +293,7 @@ func (runner *Runner) bootstrapAutonomousSchema(ctx context.Context, querySessio
 	if strings.TrimSpace(rankingGoal) == "" {
 		rankingGoal = strings.TrimSpace(querySession.UserGoal)
 	}
-	match := matchResourceFromGoal(
+	match := tuicatalog.MatchGoal(
 		rankingGoal,
 		session.SchemaCatalog{Entries: querySession.SchemaSnapshot.Catalog},
 		"",
@@ -321,8 +321,8 @@ func (runner *Runner) bootstrapAutonomousSchema(ctx context.Context, querySessio
 	if runner.toolBridge != nil {
 		runner.toolBridge.SetSession(querySession)
 		matchedEntry := session.CatalogEntry{Group: match.Group, Type: match.Type, Name: match.Name}
-		runner.toolBridge.SetRankedCandidates(EnsureCatalogEntry(
-			RankCatalogCandidates(rankingGoal, querySession.SchemaSnapshot.Catalog, 5),
+		runner.toolBridge.SetRankedCandidates(tuicatalog.Ensure(
+			tuicatalog.Rank(rankingGoal, querySession.SchemaSnapshot.Catalog, 5),
 			matchedEntry,
 			5,
 		))
@@ -339,7 +339,10 @@ func (runner *Runner) streamAgentTurn(
 ) {
 	defer close(updates)
 	var collectedEvents []agent.Event
-	toolEvents := bridgeEvents(runner.toolBridge)
+	var toolEvents <-chan agent.Event
+	if runner.toolBridge != nil {
+		toolEvents = runner.toolBridge.Events()
+	}
 	for agentEvents != nil {
 		select {
 		case <-ctx.Done():
@@ -353,9 +356,7 @@ func (runner *Runner) streamAgentTurn(
 				continue
 			}
 			collectedEvents = append(collectedEvents, event)
-			if shouldForwardAgentTurnEvent(event) {
-				updates <- TurnUpdate{Event: &event, QuerySession: querySession}
-			}
+			updates <- TurnUpdate{Event: &event, QuerySession: querySession}
 			if event.Kind == agent.EventKindError {
 				runner.syncToolBridgeSession(querySession)
 				querySession.Phase = session.PhaseError
@@ -368,9 +369,7 @@ func (runner *Runner) streamAgentTurn(
 			}
 		case event := <-toolEvents:
 			collectedEvents = append(collectedEvents, event)
-			if shouldForwardAgentTurnEvent(event) {
-				updates <- TurnUpdate{Event: &event, QuerySession: querySession}
-			}
+			updates <- TurnUpdate{Event: &event, QuerySession: querySession}
 		}
 	}
 	runner.syncToolBridgeSession(querySession)
@@ -409,24 +408,11 @@ func drainBridgeEvents(
 		select {
 		case event := <-toolEvents:
 			collectedEvents = append(collectedEvents, event)
-			if shouldForwardAgentTurnEvent(event) {
-				updates <- TurnUpdate{Event: &event, QuerySession: querySession}
-			}
+			updates <- TurnUpdate{Event: &event, QuerySession: querySession}
 		default:
 			return collectedEvents
 		}
 	}
-}
-
-func bridgeEvents(toolBridge *bridge.ToolBridge) <-chan agent.Event {
-	if toolBridge == nil {
-		return nil
-	}
-	return toolBridge.Events()
-}
-
-func shouldForwardAgentTurnEvent(event agent.Event) bool {
-	return true
 }
 
 func (runner *Runner) completeAgentTurn(ctx context.Context, querySession *session.QuerySession, turnHint string, turnEvents []agent.Event) error {
@@ -700,21 +686,8 @@ func gatewayMaintainsConversationHistory(agentGateway agent.Gateway) bool {
 	return supportsHistoryMode && historyGateway.MaintainsConversationHistory()
 }
 
-func inferResourceType(goal string) session.ResourceType {
-	return tuicatalog.InferResourceType(goal)
-}
-
 func normalizeGroups(groups []string) []string {
-	var normalizedGroups []string
-	for _, group := range groups {
-		parts := strings.Split(group, ",")
-		for _, part := range parts {
-			trimmedPart := strings.TrimSpace(part)
-			if trimmedPart != "" {
-				normalizedGroups = append(normalizedGroups, trimmedPart)
-			}
-		}
-	}
+	normalizedGroups := normalizeGroupsIfProvided(groups)
 	if len(normalizedGroups) == 0 {
 		return []string{defaultGroupName}
 	}

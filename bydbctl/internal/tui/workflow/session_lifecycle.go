@@ -20,6 +20,7 @@ package workflow
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -160,23 +161,11 @@ func slotsChanged(querySession *session.QuerySession, options StartOptions) bool
 	if options.NameProvided && querySession.ResourceName != strings.TrimSpace(options.ResourceName) {
 		return true
 	}
-	if options.GroupsProvided && !sameGroups(querySession.Groups, normalizeGroupsIfProvided(options.Groups)) {
+	if options.GroupsProvided && !slices.Equal(querySession.Groups, normalizeGroupsIfProvided(options.Groups)) {
 		return true
 	}
 	if querySession.TimeRange.Start != strings.TrimSpace(options.TimeRange.Start) || querySession.TimeRange.End != strings.TrimSpace(options.TimeRange.End) {
 		return true
 	}
 	return false
-}
-
-func sameGroups(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for idx := range left {
-		if left[idx] != right[idx] {
-			return false
-		}
-	}
-	return true
 }

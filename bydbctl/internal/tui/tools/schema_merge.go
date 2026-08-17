@@ -18,6 +18,7 @@ package tools
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 )
@@ -29,7 +30,7 @@ func mergeGroupSchemas(req SchemaRequest, snapshots []session.SchemaSnapshot) (s
 	if len(snapshots) == 0 {
 		return session.SchemaSnapshot{}, fmt.Errorf("schema unavailable for requested groups")
 	}
-	merged := cloneSchemaSummary(snapshots[0])
+	merged := session.CloneSchemaSnapshot(snapshots[0])
 	merged.Groups = append([]string(nil), req.Groups...)
 	for snapshotIndex := 1; snapshotIndex < len(snapshots); snapshotIndex++ {
 		current := snapshots[snapshotIndex]
@@ -112,27 +113,6 @@ func enrichTopNSchema(topNSnapshot *session.SchemaSnapshot, sourceSnapshot sessi
 	topNSnapshot.Columns = columns
 }
 
-func cloneSchemaSummary(snapshot session.SchemaSnapshot) session.SchemaSnapshot {
-	cloned := snapshot
-	cloned.Groups = append([]string(nil), snapshot.Groups...)
-	cloned.Tags = append([]string(nil), snapshot.Tags...)
-	cloned.EntityTags = append([]string(nil), snapshot.EntityTags...)
-	cloned.Fields = append([]string(nil), snapshot.Fields...)
-	cloned.Columns = append([]session.SchemaColumn(nil), snapshot.Columns...)
-	cloned.IndexedFields = append([]string(nil), snapshot.IndexedFields...)
-	cloned.SortableIndexes = cloneSortableIndexSummary(snapshot.SortableIndexes)
-	cloned.ResourceNames = append([]string(nil), snapshot.ResourceNames...)
-	return cloned
-}
-
-func cloneSortableIndexSummary(indexes []session.SortableIndex) []session.SortableIndex {
-	cloned := append([]session.SortableIndex(nil), indexes...)
-	for indexPosition := range cloned {
-		cloned[indexPosition].Tags = append([]string(nil), indexes[indexPosition].Tags...)
-	}
-	return cloned
-}
-
 func intersectStrings(left, right []string) []string {
 	rightValues := make(map[string]struct{}, len(right))
 	for _, value := range right {
@@ -172,7 +152,7 @@ func intersectSortableIndexes(left, right []session.SortableIndex) []session.Sor
 	intersection := make([]session.SortableIndex, 0, len(left))
 	for _, index := range left {
 		rightIndex, ok := rightIndexes[index.RuleName]
-		if !ok || !sameStrings(index.Tags, rightIndex.Tags) {
+		if !ok || !slices.Equal(index.Tags, rightIndex.Tags) {
 			continue
 		}
 		intersection = append(intersection, session.SortableIndex{
@@ -181,16 +161,4 @@ func intersectSortableIndexes(left, right []session.SortableIndex) []session.Sor
 		})
 	}
 	return intersection
-}
-
-func sameStrings(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for valueIndex := range left {
-		if left[valueIndex] != right[valueIndex] {
-			return false
-		}
-	}
-	return true
 }
