@@ -147,12 +147,10 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 	case t.vectorized.Enabled:
 		// Assign errors to err so the deferred result.Release() fires on failure,
 		// releasing segments, the timeout context, and the tracing span.
-		var vectorizedBatch traceBatch
-		if vectorizedBatch, err = t.buildVectorizedPhase1TraceBatch(pipelineCtx, qo, sidxInstances, sidxQueryRequest, useSIDXStreaming, tqo.MaxTraceSize); err != nil {
-			return nil, err
-		}
 		var vectorizedScanBatch *scanBatch
-		if vectorizedScanBatch, err = t.buildVectorizedScanBatch(pipelineCtx, tables, qo, vectorizedBatch); err != nil {
+		if vectorizedScanBatch, err = t.buildConsistentVectorizedScanBatch(
+			pipelineCtx, tables, qo, sidxInstances, sidxQueryRequest, useSIDXStreaming, tqo.MaxTraceSize,
+		); err != nil {
 			return nil, err
 		}
 		var vectorizedResult *vectorizedTraceQueryResult

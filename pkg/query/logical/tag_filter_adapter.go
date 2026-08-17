@@ -23,32 +23,46 @@ import (
 )
 
 type tagFilterAdapter struct {
-	filter  TagFilter
-	schema  Schema
-	decoder model.TagValueDecoder
+	filter   TagFilter
+	registry TagSpecRegistry
+	decoder  model.TagValueDecoder
 }
 
-// NewTagFilterMatcher creates a TagFilterMatcher from a TagFilter and Schema.
-func NewTagFilterMatcher(filter TagFilter, schema Schema, decoder model.TagValueDecoder) model.TagFilterMatcher {
+type tagValueIndex struct {
+	family int
+	tag    int
+}
+
+type tagValuesBySchemaIndex map[tagValueIndex]*modelv1.TagValue
+
+func (tv tagValuesBySchemaIndex) GetTagValue(tagFamilyIdx, tagIdx int) *modelv1.TagValue {
+	return tv[tagValueIndex{family: tagFamilyIdx, tag: tagIdx}]
+}
+
+// NewTagFilterMatcher creates a TagFilterMatcher from a TagFilter and tag registry.
+func NewTagFilterMatcher(filter TagFilter, registry TagSpecRegistry, decoder model.TagValueDecoder) model.TagFilterMatcher {
 	if filter == nil || filter == DummyFilter {
 		return nil
 	}
 	return &tagFilterAdapter{
-		filter:  filter,
-		schema:  schema,
-		decoder: decoder,
+		filter:   filter,
+		registry: registry,
+		decoder:  decoder,
 	}
 }
 
 func (tfa *tagFilterAdapter) Match(tags []*modelv1.Tag) (bool, error) {
-	// Convert tags to TagFamily for logical.TagFilter.Match
-	family := &modelv1.TagFamily{
-		Name: "",
-		Tags: tags,
+	// Matcher schemas describe filter conditions, while callers may provide a wider
+	// response projection. Resolve keyed values into the matcher schema explicitly.
+	values := make(tagValuesBySchemaIndex, len(tags))
+	for _, tag := range tags {
+		tagSpec := tfa.registry.FindTagSpecByName(tag.GetKey())
+		if tagSpec == nil {
+			continue
+		}
+		values[tagValueIndex{family: tagSpec.TagFamilyIdx, tag: tagSpec.TagIdx}] = tag.GetValue()
 	}
-
-	tagFamilies := []*modelv1.TagFamily{family}
-	return tfa.filter.Match(TagFamilies(tagFamilies), tfa.schema)
+	return tfa.filter.Match(values, tfa.registry)
 }
 
 func (tfa *tagFilterAdapter) GetDecoder() model.TagValueDecoder {

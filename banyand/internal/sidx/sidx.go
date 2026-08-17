@@ -442,9 +442,8 @@ func (b *blockCursorBuilder) collectTagsForFilter(
 }
 
 func (b *blockCursorBuilder) orderedTagNamesForFilter(projections []model.TagProjection) []string {
-	// IMPORTANT: The logical tag filter matcher relies on stable tag ordering,
-	// because it uses schema tag refs to locate tag values by index (TagFamily.Tags[idx]).
-	// Iterating a Go map is randomized, which makes results flaky.
+	// Preserve projection order for reproducible matcher inputs and diagnostics.
+	// Logical matchers resolve values by tag key rather than relying on this order.
 	if len(projections) > 0 {
 		seenTagNames := make(map[string]struct{}, len(b.block.tags))
 		tagNames := make([]string, 0, len(b.block.tags))

@@ -322,8 +322,7 @@ func (tst *tsTable) introducePart(nextIntroduction *introduction, epoch uint64) 
 		}
 	}()
 
-	// Commit all atomically under single transaction lock
-	txn.Commit()
+	tst.commitSnapshotTransaction(txn)
 
 	// Persist snapshot for file-backed introductions so the part survives restart.
 	// memPart introductions skip persist because the flusher persists after mem→file conversion.
@@ -390,8 +389,7 @@ func (tst *tsTable) introduceFlushed(nextIntroduction *flusherIntroduction, epoc
 		}
 	}()
 
-	// Commit all atomically under single transaction lock
-	txn.Commit()
+	tst.commitSnapshotTransaction(txn)
 
 	// Persist snapshot after commit
 	cur := tst.currentSnapshot()
@@ -444,8 +442,7 @@ func (tst *tsTable) introduceFlushedForSync(nextIntroduction *flusherIntroductio
 	defer traceTransition.Release()
 	snapshotpkg.AddTransition(txn, traceTransition)
 
-	// Commit all atomically under single transaction lock
-	txn.Commit()
+	tst.commitSnapshotTransaction(txn)
 
 	// Persist snapshot after commit
 	cur := tst.currentSnapshot()
@@ -526,8 +523,7 @@ func (tst *tsTable) introduceMerged(nextIntroduction *mergerIntroduction, epoch 
 		}
 	}()
 
-	// Commit all atomically under single transaction lock
-	txn.Commit()
+	tst.commitSnapshotTransaction(txn)
 
 	// Persist snapshot after commit
 	cur := tst.currentSnapshot()
@@ -575,8 +571,7 @@ func (tst *tsTable) introduceSync(nextIntroduction *syncIntroduction, epoch uint
 	defer traceTransition.Release()
 	snapshotpkg.AddTransition(txn, traceTransition)
 
-	// Commit all atomically under single transaction lock
-	txn.Commit()
+	tst.commitSnapshotTransaction(txn)
 
 	// Persist snapshot after commit
 	cur := tst.currentSnapshot()
@@ -600,6 +595,16 @@ func (tst *tsTable) CurrentSnapshot() *snapshot {
 	}
 	tst.snapshot.IncRef()
 	return tst.snapshot
+}
+
+// commitSnapshotTransaction publishes the core and secondary-index snapshots
+// under the table-wide publication fence. Transaction commits replace several
+// independently locked snapshot managers, so the fence is what makes that
+// sequence atomic to two-phase trace queries.
+func (tst *tsTable) commitSnapshotTransaction(txn *snapshotpkg.Transaction) {
+	tst.snapshotPublicationMu.Lock()
+	defer tst.snapshotPublicationMu.Unlock()
+	txn.Commit()
 }
 
 // ReplaceSnapshot atomically replaces the current snapshot with next.

@@ -92,6 +92,9 @@ type tsTable struct {
 	// Lazily initialized; guarded by quarantineMu.
 	quarantineFails map[uint64]int
 	quarantineMu    sync.Mutex
+	// snapshotPublicationMu makes a core snapshot and its secondary-index snapshots
+	// visible as one publication to queries that need both views.
+	snapshotPublicationMu sync.RWMutex
 	sync.RWMutex
 	shardID common.ShardID
 	isHot   bool
