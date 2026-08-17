@@ -21,12 +21,14 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
+	snapshotpkg "github.com/apache/skywalking-banyandb/banyand/internal/snapshot"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	vtrace "github.com/apache/skywalking-banyandb/pkg/query/vectorized/trace"
@@ -105,11 +107,11 @@ func newScanBatchFromCursors(phase1Batch traceBatch, cursors []*blockCursor) *sc
 }
 
 // TestMaterializeBudgetHardStop verifies that the hard-stop gate in
-// assembleVectorizedTraceResults prevents over-loading when a tiny budget is set.
+// assembleVectorizedTraceResults fails rather than returning a partial result
+// when a tiny budget is set.
 // The test uses budget=1 byte so that after the first cursor decodes any real span
 // data, usedBytes >= 1 and every subsequent cursor is stopped by the hard-stop gate
-// (decoding ends early). Fewer than all traces are returned, proving later cursors
-// were released without decoding.
+// (decoding ends early).
 func TestMaterializeBudgetHardStop(t *testing.T) {
 	tst, cleanup := newParityTSTable(t, tsTS1)
 	defer cleanup()
@@ -142,19 +144,15 @@ func TestMaterializeBudgetHardStop(t *testing.T) {
 	// subsequent cursor is stopped by the hard-stop gate before decode.
 	batchForAssembly := newScanBatchFromCursors(phase1Batch, cursors)
 	results, err := assembleVectorizedTraceResults(ctx, batchForAssembly, allTagProjections.Names, qo.schemaTagTypes, 1)
-	require.NoError(t, err)
-
-	require.GreaterOrEqual(t, len(results), 1, "the first block must have been decoded into at least one result")
-	require.Less(t, len(results), totalCursors,
-		"hard-stop gate must stop decoding cursors once prior spans fill the 1-byte budget")
-	for _, result := range results {
-		require.NotEmpty(t, result.Spans, "an emitted result must carry decoded spans")
-	}
+	require.Nil(t, results, "a budget-limited query must not expose partially decoded traces")
+	require.ErrorIs(t, err, errVectorizedTraceQueryMemoryBudgetExceeded)
+	require.Nil(t, batchForAssembly.cursors, "the budget error must release every remaining cursor")
 }
 
 // TestMaterializeMetadataPreflight verifies that the metadata preflight gate (not
 // the hard-stop gate) skips a cursor when its bm.uncompressedSpanSizeBytes estimate
-// would push usedBytes over the budget.
+// would push usedBytes over the budget. The gate must fail the query instead of
+// returning the already materialized prefix.
 // The test uses budget = firstSize + 1, so after the first cursor decodes
 // (usedBytes = firstSize) the hard-stop condition (usedBytes >= budget) is FALSE,
 // but the preflight condition (usedBytes + cursor[1].estimate > budget) is TRUE —
@@ -220,10 +218,9 @@ func TestMaterializeMetadataPreflight(t *testing.T) {
 
 	batch2 := newScanBatchFromCursors(phase1Batch, cursors2[:2])
 	results, err := assembleVectorizedTraceResults(ctx, batch2, allTagProjections.Names, qo.schemaTagTypes, budget)
-	require.NoError(t, err)
-	require.Len(t, results, 1,
-		"metadata preflight must skip cursor[1]: usedBytes+estimate > budget while usedBytes < budget")
-	require.NotEmpty(t, results[0].Spans, "the decoded cursor must have span data")
+	require.Nil(t, results, "metadata preflight must not expose an incomplete prefix")
+	require.ErrorIs(t, err, errVectorizedTraceQueryMemoryBudgetExceeded)
+	require.Nil(t, batch2.cursors, "the budget error must release every remaining cursor")
 }
 
 func TestNewVectorizedTraceQueryResultEmptyBatch(t *testing.T) {
@@ -365,6 +362,87 @@ type fakeSIDXWithSync struct {
 
 func (f *fakeSIDXWithSync) QuerySync(_ context.Context, _ sidx.QueryRequest) ([]*sidx.QueryResponse, error) {
 	return f.syncResponses, f.syncErr
+}
+
+type blockingSyncSIDX struct {
+	*fakeSIDXWithSync
+	entered chan struct{}
+	proceed chan struct{}
+}
+
+func (f *blockingSyncSIDX) QuerySync(ctx context.Context, req sidx.QueryRequest) ([]*sidx.QueryResponse, error) {
+	close(f.entered)
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-f.proceed:
+	}
+	return f.fakeSIDXWithSync.QuerySync(ctx, req)
+}
+
+func TestVectorizedOrderQueryPinsSIDXAndCorePublicationView(t *testing.T) {
+	tst, cleanup := newParityTSTable(t, tsTS1)
+	defer cleanup()
+
+	ctx := context.Background()
+	req := sidx.QueryRequest{Order: &index.OrderBy{Sort: modelv1.Sort_SORT_ASC}}
+	blockingSIDX := &blockingSyncSIDX{
+		fakeSIDXWithSync: &fakeSIDXWithSync{
+			fakeSIDX: &fakeSIDX{},
+			syncResponses: []*sidx.QueryResponse{{
+				Keys:    []int64{1},
+				Data:    [][]byte{encodeTraceIDForTest("trace1")},
+				SIDs:    []common.SeriesID{0},
+				PartIDs: []uint64{0},
+			}},
+		},
+		entered: make(chan struct{}),
+		proceed: make(chan struct{}),
+	}
+	qo := queryOptions{
+		TraceQueryOptions: model.TraceQueryOptions{Order: req.Order},
+		schemaTagTypes:    testSchemaTagTypes,
+	}
+
+	type scanResult struct {
+		batch *scanBatch
+		err   error
+	}
+	resultCh := make(chan scanResult, 1)
+	go func() {
+		batch, queryErr := newParityTrace().buildConsistentVectorizedScanBatch(
+			ctx, []*tsTable{tst}, qo, []sidx.SIDX{blockingSIDX}, req, true, 0,
+		)
+		resultCh <- scanResult{batch: batch, err: queryErr}
+	}()
+	<-blockingSIDX.entered
+
+	publicationStarted := make(chan struct{})
+	publicationDone := make(chan struct{})
+	go func() {
+		txn := snapshotpkg.NewTransaction()
+		close(publicationStarted)
+		tst.commitSnapshotTransaction(txn)
+		txn.Release()
+		close(publicationDone)
+	}()
+	<-publicationStarted
+	select {
+	case <-publicationDone:
+		t.Fatal("snapshot publication crossed the query between SIDX selection and core snapshot acquisition")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(blockingSIDX.proceed)
+	queryResult := <-resultCh
+	require.NoError(t, queryResult.err)
+	require.NotNil(t, queryResult.batch)
+	releaseVectorizedScanBatch(queryResult.batch)
+	select {
+	case <-publicationDone:
+	case <-time.After(time.Second):
+		t.Fatal("snapshot publication remained blocked after the query acquired core snapshots")
+	}
 }
 
 // TestVectorizedOrderModeSmokeTest exercises the full order-mode vectorized path end-to-end:

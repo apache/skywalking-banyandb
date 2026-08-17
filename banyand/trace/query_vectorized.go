@@ -20,6 +20,7 @@ package trace
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -34,6 +35,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	vtrace "github.com/apache/skywalking-banyandb/pkg/query/vectorized/trace"
 )
+
+var errVectorizedTraceQueryMemoryBudgetExceeded = errors.New("vectorized trace query memory budget exceeded")
 
 type vectorizedTraceQueryResult struct {
 	ctx              context.Context
@@ -128,15 +131,12 @@ type traceResultBucket struct {
 // semantics the former Phase-2 operator pipeline had (decode → group-by-traceID →
 // per-trace emission) without any RecordBatch or operator overhead.
 //
-// budgetBytes is a soft span-loading threshold capping the cumulative uncompressed
+// budgetBytes is a span-loading threshold capping the cumulative uncompressed
 // span bytes decoded across cursors. Pass QueryMemoryMiB<=0 (budgetBytes 0) to
-// disable the cap. Two gates enforce it, matching the former blockBatchSource:
-//  1. Hard stop: once usedBytes >= budgetBytes, remaining cursors are released
-//     without decoding.
-//  2. Metadata preflight: cursor.bm.uncompressedSpanSizeBytes predicts whether a
-//     cursor would push usedBytes over budgetBytes; if so it is skipped before
-//     decode. The usedBytes>0 guard makes the first cursor always decode so a
-//     too-small budget never returns zero results.
+// disable the cap. A query that cannot be completed inside the threshold fails;
+// it must never turn the threshold into a successful partial response. The first
+// cursor is still allowed to exceed the threshold because rejecting it before
+// decode would make every oversized single-block trace unqueryable.
 func materializeVectorizedTraceResults(ctx context.Context, batch *scanBatch, qo queryOptions) ([]*model.TraceResult, error) {
 	if batch == nil {
 		return nil, nil
@@ -183,28 +183,21 @@ func assembleVectorizedTraceResults(
 	for i := 0; i < len(batch.cursors); i++ {
 		cursor := batch.cursors[i]
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			for releaseIdx := i; releaseIdx < len(batch.cursors); releaseIdx++ {
-				releaseBlockCursor(batch.cursors[releaseIdx])
-			}
-			batch.cursors = nil
+			releaseRemainingBlockCursors(batch, i)
 			return nil, fmt.Errorf("interrupt while loading trace data: %w", ctxErr)
 		}
 		if budgetBytes > 0 {
-			// Hard stop: prior cursors already filled the budget.
 			if usedBytes >= budgetBytes {
-				for releaseIdx := i; releaseIdx < len(batch.cursors); releaseIdx++ {
-					releaseBlockCursor(batch.cursors[releaseIdx])
-				}
-				break
+				releaseRemainingBlockCursors(batch, i)
+				return nil, fmt.Errorf("%w: used %d bytes, budget %d bytes", errVectorizedTraceQueryMemoryBudgetExceeded, usedBytes, budgetBytes)
 			}
-			// Metadata preflight: skip the remaining cursors without decoding when
-			// this cursor's uncompressed-size estimate would push usedBytes over
-			// the budget. The usedBytes>0 guard ensures the first cursor decodes.
-			if usedBytes > 0 && usedBytes+int64(cursor.bm.uncompressedSpanSizeBytes) > budgetBytes {
-				for releaseIdx := i; releaseIdx < len(batch.cursors); releaseIdx++ {
-					releaseBlockCursor(batch.cursors[releaseIdx])
-				}
-				break
+			remainingBytes := budgetBytes - usedBytes
+			if usedBytes > 0 && cursor.bm.uncompressedSpanSizeBytes > uint64(remainingBytes) {
+				releaseRemainingBlockCursors(batch, i)
+				return nil, fmt.Errorf(
+					"%w: used %d bytes, next block estimates %d bytes, budget %d bytes",
+					errVectorizedTraceQueryMemoryBudgetExceeded, usedBytes, cursor.bm.uncompressedSpanSizeBytes, budgetBytes,
+				)
 			}
 		}
 
@@ -292,6 +285,13 @@ func assembleVectorizedTraceResults(
 		results = append(results, result)
 	}
 	return results, nil
+}
+
+func releaseRemainingBlockCursors(batch *scanBatch, start int) {
+	for cursorIdx := start; cursorIdx < len(batch.cursors); cursorIdx++ {
+		releaseBlockCursor(batch.cursors[cursorIdx])
+	}
+	batch.cursors = nil
 }
 
 // findBlockTag returns the tag whose decoded name and value type match the schema
@@ -392,6 +392,53 @@ func (t *trace) buildVectorizedPhase1TraceBatch(
 		return drainVectorizedPhase1(ctx, plan, 0)
 	default:
 		return traceBatch{}, fmt.Errorf("invalid query options: either traceIDs or order must be specified")
+	}
+}
+
+// buildConsistentVectorizedScanBatch keeps ordered SIDX selection and core
+// snapshot acquisition inside the same publication view. Once the core
+// snapshots have been acquired, their references keep the selected parts alive
+// and the publication fence can be released before data is decoded.
+func (t *trace) buildConsistentVectorizedScanBatch(
+	ctx context.Context,
+	tables []*tsTable,
+	qo queryOptions,
+	sidxInstances []sidx.SIDX,
+	req sidx.QueryRequest,
+	useSIDX bool,
+	maxTraceSize int,
+) (*scanBatch, error) {
+	var releasePublicationView func()
+	if useSIDX {
+		releasePublicationView = acquireSnapshotPublicationView(tables)
+		defer releasePublicationView()
+	}
+
+	phase1Batch, phase1Err := t.buildVectorizedPhase1TraceBatch(ctx, qo, sidxInstances, req, useSIDX, maxTraceSize)
+	if phase1Err != nil {
+		return nil, phase1Err
+	}
+	return t.buildVectorizedScanBatch(ctx, tables, qo, phase1Batch)
+}
+
+func acquireSnapshotPublicationView(tables []*tsTable) func() {
+	locked := make([]*tsTable, 0, len(tables))
+	seen := make(map[*tsTable]struct{}, len(tables))
+	for _, table := range tables {
+		if table == nil {
+			continue
+		}
+		if _, exists := seen[table]; exists {
+			continue
+		}
+		seen[table] = struct{}{}
+		table.snapshotPublicationMu.RLock()
+		locked = append(locked, table)
+	}
+	return func() {
+		for tableIdx := len(locked) - 1; tableIdx >= 0; tableIdx-- {
+			locked[tableIdx].snapshotPublicationMu.RUnlock()
+		}
 	}
 }
 

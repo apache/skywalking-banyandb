@@ -70,6 +70,12 @@ type blockingProjectionSampler struct {
 	observed chan string
 }
 
+type gatedSampler struct {
+	entered chan struct{}
+	release chan struct{}
+	calls   atomic.Int64
+}
+
 func (s *blockingProjectionSampler) Kind() sdk.Kind { return sdk.KindSampler }
 
 func (s *blockingProjectionSampler) Project() sdk.Projection {
@@ -83,6 +89,17 @@ func (s *blockingProjectionSampler) Decide(batch *sdk.TraceBatch) (sdk.Verdict, 
 	<-s.release
 	s.observed <- string(batch.Traces[0].Tags[0].Values[0]) + "/" + string(batch.Traces[0].Spans[0])
 	return sdk.Verdict{Keep: []bool{true}}, nil
+}
+
+func (s *gatedSampler) Kind() sdk.Kind          { return sdk.KindSampler }
+func (s *gatedSampler) Project() sdk.Projection { return sdk.Projection{} }
+func (s *gatedSampler) Close() error            { return nil }
+
+func (s *gatedSampler) Decide(batch *sdk.TraceBatch) (sdk.Verdict, error) {
+	s.calls.Add(1)
+	s.entered <- struct{}{}
+	<-s.release
+	return retainAllVerdict(len(batch.Traces), nil), nil
 }
 
 func (s *durationEnvelopeSampler) Kind() sdk.Kind          { return sdk.KindSampler }
@@ -931,6 +948,7 @@ func TestMergeFilter_FailOpenOnPanic(t *testing.T) {
 // toolkit's fixture builder from inside the engine's own test suite.
 func TestMergeChain_Timeout_FailsOpen(t *testing.T) {
 	chain := newMergeChain("g", "s", []sdk.Sampler{&sleepSampler{d: 200 * time.Millisecond}}, 0)
+	chain.executionSlots = make(chan struct{}, 1)
 	traceX, buildErr := sdktest.NewTrace("x").Build()
 	require.NoError(t, buildErr)
 	traceY, buildErr := sdktest.NewTrace("y").Build()
@@ -944,6 +962,7 @@ func TestMergeChain_Timeout_FailsOpen(t *testing.T) {
 
 func TestMergeChain_TimeoutDoesNotRecycleDecisionStorage(t *testing.T) {
 	chain := newMergeChain("g", "s", []sdk.Sampler{&sleepSampler{d: 200 * time.Millisecond}}, 0)
+	chain.executionSlots = make(chan struct{}, 1)
 	traceX, buildErr := sdktest.NewTrace("x").Build()
 	require.NoError(t, buildErr)
 	batch := sdktest.Batch(traceX)
@@ -956,8 +975,53 @@ func TestMergeChain_TimeoutDoesNotRecycleDecisionStorage(t *testing.T) {
 	require.False(t, reusable, "the timed-out worker may still access the caller-owned decision storage")
 }
 
+func TestMergeChain_FreshChainsShareStuckExecutionLimit(t *testing.T) {
+	executionSlots := make(chan struct{}, 1)
+	firstRelease := make(chan struct{})
+	secondRelease := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-firstRelease:
+		default:
+			close(firstRelease)
+		}
+		select {
+		case <-secondRelease:
+		default:
+			close(secondRelease)
+		}
+	})
+	firstSampler := &gatedSampler{entered: make(chan struct{}, 1), release: firstRelease}
+	firstChain := newMergeChain("g", "s", []sdk.Sampler{firstSampler}, 0)
+	firstChain.executionSlots = executionSlots
+	traceX, buildErr := sdktest.NewTrace("x").Build()
+	require.NoError(t, buildErr)
+	batch := sdktest.Batch(traceX)
+
+	firstVerdict, firstReusable, firstErr := firstChain.executeObservedInto(batch, 20*time.Millisecond, nil, []bool{false})
+
+	require.EqualError(t, firstErr, "timeout")
+	require.Equal(t, []bool{true}, firstVerdict.Keep)
+	require.False(t, firstReusable)
+	require.Equal(t, int64(1), firstSampler.calls.Load())
+	require.Len(t, executionSlots, 1, "a non-returning Decide call must retain its process-wide slot")
+
+	secondSampler := &gatedSampler{entered: make(chan struct{}, 1), release: secondRelease}
+	secondChain := newMergeChain("g", "s", []sdk.Sampler{secondSampler}, 0)
+	secondChain.executionSlots = executionSlots
+	secondVerdict, secondReusable, secondErr := secondChain.executeObservedInto(batch, 20*time.Millisecond, nil, []bool{false})
+
+	require.EqualError(t, secondErr, "timeout")
+	require.Equal(t, []bool{true}, secondVerdict.Keep)
+	require.True(t, secondReusable, "a batch not handed to a worker remains reusable")
+	require.Zero(t, secondSampler.calls.Load(), "a fresh chain must not create another stuck sampler call")
+	close(firstRelease)
+	require.Eventually(t, func() bool { return len(executionSlots) == 0 }, time.Second, time.Millisecond)
+}
+
 func TestMergeChain_CircuitBreakerOpens(t *testing.T) {
 	chain := newMergeChain("g", "s", []sdk.Sampler{&sleepSampler{d: 200 * time.Millisecond}}, 2)
+	chain.executionSlots = make(chan struct{}, 2)
 	traceX, buildErr := sdktest.NewTrace("x").Build()
 	require.NoError(t, buildErr)
 	batch := sdktest.Batch(traceX)

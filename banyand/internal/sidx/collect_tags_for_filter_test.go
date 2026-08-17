@@ -57,9 +57,9 @@ func newStrTagData(value string) *tagData {
 	}
 }
 
-// TestCollectTagsForFilter_DeterministicOrder verifies tag ordering for TagFilter.Match:
-// logical matchers align tag values with schema by slice index, so iteration order must be stable.
-// Map iteration order is undefined; without this contract, filtering can flake (0 vs 1 rows).
+// TestCollectTagsForFilter_DeterministicOrder verifies matcher inputs are reproducible.
+// Schema-aware matchers resolve values by tag key, while deterministic collection keeps
+// custom matcher behavior and diagnostics stable.
 func TestCollectTagsForFilter_DeterministicOrder(t *testing.T) {
 	t.Run("no projection sorts tag names lexicographically", func(t *testing.T) {
 		blk := &block{
