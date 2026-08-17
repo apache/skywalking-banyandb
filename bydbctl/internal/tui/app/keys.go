@@ -177,14 +177,14 @@ func (m Model) renderHelpOverlay(width, height int) string {
 	contentHeight := panelContentHeight(height)
 	header := titleStyle.Render("Keyboard reference")
 	footer := mutedStyle.Render("? or Esc closes this help")
-	viewportHeight := maxInt(contentHeight-2, 1)
-	maxScroll := maxInt(len(lines)-viewportHeight, 0)
+	viewportHeight := max(contentHeight-2, 1)
+	maxScroll := max(len(lines)-viewportHeight, 0)
 	scroll := clamp(m.helpScroll, 0, maxScroll)
 	if maxScroll > 0 {
 		footer = mutedStyle.Render(fmt.Sprintf("%d-%d/%d · pgup/pgdn scroll · ? or Esc closes",
-			scroll+1, minInt(scroll+viewportHeight, len(lines)), len(lines)))
+			scroll+1, min(scroll+viewportHeight, len(lines)), len(lines)))
 	}
-	rows := append([]string{header}, lines[scroll:minInt(scroll+viewportHeight, len(lines))]...)
+	rows := append([]string{header}, lines[scroll:min(scroll+viewportHeight, len(lines))]...)
 	return activePanelStyle.Width(width).Height(contentHeight).
 		Render(lipgloss.JoinVertical(lipgloss.Left, append(rows, footer)...))
 }
@@ -210,7 +210,7 @@ func (m Model) helpLines() []string {
 
 // scrollHelp moves the help viewport, clamped to the reference length.
 func (m *Model) scrollHelp(delta int) {
-	m.helpScroll = clamp(m.helpScroll+delta, 0, maxInt(len(m.helpLines())-1, 0))
+	m.helpScroll = clamp(m.helpScroll+delta, 0, max(len(m.helpLines())-1, 0))
 }
 
 // helpKeyColumnWidth aligns the action column of the help overlay.

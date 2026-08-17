@@ -305,9 +305,8 @@ func TestFocusingThePreviewOverridesAnOpenSchemaSearch(t *testing.T) {
 }
 
 func TestWorkspaceFitsTerminalWithProviderVisible(t *testing.T) {
-	const terminalHeight = 42
 	model := NewModel(Config{Provider: "claude"})
-	model.resize(160, terminalHeight)
+	model.resize(160, testTerminalHeight)
 	// The evidence column only appears once a turn has produced schema or result rows.
 	model.querySession = &session.QuerySession{ExecutionResult: session.ExecutionResult{
 		Query:   testMeasureQuery,
@@ -319,7 +318,6 @@ func TestWorkspaceFitsTerminalWithProviderVisible(t *testing.T) {
 	assertWorkspaceFitsTerminal(
 		t,
 		model.View(),
-		terminalHeight,
 		"provider claude",
 		"Conversation",
 		"Candidate QL",
@@ -342,9 +340,8 @@ func TestFooterWrapsBetweenShortcutLabels(t *testing.T) {
 }
 
 func TestWorkspaceFitsTerminalWithSelectedChatDetail(t *testing.T) {
-	const terminalHeight = 42
 	model := NewModel(Config{Provider: "claude"})
-	model.resize(180, terminalHeight)
+	model.resize(180, testTerminalHeight)
 	querySession := &session.QuerySession{}
 	for messageIndex := 0; messageIndex < 19; messageIndex++ {
 		querySession.ChatMessages = append(querySession.ChatMessages, session.ChatMessage{
@@ -362,7 +359,7 @@ func TestWorkspaceFitsTerminalWithSelectedChatDetail(t *testing.T) {
 	model.chatCursor = len(querySession.ChatMessages) - 1
 
 	// The visible window must contain the cursor, which sits on the last message.
-	assertWorkspaceFitsTerminal(t, model.View(), terminalHeight, "provider claude", "Detail · pgup/pgdn scroll", "20/20 messages")
+	assertWorkspaceFitsTerminal(t, model.View(), "provider claude", "Detail · pgup/pgdn scroll", "20/20 messages")
 }
 
 func TestPanelRegionsStayInsideTheRenderedViewWhenCompressed(t *testing.T) {
@@ -417,16 +414,14 @@ func TestPanelRegionsDoNotOverlap(t *testing.T) {
 }
 
 func TestWorkspaceFitsTerminalWhileRunning(t *testing.T) {
-	const terminalHeight = 42
 	model := NewModel(Config{Provider: "claude"})
-	model.resize(180, terminalHeight)
+	model.resize(180, testTerminalHeight)
 	model.busy = true
 	model.status = "executing full query"
 
 	assertWorkspaceFitsTerminal(
 		t,
 		model.View(),
-		terminalHeight,
 		"provider claude",
 		"Stop",
 		"executing full query",
@@ -435,24 +430,21 @@ func TestWorkspaceFitsTerminalWhileRunning(t *testing.T) {
 }
 
 func TestWorkspaceFitsTerminalWithQuitConfirmation(t *testing.T) {
-	const terminalHeight = 42
 	model := NewModel(Config{Provider: "claude"})
-	model.resize(180, terminalHeight)
+	model.resize(180, testTerminalHeight)
 	model.quitConfirmPending = true
 
 	assertWorkspaceFitsTerminal(
 		t,
 		model.View(),
-		terminalHeight,
 		"provider claude",
 		"Quit bydbctl agent?",
 	)
 }
 
 func TestWorkspaceFitsTerminalWithSchemaSearchOpen(t *testing.T) {
-	const terminalHeight = 42
 	model := NewModel(Config{Provider: "claude"})
-	model.resize(160, terminalHeight)
+	model.resize(160, testTerminalHeight)
 	model.catalog.setCatalog(session.SchemaCatalog{Entries: []session.CatalogEntry{
 		{Group: "sw_records", Type: session.ResourceTypeStream, Name: "event"},
 		{Group: "sw_records", Type: session.ResourceTypeTrace, Name: "segment"},
@@ -468,7 +460,6 @@ func TestWorkspaceFitsTerminalWithSchemaSearchOpen(t *testing.T) {
 	assertWorkspaceFitsTerminal(
 		t,
 		view,
-		terminalHeight,
 		"provider claude",
 		"Conversation",
 		"Candidate QL",
@@ -636,10 +627,13 @@ func TestTruncateSchemaSearchLabelFitsNarrowWidth(t *testing.T) {
 	}
 }
 
-func assertWorkspaceFitsTerminal(t *testing.T, view string, terminalHeight int, expectedValues ...string) {
+// testTerminalHeight is the terminal height every workspace-fit assertion renders against.
+const testTerminalHeight = 42
+
+func assertWorkspaceFitsTerminal(t *testing.T, view string, expectedValues ...string) {
 	t.Helper()
-	if viewHeight := lipgloss.Height(view); viewHeight > terminalHeight {
-		t.Fatalf("workspace height %d exceeds terminal height %d:\n%s", viewHeight, terminalHeight, view)
+	if viewHeight := lipgloss.Height(view); viewHeight > testTerminalHeight {
+		t.Fatalf("workspace height %d exceeds terminal height %d:\n%s", viewHeight, testTerminalHeight, view)
 	}
 	for _, expectedValue := range expectedValues {
 		if !strings.Contains(view, expectedValue) {

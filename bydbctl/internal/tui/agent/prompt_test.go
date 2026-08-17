@@ -25,8 +25,17 @@ import (
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 )
 
+func buildPromptText(t *testing.T, req TurnRequest) string {
+	t.Helper()
+	parts, partsErr := BuildBydbqlPromptParts(req)
+	if partsErr != nil {
+		t.Fatalf("BuildBydbqlPromptParts returned error: %v", partsErr)
+	}
+	return parts.System + "\n\n" + parts.User
+}
+
 func TestBuildBydbqlPromptIncludesOutputContract(t *testing.T) {
-	prompt, promptErr := BuildBydbqlPrompt(TurnRequest{
+	prompt := buildPromptText(t, TurnRequest{
 		Prompt: "Generate a query.",
 		Payload: RequestPayload{
 			Task:      "revise_query_plan",
@@ -43,9 +52,6 @@ func TestBuildBydbqlPromptIncludesOutputContract(t *testing.T) {
 			TimeRange: TimeRangePayload{Start: "-30m"},
 		},
 	})
-	if promptErr != nil {
-		t.Fatalf("BuildBydbqlPrompt returned error: %v", promptErr)
-	}
 	for _, expected := range []string{
 		"query workspace assistant",
 		"propose_query_plan",
@@ -173,7 +179,7 @@ func TestBuildAgentTurnRequestIncludesExactSortableRules(t *testing.T) {
 }
 
 func TestBuildBydbqlPromptAllowsConversationBeforeAPlan(t *testing.T) {
-	prompt, promptErr := BuildBydbqlPrompt(TurnRequest{
+	prompt := buildPromptText(t, TurnRequest{
 		Prompt: "Continue the conversation.",
 		Payload: RequestPayload{
 			Task: "continue_conversation",
@@ -183,9 +189,6 @@ func TestBuildBydbqlPromptAllowsConversationBeforeAPlan(t *testing.T) {
 			},
 		},
 	})
-	if promptErr != nil {
-		t.Fatalf("BuildBydbqlPrompt returned error: %v", promptErr)
-	}
 	for _, expected := range []string{
 		"A normal conversational response is valid when no query is ready.",
 		"Submit a typed query plan only when the user asks for data and the request is specific enough.",

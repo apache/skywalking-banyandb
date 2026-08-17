@@ -1,17 +1,19 @@
 // Licensed to Apache Software Foundation (ASF) under one or more contributor
 // license agreements. See the NOTICE file distributed with
 // this work for additional information regarding copyright
-// ownership. Apache License, Version 2.0 (the "License"); you may
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
 // not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 // Package codex provides a fail-closed Codex app-server gateway for bydbctl.
 package codex
@@ -260,7 +262,7 @@ func validateConfig(config Config) error {
 	if !filepath.IsAbs(server.Command) {
 		return errors.New("controlled MCP server command must be absolute")
 	}
-	if !equalStringSets(server.EnabledTools, controlledToolNames) {
+	if !agent.SameToolSet(server.EnabledTools, controlledToolNames) {
 		return fmt.Errorf("controlled MCP tool allowlist must contain exactly %s", strings.Join(controlledToolNames, ", "))
 	}
 	return nil
@@ -328,7 +330,7 @@ func configuredMCPNames(ctx context.Context, command, workingDirectory string) (
 }
 
 func appServerArgs(server agent.ControlledMCPServer, configuredNames []string) ([]string, error) {
-	if !equalStringSets(server.EnabledTools, controlledToolNames) {
+	if !agent.SameToolSet(server.EnabledTools, controlledToolNames) {
 		return nil, errors.New("invalid controlled MCP tool allowlist")
 	}
 	args := []string{
@@ -387,22 +389,6 @@ func tomlValue(value any) (string, error) {
 		return "", fmt.Errorf("failed to encode Codex configuration value: %w", marshalErr)
 	}
 	return string(encodedValue), nil
-}
-
-func equalStringSets(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	leftCopy := append([]string(nil), left...)
-	rightCopy := append([]string(nil), right...)
-	sort.Strings(leftCopy)
-	sort.Strings(rightCopy)
-	for valueIdx := range leftCopy {
-		if leftCopy[valueIdx] != rightCopy[valueIdx] {
-			return false
-		}
-	}
-	return true
 }
 
 func currentEnvironment() []string {

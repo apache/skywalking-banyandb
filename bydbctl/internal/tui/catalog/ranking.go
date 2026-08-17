@@ -19,6 +19,7 @@ package catalog
 
 import (
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -289,7 +290,7 @@ func filterEntries(entries []session.CatalogEntry, preferredType session.Resourc
 		if preferredName != "" && entry.Name != preferredName {
 			continue
 		}
-		if len(preferredGroups) > 0 && !containsString(preferredGroups, entry.Group) {
+		if len(preferredGroups) > 0 && !slices.Contains(preferredGroups, entry.Group) {
 			continue
 		}
 		if preferredType != "" && entry.Type != preferredType {
@@ -335,15 +336,6 @@ func sameEntry(left, right session.CatalogEntry) bool {
 func containsAny(value string, fragments ...string) bool {
 	for _, fragment := range fragments {
 		if strings.Contains(value, fragment) {
-			return true
-		}
-	}
-	return false
-}
-
-func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
 			return true
 		}
 	}

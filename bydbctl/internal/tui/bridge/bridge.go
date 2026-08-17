@@ -1,17 +1,19 @@
 // Licensed to Apache Software Foundation (ASF) under one or more contributor
 // license agreements. See the NOTICE file distributed with
 // this work for additional information regarding copyright
-// ownership. Apache License, Version 2.0 (the "License"); you may
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
 // not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 // Package bridge provides the private, bydbctl-owned tool set exposed to agents.
 package bridge
@@ -64,8 +66,8 @@ type Call struct {
 
 // Result is the compact, provider-safe result of a tool request.
 type Result struct {
-	Content string
 	Err     error
+	Content string
 }
 
 // ToolBridge holds all tool execution and visible lifecycle events behind a small interface.
@@ -664,96 +666,6 @@ func (toolBridge *ToolBridge) session() *session.QuerySession {
 	return toolBridge.querySession
 }
 
-func cloneQuerySession(querySession *session.QuerySession) *session.QuerySession {
-	if querySession == nil {
-		return nil
-	}
-	clonedSession := *querySession
-	clonedSession.Groups = append([]string(nil), querySession.Groups...)
-	clonedSession.SchemaSnapshot = cloneSchemaSnapshot(querySession.SchemaSnapshot)
-	clonedSession.Schemas = cloneSchemaStore(querySession.Schemas)
-	clonedSession.Conversation = append([]session.ConversationTurn(nil), querySession.Conversation...)
-	clonedSession.Candidates = cloneCandidates(querySession.Candidates)
-	clonedSession.PlannedQueries = clonePlannedQueries(querySession.PlannedQueries)
-	clonedSession.ExecutionResult = cloneExecutionResult(querySession.ExecutionResult)
-	clonedSession.Transcript = append([]session.TranscriptEntry(nil), querySession.Transcript...)
-	clonedSession.ChatMessages = cloneChatMessages(querySession.ChatMessages)
-	return &clonedSession
-}
-
-func cloneSchemaSnapshot(schemaSnapshot session.SchemaSnapshot) session.SchemaSnapshot {
-	clonedSnapshot := schemaSnapshot
-	clonedSnapshot.Groups = append([]string(nil), schemaSnapshot.Groups...)
-	clonedSnapshot.Tags = append([]string(nil), schemaSnapshot.Tags...)
-	clonedSnapshot.EntityTags = append([]string(nil), schemaSnapshot.EntityTags...)
-	clonedSnapshot.Fields = append([]string(nil), schemaSnapshot.Fields...)
-	clonedSnapshot.Columns = append([]session.SchemaColumn(nil), schemaSnapshot.Columns...)
-	clonedSnapshot.IndexedFields = append([]string(nil), schemaSnapshot.IndexedFields...)
-	clonedSnapshot.SortableIndexes = cloneSortableIndexes(schemaSnapshot.SortableIndexes)
-	clonedSnapshot.ResourceNames = append([]string(nil), schemaSnapshot.ResourceNames...)
-	clonedSnapshot.AvailableGroups = append([]string(nil), schemaSnapshot.AvailableGroups...)
-	clonedSnapshot.Catalog = append([]session.CatalogEntry(nil), schemaSnapshot.Catalog...)
-	return clonedSnapshot
-}
-
-func cloneSchemaStore(schemaStore map[string]session.SchemaSnapshot) map[string]session.SchemaSnapshot {
-	if len(schemaStore) == 0 {
-		return nil
-	}
-	clonedStore := make(map[string]session.SchemaSnapshot, len(schemaStore))
-	for schemaKey, schemaSnapshot := range schemaStore {
-		clonedStore[schemaKey] = cloneSchemaSnapshot(schemaSnapshot)
-	}
-	return clonedStore
-}
-
-func cloneSortableIndexes(indexes []session.SortableIndex) []session.SortableIndex {
-	clonedIndexes := append([]session.SortableIndex(nil), indexes...)
-	for indexPosition := range clonedIndexes {
-		clonedIndexes[indexPosition].Tags = append([]string(nil), indexes[indexPosition].Tags...)
-	}
-	return clonedIndexes
-}
-
-func cloneCandidates(candidates []session.BydbqlCandidate) []session.BydbqlCandidate {
-	return append([]session.BydbqlCandidate(nil), candidates...)
-}
-
-func clonePlannedQueries(queries []session.PlannedQuery) []session.PlannedQuery {
-	clonedQueries := append([]session.PlannedQuery(nil), queries...)
-	for queryIdx := range clonedQueries {
-		clonedQueries[queryIdx].Groups = append([]string(nil), queries[queryIdx].Groups...)
-	}
-	return clonedQueries
-}
-
-func cloneExecutionResult(executionResult session.ExecutionResult) session.ExecutionResult {
-	clonedResult := executionResult
-	clonedResult.Columns = append([]string(nil), executionResult.Columns...)
-	clonedResult.Preview = clonePreview(executionResult.Preview)
-	return clonedResult
-}
-
-func cloneChatMessages(messages []session.ChatMessage) []session.ChatMessage {
-	clonedMessages := append([]session.ChatMessage(nil), messages...)
-	for messageIdx := range clonedMessages {
-		if messages[messageIdx].Validation == nil {
-			continue
-		}
-		clonedValidation := *messages[messageIdx].Validation
-		clonedMessages[messageIdx].Validation = &clonedValidation
-	}
-	return clonedMessages
-}
-
-func clonePreview(preview [][]string) [][]string {
-	clonedPreview := make([][]string, 0, len(preview))
-	for _, row := range preview {
-		clonedPreview = append(clonedPreview, append([]string(nil), row...))
-	}
-	return clonedPreview
-}
-
 func (toolBridge *ToolBridge) emitResult(callID, toolName string, result Result) {
 	status := agent.EventStatusSucceeded
 	message := "tool completed"
@@ -779,139 +691,4 @@ func (toolBridge *ToolBridge) emit(event agent.Event) {
 	case toolBridge.events <- event:
 	default:
 	}
-}
-
-func jsonResult(value any) Result {
-	encodedValue, marshalErr := json.Marshal(value)
-	if marshalErr != nil {
-		return Result{Err: fmt.Errorf("failed to encode tool result: %w", marshalErr)}
-	}
-	return Result{Content: string(encodedValue)}
-}
-
-func stringArgument(arguments map[string]any, name string) string {
-	if arguments == nil {
-		return ""
-	}
-	value, ok := arguments[name].(string)
-	if !ok {
-		return ""
-	}
-	return strings.TrimSpace(value)
-}
-
-func stringSliceArgument(arguments map[string]any, name string) []string {
-	if arguments == nil {
-		return nil
-	}
-	switch value := arguments[name].(type) {
-	case string:
-		return compactStrings(strings.Split(value, ","))
-	case []string:
-		return compactStrings(value)
-	case []any:
-		groups := make([]string, 0, len(value))
-		for _, item := range value {
-			if group, ok := item.(string); ok {
-				groups = append(groups, group)
-			}
-		}
-		return compactStrings(groups)
-	default:
-		return nil
-	}
-}
-
-func compactStrings(values []string) []string {
-	compactedValues := make([]string, 0, len(values))
-	for _, value := range values {
-		if trimmedValue := strings.TrimSpace(value); trimmedValue != "" {
-			compactedValues = append(compactedValues, trimmedValue)
-		}
-	}
-	return compactedValues
-}
-
-func summarizeArguments(arguments map[string]any) string {
-	if len(arguments) == 0 {
-		return "no parameters"
-	}
-	if query := stringArgument(arguments, "query"); query != "" {
-		trimmedQuery := strings.Join(strings.Fields(query), " ")
-		if len(trimmedQuery) > 120 {
-			return "query=" + trimmedQuery[:120] + "..."
-		}
-		return "query=" + trimmedQuery
-	}
-	if planValue, hasPlan := arguments["plan"]; hasPlan {
-		return "plan=" + summarizePlanArgument(planValue)
-	}
-	if workflowValue, hasWorkflow := arguments["workflow"]; hasWorkflow {
-		return "workflow=" + summarizePlanArgument(workflowValue)
-	}
-	keys := make([]string, 0, len(arguments))
-	for key := range arguments {
-		keys = append(keys, key)
-	}
-	return "parameters=" + strings.Join(keys, ",")
-}
-
-func formatArgumentsDetail(arguments map[string]any) string {
-	if len(arguments) == 0 {
-		return ""
-	}
-	if query := stringArgument(arguments, "query"); query != "" {
-		return "query:\n" + strings.TrimSpace(query)
-	}
-	if planValue, hasPlan := arguments["plan"]; hasPlan {
-		return formatJSONDetailSection("plan", planValue)
-	}
-	if workflowValue, hasWorkflow := arguments["workflow"]; hasWorkflow {
-		return formatJSONDetailSection("workflow", workflowValue)
-	}
-	return formatJSONDetailSection("parameters", arguments)
-}
-
-func formatJSONDetailSection(label string, value any) string {
-	encodedValue, marshalErr := json.MarshalIndent(value, "", "  ")
-	if marshalErr != nil {
-		return label + ":\n" + fmt.Sprint(value)
-	}
-	return label + ":\n" + string(encodedValue)
-}
-
-func summarizePlanArgument(value any) string {
-	encodedValue, marshalErr := json.Marshal(value)
-	if marshalErr != nil {
-		return "structured plan"
-	}
-	trimmedValue := strings.TrimSpace(string(encodedValue))
-	if len(trimmedValue) > 120 {
-		return trimmedValue[:120] + "..."
-	}
-	return trimmedValue
-}
-
-func summarizeResult(result Result) string {
-	if result.Err != nil {
-		return result.Err.Error()
-	}
-	if result.Content == "" {
-		return "completed"
-	}
-	return fmt.Sprintf("result=%d characters", len([]rune(result.Content)))
-}
-
-func schemaNotReadyMessage(step int, resource planner.Resource) string {
-	groupLabel := strings.Join(resource.Groups, ", ")
-	if groupLabel == "" {
-		groupLabel = "<group>"
-	}
-	return fmt.Sprintf(
-		"query plan step %d: call describe_schema for %s %s in %s before propose_query_plan; use only typed columns from describe_schema",
-		step,
-		resource.Type,
-		resource.Name,
-		groupLabel,
-	)
 }

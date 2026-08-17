@@ -745,7 +745,7 @@ func TestCancelledAgentTurnDoesNotPublishPartialConversation(t *testing.T) {
 			continue
 		}
 		if !errors.Is(update.Err, context.Canceled) {
-			t.Fatalf("expected cancelled update, got %+v", update)
+			t.Fatalf("expected canceled update, got %+v", update)
 		}
 	}
 	if len(querySession.Conversation) != 0 || len(querySession.ChatMessages) != 1 {
@@ -981,10 +981,10 @@ func executeAfterApproval(t *testing.T, runner *Runner, querySession *session.Qu
 }
 
 type catalogExecutor struct {
+	executeErr          error
 	catalog             session.SchemaCatalog
 	schema              session.SchemaSnapshot
 	result              session.ExecutionResult
-	executeErr          error
 	discoverSchemaCount int
 	executeCount        int
 }

@@ -80,6 +80,32 @@ func truncateProviderError(executionError string) string {
 	return string(runes[:maxProviderExecutionErrorRunes-1]) + "…"
 }
 
-func providerExecutionError(executionError string) string {
-	return SanitizeExecutionErrorForProvider(executionError)
+// SameToolSet reports whether two tool-name lists hold the same names, ignoring order.
+//
+// Gateways compare an MCP server's advertised tools against the controlled set, so a reordered list
+// must not read as a different one.
+func SameToolSet(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	leftSet := make(map[string]struct{}, len(left))
+	for _, value := range left {
+		leftSet[value] = struct{}{}
+	}
+	for _, value := range right {
+		if _, exists := leftSet[value]; !exists {
+			return false
+		}
+	}
+	return len(leftSet) == len(left)
+}
+
+// ErrorEvent wraps an error as a terminal provider event, so every gateway reports failures alike.
+func ErrorEvent(eventErr error) Event {
+	return Event{
+		Kind:    EventKindError,
+		Message: eventErr.Error(),
+		Origin:  EventOriginProvider,
+		Err:     eventErr,
+	}
 }

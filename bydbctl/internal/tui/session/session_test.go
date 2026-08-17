@@ -1,17 +1,19 @@
 // Licensed to Apache Software Foundation (ASF) under one or more contributor
 // license agreements. See the NOTICE file distributed with
 // this work for additional information regarding copyright
-// ownership. Apache License, Version 2.0 (the "License"); you may
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
 // not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 package session
 
@@ -137,5 +139,23 @@ func TestSchemaFingerprintIncludesTopNFilterTags(t *testing.T) {
 	second.EntityTags = []string{"endpoint"}
 	if first.EnsureFingerprint() == second.EnsureFingerprint() {
 		t.Fatal("expected TopN filter-tag changes to invalidate the schema fingerprint")
+	}
+}
+
+func TestTraceIDTagNameFallsBackToTheConventionalName(t *testing.T) {
+	explicit := &SchemaSnapshot{Type: ResourceTypeTrace, TraceIDTag: "custom_trace_id", Tags: []string{"trace_id"}}
+	if traceIDTag := explicit.TraceIDTagName(); traceIDTag != "custom_trace_id" {
+		t.Fatalf("an explicit trace ID tag must win, got %q", traceIDTag)
+	}
+	tagged := &SchemaSnapshot{Type: ResourceTypeTrace, Tags: []string{"trace_id", "span_id"}}
+	if traceIDTag := tagged.TraceIDTagName(); traceIDTag != "trace_id" {
+		t.Fatalf("a schema without an explicit tag must fall back to trace_id, got %q", traceIDTag)
+	}
+	typed := &SchemaSnapshot{Type: ResourceTypeTrace, Columns: []SchemaColumn{{Name: "trace_id"}}}
+	if traceIDTag := typed.TraceIDTagName(); traceIDTag != "trace_id" {
+		t.Fatalf("the fallback must also match typed columns, got %q", traceIDTag)
+	}
+	if traceIDTag := (&SchemaSnapshot{Type: ResourceTypeTrace}).TraceIDTagName(); traceIDTag != "" {
+		t.Fatalf("a schema with no trace ID tag must report none, got %q", traceIDTag)
 	}
 }

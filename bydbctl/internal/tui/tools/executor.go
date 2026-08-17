@@ -45,19 +45,6 @@ type ExecutionLimits struct {
 	PreviewRows int
 }
 
-// Limits returns an executor's effective execution limits.
-func Limits(executor Executor) ExecutionLimits {
-	if limitedExecutor, ok := executor.(interface{ ExecutionLimits() ExecutionLimits }); ok {
-		return limitedExecutor.ExecutionLimits()
-	}
-	return DefaultExecutionLimits()
-}
-
-// DefaultExecutionLimits returns the built-in safe execution limits.
-func DefaultExecutionLimits() ExecutionLimits {
-	return ExecutionLimits{Timeout: defaultHTTPTimeout, PreviewRows: defaultPreviewRows}
-}
-
 // ReadOnlyExecutor is the default local executor used before MCP tool exposure exists.
 type ReadOnlyExecutor struct {
 	now func() time.Time
@@ -68,11 +55,6 @@ func NewReadOnlyExecutor() *ReadOnlyExecutor {
 	return &ReadOnlyExecutor{
 		now: time.Now,
 	}
-}
-
-// ExecutionLimits returns the built-in safe execution limits.
-func (executor *ReadOnlyExecutor) ExecutionLimits() ExecutionLimits {
-	return DefaultExecutionLimits()
 }
 
 // DiscoverCatalog returns an empty catalog for the local placeholder executor.

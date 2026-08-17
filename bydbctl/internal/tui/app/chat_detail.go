@@ -105,7 +105,7 @@ func renderCodeBlock(language string, codeLines []string, width int) []string {
 		rows = append(rows, titleStyle.Render(label))
 	}
 	for _, codeLine := range codeLines {
-		for _, wrappedLine := range wrapRunes(strings.TrimRight(codeLine, " "), maxInt(width-2, 8)) {
+		for _, wrappedLine := range wrapRunes(strings.TrimRight(codeLine, " "), max(width-2, 8)) {
 			rows = append(rows, codeDetailStyle.Render(" "+wrappedLine))
 		}
 	}

@@ -95,10 +95,3 @@ func shortTypeLabel(resourceType session.ResourceType) string {
 		return "?"
 	}
 }
-
-func minInt(left, right int) int {
-	if left < right {
-		return left
-	}
-	return right
-}

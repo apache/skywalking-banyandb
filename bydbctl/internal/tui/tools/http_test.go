@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -625,7 +626,7 @@ func TestResponsePreviewFlattensStreamTagFamilies(t *testing.T) {
 	if len(preview) != 1 {
 		t.Fatalf("expected one preview row, got %v", preview)
 	}
-	if !containsString(columns, "trace_id") || !containsString(columns, "content") {
+	if !slices.Contains(columns, "trace_id") || !slices.Contains(columns, "content") {
 		t.Fatalf("unexpected columns: %v", columns)
 	}
 	row := map[string]string{}
@@ -640,7 +641,7 @@ func TestResponsePreviewFlattensStreamTagFamilies(t *testing.T) {
 	if !strings.Contains(row["content"], "Listing top songs") {
 		t.Fatalf("unexpected content: %q", row["content"])
 	}
-	if containsString(columns, "tags_raw_data") {
+	if slices.Contains(columns, "tags_raw_data") {
 		t.Fatalf("did not expect skipped tag column: %v", columns)
 	}
 }
@@ -662,13 +663,4 @@ func TestResponsePreviewPreservesLongCellForHorizontalScrolling(t *testing.T) {
 	if row["spans"] != longSpans {
 		t.Fatalf("expected the complete spans cell for horizontal scrolling, got %q", row["spans"])
 	}
-}
-
-func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
 }

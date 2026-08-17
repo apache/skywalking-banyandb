@@ -177,7 +177,7 @@ func formatExecutionRowDetail(columns []string, row []string, rowNumber, rowTota
 		if idx < len(row) {
 			value = row[idx]
 		}
-		lines = append(lines, wrapRunes(column+": "+value, maxInt(width-2, 24))...)
+		lines = append(lines, wrapRunes(column+": "+value, max(width-2, 24))...)
 	}
 	return lines
 }
@@ -189,7 +189,7 @@ func formatPreviewTable(columns []string, preview [][]string, width, selectedRow
 	colWidths := previewColumnWidths(columns, preview, width)
 	header := "  " + renderPreviewRow(columns, colWidths)
 	separatorWidth := sumInts(colWidths) + 3*(len(columns)-1)
-	separator := "  " + strings.Repeat("─", maxInt(separatorWidth, 8))
+	separator := "  " + strings.Repeat("─", max(separatorWidth, 8))
 	lines := []string{header, separator}
 	for rowIdx, row := range preview {
 		line := renderPreviewRow(row, colWidths)
@@ -267,7 +267,7 @@ func padDisplayWidth(value string, width int) string {
 	if valueWidth > width {
 		return truncate(value, width)
 	}
-	return value + strings.Repeat(" ", maxInt(width-valueWidth, 0))
+	return value + strings.Repeat(" ", max(width-valueWidth, 0))
 }
 
 // previewTableViewport clamps the horizontal offset and returns the visible slice of each table row.
@@ -276,7 +276,7 @@ func previewTableViewport(lines []string, width, offset int) []string {
 	visible := make([]string, 0, len(lines))
 	for _, line := range lines {
 		prefix, content := previewTableLinePrefix(line)
-		visibleWidth := maxInt(width-lipgloss.Width(prefix), 1)
+		visibleWidth := max(width-lipgloss.Width(prefix), 1)
 		visible = append(visible, prefix+horizontalViewport(content, offset, visibleWidth))
 	}
 	return visible
@@ -286,10 +286,10 @@ func previewTableMaxHorizontalOffset(lines []string, width int) int {
 	maxWidth := 0
 	for _, line := range lines {
 		prefix, content := previewTableLinePrefix(line)
-		visibleWidth := maxInt(width-lipgloss.Width(prefix), 1)
-		maxWidth = maxInt(maxWidth, lipgloss.Width(content)-visibleWidth)
+		visibleWidth := max(width-lipgloss.Width(prefix), 1)
+		maxWidth = max(maxWidth, lipgloss.Width(content)-visibleWidth)
 	}
-	return maxInt(maxWidth, 0)
+	return max(maxWidth, 0)
 }
 
 func previewTableLinePrefix(line string) (string, string) {
@@ -425,7 +425,8 @@ func exportExecutionResult(executionResult session.ExecutionResult) (string, err
 	filename := fmt.Sprintf("execution-%s.json", time.Now().Format("20060102-150405"))
 	exportPath := filepath.Join(exportDir, filename)
 	payload := buildExecutionExportPayload(executionResult)
-	if writeErr := os.WriteFile(exportPath, payload, 0o640); writeErr != nil {
+	// An export holds queried rows, so it stays readable only by the user who ran the query.
+	if writeErr := os.WriteFile(exportPath, payload, 0o600); writeErr != nil {
 		return "", fmt.Errorf("failed to write export file: %w", writeErr)
 	}
 	return exportPath, nil

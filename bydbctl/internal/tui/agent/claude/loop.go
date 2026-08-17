@@ -97,7 +97,7 @@ func (gateway *Gateway) runTurn(
 	}()
 	args, argsErr := claudeArgs(gateway.config, providerSessionID, parts)
 	if argsErr != nil {
-		gateway.emitTerminal(events, errorEvent(fmt.Errorf("failed to configure Claude CLI: %w", argsErr)))
+		gateway.emitTerminal(events, agent.ErrorEvent(fmt.Errorf("failed to configure Claude CLI: %w", argsErr)))
 		return
 	}
 	// #nosec G204 -- The executable is the explicit --claude-command value and arguments are passed without a shell.
@@ -107,13 +107,13 @@ func (gateway *Gateway) runTurn(
 	configureProcessTree(command)
 	stdout, stdoutErr := command.StdoutPipe()
 	if stdoutErr != nil {
-		gateway.emitTerminal(events, errorEvent(fmt.Errorf("failed to open Claude CLI output: %w", stdoutErr)))
+		gateway.emitTerminal(events, agent.ErrorEvent(fmt.Errorf("failed to open Claude CLI output: %w", stdoutErr)))
 		return
 	}
 	var stderr cappedBuffer
 	command.Stderr = &stderr
 	if startErr := command.Start(); startErr != nil {
-		gateway.emitTerminal(events, errorEvent(fmt.Errorf("failed to start Claude CLI: %w", startErr)))
+		gateway.emitTerminal(events, agent.ErrorEvent(fmt.Errorf("failed to start Claude CLI: %w", startErr)))
 		return
 	}
 	if !gateway.attachProcess(handle, command.Process) {
@@ -122,7 +122,7 @@ func (gateway *Gateway) runTurn(
 		if cleanupErr != nil {
 			interruptErr = errors.Join(interruptErr, cleanupErr)
 		}
-		gateway.emitTerminal(events, errorEvent(interruptErr))
+		gateway.emitTerminal(events, agent.ErrorEvent(interruptErr))
 		return
 	}
 	state := turnStreamState{expectedSessionID: providerSessionID}
@@ -147,7 +147,7 @@ func (gateway *Gateway) runTurn(
 		completedProviderSessionID = state.providerSessionID
 	}
 	if ctx.Err() != nil || gateway.turnWasInterrupted(handle) {
-		gateway.emitTerminal(events, errorEvent(fmt.Errorf("claude turn interrupted: %w", context.Canceled)))
+		gateway.emitTerminal(events, agent.ErrorEvent(fmt.Errorf("claude turn interrupted: %w", context.Canceled)))
 		return
 	}
 	if turnErr != nil {
@@ -158,11 +158,11 @@ func (gateway *Gateway) runTurn(
 		if waitErr != nil && !errors.As(waitErr, &exitErr) {
 			turnErr = errors.Join(turnErr, fmt.Errorf("failed to reap invalid Claude CLI turn: %w", waitErr))
 		}
-		gateway.emitTerminal(events, errorEvent(fmt.Errorf("claude CLI turn failed: %w", turnErr)))
+		gateway.emitTerminal(events, agent.ErrorEvent(fmt.Errorf("claude CLI turn failed: %w", turnErr)))
 		return
 	}
 	if scanErr != nil {
-		gateway.emitTerminal(events, errorEvent(fmt.Errorf("failed to read Claude CLI stream: %w", scanErr)))
+		gateway.emitTerminal(events, agent.ErrorEvent(fmt.Errorf("failed to read Claude CLI stream: %w", scanErr)))
 		return
 	}
 	if waitErr != nil {
@@ -170,15 +170,15 @@ func (gateway *Gateway) runTurn(
 		if message == "" {
 			message = waitErr.Error()
 		}
-		gateway.emitTerminal(events, errorEvent(fmt.Errorf("claude CLI failed: %s: %w", message, waitErr)))
+		gateway.emitTerminal(events, agent.ErrorEvent(fmt.Errorf("claude CLI failed: %s: %w", message, waitErr)))
 		return
 	}
 	if !state.initSeen {
-		gateway.emitTerminal(events, errorEvent(errors.New("claude CLI stream did not initialize")))
+		gateway.emitTerminal(events, agent.ErrorEvent(errors.New("claude CLI stream did not initialize")))
 		return
 	}
 	if !state.resultSeen {
-		gateway.emitTerminal(events, errorEvent(errors.New("claude CLI stream ended without a result")))
+		gateway.emitTerminal(events, agent.ErrorEvent(errors.New("claude CLI stream ended without a result")))
 		return
 	}
 	gateway.emitTerminal(events, agent.Event{
@@ -443,15 +443,6 @@ func (gateway *Gateway) emitTerminal(events chan agent.Event, event agent.Event)
 		case <-events:
 		default:
 		}
-	}
-}
-
-func errorEvent(turnErr error) agent.Event {
-	return agent.Event{
-		Kind:    agent.EventKindError,
-		Message: turnErr.Error(),
-		Origin:  agent.EventOriginProvider,
-		Err:     turnErr,
 	}
 }
 

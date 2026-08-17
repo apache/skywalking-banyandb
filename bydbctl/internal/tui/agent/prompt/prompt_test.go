@@ -22,11 +22,15 @@ import (
 	"testing"
 )
 
+func joinParts(parts Parts) string {
+	return parts.System + "\n\n" + parts.User
+}
+
 func TestBuildInitialPrompt(t *testing.T) {
-	promptText := Build(Input{
+	promptText := joinParts(BuildParts(Input{
 		TaskPrompt:  "Generate a query.",
 		PayloadJSON: `{"goal":"top slow endpoints","candidate":""}`,
-	})
+	}))
 	for _, expected := range []string{
 		"Generate a query",
 		"propose_query_plan",
@@ -77,10 +81,10 @@ func TestBuildPartsUsesStableDeveloperInstructions(t *testing.T) {
 }
 
 func TestBuildRevisePrompt(t *testing.T) {
-	promptText := Build(Input{
+	promptText := joinParts(BuildParts(Input{
 		TaskPrompt:  "Revise the query.",
 		PayloadJSON: `{"candidate":"SELECT * FROM MEASURE x IN g TIME > '-30m' LIMIT 10"}`,
-	})
+	}))
 	if !strings.Contains(promptText, "Revise the query") {
 		t.Fatalf("expected revise instructions:\n%s", promptText)
 	}

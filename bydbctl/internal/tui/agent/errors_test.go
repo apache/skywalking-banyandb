@@ -35,7 +35,8 @@ func TestSanitizeExecutionErrorForProviderRedactsTransportErrors(t *testing.T) {
 }
 
 func TestSanitizeExecutionErrorForProviderKeepsSchemaMessage(t *testing.T) {
-	rawError := `BYDBQL query returned HTTP 500: {"code":13,"message":"failed to transform to native request: column searchable.service_id not found in schema","details":[]}`
+	rawError := `BYDBQL query returned HTTP 500: {"code":13,` +
+		`"message":"failed to transform to native request: column searchable.service_id not found in schema","details":[]}`
 	sanitized := SanitizeExecutionErrorForProvider(rawError)
 	if !strings.Contains(sanitized, "searchable.service_id not found in schema") {
 		t.Fatalf("expected schema error to be preserved, got %q", sanitized)

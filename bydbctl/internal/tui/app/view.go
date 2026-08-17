@@ -64,7 +64,7 @@ func (m Model) renderStatusSummary(width int) string {
 	}
 	summary := fmt.Sprintf("%s Status: %s%s · Focus: %s · %s",
 		stateGlyph, m.status, m.validationField(), m.focusLabel(), m.currentPhaseLabel())
-	return summaryStyle.Render(truncate(summary, maxInt(width, 8)))
+	return summaryStyle.Render(truncate(summary, max(width, 8)))
 }
 
 // validationField reports candidate validation, and nothing at all when there is no candidate.
@@ -146,7 +146,7 @@ func (m Model) renderChat(width, panelHeight int) string {
 			rows = append(rows, warnStyle.Render(glyphRunning+" "+m.status))
 		} else if len(m.activityLog) > 0 {
 			lastActivity := m.activityLog[len(m.activityLog)-1]
-			rows = append(rows, mutedStyle.Render(truncate(lastActivity.title, maxInt(width-6, 8))))
+			rows = append(rows, mutedStyle.Render(truncate(lastActivity.title, max(width-6, 8))))
 		}
 		if progress := m.renderTurnProgress(); progress != "" {
 			rows = append(rows, progress)
@@ -185,15 +185,15 @@ func (m Model) renderChatEntries(entries []chatEntryView, width, panelHeight, av
 	detailLines := []string(nil)
 	if m.chatCursor >= 0 && m.chatCursor < len(entries) {
 		if selected := entries[m.chatCursor]; strings.TrimSpace(selected.detail) != "" {
-			detailViewportHeight = minInt(chatDetailViewportHeight(panelHeight), maxInt(availableRows/2, 0))
+			detailViewportHeight = min(chatDetailViewportHeight(panelHeight), max(availableRows/2, 0))
 			if detailViewportHeight > 0 {
 				detailLines = selected.detailLines(width - 4)
 			}
 		}
 	}
-	listViewportHeight := maxInt(availableRows-detailViewportHeight-chatDetailChrome-1, 1)
+	listViewportHeight := max(availableRows-detailViewportHeight-chatDetailChrome-1, 1)
 	if detailViewportHeight == 0 {
-		listViewportHeight = maxInt(availableRows-1, 1)
+		listViewportHeight = max(availableRows-1, 1)
 	}
 	startIdx, endIdx := chatListWindow(m.chatScroll, m.chatCursor, listViewportHeight, len(entries))
 	rows := make([]string, 0, listViewportHeight+detailViewportHeight+3)
@@ -219,7 +219,7 @@ func chatListWindow(scroll, cursor, viewportHeight, entryCount int) (int, int) {
 	if viewportHeight >= entryCount {
 		return 0, entryCount
 	}
-	start := clamp(scroll, 0, maxInt(entryCount-viewportHeight, 0))
+	start := clamp(scroll, 0, max(entryCount-viewportHeight, 0))
 	if cursor >= 0 && cursor < entryCount {
 		if cursor < start {
 			start = cursor
@@ -228,7 +228,7 @@ func chatListWindow(scroll, cursor, viewportHeight, entryCount int) (int, int) {
 			start = cursor - viewportHeight + 1
 		}
 	}
-	return start, minInt(start+viewportHeight, entryCount)
+	return start, min(start+viewportHeight, entryCount)
 }
 
 // renderChatEntryLine styles one message row by role, marking the cursor with a fixed-width prefix.
@@ -237,7 +237,7 @@ func (m Model) renderChatEntryLine(entry chatEntryView, entryIdx, width int) str
 	if kindLabel := chatKindLabel(entry.kind); kindLabel != "" {
 		suffix = mutedStyle.Render("  · " + kindLabel)
 	}
-	headlineWidth := maxInt(width-12-lipgloss.Width(suffix), 8)
+	headlineWidth := max(width-12-lipgloss.Width(suffix), 8)
 	if entryIdx == m.chatCursor {
 		return focusStyle.Render(glyphSelected+" "+truncate(entry.headline, headlineWidth)) + suffix
 	}
@@ -270,7 +270,7 @@ func chatEntryStyle(entry chatEntryView) lipgloss.Style {
 // renderChatDetail renders the scrollable body of the selected message.
 func (m Model) renderChatDetail(detailLines []string, viewportHeight, width int) []string {
 	rows := []string{titleStyle.Render("Detail · pgup/pgdn scroll")}
-	detailEnd := minInt(m.chatDetailScroll+viewportHeight, len(detailLines))
+	detailEnd := min(m.chatDetailScroll+viewportHeight, len(detailLines))
 	for lineIdx := m.chatDetailScroll; lineIdx < detailEnd; lineIdx++ {
 		line := renderChatDetailLine(detailLines[lineIdx])
 		if lipgloss.Width(line) > width-4 {

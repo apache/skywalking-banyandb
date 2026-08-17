@@ -51,13 +51,3 @@ func (browser *catalogBrowser) setLoading() {
 	browser.loading = true
 	browser.loadError = ""
 }
-
-// resourceCount reports how many resources the catalog holds.
-func (browser catalogBrowser) resourceCount() int {
-	return len(browser.catalog.Entries)
-}
-
-// groupCount reports how many groups the catalog spans.
-func (browser catalogBrowser) groupCount() int {
-	return len(browser.catalog.Groups)
-}

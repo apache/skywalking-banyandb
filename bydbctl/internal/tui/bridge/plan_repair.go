@@ -135,7 +135,7 @@ func buildDescribePlanExample(snapshot session.SchemaSnapshot) map[string]any {
 	}
 	planExample["limit"] = 10
 	if len(snapshot.Columns) > 0 {
-		projection := make([]map[string]any, 0, minInt(3, len(snapshot.Columns)))
+		projection := make([]map[string]any, 0, min(3, len(snapshot.Columns)))
 		for columnIdx, column := range snapshot.Columns {
 			if columnIdx >= 3 {
 				break
@@ -152,13 +152,6 @@ func buildDescribePlanExample(snapshot session.SchemaSnapshot) map[string]any {
 		planExample["projection_mode"] = "NONE"
 	}
 	return map[string]any{"plan": planExample}
-}
-
-func minInt(left, right int) int {
-	if left < right {
-		return left
-	}
-	return right
 }
 
 func planRepairLimitMessage() string {

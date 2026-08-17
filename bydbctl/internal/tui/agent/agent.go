@@ -34,8 +34,8 @@ const (
 	DefaultMaxSchemaDescriptions = 20
 )
 
-// AgentGateway starts sessions and streams provider-neutral agent events.
-type AgentGateway interface {
+// Gateway starts sessions and streams provider-neutral agent events.
+type Gateway interface {
 	Start(ctx context.Context, req StartRequest) (Session, error)
 	Send(ctx context.Context, sessionID string, req TurnRequest) (<-chan Event, error)
 	Interrupt(ctx context.Context, sessionID string) error
@@ -47,18 +47,11 @@ type ConversationHistoryGateway interface {
 	MaintainsConversationHistory() bool
 }
 
-// Gateway is an alias for AgentGateway.
-type Gateway = AgentGateway
-
 // StartRequest contains provider-neutral session startup data.
 type StartRequest struct {
-	Metadata         map[string]string
 	Provider         string
 	WorkingDirectory string
 }
-
-// AgentStartRequest is an alias for StartRequest.
-type AgentStartRequest = StartRequest
 
 // Session identifies a provider session.
 type Session struct {
@@ -75,18 +68,14 @@ type ControlledMCPServer struct {
 	EnabledTools []string
 }
 
-// AgentSession is an alias for Session.
-type AgentSession = Session
-
 // TurnRequest is a structured prompt sent to an agent.
+//
+// Prompt is the trusted per-turn instruction; Payload carries the untrusted turn context that the
+// prompt builder renders as JSON.
 type TurnRequest struct {
-	Payload RequestPayload
-	Task    string
 	Prompt  string
+	Payload RequestPayload
 }
-
-// AgentTurnRequest is an alias for TurnRequest.
-type AgentTurnRequest = TurnRequest
 
 // ConversationTurnPayload is one prior user-agent exchange exposed to the agent.
 type ConversationTurnPayload struct {
@@ -109,21 +98,21 @@ const (
 
 // RequestPayload is the JSON shape sent through agent adapters.
 type RequestPayload struct {
-	Constraints      Constraints               `json:"constraints"`
-	Schema           SchemaSummary             `json:"schema"`
-	Workflow         WorkflowGuidance          `json:"workflow"`
-	QueryHints       QueryHints                `json:"query_hints"`
-	TimeRange        TimeRangePayload          `json:"time_range"`
-	ExecutionSummary *ExecutionSummary         `json:"execution_summary,omitempty"`
+	PlanExample      map[string]any            `json:"plan_example,omitempty"`
 	ValidationError  *string                   `json:"validation_error,omitempty"`
-	Conversation     []ConversationTurnPayload `json:"conversation,omitempty"`
+	ExecutionSummary *ExecutionSummary         `json:"execution_summary,omitempty"`
+	TimeRange        TimeRangePayload          `json:"time_range"`
+	Goal             string                    `json:"goal"`
 	Intent           TurnIntent                `json:"intent"`
 	Task             string                    `json:"task"`
-	Goal             string                    `json:"goal"`
 	TurnHint         string                    `json:"turn_hint,omitempty"`
 	Candidate        string                    `json:"candidate"`
 	TemplateHint     string                    `json:"template_hint,omitempty"`
-	PlanExample      map[string]any            `json:"plan_example,omitempty"`
+	Conversation     []ConversationTurnPayload `json:"conversation,omitempty"`
+	Constraints      Constraints               `json:"constraints"`
+	QueryHints       QueryHints                `json:"query_hints"`
+	Schema           SchemaSummary             `json:"schema"`
+	Workflow         WorkflowGuidance          `json:"workflow"`
 }
 
 // Constraints are hard safety constraints owned by bydbctl.
@@ -138,23 +127,23 @@ type Constraints struct {
 
 // SchemaSummary is the schema subset exposed to an agent.
 type SchemaSummary struct {
-	Columns            []SchemaColumnSummary  `json:"columns,omitempty"`
-	SortableIndexes    []SortableIndexSummary `json:"sortable_indexes,omitempty"`
-	Groups             []string               `json:"groups"`
-	Tags               []string               `json:"tags"`
+	Type               string                 `json:"type"`
+	Fingerprint        string                 `json:"fingerprint,omitempty"`
+	FieldValueSort     string                 `json:"field_value_sort,omitempty"`
+	SourceMeasureGroup string                 `json:"source_measure_group,omitempty"`
+	SourceMeasure      string                 `json:"source_measure,omitempty"`
+	Name               string                 `json:"name"`
 	Fields             []string               `json:"fields"`
-	IndexedFields      []string               `json:"indexed_fields,omitempty"`
-	AvailableResources []string               `json:"available_resources,omitempty"`
 	AvailableGroups    []string               `json:"available_groups,omitempty"`
 	Catalog            []CatalogEntrySummary  `json:"catalog,omitempty"`
-	CatalogTotal       int                    `json:"catalog_total,omitempty"`
 	RankedCandidates   []CatalogEntrySummary  `json:"ranked_candidates,omitempty"`
-	Type               string                 `json:"type"`
-	Name               string                 `json:"name"`
-	SourceMeasure      string                 `json:"source_measure,omitempty"`
-	SourceMeasureGroup string                 `json:"source_measure_group,omitempty"`
-	FieldValueSort     string                 `json:"field_value_sort,omitempty"`
-	Fingerprint        string                 `json:"fingerprint,omitempty"`
+	AvailableResources []string               `json:"available_resources,omitempty"`
+	IndexedFields      []string               `json:"indexed_fields,omitempty"`
+	Columns            []SchemaColumnSummary  `json:"columns,omitempty"`
+	Tags               []string               `json:"tags"`
+	Groups             []string               `json:"groups"`
+	SortableIndexes    []SortableIndexSummary `json:"sortable_indexes,omitempty"`
+	CatalogTotal       int                    `json:"catalog_total,omitempty"`
 	TypedColumnsReady  bool                   `json:"typed_columns_ready,omitempty"`
 }
 
@@ -187,9 +176,9 @@ type TimeRangePayload struct {
 
 // QueryHints carries rule-based intent classification for prompt guidance.
 type QueryHints struct {
-	PreferShowTop bool   `json:"prefer_show_top,omitempty"`
 	TimeRangeHint string `json:"time_range_hint,omitempty"`
 	LimitHint     int    `json:"limit_hint,omitempty"`
+	PreferShowTop bool   `json:"prefer_show_top,omitempty"`
 	SlotsPinned   bool   `json:"slots_pinned"`
 	AutoMatched   bool   `json:"auto_matched,omitempty"`
 	UseSlots      bool   `json:"use_slots"`
@@ -204,22 +193,13 @@ type CatalogEntrySummary struct {
 
 // ExecutionSummary is the compact execution feedback exposed to the agent.
 type ExecutionSummary struct {
-	Rows         int        `json:"rows"`
-	Columns      []string   `json:"columns,omitempty"`
-	Preview      [][]string `json:"preview,omitempty"`
 	ResourceType string     `json:"resource_type,omitempty"`
 	Duration     string     `json:"duration,omitempty"`
 	Query        string     `json:"query"`
 	Error        string     `json:"error,omitempty"`
-}
-
-// BuildBydbqlPrompt renders the provider prompt for BYDBQL generation.
-func BuildBydbqlPrompt(req TurnRequest) (string, error) {
-	parts, partsErr := BuildBydbqlPromptParts(req)
-	if partsErr != nil {
-		return "", partsErr
-	}
-	return parts.System + "\n\n" + parts.User, nil
+	Columns      []string   `json:"columns,omitempty"`
+	Preview      [][]string `json:"preview,omitempty"`
+	Rows         int        `json:"rows"`
 }
 
 // BuildBydbqlPromptParts separates trusted instructions from untrusted context.
@@ -252,7 +232,7 @@ const (
 	EventKindClarification     EventKind = "clarification"
 	EventKindCandidate         EventKind = "candidate"
 	EventKindApproval          EventKind = "approval"
-	EventKindCancelled         EventKind = "cancelled"
+	EventKindCancelled         EventKind = "canceled"
 	EventKindFinalResponse     EventKind = "final_response"
 	EventKindError             EventKind = "error"
 )
@@ -275,18 +255,18 @@ const (
 	EventStatusRunning   EventStatus = "running"
 	EventStatusSucceeded EventStatus = "succeeded"
 	EventStatusFailed    EventStatus = "failed"
-	EventStatusCancelled EventStatus = "cancelled"
+	EventStatusCancelled EventStatus = "canceled"
 )
 
-// Event is the provider-neutral stream item consumed by WorkflowRunner and the TUI.
+// Event is the provider-neutral stream item consumed by the workflow runner and the TUI.
 type Event struct {
 	StartedAt     time.Time
 	CompletedAt   time.Time
-	ID            string
-	Kind          EventKind
+	Err           error
+	Explanation   string
 	Message       string
 	Candidate     string
-	Explanation   string
+	Kind          EventKind
 	Permission    string
 	Origin        EventOrigin
 	ToolName      string
@@ -294,11 +274,8 @@ type Event struct {
 	InputDetail   string
 	OutputSummary string
 	Status        EventStatus
-	Err           error
+	ID            string
 }
-
-// AgentEvent is an alias for Event.
-type AgentEvent = Event
 
 // IsTerminal reports whether the event ends an agent turn.
 func (event Event) IsTerminal() bool {
@@ -315,17 +292,6 @@ func BuildAgentTurnRequest(querySession *session.QuerySession, hints QueryHints,
 		payload.ValidationError = nil
 	}
 	payload.Intent = classifyTurnIntent(querySession, payload)
-	payload.Task = taskForIntent(payload.Intent)
-	return payload
-}
-
-// BuildReviseRequest builds the structured request used by the BYDBQL refinement workflow.
-func BuildReviseRequest(querySession *session.QuerySession, hints QueryHints, templateHint string) RequestPayload {
-	payload := buildRequestPayload(querySession, hints, templateHint)
-	payload.Intent = TurnIntentRefine
-	if payload.ValidationError != nil {
-		payload.Intent = TurnIntentRepair
-	}
 	payload.Task = taskForIntent(payload.Intent)
 	return payload
 }
@@ -384,7 +350,7 @@ func buildRequestPayload(querySession *session.QuerySession, hints QueryHints, t
 			ResourceType: querySession.ExecutionResult.ResourceType,
 			Duration:     querySession.ExecutionResult.Duration.String(),
 			Query:        querySession.ExecutionResult.Query,
-			Error:        providerExecutionError(querySession.ExecutionResult.Error),
+			Error:        SanitizeExecutionErrorForProvider(querySession.ExecutionResult.Error),
 		}
 	}
 	typedColumnsReady := querySession.SchemaSnapshot.Loaded && len(querySession.SchemaSnapshot.Columns) > 0

@@ -1,17 +1,19 @@
 // Licensed to Apache Software Foundation (ASF) under one or more contributor
 // license agreements. See the NOTICE file distributed with
 // this work for additional information regarding copyright
-// ownership. Apache License, Version 2.0 (the "License"); you may
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
 // not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 package codex
 
@@ -39,20 +41,10 @@ const (
 	eventBufferSize        = 64
 	maxScannerBuffer       = 4 * 1024 * 1024
 	maxStderrBytes         = 64 * 1024
-	maxClarificationRunes  = 320
-	maxUserInputQuestions  = 8
-	maxUserInputOptions    = 4
 	requestTimeout         = 30 * time.Second
 	closeTimeout           = 2 * time.Second
 	unsafeInterruptTimeout = 5 * time.Second
 	userInputRequestMethod = "item/tool/requestUserInput"
-)
-
-const (
-	normalizedControlledMCPApprovalHeader       = "approveapptoolcall?"
-	normalizedControlledMCPApprovalPromptPrefix = "allowthe" + controlledMCPServerName + "mcpservertoruntool\""
-	normalizedControlledMCPApprovalPromptSuffix = "\"?"
-	normalizedAllowSessionOption                = "allowforthissession"
 )
 
 type connection struct {
@@ -73,20 +65,6 @@ type connection struct {
 	turnMu         sync.Mutex
 	writeMu        sync.Mutex
 	closing        bool
-}
-
-type turnState struct {
-	ctx        context.Context
-	events     chan agent.Event
-	idReady    chan struct{}
-	done       chan struct{}
-	threadID   string
-	id         string
-	message    strings.Builder
-	idOnce     sync.Once
-	finishOnce sync.Once
-	unsafeOnce sync.Once
-	messageMu  sync.Mutex
 }
 
 type rpcRequest struct {
@@ -111,34 +89,6 @@ type incomingMessage struct {
 	ID     json.RawMessage `json:"id"`
 	Params json.RawMessage `json:"params"`
 	Result json.RawMessage `json:"result"`
-}
-
-type toolRequestUserInputParams struct {
-	Questions []toolRequestUserInputQuestion `json:"questions"`
-	ThreadID  string                         `json:"threadId"`
-	TurnID    string                         `json:"turnId"`
-}
-
-type toolRequestUserInputQuestion struct {
-	Header   string                       `json:"header"`
-	ID       string                       `json:"id"`
-	IsOther  bool                         `json:"isOther"`
-	IsSecret bool                         `json:"isSecret"`
-	Options  []toolRequestUserInputOption `json:"options"`
-	Question string                       `json:"question"`
-}
-
-type toolRequestUserInputOption struct {
-	Description string `json:"description"`
-	Label       string `json:"label"`
-}
-
-type toolRequestUserInputResponse struct {
-	Answers map[string]toolRequestUserInputAnswer `json:"answers"`
-}
-
-type toolRequestUserInputAnswer struct {
-	Answers []string `json:"answers"`
 }
 
 type rpcResponse struct {
@@ -283,7 +233,7 @@ func (appConnection *connection) validateMCPInventory(ctx context.Context) error
 				for toolName := range server.Tools {
 					toolNames = append(toolNames, toolName)
 				}
-				if !equalStringSets(toolNames, controlledToolNames) {
+				if !agent.SameToolSet(toolNames, controlledToolNames) {
 					sort.Strings(toolNames)
 					return fmt.Errorf("controlled MCP runtime tools do not match the allowlist: %s", strings.Join(toolNames, ", "))
 				}
@@ -542,314 +492,6 @@ func (appConnection *connection) rejectServerRequest(ctx context.Context, id jso
 	}
 }
 
-func (appConnection *connection) respondToUserInputRequest(id, params json.RawMessage) bool {
-	var request toolRequestUserInputParams
-	if unmarshalErr := json.Unmarshal(params, &request); unmarshalErr != nil || !request.valid() {
-		return false
-	}
-	turn := appConnection.activeTurn(request.ThreadID, request.TurnID)
-	if turn == nil {
-		return false
-	}
-	if setErr := turn.setID(request.TurnID); setErr != nil {
-		return false
-	}
-	answers, autoApproved := request.responseAnswers()
-	if answers == nil {
-		return false
-	}
-	responseBytes, marshalErr := json.Marshal(map[string]any{
-		"id":     id,
-		"result": toolRequestUserInputResponse{Answers: answers},
-	})
-	if marshalErr != nil {
-		return false
-	}
-	if writeErr := appConnection.writeLine(responseBytes); writeErr != nil {
-		return false
-	}
-	if autoApproved {
-		return true
-	}
-	turn.emit(agent.Event{
-		Kind:    agent.EventKindClarification,
-		Message: request.clarificationMessage(),
-		Origin:  agent.EventOriginProvider,
-	})
-	return true
-}
-
-func (request toolRequestUserInputParams) responseAnswers() (map[string]toolRequestUserInputAnswer, bool) {
-	if len(request.Questions) == 1 {
-		question := request.Questions[0]
-		if sessionOption := question.allowControlledMCPToolForSession(); sessionOption != "" {
-			return map[string]toolRequestUserInputAnswer{
-				question.ID: {Answers: []string{sessionOption}},
-			}, true
-		}
-	}
-	answers := make(map[string]toolRequestUserInputAnswer, len(request.Questions))
-	for _, question := range request.Questions {
-		if _, exists := answers[question.ID]; exists {
-			return nil, false
-		}
-		answers[question.ID] = toolRequestUserInputAnswer{Answers: []string{}}
-	}
-	return answers, false
-}
-
-func (request toolRequestUserInputParams) valid() bool {
-	if strings.TrimSpace(request.ThreadID) == "" || strings.TrimSpace(request.TurnID) == "" || len(request.Questions) == 0 || len(request.Questions) > maxUserInputQuestions {
-		return false
-	}
-	for _, question := range request.Questions {
-		if strings.TrimSpace(question.ID) == "" || strings.TrimSpace(question.Question) == "" {
-			return false
-		}
-	}
-	return true
-}
-
-func (request toolRequestUserInputParams) clarificationMessage() string {
-	const secretInputMessage = "Codex requested secret input, which bydbctl declined. Provide only non-secret query details in the composer."
-	var lines []string
-	for _, question := range request.Questions {
-		if question.IsSecret {
-			return secretInputMessage
-		}
-		if header := compactUserInputText(question.Header); header != "" {
-			lines = append(lines, header)
-		}
-		lines = append(lines, compactUserInputText(question.Question))
-		if options := question.optionLabels(); len(options) > 0 {
-			lines = append(lines, "Options: "+strings.Join(options, " | "))
-		}
-		if question.IsOther {
-			lines = append(lines, "You can provide another answer in the composer.")
-		}
-	}
-	return truncateClarification(strings.Join(lines, "\n"))
-}
-
-func (question toolRequestUserInputQuestion) allowControlledMCPToolForSession() string {
-	header := normalizedUserInputText(question.Header)
-	prompt := normalizedUserInputText(question.Question)
-	if question.IsSecret || header != normalizedControlledMCPApprovalHeader ||
-		!strings.HasPrefix(prompt, normalizedControlledMCPApprovalPromptPrefix) || !strings.HasSuffix(prompt, normalizedControlledMCPApprovalPromptSuffix) {
-		return ""
-	}
-	toolName := strings.TrimSuffix(strings.TrimPrefix(prompt, normalizedControlledMCPApprovalPromptPrefix), normalizedControlledMCPApprovalPromptSuffix)
-	if !containsString(controlledToolNames, toolName) {
-		return ""
-	}
-	for _, option := range question.Options {
-		if normalizedUserInputText(option.Label) == normalizedAllowSessionOption {
-			return option.Label
-		}
-	}
-	return ""
-}
-
-func (question toolRequestUserInputQuestion) optionLabels() []string {
-	optionCount := len(question.Options)
-	if optionCount > maxUserInputOptions {
-		optionCount = maxUserInputOptions
-	}
-	labels := make([]string, 0, optionCount)
-	for optionIdx := 0; optionIdx < optionCount; optionIdx++ {
-		label := compactUserInputText(question.Options[optionIdx].Label)
-		if label != "" {
-			labels = append(labels, label)
-		}
-	}
-	if len(question.Options) > maxUserInputOptions {
-		labels = append(labels, "…")
-	}
-	return labels
-}
-
-func compactUserInputText(text string) string {
-	return strings.Join(strings.Fields(text), " ")
-}
-
-func normalizedUserInputText(text string) string {
-	return strings.ToLower(strings.ReplaceAll(compactUserInputText(text), " ", ""))
-}
-
-func truncateClarification(message string) string {
-	runes := []rune(message)
-	if len(runes) > maxClarificationRunes {
-		return string(runes[:maxClarificationRunes-1]) + "…"
-	}
-	return message
-}
-
-func (appConnection *connection) handleNotification(ctx context.Context, method string, params json.RawMessage) {
-	switch method {
-	case "turn/started":
-		appConnection.recordTurnStarted(ctx, params)
-	case "item/agentMessage/delta":
-		appConnection.recordMessageDelta(ctx, params)
-	case "item/started", "item/completed":
-		appConnection.validateItemNotification(ctx, params)
-	case "turn/completed":
-		appConnection.completeTurn(ctx, params)
-	case "error":
-		appConnection.recordErrorNotification(ctx, params)
-	case "turn/diff/updated", "item/commandExecution/outputDelta", "item/fileChange/outputDelta":
-		appConnection.failActiveUnsafe(ctx, fmt.Errorf("codex emitted forbidden notification %q", method))
-	default:
-		// Unknown non-request notifications are ignored for forward compatibility.
-	}
-}
-
-func (appConnection *connection) recordTurnStarted(ctx context.Context, params json.RawMessage) {
-	var notification struct {
-		ThreadID string `json:"threadId"`
-		Turn     struct {
-			ID string `json:"id"`
-		} `json:"turn"`
-	}
-	if unmarshalErr := json.Unmarshal(params, &notification); unmarshalErr != nil {
-		appConnection.failActiveUnsafe(ctx, fmt.Errorf("invalid turn/started notification: %w", unmarshalErr))
-		return
-	}
-	turn := appConnection.activeTurn(notification.ThreadID, notification.Turn.ID)
-	if turn == nil {
-		return
-	}
-	if setErr := turn.setID(notification.Turn.ID); setErr != nil {
-		appConnection.failUnsafeTurn(ctx, turn, setErr)
-	}
-}
-
-func (appConnection *connection) recordMessageDelta(ctx context.Context, params json.RawMessage) {
-	var notification struct {
-		Delta    string `json:"delta"`
-		ThreadID string `json:"threadId"`
-		TurnID   string `json:"turnId"`
-	}
-	if unmarshalErr := json.Unmarshal(params, &notification); unmarshalErr != nil {
-		appConnection.failActiveUnsafe(ctx, fmt.Errorf("invalid agent message delta: %w", unmarshalErr))
-		return
-	}
-	turn := appConnection.activeTurn(notification.ThreadID, notification.TurnID)
-	if turn == nil {
-		return
-	}
-	if setErr := turn.setID(notification.TurnID); setErr != nil {
-		appConnection.failUnsafeTurn(ctx, turn, setErr)
-		return
-	}
-	turn.appendMessage(notification.Delta)
-	turn.emit(agent.Event{Kind: agent.EventKindMessageDelta, Message: notification.Delta, Origin: agent.EventOriginProvider})
-}
-
-func (appConnection *connection) validateItemNotification(ctx context.Context, params json.RawMessage) {
-	var notification struct {
-		Item struct {
-			Type   string `json:"type"`
-			Server string `json:"server"`
-			Tool   string `json:"tool"`
-		} `json:"item"`
-		ThreadID string `json:"threadId"`
-		TurnID   string `json:"turnId"`
-	}
-	if unmarshalErr := json.Unmarshal(params, &notification); unmarshalErr != nil {
-		appConnection.failActiveUnsafe(ctx, fmt.Errorf("invalid item notification: %w", unmarshalErr))
-		return
-	}
-	turn := appConnection.activeTurn(notification.ThreadID, notification.TurnID)
-	if turn == nil {
-		return
-	}
-	switch notification.Item.Type {
-	case "userMessage", "agentMessage", "plan", "reasoning", "contextCompaction":
-		return
-	case "mcpToolCall":
-		if notification.Item.Server == controlledMCPServerName && containsString(controlledToolNames, notification.Item.Tool) {
-			return
-		}
-		appConnection.failUnsafeTurn(ctx, turn, fmt.Errorf(
-			"codex attempted non-allowlisted MCP tool %q from server %q",
-			notification.Item.Tool,
-			notification.Item.Server,
-		))
-	default:
-		appConnection.failUnsafeTurn(ctx, turn, fmt.Errorf("codex attempted forbidden item type %q", notification.Item.Type))
-	}
-}
-
-func (appConnection *connection) completeTurn(ctx context.Context, params json.RawMessage) {
-	var notification struct {
-		ThreadID string `json:"threadId"`
-		Turn     struct {
-			Error *struct {
-				Message string `json:"message"`
-			} `json:"error"`
-			ID     string `json:"id"`
-			Status string `json:"status"`
-			Items  []struct {
-				Text string `json:"text"`
-				Type string `json:"type"`
-			} `json:"items"`
-		} `json:"turn"`
-	}
-	if unmarshalErr := json.Unmarshal(params, &notification); unmarshalErr != nil {
-		appConnection.failActiveUnsafe(ctx, fmt.Errorf("invalid turn/completed notification: %w", unmarshalErr))
-		return
-	}
-	turn := appConnection.activeTurn(notification.ThreadID, notification.Turn.ID)
-	if turn == nil {
-		return
-	}
-	switch notification.Turn.Status {
-	case "completed":
-		message := turn.messageText()
-		if message == "" {
-			for _, item := range notification.Turn.Items {
-				if item.Type == "agentMessage" && strings.TrimSpace(item.Text) != "" {
-					message = item.Text
-				}
-			}
-		}
-		turn.finish(agent.Event{Kind: agent.EventKindFinalResponse, Message: message, Origin: agent.EventOriginProvider})
-	case "interrupted":
-		turn.finish(errorEvent(errors.New("codex turn interrupted")))
-	case "failed":
-		message := "codex turn failed"
-		if notification.Turn.Error != nil && strings.TrimSpace(notification.Turn.Error.Message) != "" {
-			message += ": " + notification.Turn.Error.Message
-		}
-		turn.finish(errorEvent(errors.New(message)))
-	default:
-		appConnection.failUnsafeTurn(ctx, turn, fmt.Errorf("turn/completed returned invalid status %q", notification.Turn.Status))
-		return
-	}
-	appConnection.clearTurn(turn)
-}
-
-func (appConnection *connection) recordErrorNotification(ctx context.Context, params json.RawMessage) {
-	var notification struct {
-		Error struct {
-			Message string `json:"message"`
-		} `json:"error"`
-		Message string `json:"message"`
-	}
-	if unmarshalErr := json.Unmarshal(params, &notification); unmarshalErr != nil {
-		appConnection.failActiveUnsafe(ctx, fmt.Errorf("invalid Codex error notification: %w", unmarshalErr))
-		return
-	}
-	message := strings.TrimSpace(notification.Error.Message)
-	if message == "" {
-		message = strings.TrimSpace(notification.Message)
-	}
-	if message == "" {
-		message = "codex reported an unknown error"
-	}
-	appConnection.failActive(errors.New(message))
-}
-
 func (appConnection *connection) activeTurn(threadID, turnID string) *turnState {
 	appConnection.turnMu.Lock()
 	defer appConnection.turnMu.Unlock()
@@ -883,7 +525,7 @@ func (appConnection *connection) clearTurn(turn *turnState) {
 }
 
 func (appConnection *connection) failTurn(turn *turnState, turnErr error) {
-	turn.finish(errorEvent(turnErr))
+	turn.finish(agent.ErrorEvent(turnErr))
 	appConnection.clearTurn(turn)
 }
 
@@ -907,7 +549,7 @@ func (appConnection *connection) failActiveUnsafe(ctx context.Context, turnErr e
 
 func (appConnection *connection) failUnsafeTurn(ctx context.Context, turn *turnState, turnErr error) {
 	turn.unsafeOnce.Do(func() {
-		turn.finish(errorEvent(turnErr))
+		turn.finish(agent.ErrorEvent(turnErr))
 		appConnection.clearTurn(turn)
 		go func() {
 			interruptCtx, cancelInterrupt := context.WithTimeout(context.WithoutCancel(ctx), unsafeInterruptTimeout)
@@ -990,73 +632,6 @@ func (appConnection *connection) close() error {
 	}
 }
 
-func (turn *turnState) setID(turnID string) error {
-	turnID = strings.TrimSpace(turnID)
-	if turnID == "" {
-		return errors.New("codex turn id is empty")
-	}
-	var setErr error
-	turn.messageMu.Lock()
-	if turn.id != "" && turn.id != turnID {
-		setErr = fmt.Errorf("codex changed active turn id from %q to %q", turn.id, turnID)
-	} else {
-		turn.id = turnID
-	}
-	turn.messageMu.Unlock()
-	if setErr == nil {
-		turn.idOnce.Do(func() { close(turn.idReady) })
-	}
-	return setErr
-}
-
-func (turn *turnState) currentID() string {
-	turn.messageMu.Lock()
-	defer turn.messageMu.Unlock()
-	return turn.id
-}
-
-func (turn *turnState) waitID(ctx context.Context) (string, error) {
-	select {
-	case <-turn.idReady:
-		return turn.currentID(), nil
-	case <-turn.done:
-		if turnID := turn.currentID(); turnID != "" {
-			return turnID, nil
-		}
-		return "", errors.New("codex turn ended before returning an id")
-	case <-ctx.Done():
-		return "", ctx.Err()
-	}
-}
-
-func (turn *turnState) appendMessage(delta string) {
-	turn.messageMu.Lock()
-	turn.message.WriteString(delta)
-	turn.messageMu.Unlock()
-}
-
-func (turn *turnState) messageText() string {
-	turn.messageMu.Lock()
-	defer turn.messageMu.Unlock()
-	return strings.TrimSpace(turn.message.String())
-}
-
-func (turn *turnState) emit(event agent.Event) {
-	select {
-	case turn.events <- event:
-	case <-turn.ctx.Done():
-	case <-turn.done:
-	}
-}
-
-func (turn *turnState) finish(event agent.Event) {
-	turn.finishOnce.Do(func() {
-		turn.emit(event)
-		close(turn.done)
-		close(turn.events)
-	})
-}
-
 func (writer *cappedWriter) Write(content []byte) (int, error) {
 	remaining := writer.limit - writer.buffer.Len()
 	if remaining > 0 {
@@ -1079,22 +654,4 @@ func responseID(rawID json.RawMessage) (string, error) {
 		return stringID, nil
 	}
 	return "", fmt.Errorf("codex app-server returned a non-string response id: %s", string(rawID))
-}
-
-func errorEvent(eventErr error) agent.Event {
-	return agent.Event{
-		Kind:    agent.EventKindError,
-		Message: eventErr.Error(),
-		Origin:  agent.EventOriginProvider,
-		Err:     eventErr,
-	}
-}
-
-func containsString(values []string, expected string) bool {
-	for _, value := range values {
-		if value == expected {
-			return true
-		}
-	}
-	return false
 }

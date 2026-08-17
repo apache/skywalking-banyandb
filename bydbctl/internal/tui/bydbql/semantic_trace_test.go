@@ -130,9 +130,6 @@ func TestTraceIDTagFallsBackToTheConventionalName(t *testing.T) {
 		Tags:   []string{"trace_id", "span_id"},
 		Loaded: true,
 	}
-	if traceIDTag := traceIDTagName(schema); traceIDTag != "trace_id" {
-		t.Fatalf("a schema without an explicit trace ID tag must fall back to trace_id, got %q", traceIDTag)
-	}
 	message := validateTraceScanBounds("SELECT * FROM TRACE sw_trace IN sw_trace TIME > '-30m' WHERE trace_id = 'abc' LIMIT 10", schema)
 	if message != "" {
 		t.Fatalf("the fallback tag must satisfy the scan bound: %q", message)

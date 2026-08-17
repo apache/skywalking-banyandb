@@ -40,11 +40,11 @@ func TestCatalogBrowserTracksLoadedResources(t *testing.T) {
 	if browser.loading {
 		t.Fatal("a loaded catalog must clear the loading flag")
 	}
-	if browser.resourceCount() != 3 {
-		t.Fatalf("expected three resources, got %d", browser.resourceCount())
+	if len(browser.catalog.Entries) != 3 {
+		t.Fatalf("expected three resources, got %d", len(browser.catalog.Entries))
 	}
-	if browser.groupCount() != 2 {
-		t.Fatalf("expected two groups, got %d", browser.groupCount())
+	if len(browser.catalog.Groups) != 2 {
+		t.Fatalf("expected two groups, got %d", len(browser.catalog.Groups))
 	}
 }
 
@@ -58,7 +58,7 @@ func TestCatalogBrowserLoadErrorClearsStaleEntries(t *testing.T) {
 	if browser.loadError != "connection refused" {
 		t.Fatalf("unexpected load error: %q", browser.loadError)
 	}
-	if browser.resourceCount() != 0 {
-		t.Fatalf("a failed load must not leave stale resources, got %d", browser.resourceCount())
+	if len(browser.catalog.Entries) != 0 {
+		t.Fatalf("a failed load must not leave stale resources, got %d", len(browser.catalog.Entries))
 	}
 }

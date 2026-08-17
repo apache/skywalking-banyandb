@@ -41,7 +41,7 @@ func validateTraceScanBounds(query string, schema *session.SchemaSnapshot) strin
 	if grammar.Select.OrderBy != nil {
 		return ""
 	}
-	traceIDTag := traceIDTagName(schema)
+	traceIDTag := schema.TraceIDTagName()
 	if traceIDTag == "" {
 		return "TRACE queries need ORDER BY on a sortable index, or an equality filter on the trace ID tag; " +
 			"call describe_schema to learn which tag holds the trace ID"
@@ -56,28 +56,6 @@ func validateTraceScanBounds(query string, schema *session.SchemaSnapshot) strin
 	return fmt.Sprintf("TRACE queries need ORDER BY or a %s filter, and this resource has no sortable index rule; "+
 		"add WHERE %s = '<id>'", traceIDTag, traceIDTag)
 }
-
-// traceIDTagName reports the tag that identifies a trace, falling back to the conventional name.
-//
-// A schema loaded before this field existed, or one merged across groups that disagree, leaves it
-// empty; the conventional name still matches every trace schema BanyanDB ships.
-func traceIDTagName(schema *session.SchemaSnapshot) string {
-	if schema == nil {
-		return ""
-	}
-	if traceIDTag := strings.TrimSpace(schema.TraceIDTag); traceIDTag != "" {
-		return traceIDTag
-	}
-	for _, tagName := range schema.Tags {
-		if strings.EqualFold(strings.TrimSpace(tagName), conventionalTraceIDTag) {
-			return strings.TrimSpace(tagName)
-		}
-	}
-	return ""
-}
-
-// conventionalTraceIDTag is the trace-ID tag name used by the trace schemas BanyanDB ships.
-const conventionalTraceIDTag = "trace_id"
 
 // traceOrderSuggestion names a sortable index rule the query could order by.
 func traceOrderSuggestion(schema *session.SchemaSnapshot) string {

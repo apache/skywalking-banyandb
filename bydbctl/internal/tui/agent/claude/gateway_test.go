@@ -55,13 +55,13 @@ func TestGatewayDrivesClaudeCLIAndResumesProviderSession(t *testing.T) {
 	if startErr != nil {
 		t.Fatalf("Start returned an error: %v", startErr)
 	}
-	firstRequest := agent.TurnRequest{Prompt: "first question", Task: "new_query"}
+	firstRequest := agent.TurnRequest{Prompt: "first question"}
 	firstEvents, firstSendErr := gateway.Send(context.Background(), session.ID, firstRequest)
 	if firstSendErr != nil {
 		t.Fatalf("first Send returned an error: %v", firstSendErr)
 	}
 	assertSuccessfulTurn(t, collectEvents(firstEvents), "hel", "hello")
-	secondEvents, secondSendErr := gateway.Send(context.Background(), session.ID, agent.TurnRequest{Prompt: "second question", Task: "refine"})
+	secondEvents, secondSendErr := gateway.Send(context.Background(), session.ID, agent.TurnRequest{Prompt: "second question"})
 	if secondSendErr != nil {
 		t.Fatalf("second Send returned an error: %v", secondSendErr)
 	}

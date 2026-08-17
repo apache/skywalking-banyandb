@@ -153,6 +153,33 @@ type SchemaSnapshot struct {
 	Loaded          bool
 }
 
+// conventionalTraceIDTag is the trace-ID tag name used by the trace schemas BanyanDB ships.
+const conventionalTraceIDTag = "trace_id"
+
+// TraceIDTagName reports the tag that identifies a trace, or "" when the schema has none.
+//
+// A schema loaded before TraceIDTag existed, or merged across groups that disagree, leaves the field
+// empty, so the conventional name is matched against both the tag list and the typed columns.
+func (snapshot *SchemaSnapshot) TraceIDTagName() string {
+	if snapshot == nil {
+		return ""
+	}
+	if traceIDTag := strings.TrimSpace(snapshot.TraceIDTag); traceIDTag != "" {
+		return traceIDTag
+	}
+	for _, tagName := range snapshot.Tags {
+		if strings.EqualFold(strings.TrimSpace(tagName), conventionalTraceIDTag) {
+			return strings.TrimSpace(tagName)
+		}
+	}
+	for _, column := range snapshot.Columns {
+		if strings.EqualFold(strings.TrimSpace(column.Name), conventionalTraceIDTag) {
+			return strings.TrimSpace(column.Name)
+		}
+	}
+	return ""
+}
+
 // EnsureFingerprint computes a deterministic schema identity when one is not already set.
 func (snapshot *SchemaSnapshot) EnsureFingerprint() string {
 	if snapshot == nil {
@@ -179,7 +206,7 @@ func (snapshot *SchemaSnapshot) EnsureFingerprint() string {
 		}
 		return columns[leftIndex].Type < columns[rightIndex].Type
 	})
-	indexes := cloneSortableIndexes(snapshot.SortableIndexes)
+	indexes := CloneSortableIndexes(snapshot.SortableIndexes)
 	for indexPosition := range indexes {
 		sort.Strings(indexes[indexPosition].Tags)
 	}
@@ -333,11 +360,11 @@ const (
 // BydbqlCandidate is a versioned candidate query and its validation state.
 type BydbqlCandidate struct {
 	CreatedAt   time.Time
-	Validation  ValidationReport
 	ID          string
 	Query       string
 	Explanation string
 	Source      CandidateSource
+	Validation  ValidationReport
 }
 
 // PlannedQuery is one independently approved query from an agent workflow plan.
@@ -354,9 +381,9 @@ type PlannedQuery struct {
 // ValidationReport stores local BYDBQL validation output.
 type ValidationReport struct {
 	CheckedAt time.Time
-	Valid     bool
 	Message   string
 	QueryType string
+	Valid     bool
 }
 
 // Status returns a compact validation status.
@@ -373,19 +400,19 @@ func (vr ValidationReport) Status() string {
 // ExecutionResult stores read-only BYDBQL execution output.
 type ExecutionResult struct {
 	CheckedAt    time.Time
-	Duration     time.Duration
-	Rows         int
-	Columns      []string
-	Preview      [][]string
-	Truncated    bool
+	Command      string
 	ResourceType string
 	Summary      string
 	Query        string
-	Command      string
 	Path         string
 	Response     string
 	Error        string
 	Hint         string
+	Columns      []string
+	Preview      [][]string
+	Rows         int
+	Duration     time.Duration
+	Truncated    bool
 }
 
 // TranscriptEntry is one visible agent or workflow event.
@@ -405,29 +432,29 @@ type ConversationTurn struct {
 
 // QuerySession is the workflow contract between the TUI, agent gateway, validator, and tool executor.
 type QuerySession struct {
-	ID                  string
-	Phase               Phase
-	UserGoal            string
-	DiscoveryGoal       string
-	CandidateSuperseded bool
-	ResourceType        ResourceType
-	ResourceName        string
-	Groups              []string
-	TimeRange           TimeRange
-	SchemaSnapshot      SchemaSnapshot
 	Schemas             map[string]SchemaSnapshot
-	SlotsPinned         bool
-	AutoMatched         bool
+	TimeRange           TimeRange
 	AgentSessionID      string
+	ResourceType        ResourceType
+	UserGoal            string
+	ResourceName        string
+	ID                  string
+	DiscoveryGoal       string
+	Phase               Phase
+	Validation          ValidationReport
+	Transcript          []TranscriptEntry
+	Groups              []string
+	ChatMessages        []ChatMessage
 	Conversation        []ConversationTurn
 	Candidates          []BydbqlCandidate
 	PlannedQueries      []PlannedQuery
-	SelectedCandidate   int
-	ActivePlanStep      int
-	Validation          ValidationReport
+	SchemaSnapshot      SchemaSnapshot
 	ExecutionResult     ExecutionResult
-	Transcript          []TranscriptEntry
-	ChatMessages        []ChatMessage
+	ActivePlanStep      int
+	SelectedCandidate   int
+	AutoMatched         bool
+	SlotsPinned         bool
+	CandidateSuperseded bool
 }
 
 // SchemaKey returns a normalized identity for a resource schema.
@@ -457,7 +484,7 @@ func (qs *QuerySession) CacheSchema(snapshot SchemaSnapshot) SchemaSnapshot {
 	if qs.Schemas == nil {
 		qs.Schemas = make(map[string]SchemaSnapshot)
 	}
-	qs.Schemas[SchemaKey(snapshot.Type, snapshot.Name, snapshot.Groups)] = cloneSchemaSnapshot(snapshot)
+	qs.Schemas[SchemaKey(snapshot.Type, snapshot.Name, snapshot.Groups)] = CloneSchemaSnapshot(snapshot)
 	return snapshot
 }
 
@@ -470,7 +497,7 @@ func (qs *QuerySession) ActivateSchema(snapshot SchemaSnapshot) {
 	qs.ResourceType = snapshot.Type
 	qs.ResourceName = snapshot.Name
 	qs.Groups = append([]string(nil), snapshot.Groups...)
-	qs.SchemaSnapshot = cloneSchemaSnapshot(snapshot)
+	qs.SchemaSnapshot = CloneSchemaSnapshot(snapshot)
 }
 
 // CachedSchema returns the exact schema cached for a resource and group set.
@@ -480,7 +507,7 @@ func (qs *QuerySession) CachedSchema(resourceType ResourceType, name string, gro
 	}
 	if qs.Schemas != nil {
 		if snapshot, ok := qs.Schemas[SchemaKey(resourceType, name, groups)]; ok {
-			return cloneSchemaSnapshot(snapshot), true
+			return CloneSchemaSnapshot(snapshot), true
 		}
 	}
 	activeSnapshot := qs.SchemaSnapshot
@@ -488,7 +515,7 @@ func (qs *QuerySession) CachedSchema(resourceType ResourceType, name string, gro
 		return SchemaSnapshot{}, false
 	}
 	activeSnapshot = qs.CacheSchema(activeSnapshot)
-	return cloneSchemaSnapshot(activeSnapshot), activeSnapshot.Loaded
+	return CloneSchemaSnapshot(activeSnapshot), activeSnapshot.Loaded
 }
 
 func preserveSchemaDiscoveryContext(target *SchemaSnapshot, existing SchemaSnapshot) {
@@ -500,7 +527,8 @@ func preserveSchemaDiscoveryContext(target *SchemaSnapshot, existing SchemaSnaps
 	}
 }
 
-func cloneSchemaSnapshot(snapshot SchemaSnapshot) SchemaSnapshot {
+// CloneSchemaSnapshot deep-copies a snapshot so a stored schema cannot be mutated through a shared slice.
+func CloneSchemaSnapshot(snapshot SchemaSnapshot) SchemaSnapshot {
 	clonedSnapshot := snapshot
 	clonedSnapshot.Groups = append([]string(nil), snapshot.Groups...)
 	clonedSnapshot.Tags = append([]string(nil), snapshot.Tags...)
@@ -508,14 +536,15 @@ func cloneSchemaSnapshot(snapshot SchemaSnapshot) SchemaSnapshot {
 	clonedSnapshot.Fields = append([]string(nil), snapshot.Fields...)
 	clonedSnapshot.Columns = append([]SchemaColumn(nil), snapshot.Columns...)
 	clonedSnapshot.IndexedFields = append([]string(nil), snapshot.IndexedFields...)
-	clonedSnapshot.SortableIndexes = cloneSortableIndexes(snapshot.SortableIndexes)
+	clonedSnapshot.SortableIndexes = CloneSortableIndexes(snapshot.SortableIndexes)
 	clonedSnapshot.ResourceNames = append([]string(nil), snapshot.ResourceNames...)
 	clonedSnapshot.AvailableGroups = append([]string(nil), snapshot.AvailableGroups...)
 	clonedSnapshot.Catalog = append([]CatalogEntry(nil), snapshot.Catalog...)
 	return clonedSnapshot
 }
 
-func cloneSortableIndexes(indexes []SortableIndex) []SortableIndex {
+// CloneSortableIndexes deep-copies index rules together with their tag lists.
+func CloneSortableIndexes(indexes []SortableIndex) []SortableIndex {
 	clonedIndexes := append([]SortableIndex(nil), indexes...)
 	for indexPosition := range clonedIndexes {
 		clonedIndexes[indexPosition].Tags = append([]string(nil), indexes[indexPosition].Tags...)

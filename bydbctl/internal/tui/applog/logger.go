@@ -35,9 +35,9 @@ const defaultLogDirName = ".bydbctl/logs"
 
 // Logger appends structured session diagnostics to a log file.
 type Logger struct {
-	mu   sync.Mutex
 	file *os.File
 	path string
+	mu   sync.Mutex
 }
 
 // New creates a timestamped agent session log under dir or $HOME/.bydbctl/logs.
@@ -138,6 +138,8 @@ func (sessionLogger *Logger) WriteAgentTurn(events []agent.Event) {
 			if event.Status == agent.EventStatusFailed && strings.TrimSpace(event.Message) != "" {
 				toolFailures = append(toolFailures, event.ToolName+": "+event.Message)
 			}
+		default:
+			// Every other kind is already accounted for by the kind counts above.
 		}
 	}
 	parts := []string{fmt.Sprintf("events=%d", len(events))}

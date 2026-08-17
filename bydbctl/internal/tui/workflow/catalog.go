@@ -26,11 +26,11 @@ import (
 
 // ResolvedSlots contains workflow-owned slot values after catalog resolution.
 type ResolvedSlots struct {
+	TimeRange    session.TimeRange
 	ResourceType session.ResourceType
 	ResourceName string
-	Groups       []string
 	Goal         string
-	TimeRange    session.TimeRange
+	Groups       []string
 	SlotsPinned  bool
 	AutoMatched  bool
 }
@@ -84,12 +84,12 @@ func ResolveSessionSlots(options StartOptions, catalog session.SchemaCatalog) Re
 }
 
 type catalogMatch struct {
-	Matched   bool
-	Ambiguous bool
 	Group     string
 	Name      string
 	Type      session.ResourceType
 	Score     int
+	Matched   bool
+	Ambiguous bool
 }
 
 func matchResourceFromGoal(

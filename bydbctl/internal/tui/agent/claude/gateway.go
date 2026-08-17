@@ -74,9 +74,9 @@ type turnHandle struct {
 type Gateway struct {
 	now               func() time.Time
 	turn              *turnHandle
-	config            Config
 	session           agent.Session
 	providerSessionID string
+	config            Config
 	startMu           sync.Mutex
 	mu                sync.Mutex
 	started           bool
@@ -275,7 +275,7 @@ func validateConfig(config Config) error {
 	if !filepath.IsAbs(server.Command) {
 		return errors.New("controlled MCP server command must be absolute")
 	}
-	if !equalStringSets(server.EnabledTools, controlledToolNames) {
+	if !agent.SameToolSet(server.EnabledTools, controlledToolNames) {
 		return fmt.Errorf("controlled MCP tool allowlist must contain exactly %s", strings.Join(controlledToolNames, ", "))
 	}
 	return nil
@@ -293,23 +293,4 @@ func checkClaudeVersion(ctx context.Context, command, workingDirectory string) e
 		return fmt.Errorf("failed to parse Claude CLI version from %q", version)
 	}
 	return nil
-}
-
-func equalStringSets(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	leftSet := make(map[string]struct{}, len(left))
-	for _, value := range left {
-		if _, exists := leftSet[value]; exists {
-			return false
-		}
-		leftSet[value] = struct{}{}
-	}
-	for _, value := range right {
-		if _, exists := leftSet[value]; !exists {
-			return false
-		}
-	}
-	return true
 }
