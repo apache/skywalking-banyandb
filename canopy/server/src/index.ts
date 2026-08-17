@@ -27,6 +27,9 @@ import { registerAuth } from './routes/auth.js';
 const config = loadConfig();
 
 const app = Fastify({
+  // TLS is commonly terminated by an ingress. This lets secure-session's
+  // secure: 'auto' option use the proxy's X-Forwarded-Proto value.
+  trustProxy: true,
   logger: {
     level: process.env.LOG_LEVEL || 'info',
     redact: ['req.headers.authorization', 'res.headers.authorization'],
