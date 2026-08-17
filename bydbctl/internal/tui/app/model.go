@@ -38,9 +38,8 @@ import (
 )
 
 const (
-	defaultWidth            = 120
-	defaultHeight           = 36
-	queryValidationDebounce = 350 * time.Millisecond
+	defaultWidth  = 120
+	defaultHeight = 36
 )
 
 const (
@@ -69,53 +68,55 @@ type Config struct {
 
 // Model is the Bubble Tea state for the bydbctl agent TUI.
 type Model struct {
-	message                textarea.Model
-	query                  textarea.Model
-	turnStartedAt          time.Time
-	executor               tools.Executor
-	composerReference      *session.CatalogEntry
-	querySession           *session.QuerySession
-	runner                 *workflow.Runner
-	schemaCache            map[string]session.SchemaSnapshot
-	schemaLoads            map[string]struct{}
-	turnCancel             context.CancelFunc
-	sessionLog             *applog.Logger
-	queuedMessage          string
-	schemaSearchValue      string
-	provider               string
-	status                 string
-	executionExportPath    string
-	liveResponse           string
-	turnEvents             []agent.Event
-	activityLog            []activityEntry
-	panelRegions           []panelRegion
-	messageHistory         editorHistory
-	limit                  textinput.Model
-	end                    textinput.Model
-	start                  textinput.Model
-	selectedSchema         session.SchemaSnapshot
-	catalog                catalogBrowser
-	focus                  int
-	schemaSearchCursor     int
-	chatDetailScroll       int
-	chatScroll             int
-	helpScroll             int
-	progressOperation      progressOperation
-	schemaDetailScroll     int
-	executionPreviewOffset int
-	executionRowCursor     int
-	executionDetailScroll  int
-	queryRevision          int
-	chatCursor             int
-	height                 int
-	evidenceMode           evidenceMode
-	width                  int
-	regionsStale           bool
-	busy                   bool
-	helpVisible            bool
-	quitConfirmPending     bool
-	editingQuery           bool
-	schemaSearchDismissed  bool
+	message                    textarea.Model
+	query                      textarea.Model
+	turnStartedAt              time.Time
+	executor                   tools.Executor
+	composerReference          *session.CatalogEntry
+	querySession               *session.QuerySession
+	runner                     *workflow.Runner
+	schemaCache                map[string]session.SchemaSnapshot
+	schemaLoads                map[string]struct{}
+	turnCancel                 context.CancelFunc
+	sessionLog                 *applog.Logger
+	queuedMessage              string
+	schemaSearchValue          string
+	provider                   string
+	status                     string
+	executionExportPath        string
+	liveResponse               string
+	turnEvents                 []agent.Event
+	activityLog                []activityEntry
+	panelRegions               []panelRegion
+	messageHistory             editorHistory
+	limit                      textinput.Model
+	end                        textinput.Model
+	start                      textinput.Model
+	selectedSchema             session.SchemaSnapshot
+	catalog                    catalogBrowser
+	focus                      int
+	schemaSearchCursor         int
+	chatDetailScroll           int
+	chatScroll                 int
+	helpScroll                 int
+	progressOperation          progressOperation
+	schemaDetailScroll         int
+	executionPreviewOffset     int
+	executionRowCursor         int
+	executionDetailScroll      int
+	candidateCountAtTurnStart  int
+	autoExecutedCandidateIndex int
+	chatCursor                 int
+	height                     int
+	evidenceMode               evidenceMode
+	width                      int
+	regionsStale               bool
+	busy                       bool
+	helpVisible                bool
+	quitConfirmPending         bool
+	editingQuery               bool
+	schemaSearchDismissed      bool
+	hasAutoExecutedCandidate   bool
 }
 
 // NewModel creates a TUI model with the configured agent gateway.
@@ -214,14 +215,6 @@ func (m Model) update(teaMsg tea.Msg) (Model, tea.Cmd) {
 		return m.applyAgentStarted(typedMsg)
 	case agentTurnUpdateMsg:
 		return m.applyAgentTurnUpdate(typedMsg)
-	case queryDebounceMsg:
-		if typedMsg.revision != m.queryRevision || m.busy || strings.TrimSpace(m.query.Value()) == "" {
-			return m, nil
-		}
-		m.busy = true
-		m.progressOperation = progressOperationValidate
-		m.status = "validating edited query"
-		return m, m.validateCmd()
 	case catalogMsg:
 		return m.applyCatalog(typedMsg)
 	case schemaDetailMsg:
@@ -250,6 +243,7 @@ func (m Model) applyAgentStarted(startedMsg agentStartedMsg) (Model, tea.Cmd) {
 	}
 	if startedMsg.querySession != nil {
 		m.querySession = startedMsg.querySession
+		m.candidateCountAtTurnStart = len(startedMsg.querySession.Candidates)
 		m.syncQuerySession()
 		m.queuedMessage = ""
 	}
@@ -301,7 +295,65 @@ func (m Model) applyAgentTurnUpdate(updateMsg agentTurnUpdateMsg) (Model, tea.Cm
 	m.status = "agent turn complete"
 	m.addUIEvent("agent: turn complete")
 	m.logQuerySession(m.querySession)
+	if m.shouldExecuteGeneratedCandidate(true) {
+		return m, m.executeGeneratedCandidate()
+	}
 	return m, nil
+}
+
+// shouldExecuteGeneratedCandidate reports whether the current candidate is a valid generated query that has not run automatically.
+func (m Model) shouldExecuteGeneratedCandidate(requireNewAgentCandidate bool) bool {
+	if m.querySession == nil {
+		return false
+	}
+	if requireNewAgentCandidate && len(m.querySession.Candidates) <= m.candidateCountAtTurnStart {
+		return false
+	}
+	candidateIndex := m.querySession.SelectedCandidateIndex()
+	currentCandidate := m.querySession.CurrentCandidate()
+	if currentCandidate == nil || currentCandidate.Source != session.CandidateSourceAgent || !currentCandidate.Validation.Valid {
+		return false
+	}
+	if m.hasAutoExecutedCandidate && candidateIndex == m.autoExecutedCandidateIndex {
+		return false
+	}
+	generatedQuery := strings.TrimSpace(currentCandidate.Query)
+	if generatedQuery == "" || strings.TrimSpace(m.query.Value()) != generatedQuery {
+		return false
+	}
+	if requireNewAgentCandidate && m.agentExecutedCandidate(generatedQuery) {
+		return false
+	}
+	return true
+}
+
+// agentExecutedCandidate reports whether this agent turn already executed the generated query.
+func (m Model) agentExecutedCandidate(query string) bool {
+	for _, event := range m.turnEvents {
+		if event.Kind != agent.EventKindToolResult || event.Origin != agent.EventOriginToolBridge ||
+			event.ToolName != bridge.ToolExecuteBydbQL || event.Status != agent.EventStatusSucceeded {
+			continue
+		}
+		if strings.TrimSpace(event.Candidate) == query {
+			return true
+		}
+	}
+	return false
+}
+
+// executeGeneratedCandidate runs a newly generated candidate without reinterpreting editor text as a manual edit.
+func (m *Model) executeGeneratedCandidate() tea.Cmd {
+	m.autoExecutedCandidateIndex = m.querySession.SelectedCandidateIndex()
+	m.hasAutoExecutedCandidate = true
+	m.busy = true
+	m.turnEvents = nil
+	m.progressOperation = progressOperationExecute
+	m.status = "executing generated query"
+	m.turnStartedAt = time.Now()
+	m.logWrite("action", "automatically execute generated query")
+	executeCtx, cancelExecute := context.WithCancel(context.Background())
+	m.turnCancel = cancelExecute
+	return tea.Batch(m.executeGeneratedCmd(executeCtx), m.turnTimeoutCmd(m.turnStartedAt))
 }
 
 // applyCatalog records a catalog refresh or its connection failure.
@@ -370,6 +422,9 @@ func (m Model) applyWorkflow(workflowResult workflowMsg) (Model, tea.Cmd) {
 		m.addUIEvent(summarizeStatusEvent(workflowResult.status))
 		m.logWrite("workflow", workflowResult.status)
 		m.status = workflowResult.status
+		if workflowResult.status == statusExecutionComplete && m.shouldExecuteGeneratedCandidate(false) {
+			return m, m.executeGeneratedCandidate()
+		}
 	} else if m.querySession != nil && !m.querySession.Validation.Valid && m.querySession.CurrentCandidate() != nil {
 		m.status = "invalid candidate — Ctrl+G lets Agent fix it, or send a message"
 		m.addUIEvent("validation: Ctrl+G lets Agent fix the candidate")
@@ -391,7 +446,7 @@ func (m *Model) recordWorkflowSessionState(status string) {
 		m.logWrite("candidate", currentCandidate.Query)
 	}
 	m.logQuerySession(m.querySession)
-	if status != "execution complete" {
+	if status != statusExecutionComplete {
 		return
 	}
 	m.executionDetailScroll = 0
@@ -508,6 +563,9 @@ const statusAskingAgent = "asking agent"
 
 // statusSchemaComplete is the status of a turn answered straight from the schema catalog.
 const statusSchemaComplete = "schema lookup complete"
+
+// statusExecutionComplete is the status of a successful candidate execution.
+const statusExecutionComplete = "execution complete"
 
 // cancelActive stops the in-flight turn on both sides: the local context and the provider session.
 func (m *Model) cancelActive() {
@@ -684,9 +742,7 @@ func (m *Model) updateFocused(teaMsg tea.Msg) tea.Cmd {
 		return nil
 	}
 	if (m.focus == focusStart || m.focus == focusEnd || m.focus == focusLimit || m.focus == focusQuery) && previousQuery != m.query.Value() {
-		m.queryRevision++
 		m.editingQuery = true
-		return tea.Batch(updateCmd, m.queryDebounceCmd(m.queryRevision))
 	}
 	return updateCmd
 }

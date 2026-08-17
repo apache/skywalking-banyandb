@@ -174,7 +174,7 @@ func (toolBridge *ToolBridge) Call(ctx context.Context, call Call) Result {
 	default:
 		result = Result{Err: fmt.Errorf("tool %q is not registered", toolName)}
 	}
-	toolBridge.emitResult(callID, toolName, result)
+	toolBridge.emitResult(callID, toolName, call.Arguments, result)
 	return result
 }
 
@@ -666,15 +666,20 @@ func (toolBridge *ToolBridge) session() *session.QuerySession {
 	return toolBridge.querySession
 }
 
-func (toolBridge *ToolBridge) emitResult(callID, toolName string, result Result) {
+func (toolBridge *ToolBridge) emitResult(callID, toolName string, arguments map[string]any, result Result) {
 	status := agent.EventStatusSucceeded
 	message := "tool completed"
 	if result.Err != nil {
 		status = agent.EventStatusFailed
 		message = result.Err.Error()
 	}
+	candidate := ""
+	if toolName == ToolExecuteBydbQL {
+		candidate = stringArgument(arguments, "query")
+	}
 	toolBridge.emit(agent.Event{
 		ID:            callID,
+		Candidate:     candidate,
 		Kind:          agent.EventKindToolResult,
 		ToolName:      toolName,
 		Message:       message,

@@ -850,6 +850,11 @@ func TestBridgeExecutesFullQueryImmediately(t *testing.T) {
 	if executor.executeCount != 1 {
 		t.Fatalf("expected exactly one execution, got %d", executor.executeCount)
 	}
+	_ = receiveEvent(t, toolBridge.Events())
+	resultEvent := receiveEvent(t, toolBridge.Events())
+	if resultEvent.Candidate != query {
+		t.Fatalf("expected the execution result to identify its query, got %q", resultEvent.Candidate)
+	}
 }
 
 func TestBridgeDoesNotReportAnApprovalWait(t *testing.T) {

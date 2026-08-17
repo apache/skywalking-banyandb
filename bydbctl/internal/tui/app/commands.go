@@ -66,10 +66,6 @@ type agentTurnUpdateMsg struct {
 	update  workflow.TurnUpdate
 }
 
-type queryDebounceMsg struct {
-	revision int
-}
-
 type turnTimeoutMsg struct {
 	startedAt time.Time
 }
@@ -82,12 +78,6 @@ func (m Model) nextAgentUpdateCmd(updates <-chan workflow.TurnUpdate) tea.Cmd {
 		}
 		return agentTurnUpdateMsg{update: update, updates: updates}
 	}
-}
-
-func (m Model) queryDebounceCmd(revision int) tea.Cmd {
-	return tea.Tick(queryValidationDebounce, func(time.Time) tea.Msg {
-		return queryDebounceMsg{revision: revision}
-	})
 }
 
 func (m Model) turnTimeoutCmd(startedAt time.Time) tea.Cmd {
@@ -134,34 +124,6 @@ func (m Model) describeCmd(ctx context.Context, request workflow.DescribeRequest
 	}
 }
 
-func (m Model) validateCmd() tea.Cmd {
-	runner := m.runner
-	options := m.startOptions()
-	query := m.query.Value()
-	querySession := m.querySession
-	return func() tea.Msg {
-		updatedSession, ensureErr := ensureSession(context.Background(), runner, querySession, options, query)
-		if ensureErr != nil {
-			return workflowMsg{err: ensureErr}
-		}
-		if strings.TrimSpace(query) == "" {
-			if currentCandidate := updatedSession.CurrentCandidate(); currentCandidate != nil {
-				query = currentCandidate.Query
-			}
-		}
-		if validateErr := runner.ValidateManualQuery(context.Background(), updatedSession, query); validateErr != nil {
-			return workflowMsg{
-				querySession: updatedSession,
-				err:          validateErr,
-			}
-		}
-		return workflowMsg{
-			querySession: updatedSession,
-			status:       "validation complete",
-		}
-	}
-}
-
 func (m Model) executeCmd(ctx context.Context) tea.Cmd {
 	runner := m.runner
 	options := m.startOptions()
@@ -172,17 +134,23 @@ func (m Model) executeCmd(ctx context.Context) tea.Cmd {
 		if ensureErr != nil {
 			return workflowMsg{err: ensureErr}
 		}
-		if executeErr := runner.ExecuteCurrent(ctx, updatedSession); executeErr != nil {
-			return workflowMsg{
-				querySession: updatedSession,
-				err:          executeErr,
-			}
-		}
-		return workflowMsg{
-			querySession: updatedSession,
-			status:       "execution complete",
-		}
+		return executeSession(ctx, runner, updatedSession)
 	}
+}
+
+func (m Model) executeGeneratedCmd(ctx context.Context) tea.Cmd {
+	runner := m.runner
+	querySession := m.querySession
+	return func() tea.Msg {
+		return executeSession(ctx, runner, querySession)
+	}
+}
+
+func executeSession(ctx context.Context, runner *workflow.Runner, querySession *session.QuerySession) workflowMsg {
+	if executeErr := runner.ExecuteCurrent(ctx, querySession); executeErr != nil {
+		return workflowMsg{querySession: querySession, err: executeErr}
+	}
+	return workflowMsg{querySession: querySession, status: statusExecutionComplete}
 }
 
 func (m Model) loadCatalogCmd() tea.Cmd {

@@ -30,6 +30,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/applog"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/bridge"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/workflow"
 )
@@ -394,6 +395,141 @@ func TestManualEditSurvivesAnAgentTurnUpdate(t *testing.T) {
 	if typedSyncedModel.query.Value() != editedQuery {
 		t.Fatalf("a session sync must not overwrite an in-progress edit: got %q want %q",
 			typedSyncedModel.query.Value(), editedQuery)
+	}
+}
+
+func TestGeneratedCandidateStartsAutomaticExecution(t *testing.T) {
+	querySession := &session.QuerySession{}
+	querySession.AddCandidate(session.BydbqlCandidate{
+		Query:      testMeasureQuery,
+		Source:     session.CandidateSourceAgent,
+		Validation: session.ValidationReport{Valid: true},
+	})
+	model := NewModel(Config{})
+	model.busy = true
+
+	updatedModel, executeCmd := model.Update(agentTurnUpdateMsg{update: workflow.TurnUpdate{
+		Done:         true,
+		QuerySession: querySession,
+	}})
+	typedModel, ok := updatedModel.(Model)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", updatedModel)
+	}
+	if !typedModel.busy || executeCmd == nil {
+		t.Fatal("a valid generated candidate must start execution immediately")
+	}
+	if typedModel.status != "executing generated query" {
+		t.Fatalf("unexpected automatic execution status: %q", typedModel.status)
+	}
+	if typedModel.query.Value() != testMeasureQuery {
+		t.Fatalf("unexpected generated query in editor: %q", typedModel.query.Value())
+	}
+}
+
+func TestRepeatedGeneratedCandidateStartsAutomaticExecution(t *testing.T) {
+	querySession := &session.QuerySession{
+		ExecutionResult: session.ExecutionResult{Query: testMeasureQuery},
+	}
+	querySession.AddCandidate(session.BydbqlCandidate{
+		Query:      testMeasureQuery,
+		Source:     session.CandidateSourceAgent,
+		Validation: session.ValidationReport{Valid: true},
+	})
+	model := NewModel(Config{})
+	model.busy = true
+
+	updatedModel, executeCmd := model.Update(agentTurnUpdateMsg{update: workflow.TurnUpdate{
+		Done:         true,
+		QuerySession: querySession,
+	}})
+	typedModel, ok := updatedModel.(Model)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", updatedModel)
+	}
+	if !typedModel.busy || executeCmd == nil {
+		t.Fatal("a newly generated query must execute even when its text matches the previous query")
+	}
+}
+
+func TestAgentExecutedGeneratedCandidateDoesNotRunTwice(t *testing.T) {
+	querySession := &session.QuerySession{}
+	querySession.AddCandidate(session.BydbqlCandidate{
+		Query:      testMeasureQuery,
+		Source:     session.CandidateSourceAgent,
+		Validation: session.ValidationReport{Valid: true},
+	})
+	model := NewModel(Config{})
+	model.busy = true
+	model.turnEvents = []agent.Event{{
+		Candidate: testMeasureQuery,
+		Kind:      agent.EventKindToolResult,
+		Origin:    agent.EventOriginToolBridge,
+		ToolName:  bridge.ToolExecuteBydbQL,
+		Status:    agent.EventStatusSucceeded,
+	}}
+
+	updatedModel, executeCmd := model.Update(agentTurnUpdateMsg{update: workflow.TurnUpdate{
+		Done:         true,
+		QuerySession: querySession,
+	}})
+	typedModel, ok := updatedModel.(Model)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", updatedModel)
+	}
+	if typedModel.busy || executeCmd != nil {
+		t.Fatal("a query executed by the agent must not run twice in the TUI")
+	}
+}
+
+func TestExecutionStartsTheNextGeneratedWorkflowCandidate(t *testing.T) {
+	querySession := &session.QuerySession{}
+	querySession.AddCandidate(session.BydbqlCandidate{
+		ID:         "candidate-1",
+		Query:      testMeasureQuery,
+		Source:     session.CandidateSourceAgent,
+		Validation: session.ValidationReport{Valid: true},
+	})
+	querySession.AddCandidate(session.BydbqlCandidate{
+		ID:         "candidate-2",
+		Query:      "SELECT service_id FROM MEASURE service_cpm IN sw_metrics TIME > '-30m' LIMIT 10",
+		Source:     session.CandidateSourceAgent,
+		Validation: session.ValidationReport{Valid: true},
+	})
+	model := NewModel(Config{})
+
+	updatedModel, executeCmd := model.Update(workflowMsg{
+		querySession: querySession,
+		status:       "execution complete",
+	})
+	typedModel, ok := updatedModel.(Model)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", updatedModel)
+	}
+	if !typedModel.busy || executeCmd == nil {
+		t.Fatal("the next generated workflow candidate must start automatically")
+	}
+}
+
+func TestEditingCandidateDoesNotScheduleValidation(t *testing.T) {
+	model := NewModel(Config{})
+	model.focus = focusQuery
+	model.query.SetValue(testMeasureQuery)
+	model.syncFocus()
+
+	updatedModel, editCmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'X'}})
+	typedModel, ok := updatedModel.(Model)
+	if !ok {
+		t.Fatalf("unexpected model type: %T", updatedModel)
+	}
+	if typedModel.busy {
+		t.Fatal("editing a candidate must not start validation")
+	}
+	if editCmd == nil {
+		return
+	}
+	if _, isBatch := editCmd().(tea.BatchMsg); isBatch {
+		t.Fatal("editing a candidate must not schedule background validation")
 	}
 }
 
