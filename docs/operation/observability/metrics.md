@@ -392,6 +392,39 @@ therefore cannot be enumerated in the host catalog. The host caps each plugin in
 series and directs overflow to a bounded sentinel series. See
 [Plugin Telemetry](../../design/post-trace-pipeline.md#27-plugin-telemetry-meter--logger) for the complete contract.
 
+The first-party `sw-trace-sampler` and `zipkin-trace-sampler` publish the following bounded decision metric:
+
+| Metric | Type | Labels | Meaning |
+| --- | --- | --- | --- |
+| `banyandb_trace_pipeline_plugin_trace_sampler_decisions_total` | Counter | `group`, `plugin_name`, `verdict`, `rule` | Trace evaluations attributed to the first matching sampler rule. |
+| `banyandb_trace_pipeline_plugin_trace_sampler_rows_total` | Counter | `group`, `plugin_name` | All span or segment rows carried by trace evaluations when a projected row-aligned column is available. |
+| `banyandb_trace_pipeline_plugin_trace_sampler_rows_dropped_total` | Counter | `group`, `plugin_name`, `rule` | Rows belonging to traces the sampler proposed dropping, attributed to the fixed drop rule. |
+| `banyandb_trace_pipeline_plugin_trace_sampler_row_count_unavailable_total` | Counter | `group`, `plugin_name` | Trace evaluations whose metadata-only projection exposed no row count; these traces are omitted from `rows_total`. |
+
+`verdict` is `keep` or `drop`. `rule` is one of the fixed built-in values `duration`, `error`, `healthy_sample`,
+`healthy_rejected`, `no_keep_rule`, `decode_failure_duration`, `decode_failure_error`, and `decode_failure_tags`, or a
+fixed positional tag-rule slot from `tag_00` through `tag_31`. Tag slots follow `keepTagRules` configuration order; tag
+keys and values are never copied into metric labels. Configurations with more than 32 tag rules are rejected.
+
+This counter reports sampler evaluations, not unique traces or committed storage deletions. A trace may be evaluated in
+multiple merge or finalization rounds, and BanyanDB safety guards may retain a trace for which a plugin returned a drop
+verdict. Compare requested drops by rule with the engine's committed drop rate rather than treating them as equal:
+
+`sum by (group, plugin_name, rule) (rate(banyandb_trace_pipeline_plugin_trace_sampler_decisions_total{verdict="drop"}[5m]))`
+
+`sum by (group) (rate(banyandb_trace_tst_pipeline_traces_dropped[5m]))`
+
+For the first-party default SkyWalking policy, projected duration and error columns make the row count available. The
+proposed dropped-row ratio is:
+
+`sum by (group, plugin_name) (rate(banyandb_trace_pipeline_plugin_trace_sampler_rows_dropped_total[5m]))`
+` / sum by (group, plugin_name) (rate(banyandb_trace_pipeline_plugin_trace_sampler_rows_total[5m]))`
+
+Break down the dropped rows by the responsible rule with
+`sum by (group, plugin_name, rule) (rate(banyandb_trace_pipeline_plugin_trace_sampler_rows_dropped_total[5m]))`.
+Alert on any increase of `trace_sampler_row_count_unavailable_total` before treating the ratio as complete. Like the
+decision counter, this is the plugin's proposed row-drop ratio, not the committed storage deletion ratio after guards.
+
 ## Data: Inverted Index
 
 `Inverted Index` metrics monitor the series index of measures and streams, grouped by the `group` tag. Rapid growth or churn signals a cardinality problem that bloats the index and slows queries.
