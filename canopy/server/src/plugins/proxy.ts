@@ -162,13 +162,18 @@ export async function registerProxy(app: FastifyInstance, config: Config): Promi
   // /api/* — proxied VERBATIM to config.banyandbTarget (no prefix add/strip)
   app.all('/api/*', { preHandler: [requireAuth, enforceRole] }, async (request, reply) => {
     const upstreamBase = getSessionEndpoint(request, config);
-    const upstreamPath = request.url; // VERBATIM — includes /api/v1/... prefix
+    const upstreamPath = stripBasePath(request.url, config.basePath);
     await forwardRequest(upstreamBase, upstreamPath, request, reply, config, upstreamAuth);
   });
 
   // /monitoring/* — forwarded to MONITOR_TARGET with /monitoring prefix STRIPPED
   app.all('/monitoring/*', { preHandler: [requireAuth] }, async (request, reply) => {
-    const stripped = request.url.replace(/^\/monitoring/, '');
+    const scopedPath = stripBasePath(request.url, config.basePath);
+    const stripped = scopedPath.replace(/^\/monitoring/, '');
     await forwardRequest(config.monitorTarget, stripped, request, reply, config, undefined);
   });
+}
+
+function stripBasePath(requestURL: string, basePath: string): string {
+  return basePath === '/' ? requestURL : requestURL.slice(basePath.length) || '/';
 }

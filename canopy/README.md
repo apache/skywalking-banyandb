@@ -29,6 +29,20 @@ BANYANDB_TARGET=http://<host>:17913 SESSION_SECRET=<secret> CANOPY_USERS=/etc/ca
 # open http://localhost:4000
 ```
 
+### Reverse proxy path prefix
+
+To expose Canopy below a shared host path, set `CANOPY_BASE_PATH` and preserve
+that path when proxying requests:
+
+```bash
+CANOPY_BASE_PATH=/canopy
+```
+
+For the BanyanDB Helm chart, pass it through the existing `canopy.env` value.
+Route `/canopy` to the Canopy service without an nginx rewrite or a trailing
+slash on `proxy_pass`. The root `/healthz` endpoint remains available for
+container and Kubernetes probes.
+
 ## Environment variables
 
 See `.env.example` for all env vars.

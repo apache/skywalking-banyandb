@@ -17,6 +17,7 @@
  * under the License.
  */
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { canopyPath } from '../runtime-config.js';
 
 export interface Session {
   readonly user: string;
@@ -41,7 +42,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/auth/session')
+    fetch(canopyPath('/auth/session'))
       .then(res => (res.ok ? res.json() as Promise<Session> : null))
       .then(s => { setSession(s); setLoading(false); })
       .catch(() => setLoading(false));

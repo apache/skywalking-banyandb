@@ -28,7 +28,7 @@ import { test, expect } from '../framework/fixtures.js';
 import type { APIRequestContext } from '@playwright/test';
 
 async function seedGroupWithStage(request: APIRequestContext, name: string): Promise<void> {
-  const res = await request.post('/api/v1/group/schema', {
+  const res = await request.post('./api/v1/group/schema', {
     data: {
       group: {
         metadata: { name },

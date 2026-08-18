@@ -21,6 +21,7 @@ import React, { useState, useEffect } from 'react';
 
 import { CanopyMark } from '../components/CanopyMark.js';
 import { useAuth } from '../auth/AuthContext.js';
+import { canopyPath } from '../runtime-config.js';
 import { IconShield, IconViewer } from '../components/icons.js';
 
 type Role = 'admin' | 'readonly';
@@ -113,7 +114,7 @@ export function LoginPage() {
   // The BanyanDB target itself is configured server-side (BANYANDB_TARGET)
   // and is no longer a per-session input.
   useEffect(() => {
-    fetch('/api/meta')
+    fetch(canopyPath('/api/meta'))
       .then(r => r.ok ? r.json() as Promise<{ banyanVersion: string | null; reachable?: boolean }> : null)
       .then(d => {
         if (!d) { setBanyanReachable(false); setBanyanVersion(null); return; }
@@ -153,7 +154,7 @@ export function LoginPage() {
     // so the result is authoritative even if the mount-time probe is stale.
     let preflightReachable = banyanReachable;
     try {
-      const probe = await fetch('/api/meta');
+      const probe = await fetch(canopyPath('/api/meta'));
       if (probe.ok) {
         const meta = await probe.json() as { reachable?: boolean };
         preflightReachable = typeof meta.reachable === 'boolean' ? meta.reachable : preflightReachable;
@@ -170,7 +171,7 @@ export function LoginPage() {
     setStatus('connecting');
     setErrorMsg('');
     try {
-      const res = await fetch('/auth/login', {
+      const res = await fetch(canopyPath('/auth/login'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: username.trim(), password }),

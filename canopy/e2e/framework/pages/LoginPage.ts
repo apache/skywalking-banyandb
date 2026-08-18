@@ -67,7 +67,7 @@ export class LoginPage extends BasePage {
   }
 
   async goto(): Promise<void> {
-    await this.page.goto('/login');
+    await this.page.goto('./login');
   }
 
   // Fill the login form (role + credentials) without submitting.

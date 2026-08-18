@@ -38,16 +38,16 @@ export class PropertyPage extends BasePage {
 
   // ── Navigation ─────────────────────────────────────────────────────────────
   async gotoOverview(): Promise<void> {
-    await this.page.goto('/properties');
+    await this.page.goto('./properties');
   }
 
   async gotoGroup(group: string): Promise<void> {
-    await this.page.goto(`/properties/${group}`);
+    await this.page.goto(`./properties/${group}`);
     await expect(this.pageTitle(group)).toBeVisible();
   }
 
   async gotoDetail(group: string, name: string): Promise<void> {
-    await this.page.goto(`/properties/${group}/${name}`);
+    await this.page.goto(`./properties/${group}/${name}`);
     await expect(this.pageTitle(name)).toBeVisible();
   }
 

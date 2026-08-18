@@ -52,7 +52,7 @@ test.describe('Pipelines + TopN CRUD @e2e @pipelines @seed', () => {
       rank: 'bottomN',
       groupByTags: ['id'],
     });
-    seed.trackResource(`/api/v1/topn-agg/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}`);
+    seed.trackResource(`./api/v1/topn-agg/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}`);
 
     // Create navigates straight to the new aggregation's detail page.
     await expect(pipelinesPage.page).toHaveURL(new RegExp(`/pipelines/topn/${group}/${name}$`));

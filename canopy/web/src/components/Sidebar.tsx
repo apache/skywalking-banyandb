@@ -23,6 +23,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { CanopyMark } from './CanopyMark.js';
 import { useAuth } from '../auth/AuthContext.js';
+import { canopyPath } from '../runtime-config.js';
 import { apiDataSource } from '../data/api.js';
 import {
   IconHome, IconMetadata, IconMeasures, IconStreams, IconTraces,
@@ -421,7 +422,7 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
     let cancelled = false;
     const probe = async () => {
       try {
-        const res = await fetch('/api/meta');
+        const res = await fetch(canopyPath('/api/meta'));
         if (!res.ok) return;
         const d = await res.json() as { banyandbTarget?: string; reachable?: boolean };
         if (cancelled) return;
@@ -438,7 +439,7 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
   const displayHost = banyandbTarget.replace(/^https?:\/\//, '');
 
   const signOut = async () => {
-    try { await fetch('/auth/logout', { method: 'POST' }); } catch { /* ignore */ }
+    try { await fetch(canopyPath('/auth/logout'), { method: 'POST' }); } catch { /* ignore */ }
     setSession(null);
     navigate('/');
   };

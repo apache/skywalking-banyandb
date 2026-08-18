@@ -62,7 +62,7 @@ test.describe('group crud @e2e @schema @seed', () => {
 
   test('API resourceOpts update is reflected in the GroupPage meta chips', async ({ schemaPage, seed, request }) => {
     const name = await seed.createGroup('e2e-opts', 'CATALOG_MEASURE');
-    const res = await request.put(`/api/v1/group/schema/${name}`, {
+    const res = await request.put(`./api/v1/group/schema/${name}`, {
       data: {
         group: {
           metadata: { name },
@@ -131,7 +131,7 @@ test.describe('measure crud @e2e @schema @seed', () => {
     await schemaPage.gotoGroup('measures', group);
     const name = seed.uniqueName('m');
     await schemaPage.createMeasure(name, 't1', true);
-    seed.trackResource(`/api/v1/measure/schema/${group}/${name}`);
+    seed.trackResource(`./api/v1/measure/schema/${group}/${name}`);
     await expect(schemaPage.resourceRow(name)).toBeVisible();
   });
 
@@ -146,7 +146,7 @@ test.describe('measure crud @e2e @schema @seed', () => {
   test('API tag addition is reflected in the measure detail page', async ({ schemaPage, seed, request, page }) => {
     const group = await seed.createGroup('e2e-mtag', 'CATALOG_MEASURE');
     const name = await seed.createMeasure(group, 'm');
-    const res = await request.put(`/api/v1/measure/schema/${group}/${name}`, {
+    const res = await request.put(`./api/v1/measure/schema/${group}/${name}`, {
       data: {
         measure: {
           metadata: { name, group },
@@ -205,7 +205,7 @@ test.describe('stream crud @e2e @schema @seed', () => {
     await schemaPage.gotoGroup('streams', group);
     const name = seed.uniqueName('s');
     await schemaPage.createStream(name, 't1');
-    seed.trackResource(`/api/v1/stream/schema/${group}/${name}`);
+    seed.trackResource(`./api/v1/stream/schema/${group}/${name}`);
     await expect(schemaPage.resourceRow(name)).toBeVisible();
   });
 
@@ -244,7 +244,7 @@ test.describe('stream crud @e2e @schema @seed', () => {
 test.describe('trace crud @e2e @schema @seed', () => {
   // Create a trace schema over HTTP (all three reserved tags mapped).
   async function seedTrace(request: import('@playwright/test').APIRequestContext, group: string, name: string) {
-    const res = await request.post('/api/v1/trace/schema', {
+    const res = await request.post('./api/v1/trace/schema', {
       data: {
         trace: {
           metadata: { name, group },
@@ -277,7 +277,7 @@ test.describe('trace crud @e2e @schema @seed', () => {
     await schemaPage.gotoGroup('traces', group);
     const name = seed.uniqueName('t');
     await schemaPage.createTrace(name, ['tid', 'sid', 'ts']);
-    seed.trackResource(`/api/v1/trace/schema/${group}/${name}`);
+    seed.trackResource(`./api/v1/trace/schema/${group}/${name}`);
     await expect(schemaPage.resourceRow(name)).toBeVisible();
   });
 
@@ -285,7 +285,7 @@ test.describe('trace crud @e2e @schema @seed', () => {
     const group = await seed.createGroup('e2e-tdet', 'CATALOG_TRACE');
     const name = seed.uniqueName('t');
     await seedTrace(request, group, name);
-    seed.trackResource(`/api/v1/trace/schema/${group}/${name}`);
+    seed.trackResource(`./api/v1/trace/schema/${group}/${name}`);
     await schemaPage.gotoResource('traces', group, name);
     await expect(page.getByText('trace id')).toBeVisible();
     await expect(page.getByText('span id')).toBeVisible();
@@ -295,7 +295,7 @@ test.describe('trace crud @e2e @schema @seed', () => {
     const group = await seed.createGroup('e2e-tedit', 'CATALOG_TRACE');
     const name = seed.uniqueName('t');
     await seedTrace(request, group, name);
-    seed.trackResource(`/api/v1/trace/schema/${group}/${name}`);
+    seed.trackResource(`./api/v1/trace/schema/${group}/${name}`);
     await schemaPage.gotoResource('traces', group, name);
     await schemaPage.editResourceButton().click();
     const dlg = schemaPage.dialog('Edit trace');
@@ -311,7 +311,7 @@ test.describe('trace crud @e2e @schema @seed', () => {
     const group = await seed.createGroup('e2e-tdel', 'CATALOG_TRACE');
     const name = seed.uniqueName('t');
     await seedTrace(request, group, name);
-    seed.trackResource(`/api/v1/trace/schema/${group}/${name}`);
+    seed.trackResource(`./api/v1/trace/schema/${group}/${name}`);
     await schemaPage.gotoResource('traces', group, name);
     await schemaPage.deleteResource('traces');
     await expect(page).toHaveURL(new RegExp(`/metadata/traces/${group}$`));
@@ -344,7 +344,7 @@ test.describe('resource pagination @e2e @schema @seed', () => {
     // Distinct, zero-padded names so 'pg-5' matches exactly pg-50..pg-54.
     const names = Array.from({ length: COUNT }, (_, i) => `${group}-pg-${String(i).padStart(2, '0')}`);
     await Promise.all(names.map(async (measureName) => {
-      const res = await request.post('/api/v1/measure/schema', {
+      const res = await request.post('./api/v1/measure/schema', {
         data: {
           measure: {
             metadata: { name: measureName, group },
@@ -356,7 +356,7 @@ test.describe('resource pagination @e2e @schema @seed', () => {
         },
       });
       if (!res.ok()) throw new Error(`seed measure ${measureName} failed: ${res.status()}`);
-      seed.trackResource(`/api/v1/measure/schema/${group}/${measureName}`);
+      seed.trackResource(`./api/v1/measure/schema/${group}/${measureName}`);
     }));
 
     await schemaPage.gotoGroup('measures', group);
