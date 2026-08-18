@@ -147,7 +147,7 @@ would measure a trace from a later span and understate it.
 A Go plugin is loaded via `plugin.Open`, which requires the `.so` and the
 host process to share the **exact same**:
 
-- Go toolchain version (this repo pins `go 1.25.12` via `go.mod`; `GOTOOLCHAIN=auto`
+- Go toolchain version (this repo pins `go 1.25.13` via `go.mod`; `GOTOOLCHAIN=auto`
   resolves it identically in CI, in the `-plugins` Docker builder stage, and
   in a local `make build-plugins`),
 - `pkg/pipeline/sdk` package build (and its full transitive module graph),
