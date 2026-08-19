@@ -38,6 +38,27 @@ export interface Config {
   readonly users: CanopyUser[];
   readonly devNoAuth: boolean;
   readonly blockRfc1918: boolean;
+  readonly basePath: string;
+  readonly baseHref: string;
+}
+
+export function normalizeBasePath(value: string | undefined): { basePath: string; baseHref: string } {
+  const input = value?.trim() || '/';
+  if (input.startsWith('//') || !/^\/?[A-Za-z0-9._~/-]+$/.test(input) || /(?:^|\/)\.\.?($|\/)/.test(input)) {
+    throw new Error('CANOPY_BASE_PATH must be a URL path without a query, fragment, backslash, or traversal segment');
+  }
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(input);
+  } catch {
+    throw new Error('CANOPY_BASE_PATH must contain valid URL encoding');
+  }
+  if (decoded.startsWith('//') || !/^\/?[A-Za-z0-9._~/-]+$/.test(decoded) || /(?:^|\/)\.\.?($|\/)/.test(decoded)) {
+    throw new Error('CANOPY_BASE_PATH must not contain encoded traversal segments');
+  }
+  const withLeadingSlash = input.startsWith('/') ? input : `/${input}`;
+  const basePath = withLeadingSlash.replace(/\/+$/, '') || '/';
+  return { basePath, baseHref: basePath === '/' ? '/' : `${basePath}/` };
 }
 
 function loadUsers(canopyUsersPath: string | undefined, devNoAuth: boolean): CanopyUser[] {
@@ -88,6 +109,7 @@ export function loadConfig(): Config {
   const users = loadUsers(process.env.CANOPY_USERS, devNoAuth);
 
   const upstreamPassword = resolveUpstreamPassword();
+  const { basePath, baseHref } = normalizeBasePath(process.env.CANOPY_BASE_PATH);
 
   return {
     port: parseInt(process.env.PORT || '4000', 10),
@@ -100,5 +122,7 @@ export function loadConfig(): Config {
     users,
     devNoAuth,
     blockRfc1918: process.env.BLOCK_RFC1918 === 'true',
+    basePath,
+    baseHref,
   };
 }

@@ -31,7 +31,7 @@ test.describe('property CRUD + query @e2e @property @seed', () => {
     const name = seed.uniqueName('e2e-coll');
     await propertyPage.gotoGroup(group);
     await propertyPage.createCollection(group, name);
-    seed.trackResource(`/api/v1/property/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}`);
+    seed.trackResource(`./api/v1/property/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}`);
     await expect(propertyPage.page).toHaveURL(new RegExp(`/properties/${group}/${name}`));
   });
 

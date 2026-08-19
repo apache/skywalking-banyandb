@@ -30,6 +30,8 @@ const TEST_CONFIG: Config = {
   users: [],
   devNoAuth: false,
   blockRfc1918: false,
+  basePath: '/',
+  baseHref: '/',
 };
 
 function cookieHeader(setCookie: string | string[] | undefined): string {
@@ -46,10 +48,10 @@ describe('session cookies', () => {
     await Promise.all(apps.splice(0).map(app => app.close()));
   });
 
-  async function buildApp(): Promise<FastifyInstance> {
+  async function buildApp(config: Config = TEST_CONFIG): Promise<FastifyInstance> {
     const app = Fastify({ trustProxy: true });
     apps.push(app);
-    await registerSession(app, TEST_CONFIG);
+    await registerSession(app, config);
     app.get('/login', async request => {
       request.session.user = 'admin';
       request.session.role = 'admin';
@@ -58,6 +60,15 @@ describe('session cookies', () => {
     });
     return app;
   }
+
+  it('scopes the session cookie to the configured base path', async () => {
+    const app = await buildApp({ ...TEST_CONFIG, basePath: '/canopy', baseHref: '/canopy/' });
+
+    const response = await app.inject({ method: 'GET', url: '/login' });
+
+    expect(response.statusCode).toBe(200);
+    expect(cookieHeader(response.headers['set-cookie'])).toContain('; Path=/canopy/');
+  });
 
   it('sets a Secure cookie when TLS is terminated by a proxy', async () => {
     const app = await buildApp();

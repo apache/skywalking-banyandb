@@ -106,7 +106,7 @@ export class QueryConsolePage extends BasePage {
 
   // ── Actions (app-action style: intent, not clicks) ─────────────────────────
   async goto(): Promise<void> {
-    await this.page.goto('/query');
+    await this.page.goto('./query');
     await expect(this.builder()).toBeVisible();
   }
 

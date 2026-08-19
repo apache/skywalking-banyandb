@@ -87,7 +87,7 @@ export class SeedFactory {
   async createGroup(prefix: string, catalog: Catalog = 'CATALOG_MEASURE'): Promise<string> {
     const name = this.uniqueName(prefix);
     const isProperty = catalog === 'CATALOG_PROPERTY';
-    const res = await this.request.post('/api/v1/group/schema', {
+    const res = await this.request.post('./api/v1/group/schema', {
       data: {
         group: {
           metadata: { name },
@@ -112,7 +112,7 @@ export class SeedFactory {
   // Create a minimal measure in `group`. Returns the measure name.
   async createMeasure(group: string, prefix = 'm', fields: readonly string[] = ['value']): Promise<string> {
     const name = this.uniqueName(prefix);
-    const res = await this.request.post('/api/v1/measure/schema', {
+    const res = await this.request.post('./api/v1/measure/schema', {
       data: {
         measure: {
           metadata: { group, name },
@@ -131,7 +131,7 @@ export class SeedFactory {
     if (!res.ok()) {
       throw new Error(`seed createMeasure(${group}/${name}) failed: ${res.status()} ${await res.text()}`);
     }
-    this.createdResources.push({ path: `/api/v1/measure/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}` });
+    this.createdResources.push({ path: `./api/v1/measure/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}` });
     return name;
   }
 
@@ -139,7 +139,7 @@ export class SeedFactory {
   // entity. Returns the stream name.
   async createStream(group: string, prefix = 's', entityTag = 'host'): Promise<string> {
     const name = this.uniqueName(prefix);
-    const res = await this.request.post('/api/v1/stream/schema', {
+    const res = await this.request.post('./api/v1/stream/schema', {
       data: {
         stream: {
           metadata: { name, group },
@@ -151,7 +151,7 @@ export class SeedFactory {
     if (!res.ok()) {
       throw new Error(`seed createStream(${group}/${name}) failed: ${res.status()} ${await res.text()}`);
     }
-    this.createdResources.push({ path: `/api/v1/stream/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}` });
+    this.createdResources.push({ path: `./api/v1/stream/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}` });
     return name;
   }
 
@@ -162,13 +162,13 @@ export class SeedFactory {
   // validation. Documents aren't validated against these declared tags.
   async createPropertySchema(group: string, prefix = 'p'): Promise<string> {
     const name = this.uniqueName(prefix);
-    const res = await this.request.post('/api/v1/property/schema', {
+    const res = await this.request.post('./api/v1/property/schema', {
       data: { property: { metadata: { name, group }, tags: [{ name: '_placeholder', type: 'TAG_TYPE_STRING' }] } },
     });
     if (!res.ok()) {
       throw new Error(`seed createPropertySchema(${group}/${name}) failed: ${res.status()} ${await res.text()}`);
     }
-    this.createdResources.push({ path: `/api/v1/property/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}` });
+    this.createdResources.push({ path: `./api/v1/property/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}` });
     return name;
   }
 
@@ -183,20 +183,20 @@ export class SeedFactory {
     // The registry rejects Apply with undeclared tag keys, so declare any
     // missing keys on the collection schema first — mirroring the product's
     // applyPropertyDocument auto-grow. Seed tags are always `str`.
-    const getRes = await this.request.get(`/api/v1/property/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}`);
+    const getRes = await this.request.get(`./api/v1/property/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}`);
     if (getRes.ok()) {
       const body = await getRes.json() as { property?: { tags?: { name: string; type: string }[] } };
       const declared = body.property?.tags ?? [];
       const have = new Set(declared.map((t) => t.name));
       const missing = Object.keys(tags).filter((k) => !have.has(k));
       if (missing.length) {
-        await this.request.put(`/api/v1/property/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}`, {
+        await this.request.put(`./api/v1/property/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}`, {
           data: { property: { metadata: { group, name }, tags: [...declared, ...missing.map((k) => ({ name: k, type: 'TAG_TYPE_STRING' }))] } },
         });
       }
     }
     const res = await this.request.put(
-      `/api/v1/property/data/${encodeURIComponent(group)}/${encodeURIComponent(name)}/${encodeURIComponent(id)}`,
+      `./api/v1/property/data/${encodeURIComponent(group)}/${encodeURIComponent(name)}/${encodeURIComponent(id)}`,
       {
         data: {
           property: {
@@ -214,7 +214,7 @@ export class SeedFactory {
     // Tracked for cleanup as a resource (not a group) — deleted via the
     // property/v1 Delete endpoint, reverse-order before its collection schema.
     this.createdResources.push({
-      path: `/api/v1/property/data/${encodeURIComponent(group)}/${encodeURIComponent(name)}/${encodeURIComponent(id)}`,
+      path: `./api/v1/property/data/${encodeURIComponent(group)}/${encodeURIComponent(name)}/${encodeURIComponent(id)}`,
     });
   }
 
@@ -230,7 +230,7 @@ export class SeedFactory {
     opts: { readonly fieldValueSort?: 'SORT_DESC' | 'SORT_ASC' | 'SORT_UNSPECIFIED'; readonly groupByTagNames?: readonly string[] } = {},
   ): Promise<string> {
     const name = this.uniqueName(prefix);
-    const res = await this.request.post('/api/v1/topn-agg/schema', {
+    const res = await this.request.post('./api/v1/topn-agg/schema', {
       data: {
         topNAggregation: {
           metadata: { name, group },
@@ -246,20 +246,20 @@ export class SeedFactory {
     if (!res.ok()) {
       throw new Error(`seed createTopNAggregation(${group}/${name}) failed: ${res.status()} ${await res.text()}`);
     }
-    this.createdResources.push({ path: `/api/v1/topn-agg/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}` });
+    this.createdResources.push({ path: `./api/v1/topn-agg/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}` });
     return name;
   }
 
   // Create an index rule over `tags` in `group`. Returns the rule name.
   async createIndexRule(group: string, tags: readonly string[], prefix = 'rule', type: IndexRuleType = 'TYPE_TREE'): Promise<string> {
     const name = this.uniqueName(prefix);
-    const res = await this.request.post('/api/v1/index-rule/schema', {
+    const res = await this.request.post('./api/v1/index-rule/schema', {
       data: { indexRule: { metadata: { name, group }, tags: [...tags], type } },
     });
     if (!res.ok()) {
       throw new Error(`seed createIndexRule(${group}/${name}) failed: ${res.status()} ${await res.text()}`);
     }
-    this.createdResources.push({ path: `/api/v1/index-rule/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}` });
+    this.createdResources.push({ path: `./api/v1/index-rule/schema/${encodeURIComponent(group)}/${encodeURIComponent(name)}` });
     return name;
   }
 
@@ -302,7 +302,7 @@ export class SeedFactory {
     }
     this.createdResources.length = 0;
     for (const name of this.createdGroups.reverse()) {
-      const res = await this.request.delete(`/api/v1/group/schema/${encodeURIComponent(name)}`);
+      const res = await this.request.delete(`./api/v1/group/schema/${encodeURIComponent(name)}`);
       if (!res.ok() && res.status() !== 404) {
         // eslint-disable-next-line no-console
         console.warn(`[seed] cleanup: delete group ${name} → ${res.status()}`);

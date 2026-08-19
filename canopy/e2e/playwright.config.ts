@@ -35,6 +35,8 @@ import { join } from 'node:path';
 import { STORAGE_STATE } from './framework/paths.js';
 
 const isCI = !!process.env.CI;
+const configuredURL = process.env.CANOPY_URL || 'http://localhost:4000/';
+const canopyURL = configuredURL.endsWith('/') ? configuredURL : `${configuredURL}/`;
 
 export default defineConfig({
   testDir: '.',
@@ -70,10 +72,13 @@ export default defineConfig({
       BANYANDB_TARGET: process.env.BANYANDB_TARGET || 'http://127.0.0.1:17913',
       PORT: '4000',
       LOG_LEVEL: 'warn',
+      CANOPY_BASE_PATH: process.env.CANOPY_BASE_PATH || '/',
     },
   },
   use: {
-    baseURL: process.env.CANOPY_URL || 'http://localhost:4000',
+    // Application URLs in the suite are relative so a baseURL ending in a
+    // reverse-proxy prefix (for example /canopy/) is preserved.
+    baseURL: canopyURL,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
