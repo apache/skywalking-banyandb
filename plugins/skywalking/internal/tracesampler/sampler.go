@@ -425,6 +425,11 @@ var builtInDecisionMetricLabels = [...]decisionMetricLabels{
 	{verdict: decisionVerdictKeep, rule: decisionReasonDecodeTagsLabel},
 }
 
+var (
+	_ [len(builtInDecisionMetricLabels) - int(decisionReasonBuiltInCount)]struct{}
+	_ [int(decisionReasonBuiltInCount) - len(builtInDecisionMetricLabels)]struct{}
+)
+
 type traceDecision struct {
 	reason       decisionReason
 	tagRuleIndex uint8
@@ -650,6 +655,13 @@ func (s *Sampler) UseHost(host sdk.Host) {
 // (kept), so one malformed value can never make the sampler drop data.
 func (s *Sampler) Decide(batch *sdk.TraceBatch) (sdk.Verdict, error) {
 	keep := make([]bool, len(batch.Traces))
+	if s.decisions == nil {
+		for traceIndex := range batch.Traces {
+			keep[traceIndex] = s.decideTrace(&batch.Traces[traceIndex]).keep
+		}
+		return sdk.Verdict{Keep: keep}, nil
+	}
+
 	var reasonCounts [decisionReasonBuiltInCount]uint64
 	var droppedReasonRowCounts [decisionReasonBuiltInCount]uint64
 	var tagReasonCounts [maxKeepTagRules]uint64
@@ -658,36 +670,32 @@ func (s *Sampler) Decide(batch *sdk.TraceBatch) (sdk.Verdict, error) {
 	for traceIndex := range batch.Traces {
 		decision := s.decideTrace(&batch.Traces[traceIndex])
 		keep[traceIndex] = decision.keep
-		if s.decisions != nil {
-			rowCount := batch.Traces[traceIndex].Len()
-			if decision.reason == decisionReasonTagRule {
-				tagReasonCounts[decision.tagRuleIndex]++
-			} else {
-				reasonCounts[decision.reason]++
+		rowCount := batch.Traces[traceIndex].Len()
+		if decision.reason == decisionReasonTagRule {
+			tagReasonCounts[decision.tagRuleIndex]++
+		} else {
+			reasonCounts[decision.reason]++
+		}
+		if rowCount > 0 {
+			totalRows += uint64(rowCount)
+			if !decision.keep {
+				droppedReasonRowCounts[decision.reason] += uint64(rowCount)
 			}
-			if rowCount > 0 {
-				totalRows += uint64(rowCount)
-				if !decision.keep {
-					droppedReasonRowCounts[decision.reason] += uint64(rowCount)
-				}
-			} else {
-				unavailableRowCounts++
-			}
+		} else {
+			unavailableRowCounts++
 		}
 	}
-	if s.decisions != nil {
-		emitSamplerCounts(s.decisions, reasonCounts, tagReasonCounts)
-		if totalRows > 0 {
-			s.rowsTotal.Inc(float64(totalRows))
+	emitSamplerCounts(s.decisions, reasonCounts, tagReasonCounts)
+	if totalRows > 0 {
+		s.rowsTotal.Inc(float64(totalRows))
+	}
+	for reasonIndex, rowCount := range droppedReasonRowCounts {
+		if rowCount > 0 {
+			s.rowsDropped.Inc(float64(rowCount), builtInDecisionMetricLabels[reasonIndex].rule)
 		}
-		for reasonIndex, rowCount := range droppedReasonRowCounts {
-			if rowCount > 0 {
-				s.rowsDropped.Inc(float64(rowCount), builtInDecisionMetricLabels[reasonIndex].rule)
-			}
-		}
-		if unavailableRowCounts > 0 {
-			s.rowCountUnavailable.Inc(float64(unavailableRowCounts))
-		}
+	}
+	if unavailableRowCounts > 0 {
+		s.rowCountUnavailable.Inc(float64(unavailableRowCounts))
 	}
 	return sdk.Verdict{Keep: keep}, nil
 }

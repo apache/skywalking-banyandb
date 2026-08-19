@@ -392,7 +392,7 @@ therefore cannot be enumerated in the host catalog. The host caps each plugin in
 series and directs overflow to a bounded sentinel series. See
 [Plugin Telemetry](../../design/post-trace-pipeline.md#27-plugin-telemetry-meter--logger) for the complete contract.
 
-The first-party `sw-trace-sampler` and `zipkin-trace-sampler` publish the following bounded decision metric:
+The first-party `sw-trace-sampler` and `zipkin-trace-sampler` publish the following bounded decision and row metrics:
 
 | Metric | Type | Labels | Meaning |
 | --- | --- | --- | --- |
