@@ -61,23 +61,48 @@ func singleTraceSet(traceID string, ts int64) *traces {
 	}
 }
 
+// waitForMergeControlCondition blocks until condition() is true while the merge control
+// state remains unchanged. The stable state check prevents a notification that arrives
+// between the condition check and the change-channel snapshot from being missed.
+func waitForMergeControlCondition(tst *tsTable, deadline time.Duration, condition func() bool) bool {
+	timeout := time.NewTimer(deadline)
+	defer timeout.Stop()
+	for {
+		state := tst.mergeControl.state()
+		if condition() && tst.mergeControl.unchanged(state.version) {
+			return true
+		}
+		select {
+		case <-state.changed:
+		case <-timeout.C:
+			return false
+		}
+	}
+}
+
 // waitForMergeControlChange blocks until condition() is true, waking only on
 // tst.mergeControl's change notifications (never a bare sleep), and fails the test if
 // deadline elapses first.
 func waitForMergeControlChange(t *testing.T, tst *tsTable, deadline time.Duration, condition func() bool) {
 	t.Helper()
-	timeout := time.After(deadline)
-	for {
-		if condition() {
-			return
-		}
-		state := tst.mergeControl.state()
-		select {
-		case <-state.changed:
-		case <-timeout:
-			t.Fatalf("timed out after %s waiting for merge control condition", deadline)
-		}
+	if !waitForMergeControlCondition(tst, deadline, condition) {
+		t.Fatalf("timed out after %s waiting for merge control condition", deadline)
 	}
+}
+
+func TestWaitForMergeControlConditionDoesNotMissPriorNotification(t *testing.T) {
+	tst := &tsTable{mergeControl: newMergeLoopControl()}
+	conditionCalls := 0
+
+	require.True(t, waitForMergeControlCondition(tst, 100*time.Millisecond, func() bool {
+		conditionCalls++
+		if conditionCalls == 1 {
+			tst.mergeControl.recordOutcome(false)
+			return false
+		}
+		return true
+	}))
+	require.Equal(t, 2, conditionCalls)
 }
 
 func consecutiveMergeFailures(tst *tsTable) int {
