@@ -32,6 +32,29 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
+func TestTopNPostProcessor_AggregatesEntitiesBeforeApplyingLimit(t *testing.T) {
+	processor := CreateTopNPostProcessorInt(2, modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, modelv1.Sort_SORT_DESC)
+	entityA := pbv1.EntityValues{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_a"}}}}
+	entityB := pbv1.EntityValues{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_b"}}}}
+	entityC := pbv1.EntityValues{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "entity_c"}}}}
+
+	processor.Put(entityA, 50, 1, 1)
+	processor.Put(entityB, 90, 1, 1)
+	processor.Put(entityA, 50, 2, 1)
+	processor.Put(entityC, 80, 2, 1)
+
+	lists, err := processor.Val([]string{"entity_id"})
+	require.NoError(t, err)
+	require.Len(t, lists, 1)
+	require.Len(t, lists[0].Items, 2)
+
+	actual := make(map[string]int64, len(lists[0].Items))
+	for _, item := range lists[0].Items {
+		actual[item.GetEntity()[0].GetValue().GetStr().GetValue()] = item.GetValue().GetInt().GetValue()
+	}
+	require.Equal(t, map[string]int64{"entity_a": 100, "entity_b": 90}, actual)
+}
+
 func TestBlockCursor_MergeTopNResult(t *testing.T) {
 	tests := []struct {
 		srcTopNVal  *TopNValue[int64]

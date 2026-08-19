@@ -118,7 +118,7 @@ func (taggr *topNPostProcessor[K]) Pop() any {
 	return item
 }
 
-func (taggr *topNPostProcessor[K]) tryEnqueue(key string, item *topNAggregatorItem[K]) {
+func (taggr *topNPostProcessor[K]) tryEnqueue(item *topNAggregatorItem[K]) {
 	if len(taggr.items) == 0 {
 		return
 	}
@@ -127,8 +127,6 @@ func (taggr *topNPostProcessor[K]) tryEnqueue(key string, item *topNAggregatorIt
 			(taggr.sort != modelv1.Sort_SORT_DESC && lowest.mapFunc.Val() > item.mapFunc.Val())
 
 		if shouldReplace {
-			delete(taggr.cache, lowest.key)
-			taggr.cache[key] = item
 			taggr.items[0] = item
 			item.index = 0
 			heap.Fix(taggr, 0)
@@ -278,7 +276,6 @@ func (taggr *topNPostProcessor[K]) Flush() ([]*topNAggregatorItem[K], error) {
 			for _, item := range timeline.items {
 				if exist, found := taggr.cache[item.key]; found {
 					exist.mapFunc.In(item.val)
-					heap.Fix(taggr, exist.index)
 					continue
 				}
 
@@ -289,13 +286,15 @@ func (taggr *topNPostProcessor[K]) Flush() ([]*topNAggregatorItem[K], error) {
 
 				item.mapFunc = mapFunc
 				item.mapFunc.In(item.val)
+				taggr.cache[item.key] = item
+			}
+		}
 
-				if taggr.Len() < int(taggr.topN) {
-					taggr.cache[item.key] = item
-					heap.Push(taggr, item)
-				} else {
-					taggr.tryEnqueue(item.key, item)
-				}
+		for _, item := range taggr.cache {
+			if taggr.Len() < int(taggr.topN) {
+				heap.Push(taggr, item)
+			} else {
+				taggr.tryEnqueue(item)
 			}
 		}
 		result = make([]*topNAggregatorItem[K], 0, taggr.Len())
