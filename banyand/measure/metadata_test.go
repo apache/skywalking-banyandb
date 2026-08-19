@@ -521,14 +521,16 @@ var _ = Describe("Schema Change", func() {
 			if elapsed := now.Sub(midnight); elapsed <= firstOffset {
 				firstOffset, secondOffset = elapsed/2, elapsed/4
 			}
+			firstBatchTime := now.Add(-firstOffset).Truncate(time.Millisecond)
+			secondBatchTime := now.Add(-secondOffset).Truncate(time.Millisecond)
 
 			env := setupSchemaChangeMeasure(svcs, measureName, measureSetupOptions{withExtraTag: true})
-			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-firstOffset), 5,
+			writeSchemaChangeMeasureData(svcs, measureName, firstBatchTime, 5,
 				measureWriteDataOptions{withExtraTag: true})
 			filePartCountAfterFirstBatch, filePartCountErr := getMeasureFilePartCount(svcs, groupName)
 			Expect(filePartCountErr).ShouldNot(HaveOccurred())
 			changeExtraMeasureTagType(svcs, measureName)
-			writeSchemaChangeMeasureData(svcs, measureName, now.Add(-secondOffset), 3,
+			writeSchemaChangeMeasureData(svcs, measureName, secondBatchTime, 3,
 				measureWriteDataOptions{withExtraTagString: true, entityIDPrefix: "entity_new_"})
 			// Wait for the second batch to flush to disk, creating additional
 			// file parts that the merge loop can pick up. Without this gate the
