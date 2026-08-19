@@ -893,7 +893,7 @@ func TestDecide_FailOpenOnDecodeError(t *testing.T) {
 
 // TestDecide_MissingTagArrayColumn is a regression test for the nil-pool-element
 // dereference. arrayEntries must return a non-nil *[]string (an empty slice) when
-// the array column is missing from the block, so keepTrace can dereference it
+// the array column is missing from the block, so decideTrace can dereference it
 // without crashing. The pre-pool version of arrayEntries returned a nil slice and
 // matchEntries(nil, ...) was safe by accident; the pool-typed version is not.
 func TestDecide_MissingTagArrayColumn(t *testing.T) {

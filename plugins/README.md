@@ -80,7 +80,7 @@ overrides, and tuning guidance, see SkyWalking's
 | `durationThresholdMs` | int | Keep a trace whose end-to-end envelope reaches this many **milliseconds**. `0` disables. |
 | `keepErrors` | bool | Keep a trace carrying an error. Rejected on a schema that expresses error neither as a column nor as an array key. On the Zipkin schema see the truncation caveat below. |
 | `errorTag` | string | Override the tag `keepErrors` reads. Ignored unless `keepErrors` is set. |
-| `keepTagRules` | list \| string | Sure-keep rules over the searchable tags: `{tagKey, exists\|equals\|in\|regex}`, or the compact `key=value,key=~regex,key` string form. |
+| `keepTagRules` | list \| string | Up to 32 sure-keep rules over the searchable tags: `{tagKey, exists\|equals\|in\|regex}`, or the compact `key=value,key=~regex,key` string form. |
 | `healthySampleRate` | float | Fraction in `[0,1]` of the remaining traces to keep, by FNV-1a hash of the trace ID. Accepts a quoted number, since SkyWalking's config loader stringifies float placeholders. |
 
 **Unknown keys are rejected.** Every option is a keep rule, so a key that

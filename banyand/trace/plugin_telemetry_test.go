@@ -61,6 +61,47 @@ func TestPluginTelemetry_MetricNamePrefix(t *testing.T) {
 	assert.True(t, hasGauge, "gauge name must be prefixed with plugin_")
 }
 
+// TestPluginTelemetry_TraceSamplerDecisionContract verifies the real host
+// adapter supplies attribution labels, prefixes the first-party decision
+// metric, records its fixed labels, and removes the emitted series at teardown.
+func TestPluginTelemetry_TraceSamplerDecisionContract(t *testing.T) {
+	const (
+		group       = "sw_trace"
+		pluginName  = "sw-trace-sampler"
+		verdictKeep = "keep"
+		ruleTag31   = "tag_31"
+	)
+	sm, factory := newTestSamplerMetrics()
+	telemetry := newPluginTelemetry(factory, logger.GetLogger("trace"), sm, group, pluginName)
+	counter := telemetry.Meter().Counter("trace_sampler_decisions_total", "verdict", "rule")
+	counter.Inc(3, verdictKeep, ruleTag31)
+	rowCounter := telemetry.Meter().Counter("trace_sampler_rows_total")
+	rowCounter.Inc(12)
+	droppedRowCounter := telemetry.Meter().Counter("trace_sampler_rows_dropped_total", "rule")
+	droppedRowCounter.Inc(4, ruleTag31)
+	unavailableCounter := telemetry.Meter().Counter("trace_sampler_row_count_unavailable_total")
+	unavailableCounter.Inc(1)
+
+	underlying := factory.counter("plugin_trace_sampler_decisions_total")
+	require.NotNil(t, underlying)
+	assert.Equal(t, 1, underlying.callsWithLabels(group, pluginName, verdictKeep, ruleTag31))
+	underlyingRows := factory.counter("plugin_trace_sampler_rows_total")
+	require.NotNil(t, underlyingRows)
+	assert.Equal(t, 1, underlyingRows.callsWithLabels(group, pluginName))
+	underlyingDroppedRows := factory.counter("plugin_trace_sampler_rows_dropped_total")
+	require.NotNil(t, underlyingDroppedRows)
+	assert.Equal(t, 1, underlyingDroppedRows.callsWithLabels(group, pluginName, ruleTag31))
+	underlyingUnavailable := factory.counter("plugin_trace_sampler_row_count_unavailable_total")
+	require.NotNil(t, underlyingUnavailable)
+	assert.Equal(t, 1, underlyingUnavailable.callsWithLabels(group, pluginName))
+
+	telemetry.teardown()
+	assert.Equal(t, 1, underlying.deletesWithPrefix(group, pluginName, verdictKeep, ruleTag31))
+	assert.Equal(t, 1, underlyingRows.deletesWithPrefix(group, pluginName))
+	assert.Equal(t, 1, underlyingDroppedRows.deletesWithPrefix(group, pluginName, ruleTag31))
+	assert.Equal(t, 1, underlyingUnavailable.deletesWithPrefix(group, pluginName))
+}
+
 // TestPluginTelemetry_MetricNameSanitization verifies that mixed-case and
 // special-character names are lowercased and sanitized.
 func TestPluginTelemetry_MetricNameSanitization(t *testing.T) {

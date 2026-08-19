@@ -35,6 +35,7 @@ package tracesampler
 
 import (
 	"fmt"
+	"sync/atomic"
 	"testing"
 
 	"github.com/apache/skywalking-banyandb/pkg/pb/v1/valuetype"
@@ -168,7 +169,10 @@ func runDecide(b *testing.B, s sdk.Sampler, batch *sdk.TraceBatch) {
 		benchSink = v
 	}
 	b.StopTimer()
-	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*len(batch.Traces)), "ns/trace")
+	elapsed := b.Elapsed()
+	traceCount := float64(b.N * len(batch.Traces))
+	b.ReportMetric(float64(elapsed.Nanoseconds())/traceCount, "ns/trace")
+	b.ReportMetric(traceCount/elapsed.Seconds(), "traces/s")
 }
 
 // BenchmarkDecide isolates what each keep rule costs, so a config change's price is
@@ -251,6 +255,132 @@ func BenchmarkDecide_BatchSize(b *testing.B) {
 				s := mustSampler(b, p.scenario, p.schema)
 				runDecide(b, s, benchBatch(b, p, traces, 3, 8, false))
 			})
+		}
+	}
+}
+
+type benchmarkCounter struct{ total atomic.Uint64 }
+
+func (c *benchmarkCounter) Inc(delta float64, _ ...string) { c.total.Add(uint64(delta)) }
+
+type benchmarkMeter struct {
+	decisions   *benchmarkCounter
+	rows        *benchmarkCounter
+	droppedRows *benchmarkCounter
+	unavailable *benchmarkCounter
+}
+
+func (m *benchmarkMeter) Counter(name string, _ ...string) sdk.Counter {
+	switch name {
+	case decisionMetricName:
+		return m.decisions
+	case rowMetricName:
+		return m.rows
+	case rowDroppedMetricName:
+		return m.droppedRows
+	case rowCountUnavailableMetricName:
+		return m.unavailable
+	default:
+		return &benchmarkCounter{}
+	}
+}
+func (m *benchmarkMeter) Gauge(_ string, _ ...string) sdk.Gauge { return nil }
+func (m *benchmarkMeter) Histogram(_ string, _ []float64, _ ...string) sdk.Histogram {
+	return nil
+}
+
+type benchmarkHost struct{ meter *benchmarkMeter }
+
+func (h *benchmarkHost) Meter() sdk.Meter   { return h.meter }
+func (h *benchmarkHost) Logger() sdk.Logger { return nil }
+
+// BenchmarkDecide_TelemetryRegression compares the unchanged no-host path with
+// batch-aggregated decision telemetry over both shipped schemas. It is intended
+// for repeated benchstat runs when changing the sampler hot path.
+func BenchmarkDecide_TelemetryRegression(b *testing.B) {
+	for _, plugin := range benchPlugins() {
+		config, batch := benchmarkDecisionMetricBatch(b, plugin)
+		b.Run(plugin.name+"/disabled", func(b *testing.B) {
+			sampler := mustSampler(b, config, plugin.schema)
+			runDecide(b, sampler, batch)
+		})
+		b.Run(plugin.name+"/enabled", func(b *testing.B) {
+			sampler := mustSampler(b, config, plugin.schema).(*Sampler)
+			meter := &benchmarkMeter{
+				decisions: &benchmarkCounter{}, rows: &benchmarkCounter{}, droppedRows: &benchmarkCounter{}, unavailable: &benchmarkCounter{},
+			}
+			sampler.UseHost(&benchmarkHost{meter: meter})
+			runDecide(b, sampler, batch)
+			expectedTotal := uint64(b.N * len(batch.Traces))
+			if actualTotal := meter.decisions.total.Load(); actualTotal != expectedTotal {
+				b.Fatalf("telemetry counter total %d, want %d", actualTotal, expectedTotal)
+			}
+			if totalRows := meter.rows.total.Load(); totalRows > 0 {
+				b.ReportMetric(100*float64(meter.droppedRows.total.Load())/float64(totalRows), "row-drop-%")
+			}
+		})
+	}
+}
+
+// benchmarkDecisionMetricBatch exercises every decision family and both tag
+// decode paths in the telemetry regression benchmark.
+func benchmarkDecisionMetricBatch(b *testing.B, plugin benchPlugin) (string, *sdk.TraceBatch) {
+	b.Helper()
+	config := fmt.Sprintf(`{
+		"durationThresholdMs":%d,"keepErrors":true,"healthySampleRate":0.5,
+		"keepTagRules":[
+			{"tagKey":"missing","exists":true},
+			{"tagKey":"db.type","equals":"PostgreSQL"},
+			{"tagKey":"http.method","in":["POST","PUT"]}
+		]}`, plugin.durationMs)
+	healthyID := benchmarkTraceIDForSampleResult(true, 0.5)
+	rejectedID := benchmarkTraceIDForSampleResult(false, 0.5)
+	durationHit := plugin.durationMs*nanosPerMillis/plugin.schema.DurationTagNanosPerUnit + 1
+	blocks := []sdk.TraceBlock{
+		benchmarkDecisionMetricBlock(b, plugin, "duration", durationHit, false, nil),
+		benchmarkDecisionMetricBlock(b, plugin, "error", 1, true, nil),
+		benchmarkDecisionMetricBlock(b, plugin, "tag-equals", 1, false, []string{"db.type=PostgreSQL"}),
+		benchmarkDecisionMetricBlock(b, plugin, "tag-in", 1, false, []string{"note=a|b", "http.method=PUT"}),
+		benchmarkDecisionMetricBlock(b, plugin, healthyID, 1, false, nil),
+		benchmarkDecisionMetricBlock(b, plugin, rejectedID, 1, false, nil),
+	}
+	const realisticBatchSize = 64
+	seedCount := len(blocks)
+	for len(blocks) < realisticBatchSize {
+		blocks = append(blocks, blocks[len(blocks)%seedCount])
+	}
+	return config, sdktest.Batch(blocks...)
+}
+
+func benchmarkDecisionMetricBlock(b *testing.B, plugin benchPlugin, traceID string, duration int64, hasError bool, entries []string) sdk.TraceBlock {
+	b.Helper()
+	builder := sdktest.NewTrace(traceID).
+		TagAs(plugin.startCol, valuetype.ValueTypeTimestamp, int64(0)).
+		Tag(plugin.durCol, duration)
+	if plugin.errCol != "" {
+		errorValue := int64(0)
+		if hasError {
+			errorValue = 1
+		}
+		builder.Tag(plugin.errCol, errorValue)
+	} else if hasError {
+		entries = append(entries, "error")
+	}
+	if entries != nil {
+		builder.Tag(plugin.arrayCol, entries)
+	}
+	block, buildErr := builder.Build()
+	if buildErr != nil {
+		b.Fatalf("build decision metric fixture: %v", buildErr)
+	}
+	return block
+}
+
+func benchmarkTraceIDForSampleResult(keep bool, rate float64) string {
+	for candidateIndex := 0; ; candidateIndex++ {
+		traceID := fmt.Sprintf("benchmark-sample-%d", candidateIndex)
+		if (sampleFraction(traceID) < rate) == keep {
+			return traceID
 		}
 	}
 }
