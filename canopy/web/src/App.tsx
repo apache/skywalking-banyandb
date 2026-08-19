@@ -18,6 +18,7 @@
  */
 import React, { useState } from 'react';
 import { BrowserRouter, Routes, Route, useParams, useNavigate } from 'react-router';
+import { canopyBasePath } from './runtime-config.js';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { AuthProvider, useAuth } from './auth/AuthContext.js';
@@ -563,7 +564,7 @@ function AppContent() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
+      <BrowserRouter basename={canopyBasePath}>
         <AuthProvider>
           <AppContent />
         </AuthProvider>

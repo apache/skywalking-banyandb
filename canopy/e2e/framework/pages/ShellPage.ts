@@ -73,7 +73,7 @@ export class ShellPage extends BasePage {
 
   // ── Actions ────────────────────────────────────────────────────────────────
   async goto(): Promise<void> {
-    await this.page.goto('/');
+    await this.page.goto('./');
     await expect(this.sidebar()).toBeVisible();
   }
 

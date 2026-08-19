@@ -61,6 +61,8 @@ async function buildTestApp(configOverrides: Partial<Config> = {}): Promise<Fast
     ],
     devNoAuth: false,
     blockRfc1918: false,
+    basePath: '/',
+    baseHref: '/',
     ...configOverrides,
   };
 
@@ -223,7 +225,7 @@ describe('SPA fallback scoping', () => {
 
   beforeEach(async () => {
     app = await buildTestApp();
-    await registerStatic(app);
+    await registerStatic(app, { basePath: '/', baseHref: '/' } as Config);
   });
 
   afterEach(async () => { await app.close(); });

@@ -103,7 +103,11 @@ func TestBuildControlledMergeReportRecordsInventoryAndPluginIdentity(t *testing.
 	event := storagetrace.BenchmarkMergeEvent{
 		SelectionSHA256: "selection", InputPartIDs: []uint64{1, 2}, MatureInputParts: 2, InputRows: 10, OutputRows: 10,
 		Sampling: storagetrace.BenchmarkMergeSamplingExecuted, PluginCalls: 1, TracesEvaluated: 4, TracesRetained: 4,
-		Children: []storagetrace.BenchmarkMergeChild{{Name: LedgerLatency}, {Name: LedgerStartTime}},
+		PluginExecutions: []storagetrace.BenchmarkMergePluginExecution{
+			{PluginName: string(ControlledMergePipelineRetainAll), Result: "success", Calls: 1, ElapsedNanos: 10, MaxElapsedNanos: 10},
+		},
+		PluginBatches: []storagetrace.BenchmarkMergePluginBatch{{Result: "success", Batches: 1, Traces: 4}},
+		Children:      []storagetrace.BenchmarkMergeChild{{Name: LedgerLatency}, {Name: LedgerStartTime}},
 	}
 	inventory := storagetrace.BenchmarkMergeInventory{CoreRows: 10}
 	stagingLimits := storagetrace.BenchmarkMergeStagingLimits{MemoryLimit: 8 << 30, StageBytes: 64 << 20, TraceBytes: 64 << 20, MaxTraceCount: 65536}
@@ -135,7 +139,11 @@ func TestBuildControlledMergeReportVerifiesDeterministicDrops(t *testing.T) {
 	event := storagetrace.BenchmarkMergeEvent{
 		SelectionSHA256: "selection", InputPartIDs: []uint64{1, 2}, MatureInputParts: 2, InputRows: 10, OutputRows: 7,
 		Sampling: storagetrace.BenchmarkMergeSamplingExecuted, PluginCalls: 1, TracesEvaluated: 4, TracesRetained: 3, TracesDropped: 1,
-		Children: []storagetrace.BenchmarkMergeChild{{Name: LedgerLatency}, {Name: LedgerStartTime}},
+		PluginExecutions: []storagetrace.BenchmarkMergePluginExecution{
+			{PluginName: string(ControlledMergePipelineDeterministicDrop), Result: "success", Calls: 1, ElapsedNanos: 10, MaxElapsedNanos: 10},
+		},
+		PluginBatches: []storagetrace.BenchmarkMergePluginBatch{{Result: "success", Batches: 1, Traces: 4}},
+		Children:      []storagetrace.BenchmarkMergeChild{{Name: LedgerLatency}, {Name: LedgerStartTime}},
 	}
 	inventory := storagetrace.BenchmarkMergeInventory{
 		CoreRows: 7, IndexRows: map[string]uint64{LedgerLatency: 7, LedgerStartTime: 7},
@@ -170,6 +178,22 @@ func TestBuildControlledMergeReportRejectsWrongDeterministicOutputLedger(t *test
 		map[string]string{LedgerCore: "wrong", LedgerLatency: "latency", LedgerStartTime: "start"}, false)
 
 	require.ErrorContains(t, reportErr, "controlled merge correctness gate failed")
+}
+
+func TestControlledPluginExecutionMetricsDistinguishPlugins(t *testing.T) {
+	event := storagetrace.BenchmarkMergeEvent{
+		PluginCalls: 4, TracesEvaluated: 6,
+		PluginBatches: []storagetrace.BenchmarkMergePluginBatch{{Result: "success", Batches: 2, Traces: 6}},
+		PluginExecutions: []storagetrace.BenchmarkMergePluginExecution{
+			{PluginName: "latency", Result: "success", Calls: 2, ElapsedNanos: 10, MaxElapsedNanos: 7},
+			{PluginName: "probabilistic", Result: "success", Calls: 2, ElapsedNanos: 20, MaxElapsedNanos: 12},
+		},
+	}
+	require.True(t, controlledPluginExecutionMetricsCorrect(ControlledMergePipelineRetainAll, event))
+
+	event.PluginExecutions[1].BypassReason = "panic"
+	require.False(t, controlledPluginExecutionMetricsCorrect(ControlledMergePipelineRetainAll, event))
+	require.True(t, controlledPluginExecutionMetricsCorrect(ControlledMergePipelineDisabled, storagetrace.BenchmarkMergeEvent{}))
 }
 
 func TestWriteControlledMergeReportWritesJSON(t *testing.T) {

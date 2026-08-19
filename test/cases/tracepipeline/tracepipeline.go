@@ -62,7 +62,7 @@ var (
 
 const (
 	// seedOffset places both batches 2 hours in the past relative to BaseTime.
-	// This ensures isMergeHot (graceNs=0) returns false at merge time, so the
+	// This ensures mergeMayContainMatureTrace (merge grace 1ns) returns true at merge time, so the
 	// sampler filter is applied. All queries use the same offset + duration window.
 	seedOffset = -2 * time.Hour
 
@@ -76,7 +76,7 @@ const (
 // t-drop-2 (dur=499, status=success), t-keep-boundary (dur=500, status=success),
 // t-keep-highlat (dur=800, status=success). The 4/3 split with batch2 keeps the two
 // parts near-equal so the real merge-balance gate fires (no merge-policy tuning needed).
-// Timestamps are placed seedOffset before baseTime so isMergeHot returns false.
+// Timestamps are placed seedOffset before baseTime so mergeMayContainMatureTrace returns true.
 func SeedBatch1(baseTime time.Time) {
 	tracepipelinedata.WriteBatch(SharedContext.Connection, batch1File, PipelineGroup, baseTime.Add(seedOffset), time.Millisecond)
 }
@@ -85,7 +85,7 @@ func SeedBatch1(baseTime time.Time) {
 // Batch 2 contains 3 keeps: t-keep-errfast (dur=50, status=error),
 // t-keep-errslow (dur=900, status=error), t-keep-nostatus (dur=100, status=null/fail-open keep).
 // Writing this second part triggers the filtering compaction (max-merge-parts=2).
-// Timestamps are placed slightly after batch1 but still in the past so isMergeHot returns false.
+// Timestamps are placed slightly after batch1 but still in the past so mergeMayContainMatureTrace returns true.
 func SeedBatch2(baseTime time.Time) {
 	tracepipelinedata.WriteBatch(SharedContext.Connection, batch2File, PipelineGroup, baseTime.Add(seedOffset).Add(time.Second), time.Millisecond)
 }
@@ -134,9 +134,9 @@ func RegisterMergeFilterTable(description string) bool {
 const soakDefaultDuration = 3 * time.Minute
 
 // soakGracePad is the minimum age for soak timestamps relative to now.
-// Writes are placed this far in the past so isMergeHot returns false when the
+// Writes are placed this far in the past so mergeMayContainMatureTrace returns true when the
 // effective grace is explicitly configured at or below this value. The integration
-// harnesses use a 1ns merge grace and matching maximum-fragment-gap contract; variants
+// harnesses use a 1ns merge grace for maturity and boundary guarding; variants
 // exercising a larger grace must configure one no greater than this pad rather than
 // waiting for the production default.
 const soakGracePad = 2 * time.Minute
@@ -146,7 +146,7 @@ const soakGracePad = 2 * time.Minute
 // if that env var is not set the caller should ginkgo.Skip before invoking.
 //
 // Each iteration writes two batches with DISTINCT trace_ids (suffixed by the iteration
-// counter) using timestamps older than soakGracePad so isMergeHot is false regardless
+// counter) using timestamps older than soakGracePad so mergeMayContainMatureTrace is true regardless
 // of the server's configured grace value. After each pair, the loop asserts the
 // drop candidates become absent (filtered by the sampler) and the keeps remain visible.
 //
@@ -156,8 +156,8 @@ const soakGracePad = 2 * time.Minute
 //   - TRACE_PIPELINE_SOAK_DURATION overrides the default duration (default: 3 m).
 func RunSoak(duration time.Duration) {
 	deadline := time.Now().Add(duration)
-	// baseTime anchors all soak timestamps well in the past so isMergeHot is false
-	// for any grace value ≤ soakGracePad (the instant suite uses grace=0; the soak
+	// baseTime anchors all soak timestamps well in the past so mergeMayContainMatureTrace is true
+	// for any grace value ≤ soakGracePad (the instant suite uses merge grace 1ns; the soak
 	// validates the non-zero grace path by using timestamps older than 2 min).
 	baseTime := time.Now().Add(-soakGracePad).Truncate(time.Millisecond)
 
@@ -290,9 +290,9 @@ func querySoakByTraceID(innerGm gm.Gomega, conn *grpclib.ClientConn, traceID str
 // Set TRACE_PIPELINE_SOAK=1 to enable; set TRACE_PIPELINE_SOAK_DURATION to override the
 // default duration (default: 3 m, e.g. "20s", "5m").
 //
-// The soak reuses the standalone SharedContext (grace=0 on the instant server) and validates
+// The soak reuses the standalone SharedContext (merge grace 1ns on the instant server) and validates
 // the non-zero grace path by writing timestamps older than soakGracePad (2 min), which ensures
-// isMergeHot returns false for any grace ≤ 2 min including the server default of 30 s.
+// mergeMayContainMatureTrace returns true for any grace ≤ 2 min including the server default of 30 s.
 func RegisterSoak(description string) bool {
 	return g.Describe(description, func() {
 		g.It("soak: write→merge→verify loop", func() {

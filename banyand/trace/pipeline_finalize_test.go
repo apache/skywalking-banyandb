@@ -52,7 +52,6 @@ func TestBuildHotMergeFilter_MergeEventGate(t *testing.T) {
 		option: option{
 			nativePipelineEnabled: true,
 			mergeGraceDefault:     time.Second,
-			maxTraceFragmentGap:   time.Second,
 		},
 	}
 
@@ -75,12 +74,20 @@ func TestBuildHotMergeFilter_UsesMergeClock(t *testing.T) {
 	replaceSamplersForGroup(group, []namedSampler{{name: "s", sampler: &dummySampler{}}})
 	setMergeEventForGroup(group, true)
 
-	parts := []*partWrapper{{p: &part{partMetadata: partMetadata{
-		ID:           1,
-		TotalCount:   1,
-		MinTimestamp: int64(9 * time.Hour),
-		MaxTimestamp: int64(9 * time.Hour),
-	}}}}
+	parts := []*partWrapper{
+		{p: &part{partMetadata: partMetadata{
+			ID:           1,
+			TotalCount:   1,
+			MinTimestamp: int64(9 * time.Hour),
+			MaxTimestamp: int64(9 * time.Hour),
+		}}},
+		{p: &part{partMetadata: partMetadata{
+			ID:           2,
+			TotalCount:   1,
+			MinTimestamp: int64(11 * time.Hour),
+			MaxTimestamp: int64(11 * time.Hour),
+		}}},
+	}
 	tst := &tsTable{
 		segmentTimeRange: timestamp.NewInclusiveTimeRange(time.Unix(0, 0), time.Unix(0, int64(24*time.Hour))),
 		group:            group,
@@ -92,15 +99,15 @@ func TestBuildHotMergeFilter_UsesMergeClock(t *testing.T) {
 		option: option{
 			nativePipelineEnabled: true,
 			mergeGraceDefault:     2 * time.Hour,
-			maxTraceFragmentGap:   time.Hour,
 		},
 	}
 
 	tst.setMergeNow(time.Unix(0, int64(10*time.Hour)))
-	assert.Nil(t, tst.buildHotMergeFilter(parts), "a part inside the logical grace window must bypass sampling")
+	assert.Nil(t, tst.buildHotMergeFilter(parts), "no selected part can contain a mature trace")
 	tst.setMergeNow(time.Unix(0, int64(12*time.Hour)))
 	filter := tst.buildHotMergeFilter(parts)
-	require.NotNil(t, filter, "advancing only the logical clock must make the same part mature")
+	require.NotNil(t, filter, "a hot selected part must not bypass sampling for a mature selected trace")
+	assert.Equal(t, int64(10*time.Hour), filter.maturityFrontier)
 	filter.guard.Close()
 }
 

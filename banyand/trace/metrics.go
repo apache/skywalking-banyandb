@@ -18,11 +18,14 @@
 package trace
 
 import (
+	"sync"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
+	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
 )
 
 var (
@@ -32,50 +35,50 @@ var (
 )
 
 type metrics struct {
-	indexMetrics           *inverted.Metrics
-	totalWritten           meter.Counter
-	totalBatch             meter.Counter
-	totalBatchIntroLatency meter.Counter
-
-	totalIntroduceLoopStarted  meter.Counter
-	totalIntroduceLoopFinished meter.Counter
-
-	totalFlushLoopStarted  meter.Counter
-	totalFlushLoopFinished meter.Counter
-	totalFlushLoopErr      meter.Counter
-
-	totalMergeLoopStarted  meter.Counter
-	totalMergeLoopFinished meter.Counter
-	totalMergeLoopErr      meter.Counter
-
-	totalSyncLoopStarted  meter.Counter
-	totalSyncLoopFinished meter.Counter
-	totalSyncLoopErr      meter.Counter
-	totalSyncLoopLatency  meter.Counter
-	totalSyncLoopBytes    meter.Counter
-
-	totalFlushLoopProgress   meter.Counter
-	totalFlushed             meter.Counter
-	totalFlushedMemParts     meter.Counter
-	totalFlushPauseCompleted meter.Counter
-	totalFlushPauseBreak     meter.Counter
-	totalFlushIntroLatency   meter.Counter
-	totalFlushLatency        meter.Counter
-
-	totalMergedParts          meter.Counter
-	totalMergeLatency         meter.Counter
-	totalMerged               meter.Counter
-	totalMergeQueueLatency    meter.Counter
-	totalMergePartQuarantined meter.Counter
-	totalMergeBackoffSeconds  meter.Counter
-	totalMergePanicRecovered  meter.Counter
-
-	pipelineTracesEvaluated          meter.Counter
+	tbMetrics
+	totalMergeBackoffSeconds meter.Counter
+	// Plugin overhead is emitted once per decision batch and once per executed
+	// plugin link, never per trace. Names come from the bounded configured chain;
+	// result and reason values are closed constants.
+	pipelinePluginDurationSeconds    meter.Histogram
+	totalIntroduceLoopStarted        meter.Counter
+	totalIntroduceLoopFinished       meter.Counter
+	totalFlushLoopStarted            meter.Counter
+	totalFlushLoopFinished           meter.Counter
+	totalFlushLoopErr                meter.Counter
+	totalMergeLoopStarted            meter.Counter
+	totalMergeLoopFinished           meter.Counter
+	totalMergeLoopErr                meter.Counter
+	totalSyncLoopStarted             meter.Counter
+	totalSyncLoopFinished            meter.Counter
+	totalSyncLoopErr                 meter.Counter
+	totalSyncLoopLatency             meter.Counter
+	totalSyncLoopBytes               meter.Counter
+	totalFlushLoopProgress           meter.Counter
+	totalFlushed                     meter.Counter
+	totalFlushedMemParts             meter.Counter
+	totalFlushPauseCompleted         meter.Counter
+	totalFlushPauseBreak             meter.Counter
+	totalFlushIntroLatency           meter.Counter
+	totalFlushLatency                meter.Counter
+	totalMergedParts                 meter.Counter
+	totalMergeLatency                meter.Counter
+	totalMerged                      meter.Counter
+	totalMergeQueueLatency           meter.Counter
+	totalMergePartQuarantined        meter.Counter
+	totalWritten                     meter.Counter
+	totalBatchIntroLatency           meter.Counter
 	pipelineTracesDropped            meter.Counter
+	totalMergePanicRecovered         meter.Counter
 	pipelineTracesRetained           meter.Counter
 	pipelineTracesImmature           meter.Counter
 	pipelineOversizedTracesBypassed  meter.Counter
 	pipelinePluginErrors             meter.Counter
+	pipelinePluginBatches            meter.Counter
+	pipelinePluginExecutions         meter.Counter
+	pipelineTracesEvaluated          meter.Counter
+	pipelinePluginBatchTraces        meter.Histogram
+	pipelinePluginLinkBypasses       meter.Counter
 	pipelineAmbiguous                meter.Counter
 	pipelineSidxPruned               meter.Counter
 	pipelineGuardBloomProbes         meter.Counter
@@ -84,25 +87,19 @@ type metrics struct {
 	pipelineGuardPublicationRejected meter.Counter
 	pipelineGuardLosslessRetry       meter.Counter
 	pipelineGuardBypassed            meter.Counter
-	// pipelineTracesRetainedByCeiling and pipelineMergesCeilingReached carry the
-	// shard dimension, unlike the group-scoped pipeline counters above: the
-	// deletion bound they report against is per shard (spec section 5.2), so
-	// without seg/shard an operator can see that a group is under-deleting but not
-	// where. Both are deleted per tsTable in deleteMetrics, so their cardinality is
-	// bounded by live segments rather than growing with rotation.
+	// Ceiling metrics are group-scoped. The lane is retained only where ordinary
+	// and finalize merge behavior must be distinguished.
 	pipelineTracesRetainedByCeiling meter.Counter
 	pipelineMergesCeilingReached    meter.Counter
-	// pipelineDropSetBudgetBytes is the resolved ceiling every merge in this group
-	// is charged. It is the denominator for the two counters above: without it a
-	// dashboard cannot tell a capped merge from a merge that had room to spare.
+	// The budget gauge and entry histogram expose drop-set headroom before the
+	// ceiling starts retaining traces.
 	pipelineDropSetBudgetBytes meter.Gauge
-	// pipelineDropSetEntries distributes the dropped-ID count each merge finished
-	// with, so headroom is observable *before* the ceiling is reached. The counters
-	// above only fire once deletion has already been lost, which makes them a
-	// lagging indicator on their own.
-	pipelineDropSetEntries meter.Histogram
-
-	tbMetrics
+	pipelineDropSetEntries     meter.Histogram
+	totalBatch                 meter.Counter
+	indexMetrics               *inverted.Metrics
+	pipelinePluginNames        sync.Map
+	pipelinePluginLifecycleMu  sync.RWMutex
+	pipelinePluginClosed       bool
 }
 
 // dropSetEntryBuckets spans a single dropped trace ID to well past the ceiling a
@@ -111,6 +108,15 @@ type metrics struct {
 var dropSetEntryBuckets = meter.Buckets{
 	1, 100, 1_000, 10_000, 50_000, 100_000, 250_000, 500_000, 1_000_000, 2_000_000,
 }
+
+var (
+	pipelinePluginDurationBuckets = meter.Buckets{
+		0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10,
+	}
+	pipelinePluginBatchTraceBuckets = meter.Buckets{
+		1, 8, 32, 128, 512, 2_048, 8_192, 32_768, 131_072, 524_288, 1_048_576,
+	}
+)
 
 func (tst *tsTable) incTotalWritten(delta int) {
 	if tst == nil || tst.metrics == nil {
@@ -361,7 +367,7 @@ func (tst *tsTable) incPipelineTracesRetainedByCeiling(delta int) {
 	if tst == nil || tst.metrics == nil {
 		return
 	}
-	tst.metrics.pipelineTracesRetainedByCeiling.Inc(float64(delta), tst.p.ShardLabelValues()...)
+	tst.metrics.pipelineTracesRetainedByCeiling.Inc(float64(delta))
 }
 
 // incPipelineMergesCeilingReached counts one merge whose drop-set ceiling was
@@ -370,7 +376,7 @@ func (tst *tsTable) incPipelineMergesCeilingReached(lane string) {
 	if tst == nil || tst.metrics == nil {
 		return
 	}
-	tst.metrics.pipelineMergesCeilingReached.Inc(1, append(tst.p.ShardLabelValues(), lane)...)
+	tst.metrics.pipelineMergesCeilingReached.Inc(1, lane)
 }
 
 // observeDropSetUsage publishes what one merge's drop set cost against the
@@ -383,10 +389,9 @@ func (tst *tsTable) observeDropSetUsage(budget uint64, entries int, lane string)
 		return
 	}
 	tst.metrics.pipelineDropSetBudgetBytes.Set(float64(budget))
-	tst.metrics.pipelineDropSetEntries.Observe(float64(entries), append(tst.p.ShardLabelValues(), lane)...)
+	tst.metrics.pipelineDropSetEntries.Observe(float64(entries), lane)
 }
 
-//nolint:unused
 func (tst *tsTable) incPipelineTracesImmature(delta int) {
 	if tst == nil || tst.metrics == nil {
 		return
@@ -408,6 +413,36 @@ func (tst *tsTable) incPipelinePluginErrors(delta int, reason string) {
 		return
 	}
 	tst.metrics.pipelinePluginErrors.Inc(float64(delta), reason)
+}
+
+func (tst *tsTable) observePipelinePluginExecution(observation pluginExecutionObservation) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.pipelinePluginLifecycleMu.RLock()
+	defer tst.metrics.pipelinePluginLifecycleMu.RUnlock()
+	if tst.metrics.pipelinePluginClosed {
+		return
+	}
+	tst.metrics.pipelinePluginBatches.Inc(1, observation.result)
+	tst.metrics.pipelinePluginBatchTraces.Observe(float64(observation.batchTraces), observation.result)
+}
+
+func (tst *tsTable) observePipelinePluginLinkExecution(observation pluginLinkExecutionObservation) {
+	if tst == nil || tst.metrics == nil {
+		return
+	}
+	tst.metrics.pipelinePluginLifecycleMu.RLock()
+	defer tst.metrics.pipelinePluginLifecycleMu.RUnlock()
+	if tst.metrics.pipelinePluginClosed {
+		return
+	}
+	tst.metrics.pipelinePluginNames.Store(observation.pluginName, struct{}{})
+	tst.metrics.pipelinePluginExecutions.Inc(1, observation.pluginName, observation.result)
+	tst.metrics.pipelinePluginDurationSeconds.Observe(observation.elapsed.Seconds(), observation.pluginName, observation.result)
+	if observation.bypassReason != "" {
+		tst.metrics.pipelinePluginLinkBypasses.Inc(1, observation.pluginName, observation.bypassReason)
+	}
 }
 
 //nolint:unused
@@ -484,6 +519,9 @@ func (m *metrics) DeleteAll() {
 	if m == nil {
 		return
 	}
+	m.pipelinePluginLifecycleMu.Lock()
+	defer m.pipelinePluginLifecycleMu.Unlock()
+	m.pipelinePluginClosed = true
 	m.totalWritten.Delete()
 	m.totalBatch.Delete()
 	m.totalBatchIntroLatency.Delete()
@@ -536,6 +574,25 @@ func (m *metrics) DeleteAll() {
 	m.pipelineTracesRetained.Delete()
 	m.pipelineTracesImmature.Delete()
 	m.pipelineOversizedTracesBypassed.Delete()
+	for _, result := range []string{pluginExecutionResultSuccess, pluginExecutionResultTimeout, pluginExecutionResultCircuitOpen} {
+		m.pipelinePluginBatches.Delete(result)
+		m.pipelinePluginBatchTraces.Delete(result)
+	}
+	m.pipelinePluginNames.Range(func(name, _ any) bool {
+		pluginName := name.(string)
+		for _, result := range []string{
+			pluginExecutionResultSuccess, pluginExecutionResultDecideError, pluginExecutionResultMismatch,
+			pluginExecutionResultPanic, pluginExecutionResultLate,
+		} {
+			m.pipelinePluginExecutions.Delete(pluginName, result)
+			m.pipelinePluginDurationSeconds.Delete(pluginName, result)
+		}
+		for _, reason := range []string{sdk.BypassReasonDecideError, sdk.BypassReasonLengthMismatch, sdk.BypassReasonPanic} {
+			m.pipelinePluginLinkBypasses.Delete(pluginName, reason)
+		}
+		m.pipelinePluginNames.Delete(pluginName)
+		return true
+	})
 	m.pipelineAmbiguous.Delete()
 	m.pipelineSidxPruned.Delete()
 	m.pipelineGuardBloomProbes.Delete()
@@ -544,10 +601,12 @@ func (m *metrics) DeleteAll() {
 	m.pipelineGuardPublicationRejected.Delete()
 	m.pipelineGuardLosslessRetry.Delete()
 	m.pipelineGuardBypassed.Delete()
+	m.pipelineTracesRetainedByCeiling.Delete()
+	for _, lane := range []string{"", mergeLaneFast, mergeLaneSlow, mergeLaneFinalize} {
+		m.pipelineMergesCeilingReached.Delete(lane)
+		m.pipelineDropSetEntries.Delete(lane)
+	}
 	m.pipelineDropSetBudgetBytes.Delete()
-	// The ceiling counters and the entry histogram are shard-labeled, so they are
-	// deleted per tsTable in deleteMetrics rather than here — a group-level Delete()
-	// with no label values would not match their series.
 }
 
 func (s *supplier) newMetrics(p common.Position) storage.Metrics {
@@ -589,6 +648,11 @@ func (s *supplier) newMetrics(p common.Position) storage.Metrics {
 		pipelineTracesImmature:           factory.NewCounter("pipeline_traces_immature"),
 		pipelineOversizedTracesBypassed:  factory.NewCounter("pipeline_oversized_traces_bypassed"),
 		pipelinePluginErrors:             factory.NewCounter("pipeline_plugin_errors", "reason"),
+		pipelinePluginBatches:            factory.NewCounter("pipeline_plugin_batches", "result"),
+		pipelinePluginExecutions:         factory.NewCounter("pipeline_plugin_executions", "plugin_name", "result"),
+		pipelinePluginDurationSeconds:    factory.NewHistogram("pipeline_plugin_execution_duration_seconds", pipelinePluginDurationBuckets, "plugin_name", "result"),
+		pipelinePluginBatchTraces:        factory.NewHistogram("pipeline_plugin_batch_traces", pipelinePluginBatchTraceBuckets, "result"),
+		pipelinePluginLinkBypasses:       factory.NewCounter("pipeline_plugin_link_bypasses", "plugin_name", "reason"),
 		pipelineAmbiguous:                factory.NewCounter("pipeline_ambiguous"),
 		pipelineSidxPruned:               factory.NewCounter("pipeline_sidx_pruned"),
 		pipelineGuardBloomProbes:         factory.NewCounter("pipeline_guard_bloom_probes"),
@@ -597,11 +661,10 @@ func (s *supplier) newMetrics(p common.Position) storage.Metrics {
 		pipelineGuardPublicationRejected: factory.NewCounter("pipeline_guard_publication_rejected"),
 		pipelineGuardLosslessRetry:       factory.NewCounter("pipeline_guard_lossless_retry"),
 		pipelineGuardBypassed:            factory.NewCounter("pipeline_guard_bypassed"),
-		pipelineTracesRetainedByCeiling:  factory.NewCounter("pipeline_traces_retained_by_ceiling", common.ShardLabelNames()...),
-		pipelineMergesCeilingReached:     factory.NewCounter("pipeline_merges_ceiling_reached", append(common.ShardLabelNames(), "lane")...),
+		pipelineTracesRetainedByCeiling:  factory.NewCounter("pipeline_traces_retained_by_ceiling"),
+		pipelineMergesCeilingReached:     factory.NewCounter("pipeline_merges_ceiling_reached", "lane"),
 		pipelineDropSetBudgetBytes:       factory.NewGauge("pipeline_drop_set_budget_bytes"),
-		pipelineDropSetEntries: factory.NewHistogram("pipeline_drop_set_entries", dropSetEntryBuckets,
-			append(common.ShardLabelNames(), "lane")...),
+		pipelineDropSetEntries:           factory.NewHistogram("pipeline_drop_set_entries", dropSetEntryBuckets, "lane"),
 		tbMetrics: tbMetrics{
 			totalMemParts:                  factory.NewGauge("total_mem_part", common.ShardLabelNames()...),
 			totalMemElements:               factory.NewGauge("total_mem_elements", common.ShardLabelNames()...),
@@ -659,6 +722,11 @@ func (qs *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observa
 		pipelineTracesImmature:           factory.NewCounter("pipeline_traces_immature"),
 		pipelineOversizedTracesBypassed:  factory.NewCounter("pipeline_oversized_traces_bypassed"),
 		pipelinePluginErrors:             factory.NewCounter("pipeline_plugin_errors", "reason"),
+		pipelinePluginBatches:            factory.NewCounter("pipeline_plugin_batches", "result"),
+		pipelinePluginExecutions:         factory.NewCounter("pipeline_plugin_executions", "plugin_name", "result"),
+		pipelinePluginDurationSeconds:    factory.NewHistogram("pipeline_plugin_execution_duration_seconds", pipelinePluginDurationBuckets, "plugin_name", "result"),
+		pipelinePluginBatchTraces:        factory.NewHistogram("pipeline_plugin_batch_traces", pipelinePluginBatchTraceBuckets, "result"),
+		pipelinePluginLinkBypasses:       factory.NewCounter("pipeline_plugin_link_bypasses", "plugin_name", "reason"),
 		pipelineAmbiguous:                factory.NewCounter("pipeline_ambiguous"),
 		pipelineSidxPruned:               factory.NewCounter("pipeline_sidx_pruned"),
 		pipelineGuardBloomProbes:         factory.NewCounter("pipeline_guard_bloom_probes"),
@@ -667,11 +735,10 @@ func (qs *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observa
 		pipelineGuardPublicationRejected: factory.NewCounter("pipeline_guard_publication_rejected"),
 		pipelineGuardLosslessRetry:       factory.NewCounter("pipeline_guard_lossless_retry"),
 		pipelineGuardBypassed:            factory.NewCounter("pipeline_guard_bypassed"),
-		pipelineTracesRetainedByCeiling:  factory.NewCounter("pipeline_traces_retained_by_ceiling", common.ShardLabelNames()...),
-		pipelineMergesCeilingReached:     factory.NewCounter("pipeline_merges_ceiling_reached", append(common.ShardLabelNames(), "lane")...),
+		pipelineTracesRetainedByCeiling:  factory.NewCounter("pipeline_traces_retained_by_ceiling"),
+		pipelineMergesCeilingReached:     factory.NewCounter("pipeline_merges_ceiling_reached", "lane"),
 		pipelineDropSetBudgetBytes:       factory.NewGauge("pipeline_drop_set_budget_bytes"),
-		pipelineDropSetEntries: factory.NewHistogram("pipeline_drop_set_entries", dropSetEntryBuckets,
-			append(common.ShardLabelNames(), "lane")...),
+		pipelineDropSetEntries:           factory.NewHistogram("pipeline_drop_set_entries", dropSetEntryBuckets, "lane"),
 		tbMetrics: tbMetrics{
 			totalMemParts:                  factory.NewGauge("total_mem_part", common.ShardLabelNames()...),
 			totalMemElements:               factory.NewGauge("total_mem_elements", common.ShardLabelNames()...),
@@ -757,15 +824,6 @@ func (tst *tsTable) deleteMetrics() {
 	tst.metrics.tbMetrics.totalFilePartUncompressedBytes.Delete(tst.p.ShardLabelValues()...)
 	tst.metrics.tbMetrics.pendingDataCount.Delete(tst.p.ShardLabelValues()...)
 	tst.metrics.tbMetrics.mergeQuarantinedParts.Delete(tst.p.ShardLabelValues()...)
-	tst.metrics.pipelineTracesRetainedByCeiling.Delete(tst.p.ShardLabelValues()...)
-	// Mem merges carry an empty lane label (flusher.go passes ""), so that series
-	// needs deleting too, exactly as the "mem" rows in DeleteAll do for the
-	// totalMerge* families.
-	for _, lane := range []string{"", mergeLaneFast, mergeLaneSlow, mergeLaneFinalize} {
-		laneValues := append(tst.p.ShardLabelValues(), lane)
-		tst.metrics.pipelineMergesCeilingReached.Delete(laneValues...)
-		tst.metrics.pipelineDropSetEntries.Delete(laneValues...)
-	}
 	tst.metrics.indexMetrics.DeleteAll(tst.p.SegLabelValues()...)
 }
 

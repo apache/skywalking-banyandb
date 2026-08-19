@@ -120,19 +120,46 @@ func TestLogicalWriteAmplificationUsesSelectedMergeBytes(t *testing.T) {
 	require.Zero(t, logicalWriteAmplification(storagetrace.BenchmarkMergeReport{}))
 }
 
+func TestPluginExecutionMetricsCorrect(t *testing.T) {
+	report := storagetrace.BenchmarkMergeReport{
+		Events: []storagetrace.BenchmarkMergeEvent{{
+			PluginCalls: 4, TracesEvaluated: 6,
+			PluginBatches: []storagetrace.BenchmarkMergePluginBatch{{Result: "success", Batches: 2, Traces: 6}},
+			PluginExecutions: []storagetrace.BenchmarkMergePluginExecution{
+				{PluginName: "latency", Result: "success", Calls: 2, ElapsedNanos: 10, MaxElapsedNanos: 10},
+				{PluginName: "probabilistic", Result: "success", Calls: 2, ElapsedNanos: 20, MaxElapsedNanos: 20},
+			},
+		}},
+		PluginBatches: []storagetrace.BenchmarkMergePluginBatch{{Result: "success", Batches: 2, Traces: 6}},
+		PluginExecutions: []storagetrace.BenchmarkMergePluginExecution{
+			{PluginName: "latency", Result: "success", Calls: 2, ElapsedNanos: 10, MaxElapsedNanos: 10},
+			{PluginName: "probabilistic", Result: "success", Calls: 2, ElapsedNanos: 20, MaxElapsedNanos: 20},
+		},
+	}
+	require.True(t, pluginExecutionMetricsCorrect(report, true))
+
+	report.PluginExecutions[1].Result = "late"
+	require.False(t, pluginExecutionMetricsCorrect(report, true))
+	report.PluginExecutions[1].Result = "success"
+	report.PluginBatches[0].Result = "timeout"
+	require.False(t, pluginExecutionMetricsCorrect(report, true))
+	require.True(t, pluginExecutionMetricsCorrect(storagetrace.BenchmarkMergeReport{}, false))
+}
+
 func TestRetainAllFinalizeOutputRequiresExecutedLosslessFinalize(t *testing.T) {
 	baseEvent := storagetrace.BenchmarkMergeEvent{
 		Type: "finalize", Phase: storagetrace.BenchmarkMergePhaseCooldown,
 		Sampling: storagetrace.BenchmarkMergeSamplingExecuted, PluginCalls: 2,
 		TracesEvaluated: 10, TracesRetained: 10, MatureInputParts: 1,
 	}
-	require.True(t, retainAllFinalizeOutputCorrect([]storagetrace.BenchmarkMergeEvent{baseEvent}))
+	require.False(t, retainAllFinalizeOutputCorrect([]storagetrace.BenchmarkMergeEvent{baseEvent}),
+		"the full-day validation must exercise ordinary merge sampling")
 	hotBypass := storagetrace.BenchmarkMergeEvent{
 		Type: "file", Phase: storagetrace.BenchmarkMergePhasePrimary,
 		Sampling: storagetrace.BenchmarkMergeSamplingNotExecuted, Reason: storagetrace.BenchmarkMergeReasonGrace,
 		HotInputParts: 1,
 	}
-	require.True(t, retainAllFinalizeOutputCorrect([]storagetrace.BenchmarkMergeEvent{hotBypass, baseEvent}))
+	require.False(t, retainAllFinalizeOutputCorrect([]storagetrace.BenchmarkMergeEvent{hotBypass, baseEvent}))
 
 	hotPluginExecution := hotBypass
 	hotPluginExecution.Sampling = storagetrace.BenchmarkMergeSamplingExecuted
@@ -140,7 +167,15 @@ func TestRetainAllFinalizeOutputRequiresExecutedLosslessFinalize(t *testing.T) {
 	hotPluginExecution.PluginCalls = 1
 	hotPluginExecution.TracesEvaluated = 1
 	hotPluginExecution.TracesRetained = 1
-	require.False(t, retainAllFinalizeOutputCorrect([]storagetrace.BenchmarkMergeEvent{hotPluginExecution, baseEvent}))
+	require.True(t, retainAllFinalizeOutputCorrect([]storagetrace.BenchmarkMergeEvent{hotPluginExecution, baseEvent}),
+		"a mixed hot/mature selection may execute sampling for its mature trace groups")
+
+	allImmature := hotBypass
+	allImmature.Sampling = storagetrace.BenchmarkMergeSamplingEnabledNoEvaluation
+	allImmature.Reason = "other"
+	allImmature.TracesImmature = 1
+	require.False(t, retainAllFinalizeOutputCorrect([]storagetrace.BenchmarkMergeEvent{allImmature, baseEvent}),
+		"an all-immature filter build does not satisfy the ordinary execution gate")
 
 	missingFinalize := baseEvent
 	missingFinalize.Type = "file"
@@ -165,8 +200,8 @@ func TestSamplingOracleOutputRequiresExpectedMatureDecisions(t *testing.T) {
 	events := []storagetrace.BenchmarkMergeEvent{
 		{
 			Type: "file", Phase: storagetrace.BenchmarkMergePhasePrimary,
-			Sampling: storagetrace.BenchmarkMergeSamplingNotExecuted, Reason: storagetrace.BenchmarkMergeReasonGrace,
-			HotInputParts: 2,
+			Sampling: storagetrace.BenchmarkMergeSamplingExecuted, PluginCalls: 1,
+			TracesEvaluated: 4, TracesRetained: 3, TracesDropped: 1, TracesImmature: 2, HotInputParts: 2,
 		},
 		{
 			Type: "finalize", Phase: storagetrace.BenchmarkMergePhaseCooldown,
@@ -181,8 +216,10 @@ func TestSamplingOracleOutputRequiresExpectedMatureDecisions(t *testing.T) {
 	wrongTotals[1].TracesDropped--
 	require.False(t, samplingOracleOutputCorrect(wrongTotals, oracle))
 
-	hotEvaluation := append([]storagetrace.BenchmarkMergeEvent(nil), events...)
-	hotEvaluation[0].Sampling = storagetrace.BenchmarkMergeSamplingExecuted
-	hotEvaluation[0].PluginCalls = 1
-	require.False(t, samplingOracleOutputCorrect(hotEvaluation, oracle))
+	missingOrdinaryExecution := append([]storagetrace.BenchmarkMergeEvent(nil), events...)
+	missingOrdinaryExecution[0] = storagetrace.BenchmarkMergeEvent{
+		Type: "file", Phase: storagetrace.BenchmarkMergePhasePrimary,
+		Sampling: storagetrace.BenchmarkMergeSamplingNotExecuted, Reason: storagetrace.BenchmarkMergeReasonGrace, HotInputParts: 2,
+	}
+	require.False(t, samplingOracleOutputCorrect(missingOrdinaryExecution, oracle))
 }

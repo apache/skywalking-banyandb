@@ -27,6 +27,9 @@ import { registerAuth } from './routes/auth.js';
 const config = loadConfig();
 
 const app = Fastify({
+  // TLS is commonly terminated by an ingress. This lets secure-session's
+  // secure: 'auto' option use the proxy's X-Forwarded-Proto value.
+  trustProxy: true,
   logger: {
     level: process.env.LOG_LEVEL || 'info',
     redact: ['req.headers.authorization', 'res.headers.authorization'],
@@ -53,10 +56,12 @@ app.addHook('onSend', async (_request, reply) => {
 app.get('/healthz', async () => ({ status: 'ok' }));
 
 async function start() {
-  await registerSession(app, config);
-  await registerAuth(app, config);
-  await registerProxy(app, config);
-  await registerStatic(app);
+  await app.register(async scopedApp => {
+    await registerSession(scopedApp, config);
+    await registerAuth(scopedApp, config);
+    await registerProxy(scopedApp, config);
+    await registerStatic(scopedApp, config);
+  }, config.basePath === '/' ? {} : { prefix: config.basePath });
 
   await app.listen({ port: config.port, host: '0.0.0.0' });
   app.log.info(`Canopy BFF listening on port ${config.port}`);

@@ -25,6 +25,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -35,11 +36,12 @@ import (
 )
 
 const (
-	seedSourceEnv   = "TRACE_SAMPLER_BENCH_SOURCE"
-	seedCatalogEnv  = "TRACE_SAMPLER_BENCH_CATALOG"
-	seedScheduleEnv = "TRACE_SAMPLER_BENCH_SCHEDULE"
-	seedExpectedEnv = "TRACE_SAMPLER_BENCH_EXPECTED"
-	seedPluginEnv   = "TRACE_SAMPLER_BENCH_PLUGIN"
+	seedSourceEnv          = "TRACE_SAMPLER_BENCH_SOURCE"
+	seedCatalogEnv         = "TRACE_SAMPLER_BENCH_CATALOG"
+	seedScheduleEnv        = "TRACE_SAMPLER_BENCH_SCHEDULE"
+	seedExpectedEnv        = "TRACE_SAMPLER_BENCH_EXPECTED"
+	seedPluginEnv          = "TRACE_SAMPLER_BENCH_PLUGIN"
+	seedDecisionMetricName = "trace_sampler_decisions_total"
 )
 
 type seedSamplerInputs struct {
@@ -53,7 +55,49 @@ type seedSamplerCase struct {
 	name      string
 	config    []byte
 	batchSize int
+	telemetry bool
 }
+
+type seedBenchmarkCounter struct {
+	total atomic.Uint64
+}
+
+func (counter *seedBenchmarkCounter) Inc(delta float64, _ ...string) {
+	counter.total.Add(uint64(delta))
+}
+
+type seedBenchmarkMeter struct {
+	decisions   *seedBenchmarkCounter
+	rows        *seedBenchmarkCounter
+	droppedRows *seedBenchmarkCounter
+	unavailable *seedBenchmarkCounter
+}
+
+func (meter *seedBenchmarkMeter) Counter(name string, _ ...string) sdk.Counter {
+	switch name {
+	case seedDecisionMetricName:
+		return meter.decisions
+	case "trace_sampler_rows_total":
+		return meter.rows
+	case "trace_sampler_rows_dropped_total":
+		return meter.droppedRows
+	case "trace_sampler_row_count_unavailable_total":
+		return meter.unavailable
+	default:
+		return &seedBenchmarkCounter{}
+	}
+}
+func (meter *seedBenchmarkMeter) Gauge(_ string, _ ...string) sdk.Gauge { return nil }
+func (meter *seedBenchmarkMeter) Histogram(_ string, _ []float64, _ ...string) sdk.Histogram {
+	return nil
+}
+
+type seedBenchmarkHost struct {
+	meter *seedBenchmarkMeter
+}
+
+func (host *seedBenchmarkHost) Meter() sdk.Meter   { return host.meter }
+func (host *seedBenchmarkHost) Logger() sdk.Logger { return nil }
 
 type seedTestSampler struct {
 	decide     func(*sdk.TraceBatch) (sdk.Verdict, error)
@@ -227,7 +271,7 @@ var (
 )
 
 func benchmarkSeedSamplerCase(b *testing.B, sampler sdk.Sampler, builder *SamplerBatchBuilder, instances []Instance, batchSize int,
-	expectedDigest string,
+	expectedDigest string, telemetryMeter *seedBenchmarkMeter,
 ) {
 	b.Helper()
 	batches, buildErr := buildSeedBatches(context.Background(), builder, instances, sampler.Project(), batchSize)
@@ -241,6 +285,12 @@ func benchmarkSeedSamplerCase(b *testing.B, sampler sdk.Sampler, builder *Sample
 	if expectedDigest != "" && seedVerdictDigest(preflight) != expectedDigest {
 		b.Fatalf("verdict drift: got %s, want %s", seedVerdictDigest(preflight), expectedDigest)
 	}
+	if telemetryMeter != nil {
+		telemetryMeter.decisions.total.Store(0)
+		telemetryMeter.rows.total.Store(0)
+		telemetryMeter.droppedRows.total.Store(0)
+		telemetryMeter.unavailable.total.Store(0)
+	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for iteration := 0; iteration < b.N; iteration++ {
@@ -253,7 +303,20 @@ func benchmarkSeedSamplerCase(b *testing.B, sampler sdk.Sampler, builder *Sample
 	b.StopTimer()
 	traceOperations := float64(b.N * len(instances))
 	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/traceOperations, "ns/trace")
+	b.ReportMetric(traceOperations/b.Elapsed().Seconds(), "traces/s")
 	b.ReportMetric(float64(len(instances)), "traces/op")
+	if telemetryMeter != nil {
+		expectedTotal := uint64(b.N * len(instances))
+		if actualTotal := telemetryMeter.decisions.total.Load(); actualTotal != expectedTotal {
+			b.Fatalf("telemetry counter total %d, want %d", actualTotal, expectedTotal)
+		}
+		if unavailable := telemetryMeter.unavailable.total.Load(); unavailable != 0 {
+			b.Fatalf("real seed has %d trace evaluations without row counts", unavailable)
+		}
+		if totalRows := telemetryMeter.rows.total.Load(); totalRows > 0 {
+			b.ReportMetric(100*float64(telemetryMeter.droppedRows.total.Load())/float64(totalRows), "row-drop-%")
+		}
+	}
 }
 
 func TestSeedSamplerArtifact(t *testing.T) {
@@ -342,6 +405,7 @@ func BenchmarkSeedSampler(b *testing.B) {
 		{name: "tag-regex", config: []byte(`{"keepTagRules":[{"tagKey":"db.type","regex":"Postgre.*"}]}`), batchSize: 512},
 		{name: "status-regex", config: []byte(`{"keepTagRules":[{"tagKey":"http.status_code","regex":"5\\d{2}"}]}`), batchSize: 512},
 		{name: "default", config: DefaultSkyWalkingSamplerConfig, batchSize: 512},
+		{name: "default-telemetry", config: DefaultSkyWalkingSamplerConfig, batchSize: 512, telemetry: true},
 	}
 	for _, batchSize := range []int{1, 16, 64, 256, 512, 4096, 8192, 16384} {
 		cases = append(cases,
@@ -362,7 +426,19 @@ func BenchmarkSeedSampler(b *testing.B) {
 			if strings.HasPrefix(benchmarkCase.name, "default") {
 				expectedDigest = inputs.expected.VerdictSHA256
 			}
-			benchmarkSeedSamplerCase(b, sampler, builder, inputs.plan.Instances, benchmarkCase.batchSize, expectedDigest)
+			var telemetryMeter *seedBenchmarkMeter
+			if benchmarkCase.telemetry {
+				hostAwareSampler, hostAware := sampler.(sdk.HostAware)
+				if !hostAware {
+					b.Fatal("loaded sampler does not implement sdk.HostAware")
+				}
+				telemetryMeter = &seedBenchmarkMeter{
+					decisions: &seedBenchmarkCounter{}, rows: &seedBenchmarkCounter{},
+					droppedRows: &seedBenchmarkCounter{}, unavailable: &seedBenchmarkCounter{},
+				}
+				hostAwareSampler.UseHost(&seedBenchmarkHost{meter: telemetryMeter})
+			}
+			benchmarkSeedSamplerCase(b, sampler, builder, inputs.plan.Instances, benchmarkCase.batchSize, expectedDigest, telemetryMeter)
 		})
 	}
 	projectionCases := []struct {
@@ -398,7 +474,7 @@ func BenchmarkSeedSampler(b *testing.B) {
 				seedBenchmarkPayloadSink = payloadBytes
 				return sdk.Verdict{Keep: keep}, nil
 			}}
-			benchmarkSeedSamplerCase(b, sampler, builder, inputs.plan.Instances, 512, "")
+			benchmarkSeedSamplerCase(b, sampler, builder, inputs.plan.Instances, 512, "", nil)
 		})
 	}
 }

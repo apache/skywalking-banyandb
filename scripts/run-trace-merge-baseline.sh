@@ -19,7 +19,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 FIXTURE=${FIXTURE:-"$ROOT/.scratch/trace-pipeline-merge-performance/generated-fixture-2x-v2-timestamps"}
 OUTPUT=${OUTPUT:-"$ROOT/.scratch/trace-pipeline-merge-performance/baseline-report"}
-IMAGE=${IMAGE:-golang:1.25.12}
+IMAGE=${IMAGE:-golang:1.25.13}
 DATA_CPUS=${DATA_CPUS:-0-1}
 DATA_CPU_LIMIT=${DATA_CPU_LIMIT:-2}
 DATA_MEMORY=${DATA_MEMORY:-4g}
@@ -236,7 +236,8 @@ run_once() {
       -e GOMAXPROCS="$DATA_GOMAXPROCS" -v "$ROOT":/workspace:ro -v "$FIXTURE":/fixture:ro -v "$run_dir":/run -w /workspace "$IMAGE" \
       /workspace/.scratch/trace-pipeline-merge-performance/bin/trace-merge-benchmark build-oracle \
       --source=/run/source --plugin=/workspace/${FULL_PLUGIN#"$ROOT/"} \
-      --plugin-config=/workspace/${FULL_PLUGIN_CONFIG#"$ROOT/"} "${expected_sampler_flag[@]}" --output=/run/oracle.json
+      --plugin-config=/workspace/${FULL_PLUGIN_CONFIG#"$ROOT/"} "${expected_sampler_flag[@]}" \
+      --segment-min-time-nanos="$SEGMENT_MIN_TIME_NANOS" --segment-max-time-nanos="$SEGMENT_MAX_TIME_NANOS" --output=/run/oracle.json
   fi
   local attribution_flag=()
   if [[ "$attribution" == true ]]; then attribution_flag=(--attribution); fi
@@ -244,6 +245,7 @@ run_once() {
   local finalize_flag=()
   if [[ "$FULL_PIPELINE" != "disabled" ]]; then
     plugin_flag=(--plugin=/workspace/${FULL_PLUGIN#"$ROOT/"} --plugin-sha256="$FULL_PLUGIN_SHA" \
+      --plugin-name="$FULL_PIPELINE" \
       --segment-min-time-nanos="$SEGMENT_MIN_TIME_NANOS" --segment-max-time-nanos="$SEGMENT_MAX_TIME_NANOS")
     if [[ "$FULL_PIPELINE" == "skywalking" || "$FULL_PIPELINE" == deterministic-* ]]; then
       plugin_flag+=(--plugin-config=/workspace/${FULL_PLUGIN_CONFIG#"$ROOT/"} \

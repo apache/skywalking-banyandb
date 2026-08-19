@@ -43,7 +43,7 @@ import (
 	tracepipelinedata "github.com/apache/skywalking-banyandb/test/cases/tracepipeline/data"
 )
 
-// dynSeedOffset places timestamps well in the past so isMergeHot (grace=0) returns false.
+// dynSeedOffset places timestamps well in the past so mergeMayContainMatureTrace (merge grace 1ns) returns true.
 const dynSeedOffset = -2 * time.Hour
 
 // queryByTraceID queries the "filter" trace for a single trace_id over a broad window.
@@ -114,7 +114,7 @@ func makeDynRow(traceID string, durationMs int64, status string) tracepipelineda
 }
 
 // writeTwoPartMerge writes two batches via the liaison, triggering a filtering merge
-// on both data nodes (max-merge-parts=2, grace=0). rowA lands as part-1; once it is
+// on both data nodes (max-merge-parts=2, merge grace 1ns). rowA lands as part-1; once it is
 // visible (one part, no merge), rowB is written as part-2 to trigger the merge.
 func writeTwoPartMerge(
 	conn *grpc.ClientConn,
@@ -151,7 +151,7 @@ func writeTwoPartMerge(
 //  5. LateJoin: a new data node joining the cluster converges via syncLoop.
 //  6. LiaisonNoLoad: the liaison's sampler-load path is unreachable (structural gate).
 var _ = ginkgo.Describe("Dynamic sampler registration (distributed)", ginkgo.Ordered, func() {
-	// dynBase anchors all dynamic-spec timestamps in the past (grace=0 → isMergeHot=false).
+	// dynBase anchors all dynamic-spec timestamps in the past (merge grace 1ns → mergeMayContainMatureTrace=true).
 	var dynBase time.Time
 
 	ginkgo.BeforeAll(func() {
@@ -208,7 +208,7 @@ var _ = ginkgo.Describe("Dynamic sampler registration (distributed)", ginkgo.Ord
 	// --- Step 3: Remove → stop dropping (Correction-C measurement AC) ---
 	//
 	// After RemoveSamplerRuntime both healthy nodes must stop dropping within
-	// merge_grace + one merge cycle. With grace=0 this is the very next merge pass.
+	// merge_grace + one merge cycle. With merge grace 1ns this is the very next merge pass.
 	// No nudge is used (Correction C); STOP latency is the inherited schema-sync
 	// propagation (WatchSchemas push stream) + the merge-cool floor.
 	ginkgo.Describe("Remove: both healthy nodes stop dropping within merge_grace+one cycle", ginkgo.Ordered, func() {
@@ -232,7 +232,7 @@ var _ = ginkgo.Describe("Dynamic sampler registration (distributed)", ginkgo.Ord
 
 		ginkgo.It("previously-dropped shape (dur=100 success) is RETAINED on both nodes after remove", func() {
 			// Correction-C measurement AC: STOP latency ≤ merge_grace + one merge cycle.
-			// With grace=0 the trace must be present after the first merge pass
+			// With merge grace 1ns the trace must be present after the first merge pass
 			// following removal. We assert eventual presence (no nudge, no explicit
 			// time bound beyond EventuallyTimeout which exceeds the merge cycle).
 			assertTracePresent(connection, retainedID, dynBase)
@@ -317,8 +317,6 @@ var _ = ginkgo.Describe("Dynamic sampler registration (distributed)", ginkgo.Ord
 				setup.BuildDataNodeFlags(clusterConfig, clusterDataDir0, clusterDN0Ports),
 				"--trace-pipeline-native-plugin-enabled=true",
 				"--trace-pipeline-trusted-plugin-dir="+clusterTrustedDir,
-				"--trace-pipeline-merge-grace-default=1ns",
-				"--trace-pipeline-max-fragment-gap=1ns",
 				"--trace-max-merge-parts=2",
 				"--trace-flush-timeout=500ms",
 			)
@@ -402,8 +400,6 @@ var _ = ginkgo.Describe("Dynamic sampler registration (distributed)", ginkgo.Ord
 				ljPorts,
 				"--trace-pipeline-native-plugin-enabled=true",
 				"--trace-pipeline-trusted-plugin-dir="+clusterTrustedDir,
-				"--trace-pipeline-merge-grace-default=1ns",
-				"--trace-pipeline-max-fragment-gap=1ns",
 				"--trace-max-merge-parts=2",
 				"--trace-flush-timeout=500ms",
 			)

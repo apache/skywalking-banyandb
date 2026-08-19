@@ -25,7 +25,6 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/meter/prom"
@@ -56,12 +55,9 @@ func metricLabelValue(m *dto.Metric, name string) string {
 	return ""
 }
 
-// TestFinalizeStateGaugesReportTerminalShards asserts the scan pre-filter
-// publishes every cooled shard's finalize state, including shards it then skips.
-// A terminal shard is precisely the one an operator needs to see — it can never
-// delete another trace (spec section 5.2) — and it is also the one no later stage
-// of the scan visits, so this pre-filter is the only place it stays visible.
-func TestFinalizeStateGaugesReportTerminalShards(t *testing.T) {
+// TestFinalizeStateGaugesReportGroupSummary asserts the scan pre-filter rolls
+// shard state up to one group-level worst-case summary.
+func TestFinalizeStateGaugesReportGroupSummary(t *testing.T) {
 	tmpPath, defFn := test.Space(require.New(t))
 	defer defFn()
 	lfs := fs.NewLocalFileSystem()
@@ -79,34 +75,30 @@ func TestFinalizeStateGaugesReportTerminalShards(t *testing.T) {
 	factory := services.NewFactory(prom.NewProvider(pipelineScope, reg), nil, nil)
 	sr := &schemaRepo{samplerMeter: newSamplerMetrics(factory)}
 
-	require.True(t, sr.segmentMayWarrantObserved("g1", lfs, shardPaths, cfg),
+	warrants, summary := segmentMayWarrantSummary(lfs, shardPaths, cfg)
+	require.True(t, warrants,
 		"shard-0 still warrants, so the segment must be reopened")
+	sr.samplerMeter.observeFinalizeState("g1", summary.maxRounds, summary.terminal)
 
 	rounds := gatherMetric(t, reg, "finalize_rounds")
-	require.Len(t, rounds, 2, "every shard must report, not only the warranting one")
-	byShard := map[string]float64{}
-	for _, m := range rounds {
-		byShard[metricLabelValue(m, "shard")] = m.GetGauge().GetValue()
-	}
-	require.Equal(t, float64(2), byShard["0"])
-	require.Equal(t, float64(cfg.maxRounds), byShard["1"])
+	require.Len(t, rounds, 1)
+	require.Equal(t, "g1", metricLabelValue(rounds[0], "group"))
+	require.Empty(t, metricLabelValue(rounds[0], "seg"))
+	require.Empty(t, metricLabelValue(rounds[0], "shard"))
+	require.Equal(t, float64(cfg.maxRounds), rounds[0].GetGauge().GetValue())
 
 	terminal := gatherMetric(t, reg, "finalize_terminal")
-	require.Len(t, terminal, 2)
-	byShardTerminal := map[string]float64{}
-	for _, m := range terminal {
-		byShardTerminal[metricLabelValue(m, "shard")] = m.GetGauge().GetValue()
-	}
-	require.Equal(t, float64(0), byShardTerminal["0"])
-	require.Equal(t, float64(1), byShardTerminal["1"],
-		"a shard at max_finalize_rounds is terminal and must report as such")
+	require.Len(t, terminal, 1)
+	require.Equal(t, "g1", metricLabelValue(terminal[0], "group"))
+	require.Empty(t, metricLabelValue(terminal[0], "seg"))
+	require.Empty(t, metricLabelValue(terminal[0], "shard"))
+	require.Equal(t, float64(1), terminal[0].GetGauge().GetValue(),
+		"a terminal shard must make the group-level any-terminal gauge true")
 }
 
-// TestSegmentMayWarrantObservedMatchesUnobserved asserts adding telemetry did not
-// change the pre-filter's decision, which is the one thing it must not do: it is a
-// conservative superset of warrantsFinalize and skipping a warranting segment
-// would silently stop finalization.
-func TestSegmentMayWarrantObservedMatchesUnobserved(t *testing.T) {
+// TestSegmentMayWarrantSummaryMatchesDecision asserts summary collection does
+// not change the conservative segment pre-filter decision.
+func TestSegmentMayWarrantSummaryMatchesDecision(t *testing.T) {
 	tmpPath, defFn := test.Space(require.New(t))
 	defer defFn()
 	lfs := fs.NewLocalFileSystem()
@@ -128,9 +120,8 @@ func TestSegmentMayWarrantObservedMatchesUnobserved(t *testing.T) {
 				lfs.MkdirIfNotExist(shardPaths[idx], 0o755)
 				require.NoError(t, writeFinalizeState(lfs, shardPaths[idx], st))
 			}
-			sr := &schemaRepo{samplerMeter: newSamplerMetrics(nil)}
-			require.Equal(t, segmentMayWarrant(lfs, shardPaths, cfg),
-				sr.segmentMayWarrantObserved("g1", lfs, shardPaths, cfg))
+			warrants, _ := segmentMayWarrantSummary(lfs, shardPaths, cfg)
+			require.Equal(t, segmentMayWarrant(lfs, shardPaths, cfg), warrants)
 		})
 	}
 }
@@ -143,24 +134,20 @@ func TestSegmentMayWarrantObservedMatchesUnobserved(t *testing.T) {
 func newDropSetMetricsForTest(reg *prometheus.Registry) *metrics {
 	factory := services.NewFactory(prom.NewProvider(tbScope, reg), nil, nil)
 	return &metrics{
-		pipelineTracesRetainedByCeiling: factory.NewCounter("pipeline_traces_retained_by_ceiling", common.ShardLabelNames()...),
-		pipelineMergesCeilingReached:    factory.NewCounter("pipeline_merges_ceiling_reached", append(common.ShardLabelNames(), "lane")...),
+		pipelineTracesRetainedByCeiling: factory.NewCounter("pipeline_traces_retained_by_ceiling"),
+		pipelineMergesCeilingReached:    factory.NewCounter("pipeline_merges_ceiling_reached", "lane"),
 		pipelineDropSetBudgetBytes:      factory.NewGauge("pipeline_drop_set_budget_bytes"),
-		pipelineDropSetEntries: factory.NewHistogram("pipeline_drop_set_entries", dropSetEntryBuckets,
-			append(common.ShardLabelNames(), "lane")...),
+		pipelineDropSetEntries:          factory.NewHistogram("pipeline_drop_set_entries", dropSetEntryBuckets, "lane"),
 	}
 }
 
-// TestDropSetInstrumentsCarryShardAndLane asserts the four drop-set instruments
-// emit with the label arity they were declared with, and that the ceiling counters
-// carry seg/shard. A wrong label count panics inside the meter, so this test is the
-// guard for that; the existing ceiling tests run with nil metrics and cannot catch
-// it.
-func TestDropSetInstrumentsCarryShardAndLane(t *testing.T) {
+// TestDropSetInstrumentsUseGroupAndLane asserts drop-set instruments do not
+// create segment- or shard-level series. The table factory supplies group as a
+// constant label, while lane remains dynamic where merge behavior differs.
+func TestDropSetInstrumentsUseGroupAndLane(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	tst := &tsTable{
 		metrics: newDropSetMetricsForTest(reg),
-		p:       common.Position{Database: "g1", Segment: "seg-1", Shard: "3"},
 	}
 
 	tst.observeDropSetUsage(32<<20, 1234, mergeLaneFinalize)
@@ -175,20 +162,21 @@ func TestDropSetInstrumentsCarryShardAndLane(t *testing.T) {
 	require.Len(t, entries, 1)
 	require.Equal(t, uint64(1), entries[0].GetHistogram().GetSampleCount())
 	require.Equal(t, float64(1234), entries[0].GetHistogram().GetSampleSum())
-	require.Equal(t, "3", metricLabelValue(entries[0], "shard"))
+	require.Empty(t, metricLabelValue(entries[0], "seg"))
+	require.Empty(t, metricLabelValue(entries[0], "shard"))
 	require.Equal(t, mergeLaneFinalize, metricLabelValue(entries[0], "lane"))
 
 	retained := gatherMetric(t, reg, "pipeline_traces_retained_by_ceiling")
 	require.Len(t, retained, 1)
 	require.Equal(t, float64(7), retained[0].GetCounter().GetValue())
-	require.Equal(t, "3", metricLabelValue(retained[0], "shard"),
-		"the ceiling counter must localize which shard is under-deleting")
-	require.Equal(t, "seg-1", metricLabelValue(retained[0], "seg"))
+	require.Empty(t, metricLabelValue(retained[0], "seg"))
+	require.Empty(t, metricLabelValue(retained[0], "shard"))
 
 	merges := gatherMetric(t, reg, "pipeline_merges_ceiling_reached")
 	require.Len(t, merges, 1)
 	require.Equal(t, float64(1), merges[0].GetCounter().GetValue())
-	require.Equal(t, "3", metricLabelValue(merges[0], "shard"))
+	require.Empty(t, metricLabelValue(merges[0], "seg"))
+	require.Empty(t, metricLabelValue(merges[0], "shard"))
 	require.Equal(t, mergeLaneFinalize, metricLabelValue(merges[0], "lane"))
 }
 
@@ -200,7 +188,6 @@ func TestDropSetUsageObservedWhenUncapped(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	tst := &tsTable{
 		metrics: newDropSetMetricsForTest(reg),
-		p:       common.Position{Database: "g1", Segment: "seg-1", Shard: "0"},
 	}
 
 	tst.observeDropSetUsage(32<<20, 10, mergeLaneFast)
@@ -219,20 +206,10 @@ func TestDropSetUsageSkippedWhenUnlimited(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	tst := &tsTable{
 		metrics: newDropSetMetricsForTest(reg),
-		p:       common.Position{Database: "g1", Segment: "seg-1", Shard: "0"},
 	}
 
 	tst.observeDropSetUsage(0, 500, mergeLaneFast)
 
 	require.Nil(t, gatherMetric(t, reg, "pipeline_drop_set_budget_bytes"))
 	require.Nil(t, gatherMetric(t, reg, "pipeline_drop_set_entries"))
-}
-
-// TestShardLabelFromPath pins the label derivation, including the fallback for an
-// unexpected directory layout: an empty label would silently merge every shard's
-// series into one.
-func TestShardLabelFromPath(t *testing.T) {
-	require.Equal(t, "0", shardLabelFromPath("/data/measure-default/seg-20240101/shard-0"))
-	require.Equal(t, "17", shardLabelFromPath("shard-17"))
-	require.Equal(t, "unexpected", shardLabelFromPath("/data/unexpected"))
 }

@@ -32,7 +32,7 @@ test.describe('boot @e2e @boot @smoke', () => {
   });
 
   test('SPA boots with the dark theme applied', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('./');
     // The theme sets the body background to #0d120e = rgb(13, 18, 14).
     const bgColor = await page.evaluate(() => window.getComputedStyle(document.body).backgroundColor);
     expect(bgColor).toMatch(/rgb\(13,\s*18,\s*14\)/);

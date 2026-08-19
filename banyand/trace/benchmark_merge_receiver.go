@@ -46,6 +46,7 @@ type BenchmarkMergeReceiverOptions struct {
 	LogicalNow       time.Time
 	EventWriter      io.Writer
 	Sampler          sdk.Sampler
+	SamplerName      string
 	PartMergeDepths  map[uint64]uint32
 	SegmentTimeRange timestamp.TimeRange
 	IndexNames       []string
@@ -55,6 +56,9 @@ type BenchmarkMergeReceiverOptions struct {
 	Attribution      bool
 	BlockMerges      bool
 }
+
+// BenchmarkDefaultMergeGrace is the production trace-pipeline merge-grace fallback used by benchmark workloads.
+const BenchmarkDefaultMergeGrace = defaultTracePipelineMergeGrace
 
 // BenchmarkMergeStagingLimits reports the effective limits used by the trace sampler staging path.
 type BenchmarkMergeStagingLimits struct {
@@ -141,7 +145,7 @@ func NewBenchmarkMergeReceiver(root string, options BenchmarkMergeReceiverOption
 	table, tableErr := newTSTable(fileSystem, absoluteRoot, common.Position{Database: group},
 		logger.GetLogger("trace-merge-benchmark"), options.SegmentTimeRange, option{
 			flushTimeout: 0, mergePolicy: newDefaultMergePolicy(), protector: memoryProtector,
-			nativePipelineEnabled: options.Sampler != nil, maxTraceFragmentGap: time.Minute, mergeGraceDefault: options.MergeGrace,
+			nativePipelineEnabled: options.Sampler != nil, mergeGraceDefault: options.MergeGrace,
 			decideTimeout: 5 * time.Second, decideTimeoutCircuitBreak: 3, benchmarkMergeBlocked: options.BlockMerges,
 		}, nil)
 	if tableErr != nil {
@@ -162,7 +166,7 @@ func NewBenchmarkMergeReceiver(root string, options BenchmarkMergeReceiverOption
 		table.mustGetOrCreateSidx(indexName)
 	}
 	if options.Sampler != nil {
-		deregister := registerSampler(group, options.Sampler)
+		deregister := registerNamedSampler(group, options.SamplerName, options.Sampler)
 		receiver.closeCallbacks = append(receiver.closeCallbacks, func() error {
 			deregister()
 			return options.Sampler.Close()
@@ -243,6 +247,14 @@ func (bpr *BenchmarkPartReceiver) TraceFragmentMaybeOutsideSelection(selectedPar
 	}
 	guardMin := traceFragmentSaturatingSub(minTimestamp, int64(grace))
 	guardMax := traceFragmentSaturatingAdd(maxTimestamp, int64(grace))
+	segmentRange := bpr.table.segmentTimeRange
+	if !segmentRange.Start.IsZero() && !segmentRange.End.IsZero() {
+		coverageMin := segmentRange.Start.UnixNano()
+		coverageMax := segmentRange.End.UnixNano()
+		if guardMin < coverageMin || guardMax > coverageMax {
+			return true, nil
+		}
+	}
 	snapshot := bpr.table.currentSnapshot()
 	if snapshot == nil {
 		return false, fmt.Errorf("benchmark trace fragment snapshot is unavailable")
@@ -367,7 +379,7 @@ func (bpr *BenchmarkPartReceiver) RunFinalizeRound(ctx context.Context, logicalN
 	}
 	bpr.table.setMergeNow(logicalNow)
 	// A dispatched finalization is owned by the table lifecycle so its durable introduction is not interrupted by an HTTP disconnect.
-	finalized, finalizeErr := bpr.table.runFinalizeRound(lookupSamplers(bpr.table.group), int64(grace)) //nolint:contextcheck
+	finalized, finalizeErr := bpr.table.runFinalizeRoundNamed(lookupNamedSamplers(bpr.table.group), int64(grace)) //nolint:contextcheck
 	if finalizeErr != nil {
 		return false, fmt.Errorf("cannot run benchmark finalize round: %w", finalizeErr)
 	}

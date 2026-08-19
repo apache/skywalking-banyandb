@@ -43,16 +43,26 @@ import (
 // the segment is left intact and the scanner retries on a later tick). It is invoked
 // only by the finalize scanner while the owning segment is incRef-held, so the
 // tsTable's introducer loop is alive to apply the introduction.
+//
+//nolint:unparam // Test compatibility wrapper; production preserves configured names through runFinalizeRoundNamed.
 func (tst *tsTable) runFinalizeRound(samplers []sdk.Sampler, graceNs int64) (bool, error) {
+	named := make([]namedSampler, len(samplers))
+	for idx, sampler := range samplers {
+		named[idx] = namedSampler{sampler: sampler}
+	}
+	return tst.runFinalizeRoundNamed(named, graceNs)
+}
+
+func (tst *tsTable) runFinalizeRoundNamed(samplers []namedSampler, graceNs int64) (bool, error) {
 	if len(samplers) == 0 {
 		return false, nil
 	}
 	mergeGraceNs := tst.effectiveMergeGraceNs()
-	guardGrace := tst.option.maxTraceFragmentGap
-	if graceNs < 0 || guardGrace <= 0 || mergeGraceNs < int64(guardGrace) {
+	if graceNs < 0 || mergeGraceNs <= 0 {
 		tst.incPipelineGuardBypassed()
 		return false, nil
 	}
+	guardGrace := time.Duration(mergeGraceNs)
 	maturityGraceNs := max(graceNs, mergeGraceNs)
 	// Resource gate: never run finalize compute under memory pressure (constraint 1).
 	if tst.pm != nil && tst.pm.State() == protector.StateHigh {
@@ -152,7 +162,9 @@ func (tst *tsTable) runFinalizeRound(samplers []sdk.Sampler, graceNs int64) (boo
 	// Build the finalize filter. Eligibility uses the greater of finalize_grace and
 	// merge_grace, while boundary discovery expands by the separately enforced maximum
 	// fragment gap. The chain fails open on any Decide error.
-	chain := newMergeChain(tst.group, "", samplers, tst.option.decideTimeoutCircuitBreak)
+	chain := newNamedMergeChain(tst.group, "", samplers, tst.option.decideTimeoutCircuitBreak)
+	chain.observeExecution = tst.observePipelinePluginExecution
+	chain.observeLinkExecution = tst.observePipelinePluginLinkExecution
 	filter := &mergeFilter{
 		chain:                 chain,
 		guard:                 guard,

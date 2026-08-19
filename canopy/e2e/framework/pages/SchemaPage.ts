@@ -53,17 +53,17 @@ export class SchemaPage extends BasePage {
 
   // ── Navigation ─────────────────────────────────────────────────────────────
   async gotoOverview(type: MetaType): Promise<void> {
-    await this.page.goto(`/metadata/${type}`);
+    await this.page.goto(`./metadata/${type}`);
     await expect(this.newGroupButton()).toBeVisible();
   }
 
   async gotoGroup(type: MetaType, group: string): Promise<void> {
-    await this.page.goto(`/metadata/${type}/${group}`);
+    await this.page.goto(`./metadata/${type}/${group}`);
     await expect(this.pageTitle(group)).toBeVisible();
   }
 
   async gotoResource(type: MetaType, group: string, name: string): Promise<void> {
-    await this.page.goto(`/metadata/${type}/${group}/${name}`);
+    await this.page.goto(`./metadata/${type}/${group}/${name}`);
     await expect(this.pageTitle(name)).toBeVisible();
   }
 

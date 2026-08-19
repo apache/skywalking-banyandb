@@ -142,8 +142,8 @@ log "Loaded ${#PRESENCE[@]} presence, ${#NON_EMPTY[@]} non_empty, ${#GAP[@]} doc
 
 scrape > "${SCRAPE_FILE}"
 
-if [ ! -s "${SCRAPE_FILE}" ] || ! grep -q 'node_role="' "${SCRAPE_FILE}"; then
-  fail "no agents registered (proxy scrape has no node_role labels)"
+if [ ! -s "${SCRAPE_FILE}" ] || ! grep -q 'node_role="' "${SCRAPE_FILE}" || ! grep -q 'container_name="' "${SCRAPE_FILE}"; then
+  fail "no usable agents registered (proxy scrape requires node_role and container_name labels)"
 fi
 
 ROLES="$(grep -oE 'node_role="[^"]+"' "${SCRAPE_FILE}" | sort -u | wc -l | tr -d ' ')"

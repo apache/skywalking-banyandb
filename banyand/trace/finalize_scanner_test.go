@@ -168,12 +168,11 @@ func TestFinalizeScan_SelectsCooledSegmentAndFinalizes(t *testing.T) {
 		SegmentInterval: hourly,
 		TTL:             storage.IntervalRule{Unit: storage.DAY, Num: 30},
 		Option: option{
-			flushTimeout:        0,
-			protector:           protector.Nop{},
-			mergePolicy:         newDefaultMergePolicyForTesting(),
-			decideTimeout:       time.Second,
-			mergeGraceDefault:   time.Millisecond,
-			maxTraceFragmentGap: time.Nanosecond,
+			flushTimeout:      0,
+			protector:         protector.Nop{},
+			mergePolicy:       newDefaultMergePolicyForTesting(),
+			decideTimeout:     time.Second,
+			mergeGraceDefault: time.Millisecond,
 		},
 	}
 	require.NoError(t, os.MkdirAll(opts.Location, storage.DirPerm))

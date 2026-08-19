@@ -36,7 +36,7 @@ export class IndexRulePage extends BasePage {
   }
 
   async goto(type: MetaType, group: string): Promise<void> {
-    await this.page.goto(`/metadata/${type}/${group}/Index`);
+    await this.page.goto(`./metadata/${type}/${group}/Index`);
     await expect(this.ruleTab()).toBeVisible();
   }
 

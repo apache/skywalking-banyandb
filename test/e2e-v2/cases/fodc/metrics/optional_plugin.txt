@@ -1,0 +1,49 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Metrics used only by the optional Trace Plugin Sampling dashboard. The base
+# FODC E2E does not load a trace plugin, so check-metrics.sh does not require
+# these series. They are validated in a plugin-enabled live-cluster run.
+banyandb_trace_pipeline_finalize_rounds
+banyandb_trace_pipeline_finalize_terminal
+banyandb_trace_pipeline_plugin_log_dropped_total
+banyandb_trace_pipeline_plugin_telemetry_panic_total
+banyandb_trace_pipeline_plugin_telemetry_series_rejected_total
+banyandb_trace_pipeline_plugin_trace_sampler_decisions_total
+banyandb_trace_pipeline_plugin_trace_sampler_rows_dropped_total
+banyandb_trace_pipeline_plugin_trace_sampler_rows_total
+banyandb_trace_pipeline_sampler_active_count
+banyandb_trace_pipeline_sampler_load_failed
+banyandb_trace_tst_pipeline_ambiguous
+banyandb_trace_tst_pipeline_drop_set_budget_bytes
+banyandb_trace_tst_pipeline_drop_set_entries_bucket
+banyandb_trace_tst_pipeline_guard_budget_exhausted
+banyandb_trace_tst_pipeline_guard_bypassed
+banyandb_trace_tst_pipeline_guard_deferred
+banyandb_trace_tst_pipeline_guard_lossless_retry
+banyandb_trace_tst_pipeline_guard_publication_rejected
+banyandb_trace_tst_pipeline_merges_ceiling_reached
+banyandb_trace_tst_pipeline_oversized_traces_bypassed
+banyandb_trace_tst_pipeline_plugin_batch_traces_bucket
+banyandb_trace_tst_pipeline_plugin_batches
+banyandb_trace_tst_pipeline_plugin_errors
+banyandb_trace_tst_pipeline_plugin_execution_duration_seconds_bucket
+banyandb_trace_tst_pipeline_plugin_execution_duration_seconds_sum
+banyandb_trace_tst_pipeline_plugin_executions
+banyandb_trace_tst_pipeline_traces_dropped
+banyandb_trace_tst_pipeline_traces_evaluated
+banyandb_trace_tst_pipeline_traces_immature
+banyandb_trace_tst_pipeline_traces_retained
+banyandb_trace_tst_pipeline_traces_retained_by_ceiling

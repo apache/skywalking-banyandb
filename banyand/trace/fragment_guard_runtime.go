@@ -144,12 +144,8 @@ func (tst *tsTable) newTraceFragmentGuardSession(selected []*partWrapper, grace 
 		}
 	}
 	catalog.CoverageMinTimestamp, catalog.CoverageMaxTimestamp, catalog.CoverageKnown = traceFragmentCoverage(tst.segmentTimeRange)
-	if tst.option.maxTraceFragmentGap > 0 {
-		catalog.EnforcedMaxFragmentGap = tst.option.maxTraceFragmentGap
-		catalog.TemporalSafety = traceFragmentTemporalSafetyMaxGapEnforced
-	} else {
-		catalog.TemporalSafety = traceFragmentTemporalSafetyUnknown
-	}
+	catalog.EnforcedMaxFragmentGap = grace
+	catalog.TemporalSafety = traceFragmentTemporalSafetyMaxGapEnforced
 	if catalog.Pin == nil || !catalog.Complete || !catalog.CoverageKnown ||
 		!traceFragmentCoverageHasInterior(catalog.CoverageMinTimestamp, catalog.CoverageMaxTimestamp, grace) ||
 		traceFragmentPartsValidationReason(catalog.OutsideParts) != "" {

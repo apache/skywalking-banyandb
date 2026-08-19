@@ -178,6 +178,7 @@ type RunReport struct {
 	Version                   uint32                               `json:"version"`
 	LedgerVerified            bool                                 `json:"ledgerVerified"`
 	SamplingVerified          bool                                 `json:"samplingVerified"`
+	PluginMetricsVerified     bool                                 `json:"pluginMetricsVerified"`
 	Correct                   bool                                 `json:"correct"`
 }
 

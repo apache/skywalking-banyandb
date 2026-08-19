@@ -294,7 +294,7 @@ func readyTestSuite() SuiteReport {
 			LogicalWriteAmplification: 1.0009,
 			Primary:                   PhaseResult{InputBytes: 100, DrainNanos: int64(100 * time.Millisecond)},
 			Environment: Environment{
-				Commit: "abc123", GoVersion: "go1.25.12", Kernel: "5.15.0",
+				Commit: "abc123", GoVersion: "go1.25.13", Kernel: "5.15.0",
 				GOMAXPROCS: 2, MemoryMax: "4294967296", MemorySwapMax: "0", PIDsMax: "512", OneShardOnly: true,
 				DataNodeCgroup: "/data", ControllerCgroup: "/controller", CPUSet: "0-1",
 				Filesystem: "ext4", StorageDevice: "/dev/sda1", ImageDigest: "sha256:image",

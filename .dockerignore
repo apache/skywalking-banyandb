@@ -25,6 +25,7 @@
 # history, JS dependency trees, and local caches/logs.
 
 .git
+.scratch
 **/node_modules
 canopy/dist
 **/*.log

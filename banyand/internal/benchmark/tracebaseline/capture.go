@@ -25,7 +25,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/benchmark/tracefixture"
 	storagetrace "github.com/apache/skywalking-banyandb/banyand/trace"
@@ -71,7 +70,8 @@ func CaptureControlledMergeSeed(ctx context.Context, options ControlledSeedCaptu
 	}
 	receiver, receiverErr := storagetrace.NewBenchmarkMergeReceiver( //nolint:contextcheck // The storage constructor has no context parameter.
 		options.DataRoot, storagetrace.BenchmarkMergeReceiverOptions{
-			LogicalNow: schedule.DayStart, MergeGrace: 2 * time.Hour, MaxInputPartID: uint64(len(schedule.Writes)), Attribution: true, BlockMerges: true,
+			LogicalNow: schedule.DayStart, MergeGrace: storagetrace.BenchmarkDefaultMergeGrace, MaxInputPartID: uint64(len(schedule.Writes)), Attribution: true,
+			BlockMerges: true,
 		})
 	if receiverErr != nil {
 		return ControlledMergeSeedManifest{}, fmt.Errorf("cannot open controlled seed receiver: %w", receiverErr)
@@ -128,7 +128,9 @@ func CaptureControlledMergeSeed(ctx context.Context, options ControlledSeedCaptu
 				if copyErr := copyControlledSnapshot(options.DataRoot, snapshotRoot, activePartIDs); copyErr != nil {
 					return ControlledMergeSeedManifest{}, fmt.Errorf("cannot copy controlled seed snapshot: %w", copyErr)
 				}
-				manifest, buildErr := BuildControlledMergeSeedManifest(snapshotRoot, selection, 2*time.Hour, logicalLedger, partDepths)
+				manifest, buildErr := BuildControlledMergeSeedManifest(
+					snapshotRoot, selection, storagetrace.BenchmarkDefaultMergeGrace, logicalLedger, partDepths,
+				)
 				if buildErr != nil {
 					return ControlledMergeSeedManifest{}, buildErr
 				}

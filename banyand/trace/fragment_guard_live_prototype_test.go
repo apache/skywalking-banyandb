@@ -303,28 +303,6 @@ func prepareLiveGuardSelection(testingTB testing.TB, dataset *liveGuardDataset,
 	return prepared
 }
 
-func runLiveHybridGuard(prepared *preparedLiveGuardSelection, grace int64) liveGuardMetrics {
-	metrics := liveGuardMetrics{}
-	for traceIdx := range prepared.traces {
-		traceData := &prepared.traces[traceIdx]
-		result := prototypeConfirmTraceDropBytes(traceData.idBytes, traceData.minTS, traceData.maxTS, grace, prepared.outsideParts)
-		metrics.bloomProbes += result.bloomProbes
-		metrics.candidateParts += result.candidateParts
-		if result.canDrop {
-			metrics.dropped++
-			if traceData.split {
-				metrics.falseNegative++
-			}
-			continue
-		}
-		metrics.retained++
-		if !traceData.split {
-			metrics.falseDeferral++
-		}
-	}
-	return metrics
-}
-
 func runLiveAllBloomGuard(prepared *preparedLiveGuardSelection) liveGuardMetrics {
 	metrics := liveGuardMetrics{}
 	for traceIdx := range prepared.traces {
@@ -433,17 +411,40 @@ func liveGuardCandidatePartIDs(prepared *preparedLiveGuardSelection, grace int64
 }
 
 func runLiveMaturityAwareHybrid(prepared *preparedLiveGuardSelection, now int64) liveGuardMergeResult {
-	if isMergeHot(prepared.selectedParts, liveGuardDefaultGrace, now) {
+	frontier := now - liveGuardDefaultGrace
+	if !mergeMayContainMatureTrace(prepared.selectedParts, frontier) {
 		return liveGuardMergeResult{
 			guardMetrics: liveGuardMetrics{retained: len(prepared.traces)},
 		}
 	}
-	return liveGuardMergeResult{
-		guardMetrics:    runLiveHybridGuard(prepared, liveGuardDefaultGrace),
-		samplingApplied: true,
-		sampledTraces:   len(prepared.traces),
-		guardedDrops:    len(prepared.traces),
+	result := liveGuardMergeResult{}
+	for traceIdx := range prepared.traces {
+		traceData := &prepared.traces[traceIdx]
+		if traceData.maxTS > frontier {
+			result.guardMetrics.retained++
+			continue
+		}
+		result.samplingApplied = true
+		result.sampledTraces++
+		result.guardedDrops++
+		guardResult := prototypeConfirmTraceDropBytes(
+			traceData.idBytes, traceData.minTS, traceData.maxTS, liveGuardDefaultGrace, prepared.outsideParts,
+		)
+		result.guardMetrics.bloomProbes += guardResult.bloomProbes
+		result.guardMetrics.candidateParts += guardResult.candidateParts
+		if guardResult.canDrop {
+			result.guardMetrics.dropped++
+			if traceData.split {
+				result.guardMetrics.falseNegative++
+			}
+			continue
+		}
+		result.guardMetrics.retained++
+		if !traceData.split {
+			result.guardMetrics.falseDeferral++
+		}
 	}
+	return result
 }
 
 func requireLiveGuardResult(t *testing.T, expected liveGuardExpectedResult, candidatePairs int, metrics liveGuardMetrics) {
@@ -526,7 +527,7 @@ func TestFragmentGuardLiveShardCooledLargeParts(t *testing.T) {
 	)
 }
 
-func TestFragmentGuardLiveShardHotSelectionsBypassSampling(t *testing.T) {
+func TestFragmentGuardLiveShardMixedMaturitySelections(t *testing.T) {
 	dataset := loadLiveGuardDataset(t)
 	frontier := dataset.logicalNow - liveGuardDefaultGrace
 	for selectionIdx := range liveGuardHotSelections {
@@ -534,14 +535,21 @@ func TestFragmentGuardLiveShardHotSelectionsBypassSampling(t *testing.T) {
 		t.Run(selection.name, func(t *testing.T) {
 			prepared := prepareLiveGuardSelection(t, dataset, selection)
 			require.Greater(t, prepared.selectedMaxTimestamp, frontier)
+			matureTraces := 0
+			for traceIdx := range prepared.traces {
+				if prepared.traces[traceIdx].maxTS <= frontier {
+					matureTraces++
+				}
+			}
 			mergeResult := runLiveMaturityAwareHybrid(&prepared, dataset.logicalNow)
-			require.False(t, mergeResult.samplingApplied)
-			require.Zero(t, mergeResult.sampledTraces)
-			require.Zero(t, mergeResult.guardedDrops)
-			require.Equal(t, len(prepared.traces), mergeResult.guardMetrics.retained)
-			require.Zero(t, mergeResult.guardMetrics.dropped)
-			require.Zero(t, mergeResult.guardMetrics.candidateParts)
-			require.Zero(t, mergeResult.guardMetrics.bloomProbes)
+			require.Equal(t, matureTraces > 0, mergeResult.samplingApplied)
+			require.Equal(t, matureTraces, mergeResult.sampledTraces)
+			require.Equal(t, matureTraces, mergeResult.guardedDrops)
+			require.Equal(t, len(prepared.traces), mergeResult.guardMetrics.retained+mergeResult.guardMetrics.dropped)
+			if selection.name == "cooled_large_plus_recent_small" {
+				require.Positive(t, matureTraces)
+				require.Less(t, matureTraces, len(prepared.traces))
+			}
 			if selection.name == "recent_small_parts" {
 				for _, partID := range selection.selectedPartIDs {
 					require.Less(t, dataset.parts[partID].metadata.CompressedSizeBytes, liveGuardFixtureLargePartMinimumSize)
@@ -580,7 +588,7 @@ func BenchmarkFragmentGuardLiveShard(b *testing.B) {
 
 	hotSelection := liveGuardHotSelections[0]
 	hotPrepared := prepareLiveGuardSelection(b, dataset, hotSelection)
-	b.Run("recent_small_parts/maturity_bypass_2h", func(b *testing.B) {
+	b.Run("recent_small_parts/per_trace_maturity_2h", func(b *testing.B) {
 		benchmarkLiveGuard(b, &hotPrepared, func(preparedSelection *preparedLiveGuardSelection) liveGuardMetrics {
 			return runLiveMaturityAwareHybrid(preparedSelection, dataset.logicalNow).guardMetrics
 		})

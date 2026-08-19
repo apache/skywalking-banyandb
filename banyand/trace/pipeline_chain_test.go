@@ -70,6 +70,12 @@ type blockingProjectionSampler struct {
 	observed chan string
 }
 
+type gatedSampler struct {
+	entered chan struct{}
+	release chan struct{}
+	calls   atomic.Int64
+}
+
 func (s *blockingProjectionSampler) Kind() sdk.Kind { return sdk.KindSampler }
 
 func (s *blockingProjectionSampler) Project() sdk.Projection {
@@ -83,6 +89,17 @@ func (s *blockingProjectionSampler) Decide(batch *sdk.TraceBatch) (sdk.Verdict, 
 	<-s.release
 	s.observed <- string(batch.Traces[0].Tags[0].Values[0]) + "/" + string(batch.Traces[0].Spans[0])
 	return sdk.Verdict{Keep: []bool{true}}, nil
+}
+
+func (s *gatedSampler) Kind() sdk.Kind          { return sdk.KindSampler }
+func (s *gatedSampler) Project() sdk.Projection { return sdk.Projection{} }
+func (s *gatedSampler) Close() error            { return nil }
+
+func (s *gatedSampler) Decide(batch *sdk.TraceBatch) (sdk.Verdict, error) {
+	s.calls.Add(1)
+	s.entered <- struct{}{}
+	<-s.release
+	return retainAllVerdict(len(batch.Traces), nil), nil
 }
 
 func (s *durationEnvelopeSampler) Kind() sdk.Kind          { return sdk.KindSampler }
@@ -525,7 +542,7 @@ func TestRawProjectionBudgetCoversSparseColumnsAndDecodedPayload(t *testing.T) {
 	projection := sdk.Projection{Tags: []string{"missing-a", "status", "missing-b"}, SpanIDs: true, Spans: true}
 	charged := stagedBlock.approxEvaluationBytes(projection)
 	vectors := &stagedEvaluationVectors{}
-	prepareStagedProjectionVectors(vectors, []stagedTrace{stagedBlock}, []stagedTraceGroup{{
+	prepareStagedProjectionVectors(vectors, nil, []stagedTrace{stagedBlock}, []stagedTraceGroup{{
 		traceID: "trace-projected", start: 0, end: 1, minTS: 1, maxTS: 2, validMetadata: true,
 	}}, projection)
 	assembled, valid := assembleRawTraceBlockInto(vectors, &stagedBlock, projection)
@@ -815,35 +832,100 @@ func TestMergeFilter_DropMatureTrace(t *testing.T) {
 	require.Len(t, dropped, 1)
 }
 
-func TestMergeFilter_HotMergeGate(t *testing.T) {
+func TestMergeFilter_MergeMayContainMatureTrace(t *testing.T) {
 	now := time.Now().UnixNano()
 	grace := int64(time.Minute)
-	makePW := func(maxTS int64) *partWrapper {
-		return &partWrapper{p: &part{partMetadata: partMetadata{MaxTimestamp: maxTS}}}
+	frontier := now - grace
+	makePW := func(minTS, maxTS int64) *partWrapper {
+		return &partWrapper{p: &part{partMetadata: partMetadata{MinTimestamp: minTS, MaxTimestamp: maxTS}}}
 	}
-	// All parts cold: maxTS well below now-grace.
+	// All selected parts can contain mature traces.
 	cold := []*partWrapper{
-		makePW(now - 2*int64(time.Minute)),
-		makePW(now - 3*int64(time.Minute)),
+		makePW(now-3*int64(time.Minute), now-2*int64(time.Minute)),
+		makePW(now-4*int64(time.Minute), now-3*int64(time.Minute)),
 	}
-	require.False(t, isMergeHot(cold, grace, now), "all-cold parts must not be hot")
+	require.True(t, mergeMayContainMatureTrace(cold, frontier), "all-cold parts can contain mature traces")
 
-	// One part within grace window makes the whole merge hot.
+	// A hot part must not suppress a mature selected part.
 	mixed := []*partWrapper{
-		makePW(now - 2*int64(time.Minute)),
-		makePW(now - 30*int64(time.Second)),
+		makePW(now-3*int64(time.Minute), now-2*int64(time.Minute)),
+		makePW(now-30*int64(time.Second), now),
 	}
-	require.True(t, isMergeHot(mixed, grace, now), "one warm part makes the merge hot")
+	require.True(t, mergeMayContainMatureTrace(mixed, frontier), "one hot part must not bypass the whole merge")
 
-	// All parts within grace.
+	// No selected part can contain a mature trace.
 	hot := []*partWrapper{
-		makePW(now),
-		makePW(now - 10*int64(time.Second)),
+		makePW(now-10*int64(time.Second), now),
+		makePW(now-30*int64(time.Second), now-20*int64(time.Second)),
 	}
-	require.True(t, isMergeHot(hot, grace, now), "all-hot parts is hot")
+	require.False(t, mergeMayContainMatureTrace(hot, frontier), "all-hot parts cannot contain mature traces")
 
-	// Empty slice is not hot.
-	require.False(t, isMergeHot(nil, grace, now), "empty part list is not hot")
+	require.False(t, mergeMayContainMatureTrace(nil, frontier), "empty part list cannot contain mature traces")
+}
+
+func TestMergeFilter_EvaluatesOnlyMatureTraceGroups(t *testing.T) {
+	immatureCounter := &fakeMetricCounter{}
+	sampler := &wholeTraceErrorSampler{}
+	observation := &mergeEvaluationObservation{}
+	filter := &mergeFilter{
+		chain:       newMergeChain("g", "s", []sdk.Sampler{sampler}, 0),
+		timeout:     time.Second,
+		observation: observation,
+		owner: &tsTable{metrics: &metrics{
+			pipelineTracesDropped:   &fakeMetricCounter{},
+			pipelineTracesEvaluated: &fakeMetricCounter{},
+			pipelineTracesImmature:  immatureCounter,
+		}},
+		maturityFrontier: 10,
+		filterImmature:   true,
+	}
+	parts := []*traces{{
+		traceIDs:   []string{"trace-mature", "trace-immature"},
+		timestamps: []int64{10, 11},
+		tags: [][]*tagValue{
+			{{tag: "status", valueType: pbv1.ValueTypeStr, value: convert.StringToBytes("success")}},
+			{{tag: "status", valueType: pbv1.ValueTypeStr, value: convert.StringToBytes("success")}},
+		},
+		spans:   [][]byte{[]byte("mature"), []byte("immature")},
+		spanIDs: []string{"mature-span", "immature-span"},
+	}}
+
+	got, dropped := mergeWithFilter(t, parts, filter)
+
+	require.Equal(t, []string{"trace-immature"}, got, "immature traces must remain unchanged")
+	require.Equal(t, map[string]struct{}{"trace-mature": {}}, dropped)
+	require.Equal(t, int64(1), sampler.calls.Load())
+	require.Equal(t, int64(1), sampler.traceCount.Load(), "only mature traces reach Decide")
+	require.Equal(t, 1, immatureCounter.callsWithLabels(), "each immature trace increments the metric")
+	require.Equal(t, uint64(1), observation.immature.Load())
+}
+
+func TestMergeFilter_CompletesTraceBeforeMaturityDecision(t *testing.T) {
+	immatureCounter := &fakeMetricCounter{}
+	sampler := &wholeTraceErrorSampler{}
+	filter := &mergeFilter{
+		chain:   newMergeChain("g", "s", []sdk.Sampler{sampler}, 0),
+		timeout: time.Second,
+		owner: &tsTable{metrics: &metrics{
+			pipelineTracesDropped:   &fakeMetricCounter{},
+			pipelineTracesEvaluated: &fakeMetricCounter{},
+			pipelineTracesImmature:  immatureCounter,
+		}},
+		maturityFrontier: int64(5 * time.Second),
+		filterImmature:   true,
+		forceSlow:        true,
+	}
+	parts := appendTrace(splitTraceParts("success"), "trace-next", "success")
+	parts[0].timestamps[len(parts[0].timestamps)-1] = int64(time.Second)
+
+	got, dropped := mergeWithFilter(t, parts, filter)
+
+	require.Equal(t, []string{"trace-large", "trace-large"}, got,
+		"a mature head block cannot make a logical trace with an immature tail eligible")
+	require.Equal(t, map[string]struct{}{"trace-next": {}}, dropped)
+	require.Equal(t, int64(1), sampler.calls.Load())
+	require.Equal(t, int64(1), sampler.traceCount.Load(), "only the complete mature trace reaches Decide")
+	require.Equal(t, 1, immatureCounter.callsWithLabels())
 }
 
 func TestMergeFilter_NilFilterIdenticalToLegacy(t *testing.T) {
@@ -866,6 +948,7 @@ func TestMergeFilter_FailOpenOnPanic(t *testing.T) {
 // toolkit's fixture builder from inside the engine's own test suite.
 func TestMergeChain_Timeout_FailsOpen(t *testing.T) {
 	chain := newMergeChain("g", "s", []sdk.Sampler{&sleepSampler{d: 200 * time.Millisecond}}, 0)
+	chain.executionSlots = make(chan struct{}, 1)
 	traceX, buildErr := sdktest.NewTrace("x").Build()
 	require.NoError(t, buildErr)
 	traceY, buildErr := sdktest.NewTrace("y").Build()
@@ -879,6 +962,7 @@ func TestMergeChain_Timeout_FailsOpen(t *testing.T) {
 
 func TestMergeChain_TimeoutDoesNotRecycleDecisionStorage(t *testing.T) {
 	chain := newMergeChain("g", "s", []sdk.Sampler{&sleepSampler{d: 200 * time.Millisecond}}, 0)
+	chain.executionSlots = make(chan struct{}, 1)
 	traceX, buildErr := sdktest.NewTrace("x").Build()
 	require.NoError(t, buildErr)
 	batch := sdktest.Batch(traceX)
@@ -891,8 +975,76 @@ func TestMergeChain_TimeoutDoesNotRecycleDecisionStorage(t *testing.T) {
 	require.False(t, reusable, "the timed-out worker may still access the caller-owned decision storage")
 }
 
+func TestMergeChain_EmptyChainSkipsExecutionLimit(t *testing.T) {
+	executionSlots := make(chan struct{}, 1)
+	executionSlots <- struct{}{}
+	chain := newMergeChain("g", "s", []sdk.Sampler{nil}, 1)
+	chain.executionSlots = executionSlots
+	batch := &sdk.TraceBatch{Traces: []sdk.TraceBlock{{TraceID: "trace-a"}}}
+	decisionMask := []bool{false}
+
+	verdict, reusable, executeErr := chain.executeObservedInto(batch, time.Nanosecond, nil, decisionMask)
+
+	require.NoError(t, executeErr)
+	require.True(t, reusable)
+	require.Equal(t, []bool{true}, verdict.Keep)
+	require.Len(t, executionSlots, 1, "an empty chain must not consume an execution slot")
+	require.Nil(t, chain.worker, "an empty chain must not create a worker")
+	chain.mu.Lock()
+	circuitOpen := chain.circuitOpen
+	consecutiveTimeouts := chain.consecutiveTOs
+	chain.mu.Unlock()
+	require.False(t, circuitOpen)
+	require.Zero(t, consecutiveTimeouts)
+}
+
+func TestMergeChain_FreshChainsShareStuckExecutionLimit(t *testing.T) {
+	executionSlots := make(chan struct{}, 1)
+	firstRelease := make(chan struct{})
+	secondRelease := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-firstRelease:
+		default:
+			close(firstRelease)
+		}
+		select {
+		case <-secondRelease:
+		default:
+			close(secondRelease)
+		}
+	})
+	firstSampler := &gatedSampler{entered: make(chan struct{}, 1), release: firstRelease}
+	firstChain := newMergeChain("g", "s", []sdk.Sampler{firstSampler}, 0)
+	firstChain.executionSlots = executionSlots
+	traceX, buildErr := sdktest.NewTrace("x").Build()
+	require.NoError(t, buildErr)
+	batch := sdktest.Batch(traceX)
+
+	firstVerdict, firstReusable, firstErr := firstChain.executeObservedInto(batch, 20*time.Millisecond, nil, []bool{false})
+
+	require.EqualError(t, firstErr, "timeout")
+	require.Equal(t, []bool{true}, firstVerdict.Keep)
+	require.False(t, firstReusable)
+	require.Equal(t, int64(1), firstSampler.calls.Load())
+	require.Len(t, executionSlots, 1, "a non-returning Decide call must retain its process-wide slot")
+
+	secondSampler := &gatedSampler{entered: make(chan struct{}, 1), release: secondRelease}
+	secondChain := newMergeChain("g", "s", []sdk.Sampler{secondSampler}, 0)
+	secondChain.executionSlots = executionSlots
+	secondVerdict, secondReusable, secondErr := secondChain.executeObservedInto(batch, 20*time.Millisecond, nil, []bool{false})
+
+	require.EqualError(t, secondErr, "timeout")
+	require.Equal(t, []bool{true}, secondVerdict.Keep)
+	require.True(t, secondReusable, "a batch not handed to a worker remains reusable")
+	require.Zero(t, secondSampler.calls.Load(), "a fresh chain must not create another stuck sampler call")
+	close(firstRelease)
+	require.Eventually(t, func() bool { return len(executionSlots) == 0 }, time.Second, time.Millisecond)
+}
+
 func TestMergeChain_CircuitBreakerOpens(t *testing.T) {
 	chain := newMergeChain("g", "s", []sdk.Sampler{&sleepSampler{d: 200 * time.Millisecond}}, 2)
+	chain.executionSlots = make(chan struct{}, 2)
 	traceX, buildErr := sdktest.NewTrace("x").Build()
 	require.NoError(t, buildErr)
 	batch := sdktest.Batch(traceX)

@@ -23,7 +23,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 FIXTURE=${FIXTURE:-"$ROOT/.scratch/trace-pipeline-merge-performance/generated-fixture-2x-v2-timestamps"}
 OUTPUT=${OUTPUT:-"$ROOT/.scratch/trace-pipeline-merge-performance/baseline-report"}
-IMAGE=${IMAGE:-golang:1.25.12}
+IMAGE=${IMAGE:-golang:1.25.13}
 DATA_CPUS=${DATA_CPUS:-0-1}
 DATA_CPU_LIMIT=${DATA_CPU_LIMIT:-2}
 DATA_MEMORY=${DATA_MEMORY:-4g}

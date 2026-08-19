@@ -2,9 +2,9 @@
 
 ## Status
 
-Execution record. Phases 1 through 9 are closed. The original Phase 3 resource targets are retained below as historical
-goals, together with their measured disposition; they are not reported as passed. Phase 10, the final serialized
-SkyWalking integration and acceptance run, is the only remaining phase.
+Execution record. Phases 1 through 10 are closed. The original Phase 3 resource targets are retained below as historical
+goals, together with their measured disposition; they are not reported as passed. The final serialized SkyWalking
+integration and acceptance run passed in a resource-limited Docker matrix.
 
 ## Opening Baseline (Before Adaptive Batching)
 
@@ -668,19 +668,82 @@ gate is met.
 **Hard invariants.** All gates from the original plan (selection, maturity, whole-trace, ledger) unchanged. Two-hour
 merge grace unchanged. No unfinished queued, running, or in-flight merge work.
 
+**Plugin monitoring.** The Phase 10 merge observer mirrors the production execution catalog into every merge event and
+the aggregate run report. Chain batch result/count/trace totals are recorded alongside the link measurements. Each
+configured link is keyed by its stable `plugin_name`; calls, total `Decide` wall time, maximum call time, result, and
+fail-open reason are never combined across plugins. The standalone HTML report plots total and maximum execution time per
+plugin and lists chain and link result counts. These values are reconciled with the existing
+`pluginCalls` and `tracesEvaluated` counters so the benchmark cannot silently omit an executed link. Production Prometheus
+metrics remain the deployment view; the benchmark mirror provides the same attribution without adding a metrics scraper
+to the resource-limited container.
+
 **Exit gate.**
 
-- [ ] Nonzero plugin calls and evaluated traces.
-- [ ] Independently validated mature-trace deletion ratio near 35%.
-- [ ] Correct core and secondary-index ledgers.
-- [ ] Grace bypass for hot selections.
-- [ ] No OOM, timeout, panic, malformed verdict, or unexpected lossless retry.
-- [ ] No regression in pipeline-disabled baseline.
-- [ ] All proposed targets met (or explicitly accepted with quantified impact).
+- [x] Nonzero plugin calls and evaluated traces.
+- [x] Independently validated mature-trace deletion ratio near 35%.
+- [x] Correct core and secondary-index ledgers.
+- [x] Grace bypass for hot selections.
+- [x] No OOM, timeout, panic, malformed verdict, or unexpected lossless retry.
+- [x] Every configured plugin has a nonempty name, only `success` executions, no link bypass, and execution calls that
+      reconcile exactly with the merge observer's plugin-call total.
+- [x] Chain batch count/trace totals plus per-plugin total, mean, and maximum execution time and time per evaluated trace
+      are present in JSON and HTML.
+- [x] No regression in pipeline-disabled baseline.
+- [x] All proposed targets met (or explicitly accepted with quantified impact).
 
 **Dependencies.** Phases 4, 6, 7, 8, and 9; all are closed.
 
 **Boundary rationale.** Final acceptance gate. Only the targets frozen here become blocking.
+
+**Final integration result.** The paired matrix ran five pipeline-disabled and five default-SkyWalking repetitions in
+fresh Docker processes. The data node was pinned to two CPUs and limited to 4 GiB memory, no additional swap, 512 PIDs,
+and `GOMAXPROCS=2`. Every run used one shard, the same 325,570-row, 3,219-write fixture spread over one logical day, a
+two-hour merge grace period, and the same publication schedule. The fixture SHA-256 was
+`8c9289bed26d7696a44b4937c5670b2709707b03904cf9de3241d279d4081438`; the schedule SHA-256 was
+`f7b651db0fe965362696139d19bc9ec452269868bba236e3e3b5615830652bcd`.
+
+All ten measured runs passed their row, core-ledger, secondary-index-ledger, sampling, and plugin-observability gates and reached
+an idle boundary. The 24-hour primary phase produced the same 286 merge rounds and no sampler calls in either mode
+because the selected data remained inside the two-hour grace window. Each SkyWalking run then performed one sampled
+finalize merge. It made 12 calls and evaluated 74,576 complete traces. The plugin proposed retaining 48,196 and dropping
+26,380; the two-hour boundary guard retained four additional edge traces, so 26,376 were dropped. The resulting effective
+35.3679% deletion ratio matched the independent fragment-aware oracle. Core, latency-index, and start-time-index output each
+reconciled to 89,265 rows. No run reported a timeout, circuit-open result, plugin bypass, oversized-trace bypass, lossless
+retry, malformed verdict, panic, or OOM.
+
+The like-for-like primary phase measures the common merge path before the intentional sampled finalize work. Medians are
+over five fresh processes.
+
+| Primary metric | Pipeline disabled | SkyWalking | Delta | Disposition |
+| --- | ---: | ---: | ---: | --- |
+| Wall time | 76.994 s | 81.519 s | +5.88% | Accepted |
+| CPU time | 28.332 s | 27.976 s | -1.25% | No regression claimed |
+| Allocated bytes | 931.5 MiB | 925.4 MiB | -0.66% | No regression claimed |
+| Allocation count | 18,112,812 | 18,115,022 | +0.01% | Passed |
+| Cgroup memory peak | 160.5 MiB | 160.8 MiB | +0.14% | Passed |
+| Logical write amplification | 0.947236 | 0.947236 | 0.00% | Passed |
+
+The end-to-end comparison includes the extra sampled finalize merge and therefore quantifies both its cost and its
+storage benefit rather than treating that work as an ordinary-path regression.
+
+| End-to-end metric | Pipeline disabled | SkyWalking | Delta |
+| --- | ---: | ---: | ---: |
+| Wall time | 77.196 s | 86.237 s | +11.71% |
+| CPU time | 28.333 s | 32.449 s | +14.53% |
+| Allocated bytes | 933.8 MiB | 1,499.3 MiB | +60.55% |
+| Cgroup memory peak | 160.5 MiB | 250.5 MiB | +56.02% |
+| Final core plus secondary-index bytes | 85.13 MiB | 40.19 MiB | -52.79% |
+| Logical write amplification | 0.947236 | 0.801995 | -15.33% |
+
+The plugin itself accounted for a median 17.025 ms of `Decide` wall time per SkyWalking run, 228.3 ns per evaluated
+trace, with a median maximum call of 3.543 ms. Across all five runs, the exact histogram reconciled all 60 calls: one at
+or below 0.25 ms, four at or below 0.5 ms, 25 at or below 1 ms, 24 at or below 2.5 ms, and six at or below 5 ms. There
+were no overflows. Most sampled-finalize cost therefore belongs to trace reconstruction, filtering, and rewriting rather
+than plugin execution.
+
+The paired suites, raw merge events, profiles, and standalone comparison report are under
+`.scratch/trace-pipeline-merge-performance/phase10-paired-merge-grace-v6`. This closes Phase 10 without adding a production budget or
+configuration flag.
 
 ---
 

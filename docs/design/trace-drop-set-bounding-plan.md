@@ -269,7 +269,7 @@ reach it. That is the result, not a failure to test:
 - [ ] `pipeline_drop_set_entries` p99 recorded against `pipeline_drop_set_budget_bytes / dropSetBytesPerEntry`. **This
       ratio is the deliverable** — it is how much headroom production-shaped traffic actually has, and therefore whether
       the ceiling is load-bearing at default settings at all.
-- [ ] `pipeline_traces_retained_by_ceiling` is zero on every shard, confirming activation is behaviour-neutral here.
+- [ ] `pipeline_traces_retained_by_ceiling` is zero for the group, confirming activation is behaviour-neutral here.
 - [ ] Phase 10's existing gates still pass: correct core and secondary-index ledgers, no OOM, no unexpected lossless
       retry, no regression against the pipeline-disabled baseline.
 - [ ] Observed trace-ID length recorded. Real SkyWalking IDs are the first workload test of DS-1b's derived
@@ -281,7 +281,7 @@ reach it. That is the result, not a failure to test:
 budget and a ceiling near 84,000 traces, which the same workload reaches comfortably. This is the only run that
 exercises the code this ticket adds:
 
-- [ ] `pipeline_traces_retained_by_ceiling` non-zero, with the shard label identifying where.
+- [ ] `pipeline_traces_retained_by_ceiling` is non-zero for the group, and `pipeline_merges_ceiling_reached{lane="finalize"}` identifies the affected lane.
 - [ ] For every shard, secondary-index contents equal exactly the retained-trace set — spec invariant 9, now under real
       trace IDs, real drop ratios, real fragment-guard behaviour and live query traffic rather than one frozen selection.
 - [ ] Queries ordered by `latency` and `start_time` return the same traces as the pipeline-disabled baseline for the

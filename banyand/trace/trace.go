@@ -61,7 +61,6 @@ type option struct {
 	syncInterval                 time.Duration
 	memWaitTimeout               time.Duration
 	mergeGraceDefault            time.Duration
-	maxTraceFragmentGap          time.Duration
 	finalizeGraceDefault         time.Duration
 	decideTimeout                time.Duration
 	failedPartsMaxTotalSizeBytes uint64

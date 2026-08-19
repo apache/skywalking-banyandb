@@ -26,23 +26,38 @@ import (
 func TestStandaloneDefaultTracePipelineMergeGrace(t *testing.T) {
 	service := &standalone{}
 
-	service.FlagSet()
+	flags := service.FlagSet()
 
 	require.Equal(t, 2*time.Hour, service.option.mergeGraceDefault)
-	require.Zero(t, service.option.maxTraceFragmentGap)
+	require.Equal(t, 5*time.Minute, service.option.finalizeGraceDefault)
+	for _, flagName := range []string{
+		"trace-pipeline-native-plugin-enabled",
+		"trace-pipeline-trusted-plugin-dir",
+		"trace-pipeline-decide-timeout",
+		"trace-pipeline-decide-timeout-circuit-break",
+	} {
+		require.NotNil(t, flags.Lookup(flagName), "expected pipeline flag %q", flagName)
+	}
+	for _, removedFlagName := range []string{
+		"trace-pipeline-merge-grace-default",
+		"trace-pipeline-max-fragment-gap",
+		"trace-pipeline-finalize-grace-default",
+	} {
+		require.Nil(t, flags.Lookup(removedFlagName), "removed pipeline flag %q must not be registered", removedFlagName)
+	}
 }
 
 func TestDefaultMergeGraceMaturityBoundary(t *testing.T) {
 	const now = int64(10 * time.Hour)
 	frontier := now - int64(defaultTracePipelineMergeGrace)
 	testCases := []struct {
-		name         string
-		maxTimestamp int64
-		wantHot      bool
+		name       string
+		timestamp  int64
+		wantMature bool
 	}{
-		{name: "one nanosecond inside grace", maxTimestamp: frontier + 1, wantHot: true},
-		{name: "exactly at grace", maxTimestamp: frontier},
-		{name: "one nanosecond beyond grace", maxTimestamp: frontier - 1},
+		{name: "one nanosecond inside grace", timestamp: frontier + 1},
+		{name: "exactly at grace", timestamp: frontier, wantMature: true},
+		{name: "one nanosecond beyond grace", timestamp: frontier - 1, wantMature: true},
 	}
 
 	for testCaseIdx := range testCases {
@@ -51,46 +66,12 @@ func TestDefaultMergeGraceMaturityBoundary(t *testing.T) {
 			parts := []*partWrapper{
 				{
 					p: &part{
-						partMetadata: partMetadata{MaxTimestamp: testCase.maxTimestamp},
+						partMetadata: partMetadata{MinTimestamp: testCase.timestamp, MaxTimestamp: testCase.timestamp},
 					},
 				},
 			}
 
-			require.Equal(t, testCase.wantHot, isMergeHot(parts, int64(defaultTracePipelineMergeGrace), now))
-		})
-	}
-}
-
-func TestStandaloneRejectsNegativeTraceFragmentDurations(t *testing.T) {
-	testCases := []struct {
-		mutate  func(*standalone)
-		name    string
-		message string
-	}{
-		{
-			name: "negative merge grace",
-			mutate: func(service *standalone) {
-				service.option.mergeGraceDefault = -time.Nanosecond
-			},
-			message: "trace-pipeline-merge-grace-default must not be negative",
-		},
-		{
-			name: "negative maximum fragment gap",
-			mutate: func(service *standalone) {
-				service.option.maxTraceFragmentGap = -time.Nanosecond
-			},
-			message: "trace-pipeline-max-fragment-gap must not be negative",
-		},
-	}
-
-	for testCaseIdx := range testCases {
-		testCase := testCases[testCaseIdx]
-		t.Run(testCase.name, func(t *testing.T) {
-			service := &standalone{root: t.TempDir()}
-			service.FlagSet()
-			testCase.mutate(service)
-
-			require.EqualError(t, service.Validate(), testCase.message)
+			require.Equal(t, testCase.wantMature, mergeMayContainMatureTrace(parts, frontier))
 		})
 	}
 }
