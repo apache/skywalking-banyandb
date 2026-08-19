@@ -370,6 +370,9 @@ func runObservedBenchmarkMerge(t *testing.T, mature bool) (mergeBenchmarkEvent, 
 	for _, indexName := range []string{"latency", "start_time"} {
 		table.mustGetOrCreateSidx(indexName)
 	}
+	var jsonLines bytes.Buffer
+	observer := newMergeBenchmarkObserver(&jsonLines, mergeBenchmarkObserverOptions{Phase: mergePhasePrimary, Attribution: true})
+	require.True(t, table.setMergeBenchmarkObserver(observer))
 	table.observePartID(partIDs[len(partIDs)-1])
 	for _, partID := range partIDs {
 		require.NoError(t, os.Rename(filepath.Join(prepared, formatExternalPartID(partID)), filepath.Join(root, formatExternalPartID(partID))))
@@ -394,9 +397,6 @@ func runObservedBenchmarkMerge(t *testing.T, mature bool) (mergeBenchmarkEvent, 
 		table.setMergeNow(base.Add(time.Minute))
 	}
 
-	var jsonLines bytes.Buffer
-	observer := newMergeBenchmarkObserver(&jsonLines, mergeBenchmarkObserverOptions{Phase: mergePhasePrimary, Attribution: true})
-	require.True(t, table.setMergeBenchmarkObserver(observer))
 	require.NoError(t, table.triggerMerge())
 	waitCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
