@@ -17,24 +17,51 @@
  * under the License.
  */
 
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { existsSync } from 'node:fs';
-import type { FastifyInstance } from 'fastify';
+
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import fastifyStatic from '@fastify/static';
+
+import type { Config } from '../config.js';
 
 // Anchor to process.cwd() (always the server package dir) rather than __dirname so
 // the path is correct both in ts-node (src/plugins/) and compiled (dist/src/plugins/).
 const WEB_DIST = join(process.cwd(), '..', 'web', 'dist');
 
-export async function registerStatic(app: FastifyInstance): Promise<void> {
+export async function registerStatic(app: FastifyInstance, config: Config): Promise<void> {
   if (!existsSync(WEB_DIST)) {
     app.log.warn(`[static] web/dist not found at ${WEB_DIST} — SPA serving disabled (run npm run build in web/)`);
     return;
   }
 
+  const indexPath = join(WEB_DIST, 'index.html');
+  if (!existsSync(indexPath)) {
+    app.log.warn(`[static] index.html not found at ${indexPath} — SPA serving disabled (run npm run build in web/)`);
+    return;
+  }
+
+  let indexTemplate: string;
+  try {
+    indexTemplate = readFileSync(indexPath, 'utf8');
+  } catch (error) {
+    app.log.warn({ error }, `[static] failed to read ${indexPath} — SPA serving disabled`);
+    return;
+  }
+  const runtimeIndex = indexTemplate
+    .replace('<base href="/" />', `<base href="${config.baseHref}" />`)
+    .replace('<meta name="canopy-base-path" content="/" />', `<meta name="canopy-base-path" content="${config.basePath}" />`);
+  const sendIndex = async (reply: FastifyReply) => {
+    reply.header('Content-Type', 'text/html; charset=utf-8');
+    reply.header('Cache-Control', 'no-store, must-revalidate');
+    reply.header('Pragma', 'no-cache');
+    await reply.send(runtimeIndex);
+  };
+
   await app.register(fastifyStatic, {
     root: WEB_DIST,
     prefix: '/',
+    index: false,
     // SPA assets must always revalidate. Without these headers the browser
     // caches the index.html + the hash-named bundle, so a `npm run -w web build`
     // that swaps the bundle filename does NOT clear the browser's view of the
@@ -55,9 +82,11 @@ export async function registerStatic(app: FastifyInstance): Promise<void> {
     // to ensure /api, /auth, /monitoring, /healthz are NOT shadowed.
   });
 
+  app.get('/', async (_request, reply) => sendIndex(reply));
+
   // SPA fallback: serve index.html for any path not matching API/auth/monitoring/healthz
   app.setNotFoundHandler(async (request, reply) => {
-    const path = request.url;
+    const path = config.basePath === '/' ? request.url : request.url.slice(config.basePath.length) || '/';
     if (
       path.startsWith('/api/') ||
       path.startsWith('/auth/') ||
@@ -71,6 +100,6 @@ export async function registerStatic(app: FastifyInstance): Promise<void> {
     // SPA fallback — always re-validate the HTML.
     reply.header('Cache-Control', 'no-store, must-revalidate');
     reply.header('Pragma', 'no-cache');
-    await reply.sendFile('index.html', WEB_DIST);
+    await sendIndex(reply);
   });
 }

@@ -30,21 +30,15 @@
 // itself is validated against an auth-enabled server.
 
 import { test as setup, expect } from '@playwright/test';
-import { LoginPage } from '../framework/pages/LoginPage.js';
 import { STORAGE_STATE } from '../framework/paths.js';
 
 setup('authenticate once', async ({ page }) => {
-  const login = new LoginPage(page);
-  await page.goto('/');
-  // The app renders the login form inline (there is no /login route) whenever
-  // GET /auth/session returns no session. NOAUTH does NOT auto-create one — it
-  // only accepts the dev admin/admin credentials — so we must actually Connect
-  // to obtain the session cookie. Skip only if a prior storageState already
-  // authenticated us (no form on screen).
-  if (await login.username().isVisible().catch(() => false)) {
-    await login.fill();
-    await login.submit().click();
-    await expect(login.username()).toBeHidden({ timeout: 30_000 });
-  }
+  // Authenticate through the context-bound request client so the resulting
+  // cookie is guaranteed to be present before storageState is serialized.
+  // The dedicated auth specs cover the login form itself.
+  const response = await page.request.post('./auth/login', {
+    data: { username: 'admin', password: 'admin' },
+  });
+  expect(response.ok()).toBeTruthy();
   await page.context().storageState({ path: STORAGE_STATE });
 });

@@ -34,9 +34,10 @@ import type {
 } from 'canopy-shared';
 
 import type { DataSource } from './DataSource.js';
+import { canopyPath } from '../runtime-config.js';
 
 async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  const res = await fetch(canopyPath(url), init);
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
     try {

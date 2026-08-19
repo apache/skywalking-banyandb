@@ -56,10 +56,12 @@ app.addHook('onSend', async (_request, reply) => {
 app.get('/healthz', async () => ({ status: 'ok' }));
 
 async function start() {
-  await registerSession(app, config);
-  await registerAuth(app, config);
-  await registerProxy(app, config);
-  await registerStatic(app);
+  await app.register(async scopedApp => {
+    await registerSession(scopedApp, config);
+    await registerAuth(scopedApp, config);
+    await registerProxy(scopedApp, config);
+    await registerStatic(scopedApp, config);
+  }, config.basePath === '/' ? {} : { prefix: config.basePath });
 
   await app.listen({ port: config.port, host: '0.0.0.0' });
   app.log.info(`Canopy BFF listening on port ${config.port}`);

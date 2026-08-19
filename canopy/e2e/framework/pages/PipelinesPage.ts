@@ -63,17 +63,17 @@ export class PipelinesPage extends BasePage {
 
   // ── Navigation ─────────────────────────────────────────────────────────────
   async gotoOverview(): Promise<void> {
-    await this.page.goto('/pipelines');
+    await this.page.goto('./pipelines');
     await expect(this.page.getByRole('heading', { level: 1, name: 'Pipelines' })).toBeVisible();
   }
 
   async gotoList(): Promise<void> {
-    await this.page.goto('/pipelines/topn');
+    await this.page.goto('./pipelines/topn');
     await expect(this.page.getByRole('heading', { level: 1, name: 'TopN' })).toBeVisible();
   }
 
   async gotoDetail(group: string, name: string): Promise<void> {
-    await this.page.goto(`/pipelines/topn/${group}/${name}`);
+    await this.page.goto(`./pipelines/topn/${group}/${name}`);
     await expect(this.page.getByRole('heading', { level: 1, name })).toBeVisible();
   }
 

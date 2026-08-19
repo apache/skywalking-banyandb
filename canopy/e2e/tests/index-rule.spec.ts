@@ -33,35 +33,35 @@ test.describe('index rule API @e2e @index-rule @seed', () => {
     const group = await seed.createGroup('e2e-ira', 'CATALOG_STREAM');
     await seed.createStream(group, 's');
     const ruleName = seed.uniqueName('rule');
-    seed.trackResource(`/api/v1/index-rule/schema/${group}/${ruleName}`);
+    seed.trackResource(`./api/v1/index-rule/schema/${group}/${ruleName}`);
 
-    const createRes = await request.post('/api/v1/index-rule/schema', {
+    const createRes = await request.post('./api/v1/index-rule/schema', {
       data: { indexRule: { metadata: { name: ruleName, group }, tags: ['host'], type: 'TYPE_TREE' } },
     });
     expect(createRes.ok(), `create failed: ${await createRes.text()}`).toBeTruthy();
 
-    const getRes = await request.get(`/api/v1/index-rule/schema/${group}/${ruleName}`);
+    const getRes = await request.get(`./api/v1/index-rule/schema/${group}/${ruleName}`);
     expect(getRes.ok()).toBeTruthy();
     const got = (await getRes.json()) as { indexRule: { tags: string[]; type: string } };
     expect(got.indexRule.tags).toEqual(['host']);
     expect(got.indexRule.type).toBe('TYPE_TREE');
 
-    const listRes = await request.get(`/api/v1/index-rule/schema/lists/${group}`);
+    const listRes = await request.get(`./api/v1/index-rule/schema/lists/${group}`);
     expect(listRes.ok()).toBeTruthy();
     const listed = (await listRes.json()) as { indexRule: Array<{ metadata: { name: string } }> };
     expect(listed.indexRule?.map((r) => r.metadata.name)).toContain(ruleName);
 
-    const updRes = await request.put(`/api/v1/index-rule/schema/${group}/${ruleName}`, {
+    const updRes = await request.put(`./api/v1/index-rule/schema/${group}/${ruleName}`, {
       data: { indexRule: { metadata: { name: ruleName, group }, tags: ['host', 'svc'], type: 'TYPE_INVERTED' } },
     });
     expect(updRes.ok(), `update failed: ${await updRes.text()}`).toBeTruthy();
-    const updGot = (await (await request.get(`/api/v1/index-rule/schema/${group}/${ruleName}`)).json()) as { indexRule: { tags: string[]; type: string } };
+    const updGot = (await (await request.get(`./api/v1/index-rule/schema/${group}/${ruleName}`)).json()) as { indexRule: { tags: string[]; type: string } };
     expect(updGot.indexRule.tags).toEqual(['host', 'svc']);
     expect(updGot.indexRule.type).toBe('TYPE_INVERTED');
 
-    const delRes = await request.delete(`/api/v1/index-rule/schema/${group}/${ruleName}`);
+    const delRes = await request.delete(`./api/v1/index-rule/schema/${group}/${ruleName}`);
     expect(delRes.ok()).toBeTruthy();
-    const afterDel = await request.get(`/api/v1/index-rule/schema/${group}/${ruleName}`);
+    const afterDel = await request.get(`./api/v1/index-rule/schema/${group}/${ruleName}`);
     expect(afterDel.status()).toBe(404);
   });
 
@@ -70,9 +70,9 @@ test.describe('index rule API @e2e @index-rule @seed', () => {
     const stream = await seed.createStream(group, 's');
     const ruleName = await seed.createIndexRule(group, ['host'], 'rl');
     const bindingName = seed.uniqueName('bind');
-    seed.trackResource(`/api/v1/index-rule-binding/schema/${group}/${bindingName}`);
+    seed.trackResource(`./api/v1/index-rule-binding/schema/${group}/${bindingName}`);
 
-    const bindRes = await request.post('/api/v1/index-rule-binding/schema', {
+    const bindRes = await request.post('./api/v1/index-rule-binding/schema', {
       data: {
         indexRuleBinding: {
           metadata: { name: bindingName, group },
@@ -85,18 +85,18 @@ test.describe('index rule API @e2e @index-rule @seed', () => {
     });
     expect(bindRes.ok(), `create binding failed: ${await bindRes.text()}`).toBeTruthy();
 
-    const got = await request.get(`/api/v1/index-rule-binding/schema/${group}/${bindingName}`);
+    const got = await request.get(`./api/v1/index-rule-binding/schema/${group}/${bindingName}`);
     expect(got.ok()).toBeTruthy();
     const gotJson = (await got.json()) as { indexRuleBinding: { rules: string[]; subject: { name: string } } };
     expect(gotJson.indexRuleBinding.rules).toEqual([ruleName]);
     expect(gotJson.indexRuleBinding.subject.name).toBe(stream);
 
-    const list = await request.get(`/api/v1/index-rule-binding/schema/lists/${group}`);
+    const list = await request.get(`./api/v1/index-rule-binding/schema/lists/${group}`);
     expect(list.ok()).toBeTruthy();
     const listJson = (await list.json()) as { indexRuleBinding: Array<{ metadata: { name: string } }> };
     expect(listJson.indexRuleBinding?.map((b) => b.metadata.name)).toContain(bindingName);
 
-    const upd = await request.put(`/api/v1/index-rule-binding/schema/${group}/${bindingName}`, {
+    const upd = await request.put(`./api/v1/index-rule-binding/schema/${group}/${bindingName}`, {
       data: {
         indexRuleBinding: {
           metadata: { name: bindingName, group },
@@ -110,9 +110,9 @@ test.describe('index rule API @e2e @index-rule @seed', () => {
     // The server may accept or reject empty rules — either is a valid authority outcome.
     expect([200, 400, 422].includes(upd.status())).toBeTruthy();
 
-    const del = await request.delete(`/api/v1/index-rule-binding/schema/${group}/${bindingName}`);
+    const del = await request.delete(`./api/v1/index-rule-binding/schema/${group}/${bindingName}`);
     expect(del.ok()).toBeTruthy();
-    const afterDel = await request.get(`/api/v1/index-rule-binding/schema/${group}/${bindingName}`);
+    const afterDel = await request.get(`./api/v1/index-rule-binding/schema/${group}/${bindingName}`);
     expect(afterDel.status()).toBe(404);
   });
 
@@ -126,8 +126,8 @@ test.describe('index rule API @e2e @index-rule @seed', () => {
     const stream = await seed.createStream(group, 's');
     const ruleName = await seed.createIndexRule(group, ['host'], 'rl');
     const bindingName = seed.uniqueName('bind-bad');
-    seed.trackResource(`/api/v1/index-rule-binding/schema/${group}/${bindingName}`);
-    const bad = await request.post('/api/v1/index-rule-binding/schema', {
+    seed.trackResource(`./api/v1/index-rule-binding/schema/${group}/${bindingName}`);
+    const bad = await request.post('./api/v1/index-rule-binding/schema', {
       data: {
         indexRuleBinding: {
           metadata: { name: bindingName, group },
@@ -148,8 +148,8 @@ test.describe('index rule API @e2e @index-rule @seed', () => {
     const group = await seed.createGroup('e2e-irz', 'CATALOG_STREAM');
     await seed.createStream(group, 's');
     const ruleName = seed.uniqueName('rule-z');
-    seed.trackResource(`/api/v1/index-rule/schema/${group}/${ruleName}`);
-    const res = await request.post('/api/v1/index-rule/schema', {
+    seed.trackResource(`./api/v1/index-rule/schema/${group}/${ruleName}`);
+    const res = await request.post('./api/v1/index-rule/schema', {
       data: { indexRule: { metadata: { name: ruleName, group }, tags: ['undeclared_tag'], type: 'TYPE_TREE' } },
     });
     expect(res.ok()).toBeTruthy();
@@ -163,7 +163,7 @@ test.describe('index rule UI @e2e @index-rule @seed', () => {
     const group = await seed.createGroup('e2e-uir', 'CATALOG_STREAM');
     await seed.createStream(group, 's');
     const ruleName = seed.uniqueName('r');
-    seed.trackResource(`/api/v1/index-rule/schema/${group}/${ruleName}`);
+    seed.trackResource(`./api/v1/index-rule/schema/${group}/${ruleName}`);
 
     await indexRulePage.goto('streams', group);
     await indexRulePage.openRuleTab();
@@ -209,7 +209,7 @@ test.describe('index rule UI @e2e @index-rule @seed', () => {
     await indexRulePage.openRuleTab();
     await indexRulePage.deleteRule(ruleName);
     await expect(indexRulePage.ruleRow(ruleName)).toHaveCount(0);
-    const apiCheck = await request.get(`/api/v1/index-rule/schema/${group}/${ruleName}`);
+    const apiCheck = await request.get(`./api/v1/index-rule/schema/${group}/${ruleName}`);
     expect(apiCheck.status()).toBe(404);
   });
 
@@ -219,7 +219,7 @@ test.describe('index rule UI @e2e @index-rule @seed', () => {
     const rule1 = await seed.createIndexRule(group, ['host'], 'ra');
     const rule2 = await seed.createIndexRule(group, ['host'], 'rb');
     const bindingName = seed.uniqueName('b');
-    seed.trackResource(`/api/v1/index-rule-binding/schema/${group}/${bindingName}`);
+    seed.trackResource(`./api/v1/index-rule-binding/schema/${group}/${bindingName}`);
 
     await indexRulePage.goto('streams', group);
     await indexRulePage.openBindingTab();
@@ -241,8 +241,8 @@ test.describe('index rule UI @e2e @index-rule @seed', () => {
     const rule1 = await seed.createIndexRule(group, ['host'], 'ra');
     const rule2 = await seed.createIndexRule(group, ['host'], 'rb');
     const bindingName = seed.uniqueName('b');
-    seed.trackResource(`/api/v1/index-rule-binding/schema/${group}/${bindingName}`);
-    const create = await request.post('/api/v1/index-rule-binding/schema', {
+    seed.trackResource(`./api/v1/index-rule-binding/schema/${group}/${bindingName}`);
+    const create = await request.post('./api/v1/index-rule-binding/schema', {
       data: {
         indexRuleBinding: {
           metadata: { name: bindingName, group },
@@ -276,7 +276,7 @@ test.describe('index rule UI @e2e @index-rule @seed', () => {
     const stream = await seed.createStream(group, 's');
     const ruleName = await seed.createIndexRule(group, ['host'], 'r');
     const bindingName = seed.uniqueName('b');
-    seed.trackResource(`/api/v1/index-rule-binding/schema/${group}/${bindingName}`);
+    seed.trackResource(`./api/v1/index-rule-binding/schema/${group}/${bindingName}`);
 
     await indexRulePage.goto('streams', group);
     await indexRulePage.openRuleTab();
