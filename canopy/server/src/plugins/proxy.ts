@@ -159,7 +159,7 @@ export async function registerProxy(app: FastifyInstance, config: Config): Promi
     }
   }
 
-  // /api/* — proxied VERBATIM to config.banyandbTarget (no prefix add/strip)
+  // /api/* — strip Canopy's mount prefix, then preserve the remaining path verbatim.
   app.all('/api/*', { preHandler: [requireAuth, enforceRole] }, async (request, reply) => {
     const upstreamBase = getSessionEndpoint(request, config);
     const upstreamPath = stripBasePath(request.url, config.basePath);

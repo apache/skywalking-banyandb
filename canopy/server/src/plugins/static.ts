@@ -35,7 +35,19 @@ export async function registerStatic(app: FastifyInstance, config: Config): Prom
     return;
   }
 
-  const indexTemplate = readFileSync(join(WEB_DIST, 'index.html'), 'utf8');
+  const indexPath = join(WEB_DIST, 'index.html');
+  if (!existsSync(indexPath)) {
+    app.log.warn(`[static] index.html not found at ${indexPath} — SPA serving disabled (run npm run build in web/)`);
+    return;
+  }
+
+  let indexTemplate: string;
+  try {
+    indexTemplate = readFileSync(indexPath, 'utf8');
+  } catch (error) {
+    app.log.warn({ error }, `[static] failed to read ${indexPath} — SPA serving disabled`);
+    return;
+  }
   const runtimeIndex = indexTemplate
     .replace('<base href="/" />', `<base href="${config.baseHref}" />`)
     .replace('<meta name="canopy-base-path" content="/" />', `<meta name="canopy-base-path" content="${config.basePath}" />`);
