@@ -509,12 +509,21 @@ var _ = Describe("Schema Change", func() {
 		It("querying data should return correct values after parts with different types are merged", func() {
 			streamName := "schema_change_tag_type_merge"
 			now := timestamp.NowMilli()
+			// Keep both batches in today's segment when the test runs near midnight;
+			// parts from different day segments cannot be merged.
+			firstOffset, secondOffset := 2*time.Hour, time.Hour
+			midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+			if elapsed := now.Sub(midnight); elapsed <= firstOffset {
+				firstOffset, secondOffset = elapsed/2, elapsed/4
+			}
+			firstBatchTime := now.Add(-firstOffset).Truncate(time.Millisecond)
+			secondBatchTime := now.Add(-secondOffset).Truncate(time.Millisecond)
 
 			env := setupSchemaChangeStream(svcs, streamName, groupName, streamSetupOptions{withExtraTag: true})
-			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-2*time.Hour), 5,
+			writeSchemaChangeData(svcs, streamName, groupName, firstBatchTime, 5,
 				writeDataOptions{extraTag: extraTagInt})
 			changeExtraTagType(svcs, streamName, groupName)
-			writeSchemaChangeData(svcs, streamName, groupName, now.Add(-1*time.Hour), 3,
+			writeSchemaChangeData(svcs, streamName, groupName, secondBatchTime, 3,
 				writeDataOptions{extraTag: extraTagString, traceIDPrefix: "trace_new_", elementIDOffset: 5})
 			partCountBeforeMerge, partCountErr := getTotalStreamPartCount(svcs, groupName)
 			Expect(partCountErr).ShouldNot(HaveOccurred())
