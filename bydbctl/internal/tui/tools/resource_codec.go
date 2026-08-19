@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -42,23 +43,58 @@ var resourceTypeOrder = []session.ResourceType{
 
 var resourceCodecs = map[session.ResourceType]resourceCodec{
 	session.ResourceTypeMeasure: {
-		summarize: summarizeMeasureSchema, decodeList: decodeMeasureNames,
+		summarize: summarizeMeasureSchema,
+		decodeList: decodeNames(
+			func() *databasev1.MeasureRegistryServiceListResponse {
+				return new(databasev1.MeasureRegistryServiceListResponse)
+			},
+			(*databasev1.MeasureRegistryServiceListResponse).GetMeasure,
+			(*databasev1.Measure).GetMetadata,
+		),
 		schemaPath: measureSchemaPath, listPath: measureListPath, catalog: commonv1.Catalog_CATALOG_MEASURE,
 	},
 	session.ResourceTypeStream: {
-		summarize: summarizeStreamSchema, decodeList: decodeStreamNames,
+		summarize: summarizeStreamSchema,
+		decodeList: decodeNames(
+			func() *databasev1.StreamRegistryServiceListResponse {
+				return new(databasev1.StreamRegistryServiceListResponse)
+			},
+			(*databasev1.StreamRegistryServiceListResponse).GetStream,
+			(*databasev1.Stream).GetMetadata,
+		),
 		schemaPath: streamSchemaPath, listPath: streamListPath, catalog: commonv1.Catalog_CATALOG_STREAM,
 	},
 	session.ResourceTypeTrace: {
-		summarize: summarizeTraceSchema, decodeList: decodeTraceNames,
+		summarize: summarizeTraceSchema,
+		decodeList: decodeNames(
+			func() *databasev1.TraceRegistryServiceListResponse {
+				return new(databasev1.TraceRegistryServiceListResponse)
+			},
+			(*databasev1.TraceRegistryServiceListResponse).GetTrace,
+			(*databasev1.Trace).GetMetadata,
+		),
 		schemaPath: traceSchemaPath, listPath: traceListPath, catalog: commonv1.Catalog_CATALOG_TRACE,
 	},
 	session.ResourceTypeProperty: {
-		summarize: summarizePropertySchema, decodeList: decodePropertyNames,
+		summarize: summarizePropertySchema,
+		decodeList: decodeNames(
+			func() *databasev1.PropertyRegistryServiceListResponse {
+				return new(databasev1.PropertyRegistryServiceListResponse)
+			},
+			(*databasev1.PropertyRegistryServiceListResponse).GetProperties,
+			(*databasev1.Property).GetMetadata,
+		),
 		schemaPath: propertySchemaPath, listPath: propertyListPath, catalog: commonv1.Catalog_CATALOG_PROPERTY,
 	},
 	session.ResourceTypeTopN: {
-		summarize: summarizeTopNSchema, decodeList: decodeTopNNames,
+		summarize: summarizeTopNSchema,
+		decodeList: decodeNames(
+			func() *databasev1.TopNAggregationRegistryServiceListResponse {
+				return new(databasev1.TopNAggregationRegistryServiceListResponse)
+			},
+			(*databasev1.TopNAggregationRegistryServiceListResponse).GetTopNAggregation,
+			(*databasev1.TopNAggregation).GetMetadata,
+		),
 		schemaPath: topnSchemaPath, listPath: topnListPath, catalog: commonv1.Catalog_CATALOG_UNSPECIFIED,
 	},
 }
@@ -107,42 +143,13 @@ func resourceNamesFromList(resourceType session.ResourceType, body []byte) ([]st
 	return codec.decodeList(body)
 }
 
-func decodeMeasureNames(body []byte) ([]string, error) {
-	listResponse := new(databasev1.MeasureRegistryServiceListResponse)
-	if unmarshalErr := protojson.Unmarshal(body, listResponse); unmarshalErr != nil {
-		return nil, unmarshalErr
+// decodeNames decodes one registry list response and returns its distinct resource names.
+func decodeNames[L proto.Message, R any](newList func() L, resourcesOf func(L) []*R, metadataOf func(*R) *commonv1.Metadata) func([]byte) ([]string, error) {
+	return func(body []byte) ([]string, error) {
+		listResponse := newList()
+		if unmarshalErr := protojson.Unmarshal(body, listResponse); unmarshalErr != nil {
+			return nil, fmt.Errorf("failed to decode resource registry list: %w", unmarshalErr)
+		}
+		return metadataNames(collectMetadata(resourcesOf(listResponse), metadataOf)), nil
 	}
-	return metadataNames(extractMeasureMetadata(listResponse.GetMeasure())), nil
-}
-
-func decodeStreamNames(body []byte) ([]string, error) {
-	listResponse := new(databasev1.StreamRegistryServiceListResponse)
-	if unmarshalErr := protojson.Unmarshal(body, listResponse); unmarshalErr != nil {
-		return nil, unmarshalErr
-	}
-	return metadataNames(extractStreamMetadata(listResponse.GetStream())), nil
-}
-
-func decodeTraceNames(body []byte) ([]string, error) {
-	listResponse := new(databasev1.TraceRegistryServiceListResponse)
-	if unmarshalErr := protojson.Unmarshal(body, listResponse); unmarshalErr != nil {
-		return nil, unmarshalErr
-	}
-	return metadataNames(extractTraceMetadata(listResponse.GetTrace())), nil
-}
-
-func decodePropertyNames(body []byte) ([]string, error) {
-	listResponse := new(databasev1.PropertyRegistryServiceListResponse)
-	if unmarshalErr := protojson.Unmarshal(body, listResponse); unmarshalErr != nil {
-		return nil, unmarshalErr
-	}
-	return metadataNames(extractPropertyMetadata(listResponse.GetProperties())), nil
-}
-
-func decodeTopNNames(body []byte) ([]string, error) {
-	listResponse := new(databasev1.TopNAggregationRegistryServiceListResponse)
-	if unmarshalErr := protojson.Unmarshal(body, listResponse); unmarshalErr != nil {
-		return nil, unmarshalErr
-	}
-	return metadataNames(extractTopNMetadata(listResponse.GetTopNAggregation())), nil
 }

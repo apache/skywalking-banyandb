@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package fake provides a deterministic agent implementation for TUI tests and demos.
 package fake
 
 import (
@@ -27,9 +28,13 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tuirun"
 )
 
 var limitPattern = regexp.MustCompile(`(?i)limit\s*(\d+)`)
+
+// placeholderResourceName names the resource in a fixture candidate when the payload sets none.
+const placeholderResourceName = "service_endpoint_latency"
 
 // Gateway is a deterministic agent implementation.
 type Gateway struct {
@@ -55,9 +60,9 @@ func (gateway *Gateway) Start(_ context.Context, req agent.StartRequest) (agent.
 // Send emits a deterministic review and final BYDBQL candidate.
 func (gateway *Gateway) Send(ctx context.Context, _ string, req agent.TurnRequest) (<-chan agent.Event, error) {
 	events := make(chan agent.Event, 4)
-	go func() {
+	tuirun.Go(ctx, "fake-turn", func(turnCtx context.Context) {
 		defer close(events)
-		if !send(ctx, events, agent.Event{
+		if !send(turnCtx, events, agent.Event{
 			Kind:    agent.EventKindPlanUpdate,
 			Message: "generate read-only BYDBQL candidate from goal and schema",
 		}) {
@@ -71,7 +76,7 @@ func (gateway *Gateway) Send(ctx context.Context, _ string, req agent.TurnReques
 		if req.Payload.ValidationError != nil {
 			explanation = fmt.Sprintf("fake agent kept the candidate after validation feedback: %s", *req.Payload.ValidationError)
 		}
-		if !send(ctx, events, agent.Event{
+		if !send(turnCtx, events, agent.Event{
 			Kind:      agent.EventKindCandidate,
 			Candidate: candidate,
 			Origin:    agent.EventOriginToolBridge,
@@ -79,12 +84,12 @@ func (gateway *Gateway) Send(ctx context.Context, _ string, req agent.TurnReques
 		}) {
 			return
 		}
-		_ = send(ctx, events, agent.Event{
+		_ = send(turnCtx, events, agent.Event{
 			Kind:        agent.EventKindFinalResponse,
 			Message:     explanation,
 			Explanation: explanation,
 		})
-	}()
+	})
 	return events, nil
 }
 
@@ -98,6 +103,10 @@ func (gateway *Gateway) Close() error {
 	return nil
 }
 
+// buildCandidate renders a deterministic candidate from whatever the payload supplies.
+//
+// The placeholders below stand in only for an unset slot, so a test that cares about the rendered
+// statement supplies the schema it expects to see rather than relying on them.
 func buildCandidate(payload agent.RequestPayload) string {
 	resourceType := strings.ToUpper(strings.TrimSpace(payload.Schema.Type))
 	if resourceType == "" {
@@ -105,7 +114,7 @@ func buildCandidate(payload agent.RequestPayload) string {
 	}
 	resourceName := strings.TrimSpace(payload.Schema.Name)
 	if resourceName == "" {
-		resourceName = "service_endpoint_latency"
+		resourceName = placeholderResourceName
 	}
 	group := "default"
 	if len(payload.Schema.Groups) > 0 && strings.TrimSpace(payload.Schema.Groups[0]) != "" {

@@ -14,6 +14,8 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
+// Package tools implements controlled schema discovery and BYDBQL execution for the TUI.
 package tools
 
 import (
@@ -22,9 +24,12 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tuitext"
 )
 
 // The schema endpoints return one protobuf message per resource type. Everything below turns those
@@ -103,7 +108,7 @@ func summarizeTopNSchema(req SchemaRequest, body []byte, updatedAt time.Time) (s
 	}
 	snapshot := baseSchemaSnapshot(req, updatedAt)
 	snapshot.Tags = append([]string(nil), topN.GetGroupByTagNames()...)
-	snapshot.Fields = compactStrings([]string{topN.GetFieldName()})
+	snapshot.Fields = tuitext.Compact([]string{topN.GetFieldName()})
 	snapshot.SourceMeasure = strings.TrimSpace(topN.GetSourceMeasure().GetName())
 	snapshot.SourceMeasureGroup = strings.TrimSpace(topN.GetSourceMeasure().GetGroup())
 	snapshot.FieldValueSort = topN.GetFieldValueSort().String()
@@ -116,112 +121,91 @@ func summarizeTopNSchema(req SchemaRequest, body []byte, updatedAt time.Time) (s
 	return snapshot, nil
 }
 
-func parseMeasureSchema(body []byte) (*databasev1.Measure, error) {
-	wrapped := new(databasev1.MeasureRegistryServiceGetResponse)
+// parseSchema decodes a schema response that may be wrapped in its registry Get envelope.
+//
+// The HTTP gateway returns the envelope, while a cached or hand-supplied body may hold the bare
+// resource, so both shapes are accepted and the presence of metadata is what proves a real schema.
+func parseSchema[W proto.Message, R proto.Message](
+	body []byte,
+	newWrapped func() W,
+	unwrap func(W) R,
+	newBare func() R,
+	metadataOf func(R) *commonv1.Metadata,
+	resourceName string,
+) (R, error) {
+	wrapped := newWrapped()
 	if unmarshalErr := protojson.Unmarshal(body, wrapped); unmarshalErr == nil {
-		if measure := wrapped.GetMeasure(); measure != nil {
-			return measure, nil
+		if resource := unwrap(wrapped); metadataOf(resource) != nil {
+			return resource, nil
 		}
 	}
-	measure := new(databasev1.Measure)
-	if unmarshalErr := protojson.Unmarshal(body, measure); unmarshalErr != nil {
-		return nil, unmarshalErr
+	bare := newBare()
+	if unmarshalErr := protojson.Unmarshal(body, bare); unmarshalErr != nil {
+		var zero R
+		return zero, fmt.Errorf("failed to decode %s schema: %w", resourceName, unmarshalErr)
 	}
-	if measure.GetMetadata() == nil {
-		return nil, fmt.Errorf("measure schema missing in response")
+	if metadataOf(bare) == nil {
+		var zero R
+		return zero, fmt.Errorf("%s schema missing in response", resourceName)
 	}
-	return measure, nil
+	return bare, nil
+}
+
+func parseMeasureSchema(body []byte) (*databasev1.Measure, error) {
+	return parseSchema(body,
+		func() *databasev1.MeasureRegistryServiceGetResponse {
+			return new(databasev1.MeasureRegistryServiceGetResponse)
+		},
+		(*databasev1.MeasureRegistryServiceGetResponse).GetMeasure,
+		func() *databasev1.Measure { return new(databasev1.Measure) },
+		(*databasev1.Measure).GetMetadata, "measure")
 }
 
 func parseStreamSchema(body []byte) (*databasev1.Stream, error) {
-	wrapped := new(databasev1.StreamRegistryServiceGetResponse)
-	if unmarshalErr := protojson.Unmarshal(body, wrapped); unmarshalErr == nil {
-		if stream := wrapped.GetStream(); stream != nil {
-			return stream, nil
-		}
-	}
-	stream := new(databasev1.Stream)
-	if unmarshalErr := protojson.Unmarshal(body, stream); unmarshalErr != nil {
-		return nil, unmarshalErr
-	}
-	if stream.GetMetadata() == nil {
-		return nil, fmt.Errorf("stream schema missing in response")
-	}
-	return stream, nil
+	return parseSchema(body,
+		func() *databasev1.StreamRegistryServiceGetResponse {
+			return new(databasev1.StreamRegistryServiceGetResponse)
+		},
+		(*databasev1.StreamRegistryServiceGetResponse).GetStream,
+		func() *databasev1.Stream { return new(databasev1.Stream) },
+		(*databasev1.Stream).GetMetadata, "stream")
 }
 
 func parseTraceSchema(body []byte) (*databasev1.Trace, error) {
-	wrapped := new(databasev1.TraceRegistryServiceGetResponse)
-	if unmarshalErr := protojson.Unmarshal(body, wrapped); unmarshalErr == nil {
-		if trace := wrapped.GetTrace(); trace != nil {
-			return trace, nil
-		}
-	}
-	trace := new(databasev1.Trace)
-	if unmarshalErr := protojson.Unmarshal(body, trace); unmarshalErr != nil {
-		return nil, unmarshalErr
-	}
-	if trace.GetMetadata() == nil {
-		return nil, fmt.Errorf("trace schema missing in response")
-	}
-	return trace, nil
+	return parseSchema(body,
+		func() *databasev1.TraceRegistryServiceGetResponse {
+			return new(databasev1.TraceRegistryServiceGetResponse)
+		},
+		(*databasev1.TraceRegistryServiceGetResponse).GetTrace,
+		func() *databasev1.Trace { return new(databasev1.Trace) },
+		(*databasev1.Trace).GetMetadata, "trace")
 }
 
 func parsePropertySchema(body []byte) (*databasev1.Property, error) {
-	wrapped := new(databasev1.PropertyRegistryServiceGetResponse)
-	if unmarshalErr := protojson.Unmarshal(body, wrapped); unmarshalErr == nil {
-		if property := wrapped.GetProperty(); property != nil {
-			return property, nil
-		}
-	}
-	property := new(databasev1.Property)
-	if unmarshalErr := protojson.Unmarshal(body, property); unmarshalErr != nil {
-		return nil, unmarshalErr
-	}
-	if property.GetMetadata() == nil {
-		return nil, fmt.Errorf("property schema missing in response")
-	}
-	return property, nil
+	return parseSchema(body,
+		func() *databasev1.PropertyRegistryServiceGetResponse {
+			return new(databasev1.PropertyRegistryServiceGetResponse)
+		},
+		(*databasev1.PropertyRegistryServiceGetResponse).GetProperty,
+		func() *databasev1.Property { return new(databasev1.Property) },
+		(*databasev1.Property).GetMetadata, "property")
 }
 
 func parseTopNSchema(body []byte) (*databasev1.TopNAggregation, error) {
-	wrapped := new(databasev1.TopNAggregationRegistryServiceGetResponse)
-	if unmarshalErr := protojson.Unmarshal(body, wrapped); unmarshalErr == nil {
-		if topN := wrapped.GetTopNAggregation(); topN != nil {
-			return topN, nil
-		}
-	}
-	topN := new(databasev1.TopNAggregation)
-	if unmarshalErr := protojson.Unmarshal(body, topN); unmarshalErr != nil {
-		return nil, unmarshalErr
-	}
-	if topN.GetMetadata() == nil {
-		return nil, fmt.Errorf("topn schema missing in response")
-	}
-	return topN, nil
+	return parseSchema(body,
+		func() *databasev1.TopNAggregationRegistryServiceGetResponse {
+			return new(databasev1.TopNAggregationRegistryServiceGetResponse)
+		},
+		(*databasev1.TopNAggregationRegistryServiceGetResponse).GetTopNAggregation,
+		func() *databasev1.TopNAggregation { return new(databasev1.TopNAggregation) },
+		(*databasev1.TopNAggregation).GetMetadata, "topn")
 }
 
-func tagFamilies(families []*databasev1.TagFamilySpec) []string {
-	var tags []string
-	for _, family := range families {
-		familyName := strings.TrimSpace(family.GetName())
-		for _, tag := range family.GetTags() {
-			tagName := strings.TrimSpace(tag.GetName())
-			if tagName == "" {
-				continue
-			}
-			if familyName != "" {
-				tags = append(tags, familyName+"."+tagName)
-				continue
-			}
-			tags = append(tags, tagName)
-		}
-	}
-	return compactStrings(tags)
-}
-
-func tagFamilyColumns(families []*databasev1.TagFamilySpec) []session.SchemaColumn {
-	var columns []session.SchemaColumn
+// flattenTagFamilies visits every named tag in a family list under its qualified "family.tag" name.
+//
+// Measure and Stream nest their tags one level deep; a tag outside a named family keeps its bare
+// name so it matches how BYDBQL refers to it.
+func flattenTagFamilies(families []*databasev1.TagFamilySpec, visit func(qualifiedName string, tag *databasev1.TagSpec)) {
 	for _, family := range families {
 		familyName := strings.TrimSpace(family.GetName())
 		for _, tag := range family.GetTags() {
@@ -232,13 +216,28 @@ func tagFamilyColumns(families []*databasev1.TagFamilySpec) []session.SchemaColu
 			if familyName != "" {
 				tagName = familyName + "." + tagName
 			}
-			columns = append(columns, session.SchemaColumn{
-				Name: tagName,
-				Kind: session.SchemaColumnTag,
-				Type: tagValueType(tag.GetType()),
-			})
+			visit(tagName, tag)
 		}
 	}
+}
+
+func tagFamilies(families []*databasev1.TagFamilySpec) []string {
+	var tags []string
+	flattenTagFamilies(families, func(qualifiedName string, _ *databasev1.TagSpec) {
+		tags = append(tags, qualifiedName)
+	})
+	return tuitext.Compact(tags)
+}
+
+func tagFamilyColumns(families []*databasev1.TagFamilySpec) []session.SchemaColumn {
+	var columns []session.SchemaColumn
+	flattenTagFamilies(families, func(qualifiedName string, tag *databasev1.TagSpec) {
+		columns = append(columns, session.SchemaColumn{
+			Name: qualifiedName,
+			Kind: session.SchemaColumnTag,
+			Type: tagValueType(tag.GetType()),
+		})
+	})
 	return columns
 }
 
@@ -246,75 +245,59 @@ func entityTagNames(entity *databasev1.Entity) []string {
 	if entity == nil {
 		return nil
 	}
-	return compactStrings(entity.GetTagNames())
+	return tuitext.Compact(entity.GetTagNames())
+}
+
+// specNames collects the distinct trimmed names of a tag or field spec list.
+func specNames[S any](specs []*S, nameOf func(*S) string) []string {
+	names := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		names = append(names, nameOf(spec))
+	}
+	return tuitext.Compact(names)
+}
+
+// specColumns turns a tag or field spec list into typed columns, skipping unnamed entries.
+func specColumns[S any](specs []*S, kind session.SchemaColumnKind, nameOf func(*S) string, typeOf func(*S) session.SchemaValueType) []session.SchemaColumn {
+	columns := make([]session.SchemaColumn, 0, len(specs))
+	for _, spec := range specs {
+		name := strings.TrimSpace(nameOf(spec))
+		if name == "" {
+			continue
+		}
+		columns = append(columns, session.SchemaColumn{Name: name, Kind: kind, Type: typeOf(spec)})
+	}
+	return columns
 }
 
 func tagNames(tags []*databasev1.TagSpec) []string {
-	var names []string
-	for _, tag := range tags {
-		names = append(names, tag.GetName())
-	}
-	return compactStrings(names)
+	return specNames(tags, (*databasev1.TagSpec).GetName)
 }
 
 func tagColumns(tags []*databasev1.TagSpec, kind session.SchemaColumnKind) []session.SchemaColumn {
-	columns := make([]session.SchemaColumn, 0, len(tags))
-	for _, tag := range tags {
-		tagName := strings.TrimSpace(tag.GetName())
-		if tagName == "" {
-			continue
-		}
-		columns = append(columns, session.SchemaColumn{Name: tagName, Kind: kind, Type: tagValueType(tag.GetType())})
-	}
-	return columns
+	return specColumns(tags, kind, (*databasev1.TagSpec).GetName, func(tag *databasev1.TagSpec) session.SchemaValueType {
+		return tagValueType(tag.GetType())
+	})
 }
 
 func traceTagNames(tags []*databasev1.TraceTagSpec) []string {
-	var names []string
-	for _, tag := range tags {
-		names = append(names, tag.GetName())
-	}
-	return compactStrings(names)
+	return specNames(tags, (*databasev1.TraceTagSpec).GetName)
 }
 
 func traceTagColumns(tags []*databasev1.TraceTagSpec) []session.SchemaColumn {
-	columns := make([]session.SchemaColumn, 0, len(tags))
-	for _, tag := range tags {
-		tagName := strings.TrimSpace(tag.GetName())
-		if tagName == "" {
-			continue
-		}
-		columns = append(columns, session.SchemaColumn{
-			Name: tagName,
-			Kind: session.SchemaColumnTag,
-			Type: tagValueType(tag.GetType()),
-		})
-	}
-	return columns
+	return specColumns(tags, session.SchemaColumnTag, (*databasev1.TraceTagSpec).GetName, func(tag *databasev1.TraceTagSpec) session.SchemaValueType {
+		return tagValueType(tag.GetType())
+	})
 }
 
 func fieldNames(fields []*databasev1.FieldSpec) []string {
-	var names []string
-	for _, field := range fields {
-		names = append(names, field.GetName())
-	}
-	return compactStrings(names)
+	return specNames(fields, (*databasev1.FieldSpec).GetName)
 }
 
 func fieldColumns(fields []*databasev1.FieldSpec) []session.SchemaColumn {
-	columns := make([]session.SchemaColumn, 0, len(fields))
-	for _, field := range fields {
-		fieldName := strings.TrimSpace(field.GetName())
-		if fieldName == "" {
-			continue
-		}
-		columns = append(columns, session.SchemaColumn{
-			Name: fieldName,
-			Kind: session.SchemaColumnField,
-			Type: fieldValueType(field.GetFieldType()),
-		})
-	}
-	return columns
+	return specColumns(fields, session.SchemaColumnField, (*databasev1.FieldSpec).GetName, func(field *databasev1.FieldSpec) session.SchemaValueType {
+		return fieldValueType(field.GetFieldType())
+	})
 }
 
 func markIndexedColumns(columns []session.SchemaColumn, indexedFields []string) []session.SchemaColumn {
@@ -370,21 +353,4 @@ func fieldValueType(fieldType databasev1.FieldType) session.SchemaValueType {
 	default:
 		return session.SchemaValueTypeUnknown
 	}
-}
-
-func compactStrings(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	var compactedValues []string
-	for _, value := range values {
-		trimmedValue := strings.TrimSpace(value)
-		if trimmedValue == "" {
-			continue
-		}
-		if _, ok := seen[trimmedValue]; ok {
-			continue
-		}
-		seen[trimmedValue] = struct{}{}
-		compactedValues = append(compactedValues, trimmedValue)
-	}
-	return compactedValues
 }

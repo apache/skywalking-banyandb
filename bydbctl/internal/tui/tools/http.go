@@ -29,12 +29,15 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 
 	bydbqlv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/bydbql/v1"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tuitext"
 	"github.com/apache/skywalking-banyandb/pkg/auth"
 )
 
@@ -135,7 +138,12 @@ func (executor *HTTPExecutor) ExecutionLimits() ExecutionLimits {
 	return executor.limits
 }
 
-const maxCatalogEntries = 10000
+const (
+	maxCatalogEntries = 10000
+	// catalogDiscoveryConcurrency bounds in-flight schema list requests so discovery stays fast on a
+	// server with many groups without opening an unbounded number of connections to it.
+	catalogDiscoveryConcurrency = 8
+)
 
 // DiscoverCatalog lists groups and resource names across supported resource types.
 func (executor *HTTPExecutor) DiscoverCatalog(ctx context.Context) (session.SchemaCatalog, error) {
@@ -151,32 +159,62 @@ func (executor *HTTPExecutor) DiscoverCatalog(ctx context.Context) (session.Sche
 		return catalog, groupsErr
 	}
 	catalog.Groups = groups
-	catalog.Entries = executor.discoverCatalogEntries(ctx, groups)
+	entries, discoveryErr := executor.discoverCatalogEntries(ctx, groups)
+	if discoveryErr != nil {
+		return catalog, fmt.Errorf("failed to discover catalog resources: %w", discoveryErr)
+	}
+	catalog.Entries = entries
 	return catalog, nil
 }
 
 // discoverCatalogEntries lists resources per group and interleaves them fairly so one large
 // group cannot starve later groups under the global entry limit.
-func (executor *HTTPExecutor) discoverCatalogEntries(ctx context.Context, groups []string) []session.CatalogEntry {
-	resourcesByGroup := make([][]session.CatalogEntry, len(groups))
-	for groupIndex, group := range groups {
-		for _, resourceType := range catalogResourceTypes() {
-			resourceNames, listErr := executor.listResources(ctx, group, resourceType)
-			if listErr != nil {
-				continue
-			}
-			groupResources := make([]session.CatalogEntry, 0, len(resourceNames))
-			for _, resourceName := range resourceNames {
-				groupResources = append(groupResources, session.CatalogEntry{
-					Group: group,
-					Type:  resourceType,
-					Name:  resourceName,
-				})
-			}
-			resourcesByGroup[groupIndex] = append(resourcesByGroup[groupIndex], groupResources...)
+//
+// One list request is issued per group and resource type. On a server with many groups that is
+// hundreds of independent round trips, so they run concurrently under a bounded worker count and
+// are collected into fixed slots, which keeps the result identical to a sequential walk.
+func (executor *HTTPExecutor) discoverCatalogEntries(ctx context.Context, groups []string) ([]session.CatalogEntry, error) {
+	resourceTypes := catalogResourceTypes()
+	perGroupType := make([][]session.CatalogEntry, len(groups)*len(resourceTypes))
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(catalogDiscoveryConcurrency)
+	for groupIndex, groupName := range groups {
+		for typeIndex, resourceType := range resourceTypes {
+			slot := groupIndex*len(resourceTypes) + typeIndex
+			group.Go(func() error {
+				resourceNames, listErr := executor.listResources(groupCtx, groupName, resourceType)
+				if listErr != nil {
+					if groupCtx.Err() != nil {
+						return fmt.Errorf("catalog discovery for group %q and type %s canceled: %w", groupName, resourceType, groupCtx.Err())
+					}
+					// A resource type absent from a group is normal, so it narrows the catalog
+					// rather than failing the whole discovery pass.
+					return nil
+				}
+				groupResources := make([]session.CatalogEntry, 0, len(resourceNames))
+				for _, resourceName := range resourceNames {
+					groupResources = append(groupResources, session.CatalogEntry{
+						Group: groupName,
+						Type:  resourceType,
+						Name:  resourceName,
+					})
+				}
+				perGroupType[slot] = groupResources
+				return nil
+			})
 		}
 	}
-	return interleaveCatalogEntries(resourcesByGroup, maxCatalogEntries)
+	waitErr := group.Wait()
+	if waitErr != nil {
+		return nil, fmt.Errorf("catalog discovery did not complete: %w", waitErr)
+	}
+	resourcesByGroup := make([][]session.CatalogEntry, len(groups))
+	for groupIndex := range groups {
+		for typeIndex := range resourceTypes {
+			resourcesByGroup[groupIndex] = append(resourcesByGroup[groupIndex], perGroupType[groupIndex*len(resourceTypes)+typeIndex]...)
+		}
+	}
+	return interleaveCatalogEntries(resourcesByGroup, maxCatalogEntries), nil
 }
 
 // interleaveCatalogEntries fills the catalog fairly by taking one entry per non-empty group in
@@ -207,36 +245,59 @@ func interleaveCatalogEntries(resourcesByGroup [][]session.CatalogEntry, limit i
 	return entries
 }
 
-func (executor *HTTPExecutor) listGroups(ctx context.Context) ([]string, error) {
+// newRequest builds an authenticated read-only JSON request against the configured BanyanDB address.
+func (executor *HTTPExecutor) newRequest(ctx context.Context) *resty.Request {
 	request := executor.client.R().
 		SetContext(ctx).
 		SetHeader("Accept", "application/json")
 	if authHeader := executor.authHeader(); authHeader != "" {
 		request.SetHeader("Authorization", authHeader)
 	}
-	response, requestErr := request.Get(executor.config.Addr + groupListPath)
-	if requestErr != nil {
-		return nil, fmt.Errorf("failed to list BanyanDB groups from %s: %w", executor.config.Addr, requestErr)
-	}
-	if response.StatusCode() != http.StatusOK {
-		return nil, fmt.Errorf("BanyanDB group list returned %s", response.Status())
-	}
-	listResponse := new(databasev1.GroupRegistryServiceListResponse)
-	if unmarshalErr := protojson.Unmarshal(response.Body(), listResponse); unmarshalErr != nil {
-		return nil, unmarshalErr
-	}
-	return metadataNames(extractGroupMetadata(listResponse.GetGroup())), nil
+	return request
 }
 
-func extractGroupMetadata(groups []*commonv1.Group) []*commonv1.Metadata {
-	metadataItems := make([]*commonv1.Metadata, 0, len(groups))
-	for _, group := range groups {
-		if group == nil || group.GetMetadata() == nil {
-			continue
-		}
-		metadataItems = append(metadataItems, group.GetMetadata())
+// registryList names one schema registry listing in the errors reported for it.
+type registryList struct {
+	// plural names what was being listed, as in "failed to list BanyanDB groups".
+	plural string
+	// listing names the endpoint, as in "BanyanDB group list returned 503".
+	listing string
+}
+
+var (
+	groupRegistry            = registryList{plural: "groups", listing: "group list"}
+	indexRuleRegistry        = registryList{plural: "index rules", listing: "index rule list"}
+	indexRuleBindingRegistry = registryList{plural: "index rule bindings", listing: "index rule binding list"}
+)
+
+// getRegistryList performs one read-only registry GET and decodes its protojson body into target.
+//
+// A non-OK status is reported by naming the endpoint rather than by returning the response body, so
+// a discovery failure never forwards server text into an agent prompt.
+func (executor *HTTPExecutor) getRegistryList(ctx context.Context, path, group string, registry registryList, target proto.Message) error {
+	request := executor.newRequest(ctx)
+	if group != "" {
+		request.SetPathParam("group", group)
 	}
-	return metadataItems
+	response, requestErr := request.Get(executor.config.Addr + path)
+	if requestErr != nil {
+		return fmt.Errorf("failed to list BanyanDB %s from %s: %w", registry.plural, executor.config.Addr, requestErr)
+	}
+	if response.StatusCode() != http.StatusOK {
+		return fmt.Errorf("BanyanDB %s returned %s", registry.listing, response.Status())
+	}
+	if unmarshalErr := protojson.Unmarshal(response.Body(), target); unmarshalErr != nil {
+		return fmt.Errorf("failed to decode BanyanDB %s: %w", registry.listing, unmarshalErr)
+	}
+	return nil
+}
+
+func (executor *HTTPExecutor) listGroups(ctx context.Context) ([]string, error) {
+	listResponse := new(databasev1.GroupRegistryServiceListResponse)
+	if getErr := executor.getRegistryList(ctx, groupListPath, "", groupRegistry, listResponse); getErr != nil {
+		return nil, getErr
+	}
+	return metadataNames(collectMetadata(listResponse.GetGroup(), (*commonv1.Group).GetMetadata)), nil
 }
 
 // DiscoverSchema fetches and summarizes a resource schema, falling back to a local snapshot when unavailable.
@@ -282,14 +343,9 @@ func (executor *HTTPExecutor) discoverGroupSchema(ctx context.Context, req Schem
 	if fallbackErr != nil {
 		return session.SchemaSnapshot{}, fallbackErr
 	}
-	request := executor.client.R().
-		SetContext(ctx).
+	request := executor.newRequest(ctx).
 		SetPathParam("group", group).
-		SetPathParam("name", req.Name).
-		SetHeader("Accept", "application/json")
-	if authHeader := executor.authHeader(); authHeader != "" {
-		request.SetHeader("Authorization", authHeader)
-	}
+		SetPathParam("name", req.Name)
 	response, requestErr := request.Get(executor.config.Addr + path)
 	if requestErr != nil || response.StatusCode() != http.StatusOK {
 		if resourceNames, listErr := executor.listResources(ctx, group, req.Type); listErr == nil {
@@ -335,14 +391,7 @@ func (executor *HTTPExecutor) listResources(ctx context.Context, group string, r
 	if listErr != nil {
 		return nil, listErr
 	}
-	request := executor.client.R().
-		SetContext(ctx).
-		SetPathParam("group", group).
-		SetHeader("Accept", "application/json")
-	if authHeader := executor.authHeader(); authHeader != "" {
-		request.SetHeader("Authorization", authHeader)
-	}
-	response, requestErr := request.Get(executor.config.Addr + listPath)
+	response, requestErr := executor.newRequest(ctx).SetPathParam("group", group).Get(executor.config.Addr + listPath)
 	if requestErr != nil || response.StatusCode() != http.StatusOK {
 		return nil, fmt.Errorf("resource list unavailable")
 	}
@@ -378,7 +427,7 @@ func (executor *HTTPExecutor) discoverResourceSortableIndexes(
 		}
 		sortableIndexes = append(sortableIndexes, session.SortableIndex{
 			RuleName: ruleName,
-			Tags:     compactStrings(indexRule.GetTags()),
+			Tags:     tuitext.Compact(indexRule.GetTags()),
 		})
 	}
 	sort.Slice(sortableIndexes, func(leftIndex, rightIndex int) bool {
@@ -392,7 +441,7 @@ func sortableIndexTags(indexes []session.SortableIndex) []string {
 	for _, index := range indexes {
 		tags = append(tags, index.Tags...)
 	}
-	return compactStrings(tags)
+	return tuitext.Compact(tags)
 }
 
 func boundRuleNamesForResource(
@@ -424,39 +473,17 @@ func boundRuleNamesForResource(
 }
 
 func (executor *HTTPExecutor) listIndexRules(ctx context.Context, group string) ([]*databasev1.IndexRule, error) {
-	request := executor.client.R().
-		SetContext(ctx).
-		SetPathParam("group", group).
-		SetHeader("Accept", "application/json")
-	if authHeader := executor.authHeader(); authHeader != "" {
-		request.SetHeader("Authorization", authHeader)
-	}
-	response, requestErr := request.Get(executor.config.Addr + indexRuleListPath)
-	if requestErr != nil || response.StatusCode() != http.StatusOK {
-		return nil, fmt.Errorf("index rule list unavailable")
-	}
 	listResponse := new(databasev1.IndexRuleRegistryServiceListResponse)
-	if unmarshalErr := protojson.Unmarshal(response.Body(), listResponse); unmarshalErr != nil {
-		return nil, unmarshalErr
+	if getErr := executor.getRegistryList(ctx, indexRuleListPath, group, indexRuleRegistry, listResponse); getErr != nil {
+		return nil, getErr
 	}
 	return listResponse.GetIndexRule(), nil
 }
 
 func (executor *HTTPExecutor) listIndexRuleBindings(ctx context.Context, group string) ([]*databasev1.IndexRuleBinding, error) {
-	request := executor.client.R().
-		SetContext(ctx).
-		SetPathParam("group", group).
-		SetHeader("Accept", "application/json")
-	if authHeader := executor.authHeader(); authHeader != "" {
-		request.SetHeader("Authorization", authHeader)
-	}
-	response, requestErr := request.Get(executor.config.Addr + indexRuleBindingListPath)
-	if requestErr != nil || response.StatusCode() != http.StatusOK {
-		return nil, fmt.Errorf("index rule binding list unavailable")
-	}
 	listResponse := new(databasev1.IndexRuleBindingRegistryServiceListResponse)
-	if unmarshalErr := protojson.Unmarshal(response.Body(), listResponse); unmarshalErr != nil {
-		return nil, unmarshalErr
+	if getErr := executor.getRegistryList(ctx, indexRuleBindingListPath, group, indexRuleBindingRegistry, listResponse); getErr != nil {
+		return nil, getErr
 	}
 	return listResponse.GetIndexRuleBinding(), nil
 }
@@ -478,14 +505,9 @@ func (executor *HTTPExecutor) Execute(ctx context.Context, querySession *session
 	if marshalErr != nil {
 		return session.ExecutionResult{}, fmt.Errorf("failed to marshal BYDBQL request: %w", marshalErr)
 	}
-	request := executor.client.R().
-		SetContext(ctx).
-		SetHeader("Accept", "application/json").
+	request := executor.newRequest(ctx).
 		SetHeader("Content-Type", "application/json").
 		SetBody(requestBody)
-	if authHeader := executor.authHeader(); authHeader != "" {
-		request.SetHeader("Authorization", authHeader)
-	}
 	response, requestErr := request.Post(executor.config.Addr + bydbqlQueryPath)
 	if requestErr != nil {
 		executionResult := session.ExecutionResult{
@@ -534,55 +556,14 @@ func (executor *HTTPExecutor) authHeader() string {
 	return auth.GenerateBasicAuthHeader(executor.config.Username, executor.config.Password)
 }
 
-func extractMeasureMetadata(measures []*databasev1.Measure) []*commonv1.Metadata {
-	return extractMetadata(len(measures), func(idx int) *commonv1.Metadata {
-		if measures[idx] == nil {
-			return nil
+// collectMetadata reads the metadata of every non-nil resource in a registry list response.
+func collectMetadata[T any](resources []*T, metadataOf func(*T) *commonv1.Metadata) []*commonv1.Metadata {
+	metadataItems := make([]*commonv1.Metadata, 0, len(resources))
+	for _, resource := range resources {
+		if resource == nil {
+			continue
 		}
-		return measures[idx].GetMetadata()
-	})
-}
-
-func extractStreamMetadata(streams []*databasev1.Stream) []*commonv1.Metadata {
-	return extractMetadata(len(streams), func(idx int) *commonv1.Metadata {
-		if streams[idx] == nil {
-			return nil
-		}
-		return streams[idx].GetMetadata()
-	})
-}
-
-func extractTraceMetadata(traces []*databasev1.Trace) []*commonv1.Metadata {
-	return extractMetadata(len(traces), func(idx int) *commonv1.Metadata {
-		if traces[idx] == nil {
-			return nil
-		}
-		return traces[idx].GetMetadata()
-	})
-}
-
-func extractPropertyMetadata(properties []*databasev1.Property) []*commonv1.Metadata {
-	return extractMetadata(len(properties), func(idx int) *commonv1.Metadata {
-		if properties[idx] == nil {
-			return nil
-		}
-		return properties[idx].GetMetadata()
-	})
-}
-
-func extractTopNMetadata(topNItems []*databasev1.TopNAggregation) []*commonv1.Metadata {
-	return extractMetadata(len(topNItems), func(idx int) *commonv1.Metadata {
-		if topNItems[idx] == nil {
-			return nil
-		}
-		return topNItems[idx].GetMetadata()
-	})
-}
-
-func extractMetadata(count int, at func(int) *commonv1.Metadata) []*commonv1.Metadata {
-	metadataItems := make([]*commonv1.Metadata, 0, count)
-	for idx := 0; idx < count; idx++ {
-		metadataItems = append(metadataItems, at(idx))
+		metadataItems = append(metadataItems, metadataOf(resource))
 	}
 	return metadataItems
 }
@@ -597,5 +578,5 @@ func metadataNames(metadataItems []*commonv1.Metadata) []string {
 			names = append(names, name)
 		}
 	}
-	return compactStrings(names)
+	return tuitext.Compact(names)
 }

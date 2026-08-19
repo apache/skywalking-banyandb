@@ -34,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/bridge"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tools"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tuitext"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/workflow"
 )
 
@@ -519,7 +520,7 @@ func (m Model) workspaceFrame() (string, string, int, int) {
 	contentWidth := clamp(m.width-4, minTerminalWidth-4, 200)
 	header := m.renderWorkspaceHeader(contentWidth)
 	if m.catalog.loadError != "" {
-		connectionError := truncate(glyphFailed+" BanyanDB connection failed: "+singleLine(m.catalog.loadError), contentWidth)
+		connectionError := truncate(glyphFailed+" BanyanDB connection failed: "+tuitext.SingleLine(m.catalog.loadError), contentWidth)
 		header = lipgloss.JoinVertical(lipgloss.Left, header,
 			badStyle.Render(connectionError),
 			mutedStyle.Render("Ctrl+L retries the catalog load"))
@@ -800,16 +801,7 @@ func (m *Model) addUIEvent(event string) {
 	m.recordActivity("workflow", event, "")
 }
 
-func singleLine(value string) string {
-	return strings.Join(strings.Fields(value), " ")
-}
-
+// clamp bounds value to the inclusive range between minValue and maxValue.
 func clamp(value, minValue, maxValue int) int {
-	if value < minValue {
-		return minValue
-	}
-	if value > maxValue {
-		return maxValue
-	}
-	return value
+	return min(max(value, minValue), maxValue)
 }

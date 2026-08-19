@@ -23,6 +23,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tuitext"
 )
 
 const maxActivityEntries = 200
@@ -62,7 +63,7 @@ func (m *Model) recordAgentActivities(events []agent.Event) {
 			m.querySession.AddChatMessage(session.ChatMessage{
 				Role:      session.ChatRoleTool,
 				ToolName:  event.ToolName,
-				Content:   fallback(singleLine(event.InputSummary), event.ToolName),
+				Content:   fallback(tuitext.SingleLine(event.InputSummary), event.ToolName),
 				Detail:    toolDetail,
 				CreatedAt: event.StartedAt,
 			})
@@ -111,16 +112,16 @@ func activityTitle(event agent.Event) string {
 		}
 		return "candidate: validated"
 	case agent.EventKindClarification:
-		return "agent question: " + fallback(singleLine(event.Message), "clarification needed")
+		return "agent question: " + fallback(tuitext.SingleLine(event.Message), "clarification needed")
 	case agent.EventKindCancelled:
-		return "canceled: " + fallback(singleLine(event.Message), "agent action")
+		return "canceled: " + fallback(tuitext.SingleLine(event.Message), "agent action")
 	case agent.EventKindPlanUpdate:
 		if strings.TrimSpace(event.Message) != "" {
-			return "plan: " + singleLine(event.Message)
+			return "plan: " + tuitext.SingleLine(event.Message)
 		}
 		return "plan update"
 	case agent.EventKindMessageDelta:
-		return "output: " + truncateRunes(singleLine(event.Message), 96)
+		return "output: " + truncateRunes(tuitext.SingleLine(event.Message), 96)
 	case agent.EventKindFinalResponse:
 		if strings.TrimSpace(event.Candidate) != "" {
 			return "agent: BYDBQL candidate"
@@ -132,10 +133,10 @@ func activityTitle(event agent.Event) string {
 		}
 		return "error"
 	case agent.EventKindPermissionRequest:
-		return "permission: " + fallback(singleLine(event.Message), "denied by workflow")
+		return "permission: " + fallback(tuitext.SingleLine(event.Message), "denied by workflow")
 	default:
 		if strings.TrimSpace(event.Message) != "" {
-			return string(event.Kind) + ": " + singleLine(event.Message)
+			return string(event.Kind) + ": " + tuitext.SingleLine(event.Message)
 		}
 		return string(event.Kind)
 	}

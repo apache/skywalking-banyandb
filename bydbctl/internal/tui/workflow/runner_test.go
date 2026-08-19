@@ -916,6 +916,7 @@ func (gateway blockingGateway) Send(ctx context.Context, _ string, _ agent.TurnR
 	events := make(chan agent.Event, 1)
 	events <- agent.Event{Kind: agent.EventKindMessageDelta, Message: "partial response"}
 	close(gateway.started)
+	//panicdiag:allow-rawgo test-only gateway stub; a panic here must fail the test loudly rather than be recovered and hidden
 	go func() {
 		defer close(events)
 		<-ctx.Done()
@@ -940,6 +941,7 @@ func (gateway scriptedGateway) Send(ctx context.Context, _ string, req agent.Tur
 		*gateway.requests = append(*gateway.requests, req)
 	}
 	events := make(chan agent.Event, len(gateway.events))
+	//panicdiag:allow-rawgo test-only gateway stub; a panic here must fail the test loudly rather than be recovered and hidden
 	go func() {
 		defer close(events)
 		for _, event := range gateway.events {

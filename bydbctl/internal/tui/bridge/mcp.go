@@ -30,6 +30,7 @@ import (
 	"sync"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tuirun"
 )
 
 const (
@@ -75,7 +76,7 @@ func StartSocketServer(toolBridge *ToolBridge) (*SocketServer, error) {
 		directory:  directory,
 		done:       make(chan struct{}),
 	}
-	go socketServer.accept()
+	tuirun.Go(context.Background(), "bridge-accept", socketServer.accept)
 	return socketServer, nil
 }
 
@@ -117,7 +118,7 @@ func (socketServer *SocketServer) Close() error {
 	return closeErr
 }
 
-func (socketServer *SocketServer) accept() {
+func (socketServer *SocketServer) accept(ctx context.Context) {
 	for {
 		connection, acceptErr := socketServer.listener.Accept()
 		if acceptErr != nil {
@@ -128,11 +129,13 @@ func (socketServer *SocketServer) accept() {
 				continue
 			}
 		}
-		go socketServer.handleConnection(connection)
+		tuirun.Go(ctx, "bridge-connection", func(connectionCtx context.Context) {
+			socketServer.handleConnection(connectionCtx, connection)
+		})
 	}
 }
 
-func (socketServer *SocketServer) handleConnection(connection net.Conn) {
+func (socketServer *SocketServer) handleConnection(ctx context.Context, connection net.Conn) {
 	defer func() {
 		_ = connection.Close()
 	}()
@@ -141,7 +144,7 @@ func (socketServer *SocketServer) handleConnection(connection net.Conn) {
 	if decodeErr := decoder.Decode(&request); decodeErr != nil {
 		return
 	}
-	result := socketServer.bridge.Call(context.Background(), request.Call)
+	result := socketServer.bridge.Call(ctx, request.Call)
 	if encodeErr := json.NewEncoder(connection).Encode(bridgeResponse{Result: result.Content, Error: errorString(result.Err)}); encodeErr != nil {
 		return
 	}

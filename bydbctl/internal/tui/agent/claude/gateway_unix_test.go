@@ -58,7 +58,8 @@ func TestGatewayInterruptKillsClaudeDescendants(t *testing.T) {
 	if interruptErr := gateway.Interrupt(context.Background(), session.ID); interruptErr != nil {
 		t.Fatalf("Interrupt returned an error: %v", interruptErr)
 	}
-	for range events {
+	for event := range events {
+		_ = event
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {

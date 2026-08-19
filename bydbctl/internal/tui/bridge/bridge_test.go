@@ -947,6 +947,7 @@ func TestBridgeCancelsAnAlreadySentQuery(t *testing.T) {
 		SchemaSnapshot: session.SchemaSnapshot{Type: session.ResourceTypeMeasure},
 	})
 	resultCh := make(chan Result, 1)
+	//panicdiag:allow-rawgo test-only cancellation driver; a panic here must fail the test loudly rather than be recovered and hidden
 	go func() {
 		resultCh <- toolBridge.Call(context.Background(), Call{
 			Name:      ToolExecuteBydbQL,

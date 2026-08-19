@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tuitext"
 )
 
 const (
@@ -33,13 +34,13 @@ func summarizeAgentEvent(event agent.Event) string {
 	case agent.EventKindPlanUpdate:
 		return "agent: planning"
 	case agent.EventKindToolCall:
-		return "tool: " + fallback(event.ToolName, singleLine(event.Message))
+		return "tool: " + fallback(event.ToolName, tuitext.SingleLine(event.Message))
 	case agent.EventKindToolResult:
-		return "tool complete: " + fallback(event.ToolName, singleLine(event.Message))
+		return "tool complete: " + fallback(event.ToolName, tuitext.SingleLine(event.Message))
 	case agent.EventKindCandidate:
 		return "agent: validated BYDBQL candidate ready"
 	case agent.EventKindClarification:
-		return "agent question: " + singleLine(event.Message)
+		return "agent question: " + tuitext.SingleLine(event.Message)
 	case agent.EventKindApproval:
 		return "execution approval required"
 	case agent.EventKindCancelled:
@@ -68,7 +69,7 @@ func summarizeError(prefix, message string) string {
 	if trimmedMessage == "" {
 		return prefix + ": failed"
 	}
-	oneLine := singleLine(trimmedMessage)
+	oneLine := tuitext.SingleLine(trimmedMessage)
 	if idx := strings.Index(oneLine, ";"); idx > 0 {
 		oneLine = strings.TrimSpace(oneLine[:idx])
 	}
@@ -76,7 +77,7 @@ func summarizeError(prefix, message string) string {
 }
 
 func summarizeStatusEvent(message string) string {
-	return truncateRunes(singleLine(message), maxUIEventRunes)
+	return truncateRunes(tuitext.SingleLine(message), maxUIEventRunes)
 }
 
 func truncateRunes(value string, maxRunes int) string {
@@ -94,7 +95,7 @@ func formatValidationHint(message string) string {
 	if strings.TrimSpace(message) == "" {
 		return ""
 	}
-	return truncateRunes("validation: "+singleLine(message), maxUIEventRunes)
+	return truncateRunes("validation: "+tuitext.SingleLine(message), maxUIEventRunes)
 }
 
 func formatInvalidCandidateHint(query string) string {

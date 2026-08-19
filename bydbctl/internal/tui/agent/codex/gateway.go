@@ -249,8 +249,9 @@ func validateConfig(config Config) error {
 	if !filepath.IsAbs(config.WorkingDirectory) {
 		return errors.New("isolated Codex working directory must be absolute")
 	}
-	if serverErr := agent.ValidateControlledMCPServer(config.ControlledMCPServer); serverErr != nil {
-		return serverErr
+	serverErr := agent.ValidateControlledMCPServer(config.ControlledMCPServer)
+	if serverErr != nil {
+		return fmt.Errorf("invalid controlled MCP server: %w", serverErr)
 	}
 	return nil
 }

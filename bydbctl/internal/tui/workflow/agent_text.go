@@ -21,59 +21,54 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tuitext"
 )
 
-// Some providers stream text with spaces inserted inside identifiers and keywords ("ME ASURE",
-// "service _name"). The helpers below repair that for display and for candidate extraction, leaving
-// text outside backticks conservatively alone.
+// A provider streaming token-by-token can split a word across deltas, so the reassembled text
+// carries spaces inside identifiers and keywords ("ME ASURE", "service _name"). The helpers below
+// repair that for display and for candidate extraction.
+//
+// Repair is deliberately conservative, because it rewrites text the user reads: the rules join only
+// fragments that cannot be a real word boundary, and everything else is left alone. This is a
+// presentation fix, never a correctness one — a candidate is still validated and compiled from the
+// structured plan the controlled tool returned, not from repaired text.
 
 var fragmentedTimeRangePattern = regexp.MustCompile(`'-\s*(\d+)\s*m\s*'`)
 
+// fragmentedTokenReplacements repairs the split forms of BYDBQL keywords and of the few English
+// words whose fragments the generic identifier rules cannot safely rejoin.
+//
+// Longer patterns come first: a replacement runs against the output of the previous one, so
+// "A GG REG ATE" must be tried before the shorter keyword fragments it contains.
 var fragmentedTokenReplacements = []struct {
 	old string
 	new string
 }{
-	{old: "by db ql", new: "bydbql"},
-	{old: "b yd b ql", new: "bydbql"},
-	{old: "SH OW", new: "SHOW"},
 	{old: "A GG REG ATE", new: "AGGREGATE"},
-	{old: "AGGREGATE BY AV G", new: "AGGREGATE BY AVG"},
-	{old: "AGGREGATE BY MA X", new: "AGGREGATE BY MAX"},
-	{old: "AGGREGATE BY MI N", new: "AGGREGATE BY MIN"},
+	{old: "ME AS URE", new: "MEASURE"},
+	{old: "ME ASURE", new: "MEASURE"},
+	{old: "PROP ERTY", new: "PROPERTY"},
+	{old: "ST REAM", new: "STREAM"},
+	{old: "TR ACE", new: "TRACE"},
+	{old: "WHE RE", new: "WHERE"},
+	{old: "GRO UP", new: "GROUP"},
+	{old: "OR DER", new: "ORDER"},
+	{old: "LI MIT", new: "LIMIT"},
+	{old: "SH OW", new: "SHOW"},
 	{old: "AV G", new: "AVG"},
 	{old: "MA X", new: "MAX"},
 	{old: "MI N", new: "MIN"},
-	{old: "TOP text 10", new: "TOP 10"},
-	{old: "TOP text ", new: "TOP "},
-	{old: "ME ASURE", new: "MEASURE"},
-	{old: "ME AS URE", new: "MEASURE"},
-	{old: "ST REAM", new: "STREAM"},
-	{old: "TR ACE", new: "TRACE"},
-	{old: "PROP ERTY", new: "PROPERTY"},
-	{old: "SER VICE", new: "SERVICE"},
-	{old: "LI MIT", new: "LIMIT"},
-	{old: "GRO UP", new: "GROUP"},
-	{old: "OR DER", new: "ORDER"},
-	{old: "WHE RE", new: "WHERE"},
-	{old: "service _", new: "service_"},
-	{old: "service_end point_l atency", new: "service_endpoint_latency"},
-	{old: "endpoint _", new: "endpoint_"},
-	{old: "_ ", new: "_"},
-	{old: " - ", new: "-"},
-	{old: "text 10 text", new: "10"},
-	{old: "text 100 text", new: "100"},
-	{old: "text SELECT", new: "SELECT"},
 	{old: "sche mas", new: "schemas"},
 	{old: "sche ma", new: "schema"},
-}
-
-func singleLine(value string) string {
-	return strings.Join(strings.Fields(value), " ")
+	// A trailing underscore or a spaced hyphen never ends a word, so both always rejoin.
+	{old: "_ ", new: "_"},
+	{old: " - ", new: "-"},
 }
 
 // NormalizeAgentDisplayText repairs fragmented natural-language output for UI display.
 func NormalizeAgentDisplayText(text string) string {
-	normalizedText := singleLine(text)
+	normalizedText := tuitext.SingleLine(text)
 	if normalizedText == "" {
 		return strings.TrimSpace(text)
 	}
@@ -189,7 +184,7 @@ func RepairFragmentedQuery(query string) string {
 }
 
 func normalizeFragmentedAgentText(text string) string {
-	normalizedText := singleLine(text)
+	normalizedText := tuitext.SingleLine(text)
 	normalizedText = strings.ReplaceAll(normalizedText, "` ` `", "```")
 	normalizedText = strings.ReplaceAll(normalizedText, "`` `", "```")
 	normalizedText = strings.ReplaceAll(normalizedText, "` ``", "```")

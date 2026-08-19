@@ -24,6 +24,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tuitext"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/workflow"
 )
 
@@ -326,7 +327,7 @@ func chatEntries(querySession *session.QuerySession, liveResponse, queuedMessage
 	if strings.TrimSpace(liveResponse) != "" {
 		entries = append(entries, chatEntryView{
 			role:     session.ChatRoleAssistant,
-			headline: "live output: " + truncateRunes(singleLine(liveResponse), 96),
+			headline: "live output: " + truncateRunes(tuitext.SingleLine(liveResponse), 96),
 			detail:   strings.TrimSpace(liveResponse),
 		})
 	}
@@ -340,7 +341,7 @@ func chatEntries(querySession *session.QuerySession, liveResponse, queuedMessage
 func chatEntryFromMessage(message session.ChatMessage) chatEntryView {
 	content := strings.TrimSpace(message.Content)
 	roleLabel := chatMessageLabel(message)
-	headline := roleLabel + singleLine(workflow.NormalizeAgentDisplayText(content))
+	headline := roleLabel + tuitext.SingleLine(workflow.NormalizeAgentDisplayText(content))
 	detail := content
 	if structuredDetail := strings.TrimSpace(message.Detail); structuredDetail != "" {
 		detail = structuredDetail
@@ -351,13 +352,13 @@ func chatEntryFromMessage(message session.ChatMessage) chatEntryView {
 		return chatEntryView{
 			role:        message.Role,
 			kind:        message.Kind,
-			headline:    roleLabel + singleLine(content),
+			headline:    roleLabel + tuitext.SingleLine(content),
 			detail:      detail,
 			exactDetail: true,
 		}
 	}
 	if message.ToolName != "" {
-		headline = roleLabel + message.ToolName + ": " + singleLine(content)
+		headline = roleLabel + message.ToolName + ": " + tuitext.SingleLine(content)
 	}
 	if strings.TrimSpace(message.Candidate) != "" {
 		status := "unchecked"
@@ -365,7 +366,7 @@ func chatEntryFromMessage(message session.ChatMessage) chatEntryView {
 			status = message.Validation.Status()
 		}
 		candidate := strings.TrimSpace(message.Candidate)
-		candidateLine := chatRoleLabel(message.Role) + "candidate [" + status + "]: " + singleLine(candidate)
+		candidateLine := chatRoleLabel(message.Role) + "candidate [" + status + "]: " + tuitext.SingleLine(candidate)
 		compactDetail := strings.ReplaceAll(strings.ReplaceAll(detail, " ", ""), "\n", "")
 		compactCandidate := strings.ReplaceAll(candidate, " ", "")
 		if detail == "" {

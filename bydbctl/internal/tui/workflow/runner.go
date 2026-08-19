@@ -32,14 +32,14 @@ import (
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/execution"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tools"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tuirun"
 )
 
 const (
-	defaultGroupName    = "default"
-	defaultResourceName = "service_endpoint_latency"
-	defaultTimeStart    = "-30m"
-	defaultLimit        = 10
-	defaultTopN         = 10
+	defaultGroupName = "default"
+	defaultTimeStart = "-30m"
+	defaultLimit     = 10
+	defaultTopN      = 10
 )
 
 // Runner coordinates deterministic workflow phases and agent turns.
@@ -191,7 +191,9 @@ func (runner *Runner) StartAgentTurn(ctx context.Context, querySession *session.
 		return nil, sendErr
 	}
 	updates := make(chan TurnUpdate, 16)
-	go runner.streamAgentTurn(ctx, querySession, trimmedTurnHint, agentEvents, updates)
+	tuirun.Go(ctx, "agent-turn-stream", func(turnCtx context.Context) {
+		runner.streamAgentTurn(turnCtx, querySession, trimmedTurnHint, agentEvents, updates)
+	})
 	return updates, nil
 }
 
@@ -346,8 +348,7 @@ func (runner *Runner) streamAgentTurn(
 	for agentEvents != nil {
 		select {
 		case <-ctx.Done():
-			querySession.Phase = session.PhaseReady
-			updates <- TurnUpdate{Done: true, Err: ctx.Err(), QuerySession: querySession}
+			runner.reportCancelledTurn(ctx, querySession, updates)
 			return
 		case event, open := <-agentEvents:
 			if !open {
@@ -372,9 +373,22 @@ func (runner *Runner) streamAgentTurn(
 			updates <- TurnUpdate{Event: &event, QuerySession: querySession}
 		}
 	}
+	// Canceling the turn also closes the provider stream, so both cases above can be ready at once
+	// and select may take the closed stream. The context is rechecked here so a truncated stream is
+	// never mistaken for a finished turn and its partial output never reaches the conversation.
+	if ctx.Err() != nil {
+		runner.reportCancelledTurn(ctx, querySession, updates)
+		return
+	}
 	runner.syncToolBridgeSession(querySession)
 	completeErr := runner.completeAgentTurn(ctx, querySession, turnHint, collectedEvents)
 	updates <- TurnUpdate{Done: true, Err: completeErr, QuerySession: querySession}
+}
+
+// reportCancelledTurn ends a turn the user stopped, leaving the workspace ready for the next one.
+func (runner *Runner) reportCancelledTurn(ctx context.Context, querySession *session.QuerySession, updates chan<- TurnUpdate) {
+	querySession.Phase = session.PhaseReady
+	updates <- TurnUpdate{Done: true, Err: ctx.Err(), QuerySession: querySession}
 }
 
 func (runner *Runner) syncToolBridgeSession(querySession *session.QuerySession) {

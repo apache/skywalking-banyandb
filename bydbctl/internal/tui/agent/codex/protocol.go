@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tuirun"
 )
 
 const (
@@ -128,7 +129,7 @@ func startConnection(lifecycleCtx context.Context, command string, args []string
 		responses: make(map[string]chan rpcResponse),
 		done:      make(chan struct{}),
 	}
-	go appConnection.readLoop(lifecycleCtx)
+	tuirun.Go(lifecycleCtx, "codex-read-loop", appConnection.readLoop)
 	return appConnection, nil
 }
 
@@ -269,16 +270,16 @@ func (appConnection *connection) send(ctx context.Context, req agent.TurnRequest
 	if setErr := appConnection.setTurn(turn); setErr != nil {
 		return nil, setErr
 	}
-	go func() {
+	tuirun.Go(ctx, "codex-turn-cancel", func(cancelCtx context.Context) {
 		select {
-		case <-ctx.Done():
-			interruptCtx, cancelInterrupt := context.WithTimeout(context.WithoutCancel(ctx), unsafeInterruptTimeout)
+		case <-cancelCtx.Done():
+			interruptCtx, cancelInterrupt := context.WithTimeout(context.WithoutCancel(cancelCtx), unsafeInterruptTimeout)
 			defer cancelInterrupt()
 			_ = appConnection.interruptState(interruptCtx, turn)
 		case <-turn.done:
 		}
-	}()
-	go func(parentCtx context.Context) {
+	})
+	tuirun.Go(ctx, "codex-turn-start", func(parentCtx context.Context) {
 		startCtx, cancelStart := context.WithTimeout(context.WithoutCancel(parentCtx), requestTimeout)
 		defer cancelStart()
 		result, requestErr := appConnection.request(startCtx, "turn/start", map[string]any{
@@ -308,7 +309,7 @@ func (appConnection *connection) send(ctx context.Context, req agent.TurnRequest
 		if setErr := turn.setID(turnResult.Turn.ID); setErr != nil {
 			appConnection.failUnsafeTurn(startCtx, turn, setErr)
 		}
-	}(ctx)
+	})
 	return turn.events, nil
 }
 
@@ -397,10 +398,10 @@ func (appConnection *connection) writeLine(line []byte) error {
 func (appConnection *connection) readLoop(ctx context.Context) {
 	stderrOutput := &cappedWriter{limit: maxStderrBytes}
 	stderrDone := make(chan error, 1)
-	go func() {
+	tuirun.Go(ctx, "codex-stderr-copy", func(context.Context) {
 		_, copyErr := io.Copy(stderrOutput, appConnection.stderr)
 		stderrDone <- copyErr
-	}()
+	})
 	scanner := bufio.NewScanner(appConnection.stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxScannerBuffer)
 	var protocolErr error
@@ -551,11 +552,11 @@ func (appConnection *connection) failUnsafeTurn(ctx context.Context, turn *turnS
 	turn.unsafeOnce.Do(func() {
 		turn.finish(agent.ErrorEvent(turnErr))
 		appConnection.clearTurn(turn)
-		go func() {
-			interruptCtx, cancelInterrupt := context.WithTimeout(context.WithoutCancel(ctx), unsafeInterruptTimeout)
+		tuirun.Go(context.WithoutCancel(ctx), "codex-unsafe-interrupt", func(parentCtx context.Context) {
+			interruptCtx, cancelInterrupt := context.WithTimeout(parentCtx, unsafeInterruptTimeout)
 			defer cancelInterrupt()
 			_ = appConnection.interruptState(interruptCtx, turn)
-		}()
+		})
 	})
 }
 

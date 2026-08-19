@@ -14,6 +14,8 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
+// Package tools implements controlled schema discovery and BYDBQL execution for the TUI.
 package tools
 
 import (
@@ -70,7 +72,7 @@ func responsePreview(body []byte, maxRows int) ([]string, [][]string, bool) {
 	if len(columns) == 0 {
 		columns = []string{"value"}
 	}
-	previewLength := minimum(len(items), maxRows)
+	previewLength := min(len(items), maxRows)
 	preview := make([][]string, 0, previewLength)
 	for _, item := range items[:previewLength] {
 		preview = append(preview, previewRow(item, columns))
@@ -129,7 +131,7 @@ func previewColumns(items []any, maxRows int) []string {
 		}
 	}
 	columnSet := make(map[string]struct{})
-	for _, item := range items[:minimum(len(items), maxRows)] {
+	for _, item := range items[:min(len(items), maxRows)] {
 		object, ok := item.(map[string]any)
 		if !ok {
 			continue
@@ -266,13 +268,6 @@ func previewValue(value any) string {
 		return "<unavailable>"
 	}
 	return string(encodedValue)
-}
-
-func minimum(left, right int) int {
-	if left < right {
-		return left
-	}
-	return right
 }
 
 func truncateBody(value string) string {

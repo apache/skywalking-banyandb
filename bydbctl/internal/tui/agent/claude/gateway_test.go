@@ -181,6 +181,7 @@ func TestGatewayInterruptCompletesWhenEventBufferIsFull(t *testing.T) {
 		t.Fatalf("Interrupt returned an error: %v", interruptErr)
 	}
 	collectedEvents := make(chan []agent.Event, 1)
+	//panicdiag:allow-rawgo test-only event collector; a panic here must fail the test loudly rather than be recovered and hidden
 	go func() {
 		collectedEvents <- collectEvents(events)
 	}()

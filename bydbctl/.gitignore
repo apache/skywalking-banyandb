@@ -17,5 +17,3 @@
 
 # Binaries for programs and plugins
 build
-# local `go build -o cli ./cmd/bydbctl` output
-/cli

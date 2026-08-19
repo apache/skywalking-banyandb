@@ -97,7 +97,8 @@ func TestGatewayInterruptPreservesProcessAndThread(t *testing.T) {
 	if interruptErr := gateway.Interrupt(context.Background(), session.ID); interruptErr != nil {
 		t.Fatalf("Interrupt returned error: %v", interruptErr)
 	}
-	for range events {
+	for event := range events {
+		_ = event
 	}
 	nextEvents := sendAndCollect(t, gateway, session.ID, "after interrupt")
 	if finalMessage(nextEvents) != "reply-2" {
@@ -320,6 +321,7 @@ func sendAndCollect(t *testing.T, gateway *Gateway, sessionID, task string) []ag
 		t.Fatalf("Send returned error: %v", sendErr)
 	}
 	resultCh := make(chan []agent.Event, 1)
+	//panicdiag:allow-rawgo test-only event collector; a panic here must fail the test loudly rather than be recovered and hidden
 	go func() {
 		var collected []agent.Event
 		for event := range events {

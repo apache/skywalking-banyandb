@@ -127,12 +127,13 @@ func applyTimeDefaults(timeRange session.TimeRange) session.TimeRange {
 	}
 }
 
+// finalizeResolvedSlots fills the group slot when discovery returned nothing to match against.
+//
+// The resource name is deliberately left empty in that case: a guessed name would enter the prompt
+// as an exact resource the agent must not invent, so the turn discovers one instead.
 func finalizeResolvedSlots(resolved ResolvedSlots, catalog session.SchemaCatalog) ResolvedSlots {
 	if len(catalog.Entries) > 0 {
 		return resolved
-	}
-	if strings.TrimSpace(resolved.ResourceName) == "" {
-		resolved.ResourceName = defaultResourceName
 	}
 	if len(resolved.Groups) == 0 {
 		resolved.Groups = []string{defaultGroupName}

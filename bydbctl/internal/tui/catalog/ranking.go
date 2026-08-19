@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tuitext"
 )
 
 const (
@@ -32,10 +33,7 @@ const (
 	minimumScoreMargin    = 4
 )
 
-var (
-	tokenPattern           = regexp.MustCompile(`[a-z0-9]+`)
-	resourceMentionPattern = regexp.MustCompile(`(?i)[a-z][a-z0-9_]{5,}`)
-)
+var resourceMentionPattern = regexp.MustCompile(`(?i)[a-z][a-z0-9_]{5,}`)
 
 // Match is a confidence-aware catalog resolution result.
 type Match struct {
@@ -184,7 +182,7 @@ func Ensure(candidates []session.CatalogEntry, entry session.CatalogEntry, limit
 }
 
 func rank(goal string, entries []session.CatalogEntry, preferredType session.ResourceType, groupCount int) []rankedEntry {
-	goalTokens := tokens(goal)
+	scoring := newScoringContext(goal, preferredType, groupCount)
 	ranked := make([]rankedEntry, 0, len(entries))
 	for _, entry := range entries {
 		if shouldSkip(entry) {
@@ -192,7 +190,7 @@ func rank(goal string, entries []session.CatalogEntry, preferredType session.Res
 		}
 		ranked = append(ranked, rankedEntry{
 			entry: entry,
-			score: scoreEntry(goal, goalTokens, entry, preferredType, groupCount),
+			score: scoring.score(entry),
 		})
 	}
 	sort.SliceStable(ranked, func(leftIndex, rightIndex int) bool {
@@ -210,75 +208,104 @@ func rank(goal string, entries []session.CatalogEntry, preferredType session.Res
 	return ranked
 }
 
-func scoreEntry(goal string, goalTokens []string, entry session.CatalogEntry, preferredType session.ResourceType, groupCount int) int {
+// scoringContext holds everything derived from the goal alone.
+//
+// A catalog can hold thousands of entries and is re-ranked on every turn, so the goal is tokenized
+// and its keyword hints resolved once here rather than per entry.
+type scoringContext struct {
+	goalTokens    map[string]struct{}
+	typeScores    map[session.ResourceType]int
+	goal          string
+	preferredType session.ResourceType
+	groupCount    int
+	metricHint    bool
+	latencyHint   bool
+	endpointHint  bool
+	cpuHint       bool
+}
+
+func newScoringContext(goal string, preferredType session.ResourceType, groupCount int) scoringContext {
 	normalizedGoal := strings.ToLower(goal)
+	goalTokens := make(map[string]struct{})
+	for _, token := range tokens(normalizedGoal) {
+		goalTokens[token] = struct{}{}
+	}
+	return scoringContext{
+		goal:          normalizedGoal,
+		goalTokens:    goalTokens,
+		preferredType: preferredType,
+		groupCount:    groupCount,
+		typeScores:    goalTypeScores(normalizedGoal),
+		metricHint:    containsAny(normalizedGoal, "metric", "endpoint", "latency", "指标", "端点", "延迟"),
+		latencyHint:   containsAny(normalizedGoal, "slow", "latency", "慢", "延迟"),
+		endpointHint:  containsAny(normalizedGoal, "endpoint", "payment", "端点", "支付"),
+		cpuHint:       containsAny(normalizedGoal, "cpu", "处理器"),
+	}
+}
+
+func (scoring scoringContext) score(entry session.CatalogEntry) int {
 	entryName := strings.ToLower(entry.Name)
 	entryGroup := strings.ToLower(entry.Group)
 	score := 0
-	for _, goalToken := range goalTokens {
-		for _, nameToken := range tokens(entryName) {
-			if goalToken == nameToken {
-				score += 12
-			}
-		}
-		for _, groupToken := range tokens(entryGroup) {
-			if goalToken == groupToken {
-				score += 6
-			}
+	for _, nameToken := range tokens(entryName) {
+		if _, matched := scoring.goalTokens[nameToken]; matched {
+			score += 12
 		}
 	}
-	if strings.Contains(normalizedGoal, entryName) {
+	for _, groupToken := range tokens(entryGroup) {
+		if _, matched := scoring.goalTokens[groupToken]; matched {
+			score += 6
+		}
+	}
+	if strings.Contains(scoring.goal, entryName) {
 		score += 20
 	}
-	if strings.Contains(normalizedGoal, entryGroup) {
+	if strings.Contains(scoring.goal, entryGroup) {
 		score += 10
 	}
-	if entry.Type == preferredType {
+	if entry.Type == scoring.preferredType {
 		score += 8
 	}
-	if entry.Group == "default" && groupCount > 1 {
+	if entry.Group == "default" && scoring.groupCount > 1 {
 		score -= 8
 	}
-	if strings.Contains(entryGroup, "metric") && containsAny(normalizedGoal, "metric", "endpoint", "latency", "指标", "端点", "延迟") {
+	if scoring.metricHint && strings.Contains(entryGroup, "metric") {
 		score += 6
 	}
-	score += typeKeywordScore(normalizedGoal, entry.Type)
-	if strings.Contains(entryName, "latency") && containsAny(normalizedGoal, "slow", "latency", "慢", "延迟") {
+	score += scoring.typeScores[entry.Type]
+	if scoring.latencyHint && strings.Contains(entryName, "latency") {
 		score += 8
 	}
-	if strings.Contains(entryName, "endpoint") && containsAny(normalizedGoal, "endpoint", "payment", "端点", "支付") {
+	if scoring.endpointHint && strings.Contains(entryName, "endpoint") {
 		score += 8
 	}
-	if strings.Contains(entryName, "cpu") && containsAny(normalizedGoal, "cpu", "处理器") {
+	if scoring.cpuHint && strings.Contains(entryName, "cpu") {
 		score += 12
 	}
 	return score
 }
 
-func typeKeywordScore(goal string, resourceType session.ResourceType) int {
-	switch resourceType {
-	case session.ResourceTypeStream:
-		if containsAny(goal, "log", "stream", "日志") {
-			return 6
-		}
-	case session.ResourceTypeTrace:
-		if containsAny(goal, "trace", "span", "链路") {
-			return 6
-		}
-	case session.ResourceTypeProperty:
-		if containsAny(goal, "property", "属性") {
-			return 6
-		}
-	case session.ResourceTypeTopN:
-		if containsAny(goal, "top", "最高", "最低") {
-			return 6
-		}
-	case session.ResourceTypeMeasure:
-		if containsAny(goal, "measure", "metric", "latency", "指标", "延迟") {
-			return 4
+// goalTypeScores resolves the resource-type keyword bonus for the goal once per ranking pass.
+func goalTypeScores(goal string) map[session.ResourceType]int {
+	scores := make(map[session.ResourceType]int, len(typeKeywordBonuses))
+	for _, bonus := range typeKeywordBonuses {
+		if containsAny(goal, bonus.keywords...) {
+			scores[bonus.resourceType] = bonus.score
 		}
 	}
-	return 0
+	return scores
+}
+
+var typeKeywordBonuses = []struct {
+	resourceType session.ResourceType
+	keywords     []string
+	score        int
+}{
+	{resourceType: session.ResourceTypeStream, keywords: []string{"log", "stream", "日志"}, score: 6},
+	{resourceType: session.ResourceTypeTrace, keywords: []string{"trace", "span", "链路"}, score: 6},
+	{resourceType: session.ResourceTypeProperty, keywords: []string{"property", "属性"}, score: 6},
+	{resourceType: session.ResourceTypeTopN, keywords: []string{"top", "最高", "最低"}, score: 6},
+	{resourceType: session.ResourceTypeMeasure, keywords: []string{"measure", "metric", "latency", "指标", "延迟"}, score: 4},
 }
 
 func filterEntries(entries []session.CatalogEntry, preferredType session.ResourceType, preferredName string, preferredGroups []string) []session.CatalogEntry {
@@ -301,9 +328,34 @@ func filterEntries(entries []session.CatalogEntry, preferredType session.Resourc
 	return filtered
 }
 
+// tokens splits value into its distinct lowercase alphanumeric runs.
+//
+// Ranking calls this once per catalog entry, so it scans directly instead of running a regular
+// expression: every other byte, `_` and CJK text included, is already a separator.
 func tokens(value string) []string {
-	normalizedValue := strings.ToLower(strings.ReplaceAll(value, "_", " "))
-	return compactStrings(tokenPattern.FindAllString(normalizedValue, -1))
+	lowered := strings.ToLower(value)
+	var collected []string
+	tokenStart := -1
+	for idx := 0; idx < len(lowered); idx++ {
+		if isTokenByte(lowered[idx]) {
+			if tokenStart < 0 {
+				tokenStart = idx
+			}
+			continue
+		}
+		if tokenStart >= 0 {
+			collected = append(collected, lowered[tokenStart:idx])
+			tokenStart = -1
+		}
+	}
+	if tokenStart >= 0 {
+		collected = append(collected, lowered[tokenStart:])
+	}
+	return tuitext.Compact(collected)
+}
+
+func isTokenByte(value byte) bool {
+	return (value >= 'a' && value <= 'z') || (value >= '0' && value <= '9')
 }
 
 func uniqueGroupCount(entries []session.CatalogEntry) int {
@@ -340,20 +392,4 @@ func containsAny(value string, fragments ...string) bool {
 		}
 	}
 	return false
-}
-
-func compactStrings(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	compactedValues := make([]string, 0, len(values))
-	for _, value := range values {
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		compactedValues = append(compactedValues, value)
-	}
-	return compactedValues
 }

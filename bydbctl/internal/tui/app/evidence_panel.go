@@ -122,8 +122,8 @@ const minPreviewDetailHeight = 3
 
 type previewBodyLayout struct {
 	tableHeight          int
-	tableOverflows       bool
 	detailViewportHeight int
+	tableOverflows       bool
 	detailOverflows      bool
 }
 

@@ -34,9 +34,9 @@ type Validator interface {
 // Outcome contains the state produced by one successful validation attempt and optional execution.
 type Outcome struct {
 	Next       *session.PlannedQuery
-	Result     session.ExecutionResult
-	Validation session.ValidationReport
 	Phase      session.Phase
+	Validation session.ValidationReport
+	Result     session.ExecutionResult
 	Executed   bool
 }
 

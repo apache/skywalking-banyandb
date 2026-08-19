@@ -14,6 +14,8 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+
+// Package tools implements controlled schema discovery and BYDBQL execution for the TUI.
 package tools
 
 import (
@@ -66,9 +68,23 @@ func mergeGroupSchemas(req SchemaRequest, snapshots []session.SchemaSnapshot) (s
 	return merged, nil
 }
 
+// enrichTopNSchema gives a TOPN snapshot the typed columns of the measure it aggregates.
+//
+// A TOPN registration names only its group-by tags and one field, so their types come from the
+// source measure; anything the measure does not define is dropped rather than guessed at.
 func enrichTopNSchema(topNSnapshot *session.SchemaSnapshot, sourceSnapshot session.SchemaSnapshot) {
 	if topNSnapshot == nil {
 		return
+	}
+	columnByName := make(map[string]session.SchemaColumn, len(sourceSnapshot.Columns))
+	for _, column := range sourceSnapshot.Columns {
+		columnByName[column.Name] = column
+	}
+	sourceColumn := func(name string) (session.SchemaColumn, bool) {
+		if column, found := columnByName[name]; found {
+			return column, true
+		}
+		return sourceSnapshot.Column(name)
 	}
 	topNSnapshot.EntityTags = make([]string, 0, len(topNSnapshot.Tags))
 	for _, groupByTag := range topNSnapshot.Tags {
@@ -76,32 +92,11 @@ func enrichTopNSchema(topNSnapshot *session.SchemaSnapshot, sourceSnapshot sessi
 			topNSnapshot.EntityTags = append(topNSnapshot.EntityTags, column.Name)
 		}
 	}
-	columnByName := make(map[string]session.SchemaColumn, len(sourceSnapshot.Columns))
-	for _, column := range sourceSnapshot.Columns {
-		columnByName[column.Name] = column
-	}
-	columns := make([]session.SchemaColumn, 0, len(topNSnapshot.Tags)+1+len(topNSnapshot.EntityTags))
+	columns := make([]session.SchemaColumn, 0, len(topNSnapshot.Tags)+len(topNSnapshot.EntityTags)+len(topNSnapshot.Fields))
 	seen := make(map[string]struct{})
-	for _, columnName := range append(append([]string(nil), topNSnapshot.Tags...), topNSnapshot.EntityTags...) {
-		column, ok := columnByName[columnName]
-		if !ok {
-			column, ok = sourceSnapshot.Column(columnName)
-		}
-		if !ok {
-			continue
-		}
-		if _, exists := seen[column.Name]; exists {
-			continue
-		}
-		seen[column.Name] = struct{}{}
-		columns = append(columns, column)
-	}
-	for _, fieldName := range topNSnapshot.Fields {
-		column, ok := columnByName[fieldName]
-		if !ok {
-			column, ok = sourceSnapshot.Column(fieldName)
-		}
-		if !ok {
+	for _, columnName := range slices.Concat(topNSnapshot.Tags, topNSnapshot.EntityTags, topNSnapshot.Fields) {
+		column, found := sourceColumn(columnName)
+		if !found {
 			continue
 		}
 		if _, exists := seen[column.Name]; exists {
@@ -113,52 +108,58 @@ func enrichTopNSchema(topNSnapshot *session.SchemaSnapshot, sourceSnapshot sessi
 	topNSnapshot.Columns = columns
 }
 
-func intersectStrings(left, right []string) []string {
-	rightValues := make(map[string]struct{}, len(right))
-	for _, value := range right {
-		rightValues[value] = struct{}{}
+// intersectBy keeps the left items whose key also appears on the right and that reconcile with it.
+//
+// reconcile returns the merged item to keep, or false to drop a key the two sides define
+// incompatibly, so a capability survives the merge only where every group agrees on it.
+func intersectBy[T any, K comparable](left, right []T, keyOf func(T) K, reconcile func(leftItem, rightItem T) (T, bool)) []T {
+	rightByKey := make(map[K]T, len(right))
+	for _, item := range right {
+		rightByKey[keyOf(item)] = item
 	}
-	intersection := make([]string, 0, len(left))
-	for _, value := range left {
-		if _, ok := rightValues[value]; ok {
-			intersection = append(intersection, value)
+	intersection := make([]T, 0, len(left))
+	for _, leftItem := range left {
+		rightItem, found := rightByKey[keyOf(leftItem)]
+		if !found {
+			continue
 		}
+		merged, keep := reconcile(leftItem, rightItem)
+		if !keep {
+			continue
+		}
+		intersection = append(intersection, merged)
 	}
 	return intersection
+}
+
+func intersectStrings(left, right []string) []string {
+	return intersectBy(left, right,
+		func(value string) string { return value },
+		func(leftValue, _ string) (string, bool) { return leftValue, true })
 }
 
 func intersectColumns(left, right []session.SchemaColumn) []session.SchemaColumn {
-	rightColumns := make(map[string]session.SchemaColumn, len(right))
-	for _, column := range right {
-		rightColumns[column.Name] = column
-	}
-	intersection := make([]session.SchemaColumn, 0, len(left))
-	for _, column := range left {
-		rightColumn, ok := rightColumns[column.Name]
-		if !ok || rightColumn.Kind != column.Kind || rightColumn.Type != column.Type {
-			continue
-		}
-		column.Indexed = column.Indexed && rightColumn.Indexed
-		intersection = append(intersection, column)
-	}
-	return intersection
+	return intersectBy(left, right,
+		func(column session.SchemaColumn) string { return column.Name },
+		func(leftColumn, rightColumn session.SchemaColumn) (session.SchemaColumn, bool) {
+			if leftColumn.Kind != rightColumn.Kind || leftColumn.Type != rightColumn.Type {
+				return session.SchemaColumn{}, false
+			}
+			leftColumn.Indexed = leftColumn.Indexed && rightColumn.Indexed
+			return leftColumn, true
+		})
 }
 
 func intersectSortableIndexes(left, right []session.SortableIndex) []session.SortableIndex {
-	rightIndexes := make(map[string]session.SortableIndex, len(right))
-	for _, index := range right {
-		rightIndexes[index.RuleName] = index
-	}
-	intersection := make([]session.SortableIndex, 0, len(left))
-	for _, index := range left {
-		rightIndex, ok := rightIndexes[index.RuleName]
-		if !ok || !slices.Equal(index.Tags, rightIndex.Tags) {
-			continue
-		}
-		intersection = append(intersection, session.SortableIndex{
-			RuleName: index.RuleName,
-			Tags:     append([]string(nil), index.Tags...),
+	return intersectBy(left, right,
+		func(index session.SortableIndex) string { return index.RuleName },
+		func(leftIndex, rightIndex session.SortableIndex) (session.SortableIndex, bool) {
+			if !slices.Equal(leftIndex.Tags, rightIndex.Tags) {
+				return session.SortableIndex{}, false
+			}
+			return session.SortableIndex{
+				RuleName: leftIndex.RuleName,
+				Tags:     append([]string(nil), leftIndex.Tags...),
+			}, true
 		})
-	}
-	return intersection
 }

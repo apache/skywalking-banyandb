@@ -23,6 +23,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,10 @@ import (
 const (
 	eventBufferSize       = 64
 	maxSchemaDescriptions = agent.DefaultMaxSchemaDescriptions
+)
+
+// Controlled tool names shared by the provider prompt and private bridge.
+const (
 	ToolListGroupsSchemas = agent.ToolListGroupsSchemas
 	ToolDescribeSchema    = agent.ToolDescribeSchema
 	ToolProposeQueryPlan  = agent.ToolProposeQueryPlan
@@ -118,9 +123,7 @@ func (toolBridge *ToolBridge) SessionSnapshot() *session.QuerySession {
 
 // SetRankedCandidates pins the catalog shortlist used by describe_schema and propose_query_plan.
 func (toolBridge *ToolBridge) SetRankedCandidates(candidates []session.CatalogEntry) {
-	toolBridge.mu.Lock()
-	toolBridge.rankedCandidates = append([]session.CatalogEntry(nil), candidates...)
-	toolBridge.mu.Unlock()
+	toolBridge.setRankedCandidates(candidates)
 }
 
 // Events returns visible tool lifecycle updates for the TUI.
@@ -279,29 +282,23 @@ func (toolBridge *ToolBridge) rankedCatalogCandidates() []session.CatalogEntry {
 	return append([]session.CatalogEntry(nil), toolBridge.rankedCandidates...)
 }
 
-func catalogIncludesResource(entries []session.CatalogEntry, resourceType session.ResourceType, resourceName string, groups []string) bool {
-	for _, group := range groups {
-		found := false
-		for _, entry := range entries {
-			if resourceType == entry.Type &&
-				entry.Name == resourceName &&
-				entry.Group == group {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
-}
-
+// catalogContainsResource reports whether every requested group registers the exact resource.
+//
+// An empty catalog means discovery has not run yet, which is allowed rather than treated as a
+// rejection: the schema call that follows is what establishes whether the resource exists.
 func catalogContainsResource(entries []session.CatalogEntry, resourceType session.ResourceType, resourceName string, groups []string) bool {
 	if len(entries) == 0 {
 		return true
 	}
-	return catalogIncludesResource(entries, resourceType, resourceName, groups)
+	for _, group := range groups {
+		registered := slices.ContainsFunc(entries, func(entry session.CatalogEntry) bool {
+			return entry.Type == resourceType && entry.Name == resourceName && entry.Group == group
+		})
+		if !registered {
+			return false
+		}
+	}
+	return true
 }
 
 func (toolBridge *ToolBridge) reserveSchemaDescription() bool {

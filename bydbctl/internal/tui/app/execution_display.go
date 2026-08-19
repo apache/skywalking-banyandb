@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -115,7 +116,7 @@ func selectDisplayColumns(columns []string) []string {
 	selected := make([]string, 0, maxExecutionTableColumns)
 	seen := make(map[string]struct{}, len(columns))
 	for _, column := range executionTableColumnOrder {
-		if !containsColumn(columns, column) {
+		if !slices.Contains(columns, column) {
 			continue
 		}
 		selected = append(selected, column)
@@ -162,15 +163,6 @@ func projectPreviewRows(preview [][]string, columns []string, displayColumns []s
 	return projected
 }
 
-func containsColumn(columns []string, target string) bool {
-	for _, column := range columns {
-		if column == target {
-			return true
-		}
-	}
-	return false
-}
-
 func formatExecutionRowDetail(columns []string, row []string, rowNumber, rowTotal, width int) []string {
 	lines := []string{fmt.Sprintf("Row detail %d/%d", rowNumber, rowTotal)}
 	for idx, column := range columns {
@@ -189,7 +181,7 @@ func formatPreviewTable(columns []string, preview [][]string, width, selectedRow
 	}
 	colWidths := previewColumnWidths(columns, preview, width)
 	header := "  " + renderPreviewRow(columns, colWidths)
-	separatorWidth := sumInts(colWidths) + 3*(len(columns)-1)
+	separatorWidth := totalWidthOf(colWidths) + 3*(len(columns)-1)
 	separator := "  " + strings.Repeat("─", max(separatorWidth, 8))
 	lines := []string{header, separator}
 	for rowIdx, row := range preview {
@@ -255,7 +247,7 @@ func previewColumnWidths(columns []string, preview [][]string, totalWidth int) [
 			widths[idx] = maxColumnWidth
 		}
 	}
-	usedWidth := sumInts(widths) + 3*len(widths) + 2
+	usedWidth := totalWidthOf(widths) + 3*len(widths) + 2
 	for usedWidth > totalWidth {
 		widestIdx := 0
 		for idx := 1; idx < len(widths); idx++ {
@@ -267,7 +259,7 @@ func previewColumnWidths(columns []string, preview [][]string, totalWidth int) [
 			break
 		}
 		widths[widestIdx]--
-		usedWidth = sumInts(widths) + 3*len(widths) + 2
+		usedWidth = totalWidthOf(widths) + 3*len(widths) + 2
 	}
 	return widths
 }
@@ -427,10 +419,11 @@ func formatByteCount(size int) string {
 	}
 }
 
-func sumInts(values []int) int {
+// totalWidthOf sums the rendered widths of every preview table column.
+func totalWidthOf(widths []int) int {
 	total := 0
-	for _, value := range values {
-		total += value
+	for _, width := range widths {
+		total += width
 	}
 	return total
 }

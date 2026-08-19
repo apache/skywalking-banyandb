@@ -31,6 +31,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/tuirun"
 )
 
 const (
@@ -158,7 +159,9 @@ func (gateway *Gateway) Send(ctx context.Context, sessionID string, req agent.Tu
 	gateway.turn = handle
 	gateway.mu.Unlock()
 	events := make(chan agent.Event, agentEventBuffer)
-	go gateway.runTurn(turnCtx, handle, providerSessionID, parts, events)
+	tuirun.Go(turnCtx, "claude-turn", func(runCtx context.Context) {
+		gateway.runTurn(runCtx, handle, providerSessionID, parts, events)
+	})
 	return events, nil
 }
 
@@ -262,8 +265,9 @@ func validateConfig(config Config) error {
 	if !filepath.IsAbs(config.WorkingDirectory) {
 		return errors.New("isolated Claude working directory must be absolute")
 	}
-	if serverErr := agent.ValidateControlledMCPServer(config.ControlledMCPServer); serverErr != nil {
-		return serverErr
+	serverErr := agent.ValidateControlledMCPServer(config.ControlledMCPServer)
+	if serverErr != nil {
+		return fmt.Errorf("invalid controlled MCP server: %w", serverErr)
 	}
 	return nil
 }
