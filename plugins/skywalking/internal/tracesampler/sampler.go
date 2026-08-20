@@ -330,6 +330,112 @@ type config struct {
 	KeepErrors          bool      `json:"keepErrors"`
 }
 
+const (
+	decisionMetricName                 = "trace_sampler_decisions_total"
+	rowMetricName                      = "trace_sampler_rows_total"
+	rowDroppedMetricName               = "trace_sampler_rows_dropped_total"
+	rowCountUnavailableMetricName      = "trace_sampler_row_count_unavailable_total"
+	decisionLabelVerdict               = "verdict"
+	decisionLabelRule                  = "rule"
+	decisionVerdictKeep                = "keep"
+	decisionVerdictDrop                = "drop"
+	decisionReasonDurationLabel        = "duration"
+	decisionReasonErrorLabel           = "error"
+	decisionReasonHealthySampleLabel   = "healthy_sample"
+	decisionReasonHealthyRejectedLabel = "healthy_rejected"
+	decisionReasonNoKeepRuleLabel      = "no_keep_rule"
+	decisionReasonDecodeDurationLabel  = "decode_failure_duration"
+	decisionReasonDecodeErrorLabel     = "decode_failure_error"
+	decisionReasonDecodeTagsLabel      = "decode_failure_tags"
+	decisionReasonTag00Label           = "tag_00"
+	decisionReasonTag01Label           = "tag_01"
+	decisionReasonTag02Label           = "tag_02"
+	decisionReasonTag03Label           = "tag_03"
+	decisionReasonTag04Label           = "tag_04"
+	decisionReasonTag05Label           = "tag_05"
+	decisionReasonTag06Label           = "tag_06"
+	decisionReasonTag07Label           = "tag_07"
+	decisionReasonTag08Label           = "tag_08"
+	decisionReasonTag09Label           = "tag_09"
+	decisionReasonTag10Label           = "tag_10"
+	decisionReasonTag11Label           = "tag_11"
+	decisionReasonTag12Label           = "tag_12"
+	decisionReasonTag13Label           = "tag_13"
+	decisionReasonTag14Label           = "tag_14"
+	decisionReasonTag15Label           = "tag_15"
+	decisionReasonTag16Label           = "tag_16"
+	decisionReasonTag17Label           = "tag_17"
+	decisionReasonTag18Label           = "tag_18"
+	decisionReasonTag19Label           = "tag_19"
+	decisionReasonTag20Label           = "tag_20"
+	decisionReasonTag21Label           = "tag_21"
+	decisionReasonTag22Label           = "tag_22"
+	decisionReasonTag23Label           = "tag_23"
+	decisionReasonTag24Label           = "tag_24"
+	decisionReasonTag25Label           = "tag_25"
+	decisionReasonTag26Label           = "tag_26"
+	decisionReasonTag27Label           = "tag_27"
+	decisionReasonTag28Label           = "tag_28"
+	decisionReasonTag29Label           = "tag_29"
+	decisionReasonTag30Label           = "tag_30"
+	decisionReasonTag31Label           = "tag_31"
+)
+
+var tagDecisionReasonLabels = [...]string{
+	decisionReasonTag00Label, decisionReasonTag01Label, decisionReasonTag02Label, decisionReasonTag03Label,
+	decisionReasonTag04Label, decisionReasonTag05Label, decisionReasonTag06Label, decisionReasonTag07Label,
+	decisionReasonTag08Label, decisionReasonTag09Label, decisionReasonTag10Label, decisionReasonTag11Label,
+	decisionReasonTag12Label, decisionReasonTag13Label, decisionReasonTag14Label, decisionReasonTag15Label,
+	decisionReasonTag16Label, decisionReasonTag17Label, decisionReasonTag18Label, decisionReasonTag19Label,
+	decisionReasonTag20Label, decisionReasonTag21Label, decisionReasonTag22Label, decisionReasonTag23Label,
+	decisionReasonTag24Label, decisionReasonTag25Label, decisionReasonTag26Label, decisionReasonTag27Label,
+	decisionReasonTag28Label, decisionReasonTag29Label, decisionReasonTag30Label, decisionReasonTag31Label,
+}
+
+const maxKeepTagRules = len(tagDecisionReasonLabels)
+
+type decisionReason uint8
+
+const (
+	decisionReasonDuration decisionReason = iota
+	decisionReasonError
+	decisionReasonHealthySample
+	decisionReasonHealthyRejected
+	decisionReasonNoKeepRule
+	decisionReasonDecodeDuration
+	decisionReasonDecodeError
+	decisionReasonDecodeTags
+	decisionReasonBuiltInCount
+	decisionReasonTagRule
+)
+
+type decisionMetricLabels struct {
+	verdict string
+	rule    string
+}
+
+var builtInDecisionMetricLabels = [...]decisionMetricLabels{
+	{verdict: decisionVerdictKeep, rule: decisionReasonDurationLabel},
+	{verdict: decisionVerdictKeep, rule: decisionReasonErrorLabel},
+	{verdict: decisionVerdictKeep, rule: decisionReasonHealthySampleLabel},
+	{verdict: decisionVerdictDrop, rule: decisionReasonHealthyRejectedLabel},
+	{verdict: decisionVerdictDrop, rule: decisionReasonNoKeepRuleLabel},
+	{verdict: decisionVerdictKeep, rule: decisionReasonDecodeDurationLabel},
+	{verdict: decisionVerdictKeep, rule: decisionReasonDecodeErrorLabel},
+	{verdict: decisionVerdictKeep, rule: decisionReasonDecodeTagsLabel},
+}
+
+var (
+	_ [len(builtInDecisionMetricLabels) - int(decisionReasonBuiltInCount)]struct{}
+	_ [int(decisionReasonBuiltInCount) - len(builtInDecisionMetricLabels)]struct{}
+)
+
+type traceDecision struct {
+	reason       decisionReason
+	tagRuleIndex uint8
+	keep         bool
+}
+
 // Sampler keeps a trace when any sure-keep rule matches, and otherwise admits a
 // deterministic fraction of the healthy remainder. It implements sdk.Sampler.
 type Sampler struct {
@@ -339,6 +445,10 @@ type Sampler struct {
 	startTimeTag            string
 	rules                   []rule
 	requiredTags            []string
+	decisions               sdk.Counter
+	rowsTotal               sdk.Counter
+	rowsDropped             sdk.Counter
+	rowCountUnavailable     sdk.Counter
 	errorRule               rule
 	durationThresholdMs     int64
 	durationTagNanosPerUnit int64
@@ -387,6 +497,9 @@ func New(configJSON []byte, schema Schema) (sdk.Sampler, error) {
 	}
 	if c.HealthySampleRate < 0 || c.HealthySampleRate > 1 {
 		return nil, fmt.Errorf("tracesampler: healthySampleRate %v out of [0,1]", c.HealthySampleRate)
+	}
+	if len(c.KeepTagRules) > maxKeepTagRules {
+		return nil, fmt.Errorf("tracesampler: keepTagRules contains %d rules, maximum is %d", len(c.KeepTagRules), maxKeepTagRules)
 	}
 	s := &Sampler{
 		arrayColumn:       schema.ArrayTagColumn,
@@ -528,18 +641,83 @@ func (s *Sampler) Project() sdk.Projection {
 // Close releases resources; this sampler holds none.
 func (s *Sampler) Close() error { return nil }
 
+// UseHost binds the sampler's decision counter to its group-scoped host.
+func (s *Sampler) UseHost(host sdk.Host) {
+	meter := host.Meter()
+	s.decisions = meter.Counter(decisionMetricName, decisionLabelVerdict, decisionLabelRule)
+	s.rowsTotal = meter.Counter(rowMetricName)
+	s.rowsDropped = meter.Counter(rowDroppedMetricName, decisionLabelRule)
+	s.rowCountUnavailable = meter.Counter(rowCountUnavailableMetricName)
+}
+
 // Decide returns a keep-mask aligned to batch.Traces. The batch is read-only.
 // It never returns an error: a per-row decode failure fails open for that trace
 // (kept), so one malformed value can never make the sampler drop data.
 func (s *Sampler) Decide(batch *sdk.TraceBatch) (sdk.Verdict, error) {
 	keep := make([]bool, len(batch.Traces))
-	for i := range batch.Traces {
-		keep[i] = s.keepTrace(&batch.Traces[i])
+	if s.decisions == nil {
+		for traceIndex := range batch.Traces {
+			keep[traceIndex] = s.decideTrace(&batch.Traces[traceIndex]).keep
+		}
+		return sdk.Verdict{Keep: keep}, nil
+	}
+
+	var reasonCounts [decisionReasonBuiltInCount]uint64
+	var droppedReasonRowCounts [decisionReasonBuiltInCount]uint64
+	var tagReasonCounts [maxKeepTagRules]uint64
+	var totalRows uint64
+	var unavailableRowCounts uint64
+	for traceIndex := range batch.Traces {
+		decision := s.decideTrace(&batch.Traces[traceIndex])
+		keep[traceIndex] = decision.keep
+		rowCount := batch.Traces[traceIndex].Len()
+		if decision.reason == decisionReasonTagRule {
+			tagReasonCounts[decision.tagRuleIndex]++
+		} else {
+			reasonCounts[decision.reason]++
+		}
+		if rowCount > 0 {
+			totalRows += uint64(rowCount)
+			if !decision.keep {
+				droppedReasonRowCounts[decision.reason] += uint64(rowCount)
+			}
+		} else {
+			unavailableRowCounts++
+		}
+	}
+	emitSamplerCounts(s.decisions, reasonCounts, tagReasonCounts)
+	if totalRows > 0 {
+		s.rowsTotal.Inc(float64(totalRows))
+	}
+	for reasonIndex, rowCount := range droppedReasonRowCounts {
+		if rowCount > 0 {
+			s.rowsDropped.Inc(float64(rowCount), builtInDecisionMetricLabels[reasonIndex].rule)
+		}
+	}
+	if unavailableRowCounts > 0 {
+		s.rowCountUnavailable.Inc(float64(unavailableRowCounts))
 	}
 	return sdk.Verdict{Keep: keep}, nil
 }
 
-// keepTrace applies the sure-keep rules, then the deterministic healthy sample.
+func emitSamplerCounts(counter sdk.Counter, builtInCounts [decisionReasonBuiltInCount]uint64,
+	tagCounts [maxKeepTagRules]uint64,
+) {
+	for reasonIndex, count := range builtInCounts {
+		if count == 0 {
+			continue
+		}
+		labels := builtInDecisionMetricLabels[reasonIndex]
+		counter.Inc(float64(count), labels.verdict, labels.rule)
+	}
+	for ruleIndex, count := range tagCounts {
+		if count > 0 {
+			counter.Inc(float64(count), decisionVerdictKeep, tagDecisionReasonLabels[ruleIndex])
+		}
+	}
+}
+
+// decideTrace applies the sure-keep rules, then the deterministic healthy sample.
 // Any decode error encountered while evaluating a sure-keep predicate keeps the
 // trace (fail open), never drops it.
 //
@@ -555,13 +733,16 @@ func (s *Sampler) Decide(batch *sdk.TraceBatch) (sdk.Verdict, error) {
 // inlined lazy decode exists to avoid repeated decode work and the per-row
 // allocations it triggers, and to keep failure semantics consistent across
 // every rule in the trace.
-func (s *Sampler) keepTrace(b *sdk.TraceBlock) bool {
+func (s *Sampler) decideTrace(traceBlock *sdk.TraceBlock) traceDecision {
 	// Duration keep: the trace's end-to-end envelope reaches the threshold.
 	// The early return keeps entriesPtr nil, so no pool release is needed.
 	if s.durationThresholdMs > 0 {
-		hit, durErr := s.hasSlowTrace(b)
-		if durErr != nil || hit {
-			return true
+		hit, durErr := s.hasSlowTrace(traceBlock)
+		if durErr != nil {
+			return traceDecision{keep: true, reason: decisionReasonDecodeDuration}
+		}
+		if hit {
+			return traceDecision{keep: true, reason: decisionReasonDuration}
 		}
 	}
 	// Lazy tag-array decode. Entries are computed on first call and reused for
@@ -600,37 +781,41 @@ func (s *Sampler) keepTrace(b *sdk.TraceBlock) bool {
 		entriesErr   error
 		decoded      bool
 	)
-	keep := false
+	decision := traceDecision{reason: decisionReasonNoKeepRule}
 	// Error keep.
 	if s.keepErrors {
 		if s.errorTagInArray {
 			if !decoded {
 				decoded = true
-				entriesPtr, stableBufPtr, entriesErr = arrayEntries(b.Tag(s.arrayColumn))
+				entriesPtr, stableBufPtr, entriesErr = arrayEntries(traceBlock.Tag(s.arrayColumn))
 			}
-			if entriesErr != nil || matchEntries(*entriesPtr, &s.errorRule) {
-				keep = true
+			if entriesErr != nil {
+				decision = traceDecision{keep: true, reason: decisionReasonDecodeError}
+			} else if matchEntries(*entriesPtr, &s.errorRule) {
+				decision = traceDecision{keep: true, reason: decisionReasonError}
 			}
 		} else {
-			hit, errColErr := s.hasErrorColumn(b)
-			if errColErr != nil || hit {
-				keep = true
+			hit, errColErr := s.hasErrorColumn(traceBlock)
+			if errColErr != nil {
+				decision = traceDecision{keep: true, reason: decisionReasonDecodeError}
+			} else if hit {
+				decision = traceDecision{keep: true, reason: decisionReasonError}
 			}
 		}
 	}
 	// Sure-keep tag rules. The decode is hoisted out of the loop so the
 	// lazy fetch fires exactly once even when multiple rules are configured.
-	if !keep && len(s.rules) > 0 {
+	if !decision.keep && len(s.rules) > 0 {
 		if !decoded {
 			decoded = true
-			entriesPtr, stableBufPtr, entriesErr = arrayEntries(b.Tag(s.arrayColumn))
+			entriesPtr, stableBufPtr, entriesErr = arrayEntries(traceBlock.Tag(s.arrayColumn))
 		}
 		if entriesErr != nil {
-			keep = true
+			decision = traceDecision{keep: true, reason: decisionReasonDecodeTags}
 		} else {
-			for i := range s.rules {
-				if matchEntries(*entriesPtr, &s.rules[i]) {
-					keep = true
+			for ruleIndex := range s.rules {
+				if matchEntries(*entriesPtr, &s.rules[ruleIndex]) {
+					decision = traceDecision{keep: true, reason: decisionReasonTagRule, tagRuleIndex: uint8(ruleIndex)}
 					break
 				}
 			}
@@ -638,8 +823,12 @@ func (s *Sampler) keepTrace(b *sdk.TraceBlock) bool {
 	}
 	// Healthy remainder: deterministic hash(trace_id) < rate, stable across
 	// re-evaluation at merge and finalization.
-	if !keep && s.healthySampleRate > 0 && sampleFraction(b.TraceID) < s.healthySampleRate {
-		keep = true
+	if !decision.keep && s.healthySampleRate > 0 {
+		if sampleFraction(traceBlock.TraceID) < s.healthySampleRate {
+			decision = traceDecision{keep: true, reason: decisionReasonHealthySample}
+		} else {
+			decision.reason = decisionReasonHealthyRejected
+		}
 	}
 	// Release only what a decode acquired. Keying this off decoded rather than
 	// off the pointers is what keeps the flag honest: it is the same flag both
@@ -648,7 +837,7 @@ func (s *Sampler) keepTrace(b *sdk.TraceBlock) bool {
 		releaseEntries(entriesPtr)
 		releaseStableBuf(stableBufPtr)
 	}
-	return keep
+	return decision
 }
 
 // nanosPerMillis converts the millisecond threshold to nanoseconds for the
@@ -656,7 +845,7 @@ func (s *Sampler) keepTrace(b *sdk.TraceBlock) bool {
 const nanosPerMillis = int64(1_000_000)
 
 // errNoDurationEnvelope reports that no row yielded a usable start/duration pair,
-// so the envelope could not be computed at all. keepTrace treats any error as a
+// so the envelope could not be computed at all. decideTrace treats any error as a
 // keep, which is the intended reading: "can't tell", not "not slow". The columns
 // are declared by the Schema, so their absence means the block was written under a
 // different schema — typically the wrong plugin for the group — and answering
@@ -797,7 +986,7 @@ func (s *Sampler) hasSlowTrace(b *sdk.TraceBlock) (bool, error) {
 // Bounded by aggregate capacity: each retained slice's cap is counted at 8 bytes
 // per string header, so a 64 KiB cap supports ~8000 cap-1 slices or ~340 cap-24
 // slices (the realistic 3-row × 8-entry trace). The pool is checked-out at
-// arrayEntries entry and released by keepTrace once matchEntries is done with
+// arrayEntries entry and released by decideTrace once matchEntries is done with
 // it; the call site owns the slice for the lifetime of the rule evaluation.
 //
 // Bounded[T] requires T to be comparable, so the pool element is *[]string
@@ -907,7 +1096,7 @@ func releaseStableBuf(b *[]byte) {
 // arrayEntries decodes every entry of the flattened tag array, flattened across
 // rows. All tag predicates are existential over rows and entries, so collapsing
 // the rows loses nothing — and decoding once is what keeps the in-place string
-// array decode from corrupting later reads (see keepTrace).
+// array decode from corrupting later reads (see decideTrace).
 //
 // The returned *[]string is a pool-managed slice. The pointer is what the
 // caller stores; passing it by value (not by address) keeps the caller's
@@ -959,9 +1148,9 @@ func arrayEntries(col *sdk.TagColumn) (*[]string, *[]byte, error) {
 	// never leak into the new one (matchEntries iterates whatever the length says).
 	//
 	// Ownership note: arrayEntries returns the pool pointer to its caller
-	// (keepTrace), which calls releaseEntries after matchEntries no longer
+	// (decideTrace), which calls releaseEntries after matchEntries no longer
 	// references it. The error path here releases locally because the slice
-	// never escapes to keepTrace.
+	// never escapes to decideTrace.
 	out := acquireEntries()
 	// The per-row copy buffer is acquired LAZILY, on the first row that actually
 	// carries an escape. A column whose rows are all escape-free never needs one,
@@ -1082,7 +1271,7 @@ func arrayEntries(col *sdk.TagColumn) (*[]string, *[]byte, error) {
 }
 
 // errNoErrorColumn reports that the schema's error column is absent from the block.
-// keepTrace treats any error as a keep, which is the intended reading: the column is
+// decideTrace treats any error as a keep, which is the intended reading: the column is
 // schema-declared, so its absence means the block was written under a different
 // schema — typically the wrong plugin attached to the group — and answering "no
 // error" there would drop every trace keepErrors was enabled to save. This mirrors

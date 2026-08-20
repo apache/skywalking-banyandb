@@ -944,7 +944,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 8,
         "x": 0,
         "y": 24
       },
@@ -1081,8 +1081,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 12,
+        "w": 8,
+        "x": 8,
         "y": 24
       },
       "id": 302,
@@ -1204,6 +1204,131 @@
         }
       ],
       "title": "Safety Events",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "First-party sampler decisions and evaluated rows by the first matching fixed rule slot. Proposed drops are not committed storage deletions.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 24
+      },
+      "id": 303,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (group, plugin_name, verdict, rule) (rate(banyandb_trace_pipeline_plugin_trace_sampler_decisions_total{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "{{group}} / {{plugin_name}} / {{verdict}} / {{rule}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (group, plugin_name, rule) (rate(banyandb_trace_pipeline_plugin_trace_sampler_rows_dropped_total{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "{{group}} / {{plugin_name}} / {{rule}} dropped rows",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (group, plugin_name) (rate(banyandb_trace_pipeline_plugin_trace_sampler_rows_total{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "{{group}} / {{plugin_name}} total rows",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Sampler Decisions & Rows by Rule",
       "type": "timeseries"
     },
     {
