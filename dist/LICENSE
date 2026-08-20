@@ -430,7 +430,7 @@ MIT licenses
     github.com/urfave/cli/v2 v2.27.7 MIT
     github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e MIT
     github.com/xrash/smetrics v0.0.0-20250705151800-55b8f293f342 MIT
-    github.com/yuin/goldmark v1.7.8 MIT
+    github.com/yuin/goldmark v1.7.17 MIT
     github.com/yuin/goldmark-emoji v1.0.5 MIT
     github.com/yusufpapurcu/wmi v1.2.4 MIT
     go.uber.org/automaxprocs v1.6.0 MIT
