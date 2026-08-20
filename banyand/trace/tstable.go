@@ -552,6 +552,10 @@ func (tst *tsTable) Close() error {
 }
 
 func (tst *tsTable) mustAddFilePart(partID uint64, sidxFilePartsMap map[string]string) {
+	tst.mustAddFilePartWithMergeDepth(partID, sidxFilePartsMap, 0)
+}
+
+func (tst *tsTable) mustAddFilePartWithMergeDepth(partID uint64, sidxFilePartsMap map[string]string, mergeDepth uint32) {
 	tst.observePartID(partID)
 	p := mustOpenFilePart(partID, tst.root, tst.fileSystem)
 	p.partMetadata.ID = partID
@@ -560,6 +564,7 @@ func (tst *tsTable) mustAddFilePart(partID uint64, sidxFilePartsMap map[string]s
 	defer releaseIntroduction(ind)
 	ind.applied = make(chan struct{})
 	ind.part = newPartWrapper(nil, p)
+	ind.part.mergeDepth = mergeDepth
 	ind.sidxFilePartsMap = sidxFilePartsMap
 
 	select {
