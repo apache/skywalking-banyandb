@@ -83,11 +83,11 @@ The following flags are used to configure access logs for the data ingestion:
 - `--enable-ingestion-access-log`: Enable ingestion access log.
 - `--access-log-sampled`: if true, requests may be dropped when the channel is full; if false, requests are never dropped
 
-The following flags are used to configure the timeout of data sending from liaison to data servers:
+The following flags configure the tier-1 write admission timeout between liaison nodes:
 
-- `--stream-write-timeout duration`: Stream write timeout (default: 1m).
-- `--measure-write-timeout duration`: Measure write timeout (default: 1m).
-- `--trace-write-timeout duration`: Trace write timeout (default: 1m).
+- `--stream-write-timeout duration`: Stream write timeout (default: 2m).
+- `--measure-write-timeout duration`: Measure write timeout (default: 2m).
+- `--trace-write-timeout duration`: Trace write timeout (default: 2m).
 
 The following flags tune the BydbQL prepared-statement cache on the query path. The cache stores parsed statements keyed by query text so repeated, parameterized (`?`) queries skip re-parsing; literal queries without placeholders are never cached. It is bounded by both an entry count and the estimated in-memory size of the cached statements, evicting least-recently-used entries when either bound is exceeded. Effectiveness is observable via the `bydbql_prepared_cache_*` metrics (a `hit`/`miss`/`bypass` counter plus hit-ratio, entry-count, and byte-size gauges).
 
