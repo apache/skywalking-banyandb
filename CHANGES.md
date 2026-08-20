@@ -67,6 +67,8 @@ Release Notes.
 
 ### Bug Fixes
 
+- Prevent long-lived client write streams from failing whole liaison batches when the write timeout expires; start the liaison admission timeout
+  only after the batch is sealed and raise its default to two minutes. (apache/skywalking#13982)
 - Stabilize measure, stream, and trace snapshot tests by waiting for persisted manifests and all flushed memory parts rather than directory creation or the latest snapshot creator, eliminating asynchronous-flush and fallback races.
 - Prevent merge-time trace sampling from dropping fragments when the same trace ID may remain in unselected parts. Provisional drops are now checked against time bounds and
   trace-ID Bloom filters in candidate outside parts whose time bounds intersect the trace's max-fragment-gap-expanded range, revalidated before publication, and retained on
