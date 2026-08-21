@@ -32,6 +32,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -193,6 +194,38 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 			gomega.Consistently(func() int {
 				return p.connMgr.ActiveCount()
 			}, "1s").Should(gomega.Equal(2))
+		})
+
+		ginkgo.It("should start the tier-1 liaison admission timeout when the batch is sealed", func() {
+			address := getAddress()
+			// This fixture exposes only cluster.v1.Service.Send; data-node ChunkedSyncService is not involved.
+			closeServer := setup(address, codes.OK, 0)
+			publisher := newPub(databasev1.Role_ROLE_LIAISON)
+			defer func() {
+				publisher.GracefulStop()
+				closeServer()
+			}()
+
+			liaisonNode := getDataNode("liaison1", address)
+			liaisonNode.Spec.(*databasev1.Node).Roles = []databasev1.Role{databasev1.Role_ROLE_LIAISON}
+			publisher.OnAddOrUpdate(liaisonNode)
+			gomega.Eventually(func() int {
+				return publisher.connMgr.ActiveCount()
+			}, flags.EventuallyTimeout).Should(gomega.Equal(1))
+
+			admissionTimeout := 500 * time.Millisecond
+			batchPublisher := publisher.NewBatchPublisher(admissionTimeout)
+			_, publishErr := batchPublisher.Publish(context.Background(), data.TopicStreamWrite,
+				bus.NewBatchMessageWithNode(bus.MessageID(1), "liaison1", &streamv1.InternalWriteRequest{}),
+			)
+			gomega.Expect(publishErr).ShouldNot(gomega.HaveOccurred())
+
+			// Client ingestion may keep the tier-1 batch open longer than the liaison admission timeout.
+			time.Sleep(2 * admissionTimeout)
+
+			failedNodes, closeErr := batchPublisher.Close()
+			gomega.Expect(closeErr).ShouldNot(gomega.HaveOccurred())
+			gomega.Expect(failedNodes).Should(gomega.BeEmpty())
 		})
 	})
 

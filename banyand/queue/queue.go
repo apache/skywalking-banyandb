@@ -61,6 +61,7 @@ type Client interface {
 	bus.Publisher
 	bus.Broadcaster
 	route.TableProvider
+	// NewBatchPublisher creates a batch publisher whose timeout starts when Close seals the batch.
 	NewBatchPublisher(timeout time.Duration) BatchPublisher
 	NewChunkedSyncClient(node string, chunkSize uint32) (ChunkedSyncClient, error)
 	// SetSelfNode stamps the publisher's own node identity onto the wire

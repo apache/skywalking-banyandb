@@ -58,6 +58,26 @@ func TestGrpcBufferMemoryRatioFlagDefault(t *testing.T) {
 	assert.Equal(t, "0.1", flag.DefValue)
 }
 
+// TestLiaisonWriteTimeoutFlagDefaults verifies the safety margin for tier-1 admission.
+func TestLiaisonWriteTimeoutFlagDefaults(t *testing.T) {
+	s := &server{
+		streamSVC:      &streamService{},
+		measureSVC:     &measureService{},
+		traceSVC:       &traceService{},
+		propertyServer: &propertyServer{},
+	}
+	flagSet := s.FlagSet()
+	expectedTimeout := 2 * time.Minute
+	for _, flagName := range []string{"stream-write-timeout", "measure-write-timeout", "trace-write-timeout"} {
+		timeoutFlag := flagSet.Lookup(flagName)
+		require.NotNil(t, timeoutFlag)
+		assert.Equal(t, expectedTimeout.String(), timeoutFlag.DefValue)
+	}
+	assert.Equal(t, expectedTimeout, s.streamSVC.writeTimeout)
+	assert.Equal(t, expectedTimeout, s.measureSVC.writeTimeout)
+	assert.Equal(t, expectedTimeout, s.traceSVC.writeTimeout)
+}
+
 // TestGrpcBufferMemoryRatioValidation verifies validation logic.
 func TestGrpcBufferMemoryRatioValidation(t *testing.T) {
 	tests := []struct {

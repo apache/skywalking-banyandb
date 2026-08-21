@@ -59,6 +59,7 @@ const (
 type writeStream struct {
 	client         clusterv1.Service_SendClient
 	ctxDoneCh      <-chan struct{}
+	cancel         context.CancelFunc
 	batchStart     time.Time
 	firstFrameSent bool // false until the first frame is sent; the first frame carries the sender_* identity labels
 }
@@ -73,6 +74,7 @@ type batchPublisher struct {
 }
 
 // NewBatchPublisher returns a new batch publisher.
+// The timeout bounds acknowledgement after Close seals the batch, not the time between Publish calls.
 func (p *pub) NewBatchPublisher(timeout time.Duration) queue.BatchPublisher {
 	return &batchPublisher{
 		pub:     p,
@@ -181,14 +183,12 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 			continue
 		}
 
-		streamCtx, cancel := context.WithTimeout(ctx, bp.timeout)
+		streamCtx, cancel := context.WithCancel(ctx)
 		// this assignment is for getting around the go vet lint
 		deferFn := cancel
 		stream, errCreateStream := nodeClient.client.Send(streamCtx)
 		if errCreateStream != nil {
-			// Release the timeout context when Send() fails; otherwise listenBatchResponse,
-			// which normally invokes deferFn on exit, is never spawned and streamCtx leaks
-			// until bp.timeout expires, accumulating timer goroutines under repeated failures.
+			// Release the stream context when Send fails because no response listener will own it.
 			cancel()
 			err = multierr.Append(err, fmt.Errorf("failed to get stream for node %s: %w", node, errCreateStream))
 			continue
@@ -197,6 +197,7 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 		bp.streams[node] = writeStream{
 			client:     stream,
 			ctxDoneCh:  streamCtx.Done(),
+			cancel:     cancel,
 			batchStart: streamBatchStart,
 		}
 		var batchOp string
@@ -323,8 +324,25 @@ func (bp *batchPublisher) Close() (cee map[string]*common.Error, err error) {
 		stream := bp.streams[nodeName]
 		err = multierr.Append(err, stream.client.CloseSend())
 	}
-	for i := range bp.streams {
-		<-bp.streams[i].ctxDoneCh
+	if len(bp.streams) > 0 {
+		admissionTimer := time.NewTimer(bp.timeout)
+		defer admissionTimer.Stop()
+		admissionTimedOut := false
+		for nodeName := range bp.streams {
+			select {
+			case <-bp.streams[nodeName].ctxDoneCh:
+			case <-admissionTimer.C:
+				for pendingNodeName := range bp.streams {
+					if bp.streams[pendingNodeName].cancel != nil {
+						bp.streams[pendingNodeName].cancel()
+					}
+				}
+				admissionTimedOut = true
+			}
+			if admissionTimedOut {
+				break
+			}
+		}
 	}
 	batchEvents := bp.f.get()
 	if len(batchEvents) < 1 {
