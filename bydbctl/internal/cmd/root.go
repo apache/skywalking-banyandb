@@ -89,7 +89,8 @@ func init() {
 }
 
 func initConfig() {
-	if len(os.Args) > 1 && os.Args[1] == "agent-tool-bridge" {
+	command, _, findErr := rootCmd.Find(os.Args[1:])
+	if findErr == nil && command.Name() == "agent-tool-bridge" {
 		return
 	}
 	if cfgFile != "" {
