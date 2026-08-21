@@ -36,6 +36,11 @@ var DefBuckets = Buckets{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}
 // extends to 300s instead of the 10s ceiling of DefBuckets.
 var BatchBuckets = Buckets{0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300}
 
+// QueueLatencyBuckets is the bucket set for durable queue-residence latency.
+// A downstream outage can leave data queued for hours, so the upper bound
+// extends to 24 hours while retaining the short-latency resolution of DefBuckets.
+var QueueLatencyBuckets = Buckets{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600, 10_800, 21_600, 43_200, 86_400}
+
 // Merge merges the given label pairs with the current label pairs.
 func (p LabelPairs) Merge(other LabelPairs) LabelPairs {
 	result := make(LabelPairs, len(p)+len(other))

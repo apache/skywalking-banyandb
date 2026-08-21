@@ -61,7 +61,56 @@ type writeStream struct {
 	ctxDoneCh      <-chan struct{}
 	cancel         context.CancelFunc
 	batchStart     time.Time
+	firstFrameAt   time.Time
+	timing         *batchTiming
+	group          string
 	firstFrameSent bool // false until the first frame is sent; the first frame carries the sender_* identity labels
+}
+
+type batchTiming struct {
+	sealedAt          time.Time
+	terminalAt        time.Time
+	mu                sync.Mutex
+	admissionObserved bool
+}
+
+func (bt *batchTiming) seal(sealedAt time.Time) (duration time.Duration, admissionReady, sealed bool) {
+	if bt == nil {
+		return 0, false, false
+	}
+	bt.mu.Lock()
+	defer bt.mu.Unlock()
+	if !bt.sealedAt.IsZero() {
+		return 0, false, false
+	}
+	bt.sealedAt = sealedAt
+	duration, admissionReady = bt.readyAdmissionDurationLocked()
+	return duration, admissionReady, true
+}
+
+func (bt *batchTiming) recordTerminal(terminalAt time.Time) (duration time.Duration, admissionReady, recorded bool) {
+	if bt == nil {
+		return 0, false, false
+	}
+	bt.mu.Lock()
+	defer bt.mu.Unlock()
+	if !bt.terminalAt.IsZero() {
+		return 0, false, false
+	}
+	bt.terminalAt = terminalAt
+	duration, admissionReady = bt.readyAdmissionDurationLocked()
+	return duration, admissionReady, true
+}
+
+func (bt *batchTiming) readyAdmissionDurationLocked() (time.Duration, bool) {
+	if bt.sealedAt.IsZero() || bt.terminalAt.IsZero() || bt.admissionObserved {
+		return 0, false
+	}
+	bt.admissionObserved = true
+	if bt.terminalAt.Before(bt.sealedAt) {
+		return 0, true
+	}
+	return bt.terminalAt.Sub(bt.sealedAt), true
 }
 
 type batchPublisher struct {
@@ -137,6 +186,7 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 				if !stream.firstFrameSent {
 					ws := bp.streams[node]
 					ws.firstFrameSent = true
+					ws.firstFrameAt = time.Now()
 					bp.streams[node] = ws
 				}
 				// Record success for circuit breaker
@@ -194,11 +244,15 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 			continue
 		}
 		streamBatchStart := time.Now()
+		batchGroup := m.Group()
+		streamTiming := &batchTiming{}
 		bp.streams[node] = writeStream{
 			client:     stream,
 			ctxDoneCh:  streamCtx.Done(),
 			cancel:     cancel,
 			batchStart: streamBatchStart,
+			group:      batchGroup,
+			timing:     streamTiming,
 		}
 		var batchOp string
 		var batchInfo nodeInfo
@@ -208,14 +262,13 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 		if bp.pub != nil {
 			batchInfo = bp.pub.getNodeInfo(node)
 		}
-		batchGroup := m.Group()
 		if bp.hasMetrics() {
 			bp.pub.metrics.totalBatchStarted.Inc(1, batchOp, batchGroup, node, batchInfo.role, batchInfo.tier)
 		}
 		if bp.hasMigrationMetrics() {
 			bp.pub.migrationMetrics.totalBatchStarted.Inc(1, batchOp, batchGroup, node, batchInfo.role, batchInfo.tier)
 		}
-		bp.f.events = append(bp.f.events, make(chan batchEvent))
+		bp.f.events = append(bp.f.events, make(chan batchEvent, 1))
 		_ = sendData()
 		nodeName := node
 		recvStream := stream
@@ -223,8 +276,9 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 		recvBC := bp.f.events[len(bp.f.events)-1]
 		recvBatchStart := streamBatchStart
 		recvGroup := batchGroup
+		recvTiming := streamTiming
 		run.Go(ctx, "batch-stream-recv", bp.pub.log, func(runCtx context.Context) {
-			bp.listenBatchResponse(runCtx, recvStream, recvDeferFn, recvBC, nodeName, recvBatchStart, recvGroup)
+			bp.listenBatchResponse(runCtx, recvStream, recvDeferFn, recvBC, nodeName, recvBatchStart, recvGroup, recvTiming)
 		})
 	}
 	return nil, err
@@ -238,11 +292,75 @@ func (bp *batchPublisher) hasMigrationMetrics() bool {
 	return bp.pub != nil && bp.pub.migrationMetrics != nil
 }
 
+func (bp *batchPublisher) batchMetricMetadata(nodeName string) (operation string, info nodeInfo) {
+	if bp.topic != nil {
+		operation = apidata.OperationOf(*bp.topic)
+	}
+	if bp.pub != nil {
+		info = bp.pub.getNodeInfo(nodeName)
+	}
+	return operation, info
+}
+
+func (bp *batchPublisher) observeBatchOpenDuration(nodeName string, stream writeStream, sealedAt time.Time) {
+	if !stream.firstFrameSent || stream.firstFrameAt.IsZero() || sealedAt.Before(stream.firstFrameAt) {
+		return
+	}
+	operation, info := bp.batchMetricMetadata(nodeName)
+	durationSeconds := sealedAt.Sub(stream.firstFrameAt).Seconds()
+	if bp.hasMetrics() && bp.pub.metrics.batchOpenDuration != nil {
+		bp.pub.metrics.batchOpenDuration.Observe(durationSeconds, operation, stream.group, nodeName, info.role, info.tier)
+	}
+	if bp.hasMigrationMetrics() && bp.pub.migrationMetrics.batchOpenDuration != nil {
+		bp.pub.migrationMetrics.batchOpenDuration.Observe(durationSeconds, operation, stream.group, nodeName, info.role, info.tier)
+	}
+}
+
+func (bp *batchPublisher) observeBatchAdmissionDuration(nodeName, group string, duration time.Duration) {
+	operation, info := bp.batchMetricMetadata(nodeName)
+	if bp.hasMetrics() && bp.pub.metrics.batchAdmissionDuration != nil {
+		bp.pub.metrics.batchAdmissionDuration.Observe(duration.Seconds(), operation, group, nodeName, info.role, info.tier)
+	}
+	if bp.hasMigrationMetrics() && bp.pub.migrationMetrics.batchAdmissionDuration != nil {
+		bp.pub.migrationMetrics.batchAdmissionDuration.Observe(duration.Seconds(), operation, group, nodeName, info.role, info.tier)
+	}
+}
+
+func (bp *batchPublisher) sealBatchStream(nodeName string, stream writeStream, sealedAt time.Time) {
+	duration, ready, sealed := stream.timing.seal(sealedAt)
+	if !sealed {
+		return
+	}
+	if ready {
+		bp.observeBatchAdmissionDuration(nodeName, stream.group, duration)
+	}
+	bp.observeBatchOpenDuration(nodeName, stream, sealedAt)
+}
+
+func (bp *batchPublisher) recordBatchTerminal(nodeName, group string, timing *batchTiming, terminalAt time.Time) bool {
+	duration, ready, recorded := timing.recordTerminal(terminalAt)
+	if ready {
+		bp.observeBatchAdmissionDuration(nodeName, group, duration)
+	}
+	return recorded
+}
+
+func (bp *batchPublisher) recordBatchAdmissionTimeout(nodeName string, stream writeStream) {
+	operation, info := bp.batchMetricMetadata(nodeName)
+	if bp.hasMetrics() && bp.pub.metrics.batchAdmissionTimeoutTotal != nil {
+		bp.pub.metrics.batchAdmissionTimeoutTotal.Inc(1, operation, stream.group, nodeName, info.role, info.tier)
+	}
+	if bp.hasMigrationMetrics() && bp.pub.migrationMetrics.batchAdmissionTimeoutTotal != nil {
+		bp.pub.migrationMetrics.batchAdmissionTimeoutTotal.Inc(1, operation, stream.group, nodeName, info.role, info.tier)
+	}
+}
+
 // listenBatchResponse receives the server response and records failover events and end-to-end failure metrics.
 func (bp *batchPublisher) listenBatchResponse(ctx context.Context, s clusterv1.Service_SendClient, deferFn func(),
-	bc chan batchEvent, curNode string, batchStart time.Time, group string,
+	bc chan batchEvent, curNode string, batchStart time.Time, group string, timing *batchTiming,
 ) {
 	defer func() {
+		bp.recordBatchTerminal(curNode, group, timing, time.Now())
 		close(bc)
 		deferFn()
 	}()
@@ -264,6 +382,7 @@ func (bp *batchPublisher) listenBatchResponse(ctx context.Context, s clusterv1.S
 	}
 
 	resp, errRecv := s.Recv()
+	bp.recordBatchTerminal(curNode, group, timing, time.Now())
 	if errRecv != nil {
 		if bp.hasMetrics() {
 			bp.pub.metrics.totalErr.Inc(1, operation, group, curNode, info.role, info.tier, sendErrReasonRecvError)
@@ -325,16 +444,31 @@ func (bp *batchPublisher) Close() (cee map[string]*common.Error, err error) {
 		err = multierr.Append(err, stream.client.CloseSend())
 	}
 	if len(bp.streams) > 0 {
+		sealedAt := time.Now()
 		admissionTimer := time.NewTimer(bp.timeout)
 		defer admissionTimer.Stop()
+		for nodeName, stream := range bp.streams {
+			bp.sealBatchStream(nodeName, stream, sealedAt)
+		}
 		admissionTimedOut := false
 		for nodeName := range bp.streams {
 			select {
 			case <-bp.streams[nodeName].ctxDoneCh:
 			case <-admissionTimer.C:
-				for pendingNodeName := range bp.streams {
-					if bp.streams[pendingNodeName].cancel != nil {
-						bp.streams[pendingNodeName].cancel()
+				timedOutAt := time.Now()
+				for pendingNodeName, pendingStream := range bp.streams {
+					select {
+					case <-pendingStream.ctxDoneCh:
+						continue
+					default:
+					}
+					timedOut := bp.recordBatchTerminal(pendingNodeName, pendingStream.group, pendingStream.timing, timedOutAt)
+					if !timedOut {
+						continue
+					}
+					bp.recordBatchAdmissionTimeout(pendingNodeName, pendingStream)
+					if pendingStream.cancel != nil {
+						pendingStream.cancel()
 					}
 				}
 				admissionTimedOut = true

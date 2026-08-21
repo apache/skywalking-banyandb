@@ -54,6 +54,8 @@ import (
 
 var queuePubScope = observability.RootScope.SubScope("queue_pub")
 
+var batchOpenDurationBuckets = meter.Buckets{1, 5, 10, 30, 60, 120, 300, 600, 1800, 3600, 21600, 86400}
+
 // defaultHealthCheckInterval is how often the queue client re-checks the nodes it considers
 // active, matching the property schema client's default. Without it the active set is only
 // validated on admission and then by a request failing on it, so a dead node keeps absorbing
@@ -108,27 +110,33 @@ type nodeInfo struct {
 }
 
 type pubMetrics struct {
-	totalStarted       meter.Counter
-	totalFinished      meter.Counter
-	totalLatency       meter.Histogram
-	totalErr           meter.Counter
-	sentBytes          meter.Counter
-	totalBatchStarted  meter.Counter
-	totalBatchFinished meter.Counter
-	totalBatchLatency  meter.Histogram
+	totalStarted               meter.Counter
+	totalFinished              meter.Counter
+	totalLatency               meter.Histogram
+	totalErr                   meter.Counter
+	sentBytes                  meter.Counter
+	totalBatchStarted          meter.Counter
+	totalBatchFinished         meter.Counter
+	totalBatchLatency          meter.Histogram
+	batchOpenDuration          meter.Histogram
+	batchAdmissionDuration     meter.Histogram
+	batchAdmissionTimeoutTotal meter.Counter
 }
 
 func newPubMetrics(factory observability.Factory) *pubMetrics {
 	labels := []string{"operation", "group", "remote_node", "remote_role", "remote_tier"}
 	return &pubMetrics{
-		totalStarted:       factory.NewCounter("total_started", labels...),
-		totalFinished:      factory.NewCounter("total_finished", labels...),
-		totalLatency:       factory.NewHistogram("total_latency", meter.DefBuckets, labels...),
-		totalErr:           factory.NewCounter("total_err", append(labels, "error_type")...),
-		sentBytes:          factory.NewCounter("sent_bytes", labels...),
-		totalBatchStarted:  factory.NewCounter("total_batch_started", labels...),
-		totalBatchFinished: factory.NewCounter("total_batch_finished", labels...),
-		totalBatchLatency:  factory.NewHistogram("total_batch_latency", meter.BatchBuckets, labels...),
+		totalStarted:               factory.NewCounter("total_started", labels...),
+		totalFinished:              factory.NewCounter("total_finished", labels...),
+		totalLatency:               factory.NewHistogram("total_latency", meter.DefBuckets, labels...),
+		totalErr:                   factory.NewCounter("total_err", append(labels, "error_type")...),
+		sentBytes:                  factory.NewCounter("sent_bytes", labels...),
+		totalBatchStarted:          factory.NewCounter("total_batch_started", labels...),
+		totalBatchFinished:         factory.NewCounter("total_batch_finished", labels...),
+		totalBatchLatency:          factory.NewHistogram("total_batch_latency", meter.BatchBuckets, labels...),
+		batchOpenDuration:          factory.NewHistogram("batch_open_duration_seconds", batchOpenDurationBuckets, labels...),
+		batchAdmissionDuration:     factory.NewHistogram("batch_admission_duration_seconds", meter.BatchBuckets, labels...),
+		batchAdmissionTimeoutTotal: factory.NewCounter("batch_admission_timeout_total", labels...),
 	}
 }
 

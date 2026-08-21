@@ -209,9 +209,11 @@ func (tst *tsTable) syncPartsToNodesHelper(ctx context.Context, parts []*part, n
 		}
 
 		result, err := chunkedClient.SyncStreamingParts(ctx, streamingParts)
+		acknowledgedAt := time.Now()
 		if err != nil {
 			return nil, fmt.Errorf("failed to sync streaming parts to node %s: %w", node, err)
 		}
+		tst.observeAcknowledgedFileSyncParts(parts, node, result, acknowledgedAt)
 
 		tst.incTotalSyncLoopBytes(result.TotalBytes)
 		if dl := tst.l.Debug(); dl.Enabled() {
@@ -230,6 +232,27 @@ func (tst *tsTable) syncPartsToNodesHelper(ctx context.Context, parts []*part, n
 	}
 
 	return allFailedParts, nil
+}
+
+func (tst *tsTable) observeAcknowledgedFileSyncParts(parts []*part, node string, result *queue.SyncResult, acknowledgedAt time.Time) {
+	if result == nil || !result.Success {
+		return
+	}
+	failedPartIDs := make(map[string]struct{}, len(result.FailedParts))
+	for _, failedPart := range result.FailedParts {
+		failedPartIDs[failedPart.PartID] = struct{}{}
+	}
+	acknowledgedAtNanos := acknowledgedAt.UnixNano()
+	for _, part := range parts {
+		if _, failed := failedPartIDs[strconv.FormatUint(part.partMetadata.ID, 10)]; failed {
+			continue
+		}
+		queuedAtUnixNano := part.partMetadata.QueuedAtUnixNano
+		if queuedAtUnixNano <= 0 || queuedAtUnixNano > acknowledgedAtNanos {
+			continue
+		}
+		tst.observeFileSyncQueueLatency(float64(acknowledgedAtNanos-queuedAtUnixNano)/float64(time.Second), node)
+	}
 }
 
 func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntroduction) error {

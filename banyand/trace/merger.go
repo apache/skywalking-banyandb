@@ -1274,6 +1274,7 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	tt.mustWriteTagType(fileSystem, dstPath)
 	pm.MinTimestamp = minTimestamp
 	pm.MaxTimestamp = maxTimestamp
+	pm.QueuedAtUnixNano = oldestQueuedAtUnixNano(parts)
 	// Finalization-sampling generation stamp, applied BEFORE the on-disk metadata write
 	// (and the subsequent re-open below) so it survives restart. finalizeGenOverride set
 	// => this is a finalize round: stamp the output at the round's generation. nil => any

@@ -18,6 +18,8 @@
 package measure
 
 import (
+	"time"
+
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/watcher"
 )
@@ -227,6 +229,7 @@ func (tst *tsTable) introducePart(nextIntroduction *introduction, epoch uint64) 
 	}
 
 	next := nextIntroduction.part
+	tst.stampQueuedAtUnixNano(next, time.Now().UnixNano())
 	if next.mp != nil {
 		tst.addPendingDataCount(-int64(next.mp.partMetadata.TotalCount))
 	}
@@ -238,6 +241,16 @@ func (tst *tsTable) introducePart(nextIntroduction *introduction, epoch uint64) 
 	tst.replaceSnapshot(&nextSnp, next.mp == nil)
 	if nextIntroduction.applied != nil {
 		close(nextIntroduction.applied)
+	}
+}
+
+func (tst *tsTable) stampQueuedAtUnixNano(part *partWrapper, queuedAtUnixNano int64) {
+	if tst.getNodes == nil || part == nil || part.p == nil || part.p.partMetadata.QueuedAtUnixNano > 0 {
+		return
+	}
+	part.p.partMetadata.QueuedAtUnixNano = queuedAtUnixNano
+	if part.mp != nil {
+		part.mp.partMetadata.QueuedAtUnixNano = queuedAtUnixNano
 	}
 }
 

@@ -54,6 +54,7 @@ type metrics struct {
 	totalSyncLoopErr                 meter.Counter
 	totalSyncLoopLatency             meter.Counter
 	totalSyncLoopBytes               meter.Counter
+	fileSyncQueueLatency             meter.Histogram
 	totalFlushLoopProgress           meter.Counter
 	totalFlushed                     meter.Counter
 	totalFlushedMemParts             meter.Counter
@@ -98,6 +99,7 @@ type metrics struct {
 	totalBatch                 meter.Counter
 	indexMetrics               *inverted.Metrics
 	pipelinePluginNames        sync.Map
+	fileSyncTargets            sync.Map
 	pipelinePluginLifecycleMu  sync.RWMutex
 	pipelinePluginClosed       bool
 }
@@ -228,6 +230,14 @@ func (tst *tsTable) incTotalSyncLoopBytes(delta uint64) {
 		return
 	}
 	tst.metrics.totalSyncLoopBytes.Inc(float64(delta))
+}
+
+func (tst *tsTable) observeFileSyncQueueLatency(delta float64, node string) {
+	if tst == nil || tst.metrics == nil || tst.metrics.fileSyncQueueLatency == nil {
+		return
+	}
+	tst.metrics.fileSyncTargets.Store(node, struct{}{})
+	tst.metrics.fileSyncQueueLatency.Observe(delta, node)
 }
 
 func (tst *tsTable) incTotalFlushLoopProgress(delta int) {
@@ -546,6 +556,12 @@ func (m *metrics) DeleteAll() {
 	m.totalSyncLoopErr.Delete()
 	m.totalSyncLoopLatency.Delete()
 	m.totalSyncLoopBytes.Delete()
+	m.fileSyncTargets.Range(func(target, _ any) bool {
+		node := target.(string)
+		m.fileSyncQueueLatency.Delete(node)
+		m.fileSyncTargets.Delete(node)
+		return true
+	})
 
 	m.totalFlushLoopProgress.Delete()
 	m.totalFlushed.Delete()
@@ -628,6 +644,7 @@ func (s *supplier) newMetrics(p common.Position) storage.Metrics {
 		totalSyncLoopErr:                 factory.NewCounter("total_sync_loop_err"),
 		totalSyncLoopLatency:             factory.NewCounter("total_sync_loop_latency"),
 		totalSyncLoopBytes:               factory.NewCounter("total_sync_loop_bytes"),
+		fileSyncQueueLatency:             factory.NewHistogram("file_sync_queue_latency_seconds", meter.QueueLatencyBuckets, "remote_node"),
 		totalFlushLoopProgress:           factory.NewCounter("total_flush_loop_progress"),
 		totalFlushed:                     factory.NewCounter("total_flushed"),
 		totalFlushedMemParts:             factory.NewCounter("total_flushed_mem_parts"),
@@ -702,6 +719,7 @@ func (qs *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observa
 		totalSyncLoopErr:                 factory.NewCounter("total_sync_loop_err"),
 		totalSyncLoopLatency:             factory.NewCounter("total_sync_loop_latency"),
 		totalSyncLoopBytes:               factory.NewCounter("total_sync_loop_bytes"),
+		fileSyncQueueLatency:             factory.NewHistogram("file_sync_queue_latency_seconds", meter.QueueLatencyBuckets, "remote_node"),
 		totalFlushLoopProgress:           factory.NewCounter("total_flush_loop_progress"),
 		totalFlushed:                     factory.NewCounter("total_flushed"),
 		totalFlushedMemParts:             factory.NewCounter("total_flushed_mem_parts"),

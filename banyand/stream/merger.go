@@ -272,6 +272,7 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 	if err != nil {
 		return nil, err
 	}
+	pm.QueuedAtUnixNano = oldestQueuedAtUnixNano(parts)
 	mergedTagType.mustWriteTagType(fileSystem, dstPath)
 	pm.mustWriteMetadata(fileSystem, dstPath)
 	// No SyncPath: mustWriteMetadata goes through WriteAtomic which already
