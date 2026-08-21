@@ -80,7 +80,7 @@ func RootCmdFlags(command *cobra.Command) {
 	_ = viper.BindPFlag("password", command.PersistentFlags().Lookup("password"))
 
 	command.AddCommand(newGroupCmd(), newUseCmd(), newStreamCmd(), newMeasureCmd(), newTopnCmd(),
-		newIndexRuleCmd(), newIndexRuleBindingCmd(), newPropertyCmd(), newTraceCmd(), newHealthCheckCmd(), newAnalyzeCmd())
+		newIndexRuleCmd(), newIndexRuleBindingCmd(), newPropertyCmd(), newTraceCmd(), newHealthCheckCmd(), newAnalyzeCmd(), newAgentCmd(), newAgentToolBridgeCmd())
 }
 
 func init() {
@@ -89,6 +89,10 @@ func init() {
 }
 
 func initConfig() {
+	command, _, findErr := rootCmd.Find(os.Args[1:])
+	if findErr == nil && command.Name() == "agent-tool-bridge" {
+		return
+	}
 	if cfgFile != "" {
 		if cfgFile == "-" {
 			return

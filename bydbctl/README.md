@@ -2,6 +2,12 @@
 
 `bydbctl` is a command line tool to interact with BanyanD.
 
+## BYDBQL Agent TUI
+
+`bydbctl agent` uses either Codex app-server or a directly supervised Claude CLI for multi-turn schema and query conversations in a persistent two-pane
+terminal workspace. bydbctl owns the controlled tool bridge, deterministically renders BYDBQL, and requires approval before full execution unless the user explicitly trusts the session. See the
+[BYDBQL Agent TUI guide](../docs/interacting/bydbctl/agent.md).
+
 ## Build
 
 ```

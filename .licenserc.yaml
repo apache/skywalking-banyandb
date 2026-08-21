@@ -117,3 +117,7 @@ header: # `header` section is configurations for source codes license header.
 dependency:
   files:
     - go.mod
+  licenses:
+    - name: github.com/mattn/go-localereader
+      version: v0.0.1
+      license: MIT

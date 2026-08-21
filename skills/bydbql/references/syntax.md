@@ -311,6 +311,10 @@ TIME <time_condition>
 [OFFSET <n>]
 ```
 
+A TRACE query needs a scan entry point, and unlike the other resource types this is not optional. Supply either an `ORDER BY` on a sortable index rule (or `TIME`), or an `=`/`IN` filter on the trace ID tag. BanyanDB cannot plan a TRACE scan with neither and rejects the query at execution as an internal error, which surfaces as an opaque HTTP 500 rather than a message naming the missing clause. `WHERE status = 'error'` alone is not an entry point: only the trace ID tag counts.
+
+The trace ID tag is named per schema by `trace_id_tag_name` (`trace_id` in the trace schemas BanyanDB ships), so read it from the schema rather than assuming it. Discover it through MCP before writing the query.
+
 Examples:
 
 ```sql
@@ -318,6 +322,15 @@ SELECT ()
 FROM TRACE sw_trace IN default
 TIME > '-30m'
 WHERE status = 'error'
+ORDER BY start_time DESC
+LIMIT 50
+```
+
+```sql
+SELECT *
+FROM TRACE sw_trace IN default
+TIME > '-30m'
+WHERE trace_id = 'abc123'
 LIMIT 50
 ```
 
@@ -357,6 +370,7 @@ WITH QUERY_TRACE
 - Use `ORDER BY` only when the user asks for sorted, latest, earliest, highest, lowest, top, bottom, first, or last results.
 - For "latest N" or "last N records", use a timestamp-like indexed field when known, for example `ORDER BY timestamp_millis DESC LIMIT N`.
 - If no sortable field is known, prefer discovering schema/index information or omit `ORDER BY` rather than inventing a field.
+- `TRACE` is the exception: omitting `ORDER BY` is only safe when the query filters the trace ID tag with `=` or `IN`. See [Traces](#traces).
 - `LIMIT` is for result count, not time range.
 - `OFFSET` is for pagination.
 - For `SHOW TOP`, do not use `LIMIT`.
@@ -371,4 +385,5 @@ Before finalizing a query:
 4. Add filters from user constraints as `WHERE`.
 5. Add aggregation/grouping only when requested by words like average, sum, count, max, min, per, by, grouped by.
 6. Add ordering and limit only when result count or sort direction is requested.
-7. Validate with `validate_bydbql` before execution.
+7. For `TRACE`, confirm the query has a scan entry point even if the user asked for no ordering: an `ORDER BY`, or a trace ID equality filter. Add `ORDER BY <sortable_rule> DESC` when neither is present.
+8. Validate with `validate_bydbql` before execution.

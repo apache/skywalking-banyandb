@@ -1,0 +1,190 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package bridge
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/agent"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/planner"
+	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
+)
+
+// MaxPlanRepairAttempts is the number of query plan proposals allowed per describe_schema cycle.
+const MaxPlanRepairAttempts = agent.DefaultMaxPlanAttempts
+
+func planFailurePayload(
+	querySession *session.QuerySession,
+	diagnostic planner.Diagnostic,
+	step int,
+	attempt int,
+	draftQuery string,
+) map[string]any {
+	payload := map[string]any{
+		"valid":              false,
+		"message":            diagnostic.Message,
+		"diagnostic":         diagnostic,
+		"schema_hint":        queryPlanSchemaHint(),
+		"attempt":            attempt,
+		"attempts_remaining": attemptsRemaining(attempt),
+		"repair_hint":        repairHintForDiagnostic(diagnostic),
+	}
+	if strings.TrimSpace(draftQuery) != "" {
+		payload["draft_query"] = draftQuery
+	}
+	if step > 0 {
+		payload["step"] = step
+	}
+	if querySession == nil {
+		return payload
+	}
+	snapshot := querySession.SchemaSnapshot
+	if snapshot.Loaded && len(snapshot.Columns) > 0 {
+		payload["columns"] = columnsForProvider(snapshot.Columns)
+		payload["indexed_fields"] = append([]string(nil), snapshot.IndexedFields...)
+		payload["plan_constraints"] = planConstraintsForSnapshot(snapshot)
+	}
+	if planExample := buildDescribePlanExample(snapshot); planExample != nil {
+		payload["plan_example"] = planExample
+	}
+	return payload
+}
+
+func attemptsRemaining(attempt int) int {
+	remaining := MaxPlanRepairAttempts - attempt
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
+}
+
+func repairHintForDiagnostic(diagnostic planner.Diagnostic) string {
+	switch diagnostic.Code {
+	case "SCHEMA_NOT_READY":
+		return "Call describe_schema for the target resource, then resubmit propose_query_plan using only returned columns."
+	case "UNKNOWN_COLUMN", "FILTER_COLUMN_NOT_TAG", "TOPN_FILTER_NOT_ENTITY_TAG":
+		return "Replace unknown columns with names from columns or indexed_fields in the latest describe_schema result."
+	case "ORDER_INDEX_NOT_SORTABLE":
+		return "Use TIME or a rule_name from sortable_indexes for order_by.index_rule, or omit order_by."
+	case "TRACE_SCAN_UNBOUNDED":
+		return "Add order_by with a sortable_indexes rule_name, or filter the trace ID tag with = or IN. " +
+			"See plan_constraints.trace_scan_requirement for the tag names."
+	case "UNSUPPORTED_FILTER_OPERATOR":
+		return "Use =, !=, >, >=, <, <=, IN, or NOT IN for filter.operator."
+	case "PLAN_SHAPE_INVALID":
+		return "Submit {\"plan\":{...}} with resource nested inside plan, not at the root."
+	case "PLAN_DECODE_FAILED":
+		return "Copy plan_example from describe_schema or the tool error payload and fill only known columns."
+	case "REPAIR_LIMIT_REACHED":
+		return "Call describe_schema again to reset the repair budget, then submit one corrected plan."
+	default:
+		return "Fix the reported issue, keep the correct resource and time_range, and call propose_query_plan again."
+	}
+}
+
+func buildDescribePlanExample(snapshot session.SchemaSnapshot) map[string]any {
+	if !snapshot.Loaded || strings.TrimSpace(snapshot.Name) == "" || len(snapshot.Groups) == 0 {
+		return nil
+	}
+	groups := make([]string, 0, len(snapshot.Groups))
+	for _, group := range snapshot.Groups {
+		trimmedGroup := strings.TrimSpace(group)
+		if trimmedGroup != "" {
+			groups = append(groups, trimmedGroup)
+		}
+	}
+	if len(groups) == 0 {
+		return nil
+	}
+	resource := map[string]any{
+		"type":   snapshot.Type.String(),
+		"name":   snapshot.Name,
+		"groups": groups,
+	}
+	planExample := map[string]any{
+		"resource": resource,
+	}
+	if snapshot.Type == session.ResourceTypeTopN {
+		direction := "DESC"
+		if strings.EqualFold(snapshot.FieldValueSort, "SORT_ASC") {
+			direction = "ASC"
+		}
+		planExample["time_range"] = map[string]any{"start": "-30m"}
+		planExample["top_n"] = 10
+		planExample["aggregate"] = map[string]any{"function": "SUM"}
+		planExample["order_by"] = map[string]any{"direction": direction}
+		return map[string]any{"plan": planExample}
+	}
+	if snapshot.Type != session.ResourceTypeProperty {
+		planExample["time_range"] = map[string]any{"start": "-30m"}
+	}
+	planExample["limit"] = 10
+	if len(snapshot.Columns) > 0 {
+		projection := make([]map[string]any, 0, min(3, len(snapshot.Columns)))
+		for columnIdx, column := range snapshot.Columns {
+			if columnIdx >= 3 {
+				break
+			}
+			if column.Type == session.SchemaValueTypeUnknown {
+				continue
+			}
+			projection = append(projection, map[string]any{"column": column.Name})
+		}
+		if len(projection) > 0 {
+			planExample["projection"] = projection
+		}
+	} else if snapshot.Type == session.ResourceTypeTrace {
+		planExample["projection_mode"] = "NONE"
+	}
+	return map[string]any{"plan": planExample}
+}
+
+func planRepairLimitMessage() string {
+	return fmt.Sprintf(
+		"automatic query plan repair limit reached after %d attempts; call describe_schema to reset the repair budget, "+
+			"submit one corrected plan, and do not call validate_bydbql or execute_bydbql until "+
+			"propose_query_plan returns valid=true",
+		MaxPlanRepairAttempts,
+	)
+}
+
+func (toolBridge *ToolBridge) emitProposeCandidate(callID, query string, draft bool, message string) {
+	trimmedQuery := strings.TrimSpace(query)
+	if trimmedQuery == "" {
+		return
+	}
+	status := agent.EventStatusSucceeded
+	eventMessage := strings.TrimSpace(message)
+	if draft {
+		status = agent.EventStatusFailed
+		if eventMessage == "" {
+			eventMessage = "query plan draft (propose_query_plan has not validated yet)"
+		}
+	} else if eventMessage == "" {
+		eventMessage = "query plan compiled through controlled tool"
+	}
+	toolBridge.emit(agent.Event{
+		ID:          callID,
+		Kind:        agent.EventKindCandidate,
+		ToolName:    ToolProposeQueryPlan,
+		Candidate:   trimmedQuery,
+		Message:     eventMessage,
+		Status:      status,
+		CompletedAt: toolBridge.now(),
+	})
+}
