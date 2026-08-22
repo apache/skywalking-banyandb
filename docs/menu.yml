@@ -45,6 +45,8 @@ catalog:
         catalog:
           - name: "bydbctl"
             path: "/interacting/bydbctl/bydbctl"
+          - name: "BYDBQL Agent TUI"
+            path: "/interacting/bydbctl/agent"
           - name: "CRUD Schema"
             catalog:
               - name: "Group"

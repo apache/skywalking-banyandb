@@ -1,6 +1,10 @@
 # bydbctl
 
-`bydbctl` is the command line tool for interacting with BanyanDB. It is a powerful tool that can be used to create, update, read, and delete schemas. It can also be used to query data stored in streams, measures, traces, and properties.
+`bydbctl` is the command line tool for interacting with BanyanDB. It is a powerful tool that can be used to create, update, read, and delete
+schemas. It can also be used to query data stored in streams, measures, traces, and properties.
+
+`bydbctl agent` opens an interactive BYDBQL agent TUI. It helps users generate, edit, validate, approve, and execute BYDBQL queries. See
+[BYDBQL Agent TUI](agent.md) for details.
 
 These are several ways to install:
 
@@ -23,4 +27,5 @@ Users could select any HTTP client to access the HTTP based endpoints. The defau
 
 ## TLS
 
-TLS is supported by `bydbctl`.`--tls=true` and `--cert <cert_file>` are the flags to enable TLS and specify the certificate file. If you want to ignore the certificate verification, use `--insecure=true`.
+TLS is supported by `bydbctl`. `--tls=true` and `--cert <cert_file>` are the flags to enable TLS and specify the certificate file. If you want to
+ignore the certificate verification, use `--insecure=true`.
