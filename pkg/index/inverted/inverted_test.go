@@ -28,6 +28,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
@@ -37,6 +38,20 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
+
+func TestStore_CollectMetricsAfterClose(t *testing.T) {
+	tester := require.New(t)
+	path, cleanUp := setUp(tester)
+	defer cleanUp()
+	s, err := NewStore(StoreOpts{
+		Path:    path,
+		Logger:  logger.GetLogger("test"),
+		Metrics: NewMetrics(observability.BypassRegistry.With(observability.RootScope)),
+	})
+	tester.NoError(err)
+	tester.NoError(s.Close())
+	s.CollectMetrics()
+}
 
 func TestStore_Match(t *testing.T) {
 	tester := require.New(t)

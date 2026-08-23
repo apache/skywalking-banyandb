@@ -133,6 +133,10 @@ func (s *store) CollectMetrics(labelValues ...string) {
 	if s.metrics == nil {
 		return
 	}
+	if !s.closer.AddRunning() {
+		return
+	}
+	defer s.closer.Done()
 	// fixme: data race here
 	status := s.writer.Status()
 	s.metrics.totalUpdates.Set(float64(status.TotUpdates), labelValues...)
