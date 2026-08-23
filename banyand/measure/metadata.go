@@ -902,6 +902,7 @@ func (s *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observab
 		totalSyncLoopErr:           factory.NewCounter("total_sync_loop_err"),
 		totalSyncLoopLatency:       factory.NewCounter("total_sync_loop_latency"),
 		totalSyncLoopBytes:         factory.NewCounter("total_sync_loop_bytes"),
+		fileSyncQueueLatency:       factory.NewHistogram("file_sync_queue_latency_seconds", meter.QueueLatencyBuckets, "remote_node"),
 		totalFlushLoopProgress:     factory.NewCounter("total_flush_loop_progress"),
 		totalFlushed:               factory.NewCounter("total_flushed"),
 		totalFlushedMemParts:       factory.NewCounter("total_flushed_mem_parts"),

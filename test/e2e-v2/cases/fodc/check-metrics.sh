@@ -176,6 +176,9 @@ QUEUE_LABEL_METRICS=(
   banyandb_queue_pub_total_batch_started
   banyandb_queue_pub_total_batch_finished
   banyandb_queue_pub_total_batch_latency_bucket
+  banyandb_queue_pub_batch_open_duration_seconds_bucket
+  banyandb_queue_pub_batch_admission_duration_seconds_bucket
+  banyandb_queue_pub_batch_admission_timeout_total
   banyandb_queue_sub_total_started
   banyandb_queue_sub_total_finished
   banyandb_queue_sub_total_latency_bucket
@@ -189,6 +192,18 @@ MISSING_LABELS=""
 for m in "${QUEUE_LABEL_METRICS[@]}"; do
   series_present "${m}" || continue
   for lbl in operation group; do
+    label_exists "${m}" "${lbl}" || MISSING_LABELS="${MISSING_LABELS} ${m}(${lbl})"
+  done
+done
+
+# Liaison wqueue-to-data histograms use group as a database-level const label
+# and remote_node as the per-target metric label consumed by panel 31.
+for m in \
+    banyandb_measure_file_sync_queue_latency_seconds_bucket \
+    banyandb_stream_tst_file_sync_queue_latency_seconds_bucket \
+    banyandb_trace_tst_file_sync_queue_latency_seconds_bucket; do
+  series_present "${m}" || continue
+  for lbl in group remote_node; do
     label_exists "${m}" "${lbl}" || MISSING_LABELS="${MISSING_LABELS} ${m}(${lbl})"
   done
 done

@@ -40,17 +40,17 @@ consumer ─POST /users─▶ provider ──▶ OAP ──┬─ writes ─▶ 
 
 ## What is asserted
 
-The metric universe (106 distinct names, extracted mechanically from dashboard
+The metric universe (115 distinct names, extracted mechanically from dashboard
 panel `expr` fields) is partitioned into four checked-in lists under `metrics/`:
 
 | List | Meaning | check-metrics.sh action |
 |------|---------|-------------------------|
 | `presence.txt` (44) | reliably exported by a 1:1 OAP cluster; value may be 0 | assert ≥ 1 exported series |
-| `non_empty.txt` (14) | always-on core through OAP traffic | assert a sample value > 0 (histogram families via the companion `_count`) |
-| `documented_gap.txt` (20) | need a specific event or an undeployed lifecycle service | reported only, never asserted |
-| `optional_plugin.txt` (28) | used only by the separately installed trace-plugin dashboard | excluded from the base run; validate in a plugin-enabled cluster |
+| `non_empty.txt` (19) | always-on core through OAP traffic | assert a sample value > 0 (histogram families via the companion `_count`) |
+| `documented_gap.txt` (21) | need a specific event or an undeployed lifecycle service | reported only, never asserted |
+| `optional_plugin.txt` (31) | used only by the separately installed trace-plugin dashboard | excluded from the base run; validate in a plugin-enabled cluster |
 
-The four lists are disjoint and their union is exactly the 106 dashboard metrics —
+The four lists are disjoint and their union is exactly the 115 dashboard metrics —
 nothing is silently dropped. `check-metrics.sh` additionally asserts that the two
 agents registered with **distinct `node_role` labels** and that the dashboard's
 query-throughput series `banyandb_queue_sub_*{operation="query"}` is present on the
@@ -61,7 +61,7 @@ the OAP→liaison→data query fan-out is observable.
 
 The split was calibrated against a live run; the recorded findings:
 
-- **`documented_gap.txt` holds event-driven and undeployed-service families (20 names), reported but never asserted.**
+- **`documented_gap.txt` holds event-driven and undeployed-service families (21 names), reported but never asserted.**
   *Error counters* (`*_grpc_total_err`, `*_grpc_total_stream_msg_received_err`, four
   `*_total_sync_loop_err`, `queue_pub_total_err`): a labelled Prometheus counter is
   not exported until first incremented, so on a healthy run they never appear.
