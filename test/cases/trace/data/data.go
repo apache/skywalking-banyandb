@@ -24,6 +24,7 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -64,6 +65,25 @@ var qlFS embed.FS
 
 //go:embed testdata/*.json
 var dataFS embed.FS
+
+func expectWriteSucceeded(writeClient tracev1.TraceService_WriteClient) {
+	// Setup already waited on SchemaBarrier AwaitSchemaApplied; a NOT_FOUND
+	// here means the barrier contract was violated and must fail loudly.
+	// Callers must open Write with a deadline so a stalled Recv cannot hang forever.
+	var statuses []string
+	for {
+		ack, recvErr := writeClient.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			break
+		}
+		gm.Expect(recvErr).NotTo(gm.HaveOccurred())
+		statuses = append(statuses, ack.GetStatus())
+	}
+	gm.Expect(statuses).NotTo(gm.BeEmpty())
+	for _, writeStatus := range statuses {
+		gm.Expect(writeStatus).To(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+	}
+}
 
 // VerifyFn verify whether the query response matches the wanted result.
 var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args helpers.Args) {
@@ -380,16 +400,14 @@ func WriteToGroup(conn *grpclib.ClientConn, name, group, fileName string, baseTi
 	metadata = resp.GetTrace().GetMetadata()
 
 	c := tracev1.NewTraceServiceClient(conn)
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
+	defer cancel()
 	writeClient, err := c.Write(ctx)
 	gm.Expect(err).NotTo(gm.HaveOccurred())
 	version := uint64(1)
 	loadData(writeClient, metadata, fmt.Sprintf("%s.json", fileName), baseTime, interval, &version)
 	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
-	gm.Eventually(func() error {
-		_, err := writeClient.Recv()
-		return err
-	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
+	expectWriteSucceeded(writeClient)
 }
 
 // WriteSpec defines the specification for writing trace data.
@@ -401,7 +419,8 @@ type WriteSpec struct {
 
 // WriteMixed writes trace data in schema order first, and then in spec order.
 func WriteMixed(conn *grpclib.ClientConn, baseTime time.Time, interval time.Duration, writeSpecs ...WriteSpec) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
+	defer cancel()
 	schemaClient := databasev1.NewTraceRegistryServiceClient(conn)
 	c := tracev1.NewTraceServiceClient(conn)
 	writeClient, err := c.Write(ctx)
@@ -436,10 +455,7 @@ func WriteMixed(conn *grpclib.ClientConn, baseTime time.Time, interval time.Dura
 	}
 
 	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
-	gm.Eventually(func() error {
-		_, recvErr := writeClient.Recv()
-		return recvErr
-	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
+	expectWriteSucceeded(writeClient)
 }
 
 // unmarshalYAMLWithSpanEncoding decodes YAML with special handling for span data.

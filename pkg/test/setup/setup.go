@@ -32,10 +32,12 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	grpcmetadata "google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"gopkg.in/yaml.v3"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/discovery/file"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
@@ -809,16 +811,94 @@ func waitForSchemaSyncWithAuth(grpcAddr, username, password string, opts ...grpc
 	}()
 	groupClient := databasev1.NewGroupRegistryServiceClient(conn)
 	gomega.Eventually(func(g gomega.Gomega) {
-		ctx := context.Background()
-		if username != "" && password != "" {
-			md := grpcmetadata.Pairs("username", username, "password", password)
-			ctx = grpcmetadata.NewOutgoingContext(ctx, md)
-		}
+		ctx := authContext(username, password)
 		resp, listErr := groupClient.List(ctx, &databasev1.GroupRegistryServiceListRequest{})
 		g.Expect(listErr).NotTo(gomega.HaveOccurred())
 		g.Expect(resp.GetGroup()).NotTo(gomega.BeEmpty(),
 			"no groups found in standalone schema registry")
 	}, testflags.EventuallyTimeout).Should(gomega.Succeed())
+	// Registry List succeeding is not enough: writes validate against the liaison
+	// entityRepo / NodeRepoRegistry, which can lag the property schema store.
+	// Wait for catalog contents, then barrier until local caches have applied them.
+	for _, kind := range []schema.Kind{schema.KindStream, schema.KindMeasure, schema.KindTrace} {
+		waitForSchemaKind(conn, kind, username, password)
+	}
+	awaitPreloadedSchemasApplied(conn, username, password)
+}
+
+func authContext(username, password string) context.Context {
+	ctx := context.Background()
+	if username != "" && password != "" {
+		md := grpcmetadata.Pairs("username", username, "password", password)
+		ctx = grpcmetadata.NewOutgoingContext(ctx, md)
+	}
+	return ctx
+}
+
+func awaitPreloadedSchemasApplied(conn *grpclib.ClientConn, username, password string) {
+	keys, minRevisions := collectPreloadedSchemaKeys(conn, username, password)
+	if len(keys) == 0 {
+		return
+	}
+	barrierClient := schemav1.NewSchemaBarrierServiceClient(conn)
+	ctx := authContext(username, password)
+	resp, awaitErr := barrierClient.AwaitSchemaApplied(ctx, &schemav1.AwaitSchemaAppliedRequest{
+		Keys:         keys,
+		MinRevisions: minRevisions,
+		Timeout:      durationpb.New(testflags.EventuallyTimeout),
+	})
+	gomega.Expect(awaitErr).NotTo(gomega.HaveOccurred())
+	gomega.Expect(resp.GetApplied()).To(gomega.BeTrue(),
+		"preloaded schemas not applied to local caches; laggards=%v", resp.GetLaggards())
+}
+
+func collectPreloadedSchemaKeys(conn *grpclib.ClientConn, username, password string) ([]*schemav1.SchemaKey, []int64) {
+	ctx := authContext(username, password)
+	groupResp, groupErr := databasev1.NewGroupRegistryServiceClient(conn).List(
+		ctx, &databasev1.GroupRegistryServiceListRequest{})
+	gomega.Expect(groupErr).NotTo(gomega.HaveOccurred())
+	var keys []*schemav1.SchemaKey
+	var minRevisions []int64
+	for _, grp := range groupResp.GetGroup() {
+		groupName := grp.GetMetadata().GetName()
+		switch grp.GetCatalog() {
+		case commonv1.Catalog_CATALOG_STREAM:
+			streamResp, listErr := databasev1.NewStreamRegistryServiceClient(conn).List(
+				ctx, &databasev1.StreamRegistryServiceListRequest{Group: groupName})
+			gomega.Expect(listErr).NotTo(gomega.HaveOccurred())
+			for _, stream := range streamResp.GetStream() {
+				meta := stream.GetMetadata()
+				keys = append(keys, &schemav1.SchemaKey{
+					Kind: "stream", Group: groupName, Name: meta.GetName(),
+				})
+				minRevisions = append(minRevisions, meta.GetModRevision())
+			}
+		case commonv1.Catalog_CATALOG_MEASURE:
+			measureResp, listErr := databasev1.NewMeasureRegistryServiceClient(conn).List(
+				ctx, &databasev1.MeasureRegistryServiceListRequest{Group: groupName})
+			gomega.Expect(listErr).NotTo(gomega.HaveOccurred())
+			for _, measure := range measureResp.GetMeasure() {
+				meta := measure.GetMetadata()
+				keys = append(keys, &schemav1.SchemaKey{
+					Kind: "measure", Group: groupName, Name: meta.GetName(),
+				})
+				minRevisions = append(minRevisions, meta.GetModRevision())
+			}
+		case commonv1.Catalog_CATALOG_TRACE:
+			traceResp, listErr := databasev1.NewTraceRegistryServiceClient(conn).List(
+				ctx, &databasev1.TraceRegistryServiceListRequest{Group: groupName})
+			gomega.Expect(listErr).NotTo(gomega.HaveOccurred())
+			for _, trace := range traceResp.GetTrace() {
+				meta := trace.GetMetadata()
+				keys = append(keys, &schemav1.SchemaKey{
+					Kind: "trace", Group: groupName, Name: meta.GetName(),
+				})
+				minRevisions = append(minRevisions, meta.GetModRevision())
+			}
+		default:
+		}
+	}
+	return keys, minRevisions
 }
 
 func waitForNodeDiscovery(grpcAddr string, dialOpts ...grpclib.DialOption) {
@@ -886,20 +966,20 @@ func waitForActiveDataNodes(grpcAddr string, config *ClusterConfig) {
 			"no active data nodes in tire2 route table")
 	}, testflags.EventuallyTimeout).Should(gomega.Succeed())
 	for _, kind := range config.getLoadedKinds() {
-		waitForSchemaKind(conn, kind)
+		waitForSchemaKind(conn, kind, "", "")
 	}
 	time.Sleep(5 * time.Second)
 }
 
-func waitForSchemaKind(conn *grpclib.ClientConn, kind schema.Kind) {
+func waitForSchemaKind(conn *grpclib.ClientConn, kind schema.Kind, username, password string) {
 	catalog := kindToCatalog(kind)
 	if catalog == commonv1.Catalog_CATALOG_UNSPECIFIED {
 		return
 	}
 	groupClient := databasev1.NewGroupRegistryServiceClient(conn)
 	gomega.Eventually(func(g gomega.Gomega) {
-		groupResp, groupListErr := groupClient.List(
-			context.Background(), &databasev1.GroupRegistryServiceListRequest{})
+		ctx := authContext(username, password)
+		groupResp, groupListErr := groupClient.List(ctx, &databasev1.GroupRegistryServiceListRequest{})
 		g.Expect(groupListErr).NotTo(gomega.HaveOccurred())
 		var matchingGroups int
 		var syncedGroups int
@@ -909,7 +989,7 @@ func waitForSchemaKind(conn *grpclib.ClientConn, kind schema.Kind) {
 			}
 			matchingGroups++
 			groupName := grp.GetMetadata().GetName()
-			found, schemaErr := hasSchemaInGroup(conn, kind, groupName)
+			found, schemaErr := hasSchemaInGroup(conn, kind, groupName, username, password)
 			g.Expect(schemaErr).NotTo(gomega.HaveOccurred())
 			if found {
 				syncedGroups++
@@ -936,8 +1016,8 @@ func kindToCatalog(kind schema.Kind) commonv1.Catalog {
 	}
 }
 
-func hasSchemaInGroup(conn *grpclib.ClientConn, kind schema.Kind, group string) (bool, error) {
-	ctx := context.Background()
+func hasSchemaInGroup(conn *grpclib.ClientConn, kind schema.Kind, group, username, password string) (bool, error) {
+	ctx := authContext(username, password)
 	switch kind {
 	case schema.KindStream:
 		client := databasev1.NewStreamRegistryServiceClient(conn)
