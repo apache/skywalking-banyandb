@@ -24,6 +24,7 @@
 banyandb_liaison_grpc_total_err
 banyandb_liaison_grpc_total_stream_msg_received_err
 banyandb_queue_pub_total_err
+banyandb_queue_pub_batch_admission_timeout_total
 banyandb_queue_sub_total_err
 #
 # Group 2 -- part-merge completion metrics. These increment only when a

@@ -32,26 +32,32 @@ var lifecycleMigrationScope = observability.RootScope.SubScope("lifecycle_migrat
 // from an explicitly supplied MetricsRegistry instead, on its own scope so the
 // migration layer can be queried independently of the write-pipeline pub family.
 type pubMigrationMetrics struct {
-	totalStarted       meter.Counter
-	totalFinished      meter.Counter
-	totalLatency       meter.Histogram
-	totalErr           meter.Counter
-	sentBytes          meter.Counter
-	totalBatchStarted  meter.Counter
-	totalBatchFinished meter.Counter
-	totalBatchLatency  meter.Histogram
+	totalStarted               meter.Counter
+	totalFinished              meter.Counter
+	totalLatency               meter.Histogram
+	totalErr                   meter.Counter
+	sentBytes                  meter.Counter
+	totalBatchStarted          meter.Counter
+	totalBatchFinished         meter.Counter
+	totalBatchLatency          meter.Histogram
+	batchOpenDuration          meter.Histogram
+	batchAdmissionDuration     meter.Histogram
+	batchAdmissionTimeoutTotal meter.Counter
 }
 
 func newPubMigrationMetrics(factory observability.Factory) *pubMigrationMetrics {
 	labels := []string{"operation", "group", "remote_node", "remote_role", "remote_tier"}
 	return &pubMigrationMetrics{
-		totalStarted:       factory.NewCounter("total_started", labels...),
-		totalFinished:      factory.NewCounter("total_finished", labels...),
-		totalLatency:       factory.NewHistogram("total_latency", meter.DefBuckets, labels...),
-		totalErr:           factory.NewCounter("total_err", append(labels, "error_type")...),
-		sentBytes:          factory.NewCounter("sent_bytes", labels...),
-		totalBatchStarted:  factory.NewCounter("total_batch_started", labels...),
-		totalBatchFinished: factory.NewCounter("total_batch_finished", labels...),
-		totalBatchLatency:  factory.NewHistogram("total_batch_latency", meter.BatchBuckets, labels...),
+		totalStarted:               factory.NewCounter("total_started", labels...),
+		totalFinished:              factory.NewCounter("total_finished", labels...),
+		totalLatency:               factory.NewHistogram("total_latency", meter.DefBuckets, labels...),
+		totalErr:                   factory.NewCounter("total_err", append(labels, "error_type")...),
+		sentBytes:                  factory.NewCounter("sent_bytes", labels...),
+		totalBatchStarted:          factory.NewCounter("total_batch_started", labels...),
+		totalBatchFinished:         factory.NewCounter("total_batch_finished", labels...),
+		totalBatchLatency:          factory.NewHistogram("total_batch_latency", meter.BatchBuckets, labels...),
+		batchOpenDuration:          factory.NewHistogram("batch_open_duration_seconds", batchOpenDurationBuckets, labels...),
+		batchAdmissionDuration:     factory.NewHistogram("batch_admission_duration_seconds", meter.BatchBuckets, labels...),
+		batchAdmissionTimeoutTotal: factory.NewCounter("batch_admission_timeout_total", labels...),
 	}
 }

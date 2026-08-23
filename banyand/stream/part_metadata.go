@@ -41,7 +41,9 @@ type partMetadata struct {
 	BlocksCount           uint64 `json:"blocksCount"`
 	MinTimestamp          int64  `json:"minTimestamp"`
 	MaxTimestamp          int64  `json:"maxTimestamp"`
-	ID                    uint64 `json:"-"`
+	// QueuedAtUnixNano is the liaison write-queue introduction commit time.
+	QueuedAtUnixNano int64  `json:"queuedAtUnixNano,omitempty"`
+	ID               uint64 `json:"-"`
 }
 
 func (pm *partMetadata) reset() {
@@ -51,7 +53,19 @@ func (pm *partMetadata) reset() {
 	pm.BlocksCount = 0
 	pm.MinTimestamp = 0
 	pm.MaxTimestamp = 0
+	pm.QueuedAtUnixNano = 0
 	pm.ID = 0
+}
+
+func oldestQueuedAtUnixNano(parts []*partWrapper) int64 {
+	var oldest int64
+	for _, part := range parts {
+		queuedAtUnixNano := part.p.partMetadata.QueuedAtUnixNano
+		if queuedAtUnixNano > 0 && (oldest == 0 || queuedAtUnixNano < oldest) {
+			oldest = queuedAtUnixNano
+		}
+	}
+	return oldest
 }
 
 func (pm *partMetadata) fillFromSyncContext(ctx *queue.ChunkedSyncPartContext) {

@@ -1188,7 +1188,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "p99 latency of publish sends from liaison to data nodes, by operation.",
+      "description": "p99 publisher RPC latency by operation, plus core-part latency from liaison wqueue commit through a successful data-node file-sync acknowledgement. The latter includes queue residence, merge/flush scheduling, transfer, and retries.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1279,9 +1279,45 @@
           "legendFormat": "p99 {{operation}} {{group}}",
           "range": true,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum(rate(banyandb_measure_file_sync_queue_latency_seconds_bucket{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (le, group, remote_node))",
+          "instant": false,
+          "legendFormat": "wqueue measure {{group}} \u2192 {{remote_node}}",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum(rate(banyandb_stream_tst_file_sync_queue_latency_seconds_bucket{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (le, group, remote_node))",
+          "instant": false,
+          "legendFormat": "wqueue stream {{group}} \u2192 {{remote_node}}",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum(rate(banyandb_trace_tst_file_sync_queue_latency_seconds_bucket{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (le, group, remote_node))",
+          "instant": false,
+          "legendFormat": "wqueue trace {{group}} \u2192 {{remote_node}}",
+          "range": true,
+          "refId": "D"
         }
       ],
-      "title": "Publish Send Latency p99",
+      "title": "Publish & Wqueue-to-data Latency p99",
       "type": "timeseries"
     },
     {
@@ -3159,7 +3195,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "p99 end-to-end latency of a single batch stream from open to close, for pub and sub.",
+      "description": "p99 batch-stream latency split into client-held-open and post-seal admission phases. The legacy pub/sub end-to-end series remain for compatibility.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3208,34 +3244,9 @@
               }
             ]
           },
-          "unit": "ops"
+          "unit": "s"
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byFrameRefID",
-              "options": "A"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "s"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byFrameRefID",
-              "options": "B"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "s"
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 7,
@@ -3287,9 +3298,33 @@
           "legendFormat": "sub p99 {{group}}",
           "range": true,
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum(rate(banyandb_queue_pub_batch_open_duration_seconds_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=~\"$operation\", group=~\"$group\"}[$__rate_interval])) by (le, group))",
+          "instant": false,
+          "legendFormat": "open p99 {{group}}",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum(rate(banyandb_queue_pub_batch_admission_duration_seconds_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=~\"$operation\", group=~\"$group\"}[$__rate_interval])) by (le, group))",
+          "instant": false,
+          "legendFormat": "admission p99 {{group}}",
+          "range": true,
+          "refId": "D"
         }
       ],
-      "title": "Batch-write \u2014 Batch Stream Latency p99",
+      "title": "Batch-write \u2014 Stream Phase Latency p99",
       "type": "timeseries"
     },
     {
@@ -3403,6 +3438,107 @@
         }
       ],
       "title": "Batch-write \u2014 Message Throughput",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Post-seal admission deadlines reached per target node. The counter is registered lazily, so an empty panel means no timeout has occurred.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 81
+      },
+      "id": 52,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(banyandb_queue_pub_batch_admission_timeout_total{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", operation=~\"$operation\", group=~\"$group\"}[$__rate_interval])) by (group, remote_node)",
+          "instant": false,
+          "legendFormat": "{{group}} \u2192 {{remote_node}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Batch-write \u2014 Admission Timeout Rate",
       "type": "timeseries"
     },
     {

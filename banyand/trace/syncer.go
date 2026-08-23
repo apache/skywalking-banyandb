@@ -281,7 +281,7 @@ func (tst *tsTable) syncPartsToNodesHelper(
 			return streamingParts[i].ID < streamingParts[j].ID
 		})
 
-		failedParts, err := tst.syncStreamingPartsToNode(ctx, node, streamingParts)
+		failedParts, err := tst.syncStreamingPartsToNode(ctx, node, parts, streamingParts)
 		if err != nil {
 			return allFailedParts, err
 		}
@@ -481,7 +481,9 @@ func (tst *tsTable) handleSyncIntroductions(partsToSync []*part, syncCh chan *sy
 
 // syncStreamingPartsToNode synchronizes streaming parts to a node.
 // Returns the list of failed parts.
-func (tst *tsTable) syncStreamingPartsToNode(ctx context.Context, node string, streamingParts []queue.StreamingPartData) ([]queue.FailedPart, error) {
+func (tst *tsTable) syncStreamingPartsToNode(
+	ctx context.Context, node string, parts []*part, streamingParts []queue.StreamingPartData,
+) ([]queue.FailedPart, error) {
 	// Get chunked sync client for this node
 	chunkedClient, err := tst.option.tire2Client.NewChunkedSyncClient(node, 1024*1024)
 	if err != nil {
@@ -491,9 +493,11 @@ func (tst *tsTable) syncStreamingPartsToNode(ctx context.Context, node string, s
 
 	// Sync parts using chunked transfer with streaming
 	result, err := chunkedClient.SyncStreamingParts(ctx, streamingParts)
+	acknowledgedAt := time.Now()
 	if err != nil {
 		return nil, fmt.Errorf("failed to sync streaming parts to node %s: %w", node, err)
 	}
+	tst.observeAcknowledgedFileSyncParts(parts, node, result, acknowledgedAt)
 
 	tst.incTotalSyncLoopBytes(result.TotalBytes)
 	if dl := tst.l.Debug(); dl.Enabled() {
@@ -509,4 +513,25 @@ func (tst *tsTable) syncStreamingPartsToNode(ctx context.Context, node string, s
 	}
 
 	return result.FailedParts, nil
+}
+
+func (tst *tsTable) observeAcknowledgedFileSyncParts(parts []*part, node string, result *queue.SyncResult, acknowledgedAt time.Time) {
+	if result == nil || !result.Success {
+		return
+	}
+	failedPartIDs := make(map[string]struct{}, len(result.FailedParts))
+	for _, failedPart := range result.FailedParts {
+		failedPartIDs[failedPart.PartID] = struct{}{}
+	}
+	acknowledgedAtNanos := acknowledgedAt.UnixNano()
+	for _, part := range parts {
+		if _, failed := failedPartIDs[strconv.FormatUint(part.partMetadata.ID, 10)]; failed {
+			continue
+		}
+		queuedAtUnixNano := part.partMetadata.QueuedAtUnixNano
+		if queuedAtUnixNano <= 0 || queuedAtUnixNano > acknowledgedAtNanos {
+			continue
+		}
+		tst.observeFileSyncQueueLatency(float64(acknowledgedAtNanos-queuedAtUnixNano)/float64(time.Second), node)
+	}
 }
