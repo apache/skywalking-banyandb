@@ -374,29 +374,26 @@ func runObservedBenchmarkMerge(t *testing.T, mature bool) (mergeBenchmarkEvent, 
 	observer := newMergeBenchmarkObserver(&jsonLines, mergeBenchmarkObserverOptions{Phase: mergePhasePrimary, Attribution: true})
 	require.True(t, table.setMergeBenchmarkObserver(observer))
 	table.observePartID(partIDs[len(partIDs)-1])
+	if mature {
+		table.setMergeNow(base.Add(3 * time.Hour))
+	} else {
+		table.setMergeNow(base.Add(time.Minute))
+	}
 	for _, partID := range partIDs {
 		require.NoError(t, os.Rename(filepath.Join(prepared, formatExternalPartID(partID)), filepath.Join(root, formatExternalPartID(partID))))
 		for _, indexName := range []string{"latency", "start_time"} {
 			require.NoError(t, os.Rename(filepath.Join(prepared, sidxDirName, indexName, formatExternalPartID(partID)),
 				filepath.Join(root, sidxDirName, indexName, formatExternalPartID(partID))))
 		}
-		table.mustAddFilePart(partID, map[string]string{
+		mergeDepth := uint32(0)
+		if mature {
+			mergeDepth = 1
+		}
+		table.mustAddFilePartWithMergeDepth(partID, map[string]string{
 			"latency":    filepath.Join(root, sidxDirName, "latency", formatExternalPartID(partID)),
 			"start_time": filepath.Join(root, sidxDirName, "start_time", formatExternalPartID(partID)),
-		})
+		}, mergeDepth)
 	}
-	if mature {
-		snapshot := table.currentSnapshot()
-		require.NotNil(t, snapshot)
-		for partIdx := range snapshot.parts {
-			snapshot.parts[partIdx].mergeDepth = 1
-		}
-		snapshot.decRef()
-		table.setMergeNow(base.Add(3 * time.Hour))
-	} else {
-		table.setMergeNow(base.Add(time.Minute))
-	}
-
 	require.NoError(t, table.triggerMerge())
 	waitCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
