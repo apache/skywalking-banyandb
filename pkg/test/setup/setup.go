@@ -841,7 +841,8 @@ func awaitPreloadedSchemasApplied(conn *grpclib.ClientConn, username, password s
 		return
 	}
 	barrierClient := schemav1.NewSchemaBarrierServiceClient(conn)
-	ctx := authContext(username, password)
+	ctx, cancel := context.WithTimeout(authContext(username, password), testflags.EventuallyTimeout)
+	defer cancel()
 	resp, awaitErr := barrierClient.AwaitSchemaApplied(ctx, &schemav1.AwaitSchemaAppliedRequest{
 		Keys:         keys,
 		MinRevisions: minRevisions,
