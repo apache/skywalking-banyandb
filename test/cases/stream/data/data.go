@@ -23,6 +23,7 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -70,7 +71,7 @@ func expectWriteSucceeded(writeClient streamv1.StreamService_WriteClient) {
 	var statuses []string
 	for {
 		ack, recvErr := writeClient.Recv()
-		if recvErr == io.EOF {
+		if errors.Is(recvErr, io.EOF) {
 			break
 		}
 		gm.Expect(recvErr).NotTo(gm.HaveOccurred())

@@ -22,6 +22,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"io"
 	"regexp"
 	"slices"
@@ -310,7 +311,7 @@ func expectWriteSucceeded(writeClient measurev1.MeasureService_WriteClient) {
 	var statuses []string
 	for {
 		ack, recvErr := writeClient.Recv()
-		if recvErr == io.EOF {
+		if errors.Is(recvErr, io.EOF) {
 			break
 		}
 		gm.Expect(recvErr).NotTo(gm.HaveOccurred())
