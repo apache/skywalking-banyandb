@@ -49,7 +49,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bydbql"
-	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 )
 
@@ -64,6 +63,24 @@ var dataFS embed.FS
 
 //go:embed input/*.ql
 var qlFS embed.FS
+
+func expectWriteSucceeded(writeClient streamv1.StreamService_WriteClient) {
+	// Setup already waited on SchemaBarrier AwaitSchemaApplied; a NOT_FOUND
+	// here means the barrier contract was violated and must fail loudly.
+	var statuses []string
+	for {
+		ack, recvErr := writeClient.Recv()
+		if recvErr == io.EOF {
+			break
+		}
+		gm.Expect(recvErr).NotTo(gm.HaveOccurred())
+		statuses = append(statuses, ack.GetStatus())
+	}
+	gm.Expect(statuses).NotTo(gm.BeEmpty())
+	for _, writeStatus := range statuses {
+		gm.Expect(writeStatus).To(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+	}
+}
 
 // VerifyFn verify whether the query response matches the wanted result.
 // It also validates that the corresponding QL file can produce the same QueryRequest.
@@ -303,10 +320,7 @@ func WriteToGroup(conn *grpclib.ClientConn, name, group, fileName string, baseTi
 	elementCounter := 0
 	loadData(writeClient, metadata, fmt.Sprintf("%s.json", fileName), baseTime, interval, &elementCounter)
 	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
-	gm.Eventually(func() error {
-		_, err := writeClient.Recv()
-		return err
-	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
+	expectWriteSucceeded(writeClient)
 }
 
 // WriteSpec defines the specification for writing stream data.
@@ -353,10 +367,7 @@ func WriteMixed(conn *grpclib.ClientConn, baseTime time.Time, interval time.Dura
 	}
 
 	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
-	gm.Eventually(func() error {
-		_, recvErr := writeClient.Recv()
-		return recvErr
-	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
+	expectWriteSucceeded(writeClient)
 }
 
 // loadDataWithElementIDMap loads data with element IDs specified in the data file for deduplication tests.
@@ -471,8 +482,5 @@ func WriteDeduplicationTest(conn *grpclib.ClientConn, name string, baseTime time
 	gm.Expect(err).NotTo(gm.HaveOccurred())
 	loadDataWithElementIDMap(writeClient, metadata, fmt.Sprintf("%s.json", name), baseTime, interval)
 	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
-	gm.Eventually(func() error {
-		_, err := writeClient.Recv()
-		return err
-	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
+	expectWriteSucceeded(writeClient)
 }

@@ -49,7 +49,6 @@ import (
 	metadata "github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bydbql"
-	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 )
 
@@ -64,6 +63,24 @@ var qlFS embed.FS
 
 //go:embed testdata/*.json
 var dataFS embed.FS
+
+func expectWriteSucceeded(writeClient tracev1.TraceService_WriteClient) {
+	// Setup already waited on SchemaBarrier AwaitSchemaApplied; a NOT_FOUND
+	// here means the barrier contract was violated and must fail loudly.
+	var statuses []string
+	for {
+		ack, recvErr := writeClient.Recv()
+		if recvErr == io.EOF {
+			break
+		}
+		gm.Expect(recvErr).NotTo(gm.HaveOccurred())
+		statuses = append(statuses, ack.GetStatus())
+	}
+	gm.Expect(statuses).NotTo(gm.BeEmpty())
+	for _, writeStatus := range statuses {
+		gm.Expect(writeStatus).To(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+	}
+}
 
 // VerifyFn verify whether the query response matches the wanted result.
 var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args helpers.Args) {
@@ -386,10 +403,7 @@ func WriteToGroup(conn *grpclib.ClientConn, name, group, fileName string, baseTi
 	version := uint64(1)
 	loadData(writeClient, metadata, fmt.Sprintf("%s.json", fileName), baseTime, interval, &version)
 	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
-	gm.Eventually(func() error {
-		_, err := writeClient.Recv()
-		return err
-	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
+	expectWriteSucceeded(writeClient)
 }
 
 // WriteSpec defines the specification for writing trace data.
@@ -436,10 +450,7 @@ func WriteMixed(conn *grpclib.ClientConn, baseTime time.Time, interval time.Dura
 	}
 
 	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
-	gm.Eventually(func() error {
-		_, recvErr := writeClient.Recv()
-		return recvErr
-	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
+	expectWriteSucceeded(writeClient)
 }
 
 // unmarshalYAMLWithSpanEncoding decodes YAML with special handling for span data.
