@@ -22,6 +22,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"io"
 	"regexp"
 	"slices"
@@ -43,6 +44,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	metadatapkg "github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bydbql"
@@ -283,28 +285,44 @@ func Write(conn *grpclib.ClientConn, name, group, dataFile string,
 func WriteWithAuth(conn *grpclib.ClientConn, name, group, dataFile string,
 	baseTime time.Time, interval time.Duration, username, password string,
 ) {
-	ctx := context.Background()
-	md := metadata.Pairs("username", username, "password", password)
-	ctx = metadata.NewOutgoingContext(ctx, md)
-	metadata := &commonv1.Metadata{
+	ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("username", username, "password", password))
+	meta := &commonv1.Metadata{
 		Name:  name,
 		Group: group,
 	}
 
-	schema := databasev1.NewMeasureRegistryServiceClient(conn)
-	resp, err := schema.Get(ctx, &databasev1.MeasureRegistryServiceGetRequest{Metadata: metadata})
+	schemaClient := databasev1.NewMeasureRegistryServiceClient(conn)
+	resp, err := schemaClient.Get(ctx, &databasev1.MeasureRegistryServiceGetRequest{Metadata: meta})
 	gm.Expect(err).NotTo(gm.HaveOccurred())
-	metadata = resp.GetMeasure().GetMetadata()
+	meta = resp.GetMeasure().GetMetadata()
 
 	c := measurev1.NewMeasureServiceClient(conn)
 	writeClient, err := c.Write(ctx)
 	gm.Expect(err).NotTo(gm.HaveOccurred())
-	loadData(metadata, writeClient, dataFile, baseTime, interval)
+	loadData(meta, writeClient, dataFile, baseTime, interval)
 	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
-	gm.Eventually(func() error {
-		_, err := writeClient.Recv()
-		return err
-	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
+	expectWriteSucceeded(writeClient)
+}
+
+func expectWriteSucceeded(writeClient measurev1.MeasureService_WriteClient) {
+	// Setup already waited on SchemaBarrier AwaitSchemaApplied; a NOT_FOUND
+	// here means the barrier contract was violated and must fail loudly.
+	// Callers must open Write with a deadline so a stalled Recv cannot hang forever.
+	var statuses []string
+	for {
+		ack, recvErr := writeClient.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			break
+		}
+		gm.Expect(recvErr).NotTo(gm.HaveOccurred())
+		statuses = append(statuses, ack.GetStatus())
+	}
+	gm.Expect(statuses).NotTo(gm.BeEmpty())
+	for _, writeStatus := range statuses {
+		gm.Expect(writeStatus).To(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+	}
 }
 
 // WriteOnly write data into the server and return the write client.
@@ -338,7 +356,8 @@ type WriteSpec struct {
 
 // WriteWithSpec writes data using multiple data_point_specs to specify tag and field names.
 func WriteWithSpec(conn *grpclib.ClientConn, baseTime time.Time, interval time.Duration, writeSpecs ...WriteSpec) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
+	defer cancel()
 	schemaClient := databasev1.NewMeasureRegistryServiceClient(conn)
 	c := measurev1.NewMeasureServiceClient(conn)
 	writeClient, err := c.Write(ctx)
@@ -384,15 +403,13 @@ func WriteWithSpec(conn *grpclib.ClientConn, baseTime time.Time, interval time.D
 	}
 
 	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
-	gm.Eventually(func() error {
-		_, recvErr := writeClient.Recv()
-		return recvErr
-	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
+	expectWriteSucceeded(writeClient)
 }
 
 // WriteMixed writes measure data in schema order first, and then in spec order.
 func WriteMixed(conn *grpclib.ClientConn, baseTime time.Time, interval time.Duration, writeSpecs ...WriteSpec) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
+	defer cancel()
 	schemaClient := databasev1.NewMeasureRegistryServiceClient(conn)
 	c := measurev1.NewMeasureServiceClient(conn)
 	writeClient, err := c.Write(ctx)
@@ -426,8 +443,5 @@ func WriteMixed(conn *grpclib.ClientConn, baseTime time.Time, interval time.Dura
 	}
 
 	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
-	gm.Eventually(func() error {
-		_, recvErr := writeClient.Recv()
-		return recvErr
-	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
+	expectWriteSucceeded(writeClient)
 }
