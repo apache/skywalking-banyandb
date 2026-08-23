@@ -680,6 +680,59 @@ func TestBatchAdmissionTimeoutCountsOnlyPendingTargets(t *testing.T) {
 	}
 }
 
+func TestBatchCloseSealsEachTargetBeforeClosingItsStream(t *testing.T) {
+	admissionDuration := &countingHistogram{}
+	p := &pub{ //nolint:exhaustruct
+		metrics: &pubMetrics{ //nolint:exhaustruct
+			batchOpenDuration:      &countingHistogram{},
+			batchAdmissionDuration: admissionDuration,
+		},
+		nodeCache: make(map[string]nodeInfo),
+	}
+	const (
+		group      = "test-group"
+		closeDelay = 20 * time.Millisecond
+	)
+	bp := &batchPublisher{ //nolint:exhaustruct
+		pub:     p,
+		topic:   topicPtr(data.TopicMeasureWrite),
+		timeout: time.Second,
+		streams: make(map[string]writeStream),
+	}
+	newStream := func(nodeName string) writeStream {
+		streamCtx, streamCancel := context.WithCancel(context.Background())
+		timing := &batchTiming{}
+		mockStream := NewMockSendClient(streamCtx)
+		mockStream.SetCloseSendFunc(func() error {
+			time.Sleep(closeDelay)
+			bp.recordBatchTerminal(nodeName, group, timing, time.Now())
+			streamCancel()
+			time.Sleep(closeDelay)
+			return nil
+		})
+		return writeStream{ //nolint:exhaustruct
+			client:         mockStream,
+			ctxDoneCh:      streamCtx.Done(),
+			cancel:         streamCancel,
+			firstFrameAt:   time.Now().Add(-time.Second),
+			firstFrameSent: true,
+			group:          group,
+			timing:         timing,
+		}
+	}
+	bp.streams["node-a"] = newStream("node-a")
+	bp.streams["node-b"] = newStream("node-b")
+
+	cee, closeErr := bp.Close()
+	require.NoError(t, closeErr)
+	require.Empty(t, cee)
+	admissionValues, _ := admissionDuration.snapshot()
+	require.Len(t, admissionValues, 2)
+	for _, duration := range admissionValues {
+		require.GreaterOrEqual(t, duration, (closeDelay / 2).Seconds(), "each target's admission phase must begin before its own CloseSend call")
+	}
+}
+
 func newCloseTriggeredResponseStream(ctx context.Context, response *clusterv1.SendResponse) (*MockSendClient, <-chan struct{}) {
 	sealed := make(chan struct{})
 	listenerStarted := make(chan struct{})

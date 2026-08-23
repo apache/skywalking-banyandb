@@ -441,15 +441,12 @@ func (bp *batchPublisher) listenBatchResponse(ctx context.Context, s clusterv1.S
 func (bp *batchPublisher) Close() (cee map[string]*common.Error, err error) {
 	for nodeName := range bp.streams {
 		stream := bp.streams[nodeName]
+		bp.sealBatchStream(nodeName, stream, time.Now())
 		err = multierr.Append(err, stream.client.CloseSend())
 	}
 	if len(bp.streams) > 0 {
-		sealedAt := time.Now()
 		admissionTimer := time.NewTimer(bp.timeout)
 		defer admissionTimer.Stop()
-		for nodeName, stream := range bp.streams {
-			bp.sealBatchStream(nodeName, stream, sealedAt)
-		}
 		admissionTimedOut := false
 		for nodeName := range bp.streams {
 			select {
