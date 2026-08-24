@@ -135,6 +135,7 @@ Release Notes.
 - Fix the flaky distributed schema clamp test: it queried once immediately after `AwaitRevision`/`AwaitApplied`, which confirm the schema cache but not that the data node has loaded the group's query topology, so the query could still fail with "group not found". It now retries until the query resolves, the same treatment the multi-group spec in the same file already had.
 - Stop the TopN test overriding the configured eventually timeout. It passed `flags.EventuallyTimeout` and then chained `WithTimeout(10s)`, which takes precedence, so the spec always ran on a 10s budget even though CI builds the integration suites with `-X ...flags.eventuallyTimeout=30s` to give slow runners room. It was the only case in `test/cases` opting out.
 - Await SchemaBarrier applied state after standalone schema preload so measure/stream/trace writes no longer race local caches.
+- Fix wrong log level in trace lifecycle migration.
 
 ### Document
 

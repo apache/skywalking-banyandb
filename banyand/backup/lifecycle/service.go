@@ -1422,7 +1422,7 @@ func (l *lifecycleService) deleteExpiredTraceSegments(ctx context.Context, g *co
 		return
 	}
 
-	l.l.Warn().Msgf("deleted %d expired segments in group %s, suffixes: %s", resp.Deleted, g.Metadata.Name, segmentSuffixes)
+	l.l.Info().Msgf("deleted %d expired segments in group %s, suffixes: %s", resp.Deleted, g.Metadata.Name, segmentSuffixes)
 	progress.MarkTraceGroupDeleted(g.Metadata.Name)
 	progress.Save(l.progressFilePath, l.l)
 }
