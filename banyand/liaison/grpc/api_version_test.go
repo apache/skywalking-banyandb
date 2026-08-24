@@ -11,20 +11,25 @@
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
 // "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-// KIND, either express or implied.  See the License for the
+// KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations
 // under the License.
 
-// Package apiversion contains the version of the API.
-package apiversion
+package grpc
 
-// Version is the API version used by external clients and internal node communication.
-const Version = "0.11"
+import (
+	"context"
+	"testing"
 
-// Revision is the revision of the API. Building with -ldflags -X.
-var revision string
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+)
 
-// GetRevision returns the revision of the API.
-func GetRevision() string {
-	return revision
+func TestGetAPIVersion(t *testing.T) {
+	response, err := (&apiVersionService{}).GetAPIVersion(context.Background(), &commonv1.GetAPIVersionRequest{})
+	if err != nil {
+		t.Fatalf("GetAPIVersion returned an error: %v", err)
+	}
+	if response.GetVersion().GetVersion() != "0.11" {
+		t.Fatalf("expected public API version 0.11, got %s", response.GetVersion().GetVersion())
+	}
 }

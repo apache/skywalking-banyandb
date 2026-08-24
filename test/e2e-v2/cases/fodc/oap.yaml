@@ -61,7 +61,7 @@ spec:
             - name: SW_STORAGE_BANYANDB_TARGETS
               value: "liaison:17912"
             - name: SW_STORAGE_BANYANDB_COMPATIBLE_SERVER_API_VERSIONS
-              value: "0.10"
+              value: "0.11"
             - name: SW_HEALTH_CHECKER
               value: default
             - name: SW_TELEMETRY
