@@ -45,6 +45,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	test_cases "github.com/apache/skywalking-banyandb/test/cases"
 	caseslifecycle "github.com/apache/skywalking-banyandb/test/cases/lifecycle"
+	measureTestData "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 )
 
 type setupResult struct {
@@ -141,7 +142,27 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 		BaseTime:      result.tenDaysBeforeNow,
 		MetadataFlags: result.metadataFlags,
 	}
+	awaitLifecycleSourceMeasureData()
 })
+
+func awaitLifecycleSourceMeasureData() {
+	liaisonConnection, connectionErr := grpchelper.Conn(result.liaisonAddr, 10*time.Second,
+		grpclib.WithTransportCredentials(insecure.NewCredentials()))
+	gomega.Expect(connectionErr).NotTo(gomega.HaveOccurred())
+	defer func() { _ = liaisonConnection.Close() }()
+	sharedContext := helpers.SharedContext{
+		Connection: liaisonConnection,
+		BaseTime:   result.tenDaysBeforeNow,
+	}
+	test.EventuallyConsistently(func(innerGm gomega.Gomega) {
+		measureTestData.VerifyFn(innerGm, sharedContext, helpers.Args{
+			Input:    "all",
+			Duration: 25 * time.Minute,
+			Offset:   -20 * time.Minute,
+			Stages:   []string{"hot"},
+		})
+	}, flags.EventuallyTimeout).Should(gomega.Succeed())
+}
 
 func verifyClusterNodeRoles(liaisonAddr string) {
 	conn, connErr := grpchelper.Conn(liaisonAddr, 10*time.Second,
