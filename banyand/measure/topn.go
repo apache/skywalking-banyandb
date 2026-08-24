@@ -657,31 +657,29 @@ func (manager *topNProcessorManager) onMeasureWrite(
 	request *measurev1.InternalWriteRequest,
 	measure *databasev1.Measure,
 ) {
-	run.Go(ctx, "topn-write", manager.l, func(_ context.Context) {
+	manager.RLock()
+	defer manager.RUnlock()
+	if manager.closed {
+		return
+	}
+	if manager.m == nil {
+		manager.RUnlock()
+		manager.init(ctx, measure)
 		manager.RLock()
-		defer manager.RUnlock()
-		if manager.closed {
-			return
-		}
-		if manager.m == nil {
-			manager.RUnlock()
-			manager.init(ctx, measure)
-			manager.RLock()
-		}
-		dp := request.GetRequest().GetDataPoint()
-		spec := request.GetRequest().GetDataPointSpec()
-		for _, processor := range manager.processorList {
-			dpWithEntity := newDataPointWithEntityValues(
-				dp,
-				request.GetEntityValues(),
-				seriesID,
-				shardID,
-				spec,
-				manager.m,
-			)
-			processor.Src() <- flow.NewStreamRecordWithTimestampPb(dpWithEntity, dp.GetTimestamp())
-		}
-	})
+	}
+	dp := request.GetRequest().GetDataPoint()
+	spec := request.GetRequest().GetDataPointSpec()
+	for _, processor := range manager.processorList {
+		dpWithEntity := newDataPointWithEntityValues(
+			dp,
+			request.GetEntityValues(),
+			seriesID,
+			shardID,
+			spec,
+			manager.m,
+		)
+		processor.Src() <- flow.NewStreamRecordWithTimestampPb(dpWithEntity, dp.GetTimestamp())
+	}
 }
 
 func (manager *topNProcessorManager) register(ctx context.Context, topNSchema *databasev1.TopNAggregation) {
