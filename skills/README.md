@@ -26,6 +26,20 @@ Compile and build the SkyWalking BanyanDB project.
 1. Runs `make generate` to regenerate protobuf and mock code
 2. Runs `make build` to compile all binaries
 
+### gh-issue
+
+Write a BanyanDB issue someone can implement from, and break a design-ready
+issue into tickets.
+
+**Triggers:** "file an issue", "write up this feature", "turn this design into tickets", "split this issue"
+
+**What it does:**
+1. Checks the body carries a boundary, expected values, and criteria provable by a command
+2. Names the packages and the commands that test them
+3. Flags what a storage change owes: compatibility, durability, concurrency, bounds
+4. Splits a design-ready issue into dependency-ordered vertical slices
+5. Files them as sub-issues of the base
+
 ### gh-pull-request
 
 Create a GitHub pull request following project conventions.
