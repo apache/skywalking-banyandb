@@ -340,19 +340,19 @@ type topNProcessor interface {
 type topNStreamingProcessor[K streaming.TopSortKey] struct {
 	pipeline      queue.Client
 	streamingFlow flow.Flow
-	in            chan flow.StreamRecord
-	l             *logger.Logger
-	topNSchema    *databasev1.TopNAggregation
+	stopCh        chan struct{}
 	src           chan interface{}
 	m             *databasev1.Measure
 	errCh         <-chan error
-	stopCh        chan struct{}
+	topNSchema    *databasev1.TopNAggregation
+	l             *logger.Logger
+	in            chan flow.StreamRecord
 	nodeID        string
-	writeMu       sync.Mutex
-	closed        bool
 	flow.ComponentState
 	interval      time.Duration
+	writeMu       sync.Mutex
 	sortDirection modelv1.Sort
+	closed        bool
 }
 
 func newTopNStreamingProcessor[K streaming.TopSortKey](

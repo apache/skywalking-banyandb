@@ -49,6 +49,7 @@ type blockingTopNProcessor struct {
 	closeStarted chan struct{}
 	releaseWrite chan struct{}
 	writeMu      sync.Mutex
+	closed       bool
 }
 
 func (b *blockingTopNProcessor) In() chan<- flow.StreamRecord            { return nil }
@@ -66,6 +67,7 @@ func (b *blockingTopNProcessor) Write(flow.StreamRecord) {
 func (b *blockingTopNProcessor) Close() error {
 	close(b.closeStarted)
 	b.writeMu.Lock()
+	b.closed = true
 	b.writeMu.Unlock()
 	return nil
 }
@@ -175,16 +177,17 @@ func TestTopNManager_CloseDoesNotHoldManagerLockWhileWriterDrains(t *testing.T) 
 		}
 	}, time.Second, time.Millisecond)
 
-	locked := make(chan struct{})
+	managerClosed := make(chan bool, 1)
 	go func() {
 		manager.Lock()
+		closed := manager.closed
 		manager.Unlock()
-		close(locked)
+		managerClosed <- closed
 	}()
 	require.Eventually(t, func() bool {
 		select {
-		case <-locked:
-			return true
+		case isClosed := <-managerClosed:
+			return isClosed
 		default:
 			return false
 		}
