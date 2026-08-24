@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/data"
+	apiversion "github.com/apache/skywalking-banyandb/api/proto/banyandb"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -43,6 +44,7 @@ func TestMessageToRequestGroup(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "stream-group", r.GetGroup())
 		require.NotNil(t, r.GetBody())
+		require.Equal(t, apiversion.Version, r.GetVersionInfo().GetApiVersion())
 	})
 
 	t.Run("byte payload carries explicit group", func(t *testing.T) {

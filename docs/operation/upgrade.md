@@ -59,6 +59,22 @@ If you don't have enough resource to perform a rolling upgrade or you have a lar
 
 This section describes breaking changes and important behavioral changes when upgrading to BanyanDB 0.11.0.
 
+### API version 0.11
+
+BanyanDB 0.11 uses API version `0.11` for external clients and internal node communication. A cluster containing both
+BanyanDB 0.10 and 0.11 nodes is not supported.
+
+Use a maintenance window for this upgrade:
+
+1. Stop writes and all other BanyanDB API clients.
+2. Stop all BanyanDB 0.10 nodes.
+3. Upgrade and start all BanyanDB nodes at 0.11.
+4. Upgrade API clients to require version 0.11, then start them.
+5. Verify schema initialization and ingestion before restoring normal traffic.
+
+**Rollback.** Stop all clients and BanyanDB nodes before restoring the previous versions. Do not run a mixed 0.10/0.11
+BanyanDB cluster during rollback.
+
 ### Vectorized query paths enabled by default (breaking for rolling upgrades)
 
 The vectorized **stream** and **trace** query paths are now enabled by default, joining **measure** (default-on since 0.10). `--stream-vectorized-enabled`, `--trace-vectorized-enabled` and `--measure-vectorized-enabled` all default to `true`.

@@ -31,6 +31,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	apiversion "github.com/apache/skywalking-banyandb/api/proto/banyandb"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
@@ -336,6 +337,7 @@ var _ = ginkgo.Describe("Chunked Sync Retry Mechanism", func() {
 			// Find where part 2 appears in chunks
 			var part2FirstChunkIdx, part2LastChunkIdx int = -1, -1
 			for idx, chunk := range receivedChunks {
+				gomega.Expect(chunk.GetVersionInfo().GetApiVersion()).To(gomega.Equal(apiversion.Version))
 				if chunk.GetCompletion() != nil {
 					continue
 				}
