@@ -27,3 +27,9 @@
 *.bz2 binary
 
 go.sum merge=union
+
+# Legacy-writer index corpora are byte-exact oracles for the native inverted
+# index contract tests. The repo-wide `* text` rule above would let Git rewrite
+# CR/LF byte pairs inside them on checkin and checkout, silently invalidating
+# the SHA-256 values recorded in each corpus provenance manifest.
+pkg/index/inverted/testdata/icev3/** binary

@@ -1,0 +1,41 @@
+{
+  "oracle_versions": {
+    "github.com/RoaringBitmap/roaring": "github.com/RoaringBitmap/roaring@v1.9.4",
+    "github.com/blugelabs/bluge": "github.com/SkyAPM/bluge@v0.0.0-20260625022800-42385daf66b8",
+    "github.com/blugelabs/ice": "github.com/SkyAPM/ice@v0.0.0-20250619023539-b5173603b0b3"
+  },
+  "file_sha256": {
+    "000000000002.seg": "1a57e244c87951c09bf2706c0ec882eb4c7925313e9ff36882a05b6251bd0d3e",
+    "000000000002.snp": "0e9e6c74b4a8a3000bc7c33d1936aba8ec050c1517ff6668b7cb66e90d12c0cd"
+  },
+  "generator_command": "go run ./pkg/index/inverted/internal/icev3/fixturegen -out pkg/index/inverted/testdata/icev3/single-segment",
+  "description": "Legacy-writer ICE v3 / snapshot v3 corpus for NIDX-01A: one committed segment, documents doc-11 and doc-12, no deletion record, arbitrary non-zero reserved CRC32 bytes.",
+  "logical_documents": [
+    "doc-11",
+    "doc-12"
+  ],
+  "snapshot_generations": [
+    {
+      "file": "000000000002.snp",
+      "version": 3,
+      "segment_count": 1,
+      "declared_visible_count": 2,
+      "deletion_bitmap_entries": 0
+    }
+  ],
+  "segment_footers": [
+    {
+      "file": "000000000002.seg",
+      "num_docs": 2,
+      "stored_index_offset": 56,
+      "fields_index_offset": 347,
+      "doc_value_offset": 300,
+      "chunk_mode": 1025,
+      "version": 3,
+      "size_bytes": 423
+    }
+  ],
+  "expected_visible_count": 2,
+  "deletion_records": 0,
+  "reserved_crc32_patched": true
+}

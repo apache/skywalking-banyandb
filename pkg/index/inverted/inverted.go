@@ -43,6 +43,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/analyzer"
+	"github.com/apache/skywalking-banyandb/pkg/index/inverted/internal/icev3"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -297,25 +298,16 @@ func (s *store) Reset() {
 	s.writer.ResetCache()
 }
 
-// ReadOnlyDocCount opens the index directory at path read-only and returns the
-// number of indexed documents. Unlike NewStore it never acquires the exclusive
-// directory lock, so it can inspect a closed (or even concurrently open)
-// segment index without reopening its writable index. A missing or unflushed
-// index (no usable snapshot) returns a count of 0 together with the open error,
-// which callers may treat as an empty index.
+// ReadOnlyDocCount reads the index directory at path and returns the number of
+// live documents in its newest committed generation. It never acquires the
+// exclusive directory lock, so it can inspect a closed (or even concurrently
+// open) segment index without reopening its writable index. A missing or
+// unflushed index (no usable snapshot) returns a count of 0 together with the
+// open error, which callers may treat as an empty index; a structurally
+// malformed directory returns a count of 0 together with an error matching
+// icev3.ErrCorruptSegment.
 func ReadOnlyDocCount(path string) (int64, error) {
-	reader, err := bluge.OpenReader(bluge.DefaultConfig(path))
-	if err != nil {
-		return 0, err
-	}
-	defer func() {
-		_ = reader.Close()
-	}()
-	count, err := reader.Count()
-	if err != nil {
-		return 0, err
-	}
-	return int64(count), nil
+	return icev3.LiveDocCount(path)
 }
 
 func (s *store) Iterator(ctx context.Context, fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort,
