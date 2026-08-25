@@ -59,6 +59,7 @@ const (
 	resultPersistencyTimeout = 10 * time.Second
 	maxFlushInterval         = time.Minute
 	maxTopNValuesCount       = 1 << 17 // sanity upper bound: 131072 elements = ~1MB per unmarshal, far above TopN CountersNumber
+	topNWriteQueueCapacity   = 1024
 )
 
 var (
@@ -333,7 +334,7 @@ type topNProcessor interface {
 	Setup(ctx context.Context) error
 	Teardown(ctx context.Context) error
 	Close() error
-	Src() chan interface{}
+	Write(flow.StreamRecord)
 	TopNSchema() *databasev1.TopNAggregation
 }
 
@@ -341,16 +342,20 @@ type topNStreamingProcessor[K streaming.TopSortKey] struct {
 	pipeline      queue.Client
 	streamingFlow flow.Flow
 	in            chan flow.StreamRecord
-	l             *logger.Logger
-	topNSchema    *databasev1.TopNAggregation
-	src           chan interface{}
+	writeStopCh   chan struct{}
 	m             *databasev1.Measure
 	errCh         <-chan error
+	topNSchema    *databasev1.TopNAggregation
+	l             *logger.Logger
 	stopCh        chan struct{}
+	src           chan interface{}
 	nodeID        string
 	flow.ComponentState
 	interval      time.Duration
+	closeOnce     sync.Once
+	writeMu       sync.Mutex
 	sortDirection modelv1.Sort
+	closed        bool
 }
 
 func newTopNStreamingProcessor[K streaming.TopSortKey](
@@ -373,6 +378,7 @@ func newTopNStreamingProcessor[K streaming.TopSortKey](
 		src:           srcCh,
 		in:            make(chan flow.StreamRecord),
 		stopCh:        make(chan struct{}),
+		writeStopCh:   make(chan struct{}),
 		streamingFlow: streamingFlow,
 		pipeline:      pipeline,
 		nodeID:        nodeID,
@@ -418,7 +424,17 @@ func (t *topNStreamingProcessor[K]) Teardown(_ context.Context) error {
 }
 
 func (t *topNStreamingProcessor[K]) Close() error {
+	t.closeOnce.Do(func() {
+		close(t.writeStopCh)
+	})
+	t.writeMu.Lock()
+	if t.closed {
+		t.writeMu.Unlock()
+		return nil
+	}
+	t.closed = true
 	close(t.src)
+	t.writeMu.Unlock()
 	// close streaming flow
 	err := t.streamingFlow.Close()
 	// and wait for error channel close
@@ -427,8 +443,16 @@ func (t *topNStreamingProcessor[K]) Close() error {
 	return err
 }
 
-func (t *topNStreamingProcessor[K]) Src() chan interface{} {
-	return t.src
+func (t *topNStreamingProcessor[K]) Write(record flow.StreamRecord) {
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
+	if t.closed {
+		return
+	}
+	select {
+	case t.src <- record:
+	case <-t.writeStopCh:
+	}
 }
 
 func (t *topNStreamingProcessor[K]) TopNSchema() *databasev1.TopNAggregation {
@@ -596,16 +620,27 @@ func (t *topNStreamingProcessor[K]) handleError() {
 	close(t.stopCh)
 }
 
+type topNWrite struct {
+	request  *measurev1.InternalWriteRequest
+	measure  *databasev1.Measure
+	seriesID uint64
+	shardID  uint32
+}
+
 // topNProcessorManager manages multiple topNStreamingProcessor(s) belonging to a single measure.
 type topNProcessorManager struct {
 	pipeline        queue.Client
 	l               *logger.Logger
 	m               *databasev1.Measure
+	inputCh         chan topNWrite
+	stopCh          chan struct{}
+	dispatcher      *run.Task
 	nodeID          string
 	registeredTasks []*databasev1.TopNAggregation
 	processorList   []topNProcessor
 	sync.RWMutex
-	closed bool
+	enqueueMu sync.Mutex
+	closed    bool
 }
 
 func (manager *topNProcessorManager) init(ctx context.Context, m *databasev1.Measure) {
@@ -613,6 +648,11 @@ func (manager *topNProcessorManager) init(ctx context.Context, m *databasev1.Mea
 	defer manager.Unlock()
 	if manager.closed {
 		return
+	}
+	if manager.inputCh == nil {
+		manager.inputCh = make(chan topNWrite, topNWriteQueueCapacity)
+		manager.stopCh = make(chan struct{})
+		manager.dispatcher = run.Go(ctx, "measure.topn.dispatcher", manager.l, manager.dispatchTopNWrites)
 	}
 	if manager.m != nil {
 		return
@@ -627,26 +667,36 @@ func (manager *topNProcessorManager) init(ctx context.Context, m *databasev1.Mea
 
 func (manager *topNProcessorManager) Close() error {
 	manager.Lock()
-	defer manager.Unlock()
 	if manager.closed {
+		manager.Unlock()
 		return nil
 	}
 	manager.closed = true
+	processorList := manager.processorList
+	manager.processorList = nil
+	manager.registeredTasks = nil
+	manager.m = nil
+	stopCh := manager.stopCh
+	dispatcher := manager.dispatcher
+	manager.Unlock()
+	if stopCh != nil {
+		close(stopCh)
+	}
 	// Close all processors in parallel to avoid serial 5-second-per-flow timeouts.
-	errCh := make(chan error, len(manager.processorList))
-	for _, processor := range manager.processorList {
+	errCh := make(chan error, len(processorList))
+	for _, processor := range processorList {
 		p := processor
 		run.Go(context.Background(), "measure.topn.processor-close", manager.l, func(_ context.Context) {
 			errCh <- p.Close()
 		})
 	}
 	var err error
-	for range manager.processorList {
+	for range processorList {
 		err = multierr.Append(err, <-errCh)
 	}
-	manager.processorList = nil
-	manager.registeredTasks = nil
-	manager.m = nil
+	if dispatcher != nil {
+		dispatcher.Wait()
+	}
 	return err
 }
 
@@ -657,66 +707,106 @@ func (manager *topNProcessorManager) onMeasureWrite(
 	request *measurev1.InternalWriteRequest,
 	measure *databasev1.Measure,
 ) {
-	run.Go(ctx, "topn-write", manager.l, func(_ context.Context) {
+	manager.enqueueMu.Lock()
+	defer manager.enqueueMu.Unlock()
+	manager.RLock()
+	if manager.closed {
+		manager.RUnlock()
+		return
+	}
+	if manager.m == nil {
+		manager.RUnlock()
+		manager.init(ctx, measure)
 		manager.RLock()
-		defer manager.RUnlock()
-		if manager.closed {
+		if manager.closed || manager.m == nil || manager.inputCh == nil {
+			manager.RUnlock()
 			return
 		}
-		if manager.m == nil {
-			manager.RUnlock()
-			manager.init(ctx, measure)
-			manager.RLock()
+	}
+	inputCh := manager.inputCh
+	stopCh := manager.stopCh
+	manager.RUnlock()
+	input := topNWrite{
+		seriesID: seriesID,
+		shardID:  shardID,
+		request:  request,
+		measure:  measure,
+	}
+	select {
+	case inputCh <- input:
+	case <-stopCh:
+	}
+}
+
+func (manager *topNProcessorManager) dispatchTopNWrites(_ context.Context) {
+	for {
+		select {
+		case <-manager.stopCh:
+			return
+		default:
 		}
-		dp := request.GetRequest().GetDataPoint()
-		spec := request.GetRequest().GetDataPointSpec()
-		for _, processor := range manager.processorList {
-			dpWithEntity := newDataPointWithEntityValues(
-				dp,
-				request.GetEntityValues(),
-				seriesID,
-				shardID,
-				spec,
-				manager.m,
-			)
-			processor.Src() <- flow.NewStreamRecordWithTimestampPb(dpWithEntity, dp.GetTimestamp())
+		select {
+		case input := <-manager.inputCh:
+			manager.dispatchTopNWrite(input)
+		case <-manager.stopCh:
+			return
 		}
-	})
+	}
+}
+
+func (manager *topNProcessorManager) dispatchTopNWrite(input topNWrite) {
+	manager.RLock()
+	if manager.closed {
+		manager.RUnlock()
+		return
+	}
+	processors := slices.Clone(manager.processorList)
+	manager.RUnlock()
+	dp := input.request.GetRequest().GetDataPoint()
+	spec := input.request.GetRequest().GetDataPointSpec()
+	for _, processor := range processors {
+		dpWithEntity := newDataPointWithEntityValues(
+			dp,
+			input.request.GetEntityValues(),
+			input.seriesID,
+			input.shardID,
+			spec,
+			input.measure,
+		)
+		processor.Write(flow.NewStreamRecordWithTimestampPb(dpWithEntity, dp.GetTimestamp()))
+	}
 }
 
 func (manager *topNProcessorManager) register(ctx context.Context, topNSchema *databasev1.TopNAggregation) {
 	manager.Lock()
-	defer manager.Unlock()
 	if manager.closed {
+		manager.Unlock()
 		return
 	}
-	exist := false
 	for i := range manager.registeredTasks {
 		if manager.registeredTasks[i].GetMetadata().GetName() == topNSchema.GetMetadata().GetName() {
-			exist = true
 			if manager.registeredTasks[i].GetMetadata().GetModRevision() < topNSchema.GetMetadata().GetModRevision() {
 				prev := manager.registeredTasks[i]
 				prevProcessors := manager.removeProcessors(prev)
 				if err := manager.start(ctx, topNSchema); err != nil {
 					manager.l.Err(err).Msg("fail to start the new processor")
+					manager.Unlock()
 					return
 				}
 				manager.registeredTasks[i] = topNSchema
-				for _, processor := range prevProcessors {
-					if err := processor.Close(); err != nil {
-						manager.l.Err(err).Msg("fail to close the prev processor")
-					}
-				}
+				manager.Unlock()
+				manager.closeProcessors(prevProcessors, "fail to close the prev processor")
+				return
 			}
+			manager.Unlock()
+			return
 		}
-	}
-	if exist {
-		return
 	}
 	manager.registeredTasks = append(manager.registeredTasks, topNSchema)
 	if err := manager.start(ctx, topNSchema); err != nil {
 		manager.l.Err(err).Msg("fail to start processor")
 	}
+	manager.Unlock()
 }
 
 func (manager *topNProcessorManager) start(ctx context.Context, topNSchema *databasev1.TopNAggregation) error {
@@ -784,12 +874,16 @@ func (manager *topNProcessorManager) unregister(topNSchema *databasev1.TopNAggre
 	manager.Unlock()
 	// Close outside the lock: processor.Close can block up to ~5s and would otherwise
 	// stall onMeasureWrite readers; the processors are already detached from the manager.
-	for _, processor := range removed {
+	manager.closeProcessors(removed, "fail to close the removed top-n processor")
+	return empty
+}
+
+func (manager *topNProcessorManager) closeProcessors(processors []topNProcessor, message string) {
+	for _, processor := range processors {
 		if err := processor.Close(); err != nil {
-			manager.l.Err(err).Msg("fail to close the removed top-n processor")
+			manager.l.Err(err).Msg(message)
 		}
 	}
-	return empty
 }
 
 func (manager *topNProcessorManager) removeProcessors(topNSchema *databasev1.TopNAggregation) []topNProcessor {
