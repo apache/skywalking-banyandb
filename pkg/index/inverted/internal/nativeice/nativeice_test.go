@@ -17,12 +17,47 @@ package nativeice
 
 import (
 	"encoding/binary"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
 func TestOpenVisibleDocCount(t *testing.T) {
+	directory, _ := writeCommittedIndex(t)
+
+	reader, openErr := Open(directory)
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	defer func() {
+		if closeErr := reader.Close(); closeErr != nil {
+			t.Error(closeErr)
+		}
+	}()
+	count, countErr := reader.VisibleDocCount()
+	if countErr != nil {
+		t.Fatal(countErr)
+	}
+	if count != 2 {
+		t.Fatalf("VisibleDocCount() = %d, want 2", count)
+	}
+}
+
+func TestOpenMissingReferencedSegmentIsCorrupt(t *testing.T) {
+	directory, segmentPath := writeCommittedIndex(t)
+	if removeErr := os.Remove(segmentPath); removeErr != nil {
+		t.Fatal(removeErr)
+	}
+
+	_, openErr := Open(directory)
+	if !errors.Is(openErr, ErrCorrupt) {
+		t.Fatalf("Open() error = %v, want error wrapping ErrCorrupt", openErr)
+	}
+}
+
+func writeCommittedIndex(t *testing.T) (string, string) {
+	t.Helper()
 	directory := t.TempDir()
 	segmentID := uint64(2)
 	segmentPath := filepath.Join(directory, "000000000002.seg")
@@ -47,21 +82,5 @@ func TestOpenVisibleDocCount(t *testing.T) {
 	if writeErr := os.WriteFile(filepath.Join(directory, "000000000001.snp"), manifest, 0o600); writeErr != nil {
 		t.Fatal(writeErr)
 	}
-
-	reader, openErr := Open(directory)
-	if openErr != nil {
-		t.Fatal(openErr)
-	}
-	defer func() {
-		if closeErr := reader.Close(); closeErr != nil {
-			t.Error(closeErr)
-		}
-	}()
-	count, countErr := reader.VisibleDocCount()
-	if countErr != nil {
-		t.Fatal(countErr)
-	}
-	if count != 2 {
-		t.Fatalf("VisibleDocCount() = %d, want 2", count)
-	}
+	return directory, segmentPath
 }

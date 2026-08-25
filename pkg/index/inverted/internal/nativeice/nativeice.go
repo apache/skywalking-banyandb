@@ -45,8 +45,9 @@ const (
 	segmentFooterLength = 60
 	segmentVersion      = 3
 	snapshotVersion     = 3
-	maxFileSize         = 64 << 20
+	maxManifestSize     = 16 << 20
 	maxOpenAttempts     = 2
+	maxFieldsIndexCount = 1 << 20
 )
 
 // ErrCorrupt is the sentinel that every structural rejection wraps: a footer,
@@ -63,6 +64,7 @@ var ErrNoSnapshot = errors.New("nativeice: no committed snapshot")
 
 var (
 	errEntryDisappeared      = errors.New("nativeice: enumerated entry disappeared")
+	errManifestTooLarge      = errors.New("nativeice: snapshot exceeds read limit")
 	errMissingReferencedFile = errors.New("nativeice: missing referenced file")
 )
 
@@ -96,10 +98,13 @@ func Open(path string) (*Reader, error) {
 		if snapshotErr != nil {
 			return nil, snapshotErr
 		}
-		manifest, readErr := readBoundedFile(snapshotPath)
+		manifest, readErr := readManifest(snapshotPath)
 		if errors.Is(readErr, os.ErrNotExist) {
 			sawDisappearedEntry = true
 			continue
+		}
+		if errors.Is(readErr, errManifestTooLarge) {
+			return nil, readErr
 		}
 		if readErr != nil {
 			return nil, corruptError("read snapshot %q", snapshotPath, readErr)
@@ -109,7 +114,8 @@ func Open(path string) (*Reader, error) {
 			sawDisappearedEntry = true
 			continue
 		}
-		if sawDisappearedEntry && errors.Is(parseErr, errMissingReferencedFile) {
+		if errors.Is(parseErr, errMissingReferencedFile) {
+			sawDisappearedEntry = true
 			continue
 		}
 		if parseErr != nil {
@@ -118,7 +124,7 @@ func Open(path string) (*Reader, error) {
 		return &Reader{visibleDocCount: visibleDocCount}, nil
 	}
 	if sawDisappearedEntry {
-		return nil, fmt.Errorf("nativeice: open %q: %w", path, ErrNoSnapshot)
+		return nil, corruptError("open %q references an absent segment", path)
 	}
 	return nil, corruptError("open %q exhausted attempts", path)
 }
@@ -340,18 +346,28 @@ func (d *byteDecoder) segmentRecord(segmentPaths map[uint64]string) (segmentReco
 }
 
 func validateSegment(record segmentRecord) (uint64, error) {
-	payload, readErr := readBoundedFile(record.path)
-	if errors.Is(readErr, os.ErrNotExist) {
+	file, openErr := os.Open(record.path)
+	if errors.Is(openErr, os.ErrNotExist) {
 		return 0, fmt.Errorf("segment %d: %w", record.id, errEntryDisappeared)
 	}
-	if readErr != nil {
-		return 0, corruptError("read segment %q", record.path, readErr)
+	if openErr != nil {
+		return 0, corruptError("open segment %q", record.path, openErr)
 	}
-	if len(payload) < segmentFooterLength {
+	defer func() {
+		_ = file.Close()
+	}()
+	info, statErr := file.Stat()
+	if statErr != nil {
+		return 0, corruptError("stat segment %q", record.path, statErr)
+	}
+	if !info.Mode().IsRegular() || info.Size() < segmentFooterLength {
 		return 0, corruptError("segment %q is shorter than its footer", record.path)
 	}
-	footerOffset := len(payload) - segmentFooterLength
-	footer := payload[footerOffset:]
+	footerOffset := info.Size() - segmentFooterLength
+	var footer [segmentFooterLength]byte
+	if _, readErr := file.ReadAt(footer[:], footerOffset); readErr != nil {
+		return 0, corruptError("read footer from segment %q", record.path, readErr)
+	}
 	documentCount := binary.BigEndian.Uint64(footer[0:8])
 	storedIndex := binary.BigEndian.Uint64(footer[8:16])
 	fieldsIndex := binary.BigEndian.Uint64(footer[16:24])
@@ -372,8 +388,15 @@ func validateSegment(record segmentRecord) (uint64, error) {
 	if (uint64(footerOffset)-fieldsIndex)%8 != 0 {
 		return 0, corruptError("segment %q has a misaligned fields index", record.path)
 	}
+	if (uint64(footerOffset)-fieldsIndex)/8 > maxFieldsIndexCount {
+		return 0, corruptError("segment %q has too many fields index entries", record.path)
+	}
 	for fieldIndexOffset := fieldsIndex; fieldIndexOffset < uint64(footerOffset); fieldIndexOffset += 8 {
-		fieldRecordOffset := binary.BigEndian.Uint64(payload[fieldIndexOffset : fieldIndexOffset+8])
+		var fieldRecord [8]byte
+		if _, readErr := file.ReadAt(fieldRecord[:], int64(fieldIndexOffset)); readErr != nil {
+			return 0, corruptError("read fields index from segment %q", record.path, readErr)
+		}
+		fieldRecordOffset := binary.BigEndian.Uint64(fieldRecord[:])
 		if fieldRecordOffset >= fieldsIndex {
 			return 0, corruptError("segment %q has a field record outside its section", record.path)
 		}
@@ -405,7 +428,7 @@ func deletionCount(payload []byte, documentCount uint64) (uint64, error) {
 	return deletedCount, nil
 }
 
-func readBoundedFile(path string) ([]byte, error) {
+func readManifest(path string) ([]byte, error) {
 	file, openErr := os.Open(path)
 	if openErr != nil {
 		return nil, openErr
@@ -417,8 +440,11 @@ func readBoundedFile(path string) ([]byte, error) {
 	if statErr != nil {
 		return nil, statErr
 	}
-	if !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > maxFileSize {
-		return nil, fmt.Errorf("unsupported file size %d", info.Size())
+	if !info.Mode().IsRegular() || info.Size() < 0 {
+		return nil, fmt.Errorf("unsupported snapshot file %q", path)
+	}
+	if info.Size() > maxManifestSize {
+		return nil, fmt.Errorf("%w: %q is %d bytes", errManifestTooLarge, path, info.Size())
 	}
 	payload := make([]byte, int(info.Size()))
 	if _, readErr := io.ReadFull(file, payload); readErr != nil {
