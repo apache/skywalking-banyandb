@@ -18,7 +18,7 @@
 // Command zipkin-trace-sampler is the first-party post-trace sampler for the
 // Zipkin schema (group sw_zipkinTrace, BanyanDB trace "zipkin_span"). It
 // implements the Scenario 6.2 keep logic from
-// docs/design/post-trace-pipeline.md on the real Zipkin columns:
+// docs/design/archive/0.11.0/post-trace-pipeline.md on the real Zipkin columns:
 //
 //   - trace duration from the envelope of the "timestamp_millis"/"duration" tags (duration is µs),
 //   - keepTagRules matched against the flattened "query" array, whose entries

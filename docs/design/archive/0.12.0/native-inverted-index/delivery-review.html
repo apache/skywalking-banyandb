@@ -1,0 +1,940 @@
+<!--
+  Licensed to Apache Software Foundation (ASF) under one or more contributor
+  license agreements. See the NOTICE file distributed with
+  this work for additional information regarding copyright
+  ownership. Apache Software Foundation (ASF) licenses this file to you under
+  the Apache License, Version 2.0 (the "License"); you may
+  not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing,
+  software distributed under the License is distributed on an
+  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+  KIND, either express or implied. See the License for the
+  specific language governing permissions and limitations
+  under the License.
+-->
+<!doctype html>
+<html lang="en" data-theme="paper">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Four live cutovers, operational signals, accepted decisions, release gates, and source traceability.">
+  <title>BDB Native Index Spec — Delivery and review</title>
+  <link rel="stylesheet" href="spec.css">
+</head>
+<body data-page="delivery">
+  <div class="progress" id="scroll-progress"></div>
+  <div class="shell">
+    <aside class="rail">
+      <div class="rail-brand">
+        <div class="rail-mark">BDB</div>
+        <div>
+          <b>NATIVE INDEX</b>
+          <span>implementation specification</span>
+        </div>
+      </div>
+      <div class="rail-status">
+        <b>REVIEW</b>
+        <span>BDB-NIDX-SPEC-001<br>Revision 0.1 · 2026-08-24</span>
+        <span class="page-label">CHAPTER 05/05 · DELIVERY + REVIEW</span>
+      </div>
+      <nav aria-label="Specification sections">
+        <ol class="toc" id="toc">
+          <li>
+            <a href="index.html#status">
+              <b>00</b>
+              <span>Document status</span>
+            </a>
+          </li>
+          <li>
+            <a href="index.html#contract">
+              <b>01</b>
+              <span>Contract and scope</span>
+            </a>
+          </li>
+          <li>
+            <a href="index.html#model">
+              <b>02</b>
+              <span>Data model</span>
+            </a>
+          </li>
+          <li>
+            <a href="index.html#products">
+              <b>03</b>
+              <span>Product requirements</span>
+            </a>
+          </li>
+          <li>
+            <a href="index.html#architecture">
+              <b>04</b>
+              <span>Architecture and APIs</span>
+            </a>
+          </li>
+          <li>
+            <a href="write-format.html#fields">
+              <b>05</b>
+              <span>Fields and identity</span>
+            </a>
+          </li>
+          <li>
+            <a href="write-format.html#terms">
+              <b>06</b>
+              <span>Analyzers and terms</span>
+            </a>
+          </li>
+          <li>
+            <a href="write-format.html#write">
+              <b>07</b>
+              <span>Write semantics</span>
+            </a>
+          </li>
+          <li>
+            <a href="write-format.html#ice">
+              <b>08</b>
+              <span>ICE v3 format</span>
+            </a>
+          </li>
+          <li>
+            <a href="write-format.html#snapshot">
+              <b>09</b>
+              <span>Snapshot v3 format</span>
+            </a>
+          </li>
+          <li>
+            <a href="query-lifecycle.html#query">
+              <b>10</b>
+              <span>Query execution</span>
+            </a>
+          </li>
+          <li>
+            <a href="query-lifecycle.html#sort">
+              <b>11</b>
+              <span>Sort and projection</span>
+            </a>
+          </li>
+          <li>
+            <a href="query-lifecycle.html#lifecycle">
+              <b>12</b>
+              <span>Durability and recovery</span>
+            </a>
+          </li>
+          <li>
+            <a href="query-lifecycle.html#merge">
+              <b>13</b>
+              <span>Merge, delete, and GC</span>
+            </a>
+          </li>
+          <li>
+            <a href="query-lifecycle.html#external">
+              <b>14</b>
+              <span>External and admin</span>
+            </a>
+          </li>
+          <li>
+            <a href="safety-verification.html#integrity">
+              <b>15</b>
+              <span>Integrity and limits</span>
+            </a>
+          </li>
+          <li>
+            <a href="safety-verification.html#compatibility">
+              <b>16</b>
+              <span>Compatibility</span>
+            </a>
+          </li>
+          <li>
+            <a href="safety-verification.html#verification">
+              <b>17</b>
+              <span>Verification program</span>
+            </a>
+          </li>
+          <li>
+            <a class="page-current" href="#rollout">
+              <b>18</b>
+              <span>Implementation tickets</span>
+            </a>
+          </li>
+          <li>
+            <a class="page-current" href="#operations">
+              <b>19</b>
+              <span>Operations</span>
+            </a>
+          </li>
+          <li>
+            <a class="page-current" href="#decisions">
+              <b>20</b>
+              <span>Review decisions</span>
+            </a>
+          </li>
+          <li>
+            <a class="page-current" href="#acceptance">
+              <b>21</b>
+              <span>Acceptance criteria</span>
+            </a>
+          </li>
+          <li>
+            <a class="page-current" href="#traceability">
+              <b>22</b>
+              <span>Traceability</span>
+            </a>
+          </li>
+        </ol>
+      </nav>
+      <div class="rail-footer">
+        <a href="ice-segment-animated-walkthrough.html">Animated ICE walkthrough</a>
+        <br>
+        <a href="research-report.html">Visual research report</a>
+      </div>
+    </aside>
+
+    <div class="workspace">
+      <header class="toolbar">
+        <input class="search" id="spec-search" type="search" placeholder="Search this chapter…" aria-label="Search this specification chapter">
+        <div class="filter-set" aria-label="Filter specification chapter">
+          <button class="filter-button" type="button" data-filter="all" aria-pressed="true">All</button>
+          <button class="filter-button" type="button" data-filter="normative" aria-pressed="false">Normative</button>
+          <button class="filter-button" type="button" data-filter="open" aria-pressed="false">Open only</button>
+        </div>
+        <div class="tool-set">
+          <button class="tool-button" id="theme-toggle" type="button" title="Toggle paper/night theme">◐</button>
+          <button class="tool-button" id="print-spec" type="button">Print</button>
+        </div>
+      </header>
+
+      <main class="document" id="document">
+      <section class="chapter-hero" id="chapter-top" data-chapter="05">
+        <div class="chapter-kicker">BDB-NIDX-SPEC-001 · chapter 05 of 05</div>
+        <h1>Delivery and review</h1>
+        <p class="chapter-summary">Four live cutovers, operational signals, accepted decisions, release gates, and source traceability.</p>
+        <p class="chapter-range">SECTIONS 18–22 · REVISION 0.1 · REVIEW DRAFT</p>
+        <nav class="chapter-tabs" aria-label="Specification chapters">
+          <a href="index.html#status">01 Overview</a>
+          <a href="write-format.html#fields">02 Write + format</a>
+          <a href="query-lifecycle.html#query">03 Query + lifecycle</a>
+          <a href="safety-verification.html#integrity">04 Safety</a>
+          <a href="#rollout" aria-current="page">05 Delivery + review</a>
+        </nav>
+      </section>
+
+<section class="spec-section" id="rollout" data-status="stable" data-searchable data-normative>
+          <div class="section-grid">
+            <aside class="section-side">
+              <div>
+                <div class="section-no">18</div>
+                <span class="section-state">Four mergeable tickets</span>
+                <p>Every merge cuts over one live Bluge path; no dormant foundation phase is allowed.</p>
+              </div>
+            </aside>
+            <div class="section-main">
+              <h2>Implementation tickets and rollback</h2>
+              <p class="section-lede">Four vertical cutovers replace the live Bluge surface. Each ticket is one reviewable main-branch merge unit.</p>
+
+              <div class="callout danger">
+                <b>!</b>
+                <p><strong>Merge law:</strong> a parser, writer, query IR, shadow executor, benchmark, or fuzz harness cannot land as its own ticket. It must
+                  ship inside the first ticket whose named production constructor calls it and selects it by default for that index role.</p>
+              </div>
+
+              <div class="ticket-chain" aria-label="Four-ticket dependency chain">
+                <div class="ticket-node">
+                  <b>NIDX-01</b>
+                  <strong>Property</strong>
+                  <span>first complete native vertical</span>
+                </div>
+                <div class="ticket-arrow" aria-hidden="true">→</div>
+                <div class="ticket-node">
+                  <b>NIDX-02</b>
+                  <strong>Series <code>sidx</code></strong>
+                  <span>Measure · Stream · Trace</span>
+                </div>
+                <div class="ticket-arrow" aria-hidden="true">→</div>
+                <div class="ticket-node">
+                  <b>NIDX-03</b>
+                  <strong>Stream element <code>idx</code></strong>
+                  <span>filters · postings · sort</span>
+                </div>
+                <div class="ticket-arrow" aria-hidden="true">→</div>
+                <div class="ticket-node">
+                  <b>NIDX-04</b>
+                  <strong>Admin + removal</strong>
+                  <span>last callers and dependencies</span>
+                </div>
+              </div>
+
+              <div class="ticket-board">
+                <article class="ticket-card" id="nidx-01">
+                  <header class="ticket-head">
+                    <span class="ticket-number">NIDX-01</span>
+                    <h3>Replace the Property shard index</h3>
+                  </header>
+                  <p class="ticket-cutover"><b>Live Bluge feature replaced</b><code>property/db.newShard</code> selects the native store for existing and new
+                    Property shards; Property repair scans use the same native reader.</p>
+                  <div class="ticket-scope">
+                    <div>
+                      <h4>Inside this ticket</h4>
+                      <ul>
+                        <li>Bounded ICE v3 and snapshot readers plus compatible segment/snapshot publication.</li>
+                        <li>Property upsert/replacement, delete masks, stored fields, exact/boolean/range filter, and explicit sort.</li>
+                        <li>Durable callbacks, snapshots, recovery, merge-time expiry, reference-safe GC, repair scan, and file snapshot.</li>
+                        <li>Only analyzers, term codecs, query nodes, and format sections exercised by Property.</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h4>Explicit boundary</h4>
+                      <ul>
+                        <li>No series wildcard/dictionary surface.</li>
+                        <li>No Stream element postings or MATCH analyzer family.</li>
+                        <li>No external-segment receiver.</li>
+                        <li>No general migration or schema-reader API.</li>
+                      </ul>
+                    </div>
+                  </div>
+                  <div class="ticket-proof"><b>Merge proof · </b>Update, query, ordered scan, delete/expiry, callback, repair, merge, restart, and backup all
+                    execute natively against a legacy-created shard. The pinned legacy binary then opens, queries, mutates, merges, and restarts it.</div>
+                  <p class="ticket-rollback"><b>Rollback:</b> drain the Property writer and select the retained legacy Property constructor on the same files.
+                    Startup fails instead of rewriting if the named rollback binary cannot accept the directory.</p>
+                </article>
+
+                <article class="ticket-card" id="nidx-02">
+                  <header class="ticket-head">
+                    <span class="ticket-number">NIDX-02</span>
+                    <h3>Replace the per-segment series index</h3>
+                  </header>
+                  <p class="ticket-cutover"><b>Live Bluge feature replaced</b><code>internal/storage.newSeriesIndex</code> selects native <code>sidx</code> for
+                    Measure, Stream, and Trace, including their active replication path.</p>
+                  <div class="ticket-scope">
+                    <div>
+                      <h4>Inside this ticket</h4>
+                      <ul>
+                        <li>Field-set-aware insert-if-absent, update, version/timestamp, delete, and projection.</li>
+                        <li>Exact/prefix/wildcard identity, field dictionaries, composed filters, stored lookup, and series/index/time sort.</li>
+                        <li>Index-mode Measure reads and writes, stats, read-only count, file snapshot, and cache reset.</li>
+                        <li>Crash-safe external segment receive, validation, deduplication, introduction, and mixed-version replication.</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h4>Explicit boundary</h4>
+                      <ul>
+                        <li>No Stream element <code>idx</code> batch or paired posting API.</li>
+                        <li>No element MATCH analyzer override.</li>
+                        <li>No general schema, union, copy, verify, dump, or rebuild command.</li>
+                        <li>No removal of the legacy adapter.</li>
+                      </ul>
+                    </div>
+                  </div>
+                  <div class="ticket-proof"><b>Merge proof · </b>Real Measure, Stream, and Trace segment flows use native series insert, lookup, sort,
+                    replication, restart, snapshot, and raw segment receive. A rolling mixed-version replication test passes in both directions.</div>
+                  <p class="ticket-rollback"><b>Rollback:</b> stop native admission, drain external receive, and reopen the last committed generation with the
+                    retained legacy series constructor; no document replay or format conversion is allowed.</p>
+                </article>
+
+                <article class="ticket-card" id="nidx-03">
+                  <header class="ticket-head">
+                    <span class="ticket-number">NIDX-03</span>
+                    <h3>Replace the Stream element index</h3>
+                  </header>
+                  <p class="ticket-cutover"><b>Live Bluge feature replaced</b><code>stream.newElementIndex</code> selects the native <code>idx</code> writer,
+                    filter executor, posting collector, sorter, snapshot path, and external receiver.</p>
+                  <div class="ticket-scope">
+                    <div>
+                      <h4>Inside this ticket</h4>
+                      <ul>
+                        <li>Element batch write and near-real-time visibility with document-ID and timestamp postings.</li>
+                        <li>Exact, existence, numeric/date range, AND/OR/NOT, HAVING, IN, prefix, wildcard, and MATCH filters.</li>
+                        <li>Keyword, simple, standard, and URL analysis with MATCH AND/OR override.</li>
+                        <li>Ascending/descending doc-value sort, snapshot/restart, and element-index raw segment receive.</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h4>Explicit boundary</h4>
+                      <ul>
+                        <li>No BM25, boosts, phrase, fuzzy, geo, highlighting, facet, or explanation surface.</li>
+                        <li>No generic Bluge collector or plugin compatibility layer.</li>
+                        <li>No remaining offline migration callers.</li>
+                        <li>No dependency deletion before NIDX-04.</li>
+                      </ul>
+                    </div>
+                  </div>
+                  <div class="ticket-proof"><b>Merge proof · </b>Production-shaped Stream writes immediately drive native EQ/NE/IN/HAVING, range, MATCH,
+                    NOT-universe, paired postings, sorting, restart, snapshot, and chunk-sync tests on legacy and native directories.</div>
+                  <p class="ticket-rollback"><b>Rollback:</b> the role-scoped switch returns only <code>idx/</code> to the retained legacy constructor and reopens
+                    the same compatible snapshot after the writer is drained.</p>
+                </article>
+
+                <article class="ticket-card" id="nidx-04">
+                  <header class="ticket-head">
+                    <span class="ticket-number">NIDX-04</span>
+                    <h3>Replace admin/migration and remove Bluge</h3>
+                  </header>
+                  <p class="ticket-cutover"><b>Live Bluge feature replaced</b>Schema loading, union/rebuild, index-mode copy, migration verification, dump, and
+                    read-only count call native administration APIs; runtime and offline Bluge dependencies are deleted.</p>
+                  <div class="ticket-scope">
+                    <div>
+                      <h4>Inside this ticket</h4>
+                      <ul>
+                        <li>Bounded read-only open/count, latest generation, document walk, stored/doc-value visitation, and sorted search-after.</li>
+                        <li>Native verify, staged rebuild, union/dedup, index-mode reconstruction, and migration verification.</li>
+                        <li>Rewire every remaining production and CLI caller; remove legacy query bridges, segment API types, modules, and replacements.</li>
+                        <li>Retain a pinned legacy oracle binary and fixture corpus only as isolated compatibility test inputs.</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h4>Explicit boundary</h4>
+                      <ul>
+                        <li>No new disk version or opening-time migration.</li>
+                        <li>No format rewrite merely to remove dependencies.</li>
+                        <li>No unsupported search-product features.</li>
+                        <li>No runtime legacy fallback after the approved retirement gate.</li>
+                      </ul>
+                    </div>
+                  </div>
+                  <div class="ticket-proof"><b>Merge proof · </b>All named maintenance flows run against historical and native directories, source/dependency
+                    scans find no Bluge, ICE, or segment-API runtime edge, and the full two-binary compatibility matrix passes.</div>
+                  <p class="ticket-rollback"><b>Rollback:</b> redeploy the preceding native release on the unchanged ICE/snapshot files. Dependency removal may
+                    merge only after the declared legacy-retirement window; a Bluge runtime switch is no longer promised afterward.</p>
+                </article>
+              </div>
+
+              <h3>Ticket dependency and activation contract</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Ticket</th>
+                      <th>Depends on</th>
+                      <th>Production activation in the merge</th>
+                      <th>Cannot be the ticket's only result</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>NIDX-01</td>
+                      <td>Approved format fixtures and DEC gates</td>
+                      <td>Native is the default Property constructor; legacy is an explicit rollback choice.</td>
+                      <td>Codec, IR, writer, or fuzz code used only by tests.</td>
+                    </tr>
+                    <tr>
+                      <td>NIDX-02</td>
+                      <td>NIDX-01</td>
+                      <td>Native is the default per-segment <code>sidx</code> constructor for all three TS products.</td>
+                      <td>Series executor without live write, snapshot, and replication paths.</td>
+                    </tr>
+                    <tr>
+                      <td>NIDX-03</td>
+                      <td>NIDX-02</td>
+                      <td>Native is the default Stream element <code>idx</code> constructor.</td>
+                      <td>Shadow-only filter or test-only element writer.</td>
+                    </tr>
+                    <tr>
+                      <td>NIDX-04</td>
+                      <td>NIDX-01 through NIDX-03 plus retirement approval</td>
+                      <td>Every admin/migration caller is native and runtime Bluge code is absent.</td>
+                      <td>A dependency cleanup that leaves a production Bluge bypass.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <h3>Shared merge gates</h3>
+              <div class="checklist">
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span><b>Live call-graph proof</b>Every new production component is reachable from the constructor named by the ticket.</span>
+                  <span class="tag stable">required</span>
+                </label>
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span><b>Role-complete contract</b>The ticket replaces every Bluge operation used by that role; it does not split read and write authority.</span>
+                  <span class="tag stable">required</span>
+                </label>
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span><b>Bidirectional files</b>Native opens legacy files and the named rollback binary opens, mutates, merges, and restarts native files.</span>
+                  <span class="tag fixture">required</span>
+                </label>
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span><b>Fault and budget gate</b>Relevant crash cut points, fuzz limits, race tests, and production-shaped budgets pass.</span>
+                  <span class="tag fixture">required</span>
+                </label>
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span><b>Reserved CRC field gate</b>The named rollback binary accepts native files while CRC32 remains uncalculated and unvalidated.</span>
+                  <span class="tag out">blocking</span>
+                </label>
+              </div>
+              <div class="clause-list">
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">ROLL-001</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>No native output may enter a rolling fleet before the named rollback binary can open, query, append, update, delete, merge, restart,
+                      recover, and receive raw external segments on the same directory.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">ROLL-002</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Capture every pre-merge differential mismatch as a reproducible artifact containing snapshot generation, canonical query, fixture-safe
+                      metadata, and both results. Shadow comparison is evidence, not a delivery ticket.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">ROLL-003</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Each ticket must switch its named production role to native in the same merge. Future-role code, disabled-only paths, and test-only
+                      implementations are prohibited from that ticket.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+<section class="spec-section" id="operations" data-status="decision" data-searchable data-normative data-open>
+          <div class="section-grid">
+            <aside class="section-side">
+              <div>
+                <div class="section-no">19</div>
+                <span class="section-state">Budgets open</span>
+                <p>Signals are defined; thresholds require workload measurement.</p>
+              </div>
+            </aside>
+            <div class="section-main">
+              <h2>Operations, metrics, and performance</h2>
+              <p class="section-lede">The native engine must make memory ownership, persistence lag, merge pressure, corruption, and rollback safety observable.</p>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Signal</th>
+                      <th>Required dimensions</th>
+                      <th>Purpose</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Batch admission</td>
+                      <td>product, result, document/byte/term counts</td>
+                      <td>Capacity and rejected-limit diagnosis.</td>
+                    </tr>
+                    <tr>
+                      <td>Visibility/persistence latency</td>
+                      <td>generation, policy, p50/p95/p99</td>
+                      <td>Separate query visibility from durability.</td>
+                    </tr>
+                    <tr>
+                      <td>Snapshot state</td>
+                      <td>generation, segment count, live/deleted docs, refs</td>
+                      <td>MVCC and leaked-reader diagnosis.</td>
+                    </tr>
+                    <tr>
+                      <td>Segment/cache memory</td>
+                      <td>mmap, FST, bitmap, stored, doc-value, evictable</td>
+                      <td>Bound resident and mapped memory.</td>
+                    </tr>
+                    <tr>
+                      <td>Merge</td>
+                      <td>input/output bytes/docs, drops, duration, amplification</td>
+                      <td>Policy tuning and expiry health.</td>
+                    </tr>
+                    <tr>
+                      <td>GC</td>
+                      <td>pending files/bytes, oldest age, removal failures</td>
+                      <td>Ref or filesystem blockage.</td>
+                    </tr>
+                    <tr>
+                      <td>Integrity</td>
+                      <td>file kind, generation/segment, validation stage, error class</td>
+                      <td>Recovery and corpus evidence without leaking values.</td>
+                    </tr>
+                    <tr>
+                      <td>Shadow comparison</td>
+                      <td>query class, mismatch class, backend, generation</td>
+                      <td>Rollout gate.</td>
+                    </tr>
+                    <tr>
+                      <td>External receive</td>
+                      <td>bytes, retries, validation, dedup, introduction latency</td>
+                      <td>Migration reliability.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <h3>Benchmark dimensions</h3>
+              <p>Record throughput; p50/p95/p99 latency; allocations; resident, mapped, and cache bytes; goroutines; disk size; segment count; write
+                amplification; merge duration; startup/recovery time; and durable callback latency for product-shaped workloads. Budgets are approved from
+                measured current workloads, not arbitrary parity percentages.</p>
+            </div>
+          </div>
+        </section>
+
+<section class="spec-section" id="decisions" data-status="decision" data-searchable data-open>
+          <div class="section-grid">
+            <aside class="section-side">
+              <div>
+                <div class="section-no">20</div>
+                <span class="section-state">Review required</span>
+                <p>Selections persist locally in this browser and can be exported.</p>
+              </div>
+            </aside>
+            <div class="section-main">
+              <h2>Open maintainer decisions</h2>
+              <p class="section-lede">These choices must be explicit; the implementation must not decide them accidentally.</p>
+
+              <div class="decision-grid">
+                <article class="decision-card">
+                  <header>
+                    <h3>Same-file rollback window</h3>
+                    <span class="decision-id">DEC-001</span>
+                  </header>
+                  <p>
+                    <strong>Recommendation:</strong> retain until one full release after native becomes default and the upgrade/downgrade matrix passes.</p>
+                    <label for="dec-001">Disposition</label>
+                    <select id="dec-001" data-decision="DEC-001">
+                      <option value="">Not reviewed</option>
+                      <option>Accept recommendation</option>
+                      <option>Needs discussion</option>
+                      <option>Block specification</option>
+                    </select>
+                  </article>
+                <article class="decision-card">
+                  <header>
+                    <h3>Historical release floor</h3>
+                    <span class="decision-id">DEC-002</span>
+                  </header>
+                  <p>
+                    <strong>Recommendation:</strong> select the oldest BanyanDB release represented by a collected, passing production fixture corpus.</p>
+                    <label for="dec-002">Disposition</label>
+                    <select id="dec-002" data-decision="DEC-002">
+                      <option value="">Not reviewed</option>
+                      <option>Accept recommendation</option>
+                      <option>Needs discussion</option>
+                      <option>Block specification</option>
+                    </select>
+                  </article>
+                <article class="decision-card">
+                  <header>
+                    <h3>Intentional defect fixes</h3>
+                    <span class="decision-id">DEC-003</span>
+                  </header>
+                  <p>Approve fixes for closing-write success, numeric exact terms, pure negatives, iterator ownership, and field-universe confusion.</p>
+                  <label for="dec-003">Disposition</label>
+                  <select id="dec-003" data-decision="DEC-003">
+                    <option value="">Not reviewed</option>
+                    <option>Accept recommendation</option>
+                    <option>Needs discussion</option>
+                    <option>Block specification</option>
+                  </select>
+                </article>
+                <article class="decision-card">
+                  <header>
+                    <h3>Sort semantics</h3>
+                    <span class="decision-id">DEC-004</span>
+                  </header>
+                  <p>
+                    <strong>Recommendation:</strong> missing last in both directions, smallest encoded repeated value, identity/local-hit tie key, pinned
+                      search-after.</p>
+                    <label for="dec-004">Disposition</label>
+                    <select id="dec-004" data-decision="DEC-004">
+                      <option value="">Not reviewed</option>
+                      <option>Accept recommendation</option>
+                      <option>Needs discussion</option>
+                      <option>Block specification</option>
+                    </select>
+                  </article>
+                <article class="decision-card">
+                  <header>
+                    <h3>Epoch and negative timestamps</h3>
+                    <span class="decision-id">DEC-005</span>
+                  </header>
+                  <p>
+                    <strong>Recommendation:</strong> support full signed <code>int64</code> nanoseconds and stop silently omitting values at or below zero.</p>
+                    <label for="dec-005">Disposition</label>
+                    <select id="dec-005" data-decision="DEC-005">
+                      <option value="">Not reviewed</option>
+                      <option>Accept recommendation</option>
+                      <option>Needs discussion</option>
+                      <option>Block specification</option>
+                    </select>
+                  </article>
+                <article class="decision-card">
+                  <header>
+                    <h3>Durable callback surface</h3>
+                    <span class="decision-id">DEC-006</span>
+                  </header>
+                  <p>
+                    <strong>Recommendation:</strong> support callbacks uniformly on element and series batches, with exactly-once terminal completion.</p>
+                    <label for="dec-006">Disposition</label>
+                    <select id="dec-006" data-decision="DEC-006">
+                      <option value="">Not reviewed</option>
+                      <option>Accept recommendation</option>
+                      <option>Needs discussion</option>
+                      <option>Block specification</option>
+                    </select>
+                  </article>
+                <article class="decision-card">
+                  <header>
+                    <h3>CRC32 compatibility field</h3>
+                    <span class="decision-id">DEC-007</span>
+                  </header>
+                  <p>
+                    <strong>Disposition:</strong> preserve the historical CRC32 fields only. Do not calculate, validate, cache, or use them for publication,
+                    recovery, or corruption classification.</p>
+                    <label for="dec-007">Disposition</label>
+                    <select id="dec-007" data-decision="DEC-007">
+                      <option value="">Not reviewed</option>
+                      <option>Accept recommendation</option>
+                      <option>Needs discussion</option>
+                      <option selected>Block specification</option>
+                    </select>
+                  </article>
+                <article class="decision-card">
+                  <header>
+                    <h3>Historical compressors</h3>
+                    <span class="decision-id">DEC-008</span>
+                  </header>
+                  <p>
+                    <strong>Recommendation:</strong> read only compressors proven by the historical corpus; emit verified S2 during the rollback window.</p>
+                    <label for="dec-008">Disposition</label>
+                    <select id="dec-008" data-decision="DEC-008">
+                      <option value="">Not reviewed</option>
+                      <option>Accept recommendation</option>
+                      <option>Needs discussion</option>
+                      <option>Block specification</option>
+                    </select>
+                  </article>
+                <article class="decision-card">
+                  <header>
+                    <h3>Resource limits</h3>
+                    <span class="decision-id">DEC-009</span>
+                  </header>
+                  <p>
+                    <strong>Recommendation:</strong> derive defaults from observed p99 workloads with explicit overrides and hard safety ceilings.</p>
+                    <label for="dec-009">Disposition</label>
+                    <select id="dec-009" data-decision="DEC-009">
+                      <option value="">Not reviewed</option>
+                      <option>Accept recommendation</option>
+                      <option>Needs discussion</option>
+                      <option>Block specification</option>
+                    </select>
+                  </article>
+                <article class="decision-card">
+                  <header>
+                    <h3>Identity sort support</h3>
+                    <span class="decision-id">DEC-010</span>
+                  </header>
+                  <p>
+                    <strong>Recommendation:</strong> specify and implement it only if a production planner contract is confirmed; otherwise reject it explicitly.</p>
+                    <label for="dec-010">Disposition</label>
+                    <select id="dec-010" data-decision="DEC-010">
+                      <option value="">Not reviewed</option>
+                      <option>Accept recommendation</option>
+                      <option>Needs discussion</option>
+                      <option>Block specification</option>
+                    </select>
+                  </article>
+              </div>
+
+              <div class="review-console">
+                <h3>Reviewer notes</h3>
+                <textarea id="review-notes" placeholder="Record cross-cutting comments, requested experiments, owners, or approval conditions…"></textarea>
+                <div class="review-actions">
+                  <button class="tool-button" id="export-review" type="button">Export review JSON</button>
+                  <button class="tool-button" id="copy-review" type="button">Copy review summary</button>
+                  <button class="tool-button" id="reset-review" type="button">Reset local review</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+<section class="spec-section" id="acceptance" data-status="fixture" data-searchable data-normative data-open>
+          <div class="section-grid">
+            <aside class="section-side">
+              <div>
+                <div class="section-no">21</div>
+                <span class="section-state">Definition of done</span>
+                <p>Every item is required before legacy dependency removal.</p>
+              </div>
+            </aside>
+            <div class="section-main">
+              <h2>Acceptance criteria</h2>
+              <p class="section-lede">The project is complete only when product behavior, bytes, lifecycle, failure safety, operations, and rollback are all proven.</p>
+              <div class="checklist">
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span>
+                    <b>Owned surface</b>No production or offline path imports Bluge, ICE, or <code>bluge_segment_api</code>; no third-party codec type escapes the
+                      internal boundary.</span>
+                    <span class="tag fixture">required</span>
+                  </label>
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span>
+                    <b>Product conformance</b>Series, Stream, Property, index-mode Measure, admin, migration, repair, and backup suites pass.</span>
+                    <span class="tag fixture">required</span>
+                  </label>
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span>
+                    <b>Historical read</b>Native reader opens every supported historical directory and returns canonical logical results.</span>
+                    <span class="tag fixture">required</span>
+                  </label>
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span>
+                    <b>Legacy read of native output</b>Pinned rollback binary opens, queries, merges, restarts, and externally receives native output.</span>
+                    <span class="tag fixture">required</span>
+                  </label>
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span>
+                    <b>Crash consistency</b>Every injected cut point recovers a complete committed snapshot with no referenced partial segment.</span>
+                    <span class="tag fixture">required</span>
+                  </label>
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span>
+                    <b>Malformed-input safety</b>Fuzz/corruption corpus produces bounded typed errors without panic, hang, leak, or unbounded allocation.</span>
+                    <span class="tag fixture">required</span>
+                  </label>
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span>
+                    <b>Performance budgets</b>Approved workloads meet throughput, latency, memory, disk, startup, merge, and callback budgets.</span>
+                    <span class="tag fixture">required</span>
+                  </label>
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span>
+                    <b>Operational readiness</b>Metrics, logs, verifier, mismatch artifacts, recovery runbook, and rollback procedure are documented and exercised.</span>
+                    <span class="tag fixture">required</span>
+                  </label>
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span>
+                    <b>Decision closure</b>All Section 20 decisions have approved dispositions reflected in normative clauses and tests.</span>
+                    <span class="tag decision">review</span>
+                  </label>
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span>
+                    <b>License and provenance</b>Retained dependencies, independent specification evidence, and implementation provenance are recorded.</span>
+                    <span class="tag fixture">required</span>
+                  </label>
+              </div>
+            </div>
+          </div>
+        </section>
+
+<section class="spec-section" id="traceability" data-status="stable" data-searchable>
+          <div class="section-grid">
+            <aside class="section-side">
+              <div>
+                <div class="section-no">22</div>
+                <span class="section-state">Evidence map</span>
+                <p>Where each specification class comes from.</p>
+              </div>
+            </aside>
+            <div class="section-main">
+              <h2>Traceability and references</h2>
+              <p class="section-lede">Source observations establish hypotheses; fixtures and conformance tests promote them to approved compatibility claims.</p>
+
+              <div class="source-list">
+                <div class="source-item">
+                  <code>go.mod</code>
+                  <span>BanyanDB baseline <code>8f1c6f5f</code>; SkyAPM Bluge <code>42385daf66b8</code>, ICE <code>b5173603b0b3</code>, and the resolved
+                    <code>bluge_segment_api</code> version.</span>
+                </div>
+                <div class="source-item">
+                  <code>pkg/index/index.go</code>
+                  <span>Public BanyanDB index, series, search, sort, snapshot, and batch contracts.</span>
+                </div>
+                <div class="source-item">
+                  <code>pkg/index/inverted/*</code>
+                  <span>Current adapter semantics for documents, queries, sorting, series evolution, callbacks, and external segments.</span>
+                </div>
+                <div class="source-item">
+                  <code>SkyAPM/ice new.go</code>
+                  <span>Field assignment, analysis staging, stored write, term/posting/FST/doc-value order, and timestamp bounds.</span>
+                </div>
+                <div class="source-item">
+                  <code>SkyAPM/ice write.go</code>
+                  <span>Stored metadata, posting record, fields, Roaring length, and footer serialization.</span>
+                </div>
+                <div class="source-item">
+                  <code>SkyAPM/ice footer.go</code>
+                  <span>60-byte footer widths, parse order, and version enforcement.</span>
+                </div>
+                <div class="source-item">
+                  <code>SkyAPM/ice docvalues.go</code>
+                  <span>1024-document chunks, delta metadata, escaping, ranges, and visitation.</span>
+                </div>
+                <div class="source-item">
+                  <code>SkyAPM/ice posting.go</code>
+                  <span>General and one-hit FST values, posting offsets, Roaring decoding, and detail readers.</span>
+                </div>
+                <div class="source-item">
+                  <code>SkyAPM/bluge index/snapshot.go</code>
+                  <span>Snapshot v1-v3 grammar, segment records, deletion bitmap, and reserved CRC32 field placement.</span>
+                </div>
+                <div class="source-item">
+                  <code>SkyAPM/bluge index/persister.go</code>
+                  <span>Existing persistence, introduction, merge, and deletion-policy lifecycle.</span>
+                </div>
+                <div class="source-item">
+                  <code>research report</code>
+                  <span>
+                    <a href="research-report.md">Complete source-level findings, risks, architecture, and estimates.</a>
+                  </span>
+                </div>
+                <div class="source-item">
+                  <code>visual report</code>
+                  <span>
+                    <a href="research-report.html">Diagrams, matrices, roadmap, and compatibility summary.</a>
+                  </span>
+                </div>
+                <div class="source-item">
+                  <code>walkthrough</code>
+                  <span>
+                    <a href="ice-segment-animated-walkthrough.html">Animated batch write, filter read, and doc-value sort examples.</a>
+                  </span>
+                </div>
+              </div>
+
+              <div class="callout info">
+                <b>i</b>
+                <p>
+                  <strong>Review rule:</strong> accepting this document approves the architecture and normative intent. It does not waive fixture, cross-read,
+                  fuzz, crash, benchmark, or open-decision gates.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      <nav class="page-turn" aria-label="Specification chapters">
+        <a href="safety-verification.html#integrity"><b>← Previous chapter</b><span>Safety and verification</span></a>
+        <div class="spacer" aria-hidden="true"></div>
+      </nav>
+
+      <div class="empty-search" id="empty-search">No section in this chapter matches the search/filter.</div>
+      </main>
+    </div>
+  </div>
+  <script src="spec.js"></script>
+</body>
+</html>

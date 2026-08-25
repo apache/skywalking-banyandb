@@ -1,0 +1,1387 @@
+<!--
+  Licensed to Apache Software Foundation (ASF) under one or more contributor
+  license agreements. See the NOTICE file distributed with
+  this work for additional information regarding copyright
+  ownership. Apache Software Foundation (ASF) licenses this file to you under
+  the Apache License, Version 2.0 (the "License"); you may
+  not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing,
+  software distributed under the License is distributed on an
+  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+  KIND, either express or implied. See the License for the
+  specific language governing permissions and limitations
+  under the License.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Animated walkthrough of ICE segment batch writing, field filtering, and sorting.">
+  <title>Inside ICE — Animated Write, Filter, and Sort</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #091017;
+      --panel: #101923;
+      --panel-2: #15212c;
+      --ink: #edf7f3;
+      --muted: #91a5a6;
+      --line: #29404c;
+      --cyan: #52e1d1;
+      --cyan-soft: #173d3e;
+      --coral: #ff6b4a;
+      --coral-soft: #49251f;
+      --amber: #ffc857;
+      --amber-soft: #473a1d;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --display: Georgia, "Times New Roman", serif;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      min-width: 320px;
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      line-height: 1.5;
+    }
+
+    button, select { font: inherit; }
+    button { color: inherit; }
+    code {
+      padding: .08rem .3rem;
+      border: 1px solid var(--line);
+      background: #071017;
+      color: var(--cyan);
+      font-family: var(--mono);
+    }
+
+    .world-grid {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      width: 100%;
+      height: 100%;
+      opacity: .22;
+      pointer-events: none;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: grid;
+      grid-template-columns: minmax(12rem, 1fr) auto minmax(12rem, 1fr);
+      align-items: center;
+      min-height: 4.5rem;
+      padding: .75rem clamp(1rem, 3vw, 2.8rem);
+      border-bottom: 1px solid var(--line);
+      background: rgb(9 16 23 / 94%);
+      backdrop-filter: blur(16px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      font: 800 .73rem/1 var(--mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 2rem;
+      height: 2rem;
+      border: 1px solid var(--cyan);
+      border-radius: 50%;
+      color: var(--cyan);
+    }
+
+    .scene-nav { display: flex; gap: .35rem; }
+    .scene-nav button,
+    .control-button,
+    .speed-select {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      cursor: pointer;
+    }
+
+    .scene-nav button {
+      min-width: 7.5rem;
+      padding: .65rem .85rem;
+      color: var(--muted);
+      font: 800 .69rem/1 var(--mono);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .scene-nav button[aria-selected="true"] {
+      border-color: var(--cyan);
+      background: var(--cyan-soft);
+      color: var(--cyan);
+    }
+
+    .top-note {
+      justify-self: end;
+      color: var(--muted);
+      font: .67rem/1.35 var(--mono);
+      text-align: right;
+    }
+
+    main { width: min(1500px, 100%); margin: 0 auto; }
+    .intro {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(30rem, .9fr);
+      gap: clamp(2rem, 7vw, 8rem);
+      align-items: center;
+      min-height: calc(100vh - 4.5rem);
+      padding: clamp(4rem, 9vw, 9rem) clamp(1.2rem, 5vw, 5rem);
+    }
+
+    .eyebrow {
+      display: flex;
+      gap: .8rem;
+      align-items: center;
+      color: var(--coral);
+      font: 800 .72rem/1 var(--mono);
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow::before { content: ""; width: 2.8rem; height: 2px; background: currentColor; }
+    h1 {
+      max-width: 10ch;
+      margin: 1.3rem 0 1.5rem;
+      font: 700 clamp(4rem, 9vw, 9rem)/.78 var(--display);
+      letter-spacing: -.055em;
+    }
+
+    h1 em { color: var(--cyan); font-weight: 400; }
+    .intro-copy {
+      max-width: 44rem;
+      margin: 0;
+      color: var(--muted);
+      font-size: clamp(1rem, 2vw, 1.35rem);
+    }
+
+    .three-ways {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: .7rem;
+      margin-top: 2.2rem;
+    }
+
+    .way {
+      padding: .9rem;
+      border-top: 3px solid var(--cyan);
+      background: var(--panel);
+    }
+
+    .way:nth-child(2) { border-color: var(--coral); }
+    .way:nth-child(3) { border-color: var(--amber); }
+    .way b { display: block; margin-bottom: .25rem; font: 800 .7rem/1 var(--mono); text-transform: uppercase; }
+    .way span { color: var(--muted); font-size: .76rem; }
+
+    .batch-card {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: 1.2rem 1.2rem 0 #050a0f;
+    }
+
+    .batch-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      align-items: center;
+      padding: 1rem 1.2rem;
+      border-bottom: 1px solid var(--line);
+      font: 800 .72rem/1 var(--mono);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .batch-head span:last-child { color: var(--cyan); }
+    .doc-table { width: 100%; border-collapse: collapse; }
+    .doc-table th,
+    .doc-table td { padding: .78rem .65rem; border-bottom: 1px solid var(--line); text-align: left; }
+    .doc-table th { color: var(--muted); font: 700 .62rem/1 var(--mono); text-transform: uppercase; }
+    .doc-table td { font: .74rem/1.2 var(--mono); }
+    .doc-table tr:last-child td { border-bottom: 0; }
+    .doc-num { color: var(--coral); }
+    .checkout { color: var(--cyan); }
+    .latency { color: var(--amber); }
+
+    .field-contracts {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .45rem;
+      padding: 1rem 1.2rem;
+      border-top: 1px solid var(--line);
+    }
+
+    .field-contracts span {
+      padding: .38rem .55rem;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font: 700 .61rem/1.2 var(--mono);
+    }
+
+    .contract-note {
+      margin: 0;
+      padding: 0 1.2rem 1rem;
+      color: var(--muted);
+      font: .64rem/1.45 var(--mono);
+    }
+
+    .contract-note b { color: var(--amber); }
+
+    .lab {
+      min-height: 100vh;
+      padding: 6rem clamp(1rem, 4vw, 4rem) 5rem;
+      border-top: 1px solid var(--line);
+    }
+
+    .lab-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 2rem;
+      align-items: end;
+      margin-bottom: 2rem;
+    }
+
+    .lab h2 { margin: .8rem 0 0; font: 700 clamp(2.8rem, 6vw, 6rem)/.9 var(--display); letter-spacing: -.04em; }
+    .lab h2 em { color: var(--cyan); font-weight: 400; }
+    .legend { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 1rem; color: var(--muted); font: .65rem/1 var(--mono); }
+    .legend span { display: flex; align-items: center; gap: .4rem; }
+    .legend i { width: .7rem; height: .7rem; border: 1px solid var(--line); background: var(--panel); }
+    .legend .is-active { border-color: var(--cyan); background: var(--cyan); }
+    .legend .is-done { border-color: var(--coral); background: var(--coral-soft); }
+
+    .player {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 1rem;
+      align-items: center;
+      padding: .85rem;
+      border: 1px solid var(--line);
+      background: #071017;
+    }
+
+    .player-buttons { display: flex; gap: .4rem; }
+    .control-button {
+      display: grid;
+      place-items: center;
+      min-width: 2.65rem;
+      height: 2.65rem;
+      padding: 0 .75rem;
+      font: 800 .7rem/1 var(--mono);
+    }
+
+    .control-button:hover,
+    .control-button:focus-visible { border-color: var(--cyan); color: var(--cyan); }
+    .control-button.primary { border-color: var(--cyan); background: var(--cyan); color: var(--bg); }
+    .speed-select { height: 2.65rem; padding: 0 .7rem; color: var(--muted); font: 700 .68rem/1 var(--mono); }
+    .progress-shell { height: .42rem; background: var(--line); overflow: hidden; }
+    .progress-fill { width: 0; height: 100%; background: var(--cyan); transition: width .45s ease; }
+    .step-counter { min-width: 5rem; color: var(--muted); font: 700 .68rem/1 var(--mono); text-align: right; }
+
+    .scene-tabs {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      margin: 1rem 0;
+      border: 1px solid var(--line);
+    }
+
+    .scene-tab {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: .8rem;
+      align-items: center;
+      min-height: 5rem;
+      padding: .8rem 1rem;
+      border: 0;
+      border-right: 1px solid var(--line);
+      background: var(--panel);
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .scene-tab:last-child { border-right: 0; }
+    .scene-tab b { color: var(--muted); font: 900 1.2rem/1 var(--mono); }
+    .scene-tab strong { display: block; font: 800 .75rem/1.1 var(--mono); text-transform: uppercase; }
+    .scene-tab small { display: block; margin-top: .25rem; color: var(--muted); }
+    .scene-tab[aria-selected="true"] { background: var(--cyan-soft); }
+    .scene-tab[aria-selected="true"] b,
+    .scene-tab[aria-selected="true"] strong { color: var(--cyan); }
+
+    .scene[hidden] { display: none; }
+    .scene-layout { display: grid; grid-template-columns: 18rem minmax(0, 1fr); gap: 1rem; }
+    .step-list { margin: 0; padding: 0; list-style: none; border: 1px solid var(--line); background: var(--panel); }
+    .step-button {
+      display: grid;
+      grid-template-columns: 2.2rem 1fr;
+      gap: .65rem;
+      width: 100%;
+      min-height: 4rem;
+      padding: .75rem;
+      border: 0;
+      border-bottom: 1px solid var(--line);
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      text-align: left;
+    }
+
+    .step-list li:last-child .step-button { border-bottom: 0; }
+    .step-button b { font: 800 .68rem/1 var(--mono); }
+    .step-button span { font-size: .75rem; line-height: 1.25; }
+    .step-button.done { background: var(--coral-soft); color: #e8b7a9; }
+    .step-button.active { box-shadow: inset 4px 0 0 var(--cyan); background: var(--cyan-soft); color: var(--ink); }
+
+    .stage {
+      position: relative;
+      min-width: 0;
+      min-height: 47rem;
+      padding: 1.2rem;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      overflow: hidden;
+    }
+
+    .stage::before {
+      content: attr(data-label);
+      position: absolute;
+      top: .8rem;
+      right: 1rem;
+      color: var(--line);
+      font: 900 clamp(3rem, 8vw, 7rem)/1 var(--mono);
+      pointer-events: none;
+    }
+
+    .flow-track {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: .45rem;
+      margin: .4rem 0 1.2rem;
+      padding-top: 1.1rem;
+    }
+
+    .scene[data-scene="write"] .flow-track { grid-template-columns: repeat(7, 1fr); }
+
+    .flow-track::before { content: ""; position: absolute; top: .34rem; left: 4%; right: 4%; height: 2px; background: var(--line); }
+    .flow-node { position: relative; color: var(--muted); font: 700 .59rem/1.2 var(--mono); text-align: center; }
+    .flow-node::before {
+      content: "";
+      position: absolute;
+      top: -1.05rem;
+      left: 50%;
+      width: .62rem;
+      height: .62rem;
+      border: 2px solid var(--line);
+      border-radius: 50%;
+      background: var(--panel);
+      translate: -50% 0;
+      transition: .35s ease;
+    }
+
+    .flow-node.done::before { border-color: var(--coral); background: var(--coral); }
+    .flow-node.active { color: var(--cyan); }
+    .flow-node.active::before { border-color: var(--cyan); background: var(--cyan); box-shadow: 0 0 0 .35rem rgb(82 225 209 / 14%); }
+
+    .stage-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .8rem; }
+    .stage-column { min-width: 0; padding: .85rem; border: 1px solid var(--line); background: #0c141c; }
+    .stage-column h3 { margin: 0 0 .75rem; color: var(--muted); font: 800 .65rem/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+
+    [data-enter] { opacity: .16; filter: saturate(.35); transition: opacity .45s ease, filter .45s ease, transform .45s ease, border-color .45s ease; }
+    [data-enter].done { opacity: .82; filter: none; }
+    [data-enter].active { opacity: 1; filter: none; border-color: var(--cyan); animation: breathe 1.2s ease-in-out infinite alternate; }
+
+    @keyframes breathe {
+      from { box-shadow: 0 0 0 0 rgb(82 225 209 / 0%); }
+      to { box-shadow: 0 0 0 .28rem rgb(82 225 209 / 10%); }
+    }
+
+    .mini-doc {
+      display: grid;
+      grid-template-columns: 2.2rem 1fr auto;
+      gap: .55rem;
+      align-items: center;
+      margin-bottom: .45rem;
+      padding: .65rem;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      font: .65rem/1.25 var(--mono);
+    }
+
+    .mini-doc b { color: var(--coral); }
+    .mini-doc span { overflow-wrap: anywhere; }
+    .mini-doc output { color: var(--amber); }
+    .field-map,
+    .term-box,
+    .posting-box,
+    .dv-box,
+    .result-box {
+      margin-bottom: .55rem;
+      padding: .65rem;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      font: .65rem/1.45 var(--mono);
+    }
+
+    .field-map strong,
+    .term-box strong,
+    .posting-box strong,
+    .dv-box strong,
+    .result-box strong { display: block; margin-bottom: .3rem; color: var(--cyan); }
+
+    .view-postings { border-left: 3px solid var(--cyan); }
+    .view-docvalues { border-left: 3px solid var(--amber); }
+    .view-stored { border-left: 3px solid var(--coral); }
+    .view-postings strong { color: var(--cyan); }
+    .view-docvalues strong { color: var(--amber); }
+    .view-stored strong { color: var(--coral); }
+    .term-chip { display: inline-block; margin: .12rem; padding: .22rem .34rem; border: 1px solid var(--line); color: var(--amber); }
+    .posting-bits { display: flex; gap: .28rem; margin-top: .45rem; }
+    .bit { display: grid; place-items: center; width: 1.7rem; height: 1.7rem; border: 1px solid var(--line); color: var(--muted); }
+    .bit.on { border-color: var(--cyan); background: var(--cyan-soft); color: var(--cyan); }
+
+    .segment-stack { display: flex; flex-direction: column; min-height: 27rem; border: 1px solid var(--line); }
+    .segment-block {
+      display: grid;
+      align-content: center;
+      min-height: 3.35rem;
+      padding: .55rem;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel-2);
+      font: 700 .61rem/1.25 var(--mono);
+      text-align: center;
+    }
+
+    .segment-block.payload { flex: 1; min-height: 7rem; }
+    .segment-block.footer { border-bottom: 0; background: var(--coral-soft); color: var(--coral); }
+    .segment-block.active { background: var(--cyan-soft); }
+    .segment-block.from-postings { box-shadow: inset 4px 0 0 var(--cyan); }
+    .segment-block.from-docvalues { box-shadow: inset 4px 0 0 var(--amber); }
+    .segment-block.from-stored { box-shadow: inset 4px 0 0 var(--coral); }
+    .segment-block.from-meta { box-shadow: inset 4px 0 0 #a991ff; }
+
+    .view-map {
+      grid-column: 1 / -1;
+      padding: .9rem;
+      border: 1px solid var(--line);
+      background: #071017;
+    }
+
+    .view-map h3 {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      margin: 0 0 .7rem;
+      color: var(--ink);
+    }
+
+    .view-map h3 span { color: var(--muted); font-weight: 400; text-transform: none; letter-spacing: 0; }
+    .map-lanes { display: grid; gap: .42rem; }
+    .map-lane {
+      display: grid;
+      grid-template-columns: 8.5rem 2.2rem minmax(0, 1fr);
+      gap: .55rem;
+      align-items: center;
+      min-height: 3rem;
+    }
+
+    .map-source,
+    .map-target {
+      padding: .55rem .65rem;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      font: 700 .62rem/1.35 var(--mono);
+    }
+
+    .map-source { text-align: center; }
+    .map-source.postings { border-color: var(--cyan); color: var(--cyan); }
+    .map-source.docvalues { border-color: var(--amber); color: var(--amber); }
+    .map-source.stored { border-color: var(--coral); color: var(--coral); }
+    .map-source.meta { border-color: #a991ff; color: #c7b9ff; }
+    .map-arrow { position: relative; height: 1px; background: var(--line); }
+    .map-arrow::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -.08rem;
+      width: .45rem;
+      height: .45rem;
+      border-top: 2px solid var(--cyan);
+      border-right: 2px solid var(--cyan);
+      rotate: 45deg;
+      translate: 0 -50%;
+    }
+
+    .map-target b { color: var(--ink); }
+    .map-target span { color: var(--muted); }
+    .map-note {
+      margin: .75rem 0 0;
+      padding-top: .7rem;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font: .65rem/1.5 var(--mono);
+    }
+
+    .map-note b { color: var(--coral); }
+    .representation-split {
+      display: grid;
+      grid-template-columns: 9rem repeat(3, minmax(0, 1fr));
+      gap: .45rem;
+      margin-top: .75rem;
+      padding-top: .75rem;
+      border-top: 1px solid var(--line);
+    }
+
+    .representation-input,
+    .representation-copy {
+      display: grid;
+      align-content: center;
+      min-height: 4rem;
+      padding: .6rem;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      font: .61rem/1.35 var(--mono);
+    }
+
+    .representation-input { border-color: var(--ink); color: var(--ink); text-align: center; }
+    .representation-copy b { display: block; margin-bottom: .2rem; }
+    .representation-copy.postings b { color: var(--cyan); }
+    .representation-copy.docvalues b { color: var(--amber); }
+    .representation-copy.stored b { color: var(--coral); }
+    .representation-copy span { color: var(--muted); }
+    .representation-explanation {
+      grid-column: 1 / -1;
+      margin: .2rem 0 0;
+      color: var(--ink);
+      font: .64rem/1.45 var(--mono);
+    }
+
+    .representation-explanation b { color: var(--amber); }
+
+    .narration {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: .8rem;
+      align-items: start;
+      min-height: 5.2rem;
+      margin-top: 1rem;
+      padding: 1rem;
+      border: 1px solid var(--cyan);
+      background: var(--cyan-soft);
+    }
+
+    .narration b { color: var(--cyan); font: 900 1rem/1 var(--mono); }
+    .narration p { margin: 0; font-size: .84rem; }
+
+    .lookup-query {
+      display: flex;
+      align-items: center;
+      gap: .6rem;
+      margin-bottom: 1rem;
+      padding: .9rem;
+      border: 1px solid var(--line);
+      background: #071017;
+      font: 700 .75rem/1 var(--mono);
+    }
+
+    .lookup-query b { color: var(--coral); }
+    .lookup-query output { color: var(--cyan); }
+    .lookup-grid { display: grid; grid-template-columns: 1.1fr .9fr; gap: .8rem; }
+    .lookup-path { display: grid; grid-template-columns: repeat(3, 1fr); gap: .55rem; }
+    .lookup-node {
+      position: relative;
+      display: grid;
+      place-items: center;
+      min-height: 6rem;
+      padding: .6rem;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      font: 700 .65rem/1.35 var(--mono);
+      text-align: center;
+    }
+
+    .lookup-node small { display: block; margin-top: .3rem; color: var(--muted); }
+    .result-list { display: grid; gap: .5rem; }
+    .result-box { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: .6rem; margin: 0; }
+    .result-box b { margin: 0; color: var(--coral); }
+    .result-box output { color: var(--amber); }
+
+    .sort-grid { display: grid; grid-template-columns: .8fr 1fr 1fr; gap: .8rem; }
+    .candidate,
+    .dv-row,
+    .rank-row {
+      display: grid;
+      grid-template-columns: 3rem 1fr auto;
+      gap: .6rem;
+      align-items: center;
+      margin-bottom: .55rem;
+      padding: .65rem;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      font: .67rem/1 var(--mono);
+    }
+
+    .candidate b,
+    .dv-row b,
+    .rank-row b { color: var(--coral); }
+    .value-bar { width: 100%; height: .55rem; background: var(--line); }
+    .value-bar::after {
+      content: "";
+      display: block;
+      width: var(--value);
+      height: 100%;
+      background: var(--amber);
+      transform-origin: left;
+      animation: grow .65s ease both;
+    }
+
+    @keyframes grow { from { scale: 0 1; } to { scale: 1 1; } }
+    .dv-row output,
+    .rank-row output { color: var(--amber); }
+    .rank-row { translate: 1.2rem 0; }
+    .rank-row.active,
+    .rank-row.done { translate: 0 0; }
+    .rank-badge { color: var(--cyan) !important; }
+
+    .truth-panel {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+
+    .truth {
+      padding: 1rem;
+      border: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .truth b { display: block; margin-bottom: .4rem; color: var(--cyan); font: 800 .7rem/1 var(--mono); }
+    .truth p { margin: 0; color: var(--muted); font-size: .76rem; }
+
+    footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 1.5rem clamp(1rem, 4vw, 4rem);
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font: .67rem/1.4 var(--mono);
+    }
+
+    footer a { color: var(--cyan); }
+
+    @media (max-width: 1050px) {
+      .topbar { grid-template-columns: 1fr auto; }
+      .top-note { display: none; }
+      .intro { grid-template-columns: 1fr; }
+      .batch-card { max-width: 46rem; }
+      .scene-layout { grid-template-columns: 1fr; }
+      .step-list { display: grid; grid-template-columns: repeat(3, 1fr); }
+      .step-button { border-right: 1px solid var(--line); }
+      .stage { min-height: auto; }
+    }
+
+    @media (max-width: 760px) {
+      .topbar { position: static; display: block; }
+      .scene-nav { margin-top: .8rem; }
+      .scene-nav button { flex: 1; min-width: 0; }
+      .intro { padding-top: 4rem; }
+      h1 { font-size: clamp(3.8rem, 20vw, 6rem); }
+      .three-ways, .truth-panel { grid-template-columns: 1fr; }
+      .doc-table th:nth-child(4), .doc-table td:nth-child(4) { display: none; }
+      .lab { padding-top: 4rem; }
+      .lab-head { grid-template-columns: 1fr; }
+      .legend { justify-content: flex-start; }
+      .player { grid-template-columns: 1fr; }
+      .player-buttons { flex-wrap: wrap; }
+      .step-counter { grid-row: 2; min-width: 0; text-align: left; }
+      .progress-shell { grid-column: 1; grid-row: 3; }
+      .scene-tabs { grid-template-columns: 1fr; }
+      .scene-tab { border-right: 0; border-bottom: 1px solid var(--line); }
+      .scene-tab:last-child { border-bottom: 0; }
+      .step-list { grid-template-columns: 1fr 1fr; }
+      .stage-grid, .lookup-grid, .sort-grid { grid-template-columns: 1fr; }
+      .view-map { grid-column: 1; }
+      .map-lane { grid-template-columns: 1fr; }
+      .map-arrow { width: 1px; height: 1.2rem; margin-left: 50%; }
+      .map-arrow::after { top: auto; right: 50%; bottom: 0; rotate: 135deg; translate: 50% 0; }
+      .representation-split { grid-template-columns: 1fr; }
+      .representation-explanation { grid-column: 1; }
+      .flow-node { font-size: .5rem; }
+      .lookup-path { grid-template-columns: 1fr 1fr; }
+      .segment-stack { min-height: 22rem; }
+      footer { flex-direction: column; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
+    }
+
+    @media print {
+      .topbar, .player, .scene-tabs { display: none; }
+      body { background: #fff; color: #111; }
+      .world-grid { display: none; }
+      .scene[hidden] { display: block; }
+      .scene-layout { grid-template-columns: 1fr; }
+      [data-enter] { opacity: 1; filter: none; }
+      .stage, .stage-column, .mini-doc, .field-map, .term-box, .posting-box, .dv-box, .result-box { color: #111; background: #fff; }
+    }
+  </style>
+</head>
+<body>
+  <svg class="world-grid" aria-hidden="true">
+    <defs>
+      <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+        <path d="M32 0H0V32" fill="none" stroke="#29404c" stroke-width="1"/>
+      </pattern>
+    </defs>
+    <rect width="100%" height="100%" fill="url(#grid)"/>
+  </svg>
+
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">◆</span><span>ICE process laboratory</span></div>
+    <nav class="scene-nav" aria-label="Jump to an animation">
+      <button type="button" data-scene-target="write" aria-selected="true">01 · Write</button>
+      <button type="button" data-scene-target="filter" aria-selected="false">02 · Filter</button>
+      <button type="button" data-scene-target="sort" aria-selected="false">03 · Sort</button>
+    </nav>
+    <div class="top-note">ICE v3 · conceptual byte flow<br>based on the pinned SkyAPM fork</div>
+  </header>
+
+  <main>
+    <section class="intro" id="intro">
+      <div>
+        <div class="eyebrow">Animated systems walkthrough</div>
+        <h1>One batch.<br><em>Three directions.</em></h1>
+        <p class="intro-copy">Watch four BanyanDB documents become one immutable ICE segment, then follow the exact structures used to filter and sort them.</p>
+        <div class="three-ways">
+          <div class="way"><b>Write</b><span>documents become field-oriented structures</span></div>
+          <div class="way"><b>Filter</b><span>a term becomes a Roaring document set</span></div>
+          <div class="way"><b>Sort</b><span>matching documents become ordered results</span></div>
+        </div>
+      </div>
+
+      <div class="batch-card" aria-label="Example batch used by all animations">
+        <div class="batch-head"><span>Example input batch</span><span>4 documents</span></div>
+        <table class="doc-table">
+          <thead><tr><th>local doc</th><th>_id</th><th>service</th><th>region</th><th>latency ms</th></tr></thead>
+          <tbody>
+            <tr><td class="doc-num">0</td><td>A17</td><td class="checkout">checkout</td><td>us-east</td><td class="latency">120</td></tr>
+            <tr><td class="doc-num">1</td><td>B04</td><td>payment</td><td>eu-west</td><td class="latency">350</td></tr>
+            <tr><td class="doc-num">2</td><td>C91</td><td class="checkout">checkout</td><td>us-west</td><td class="latency">80</td></tr>
+            <tr><td class="doc-num">3</td><td>D22</td><td class="checkout">checkout</td><td>eu-west</td><td class="latency">210</td></tr>
+          </tbody>
+        </table>
+        <div class="field-contracts">
+          <span>service · INDEX + STORE</span>
+          <span>region · INDEX</span>
+          <span>latency · INDEX + STORE + SORTABLE</span>
+        </div>
+        <p class="contract-note"><b>Why latency appears more than once:</b> this example deliberately requests filtering, returning the original value,
+          and sorting. ICE builds a different physical representation for each access direction.</p>
+      </div>
+    </section>
+
+    <section class="lab" id="lab">
+      <div class="lab-head">
+        <div>
+          <div class="eyebrow">Interactive animation</div>
+          <h2>Follow the <em>bytes.</em></h2>
+        </div>
+        <div class="legend">
+          <span><i class="is-active"></i> current work</span>
+          <span><i class="is-done"></i> completed</span>
+          <span><i></i> not reached</span>
+        </div>
+      </div>
+
+      <div class="player" aria-label="Animation controls">
+        <div class="player-buttons">
+          <button class="control-button" id="restart" type="button" title="Restart">↺</button>
+          <button class="control-button" id="previous" type="button" title="Previous step">←</button>
+          <button class="control-button primary" id="play" type="button" title="Play or pause" aria-pressed="false">▶</button>
+          <button class="control-button" id="next" type="button" title="Next step">→</button>
+          <select class="speed-select" id="speed" aria-label="Animation speed">
+            <option value="2200">0.75×</option>
+            <option value="1500" selected>1×</option>
+            <option value="850">1.75×</option>
+          </select>
+        </div>
+        <div class="progress-shell" aria-hidden="true"><div class="progress-fill" id="progress"></div></div>
+        <div class="step-counter" id="counter">STEP 1 / 6</div>
+      </div>
+
+      <div class="scene-tabs" role="tablist" aria-label="ICE operation">
+        <button class="scene-tab" type="button" data-scene-target="write" role="tab" aria-selected="true">
+          <b>01</b><span><strong>Batch → segment</strong><small>transpose and encode</small></span>
+        </button>
+        <button class="scene-tab" type="button" data-scene-target="filter" role="tab" aria-selected="false">
+          <b>02</b><span><strong>Field filter</strong><small>term → local docs</small></span>
+        </button>
+        <button class="scene-tab" type="button" data-scene-target="sort" role="tab" aria-selected="false">
+          <b>03</b><span><strong>Sort matching data</strong><small>doc values → Top N</small></span>
+        </button>
+      </div>
+
+      <section class="scene" id="scene-write" data-scene="write" data-max-step="6">
+        <div class="scene-layout">
+          <ol class="step-list">
+            <li>
+
+              <button class="step-button" type="button" data-step="0"
+
+                data-narration="The batch is document-oriented: each document carries its own fields and options.">
+
+                <b>01</b><span>Receive four documents</span>
+
+              </button>
+
+            </li>
+            <li>
+
+              <button class="step-button" type="button" data-step="1"
+
+                data-narration="ICE assigns dense local document numbers and stable field IDs. _id remains field zero; other field names are sorted.">
+
+                <b>02</b><span>Assign local IDs</span>
+
+              </button>
+
+            </li>
+            <li>
+
+              <button class="step-button" type="button" data-step="2"
+
+                data-narration="Analyzers convert values to term bytes. Keyword terms remain readable; numeric values become order-preserving prefix-coded terms.">
+
+                <b>03</b><span>Analyze field values</span>
+
+              </button>
+
+            </li>
+            <li>
+
+              <button class="step-button" type="button" data-step="3"
+
+                data-narration="ICE transposes rows into three views: term-to-doc postings, doc-to-term values, and stored source bytes.">
+
+                <b>04</b><span>Build three views</span>
+
+              </button>
+
+            </li>
+            <li>
+
+              <button class="step-button" type="button" data-step="4"
+
+                data-narration="Each logical view fans out into specific physical sections. Support indexes connect those sections; they are not a fourth data view.">
+
+                <b>05</b><span>Map views to sections</span>
+
+              </button>
+
+            </li>
+            <li>
+
+              <button class="step-button" type="button" data-step="5"
+
+                data-narration="The writer emits the mapped sections in physical order and records their absolute byte addresses for later navigation.">
+
+                <b>06</b><span>Encode segment sections</span>
+
+              </button>
+
+            </li>
+            <li>
+
+              <button class="step-button" type="button" data-step="6"
+
+                data-narration="The 60-byte footer seals the segment with roots, counts, chunk mode, version 3, timestamps, and CRC32.">
+
+                <b>07</b><span>Seal the footer</span>
+
+              </button>
+
+            </li>
+          </ol>
+
+          <div class="stage" data-label="WRITE">
+            <div class="flow-track" aria-hidden="true">
+              <div class="flow-node">batch</div><div class="flow-node">IDs</div><div class="flow-node">terms</div>
+              <div class="flow-node">views</div><div class="flow-node">mapping</div><div class="flow-node">bytes</div>
+              <div class="flow-node">footer</div>
+            </div>
+
+            <div class="stage-grid">
+              <div class="stage-column">
+                <h3>Document-oriented input</h3>
+                <div class="mini-doc" data-enter="0"><b>0</b><span>A17 · checkout · us-east</span><output>120</output></div>
+                <div class="mini-doc" data-enter="0"><b>1</b><span>B04 · payment · eu-west</span><output>350</output></div>
+                <div class="mini-doc" data-enter="0"><b>2</b><span>C91 · checkout · us-west</span><output>80</output></div>
+                <div class="mini-doc" data-enter="0"><b>3</b><span>D22 · checkout · eu-west</span><output>210</output></div>
+                <div class="field-map" data-enter="1">
+                  <strong>FIELD TABLE</strong>
+                  0 → _id<br>1 → latency<br>2 → region<br>3 → service
+                </div>
+                <div class="field-map" data-enter="1">
+                  <strong>LOCAL DOCUMENT SPACE</strong>
+                  batch position → docNum 0…3
+                </div>
+              </div>
+
+              <div class="stage-column">
+                <h3>Analyzed and transposed</h3>
+                <div class="term-box" data-enter="2">
+                  <strong>service · keyword analyzer</strong>
+                  <span class="term-chip">checkout</span><span class="term-chip">payment</span>
+                </div>
+                <div class="term-box" data-enter="2">
+                  <strong>latency · numeric analyzer</strong>
+                  <span class="term-chip">N(80)</span><span class="term-chip">N(120)</span>
+                  <span class="term-chip">N(210)</span><span class="term-chip">N(350)</span>
+                </div>
+                <div class="posting-box view-postings" data-enter="3">
+                  <strong>POSTINGS · term → docs</strong>
+                  checkout → {0, 2, 3}<br>payment → {1}
+                  <div class="posting-bits"><span class="bit on">0</span><span class="bit">1</span><span class="bit on">2</span><span class="bit on">3</span></div>
+                </div>
+                <div class="dv-box view-docvalues" data-enter="3">
+                  <strong>DOC VALUES · doc → terms</strong>
+                  latency → 0:N120 · 1:N350 · 2:N80 · 3:N210
+                </div>
+                <div class="dv-box view-stored" data-enter="3"><strong>STORED · doc → source bytes</strong>_id, service, and latency values</div>
+              </div>
+
+              <div class="stage-column">
+                <h3>Immutable ICE v3 segment</h3>
+                <div class="segment-stack">
+                  <div class="segment-block from-stored" data-enter="5">stored chunks + navigation</div>
+                  <div class="segment-block payload from-postings" data-enter="5">freq / norm · locations · Roaring posting records</div>
+                  <div class="segment-block from-postings" data-enter="5">Vellum FST dictionaries</div>
+                  <div class="segment-block from-docvalues" data-enter="5">doc-value chunks + global DV ranges</div>
+                  <div class="segment-block from-meta" data-enter="5">field records + fields index</div>
+                  <div class="segment-block footer" data-enter="6">60 B FOOTER · v3 · CRC32</div>
+                </div>
+              </div>
+
+              <div class="view-map" data-enter="4">
+                <h3>Logical view → physical ICE sections <span>one view may become several byte regions</span></h3>
+                <div class="map-lanes">
+                  <div class="map-lane">
+                    <div class="map-source postings">TERM → DOCS</div><div class="map-arrow"></div>
+                    <div class="map-target"><b>Term payloads + FST</b> · <span>freq/norm, locations, Roaring record; FST maps each term to that record</span></div>
+                  </div>
+                  <div class="map-lane">
+                    <div class="map-source docvalues">DOC → TERMS</div><div class="map-arrow"></div>
+                    <div class="map-target"><b>Per-field doc-value chunks + global ranges</b> · <span>analyzed/encoded terms for sorting and merging</span></div>
+                  </div>
+                  <div class="map-lane">
+                    <div class="map-source stored">DOC → SOURCE</div><div class="map-arrow"></div>
+                    <div class="map-target"><b>Stored chunks + navigation</b> · <span>original value bytes for returning and reconstruction</span></div>
+                  </div>
+                  <div class="map-lane">
+                    <div class="map-source meta">SUPPORT METADATA</div><div class="map-arrow"></div>
+                    <div class="map-target"><b>Field records + fields index + footer</b> · <span>names, counts, root addresses, version, and integrity</span></div>
+                  </div>
+                </div>
+                <p class="map-note"><b>ACTUAL WRITE ORDER:</b> stored area → for each field {term payloads → FST → optional doc values} →
+                  global doc-value ranges → field records → fields index → footer.</p>
+                <div class="representation-split" aria-label="Three physical representations of latency 120">
+                  <div class="representation-input">INPUT<br><b>latency = 120</b></div>
+                  <div class="representation-copy postings"><b>INDEXED</b><span>numeric terms → posting containing doc 0</span></div>
+                  <div class="representation-copy docvalues"><b>SORTABLE</b><span>doc 0 → encoded comparable term N(120)</span></div>
+                  <div class="representation-copy stored"><b>STORED</b><span>doc 0 → original value bytes for projection</span></div>
+                  <p class="representation-explanation"><b>Not the same value stored twice:</b> it is one logical value materialized into purpose-specific
+                    representations. In the native design, omit <code>STORE</code> when the original is never returned and omit <code>SORTABLE</code> when it
+                    is never sorted.</p>
+                </div>
+              </div>
+            </div>
+            <div class="narration"><b id="write-narration-number">01</b><p id="write-narration" aria-live="polite"></p></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="scene" id="scene-filter" data-scene="filter" data-max-step="5" hidden>
+        <div class="scene-layout">
+          <ol class="step-list">
+            <li>
+
+              <button class="step-button" type="button" data-step="0"
+
+                data-narration="The query asks for an exact term in one field. The analyzer must produce the same term bytes used during writing.">
+
+                <b>01</b><span>Build the term query</span>
+
+              </button>
+
+            </li>
+            <li>
+
+              <button class="step-button" type="button" data-step="1"
+
+                data-narration="The reader starts at EOF. The footer supplies the fields-index root and confirms segment version 3.">
+
+                <b>02</b><span>Read footer roots</span>
+
+              </button>
+
+            </li>
+            <li>
+
+              <button class="step-button" type="button" data-step="2"
+
+                data-narration="The fields index locates the service record; that record supplies the Vellum dictionary address.">
+
+                <b>03</b><span>Resolve the field</span>
+
+              </button>
+
+            </li>
+            <li>
+
+              <button class="step-button" type="button" data-step="3"
+
+                data-narration="The field FST maps the checkout bytes to a postings address. Prefix queries would enumerate a range of FST keys here.">
+
+                <b>04</b><span>Seek the term in FST</span>
+
+              </button>
+
+            </li>
+            <li>
+
+              <button class="step-button" type="button" data-step="4"
+
+                data-narration="The postings record loads a portable Roaring bitmap. Its segment-local candidates are document numbers 0, 2, and 3.">
+
+                <b>05</b><span>Load the posting bitmap</span>
+
+              </button>
+
+            </li>
+            <li>
+
+              <button class="step-button" type="button" data-step="5"
+
+                data-narration="Stored navigation locates the three source records. They share one 128-document chunk, so one decompression can serve all results.">
+
+                <b>06</b><span>Materialize matching data</span>
+
+              </button>
+
+            </li>
+          </ol>
+
+          <div class="stage" data-label="FILTER">
+            <div class="flow-track" aria-hidden="true">
+              <div class="flow-node">query</div><div class="flow-node">footer</div><div class="flow-node">field</div>
+              <div class="flow-node">FST</div><div class="flow-node">posting</div><div class="flow-node">stored</div>
+            </div>
+            <div class="lookup-query" data-enter="0"><b>FILTER</b><span>service</span><span>=</span><output>"checkout"</output></div>
+
+            <div class="lookup-grid">
+              <div class="lookup-path">
+                <div class="lookup-node" data-enter="1">FOOTER<small>fieldsIndex → address</small></div>
+                <div class="lookup-node" data-enter="2">FIELDS INDEX<small>field 3 → record</small></div>
+                <div class="lookup-node" data-enter="2">SERVICE RECORD<small>dictOffset → address</small></div>
+                <div class="lookup-node" data-enter="3">VELLUM FST<small>checkout → postingOffset</small></div>
+                <div class="lookup-node" data-enter="4">POSTING RECORD<small>Roaring length + bytes</small></div>
+                <div class="lookup-node" data-enter="5">STORED CHUNK<small>docNum → original values</small></div>
+              </div>
+
+              <div class="stage-column">
+                <h3>Segment-local result</h3>
+                <div class="posting-box" data-enter="4">
+                  <strong>Roaring(checkout)</strong>
+                  <div class="posting-bits"><span class="bit on">0</span><span class="bit">1</span><span class="bit on">2</span><span class="bit on">3</span></div>
+                  candidates = {0, 2, 3}
+                </div>
+                <div class="result-list">
+                  <div class="result-box" data-enter="5"><b>0</b><span>A17 · checkout</span><output>120 ms</output></div>
+                  <div class="result-box" data-enter="5"><b>2</b><span>C91 · checkout</span><output>80 ms</output></div>
+                  <div class="result-box" data-enter="5"><b>3</b><span>D22 · checkout</span><output>210 ms</output></div>
+                </div>
+                <div class="dv-box" data-enter="5">
+                  <strong>SNAPSHOT BOUNDARY</strong>
+                  ICE returns candidates. A separate <code>.snp</code> deletion bitmap removes logically deleted documents before final results.
+                </div>
+              </div>
+            </div>
+            <div class="narration"><b id="filter-narration-number">01</b><p id="filter-narration" aria-live="polite"></p></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="scene" id="scene-sort" data-scene="sort" data-max-step="5" hidden>
+        <div class="scene-layout">
+          <ol class="step-list">
+            <li>
+
+              <button class="step-button" type="button" data-step="0"
+
+                data-narration="Sorting starts with the filter candidates, not every segment document: local documents 0, 2, and 3.">
+
+                <b>01</b><span>Receive filter candidates</span>
+
+              </button>
+
+            </li>
+            <li>
+
+              <button class="step-button" type="button" data-step="1"
+
+                data-narration="The footer docValues root leads to one start/end pair for every field. The latency pair selects its doc-value region.">
+
+                <b>02</b><span>Resolve latency doc values</span>
+
+              </button>
+
+            </li>
+            <li>
+
+              <button class="step-button" type="button" data-step="2"
+
+                data-narration="The reader loads the 1024-document doc-value chunk and visits only candidate document numbers.">
+
+                <b>03</b><span>Read candidate sort keys</span>
+
+              </button>
+
+            </li>
+            <li>
+
+              <button class="step-button" type="button" data-step="3"
+
+                data-narration="Each numeric value is represented by a shift-zero prefix-coded term whose byte order preserves numeric order.">
+
+                <b>04</b><span>Normalize comparable bytes</span>
+
+              </button>
+
+            </li>
+            <li>
+
+              <button class="step-button" type="button" data-step="4"
+
+                data-narration="The Top N collector compares byte keys and maintains a bounded heap. Here every candidate fits, producing 80, 120, then 210.">
+
+                <b>05</b><span>Build the ordered Top N</span>
+
+              </button>
+
+            </li>
+            <li>
+
+              <button class="step-button" type="button" data-step="5"
+
+                data-narration="Finally, stored fields are loaded in rank order. Doc values choose order; stored fields produce the values returned to BanyanDB.">
+
+                <b>06</b><span>Return ordered data</span>
+
+              </button>
+
+            </li>
+          </ol>
+
+          <div class="stage" data-label="SORT">
+            <div class="flow-track" aria-hidden="true">
+              <div class="flow-node">hits</div><div class="flow-node">DV root</div><div class="flow-node">chunk</div>
+              <div class="flow-node">keys</div><div class="flow-node">Top N</div><div class="flow-node">stored</div>
+            </div>
+            <div class="lookup-query" data-enter="0"><b>SORT</b><span>service = checkout</span><span>BY</span><output>latency ASC · LIMIT 3</output></div>
+
+            <div class="sort-grid">
+              <div class="stage-column">
+                <h3>Candidate local docs</h3>
+                <div class="candidate" data-enter="0"><b>doc 0</b><span>A17</span><output>?</output></div>
+                <div class="candidate" data-enter="0"><b>doc 2</b><span>C91</span><output>?</output></div>
+                <div class="candidate" data-enter="0"><b>doc 3</b><span>D22</span><output>?</output></div>
+                <div class="field-map" data-enter="1">
+                  <strong>GLOBAL DV INDEX</strong>
+                  latency → [start, end)<br>chunk = docNum / 1024
+                </div>
+              </div>
+
+              <div class="stage-column">
+                <h3>Decoded view of sort bytes</h3>
+                <div class="dv-row" data-enter="2"><b>doc 0</b><span class="value-bar" style="--value:34%"></span><output>120</output></div>
+                <div class="dv-row" data-enter="2"><b>doc 2</b><span class="value-bar" style="--value:23%"></span><output>80</output></div>
+                <div class="dv-row" data-enter="2"><b>doc 3</b><span class="value-bar" style="--value:60%"></span><output>210</output></div>
+                <div class="term-box" data-enter="3">
+                  <strong>ACTUAL COMPARISON</strong>
+                  N(80) &lt; N(120) &lt; N(210)<br>
+                  <span style="color:var(--muted)">visual numbers are decoded labels; the collector compares encoded bytes.</span>
+                </div>
+              </div>
+
+              <div class="stage-column">
+                <h3>Ordered Top N and materialization</h3>
+                <div class="rank-row" data-enter="4"><b class="rank-badge">#1</b><span>doc 2 · C91</span><output>80 ms</output></div>
+                <div class="rank-row" data-enter="4"><b class="rank-badge">#2</b><span>doc 0 · A17</span><output>120 ms</output></div>
+                <div class="rank-row" data-enter="4"><b class="rank-badge">#3</b><span>doc 3 · D22</span><output>210 ms</output></div>
+                <div class="result-box" data-enter="5"><b>RETURN</b><span>C91 → A17 → D22</span><output>ascending</output></div>
+                <div class="dv-box" data-enter="5">
+                  <strong>TIE BREAK</strong>
+                  Equal sort bytes fall back to the index hit number, giving deterministic segment-local order.
+                </div>
+              </div>
+            </div>
+            <div class="narration"><b id="sort-narration-number">01</b><p id="sort-narration" aria-live="polite"></p></div>
+          </div>
+        </div>
+      </section>
+
+      <div class="truth-panel">
+        <article class="truth"><b>POSTINGS FILTER</b><p>The dictionary and Roaring postings move from a field term to matching local document numbers.</p></article>
+        <article class="truth"><b>DOC VALUES SORT</b><p>The column-like doc-value view moves from candidate document numbers to comparable term bytes.</p></article>
+        <article class="truth"><b>STORED FIELDS RETURN</b><p>The compressed stored view moves from ordered document numbers to the original values returned to
+          callers.</p></article>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>Conceptual addresses and encoded labels are illustrative; structure and access paths follow ICE v3 source behavior.</span>
+    <span><a href="research-report.html#format">ICE anatomy report</a> ·
+      <a href="research-report.md">full research report</a></span>
+  </footer>
+
+  <script>
+    (() => {
+      const scenes = new Map([...document.querySelectorAll('.scene')].map(scene => [scene.dataset.scene, scene]));
+      const sceneTargets = [...document.querySelectorAll('[data-scene-target]')];
+      const playButton = document.querySelector('#play');
+      const previousButton = document.querySelector('#previous');
+      const nextButton = document.querySelector('#next');
+      const restartButton = document.querySelector('#restart');
+      const speedSelect = document.querySelector('#speed');
+      const progress = document.querySelector('#progress');
+      const counter = document.querySelector('#counter');
+      let currentScene = 'write';
+      let currentStep = 0;
+      let timer = null;
+
+      function maxStep() {
+        return Number(scenes.get(currentScene).dataset.maxStep);
+      }
+
+      function stop() {
+        if (timer !== null) {
+          window.clearInterval(timer);
+          timer = null;
+        }
+        playButton.textContent = '▶';
+        playButton.setAttribute('aria-pressed', 'false');
+      }
+
+      function render() {
+        const scene = scenes.get(currentScene);
+        const maximum = maxStep();
+        const stepButtons = [...scene.querySelectorAll('.step-button')];
+
+        scene.querySelectorAll('[data-enter]').forEach(element => {
+          const enterStep = Number(element.dataset.enter);
+          element.classList.toggle('done', enterStep < currentStep);
+          element.classList.toggle('active', enterStep === currentStep);
+        });
+
+        scene.querySelectorAll('.flow-node').forEach((node, index) => {
+          node.classList.toggle('done', index < currentStep);
+          node.classList.toggle('active', index === currentStep);
+        });
+
+        stepButtons.forEach((button, index) => {
+          button.classList.toggle('done', index < currentStep);
+          button.classList.toggle('active', index === currentStep);
+          button.setAttribute('aria-current', index === currentStep ? 'step' : 'false');
+        });
+
+        const activeButton = stepButtons[currentStep];
+        document.querySelector(`#${currentScene}-narration`).textContent = activeButton.dataset.narration;
+        document.querySelector(`#${currentScene}-narration-number`).textContent = String(currentStep + 1).padStart(2, '0');
+        progress.style.width = `${((currentStep + 1) / (maximum + 1)) * 100}%`;
+        counter.textContent = `STEP ${currentStep + 1} / ${maximum + 1}`;
+        previousButton.disabled = currentStep === 0;
+        nextButton.disabled = currentStep === maximum;
+      }
+
+      function chooseScene(name, reset = true) {
+        if (!scenes.has(name)) return;
+        stop();
+        currentScene = name;
+        if (reset) currentStep = 0;
+        scenes.forEach((scene, sceneName) => { scene.hidden = sceneName !== name; });
+        sceneTargets.forEach(button => {
+          const selected = button.dataset.sceneTarget === name;
+          button.setAttribute('aria-selected', String(selected));
+        });
+        window.history.replaceState(null, '', `#${name}`);
+        render();
+      }
+
+      function advance() {
+        if (currentStep < maxStep()) {
+          currentStep += 1;
+          render();
+          return;
+        }
+        stop();
+      }
+
+      function play() {
+        if (timer !== null) {
+          stop();
+          return;
+        }
+        if (currentStep === maxStep()) currentStep = 0;
+        render();
+        playButton.textContent = 'Ⅱ';
+        playButton.setAttribute('aria-pressed', 'true');
+        timer = window.setInterval(advance, Number(speedSelect.value));
+      }
+
+      sceneTargets.forEach(button => button.addEventListener('click', () => chooseScene(button.dataset.sceneTarget)));
+      document.querySelectorAll('.step-button').forEach(button => {
+        button.addEventListener('click', () => {
+          stop();
+          currentStep = Number(button.dataset.step);
+          render();
+        });
+      });
+      playButton.addEventListener('click', play);
+      previousButton.addEventListener('click', () => { stop(); currentStep = Math.max(0, currentStep - 1); render(); });
+      nextButton.addEventListener('click', () => { stop(); currentStep = Math.min(maxStep(), currentStep + 1); render(); });
+      restartButton.addEventListener('click', () => { stop(); currentStep = 0; render(); });
+      speedSelect.addEventListener('change', () => { if (timer !== null) { stop(); play(); } });
+
+      document.addEventListener('keydown', event => {
+        if (event.target.matches('select, button')) return;
+        if (event.key === 'ArrowRight') { event.preventDefault(); nextButton.click(); }
+        if (event.key === 'ArrowLeft') { event.preventDefault(); previousButton.click(); }
+        if (event.key === ' ') { event.preventDefault(); play(); }
+      });
+
+      const requestedScene = window.location.hash.slice(1);
+      chooseScene(scenes.has(requestedScene) ? requestedScene : 'write');
+    })();
+  </script>
+</body>
+</html>

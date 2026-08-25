@@ -34,7 +34,7 @@ The database research community usually uses [RUM Conjecture](http://daslab.seas
 
 The `dump trace-source-catalog` subcommand validates the frozen downloaded trace benchmark shard and writes its deterministic
 core and secondary-index ledgers. It requires `--source-path` and a new, outside-source `--output-path`; see the
-[trace pipeline merge performance design](docs/design/trace-pipeline-merge-performance-test.md) for the source contract.
+[trace pipeline merge performance design](docs/design/archive/0.11.0/trace-pipeline-merge-performance-test.md) for the source contract.
 
 The `dump trace-generate-fixture` subcommand consumes that catalog and the immutable downloaded shard, verifies the default
 SkyWalking sampler ratio, and writes the deterministic one-day core and secondary-index fixture through the data-node part

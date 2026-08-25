@@ -18,7 +18,7 @@
 // Package sdk defines the contract between the BanyanDB post-trace pipeline
 // engine and user-supplied native Go plugins (each a .so loaded in-process via
 // the standard Go plugin package). It is the single pinned surface plugin
-// authors build against; see docs/design/post-trace-pipeline.md §2.5.
+// authors build against; see docs/design/archive/0.11.0/post-trace-pipeline.md §2.5.
 //
 // A plugin is one kind of the generic Plugin interface. Every kind shares Kind,
 // Project, and Close; each kind adds its own processing method (the sampler kind

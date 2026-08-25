@@ -234,7 +234,7 @@ type Verdict struct {
 }
 ```
 
-These types are real and live in [`pkg/pipeline/sdk`](../../pkg/pipeline/sdk); the block above is the conceptual layout, and the canonical definitions plus the value-decode helpers (`TagColumn.At`, `DecodeTagValue`) are in that package. The shipped first-party samplers live at [`plugins/skywalking/sw-trace-sampler`](../../plugins/skywalking/sw-trace-sampler) and [`plugins/skywalking/zipkin-trace-sampler`](../../plugins/skywalking/zipkin-trace-sampler); a standalone teaching example of the same contract — config parsing, `Project()`, and tag/span extraction — lives at [`pkg/pipeline/sdk/_example/segment-tail-sampler`](../../pkg/pipeline/sdk/_example/segment-tail-sampler) (note the example predates the shipped plugins and still uses snake_case config keys).
+These types are real and live in [`pkg/pipeline/sdk`](../../../../pkg/pipeline/sdk); the block above is the conceptual layout, and the canonical definitions plus the value-decode helpers (`TagColumn.At`, `DecodeTagValue`) are in that package. The shipped first-party samplers live at [`plugins/skywalking/sw-trace-sampler`](../../../../plugins/skywalking/sw-trace-sampler) and [`plugins/skywalking/zipkin-trace-sampler`](../../../../plugins/skywalking/zipkin-trace-sampler); a standalone teaching example of the same contract — config parsing, `Project()`, and tag/span extraction — lives at [`pkg/pipeline/sdk/_example/segment-tail-sampler`](../../../../pkg/pipeline/sdk/_example/segment-tail-sampler) (note the example predates the shipped plugins and still uses snake_case config keys).
 
 **Verdict shape — boolean keep-mask.** `Decide` returns a `[]bool` aligned to `batch.Traces`: `Keep[i]` retains trace `i`. This is the simplest fully-vectorized contract and makes the alignment invariant trivial to check (the engine rejects a verdict whose length ≠ `len(batch.Traces)`). The keep/drop is per `trace_id`, matching the merger's per-`trace_id` write granularity (§7.1).
 
@@ -314,7 +314,7 @@ type Logger interface {
 
 **D7 caveat — transitive zerolog dependency.** The `.so` already links `zerolog` transitively via `pbv1` (`pkg/pb/v1`). The `sdk.Logger` façade avoids widening that coupling to plugin authors (no `zerolog.Logger` or `zerolog.Event` crosses the `.so` boundary) rather than eliminating the transitive link. Plugin authors should not rely on `zerolog` being present; use only the `sdk.Logger` interface.
 
-Reference plugins demonstrating well-behaved and adversarial use of the façade live at [`test/plugins/_telemetrysampler`](../../test/plugins/_telemetrysampler) (keeps all traces, emits bounded counter + sparse Info log) and [`test/plugins/_faultysampler`](../../test/plugins/_faultysampler) (panic in UseHost, log flood, cardinality explosion — verifies host bounds hold). Build them with `make build-trace-pipeline-telemetry-plugins`.
+Reference plugins demonstrating well-behaved and adversarial use of the façade live at [`test/plugins/_telemetrysampler`](../../../../test/plugins/_telemetrysampler) (keeps all traces, emits bounded counter + sparse Info log) and [`test/plugins/_faultysampler`](../../../../test/plugins/_faultysampler) (panic in UseHost, log flood, cardinality explosion — verifies host bounds hold). Build them with `make build-trace-pipeline-telemetry-plugins`.
 
 ### Host-provided plugin execution metrics
 
@@ -505,9 +505,9 @@ Below are two operational scenarios represented as complete `TracePipelineConfig
 > `MaxTS - MinTS`, which is the spread of per-row *start* timestamps (and zero for a single-segment trace), not a duration.
 >
 > The `sw-trace-sampler.so` link is implemented at
-> [`plugins/skywalking/sw-trace-sampler`](../../plugins/skywalking/sw-trace-sampler). A teaching example of the same SDK
+> [`plugins/skywalking/sw-trace-sampler`](../../../../plugins/skywalking/sw-trace-sampler). A teaching example of the same SDK
 > contract lives at
-> [`pkg/pipeline/sdk/_example/segment-tail-sampler`](../../pkg/pipeline/sdk/_example/segment-tail-sampler) (§2.5). Each
+> [`pkg/pipeline/sdk/_example/segment-tail-sampler`](../../../../pkg/pipeline/sdk/_example/segment-tail-sampler) (§2.5). Each
 > `StageRule.plugins` chain has the same shape: one shared sampler whose config tightens from Hot (`durationThresholdMs`
 > 100, `keepErrors`, and the `db.type` plus `mq.queue` keep-tag rules) to Warm (`keepErrors` only), with each link projecting
 > only the tags its config references and keeping `Spans` false.

@@ -354,9 +354,9 @@ the exact `bytes.Equal` confirmation are untouched — the probe becomes `arena[
 
 **Scope.**
 
-- `docs/design/post-trace-pipeline.md:630-632` — a merge may stop dropping at its ceiling; the pruning predicate, lockstep
+- `post-trace-pipeline.md:630-632` — a merge may stop dropping at its ceiling; the pruning predicate, lockstep
   publication, and atomicity are unchanged.
-- `docs/design/trace-pipeline-merge-optimization-plan.md` Phase 6 — the collector is now ceiling-bounded; the phase's
+- `trace-pipeline-merge-optimization-plan.md` Phase 6 — the collector is now ceiling-bounded; the phase's
   exactness invariant is unchanged, not revised.
 - Operator documentation: the retained-by-ceiling counter and what to do about it (raise memory), the ordering bias of
   spec §4, and — the item an operator is most likely to be surprised by — that a ceiling-bound shard will not shrink as

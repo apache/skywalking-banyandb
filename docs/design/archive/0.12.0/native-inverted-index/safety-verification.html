@@ -1,0 +1,596 @@
+<!--
+  Licensed to Apache Software Foundation (ASF) under one or more contributor
+  license agreements. See the NOTICE file distributed with
+  this work for additional information regarding copyright
+  ownership. Apache Software Foundation (ASF) licenses this file to you under
+  the Apache License, Version 2.0 (the "License"); you may
+  not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing,
+  software distributed under the License is distributed on an
+  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+  KIND, either express or implied. See the License for the
+  specific language governing permissions and limitations
+  under the License.
+-->
+<!doctype html>
+<html lang="en" data-theme="paper">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Bounds, malformed-input behavior, compatibility matrices, fixtures, fuzzing, and crash evidence.">
+  <title>BDB Native Index Spec — Safety and verification</title>
+  <link rel="stylesheet" href="spec.css">
+</head>
+<body data-page="safety">
+  <div class="progress" id="scroll-progress"></div>
+  <div class="shell">
+    <aside class="rail">
+      <div class="rail-brand">
+        <div class="rail-mark">BDB</div>
+        <div>
+          <b>NATIVE INDEX</b>
+          <span>implementation specification</span>
+        </div>
+      </div>
+      <div class="rail-status">
+        <b>REVIEW</b>
+        <span>BDB-NIDX-SPEC-001<br>Revision 0.1 · 2026-08-24</span>
+        <span class="page-label">CHAPTER 04/05 · SAFETY</span>
+      </div>
+      <nav aria-label="Specification sections">
+        <ol class="toc" id="toc">
+          <li>
+            <a href="index.html#status">
+              <b>00</b>
+              <span>Document status</span>
+            </a>
+          </li>
+          <li>
+            <a href="index.html#contract">
+              <b>01</b>
+              <span>Contract and scope</span>
+            </a>
+          </li>
+          <li>
+            <a href="index.html#model">
+              <b>02</b>
+              <span>Data model</span>
+            </a>
+          </li>
+          <li>
+            <a href="index.html#products">
+              <b>03</b>
+              <span>Product requirements</span>
+            </a>
+          </li>
+          <li>
+            <a href="index.html#architecture">
+              <b>04</b>
+              <span>Architecture and APIs</span>
+            </a>
+          </li>
+          <li>
+            <a href="write-format.html#fields">
+              <b>05</b>
+              <span>Fields and identity</span>
+            </a>
+          </li>
+          <li>
+            <a href="write-format.html#terms">
+              <b>06</b>
+              <span>Analyzers and terms</span>
+            </a>
+          </li>
+          <li>
+            <a href="write-format.html#write">
+              <b>07</b>
+              <span>Write semantics</span>
+            </a>
+          </li>
+          <li>
+            <a href="write-format.html#ice">
+              <b>08</b>
+              <span>ICE v3 format</span>
+            </a>
+          </li>
+          <li>
+            <a href="write-format.html#snapshot">
+              <b>09</b>
+              <span>Snapshot v3 format</span>
+            </a>
+          </li>
+          <li>
+            <a href="query-lifecycle.html#query">
+              <b>10</b>
+              <span>Query execution</span>
+            </a>
+          </li>
+          <li>
+            <a href="query-lifecycle.html#sort">
+              <b>11</b>
+              <span>Sort and projection</span>
+            </a>
+          </li>
+          <li>
+            <a href="query-lifecycle.html#lifecycle">
+              <b>12</b>
+              <span>Durability and recovery</span>
+            </a>
+          </li>
+          <li>
+            <a href="query-lifecycle.html#merge">
+              <b>13</b>
+              <span>Merge, delete, and GC</span>
+            </a>
+          </li>
+          <li>
+            <a href="query-lifecycle.html#external">
+              <b>14</b>
+              <span>External and admin</span>
+            </a>
+          </li>
+          <li>
+            <a class="page-current" href="#integrity">
+              <b>15</b>
+              <span>Integrity and limits</span>
+            </a>
+          </li>
+          <li>
+            <a class="page-current" href="#compatibility">
+              <b>16</b>
+              <span>Compatibility</span>
+            </a>
+          </li>
+          <li>
+            <a class="page-current" href="#verification">
+              <b>17</b>
+              <span>Verification program</span>
+            </a>
+          </li>
+          <li>
+            <a href="delivery-review.html#rollout">
+              <b>18</b>
+              <span>Implementation tickets</span>
+            </a>
+          </li>
+          <li>
+            <a href="delivery-review.html#operations">
+              <b>19</b>
+              <span>Operations</span>
+            </a>
+          </li>
+          <li>
+            <a href="delivery-review.html#decisions">
+              <b>20</b>
+              <span>Review decisions</span>
+            </a>
+          </li>
+          <li>
+            <a href="delivery-review.html#acceptance">
+              <b>21</b>
+              <span>Acceptance criteria</span>
+            </a>
+          </li>
+          <li>
+            <a href="delivery-review.html#traceability">
+              <b>22</b>
+              <span>Traceability</span>
+            </a>
+          </li>
+        </ol>
+      </nav>
+      <div class="rail-footer">
+        <a href="ice-segment-animated-walkthrough.html">Animated ICE walkthrough</a>
+        <br>
+        <a href="research-report.html">Visual research report</a>
+      </div>
+    </aside>
+
+    <div class="workspace">
+      <header class="toolbar">
+        <input class="search" id="spec-search" type="search" placeholder="Search this chapter…" aria-label="Search this specification chapter">
+        <div class="filter-set" aria-label="Filter specification chapter">
+          <button class="filter-button" type="button" data-filter="all" aria-pressed="true">All</button>
+          <button class="filter-button" type="button" data-filter="normative" aria-pressed="false">Normative</button>
+          <button class="filter-button" type="button" data-filter="open" aria-pressed="false">Open only</button>
+        </div>
+        <div class="tool-set">
+          <button class="tool-button" id="theme-toggle" type="button" title="Toggle paper/night theme">◐</button>
+          <button class="tool-button" id="print-spec" type="button">Print</button>
+        </div>
+      </header>
+
+      <main class="document" id="document">
+      <section class="chapter-hero" id="chapter-top" data-chapter="04">
+        <div class="chapter-kicker">BDB-NIDX-SPEC-001 · chapter 04 of 05</div>
+        <h1>Safety and verification</h1>
+        <p class="chapter-summary">Bounds, malformed-input behavior, compatibility matrices, fixtures, fuzzing, and crash evidence.</p>
+        <p class="chapter-range">SECTIONS 15–17 · REVISION 0.1 · REVIEW DRAFT</p>
+        <nav class="chapter-tabs" aria-label="Specification chapters">
+          <a href="index.html#status">01 Overview</a>
+          <a href="write-format.html#fields">02 Write + format</a>
+          <a href="query-lifecycle.html#query">03 Query + lifecycle</a>
+          <a href="#integrity" aria-current="page">04 Safety</a>
+          <a href="delivery-review.html#rollout">05 Delivery + review</a>
+        </nav>
+      </section>
+
+<section class="spec-section" id="integrity" data-status="decision" data-searchable data-normative data-open>
+          <div class="section-grid">
+            <aside class="section-side">
+              <div>
+                <div class="section-no">15</div>
+                <span class="section-state">Limit values open</span>
+                <p>Classes of limits are normative; numeric budgets require measurement.</p>
+              </div>
+            </aside>
+            <div class="section-main">
+              <h2>Integrity, malformed input, and resource limits</h2>
+              <p class="section-lede">Every untrusted count, address, codec payload, expansion, and decompression result is checked before use.</p>
+
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Limit class</th>
+                      <th>Enforcement point</th>
+                      <th>Required failure</th>
+                      <th>Value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>File and segment bytes</td>
+                      <td>Before mmap/read allocation and external receive.</td>
+                      <td>Typed limit error.</td>
+                      <td>
+                        <span class="tag decision">benchmark</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Fields and field-name bytes</td>
+                      <td>Footer/field-index validation.</td>
+                      <td>Reject segment.</td>
+                      <td>
+                        <span class="tag decision">benchmark</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Terms, term length, analyzed expansion</td>
+                      <td>Batch admission and FST enumeration.</td>
+                      <td>Reject batch/query.</td>
+                      <td>
+                        <span class="tag decision">benchmark</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Stored/doc-value decompressed bytes</td>
+                      <td>Before decompression destination growth.</td>
+                      <td>Reject chunk.</td>
+                      <td>
+                        <span class="tag decision">corpus</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Compression ratio</td>
+                      <td>Chunk decompression.</td>
+                      <td>Reject suspected bomb.</td>
+                      <td>
+                        <span class="tag decision">corpus</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Roaring cardinality and bytes</td>
+                      <td>Before bitmap load.</td>
+                      <td>Reject payload.</td>
+                      <td>≤ segment docs plus byte budget.</td>
+                    </tr>
+                    <tr>
+                      <td>Wildcard/range term expansion</td>
+                      <td>During FST enumeration.</td>
+                      <td>Cancel or typed expansion error.</td>
+                      <td>
+                        <span class="tag decision">workload</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Top N and projection bytes</td>
+                      <td>Before collector/result allocation.</td>
+                      <td>Reject request.</td>
+                      <td>
+                        <span class="tag decision">API policy</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Snapshot segment count</td>
+                      <td>Before record allocation.</td>
+                      <td>Reject snapshot.</td>
+                      <td>
+                        <span class="tag decision">workload</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="clause-list">
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">SAFE-001</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Malformed bytes must return descriptive typed errors without panic, hang, integer-wrap slicing, unbounded allocation, or partial publication.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">SAFE-002</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Use checked addition/multiplication for all offset, width, count, and allocation arithmetic.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">SAFE-003</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Verify Roaring document numbers are below segment <code>numDocs</code> and snapshot deletions are within their referenced segment.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">SAFE-004</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Never log raw Property source, arbitrary indexed binary values, or complete terms by default when reporting corruption.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+<section class="spec-section" id="compatibility" data-status="fixture" data-searchable data-normative data-open>
+          <div class="section-grid">
+            <aside class="section-side">
+              <div>
+                <div class="section-no">16</div>
+                <span class="section-state">Hard gate</span>
+                <p>Compatibility is behavioral and bidirectional, not byte identity.</p>
+              </div>
+            </aside>
+            <div class="section-main">
+              <h2>Compatibility contract</h2>
+              <p class="section-lede">Native output may use different valid Roaring containers or omit optional optimizations, but both readers must observe
+                identical live documents and required query results.</p>
+
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Producer/action</th>
+                      <th>Consumer</th>
+                      <th>Required proof</th>
+                      <th>Gate</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Historical/legacy directory</td>
+                      <td>Native read-only</td>
+                      <td>Fields, terms, postings, stored values, doc values, timestamps, manifests, deletions.</td>
+                      <td>
+                        <span class="tag fixture">reader</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Legacy directory + native append/update/delete</td>
+                      <td>Legacy and native</td>
+                      <td>Open, query, merge, restart, and identical live documents.</td>
+                      <td>
+                        <span class="tag fixture">writer</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Native ICE v3 segment</td>
+                      <td>Legacy reader</td>
+                      <td>Dictionary, posting, stored, doc-value, query, merge, and restart parity.</td>
+                      <td>
+                        <span class="tag fixture">writer</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Native snapshot v3</td>
+                      <td>Legacy reader</td>
+                      <td>Exact segment set, metadata, deletion masks, reserved CRC32 field placement, and recovery.</td>
+                      <td>
+                        <span class="tag fixture">manifest</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Legacy/native raw segment</td>
+                      <td>Legacy/native receiver</td>
+                      <td>Validate, receive, dedup on/off, retry, crash, and later introduction.</td>
+                      <td>
+                        <span class="tag fixture">external</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Native pre-crash filesystem</td>
+                      <td>Native recovery</td>
+                      <td>Select last complete commit and safely classify orphans.</td>
+                      <td>
+                        <span class="tag fixture">crash</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="clause-list">
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">COMPAT-001</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Preserve same-file old-binary rollback for the maintainer-approved compatibility window.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">COMPAT-002</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Define the historical release floor from real BanyanDB directories, not from nominal snapshot version support.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">COMPAT-003</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Record fixture producer commit, Go/OS/architecture, compressor, codec versions, options, SHA-256, and canonical logical results.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">COMPAT-004</span>
+                    <span class="verb may">MAY</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Emit bytes different from the legacy writer when multiple valid encodings exist, provided every cross-reader and logical parity test passes.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+<section class="spec-section" id="verification" data-status="fixture" data-searchable data-normative data-open>
+          <div class="section-grid">
+            <aside class="section-side">
+              <div>
+                <div class="section-no">17</div>
+                <span class="section-state">Required program</span>
+                <p>No production writer without corpus, fuzz, crash, and cross-read evidence.</p>
+              </div>
+            </aside>
+            <div class="section-main">
+              <h2>Verification and test program</h2>
+              <p class="section-lede">Tests establish the contract independently of the legacy source and remain executable after dependency removal.</p>
+
+              <h3>Golden corpus boundaries</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Area</th>
+                      <th>Mandatory fixtures</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Stored chunks</td>
+                      <td>0, 1, 127, 128, and 129 documents; empty, repeated, binary, long, and multi-field stored values.</td>
+                    </tr>
+                    <tr>
+                      <td>Doc values</td>
+                      <td>1023, 1024, and 1025 documents; missing, repeated, <code>0xff</code>, backslash, empty, numeric, and timestamp terms.</td>
+                    </tr>
+                    <tr>
+                      <td>Postings</td>
+                      <td>One-hit/general; sparse/dense/run Roaring; detail absent/present; adaptive chunks; all/none cardinality.</td>
+                    </tr>
+                    <tr>
+                      <td>Integer widths</td>
+                      <td>Every uvarint width transition, large offsets, max legal counts, and overflowing encodings.</td>
+                    </tr>
+                    <tr>
+                      <td>Analysis</td>
+                      <td>Every analyzer, Unicode edge, numeric extrema, inclusive range boundary, wildcard escape, and MATCH operator.</td>
+                    </tr>
+                    <tr>
+                      <td>Lifecycle</td>
+                      <td>Pre/post update, delete, merge, expiry, external receive, dedup, restart, snapshot v1-v3, and orphan files.</td>
+                    </tr>
+                    <tr>
+                      <td>Corruption</td>
+                      <td>One-at-a-time mutation of every offset, count, length, FST value, bitmap, compressed chunk, and version. CRC32-field mutation is
+                        intentionally accepted because the field is not validated.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="checklist">
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span>
+                    <b>Backend-neutral behavior suite</b>Existing backend passes canonical insert/update/delete/query/sort/projection/restart state machines.</span>
+                    <span class="tag fixture">gate R2</span>
+                  </label>
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span>
+                    <b>Independent annotated grammar</b>A reviewer can navigate fixtures without consulting Bluge/ICE source.</span>
+                    <span class="tag fixture">gate R3</span>
+                  </label>
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span>
+                    <b>Native reader differential</b>Decoded logical representation matches the legacy reader on every supported fixture.</span>
+                    <span class="tag fixture">gate R4</span>
+                  </label>
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span>
+                    <b>Native writer cross-open</b>Legacy reader can query, merge, and restart every native fixture.</span>
+                    <span class="tag fixture">gate R4</span>
+                  </label>
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span>
+                    <b>Structure-aware fuzzing</b>All entry points enforce limits and return errors without panic/hang.</span>
+                    <span class="tag fixture">gate</span>
+                  </label>
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span>
+                    <b>Crash cut-point matrix</b>Every write/sync/rename/callback/GC boundary recovers a complete committed generation.</span>
+                    <span class="tag fixture">gate</span>
+                  </label>
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span>
+                    <b>Production-shaped benchmark budget</b>Throughput, latency, allocation, disk, startup, and merge budgets approved.</span>
+                    <span class="tag fixture">gate</span>
+                  </label>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      <nav class="page-turn" aria-label="Specification chapters">
+        <a href="query-lifecycle.html#query"><b>← Previous chapter</b><span>Query and lifecycle</span></a>
+        <a href="delivery-review.html#rollout"><b>Next chapter →</b><span>Delivery and review</span></a>
+      </nav>
+
+      <div class="empty-search" id="empty-search">No section in this chapter matches the search/filter.</div>
+      </main>
+    </div>
+  </div>
+  <script src="spec.js"></script>
+</body>
+</html>
