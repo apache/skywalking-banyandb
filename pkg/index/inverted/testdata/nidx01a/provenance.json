@@ -1,0 +1,22 @@
+{
+  "oracle": {
+    "github.com/blugelabs/bluge": "github.com/SkyAPM/bluge v0.0.0-20260625022800-42385daf66b8",
+    "github.com/blugelabs/bluge_segment_api": "github.com/zinclabs/bluge_segment_api v1.0.0",
+    "github.com/blugelabs/ice": "github.com/SkyAPM/ice v0.0.0-20250619023539-b5173603b0b3"
+  },
+  "file_sha256": {
+    "index/000000000002.seg": "f032abe57c445b3db7976c85cd05671388907b3f872c446b785cb9a67b9185a6",
+    "index/000000000002.snp": "34c6ad06b3e4efa1653559a2c9cb11aad8d95523083ccd4eae6f42652cba998a"
+  },
+  "reserved_crc32": {
+    ".seg": "deadbeef (arbitrary, no writer computed it)",
+    ".snp": "as written by the oracle; the pinned legacy loader validates this slot, so the corpus keeps it readable and the reserved-field contract is proved by run-time mutation"
+  },
+  "generator_command": "GENERATE_NIDX01A_FIXTURE=1 go test ./pkg/index/inverted/ -run TestGenerateNIDX01AFixture -count=1",
+  "notes": "One committed segment, documents doc-11 and doc-12, no deletion record.",
+  "logical_documents": [
+    "doc-11",
+    "doc-12"
+  ],
+  "visible_count": 2
+}

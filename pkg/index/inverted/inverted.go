@@ -43,6 +43,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/analyzer"
+	"github.com/apache/skywalking-banyandb/pkg/index/inverted/internal/nativeice"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -69,6 +70,18 @@ var (
 	defaultRangePreloadSize = 1000
 	defaultProjection       = []string{docIDField, timestampField}
 )
+
+// ErrCorruptIndex reports that an index directory's committed bytes violate
+// the on-disk grammar -- a damaged segment footer, an out-of-range section
+// offset, a malformed manifest record -- or that reading them would exceed a
+// configured bound. Callers classify a read-only failure with errors.Is.
+var ErrCorruptIndex = nativeice.ErrCorrupt
+
+// ErrNoCommittedIndex reports that an index directory holds no committed
+// generation to read: it is absent, empty, or has never been flushed. Callers
+// that treat a cold or unflushed index as empty match this rather than
+// ErrCorruptIndex, which means the committed bytes themselves are damaged.
+var ErrNoCommittedIndex = nativeice.ErrNoSnapshot
 
 var _ index.Store = (*store)(nil)
 
