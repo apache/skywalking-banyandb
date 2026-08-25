@@ -317,18 +317,18 @@ func (s *store) Reset() {
 // index (no usable snapshot) returns a count of 0 together with the open error,
 // which callers may treat as an empty index.
 func ReadOnlyDocCount(path string) (int64, error) {
-	reader, err := bluge.OpenReader(bluge.DefaultConfig(path))
+	reader, err := nativeice.Open(path)
 	if err != nil {
 		return 0, err
 	}
 	defer func() {
 		_ = reader.Close()
 	}()
-	count, err := reader.Count()
+	count, err := reader.VisibleDocCount()
 	if err != nil {
 		return 0, err
 	}
-	return int64(count), nil
+	return count, nil
 }
 
 func (s *store) Iterator(ctx context.Context, fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort,
