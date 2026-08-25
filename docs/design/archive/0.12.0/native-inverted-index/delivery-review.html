@@ -21,7 +21,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Four live cutovers, operational signals, accepted decisions, release gates, and source traceability.">
+  <meta name="description" content="Five bounded cutovers, operational signals, accepted decisions, release gates, and source traceability.">
   <title>BDB Native Index Spec — Delivery and review</title>
   <link rel="stylesheet" href="spec.css">
 </head>
@@ -38,7 +38,7 @@
       </div>
       <div class="rail-status">
         <b>REVIEW</b>
-        <span>BDB-NIDX-SPEC-001<br>Revision 0.1 · 2026-08-24</span>
+        <span>BDB-NIDX-SPEC-001<br>Revision 0.2 · 2026-08-25</span>
         <span class="page-label">CHAPTER 05/05 · DELIVERY + REVIEW</span>
       </div>
       <nav aria-label="Specification sections">
@@ -208,8 +208,8 @@
       <section class="chapter-hero" id="chapter-top" data-chapter="05">
         <div class="chapter-kicker">BDB-NIDX-SPEC-001 · chapter 05 of 05</div>
         <h1>Delivery and review</h1>
-        <p class="chapter-summary">Four live cutovers, operational signals, accepted decisions, release gates, and source traceability.</p>
-        <p class="chapter-range">SECTIONS 18–22 · REVISION 0.1 · REVIEW DRAFT</p>
+        <p class="chapter-summary">Five bounded cutovers, operational signals, accepted decisions, release gates, and source traceability.</p>
+        <p class="chapter-range">SECTIONS 18–22 · REVISION 0.2 · AMENDED DESIGN</p>
         <nav class="chapter-tabs" aria-label="Specification chapters">
           <a href="index.html#status">01 Overview</a>
           <a href="write-format.html#fields">02 Write + format</a>
@@ -224,43 +224,50 @@
             <aside class="section-side">
               <div>
                 <div class="section-no">18</div>
-                <span class="section-state">Four mergeable tickets</span>
-                <p>Every merge cuts over one live Bluge path; no dormant foundation phase is allowed.</p>
+                <span class="section-state">Five mergeable tickets</span>
+                <p>Every merge replaces named live Bluge callers; no dormant foundation phase is allowed.</p>
               </div>
             </aside>
             <div class="section-main">
               <h2>Implementation tickets and rollback</h2>
-              <p class="section-lede">Four vertical cutovers replace the live Bluge surface. Each ticket is one reviewable main-branch merge unit.</p>
+              <p class="section-lede">Five bounded cutovers replace the live Bluge surface. Each ticket is one reviewable main-branch merge unit.</p>
 
               <div class="callout danger">
                 <b>!</b>
-                <p><strong>Merge law:</strong> a parser, writer, query IR, shadow executor, benchmark, or fuzz harness cannot land as its own ticket. It must
-                  ship inside the first ticket whose named production constructor calls it and selects it by default for that index role.</p>
+                <p><strong>Merge law:</strong> a parser, writer, query IR, shadow executor, benchmark, or fuzz harness cannot land without a named production
+                  caller switching to it in the same merge. NIDX-01 is a valid production slice because it removes direct Bluge readers from named read-only,
+                  schema, repair, and verification operations; it is not permission to merge an unused general reader.</p>
               </div>
 
-              <div class="ticket-chain" aria-label="Four-ticket dependency chain">
+              <div class="ticket-chain" aria-label="Five-ticket dependency chain">
                 <div class="ticket-node">
                   <b>NIDX-01</b>
-                  <strong>Property</strong>
-                  <span>first complete native vertical</span>
+                  <strong>Read-only access</strong>
+                  <span>count · walk · repair · verify</span>
                 </div>
                 <div class="ticket-arrow" aria-hidden="true">→</div>
                 <div class="ticket-node">
                   <b>NIDX-02</b>
+                  <strong>Property</strong>
+                  <span>write · query · lifecycle</span>
+                </div>
+                <div class="ticket-arrow" aria-hidden="true">→</div>
+                <div class="ticket-node">
+                  <b>NIDX-03</b>
                   <strong>Series <code>sidx</code></strong>
                   <span>Measure · Stream · Trace</span>
                 </div>
                 <div class="ticket-arrow" aria-hidden="true">→</div>
                 <div class="ticket-node">
-                  <b>NIDX-03</b>
+                  <b>NIDX-04</b>
                   <strong>Stream element <code>idx</code></strong>
                   <span>filters · postings · sort</span>
                 </div>
                 <div class="ticket-arrow" aria-hidden="true">→</div>
                 <div class="ticket-node">
-                  <b>NIDX-04</b>
+                  <b>NIDX-05</b>
                   <strong>Admin + removal</strong>
-                  <span>last callers and dependencies</span>
+                  <span>last writers and dependencies</span>
                 </div>
               </div>
 
@@ -268,18 +275,53 @@
                 <article class="ticket-card" id="nidx-01">
                   <header class="ticket-head">
                     <span class="ticket-number">NIDX-01</span>
-                    <h3>Replace the Property shard index</h3>
+                    <h3>Replace bounded read-only index access</h3>
                   </header>
-                  <p class="ticket-cutover"><b>Live Bluge feature replaced</b><code>property/db.newShard</code> selects the native store for existing and new
-                    Property shards; Property repair scans use the same native reader.</p>
+                  <p class="ticket-cutover"><b>Live Bluge feature replaced</b><code>inverted.ReadOnlyDocCount</code>, schema-property
+                    <code>reader.WalkShard</code>/<code>WalkDocs</code>, the Property repair scan, migration verification counts, and the source-read sides of
+                    index-mode copy and series union open committed directories through the native reader.</p>
                   <div class="ticket-scope">
                     <div>
                       <h4>Inside this ticket</h4>
                       <ul>
-                        <li>Bounded ICE v3 and snapshot readers plus compatible segment/snapshot publication.</li>
+                        <li>Bounded read-only open of the latest complete ICE v3/snapshot v3 generation without an exclusive writer lock.</li>
+                        <li>Live-document count, match-all, exact term and exact-term OR, deletion masks, stored-field visit, and typed scalar decoding.</li>
+                        <li>Ascending tuple sort and strict search-after for Property repair: group, name, entity ID, and timestamp.</li>
+                        <li>Streaming iteration, concurrent-writer inspection, file-immutability proof, typed corruption errors, and CRC32 ignore behavior.</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <h4>Explicit boundary</h4>
+                      <ul>
+                        <li>No insert, update, delete, batch, callback, near-real-time refresh, segment write, publication, merge, expiry, or GC.</li>
+                        <li>No numeric/date range, prefix, wildcard, MATCH, NOT, HAVING, IN, analyzer, scoring, or generic collector surface.</li>
+                        <li>No external-segment introduction and no native destination writer for copy, union, rebuild, or migration.</li>
+                        <li>No runtime dependency deletion and no unused general query abstraction.</li>
+                      </ul>
+                    </div>
+                  </div>
+                  <div class="ticket-proof"><b>Merge proof · </b>Named production callers return fixture-pinned counts, schema revisions, repair tuple/SHA
+                    pages, and migration-source documents from historical directories. File hashes and mtimes remain unchanged, concurrent writable indexes can
+                    be inspected, deleted documents remain absent, malformed data fails within bounds, and CRC32 values are ignored.</div>
+                  <p class="ticket-rollback"><b>Rollback:</b> select the retained legacy reader in the named callers. No writer drain, replay, conversion, or
+                    file change is required because NIDX-01 emits no index bytes.</p>
+                </article>
+
+                <article class="ticket-card" id="nidx-02">
+                  <header class="ticket-head">
+                    <span class="ticket-number">NIDX-02</span>
+                    <h3>Replace the Property shard index</h3>
+                  </header>
+                  <p class="ticket-cutover"><b>Live Bluge feature replaced</b><code>property/db.newShard</code> selects the native store for existing and new
+                    Property shards; its query and repair paths build on the bounded reader merged by NIDX-01.</p>
+                  <div class="ticket-scope">
+                    <div>
+                      <h4>Inside this ticket</h4>
+                      <ul>
+                        <li>Compatible ICE segment and snapshot publication for Property writes.</li>
                         <li>Property upsert/replacement, delete masks, stored fields, exact/boolean/range filter, and explicit sort.</li>
-                        <li>Durable callbacks, snapshots, recovery, merge-time expiry, reference-safe GC, repair scan, and file snapshot.</li>
-                        <li>Only analyzers, term codecs, query nodes, and format sections exercised by Property.</li>
+                        <li>Durable callbacks, snapshots, recovery, merge-time expiry, reference-safe GC, repair integration, and file snapshot.</li>
+                        <li>Only analyzers, term codecs, query nodes, and write-format sections exercised by Property.</li>
                       </ul>
                     </div>
                     <div>
@@ -288,7 +330,7 @@
                         <li>No series wildcard/dictionary surface.</li>
                         <li>No Stream element postings or MATCH analyzer family.</li>
                         <li>No external-segment receiver.</li>
-                        <li>No general migration or schema-reader API.</li>
+                        <li>No general union, copy, verify, dump, or migration writer.</li>
                       </ul>
                     </div>
                   </div>
@@ -298,9 +340,9 @@
                     Startup fails instead of rewriting if the named rollback binary cannot accept the directory.</p>
                 </article>
 
-                <article class="ticket-card" id="nidx-02">
+                <article class="ticket-card" id="nidx-03">
                   <header class="ticket-head">
-                    <span class="ticket-number">NIDX-02</span>
+                    <span class="ticket-number">NIDX-03</span>
                     <h3>Replace the per-segment series index</h3>
                   </header>
                   <p class="ticket-cutover"><b>Live Bluge feature replaced</b><code>internal/storage.newSeriesIndex</code> selects native <code>sidx</code> for
@@ -311,7 +353,7 @@
                       <ul>
                         <li>Field-set-aware insert-if-absent, update, version/timestamp, delete, and projection.</li>
                         <li>Exact/prefix/wildcard identity, field dictionaries, composed filters, stored lookup, and series/index/time sort.</li>
-                        <li>Index-mode Measure reads and writes, stats, read-only count, file snapshot, and cache reset.</li>
+                        <li>Index-mode Measure reads and writes, stats, file snapshot, and cache reset.</li>
                         <li>Crash-safe external segment receive, validation, deduplication, introduction, and mixed-version replication.</li>
                       </ul>
                     </div>
@@ -320,7 +362,7 @@
                       <ul>
                         <li>No Stream element <code>idx</code> batch or paired posting API.</li>
                         <li>No element MATCH analyzer override.</li>
-                        <li>No general schema, union, copy, verify, dump, or rebuild command.</li>
+                        <li>No general union, copy, verify, dump, or rebuild writer.</li>
                         <li>No removal of the legacy adapter.</li>
                       </ul>
                     </div>
@@ -331,9 +373,9 @@
                     retained legacy series constructor; no document replay or format conversion is allowed.</p>
                 </article>
 
-                <article class="ticket-card" id="nidx-03">
+                <article class="ticket-card" id="nidx-04">
                   <header class="ticket-head">
-                    <span class="ticket-number">NIDX-03</span>
+                    <span class="ticket-number">NIDX-04</span>
                     <h3>Replace the Stream element index</h3>
                   </header>
                   <p class="ticket-cutover"><b>Live Bluge feature replaced</b><code>stream.newElementIndex</code> selects the native <code>idx</code> writer,
@@ -353,8 +395,8 @@
                       <ul>
                         <li>No BM25, boosts, phrase, fuzzy, geo, highlighting, facet, or explanation surface.</li>
                         <li>No generic Bluge collector or plugin compatibility layer.</li>
-                        <li>No remaining offline migration callers.</li>
-                        <li>No dependency deletion before NIDX-04.</li>
+                        <li>No remaining offline migration destination writers.</li>
+                        <li>No dependency deletion before NIDX-05.</li>
                       </ul>
                     </div>
                   </div>
@@ -364,19 +406,19 @@
                     the same compatible snapshot after the writer is drained.</p>
                 </article>
 
-                <article class="ticket-card" id="nidx-04">
+                <article class="ticket-card" id="nidx-05">
                   <header class="ticket-head">
-                    <span class="ticket-number">NIDX-04</span>
-                    <h3>Replace admin/migration and remove Bluge</h3>
+                    <span class="ticket-number">NIDX-05</span>
+                    <h3>Replace remaining admin/migration writers and remove Bluge</h3>
                   </header>
-                  <p class="ticket-cutover"><b>Live Bluge feature replaced</b>Schema loading, union/rebuild, index-mode copy, migration verification, dump, and
-                    read-only count call native administration APIs; runtime and offline Bluge dependencies are deleted.</p>
+                  <p class="ticket-cutover"><b>Live Bluge feature replaced</b>Union/rebuild, index-mode copy, migration output, dump, and every remaining
+                    maintenance/CLI caller use native administration APIs; runtime and offline Bluge dependencies are deleted.</p>
                   <div class="ticket-scope">
                     <div>
                       <h4>Inside this ticket</h4>
                       <ul>
-                        <li>Bounded read-only open/count, latest generation, document walk, stored/doc-value visitation, and sorted search-after.</li>
-                        <li>Native verify, staged rebuild, union/dedup, index-mode reconstruction, and migration verification.</li>
+                        <li>Native verify, staged rebuild, union/dedup, index-mode reconstruction, and migration destination writing.</li>
+                        <li>Complete document walk, stored/doc-value visitation, and sorted search-after extensions not already required by NIDX-01.</li>
                         <li>Rewire every remaining production and CLI caller; remove legacy query bridges, segment API types, modules, and replacements.</li>
                         <li>Retain a pinned legacy oracle binary and fixture corpus only as isolated compatibility test inputs.</li>
                       </ul>
@@ -398,6 +440,63 @@
                 </article>
               </div>
 
+              <h3>NIDX-01 read-only operation contract</h3>
+              <p>NIDX-01 is an operation slice, not a general reader layer. Its public surface is limited to the following production needs; migration copy and
+                union continue to publish through their retained legacy writers until their destination paths are replaced by later tickets.</p>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Operation</th>
+                      <th>Named callers</th>
+                      <th>Native behavior</th>
+                      <th>Result and bound</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Open committed generation</td>
+                      <td>All NIDX-01 callers</td>
+                      <td>Inspect snapshot generations newest-first and pin the newest structurally complete ICE v3/snapshot v3 view without acquiring
+                        <code>bluge.pid</code>.</td>
+                      <td>Immutable snapshot handle; bounded record and section validation; no directory entry, byte, or mtime change.</td>
+                    </tr>
+                    <tr>
+                      <td>Visible-document count</td>
+                      <td><code>inverted.ReadOnlyDocCount</code> and migration verification</td>
+                      <td>Combine segment document counts with the pinned snapshot's deletion masks.</td>
+                      <td>One count in O(number of segments + deletion masks), without visiting stored documents.</td>
+                    </tr>
+                    <tr>
+                      <td>Match-all document walk</td>
+                      <td>Schema walk, index-mode copy, and series union source reads</td>
+                      <td>Stream live local document numbers and visit every repeated stored field as raw name/value bytes.</td>
+                      <td>Caller-owned document callback; one document plus configured decode buffers in memory.</td>
+                    </tr>
+                    <tr>
+                      <td>Exact term and exact-term OR</td>
+                      <td>Kind-filtered schema <code>WalkShard</code></td>
+                      <td>Resolve exact FST terms, union the selected postings, remove snapshot deletions, and visit stored source/tombstone fields.</td>
+                      <td>Streaming matches; OR fan-out is bounded by the caller-supplied term count.</td>
+                    </tr>
+                    <tr>
+                      <td>Stored and typed value access</td>
+                      <td>Schema decode, copy, union, and Property repair</td>
+                      <td>Preserve repeated raw values and expose only the scalar decoders required by the named adapters; internal-field policy stays in those
+                        adapters.</td>
+                      <td>Borrowed values are valid only during the visit callback; callers copy values they retain.</td>
+                    </tr>
+                    <tr>
+                      <td>Ascending tuple page</td>
+                      <td>Property repair</td>
+                      <td>Order by <code>(group, name, entityID, timestamp)</code>, return the stored SHA value, and resume strictly after all four prior sort
+                        components on the same pinned generation.</td>
+                      <td>At most the configured repair page size plus bounded sort state; no unbounded offset scan.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
               <h3>Ticket dependency and activation contract</h3>
               <div class="table-wrap">
                 <table>
@@ -412,27 +511,33 @@
                   <tbody>
                     <tr>
                       <td>NIDX-01</td>
-                      <td>Approved format fixtures and DEC gates</td>
-                      <td>Native is the default Property constructor; legacy is an explicit rollback choice.</td>
-                      <td>Codec, IR, writer, or fuzz code used only by tests.</td>
+                      <td>Approved read fixtures and DEC gates</td>
+                      <td>Every named read-only caller uses native open/count/walk/search-after; no file is modified.</td>
+                      <td>A reader used only by tests, shadow comparison, or a future writer.</td>
                     </tr>
                     <tr>
                       <td>NIDX-02</td>
                       <td>NIDX-01</td>
-                      <td>Native is the default per-segment <code>sidx</code> constructor for all three TS products.</td>
-                      <td>Series executor without live write, snapshot, and replication paths.</td>
+                      <td>Native is the default Property constructor; legacy is an explicit rollback choice.</td>
+                      <td>A writer or query extension without the live Property write/lifecycle cutover.</td>
                     </tr>
                     <tr>
                       <td>NIDX-03</td>
                       <td>NIDX-02</td>
+                      <td>Native is the default per-segment <code>sidx</code> constructor for all three TS products.</td>
+                      <td>Series executor without live write, snapshot, and replication paths.</td>
+                    </tr>
+                    <tr>
+                      <td>NIDX-04</td>
+                      <td>NIDX-03</td>
                       <td>Native is the default Stream element <code>idx</code> constructor.</td>
                       <td>Shadow-only filter or test-only element writer.</td>
                     </tr>
                     <tr>
-                      <td>NIDX-04</td>
-                      <td>NIDX-01 through NIDX-03 plus retirement approval</td>
-                      <td>Every admin/migration caller is native and runtime Bluge code is absent.</td>
-                      <td>A dependency cleanup that leaves a production Bluge bypass.</td>
+                      <td>NIDX-05</td>
+                      <td>NIDX-01 through NIDX-04 plus retirement approval</td>
+                      <td>Every remaining admin/migration caller is native and runtime Bluge code is absent.</td>
+                      <td>A dependency cleanup that leaves a production or CLI Bluge bypass.</td>
                     </tr>
                   </tbody>
                 </table>
@@ -442,17 +547,22 @@
               <div class="checklist">
                 <label class="check">
                   <input type="checkbox" disabled>
-                  <span><b>Live call-graph proof</b>Every new production component is reachable from the constructor named by the ticket.</span>
+                  <span><b>Live call-graph proof</b>Every new production component is reachable from the named activation points in its ticket.</span>
                   <span class="tag stable">required</span>
                 </label>
                 <label class="check">
                   <input type="checkbox" disabled>
-                  <span><b>Role-complete contract</b>The ticket replaces every Bluge operation used by that role; it does not split read and write authority.</span>
+                  <span><b>Bounded read slice</b>NIDX-01 replaces every listed direct Bluge read operation, writes no bytes, and exposes no unused general API.</span>
                   <span class="tag stable">required</span>
                 </label>
                 <label class="check">
                   <input type="checkbox" disabled>
-                  <span><b>Bidirectional files</b>Native opens legacy files and the named rollback binary opens, mutates, merges, and restarts native files.</span>
+                  <span><b>Role-complete write contract</b>NIDX-02 through NIDX-04 replace every read/write operation used by their named role.</span>
+                  <span class="tag stable">required</span>
+                </label>
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span><b>Bidirectional files</b>Writing tickets open legacy files and the named rollback binary opens, mutates, merges, and restarts native files.</span>
                   <span class="tag fixture">required</span>
                 </label>
                 <label class="check">
@@ -462,11 +572,51 @@
                 </label>
                 <label class="check">
                   <input type="checkbox" disabled>
-                  <span><b>Reserved CRC field gate</b>The named rollback binary accepts native files while CRC32 remains uncalculated and unvalidated.</span>
+                  <span><b>Reserved CRC field gate</b>Readers ignore CRC32; named rollback binaries accept uncalculated/unvalidated fields from writing tickets.</span>
                   <span class="tag out">blocking</span>
                 </label>
               </div>
               <div class="clause-list">
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">READ-001</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>NIDX-01 shall select and pin the newest structurally complete committed generation, apply its deletion masks, and leave file bytes,
+                      mtimes, and directory entries unchanged.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">READ-002</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>NIDX-01 shall bound memory by configured page, block, section, term-count, and decode limits and return typed errors for malformed offsets,
+                      lengths, varints, and scalar encodings.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">READ-003</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>NIDX-01 shall expose only committed-generation open, visible count, match-all, exact term, exact-term OR, stored-field visitation, required
+                      scalar decoding, and the Property repair tuple search-after.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">READ-004</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>NIDX-01 shall remain safe beside an active legacy writer, shall not acquire the exclusive writer lock, and shall close all files and mapped
+                      regions when its pinned snapshot and iterators close.</p>
+                  </div>
+                </div>
                 <div class="clause">
                   <div class="clause-key">
                     <span class="clause-id">ROLL-001</span>
@@ -493,8 +643,18 @@
                     <span class="verb must">MUST</span>
                   </div>
                   <div class="clause-body">
-                    <p>Each ticket must switch its named production role to native in the same merge. Future-role code, disabled-only paths, and test-only
-                      implementations are prohibited from that ticket.</p>
+                    <p>Each ticket must switch every production operation named by its boundary to native in the same merge. Future-role code, disabled-only
+                      paths, and test-only implementations are prohibited from that ticket.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">ROLL-004</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>No blocked ticket may merge before its predecessor merges and satisfies its production activation gate; an open pull request does not
+                      satisfy this dependency.</p>
                   </div>
                 </div>
               </div>
@@ -586,13 +746,14 @@
             <aside class="section-side">
               <div>
                 <div class="section-no">20</div>
-                <span class="section-state">Review required</span>
-                <p>Selections persist locally in this browser and can be exported.</p>
+                <span class="section-state">Disposition recorded</span>
+                <p>Revision 0.2 records all decisions; reviewers may persist and export local overrides.</p>
               </div>
             </aside>
             <div class="section-main">
-              <h2>Open maintainer decisions</h2>
-              <p class="section-lede">These choices must be explicit; the implementation must not decide them accidentally.</p>
+              <h2>Maintainer decisions</h2>
+              <p class="section-lede">These recorded choices are normative for the implementation. DEC-007 retains its explicit block disposition while the
+                specification enforces the requested field-only CRC32 compatibility behavior.</p>
 
               <div class="decision-grid">
                 <article class="decision-card">
@@ -605,7 +766,7 @@
                     <label for="dec-001">Disposition</label>
                     <select id="dec-001" data-decision="DEC-001">
                       <option value="">Not reviewed</option>
-                      <option>Accept recommendation</option>
+                      <option selected>Accept recommendation</option>
                       <option>Needs discussion</option>
                       <option>Block specification</option>
                     </select>
@@ -620,7 +781,7 @@
                     <label for="dec-002">Disposition</label>
                     <select id="dec-002" data-decision="DEC-002">
                       <option value="">Not reviewed</option>
-                      <option>Accept recommendation</option>
+                      <option selected>Accept recommendation</option>
                       <option>Needs discussion</option>
                       <option>Block specification</option>
                     </select>
@@ -634,7 +795,7 @@
                   <label for="dec-003">Disposition</label>
                   <select id="dec-003" data-decision="DEC-003">
                     <option value="">Not reviewed</option>
-                    <option>Accept recommendation</option>
+                    <option selected>Accept recommendation</option>
                     <option>Needs discussion</option>
                     <option>Block specification</option>
                   </select>
@@ -650,7 +811,7 @@
                     <label for="dec-004">Disposition</label>
                     <select id="dec-004" data-decision="DEC-004">
                       <option value="">Not reviewed</option>
-                      <option>Accept recommendation</option>
+                      <option selected>Accept recommendation</option>
                       <option>Needs discussion</option>
                       <option>Block specification</option>
                     </select>
@@ -665,7 +826,7 @@
                     <label for="dec-005">Disposition</label>
                     <select id="dec-005" data-decision="DEC-005">
                       <option value="">Not reviewed</option>
-                      <option>Accept recommendation</option>
+                      <option selected>Accept recommendation</option>
                       <option>Needs discussion</option>
                       <option>Block specification</option>
                     </select>
@@ -680,7 +841,7 @@
                     <label for="dec-006">Disposition</label>
                     <select id="dec-006" data-decision="DEC-006">
                       <option value="">Not reviewed</option>
-                      <option>Accept recommendation</option>
+                      <option selected>Accept recommendation</option>
                       <option>Needs discussion</option>
                       <option>Block specification</option>
                     </select>
@@ -711,7 +872,7 @@
                     <label for="dec-008">Disposition</label>
                     <select id="dec-008" data-decision="DEC-008">
                       <option value="">Not reviewed</option>
-                      <option>Accept recommendation</option>
+                      <option selected>Accept recommendation</option>
                       <option>Needs discussion</option>
                       <option>Block specification</option>
                     </select>
@@ -726,7 +887,7 @@
                     <label for="dec-009">Disposition</label>
                     <select id="dec-009" data-decision="DEC-009">
                       <option value="">Not reviewed</option>
-                      <option>Accept recommendation</option>
+                      <option selected>Accept recommendation</option>
                       <option>Needs discussion</option>
                       <option>Block specification</option>
                     </select>
@@ -741,11 +902,26 @@
                     <label for="dec-010">Disposition</label>
                     <select id="dec-010" data-decision="DEC-010">
                       <option value="">Not reviewed</option>
-                      <option>Accept recommendation</option>
+                      <option selected>Accept recommendation</option>
                       <option>Needs discussion</option>
                       <option>Block specification</option>
                     </select>
                   </article>
+                <article class="decision-card">
+                  <header>
+                    <h3>Read-only-first delivery slice</h3>
+                    <span class="decision-id">DEC-011</span>
+                  </header>
+                  <p><strong>Disposition:</strong> split bounded native read-only operations from the Property writer/lifecycle cutover. The read-only ticket
+                    may merge only when every named production caller switches in the same merge and no unused general reader surface is exposed.</p>
+                  <label for="dec-011">Disposition</label>
+                  <select id="dec-011" data-decision="DEC-011">
+                    <option value="">Not reviewed</option>
+                    <option selected>Accept recommendation</option>
+                    <option>Needs discussion</option>
+                    <option>Block specification</option>
+                  </select>
+                </article>
               </div>
 
               <div class="review-console">
@@ -785,6 +961,13 @@
                   <input type="checkbox" disabled>
                   <span>
                     <b>Product conformance</b>Series, Stream, Property, index-mode Measure, admin, migration, repair, and backup suites pass.</span>
+                    <span class="tag fixture">required</span>
+                  </label>
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span>
+                    <b>Read-only immutability</b>Native count, walk, stored-field, and search-after operations leave bytes, mtimes, and directory entries unchanged
+                      while remaining safe beside an open writer.</span>
                     <span class="tag fixture">required</span>
                   </label>
                 <label class="check">

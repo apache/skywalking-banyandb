@@ -18,8 +18,21 @@
  */
 
 (() => {
-  const storageKey = 'banyandb-native-index-spec-review-v1';
+  const storageKey = 'banyandb-native-index-spec-review-v2';
   const themeKey = 'banyandb-native-index-spec-theme';
+  const documentedDisposition = {
+    'DEC-001': 'Accept recommendation',
+    'DEC-002': 'Accept recommendation',
+    'DEC-003': 'Accept recommendation',
+    'DEC-004': 'Accept recommendation',
+    'DEC-005': 'Accept recommendation',
+    'DEC-006': 'Accept recommendation',
+    'DEC-007': 'Block specification',
+    'DEC-008': 'Accept recommendation',
+    'DEC-009': 'Accept recommendation',
+    'DEC-010': 'Accept recommendation',
+    'DEC-011': 'Accept recommendation'
+  };
   const page = document.body.dataset.page;
   const movedSections = {
     fields: 'write-format.html#fields',
@@ -42,6 +55,7 @@
     'nidx-02': 'delivery-review.html#nidx-02',
     'nidx-03': 'delivery-review.html#nidx-03',
     'nidx-04': 'delivery-review.html#nidx-04',
+    'nidx-05': 'delivery-review.html#nidx-05',
     'dec-001': 'delivery-review.html#dec-001',
     'dec-002': 'delivery-review.html#dec-002',
     'dec-003': 'delivery-review.html#dec-003',
@@ -52,6 +66,7 @@
     'dec-008': 'delivery-review.html#dec-008',
     'dec-009': 'delivery-review.html#dec-009',
     'dec-010': 'delivery-review.html#dec-010',
+    'dec-011': 'delivery-review.html#dec-011',
     'review-notes': 'delivery-review.html#review-notes',
     acceptance: 'delivery-review.html#acceptance',
     traceability: 'delivery-review.html#traceability'
@@ -85,11 +100,11 @@
 
   const reviewState = () => {
     const stored = readStoredReview();
-    const disposition = { ...(stored.disposition || {}) };
+    const disposition = { ...documentedDisposition, ...(stored.disposition || {}) };
     decisions.forEach(select => { disposition[select.dataset.decision] = select.value; });
     return {
       specification: 'BDB-NIDX-SPEC-001',
-      revision: '0.1',
+      revision: '0.2',
       disposition,
       notes: reviewNotes ? reviewNotes.value : (stored.notes || '')
     };
@@ -97,11 +112,12 @@
 
   const updateReviewMeter = () => {
     const state = reviewState();
-    const reviewed = Object.values(state.disposition).filter(Boolean).length;
+    const decisionIDs = Object.keys(documentedDisposition);
+    const reviewed = decisionIDs.filter(id => state.disposition[id]).length;
     const fill = document.querySelector('#review-meter-fill');
     const label = document.querySelector('#review-meter-label');
-    if (fill) fill.style.width = `${Math.min(reviewed, 10) * 10}%`;
-    if (label) label.textContent = `${reviewed} of 10 open decisions dispositioned`;
+    if (fill) fill.style.width = `${Math.min(reviewed / decisionIDs.length, 1) * 100}%`;
+    if (label) label.textContent = `${reviewed} of ${decisionIDs.length} decisions dispositioned`;
   };
 
   const saveReview = () => {
@@ -187,7 +203,10 @@
 
   document.querySelector('#reset-review')?.addEventListener('click', () => {
     localStorage.removeItem(storageKey);
-    decisions.forEach(select => { select.value = ''; });
+    decisions.forEach(select => {
+      const defaultOption = [...select.options].find(option => option.defaultSelected);
+      select.value = defaultOption?.value || '';
+    });
     if (reviewNotes) reviewNotes.value = '';
     updateReviewMeter();
   });

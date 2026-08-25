@@ -141,7 +141,7 @@ The work is intentionally spec-first. A phase may change later implementation es
 previously measured compatibility result without updating the fixture and rationale.
 
 These R0–R7 work packages are research activities, not main-branch implementation tickets. Prototypes remain isolated
-research artifacts. The only production implementation merges are the four live cutovers defined by R7; no research
+research artifacts. The only production implementation merges are the five live cutovers defined by R7; no research
 package authorizes dormant production code on main.
 
 ### R0 — Freeze the oracle and define provenance
@@ -352,54 +352,68 @@ cancellation boundaries. Reopen after each failure and verify that either the ol
 
 **Exit gate.** The proposal includes agreed regression budgets and demonstrates bounded memory and valid recovery.
 
-### R7 — Produce the four-ticket implementation and rollout proposal
+### R7 — Produce the five-ticket implementation and rollout proposal
 
-**Purpose.** Convert research evidence into reviewable engineering work.
+**Purpose.** Convert research evidence into reviewable engineering work without placing the entire native engine in the first merge.
 
-The implementation proposal must contain exactly four production vertical tickets. A codec, query IR, test writer,
-shadow executor, fuzz harness, or benchmark may be work inside a ticket, but cannot be merged as a standalone ticket.
-Every ticket must route a named live BanyanDB constructor or administrative caller to native code in the same merge.
+The implementation proposal must contain exactly five production tickets. A codec, query IR, test writer, shadow executor,
+fuzz harness, or benchmark may be work inside a ticket, but cannot merge without a named live BanyanDB caller switching to
+native in the same merge. NIDX-01 is intentionally read-only and is valid only because it replaces the complete bounded
+read operation set of named production callers; it must not expose an unused general reader.
 
-#### NIDX-01 — Property shard index
+#### NIDX-01 — Bounded read-only index access
 
-- **Live replacement:** Property upsert, query, sort, delete/expiry, repair, and durable publication.
-- **Inside:** Only the ICE/snapshot, query, writer, merge, recovery, and administration pieces exercised by Property.
-- **Outside:** Series matching, Stream element postings, external receive, and general migration.
+- **Live replacement:** `inverted.ReadOnlyDocCount`, schema-property `WalkShard`/`WalkDocs`, Property repair scans,
+  migration verification counts, and the source-read sides of index-mode copy and series union.
+- **Inside:** Latest committed snapshot open, live count, match-all, exact term/OR, deletion masks, stored-field visit,
+  typed scalar decode, tuple sort/search-after, streaming bounds, file-immutability proof, and typed corruption errors.
+- **Outside:** Every write, callback, publication, merge, expiry, GC, external introduction, general query language, and
+  destination writer.
 
-#### NIDX-02 — Per-segment series `sidx`
+#### NIDX-02 — Property shard index
+
+- **Live replacement:** `property/db.newShard` Property upsert, query, sort, delete/expiry, repair integration, and durable
+  publication.
+- **Inside:** Only the ICE/snapshot writer, query extensions, merge, recovery, callback, and lifecycle pieces exercised by
+  Property, building on NIDX-01's reader.
+- **Outside:** Series matching, Stream element postings, external receive, and general migration writers.
+
+#### NIDX-03 — Per-segment series `sidx`
 
 - **Live replacement:** Measure, Stream, and Trace series insert, update, lookup, sort, snapshot, and raw segment
   replication.
 - **Inside:** Field-set-aware insert, identity dictionaries/matchers, projection/sort, index-mode Measure, and external
   receive.
-- **Outside:** The Stream element `idx` and general offline migration commands.
+- **Outside:** The Stream element `idx` and general offline destination writers.
 
-#### NIDX-03 — Stream element `idx`
+#### NIDX-04 — Stream element `idx`
 
 - **Live replacement:** Stream element batch, filter/posting execution, sort, snapshot, and raw segment replication.
 - **Inside:** Only the required analyzer, numeric/date term, MATCH/filter, and paired document/timestamp posting surface.
 - **Outside:** Scoring and every other unused search-product feature.
 
-#### NIDX-04 — Administration, migration, and removal
+#### NIDX-05 — Administration, migration, and removal
 
-- **Live replacement:** Schema reader, union/rebuild, index-mode copy, migration verification, dump, and read-only count.
-- **Inside:** Rewire every remaining production/CLI caller, then remove runtime Bluge, ICE, and segment-API dependencies.
+- **Live replacement:** Remaining union/rebuild, index-mode copy, migration output, dump, and maintenance/CLI callers.
+- **Inside:** Native destination writers, every remaining caller rewire, and runtime Bluge, ICE, and segment-API dependency
+  removal.
 - **Outside:** The pinned legacy oracle, which remains only as an isolated compatibility test input.
 
 Each ticket must be a reviewable main-branch merge unit with all of the following:
 
-1. a production activation point that selects native by default for the named role;
+1. production activation points that select native for every named operation in that ticket;
 2. an explicit in-scope and out-of-scope API/format boundary;
-3. a call-graph check proving every new production component is reachable from that activation point;
-4. backend-neutral role tests, relevant fuzz/crash/benchmark gates, and legacy-directory coverage;
-5. native-reader/legacy-writer and native-writer/named-rollback-binary interoperability; and
-6. a same-file rollback procedure until NIDX-04 passes the approved dependency-retirement gate.
+3. a call-graph check proving every new production component is reachable from an activation point;
+4. backend-neutral operation tests, relevant fuzz/crash/benchmark gates, and legacy-directory coverage;
+5. for NIDX-01, proof of read-only file immutability, concurrent-writer inspection, bounded iteration, and no output bytes;
+6. for writing tickets, native-reader/legacy-writer and native-writer/named-rollback-binary interoperability; and
+7. a same-file rollback procedure until NIDX-05 passes the approved dependency-retirement gate.
 
 Shadow comparisons and test-only writers remain pre-merge evidence, not deliverables. Because CRC32 processing is
 prohibited, each writing ticket is blocked unless the named rollback binary accepts the retained-but-uncomputed CRC32
-field. The implementation must not silently restore checksum calculation to make the gate pass.
+field. NIDX-01 instead proves that arbitrary CRC32 values are ignored without modifying the source directory.
 
-**Deliverable.** A ticketed implementation plan with dependencies, test gates, observability, upgrade/downgrade policy,
+**Deliverable.** A five-ticket implementation plan with dependencies, test gates, observability, upgrade/downgrade policy,
 and removal criteria.
 
 **Exit gate.** Maintainers approve the requirements, format specifications, architecture decision, performance budgets,

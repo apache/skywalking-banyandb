@@ -1,6 +1,6 @@
 # Native Inverted Index Design
 
-This folder preserves the 0.12.0 design package for replacing Bluge and ICE with a minimal BanyanDB-owned inverted index.
+This folder preserves revision 0.2 of the 0.12.0 design package for replacing Bluge and ICE with a minimal BanyanDB-owned inverted index.
 
 ## Review entry points
 

@@ -419,7 +419,8 @@
 
     .ticket-chain {
       display: grid;
-      grid-template-columns: minmax(8rem, 1fr) auto minmax(8rem, 1fr) auto minmax(8rem, 1fr) auto minmax(8rem, 1fr);
+      grid-template-columns:
+        minmax(8rem, 1fr) auto minmax(8rem, 1fr) auto minmax(8rem, 1fr) auto minmax(8rem, 1fr) auto minmax(8rem, 1fr);
       gap: .45rem;
       align-items: stretch;
       margin: 1.2rem 0 2rem;

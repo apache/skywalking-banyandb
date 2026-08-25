@@ -566,57 +566,66 @@ Record throughput, p50/p95/p99 latency, allocations, resident/mapped/cache bytes
 write amplification, merge time, startup/recovery time, and callback durability latency. Establish budgets from measured
 current workloads rather than choosing arbitrary parity thresholds.
 
-## 11. Four-ticket implementation sequence and rollback
+## 11. Five-ticket implementation sequence and rollback
 
-Implementation is organized by live BanyanDB role, not by engine layer. A parser, writer, query IR, shadow executor,
-fuzzer, or benchmark may be built on a ticket branch, but it cannot merge as a standalone delivery. Each ticket must
-replace its named Bluge production path in the same main-branch merge.
+Implementation is organized by independently mergeable production behavior. A parser, writer, query IR, shadow executor,
+fuzzer, or benchmark cannot merge unless named live callers switch to it in the same delivery. The read-only-first slice
+is intentionally narrow: it replaces current production reads and emits no index bytes.
 
-### NIDX-01 — Property shard index
+### NIDX-01 — Bounded read-only index access
 
-- **Production cutover:** `property/db.newShard` selects native for existing and new Property shards; Property repair uses
-  the native reader.
-- **Complete boundary:** ICE/snapshot read and compatible write; Property replace/upsert/delete; stored fields;
-  exact/boolean/range query and sort; durable callback; recovery; merge-time expiry; GC; repair; and backup.
+- **Production cutover:** `inverted.ReadOnlyDocCount`, schema-property `WalkShard`/`WalkDocs`, Property repair scans,
+  verification counts, and source reads for index-mode copy/series union use the native reader.
+- **Complete boundary:** Latest committed generation, live count, match-all, exact term/OR, deletion masks, stored fields,
+  typed scalars, repair tuple sort/search-after, streaming limits, concurrent-writer inspection, and immutable files.
+- **Deferred:** Every write, publication, callback, merge, expiry, GC, external introduction, general query language, and
+  destination writer.
+
+### NIDX-02 — Property shard index
+
+- **Production cutover:** `property/db.newShard` selects native for existing and new Property shards.
+- **Complete boundary:** Compatible write; Property replace/upsert/delete; stored fields; exact/boolean/range query and
+  sort; durable callback; recovery; merge-time expiry; GC; repair integration; and backup.
 - **Deferred:** Series wildcard/dictionary behavior, Stream element postings/MATCH, external receive, and general
-  migration.
+  migration writers.
 
-### NIDX-02 — Per-segment series `sidx`
+### NIDX-03 — Per-segment series `sidx`
 
 - **Production cutover:** `internal/storage.newSeriesIndex` selects native for Measure, Stream, and Trace, including raw
   segment replication.
 - **Complete boundary:** Field-set-aware insert, update/version/timestamp, exact/prefix/wildcard identity, dictionary
   iteration, projection, index/time/series sort, index-mode Measure, snapshot/stats, and external receive/deduplication.
-- **Deferred:** Stream element `idx`, general schema/union/copy/verify/dump/rebuild, and dependency removal.
+- **Deferred:** Stream element `idx`, general union/copy/verify/dump/rebuild writers, and dependency removal.
 
-### NIDX-03 — Stream element `idx`
+### NIDX-04 — Stream element `idx`
 
 - **Production cutover:** `stream.newElementIndex` selects the native writer, filters, posting collector, sort, snapshot,
   and receiver.
 - **Complete boundary:** Element batch and visibility; keyword/simple/standard/URL analysis; numeric/date terms;
   exact/range/AND/OR/NOT/HAVING/IN/prefix/wildcard/MATCH; paired document/timestamp postings; explicit sort; and raw
   segment receive.
-- **Deferred:** Scoring, phrase/fuzzy/geo/highlight/facet/explanation APIs, generic plugins, offline migration, and
-  dependency deletion.
+- **Deferred:** Scoring, phrase/fuzzy/geo/highlight/facet/explanation APIs, generic plugins, offline destination writers,
+  and dependency deletion.
 
-### NIDX-04 — Administration, migration, and removal
+### NIDX-05 — Remaining administration, migration, and removal
 
-- **Production cutover:** Schema loading, union/rebuild, index-mode copy, migration verification, dump, and read-only
-  count use native administration APIs.
-- **Complete boundary:** Read-only open/count, latest generation, document walk, stored/doc-value visit, sorted
-  search-after, verify/rebuild, every remaining caller rewire, and runtime Bluge/ICE/segment-API removal.
+- **Production cutover:** Remaining union/rebuild, index-mode copy, migration output, dump, and maintenance/CLI callers
+  use native administration APIs.
+- **Complete boundary:** Native destination writers, every remaining caller rewire, full verification, and runtime
+  Bluge/ICE/segment-API removal. Read-only count/walk/search-after already became native in NIDX-01.
 - **Deferred:** New disk version, opening-time migration, unused search features, and a runtime legacy fallback after
   retirement.
 
-NIDX-01 → NIDX-02 → NIDX-03 → NIDX-04 is the merge order. Each ticket is mergeable only when its native constructor is
-the default for the named role, every new production component is reachable from that constructor, the full role
-contract passes, and the named rollback binary opens, queries, mutates, merges, restarts, recovers, and—where relevant—
-receives native files on the same directory. Pre-merge shadow comparison is evidence, not a ticket.
+NIDX-01 → NIDX-02 → NIDX-03 → NIDX-04 → NIDX-05 is the merge order. NIDX-01 merges only when all named read-only callers
+are native, no file changes, iteration is bounded, and no unused reader surface is exposed. NIDX-02 through NIDX-04 merge
+only when their native constructor is the default for the complete named role and the rollback binary accepts their files.
+Pre-merge shadow comparison remains evidence, not a ticket.
 
-Before NIDX-04 retires the fallback, rollback means draining the role's writer and selecting the retained legacy
-constructor against the same files; no document replay or conversion is allowed. NIDX-04 may remove the runtime fallback
-only after the declared compatibility window and two-binary matrix pass. Because CRC32 processing is prohibited, any
-writing ticket is blocked unless the named rollback binary accepts the retained-but-uncomputed CRC32 field.
+Before NIDX-05 retires the fallback, rollback of a writing role means draining its writer and selecting the retained legacy
+constructor against the same files; no document replay or conversion is allowed. NIDX-01 rolls back by restoring the
+legacy readers and requires no drain. NIDX-05 may remove the runtime fallback only after the declared compatibility window
+and two-binary matrix pass. Because CRC32 processing is prohibited, writing tickets remain blocked unless the named
+rollback binary accepts the retained-but-uncomputed CRC32 field.
 
 ## 12. Effort and ownership estimate
 
@@ -633,7 +642,7 @@ The preliminary estimate is 25–35 engineer-weeks, or approximately 4–6 calen
 | Benchmarks, failure injection, soak, rollout | 6–10 weeks, parallel/ongoing |
 
 The ranges are planning estimates, not commitments. The codec compatibility prototype should revise them before the
-first production cutover is scheduled. These are workstreams inside NIDX-01 through NIDX-04, not additional mergeable
+first production cutover is scheduled. These are workstreams inside NIDX-01 through NIDX-05, not additional mergeable
 tickets.
 
 ## 13. Decisions and unresolved experiments
@@ -660,10 +669,11 @@ Experiments that still gate production work:
 
 ## 14. Final recommendation
 
-Proceed through four production vertical tickets. Do not merge a backend-neutral boundary, parser, shadow reader, or test
-writer by itself. Build those foundations on the NIDX-01 branch and merge them only when Property shards use the complete
-native read/write/lifecycle path by default. Then extend the already-live engine to per-segment series indexes, the Stream
-element index, and finally the remaining administration/migration callers and dependency removal.
+Proceed through five production tickets. Merge the bounded reader first only when named read-only production callers switch
+to it, historical fixtures pass, and the source directories remain byte-for-byte unchanged. Then cut over the complete
+Property write/query/lifecycle role, per-segment series indexes, the Stream element index, and finally the remaining
+administration/migration destination writers and dependency removal. Do not merge an unused backend-neutral boundary,
+parser, shadow reader, or test writer.
 
 Keep legacy output compatibility until the declared rollback window ends. This order makes every merge useful to
 BanyanDB, prevents an unused second engine from accumulating on main, and still produces a small BanyanDB-owned engine

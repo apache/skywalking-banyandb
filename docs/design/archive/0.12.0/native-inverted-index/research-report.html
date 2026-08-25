@@ -738,7 +738,7 @@
 
     .roadmap {
       display: grid;
-      grid-template-columns: repeat(4, minmax(14rem, 1fr));
+      grid-template-columns: repeat(5, minmax(13rem, 1fr));
       gap: .65rem;
       overflow-x: auto;
       padding-bottom: 1rem;
@@ -1814,42 +1814,48 @@
 
       <section id="roadmap">
         <span class="section-no">09 / DELIVERY</span>
-        <h2 class="section-title reveal">Four live cutovers. Zero foundation-only tickets.</h2>
-        <p class="section-lede reveal">Each main-branch merge replaces one named Bluge production path. Parsers, writers, query IR, fuzzing, and shadow
-          comparison ship inside the first vertical that uses them; none is a standalone delivery.</p>
-        <div class="roadmap reveal" aria-label="Four-ticket implementation roadmap">
+        <h2 class="section-title reveal">Five live replacements. Read-only first, never dormant.</h2>
+        <p class="section-lede reveal">Each main-branch merge replaces named Bluge production callers. NIDX-01 writes no index bytes, but it switches the
+          bounded count, walk, repair, verification, and migration-source operations that establish the reader used by later writers.</p>
+        <div class="roadmap reveal" aria-label="Five-ticket implementation roadmap">
           <article class="roadmap-step">
 <b>NIDX-01</b>
-<h3>Property shard index</h3>
-<p><strong>Replaces</strong> Property upsert, query, sort, delete/expiry, repair scan, callback, merge, recovery, and backup.</p>
-<p><strong>Boundary</strong> No series wildcard/dictionary behavior, Stream element postings, external receive, or general migration.</p>
-<small>LIVE MERGE · property/db.newShard defaults native</small>
+<h3>Bounded read-only access</h3>
+<p><strong>Replaces</strong> Live count, schema walk, Property repair scan, verification counts, and migration source reads.</p>
+<p><strong>Boundary</strong> Match-all, exact/OR, stored values, deletion masks, tuple search-after; no output bytes or general query API.</p>
+<small>LIVE MERGE · named readers default native</small>
 </article>
           <article class="roadmap-step">
 <b>NIDX-02</b>
-<h3>Per-segment series <code>sidx</code></h3>
-<p><strong>Replaces</strong> Measure, Stream, and Trace series write, lookup, projection, sort, snapshot, and raw segment replication.</p>
-<p><strong>Boundary</strong> No Stream element <code>idx</code>, general offline migration commands, or dependency removal.</p>
-<small>LIVE MERGE · internal/storage.newSeriesIndex defaults native</small>
+<h3>Property shard index</h3>
+<p><strong>Replaces</strong> Property upsert, query, sort, delete/expiry, callback, merge, recovery, and backup.</p>
+<p><strong>Boundary</strong> No series wildcard/dictionary behavior, Stream element postings, external receive, or general migration writers.</p>
+<small>LIVE MERGE · property/db.newShard defaults native</small>
 </article>
           <article class="roadmap-step">
 <b>NIDX-03</b>
+<h3>Per-segment series <code>sidx</code></h3>
+<p><strong>Replaces</strong> Measure, Stream, and Trace series write, lookup, projection, sort, snapshot, and raw segment replication.</p>
+<p><strong>Boundary</strong> No Stream element <code>idx</code>, general offline destination writers, or dependency removal.</p>
+<small>LIVE MERGE · internal/storage.newSeriesIndex defaults native</small>
+</article>
+          <article class="roadmap-step">
+<b>NIDX-04</b>
 <h3>Stream element <code>idx</code></h3>
 <p><strong>Replaces</strong> Element batch, filters, paired postings, sort, snapshot, restart, and raw segment receive.</p>
 <p><strong>Boundary</strong> Only required analyzers and filters; no scoring, phrase, fuzzy, geo, highlight, facet, or plugin API.</p>
 <small>LIVE MERGE · stream.newElementIndex defaults native</small>
 </article>
           <article class="roadmap-step">
-<b>NIDX-04</b>
-<h3>Admin, migration, removal</h3>
-<p><strong>Replaces</strong> Schema load, union/rebuild, index-mode copy, migration verify, dump, and read-only count.</p>
-<p><strong>Boundary</strong> Rewire every last live caller before removing runtime Bluge, ICE, and segment-API dependencies.</p>
+<b>NIDX-05</b>
+<h3>Admin writers and removal</h3>
+<p><strong>Replaces</strong> Remaining union/rebuild, index-mode copy, migration output, dump, and maintenance/CLI paths.</p>
+<p><strong>Boundary</strong> Rewire every last caller before removing runtime Bluge, ICE, and segment-API dependencies.</p>
 <small>LIVE MERGE · zero production dependency edges</small>
 </article>
         </div>
-        <p class="caption reveal"><strong>Shared gate:</strong> every ticket must open legacy files, emit files accepted by the named rollback binary, pass its
-          complete role contract, and include a same-file rollback. With CRC32 processing prohibited, failure of the rollback binary to accept the reserved
-          field blocks the writing ticket.</p>
+        <p class="caption reveal"><strong>Shared gate:</strong> NIDX-01 must prove immutable files, bounded iteration, historical results, concurrent-writer
+          inspection, and CRC32 ignore behavior. Each writing ticket must emit files accepted by its named rollback binary and include a same-file rollback.</p>
       </section>
 
       <section id="risks">
@@ -2050,14 +2056,14 @@
 
       <section class="closing" id="close">
         <span class="section-no">RECOMMENDATION</span>
-        <h2 class="section-title reveal">Begin with one complete live vertical.</h2>
-        <p class="section-lede reveal">Develop the bounded reader, compatible writer, query path, fixtures, and fault evidence together on NIDX-01. Merge
-          only when Property shards select that native path by default; never accumulate a second unused engine on main.</p>
+        <h2 class="section-title reveal">Begin with bounded production reads.</h2>
+        <p class="section-lede reveal">Develop only the ICE/snapshot sections required by named read-only callers. Merge NIDX-01 when those callers are
+          native, historical results match, iteration is bounded, and every source directory remains unchanged; do not expose an unused general reader.</p>
         <div class="next-action reveal">
           <b>NIDX-01</b>
           <div>
-<h3>First production cutover</h3>
-<p>Replace the complete Property shard index and repair path, with legacy-directory input, compatible output, and same-file rollback proof.</p>
+<h3>First production replacement</h3>
+<p>Replace count, schema walk, Property repair, verification, and migration-source reads with a bounded native reader that emits no index bytes.</p>
 </div>
         </div>
         <div class="source-links reveal">
