@@ -341,18 +341,18 @@ type topNProcessor interface {
 type topNStreamingProcessor[K streaming.TopSortKey] struct {
 	pipeline      queue.Client
 	streamingFlow flow.Flow
-	stopCh        chan struct{}
-	src           chan interface{}
+	in            chan flow.StreamRecord
+	writeStopCh   chan struct{}
 	m             *databasev1.Measure
 	errCh         <-chan error
 	topNSchema    *databasev1.TopNAggregation
 	l             *logger.Logger
-	in            chan flow.StreamRecord
+	stopCh        chan struct{}
+	src           chan interface{}
 	nodeID        string
-	writeStopCh   chan struct{}
-	closeOnce     sync.Once
 	flow.ComponentState
 	interval      time.Duration
+	closeOnce     sync.Once
 	writeMu       sync.Mutex
 	sortDirection modelv1.Sort
 	closed        bool
@@ -621,10 +621,10 @@ func (t *topNStreamingProcessor[K]) handleError() {
 }
 
 type topNWrite struct {
-	seriesID uint64
-	shardID  uint32
 	request  *measurev1.InternalWriteRequest
 	measure  *databasev1.Measure
+	seriesID uint64
+	shardID  uint32
 }
 
 // topNProcessorManager manages multiple topNStreamingProcessor(s) belonging to a single measure.
@@ -632,15 +632,15 @@ type topNProcessorManager struct {
 	pipeline        queue.Client
 	l               *logger.Logger
 	m               *databasev1.Measure
-	nodeID          string
-	registeredTasks []*databasev1.TopNAggregation
-	processorList   []topNProcessor
-	enqueueMu       sync.Mutex
 	inputCh         chan topNWrite
 	stopCh          chan struct{}
 	dispatcher      *run.Task
+	nodeID          string
+	registeredTasks []*databasev1.TopNAggregation
+	processorList   []topNProcessor
 	sync.RWMutex
-	closed bool
+	enqueueMu sync.Mutex
+	closed    bool
 }
 
 func (manager *topNProcessorManager) init(ctx context.Context, m *databasev1.Measure) {
@@ -652,7 +652,7 @@ func (manager *topNProcessorManager) init(ctx context.Context, m *databasev1.Mea
 	if manager.inputCh == nil {
 		manager.inputCh = make(chan topNWrite, topNWriteQueueCapacity)
 		manager.stopCh = make(chan struct{})
-		manager.dispatcher = run.Go(context.Background(), "measure.topn.dispatcher", manager.l, manager.dispatchTopNWrites)
+		manager.dispatcher = run.Go(ctx, "measure.topn.dispatcher", manager.l, manager.dispatchTopNWrites)
 	}
 	if manager.m != nil {
 		return
