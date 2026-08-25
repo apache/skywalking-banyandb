@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
+	"github.com/onsi/ginkgo/v2/types"
 	"github.com/onsi/gomega"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -135,19 +136,21 @@ var _ = ginkgo.Describe("vec independent verification (standalone)", ginkgo.Orde
 		// any later test that targets the row baseline cluster (same
 		// process) sees the original proto codec contract.
 		data.SetMeasureWireModeRaw(savedWireModeRaw)
-		// G8e observability: dispatch MUST fire for at least one of the
-		// replayed cases. If this assertion ever drops to zero, the
-		// vec subsystem is silently 0%-covered — either the dispatch
-		// eligibility gate is too tight or the wire-up regressed.
+		// G8e observability: an unfiltered table must dispatch at least one
+		// replayed case. A focused run may select only row-path cases.
 		handledDelta := vecplan.HandledCount() - startHandledCount
 		fellThroughDelta := vecplan.FellThroughCount() - startFellThroughCount
 		ginkgo.GinkgoWriter.Printf(
 			"vec dispatch (standalone): handled=%d fell_through=%d (deltas across vec-standalone table)\n",
 			handledDelta, fellThroughDelta,
 		)
-		gomega.Expect(handledDelta).To(gomega.BeNumerically(">", int64(0)),
-			"vec dispatch did not fire for any case in the vec-standalone table; "+
-				"either the eligibility gate is too tight or processor.go's tryVecDispatch regressed")
+		if suiteFiltersSpecs() {
+			ginkgo.GinkgoWriter.Println("vec dispatch proof omitted because Ginkgo filters selected a subset of the table")
+		} else {
+			gomega.Expect(handledDelta).To(gomega.BeNumerically(">", int64(0)),
+				"vec dispatch did not fire for any case in the vec-standalone table; "+
+					"either the eligibility gate is too tight or processor.go's tryVecDispatch regressed")
+		}
 		if vectorizedConn != nil {
 			gomega.Expect(vectorizedConn.Close()).To(gomega.Succeed())
 		}
@@ -159,3 +162,14 @@ var _ = ginkgo.Describe("vec independent verification (standalone)", ginkgo.Orde
 	casesmeasure.RegisterTable("Vec (standalone): scanning measures")
 	casestopn.RegisterTable("Vec (standalone): TopN")
 })
+
+func suiteFiltersSpecs() bool {
+	suiteConfig, _ := ginkgo.GinkgoConfiguration()
+	return hasSpecFilter(suiteConfig)
+}
+
+func hasSpecFilter(suiteConfig types.SuiteConfig) bool {
+	return len(suiteConfig.FocusStrings) > 0 || len(suiteConfig.SkipStrings) > 0 ||
+		len(suiteConfig.FocusFiles) > 0 || len(suiteConfig.SkipFiles) > 0 ||
+		suiteConfig.LabelFilter != "" || suiteConfig.SemVerFilter != ""
+}
