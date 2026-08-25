@@ -1,0 +1,909 @@
+<!--
+  Licensed to Apache Software Foundation (ASF) under one or more contributor
+  license agreements. See the NOTICE file distributed with
+  this work for additional information regarding copyright
+  ownership. Apache Software Foundation (ASF) licenses this file to you under
+  the Apache License, Version 2.0 (the "License"); you may
+  not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing,
+  software distributed under the License is distributed on an
+  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+  KIND, either express or implied. See the License for the
+  specific language governing permissions and limitations
+  under the License.
+-->
+<!doctype html>
+<html lang="en" data-theme="paper">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Scope, product roles, the native data model, and the owned architecture boundary.">
+  <title>BDB Native Index Spec — Overview and contracts</title>
+  <link rel="stylesheet" href="spec.css">
+</head>
+<body data-page="overview">
+  <div class="progress" id="scroll-progress"></div>
+  <div class="shell">
+    <aside class="rail">
+      <div class="rail-brand">
+        <div class="rail-mark">BDB</div>
+        <div>
+          <b>NATIVE INDEX</b>
+          <span>implementation specification</span>
+        </div>
+      </div>
+      <div class="rail-status">
+        <b>REVIEW</b>
+        <span>BDB-NIDX-SPEC-001<br>Revision 0.1 · 2026-08-24</span>
+        <span class="page-label">CHAPTER 01/05 · OVERVIEW</span>
+      </div>
+      <nav aria-label="Specification sections">
+        <ol class="toc" id="toc">
+          <li>
+            <a class="page-current" href="#status">
+              <b>00</b>
+              <span>Document status</span>
+            </a>
+          </li>
+          <li>
+            <a class="page-current" href="#contract">
+              <b>01</b>
+              <span>Contract and scope</span>
+            </a>
+          </li>
+          <li>
+            <a class="page-current" href="#model">
+              <b>02</b>
+              <span>Data model</span>
+            </a>
+          </li>
+          <li>
+            <a class="page-current" href="#products">
+              <b>03</b>
+              <span>Product requirements</span>
+            </a>
+          </li>
+          <li>
+            <a class="page-current" href="#architecture">
+              <b>04</b>
+              <span>Architecture and APIs</span>
+            </a>
+          </li>
+          <li>
+            <a href="write-format.html#fields">
+              <b>05</b>
+              <span>Fields and identity</span>
+            </a>
+          </li>
+          <li>
+            <a href="write-format.html#terms">
+              <b>06</b>
+              <span>Analyzers and terms</span>
+            </a>
+          </li>
+          <li>
+            <a href="write-format.html#write">
+              <b>07</b>
+              <span>Write semantics</span>
+            </a>
+          </li>
+          <li>
+            <a href="write-format.html#ice">
+              <b>08</b>
+              <span>ICE v3 format</span>
+            </a>
+          </li>
+          <li>
+            <a href="write-format.html#snapshot">
+              <b>09</b>
+              <span>Snapshot v3 format</span>
+            </a>
+          </li>
+          <li>
+            <a href="query-lifecycle.html#query">
+              <b>10</b>
+              <span>Query execution</span>
+            </a>
+          </li>
+          <li>
+            <a href="query-lifecycle.html#sort">
+              <b>11</b>
+              <span>Sort and projection</span>
+            </a>
+          </li>
+          <li>
+            <a href="query-lifecycle.html#lifecycle">
+              <b>12</b>
+              <span>Durability and recovery</span>
+            </a>
+          </li>
+          <li>
+            <a href="query-lifecycle.html#merge">
+              <b>13</b>
+              <span>Merge, delete, and GC</span>
+            </a>
+          </li>
+          <li>
+            <a href="query-lifecycle.html#external">
+              <b>14</b>
+              <span>External and admin</span>
+            </a>
+          </li>
+          <li>
+            <a href="safety-verification.html#integrity">
+              <b>15</b>
+              <span>Integrity and limits</span>
+            </a>
+          </li>
+          <li>
+            <a href="safety-verification.html#compatibility">
+              <b>16</b>
+              <span>Compatibility</span>
+            </a>
+          </li>
+          <li>
+            <a href="safety-verification.html#verification">
+              <b>17</b>
+              <span>Verification program</span>
+            </a>
+          </li>
+          <li>
+            <a href="delivery-review.html#rollout">
+              <b>18</b>
+              <span>Implementation tickets</span>
+            </a>
+          </li>
+          <li>
+            <a href="delivery-review.html#operations">
+              <b>19</b>
+              <span>Operations</span>
+            </a>
+          </li>
+          <li>
+            <a href="delivery-review.html#decisions">
+              <b>20</b>
+              <span>Review decisions</span>
+            </a>
+          </li>
+          <li>
+            <a href="delivery-review.html#acceptance">
+              <b>21</b>
+              <span>Acceptance criteria</span>
+            </a>
+          </li>
+          <li>
+            <a href="delivery-review.html#traceability">
+              <b>22</b>
+              <span>Traceability</span>
+            </a>
+          </li>
+        </ol>
+      </nav>
+      <div class="rail-footer">
+        <a href="ice-segment-animated-walkthrough.html">Animated ICE walkthrough</a>
+        <br>
+        <a href="research-report.html">Visual research report</a>
+      </div>
+    </aside>
+
+    <div class="workspace">
+      <header class="toolbar">
+        <input class="search" id="spec-search" type="search" placeholder="Search this chapter…" aria-label="Search this specification chapter">
+        <div class="filter-set" aria-label="Filter specification chapter">
+          <button class="filter-button" type="button" data-filter="all" aria-pressed="true">All</button>
+          <button class="filter-button" type="button" data-filter="normative" aria-pressed="false">Normative</button>
+          <button class="filter-button" type="button" data-filter="open" aria-pressed="false">Open only</button>
+        </div>
+        <div class="tool-set">
+          <button class="tool-button" id="theme-toggle" type="button" title="Toggle paper/night theme">◐</button>
+          <button class="tool-button" id="print-spec" type="button">Print</button>
+        </div>
+      </header>
+
+      <main class="document" id="document">
+<section class="cover" id="status" data-status="decision" data-searchable>
+          <div>
+            <div class="kicker">BDB-NIDX-SPEC-001 · review draft</div>
+            <h1>Native inverted index <em>implementation spec.</em>
+            </h1>
+            <p class="cover-lede">A complete review contract for replacing Bluge and ICE with a minimal BanyanDB-owned engine while preserving ICE v3
+              segments, snapshot v3 manifests, live-query behavior, crash recovery, and same-file rollback.</p>
+            <div class="doc-meta">
+              <div class="meta-cell">
+                <b>Revision</b>
+                <span>0.1</span>
+              </div>
+              <div class="meta-cell">
+                <b>Date</b>
+                <span>2026-08-24</span>
+              </div>
+              <div class="meta-cell">
+                <b>Compatibility target</b>
+                <span>ICE v3 + snapshot v3</span>
+              </div>
+              <div class="meta-cell">
+                <b>Implementation</b>
+                <span>Direct immutable builder</span>
+              </div>
+              <div class="meta-cell">
+                <b>Source baseline</b>
+                <span>BanyanDB 8f1c6f5f + pinned forks</span>
+              </div>
+              <div class="meta-cell">
+                <b>Disposition</b>
+                <span>Review; not approved for production</span>
+              </div>
+            </div>
+          </div>
+
+          <aside class="cover-side">
+            <span class="draft-stamp">REVIEW DRAFT</span>
+            <div class="status-ledger">
+              <div class="status-card stable">
+                <b>STABLE</b>
+                <p>Source-observed contracts suitable for implementation after fixture confirmation.</p>
+              </div>
+              <div class="status-card fixture">
+                <b>FIXTURE</b>
+                <p>Normative intent is clear, but exact historical bytes still require golden corpus proof.</p>
+              </div>
+              <div class="status-card decision">
+                <b>DECIDE</b>
+                <p>Maintainer choice is required before the corresponding behavior becomes normative.</p>
+              </div>
+              <div class="status-card prohibited">
+                <b>DO NOT</b>
+                <p>No mechanical source copy and no production-directory rewrite on open.</p>
+              </div>
+            </div>
+            <div class="review-summary">
+              <h3>Review completion</h3>
+              <div class="review-meter">
+                <i id="review-meter-fill">
+                </i>
+              </div>
+              <p id="review-meter-label">0 of 10 open decisions dispositioned</p>
+            </div>
+          </aside>
+        </section>
+
+      <section class="chapter-map" aria-labelledby="chapter-map-title">
+        <div class="chapter-map-head">
+          <h2 id="chapter-map-title">Read the specification by chapter.</h2>
+          <p>The former monolith is now five focused review surfaces. Requirement IDs and section numbers remain stable.</p>
+        </div>
+        <div class="chapter-grid">
+        <a class="chapter-card" href="#status" aria-current="page">
+          <b>CHAPTER 01</b>
+          <strong>Overview and contracts</strong>
+          <span>Scope, product roles, the native data model, and the owned architecture boundary.</span>
+        </a>
+        <a class="chapter-card" href="write-format.html#fields">
+          <b>CHAPTER 02</b>
+          <strong>Write path and disk grammar</strong>
+          <span>Fields, analyzers, batch transformation, ICE v3 sections, and snapshot v3 publication.</span>
+        </a>
+        <a class="chapter-card" href="query-lifecycle.html#query">
+          <b>CHAPTER 03</b>
+          <strong>Query and lifecycle</strong>
+          <span>Filter execution, projection, ordering, durability, merge, garbage collection, and external receive.</span>
+        </a>
+        <a class="chapter-card" href="safety-verification.html#integrity">
+          <b>CHAPTER 04</b>
+          <strong>Safety and verification</strong>
+          <span>Bounds, malformed-input behavior, compatibility matrices, fixtures, fuzzing, and crash evidence.</span>
+        </a>
+        <a class="chapter-card" href="delivery-review.html#rollout">
+          <b>CHAPTER 05</b>
+          <strong>Delivery and review</strong>
+          <span>Four live cutovers, operational signals, accepted decisions, release gates, and source traceability.</span>
+        </a>
+        </div>
+      </section>
+
+<section class="spec-section" id="contract" data-status="stable" data-searchable data-normative>
+          <div class="section-grid">
+            <aside class="section-side">
+              <div>
+                <div class="section-no">01</div>
+                <span class="section-state">Stable contract</span>
+                <p>Defines what the replacement is—and is not.</p>
+              </div>
+            </aside>
+            <div class="section-main">
+              <h2>Contract and scope</h2>
+              <p class="section-lede">The replacement is a BanyanDB filter, projection, and sort engine—not a general-purpose relevance search product.</p>
+
+              <h3>Requirement language</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Marker</th>
+                      <th>Review meaning</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><span class="verb must">MUST</span></td>
+                      <td>Required for conformance and release acceptance.</td>
+                    </tr>
+                    <tr>
+                      <td><span class="verb should">SHOULD</span></td>
+                      <td>Expected unless a reviewed exception records the reason, impact, and replacement control.</td>
+                    </tr>
+                    <tr>
+                      <td><span class="verb may">MAY</span></td>
+                      <td>Optional behavior that must not weaken a MUST or the compatibility boundary.</td>
+                    </tr>
+                    <tr>
+                      <td><span class="tag fixture">fixture gate</span></td>
+                      <td>The stated rule guides the prototype, but production enablement waits for independent byte evidence.</td>
+                    </tr>
+                    <tr>
+                      <td><span class="tag decision">decision gate</span></td>
+                      <td>The corresponding Section 20 disposition must be approved and folded into the next revision.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <h3>Objective</h3>
+              <div class="clause-list">
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">SCOPE-001</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Implement the index behavior required by Series, Stream, Property, index-mode Measure, migration, repair, dump, backup, and verification.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">SCOPE-002</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Read existing supported BanyanDB index directories and, during the rollback window, emit ICE v3 segments and snapshot v3 manifests
+                      readable by the pinned legacy implementation.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">SCOPE-003</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Own query semantics, analysis, term encoding, snapshots, durability, merge, external receive, administration, and lifecycle in BanyanDB
+                      packages.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">SCOPE-004</span>
+                    <span class="verb should">SHOULD</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Retain only low-level codecs whose serialized bytes are already part of the compatibility boundary: Roaring, Vellum, and verified
+                      compression implementations.</p>
+                  </div>
+                </div>
+              </div>
+
+              <h3>Non-goals</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Excluded capability</th>
+                      <th>Reason</th>
+                      <th>Compatibility handling</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>BM25 scoring and relevance ranking</td>
+                      <td>No production caller consumes scores.</td>
+                      <td>Reader tolerates legacy detail; native query results are unscored.</td>
+                    </tr>
+                    <tr>
+                      <td>Phrase/fuzzy/geo queries</td>
+                      <td>No required caller identified.</td>
+                      <td>Locations may be preserved during compatible merge without exposing APIs.</td>
+                    </tr>
+                    <tr>
+                      <td>Highlights, facets, aggregations, explanations</td>
+                      <td>Outside BanyanDB index contracts.</td>
+                      <td>No native implementation.</td>
+                    </tr>
+                    <tr>
+                      <td>General plugin or remote-directory API</td>
+                      <td>Would recreate Bluge abstraction surface.</td>
+                      <td>Private segment and directory interfaces only.</td>
+                    </tr>
+                    <tr>
+                      <td>New disk version during rollout</td>
+                      <td>Would break same-file downgrade.</td>
+                      <td>Consider only after legacy fallback retirement.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <h3 id="capability-comparison">Legacy-to-native implementation comparison</h3>
+              <p>The native index intentionally implements the BanyanDB contract, not the entire Bluge/ICE feature surface. This table distinguishes
+                required compatibility work from capabilities that must remain absent. “Not implemented” is a deliberate boundary, not deferred work.</p>
+              <div class="comparison-key" aria-label="Capability state legend">
+                <span><span class="tag stable">native</span> BanyanDB-owned behavior</span>
+                <span><span class="tag fixture">compatibility only</span> retained format or codec boundary</span>
+                <span><span class="tag out">not implemented</span> intentionally absent from the native index</span>
+                <span><span class="tag decision">deferred</span> prohibited during the rollback window</span>
+              </div>
+              <div class="table-wrap">
+                <table class="capability-comparison">
+                  <thead>
+                    <tr>
+                      <th>Legacy capability or format area</th>
+                      <th>Native index behavior</th>
+                      <th>State</th>
+                      <th>Compatibility consequence</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="state-native">
+                      <td>Document identity, batch mutation, replacement, and deletion masks</td>
+                      <td>Implement with BanyanDB-owned writer, snapshot, and identity semantics.</td>
+                      <td><span class="tag stable">native</span></td>
+                      <td>Series, Stream, Property, and index-mode Measure retain their required write contracts.</td>
+                    </tr>
+                    <tr class="state-native">
+                      <td>Exact, range, prefix, wildcard, MATCH, existence, and boolean filters</td>
+                      <td>Implement the caller-required filter algebra without scoring.</td>
+                      <td><span class="tag stable">native</span></td>
+                      <td>Pure-negative and field-universe behavior follows the accepted DEC-003 corrections.</td>
+                    </tr>
+                    <tr class="state-native">
+                      <td>Stored projection, field dictionaries, doc-value sort, and search-after</td>
+                      <td>Implement projection and stable explicit ordering required by online and offline consumers.</td>
+                      <td><span class="tag stable">native</span></td>
+                      <td>Sort is explicit; relevance ordering is never implied.</td>
+                    </tr>
+                    <tr class="state-native">
+                      <td>Snapshots, publication, recovery, merge, expiry, repair, migration, and administration</td>
+                      <td>Implement the BanyanDB-required lifecycle with private owned APIs.</td>
+                      <td><span class="tag stable">native</span></td>
+                      <td>Includes external segment reception and read-only administrative access.</td>
+                    </tr>
+                    <tr class="state-native">
+                      <td>ICE v3 segments and snapshot v3 manifests</td>
+                      <td>Read and write the required byte layout during the rollback window.</td>
+                      <td><span class="tag stable">native</span></td>
+                      <td>Existing supported directories and native-produced files remain cross-readable.</td>
+                    </tr>
+                    <tr class="state-compat">
+                      <td>Vellum dictionaries, Roaring postings, and proven compression codecs</td>
+                      <td>Retain only these low-level codecs at the serialized-byte boundary.</td>
+                      <td><span class="tag fixture">compatibility only</span></td>
+                      <td>Native code owns index behavior; codec versions remain pinned by fixture evidence.</td>
+                    </tr>
+                    <tr class="state-compat">
+                      <td>Legacy frequency, norm, and location detail</td>
+                      <td>Read or preserve it only where fixture-proven compatibility and compatible merge require it.</td>
+                      <td><span class="tag fixture">compatibility only</span></td>
+                      <td>The native query API does not expose scoring or positional-search behavior.</td>
+                    </tr>
+                    <tr class="state-omitted">
+                      <td>Segment-footer and snapshot CRC32 fields</td>
+                      <td>Preserve each four-byte field in its historical position, but do not calculate, validate, or use its value.</td>
+                      <td><span class="tag out">processing not implemented</span></td>
+                      <td>CRC32 is a layout-compatibility field only; structural, bounds, and codec validation remain required.</td>
+                    </tr>
+                    <tr class="state-omitted">
+                      <td>BM25 scoring, boosts, and relevance ranking</td>
+                      <td>Return unscored results only.</td>
+                      <td><span class="tag out">not implemented</span></td>
+                      <td>No production caller may depend on scores or relevance ordering.</td>
+                    </tr>
+                    <tr class="state-omitted">
+                      <td>Phrase and other positional-search APIs</td>
+                      <td>Do not expose a phrase-query or public term-vector surface.</td>
+                      <td><span class="tag out">not implemented</span></td>
+                      <td>Location detail may be preserved only when needed for compatible merge.</td>
+                    </tr>
+                    <tr class="state-omitted">
+                      <td>Fuzzy and edit-distance queries</td>
+                      <td>Do not build fuzzy expansion or distance-scoring machinery.</td>
+                      <td><span class="tag out">not implemented</span></td>
+                      <td>Callers retain exact, prefix, wildcard, and MATCH behavior only.</td>
+                    </tr>
+                    <tr class="state-omitted">
+                      <td>Geospatial indexing and geo queries</td>
+                      <td>Do not implement geo shapes, spatial terms, or geo-distance search.</td>
+                      <td><span class="tag out">not implemented</span></td>
+                      <td>No production BanyanDB index contract requires this surface.</td>
+                    </tr>
+                    <tr class="state-omitted">
+                      <td>Highlights, facets, aggregations, and explanations</td>
+                      <td>Expose none of these search-product result features.</td>
+                      <td><span class="tag out">not implemented</span></td>
+                      <td>Aggregation remains outside the native inverted-index contract.</td>
+                    </tr>
+                    <tr class="state-omitted">
+                      <td>General plugin and remote-directory abstractions</td>
+                      <td>Use private BanyanDB segment and directory interfaces.</td>
+                      <td><span class="tag out">not implemented</span></td>
+                      <td>The native implementation must not recreate the Bluge abstraction surface.</td>
+                    </tr>
+                    <tr class="state-deferred">
+                      <td>New disk version during the rollback window</td>
+                      <td>Do not introduce one.</td>
+                      <td><span class="tag decision">deferred</span></td>
+                      <td>Same-file downgrade remains possible until legacy fallback retirement.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="callout danger">
+                <b>!</b>
+                <p>
+                  <strong>Provenance rule:</strong> existing Bluge/ICE source may establish behavior, but production code must be implemented from this
+                    specification, independent fixtures, and black-box tests—not by mechanical translation.</p>
+                </div>
+            </div>
+          </div>
+        </section>
+
+<section class="spec-section" id="model" data-status="stable" data-searchable data-normative>
+          <div class="section-grid">
+            <aside class="section-side">
+              <div>
+                <div class="section-no">02</div>
+                <span class="section-state">Stable model</span>
+                <p>Defines the immutable objects and three access directions.</p>
+              </div>
+            </aside>
+            <div class="section-main">
+              <h2>Data model and terminology</h2>
+              <p class="section-lede">A logical field may be materialized more than once because filtering, sorting, and returning values travel in opposite
+                directions.</p>
+
+              <div class="three-views">
+                <article class="view-card">
+                  <b>VIEW A · INVERTED</b>
+                  <strong>term → local documents</strong>
+                  <p>Vellum FST dictionaries lead to Roaring postings and optional frequency/location detail. Used for exact, range, prefix, wildcard, and
+                    boolean filtering.</p>
+                </article>
+                <article class="view-card">
+                  <b>VIEW B · DOC VALUES</b>
+                  <strong>local document → terms</strong>
+                  <p>Per-field compressed chunks return analyzed, comparable term bytes. Used for explicit sort, reconstruction, and merge.</p>
+                </article>
+                <article class="view-card">
+                  <b>VIEW C · STORED</b>
+                  <strong>local document → source bytes</strong>
+                  <p>Compressed document records preserve original stored values. Used for projection, repair, migration, and administration.</p>
+                </article>
+              </div>
+
+              <div class="representation" aria-label="Three representations of latency 120">
+                <div class="source">INPUT<br>latency = 120</div>
+                <div>
+                  <b>INDEXED</b>
+                  <p>Numeric terms point to a posting containing local document 0.</p>
+                </div>
+                <div>
+                  <b>SORTABLE</b>
+                  <p>Document 0 points to the shift-zero comparable numeric term.</p>
+                </div>
+                <div>
+                  <b>STORED</b>
+                  <p>Document 0 points to the original value bytes used for return.</p>
+                </div>
+              </div>
+
+              <div class="callout info">
+                <b>≠</b>
+                <p><strong>Not a duplicate doc value:</strong> stored chunks contain original source values; doc-value chunks contain analyzed, escaped term
+                  bytes. When one logical field is both stored and sortable, ICE deliberately materializes both representations because they serve different
+                  access directions.</p>
+              </div>
+
+              <h3>Normative terms</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Term</th>
+                      <th>Definition</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Document identity</td>
+                      <td>The unique <code>_id</code> term used to find the current live version of a document.</td>
+                    </tr>
+                    <tr>
+                      <td>Local document number</td>
+                      <td>A dense zero-based number meaningful only within one immutable segment.</td>
+                    </tr>
+                    <tr>
+                      <td>Global hit number</td>
+                      <td>A snapshot-relative number obtained by adding a segment base offset to a local document number.</td>
+                    </tr>
+                    <tr>
+                      <td>Term</td>
+                      <td>An analyzer/codec-produced byte string stored as a field dictionary key.</td>
+                    </tr>
+                    <tr>
+                      <td>Posting</td>
+                      <td>A term's local document set and optional frequency, norm, and location detail.</td>
+                    </tr>
+                    <tr>
+                      <td>Stored field</td>
+                      <td>Original field bytes explicitly retained for document materialization.</td>
+                    </tr>
+                    <tr>
+                      <td>Doc value</td>
+                      <td>Analyzed term bytes indexed by document number for sort, merge, or reconstruction; not the original source value.</td>
+                    </tr>
+                    <tr>
+                      <td>Segment</td>
+                      <td>An immutable ICE v3 byte sequence containing documents and indexes but no logical deletion state.</td>
+                    </tr>
+                    <tr>
+                      <td>Snapshot</td>
+                      <td>An immutable generation selecting segments and per-segment deletion bitmaps.</td>
+                    </tr>
+                    <tr>
+                      <td>Live document</td>
+                      <td>A segment document not present in its snapshot deletion bitmap.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+<section class="spec-section" id="products" data-status="stable" data-searchable data-normative>
+          <div class="section-grid">
+            <aside class="section-side">
+              <div>
+                <div class="section-no">03</div>
+                <span class="section-state">Stable contract</span>
+                <p>Maps every feature to a BanyanDB consumer.</p>
+              </div>
+            </aside>
+            <div class="section-main">
+              <h2>Product requirements</h2>
+              <p class="section-lede">Every production feature must map to one of these consumers or to disk compatibility.</p>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Consumer</th>
+                      <th>Identity/write semantics</th>
+                      <th>Required reads</th>
+                      <th>Lifecycle</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>
+                        <strong>Series index</strong>
+                      </td>
+                      <td>One live serialized entity identity; field-set-aware ensure/upsert.</td>
+                      <td>Exact/prefix/wildcard identity, filters, projection, timestamp/version, dictionary scan, explicit sort.</td>
+                      <td>Per-storage-segment persistence and migration.</td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <strong>Stream element index</strong>
+                      </td>
+                      <td>Numeric document ID plus mandatory series identity.</td>
+                      <td>Exact/range/MATCH/existence, document and timestamp postings, explicit sort.</td>
+                      <td>Batch write, rebuild, external receive.</td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <strong>Property</strong>
+                      </td>
+                      <td>Replacement document with stored source, delete time, hash, and identity.</td>
+                      <td>Boolean/range filters, stable sorted repair scan, stored fields.</td>
+                      <td>Durable callbacks, merge-time expiry, repair, backup.</td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <strong>Index-mode Measure</strong>
+                      </td>
+                      <td>Series entity plus stored tags, timestamp, and version.</td>
+                      <td>Time/range filter, full projection, sort/doc values.</td>
+                      <td>Migration reconstruction and verification.</td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <strong>Admin/offline</strong>
+                      </td>
+                      <td>No mutation for read-only open.</td>
+                      <td>Count, latest generation, walk, verify, search-after, stored/doc-value visitation.</td>
+                      <td>Snapshot, dump, rebuild, repair, migration.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="clause-list">
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">PROD-001</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>The native backend must satisfy the existing <code>pkg/index</code> online contracts and replace every direct production Bluge bypass with an owned
+                      admin interface.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">PROD-002</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>External segment reception must remain available for Stream, Measure, and Trace migration workflows.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">PROD-003</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Property expiration must be evaluated during merge using a private deletion set and must not mutate a published reader snapshot.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+<section class="spec-section" id="architecture" data-status="stable" data-searchable data-normative>
+          <div class="section-grid">
+            <aside class="section-side">
+              <div>
+                <div class="section-no">04</div>
+                <span class="section-state">Recommended</span>
+                <p>Direct immutable builder with isolated codecs.</p>
+              </div>
+            </aside>
+            <div class="section-main">
+              <h2>Architecture and APIs</h2>
+              <p class="section-lede">BanyanDB concepts form the public boundary. No Bluge, ICE, Vellum, Roaring, or compression types escape the internal codec
+                layer.</p>
+
+              <div class="model-flow" aria-label="Proposed package flow">
+                <div class="flow-node">
+                  <b>pkg/index</b>
+                  <span>stable product contracts</span>
+                </div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">
+                  <b>Query IR + codecs</b>
+                  <span>owned semantics</span>
+                </div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">
+                  <b>Native store</b>
+                  <span>write and execute</span>
+                </div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">
+                  <b>Segment boundary</b>
+                  <span>immutable refs</span>
+                </div>
+              </div>
+              <div class="model-flow" aria-label="Codec and persistence flow">
+                <div class="flow-node">
+                  <b>Snapshot manager</b>
+                  <span>live masks + MVCC</span>
+                </div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">
+                  <b>ICE v3 codec</b>
+                  <span>bounded read/write</span>
+                </div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">
+                  <b>Directory</b>
+                  <span>publish + recover</span>
+                </div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">
+                  <b>Admin/external</b>
+                  <span>verify + receive</span>
+                </div>
+              </div>
+
+              <h3>Package ownership</h3>
+              <pre>pkg/index/queryir           backend-neutral query tree
+pkg/index/analyzer          keyword, simple, standard, URL tokenization
+pkg/index/termcodec         byte, numeric, and timestamp term encodings
+pkg/index/native/store      admission, identity evolution, public adapters
+pkg/index/native/snapshot   immutable generations and deletion masks
+pkg/index/native/execute    postings algebra, ranges, wildcard, projection, sort
+pkg/index/native/segment    private immutable segment interfaces
+pkg/index/native/icev3      bounded ICE segment codec
+pkg/index/native/persist    ordered durable publication and callbacks
+pkg/index/native/directory  naming, locking, fsync, recovery, and GC
+pkg/index/native/external   raw segment validation and introduction
+pkg/index/native/admin      count, inspect, verify, walk, rebuild, backup</pre>
+
+              <h3>Required private boundaries</h3>
+              <pre>type Segment interface {
+    NumDocs() uint64
+    Fields() FieldIterator
+    Dictionary(fieldID uint16) Dictionary
+    Postings(fieldID uint16, term []byte, except LiveMask) Postings
+    VisitStored(docNum uint64, visit StoredVisitor) error
+    VisitDocValues(docNum uint64, fieldIDs []uint16, visit TermVisitor) error
+    TimeBounds() (min, max int64)
+}
+
+type Snapshot interface {
+    Acquire() SnapshotRef
+    Segments() []SegmentRef
+    Deletions(segmentID uint64) LiveMask
+    Generation() uint64
+}</pre>
+
+              <div class="clause-list">
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">ARCH-001</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Use the direct immutable segment builder as the target architecture. A permanent mutable document arena is not part of the design.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">ARCH-002</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Serialize mutations per index directory while permitting concurrent ref-counted immutable readers.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">ARCH-003</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Keep third-party serialized codec types behind <code>native/icev3</code>; other packages operate on owned interfaces and byte slices.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      <nav class="page-turn" aria-label="Specification chapters">
+        <div class="spacer" aria-hidden="true"></div>
+        <a href="write-format.html#fields"><b>Next chapter →</b><span>Write path and disk grammar</span></a>
+      </nav>
+
+      <div class="empty-search" id="empty-search">No section in this chapter matches the search/filter.</div>
+      </main>
+    </div>
+  </div>
+  <script src="spec.js"></script>
+</body>
+</html>

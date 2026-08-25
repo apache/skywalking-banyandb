@@ -1,0 +1,776 @@
+<!--
+  Licensed to Apache Software Foundation (ASF) under one or more contributor
+  license agreements. See the NOTICE file distributed with
+  this work for additional information regarding copyright
+  ownership. Apache Software Foundation (ASF) licenses this file to you under
+  the Apache License, Version 2.0 (the "License"); you may
+  not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing,
+  software distributed under the License is distributed on an
+  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+  KIND, either express or implied. See the License for the
+  specific language governing permissions and limitations
+  under the License.
+-->
+<!doctype html>
+<html lang="en" data-theme="paper">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Filter execution, projection, ordering, durability, merge, garbage collection, and external receive.">
+  <title>BDB Native Index Spec — Query and lifecycle</title>
+  <link rel="stylesheet" href="spec.css">
+</head>
+<body data-page="query-lifecycle">
+  <div class="progress" id="scroll-progress"></div>
+  <div class="shell">
+    <aside class="rail">
+      <div class="rail-brand">
+        <div class="rail-mark">BDB</div>
+        <div>
+          <b>NATIVE INDEX</b>
+          <span>implementation specification</span>
+        </div>
+      </div>
+      <div class="rail-status">
+        <b>REVIEW</b>
+        <span>BDB-NIDX-SPEC-001<br>Revision 0.1 · 2026-08-24</span>
+        <span class="page-label">CHAPTER 03/05 · QUERY + LIFECYCLE</span>
+      </div>
+      <nav aria-label="Specification sections">
+        <ol class="toc" id="toc">
+          <li>
+            <a href="index.html#status">
+              <b>00</b>
+              <span>Document status</span>
+            </a>
+          </li>
+          <li>
+            <a href="index.html#contract">
+              <b>01</b>
+              <span>Contract and scope</span>
+            </a>
+          </li>
+          <li>
+            <a href="index.html#model">
+              <b>02</b>
+              <span>Data model</span>
+            </a>
+          </li>
+          <li>
+            <a href="index.html#products">
+              <b>03</b>
+              <span>Product requirements</span>
+            </a>
+          </li>
+          <li>
+            <a href="index.html#architecture">
+              <b>04</b>
+              <span>Architecture and APIs</span>
+            </a>
+          </li>
+          <li>
+            <a href="write-format.html#fields">
+              <b>05</b>
+              <span>Fields and identity</span>
+            </a>
+          </li>
+          <li>
+            <a href="write-format.html#terms">
+              <b>06</b>
+              <span>Analyzers and terms</span>
+            </a>
+          </li>
+          <li>
+            <a href="write-format.html#write">
+              <b>07</b>
+              <span>Write semantics</span>
+            </a>
+          </li>
+          <li>
+            <a href="write-format.html#ice">
+              <b>08</b>
+              <span>ICE v3 format</span>
+            </a>
+          </li>
+          <li>
+            <a href="write-format.html#snapshot">
+              <b>09</b>
+              <span>Snapshot v3 format</span>
+            </a>
+          </li>
+          <li>
+            <a class="page-current" href="#query">
+              <b>10</b>
+              <span>Query execution</span>
+            </a>
+          </li>
+          <li>
+            <a class="page-current" href="#sort">
+              <b>11</b>
+              <span>Sort and projection</span>
+            </a>
+          </li>
+          <li>
+            <a class="page-current" href="#lifecycle">
+              <b>12</b>
+              <span>Durability and recovery</span>
+            </a>
+          </li>
+          <li>
+            <a class="page-current" href="#merge">
+              <b>13</b>
+              <span>Merge, delete, and GC</span>
+            </a>
+          </li>
+          <li>
+            <a class="page-current" href="#external">
+              <b>14</b>
+              <span>External and admin</span>
+            </a>
+          </li>
+          <li>
+            <a href="safety-verification.html#integrity">
+              <b>15</b>
+              <span>Integrity and limits</span>
+            </a>
+          </li>
+          <li>
+            <a href="safety-verification.html#compatibility">
+              <b>16</b>
+              <span>Compatibility</span>
+            </a>
+          </li>
+          <li>
+            <a href="safety-verification.html#verification">
+              <b>17</b>
+              <span>Verification program</span>
+            </a>
+          </li>
+          <li>
+            <a href="delivery-review.html#rollout">
+              <b>18</b>
+              <span>Implementation tickets</span>
+            </a>
+          </li>
+          <li>
+            <a href="delivery-review.html#operations">
+              <b>19</b>
+              <span>Operations</span>
+            </a>
+          </li>
+          <li>
+            <a href="delivery-review.html#decisions">
+              <b>20</b>
+              <span>Review decisions</span>
+            </a>
+          </li>
+          <li>
+            <a href="delivery-review.html#acceptance">
+              <b>21</b>
+              <span>Acceptance criteria</span>
+            </a>
+          </li>
+          <li>
+            <a href="delivery-review.html#traceability">
+              <b>22</b>
+              <span>Traceability</span>
+            </a>
+          </li>
+        </ol>
+      </nav>
+      <div class="rail-footer">
+        <a href="ice-segment-animated-walkthrough.html">Animated ICE walkthrough</a>
+        <br>
+        <a href="research-report.html">Visual research report</a>
+      </div>
+    </aside>
+
+    <div class="workspace">
+      <header class="toolbar">
+        <input class="search" id="spec-search" type="search" placeholder="Search this chapter…" aria-label="Search this specification chapter">
+        <div class="filter-set" aria-label="Filter specification chapter">
+          <button class="filter-button" type="button" data-filter="all" aria-pressed="true">All</button>
+          <button class="filter-button" type="button" data-filter="normative" aria-pressed="false">Normative</button>
+          <button class="filter-button" type="button" data-filter="open" aria-pressed="false">Open only</button>
+        </div>
+        <div class="tool-set">
+          <button class="tool-button" id="theme-toggle" type="button" title="Toggle paper/night theme">◐</button>
+          <button class="tool-button" id="print-spec" type="button">Print</button>
+        </div>
+      </header>
+
+      <main class="document" id="document">
+      <section class="chapter-hero" id="chapter-top" data-chapter="03">
+        <div class="chapter-kicker">BDB-NIDX-SPEC-001 · chapter 03 of 05</div>
+        <h1>Query and lifecycle</h1>
+        <p class="chapter-summary">Filter execution, projection, ordering, durability, merge, garbage collection, and external receive.</p>
+        <p class="chapter-range">SECTIONS 10–14 · REVISION 0.1 · REVIEW DRAFT</p>
+        <nav class="chapter-tabs" aria-label="Specification chapters">
+          <a href="index.html#status">01 Overview</a>
+          <a href="write-format.html#fields">02 Write + format</a>
+          <a href="#query" aria-current="page">03 Query + lifecycle</a>
+          <a href="safety-verification.html#integrity">04 Safety</a>
+          <a href="delivery-review.html#rollout">05 Delivery + review</a>
+        </nav>
+      </section>
+
+<section class="spec-section" id="query" data-status="decision" data-searchable data-normative data-open>
+          <div class="section-grid">
+            <aside class="section-side">
+              <div>
+                <div class="section-no">10</div>
+                <span class="section-state">Partly open</span>
+                <p>Filter algebra is stable; negative-universe parity needs DEC-003.</p>
+              </div>
+            </aside>
+            <div class="section-main">
+              <h2>Query IR and execution</h2>
+              <p class="section-lede">Queries operate on immutable segment-local document sets, apply snapshot deletions, and then merge results across pinned
+                segments.</p>
+
+              <h3>Required query nodes</h3>
+              <pre>Query :=
+    All | None | LiveUniverse
+  | Term(field, termBytes)
+  | ByteRange(field, lower?, upper?, includeLower, includeUpper)
+  | NumericRange(field, lower?, upper?, includeLower, includeUpper)
+  | TimeRange(lower?, upper?, includeLower, includeUpper)
+  | Prefix(field, prefixBytes)
+  | Wildcard(field, patternBytes)
+  | Match(field, text, analyzerOverride?, operator: AND|OR)
+  | Boolean(must[], should[], mustNot[], minShould)
+  | SeriesConstraint(seriesIDs[])
+  | AndTime(query, timeRange)</pre>
+
+              <h3>Execution paths</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Node</th>
+                      <th>Dictionary operation</th>
+                      <th>Posting algebra</th>
+                      <th>Bound</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Term</td>
+                      <td>Single FST lookup.</td>
+                      <td>One posting minus deletions.</td>
+                      <td>Constant dictionary lookup.</td>
+                    </tr>
+                    <tr>
+                      <td>Range</td>
+                      <td>Ordered dictionary enumeration between encoded bounds.</td>
+                      <td>Union term postings.</td>
+                      <td>Term expansion limit required.</td>
+                    </tr>
+                    <tr>
+                      <td>Prefix</td>
+                      <td>FST seek and prefix-constrained enumeration.</td>
+                      <td>Union term postings.</td>
+                      <td>Expansion and cancellation required.</td>
+                    </tr>
+                    <tr>
+                      <td>Wildcard</td>
+                      <td>Bounded automaton/FST enumeration.</td>
+                      <td>Union term postings.</td>
+                      <td>Pattern and expansion limits required.</td>
+                    </tr>
+                    <tr>
+                      <td>Boolean AND</td>
+                      <td>Execute cheapest/selective children first where known.</td>
+                      <td>Intersection.</td>
+                      <td>Context checked between operations.</td>
+                    </tr>
+                    <tr>
+                      <td>Boolean OR</td>
+                      <td>Execute all required children.</td>
+                      <td>Union; enforce min-should semantics.</td>
+                      <td>Context checked between operations.</td>
+                    </tr>
+                    <tr>
+                      <td>NOT</td>
+                      <td>Evaluate child under explicit live universe.</td>
+                      <td>Universe AND NOT child.</td>
+                      <td>No implicit match-all dependency.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="clause-list">
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">QUERY-001</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Apply the snapshot deletion mask to every segment result before exposing a hit.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">QUERY-002</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Represent pure negative queries using an explicit live universe. <code>MatchField</code> may not silently stand in for field existence.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">QUERY-003</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Preserve independent inclusive/exclusive lower and upper range endpoints and unbounded sides.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">QUERY-004</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Check context cancellation during dictionary expansion, postings combination, cross-segment merge, stored projection, and sorting.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">QUERY-005</span>
+                    <span class="verb should">SHOULD</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Reuse immutable postings and pooled iterators without allowing pooled state to escape a query lifetime.</p>
+                  </div>
+                </div>
+              </div>
+              <div class="callout warning">
+                <b>?</b>
+                <p>Pure-negative and field-universe behavior becomes authoritative only when DEC-003 approves the intentional legacy defect fixes.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+<section class="spec-section" id="sort" data-status="decision" data-searchable data-normative data-open>
+          <div class="section-grid">
+            <aside class="section-side">
+              <div>
+                <div class="section-no">11</div>
+                <span class="section-state">Decision gate</span>
+                <p>Mechanism is stable; edge ordering must be approved.</p>
+              </div>
+            </aside>
+            <div class="section-main">
+              <h2>Sort, pagination, and projection</h2>
+              <p class="section-lede">Postings choose candidates, doc values choose order, and stored fields materialize the returned data.</p>
+
+              <div class="model-flow">
+                <div class="flow-node">
+                  <b>Filter hits</b>
+                  <span>live local document numbers</span>
+                </div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">
+                  <b>Doc values</b>
+                  <span>candidate comparable bytes</span>
+                </div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">
+                  <b>Bounded Top N</b>
+                  <span>heap + deterministic ties</span>
+                </div>
+                <div class="flow-arrow">→</div>
+                <div class="flow-node">
+                  <b>Stored fields</b>
+                  <span>rank-ordered projection</span>
+                </div>
+              </div>
+
+              <div class="clause-list">
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">SORT-001</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Load doc values only for requested sort fields and candidate documents, and compare encoded bytes using the same term codec used by the writer.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">SORT-002</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Pin one immutable snapshot for the complete page operation; offset-based repeated searches against changing generations are prohibited.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">SORT-003</span>
+                    <span class="verb should">SHOULD</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Use search-after keys containing every sort component, deterministic tie key, and pinned generation rather than growing offset scans.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">PROJ-001</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Return all repeated stored values through the raw visitation API. Scalar convenience APIs must document their selection rule.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">PROJ-002</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Keep internal-field hiding policy in the product adapter, not in the ICE stored-field reader.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="callout warning">
+                <b>?</b>
+                <p>Section 20 must approve missing-value placement, repeated-value selection, identity ordering, and the stable tie key before the native
+                  collector becomes authoritative.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+<section class="spec-section" id="lifecycle" data-status="decision" data-searchable data-normative data-open>
+          <div class="section-grid">
+            <aside class="section-side">
+              <div>
+                <div class="section-no">12</div>
+                <span class="section-state">Surface open</span>
+                <p>Crash protocol is stable; callback coverage needs DEC-006.</p>
+              </div>
+            </aside>
+            <div class="section-main">
+              <h2>Durability, publication, and recovery</h2>
+              <p class="section-lede">The snapshot is the commit record. Final file names become visible only after complete bytes are synced and validated.</p>
+
+              <div class="state-machine">
+                <article class="state-node" data-step="01">
+                  <b>Write segment temp</b>
+                  <p>Unique same-filesystem name; truncate/create exclusively.</p>
+                </article>
+                <article class="state-node" data-step="02">
+                  <b>Sync and validate</b>
+                  <p>fsync, close, reopen or validate complete bytes.</p>
+                </article>
+                <article class="state-node" data-step="03">
+                  <b>Rename segment</b>
+                  <p>Atomic rename to final <code>.seg</code>; fsync parent directory.</p>
+                </article>
+                <article class="state-node" data-step="04">
+                  <b>Write snapshot temp</b>
+                  <p>Complete v3 manifest referencing valid final segments.</p>
+                </article>
+                <article class="state-node" data-step="05">
+                  <b>Commit snapshot</b>
+                  <p>fsync, rename to <code>.snp</code>, fsync parent directory.</p>
+                </article>
+                <article class="state-node" data-step="06">
+                  <b>Callback and GC</b>
+                  <p>Acknowledge durability; later collect unreachable files.</p>
+                </article>
+              </div>
+
+              <div class="clause-list">
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">DUR-001</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Use same-filesystem temp-write, file sync, close, validate, atomic rename, and parent-directory sync for segments and snapshots.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">DUR-002</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Complete a supported persistent callback exactly once after its snapshot rename and directory sync succeed, or exactly once with terminal
+                      failure during close.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">DUR-003</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>On startup, enumerate snapshots newest-first and select the newest generation whose records, referenced segments, codecs, and
+                      structural invariants all validate. The reserved CRC32 field is not a selection criterion.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">DUR-004</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Never rewrite or migrate production bytes merely because an index is opened.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">DUR-005</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Preserve <code>bluge.pid</code> exclusive writer-lock behavior during the compatibility window; read-only opens must not acquire it.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="callout warning">
+                <b>?</b>
+                <p>DEC-006 selects which batch entry points expose durable callbacks. The ordering and exactly-once terminal completion rules apply to every
+                  entry point that is approved.</p>
+              </div>
+
+              <h3>Recovery classification</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Artifact</th>
+                      <th>Recovery action</th>
+                      <th>Visibility</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Unrenamed temp file</td>
+                      <td>Ignore; remove after lock ownership and age validation.</td>
+                      <td>Never committed.</td>
+                    </tr>
+                    <tr>
+                      <td>Final segment not referenced by selected snapshot</td>
+                      <td>Classify as orphan; defer GC until retained-generation scan completes.</td>
+                      <td>Not live.</td>
+                    </tr>
+                    <tr>
+                      <td>Newest invalid snapshot</td>
+                      <td>Report and try next older generation.</td>
+                      <td>Never selected.</td>
+                    </tr>
+                    <tr>
+                      <td>Snapshot references missing/invalid segment</td>
+                      <td>Reject entire snapshot generation.</td>
+                      <td>Never partially selected.</td>
+                    </tr>
+                    <tr>
+                      <td>No usable snapshot with snapshot files present</td>
+                      <td>Writable open fails; admin verifier reports all causes.</td>
+                      <td>No fabricated empty index.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+<section class="spec-section" id="merge" data-status="stable" data-searchable data-normative>
+          <div class="section-grid">
+            <aside class="section-side">
+              <div>
+                <div class="section-no">13</div>
+                <span class="section-state">Stable design</span>
+                <p>Stream live content; publish replacement before ref-safe GC.</p>
+              </div>
+            </aside>
+            <div class="section-main">
+              <h2>Merge, deletion, expiry, and GC</h2>
+              <p class="section-lede">Deletes remain snapshot overlays until merge omits them from a replacement segment.</p>
+              <div class="clause-list">
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">MERGE-001</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Merge only documents live in the pinned source snapshot plus product-specific private drop decisions.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">MERGE-002</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Rebuild postings, doc values, stored values, identity, timestamps, analyzers, and repeated fields without lossy document reconstruction.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">MERGE-003</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Property expiry evaluation must read bounded stored fields through <code>SegmentView</code> and add drops to a cloned bitmap.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">MERGE-004</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Publish the replacement segment and snapshot before making source files eligible for collection.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">GC-001</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Delete a segment or snapshot only when no retained manifest and no active reader/backup reference requires it.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">GC-002</span>
+                    <span class="verb should">SHOULD</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Retry platform-specific unlink failures with bounded backoff and expose pending-GC bytes and oldest age.</p>
+                  </div>
+                </div>
+              </div>
+              <div class="callout info">
+                <b>i</b>
+                <p>Merge policy—when and which segments to merge—is tunable. Merge correctness, deletion ownership, and publication order are not.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+<section class="spec-section" id="external" data-status="fixture" data-searchable data-normative data-open>
+          <div class="section-grid">
+            <aside class="section-side">
+              <div>
+                <div class="section-no">14</div>
+                <span class="section-state">Fixture gate</span>
+                <p>Raw migration remains mandatory and must become self-validating.</p>
+              </div>
+            </aside>
+            <div class="section-main">
+              <h2>External segments, admin, and backup</h2>
+              <p class="section-lede">A raw segment is accepted only after full validation and becomes live only through the single-writer snapshot path.</p>
+
+              <h3>External receive state machine</h3>
+              <div class="state-machine">
+                <article class="state-node" data-step="01">
+                  <b>Stage</b>
+                  <p>Write bounded chunks to an OS/same-filesystem temp file.</p>
+                </article>
+                <article class="state-node" data-step="02">
+                  <b>Verify transfer</b>
+                  <p>Length, expected hash, retry identity, and completion.</p>
+                </article>
+                <article class="state-node" data-step="03">
+                  <b>Validate ICE</b>
+                  <p>Version, offsets, FST, Roaring, compression, and limits; retain but do not validate CRC32.</p>
+                </article>
+                <article class="state-node" data-step="04">
+                  <b>Deduplicate</b>
+                  <p>Optional identity reconciliation under mutation serialization.</p>
+                </article>
+                <article class="state-node" data-step="05">
+                  <b>Publish file</b>
+                  <p>Sync, validate, rename, and directory sync.</p>
+                </article>
+                <article class="state-node" data-step="06">
+                  <b>Introduce</b>
+                  <p>Commit a later snapshot containing the segment.</p>
+                </article>
+              </div>
+
+              <div class="clause-list">
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">EXT-001</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Validate expected type/version, length, hash, every address, embedded codec, and configured limit before final publication. Preserve
+                      but do not validate the reserved CRC32 field.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">EXT-002</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Make retry and idempotency explicit; a repeated transfer may not introduce duplicate logical content accidentally.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">EXT-003</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Serialize deduplication and introduction with concurrent identity updates and preserve all surviving representations.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">ADMIN-001</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Provide <code>OpenReadOnly</code>, <code>Count</code>, <code>LatestGeneration</code>, <code>WalkDocuments</code>, <code>Verify</code>,
+                      <code>Rebuild</code>, stored/doc-value visitation, and stable search-after without legacy APIs.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">BACKUP-001</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Pin one committed snapshot and copy or hard-link exactly its manifest and referenced segments; exclude locks, temps, failed parts, and
+                      unreferenced files.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      <nav class="page-turn" aria-label="Specification chapters">
+        <a href="write-format.html#fields"><b>← Previous chapter</b><span>Write path and disk grammar</span></a>
+        <a href="safety-verification.html#integrity"><b>Next chapter →</b><span>Safety and verification</span></a>
+      </nav>
+
+      <div class="empty-search" id="empty-search">No section in this chapter matches the search/filter.</div>
+      </main>
+    </div>
+  </div>
+  <script src="spec.js"></script>
+</body>
+</html>

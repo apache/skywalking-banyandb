@@ -2,7 +2,7 @@
 
 A worked example of a BanyanDB post-trace sampler plugin built on
 [`pkg/pipeline/sdk`](../../). It implements the Scenario 6.1 (`sw_trace`) sampler
-from [`docs/design/post-trace-pipeline.md`](../../../../../docs/design/post-trace-pipeline.md)
+from [`docs/design/archive/0.11.0/post-trace-pipeline.md`](../../../../../docs/design/archive/0.11.0/post-trace-pipeline.md)
 and exists to show plugin authors three things:
 
 1. **Read the proto config.** `SamplerPlugin.config` is a

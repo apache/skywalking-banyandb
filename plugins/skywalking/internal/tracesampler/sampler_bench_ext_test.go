@@ -22,7 +22,7 @@
 //
 // These cover synthetic-data engine microbenchmarks only: no production-ratio
 // claim, no calibrated fixture, no .so loading. See the Phase 9 workstream in
-// docs/design/trace-pipeline-merge-optimization-plan.md, whose exit gate asks for
+// docs/design/archive/0.11.0/trace-pipeline-merge-optimization-plan.md, whose exit gate asks for
 // per-call-site attribution of the plugin-local costs these measure.
 package tracesampler
 

@@ -398,8 +398,8 @@ Nothing is added to the persisted finalize state; a capped round is visible thro
 | `banyand/trace/finalizer.go:156-168` | Finalize filter carries the **same** budget. Nothing else in the finalize path changes. |
 | `banyand/trace/merger.go:712-716` | Emit budget, capped flag, retained-by-ceiling count. |
 | `banyand/trace/metrics.go:318-334` | Retained-by-ceiling and capped-merge counters. |
-| `docs/design/post-trace-pipeline.md:630-632` | Note that a merge may stop dropping at its ceiling; the pruning predicate and lockstep publication are unchanged. |
-| `docs/design/trace-pipeline-merge-optimization-plan.md` Phase 6 | Record that the collector is now ceiling-bounded; the phase's exactness invariant is unchanged. |
+| `post-trace-pipeline.md:630-632` | Note that a merge may stop dropping at its ceiling; the pruning predicate and lockstep publication are unchanged. |
+| `trace-pipeline-merge-optimization-plan.md` Phase 6 | Record that the collector is now ceiling-bounded; the phase's exactness invariant is unchanged. |
 
 Not changed: `keepEncoded`, `filterBlockPointer`, the SIDX merge signature, the output part's `traceIDFilter`,
 `banyand/trace/finalize_state.go`, every query path.

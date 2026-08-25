@@ -3,7 +3,7 @@
 BanyanDB's trace pipeline can retain/drop traces in-merge (and at segment
 finalization) using operator-installed native Go plugins ("samplers"). This
 document covers packaging and deploying plugins on a running cluster. See
-[`docs/design/post-trace-pipeline.md`](../design/post-trace-pipeline.md) for
+[`docs/design/archive/0.11.0/post-trace-pipeline.md`](../design/archive/0.11.0/post-trace-pipeline.md) for
 the plugin ABI/contract, and
 [`plugins/README.md`](../../plugins/README.md) for authoring a first-party
 plugin. For diagnosing "nothing is being sampled" / "unexpected data is being

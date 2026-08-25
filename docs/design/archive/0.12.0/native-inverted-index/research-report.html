@@ -1,0 +1,2120 @@
+<!--
+  Licensed to Apache Software Foundation (ASF) under one or more contributor
+  license agreements. See the NOTICE file distributed with
+  this work for additional information regarding copyright
+  ownership. Apache Software Foundation (ASF) licenses this file to you under
+  the Apache License, Version 2.0 (the "License"); you may
+  not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing,
+  software distributed under the License is distributed on an
+  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+  KIND, either express or implied. See the License for the
+  specific language governing permissions and limitations
+  under the License.
+-->
+<!doctype html>
+<html lang="en" data-theme="paper">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Visual research report for replacing Bluge and ICE with a BanyanDB-native inverted index.">
+  <title>BanyanDB Native Inverted Index — Visual Research Report</title>
+  <style>
+    :root {
+      --paper: #f2ecde;
+      --paper-deep: #e5dbc5;
+      --ink: #152827;
+      --ink-soft: #445452;
+      --rule: #b9ae97;
+      --accent: #e84a27;
+      --accent-soft: #f7c7a8;
+      --blue: #1d4e63;
+      --blue-soft: #b9d4d7;
+      --green: #266b55;
+      --green-soft: #bdd8c7;
+      --amber: #b86f10;
+      --amber-soft: #ecd2a8;
+      --danger: #9f2f26;
+      --shadow: 0 18px 55px rgb(21 40 39 / 12%);
+      --display: "Baskerville", "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+      --body: "Aptos", "Gill Sans", "Trebuchet MS", sans-serif;
+      --condensed: "DIN Condensed", "Bahnschrift Condensed", "Franklin Gothic Medium", sans-serif;
+      --mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+      color-scheme: light;
+    }
+
+    html[data-theme="night"] {
+      --paper: #102322;
+      --paper-deep: #172f2d;
+      --ink: #f3ead9;
+      --ink-soft: #b9c9c5;
+      --rule: #3d5550;
+      --accent: #ff6942;
+      --accent-soft: #733b2d;
+      --blue: #7bb8cb;
+      --blue-soft: #244c58;
+      --green: #83cbaa;
+      --green-soft: #275343;
+      --amber: #efb85b;
+      --amber-soft: #684a1e;
+      --danger: #ff8b7d;
+      --shadow: 0 22px 70px rgb(0 0 0 / 32%);
+      color-scheme: dark;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background:
+        linear-gradient(90deg, transparent 0 49.8%, rgb(21 40 39 / 2.5%) 50%, transparent 50.2%),
+        radial-gradient(circle at 86% 5%, rgb(232 74 39 / 12%), transparent 27rem),
+        var(--paper);
+      color: var(--ink);
+      font-family: var(--body);
+      font-size: 17px;
+      line-height: 1.62;
+      text-rendering: optimizeLegibility;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: .22;
+      z-index: 10;
+      background-image:
+        repeating-radial-gradient(circle at 20% 30%, rgb(21 40 39 / 8%) 0 1px, transparent 1px 4px);
+      background-size: 7px 7px;
+      mix-blend-mode: multiply;
+    }
+
+    a { color: inherit; }
+    button { font: inherit; }
+    code {
+      padding: .12em .35em;
+      border: 1px solid var(--rule);
+      border-radius: .25rem;
+      background: color-mix(in srgb, var(--paper-deep) 70%, transparent);
+      font: .86em/1.3 var(--mono);
+    }
+
+    .progress {
+      position: fixed;
+      inset: 0 auto auto 0;
+      width: 0;
+      height: 4px;
+      z-index: 100;
+      background: var(--accent);
+      box-shadow: 0 0 16px var(--accent);
+    }
+
+    .theme-toggle {
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      z-index: 90;
+      display: grid;
+      place-items: center;
+      width: 2.8rem;
+      height: 2.8rem;
+      border: 1px solid var(--rule);
+      border-radius: 50%;
+      background: color-mix(in srgb, var(--paper) 88%, transparent);
+      color: var(--ink);
+      cursor: pointer;
+      box-shadow: 0 8px 28px rgb(0 0 0 / 10%);
+      backdrop-filter: blur(12px);
+      transition: transform .25s ease, background .25s ease;
+    }
+
+    .theme-toggle:hover { transform: rotate(10deg) scale(1.05); }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 18rem minmax(0, 1fr);
+      max-width: 104rem;
+      margin: 0 auto;
+    }
+
+    .rail {
+      position: sticky;
+      top: 0;
+      align-self: start;
+      height: 100vh;
+      padding: 2.3rem 1.5rem 2rem;
+      border-right: 1px solid var(--rule);
+      background: color-mix(in srgb, var(--paper) 82%, transparent);
+      backdrop-filter: blur(14px);
+      z-index: 20;
+    }
+
+    .rail-mark {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      margin-bottom: 2rem;
+      font: 700 .8rem/1 var(--condensed);
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+
+    .rail-mark svg { width: 2.2rem; height: 2.2rem; color: var(--accent); }
+    .rail-kicker { color: var(--ink-soft); }
+    .rail h2 {
+      margin: 0 0 .45rem;
+      font: 700 1.5rem/1.05 var(--display);
+    }
+
+    .rail .reading-time {
+      margin: 0 0 1.7rem;
+      color: var(--ink-soft);
+      font: 600 .75rem/1.3 var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+
+    .rail nav { display: grid; gap: .18rem; }
+    .rail nav a {
+      position: relative;
+      display: block;
+      padding: .48rem .55rem .48rem 1.2rem;
+      color: var(--ink-soft);
+      text-decoration: none;
+      font: 650 .78rem/1.2 var(--body);
+      transition: color .18s ease, transform .18s ease;
+    }
+
+    .rail nav a::before {
+      content: "";
+      position: absolute;
+      left: .2rem;
+      top: 50%;
+      width: .38rem;
+      height: .38rem;
+      border: 1px solid var(--rule);
+      border-radius: 50%;
+      transform: translateY(-50%);
+      transition: background .18s ease, border .18s ease, scale .18s ease;
+    }
+
+    .rail nav a:hover,
+    .rail nav a.active { color: var(--ink); transform: translateX(.15rem); }
+    .rail nav a.active::before { background: var(--accent); border-color: var(--accent); scale: 1.35; }
+
+    .rail-footer {
+      position: absolute;
+      inset: auto 1.5rem 1.5rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--rule);
+      color: var(--ink-soft);
+      font: .72rem/1.45 var(--mono);
+    }
+
+    main { min-width: 0; overflow: hidden; }
+    section {
+      position: relative;
+      padding: clamp(4.5rem, 8vw, 8rem) clamp(2rem, 6vw, 7rem);
+      border-bottom: 1px solid var(--rule);
+      scroll-margin-top: 1rem;
+    }
+
+    section:nth-of-type(even) {
+      background: color-mix(in srgb, var(--paper-deep) 32%, transparent);
+    }
+
+    .hero {
+      min-height: 100vh;
+      display: grid;
+      align-content: center;
+      isolation: isolate;
+    }
+
+    .hero::after {
+      content: "03";
+      position: absolute;
+      right: -1.8rem;
+      bottom: -5.6rem;
+      z-index: -1;
+      color: color-mix(in srgb, var(--accent) 10%, transparent);
+      font: 900 clamp(15rem, 34vw, 38rem)/.75 var(--condensed);
+      letter-spacing: -.08em;
+    }
+
+    .eyebrow {
+      display: flex;
+      align-items: center;
+      gap: .85rem;
+      margin-bottom: 1.3rem;
+      color: var(--accent);
+      font: 800 .78rem/1 var(--mono);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow::before { content: ""; width: 2.8rem; height: 2px; background: currentColor; }
+    h1, h2, h3, p { text-wrap: pretty; }
+    h1 {
+      max-width: 14ch;
+      margin: 0;
+      font: 700 clamp(4rem, 9.7vw, 9.2rem)/.82 var(--display);
+      letter-spacing: -.055em;
+    }
+
+    h1 em { display: block; color: var(--accent); font-weight: 400; }
+    .hero-dek {
+      max-width: 47rem;
+      margin: 2rem 0 2.5rem;
+      color: var(--ink-soft);
+      font: 400 clamp(1.1rem, 1.8vw, 1.45rem)/1.48 var(--body);
+    }
+
+    .status-line {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .8rem;
+      margin-bottom: 3.5rem;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: .5rem;
+      padding: .5rem .8rem;
+      border: 1px solid var(--rule);
+      border-radius: 99rem;
+      background: color-mix(in srgb, var(--paper) 80%, transparent);
+      font: 700 .72rem/1 var(--mono);
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    .pill::before { content: ""; width: .48rem; height: .48rem; border-radius: 50%; background: var(--green); }
+    .pill.pending::before { background: var(--amber); }
+
+    .hero-metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(7rem, 1fr));
+      max-width: 62rem;
+      border-block: 1px solid var(--rule);
+    }
+
+    .metric {
+      padding: 1.3rem 1.25rem 1.2rem 0;
+      border-right: 1px solid var(--rule);
+    }
+
+    .metric:not(:first-child) { padding-left: 1.25rem; }
+    .metric:last-child { border-right: 0; }
+    .metric strong { display: block; font: 800 clamp(1.8rem, 3.2vw, 3.1rem)/1 var(--condensed); }
+    .metric span { color: var(--ink-soft); font: 600 .72rem/1.35 var(--mono); text-transform: uppercase; }
+
+    .section-no {
+      display: inline-block;
+      margin-bottom: .8rem;
+      color: var(--accent);
+      font: 800 .76rem/1 var(--mono);
+      letter-spacing: .13em;
+    }
+
+    .section-title {
+      max-width: 14ch;
+      margin: 0 0 1.4rem;
+      font: 700 clamp(2.8rem, 5.4vw, 5.8rem)/.93 var(--display);
+      letter-spacing: -.045em;
+    }
+
+    .section-lede {
+      max-width: 52rem;
+      margin: 0 0 3.4rem;
+      color: var(--ink-soft);
+      font-size: clamp(1.05rem, 1.45vw, 1.3rem);
+    }
+
+    .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+    .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.2rem; }
+    .card {
+      position: relative;
+      min-width: 0;
+      padding: 1.55rem;
+      border: 1px solid var(--rule);
+      background: color-mix(in srgb, var(--paper) 83%, transparent);
+      box-shadow: 0 8px 32px rgb(21 40 39 / 5%);
+    }
+
+    .card::before {
+      content: "";
+      position: absolute;
+      top: -1px;
+      left: -1px;
+      width: 2.7rem;
+      height: 4px;
+      background: var(--accent);
+    }
+
+    .card h3 { margin: .4rem 0 .7rem; font: 700 1.35rem/1.1 var(--display); }
+    .card p { margin: 0; color: var(--ink-soft); font-size: .92rem; }
+    .card .icon {
+      display: grid;
+      place-items: center;
+      width: 2.4rem;
+      height: 2.4rem;
+      border-radius: 50%;
+      background: var(--accent-soft);
+      color: var(--danger);
+      font: 900 1rem/1 var(--mono);
+    }
+
+    .verdict {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(17rem, .9fr);
+      gap: clamp(2rem, 5vw, 5rem);
+      align-items: center;
+      margin-top: 4rem;
+      padding: clamp(2rem, 5vw, 4rem);
+      background: var(--ink);
+      color: var(--paper);
+      box-shadow: var(--shadow);
+    }
+
+    .verdict .stamp {
+      width: fit-content;
+      padding: .45rem .72rem;
+      border: 1px solid color-mix(in srgb, var(--paper) 45%, transparent);
+      color: var(--accent);
+      font: 800 .72rem/1 var(--mono);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .verdict h3 { margin: 1rem 0; font: 700 clamp(2rem, 4vw, 4rem)/.96 var(--display); }
+    .verdict p { margin: 0; color: color-mix(in srgb, var(--paper) 78%, transparent); }
+    .verdict svg { width: 100%; overflow: visible; }
+
+    .capability-map {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 1.4rem;
+    }
+
+    .capability-column {
+      padding: 2rem;
+      border: 1px solid var(--rule);
+      background: color-mix(in srgb, var(--paper) 82%, transparent);
+    }
+
+    .capability-column.keep { border-top: 5px solid var(--green); }
+    .capability-column.drop { border-top: 5px solid var(--accent); }
+    .capability-column h3 { margin: 0 0 1.2rem; font: 700 2rem/1 var(--display); }
+    .chip-list { display: flex; flex-wrap: wrap; gap: .55rem; }
+    .chip {
+      padding: .44rem .66rem;
+      border: 1px solid var(--rule);
+      background: color-mix(in srgb, var(--paper-deep) 60%, transparent);
+      font: 700 .74rem/1.15 var(--mono);
+    }
+
+    .drop .chip { text-decoration: line-through; text-decoration-color: var(--accent); text-decoration-thickness: 2px; }
+    .caption { margin: 1.2rem 0 0; color: var(--ink-soft); font: .77rem/1.5 var(--mono); }
+
+    .system-map {
+      padding: 1.5rem;
+      border: 1px solid var(--rule);
+      background: color-mix(in srgb, var(--paper) 90%, transparent);
+      overflow-x: auto;
+    }
+
+    .system-map svg { display: block; width: 100%; min-width: 720px; height: auto; }
+    .system-map text { font-family: var(--body); fill: var(--ink); }
+    .system-map .small { font-family: var(--mono); fill: var(--ink-soft); }
+    .system-map .box { fill: var(--paper); stroke: var(--rule); stroke-width: 1.5; }
+    .system-map .hot { fill: var(--accent-soft); stroke: var(--accent); }
+    .system-map .low { fill: var(--green-soft); stroke: var(--green); }
+    .system-map .wire { stroke: var(--ink-soft); stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
+    .system-map .wire.hotwire { stroke: var(--accent); stroke-width: 2.2; }
+
+    .product-lanes { display: grid; gap: 1rem; }
+    .lane {
+      display: grid;
+      grid-template-columns: 9rem minmax(10rem, .8fr) 2.2rem minmax(12rem, 1.2fr);
+      align-items: stretch;
+      min-height: 7rem;
+      border: 1px solid var(--rule);
+      background: color-mix(in srgb, var(--paper) 85%, transparent);
+    }
+
+    .lane-name {
+      display: grid;
+      align-content: center;
+      padding: 1rem;
+      background: var(--ink);
+      color: var(--paper);
+      font: 800 1rem/1.05 var(--condensed);
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+
+    .lane-input, .lane-output { padding: 1rem 1.2rem; }
+    .lane-input strong, .lane-output strong { display: block; margin-bottom: .25rem; font-size: .85rem; }
+    .lane-input span, .lane-output span { color: var(--ink-soft); font-size: .82rem; line-height: 1.4; }
+    .lane-arrow { display: grid; place-items: center; color: var(--accent); font: 900 1.4rem/1 var(--mono); }
+
+    .anatomy {
+      display: grid;
+      grid-template-columns: minmax(18rem, .8fr) minmax(21rem, 1.2fr);
+      gap: clamp(2rem, 5vw, 5rem);
+      align-items: start;
+    }
+
+    .file-stack { filter: drop-shadow(0 18px 25px rgb(21 40 39 / 12%)); }
+    .file-block {
+      position: relative;
+      display: grid;
+      grid-template-columns: 3.2rem 1fr auto;
+      align-items: center;
+      min-height: 4.2rem;
+      padding: .7rem 1rem .7rem 0;
+      border: 1px solid var(--rule);
+      border-bottom: 0;
+      background: var(--paper);
+    }
+
+    .file-block:last-child { border-bottom: 1px solid var(--rule); }
+    .file-block.stored { min-height: 7rem; background: var(--green-soft); }
+    .file-block.terms { min-height: 10rem; background: var(--blue-soft); }
+    .file-block.dictionary { min-height: 7rem; background: var(--amber-soft); }
+    .file-block:last-child { background: var(--ink); color: var(--paper); }
+    .file-block .offset {
+      color: color-mix(in srgb, currentColor 58%, transparent);
+      font: 700 .62rem/1 var(--mono);
+      writing-mode: vertical-rl;
+      rotate: 180deg;
+      text-transform: uppercase;
+    }
+
+    .file-block strong { display: block; font: 700 1rem/1.1 var(--body); }
+    .file-block span { font: .72rem/1.35 var(--mono); }
+    .file-block .size { color: color-mix(in srgb, currentColor 70%, transparent); }
+
+    .format-notes { display: grid; gap: 1rem; }
+    .note {
+      display: grid;
+      grid-template-columns: 2.6rem 1fr;
+      gap: .8rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--rule);
+    }
+
+    .note b { display: grid; place-items: center; width: 2.4rem; height: 2.4rem; background: var(--ink); color: var(--paper); }
+    .note h3 { margin: 0 0 .2rem; font: 700 1.1rem/1.2 var(--display); }
+    .note p { margin: 0; color: var(--ink-soft); font-size: .86rem; }
+
+    .footer-map { margin-top: 3.2rem; }
+    .footer-map h3 { font: 700 1.55rem/1.1 var(--display); }
+    .bytebar { display: flex; min-height: 6.3rem; border: 1px solid var(--rule); overflow-x: auto; }
+    .bytebar > div {
+      display: grid;
+      align-content: space-between;
+      min-width: 5.2rem;
+      padding: .7rem;
+      border-right: 1px solid var(--rule);
+      background: color-mix(in srgb, var(--paper) 82%, transparent);
+    }
+
+    .bytebar > div:nth-child(even) { background: color-mix(in srgb, var(--blue-soft) 62%, var(--paper)); }
+    .bytebar > div:last-child { border-right: 0; background: var(--accent); color: #fff7ee; }
+    .bytebar .w8 { flex: 2; }
+    .bytebar .w4 { flex: 1; min-width: 4.2rem; }
+    .bytebar b { font: 700 .72rem/1.1 var(--mono); overflow-wrap: anywhere; }
+    .bytebar span { font: 800 1.15rem/1 var(--condensed); }
+
+    .ice-boundary {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 1rem;
+      align-items: center;
+      margin-top: 3.2rem;
+      padding: 1.1rem 1.3rem;
+      border: 1px solid var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .ice-boundary b { color: var(--accent); font: 900 1.5rem/1 var(--condensed); }
+    .ice-boundary p { margin: 0; color: var(--ink-soft); font-size: .88rem; }
+
+    .ice-paths {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+
+    .ice-path {
+      padding: 1.2rem;
+      border: 1px solid var(--rule);
+      background: color-mix(in srgb, var(--paper) 86%, transparent);
+    }
+
+    .ice-path h3 { margin: 0 0 .8rem; font: 700 1.15rem/1.1 var(--display); }
+    .path-line { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; }
+    .path-line span {
+      padding: .42rem .58rem;
+      border: 1px solid var(--rule);
+      background: var(--paper);
+      font: 700 .68rem/1.15 var(--mono);
+    }
+
+    .path-line i { color: var(--accent); font: 900 .8rem/1 var(--mono); }
+
+    .ice-parts {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+
+    .ice-part {
+      display: grid;
+      grid-template-columns: 3.4rem 1fr;
+      border: 1px solid var(--rule);
+      background: color-mix(in srgb, var(--paper) 88%, transparent);
+    }
+
+    .ice-part-no {
+      display: grid;
+      place-items: start center;
+      padding-top: 1rem;
+      background: var(--ink);
+      color: var(--paper);
+      font: 900 1rem/1 var(--mono);
+    }
+
+    .ice-part-body { padding: 1rem 1.15rem 1.2rem; }
+    .ice-part h3 { margin: 0 0 .35rem; font: 700 1.2rem/1.1 var(--display); }
+    .ice-part .job { margin: 0 0 .8rem; color: var(--ink-soft); font-size: .82rem; }
+    .ice-part .shape {
+      margin: 0;
+      padding: .72rem;
+      border-left: 3px solid var(--accent);
+      background: var(--paper-deep);
+      font: .69rem/1.55 var(--mono);
+      overflow-wrap: anywhere;
+    }
+
+    .ice-part .reader { margin: .75rem 0 0; font-size: .78rem; }
+    .ice-part .reader b { color: var(--green); font-family: var(--mono); }
+
+    .lifecycle {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(8rem, 1fr));
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+
+    .lifecycle::before {
+      content: "";
+      position: absolute;
+      top: 2rem;
+      left: 5%;
+      right: 5%;
+      height: 2px;
+      background: var(--rule);
+    }
+
+    .life-step { position: relative; padding-top: 4.7rem; }
+    .life-step::before {
+      content: attr(data-step);
+      position: absolute;
+      top: .65rem;
+      left: 0;
+      z-index: 1;
+      display: grid;
+      place-items: center;
+      width: 2.8rem;
+      height: 2.8rem;
+      border: 2px solid var(--paper);
+      outline: 1px solid var(--rule);
+      border-radius: 50%;
+      background: var(--ink);
+      color: var(--paper);
+      font: 800 .8rem/1 var(--mono);
+    }
+
+    .life-step h3 { margin: 0 0 .4rem; font: 700 1rem/1.15 var(--display); }
+    .life-step p { margin: 0; color: var(--ink-soft); font-size: .78rem; }
+
+    .warning-strip {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 1rem;
+      margin-top: 2rem;
+      padding: 1.2rem 1.3rem;
+      border: 1px solid var(--amber);
+      background: var(--amber-soft);
+      color: color-mix(in srgb, var(--ink) 88%, #000);
+    }
+
+    .warning-strip b { font: 900 1.4rem/1 var(--mono); }
+    .warning-strip p { margin: 0; font-size: .88rem; }
+
+    .matrix-wrap { overflow-x: auto; border: 1px solid var(--rule); }
+    table { width: 100%; border-collapse: collapse; min-width: 700px; background: color-mix(in srgb, var(--paper) 88%, transparent); }
+    th, td { padding: .9rem 1rem; border-right: 1px solid var(--rule); border-bottom: 1px solid var(--rule); text-align: left; }
+    th { background: var(--ink); color: var(--paper); font: 800 .72rem/1.2 var(--mono); letter-spacing: .05em; text-transform: uppercase; }
+    td { font-size: .86rem; vertical-align: top; }
+    tr:last-child td { border-bottom: 0; }
+    td:last-child, th:last-child { border-right: 0; }
+    .pass { color: var(--green); font-weight: 800; }
+    .gate { color: var(--amber); font-weight: 800; }
+
+    .architecture-switcher { margin-top: 1rem; }
+    .switches { display: flex; gap: .5rem; margin-bottom: 1rem; }
+    .switches button {
+      padding: .65rem 1rem;
+      border: 1px solid var(--rule);
+      background: transparent;
+      color: var(--ink-soft);
+      cursor: pointer;
+      font: 800 .75rem/1 var(--mono);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+
+    .switches button[aria-selected="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+    .architecture-panel { display: none; }
+    .architecture-panel.active { display: block; animation: panel-in .4s ease both; }
+    @keyframes panel-in { from { opacity: 0; translate: 0 .5rem; } }
+
+    .arch-flow {
+      display: grid;
+      grid-template-columns: minmax(7.4rem, 1fr) auto minmax(7.4rem, 1fr) auto minmax(7.4rem, 1fr) auto minmax(7.4rem, 1fr) auto minmax(7.4rem, 1fr);
+      gap: .75rem;
+      align-items: center;
+      padding: clamp(1.2rem, 3vw, 2.4rem);
+      border: 1px solid var(--rule);
+      background: color-mix(in srgb, var(--paper) 88%, transparent);
+    }
+
+    .arch-node {
+      min-height: 8.5rem;
+      display: grid;
+      align-content: center;
+      padding: 1rem;
+      border: 1px solid var(--rule);
+      background: var(--paper);
+      text-align: center;
+    }
+
+    .arch-node b { font: 700 1rem/1.15 var(--display); }
+    .arch-node small { margin-top: .4rem; color: var(--ink-soft); font: .67rem/1.35 var(--mono); }
+    .arch-arrow { color: var(--accent); text-align: center; font: 900 1.4rem/1 var(--mono); }
+    .arch-flow.current .arch-node:nth-child(3) { background: var(--accent-soft); border-color: var(--accent); }
+    .arch-flow.future .arch-node { background: var(--green-soft); }
+    .arch-flow.future .arch-node:nth-child(7) { background: var(--blue-soft); }
+
+    .design-compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin-top: 3rem;
+    }
+
+    .design-card { padding: 2rem; border: 1px solid var(--rule); background: var(--paper); }
+    .design-card.recommended { border: 3px solid var(--green); box-shadow: var(--shadow); }
+    .design-card .tag { color: var(--green); font: 800 .7rem/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+    .design-card h3 { margin: .5rem 0 1.4rem; font: 700 2rem/1 var(--display); }
+    .bar-row { display: grid; grid-template-columns: 7rem 1fr 3rem; gap: .7rem; align-items: center; margin: .75rem 0; }
+    .bar-row label { color: var(--ink-soft); font: 700 .72rem/1 var(--mono); }
+    .bar { height: .65rem; background: var(--paper-deep); overflow: hidden; }
+    .bar i { display: block; height: 100%; background: var(--accent); }
+    .recommended .bar i { background: var(--green); }
+    .bar-row output { font: 800 .7rem/1 var(--mono); text-align: right; }
+
+    .roadmap {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(14rem, 1fr));
+      gap: .65rem;
+      overflow-x: auto;
+      padding-bottom: 1rem;
+    }
+
+    .roadmap-step {
+      position: relative;
+      min-height: 22rem;
+      padding: 1.1rem;
+      border: 1px solid var(--rule);
+      border-top: 5px solid var(--green);
+      background: var(--paper);
+    }
+
+    .roadmap-step::after {
+      content: "→";
+      position: absolute;
+      right: -.72rem;
+      top: 1.2rem;
+      z-index: 2;
+      color: var(--accent);
+      font: 900 1rem/1 var(--mono);
+    }
+
+    .roadmap-step:last-child::after { display: none; }
+    .roadmap-step b { color: var(--accent); font: 800 1.7rem/1 var(--condensed); }
+    .roadmap-step h3 { margin: 2rem 0 .5rem; font: 700 1rem/1.1 var(--display); }
+    .roadmap-step p { margin: 0; color: var(--ink-soft); font-size: .72rem; line-height: 1.45; }
+    .roadmap-step p + p { margin-top: .7rem; }
+    .roadmap-step p strong { color: var(--ink); font-family: var(--mono); font-size: .62rem; text-transform: uppercase; }
+    .roadmap-step small { position: absolute; inset: auto 1rem 1rem; font: 700 .62rem/1.3 var(--mono); color: var(--green); }
+
+    .risk-grid { display: grid; gap: .65rem; }
+    .risk-row {
+      display: grid;
+      grid-template-columns: 10rem minmax(12rem, 1fr) 8rem;
+      gap: 1rem;
+      align-items: center;
+      padding: .95rem 1rem;
+      border: 1px solid var(--rule);
+      background: color-mix(in srgb, var(--paper) 86%, transparent);
+    }
+
+    .risk-name { font: 750 .85rem/1.2 var(--body); }
+    .risk-meter { height: .7rem; background: var(--paper-deep); }
+    .risk-meter i { display: block; height: 100%; background: var(--amber); }
+    .risk-row.high .risk-meter i { background: var(--accent); }
+    .risk-row.medium .risk-meter i { background: var(--amber); }
+    .risk-row.low .risk-meter i { background: var(--green); }
+    .risk-action { color: var(--ink-soft); font: .68rem/1.3 var(--mono); }
+
+    .effort {
+      display: grid;
+      grid-template-columns: minmax(17rem, .75fr) minmax(22rem, 1.25fr);
+      gap: 2rem;
+      align-items: center;
+      margin-top: 3rem;
+    }
+
+    .effort-total {
+      display: grid;
+      place-items: center;
+      aspect-ratio: 1;
+      max-width: 23rem;
+      border: clamp(1.2rem, 3vw, 2.4rem) solid var(--ink);
+      border-right-color: var(--accent);
+      border-radius: 50%;
+      text-align: center;
+      rotate: -7deg;
+    }
+
+    .effort-total div { rotate: 7deg; }
+    .effort-total strong { display: block; font: 800 clamp(3rem, 7vw, 6rem)/.8 var(--condensed); }
+    .effort-total span { font: 700 .78rem/1.2 var(--mono); text-transform: uppercase; }
+    .effort-bars { display: grid; gap: .8rem; }
+    .effort-item { display: grid; grid-template-columns: 10rem 1fr 5rem; gap: .8rem; align-items: center; }
+    .effort-item label { font: 700 .72rem/1.15 var(--mono); }
+    .effort-item .bar i { background: var(--blue); }
+    .effort-item output { font: 800 .7rem/1 var(--mono); }
+
+    .research-state {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.2rem;
+    }
+
+    .state-panel { padding: 2rem; border: 1px solid var(--rule); }
+    .state-panel.done { background: var(--green-soft); }
+    .state-panel.todo { background: var(--amber-soft); }
+    .state-panel h3 { margin: 0 0 1rem; font: 700 2rem/1 var(--display); }
+    .state-panel ul { margin: 0; padding: 0; list-style: none; }
+    .state-panel li { position: relative; padding: .5rem 0 .5rem 1.7rem; border-top: 1px solid color-mix(in srgb, var(--ink) 20%, transparent); font-size: .85rem; }
+    .state-panel li::before { position: absolute; left: 0; font-family: var(--mono); font-weight: 900; }
+    .state-panel.done li::before { content: "✓"; color: var(--green); }
+    .state-panel.todo li::before { content: "○"; color: var(--amber); }
+
+    .decision-list { counter-reset: decisions; display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .decision {
+      counter-increment: decisions;
+      position: relative;
+      min-height: 10rem;
+      padding: 1.5rem 1.5rem 1.5rem 4.6rem;
+      border: 1px solid var(--rule);
+      background: var(--paper);
+    }
+
+    .decision::before {
+      content: counter(decisions, decimal-leading-zero);
+      position: absolute;
+      left: 1.2rem;
+      top: 1.2rem;
+      color: var(--accent);
+      font: 900 1.8rem/1 var(--condensed);
+    }
+
+    .decision h3 { margin: 0 0 .45rem; font: 700 1.1rem/1.15 var(--display); }
+    .decision p { margin: 0; color: var(--ink-soft); font-size: .82rem; }
+
+    .closing {
+      min-height: 80vh;
+      display: grid;
+      align-content: center;
+      background: var(--ink) !important;
+      color: var(--paper);
+    }
+
+    .closing .section-no { color: var(--accent); }
+    .closing .section-title { max-width: 18ch; }
+    .closing .section-lede { color: color-mix(in srgb, var(--paper) 72%, transparent); }
+    .next-action {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 1.2rem;
+      max-width: 52rem;
+      padding: 1.4rem;
+      border: 1px solid color-mix(in srgb, var(--paper) 35%, transparent);
+    }
+
+    .next-action b { color: var(--accent); font: 900 2rem/1 var(--condensed); }
+    .next-action h3 { margin: 0 0 .25rem; font: 700 1.3rem/1.15 var(--display); }
+    .next-action p { margin: 0; color: color-mix(in srgb, var(--paper) 72%, transparent); font-size: .87rem; }
+    .source-links { display: flex; flex-wrap: wrap; gap: .75rem; margin-top: 2rem; }
+    .source-links a {
+      padding: .65rem .85rem;
+      border: 1px solid color-mix(in srgb, var(--paper) 35%, transparent);
+      color: var(--paper);
+      text-decoration: none;
+      font: 700 .72rem/1 var(--mono);
+    }
+
+    .source-links a:hover { border-color: var(--accent); color: var(--accent); }
+
+    .reveal {
+      opacity: 0;
+      translate: 0 1.2rem;
+      transition: opacity .65s ease, translate .65s ease;
+    }
+
+    .reveal.in { opacity: 1; translate: 0 0; }
+
+    @media (max-width: 1100px) {
+      .layout { grid-template-columns: 1fr; }
+      .rail { display: none; }
+      .hero { min-height: 92vh; }
+      .anatomy, .effort { grid-template-columns: 1fr; }
+      .lifecycle { grid-template-columns: repeat(3, 1fr); }
+      .lifecycle::before { display: none; }
+      .arch-flow { grid-template-columns: 1fr; }
+      .arch-arrow { rotate: 90deg; }
+    }
+
+    @media (max-width: 760px) {
+      body { font-size: 16px; }
+      section { padding: 4.5rem 1.2rem; }
+      h1 { font-size: clamp(3.5rem, 19vw, 6rem); }
+      .hero-metrics { grid-template-columns: 1fr 1fr; }
+      .metric:nth-child(2) { border-right: 0; }
+      .metric:nth-child(n+3) { border-top: 1px solid var(--rule); }
+      .grid-3, .grid-2, .capability-map, .design-compare, .research-state, .decision-list { grid-template-columns: 1fr; }
+      .verdict { grid-template-columns: 1fr; }
+      .lane { grid-template-columns: 6.5rem 1fr; }
+      .lane-arrow { display: none; }
+      .lane-output { grid-column: 2; border-top: 1px solid var(--rule); }
+      .ice-paths, .ice-parts { grid-template-columns: 1fr; }
+      .lifecycle { grid-template-columns: 1fr; }
+      .life-step { padding: 0 0 1.2rem 4rem; }
+      .life-step::before { top: 0; }
+      .risk-row { grid-template-columns: 1fr; gap: .45rem; }
+      .effort-item { grid-template-columns: 7rem 1fr; }
+      .effort-item output { display: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
+      .reveal { opacity: 1; translate: none; }
+    }
+
+    @media print {
+      :root { --paper: #fff; --paper-deep: #f3f3f3; --ink: #111; --ink-soft: #444; --rule: #999; }
+      body { background: #fff; font-size: 10pt; }
+      body::before, .rail, .theme-toggle, .progress { display: none; }
+      .layout { display: block; }
+      section { padding: 2rem 1.5rem; break-inside: avoid; }
+      .hero { min-height: auto; }
+      .hero::after { display: none; }
+      .reveal { opacity: 1; translate: none; }
+      .roadmap { grid-template-columns: repeat(3, 1fr); overflow: visible; }
+      .architecture-panel { display: block !important; margin-bottom: 1rem; }
+      .switches { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="progress" aria-hidden="true"></div>
+  <button class="theme-toggle" type="button" aria-label="Toggle color theme" title="Toggle color theme">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+      <circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"/>
+    </svg>
+  </button>
+
+  <div class="layout">
+    <aside class="rail" aria-label="Report navigation">
+      <div class="rail-mark">
+        <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <circle cx="20" cy="20" r="17"/><path d="M10 23c4-11 16-11 20 0M12 28h16M20 8v7"/>
+        </svg>
+        <div><span class="rail-kicker">BanyanDB</span><br>Field report</div>
+      </div>
+      <h2>Native index research</h2>
+      <p class="reading-time">Visual edition · ~16 min</p>
+      <nav>
+        <a href="#summary">Executive answer</a>
+        <a href="#scope">Keep vs remove</a>
+        <a href="#current">Current dependency</a>
+        <a href="#requirements">Requirements</a>
+        <a href="#format">ICE anatomy</a>
+        <a href="#lifecycle">Lifecycle</a>
+        <a href="#compatibility">Compatibility</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#roadmap">Roadmap</a>
+        <a href="#risks">Risks & effort</a>
+        <a href="#research">Research status</a>
+        <a href="#decisions">Decisions</a>
+      </nav>
+      <div class="rail-footer">Source-derived findings<br>Compatibility proof pending</div>
+    </aside>
+
+    <main>
+      <section class="hero" id="top">
+        <div class="eyebrow">Architecture research · visual report</div>
+        <h1>BanyanDB’s <em>native index</em>
+</h1>
+        <p class="hero-dek">How to replace an unmaintained general-purpose search stack with a smaller, owned engine—without breaking the ICE data already on disk.</p>
+        <div class="status-line">
+          <span class="pill">Source research complete</span>
+          <span class="pill pending">Codec proof pending</span>
+          <span class="pill pending">Historical corpus pending</span>
+        </div>
+        <div class="hero-metrics" aria-label="Research metrics">
+          <div class="metric">
+<strong>16</strong>
+<span>direct production imports</span>
+</div>
+          <div class="metric">
+<strong>41k</strong>
+<span>Bluge + ICE lines</span>
+</div>
+          <div class="metric">
+<strong>13–17k</strong>
+<span>estimated native lines</span>
+</div>
+          <div class="metric">
+<strong>4–6 mo</strong>
+<span>parallel delivery range</span>
+</div>
+        </div>
+      </section>
+
+      <section id="summary">
+        <span class="section-no">01 / THE ANSWER</span>
+        <h2 class="section-title reveal">Replace the engine, preserve the language.</h2>
+        <p class="section-lede reveal">BanyanDB does not need another Bluge. It needs a purpose-built filter-and-sort engine that continues speaking ICE v3
+          and snapshot v3 while old binaries remain a rollback option.</p>
+        <div class="grid-3">
+          <article class="card reveal">
+            <div class="icon">A</div>
+            <h3>Own the semantics</h3>
+            <p>Query IR, analyzers, numeric terms, snapshots, durability, merge, and administration become BanyanDB code.</p>
+          </article>
+          <article class="card reveal">
+            <div class="icon">B</div>
+            <h3>Keep the binary tongue</h3>
+            <p>Write <code>ice/v3</code> segments and snapshot v3 until same-file rollback to the legacy reader is retired.</p>
+          </article>
+          <article class="card reveal">
+            <div class="icon">C</div>
+            <h3>Merge live verticals</h3>
+            <p>Build parser and writer evidence on the ticket branch; merge only when one named production role runs natively end to end.</p>
+          </article>
+        </div>
+
+        <div class="verdict reveal">
+          <div>
+            <div class="stamp">Recommended design</div>
+            <h3>Direct immutable segment builder</h3>
+            <p>Analyze a bounded batch, seal one immutable byte-backed segment, publish a ref-counted snapshot, persist compatible bytes, then merge live
+              content by streaming.</p>
+          </div>
+          <svg viewBox="0 0 430 250" role="img" aria-label="Batch becomes immutable segment and snapshot">
+            <defs>
+<marker id="va" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+<path d="M0 0L6 3L0 6Z" fill="#ff6942"/>
+</marker>
+</defs>
+            <g fill="none" stroke="#ff6942" stroke-width="2" marker-end="url(#va)">
+              <path d="M96 70H178"/>
+<path d="M260 70H342"/>
+<path d="M220 112V182"/>
+            </g>
+            <g fill="#f2ecde" stroke="#f2ecde" stroke-width="1.5">
+              <rect x="14" y="38" width="82" height="64"/>
+<rect x="178" y="38" width="82" height="64"/>
+<rect x="342" y="38" width="74" height="64"/>
+<rect x="168" y="182" width="104" height="48"/>
+            </g>
+            <g fill="#152827" font-family="sans-serif" font-size="13" text-anchor="middle">
+              <text x="55" y="66">BATCH</text>
+<text x="55" y="83" font-size="10">bounded staging</text>
+              <text x="219" y="66">SEGMENT</text>
+<text x="219" y="83" font-size="10">immutable bytes</text>
+              <text x="379" y="66">SNAPSHOT</text>
+<text x="379" y="83" font-size="10">atomic view</text>
+              <text x="220" y="205">ICE v3 + .snp</text>
+<text x="220" y="219" font-size="9">durable generation</text>
+            </g>
+          </svg>
+        </div>
+      </section>
+
+      <section id="scope">
+        <span class="section-no">02 / SCOPE</span>
+        <h2 class="section-title reveal">A much smaller search surface.</h2>
+        <p class="section-lede reveal">Static production inventory shows BanyanDB is a filtering, projection, and sorting client—not a relevance-search product.</p>
+        <div class="capability-map">
+          <div class="capability-column keep reveal">
+            <h3>Keep & own</h3>
+            <div class="chip-list">
+              <span class="chip">exact term</span>
+<span class="chip">byte range</span>
+<span class="chip">numeric range</span>
+              <span class="chip">time range</span>
+<span class="chip">prefix</span>
+<span class="chip">wildcard</span>
+              <span class="chip">boolean AND/OR/NOT</span>
+<span class="chip">analyzed MATCH</span>
+<span class="chip">stored fields</span>
+              <span class="chip">doc values</span>
+<span class="chip">explicit sort</span>
+<span class="chip">snapshot MVCC</span>
+              <span class="chip">update/delete masks</span>
+<span class="chip">external segments</span>
+<span class="chip">merge + GC</span>
+            </div>
+            <p class="caption">Every item maps to current production call sites or disk compatibility.</p>
+          </div>
+          <div class="capability-column drop reveal">
+            <h3>Do not rebuild</h3>
+            <div class="chip-list">
+              <span class="chip">BM25 scoring</span>
+<span class="chip">phrase query</span>
+<span class="chip">fuzzy query</span>
+              <span class="chip">highlights</span>
+<span class="chip">facets</span>
+<span class="chip">aggregations</span>
+              <span class="chip">boosts</span>
+<span class="chip">explanations</span>
+<span class="chip">geo search</span>
+              <span class="chip">general collectors</span>
+<span class="chip">plugin API</span>
+<span class="chip">remote directory API</span>
+            </div>
+            <p class="caption">No current production caller was identified. Legacy files may still contain optional detail sections.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="current">
+        <span class="section-no">03 / CURRENT SYSTEM</span>
+        <h2 class="section-title reveal">The dependency is wider than one adapter.</h2>
+        <p class="section-lede reveal">Sixteen production files import Bluge packages. Migration, repair, schema reading, analyzers, numeric transforms,
+          and external receive all bypass the nominal store boundary.</p>
+        <div class="system-map reveal">
+          <svg viewBox="0 0 1120 520" role="img" aria-label="Current dependency map from BanyanDB products through Bluge and ICE">
+            <defs>
+<marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+<path d="M0 0L6 3L0 6Z" fill="currentColor"/>
+</marker>
+</defs>
+            <text x="20" y="34" font-size="13" font-weight="700">BANYANDB CALLERS</text>
+            <rect class="box" x="20" y="58" width="190" height="70" rx="3"/>
+<text x="115" y="87" text-anchor="middle" font-weight="700">Series index</text>
+<text class="small" x="115" y="108" text-anchor="middle" font-size="11">Measure · Stream · Trace</text>
+            <rect class="box" x="20" y="148" width="190" height="70" rx="3"/>
+<text x="115" y="177" text-anchor="middle" font-weight="700">Stream element index</text>
+<text class="small" x="115" y="198" text-anchor="middle" font-size="11">filter · sort · migration</text>
+            <rect class="box" x="20" y="238" width="190" height="70" rx="3"/>
+<text x="115" y="267" text-anchor="middle" font-weight="700">Property</text>
+<text class="small" x="115" y="288" text-anchor="middle" font-size="11">upsert · repair · expiry</text>
+            <rect class="box" x="20" y="328" width="190" height="70" rx="3"/>
+<text x="115" y="357" text-anchor="middle" font-weight="700">Index-mode Measure</text>
+<text class="small" x="115" y="378" text-anchor="middle" font-size="11">stored document engine</text>
+            <rect class="box" x="20" y="418" width="190" height="70" rx="3"/>
+<text x="115" y="447" text-anchor="middle" font-weight="700">Admin & offline</text>
+<text class="small" x="115" y="468" text-anchor="middle" font-size="11">dump · schema · repair · rebuild</text>
+
+            <rect class="hot" x="330" y="130" width="220" height="260" rx="4"/>
+<text x="440" y="168" text-anchor="middle" font-size="20" font-weight="700">Bluge</text>
+<text class="small" x="440" y="194" text-anchor="middle" font-size="11">writer · reader · query · search</text>
+            <rect class="box" x="365" y="220" width="150" height="52" rx="2"/>
+<text x="440" y="251" text-anchor="middle" font-size="13">pkg/index/inverted</text>
+            <rect class="box" x="365" y="292" width="150" height="52" rx="2"/>
+<text x="440" y="323" text-anchor="middle" font-size="13">direct bypasses</text>
+
+            <rect class="hot" x="670" y="130" width="190" height="260" rx="4"/>
+<text x="765" y="168" text-anchor="middle" font-size="20" font-weight="700">ICE v3</text>
+<text class="small" x="765" y="194" text-anchor="middle" font-size="11">segment grammar + merge</text>
+            <text x="765" y="235" text-anchor="middle" font-size="12">stored chunks</text>
+<text x="765" y="265" text-anchor="middle" font-size="12">postings</text>
+<text x="765" y="295" text-anchor="middle" font-size="12">doc values</text>
+<text x="765" y="325" text-anchor="middle" font-size="12">footer + CRC</text>
+
+            <rect class="low" x="970" y="85" width="130" height="62" rx="3"/>
+<text x="1035" y="121" text-anchor="middle" font-size="13" font-weight="700">Vellum FST</text>
+            <rect class="low" x="970" y="170" width="130" height="62" rx="3"/>
+<text x="1035" y="206" text-anchor="middle" font-size="13" font-weight="700">Roaring</text>
+            <rect class="low" x="970" y="255" width="130" height="62" rx="3"/>
+<text x="1035" y="291" text-anchor="middle" font-size="13" font-weight="700">S2</text>
+            <rect class="box" x="970" y="340" width="130" height="62" rx="3"/>
+<text x="1035" y="376" text-anchor="middle" font-size="13" font-weight="700">mmap</text>
+
+            <path class="wire hotwire" d="M210 93C270 93 280 180 330 180"/>
+<path class="wire hotwire" d="M210 183H330"/>
+<path class="wire hotwire" d="M210 273H330"/>
+<path class="wire hotwire" d="M210 363C270 363 280 330 330 330"/>
+<path class="wire hotwire" d="M210 453C290 453 270 365 330 365"/>
+            <path class="wire hotwire" d="M550 260H670"/>
+<path class="wire" d="M860 210C920 210 920 116 970 116"/>
+<path class="wire" d="M860 250C920 250 920 201 970 201"/>
+<path class="wire" d="M860 290H970"/>
+<path class="wire" d="M860 330C920 330 920 371 970 371"/>
+            <text class="small" x="440" y="430" text-anchor="middle" font-size="12">≈ 35k production lines</text>
+<text class="small" x="765" y="430" text-anchor="middle" font-size="12">≈ 6k production lines</text>
+          </svg>
+        </div>
+      </section>
+
+      <section id="requirements">
+        <span class="section-no">04 / PRODUCT CONTRACTS</span>
+        <h2 class="section-title reveal">Four products, one narrow core.</h2>
+        <p class="section-lede reveal">The same segment machinery serves distinct identities, fields, and lifecycle rules. The native API must make those
+          differences explicit.</p>
+        <div class="product-lanes">
+          <div class="lane reveal">
+<div class="lane-name">Series</div>
+<div class="lane-input">
+<strong>Identity</strong>
+<span>serialized entity values; field-set-aware ensure/upsert</span>
+</div>
+<div class="lane-arrow">→</div>
+<div class="lane-output">
+<strong>Needs</strong>
+<span>exact/prefix/wildcard ID, projection, timestamp/version, dictionary scan, explicit sort</span>
+</div>
+</div>
+          <div class="lane reveal">
+<div class="lane-name">Stream</div>
+<div class="lane-input">
+<strong>Identity</strong>
+<span>numeric document ID plus mandatory series constraint</span>
+</div>
+<div class="lane-arrow">→</div>
+<div class="lane-output">
+<strong>Needs</strong>
+<span>term/range/MATCH filters, document + timestamp postings, sort, external receive</span>
+</div>
+</div>
+          <div class="lane reveal">
+<div class="lane-name">Property</div>
+<div class="lane-input">
+<strong>Identity</strong>
+<span>replacement document with stored JSON source and delete time</span>
+</div>
+<div class="lane-arrow">→</div>
+<div class="lane-output">
+<strong>Needs</strong>
+<span>durable callback, merge-time expiry, stable repair scan, stored hash/source</span>
+</div>
+</div>
+          <div class="lane reveal">
+<div class="lane-name">Index Measure</div>
+<div class="lane-input">
+<strong>Identity</strong>
+<span>series entity with stored tags, timestamp, and version</span>
+</div>
+<div class="lane-arrow">→</div>
+<div class="lane-output">
+<strong>Needs</strong>
+<span>full projection, time range, sort/doc values, migration reconstruction</span>
+</div>
+</div>
+          <div class="lane reveal">
+<div class="lane-name">Admin</div>
+<div class="lane-input">
+<strong>Identity</strong>
+<span>committed generation and raw stored documents</span>
+</div>
+<div class="lane-arrow">→</div>
+<div class="lane-output">
+<strong>Needs</strong>
+<span>read-only count, verify, search-after scan, rebuild, snapshot, dump, repair</span>
+</div>
+</div>
+        </div>
+      </section>
+
+      <section id="format">
+        <span class="section-no">05 / DISK ANATOMY</span>
+        <h2 class="section-title reveal">ICE is a map read from the bottom.</h2>
+        <p class="section-lede reveal">The file has no leading magic. Readers start at the 60-byte footer, discover section offsets, then navigate
+          dictionaries, postings, doc values, and stored chunks.</p>
+        <div class="anatomy">
+          <div class="file-stack reveal" aria-label="ICE v3 conceptual file layout">
+            <div class="file-block stored">
+<span class="offset">start</span>
+<div>
+<strong>Stored-field chunks</strong>
+<span>128 docs · metadata + concatenated bytes · compressed</span>
+</div>
+<span class="size">variable</span>
+</div>
+            <div class="file-block">
+<span class="offset">↑</span>
+<div>
+<strong>Stored chunk directory</strong>
+<span>varint end offsets · byte length · chunk count</span>
+</div>
+<span class="size">trailer</span>
+</div>
+            <div class="file-block">
+<span class="offset">↑</span>
+<div>
+<strong>Stored document offsets</strong>
+<span>one big-endian uint64 per document</span>
+</div>
+<span class="size">8 × docs</span>
+</div>
+            <div class="file-block terms">
+<span class="offset">↑</span>
+<div>
+<strong>Per-field term payloads</strong>
+<span>freq/norm chunks · location chunks · Roaring postings</span>
+</div>
+<span class="size">largest</span>
+</div>
+            <div class="file-block dictionary">
+<span class="offset">↑</span>
+<div>
+<strong>FST + optional doc values</strong>
+<span>repeated for every field · 1024-doc DV chunks</span>
+</div>
+<span class="size">variable</span>
+</div>
+            <div class="file-block">
+<span class="offset">↑</span>
+<div>
+<strong>Global doc-value ranges</strong>
+<span>start/end uvarint pair per field</span>
+</div>
+<span class="size">index</span>
+</div>
+            <div class="file-block">
+<span class="offset">↑</span>
+<div>
+<strong>Field records</strong>
+<span>dictionary offset · name · document count · token count</span>
+</div>
+<span class="size">variable</span>
+</div>
+            <div class="file-block">
+<span class="offset">↑</span>
+<div>
+<strong>Fields index</strong>
+<span>one big-endian uint64 field-record address per field</span>
+</div>
+<span class="size">8 × fields</span>
+</div>
+            <div class="file-block">
+<span class="offset">EOF</span>
+<div>
+<strong>Footer</strong>
+<span>root offsets · timestamps · version · CRC32</span>
+</div>
+<span class="size">60 B</span>
+</div>
+          </div>
+          <div class="format-notes reveal">
+            <div class="note">
+<b>1</b>
+<div>
+<h3>Terms become FST keys</h3>
+<p>Raw term bytes map through a serialized Vellum FST to a general posting offset or compact one-hit value.</p>
+</div>
+</div>
+            <div class="note">
+<b>2</b>
+<div>
+<h3>Postings are Roaring</h3>
+<p>Document numbers use portable Roaring serialization. Different valid container choices can produce different bytes.</p>
+</div>
+</div>
+            <div class="note">
+<b>3</b>
+<div>
+<h3>Stored ≠ sortable</h3>
+<p>Stored fields preserve original projection bytes. Doc values preserve analyzed terms for sorting and merging. A Store + Sortable field intentionally
+  creates both representations because they are not interchangeable.</p>
+</div>
+</div>
+            <div class="note">
+<b>4</b>
+<div>
+<h3>Compression is implicit</h3>
+<p>The current fork defaults to S2, but the footer carries no algorithm ID. Historical files must be sampled.</p>
+</div>
+</div>
+            <div class="note">
+<b>5</b>
+<div>
+<h3>CRC is not enforced today</h3>
+<p>The segment stores CRC32 across every prior byte, yet the resolved ICE loader parses without validating it.</p>
+</div>
+</div>
+            <p class="caption">Source observation only. Byte-annotated fixtures and cross-read tests must convert this into the independent specification.</p>
+          </div>
+        </div>
+
+        <div class="footer-map reveal">
+          <h3>The 60-byte footer</h3>
+          <div class="bytebar" role="img" aria-label="ICE footer fields and sizes">
+            <div class="w8">
+<b>numDocs</b>
+<span>8</span>
+</div>
+<div class="w8">
+<b>storedIndex</b>
+<span>8</span>
+</div>
+<div class="w8">
+<b>fieldsIndex</b>
+<span>8</span>
+</div>
+<div class="w8">
+<b>docValues</b>
+<span>8</span>
+</div>
+<div class="w4">
+<b>chunkMode</b>
+<span>4</span>
+</div>
+<div class="w8">
+<b>timeMin</b>
+<span>8</span>
+</div>
+<div class="w8">
+<b>timeMax</b>
+<span>8</span>
+</div>
+<div class="w4">
+<b>version</b>
+<span>4</span>
+</div>
+<div class="w4">
+<b>CRC32</b>
+<span>4</span>
+</div>
+          </div>
+          <p class="caption">Numbers are widths in bytes. Fixed-width values are big-endian; internal counts and offsets also use unsigned varints.</p>
+        </div>
+
+        <div class="ice-boundary reveal">
+          <b>SEG ≠ SNP</b>
+          <p>This anatomy describes one immutable ICE <code>.seg</code> file. The Bluge <code>.snp</code> manifest is separate: it chooses the live segment
+            generation and carries per-segment deletion bitmaps. A segment alone does not tell you which of its documents are logically deleted.</p>
+        </div>
+
+        <div class="ice-paths reveal">
+          <article class="ice-path">
+            <h3>Term-filter lookup</h3>
+            <div class="path-line">
+              <span>footer</span><i>→</i><span>fields index</span><i>→</i><span>field record</span><i>→</i><span>FST</span><i>→</i>
+              <span>posting</span><i>→</i><span>doc numbers</span>
+            </div>
+          </article>
+          <article class="ice-path">
+            <h3>Stored-document lookup</h3>
+            <div class="path-line">
+              <span>footer</span><i>→</i><span>stored index</span><i>→</i><span>128-doc chunk</span><i>→</i><span>metadata</span><i>→</i>
+              <span>raw values</span>
+            </div>
+          </article>
+        </div>
+
+        <div class="ice-parts">
+          <article class="ice-part reveal">
+            <div class="ice-part-no">01</div>
+            <div class="ice-part-body">
+              <h3>Stored-field chunks</h3>
+              <p class="job">Recover original field bytes for result projection, migration, repair, and administration. A stored value need not be indexed.</p>
+              <p class="shape">128 documents/chunk → compress([metaLen, dataLen, metadata, data] × document). Metadata repeats
+                (fieldID, valueStart, valueLen) as uvarints; data concatenates the raw values.</p>
+              <p class="reader"><b>Reader:</b> choose <code>docNum / 128</code>, decompress once, then slice the requested values.</p>
+            </div>
+          </article>
+
+          <article class="ice-part reveal">
+            <div class="ice-part-no">02</div>
+            <div class="ice-part-body">
+              <h3>Stored-field navigation</h3>
+              <p class="job">Find a document inside compressed storage without scanning earlier chunks or documents.</p>
+              <p class="shape">chunk end offsets as uvarints → uint32 encoded-offset byte length → uint32 chunk count → one big-endian uint64
+                uncompressed offset per document.</p>
+              <p class="reader"><b>Reader:</b> the footer points to the per-document uint64 array; the chunk directory sits immediately before it.</p>
+            </div>
+          </article>
+
+          <article class="ice-part reveal">
+            <div class="ice-part-no">03</div>
+            <div class="ice-part-body">
+              <h3>Frequency and norm streams</h3>
+              <p class="job">Carry optional scoring/detail data alongside each term hit. BanyanDB mainly needs the document set, but legacy readers may
+                request this detail.</p>
+              <p class="shape">chunk count uvarint → chunk end offsets uvarint[] → compressed uvarints. Each hit records encoded frequency/has-locations
+                plus the float32 norm bits.</p>
+              <p class="reader"><b>Compatibility:</b> a minimal writer must still emit valid streams when legacy merge/query code asks for them.</p>
+            </div>
+          </article>
+
+          <article class="ice-part reveal">
+            <div class="ice-part-no">04</div>
+            <div class="ice-part-body">
+              <h3>Location streams</h3>
+              <p class="job">Describe where a term occurred. These support phrase/highlight-style detail even though BanyanDB does not require those features.</p>
+              <p class="shape">per hit: location-byte-length uvarint, then repeated (fieldID, position, start, end) uvarints in compressed integer chunks.</p>
+              <p class="reader"><b>Minimal policy:</b> preserve and merge legacy locations; new BanyanDB fields can omit them unless their analyzer
+                contract requires them.</p>
+            </div>
+          </article>
+
+          <article class="ice-part reveal">
+            <div class="ice-part-no">05</div>
+            <div class="ice-part-body">
+              <h3>Postings records</h3>
+              <p class="job">Answer the central inverted-index question: “which local document numbers contain this field term?”</p>
+              <p class="shape">freqOffset uvarint → locOffsetDelta uvarint → RoaringByteLen uvarint → portable Roaring bitmap bytes. Merge output may instead
+                pack a one-hit doc number and norm directly into the FST value.</p>
+              <p class="reader"><b>Query:</b> AND, OR, and NOT are bitmap/iterator operations over these local document numbers and snapshot deletion masks.</p>
+            </div>
+          </article>
+
+          <article class="ice-part reveal">
+            <div class="ice-part-no">06</div>
+            <div class="ice-part-body">
+              <h3>Vellum FST dictionaries</h3>
+              <p class="job">Map sorted analyzed term bytes to their postings record quickly, while supporting prefix and ordered term enumeration.</p>
+              <p class="shape">FSTByteLen uvarint → serialized Vellum FST. Values use the top two bits as a tag: <code>00</code> means a 62-bit posting offset;
+                <code>10</code> means packed one-hit data.</p>
+              <p class="reader"><b>Boundary:</b> term bytes are the compatibility contract; query strings must pass through the same analyzer and numeric term codec.</p>
+            </div>
+          </article>
+
+          <article class="ice-part reveal">
+            <div class="ice-part-no">07</div>
+            <div class="ice-part-body">
+              <h3>Per-field doc values</h3>
+              <p class="job">Provide a document-to-terms view for explicit sorting, dictionary-like scans, reconstruction, and merge. This is separate
+                from stored fields.</p>
+              <p class="shape">1024-document chunks. Each chunk has doc count + delta(docNum, termEndOffset) metadata and compressed term bytes. Terms use
+                <code>0xFF</code> separators and <code>0x5C</code> escaping, followed by chunk offsets and two uint64 trailer values.</p>
+              <p class="reader"><b>Global index:</b> one start/end uvarint pair per field locates these regions; <code>MaxUint64</code> marks “no doc values.”</p>
+            </div>
+          </article>
+
+          <article class="ice-part reveal">
+            <div class="ice-part-no">08</div>
+            <div class="ice-part-body">
+              <h3>Field records and fields index</h3>
+              <p class="job">Connect a field name to its term dictionary and record aggregate statistics.</p>
+              <p class="shape">per record: dictionaryOffset uvarint → nameLen uvarint → name bytes → docsWithField uvarint → totalTokens uvarint. The final
+                fields index is one big-endian uint64 record address per field.</p>
+              <p class="reader"><b>Identity:</b> file field IDs are zero-based; ICE forces <code>_id</code> to field 0 and sorts the remaining names.</p>
+            </div>
+          </article>
+
+          <article class="ice-part reveal">
+            <div class="ice-part-no">09</div>
+            <div class="ice-part-body">
+              <h3>Footer and roots</h3>
+              <p class="job">Bootstrap the entire file from EOF and reject the wrong segment version.</p>
+              <p class="shape">60 fixed bytes, big-endian: numDocs(8), storedIndex(8), fieldsIndex(8), docValues(8), chunkMode(4), timeMin(8), timeMax(8),
+                version(4), CRC32(4).</p>
+              <p class="reader"><b>Caution:</b> version must equal 3. The pinned loader reads but does not verify CRC32, and the footer does not identify
+                the compressor.</p>
+            </div>
+          </article>
+
+          <article class="ice-part reveal">
+            <div class="ice-part-no">10</div>
+            <div class="ice-part-body">
+              <h3>Compression and chunk mode</h3>
+              <p class="job">Bound decompression and sequential scanning costs without adding a top-level section.</p>
+              <p class="shape">The pinned fork globally defaults to S2. Stored fields always use 128-doc chunks; doc values retain 1024-doc chunks; postings
+                detail chunk size is derived from footer chunk mode 1025 and term cardinality.</p>
+              <p class="reader"><b>Historical risk:</b> compressor choice is process-global and absent from the bytes, so real old segments are required fixtures.</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="lifecycle">
+        <span class="section-no">06 / COMMIT LIFECYCLE</span>
+        <h2 class="section-title reveal">A snapshot is the commit record.</h2>
+        <p class="section-lede reveal">A <code>.seg</code> contains immutable data. A <code>.snp</code> decides which segments—and which document numbers
+          inside them—are live.</p>
+        <div class="lifecycle reveal">
+          <div class="life-step" data-step="01">
+<h3>Admit batch</h3>
+<p>Normalize identity, analyze fields, apply update/ensure rules.</p>
+</div>
+          <div class="life-step" data-step="02">
+<h3>Publish memory view</h3>
+<p>Readers atomically acquire a new immutable snapshot.</p>
+</div>
+          <div class="life-step" data-step="03">
+<h3>Persist segment</h3>
+<p>Write, fsync, close, validate, rename, sync directory.</p>
+</div>
+          <div class="life-step" data-step="04">
+<h3>Publish manifest</h3>
+<p>Write snapshot v3 with segment metadata and deletion masks.</p>
+</div>
+          <div class="life-step" data-step="05">
+<h3>Callback + GC</h3>
+<p>Complete durable waiters; later remove unreachable generations.</p>
+</div>
+        </div>
+        <div class="warning-strip reveal">
+<b>!</b>
+<p>
+<strong>Improvement opportunity:</strong> current Bluge writes directly to final names, omits directory fsync, and does not truncate reused IDs. Native
+            temp→rename publication can be stronger without changing final file grammar.</p>
+</div>
+      </section>
+
+      <section id="compatibility">
+        <span class="section-no">07 / COMPATIBILITY CONTRACT</span>
+        <h2 class="section-title reveal">Rollback requires two-way reading.</h2>
+        <p class="section-lede reveal">“Native can read old files” is only half the contract. Until old binaries leave the fleet, they must also open,
+          query, merge, and restart native output.</p>
+        <div class="matrix-wrap reveal">
+          <table>
+            <thead>
+<tr>
+<th>Producer / action</th>
+<th>Consumer</th>
+<th>Required proof</th>
+<th>Status</th>
+</tr>
+</thead>
+            <tbody>
+              <tr>
+<td>Legacy Bluge + ICE directory</td>
+<td>Native reader</td>
+<td>Identity, fields, terms, postings, doc values, timestamps, deletion masks</td>
+<td class="gate">Fixture gate</td>
+</tr>
+              <tr>
+<td>Legacy directory + native append/update</td>
+<td>Legacy reader</td>
+<td>Open, query, merge, restart with identical live documents</td>
+<td class="gate">Prototype gate</td>
+</tr>
+              <tr>
+<td>Native ICE v3 segment</td>
+<td>Legacy reader</td>
+<td>Dictionary, posting, stored, doc-value, query and merge parity</td>
+<td class="gate">Writer gate</td>
+</tr>
+              <tr>
+<td>Native snapshot v3</td>
+<td>Legacy reader</td>
+<td>Exact live segment set and Roaring tombstones</td>
+<td class="gate">Writer gate</td>
+</tr>
+              <tr>
+<td>Legacy/native raw segment</td>
+<td>Legacy/native receiver</td>
+<td>Receive, validate, dedup on/off, crash/retry, later manifest publication</td>
+<td class="gate">Lifecycle gate</td>
+</tr>
+              <tr>
+<td>Source research</td>
+<td>Architecture report</td>
+<td>Required call sites, source grammar, risks, candidate design</td>
+<td class="pass">Complete</td>
+</tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="warning-strip reveal">
+<b>?</b>
+<p>
+<strong>Highest historical uncertainty:</strong> ICE v3 does not name its compressor. Snapshot v1–v3 support also does not imply segment v1–v3
+            support—the pinned ICE reader accepts segment v3 only.</p>
+</div>
+      </section>
+
+      <section id="architecture">
+        <span class="section-no">08 / TARGET ARCHITECTURE</span>
+        <h2 class="section-title reveal">Own the engine. Isolate the codecs.</h2>
+        <p class="section-lede reveal">The public store remains stable, but query and lifecycle concepts stop leaking third-party types. Low-level binary
+          codecs sit behind an internal segment boundary.</p>
+
+        <div class="architecture-switcher reveal">
+          <div class="switches" role="tablist" aria-label="Architecture comparison">
+            <button role="tab" aria-selected="true" aria-controls="future-panel" id="future-tab">Proposed native</button>
+            <button role="tab" aria-selected="false" aria-controls="current-panel" id="current-tab">Current stack</button>
+          </div>
+          <div class="architecture-panel active" id="future-panel" role="tabpanel" aria-labelledby="future-tab">
+            <div class="arch-flow future">
+              <div class="arch-node">
+<b>pkg/index</b>
+<small>stable public contracts</small>
+</div>
+<div class="arch-arrow">→</div>
+              <div class="arch-node">
+<b>Query IR + analyzer + term codec</b>
+<small>BanyanDB semantics</small>
+</div>
+<div class="arch-arrow">→</div>
+              <div class="arch-node">
+<b>Native store + executor</b>
+<small>filter · project · sort</small>
+</div>
+<div class="arch-arrow">→</div>
+              <div class="arch-node">
+<b>Snapshot + segment interface</b>
+<small>immutable refs + live masks</small>
+</div>
+<div class="arch-arrow">→</div>
+              <div class="arch-node">
+<b>ICE v3 codec</b>
+<small>Vellum · Roaring · S2 isolated</small>
+</div>
+            </div>
+          </div>
+          <div class="architecture-panel" id="current-panel" role="tabpanel" aria-labelledby="current-tab">
+            <div class="arch-flow current">
+              <div class="arch-node">
+<b>pkg/index</b>
+<small>partly coupled values</small>
+</div>
+<div class="arch-arrow">→</div>
+              <div class="arch-node">
+<b>Bluge</b>
+<small>general query + writer + reader</small>
+</div>
+<div class="arch-arrow">→</div>
+              <div class="arch-node">
+<b>bluge_segment_api</b>
+<small>third-party storage boundary</small>
+</div>
+<div class="arch-arrow">→</div>
+              <div class="arch-node">
+<b>ICE</b>
+<small>format + reader + merge</small>
+</div>
+<div class="arch-arrow">→</div>
+              <div class="arch-node">
+<b>Binary codecs</b>
+<small>Vellum · Roaring · S2 · mmap</small>
+</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="design-compare">
+          <article class="design-card recommended reveal">
+            <span class="tag">Recommended</span>
+<h3>A · Direct immutable builder</h3>
+            <div class="bar-row">
+<label>Code size</label>
+<div class="bar">
+<i style="width:68%">
+</i>
+</div>
+<output>13–17k</output>
+</div>
+            <div class="bar-row">
+<label>Memory</label>
+<div class="bar">
+<i style="width:42%">
+</i>
+</div>
+<output>lower</output>
+</div>
+            <div class="bar-row">
+<label>Write risk</label>
+<div class="bar">
+<i style="width:72%">
+</i>
+</div>
+<output>higher</output>
+</div>
+            <div class="bar-row">
+<label>Operations</label>
+<div class="bar">
+<i style="width:48%">
+</i>
+</div>
+<output>simple</output>
+</div>
+            <p class="caption">One queryable representation; bounded document-oriented staging; stream merge later.</p>
+          </article>
+          <article class="design-card reveal">
+            <span class="tag">Alternative</span>
+<h3>B · Mutable arena + compiler</h3>
+            <div class="bar-row">
+<label>Code size</label>
+<div class="bar">
+<i style="width:82%">
+</i>
+</div>
+<output>15–20k</output>
+</div>
+            <div class="bar-row">
+<label>Memory</label>
+<div class="bar">
+<i style="width:76%">
+</i>
+</div>
+<output>higher</output>
+</div>
+            <div class="bar-row">
+<label>Write risk</label>
+<div class="bar">
+<i style="width:52%">
+</i>
+</div>
+<output>medium</output>
+</div>
+            <div class="bar-row">
+<label>Operations</label>
+<div class="bar">
+<i style="width:78%">
+</i>
+</div>
+<output>complex</output>
+</div>
+            <p class="caption">Easier retry/debugging, but two representations and replay/retention lifecycle.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="roadmap">
+        <span class="section-no">09 / DELIVERY</span>
+        <h2 class="section-title reveal">Four live cutovers. Zero foundation-only tickets.</h2>
+        <p class="section-lede reveal">Each main-branch merge replaces one named Bluge production path. Parsers, writers, query IR, fuzzing, and shadow
+          comparison ship inside the first vertical that uses them; none is a standalone delivery.</p>
+        <div class="roadmap reveal" aria-label="Four-ticket implementation roadmap">
+          <article class="roadmap-step">
+<b>NIDX-01</b>
+<h3>Property shard index</h3>
+<p><strong>Replaces</strong> Property upsert, query, sort, delete/expiry, repair scan, callback, merge, recovery, and backup.</p>
+<p><strong>Boundary</strong> No series wildcard/dictionary behavior, Stream element postings, external receive, or general migration.</p>
+<small>LIVE MERGE · property/db.newShard defaults native</small>
+</article>
+          <article class="roadmap-step">
+<b>NIDX-02</b>
+<h3>Per-segment series <code>sidx</code></h3>
+<p><strong>Replaces</strong> Measure, Stream, and Trace series write, lookup, projection, sort, snapshot, and raw segment replication.</p>
+<p><strong>Boundary</strong> No Stream element <code>idx</code>, general offline migration commands, or dependency removal.</p>
+<small>LIVE MERGE · internal/storage.newSeriesIndex defaults native</small>
+</article>
+          <article class="roadmap-step">
+<b>NIDX-03</b>
+<h3>Stream element <code>idx</code></h3>
+<p><strong>Replaces</strong> Element batch, filters, paired postings, sort, snapshot, restart, and raw segment receive.</p>
+<p><strong>Boundary</strong> Only required analyzers and filters; no scoring, phrase, fuzzy, geo, highlight, facet, or plugin API.</p>
+<small>LIVE MERGE · stream.newElementIndex defaults native</small>
+</article>
+          <article class="roadmap-step">
+<b>NIDX-04</b>
+<h3>Admin, migration, removal</h3>
+<p><strong>Replaces</strong> Schema load, union/rebuild, index-mode copy, migration verify, dump, and read-only count.</p>
+<p><strong>Boundary</strong> Rewire every last live caller before removing runtime Bluge, ICE, and segment-API dependencies.</p>
+<small>LIVE MERGE · zero production dependency edges</small>
+</article>
+        </div>
+        <p class="caption reveal"><strong>Shared gate:</strong> every ticket must open legacy files, emit files accepted by the named rollback binary, pass its
+          complete role contract, and include a same-file rollback. With CRC32 processing prohibited, failure of the rollback binary to accept the reserved
+          field blocks the writing ticket.</p>
+      </section>
+
+      <section id="risks">
+        <span class="section-no">10 / RISK & EFFORT</span>
+        <h2 class="section-title reveal">The long pole is compatibility.</h2>
+        <p class="section-lede reveal">Query filtering is tractable. The dangerous work is writing bytes that old nodes can merge and restart across
+          historical data, crashes, locks, and filesystems.</p>
+        <div class="risk-grid reveal">
+          <div class="risk-row high">
+<div class="risk-name">Historical compressor</div>
+<div class="risk-meter">
+<i style="width:96%">
+</i>
+</div>
+<div class="risk-action">collect real corpus</div>
+</div>
+          <div class="risk-row high">
+<div class="risk-name">Native → legacy writer parity</div>
+<div class="risk-meter">
+<i style="width:91%">
+</i>
+</div>
+<div class="risk-action">cross-open + merge</div>
+</div>
+          <div class="risk-row high">
+<div class="risk-name">Crash publication</div>
+<div class="risk-meter">
+<i style="width:84%">
+</i>
+</div>
+<div class="risk-action">fault every cutpoint</div>
+</div>
+          <div class="risk-row medium">
+<div class="risk-name">Numeric/analyzer terms</div>
+<div class="risk-meter">
+<i style="width:69%">
+</i>
+</div>
+<div class="risk-action">golden boundaries</div>
+</div>
+          <div class="risk-row medium">
+<div class="risk-name">External dedup fidelity</div>
+<div class="risk-meter">
+<i style="width:62%">
+</i>
+</div>
+<div class="risk-action">query parity corpus</div>
+</div>
+          <div class="risk-row medium">
+<div class="risk-name">mmap + GC ownership</div>
+<div class="risk-meter">
+<i style="width:56%">
+</i>
+</div>
+<div class="risk-action">race + OS matrix</div>
+</div>
+          <div class="risk-row low">
+<div class="risk-name">Boolean executor</div>
+<div class="risk-meter">
+<i style="width:34%">
+</i>
+</div>
+<div class="risk-action">state model</div>
+</div>
+        </div>
+
+        <div class="effort reveal">
+          <div class="effort-total">
+<div>
+<strong>25–35</strong>
+<span>engineer-weeks<br>4–6 calendar months</span>
+</div>
+</div>
+          <div class="effort-bars">
+            <div class="effort-item">
+<label>Format + parser</label>
+<div class="bar">
+<i style="width:82%">
+</i>
+</div>
+<output>6–10 wk</output>
+</div>
+            <div class="effort-item">
+<label>Query IR + codec</label>
+<div class="bar">
+<i style="width:52%">
+</i>
+</div>
+<output>4–6 wk</output>
+</div>
+            <div class="effort-item">
+<label>Writer + directory</label>
+<div class="bar">
+<i style="width:100%">
+</i>
+</div>
+<output>8–12 wk</output>
+</div>
+            <div class="effort-item">
+<label>Executor + snapshot</label>
+<div class="bar">
+<i style="width:70%">
+</i>
+</div>
+<output>6–8 wk</output>
+</div>
+            <div class="effort-item">
+<label>Merge + expiry</label>
+<div class="bar">
+<i style="width:52%">
+</i>
+</div>
+<output>4–6 wk</output>
+</div>
+            <div class="effort-item">
+<label>External + admin</label>
+<div class="bar">
+<i style="width:52%">
+</i>
+</div>
+<output>4–6 wk</output>
+</div>
+            <div class="effort-item">
+<label>Soak + rollout</label>
+<div class="bar">
+<i style="width:82%">
+</i>
+</div>
+<output>6–10 wk</output>
+</div>
+          </div>
+        </div>
+      </section>
+
+      <section id="research">
+        <span class="section-no">11 / EVIDENCE STATUS</span>
+        <h2 class="section-title reveal">What we know—and what we do not.</h2>
+        <p class="section-lede reveal">The report separates source observations from experimental proof. Production implementation should not erase that boundary.</p>
+        <div class="research-state">
+          <div class="state-panel done reveal">
+            <h3>Completed</h3>
+            <ul>
+              <li>Production API and call-site inventory</li>
+              <li>Direct Bluge coupling map</li>
+              <li>Required vs unused feature analysis</li>
+              <li>Pinned-source ICE/snapshot grammar study</li>
+              <li>Lifecycle, merge, and external receiver audit</li>
+              <li>Two native architecture comparison</li>
+              <li>Rollout, risk, and preliminary effort model</li>
+            </ul>
+          </div>
+          <div class="state-panel todo reveal">
+            <h3>Still gating</h3>
+            <ul>
+              <li>Historical BanyanDB index corpus</li>
+              <li>Independent byte-annotated specification</li>
+              <li>Legacy ↔ native cross-reader prototype</li>
+              <li>Vellum/Roaring version compatibility</li>
+              <li>Fuzz and corruption campaigns</li>
+              <li>Filesystem crash and lock matrix</li>
+              <li>Production-shaped performance budgets</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section id="decisions">
+        <span class="section-no">12 / MAINTAINER DECISIONS</span>
+        <h2 class="section-title reveal">Six answers unblock the prototype.</h2>
+        <p class="section-lede reveal">These are product and rollout choices, not details the storage implementation should decide accidentally.</p>
+        <div class="decision-list">
+          <article class="decision reveal">
+<h3>How long must same-file rollback remain?</h3>
+<p>The report assumes an old binary can open native output throughout rollout.</p>
+</article>
+          <article class="decision reveal">
+<h3>Which adapter defects become intentional fixes?</h3>
+<p>Closed-write errors, numeric exact match, negative queries, iterator ownership, and field-universe semantics need labels.</p>
+</article>
+          <article class="decision reveal">
+<h3>What is deterministic sort order?</h3>
+<p>Define ties, absent values, repeated values, identity ordering, and pagination keys.</p>
+</article>
+          <article class="decision reveal">
+<h3>Are epoch and negative timestamps valid?</h3>
+<p>Current writers omit values at or below zero without a documented contract.</p>
+</article>
+          <article class="decision reveal">
+<h3>Which batches support durable callbacks?</h3>
+<p>Series paths honor them; element Batch currently ignores them.</p>
+</article>
+          <article class="decision reveal">
+<h3>What historical release is the floor?</h3>
+<p>The answer determines compressors, snapshot versions, analyzers, FST/Roaring versions, and reader scope.</p>
+</article>
+        </div>
+      </section>
+
+      <section class="closing" id="close">
+        <span class="section-no">RECOMMENDATION</span>
+        <h2 class="section-title reveal">Begin with one complete live vertical.</h2>
+        <p class="section-lede reveal">Develop the bounded reader, compatible writer, query path, fixtures, and fault evidence together on NIDX-01. Merge
+          only when Property shards select that native path by default; never accumulate a second unused engine on main.</p>
+        <div class="next-action reveal">
+          <b>NIDX-01</b>
+          <div>
+<h3>First production cutover</h3>
+<p>Replace the complete Property shard index and repair path, with legacy-directory input, compatible output, and same-file rollback proof.</p>
+</div>
+        </div>
+        <div class="source-links reveal">
+          <a href="index.html">Review the implementation specification chapters</a>
+          <a href="ice-segment-animated-walkthrough.html">Animated ICE write, filter, and sort</a>
+          <a href="research-report.md">Read the full Markdown report</a>
+          <a href="research-plan.md">Read the research plan</a>
+          <a href="../../../../concept/storage-and-format.md">Storage and format reference</a>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    (() => {
+      const root = document.documentElement;
+      const progress = document.querySelector('.progress');
+      const toggle = document.querySelector('.theme-toggle');
+      const navLinks = [...document.querySelectorAll('.rail nav a')];
+      const sections = navLinks.map(link => document.querySelector(link.getAttribute('href'))).filter(Boolean);
+
+      const storedTheme = localStorage.getItem('native-index-report-theme');
+      if (storedTheme === 'night') root.dataset.theme = 'night';
+
+      toggle.addEventListener('click', () => {
+        root.dataset.theme = root.dataset.theme === 'night' ? 'paper' : 'night';
+        localStorage.setItem('native-index-report-theme', root.dataset.theme);
+      });
+
+      const updateProgress = () => {
+        const scrollable = document.documentElement.scrollHeight - innerHeight;
+        progress.style.width = `${scrollable > 0 ? (scrollY / scrollable) * 100 : 0}%`;
+      };
+      addEventListener('scroll', updateProgress, { passive: true });
+      updateProgress();
+
+      const revealObserver = new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) entry.target.classList.add('in');
+        });
+      }, { threshold: 0.08, rootMargin: '0px 0px -5% 0px' });
+      document.querySelectorAll('.reveal').forEach(node => revealObserver.observe(node));
+
+      const navObserver = new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+          if (!entry.isIntersecting) return;
+          navLinks.forEach(link => link.classList.toggle('active', link.getAttribute('href') === `#${entry.target.id}`));
+        });
+      }, { rootMargin: '-25% 0px -65% 0px', threshold: 0 });
+      sections.forEach(section => navObserver.observe(section));
+
+      const tabs = [...document.querySelectorAll('[role="tab"]')];
+      tabs.forEach(tab => tab.addEventListener('click', () => {
+        tabs.forEach(other => other.setAttribute('aria-selected', String(other === tab)));
+        document.querySelectorAll('.architecture-panel').forEach(panel => panel.classList.toggle('active', panel.id === tab.getAttribute('aria-controls')));
+      }));
+    })();
+  </script>
+</body>
+</html>

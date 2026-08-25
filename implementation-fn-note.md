@@ -61,7 +61,7 @@ The plan's DD1 claimed THREE things that are mutually inconsistent: (a) monotoni
 
 ## Phase 6 (US-006) — DONE 2026-07-05
 - Finalize compute observable via REUSED merge metrics `type="finalize"`/`lane="finalize"` (`total_merged`/`total_merge_latency`/`total_merged_parts`). **Deviation:** did NOT add dedicated coverage-gauge/rounds/dropped/fail-open finalize counters — the existing `incPipelineTraces*` counters (evaluated/dropped/…) are DEFINED BUT UNWIRED (zero call sites, even for the hot path — a pre-existing gap), so adding a parallel finalize metric set would be inconsistent scope. The reused lane label satisfies "distinct finalize metrics." NO `finalize_unsampled_deleted_total` (Rev 7). Recorded as a follow-up: wire the pipeline drop counters (hot + finalize) uniformly.
-- Docs: `docs/design/post-trace-pipeline.md` gained an "Implementation: finalization sampling (v1)" section (best-effort/misses-accepted, per-shard/scanner model, all knobs). CHANGES.md feature entry added under 0.11.0.
+- Docs: `docs/design/archive/0.11.0/post-trace-pipeline.md` gained an "Implementation: finalization sampling (v1)" section (best-effort/misses-accepted, per-shard/scanner model, all knobs). CHANGES.md feature entry added under 0.11.0.
 
 ## Verification & review (2026-07-06)
 - **Architect review: APPROVED (0 blockers)**, all 8 correctness claims verified with file:line evidence (crash-safety ordering, min-propagation, semaphore bypass, in-flight pin + mergeCh-close safety, O(1) counter, threshold termination, no-delete-gate, reopen-closed coverage).

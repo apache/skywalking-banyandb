@@ -18,7 +18,7 @@
 // Command sw-trace-sampler is the first-party post-trace sampler for the
 // SkyWalking-native segment schema (group sw_trace, BanyanDB trace "segment").
 // It implements the Scenario 6.1 keep logic from
-// docs/design/post-trace-pipeline.md on the real segment columns:
+// docs/design/archive/0.11.0/post-trace-pipeline.md on the real segment columns:
 //
 //   - trace duration from the envelope of the segment "start_time"/"latency" tags (ms),
 //   - keepErrors from the first-class is_error tag,

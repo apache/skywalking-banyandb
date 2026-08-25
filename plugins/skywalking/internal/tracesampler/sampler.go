@@ -17,7 +17,7 @@
 
 // Package tracesampler is the shared post-trace sampler engine behind the
 // first-party sw-trace-sampler and zipkin-trace-sampler plugins. Both plugins
-// implement the same keep logic from docs/design/post-trace-pipeline.md
+// implement the same keep logic from docs/design/archive/0.11.0/post-trace-pipeline.md
 // (Scenario 6.1 for SkyWalking segments, 6.2 for Zipkin) — a duration
 // threshold, sure-keep error and tag rules, and a deterministic healthy sample
 // — and differ only in how each schema physically stores the columns those

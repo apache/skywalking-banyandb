@@ -1,0 +1,1080 @@
+<!--
+  Licensed to Apache Software Foundation (ASF) under one or more contributor
+  license agreements. See the NOTICE file distributed with
+  this work for additional information regarding copyright
+  ownership. Apache Software Foundation (ASF) licenses this file to you under
+  the Apache License, Version 2.0 (the "License"); you may
+  not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing,
+  software distributed under the License is distributed on an
+  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+  KIND, either express or implied. See the License for the
+  specific language governing permissions and limitations
+  under the License.
+-->
+<!doctype html>
+<html lang="en" data-theme="paper">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Fields, analyzers, batch transformation, ICE v3 sections, and snapshot v3 publication.">
+  <title>BDB Native Index Spec — Write path and disk grammar</title>
+  <link rel="stylesheet" href="spec.css">
+</head>
+<body data-page="write-format">
+  <div class="progress" id="scroll-progress"></div>
+  <div class="shell">
+    <aside class="rail">
+      <div class="rail-brand">
+        <div class="rail-mark">BDB</div>
+        <div>
+          <b>NATIVE INDEX</b>
+          <span>implementation specification</span>
+        </div>
+      </div>
+      <div class="rail-status">
+        <b>REVIEW</b>
+        <span>BDB-NIDX-SPEC-001<br>Revision 0.1 · 2026-08-24</span>
+        <span class="page-label">CHAPTER 02/05 · WRITE + FORMAT</span>
+      </div>
+      <nav aria-label="Specification sections">
+        <ol class="toc" id="toc">
+          <li>
+            <a href="index.html#status">
+              <b>00</b>
+              <span>Document status</span>
+            </a>
+          </li>
+          <li>
+            <a href="index.html#contract">
+              <b>01</b>
+              <span>Contract and scope</span>
+            </a>
+          </li>
+          <li>
+            <a href="index.html#model">
+              <b>02</b>
+              <span>Data model</span>
+            </a>
+          </li>
+          <li>
+            <a href="index.html#products">
+              <b>03</b>
+              <span>Product requirements</span>
+            </a>
+          </li>
+          <li>
+            <a href="index.html#architecture">
+              <b>04</b>
+              <span>Architecture and APIs</span>
+            </a>
+          </li>
+          <li>
+            <a class="page-current" href="#fields">
+              <b>05</b>
+              <span>Fields and identity</span>
+            </a>
+          </li>
+          <li>
+            <a class="page-current" href="#terms">
+              <b>06</b>
+              <span>Analyzers and terms</span>
+            </a>
+          </li>
+          <li>
+            <a class="page-current" href="#write">
+              <b>07</b>
+              <span>Write semantics</span>
+            </a>
+          </li>
+          <li>
+            <a class="page-current" href="#ice">
+              <b>08</b>
+              <span>ICE v3 format</span>
+            </a>
+          </li>
+          <li>
+            <a class="page-current" href="#snapshot">
+              <b>09</b>
+              <span>Snapshot v3 format</span>
+            </a>
+          </li>
+          <li>
+            <a href="query-lifecycle.html#query">
+              <b>10</b>
+              <span>Query execution</span>
+            </a>
+          </li>
+          <li>
+            <a href="query-lifecycle.html#sort">
+              <b>11</b>
+              <span>Sort and projection</span>
+            </a>
+          </li>
+          <li>
+            <a href="query-lifecycle.html#lifecycle">
+              <b>12</b>
+              <span>Durability and recovery</span>
+            </a>
+          </li>
+          <li>
+            <a href="query-lifecycle.html#merge">
+              <b>13</b>
+              <span>Merge, delete, and GC</span>
+            </a>
+          </li>
+          <li>
+            <a href="query-lifecycle.html#external">
+              <b>14</b>
+              <span>External and admin</span>
+            </a>
+          </li>
+          <li>
+            <a href="safety-verification.html#integrity">
+              <b>15</b>
+              <span>Integrity and limits</span>
+            </a>
+          </li>
+          <li>
+            <a href="safety-verification.html#compatibility">
+              <b>16</b>
+              <span>Compatibility</span>
+            </a>
+          </li>
+          <li>
+            <a href="safety-verification.html#verification">
+              <b>17</b>
+              <span>Verification program</span>
+            </a>
+          </li>
+          <li>
+            <a href="delivery-review.html#rollout">
+              <b>18</b>
+              <span>Implementation tickets</span>
+            </a>
+          </li>
+          <li>
+            <a href="delivery-review.html#operations">
+              <b>19</b>
+              <span>Operations</span>
+            </a>
+          </li>
+          <li>
+            <a href="delivery-review.html#decisions">
+              <b>20</b>
+              <span>Review decisions</span>
+            </a>
+          </li>
+          <li>
+            <a href="delivery-review.html#acceptance">
+              <b>21</b>
+              <span>Acceptance criteria</span>
+            </a>
+          </li>
+          <li>
+            <a href="delivery-review.html#traceability">
+              <b>22</b>
+              <span>Traceability</span>
+            </a>
+          </li>
+        </ol>
+      </nav>
+      <div class="rail-footer">
+        <a href="ice-segment-animated-walkthrough.html">Animated ICE walkthrough</a>
+        <br>
+        <a href="research-report.html">Visual research report</a>
+      </div>
+    </aside>
+
+    <div class="workspace">
+      <header class="toolbar">
+        <input class="search" id="spec-search" type="search" placeholder="Search this chapter…" aria-label="Search this specification chapter">
+        <div class="filter-set" aria-label="Filter specification chapter">
+          <button class="filter-button" type="button" data-filter="all" aria-pressed="true">All</button>
+          <button class="filter-button" type="button" data-filter="normative" aria-pressed="false">Normative</button>
+          <button class="filter-button" type="button" data-filter="open" aria-pressed="false">Open only</button>
+        </div>
+        <div class="tool-set">
+          <button class="tool-button" id="theme-toggle" type="button" title="Toggle paper/night theme">◐</button>
+          <button class="tool-button" id="print-spec" type="button">Print</button>
+        </div>
+      </header>
+
+      <main class="document" id="document">
+      <section class="chapter-hero" id="chapter-top" data-chapter="02">
+        <div class="chapter-kicker">BDB-NIDX-SPEC-001 · chapter 02 of 05</div>
+        <h1>Write path and disk grammar</h1>
+        <p class="chapter-summary">Fields, analyzers, batch transformation, ICE v3 sections, and snapshot v3 publication.</p>
+        <p class="chapter-range">SECTIONS 05–09 · REVISION 0.1 · REVIEW DRAFT</p>
+        <nav class="chapter-tabs" aria-label="Specification chapters">
+          <a href="index.html#status">01 Overview</a>
+          <a href="#fields" aria-current="page">02 Write + format</a>
+          <a href="query-lifecycle.html#query">03 Query + lifecycle</a>
+          <a href="safety-verification.html#integrity">04 Safety</a>
+          <a href="delivery-review.html#rollout">05 Delivery + review</a>
+        </nav>
+      </section>
+
+<section class="spec-section" id="fields" data-status="decision" data-searchable data-normative data-open>
+          <div class="section-grid">
+            <aside class="section-side">
+              <div>
+                <div class="section-no">05</div>
+                <span class="section-state">Partly open</span>
+                <p>Identity is stable; sort and callback edge cases need decisions.</p>
+              </div>
+            </aside>
+            <div class="section-main">
+              <h2>Documents, fields, and identity</h2>
+              <p class="section-lede">Field options independently select filtering, projection, and ordering representations.</p>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Mode</th>
+                      <th>Postings/FST</th>
+                      <th>Stored chunks</th>
+                      <th>Doc values</th>
+                      <th>Typical use</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Indexed only</td>
+                      <td>Yes</td>
+                      <td>No</td>
+                      <td>No</td>
+                      <td>Filter-only region or internal constraint.</td>
+                    </tr>
+                    <tr>
+                      <td>Stored only</td>
+                      <td>No</td>
+                      <td>Yes</td>
+                      <td>No</td>
+                      <td>Source payload returned but never filtered.</td>
+                    </tr>
+                    <tr>
+                      <td>Indexed + stored</td>
+                      <td>Yes</td>
+                      <td>Yes</td>
+                      <td>No</td>
+                      <td>Filter then return original representation.</td>
+                    </tr>
+                    <tr>
+                      <td>Indexed + sortable</td>
+                      <td>Yes</td>
+                      <td>Optional</td>
+                      <td>Yes</td>
+                      <td>Filter and order using encoded terms.</td>
+                    </tr>
+                    <tr>
+                      <td>Repeated values</td>
+                      <td>Unioned posting</td>
+                      <td>All requested values</td>
+                      <td>All analyzed terms</td>
+                      <td>Arrays and repeated tags.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="clause-list">
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">FIELD-001</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Reserve <code>_id</code> as field ID zero in newly written ICE segments; sort all remaining field names by raw byte lexical order before
+                      assigning IDs.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">FIELD-002</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Preserve repeated stored values and repeated doc-value terms; no API may silently collapse them unless that API explicitly requests a scalar.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">FIELD-003</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Treat stored bytes and doc-value terms as different representations. A Store + Sortable field may intentionally occupy both sections.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">IDENT-001</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>An update publishes a replacement document and adds the previous live identity hit to a snapshot deletion mask atomically.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">IDENT-002</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Series ensure/upsert suppresses a new document only when the existing live identity already contains every requested field; otherwise it
+                      replaces/evolves the document.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">IDENT-003</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>A delete-only mutation adds deletion state without writing a tombstone document.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="callout warning">
+                <b>?</b>
+                <p>Timestamp acceptance at or below the Unix epoch, repeated-value scalar projection, and missing/repeated sort semantics remain maintainer
+                  decisions in Section 20.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+<section class="spec-section" id="terms" data-status="fixture" data-searchable data-normative data-open>
+          <div class="section-grid">
+            <aside class="section-side">
+              <div>
+                <div class="section-no">06</div>
+                <span class="section-state">Fixture gate</span>
+                <p>Logical contract known; exact bytes require independent goldens.</p>
+              </div>
+            </aside>
+            <div class="section-main">
+              <h2>Analyzers and term codecs</h2>
+              <p class="section-lede">Persisted term bytes are part of disk compatibility. Matching requires the writer and query path to produce identical bytes.</p>
+
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Codec/analyzer</th>
+                      <th>Required behavior</th>
+                      <th>Golden boundaries</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Keyword</td>
+                      <td>Emit one term containing the complete input bytes.</td>
+                      <td>Empty, zero byte, <code>0xff</code>, Unicode, long binary.</td>
+                      <td>
+                        <span class="tag fixture">fixture</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Simple</td>
+                      <td>Match pinned Unicode letter segmentation and case normalization.</td>
+                      <td>Scripts, combining marks, punctuation.</td>
+                      <td>
+                        <span class="tag fixture">fixture</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Standard</td>
+                      <td>Match pinned token boundaries and normalization.</td>
+                      <td>URLs, email-like text, mixed scripts.</td>
+                      <td>
+                        <span class="tag fixture">fixture</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>URL</td>
+                      <td>Match BanyanDB URL token semantics.</td>
+                      <td>Scheme, host, path, query, escaped bytes.</td>
+                      <td>
+                        <span class="tag fixture">fixture</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Numeric</td>
+                      <td>Reproduce sortable float transform and prefix-coded shift terms.</td>
+                      <td>Min/max, negative, ±0, precision edges.</td>
+                      <td>
+                        <span class="tag fixture">fixture</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>Timestamp</td>
+                      <td>Reproduce date/numeric encoding with inclusive range control.</td>
+                      <td>Epoch, negative, nanoseconds, bounds.</td>
+                      <td>
+                        <span class="tag decision">decision</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="clause-list">
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">TERM-001</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>The native analyzer output and numeric/timestamp encodings must be specified independently and verified byte-for-byte against pinned
+                      fixtures before writer enablement.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">TERM-002</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Exact, range, and sort paths must use one shared term codec. Query-specific decimal formatting may not bypass persisted numeric encoding.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">TERM-003</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>MATCH must support analyzer override and AND/OR token combination without exposing legacy analyzer types.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">TERM-004</span>
+                    <span class="verb should">SHOULD</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Reject non-finite numeric values unless an existing product contract and fixture explicitly require them.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="callout danger">
+                <b>!</b>
+                <p>The current exact numeric <code>MatchTerms</code> path may format decimal text while writes use numeric terms. This is a suspected adapter defect, not
+                  an approved native contract.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+<section class="spec-section" id="write" data-status="stable" data-searchable data-normative>
+          <div class="section-grid">
+            <aside class="section-side">
+              <div>
+                <div class="section-no">07</div>
+                <span class="section-state">Stable design</span>
+                <p>One batch becomes one immutable segment and one snapshot transition.</p>
+              </div>
+            </aside>
+            <div class="section-main">
+              <h2>Write and visibility semantics</h2>
+              <p class="section-lede">Admission, analysis, byte sealing, memory visibility, persistence, and durable acknowledgement are separate milestones.</p>
+
+              <div class="state-machine">
+                <article class="state-node" data-step="01">
+                  <b>Normalize</b>
+                  <p>Validate identity, field flags, timestamps, and batch limits.</p>
+                </article>
+                <article class="state-node" data-step="02">
+                  <b>Analyze</b>
+                  <p>Assign IDs; build terms, stored values, and doc values.</p>
+                </article>
+                <article class="state-node" data-step="03">
+                  <b>Seal</b>
+                  <p>Write one immutable byte-backed ICE segment.</p>
+                </article>
+                <article class="state-node" data-step="04">
+                  <b>Publish memory</b>
+                  <p>Atomically install segment and replacement masks.</p>
+                </article>
+                <article class="state-node" data-step="05">
+                  <b>Persist</b>
+                  <p>Publish compatible segment and snapshot files in order.</p>
+                </article>
+                <article class="state-node" data-step="06">
+                  <b>Acknowledge</b>
+                  <p>Complete durable callbacks exactly once.</p>
+                </article>
+              </div>
+
+              <h3>Direct builder staging</h3>
+              <pre>batch documents
+  ├─ field catalog: field name → zero-based field ID
+  ├─ stored rows: doc → repeated original values
+  ├─ inverted rows: field → sorted term → docs + optional detail
+  └─ doc-value rows: field → doc → sorted analyzed terms
+
+seal order
+  stored area
+  for each field { term payloads → FST → optional doc values }
+  global doc-value ranges → field records → fields index → footer</pre>
+
+              <h3>Logical view to physical section crosswalk</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Builder view</th>
+                      <th>ICE v3 bytes produced</th>
+                      <th>Navigation root</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>Stored rows</td>
+                      <td>Compressed stored chunks, boundary directory, and one chunk-relative document offset per document.</td>
+                      <td><code>storedIndexOffset</code> in footer.</td>
+                    </tr>
+                    <tr>
+                      <td>Inverted rows</td>
+                      <td>Per-term frequency/norm stream, location stream, posting record, and one field FST after its terms.</td>
+                      <td>Dictionary address in the field record.</td>
+                    </tr>
+                    <tr>
+                      <td>Doc-value rows</td>
+                      <td>Optional 1024-document chunks immediately after that field's FST, plus the global start/end range pair.</td>
+                      <td><code>docValueOffset</code> in footer.</td>
+                    </tr>
+                    <tr>
+                      <td>Field catalog</td>
+                      <td>Field records followed by their fixed-width address index.</td>
+                      <td><code>fieldsIndexOffset</code> in footer.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="clause-list">
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">WRITE-001</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Reject the entire batch before publication if validation, analysis, allocation bounds, or segment sealing fails.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">WRITE-002</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Publish all documents, replacements, and deletion masks in one atomic in-memory snapshot transition.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">WRITE-003</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Never mutate a sealed segment or a deletion bitmap reachable by a published snapshot.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">WRITE-004</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Return a terminal error when the store cannot admit work because it is closing; silent success is prohibited.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">WRITE-005</span>
+                    <span class="verb should">SHOULD</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Bound staging memory by batch document count, total source bytes, fields, unique terms, postings cardinality, and analyzed expansion.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+<section class="spec-section" id="ice" data-status="fixture" data-searchable data-normative data-open>
+          <div class="section-grid">
+            <aside class="section-side">
+              <div>
+                <div class="section-no">08</div>
+                <span class="section-state">Fixture gate</span>
+                <p>Complete source-derived grammar; byte fixtures remain the approval gate.</p>
+              </div>
+            </aside>
+            <div class="section-main">
+              <h2>ICE v3 segment format</h2>
+              <p class="section-lede">Readers bootstrap from a fixed 60-byte footer at EOF. There is no leading magic. All offsets are absolute from byte zero
+                unless a subsection says otherwise.</p>
+
+              <div class="callout warning">
+                <b>Δ</b>
+                <p>This section is normative for the prototype but remains <strong>fixture-gated</strong>. A production writer may not ship until independently
+                  annotated files and bidirectional cross-read tests confirm every grammar rule.</p>
+              </div>
+
+              <h3>Primitive encoding rules</h3>
+              <div class="grammar">
+                <div class="grammar-row">
+                  <b>uint32 / uint64</b>
+                  <code>fixed width</code>
+                  <span>Big-endian.</span>
+                </div>
+                <div class="grammar-row">
+                  <b>uvarint</b>
+                  <code>1…10 bytes</code>
+                  <span>Unsigned LEB128 as produced by Go <code>binary.PutUvarint</code>; malformed and overflowing values are errors.</span>
+                </div>
+                <div class="grammar-row">
+                  <b>offset</b>
+                  <code>uint64/uvarint</code>
+                  <span>Absolute file address unless explicitly described as a delta, length, chunk-relative offset, or end offset.</span>
+                </div>
+                <div class="grammar-row">
+                  <b>term order</b>
+                  <code>raw bytes</code>
+                  <span>Strict ascending lexical byte order within a field FST.</span>
+                </div>
+                <div class="grammar-row">
+                  <b>compression</b>
+                  <code>implicit</code>
+                  <span>No algorithm identifier exists in the file. Current pinned output uses S2; historical support is corpus-dependent.</span>
+                </div>
+                <div class="grammar-row">
+                  <b>version</b>
+                  <code>uint32 = 3</code>
+                  <span>The pinned loader rejects every other segment version.</span>
+                </div>
+              </div>
+
+              <h3>Physical file order</h3>
+              <div class="format-stack">
+                <div class="byte-file" aria-label="ICE v3 file layout">
+                  <div class="byte-block stored">
+                    <span class="offset">byte 0</span>
+                    <div>
+                      <strong>Stored chunks</strong>
+                      <span>128-document compressed records</span>
+                    </div>
+                    <span class="width">variable</span>
+                  </div>
+                  <div class="byte-block">
+                    <span class="offset">↑</span>
+                    <div>
+                      <strong>Stored chunk directory</strong>
+                      <span>boundary offsets + uint32 length/count trailer</span>
+                    </div>
+                    <span class="width">variable</span>
+                  </div>
+                  <div class="byte-block">
+                    <span class="offset">↑</span>
+                    <div>
+                      <strong>Stored document offsets</strong>
+                      <span>one big-endian uint64 per document</span>
+                    </div>
+                    <span class="width">8 × docs</span>
+                  </div>
+                  <div class="byte-block payload">
+                    <span class="offset">↑</span>
+                    <div>
+                      <strong>Field 0 envelope</strong>
+                      <span>term detail streams → posting records → FST → optional doc-value chunks</span>
+                    </div>
+                    <span class="width">variable</span>
+                  </div>
+                  <div class="byte-block dv">
+                    <span class="offset">↑</span>
+                    <div>
+                      <strong>Field 1…N envelopes</strong>
+                      <span>repeat the same envelope in field-ID order; doc values never move to the stored area</span>
+                    </div>
+                    <span class="width">variable</span>
+                  </div>
+                  <div class="byte-block">
+                    <span class="offset">↑</span>
+                    <div>
+                      <strong>Global doc-value ranges</strong>
+                      <span>start/end uvarint pair per field</span>
+                    </div>
+                    <span class="width">variable</span>
+                  </div>
+                  <div class="byte-block">
+                    <span class="offset">↑</span>
+                    <div>
+                      <strong>Field records</strong>
+                      <span>dictionary address, name, document and token counts</span>
+                    </div>
+                    <span class="width">variable</span>
+                  </div>
+                  <div class="byte-block">
+                    <span class="offset">↑</span>
+                    <div>
+                      <strong>Fields index</strong>
+                      <span>one big-endian uint64 record address per field</span>
+                    </div>
+                    <span class="width">8 × fields</span>
+                  </div>
+                  <div class="byte-block footer">
+                    <span class="offset">EOF</span>
+                    <div>
+                      <strong>Footer</strong>
+                      <span>root offsets, bounds, version, reserved CRC32 field</span>
+                    </div>
+                    <span class="width">60 B</span>
+                  </div>
+                </div>
+
+                <div>
+                  <h4>Reader bootstrap</h4>
+                  <ol>
+                    <li>Require file length at least 60 bytes.</li>
+                    <li>Parse the footer backwards from EOF and require version 3.</li>
+                    <li>Validate root ordering, address arithmetic, field-index divisibility, counts, and configured allocation limits.</li>
+                    <li>Skip the reserved CRC32 field; validate structural bounds and codec framing independently.</li>
+                    <li>Load field records, stored chunk navigation, and doc-value readers without decompressing content.</li>
+                    <li>Load FST, postings, or compressed chunks lazily and pin their lifetime to the segment reference.</li>
+                  </ol>
+                  <div class="callout danger">
+                    <b>!</b>
+                    <p>The existing loader parses the footer CRC but does not enforce it. The native reader intentionally retains the field for layout
+                      compatibility while neither calculating nor validating it.</p>
+                  </div>
+                </div>
+              </div>
+
+              <h3>Stored-field area</h3>
+              <pre>for each group of at most 128 documents:
+    compressedChunk = Compress(concat(documentRecord...))
+
+documentRecord :=
+    uvarint(metadataLength)
+    uvarint(dataLength)
+    metadata[metadataLength]
+    data[dataLength]
+
+metadata := repeated {
+    uvarint(fieldID)
+    uvarint(valueStartWithinData)
+    uvarint(valueLength)
+}
+
+data := concatenated original stored value bytes</pre>
+              <pre>storedChunkDirectory :=
+    repeated uvarint(compressedChunkBoundary)
+    uint32BE(encodedBoundaryByteLength)
+    uint32BE(boundaryCount)</pre>
+              <p>The boundary list begins with zero and supplies the start/end pair used for each compressed chunk. Compatibility fixtures must pin the
+                boundary count emitted at empty and exact-128-document edges. At <code>storedIndexOffset</code>, one big-endian uint64 per document stores the
+                document-record offset inside its uncompressed 128-document chunk.</p>
+
+              <h3>Frequency/norm and location streams</h3>
+              <pre>chunkedIntegerStream :=
+    uvarint(numberOfChunks)
+    repeated uvarint(compressedChunkEndOffset)
+    concatenated compressed chunks
+
+freqNorm values per hit :=
+    uvarint(encodedFrequencyAndHasLocations)
+    uvarint(float32NormBits)
+
+location values per hit :=
+    uvarint(encodedLocationByteLength)
+    repeated {
+        uvarint(fieldID)
+        uvarint(position)
+        uvarint(start)
+        uvarint(end)
+    }</pre>
+              <p>Posting-detail chunk size is derived from footer <code>chunkMode</code>. Modes at or below 1024 mean a fixed chunk size. Mode 1025 uses
+                <code>maxDocs / (cardinality / 1024 + 1)</code>. Division, zero, and overflow conditions must be bounds-checked.</p>
+
+              <h3>Posting records and FST values</h3>
+              <pre>generalPostingRecord :=
+    uvarint(freqNormAbsoluteOffset)
+    uvarint(locationOffsetDeltaFromFreqNormOrAbsolute)
+    uvarint(roaringByteLength)
+    roaringPortableBytes[roaringByteLength]
+
+FST value top-bit tags:
+    00xxxxxxxx…  general: lower 62 bits are posting-record absolute offset
+    01xxxxxxxx…  reserved; reject
+    10xxxxxxxx…  one-hit: 31-bit positive norm + 31-bit local doc number
+    11xxxxxxxx…  reserved; reject</pre>
+              <p>The one-hit form is valid only when the term has one document, frequency one, no locations, a positive encodable norm, and a document
+                number fitting 31 bits. The initial native writer may always use the general form if legacy cross-reading proves it valid.</p>
+
+              <h3>Per-field FST and doc values</h3>
+              <pre>fieldDictionary :=
+    uvarint(vellumByteLength)
+    vellumBytes[vellumByteLength]
+
+docValueTermStream := repeated encodedTerm
+encodedTerm := escapedTermBytes 0xff
+escape rules := prefix byte 0xff or byte 0x5c with 0x5c
+
+docValueChunk :=
+    uvarint(documentEntryCount)
+    repeated {
+        uvarint(docNumberDelta)
+        uvarint(termEndOffsetDelta)
+    }
+    compressed concatenated term streams
+
+fieldDocValues :=
+    concatenated 1024-document chunks
+    repeated uvarint(chunkEndOffset)
+    uint64BE(encodedChunkOffsetByteLength)
+    uint64BE(numberOfChunks)</pre>
+              <p>After every field is written, the global doc-value index stores one uvarint start/end pair per field. Both values are
+                <code>MaxUint64</code> when that field has no doc values.</p>
+
+              <h3>Field records and fields index</h3>
+              <pre>fieldRecord :=
+    uvarint(dictionaryAbsoluteOffset)
+    uvarint(fieldNameByteLength)
+    fieldNameBytes
+    uvarint(documentsContainingField)
+    uvarint(totalAnalyzedTokens)
+
+fieldsIndex := repeated uint64BE(fieldRecordAbsoluteOffset)</pre>
+              <p>The fields index begins at <code>fieldsIndexOffset</code> and ends immediately before the footer. Its byte length divided by eight determines
+                the number of field records.</p>
+
+              <h3>The 60-byte footer</h3>
+              <div class="footer-bytes" aria-label="ICE v3 footer">
+                <div class="w8">
+                  <b>numDocs</b>
+                  <span>8</span>
+                </div>
+                <div class="w8">
+                  <b>storedIndex</b>
+                  <span>8</span>
+                </div>
+                <div class="w8">
+                  <b>fieldsIndex</b>
+                  <span>8</span>
+                </div>
+                <div class="w8">
+                  <b>docValues</b>
+                  <span>8</span>
+                </div>
+                <div class="w4">
+                  <b>chunkMode</b>
+                  <span>4</span>
+                </div>
+                <div class="w8">
+                  <b>timeMin</b>
+                  <span>8</span>
+                </div>
+                <div class="w8">
+                  <b>timeMax</b>
+                  <span>8</span>
+                </div>
+                <div class="w4">
+                  <b>version</b>
+                  <span>4</span>
+                </div>
+                <div class="w4">
+                  <b>CRC32 (reserved)</b>
+                  <span>4</span>
+                </div>
+              </div>
+              <p>All footer fields are big-endian and appear in the displayed order. The terminal CRC32 field remains a four-byte reserved compatibility
+                slot: native code preserves its position but does not calculate, validate, or use its value. Time bounds preserve signed <code>int64</code>
+                bit patterns through a <code>uint64</code> cast.</p>
+
+              <div class="clause-list">
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">ICE-001</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Read and write segment type <code>ice</code>, version 3, using this grammar throughout the same-file rollback window.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">ICE-002</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Reject every count, length, offset, delta, decompressed size, FST value, or bitmap that exceeds its containing range or configured
+                      resource limit before allocation or slicing.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">ICE-003</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Pin exact Vellum and Roaring versions used for compatible output; dependency upgrades require cross-version fixtures.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">ICE-004</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Determine the compressor from directory provenance/configuration or verified historical policy; never guess by accepting unchecked
+                      decompression output.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+<section class="spec-section" id="snapshot" data-status="fixture" data-searchable data-normative data-open>
+          <div class="section-grid">
+            <aside class="section-side">
+              <div>
+                <div class="section-no">09</div>
+                <span class="section-state">Fixture gate</span>
+                <p>The manifest is the commit record and owns deletion state.</p>
+              </div>
+            </aside>
+            <div class="section-main">
+              <h2>Snapshot v3 manifest format</h2>
+              <p class="section-lede">A <code>.seg</code> file is immutable data. A <code>.snp</code> file selects the live segment generation and stores logical
+                deletion bitmaps.</p>
+
+              <h3>File naming</h3>
+              <pre>snapshot final name := lower-case hexadecimal numeric ID, conventionally width 12, + ".snp"
+segment final name  := lower-case hexadecimal numeric ID, conventionally width 12, + ".seg"
+writer lock         := "bluge.pid" during compatibility window</pre>
+              <p>Readers accept hexadecimal IDs and order them numerically. Temporary/staging names must not match accepted final-name enumeration.</p>
+
+              <h3>Snapshot v3 grammar</h3>
+              <pre>snapshotV3 :=
+    uvarint(version = 3)
+    uvarint(segmentCount)
+    repeated segmentRecordV3[segmentCount]
+    uint32BE(reservedCRC32)
+
+segmentRecordV3 :=
+    uvarint(typeByteLength)
+    typeBytes                         // "ice"
+    uint32BE(segmentVersion)          // 3
+    uvarint(segmentID)
+    uint64BE(segmentSize)
+    uint64BE(segmentDocumentCount)
+    uint64BE(segmentTimeMinBits)
+    uint64BE(segmentTimeMaxBits)
+    uvarint(deletionBitmapByteLength)
+    roaringPortableDeletionBytes</pre>
+              <p>The final CRC32 field remains at its historical four-byte position but is reserved for compatibility only; native code neither calculates
+                nor validates it. The deletion bitmap contains segment-local document numbers. Length zero means no deletions.</p>
+
+              <h3>Read compatibility</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Snapshot version</th>
+                      <th>Metadata after segment ID</th>
+                      <th>Native reader policy</th>
+                      <th>Native writer</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td>1</td>
+                      <td>None before deletion bitmap.</td>
+                      <td>Accept only if historical fixtures require it.</td>
+                      <td>Never emit.</td>
+                    </tr>
+                    <tr>
+                      <td>2</td>
+                      <td><code>timeMin</code>, <code>timeMax</code> as two uint64BE values.</td>
+                      <td>Accept only if historical fixtures require it.</td>
+                      <td>Never emit.</td>
+                    </tr>
+                    <tr>
+                      <td>3</td>
+                      <td><code>size</code>, <code>docCount</code>, <code>timeMin</code>, <code>timeMax</code> as four uint64BE values.</td>
+                      <td>Required.</td>
+                      <td>Required during rollback window.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="clause-list">
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">SNP-001</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Publish only a snapshot whose referenced final segment files exist, validate successfully, and match their recorded type, version, size,
+                      count, and time bounds.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">SNP-002</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Treat snapshot deletion bitmaps as immutable after publication; writers clone before adding update or expiry drops.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">SNP-003</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>Preserve but ignore the snapshot CRC32 field; select a generation using the remaining structural and referenced-segment validation.</p>
+                  </div>
+                </div>
+                <div class="clause">
+                  <div class="clause-key">
+                    <span class="clause-id">SNP-004</span>
+                    <span class="verb must">MUST</span>
+                  </div>
+                  <div class="clause-body">
+                    <p>If the newest snapshot is malformed or references an unusable segment, recovery may select the newest older fully valid generation; it
+                      must report degradation.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      <nav class="page-turn" aria-label="Specification chapters">
+        <a href="index.html#status"><b>← Previous chapter</b><span>Overview and contracts</span></a>
+        <a href="query-lifecycle.html#query"><b>Next chapter →</b><span>Query and lifecycle</span></a>
+      </nav>
+
+      <div class="empty-search" id="empty-search">No section in this chapter matches the search/filter.</div>
+      </main>
+    </div>
+  </div>
+  <script src="spec.js"></script>
+</body>
+</html>

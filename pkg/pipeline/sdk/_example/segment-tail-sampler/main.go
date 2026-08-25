@@ -16,7 +16,7 @@
 // under the License.
 
 // Command segment-tail-sampler is the reference post-trace sampler plugin from
-// docs/design/post-trace-pipeline.md §6.1. It is a worked example of the
+// docs/design/archive/0.11.0/post-trace-pipeline.md §6.1. It is a worked example of the
 // pkg/pipeline/sdk contract and illustrates the three things a real plugin
 // must do:
 //
