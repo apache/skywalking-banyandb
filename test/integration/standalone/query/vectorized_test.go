@@ -144,8 +144,8 @@ var _ = ginkgo.Describe("vec independent verification (standalone)", ginkgo.Orde
 			"vec dispatch (standalone): handled=%d fell_through=%d (deltas across vec-standalone table)\n",
 			handledDelta, fellThroughDelta,
 		)
-		if suiteFiltersSpecs() {
-			ginkgo.GinkgoWriter.Println("vec dispatch proof omitted because Ginkgo filters selected a subset of the table")
+		if hasConfiguredSpecFilters() {
+			ginkgo.GinkgoWriter.Println("vec dispatch proof omitted because Ginkgo suite filters are configured")
 		} else {
 			gomega.Expect(handledDelta).To(gomega.BeNumerically(">", int64(0)),
 				"vec dispatch did not fire for any case in the vec-standalone table; "+
@@ -163,7 +163,7 @@ var _ = ginkgo.Describe("vec independent verification (standalone)", ginkgo.Orde
 	casestopn.RegisterTable("Vec (standalone): TopN")
 })
 
-func suiteFiltersSpecs() bool {
+func hasConfiguredSpecFilters() bool {
 	suiteConfig, _ := ginkgo.GinkgoConfiguration()
 	return hasSpecFilter(suiteConfig)
 }
