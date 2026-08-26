@@ -40,13 +40,14 @@ const (
 
 // TestReadOnlyDocCountReachesNativeReader is the structural half of the
 // NIDX-01A cutover. Counting documents correctly is not enough on its own: the
-// point of the milestone is that the read-only path stops going through Bluge,
+// point of the milestone is that the read-only path stops going through the
+// retired reader,
 // and a count that is right for the wrong reason would hide that.
 //
 // Requirement proved here:
 //
-//	R6 -- ReadOnlyDocCount reaches the native ICE reader, names no Bluge symbol
-//	      itself, and that native reader imports nothing from Bluge or ICE, so
+//	R6 -- ReadOnlyDocCount reaches the native ICE reader, names no retired-reader
+//	      symbol itself, and that native reader imports no retired index package, so
 //	      the read-only path no longer depends on the legacy library.
 func TestReadOnlyDocCountReachesNativeReader(t *testing.T) {
 	fileSet := token.NewFileSet()
@@ -54,7 +55,7 @@ func TestReadOnlyDocCountReachesNativeReader(t *testing.T) {
 	require.NoError(t, err)
 
 	legacyNames, nativeNames := importQualifiers(t, file)
-	require.NotEmpty(t, legacyNames, "%s is expected to still import Bluge for the writable store", readOnlyDocCountFile)
+	require.NotEmpty(t, legacyNames, "%s is expected to still import the retired writer package", readOnlyDocCountFile)
 
 	body := findFuncBody(t, file, readOnlyDocCountFunc)
 	used := qualifiersUsedIn(body)

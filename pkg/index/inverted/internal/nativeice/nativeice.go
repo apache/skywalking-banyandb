@@ -19,7 +19,7 @@
 // defined by BDB-NIDX-SPEC-001 revision 0.2 sections 08 and 09, using only
 // BanyanDB code. It is the bounded read-only container reader that the
 // read-only production paths in pkg/index/inverted open committed index
-// directories through, and it never depends on Bluge or ICE.
+// directories through, and it never depends on the retired index libraries.
 //
 // The package is deliberately reachable only from pkg/index/inverted. Footer,
 // offset, mapping, and section decoder types are private to it; the contract
