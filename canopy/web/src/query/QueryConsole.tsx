@@ -33,7 +33,7 @@ import { TopNResultView } from './results/TopNResultView.js';
 import { ResultEmpty } from './results/ResultEmpty.js';
 import { ResultError } from './results/ResultError.js';
 import {
-  buildBydbQL, qbDataCatalog, qbEmptyWhere, qbPruneWhere, qbNewCond,
+  buildBydbQL, qbDataCatalog, qbEmptyWhere, qbPruneProjection, qbPruneWhere, qbNewCond,
   qbProtoCatalog, qbHasAnyFilter, qbHasTraceIdCondition,
   type QBBuilderState, type QB_CATALOG_VALUE, type GroupTopnAggMap,
 } from './bydbql.js';
@@ -472,7 +472,13 @@ export function QueryConsole() {
   // pruning against an empty list would wipe the freshly seeded trace_id
   // condition for traces.
   useEffect(() => {
-    if (tags.length > 0) setState((s) => ({ ...s, where: qbPruneWhere(s.where, tags) }));
+    if (tags.length === 0) return;
+    setState((s) => ({
+      ...s,
+      projection: qbPruneProjection(s.projection, tags),
+      where: qbPruneWhere(s.where, tags),
+      groupBy: qbPruneProjection(s.groupBy, tags),
+    }));
   }, [state.resource, tags]);
 
   // Auto-pick a group once groups load so the rail renders real content

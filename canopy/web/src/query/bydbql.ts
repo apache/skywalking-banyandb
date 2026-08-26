@@ -623,6 +623,10 @@ export const qbPruneWhere = (
   return { ...group, children: pruned as readonly QBWhereLeafWithConn[] };
 };
 
+/** Drop projected tags that do not exist on the chosen resource. */
+export const qbPruneProjection = (projection: readonly string[], tags: readonly string[]): readonly string[] =>
+  projection.filter((tag) => tags.includes(tag));
+
 // ── Fuzzy resource search (From-row search box) ─────────────────────────────
 
 /** A resource row in the search index, before scoring. */

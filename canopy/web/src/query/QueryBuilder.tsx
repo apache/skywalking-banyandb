@@ -525,8 +525,17 @@ export function QueryBuilder({
       fromResource: null,
     });
   };
-  const setGroup = (group: string) => onChange({ group, resource: '' });
-  const setResource = (resource: string) => onChange({ resource });
+  const resetResourceClauses = (): Partial<QBBuilderState> => ({
+    select: [],
+    projection: [],
+    where: qbEmptyWhere(),
+    groupBy: [],
+    fromAgg: null,
+    fromResource: null,
+    offset: 0,
+  });
+  const setGroup = (group: string) => onChange({ group, resource: '', ...resetResourceClauses() });
+  const setResource = (resource: string) => onChange({ resource, ...resetResourceClauses() });
   const toggleProjection = (tag: string) => {
     const cur = state.projection;
     const next = cur.includes(tag) ? cur.filter((t) => t !== tag) : [...cur, tag];

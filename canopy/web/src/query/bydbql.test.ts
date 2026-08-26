@@ -22,7 +22,7 @@ import {
   QB_CAT, QB_OP, QB_OPS, QB_UI_KW, QB_CATALOGS, qbDataCatalog,
   qbSearchIndex, qbSearchResults,
   buildBydbQL, qbNodeSQL, qbQuote, qbTimeSQL,
-  qbNewCond, qbEmptyWhere, qbPruneWhere, qbConnSummary,
+  qbNewCond, qbEmptyWhere, qbPruneWhere, qbPruneProjection, qbConnSummary,
   type QBBuilderState, type QBWhereGroupWithConn, type QBWhereLeafWithConn,
   type GroupResourcesMap, type GroupTopnAggMap,
 } from './bydbql.js';
@@ -471,6 +471,15 @@ describe('WHERE tree helpers', () => {
     };
     const p = qbPruneWhere(where, ['keep']);
     expect(p.children.map((c) => (c as QBWhereLeafWithConn).tag)).toEqual(['keep']);
+  });
+  it('prunes WHERE and projected tags when a resource has no tags', () => {
+    const where: QBWhereGroupWithConn = {
+      combinator: 'AND',
+      children: [{ tag: 'old_tag', op: 'BINARY_OP_EQ', value: 'old-value' }],
+    };
+
+    expect(qbPruneWhere(where, []).children).toEqual([]);
+    expect(qbPruneProjection(['old_tag'], [])).toEqual([]);
   });
   it('qbConnSummary reports AND / OR / mixed', () => {
     expect(qbConnSummary({ combinator: 'AND', children: [] })).toBe('AND');

@@ -22,7 +22,8 @@
 // where.test.ts / bydbql.test.ts).
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { useState } from 'react';
 import { MemoryRouter } from 'react-router';
 import { QueryBuilder, type QueryBuilderProps } from './QueryBuilder.js';
 import type { QBBuilderState, QBWhereLeafWithConn } from './bydbql.js';
@@ -75,6 +76,65 @@ function renderBuilder(state: QBBuilderState, onChange = vi.fn()) {
   return { onChange };
 }
 
+function staleMeasureState(): QBBuilderState {
+  return {
+    ...stateWithLeaf({ tag: 'old_tag', op: 'BINARY_OP_EQ', value: 'old-value' }),
+    catalog: 'measures',
+    resource: 'old_measure',
+    select: [{ field: 'old_field', fn: 'MEAN' }],
+    projection: ['old_tag'],
+    groupBy: ['old_tag'],
+    fromResource: 'g1/old_measure',
+  };
+}
+
+function StatefulQueryBuilder({ autoPickOnGroupChange }: { readonly autoPickOnGroupChange?: boolean }) {
+  const [state, setState] = useState(staleMeasureState);
+  const tags = state.resource === 'new_measure' ? ['new_tag'] : ['old_tag'];
+  const fields = state.resource === 'new_measure' ? ['new_field'] : ['old_field'];
+  const resourceNames = state.group === 'g2' ? ['new_measure'] : ['old_measure', 'new_measure'];
+  const onChange = (patch: Partial<QBBuilderState>) => {
+    setState((current) => {
+      const next = { ...current, ...patch };
+      return autoPickOnGroupChange && next.group === 'g2' && !next.resource
+        ? { ...next, resource: 'new_measure' }
+        : next;
+    });
+  };
+
+  return (
+    <MemoryRouter>
+      <QueryBuilder
+        state={state}
+        onChange={onChange}
+        tags={tags}
+        fields={fields}
+        groupNames={['g1', 'g2']}
+        resourceNames={resourceNames}
+        topnAggNames={[]}
+        groups={[]}
+        groupResources={new Map()}
+        groupTopnAggs={new Map()}
+        onPickResource={vi.fn()}
+        isRunning={false}
+        onEjectToCode={vi.fn()}
+        onRun={vi.fn()}
+        hasRun={false}
+        compact={false}
+        setCompact={vi.fn()}
+        openSection={null}
+        setOpenSection={vi.fn()}
+      />
+    </MemoryRouter>
+  );
+}
+
+function queryPreview(container: HTMLElement): HTMLElement {
+  const preview = container.querySelector('.qb-gen-line');
+  if (!preview) throw new Error('Generated query preview was not rendered');
+  return preview as HTMLElement;
+}
+
 describe('QueryBuilder WHERE — MATCH analyzer + operator fields', () => {
   it('shows the Analyzer + Match operator controls only for the MATCH operator', () => {
     renderBuilder(stateWithLeaf({ tag: 'name', op: 'BINARY_OP_MATCH', value: 'nodea' }));
@@ -102,6 +162,36 @@ describe('QueryBuilder WHERE — MATCH analyzer + operator fields', () => {
     const call = onChange.mock.calls.find((c) => c[0]?.where);
     expect(call).toBeTruthy();
     expect((call![0].where.children[0] as QBWhereLeafWithConn).matchOp).toBe('OR');
+  });
+});
+
+describe('QueryBuilder resource changes', () => {
+  it('clears dependent clauses when the resource dropdown selects a new schema', async () => {
+    const { container } = render(<StatefulQueryBuilder />);
+
+    fireEvent.change(screen.getByLabelText('Resource'), { target: { value: 'new_measure' } });
+
+    await waitFor(() => expect(queryPreview(container)).toHaveTextContent('FROM MEASURE new_measure'));
+    const query = queryPreview(container).getAttribute('title') ?? '';
+    expect(query).toContain('SELECT new_tag');
+    expect(query).not.toContain('old_tag');
+    expect(query).not.toContain('old_field');
+    expect(query).not.toContain('WHERE');
+    expect(query).not.toContain('GROUP BY');
+  });
+
+  it('does not carry clauses into an auto-selected resource after changing groups', async () => {
+    const { container } = render(<StatefulQueryBuilder autoPickOnGroupChange />);
+
+    fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'g2' } });
+
+    await waitFor(() => expect(screen.getByLabelText('Resource')).toHaveValue('new_measure'));
+    const query = queryPreview(container).getAttribute('title') ?? '';
+    expect(query).toContain('SELECT new_tag');
+    expect(query).not.toContain('old_tag');
+    expect(query).not.toContain('old_field');
+    expect(query).not.toContain('WHERE');
+    expect(query).not.toContain('GROUP BY');
   });
 });
 
