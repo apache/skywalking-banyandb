@@ -1,0 +1,29 @@
+{
+  "skill_name": "gh-issue",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Make one Backlog issue replace the ICE reader across six callers, including all codecs, generation selection, sorting, and a new fixture corpus.",
+      "expected_output": "Classifies it as a parent after a size audit, proposes live-caller slices instead of format tickets, and does not queue the parent.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Write an issue to switch property ReadOnlyDocCount to a merged seam. A legacy-generated, no-deletion fixture has expected count 7.",
+      "expected_output": "Classifies it as a leaf, states the expected count, RED and end-to-end tests, and excludes multi-segment and deletion behavior.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "The reader is not merged. Pre-file writer, GC, replication, query, and cutover leaves, then apply Backlog to every child.",
+      "expected_output": "Keeps downstream work as parents until blockers merge, decomposes just in time, and queues only the oldest unblocked leaf.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Make a reader cutover TDD-ready. Its output test already passes on legacy, and its new decoders have no caller until a later PR.",
+      "expected_output": "Flags the false RED and dead foundation, then requires a failing boundary test and caller activation in the same merge or redesigns the slice.",
+      "files": []
+    }
+  ]
+}
