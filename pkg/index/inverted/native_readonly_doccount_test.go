@@ -36,13 +36,17 @@ const (
 	iceFooterLength           = 60
 	iceFooterFieldsIndexStart = 16
 	iceFooterFieldsIndexEnd   = 24
+	snapshotSegmentSizeStart  = 11
+	snapshotSegmentSizeEnd    = 19
+	nidx01aAccountingSize     = uint64(1292)
+	nidx01aPersistedSize      = int64(577)
 
 	// oversizeSectionOffset is far past the end of any corpus file, yet small
 	// enough that a reader which trusted it would succeed in allocating for
 	// it. That separates "rejected the offset" from "died on the offset".
 	oversizeSectionOffset = uint64(1) << 31
 
-	// sectionAllocationCeiling bounds the heap one count of a 414-byte corpus
+	// sectionAllocationCeiling bounds the heap one count of this sub-kilobyte corpus
 	// may consume. A reader that sized a buffer from an unchecked section
 	// offset would pass it by orders of magnitude.
 	sectionAllocationCeiling = uint64(64) << 20
@@ -82,6 +86,25 @@ func TestReadOnlyDocCountSingleSegment(t *testing.T) {
 		tester.Equal(manifest.VisibleCount, observed.Count)
 		tester.Equal(nidx01aVisibleCount, observed.Count)
 		tester.Equal(before, dirInventory(t, dir), "the read-only count must not disturb the directory")
+	})
+
+	t.Run("segment_size_is_accounting_metadata_not_file_length", func(t *testing.T) {
+		tester := require.New(t)
+		dir := copyIndexDir(t, nidx01aIndexDir)
+		segmentInfo, statErr := os.Stat(newestSegmentFile(t, dir))
+		tester.NoError(statErr)
+		recordedSize := nidx01aRecordedSegmentSize(t, dir)
+		tester.Equal(nidx01aAccountingSize, recordedSize)
+		tester.Equal(nidx01aPersistedSize, segmentInfo.Size())
+		tester.NotEqual(uint64(segmentInfo.Size()), recordedSize,
+			"the compatibility corpus must distinguish the historical accounting value from file length")
+		before := dirInventory(t, dir)
+
+		observed := countInChildProcess(t, dir)
+
+		tester.True(observed.Succeeded, "want a count, got %q", observed.Err)
+		tester.Equal(nidx01aVisibleCount, observed.Count)
+		tester.Equal(before, dirInventory(t, dir), "reading accounting metadata must not disturb the directory")
 	})
 
 	t.Run("R3_truncated_footer_is_typed_corruption", func(t *testing.T) {
@@ -140,6 +163,21 @@ func TestReadOnlyDocCountSingleSegment(t *testing.T) {
 		observed = countInChildProcess(t, damaged)
 		tester.True(observed.Corrupt, "want the corruption sentinel, got %q", observed.Err)
 	})
+}
+
+// nidx01aRecordedSegmentSize reads the historical segment Size() accounting
+// value from the fixed one-record corpus. In this corpus, the version, record
+// count, type length, and segment ID are all one-byte varints, placing the
+// uint64 value at the named snapshot offsets.
+func nidx01aRecordedSegmentSize(t *testing.T, dir string) uint64 {
+	t.Helper()
+	matches, globErr := filepath.Glob(filepath.Join(dir, "*"+snpExt))
+	require.NoError(t, globErr)
+	require.Len(t, matches, 1)
+	payload, readErr := os.ReadFile(matches[0])
+	require.NoError(t, readErr)
+	require.GreaterOrEqual(t, len(payload), snapshotSegmentSizeEnd)
+	return binary.BigEndian.Uint64(payload[snapshotSegmentSizeStart:snapshotSegmentSizeEnd])
 }
 
 // assertMatchesProvenance checks that the corpus bytes under test still hash to
