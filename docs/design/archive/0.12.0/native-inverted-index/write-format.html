@@ -964,8 +964,9 @@ fieldsIndex := repeated uint64BE(fieldRecordAbsoluteOffset)</pre>
               <h3>File naming</h3>
               <pre>snapshot final name := lower-case hexadecimal numeric ID, conventionally width 12, + ".snp"
 segment final name  := lower-case hexadecimal numeric ID, conventionally width 12, + ".seg"
-writer lock         := "bluge.pid" during compatibility window</pre>
-              <p>Readers accept hexadecimal IDs and order them numerically. Temporary/staging names must not match accepted final-name enumeration.</p>
+writer ownership    := BanyanDB database lock, outside the persisted ICE generation</pre>
+              <p>Readers accept hexadecimal IDs and order them numerically. Temporary/staging names must not match accepted final-name enumeration. Segment
+                directories contain no required index-local PID or lock file; read-only opens ignore entries outside this grammar and never create one.</p>
 
               <h3>Snapshot v3 grammar</h3>
               <pre>snapshotV3 :=
@@ -979,7 +980,7 @@ segmentRecordV3 :=
     typeBytes                         // "ice"
     uint32BE(segmentVersion)          // 3
     uvarint(segmentID)
-    uint64BE(segmentSize)
+    uint64BE(segmentSize)             // historical segment.Size() accounting value
     uint64BE(segmentDocumentCount)
     uint64BE(segmentTimeMinBits)
     uint64BE(segmentTimeMaxBits)
@@ -987,6 +988,10 @@ segmentRecordV3 :=
     roaringPortableDeletionBytes</pre>
               <p>The final CRC32 field remains at its historical four-byte position but is reserved for compatibility only; native code neither calculates
                 nor validates it. The deletion bitmap contains segment-local document numbers. Length zero means no deletions.</p>
+              <p><code>segmentSize</code> is the historical writer's logical <code>segment.Size()</code> accounting value used for runtime resource estimates.
+                It is not the persisted <code>.seg</code> file byte length and <span class="verb must">MUST NOT</span> be compared with
+                <code>FileInfo.Size()</code>. A native reader parses the field within the bounded record and may ignore its value for document count; it validates
+                the actual file extent independently through the footer and section-root bounds.</p>
 
               <h3>Read compatibility</h3>
               <div class="table-wrap">
@@ -1029,8 +1034,9 @@ segmentRecordV3 :=
                     <span class="verb must">MUST</span>
                   </div>
                   <div class="clause-body">
-                    <p>Publish only a snapshot whose referenced final segment files exist, validate successfully, and match their recorded type, version, size,
-                      count, and time bounds.</p>
+                    <p>Publish only a snapshot whose referenced final segment files exist, validate successfully, and match their recorded type, version,
+                      count, and time bounds. Encode <code>segmentSize</code> using the compatible logical accounting semantics; do not reinterpret it as the
+                      referenced file's byte length or as an integrity field.</p>
                   </div>
                 </div>
                 <div class="clause">
@@ -1048,7 +1054,8 @@ segmentRecordV3 :=
                     <span class="verb must">MUST</span>
                   </div>
                   <div class="clause-body">
-                    <p>Preserve but ignore the snapshot CRC32 field; select a generation using the remaining structural and referenced-segment validation.</p>
+                    <p>Preserve but ignore the snapshot CRC32 field. Parse <code>segmentSize</code> as accounting metadata, not file length. Select a generation
+                      using the remaining structural and referenced-segment validation.</p>
                   </div>
                 </div>
                 <div class="clause">

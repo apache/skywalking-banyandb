@@ -1,0 +1,21 @@
+{
+  "oracle": {
+    "go_mod_sha256": "b7faaa8e1fcef81607b38a6fa593b54381e11fa466f496e4cb10d4599b657ac1",
+    "writer": "pkg/index/inverted.NewStore"
+  },
+  "file_sha256": {
+    "index/000000000002.seg": "de97b077ad0b5df5ccedf3c783a9a87bfa8fef30c129c50546661b737df59b5c",
+    "index/000000000002.snp": "e21ca80dbd925b4cd2f22257428e90cd49004fd1c2fd352ff34babc96df45552"
+  },
+  "reserved_crc32": {
+    ".seg": "deadbeef (arbitrary, no writer computed it)",
+    ".snp": "as written by the oracle; the compatibility loader validates this slot, so the corpus keeps it readable and the reserved-field contract is proved by run-time mutation"
+  },
+  "generator_command": "GENERATE_NIDX01A_FIXTURE=1 go test ./pkg/index/inverted/ -run TestGenerateNIDX01AFixture -count=1",
+  "notes": "One committed segment, numeric document IDs 11 and 12, no deletion record.",
+  "logical_documents": [
+    11,
+    12
+  ],
+  "visible_count": 2
+}
