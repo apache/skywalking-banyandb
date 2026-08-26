@@ -25,17 +25,18 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
-	"strings"
 	"testing"
 
-	"github.com/blugelabs/bluge"
 	"github.com/stretchr/testify/require"
+
+	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 )
 
 // The NIDX-01A corpus is an ICE v3 / snapshot v3 directory produced by the
-// pinned legacy writer and checked in as bytes. Tests read it; production code
-// never generates it and never links the generator, which lives in this test
-// file behind nidx01aGenerateEnv.
+// compatibility writer through BanyanDB's store boundary and checked in as
+// bytes. Tests read it; production code never generates it, and the generator
+// lives in this test file behind nidx01aGenerateEnv.
 const (
 	nidx01aRoot     = "testdata/nidx01a"
 	nidx01aIndexDir = nidx01aRoot + "/index"
@@ -57,7 +58,7 @@ const (
 
 // nidx01aDocIDs are the logical documents the corpus contains, in insertion
 // order, as named by issue #14008.
-var nidx01aDocIDs = []string{"doc-11", "doc-12"}
+var nidx01aDocIDs = []uint64{11, 12}
 
 // reservedCRC32FillSegment overwrites the reserved four-byte CRC32 slot that
 // BDB-NIDX-SPEC-001 section 08 places at the end of a segment footer. They are
@@ -84,12 +85,12 @@ type nidx01aProvenance struct {
 	ReservedCRC32    map[string]string `json:"reserved_crc32"`
 	GeneratorCommand string            `json:"generator_command"`
 	Notes            string            `json:"notes"`
-	LogicalDocuments []string          `json:"logical_documents"`
+	LogicalDocuments []uint64          `json:"logical_documents"`
 	VisibleCount     int64             `json:"visible_count"`
 }
 
 // TestGenerateNIDX01AFixture rebuilds the checked-in NIDX-01A corpus and its
-// provenance manifest with the pinned legacy writer. It runs only when
+// provenance manifest with BanyanDB's compatibility writer. It runs only when
 // nidx01aGenerateEnv is set, so a normal test run reads the committed bytes
 // instead of producing fresh ones.
 func TestGenerateNIDX01AFixture(t *testing.T) {
@@ -99,15 +100,9 @@ func TestGenerateNIDX01AFixture(t *testing.T) {
 	tester := require.New(t)
 
 	staging := t.TempDir()
-	writer, err := bluge.OpenWriter(bluge.DefaultConfig(staging))
+	writer, err := NewStore(StoreOpts{Path: staging})
 	tester.NoError(err)
-	batch := bluge.NewBatch()
-	for _, docID := range nidx01aDocIDs {
-		doc := bluge.NewDocument(docID)
-		doc.AddField(bluge.NewKeywordField("kind", "nidx01a").StoreValue())
-		batch.Insert(doc)
-	}
-	tester.NoError(writer.Batch(batch))
+	tester.NoError(writer.Batch(nidx01aBatch()))
 	tester.NoError(writer.Close())
 
 	// The writer may leave older, empty generations behind; the corpus is the
@@ -139,43 +134,50 @@ func TestGenerateNIDX01AFixture(t *testing.T) {
 	tester.Len(hashes, 2, "the corpus is exactly one committed segment and its manifest")
 
 	manifest := nidx01aProvenance{
-		Oracle:           readPinnedOracleVersions(t),
+		Oracle:           readCompatibilityOracleIdentity(t),
 		GeneratorCommand: nidx01aGenerateCmd,
-		LogicalDocuments: append([]string(nil), nidx01aDocIDs...),
+		LogicalDocuments: append([]uint64(nil), nidx01aDocIDs...),
 		FileSHA256:       hashes,
 		VisibleCount:     nidx01aVisibleCount,
 		ReservedCRC32: map[string]string{
 			segExt: hex.EncodeToString(reservedCRC32FillSegment) + " (arbitrary, no writer computed it)",
-			snpExt: "as written by the oracle; the pinned legacy loader validates this slot, " +
+			snpExt: "as written by the oracle; the compatibility loader validates this slot, " +
 				"so the corpus keeps it readable and the reserved-field contract is proved by run-time mutation",
 		},
-		Notes: "One committed segment, documents doc-11 and doc-12, no deletion record.",
+		Notes: "One committed segment, numeric document IDs 11 and 12, no deletion record.",
 	}
 	encoded, err := json.MarshalIndent(manifest, "", "  ")
 	tester.NoError(err)
 	tester.NoError(os.WriteFile(nidx01aManifest, append(encoded, '\n'), 0o600))
 }
 
-// readPinnedOracleVersions returns the module replacements that pin the legacy
-// writer used as the corpus oracle, read from go.mod so the manifest cannot
-// drift away from the build.
-func readPinnedOracleVersions(t *testing.T) map[string]string {
+func nidx01aBatch() index.Batch {
+	fieldKey := index.FieldKey{
+		Analyzer:    index.AnalyzerKeyword,
+		SeriesID:    common.SeriesID(1),
+		IndexRuleID: 1,
+	}
+	documents := make(index.Documents, 0, len(nidx01aDocIDs))
+	for _, docID := range nidx01aDocIDs {
+		field := index.NewStringField(fieldKey, "nidx01a")
+		field.Index = true
+		field.Store = true
+		documents = append(documents, index.Document{DocID: docID, Fields: []index.Field{field}})
+	}
+	return index.Batch{Documents: documents}
+}
+
+// readCompatibilityOracleIdentity returns immutable provenance for the
+// BanyanDB store boundary used to produce the corpus.
+func readCompatibilityOracleIdentity(t *testing.T) map[string]string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "go.mod"))
 	require.NoError(t, err)
-	pinned := map[string]string{}
-	for _, line := range strings.Split(string(raw), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) != 4 || fields[1] != "=>" {
-			continue
-		}
-		if !strings.HasPrefix(fields[0], "github.com/blugelabs/") {
-			continue
-		}
-		pinned[fields[0]] = fields[2] + " " + fields[3]
+	sum := sha256.Sum256(raw)
+	return map[string]string{
+		"writer":        "pkg/index/inverted.NewStore",
+		"go_mod_sha256": hex.EncodeToString(sum[:]),
 	}
-	require.NotEmpty(t, pinned, "go.mod must pin the legacy writer used as the oracle")
-	return pinned
 }
 
 // loadNIDX01AProvenance reads the checked-in manifest.

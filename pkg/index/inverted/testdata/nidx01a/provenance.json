@@ -1,22 +1,21 @@
 {
   "oracle": {
-    "github.com/blugelabs/bluge": "github.com/SkyAPM/bluge v0.0.0-20260625022800-42385daf66b8",
-    "github.com/blugelabs/bluge_segment_api": "github.com/zinclabs/bluge_segment_api v1.0.0",
-    "github.com/blugelabs/ice": "github.com/SkyAPM/ice v0.0.0-20250619023539-b5173603b0b3"
+    "go_mod_sha256": "b7faaa8e1fcef81607b38a6fa593b54381e11fa466f496e4cb10d4599b657ac1",
+    "writer": "pkg/index/inverted.NewStore"
   },
   "file_sha256": {
-    "index/000000000002.seg": "f032abe57c445b3db7976c85cd05671388907b3f872c446b785cb9a67b9185a6",
-    "index/000000000002.snp": "34c6ad06b3e4efa1653559a2c9cb11aad8d95523083ccd4eae6f42652cba998a"
+    "index/000000000002.seg": "de97b077ad0b5df5ccedf3c783a9a87bfa8fef30c129c50546661b737df59b5c",
+    "index/000000000002.snp": "e21ca80dbd925b4cd2f22257428e90cd49004fd1c2fd352ff34babc96df45552"
   },
   "reserved_crc32": {
     ".seg": "deadbeef (arbitrary, no writer computed it)",
-    ".snp": "as written by the oracle; the pinned legacy loader validates this slot, so the corpus keeps it readable and the reserved-field contract is proved by run-time mutation"
+    ".snp": "as written by the oracle; the compatibility loader validates this slot, so the corpus keeps it readable and the reserved-field contract is proved by run-time mutation"
   },
   "generator_command": "GENERATE_NIDX01A_FIXTURE=1 go test ./pkg/index/inverted/ -run TestGenerateNIDX01AFixture -count=1",
-  "notes": "One committed segment, documents doc-11 and doc-12, no deletion record.",
+  "notes": "One committed segment, numeric document IDs 11 and 12, no deletion record.",
   "logical_documents": [
-    "doc-11",
-    "doc-12"
+    11,
+    12
   ],
   "visible_count": 2
 }

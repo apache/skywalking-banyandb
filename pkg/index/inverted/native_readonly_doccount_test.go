@@ -50,9 +50,10 @@ const (
 
 // TestReadOnlyDocCountSingleSegment is the boundary contract for NIDX-01A. It
 // exercises inverted.ReadOnlyDocCount, and nothing behind it, against the
-// checked-in ICE v3 / snapshot v3 corpus that the pinned legacy writer
-// produced: one committed segment, documents doc-11 and doc-12, no deletion
-// record, and arbitrary non-zero bytes in every reserved CRC32 field.
+// checked-in ICE v3 / snapshot v3 corpus produced through BanyanDB's
+// compatibility writer boundary: one committed segment, numeric document IDs
+// 11 and 12, no deletion record, and arbitrary non-zero bytes in every reserved
+// CRC32 field.
 //
 // Requirements proved here:
 //
