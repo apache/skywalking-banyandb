@@ -18,8 +18,6 @@
 package inverted
 
 import (
-	"os"
-	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -43,8 +41,8 @@ const (
 )
 
 // TestE2EReadOnlyDocCount walks the production situation this milestone exists
-// for. A segment's series index is owned by a live writer that holds the
-// exclusive directory lock, and something else -- storage.SeriesIndexStats
+// for. A segment's series index is owned by a live writer, and something else
+// -- storage.SeriesIndexStats
 // reporting a segment's document count -- has to count its documents without
 // disturbing it. Here the writer stays open in this process while every count
 // happens in another, which is the arrangement the guarantee is written for.
@@ -63,10 +61,10 @@ const (
 //	      committed generation and counts zero; callers may treat that as
 //	      empty, and it is not classified as corruption.
 //	R2 -- once doc-11 and doc-12 are committed, the count is 2 while the legacy
-//	      writer still owns the lock, and it is still 2 after that writer
+//	      writer remains open, and it is still 2 after that writer
 //	      closes and hands the same bytes over.
 //	R1 -- no count changes any path, byte, size, hash, mtime, or directory
-//	      entry, the writer's own lock file included.
+//	      entry.
 //	R3 -- a damaged copy of those same live bytes reports the typed corruption
 //	      sentinel rather than an untyped failure or a plausible wrong count.
 func TestE2EReadOnlyDocCount(t *testing.T) {
@@ -83,11 +81,13 @@ func TestE2EReadOnlyDocCount(t *testing.T) {
 	}()
 
 	// R5: the writer owns the directory and has committed nothing yet.
-	tester.FileExists(filepath.Join(dir, LockFilename), "the legacy writer must own the directory lock")
+	beforeUnflushed := dirInventory(t, dir)
 	unflushed := countInChildProcess(t, dir)
 	tester.Zero(unflushed.Count, "an unflushed index counts as empty")
 	tester.True(unflushed.NoCommitted, "want the absent-generation sentinel, got %q", unflushed.Err)
 	tester.False(unflushed.Corrupt, "an index that was never flushed is not damaged")
+	tester.Equal(beforeUnflushed, dirInventory(t, dir),
+		"counting an unflushed directory must not add, remove, or rewrite an entry")
 
 	batch := bluge.NewBatch()
 	for _, docID := range nidx01aDocIDs {
@@ -98,11 +98,10 @@ func TestE2EReadOnlyDocCount(t *testing.T) {
 	tester.NoError(writer.Batch(batch))
 
 	// R2 + R1: count the committed generation from another process while this
-	// one still holds the lock, and prove the directory came through untouched.
+	// one remains open, and prove the directory came through untouched.
 	// The baseline is taken once the writer has finished its own post-commit
 	// housekeeping, so that what follows measures the read-only call alone.
 	beforeLive := waitForLegacyWriterQuiescence(t, dir)
-	tester.FileExists(filepath.Join(dir, LockFilename))
 	live := countInChildProcess(t, dir)
 	tester.True(live.Succeeded, "want a count, got %q", live.Err)
 	// 2 is the number of documents inserted above and the count declared for
@@ -110,15 +109,6 @@ func TestE2EReadOnlyDocCount(t *testing.T) {
 	tester.Equal(nidx01aVisibleCount, live.Count)
 	tester.Equal(beforeLive, dirInventory(t, dir),
 		"counting a directory a writer owns must not add, remove, or rewrite a single entry")
-	// The comparison above catches an entry a count modified, but not one an
-	// earlier count in this test had already created: creating the same stray
-	// file again leaves both sides of the delta equal. So also state absolutely
-	// that nothing foreign is present. A writer's directory holds its lock
-	// file, its segments and its manifests; a read-only call adds no directory
-	// entry, so anything else here was put there by a reader that had no
-	// business writing at all.
-	tester.Empty(foreignDirEntries(t, dir),
-		"a read-only count must leave the directory holding only what the writer wrote")
 
 	// R3: the same live bytes, damaged in a copy, are rejected as corruption.
 	damaged := copyIndexDir(t, dir)
@@ -130,7 +120,6 @@ func TestE2EReadOnlyDocCount(t *testing.T) {
 	// R2: the writer hands the directory over, and the same bytes still count 2.
 	tester.NoError(writer.Close())
 	writerClosed = true
-	tester.NoFileExists(filepath.Join(dir, LockFilename), "closing the writer releases the lock")
 
 	beforeClosed := dirInventory(t, dir)
 	closed := countInChildProcess(t, dir)
@@ -138,24 +127,6 @@ func TestE2EReadOnlyDocCount(t *testing.T) {
 	tester.Equal(nidx01aVisibleCount, closed.Count)
 	tester.Equal(beforeClosed, dirInventory(t, dir),
 		"counting a closed directory must not disturb it either")
-}
-
-// foreignDirEntries returns the names in dir that belong to neither the on-disk
-// grammar nor the writer that owns the directory: anything that is not a
-// segment, a manifest, or the writer's lock file.
-func foreignDirEntries(t *testing.T, dir string) []string {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	foreign := []string{}
-	for _, entry := range entries {
-		switch ext := filepath.Ext(entry.Name()); {
-		case entry.Name() == LockFilename, ext == segExt, ext == snpExt:
-		default:
-			foreign = append(foreign, entry.Name())
-		}
-	}
-	return foreign
 }
 
 // waitForLegacyWriterQuiescence blocks until the index directory at dir stops

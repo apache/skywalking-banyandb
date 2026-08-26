@@ -188,9 +188,9 @@ func loadNIDX01AProvenance(t *testing.T) nidx01aProvenance {
 	return manifest
 }
 
-// copyIndexDir copies every regular file in src into a fresh directory under
-// the test's temporary space and returns it. The writer lock file is skipped:
-// a copy of an index directory never carries another process's lock.
+// copyIndexDir copies the persisted index files in src into a fresh directory
+// under the test's temporary space and returns it. Runtime files are outside
+// the ICE grammar and are not part of a copied index generation.
 func copyIndexDir(t *testing.T, src string) string {
 	t.Helper()
 	dst := filepath.Join(t.TempDir(), "index")
@@ -198,7 +198,8 @@ func copyIndexDir(t *testing.T, src string) string {
 	entries, err := os.ReadDir(src)
 	require.NoError(t, err)
 	for _, entry := range entries {
-		if entry.IsDir() || entry.Name() == LockFilename {
+		extension := filepath.Ext(entry.Name())
+		if entry.IsDir() || extension != segExt && extension != snpExt {
 			continue
 		}
 		payload, readErr := os.ReadFile(filepath.Join(src, entry.Name()))

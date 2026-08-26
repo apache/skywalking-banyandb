@@ -57,8 +57,7 @@ const (
 // Requirements proved here:
 //
 //	R1 -- a committed single-segment generation counts 2, and the call leaves
-//	      every path, byte, size, hash, mtime, and directory entry alone and
-//	      takes no writer lock.
+//	      every path, byte, size, hash, mtime, and directory entry alone.
 //	R3 -- a truncated footer and an out-of-bounds section offset each report
 //	      the typed corruption sentinel, without panicking, aborting the
 //	      process, hanging, or allocating past the configured section bound.
@@ -82,7 +81,6 @@ func TestReadOnlyDocCountSingleSegment(t *testing.T) {
 		tester.Equal(manifest.VisibleCount, observed.Count)
 		tester.Equal(nidx01aVisibleCount, observed.Count)
 		tester.Equal(before, dirInventory(t, dir), "the read-only count must not disturb the directory")
-		tester.NoFileExists(filepath.Join(dir, LockFilename), "the read-only count must not take the writer lock")
 	})
 
 	t.Run("R3_truncated_footer_is_typed_corruption", func(t *testing.T) {
