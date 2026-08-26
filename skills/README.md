@@ -28,17 +28,17 @@ Compile and build the SkyWalking BanyanDB project.
 
 ### gh-issue
 
-Write a BanyanDB issue someone can implement from, and break a design-ready
-issue into tickets.
+Size-audit and write a BanyanDB issue somebody or an automated TDD workflow can
+implement, and split tracking parents into executable leaves.
 
-**Triggers:** "file an issue", "write up this feature", "turn this design into tickets", "split this issue"
+**Triggers:** "file an issue", "is this issue too large", "make this TDD-ready", "turn this design into tickets", "split this issue"
 
 **What it does:**
-1. Checks the body carries a boundary, expected values, and criteria provable by a command
-2. Names the packages and the commands that test them
-3. Flags what a storage change owes: compatibility, durability, concurrency, bounds
-4. Splits a design-ready issue into dependency-ordered vertical slices
-5. Files them as sub-issues of the base
+1. Audits repository evidence and classifies the work as an executable leaf or tracking parent
+2. Rejects oversized, false-RED, foundation-only, and not-yet-merged dependency scopes
+3. Checks the body carries a boundary, independent expected values, production activation, and command-proven acceptance criteria
+4. Splits storage replacements by live caller and fixture complexity instead of unused format layers
+5. Decomposes downstream work just in time and queues only the oldest unblocked executable leaf
 
 ### gh-pull-request
 
