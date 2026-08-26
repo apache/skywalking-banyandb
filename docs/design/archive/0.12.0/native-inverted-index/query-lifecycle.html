@@ -537,7 +537,8 @@
                     <span class="verb must">MUST</span>
                   </div>
                   <div class="clause-body">
-                    <p>Preserve <code>bluge.pid</code> exclusive writer-lock behavior during the compatibility window; read-only opens must not acquire it.</p>
+                    <p>Use the BanyanDB database ownership lock for writer exclusion. Native index code must not create or require an index-local PID or lock
+                      file, and read-only opens must create no runtime file.</p>
                   </div>
                 </div>
               </div>

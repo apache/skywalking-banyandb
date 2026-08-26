@@ -239,6 +239,15 @@
                   schema, repair, and verification operations; it is not permission to merge an unused general reader.</p>
               </div>
 
+              <div class="callout warning">
+                <b>0</b>
+                <p><strong>Lexical non-regression:</strong> every NIDX-01 through NIDX-04 implementation PR may remove retired references but must introduce
+                  zero new case-insensitive <code>bluge</code> tokens in added implementation, test, fixture/provenance, script, configuration, or generated-asset
+                  lines, and zero matching tracked paths. The gate covers imports, aliases, identifiers, runtime names, comments, and messages. Compatibility
+                  tests use neutral <em>legacy oracle</em> or <em>compatibility writer</em> labels plus immutable revision or content-hash provenance. Design and
+                  issue prose may name the retired dependency to state this rule.</p>
+              </div>
+
               <div class="ticket-chain" aria-label="Five-ticket dependency chain">
                 <div class="ticket-node">
                   <b>NIDX-01</b>
@@ -419,8 +428,11 @@
                       <ul>
                         <li>Native verify, staged rebuild, union/dedup, index-mode reconstruction, and migration destination writing.</li>
                         <li>Complete document walk, stored/doc-value visitation, and sorted search-after extensions not already required by NIDX-01.</li>
-                        <li>Rewire every remaining production and CLI caller; remove legacy query bridges, segment API types, modules, and replacements.</li>
-                        <li>Retain a pinned legacy oracle binary and fixture corpus only as isolated compatibility test inputs.</li>
+                        <li>Rewire every remaining production and CLI caller; remove legacy query bridges, segment API types, modules, replacements, and the
+                          obsolete index-local PID filename.</li>
+                        <li>Delete every pre-existing case-insensitive <code>bluge</code> token and matching path from the active implementation surface: Go
+                          source and tests, imports, identifiers, filenames, strings, messages, module files, scripts, configuration, and generated licenses.</li>
+                        <li>Retain compatibility evidence only as neutral, isolated oracle fixtures identified by an immutable revision or content hash.</li>
                       </ul>
                     </div>
                     <div>
@@ -430,11 +442,13 @@
                         <li>No format rewrite merely to remove dependencies.</li>
                         <li>No unsupported search-product features.</li>
                         <li>No runtime legacy fallback after the approved retirement gate.</li>
+                        <li>Archived design/research records and Git history are historical evidence and are outside the active-surface lexical cleanup.</li>
                       </ul>
                     </div>
                   </div>
-                  <div class="ticket-proof"><b>Merge proof · </b>All named maintenance flows run against historical and native directories, source/dependency
-                    scans find no Bluge, ICE, or segment-API runtime edge, and the full two-binary compatibility matrix passes.</div>
+                  <div class="ticket-proof"><b>Merge proof · </b>All named maintenance flows run against historical and native directories. Case-insensitive
+                    content and tracked-path scans find no <code>bluge</code> token in the active implementation surface, dependency enumeration finds no retired
+                    runtime edge, and the full compatibility matrix passes.</div>
                   <p class="ticket-rollback"><b>Rollback:</b> redeploy the preceding native release on the unchanged ICE/snapshot files. Dependency removal may
                     merge only after the declared legacy-retirement window; a Bluge runtime switch is no longer promised afterward.</p>
                 </article>
@@ -457,8 +471,8 @@
                     <tr>
                       <td>Open committed generation</td>
                       <td>All NIDX-01 callers</td>
-                      <td>Inspect snapshot generations newest-first and pin the newest structurally complete ICE v3/snapshot v3 view without acquiring
-                        <code>bluge.pid</code>.</td>
+                      <td>Inspect snapshot generations newest-first and pin the newest structurally complete ICE v3/snapshot v3 view without creating or
+                        acquiring an index-local runtime file.</td>
                       <td>Immutable snapshot handle; bounded record and section validation; no directory entry, byte, or mtime change.</td>
                     </tr>
                     <tr>
@@ -955,6 +969,14 @@
                   <span>
                     <b>Owned surface</b>No production or offline path imports Bluge, ICE, or <code>bluge_segment_api</code>; no third-party codec type escapes the
                       internal boundary.</span>
+                    <span class="tag fixture">required</span>
+                  </label>
+                <label class="check">
+                  <input type="checkbox" disabled>
+                  <span>
+                    <b>Lexical cleanup</b>NIDX-01 through NIDX-04 added no new case-insensitive <code>bluge</code> token or tracked path in implementation
+                      surfaces. NIDX-05 removes every pre-existing occurrence and matching path from the active implementation surface; archived design/research
+                      records and Git history remain as provenance.</span>
                     <span class="tag fixture">required</span>
                   </label>
                 <label class="check">

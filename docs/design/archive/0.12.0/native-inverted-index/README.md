@@ -15,3 +15,7 @@ This folder preserves revision 0.2 of the 0.12.0 design package for replacing Bl
 - `index.html`, `write-format.html`, `query-lifecycle.html`, `safety-verification.html`, and `delivery-review.html` form one split implementation specification.
 - `spec.css` and `spec.js` are shared by those five pages.
 - The former one-page revision 0.1 draft is preserved as [a monolith](native-inverted-index-spec-r0.1-monolith.html).
+
+Revision 0.2 requires every pre-cutover implementation PR to add no new case-insensitive `bluge` token or matching tracked path in active implementation
+surfaces. The final NIDX-05 cutover removes all existing occurrences and paths from that surface; archived design/research records and Git history remain as
+historical provenance.

@@ -964,8 +964,9 @@ fieldsIndex := repeated uint64BE(fieldRecordAbsoluteOffset)</pre>
               <h3>File naming</h3>
               <pre>snapshot final name := lower-case hexadecimal numeric ID, conventionally width 12, + ".snp"
 segment final name  := lower-case hexadecimal numeric ID, conventionally width 12, + ".seg"
-writer lock         := "bluge.pid" during compatibility window</pre>
-              <p>Readers accept hexadecimal IDs and order them numerically. Temporary/staging names must not match accepted final-name enumeration.</p>
+writer ownership    := BanyanDB database lock, outside the persisted ICE generation</pre>
+              <p>Readers accept hexadecimal IDs and order them numerically. Temporary/staging names must not match accepted final-name enumeration. Segment
+                directories contain no required index-local PID or lock file; read-only opens ignore entries outside this grammar and never create one.</p>
 
               <h3>Snapshot v3 grammar</h3>
               <pre>snapshotV3 :=
