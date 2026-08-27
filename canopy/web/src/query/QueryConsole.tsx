@@ -33,7 +33,7 @@ import { TopNResultView } from './results/TopNResultView.js';
 import { ResultEmpty } from './results/ResultEmpty.js';
 import { ResultError } from './results/ResultError.js';
 import {
-  buildBydbQL, qbDataCatalog, qbEmptyWhere, qbPruneWhere, qbNewCond,
+  buildBydbQL, qbDataCatalog, qbEmptyWhere, qbDefaultTraceWhere, qbPruneProjection, qbPruneSelect, qbPruneWhere, qbNewCond,
   qbProtoCatalog, qbHasAnyFilter, qbHasTraceIdCondition,
   type QBBuilderState, type QB_CATALOG_VALUE, type GroupTopnAggMap,
 } from './bydbql.js';
@@ -201,9 +201,7 @@ export function QueryConsole() {
     // ORDER BY clause; seed a trace_id condition for trace resources as a
     // convenient starting point. The user can change the tag freely; if no
     // trace_id condition remains, an effect defaults orderField to 'time'.
-    const defaultWhere = catalog === 'traces'
-      ? { combinator: 'AND' as const, children: [{ tag: 'trace_id', op: 'BINARY_OP_EQ' as const, value: '' }] }
-      : qbEmptyWhere();
+    const defaultWhere = catalog === 'traces' ? qbDefaultTraceWhere() : qbEmptyWhere();
     patch({
       catalog,
       group,
@@ -467,13 +465,21 @@ export function QueryConsole() {
     return { begin: new Date(beginMs).toISOString(), end: new Date(now).toISOString() };
   };
 
-  // Re-prune WHERE tags when resource changes. Guard on a non-empty tag list:
-  // right after a pick the new schema hasn't loaded yet (tags === []), and
-  // pruning against an empty list would wipe the freshly seeded trace_id
-  // condition for traces.
+  // Re-prune WHERE / SELECT / GROUP BY / measure field rows when the resource
+  // schema loads. Guard on a non-empty tag list: right after a pick the new
+  // schema hasn't loaded yet (tags === []), and pruning against an empty list
+  // would wipe the freshly seeded trace_id condition for traces. Measure
+  // select[] is pruned only once fields are known for the same reason.
   useEffect(() => {
-    if (tags.length > 0) setState((s) => ({ ...s, where: qbPruneWhere(s.where, tags) }));
-  }, [state.resource, tags]);
+    if (tags.length === 0) return;
+    setState((s) => ({
+      ...s,
+      projection: qbPruneProjection(s.projection, tags),
+      where: qbPruneWhere(s.where, tags),
+      groupBy: qbPruneProjection(s.groupBy, tags),
+      select: s.catalog === 'measures' && fields.length > 0 ? qbPruneSelect(s.select, fields) : s.select,
+    }));
+  }, [state.resource, tags, fields]);
 
   // Auto-pick a group once groups load so the rail renders real content
   // on initial load instead of "— none —". Prefers the canonical handoff
