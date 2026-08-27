@@ -525,8 +525,33 @@ export function QueryBuilder({
       fromResource: null,
     });
   };
-  const setGroup = (group: string) => onChange({ group, resource: '' });
-  const setResource = (resource: string) => onChange({ resource });
+  // Switching FROM (resource/group dropdown) must cascade-reset every clause
+  // that references tags of the earlier resource — SELECT / WHERE / GROUP BY
+  // projections become invalid against the new schema. Mirrors the
+  // query-console onPickResource reset (this QueryBuilder only ever receives
+  // a resource/group patch from these controls).
+  const qbResetWhere = () => state.catalog === 'traces'
+    ? { combinator: 'AND' as const, children: [{ tag: 'trace_id', op: 'BINARY_OP_EQ' as const, value: '' }] }
+    : qbEmptyWhere();
+  const setGroup = (group: string) => onChange({
+    group,
+    resource: '',
+    select: [],
+    projection: [],
+    where: qbResetWhere(),
+    groupBy: [],
+    fromAgg: null,
+    fromResource: null,
+  });
+  const setResource = (resource: string) => onChange({
+    resource,
+    select: [],
+    projection: [],
+    where: qbResetWhere(),
+    groupBy: [],
+    fromAgg: null,
+    fromResource: null,
+  });
   const toggleProjection = (tag: string) => {
     const cur = state.projection;
     const next = cur.includes(tag) ? cur.filter((t) => t !== tag) : [...cur, tag];
