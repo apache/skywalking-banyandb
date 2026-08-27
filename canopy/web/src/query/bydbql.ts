@@ -627,6 +627,19 @@ export const qbPruneWhere = (
 export const qbPruneProjection = (projection: readonly string[], tags: readonly string[]): readonly string[] =>
   projection.filter((tag) => tags.includes(tag));
 
+/** Drop measure SELECT field rows whose field no longer exists on the chosen measure. */
+export const qbPruneSelect = (
+  rows: readonly { readonly field: string; readonly fn: string }[],
+  fields: readonly string[],
+): readonly { readonly field: string; readonly fn: string }[] =>
+  rows.filter((row) => !row.field || fields.includes(row.field));
+
+/** Empty trace_id equality seed used when switching to a Trace resource. */
+export const qbDefaultTraceWhere = (): QBWhereGroupWithConn => ({
+  combinator: 'AND',
+  children: [{ tag: 'trace_id', op: 'BINARY_OP_EQ', value: '' }],
+});
+
 // ── Fuzzy resource search (From-row search box) ─────────────────────────────
 
 /** A resource row in the search index, before scoring. */

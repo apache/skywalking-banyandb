@@ -22,7 +22,7 @@ import {
   QB_CAT, QB_OP, QB_OPS, QB_UI_KW, QB_CATALOGS, qbDataCatalog,
   qbSearchIndex, qbSearchResults,
   buildBydbQL, qbNodeSQL, qbQuote, qbTimeSQL,
-  qbNewCond, qbEmptyWhere, qbPruneWhere, qbPruneProjection, qbConnSummary,
+  qbNewCond, qbEmptyWhere, qbPruneWhere, qbPruneProjection, qbPruneSelect, qbDefaultTraceWhere, qbConnSummary,
   type QBBuilderState, type QBWhereGroupWithConn, type QBWhereLeafWithConn,
   type GroupResourcesMap, type GroupTopnAggMap,
 } from './bydbql.js';
@@ -480,6 +480,16 @@ describe('WHERE tree helpers', () => {
 
     expect(qbPruneWhere(where, []).children).toEqual([]);
     expect(qbPruneProjection(['old_tag'], [])).toEqual([]);
+  });
+  it('qbPruneSelect drops measure field rows absent from the new measure', () => {
+    expect(qbPruneSelect(
+      [{ field: 'total', fn: 'MEAN' }, { field: 'gone', fn: '' }],
+      ['total', 'value'],
+    )).toEqual([{ field: 'total', fn: 'MEAN' }]);
+  });
+  it('qbDefaultTraceWhere seeds an empty trace_id equality leaf', () => {
+    const where = qbDefaultTraceWhere();
+    expect(where.children).toEqual([{ tag: 'trace_id', op: 'BINARY_OP_EQ', value: '' }]);
   });
   it('qbConnSummary reports AND / OR / mixed', () => {
     expect(qbConnSummary({ combinator: 'AND', children: [] })).toBe('AND');

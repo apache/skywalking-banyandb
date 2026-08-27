@@ -88,11 +88,40 @@ function staleMeasureState(): QBBuilderState {
   };
 }
 
-function StatefulQueryBuilder({ autoPickOnGroupChange }: { readonly autoPickOnGroupChange?: boolean }) {
-  const [state, setState] = useState(staleMeasureState);
-  const tags = state.resource === 'new_measure' ? ['new_tag'] : ['old_tag'];
-  const fields = state.resource === 'new_measure' ? ['new_field'] : ['old_field'];
-  const resourceNames = state.group === 'g2' ? ['new_measure'] : ['old_measure', 'new_measure'];
+/** Mirrors #14043: SELECT entity_id carried from a prior resource into Trace zipkin_span. */
+function staleTraceState(): QBBuilderState {
+  return {
+    ...stateWithLeaf({ tag: 'entity_id', op: 'BINARY_OP_EQ', value: 'svc-1' }),
+    catalog: 'traces',
+    group: 'sw_zipkin',
+    resource: 'old_span',
+    select: [],
+    projection: ['entity_id'],
+    groupBy: [],
+    orderField: 'time',
+    fromResource: 'sw_zipkin/old_span',
+  };
+}
+
+function StatefulQueryBuilder({
+  autoPickOnGroupChange,
+  initialState = staleMeasureState(),
+}: {
+  readonly autoPickOnGroupChange?: boolean;
+  readonly initialState?: QBBuilderState;
+}) {
+  const [state, setState] = useState(initialState);
+  const isTrace = state.catalog === 'traces';
+  const tags = isTrace
+    ? (state.resource === 'zipkin_span' ? ['trace_id', 'span_id', 'name'] : ['entity_id', 'trace_id'])
+    : (state.resource === 'new_measure' ? ['new_tag'] : ['old_tag']);
+  const fields = isTrace
+    ? []
+    : (state.resource === 'new_measure' ? ['new_field'] : ['old_field']);
+  const resourceNames = isTrace
+    ? ['old_span', 'zipkin_span']
+    : (state.group === 'g2' ? ['new_measure'] : ['old_measure', 'new_measure']);
+  const groupNames = isTrace ? ['sw_zipkin'] : ['g1', 'g2'];
   const onChange = (patch: Partial<QBBuilderState>) => {
     setState((current) => {
       const next = { ...current, ...patch };
@@ -109,7 +138,7 @@ function StatefulQueryBuilder({ autoPickOnGroupChange }: { readonly autoPickOnGr
         onChange={onChange}
         tags={tags}
         fields={fields}
-        groupNames={['g1', 'g2']}
+        groupNames={groupNames}
         resourceNames={resourceNames}
         topnAggNames={[]}
         groups={[]}
@@ -192,6 +221,20 @@ describe('QueryBuilder resource changes', () => {
     expect(query).not.toContain('old_field');
     expect(query).not.toContain('WHERE');
     expect(query).not.toContain('GROUP BY');
+  });
+
+  it('drops a stale SELECT tag when switching Trace resources (#14043)', async () => {
+    const { container } = render(<StatefulQueryBuilder initialState={staleTraceState()} />);
+
+    fireEvent.change(screen.getByLabelText('Resource'), { target: { value: 'zipkin_span' } });
+
+    await waitFor(() => expect(queryPreview(container)).toHaveTextContent('FROM TRACE zipkin_span'));
+    const query = queryPreview(container).getAttribute('title') ?? '';
+    // Empty projection on Trace expands to the new resource's tag list (not SELECT *).
+    expect(query).toContain('SELECT trace_id, span_id, name');
+    expect(query).not.toContain('entity_id');
+    expect(query).toContain('WHERE trace_id');
+    expect(query).not.toContain('ORDER BY');
   });
 });
 
