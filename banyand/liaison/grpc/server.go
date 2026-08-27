@@ -505,6 +505,25 @@ func (s *server) validateParamMode() error {
 }
 
 func (s *server) Validate() error {
+	activation := ServiceActivation{
+		SchemaBarrier:    s.barrierSVC != nil,
+		NodeSchemaStatus: s.nodeStatusSVC != nil,
+	}
+	registered := RegisteredMethods(activation)
+	registeredSet := make(map[string]struct{}, len(registered))
+	for _, method := range registered {
+		registeredSet[method] = struct{}{}
+	}
+	policies := GlobalMethodPolicies()
+	activePolicies := make(MethodPolicyTable, 0, len(registered))
+	for _, policy := range policies {
+		if _, active := registeredSet[policy.FullMethod]; active {
+			activePolicies = append(activePolicies, policy)
+		}
+	}
+	if policyErr := ValidateMethodPolicies(activePolicies, registered); policyErr != nil {
+		return policyErr
+	}
 	s.addr = net.JoinHostPort(s.host, strconv.FormatUint(uint64(s.port), 10))
 	if s.addr == ":" {
 		return errNoAddr
@@ -563,13 +582,15 @@ func (s *server) Serve() run.StopNotify {
 	}
 	unaryChain := []grpclib.UnaryServerInterceptor{
 		panicdiag.BreadcrumbUnaryInterceptor(),
-		grpc_validator.UnaryServerInterceptor(),
-		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandlerContext(grpcPanicRecoveryHandler)),
 	}
 	if s.authConfigFile != "" {
 		streamChain = append(streamChain, authStreamInterceptor(s.authReloader))
-		unaryChain = append(unaryChain, authInterceptor(s.authReloader))
+		unaryChain = append(unaryChain, NewAuthorizationInterceptor(s.authReloader, GlobalMethodPolicies(), s.metrics))
 	}
+	unaryChain = append(unaryChain,
+		grpc_validator.UnaryServerInterceptor(),
+		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandlerContext(grpcPanicRecoveryHandler)),
+	)
 	if s.protector != nil {
 		streamChain = append(streamChain, s.protectorLoadSheddingInterceptor)
 	}

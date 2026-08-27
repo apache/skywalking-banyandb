@@ -72,6 +72,7 @@ type metrics struct {
 	bydbqlPreparedCacheCount    meter.Gauge
 	bydbqlPreparedCacheBytes    meter.Gauge
 	bydbqlSlowQueryTotal        meter.Counter
+	authorizationDecisions      meter.Counter
 }
 
 func newMetrics(factory observability.Factory) *metrics {
@@ -107,7 +108,16 @@ func newMetrics(factory observability.Factory) *metrics {
 		bydbqlPreparedCacheCount:           factory.NewGauge("bydbql_prepared_cache_count"),
 		bydbqlPreparedCacheBytes:           factory.NewGauge("bydbql_prepared_cache_bytes"),
 		bydbqlSlowQueryTotal:               factory.NewCounter("bydbql_slow_query_total"),
+		authorizationDecisions:             factory.NewCounter("authorization_decisions_total", "method", "outcome"),
 	}
+}
+
+// ObserveDecision records a bounded unary authorization decision.
+func (m *metrics) ObserveDecision(fullMethod string, decision Decision) {
+	if m == nil {
+		return
+	}
+	m.authorizationDecisions.Inc(1, fullMethod, DecisionLabel(decision))
 }
 
 // updateBufferSizeMetrics updates the buffer size metrics.

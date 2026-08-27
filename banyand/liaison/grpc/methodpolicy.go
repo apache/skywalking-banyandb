@@ -19,10 +19,25 @@ package grpc
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"sort"
 
-	"github.com/pkg/errors"
-	"google.golang.org/grpc"
+	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
+	bydbqlv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/bydbql/v1"
+	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 )
 
@@ -61,13 +76,22 @@ const (
 // DecisionLabel returns the bounded observability label for the decision: "allow", "deny",
 // "unavailable", or "unspecified". The set is closed and contains no caller-controlled
 // text, so it cannot grow the cardinality of the metrics it labels.
-func DecisionLabel(_ Decision) string {
-	return ""
+func DecisionLabel(decision Decision) string {
+	switch decision {
+	case DecisionAllow:
+		return "allow"
+	case DecisionDeny:
+		return "deny"
+	case DecisionUnavailable:
+		return "unavailable"
+	default:
+		return "unspecified"
+	}
 }
 
 // DecisionLabels returns every value DecisionLabel produces, in a fixed order.
 func DecisionLabels() []string {
-	return nil
+	return []string{"allow", "deny", "unavailable", "unspecified"}
 }
 
 // MethodPolicy classifies one gRPC method the liaison serves.
@@ -101,8 +125,56 @@ type ServiceActivation struct {
 // activation, sorted lexicographically. It is derived from the registered services'
 // descriptors, so it tracks a service gaining or losing a method without the method policy
 // table being edited.
-func RegisteredMethods(_ ServiceActivation) []string {
-	return nil
+func RegisteredMethods(activation ServiceActivation) []string {
+	methods := make(map[string]struct{})
+	for _, descriptor := range registeredServiceDescriptors(activation) {
+		for _, method := range descriptor.Methods {
+			methods[fullMethod(descriptor, method.MethodName)] = struct{}{}
+		}
+		for _, stream := range descriptor.Streams {
+			methods[fullMethod(descriptor, stream.StreamName)] = struct{}{}
+		}
+	}
+	registered := make([]string, 0, len(methods))
+	for method := range methods {
+		registered = append(registered, method)
+	}
+	sort.Strings(registered)
+	return registered
+}
+
+func registeredServiceDescriptors(activation ServiceActivation) []grpclib.ServiceDesc {
+	descriptors := []grpclib.ServiceDesc{
+		commonv1.Service_ServiceDesc,
+		streamv1.StreamService_ServiceDesc,
+		measurev1.MeasureService_ServiceDesc,
+		tracev1.TraceService_ServiceDesc,
+		bydbqlv1.BydbQLService_ServiceDesc,
+		databasev1.GroupRegistryService_ServiceDesc,
+		databasev1.IndexRuleBindingRegistryService_ServiceDesc,
+		databasev1.IndexRuleRegistryService_ServiceDesc,
+		databasev1.StreamRegistryService_ServiceDesc,
+		databasev1.MeasureRegistryService_ServiceDesc,
+		propertyv1.PropertyService_ServiceDesc,
+		databasev1.TopNAggregationRegistryService_ServiceDesc,
+		databasev1.SnapshotService_ServiceDesc,
+		databasev1.PropertyRegistryService_ServiceDesc,
+		databasev1.TraceRegistryService_ServiceDesc,
+		databasev1.ClusterStateService_ServiceDesc,
+		databasev1.NodeQueryService_ServiceDesc,
+		grpc_health_v1.Health_ServiceDesc,
+	}
+	if activation.SchemaBarrier {
+		descriptors = append(descriptors, schemav1.SchemaBarrierService_ServiceDesc)
+	}
+	if activation.NodeSchemaStatus {
+		descriptors = append(descriptors, clusterv1.NodeSchemaStatusService_ServiceDesc)
+	}
+	return descriptors
+}
+
+func fullMethod(descriptor grpclib.ServiceDesc, method string) string {
+	return "/" + descriptor.ServiceName + "/" + method
 }
 
 // GlobalMethodPolicies returns the method policy table for this release: every method the
@@ -110,11 +182,39 @@ func RegisteredMethods(_ ServiceActivation) []string {
 // permission. Cluster permissions are activated; schema and data permissions are not, and
 // the methods carrying them fail closed until a later release activates their executor.
 func GlobalMethodPolicies() MethodPolicyTable {
-	return nil
+	globalPermissions := map[string]auth.Permission{
+		fullMethod(commonv1.Service_ServiceDesc, "GetAPIVersion"):                     auth.PermissionClusterRead,
+		fullMethod(databasev1.ClusterStateService_ServiceDesc, "GetClusterState"):     auth.PermissionClusterRead,
+		fullMethod(databasev1.NodeQueryService_ServiceDesc, "GetCurrentNode"):         auth.PermissionClusterRead,
+		fullMethod(grpc_health_v1.Health_ServiceDesc, "Check"):                        auth.PermissionClusterRead,
+		fullMethod(databasev1.SnapshotService_ServiceDesc, "Snapshot"):                auth.PermissionClusterAdmin,
+		fullMethod(clusterv1.NodeSchemaStatusService_ServiceDesc, "GetMaxRevision"):   auth.PermissionClusterAdmin,
+		fullMethod(clusterv1.NodeSchemaStatusService_ServiceDesc, "GetKeyRevisions"):  auth.PermissionClusterAdmin,
+		fullMethod(clusterv1.NodeSchemaStatusService_ServiceDesc, "GetAbsentKeys"):    auth.PermissionClusterAdmin,
+		fullMethod(schemav1.SchemaBarrierService_ServiceDesc, "AwaitRevisionApplied"): auth.PermissionClusterAdmin,
+		fullMethod(streamv1.StreamService_ServiceDesc, "DeleteExpiredSegments"):       auth.PermissionClusterAdmin,
+		fullMethod(measurev1.MeasureService_ServiceDesc, "DeleteExpiredSegments"):     auth.PermissionClusterAdmin,
+		fullMethod(tracev1.TraceService_ServiceDesc, "DeleteExpiredSegments"):         auth.PermissionClusterAdmin,
+	}
+	registered := RegisteredMethods(ServiceActivation{SchemaBarrier: true, NodeSchemaStatus: true})
+	policies := make(MethodPolicyTable, 0, len(registered))
+	for _, method := range registered {
+		permission, activated := globalPermissions[method]
+		if !activated {
+			permission = auth.PermissionDataRead
+		}
+		policies = append(policies, MethodPolicy{FullMethod: method, Permission: permission, Activated: activated})
+	}
+	return policies
 }
 
 // Policy returns the policy classifying the given gRPC full method name.
-func (MethodPolicyTable) Policy(_ string) (MethodPolicy, bool) {
+func (table MethodPolicyTable) Policy(fullMethod string) (MethodPolicy, bool) {
+	for _, policy := range table {
+		if policy.FullMethod == fullMethod {
+			return policy, true
+		}
+	}
 	return MethodPolicy{}, false
 }
 
@@ -122,16 +222,45 @@ func (MethodPolicyTable) Policy(_ string) (MethodPolicy, bool) {
 // the given snapshot. It returns DecisionUnavailable when the method's permission has no
 // activated executor, DecisionDeny when the principal does not hold the permission or when
 // the method is unclassified, and DecisionAllow only when an activated permission is held.
-func (MethodPolicyTable) Authorize(_ auth.Snapshot, _ auth.Principal, _ string) Decision {
-	return DecisionUnspecified
+func (table MethodPolicyTable) Authorize(snapshot auth.Snapshot, principal auth.Principal, fullMethod string) Decision {
+	policy, exists := table.Policy(fullMethod)
+	if !exists {
+		return DecisionDeny
+	}
+	if !policy.Activated {
+		return DecisionUnavailable
+	}
+	if snapshot == nil || !snapshot.Allows(principal, policy.Permission) {
+		return DecisionDeny
+	}
+	return DecisionAllow
 }
 
 // ValidateMethodPolicies reports whether the given table classifies exactly the given
 // registered methods: every registered method carries one policy, no policy names a method
 // that is not registered, and no method is classified twice. The liaison calls it from
 // Validate(), so a defect stops startup before any watcher, goroutine or listener starts.
-func ValidateMethodPolicies(_ MethodPolicyTable, _ []string) error {
-	return errors.New("method policy validation is not built yet")
+func ValidateMethodPolicies(table MethodPolicyTable, registered []string) error {
+	registeredSet := make(map[string]struct{}, len(registered))
+	for _, method := range registered {
+		registeredSet[method] = struct{}{}
+	}
+	classified := make(map[string]struct{}, len(table))
+	for _, policy := range table {
+		if _, exists := classified[policy.FullMethod]; exists {
+			return fmt.Errorf("%w: %s", ErrMethodPolicyDuplicate, policy.FullMethod)
+		}
+		classified[policy.FullMethod] = struct{}{}
+		if _, exists := registeredSet[policy.FullMethod]; !exists {
+			return fmt.Errorf("%w: %s", ErrMethodPolicyStale, policy.FullMethod)
+		}
+	}
+	for _, method := range registered {
+		if _, exists := classified[method]; !exists {
+			return fmt.Errorf("%w: %s", ErrMethodPolicyIncomplete, method)
+		}
+	}
+	return nil
 }
 
 // DecisionObserver records authorization outcomes for observability. The interceptor
@@ -143,13 +272,19 @@ type DecisionObserver interface {
 	ObserveDecision(fullMethod string, decision Decision)
 }
 
+type principalContextKey struct{}
+
 // PrincipalFromContext returns the trusted principal the authorization interceptor
 // established for the given context, and reports whether one was established. The principal is stored
 // under a key this package does not export and is minted only by
 // auth.Snapshot.Authenticate, so an identity a caller supplied in gRPC metadata or an HTTP
 // header can never be read back through this function.
-func PrincipalFromContext(_ context.Context) (auth.Principal, bool) {
-	return auth.Principal{}, false
+func PrincipalFromContext(ctx context.Context) (auth.Principal, bool) {
+	principal, exists := ctx.Value(principalContextKey{}).(auth.Principal)
+	if !exists || principal.IsZero() {
+		return auth.Principal{}, false
+	}
+	return principal, true
 }
 
 // NewAuthorizationInterceptor returns the unary interceptor that owns the authoritative
@@ -167,8 +302,52 @@ func PrincipalFromContext(_ context.Context) (auth.Principal, bool) {
 //
 // When the snapshot has RBAC disabled the interceptor performs authentication only, which
 // leaves no-auth and users-only deployments behaving exactly as they did before.
-func NewAuthorizationInterceptor(_ *auth.Reloader, _ MethodPolicyTable, _ DecisionObserver) grpc.UnaryServerInterceptor {
-	return func(_ context.Context, _ any, _ *grpc.UnaryServerInfo, _ grpc.UnaryHandler) (any, error) {
-		return nil, errors.New("the authorization interceptor is not built yet")
+func NewAuthorizationInterceptor(reloader *auth.Reloader, table MethodPolicyTable, observer DecisionObserver) grpclib.UnaryServerInterceptor {
+	return func(ctx context.Context, request any, info *grpclib.UnaryServerInfo, handler grpclib.UnaryHandler) (any, error) {
+		if reloader == nil {
+			return handler(ctx, request)
+		}
+		configuration := reloader.GetConfig()
+		if configuration == nil || !configuration.Enabled {
+			return handler(ctx, request)
+		}
+		if info == nil {
+			return nil, status.Error(codes.PermissionDenied, "permission denied")
+		}
+		if info.FullMethod == "/grpc.health.v1.Health/Check" && !configuration.HealthAuthEnabled {
+			return handler(ctx, request)
+		}
+
+		snapshot := reloader.CurrentSnapshot()
+		principal, authenticated := authenticatePrincipal(ctx, snapshot)
+		if !authenticated {
+			return nil, status.Error(codes.Unauthenticated, "unauthenticated")
+		}
+		handlerContext := context.WithValue(ctx, principalContextKey{}, principal)
+		if !snapshot.RBACEnabled() {
+			return handler(handlerContext, request)
+		}
+
+		decision := table.Authorize(snapshot, principal, info.FullMethod)
+		if _, classified := table.Policy(info.FullMethod); classified && observer != nil {
+			observer.ObserveDecision(info.FullMethod, decision)
+		}
+		if decision != DecisionAllow {
+			return nil, status.Error(codes.PermissionDenied, "permission denied")
+		}
+		return handler(handlerContext, request)
 	}
+}
+
+func authenticatePrincipal(ctx context.Context, snapshot auth.Snapshot) (auth.Principal, bool) {
+	metadataValues, exists := metadata.FromIncomingContext(ctx)
+	if !exists {
+		return auth.Principal{}, false
+	}
+	usernames := metadataValues.Get("username")
+	passwords := metadataValues.Get("password")
+	if len(usernames) == 0 || len(passwords) == 0 {
+		return auth.Principal{}, false
+	}
+	return snapshot.Authenticate(usernames[0], passwords[0])
 }

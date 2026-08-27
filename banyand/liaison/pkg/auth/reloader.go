@@ -21,11 +21,10 @@ package auth
 import (
 	"bytes"
 	"crypto/sha256"
-	"crypto/subtle"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -37,9 +36,10 @@ import (
 
 // Config AuthConfig.
 type Config struct {
-	Users             []User `yaml:"users"`
-	Enabled           bool   `yaml:"-"`
-	HealthAuthEnabled bool   `yaml:"-"`
+	Users             []User      `yaml:"users"`
+	RBAC              RBACSection `yaml:"rbac"`
+	Enabled           bool        `yaml:"-"`
+	HealthAuthEnabled bool        `yaml:"-"`
 }
 
 // User details from config file.
@@ -62,26 +62,42 @@ func (ar *Reloader) loadConfig(filePath string) error {
 	if filePath == "" {
 		return errors.New("configFile must be provided")
 	}
-	info, err := os.Stat(filePath)
-	if err != nil {
-		return err
+	info, statErr := os.Stat(filePath)
+	if statErr != nil {
+		return statErr
 	}
 	perm := info.Mode().Perm()
 	if perm != 0o600 {
 		return fmt.Errorf("config file %s has unsafe permissions: %o (expected 0600)", filePath, perm)
 	}
 
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return err
+	data, readErr := os.ReadFile(filePath)
+	if readErr != nil {
+		return readErr
 	}
 	newCfg := InitCfg()
-	err = yaml.Unmarshal(data, newCfg)
-	if err != nil {
-		return err
+	if unmarshalErr := yaml.Unmarshal(data, newCfg); unmarshalErr != nil {
+		return unmarshalErr
 	}
-	ar.setAuthEnabled(true)
-	ar.setUsers(newCfg.Users)
+
+	ar.mu.Lock()
+	current := ar.snapshot.Load()
+	revision := uint64(1)
+	if current != nil {
+		revision = current.Revision() + 1
+	}
+	snapshot, compileErr := compileSnapshot(revision, data)
+	if compileErr != nil {
+		ar.mu.Unlock()
+		return compileErr
+	}
+	if ar.Config != nil {
+		newCfg.HealthAuthEnabled = ar.Config.HealthAuthEnabled
+	}
+	newCfg.Enabled = true
+	ar.Config = newCfg
+	ar.snapshot.Store(snapshot)
+	ar.mu.Unlock()
 	return nil
 }
 
@@ -89,19 +105,22 @@ func (ar *Reloader) loadConfig(filePath string) error {
 type Reloader struct {
 	debounceTimer  *time.Timer
 	updateCh       chan struct{}
-	configFile     string
 	Config         *Config
 	watcher        *fsnotify.Watcher
 	log            *logger.Logger
+	snapshot       atomic.Pointer[compiledSnapshot]
+	configFile     string
 	lastConfigHash []byte
 	mu             sync.RWMutex
 }
 
 // InitAuthReloader returns Reloader with default values.
 func InitAuthReloader() *Reloader {
-	return &Reloader{
+	reloader := &Reloader{
 		Config: InitCfg(),
 	}
+	reloader.snapshot.Store(initialSnapshot)
+	return reloader
 }
 
 // ConfigAuthReloader returns a Reloader instance with properties populated.
@@ -112,32 +131,39 @@ func (ar *Reloader) ConfigAuthReloader(configFile string, healthAuthEnabled bool
 	if log == nil {
 		return errors.New("logger must not be nil")
 	}
-	err := ar.loadConfig(configFile)
-	if err != nil {
-		return errors.Wrapf(err, "failed to load initial auth config from %s", configFile)
+	if loadErr := ar.loadConfig(configFile); loadErr != nil {
+		return errors.Wrapf(loadErr, "failed to load initial auth config from %s", configFile)
 	}
-	cfg := ar.GetConfig()
 	ar.setHealthAuthEnabled(healthAuthEnabled)
 
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		return errors.Wrap(err, "failed to create fsnotify watcher")
+	watcher, watcherErr := fsnotify.NewWatcher()
+	if watcherErr != nil {
+		return errors.Wrap(watcherErr, "failed to create fsnotify watcher")
+	}
+	lastConfigHash, hashErr := ar.computeFileHash(configFile)
+	if hashErr != nil {
+		closeErr := watcher.Close()
+		if closeErr != nil {
+			return errors.Wrapf(hashErr, "failed to hash initial auth config from %s after closing watcher: %v", configFile, closeErr)
+		}
+		return errors.Wrapf(hashErr, "failed to hash initial auth config from %s", configFile)
 	}
 
-	ar.setConfig(cfg)
+	ar.mu.Lock()
 	ar.configFile = configFile
 	ar.log = log
 	ar.watcher = watcher
 	ar.updateCh = make(chan struct{}, 1)
-	ar.lastConfigHash, _ = ar.computeFileHash(configFile)
+	ar.lastConfigHash = lastConfigHash
+	ar.mu.Unlock()
 
 	return nil
 }
 
 // Start begins monitoring the config file.
 func (ar *Reloader) Start() error {
-	if err := ar.watcher.Add(ar.configFile); err != nil {
-		return errors.Wrapf(err, "failed to watch config file: %s", ar.configFile)
+	if watchErr := ar.watcher.Add(ar.configFile); watchErr != nil {
+		return errors.Wrapf(watchErr, "failed to watch config file: %s", ar.configFile)
 	}
 
 	go ar.watchFiles()
@@ -156,61 +182,21 @@ func (ar *Reloader) GetConfig() *Config {
 	return ar.Config
 }
 
-func (ar *Reloader) setConfig(cfg *Config) {
-	ar.mu.Lock()
-	defer ar.mu.Unlock()
-	ar.Config = cfg
-}
-
 func (ar *Reloader) setHealthAuthEnabled(enabled bool) {
 	ar.mu.Lock()
 	defer ar.mu.Unlock()
-	ar.Config.HealthAuthEnabled = enabled
-}
-
-func (ar *Reloader) setAuthEnabled(enabled bool) {
-	ar.mu.Lock()
-	defer ar.mu.Unlock()
-	ar.Config.Enabled = enabled
-}
-
-func (ar *Reloader) setUsers(users []User) {
-	ar.mu.Lock()
-	defer ar.mu.Unlock()
-	ar.Config.Users = users
+	if ar.Config == nil {
+		ar.Config = InitCfg()
+	}
+	updated := *ar.Config
+	updated.HealthAuthEnabled = enabled
+	ar.Config = &updated
 }
 
 // CheckUsernameAndPassword returns true if the provided username and password match any configured user.
 func (ar *Reloader) CheckUsernameAndPassword(username, password string) bool {
-	cfg := ar.GetConfig()
-
-	username = strings.TrimSpace(username)
-	password = strings.TrimSpace(password)
-
-	for _, user := range cfg.Users {
-		storedUsername := strings.TrimSpace(user.Username)
-		storedPassword := strings.TrimSpace(user.Password)
-
-		// Convert to []byte
-		usernameBytes := []byte(username)
-		storedUsernameBytes := []byte(storedUsername)
-		passwordBytes := []byte(password)
-		storedPasswordBytes := []byte(storedPassword)
-
-		// Length must match
-		if len(usernameBytes) != len(storedUsernameBytes) || len(passwordBytes) != len(storedPasswordBytes) {
-			continue
-		}
-
-		// Use constant-time comparison
-		usernameMatch := subtle.ConstantTimeCompare(usernameBytes, storedUsernameBytes) == 1
-		passwordMatch := subtle.ConstantTimeCompare(passwordBytes, storedPasswordBytes) == 1
-
-		if usernameMatch && passwordMatch {
-			return true
-		}
-	}
-	return false
+	_, authenticated := ar.CurrentSnapshot().Authenticate(username, password)
+	return authenticated
 }
 
 // watchFiles listens for config changes.
@@ -249,18 +235,17 @@ func (ar *Reloader) scheduleReloadAttempt() {
 
 // tryReload reloads config if changed.
 func (ar *Reloader) tryReload() {
-	changed, newHash, err := ar.checkContentChanged()
-	if err != nil {
-		ar.log.Error().Err(err).Msg("error checking config change")
+	changed, newHash, changeErr := ar.checkContentChanged()
+	if changeErr != nil {
+		ar.log.Error().Err(changeErr).Msg("error checking config change")
 		return
 	}
 	if !changed {
 		return
 	}
 
-	err = ar.loadConfig(ar.configFile)
-	if err != nil {
-		ar.log.Error().Err(err).Msg("failed to reload config")
+	if reloadErr := ar.loadConfig(ar.configFile); reloadErr != nil {
+		ar.log.Error().Err(reloadErr).Msg("failed to reload config")
 		return
 	}
 
@@ -278,11 +263,14 @@ func (ar *Reloader) tryReload() {
 
 // checkContentChanged compares file hash.
 func (ar *Reloader) checkContentChanged() (bool, []byte, error) {
-	currentHash, err := ar.computeFileHash(ar.configFile)
-	if err != nil {
-		return false, nil, err
+	currentHash, hashErr := ar.computeFileHash(ar.configFile)
+	if hashErr != nil {
+		return false, nil, hashErr
 	}
-	return !bytes.Equal(ar.lastConfigHash, currentHash), currentHash, nil
+	ar.mu.RLock()
+	lastConfigHash := ar.lastConfigHash
+	ar.mu.RUnlock()
+	return !bytes.Equal(lastConfigHash, currentHash), currentHash, nil
 }
 
 // computeFileHash computes sha256 of file.

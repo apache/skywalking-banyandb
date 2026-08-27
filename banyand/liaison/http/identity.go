@@ -27,7 +27,7 @@ import (
 // grpc-gateway boundary. The gateway turns each of them into gRPC metadata, so a request
 // arriving from the network must never be allowed to set one itself.
 func IdentityHeaders() []string {
-	return nil
+	return []string{"Grpc-Metadata-Username", "Grpc-Metadata-Password"}
 }
 
 // NewAuthMiddleware returns the HTTP middleware that guards the grpc-gateway mux. It
@@ -42,10 +42,6 @@ func IdentityHeaders() []string {
 //
 // Static asset paths and, when health-check authentication is disabled, the health
 // endpoint pass through untouched, exactly as they did before this middleware existed.
-func NewAuthMiddleware(_ *auth.Reloader) func(http.Handler) http.Handler {
-	return func(http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			http.Error(w, "the security middleware is not built yet", http.StatusNotImplemented)
-		})
-	}
+func NewAuthMiddleware(authReloader *auth.Reloader) func(http.Handler) http.Handler {
+	return authMiddleware(authReloader)
 }

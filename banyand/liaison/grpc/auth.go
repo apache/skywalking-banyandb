@@ -28,27 +28,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 )
 
-func authInterceptor(authReloader *auth.Reloader) grpc.UnaryServerInterceptor {
-	return func(
-		ctx context.Context,
-		req interface{},
-		info *grpc.UnaryServerInfo,
-		handler grpc.UnaryHandler,
-	) (interface{}, error) {
-		cfg := authReloader.GetConfig()
-		if !cfg.Enabled {
-			return handler(ctx, req)
-		}
-		if info.FullMethod == "/grpc.health.v1.Health/Check" && !cfg.HealthAuthEnabled {
-			return handler(ctx, req)
-		}
-		if err := validateUser(ctx, authReloader); err != nil {
-			return nil, err
-		}
-		return handler(ctx, req)
-	}
-}
-
 func authStreamInterceptor(authReloader *auth.Reloader) grpc.StreamServerInterceptor {
 	return func(
 		srv interface{},

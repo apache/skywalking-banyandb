@@ -36,8 +36,12 @@ func authMiddleware(authReloader *auth.Reloader) func(http.Handler) http.Handler
 				next.ServeHTTP(w, r)
 				return
 			}
+			if authReloader == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
 			cfg := authReloader.GetConfig()
-			if !cfg.Enabled {
+			if cfg == nil || !cfg.Enabled {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -46,16 +50,19 @@ func authMiddleware(authReloader *auth.Reloader) func(http.Handler) http.Handler
 				next.ServeHTTP(w, r)
 				return
 			}
+			for _, header := range IdentityHeaders() {
+				r.Header.Del(header)
+			}
 
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
 				w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
-				http.Error(w, "Authorization header is missing", http.StatusUnauthorized)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
 
 			if !strings.HasPrefix(authHeader, "Basic ") {
-				http.Error(w, "Invalid authorization header format", http.StatusBadRequest)
+				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
 
@@ -63,7 +70,7 @@ func authMiddleware(authReloader *auth.Reloader) func(http.Handler) http.Handler
 
 			decodedBytes, err := base64.StdEncoding.DecodeString(encodedCredentials)
 			if err != nil {
-				http.Error(w, "Failed to decode authorization header", http.StatusBadRequest)
+				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
 
@@ -71,14 +78,15 @@ func authMiddleware(authReloader *auth.Reloader) func(http.Handler) http.Handler
 
 			parts := strings.SplitN(decodedCredentials, ":", 2)
 			if len(parts) != 2 {
-				http.Error(w, "Invalid authorization header format", http.StatusBadRequest)
+				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
 
 			username := parts[0]
 			password := parts[1]
-			if !authReloader.CheckUsernameAndPassword(username, password) {
-				http.Error(w, `{"error": "invalid credentials"}`, http.StatusUnauthorized)
+			if _, authenticated := authReloader.CurrentSnapshot().Authenticate(username, password); !authenticated {
+				w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
 
@@ -93,6 +101,7 @@ var staticPaths = []string{
 	"/favicon.ico",
 	"/banyandb.ico",
 	"/assets/",
+	"/index.html",
 	"index.html",
 }
 
