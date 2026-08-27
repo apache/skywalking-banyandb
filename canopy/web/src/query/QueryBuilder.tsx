@@ -29,7 +29,7 @@
 import React from 'react';
 import {
   QB_CATALOGS, QB_CAT, QB_UI_KW, QB_OPS, QB_OP, QB_AGGS, QB_TOPN_OPS, QB_TOPN_AGGS, QB_TIMES, QB_COMBINATORS,
-  qbDataCatalog, qbIsGroup, qbNewCond, qbNewGroup, qbEmptyWhere, qbPruneWhere,
+  qbDataCatalog, qbIsGroup, qbNewCond, qbNewGroup, qbEmptyWhere, qbDefaultTraceWhere, qbPruneWhere,
   qbSearchIndex, qbSearchResults, qbConnSummary,
   buildBydbQL,
   type QBWhereNode, type QBWhereLeafWithConn,
@@ -525,8 +525,23 @@ export function QueryBuilder({
       fromResource: null,
     });
   };
-  const setGroup = (group: string) => onChange({ group, resource: '' });
-  const setResource = (resource: string) => onChange({ resource });
+  // Match onPickResource / fuzzy From pick: Trace resource changes re-seed an
+  // empty trace_id condition (and clear ORDER BY) so the analyzer stays valid.
+  const resetResourceClauses = (): Partial<QBBuilderState> => {
+    const isTrace = state.catalog === 'traces';
+    return {
+      select: [],
+      projection: [],
+      where: isTrace ? qbDefaultTraceWhere() : qbEmptyWhere(),
+      groupBy: [],
+      ...(isTrace ? { orderField: '' as const } : {}),
+      fromAgg: null,
+      fromResource: null,
+      offset: 0,
+    };
+  };
+  const setGroup = (group: string) => onChange({ group, resource: '', ...resetResourceClauses() });
+  const setResource = (resource: string) => onChange({ resource, ...resetResourceClauses() });
   const toggleProjection = (tag: string) => {
     const cur = state.projection;
     const next = cur.includes(tag) ? cur.filter((t) => t !== tag) : [...cur, tag];
