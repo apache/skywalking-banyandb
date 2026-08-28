@@ -186,7 +186,7 @@ assert_bounded_decision_labels() {
       *) fail "unbounded RBAC permission label: ${permission}" ;;
     esac
     case ${reason} in
-      granted|unauthenticated|permission_missing|executor_unavailable|health_exempt) ;;
+      granted|unauthenticated|permission_missing|executor_unavailable|health_exempt|invalid_request) ;;
       *) fail "unbounded RBAC reason label: ${reason}" ;;
     esac
     if grep -Eq '(username|password|principal|role|group)=' <<<"${line}"; then
@@ -244,7 +244,9 @@ expect_http 200 bydb-admin admin-secret POST /api/v1/snapshot '{}'
 after_http_snapshot=$(snapshot_fingerprint "${container_id}")
 [[ ${after_http_snapshot} != "${after_grpc_snapshot}" ]] || fail "allowed HTTP Snapshot created no filesystem artifact"
 
-expect_grpc PermissionDenied bydb-admin admin-secret "${group_list}"
+# Group.List is decided by the schema executor issue #14015 activates: a wildcard
+# administrator is allowed and its response carries every group.
+expect_grpc OK bydb-admin admin-secret "${group_list}"
 expect_grpc PermissionDenied bydb-admin admin-secret "${stream_write}"
 for fallback_method in "${internal_query}" "${stream_delete}" "${measure_delete}" "${trace_delete}"; do
   expect_grpc Unimplemented bydb-admin admin-secret "${fallback_method}"
@@ -256,7 +258,7 @@ expect_http 401 bydb-admin wrong-password GET /api/v1/cluster/state ''
 expect_http 403 bydb-auth-only auth-only-secret GET /api/v1/cluster/state ''
 expect_http 403 bydb-reader reader-secret GET /api/v1/cluster/state ''
 expect_http 200 bydb-admin admin-secret GET /api/v1/cluster/state ''
-expect_http 403 bydb-admin admin-secret GET /api/v1/group/schema/lists ''
+expect_http 200 bydb-admin admin-secret GET /api/v1/group/schema/lists ''
 expect_http 403 bydb-reader reader-secret GET /api/v1/cluster/state '' \
   --header 'Grpc-Metadata-Username: bydb-admin' --header 'Grpc-Metadata-Password: admin-secret'
 
@@ -280,7 +282,7 @@ assert_metric_delta "${before_metrics}" "${after_metrics}" 2 "${decision_metric}
 assert_metric_delta "${before_metrics}" "${after_metrics}" 2 "${decision_metric}" \
   'method="banyandb.database.v1.SnapshotService/Snapshot"' 'decision="allow"' 'reason="granted"'
 assert_metric_delta "${before_metrics}" "${after_metrics}" 2 "${decision_metric}" \
-  'method="banyandb.database.v1.GroupRegistryService/List"' 'decision="deny"' 'reason="executor_unavailable"'
+  'method="banyandb.database.v1.GroupRegistryService/List"' 'decision="allow"' 'reason="granted"'
 assert_metric_delta "${before_metrics}" "${after_metrics}" 1 "${decision_metric}" \
   'method="banyandb.stream.v1.StreamService/Write"' 'decision="deny"' 'reason="executor_unavailable"'
 for fallback_method in "${internal_query}" "${stream_delete}" "${measure_delete}" "${trace_delete}"; do

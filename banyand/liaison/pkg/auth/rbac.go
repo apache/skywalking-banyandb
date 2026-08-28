@@ -114,6 +114,13 @@ type Snapshot interface {
 	// Allows reports whether principal holds perm for every requested group. Omitting groups
 	// asks for the wildcard/global grant. It reports false for a zero or unbound principal.
 	Allows(principal Principal, perm Permission, groups ...string) bool
+	// AllowsAny reports whether principal holds perm in at least one scope, exact or
+	// wildcard. It answers the visibility question a method whose resource set is the whole
+	// deployment asks before its handler runs: a principal holding perm in no scope at all is
+	// rejected outright, while one holding it in any scope proceeds and has its response
+	// reduced to the groups its scopes cover. It reports false for a zero or unbound
+	// principal, and false whenever the configuration left RBAC off.
+	AllowsAny(principal Principal, perm Permission) bool
 }
 
 type credential struct {
@@ -387,6 +394,10 @@ func (s *compiledSnapshot) Allows(principal Principal, permission Permission, gr
 		}
 	}
 	return true
+}
+
+func (s *compiledSnapshot) AllowsAny(_ Principal, _ Permission) bool {
+	return false
 }
 
 // CurrentSnapshot returns the security snapshot in force. It never returns nil: before any

@@ -72,6 +72,11 @@ const (
 	// for the method's permission. It is the fail-closed outcome and, like DecisionDeny,
 	// is reported to the caller as codes.PermissionDenied.
 	DecisionUnavailable
+	// DecisionInvalidRequest rejects the request because the group scope its method's policy
+	// needs cannot be read from it. It is reported to the caller as codes.InvalidArgument, so
+	// an authenticated caller sending a malformed request learns that it was malformed and
+	// learns nothing about what it would have been allowed to do.
+	DecisionInvalidRequest
 )
 
 // DecisionReason is a bounded explanation for an authorization decision.
@@ -84,7 +89,21 @@ const (
 	DecisionReasonPermissionMissing   DecisionReason = "permission_missing"
 	DecisionReasonExecutorUnavailable DecisionReason = "executor_unavailable"
 	DecisionReasonHealthExempt        DecisionReason = "health_exempt"
+	DecisionReasonInvalidRequest      DecisionReason = "invalid_request"
 )
+
+// DecisionReasons returns every bounded reason an authorization decision can carry, in a
+// fixed order. It is the closed label set observability is allowed to report.
+func DecisionReasons() []DecisionReason {
+	return []DecisionReason{
+		DecisionReasonGranted,
+		DecisionReasonUnauthenticated,
+		DecisionReasonPermissionMissing,
+		DecisionReasonExecutorUnavailable,
+		DecisionReasonHealthExempt,
+		DecisionReasonInvalidRequest,
+	}
+}
 
 // DecisionLabel returns the bounded observability label for the decision. Internal deny
 // variants collapse to "deny" and are distinguished by a bounded reason label.
@@ -109,6 +128,10 @@ type MethodPolicy struct {
 	Permission auth.Permission
 	// Access identifies authentication-only, health-policy, or RBAC permission checks.
 	Access MethodAccess
+	// Scope names the typed extractor that resolves the method's group scopes from its
+	// request. It pairs the method with exactly one scope family, so a decision for the
+	// method reads the groups out of the request shape that method actually has.
+	Scope ScopeFamily
 	// Activated reports whether this release has an executor that can decide Permission.
 	// A registered method whose permission has no activated executor fails closed for
 	// every principal, admin included.
@@ -210,47 +233,48 @@ func fullMethod(descriptor grpclib.ServiceDesc, method string) string {
 }
 
 // GlobalMethodPolicies returns the method policy table for this release: every method the
-// liaison can serve, the permission it requires, and whether this release can decide that
-// permission. Cluster permissions are activated; schema and data permissions are not, and
-// the methods carrying them fail closed until a later release activates their executor.
+// liaison can serve, the permission it requires, the scope family a decision for it reads out
+// of its request, and whether this release can decide that permission. Cluster permissions
+// are activated; the methods whose permission has no activated executor fail closed for every
+// principal until a later release activates it.
 func GlobalMethodPolicies() MethodPolicyTable {
 	policies := MethodPolicyTable{
 		authenticatedPolicy("/banyandb.common.v1.Service/GetAPIVersion"),
 		healthPolicy("/grpc.health.v1.Health/Check"),
 		authenticatedPolicy("/grpc.health.v1.Health/List"),
 		authenticatedPolicy("/grpc.health.v1.Health/Watch"),
-		permissionPolicy("/banyandb.database.v1.ClusterStateService/GetClusterState", auth.PermissionClusterRead, true),
-		permissionPolicy("/banyandb.database.v1.NodeQueryService/GetCurrentNode", auth.PermissionClusterRead, true),
-		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Inspect", auth.PermissionClusterRead, true),
-		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Query", auth.PermissionClusterRead, true),
-		permissionPolicy("/banyandb.database.v1.SnapshotService/Snapshot", auth.PermissionClusterAdmin, true),
-		permissionPolicy("/banyandb.stream.v1.StreamService/DeleteExpiredSegments", auth.PermissionClusterAdmin, true),
-		permissionPolicy("/banyandb.measure.v1.MeasureService/DeleteExpiredSegments", auth.PermissionClusterAdmin, true),
-		permissionPolicy("/banyandb.trace.v1.TraceService/DeleteExpiredSegments", auth.PermissionClusterAdmin, true),
-		permissionPolicy("/banyandb.measure.v1.MeasureService/InternalQuery", auth.PermissionClusterAdmin, true),
-		permissionPolicy("/banyandb.cluster.v1.NodeSchemaStatusService/GetMaxRevision", auth.PermissionClusterAdmin, true),
-		permissionPolicy("/banyandb.cluster.v1.NodeSchemaStatusService/GetKeyRevisions", auth.PermissionClusterAdmin, true),
-		permissionPolicy("/banyandb.cluster.v1.NodeSchemaStatusService/GetAbsentKeys", auth.PermissionClusterAdmin, true),
-		permissionPolicy("/banyandb.schema.v1.SchemaBarrierService/AwaitRevisionApplied", auth.PermissionSchemaRead, false),
-		permissionPolicy("/banyandb.schema.v1.SchemaBarrierService/AwaitSchemaApplied", auth.PermissionSchemaRead, false),
-		permissionPolicy("/banyandb.schema.v1.SchemaBarrierService/AwaitSchemaDeleted", auth.PermissionSchemaRead, false),
-		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Get", auth.PermissionSchemaRead, false),
-		permissionPolicy("/banyandb.database.v1.GroupRegistryService/List", auth.PermissionSchemaRead, false),
-		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Exist", auth.PermissionSchemaRead, false),
-		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Create", auth.PermissionSchemaWrite, false),
-		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Update", auth.PermissionSchemaWrite, false),
-		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Delete", auth.PermissionSchemaWrite, false),
-		permissionPolicy("/banyandb.stream.v1.StreamService/Query", auth.PermissionDataRead, false),
-		permissionPolicy("/banyandb.stream.v1.StreamService/Write", auth.PermissionDataWrite, false),
-		permissionPolicy("/banyandb.measure.v1.MeasureService/Query", auth.PermissionDataRead, false),
-		permissionPolicy("/banyandb.measure.v1.MeasureService/TopN", auth.PermissionDataRead, false),
-		permissionPolicy("/banyandb.measure.v1.MeasureService/Write", auth.PermissionDataWrite, false),
-		permissionPolicy("/banyandb.trace.v1.TraceService/Query", auth.PermissionDataRead, false),
-		permissionPolicy("/banyandb.trace.v1.TraceService/Write", auth.PermissionDataWrite, false),
-		permissionPolicy("/banyandb.property.v1.PropertyService/Query", auth.PermissionDataRead, false),
-		permissionPolicy("/banyandb.property.v1.PropertyService/Apply", auth.PermissionDataWrite, false),
-		permissionPolicy("/banyandb.property.v1.PropertyService/Delete", auth.PermissionDataWrite, false),
-		permissionPolicy("/banyandb.bydbql.v1.BydbQLService/Query", auth.PermissionDataRead, false),
+		permissionPolicy("/banyandb.database.v1.ClusterStateService/GetClusterState", auth.PermissionClusterRead, ScopeGlobal, true),
+		permissionPolicy("/banyandb.database.v1.NodeQueryService/GetCurrentNode", auth.PermissionClusterRead, ScopeGlobal, true),
+		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Inspect", auth.PermissionClusterRead, ScopeGlobal, true),
+		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Query", auth.PermissionClusterRead, ScopeGlobal, true),
+		permissionPolicy("/banyandb.database.v1.SnapshotService/Snapshot", auth.PermissionClusterAdmin, ScopeGlobal, true),
+		permissionPolicy("/banyandb.stream.v1.StreamService/DeleteExpiredSegments", auth.PermissionClusterAdmin, ScopeGlobal, true),
+		permissionPolicy("/banyandb.measure.v1.MeasureService/DeleteExpiredSegments", auth.PermissionClusterAdmin, ScopeGlobal, true),
+		permissionPolicy("/banyandb.trace.v1.TraceService/DeleteExpiredSegments", auth.PermissionClusterAdmin, ScopeGlobal, true),
+		permissionPolicy("/banyandb.measure.v1.MeasureService/InternalQuery", auth.PermissionClusterAdmin, ScopeGlobal, true),
+		permissionPolicy("/banyandb.cluster.v1.NodeSchemaStatusService/GetMaxRevision", auth.PermissionClusterAdmin, ScopeGlobal, true),
+		permissionPolicy("/banyandb.cluster.v1.NodeSchemaStatusService/GetKeyRevisions", auth.PermissionClusterAdmin, ScopeGlobal, true),
+		permissionPolicy("/banyandb.cluster.v1.NodeSchemaStatusService/GetAbsentKeys", auth.PermissionClusterAdmin, ScopeGlobal, true),
+		permissionPolicy("/banyandb.schema.v1.SchemaBarrierService/AwaitRevisionApplied", auth.PermissionSchemaRead, ScopeUnspecified, false),
+		permissionPolicy("/banyandb.schema.v1.SchemaBarrierService/AwaitSchemaApplied", auth.PermissionSchemaRead, ScopeUnspecified, false),
+		permissionPolicy("/banyandb.schema.v1.SchemaBarrierService/AwaitSchemaDeleted", auth.PermissionSchemaRead, ScopeUnspecified, false),
+		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Get", auth.PermissionSchemaRead, ScopeUnspecified, false),
+		permissionPolicy("/banyandb.database.v1.GroupRegistryService/List", auth.PermissionSchemaRead, ScopeUnspecified, false),
+		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Exist", auth.PermissionSchemaRead, ScopeUnspecified, false),
+		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Create", auth.PermissionSchemaWrite, ScopeUnspecified, false),
+		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Update", auth.PermissionSchemaWrite, ScopeUnspecified, false),
+		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Delete", auth.PermissionSchemaWrite, ScopeUnspecified, false),
+		permissionPolicy("/banyandb.stream.v1.StreamService/Query", auth.PermissionDataRead, ScopeUnspecified, false),
+		permissionPolicy("/banyandb.stream.v1.StreamService/Write", auth.PermissionDataWrite, ScopeUnspecified, false),
+		permissionPolicy("/banyandb.measure.v1.MeasureService/Query", auth.PermissionDataRead, ScopeUnspecified, false),
+		permissionPolicy("/banyandb.measure.v1.MeasureService/TopN", auth.PermissionDataRead, ScopeUnspecified, false),
+		permissionPolicy("/banyandb.measure.v1.MeasureService/Write", auth.PermissionDataWrite, ScopeUnspecified, false),
+		permissionPolicy("/banyandb.trace.v1.TraceService/Query", auth.PermissionDataRead, ScopeUnspecified, false),
+		permissionPolicy("/banyandb.trace.v1.TraceService/Write", auth.PermissionDataWrite, ScopeUnspecified, false),
+		permissionPolicy("/banyandb.property.v1.PropertyService/Query", auth.PermissionDataRead, ScopeUnspecified, false),
+		permissionPolicy("/banyandb.property.v1.PropertyService/Apply", auth.PermissionDataWrite, ScopeUnspecified, false),
+		permissionPolicy("/banyandb.property.v1.PropertyService/Delete", auth.PermissionDataWrite, ScopeUnspecified, false),
+		permissionPolicy("/banyandb.bydbql.v1.BydbQLService/Query", auth.PermissionDataRead, ScopeUnspecified, false),
 	}
 	for _, service := range []string{
 		"StreamRegistryService", "MeasureRegistryService", "TraceRegistryService", "IndexRuleRegistryService",
@@ -258,19 +282,19 @@ func GlobalMethodPolicies() MethodPolicyTable {
 	} {
 		servicePrefix := "/banyandb.database.v1." + service + "/"
 		policies = append(policies,
-			permissionPolicy(servicePrefix+"Get", auth.PermissionSchemaRead, false),
-			permissionPolicy(servicePrefix+"List", auth.PermissionSchemaRead, false),
-			permissionPolicy(servicePrefix+"Exist", auth.PermissionSchemaRead, false),
-			permissionPolicy(servicePrefix+"Create", auth.PermissionSchemaWrite, false),
-			permissionPolicy(servicePrefix+"Update", auth.PermissionSchemaWrite, false),
-			permissionPolicy(servicePrefix+"Delete", auth.PermissionSchemaWrite, false),
+			permissionPolicy(servicePrefix+"Get", auth.PermissionSchemaRead, ScopeUnspecified, false),
+			permissionPolicy(servicePrefix+"List", auth.PermissionSchemaRead, ScopeUnspecified, false),
+			permissionPolicy(servicePrefix+"Exist", auth.PermissionSchemaRead, ScopeUnspecified, false),
+			permissionPolicy(servicePrefix+"Create", auth.PermissionSchemaWrite, ScopeUnspecified, false),
+			permissionPolicy(servicePrefix+"Update", auth.PermissionSchemaWrite, ScopeUnspecified, false),
+			permissionPolicy(servicePrefix+"Delete", auth.PermissionSchemaWrite, ScopeUnspecified, false),
 		)
 	}
 	return policies
 }
 
-func permissionPolicy(method string, permission auth.Permission, activated bool) MethodPolicy {
-	return MethodPolicy{FullMethod: method, Permission: permission, Access: MethodAccessPermission, Activated: activated}
+func permissionPolicy(method string, permission auth.Permission, scope ScopeFamily, activated bool) MethodPolicy {
+	return MethodPolicy{FullMethod: method, Permission: permission, Access: MethodAccessPermission, Scope: scope, Activated: activated}
 }
 
 func authenticatedPolicy(method string) MethodPolicy {
@@ -307,25 +331,41 @@ func (table MethodPolicyTable) Policy(fullMethod string) (MethodPolicy, bool) {
 	return MethodPolicy{}, false
 }
 
-// Authorize decides the given gRPC method for the given principal against the grants in
-// the given snapshot. It returns DecisionUnavailable when the method's permission has no
-// activated executor, DecisionDeny when the principal does not hold the permission or when
-// the method is unclassified, and DecisionAllow only when an activated permission is held.
-func (table MethodPolicyTable) Authorize(snapshot auth.Snapshot, principal auth.Principal, fullMethod string) Decision {
+// Authorize is the liaison's single authorization decision. It decides fullMethod for
+// principal against the grants in snapshot, resolving the group scopes the method's policy
+// needs from request, and returns the outcome together with the bounded reason the liaison
+// reports for it. Both interceptors take their decision here; there is no second authorizer
+// and no per-transport policy, so a direct gRPC call and the grpc-gateway call bound to the
+// same method are decided identically.
+//
+// The order is fixed and each step is decidable without the one after it: an unclassified
+// method is DecisionDeny; an authentication-only or health method is DecisionAllow; a method
+// whose permission has no activated executor is DecisionUnavailable for every principal,
+// admin included; a request the policy's scope family cannot be read from is
+// DecisionInvalidRequest; and the permission must then be held for every resolved scope,
+// which makes a multi-group request all-or-nothing. Requests addressing no group pass a nil
+// request and are satisfied only by a wildcard grant.
+func (table MethodPolicyTable) Authorize(
+	snapshot auth.Snapshot, principal auth.Principal, fullMethod string, request any,
+) (Decision, DecisionReason) {
 	policy, exists := table.Policy(fullMethod)
 	if !exists {
-		return DecisionDeny
+		return DecisionDeny, DecisionReasonPermissionMissing
 	}
 	if policy.Access == MethodAccessAuthenticated || policy.Access == MethodAccessHealth {
-		return DecisionAllow
+		return DecisionAllow, DecisionReasonGranted
 	}
 	if !policy.Activated {
-		return DecisionUnavailable
+		return DecisionUnavailable, DecisionReasonExecutorUnavailable
 	}
-	if snapshot == nil || !snapshot.Allows(principal, policy.Permission) {
-		return DecisionDeny
+	scopes, scopeErr := RequestScopes(policy.Scope, request)
+	if scopeErr != nil {
+		return DecisionInvalidRequest, DecisionReasonInvalidRequest
 	}
-	return DecisionAllow
+	if snapshot == nil || !snapshot.Allows(principal, policy.Permission, scopes...) {
+		return DecisionDeny, DecisionReasonPermissionMissing
+	}
+	return DecisionAllow, DecisionReasonGranted
 }
 
 // ValidateMethodPolicies reports whether the given table classifies exactly the given
@@ -425,9 +465,9 @@ func NewAuthorizationInterceptor(reloader *auth.Reloader, table MethodPolicyTabl
 			return handler(handlerContext, request)
 		}
 
-		decision := table.Authorize(snapshot, principal, info.FullMethod)
+		decision, reason := table.Authorize(snapshot, principal, info.FullMethod, request)
 		if classified {
-			observeDecision(observer, snapshot, policy, decision, reasonForDecision(decision))
+			observeDecision(observer, snapshot, policy, decision, reason)
 		}
 		if decision != DecisionAllow {
 			return nil, status.Error(codes.PermissionDenied, "permission denied")
@@ -477,9 +517,9 @@ func NewAuthorizationStreamInterceptor(
 			return handler(server, trustedStream)
 		}
 
-		decision := table.Authorize(snapshot, principal, info.FullMethod)
+		decision, reason := table.Authorize(snapshot, principal, info.FullMethod, nil)
 		if classified {
-			observeDecision(observer, snapshot, policy, decision, reasonForDecision(decision))
+			observeDecision(observer, snapshot, policy, decision, reason)
 		}
 		if decision != DecisionAllow {
 			return status.Error(codes.PermissionDenied, "permission denied")
@@ -503,17 +543,6 @@ func permissionLabel(policy MethodPolicy) string {
 		return "health"
 	default:
 		return string(policy.Permission)
-	}
-}
-
-func reasonForDecision(decision Decision) DecisionReason {
-	switch decision {
-	case DecisionAllow:
-		return DecisionReasonGranted
-	case DecisionUnavailable:
-		return DecisionReasonExecutorUnavailable
-	default:
-		return DecisionReasonPermissionMissing
 	}
 }
 
