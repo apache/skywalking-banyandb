@@ -1,0 +1,70 @@
+{
+  "oracle": {
+    "go_mod_sha256": "b7faaa8e1fcef81607b38a6fa593b54381e11fa466f496e4cb10d4599b657ac1",
+    "writer": "pkg/index/inverted.NewStore"
+  },
+  "file_sha256": {
+    "detached/000000000006.seg": "6eb9c33787d89707e748e02c3bc90dfa6dd4275c71defd53ea0d1e933cf138aa",
+    "index/000000000002.seg": "9d5dc2cfc257e7bccdde4834b253b316964e72258512a1fccdf7bfc6cfa9ff57",
+    "index/000000000003.seg": "ccdab9e6775b4cc7778f78e1c15e5c2d230a87f0797459cde28bc8a6eb1f8962",
+    "index/000000000005.seg": "81556c5330f764d71ba2b12486066956d0094a5e72e6744957120be2fe178e85",
+    "index/00000000000a.snp": "4aac10b45b416c25489138c00334b8615dab684873b29e943ae43162abb3a948",
+    "index/00000000000b.snp": "958a0612b363333af2987a2146690dfbaa7c5bf6a4e0883af7f5ca5d52606d38"
+  },
+  "reserved_crc32": {
+    ".seg": "deadbeef (arbitrary, no writer computed it)",
+    ".snp": "as written by the oracle; the compatibility loader validates this slot, so the corpus keeps it readable and the reserved-field contract is proved by run-time mutation"
+  },
+  "generator_command": "GENERATE_NIDX01B_FIXTURE=1 go test ./pkg/index/inverted/ -run TestGenerateNIDX01BFixture -count=1",
+  "notes": "Generation 10 spans two segments holding five physical documents with one snapshot deletion for doc-22, so four are visible. Generation 11 is newer and references a segment held in detached/ rather than index/, so it is structurally incomplete until that segment is restored, after which five are visible.",
+  "detached_segment": "detached/000000000006.seg",
+  "generations": [
+    {
+      "file": "index/00000000000a.snp",
+      "segments": [
+        {
+          "file": "index/000000000002.seg",
+          "deleted_ordinals": [
+            1
+          ],
+          "id": 2,
+          "physical_documents": 3,
+          "present_in_index_dir": true
+        },
+        {
+          "file": "index/000000000003.seg",
+          "deleted_ordinals": [],
+          "id": 3,
+          "physical_documents": 2,
+          "present_in_index_dir": true
+        }
+      ],
+      "id": 10,
+      "structurally_complete": true
+    },
+    {
+      "file": "index/00000000000b.snp",
+      "segments": [
+        {
+          "file": "index/000000000005.seg",
+          "deleted_ordinals": [],
+          "id": 5,
+          "physical_documents": 4,
+          "present_in_index_dir": true
+        },
+        {
+          "file": "index/000000000006.seg",
+          "deleted_ordinals": [],
+          "id": 6,
+          "physical_documents": 1,
+          "present_in_index_dir": false
+        }
+      ],
+      "id": 11,
+      "structurally_complete": false
+    }
+  ],
+  "deleted_doc_id": 22,
+  "visible_count": 4,
+  "restored_count": 5
+}
