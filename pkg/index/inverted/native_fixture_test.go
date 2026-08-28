@@ -21,11 +21,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -54,6 +56,9 @@ const (
 
 	segExt = ".seg"
 	snpExt = ".snp"
+
+	dirInventoryAttemptLimit = 100
+	dirInventoryRetryDelay   = time.Millisecond
 )
 
 // nidx01aDocIDs are the logical documents the corpus contains, in insertion
@@ -229,24 +234,50 @@ func newestSegmentFile(t *testing.T, dir string) string {
 // excluded -- reading a file is allowed to update it.
 func dirInventory(t *testing.T, dir string) []string {
 	t.Helper()
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
+	var lastInventoryErr error
+	for attempt := 0; attempt < dirInventoryAttemptLimit; attempt++ {
+		inventory, inventoryErr := readDirectoryInventory(dir)
+		if inventoryErr == nil {
+			return inventory
+		}
+		if !errors.Is(inventoryErr, os.ErrNotExist) {
+			require.NoError(t, inventoryErr)
+			return nil
+		}
+		lastInventoryErr = inventoryErr
+		if attempt+1 < dirInventoryAttemptLimit {
+			time.Sleep(dirInventoryRetryDelay)
+		}
+	}
+	t.Fatalf("directory inventory for %s did not observe a complete entry set: %v", dir, lastInventoryErr)
+	return nil
+}
+
+func readDirectoryInventory(dir string) ([]string, error) {
+	entries, readErr := os.ReadDir(dir)
+	if readErr != nil {
+		return nil, readErr
+	}
 	inventory := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		info, infoErr := entry.Info()
-		require.NoError(t, infoErr)
+		if infoErr != nil {
+			return nil, infoErr
+		}
 		line := entry.Name() + " dir=" + strconv.FormatBool(entry.IsDir()) +
 			" size=" + strconv.FormatInt(info.Size(), 10) +
 			" mode=" + info.Mode().String() +
 			" mtime=" + strconv.FormatInt(info.ModTime().UnixNano(), 10)
 		if !entry.IsDir() {
-			payload, readErr := os.ReadFile(filepath.Join(dir, entry.Name()))
-			require.NoError(t, readErr)
+			payload, payloadErr := os.ReadFile(filepath.Join(dir, entry.Name()))
+			if payloadErr != nil {
+				return nil, payloadErr
+			}
 			sum := sha256.Sum256(payload)
 			line += " sha256=" + hex.EncodeToString(sum[:])
 		}
 		inventory = append(inventory, line)
 	}
 	sort.Strings(inventory)
-	return inventory
+	return inventory, nil
 }

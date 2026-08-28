@@ -23,6 +23,8 @@ import (
 	"testing"
 )
 
+const repeatedOpenCount = 4
+
 func TestOpenVisibleDocCount(t *testing.T) {
 	directory, _ := writeCommittedIndex(t)
 
@@ -56,6 +58,53 @@ func TestOpenMissingReferencedSegmentIsCorrupt(t *testing.T) {
 	}
 }
 
+func TestOpenFallsBackToOlderStructurallyCompleteSnapshot(t *testing.T) {
+	directory, _ := writeCommittedIndex(t)
+	manifest := []byte{3, 1, 3, 'i', 'c', 'e', 0, 0, 0, 3, 3}
+	metadata := make([]byte, 32)
+	binary.BigEndian.PutUint64(metadata[8:16], 2)
+	manifest = append(manifest, metadata...)
+	manifest = append(manifest, 0, 0, 0, 0, 0)
+	if writeErr := os.WriteFile(filepath.Join(directory, "000000000002.snp"), manifest, 0o600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+
+	reader, openErr := Open(directory)
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	defer func() {
+		if closeErr := reader.Close(); closeErr != nil {
+			t.Error(closeErr)
+		}
+	}()
+	count, countErr := reader.VisibleDocCount()
+	if countErr != nil {
+		t.Fatal(countErr)
+	}
+	if count != 2 {
+		t.Fatalf("VisibleDocCount() = %d, want 2", count)
+	}
+}
+
+func TestOpenCloseDoesNotLeakFileHandles(t *testing.T) {
+	directory, _ := writeCommittedIndex(t)
+	before := openFileDescriptorCount(t)
+	for openIndex := 0; openIndex < repeatedOpenCount; openIndex++ {
+		reader, openErr := Open(directory)
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		if closeErr := reader.Close(); closeErr != nil {
+			t.Fatal(closeErr)
+		}
+	}
+	after := openFileDescriptorCount(t)
+	if after != before {
+		t.Fatalf("file descriptors after Close() = %d, want %d", after, before)
+	}
+}
+
 func writeCommittedIndex(t *testing.T) (string, string) {
 	t.Helper()
 	directory := t.TempDir()
@@ -83,4 +132,16 @@ func writeCommittedIndex(t *testing.T) (string, string) {
 		t.Fatal(writeErr)
 	}
 	return directory, segmentPath
+}
+
+func openFileDescriptorCount(t *testing.T) int {
+	t.Helper()
+	descriptors, readErr := os.ReadDir("/proc/self/fd")
+	if errors.Is(readErr, os.ErrNotExist) {
+		t.Skip("the operating system does not expose process file descriptors")
+	}
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	return len(descriptors)
 }
