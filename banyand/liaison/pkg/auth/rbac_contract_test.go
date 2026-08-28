@@ -21,6 +21,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -47,23 +48,21 @@ users:
 rbac:
   enabled: true
   roles:
-    - name: "admin"
-      permissions: ["cluster:read", "cluster:admin", "schema:read", "schema:write", "data:read", "data:write"]
-    - name: "monitor"
+    monitor:
       permissions: ["cluster:read"]
-    - name: "reader"
-      permissions: ["data:read"]
-    - name: "writer"
-      permissions: ["data:write"]
   bindings:
-    - username: "bydb-admin"
+    - principal: "bydb-admin"
       role: "admin"
-    - username: "bydb-monitor"
+      groups: ["*"]
+    - principal: "bydb-monitor"
       role: "monitor"
-    - username: "bydb-reader"
+      groups: ["*"]
+    - principal: "bydb-reader"
       role: "reader"
-    - username: "bydb-writer"
+      groups: ["sw_metric"]
+    - principal: "bydb-writer"
       role: "writer"
+      groups: ["*"]
 `
 
 // usersOnlyYAML is a configuration file written before this milestone existed. It is
@@ -89,12 +88,11 @@ users:
     password: "secret"
 rbac:
   enabled: false
-  roles:
-    - name: "admin"
-      permissions: ["cluster:admin"]
+  roles: {}
   bindings:
-    - username: "alice"
+    - principal: "alice"
       role: "admin"
+      groups: ["*"]
 `
 
 func writeSecurityFile(t *testing.T, dir, name, content string) string {
@@ -202,13 +200,13 @@ func TestR2_FixedRoleMatrix(t *testing.T) {
 		},
 		"bydb-reader": {
 			auth.PermissionClusterRead: false, auth.PermissionClusterAdmin: false,
-			auth.PermissionSchemaRead: false, auth.PermissionSchemaWrite: false,
+			auth.PermissionSchemaRead: true, auth.PermissionSchemaWrite: false,
 			auth.PermissionDataRead: true, auth.PermissionDataWrite: false,
 		},
 		"bydb-writer": {
 			auth.PermissionClusterRead: false, auth.PermissionClusterAdmin: false,
-			auth.PermissionSchemaRead: false, auth.PermissionSchemaWrite: false,
-			auth.PermissionDataRead: false, auth.PermissionDataWrite: true,
+			auth.PermissionSchemaRead: true, auth.PermissionSchemaWrite: true,
+			auth.PermissionDataRead: true, auth.PermissionDataWrite: true,
 		},
 		"bydb-unbound": {
 			auth.PermissionClusterRead: false, auth.PermissionClusterAdmin: false,
@@ -226,8 +224,12 @@ func TestR2_FixedRoleMatrix(t *testing.T) {
 		if user.Username() != username {
 			t.Errorf("Principal.Username() = %q, want %q", user.Username(), username)
 		}
+		scope := "*"
+		if username == "bydb-reader" {
+			scope = "sw_metric"
+		}
 		for perm, allowed := range row {
-			if got := snap.Allows(user, perm); got != allowed {
+			if got := snap.Allows(user, perm, scope); got != allowed {
 				t.Errorf("Allows(%s, %s) = %v, want %v", username, perm, got, allowed)
 			}
 		}
@@ -253,6 +255,23 @@ func TestR2_ZeroPrincipalHoldsNothing(t *testing.T) {
 	}
 }
 
+func TestR2_BindingsEnforceExactAndWildcardScopes(t *testing.T) {
+	snapshot := compile(t, 1, fixedPolicyYAML)
+	reader := principal(t, snapshot, "bydb-reader", "reader-secret")
+	if !snapshot.Allows(reader, auth.PermissionDataRead, "sw_metric") {
+		t.Fatal("exact reader binding did not allow sw_metric")
+	}
+	if snapshot.Allows(reader, auth.PermissionDataRead, "sw_record") {
+		t.Fatal("exact reader binding allowed an unrelated group")
+	}
+	writer := principal(t, snapshot, "bydb-writer", "writer-secret")
+	for _, group := range []string{"sw_metric", "created-after-policy-load"} {
+		if !snapshot.Allows(writer, auth.PermissionDataWrite, group) {
+			t.Errorf("wildcard writer binding did not allow %q", group)
+		}
+	}
+}
+
 // TestR2_InvalidPolicyIsRejected proves that a configuration the compiler cannot trust is
 // rejected outright rather than compiled into a partial grant set. Each case names a
 // distinct way the file can lie about its own model.
@@ -268,26 +287,66 @@ func TestR2_InvalidPolicyIsRejected(t *testing.T) {
 		{
 			name: "permission outside the closed vocabulary",
 			raw: "users:\n  - username: \"a\"\n    password: \"b\"\nrbac:\n  enabled: true\n" +
-				"  roles:\n    - name: \"r\"\n      permissions: [\"cluster:teleport\"]\n  bindings: []\n",
+				"  roles:\n    r:\n      permissions: [\"cluster:teleport\"]\n  bindings: []\n",
 		},
 		{
 			name: "binding names a role that is not declared",
 			raw: "users:\n  - username: \"a\"\n    password: \"b\"\nrbac:\n  enabled: true\n" +
-				"  roles: []\n  bindings:\n    - username: \"a\"\n      role: \"ghost\"\n",
+				"  roles: {}\n  bindings:\n    - principal: \"a\"\n      role: \"ghost\"\n      groups: [\"*\"]\n",
 		},
 		{
 			name: "binding names a user that is not declared",
 			raw: "users:\n  - username: \"a\"\n    password: \"b\"\nrbac:\n  enabled: true\n" +
-				"  roles:\n    - name: \"r\"\n      permissions: [\"cluster:read\"]\n  bindings:\n    - username: \"ghost\"\n      role: \"r\"\n",
+				"  roles:\n    r:\n      permissions: [\"cluster:read\"]\n  bindings:\n    - principal: \"ghost\"\n      role: \"r\"\n      groups: [\"*\"]\n",
 		},
 		{
 			name: "duplicate role name",
 			raw: "users:\n  - username: \"a\"\n    password: \"b\"\nrbac:\n  enabled: true\n" +
-				"  roles:\n    - name: \"r\"\n      permissions: [\"cluster:read\"]\n    - name: \"r\"\n      permissions: [\"cluster:admin\"]\n  bindings: []\n",
+				"  roles:\n    r:\n      permissions: [\"cluster:read\"]\n    r:\n      permissions: [\"cluster:admin\"]\n  bindings: []\n",
 		},
 		{
 			name: "duplicate user name",
-			raw:  "users:\n  - username: \"a\"\n    password: \"b\"\n  - username: \"a\"\n    password: \"c\"\nrbac:\n  enabled: true\n  roles: []\n  bindings: []\n",
+			raw:  "users:\n  - username: \"a\"\n    password: \"b\"\n  - username: \"a\"\n    password: \"c\"\nrbac:\n  enabled: true\n  roles: {}\n  bindings: []\n",
+		},
+		{
+			name: "built-in role override",
+			raw: "users:\n  - username: a\n    password: b\nrbac:\n  enabled: true\n  roles:\n" +
+				"    reader:\n      permissions: [data:write]\n  bindings: []\n",
+		},
+		{
+			name: "duplicate permission",
+			raw: "users:\n  - username: a\n    password: b\nrbac:\n  enabled: true\n  roles:\n" +
+				"    monitor:\n      permissions: [cluster:read, cluster:read]\n  bindings: []\n",
+		},
+		{
+			name: "duplicate group",
+			raw: "users:\n  - username: a\n    password: b\nrbac:\n  enabled: true\n  roles: {}\n  bindings:\n" +
+				"    - principal: a\n      role: reader\n      groups: [alpha, alpha]\n",
+		},
+		{
+			name: "equivalent binding",
+			raw: "users:\n  - username: a\n    password: b\nrbac:\n  enabled: true\n  roles: {}\n  bindings:\n" +
+				"    - principal: a\n      role: reader\n      groups: [alpha, beta]\n" +
+				"    - principal: a\n      role: reader\n      groups: [beta, alpha]\n",
+		},
+		{
+			name: "wildcard mixed with group",
+			raw: "users:\n  - username: a\n    password: b\nrbac:\n  enabled: true\n  roles: {}\n  bindings:\n" +
+				"    - principal: a\n      role: reader\n      groups: ['*', alpha]\n",
+		},
+		{
+			name: "cluster permission with exact scope",
+			raw: "users:\n  - username: a\n    password: b\nrbac:\n  enabled: true\n  roles:\n" +
+				"    monitor:\n      permissions: [cluster:read]\n  bindings:\n" +
+				"    - principal: a\n      role: monitor\n      groups: [alpha]\n",
+		},
+		{
+			name: "unknown RBAC field",
+			raw:  "users:\n  - username: a\n    password: b\nrbac:\n  enabled: true\n  typo: true\n  roles: {}\n  bindings: []\n",
+		},
+		{
+			name: "enabled without user",
+			raw:  "users: []\nrbac:\n  enabled: true\n  roles: {}\n  bindings: []\n",
 		},
 		{name: "truncated document", raw: truncatedYAML},
 	} {
@@ -354,7 +413,7 @@ func TestR5_RejectedReloadRetainsLastKnownGood(t *testing.T) {
 	if _, ok := after.Authenticate("bydb-monitor", "monitor-secret"); !ok {
 		t.Error("the previous revision stopped authenticating bydb-monitor after a rejected reload, want it retained")
 	}
-	if !after.Allows(monitor, auth.PermissionClusterRead) {
+	if !after.Allows(monitor, auth.PermissionClusterRead, "*") {
 		t.Error("the previous revision stopped granting cluster:read to bydb-monitor after a rejected reload, want it retained")
 	}
 	if _, ok := after.Authenticate("a", "b"); ok {
@@ -395,11 +454,12 @@ users:
 rbac:
   enabled: true
   roles:
-    - name: "monitor"
+    monitor:
       permissions: []
   bindings:
-    - username: "bydb-monitor"
+    - principal: "bydb-monitor"
       role: "monitor"
+      groups: ["*"]
 `
 	if err := os.WriteFile(path, []byte(demoted), 0o600); err != nil {
 		t.Fatalf("rewriting %s: %v", path, err)
@@ -418,13 +478,76 @@ rbac:
 		t.Errorf("Revision() = %d after an accepted reload, want it above the previous %d", after.Revision(), beforeRevision)
 	}
 	demotedMonitor := principal(t, after, "bydb-monitor", "monitor-secret")
-	if after.Allows(demotedMonitor, auth.PermissionClusterRead) {
+	if after.Allows(demotedMonitor, auth.PermissionClusterRead, "*") {
 		t.Error("the new revision still grants cluster:read to the demoted bydb-monitor, want it revoked")
 	}
-	if !before.Allows(monitor, auth.PermissionClusterRead) {
+	if !before.Allows(monitor, auth.PermissionClusterRead, "*") {
 		t.Error("the snapshot taken before the reload changed its answer, want an immutable view of its own revision")
 	}
 	if before.Revision() != beforeRevision {
 		t.Errorf("the snapshot taken before the reload reports Revision() = %d, want it pinned at %d", before.Revision(), beforeRevision)
+	}
+}
+
+type recordingPolicyObserver struct {
+	results   []string
+	revisions []uint64
+	mu        sync.Mutex
+}
+
+func (o *recordingPolicyObserver) ObservePolicyReload(result string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.results = append(o.results, result)
+}
+
+func (o *recordingPolicyObserver) SetPolicyRevision(revision uint64) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.revisions = append(o.revisions, revision)
+}
+
+func (o *recordingPolicyObserver) snapshot() ([]string, []uint64) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]string{}, o.results...), append([]uint64{}, o.revisions...)
+}
+
+func TestR5_ReloadObservabilityTracksPublicationAndRejection(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSecurityFile(t, dir, "security.yaml", fixedPolicyYAML)
+	reloader := auth.InitAuthReloader()
+	if configureErr := reloader.ConfigAuthReloader(path, false, logger.GetLogger("rbac-observer-test")); configureErr != nil {
+		t.Fatalf("ConfigAuthReloader() error = %v", configureErr)
+	}
+	observer := &recordingPolicyObserver{}
+	reloader.SetPolicyObserver(observer)
+	results, revisions := observer.snapshot()
+	if len(results) != 1 || results[0] != auth.PolicyReloadSuccess {
+		t.Fatalf("initial reload results = %v, want [%q]", results, auth.PolicyReloadSuccess)
+	}
+	if len(revisions) != 1 || revisions[0] != 1 {
+		t.Fatalf("initial revisions = %v, want [1]", revisions)
+	}
+	if startErr := reloader.Start(); startErr != nil {
+		t.Fatalf("Start() error = %v", startErr)
+	}
+	defer reloader.Stop()
+	if writeErr := os.WriteFile(path, []byte(truncatedYAML), 0o600); writeErr != nil {
+		t.Fatalf("writing invalid reload: %v", writeErr)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		results, revisions = observer.snapshot()
+		if len(results) >= 2 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(results) != 2 || results[1] != auth.PolicyReloadFailure {
+		t.Fatalf("reload results = %v, want [success failure]", results)
+	}
+	if len(revisions) != 1 || revisions[0] != 1 {
+		t.Fatalf("revisions after rejected reload = %v, want unchanged [1]", revisions)
 	}
 }

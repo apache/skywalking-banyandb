@@ -21,14 +21,15 @@ package auth
 import (
 	"bytes"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/pkg/errors"
 	"sigs.k8s.io/yaml"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -48,6 +49,20 @@ type User struct {
 	Password string `yaml:"password"`
 }
 
+// Policy reload result labels are bounded values used by reload observability.
+const (
+	PolicyReloadSuccess = "success"
+	PolicyReloadFailure = "failure"
+)
+
+// PolicyObserver records security-policy publication outcomes.
+type PolicyObserver interface {
+	// ObservePolicyReload records one accepted or rejected policy load.
+	ObservePolicyReload(result string)
+	// SetPolicyRevision records the active last-known-good revision.
+	SetPolicyRevision(revision uint64)
+}
+
 // InitCfg returns Config with default values.
 func InitCfg() *Config {
 	return &Config{
@@ -64,7 +79,7 @@ func (ar *Reloader) loadConfig(filePath string) error {
 	}
 	info, statErr := os.Stat(filePath)
 	if statErr != nil {
-		return statErr
+		return fmt.Errorf("stat auth config %s: %w", filePath, statErr)
 	}
 	perm := info.Mode().Perm()
 	if perm != 0o600 {
@@ -73,11 +88,11 @@ func (ar *Reloader) loadConfig(filePath string) error {
 
 	data, readErr := os.ReadFile(filePath)
 	if readErr != nil {
-		return readErr
+		return fmt.Errorf("read auth config %s: %w", filePath, readErr)
 	}
 	newCfg := InitCfg()
-	if unmarshalErr := yaml.Unmarshal(data, newCfg); unmarshalErr != nil {
-		return unmarshalErr
+	if unmarshalErr := yaml.UnmarshalStrict(data, newCfg); unmarshalErr != nil {
+		return fmt.Errorf("decode auth config %s: %w", filePath, unmarshalErr)
 	}
 
 	ar.mu.Lock()
@@ -89,7 +104,7 @@ func (ar *Reloader) loadConfig(filePath string) error {
 	snapshot, compileErr := compileSnapshot(revision, data)
 	if compileErr != nil {
 		ar.mu.Unlock()
-		return compileErr
+		return fmt.Errorf("compile auth config %s: %w", filePath, compileErr)
 	}
 	if ar.Config != nil {
 		newCfg.HealthAuthEnabled = ar.Config.HealthAuthEnabled
@@ -98,11 +113,13 @@ func (ar *Reloader) loadConfig(filePath string) error {
 	ar.Config = newCfg
 	ar.snapshot.Store(snapshot)
 	ar.mu.Unlock()
+	ar.observePolicyReload(PolicyReloadSuccess, revision)
 	return nil
 }
 
 // Reloader manages dynamic reloading of auth config.
 type Reloader struct {
+	policyObserver PolicyObserver
 	debounceTimer  *time.Timer
 	updateCh       chan struct{}
 	Config         *Config
@@ -132,21 +149,22 @@ func (ar *Reloader) ConfigAuthReloader(configFile string, healthAuthEnabled bool
 		return errors.New("logger must not be nil")
 	}
 	if loadErr := ar.loadConfig(configFile); loadErr != nil {
-		return errors.Wrapf(loadErr, "failed to load initial auth config from %s", configFile)
+		ar.observePolicyReload(PolicyReloadFailure, 0)
+		return fmt.Errorf("failed to load initial auth config from %s: %w", configFile, loadErr)
 	}
 	ar.setHealthAuthEnabled(healthAuthEnabled)
 
 	watcher, watcherErr := fsnotify.NewWatcher()
 	if watcherErr != nil {
-		return errors.Wrap(watcherErr, "failed to create fsnotify watcher")
+		return fmt.Errorf("failed to create fsnotify watcher: %w", watcherErr)
 	}
 	lastConfigHash, hashErr := ar.computeFileHash(configFile)
 	if hashErr != nil {
 		closeErr := watcher.Close()
 		if closeErr != nil {
-			return errors.Wrapf(hashErr, "failed to hash initial auth config from %s after closing watcher: %v", configFile, closeErr)
+			return fmt.Errorf("failed to hash initial auth config from %s: %w; failed to close watcher: %w", configFile, hashErr, closeErr)
 		}
-		return errors.Wrapf(hashErr, "failed to hash initial auth config from %s", configFile)
+		return fmt.Errorf("failed to hash initial auth config from %s: %w", configFile, hashErr)
 	}
 
 	ar.mu.Lock()
@@ -162,12 +180,28 @@ func (ar *Reloader) ConfigAuthReloader(configFile string, healthAuthEnabled bool
 
 // Start begins monitoring the config file.
 func (ar *Reloader) Start() error {
-	if watchErr := ar.watcher.Add(ar.configFile); watchErr != nil {
-		return errors.Wrapf(watchErr, "failed to watch config file: %s", ar.configFile)
+	configDir := filepath.Dir(ar.configFile)
+	if watchErr := ar.watcher.Add(configDir); watchErr != nil {
+		return fmt.Errorf("failed to watch auth config directory %s: %w", configDir, watchErr)
 	}
 
 	go ar.watchFiles()
 	return nil
+}
+
+// SetPolicyObserver installs reload observability and reports the current accepted policy.
+func (ar *Reloader) SetPolicyObserver(observer PolicyObserver) {
+	if ar == nil {
+		return
+	}
+	ar.mu.Lock()
+	ar.policyObserver = observer
+	current := ar.snapshot.Load()
+	ar.mu.Unlock()
+	if observer != nil && current != nil && current.Revision() > 0 {
+		observer.ObservePolicyReload(PolicyReloadSuccess)
+		observer.SetPolicyRevision(current.Revision())
+	}
 }
 
 // Stop stops the watcher.
@@ -211,8 +245,11 @@ func (ar *Reloader) watchFiles() {
 			if !ok {
 				return
 			}
+			if filepath.Clean(event.Name) != filepath.Clean(ar.configFile) {
+				continue
+			}
 			ar.log.Debug().Str("file", event.Name).Str("op", event.Op.String()).Msg("Detected auth file event")
-			if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) != 0 {
+			if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename|fsnotify.Remove) != 0 {
 				ar.scheduleReloadAttempt()
 			}
 		case err, ok := <-ar.watcher.Errors:
@@ -238,6 +275,7 @@ func (ar *Reloader) tryReload() {
 	changed, newHash, changeErr := ar.checkContentChanged()
 	if changeErr != nil {
 		ar.log.Error().Err(changeErr).Msg("error checking config change")
+		ar.observePolicyReload(PolicyReloadFailure, 0)
 		return
 	}
 	if !changed {
@@ -246,6 +284,7 @@ func (ar *Reloader) tryReload() {
 
 	if reloadErr := ar.loadConfig(ar.configFile); reloadErr != nil {
 		ar.log.Error().Err(reloadErr).Msg("failed to reload config")
+		ar.observePolicyReload(PolicyReloadFailure, 0)
 		return
 	}
 
@@ -259,6 +298,22 @@ func (ar *Reloader) tryReload() {
 	default:
 	}
 	ar.log.Info().Msg("auth config updated in memory")
+}
+
+func (ar *Reloader) observePolicyReload(result string, revision uint64) {
+	if ar == nil {
+		return
+	}
+	ar.mu.RLock()
+	observer := ar.policyObserver
+	ar.mu.RUnlock()
+	if observer == nil {
+		return
+	}
+	observer.ObservePolicyReload(result)
+	if result == PolicyReloadSuccess {
+		observer.SetPolicyRevision(revision)
+	}
 }
 
 // checkContentChanged compares file hash.
@@ -275,9 +330,9 @@ func (ar *Reloader) checkContentChanged() (bool, []byte, error) {
 
 // computeFileHash computes sha256 of file.
 func (ar *Reloader) computeFileHash(filePath string) ([]byte, error) {
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, err
+	content, readErr := os.ReadFile(filePath)
+	if readErr != nil {
+		return nil, fmt.Errorf("read auth config %s for hashing: %w", filePath, readErr)
 	}
 	h := sha256.New()
 	h.Write(content)

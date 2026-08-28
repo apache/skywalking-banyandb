@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -73,25 +74,30 @@ const (
 	DecisionUnavailable
 )
 
-// DecisionLabel returns the bounded observability label for the decision: "allow", "deny",
-// "unavailable", or "unspecified". The set is closed and contains no caller-controlled
-// text, so it cannot grow the cardinality of the metrics it labels.
+// DecisionReason is a bounded explanation for an authorization decision.
+type DecisionReason string
+
+// Bounded decision reasons used by authorization observability.
+const (
+	DecisionReasonGranted             DecisionReason = "granted"
+	DecisionReasonUnauthenticated     DecisionReason = "unauthenticated"
+	DecisionReasonPermissionMissing   DecisionReason = "permission_missing"
+	DecisionReasonExecutorUnavailable DecisionReason = "executor_unavailable"
+	DecisionReasonHealthExempt        DecisionReason = "health_exempt"
+)
+
+// DecisionLabel returns the bounded observability label for the decision. Internal deny
+// variants collapse to "deny" and are distinguished by a bounded reason label.
 func DecisionLabel(decision Decision) string {
-	switch decision {
-	case DecisionAllow:
+	if decision == DecisionAllow {
 		return "allow"
-	case DecisionDeny:
-		return "deny"
-	case DecisionUnavailable:
-		return "unavailable"
-	default:
-		return "unspecified"
 	}
+	return "deny"
 }
 
 // DecisionLabels returns every value DecisionLabel produces, in a fixed order.
 func DecisionLabels() []string {
-	return []string{"allow", "deny", "unavailable", "unspecified"}
+	return []string{DecisionLabel(DecisionAllow), DecisionLabel(DecisionDeny)}
 }
 
 // MethodPolicy classifies one gRPC method the liaison serves.
@@ -101,11 +107,25 @@ type MethodPolicy struct {
 	FullMethod string
 	// Permission is the capability a principal must hold to invoke the method.
 	Permission auth.Permission
+	// Access identifies authentication-only, health-policy, or RBAC permission checks.
+	Access MethodAccess
 	// Activated reports whether this release has an executor that can decide Permission.
 	// A registered method whose permission has no activated executor fails closed for
 	// every principal, admin included.
 	Activated bool
 }
+
+// MethodAccess identifies the authorization executor family for a method.
+type MethodAccess int
+
+const (
+	// MethodAccessPermission requires the policy's RBAC permission.
+	MethodAccessPermission MethodAccess = iota
+	// MethodAccessAuthenticated requires valid credentials but no role binding.
+	MethodAccessAuthenticated
+	// MethodAccessHealth preserves the configurable health-check authentication policy.
+	MethodAccessHealth
+)
 
 // MethodPolicyTable is the complete classification of the gRPC methods a liaison serves.
 type MethodPolicyTable []MethodPolicy
@@ -138,6 +158,18 @@ func RegisteredMethods(activation ServiceActivation) []string {
 	registered := make([]string, 0, len(methods))
 	for method := range methods {
 		registered = append(registered, method)
+	}
+	sort.Strings(registered)
+	return registered
+}
+
+// RegisteredServiceMethods returns the methods exposed by an already registered gRPC server.
+func RegisteredServiceMethods(serviceInfo map[string]grpclib.ServiceInfo) []string {
+	registered := make([]string, 0)
+	for serviceName, service := range serviceInfo {
+		for _, method := range service.Methods {
+			registered = append(registered, "/"+serviceName+"/"+method.Name)
+		}
 	}
 	sort.Strings(registered)
 	return registered
@@ -182,30 +214,87 @@ func fullMethod(descriptor grpclib.ServiceDesc, method string) string {
 // permission. Cluster permissions are activated; schema and data permissions are not, and
 // the methods carrying them fail closed until a later release activates their executor.
 func GlobalMethodPolicies() MethodPolicyTable {
-	globalPermissions := map[string]auth.Permission{
-		fullMethod(commonv1.Service_ServiceDesc, "GetAPIVersion"):                     auth.PermissionClusterRead,
-		fullMethod(databasev1.ClusterStateService_ServiceDesc, "GetClusterState"):     auth.PermissionClusterRead,
-		fullMethod(databasev1.NodeQueryService_ServiceDesc, "GetCurrentNode"):         auth.PermissionClusterRead,
-		fullMethod(grpc_health_v1.Health_ServiceDesc, "Check"):                        auth.PermissionClusterRead,
-		fullMethod(databasev1.SnapshotService_ServiceDesc, "Snapshot"):                auth.PermissionClusterAdmin,
-		fullMethod(clusterv1.NodeSchemaStatusService_ServiceDesc, "GetMaxRevision"):   auth.PermissionClusterAdmin,
-		fullMethod(clusterv1.NodeSchemaStatusService_ServiceDesc, "GetKeyRevisions"):  auth.PermissionClusterAdmin,
-		fullMethod(clusterv1.NodeSchemaStatusService_ServiceDesc, "GetAbsentKeys"):    auth.PermissionClusterAdmin,
-		fullMethod(schemav1.SchemaBarrierService_ServiceDesc, "AwaitRevisionApplied"): auth.PermissionClusterAdmin,
-		fullMethod(streamv1.StreamService_ServiceDesc, "DeleteExpiredSegments"):       auth.PermissionClusterAdmin,
-		fullMethod(measurev1.MeasureService_ServiceDesc, "DeleteExpiredSegments"):     auth.PermissionClusterAdmin,
-		fullMethod(tracev1.TraceService_ServiceDesc, "DeleteExpiredSegments"):         auth.PermissionClusterAdmin,
+	policies := MethodPolicyTable{
+		authenticatedPolicy("/banyandb.common.v1.Service/GetAPIVersion"),
+		healthPolicy("/grpc.health.v1.Health/Check"),
+		authenticatedPolicy("/grpc.health.v1.Health/List"),
+		authenticatedPolicy("/grpc.health.v1.Health/Watch"),
+		permissionPolicy("/banyandb.database.v1.ClusterStateService/GetClusterState", auth.PermissionClusterRead, true),
+		permissionPolicy("/banyandb.database.v1.NodeQueryService/GetCurrentNode", auth.PermissionClusterRead, true),
+		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Inspect", auth.PermissionClusterRead, true),
+		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Query", auth.PermissionClusterRead, true),
+		permissionPolicy("/banyandb.database.v1.SnapshotService/Snapshot", auth.PermissionClusterAdmin, true),
+		permissionPolicy("/banyandb.stream.v1.StreamService/DeleteExpiredSegments", auth.PermissionClusterAdmin, true),
+		permissionPolicy("/banyandb.measure.v1.MeasureService/DeleteExpiredSegments", auth.PermissionClusterAdmin, true),
+		permissionPolicy("/banyandb.trace.v1.TraceService/DeleteExpiredSegments", auth.PermissionClusterAdmin, true),
+		permissionPolicy("/banyandb.measure.v1.MeasureService/InternalQuery", auth.PermissionClusterAdmin, true),
+		permissionPolicy("/banyandb.cluster.v1.NodeSchemaStatusService/GetMaxRevision", auth.PermissionClusterAdmin, true),
+		permissionPolicy("/banyandb.cluster.v1.NodeSchemaStatusService/GetKeyRevisions", auth.PermissionClusterAdmin, true),
+		permissionPolicy("/banyandb.cluster.v1.NodeSchemaStatusService/GetAbsentKeys", auth.PermissionClusterAdmin, true),
+		permissionPolicy("/banyandb.schema.v1.SchemaBarrierService/AwaitRevisionApplied", auth.PermissionSchemaRead, false),
+		permissionPolicy("/banyandb.schema.v1.SchemaBarrierService/AwaitSchemaApplied", auth.PermissionSchemaRead, false),
+		permissionPolicy("/banyandb.schema.v1.SchemaBarrierService/AwaitSchemaDeleted", auth.PermissionSchemaRead, false),
+		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Get", auth.PermissionSchemaRead, false),
+		permissionPolicy("/banyandb.database.v1.GroupRegistryService/List", auth.PermissionSchemaRead, false),
+		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Exist", auth.PermissionSchemaRead, false),
+		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Create", auth.PermissionSchemaWrite, false),
+		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Update", auth.PermissionSchemaWrite, false),
+		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Delete", auth.PermissionSchemaWrite, false),
+		permissionPolicy("/banyandb.stream.v1.StreamService/Query", auth.PermissionDataRead, false),
+		permissionPolicy("/banyandb.stream.v1.StreamService/Write", auth.PermissionDataWrite, false),
+		permissionPolicy("/banyandb.measure.v1.MeasureService/Query", auth.PermissionDataRead, false),
+		permissionPolicy("/banyandb.measure.v1.MeasureService/TopN", auth.PermissionDataRead, false),
+		permissionPolicy("/banyandb.measure.v1.MeasureService/Write", auth.PermissionDataWrite, false),
+		permissionPolicy("/banyandb.trace.v1.TraceService/Query", auth.PermissionDataRead, false),
+		permissionPolicy("/banyandb.trace.v1.TraceService/Write", auth.PermissionDataWrite, false),
+		permissionPolicy("/banyandb.property.v1.PropertyService/Query", auth.PermissionDataRead, false),
+		permissionPolicy("/banyandb.property.v1.PropertyService/Apply", auth.PermissionDataWrite, false),
+		permissionPolicy("/banyandb.property.v1.PropertyService/Delete", auth.PermissionDataWrite, false),
+		permissionPolicy("/banyandb.bydbql.v1.BydbQLService/Query", auth.PermissionDataRead, false),
 	}
-	registered := RegisteredMethods(ServiceActivation{SchemaBarrier: true, NodeSchemaStatus: true})
-	policies := make(MethodPolicyTable, 0, len(registered))
-	for _, method := range registered {
-		permission, activated := globalPermissions[method]
-		if !activated {
-			permission = auth.PermissionDataRead
-		}
-		policies = append(policies, MethodPolicy{FullMethod: method, Permission: permission, Activated: activated})
+	for _, service := range []string{
+		"StreamRegistryService", "MeasureRegistryService", "TraceRegistryService", "IndexRuleRegistryService",
+		"IndexRuleBindingRegistryService", "TopNAggregationRegistryService", "PropertyRegistryService",
+	} {
+		servicePrefix := "/banyandb.database.v1." + service + "/"
+		policies = append(policies,
+			permissionPolicy(servicePrefix+"Get", auth.PermissionSchemaRead, false),
+			permissionPolicy(servicePrefix+"List", auth.PermissionSchemaRead, false),
+			permissionPolicy(servicePrefix+"Exist", auth.PermissionSchemaRead, false),
+			permissionPolicy(servicePrefix+"Create", auth.PermissionSchemaWrite, false),
+			permissionPolicy(servicePrefix+"Update", auth.PermissionSchemaWrite, false),
+			permissionPolicy(servicePrefix+"Delete", auth.PermissionSchemaWrite, false),
+		)
 	}
 	return policies
+}
+
+func permissionPolicy(method string, permission auth.Permission, activated bool) MethodPolicy {
+	return MethodPolicy{FullMethod: method, Permission: permission, Access: MethodAccessPermission, Activated: activated}
+}
+
+func authenticatedPolicy(method string) MethodPolicy {
+	return MethodPolicy{FullMethod: method, Access: MethodAccessAuthenticated, Activated: true}
+}
+
+func healthPolicy(method string) MethodPolicy {
+	return MethodPolicy{FullMethod: method, Access: MethodAccessHealth, Activated: true}
+}
+
+// ActiveMethodPolicies returns the fixed policy subset for the conditionally registered services.
+func ActiveMethodPolicies(activation ServiceActivation) MethodPolicyTable {
+	allPolicies := GlobalMethodPolicies()
+	activePolicies := make(MethodPolicyTable, 0, len(allPolicies))
+	for _, policy := range allPolicies {
+		if strings.HasPrefix(policy.FullMethod, "/banyandb.schema.v1.SchemaBarrierService/") && !activation.SchemaBarrier {
+			continue
+		}
+		if strings.HasPrefix(policy.FullMethod, "/banyandb.cluster.v1.NodeSchemaStatusService/") && !activation.NodeSchemaStatus {
+			continue
+		}
+		activePolicies = append(activePolicies, policy)
+	}
+	return activePolicies
 }
 
 // Policy returns the policy classifying the given gRPC full method name.
@@ -226,6 +315,9 @@ func (table MethodPolicyTable) Authorize(snapshot auth.Snapshot, principal auth.
 	policy, exists := table.Policy(fullMethod)
 	if !exists {
 		return DecisionDeny
+	}
+	if policy.Access == MethodAccessAuthenticated || policy.Access == MethodAccessHealth {
+		return DecisionAllow
 	}
 	if !policy.Activated {
 		return DecisionUnavailable
@@ -269,7 +361,7 @@ func ValidateMethodPolicies(table MethodPolicyTable, registered []string) error 
 // string can reach a metric label.
 type DecisionObserver interface {
 	// ObserveDecision records one authorization decision for fullMethod.
-	ObserveDecision(fullMethod string, decision Decision)
+	ObserveDecision(fullMethod, permission string, decision Decision, reason DecisionReason)
 }
 
 type principalContextKey struct{}
@@ -314,13 +406,18 @@ func NewAuthorizationInterceptor(reloader *auth.Reloader, table MethodPolicyTabl
 		if info == nil {
 			return nil, status.Error(codes.PermissionDenied, "permission denied")
 		}
-		if info.FullMethod == "/grpc.health.v1.Health/Check" && !configuration.HealthAuthEnabled {
+		policy, classified := table.Policy(info.FullMethod)
+		snapshot := reloader.CurrentSnapshot()
+		if policy.Access == MethodAccessHealth && !configuration.HealthAuthEnabled {
+			observeDecision(observer, snapshot, policy, DecisionAllow, DecisionReasonHealthExempt)
 			return handler(ctx, request)
 		}
 
-		snapshot := reloader.CurrentSnapshot()
 		principal, authenticated := authenticatePrincipal(ctx, snapshot)
 		if !authenticated {
+			if classified {
+				observeDecision(observer, snapshot, policy, DecisionDeny, DecisionReasonUnauthenticated)
+			}
 			return nil, status.Error(codes.Unauthenticated, "unauthenticated")
 		}
 		handlerContext := context.WithValue(ctx, principalContextKey{}, principal)
@@ -329,13 +426,94 @@ func NewAuthorizationInterceptor(reloader *auth.Reloader, table MethodPolicyTabl
 		}
 
 		decision := table.Authorize(snapshot, principal, info.FullMethod)
-		if _, classified := table.Policy(info.FullMethod); classified && observer != nil {
-			observer.ObserveDecision(info.FullMethod, decision)
+		if classified {
+			observeDecision(observer, snapshot, policy, decision, reasonForDecision(decision))
 		}
 		if decision != DecisionAllow {
 			return nil, status.Error(codes.PermissionDenied, "permission denied")
 		}
 		return handler(handlerContext, request)
+	}
+}
+
+type principalServerStream struct {
+	grpclib.ServerStream
+	ctx context.Context
+}
+
+func (s *principalServerStream) Context() context.Context {
+	return s.ctx
+}
+
+// NewAuthorizationStreamInterceptor authenticates and authorizes a stream before its handler starts.
+func NewAuthorizationStreamInterceptor(
+	reloader *auth.Reloader,
+	table MethodPolicyTable,
+	observer DecisionObserver,
+) grpclib.StreamServerInterceptor {
+	return func(server any, stream grpclib.ServerStream, info *grpclib.StreamServerInfo, handler grpclib.StreamHandler) error {
+		if reloader == nil {
+			return handler(server, stream)
+		}
+		configuration := reloader.GetConfig()
+		if configuration == nil || !configuration.Enabled {
+			return handler(server, stream)
+		}
+		if info == nil {
+			return status.Error(codes.PermissionDenied, "permission denied")
+		}
+		policy, classified := table.Policy(info.FullMethod)
+		snapshot := reloader.CurrentSnapshot()
+		principal, authenticated := authenticatePrincipal(stream.Context(), snapshot)
+		if !authenticated {
+			if classified {
+				observeDecision(observer, snapshot, policy, DecisionDeny, DecisionReasonUnauthenticated)
+			}
+			return status.Error(codes.Unauthenticated, "unauthenticated")
+		}
+		handlerContext := context.WithValue(stream.Context(), principalContextKey{}, principal)
+		trustedStream := &principalServerStream{ServerStream: stream, ctx: handlerContext}
+		if !snapshot.RBACEnabled() {
+			return handler(server, trustedStream)
+		}
+
+		decision := table.Authorize(snapshot, principal, info.FullMethod)
+		if classified {
+			observeDecision(observer, snapshot, policy, decision, reasonForDecision(decision))
+		}
+		if decision != DecisionAllow {
+			return status.Error(codes.PermissionDenied, "permission denied")
+		}
+		return handler(server, trustedStream)
+	}
+}
+
+func observeDecision(observer DecisionObserver, snapshot auth.Snapshot, policy MethodPolicy, decision Decision, reason DecisionReason) {
+	if observer == nil || snapshot == nil || !snapshot.RBACEnabled() {
+		return
+	}
+	observer.ObserveDecision(policy.FullMethod, permissionLabel(policy), decision, reason)
+}
+
+func permissionLabel(policy MethodPolicy) string {
+	switch policy.Access {
+	case MethodAccessAuthenticated:
+		return "authenticated"
+	case MethodAccessHealth:
+		return "health"
+	default:
+		return string(policy.Permission)
+	}
+}
+
+func reasonForDecision(decision Decision) DecisionReason {
+	switch decision {
+	case DecisionAllow:
+		return DecisionReasonGranted
+	case DecisionUnavailable:
+		return DecisionReasonExecutorUnavailable
+	default:
+		return DecisionReasonPermissionMissing
 	}
 }
 

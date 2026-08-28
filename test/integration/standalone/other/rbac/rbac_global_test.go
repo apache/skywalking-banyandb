@@ -34,6 +34,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	serverauth "github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
@@ -60,23 +61,21 @@ users:
 rbac:
   enabled: true
   roles:
-    - name: "admin"
-      permissions: ["cluster:read", "cluster:admin", "schema:read", "schema:write", "data:read", "data:write"]
-    - name: "monitor"
+    monitor:
       permissions: ["cluster:read"]
-    - name: "reader"
-      permissions: ["data:read"]
-    - name: "writer"
-      permissions: ["data:write"]
   bindings:
-    - username: "bydb-admin"
+    - principal: "bydb-admin"
       role: "admin"
-    - username: "bydb-monitor"
+      groups: ["*"]
+    - principal: "bydb-monitor"
       role: "monitor"
-    - username: "bydb-reader"
+      groups: ["*"]
+    - principal: "bydb-reader"
       role: "reader"
-    - username: "bydb-writer"
+      groups: ["sw_metric"]
+    - principal: "bydb-writer"
       role: "writer"
+      groups: ["*"]
 `
 
 // demotedPolicy revokes cluster:read from bydb-monitor. Applying it live is how the suite
@@ -90,15 +89,15 @@ users:
 rbac:
   enabled: true
   roles:
-    - name: "admin"
-      permissions: ["cluster:read", "cluster:admin", "schema:read", "schema:write", "data:read", "data:write"]
-    - name: "monitor"
+    monitor:
       permissions: []
   bindings:
-    - username: "bydb-admin"
+    - principal: "bydb-admin"
       role: "admin"
-    - username: "bydb-monitor"
+      groups: ["*"]
+    - principal: "bydb-monitor"
       role: "monitor"
+      groups: ["*"]
 `
 
 // malformedPolicy is a truncated document: what a reader observes if it wakes between the
@@ -114,10 +113,11 @@ users:
     password: "admin-secret"
 rbac:
   enabled: true
-  roles: []
+  roles: {}
   bindings:
-    - username: "bydb-admin"
+    - principal: "bydb-admin"
       role: "ghost"
+      groups: ["*"]
 `
 
 type actor struct {
@@ -212,27 +212,41 @@ var _ = g.Describe("rbac-global authorization through the real liaison", func() 
 	// R3: the fixed global gRPC matrix. Every expected code is read off issue #14014's
 	// role definitions and the global method table, not recomputed from the snapshot.
 	g.It("decides the fixed global gRPC method matrix", func() {
+		commonService := commonv1.NewServiceClient(conn)
 		clusterState := databasev1.NewClusterStateServiceClient(conn)
 		nodeQuery := databasev1.NewNodeQueryServiceClient(conn)
+		groups := databasev1.NewGroupRegistryServiceClient(conn)
 		snapshot := databasev1.NewSnapshotServiceClient(conn)
+		_, apiVersionErr := commonService.GetAPIVersion(unboundActor.ctx(), &commonv1.GetAPIVersionRequest{})
+		gm.Expect(apiVersionErr).NotTo(gm.HaveOccurred(), "an authenticated unbound user may negotiate the API version")
 
 		// cluster:read — admin and monitor only.
 		for _, a := range []actor{adminActor, monitorActor} {
-			_, err := clusterState.GetClusterState(a.ctx(), &databasev1.GetClusterStateRequest{})
-			gm.Expect(err).NotTo(gm.HaveOccurred(), "%s must be allowed GetClusterState", a.name)
-			_, err = nodeQuery.GetCurrentNode(a.ctx(), &databasev1.GetCurrentNodeRequest{})
-			gm.Expect(err).NotTo(gm.HaveOccurred(), "%s must be allowed GetCurrentNode", a.name)
+			_, clusterErr := clusterState.GetClusterState(a.ctx(), &databasev1.GetClusterStateRequest{})
+			gm.Expect(clusterErr).NotTo(gm.HaveOccurred(), "%s must be allowed GetClusterState", a.name)
+			_, nodeErr := nodeQuery.GetCurrentNode(a.ctx(), &databasev1.GetCurrentNodeRequest{})
+			gm.Expect(nodeErr).NotTo(gm.HaveOccurred(), "%s must be allowed GetCurrentNode", a.name)
 		}
 		for _, a := range []actor{readerActor, writerActor, unboundActor} {
-			_, err := clusterState.GetClusterState(a.ctx(), &databasev1.GetClusterStateRequest{})
-			gm.Expect(status.Code(err)).To(gm.Equal(codes.PermissionDenied), "%s must be denied GetClusterState", a.name)
-			_, err = nodeQuery.GetCurrentNode(a.ctx(), &databasev1.GetCurrentNodeRequest{})
-			gm.Expect(status.Code(err)).To(gm.Equal(codes.PermissionDenied), "%s must be denied GetCurrentNode", a.name)
+			_, clusterErr := clusterState.GetClusterState(a.ctx(), &databasev1.GetClusterStateRequest{})
+			gm.Expect(status.Code(clusterErr)).To(gm.Equal(codes.PermissionDenied), "%s must be denied GetClusterState", a.name)
+			_, nodeErr := nodeQuery.GetCurrentNode(a.ctx(), &databasev1.GetCurrentNodeRequest{})
+			gm.Expect(status.Code(nodeErr)).To(gm.Equal(codes.PermissionDenied), "%s must be denied GetCurrentNode", a.name)
 		}
+		for _, a := range []actor{adminActor, monitorActor} {
+			_, inspectErr := groups.Inspect(a.ctx(), &databasev1.GroupRegistryServiceInspectRequest{Group: "missing"})
+			gm.Expect(status.Code(inspectErr)).NotTo(gm.Equal(codes.PermissionDenied), "%s must pass RBAC for Inspect", a.name)
+			_, queryErr := groups.Query(a.ctx(), &databasev1.GroupRegistryServiceQueryRequest{Group: "missing"})
+			gm.Expect(status.Code(queryErr)).NotTo(gm.Equal(codes.PermissionDenied), "%s must pass RBAC for deletion-task Query", a.name)
+		}
+		_, inspectErr := groups.Inspect(readerActor.ctx(), &databasev1.GroupRegistryServiceInspectRequest{Group: "missing"})
+		gm.Expect(status.Code(inspectErr)).To(gm.Equal(codes.PermissionDenied), "reader must be denied Inspect")
+		_, queryErr := groups.Query(readerActor.ctx(), &databasev1.GroupRegistryServiceQueryRequest{Group: "missing"})
+		gm.Expect(status.Code(queryErr)).To(gm.Equal(codes.PermissionDenied), "reader must be denied deletion-task Query")
 
 		// cluster:admin — admin only.
-		_, err := snapshot.Snapshot(adminActor.ctx(), &databasev1.SnapshotRequest{})
-		gm.Expect(status.Code(err)).NotTo(gm.Equal(codes.PermissionDenied), "bydb-admin must be allowed Snapshot")
+		_, snapshotErr := snapshot.Snapshot(adminActor.ctx(), &databasev1.SnapshotRequest{})
+		gm.Expect(status.Code(snapshotErr)).NotTo(gm.Equal(codes.PermissionDenied), "bydb-admin must be allowed Snapshot")
 		for _, a := range []actor{monitorActor, readerActor, writerActor, unboundActor} {
 			_, denyErr := snapshot.Snapshot(a.ctx(), &databasev1.SnapshotRequest{})
 			gm.Expect(status.Code(denyErr)).To(gm.Equal(codes.PermissionDenied), "%s must be denied Snapshot", a.name)
@@ -265,6 +279,12 @@ var _ = g.Describe("rbac-global authorization through the real liaison", func() 
 			gm.Expect(status.Code(denyErr)).To(gm.Equal(codes.PermissionDenied),
 				"%s must be stopped before the generated fallback", a.name)
 		}
+		_, err = measure.InternalQuery(adminActor.ctx(), &measurev1.InternalQueryRequest{})
+		gm.Expect(status.Code(err)).To(gm.Equal(codes.Unimplemented),
+			"bydb-admin must be authorized through to the InternalQuery fallback")
+		_, err = measure.InternalQuery(readerActor.ctx(), &measurev1.InternalQueryRequest{})
+		gm.Expect(status.Code(err)).To(gm.Equal(codes.PermissionDenied),
+			"bydb-reader must be stopped before the InternalQuery fallback")
 	})
 
 	// R6: schema and data permissions have no activated executor in this release, so every

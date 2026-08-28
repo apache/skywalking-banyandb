@@ -29,7 +29,12 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 )
 
-func authMiddleware(authReloader *auth.Reloader) func(http.Handler) http.Handler {
+// NewAuthMiddleware returns the HTTP middleware that guards the grpc-gateway mux. It
+// strips every header in IdentityHeaders from the incoming request, authenticates Basic
+// credentials against the current security snapshot, and forwards only the verified
+// identity to gRPC. Authorization remains the responsibility of the gRPC interceptor.
+// Static assets and health checks with authentication disabled pass through unchanged.
+func NewAuthMiddleware(authReloader *auth.Reloader) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if isStaticPath(r.URL.Path) {

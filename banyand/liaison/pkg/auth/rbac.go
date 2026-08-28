@@ -22,6 +22,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"sigs.k8s.io/yaml"
@@ -62,24 +63,23 @@ func Permissions() []Permission {
 
 // Role is a flat, named set of permissions. Roles do not nest or inherit.
 type Role struct {
-	Name        string       `json:"name"        yaml:"name"`
 	Permissions []Permission `json:"permissions" yaml:"permissions"`
 }
 
-// Binding grants one user one role. A user named in `users` but in no binding is
-// authenticated and holds no permission.
+// Binding grants one principal one role within exact group scopes or the wildcard scope.
 type Binding struct {
-	Username string `json:"username" yaml:"username"`
-	Role     string `json:"role"     yaml:"role"`
+	Principal string   `json:"principal" yaml:"principal"`
+	Role      string   `json:"role"      yaml:"role"`
+	Groups    []string `json:"groups"    yaml:"groups"`
 }
 
 // RBACSection is the optional `rbac` block of the security configuration file. Omitting
 // the block, and setting Enabled to false, both leave role-based access control off and
 // the file behaving exactly as a users-only file does.
 type RBACSection struct {
-	Roles    []Role    `json:"roles"    yaml:"roles"`
-	Bindings []Binding `json:"bindings" yaml:"bindings"`
-	Enabled  bool      `json:"enabled"  yaml:"enabled"`
+	Roles    map[string]Role `json:"roles"    yaml:"roles"`
+	Bindings []Binding       `json:"bindings" yaml:"bindings"`
+	Enabled  bool            `json:"enabled"  yaml:"enabled"`
 }
 
 // Principal is the trusted identity of a caller whose credentials a Snapshot verified.
@@ -111,10 +111,9 @@ type Snapshot interface {
 	// Authenticate verifies username and password in constant time against the snapshot's
 	// credentials and returns the trusted principal for them.
 	Authenticate(username, password string) (Principal, bool)
-	// Allows reports whether principal holds perm under this snapshot's compiled grants.
-	// It reports false for the zero principal and for any principal the snapshot does not
-	// know, so an unbound user holds nothing.
-	Allows(principal Principal, perm Permission) bool
+	// Allows reports whether principal holds perm for every requested group. Omitting groups
+	// asks for the wildcard/global grant. It reports false for a zero or unbound principal.
+	Allows(principal Principal, perm Permission, groups ...string) bool
 }
 
 type credential struct {
@@ -124,7 +123,7 @@ type credential struct {
 }
 
 type compiledSnapshot struct {
-	grants      map[string]map[Permission]struct{}
+	grants      map[string]map[Permission]map[string]struct{}
 	credentials []credential
 	revision    uint64
 	rbacEnabled bool
@@ -132,7 +131,7 @@ type compiledSnapshot struct {
 
 var initialSnapshot = &compiledSnapshot{
 	credentials: []credential{},
-	grants:      make(map[string]map[Permission]struct{}),
+	grants:      make(map[string]map[Permission]map[string]struct{}),
 }
 
 // CompileSnapshot parses raw security configuration bytes and compiles them into an
@@ -153,7 +152,7 @@ func compileSnapshot(revision uint64, raw []byte) (*compiledSnapshot, error) {
 		Users []User      `yaml:"users"`
 		RBAC  RBACSection `yaml:"rbac"`
 	}
-	if unmarshalErr := yaml.Unmarshal(raw, &configuration); unmarshalErr != nil {
+	if unmarshalErr := yaml.UnmarshalStrict(raw, &configuration); unmarshalErr != nil {
 		return nil, invalidPolicyError("decode security configuration", unmarshalErr)
 	}
 
@@ -165,33 +164,57 @@ func compileSnapshot(revision uint64, raw []byte) (*compiledSnapshot, error) {
 		revision:    revision,
 		rbacEnabled: configuration.RBAC.Enabled,
 		credentials: credentials,
-		grants:      make(map[string]map[Permission]struct{}),
+		grants:      make(map[string]map[Permission]map[string]struct{}),
 	}
 	if !configuration.RBAC.Enabled {
 		return snapshot, nil
+	}
+	if len(configuration.Users) == 0 {
+		return nil, invalidPolicyError("RBAC is enabled without any users", nil)
 	}
 
 	roles, rolesErr := compileRoles(configuration.RBAC.Roles)
 	if rolesErr != nil {
 		return nil, rolesErr
 	}
+	seenBindings := make(map[string]struct{}, len(configuration.RBAC.Bindings))
 	for _, binding := range configuration.RBAC.Bindings {
-		username := strings.TrimSpace(binding.Username)
+		username := strings.TrimSpace(binding.Principal)
 		roleName := strings.TrimSpace(binding.Role)
 		if _, exists := users[username]; !exists {
-			return nil, invalidPolicyError(fmt.Sprintf("binding references undeclared user %q", username), nil)
+			return nil, invalidPolicyError(fmt.Sprintf("binding references undeclared principal %q", username), nil)
 		}
 		permissions, exists := roles[roleName]
 		if !exists {
 			return nil, invalidPolicyError(fmt.Sprintf("binding references undeclared role %q", roleName), nil)
 		}
+		groups, groupsErr := validateBindingGroups(binding.Groups)
+		if groupsErr != nil {
+			return nil, invalidPolicyError(fmt.Sprintf("binding for principal %q and role %q", username, roleName), groupsErr)
+		}
+		if hasClusterPermission(permissions) && (len(groups) != 1 || groups[0] != "*") {
+			return nil, invalidPolicyError(fmt.Sprintf("binding for role %q with a cluster permission must use wildcard scope", roleName), nil)
+		}
+		bindingKey := username + "\x00" + roleName + "\x00" + strings.Join(groups, "\x00")
+		if _, duplicate := seenBindings[bindingKey]; duplicate {
+			return nil, invalidPolicyError(fmt.Sprintf("duplicate binding for principal %q and role %q", username, roleName), nil)
+		}
+		seenBindings[bindingKey] = struct{}{}
+
 		grants, exists := snapshot.grants[username]
 		if !exists {
-			grants = make(map[Permission]struct{}, len(permissions))
+			grants = make(map[Permission]map[string]struct{}, len(permissions))
 			snapshot.grants[username] = grants
 		}
 		for permission := range permissions {
-			grants[permission] = struct{}{}
+			scopes, present := grants[permission]
+			if !present {
+				scopes = make(map[string]struct{}, len(groups))
+				grants[permission] = scopes
+			}
+			for _, group := range groups {
+				scopes[group] = struct{}{}
+			}
 		}
 	}
 	return snapshot, nil
@@ -219,26 +242,81 @@ func compileCredentials(users []User) ([]credential, map[string]struct{}, error)
 	return credentials, knownUsers, nil
 }
 
-func compileRoles(roles []Role) (map[string]map[Permission]struct{}, error) {
-	compiledRoles := make(map[string]map[Permission]struct{}, len(roles))
-	for _, role := range roles {
-		roleName := strings.TrimSpace(role.Name)
+func compileRoles(roles map[string]Role) (map[string]map[Permission]struct{}, error) {
+	compiledRoles := builtInRoles()
+	roleNames := make([]string, 0, len(roles))
+	for roleName := range roles {
+		roleNames = append(roleNames, roleName)
+	}
+	sort.Strings(roleNames)
+	for _, configuredName := range roleNames {
+		roleName := strings.TrimSpace(configuredName)
 		if roleName == "" {
 			return nil, invalidPolicyError("role has an empty name", nil)
 		}
 		if _, exists := compiledRoles[roleName]; exists {
-			return nil, invalidPolicyError(fmt.Sprintf("duplicate role %q", roleName), nil)
+			return nil, invalidPolicyError(fmt.Sprintf("role %q uses a reserved built-in name", roleName), nil)
 		}
+		role := roles[configuredName]
 		permissions := make(map[Permission]struct{}, len(role.Permissions))
 		for _, permission := range role.Permissions {
 			if !isKnownPermission(permission) {
 				return nil, invalidPolicyError(fmt.Sprintf("role %q has unknown permission %q", roleName, permission), nil)
+			}
+			if _, duplicate := permissions[permission]; duplicate {
+				return nil, invalidPolicyError(fmt.Sprintf("role %q has duplicate permission %q", roleName, permission), nil)
 			}
 			permissions[permission] = struct{}{}
 		}
 		compiledRoles[roleName] = permissions
 	}
 	return compiledRoles, nil
+}
+
+func builtInRoles() map[string]map[Permission]struct{} {
+	return map[string]map[Permission]struct{}{
+		"reader": permissionSet(PermissionSchemaRead, PermissionDataRead),
+		"writer": permissionSet(PermissionSchemaRead, PermissionSchemaWrite, PermissionDataRead, PermissionDataWrite),
+		"admin":  permissionSet(Permissions()...),
+	}
+}
+
+func permissionSet(permissions ...Permission) map[Permission]struct{} {
+	result := make(map[Permission]struct{}, len(permissions))
+	for _, permission := range permissions {
+		result[permission] = struct{}{}
+	}
+	return result
+}
+
+func validateBindingGroups(configuredGroups []string) ([]string, error) {
+	if len(configuredGroups) == 0 {
+		return nil, errors.New("groups must not be empty")
+	}
+	groups := make([]string, 0, len(configuredGroups))
+	seenGroups := make(map[string]struct{}, len(configuredGroups))
+	for _, configuredGroup := range configuredGroups {
+		group := strings.TrimSpace(configuredGroup)
+		if group == "" {
+			return nil, errors.New("group must not be empty")
+		}
+		if _, duplicate := seenGroups[group]; duplicate {
+			return nil, fmt.Errorf("duplicate group %q", group)
+		}
+		seenGroups[group] = struct{}{}
+		groups = append(groups, group)
+	}
+	sort.Strings(groups)
+	if len(groups) > 1 && groups[0] == "*" {
+		return nil, errors.New("wildcard group cannot be combined with exact groups")
+	}
+	return groups, nil
+}
+
+func hasClusterPermission(permissions map[Permission]struct{}) bool {
+	_, hasRead := permissions[PermissionClusterRead]
+	_, hasAdmin := permissions[PermissionClusterAdmin]
+	return hasRead || hasAdmin
 }
 
 func invalidPolicyError(message string, cause error) error {
@@ -284,7 +362,7 @@ func (s *compiledSnapshot) Authenticate(username, password string) (Principal, b
 	return Principal{username: matchedUsername}, true
 }
 
-func (s *compiledSnapshot) Allows(principal Principal, permission Permission) bool {
+func (s *compiledSnapshot) Allows(principal Principal, permission Permission, groups ...string) bool {
 	if !s.rbacEnabled || principal.IsZero() {
 		return false
 	}
@@ -292,8 +370,23 @@ func (s *compiledSnapshot) Allows(principal Principal, permission Permission) bo
 	if !exists {
 		return false
 	}
-	_, allowed := permissions[permission]
-	return allowed
+	scopes, allowed := permissions[permission]
+	if !allowed {
+		return false
+	}
+	if len(groups) == 0 {
+		_, wildcard := scopes["*"]
+		return wildcard
+	}
+	for _, group := range groups {
+		if _, wildcard := scopes["*"]; wildcard {
+			continue
+		}
+		if _, exact := scopes[group]; !exact {
+			return false
+		}
+	}
+	return true
 }
 
 // CurrentSnapshot returns the security snapshot in force. It never returns nil: before any

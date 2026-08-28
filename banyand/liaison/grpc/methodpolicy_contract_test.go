@@ -53,23 +53,21 @@ users:
 rbac:
   enabled: true
   roles:
-    - name: "admin"
-      permissions: ["cluster:read", "cluster:admin", "schema:read", "schema:write", "data:read", "data:write"]
-    - name: "monitor"
+    monitor:
       permissions: ["cluster:read"]
-    - name: "reader"
-      permissions: ["data:read"]
-    - name: "writer"
-      permissions: ["data:write"]
   bindings:
-    - username: "bydb-admin"
+    - principal: "bydb-admin"
       role: "admin"
-    - username: "bydb-monitor"
+      groups: ["*"]
+    - principal: "bydb-monitor"
       role: "monitor"
-    - username: "bydb-reader"
+      groups: ["*"]
+    - principal: "bydb-reader"
       role: "reader"
-    - username: "bydb-writer"
+      groups: ["sw_metric"]
+    - principal: "bydb-writer"
       role: "writer"
+      groups: ["*"]
 `
 
 // The gRPC full method names below are transcribed from the generated service descriptors
@@ -81,6 +79,10 @@ const (
 	mGetCurrentNode   = "/banyandb.database.v1.NodeQueryService/GetCurrentNode"
 	mGetAPIVersion    = "/banyandb.common.v1.Service/GetAPIVersion"
 	mHealthCheck      = "/grpc.health.v1.Health/Check"
+	mHealthList       = "/grpc.health.v1.Health/List"
+	mHealthWatch      = "/grpc.health.v1.Health/Watch"
+	mGroupInspect     = "/banyandb.database.v1.GroupRegistryService/Inspect"
+	mGroupTaskQuery   = "/banyandb.database.v1.GroupRegistryService/Query"
 	mSnapshot         = "/banyandb.database.v1.SnapshotService/Snapshot"
 	mGetMaxRevision   = "/banyandb.cluster.v1.NodeSchemaStatusService/GetMaxRevision"
 	mGetKeyRevisions  = "/banyandb.cluster.v1.NodeSchemaStatusService/GetKeyRevisions"
@@ -104,16 +106,23 @@ const (
 var globalMethods = map[string]auth.Permission{
 	mGetClusterState:  auth.PermissionClusterRead,
 	mGetCurrentNode:   auth.PermissionClusterRead,
-	mGetAPIVersion:    auth.PermissionClusterRead,
-	mHealthCheck:      auth.PermissionClusterRead,
+	mGroupInspect:     auth.PermissionClusterRead,
+	mGroupTaskQuery:   auth.PermissionClusterRead,
 	mSnapshot:         auth.PermissionClusterAdmin,
 	mGetMaxRevision:   auth.PermissionClusterAdmin,
 	mGetKeyRevisions:  auth.PermissionClusterAdmin,
 	mGetAbsentKeys:    auth.PermissionClusterAdmin,
-	mAwaitRevision:    auth.PermissionClusterAdmin,
 	mStreamDeleteSeg:  auth.PermissionClusterAdmin,
 	mMeasureDeleteSeg: auth.PermissionClusterAdmin,
 	mTraceDeleteSeg:   auth.PermissionClusterAdmin,
+	mMeasureInternalQ: auth.PermissionClusterAdmin,
+}
+
+var authenticatedMethods = map[string]bool{
+	mGetAPIVersion: true,
+	mHealthCheck:   true,
+	mHealthList:    true,
+	mHealthWatch:   true,
 }
 
 // fullActivation is the liaison configuration under which every conditionally registered
@@ -156,6 +165,9 @@ func policyTable(t *testing.T) liaisongrpc.MethodPolicyTable {
 // from the registered set alone.
 func TestR1_MethodPolicyCoversExactlyTheRegisteredMethods(t *testing.T) {
 	table := policyTable(t)
+	if len(table) != 78 {
+		t.Fatalf("GlobalMethodPolicies() returned %d rows, want the fixed 78-method oracle", len(table))
+	}
 	registered := liaisongrpc.RegisteredMethods(fullActivation)
 	if len(registered) == 0 {
 		t.Fatal("RegisteredMethods(full activation) returned nothing, want every method the liaison serves")
@@ -182,7 +194,8 @@ func TestR1_RegisteredMethodsTracksTheServiceDescriptors(t *testing.T) {
 		present[m] = true
 	}
 	for _, m := range []string{
-		mGetClusterState, mGetCurrentNode, mGetAPIVersion, mHealthCheck, mSnapshot,
+		mGetClusterState, mGetCurrentNode, mGetAPIVersion, mHealthCheck, mHealthList, mHealthWatch, mSnapshot,
+		mGroupInspect, mGroupTaskQuery,
 		mGetMaxRevision, mGetKeyRevisions, mGetAbsentKeys, mAwaitRevision,
 		mStreamDeleteSeg, mMeasureDeleteSeg, mTraceDeleteSeg, mMeasureInternalQ,
 		mMeasureQuery, mStreamWrite, mGroupCreate, mGroupList, mPropertyApply, mBydbQLQuery,
@@ -199,24 +212,17 @@ func TestR1_RegisteredMethodsTracksTheServiceDescriptors(t *testing.T) {
 // full table must then be *stale* against it. A table that validated under both
 // activations would be silently classifying methods nobody serves.
 func TestR1_ConditionalServicesLeaveTheActiveSet(t *testing.T) {
-	minimal := liaisongrpc.RegisteredMethods(liaisongrpc.ServiceActivation{})
-	present := make(map[string]bool, len(minimal))
-	for _, m := range minimal {
-		present[m] = true
-	}
-	for _, m := range []string{mGetMaxRevision, mGetKeyRevisions, mGetAbsentKeys, mAwaitRevision} {
-		if present[m] {
-			t.Errorf("RegisteredMethods(no conditional services) contains %q, want it absent", m)
+	for _, activation := range []liaisongrpc.ServiceActivation{
+		{},
+		{SchemaBarrier: true},
+		{NodeSchemaStatus: true},
+		{SchemaBarrier: true, NodeSchemaStatus: true},
+	} {
+		registered := liaisongrpc.RegisteredMethods(activation)
+		policies := liaisongrpc.ActiveMethodPolicies(activation)
+		if validateErr := liaisongrpc.ValidateMethodPolicies(policies, registered); validateErr != nil {
+			t.Errorf("ValidateMethodPolicies(%+v) = %v, want nil", activation, validateErr)
 		}
-	}
-	// The unconditional methods must still be there.
-	for _, m := range []string{mGetClusterState, mGetCurrentNode, mSnapshot} {
-		if !present[m] {
-			t.Errorf("RegisteredMethods(no conditional services) is missing the unconditional %q", m)
-		}
-	}
-	if err := liaisongrpc.ValidateMethodPolicies(policyTable(t), minimal); !errors.Is(err, liaisongrpc.ErrMethodPolicyStale) {
-		t.Errorf("ValidateMethodPolicies(full table, minimal activation) = %v, want ErrMethodPolicyStale", err)
 	}
 }
 
@@ -283,7 +289,9 @@ func TestR1_ClassificationDefectsStopStartup(t *testing.T) {
 func TestR6_GlobalMethodsAreActivatedAndTheRestFailClosed(t *testing.T) {
 	table := policyTable(t)
 	seen := make(map[string]bool, len(globalMethods))
+	permissionCounts := make(map[auth.Permission]int)
 	for _, p := range table {
+		permissionCounts[p.Permission]++
 		wantPerm, isGlobal := globalMethods[p.FullMethod]
 		if isGlobal {
 			seen[p.FullMethod] = true
@@ -292,6 +300,12 @@ func TestR6_GlobalMethodsAreActivatedAndTheRestFailClosed(t *testing.T) {
 			}
 			if !p.Activated {
 				t.Errorf("policy for %s is not activated, want this release to decide it", p.FullMethod)
+			}
+			continue
+		}
+		if authenticatedMethods[p.FullMethod] {
+			if !p.Activated {
+				t.Errorf("authenticated policy for %s is not activated", p.FullMethod)
 			}
 			continue
 		}
@@ -307,6 +321,15 @@ func TestR6_GlobalMethodsAreActivatedAndTheRestFailClosed(t *testing.T) {
 	for m := range globalMethods {
 		if !seen[m] {
 			t.Errorf("the table does not classify the global method %s", m)
+		}
+	}
+	for permission, want := range map[auth.Permission]int{
+		auth.PermissionClusterRead: 4, auth.PermissionClusterAdmin: 8,
+		auth.PermissionSchemaRead: 27, auth.PermissionSchemaWrite: 24,
+		auth.PermissionDataRead: 6, auth.PermissionDataWrite: 5,
+	} {
+		if permissionCounts[permission] != want {
+			t.Errorf("policy count for %q = %d, want %d", permission, permissionCounts[permission], want)
 		}
 	}
 }
@@ -340,19 +363,23 @@ func TestR3_GlobalDecisionMatrix(t *testing.T) {
 		// cluster:read — admin and monitor only.
 		{mGetClusterState, allow, allow, deny, deny, deny},
 		{mGetCurrentNode, allow, allow, deny, deny, deny},
-		{mGetAPIVersion, allow, allow, deny, deny, deny},
+		{mGroupInspect, allow, allow, deny, deny, deny},
+		{mGroupTaskQuery, allow, allow, deny, deny, deny},
+		// authenticated-only methods do not require a role binding.
+		{mGetAPIVersion, allow, allow, allow, allow, allow},
+		{mHealthCheck, allow, allow, allow, allow, allow},
 		// cluster:admin — admin only.
 		{mSnapshot, allow, deny, deny, deny, deny},
 		{mGetMaxRevision, allow, deny, deny, deny, deny},
 		{mGetKeyRevisions, allow, deny, deny, deny, deny},
 		{mGetAbsentKeys, allow, deny, deny, deny, deny},
-		{mAwaitRevision, allow, deny, deny, deny, deny},
 		// cluster:admin, generated Unimplemented handler — admin is allowed through to it.
 		{mStreamDeleteSeg, allow, deny, deny, deny, deny},
 		{mMeasureDeleteSeg, allow, deny, deny, deny, deny},
 		{mTraceDeleteSeg, allow, deny, deny, deny, deny},
+		{mMeasureInternalQ, allow, deny, deny, deny, deny},
 		// data / schema — no activated executor, so every actor fails closed.
-		{mMeasureInternalQ, shut, shut, shut, shut, shut},
+		{mAwaitRevision, shut, shut, shut, shut, shut},
 		{mMeasureQuery, shut, shut, shut, shut, shut},
 		{mStreamWrite, shut, shut, shut, shut, shut},
 		{mBydbQLQuery, shut, shut, shut, shut, shut},
@@ -391,13 +418,32 @@ func TestR3_UnclassifiedMethodIsDenied(t *testing.T) {
 // recordingObserver captures every decision the interceptor reports so the test can assert
 // both the count and the bounded label set of R4.
 type recordingObserver struct {
-	methods   []string
-	decisions []liaisongrpc.Decision
+	methods     []string
+	permissions []string
+	decisions   []liaisongrpc.Decision
+	reasons     []liaisongrpc.DecisionReason
 }
 
-func (o *recordingObserver) ObserveDecision(fullMethod string, decision liaisongrpc.Decision) {
+type testServerStream struct {
+	ctx context.Context
+}
+
+func (s *testServerStream) SetHeader(metadata.MD) error  { return nil }
+func (s *testServerStream) SendHeader(metadata.MD) error { return nil }
+func (s *testServerStream) SetTrailer(metadata.MD)       {}
+func (s *testServerStream) Context() context.Context     { return s.ctx }
+func (s *testServerStream) SendMsg(any) error            { return nil }
+func (s *testServerStream) RecvMsg(any) error            { return nil }
+
+func (o *recordingObserver) ObserveDecision(
+	fullMethod, permission string,
+	decision liaisongrpc.Decision,
+	reason liaisongrpc.DecisionReason,
+) {
 	o.methods = append(o.methods, fullMethod)
+	o.permissions = append(o.permissions, permission)
 	o.decisions = append(o.decisions, decision)
+	o.reasons = append(o.reasons, reason)
 }
 
 func newEnabledReloader(t *testing.T) *auth.Reloader {
@@ -502,6 +548,24 @@ func TestR3_InterceptorPrecedenceAndStatusCodes(t *testing.T) {
 	})
 }
 
+func TestR3_StreamInterceptorFailsClosedBeforeHandler(t *testing.T) {
+	reloader := newEnabledReloader(t)
+	interceptor := liaisongrpc.NewAuthorizationStreamInterceptor(reloader, policyTable(t), &recordingObserver{})
+	streamContext := metadata.NewIncomingContext(context.Background(), metadata.Pairs("username", "bydb-admin", "password", "admin-secret"))
+	stream := &testServerStream{ctx: streamContext}
+	handlerRan := false
+	interceptorErr := interceptor(nil, stream, &grpclib.StreamServerInfo{FullMethod: mStreamWrite}, func(any, grpclib.ServerStream) error {
+		handlerRan = true
+		return nil
+	})
+	if status.Code(interceptorErr) != codes.PermissionDenied {
+		t.Errorf("admin opening unactivated %s = %v, want PermissionDenied", mStreamWrite, status.Code(interceptorErr))
+	}
+	if handlerRan {
+		t.Fatal("stream handler ran for an unactivated method")
+	}
+}
+
 // TestR4_ForgedIdentityMetadataCannotReplaceCredentials proves R4's spoof half at the gRPC
 // seam: a caller presenting reader credentials while also asserting an admin identity in
 // metadata is decided as the reader. The extra keys below are the ones a forged
@@ -555,8 +619,8 @@ func TestR4_DecisionObservabilityIsBounded(t *testing.T) {
 		registered[m] = true
 	}
 
-	// One allowed, one denied, one fail-closed, one unauthenticated: four calls, and the
-	// authenticated three must each report exactly one decision.
+	// One allowed, one denied, one fail-closed, one unauthenticated: four calls, each with
+	// exactly one bounded decision.
 	for _, c := range []struct{ method, user, pass string }{
 		{mGetClusterState, "bydb-monitor", "monitor-secret"},
 		{mSnapshot, "bydb-monitor", "monitor-secret"},
@@ -566,8 +630,12 @@ func TestR4_DecisionObservabilityIsBounded(t *testing.T) {
 			t.Fatalf("%s as %s was unauthenticated, want the fixture credentials to verify", c.method, c.user)
 		}
 	}
-	if len(observer.decisions) != 3 {
-		t.Fatalf("the interceptor reported %d decisions for 3 authenticated calls, want exactly one each", len(observer.decisions))
+	_, unauthenticatedErr := callWithCredentials(t, interceptor, mGetClusterState, "bydb-monitor", "wrong-secret")
+	if status.Code(unauthenticatedErr) != codes.Unauthenticated {
+		t.Fatalf("bad credentials returned %v, want Unauthenticated", status.Code(unauthenticatedErr))
+	}
+	if len(observer.decisions) != 4 {
+		t.Fatalf("the interceptor reported %d decisions for 4 calls, want exactly one each", len(observer.decisions))
 	}
 	for idx, d := range observer.decisions {
 		if d == liaisongrpc.DecisionUnspecified {

@@ -373,7 +373,7 @@ func (p *server) initGRPCClient() error {
 	// This avoids the conflict when remounting to /api path
 	newMux := chi.NewRouter()
 
-	newMux.Use(authMiddleware(p.authReloader))
+	newMux.Use(NewAuthMiddleware(p.authReloader))
 	newMux.Handle("/api/healthz", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx, err := buildGRPCContextForHealthCheck(p.authReloader, r)
 		if err != nil {

@@ -18,6 +18,9 @@
 package grpc
 
 import (
+	"strings"
+
+	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
@@ -72,11 +75,17 @@ type metrics struct {
 	bydbqlPreparedCacheCount    meter.Gauge
 	bydbqlPreparedCacheBytes    meter.Gauge
 	bydbqlSlowQueryTotal        meter.Counter
-	authorizationDecisions      meter.Counter
+	rbacDecisions               meter.Counter
+	rbacPolicyReload            meter.Counter
+	rbacPolicyRevision          meter.Gauge
 }
 
-func newMetrics(factory observability.Factory) *metrics {
-	return &metrics{
+func newMetrics(factory observability.Factory, rbacFactories ...observability.Factory) *metrics {
+	rbacFactory := factory
+	if len(rbacFactories) > 0 {
+		rbacFactory = rbacFactories[0]
+	}
+	result := &metrics{
 		totalStarted:                       factory.NewCounter("total_started", "group", "service", "method"),
 		totalFinished:                      factory.NewCounter("total_finished", "group", "service", "method"),
 		totalErr:                           factory.NewCounter("total_err", "group", "service", "method"),
@@ -108,17 +117,38 @@ func newMetrics(factory observability.Factory) *metrics {
 		bydbqlPreparedCacheCount:           factory.NewGauge("bydbql_prepared_cache_count"),
 		bydbqlPreparedCacheBytes:           factory.NewGauge("bydbql_prepared_cache_bytes"),
 		bydbqlSlowQueryTotal:               factory.NewCounter("bydbql_slow_query_total"),
-		authorizationDecisions:             factory.NewCounter("authorization_decisions_total", "method", "outcome"),
 	}
+	result.rbacDecisions = rbacFactory.NewCounter("rbac_decisions_total", "decision", "permission", "method", "reason")
+	result.rbacPolicyReload = rbacFactory.NewCounter("rbac_policy_reload_total", "result")
+	result.rbacPolicyRevision = rbacFactory.NewGauge("rbac_policy_revision")
+	return result
 }
 
-// ObserveDecision records a bounded unary authorization decision.
-func (m *metrics) ObserveDecision(fullMethod string, decision Decision) {
+// ObserveDecision records a bounded authorization decision.
+func (m *metrics) ObserveDecision(fullMethod, permission string, decision Decision, reason DecisionReason) {
 	if m == nil {
 		return
 	}
-	m.authorizationDecisions.Inc(1, fullMethod, DecisionLabel(decision))
+	m.rbacDecisions.Inc(1, DecisionLabel(decision), permission, strings.TrimPrefix(fullMethod, "/"), string(reason))
 }
+
+// ObservePolicyReload records one accepted or rejected policy reload.
+func (m *metrics) ObservePolicyReload(result string) {
+	if m == nil {
+		return
+	}
+	m.rbacPolicyReload.Inc(1, result)
+}
+
+// SetPolicyRevision exposes the active last-known-good policy revision.
+func (m *metrics) SetPolicyRevision(revision uint64) {
+	if m == nil {
+		return
+	}
+	m.rbacPolicyRevision.Set(float64(revision))
+}
+
+var _ auth.PolicyObserver = (*metrics)(nil)
 
 // updateBufferSizeMetrics updates the buffer size metrics.
 func (m *metrics) updateBufferSizeMetrics(connSize, streamSize int32) {

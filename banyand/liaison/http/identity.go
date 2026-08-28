@@ -17,31 +17,9 @@
 
 package http
 
-import (
-	"net/http"
-
-	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
-)
-
 // IdentityHeaders returns the request headers that carry a caller identity across the
 // grpc-gateway boundary. The gateway turns each of them into gRPC metadata, so a request
 // arriving from the network must never be allowed to set one itself.
 func IdentityHeaders() []string {
 	return []string{"Grpc-Metadata-Username", "Grpc-Metadata-Password"}
-}
-
-// NewAuthMiddleware returns the HTTP middleware that guards the grpc-gateway mux. It
-// strips every header in IdentityHeaders from the incoming request, performs Basic
-// authentication against the security snapshot in force, and re-sets those headers from
-// the credentials it verified, so the identity the gateway forwards is always the
-// authenticated one.
-//
-// The middleware authenticates only. The authoritative authorization decision belongs to
-// the gRPC unary interceptor behind the gateway, which is what makes one HTTP request
-// produce exactly one decision.
-//
-// Static asset paths and, when health-check authentication is disabled, the health
-// endpoint pass through untouched, exactly as they did before this middleware existed.
-func NewAuthMiddleware(authReloader *auth.Reloader) func(http.Handler) http.Handler {
-	return authMiddleware(authReloader)
 }

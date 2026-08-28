@@ -39,16 +39,14 @@ users:
     password: "reader-secret"
 rbac:
   enabled: true
-  roles:
-    - name: "admin"
-      permissions: ["cluster:read", "cluster:admin", "schema:read", "schema:write", "data:read", "data:write"]
-    - name: "reader"
-      permissions: ["data:read"]
+  roles: {}
   bindings:
-    - username: "bydb-admin"
+    - principal: "bydb-admin"
       role: "admin"
-    - username: "bydb-reader"
+      groups: ["*"]
+    - principal: "bydb-reader"
       role: "reader"
+      groups: ["sw_metric"]
 `
 
 const httpUsersOnlyYAML = `

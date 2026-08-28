@@ -120,3 +120,43 @@ users:
 		t.Errorf("expected bob/hunter2 to be valid after update")
 	}
 }
+
+func TestReloaderUpdatesAfterAtomicReplacement(t *testing.T) {
+	dir := t.TempDir()
+	path := writeConfigFile(t, dir, "auth.yaml", `
+users:
+  - username: "alice"
+    password: "secret"
+`)
+
+	reloader := InitAuthReloader()
+	log := logger.GetLogger("auth-atomic-replace-test")
+	if configureErr := reloader.ConfigAuthReloader(path, false, log); configureErr != nil {
+		t.Fatalf("ConfigAuthReloader failed: %v", configureErr)
+	}
+	if startErr := reloader.Start(); startErr != nil {
+		t.Fatalf("failed to start reloader: %v", startErr)
+	}
+	defer reloader.Stop()
+
+	replacementPath := writeConfigFile(t, dir, "auth.next.yaml", `
+users:
+  - username: "bob"
+    password: "hunter2"
+`)
+	if renameErr := os.Rename(replacementPath, path); renameErr != nil {
+		t.Fatalf("failed to replace config file atomically: %v", renameErr)
+	}
+
+	select {
+	case <-reloader.GetUpdateChannel():
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for update after atomic config replacement")
+	}
+	if reloader.CheckUsernameAndPassword("alice", "secret") {
+		t.Error("alice should no longer be valid after atomic replacement")
+	}
+	if !reloader.CheckUsernameAndPassword("bob", "hunter2") {
+		t.Error("expected bob/hunter2 to be valid after atomic replacement")
+	}
+}
