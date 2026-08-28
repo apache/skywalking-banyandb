@@ -91,31 +91,11 @@ func BuildGroupUnionSidx(ctx context.Context, srcGroupRoots []string, stagingPat
 		}
 	}()
 
-	// Collect every source sidx directory across all node + segment
-	// roots up front so the worker pool can fan out cleanly.
-	var sidxPaths []string
-	for _, srcGroupRoot := range srcGroupRoots {
-		if ctx.Err() != nil {
-			return "", ctx.Err()
-		}
-		segEntries, err := os.ReadDir(srcGroupRoot)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return "", fmt.Errorf("read src group root %q: %w", srcGroupRoot, err)
-		}
-		for _, se := range segEntries {
-			if !se.IsDir() || !strings.HasPrefix(se.Name(), segPrefix) {
-				continue
-			}
-			srcSidxPath := filepath.Join(srcGroupRoot, se.Name(), sidxDirName)
-			info, statErr := os.Stat(srcSidxPath)
-			if statErr != nil || !info.IsDir() {
-				continue
-			}
-			sidxPaths = append(sidxPaths, srcSidxPath)
-		}
+	// Collect every source sidx directory across all node + segment roots up
+	// front so the worker pool can fan out cleanly.
+	sidxPaths, pathsErr := collectSourceSidxPaths(ctx, srcGroupRoots)
+	if pathsErr != nil {
+		return "", pathsErr
 	}
 
 	seen := make(map[common.SeriesID]struct{}, 1_000_000)
@@ -142,11 +122,24 @@ func BuildGroupUnionSidx(ctx context.Context, srcGroupRoots []string, stagingPat
 	workerCtx, cancelWorkers := context.WithCancel(ctx)
 	defer cancelWorkers()
 	workerLogger := logger.GetLogger("migration")
+	workerTasks := make([]*run.Task, 0, workerCount)
+	recordWorkerPanic := func(panicValue any) {
+		panicErr := fmt.Errorf("union sidx source reader panicked: %v", panicValue)
+		if firstErr.CompareAndSwap(nil, &panicErr) {
+			cancelWorkers()
+		}
+	}
 
 	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
-		run.Go(workerCtx, "union sidx source reader", workerLogger, func(taskCtx context.Context) {
+		workerTask := run.Go(workerCtx, "union sidx source reader", workerLogger, func(taskCtx context.Context) {
 			defer wg.Done()
+			defer func() {
+				if panicValue := recover(); panicValue != nil {
+					recordWorkerPanic(panicValue)
+					panic(panicValue)
+				}
+			}()
 			for srcSidxPath := range pathCh {
 				if taskCtx.Err() != nil {
 					return
@@ -167,15 +160,24 @@ func BuildGroupUnionSidx(ctx context.Context, srcGroupRoots []string, stagingPat
 					done, len(sidxPaths), float64(done)*100/float64(len(sidxPaths)), srcSidxPath)
 			}
 		})
+		workerTasks = append(workerTasks, workerTask)
 	}
-	for _, p := range sidxPaths {
+
+dispatch:
+	for _, srcSidxPath := range sidxPaths {
 		select {
-		case pathCh <- p:
+		case pathCh <- srcSidxPath:
 		case <-workerCtx.Done():
+			break dispatch
 		}
 	}
 	close(pathCh)
 	wg.Wait()
+	for _, workerTask := range workerTasks {
+		if outcome := workerTask.Wait(); outcome != nil && outcome.Panicked {
+			recordWorkerPanic(outcome.PanicValue)
+		}
+	}
 	if errPtr := firstErr.Load(); errPtr != nil {
 		return "", *errPtr
 	}
@@ -193,6 +195,34 @@ func BuildGroupUnionSidx(ctx context.Context, srcGroupRoots []string, stagingPat
 	}
 	published = true
 	return stagingPath, nil
+}
+
+func collectSourceSidxPaths(ctx context.Context, srcGroupRoots []string) ([]string, error) {
+	var sidxPaths []string
+	for _, srcGroupRoot := range srcGroupRoots {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		segmentEntries, readErr := os.ReadDir(srcGroupRoot)
+		if readErr != nil {
+			if os.IsNotExist(readErr) {
+				continue
+			}
+			return nil, fmt.Errorf("read src group root %q: %w", srcGroupRoot, readErr)
+		}
+		for _, segmentEntry := range segmentEntries {
+			if !segmentEntry.IsDir() || !strings.HasPrefix(segmentEntry.Name(), segPrefix) {
+				continue
+			}
+			sourceSidxPath := filepath.Join(srcGroupRoot, segmentEntry.Name(), sidxDirName)
+			info, statErr := os.Stat(sourceSidxPath)
+			if statErr != nil || !info.IsDir() {
+				continue
+			}
+			sidxPaths = append(sidxPaths, sourceSidxPath)
+		}
+	}
+	return sidxPaths, nil
 }
 
 func mergeOneSourceSidxInto(

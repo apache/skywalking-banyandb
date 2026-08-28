@@ -123,11 +123,6 @@ func (r *Reader) VisitLiveDocuments(ctx context.Context, visit func(StoredDocume
 		return ctxErr
 	}
 	for segmentIndex := range r.segments {
-		if validateErr := walkStoredSegment(ctx, r.segments[segmentIndex], nil); validateErr != nil {
-			return validateErr
-		}
-	}
-	for segmentIndex := range r.segments {
 		if visitErr := walkStoredSegment(ctx, r.segments[segmentIndex], visit); visitErr != nil {
 			return visitErr
 		}
@@ -529,6 +524,7 @@ type storedSegmentReader struct {
 	chunkOffsets     []uint64
 	compressedBuffer []byte
 	decodedBuffer    []byte
+	fieldNames       []string
 	fieldNameBuffer  []byte
 	footer           segmentFooter
 	size             uint64
@@ -582,9 +578,6 @@ func walkStoredSegment(ctx context.Context, record segmentRecord, visit func(Sto
 	if deletionErr != nil {
 		return deletionErr
 	}
-	if visit == nil {
-		return storedReader.validate(ctx, deleted)
-	}
 	return storedReader.visit(ctx, deleted, visit)
 }
 
@@ -603,21 +596,13 @@ func newStoredSegmentReader(file *os.File, size uint64, record segmentRecord) (*
 	if chunkErr := storedReader.loadChunkOffsets(); chunkErr != nil {
 		return nil, chunkErr
 	}
+	if fieldsErr := storedReader.loadFieldNames(); fieldsErr != nil {
+		return nil, fieldsErr
+	}
 	return storedReader, nil
 }
 
-func (s *storedSegmentReader) validate(ctx context.Context, deleted *roaringpkg.Bitmap) error {
-	if fieldsErr := s.validateFields(); fieldsErr != nil {
-		return fieldsErr
-	}
-	return s.walk(ctx, deleted, nil)
-}
-
 func (s *storedSegmentReader) visit(ctx context.Context, deleted *roaringpkg.Bitmap, visit func(StoredDocument) error) error {
-	return s.walk(ctx, deleted, visit)
-}
-
-func (s *storedSegmentReader) walk(ctx context.Context, deleted *roaringpkg.Bitmap, visit func(StoredDocument) error) error {
 	if s.footer.documentCount == 0 {
 		return nil
 	}
@@ -639,15 +624,12 @@ func (s *storedSegmentReader) walk(ctx context.Context, deleted *roaringpkg.Bitm
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
 			}
-			if visit != nil && documentNumber <= math.MaxUint32 && deleted.Contains(uint32(documentNumber)) {
+			if documentNumber <= math.MaxUint32 && deleted.Contains(uint32(documentNumber)) {
 				continue
 			}
-			document, documentErr := s.decodeDocument(documentNumber, chunk, visit != nil)
+			document, documentErr := s.decodeDocument(documentNumber, chunk)
 			if documentErr != nil {
 				return documentErr
-			}
-			if visit == nil {
-				continue
 			}
 			if visitErr := visit(document); visitErr != nil {
 				return visitErr
@@ -716,16 +698,20 @@ func (s *storedSegmentReader) loadChunkOffsets() error {
 	return nil
 }
 
-func (s *storedSegmentReader) validateFields() error {
-	for fieldID := uint64(0); fieldID < s.footer.fieldsIndexEntries; fieldID++ {
-		if _, fieldErr := s.fieldName(fieldID, false); fieldErr != nil {
+func (s *storedSegmentReader) loadFieldNames() error {
+	fieldNames := make([]string, int(s.footer.fieldsIndexEntries))
+	for fieldID := range fieldNames {
+		fieldName, fieldErr := s.readFieldName(uint64(fieldID))
+		if fieldErr != nil {
 			return fieldErr
 		}
+		fieldNames[fieldID] = fieldName
 	}
+	s.fieldNames = fieldNames
 	return nil
 }
 
-func (s *storedSegmentReader) fieldName(fieldID uint64, retain bool) (string, error) {
+func (s *storedSegmentReader) readFieldName(fieldID uint64) (string, error) {
 	if fieldID >= s.footer.fieldsIndexEntries {
 		return "", corruptError("segment %q has an out-of-range stored field identifier %d", s.path, fieldID)
 	}
@@ -762,9 +748,6 @@ func (s *storedSegmentReader) fieldName(fieldID uint64, retain bool) (string, er
 	}
 	if _, frequencyErr := s.readUvarint(&offset, s.footer.fieldsIndexOffset); frequencyErr != nil {
 		return "", frequencyErr
-	}
-	if !retain {
-		return "", nil
 	}
 	return string(s.fieldNameBuffer), nil
 }
@@ -851,7 +834,7 @@ func decodeStoredChunk(dst, compressed []byte) (decoded []byte, err error) {
 	return s2.Decode(dst, compressed)
 }
 
-func (s *storedSegmentReader) decodeDocument(documentNumber uint64, chunk []byte, retain bool) (storedDocument, error) {
+func (s *storedSegmentReader) decodeDocument(documentNumber uint64, chunk []byte) (storedDocument, error) {
 	documentOffset, offsetErr := s.documentOffset(documentNumber)
 	if offsetErr != nil {
 		return storedDocument{}, offsetErr
@@ -894,19 +877,13 @@ func (s *storedSegmentReader) decodeDocument(documentNumber uint64, chunk []byte
 		if valueLengthErr != nil {
 			return storedDocument{}, valueLengthErr
 		}
-		if fieldID >= s.footer.fieldsIndexEntries || valueOffset > uint64(len(data)) || valueLength > uint64(len(data))-valueOffset {
+		if fieldID >= uint64(len(s.fieldNames)) || valueOffset > uint64(len(data)) || valueLength > uint64(len(data))-valueOffset {
 			return storedDocument{}, corruptError("segment %q has invalid stored field metadata", s.path)
 		}
-		name, nameErr := s.fieldName(fieldID, retain)
-		if nameErr != nil {
-			return storedDocument{}, nameErr
-		}
-		if retain {
-			document.fields = append(document.fields, storedField{
-				name:  name,
-				value: data[valueOffset : valueOffset+valueLength],
-			})
-		}
+		document.fields = append(document.fields, storedField{
+			name:  s.fieldNames[fieldID],
+			value: data[valueOffset : valueOffset+valueLength],
+		})
 	}
 	return document, nil
 }

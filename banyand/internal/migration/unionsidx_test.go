@@ -257,6 +257,50 @@ func TestBuildGroupUnionSidx_EmptyGroupYieldsEmptyPath(t *testing.T) {
 	}
 }
 
+// TestBuildGroupUnionSidx_UncommittedSourceSidxIsEmpty verifies a discovered
+// source sidx with no committed generation is tolerated as an empty source.
+func TestBuildGroupUnionSidx_UncommittedSourceSidxIsEmpty(t *testing.T) {
+	srcGroupRoot := t.TempDir()
+	srcSidxPath := filepath.Join(srcGroupRoot, segPrefix+"20260101", sidxDirName)
+	if err := os.MkdirAll(srcSidxPath, storage.DirPerm); err != nil {
+		t.Fatalf("mkdir uncommitted source sidx: %v", err)
+	}
+	stagingPath := filepath.Join(t.TempDir(), "union", "sidx")
+
+	resultPath, err := BuildGroupUnionSidx(context.Background(), []string{srcGroupRoot}, stagingPath, nil)
+	if err != nil {
+		t.Fatalf("BuildGroupUnionSidx: %v", err)
+	}
+	if resultPath != "" {
+		t.Fatalf("expected empty result path for an uncommitted source sidx, got %q", resultPath)
+	}
+}
+
+// TestBuildGroupUnionSidx_RecoveredWorkerPanicReturnsError verifies a panic
+// recovered from a source worker fails the union rather than publishing it.
+func TestBuildGroupUnionSidx_RecoveredWorkerPanicReturnsError(t *testing.T) {
+	srcGroupRoot := t.TempDir()
+	segPath := filepath.Join(srcGroupRoot, segPrefix+"20260101")
+	writeSidxAt(t, segPath, nil)
+	stagingPath := filepath.Join(t.TempDir(), "union", "sidx")
+
+	resultPath, buildErr := BuildGroupUnionSidx(context.Background(), []string{srcGroupRoot}, stagingPath,
+		func(format string, _ ...any) {
+			if format == "union sidx: scanned %d/%d sidx dir(s) (%.1f%%): %s" {
+				panic("source worker panic")
+			}
+		})
+	if buildErr == nil {
+		t.Fatal("expected recovered source-worker panic to fail the union")
+	}
+	if resultPath != "" {
+		t.Fatalf("expected no published path after a recovered worker panic, got %q", resultPath)
+	}
+	if _, statErr := os.Stat(stagingPath); !os.IsNotExist(statErr) {
+		t.Fatalf("expected failed union staging path to be removed, stat error: %v", statErr)
+	}
+}
+
 func TestBuildGroupUnionSidx_MissingSrcRootIsNoop(t *testing.T) {
 	stagingPath := filepath.Join(t.TempDir(), "union", "sidx")
 	resultPath, err := BuildGroupUnionSidx(context.Background(), []string{filepath.Join(t.TempDir(), "no-such-dir")}, stagingPath, nil)
