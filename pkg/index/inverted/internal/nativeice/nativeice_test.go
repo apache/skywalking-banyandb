@@ -20,8 +20,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+const repeatedOpenCount = 4
 
 func TestOpenVisibleDocCount(t *testing.T) {
 	directory, _ := writeCommittedIndex(t)
@@ -56,6 +59,115 @@ func TestOpenMissingReferencedSegmentIsCorrupt(t *testing.T) {
 	}
 }
 
+func TestOpenFallsBackToOlderStructurallyCompleteSnapshot(t *testing.T) {
+	directory, _ := writeCommittedIndex(t)
+	manifest := []byte{3, 1, 3, 'i', 'c', 'e', 0, 0, 0, 3, 3}
+	metadata := make([]byte, 32)
+	binary.BigEndian.PutUint64(metadata[8:16], 2)
+	manifest = append(manifest, metadata...)
+	manifest = append(manifest, 0, 0, 0, 0, 0)
+	if writeErr := os.WriteFile(filepath.Join(directory, "000000000002.snp"), manifest, 0o600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+
+	reader, openErr := Open(directory)
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	defer func() {
+		if closeErr := reader.Close(); closeErr != nil {
+			t.Error(closeErr)
+		}
+	}()
+	count, countErr := reader.VisibleDocCount()
+	if countErr != nil {
+		t.Fatal(countErr)
+	}
+	if count != 2 {
+		t.Fatalf("VisibleDocCount() = %d, want 2", count)
+	}
+}
+
+func TestOpenReenumeratesAfterStaleListing(t *testing.T) {
+	directory, _ := writeCommittedIndex(t)
+	originalSnapshotPath := filepath.Join(directory, "000000000001.snp")
+	manifest, readErr := os.ReadFile(originalSnapshotPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	listCount := 0
+	reader, openErr := openWithSnapshots(directory, func(path string) ([]string, map[uint64]string, error) {
+		snapshotPaths, segmentPaths, snapshotErr := committedSnapshots(path)
+		if snapshotErr != nil {
+			return nil, nil, snapshotErr
+		}
+		listCount++
+		if listCount == 1 {
+			if removeErr := os.Remove(originalSnapshotPath); removeErr != nil {
+				t.Fatal(removeErr)
+			}
+			if writeErr := os.WriteFile(filepath.Join(directory, "000000000002.snp"), manifest, 0o600); writeErr != nil {
+				t.Fatal(writeErr)
+			}
+		}
+		return snapshotPaths, segmentPaths, nil
+	})
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	defer func() {
+		if closeErr := reader.Close(); closeErr != nil {
+			t.Error(closeErr)
+		}
+	}()
+	if listCount != 2 {
+		t.Fatalf("snapshot listings = %d, want 2", listCount)
+	}
+	count, countErr := reader.VisibleDocCount()
+	if countErr != nil {
+		t.Fatal(countErr)
+	}
+	if count != 2 {
+		t.Fatalf("VisibleDocCount() = %d, want 2", count)
+	}
+}
+
+func TestOpenRetainsLastCandidateFailure(t *testing.T) {
+	directory, segmentPath := writeCommittedIndex(t)
+	if removeErr := os.Remove(segmentPath); removeErr != nil {
+		t.Fatal(removeErr)
+	}
+
+	_, openErr := Open(directory)
+	if !errors.Is(openErr, ErrCorrupt) {
+		t.Fatalf("Open() error = %v, want error wrapping ErrCorrupt", openErr)
+	}
+	if !strings.Contains(openErr.Error(), "snapshot references missing segment 2") {
+		t.Fatalf("Open() error = %v, want missing segment rejection", openErr)
+	}
+	if !strings.Contains(openErr.Error(), "000000000001.snp") {
+		t.Fatalf("Open() error = %v, want rejected snapshot path", openErr)
+	}
+}
+
+func TestOpenCloseDoesNotLeakFileHandles(t *testing.T) {
+	directory, _ := writeCommittedIndex(t)
+	before := openFileDescriptorCount(t)
+	for openIndex := 0; openIndex < repeatedOpenCount; openIndex++ {
+		reader, openErr := Open(directory)
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		if closeErr := reader.Close(); closeErr != nil {
+			t.Fatal(closeErr)
+		}
+	}
+	after := openFileDescriptorCount(t)
+	if after != before {
+		t.Fatalf("file descriptors after Close() = %d, want %d", after, before)
+	}
+}
+
 func writeCommittedIndex(t *testing.T) (string, string) {
 	t.Helper()
 	directory := t.TempDir()
@@ -83,4 +195,16 @@ func writeCommittedIndex(t *testing.T) (string, string) {
 		t.Fatal(writeErr)
 	}
 	return directory, segmentPath
+}
+
+func openFileDescriptorCount(t *testing.T) int {
+	t.Helper()
+	descriptors, readErr := os.ReadDir("/proc/self/fd")
+	if errors.Is(readErr, os.ErrNotExist) {
+		t.Skip("the operating system does not expose process file descriptors")
+	}
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	return len(descriptors)
 }

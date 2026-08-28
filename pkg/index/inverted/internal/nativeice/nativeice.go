@@ -46,8 +46,10 @@ const (
 	segmentVersion      = 3
 	snapshotVersion     = 3
 	maxManifestSize     = 16 << 20
-	maxOpenAttempts     = 2
 	maxFieldsIndexCount = 1 << 20
+	maxDirectoryEntries = 1 << 16
+	directoryReadSize   = maxDirectoryEntries + 1
+	maxOpenAttempts     = 2
 )
 
 // ErrCorrupt is the sentinel that every structural rejection wraps: a footer,
@@ -62,11 +64,7 @@ var ErrCorrupt = errors.New("nativeice: corrupt index")
 // committed to read.
 var ErrNoSnapshot = errors.New("nativeice: no committed snapshot")
 
-var (
-	errEntryDisappeared      = errors.New("nativeice: enumerated entry disappeared")
-	errManifestTooLarge      = errors.New("nativeice: snapshot exceeds read limit")
-	errMissingReferencedFile = errors.New("nativeice: missing referenced file")
-)
+var errManifestTooLarge = errors.New("nativeice: snapshot exceeds read limit")
 
 // Reader is a bounded read-only handle on exactly one generation of an index
 // directory. The generation is chosen at Open and fixed for the Reader's
@@ -88,45 +86,45 @@ type Reader struct {
 // rather than by pairing file names.
 //
 // A directory holding no committed generation reports an error wrapping
-// ErrNoSnapshot. Bytes that violate the grammar, including a manifest whose
-// referenced segment fails validation, report an error wrapping ErrCorrupt;
-// Open reports that rather than falling back to an older generation.
+// ErrNoSnapshot. Open skips each generation whose manifest or referenced
+// segments fail structural validation and pins the newest complete generation.
+// It reports an error wrapping ErrCorrupt only when no committed generation
+// validates.
 func Open(path string) (*Reader, error) {
-	sawDisappearedEntry := false
+	return openWithSnapshots(path, committedSnapshots)
+}
+
+type snapshotLister func(string) ([]string, map[uint64]string, error)
+
+func openWithSnapshots(path string, listSnapshots snapshotLister) (*Reader, error) {
+	var lastCandidateErr error
+	var lastCandidatePath string
 	for attempt := 0; attempt < maxOpenAttempts; attempt++ {
-		snapshotPath, segmentPaths, snapshotErr := newestSnapshot(path)
+		snapshotPaths, segmentPaths, snapshotErr := listSnapshots(path)
 		if snapshotErr != nil {
 			return nil, snapshotErr
 		}
-		manifest, readErr := readManifest(snapshotPath)
-		if errors.Is(readErr, os.ErrNotExist) {
-			sawDisappearedEntry = true
-			continue
+		for snapshotIndex := len(snapshotPaths) - 1; snapshotIndex >= 0; snapshotIndex-- {
+			snapshotPath := snapshotPaths[snapshotIndex]
+			manifest, readErr := readManifest(snapshotPath)
+			if readErr != nil {
+				lastCandidateErr = fmt.Errorf("read snapshot %q: %w", snapshotPath, readErr)
+				lastCandidatePath = snapshotPath
+				continue
+			}
+			visibleDocCount, parseErr := parseSnapshot(segmentPaths, manifest)
+			if parseErr != nil {
+				lastCandidateErr = parseErr
+				lastCandidatePath = snapshotPath
+				continue
+			}
+			return &Reader{visibleDocCount: visibleDocCount}, nil
 		}
-		if errors.Is(readErr, errManifestTooLarge) {
-			return nil, readErr
-		}
-		if readErr != nil {
-			return nil, corruptError("read snapshot %q", snapshotPath, readErr)
-		}
-		visibleDocCount, parseErr := parseSnapshot(segmentPaths, manifest)
-		if errors.Is(parseErr, errEntryDisappeared) {
-			sawDisappearedEntry = true
-			continue
-		}
-		if errors.Is(parseErr, errMissingReferencedFile) {
-			sawDisappearedEntry = true
-			continue
-		}
-		if parseErr != nil {
-			return nil, parseErr
-		}
-		return &Reader{visibleDocCount: visibleDocCount}, nil
 	}
-	if sawDisappearedEntry {
-		return nil, corruptError("open %q references an absent segment", path)
+	if lastCandidateErr != nil {
+		return nil, corruptError("open %q has no structurally complete snapshot (candidate %q)", path, lastCandidatePath, lastCandidateErr)
 	}
-	return nil, corruptError("open %q exhausted attempts", path)
+	return nil, corruptError("open %q has no structurally complete snapshot", path)
 }
 
 // VisibleDocCount returns the number of live documents in the pinned
@@ -141,13 +139,13 @@ func (r *Reader) Close() error {
 	return nil
 }
 
-func newestSnapshot(path string) (string, map[uint64]string, error) {
-	entries, readErr := os.ReadDir(path)
+func committedSnapshots(path string) ([]string, map[uint64]string, error) {
+	entries, readErr := readDirectoryEntries(path)
 	if readErr != nil {
-		if errors.Is(readErr, os.ErrNotExist) {
-			return "", nil, fmt.Errorf("nativeice: open %q: %w", path, ErrNoSnapshot)
+		if errors.Is(readErr, ErrNoSnapshot) {
+			return nil, nil, fmt.Errorf("nativeice: open %q: %w", path, ErrNoSnapshot)
 		}
-		return "", nil, corruptError("read index directory %q", path, readErr)
+		return nil, nil, readErr
 	}
 	type snapshot struct {
 		path string
@@ -169,20 +167,46 @@ func newestSnapshot(path string) (string, map[uint64]string, error) {
 			continue
 		}
 		if _, exists := segmentPaths[id]; exists {
-			return "", nil, corruptError("duplicate segment identifier in %q", path)
+			return nil, nil, corruptError("duplicate segment identifier in %q", path)
 		}
 		segmentPaths[id] = filepath.Join(path, entry.Name())
 	}
 	if len(snapshots) == 0 {
-		return "", nil, fmt.Errorf("nativeice: open %q: %w", path, ErrNoSnapshot)
+		return nil, nil, fmt.Errorf("nativeice: open %q: %w", path, ErrNoSnapshot)
 	}
 	sort.Slice(snapshots, func(left, right int) bool {
 		return snapshots[left].id < snapshots[right].id
 	})
 	if len(snapshots) > 1 && snapshots[len(snapshots)-1].id == snapshots[len(snapshots)-2].id {
-		return "", nil, corruptError("duplicate snapshot identifier in %q", path, nil)
+		return nil, nil, corruptError("duplicate snapshot identifier in %q", path, nil)
 	}
-	return snapshots[len(snapshots)-1].path, segmentPaths, nil
+	snapshotPaths := make([]string, len(snapshots))
+	for snapshotIndex, snapshot := range snapshots {
+		snapshotPaths[snapshotIndex] = snapshot.path
+	}
+	return snapshotPaths, segmentPaths, nil
+}
+
+func readDirectoryEntries(path string) ([]os.DirEntry, error) {
+	directory, openErr := os.Open(path)
+	if errors.Is(openErr, os.ErrNotExist) {
+		return nil, ErrNoSnapshot
+	}
+	if openErr != nil {
+		return nil, corruptError("open index directory %q", path, openErr)
+	}
+	entries, readErr := directory.ReadDir(directoryReadSize)
+	closeErr := directory.Close()
+	if closeErr != nil {
+		return nil, corruptError("close index directory %q", path, closeErr)
+	}
+	if len(entries) > maxDirectoryEntries {
+		return nil, corruptError("index directory %q contains more than %d entries", path, maxDirectoryEntries)
+	}
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return nil, corruptError("read index directory %q", path, readErr)
+	}
+	return entries, nil
 }
 
 func parseSnapshot(segmentPaths map[uint64]string, payload []byte) (int64, error) {
@@ -340,7 +364,7 @@ func (d *byteDecoder) segmentRecord(segmentPaths map[uint64]string) (segmentReco
 	}
 	segmentPath, found := segmentPaths[id]
 	if !found {
-		return segmentRecord{}, fmt.Errorf("segment %d: %w", id, errMissingReferencedFile)
+		return segmentRecord{}, corruptError("snapshot references missing segment %d", id)
 	}
 	return segmentRecord{deletionBitmap: deletionBitmap, path: segmentPath, documentCount: documentCount, id: id, timeMin: timeMin, timeMax: timeMax}, nil
 }
@@ -348,7 +372,7 @@ func (d *byteDecoder) segmentRecord(segmentPaths map[uint64]string) (segmentReco
 func validateSegment(record segmentRecord) (uint64, error) {
 	file, openErr := os.Open(record.path)
 	if errors.Is(openErr, os.ErrNotExist) {
-		return 0, fmt.Errorf("segment %d: %w", record.id, errEntryDisappeared)
+		return 0, corruptError("open missing segment %d", record.id)
 	}
 	if openErr != nil {
 		return 0, corruptError("open segment %q", record.path, openErr)
