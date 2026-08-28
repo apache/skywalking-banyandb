@@ -143,11 +143,26 @@ func (r *recordingHistogram) snapshot() []recordedCall {
 	return out
 }
 
-type recordingGauge struct{}
+type recordingGauge struct {
+	calls []recordedCall
+	mu    sync.Mutex
+}
 
-func (r *recordingGauge) Set(_ float64, _ ...string) {}
-func (r *recordingGauge) Add(_ float64, _ ...string) {}
-func (r *recordingGauge) Delete(_ ...string) bool    { return true }
+func (r *recordingGauge) Set(value float64, labels ...string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, recordedCall{value: value, labels: append([]string{}, labels...)})
+}
+func (r *recordingGauge) Add(value float64, labels ...string) { r.Set(value, labels...) }
+func (r *recordingGauge) Delete(_ ...string) bool             { return true }
+
+func (r *recordingGauge) snapshot() []recordedCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result := make([]recordedCall, len(r.calls))
+	copy(result, r.calls)
+	return result
+}
 
 var _ observability.Factory = (*recordingFactory)(nil)
 
@@ -155,6 +170,29 @@ func newRecordingMetrics(t *testing.T) (*recordingFactory, *metrics) {
 	t.Helper()
 	f := newRecordingFactory()
 	return f, newMetrics(f)
+}
+
+func TestRBACMetricsUseBoundedContractLabels(t *testing.T) {
+	factory, metricSet := newRecordingMetrics(t)
+	metricSet.ObserveDecision(
+		"/banyandb.measure.v1.MeasureService/Query",
+		"data:read",
+		DecisionUnavailable,
+		DecisionReasonExecutorUnavailable,
+	)
+	decisionCalls := factory.counter("rbac_decisions_total").snapshot()
+	require.Len(t, decisionCalls, 1)
+	assert.Equal(t, []string{"deny", "data:read", "banyandb.measure.v1.MeasureService/Query", "executor_unavailable"}, decisionCalls[0].labels)
+
+	metricSet.ObservePolicyReload("failure")
+	reloadCalls := factory.counter("rbac_policy_reload_total").snapshot()
+	require.Len(t, reloadCalls, 1)
+	assert.Equal(t, []string{"failure"}, reloadCalls[0].labels)
+
+	metricSet.SetPolicyRevision(17)
+	revisionCalls := factory.gauges["rbac_policy_revision"].snapshot()
+	require.Len(t, revisionCalls, 1)
+	assert.Equal(t, float64(17), revisionCalls[0].value)
 }
 
 // fakeBarrierCache satisfies barrierCacheReader with controllable revision
