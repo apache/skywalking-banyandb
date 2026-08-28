@@ -28,6 +28,7 @@
 package nativeice
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -71,6 +72,45 @@ var errManifestTooLarge = errors.New("nativeice: snapshot exceeds read limit")
 // lifetime, so generations committed afterwards stay invisible to it.
 type Reader struct {
 	visibleDocCount int64
+}
+
+// StoredDocument is one live document of the pinned generation, borrowed for
+// the duration of a single walk callback.
+type StoredDocument interface {
+	// VisitStoredFields calls visit once for every stored value the document
+	// records, passing the field's name and its raw value bytes. A field the
+	// document records more than once is visited once per recorded value, in
+	// the order the document records them. Visiting stops early when visit
+	// returns false.
+	//
+	// The name and value handed to visit are borrowed from the reader's decode
+	// buffers and stay valid only until visit returns; a caller that keeps
+	// either beyond that copies it.
+	VisitStoredFields(visit func(name string, value []byte) bool) error
+}
+
+// errWalkStub is the sentinel a Reader with no stored-section decoder yields
+// instead of a document stream. Nothing references it once VisitLiveDocuments
+// decodes documents, and the unused-symbol gate then requires its removal.
+var errWalkStub = errors.New("nativeice: live document walk is unavailable")
+
+// VisitLiveDocuments streams the pinned generation's live documents to visit,
+// one at a time, in ascending segment and local document order. Documents the
+// pinned snapshot's deletion masks cover are skipped, so a deleted document is
+// never handed to visit.
+//
+// The StoredDocument handed to visit is borrowed: it, and every name and value
+// it yields, stay valid only until visit returns. At most one document plus the
+// reader's configured decode buffers are resident at a time, so the walk's
+// memory does not grow with the generation's size.
+//
+// The walk stops and returns ctx.Err() when ctx is canceled between two
+// documents or two stored chunks, and stops and returns visit's error when
+// visit fails. A stored section whose chunk table, offsets, lengths, varints or
+// field identifiers violate the ICE v3 grammar, or that would require decoding
+// past a configured bound, stops the walk with an error wrapping ErrCorrupt.
+func (r *Reader) VisitLiveDocuments(_ context.Context, _ func(StoredDocument) error) error {
+	return errWalkStub
 }
 
 // Open selects the newest committed generation in the index directory at path,

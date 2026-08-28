@@ -1,0 +1,90 @@
+{
+  "oracle": {
+    "go_mod_sha256": "b7faaa8e1fcef81607b38a6fa593b54381e11fa466f496e4cb10d4599b657ac1",
+    "writer": "pkg/index/inverted.NewStore"
+  },
+  "file_sha256": {
+    "sourceA/000000000002.seg": "ddaf8424ce113ca0fcda05f3365344803a672ba6cce26289be929b0225c6c6fa",
+    "sourceA/000000000003.snp": "59578576f4a18f77c82747b338ecf7ba441bea5cff3c40e6832158cae257bd6a",
+    "sourceB/000000000001.snp": "e457dc4d4410e458d8f427874fea937ea5002eb57d5eb5ea51cf2efb6f4e7e7c",
+    "sourceB/000000000002.seg": "92acfc30a432174549c6f370f182df21d38d22f9c810419dba6ad7dd4640e512"
+  },
+  "reserved_crc32": {
+    ".seg": "deadbeef (arbitrary, no writer computed it)",
+    ".snp": "as written by the oracle; the compatibility loader validates this slot, so the corpus keeps it readable and the reserved-field contract is proved by run-time mutation"
+  },
+  "generator_command": "GENERATE_NIDX01C_FIXTURE=1 go test ./pkg/index/inverted/ -run TestGenerateNIDX01CFixture -count=1",
+  "notes": "sourceA holds documents 101, 202 and a deleted 303 in one committed generation, so two are visible and the declared walk is 101 then 202. sourceB repeats 101 alone for the series-union case. Document labels are issue #14010's names, not series identifiers: a series identifier is a hash of the marshaled entity buffer and cannot be chosen by a fixture.",
+  "sources": [
+    {
+      "directory": "sourceA/000000000003.snp",
+      "documents": [
+        {
+          "label": "101",
+          "identity_hex": "010203",
+          "tag_name": "color",
+          "tag_values": [
+            "blue",
+            "green"
+          ],
+          "timestamp_stored_hex": "2001000000000000000064",
+          "version_stored_hex": "8000000000000002",
+          "timestamp": 100,
+          "version": 2,
+          "deleted": false
+        },
+        {
+          "label": "202",
+          "identity_hex": "040506",
+          "tag_name": "color",
+          "tag_values": [
+            "red"
+          ],
+          "timestamp_stored_hex": "2001000000000000000148",
+          "version_stored_hex": "8000000000000001",
+          "timestamp": 200,
+          "version": 1,
+          "deleted": false
+        },
+        {
+          "label": "303",
+          "identity_hex": "070809",
+          "tag_name": "color",
+          "tag_values": [
+            "gray"
+          ],
+          "timestamp_stored_hex": "200100000000000000022c",
+          "version_stored_hex": "8000000000000003",
+          "timestamp": 300,
+          "version": 3,
+          "deleted": true
+        }
+      ],
+      "physical_documents": 3,
+      "deletions": 1,
+      "visible_count": 2
+    },
+    {
+      "directory": "sourceB/000000000001.snp",
+      "documents": [
+        {
+          "label": "101",
+          "identity_hex": "010203",
+          "tag_name": "color",
+          "tag_values": [
+            "blue",
+            "green"
+          ],
+          "timestamp_stored_hex": "2001000000000000000064",
+          "version_stored_hex": "8000000000000002",
+          "timestamp": 100,
+          "version": 2,
+          "deleted": false
+        }
+      ],
+      "physical_documents": 1,
+      "deletions": 0,
+      "visible_count": 1
+    }
+  ]
+}
