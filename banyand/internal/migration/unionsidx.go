@@ -19,6 +19,7 @@ package migration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,11 +29,13 @@ import (
 	"sync/atomic"
 
 	"github.com/blugelabs/bluge"
-	blugesearch "github.com/blugelabs/bluge/search"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 // The union sidx is rebuilt read-only via raw bluge — no banyandb store
@@ -78,9 +81,13 @@ func BuildGroupUnionSidx(ctx context.Context, srcGroupRoots []string, stagingPat
 		return "", fmt.Errorf("open union sidx writer at %q: %w", stagingPath, err)
 	}
 	closed := false
+	published := false
 	defer func() {
 		if !closed {
 			_ = writer.Close()
+		}
+		if !published {
+			_ = os.RemoveAll(stagingPath)
 		}
 	}()
 
@@ -134,17 +141,18 @@ func BuildGroupUnionSidx(ctx context.Context, srcGroupRoots []string, stagingPat
 	var wg sync.WaitGroup
 	workerCtx, cancelWorkers := context.WithCancel(ctx)
 	defer cancelWorkers()
+	workerLogger := logger.GetLogger("migration")
 
 	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
-		go func() {
+		run.Go(workerCtx, "union sidx source reader", workerLogger, func(taskCtx context.Context) {
 			defer wg.Done()
 			for srcSidxPath := range pathCh {
-				if workerCtx.Err() != nil {
+				if taskCtx.Err() != nil {
 					return
 				}
 				logf("union sidx: start scanning %s", srcSidxPath)
-				count, scanned, mergeErr := mergeOneSourceSidxInto(workerCtx, srcSidxPath, writer, seen, &seenMu, &writerMu)
+				count, scanned, mergeErr := mergeOneSourceSidxInto(taskCtx, srcSidxPath, writer, seen, &seenMu, &writerMu)
 				if mergeErr != nil {
 					e := fmt.Errorf("merge %s: %w", srcSidxPath, mergeErr)
 					if firstErr.CompareAndSwap(nil, &e) {
@@ -158,7 +166,7 @@ func BuildGroupUnionSidx(ctx context.Context, srcGroupRoots []string, stagingPat
 				logf("union sidx: scanned %d/%d sidx dir(s) (%.1f%%): %s",
 					done, len(sidxPaths), float64(done)*100/float64(len(sidxPaths)), srcSidxPath)
 			}
-		}()
+		})
 	}
 	for _, p := range sidxPaths {
 		select {
@@ -181,9 +189,9 @@ func BuildGroupUnionSidx(ctx context.Context, srcGroupRoots []string, stagingPat
 		return "", fmt.Errorf("close union sidx writer: %w", closeErr)
 	}
 	if inserted == 0 {
-		_ = os.RemoveAll(stagingPath)
 		return "", nil
 	}
+	published = true
 	return stagingPath, nil
 }
 
@@ -195,25 +203,6 @@ func mergeOneSourceSidxInto(
 	seenMu *sync.Mutex,
 	writerMu *sync.Mutex,
 ) (inserted, scanned int, err error) {
-	reader, err := bluge.OpenReader(bluge.DefaultConfig(srcPath))
-	if err != nil {
-		// A sidx directory may exist on disk while carrying no committed
-		// bluge snapshot — e.g. a fresh segment created by the runtime
-		// whose sidx writer never received a doc. Treat that as "no
-		// sidx to merge for this seg" instead of aborting the whole
-		// per-group union build.
-		if strings.Contains(err.Error(), "unable to find a usable snapshot") {
-			return 0, 0, nil
-		}
-		return 0, 0, fmt.Errorf("open reader: %w", err)
-	}
-	defer func() { _ = reader.Close() }()
-
-	dmi, err := reader.Search(ctx, bluge.NewAllMatches(bluge.NewMatchAllQuery()))
-	if err != nil {
-		return 0, 0, fmt.Errorf("search: %w", err)
-	}
-
 	batch := bluge.NewBatch()
 	batched := 0
 
@@ -223,46 +212,46 @@ func mergeOneSourceSidxInto(
 		return dst.Batch(batch)
 	}
 
-	for {
-		next, nextErr := dmi.Next()
-		if nextErr != nil {
-			return inserted, scanned, fmt.Errorf("iterate docs: %w", nextErr)
-		}
-		if next == nil {
-			break
-		}
+	walkErr := inverted.ReadOnlyWalkDocuments(ctx, srcPath, func(source inverted.StoredDocument) error {
 		scanned++
 
-		doc, dup, buildErr := buildDocFromMatchLocked(next, seen, seenMu)
+		doc, dup, buildErr := buildDocFromStoredDocumentLocked(source, seen, seenMu)
 		if buildErr != nil {
-			return inserted, scanned, buildErr
+			return buildErr
 		}
 		if dup || doc == nil {
-			continue
+			return nil
 		}
 		batch.Insert(doc)
 		batched++
 		inserted++
 		if batched >= unionSidxBatchSize {
-			if err := flush(); err != nil {
-				return inserted, scanned, fmt.Errorf("flush batch: %w", err)
+			if flushErr := flush(); flushErr != nil {
+				return fmt.Errorf("flush batch: %w", flushErr)
 			}
 			batch = bluge.NewBatch()
 			batched = 0
 		}
+		return nil
+	})
+	if walkErr != nil {
+		if errors.Is(walkErr, inverted.ErrNoCommittedIndex) {
+			return 0, 0, nil
+		}
+		return inserted, scanned, fmt.Errorf("walk source %s: %w", srcPath, walkErr)
 	}
 	if batched > 0 {
-		if err := flush(); err != nil {
-			return inserted, scanned, fmt.Errorf("flush tail batch: %w", err)
+		if flushErr := flush(); flushErr != nil {
+			return inserted, scanned, fmt.Errorf("flush tail batch: %w", flushErr)
 		}
 	}
 	return inserted, scanned, nil
 }
 
-// buildDocFromMatchLocked rebuilds one series-index doc from its stored
-// fields, deduplicating by SeriesID under seenMu.
-func buildDocFromMatchLocked(
-	match *blugesearch.DocumentMatch,
+// buildDocFromStoredDocumentLocked rebuilds one series-index doc from its
+// stored fields, deduplicating by SeriesID under seenMu.
+func buildDocFromStoredDocumentLocked(
+	source inverted.StoredDocument,
 	seen map[common.SeriesID]struct{},
 	seenMu *sync.Mutex,
 ) (*bluge.Document, bool, error) {
@@ -272,7 +261,7 @@ func buildDocFromMatchLocked(
 		value []byte
 	}
 	var fields []storedField
-	visitErr := match.VisitStoredFields(func(field string, value []byte) bool {
+	visitErr := source.VisitStoredFields(func(field string, value []byte) bool {
 		switch field {
 		case sidxDocIDField:
 			entityValues = append([]byte(nil), value...)
