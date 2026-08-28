@@ -213,6 +213,77 @@ func registryGetRequest(service, group string) any {
 	}
 }
 
+// registryExistRequest and registryDeleteRequest build the other two members of
+// the Metadata.Group family, and registryUpdateRequest the second member of the
+// resource-body family. R2 names three structural families, and the design's
+// § 06 asks the coverage test to prove "the method and extractor remain
+// paired" — driving one shape per family satisfies the first reading, every
+// method the second. These make both true at once, which is cheaper than
+// deciding which R2 meant.
+func registryExistRequest(service, group string) any {
+	resourceMeta := &commonv1.Metadata{Group: group, Name: "fixture"}
+	switch service {
+	case "StreamRegistryService":
+		return &databasev1.StreamRegistryServiceExistRequest{Metadata: resourceMeta}
+	case "MeasureRegistryService":
+		return &databasev1.MeasureRegistryServiceExistRequest{Metadata: resourceMeta}
+	case "TraceRegistryService":
+		return &databasev1.TraceRegistryServiceExistRequest{Metadata: resourceMeta}
+	case "IndexRuleRegistryService":
+		return &databasev1.IndexRuleRegistryServiceExistRequest{Metadata: resourceMeta}
+	case "IndexRuleBindingRegistryService":
+		return &databasev1.IndexRuleBindingRegistryServiceExistRequest{Metadata: resourceMeta}
+	case "TopNAggregationRegistryService":
+		return &databasev1.TopNAggregationRegistryServiceExistRequest{Metadata: resourceMeta}
+	default:
+		return &databasev1.PropertyRegistryServiceExistRequest{Metadata: resourceMeta}
+	}
+}
+
+func registryDeleteRequest(service, group string) any {
+	resourceMeta := &commonv1.Metadata{Group: group, Name: "fixture"}
+	switch service {
+	case "StreamRegistryService":
+		return &databasev1.StreamRegistryServiceDeleteRequest{Metadata: resourceMeta}
+	case "MeasureRegistryService":
+		return &databasev1.MeasureRegistryServiceDeleteRequest{Metadata: resourceMeta}
+	case "TraceRegistryService":
+		return &databasev1.TraceRegistryServiceDeleteRequest{Metadata: resourceMeta}
+	case "IndexRuleRegistryService":
+		return &databasev1.IndexRuleRegistryServiceDeleteRequest{Metadata: resourceMeta}
+	case "IndexRuleBindingRegistryService":
+		return &databasev1.IndexRuleBindingRegistryServiceDeleteRequest{Metadata: resourceMeta}
+	case "TopNAggregationRegistryService":
+		return &databasev1.TopNAggregationRegistryServiceDeleteRequest{Metadata: resourceMeta}
+	default:
+		return &databasev1.PropertyRegistryServiceDeleteRequest{Metadata: resourceMeta}
+	}
+}
+
+func registryUpdateRequest(service, group string) any {
+	resourceMeta := &commonv1.Metadata{Group: group, Name: "fixture"}
+	switch service {
+	case "StreamRegistryService":
+		return &databasev1.StreamRegistryServiceUpdateRequest{Stream: &databasev1.Stream{Metadata: resourceMeta}}
+	case "MeasureRegistryService":
+		return &databasev1.MeasureRegistryServiceUpdateRequest{Measure: &databasev1.Measure{Metadata: resourceMeta}}
+	case "TraceRegistryService":
+		return &databasev1.TraceRegistryServiceUpdateRequest{Trace: &databasev1.Trace{Metadata: resourceMeta}}
+	case "IndexRuleRegistryService":
+		return &databasev1.IndexRuleRegistryServiceUpdateRequest{IndexRule: &databasev1.IndexRule{Metadata: resourceMeta}}
+	case "IndexRuleBindingRegistryService":
+		return &databasev1.IndexRuleBindingRegistryServiceUpdateRequest{
+			IndexRuleBinding: &databasev1.IndexRuleBinding{Metadata: resourceMeta},
+		}
+	case "TopNAggregationRegistryService":
+		return &databasev1.TopNAggregationRegistryServiceUpdateRequest{
+			TopNAggregation: &databasev1.TopNAggregation{Metadata: resourceMeta},
+		}
+	default:
+		return &databasev1.PropertyRegistryServiceUpdateRequest{Property: &databasev1.Property{Metadata: resourceMeta}}
+	}
+}
+
 func registryCreateRequest(service, group string) any {
 	resourceMeta := &commonv1.Metadata{Group: group, Name: "fixture"}
 	switch service {
@@ -528,7 +599,10 @@ func TestSchemaR2_RequestScopesReadsTheAgreedRequestShapes(t *testing.T) {
 			}{
 				{family: liaisongrpc.ScopeDirectGroup, request: registryListRequest(service, groupAlpha)},
 				{family: liaisongrpc.ScopeMetadataGroup, request: registryGetRequest(service, groupAlpha)},
+				{family: liaisongrpc.ScopeMetadataGroup, request: registryExistRequest(service, groupAlpha)},
+				{family: liaisongrpc.ScopeMetadataGroup, request: registryDeleteRequest(service, groupAlpha)},
 				{family: liaisongrpc.ScopeResourceMetadataGroup, request: registryCreateRequest(service, groupAlpha)},
+				{family: liaisongrpc.ScopeResourceMetadataGroup, request: registryUpdateRequest(service, groupAlpha)},
 			} {
 				got, err := liaisongrpc.RequestScopes(shape.family, shape.request)
 				if err != nil {
