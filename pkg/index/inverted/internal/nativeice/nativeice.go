@@ -49,6 +49,7 @@ const (
 	maxFieldsIndexCount = 1 << 20
 	maxDirectoryEntries = 1 << 16
 	directoryReadSize   = maxDirectoryEntries + 1
+	maxOpenAttempts     = 2
 )
 
 // ErrCorrupt is the sentinel that every structural rejection wraps: a footer,
@@ -90,21 +91,38 @@ type Reader struct {
 // It reports an error wrapping ErrCorrupt only when no committed generation
 // validates.
 func Open(path string) (*Reader, error) {
-	snapshotPaths, segmentPaths, snapshotErr := committedSnapshots(path)
-	if snapshotErr != nil {
-		return nil, snapshotErr
+	return openWithSnapshots(path, committedSnapshots)
+}
+
+type snapshotLister func(string) ([]string, map[uint64]string, error)
+
+func openWithSnapshots(path string, listSnapshots snapshotLister) (*Reader, error) {
+	var lastCandidateErr error
+	var lastCandidatePath string
+	for attempt := 0; attempt < maxOpenAttempts; attempt++ {
+		snapshotPaths, segmentPaths, snapshotErr := listSnapshots(path)
+		if snapshotErr != nil {
+			return nil, snapshotErr
+		}
+		for snapshotIndex := len(snapshotPaths) - 1; snapshotIndex >= 0; snapshotIndex-- {
+			snapshotPath := snapshotPaths[snapshotIndex]
+			manifest, readErr := readManifest(snapshotPath)
+			if readErr != nil {
+				lastCandidateErr = fmt.Errorf("read snapshot %q: %w", snapshotPath, readErr)
+				lastCandidatePath = snapshotPath
+				continue
+			}
+			visibleDocCount, parseErr := parseSnapshot(segmentPaths, manifest)
+			if parseErr != nil {
+				lastCandidateErr = parseErr
+				lastCandidatePath = snapshotPath
+				continue
+			}
+			return &Reader{visibleDocCount: visibleDocCount}, nil
+		}
 	}
-	for snapshotIndex := len(snapshotPaths) - 1; snapshotIndex >= 0; snapshotIndex-- {
-		snapshotPath := snapshotPaths[snapshotIndex]
-		manifest, readErr := readManifest(snapshotPath)
-		if readErr != nil {
-			continue
-		}
-		visibleDocCount, parseErr := parseSnapshot(segmentPaths, manifest)
-		if parseErr != nil {
-			continue
-		}
-		return &Reader{visibleDocCount: visibleDocCount}, nil
+	if lastCandidateErr != nil {
+		return nil, corruptError("open %q has no structurally complete snapshot (candidate %q)", path, lastCandidatePath, lastCandidateErr)
 	}
 	return nil, corruptError("open %q has no structurally complete snapshot", path)
 }

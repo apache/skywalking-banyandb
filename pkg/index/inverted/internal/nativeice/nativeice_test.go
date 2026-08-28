@@ -20,6 +20,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -84,6 +85,68 @@ func TestOpenFallsBackToOlderStructurallyCompleteSnapshot(t *testing.T) {
 	}
 	if count != 2 {
 		t.Fatalf("VisibleDocCount() = %d, want 2", count)
+	}
+}
+
+func TestOpenReenumeratesAfterStaleListing(t *testing.T) {
+	directory, _ := writeCommittedIndex(t)
+	originalSnapshotPath := filepath.Join(directory, "000000000001.snp")
+	manifest, readErr := os.ReadFile(originalSnapshotPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	listCount := 0
+	reader, openErr := openWithSnapshots(directory, func(path string) ([]string, map[uint64]string, error) {
+		snapshotPaths, segmentPaths, snapshotErr := committedSnapshots(path)
+		if snapshotErr != nil {
+			return nil, nil, snapshotErr
+		}
+		listCount++
+		if listCount == 1 {
+			if removeErr := os.Remove(originalSnapshotPath); removeErr != nil {
+				t.Fatal(removeErr)
+			}
+			if writeErr := os.WriteFile(filepath.Join(directory, "000000000002.snp"), manifest, 0o600); writeErr != nil {
+				t.Fatal(writeErr)
+			}
+		}
+		return snapshotPaths, segmentPaths, nil
+	})
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	defer func() {
+		if closeErr := reader.Close(); closeErr != nil {
+			t.Error(closeErr)
+		}
+	}()
+	if listCount != 2 {
+		t.Fatalf("snapshot listings = %d, want 2", listCount)
+	}
+	count, countErr := reader.VisibleDocCount()
+	if countErr != nil {
+		t.Fatal(countErr)
+	}
+	if count != 2 {
+		t.Fatalf("VisibleDocCount() = %d, want 2", count)
+	}
+}
+
+func TestOpenRetainsLastCandidateFailure(t *testing.T) {
+	directory, segmentPath := writeCommittedIndex(t)
+	if removeErr := os.Remove(segmentPath); removeErr != nil {
+		t.Fatal(removeErr)
+	}
+
+	_, openErr := Open(directory)
+	if !errors.Is(openErr, ErrCorrupt) {
+		t.Fatalf("Open() error = %v, want error wrapping ErrCorrupt", openErr)
+	}
+	if !strings.Contains(openErr.Error(), "snapshot references missing segment 2") {
+		t.Fatalf("Open() error = %v, want missing segment rejection", openErr)
+	}
+	if !strings.Contains(openErr.Error(), "000000000001.snp") {
+		t.Fatalf("Open() error = %v, want rejected snapshot path", openErr)
 	}
 }
 
