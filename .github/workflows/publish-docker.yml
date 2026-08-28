@@ -27,9 +27,14 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish, for example v0.11.0
+        required: true
+        type: string
 
 env:
-  HUB: ghcr.io/apache
   SEGMENT_DOWNLOAD_TIMEOUT_MINS: 5
 
 jobs:
@@ -42,13 +47,40 @@ jobs:
     timeout-minutes: 90
     strategy:
       fail-fast: true
-    env:
-      TAG: ${{ github.sha }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-tags: true
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - name: Set publish environment
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            release_tag="${{ inputs.tag }}"
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "HUB=ghcr.io/apache" >> "$GITHUB_ENV"
+            echo "TAG=${{ github.sha }}" >> "$GITHUB_ENV"
+            exit 0
+          else
+            echo "HUB=ghcr.io/apache" >> "$GITHUB_ENV"
+            echo "DOCKER_REGISTRY=ghcr.io" >> "$GITHUB_ENV"
+            echo "DOCKER_USERNAME=${{ github.actor }}" >> "$GITHUB_ENV"
+            echo "DOCKER_PASSWORD=${{ secrets.GITHUB_TOKEN }}" >> "$GITHUB_ENV"
+            echo "TAG=${{ github.sha }}" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          version="${release_tag#v}"
+          if [[ -z "$version" || "$version" == "$release_tag" ]]; then
+            echo "Release tag must start with v: $release_tag" >&2
+            exit 1
+          fi
+          git rev-parse --verify "refs/tags/$release_tag"
+          echo "HUB=apache" >> "$GITHUB_ENV"
+          echo "DOCKER_REGISTRY=docker.io" >> "$GITHUB_ENV"
+          echo "DOCKER_USERNAME=${{ secrets.DOCKERHUB_USER }}" >> "$GITHUB_ENV"
+          echo "DOCKER_PASSWORD=${{ secrets.DOCKERHUB_TOKEN }}" >> "$GITHUB_ENV"
+          echo "TAG=$version" >> "$GITHUB_ENV"
       - name: Setup build environment
         uses: ./.github/actions/setup-build-env
         with:
@@ -98,26 +130,36 @@ jobs:
             done
           done
       - name: Build docker image
-        if: github.ref != 'refs/heads/main' # Only build docker image on PR(Push image when pushed to main branch)
+        if: github.event_name == 'pull_request'
         run: |
           make docker.build || make docker.build
           BINARYTYPE=slim make -C banyand docker || BINARYTYPE=slim make -C banyand docker
+          PLATFORMS=linux/amd64 make -C canopy docker || PLATFORMS=linux/amd64 make -C canopy docker
           make -C test/docker build || make -C test/docker build
           make -C mcp docker || make -C mcp docker
           docker image ls
       - name: Log in to the Container registry
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
-        if: github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request'
         with:
-          registry: ${{ env.HUB }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ env.DOCKER_PASSWORD }}
       - name: Push docker image
-        if: github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request'
         run: |
-          PLATFORMS=linux/amd64,linux/arm64 make docker.push || PLATFORMS=linux/amd64,linux/arm64 make docker.push
-          PLATFORMS=linux/amd64,linux/arm64 BINARYTYPE=slim make -C banyand docker.push || PLATFORMS=linux/amd64,linux/arm64 BINARYTYPE=slim make -C banyand docker.push
-          make -C test/docker push || make -C test/docker push
+          if [[ "$HUB" == "apache" ]]; then
+            PLATFORMS=linux/amd64,linux/arm64 make -C banyand docker.push
+            PLATFORMS=linux/amd64,linux/arm64 BINARYTYPE=slim make -C banyand docker.push
+            PLATFORMS=linux/amd64,linux/arm64 make -C canopy docker.push
+            PLATFORMS=linux/amd64,linux/arm64 make -C mcp docker.push
+            PLATFORMS=linux/amd64,linux/arm64 make -C fodc/agent docker.push
+            PLATFORMS=linux/amd64,linux/arm64 make -C fodc/proxy docker.push
+          else
+            PLATFORMS=linux/amd64,linux/arm64 make docker.push || PLATFORMS=linux/amd64,linux/arm64 make docker.push
+            PLATFORMS=linux/amd64,linux/arm64 BINARYTYPE=slim make -C banyand docker.push || PLATFORMS=linux/amd64,linux/arm64 BINARYTYPE=slim make -C banyand docker.push
+            make -C test/docker push || make -C test/docker push
+          fi
 
   # push-banyandb-plugins-image builds/pushes BOTH plugin images at the SAME
   # <sha> tag (plan DD2/DD6; see docs/operation/plugins.md):
@@ -143,19 +185,31 @@ jobs:
   # a same-artifact swap, not a scope change. Revisit this number after the
   # first real arm64 run.
   push-banyandb-plugins-image:
-    if: github.repository == 'apache/skywalking-banyandb'
+    if: github.repository == 'apache/skywalking-banyandb' && (github.event_name == 'pull_request' || github.event_name == 'push')
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     timeout-minutes: 180
-    env:
-      TAG: ${{ github.sha }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-tags: true
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - name: Set publish environment
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "HUB=ghcr.io/apache" >> "$GITHUB_ENV"
+            echo "TAG=${{ github.sha }}" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "HUB=ghcr.io/apache" >> "$GITHUB_ENV"
+          echo "DOCKER_REGISTRY=ghcr.io" >> "$GITHUB_ENV"
+          echo "DOCKER_USERNAME=${{ github.actor }}" >> "$GITHUB_ENV"
+          echo "DOCKER_PASSWORD=${{ secrets.GITHUB_TOKEN }}" >> "$GITHUB_ENV"
+          echo "TAG=${{ github.sha }}" >> "$GITHUB_ENV"
       - name: Setup build environment
         uses: ./.github/actions/setup-build-env
         with:
@@ -187,20 +241,20 @@ jobs:
           mkdir -p ui/dist && touch ui/dist/index.html
           TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make release
       - name: Build plugin images (host + carrier)
-        if: github.ref != 'refs/heads/main' # Only build on PR; push when merged to main
+        if: github.event_name == 'pull_request'
         run: |
           BINARYTYPE=plugins make -C banyand docker || BINARYTYPE=plugins make -C banyand docker
           make -C banyand docker.plugins-carrier || make -C banyand docker.plugins-carrier
           docker image ls
       - name: Log in to the Container registry
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
-        if: github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request'
         with:
-          registry: ${{ env.HUB }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          registry: ${{ env.DOCKER_REGISTRY }}
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ env.DOCKER_PASSWORD }}
       - name: Push plugin images (host + carrier, same <sha> tag)
-        if: github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request'
         run: |
           PLATFORMS=linux/amd64,linux/arm64 BINARYTYPE=plugins make -C banyand docker.push || \
             PLATFORMS=linux/amd64,linux/arm64 BINARYTYPE=plugins make -C banyand docker.push
