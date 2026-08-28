@@ -4,10 +4,14 @@
 
 The BanyanDB images are hosted on Docker Hub. You can pull the images from the following links: [Apache SkyWalking BanyanDB](https://hub.docker.com/r/apache/skywalking-banyandb)
 
-There are two types of images:
+There are six types of images:
 
 - `apache/skywalking-banyandb:<version>` - The specific version of the BanyanDB.
 - `apache/skywalking-banyandb:<version>-slim` - The slim version of the BanyanDB. It does not contain the Web UI.
+- `apache/skywalking-banyandb:<version>-canopy` - The Canopy web console.
+- `apache/skywalking-banyandb-mcp:<version>` - The BanyanDB Model Context Protocol server.
+- `apache/skywalking-banyandb-fodc-agent:<version>` - The FODC agent.
+- `apache/skywalking-banyandb-fodc-proxy:<version>` - The FODC proxy.
 
 We pushed `linux/amd64` and `linux/arm64` for each type of image. You can pull the image for the specific architecture.
 

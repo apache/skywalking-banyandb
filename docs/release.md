@@ -137,6 +137,12 @@ Vote result should follow these:
 
 1. Update [Github release page](https://github.com/apache/skywalking-banyandb/releases), follow the previous convention.
 
+1. Publish the official multi-platform Docker images manually. In **Actions**, run `publish-docker` with the annotated tag (for example,
+   `v$VERSION`). It publishes `apache/skywalking-banyandb:$VERSION`, `apache/skywalking-banyandb:$VERSION-slim`, and
+   `apache/skywalking-banyandb:$VERSION-canopy`, as well as `apache/skywalking-banyandb-mcp:$VERSION`,
+   `apache/skywalking-banyandb-fodc-agent:$VERSION`, and `apache/skywalking-banyandb-fodc-proxy:$VERSION`. Pushes to `main` continue to
+   publish only SHA-tagged development images to GHCR. The workflow requires the `DOCKERHUB_USER` and `DOCKERHUB_TOKEN` GitHub secrets.
+
 1. Send ANNOUNCE email to `dev@skywalking.apache.org` and `announce@apache.org`, the sender should use his/her Apache email account. You can get the permlink of vote thread at [here](https://lists.apache.org/list.html?dev@skywalking.apache.org).
 
     ```
