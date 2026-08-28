@@ -1,0 +1,56 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements. See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+services:
+  banyandb:
+    extends:
+      file: ../../script/docker-compose/base-compose.yml
+      service: banyandb
+    hostname: banyandb
+    entrypoint:
+      - /bin/sh
+      - -ec
+    command:
+      - |
+        cp /etc/banyandb/security.template.yaml /tmp/security.yaml
+        chmod 0600 /tmp/security.yaml
+        exec /banyand standalone --auth-config-file=/tmp/security.yaml
+    volumes:
+      - ${RBAC_CONFIG_DIR:-.}/security.yaml:/etc/banyandb/security.template.yaml:ro
+      - ${RBAC_CONFIG_DIR:-.}/security-revoked.yaml:/etc/banyandb/security.revoked.yaml:ro
+      - ${RBAC_CONFIG_DIR:-.}/security-malformed.yaml:/etc/banyandb/security.malformed.yaml:ro
+    ports:
+      - 17912
+      - 17913
+      - 2121
+    networks:
+      - e2e
+
+  noauth:
+    extends:
+      file: ../../script/docker-compose/base-compose.yml
+      service: banyandb
+    hostname: noauth
+    command: standalone
+    healthcheck:
+      test: ["CMD", "./bydbctl", "health", "--config=-", "--addr=http://noauth:17913"]
+    ports:
+      - 17912
+      - 17913
+    networks:
+      - e2e
+
+networks:
+  e2e:

@@ -366,8 +366,11 @@ func (s *server) PreRun(ctx context.Context) error {
 			}
 		}
 	}
-	metrics := newMetrics(s.omr.With(liaisonGrpcScope))
+	metrics := newMetrics(s.omr.With(liaisonGrpcScope), s.omr.With(observability.RootScope))
 	s.metrics = metrics
+	if s.authConfigFile != "" {
+		s.authReloader.SetPolicyObserver(metrics)
+	}
 	s.streamSVC.metrics = metrics
 	s.measureSVC.metrics = metrics
 	s.traceSVC.metrics = metrics
@@ -505,6 +508,20 @@ func (s *server) validateParamMode() error {
 }
 
 func (s *server) Validate() error {
+	activation := ServiceActivation{
+		SchemaBarrier:    s.barrierSVC != nil,
+		NodeSchemaStatus: s.nodeStatusSVC != nil,
+	}
+	registered := RegisteredMethods(activation)
+	if s.canRegisterServices() {
+		validationServer := grpclib.NewServer()
+		s.registerServices(validationServer)
+		registered = RegisteredServiceMethods(validationServer.GetServiceInfo())
+	}
+	activePolicies := ActiveMethodPolicies(activation)
+	if policyErr := ValidateMethodPolicies(activePolicies, registered); policyErr != nil {
+		return policyErr
+	}
 	s.addr = net.JoinHostPort(s.host, strconv.FormatUint(uint64(s.port), 10))
 	if s.addr == ":" {
 		return errNoAddr
@@ -528,6 +545,13 @@ func (s *server) Validate() error {
 		return errServerKey
 	}
 	return nil
+}
+
+func (s *server) canRegisterServices() bool {
+	return s.streamSVC != nil && s.measureSVC != nil && s.traceSVC != nil && s.bydbQLSVC != nil &&
+		s.groupRegistryServer != nil && s.indexRuleBindingRegistryServer != nil && s.indexRuleRegistryServer != nil &&
+		s.streamRegistryServer != nil && s.measureRegistryServer != nil && s.propertyServer != nil &&
+		s.topNAggregationRegistryServer != nil && s.propertyRegistryServer != nil && s.traceRegistryServer != nil
 }
 
 func (s *server) Serve() run.StopNotify {
@@ -563,13 +587,15 @@ func (s *server) Serve() run.StopNotify {
 	}
 	unaryChain := []grpclib.UnaryServerInterceptor{
 		panicdiag.BreadcrumbUnaryInterceptor(),
-		grpc_validator.UnaryServerInterceptor(),
-		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandlerContext(grpcPanicRecoveryHandler)),
 	}
 	if s.authConfigFile != "" {
-		streamChain = append(streamChain, authStreamInterceptor(s.authReloader))
-		unaryChain = append(unaryChain, authInterceptor(s.authReloader))
+		streamChain = append(streamChain, NewAuthorizationStreamInterceptor(s.authReloader, GlobalMethodPolicies(), s.metrics))
+		unaryChain = append(unaryChain, NewAuthorizationInterceptor(s.authReloader, GlobalMethodPolicies(), s.metrics))
 	}
+	unaryChain = append(unaryChain,
+		grpc_validator.UnaryServerInterceptor(),
+		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandlerContext(grpcPanicRecoveryHandler)),
+	)
 	if s.protector != nil {
 		streamChain = append(streamChain, s.protectorLoadSheddingInterceptor)
 	}
@@ -591,30 +617,7 @@ func (s *server) Serve() run.StopNotify {
 	)
 	s.ser = grpclib.NewServer(opts...)
 
-	commonv1.RegisterServiceServer(s.ser, &apiVersionService{})
-	streamv1.RegisterStreamServiceServer(s.ser, s.streamSVC)
-	measurev1.RegisterMeasureServiceServer(s.ser, s.measureSVC)
-	tracev1.RegisterTraceServiceServer(s.ser, s.traceSVC)
-	bydbqlv1.RegisterBydbQLServiceServer(s.ser, s.bydbQLSVC)
-	databasev1.RegisterGroupRegistryServiceServer(s.ser, s.groupRegistryServer)
-	databasev1.RegisterIndexRuleBindingRegistryServiceServer(s.ser, s.indexRuleBindingRegistryServer)
-	databasev1.RegisterIndexRuleRegistryServiceServer(s.ser, s.indexRuleRegistryServer)
-	databasev1.RegisterStreamRegistryServiceServer(s.ser, s.streamRegistryServer)
-	databasev1.RegisterMeasureRegistryServiceServer(s.ser, s.measureRegistryServer)
-	propertyv1.RegisterPropertyServiceServer(s.ser, s.propertyServer)
-	databasev1.RegisterTopNAggregationRegistryServiceServer(s.ser, s.topNAggregationRegistryServer)
-	databasev1.RegisterSnapshotServiceServer(s.ser, s)
-	databasev1.RegisterPropertyRegistryServiceServer(s.ser, s.propertyRegistryServer)
-	databasev1.RegisterTraceRegistryServiceServer(s.ser, s.traceRegistryServer)
-	databasev1.RegisterClusterStateServiceServer(s.ser, s)
-	databasev1.RegisterNodeQueryServiceServer(s.ser, s)
-	if s.barrierSVC != nil {
-		schemav1.RegisterSchemaBarrierServiceServer(s.ser, s.barrierSVC)
-	}
-	if s.nodeStatusSVC != nil {
-		clusterv1.RegisterNodeSchemaStatusServiceServer(s.ser, s.nodeStatusSVC)
-	}
-	grpc_health_v1.RegisterHealthServer(s.ser, health.NewServer())
+	s.registerServices(s.ser)
 
 	s.stopCh = make(chan struct{})
 	s.propertyServer.startRepairQueue(s.stopCh)
@@ -634,6 +637,33 @@ func (s *server) Serve() run.StopNotify {
 		close(s.stopCh)
 	}()
 	return s.stopCh
+}
+
+func (s *server) registerServices(grpcServer *grpclib.Server) {
+	commonv1.RegisterServiceServer(grpcServer, &apiVersionService{})
+	streamv1.RegisterStreamServiceServer(grpcServer, s.streamSVC)
+	measurev1.RegisterMeasureServiceServer(grpcServer, s.measureSVC)
+	tracev1.RegisterTraceServiceServer(grpcServer, s.traceSVC)
+	bydbqlv1.RegisterBydbQLServiceServer(grpcServer, s.bydbQLSVC)
+	databasev1.RegisterGroupRegistryServiceServer(grpcServer, s.groupRegistryServer)
+	databasev1.RegisterIndexRuleBindingRegistryServiceServer(grpcServer, s.indexRuleBindingRegistryServer)
+	databasev1.RegisterIndexRuleRegistryServiceServer(grpcServer, s.indexRuleRegistryServer)
+	databasev1.RegisterStreamRegistryServiceServer(grpcServer, s.streamRegistryServer)
+	databasev1.RegisterMeasureRegistryServiceServer(grpcServer, s.measureRegistryServer)
+	propertyv1.RegisterPropertyServiceServer(grpcServer, s.propertyServer)
+	databasev1.RegisterTopNAggregationRegistryServiceServer(grpcServer, s.topNAggregationRegistryServer)
+	databasev1.RegisterSnapshotServiceServer(grpcServer, s)
+	databasev1.RegisterPropertyRegistryServiceServer(grpcServer, s.propertyRegistryServer)
+	databasev1.RegisterTraceRegistryServiceServer(grpcServer, s.traceRegistryServer)
+	databasev1.RegisterClusterStateServiceServer(grpcServer, s)
+	databasev1.RegisterNodeQueryServiceServer(grpcServer, s)
+	if s.barrierSVC != nil {
+		schemav1.RegisterSchemaBarrierServiceServer(grpcServer, s.barrierSVC)
+	}
+	if s.nodeStatusSVC != nil {
+		clusterv1.RegisterNodeSchemaStatusServiceServer(grpcServer, s.nodeStatusSVC)
+	}
+	grpc_health_v1.RegisterHealthServer(grpcServer, health.NewServer())
 }
 
 // protectorLoadSheddingInterceptor rejects streams when memory pressure is high.

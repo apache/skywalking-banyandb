@@ -153,7 +153,101 @@ You can update the files or recreate the files, and the servers will automatical
 
 ## Authorization
 
-BanyanDB does not have built-in authorization mechanisms. However, you can use external tools like [Envoy](https://www.envoyproxy.io/) or [Istio](https://istio.io/) to manage access control and authorization.
+BanyanDB liaison supports optional role-based access control (RBAC) for its
+public gRPC and HTTP APIs. Authentication and RBAC use the same file supplied
+through `--auth-config-file`; no separate policy store is required.
+
+RBAC is disabled by default. A file containing only `users`, or an explicit
+`rbac.enabled: false`, preserves the existing authenticate-then-allow behavior.
+When RBAC is enabled, a successfully authenticated user must be bound to a role
+containing the permission required by the requested method. An unbound user is
+authenticated but receives `PermissionDenied`.
+
+### Configure RBAC
+
+The built-in `reader`, `writer`, and `admin` roles cannot be overridden. Custom
+roles are flat permission sets. Bindings associate configured users with roles
+and exact group names or `*`; multiple bindings for a user combine their grants.
+
+```yaml
+users:
+  - username: admin
+    password: StrongPassword123
+  - username: monitor
+    password: AnotherStrongPassword456
+  - username: writer
+    password: YetAnotherStrongPassword789
+
+rbac:
+  enabled: true
+  roles:
+    monitor:
+      permissions:
+        - cluster:read
+  bindings:
+    - principal: admin
+      role: admin
+      groups: ["*"]
+    - principal: monitor
+      role: monitor
+      groups: ["*"]
+    - principal: writer
+      role: writer
+      groups: [sw_metric]
+```
+
+The permission vocabulary is fixed:
+
+- `cluster:read`
+- `cluster:admin`
+- `schema:read`
+- `schema:write`
+- `data:read`
+- `data:write`
+
+`reader` grants `schema:read` and `data:read`; `writer` adds both write
+permissions; `admin` grants all six permissions. Cluster permissions and the
+`admin` role require a `*` binding. An enabled policy is rejected for unknown
+fields or permissions, built-in overrides, empty groups, `*` mixed with exact
+groups, invalid references or cluster scopes, and duplicate users, custom
+roles, permissions, groups, or equivalent bindings. It also requires at least
+one user. The authentication file must still have mode `0600`. Valid file
+changes are applied atomically without restarting liaison; an invalid reload
+leaves the last valid policy and revision in force.
+
+### Authorization coverage in this release
+
+This release activates the global cluster permissions:
+
+- `cluster:read` covers cluster state, current node, group inspection, and
+  deletion-task queries.
+- `cluster:admin` covers snapshots, retention deletion, measure internal query,
+  and the conditionally registered node-schema-status RPCs.
+
+`GetAPIVersion` requires authentication but no role binding. Schema-barrier
+methods, including `AwaitRevisionApplied`, remain classified as `schema:read`
+and fail closed in this release.
+
+The existing `--enable-health-auth` setting continues to decide whether the
+gRPC `Check` and HTTP health checks require credentials; no RBAC role is added
+to that policy. Static web assets remain public. The gRPC `List` and `Watch`
+health methods retain their existing authentication requirement.
+
+Although schema and data permission names may be configured, their executors
+are not active in this release. With RBAC enabled, methods outside the activated
+global cluster set therefore fail closed with `PermissionDenied`, including for
+a role that lists the corresponding permission. Leave RBAC disabled until the
+available method coverage matches the deployment's needs.
+
+HTTP Basic authentication and direct gRPC authentication converge on the same
+gRPC authorization decision. The HTTP gateway discards caller-supplied identity
+metadata and forwards only the identity established from valid Basic
+credentials. Missing or invalid credentials return `Unauthenticated` before
+authorization, and denied requests do not invoke their handlers.
+
+External policy proxies such as [Envoy](https://www.envoyproxy.io/) or
+[Istio](https://istio.io/) may still be used when deployments require an
+authorization model beyond BanyanDB's built-in RBAC.
 
 ## Data Encryption
 
