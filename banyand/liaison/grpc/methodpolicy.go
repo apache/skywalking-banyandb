@@ -255,15 +255,15 @@ func GlobalMethodPolicies() MethodPolicyTable {
 		permissionPolicy("/banyandb.cluster.v1.NodeSchemaStatusService/GetMaxRevision", auth.PermissionClusterAdmin, ScopeGlobal, true),
 		permissionPolicy("/banyandb.cluster.v1.NodeSchemaStatusService/GetKeyRevisions", auth.PermissionClusterAdmin, ScopeGlobal, true),
 		permissionPolicy("/banyandb.cluster.v1.NodeSchemaStatusService/GetAbsentKeys", auth.PermissionClusterAdmin, ScopeGlobal, true),
-		permissionPolicy("/banyandb.schema.v1.SchemaBarrierService/AwaitRevisionApplied", auth.PermissionSchemaRead, ScopeUnspecified, false),
-		permissionPolicy("/banyandb.schema.v1.SchemaBarrierService/AwaitSchemaApplied", auth.PermissionSchemaRead, ScopeUnspecified, false),
-		permissionPolicy("/banyandb.schema.v1.SchemaBarrierService/AwaitSchemaDeleted", auth.PermissionSchemaRead, ScopeUnspecified, false),
-		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Get", auth.PermissionSchemaRead, ScopeUnspecified, false),
-		permissionPolicy("/banyandb.database.v1.GroupRegistryService/List", auth.PermissionSchemaRead, ScopeUnspecified, false),
-		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Exist", auth.PermissionSchemaRead, ScopeUnspecified, false),
-		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Create", auth.PermissionSchemaWrite, ScopeUnspecified, false),
-		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Update", auth.PermissionSchemaWrite, ScopeUnspecified, false),
-		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Delete", auth.PermissionSchemaWrite, ScopeUnspecified, false),
+		permissionPolicy("/banyandb.schema.v1.SchemaBarrierService/AwaitRevisionApplied", auth.PermissionSchemaRead, ScopeGlobal, true),
+		permissionPolicy("/banyandb.schema.v1.SchemaBarrierService/AwaitSchemaApplied", auth.PermissionSchemaRead, ScopeSchemaKeys, true),
+		permissionPolicy("/banyandb.schema.v1.SchemaBarrierService/AwaitSchemaDeleted", auth.PermissionSchemaRead, ScopeSchemaKeys, true),
+		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Get", auth.PermissionSchemaRead, ScopeDirectGroup, true),
+		permissionPolicy("/banyandb.database.v1.GroupRegistryService/List", auth.PermissionSchemaRead, ScopeVisibleGroups, true),
+		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Exist", auth.PermissionSchemaRead, ScopeDirectGroup, true),
+		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Create", auth.PermissionSchemaWrite, ScopeGroupBodyName, true),
+		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Update", auth.PermissionSchemaWrite, ScopeGroupBodyName, true),
+		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Delete", auth.PermissionSchemaWrite, ScopeDirectGroup, true),
 		permissionPolicy("/banyandb.stream.v1.StreamService/Query", auth.PermissionDataRead, ScopeUnspecified, false),
 		permissionPolicy("/banyandb.stream.v1.StreamService/Write", auth.PermissionDataWrite, ScopeUnspecified, false),
 		permissionPolicy("/banyandb.measure.v1.MeasureService/Query", auth.PermissionDataRead, ScopeUnspecified, false),
@@ -282,12 +282,12 @@ func GlobalMethodPolicies() MethodPolicyTable {
 	} {
 		servicePrefix := "/banyandb.database.v1." + service + "/"
 		policies = append(policies,
-			permissionPolicy(servicePrefix+"Get", auth.PermissionSchemaRead, ScopeUnspecified, false),
-			permissionPolicy(servicePrefix+"List", auth.PermissionSchemaRead, ScopeUnspecified, false),
-			permissionPolicy(servicePrefix+"Exist", auth.PermissionSchemaRead, ScopeUnspecified, false),
-			permissionPolicy(servicePrefix+"Create", auth.PermissionSchemaWrite, ScopeUnspecified, false),
-			permissionPolicy(servicePrefix+"Update", auth.PermissionSchemaWrite, ScopeUnspecified, false),
-			permissionPolicy(servicePrefix+"Delete", auth.PermissionSchemaWrite, ScopeUnspecified, false),
+			permissionPolicy(servicePrefix+"Get", auth.PermissionSchemaRead, ScopeMetadataGroup, true),
+			permissionPolicy(servicePrefix+"List", auth.PermissionSchemaRead, ScopeDirectGroup, true),
+			permissionPolicy(servicePrefix+"Exist", auth.PermissionSchemaRead, ScopeMetadataGroup, true),
+			permissionPolicy(servicePrefix+"Create", auth.PermissionSchemaWrite, ScopeResourceMetadataGroup, true),
+			permissionPolicy(servicePrefix+"Update", auth.PermissionSchemaWrite, ScopeResourceMetadataGroup, true),
+			permissionPolicy(servicePrefix+"Delete", auth.PermissionSchemaWrite, ScopeMetadataGroup, true),
 		)
 	}
 	return policies
@@ -362,7 +362,16 @@ func (table MethodPolicyTable) Authorize(
 	if scopeErr != nil {
 		return DecisionInvalidRequest, DecisionReasonInvalidRequest
 	}
-	if snapshot == nil || !snapshot.Allows(principal, policy.Permission, scopes...) {
+	if snapshot == nil {
+		return DecisionDeny, DecisionReasonPermissionMissing
+	}
+	if policy.Scope == ScopeVisibleGroups {
+		if !snapshot.AllowsAny(principal, policy.Permission) {
+			return DecisionDeny, DecisionReasonPermissionMissing
+		}
+		return DecisionAllow, DecisionReasonGranted
+	}
+	if !snapshot.Allows(principal, policy.Permission, scopes...) {
 		return DecisionDeny, DecisionReasonPermissionMissing
 	}
 	return DecisionAllow, DecisionReasonGranted
@@ -470,9 +479,13 @@ func NewAuthorizationInterceptor(reloader *auth.Reloader, table MethodPolicyTabl
 			observeDecision(observer, snapshot, policy, decision, reason)
 		}
 		if decision != DecisionAllow {
-			return nil, status.Error(codes.PermissionDenied, "permission denied")
+			return nil, decisionError(decision)
 		}
-		return handler(handlerContext, request)
+		reply, handlerErr := handler(handlerContext, request)
+		if handlerErr != nil {
+			return reply, handlerErr
+		}
+		return FilterResponse(snapshot, principal, policy, reply), nil
 	}
 }
 
@@ -544,6 +557,13 @@ func permissionLabel(policy MethodPolicy) string {
 	default:
 		return string(policy.Permission)
 	}
+}
+
+func decisionError(decision Decision) error {
+	if decision == DecisionInvalidRequest {
+		return status.Error(codes.InvalidArgument, "invalid request")
+	}
+	return status.Error(codes.PermissionDenied, "permission denied")
 }
 
 func authenticatePrincipal(ctx context.Context, snapshot auth.Snapshot) (auth.Principal, bool) {

@@ -396,8 +396,16 @@ func (s *compiledSnapshot) Allows(principal Principal, permission Permission, gr
 	return true
 }
 
-func (s *compiledSnapshot) AllowsAny(_ Principal, _ Permission) bool {
-	return false
+func (s *compiledSnapshot) AllowsAny(principal Principal, permission Permission) bool {
+	if !s.rbacEnabled || principal.IsZero() {
+		return false
+	}
+	permissions, exists := s.grants[principal.username]
+	if !exists {
+		return false
+	}
+	scopes, allowed := permissions[permission]
+	return allowed && len(scopes) > 0
 }
 
 // CurrentSnapshot returns the security snapshot in force. It never returns nil: before any

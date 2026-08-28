@@ -18,6 +18,8 @@
 package grpc
 
 import (
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 )
 
@@ -33,6 +35,19 @@ import (
 // A principal that holds the permission in no scope at all is rejected before its handler
 // runs and never reaches this function, so an empty result here means the caller's scopes
 // simply cover none of the listed groups.
-func FilterResponse(_ auth.Snapshot, _ auth.Principal, _ MethodPolicy, reply any) any {
-	return reply
+func FilterResponse(snapshot auth.Snapshot, principal auth.Principal, policy MethodPolicy, reply any) any {
+	if policy.Scope != ScopeVisibleGroups || snapshot == nil {
+		return reply
+	}
+	groupList, ok := reply.(*databasev1.GroupRegistryServiceListResponse)
+	if !ok || groupList == nil {
+		return reply
+	}
+	filtered := make([]*commonv1.Group, 0, len(groupList.GetGroup()))
+	for _, group := range groupList.GetGroup() {
+		if group != nil && snapshot.Allows(principal, policy.Permission, group.GetMetadata().GetName()) {
+			filtered = append(filtered, group)
+		}
+	}
+	return &databasev1.GroupRegistryServiceListResponse{Group: filtered}
 }

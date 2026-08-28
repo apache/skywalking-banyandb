@@ -86,6 +86,12 @@ const (
 	groupGamma   = "gamma"
 	measureAlpha = "alpha_marker"
 	measureBeta  = "beta_marker"
+	// internalTopNResult is provisioned by the measure subsystem itself in every measure
+	// group, exactly as test/cases/schema/clients.go already accounts for. It is not a
+	// resource this fixture created, and authorization is a group decision rather than a
+	// resource filter, so a list assertion names the fixture's own measures instead of
+	// carrying an off-by-one for it.
+	internalTopNResult = "_top_n_result"
 )
 
 type actor struct {
@@ -137,6 +143,19 @@ func measureSchema(group, name string) *databasev1.Measure {
 			CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
 		}},
 	}
+}
+
+// userMeasureNames names the measures a caller created, dropping the auto-provisioned TopN
+// result entry.
+func userMeasureNames(listed []*databasev1.Measure) []string {
+	names := make([]string, 0, len(listed))
+	for _, entry := range listed {
+		if entry.GetMetadata().GetName() == internalTopNResult {
+			continue
+		}
+		names = append(names, entry.GetMetadata().GetName())
+	}
+	return names
 }
 
 // httpCall issues one grpc-gateway request with Basic credentials and returns the status code
@@ -267,8 +286,13 @@ var _ = g.Describe("rbac-schema group-scoped schema authorization through the re
 		// metadata group, and the alpha reader denied both in beta.
 		listAlpha, listAlphaErr := measures.List(readerAlphaActor.ctx(), &databasev1.MeasureRegistryServiceListRequest{Group: groupAlpha})
 		gm.Expect(listAlphaErr).NotTo(gm.HaveOccurred(), "the alpha reader must list alpha measures")
-		gm.Expect(listAlpha.GetMeasure()).To(gm.HaveLen(1))
-		gm.Expect(listAlpha.GetMeasure()[0].GetMetadata().GetName()).To(gm.Equal(measureAlpha))
+		for _, listed := range listAlpha.GetMeasure() {
+			gm.Expect(listed.GetMetadata().GetGroup()).To(gm.Equal(groupAlpha),
+				"a group-scoped list must answer from the requested group only, got %s/%s",
+				listed.GetMetadata().GetGroup(), listed.GetMetadata().GetName())
+		}
+		gm.Expect(userMeasureNames(listAlpha.GetMeasure())).To(gm.ConsistOf(measureAlpha),
+			"the alpha reader's list must be the alpha fixture measure and nothing else the fixture created")
 
 		_, listBetaErr := measures.List(readerAlphaActor.ctx(), &databasev1.MeasureRegistryServiceListRequest{Group: groupBeta})
 		gm.Expect(status.Code(listBetaErr)).To(gm.Equal(codes.PermissionDenied), "the alpha reader must be denied beta measures")
