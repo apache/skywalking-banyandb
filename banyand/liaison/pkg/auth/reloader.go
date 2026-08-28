@@ -37,16 +37,16 @@ import (
 
 // Config AuthConfig.
 type Config struct {
-	Users             []User      `yaml:"users"`
-	RBAC              RBACSection `yaml:"rbac"`
-	Enabled           bool        `yaml:"-"`
-	HealthAuthEnabled bool        `yaml:"-"`
+	Users             []User      `json:"users" yaml:"users"`
+	RBAC              RBACSection `json:"rbac"  yaml:"rbac"`
+	Enabled           bool        `json:"-"     yaml:"-"`
+	HealthAuthEnabled bool        `json:"-"     yaml:"-"`
 }
 
 // User details from config file.
 type User struct {
-	Username string `yaml:"username"`
-	Password string `yaml:"password"`
+	Username string `json:"username" yaml:"username"`
+	Password string `json:"password" yaml:"password"`
 }
 
 // Policy reload result labels are bounded values used by reload observability.

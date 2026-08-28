@@ -149,8 +149,8 @@ func CompileSnapshot(revision uint64, raw []byte) (Snapshot, error) {
 
 func compileSnapshot(revision uint64, raw []byte) (*compiledSnapshot, error) {
 	var configuration struct {
-		Users []User      `yaml:"users"`
-		RBAC  RBACSection `yaml:"rbac"`
+		Users []User      `json:"users" yaml:"users"`
+		RBAC  RBACSection `json:"rbac"  yaml:"rbac"`
 	}
 	if unmarshalErr := yaml.UnmarshalStrict(raw, &configuration); unmarshalErr != nil {
 		return nil, invalidPolicyError("decode security configuration", unmarshalErr)

@@ -20,11 +20,34 @@ package auth
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"sigs.k8s.io/yaml"
+
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
+
+func TestConfigMarshalOmitsRuntimeFields(t *testing.T) {
+	configuration := Config{
+		Users:             []User{{Username: "alice", Password: "secret"}},
+		Enabled:           true,
+		HealthAuthEnabled: true,
+	}
+	encoded, marshalErr := yaml.Marshal(configuration)
+	if marshalErr != nil {
+		t.Fatalf("yaml.Marshal() error = %v", marshalErr)
+	}
+	for _, runtimeField := range []string{"Enabled", "HealthAuthEnabled"} {
+		if strings.Contains(string(encoded), runtimeField) {
+			t.Errorf("yaml.Marshal() output contains runtime field %q: %s", runtimeField, encoded)
+		}
+	}
+	if _, compileErr := CompileSnapshot(1, encoded); compileErr != nil {
+		t.Fatalf("CompileSnapshot() rejected marshaled Config: %v", compileErr)
+	}
+}
 
 func writeConfigFile(t *testing.T, dir, filename, content string) string {
 	t.Helper()
