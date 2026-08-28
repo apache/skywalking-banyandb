@@ -42,13 +42,27 @@ const (
 	// answer before the run is accepted, so a single lucky reading cannot stand
 	// in for stable visibility.
 	publicationSettledReadings = 3
+
+	// publicationCountWorkers keeps several production count calls in flight
+	// while the compatibility writer publishes, rather than sampling only after
+	// its synchronous Batch call has returned.
+	publicationCountWorkers = 4
 )
+
+// publicationObservation records one production count call and its execution
+// interval so the contract can prove that calls overlapped publication.
+type publicationObservation struct {
+	startedAt  time.Time
+	finishedAt time.Time
+	err        error
+	count      int64
+}
 
 // TestE2EReadOnlyCountDuringPublication walks the production situation this
 // milestone exists for, end to end. A segment's series index is owned by a live
 // compatibility writer that keeps committing, and something else --
 // storage.SeriesIndexStats reporting a closed segment's document count -- has to
-// count its documents from another process without disturbing it and without
+// count its documents through the read-only boundary without disturbing it or
 // ever seeing a half-published generation.
 //
 // The index is built through BanyanDB's compatibility writer boundary, the same
@@ -107,17 +121,51 @@ func TestE2EReadOnlyCountDuringPublication(t *testing.T) {
 	tester.True(partial.Succeeded, "a manifest still being written is publication in flight, not damage; got %q", partial.Err)
 	tester.Equal(nidx01bVisibleCount, partial.Count)
 
-	// R3: publish doc-26 with the writer still open, and keep counting from
-	// separate processes across the publication and the writer's own
-	// housekeeping behind it.
-	observations := []int64{committed.Count}
-	tester.NoError(writer.Batch(nidx01bBatch([]uint64{nidx01bPublishedDocID})))
+	// R3: warm several callers on the production boundary before publishing
+	// doc-26. They keep counting while the synchronous Batch call is blocked on
+	// persistence, so the recorded call intervals prove real overlap rather than
+	// seeding a pre-publication answer into a post-publication sample.
+	ready := make(chan struct{}, publicationCountWorkers)
+	stop := make(chan struct{})
+	done := make(chan []publicationObservation, publicationCountWorkers)
+	for workerIndex := 0; workerIndex < publicationCountWorkers; workerIndex++ {
+		go observeCountsUntilStopped(dir, ready, stop, done)
+	}
+	for workerIndex := 0; workerIndex < publicationCountWorkers; workerIndex++ {
+		<-ready
+	}
+
+	publicationStartedAt := time.Now()
+	publishErr := writer.Batch(nidx01bBatch([]uint64{nidx01bPublishedDocID}))
+	publicationFinishedAt := time.Now()
+	close(stop)
+
+	publicationObservations := make([]publicationObservation, 0, publicationCountWorkers)
+	for workerIndex := 0; workerIndex < publicationCountWorkers; workerIndex++ {
+		publicationObservations = append(publicationObservations, <-done...)
+	}
+	tester.NoError(publishErr)
+
+	observations := make([]int64, 0, len(publicationObservations)+publicationSettledReadings)
+	concurrentReadings := 0
+	for _, observed := range publicationObservations {
+		tester.NoError(observed.err, "a count taken while the writer publishes must not fail")
+		observations = append(observations, observed.count)
+		if observed.startedAt.Before(publicationFinishedAt) && observed.finishedAt.After(publicationStartedAt) {
+			concurrentReadings++
+		}
+	}
+	tester.Positive(concurrentReadings, "at least one production count must overlap the synchronous publication")
+
+	// Once Batch has returned, separate-process counts must reach 5 and stay
+	// there. Keeping these probes out of the live loop preserves the process
+	// isolation checks for panic, abort, and hang behavior.
 	deadline := time.Now().Add(publicationCountLimit)
 	settled := 0
 	for settled < publicationSettledReadings {
 		observed := countInChildProcess(t, dir)
 		tester.True(observed.Succeeded,
-			"a count taken while the writer publishes must not fail; got %q", observed.Err)
+			"a count taken after the writer publishes must not fail; got %q", observed.Err)
 		observations = append(observations, observed.Count)
 		if observed.Count == nidx01bRestoredCount {
 			settled++
@@ -136,6 +184,7 @@ func TestE2EReadOnlyCountDuringPublication(t *testing.T) {
 		tester.Contains([]int64{nidx01bVisibleCount, nidx01bRestoredCount}, observed,
 			"observed counts must be a subset of {4,5}; saw %v", observations)
 	}
+	tester.Contains(observations, nidx01bVisibleCount)
 	tester.Contains(observations, nidx01bRestoredCount)
 	assertNoReaderRuntimeFiles(t, dir)
 
@@ -149,6 +198,34 @@ func TestE2EReadOnlyCountDuringPublication(t *testing.T) {
 	tester.Equal(nidx01bRestoredCount, closed.Count)
 	tester.Equal(beforeClosed, dirInventory(t, dir),
 		"counting a closed directory must not disturb it either")
+}
+
+// observeCountsUntilStopped repeatedly calls the production read-only boundary
+// and returns every observation after stop is closed.
+func observeCountsUntilStopped(path string, ready chan<- struct{}, stop <-chan struct{}, done chan<- []publicationObservation) {
+	observations := make([]publicationObservation, 0, publicationSettledReadings)
+	firstReading := true
+	for {
+		select {
+		case <-stop:
+			done <- observations
+			return
+		default:
+		}
+
+		startedAt := time.Now()
+		count, countErr := ReadOnlyDocCount(path)
+		observations = append(observations, publicationObservation{
+			startedAt:  startedAt,
+			finishedAt: time.Now(),
+			err:        countErr,
+			count:      count,
+		})
+		if firstReading {
+			ready <- struct{}{}
+			firstReading = false
+		}
+	}
 }
 
 // writeHalfPublishedGeneration adds a manifest one generation newer than any
