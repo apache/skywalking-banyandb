@@ -36,8 +36,7 @@ verify:
   retry:
     # This case validates exact metric deltas and live reload state, so it must
     # execute once rather than replay a stateful sequence after an assertion.
-    count: 1
-    interval: 5s
+    count: 0
   cases:
     # The schema stage runs first: check-rbac.sh finishes by rewriting the mounted
     # policy to a revoked and then a malformed revision, which the schema matrix

@@ -98,6 +98,14 @@ const (
 	groupGamma = "rbac-gamma"
 	// fixtureMeasure is the child-schema name both fixture groups carry.
 	fixtureMeasure = "service_cpm"
+
+	streamRegistryService           = "StreamRegistryService"
+	measureRegistryService          = "MeasureRegistryService"
+	traceRegistryService            = "TraceRegistryService"
+	indexRuleRegistryService        = "IndexRuleRegistryService"
+	indexRuleBindingRegistryService = "IndexRuleBindingRegistryService"
+	topNAggregationRegistryService  = "TopNAggregationRegistryService"
+	propertyRegistryService         = "PropertyRegistryService"
 )
 
 // Schema method names, transcribed from the generated service descriptors' _FullMethodName
@@ -121,8 +129,8 @@ const (
 // registryServices is the fixed seven-family oracle of the issue: the registry services whose
 // six-method rule family this milestone activates.
 var registryServices = []string{
-	"StreamRegistryService", "MeasureRegistryService", "TraceRegistryService", "IndexRuleRegistryService",
-	"IndexRuleBindingRegistryService", "TopNAggregationRegistryService", "PropertyRegistryService",
+	streamRegistryService, measureRegistryService, traceRegistryService, indexRuleRegistryService,
+	indexRuleBindingRegistryService, topNAggregationRegistryService, propertyRegistryService,
 }
 
 func registryMethod(service, method string) string {
@@ -176,17 +184,17 @@ func measureIn(group string) *databasev1.Measure {
 // structural assertion that would pass for a type the liaison never serves.
 func registryListRequest(service, group string) any {
 	switch service {
-	case "StreamRegistryService":
+	case streamRegistryService:
 		return &databasev1.StreamRegistryServiceListRequest{Group: group}
-	case "MeasureRegistryService":
+	case measureRegistryService:
 		return &databasev1.MeasureRegistryServiceListRequest{Group: group}
-	case "TraceRegistryService":
+	case traceRegistryService:
 		return &databasev1.TraceRegistryServiceListRequest{Group: group}
-	case "IndexRuleRegistryService":
+	case indexRuleRegistryService:
 		return &databasev1.IndexRuleRegistryServiceListRequest{Group: group}
-	case "IndexRuleBindingRegistryService":
+	case indexRuleBindingRegistryService:
 		return &databasev1.IndexRuleBindingRegistryServiceListRequest{Group: group}
-	case "TopNAggregationRegistryService":
+	case topNAggregationRegistryService:
 		return &databasev1.TopNAggregationRegistryServiceListRequest{Group: group}
 	default:
 		return &databasev1.PropertyRegistryServiceListRequest{Group: group}
@@ -196,17 +204,17 @@ func registryListRequest(service, group string) any {
 func registryGetRequest(service, group string) any {
 	resourceMeta := &commonv1.Metadata{Group: group, Name: "fixture"}
 	switch service {
-	case "StreamRegistryService":
+	case streamRegistryService:
 		return &databasev1.StreamRegistryServiceGetRequest{Metadata: resourceMeta}
-	case "MeasureRegistryService":
+	case measureRegistryService:
 		return &databasev1.MeasureRegistryServiceGetRequest{Metadata: resourceMeta}
-	case "TraceRegistryService":
+	case traceRegistryService:
 		return &databasev1.TraceRegistryServiceGetRequest{Metadata: resourceMeta}
-	case "IndexRuleRegistryService":
+	case indexRuleRegistryService:
 		return &databasev1.IndexRuleRegistryServiceGetRequest{Metadata: resourceMeta}
-	case "IndexRuleBindingRegistryService":
+	case indexRuleBindingRegistryService:
 		return &databasev1.IndexRuleBindingRegistryServiceGetRequest{Metadata: resourceMeta}
-	case "TopNAggregationRegistryService":
+	case topNAggregationRegistryService:
 		return &databasev1.TopNAggregationRegistryServiceGetRequest{Metadata: resourceMeta}
 	default:
 		return &databasev1.PropertyRegistryServiceGetRequest{Metadata: resourceMeta}
@@ -223,17 +231,17 @@ func registryGetRequest(service, group string) any {
 func registryExistRequest(service, group string) any {
 	resourceMeta := &commonv1.Metadata{Group: group, Name: "fixture"}
 	switch service {
-	case "StreamRegistryService":
+	case streamRegistryService:
 		return &databasev1.StreamRegistryServiceExistRequest{Metadata: resourceMeta}
-	case "MeasureRegistryService":
+	case measureRegistryService:
 		return &databasev1.MeasureRegistryServiceExistRequest{Metadata: resourceMeta}
-	case "TraceRegistryService":
+	case traceRegistryService:
 		return &databasev1.TraceRegistryServiceExistRequest{Metadata: resourceMeta}
-	case "IndexRuleRegistryService":
+	case indexRuleRegistryService:
 		return &databasev1.IndexRuleRegistryServiceExistRequest{Metadata: resourceMeta}
-	case "IndexRuleBindingRegistryService":
+	case indexRuleBindingRegistryService:
 		return &databasev1.IndexRuleBindingRegistryServiceExistRequest{Metadata: resourceMeta}
-	case "TopNAggregationRegistryService":
+	case topNAggregationRegistryService:
 		return &databasev1.TopNAggregationRegistryServiceExistRequest{Metadata: resourceMeta}
 	default:
 		return &databasev1.PropertyRegistryServiceExistRequest{Metadata: resourceMeta}
@@ -243,17 +251,17 @@ func registryExistRequest(service, group string) any {
 func registryDeleteRequest(service, group string) any {
 	resourceMeta := &commonv1.Metadata{Group: group, Name: "fixture"}
 	switch service {
-	case "StreamRegistryService":
+	case streamRegistryService:
 		return &databasev1.StreamRegistryServiceDeleteRequest{Metadata: resourceMeta}
-	case "MeasureRegistryService":
+	case measureRegistryService:
 		return &databasev1.MeasureRegistryServiceDeleteRequest{Metadata: resourceMeta}
-	case "TraceRegistryService":
+	case traceRegistryService:
 		return &databasev1.TraceRegistryServiceDeleteRequest{Metadata: resourceMeta}
-	case "IndexRuleRegistryService":
+	case indexRuleRegistryService:
 		return &databasev1.IndexRuleRegistryServiceDeleteRequest{Metadata: resourceMeta}
-	case "IndexRuleBindingRegistryService":
+	case indexRuleBindingRegistryService:
 		return &databasev1.IndexRuleBindingRegistryServiceDeleteRequest{Metadata: resourceMeta}
-	case "TopNAggregationRegistryService":
+	case topNAggregationRegistryService:
 		return &databasev1.TopNAggregationRegistryServiceDeleteRequest{Metadata: resourceMeta}
 	default:
 		return &databasev1.PropertyRegistryServiceDeleteRequest{Metadata: resourceMeta}
@@ -263,19 +271,19 @@ func registryDeleteRequest(service, group string) any {
 func registryUpdateRequest(service, group string) any {
 	resourceMeta := &commonv1.Metadata{Group: group, Name: "fixture"}
 	switch service {
-	case "StreamRegistryService":
+	case streamRegistryService:
 		return &databasev1.StreamRegistryServiceUpdateRequest{Stream: &databasev1.Stream{Metadata: resourceMeta}}
-	case "MeasureRegistryService":
+	case measureRegistryService:
 		return &databasev1.MeasureRegistryServiceUpdateRequest{Measure: &databasev1.Measure{Metadata: resourceMeta}}
-	case "TraceRegistryService":
+	case traceRegistryService:
 		return &databasev1.TraceRegistryServiceUpdateRequest{Trace: &databasev1.Trace{Metadata: resourceMeta}}
-	case "IndexRuleRegistryService":
+	case indexRuleRegistryService:
 		return &databasev1.IndexRuleRegistryServiceUpdateRequest{IndexRule: &databasev1.IndexRule{Metadata: resourceMeta}}
-	case "IndexRuleBindingRegistryService":
+	case indexRuleBindingRegistryService:
 		return &databasev1.IndexRuleBindingRegistryServiceUpdateRequest{
 			IndexRuleBinding: &databasev1.IndexRuleBinding{Metadata: resourceMeta},
 		}
-	case "TopNAggregationRegistryService":
+	case topNAggregationRegistryService:
 		return &databasev1.TopNAggregationRegistryServiceUpdateRequest{
 			TopNAggregation: &databasev1.TopNAggregation{Metadata: resourceMeta},
 		}
@@ -287,19 +295,19 @@ func registryUpdateRequest(service, group string) any {
 func registryCreateRequest(service, group string) any {
 	resourceMeta := &commonv1.Metadata{Group: group, Name: "fixture"}
 	switch service {
-	case "StreamRegistryService":
+	case streamRegistryService:
 		return &databasev1.StreamRegistryServiceCreateRequest{Stream: &databasev1.Stream{Metadata: resourceMeta}}
-	case "MeasureRegistryService":
+	case measureRegistryService:
 		return &databasev1.MeasureRegistryServiceCreateRequest{Measure: &databasev1.Measure{Metadata: resourceMeta}}
-	case "TraceRegistryService":
+	case traceRegistryService:
 		return &databasev1.TraceRegistryServiceCreateRequest{Trace: &databasev1.Trace{Metadata: resourceMeta}}
-	case "IndexRuleRegistryService":
+	case indexRuleRegistryService:
 		return &databasev1.IndexRuleRegistryServiceCreateRequest{IndexRule: &databasev1.IndexRule{Metadata: resourceMeta}}
-	case "IndexRuleBindingRegistryService":
+	case indexRuleBindingRegistryService:
 		return &databasev1.IndexRuleBindingRegistryServiceCreateRequest{
 			IndexRuleBinding: &databasev1.IndexRuleBinding{Metadata: resourceMeta},
 		}
-	case "TopNAggregationRegistryService":
+	case topNAggregationRegistryService:
 		return &databasev1.TopNAggregationRegistryServiceCreateRequest{
 			TopNAggregation: &databasev1.TopNAggregation{Metadata: resourceMeta},
 		}
