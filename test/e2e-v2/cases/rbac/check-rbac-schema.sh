@@ -121,32 +121,6 @@ http_call() {
   cat "${response_file}"
 }
 
-# wait_for_schema_api proves the authenticated schema path is ready before the
-# stateful fixture starts. Retrying the complete verifier would replay mutations
-# and turn the real failure into AlreadyExists on the next attempt.
-wait_for_schema_api() {
-  local output_file="${work_dir}/schema-readiness.log"
-  local deadline=$((SECONDS + 60))
-  local exit_code
-
-  while true; do
-    set +e
-    printf '{}\n' | timeout 5s grpcurl -plaintext -protoset "${descriptor_set}" \
-      -H 'username: bydb-admin' -H 'password: admin-secret' -d @ \
-      "${grpc_addr}" "${group_list}" >"${output_file}" 2>&1
-    exit_code=$?
-    set -e
-    if [[ ${exit_code} -eq 0 ]]; then
-      return
-    fi
-    if ((SECONDS >= deadline)); then
-      cat "${output_file}" >&2
-      fail "${group_list}: schema API did not become ready"
-    fi
-    sleep 1
-  done
-}
-
 group_body() {
   printf '{"group":{"metadata":{"name":"%s"},"catalog":"CATALOG_MEASURE","resourceOpts":{"shardNum":1,' "$1"
   printf '"segmentInterval":{"unit":"UNIT_DAY","num":1},"ttl":{"unit":"UNIT_DAY","num":7}}}}'
@@ -163,7 +137,6 @@ measure_body() {
 # Bootstrap: the administrator provisions both groups and one measure in each,
 # then waits for them through the protected barrier API. No sleeps.
 # ---------------------------------------------------------------------------
-wait_for_schema_api
 for group in "${alpha}" "${beta}"; do
   grpc_call OK bydb-admin admin-secret "${group_create}" "$(group_body "${group}")" >/dev/null
 done
@@ -252,7 +225,7 @@ grpc_call PermissionDenied bydb-auth-only auth-only-secret "${group_list}" '{}'
 http_reader_list=$(http_call 200 bydb-reader reader-secret GET /api/v1/group/schema/lists '')
 grep -Fq "\"${alpha}\"" <<<"${http_reader_list}" || fail "the alpha reader's HTTP Group.List omits ${alpha}"
 grep -Fq "\"name\":\"${beta}\"" <<<"${http_reader_list}" && fail "the alpha reader's HTTP Group.List leaks ${beta}"
-http_call 403 bydb-auth-only auth-only-secret GET /api/v1/group/schema/lists ''
+http_call 403 bydb-auth-only auth-only-secret GET /api/v1/group/schema/lists '' >/dev/null
 
 # ---------------------------------------------------------------------------
 # Transport parity: every bound gateway route reaches the same decision, and
