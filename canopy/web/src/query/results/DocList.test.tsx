@@ -116,8 +116,8 @@ describe('DocList', () => {
 
   it('shows Edit/Delete actions for an admin session', async () => {
     await renderDocList(ADMIN);
-    expect(screen.getByTitle('Edit document')).toBeInTheDocument();
-    expect(screen.getByTitle('Delete document')).toBeInTheDocument();
+    expect(await screen.findByTitle('Edit document')).toBeInTheDocument();
+    expect(await screen.findByTitle('Delete document')).toBeInTheDocument();
   });
 
   it('hides Edit/Delete actions for a readonly session', async () => {
