@@ -18,6 +18,12 @@ users:
     password: admin-secret
   - username: bydb-reader
     password: reader-secret
+  - username: bydb-reader-all
+    password: reader-all-secret
+  - username: bydb-writer
+    password: writer-secret
+  - username: bydb-writer-gamma
+    password: writer-gamma-secret
   - username: bydb-auth-only
     password: auth-only-secret
 
@@ -31,3 +37,14 @@ rbac:
     - principal: bydb-reader
       role: reader
       groups: [alpha]
+    - principal: bydb-reader-all
+      role: reader
+      groups: ["*"]
+    - principal: bydb-writer
+      role: writer
+      groups: [alpha]
+    # Bound to a group the fixture does not provision, so the schema stage can prove a
+    # service account bootstrapping the group it needs without cluster administration.
+    - principal: bydb-writer-gamma
+      role: writer
+      groups: [gamma]
