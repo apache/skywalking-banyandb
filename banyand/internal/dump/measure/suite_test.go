@@ -154,13 +154,14 @@ func TestMeasureWriteRoundTrip(t *testing.T) {
 	}
 	req.Empty(bp.Close())
 
+	fileSystem := localfs.NewLocalFileSystem()
 	var partDirs []string
 	require.Eventually(t, func() bool {
 		partDirs = findPartDirs(rootPath)
-		return len(partDirs) > 0
-	}, 30*time.Second, 200*time.Millisecond, "no on-disk part was flushed")
+		rowCount, countErr := countRows(partDirs, fileSystem)
+		return countErr == nil && rowCount == total
+	}, 30*time.Second, 200*time.Millisecond, "not every written data point was flushed")
 
-	fileSystem := localfs.NewLocalFileSystem()
 	seen := map[string]bool{}
 	seriesIDs := map[uint64]bool{}
 	for _, partDir := range partDirs {
@@ -192,6 +193,34 @@ func TestMeasureWriteRoundTrip(t *testing.T) {
 	}
 	require.Len(t, seen, total, "every written data point must be read back exactly once")
 	require.Len(t, seriesIDs, total, "each distinct entity must map to a distinct series")
+}
+
+func countRows(partDirs []string, fileSystem localfs.FileSystem) (int, error) {
+	rowCount := 0
+	for _, partDir := range partDirs {
+		partID, parseErr := strconv.ParseUint(filepath.Base(partDir), 16, 64)
+		if parseErr != nil {
+			return 0, parseErr
+		}
+		p, openErr := OpenPart(partID, filepath.Dir(partDir), fileSystem)
+		if openErr != nil {
+			return 0, openErr
+		}
+		it := p.Iterator()
+		for it.Next() {
+			rowCount++
+		}
+		iterErr := it.Err()
+		it.Close()
+		closeErr := p.Close()
+		if iterErr != nil {
+			return 0, iterErr
+		}
+		if closeErr != nil {
+			return 0, closeErr
+		}
+	}
+	return rowCount, nil
 }
 
 func registerRoundTripMeasure(t *testing.T, metaSvc metadataservice.Service) {
