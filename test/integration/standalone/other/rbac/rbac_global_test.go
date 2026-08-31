@@ -287,18 +287,15 @@ var _ = g.Describe("rbac-global authorization through the real liaison", func() 
 			"bydb-reader must be stopped before the InternalQuery fallback")
 	})
 
-	// R6: schema and data permissions have no activated executor in this release, so every
-	// method carrying one fails closed for every actor, admin included.
-	g.It("fails closed on every not-yet-activated schema and data method", func() {
+	// R6: data permissions still have no activated executor in this release, so every
+	// method carrying one fails closed for every actor, admin included. Schema methods
+	// are exercised by the rbac_schema suite now that their executor is active.
+	g.It("fails closed on every not-yet-activated data method", func() {
 		measure := measurev1.NewMeasureServiceClient(conn)
-		groups := databasev1.NewGroupRegistryServiceClient(conn)
 		for _, a := range []actor{adminActor, monitorActor, readerActor, writerActor, unboundActor} {
 			_, err := measure.Query(a.ctx(), &measurev1.QueryRequest{})
 			gm.Expect(status.Code(err)).To(gm.Equal(codes.PermissionDenied),
 				"%s must fail closed on MeasureService/Query", a.name)
-			_, err = groups.List(a.ctx(), &databasev1.GroupRegistryServiceListRequest{})
-			gm.Expect(status.Code(err)).To(gm.Equal(codes.PermissionDenied),
-				"%s must fail closed on GroupRegistryService/List", a.name)
 		}
 	})
 
