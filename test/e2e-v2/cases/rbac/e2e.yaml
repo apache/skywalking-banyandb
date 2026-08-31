@@ -36,9 +36,16 @@ verify:
   retry:
     # This case validates exact metric deltas and live reload state, so it must
     # execute once rather than replay a stateful sequence after an assertion.
-    count: 1
-    interval: 5s
+    count: 0
   cases:
+    # The schema stage runs first: check-rbac.sh finishes by rewriting the mounted
+    # policy to a revoked and then a malformed revision, which the schema matrix
+    # must not observe.
+    - query: >-
+        bash test/e2e-v2/cases/rbac/check-rbac-schema.sh
+        ${banyandb_host}:${banyandb_17912}
+        ${banyandb_host}:${banyandb_17913}
+      expected: expected/success.yaml
     - query: >-
         bash test/e2e-v2/cases/rbac/check-rbac.sh
         ${banyandb_host}:${banyandb_17912}

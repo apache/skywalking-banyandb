@@ -282,10 +282,15 @@ func TestR1_ClassificationDefectsStopStartup(t *testing.T) {
 	})
 }
 
-// TestR6_GlobalMethodsAreActivatedAndTheRestFailClosed proves R6: exactly the global
-// method set of issue #14014 carries a cluster permission and is activated, and every
-// other method the liaison serves is classified with a schema or data permission and is
-// *not* activated, so it fails closed until W-PR2/W-PR3 activates its executor.
+// TestR6_GlobalMethodsAreActivatedAndTheRestFailClosed proves that the classification's
+// activation column matches what the release can decide. The global method set of issue
+// #14014 carries a cluster permission and is activated; the schema methods issue #14015
+// activates carry a schema permission and are activated; and every data method is classified
+// but *not* activated, so it fails closed until W-PR3 activates its executor.
+//
+// It gates R6 of issue #14015 alongside R6 of #14014: the activation column is the single
+// place a data method could be switched on by accident, and the per-permission counts below
+// are the fixed table size neither milestone may change.
 func TestR6_GlobalMethodsAreActivatedAndTheRestFailClosed(t *testing.T) {
 	table := policyTable(t)
 	seen := make(map[string]bool, len(globalMethods))
@@ -309,11 +314,15 @@ func TestR6_GlobalMethodsAreActivatedAndTheRestFailClosed(t *testing.T) {
 			}
 			continue
 		}
-		if p.Activated {
-			t.Errorf("policy for %s is activated, want only the fixed global method set activated in this release", p.FullMethod)
-		}
 		switch p.Permission {
-		case auth.PermissionSchemaRead, auth.PermissionSchemaWrite, auth.PermissionDataRead, auth.PermissionDataWrite:
+		case auth.PermissionSchemaRead, auth.PermissionSchemaWrite:
+			if !p.Activated {
+				t.Errorf("schema policy for %s is not activated, want issue #14015 to decide it", p.FullMethod)
+			}
+		case auth.PermissionDataRead, auth.PermissionDataWrite:
+			if p.Activated {
+				t.Errorf("data policy for %s is activated, want it to stay fail-closed for W-PR3", p.FullMethod)
+			}
 		default:
 			t.Errorf("policy for %s requires %q, want a schema or data permission for a non-global method", p.FullMethod, p.Permission)
 		}
@@ -378,14 +387,12 @@ func TestR3_GlobalDecisionMatrix(t *testing.T) {
 		{mMeasureDeleteSeg, allow, deny, deny, deny, deny},
 		{mTraceDeleteSeg, allow, deny, deny, deny, deny},
 		{mMeasureInternalQ, allow, deny, deny, deny, deny},
-		// data / schema — no activated executor, so every actor fails closed.
-		{mAwaitRevision, shut, shut, shut, shut, shut},
+		// data — no activated executor, so every actor fails closed. The schema methods
+		// this milestone activates are oracled in rbac_schema_contract_test.go instead.
 		{mMeasureQuery, shut, shut, shut, shut, shut},
 		{mStreamWrite, shut, shut, shut, shut, shut},
 		{mBydbQLQuery, shut, shut, shut, shut, shut},
 		{mPropertyApply, shut, shut, shut, shut, shut},
-		{mGroupCreate, shut, shut, shut, shut, shut},
-		{mGroupList, shut, shut, shut, shut, shut},
 	} {
 		for _, who := range []struct {
 			name string
@@ -398,7 +405,7 @@ func TestR3_GlobalDecisionMatrix(t *testing.T) {
 			{"bydb-writer", writer, tc.writer},
 			{"bydb-unbound", unbound, tc.unbound},
 		} {
-			if got := table.Authorize(snap, who.p, tc.method); got != who.want {
+			if got, _ := table.Authorize(snap, who.p, tc.method, nil); got != who.want {
 				t.Errorf("Authorize(%s, %s) = %v, want %v", who.name, tc.method, got, who.want)
 			}
 		}
@@ -410,7 +417,7 @@ func TestR3_GlobalDecisionMatrix(t *testing.T) {
 func TestR3_UnclassifiedMethodIsDenied(t *testing.T) {
 	snap := enabledSnapshot(t)
 	admin := actor(t, snap, "bydb-admin", "admin-secret")
-	if got := policyTable(t).Authorize(snap, admin, "/banyandb.future.v1.Whatever/Method"); got != liaisongrpc.DecisionDeny {
+	if got, _ := policyTable(t).Authorize(snap, admin, "/banyandb.future.v1.Whatever/Method", nil); got != liaisongrpc.DecisionDeny {
 		t.Errorf("Authorize(admin, an unclassified method) = %v, want DecisionDeny", got)
 	}
 }
