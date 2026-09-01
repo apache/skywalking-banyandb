@@ -78,6 +78,13 @@ func (b *bydbQLService) activeQueryAccessLog(root string, sampled bool) (err err
 func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (resp *bydbqlv1.QueryResponse, err error) {
 	start := time.Now()
 	b.metrics.totalStarted.Inc(1, "", "bydbql", "query")
+	snapshot, _ := SnapshotFromContext(ctx)
+	decisionObserved := false
+	defer func() {
+		if !decisionObserved {
+			b.observeTransformedDecision(snapshot, DecisionAllow, DecisionReasonGranted)
+		}
+	}()
 	// cacheResult tags the access-log entry with the prepared-statement cache
 	// outcome so operators can find un-cached queries: entries logged under
 	// "bydbql-miss" / "bydbql-bypass" are the ones that did not hit the cache.
@@ -133,9 +140,9 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to transform to native request: %v", err)
 	}
-	snapshot, _ := SnapshotFromContext(ctx)
 	principal, _ := PrincipalFromContext(ctx)
 	decision, reason := AuthorizeTransformedRequest(snapshot, principal, result.QueryRequest)
+	decisionObserved = true
 	b.observeTransformedDecision(snapshot, decision, reason)
 	if decision != DecisionAllow {
 		return nil, decisionError(decision)
