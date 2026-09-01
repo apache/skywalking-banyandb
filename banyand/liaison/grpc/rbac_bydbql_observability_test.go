@@ -85,6 +85,27 @@ func TestBydbQLQuery_ValidatorErrorRecordsAdmissionDecision(t *testing.T) {
 	assert.Equal(t, []string{"allow", "data:read", "banyandb.bydbql.v1.BydbQLService/Query", "granted"}, decisionCalls[0].labels)
 }
 
+func TestBydbQLQuery_PostTransformDenyRecordsGateDecision(t *testing.T) {
+	reloader := newBydbQLObservabilityReloader(t)
+	factory, metricSet := newRecordingMetrics(t)
+	interceptor := NewAuthorizationInterceptor(reloader, GlobalMethodPolicies(), metricSet)
+	info := &grpclib.UnaryServerInfo{FullMethod: bydbQLQueryFullMethod}
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("username", "reader", "password", "reader-secret"))
+
+	_, queryErr := interceptor(ctx, &bydbqlv1.QueryRequest{Query: "select * from measure"}, info, func(handlerCtx context.Context, _ any) (any, error) {
+		decisionSlot, exists := postTransformDecisionFromContext(handlerCtx)
+		require.True(t, exists, "the post-transform decision slot must reach the ByDBQL handler")
+		decisionSlot.decision = DecisionDeny
+		decisionSlot.reason = DecisionReasonPermissionMissing
+		return nil, decisionError(DecisionDeny)
+	})
+
+	require.Equal(t, codes.PermissionDenied, status.Code(queryErr))
+	decisionCalls := factory.counter("rbac_decisions_total").snapshot()
+	require.Len(t, decisionCalls, 1, "a post-transform denied ByDBQL call must record one decision")
+	assert.Equal(t, []string{"deny", "data:read", "banyandb.bydbql.v1.BydbQLService/Query", "permission_missing"}, decisionCalls[0].labels)
+}
+
 func newBydbQLObservabilityReloader(t *testing.T) *auth.Reloader {
 	t.Helper()
 	policyPath := filepath.Join(t.TempDir(), "security.yaml")
