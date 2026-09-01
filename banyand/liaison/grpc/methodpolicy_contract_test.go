@@ -361,9 +361,9 @@ func TestR3_GlobalDecisionMatrix(t *testing.T) {
 	unbound := actor(t, snap, "bydb-unbound", "unbound-secret")
 
 	const (
-		allow = liaisongrpc.DecisionAllow
-		deny  = liaisongrpc.DecisionDeny
-		shut  = liaisongrpc.DecisionUnavailable
+		allow   = liaisongrpc.DecisionAllow
+		deny    = liaisongrpc.DecisionDeny
+		invalid = liaisongrpc.DecisionInvalidRequest
 	)
 	for _, tc := range []struct {
 		method                                  string
@@ -387,12 +387,28 @@ func TestR3_GlobalDecisionMatrix(t *testing.T) {
 		{mMeasureDeleteSeg, allow, deny, deny, deny, deny},
 		{mTraceDeleteSeg, allow, deny, deny, deny, deny},
 		{mMeasureInternalQ, allow, deny, deny, deny, deny},
-		// data — no activated executor, so every actor fails closed. The schema methods
-		// this milestone activates are oracled in rbac_schema_contract_test.go instead.
-		{mMeasureQuery, shut, shut, shut, shut, shut},
-		{mStreamWrite, shut, shut, shut, shut, shut},
-		{mBydbQLQuery, shut, shut, shut, shut, shut},
-		{mPropertyApply, shut, shut, shut, shut, shut},
+		// data — issue #14016 activated every one of these, so no cell here is fail-closed
+		// any more. Each row below is still read off the design rather than off the table:
+		// this matrix passes a nil request, which addresses no group at all, and the design
+		// fixes what each data scope family answers such a caller.
+		//
+		// A repeated-groups read and a property-body write cannot be read from a request
+		// that carries neither, and § 07 Failure semantics answers an authenticated
+		// malformed request InvalidArgument — for the administrator too, who learns that the
+		// request was unreadable and nothing about what it would have been allowed to do.
+		{mMeasureQuery, invalid, invalid, invalid, invalid, invalid},
+		{mPropertyApply, invalid, invalid, invalid, invalid, invalid},
+		// § 05 Streaming writes rejects a write stream at open when the principal "has no
+		// data:write grant anywhere", so the open decision is by permission alone: the
+		// built-in writer and the administrator hold data:write, the cluster-read monitor
+		// and the reader do not, and the unbound principal holds nothing.
+		{mStreamWrite, allow, deny, deny, allow, deny},
+		// § 05 Special request paths defers ByDBQL's group decision to the handler, after
+		// parse, bind and transform. The interceptor can therefore only decide the
+		// permission, on the Group.List precedent of "require at least one grant, then
+		// filter": every principal holding data:read in some scope reaches the handler and
+		// the cluster-only monitor and the unbound principal are refused before it.
+		{mBydbQLQuery, allow, deny, allow, allow, deny},
 	} {
 		for _, who := range []struct {
 			name string
@@ -559,18 +575,35 @@ func TestR3_InterceptorPrecedenceAndStatusCodes(t *testing.T) {
 	})
 }
 
+// TestR3_StreamInterceptorFailsClosedBeforeHandler proves A3's rollout rule at the stream
+// boundary: "when RBAC is enabled, any permission-bearing method without an activated
+// executor returns PermissionDenied before its handler". Issue #14016 activated the last
+// unactivated method the liaison serves, so the rule can no longer be shown against the real
+// table; it is shown against a one-row table instead, because the rule guards the next
+// method somebody registers, not the ones already decided. The caller is the administrator
+// on purpose: an unactivated executor is a gap in the policy, so not even a wildcard admin
+// binding may be read as an allow.
 func TestR3_StreamInterceptorFailsClosedBeforeHandler(t *testing.T) {
+	const unactivated = "/banyandb.future.v1.FutureService/Write"
+
 	reloader := newEnabledReloader(t)
-	interceptor := liaisongrpc.NewAuthorizationStreamInterceptor(reloader, policyTable(t), &recordingObserver{})
+	table := liaisongrpc.MethodPolicyTable{{
+		FullMethod: unactivated,
+		Permission: auth.PermissionDataWrite,
+		Access:     liaisongrpc.MethodAccessPermission,
+		Scope:      liaisongrpc.ScopeFrameGroups,
+		Activated:  false,
+	}}
+	interceptor := liaisongrpc.NewAuthorizationStreamInterceptor(reloader, table, &recordingObserver{})
 	streamContext := metadata.NewIncomingContext(context.Background(), metadata.Pairs("username", "bydb-admin", "password", "admin-secret"))
 	stream := &testServerStream{ctx: streamContext}
 	handlerRan := false
-	interceptorErr := interceptor(nil, stream, &grpclib.StreamServerInfo{FullMethod: mStreamWrite}, func(any, grpclib.ServerStream) error {
+	interceptorErr := interceptor(nil, stream, &grpclib.StreamServerInfo{FullMethod: unactivated}, func(any, grpclib.ServerStream) error {
 		handlerRan = true
 		return nil
 	})
 	if status.Code(interceptorErr) != codes.PermissionDenied {
-		t.Errorf("admin opening unactivated %s = %v, want PermissionDenied", mStreamWrite, status.Code(interceptorErr))
+		t.Errorf("admin opening unactivated %s = %v, want PermissionDenied", unactivated, status.Code(interceptorErr))
 	}
 	if handlerRan {
 		t.Fatal("stream handler ran for an unactivated method")

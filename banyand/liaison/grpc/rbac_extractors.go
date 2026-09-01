@@ -25,7 +25,11 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 )
 
 // ErrScopeUnresolvable reports a request from which the group scopes its method's policy
@@ -139,14 +143,46 @@ func RequestScopes(family ScopeFamily, request any) ([]string, error) {
 // and the Measure TopN request. A request of any other type, or one listing an empty or
 // whitespace-only group, carries no resolvable scope.
 func repeatedGroupScopes(family ScopeFamily, request any) ([]string, error) {
-	return nil, unresolvableScope(family, request)
+	var groups []string
+	switch typedRequest := request.(type) {
+	case *streamv1.QueryRequest:
+		if typedRequest != nil {
+			groups = typedRequest.GetGroups()
+		}
+	case *measurev1.QueryRequest:
+		if typedRequest != nil {
+			groups = typedRequest.GetGroups()
+		}
+	case *measurev1.TopNRequest:
+		if typedRequest != nil {
+			groups = typedRequest.GetGroups()
+		}
+	case *tracev1.QueryRequest:
+		if typedRequest != nil {
+			groups = typedRequest.GetGroups()
+		}
+	case *propertyv1.QueryRequest:
+		if typedRequest != nil {
+			groups = typedRequest.GetGroups()
+		}
+	default:
+		return nil, unresolvableScope(family, request)
+	}
+	if len(groups) == 0 {
+		return nil, unresolvableScope(family, request)
+	}
+	return normalizedScopes(family, request, groups)
 }
 
 // propertyGroupScopes resolves the group of the Property body a mutation carries, which is
 // Property.Metadata.Group. A request with no property, no metadata, or an empty group carries
 // no resolvable scope.
 func propertyGroupScopes(family ScopeFamily, request any) ([]string, error) {
-	return nil, unresolvableScope(family, request)
+	typedRequest, matched := request.(*propertyv1.ApplyRequest)
+	if !matched || typedRequest == nil || typedRequest.GetProperty() == nil || typedRequest.GetProperty().GetMetadata() == nil {
+		return nil, unresolvableScope(family, request)
+	}
+	return oneScope(family, request, typedRequest.GetProperty().GetMetadata().GetGroup())
 }
 
 func directGroupScopes(family ScopeFamily, request any) ([]string, error) {
@@ -188,6 +224,10 @@ func directGroupScopes(family ScopeFamily, request any) ([]string, error) {
 			return oneScope(family, request, typedRequest.GetGroup())
 		}
 	case *databasev1.PropertyRegistryServiceListRequest:
+		if typedRequest != nil {
+			return oneScope(family, request, typedRequest.GetGroup())
+		}
+	case *propertyv1.DeleteRequest:
 		if typedRequest != nil {
 			return oneScope(family, request, typedRequest.GetGroup())
 		}

@@ -513,15 +513,28 @@ func TestSchemaR2_ScopeFamilyClassification(t *testing.T) {
 			t.Errorf("policy for %s has scope family %d, want %d", policy.FullMethod, policy.Scope, want)
 		}
 	}
+	// The four data families and the eleventh direct-group method arrived with issue #14016,
+	// and are hand-counted from the same API policy map: five repeated-group native reads
+	// (Stream, Measure and Trace Query, Measure TopN, Property Query); Property Apply, whose
+	// extractor reads the group off the property body; the three streaming writes, whose
+	// groups arrive frame by frame; ByDBQL, decided after its transformation; and Property
+	// Delete, which the map's directGroup row names alongside Group Get and registry List.
+	// Those eleven leave only the four methods the map classifies as authenticated or health
+	// with no scope family at all, so a permission-bearing method can no longer be
+	// unclassified and the loop below has nothing left to forgive.
 	for family, want := range map[liaisongrpc.ScopeFamily]int{
 		liaisongrpc.ScopeGlobal:                13,
-		liaisongrpc.ScopeDirectGroup:           10,
+		liaisongrpc.ScopeDirectGroup:           11,
 		liaisongrpc.ScopeGroupBodyName:         2,
 		liaisongrpc.ScopeMetadataGroup:         21,
 		liaisongrpc.ScopeResourceMetadataGroup: 14,
 		liaisongrpc.ScopeSchemaKeys:            2,
 		liaisongrpc.ScopeVisibleGroups:         1,
-		liaisongrpc.ScopeUnspecified:           15,
+		liaisongrpc.ScopeRepeatedGroups:        5,
+		liaisongrpc.ScopePropertyGroup:         1,
+		liaisongrpc.ScopeFrameGroups:           3,
+		liaisongrpc.ScopePostTransform:         1,
+		liaisongrpc.ScopeUnspecified:           4,
 	} {
 		if familyCounts[family] != want {
 			t.Errorf("scope family %d classifies %d methods, want %d", family, familyCounts[family], want)

@@ -305,7 +305,10 @@ var _ = g.Describe("rbac-data group-scoped data authorization through the real l
 	)
 
 	g.BeforeEach(func() {
-		baseTime = time.Now()
+		// The write validator rejects a data point whose timestamp is finer than a
+		// millisecond, so an untruncated time.Now() would have every seeding frame refused
+		// for its precision and no scope assertion below would be reached.
+		baseTime = time.Now().Truncate(time.Millisecond)
 
 		dataRoot, releaseSpace, spaceErr := test.NewSpace()
 		gm.Expect(spaceErr).NotTo(gm.HaveOccurred())
@@ -552,18 +555,30 @@ var _ = g.Describe("rbac-data group-scoped data authorization through the real l
 		gm.Expect(status.Code(allowedErr)).NotTo(gm.Equal(codes.PermissionDenied),
 			"the alpha reader's own-group ByDBQL query must not be refused, got %v", allowedErr)
 
+		// Every query here transforms into a native request naming a group the alpha reader
+		// does not hold, so the decision the handler takes on that request is the one that
+		// answers the caller. Casing is not part of the resource, so the lowercase form is
+		// refused on the same grounds as the uppercase one.
 		for _, refused := range []string{
 			fmt.Sprintf("SELECT * FROM MEASURE %s IN %s", fixtureMeasure, groupBeta),
 			fmt.Sprintf("SELECT * FROM MEASURE %s IN %s, %s", fixtureMeasure, groupAlpha, groupBeta),
-			// Neither casing nor a comment is part of the resource the decision reads.
 			fmt.Sprintf("select * from measure %s in %s", fixtureMeasure, groupBeta),
-			fmt.Sprintf("SELECT * FROM MEASURE %s IN %s -- IN %s", fixtureMeasure, groupBeta, groupAlpha),
 		} {
 			resp, refusedErr := bydbql.Query(readerAlphaActor.ctx(), &bydbqlv1.QueryRequest{Query: refused})
 			gm.Expect(status.Code(refusedErr)).To(gm.Equal(codes.PermissionDenied),
 				"%q must be refused, got response %v", refused, resp)
 			gm.Expect(resp.String()).NotTo(gm.ContainSubstring(markerBeta), "a refused ByDBQL query must leak no marker")
 		}
+
+		// A query whose text ByDBQL cannot parse is a separate matter: BanyanDB's grammar has
+		// no comment syntax, and #13994 adds none, so the requirement this case carries is not
+		// which code comes back but that no text-level trick gets a forbidden group served.
+		// Appending the permitted group in what a SQL dialect would treat as a trailing
+		// comment must not turn a beta query into an answer.
+		commented := fmt.Sprintf("SELECT * FROM MEASURE %s IN %s -- IN %s", fixtureMeasure, groupBeta, groupAlpha)
+		commentedResp, commentedErr := bydbql.Query(readerAlphaActor.ctx(), &bydbqlv1.QueryRequest{Query: commented})
+		gm.Expect(commentedErr).To(gm.HaveOccurred(), "%q must not be served, got response %v", commented, commentedResp)
+		gm.Expect(commentedResp.String()).NotTo(gm.ContainSubstring(markerBeta), "a refused ByDBQL query must leak no marker")
 
 		_, monitorErr := bydbql.Query(monitorActor.ctx(), &bydbqlv1.QueryRequest{Query: allowed})
 		gm.Expect(status.Code(monitorErr)).To(gm.Equal(codes.PermissionDenied),

@@ -18,8 +18,8 @@
 # The data and special-path stage of the direct standalone RBAC case, owning the marker
 # seeding half of E-DIR-01, the native-query half of E-DIR-04, E-DIR-05 and E-DIR-06 for issue
 # #14016. It provisions the property fixture the measure fixture from the schema stage does not
-# cover, then drives the native read matrix, the Property mutation matrix, a real streaming
-# write and the ByDBQL post-transform decision over both direct gRPC and the bound
+# cover, then drives the native read matrix, the Property mutation matrix, all three streaming
+# write protocols and the ByDBQL post-transform decision over both direct gRPC and the bound
 # grpc-gateway routes against a deployed container.
 #
 # It runs after check-rbac-schema.sh, which provisions the alpha/beta measure fixture, and
@@ -52,6 +52,8 @@ property_schema_create=banyandb.database.v1.PropertyRegistryService/Create
 await_applied=banyandb.schema.v1.SchemaBarrierService/AwaitSchemaApplied
 measure_query=banyandb.measure.v1.MeasureService/Query
 measure_write=banyandb.measure.v1.MeasureService/Write
+stream_write=banyandb.stream.v1.StreamService/Write
+trace_write=banyandb.trace.v1.TraceService/Write
 property_query=banyandb.property.v1.PropertyService/Query
 property_apply=banyandb.property.v1.PropertyService/Apply
 property_delete=banyandb.property.v1.PropertyService/Delete
@@ -151,6 +153,17 @@ write_frame() {
   printf '"fields":[{"int":{"value":"1"}}]}}'
 }
 
+stream_frame() {
+  printf '{"metadata":{"group":"%s","name":"%s"},"messageId":"%s",' "$1" "$2" "$3"
+  printf '"element":{"elementId":"%s","timestamp":"%s",' "$4" "${now}"
+  printf '"tagFamilies":[{"tags":[{"str":{"value":"%s"}}]}]}}' "$5"
+}
+
+trace_frame() {
+  printf '{"metadata":{"group":"%s","name":"%s"},"version":"%s",' "$1" "$2" "$3"
+  printf '"tags":[{"str":{"value":"%s"}}],"span":"c3Bhbgo="}' "$4"
+}
+
 # ---------------------------------------------------------------------------
 # Bootstrap: the schema stage already provisioned the alpha/beta measure fixture. Properties
 # live in groups of their own catalog, so the administrator provisions those here and waits for
@@ -197,8 +210,9 @@ http_call 401 bydb-reader wrong-password POST /api/v1/measure/data \
   "$(measure_query_body "\"${alpha}\"" "${alpha_marker}")" >/dev/null
 
 # ---------------------------------------------------------------------------
-# A forbidden frame ends the stream and reaches no storage. The allowed frame in front of it
-# proves the stream itself was open, so the denial is the frame's and not the stream's.
+# A forbidden frame ends each stream and reaches no storage. The allowed frame in front of it
+# proves the stream itself was open, so the denial is the frame's and not the stream's. The
+# same allowed-then-forbidden sequence is sent through Measure, Stream and Trace writes.
 # ---------------------------------------------------------------------------
 grpc_call OK bydb-writer writer-secret "${measure_write}" \
   "$(write_frame "${alpha}" "${alpha_marker}" 3 alpha-only)" >/dev/null
@@ -207,6 +221,12 @@ $(write_frame "${beta}" "${beta_marker}" 5 leaked-by-writer)"
 grpc_call PermissionDenied bydb-writer writer-secret "${measure_write}" "${forbidden_frames}"
 grpc_call PermissionDenied bydb-reader reader-secret "${measure_write}" \
   "$(write_frame "${alpha}" "${alpha_marker}" 6 alpha-only)"
+stream_frames="$(stream_frame "${alpha}" "${alpha_marker}" 7 alpha-element alpha-only)
+$(stream_frame "${beta}" "${beta_marker}" 8 beta-element leaked-by-writer)"
+grpc_call PermissionDenied bydb-writer writer-secret "${stream_write}" "${stream_frames}"
+trace_frames="$(trace_frame "${alpha}" "${alpha_marker}" 1 alpha-only)
+$(trace_frame "${beta}" "${beta_marker}" 2 leaked-by-writer)"
+grpc_call PermissionDenied bydb-writer writer-secret "${trace_write}" "${trace_frames}"
 beta_after=$(grpc_call OK bydb-admin admin-secret "${measure_query}" "$(measure_query_body "\"${beta}\"" "${beta_marker}")")
 grep -Fq 'leaked-by-writer' <<<"${beta_after}" && fail "a refused write frame reached storage"
 

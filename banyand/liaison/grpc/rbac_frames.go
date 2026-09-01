@@ -20,11 +20,17 @@ package grpc
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 )
 
@@ -72,7 +78,36 @@ type FrameAuthorization struct {
 // — and a frame naming an empty or whitespace-only group all return an error wrapping
 // ErrFrameGroupUnresolvable.
 func FrameGroup(frame any, lastGroup string) (string, error) {
+	switch typedFrame := frame.(type) {
+	case *measurev1.WriteRequest:
+		if typedFrame != nil {
+			return frameMetadataGroup(frame, typedFrame.GetMetadata(), lastGroup)
+		}
+	case *streamv1.WriteRequest:
+		if typedFrame != nil {
+			return frameMetadataGroup(frame, typedFrame.GetMetadata(), lastGroup)
+		}
+	case *tracev1.WriteRequest:
+		if typedFrame != nil {
+			return frameMetadataGroup(frame, typedFrame.GetMetadata(), lastGroup)
+		}
+	}
 	return "", fmt.Errorf("%w: %T continuing %q", ErrFrameGroupUnresolvable, frame, lastGroup)
+}
+
+func frameMetadataGroup(frame any, metadata *commonv1.Metadata, lastGroup string) (string, error) {
+	if metadata != nil {
+		group := strings.TrimSpace(metadata.GetGroup())
+		if group != "" {
+			return group, nil
+		}
+		return "", fmt.Errorf("%w: %T names an empty group", ErrFrameGroupUnresolvable, frame)
+	}
+	continuedGroup := strings.TrimSpace(lastGroup)
+	if continuedGroup != "" {
+		return continuedGroup, nil
+	}
+	return "", fmt.Errorf("%w: %T has no established group", ErrFrameGroupUnresolvable, frame)
 }
 
 // NewFrameAuthorizer returns a grpclib.ServerStream that authorizes every resource-bearing
@@ -103,20 +138,39 @@ func (a *frameAuthorizer) RecvMsg(frame any) error {
 	if recvErr := a.ServerStream.RecvMsg(frame); recvErr != nil {
 		return recvErr
 	}
+	snapshot := a.currentSnapshot()
+	if snapshot == nil || !snapshot.RBACEnabled() {
+		return nil
+	}
 	group, groupErr := FrameGroup(frame, a.lastGroup)
 	if groupErr != nil {
-		a.observe(DecisionInvalidRequest, DecisionReasonInvalidRequest)
+		withholdFrame(frame)
+		a.observe(snapshot, DecisionInvalidRequest, DecisionReasonInvalidRequest)
 		return status.Error(codes.InvalidArgument, "invalid request")
 	}
+	if !snapshot.Allows(a.authorization.Principal, a.authorization.Policy.Permission, group) {
+		withholdFrame(frame)
+		a.observe(snapshot, DecisionDeny, DecisionReasonPermissionMissing)
+		return status.Error(codes.PermissionDenied, "permission denied")
+	}
 	a.lastGroup = group
-	a.observe(DecisionDeny, DecisionReasonPermissionMissing)
-	return status.Error(codes.PermissionDenied, "permission denied")
+	a.observe(snapshot, DecisionAllow, DecisionReasonGranted)
+	return nil
 }
 
-func (a *frameAuthorizer) observe(decision Decision, reason DecisionReason) {
-	if a.authorization.Observer == nil {
-		return
+func (a *frameAuthorizer) currentSnapshot() auth.Snapshot {
+	if a.authorization.Snapshots == nil {
+		return nil
 	}
-	a.authorization.Observer.ObserveDecision(a.authorization.Policy.FullMethod,
-		string(a.authorization.Policy.Permission), decision, reason)
+	return a.authorization.Snapshots.CurrentSnapshot()
+}
+
+func (a *frameAuthorizer) observe(snapshot auth.Snapshot, decision Decision, reason DecisionReason) {
+	observeDecision(a.authorization.Observer, snapshot, a.authorization.Policy, decision, reason)
+}
+
+func withholdFrame(frame any) {
+	if message, isProto := frame.(proto.Message); isProto {
+		proto.Reset(message)
+	}
 }

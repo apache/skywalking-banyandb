@@ -217,33 +217,47 @@ leaves the last valid policy and revision in force.
 
 ### Authorization coverage in this release
 
-This release activates the global cluster permissions:
+This release authorizes every public liaison RPC through the same compiled
+method policy used by direct gRPC and grpc-gateway calls:
 
 - `cluster:read` covers cluster state, current node, group inspection, and
   deletion-task queries.
 - `cluster:admin` covers snapshots, retention deletion, measure internal query,
   and the conditionally registered node-schema-status RPCs.
+- `schema:read` and `schema:write` cover group and resource-schema operations,
+  including schema-barrier waits. Group lists are filtered to the caller's
+  visible groups.
+- `data:read` covers Stream, Measure, Trace and Property queries, Measure TopN,
+  and ByDBQL queries after they are transformed into their native request.
+  Every group in a multi-group query must be permitted; BanyanDB never returns
+  only the allowed subset.
+- `data:write` covers Property Apply and Delete before the handler runs, and
+  every Stream, Measure and Trace write frame. A write stream requires a grant
+  somewhere to open, then each frame is checked against its target group using
+  the policy revision current when that frame arrives.
 
 `GetAPIVersion` requires authentication but no role binding. Schema-barrier
-methods, including `AwaitRevisionApplied`, remain classified as `schema:read`
-and fail closed in this release.
+methods, including `AwaitRevisionApplied`, are classified as `schema:read`.
 
 The existing `--enable-health-auth` setting continues to decide whether the
 gRPC `Check` and HTTP health checks require credentials; no RBAC role is added
 to that policy. Static web assets remain public. The gRPC `List` and `Watch`
 health methods retain their existing authentication requirement.
 
-Although schema and data permission names may be configured, their executors
-are not active in this release. With RBAC enabled, methods outside the activated
-global cluster set therefore fail closed with `PermissionDenied`, including for
-a role that lists the corresponding permission. Leave RBAC disabled until the
-available method coverage matches the deployment's needs.
-
 HTTP Basic authentication and direct gRPC authentication converge on the same
 gRPC authorization decision. The HTTP gateway discards caller-supplied identity
 metadata and forwards only the identity established from valid Basic
 credentials. Missing or invalid credentials return `Unauthenticated` before
 authorization, and denied requests do not invoke their handlers.
+
+### Canopy service-account boundary
+
+When Canopy connects to BanyanDB with its single shared upstream Basic
+credential, BanyanDB authorizes that Canopy service account rather than the
+individual browser user. Canopy's own administrator and read-only checks remain
+the enforcement point for browser sessions. Passing per-browser-user identity
+to BanyanDB would require a separately designed signed-delegation mechanism;
+it is not part of this RBAC model.
 
 External policy proxies such as [Envoy](https://www.envoyproxy.io/) or
 [Istio](https://istio.io/) may still be used when deployments require an

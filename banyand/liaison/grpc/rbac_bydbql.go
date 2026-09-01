@@ -63,9 +63,16 @@ func ContextWithSnapshot(ctx context.Context, snapshot auth.Snapshot) context.Co
 // handler, so a denied query never reaches one. A snapshot with RBAC off, which is what a
 // users-only or no-auth-file deployment produces, allows every query: those deployments see
 // ByDBQL exactly as they did before.
-func AuthorizeTransformedRequest(snapshot auth.Snapshot, _ auth.Principal, _ any) (Decision, DecisionReason) {
+func AuthorizeTransformedRequest(snapshot auth.Snapshot, principal auth.Principal, request any) (Decision, DecisionReason) {
 	if snapshot == nil || !snapshot.RBACEnabled() {
 		return DecisionAllow, DecisionReasonGranted
 	}
-	return DecisionDeny, DecisionReasonPermissionMissing
+	scopes, scopeErr := RequestScopes(ScopeRepeatedGroups, request)
+	if scopeErr != nil {
+		return DecisionInvalidRequest, DecisionReasonInvalidRequest
+	}
+	if !snapshot.Allows(principal, auth.PermissionDataRead, scopes...) {
+		return DecisionDeny, DecisionReasonPermissionMissing
+	}
+	return DecisionAllow, DecisionReasonGranted
 }

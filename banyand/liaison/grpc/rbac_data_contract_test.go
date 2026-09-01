@@ -967,7 +967,7 @@ func TestDataR5_DataPathsAreUnchangedWithoutRBAC(t *testing.T) {
 
 // TestDataR6_EveryLiaisonMethodIsActivatedAndBounded proves R6, the closing criterion of
 // #13994: at this merge every method the liaison serves is either explicitly authorized or
-// retains its documented authenticated/health behaviour, no method is left fail-closed, every
+// retains its documented authenticated/health behavior, no method is left fail-closed, every
 // permission-bearing method names the scope family its decision reads, decision labels stay
 // inside the bounded set, and the operator documentation no longer describes a coverage gap
 // that has closed.
