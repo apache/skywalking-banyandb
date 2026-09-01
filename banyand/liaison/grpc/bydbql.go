@@ -79,12 +79,15 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 	start := time.Now()
 	b.metrics.totalStarted.Inc(1, "", "bydbql", "query")
 	snapshot, _ := SnapshotFromContext(ctx)
+	decisionSlot, hasDecisionSlot := postTransformDecisionFromContext(ctx)
 	decisionObserved := false
-	defer func() {
-		if !decisionObserved {
-			b.observeTransformedDecision(snapshot, DecisionAllow, DecisionReasonGranted)
-		}
-	}()
+	if !hasDecisionSlot {
+		defer func() {
+			if !decisionObserved {
+				b.observeTransformedDecision(snapshot, DecisionAllow, DecisionReasonGranted)
+			}
+		}()
+	}
 	// cacheResult tags the access-log entry with the prepared-statement cache
 	// outcome so operators can find un-cached queries: entries logged under
 	// "bydbql-miss" / "bydbql-bypass" are the ones that did not hit the cache.
@@ -142,8 +145,13 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 	}
 	principal, _ := PrincipalFromContext(ctx)
 	decision, reason := AuthorizeTransformedRequest(snapshot, principal, result.QueryRequest)
-	decisionObserved = true
-	b.observeTransformedDecision(snapshot, decision, reason)
+	if hasDecisionSlot {
+		decisionSlot.decision = decision
+		decisionSlot.reason = reason
+	} else {
+		decisionObserved = true
+		b.observeTransformedDecision(snapshot, decision, reason)
+	}
 	if decision != DecisionAllow {
 		return nil, decisionError(decision)
 	}

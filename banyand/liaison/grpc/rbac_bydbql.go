@@ -23,7 +23,15 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 )
 
-type snapshotContextKey struct{}
+type (
+	snapshotContextKey              struct{}
+	postTransformDecisionContextKey struct{}
+)
+
+type postTransformDecisionSlot struct {
+	reason   DecisionReason
+	decision Decision
+}
 
 // SnapshotFromContext returns the security snapshot the authorization interceptor took the
 // request's decision from, and reports whether one was established.
@@ -46,6 +54,19 @@ func SnapshotFromContext(ctx context.Context) (auth.Snapshot, bool) {
 // SnapshotFromContext trustworthy inside a handler.
 func ContextWithSnapshot(ctx context.Context, snapshot auth.Snapshot) context.Context {
 	return context.WithValue(ctx, snapshotContextKey{}, snapshot)
+}
+
+func contextWithPostTransformDecision(ctx context.Context) (context.Context, *postTransformDecisionSlot) {
+	slot := &postTransformDecisionSlot{decision: DecisionAllow, reason: DecisionReasonGranted}
+	return context.WithValue(ctx, postTransformDecisionContextKey{}, slot), slot
+}
+
+func postTransformDecisionFromContext(ctx context.Context) (*postTransformDecisionSlot, bool) {
+	slot, exists := ctx.Value(postTransformDecisionContextKey{}).(*postTransformDecisionSlot)
+	if !exists || slot == nil {
+		return nil, false
+	}
+	return slot, true
 }
 
 // AuthorizeTransformedRequest decides the native request a ByDBQL query was transformed into,

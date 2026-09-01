@@ -479,7 +479,14 @@ func NewAuthorizationInterceptor(reloader *auth.Reloader, table MethodPolicyTabl
 		if decision != DecisionAllow {
 			return nil, decisionError(decision)
 		}
+		var postTransformDecision *postTransformDecisionSlot
+		if classified && policy.Scope == ScopePostTransform {
+			handlerContext, postTransformDecision = contextWithPostTransformDecision(handlerContext)
+		}
 		reply, handlerErr := handler(handlerContext, request)
+		if postTransformDecision != nil {
+			observeDecision(observer, snapshot, policy, postTransformDecision.decision, postTransformDecision.reason)
+		}
 		if handlerErr != nil {
 			return reply, handlerErr
 		}
