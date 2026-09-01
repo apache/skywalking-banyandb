@@ -46,6 +46,13 @@ verify:
         ${banyandb_host}:${banyandb_17912}
         ${banyandb_host}:${banyandb_17913}
       expected: expected/success.yaml
+    # The data stage runs on the alpha/beta measure fixture the schema stage provisioned, and
+    # still before check-rbac.sh rewrites the mounted policy.
+    - query: >-
+        bash test/e2e-v2/cases/rbac/check-rbac-data.sh
+        ${banyandb_host}:${banyandb_17912}
+        ${banyandb_host}:${banyandb_17913}
+      expected: expected/success.yaml
     - query: >-
         bash test/e2e-v2/cases/rbac/check-rbac.sh
         ${banyandb_host}:${banyandb_17912}

@@ -1003,38 +1003,10 @@ func TestSchemaR4_SchemaBarrierScopes(t *testing.T) {
 	}
 }
 
-// TestSchemaR6_DataMethodsStayFailClosed proves R6, the issue's "all data permission methods
-// remain fail-closed" criterion: no method carrying a data permission may be decided by this
-// milestone, for any principal including the global administrator, and the reason it reports
-// must stay the bounded executor_unavailable rather than becoming a scope or grant outcome.
-func TestSchemaR6_DataMethodsStayFailClosed(t *testing.T) {
-	snap := schemaSnapshot(t)
-	table := policyTable(t)
-	actors := schemaActors(t, snap)
-
-	dataMethods := 0
-	for _, policy := range table {
-		switch policy.Permission {
-		case auth.PermissionDataRead, auth.PermissionDataWrite:
-		default:
-			continue
-		}
-		dataMethods++
-		for _, who := range []string{"admin", "writer-alpha", "reader-alpha", "reader-all", "unbound"} {
-			decision, reason := table.Authorize(snap, actors[who], policy.FullMethod, nil)
-			if decision != liaisongrpc.DecisionUnavailable {
-				t.Errorf("Authorize(%s, %s) = %v, want DecisionUnavailable", who, policy.FullMethod, decision)
-			}
-			if reason != liaisongrpc.DecisionReasonExecutorUnavailable {
-				t.Errorf("Authorize(%s, %s) reported %q, want %q", who, policy.FullMethod, reason,
-					liaisongrpc.DecisionReasonExecutorUnavailable)
-			}
-		}
-	}
-	if dataMethods != 11 {
-		t.Errorf("the table classifies %d data methods, want the fixed 11 that W-PR3 owns", dataMethods)
-	}
-}
+// The data half of R6 — "every method carrying a data permission is still fail-closed" — was
+// true only while W-PR2 was the head of this series. Issue #14016 activates those eleven
+// methods, so the invariant now lives in TestDataR6_EveryLiaisonMethodIsActivatedAndBounded,
+// which asserts the same eleven-method oracle with the opposite expectation.
 
 // TestSchemaR6_DecisionReasonsStayBounded proves that the reason this milestone adds joins a
 // closed set rather than opening one: every reason the decision function can return is listed

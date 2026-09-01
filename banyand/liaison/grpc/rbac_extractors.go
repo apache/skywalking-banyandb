@@ -72,20 +72,53 @@ const (
 	// addresses no group, any grant admits the caller, and the response is reduced afterwards
 	// to the groups the caller's scopes cover.
 	ScopeVisibleGroups
+	// ScopeRepeatedGroups reads every group a native read request lists. Stream, Measure,
+	// Trace and Property Query and Measure TopN use it. The groups are deduplicated and the
+	// permission is required for all of them, which is what makes a multi-group read
+	// all-or-nothing rather than a read of the authorized subset.
+	ScopeRepeatedGroups
+	// ScopePropertyGroup reads the group out of the Property body a mutation carries, which
+	// is Property.Metadata.Group. Property Apply uses it; Property Delete names its group
+	// directly and uses ScopeDirectGroup.
+	ScopePropertyGroup
+	// ScopeFrameGroups names the resource set of a write stream: the stream itself addresses
+	// no group, a principal holding data:write in any scope may open it, and each
+	// resource-bearing frame is decided afterwards against the group that frame resolves to.
+	ScopeFrameGroups
+	// ScopePostTransform names the resource set of a ByDBQL query: the raw query text is not
+	// the resource, so the stream itself is admitted by any data-read grant and the decision
+	// that matters is taken inside the handler over the native request the query transformed
+	// into.
+	ScopePostTransform
 )
+
+// DeferredScopeFamilies returns the families whose exact decision is taken after the unary
+// interceptor rather than at it, in a fixed order. A method carrying one of them is admitted
+// by a grant in any scope and then decided again — per received frame for ScopeFrameGroups,
+// over the transformed native request for ScopePostTransform — so a principal holding the
+// permission nowhere is still rejected before its handler runs.
+func DeferredScopeFamilies() []ScopeFamily {
+	return []ScopeFamily{ScopeVisibleGroups, ScopeFrameGroups, ScopePostTransform}
+}
 
 // RequestScopes resolves the group scopes family requires from request. The result is
 // deduplicated and sorted, so a request naming one group twice, or two groups in either
 // order, yields one canonical scope set that an all-or-nothing decision can be taken over.
 //
-// ScopeGlobal and ScopeVisibleGroups resolve to no scopes: the first is satisfied only by a
-// wildcard grant, the second is admitted by any grant and filtered after its handler. Every
-// other family reads its groups from the request, and a request the family cannot be read
-// from returns an error wrapping ErrScopeUnresolvable.
+// ScopeGlobal and the deferred families resolve to no scopes: ScopeGlobal is satisfied only
+// by a wildcard grant, and each family DeferredScopeFamilies lists is admitted by a grant in
+// any scope and decided exactly afterwards — filtered after its handler for
+// ScopeVisibleGroups, per received frame for ScopeFrameGroups, over the transformed native
+// request for ScopePostTransform. Every other family reads its groups from the request, and a
+// request the family cannot be read from returns an error wrapping ErrScopeUnresolvable.
 func RequestScopes(family ScopeFamily, request any) ([]string, error) {
 	switch family {
-	case ScopeGlobal, ScopeVisibleGroups:
+	case ScopeGlobal, ScopeVisibleGroups, ScopeFrameGroups, ScopePostTransform:
 		return nil, nil
+	case ScopeRepeatedGroups:
+		return repeatedGroupScopes(family, request)
+	case ScopePropertyGroup:
+		return propertyGroupScopes(family, request)
 	case ScopeDirectGroup:
 		return directGroupScopes(family, request)
 	case ScopeGroupBodyName:
@@ -99,6 +132,21 @@ func RequestScopes(family ScopeFamily, request any) ([]string, error) {
 	default:
 		return nil, unresolvableScope(family, request)
 	}
+}
+
+// repeatedGroupScopes resolves the deduplicated, sorted set of groups a native read request
+// lists in its repeated groups field: the Stream, Measure, Trace and Property query requests
+// and the Measure TopN request. A request of any other type, or one listing an empty or
+// whitespace-only group, carries no resolvable scope.
+func repeatedGroupScopes(family ScopeFamily, request any) ([]string, error) {
+	return nil, unresolvableScope(family, request)
+}
+
+// propertyGroupScopes resolves the group of the Property body a mutation carries, which is
+// Property.Metadata.Group. A request with no property, no metadata, or an empty group carries
+// no resolvable scope.
+func propertyGroupScopes(family ScopeFamily, request any) ([]string, error) {
+	return nil, unresolvableScope(family, request)
 }
 
 func directGroupScopes(family ScopeFamily, request any) ([]string, error) {

@@ -83,6 +83,8 @@ jobs:
             config: test/e2e-v2/cases/cluster/e2e.yaml
           - name: RBAC
             config: test/e2e-v2/cases/rbac/e2e.yaml
+          - name: RBAC Cluster
+            config: test/e2e-v2/cases/rbac-cluster/e2e.yaml
           - name: Rover eBPF - Istio mesh, Kind
             config: test/e2e-v2/cases/rover/process/istio/banyandb/e2e-banyandb.yaml
             runs-on: ubuntu-24.04

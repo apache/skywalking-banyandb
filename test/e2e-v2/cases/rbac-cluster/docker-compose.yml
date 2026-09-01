@@ -1,0 +1,96 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements. See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Two liaison endpoints and one data node, all reading one mounted policy revision. Only the
+# BanyanDB service definitions are reused from the cluster case; there is no OAP, agent or
+# Canopy dependency, because #13994 ends at direct clients.
+
+version: '2.1'
+
+services:
+  data:
+    extends:
+      file: ../../script/docker-compose/base-compose.yml
+      service: data
+    command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml
+    volumes:
+      - ./nodes.yaml:/etc/banyandb/nodes.yaml
+    networks:
+      - e2e
+
+  # Each liaison copies the mounted revision to a private path and tightens it to 0600 before
+  # starting, because the liaison refuses a policy file any other account can read.
+  liaison-a:
+    extends:
+      file: ../../script/docker-compose/base-compose.yml
+      service: liaison
+    hostname: liaison-a
+    entrypoint:
+      - /bin/sh
+      - -ec
+    command:
+      - |
+        cp /etc/banyandb/security.template.yaml /tmp/security.yaml
+        chmod 0600 /tmp/security.yaml
+        exec /banyand liaison --node-discovery-mode=file \
+          --node-discovery-file-path=/etc/banyandb/nodes.yaml \
+          --auth-config-file=/tmp/security.yaml
+    healthcheck:
+      test: ["CMD", "./bydbctl", "health", "--config=-", "--addr=http://liaison-a:17913"]
+      interval: 5s
+      timeout: 120s
+      retries: 120
+    volumes:
+      - ./nodes.yaml:/etc/banyandb/nodes.yaml
+      - ./security.yaml:/etc/banyandb/security.template.yaml:ro
+    ports:
+      - 17912
+      - 17913
+      - 2121
+    networks:
+      - e2e
+
+  liaison-b:
+    extends:
+      file: ../../script/docker-compose/base-compose.yml
+      service: liaison
+    hostname: liaison-b
+    entrypoint:
+      - /bin/sh
+      - -ec
+    command:
+      - |
+        cp /etc/banyandb/security.template.yaml /tmp/security.yaml
+        chmod 0600 /tmp/security.yaml
+        exec /banyand liaison --node-discovery-mode=file \
+          --node-discovery-file-path=/etc/banyandb/nodes.yaml \
+          --auth-config-file=/tmp/security.yaml
+    healthcheck:
+      test: ["CMD", "./bydbctl", "health", "--config=-", "--addr=http://liaison-b:17913"]
+      interval: 5s
+      timeout: 120s
+      retries: 120
+    volumes:
+      - ./nodes.yaml:/etc/banyandb/nodes.yaml
+      - ./security.yaml:/etc/banyandb/security.template.yaml:ro
+    ports:
+      - 17912
+      - 17913
+      - 2121
+    networks:
+      - e2e
+
+networks:
+  e2e:
