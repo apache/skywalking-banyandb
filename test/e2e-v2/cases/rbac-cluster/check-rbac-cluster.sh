@@ -116,6 +116,75 @@ http_call_at() {
   cat "${response_file}"
 }
 
+assert_write_succeeded() {
+  local response=$1
+  local message_id=$2
+
+  grep -Fq '"status": "STATUS_SUCCEED"' <<<"${response}" || {
+    printf '%s\n' "${response}" >&2
+    fail "write ${message_id}: response did not report STATUS_SUCCEED"
+  }
+  grep -Fq "\"messageId\": \"${message_id}\"" <<<"${response}" || fail "write ${message_id}: response omitted its message ID"
+}
+
+wait_for_measure_query() {
+  local address=$1
+  local payload=$2
+  local output_file="${work_dir}/measure-ready.log"
+  local attempt exit_code
+
+  for attempt in $(seq 1 60); do
+    set +e
+    printf '%s\n' "${payload}" | timeout 60s grpcurl -plaintext -protoset "${descriptor_set}" \
+      -H 'username: bydb-admin' -H 'password: admin-secret' -d @ "${address}" "${measure_query}" >"${output_file}" 2>&1
+    exit_code=$?
+    set -e
+    [[ ${exit_code} -eq 0 ]] && return
+    sleep 1
+  done
+  cat "${output_file}" >&2
+  fail "the distributed measure fixture did not become query-ready"
+}
+
+wait_for_write_succeeded() {
+  local address=$1
+  local username=$2
+  local password=$3
+  local payload=$4
+  local message_id=$5
+  local attempt response
+
+  for attempt in $(seq 1 60); do
+    response=$(grpc_call_at "${address}" OK "${username}" "${password}" "${measure_write}" "${payload}")
+    if grep -Fq '"status": "STATUS_SUCCEED"' <<<"${response}"; then
+      assert_write_succeeded "${response}" "${message_id}"
+      printf '%s\n' "${response}"
+      return
+    fi
+    sleep 1
+  done
+  printf '%s\n' "${response}" >&2
+  fail "write ${message_id}: the distributed data route did not become ready"
+}
+
+wait_for_marker() {
+  local address=$1
+  local payload=$2
+  local marker=$3
+  local attempt response
+
+  for attempt in $(seq 1 60); do
+    response=$(grpc_call_at "${address}" OK bydb-admin admin-secret "${measure_query}" "${payload}")
+    if grep -Fq "${marker}" <<<"${response}"; then
+      printf '%s\n' "${response}"
+      return
+    fi
+    sleep 1
+  done
+  printf '%s\n' "${response}" >&2
+  fail "${address}: marker ${marker} did not become readable"
+}
+
 group_body() {
   printf '{"group":{"metadata":{"name":"%s"},"catalog":"CATALOG_MEASURE","resourceOpts":{"shardNum":1,' "$1"
   printf '"segmentInterval":{"unit":"UNIT_DAY","num":1},"ttl":{"unit":"UNIT_DAY","num":7}}}}'
@@ -155,18 +224,20 @@ barrier_keys+=$(printf '{"kind":"measure","group":"%s","name":"%s"}],' "${beta}"
 barrier_keys+='"minRevisions":["0","0","0","0"]}'
 applied=$(grpc_call_at "${grpc_b}" OK bydb-admin admin-secret "${await_applied}" "${barrier_keys}")
 grep -Fq '"applied": true' <<<"${applied}" || fail "the fixture schema did not converge across both liaisons"
+wait_for_measure_query "${grpc_b}" "$(measure_query_body "\"${alpha}\"" "${alpha_marker}")"
 
 # ---------------------------------------------------------------------------
 # E-DST-02: write through A, read through B. Internal liaison-to-data flow must stay healthy
 # while the public boundary is authorized.
 # ---------------------------------------------------------------------------
-grpc_call_at "${grpc_a}" OK bydb-writer writer-secret "${measure_write}" \
-  "$(write_frame "${alpha}" "${alpha_marker}" 1 alpha-only)" >/dev/null
-grpc_call_at "${grpc_a}" OK bydb-admin admin-secret "${measure_write}" \
-  "$(write_frame "${beta}" "${beta_marker}" 2 beta-only)" >/dev/null
+wait_for_write_succeeded "${grpc_a}" bydb-writer writer-secret \
+  "$(write_frame "${alpha}" "${alpha_marker}" 1 alpha-only)" 1 >/dev/null
+wait_for_write_succeeded "${grpc_a}" bydb-admin admin-secret \
+  "$(write_frame "${beta}" "${beta_marker}" 2 beta-only)" 2 >/dev/null
 
-through_b=$(grpc_call_at "${grpc_b}" OK bydb-reader reader-secret "${measure_query}" \
-  "$(measure_query_body "\"${alpha}\"" "${alpha_marker}")")
+through_b=$(wait_for_marker "${grpc_b}" \
+  "$(measure_query_body "\"${alpha}\"" "${alpha_marker}")" alpha-only)
+grep -Fq 'alpha-only' <<<"${through_b}" || fail "the reader's query through endpoint B omitted the alpha marker"
 grep -Fq 'beta-only' <<<"${through_b}" && fail "the reader's query through endpoint B leaked a beta marker"
 
 # ---------------------------------------------------------------------------
@@ -174,8 +245,10 @@ grep -Fq 'beta-only' <<<"${through_b}" && fail "the reader's query through endpo
 # endpoint, over direct gRPC and over the bound gateway route.
 # ---------------------------------------------------------------------------
 for endpoint in "${grpc_a}" "${grpc_b}"; do
-  grpc_call_at "${endpoint}" OK bydb-reader reader-secret "${measure_query}" \
-    "$(measure_query_body "\"${alpha}\"" "${alpha_marker}")" >/dev/null
+  alpha_read=$(grpc_call_at "${endpoint}" OK bydb-reader reader-secret "${measure_query}" \
+    "$(measure_query_body "\"${alpha}\"" "${alpha_marker}")")
+  grep -Fq 'alpha-only' <<<"${alpha_read}" || fail "${endpoint}: the reader's query omitted the alpha marker"
+  grep -Fq 'beta-only' <<<"${alpha_read}" && fail "${endpoint}: the reader's query leaked the beta marker"
   grpc_call_at "${endpoint}" PermissionDenied bydb-reader reader-secret "${measure_query}" \
     "$(measure_query_body "\"${beta}\"" "${beta_marker}")"
   grpc_call_at "${endpoint}" PermissionDenied bydb-reader reader-secret "${measure_query}" \
@@ -193,8 +266,10 @@ for endpoint in "${grpc_a}" "${grpc_b}"; do
 done
 
 for endpoint in "${http_a}" "${http_b}"; do
-  http_call_at "${endpoint}" 200 bydb-reader reader-secret POST /api/v1/measure/data \
-    "$(measure_query_body "\"${alpha}\"" "${alpha_marker}")" >/dev/null
+  http_alpha_read=$(http_call_at "${endpoint}" 200 bydb-reader reader-secret POST /api/v1/measure/data \
+    "$(measure_query_body "\"${alpha}\"" "${alpha_marker}")")
+  grep -Fq 'alpha-only' <<<"${http_alpha_read}" || fail "${endpoint}: the reader's HTTP query omitted the alpha marker"
+  grep -Fq 'beta-only' <<<"${http_alpha_read}" && fail "${endpoint}: the reader's HTTP query leaked the beta marker"
   http_call_at "${endpoint}" 403 bydb-reader reader-secret POST /api/v1/measure/data \
     "$(measure_query_body "\"${beta}\"" "${beta_marker}")" >/dev/null
   http_call_at "${endpoint}" 401 bydb-reader wrong-password POST /api/v1/measure/data \

@@ -13,9 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Two liaison endpoints and one data node, all reading one policy revision from a shared named
-# volume. The init service gives the watched file the 0600 mode the liaison requires, while the
-# nightly stress journey can replace it in place without restarting either liaison.
+# Two edge liaison endpoints read one policy revision from a shared named volume. A non-exposed
+# routing liaison and one data node provide the normal internal write path without putting RBAC on
+# node-discovery traffic. The init service gives the watched policy the required 0600 mode.
 
 version: '2.1'
 
@@ -30,7 +30,7 @@ services:
         cp /etc/banyandb/security.template.yaml /rbac-policy/security.yaml
         chmod 0600 /rbac-policy/security.yaml
     volumes:
-      - ./security.yaml:/etc/banyandb/security.template.yaml:ro
+      - ${RBAC_CLUSTER_CONFIG_DIR:-.}/security.yaml:/etc/banyandb/security.template.yaml:ro
       - rbac-policy:/rbac-policy
     networks:
       - e2e
@@ -41,15 +41,38 @@ services:
       service: data
     command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml
     volumes:
-      - ./nodes.yaml:/etc/banyandb/nodes.yaml
+      - ${RBAC_CLUSTER_CONFIG_DIR:-.}/nodes.yaml:/etc/banyandb/nodes.yaml
+    networks:
+      - e2e
+
+  router:
+    image: "apache/skywalking-banyandb:${TAG}-testing"
+    cpus: 4
+    mem_limit: 2g
+    hostname: router
+    command: liaison --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml
+    depends_on:
+      data:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "./bydbctl", "health", "--config=-", "--addr=http://router:17913"]
+      interval: 5s
+      timeout: 120s
+      retries: 120
+    volumes:
+      - ${RBAC_CLUSTER_CONFIG_DIR:-.}/nodes.yaml:/etc/banyandb/nodes.yaml
+    expose:
+      - 17912
+      - 17913
+      - 2121
     networks:
       - e2e
 
   # The policy-init service prepares the shared watched file before either liaison starts.
-  liaison-a:
-    extends:
-      file: ../../script/docker-compose/base-compose.yml
-      service: liaison
+  liaison_a:
+    image: "apache/skywalking-banyandb:${TAG}-testing"
+    cpus: 4
+    mem_limit: 2g
     hostname: liaison-a
     entrypoint:
       - /bin/sh
@@ -58,18 +81,21 @@ services:
       - |
         exec /banyand liaison --node-discovery-mode=file \
           --node-discovery-file-path=/etc/banyandb/nodes.yaml \
+          --node-discovery-file-fetch-interval=1s \
           --auth-config-file=/rbac-policy/security.yaml
     depends_on:
       rbac-policy-init:
         condition: service_completed_successfully
+      router:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "./bydbctl", "health", "--config=-", "--addr=http://liaison-a:17913"]
       interval: 5s
       timeout: 120s
       retries: 120
     volumes:
-      - ./nodes.yaml:/etc/banyandb/nodes.yaml
-      - ./security-revoked.yaml:/etc/banyandb/security.revoked.template.yaml:ro
+      - ${RBAC_CLUSTER_CONFIG_DIR:-.}/nodes.yaml:/etc/banyandb/nodes.yaml
+      - ${RBAC_CLUSTER_CONFIG_DIR:-.}/security-revoked.yaml:/etc/banyandb/security.revoked.template.yaml:ro
       - rbac-policy:/rbac-policy
     ports:
       - 17912
@@ -78,10 +104,10 @@ services:
     networks:
       - e2e
 
-  liaison-b:
-    extends:
-      file: ../../script/docker-compose/base-compose.yml
-      service: liaison
+  liaison_b:
+    image: "apache/skywalking-banyandb:${TAG}-testing"
+    cpus: 4
+    mem_limit: 2g
     hostname: liaison-b
     entrypoint:
       - /bin/sh
@@ -90,18 +116,21 @@ services:
       - |
         exec /banyand liaison --node-discovery-mode=file \
           --node-discovery-file-path=/etc/banyandb/nodes.yaml \
+          --node-discovery-file-fetch-interval=1s \
           --auth-config-file=/rbac-policy/security.yaml
     depends_on:
       rbac-policy-init:
         condition: service_completed_successfully
+      router:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "./bydbctl", "health", "--config=-", "--addr=http://liaison-b:17913"]
       interval: 5s
       timeout: 120s
       retries: 120
     volumes:
-      - ./nodes.yaml:/etc/banyandb/nodes.yaml
-      - ./security-revoked.yaml:/etc/banyandb/security.revoked.template.yaml:ro
+      - ${RBAC_CLUSTER_CONFIG_DIR:-.}/nodes.yaml:/etc/banyandb/nodes.yaml
+      - ${RBAC_CLUSTER_CONFIG_DIR:-.}/security-revoked.yaml:/etc/banyandb/security.revoked.template.yaml:ro
       - rbac-policy:/rbac-policy
     ports:
       - 17912

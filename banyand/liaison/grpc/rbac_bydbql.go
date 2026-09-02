@@ -33,14 +33,7 @@ type postTransformDecisionSlot struct {
 	decision Decision
 }
 
-// SnapshotFromContext returns the security snapshot the authorization interceptor took the
-// request's decision from, and reports whether one was established.
-//
-// A handler that has to decide something itself must decide it against this snapshot rather
-// than by asking the reloader again. The two differ whenever a reload lands while the handler
-// runs, and a handler that re-reads would mix one revision's admission with another
-// revision's grants. The snapshot is stored under a key this package does not export, so a
-// context a caller built carries nothing this function will read back.
+// SnapshotFromContext returns the request's authorization snapshot, if established.
 func SnapshotFromContext(ctx context.Context) (auth.Snapshot, bool) {
 	snapshot, exists := ctx.Value(snapshotContextKey{}).(auth.Snapshot)
 	if !exists || snapshot == nil {
@@ -49,9 +42,7 @@ func SnapshotFromContext(ctx context.Context) (auth.Snapshot, bool) {
 	return snapshot, true
 }
 
-// ContextWithSnapshot returns ctx carrying snapshot as the one the request's authorization
-// decision was taken from. Only the authorization interceptor calls it, which is what makes
-// SnapshotFromContext trustworthy inside a handler.
+// ContextWithSnapshot returns a context carrying the request's authorization snapshot.
 func ContextWithSnapshot(ctx context.Context, snapshot auth.Snapshot) context.Context {
 	return context.WithValue(ctx, snapshotContextKey{}, snapshot)
 }
@@ -69,21 +60,8 @@ func postTransformDecisionFromContext(ctx context.Context) (*postTransformDecisi
 	return slot, true
 }
 
-// AuthorizeTransformedRequest decides the native request a ByDBQL query was transformed into,
-// and returns the outcome together with the bounded reason the liaison reports for it.
-//
-// It is the whole of ByDBQL's authorization. The raw query text, its parameters, its casing,
-// its comments and the transport that carried it are not resources and are never inspected:
-// only the typed native request the transformer produced is, and it is decided exactly as the
-// equivalent native method would be — every group it lists must be held for
-// auth.PermissionDataRead, so one forbidden group denies the whole query. Because the
-// decision is taken over the transformed request, no query text can address a group the
-// decision does not see.
-//
-// The ByDBQL handler calls it after transformation and before it dispatches to the native
-// handler, so a denied query never reaches one. A snapshot with RBAC off, which is what a
-// users-only or no-auth-file deployment produces, allows every query: those deployments see
-// ByDBQL exactly as they did before.
+// AuthorizeTransformedRequest decides whether principal may read every group addressed
+// by a transformed ByDBQL request.
 func AuthorizeTransformedRequest(snapshot auth.Snapshot, principal auth.Principal, request any) (Decision, DecisionReason) {
 	if snapshot == nil || !snapshot.RBACEnabled() {
 		return DecisionAllow, DecisionReasonGranted

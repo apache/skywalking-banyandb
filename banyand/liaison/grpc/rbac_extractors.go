@@ -32,93 +32,55 @@ import (
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 )
 
-// ErrScopeUnresolvable reports a request from which the group scopes its method's policy
-// needs cannot be read: an absent resource body, absent metadata, an empty or whitespace-only
-// group name, or a request whose type does not belong to the policy's scope family. The
-// liaison reports it to the caller as codes.InvalidArgument, so a malformed request from an
-// authenticated caller is answered as malformed rather than as an authorization outcome.
+// ErrScopeUnresolvable reports a request with no resolvable group scope.
 var ErrScopeUnresolvable = errors.New("method scope: request carries no resolvable group")
 
-// ScopeFamily names the typed extractor that resolves one method's group scopes from its
-// request message. Every classified method points at exactly one family. There is no generic
-// "find a field named group" rule: BanyanDB request shapes differ too much for one, and a
-// newly added RPC must be classified explicitly rather than inherit a scope by accident.
+// ScopeFamily identifies how a method's group scopes are resolved.
 type ScopeFamily int
 
 const (
-	// ScopeUnspecified is the zero value and names no extractor. A method whose permission
-	// this release cannot decide carries it, and resolving it is an error, so a policy row
-	// that is activated without being given a family fails closed instead of falling back to
-	// a global decision.
+	// ScopeUnspecified names no scope resolver.
 	ScopeUnspecified ScopeFamily = iota
-	// ScopeGlobal names the deployment-wide scope: the method addresses no group, and only a
-	// wildcard grant satisfies it. Cluster state, node query, internal maintenance and the
-	// cluster-wide schema revision wait use it.
+	// ScopeGlobal requires a wildcard grant.
 	ScopeGlobal
-	// ScopeDirectGroup reads the request's own group field, the single non-empty string of
-	// Group Get/Exist/Delete and of the seven registry List methods.
+	// ScopeDirectGroup reads a request's group field.
 	ScopeDirectGroup
-	// ScopeGroupBodyName reads the group name out of the Group body a request carries, which
-	// for a group is Group.Metadata.Name and never Group.Metadata.Group. Group Create and
-	// Update use it.
+	// ScopeGroupBodyName reads the name of a group body.
 	ScopeGroupBodyName
-	// ScopeMetadataGroup reads Metadata.Group off a request that identifies one existing
-	// resource by name. The seven registry Get, Exist and Delete methods use it.
+	// ScopeMetadataGroup reads the group from request metadata.
 	ScopeMetadataGroup
-	// ScopeResourceMetadataGroup reads Metadata.Group out of the resource body a request
-	// carries. The seven registry Create and Update methods use it.
+	// ScopeResourceMetadataGroup reads the group from resource metadata.
 	ScopeResourceMetadataGroup
-	// ScopeSchemaKeys reads every schema key a barrier wait names. A key of kind "group"
-	// scopes to its Name, because that is where a group key carries the group; every other
-	// kind scopes to its Group.
+	// ScopeSchemaKeys reads the groups addressed by schema keys.
 	ScopeSchemaKeys
-	// ScopeVisibleGroups names the whole-deployment resource set of Group List: the method
-	// addresses no group, any grant admits the caller, and the response is reduced afterwards
-	// to the groups the caller's scopes cover.
+	// ScopeVisibleGroups defers authorization to response filtering.
 	ScopeVisibleGroups
-	// ScopeRepeatedGroups reads every group a native read request lists. Stream, Measure,
-	// Trace and Property Query and Measure TopN use it. The groups are deduplicated and the
-	// permission is required for all of them, which is what makes a multi-group read
-	// all-or-nothing rather than a read of the authorized subset.
+	// ScopeRepeatedGroups reads a request's repeated groups field.
 	ScopeRepeatedGroups
-	// ScopePropertyGroup reads the group out of the Property body a mutation carries, which
-	// is Property.Metadata.Group. Property Apply uses it; Property Delete names its group
-	// directly and uses ScopeDirectGroup.
+	// ScopePropertyGroup reads the group from a property body.
 	ScopePropertyGroup
-	// ScopeFrameGroups names the resource set of a write stream: the stream itself addresses
-	// no group, a principal holding data:write in any scope may open it, and each
-	// resource-bearing frame is decided afterwards against the group that frame resolves to.
+	// ScopeFrameGroups defers authorization to individual stream frames.
 	ScopeFrameGroups
-	// ScopePostTransform names the resource set of a ByDBQL query: the raw query text is not
-	// the resource, so the stream itself is admitted by any data-read grant and the decision
-	// that matters is taken inside the handler over the native request the query transformed
-	// into.
+	// ScopePostTransform defers authorization until a query is transformed.
 	ScopePostTransform
 )
 
-// DeferredScopeFamilies returns the families whose exact decision is taken after the unary
-// interceptor rather than at it, in a fixed order. A method carrying one of them is admitted
-// by a grant in any scope and then decided again — per received frame for ScopeFrameGroups,
-// over the transformed native request for ScopePostTransform — so a principal holding the
-// permission nowhere is still rejected before its handler runs.
-func DeferredScopeFamilies() []ScopeFamily {
-	return []ScopeFamily{ScopeVisibleGroups, ScopeFrameGroups, ScopePostTransform}
+func isDeferredScope(family ScopeFamily) bool {
+	switch family {
+	case ScopeVisibleGroups, ScopeFrameGroups, ScopePostTransform:
+		return true
+	default:
+		return false
+	}
 }
 
-// RequestScopes resolves the group scopes family requires from request. The result is
-// deduplicated and sorted, so a request naming one group twice, or two groups in either
-// order, yields one canonical scope set that an all-or-nothing decision can be taken over.
-//
-// ScopeGlobal and the deferred families resolve to no scopes: ScopeGlobal is satisfied only
-// by a wildcard grant, and each family DeferredScopeFamilies lists is admitted by a grant in
-// any scope and decided exactly afterwards — filtered after its handler for
-// ScopeVisibleGroups, per received frame for ScopeFrameGroups, over the transformed native
-// request for ScopePostTransform. Every other family reads its groups from the request, and a
-// request the family cannot be read from returns an error wrapping ErrScopeUnresolvable.
+// RequestScopes returns the canonical group scopes addressed by request. Unresolvable
+// requests return an error wrapping ErrScopeUnresolvable.
 func RequestScopes(family ScopeFamily, request any) ([]string, error) {
-	switch family {
-	case ScopeGlobal, ScopeVisibleGroups, ScopeFrameGroups, ScopePostTransform:
+	if family == ScopeGlobal || isDeferredScope(family) {
 		return nil, nil
+	}
+	switch family {
 	case ScopeRepeatedGroups:
 		return repeatedGroupScopes(family, request)
 	case ScopePropertyGroup:

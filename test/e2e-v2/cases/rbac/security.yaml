@@ -39,13 +39,13 @@ rbac:
     # rather than about the catalog.
     - principal: bydb-reader
       role: reader
-      groups: [alpha, alpha-prop]
+      groups: [alpha, alpha-prop, alpha-stream, alpha-trace]
     - principal: bydb-reader-all
       role: reader
       groups: ["*"]
     - principal: bydb-writer
       role: writer
-      groups: [alpha, alpha-prop]
+      groups: [alpha, alpha-prop, alpha-stream, alpha-trace]
     # Bound to a group the fixture does not provision, so the schema stage can prove a
     # service account bootstrapping the group it needs without cluster administration.
     - principal: bydb-writer-gamma

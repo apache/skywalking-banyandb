@@ -210,9 +210,10 @@ func callDataMethod(
 // caller supplied, exactly as the transport does, so the wrapper under test sees the frame
 // through the same seam a real write handler would.
 type scriptedStream struct {
-	ctx    context.Context
-	frames []proto.Message
-	index  int
+	ctx        context.Context
+	receiveErr error
+	frames     []proto.Message
+	index      int
 }
 
 func (s *scriptedStream) SetHeader(metadata.MD) error  { return nil }
@@ -223,6 +224,9 @@ func (s *scriptedStream) SendMsg(any) error            { return nil }
 
 func (s *scriptedStream) RecvMsg(target any) error {
 	if s.index >= len(s.frames) {
+		if s.receiveErr != nil {
+			return s.receiveErr
+		}
 		return io.EOF
 	}
 	message, isProto := target.(proto.Message)
@@ -542,6 +546,8 @@ func applyIn(group string) *propertyv1.ApplyRequest {
 // principal holding data:write somewhere, each resource-bearing frame is then decided against
 // the group that frame resolves to, and each decision reads the snapshot in force at that
 // moment — so removing a binding denies the next frame of a stream that is already open.
+//
+//nolint:gocyclo // Independent subtests keep the complete write-stream contract in one TDD specification.
 func TestDataR3_WriteFramesUseTheSnapshotInForce(t *testing.T) {
 	snap := dataSnapshot(t, dataPolicyYAML)
 	table := policyTable(t)
@@ -745,14 +751,37 @@ func TestDataR3_WriteFramesUseTheSnapshotInForce(t *testing.T) {
 		}
 	})
 
-	t.Run("a transport error is returned unchanged", func(t *testing.T) {
-		authorized := liaisongrpc.NewFrameAuthorizer(&scriptedStream{ctx: context.Background()}, liaisongrpc.FrameAuthorization{
-			Policy:    writePolicy,
-			Snapshots: &scriptedSnapshots{revisions: []auth.Snapshot{snap}},
-			Principal: actors["writer-alpha"],
-		})
-		if recvErr := authorized.RecvMsg(&measurev1.WriteRequest{}); !errors.Is(recvErr, io.EOF) {
-			t.Errorf("a closed send side = %v, want io.EOF passed through so the handler completes its batch", recvErr)
+	t.Run("a transport error is wrapped without losing its semantics", func(t *testing.T) {
+		for _, tc := range []struct {
+			receiveErr error
+			name       string
+			wantCode   codes.Code
+		}{
+			{name: "closed send side", receiveErr: io.EOF, wantCode: codes.Unknown},
+			{name: "gRPC status", receiveErr: status.Error(codes.Canceled, "canceled"), wantCode: codes.Canceled},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				authorized := liaisongrpc.NewFrameAuthorizer(&scriptedStream{
+					ctx: context.Background(), receiveErr: tc.receiveErr,
+				}, liaisongrpc.FrameAuthorization{
+					Policy:    writePolicy,
+					Snapshots: &scriptedSnapshots{revisions: []auth.Snapshot{snap}},
+					Principal: actors["writer-alpha"],
+				})
+				recvErr := authorized.RecvMsg(&measurev1.WriteRequest{})
+				if recvErr == nil {
+					t.Fatal("RecvMsg() returned nil, want a wrapped receive error")
+				}
+				if !errors.Is(recvErr, tc.receiveErr) {
+					t.Errorf("RecvMsg() = %v, want it to wrap %v", recvErr, tc.receiveErr)
+				}
+				if !strings.Contains(recvErr.Error(), "receive write frame") {
+					t.Errorf("RecvMsg() = %q, want receive context", recvErr)
+				}
+				if got := status.Code(recvErr); got != tc.wantCode {
+					t.Errorf("status.Code(RecvMsg()) = %v, want %v", got, tc.wantCode)
+				}
+			})
 		}
 	})
 }
@@ -1012,15 +1041,6 @@ func TestDataR6_EveryLiaisonMethodIsActivatedAndBounded(t *testing.T) {
 			if policy.Scope != want.scope {
 				t.Errorf("policy for %s reads scope family %v, want %v", want.method, policy.Scope, want.scope)
 			}
-		}
-	})
-
-	t.Run("the deferred families are the three the design names", func(t *testing.T) {
-		want := []liaisongrpc.ScopeFamily{
-			liaisongrpc.ScopeVisibleGroups, liaisongrpc.ScopeFrameGroups, liaisongrpc.ScopePostTransform,
-		}
-		if got := liaisongrpc.DeferredScopeFamilies(); !reflect.DeepEqual(got, want) {
-			t.Errorf("DeferredScopeFamilies() = %v, want %v", got, want)
 		}
 	})
 

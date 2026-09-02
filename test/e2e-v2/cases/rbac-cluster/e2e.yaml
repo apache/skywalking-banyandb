@@ -40,10 +40,10 @@ verify:
   cases:
     - query: >-
         bash test/e2e-v2/cases/rbac-cluster/check-rbac-cluster.sh
-        ${liaison-a_host}:${liaison-a_17912}
-        ${liaison-a_host}:${liaison-a_17913}
-        ${liaison-b_host}:${liaison-b_17912}
-        ${liaison-b_host}:${liaison-b_17913}
+        ${liaison_a_host}:${liaison_a_17912}
+        ${liaison_a_host}:${liaison_a_17913}
+        ${liaison_b_host}:${liaison_b_17912}
+        ${liaison_b_host}:${liaison_b_17913}
       expected: expected/success.yaml
 
 cleanup:

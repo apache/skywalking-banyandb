@@ -52,6 +52,7 @@ verify:
         bash test/e2e-v2/cases/rbac/check-rbac-data.sh
         ${banyandb_host}:${banyandb_17912}
         ${banyandb_host}:${banyandb_17913}
+        ${banyandb_host}:${banyandb_2121}
       expected: expected/success.yaml
     - query: >-
         bash test/e2e-v2/cases/rbac/check-rbac.sh

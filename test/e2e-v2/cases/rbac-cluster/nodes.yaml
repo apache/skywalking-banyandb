@@ -16,7 +16,5 @@
 nodes:
   - name: data
     grpc_address: data:17912
-  - name: liaison-a
-    grpc_address: liaison-a:17912
-  - name: liaison-b
-    grpc_address: liaison-b:17912
+  - name: router
+    grpc_address: router:17912

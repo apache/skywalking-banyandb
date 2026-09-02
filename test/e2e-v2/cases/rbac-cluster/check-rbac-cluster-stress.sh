@@ -187,8 +187,8 @@ bash "${script_dir}/check-rbac-cluster.sh" "${grpc_a}" "${http_a}" "${grpc_b}" "
 expect_reader_code "${grpc_a}" OK
 expect_reader_code "${grpc_b}" OK
 
-liaison_a=$(liaison_container liaison-a "${grpc_a}")
-liaison_b=$(liaison_container liaison-b "${grpc_b}")
+liaison_a=$(liaison_container liaison_a "${grpc_a}")
+liaison_b=$(liaison_container liaison_b "${grpc_b}")
 
 # E-DST-03: both endpoints serve concurrent calls while one shared watched file is replaced.
 start_traffic "${grpc_a}" "${work_dir}/reload-a.log"

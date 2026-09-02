@@ -329,20 +329,8 @@ func (table MethodPolicyTable) Policy(fullMethod string) (MethodPolicy, bool) {
 	return MethodPolicy{}, false
 }
 
-// Authorize is the liaison's single authorization decision. It decides fullMethod for
-// principal against the grants in snapshot, resolving the group scopes the method's policy
-// needs from request, and returns the outcome together with the bounded reason the liaison
-// reports for it. Both interceptors take their decision here; there is no second authorizer
-// and no per-transport policy, so a direct gRPC call and the grpc-gateway call bound to the
-// same method are decided identically.
-//
-// The order is fixed and each step is decidable without the one after it: an unclassified
-// method is DecisionDeny; an authentication-only or health method is DecisionAllow; a method
-// whose permission has no activated executor is DecisionUnavailable for every principal,
-// admin included; a request the policy's scope family cannot be read from is
-// DecisionInvalidRequest; and the permission must then be held for every resolved scope,
-// which makes a multi-group request all-or-nothing. Requests addressing no group pass a nil
-// request and are satisfied only by a wildcard grant.
+// Authorize decides whether principal may invoke fullMethod for the scopes in request.
+// It returns the bounded outcome and reason reported by authorization observability.
 func (table MethodPolicyTable) Authorize(
 	snapshot auth.Snapshot, principal auth.Principal, fullMethod string, request any,
 ) (Decision, DecisionReason) {
@@ -363,7 +351,7 @@ func (table MethodPolicyTable) Authorize(
 	if snapshot == nil {
 		return DecisionDeny, DecisionReasonPermissionMissing
 	}
-	if policy.Scope == ScopeVisibleGroups || policy.Scope == ScopeFrameGroups || policy.Scope == ScopePostTransform {
+	if isDeferredScope(policy.Scope) {
 		if !snapshot.AllowsAny(principal, policy.Permission) {
 			return DecisionDeny, DecisionReasonPermissionMissing
 		}

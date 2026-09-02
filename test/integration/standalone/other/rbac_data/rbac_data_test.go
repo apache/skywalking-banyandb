@@ -18,6 +18,7 @@
 package rbacdata_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -26,6 +27,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	g "github.com/onsi/ginkgo/v2"
@@ -91,9 +94,9 @@ rbac:
       groups: ["*"]
 `
 
-// revokedDataPolicy is the same fixture with the alpha writer's binding removed. Rewriting the
-// watched file to it is how the suite observes a revocation land on a connection that is
-// already open, without the client reconnecting or the process restarting.
+// revokedDataPolicy keeps the actors authenticatable while removing their data bindings.
+// Rewriting the watched file to it lets the suite observe a revocation on an existing unary
+// connection and an already-open write stream without reconnecting or restarting the process.
 const revokedDataPolicy = `
 users:
   - username: "bydb-admin"
@@ -108,9 +111,6 @@ rbac:
     - principal: "bydb-admin"
       role: "admin"
       groups: ["*"]
-    - principal: "bydb-reader-alpha"
-      role: "reader"
-      groups: ["rbac-alpha"]
 `
 
 const (
@@ -234,6 +234,55 @@ func markersIn(resp *measurev1.QueryResponse) []string {
 	return markers
 }
 
+func replacePolicy(path, content string) {
+	nextPath := path + ".next"
+	gm.ExpectWithOffset(1, os.WriteFile(nextPath, []byte(content), 0o600)).To(gm.Succeed())
+	gm.ExpectWithOffset(1, os.Rename(nextPath, path)).To(gm.Succeed())
+}
+
+func metricValue(addr, name string, labels ...string) (float64, error) {
+	resp, requestErr := http.Get(fmt.Sprintf("http://%s/metrics", addr))
+	if requestErr != nil {
+		return 0, fmt.Errorf("scrape metrics: %w", requestErr)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("scrape metrics: status %d", resp.StatusCode)
+	}
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, name) {
+			continue
+		}
+		matched := true
+		for _, label := range labels {
+			if !strings.Contains(line, label) {
+				matched = false
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			return 0, fmt.Errorf("scrape metric %s: malformed sample %q", name, line)
+		}
+		value, parseErr := strconv.ParseFloat(fields[1], 64)
+		if parseErr != nil {
+			return 0, fmt.Errorf("parse metric %s: %w", name, parseErr)
+		}
+		return value, nil
+	}
+	if scanErr := scanner.Err(); scanErr != nil {
+		return 0, fmt.Errorf("scan metrics: %w", scanErr)
+	}
+	return 0, nil
+}
+
 // sendMeasureFrames opens a real bidirectional write, sends every frame, closes the send side
 // and returns the terminal status of the stream. A per-frame denial surfaces on Recv rather
 // than on Send, so the send side has to be closed before the status can be read.
@@ -293,15 +342,16 @@ func httpCall(httpAddr, method, path string, a actor, body string) (int, string)
 
 var _ = g.Describe("rbac-data group-scoped data authorization through the real liaison", func() {
 	var (
-		httpAddr   string
-		policyFile string
-		conn       *grpclib.ClientConn
-		groups     databasev1.GroupRegistryServiceClient
-		measures   measurev1.MeasureServiceClient
-		properties propertyv1.PropertyServiceClient
-		bydbql     bydbqlv1.BydbQLServiceClient
-		baseTime   time.Time
-		deferFn    func()
+		httpAddr    string
+		metricsAddr string
+		policyFile  string
+		conn        *grpclib.ClientConn
+		groups      databasev1.GroupRegistryServiceClient
+		measures    measurev1.MeasureServiceClient
+		properties  propertyv1.PropertyServiceClient
+		bydbql      bydbqlv1.BydbQLServiceClient
+		baseTime    time.Time
+		deferFn     func()
 	)
 
 	g.BeforeEach(func() {
@@ -318,11 +368,13 @@ var _ = g.Describe("rbac-data group-scoped data authorization through the real l
 
 		ports, portErr := test.AllocateFreePorts(5)
 		gm.Expect(portErr).NotTo(gm.HaveOccurred())
+		metricsAddr = fmt.Sprintf("127.0.0.1:%d", ports[2])
 
 		var grpcAddr string
 		var closeServer func()
 		grpcAddr, httpAddr, closeServer = setup.EmptyClosableStandalone(nil, dataRoot, ports,
-			"--auth-config-file="+policyFile)
+			"--auth-config-file="+policyFile,
+			"--observability-listener-addr="+metricsAddr)
 
 		var dialErr error
 		conn, dialErr = grpclib.NewClient(grpcAddr, grpclib.WithTransportCredentials(insecure.NewCredentials()))
@@ -474,15 +526,64 @@ var _ = g.Describe("rbac-data group-scoped data authorization through the real l
 		readerErr := sendMeasureFrames(readerAlphaActor, measures, markerFrame(groupAlpha, markerAlpha, baseTime, 4))
 		gm.Expect(status.Code(readerErr)).To(gm.Equal(codes.PermissionDenied),
 			"a principal holding no data:write grant must be refused the write stream")
+	})
 
-		// Revoking the writer's binding must land without the client reconnecting or the
-		// process restarting: the next frame it sends is decided by the new revision.
-		gm.Expect(os.WriteFile(policyFile, []byte(revokedDataPolicy), 0o600)).To(gm.Succeed())
+	// R5: every data decision reads the current policy revision. A unary call on the existing
+	// connection observes a live revocation, and the next frame on a write stream that was
+	// admitted under the previous revision is denied before it can reach storage.
+	g.It("applies live revocation to unary data calls and an already-open write stream", func() {
+		writeStream, openErr := measures.Write(writerAlphaActor.ctx())
+		gm.Expect(openErr).NotTo(gm.HaveOccurred())
+
+		allowedFrame := markerFrame(groupAlpha, markerAlpha, baseTime, 1)
+		gm.Expect(writeStream.Send(allowedFrame)).To(gm.Succeed(),
+			"the writer must send an allowed frame before its grant is revoked")
+		gm.Eventually(func() (float64, error) {
+			return metricValue(metricsAddr, "banyandb_rbac_decisions_total",
+				`decision="allow"`, `method="banyandb.measure.v1.MeasureService/Write"`,
+				`permission="data:write"`, `reason="granted"`)
+		}, flags.EventuallyTimeout).Should(gm.BeNumerically(">=", 1),
+			"the open stream's first frame must be allowed under the original revision")
+
+		_, allowedQueryErr := measures.Query(readerAlphaActor.ctx(), markerQuery(baseTime, groupAlpha))
+		gm.Expect(allowedQueryErr).NotTo(gm.HaveOccurred(),
+			"the reader must be allowed on the existing connection before its grant is revoked")
+
+		replacePolicy(policyFile, revokedDataPolicy)
+		gm.Eventually(func() (float64, error) {
+			return metricValue(metricsAddr, "banyandb_rbac_policy_revision")
+		}, flags.EventuallyTimeout).Should(gm.Equal(float64(2)),
+			"the liaison must publish the replacement policy revision")
 		gm.Eventually(func() codes.Code {
-			return status.Code(sendMeasureFrames(writerAlphaActor, measures,
-				markerFrame(groupAlpha, markerAlpha, baseTime.Add(2*time.Second), 5)))
+			_, queryErr := measures.Query(readerAlphaActor.ctx(), markerQuery(baseTime, groupAlpha))
+			return status.Code(queryErr)
 		}, flags.EventuallyTimeout).Should(gm.Equal(codes.PermissionDenied),
-			"the frame sent after the revocation must be refused under the new revision")
+			"the existing unary connection must observe the revoked policy revision")
+
+		deniedFrame := markerFrame(groupAlpha, "revoked-marker", baseTime.Add(time.Second), 2)
+		gm.Expect(writeStream.Send(deniedFrame)).To(gm.Succeed(),
+			"the transport must accept the next frame on the same open stream")
+		for {
+			_, receiveErr := writeStream.Recv()
+			if receiveErr == nil {
+				continue
+			}
+			gm.Expect(status.Code(receiveErr)).To(gm.Equal(codes.PermissionDenied),
+				"the next frame on the already-open stream must use the revoked revision")
+			break
+		}
+
+		_, deniedQueryErr := measures.Query(adminActor.ctx(), markerQuery(baseTime.Add(time.Second), groupAlpha))
+		gm.Expect(deniedQueryErr).NotTo(gm.HaveOccurred(),
+			"the administrator must be able to look for the frame denied after revocation")
+		gm.Eventually(func() []string {
+			stored, queryErr := measures.Query(adminActor.ctx(), markerQuery(baseTime.Add(time.Second), groupAlpha))
+			if queryErr != nil {
+				return nil
+			}
+			return markersIn(stored)
+		}, flags.EventuallyTimeout).Should(gm.ConsistOf(markerAlpha),
+			"the frame denied after revocation must leave no marker beyond the previously allowed frame")
 	})
 
 	// R2: a property mutation is decided by the group of the record it names, before the
