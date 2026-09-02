@@ -331,6 +331,57 @@ func ReadOnlyDocCount(path string) (int64, error) {
 	return count, nil
 }
 
+// StoredDocument is one live document of a committed index generation,
+// borrowed for the duration of a single ReadOnlyWalkDocuments callback.
+//
+// It is the whole of what a read-only match-all walk exposes: repeated raw
+// stored (field name, value) pairs, and nothing about terms, dictionaries,
+// postings, doc values, sorting or the container format underneath.
+type StoredDocument interface {
+	// VisitStoredFields calls visit once for every stored value the document
+	// records, passing the field's name and its raw value bytes. A field the
+	// document records more than once is visited once per recorded value, in
+	// the order the document records them. Visiting stops early when visit
+	// returns false.
+	//
+	// The name and value handed to visit are borrowed and stay valid only until
+	// visit returns; a caller that keeps either beyond that copies it.
+	VisitStoredFields(visit func(name string, value []byte) bool) error
+}
+
+// ReadOnlyWalkDocuments opens the index directory at path read-only, pins its
+// newest structurally complete committed generation and calls visit once for
+// every live document that generation holds, streaming one document at a time.
+// Documents the pinned generation's deletion masks cover are skipped.
+//
+// Like ReadOnlyDocCount it never acquires the exclusive directory lock and
+// writes no bytes, so a directory a live writer owns can be walked while it is
+// being written, and the walk leaves file contents, modification times and
+// directory entries unchanged.
+//
+// The StoredDocument handed to visit is borrowed: it, and every name and value
+// it yields, stay valid only until visit returns. A caller that retains a value
+// beyond its callback copies it.
+//
+// A directory holding no committed generation reports an error wrapping
+// ErrNoCommittedIndex, which callers that treat a cold or unflushed index as
+// empty match on. Committed bytes that violate the on-disk grammar, or that
+// would require decoding past a configured bound, report an error wrapping
+// ErrCorruptIndex. Canceling ctx stops the walk between two documents and
+// returns ctx.Err(); an error from visit stops the walk and is returned as-is.
+func ReadOnlyWalkDocuments(ctx context.Context, path string, visit func(doc StoredDocument) error) error {
+	reader, err := nativeice.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = reader.Close()
+	}()
+	return reader.VisitLiveDocuments(ctx, func(doc nativeice.StoredDocument) error {
+		return visit(doc)
+	})
+}
+
 func (s *store) Iterator(ctx context.Context, fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort,
 	preLoadSize int,
 ) (iter index.FieldIterator[*index.DocumentResult], err error) {

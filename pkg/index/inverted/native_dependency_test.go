@@ -38,8 +38,13 @@ const (
 	readOnlyDocCountFunc    = "ReadOnlyDocCount"
 )
 
+// allowedNativeReaderExternalImports is the native reader's whole third-party
+// dependency budget: the bitmap decoder its deletion masks are encoded with,
+// and the block codec BDB-NIDX-SPEC-001 revision 0.2 DEC-008 fixes for the
+// stored-field chunks of the historical corpus.
 var allowedNativeReaderExternalImports = map[string]struct{}{
 	"github.com/RoaringBitmap/roaring": {},
+	"github.com/klauspost/compress/s2": {},
 }
 
 // TestReadOnlyDocCountReachesNativeReader is the structural half of the
