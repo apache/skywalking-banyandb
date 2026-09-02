@@ -69,11 +69,10 @@ type StreamExecutable interface {
 	StreamCloser
 }
 
-// StreamVecExecutable is the optional capability a stream plan node exposes when
-// it can be executed through the native columnar (vectorized) path. The data-node
-// processor type-asserts the analyzed plan to this interface; a plan shape that
-// cannot be vectorized (multi-group merge, skipping filter, tag filter, etc.)
-// simply does not implement it, so the assertion fails and the row path runs.
+// StreamVecExecutable is the capability a stream plan node exposes when it can be
+// executed through the native columnar (vectorized) path. The data-node processor
+// type-asserts the analyzed plan to this interface; since the row path was removed
+// in 0.12.0 a failed assertion is a hard error, not a fallback.
 //
 // ExecuteVectorized returns the fully merged/deduped/limited columnar batches
 // (the M4 pipeline already applied) plus the batch schema, so both the

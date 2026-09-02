@@ -168,17 +168,16 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 	return
 }
 
-// tryStreamVecDispatch attempts the native columnar (vec) path for a stream
-// query. It returns (false, nil) when the plan is not vec-eligible (the caller
-// then runs the row path). On success it returns (true, resp) where resp is:
+// tryStreamVecDispatch runs the native columnar (vec) path for a stream query.
+// It returns (false, nil) when the plan is not vec-eligible, which the caller
+// treats as a hard error. On success it returns (true, resp) where resp is:
 //   - a []byte columnar frame body, when the process is a distributed data node
 //     with the raw wire mode on and tracing off (traced == false);
 //   - a *streamv1.QueryResponse with materialized Elements, for standalone, for a
 //     traced query (the frame has no trace channel), or when the wire mode is off.
 //
-// Any error is surfaced as a *common.Error response (handled=true) rather than
-// falling back to row, matching the measure/trace no-silent-fallback discipline
-// once we have committed to vec.
+// Any error is surfaced as a *common.Error response (handled=true), matching the
+// measure/trace no-silent-fallback discipline.
 func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan logical.Plan,
 	queryCriteria *streamv1.QueryRequest, traced bool,
 ) (bool, bus.Message) {
