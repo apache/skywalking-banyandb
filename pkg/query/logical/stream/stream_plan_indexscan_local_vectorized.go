@@ -102,7 +102,7 @@ func scanFromInput(input logical.Plan) *localIndexScan {
 //     legitimately UNDER-filled the limit (e.g. 30 scanned, 2 rejected ⇒ 28 returned).
 //     The vec merge must cap at maxElementSize to reproduce that same input set.
 //
-// Behaviour change in 0.12.0 (documented, not emulated): for timestamp order spanning
+// Behavior change in 0.12.0 (documented, not emulated): for timestamp order spanning
 // MULTIPLE segments the row scan resumed per segment, so it could accumulate past the
 // first capped batch where vec stops. Reproducing that needs the scan's segment
 // boundaries, which the vec merge does not see, so vec's answer is now the only
