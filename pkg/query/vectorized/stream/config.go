@@ -18,11 +18,17 @@
 package stream
 
 import (
+	"errors"
 	"fmt"
 	"math"
 
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
+
+// errRowPathRemoved rejects --stream-vectorized-enabled=false. The flag survives as
+// a no-op so an operator's existing command line still starts, but a rollback attempt
+// must fail loudly instead of quietly running the vectorized path anyway.
+var errRowPathRemoved = errors.New("stream-vectorized-enabled=false: row-based query was removed in 0.12.0, see apache/skywalking#13998")
 
 // VectorizedConfig controls the v1 vectorized Stream query path.
 type VectorizedConfig struct {
@@ -33,7 +39,10 @@ type VectorizedConfig struct {
 	// always loads regardless of the budget (first-block exception), so a single
 	// oversized block may exceed this value.
 	QueryMemoryMiB int
-	Enabled        bool
+	// Enabled is a removed-flag shim. The row query path was deleted in 0.12.0, so
+	// the only accepted value is true; Validate rejects false rather than silently
+	// ignoring an operator's attempt to roll back. The flag goes away in 0.13.0.
+	Enabled bool
 }
 
 // DefaultConfig returns the default stream vectorized configuration — enabled,
@@ -51,14 +60,10 @@ type VectorizedConfig struct {
 // guarantee than this path gives, not a different semantic; a fixture that reuses an
 // element_id across two writes is malformed either way.
 //
-// Enabled also selects the liaison<->data wire format: a flag-on distributed data
-// node emits the native columnar frame instead of protobuf. A liaison decodes both
-// (it dispatches on the frame magic byte per message), but an older liaison has no
-// frame decoder at all, so a cluster must upgrade liaison nodes BEFORE data nodes.
-// See docs/operation/upgrade.md.
-//
-// To roll back the vec path entirely, pass --stream-vectorized-enabled=false on the
-// standalone or data-node command line and restart; the row path resumes immediately.
+// A distributed data node emits the native columnar frame instead of protobuf. A
+// liaison decodes both (it dispatches on the frame magic byte per message), but an
+// older liaison has no frame decoder at all, so a cluster must upgrade liaison nodes
+// BEFORE data nodes. See docs/operation/upgrade.md.
 func DefaultConfig() VectorizedConfig {
 	return VectorizedConfig{
 		Enabled:        true,
@@ -79,6 +84,9 @@ func (c VectorizedConfig) Validate() error {
 	}
 	if c.QueryMemoryMiB <= 0 {
 		return fmt.Errorf("vectorized.stream: QueryMemoryMiB must be > 0, got %d", c.QueryMemoryMiB)
+	}
+	if !c.Enabled {
+		return errRowPathRemoved
 	}
 	return nil
 }
