@@ -83,6 +83,13 @@ var ErrCorruptIndex = nativeice.ErrCorrupt
 // ErrCorruptIndex, which means the committed bytes themselves are damaged.
 var ErrNoCommittedIndex = nativeice.ErrNoSnapshot
 
+// ErrInvalidSelection reports that a TermSelection names no field, or that its
+// term count or one of its term lengths exceeds the bound the read-only reader
+// serves. It is distinct from ErrCorruptIndex: nothing on disk is damaged, the
+// request itself is outside the reader's bounds, so no dictionary is opened and
+// no posting is decoded.
+var ErrInvalidSelection = nativeice.ErrInvalidSelection
+
 var _ index.Store = (*store)(nil)
 
 // StoreOpts wraps options to create an inverted index repository.
@@ -378,6 +385,68 @@ func ReadOnlyWalkDocuments(ctx context.Context, path string, visit func(doc Stor
 		_ = reader.Close()
 	}()
 	return reader.VisitLiveDocuments(ctx, func(doc nativeice.StoredDocument) error {
+		return visit(doc)
+	})
+}
+
+// TermSelection is the one bounded document filter a read-only walk accepts:
+// the documents whose Field records any of the literal byte sequences in Terms.
+//
+// It is deliberately not a query language, and NIDX-01 denies it becoming one.
+// There is exactly one field, the terms are matched as raw bytes with no
+// analysis or normalization, and they are unioned. There is no range, prefix,
+// wildcard, negation, conjunction, existence test, scoring, projection or
+// ordering, and the term dictionary and postings that resolve a selection stay
+// private to the reader.
+type TermSelection struct {
+	// Field is the name of the indexed field whose term dictionary the
+	// selection resolves against.
+	Field string
+	// Terms are the literal term byte sequences to select. The documents
+	// selected are the union of these terms' postings; an empty Terms selects
+	// no document.
+	Terms [][]byte
+}
+
+// ReadOnlySelectDocuments opens the index directory at path read-only, pins its
+// newest structurally complete committed generation and calls visit once for
+// every live document of that generation the selection holds, streaming one
+// document at a time.
+//
+// The selection resolves exact terms against one field's dictionary, unions
+// their postings and removes the pinned generation's deletion masks, so a
+// deleted document is never handed to visit however many terms selected it, and
+// a document several terms select is handed to visit once. A term the
+// dictionary does not hold, and an empty term set, select nothing rather than
+// failing. Selection precedes stored-field decoding, so a document the
+// selection excludes has its stored bytes left unread.
+//
+// Like ReadOnlyWalkDocuments it never acquires the exclusive directory lock and
+// writes no bytes, so a directory a live writer owns can be read while it is
+// being written, and the read leaves file contents, modification times and
+// directory entries unchanged.
+//
+// The StoredDocument handed to visit is borrowed: it, and every name and value
+// it yields, stay valid only until visit returns. A caller that retains a value
+// beyond its callback copies it.
+//
+// A selection naming no field, or exceeding the reader's term-count or
+// term-length bounds, reports an error wrapping ErrInvalidSelection before any
+// document is visited. A directory holding no committed generation reports an
+// error wrapping ErrNoCommittedIndex. Committed bytes that violate the on-disk
+// grammar, or that would require decoding past a configured bound, report an
+// error wrapping ErrCorruptIndex. Canceling ctx stops the read between two
+// documents and returns ctx.Err(); an error from visit stops the read and is
+// returned as-is.
+func ReadOnlySelectDocuments(ctx context.Context, path string, selection TermSelection, visit func(doc StoredDocument) error) error {
+	reader, err := nativeice.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = reader.Close()
+	}()
+	return reader.VisitSelectedDocuments(ctx, selection.Field, selection.Terms, func(doc nativeice.StoredDocument) error {
 		return visit(doc)
 	})
 }

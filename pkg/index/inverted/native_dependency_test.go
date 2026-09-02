@@ -39,11 +39,19 @@ const (
 )
 
 // allowedNativeReaderExternalImports is the native reader's whole third-party
-// dependency budget: the bitmap decoder its deletion masks are encoded with,
-// and the block codec BDB-NIDX-SPEC-001 revision 0.2 DEC-008 fixes for the
-// stored-field chunks of the historical corpus.
+// dependency budget: the bitmap decoder its deletion masks and term postings
+// are encoded with, the block codec BDB-NIDX-SPEC-001 revision 0.2 DEC-008
+// fixes for the stored-field chunks of the historical corpus, and the finite
+// state transducer the historical term dictionaries are serialized as.
+//
+// Each entry decodes one historical on-disk encoding and nothing else. None is
+// a search engine, none brings a query language, collector or analyzer, and
+// BDB-NIDX-SPEC-001 revision 0.2 section 21 requires that no third-party codec
+// type escapes this package: the contract other packages observe stays the
+// behavior of the exported functions in pkg/index/inverted.
 var allowedNativeReaderExternalImports = map[string]struct{}{
 	"github.com/RoaringBitmap/roaring": {},
+	"github.com/blevesearch/vellum":    {},
 	"github.com/klauspost/compress/s2": {},
 }
 
