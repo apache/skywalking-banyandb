@@ -56,10 +56,17 @@ type StreamVecScanSource interface {
 	Release()
 }
 
+// StreamCloser releases the resources a stream plan node holds. It is separate
+// from StreamExecutable so a plan tree can be released without asserting the row
+// Execute capability.
+type StreamCloser interface {
+	Close()
+}
+
 // StreamExecutable allows querying in the stream schema.
 type StreamExecutable interface {
 	Execute(context.Context) ([]*streamv1.Element, error)
-	Close()
+	StreamCloser
 }
 
 // StreamVecExecutable is the optional capability a stream plan node exposes when

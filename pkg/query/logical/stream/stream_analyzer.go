@@ -141,7 +141,7 @@ type limit struct {
 }
 
 func (l *limit) Close() {
-	l.Parent.Input.(executor.StreamExecutable).Close()
+	l.Parent.Input.(executor.StreamCloser).Close()
 }
 
 func (l *limit) Execute(ec context.Context) ([]*streamv1.Element, error) {

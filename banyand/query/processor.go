@@ -161,8 +161,7 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 	if p.streamService.VectorizedConfig().Enabled {
 		if handled, vecResp := p.tryStreamVecDispatch(ctx, plan, queryCriteria, tracer != nil); handled {
 			resp = vecResp
-			se := plan.(executor.StreamExecutable)
-			se.Close()
+			plan.(executor.StreamCloser).Close()
 			return
 		}
 	}

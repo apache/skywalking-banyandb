@@ -119,7 +119,7 @@ type mergePlan struct {
 // Close implements executor.StreamExecutable.
 func (m *mergePlan) Close() {
 	for _, p := range m.subPlans {
-		p.(executor.StreamExecutable).Close()
+		p.(executor.StreamCloser).Close()
 	}
 }
 

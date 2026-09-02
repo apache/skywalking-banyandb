@@ -172,7 +172,7 @@ type tagFilterPlan struct {
 }
 
 func (t *tagFilterPlan) Close() {
-	t.parent.(executor.StreamExecutable).Close()
+	t.parent.(executor.StreamCloser).Close()
 }
 
 func newTagFilter(s logical.Schema, parent logical.Plan, tagFilter logical.TagFilter, hiddenTags logical.HiddenTagSet) logical.Plan {
