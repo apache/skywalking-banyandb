@@ -30,26 +30,55 @@ const (
 	benchTopN      = 20
 )
 
-// benchBatches builds a fixed corpus of benchRows rows, shuffled so the merge
-// cannot exploit an already-ordered input, split into benchBatchSize batches.
-// The corpus is built once per benchmark and replayed every iteration so the
-// reported allocations are the merge pipeline's, not the fixture's.
-func benchBatches(schema *vectorized.BatchSchema) []*vectorized.RecordBatch {
+// benchCorpus builds a fixed benchRows-row corpus split into benchBatchSize
+// batches. A cardinality of 0 gives every row its own ElementID; a positive one
+// caps the number of distinct ElementIDs. Shuffling denies the merge an
+// already-ordered input. The corpus is built once per benchmark and replayed on
+// every iteration, so the reported allocations are the merge pipeline's rather
+// than the fixture's.
+func benchCorpus(schema *vectorized.BatchSchema, cardinality int, shuffle bool) []*vectorized.RecordBatch {
 	rows := make([]testRow, benchRows)
-	for i := range rows {
-		rows[i] = testRow{ts: int64(i), elemID: uint64(i)}
+	for rowIdx := range rows {
+		elemID := uint64(rowIdx)
+		if cardinality > 0 {
+			elemID = uint64(rowIdx % cardinality)
+		}
+		rows[rowIdx] = testRow{ts: int64(rowIdx), elemID: elemID}
 	}
-	rng := rand.New(rand.NewSource(1)) //nolint:gosec // fixed seed: the corpus must be identical across runs to compare benchmarks
-	rng.Shuffle(len(rows), func(i, j int) { rows[i], rows[j] = rows[j], rows[i] })
+	if shuffle {
+		rng := rand.New(rand.NewSource(1)) //nolint:gosec // fixed seed: the corpus must be identical across runs to compare benchmarks
+		rng.Shuffle(len(rows), func(leftIdx, rightIdx int) {
+			rows[leftIdx], rows[rightIdx] = rows[rightIdx], rows[leftIdx]
+		})
+	}
 	var batches []*vectorized.RecordBatch
 	for start := 0; start < len(rows); start += benchBatchSize {
-		end := start + benchBatchSize
-		if end > len(rows) {
-			end = len(rows)
-		}
-		batches = append(batches, buildBatch(schema, rows[start:end]))
+		batches = append(batches, buildBatch(schema, rows[start:min(start+benchBatchSize, len(rows))]))
 	}
 	return batches
+}
+
+// runMergeBenchmark drives the merge pipeline over a prebuilt corpus at the given
+// merge cap, failing if the drained result is not wantRows rows. Sharing it keeps
+// the capped, duplicate-heavy and uncapped cases from drifting apart.
+func runMergeBenchmark(b *testing.B, schema *vectorized.BatchSchema, batches []*vectorized.RecordBatch, mergeCap, wantRows int) {
+	b.Helper()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		pipe, err := BuildStreamMergePipeline(
+			newStaticBatchSource(schema, batches...), schema, true, 0, benchTopN, benchBatchSize, mergeCap)
+		if err != nil {
+			b.Fatalf("build pipeline: %v", err)
+		}
+		tss, _, _ := drainRows(b, pipe)
+		if len(tss) != wantRows {
+			b.Fatalf("expected %d rows, got %d", wantRows, len(tss))
+		}
+		if closeErr := pipe.Close(); closeErr != nil {
+			b.Fatalf("close pipeline: %v", closeErr)
+		}
+	}
 }
 
 // BenchmarkSortedMergeTopN is the LIMIT-20-over-100k-rows case from the
@@ -57,55 +86,15 @@ func benchBatches(schema *vectorized.BatchSchema) []*vectorized.RecordBatch {
 // return benchTopN elements out of benchRows scanned rows.
 func BenchmarkSortedMergeTopN(b *testing.B) {
 	schema := tsSchema()
-	batches := benchBatches(schema)
-	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
-		src := newStaticBatchSource(schema, batches...)
-		pipe, err := BuildStreamMergePipeline(src, schema, true, 0, benchTopN, benchBatchSize, benchTopN)
-		if err != nil {
-			b.Fatalf("build pipeline: %v", err)
-		}
-		tss, _, _ := drainRows(b, pipe)
-		if len(tss) != benchTopN {
-			b.Fatalf("expected %d rows, got %d", benchTopN, len(tss))
-		}
-		if closeErr := pipe.Close(); closeErr != nil {
-			b.Fatalf("close pipeline: %v", closeErr)
-		}
-	}
+	runMergeBenchmark(b, schema, benchCorpus(schema, 0, true), benchTopN, benchTopN)
 }
 
 // BenchmarkSortedMergeTopNDuplicateHeavy is the adversarial corpus for the
 // incremental prune: only benchTopN/2 distinct ElementIDs across all benchRows
-// rows, so the distinct-ID cap can never truncate and every prune re-sorts a
-// buffer that never shrinks. It must not degrade past the uncapped baseline.
+// rows, so the distinct-ID cap can never truncate on distinct count alone.
 func BenchmarkSortedMergeTopNDuplicateHeavy(b *testing.B) {
 	schema := tsSchema()
-	rows := make([]testRow, benchRows)
-	for i := range rows {
-		rows[i] = testRow{ts: int64(i), elemID: uint64(i % (benchTopN / 2))}
-	}
-	var batches []*vectorized.RecordBatch
-	for start := 0; start < len(rows); start += benchBatchSize {
-		batches = append(batches, buildBatch(schema, rows[start:min(start+benchBatchSize, len(rows))]))
-	}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
-		src := newStaticBatchSource(schema, batches...)
-		pipe, err := BuildStreamMergePipeline(src, schema, true, 0, benchTopN, benchBatchSize, benchTopN)
-		if err != nil {
-			b.Fatalf("build pipeline: %v", err)
-		}
-		tss, _, _ := drainRows(b, pipe)
-		if len(tss) != benchTopN/2 {
-			b.Fatalf("expected %d rows, got %d", benchTopN/2, len(tss))
-		}
-		if closeErr := pipe.Close(); closeErr != nil {
-			b.Fatalf("close pipeline: %v", closeErr)
-		}
-	}
+	runMergeBenchmark(b, schema, benchCorpus(schema, benchTopN/2, false), benchTopN, benchTopN/2)
 }
 
 // BenchmarkSortedMergeUncapped is the uncapped control: the same corpus with
@@ -113,21 +102,5 @@ func BenchmarkSortedMergeTopNDuplicateHeavy(b *testing.B) {
 // row. It bounds how much of the capped case's cost is inherent to the scan.
 func BenchmarkSortedMergeUncapped(b *testing.B) {
 	schema := tsSchema()
-	batches := benchBatches(schema)
-	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
-		src := newStaticBatchSource(schema, batches...)
-		pipe, err := BuildStreamMergePipeline(src, schema, true, 0, benchTopN, benchBatchSize, 0)
-		if err != nil {
-			b.Fatalf("build pipeline: %v", err)
-		}
-		tss, _, _ := drainRows(b, pipe)
-		if len(tss) != benchTopN {
-			b.Fatalf("expected %d rows, got %d", benchTopN, len(tss))
-		}
-		if closeErr := pipe.Close(); closeErr != nil {
-			b.Fatalf("close pipeline: %v", closeErr)
-		}
-	}
+	runMergeBenchmark(b, schema, benchCorpus(schema, 0, true), 0, benchTopN)
 }

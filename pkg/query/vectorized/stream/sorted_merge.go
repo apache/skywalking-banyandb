@@ -87,17 +87,20 @@ const maxPrunableCap = 1 << 20
 //
 // The cap is enforced INCREMENTALLY: Consume prunes the buffer back to the
 // in-order top-N whenever it grows past 2*maxRows, so merge state stays O(maxRows)
-// rows — plus the batch being consumed — and sort work is O(N log maxRows) rather
-// than O(N log N).
+// rows — peaking just under 2*maxRows plus the batch being consumed — and sort
+// work is O(N log maxRows) rather than O(N log N).
 //
 // This yields the same QUERY result as capping after one full sort (the emitted
 // rows are the deduped top-N rather than a duplicate-carrying prefix of it, which
 // the downstream Distinct makes indistinguishable). A row dropped by a prune
-// already sits behind maxRows distinct ElementIDs, and rows consumed later can
-// only insert AHEAD of it (pushing it further past the cap), never behind it;
-// equal sort keys cannot reorder across a prune either, because ties break on the
-// globally monotonic arrive sequence. The result therefore still matches the row
-// path's cap-after-in-order-merge semantics (blockHeap.merge / MergeStreamResults).
+// already sits behind maxRows distinct ElementIDs. Rows consumed later may sort
+// to either side of it, but neither side can rescue it: rows sorting ahead only
+// add to the distinct ElementIDs preceding it, and rows sorting behind cannot
+// remove any. Its distinct rank therefore never improves, so a row a prune drops
+// is one the full sort would have dropped too. Equal sort keys cannot reorder
+// across a prune either, because ties break on the globally monotonic arrive
+// sequence. The result still matches the row path's cap-after-in-order-merge
+// semantics (blockHeap.merge / MergeStreamResults).
 func NewSortedMergeWithCap(schema *vectorized.BatchSchema, desc bool, batchSize, maxRows int) *SortedMerge {
 	s := NewSortedMerge(schema, desc, batchSize)
 	if maxRows > 0 {
@@ -146,9 +149,10 @@ func (s *SortedMerge) Consume(_ context.Context, batch *vectorized.RecordBatch) 
 		}
 	}
 	// Every prune leaves at most maxRows rows (capByDistinctElementID compacts to
-	// one row per retained ElementID), so the buffer never exceeds maxRows plus
-	// one batch and the threshold needs no backoff: prunes stay O(maxRows +
-	// batchSize) work each, amortized O(N log(maxRows + batchSize)) overall.
+	// one row per retained ElementID), so the threshold needs no backoff. The
+	// buffer is checked only after a whole batch has been appended, so it peaks
+	// just under pruneAt (2*maxRows) plus one batch; each prune is therefore
+	// O(maxRows + batchSize) work, amortized O(N log(maxRows + batchSize)).
 	if s.pruneAt > 0 && len(s.rows) >= s.pruneAt {
 		s.sortRows()
 		s.capByDistinctElementID()
@@ -180,10 +184,10 @@ func (s *SortedMerge) Finalize(context.Context) error {
 // sortRows stably orders the buffered rows by the schema order key, breaking
 // ties on arrival order so downstream first-seen dedup stays deterministic.
 func (s *SortedMerge) sortRows() {
-	sort.SliceStable(s.rows, func(i, j int) bool {
-		cmp := s.compare(s.rows[i], s.rows[j])
+	sort.SliceStable(s.rows, func(leftIdx, rightIdx int) bool {
+		cmp := s.compare(s.rows[leftIdx], s.rows[rightIdx])
 		if cmp == 0 {
-			return s.rows[i].arrive < s.rows[j].arrive
+			return s.rows[leftIdx].arrive < s.rows[rightIdx].arrive
 		}
 		if s.desc {
 			return cmp > 0
@@ -222,8 +226,8 @@ func (s *SortedMerge) capByDistinctElementID() {
 	}
 	seen := make(map[int64]struct{}, capHint)
 	kept := 0
-	for i := range s.rows {
-		ref := s.rows[i]
+	for rowIdx := range s.rows {
+		ref := s.rows[rowIdx]
 		id := ref.batch.Columns[s.elemIdx].(*vectorized.TypedColumn[int64]).Data()[ref.row]
 		if _, ok := seen[id]; ok {
 			continue

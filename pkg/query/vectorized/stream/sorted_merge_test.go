@@ -243,8 +243,8 @@ func runPruneParityCase(t *testing.T, seed int64, mergeCap, idCardinality int, d
 	name := fmt.Sprintf("seed%d/cap%d/ids%d/desc%v", seed, mergeCap, idCardinality, desc)
 	rng := rand.New(rand.NewSource(seed)) //nolint:gosec // fixed seed: a failing case must reproduce exactly
 	rows := make([]testRow, pruneParityRows)
-	for i := range rows {
-		rows[i] = testRow{ts: int64(rng.Intn(pruneParityRows / 4)), elemID: uint64(rng.Intn(idCardinality))}
+	for rowIdx := range rows {
+		rows[rowIdx] = testRow{ts: int64(rng.Intn(pruneParityRows / 4)), elemID: uint64(rng.Intn(idCardinality))}
 	}
 	// SortedMerge validates batch schemas by POINTER identity, so every batch in
 	// one case must share a single instance.
@@ -306,18 +306,24 @@ func runPruneBoundsCase(t *testing.T, mergeCap, batchRows, batchCnt, cardinality
 	// real worst case (a seriesID-major scan interleaves series, so global sort
 	// order is not the arrival order) and is what makes the bound load-bearing.
 	all := make([]testRow, batchCnt*batchRows)
-	for i := range all {
-		all[i] = testRow{ts: int64(i), elemID: uint64(i % cardinality)}
+	for rowIdx := range all {
+		all[rowIdx] = testRow{ts: int64(rowIdx), elemID: uint64(rowIdx % cardinality)}
 	}
 	rng := rand.New(rand.NewSource(1)) //nolint:gosec // fixed seed: a failing case must reproduce exactly
-	rng.Shuffle(len(all), func(i, j int) { all[i], all[j] = all[j], all[i] })
+	rng.Shuffle(len(all), func(leftIdx, rightIdx int) { all[leftIdx], all[rightIdx] = all[rightIdx], all[leftIdx] })
 	merge := NewSortedMergeWithCap(schema, true, batchRows, mergeCap)
 	require.NoError(t, merge.Init(context.Background()))
-	for b := 0; b < batchCnt; b++ {
-		require.NoError(t, merge.Consume(context.Background(), buildBatch(schema, all[b*batchRows:(b+1)*batchRows])))
+	for batchIdx := 0; batchIdx < batchCnt; batchIdx++ {
+		require.NoError(t, merge.Consume(context.Background(), buildBatch(schema, all[batchIdx*batchRows:(batchIdx+1)*batchRows])))
 		// Checked DURING consume, not after Finalize: the final sort-then-cap
 		// bounds the buffer either way, so only the mid-stream size proves the
 		// prune is doing the work.
+		//
+		// mergeCap+batchRows is the exact bound for THIS configuration, not the
+		// general one. batchRows exceeds mergeCap here, so every Consume crosses
+		// the 2*mergeCap threshold and prunes; a config with batchRows < mergeCap
+		// would take several batches to reach it and peak just under
+		// 2*mergeCap+batchRows instead.
 		require.LessOrEqual(t, len(merge.rows), mergeCap+batchRows,
 			"merge state must stay O(cap) while scanning, not O(scanned rows)")
 	}
