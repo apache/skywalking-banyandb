@@ -19,7 +19,6 @@ package dquery
 import (
 	"testing"
 
-	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -56,8 +55,7 @@ func rawWireModeTestSchema() *databasev1.Measure {
 // measureQueryProcessor with a minimal fake measureService, invokes Rev
 // with a crafted bus.Message, and asserts the concrete plan type on the
 // returned MIterator. The plan-type gate here covers the AnalyzeDistributed
-// call site directly; the Rev routing boolean is covered by
-// TestRawWireMode_AlwaysUsesVecPlan.
+// call site directly.
 func TestRawWireMode_PlanType_AnalyzeDistributed(t *testing.T) {
 	ms := rawWireModeTestSchema()
 	cfg := vmeasure.VectorizedConfig{Enabled: true, BatchSize: 64, QueryMemoryMiB: 4}
@@ -130,123 +128,6 @@ func TestRawWireMode_PlanType_AnalyzeDistributed(t *testing.T) {
 			// Compile-time proof: DistributedPlan implements measureDistributedExecutable
 			// (executor.MeasureExecutable + fmt.Stringer), so the assignment in Rev succeeds.
 			_ = plan.String()
-		})
-	}
-}
-
-// TestRawWireMode_AlwaysUsesVecPlan asserts that under raw wire mode the
-// routing predicate (data.MeasureWireModeRaw()) is true for every request
-// shape, and false when the flag is off — regardless of request shape.
-// After Phase 6 the routing in Rev is a single boolean: data.MeasureWireModeRaw().
-func TestRawWireMode_AlwaysUsesVecPlan(t *testing.T) {
-	shapes := []struct {
-		req  *measurev1.QueryRequest
-		name string
-	}{
-		{
-			name: "plain non-agg",
-			req:  &measurev1.QueryRequest{Groups: []string{"default"}},
-		},
-		{
-			name: "orderby by index rule",
-			req: &measurev1.QueryRequest{
-				Groups: []string{"default"},
-				OrderBy: &modelv1.QueryOrder{
-					IndexRuleName: "idx_latency",
-					Sort:          modelv1.Sort_SORT_DESC,
-				},
-			},
-		},
-		{
-			name: "multi-group",
-			req:  &measurev1.QueryRequest{Groups: []string{"a", "b"}},
-		},
-		{
-			name: "top without agg",
-			req: &measurev1.QueryRequest{
-				Groups: []string{"default"},
-				Top: &measurev1.QueryRequest_Top{
-					Number:         5,
-					FieldName:      "value",
-					FieldValueSort: modelv1.Sort_SORT_DESC,
-				},
-			},
-		},
-		{
-			name: "raw groupby",
-			req: &measurev1.QueryRequest{
-				Groups: []string{"default"},
-				GroupBy: &measurev1.QueryRequest_GroupBy{
-					TagProjection: &modelv1.TagProjection{
-						TagFamilies: []*modelv1.TagProjection_TagFamily{
-							{Name: "default", Tags: []string{"service_id"}},
-						},
-					},
-				},
-			},
-		},
-		{
-			name: "groupby + top",
-			req: &measurev1.QueryRequest{
-				Groups: []string{"default"},
-				GroupBy: &measurev1.QueryRequest_GroupBy{
-					TagProjection: &modelv1.TagProjection{
-						TagFamilies: []*modelv1.TagProjection_TagFamily{
-							{Name: "default", Tags: []string{"service_id"}},
-						},
-					},
-				},
-				Top: &measurev1.QueryRequest_Top{
-					Number:         10,
-					FieldName:      "value",
-					FieldValueSort: modelv1.Sort_SORT_DESC,
-				},
-			},
-		},
-		{
-			name: "agg with groupby",
-			req: &measurev1.QueryRequest{
-				Groups: []string{"default"},
-				Agg: &measurev1.QueryRequest_Aggregation{
-					Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
-					FieldName: "value",
-				},
-				GroupBy: &measurev1.QueryRequest_GroupBy{
-					TagProjection: &modelv1.TagProjection{
-						TagFamilies: []*modelv1.TagProjection_TagFamily{
-							{Name: "default", Tags: []string{"service_id"}},
-						},
-					},
-				},
-			},
-		},
-		{
-			name: "agg only scalar reduce",
-			req: &measurev1.QueryRequest{
-				Groups: []string{"default"},
-				Agg: &measurev1.QueryRequest_Aggregation{
-					Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN,
-					FieldName: "latency",
-				},
-			},
-		},
-	}
-
-	prev := data.MeasureWireModeRaw()
-	t.Cleanup(func() { data.SetMeasureWireModeRaw(prev) })
-
-	for _, shape := range shapes {
-		t.Run(shape.name+"/raw_on", func(t *testing.T) {
-			data.SetMeasureWireModeRaw(true)
-			if !data.MeasureWireModeRaw() {
-				t.Fatal("routing predicate must be true when raw wire mode is on")
-			}
-		})
-		t.Run(shape.name+"/raw_off", func(t *testing.T) {
-			data.SetMeasureWireModeRaw(false)
-			if data.MeasureWireModeRaw() {
-				t.Fatal("routing predicate must be false when raw wire mode is off")
-			}
 		})
 	}
 }

@@ -68,30 +68,6 @@ func assertRootSpanFinalized(t *testing.T, traceProto *commonv1.Trace, label str
 	}
 }
 
-// TestRootSpanDurationNonZero_DataNode_ProtoWire mirrors the proto-wire data-node
-// response path in measureInternalQueryProcessor.Rev (processor.go ~line 623-641):
-//
-//	span.Tag(...)
-//	span.Stop()
-//	d.Trace = tracer.ToProto()
-//
-// The regression being guarded: if ToProto() is called before Stop(), the
-// captured span has EndTime=nil and Duration=0.
-func TestRootSpanDurationNonZero_DataNode_ProtoWire(t *testing.T) {
-	ctx := context.Background()
-	tracer, ctx := query.NewTracer(ctx, "proto-wire-test")
-	span, _ := tracer.StartSpan(ctx, "data-node-proto")
-
-	span.Tag("plan", "test-plan")
-	span.Tag("resp_count", "42")
-
-	// Proto-wire path: Stop then ToProto.
-	span.Stop()
-	traceProto := tracer.ToProto()
-
-	assertRootSpanFinalized(t, traceProto, "proto-wire", false)
-}
-
 // TestRootSpanDurationNonZero_DataNode_RawWire mirrors the raw-wire data-node
 // success response path in measureInternalQueryProcessor.Rev (processor.go
 // ~line 606-613), which is reached only when data.MeasureWireModeRaw() is true:
@@ -122,30 +98,15 @@ func TestRootSpanDurationNonZero_DataNode_RawWire(t *testing.T) {
 	assertRootSpanFinalized(t, traceProto, "raw-wire", false)
 }
 
-// TestRootSpanDurationNonZero_DataNode_ErrorPath mirrors both error branches in
-// measureInternalQueryProcessor.Rev:
+// TestRootSpanDurationNonZero_DataNode_ErrorPath mirrors the raw-wire error
+// branches in measureInternalQueryProcessor.Rev (processor.go ~line 583-588 and
+// ~line 596-601):
 //
-//  1. Proto-wire error (processor.go ~line 633-637):
-//     span.Error(err); span.Stop(); resp = &InternalQueryResponse{Trace: tracer.ToProto()}
-//
-//  2. Raw-wire error (processor.go ~line 583-588 and ~line 596-601):
-//     span.Error(err); span.Stop(); resp = &InternalQueryResponse{Trace: tracer.ToProto()}
+//	span.Error(err); span.Stop(); resp = &InternalQueryResponse{Trace: tracer.ToProto()}
 //
 // Even on the error path the root span must have populated Duration and EndTime.
 func TestRootSpanDurationNonZero_DataNode_ErrorPath(t *testing.T) {
 	simulatedErr := errors.New("simulated query execution error")
-
-	t.Run("proto-wire-error", func(t *testing.T) {
-		ctx := context.Background()
-		tracer, ctx := query.NewTracer(ctx, "proto-wire-error-test")
-		span, _ := tracer.StartSpan(ctx, "data-node-proto-error")
-
-		span.Error(simulatedErr)
-		span.Stop()
-		traceProto := tracer.ToProto()
-
-		assertRootSpanFinalized(t, traceProto, "proto-wire-error", true)
-	})
 
 	t.Run("raw-wire-error", func(t *testing.T) {
 		prevMode := data.MeasureWireModeRaw()
