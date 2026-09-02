@@ -52,12 +52,13 @@ var nidx01bBoundary committedGenerationCounter = ReadOnlyDocCount
 // permitted to export. Methods appear as Type.Method.
 //
 // The list is the read-only slice NIDX-01 allows and nothing else: open a
-// committed generation, report its visible document count, close it, and
-// classify the two failures a caller must distinguish. Issue #14009 places
-// stored fields, dictionaries, term postings, document walk, doc values,
-// sort/search-after, writers and merge outside this milestone, so an entry
-// appearing here for any of them is the milestone growing surface it was
-// explicitly denied.
+// committed generation, report its visible document count, walk its live
+// documents' stored fields, close it, and classify the two failures a caller
+// must distinguish. Issue #14009 placed the document walk outside NIDX-01B;
+// issue #14010 adds it and nothing more. Dictionaries, term postings, doc
+// values, sort/search-after, writers and merge remain outside the milestone, so
+// an entry appearing here for any of them is the milestone growing surface it
+// was explicitly denied.
 var nativeReaderSurface = []string{
 	"ErrCorrupt",
 	"ErrNoSnapshot",
@@ -65,6 +66,8 @@ var nativeReaderSurface = []string{
 	"Reader",
 	"Reader.Close",
 	"Reader.VisibleDocCount",
+	"Reader.VisitLiveDocuments",
+	"StoredDocument",
 }
 
 // TestNIDX01BBoundarySurface guards the boundary itself rather than any

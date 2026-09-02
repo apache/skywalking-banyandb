@@ -294,6 +294,15 @@ func TestReadIndexModeDocs_EmptySidx(t *testing.T) {
 	require.Empty(t, docs)
 }
 
+func TestReadIndexModeDocsNative_EmptySidx(t *testing.T) {
+	sidxDir := filepath.Join(t.TempDir(), directCopySidxDirName)
+	require.NoError(t, os.MkdirAll(sidxDir, storage.DirPerm))
+
+	docs, err := readIndexModeDocsNative(context.Background(), sidxDir, map[uint32]indexRuleInfo{}, nil)
+	require.NoError(t, err)
+	require.Empty(t, docs)
+}
+
 // ── Phase 2: copy routing tests ──────────────────────────────────────────────.
 
 // day20260621Nanos returns the local-time start-of-day nanos for 2026-06-21.
