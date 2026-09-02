@@ -39,17 +39,16 @@ import (
 )
 
 var (
-	_ logical.Plan              = (*localIndexScan)(nil)
-	_ logical.Sorter            = (*localIndexScan)(nil)
-	_ logical.VolumeLimiter     = (*localIndexScan)(nil)
-	_ executor.StreamExecutable = (*localIndexScan)(nil)
+	_ logical.Plan          = (*localIndexScan)(nil)
+	_ logical.Sorter        = (*localIndexScan)(nil)
+	_ logical.VolumeLimiter = (*localIndexScan)(nil)
+	_ executor.StreamCloser = (*localIndexScan)(nil)
 )
 
 type localIndexScan struct {
 	schema            logical.Schema
 	invertedFilter    index.Filter
 	skippingFilter    index.Filter
-	result            model.StreamQueryResult
 	ec                executor.StreamExecutionContext
 	order             *logical.OrderBy
 	metadata          *commonv1.Metadata
@@ -69,11 +68,7 @@ type localIndexScan struct {
 	deferLimitToEgress bool
 }
 
-func (i *localIndexScan) Close() {
-	if i.result != nil {
-		i.result.Release()
-	}
-}
+func (i *localIndexScan) Close() {}
 
 func (i *localIndexScan) Limit(maxVal int) {
 	i.maxElementSize = maxVal
@@ -81,41 +76,6 @@ func (i *localIndexScan) Limit(maxVal int) {
 
 func (i *localIndexScan) Sort(order *logical.OrderBy) {
 	i.order = order
-}
-
-func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
-	}
-	if i.result != nil {
-		return BuildElementsFromStreamResult(ctx, i.result, i.projectionTags)
-	}
-	var orderBy *index.OrderBy
-	if i.order != nil {
-		orderBy = &index.OrderBy{
-			Index: i.order.Index,
-			Sort:  i.order.Sort,
-		}
-	}
-	var err error
-	if i.result, err = i.ec.Query(ctx, model.StreamQueryOptions{
-		Name:           i.metadata.GetName(),
-		TimeRange:      &i.timeRange,
-		Entities:       i.entities,
-		InvertedFilter: i.invertedFilter,
-		SkippingFilter: i.skippingFilter,
-		Order:          orderBy,
-		TagProjection:  i.projectionTags,
-		MaxElementSize: i.maxElementSize,
-	}); err != nil {
-		return nil, err
-	}
-	if i.result == nil {
-		return nil, nil
-	}
-	return BuildElementsFromStreamResult(ctx, i.result, i.projectionTags)
 }
 
 func (i *localIndexScan) String() string {

@@ -152,37 +152,19 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 		}()
 	}
 
-	// Vec dispatch: attempt the native columnar path before the row execution.
-	// Gated on the engine flag (VectorizedConfig().Enabled). The plan must expose
-	// StreamVecExecutable (single localIndexScan, no tag filter / multi-group /
-	// skipping filter) — otherwise the assertion fails and we fall through to the
-	// row path below. When tracing is on we MUST return a proto QueryResponse (it
-	// carries common.v1.Trace); the frame emit is gated on tracer == nil.
-	if p.streamService.VectorizedConfig().Enabled {
-		if handled, vecResp := p.tryStreamVecDispatch(ctx, plan, queryCriteria, tracer != nil); handled {
-			resp = vecResp
-			plan.(executor.StreamCloser).Close()
-			return
-		}
-	}
-
-	se := plan.(executor.StreamExecutable)
-	defer se.Close()
-	entities, err := se.Execute(ctx)
-	if err != nil {
-		p.log.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to execute the query plan")
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("execute the query plan for stream %s: %v", queryCriteria.GetName(), err))
+	// Vec dispatch is the only stream execution path; the row path was removed in
+	// 0.12.0. Every analyzed plan shape must therefore be vec-eligible, so a decline
+	// is a hard error rather than a silent proto fallback (same no-silent-fallback
+	// discipline as measure and trace). When tracing is on we MUST return a proto
+	// QueryResponse (it carries common.v1.Trace); the frame emit is gated on tracer == nil.
+	handled, vecResp := p.tryStreamVecDispatch(ctx, plan, queryCriteria, tracer != nil)
+	plan.(executor.StreamCloser).Close()
+	if !handled {
+		p.log.Error().Str("plan", plan.String()).RawJSON("req", logger.Proto(queryCriteria)).Msg("no vectorized execution path for the query plan")
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("no vectorized execution path for stream %s", queryCriteria.GetName()))
 		return
 	}
-
-	resp = bus.NewMessage(bus.MessageID(now), &streamv1.QueryResponse{Elements: entities})
-
-	if !queryCriteria.Trace && p.slowQuery > 0 {
-		latency := time.Since(n)
-		if latency > p.slowQuery {
-			p.log.Warn().Dur("latency", latency).RawJSON("req", logger.Proto(queryCriteria)).Int("resp_count", len(entities)).Msg("stream slow query")
-		}
-	}
+	resp = vecResp
 	return
 }
 
