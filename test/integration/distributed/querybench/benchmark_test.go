@@ -310,11 +310,9 @@ func startBenchCluster(t *testing.T, cfg Config, vectorized bool) (benchCluster,
 
 func clusterFlags(cfg Config, vectorized bool) []string {
 	if cfg.Engine == engineTrace {
-		vecFlag := "--trace-vectorized-enabled=false"
-		if vectorized {
-			vecFlag = "--trace-vectorized-enabled=true"
-		}
-		return []string{vecFlag, fmt.Sprintf("--trace-vectorized-query-memory-mib=%d", cfg.QueryMemoryMiB)}
+		// The row-based trace query path was removed in 0.12.0, so both modes run
+		// vec: --trace-vectorized-enabled=false now aborts node startup.
+		return []string{"--trace-vectorized-enabled=true", fmt.Sprintf("--trace-vectorized-query-memory-mib=%d", cfg.QueryMemoryMiB)}
 	}
 	// --measure-vectorized-enabled defaults to true (pkg/query/vectorized/
 	// measure/config.go DefaultConfig). Pass the flag explicitly for both

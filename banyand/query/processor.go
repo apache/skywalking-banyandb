@@ -1266,11 +1266,11 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 		return
 	}
 
-	// Native wire mode (flag-on, no tracing): emit a columnar frame body so the
-	// send path passes it through as opaque bytes and the liaison decodes it
-	// without the protobuf message-slice/oneof machinery. The tracing path keeps
-	// the proto body (the traceMonitor defer needs *InternalQueryResponse).
-	if p.distributed && data.TraceWireModeRaw() && traceMonitor == nil {
+	// Native wire mode (no tracing): emit a columnar frame body so the send path
+	// passes it through as opaque bytes and the liaison decodes it without the
+	// protobuf message-slice/oneof machinery. The tracing path keeps the proto
+	// body (the traceMonitor defer needs *InternalQueryResponse).
+	if p.distributed && traceMonitor == nil {
 		results, buildErr := p.buildFrameTraceResults(resultIterator, queryCriteria, execPlan)
 		if buildErr != nil {
 			p.log.Error().Err(buildErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to process trace results")
