@@ -208,8 +208,7 @@ func (p *measureQueryProcessor) loadMeasureSchemas(queryCriteria *measurev1.Quer
 }
 
 // analyzeDistributedPlan picks the vec plan when raw wire mode is on, otherwise
-// falls back to the row distributed plan (kill-switch / rollback rail).
-// See docs/operation/troubleshooting/measure-vec-flag-off-rollback.md.
+// falls back to the row distributed plan.
 func (p *measureQueryProcessor) analyzeDistributedPlan(
 	queryCriteria *measurev1.QueryRequest,
 	schemas []logical.Schema,
