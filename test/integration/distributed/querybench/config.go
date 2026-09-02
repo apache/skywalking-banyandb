@@ -231,6 +231,10 @@ func (c Config) Validate() error {
 	}
 	switch c.Engine {
 	case engineMeasure:
+		if c.Mode == modeRow {
+			return fmt.Errorf("%s=%s is unsupported for %s=%s: row-based measure query was removed in 0.12.0, see apache/skywalking#13998",
+				envMode, modeRow, envEngine, c.Engine)
+		}
 		switch c.Scenario {
 		case ScenarioScanAll, ScenarioTopWithFilter:
 		default:

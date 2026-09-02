@@ -129,22 +129,21 @@ func (c *RawFrameCodec) Unmarshal(body []byte) (any, error) {
 }
 
 // measureWireModeRaw is the per-process wire mode for TopicInternalMeasureQuery.
-// It is set once at measure-service startup from --measure-vectorized-enabled
-// (a per-process CLI bool with zero cluster propagation — G9f spec Principle 2).
-// Default false (flag-off / proto) so any process that never sets it keeps the
-// pre-G9f.0 proto behavior.
+// It is set once at measure-service startup. Default false (proto) so any
+// process that never sets it — notably a traced query, which forces the proto
+// egress — keeps the pre-G9f.0 proto behavior.
 var measureWireModeRaw atomic.Bool
 
 // SetMeasureWireModeRaw publishes the per-process wire mode for
-// TopicInternalMeasureQuery. raw==true selects RawFrameCodec (flag-on,
-// vec columnar frame body); raw==false selects ProtoCodec (flag-off, proto
-// body). Called at measure-service startup after flags are parsed.
+// TopicInternalMeasureQuery. raw==true selects RawFrameCodec (vec columnar
+// frame body); raw==false selects ProtoCodec. Called at measure-service
+// startup after flags are parsed.
 func SetMeasureWireModeRaw(raw bool) {
 	measureWireModeRaw.Store(raw)
 }
 
-// MeasureWireModeRaw reports whether this process is flag-on (raw vec frame
-// body) for TopicInternalMeasureQuery.
+// MeasureWireModeRaw reports whether this process uses the raw vec frame
+// body for TopicInternalMeasureQuery.
 func MeasureWireModeRaw() bool {
 	return measureWireModeRaw.Load()
 }
