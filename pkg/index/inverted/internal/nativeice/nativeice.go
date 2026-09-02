@@ -28,6 +28,7 @@
 package nativeice
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -39,6 +40,7 @@ import (
 	"strconv"
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
+	"github.com/klauspost/compress/s2"
 )
 
 const (
@@ -50,6 +52,18 @@ const (
 	maxDirectoryEntries = 1 << 16
 	directoryReadSize   = maxDirectoryEntries + 1
 	maxOpenAttempts     = 2
+
+	storedDocumentsPerChunk       = 128
+	maxStoredChunkCount           = 1 << 20
+	maxStoredChunkTableSize       = 16 << 20
+	maxStoredCompressedChunkSize  = 16 << 20
+	maxStoredDecodedChunkSize     = 64 << 20
+	maxStoredFieldNameLength      = 64 << 10
+	maxStoredFieldsPerDocument    = 1 << 20
+	segmentFooterPayloadLength    = segmentFooterLength - 4
+	storedChunkTableFooterLength  = 8
+	storedDocumentOffsetByteWidth = 8
+	fieldsIndexAddressByteWidth   = 8
 )
 
 // ErrCorrupt is the sentinel that every structural rejection wraps: a footer,
@@ -70,7 +84,50 @@ var errManifestTooLarge = errors.New("nativeice: snapshot exceeds read limit")
 // directory. The generation is chosen at Open and fixed for the Reader's
 // lifetime, so generations committed afterwards stay invisible to it.
 type Reader struct {
+	segments        []segmentRecord
 	visibleDocCount int64
+}
+
+// StoredDocument is one live document of the pinned generation, borrowed for
+// the duration of a single walk callback.
+type StoredDocument interface {
+	// VisitStoredFields calls visit once for every stored value the document
+	// records, passing the field's name and its raw value bytes. A field the
+	// document records more than once is visited once per recorded value, in
+	// the order the document records them. Visiting stops early when visit
+	// returns false.
+	//
+	// The name and value handed to visit are borrowed from the reader's decode
+	// buffers and stay valid only until visit returns; a caller that keeps
+	// either beyond that copies it.
+	VisitStoredFields(visit func(name string, value []byte) bool) error
+}
+
+// VisitLiveDocuments streams the pinned generation's live documents to visit,
+// one at a time, in ascending segment and local document order. Documents the
+// pinned snapshot's deletion masks cover are skipped, so a deleted document is
+// never handed to visit.
+//
+// The StoredDocument handed to visit is borrowed: it, and every name and value
+// it yields, stay valid only until visit returns. At most one document plus the
+// reader's configured decode buffers are resident at a time, so the walk's
+// memory does not grow with the generation's size.
+//
+// The walk stops and returns ctx.Err() when ctx is canceled between two
+// documents or two stored chunks, and stops and returns visit's error when
+// visit fails. A stored section whose chunk table, offsets, lengths, varints or
+// field identifiers violate the ICE v3 grammar, or that would require decoding
+// past a configured bound, stops the walk with an error wrapping ErrCorrupt.
+func (r *Reader) VisitLiveDocuments(ctx context.Context, visit func(StoredDocument) error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	for segmentIndex := range r.segments {
+		if visitErr := walkStoredSegment(ctx, r.segments[segmentIndex], visit); visitErr != nil {
+			return visitErr
+		}
+	}
+	return nil
 }
 
 // Open selects the newest committed generation in the index directory at path,
@@ -112,13 +169,13 @@ func openWithSnapshots(path string, listSnapshots snapshotLister) (*Reader, erro
 				lastCandidatePath = snapshotPath
 				continue
 			}
-			visibleDocCount, parseErr := parseSnapshot(segmentPaths, manifest)
+			visibleDocCount, segments, parseErr := parseSnapshotSegments(segmentPaths, manifest)
 			if parseErr != nil {
 				lastCandidateErr = parseErr
 				lastCandidatePath = snapshotPath
 				continue
 			}
-			return &Reader{visibleDocCount: visibleDocCount}, nil
+			return &Reader{visibleDocCount: visibleDocCount, segments: segments}, nil
 		}
 	}
 	if lastCandidateErr != nil {
@@ -209,55 +266,57 @@ func readDirectoryEntries(path string) ([]os.DirEntry, error) {
 	return entries, nil
 }
 
-func parseSnapshot(segmentPaths map[uint64]string, payload []byte) (int64, error) {
+func parseSnapshotSegments(segmentPaths map[uint64]string, payload []byte) (int64, []segmentRecord, error) {
 	if len(payload) < 4 {
-		return 0, corruptError("snapshot is shorter than its reserved CRC32", nil)
+		return 0, nil, corruptError("snapshot is shorter than its reserved CRC32", nil)
 	}
 	decoder := byteDecoder{payload: payload[:len(payload)-4]}
 	version, versionErr := decoder.uvarint()
 	if versionErr != nil {
-		return 0, versionErr
+		return 0, nil, versionErr
 	}
 	if version != snapshotVersion {
-		return 0, corruptError("unsupported snapshot version %d", version)
+		return 0, nil, corruptError("unsupported snapshot version %d", version)
 	}
 	segmentCount, countErr := decoder.uvarint()
 	if countErr != nil {
-		return 0, countErr
+		return 0, nil, countErr
 	}
 	if segmentCount > uint64(len(decoder.payload)) {
-		return 0, corruptError("snapshot segment count %d exceeds remaining bytes", segmentCount)
+		return 0, nil, corruptError("snapshot segment count %d exceeds remaining bytes", segmentCount)
 	}
 	var visibleDocCount int64
+	segments := make([]segmentRecord, 0, int(segmentCount))
 	for segmentIndex := uint64(0); segmentIndex < segmentCount; segmentIndex++ {
-		segmentRecord, recordErr := decoder.segmentRecord(segmentPaths)
+		record, recordErr := decoder.segmentRecord(segmentPaths)
 		if recordErr != nil {
-			return 0, recordErr
+			return 0, nil, recordErr
 		}
-		segmentDocCount, segmentErr := validateSegment(segmentRecord)
+		segmentDocCount, segmentErr := validateSegment(record)
 		if segmentErr != nil {
-			return 0, segmentErr
+			return 0, nil, segmentErr
 		}
-		if segmentDocCount != segmentRecord.documentCount {
-			return 0, corruptError("segment %d document count differs from snapshot", segmentRecord.id)
+		if segmentDocCount != record.documentCount {
+			return 0, nil, corruptError("segment %d document count differs from snapshot", record.id)
 		}
-		deletedCount, deletionErr := deletionCount(segmentRecord.deletionBitmap, segmentRecord.documentCount)
+		deletedCount, deletionErr := deletionCount(record.deletionBitmap, record.documentCount)
 		if deletionErr != nil {
-			return 0, deletionErr
+			return 0, nil, deletionErr
 		}
-		if segmentRecord.documentCount > uint64(math.MaxInt64) || deletedCount > segmentRecord.documentCount {
-			return 0, corruptError("invalid document count for segment %d", segmentRecord.id)
+		if record.documentCount > uint64(math.MaxInt64) || deletedCount > record.documentCount {
+			return 0, nil, corruptError("invalid document count for segment %d", record.id)
 		}
-		segmentVisibleCount := int64(segmentRecord.documentCount - deletedCount)
+		segmentVisibleCount := int64(record.documentCount - deletedCount)
 		if segmentVisibleCount > math.MaxInt64-visibleDocCount {
-			return 0, corruptError("visible document count overflows int64", nil)
+			return 0, nil, corruptError("visible document count overflows int64", nil)
 		}
 		visibleDocCount += segmentVisibleCount
+		segments = append(segments, record)
 	}
 	if decoder.remaining() != 0 {
-		return 0, corruptError("snapshot has trailing bytes before its reserved CRC32", nil)
+		return 0, nil, corruptError("snapshot has trailing bytes before its reserved CRC32", nil)
 	}
-	return visibleDocCount, nil
+	return visibleDocCount, segments, nil
 }
 
 type segmentRecord struct {
@@ -369,6 +428,18 @@ func (d *byteDecoder) segmentRecord(segmentPaths map[uint64]string) (segmentReco
 	return segmentRecord{deletionBitmap: deletionBitmap, path: segmentPath, documentCount: documentCount, id: id, timeMin: timeMin, timeMax: timeMax}, nil
 }
 
+type segmentFooter struct {
+	documentCount      uint64
+	storedIndexOffset  uint64
+	fieldsIndexOffset  uint64
+	docValueOffset     uint64
+	chunkMode          uint32
+	timeMin            uint64
+	timeMax            uint64
+	footerOffset       uint64
+	fieldsIndexEntries uint64
+}
+
 func validateSegment(record segmentRecord) (uint64, error) {
 	file, openErr := os.Open(record.path)
 	if errors.Is(openErr, os.ErrNotExist) {
@@ -387,48 +458,483 @@ func validateSegment(record segmentRecord) (uint64, error) {
 	if !info.Mode().IsRegular() || info.Size() < segmentFooterLength {
 		return 0, corruptError("segment %q is shorter than its footer", record.path)
 	}
-	footerOffset := info.Size() - segmentFooterLength
-	var footer [segmentFooterLength]byte
-	if _, readErr := file.ReadAt(footer[:], footerOffset); readErr != nil {
-		return 0, corruptError("read footer from segment %q", record.path, readErr)
+	footer, footerErr := readSegmentFooter(file, uint64(info.Size()), record.path)
+	if footerErr != nil {
+		return 0, footerErr
 	}
-	documentCount := binary.BigEndian.Uint64(footer[0:8])
-	storedIndex := binary.BigEndian.Uint64(footer[8:16])
-	fieldsIndex := binary.BigEndian.Uint64(footer[16:24])
-	docValues := binary.BigEndian.Uint64(footer[24:32])
-	chunkMode := binary.BigEndian.Uint32(footer[32:36])
-	timeMin := binary.BigEndian.Uint64(footer[36:44])
-	timeMax := binary.BigEndian.Uint64(footer[44:52])
-	version := binary.BigEndian.Uint32(footer[52:56])
-	if version != segmentVersion {
-		return 0, corruptError("unsupported segment version %d", version)
-	}
-	if chunkMode == 0 || storedIndex > docValues || docValues > fieldsIndex || fieldsIndex > uint64(footerOffset) {
-		return 0, corruptError("segment %q has invalid section roots", record.path)
-	}
-	if documentCount > uint64(math.MaxInt64) || documentCount > (docValues-storedIndex)/8 {
-		return 0, corruptError("segment %q has invalid document count", record.path)
-	}
-	if (uint64(footerOffset)-fieldsIndex)%8 != 0 {
-		return 0, corruptError("segment %q has a misaligned fields index", record.path)
-	}
-	if (uint64(footerOffset)-fieldsIndex)/8 > maxFieldsIndexCount {
-		return 0, corruptError("segment %q has too many fields index entries", record.path)
-	}
-	for fieldIndexOffset := fieldsIndex; fieldIndexOffset < uint64(footerOffset); fieldIndexOffset += 8 {
-		var fieldRecord [8]byte
+	for fieldIndexOffset := footer.fieldsIndexOffset; fieldIndexOffset < footer.footerOffset; fieldIndexOffset += fieldsIndexAddressByteWidth {
+		var fieldRecord [fieldsIndexAddressByteWidth]byte
 		if _, readErr := file.ReadAt(fieldRecord[:], int64(fieldIndexOffset)); readErr != nil {
 			return 0, corruptError("read fields index from segment %q", record.path, readErr)
 		}
 		fieldRecordOffset := binary.BigEndian.Uint64(fieldRecord[:])
-		if fieldRecordOffset >= fieldsIndex {
+		if fieldRecordOffset >= footer.fieldsIndexOffset {
 			return 0, corruptError("segment %q has a field record outside its section", record.path)
 		}
 	}
-	if timeMin != record.timeMin || timeMax != record.timeMax {
+	if footer.timeMin != record.timeMin || footer.timeMax != record.timeMax {
 		return 0, corruptError("segment %d time bounds differ from snapshot", record.id)
 	}
-	return documentCount, nil
+	return footer.documentCount, nil
+}
+
+func readSegmentFooter(file *os.File, size uint64, path string) (segmentFooter, error) {
+	if size < segmentFooterLength {
+		return segmentFooter{}, corruptError("segment %q is shorter than its footer", path)
+	}
+	footerOffset := size - segmentFooterLength
+	var payload [segmentFooterPayloadLength]byte
+	if _, readErr := file.ReadAt(payload[:], int64(footerOffset)); readErr != nil {
+		return segmentFooter{}, corruptError("read footer from segment %q", path, readErr)
+	}
+	footer := segmentFooter{
+		documentCount:     binary.BigEndian.Uint64(payload[0:8]),
+		storedIndexOffset: binary.BigEndian.Uint64(payload[8:16]),
+		fieldsIndexOffset: binary.BigEndian.Uint64(payload[16:24]),
+		docValueOffset:    binary.BigEndian.Uint64(payload[24:32]),
+		chunkMode:         binary.BigEndian.Uint32(payload[32:36]),
+		timeMin:           binary.BigEndian.Uint64(payload[36:44]),
+		timeMax:           binary.BigEndian.Uint64(payload[44:52]),
+		footerOffset:      footerOffset,
+	}
+	if binary.BigEndian.Uint32(payload[52:56]) != segmentVersion {
+		return segmentFooter{}, corruptError("unsupported segment version %d", binary.BigEndian.Uint32(payload[52:56]))
+	}
+	if footer.chunkMode == 0 || footer.storedIndexOffset > footer.docValueOffset ||
+		footer.docValueOffset > footer.fieldsIndexOffset || footer.fieldsIndexOffset > footer.footerOffset {
+		return segmentFooter{}, corruptError("segment %q has invalid section roots", path)
+	}
+	if footer.documentCount > uint64(math.MaxInt64) ||
+		footer.documentCount > (footer.docValueOffset-footer.storedIndexOffset)/storedDocumentOffsetByteWidth {
+		return segmentFooter{}, corruptError("segment %q has invalid document count", path)
+	}
+	if (footer.footerOffset-footer.fieldsIndexOffset)%fieldsIndexAddressByteWidth != 0 {
+		return segmentFooter{}, corruptError("segment %q has a misaligned fields index", path)
+	}
+	footer.fieldsIndexEntries = (footer.footerOffset - footer.fieldsIndexOffset) / fieldsIndexAddressByteWidth
+	if footer.fieldsIndexEntries > maxFieldsIndexCount {
+		return segmentFooter{}, corruptError("segment %q has too many fields index entries", path)
+	}
+	return footer, nil
+}
+
+type storedSegmentReader struct {
+	file             *os.File
+	path             string
+	chunkOffsets     []uint64
+	compressedBuffer []byte
+	decodedBuffer    []byte
+	fieldNames       []string
+	fieldNameBuffer  []byte
+	footer           segmentFooter
+	size             uint64
+	storedDataEnd    uint64
+}
+
+type storedField struct {
+	name  string
+	value []byte
+}
+
+type storedDocument struct {
+	fields []storedField
+}
+
+func (d storedDocument) VisitStoredFields(visit func(name string, value []byte) bool) error {
+	for _, field := range d.fields {
+		if !visit(field.name, field.value) {
+			break
+		}
+	}
+	return nil
+}
+
+func walkStoredSegment(ctx context.Context, record segmentRecord, visit func(StoredDocument) error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	file, openErr := os.Open(record.path)
+	if errors.Is(openErr, os.ErrNotExist) {
+		return corruptError("open missing segment %d", record.id)
+	}
+	if openErr != nil {
+		return corruptError("open segment %q", record.path, openErr)
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+	info, statErr := file.Stat()
+	if statErr != nil {
+		return corruptError("stat segment %q", record.path, statErr)
+	}
+	if !info.Mode().IsRegular() || info.Size() < segmentFooterLength {
+		return corruptError("segment %q is shorter than its footer", record.path)
+	}
+	storedReader, readerErr := newStoredSegmentReader(file, uint64(info.Size()), record)
+	if readerErr != nil {
+		return readerErr
+	}
+	deleted, deletionErr := deletedDocuments(record)
+	if deletionErr != nil {
+		return deletionErr
+	}
+	return storedReader.visit(ctx, deleted, visit)
+}
+
+func newStoredSegmentReader(file *os.File, size uint64, record segmentRecord) (*storedSegmentReader, error) {
+	footer, footerErr := readSegmentFooter(file, size, record.path)
+	if footerErr != nil {
+		return nil, footerErr
+	}
+	if footer.documentCount != record.documentCount {
+		return nil, corruptError("segment %d document count differs from snapshot", record.id)
+	}
+	if footer.timeMin != record.timeMin || footer.timeMax != record.timeMax {
+		return nil, corruptError("segment %d time bounds differ from snapshot", record.id)
+	}
+	storedReader := &storedSegmentReader{file: file, path: record.path, size: size, footer: footer}
+	if chunkErr := storedReader.loadChunkOffsets(); chunkErr != nil {
+		return nil, chunkErr
+	}
+	if fieldsErr := storedReader.loadFieldNames(); fieldsErr != nil {
+		return nil, fieldsErr
+	}
+	return storedReader, nil
+}
+
+func (s *storedSegmentReader) visit(ctx context.Context, deleted *roaringpkg.Bitmap, visit func(StoredDocument) error) error {
+	if s.footer.documentCount == 0 {
+		return nil
+	}
+	chunkCount := (s.footer.documentCount + storedDocumentsPerChunk - 1) / storedDocumentsPerChunk
+	for chunkIndex := uint64(0); chunkIndex < chunkCount; chunkIndex++ {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		chunk, chunkErr := s.loadChunk(chunkIndex)
+		if chunkErr != nil {
+			return chunkErr
+		}
+		firstDocument := chunkIndex * storedDocumentsPerChunk
+		lastDocument := firstDocument + storedDocumentsPerChunk
+		if lastDocument > s.footer.documentCount {
+			lastDocument = s.footer.documentCount
+		}
+		for documentNumber := firstDocument; documentNumber < lastDocument; documentNumber++ {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			if documentNumber <= math.MaxUint32 && deleted.Contains(uint32(documentNumber)) {
+				continue
+			}
+			document, documentErr := s.decodeDocument(documentNumber, chunk)
+			if documentErr != nil {
+				return documentErr
+			}
+			if visitErr := visit(document); visitErr != nil {
+				return visitErr
+			}
+		}
+	}
+	return nil
+}
+
+func (s *storedSegmentReader) loadChunkOffsets() error {
+	if s.footer.storedIndexOffset < storedChunkTableFooterLength {
+		return corruptError("segment %q has a truncated stored chunk table", s.path)
+	}
+	var tableFooter [storedChunkTableFooterLength]byte
+	if readErr := s.readInto(s.footer.storedIndexOffset-storedChunkTableFooterLength, tableFooter[:]); readErr != nil {
+		return readErr
+	}
+	offsetLength := uint64(binary.BigEndian.Uint32(tableFooter[0:4]))
+	chunkCount := uint64(binary.BigEndian.Uint32(tableFooter[4:8]))
+	if offsetLength > maxStoredChunkTableSize || chunkCount == 0 || chunkCount > maxStoredChunkCount || chunkCount > offsetLength {
+		return corruptError("segment %q has an invalid stored chunk table", s.path)
+	}
+	if offsetLength > s.footer.storedIndexOffset-storedChunkTableFooterLength {
+		return corruptError("segment %q has a stored chunk table outside its section", s.path)
+	}
+	tableStart := s.footer.storedIndexOffset - storedChunkTableFooterLength - offsetLength
+	table, tableErr := s.readBytes(tableStart, offsetLength)
+	if tableErr != nil {
+		return tableErr
+	}
+	decoder := byteDecoder{payload: table}
+	offsets := make([]uint64, int(chunkCount))
+	for chunkIndex := range offsets {
+		offset, offsetErr := decoder.uvarint()
+		if offsetErr != nil {
+			return offsetErr
+		}
+		offsets[chunkIndex] = offset
+	}
+	if decoder.remaining() != 0 {
+		return corruptError("segment %q has trailing bytes in its stored chunk table", s.path)
+	}
+	if offsets[0] != 0 {
+		return corruptError("segment %q has a stored chunk table without a zero origin", s.path)
+	}
+	for offsetIndex := 1; offsetIndex < len(offsets); offsetIndex++ {
+		if offsets[offsetIndex] < offsets[offsetIndex-1] || offsets[offsetIndex] > tableStart {
+			return corruptError("segment %q has invalid stored chunk offsets", s.path)
+		}
+	}
+	dataChunks := (s.footer.documentCount + storedDocumentsPerChunk - 1) / storedDocumentsPerChunk
+	if s.footer.documentCount == 0 {
+		if chunkCount > 2 {
+			return corruptError("segment %q has too many empty stored chunks", s.path)
+		}
+	} else if chunkCount != dataChunks+1 {
+		return corruptError("segment %q has %d stored chunks for %d documents", s.path, chunkCount, s.footer.documentCount)
+	}
+	for chunkIndex := uint64(0); chunkIndex < dataChunks; chunkIndex++ {
+		if offsets[chunkIndex] >= offsets[chunkIndex+1] {
+			return corruptError("segment %q has an empty stored document chunk", s.path)
+		}
+	}
+	s.chunkOffsets = offsets
+	s.storedDataEnd = tableStart
+	return nil
+}
+
+func (s *storedSegmentReader) loadFieldNames() error {
+	fieldNames := make([]string, int(s.footer.fieldsIndexEntries))
+	for fieldID := range fieldNames {
+		fieldName, fieldErr := s.readFieldName(uint64(fieldID))
+		if fieldErr != nil {
+			return fieldErr
+		}
+		fieldNames[fieldID] = fieldName
+	}
+	s.fieldNames = fieldNames
+	return nil
+}
+
+func (s *storedSegmentReader) readFieldName(fieldID uint64) (string, error) {
+	if fieldID >= s.footer.fieldsIndexEntries {
+		return "", corruptError("segment %q has an out-of-range stored field identifier %d", s.path, fieldID)
+	}
+	indexOffset := s.footer.fieldsIndexOffset + fieldID*fieldsIndexAddressByteWidth
+	var addressData [fieldsIndexAddressByteWidth]byte
+	if readErr := s.readInto(indexOffset, addressData[:]); readErr != nil {
+		return "", readErr
+	}
+	offset := binary.BigEndian.Uint64(addressData[:])
+	if offset >= s.footer.fieldsIndexOffset {
+		return "", corruptError("segment %q has a field record outside its section", s.path)
+	}
+	if _, dictErr := s.readUvarint(&offset, s.footer.fieldsIndexOffset); dictErr != nil {
+		return "", dictErr
+	}
+	nameLength, lengthErr := s.readUvarint(&offset, s.footer.fieldsIndexOffset)
+	if lengthErr != nil {
+		return "", lengthErr
+	}
+	if nameLength > maxStoredFieldNameLength || nameLength > s.footer.fieldsIndexOffset-offset {
+		return "", corruptError("segment %q has an invalid stored field name length", s.path)
+	}
+	if cap(s.fieldNameBuffer) < int(nameLength) {
+		s.fieldNameBuffer = make([]byte, int(nameLength))
+	} else {
+		s.fieldNameBuffer = s.fieldNameBuffer[:int(nameLength)]
+	}
+	if readErr := s.readInto(offset, s.fieldNameBuffer); readErr != nil {
+		return "", readErr
+	}
+	offset += nameLength
+	if _, documentCountErr := s.readUvarint(&offset, s.footer.fieldsIndexOffset); documentCountErr != nil {
+		return "", documentCountErr
+	}
+	if _, frequencyErr := s.readUvarint(&offset, s.footer.fieldsIndexOffset); frequencyErr != nil {
+		return "", frequencyErr
+	}
+	return string(s.fieldNameBuffer), nil
+}
+
+func (s *storedSegmentReader) readUvarint(offset *uint64, end uint64) (uint64, error) {
+	if *offset >= end {
+		return 0, corruptError("segment %q has a truncated variable-length integer", s.path)
+	}
+	length := uint64(binary.MaxVarintLen64)
+	if remaining := end - *offset; remaining < length {
+		length = remaining
+	}
+	var encoded [binary.MaxVarintLen64]byte
+	if readErr := s.readInto(*offset, encoded[:int(length)]); readErr != nil {
+		return 0, readErr
+	}
+	value, width := binary.Uvarint(encoded[:int(length)])
+	if width <= 0 {
+		return 0, corruptError("segment %q has an invalid variable-length integer", s.path)
+	}
+	*offset += uint64(width)
+	return value, nil
+}
+
+func (s *storedSegmentReader) loadChunk(chunkIndex uint64) ([]byte, error) {
+	if chunkIndex+1 >= uint64(len(s.chunkOffsets)) {
+		return nil, corruptError("segment %q has no stored chunk %d", s.path, chunkIndex)
+	}
+	start := s.chunkOffsets[chunkIndex]
+	end := s.chunkOffsets[chunkIndex+1]
+	if start >= end || end > s.storedDataEnd {
+		return nil, corruptError("segment %q has invalid bounds for stored chunk %d", s.path, chunkIndex)
+	}
+	compressedLength := end - start
+	if compressedLength > maxStoredCompressedChunkSize {
+		return nil, corruptError("segment %q has an oversized stored chunk", s.path)
+	}
+	if cap(s.compressedBuffer) < int(compressedLength) {
+		s.compressedBuffer = make([]byte, int(compressedLength))
+	} else {
+		s.compressedBuffer = s.compressedBuffer[:int(compressedLength)]
+	}
+	if readErr := s.readInto(start, s.compressedBuffer); readErr != nil {
+		return nil, readErr
+	}
+	decodedLength, lengthErr := storedChunkDecodedLength(s.compressedBuffer)
+	if lengthErr != nil {
+		return nil, corruptError("decode stored chunk length in segment %q: %w", s.path, lengthErr)
+	}
+	if decodedLength < 0 || decodedLength > maxStoredDecodedChunkSize {
+		return nil, corruptError("segment %q has an oversized decoded stored chunk", s.path)
+	}
+	if cap(s.decodedBuffer) < decodedLength {
+		s.decodedBuffer = make([]byte, decodedLength)
+	} else {
+		s.decodedBuffer = s.decodedBuffer[:decodedLength]
+	}
+	decoded, decodeErr := decodeStoredChunk(s.decodedBuffer[:0], s.compressedBuffer)
+	if decodeErr != nil {
+		return nil, corruptError("decode stored chunk in segment %q: %w", s.path, decodeErr)
+	}
+	if len(decoded) != decodedLength {
+		return nil, corruptError("segment %q decoded a stored chunk to an unexpected length", s.path)
+	}
+	s.decodedBuffer = decoded
+	return decoded, nil
+}
+
+func storedChunkDecodedLength(compressed []byte) (decodedLength int, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("stored chunk length decoder panicked: %v", recovered)
+		}
+	}()
+	return s2.DecodedLen(compressed)
+}
+
+func decodeStoredChunk(dst, compressed []byte) (decoded []byte, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("stored chunk decoder panicked: %v", recovered)
+		}
+	}()
+	return s2.Decode(dst, compressed)
+}
+
+func (s *storedSegmentReader) decodeDocument(documentNumber uint64, chunk []byte) (storedDocument, error) {
+	documentOffset, offsetErr := s.documentOffset(documentNumber)
+	if offsetErr != nil {
+		return storedDocument{}, offsetErr
+	}
+	if documentOffset >= uint64(len(chunk)) {
+		return storedDocument{}, corruptError("segment %q has a stored document offset outside its chunk", s.path)
+	}
+	decoder := byteDecoder{payload: chunk[documentOffset:]}
+	metaLength, metaLengthErr := decoder.uvarint()
+	if metaLengthErr != nil {
+		return storedDocument{}, metaLengthErr
+	}
+	dataLength, dataLengthErr := decoder.uvarint()
+	if dataLengthErr != nil {
+		return storedDocument{}, dataLengthErr
+	}
+	meta, metaErr := decoder.bytes(metaLength)
+	if metaErr != nil {
+		return storedDocument{}, metaErr
+	}
+	data, dataErr := decoder.bytes(dataLength)
+	if dataErr != nil {
+		return storedDocument{}, dataErr
+	}
+	metaDecoder := byteDecoder{payload: meta}
+	document := storedDocument{}
+	for fieldCount := 0; metaDecoder.remaining() > 0; fieldCount++ {
+		if fieldCount >= maxStoredFieldsPerDocument {
+			return storedDocument{}, corruptError("segment %q has too many stored field values in one document", s.path)
+		}
+		fieldID, fieldIDErr := metaDecoder.uvarint()
+		if fieldIDErr != nil {
+			return storedDocument{}, fieldIDErr
+		}
+		valueOffset, valueOffsetErr := metaDecoder.uvarint()
+		if valueOffsetErr != nil {
+			return storedDocument{}, valueOffsetErr
+		}
+		valueLength, valueLengthErr := metaDecoder.uvarint()
+		if valueLengthErr != nil {
+			return storedDocument{}, valueLengthErr
+		}
+		if fieldID >= uint64(len(s.fieldNames)) || valueOffset > uint64(len(data)) || valueLength > uint64(len(data))-valueOffset {
+			return storedDocument{}, corruptError("segment %q has invalid stored field metadata", s.path)
+		}
+		document.fields = append(document.fields, storedField{
+			name:  s.fieldNames[fieldID],
+			value: data[valueOffset : valueOffset+valueLength],
+		})
+	}
+	return document, nil
+}
+
+func (s *storedSegmentReader) documentOffset(documentNumber uint64) (uint64, error) {
+	if documentNumber >= s.footer.documentCount {
+		return 0, corruptError("segment %q has an out-of-range stored document number", s.path)
+	}
+	indexOffset := s.footer.storedIndexOffset + documentNumber*storedDocumentOffsetByteWidth
+	if indexOffset > s.footer.docValueOffset-storedDocumentOffsetByteWidth {
+		return 0, corruptError("segment %q has a stored document offset outside its index", s.path)
+	}
+	var offsetData [storedDocumentOffsetByteWidth]byte
+	if readErr := s.readInto(indexOffset, offsetData[:]); readErr != nil {
+		return 0, readErr
+	}
+	return binary.BigEndian.Uint64(offsetData[:]), nil
+}
+
+func (s *storedSegmentReader) readBytes(offset, length uint64) ([]byte, error) {
+	if length > maxStoredChunkTableSize {
+		return nil, corruptError("segment %q requested an oversized read", s.path)
+	}
+	data := make([]byte, int(length))
+	if readErr := s.readInto(offset, data); readErr != nil {
+		return nil, readErr
+	}
+	return data, nil
+}
+
+func (s *storedSegmentReader) readInto(offset uint64, data []byte) error {
+	length := uint64(len(data))
+	if offset > s.size || length > s.size-offset {
+		return corruptError("segment %q read exceeds file bounds", s.path)
+	}
+	read, readErr := s.file.ReadAt(data, int64(offset))
+	if readErr != nil || read != len(data) {
+		return corruptError("read segment %q", s.path, readErr)
+	}
+	return nil
+}
+
+func deletedDocuments(record segmentRecord) (*roaringpkg.Bitmap, error) {
+	deleted := roaringpkg.New()
+	if len(record.deletionBitmap) == 0 {
+		return deleted, nil
+	}
+	if unmarshalErr := deleted.UnmarshalBinary(record.deletionBitmap); unmarshalErr != nil {
+		return nil, corruptError("decode deletion bitmap", unmarshalErr)
+	}
+	return deleted, nil
 }
 
 func deletionCount(payload []byte, documentCount uint64) (uint64, error) {

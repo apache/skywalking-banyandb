@@ -20,6 +20,7 @@ package measure
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -27,9 +28,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"github.com/blugelabs/bluge"
-	blugesearch "github.com/blugelabs/bluge/search"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/migration"
@@ -124,64 +122,31 @@ func classifyStoredField(name string, tagNames map[string]struct{}, ruleByID map
 	return index.FieldKey{TagName: name}, false, 0
 }
 
-// readIndexModeDocs scans every committed bluge doc under sidxDir and rebuilds
-// each as an index.Document from TWO sources:
-//
-//	A) stored fields -> regular tag fields (+ timestamp/version), and
-//	B) the doc _id unmarshaled to a pbv1.Series -> regenerate the index-only
-//	   _im_name / _im_entity_tag_* fields, which the write path never stores.
-//
-// ruleByID restores Analyzer/NoSort on indexed fields; schemasBySubject maps
-// each series' Subject to its measure schema so the entity-derived fields are
-// regenerated with the right tag names/types and skip conditions.
-func readIndexModeDocs(ctx context.Context, sidxDir string, ruleByID map[uint32]indexRuleInfo,
+func readIndexModeDocsNative(ctx context.Context, sidxDir string, ruleByID map[uint32]indexRuleInfo,
 	schemasBySubject map[string]*measureSchemaInfo,
 ) ([]index.Document, error) {
-	r, err := bluge.OpenReader(bluge.DefaultConfig(sidxDir))
-	if err != nil {
-		// A sidx directory can exist on disk with no committed bluge snapshot
-		// (a fresh segment whose writer never received a doc). Treat that as an
-		// empty sidx instead of failing the whole copy.
-		if strings.Contains(err.Error(), "unable to find a usable snapshot") {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("open sidx reader %s: %w", sidxDir, err)
-	}
-	defer func() { _ = r.Close() }()
-	dmi, err := r.Search(ctx, bluge.NewAllMatches(bluge.NewMatchAllQuery()))
-	if err != nil {
-		return nil, fmt.Errorf("search sidx %s: %w", sidxDir, err)
-	}
-	var out []index.Document
+	var documents []index.Document
 	var timeless []uint64
 	tagNames := collectTagNames(schemasBySubject)
 	missingRules := map[uint32]int{}
-	for {
-		match, nextErr := dmi.Next()
-		if nextErr != nil {
-			return nil, fmt.Errorf("iterate sidx %s: %w", sidxDir, nextErr)
+	walkErr := inverted.ReadOnlyWalkDocuments(ctx, sidxDir, func(source inverted.StoredDocument) error {
+		document, rebuildErr := rebuildOneDoc(source, ruleByID, schemasBySubject, tagNames, missingRules)
+		if rebuildErr != nil {
+			return fmt.Errorf("rebuild doc in %s: %w", sidxDir, rebuildErr)
 		}
-		if match == nil {
-			break
+		if document.Timestamp == 0 {
+			timeless = append(timeless, document.DocID)
+			return nil
 		}
-		doc, buildErr := rebuildOneDoc(match, ruleByID, schemasBySubject, tagNames, missingRules)
-		if buildErr != nil {
-			return nil, fmt.Errorf("rebuild doc in %s: %w", sidxDir, buildErr)
+		documents = append(documents, document)
+		return nil
+	})
+	if walkErr != nil {
+		if errors.Is(walkErr, inverted.ErrNoCommittedIndex) {
+			return nil, nil
 		}
-		// The write path always stamps a checked, non-zero _timestamp on every
-		// index-mode doc (write_standalone.go), so Timestamp==0 here means the
-		// stored _timestamp is missing or undecodable — corrupt or unexpected
-		// source data. Routing such a doc by a guessed segment boundary would
-		// silently misplace it, so collect the offenders (without retaining the
-		// corrupt docs) and surface them once the whole sidx has been scanned.
-		if doc.Timestamp == 0 {
-			timeless = append(timeless, doc.DocID)
-			continue
-		}
-		out = append(out, doc)
+		return nil, fmt.Errorf("walk sidx %s: %w", sidxDir, walkErr)
 	}
-	// Surface corrupt data before anything else: a missing-rule warning implies
-	// "continuing", which would be misleading when the read is about to abort.
 	if len(timeless) > 0 {
 		sample := timeless
 		if len(sample) > 10 {
@@ -192,7 +157,7 @@ func readIndexModeDocs(ctx context.Context, sidxDir string, ruleByID map[uint32]
 			sidxDir, len(timeless), len(sample), sample)
 	}
 	warnMissingRules(sidxDir, missingRules)
-	return out, nil
+	return documents, nil
 }
 
 // warnMissingRules logs a single warning enumerating every IndexRuleID that an
@@ -219,66 +184,6 @@ func warnMissingRules(sidxDir string, missingRules map[uint32]int) {
 		Strs("ruleIDxCount", ids).
 		Msg("index-mode rebuild: indexed field(s) decode to an IndexRuleID missing from the schema-property " +
 			"catalog; kept indexed with default Analyzer/NoSort — restore the missing index rule(s) for exact fidelity")
-}
-
-// rebuildOneDoc reconstructs a single index.Document from a bluge match,
-// combining the two sources documented on readIndexModeDocs. tagNames is the
-// group's known tag-name set (to tell a tag from a rule id). missingRules, when
-// non-nil, accumulates (rule-id -> count) for fields that decode to an
-// IndexRuleID NOT present in ruleByID, so the caller can warn.
-func rebuildOneDoc(match *blugesearch.DocumentMatch, ruleByID map[uint32]indexRuleInfo,
-	schemasBySubject map[string]*measureSchemaInfo, tagNames map[string]struct{}, missingRules map[uint32]int,
-) (index.Document, error) {
-	var entityValues []byte
-	var ts, version int64
-	var fields []index.Field
-	visitErr := match.VisitStoredFields(func(name string, value []byte) bool {
-		switch name {
-		case imDocIDField:
-			entityValues = append([]byte(nil), value...)
-		case imTimestampField:
-			if dt, decErr := bluge.DecodeDateTime(value); decErr == nil {
-				ts = dt.UnixNano()
-			}
-		case imVersionField:
-			version = convert.BytesToInt64(value)
-		default:
-			key, indexed, missingRuleID := classifyStoredField(name, tagNames, ruleByID)
-			// NewBytesField clones value internally, so no extra copy of the
-			// reusable bluge visit buffer is needed here.
-			f := index.NewBytesField(key, value)
-			f.Store = true
-			f.Index = indexed
-			if ri, ok := ruleByID[key.IndexRuleID]; indexed && ok {
-				f.NoSort = ri.NoSort
-				f.Key.Analyzer = ri.Analyzer
-			}
-			// A field that decodes to an IndexRuleID the catalog does not know: it
-			// stays indexed (defaults), but the operator must be told rather than
-			// have a possibly-searchable field silently degraded.
-			if missingRuleID != 0 && missingRules != nil {
-				missingRules[missingRuleID]++
-			}
-			fields = append(fields, f)
-		}
-		return true
-	})
-	if visitErr != nil {
-		return index.Document{}, fmt.Errorf("visit stored fields: %w", visitErr)
-	}
-	// Source B: rebuild the index-only entity-derived fields from _id.
-	var series pbv1.Series
-	if err := series.Unmarshal(entityValues); err != nil {
-		return index.Document{}, fmt.Errorf("unmarshal series from _id: %w", err)
-	}
-	fields = appendRegeneratedEntityFields(fields, &series, schemasBySubject[series.Subject])
-	return index.Document{
-		Fields:       fields,
-		EntityValues: entityValues,
-		Timestamp:    ts,
-		DocID:        uint64(series.ID),
-		Version:      version,
-	}, nil
 }
 
 // appendRegeneratedEntityFields rebuilds the index-only fields the production
@@ -485,7 +390,7 @@ func copyIndexModeGroup(ctx context.Context, in migration.EntryGroupInput,
 		if ctx.Err() != nil {
 			return res, ctx.Err()
 		}
-		docs, readErr := readIndexModeDocs(ctx, srcSidx, ruleByID, schemasBySubject)
+		docs, readErr := readIndexModeDocsNative(ctx, srcSidx, ruleByID, schemasBySubject)
 		if readErr != nil {
 			return res, readErr
 		}
