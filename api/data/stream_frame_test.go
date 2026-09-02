@@ -67,41 +67,28 @@ func TestStreamCodec_RawEmptyBody(t *testing.T) {
 	require.Empty(t, decoded.GetElements())
 }
 
-// TestStreamCodec_FlagOffIsProto verifies flag-off encodes byte-identically to
-// plain proto.Marshal and round-trips through the proto path.
-func TestStreamCodec_FlagOffIsProto(t *testing.T) {
-	SetStreamWireModeRaw(false)
-	c := newStreamCodec()
-	orig := &streamv1.QueryResponse{
-		Elements: []*streamv1.Element{{ElementId: "element-1", Timestamp: nil}},
-	}
-
-	body, err := c.Marshal(orig)
-	require.NoError(t, err)
-	want, err := proto.Marshal(orig)
-	require.NoError(t, err)
-	require.Equal(t, want, body, "flag-off must encode byte-identically to proto.Marshal")
-
-	got, err := c.Unmarshal(body)
-	require.NoError(t, err)
-	require.True(t, proto.Equal(orig, got.(*streamv1.QueryResponse)))
-}
-
-// TestStreamCodec_FlagOnProtoFallback verifies that flag-on, a proto.Message
-// value (e.g. the tracing path) still goes through the proto path.
-func TestStreamCodec_FlagOnProtoFallback(t *testing.T) {
+// TestStreamCodec_ProtoFallback verifies that a proto.Message value (the tracing
+// path, or any shape the columnar egress declines) still encodes byte-identically
+// to plain proto.Marshal and round-trips through the proto path. The non-empty
+// case matters on its own: it produces a body Unmarshal must route to proto
+// despite the raw-frame magic being 0x00, which an empty body never exercises.
+func TestStreamCodec_ProtoFallback(t *testing.T) {
 	SetStreamWireModeRaw(true)
 	defer SetStreamWireModeRaw(false)
 	c := newStreamCodec()
-	orig := &streamv1.QueryResponse{}
 
-	body, err := c.Marshal(orig)
-	require.NoError(t, err)
-	want, err := proto.Marshal(orig)
-	require.NoError(t, err)
-	require.Equal(t, want, body)
+	for _, orig := range []*streamv1.QueryResponse{
+		{},
+		{Elements: []*streamv1.Element{{ElementId: "element-1", Timestamp: nil}}},
+	} {
+		body, err := c.Marshal(orig)
+		require.NoError(t, err)
+		want, err := proto.Marshal(orig)
+		require.NoError(t, err)
+		require.Equal(t, want, body, "proto fallback must encode byte-identically to proto.Marshal")
 
-	got, err := c.Unmarshal(body)
-	require.NoError(t, err)
-	require.True(t, proto.Equal(orig, got.(*streamv1.QueryResponse)))
+		got, err := c.Unmarshal(body)
+		require.NoError(t, err)
+		require.True(t, proto.Equal(orig, got.(*streamv1.QueryResponse)))
+	}
 }
