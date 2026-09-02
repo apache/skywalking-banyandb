@@ -317,6 +317,13 @@ func (i *localIndexScan) ExecuteVectorized(ctx context.Context) ([]*vectorized.R
 	// trailing pipeline Limit a pass-through (MaxUint32, since a 0 limit emits
 	// NOTHING) — the egress then applies the tag filter and the true
 	// offset:offset+limit slice.
+	//
+	// This path is therefore NOT bounded by limit+offset, and cannot be until the
+	// tag filter moves ahead of the merge. Any cap here is unsound in general: the
+	// filter's selectivity is unknown, so the top-(limit+offset) rows BEFORE it can
+	// contain arbitrarily few surviving rows — including zero — while the row path
+	// keeps pulling until it has enough. Bounding it needs columnar tag-filter
+	// pushdown (out of scope here), not a bigger cap.
 	limitRows := uint32(0)
 	mergeCap := i.maxElementSize
 	if i.deferLimitToEgress {
