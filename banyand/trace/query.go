@@ -137,46 +137,25 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 	pipelineCtx, cancel := context.WithTimeout(ctx, queryTimeout)
 	result.ctx = pipelineCtx
 	result.cancel = cancel
-	result.recordCursor, result.recordResult, result.finishResultSpan = startQueryResultSpan(pipelineCtx)
+	_, result.recordResult, result.finishResultSpan = startQueryResultSpan(pipelineCtx)
 
-	if result.keys == nil {
-		result.keys = make(map[string]int64)
+	// Assign errors to err so the deferred result.Release() fires on failure,
+	// releasing segments, the timeout context, and the tracing span.
+	var vectorizedScanBatch *scanBatch
+	if vectorizedScanBatch, err = t.buildConsistentVectorizedScanBatch(
+		pipelineCtx, tables, qo, sidxInstances, sidxQueryRequest, useSIDXStreaming, tqo.MaxTraceSize,
+	); err != nil {
+		return nil, err
 	}
-
-	switch {
-	case t.vectorized.Enabled:
-		// Assign errors to err so the deferred result.Release() fires on failure,
-		// releasing segments, the timeout context, and the tracing span.
-		var vectorizedScanBatch *scanBatch
-		if vectorizedScanBatch, err = t.buildConsistentVectorizedScanBatch(
-			pipelineCtx, tables, qo, sidxInstances, sidxQueryRequest, useSIDXStreaming, tqo.MaxTraceSize,
-		); err != nil {
-			return nil, err
-		}
-		var vectorizedResult *vectorizedTraceQueryResult
-		vectorizedResult, err = newVectorizedTraceQueryResult(
-			pipelineCtx, vectorizedScanBatch, qo, segments, cancel, result.finishResultSpan, result.recordResult)
-		if err != nil {
-			return nil, err
-		}
-		vtrace.IncrQueryCount()
-		traceQueryResultTracker.Acquire(vectorizedResult)
-		return vectorizedResult, nil
-	case len(qo.traceIDs) > 0:
-		traceBatchCh := staticTraceBatchSource(pipelineCtx, qo.traceIDs, tqo.MaxTraceSize, result.keys)
-		result.cursorBatchCh = t.startBlockScanStage(pipelineCtx, tables, qo, traceBatchCh)
-	case useSIDXStreaming:
-		var streamDone <-chan struct{}
-		traceBatchCh, streamDone := t.streamSIDXTraceBatches(pipelineCtx, sidxInstances, sidxQueryRequest, tqo.MaxTraceSize)
-		result.streamDone = streamDone
-		result.cursorBatchCh = t.startBlockScanStage(pipelineCtx, tables, qo, traceBatchCh)
-	default:
-		err = errors.New("invalid query options: either traceIDs or order must be specified")
-		return nilResult, err
+	var vectorizedResult *vectorizedTraceQueryResult
+	vectorizedResult, err = newVectorizedTraceQueryResult(
+		pipelineCtx, vectorizedScanBatch, qo, segments, cancel, result.finishResultSpan, result.recordResult)
+	if err != nil {
+		return nil, err
 	}
-
-	traceQueryResultTracker.Acquire(&result)
-	return &result, nil
+	vtrace.IncrQueryCount()
+	traceQueryResultTracker.Acquire(vectorizedResult)
+	return vectorizedResult, nil
 }
 
 func omitIdentityTagProjection(projection *model.TagProjection, traceIDTagName, spanIDTagName string) *model.TagProjection {
