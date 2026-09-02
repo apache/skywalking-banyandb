@@ -23,9 +23,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/testing/protocmp"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -57,6 +55,15 @@ func collectResults(t *testing.T, result model.TraceQueryResult) []*model.TraceR
 	return got
 }
 
+// traceIDsOf projects the trace IDs out of a result slice, in result order.
+func traceIDsOf(results []*model.TraceResult) []string {
+	ids := make([]string, 0, len(results))
+	for _, r := range results {
+		ids = append(ids, r.TID)
+	}
+	return ids
+}
+
 // newParityTSTable sets up an in-memory tsTable populated with the given trace sets.
 func newParityTSTable(tb testing.TB, traceSets ...*traces) (*tsTable, func()) {
 	tb.Helper()
@@ -83,25 +90,6 @@ func newParityTrace() *trace {
 	}
 }
 
-func pushLookupResult(
-	ctx context.Context,
-	tr *trace,
-	tables []*tsTable,
-	qo queryOptions,
-	traceIDs []string,
-	maxTraceSize int,
-) *queryResult {
-	pushKeys := make(map[string]int64)
-	traceBatchCh := staticTraceBatchSource(ctx, traceIDs, maxTraceSize, pushKeys)
-	cursorBatchCh := tr.startBlockScanStage(ctx, tables, qo, traceBatchCh)
-	return &queryResult{
-		ctx:           ctx,
-		keys:          pushKeys,
-		tagProjection: qo.TagProjection,
-		cursorBatchCh: cursorBatchCh,
-	}
-}
-
 func pullLookupResult(
 	ctx context.Context,
 	tr *trace,
@@ -120,26 +108,6 @@ func pullLookupResult(
 		return nil, sbErr
 	}
 	return newVectorizedTraceQueryResult(ctx, sb, qo, nil, nil, nil, nil)
-}
-
-func pushOrderResult(
-	ctx context.Context,
-	tr *trace,
-	tables []*tsTable,
-	qo queryOptions,
-	fakeSIDXInst *fakeSIDXWithSync,
-	req sidx.QueryRequest,
-	maxTraceSize int,
-) *queryResult {
-	traceBatchCh, streamDone := tr.streamSIDXTraceBatches(ctx, []sidx.SIDX{fakeSIDXInst}, req, maxTraceSize)
-	cursorBatchCh := tr.startBlockScanStage(ctx, tables, qo, traceBatchCh)
-	return &queryResult{
-		ctx:           ctx,
-		keys:          make(map[string]int64),
-		tagProjection: qo.TagProjection,
-		cursorBatchCh: cursorBatchCh,
-		streamDone:    streamDone,
-	}
 }
 
 func pullOrderResult(
@@ -162,9 +130,11 @@ func pullOrderResult(
 	return newVectorizedTraceQueryResult(ctx, sb, qo, nil, nil, nil, nil)
 }
 
-// TestVectorizedParityLookup verifies that the push and pull paths return
-// byte-identical model.TraceResult sequences for traceID lookup mode.
-func TestVectorizedParityLookup(t *testing.T) {
+// TestVectorizedLookup pins the vectorized traceID-lookup result: the traces the
+// requested IDs resolve to, the MaxTraceSize cap, and the AC8 contract that an
+// identity-only projection (nil or empty after omitIdentityTagProjection) yields
+// r.Tags == nil.
+func TestVectorizedLookup(t *testing.T) {
 	tst, cleanup := newParityTSTable(t, tsTS1, tsTS2)
 	defer cleanup()
 
@@ -197,37 +167,27 @@ func TestVectorizedParityLookup(t *testing.T) {
 				schemaTagTypes:    testSchemaTagTypes,
 			}
 
-			pushRes := pushLookupResult(ctx, tr, tables, qo, tt.traceIDs, tt.maxTraceSize)
-			defer pushRes.Release()
-			pushGot := collectResults(t, pushRes)
-
 			pullRes, pullErr := pullLookupResult(ctx, tr, tables, qo, tt.traceIDs, tt.maxTraceSize)
 			require.NoError(t, pullErr)
 			defer pullRes.Release()
 			pullGot := collectResults(t, pullRes)
 
-			require.Len(t, pushGot, tt.wantCount, "push path result count")
-			require.Len(t, pullGot, tt.wantCount, "pull path result count")
+			require.Len(t, pullGot, tt.wantCount, "result count")
+			require.Subset(t, tt.traceIDs, traceIDsOf(pullGot), "resolved a trace that was not requested")
 
 			if tt.wantNilTags {
-				for _, r := range pushGot {
-					require.Nil(t, r.Tags, "push path must produce nil Tags for empty projection")
-				}
 				for _, r := range pullGot {
-					require.Nil(t, r.Tags, "pull path must produce nil Tags for empty projection")
+					require.Nil(t, r.Tags, "must produce nil Tags for empty projection")
 				}
-			}
-
-			if diff := cmp.Diff(pushGot, pullGot, protocmp.Transform()); diff != "" {
-				t.Errorf("push vs pull lookup mismatch (-push +pull):\n%s", diff)
 			}
 		})
 	}
 }
 
-// TestVectorizedParityOrderMode verifies that the push and pull paths return
-// byte-identical model.TraceResult sequences for order mode (ASC and DESC).
-func TestVectorizedParityOrderMode(t *testing.T) {
+// TestVectorizedOrderMode pins the vectorized order-mode result: the traces come
+// back in the SIDX key order (ASC and DESC), and MaxTraceSize caps the
+// materialized set to the sorted top-N rather than truncating arbitrarily.
+func TestVectorizedOrderMode(t *testing.T) {
 	tst, cleanup := newParityTSTable(t, tsTS1)
 	defer cleanup()
 
@@ -300,8 +260,6 @@ func TestVectorizedParityOrderMode(t *testing.T) {
 			sids := make([]common.SeriesID, len(tt.traceIDs))
 			partIDs := make([]uint64, len(tt.traceIDs))
 
-			// Push (StreamingQuery) and pull (QuerySync) share one response slice so
-			// they always use identical data and cannot drift if either path is rewired.
 			sharedResp := []*sidx.QueryResponse{
 				{Keys: tt.keys, Data: respData, SIDs: sids, PartIDs: partIDs},
 			}
@@ -310,28 +268,20 @@ func TestVectorizedParityOrderMode(t *testing.T) {
 				syncResponses: sharedResp,
 			}
 
-			pushRes := pushOrderResult(ctx, tr, tables, qo, fakeSIDXInst, req, tt.maxTraceSize)
-			defer pushRes.Release()
-			pushGot := collectResults(t, pushRes)
-
 			pullRes, pullErr := pullOrderResult(ctx, tr, tables, qo, fakeSIDXInst, req, tt.maxTraceSize)
 			require.NoError(t, pullErr)
 			defer pullRes.Release()
 			pullGot := collectResults(t, pullRes)
 
-			// The pull path caps the materialized set at MaxTraceSize; the push path streams
-			// all matches (the outer traceLimit caps it in production). With no cap the two
-			// are identical; with a cap the pull result is the sorted MaxTraceSize-prefix.
+			// MaxTraceSize (= offset+limit) caps the materialized trace set to the sorted
+			// top-N; tt.traceIDs is already listed in the sort direction under test, so the
+			// expectation is its MaxTraceSize-prefix.
 			wantPull := tt.wantCount
 			if tt.wantPullCount > 0 {
 				wantPull = tt.wantPullCount
 			}
-			require.Len(t, pushGot, tt.wantCount, "push path result count")
-			require.Len(t, pullGot, wantPull, "pull path result count")
-
-			if diff := cmp.Diff(pushGot[:wantPull], pullGot, protocmp.Transform()); diff != "" {
-				t.Errorf("pull path must equal the sorted MaxTraceSize-prefix of push (-push +pull):\n%s", diff)
-			}
+			require.Len(t, pullGot, wantPull, "result count")
+			require.Equal(t, tt.traceIDs[:wantPull], traceIDsOf(pullGot), "traces not returned in sort-key order")
 		})
 	}
 }
@@ -466,10 +416,10 @@ func TestVectorizedTracingSpansAC7(t *testing.T) {
 	require.Contains(t, allMsgs, "scan-blocks", "AC7: pull path must emit scan-blocks span")
 }
 
-// TestVectorizedTTLExpiredParity verifies AC9: when TTL-expired segment filtering
-// produces an empty tables slice (as SelectSegments returns nothing for expired data),
-// both push and pull paths return zero results identically.
-func TestVectorizedTTLExpiredParity(t *testing.T) {
+// TestVectorizedTTLExpired verifies AC9: when TTL-expired segment filtering
+// produces an empty tables slice (as SelectSegments returns nothing for expired
+// data), the vectorized path returns zero results rather than erroring.
+func TestVectorizedTTLExpired(t *testing.T) {
 	tr := newParityTrace()
 	ctx := context.Background()
 	qo := queryOptions{
@@ -481,15 +431,9 @@ func TestVectorizedTTLExpiredParity(t *testing.T) {
 	// Empty tables simulates all segments being TTL-expired (SelectSegments returned nothing).
 	emptyTables := []*tsTable{}
 
-	pushRes := pushLookupResult(ctx, tr, emptyTables, qo, traceIDs, 0)
-	defer pushRes.Release()
-	pushGot := collectResults(t, pushRes)
-
 	pullRes, pullErr := pullLookupResult(ctx, tr, emptyTables, qo, traceIDs, 0)
 	require.NoError(t, pullErr)
 	defer pullRes.Release()
-	pullGot := collectResults(t, pullRes)
 
-	require.Empty(t, pushGot, "push path must return no results for TTL-expired (empty) tables")
-	require.Empty(t, pullGot, "pull path must return no results for TTL-expired (empty) tables")
+	require.Empty(t, collectResults(t, pullRes), "must return no results for TTL-expired (empty) tables")
 }
