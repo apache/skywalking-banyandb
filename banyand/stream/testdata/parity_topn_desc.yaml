@@ -1,0 +1,27 @@
+# Golden expectation captured from the ROW query path (stream.Query ->
+# BuildElementsFromStreamResult) on branch rowdrop/base, before the row path was
+# removed (apache/skywalking#13998). It cannot be re-captured afterwards.
+#
+# Normalization, forced by the fixture generator:
+#   ts   - nanosecond offset from the query time range start. generateData anchors
+#          element timestamps at time.Now(), so absolute timestamps differ per run.
+#   tags - only entity-tag is recorded. The sibling filter-tag is drawn from
+#          crypto/rand per run (benchmark_test.go generateRandomNumber), so its
+#          value is not reproducible and no golden can pin it.
+# Element order is as the row path returned it.
+name: parity_topn_desc
+cases:
+  - name: desc
+    query: fixture{ts=100,series=1} order=ts-desc max=10
+    element_count: 10
+    elements:
+      - {id: 653cbe3860b2f8b8, ts: 99000000000, entity-tag: entity1}
+      - {id: bae7b044cf1f3238, ts: 98000000000, entity-tag: entity1}
+      - {id: e6c327a35bc00991, ts: 97000000000, entity-tag: entity1}
+      - {id: 25faf71b4e2c9b9b, ts: 96000000000, entity-tag: entity1}
+      - {id: d2688b2e323a5e6c, ts: 95000000000, entity-tag: entity1}
+      - {id: cfb0945e07a4b99e, ts: 94000000000, entity-tag: entity1}
+      - {id: 2897044e46e6b512, ts: 93000000000, entity-tag: entity1}
+      - {id: ab77a7816f6952ba, ts: 92000000000, entity-tag: entity1}
+      - {id: 79f4994c063b03fe, ts: 91000000000, entity-tag: entity1}
+      - {id: e4346756ceb39846, ts: 90000000000, entity-tag: entity1}
