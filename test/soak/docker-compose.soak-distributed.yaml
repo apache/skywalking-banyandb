@@ -20,8 +20,7 @@
 # The standalone compose (docker-compose.soak.yaml) cannot exercise the native
 # columnar wire frame at all: a data node only emits a frame when it is
 # distributed (streamVecEmitAsFrame requires `distributed`), so a single-node
-# run always falls back to protobuf however the vectorized flags are set. This
-# file exists to close that gap — the frame is encoded on the data nodes,
+# run always falls back to protobuf. This file exists to close that gap — the frame is encoded on the data nodes,
 # crosses a real gRPC hop, and is decoded and merged on the liaison.
 #
 # Two data nodes is the minimum that exercises the cross-node k-way merge,
@@ -29,8 +28,7 @@
 # distributed integration suite uses.
 #
 # Usage (driven by scripts/soak-vectorized.sh with SOAK_TOPOLOGY=distributed):
-#   BANYANDB_VEC_ENABLED=false docker compose -f docker-compose.soak-distributed.yaml up -d
-#   BANYANDB_VEC_ENABLED=true  docker compose -f docker-compose.soak-distributed.yaml up -d
+#   docker compose -f docker-compose.soak-distributed.yaml up -d
 #
 # No host ports are published for the nodes. The driver reaches them by service
 # name over the soak network, which keeps the stack from colliding with any
@@ -52,12 +50,6 @@ services:
         condition: service_healthy
     command:
       - liaison
-      # The liaison's own vectorized flags set its per-process wire mode, which
-      # is what lets it DECODE a frame. A liaison that is flag-off cannot read a
-      # frame body at all — the ordering rule in docs/operation/upgrade.md.
-      - --measure-vectorized-enabled=${BANYANDB_VEC_ENABLED:-true}
-      - --trace-vectorized-enabled=${BANYANDB_VEC_ENABLED:-true}
-      - --stream-vectorized-enabled=${BANYANDB_VEC_ENABLED:-true}
       - --observability-modes=prometheus
       - --observability-listener-addr=:2121
       - --node-discovery-mode=file
@@ -89,9 +81,6 @@ services:
     user: "${SOAK_UID:-1000}:${SOAK_GID:-1000}"
     command:
       - data
-      - --measure-vectorized-enabled=${BANYANDB_VEC_ENABLED:-true}
-      - --trace-vectorized-enabled=${BANYANDB_VEC_ENABLED:-true}
-      - --stream-vectorized-enabled=${BANYANDB_VEC_ENABLED:-true}
       - --observability-modes=prometheus
       - --observability-listener-addr=:2121
       - --node-discovery-mode=file

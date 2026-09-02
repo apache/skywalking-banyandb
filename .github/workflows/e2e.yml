@@ -50,23 +50,12 @@ jobs:
           tag: ${{ github.sha }}
 
   StoragePlugins:
-    name: ${{ matrix.test.name }}${{ matrix.engine.suffix }}
+    name: ${{ matrix.test.name }}
     runs-on: ${{ matrix.test.runs-on || 'ubuntu-latest' }}
     timeout-minutes: 90
     needs: [DockerImage]
     strategy:
       fail-fast: false
-      # Two-dimensional matrix: (suite × engine). The `engine` axis pivots
-      # every suite into a (row, vec) pair without literal duplication. The
-      # row variant keeps the historical CI label (empty suffix); the vec
-      # variant appends " Vec" so existing dashboards/regex over job names
-      # keep matching.
-      #
-      # BANYANDB_DEPLOYMENT_FILE is consumed only by the Rover
-      # e2e-banyandb.yaml. It is exported by the "Set env var" step below
-      # (conditional on matrix.test.name=='Rover...' && engine.suffix==' Vec')
-      # rather than via matrix.engine.env so it does not bloat the
-      # skywalking-infra-e2e log directory name past Linux NAME_MAX=255.
       matrix:
         test:
           - name: Storage
@@ -89,11 +78,6 @@ jobs:
           # TODO: Enable Lifecycle test when it is ready
           # - name: Lifecycle
           #   config: test/e2e-v2/cases/lifecycle/e2e.yaml
-        engine:
-          - suffix: ""
-          - suffix: " Vec"
-            env: |
-              BANYANDB_MEASURE_VECTORIZED_FLAGS=--measure-vectorized-enabled=true
     env:
       TAG: ${{ github.sha }}
     steps:
@@ -124,18 +108,10 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Set env var
         run: |
-          echo "${{ matrix.engine.env }}" >> $GITHUB_ENV
-          # Suite-specific env is set here rather than via matrix.test.env
-          # to keep the skywalking-infra-e2e log directory name (built from
-          # the full matrix object) under Linux NAME_MAX=255 — particularly
-          # for the Rover Vec cell, which previously overflowed.
           case "${{ matrix.test.name }}" in
             "Rover eBPF"*)
               echo "ISTIO_VERSION=1.28.0" >> $GITHUB_ENV
               echo "KUBERNETES_VERSION=28" >> $GITHUB_ENV
-              if [[ "${{ matrix.engine.suffix }}" == " Vec" ]]; then
-                echo "BANYANDB_DEPLOYMENT_FILE=test/e2e-v2/cases/rover/process/istio/banyandb/banyandb-deployment-vec.yaml" >> $GITHUB_ENV
-              fi
               ;;
           esac
       - name: Generate data for lifecycle

@@ -21,7 +21,7 @@
 # Configuration (set as env vars before running):
 #   SOAK_ENGINE         – engine to test: measure|trace (default measure)
 #   WARMUP_MIN          – minutes OAP has to write data before baseline snapshot (default 60)
-#   SOAK_HOURS          – duration of the vec-on Phase 1 run in hours (default 48)
+#   SOAK_HOURS          – duration of the Phase 1 soak run in hours (default 48)
 #   PPROF_INTERVAL_MIN  – minutes between each pprof capture (default 30)
 #   PARITY_INTERVAL_MIN – minutes between each replay-and-diff run (default 5)
 #   SMOKE               – set to 1 for a quick ~30-min smoke run (overrides durations)
@@ -307,11 +307,10 @@ if [[ "${SOAK_ENGINE}" == "trace" || "${SOAK_ENGINE}" == "stream" ]]; then
 # ║  TRACE/STREAM ENGINE — Instrument 1 (containerized correctness + survival)║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 # This branch is engine-parameterized: everything is driven by ${SOAK_ENGINE}
-# (trace|stream), the ${ENGINE_CATALOG} catalog, and the ${VEC_FLAG} vec flag,
-# so the identical two-phase parity orchestration serves both engines.
+# (trace|stream) and the ${ENGINE_CATALOG} catalog, so the identical two-phase
+# orchestration serves both engines.
 ENGINE="${SOAK_ENGINE}"
 ENGINE_CATALOG="/catalog/${ENGINE}.json"
-VEC_FLAG="--${ENGINE}-vectorized-enabled=true"
 # Engine-specific seed args: trace tunes spans/trace; stream tunes series/elements.
 if [[ "${ENGINE}" == "trace" ]]; then
   SEED_ARGS=( ${SOAK_TRACE_SPANS_PER_TRACE:+--spans "${SOAK_TRACE_SPANS_PER_TRACE}"} )
@@ -333,7 +332,7 @@ log "soak-driver image built."
 # Build banyand from the current source tree too. `compose up` reuses any
 # cached image and will NOT rebuild on source changes, so without an explicit
 # build Phase 0 can boot a stale binary that lacks new flags and dies with
-# "unknown flag: --trace-vectorized-enabled". Build once; both phases reuse it.
+# "unknown flag". Build once; both phases reuse it.
 log "Building banyand container image (current source)..."
 compose_cmd build "${BANYANDB_UP_SERVICE}"
 log "banyand image built."
@@ -347,8 +346,8 @@ DRIVER_IMAGE_DIGEST=$(docker inspect \
 DRIVER_IMAGE_DIGEST="${DRIVER_IMAGE_DIGEST:-unknown}"
 log "soak-driver image digest: ${DRIVER_IMAGE_DIGEST}"
 
-# ── PHASE 0 — Baseline (vec-off) ───────────────────────────────────────
-log "=== ${SOAK_ENGINE} PHASE 0: Baseline (BANYANDB_VEC_ENABLED=false) ==="
+# ── PHASE 0 — Baseline ─────────────────────────────────────────────────
+log "=== ${SOAK_ENGINE} PHASE 0: Baseline ==="
 
 # Phase 0 MUST start from an empty data dir. The dir is a host bind mount, so
 # `compose down -v` (which only drops volumes) leaves it behind: a previous run's
@@ -361,7 +360,7 @@ for d in "${DATA_DIRS[@]}"; do
   rm -rf "${d:?}"/*
 done
 
-SOAK_DATA_DIR="${DATA_DIR}" BANYANDB_VEC_ENABLED=false compose_cmd up -d "${BANYANDB_UP_SERVICE}"
+SOAK_DATA_DIR="${DATA_DIR}" compose_cmd up -d "${BANYANDB_UP_SERVICE}"
 wait_banyandb_container_healthy
 
 # Record BanyanDB container image digest.
@@ -433,8 +432,8 @@ trap - EXIT
 compose_cmd down -v --remove-orphans
 trap cleanup INT TERM EXIT
 
-# ── PHASE 1 — Soak (vec-on) ────────────────────────────────────────────
-log "=== ${SOAK_ENGINE} PHASE 1: Soak (BANYANDB_VEC_ENABLED=true, duration=${SOAK_HOURS}h) ==="
+# ── PHASE 1 — Soak ─────────────────────────────────────────────────────
+log "=== ${SOAK_ENGINE} PHASE 1: Soak (duration=${SOAK_HOURS}h) ==="
 
 log "Restoring data snapshot..."
 rm -rf "${DATA_DIR:?}"/*
@@ -445,23 +444,11 @@ for d in "${DATA_DIRS[@]}"; do
   cp -a "${SNAPSHOT_DIR}/${sub}/." "${d}/"
 done
 
-SOAK_DATA_DIR="${DATA_DIR}" BANYANDB_VEC_ENABLED=true compose_cmd up -d "${BANYANDB_UP_SERVICE}"
+SOAK_DATA_DIR="${DATA_DIR}" compose_cmd up -d "${BANYANDB_UP_SERVICE}"
 wait_banyandb_container_healthy
 
-# Gate: verify the container actually honored --trace-vectorized-enabled=true.
-# The parity-clean S=20 fixture yields identical vec-on/vec-off output by
-# design, so this check is load-bearing. banyand does not echo its flags to the
-# log, so inspect the running container's actual command args instead of grepping
-# the log (the log grep is a guaranteed false negative).
-log "Checking vec-flag-honored via container args..."
-VEC_FLAG_HONORED=false
-if docker inspect "${BANYANDB_CONTAINER_NAME}" --format '{{json .Args}}' 2>/dev/null | grep -q -- "${VEC_FLAG}"; then
-  VEC_FLAG_HONORED=true
-fi
-log "Vec flag honored: ${VEC_FLAG_HONORED}"
-
-# Phase -1 (distributed only): the flag being honored proves the vec COMPUTE
-# path is on; it does NOT prove the columnar frame is on the wire. Drive one
+# Phase -1 (distributed only): the vectorized engine is the only query engine,
+# but that does NOT prove the columnar frame is on the wire. Drive one
 # replay so there is traffic to observe, then gate on the frame counters and
 # abort before committing the soak window if they are flat.
 if [[ "${SOAK_TOPOLOGY}" == "distributed" ]]; then
@@ -680,7 +667,6 @@ cat > "${DIST}/summary.json" <<EOF
   "soak_hours": ${SOAK_HOURS},
   "t1_ms": ${T1_MS},
   "final_parity_pass": ${FINAL_PASS},
-  "vec_flag_honored": ${VEC_FLAG_HONORED},
   "topology": "${SOAK_TOPOLOGY}",
   "frames_encoded": ${FRAME_ENCODED:-0},
   "frames_decoded": ${FRAME_DECODED:-0},
@@ -720,11 +706,11 @@ log "soak-driver built at bin/soak-driver"
 log "Config: WARMUP_MIN=${WARMUP_MIN} SOAK_HOURS=${SOAK_HOURS} PPROF_INTERVAL_MIN=${PPROF_INTERVAL_MIN} PARITY_INTERVAL_MIN=${PARITY_INTERVAL_MIN}"
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
-# ║  PHASE 0 — Baseline (vec-off)                                          ║
+# ║  PHASE 0 — Baseline                                                      ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
-log "=== PHASE 0: Baseline (BANYANDB_VEC_ENABLED=false) ==="
+log "=== PHASE 0: Baseline ==="
 
-SOAK_DATA_DIR="${DATA_DIR}" BANYANDB_VEC_ENABLED=false compose_cmd up -d
+SOAK_DATA_DIR="${DATA_DIR}" compose_cmd up -d
 wait_banyandb_healthy
 
 log "Waiting for OAP to become healthy (schema install + agent chain)..."
@@ -792,15 +778,15 @@ compose_cmd down -v --remove-orphans
 trap cleanup INT TERM EXIT
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
-# ║  PHASE 1 — Soak (vec-on)                                               ║
+# ║  PHASE 1 — Soak                                                          ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
-log "=== PHASE 1: Soak (BANYANDB_VEC_ENABLED=true, duration=${SOAK_HOURS}h) ==="
+log "=== PHASE 1: Soak (duration=${SOAK_HOURS}h) ==="
 
 log "Restoring data snapshot..."
 rm -rf "${DATA_DIR:?}"/*
 cp -a "${SNAPSHOT_DIR}/." "${DATA_DIR}/"
 
-SOAK_DATA_DIR="${DATA_DIR}" BANYANDB_VEC_ENABLED=true compose_cmd up -d
+SOAK_DATA_DIR="${DATA_DIR}" compose_cmd up -d
 wait_banyandb_healthy
 
 # Initial pprof grab.
