@@ -232,7 +232,7 @@ func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan lo
 	// so the send path passes it through and the liaison decodes it. The liaison
 	// applies the global offset/limit slice, so the data node emits the whole
 	// (already per-node-capped) batch set — no slice here.
-	if !hasFilter && streamVecEmitAsFrame(p.distributed, data.StreamWireModeRaw(), traced) {
+	if !hasFilter && !vecExec.HidesOrderTag() && streamVecEmitAsFrame(p.distributed, data.StreamWireModeRaw(), traced) {
 		merged, mergeErr := mergeStreamBatches(schema, batches)
 		if mergeErr != nil {
 			p.log.Error().Err(mergeErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to merge the vectorized stream batches")

@@ -802,3 +802,92 @@ func buildIndexOrderStream(t *testing.T) (*stream, timestamp.TimeRange) {
 	s.tsdb.Store(db)
 	return s, timestamp.NewInclusiveTimeRange(time.Unix(0, minTS), time.Unix(0, maxTS))
 }
+
+// runVecHiddenOrderTag mirrors localIndexScan.ExecuteVectorized for an index-order
+// query whose ordered tag is NOT in the client projection: the scan is asked for
+// scanProjection (client tags + the ordered tag) so the OrderKey column can be
+// populated, and the egress materializes only clientProjection, so the ordered tag
+// never reaches the result.
+func runVecHiddenOrderTag(ctx context.Context, t *testing.T, s *stream, sqo model.StreamQueryOptions,
+	scanProjection, clientProjection []model.TagProjection, desc bool,
+) []*streamv1.Element {
+	t.Helper()
+	scanSQO := sqo
+	scanSQO.TagProjection = scanProjection
+	src, err := s.queryVectorized(ctx, scanSQO)
+	require.NoError(t, err)
+	require.NotNil(t, src)
+	schema := src.Schema()
+	pipeline, err := vstream.BuildStreamMergePipeline(
+		&testVecSource{src: src, schema: schema}, schema, desc, 0, math.MaxUint32, vstream.DefaultConfig().BatchSize, 0)
+	require.NoError(t, err)
+	require.NoError(t, pipeline.Init(ctx))
+	var batches []*vectorized.RecordBatch
+	for {
+		batch, nextErr := pipeline.Next(ctx)
+		require.NoError(t, nextErr)
+		if batch == nil {
+			break
+		}
+		batches = append(batches, batch)
+	}
+	elems, err := BuildElementsFromBatches(batches, clientProjection)
+	require.NoError(t, err)
+	require.NoError(t, pipeline.Close())
+	return elems
+}
+
+// TestQueryVectorized_Parity_IndexOrder_TagNotProjected covers the R-1 gap: an
+// index-order query whose ordered tag is absent from the projection. Vec derives
+// its OrderKey from the ordered tag's projected cell, so such a query used to fall
+// back to the row path; it now projects the tag internally and strips it before
+// egress. The row path (which sorts via the inverted index regardless of
+// projection) is the oracle for the resulting element ORDER. The fixture makes
+// index order the reverse of timestamp order, so a silent timestamp fallback — the
+// exact failure this closes — cannot pass.
+func TestQueryVectorized_Parity_IndexOrder_TagNotProjected(t *testing.T) {
+	indexRule := &databasev1.IndexRule{
+		Metadata: &commonv1.Metadata{Name: "filter-idx", Id: indexOrderRuleID},
+		Tags:     []string{"filter-tag"},
+	}
+	s, tr := buildIndexOrderStream(t)
+	ctx := context.Background()
+	// One series, so the order key has no cross-series ties and both paths produce
+	// the same deterministic total order.
+	entities := parityEntities(1)
+	clientProjection := []model.TagProjection{{Family: "benchmark-family", Names: []string{"entity-tag"}}}
+	scanProjection := []model.TagProjection{{Family: "benchmark-family", Names: []string{"entity-tag", "filter-tag"}}}
+
+	for _, tc := range []struct {
+		name string
+		sort modelv1.Sort
+	}{
+		{name: "index-order-asc", sort: modelv1.Sort_SORT_ASC},
+		{name: "index-order-desc", sort: modelv1.Sort_SORT_DESC},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sqo := model.StreamQueryOptions{
+				Name:           "benchmark",
+				TimeRange:      &tr,
+				Entities:       entities,
+				TagProjection:  clientProjection,
+				Order:          &index.OrderBy{Index: indexRule, Sort: tc.sort},
+				MaxElementSize: math.MaxInt32,
+			}
+			rowElements := runRowPath(ctx, t, s, sqo)
+			require.Len(t, rowElements, indexOrderTSCount, "row index-sort produced an unexpected element count")
+			vecElements := runVecHiddenOrderTag(ctx, t, s, sqo, scanProjection, clientProjection,
+				tc.sort == modelv1.Sort_SORT_DESC)
+
+			assertExactParity(t, rowElements, vecElements)
+			for _, e := range vecElements {
+				require.Len(t, e.TagFamilies, 1)
+				require.Len(t, e.TagFamilies[0].Tags, 1, "the ordered tag must not reach the egress")
+				require.Equal(t, "entity-tag", e.TagFamilies[0].Tags[0].Key)
+			}
+			// The fixture's sort value decreases as ts increases, so index order is
+			// the reverse of ts order — a timestamp fallback would fail here.
+			assertMonotonicTS(t, vecElements, tc.sort == modelv1.Sort_SORT_ASC)
+		})
+	}
+}

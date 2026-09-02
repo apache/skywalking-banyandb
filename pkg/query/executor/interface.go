@@ -84,6 +84,11 @@ type StreamVecExecutable interface {
 	// ProjectionTags returns the projected tag families/names in projection order,
 	// so the egress builds the same tag families/tags the row path would.
 	ProjectionTags() []model.TagProjection
+	// HidesOrderTag reports whether the scan requests an ordered tag that is absent
+	// from ProjectionTags(). The columnar frame egress rebuilds the projection from
+	// the batch schema, so such a scan must take the proto egress or the hidden tag
+	// leaks into the result.
+	HidesOrderTag() bool
 }
 
 // MeasureExecutionContext allows retrieving data through the measure module.
