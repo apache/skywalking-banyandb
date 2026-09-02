@@ -39,14 +39,13 @@ import (
 
 // Vec independent verification on a standalone process.
 //
-// Boots a *separate* standalone with --measure-vectorized-enabled=true and
-// replays the same Measure / TopN test entries the row-path integration
-// suite already covers in suite_test.go. Each case asserts the row-path's
-// expected output, so every greenness here is an INDEPENDENT verification
-// that vec produces the same reference InternalDataPoints on its own
-// merits — not a row-vec same-process diff, but vec running against the
-// reference yaml the row path agreed with first. The cluster is fresh
-// and isolated so neither side observes the other's state.
+// Boots a *separate*, freshly-written standalone and replays the same Measure
+// / TopN test entries the on-disk suite in round2.go covers after a restart.
+// Each case asserts the committed reference yaml, so every greenness here is
+// an INDEPENDENT verification that vec produces the same InternalDataPoints
+// on its own merits. The cluster is fresh and isolated so neither side
+// observes the other's state, and the data is queried before it has been
+// through a restart cycle.
 //
 // This is the standalone twin of test/integration/distributed/query/
 // vectorized_test.go. Together they satisfy the directive that integration
@@ -73,8 +72,7 @@ var _ = ginkgo.Describe("vec independent verification (standalone)", ginkgo.Orde
 		stopFn         func()
 		// Snapshot dispatch counters so the AfterAll can compute the
 		// delta this Describe's specs produced.
-		startHandledCount     int64
-		startFellThroughCount int64
+		startHandledCount int64
 		// Save the package-global SharedContexts so AfterAll can restore
 		// them. Sibling Describes may run *between* this AfterAll and the
 		// next BeforeAll (e.g. the top-level "TopN Tests" / "Scanning
@@ -93,7 +91,6 @@ var _ = ginkgo.Describe("vec independent verification (standalone)", ginkgo.Orde
 		// hitting the flag-on raw-frame guard for its own responses.
 		savedWireModeRaw = data.MeasureWireModeRaw()
 		startHandledCount = vecplan.HandledCount()
-		startFellThroughCount = vecplan.FellThroughCount()
 		path, diskCleanupFn, pathErr := test.NewSpace()
 		gomega.Expect(pathErr).NotTo(gomega.HaveOccurred())
 		ports, portsErr := test.AllocateFreePorts(5)
@@ -102,9 +99,7 @@ var _ = ginkgo.Describe("vec independent verification (standalone)", ginkgo.Orde
 		gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
 		dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
 		config := setup.PropertyClusterConfig(dfWriter)
-		addr, _, closeFn := setup.ClosableStandalone(config, path, ports,
-			"--measure-vectorized-enabled=true",
-		)
+		addr, _, closeFn := setup.ClosableStandalone(config, path, ports)
 		stopFn = func() {
 			closeFn()
 			diskCleanupFn()
@@ -140,11 +135,8 @@ var _ = ginkgo.Describe("vec independent verification (standalone)", ginkgo.Orde
 		// vec subsystem is silently 0%-covered — either the dispatch
 		// eligibility gate is too tight or the wire-up regressed.
 		handledDelta := vecplan.HandledCount() - startHandledCount
-		fellThroughDelta := vecplan.FellThroughCount() - startFellThroughCount
 		ginkgo.GinkgoWriter.Printf(
-			"vec dispatch (standalone): handled=%d fell_through=%d (deltas across vec-standalone table)\n",
-			handledDelta, fellThroughDelta,
-		)
+			"vec dispatch (standalone): handled=%d (delta across the vec-standalone table)\n", handledDelta)
 		gomega.Expect(handledDelta).To(gomega.BeNumerically(">", int64(0)),
 			"vec dispatch did not fire for any case in the vec-standalone table; "+
 				"either the eligibility gate is too tight or processor.go's tryVecDispatch regressed")
