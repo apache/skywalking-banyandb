@@ -55,9 +55,9 @@ services:
       # The liaison's own vectorized flags set its per-process wire mode, which
       # is what lets it DECODE a frame. A liaison that is flag-off cannot read a
       # frame body at all — the ordering rule in docs/operation/upgrade.md.
-      - --measure-vectorized-enabled=${BANYANDB_VEC_ENABLED:-false}
-      - --trace-vectorized-enabled=${BANYANDB_VEC_ENABLED:-false}
-      - --stream-vectorized-enabled=${BANYANDB_VEC_ENABLED:-false}
+      - --measure-vectorized-enabled=${BANYANDB_VEC_ENABLED:-true}
+      - --trace-vectorized-enabled=${BANYANDB_VEC_ENABLED:-true}
+      - --stream-vectorized-enabled=${BANYANDB_VEC_ENABLED:-true}
       - --observability-modes=prometheus
       - --observability-listener-addr=:2121
       - --node-discovery-mode=file
@@ -89,9 +89,9 @@ services:
     user: "${SOAK_UID:-1000}:${SOAK_GID:-1000}"
     command:
       - data
-      - --measure-vectorized-enabled=${BANYANDB_VEC_ENABLED:-false}
-      - --trace-vectorized-enabled=${BANYANDB_VEC_ENABLED:-false}
-      - --stream-vectorized-enabled=${BANYANDB_VEC_ENABLED:-false}
+      - --measure-vectorized-enabled=${BANYANDB_VEC_ENABLED:-true}
+      - --trace-vectorized-enabled=${BANYANDB_VEC_ENABLED:-true}
+      - --stream-vectorized-enabled=${BANYANDB_VEC_ENABLED:-true}
       - --observability-modes=prometheus
       - --observability-listener-addr=:2121
       - --node-discovery-mode=file

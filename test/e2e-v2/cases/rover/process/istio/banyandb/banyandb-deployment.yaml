@@ -36,8 +36,8 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - standalone
-            - --measure-vectorized-enabled=false
-            - --trace-vectorized-enabled=false
+            - --measure-vectorized-enabled=true
+            - --trace-vectorized-enabled=true
           ports:
             - name: grpc
               containerPort: 17912
