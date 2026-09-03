@@ -23,7 +23,6 @@ import (
 	"os"
 	"sort"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -66,7 +65,7 @@ func TestDistributedQueryBench(t *testing.T) {
 	runSingleShotScenario(t, cfg)
 }
 
-// runSingleShotScenario boots one cluster (row or vec), writes the data set
+// runSingleShotScenario boots one cluster, writes the data set
 // at the configured cardinality, runs the timed phase of one scenario, and
 // persists the result as a shard JSON. Each invocation is a fresh Go process
 // so the captured heap and CPU profiles describe only this combo.
@@ -75,7 +74,7 @@ func runSingleShotScenario(t *testing.T, cfg Config) {
 		t.Fatalf("initialize logger: %v", initErr)
 	}
 	gomega.RegisterTestingT(t)
-	cluster, base, clusterErr := startBenchCluster(t, cfg, cfg.Mode == modeVec)
+	cluster, base, clusterErr := startBenchCluster(t, cfg)
 	if clusterErr != nil {
 		t.Fatalf("start cluster: %v", clusterErr)
 	}
@@ -100,9 +99,8 @@ func runSingleShotScenario(t *testing.T, cfg Config) {
 		shardPath, cfg.Engine, cfg.Mode, cfg.Scenario, cfg.Cardinality, result.ResponseRows, result.ResponseTraces, result.ResponseSpans, result.QPS)
 }
 
-// runMergeShards reads every shard the orchestrator produced, computes vec
-// correctness against its row counterpart, builds the unified report, and
-// fails the test if any vec result diverges from its row baseline.
+// runMergeShards reads every shard the orchestrator produced and builds the
+// unified report.
 func runMergeShards(t *testing.T, cfg Config) {
 	results, readErr := readShards(cfg.ReportDir)
 	if readErr != nil {
@@ -122,63 +120,14 @@ func runMergeShards(t *testing.T, cfg Config) {
 		if a.variantKey() != b.variantKey() {
 			return a.variantKey() < b.variantKey()
 		}
-		if a.Mode != b.Mode {
-			return a.Mode == modeRow
-		}
 		return false
 	})
-	type comboKey struct {
-		scenario    Scenario
-		variant     string
-		cardinality int
-	}
-	rowByCombo := make(map[comboKey]Result, len(results)/2+1)
-	for _, r := range results {
-		if r.Mode == modeRow {
-			rowByCombo[comboKey{scenario: r.Scenario, cardinality: r.Cardinality, variant: r.variantKey()}] = r
-		}
-	}
-	var correctnessErrs []string
-	for i := range results {
-		if results[i].Mode != modeVec {
-			continue
-		}
-		rowResult, ok := rowByCombo[comboKey{scenario: results[i].Scenario, cardinality: results[i].Cardinality, variant: results[i].variantKey()}]
-		if !ok {
-			results[i].Correctness = "no row counterpart"
-			correctnessErrs = append(correctnessErrs,
-				fmt.Sprintf("scenario=%s cardinality=%d variant=%s: vec shard without matching row shard",
-					results[i].Scenario, results[i].Cardinality, results[i].variantKey()))
-			continue
-		}
-		verdict := compareModeResults(rowResult, results[i], cfg.SmallExactRows)
-		results[i].Correctness = verdict
-		if verdict == "matched" || verdict == "matched rows; sampled hash differs for large result" {
-			continue
-		}
-		if rowResult.Error != "" || results[i].Error != "" {
-			continue
-		}
-		// Dump prototext samples so the source of a hash divergence
-		// (TagFamily order, oneof variant, missing field) is visible in
-		// the test log without a follow-up instrumentation pass.
-		t.Logf("=== sample dump for scenario=%s cardinality=%d variant=%s ===", results[i].Scenario, results[i].Cardinality, results[i].variantKey())
-		t.Logf("--- row sample DataPoint ---\n%s", rowResult.SampleDataPointText)
-		t.Logf("--- vec sample DataPoint ---\n%s", results[i].SampleDataPointText)
-		t.Logf("--- row sample Trace ---\n%s", rowResult.SampleTraceText)
-		t.Logf("--- vec sample Trace ---\n%s", results[i].SampleTraceText)
-		correctnessErrs = append(correctnessErrs,
-			fmt.Sprintf("scenario=%s cardinality=%d variant=%s: %s", results[i].Scenario, results[i].Cardinality, results[i].variantKey(), verdict))
-	}
 	report := newReportFromShards(cfg, results)
 	jsonPath, mdPath, reportErr := writeReport(report, cfg.ReportDir)
 	if reportErr != nil {
 		t.Fatalf("write merged report: %v", reportErr)
 	}
 	t.Logf("merged report: json=%s markdown=%s", jsonPath, mdPath)
-	if len(correctnessErrs) > 0 {
-		t.Fatalf("correctness failures:\n%s", strings.Join(correctnessErrs, "\n"))
-	}
 }
 
 // runScenarioBenchmark drives warmup + timed queries for a single scenario
@@ -234,9 +183,8 @@ func runScenarioBenchmark(ctx context.Context, conn *grpc.ClientConn, cfg Config
 }
 
 // startBenchCluster brings up a local distributed cluster in-process. Measure
-// runs use two data nodes; trace runs use DQB_DATA_NODES. When vectorized is
-// true every node is started with the selected engine's vectorized flag.
-func startBenchCluster(t *testing.T, cfg Config, vectorized bool) (benchCluster, time.Time, error) {
+// runs use two data nodes; trace runs use DQB_DATA_NODES.
+func startBenchCluster(t *testing.T, cfg Config) (benchCluster, time.Time, error) {
 	t.Helper()
 	savedWireModeRaw := data.MeasureWireModeRaw()
 	tmpDir, cleanup, spaceErr := test.NewSpace()
@@ -245,7 +193,7 @@ func startBenchCluster(t *testing.T, cfg Config, vectorized bool) (benchCluster,
 	}
 	dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
 	config := setup.PropertyClusterConfig(dfWriter)
-	flags := clusterFlags(cfg, vectorized)
+	flags := clusterFlags(cfg)
 	dataNodeCount := 2
 	if cfg.Engine == engineTrace {
 		dataNodeCount = cfg.DataNodes
@@ -308,44 +256,9 @@ func startBenchCluster(t *testing.T, cfg Config, vectorized bool) (benchCluster,
 	return benchCluster{conn: conn, close: closeFn}, base, nil
 }
 
-func clusterFlags(cfg Config, vectorized bool) []string {
+func clusterFlags(cfg Config) []string {
 	if cfg.Engine == engineTrace {
-		// The row-based trace query path was removed in 0.12.0, so both modes run
-		// vec: --trace-vectorized-enabled=false now aborts node startup.
-		return []string{"--trace-vectorized-enabled=true", fmt.Sprintf("--trace-vectorized-query-memory-mib=%d", cfg.QueryMemoryMiB)}
+		return []string{fmt.Sprintf("--trace-vectorized-query-memory-mib=%d", cfg.QueryMemoryMiB)}
 	}
-	// The measure engine has no row mode left to compare against (see
-	// apache/skywalking#13998), so Config.Validate rejects mode=row for it
-	// and there is no flag to pass.
 	return nil
-}
-
-// compareModeResults reports whether a vec result matches its row baseline.
-// Small results (<= exactRowsLimit rows) require exact response hash equality;
-// larger scans accept matching row counts with a sampled-hash mismatch since
-// sample order can drift legitimately across modes.
-func compareModeResults(rowResult, vecResult Result, exactRowsLimit int) string {
-	if rowResult.Error != "" || vecResult.Error != "" {
-		return "not compared: error"
-	}
-	if rowResult.ResponseRows != vecResult.ResponseRows {
-		return fmt.Sprintf("mismatch: rows row=%d vec=%d", rowResult.ResponseRows, vecResult.ResponseRows)
-	}
-	if rowResult.Engine == engineTrace {
-		if rowResult.ResponseTraces != vecResult.ResponseTraces || rowResult.ResponseSpans != vecResult.ResponseSpans {
-			return fmt.Sprintf("mismatch: traces/spans row=%d/%d vec=%d/%d",
-				rowResult.ResponseTraces, rowResult.ResponseSpans, vecResult.ResponseTraces, vecResult.ResponseSpans)
-		}
-		if rowResult.ApproxResultHash != vecResult.ApproxResultHash {
-			return fmt.Sprintf("mismatch: trace hash row=%d vec=%d", rowResult.ApproxResultHash, vecResult.ApproxResultHash)
-		}
-		return "matched"
-	}
-	if rowResult.ResponseRows <= exactRowsLimit && rowResult.ApproxResultHash != vecResult.ApproxResultHash {
-		return fmt.Sprintf("mismatch: hash row=%d vec=%d", rowResult.ApproxResultHash, vecResult.ApproxResultHash)
-	}
-	if rowResult.ApproxResultHash != vecResult.ApproxResultHash {
-		return "matched rows; sampled hash differs for large result"
-	}
-	return "matched"
 }

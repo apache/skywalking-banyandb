@@ -124,13 +124,12 @@ func TestValidateRejectsDirectVMBenchmark(t *testing.T) {
 	cfg := Config{
 		RunBench:        true,
 		InContainer:     false,
-		Mode:            modeRow,
+		Mode:            modeVec,
 		Scenario:        ScenarioScanAll,
 		Cardinality:     1024,
 		QueryWorkers:    1,
 		QueryIterations: 1,
 		Writers:         1,
-		SmallExactRows:  1,
 	}
 	if validateErr := cfg.Validate(); validateErr == nil {
 		t.Fatalf("Validate() succeeded for direct VM benchmark")
@@ -144,7 +143,6 @@ func TestValidateRejectsMissingComboSelection(t *testing.T) {
 		QueryWorkers:    1,
 		QueryIterations: 1,
 		Writers:         1,
-		SmallExactRows:  1,
 	}
 	if validateErr := cfg.Validate(); validateErr == nil {
 		t.Fatalf("Validate() succeeded with no Merge and no single-shot selection")
@@ -155,11 +153,10 @@ func TestValidateRejectsPartialSingleShot(t *testing.T) {
 	cfg := Config{
 		RunBench:        true,
 		InContainer:     true,
-		Mode:            modeRow,
+		Mode:            modeVec,
 		QueryWorkers:    1,
 		QueryIterations: 1,
 		Writers:         1,
-		SmallExactRows:  1,
 	}
 	if validateErr := cfg.Validate(); validateErr == nil {
 		t.Fatalf("Validate() succeeded with only Mode set; Scenario and Cardinality are required too")
@@ -182,19 +179,22 @@ func TestValidateRejectsMergePlusSingleShot(t *testing.T) {
 }
 
 func TestValidateRejectsUnknownMode(t *testing.T) {
-	cfg := Config{
-		RunBench:        true,
-		InContainer:     true,
-		Mode:            "weird",
-		Scenario:        ScenarioScanAll,
-		Cardinality:     1024,
-		QueryWorkers:    1,
-		QueryIterations: 1,
-		Writers:         1,
-		SmallExactRows:  1,
-	}
-	if validateErr := cfg.Validate(); validateErr == nil {
-		t.Fatalf("Validate() accepted unknown mode")
+	for _, mode := range []string{"weird", "row"} {
+		t.Run(mode, func(t *testing.T) {
+			cfg := Config{
+				RunBench:        true,
+				InContainer:     true,
+				Mode:            mode,
+				Scenario:        ScenarioScanAll,
+				Cardinality:     1024,
+				QueryWorkers:    1,
+				QueryIterations: 1,
+				Writers:         1,
+			}
+			if validateErr := cfg.Validate(); validateErr == nil {
+				t.Fatalf("Validate() accepted mode %q", mode)
+			}
+		})
 	}
 }
 
@@ -214,7 +214,7 @@ func TestValidateRejectsWrongScenarioForEngine(t *testing.T) {
 				InContainer:       true,
 				Engine:            tt.engine,
 				Matrix:            matrixA,
-				Mode:              modeRow,
+				Mode:              modeVec,
 				Scenario:          tt.scenario,
 				Cardinality:       1024,
 				SpansPerTrace:     defaultSpansPerTrace,
@@ -228,7 +228,6 @@ func TestValidateRejectsWrongScenarioForEngine(t *testing.T) {
 				QueryWorkers:      1,
 				QueryIterations:   1,
 				Writers:           1,
-				SmallExactRows:    1,
 			}
 			if validateErr := cfg.Validate(); validateErr == nil {
 				t.Fatalf("Validate() accepted scenario %s for engine %s", tt.scenario, tt.engine)
@@ -243,7 +242,7 @@ func TestValidateRejectsInvalidTraceDimensions(t *testing.T) {
 		InContainer:       true,
 		Engine:            engineTrace,
 		Matrix:            matrixA,
-		Mode:              modeRow,
+		Mode:              modeVec,
 		Scenario:          ScenarioTraceByID,
 		Cardinality:       1024,
 		SpansPerTrace:     defaultSpansPerTrace,
@@ -257,7 +256,6 @@ func TestValidateRejectsInvalidTraceDimensions(t *testing.T) {
 		QueryWorkers:      1,
 		QueryIterations:   1,
 		Writers:           1,
-		SmallExactRows:    1,
 	}
 	if validateErr := cfg.Validate(); validateErr == nil {
 		t.Fatalf("Validate() accepted invalid trace span distribution")
