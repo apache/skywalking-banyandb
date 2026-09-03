@@ -16,9 +16,9 @@
 // under the License.
 
 // Package reader provides offline read access to the property-based schema
-// catalog (the `_schema` bluge index written by the property schema server).
-// It is used by tools that must load schemas without a running schema server,
-// e.g. the data-migration CLI reading a backup snapshot or a live PVC mount.
+// catalog index written by the property schema server. It is used by tools that
+// must load schemas without a running schema server, e.g. the data-migration
+// CLI reading a backup snapshot or a live PVC mount.
 package reader
 
 import (
@@ -28,20 +28,17 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/blugelabs/bluge"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/property"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 )
 
-const schemaSearchSize = 200000
-
-// Bluge field / directory names of property documents, mirroring the
-// (unexported) layout written by banyand/property/db so the offline reader
-// can re-open the index via raw bluge.
+// Property-document field and directory names mirror the unexported layout
+// written by banyand/property/db.
 const (
 	propShardDirPrefix = "shard-"
 	propSourceField    = "_source"
@@ -61,104 +58,62 @@ type Doc struct {
 	Deleted    bool
 }
 
-// kindsQuery narrows a shard scan to the requested schema kinds by reusing
-// the exact per-kind query the schema server issues against the property db
-// (property.BuildSchemaQuery → inverted.BuildPropertyQuery), so a term match
-// skips loading the stored _source of every other doc (nodes, other kinds)
-// instead of match-all'ing the whole shard. No kinds means every doc.
-func kindsQuery(kinds []schema.Kind) (bluge.Query, error) {
+// WalkShard opens one shard of the schema-property index and invokes visit
+// for every document the requested kinds select. No kinds walks every live
+// document.
+func WalkShard(shardPath string, visit func(Doc) error, kinds ...schema.Kind) error {
+	documentVisit := func(document inverted.StoredDocument) error {
+		return decodeSchemaDocument(shardPath, document, visit)
+	}
 	if len(kinds) == 0 {
-		return bluge.NewMatchAllQuery(), nil
-	}
-	q := bluge.NewBooleanQuery().SetMinShould(1)
-	for _, k := range kinds {
-		iq, err := inverted.BuildPropertyQuery(property.BuildSchemaQuery(k, "", "", 0),
-			propGroupField, propEntityIDField)
-		if err != nil {
-			return nil, fmt.Errorf("build %s schema query: %w", k.String(), err)
+		if walkErr := inverted.ReadOnlyWalkDocuments(context.Background(), shardPath, documentVisit); walkErr != nil {
+			return fmt.Errorf("walk schema docs in %s: %w", shardPath, walkErr)
 		}
-		bq, ok := inverted.BlugeQuery(iq)
-		if !ok {
-			return nil, fmt.Errorf("unexpected %s schema query type %T", k.String(), iq)
-		}
-		q.AddShould(bq)
+		return nil
 	}
-	return q, nil
+	terms := make([][]byte, len(kinds))
+	for kindIndex, kind := range kinds {
+		terms[kindIndex] = []byte(kind.String())
+	}
+	selection := inverted.TermSelection{Field: index.IndexModeName, Terms: terms}
+	if walkErr := inverted.ReadOnlySelectDocuments(context.Background(), shardPath, selection, documentVisit); walkErr != nil {
+		return fmt.Errorf("walk schema docs in %s: %w", shardPath, walkErr)
+	}
+	return nil
 }
 
-// WalkShard opens one shard of the schema-property bluge index and invokes
-// visit() for each doc. Passing kinds narrows the scan to those schema kinds
-// via the indexed kind field; no kinds means every doc.
-func WalkShard(shardPath string, visit func(Doc) error, kinds ...schema.Kind) error {
-	blugeReader, err := bluge.OpenReader(bluge.DefaultConfig(shardPath))
-	if err != nil {
-		return fmt.Errorf("open bluge reader: %w", err)
-	}
-	defer func() { _ = blugeReader.Close() }()
-	query, err := kindsQuery(kinds)
-	if err != nil {
-		return err
-	}
-	// Request one more than the limit so an exact-fit shard (matched ==
-	// schemaSearchSize) is not mistaken for truncation; TopN returns at most
-	// the requested count, so seeing more than schemaSearchSize means the
-	// shard genuinely overflowed.
-	dmi, err := blugeReader.Search(context.Background(),
-		bluge.NewTopNSearch(schemaSearchSize+1, query))
-	if err != nil {
-		return fmt.Errorf("search schema docs: %w", err)
-	}
-	matched := 0
-	for {
-		next, nextErr := dmi.Next()
-		if nextErr != nil {
-			return fmt.Errorf("iterate schema docs: %w", nextErr)
-		}
-		if next == nil {
-			if matched > schemaSearchSize {
-				return fmt.Errorf("shard %s: schema docs hit the search limit %d; results may be truncated", shardPath, schemaSearchSize)
+func decodeSchemaDocument(shardPath string, document inverted.StoredDocument, visit func(Doc) error) error {
+	var sourceBytes []byte
+	var deleted bool
+	if visitErr := document.VisitStoredFields(func(field string, value []byte) bool {
+		switch field {
+		case propSourceField:
+			sourceBytes = append([]byte(nil), value...)
+		case propDeleteField:
+			if len(value) > 0 {
+				deleted = true
 			}
-			return nil
 		}
-		matched++
-		var sourceBytes []byte
-		var deleted bool
-		if visitErr := next.VisitStoredFields(func(field string, value []byte) bool {
-			switch field {
-			case propSourceField:
-				sourceBytes = append([]byte(nil), value...)
-			case propDeleteField:
-				if len(value) > 0 {
-					deleted = true
-				}
-			}
-			return true
-		}); visitErr != nil {
-			return fmt.Errorf("visit schema doc: %w", visitErr)
-		}
-		if len(sourceBytes) == 0 {
-			continue
-		}
-		var prop propertyv1.Property
-		if err := protojson.Unmarshal(sourceBytes, &prop); err != nil {
-			// Surface the failure with the shard path + the source size so an
-			// operator hitting a corrupt catalog can see WHERE the parse broke
-			// instead of just "missing schema" later in the run.
-			return fmt.Errorf("unmarshal property doc in %s (%d source bytes): %w",
-				shardPath, len(sourceBytes), err)
-		}
-		parsed := property.ParseTags(prop.GetTags())
-		if vErr := visit(Doc{
-			PropID:     prop.GetId(),
-			KindName:   prop.GetMetadata().GetName(),
-			Group:      parsed.Group,
-			SourceJSON: parsed.Source,
-			ModRev:     prop.GetMetadata().GetModRevision(),
-			Deleted:    deleted,
-		}); vErr != nil {
-			return vErr
-		}
+		return true
+	}); visitErr != nil {
+		return fmt.Errorf("visit schema doc: %w", visitErr)
 	}
+	if len(sourceBytes) == 0 {
+		return nil
+	}
+	var prop propertyv1.Property
+	if unmarshalErr := protojson.Unmarshal(sourceBytes, &prop); unmarshalErr != nil {
+		return fmt.Errorf("unmarshal property doc in %s (%d source bytes): %w", shardPath, len(sourceBytes), unmarshalErr)
+	}
+	parsed := property.ParseTags(prop.GetTags())
+	return visit(Doc{
+		PropID:     prop.GetId(),
+		KindName:   prop.GetMetadata().GetName(),
+		Group:      parsed.Group,
+		SourceJSON: parsed.Source,
+		ModRev:     prop.GetMetadata().GetModRevision(),
+		Deleted:    deleted,
+	})
 }
 
 // WalkShards reads the shard-* subdirectories of a `_schema` bluge root and
