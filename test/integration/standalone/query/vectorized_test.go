@@ -39,14 +39,13 @@ import (
 
 // Vec independent verification on a standalone process.
 //
-// Boots a *separate* standalone with --measure-vectorized-enabled=true and
-// replays the same Measure / TopN test entries the row-path integration
-// suite already covers in suite_test.go. Each case asserts the row-path's
-// expected output, so every greenness here is an INDEPENDENT verification
-// that vec produces the same reference InternalDataPoints on its own
-// merits — not a row-vec same-process diff, but vec running against the
-// reference yaml the row path agreed with first. The cluster is fresh
-// and isolated so neither side observes the other's state.
+// Boots a *separate*, freshly-written standalone and replays the same Measure
+// / TopN test entries the on-disk suite in round2.go covers after a restart.
+// Each case asserts the committed reference yaml, so every greenness here is
+// an INDEPENDENT verification that vec produces the same InternalDataPoints
+// on its own merits. The cluster is fresh and isolated so neither side
+// observes the other's state, and the data is queried before it has been
+// through a restart cycle.
 //
 // This is the standalone twin of test/integration/distributed/query/
 // vectorized_test.go. Together they satisfy the directive that integration
@@ -100,9 +99,7 @@ var _ = ginkgo.Describe("vec independent verification (standalone)", ginkgo.Orde
 		gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
 		dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
 		config := setup.PropertyClusterConfig(dfWriter)
-		addr, _, closeFn := setup.ClosableStandalone(config, path, ports,
-			"--measure-vectorized-enabled=true",
-		)
+		addr, _, closeFn := setup.ClosableStandalone(config, path, ports)
 		stopFn = func() {
 			closeFn()
 			diskCleanupFn()
@@ -139,9 +136,7 @@ var _ = ginkgo.Describe("vec independent verification (standalone)", ginkgo.Orde
 		// eligibility gate is too tight or the wire-up regressed.
 		handledDelta := vecplan.HandledCount() - startHandledCount
 		ginkgo.GinkgoWriter.Printf(
-			"vec dispatch (standalone): handled=%d (delta across vec-standalone table)\n",
-			handledDelta,
-		)
+			"vec dispatch (standalone): handled=%d (delta across the vec-standalone table)\n", handledDelta)
 		gomega.Expect(handledDelta).To(gomega.BeNumerically(">", int64(0)),
 			"vec dispatch did not fire for any case in the vec-standalone table; "+
 				"either the eligibility gate is too tight or processor.go's dispatchMeasure regressed")

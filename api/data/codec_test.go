@@ -146,12 +146,11 @@ func TestTopicResponseMap_ProtoCodec_RoundTripsByteIdentical(t *testing.T) {
 	}
 }
 
-// TestMeasureQueryResponseCodec_DispatchesOnWireMode covers the G9f.0
-// topic-AND-process-wire-mode guard: TopicInternalMeasureQuery is served by a
-// single static supplier in the map but the codec selected per-encode/decode
-// must depend on the per-process wire-mode flag set via SetMeasureWireModeRaw
-// (flag-on → RawFrameCodec; flag-off → ProtoCodec).
-func TestMeasureQueryResponseCodec_DispatchesOnWireMode(t *testing.T) {
+// TestMeasureQueryResponseCodec_RawPassthrough covers the raw-frame half of the
+// TopicInternalMeasureQuery codec: a magic-prefixed []byte body is passed through
+// unchanged in both directions, and a body carrying the wrong magic falls back to
+// the proto envelope decoder and fails loud rather than being silently accepted.
+func TestMeasureQueryResponseCodec_RawPassthrough(t *testing.T) {
 	codec, ok := TopicResponseMap[TopicInternalMeasureQuery]
 	if !ok {
 		t.Fatal("TopicInternalMeasureQuery is not registered in TopicResponseMap")
@@ -162,44 +161,28 @@ func TestMeasureQueryResponseCodec_DispatchesOnWireMode(t *testing.T) {
 	prev := MeasureWireModeRaw()
 	t.Cleanup(func() { SetMeasureWireModeRaw(prev) })
 
-	// Flag OFF: proto behavior, byte-identical to pre-G9f.0 path for the
-	// real measurev1.InternalQueryResponse{} body.
-	SetMeasureWireModeRaw(false)
-	msg := &measurev1.InternalQueryResponse{}
-	body, err := codec.Marshal(msg)
-	if err != nil {
-		t.Fatalf("flag-off Marshal failed: %v", err)
-	}
-	decoded, err := codec.Unmarshal(body)
-	if err != nil {
-		t.Fatalf("flag-off Unmarshal failed: %v", err)
-	}
-	if _, ok := decoded.(*measurev1.InternalQueryResponse); !ok {
-		t.Fatalf("flag-off Unmarshal returned %T; want *measurev1.InternalQueryResponse", decoded)
-	}
-
-	// Flag ON: raw passthrough; bytes in == bytes out, 0x00-leading.
 	SetMeasureWireModeRaw(true)
+	// Raw passthrough: bytes in == bytes out, 0x00-leading.
 	rawBody := []byte{RawFrameMagicLeadingByte, 0x01, 0xAA, 0xBB}
 	encoded, err := codec.Marshal(rawBody)
 	if err != nil {
-		t.Fatalf("flag-on Marshal failed: %v", err)
+		t.Fatalf("raw Marshal failed: %v", err)
 	}
 	if !bytes.Equal(encoded, rawBody) {
-		t.Fatalf("flag-on Marshal is not passthrough: got %x want %x", encoded, rawBody)
+		t.Fatalf("raw Marshal is not passthrough: got %x want %x", encoded, rawBody)
 	}
 	out, err := codec.Unmarshal(rawBody)
 	if err != nil {
-		t.Fatalf("flag-on Unmarshal of 0x00-leading body failed: %v", err)
+		t.Fatalf("raw Unmarshal of 0x00-leading body failed: %v", err)
 	}
 	outBytes, _ := out.([]byte)
 	if !bytes.Equal(outBytes, rawBody) {
-		t.Fatalf("flag-on Unmarshal is not passthrough: got %x want %x", outBytes, rawBody)
+		t.Fatalf("raw Unmarshal is not passthrough: got %x want %x", outBytes, rawBody)
 	}
 
-	// Flag ON + body with the wrong magic now routes to the proto envelope decoder.
+	// A body with the wrong magic routes to the proto envelope decoder.
 	if _, err := codec.Unmarshal([]byte{0xff, 0x02}); err == nil {
-		t.Fatal("flag-on Unmarshal of invalid proto envelope returned nil error; want fail-loud")
+		t.Fatal("Unmarshal of invalid proto envelope returned nil error; want fail-loud")
 	}
 }
 

@@ -30,7 +30,7 @@ import (
 // The counters exist to let a soak or an operator assert that the native columnar
 // frame is genuinely carrying traffic. Their whole value is that they are zero when
 // it is not, so both directions are pinned here: a frame body must move them, and a
-// flag-off process must leave them alone.
+// proto response must leave them alone.
 //
 // Encode and decode are counted at different layers because the wire path is not
 // symmetric. The liaison decodes through ResponseCodec.Unmarshal, so the decode
@@ -44,23 +44,12 @@ func TestStreamFrameCounters_CountRawTrafficOnly(t *testing.T) {
 	c := newStreamCodec()
 	frame := []byte{RawFrameMagicLeadingByte, 0x01, 0x02, 0x03}
 
-	// Flag OFF: a proto response must not be counted as frame traffic. This is the
-	// standalone case, where the data node never emits a frame at all.
-	SetStreamWireModeRaw(false)
-	encBefore, decBefore := StreamFrameEncodedCount(), StreamFrameDecodedCount()
-	body, err := c.Marshal(&streamv1.QueryResponse{})
-	require.NoError(t, err)
-	_, err = c.Unmarshal(body)
-	require.NoError(t, err)
-	require.Equal(t, encBefore, StreamFrameEncodedCount(), "proto encode must not count as a frame")
-	require.Equal(t, decBefore, StreamFrameDecodedCount(), "proto decode must not count as a frame")
-
-	// Flag ON with a frame body: the decode counts, and the send path's
-	// IncrFrameEncoded counts the matching encode.
+	// A frame body: the decode counts, and the send path's IncrFrameEncoded counts
+	// the matching encode.
 	SetStreamWireModeRaw(true)
 	defer SetStreamWireModeRaw(false)
-	encBefore, decBefore = StreamFrameEncodedCount(), StreamFrameDecodedCount()
-	body, err = c.Marshal(frame)
+	encBefore, decBefore := StreamFrameEncodedCount(), StreamFrameDecodedCount()
+	body, err := c.Marshal(frame)
 	require.NoError(t, err)
 	_, err = c.Unmarshal(body)
 	require.NoError(t, err)
@@ -68,8 +57,8 @@ func TestStreamFrameCounters_CountRawTrafficOnly(t *testing.T) {
 	IncrFrameEncoded(TopicStreamQuery)
 	require.Equal(t, encBefore+1, StreamFrameEncodedCount())
 
-	// Flag ON but a proto body still travels the proto path (the fallback a traced
-	// query or an unsupported shape takes), so it must not be counted either.
+	// A proto body still travels the proto path (the fallback a traced query or an
+	// unsupported shape takes), so it must not be counted.
 	encBefore, decBefore = StreamFrameEncodedCount(), StreamFrameDecodedCount()
 	body, err = c.Marshal(&streamv1.QueryResponse{})
 	require.NoError(t, err)
@@ -86,17 +75,20 @@ func TestTraceFrameCounters_CountRawTrafficOnly(t *testing.T) {
 	}
 	frame := []byte{RawFrameMagicLeadingByte, 0x0a, 0x0b}
 
-	SetTraceWireModeRaw(false)
+	SetTraceWireModeRaw(true)
+	defer SetTraceWireModeRaw(false)
+
+	// A proto response travels the proto fallback and must not be counted.
 	encBefore, decBefore := TraceFrameEncodedCount(), TraceFrameDecodedCount()
-	body, err := c.Marshal(&tracev1.InternalQueryResponse{})
+	body, err := c.Marshal(&tracev1.InternalQueryResponse{
+		InternalTraces: []*tracev1.InternalTrace{{TraceId: "trace-1"}},
+	})
 	require.NoError(t, err)
 	_, err = c.Unmarshal(body)
 	require.NoError(t, err)
 	require.Equal(t, encBefore, TraceFrameEncodedCount(), "proto encode must not count as a frame")
 	require.Equal(t, decBefore, TraceFrameDecodedCount(), "proto decode must not count as a frame")
 
-	SetTraceWireModeRaw(true)
-	defer SetTraceWireModeRaw(false)
 	encBefore, decBefore = TraceFrameEncodedCount(), TraceFrameDecodedCount()
 	body, err = c.Marshal(frame)
 	require.NoError(t, err)

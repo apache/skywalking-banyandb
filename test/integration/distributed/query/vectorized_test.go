@@ -44,12 +44,12 @@ import (
 
 // Vec independent verification on a distributed cluster.
 //
-// Boots a *separate* distributed cluster — 2 data nodes + 1 liaison, all
-// launched with --measure-vectorized-enabled=true — and replays the same
-// Measure / TopN test entries the row-path distributed suite already
-// covers in common.go. Each case asserts the row-path's expected output;
-// every greenness here is an INDEPENDENT verification that vec produces
-// the same reference InternalDataPoints on the cluster wire.
+// Boots a *separate* distributed cluster — 2 data nodes + 1 liaison — and
+// replays the Measure / TopN test entries against it. The shared cluster in
+// common.go registers no tables, so this Describe is the distributed suite's
+// only Measure and TopN coverage. Each case asserts the committed reference
+// yaml; every greenness here is an INDEPENDENT verification that vec produces
+// the same InternalDataPoints on the cluster wire.
 //
 // This is the distributed twin of test/integration/standalone/query/
 // vectorized_test.go. Together they satisfy the "integration standalone
@@ -91,11 +91,11 @@ var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ord
 		gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
 		dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
 		config := setup.PropertyClusterConfig(dfWriter)
-		closeDataNode0 := setup.DataNode(config, "--measure-vectorized-enabled=true")
-		closeDataNode1 := setup.DataNode(config, "--measure-vectorized-enabled=true")
+		closeDataNode0 := setup.DataNode(config)
+		closeDataNode1 := setup.DataNode(config)
 		setup.PreloadSchemaViaProperty(config, test_stream.PreloadSchema, test_measure.PreloadSchema, test_trace.PreloadSchema, test_property.PreloadSchema)
 		config.AddLoadedKinds(schema.KindStream, schema.KindMeasure, schema.KindTrace)
-		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config, "--measure-vectorized-enabled=true")
+		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config)
 		stopFn = func() {
 			closerLiaisonNode()
 			closeDataNode0()
@@ -129,9 +129,7 @@ var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ord
 		// eligibility gate or processor.go's dispatchMeasure regressed.
 		handledDelta := vecplan.HandledCount() - startHandledCount
 		ginkgo.GinkgoWriter.Printf(
-			"vec dispatch (distributed): handled=%d (delta across vec-distributed table)\n",
-			handledDelta,
-		)
+			"vec dispatch (distributed): handled=%d (delta across the vec-distributed table)\n", handledDelta)
 		gomega.Expect(handledDelta).To(gomega.BeNumerically(">", int64(0)),
 			"vec dispatch did not fire for any case on the distributed cluster")
 		// HandledCount above only proves the vec COMPUTE path dispatched. A vec query
