@@ -77,8 +77,11 @@ All three flags are removed outright in 0.13.0. Drop them from systemd units, He
 
 ### Stream timestamp-order queries with criteria spanning multiple segments
 
-<!-- TODO(W5): replace with the R-2 divergence wording reported by W2. -->
-**PLACEHOLDER — pending exact wording.** For stream **timestamp-order** queries **with criteria** that span **multiple segments**, the removed row path resumed scanning per segment and could return more elements than the vectorized path, which stops at the first `maxElementSize`-capped batch. The divergence pre-existed this release and was documented in code; with the row path removed, the vectorized result is the only result.
+Stream queries that are ordered by timestamp, carry a criteria filter, and span more than one segment may now return fewer elements than 0.11.x did. The removed row scan resumed segment by segment: after its first `maxElementSize`-sized batch it could keep pulling from later segments, accumulating further matches until the requested limit was filled. The vectorized scan does not see segment boundaries, so it caps at `maxElementSize` and stops there.
+
+The results it returns are correct and correctly ordered — the response is simply under-filled against the limit where the old path would have gone back for more. Index-order (tag-ordered) queries are unaffected: their merge stays uncapped and still fills the limit.
+
+A client that needs the missing elements should re-issue the query over a narrower time range or page forward. This divergence was always documented as one the vectorized path deliberately does not emulate; with the row path gone, the vectorized answer is now the only answer.
 
 ### Index-order queries that do not project the ordered tag
 
