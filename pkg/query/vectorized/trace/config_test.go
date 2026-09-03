@@ -27,10 +27,6 @@ import (
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
-	// Enabled is the default: it selects both the vec query path and the native
-	// columnar liaison<->data wire frame. Flipping this back to false is a wire
-	// format change — see docs/operation/upgrade.md for the upgrade ordering rule.
-	require.True(t, cfg.Enabled)
 	require.Equal(t, vectorized.DefaultBatchSize, cfg.BatchSize)
 	require.Equal(t, 256, cfg.QueryMemoryMiB)
 	require.NoError(t, cfg.Validate())

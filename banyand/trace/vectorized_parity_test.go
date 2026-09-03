@@ -79,7 +79,7 @@ func newParityTSTable(tb testing.TB, traceSets ...*traces) (*tsTable, func()) {
 func newParityTrace() *trace {
 	return &trace{
 		pm:         protector.Nop{},
-		vectorized: vtrace.VectorizedConfig{Enabled: true, BatchSize: 10, QueryMemoryMiB: 100},
+		vectorized: vtrace.VectorizedConfig{BatchSize: 10, QueryMemoryMiB: 100},
 	}
 }
 
@@ -401,7 +401,7 @@ func TestVectorizedMemoryQuotaAC5(t *testing.T) {
 	// Pull path with unlimited quota succeeds.
 	unlimitedTrace := &trace{
 		pm:         protector.Nop{},
-		vectorized: vtrace.VectorizedConfig{Enabled: true, BatchSize: 10, QueryMemoryMiB: 100},
+		vectorized: vtrace.VectorizedConfig{BatchSize: 10, QueryMemoryMiB: 100},
 	}
 	qo.traceIDs = []string{"trace1"}
 	unlimitedBatch, unlimitedBatchErr := unlimitedTrace.buildVectorizedPhase1TraceBatch(ctx, qo, nil, sidx.QueryRequest{}, false, 0)
@@ -415,7 +415,7 @@ func TestVectorizedMemoryQuotaAC5(t *testing.T) {
 	// have been accumulated yet, matching push path's "quota exceeded" early-exit.
 	zeroQuotaTrace := &trace{
 		pm:         zeroQuotaProtector{},
-		vectorized: vtrace.VectorizedConfig{Enabled: true, BatchSize: 10, QueryMemoryMiB: 100},
+		vectorized: vtrace.VectorizedConfig{BatchSize: 10, QueryMemoryMiB: 100},
 	}
 	qo.traceIDs = []string{"trace1"}
 	zeroBatch, zeroBatchErr := zeroQuotaTrace.buildVectorizedPhase1TraceBatch(ctx, qo, nil, sidx.QueryRequest{}, false, 0)

@@ -310,11 +310,9 @@ func startBenchCluster(t *testing.T, cfg Config, vectorized bool) (benchCluster,
 
 func clusterFlags(cfg Config, vectorized bool) []string {
 	if cfg.Engine == engineTrace {
-		vecFlag := "--trace-vectorized-enabled=false"
-		if vectorized {
-			vecFlag = "--trace-vectorized-enabled=true"
-		}
-		return []string{vecFlag, fmt.Sprintf("--trace-vectorized-query-memory-mib=%d", cfg.QueryMemoryMiB)}
+		// The row-based trace query path was removed in 0.12.0, so both modes run
+		// vec: --trace-vectorized-enabled=false now aborts node startup.
+		return []string{"--trace-vectorized-enabled=true", fmt.Sprintf("--trace-vectorized-query-memory-mib=%d", cfg.QueryMemoryMiB)}
 	}
 	// The measure engine has no row mode left to compare against (see
 	// apache/skywalking#13998), so Config.Validate rejects mode=row for it

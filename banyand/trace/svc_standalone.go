@@ -105,7 +105,7 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	s.option.mergePolicy = newDefaultMergePolicy()
 	fs.IntVar(&s.option.mergePolicy.maxParts, "trace-max-merge-parts", s.option.mergePolicy.maxParts, "the maximum number of parts to merge at once")
 	fs.VarP(&s.option.mergePolicy.maxFanOutSize, "trace-max-fan-out-size", "", "the upper bound of a single file size after merge of trace")
-	bindVectorizedFlags(fs, &s.option.vectorized)
+	bindVectorizedFlags(fs, &s.option.vectorized, &s.option.vectorizedEnabled)
 	s.option.mergeGraceDefault = defaultTracePipelineMergeGrace
 	s.option.finalizeGraceDefault = defaultTracePipelineFinalizeGrace
 	fs.BoolVar(&s.option.nativePipelineEnabled, "trace-pipeline-native-plugin-enabled", false, "enable the native plugin pipeline for in-merge trace retention")
@@ -137,6 +137,9 @@ func (s *standalone) Validate() error {
 	if s.retentionConfig.Cooldown <= 0 {
 		return errors.New("trace-retention-cooldown must be greater than 0")
 	}
+	if !s.option.vectorizedEnabled {
+		return errRowQueryRemoved
+	}
 	return s.option.vectorized.Validate()
 }
 
@@ -150,10 +153,8 @@ func (s *standalone) Role() databasev1.Role {
 
 func (s *standalone) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
-	// Native columnar wire frame for the data↔liaison query hop follows the
-	// vectorized flag (mirrors measure's wire-mode wiring).
-	data.SetTraceWireModeRaw(s.option.vectorized.Enabled)
-	s.l.Info().Bool("trace_wire_mode_raw", s.option.vectorized.Enabled).Msg("trace wire mode published (standalone)")
+	// The data↔liaison query hop always carries the native columnar wire frame.
+	data.SetTraceWireModeRaw(true)
 	s.l.Info().Msg("memory protector is initialized in PreRun")
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
 	var err error
