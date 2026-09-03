@@ -176,7 +176,7 @@ func (s *storedSegmentReader) selectedDocuments(ctx context.Context, field strin
 	if readErr := s.readInto(dictionaryCursor, dictionaryData); readErr != nil {
 		return nil, readErr
 	}
-	dictionary, loadErr := vellum.Load(dictionaryData)
+	dictionary, loadErr := loadTermDictionary(dictionaryData)
 	if loadErr != nil {
 		return nil, corruptError("decode term dictionary in segment %q", s.path, loadErr)
 	}
@@ -187,7 +187,7 @@ func (s *storedSegmentReader) selectedDocuments(ctx context.Context, field strin
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
-		postingsOffset, exists, lookupErr := dictionary.Get(term)
+		postingsOffset, exists, lookupErr := lookupTermPosting(dictionary, term)
 		if lookupErr != nil {
 			return nil, corruptError("look up term in segment %q", s.path, lookupErr)
 		}
@@ -199,6 +199,27 @@ func (s *storedSegmentReader) selectedDocuments(ctx context.Context, field strin
 		}
 	}
 	return selected, nil
+}
+
+func loadTermDictionary(data []byte) (dictionary *vellum.FST, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			dictionary = nil
+			err = fmt.Errorf("term dictionary decoder panicked: %v", recovered)
+		}
+	}()
+	return vellum.Load(data)
+}
+
+func lookupTermPosting(dictionary *vellum.FST, term []byte) (postingOffset uint64, exists bool, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			postingOffset = 0
+			exists = false
+			err = fmt.Errorf("term dictionary lookup panicked: %v", recovered)
+		}
+	}()
+	return dictionary.Get(term)
 }
 
 func (s *storedSegmentReader) dictionaryOffset(field string) (uint64, bool, error) {
@@ -273,8 +294,8 @@ func (s *storedSegmentReader) unionGeneralPostings(selected *roaringpkg.Bitmap, 
 	if readErr := s.readInto(postingsCursor, postingsData); readErr != nil {
 		return readErr
 	}
-	postings := roaringpkg.New()
-	if unmarshalErr := postings.UnmarshalBinary(postingsData); unmarshalErr != nil {
+	postings, unmarshalErr := decodePostingBitmap(postingsData)
+	if unmarshalErr != nil {
 		return corruptError("decode posting bitmap in segment %q", s.path, unmarshalErr)
 	}
 	if postings.GetCardinality() > s.footer.documentCount {
@@ -288,6 +309,20 @@ func (s *storedSegmentReader) unionGeneralPostings(selected *roaringpkg.Bitmap, 
 	}
 	selected.Or(postings)
 	return nil
+}
+
+func decodePostingBitmap(data []byte) (postings *roaringpkg.Bitmap, err error) {
+	postings = roaringpkg.New()
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			postings = nil
+			err = fmt.Errorf("posting bitmap decoder panicked: %v", recovered)
+		}
+	}()
+	if unmarshalErr := postings.UnmarshalBinary(data); unmarshalErr != nil {
+		return nil, unmarshalErr
+	}
+	return postings, nil
 }
 
 func (s *storedSegmentReader) visitSelected(ctx context.Context, selected, deleted *roaringpkg.Bitmap, visit func(StoredDocument) error) error {
