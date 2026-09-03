@@ -64,15 +64,14 @@ import (
 // row — that is the loud-failure signal the runbook depends on.
 var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ordered, func() {
 	var (
-		vectorizedConn        *grpc.ClientConn
-		stopFn                func()
-		startHandledCount     int64
-		startFrameEnc         int64
-		startFrameDec         int64
-		startFellThroughCount int64
-		savedMeasureCtx       helpers.SharedContext
-		savedTopNCtx          helpers.SharedContext
-		savedWireModeRaw      bool
+		vectorizedConn    *grpc.ClientConn
+		stopFn            func()
+		startHandledCount int64
+		startFrameEnc     int64
+		startFrameDec     int64
+		savedMeasureCtx   helpers.SharedContext
+		savedTopNCtx      helpers.SharedContext
+		savedWireModeRaw  bool
 	)
 	ginkgo.BeforeAll(func() {
 		savedMeasureCtx = casesmeasure.SharedContext
@@ -87,7 +86,6 @@ var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ord
 		startHandledCount = vecplan.HandledCount()
 		startFrameEnc = data.MeasureFrameEncodedCount()
 		startFrameDec = data.MeasureFrameDecodedCount()
-		startFellThroughCount = vecplan.FellThroughCount()
 
 		tmpDir, tmpDirCleanup, tmpErr := test.NewSpace()
 		gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
@@ -128,12 +126,11 @@ var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ord
 		// Observability gate: vec dispatch must fire for at least one
 		// case in the table. If this drops to zero the vec subsystem is
 		// silently 0%-covered on the distributed cluster — either the
-		// eligibility gate or processor.go's tryVecDispatch regressed.
+		// eligibility gate or processor.go's dispatchMeasure regressed.
 		handledDelta := vecplan.HandledCount() - startHandledCount
-		fellThroughDelta := vecplan.FellThroughCount() - startFellThroughCount
 		ginkgo.GinkgoWriter.Printf(
-			"vec dispatch (distributed): handled=%d fell_through=%d (deltas across vec-distributed table)\n",
-			handledDelta, fellThroughDelta,
+			"vec dispatch (distributed): handled=%d (delta across vec-distributed table)\n",
+			handledDelta,
 		)
 		gomega.Expect(handledDelta).To(gomega.BeNumerically(">", int64(0)),
 			"vec dispatch did not fire for any case on the distributed cluster")

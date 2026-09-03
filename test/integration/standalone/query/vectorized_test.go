@@ -73,8 +73,7 @@ var _ = ginkgo.Describe("vec independent verification (standalone)", ginkgo.Orde
 		stopFn         func()
 		// Snapshot dispatch counters so the AfterAll can compute the
 		// delta this Describe's specs produced.
-		startHandledCount     int64
-		startFellThroughCount int64
+		startHandledCount int64
 		// Save the package-global SharedContexts so AfterAll can restore
 		// them. Sibling Describes may run *between* this AfterAll and the
 		// next BeforeAll (e.g. the top-level "TopN Tests" / "Scanning
@@ -93,7 +92,6 @@ var _ = ginkgo.Describe("vec independent verification (standalone)", ginkgo.Orde
 		// hitting the flag-on raw-frame guard for its own responses.
 		savedWireModeRaw = data.MeasureWireModeRaw()
 		startHandledCount = vecplan.HandledCount()
-		startFellThroughCount = vecplan.FellThroughCount()
 		path, diskCleanupFn, pathErr := test.NewSpace()
 		gomega.Expect(pathErr).NotTo(gomega.HaveOccurred())
 		ports, portsErr := test.AllocateFreePorts(5)
@@ -140,14 +138,13 @@ var _ = ginkgo.Describe("vec independent verification (standalone)", ginkgo.Orde
 		// vec subsystem is silently 0%-covered — either the dispatch
 		// eligibility gate is too tight or the wire-up regressed.
 		handledDelta := vecplan.HandledCount() - startHandledCount
-		fellThroughDelta := vecplan.FellThroughCount() - startFellThroughCount
 		ginkgo.GinkgoWriter.Printf(
-			"vec dispatch (standalone): handled=%d fell_through=%d (deltas across vec-standalone table)\n",
-			handledDelta, fellThroughDelta,
+			"vec dispatch (standalone): handled=%d (delta across vec-standalone table)\n",
+			handledDelta,
 		)
 		gomega.Expect(handledDelta).To(gomega.BeNumerically(">", int64(0)),
 			"vec dispatch did not fire for any case in the vec-standalone table; "+
-				"either the eligibility gate is too tight or processor.go's tryVecDispatch regressed")
+				"either the eligibility gate is too tight or processor.go's dispatchMeasure regressed")
 		if vectorizedConn != nil {
 			gomega.Expect(vectorizedConn.Close()).To(gomega.Succeed())
 		}

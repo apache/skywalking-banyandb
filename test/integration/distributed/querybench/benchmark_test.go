@@ -316,16 +316,10 @@ func clusterFlags(cfg Config, vectorized bool) []string {
 		}
 		return []string{vecFlag, fmt.Sprintf("--trace-vectorized-query-memory-mib=%d", cfg.QueryMemoryMiB)}
 	}
-	// --measure-vectorized-enabled defaults to true (pkg/query/vectorized/
-	// measure/config.go DefaultConfig). Pass the flag explicitly for both
-	// modes so "row" mode genuinely disables vec dispatch + the raw-frame
-	// wire codec; without =false the row cluster silently runs the vec
-	// engine and the comparison degenerates into two copies of vec.
-	vecFlag := "--measure-vectorized-enabled=false"
-	if vectorized {
-		vecFlag = "--measure-vectorized-enabled=true"
-	}
-	return []string{vecFlag}
+	// The measure engine has no row mode left to compare against (see
+	// apache/skywalking#13998), so Config.Validate rejects mode=row for it
+	// and there is no flag to pass.
+	return nil
 }
 
 // compareModeResults reports whether a vec result matches its row baseline.

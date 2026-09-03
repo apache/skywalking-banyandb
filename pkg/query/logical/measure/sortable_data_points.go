@@ -17,33 +17,33 @@
 
 package measure
 
-import "testing"
+import (
+	"github.com/apache/skywalking-banyandb/pkg/query/executor"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+)
 
-func TestVectorizedConfig_Default_BatchSize1024_Memory256(t *testing.T) {
-	c := DefaultConfig()
-	if c.BatchSize != 1024 {
-		t.Fatalf("default BatchSize: want 1024, got %d", c.BatchSize)
-	}
-	if c.QueryMemoryMiB != 256 {
-		t.Fatalf("default QueryMemoryMiB: want 256, got %d", c.QueryMemoryMiB)
-	}
-	if err := c.Validate(); err != nil {
-		t.Fatalf("default config must Validate cleanly, got %v", err)
-	}
+type sortableDataPoints struct {
+	iter        executor.MIterator
+	current     *comparableDataPoint
+	sortTagSpec logical.TagSpec
+	sortByTime  bool
 }
 
-func TestVectorizedConfig_Validate_ZeroBatchSize_ReturnsError(t *testing.T) {
-	c := DefaultConfig()
-	c.BatchSize = 0
-	if err := c.Validate(); err == nil {
-		t.Fatal("BatchSize=0 must fail Validate")
+func (s *sortableDataPoints) Next() bool {
+	if !s.iter.Next() {
+		return false
 	}
+
+	dp := s.iter.Current()[0]
+	var err error
+	s.current, err = newComparableElement(dp, s.sortByTime, s.sortTagSpec)
+	return err == nil
 }
 
-func TestVectorizedConfig_Validate_NegativeMemoryMiB_ReturnsError(t *testing.T) {
-	c := DefaultConfig()
-	c.QueryMemoryMiB = -1
-	if err := c.Validate(); err == nil {
-		t.Fatal("negative QueryMemoryMiB must fail Validate")
-	}
+func (s *sortableDataPoints) Val() *comparableDataPoint {
+	return s.current
+}
+
+func (s *sortableDataPoints) Close() error {
+	return s.iter.Close()
 }

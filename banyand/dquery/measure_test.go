@@ -60,7 +60,7 @@ func rawWireModeTestSchema() *databasev1.Measure {
 // TestRawWireMode_AlwaysUsesVecPlan.
 func TestRawWireMode_PlanType_AnalyzeDistributed(t *testing.T) {
 	ms := rawWireModeTestSchema()
-	cfg := vmeasure.VectorizedConfig{Enabled: true, BatchSize: 64, QueryMemoryMiB: 4}
+	cfg := vmeasure.VectorizedConfig{BatchSize: 64, QueryMemoryMiB: 4}
 
 	groupByTagProj := &modelv1.TagProjection{
 		TagFamilies: []*modelv1.TagProjection_TagFamily{

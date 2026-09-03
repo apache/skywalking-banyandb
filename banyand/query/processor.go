@@ -405,7 +405,6 @@ func buildMeasureContext(measureService measure.Service, log *logger.Logger, que
 		if ecErr != nil {
 			return nil, fmt.Errorf("fail to get execution context for measure %s: %w", meta.GetName(), ecErr)
 		}
-		// nolint:staticcheck // SA1019 — row-path BuildSchema is the only production path until G8 ships.
 		s, schemaErr := logical_measure.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
 		if schemaErr != nil {
 			return nil, fmt.Errorf("fail to build schema for measure %s: %w", meta.GetName(), schemaErr)
@@ -436,12 +435,6 @@ type vecExecutionContext interface {
 
 // executeMeasurePlan executes the measure query plan and returns the iterator.
 //
-// G8d: the vec subsystem is tried first via vecplan.Dispatch. When the
-// request is vec-eligible (no GroupBy/Agg/Top, has TimeRange, no hidden
-// criteria tags), dispatch returns a vec MIterator and the row-path
-// Analyze is skipped entirely. Otherwise, control flows through to the
-// deprecated row plan unchanged.
-//
 // The second return value is the rendered plan string used by the caller
 // for tracing — abstracted to a string so the vec subsystem (which does
 // not produce a logical.Plan) can participate.
@@ -451,107 +444,65 @@ func executeMeasurePlan(
 	mctx *measureExecutionContext,
 	emitPartial bool,
 ) (executor.MIterator, string, error) {
-	if mit, planStr, handled, dispatchErr := tryVecDispatch(ctx, queryCriteria, mctx, emitPartial); dispatchErr != nil {
+	mit, planStr, dispatchErr := dispatchMeasure(ctx, queryCriteria, mctx, emitPartial)
+	if dispatchErr != nil {
 		return nil, "", fmt.Errorf("fail to dispatch the query request for measure %s: %w", queryCriteria.GetName(), dispatchErr)
-	} else if handled {
-		if e := mctx.ml.Debug(); e.Enabled() {
-			e.Str("plan", planStr).Msg("vec query plan")
-		}
-		return mit, planStr, nil
-	}
-
-	// nolint:staticcheck // SA1019 — row-path Analyze is the only production path until G8 ships.
-	plan, planErr := logical_measure.Analyze(queryCriteria, mctx.metadata, mctx.schemas, mctx.ecc, emitPartial)
-	if planErr != nil {
-		return nil, "", fmt.Errorf("fail to analyze the query request for measure %s: %w", queryCriteria.GetName(), planErr)
 	}
 	if e := mctx.ml.Debug(); e.Enabled() {
-		e.Str("plan", plan.String()).Msg("query plan")
+		e.Str("plan", planStr).Msg("vec query plan")
 	}
-	mIterator, execErr := plan.(executor.MeasureExecutable).Execute(ctx)
-	if execErr != nil {
-		mctx.ml.Error().Err(execErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to query")
-		return nil, "", fmt.Errorf("fail to execute the query plan for measure %s: %w", queryCriteria.GetName(), execErr)
-	}
-	return mIterator, plan.String(), nil
+	return mit, planStr, nil
 }
 
-// tryVecDispatch is the thin adapter from measureExecutionContext into
+// dispatchMeasure is the thin adapter from measureExecutionContext into
 // the vec dispatch inputs. Multi-measure queries (len(ecc) > 1) are
-// handled per-group: each group is dispatched to vec individually and
-// the per-group iterators are merged through the row path's exact
-// cross-group ordering via logical_measure.MergeGroupMIterators (G9f.1,
-// reusing the row sortableDataPoints + sortedMIterator stack so the
-// cross-group order and version dedup are reproduced by construction,
-// not by parallel reimplementation). If any group's executor context is
-// not vec-capable, or any group's dispatch declines to handle the
-// request, the whole multi-measure request falls through to the row
-// path — mixing vec for some groups with row for others would produce a
-// merged result the row path cannot validate.
+// handled per-group: each group is dispatched individually and the
+// per-group iterators are merged through the shared cross-group ordering
+// stack in logical_measure.MergeGroupMIterators (G9f.1, reusing
+// sortableDataPoints + sortedMIterator so the cross-group order and
+// version dedup are reproduced by construction, not by parallel
+// reimplementation).
 //
 // Distributed Map-mode GroupBy+Agg (emitPartial=true) routes to vec via
 // AggModeMap (G9f.2): vecplan.Dispatch receives emitPartial and the
 // BatchAggregation operator emits typed-column partials. As of G9f.4 the
 // data-node side handles distributed Top-over-Agg too — the vec plan emits
 // Scan → GroupByAgg(Map) → Top → Limit per node, BatchTop sorts on the
-// partial value column, and the row-path liaison's distributedPlan dedupes
-// + applies the global Top across the per-node partial top-Ns (mirrors the
-// row path's two-pass distributed Top approach; pushDownAgg is set whenever
-// Agg != nil, see measure_analyzer.go:179, and Top is applied AFTER
-// aggregation at :205-207).
-func tryVecDispatch(
+// partial value column, and the liaison's distributed plan dedupes and
+// applies the global Top across the per-node partial top-Ns.
+func dispatchMeasure(
 	ctx context.Context,
 	queryCriteria *measurev1.QueryRequest,
 	mctx *measureExecutionContext,
 	emitPartial bool,
-) (executor.MIterator, string, bool, error) {
-	// Empty execution context = no measures to query. Fall through to row
-	// in both flag states — the row path handles the degenerate empty
-	// case identically (returns an empty MIterator). This is NOT a vec
-	// fall-through under flag-on (we never entered vec); it is the
-	// "no work to do" exit.
-	if len(mctx.ecc) == 0 {
-		return nil, "", false, nil
-	}
+) (executor.MIterator, string, error) {
 	vecs := make([]vecExecutionContext, len(mctx.ecc))
-	flagOn := false
 	for groupIdx, ec := range mctx.ecc {
 		vec, ok := ec.(vecExecutionContext)
 		if !ok {
-			// A non-vec execution context can legitimately appear only on
-			// the flag-off rollback path (production storage satisfies
-			// vecExecutionContext). If ANY group's executor lacks the
-			// capability and the cluster is flag-on, that is a botched
-			// rollout and must fail loud — no proto/row fall-through.
-			if flagOn {
-				return nil, "", true, fmt.Errorf("vec dispatch: group %d execution context not vec-capable under flag-on (rollout skew?)", groupIdx)
-			}
-			return nil, "", false, nil
+			// Production storage always satisfies vecExecutionContext. A
+			// group that does not is a botched rollout and must fail loud.
+			return nil, "", fmt.Errorf("vec dispatch: group %d execution context not vec-capable (rollout skew?)", groupIdx)
 		}
 		vecs[groupIdx] = vec
-		// Detect flag-on as soon as the first vec config is observable.
-		// Per-process flag means every group's config agrees in practice.
-		if groupIdx == 0 && vec.VectorizedConfig().Enabled {
-			flagOn = true
-		}
 	}
 	if len(mctx.ecc) == 1 {
 		return vecplan.Dispatch(ctx, queryCriteria, mctx.metadata[0], vecs[0].GetSchema(),
 			mctx.schemas[0], vecs[0], vecs[0].VectorizedConfig(), emitPartial, false)
 	}
 	// Multi-measure projection validation: a tag/field is valid if it
-	// resolves in ANY group's schema (mirrors measure_analyzer.Analyze's
-	// mergeSchema(ss) union). Running the per-group validation inside
-	// Dispatch would reject the schema-evolution case where one group
-	// added a tag/field the others lack (multi_group_new_tag_field
-	// integration fixture). We pre-validate here against the union once,
-	// then skip the per-group validation inside Dispatch.
+	// resolves in ANY group's schema (mirrors the mergeSchema(ss) union).
+	// Running the per-group validation inside Dispatch would reject the
+	// schema-evolution case where one group added a tag/field the others
+	// lack (multi_group_new_tag_field integration fixture). We pre-validate
+	// here against the union once, then skip the per-group validation
+	// inside Dispatch.
 	measureSchemas := make([]*databasev1.Measure, len(vecs))
 	for i, v := range vecs {
 		measureSchemas[i] = v.GetSchema()
 	}
 	if projErr := vecplan.ValidateMultiGroupProjection(queryCriteria, mctx.schemas, measureSchemas); projErr != nil {
-		return nil, "", true, projErr
+		return nil, "", projErr
 	}
 	iters := make([]executor.MIterator, 0, len(mctx.ecc))
 	planStrs := make([]string, 0, len(mctx.ecc))
@@ -561,20 +512,11 @@ func tryVecDispatch(
 		}
 	}
 	for groupIdx, vec := range vecs {
-		mit, planStr, handled, dispatchErr := vecplan.Dispatch(ctx, queryCriteria,
+		mit, planStr, dispatchErr := vecplan.Dispatch(ctx, queryCriteria,
 			mctx.metadata[groupIdx], vec.GetSchema(), mctx.schemas[groupIdx], vec, vec.VectorizedConfig(), emitPartial, true)
 		if dispatchErr != nil {
 			closeOpened()
-			// handled=true so the caller surfaces the error rather than
-			// retrying on row (no fall-through under flag-on).
-			return nil, "", true, dispatchErr
-		}
-		if !handled {
-			closeOpened()
-			// Per-group vec config is flag-off (rollback rail). Forward
-			// the rollback decision to the caller so the entire
-			// multi-measure request runs row-side end-to-end.
-			return nil, "", false, nil
+			return nil, "", dispatchErr
 		}
 		iters = append(iters, mit)
 		planStrs = append(planStrs, planStr)
@@ -582,10 +524,10 @@ func tryVecDispatch(
 	order, orderErr := logical_measure.ResolveCrossGroupMergeOrder(queryCriteria, mctx.schemas)
 	if orderErr != nil {
 		closeOpened()
-		return nil, "", false, orderErr
+		return nil, "", orderErr
 	}
 	merged := logical_measure.MergeGroupMIterators(iters, order)
-	return merged, fmt.Sprintf("vec-multi-measure%v", planStrs), true, nil
+	return merged, fmt.Sprintf("vec-multi-measure%v", planStrs), nil
 }
 
 // collectInternalDataPoints collects InternalDataPoints from the iterator.

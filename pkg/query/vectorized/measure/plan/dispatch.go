@@ -39,28 +39,18 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-// Process-wide observability counters for G8e parity testing. Tests
-// assert HandledCount > 0 to prove dispatch fires (vs silently falling
-// through), and FellThroughCount > 0 to prove the row path still serves
-// queries Dispatch is not yet ready to take.
+// Process-wide observability counter for parity testing. Tests assert
+// HandledCount > 0 to prove dispatch fires.
 //
-// Counters are best-effort: under concurrent queries the deltas are
-// accurate, but a test reading them across a workload may observe
-// updates from unrelated queries. Snapshot via Load() before the test
-// workload and compute the delta.
-var (
-	handledCount     atomic.Int64
-	fellThroughCount atomic.Int64
-)
+// The counter is best-effort: under concurrent queries the deltas are
+// accurate, but a test reading it across a workload may observe updates
+// from unrelated queries. Snapshot via Load() before the test workload
+// and compute the delta.
+var handledCount atomic.Int64
 
 // HandledCount returns the cumulative number of vec dispatch successes
 // observed by this process.
 func HandledCount() int64 { return handledCount.Load() }
-
-// FellThroughCount returns the cumulative number of times Dispatch
-// declined to handle a request (returned handled=false, err=nil) in
-// this process.
-func FellThroughCount() int64 { return fellThroughCount.Load() }
 
 // Dispatch is the G8d top-level entry into the vec measure subsystem.
 //
@@ -78,16 +68,10 @@ func FellThroughCount() int64 { return fellThroughCount.Load() }
 //     it on the leaf Scan node
 //  5. Executes the plan via plan.Execute (G8c) to return an MIterator
 //
-// Returns (iter, planStr, true, nil) when the request is handled; the
-// caller MUST return that iterator and skip the row plan. Returns
-// (nil, "", false, nil) when the request is NOT eligible — the caller
-// should fall through to the row path. Returns (nil, "", true, err)
-// when the request was eligible but execution failed; the caller must
-// surface the error rather than fall through (the storage query may
-// have already touched state).
+// Dispatch is contract-bound to either return an iterator or surface a
+// hard error — there is no fall-through.
 //
 // Eligibility gate (v1):
-//   - cfg.Enabled must be true
 //   - request may carry GroupBy and/or Agg in any combination (group+agg,
 //     scalar reduce, raw GroupBy); plan.Analyze auto-extends the
 //     projection so the keys / agg field always resolve
@@ -111,7 +95,7 @@ func Dispatch(
 	cfg measure.VectorizedConfig,
 	emitPartial bool,
 	skipProjectionValidation bool,
-) (iter executor.MIterator, planStr string, handled bool, err error) {
+) (iter executor.MIterator, planStr string, err error) {
 	// emitPartial selects the BatchAggregation strategy when GroupBy/Agg is
 	// in the plan: false → AggModeAll (single-node final reduce); true →
 	// AggModeMap (G9f.2 distributed Map phase emitting typed-column
@@ -122,29 +106,12 @@ func Dispatch(
 		mode = measure.AggModeMap
 	}
 	defer func() {
-		// Errors are surfaced as-is; only count clean handled / fall-
-		// through outcomes so observability matches the caller's
-		// branching contract.
-		if err != nil {
-			return
-		}
-		if handled {
+		if err == nil {
 			handledCount.Add(1)
-		} else {
-			fellThroughCount.Add(1)
 		}
 	}()
-	// The ONLY legitimate fall-through to the row path is flag-off
-	// (--measure-vectorized-enabled=false), i.e. the rollback rail. Once
-	// vec is enabled, Dispatch is contract-bound to either return a
-	// handled iterator or surface a hard error — no silent retry on row.
-	// (User directive: "the vec path does not have any fall-through to
-	// row path".)
-	if !cfg.Enabled {
-		return nil, "", false, nil
-	}
 	if req == nil {
-		return nil, "", true, fmt.Errorf("vec dispatch: nil request under flag-on")
+		return nil, "", fmt.Errorf("vec dispatch: nil request")
 	}
 	// Top is handled by the vec subsystem: plan.Analyze emits
 	// Scan → Top → Limit (or Scan → GroupByAgg → Top → Limit) and
@@ -164,20 +131,15 @@ func Dispatch(
 	// nil), so dispatch produces the row path's canonical empty response
 	// directly instead of borrowing it.
 
-	// Under flag-on, missing runtime context is a programming error — the
-	// caller (banyand/query/processor.go::buildMeasureContext) must
-	// populate all four. Surface it loudly instead of silently retrying
-	// on the row path.
+	// Missing runtime context is a programming error — the caller
+	// (banyand/query/processor.go::buildMeasureContext) must populate all
+	// four. Surface it loudly.
 	if measureSchema == nil || logicalSchema == nil || ec == nil || metadata == nil {
-		return nil, "", true, fmt.Errorf("vec dispatch: missing runtime context (measureSchema/logicalSchema/ec/metadata)")
+		return nil, "", fmt.Errorf("vec dispatch: missing runtime context (measureSchema/logicalSchema/ec/metadata)")
 	}
 
-	// G9c #11: projection validation. The row path's Analyze rejects
-	// unknown projection names via ValidateProjectionTags /
-	// ValidateProjectionFields and surfaces a descriptive error
-	// (test fixtures with WantErr=true assert it). Dispatch reproduces
-	// that canonical error byte-for-byte and returns handled=true so the
-	// caller surfaces it rather than falling through.
+	// G9c #11: projection validation. Unknown projection names surface a
+	// descriptive error (test fixtures with WantErr=true assert it).
 	//
 	// skipProjectionValidation is set by the multi-measure caller after
 	// it pre-validates against the UNION of all groups' schemas via
@@ -189,7 +151,7 @@ func Dispatch(
 	// (the `multi_group_new_tag_field` integration fixture pins this).
 	if !skipProjectionValidation {
 		if projErr := validateProjectionParity(req, logicalSchema, measureSchema); projErr != nil {
-			return nil, "", true, projErr
+			return nil, "", projErr
 		}
 	}
 
@@ -222,7 +184,7 @@ func Dispatch(
 
 	indexOrder, orderErr := resolveOrderBy(req.GetOrderBy(), logicalSchema)
 	if orderErr != nil {
-		return nil, "", true, orderErr
+		return nil, "", orderErr
 	}
 
 	// Resolve the index.Query + entities the same way the row path does
@@ -236,18 +198,18 @@ func Dispatch(
 		query, entities, _, qErr = inverted.BuildQuery(req.GetCriteria(), logicalSchema, entityMap, entity)
 	}
 	if qErr != nil {
-		return nil, "", true, fmt.Errorf("vec dispatch: build query: %w", qErr)
+		return nil, "", fmt.Errorf("vec dispatch: build query: %w", qErr)
 	}
 
 	// Build the structural plan tree from analyzeReq so the Scan's
 	// BatchSchema + opts.TagProjection carry the hidden criteria tags.
 	p, analyzeErr := Analyze(analyzeReq, measureSchema, mode)
 	if analyzeErr != nil {
-		return nil, "", true, fmt.Errorf("vec dispatch: analyze: %w", analyzeErr)
+		return nil, "", fmt.Errorf("vec dispatch: analyze: %w", analyzeErr)
 	}
 	scan := locateScan(p)
 	if scan == nil {
-		return nil, "", true, fmt.Errorf("vec dispatch: plan missing Scan node")
+		return nil, "", fmt.Errorf("vec dispatch: plan missing Scan node")
 	}
 	tr := timestamp.NewInclusiveTimeRange(
 		req.GetTimeRange().GetBegin().AsTime(),
@@ -279,18 +241,17 @@ func Dispatch(
 	}
 	result, queryErr := ec.Query(ctx, opts)
 	if queryErr != nil {
-		return nil, "", true, fmt.Errorf("vec dispatch: query measure: %w", queryErr)
+		return nil, "", fmt.Errorf("vec dispatch: query measure: %w", queryErr)
 	}
 	if result == nil {
 		// G9c #13: a typed-nil result is the row path's canonical empty
 		// response. The row iterator (resultMIterator{result: nil}) reports
 		// Next()==false immediately and Close()==nil, so the client
 		// observes an empty []*measurev1.InternalDataPoint. Emit the same
-		// empty MIterator directly with handled=true instead of borrowing
-		// the row machinery. Hidden-tag egress strip (below) is
+		// empty MIterator directly. Hidden-tag egress strip (below) is
 		// intentionally skipped here: an empty result has no DataPoints,
 		// so there is nothing to strip.
-		return emptyMIterator{}, p.String(), true, nil
+		return emptyMIterator{}, p.String(), nil
 	}
 
 	pool := vectorized.NewBatchPool(scan.BatchSchema, cfg.BatchSize)
@@ -307,23 +268,21 @@ func Dispatch(
 		// Execute closes the pipeline on Build/Init failure, which
 		// closes the source, which releases result. No extra Release
 		// here.
-		return nil, "", true, fmt.Errorf("vec dispatch: execute: %w", execErr)
+		return nil, "", fmt.Errorf("vec dispatch: execute: %w", execErr)
 	}
 	if !hidden.IsEmpty() {
 		// Strip the projected-for-filtering hidden tags before
 		// serialization so the wire bytes match a query without them.
 		iter = &hiddenTagsMIterator{inner: iter, hiddenTags: hidden}
 	}
-	return iter, p.String(), true, nil
+	return iter, p.String(), nil
 }
 
 // resolveOrderBy mirrors the row path's PushDownOrder optimizer rule.
 // Empty index rule + UNSPECIFIED sort yields (nil, nil) so dispatch
 // leaves opts.Order unset, matching the row path's no-order default.
-// ParseOrderBy errors on an unknown index rule or one with NoSort=true
-// — surface that error so dispatch reports handled=true rather than
-// silently retrying the row path, which would produce the same error
-// downstream.
+// ParseOrderBy errors on an unknown index rule or one with NoSort=true —
+// surface that error.
 func resolveOrderBy(reqOrder *modelv1.QueryOrder, schema logical.Schema) (*index.OrderBy, error) {
 	if reqOrder == nil {
 		return nil, nil
@@ -416,22 +375,17 @@ func ValidateMultiGroupProjection(req *measurev1.QueryRequest, schemas []logical
 	return nil
 }
 
-// validateProjectionParity reproduces, byte-for-byte, the projection
-// errors the row path's logical_measure.Analyze raises so dispatch can
-// surface the canonical WantErr=true message directly instead of falling
-// through. It mirrors the row path exactly:
+// validateProjectionParity raises the canonical WantErr=true projection
+// errors the query fixtures assert:
 //
-//   - Tags are validated before fields (measure_analyzer.go:110-119).
+//   - Tags are validated before fields.
 //   - Tag projection is checked only when non-empty; each projected tag
 //     (families in order, tags in order) is looked up schema-wide via the
-//     TagSpec registry — the logical.Schema equivalent of CommonSchema's
-//     TagSpecMap. The first miss returns errors.Wrap(ErrTagNotDefined,
-//     tagName), identical to CommonSchema.ValidateProjectionTags
-//     (schema.go:175): "<tagName>: tag is not defined".
+//     TagSpec registry. The first miss returns errors.Wrap(
+//     ErrTagNotDefined, tagName): "<tagName>: tag is not defined".
 //   - Field projection is checked only when non-empty; the first name
 //     absent from the Measure schema's fields returns errors.Errorf(
-//     "field %s not found in schema", field), identical to
-//     measure.schema.ValidateProjectionFields (measure/schema.go:77).
+//     "field %s not found in schema", field).
 //
 // A nil error means every projected name resolves, so dispatch proceeds.
 func validateProjectionParity(req *measurev1.QueryRequest, logicalSchema logical.Schema, m *databasev1.Measure) error {
@@ -445,10 +399,8 @@ func validateProjectionParity(req *measurev1.QueryRequest, logicalSchema logical
 		}
 	}
 	if fp := req.GetFieldProjection(); fp != nil && len(fp.GetNames()) > 0 {
-		// The row path's m.fieldMap is built from md.GetFields() in
-		// logical_measure.BuildSchema, so the Measure schema's field set
-		// is the authoritative lookup the row path's
-		// ValidateProjectionFields consults.
+		// BuildSchema builds its field map from md.GetFields(), so the
+		// Measure schema's field set is the authoritative lookup.
 		known := make(map[string]struct{}, len(m.GetFields()))
 		for _, fs := range m.GetFields() {
 			known[fs.GetName()] = struct{}{}
@@ -467,9 +419,9 @@ func validateProjectionParity(req *measurev1.QueryRequest, logicalSchema logical
 // reached, and Close is a no-op error. Dispatch returns it for the
 // canonical empty response (G9c #13).
 //
-// It implements vmeasure.RawFrameSource so the data-node Rev under
-// flag-on can short-circuit to an empty raw frame body without
-// constructing a pipeline. nil Pipeline / Schema is the signal that
+// It implements vmeasure.RawFrameSource so the data-node Rev can
+// short-circuit to an empty raw frame body without constructing a
+// pipeline. nil Pipeline / Schema is the signal that
 // DrainPipelineToFrame interprets as "no rows" and returns a nil body
 // — matching the codec layer's RawFrameCodec empty-body carve-out.
 type emptyMIterator struct{}
