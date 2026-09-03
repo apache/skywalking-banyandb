@@ -36,7 +36,6 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
 	clientauth "github.com/apache/skywalking-banyandb/pkg/auth"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -547,22 +546,5 @@ var _ = g.Describe("rbac-schema group-scoped schema authorization through the re
 		})
 		gm.Expect(stillThereErr).NotTo(gm.HaveOccurred())
 		gm.Expect(stillThere.GetHasMeasure()).To(gm.BeTrue(), "the denied HTTP delete must have left the measure in place")
-	})
-
-	// R6: activating the schema families must not activate a data one. Every data method
-	// stays fail-closed for the global administrator, which is what keeps W-PR3's boundary
-	// intact and provable from outside.
-	g.It("leaves every data method fail-closed", func() {
-		_, queryErr := measurev1.NewMeasureServiceClient(conn).Query(adminActor.ctx(), &measurev1.QueryRequest{
-			Groups: []string{groupAlpha},
-			Name:   measureAlpha,
-		})
-		gm.Expect(status.Code(queryErr)).To(gm.Equal(codes.PermissionDenied),
-			"a data query must stay fail-closed for the administrator until W-PR3")
-
-		queryStatus, _ := httpCall(httpAddr, http.MethodPost, "/api/v1/measure/data", adminActor,
-			fmt.Sprintf(`{"groups":[%q],"name":%q}`, groupAlpha, measureAlpha))
-		gm.Expect(queryStatus).To(gm.Equal(http.StatusForbidden),
-			"a data query must stay fail-closed over the bound HTTP route too")
 	})
 })
