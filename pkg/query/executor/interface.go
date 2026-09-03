@@ -38,7 +38,6 @@ import (
 // surfaces the engine-side --stream-vectorized-* configuration so the vec
 // dispatch can decide whether the flag is on.
 type StreamExecutionContext interface {
-	Query(ctx context.Context, opts model.StreamQueryOptions) (model.StreamQueryResult, error)
 	QueryVectorized(ctx context.Context, opts model.StreamQueryOptions) (StreamVecScanSource, error)
 	VectorizedConfig() vstream.VectorizedConfig
 }

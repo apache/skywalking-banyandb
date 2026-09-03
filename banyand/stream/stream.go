@@ -72,7 +72,6 @@ type Query interface {
 type Stream interface {
 	GetSchema() *databasev1.Stream
 	GetIndexRules() []*databasev1.IndexRule
-	Query(ctx context.Context, opts model.StreamQueryOptions) (model.StreamQueryResult, error)
 	QueryVectorized(ctx context.Context, opts model.StreamQueryOptions) (executor.StreamVecScanSource, error)
 	VectorizedConfig() vstream.VectorizedConfig
 }
