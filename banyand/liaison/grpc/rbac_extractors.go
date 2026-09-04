@@ -25,67 +25,66 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 )
 
-// ErrScopeUnresolvable reports a request from which the group scopes its method's policy
-// needs cannot be read: an absent resource body, absent metadata, an empty or whitespace-only
-// group name, or a request whose type does not belong to the policy's scope family. The
-// liaison reports it to the caller as codes.InvalidArgument, so a malformed request from an
-// authenticated caller is answered as malformed rather than as an authorization outcome.
+// ErrScopeUnresolvable reports a request with no resolvable group scope.
 var ErrScopeUnresolvable = errors.New("method scope: request carries no resolvable group")
 
-// ScopeFamily names the typed extractor that resolves one method's group scopes from its
-// request message. Every classified method points at exactly one family. There is no generic
-// "find a field named group" rule: BanyanDB request shapes differ too much for one, and a
-// newly added RPC must be classified explicitly rather than inherit a scope by accident.
+// ScopeFamily identifies how a method's group scopes are resolved.
 type ScopeFamily int
 
 const (
-	// ScopeUnspecified is the zero value and names no extractor. A method whose permission
-	// this release cannot decide carries it, and resolving it is an error, so a policy row
-	// that is activated without being given a family fails closed instead of falling back to
-	// a global decision.
+	// ScopeUnspecified names no scope resolver.
 	ScopeUnspecified ScopeFamily = iota
-	// ScopeGlobal names the deployment-wide scope: the method addresses no group, and only a
-	// wildcard grant satisfies it. Cluster state, node query, internal maintenance and the
-	// cluster-wide schema revision wait use it.
+	// ScopeGlobal requires a wildcard grant.
 	ScopeGlobal
-	// ScopeDirectGroup reads the request's own group field, the single non-empty string of
-	// Group Get/Exist/Delete and of the seven registry List methods.
+	// ScopeDirectGroup reads a request's group field.
 	ScopeDirectGroup
-	// ScopeGroupBodyName reads the group name out of the Group body a request carries, which
-	// for a group is Group.Metadata.Name and never Group.Metadata.Group. Group Create and
-	// Update use it.
+	// ScopeGroupBodyName reads the name of a group body.
 	ScopeGroupBodyName
-	// ScopeMetadataGroup reads Metadata.Group off a request that identifies one existing
-	// resource by name. The seven registry Get, Exist and Delete methods use it.
+	// ScopeMetadataGroup reads the group from request metadata.
 	ScopeMetadataGroup
-	// ScopeResourceMetadataGroup reads Metadata.Group out of the resource body a request
-	// carries. The seven registry Create and Update methods use it.
+	// ScopeResourceMetadataGroup reads the group from resource metadata.
 	ScopeResourceMetadataGroup
-	// ScopeSchemaKeys reads every schema key a barrier wait names. A key of kind "group"
-	// scopes to its Name, because that is where a group key carries the group; every other
-	// kind scopes to its Group.
+	// ScopeSchemaKeys reads the groups addressed by schema keys.
 	ScopeSchemaKeys
-	// ScopeVisibleGroups names the whole-deployment resource set of Group List: the method
-	// addresses no group, any grant admits the caller, and the response is reduced afterwards
-	// to the groups the caller's scopes cover.
+	// ScopeVisibleGroups defers authorization to response filtering.
 	ScopeVisibleGroups
+	// ScopeRepeatedGroups reads a request's repeated groups field.
+	ScopeRepeatedGroups
+	// ScopePropertyGroup reads the group from a property body.
+	ScopePropertyGroup
+	// ScopeFrameGroups defers authorization to individual stream frames.
+	ScopeFrameGroups
+	// ScopePostTransform defers authorization until a query is transformed.
+	ScopePostTransform
 )
 
-// RequestScopes resolves the group scopes family requires from request. The result is
-// deduplicated and sorted, so a request naming one group twice, or two groups in either
-// order, yields one canonical scope set that an all-or-nothing decision can be taken over.
-//
-// ScopeGlobal and ScopeVisibleGroups resolve to no scopes: the first is satisfied only by a
-// wildcard grant, the second is admitted by any grant and filtered after its handler. Every
-// other family reads its groups from the request, and a request the family cannot be read
-// from returns an error wrapping ErrScopeUnresolvable.
-func RequestScopes(family ScopeFamily, request any) ([]string, error) {
+func isDeferredScope(family ScopeFamily) bool {
 	switch family {
-	case ScopeGlobal, ScopeVisibleGroups:
+	case ScopeVisibleGroups, ScopeFrameGroups, ScopePostTransform:
+		return true
+	default:
+		return false
+	}
+}
+
+// RequestScopes returns the canonical group scopes addressed by request. Unresolvable
+// requests return an error wrapping ErrScopeUnresolvable.
+func RequestScopes(family ScopeFamily, request any) ([]string, error) {
+	if family == ScopeGlobal || isDeferredScope(family) {
 		return nil, nil
+	}
+	switch family {
+	case ScopeRepeatedGroups:
+		return repeatedGroupScopes(family, request)
+	case ScopePropertyGroup:
+		return propertyGroupScopes(family, request)
 	case ScopeDirectGroup:
 		return directGroupScopes(family, request)
 	case ScopeGroupBodyName:
@@ -99,6 +98,53 @@ func RequestScopes(family ScopeFamily, request any) ([]string, error) {
 	default:
 		return nil, unresolvableScope(family, request)
 	}
+}
+
+// repeatedGroupScopes resolves the deduplicated, sorted set of groups a native read request
+// lists in its repeated groups field: the Stream, Measure, Trace and Property query requests
+// and the Measure TopN request. A request of any other type, or one listing an empty or
+// whitespace-only group, carries no resolvable scope.
+func repeatedGroupScopes(family ScopeFamily, request any) ([]string, error) {
+	var groups []string
+	switch typedRequest := request.(type) {
+	case *streamv1.QueryRequest:
+		if typedRequest != nil {
+			groups = typedRequest.GetGroups()
+		}
+	case *measurev1.QueryRequest:
+		if typedRequest != nil {
+			groups = typedRequest.GetGroups()
+		}
+	case *measurev1.TopNRequest:
+		if typedRequest != nil {
+			groups = typedRequest.GetGroups()
+		}
+	case *tracev1.QueryRequest:
+		if typedRequest != nil {
+			groups = typedRequest.GetGroups()
+		}
+	case *propertyv1.QueryRequest:
+		if typedRequest != nil {
+			groups = typedRequest.GetGroups()
+		}
+	default:
+		return nil, unresolvableScope(family, request)
+	}
+	if len(groups) == 0 {
+		return nil, unresolvableScope(family, request)
+	}
+	return normalizedScopes(family, request, groups)
+}
+
+// propertyGroupScopes resolves the group of the Property body a mutation carries, which is
+// Property.Metadata.Group. A request with no property, no metadata, or an empty group carries
+// no resolvable scope.
+func propertyGroupScopes(family ScopeFamily, request any) ([]string, error) {
+	typedRequest, matched := request.(*propertyv1.ApplyRequest)
+	if !matched || typedRequest == nil || typedRequest.GetProperty() == nil || typedRequest.GetProperty().GetMetadata() == nil {
+		return nil, unresolvableScope(family, request)
+	}
+	return oneScope(family, request, typedRequest.GetProperty().GetMetadata().GetGroup())
 }
 
 func directGroupScopes(family ScopeFamily, request any) ([]string, error) {
@@ -140,6 +186,10 @@ func directGroupScopes(family ScopeFamily, request any) ([]string, error) {
 			return oneScope(family, request, typedRequest.GetGroup())
 		}
 	case *databasev1.PropertyRegistryServiceListRequest:
+		if typedRequest != nil {
+			return oneScope(family, request, typedRequest.GetGroup())
+		}
+	case *propertyv1.DeleteRequest:
 		if typedRequest != nil {
 			return oneScope(family, request, typedRequest.GetGroup())
 		}

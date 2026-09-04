@@ -260,11 +260,11 @@ revision=$(grpc_call OK bydb-reader-all reader-all-secret "${await_revision}" '{
 grep -Fq '"applied": true' <<<"${revision}" || fail "revision zero must be a real allow case for a wildcard reader"
 
 # ---------------------------------------------------------------------------
-# Activating the schema families must not activate a data one.
+# A data read carrying no time range is malformed, not unauthorized: the schema stage owns no
+# data assertion beyond proving that the data families are classified rather than fail-closed.
+# The scoped data matrix itself belongs to check-rbac-data.sh.
 # ---------------------------------------------------------------------------
-grpc_call PermissionDenied bydb-admin admin-secret "${measure_query}" \
+grpc_call InvalidArgument bydb-admin admin-secret "${measure_query}" \
   "{\"groups\":[\"${alpha}\"],\"name\":\"${alpha_marker}\"}"
-http_call 403 bydb-admin admin-secret POST /api/v1/measure/data \
-  "{\"groups\":[\"${alpha}\"],\"name\":\"${alpha_marker}\"}" >/dev/null
 
 printf 'status: success\n'

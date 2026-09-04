@@ -513,15 +513,28 @@ func TestSchemaR2_ScopeFamilyClassification(t *testing.T) {
 			t.Errorf("policy for %s has scope family %d, want %d", policy.FullMethod, policy.Scope, want)
 		}
 	}
+	// The four data families and the eleventh direct-group method arrived with issue #14016,
+	// and are hand-counted from the same API policy map: five repeated-group native reads
+	// (Stream, Measure and Trace Query, Measure TopN, Property Query); Property Apply, whose
+	// extractor reads the group off the property body; the three streaming writes, whose
+	// groups arrive frame by frame; ByDBQL, decided after its transformation; and Property
+	// Delete, which the map's directGroup row names alongside Group Get and registry List.
+	// Those eleven leave only the four methods the map classifies as authenticated or health
+	// with no scope family at all, so a permission-bearing method can no longer be
+	// unclassified and the loop below has nothing left to forgive.
 	for family, want := range map[liaisongrpc.ScopeFamily]int{
 		liaisongrpc.ScopeGlobal:                13,
-		liaisongrpc.ScopeDirectGroup:           10,
+		liaisongrpc.ScopeDirectGroup:           11,
 		liaisongrpc.ScopeGroupBodyName:         2,
 		liaisongrpc.ScopeMetadataGroup:         21,
 		liaisongrpc.ScopeResourceMetadataGroup: 14,
 		liaisongrpc.ScopeSchemaKeys:            2,
 		liaisongrpc.ScopeVisibleGroups:         1,
-		liaisongrpc.ScopeUnspecified:           15,
+		liaisongrpc.ScopeRepeatedGroups:        5,
+		liaisongrpc.ScopePropertyGroup:         1,
+		liaisongrpc.ScopeFrameGroups:           3,
+		liaisongrpc.ScopePostTransform:         1,
+		liaisongrpc.ScopeUnspecified:           4,
 	} {
 		if familyCounts[family] != want {
 			t.Errorf("scope family %d classifies %d methods, want %d", family, familyCounts[family], want)
@@ -1003,38 +1016,10 @@ func TestSchemaR4_SchemaBarrierScopes(t *testing.T) {
 	}
 }
 
-// TestSchemaR6_DataMethodsStayFailClosed proves R6, the issue's "all data permission methods
-// remain fail-closed" criterion: no method carrying a data permission may be decided by this
-// milestone, for any principal including the global administrator, and the reason it reports
-// must stay the bounded executor_unavailable rather than becoming a scope or grant outcome.
-func TestSchemaR6_DataMethodsStayFailClosed(t *testing.T) {
-	snap := schemaSnapshot(t)
-	table := policyTable(t)
-	actors := schemaActors(t, snap)
-
-	dataMethods := 0
-	for _, policy := range table {
-		switch policy.Permission {
-		case auth.PermissionDataRead, auth.PermissionDataWrite:
-		default:
-			continue
-		}
-		dataMethods++
-		for _, who := range []string{"admin", "writer-alpha", "reader-alpha", "reader-all", "unbound"} {
-			decision, reason := table.Authorize(snap, actors[who], policy.FullMethod, nil)
-			if decision != liaisongrpc.DecisionUnavailable {
-				t.Errorf("Authorize(%s, %s) = %v, want DecisionUnavailable", who, policy.FullMethod, decision)
-			}
-			if reason != liaisongrpc.DecisionReasonExecutorUnavailable {
-				t.Errorf("Authorize(%s, %s) reported %q, want %q", who, policy.FullMethod, reason,
-					liaisongrpc.DecisionReasonExecutorUnavailable)
-			}
-		}
-	}
-	if dataMethods != 11 {
-		t.Errorf("the table classifies %d data methods, want the fixed 11 that W-PR3 owns", dataMethods)
-	}
-}
+// The data half of R6 — "every method carrying a data permission is still fail-closed" — was
+// true only while W-PR2 was the head of this series. Issue #14016 activates those eleven
+// methods, so the invariant now lives in TestDataR6_EveryLiaisonMethodIsActivatedAndBounded,
+// which asserts the same eleven-method oracle with the opposite expectation.
 
 // TestSchemaR6_DecisionReasonsStayBounded proves that the reason this milestone adds joins a
 // closed set rather than opening one: every reason the decision function can return is listed

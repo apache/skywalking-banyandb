@@ -685,6 +685,14 @@ func DataNodeWithAddrAndDir(config *ClusterConfig, flags ...string) (string, str
 }
 
 func startLiaisonNode(config *ClusterConfig, path string, flags ...string) (string, string, func()) {
+	return startLiaisonNodeWithAuth(config, path, "", "", flags...)
+}
+
+func startLiaisonNodeWithAuth(
+	config *ClusterConfig,
+	path, username, password string,
+	flags ...string,
+) (string, string, func()) {
 	if config == nil {
 		config = newDefaultClusterConfig()
 	}
@@ -725,14 +733,14 @@ func startLiaisonNode(config *ClusterConfig, path string, flags ...string) (stri
 	}
 	beforeCount := property.CountSchemaRegistries()
 	closeFn := CMD(flags...)
-	gomega.Eventually(helpers.HTTPHealthCheck(httpAddr, ""), testflags.EventuallyTimeout).Should(gomega.Succeed())
+	gomega.Eventually(helpers.HTTPHealthCheckWithAuth(httpAddr, "", username, password), testflags.EventuallyTimeout).Should(gomega.Succeed())
 	if config.NodeDiscovery.FileWriter != nil {
 		config.NodeDiscovery.FileWriter.AddNode(
 			fmt.Sprintf("%s:%d", nodeHost, ports[2]),
 			fmt.Sprintf("%s:%d", nodeHost, ports[2]),
 		)
 	}
-	waitForActiveDataNodes(grpcAddr, config)
+	waitForActiveDataNodesWithAuth(grpcAddr, config, username, password)
 
 	// Bind the liaison's SchemaRegistry to its gRPC address so cluster-only
 	// specs can call PauseDataNodeWatch / ResumeDataNodeWatch on the
@@ -781,6 +789,18 @@ func LiaisonNodeWithHTTP(config *ClusterConfig, flags ...string) (string, string
 	dataDir, deferFn, dirErr := test.NewSpace()
 	gomega.Expect(dirErr).NotTo(gomega.HaveOccurred())
 	grpcAddr, httpAddr, closeFn := startLiaisonNode(config, dataDir, flags...)
+	return grpcAddr, httpAddr, func() {
+		closeFn()
+		deferFn()
+	}
+}
+
+// LiaisonNodeWithHTTPAuth runs a liaison node with HTTP enabled and uses the supplied
+// credentials for its readiness and cluster synchronization calls.
+func LiaisonNodeWithHTTPAuth(config *ClusterConfig, username, password string, flags ...string) (string, string, func()) {
+	dataDir, deferFn, dirErr := test.NewSpace()
+	gomega.Expect(dirErr).NotTo(gomega.HaveOccurred())
+	grpcAddr, httpAddr, closeFn := startLiaisonNodeWithAuth(config, dataDir, username, password, flags...)
 	return grpcAddr, httpAddr, func() {
 		closeFn()
 		deferFn()
@@ -935,8 +955,8 @@ func waitForNodeDiscovery(grpcAddr string, dialOpts ...grpclib.DialOption) {
 	}, testflags.EventuallyTimeout).Should(gomega.Succeed())
 }
 
-func waitForActiveDataNodes(grpcAddr string, config *ClusterConfig) {
-	conn, connErr := grpchelper.Conn(grpcAddr, 10*time.Second,
+func waitForActiveDataNodesWithAuth(grpcAddr string, config *ClusterConfig, username, password string) {
+	conn, connErr := grpchelper.ConnWithAuth(grpcAddr, 10*time.Second, username, password,
 		grpclib.WithTransportCredentials(insecure.NewCredentials()))
 	gomega.Expect(connErr).NotTo(gomega.HaveOccurred())
 	defer func() {
@@ -947,7 +967,7 @@ func waitForActiveDataNodes(grpcAddr string, config *ClusterConfig) {
 	groupClient := databasev1.NewGroupRegistryServiceClient(conn)
 	gomega.Eventually(func(g gomega.Gomega) {
 		resp, listErr := groupClient.List(
-			context.Background(), &databasev1.GroupRegistryServiceListRequest{})
+			authContext(username, password), &databasev1.GroupRegistryServiceListRequest{})
 		g.Expect(listErr).NotTo(gomega.HaveOccurred())
 		g.Expect(resp.GetGroup()).NotTo(gomega.BeEmpty(),
 			"no groups found in liaison schema registry")
@@ -955,7 +975,7 @@ func waitForActiveDataNodes(grpcAddr string, config *ClusterConfig) {
 	clusterClient := databasev1.NewClusterStateServiceClient(conn)
 	gomega.Eventually(func(g gomega.Gomega) {
 		state, stateErr := clusterClient.GetClusterState(
-			context.Background(), &databasev1.GetClusterStateRequest{})
+			authContext(username, password), &databasev1.GetClusterStateRequest{})
 		g.Expect(stateErr).NotTo(gomega.HaveOccurred())
 		tire1Table := state.GetRouteTables()["tire1"]
 		g.Expect(tire1Table).NotTo(gomega.BeNil(), "tire1 route table not found")
@@ -967,7 +987,7 @@ func waitForActiveDataNodes(grpcAddr string, config *ClusterConfig) {
 			"no active data nodes in tire2 route table")
 	}, testflags.EventuallyTimeout).Should(gomega.Succeed())
 	for _, kind := range config.getLoadedKinds() {
-		waitForSchemaKind(conn, kind, "", "")
+		waitForSchemaKind(conn, kind, username, password)
 	}
 	time.Sleep(5 * time.Second)
 }

@@ -220,8 +220,8 @@ assert_metric_value "${before_metrics}" 1 "${reload_metric}" 'result="success"'
 assert_metric_value "${before_metrics}" 0 "${reload_metric}" 'result="failure"'
 assert_metric_value "${before_metrics}" 1 "${revision_metric}"
 
-# Authentication, global cluster RPCs, unavailable schema/data executors, and all
-# generated public fallbacks are exercised directly. RPCs without HTTP bindings stay gRPC-only.
+# Authentication, global cluster RPCs, request validation, and generated public fallbacks are
+# exercised directly. RPCs without HTTP bindings stay gRPC-only.
 expect_grpc Unauthenticated bydb-admin wrong-password "${api_version}"
 expect_grpc OK bydb-auth-only auth-only-secret "${api_version}"
 expect_grpc Unauthenticated bydb-admin wrong-password "${cluster_state}"
@@ -247,7 +247,7 @@ after_http_snapshot=$(snapshot_fingerprint "${container_id}")
 # Group.List is decided by the schema executor issue #14015 activates: a wildcard
 # administrator is allowed and its response carries every group.
 expect_grpc OK bydb-admin admin-secret "${group_list}"
-expect_grpc PermissionDenied bydb-admin admin-secret "${stream_write}"
+expect_grpc InvalidArgument bydb-admin admin-secret "${stream_write}"
 for fallback_method in "${internal_query}" "${stream_delete}" "${measure_delete}" "${trace_delete}"; do
   expect_grpc Unimplemented bydb-admin admin-secret "${fallback_method}"
   expect_grpc PermissionDenied bydb-reader reader-secret "${fallback_method}"
@@ -283,8 +283,6 @@ assert_metric_delta "${before_metrics}" "${after_metrics}" 2 "${decision_metric}
   'method="banyandb.database.v1.SnapshotService/Snapshot"' 'decision="allow"' 'reason="granted"'
 assert_metric_delta "${before_metrics}" "${after_metrics}" 2 "${decision_metric}" \
   'method="banyandb.database.v1.GroupRegistryService/List"' 'decision="allow"' 'reason="granted"'
-assert_metric_delta "${before_metrics}" "${after_metrics}" 1 "${decision_metric}" \
-  'method="banyandb.stream.v1.StreamService/Write"' 'decision="deny"' 'reason="executor_unavailable"'
 for fallback_method in "${internal_query}" "${stream_delete}" "${measure_delete}" "${trace_delete}"; do
   assert_metric_delta "${before_metrics}" "${after_metrics}" 1 "${decision_metric}" "method=\"${fallback_method}\"" 'decision="allow"' 'reason="granted"'
   assert_metric_delta "${before_metrics}" "${after_metrics}" 1 "${decision_metric}" "method=\"${fallback_method}\"" 'decision="deny"' 'reason="permission_missing"'
