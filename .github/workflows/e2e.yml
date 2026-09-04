@@ -18,6 +18,11 @@ name: OAP-E2E
 
 on:
   workflow_call:
+    inputs:
+      run-rbac-stress:
+        required: false
+        type: boolean
+        default: false
 
 env:
   SW_AGENT_JDK_VERSION: 8
@@ -72,6 +77,8 @@ jobs:
             config: test/e2e-v2/cases/cluster/e2e.yaml
           - name: RBAC
             config: test/e2e-v2/cases/rbac/e2e.yaml
+          - name: RBAC Cluster
+            config: test/e2e-v2/cases/rbac-cluster/e2e.yaml
           - name: Rover eBPF - Istio mesh, Kind
             config: test/e2e-v2/cases/rover/process/istio/banyandb/e2e-banyandb.yaml
             runs-on: ubuntu-24.04
@@ -150,3 +157,45 @@ jobs:
     steps:
       - name: To pass or not pass
         run: echo "Just to make the GitHub merge button green"
+
+  RBACStress:
+    name: RBAC Cluster Stress
+    if: ${{ inputs.run-rbac-stress }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    needs: [DockerImage]
+    env:
+      TAG: ${{ github.sha }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Load env
+        run: grep -v '^#' test/e2e-v2/script/env >> "$GITHUB_ENV"
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
+        with:
+          download-artifacts: 'false'
+          setup-node: 'false'
+          setup-docker: 'false'
+      - name: Download docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: banyandb-docker-image
+          path: /tmp
+      - name: Load docker image
+        run: docker load --input /tmp/banyandb-testing-image.tar.gz
+      - name: Run nightly RBAC cluster stress
+        uses: apache/skywalking-infra-e2e@ef073adb8b9e148e4eaf3f905fa4e238ee5cc7d6
+        with:
+          e2e-file: $GITHUB_WORKSPACE/test/e2e-v2/cases/rbac-cluster/e2e-stress.yaml
+      - if: ${{ failure() }}
+        run: |
+          df -h
+          docker images
+      - uses: actions/upload-artifact@v7
+        if: ${{ failure() }}
+        name: Upload RBAC Stress Logs
+        with:
+          name: test-logs-rbac-cluster-stress
+          path: "${{ env.SW_INFRA_E2E_LOG_DIR }}"

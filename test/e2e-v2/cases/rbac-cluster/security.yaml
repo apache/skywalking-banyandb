@@ -13,17 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# One policy revision, mounted identically into both liaisons. Two endpoints reading the same
+# revision must reach the same decision for the same principal and group.
+
 users:
   - username: bydb-admin
     password: admin-secret
   - username: bydb-reader
     password: reader-secret
-  - username: bydb-reader-all
-    password: reader-all-secret
   - username: bydb-writer
     password: writer-secret
-  - username: bydb-writer-gamma
-    password: writer-gamma-secret
   - username: bydb-auth-only
     password: auth-only-secret
 
@@ -34,20 +33,9 @@ rbac:
     - principal: bydb-admin
       role: admin
       groups: ["*"]
-    # Both group-scoped actors name their measure group and their property group: a measure and
-    # a property live in groups of different catalogs, and the scope story is about the actor
-    # rather than about the catalog.
     - principal: bydb-reader
       role: reader
-      groups: [alpha, alpha-prop, alpha-stream, alpha-trace]
-    - principal: bydb-reader-all
-      role: reader
-      groups: ["*"]
+      groups: [alpha]
     - principal: bydb-writer
       role: writer
-      groups: [alpha, alpha-prop, alpha-stream, alpha-trace]
-    # Bound to a group the fixture does not provision, so the schema stage can prove a
-    # service account bootstrapping the group it needs without cluster administration.
-    - principal: bydb-writer-gamma
-      role: writer
-      groups: [gamma]
+      groups: [alpha]

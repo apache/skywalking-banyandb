@@ -45,3 +45,5 @@ jobs:
     if: github.repository == 'apache/skywalking-banyandb'
     needs: [prepare]
     uses: ./.github/workflows/e2e.yml
+    with:
+      run-rbac-stress: true
