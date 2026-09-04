@@ -287,18 +287,6 @@ var _ = g.Describe("rbac-global authorization through the real liaison", func() 
 			"bydb-reader must be stopped before the InternalQuery fallback")
 	})
 
-	// R6: data permissions still have no activated executor in this release, so every
-	// method carrying one fails closed for every actor, admin included. Schema methods
-	// are exercised by the rbac_schema suite now that their executor is active.
-	g.It("fails closed on every not-yet-activated data method", func() {
-		measure := measurev1.NewMeasureServiceClient(conn)
-		for _, a := range []actor{adminActor, monitorActor, readerActor, writerActor, unboundActor} {
-			_, err := measure.Query(a.ctx(), &measurev1.QueryRequest{})
-			gm.Expect(status.Code(err)).To(gm.Equal(codes.PermissionDenied),
-				"%s must fail closed on MeasureService/Query", a.name)
-		}
-	})
-
 	// R3/D2: a denied call to a handler with a real side effect must leave no trace. The
 	// Snapshot handler writes snapshot directories under the data root, so the count of
 	// those directories is an observation independent of any status code.

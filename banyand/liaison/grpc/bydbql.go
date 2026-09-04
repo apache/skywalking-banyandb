@@ -31,6 +31,7 @@ import (
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/pkg/accesslog"
 	"github.com/apache/skywalking-banyandb/pkg/bydbql"
@@ -60,6 +61,8 @@ type bydbQLService struct {
 	slowThreshold time.Duration
 }
 
+const bydbQLQueryFullMethod = "/banyandb.bydbql.v1.BydbQLService/Query"
+
 func (b *bydbQLService) setLogger(log *logger.Logger) {
 	b.l = log
 }
@@ -75,6 +78,16 @@ func (b *bydbQLService) activeQueryAccessLog(root string, sampled bool) (err err
 func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (resp *bydbqlv1.QueryResponse, err error) {
 	start := time.Now()
 	b.metrics.totalStarted.Inc(1, "", "bydbql", "query")
+	snapshot, _ := SnapshotFromContext(ctx)
+	decisionSlot, hasDecisionSlot := postTransformDecisionFromContext(ctx)
+	decisionObserved := false
+	if !hasDecisionSlot {
+		defer func() {
+			if !decisionObserved {
+				b.observeTransformedDecision(snapshot, DecisionAllow, DecisionReasonGranted)
+			}
+		}()
+	}
 	// cacheResult tags the access-log entry with the prepared-statement cache
 	// outcome so operators can find un-cached queries: entries logged under
 	// "bydbql-miss" / "bydbql-bypass" are the ones that did not hit the cache.
@@ -130,6 +143,18 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to transform to native request: %v", err)
 	}
+	principal, _ := PrincipalFromContext(ctx)
+	decision, reason := AuthorizeTransformedRequest(snapshot, principal, result.QueryRequest)
+	if hasDecisionSlot {
+		decisionSlot.decision = decision
+		decisionSlot.reason = reason
+	} else {
+		decisionObserved = true
+		b.observeTransformedDecision(snapshot, decision, reason)
+	}
+	if decision != DecisionAllow {
+		return nil, decisionError(decision)
+	}
 	parseDuration := time.Since(parseStart)
 	if dl := b.l.Debug(); dl.Enabled() {
 		requestJSON, err := protojson.Marshal(result.QueryRequest)
@@ -178,6 +203,19 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 		return nil, fmt.Errorf("unknown query type: %v", result.Type)
 	}
 	return resp, nil
+}
+
+func (b *bydbQLService) observeTransformedDecision(snapshot auth.Snapshot, decision Decision, reason DecisionReason) {
+	observer, observed := any(b.metrics).(DecisionObserver)
+	if !observed {
+		return
+	}
+	observeDecision(observer, snapshot, MethodPolicy{
+		FullMethod: bydbQLQueryFullMethod,
+		Permission: auth.PermissionDataRead,
+		Access:     MethodAccessPermission,
+		Scope:      ScopePostTransform,
+	}, decision, reason)
 }
 
 // topKDumper tracks the top re-parsed and slow queries and, on a supervised goroutine,
