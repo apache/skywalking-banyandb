@@ -285,12 +285,12 @@ func TestR1_ClassificationDefectsStopStartup(t *testing.T) {
 // TestR6_GlobalMethodsAreActivatedAndTheRestFailClosed proves that the classification's
 // activation column matches what the release can decide. The global method set of issue
 // #14014 carries a cluster permission and is activated; the schema methods issue #14015
-// activates carry a schema permission and are activated; and every data method is classified
-// but *not* activated, so it fails closed until W-PR3 activates its executor.
+// activates carry a schema permission and are activated; and the data methods issue #14016
+// activates carry a data permission and are activated too, which closes #13994.
 //
-// It gates R6 of issue #14015 alongside R6 of #14014: the activation column is the single
-// place a data method could be switched on by accident, and the per-permission counts below
-// are the fixed table size neither milestone may change.
+// It gates R6 of issues #14014, #14015 and #14016 together: the activation column is the
+// single place a method could be switched on or off by accident, and the per-permission
+// counts below are the fixed table size no milestone in the series may change.
 func TestR6_GlobalMethodsAreActivatedAndTheRestFailClosed(t *testing.T) {
 	table := policyTable(t)
 	seen := make(map[string]bool, len(globalMethods))
@@ -320,8 +320,8 @@ func TestR6_GlobalMethodsAreActivatedAndTheRestFailClosed(t *testing.T) {
 				t.Errorf("schema policy for %s is not activated, want issue #14015 to decide it", p.FullMethod)
 			}
 		case auth.PermissionDataRead, auth.PermissionDataWrite:
-			if p.Activated {
-				t.Errorf("data policy for %s is activated, want it to stay fail-closed for W-PR3", p.FullMethod)
+			if !p.Activated {
+				t.Errorf("data policy for %s is not activated, want issue #14016 to decide it", p.FullMethod)
 			}
 		default:
 			t.Errorf("policy for %s requires %q, want a schema or data permission for a non-global method", p.FullMethod, p.Permission)
@@ -361,9 +361,9 @@ func TestR3_GlobalDecisionMatrix(t *testing.T) {
 	unbound := actor(t, snap, "bydb-unbound", "unbound-secret")
 
 	const (
-		allow = liaisongrpc.DecisionAllow
-		deny  = liaisongrpc.DecisionDeny
-		shut  = liaisongrpc.DecisionUnavailable
+		allow   = liaisongrpc.DecisionAllow
+		deny    = liaisongrpc.DecisionDeny
+		invalid = liaisongrpc.DecisionInvalidRequest
 	)
 	for _, tc := range []struct {
 		method                                  string
@@ -387,12 +387,28 @@ func TestR3_GlobalDecisionMatrix(t *testing.T) {
 		{mMeasureDeleteSeg, allow, deny, deny, deny, deny},
 		{mTraceDeleteSeg, allow, deny, deny, deny, deny},
 		{mMeasureInternalQ, allow, deny, deny, deny, deny},
-		// data — no activated executor, so every actor fails closed. The schema methods
-		// this milestone activates are oracled in rbac_schema_contract_test.go instead.
-		{mMeasureQuery, shut, shut, shut, shut, shut},
-		{mStreamWrite, shut, shut, shut, shut, shut},
-		{mBydbQLQuery, shut, shut, shut, shut, shut},
-		{mPropertyApply, shut, shut, shut, shut, shut},
+		// data — issue #14016 activated every one of these, so no cell here is fail-closed
+		// any more. Each row below is still read off the design rather than off the table:
+		// this matrix passes a nil request, which addresses no group at all, and the design
+		// fixes what each data scope family answers such a caller.
+		//
+		// A repeated-groups read and a property-body write cannot be read from a request
+		// that carries neither, and § 07 Failure semantics answers an authenticated
+		// malformed request InvalidArgument — for the administrator too, who learns that the
+		// request was unreadable and nothing about what it would have been allowed to do.
+		{mMeasureQuery, invalid, invalid, invalid, invalid, invalid},
+		{mPropertyApply, invalid, invalid, invalid, invalid, invalid},
+		// § 05 Streaming writes rejects a write stream at open when the principal "has no
+		// data:write grant anywhere", so the open decision is by permission alone: the
+		// built-in writer and the administrator hold data:write, the cluster-read monitor
+		// and the reader do not, and the unbound principal holds nothing.
+		{mStreamWrite, allow, deny, deny, allow, deny},
+		// § 05 Special request paths defers ByDBQL's group decision to the handler, after
+		// parse, bind and transform. The interceptor can therefore only decide the
+		// permission, on the Group.List precedent of "require at least one grant, then
+		// filter": every principal holding data:read in some scope reaches the handler and
+		// the cluster-only monitor and the unbound principal are refused before it.
+		{mBydbQLQuery, allow, deny, allow, allow, deny},
 	} {
 		for _, who := range []struct {
 			name string
@@ -513,13 +529,17 @@ func TestR3_InterceptorPrecedenceAndStatusCodes(t *testing.T) {
 		}
 	})
 
-	t.Run("fail-closed calls never reach the handler", func(t *testing.T) {
+	// Once #14016 activated the data methods no method is fail-closed any more, and the
+	// precedence fact this case guards becomes the one below it: an authenticated caller whose
+	// request the method's scope family cannot be read from learns that it was malformed, and
+	// learns nothing about what it would have been allowed to do.
+	t.Run("a request no scope can be read from is answered InvalidArgument", func(t *testing.T) {
 		ran, err := callWithCredentials(t, interceptor, mMeasureQuery, "bydb-admin", "admin-secret")
-		if got := status.Code(err); got != codes.PermissionDenied {
-			t.Errorf("bydb-admin on the unactivated %s = %v, want codes.PermissionDenied", mMeasureQuery, got)
+		if got := status.Code(err); got != codes.InvalidArgument {
+			t.Errorf("bydb-admin sending an unreadable %s request = %v, want codes.InvalidArgument", mMeasureQuery, got)
 		}
 		if ran {
-			t.Errorf("the handler ran for a fail-closed %s call, want no side effect", mMeasureQuery)
+			t.Errorf("the handler ran for a malformed %s call, want no side effect", mMeasureQuery)
 		}
 	})
 
@@ -555,18 +575,35 @@ func TestR3_InterceptorPrecedenceAndStatusCodes(t *testing.T) {
 	})
 }
 
+// TestR3_StreamInterceptorFailsClosedBeforeHandler proves A3's rollout rule at the stream
+// boundary: "when RBAC is enabled, any permission-bearing method without an activated
+// executor returns PermissionDenied before its handler". Issue #14016 activated the last
+// unactivated method the liaison serves, so the rule can no longer be shown against the real
+// table; it is shown against a one-row table instead, because the rule guards the next
+// method somebody registers, not the ones already decided. The caller is the administrator
+// on purpose: an unactivated executor is a gap in the policy, so not even a wildcard admin
+// binding may be read as an allow.
 func TestR3_StreamInterceptorFailsClosedBeforeHandler(t *testing.T) {
+	const unactivated = "/banyandb.future.v1.FutureService/Write"
+
 	reloader := newEnabledReloader(t)
-	interceptor := liaisongrpc.NewAuthorizationStreamInterceptor(reloader, policyTable(t), &recordingObserver{})
+	table := liaisongrpc.MethodPolicyTable{{
+		FullMethod: unactivated,
+		Permission: auth.PermissionDataWrite,
+		Access:     liaisongrpc.MethodAccessPermission,
+		Scope:      liaisongrpc.ScopeFrameGroups,
+		Activated:  false,
+	}}
+	interceptor := liaisongrpc.NewAuthorizationStreamInterceptor(reloader, table, &recordingObserver{})
 	streamContext := metadata.NewIncomingContext(context.Background(), metadata.Pairs("username", "bydb-admin", "password", "admin-secret"))
 	stream := &testServerStream{ctx: streamContext}
 	handlerRan := false
-	interceptorErr := interceptor(nil, stream, &grpclib.StreamServerInfo{FullMethod: mStreamWrite}, func(any, grpclib.ServerStream) error {
+	interceptorErr := interceptor(nil, stream, &grpclib.StreamServerInfo{FullMethod: unactivated}, func(any, grpclib.ServerStream) error {
 		handlerRan = true
 		return nil
 	})
 	if status.Code(interceptorErr) != codes.PermissionDenied {
-		t.Errorf("admin opening unactivated %s = %v, want PermissionDenied", mStreamWrite, status.Code(interceptorErr))
+		t.Errorf("admin opening unactivated %s = %v, want PermissionDenied", unactivated, status.Code(interceptorErr))
 	}
 	if handlerRan {
 		t.Fatal("stream handler ran for an unactivated method")
