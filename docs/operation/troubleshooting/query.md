@@ -66,7 +66,7 @@ Please refer to the [Troubleshooting No Data Issue](./no-data.md) guide to ident
 
 Use query tracing to understand execution plans and identify bottlenecks. To enable query tracing, set the `trace` field to `true` in the [MeasureQueryRequest](../../api-reference.md#queryrequest) and [StreamQueryRequest](../../api-reference.md#queryrequest-1). The query results will include detailed tracing information to help you identify performance issues.
 
-> **Note:** Distributed **measure** queries run through the vectorized query path by default, which emits a different span tree (`distributed-…`, `broadcast-agg`, `groupby-agg-map`, `reduce-raw-frames`, …). See [Vectorized Measure Query Tracing](../observability/tracing.md#vectorized-measure-query-tracing) for that span shape plus worked empty-result and slow-query diagnosis walkthroughs. The span names below describe the per-data-node read path — used by stream and trace queries, and by measure when the [row-path rollback](./measure-vec-flag-off-rollback.md) is enabled.
+> **Note:** Distributed **measure** queries run through the vectorized query path, which emits a different span tree (`distributed-…`, `broadcast-agg`, `groupby-agg-map`, `reduce-raw-frames`, …). See [Vectorized Measure Query Tracing](../observability/tracing.md#vectorized-measure-query-tracing) for that span shape plus worked empty-result and slow-query diagnosis walkthroughs. The span names below describe the per-data-node read path.
 
 There are some important nodes in the trace result:
 

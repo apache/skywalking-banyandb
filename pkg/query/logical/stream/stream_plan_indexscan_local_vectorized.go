@@ -40,10 +40,12 @@ var _ executor.StreamVecExecutable = (*localIndexScan)(nil)
 // *tagFilterPlan (criteria query, stream_plan_tag_filter.go). For the tag-filter
 // case the inner scan already projects the criteria + hidden tags and pushes the
 // INDEXED criteria into its sqo (invertedFilter/skippingFilter); the caller then
-// applies the SAME per-element tagFilter.Match + hidden-tag strip that
-// tagFilterPlan.Execute does (via VecTagFilter) so the result is byte-identical to
-// the row path. A multi-group merger or any other shape does not resolve to a
-// *localIndexScan, so we decline and the caller runs the row path.
+// applies the per-element tagFilter.Match + hidden-tag strip at egress (via
+// VecTagFilter). A multi-group merger or any other shape does not resolve to a
+// *localIndexScan, so we decline and the caller fails the query.
+//
+// An index-order query need not project its ordered tag: vecTagProjection adds it
+// to the scan's request and keeps it out of ProjectionTags().
 func VecExecutable(plan logical.Plan) executor.StreamVecExecutable {
 	l, ok := plan.(*limit)
 	if !ok {
@@ -53,14 +55,7 @@ func VecExecutable(plan logical.Plan) executor.StreamVecExecutable {
 	if scan == nil {
 		return nil
 	}
-	// An index-order query sorts by an indexed tag. The vec merge keys on the
-	// OrderKey column, which is populated from the ordered tag's PROJECTED cell
-	// (resolveOrderTag). If the ordered tag is not in the projection, there is no
-	// cell to derive the key from, so the OrderKey column would be empty and the
-	// merge would silently fall back to timestamp order — a wrong result. The row
-	// path sorts via the inverted index regardless of projection, so decline vec
-	// here and let the caller run the row path (correct order).
-	if !scan.orderTagProjected() {
+	if _, _, resolved := scan.vecTagProjection(); !resolved {
 		return nil
 	}
 	return scan
@@ -86,39 +81,39 @@ func scanFromInput(input logical.Plan) *localIndexScan {
 	return nil
 }
 
-// scanResumesAcrossPulls reports whether the row scan backing this plan keeps
+// scanResumesAcrossPulls reports whether the storage scan backing this plan keeps
 // yielding new elements on successive Pulls, which decides where the vec merge may
 // cap for a criteria (filtered) query.
 //
-// The row path nests three loops: *limit.Execute pulls tagFilterPlan.Execute until
-// it has accumulated limit+offset elements, tagFilterPlan.Execute pulls the scan
-// until a batch yields ≥1 match, and the scan itself caps each batch at
-// maxElementSize. Whether the limit actually gets FILLED therefore depends on the
-// scan resuming:
+// The rule is inherited from the row path removed in 0.12.0, which nested three
+// loops: the limit pulled the tag filter until it had accumulated limit+offset
+// elements, the tag filter pulled the scan until a batch yielded ≥1 match, and the
+// scan itself capped each batch at maxElementSize. Whether the limit actually got
+// FILLED therefore depended on the scan resuming:
 //
 //   - index-order (idxResult): the sorted iterator persists across Pulls and each
-//     Pull drains the next maxElementSize entries (query_by_idx.go:262), so row keeps
-//     pulling and DOES fill the limit. The vec merge must stay uncapped, letting the
+//     Pull drains the next maxElementSize entries (query_by_idx.go:262), so row kept
+//     pulling and DID fill the limit. The vec merge must stay uncapped, letting the
 //     egress filter the whole ordered set and then apply the limit.
 //   - timestamp order (tsResult): one Pull consumes a whole segment and caps the
 //     result at maxElementSize (query_by_ts.go:136,159); the next Pull only advances
-//     to a further segment. For data inside a single segment the scan is then
-//     exhausted, so row returns only the matches from that first capped batch and
-//     legitimately UNDER-fills the limit (e.g. 30 scanned, 2 rejected ⇒ 28 returned).
+//     to a further segment. For data inside a single segment the scan was then
+//     exhausted, so row returned only the matches from that first capped batch and
+//     legitimately UNDER-filled the limit (e.g. 30 scanned, 2 rejected ⇒ 28 returned).
 //     The vec merge must cap at maxElementSize to reproduce that same input set.
 //
-// Caveat (documented, not emulated): for timestamp order spanning MULTIPLE segments
-// the row scan does resume per segment, so row could accumulate past the first
-// capped batch where vec stops. Reproducing that needs the scan's segment
-// boundaries, which the vec merge does not see.
+// Behavior change in 0.12.0 (documented, not emulated): for timestamp order spanning
+// MULTIPLE segments the row scan resumed per segment, so it could accumulate past the
+// first capped batch where vec stops. Reproducing that needs the scan's segment
+// boundaries, which the vec merge does not see, so vec's answer is now the only
+// answer. See docs/operation/upgrade.md.
 func scanResumesAcrossPulls(scan *localIndexScan) bool {
 	return scan.order != nil && scan.order.Index != nil
 }
 
 // VecTagFilter returns the criteria tag filter, the hidden-tag set, and the schema
 // carried by the *limit plan's *tagFilterPlan input, so the standalone vec egress
-// can apply the SAME per-element tagFilter.Match + hidden-tag strip that the row
-// path's tagFilterPlan.Execute applies. Returns ok=false when the plan is not the
+// applies the per-element tagFilter.Match + hidden-tag strip at egress. Returns ok=false when the plan is not the
 // *limit → *tagFilterPlan shape (a criteria-less query needs no post-filter).
 func VecTagFilter(plan logical.Plan) (tagFilter logical.TagFilter, hiddenTags logical.HiddenTagSet, schema logical.Schema, ok bool) {
 	l, isLimit := plan.(*limit)
@@ -132,8 +127,7 @@ func VecTagFilter(plan logical.Plan) (tagFilter logical.TagFilter, hiddenTags lo
 // plan is a *tagFilterPlan (a criteria group), else ok=false. It operates on a
 // plan NODE directly (not the *limit wrapper), so both the single-group VecTagFilter
 // (via l.Input) and the multi-group dispatch (via each mergePlan subPlan) share the
-// same extraction — the vec egress then applies the SAME per-element
-// tagFilter.Match + hidden-tag strip that the row tagFilterPlan.Execute applies.
+// same extraction.
 func nodeTagFilter(plan logical.Plan) (tagFilter logical.TagFilter, hiddenTags logical.HiddenTagSet, schema logical.Schema, ok bool) {
 	tf, isTagFilter := plan.(*tagFilterPlan)
 	if !isTagFilter {
@@ -169,10 +163,9 @@ type VecMerge struct {
 
 // VecMergeExecutable returns the vec-eligible multi-group form when the plan is
 // *limit → *mergePlan and EVERY subPlan resolves to a vec-eligible *localIndexScan
-// (via scanFromInput, incl. orderTagProjected). If ANY subPlan is not vec-eligible,
-// it returns ok=false so the whole query runs the row path — vec and row are never
-// mixed across groups. The merge params (sortByTime/sortTagSpec/desc) are taken
-// verbatim from the mergePlan so the cross-group order matches the row path exactly.
+// (via scanFromInput). If ANY subPlan is not vec-eligible it returns ok=false and
+// the caller fails the whole query. The merge params (sortByTime/sortTagSpec/desc)
+// are taken verbatim from the mergePlan so the cross-group order is unchanged.
 func VecMergeExecutable(plan logical.Plan) (*VecMerge, bool) {
 	l, isLimit := plan.(*limit)
 	if !isLimit {
@@ -185,7 +178,10 @@ func VecMergeExecutable(plan logical.Plan) (*VecMerge, bool) {
 	groups := make([]VecMergeGroup, 0, len(mp.subPlans))
 	for _, sp := range mp.subPlans {
 		scan := scanFromInput(sp)
-		if scan == nil || !scan.orderTagProjected() {
+		if scan == nil {
+			return nil, false
+		}
+		if _, _, resolved := scan.vecTagProjection(); !resolved {
 			return nil, false
 		}
 		filter, hidden, filterSchema, hasFilter := nodeTagFilter(sp)
@@ -207,28 +203,61 @@ func VecMergeExecutable(plan logical.Plan) (*VecMerge, bool) {
 	}, true
 }
 
-// orderTagProjected reports whether an index-order query's single ordered tag is
-// present in the scan's tag projection (so the vec OrderKey column can be
-// populated). It is true for non-index-order queries (they key on timestamp, no
-// ordered tag needed) and for the degenerate order shapes vec does not treat as
-// index-order (no Index, or not exactly one ordered tag).
-func (i *localIndexScan) orderTagProjected() bool {
+// vecTagProjection returns the tag projection the vec scan requests from storage.
+// The vec merge keys on the OrderKey column, which the scan derives from the
+// ordered tag's projected cell (resolveOrderTag); an index-order query that does
+// not project its ordered tag would otherwise get an empty OrderKey column and
+// silently sort by timestamp. So the ordered tag is appended here and reported as
+// hidden — ProjectionTags() still returns the client projection, so the extra tag
+// never reaches the element egress.
+//
+// resolved is false when the ordered tag has to be added but its family cannot be
+// resolved against the schema (a stale index rule naming a dropped tag). The
+// caller then declines vec, because the alternative is a silent timestamp sort.
+func (i *localIndexScan) vecTagProjection() (projection []model.TagProjection, hidden, resolved bool) {
 	if i.order == nil || i.order.Index == nil {
-		return true
+		return i.projectionTags, false, true
 	}
 	tags := i.order.Index.GetTags()
 	if len(tags) != 1 {
-		return true
+		return i.projectionTags, false, true
 	}
 	name := tags[0]
 	for _, proj := range i.projectionTags {
 		for _, projName := range proj.Names {
 			if projName == name {
-				return true
+				return i.projectionTags, false, true
 			}
 		}
 	}
-	return false
+	tagSpec := i.schema.FindTagSpecByName(name)
+	if tagSpec == nil {
+		return i.projectionTags, false, false
+	}
+	family, ok := familyNameFromSchema(i.schema, tagSpec)
+	if !ok {
+		return i.projectionTags, false, false
+	}
+	augmented := make([]model.TagProjection, 0, len(i.projectionTags)+1)
+	appended := false
+	for _, proj := range i.projectionTags {
+		if proj.Family == family && !appended {
+			names := make([]string, 0, len(proj.Names)+1)
+			proj.Names = append(append(names, proj.Names...), name)
+			appended = true
+		}
+		augmented = append(augmented, proj)
+	}
+	if !appended {
+		augmented = append(augmented, model.TagProjection{Family: family, Names: []string{name}})
+	}
+	return augmented, true, true
+}
+
+// HidesOrderTag implements executor.StreamVecExecutable.
+func (i *localIndexScan) HidesOrderTag() bool {
+	_, hidden, _ := i.vecTagProjection()
+	return hidden
 }
 
 // VecOffsetLimit returns the client offset/limit the *limit plan node carries, so
@@ -274,6 +303,7 @@ func (i *localIndexScan) ExecuteVectorized(ctx context.Context) ([]*vectorized.R
 			Sort:  i.order.Sort,
 		}
 	}
+	tagProjection, _, _ := i.vecTagProjection()
 	source, err := i.ec.QueryVectorized(ctx, model.StreamQueryOptions{
 		Name:           i.metadata.GetName(),
 		TimeRange:      &i.timeRange,
@@ -281,7 +311,7 @@ func (i *localIndexScan) ExecuteVectorized(ctx context.Context) ([]*vectorized.R
 		InvertedFilter: i.invertedFilter,
 		SkippingFilter: i.skippingFilter,
 		Order:          orderBy,
-		TagProjection:  i.projectionTags,
+		TagProjection:  tagProjection,
 		MaxElementSize: i.maxElementSize,
 	})
 	if err != nil {

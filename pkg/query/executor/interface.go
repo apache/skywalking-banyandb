@@ -38,7 +38,6 @@ import (
 // surfaces the engine-side --stream-vectorized-* configuration so the vec
 // dispatch can decide whether the flag is on.
 type StreamExecutionContext interface {
-	Query(ctx context.Context, opts model.StreamQueryOptions) (model.StreamQueryResult, error)
 	QueryVectorized(ctx context.Context, opts model.StreamQueryOptions) (StreamVecScanSource, error)
 	VectorizedConfig() vstream.VectorizedConfig
 }
@@ -56,17 +55,23 @@ type StreamVecScanSource interface {
 	Release()
 }
 
-// StreamExecutable allows querying in the stream schema.
-type StreamExecutable interface {
-	Execute(context.Context) ([]*streamv1.Element, error)
+// StreamCloser releases the resources a stream plan node holds. It is separate
+// from StreamExecutable so a plan tree can be released without asserting the row
+// Execute capability.
+type StreamCloser interface {
 	Close()
 }
 
-// StreamVecExecutable is the optional capability a stream plan node exposes when
-// it can be executed through the native columnar (vectorized) path. The data-node
-// processor type-asserts the analyzed plan to this interface; a plan shape that
-// cannot be vectorized (multi-group merge, skipping filter, tag filter, etc.)
-// simply does not implement it, so the assertion fails and the row path runs.
+// StreamExecutable allows querying in the stream schema.
+type StreamExecutable interface {
+	Execute(context.Context) ([]*streamv1.Element, error)
+	StreamCloser
+}
+
+// StreamVecExecutable is the capability a stream plan node exposes when it can be
+// executed through the native columnar (vectorized) path. The data-node processor
+// type-asserts the analyzed plan to this interface; since the row path was removed
+// in 0.12.0 a failed assertion is a hard error, not a fallback.
 //
 // ExecuteVectorized returns the fully merged/deduped/limited columnar batches
 // (the M4 pipeline already applied) plus the batch schema, so both the
@@ -77,6 +82,11 @@ type StreamVecExecutable interface {
 	// ProjectionTags returns the projected tag families/names in projection order,
 	// so the egress builds the same tag families/tags the row path would.
 	ProjectionTags() []model.TagProjection
+	// HidesOrderTag reports whether the scan requests an ordered tag that is absent
+	// from ProjectionTags(). The columnar frame egress rebuilds the projection from
+	// the batch schema, so such a scan must take the proto egress or the hidden tag
+	// leaks into the result.
+	HidesOrderTag() bool
 }
 
 // MeasureExecutionContext allows retrieving data through the measure module.

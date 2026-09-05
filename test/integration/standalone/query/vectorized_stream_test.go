@@ -37,12 +37,12 @@ import (
 
 // Vec stream independent verification on a standalone process.
 //
-// Boots a *separate* standalone with --stream-vectorized-enabled=true and
-// replays the same Stream test entries the row-based integration suite already
-// covers. Each case asserts the row-path's expected output, so every greenness
-// here is an INDEPENDENT verification that the vectorized stream path produces
-// the same results on its own merits. The AfterAll QueryCount delta proves the
-// vec path actually fired (vs silently falling back to the row path).
+// Boots a *separate*, freshly-written standalone and replays the same Stream
+// test entries the on-disk suite in round2.go covers after a restart. Each case
+// asserts the committed reference yaml, so every greenness here is an
+// INDEPENDENT verification that the vectorized stream path produces the same
+// results on its own merits. The AfterAll QueryCount delta proves the vec scan
+// actually ran, rather than the table passing on a path that never fired.
 //
 // The cluster is fresh and isolated so neither side observes the other's state.
 // This is the standalone twin of test/integration/distributed/query/
@@ -66,9 +66,7 @@ var _ = ginkgo.Describe("vec stream independent verification (standalone)", gink
 		gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
 		dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
 		config := setup.PropertyClusterConfig(dfWriter)
-		addr, _, closeFn := setup.ClosableStandalone(config, path, ports,
-			"--stream-vectorized-enabled=true",
-		)
+		addr, _, closeFn := setup.ClosableStandalone(config, path, ports)
 		stopFn = func() {
 			closeFn()
 			diskCleanupFn()
@@ -97,7 +95,7 @@ var _ = ginkgo.Describe("vec stream independent verification (standalone)", gink
 		)
 		gomega.Expect(queryCountDelta).To(gomega.BeNumerically(">", int64(0)),
 			"vec stream dispatch did not fire for any case in the vec-stream-standalone table; "+
-				"--stream-vectorized-enabled=true may not have taken effect")
+				"vstream.QueryCount() never moved, so no query reached the vectorized stream scan")
 		if vectorizedConn != nil {
 			gomega.Expect(vectorizedConn.Close()).To(gomega.Succeed())
 		}

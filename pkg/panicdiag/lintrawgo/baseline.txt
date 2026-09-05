@@ -119,7 +119,6 @@ banyand/queue/sub/group_lifecycle_cold_tier_test.go:289
 banyand/queue/test/chunked_sync_common.go:102
 banyand/stream/block_scanner_test.go:138
 banyand/stream/part.go:296
-banyand/stream/query_by_idx.go:139
 banyand/stream/tstable_test.go:103
 banyand/stream/tstable_test.go:245
 banyand/trace/file_part_sync_test.go:383

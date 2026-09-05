@@ -34,9 +34,10 @@ Before upgrading the cluster, you should check CHANGELOG.md](https://github.com/
 - After upgrading all nodes, the cluster will be running the new version.
 
 > **Exception — upgrading to 0.11 or later.** The vectorized query paths change the
-> liaison<->data wire format, and a data node must never have a vectorized path enabled
-> that the liaison it answers cannot decode. For 0.11 the order is **reversed**: upgrade
-> "liaison" nodes first, then "data" nodes. See [Vectorized query paths enabled by default](#vectorized-query-paths-enabled-by-default-breaking-for-rolling-upgrades).
+> liaison<->data wire format, and a data node must never emit a frame that the liaison it
+> answers cannot decode. For 0.11 and later the order is **reversed**: upgrade "liaison"
+> nodes first, then "data" nodes. See [Vectorized query paths enabled by default](#vectorized-query-paths-enabled-by-default-breaking-for-rolling-upgrades)
+> for 0.11 and [Row-based query path removed](#row-based-query-path-removed-breaking) for 0.12.
 
 To ensure this strategy works, you should have a minimum of one node for each role of node in the cluster. For example, if you have a 2-node cluster, you should have at least one "liaison" and one "data" node.
 
@@ -54,6 +55,37 @@ If the new version has breaking changes, you can use the following strategy to u
 The data ingestion and retrieval will be stopped during the upgrade process. The downtime will be the sum of the time taken to stop and start the nodes. All these steps should be running in parallel to minimize the downtime.
 
 If you don't have enough resource to perform a rolling upgrade or you have a large cluster with many nodes, you can use the minimum downtime strategy.
+
+## Upgrading to 0.12
+
+This section describes breaking changes and important behavioral changes when upgrading to BanyanDB 0.12.0.
+
+### Row-based query path removed (breaking)
+
+The row-based query execution path is gone. Stream, measure and trace queries all execute through the vectorized columnar pipeline, and a distributed data node always answers with a native columnar frame. There is no runtime switch back to row execution or to the protobuf wire format.
+
+`--stream-vectorized-enabled`, `--trace-vectorized-enabled` and `--measure-vectorized-enabled` are still registered so an existing command line keeps parsing, but they are no longer switches:
+
+- `=true`, or the flag omitted, is the only supported setting and changes nothing.
+- `=false` makes the node **exit at startup** with an error naming [apache/skywalking#13998](https://github.com/apache/skywalking/issues/13998), rather than silently discarding an explicit rollback request.
+
+All three flags are removed outright in 0.13.0. Drop them from systemd units, Helm values, container arguments and compose files as part of this upgrade.
+
+**Upgrade "liaison" nodes BEFORE "data" nodes**, as in 0.11. A 0.12 data node emits columnar frames unconditionally, and a liaison on an older binary has no frame decoder. The 0.11 workaround — starting the new data nodes with the vectorized paths disabled and enabling them once every liaison is upgraded — is no longer available, because the paths can no longer be disabled. If you cannot control node ordering, use the [Minimum Downtime Strategy](#minimum-downtime-strategy-to-upgrade-a-cluster).
+
+**Rollback.** Rollback is a binary downgrade, not a flag flip: follow the [Rollback](#rollback) procedure below. The on-disk format is unchanged by this release, so no data migration is involved.
+
+### Stream timestamp-order queries with criteria spanning multiple segments
+
+Stream queries that are ordered by timestamp, carry a criteria filter, and span more than one segment may now return fewer elements than 0.11.x did. The removed row scan resumed segment by segment: after its first `maxElementSize`-sized batch it could keep pulling from later segments, accumulating further matches until the requested limit was filled. The vectorized scan does not see segment boundaries, so it caps at `maxElementSize` and stops there.
+
+The results it returns are correct and correctly ordered — the response is simply under-filled against the limit where the old path would have gone back for more. Index-order (tag-ordered) queries are unaffected: their merge stays uncapped and still fills the limit.
+
+A client that needs the missing elements should re-issue the query over a narrower time range or page forward. This divergence was always documented as one the vectorized path deliberately does not emulate; with the row path gone, the vectorized answer is now the only answer.
+
+### Index-order queries that do not project the ordered tag
+
+An index-order stream query whose ordered tag is not in the client's tag projection now answers over protobuf on a distributed data node instead of over a columnar frame. The scan projects that tag internally to derive its sort key and hides it again before egress, while the frame egress rebuilds its projection from the batch schema and would leak the hidden tag — so this query shape is routed onto the protobuf path. Results are unaffected; the query simply forgoes the raw-wire fast path.
 
 ## Upgrading to 0.11
 
@@ -104,6 +136,8 @@ banyand data \
 Standalone deployments are unaffected: the frame is only emitted on a distributed data node, so a standalone server always uses the protobuf path regardless of the flag.
 
 **Rollback.** Pass `--stream-vectorized-enabled=false` / `--trace-vectorized-enabled=false` / `--measure-vectorized-enabled=false` on the standalone or data-node command line and restart. The row path and the protobuf wire format resume immediately; no data migration is involved, because the flags affect only the query and wire paths, never the on-disk format.
+
+> This rollback applies to 0.11 only. The row path was removed in 0.12.0 and `=false` is no longer accepted — see [Row-based query path removed](#row-based-query-path-removed-breaking).
 
 ## Upgrading to 0.10
 

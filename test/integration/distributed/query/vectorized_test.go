@@ -44,12 +44,12 @@ import (
 
 // Vec independent verification on a distributed cluster.
 //
-// Boots a *separate* distributed cluster — 2 data nodes + 1 liaison, all
-// launched with --measure-vectorized-enabled=true — and replays the same
-// Measure / TopN test entries the row-path distributed suite already
-// covers in common.go. Each case asserts the row-path's expected output;
-// every greenness here is an INDEPENDENT verification that vec produces
-// the same reference InternalDataPoints on the cluster wire.
+// Boots a *separate* distributed cluster — 2 data nodes + 1 liaison — and
+// replays the Measure / TopN test entries against it. The shared cluster in
+// common.go registers no tables, so this Describe is the distributed suite's
+// only Measure and TopN coverage. Each case asserts the committed reference
+// yaml; every greenness here is an INDEPENDENT verification that vec produces
+// the same InternalDataPoints on the cluster wire.
 //
 // This is the distributed twin of test/integration/standalone/query/
 // vectorized_test.go. Together they satisfy the "integration standalone
@@ -64,15 +64,14 @@ import (
 // row — that is the loud-failure signal the runbook depends on.
 var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ordered, func() {
 	var (
-		vectorizedConn        *grpc.ClientConn
-		stopFn                func()
-		startHandledCount     int64
-		startFrameEnc         int64
-		startFrameDec         int64
-		startFellThroughCount int64
-		savedMeasureCtx       helpers.SharedContext
-		savedTopNCtx          helpers.SharedContext
-		savedWireModeRaw      bool
+		vectorizedConn    *grpc.ClientConn
+		stopFn            func()
+		startHandledCount int64
+		startFrameEnc     int64
+		startFrameDec     int64
+		savedMeasureCtx   helpers.SharedContext
+		savedTopNCtx      helpers.SharedContext
+		savedWireModeRaw  bool
 	)
 	ginkgo.BeforeAll(func() {
 		savedMeasureCtx = casesmeasure.SharedContext
@@ -87,17 +86,16 @@ var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ord
 		startHandledCount = vecplan.HandledCount()
 		startFrameEnc = data.MeasureFrameEncodedCount()
 		startFrameDec = data.MeasureFrameDecodedCount()
-		startFellThroughCount = vecplan.FellThroughCount()
 
 		tmpDir, tmpDirCleanup, tmpErr := test.NewSpace()
 		gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
 		dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
 		config := setup.PropertyClusterConfig(dfWriter)
-		closeDataNode0 := setup.DataNode(config, "--measure-vectorized-enabled=true")
-		closeDataNode1 := setup.DataNode(config, "--measure-vectorized-enabled=true")
+		closeDataNode0 := setup.DataNode(config)
+		closeDataNode1 := setup.DataNode(config)
 		setup.PreloadSchemaViaProperty(config, test_stream.PreloadSchema, test_measure.PreloadSchema, test_trace.PreloadSchema, test_property.PreloadSchema)
 		config.AddLoadedKinds(schema.KindStream, schema.KindMeasure, schema.KindTrace)
-		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config, "--measure-vectorized-enabled=true")
+		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config)
 		stopFn = func() {
 			closerLiaisonNode()
 			closeDataNode0()
@@ -128,13 +126,10 @@ var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ord
 		// Observability gate: vec dispatch must fire for at least one
 		// case in the table. If this drops to zero the vec subsystem is
 		// silently 0%-covered on the distributed cluster — either the
-		// eligibility gate or processor.go's tryVecDispatch regressed.
+		// eligibility gate or processor.go's dispatchMeasure regressed.
 		handledDelta := vecplan.HandledCount() - startHandledCount
-		fellThroughDelta := vecplan.FellThroughCount() - startFellThroughCount
 		ginkgo.GinkgoWriter.Printf(
-			"vec dispatch (distributed): handled=%d fell_through=%d (deltas across vec-distributed table)\n",
-			handledDelta, fellThroughDelta,
-		)
+			"vec dispatch (distributed): handled=%d (delta across the vec-distributed table)\n", handledDelta)
 		gomega.Expect(handledDelta).To(gomega.BeNumerically(">", int64(0)),
 			"vec dispatch did not fire for any case on the distributed cluster")
 		// HandledCount above only proves the vec COMPUTE path dispatched. A vec query

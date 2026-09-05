@@ -23,6 +23,7 @@ package trace
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"time"
 
@@ -67,6 +68,7 @@ type option struct {
 	vectorized                   vtrace.VectorizedConfig
 	decideTimeoutCircuitBreak    int
 	nativePipelineEnabled        bool
+	vectorizedEnabled            bool
 	benchmarkMergeBlocked        bool
 	isHot                        bool
 }
@@ -167,11 +169,14 @@ func (t *trace) VectorizedConfig() vtrace.VectorizedConfig {
 	return t.vectorized
 }
 
+// errRowQueryRemoved reports a startup attempt to fall back to the deleted row-based trace query path.
+var errRowQueryRemoved = errors.New("--trace-vectorized-enabled=false: row-based query was removed in 0.12.0, see apache/skywalking#13998")
+
 // bindVectorizedFlags wires VectorizedConfig fields to a run.FlagSet.
-func bindVectorizedFlags(flagS *run.FlagSet, cfg *vtrace.VectorizedConfig) {
+func bindVectorizedFlags(flagS *run.FlagSet, cfg *vtrace.VectorizedConfig, vectorizedEnabled *bool) {
 	defaults := vtrace.DefaultConfig()
-	flagS.BoolVar(&cfg.Enabled, "trace-vectorized-enabled", defaults.Enabled,
-		"enable the vectorized trace query path")
+	flagS.BoolVar(vectorizedEnabled, "trace-vectorized-enabled", true,
+		"deprecated no-op, removed in 0.13.0; =false aborts startup because the row-based trace query path no longer exists")
 	flagS.IntVar(&cfg.BatchSize, "trace-vectorized-batch-size", defaults.BatchSize,
 		"row count per vectorized trace batch")
 	flagS.IntVar(&cfg.QueryMemoryMiB, "trace-vectorized-query-memory-mib", defaults.QueryMemoryMiB,

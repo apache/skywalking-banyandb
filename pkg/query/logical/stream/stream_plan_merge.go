@@ -18,10 +18,7 @@
 package stream
 
 import (
-	"context"
 	"fmt"
-
-	"go.uber.org/multierr"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -104,8 +101,8 @@ func (u *unresolvedMerger) Analyze(s logical.Schema) (logical.Plan, error) {
 }
 
 var (
-	_ logical.Plan              = (*mergePlan)(nil)
-	_ executor.StreamExecutable = (*mergePlan)(nil)
+	_ logical.Plan          = (*mergePlan)(nil)
+	_ executor.StreamCloser = (*mergePlan)(nil)
 )
 
 type mergePlan struct {
@@ -116,36 +113,17 @@ type mergePlan struct {
 	desc        bool
 }
 
-// Close implements executor.StreamExecutable.
+// Close implements executor.StreamCloser.
 func (m *mergePlan) Close() {
 	for _, p := range m.subPlans {
-		p.(executor.StreamExecutable).Close()
+		p.(executor.StreamCloser).Close()
 	}
-}
-
-// Execute implements executor.StreamExecutable.
-func (m *mergePlan) Execute(ctx context.Context) ([]*streamv1.Element, error) {
-	var allErr error
-	perGroup := make([][]*streamv1.Element, 0, len(m.subPlans))
-
-	for _, sp := range m.subPlans {
-		elements, err := sp.(executor.StreamExecutable).Execute(ctx)
-		if err != nil {
-			allErr = multierr.Append(allErr, err)
-			continue
-		}
-		perGroup = append(perGroup, elements)
-	}
-
-	return MergeGroupElements(perGroup, m.sortByTime, m.sortTagSpec, m.desc), allErr
 }
 
 // MergeGroupElements k-way merges the per-group ordered element slices into a
-// single ordered slice, using the SAME comparableElement/sortableElements +
-// sort.NewItemIter primitives the row mergePlan.Execute uses. Both the row path
-// and the vec multi-group dispatch call this so cross-group ordering is
-// byte-identical (DRY). The merge is UNCAPPED — the caller applies the outer
-// offset:offset+limit slice.
+// single ordered slice via the comparableElement/sortableElements +
+// sort.NewItemIter primitives. The merge is UNCAPPED — the caller applies the
+// outer offset:offset+limit slice.
 func MergeGroupElements(perGroup [][]*streamv1.Element, sortByTime bool, sortTagSpec logical.TagSpec, desc bool) []*streamv1.Element {
 	see := make([]sort.Iterator[*comparableElement], 0, len(perGroup))
 	for _, elements := range perGroup {

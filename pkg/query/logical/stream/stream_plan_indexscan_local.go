@@ -18,20 +18,12 @@
 package stream
 
 import (
-	"context"
-	"encoding/hex"
 	"fmt"
-	"time"
-
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -39,17 +31,16 @@ import (
 )
 
 var (
-	_ logical.Plan              = (*localIndexScan)(nil)
-	_ logical.Sorter            = (*localIndexScan)(nil)
-	_ logical.VolumeLimiter     = (*localIndexScan)(nil)
-	_ executor.StreamExecutable = (*localIndexScan)(nil)
+	_ logical.Plan          = (*localIndexScan)(nil)
+	_ logical.Sorter        = (*localIndexScan)(nil)
+	_ logical.VolumeLimiter = (*localIndexScan)(nil)
+	_ executor.StreamCloser = (*localIndexScan)(nil)
 )
 
 type localIndexScan struct {
 	schema            logical.Schema
 	invertedFilter    index.Filter
 	skippingFilter    index.Filter
-	result            model.StreamQueryResult
 	ec                executor.StreamExecutionContext
 	order             *logical.OrderBy
 	metadata          *commonv1.Metadata
@@ -69,11 +60,7 @@ type localIndexScan struct {
 	deferLimitToEgress bool
 }
 
-func (i *localIndexScan) Close() {
-	if i.result != nil {
-		i.result.Release()
-	}
-}
+func (i *localIndexScan) Close() {}
 
 func (i *localIndexScan) Limit(maxVal int) {
 	i.maxElementSize = maxVal
@@ -81,41 +68,6 @@ func (i *localIndexScan) Limit(maxVal int) {
 
 func (i *localIndexScan) Sort(order *logical.OrderBy) {
 	i.order = order
-}
-
-func (i *localIndexScan) Execute(ctx context.Context) ([]*streamv1.Element, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
-	}
-	if i.result != nil {
-		return BuildElementsFromStreamResult(ctx, i.result, i.projectionTags)
-	}
-	var orderBy *index.OrderBy
-	if i.order != nil {
-		orderBy = &index.OrderBy{
-			Index: i.order.Index,
-			Sort:  i.order.Sort,
-		}
-	}
-	var err error
-	if i.result, err = i.ec.Query(ctx, model.StreamQueryOptions{
-		Name:           i.metadata.GetName(),
-		TimeRange:      &i.timeRange,
-		Entities:       i.entities,
-		InvertedFilter: i.invertedFilter,
-		SkippingFilter: i.skippingFilter,
-		Order:          orderBy,
-		TagProjection:  i.projectionTags,
-		MaxElementSize: i.maxElementSize,
-	}); err != nil {
-		return nil, err
-	}
-	if i.result == nil {
-		return nil, nil
-	}
-	return BuildElementsFromStreamResult(ctx, i.result, i.projectionTags)
 }
 
 func (i *localIndexScan) String() string {
@@ -133,66 +85,4 @@ func (i *localIndexScan) Schema() logical.Schema {
 		return i.schema
 	}
 	return i.schema.ProjTags(i.projectionTagRefs...)
-}
-
-// BuildElementsFromStreamResult builds a slice of elements from the given stream query result.
-func BuildElementsFromStreamResult(ctx context.Context, result model.StreamQueryResult, projectionTags []model.TagProjection) (elements []*streamv1.Element, err error) {
-	var r *model.StreamResult
-	for {
-		r = result.Pull(ctx)
-		if r == nil {
-			return nil, nil
-		}
-		if r.Error != nil {
-			return nil, r.Error
-		}
-		if len(r.Timestamps) > 0 {
-			break
-		}
-	}
-	tagFamilyMap := make(map[string]*model.TagFamily, len(r.TagFamilies))
-	for idx := range r.TagFamilies {
-		tagFamilyMap[r.TagFamilies[idx].Name] = &r.TagFamilies[idx]
-	}
-	seenElementIDs := make(map[uint64]bool)
-	for i := range r.Timestamps {
-		elementID := r.ElementIDs[i]
-		// Deduplicate: skip if we've already seen this element ID
-		if seenElementIDs[elementID] {
-			continue
-		}
-		seenElementIDs[elementID] = true
-		e := &streamv1.Element{
-			Timestamp: timestamppb.New(time.Unix(0, r.Timestamps[i])),
-			ElementId: hex.EncodeToString(convert.Uint64ToBytes(elementID)),
-		}
-
-		for _, proj := range projectionTags {
-			tagFamily := &modelv1.TagFamily{
-				Name: proj.Family,
-			}
-			e.TagFamilies = append(e.TagFamilies, tagFamily)
-			resultTagFamily := tagFamilyMap[proj.Family]
-			for _, tagName := range proj.Names {
-				var tagValue *modelv1.TagValue
-				if resultTagFamily != nil {
-					for _, t := range resultTagFamily.Tags {
-						if t.Name == tagName {
-							tagValue = t.Values[i]
-							break
-						}
-					}
-				}
-				if tagValue == nil {
-					tagValue = pbv1.NullTagValue
-				}
-				tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
-					Key:   tagName,
-					Value: tagValue,
-				})
-			}
-		}
-		elements = append(elements, e)
-	}
-	return elements, nil
 }

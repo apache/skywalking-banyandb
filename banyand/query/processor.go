@@ -152,52 +152,32 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 		}()
 	}
 
-	// Vec dispatch: attempt the native columnar path before the row execution.
-	// Gated on the engine flag (VectorizedConfig().Enabled). The plan must expose
-	// StreamVecExecutable (single localIndexScan, no tag filter / multi-group /
-	// skipping filter) — otherwise the assertion fails and we fall through to the
-	// row path below. When tracing is on we MUST return a proto QueryResponse (it
-	// carries common.v1.Trace); the frame emit is gated on tracer == nil.
-	if p.streamService.VectorizedConfig().Enabled {
-		if handled, vecResp := p.tryStreamVecDispatch(ctx, plan, queryCriteria, tracer != nil); handled {
-			resp = vecResp
-			se := plan.(executor.StreamExecutable)
-			se.Close()
-			return
-		}
-	}
-
-	se := plan.(executor.StreamExecutable)
-	defer se.Close()
-	entities, err := se.Execute(ctx)
-	if err != nil {
-		p.log.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to execute the query plan")
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("execute the query plan for stream %s: %v", queryCriteria.GetName(), err))
+	// Vec dispatch is the only stream execution path; the row path was removed in
+	// 0.12.0. Every analyzed plan shape must therefore be vec-eligible, so a decline
+	// is a hard error rather than a silent proto fallback (same no-silent-fallback
+	// discipline as measure and trace). When tracing is on we MUST return a proto
+	// QueryResponse (it carries common.v1.Trace); the frame emit is gated on tracer == nil.
+	handled, vecResp := p.tryStreamVecDispatch(ctx, plan, queryCriteria, tracer != nil)
+	plan.(executor.StreamCloser).Close()
+	if !handled {
+		p.log.Error().Str("plan", plan.String()).RawJSON("req", logger.Proto(queryCriteria)).Msg("no vectorized execution path for the query plan")
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("no vectorized execution path for stream %s", queryCriteria.GetName()))
 		return
 	}
-
-	resp = bus.NewMessage(bus.MessageID(now), &streamv1.QueryResponse{Elements: entities})
-
-	if !queryCriteria.Trace && p.slowQuery > 0 {
-		latency := time.Since(n)
-		if latency > p.slowQuery {
-			p.log.Warn().Dur("latency", latency).RawJSON("req", logger.Proto(queryCriteria)).Int("resp_count", len(entities)).Msg("stream slow query")
-		}
-	}
+	resp = vecResp
 	return
 }
 
-// tryStreamVecDispatch attempts the native columnar (vec) path for a stream
-// query. It returns (false, nil) when the plan is not vec-eligible (the caller
-// then runs the row path). On success it returns (true, resp) where resp is:
+// tryStreamVecDispatch runs the native columnar (vec) path for a stream query.
+// It returns (false, nil) when the plan is not vec-eligible, which the caller
+// treats as a hard error. On success it returns (true, resp) where resp is:
 //   - a []byte columnar frame body, when the process is a distributed data node
 //     with the raw wire mode on and tracing off (traced == false);
 //   - a *streamv1.QueryResponse with materialized Elements, for standalone, for a
 //     traced query (the frame has no trace channel), or when the wire mode is off.
 //
-// Any error is surfaced as a *common.Error response (handled=true) rather than
-// falling back to row, matching the measure/trace no-silent-fallback discipline
-// once we have committed to vec.
+// Any error is surfaced as a *common.Error response (handled=true), matching the
+// measure/trace no-silent-fallback discipline.
 func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan logical.Plan,
 	queryCriteria *streamv1.QueryRequest, traced bool,
 ) (bool, bus.Message) {
@@ -233,7 +213,7 @@ func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan lo
 	// so the send path passes it through and the liaison decodes it. The liaison
 	// applies the global offset/limit slice, so the data node emits the whole
 	// (already per-node-capped) batch set — no slice here.
-	if !hasFilter && streamVecEmitAsFrame(p.distributed, data.StreamWireModeRaw(), traced) {
+	if !hasFilter && !vecExec.HidesOrderTag() && streamVecEmitAsFrame(p.distributed, data.StreamWireModeRaw(), traced) {
 		merged, mergeErr := mergeStreamBatches(schema, batches)
 		if mergeErr != nil {
 			p.log.Error().Err(mergeErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to merge the vectorized stream batches")
@@ -406,7 +386,6 @@ func buildMeasureContext(measureService measure.Service, log *logger.Logger, que
 		if ecErr != nil {
 			return nil, fmt.Errorf("fail to get execution context for measure %s: %w", meta.GetName(), ecErr)
 		}
-		// nolint:staticcheck // SA1019 — row-path BuildSchema is the only production path until G8 ships.
 		s, schemaErr := logical_measure.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
 		if schemaErr != nil {
 			return nil, fmt.Errorf("fail to build schema for measure %s: %w", meta.GetName(), schemaErr)
@@ -437,12 +416,6 @@ type vecExecutionContext interface {
 
 // executeMeasurePlan executes the measure query plan and returns the iterator.
 //
-// G8d: the vec subsystem is tried first via vecplan.Dispatch. When the
-// request is vec-eligible (no GroupBy/Agg/Top, has TimeRange, no hidden
-// criteria tags), dispatch returns a vec MIterator and the row-path
-// Analyze is skipped entirely. Otherwise, control flows through to the
-// deprecated row plan unchanged.
-//
 // The second return value is the rendered plan string used by the caller
 // for tracing — abstracted to a string so the vec subsystem (which does
 // not produce a logical.Plan) can participate.
@@ -452,107 +425,65 @@ func executeMeasurePlan(
 	mctx *measureExecutionContext,
 	emitPartial bool,
 ) (executor.MIterator, string, error) {
-	if mit, planStr, handled, dispatchErr := tryVecDispatch(ctx, queryCriteria, mctx, emitPartial); dispatchErr != nil {
+	mit, planStr, dispatchErr := dispatchMeasure(ctx, queryCriteria, mctx, emitPartial)
+	if dispatchErr != nil {
 		return nil, "", fmt.Errorf("fail to dispatch the query request for measure %s: %w", queryCriteria.GetName(), dispatchErr)
-	} else if handled {
-		if e := mctx.ml.Debug(); e.Enabled() {
-			e.Str("plan", planStr).Msg("vec query plan")
-		}
-		return mit, planStr, nil
-	}
-
-	// nolint:staticcheck // SA1019 — row-path Analyze is the only production path until G8 ships.
-	plan, planErr := logical_measure.Analyze(queryCriteria, mctx.metadata, mctx.schemas, mctx.ecc, emitPartial)
-	if planErr != nil {
-		return nil, "", fmt.Errorf("fail to analyze the query request for measure %s: %w", queryCriteria.GetName(), planErr)
 	}
 	if e := mctx.ml.Debug(); e.Enabled() {
-		e.Str("plan", plan.String()).Msg("query plan")
+		e.Str("plan", planStr).Msg("vec query plan")
 	}
-	mIterator, execErr := plan.(executor.MeasureExecutable).Execute(ctx)
-	if execErr != nil {
-		mctx.ml.Error().Err(execErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to query")
-		return nil, "", fmt.Errorf("fail to execute the query plan for measure %s: %w", queryCriteria.GetName(), execErr)
-	}
-	return mIterator, plan.String(), nil
+	return mit, planStr, nil
 }
 
-// tryVecDispatch is the thin adapter from measureExecutionContext into
+// dispatchMeasure is the thin adapter from measureExecutionContext into
 // the vec dispatch inputs. Multi-measure queries (len(ecc) > 1) are
-// handled per-group: each group is dispatched to vec individually and
-// the per-group iterators are merged through the row path's exact
-// cross-group ordering via logical_measure.MergeGroupMIterators (G9f.1,
-// reusing the row sortableDataPoints + sortedMIterator stack so the
-// cross-group order and version dedup are reproduced by construction,
-// not by parallel reimplementation). If any group's executor context is
-// not vec-capable, or any group's dispatch declines to handle the
-// request, the whole multi-measure request falls through to the row
-// path — mixing vec for some groups with row for others would produce a
-// merged result the row path cannot validate.
+// handled per-group: each group is dispatched individually and the
+// per-group iterators are merged through the shared cross-group ordering
+// stack in logical_measure.MergeGroupMIterators (G9f.1, reusing
+// sortableDataPoints + sortedMIterator so the cross-group order and
+// version dedup are reproduced by construction, not by parallel
+// reimplementation).
 //
 // Distributed Map-mode GroupBy+Agg (emitPartial=true) routes to vec via
 // AggModeMap (G9f.2): vecplan.Dispatch receives emitPartial and the
 // BatchAggregation operator emits typed-column partials. As of G9f.4 the
 // data-node side handles distributed Top-over-Agg too — the vec plan emits
 // Scan → GroupByAgg(Map) → Top → Limit per node, BatchTop sorts on the
-// partial value column, and the row-path liaison's distributedPlan dedupes
-// + applies the global Top across the per-node partial top-Ns (mirrors the
-// row path's two-pass distributed Top approach; pushDownAgg is set whenever
-// Agg != nil, see measure_analyzer.go:179, and Top is applied AFTER
-// aggregation at :205-207).
-func tryVecDispatch(
+// partial value column, and the liaison's distributed plan dedupes and
+// applies the global Top across the per-node partial top-Ns.
+func dispatchMeasure(
 	ctx context.Context,
 	queryCriteria *measurev1.QueryRequest,
 	mctx *measureExecutionContext,
 	emitPartial bool,
-) (executor.MIterator, string, bool, error) {
-	// Empty execution context = no measures to query. Fall through to row
-	// in both flag states — the row path handles the degenerate empty
-	// case identically (returns an empty MIterator). This is NOT a vec
-	// fall-through under flag-on (we never entered vec); it is the
-	// "no work to do" exit.
-	if len(mctx.ecc) == 0 {
-		return nil, "", false, nil
-	}
+) (executor.MIterator, string, error) {
 	vecs := make([]vecExecutionContext, len(mctx.ecc))
-	flagOn := false
 	for groupIdx, ec := range mctx.ecc {
 		vec, ok := ec.(vecExecutionContext)
 		if !ok {
-			// A non-vec execution context can legitimately appear only on
-			// the flag-off rollback path (production storage satisfies
-			// vecExecutionContext). If ANY group's executor lacks the
-			// capability and the cluster is flag-on, that is a botched
-			// rollout and must fail loud — no proto/row fall-through.
-			if flagOn {
-				return nil, "", true, fmt.Errorf("vec dispatch: group %d execution context not vec-capable under flag-on (rollout skew?)", groupIdx)
-			}
-			return nil, "", false, nil
+			// Production storage always satisfies vecExecutionContext. A
+			// group that does not is a botched rollout and must fail loud.
+			return nil, "", fmt.Errorf("vec dispatch: group %d execution context not vec-capable (rollout skew?)", groupIdx)
 		}
 		vecs[groupIdx] = vec
-		// Detect flag-on as soon as the first vec config is observable.
-		// Per-process flag means every group's config agrees in practice.
-		if groupIdx == 0 && vec.VectorizedConfig().Enabled {
-			flagOn = true
-		}
 	}
 	if len(mctx.ecc) == 1 {
 		return vecplan.Dispatch(ctx, queryCriteria, mctx.metadata[0], vecs[0].GetSchema(),
 			mctx.schemas[0], vecs[0], vecs[0].VectorizedConfig(), emitPartial, false)
 	}
 	// Multi-measure projection validation: a tag/field is valid if it
-	// resolves in ANY group's schema (mirrors measure_analyzer.Analyze's
-	// mergeSchema(ss) union). Running the per-group validation inside
-	// Dispatch would reject the schema-evolution case where one group
-	// added a tag/field the others lack (multi_group_new_tag_field
-	// integration fixture). We pre-validate here against the union once,
-	// then skip the per-group validation inside Dispatch.
+	// resolves in ANY group's schema (mirrors the mergeSchema(ss) union).
+	// Running the per-group validation inside Dispatch would reject the
+	// schema-evolution case where one group added a tag/field the others
+	// lack (multi_group_new_tag_field integration fixture). We pre-validate
+	// here against the union once, then skip the per-group validation
+	// inside Dispatch.
 	measureSchemas := make([]*databasev1.Measure, len(vecs))
 	for i, v := range vecs {
 		measureSchemas[i] = v.GetSchema()
 	}
 	if projErr := vecplan.ValidateMultiGroupProjection(queryCriteria, mctx.schemas, measureSchemas); projErr != nil {
-		return nil, "", true, projErr
+		return nil, "", projErr
 	}
 	iters := make([]executor.MIterator, 0, len(mctx.ecc))
 	planStrs := make([]string, 0, len(mctx.ecc))
@@ -562,20 +493,11 @@ func tryVecDispatch(
 		}
 	}
 	for groupIdx, vec := range vecs {
-		mit, planStr, handled, dispatchErr := vecplan.Dispatch(ctx, queryCriteria,
+		mit, planStr, dispatchErr := vecplan.Dispatch(ctx, queryCriteria,
 			mctx.metadata[groupIdx], vec.GetSchema(), mctx.schemas[groupIdx], vec, vec.VectorizedConfig(), emitPartial, true)
 		if dispatchErr != nil {
 			closeOpened()
-			// handled=true so the caller surfaces the error rather than
-			// retrying on row (no fall-through under flag-on).
-			return nil, "", true, dispatchErr
-		}
-		if !handled {
-			closeOpened()
-			// Per-group vec config is flag-off (rollback rail). Forward
-			// the rollback decision to the caller so the entire
-			// multi-measure request runs row-side end-to-end.
-			return nil, "", false, nil
+			return nil, "", dispatchErr
 		}
 		iters = append(iters, mit)
 		planStrs = append(planStrs, planStr)
@@ -583,10 +505,10 @@ func tryVecDispatch(
 	order, orderErr := logical_measure.ResolveCrossGroupMergeOrder(queryCriteria, mctx.schemas)
 	if orderErr != nil {
 		closeOpened()
-		return nil, "", false, orderErr
+		return nil, "", orderErr
 	}
 	merged := logical_measure.MergeGroupMIterators(iters, order)
-	return merged, fmt.Sprintf("vec-multi-measure%v", planStrs), true, nil
+	return merged, fmt.Sprintf("vec-multi-measure%v", planStrs), nil
 }
 
 // collectInternalDataPoints collects InternalDataPoints from the iterator.
@@ -1267,11 +1189,11 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 		return
 	}
 
-	// Native wire mode (flag-on, no tracing): emit a columnar frame body so the
-	// send path passes it through as opaque bytes and the liaison decodes it
-	// without the protobuf message-slice/oneof machinery. The tracing path keeps
-	// the proto body (the traceMonitor defer needs *InternalQueryResponse).
-	if p.distributed && data.TraceWireModeRaw() && traceMonitor == nil {
+	// Native wire mode (no tracing): emit a columnar frame body so the send path
+	// passes it through as opaque bytes and the liaison decodes it without the
+	// protobuf message-slice/oneof machinery. The tracing path keeps the proto
+	// body (the traceMonitor defer needs *InternalQueryResponse).
+	if p.distributed && traceMonitor == nil {
 		results, buildErr := p.buildFrameTraceResults(resultIterator, queryCriteria, execPlan)
 		if buildErr != nil {
 			p.log.Error().Err(buildErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to process trace results")
