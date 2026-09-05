@@ -505,4 +505,29 @@ describe('/monitoring proxy', () => {
     // Strip /monitoring prefix → sent to monitor.test:2121/metrics → 200
     expect(res.statusCode).toBe(200);
   });
+
+  it('readonly user: POST /monitoring/* returns 403', async () => {
+    const cookie = await loginAs(app, 'reader', 'readpass');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/monitoring/debug/panic',
+      headers: { cookie },
+      payload: {},
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ error: 'forbidden' });
+  });
+
+  it('admin user: POST /monitoring/* is allowed through', async () => {
+    const pool = mockAgent.get('http://monitor.test:2121');
+    pool.intercept({ path: '/debug/panic', method: 'POST' }).reply(200, 'ok');
+    const cookie = await loginAs(app, 'admin', 'adminpass');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/monitoring/debug/panic',
+      headers: { cookie },
+      payload: {},
+    });
+    expect(res.statusCode).toBe(200);
+  });
 });

@@ -166,8 +166,9 @@ export async function registerProxy(app: FastifyInstance, config: Config): Promi
     await forwardRequest(upstreamBase, upstreamPath, request, reply, config, upstreamAuth);
   });
 
-  // /monitoring/* — forwarded to MONITOR_TARGET with /monitoring prefix STRIPPED
-  app.all('/monitoring/*', { preHandler: [requireAuth] }, async (request, reply) => {
+  // /monitoring/* — forwarded to MONITOR_TARGET with /monitoring prefix STRIPPED.
+  // Same role gate as /api/*: readonly sessions may only use GET/HEAD/OPTIONS.
+  app.all('/monitoring/*', { preHandler: [requireAuth, enforceRole] }, async (request, reply) => {
     const scopedPath = stripBasePath(request.url, config.basePath);
     const stripped = scopedPath.replace(/^\/monitoring/, '');
     await forwardRequest(config.monitorTarget, stripped, request, reply, config, undefined);
