@@ -13,4 +13,10 @@ Release Notes.
 
 - Bump canopy and mcp npm dependencies to clear Dependabot CVEs (fast-uri, fastify, qs).
 
+## 0.11.1
+
+### Bug Fixes
+
+- Enforce the Canopy readonly role on the `/monitoring/*` proxy the same way as `/api/*`.
+
 ## 0.11.0
