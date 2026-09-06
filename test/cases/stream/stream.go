@@ -73,6 +73,15 @@ var streamEntries = []any{
 	g.Entry("filter with bound parameters", helpers.Args{Input: "params_bind", Want: "filter_tag", Duration: 1 * time.Hour}),
 	g.Entry("filter hidden tag projection", helpers.Args{Input: "filter_hidden_tag", Duration: 1 * time.Hour}),
 	g.Entry("filter by non-indexed tag order by duration desc with limit 3", helpers.Args{Input: "sort_duration_no_index_limit", Duration: 1 * time.Hour}),
+	// Pins the ORDERED element sequence of a filtered index-order query whose
+	// limit+offset is smaller than the corpus, which no other case does: the two
+	// generated cases of this shape either assert emptiness (case 12, WantEmpty)
+	// or ignore both order and element identity (case 15, DisOrder +
+	// IgnoreElementID). The criteria keeps durations 60, 300 and 500 of the five
+	// seeded, so offset 1 + limit 2 must yield 300 then 500. A cap taken over the
+	// UNFILTERED order would see 30, 60, 300, and return 300 alone.
+	g.Entry("filter by indexed range order by duration asc with limit and offset",
+		helpers.Args{Input: "sort_duration_filter_range_limit_offset", Duration: 1 * time.Hour}),
 	g.Entry("get empty result by non-indexed tag", helpers.Args{Input: "filter_tag_empty", Duration: 1 * time.Hour, WantEmpty: true}),
 	g.Entry("get results by no non-index tag", helpers.Args{Input: "filter_no_indexed", Duration: 1 * time.Hour}),
 	g.Entry("numeric local index: less", helpers.Args{Input: "less", Duration: 1 * time.Hour}),
