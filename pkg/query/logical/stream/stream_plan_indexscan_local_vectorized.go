@@ -74,10 +74,11 @@ func scanFromInput(input logical.Plan) *localIndexScan {
 		return in
 	case *tagFilterPlan:
 		if scan, ok := in.parent.(*localIndexScan); ok {
-			// A criteria query applies the tag filter at egress, AFTER the scan, so the
-			// vec merge must reproduce exactly the element set the row scan would hand
-			// its tagFilterPlan. Where the row scan caps depends on the order type —
-			// see scanResumesAcrossPulls.
+			// The vec merge must reproduce exactly the element set the row scan would
+			// hand its tagFilterPlan. Whether the criteria filter may run AHEAD of the
+			// merge depends on the order type — see scanResumesAcrossPulls. Only an
+			// index-order scan takes the filter; a timestamp-order scan leaves it at
+			// the egress, behind the cap.
 			if scanResumesAcrossPulls(scan) && in.tagFilter != nil && in.tagFilter != logical.DummyFilter {
 				scan.preMergeFilter, scan.filterRegistry = in.tagFilter, in.s
 			}
@@ -88,8 +89,8 @@ func scanFromInput(input logical.Plan) *localIndexScan {
 }
 
 // scanResumesAcrossPulls reports whether the row scan backing this plan keeps
-// yielding new elements on successive Pulls, which decides where the vec merge may
-// cap for a criteria (filtered) query.
+// yielding new elements on successive Pulls, which decides whether a criteria
+// (filtered) query may run its tag filter AHEAD of the vec merge.
 //
 // The row path nests three loops: *limit.Execute pulls tagFilterPlan.Execute until
 // it has accumulated limit+offset elements, tagFilterPlan.Execute pulls the scan
@@ -99,14 +100,17 @@ func scanFromInput(input logical.Plan) *localIndexScan {
 //
 //   - index-order (idxResult): the sorted iterator persists across Pulls and each
 //     Pull drains the next maxElementSize entries (query_by_idx.go:262), so row keeps
-//     pulling and DOES fill the limit. The vec merge must stay uncapped, letting the
-//     egress filter the whole ordered set and then apply the limit.
+//     pulling and DOES fill the limit out of the whole FILTERED ordered set. Vec
+//     reproduces that by running the tag filter before the merge, so the
+//     maxElementSize cap bounds the top-N of the filtered set rather than truncating
+//     the input the filter has yet to see.
 //   - timestamp order (tsResult): one Pull consumes a whole segment and caps the
 //     result at maxElementSize (query_by_ts.go:136,159); the next Pull only advances
 //     to a further segment. For data inside a single segment the scan is then
 //     exhausted, so row returns only the matches from that first capped batch and
 //     legitimately UNDER-fills the limit (e.g. 30 scanned, 2 rejected ⇒ 28 returned).
-//     The vec merge must cap at maxElementSize to reproduce that same input set.
+//     Vec reproduces that under-fill only by capping BEFORE filtering, so the filter
+//     is NOT pushed down here and stays at the egress.
 //
 // Caveat (documented, not emulated): for timestamp order spanning MULTIPLE segments
 // the row scan does resume per segment, so row could accumulate past the first

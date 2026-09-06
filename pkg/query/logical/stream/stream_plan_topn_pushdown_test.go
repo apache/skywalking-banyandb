@@ -182,11 +182,11 @@ func newPushdownFilteredPlan(t *testing.T) *localIndexScan {
 }
 
 // TestPushdown_FilteredIndexOrder_BoundsMerge is the #14056 acceptance assertion:
-// a filtered index-order stream query must bound its vec merge at
-// limit+offset. Today the filter runs at egress, after the merge, so the merge is
-// deliberately left uncapped and ExecuteVectorized returns the whole ordered set;
-// once the tag filter is pushed ahead of the merge the cap becomes sound and the
-// element count drops to maxElementSize.
+// a filtered index-order stream query must bound its vec merge at limit+offset.
+// The criteria tag filter runs ahead of the merge, so the cap keeps the top-N of
+// the FILTERED set and ExecuteVectorized never returns more than maxElementSize
+// elements. Before the pushdown the merge ran uncapped and returned the whole
+// ordered set, which is what this assertion caught.
 func TestPushdown_FilteredIndexOrder_BoundsMerge(t *testing.T) {
 	scan := newPushdownFilteredPlan(t)
 	batches, _, err := scan.ExecuteVectorized(context.Background())
