@@ -58,6 +58,7 @@ type agentConnection struct {
 	agentID                string
 	mu                     sync.RWMutex
 	fetchMu                sync.Mutex
+	metricsSendMu          sync.Mutex
 }
 
 // fetchWaiter delivers the chunks of one in-flight download to the HTTP handler that
@@ -117,6 +118,8 @@ func (ac *agentConnection) sendMetricsRequest(resp *fodcv1.StreamMetricsResponse
 	if ac.metricsStream == nil {
 		return fmt.Errorf("metrics stream not established for agent ID: %s", ac.agentID)
 	}
+	ac.metricsSendMu.Lock()
+	defer ac.metricsSendMu.Unlock()
 	if sendErr := ac.metricsStream.Send(resp); sendErr != nil {
 		return fmt.Errorf("failed to send metrics request: %w", sendErr)
 	}
