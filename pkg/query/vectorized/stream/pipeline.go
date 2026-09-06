@@ -22,22 +22,33 @@ import "github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 // BuildStreamMergePipeline composes the liaison-side merge → distinct → limit
 // pipeline over a source of stream RecordBatches. SortedMerge is the breaker
 // (global ordering), Distinct and Limit are fusibles applied on the ordered
-// output, in that strict order. There is no pre-merge short-circuit.
+// output, in that strict order.
+//
+// preMerge fusibles run on the RAW source batches, before the merge consumes
+// them. A row-level filter belongs here rather than at the egress: once the merge
+// sees only surviving rows, maxRows bounds the top-N of the FILTERED set, which is
+// what makes a cap sound for a criteria query at all. A pre-merge fusible must be
+// row-level and must never signal ErrLimitExhausted, which would truncate the scan.
 //
 // maxRows bounds the merge to the in-order top-N (0 = unbounded). This is the
 // per-node scan cap (maxElementSize = limit+offset), applied AFTER the merge
 // sorts — the correct top-N in sort order — matching the row path, which caps
-// after its in-order heap merge (blockHeap.merge / MergeStreamResults). It is
-// distinct from the client offset/limit slice the trailing Limit applies.
+// after its own in-order merge: blockHeap.merge / MergeStreamResults for
+// timestamp order, idxResult.loadSortingData + mergeByTagValue for index order.
+// It is distinct from the client offset/limit slice the trailing Limit applies.
 func BuildStreamMergePipeline(
 	source vectorized.PullOperator,
 	schema *vectorized.BatchSchema,
 	desc bool,
 	offset, limit uint32,
 	batchSize, maxRows int,
+	preMerge ...vectorized.FusibleOperator,
 ) (*vectorized.Pipeline, error) {
-	return vectorized.NewPipelineBuilder().
-		From(source).
+	builder := vectorized.NewPipelineBuilder().From(source)
+	for _, op := range preMerge {
+		builder = builder.Apply(op)
+	}
+	return builder.
 		Break(NewSortedMergeWithCap(schema, desc, batchSize, maxRows)).
 		Apply(NewDistinct(schema)).
 		Apply(NewLimit(schema, offset, limit)).

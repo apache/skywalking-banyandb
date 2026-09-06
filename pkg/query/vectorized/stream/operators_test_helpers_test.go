@@ -138,3 +138,52 @@ func drainRows(t testingT, p *vectorized.Pipeline) (tss []int64, ids []uint64, t
 type testingT interface {
 	Fatalf(format string, args ...any)
 }
+
+const testFilterTagName = "state"
+
+// filterSchema is the index-order schema carrying a SECOND tag column, so a
+// criteria over one tag can be evaluated while another tag is ordered on.
+func filterSchema() *vectorized.BatchSchema {
+	return BuildStreamBatchSchema(
+		[]model.TagProjection{{Family: testTagFamily, Names: []string{testTagName, testFilterTagName}}},
+		testTagFamily, testTagName,
+	)
+}
+
+// filterRow describes one row of a filterSchema batch. state and stateNull are
+// independent on purpose: a real column carries nullness in its validity bitmap,
+// so a null row can still hold a stale non-nil pointer, and a producer can leave
+// a cell empty without marking it. Both shapes must reach the accessor.
+type filterRow struct {
+	state     *modelv1.TagValue
+	elemID    uint64
+	stateNull bool
+}
+
+// buildFilterBatch materializes a filterSchema batch from filterRows.
+func buildFilterBatch(schema *vectorized.BatchSchema, rows []filterRow) *vectorized.RecordBatch {
+	batch := vectorized.NewRecordBatch(schema, len(rows))
+	tsCol := batch.Columns[schema.TimestampIndex()].(*vectorized.TypedColumn[int64])
+	elemCol := batch.Columns[schema.ElementIDIndex()].(*vectorized.TypedColumn[int64])
+	seriesCol := batch.Columns[schema.SeriesIDIndex()].(*vectorized.TypedColumn[int64])
+	serviceIdx, _ := schema.TagIndex(testTagFamily, testTagName)
+	serviceCol := batch.Columns[serviceIdx].(*vectorized.TypedColumn[*modelv1.TagValue])
+	stateIdx, _ := schema.TagIndex(testTagFamily, testFilterTagName)
+	stateCol := batch.Columns[stateIdx].(*vectorized.TypedColumn[*modelv1.TagValue])
+	orderCol := streamOrderKeys(batch)
+	for rowIdx, row := range rows {
+		tsCol.Append(int64(rowIdx))
+		elemCol.Append(ElementIDToColumn(row.elemID))
+		seriesCol.Append(0)
+		serviceCol.Append(strTagValue("svc"))
+		stateCol.Append(row.state)
+		if row.stateNull {
+			stateCol.MarkNullAt(rowIdx)
+		}
+		if orderCol != nil {
+			orderCol.Append([]byte{byte(rowIdx)})
+		}
+		batch.Len++
+	}
+	return batch
+}

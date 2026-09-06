@@ -24,6 +24,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -43,20 +44,29 @@ const (
 // filtered index-order stream pipeline runs it, and returns the merge plus the
 // peak retained-row count observed mid-stream.
 //
-// This helper is the ONE place the pipeline's shape is encoded. Today the tag
-// filter runs at egress, AFTER the merge, so the merge is built uncapped
-// (mergeCap 0 at stream_plan_indexscan_local_vectorized.go:329-331) and every
-// scanned row is buffered. Moving the filter ahead of the merge as a fusible that
-// writes batch.Selection makes the cap sound; flipping this helper to select
-// pre-merge and pass boundMergeCap is what turns the assertions below green.
+// This helper is the ONE place the pipeline's shape is encoded. The tag filter
+// runs as a pre-merge fusible that narrows batch.Selection, so the merge consumes
+// only surviving rows and can safely cap at boundMergeCap. Before the pushdown the
+// filter ran at the egress, AFTER the merge, which forced a cap of 0 and made the
+// merge buffer every scanned row.
 func filteredMergeState(t *testing.T, schema *vectorized.BatchSchema, corpus []testRow) (*SortedMerge, int) {
 	t.Helper()
 	ctx := context.Background()
-	merge := NewSortedMergeWithCap(schema, false, boundBatchRow, 0)
+	merge := NewSortedMergeWithCap(schema, false, boundBatchRow, boundMergeCap)
 	require.NoError(t, merge.Init(ctx))
+	tagIdx, ok := schema.TagIndex(testTagFamily, testTagName)
+	require.True(t, ok)
 	peak := 0
 	for batchIdx := 0; batchIdx < boundBatchCnt; batchIdx++ {
 		batch := buildBatch(schema, corpus[batchIdx*boundBatchRow:(batchIdx+1)*boundBatchRow])
+		tagCol := batch.Columns[tagIdx].(*vectorized.TypedColumn[*modelv1.TagValue])
+		selection := make([]uint16, 0, batch.Len)
+		for rowIdx := 0; rowIdx < batch.Len; rowIdx++ {
+			if tagCol.Data()[rowIdx].GetStr().GetValue() == boundHotTag {
+				selection = append(selection, uint16(rowIdx))
+			}
+		}
+		batch.Selection = selection
 		require.NoError(t, merge.Consume(ctx, batch))
 		if len(merge.rows) > peak {
 			peak = len(merge.rows)

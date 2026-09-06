@@ -12,6 +12,7 @@ Release Notes.
 ### Chores
 
 - Bump canopy and mcp npm dependencies to clear Dependabot CVEs (fast-uri, fastify, qs).
+- Push the criteria tag filter ahead of the vectorized stream merge, so a filtered index-order query bounds its merge at limit+offset.
 
 ## 0.11.1
 

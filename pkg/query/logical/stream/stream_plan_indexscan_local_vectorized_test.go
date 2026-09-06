@@ -89,10 +89,20 @@ func TestVecExecutable_TimeOrder_AcceptsVec(t *testing.T) {
 }
 
 // newVecFilteredPlan builds the criteria shape *limit → *tagFilterPlan →
-// *localIndexScan so scanFromInput's cap decision can be exercised directly.
-func newVecFilteredPlan(order *logical.OrderBy, projection []model.TagProjection) (logical.Plan, *localIndexScan) {
+// *localIndexScan so scanFromInput's pushdown decision can be exercised directly.
+// The tag filter is a real one, not DummyFilter: scanFromInput only pushes a
+// filter down when the criteria survived BuildTagFilter, so a dummy would make
+// both order arms report "no pushdown" for the wrong reason.
+func newVecFilteredPlan(t *testing.T, order *logical.OrderBy, projection []model.TagProjection) (logical.Plan, *localIndexScan) {
+	t.Helper()
+	tagFilter, err := logical.BuildSimpleTagFilter(&modelv1.Criteria{Exp: &modelv1.Criteria_Condition{Condition: &modelv1.Condition{
+		Name:  "state",
+		Op:    modelv1.Condition_BINARY_OP_EQ,
+		Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "open"}}},
+	}}})
+	require.NoError(t, err)
 	scan := &localIndexScan{order: order, projectionTags: projection}
-	filter := &tagFilterPlan{parent: scan, tagFilter: logical.DummyFilter, hiddenTags: logical.HiddenTagSet{}}
+	filter := &tagFilterPlan{parent: scan, tagFilter: tagFilter, hiddenTags: logical.HiddenTagSet{}}
 	return &limit{Parent: &Parent{Input: filter}}, scan
 }
 
@@ -101,22 +111,26 @@ func newVecFilteredPlan(order *logical.OrderBy, projection []model.TagProjection
 // maxElementSize, and the following Pull only advances to a further segment — so
 // within a segment the row scan is exhausted and row returns just that first capped
 // batch's matches (30 scanned, 2 rejected ⇒ 28, NOT a filled limit of 30). The vec
-// merge must therefore CAP, feeding the egress filter the same element set.
+// merge must therefore cap and leave the filter AT THE EGRESS, behind that cap,
+// feeding it the same element set. Pushing the filter ahead of the merge here would
+// let the merge fill the limit from rows row never sees, and over-return.
 func TestScanCap_FilteredTimeOrder_CapsMerge(t *testing.T) {
 	projection := []model.TagProjection{{Family: "searchable", Names: []string{"service", "state"}}}
-	plan, scan := newVecFilteredPlan(nil, projection)
+	plan, scan := newVecFilteredPlan(t, nil, projection)
 
 	require.NotNil(t, VecExecutable(plan), "a filtered time-order query is vec-eligible")
-	require.False(t, scan.deferLimitToEgress,
-		"time-order scans do not resume within a segment, so the vec merge must cap at maxElementSize to match row")
+	require.Nil(t, scan.preMergeFilter,
+		"time-order scans do not resume within a segment, so the filter must stay at the egress behind the cap")
 }
 
-// TestScanCap_FilteredIndexOrder_DefersLimit is the other arm: for INDEX order the
-// sorted iterator persists across Pulls (each drains the next maxElementSize
-// entries), so row keeps pulling and DOES fill the limit. Capping the vec merge
-// there would starve the filter and under-return; the merge must stay uncapped and
-// let the egress filter the whole ordered set before the limit slice.
-func TestScanCap_FilteredIndexOrder_DefersLimit(t *testing.T) {
+// TestScanCap_FilteredIndexOrder_PushesFilterDown is the other arm, and the shape
+// #14056 is about. For INDEX order the sorted iterator persists across Pulls (each
+// drains the next maxElementSize entries), so row keeps pulling and DOES fill the
+// limit. A cap taken BEFORE the filter would starve it, so the filter moves ahead
+// of the merge instead: the merge then orders only surviving rows, and its cap
+// bounds the top-N of the filtered set — the same element set row fills its limit
+// from. scanFromInput must therefore stash the filter on the scan.
+func TestScanCap_FilteredIndexOrder_PushesFilterDown(t *testing.T) {
 	order := &logical.OrderBy{
 		Index: &databasev1.IndexRule{
 			Metadata: &commonv1.Metadata{Name: "duration"},
@@ -125,9 +139,9 @@ func TestScanCap_FilteredIndexOrder_DefersLimit(t *testing.T) {
 		Sort: modelv1.Sort_SORT_DESC,
 	}
 	projection := []model.TagProjection{{Family: "searchable", Names: []string{"duration", "span_id"}}}
-	plan, scan := newVecFilteredPlan(order, projection)
+	plan, scan := newVecFilteredPlan(t, order, projection)
 
 	require.NotNil(t, VecExecutable(plan), "a filtered index-order query with the sort tag projected is vec-eligible")
-	require.True(t, scan.deferLimitToEgress,
-		"index-order scans resume across Pulls, so the vec merge must stay uncapped to match row filling the limit")
+	require.NotNil(t, scan.preMergeFilter,
+		"index-order scans resume across Pulls, so the filter must run pre-merge to make the merge cap sound")
 }
