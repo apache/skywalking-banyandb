@@ -19,6 +19,7 @@ package stream
 
 import (
 	"context"
+	"fmt"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -80,6 +81,12 @@ func (t *TagFilter) OutputSchema() *vectorized.BatchSchema { return t.schema }
 // Process rewrites the selection to the matching rows. A Match error aborts the
 // query, matching the egress filter.
 func (t *TagFilter) Process(_ context.Context, batch *vectorized.RecordBatch) error {
+	// Same guard SortedMerge.Consume applies. It matters here because this operator
+	// is the first to touch a raw batch's columns, so without it a foreign schema
+	// would panic on the column type assertion instead of erroring in the merge.
+	if batch.Schema != t.schema {
+		return fmt.Errorf("TagFilter: foreign batch schema")
+	}
 	acc := &tagRowAccessor{batch: batch, cols: t.cols}
 	// activeIndices is deliberately not used: it materializes a []uint16 for a nil
 	// selection, which every raw scan batch has, so it would allocate per batch.

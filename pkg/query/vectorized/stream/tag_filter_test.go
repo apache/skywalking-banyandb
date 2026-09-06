@@ -167,6 +167,18 @@ func TestTagFilter_ProjectedTagWithoutColumn(t *testing.T) {
 	require.Equal(t, []uint16{}, batch.Selection, "a null-substituted cell cannot equal a string criteria")
 }
 
+// TestTagFilter_ForeignSchema pins the guard SortedMerge.Consume used to be the
+// first to apply. The filter now touches a raw batch's columns ahead of the merge,
+// so without this check a foreign schema panics on the column type assertion
+// instead of returning the error the merge would have returned.
+func TestTagFilter_ForeignSchema(t *testing.T) {
+	schema := filterSchema()
+	batch := buildFilterBatch(filterSchema(), []filterRow{{elemID: 1, state: strTagValue(filterWantState)}})
+
+	op := NewTagFilter(schema, filterProjection(), eqStateFilter(t), filterRegistry())
+	require.ErrorContains(t, op.Process(context.Background(), batch), "foreign batch schema")
+}
+
 // TestTagFilter_CoordinateOutOfRange pins the accessor's out-of-range contract:
 // it returns a bare nil, so tagExpr raises ErrTagNotDefined and the query errors,
 // exactly as the row path does. Silently failing to match would return a wrong
