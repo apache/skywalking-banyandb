@@ -155,7 +155,11 @@ func filterSchema() *vectorized.BatchSchema {
 // so a null row can still hold a stale non-nil pointer, and a producer can leave
 // a cell empty without marking it. Both shapes must reach the accessor.
 type filterRow struct {
-	state     *modelv1.TagValue
+	state *modelv1.TagValue
+	// orderKey is the explicit index-order key. Left nil, the key falls back to
+	// the row's index WITHIN its batch, which restarts at 0 in every batch and so
+	// cannot express a corpus that is globally ordered across several batches.
+	orderKey  []byte
 	elemID    uint64
 	stateNull bool
 }
@@ -181,7 +185,11 @@ func buildFilterBatch(schema *vectorized.BatchSchema, rows []filterRow) *vectori
 			stateCol.MarkNullAt(rowIdx)
 		}
 		if orderCol != nil {
-			orderCol.Append([]byte{byte(rowIdx)})
+			key := row.orderKey
+			if key == nil {
+				key = []byte{byte(rowIdx)}
+			}
+			orderCol.Append(key)
 		}
 		batch.Len++
 	}
