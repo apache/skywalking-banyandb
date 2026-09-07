@@ -4,6 +4,10 @@ Release Notes.
 
 ## 0.12.0
 
+### Features
+
+- Add logging related flags to the FODC proxy and agent. Every BanyanDB binary now shares the same logging flags and the matching `BYDB_LOGGING_*` environment variables.
+
 ### Document
 
 - Add the [native inverted-index replacement design package](docs/design/archive/0.12.0/native-inverted-index/README.md), including the implementation specification, ICE walkthrough, research plan, and visual report.

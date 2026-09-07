@@ -56,8 +56,7 @@ func NewRestoreCommand() *cobra.Command {
 			return logger.Init(logging)
 		},
 	}
-	rootCmd.Flags().StringVar(&logging.Env, "logging-env", "prod", "the logging environment")
-	rootCmd.Flags().StringVar(&logging.Level, "logging-level", "info", "the root level of logging")
+	logger.RegisterFlags(rootCmd.Flags(), &logging)
 	rootCmd.AddCommand(newRunCommand())
 	rootCmd.AddCommand(NewTimeDirCommand())
 	return rootCmd

@@ -1,6 +1,15 @@
 # Logging
 
-BanyanDB uses the [zerolog](https://github.com/rs/zerolog) library for logging. The log level can be set using the `log-level` flag. The supported log levels are `debug`, `info`, `warn`, `error`, and `fatal`. The default log level is `info`.
+BanyanDB uses the [zerolog](https://github.com/rs/zerolog) library for logging. The log level can be set using the `logging-level` flag. The supported log levels are `debug`, `info`, `warn`, `error`, and `fatal`. The default log level is `info`.
+
+Every BanyanDB binary accepts the same four logging flags: the server (`standalone`, `data`, `liaison`), `backup`, `restore`, `lifecycle`, the FODC proxy and the FODC agent. Each flag is also bound to an environment variable named after it, prefixed with `BYDB_` and upper-cased with dashes replaced by underscores, which is the usual way to configure them in a container:
+
+| Flag | Environment variable |
+|---|---|
+| `--logging-level` | `BYDB_LOGGING_LEVEL` |
+| `--logging-env` | `BYDB_LOGGING_ENV` |
+| `--logging-modules` | `BYDB_LOGGING_MODULES` |
+| `--logging-levels` | `BYDB_LOGGING_LEVELS` |
 
 `logging-env` is used to set the logging environment. The default value is `prod`. The logging environment can be set to `dev` for development or `prod` for production. The logging environment affects the log format and output. In the `dev` environment, logs are output in a human-readable format, while in the `prod` environment, logs are output in JSON format.
 
