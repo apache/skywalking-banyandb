@@ -108,8 +108,7 @@ func NewCommandWithRegistry() (*cobra.Command, observability.MetricsRegistry) {
 		},
 	}
 	cmd.Flags().AddFlagSet(group.RegisterFlags().FlagSet)
-	cmd.Flags().StringVar(&logging.Env, "logging-env", "prod", "the logging")
-	cmd.Flags().StringVar(&logging.Level, "logging-level", "info", "the root level of logging")
+	logger.RegisterFlags(cmd.Flags(), &logging)
 	crashOutputCfg.RegisterFlags(cmd.Flags())
 	return cmd, metricSvc
 }

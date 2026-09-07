@@ -44,6 +44,7 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/server"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/watchdog"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
+	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/meter/prom"
@@ -100,6 +101,7 @@ var (
 	pressureDir                        string
 	pressureMaxArtifacts               int
 	pressureMaxDiskBytes               int64
+	logging                            logger.Logging
 	rootCmd                            = &cobra.Command{
 		Use:     "fodc",
 		Short:   "First Occurrence Data Collection (FODC) agent",
@@ -171,6 +173,7 @@ func init() {
 		"Maximum number of capture events to retain; the lowest-RSS events are evicted first")
 	rootCmd.Flags().Int64Var(&pressureMaxDiskBytes, "pressure-profiler-max-disk-bytes", defaultPressureMaxDiskBytes,
 		"Maximum total on-disk bytes for retained capture events (0 disables the disk bound)")
+	logger.RegisterFlags(rootCmd.Flags(), &logging)
 }
 
 func calculateCapacity(log *logger.Logger) int64 {
@@ -260,11 +263,14 @@ func initializeKTM(ctx context.Context, log *logger.Logger, fr *flightrecorder.F
 }
 
 // runFODC is the main function for the FODC agent.
-func runFODC(_ *cobra.Command, _ []string) error {
+func runFODC(cmd *cobra.Command, _ []string) error {
 	if installErr := crashOutputCfg.InstallGlobalCrashOutput(); installErr != nil {
 		return fmt.Errorf("failed to install crash output: %w", installErr)
 	}
-	if initErr := logger.Init(logger.Logging{Env: "prod", Level: "info"}); initErr != nil {
+	if loadErr := config.Load("logging", cmd.Flags()); loadErr != nil {
+		return fmt.Errorf("failed to load logging config: %w", loadErr)
+	}
+	if initErr := logger.Init(logging); initErr != nil {
 		return fmt.Errorf("failed to initialize logger: %w", initErr)
 	}
 	log := logger.GetLogger("fodc")

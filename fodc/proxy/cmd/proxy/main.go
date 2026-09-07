@@ -35,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/pressure"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
+	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
@@ -61,6 +62,7 @@ var (
 	httpReadTimeout   time.Duration
 	httpWriteTimeout  time.Duration
 	heartbeatInterval time.Duration
+	logging           logger.Logging
 
 	rootCmd = &cobra.Command{
 		Use:     "fodc-proxy",
@@ -91,6 +93,7 @@ func init() {
 		"HTTP write timeout")
 	rootCmd.Flags().DurationVar(&heartbeatInterval, "heartbeat-interval", defaultHeartbeatInterval,
 		"Default heartbeat interval for agents")
+	logger.RegisterFlags(rootCmd.Flags(), &logging)
 }
 
 func main() {
@@ -100,11 +103,11 @@ func main() {
 	}
 }
 
-func runProxy(_ *cobra.Command, _ []string) error {
-	if initErr := logger.Init(logger.Logging{
-		Env:   "prod",
-		Level: "info",
-	}); initErr != nil {
+func runProxy(cmd *cobra.Command, _ []string) error {
+	if loadErr := config.Load("logging", cmd.Flags()); loadErr != nil {
+		return fmt.Errorf("failed to load logging config: %w", loadErr)
+	}
+	if initErr := logger.Init(logging); initErr != nil {
 		return fmt.Errorf("failed to initialize logger: %w", initErr)
 	}
 
