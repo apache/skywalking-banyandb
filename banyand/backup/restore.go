@@ -56,7 +56,7 @@ func NewRestoreCommand() *cobra.Command {
 			return logger.Init(logging)
 		},
 	}
-	logger.RegisterFlags(rootCmd.Flags(), &logging)
+	logger.RegisterFlags(rootCmd.PersistentFlags(), &logging)
 	rootCmd.AddCommand(newRunCommand())
 	rootCmd.AddCommand(NewTimeDirCommand())
 	return rootCmd
