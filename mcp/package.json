@@ -49,6 +49,7 @@
   },
   "overrides": {
     "@hono/node-server": "^2.1.0",
-    "fast-uri": "^4.1.2"
+    "fast-uri": "^4.1.4",
+    "qs": "^6.16.0"
   }
 }

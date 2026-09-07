@@ -35,6 +35,8 @@
   },
   "overrides": {
     "brace-expansion": "^5.0.9",
+    "fast-uri@^3": "3.1.7",
+    "fast-uri@^4": "4.1.4",
     "minimatch": "^10.0.3",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
