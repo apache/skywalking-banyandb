@@ -139,8 +139,7 @@ func NewBackupCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&logging.Env, "logging-env", "prod", "the logging environment")
-	cmd.Flags().StringVar(&logging.Level, "logging-level", "info", "the root level of logging")
+	logger.RegisterFlags(cmd.Flags(), &logging)
 	cmd.Flags().StringVar(&backupOpts.gRPCAddr, "grpc-addr", "127.0.0.1:17912", "gRPC address of the data node")
 	cmd.Flags().BoolVar(&backupOpts.enableTLS, "enable-tls", false, "Enable TLS for gRPC connection")
 	cmd.Flags().BoolVar(&backupOpts.insecure, "insecure", false, "Skip server certificate verification")

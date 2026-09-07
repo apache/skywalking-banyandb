@@ -28,6 +28,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/rs/zerolog"
+	"github.com/spf13/pflag"
 )
 
 const rootName = "ROOT"
@@ -91,6 +92,14 @@ func GetLogger(scope ...string) *Logger {
 		l = l.Named(v)
 	}
 	return l
+}
+
+// RegisterFlags registers the logging flags shared by every BanyanDB binary.
+func RegisterFlags(fs *pflag.FlagSet, logging *Logging) {
+	fs.StringVar(&logging.Env, "logging-env", "prod", "the logging environment")
+	fs.StringVar(&logging.Level, "logging-level", "info", "the root level of logging")
+	fs.StringSliceVar(&logging.Modules, "logging-modules", nil, "the modules whose logging level overrides the root one")
+	fs.StringSliceVar(&logging.Levels, "logging-levels", nil, "the logging level of each module, one per module")
 }
 
 // Init initializes a rs/zerolog logger from user config.

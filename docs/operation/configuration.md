@@ -271,8 +271,8 @@ These flags configure the connections a liaison holds to the data nodes it queri
 
 - `--logging-env string`: The logging environment (default: "prod").
 - `--logging-level string`: The root level of logging (default: "info").
-- `--logging-levels strings`: The level logging of logging.
-- `--logging-modules strings`: The specific module for logging.
+- `--logging-levels strings`: The logging level of each module, one per module.
+- `--logging-modules strings`: The modules whose logging level overrides the root one.
 - `--node-host string`: The node host of the server, only used when `node-host-provider` is "flag".
 - `--node-host-provider nodeIDProvider`: The node host provider, can be hostname, IP, or flag (default: Hostname).
 
