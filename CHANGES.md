@@ -4,6 +4,10 @@ Release Notes.
 
 ## 0.12.0
 
+### Features
+
+- Add logging related flags to the FODC proxy and agent. Every BanyanDB binary now shares the same logging flags and the matching `BYDB_LOGGING_*` environment variables.
+
 ### Bug Fixes
 
 - Fix FODC proxy `/metrics` returning partial data or timing out when concurrent scrapes overlap.
