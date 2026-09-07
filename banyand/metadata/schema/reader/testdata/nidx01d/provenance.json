@@ -1,20 +1,20 @@
 {
   "oracle": {
-    "go_mod_sha256": "b7faaa8e1fcef81607b38a6fa593b54381e11fa466f496e4cb10d4599b657ac1",
+    "go_mod_sha256": "23076127a0a072d3a06b157fc063c483fe0d8293e0e77bea7fed76658423c28d",
     "writer": "pkg/index/inverted.NewStore"
   },
   "file_sha256": {
-    "shard-0/000000000001.snp": "b66ed8eda40cfb20b536b3df3d70a5d79b20dd6166c17681560bb9b34165c9d4",
-    "shard-0/000000000002.seg": "7df4094f7f44bd24609f973a68375ad6ebb2f2429c2e09c38be0d245bad57c94",
-    "shard-0/000000000002.snp": "57a09b4b733bf2c661614a8f66ffde2740cd411cc160789b0213e25f837bb5d7"
+    "shard-0/000000000002.seg": "0cd02bb58f50accd20b3510eb4f9738b8197dcf404a23b0638dc7775660d917d",
+    "shard-0/000000000002.snp": "0848ede8fbd4d63e674a0bde8b605c7f6401f2a163043caa7b180223ac3dc5bf"
   },
-  "damage": {
-    "change": "the entry is set to the decoded length of the stored chunk holding it, so the record starts at the chunk's end and no field can be read from it",
-    "scope": "one document; the chunk table, the fields index, the footer, the reserved CRC32 slots and every other document's record are exactly as the oracle wrote them",
-    "target": "the stored-document offset index entry of the damaged revision"
+  "malformed_source": {
+    "bytes_hex": "7b6d616c666f726d6564",
+    "document": "p5@1",
+    "field": "_source",
+    "scope": "the ICE container is unmodified compatibility-writer output; only the declared application payload is invalid"
   },
   "generator_command": "GENERATE_NIDX01D_FIXTURE=1 go test ./banyand/metadata/schema/reader/ -run TestGenerateNIDX01DFixture -count=1",
-  "notes": "Seven physical revisions of five logical properties in one `_schema` shard. For kinds {Stream} the catalog walk yields only p1@2; for {Stream, Group} it yields p1@2 and p4@1; p3 is absent because its latest revision is a tombstone. A Stream walk never decodes p5, so it succeeds; a Measure walk decodes p5 and fails with the native typed corruption error.",
+  "notes": "Seven physical revisions of five logical properties in one `_schema` shard. For kinds {Stream} the catalog walk yields only p1@2; for {Stream, Group} it yields p1@2 and p4@1; p3 is absent because its latest revision is a tombstone. A Stream walk never decodes p5, so it succeeds; a Measure walk decodes p5 and fails with ErrMalformedPropertyDocument.",
   "documents": [
     {
       "label": "p1@1",
@@ -23,7 +23,7 @@
       "group": "g1",
       "mod_revision": 1,
       "deleted": false,
-      "damaged": false
+      "malformed_source": false
     },
     {
       "label": "p1@2",
@@ -32,7 +32,7 @@
       "group": "g1",
       "mod_revision": 2,
       "deleted": false,
-      "damaged": false
+      "malformed_source": false
     },
     {
       "label": "p2@1",
@@ -41,7 +41,7 @@
       "group": "g1",
       "mod_revision": 1,
       "deleted": false,
-      "damaged": false
+      "malformed_source": false
     },
     {
       "label": "p3@1",
@@ -50,7 +50,7 @@
       "group": "g1",
       "mod_revision": 1,
       "deleted": false,
-      "damaged": false
+      "malformed_source": false
     },
     {
       "label": "p3@2",
@@ -59,7 +59,7 @@
       "group": "g1",
       "mod_revision": 2,
       "deleted": true,
-      "damaged": false
+      "malformed_source": false
     },
     {
       "label": "p4@1",
@@ -68,7 +68,7 @@
       "group": "",
       "mod_revision": 1,
       "deleted": false,
-      "damaged": false
+      "malformed_source": false
     },
     {
       "label": "p5@1",
@@ -77,8 +77,7 @@
       "group": "g1",
       "mod_revision": 1,
       "deleted": false,
-      "damaged": true
+      "malformed_source": true
     }
-  ],
-  "damaged_local_document_number": 6
+  ]
 }

@@ -23,6 +23,7 @@ package reader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -46,6 +47,9 @@ const (
 	propEntityIDField  = "_entity_id"
 	propDeleteField    = "_deleted"
 )
+
+// ErrMalformedPropertyDocument identifies a stored source that is not a valid property document.
+var ErrMalformedPropertyDocument = errors.New("schema reader: malformed property document")
 
 // Doc is one decoded doc emitted by WalkShard; the caller decides whether
 // the kind / group matches what it wants.
@@ -103,7 +107,8 @@ func decodeSchemaDocument(shardPath string, document inverted.StoredDocument, vi
 	}
 	var prop propertyv1.Property
 	if unmarshalErr := protojson.Unmarshal(sourceBytes, &prop); unmarshalErr != nil {
-		return fmt.Errorf("unmarshal property doc in %s (%d source bytes): %w", shardPath, len(sourceBytes), unmarshalErr)
+		return fmt.Errorf("unmarshal property doc in %s (%d source bytes): %w: %w",
+			shardPath, len(sourceBytes), ErrMalformedPropertyDocument, unmarshalErr)
 	}
 	parsed := property.ParseTags(prop.GetTags())
 	return visit(Doc{
@@ -116,7 +121,7 @@ func decodeSchemaDocument(shardPath string, document inverted.StoredDocument, vi
 	})
 }
 
-// WalkShards reads the shard-* subdirectories of a `_schema` bluge root and
+// WalkShards reads the shard-* subdirectories of a `_schema` index root and
 // invokes fn(shardPath) for each. The caller owns all scanning and
 // candidate-merging logic; this helper owns only the readDir-filter
 // boilerplate that would otherwise appear in every loader.
@@ -136,7 +141,7 @@ func WalkShards(schemaRoot string, fn func(shardPath string) error) error {
 	return nil
 }
 
-// WalkDocs walks every shard under a `_schema` bluge root, optionally
+// WalkDocs walks every shard under a `_schema` index root, optionally
 // narrowed to the given schema kinds, and invokes visit once per property ID
 // with its latest revision (highest mod_revision). IDs whose latest revision
 // is a tombstone are skipped. Revisions are resolved across ALL shards before

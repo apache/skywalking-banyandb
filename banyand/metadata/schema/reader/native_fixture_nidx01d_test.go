@@ -18,10 +18,7 @@
 package reader
 
 import (
-	"bytes"
-	"context"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -30,7 +27,6 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/klauspost/compress/s2"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -47,8 +43,8 @@ import (
 
 // The NIDX-01D corpus is the schema catalog issue #14011 declares: one shard of
 // the property-backed `_schema` catalog holding five logical properties across
-// seven physical revisions, with p5's stored record deliberately made
-// unreadable. Every byte is produced by BanyanDB's compatibility writer through
+// seven physical revisions, with p5's stored `_source` deliberately made
+// malformed. Every byte is produced by BanyanDB's compatibility writer through
 // the pkg/index/inverted store boundary and checked in; production code never
 // generates it, and the generator lives in this test file behind
 // nidx01dGenerateEnv.
@@ -81,32 +77,21 @@ const (
 	nidx01dPropID3 = "stream_g1/s3"
 	nidx01dPropID4 = "group_g4"
 	nidx01dPropID5 = "measure_g1/m5"
-
-	// iceFooterLength and iceFooterStoredIndexStart locate the stored-document
-	// offset index of a segment, whose width and position BDB-NIDX-SPEC-001
-	// revision 0.2 section 08 fixes. They are read off the grammar rather than
-	// off any reader, so the corpus cannot agree with a reader by construction.
-	iceFooterLength           = 60
-	iceFooterStoredIndexStart = 8
-	iceFooterStoredIndexEnd   = 16
-	storedChunkTableFooterLen = 8
-	storedDocumentOffsetWidth = 8
-	storedDocumentsPerChunk   = 128
 )
 
 // nidx01dDocument is one physical revision of the corpus: the logical property
 // it belongs to, its kind, the group it is scoped to, the schema payload it
 // carries, its modification revision, and whether it is a tombstone or the
-// deliberately damaged one.
+// deliberately malformed one.
 type nidx01dDocument struct {
-	source  proto.Message
-	label   string
-	propID  string
-	group   string
-	kind    schema.Kind
-	modRev  int64
-	deleted bool
-	damaged bool
+	source          proto.Message
+	label           string
+	propID          string
+	group           string
+	kind            schema.Kind
+	modRev          int64
+	deleted         bool
+	malformedSource bool
 }
 
 // nidx01dDocuments is the corpus issue #14011 declares, in insertion order:
@@ -151,35 +136,34 @@ var nidx01dDocuments = []nidx01dDocument{
 		},
 	},
 	{
-		label: "p5@1", propID: nidx01dPropID5, kind: schema.KindMeasure, group: nidx01dGroup, modRev: 1, damaged: true,
+		label: "p5@1", propID: nidx01dPropID5, kind: schema.KindMeasure, group: nidx01dGroup, modRev: 1, malformedSource: true,
 		source: &databasev1.Measure{Metadata: &commonv1.Metadata{Group: nidx01dGroup, Name: "m5"}},
 	},
 }
 
 // nidx01dProvenance is the manifest checked in beside the corpus bytes. It
 // records which oracle produced them, how to re-derive them, what every
-// physical revision declares, which document was damaged and how, and what
+// physical revision declares, which document has malformed source bytes, and what
 // every file hashes to.
 type nidx01dProvenance struct {
 	Oracle           map[string]string           `json:"oracle"`
 	FileSHA256       map[string]string           `json:"file_sha256"`
-	Damage           map[string]string           `json:"damage"`
+	MalformedSource  map[string]string           `json:"malformed_source"`
 	GeneratorCommand string                      `json:"generator_command"`
 	Notes            string                      `json:"notes"`
 	Documents        []nidx01dProvenanceDocument `json:"documents"`
-	DamagedOrdinal   uint64                      `json:"damaged_local_document_number"`
 }
 
 // nidx01dProvenanceDocument records one physical revision of the corpus so a
 // reviewer can compare it against issue #14011 without decoding a segment.
 type nidx01dProvenanceDocument struct {
-	Label   string `json:"label"`
-	PropID  string `json:"property_id"`
-	Kind    string `json:"kind"`
-	Group   string `json:"group"`
-	ModRev  int64  `json:"mod_revision"`
-	Deleted bool   `json:"deleted"`
-	Damaged bool   `json:"damaged"`
+	Label           string `json:"label"`
+	PropID          string `json:"property_id"`
+	Kind            string `json:"kind"`
+	Group           string `json:"group"`
+	ModRev          int64  `json:"mod_revision"`
+	Deleted         bool   `json:"deleted"`
+	MalformedSource bool   `json:"malformed_source"`
 }
 
 // TestGenerateNIDX01DFixture rebuilds the checked-in NIDX-01D corpus and its
@@ -188,13 +172,11 @@ type nidx01dProvenanceDocument struct {
 // instead of producing fresh ones.
 //
 // The corpus is written as one commit so its seven revisions share a single
-// segment, and p5's stored record is then made unreachable by pointing its
-// entry in the stored-document offset index at the end of the chunk that holds
-// it. That damage is invisible to a reader that filters before decoding and is
-// a bounded, typed failure for one that decodes p5, which is exactly the
-// distinction issue #14011 asks the schema walk to make. It leaves the reserved
-// CRC32 slots as the oracle wrote them, so the oracle that produced the corpus
-// can still open it.
+// segment. P5's `_source` is invalid property JSON. The malformed payload is
+// invisible to a reader that filters before decoding and is a bounded, typed
+// failure for one that decodes p5, which is exactly the distinction issue
+// #14011 asks the schema walk to make. The ICE container remains valid and is
+// byte-for-byte writer output.
 func TestGenerateNIDX01DFixture(t *testing.T) {
 	if os.Getenv(nidx01dGenerateEnv) != "1" {
 		t.Skipf("set %s=1 to regenerate the NIDX-01D corpus", nidx01dGenerateEnv)
@@ -226,10 +208,7 @@ func TestGenerateNIDX01DFixture(t *testing.T) {
 	}
 	tester.Equal(1, segments, "one commit must seal exactly one segment for the corpus")
 
-	damagedOrdinal := nidx01dDamagedOrdinal(t)
-	damageStoredDocumentRecord(t, nidx01dSegmentFile(t), damagedOrdinal)
-
-	tester.NoError(os.WriteFile(nidx01dManifest, nidx01dProvenanceBytes(t, damagedOrdinal), 0o600))
+	tester.NoError(os.WriteFile(nidx01dManifest, nidx01dProvenanceBytes(t), 0o600))
 }
 
 // nidx01dBatch turns the declared revisions into one commit shaped like the
@@ -281,6 +260,9 @@ func nidx01dIndexedField(name string, value []byte) index.Field {
 // carry the resource group and the embedded schema payload.
 func nidx01dSourceBytes(t *testing.T, declared nidx01dDocument) []byte {
 	t.Helper()
+	if declared.malformedSource {
+		return []byte("{malformed")
+	}
 	payload, err := protojson.Marshal(declared.source)
 	require.NoError(t, err)
 	prop := &propertyv1.Property{
@@ -306,126 +288,19 @@ func nidx01dTag(key, value string) *modelv1.Tag {
 	}
 }
 
-// nidx01dDamagedOrdinal returns the local document number of the revision the
-// corpus damages, found by streaming the freshly written corpus through the
-// native match-all walk and matching the stored `_source` bytes. The ordinal is
-// observed rather than assumed, and recorded in the provenance manifest.
-func nidx01dDamagedOrdinal(t *testing.T) uint64 {
-	t.Helper()
-	var damaged nidx01dDocument
-	for _, declared := range nidx01dDocuments {
-		if declared.damaged {
-			damaged = declared
-		}
-	}
-	wanted := nidx01dSourceBytes(t, damaged)
-
-	ordinal := uint64(0)
-	found := false
-	require.NoError(t, inverted.ReadOnlyWalkDocuments(context.Background(), nidx01dShardDir,
-		func(doc inverted.StoredDocument) error {
-			if found {
-				return nil
-			}
-			matched := false
-			if visitErr := doc.VisitStoredFields(func(name string, value []byte) bool {
-				if name == propSourceField && bytes.Equal(value, wanted) {
-					matched = true
-				}
-				return true
-			}); visitErr != nil {
-				return visitErr
-			}
-			if matched {
-				found = true
-				return nil
-			}
-			ordinal++
-			return nil
-		}))
-	require.True(t, found, "the corpus must hold the revision it declares damaged")
-	return ordinal
-}
-
-// damageStoredDocumentRecord makes one document's stored record unreachable by
-// pointing its entry in the segment's stored-document offset index at the end
-// of the chunk that holds it. Every other document's record, the chunk table,
-// the fields index and the footer are left exactly as the oracle wrote them, so
-// the damage is confined to the one document and only surfaces when that
-// document is decoded.
-func damageStoredDocumentRecord(t *testing.T, segmentPath string, documentNumber uint64) {
-	t.Helper()
-	payload, err := os.ReadFile(segmentPath)
-	require.NoError(t, err)
-	require.Greater(t, len(payload), iceFooterLength)
-	footer := payload[len(payload)-iceFooterLength:]
-	storedIndex := binary.BigEndian.Uint64(footer[iceFooterStoredIndexStart:iceFooterStoredIndexEnd])
-	require.Positive(t, storedIndex, "segment %s holds no stored document index", segmentPath)
-
-	entry := storedIndex + documentNumber*storedDocumentOffsetWidth
-	require.LessOrEqual(t, entry+storedDocumentOffsetWidth, uint64(len(payload)-iceFooterLength))
-	chunkLength := decodedStoredChunkLength(t, payload, storedIndex, documentNumber/storedDocumentsPerChunk)
-	binary.BigEndian.PutUint64(payload[entry:entry+storedDocumentOffsetWidth], chunkLength)
-	require.NoError(t, os.WriteFile(segmentPath, payload, 0o600))
-}
-
-// decodedStoredChunkLength returns the decoded byte length of one stored chunk,
-// read straight from the chunk table BDB-NIDX-SPEC-001 revision 0.2 section 08
-// places below the stored-fields index root: a run of variable-length chunk
-// offsets, then the table's byte length and chunk count as two big-endian
-// 32-bit values.
-func decodedStoredChunkLength(t *testing.T, payload []byte, storedIndex, chunkIndex uint64) uint64 {
-	t.Helper()
-	require.GreaterOrEqual(t, storedIndex, uint64(storedChunkTableFooterLen))
-	tableFooter := payload[storedIndex-storedChunkTableFooterLen : storedIndex]
-	offsetLength := uint64(binary.BigEndian.Uint32(tableFooter[0:4]))
-	chunkCount := uint64(binary.BigEndian.Uint32(tableFooter[4:8]))
-	require.Greater(t, chunkCount, chunkIndex+1, "the segment holds no stored chunk %d", chunkIndex)
-
-	tableStart := storedIndex - storedChunkTableFooterLen - offsetLength
-	table := payload[tableStart : tableStart+offsetLength]
-	offsets := make([]uint64, 0, chunkCount)
-	for cursor := 0; cursor < len(table); {
-		value, width := binary.Uvarint(table[cursor:])
-		require.Positive(t, width, "the stored chunk table holds an invalid offset")
-		offsets = append(offsets, value)
-		cursor += width
-	}
-	require.Len(t, offsets, int(chunkCount))
-
-	decoded, err := s2.Decode(nil, payload[offsets[chunkIndex]:offsets[chunkIndex+1]])
-	require.NoError(t, err)
-	return uint64(len(decoded))
-}
-
-// nidx01dSegmentFile returns the corpus's single segment file.
-func nidx01dSegmentFile(t *testing.T) string {
-	t.Helper()
-	entries, err := os.ReadDir(nidx01dShardDir)
-	require.NoError(t, err)
-	var segments []string
-	for _, entry := range entries {
-		if filepath.Ext(entry.Name()) == ".seg" {
-			segments = append(segments, filepath.Join(nidx01dShardDir, entry.Name()))
-		}
-	}
-	require.Len(t, segments, 1, "the corpus must hold exactly one segment")
-	return segments[0]
-}
-
 // nidx01dProvenanceBytes renders the manifest checked in beside the corpus.
-func nidx01dProvenanceBytes(t *testing.T, damagedOrdinal uint64) []byte {
+func nidx01dProvenanceBytes(t *testing.T) []byte {
 	t.Helper()
 	described := make([]nidx01dProvenanceDocument, 0, len(nidx01dDocuments))
 	for _, declared := range nidx01dDocuments {
 		described = append(described, nidx01dProvenanceDocument{
-			Label:   declared.label,
-			PropID:  declared.propID,
-			Kind:    declared.kind.String(),
-			Group:   declared.group,
-			ModRev:  declared.modRev,
-			Deleted: declared.deleted,
-			Damaged: declared.damaged,
+			Label:           declared.label,
+			PropID:          declared.propID,
+			Kind:            declared.kind.String(),
+			Group:           declared.group,
+			ModRev:          declared.modRev,
+			Deleted:         declared.deleted,
+			MalformedSource: declared.malformedSource,
 		})
 	}
 	manifest := nidx01dProvenance{
@@ -436,18 +311,16 @@ func nidx01dProvenanceBytes(t *testing.T, damagedOrdinal uint64) []byte {
 		GeneratorCommand: nidx01dGenerateCmd,
 		FileSHA256:       nidx01dFileHashes(t),
 		Documents:        described,
-		DamagedOrdinal:   damagedOrdinal,
-		Damage: map[string]string{
-			"target": "the stored-document offset index entry of the damaged revision",
-			"change": "the entry is set to the decoded length of the stored chunk holding it, " +
-				"so the record starts at the chunk's end and no field can be read from it",
-			"scope": "one document; the chunk table, the fields index, the footer, the reserved CRC32 slots " +
-				"and every other document's record are exactly as the oracle wrote them",
+		MalformedSource: map[string]string{
+			"document":  "p5@1",
+			"field":     "_source",
+			"bytes_hex": hex.EncodeToString([]byte("{malformed")),
+			"scope":     "the ICE container is unmodified compatibility-writer output; only the declared application payload is invalid",
 		},
 		Notes: "Seven physical revisions of five logical properties in one `_schema` shard. " +
 			"For kinds {Stream} the catalog walk yields only p1@2; for {Stream, Group} it yields p1@2 and p4@1; " +
 			"p3 is absent because its latest revision is a tombstone. A Stream walk never decodes p5, " +
-			"so it succeeds; a Measure walk decodes p5 and fails with the native typed corruption error.",
+			"so it succeeds; a Measure walk decodes p5 and fails with ErrMalformedPropertyDocument.",
 	}
 	encoded, err := json.MarshalIndent(manifest, "", "  ")
 	require.NoError(t, err)

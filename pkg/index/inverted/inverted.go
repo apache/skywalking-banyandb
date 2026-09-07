@@ -20,6 +20,7 @@ package inverted
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -324,18 +325,26 @@ func (s *store) Reset() {
 // index (no usable snapshot) returns a count of 0 together with the open error,
 // which callers may treat as an empty index.
 func ReadOnlyDocCount(path string) (int64, error) {
-	reader, err := nativeice.Open(path)
-	if err != nil {
-		return 0, err
+	var count int64
+	readErr := withReadOnlyReader(path, func(reader *nativeice.Reader) error {
+		var countErr error
+		count, countErr = reader.VisibleDocCount()
+		return countErr
+	})
+	return count, readErr
+}
+
+func withReadOnlyReader(path string, operation func(reader *nativeice.Reader) error) (operationErr error) {
+	reader, openErr := nativeice.Open(path)
+	if openErr != nil {
+		return fmt.Errorf("open read-only index %q: %w", path, openErr)
 	}
 	defer func() {
-		_ = reader.Close()
+		if closeErr := reader.Close(); operationErr == nil && closeErr != nil {
+			operationErr = fmt.Errorf("close read-only index %q: %w", path, closeErr)
+		}
 	}()
-	count, err := reader.VisibleDocCount()
-	if err != nil {
-		return 0, err
-	}
-	return count, nil
+	return operation(reader)
 }
 
 // StoredDocument is one live document of a committed index generation,
@@ -377,15 +386,10 @@ type StoredDocument interface {
 // ErrCorruptIndex. Canceling ctx stops the walk between two documents and
 // returns ctx.Err(); an error from visit stops the walk and is returned as-is.
 func ReadOnlyWalkDocuments(ctx context.Context, path string, visit func(doc StoredDocument) error) error {
-	reader, err := nativeice.Open(path)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = reader.Close()
-	}()
-	return reader.VisitLiveDocuments(ctx, func(doc nativeice.StoredDocument) error {
-		return visit(doc)
+	return withReadOnlyReader(path, func(reader *nativeice.Reader) error {
+		return reader.VisitLiveDocuments(ctx, func(doc nativeice.StoredDocument) error {
+			return visit(doc)
+		})
 	})
 }
 
@@ -435,19 +439,14 @@ type TermSelection struct {
 // document is visited. A directory holding no committed generation reports an
 // error wrapping ErrNoCommittedIndex. Committed bytes that violate the on-disk
 // grammar, or that would require decoding past a configured bound, report an
-// error wrapping ErrCorruptIndex. Canceling ctx stops the read between two
-// documents and returns ctx.Err(); an error from visit stops the read and is
-// returned as-is.
+// error wrapping ErrCorruptIndex. Canceling ctx stops posting decode, posting
+// union or the read between two documents and returns ctx.Err(); an error from
+// visit stops the read and is returned as-is.
 func ReadOnlySelectDocuments(ctx context.Context, path string, selection TermSelection, visit func(doc StoredDocument) error) error {
-	reader, err := nativeice.Open(path)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = reader.Close()
-	}()
-	return reader.VisitSelectedDocuments(ctx, selection.Field, selection.Terms, func(doc nativeice.StoredDocument) error {
-		return visit(doc)
+	return withReadOnlyReader(path, func(reader *nativeice.Reader) error {
+		return reader.VisitSelectedDocuments(ctx, selection.Field, selection.Terms, func(doc nativeice.StoredDocument) error {
+			return visit(doc)
+		})
 	})
 }
 

@@ -18,11 +18,11 @@
 package nativeice
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"os"
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
 	"github.com/blevesearch/vellum"
@@ -33,6 +33,8 @@ const (
 	maxSelectionTermLength     = 64 << 10
 	maxSelectionDictionarySize = 64 << 20
 	maxSelectionPostingsSize   = 64 << 20
+	selectionPostingBatchSize  = 1024
+	selectionDecodeReadSize    = 32 << 10
 	fstValueEncodingMask       = uint64(0xc000000000000000)
 	fstValueEncodingOneHit     = uint64(0x8000000000000000)
 	fstValueDocumentMask       = uint64(0x000000007fffffff)
@@ -48,6 +50,11 @@ const (
 // READ-002 requires the reader to hold, so no dictionary is opened and no
 // posting is decoded. Callers classify with errors.Is.
 var ErrInvalidSelection = errors.New("nativeice: invalid term selection")
+
+type termSelection struct {
+	field string
+	terms [][]byte
+}
 
 // VisitSelectedDocuments streams the pinned generation's live documents whose
 // field records any of terms to visit, one at a time, in ascending segment and
@@ -75,37 +82,38 @@ var ErrInvalidSelection = errors.New("nativeice: invalid term selection")
 // A selection that names no field, or whose term count or term length exceeds
 // the reader's configured bounds, is rejected with an error wrapping
 // ErrInvalidSelection before any document is visited. The walk stops and
-// returns ctx.Err() when ctx is canceled between two documents, and stops and
-// returns visit's error when visit fails. A dictionary, posting record or
-// stored record that violates the ICE v3 grammar, or that would require
-// decoding past a configured bound, stops the walk with an error wrapping
-// ErrCorrupt.
+// returns ctx.Err() when ctx is canceled while postings are decoded or unioned,
+// or between two documents. It stops and returns visit's error when visit
+// fails. A dictionary, posting record or stored record that violates the ICE
+// v3 grammar, or that would require decoding past a configured bound, stops the
+// walk with an error wrapping ErrCorrupt.
 func (r *Reader) VisitSelectedDocuments(ctx context.Context, field string, terms [][]byte, visit func(StoredDocument) error) error {
-	if selectionErr := validateSelection(field, terms); selectionErr != nil {
+	selection := termSelection{field: field, terms: terms}
+	if selectionErr := validateSelection(selection); selectionErr != nil {
 		return selectionErr
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
 	}
-	if len(terms) == 0 {
+	if len(selection.terms) == 0 {
 		return nil
 	}
 	for segmentIndex := range r.segments {
-		if visitErr := walkSelectedStoredSegment(ctx, r.segments[segmentIndex], field, terms, visit); visitErr != nil {
+		if visitErr := walkSelectedStoredSegment(ctx, r.segments[segmentIndex], selection, visit); visitErr != nil {
 			return visitErr
 		}
 	}
 	return nil
 }
 
-func validateSelection(field string, terms [][]byte) error {
-	if field == "" {
+func validateSelection(selection termSelection) error {
+	if selection.field == "" {
 		return fmt.Errorf("selection has no field: %w", ErrInvalidSelection)
 	}
-	if len(terms) > maxSelectionTermCount {
-		return fmt.Errorf("selection has %d terms, limit is %d: %w", len(terms), maxSelectionTermCount, ErrInvalidSelection)
+	if len(selection.terms) > maxSelectionTermCount {
+		return fmt.Errorf("selection has %d terms, limit is %d: %w", len(selection.terms), maxSelectionTermCount, ErrInvalidSelection)
 	}
-	for termIndex, term := range terms {
+	for termIndex, term := range selection.terms {
 		if len(term) > maxSelectionTermLength {
 			return fmt.Errorf("selection term %d has %d bytes, limit is %d: %w", termIndex, len(term), maxSelectionTermLength, ErrInvalidSelection)
 		}
@@ -113,48 +121,31 @@ func validateSelection(field string, terms [][]byte) error {
 	return nil
 }
 
-func walkSelectedStoredSegment(ctx context.Context, record segmentRecord, field string, terms [][]byte, visit func(StoredDocument) error) error {
+func walkSelectedStoredSegment(ctx context.Context, segment pinnedSegment, selection termSelection, visit func(StoredDocument) error) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
 	}
-	file, openErr := os.Open(record.path)
-	if errors.Is(openErr, os.ErrNotExist) {
-		return corruptError("open missing segment %d", record.id)
-	}
-	if openErr != nil {
-		return corruptError("open segment %q", record.path, openErr)
-	}
-	defer func() {
-		_ = file.Close()
-	}()
-	info, statErr := file.Stat()
-	if statErr != nil {
-		return corruptError("stat segment %q", record.path, statErr)
-	}
-	if !info.Mode().IsRegular() || info.Size() < segmentFooterLength {
-		return corruptError("segment %q is shorter than its footer", record.path)
-	}
-	storedReader, readerErr := newStoredSegmentReader(file, uint64(info.Size()), record)
+	storedReader, readerErr := newStoredSegmentReader(segment.file, segment.size, segment.record)
 	if readerErr != nil {
 		return readerErr
 	}
-	selected, selectedErr := storedReader.selectedDocuments(ctx, field, terms)
+	selected, selectedErr := storedReader.selectedDocuments(ctx, selection)
 	if selectedErr != nil {
 		return selectedErr
 	}
 	if selected.IsEmpty() {
 		return nil
 	}
-	deleted, deletionErr := deletedDocuments(record)
+	deleted, deletionErr := deletedDocuments(segment.record)
 	if deletionErr != nil {
 		return deletionErr
 	}
 	return storedReader.visitSelected(ctx, selected, deleted, visit)
 }
 
-func (s *storedSegmentReader) selectedDocuments(ctx context.Context, field string, terms [][]byte) (*roaringpkg.Bitmap, error) {
+func (s *storedSegmentReader) selectedDocuments(ctx context.Context, selection termSelection) (*roaringpkg.Bitmap, error) {
 	selected := roaringpkg.New()
-	dictionaryOffset, found, dictionaryErr := s.dictionaryOffset(field)
+	dictionaryOffset, found, dictionaryErr := s.dictionaryOffset(selection.field)
 	if dictionaryErr != nil {
 		return nil, dictionaryErr
 	}
@@ -183,7 +174,7 @@ func (s *storedSegmentReader) selectedDocuments(ctx context.Context, field strin
 	defer func() {
 		_ = dictionary.Close()
 	}()
-	for _, term := range terms {
+	for _, term := range selection.terms {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
@@ -194,7 +185,7 @@ func (s *storedSegmentReader) selectedDocuments(ctx context.Context, field strin
 		if !exists {
 			continue
 		}
-		if postingsErr := s.unionPostings(selected, postingsOffset); postingsErr != nil {
+		if postingsErr := s.unionPostings(ctx, selected, postingsOffset); postingsErr != nil {
 			return nil, postingsErr
 		}
 	}
@@ -245,7 +236,10 @@ func (s *storedSegmentReader) dictionaryOffset(field string) (uint64, bool, erro
 	return 0, false, nil
 }
 
-func (s *storedSegmentReader) unionPostings(selected *roaringpkg.Bitmap, postingsOffset uint64) error {
+func (s *storedSegmentReader) unionPostings(ctx context.Context, selected *roaringpkg.Bitmap, postingsOffset uint64) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
 	switch postingsOffset & fstValueEncodingMask {
 	case fstValueEncodingOneHit:
 		documentNumber := postingsOffset & fstValueDocumentMask
@@ -255,13 +249,13 @@ func (s *storedSegmentReader) unionPostings(selected *roaringpkg.Bitmap, posting
 		selected.Add(uint32(documentNumber))
 		return nil
 	case 0:
-		return s.unionGeneralPostings(selected, postingsOffset)
+		return s.unionGeneralPostings(ctx, selected, postingsOffset)
 	default:
 		return corruptError("segment %q has an unsupported posting encoding", s.path)
 	}
 }
 
-func (s *storedSegmentReader) unionGeneralPostings(selected *roaringpkg.Bitmap, postingsOffset uint64) error {
+func (s *storedSegmentReader) unionGeneralPostings(ctx context.Context, selected *roaringpkg.Bitmap, postingsOffset uint64) error {
 	if postingsOffset >= s.footer.docValueOffset {
 		return corruptError("segment %q has a posting outside its section", s.path)
 	}
@@ -294,24 +288,41 @@ func (s *storedSegmentReader) unionGeneralPostings(selected *roaringpkg.Bitmap, 
 	if readErr := s.readInto(postingsCursor, postingsData); readErr != nil {
 		return readErr
 	}
-	postings, unmarshalErr := decodePostingBitmap(postingsData)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	postings, unmarshalErr := decodePostingBitmap(ctx, postingsData)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
 	if unmarshalErr != nil {
 		return corruptError("decode posting bitmap in segment %q", s.path, unmarshalErr)
 	}
 	if postings.GetCardinality() > s.footer.documentCount {
 		return corruptError("segment %q has a posting bitmap with too many documents", s.path)
 	}
-	iterator := postings.Iterator()
-	for iterator.HasNext() {
-		if uint64(iterator.Next()) >= s.footer.documentCount {
-			return corruptError("segment %q has an out-of-range posting document", s.path)
-		}
-	}
-	selected.Or(postings)
-	return nil
+	return unionPostingBitmap(ctx, selected, postings, s.footer.documentCount, s.path)
 }
 
-func decodePostingBitmap(data []byte) (postings *roaringpkg.Bitmap, err error) {
+func unionPostingBitmap(ctx context.Context, selected, postings *roaringpkg.Bitmap, documentCount uint64, path string) error {
+	iterator := postings.ManyIterator()
+	documentNumbers := make([]uint32, selectionPostingBatchSize)
+	for {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		batchSize := iterator.NextMany(documentNumbers)
+		if batchSize == 0 {
+			return nil
+		}
+		if uint64(documentNumbers[batchSize-1]) >= documentCount {
+			return corruptError("segment %q has an out-of-range posting document", path)
+		}
+		selected.AddMany(documentNumbers[:batchSize])
+	}
+}
+
+func decodePostingBitmap(ctx context.Context, data []byte) (postings *roaringpkg.Bitmap, err error) {
 	postings = roaringpkg.New()
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -319,10 +330,29 @@ func decodePostingBitmap(data []byte) (postings *roaringpkg.Bitmap, err error) {
 			err = fmt.Errorf("posting bitmap decoder panicked: %v", recovered)
 		}
 	}()
-	if unmarshalErr := postings.UnmarshalBinary(data); unmarshalErr != nil {
-		return nil, unmarshalErr
+	reader := &contextByteReader{ctx: ctx, reader: bytes.NewReader(data)}
+	if _, readErr := postings.ReadFrom(reader); readErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, readErr
 	}
 	return postings, nil
+}
+
+type contextByteReader struct {
+	ctx    context.Context
+	reader *bytes.Reader
+}
+
+func (r *contextByteReader) Read(data []byte) (int, error) {
+	if ctxErr := r.ctx.Err(); ctxErr != nil {
+		return 0, ctxErr
+	}
+	if len(data) > selectionDecodeReadSize {
+		data = data[:selectionDecodeReadSize]
+	}
+	return r.reader.Read(data)
 }
 
 func (s *storedSegmentReader) visitSelected(ctx context.Context, selected, deleted *roaringpkg.Bitmap, visit func(StoredDocument) error) error {

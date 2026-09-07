@@ -16,6 +16,8 @@
 package nativeice
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
@@ -37,7 +39,7 @@ func TestUnionPostingsDecodesOneHitDocumentNumber(t *testing.T) {
 	}
 	selected := roaringpkg.New()
 
-	if postingsErr := reader.unionPostings(selected, fstValue); postingsErr != nil {
+	if postingsErr := reader.unionPostings(context.Background(), selected, fstValue); postingsErr != nil {
 		t.Fatal(postingsErr)
 	}
 	if !selected.Contains(uint32(oneHitDocumentNumber)) {
@@ -49,4 +51,53 @@ func TestUnionPostingsDecodesOneHitDocumentNumber(t *testing.T) {
 	if selected.GetCardinality() != 1 {
 		t.Fatalf("one-hit FST value selected %d documents, want 1", selected.GetCardinality())
 	}
+}
+
+func TestDecodePostingBitmapHonorsCancellation(t *testing.T) {
+	postings := roaringpkg.New()
+	for containerIndex := uint32(0); containerIndex < 5000; containerIndex++ {
+		postings.Add(containerIndex << 16)
+	}
+	encoded, marshalErr := postings.MarshalBinary()
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
+	}
+	if len(encoded) <= selectionDecodeReadSize {
+		t.Fatalf("posting encoding has %d bytes, want more than one bounded read", len(encoded))
+	}
+
+	ctx := &cancelAfterChecksContext{Context: context.Background(), cancelAt: 2}
+	_, decodeErr := decodePostingBitmap(ctx, encoded)
+	if !errors.Is(decodeErr, context.Canceled) {
+		t.Fatalf("decodePostingBitmap() error = %v, want context.Canceled", decodeErr)
+	}
+}
+
+func TestUnionPostingBitmapHonorsCancellationBetweenBatches(t *testing.T) {
+	postings := roaringpkg.New()
+	postings.AddRange(0, selectionPostingBatchSize*2)
+	selected := roaringpkg.New()
+	ctx := &cancelAfterChecksContext{Context: context.Background(), cancelAt: 2}
+
+	unionErr := unionPostingBitmap(ctx, selected, postings, selectionPostingBatchSize*2, "cancellation test")
+	if !errors.Is(unionErr, context.Canceled) {
+		t.Fatalf("unionPostingBitmap() error = %v, want context.Canceled", unionErr)
+	}
+	if selected.GetCardinality() != selectionPostingBatchSize {
+		t.Fatalf("selected %d documents before cancellation, want %d", selected.GetCardinality(), selectionPostingBatchSize)
+	}
+}
+
+type cancelAfterChecksContext struct {
+	context.Context
+	checks   int
+	cancelAt int
+}
+
+func (c *cancelAfterChecksContext) Err() error {
+	c.checks++
+	if c.checks >= c.cancelAt {
+		return context.Canceled
+	}
+	return nil
 }

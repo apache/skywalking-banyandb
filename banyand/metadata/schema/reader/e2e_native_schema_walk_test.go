@@ -120,14 +120,14 @@ func walkNIDX01DCatalog(kinds ...schema.Kind) ([]walkedDoc, error) {
 //	      embedded `_source` bytes survive the walk, so the migration's own
 //	      loader still decodes a usable stream schema out of the same document.
 //
-//	R3 -- filtering precedes stored-field decode: the corpus's damaged measure
+//	R3 -- filtering precedes stored-field decode: the corpus's malformed measure
 //	      revision is never decoded by a stream walk, so this load succeeds
 //	      rather than failing on a document it was never asked for.
 func TestE2ESchemaWalkNativeStreamOnly(t *testing.T) {
 	tester := require.New(t)
 
 	visited, err := walkNIDX01DCatalog(schema.KindStream)
-	tester.NoError(err, "a stream walk must not decode the corpus's damaged measure revision")
+	tester.NoError(err, "a stream walk must not decode the corpus's malformed measure revision")
 	tester.Equal([]walkedDoc{{propID: nidx01dPropID1, kind: "stream", modRev: 2}}, visited)
 
 	streams, err := LoadStreams(nidx01dRoot, []string{nidx01dGroup})
@@ -164,28 +164,30 @@ func TestE2ESchemaWalkNativeStreamAndGroup(t *testing.T) {
 		"the group property's embedded payload must survive the walk")
 }
 
-// TestE2ESchemaWalkNativeCorruptMeasureIsTyped walks the checked-in legacy
-// catalog for the kind whose corpus revision is deliberately damaged.
+// TestE2ESchemaWalkNativeMalformedMeasureIsTyped walks the checked-in legacy
+// catalog for the kind whose corpus revision has a deliberately malformed source.
 //
 // Requirement proved here:
 //
-//	R3 -- selecting the kind that owns the damaged revision decodes it, and
-//	      that decode fails with the native typed corruption error rather than
+//	R3 -- selecting the kind that owns the malformed revision decodes it, and
+//	      that decode fails with the schema reader's typed payload error rather than
 //	      with a panic, a hang, a silently short result or an untyped failure a
 //	      caller cannot classify. A migration that cannot read a measure schema
 //	      must abort loudly instead of migrating a catalog it only partly read.
-func TestE2ESchemaWalkNativeCorruptMeasureIsTyped(t *testing.T) {
+func TestE2ESchemaWalkNativeMalformedMeasureIsTyped(t *testing.T) {
 	tester := require.New(t)
 
 	visited, err := walkNIDX01DCatalog(schema.KindMeasure)
-	tester.ErrorIs(err, inverted.ErrCorruptIndex,
-		"a damaged stored record must reach the caller as the native typed corruption error")
+	tester.ErrorIs(err, ErrMalformedPropertyDocument,
+		"a malformed source must reach the caller as the schema reader's typed payload error")
+	tester.NotErrorIs(err, inverted.ErrCorruptIndex,
+		"a valid ICE container with malformed application data is not index corruption")
 	tester.NotErrorIs(err, inverted.ErrNoCommittedIndex,
 		"a damaged catalog is not an absent one; callers classify the two differently")
 	tester.Empty(visited, "a walk that fails must not also publish a partial catalog")
 
 	_, loadErr := LoadMeasures(nidx01dRoot, []string{nidx01dGroup})
-	tester.ErrorIs(loadErr, inverted.ErrCorruptIndex,
+	tester.ErrorIs(loadErr, ErrMalformedPropertyDocument,
 		"the migration's own measure loader must surface the same classified failure")
 }
 

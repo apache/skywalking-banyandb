@@ -25,6 +25,7 @@ import (
 	"math"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -458,6 +459,8 @@ func TestNativeExactTermsClassifiesAbsentAndDamagedDirectories(t *testing.T) {
 		func(_ StoredDocument) error { return nil })
 	tester.ErrorIs(absentErr, ErrNoCommittedIndex)
 	tester.NotErrorIs(absentErr, ErrCorruptIndex)
+	tester.True(strings.Contains(absentErr.Error(), "open read-only index"),
+		"the public boundary must identify the operation that failed: %v", absentErr)
 
 	damaged := copyIndexDir(t, nidx01cSourceADir)
 	damageStoredDocumentRegion(t, newestSegmentFile(t, damaged))
