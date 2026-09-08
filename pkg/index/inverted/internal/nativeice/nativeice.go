@@ -38,6 +38,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"sync"
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
 	"github.com/klauspost/compress/s2"
@@ -84,8 +85,10 @@ var errManifestTooLarge = errors.New("nativeice: snapshot exceeds read limit")
 // directory. The generation is chosen at Open and fixed for the Reader's
 // lifetime, so generations committed afterwards stay invisible to it.
 type Reader struct {
-	segments        []segmentRecord
+	closeErr        error
+	segments        []pinnedSegment
 	visibleDocCount int64
+	closeOnce       sync.Once
 }
 
 // StoredDocument is one live document of the pinned generation, borrowed for
@@ -191,9 +194,13 @@ func (r *Reader) VisibleDocCount() (int64, error) {
 	return r.visibleDocCount, nil
 }
 
-// Close releases the file handles and mappings the Reader pinned at Open.
+// Close releases the file handles the Reader pinned at Open. It is idempotent.
+// Callers must not close a Reader concurrently with a document visit.
 func (r *Reader) Close() error {
-	return nil
+	r.closeOnce.Do(func() {
+		r.closeErr = closePinnedSegments(r.segments)
+	})
+	return r.closeErr
 }
 
 func committedSnapshots(path string) ([]string, map[uint64]string, error) {
@@ -266,7 +273,7 @@ func readDirectoryEntries(path string) ([]os.DirEntry, error) {
 	return entries, nil
 }
 
-func parseSnapshotSegments(segmentPaths map[uint64]string, payload []byte) (int64, []segmentRecord, error) {
+func parseSnapshotSegments(segmentPaths map[uint64]string, payload []byte) (visibleDocCount int64, resultSegments []pinnedSegment, err error) {
 	if len(payload) < 4 {
 		return 0, nil, corruptError("snapshot is shorter than its reserved CRC32", nil)
 	}
@@ -285,17 +292,22 @@ func parseSnapshotSegments(segmentPaths map[uint64]string, payload []byte) (int6
 	if segmentCount > uint64(len(decoder.payload)) {
 		return 0, nil, corruptError("snapshot segment count %d exceeds remaining bytes", segmentCount)
 	}
-	var visibleDocCount int64
-	segments := make([]segmentRecord, 0, int(segmentCount))
+	segments := make([]pinnedSegment, 0, int(segmentCount))
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, closePinnedSegments(segments))
+		}
+	}()
 	for segmentIndex := uint64(0); segmentIndex < segmentCount; segmentIndex++ {
 		record, recordErr := decoder.segmentRecord(segmentPaths)
 		if recordErr != nil {
 			return 0, nil, recordErr
 		}
-		segmentDocCount, segmentErr := validateSegment(record)
+		pinnedRecord, segmentDocCount, segmentErr := pinSegment(record)
 		if segmentErr != nil {
 			return 0, nil, segmentErr
 		}
+		segments = append(segments, pinnedRecord)
 		if segmentDocCount != record.documentCount {
 			return 0, nil, corruptError("segment %d document count differs from snapshot", record.id)
 		}
@@ -311,7 +323,6 @@ func parseSnapshotSegments(segmentPaths map[uint64]string, payload []byte) (int6
 			return 0, nil, corruptError("visible document count overflows int64", nil)
 		}
 		visibleDocCount += segmentVisibleCount
-		segments = append(segments, record)
 	}
 	if decoder.remaining() != 0 {
 		return 0, nil, corruptError("snapshot has trailing bytes before its reserved CRC32", nil)
@@ -326,6 +337,12 @@ type segmentRecord struct {
 	id             uint64
 	timeMin        uint64
 	timeMax        uint64
+}
+
+type pinnedSegment struct {
+	file   *os.File
+	record segmentRecord
+	size   uint64
 }
 
 type byteDecoder struct {
@@ -440,42 +457,52 @@ type segmentFooter struct {
 	fieldsIndexEntries uint64
 }
 
-func validateSegment(record segmentRecord) (uint64, error) {
+func pinSegment(record segmentRecord) (pinnedSegment, uint64, error) {
 	file, openErr := os.Open(record.path)
 	if errors.Is(openErr, os.ErrNotExist) {
-		return 0, corruptError("open missing segment %d", record.id)
+		return pinnedSegment{}, 0, corruptError("open missing segment %d", record.id)
 	}
 	if openErr != nil {
-		return 0, corruptError("open segment %q", record.path, openErr)
+		return pinnedSegment{}, 0, corruptError("open segment %q", record.path, openErr)
 	}
-	defer func() {
-		_ = file.Close()
-	}()
 	info, statErr := file.Stat()
 	if statErr != nil {
-		return 0, corruptError("stat segment %q", record.path, statErr)
+		return pinnedSegment{}, 0, errors.Join(corruptError("stat segment %q", record.path, statErr), file.Close())
 	}
 	if !info.Mode().IsRegular() || info.Size() < segmentFooterLength {
-		return 0, corruptError("segment %q is shorter than its footer", record.path)
+		return pinnedSegment{}, 0, errors.Join(corruptError("segment %q is shorter than its footer", record.path), file.Close())
 	}
 	footer, footerErr := readSegmentFooter(file, uint64(info.Size()), record.path)
 	if footerErr != nil {
-		return 0, footerErr
+		return pinnedSegment{}, 0, errors.Join(footerErr, file.Close())
 	}
 	for fieldIndexOffset := footer.fieldsIndexOffset; fieldIndexOffset < footer.footerOffset; fieldIndexOffset += fieldsIndexAddressByteWidth {
 		var fieldRecord [fieldsIndexAddressByteWidth]byte
 		if _, readErr := file.ReadAt(fieldRecord[:], int64(fieldIndexOffset)); readErr != nil {
-			return 0, corruptError("read fields index from segment %q", record.path, readErr)
+			return pinnedSegment{}, 0, errors.Join(corruptError("read fields index from segment %q", record.path, readErr), file.Close())
 		}
 		fieldRecordOffset := binary.BigEndian.Uint64(fieldRecord[:])
 		if fieldRecordOffset >= footer.fieldsIndexOffset {
-			return 0, corruptError("segment %q has a field record outside its section", record.path)
+			return pinnedSegment{}, 0, errors.Join(corruptError("segment %q has a field record outside its section", record.path), file.Close())
 		}
 	}
 	if footer.timeMin != record.timeMin || footer.timeMax != record.timeMax {
-		return 0, corruptError("segment %d time bounds differ from snapshot", record.id)
+		return pinnedSegment{}, 0, errors.Join(corruptError("segment %d time bounds differ from snapshot", record.id), file.Close())
 	}
-	return footer.documentCount, nil
+	return pinnedSegment{file: file, record: record, size: uint64(info.Size())}, footer.documentCount, nil
+}
+
+func closePinnedSegments(segments []pinnedSegment) error {
+	var closeErr error
+	for segmentIndex := range segments {
+		if segments[segmentIndex].file == nil {
+			continue
+		}
+		if fileErr := segments[segmentIndex].file.Close(); fileErr != nil {
+			closeErr = errors.Join(closeErr, fmt.Errorf("close segment %q: %w", segments[segmentIndex].record.path, fileErr))
+		}
+	}
+	return closeErr
 }
 
 func readSegmentFooter(file *os.File, size uint64, path string) (segmentFooter, error) {
@@ -549,32 +576,15 @@ func (d storedDocument) VisitStoredFields(visit func(name string, value []byte) 
 	return nil
 }
 
-func walkStoredSegment(ctx context.Context, record segmentRecord, visit func(StoredDocument) error) error {
+func walkStoredSegment(ctx context.Context, segment pinnedSegment, visit func(StoredDocument) error) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
 	}
-	file, openErr := os.Open(record.path)
-	if errors.Is(openErr, os.ErrNotExist) {
-		return corruptError("open missing segment %d", record.id)
-	}
-	if openErr != nil {
-		return corruptError("open segment %q", record.path, openErr)
-	}
-	defer func() {
-		_ = file.Close()
-	}()
-	info, statErr := file.Stat()
-	if statErr != nil {
-		return corruptError("stat segment %q", record.path, statErr)
-	}
-	if !info.Mode().IsRegular() || info.Size() < segmentFooterLength {
-		return corruptError("segment %q is shorter than its footer", record.path)
-	}
-	storedReader, readerErr := newStoredSegmentReader(file, uint64(info.Size()), record)
+	storedReader, readerErr := newStoredSegmentReader(segment.file, segment.size, segment.record)
 	if readerErr != nil {
 		return readerErr
 	}
-	deleted, deletionErr := deletedDocuments(record)
+	deleted, deletionErr := deletedDocuments(segment.record)
 	if deletionErr != nil {
 		return deletionErr
 	}

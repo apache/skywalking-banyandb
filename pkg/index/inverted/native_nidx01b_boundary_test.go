@@ -53,20 +53,25 @@ var nidx01bBoundary committedGenerationCounter = ReadOnlyDocCount
 //
 // The list is the read-only slice NIDX-01 allows and nothing else: open a
 // committed generation, report its visible document count, walk its live
-// documents' stored fields, close it, and classify the two failures a caller
-// must distinguish. Issue #14009 placed the document walk outside NIDX-01B;
-// issue #14010 adds it and nothing more. Dictionaries, term postings, doc
-// values, sort/search-after, writers and merge remain outside the milestone, so
-// an entry appearing here for any of them is the milestone growing surface it
-// was explicitly denied.
+// documents' stored fields, walk the subset of them one field's exact terms
+// select, close it, and classify the three failures a caller must distinguish.
+// Issue #14009 placed the document walk outside NIDX-01B; issue #14010 added it;
+// issue #14011 adds the exact-term selection and nothing more. Term dictionaries
+// and postings are what that selection is built from, so they stay private:
+// doc values, sort/search-after, ranges, prefix and wildcard expansion,
+// analyzers, writers and merge remain outside the milestone, and an entry
+// appearing here for any of them is the milestone growing surface it was
+// explicitly denied.
 var nativeReaderSurface = []string{
 	"ErrCorrupt",
+	"ErrInvalidSelection",
 	"ErrNoSnapshot",
 	"Open",
 	"Reader",
 	"Reader.Close",
 	"Reader.VisibleDocCount",
 	"Reader.VisitLiveDocuments",
+	"Reader.VisitSelectedDocuments",
 	"StoredDocument",
 }
 
