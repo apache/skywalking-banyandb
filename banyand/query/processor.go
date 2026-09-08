@@ -158,10 +158,19 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 	// discipline as measure and trace). When tracing is on we MUST return a proto
 	// QueryResponse (it carries common.v1.Trace); the frame emit is gated on tracer == nil.
 	handled, vecResp := p.tryStreamVecDispatch(ctx, plan, queryCriteria, tracer != nil)
+	// Read the decline reason off the plan before Close, so this does not depend on
+	// Close staying a no-op for every stream node.
+	var declineReason string
+	if !handled {
+		declineReason = logical_stream.VecDeclineReason(plan)
+	}
 	plan.(executor.StreamCloser).Close()
 	if !handled {
-		p.log.Error().Str("plan", plan.String()).RawJSON("req", logger.Proto(queryCriteria)).Msg("no vectorized execution path for the query plan")
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("no vectorized execution path for stream %s", queryCriteria.GetName()))
+		p.log.Error().Str("plan", plan.String()).Str("reason", declineReason).
+			RawJSON("req", logger.Proto(queryCriteria)).Msg("no vectorized execution path for the query plan")
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError(
+			"no execution path for stream %s: %s; row execution was removed in 0.12.0 (apache/skywalking#13998)",
+			queryCriteria.GetName(), declineReason))
 		return
 	}
 	resp = vecResp

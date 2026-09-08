@@ -47,18 +47,49 @@ var _ executor.StreamVecExecutable = (*localIndexScan)(nil)
 // An index-order query need not project its ordered tag: vecTagProjection adds it
 // to the scan's request and keeps it out of ProjectionTags().
 func VecExecutable(plan logical.Plan) executor.StreamVecExecutable {
-	l, ok := plan.(*limit)
-	if !ok {
-		return nil
-	}
-	scan := scanFromInput(l.Input)
+	scan, _ := vecExecutable(plan)
 	if scan == nil {
 		return nil
 	}
-	if _, _, resolved := scan.vecTagProjection(); !resolved {
-		return nil
-	}
 	return scan
+}
+
+// VecDeclineReason explains why VecExecutable rejected a plan, for the error the
+// caller returns to the client. It is empty when the plan is vec-eligible.
+func VecDeclineReason(plan logical.Plan) string {
+	_, reason := vecExecutable(plan)
+	return reason
+}
+
+func vecExecutable(plan logical.Plan) (*localIndexScan, string) {
+	l, ok := plan.(*limit)
+	if !ok {
+		// Defensive: the analyzer always tops a stream plan with a limit node.
+		return nil, "the plan top is not a limit node"
+	}
+	// A multi-group plan is dispatched by VecMergeExecutable, so reaching here means
+	// one of its groups was ineligible. Report that group's reason rather than the
+	// shape mismatch the single-scan walk would otherwise see.
+	if mp, isMerge := l.Input.(*mergePlan); isMerge {
+		for _, sp := range mp.subPlans {
+			if _, reason := vecScanFrom(sp); reason != "" {
+				return nil, "a group of the multi-group plan is not vec-eligible: " + reason
+			}
+		}
+		return nil, "the multi-group plan is not vec-eligible"
+	}
+	return vecScanFrom(l.Input)
+}
+
+func vecScanFrom(node logical.Plan) (*localIndexScan, string) {
+	scan := scanFromInput(node)
+	if scan == nil {
+		return nil, "the plan does not resolve to a single index scan"
+	}
+	if _, _, resolved := scan.vecTagProjection(); !resolved {
+		return nil, "the order-by tag does not resolve against the stream schema"
+	}
+	return scan, ""
 }
 
 // scanFromInput resolves the *localIndexScan at the input of the *limit node,
@@ -177,11 +208,8 @@ func VecMergeExecutable(plan logical.Plan) (*VecMerge, bool) {
 	}
 	groups := make([]VecMergeGroup, 0, len(mp.subPlans))
 	for _, sp := range mp.subPlans {
-		scan := scanFromInput(sp)
-		if scan == nil {
-			return nil, false
-		}
-		if _, _, resolved := scan.vecTagProjection(); !resolved {
+		scan, reason := vecScanFrom(sp)
+		if reason != "" {
 			return nil, false
 		}
 		filter, hidden, filterSchema, hasFilter := nodeTagFilter(sp)

@@ -102,6 +102,8 @@ func TestVecExecutable_IndexOrder_TagNotInSchema_DeclinesVec(t *testing.T) {
 
 	require.Nil(t, VecExecutable(plan),
 		"vec must decline when the ordered tag cannot be resolved against the schema")
+	require.Equal(t, "the order-by tag does not resolve against the stream schema", VecDeclineReason(plan),
+		"the decline must name the tag-resolution failure, not a generic shape mismatch")
 }
 
 // TestVecExecutable_IndexOrder_TagProjected_AcceptsVec is the positive control:

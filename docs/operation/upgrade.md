@@ -87,6 +87,12 @@ A client that needs the missing elements should re-issue the query over a narrow
 
 An index-order stream query whose ordered tag is not in the client's tag projection now answers over protobuf on a distributed data node instead of over a columnar frame. The scan projects that tag internally to derive its sort key and hides it again before egress, while the frame egress rebuilds its projection from the batch schema and would leak the hidden tag — so this query shape is routed onto the protobuf path. Results are unaffected; the query simply forgoes the raw-wire fast path.
 
+### Stream query shapes with no execution path (breaking)
+
+A stream query the vectorized engine cannot plan now fails with an error. The row path served these shapes without complaint, so the query returned results instead.
+
+One shape reaches this: an `orderBy` naming a tag that no longer resolves against the stream's schema, such as an index rule left behind after its tag was dropped. The error names the reason. Drop the stale index rule, or order by a tag that still exists.
+
 ## Upgrading to 0.11
 
 This section describes breaking changes and important behavioral changes when upgrading to BanyanDB 0.11.0.
