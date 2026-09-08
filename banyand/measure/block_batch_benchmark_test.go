@@ -143,7 +143,7 @@ type benchStorageHarness struct {
 	queryOpts queryOptions
 }
 
-func setupBenchStorageHarness(b *testing.B) *benchStorageHarness {
+func setupBenchStorageHarness(b testing.TB) *benchStorageHarness {
 	b.Helper()
 	tmpPath, defFn := test.Space(require.New(b))
 	tst, err := newTSTable(
