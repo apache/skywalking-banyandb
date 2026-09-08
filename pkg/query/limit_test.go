@@ -45,3 +45,15 @@ func TestAddWindowOversizedPatterns(t *testing.T) {
 		})
 	}
 }
+
+func TestIsUnboundedLimit(t *testing.T) {
+	if !IsUnboundedLimit(^uint32(0), 0) {
+		t.Fatal("MaxUint32 with zero offset is the list-all sentinel")
+	}
+	if IsUnboundedLimit(^uint32(0), 1) {
+		t.Fatal("MaxUint32 with offset must not be treated as unbounded")
+	}
+	if IsUnboundedLimit(100001, 0) {
+		t.Fatal("finite oversized windows are not the list-all sentinel")
+	}
+}

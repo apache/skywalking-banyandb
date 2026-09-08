@@ -12,6 +12,7 @@ Release Notes.
 
 - Fix FODC proxy `/metrics` returning partial data or timing out when concurrent scrapes overlap.
 - Bound Property, Stream, and Trace query allocations with shared memory admission and capacity hints so oversized limit/offset windows cannot force huge result buffers.
+- Preserve list-all / max-limit queries (`limit=MaxUint32`) with incremental scan admission and result-count accounting.
 
 ### Document
 

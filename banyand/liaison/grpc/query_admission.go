@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 )
@@ -32,6 +33,15 @@ func admitQuery(ctx context.Context, budget *protector.QueryBudget, limit, offse
 	}
 	if limit == 0 {
 		limit = defaultLimit
+	}
+	// MaxUint32 is the historical list-all / max-limit sentinel used by OAP and
+	// integration fixtures. Admit as a scan; capacity hints and ChargeResult bound memory.
+	if query.IsUnboundedLimit(limit, offset) {
+		admittedCtx, release, admissionErr := budget.AdmitScanContext(ctx)
+		if admissionErr != nil {
+			return ctx, nil, queryStatus(admissionErr)
+		}
+		return admittedCtx, release, nil
 	}
 	window, valid := query.AddWindow(limit, offset)
 	if !valid || window > uint64(maxQueryWindow) {
@@ -67,4 +77,20 @@ func queryStatus(err error) error {
 		return status.Error(codes.ResourceExhausted, err.Error())
 	}
 	return err
+}
+
+// Unordered Property queries use the limit only as a stopping condition, not a
+// preallocation size. Preserve list-all callers while bounding actual results.
+func admitPropertyQuery(ctx context.Context, budget *protector.QueryBudget, req *propertyv1.QueryRequest) (context.Context, func(), error) {
+	if req.OrderBy != nil && req.OrderBy.TagName != "" {
+		return admitQuery(ctx, budget, req.Limit, 0, 100)
+	}
+	if budget == nil {
+		budget = protector.QueryBudgetFor(nil)
+	}
+	admittedCtx, release, admissionErr := budget.AdmitScanContext(ctx)
+	if admissionErr != nil {
+		return ctx, nil, queryStatus(admissionErr)
+	}
+	return admittedCtx, release, nil
 }

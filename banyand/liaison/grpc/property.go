@@ -429,7 +429,7 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "query request is nil")
 	}
-	ctx, release, admissionErr := admitQuery(ctx, ps.queryBudget, req.GetLimit(), 0, 100)
+	ctx, release, admissionErr := admitPropertyQuery(ctx, ps.queryBudget, req)
 	if admissionErr != nil {
 		return nil, admissionErr
 	}
@@ -443,6 +443,9 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 		}
 		err = queryStatus(err)
 	}()
+	if len(req.Groups) == 0 {
+		return nil, schema.BadRequest("groups", "groups should not be empty")
+	}
 	for _, g := range req.Groups {
 		if acquireErr := ps.groupRepo.acquireRequest(g); acquireErr != nil {
 			return nil, status.Errorf(codes.FailedPrecondition, "group %s is pending deletion", g)
@@ -469,9 +472,6 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 			}
 		}
 	}()
-	if len(req.Groups) == 0 {
-		return nil, schema.BadRequest("groups", "groups should not be empty")
-	}
 	if req.Limit == 0 {
 		req.Limit = 100
 	}
@@ -811,7 +811,7 @@ func (ps *propertyServer) queryProperties(
 			switch v := d.(type) {
 			case *propertyv1.InternalQueryResponse:
 				for i, s := range v.Sources {
-					if chargeErr := query.Charge(ctx, uint64(len(s))*8+256); chargeErr != nil {
+					if chargeErr := query.ChargeResult(ctx, uint64(len(s))*8+256); chargeErr != nil {
 						return nil, groups, trace, chargeErr
 					}
 					var p propertyv1.Property

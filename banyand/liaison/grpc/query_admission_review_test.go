@@ -35,9 +35,8 @@ func TestQueryAdmissionBeforeSchemaAccess(t *testing.T) {
 	// Empty services intentionally have no schema, pipeline, or metric dependencies.
 	// Rejection must happen before accessing any of those dependencies.
 	//
-	// Cases cover oversized request windows:
-	//   property/stream/trace maximum → Limit=math.MaxUint32
-	//   stream/trace overflow         → Limit=1, Offset=math.MaxUint32
+	// Cases cover nil requests and overflow windows. MaxUint32 list-all / max-limit
+	// sentinels are admitted as scans and are covered separately.
 	testCases := []struct {
 		call func(context.Context) error
 		name string
@@ -54,24 +53,20 @@ func TestQueryAdmissionBeforeSchemaAccess(t *testing.T) {
 			_, queryErr := new(traceService).Query(ctx, nil)
 			return queryErr
 		}},
-		{name: "property maximum", call: func(ctx context.Context) error {
-			_, queryErr := new(propertyServer).Query(ctx, &propertyv1.QueryRequest{Limit: math.MaxUint32})
-			return queryErr
-		}},
-		{name: "stream maximum", call: func(ctx context.Context) error {
-			_, queryErr := new(streamService).Query(ctx, &streamv1.QueryRequest{Limit: math.MaxUint32})
-			return queryErr
-		}},
-		{name: "trace maximum", call: func(ctx context.Context) error {
-			_, queryErr := new(traceService).Query(ctx, &tracev1.QueryRequest{Limit: math.MaxUint32})
-			return queryErr
-		}},
 		{name: "stream overflow", call: func(ctx context.Context) error {
 			_, queryErr := new(streamService).Query(ctx, &streamv1.QueryRequest{Limit: 1, Offset: math.MaxUint32})
 			return queryErr
 		}},
 		{name: "trace overflow", call: func(ctx context.Context) error {
 			_, queryErr := new(traceService).Query(ctx, &tracev1.QueryRequest{Limit: 1, Offset: math.MaxUint32})
+			return queryErr
+		}},
+		{name: "stream above absolute window", call: func(ctx context.Context) error {
+			_, queryErr := new(streamService).Query(ctx, &streamv1.QueryRequest{Limit: 100001})
+			return queryErr
+		}},
+		{name: "trace above absolute window", call: func(ctx context.Context) error {
+			_, queryErr := new(traceService).Query(ctx, &tracev1.QueryRequest{Limit: 100001})
 			return queryErr
 		}},
 	}
@@ -82,6 +77,21 @@ func TestQueryAdmissionBeforeSchemaAccess(t *testing.T) {
 				t.Fatalf("expected InvalidArgument, got %v", queryErr)
 			}
 		})
+	}
+}
+
+func TestQueryAdmissionAllowsUnboundedLimitSentinel(t *testing.T) {
+	budget := protector.NewQueryBudget(nil)
+	ctx, release, err := admitQuery(context.Background(), budget, math.MaxUint32, 0, 20)
+	if err != nil {
+		t.Fatalf("MaxUint32 list-all must be admitted as a scan: %v", err)
+	}
+	release()
+	if _, ok := query.BudgetLeaseFromContext(ctx); !ok {
+		t.Fatal("expected admitted scan lease")
+	}
+	if budget.Reserved() != 0 {
+		t.Fatalf("release leaked %d reserved bytes", budget.Reserved())
 	}
 }
 

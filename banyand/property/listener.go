@@ -170,7 +170,15 @@ func (h *queryListener) Rev(ctx context.Context, message bus.Message) (resp bus.
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("limit is 0"))
 		return
 	}
-	admittedCtx, release, admissionErr := protector.QueryBudgetFor(h.s.pm).AdmitContext(ctx, d.Limit, 0, 100)
+	budget := protector.QueryBudgetFor(h.s.pm)
+	var admittedCtx context.Context
+	var release func()
+	var admissionErr error
+	if d.OrderBy == nil || d.OrderBy.TagName == "" {
+		admittedCtx, release, admissionErr = budget.AdmitScanContext(ctx)
+	} else {
+		admittedCtx, release, admissionErr = budget.AdmitRequestContext(ctx, d.Limit, 0, 100)
+	}
 	if admissionErr != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("query admission failed: %v", admissionErr))
 		return

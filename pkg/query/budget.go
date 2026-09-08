@@ -35,6 +35,22 @@ func Charge(ctx context.Context, bytes uint64) error {
 	return lease.Charge(bytes)
 }
 
+// ChargeResult accounts one retained result and its bytes before allocation.
+// Leases without result accounting retain byte-only charging; unadmitted calls are no-ops.
+func ChargeResult(ctx context.Context, bytes uint64) error {
+	lease, ok := BudgetLeaseFromContext(ctx)
+	if !ok {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if resultLease, supportsResults := lease.(interface{ ChargeResult(uint64) error }); supportsResults {
+		return resultLease.ChargeResult(bytes)
+	}
+	return lease.Charge(bytes)
+}
+
 // BudgetLease is a query-owned byte reservation that can charge subsequent
 // allocations before they occur.
 type BudgetLease interface {

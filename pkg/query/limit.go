@@ -18,3 +18,10 @@ func AddWindow(limit, offset uint32) (uint64, bool) {
 	window := uint64(limit) + uint64(offset)
 	return window, window <= uint64(^uint32(0))
 }
+
+// IsUnboundedLimit reports the historical list-all / max-limit sentinel
+// (limit=MaxUint32 with no offset). Callers should admit these as scans and
+// bound retained results incrementally instead of pre-reserving the window.
+func IsUnboundedLimit(limit, offset uint32) bool {
+	return limit == ^uint32(0) && offset == 0
+}

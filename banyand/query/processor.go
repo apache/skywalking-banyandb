@@ -93,7 +93,7 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 	if budget == nil {
 		budget = protector.QueryBudgetFor(nil)
 	}
-	admittedCtx, release, admissionErr := budget.AdmitContext(ctx, queryCriteria.GetLimit(), queryCriteria.GetOffset(), 20)
+	admittedCtx, release, admissionErr := budget.AdmitRequestContext(ctx, queryCriteria.GetLimit(), queryCriteria.GetOffset(), 20)
 	if admissionErr != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("query admission failed: %v", admissionErr))
 		return
@@ -915,7 +915,7 @@ func (p *traceQueryProcessor) Rev(ctx context.Context, message bus.Message) (res
 	if budget == nil {
 		budget = protector.QueryBudgetFor(nil)
 	}
-	admittedCtx, release, admissionErr := budget.AdmitContext(ctx, queryCriteria.GetLimit(), queryCriteria.GetOffset(), 20)
+	admittedCtx, release, admissionErr := budget.AdmitRequestContext(ctx, queryCriteria.GetLimit(), queryCriteria.GetOffset(), 20)
 	if admissionErr != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("query admission failed: %v", admissionErr))
 		return

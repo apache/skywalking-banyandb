@@ -34,7 +34,7 @@ const (
 var (
 	// ErrQueryTooLarge indicates that a request exceeds the configured hard limit.
 	ErrQueryTooLarge = errors.New("query memory request exceeds per-query limit")
-	// ErrQueryResourceExhausted indicates temporary contention for the query pool.
+	// ErrQueryResourceExhausted indicates exhaustion of a query allowance or the shared pool.
 	ErrQueryResourceExhausted = errors.New("query memory pool exhausted")
 	// ErrQueryWindowPressure indicates a result window exceeding the current assignment.
 	ErrQueryWindowPressure = errors.New("query result window exceeds current memory budget")
@@ -61,6 +61,7 @@ type QueryBudget struct {
 type QueryReservation struct {
 	owner    *QueryBudget
 	assigned uint64
+	results  uint64
 	used     atomic.Uint64
 	released atomic.Bool
 	mu       sync.Mutex
@@ -71,6 +72,25 @@ type QueryReservation struct {
 func (r *QueryReservation) Charge(bytes uint64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.chargeLocked(bytes)
+}
+
+// ChargeResult accounts one retained result and its bytes before allocation.
+// Exhausting either allowance rejects the result without changing either counter.
+func (r *QueryReservation) ChargeResult(bytes uint64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.results >= queryAbsoluteWindow {
+		return ErrQueryResourceExhausted
+	}
+	if err := r.chargeLocked(bytes); err != nil {
+		return err
+	}
+	r.results++
+	return nil
+}
+
+func (r *QueryReservation) chargeLocked(bytes uint64) error {
 	if r.released.Load() {
 		return ErrQueryResourceExhausted
 	}
@@ -203,6 +223,23 @@ func (b *QueryBudget) Reserve(ctx context.Context, bytes uint64) (func(), error)
 func (b *QueryBudget) Admit(ctx context.Context, limit, offset, defaultLimit uint32) (func(), error) {
 	_, release, err := b.AdmitContext(ctx, limit, offset, defaultLimit)
 	return release, err
+}
+
+// AdmitScanContext admits an incremental scan without reserving from its requested limit.
+// Callers must charge every retained result with query.ChargeResult before allocation.
+func (b *QueryBudget) AdmitScanContext(ctx context.Context) (context.Context, func(), error) {
+	return b.AdmitContext(ctx, 1, 0, 1)
+}
+
+// AdmitRequestContext admits a query window, treating MaxUint32 with zero offset as an unbounded scan.
+func (b *QueryBudget) AdmitRequestContext(ctx context.Context, limit, offset, defaultLimit uint32) (context.Context, func(), error) {
+	if limit == 0 {
+		limit = defaultLimit
+	}
+	if querypkg.IsUnboundedLimit(limit, offset) {
+		return b.AdmitScanContext(ctx)
+	}
+	return b.AdmitContext(ctx, limit, offset, defaultLimit)
 }
 
 // AdmitContext admits a query and attaches its chargeable reservation to ctx.
