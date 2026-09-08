@@ -24,6 +24,7 @@ import (
 
 	g "github.com/onsi/ginkgo/v2"
 	gm "github.com/onsi/gomega"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -49,7 +50,9 @@ var streamEntries = []any{
 	g.Entry("excludes data expired beyond TTL", helpers.Args{Input: "all", Offset: -156 * time.Hour, Duration: 24 * time.Hour, WantEmpty: true}),
 	g.Entry("projection with http.method", helpers.Args{Input: "all_with_http_method", Duration: 1 * time.Hour}),
 	g.Entry("limit", helpers.Args{Input: "limit", Duration: 1 * time.Hour}),
-	g.Entry("max limit", helpers.Args{Input: "all_max_limit", Want: "all", Duration: 1 * time.Hour}),
+	g.Entry("max limit", helpers.Args{
+		Input: "all_max_limit", WantErr: true, WantErrCode: codes.InvalidArgument, Duration: 1 * time.Hour,
+	}),
 	g.Entry("offset", helpers.Args{Input: "offset", Duration: 1 * time.Hour}),
 	g.Entry("order asc", helpers.Args{Input: "order_asc", Duration: 1 * time.Hour}),
 	g.Entry("order desc", helpers.Args{Input: "order_desc", Duration: 1 * time.Hour}),

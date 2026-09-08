@@ -37,6 +37,8 @@ import (
 	gm "github.com/onsi/gomega"
 	"go.uber.org/mock/gomock"
 	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -100,8 +102,9 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 	defer cancel()
 	resp, err := c.Query(ctx, query)
 	if args.WantErr {
-		if err == nil {
-			g.Fail("expect error")
+		innerGm.Expect(err).To(gm.HaveOccurred())
+		if args.WantErrCode != codes.OK {
+			innerGm.Expect(status.Code(err)).To(gm.Equal(args.WantErrCode))
 		}
 		return
 	}
@@ -265,7 +268,7 @@ func verifyQLWithRequest(innerGm gm.Gomega, args helpers.Args, yamlQuery *stream
 	transformCtx, transformCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer transformCancel()
 	transform, err := transformer.Transform(transformCtx, query)
-	if args.WantErr && err != nil {
+	if args.WantErr && args.WantErrCode == codes.OK && err != nil {
 		return
 	}
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
@@ -292,6 +295,9 @@ func verifyQLWithRequest(innerGm gm.Gomega, args helpers.Args, yamlQuery *stream
 	})
 	if args.WantErr {
 		innerGm.Expect(err).To(gm.HaveOccurred())
+		if args.WantErrCode != codes.OK {
+			innerGm.Expect(status.Code(err)).To(gm.Equal(args.WantErrCode))
+		}
 		return
 	}
 	innerGm.Expect(err).NotTo(gm.HaveOccurred())
