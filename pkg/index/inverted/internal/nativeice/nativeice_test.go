@@ -161,10 +161,37 @@ func TestOpenCloseDoesNotLeakFileHandles(t *testing.T) {
 		if closeErr := reader.Close(); closeErr != nil {
 			t.Fatal(closeErr)
 		}
+		if closeErr := reader.Close(); closeErr != nil {
+			t.Fatalf("second Close() failed: %v", closeErr)
+		}
 	}
 	after := openFileDescriptorCount(t)
 	if after != before {
 		t.Fatalf("file descriptors after Close() = %d, want %d", after, before)
+	}
+}
+
+func TestParseSnapshotSegmentsClosesPinsAfterLaterRecordFails(t *testing.T) {
+	directory, segmentPath := writeCommittedIndex(t)
+	manifest, readErr := os.ReadFile(filepath.Join(directory, "000000000001.snp"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	record := manifest[2 : len(manifest)-4]
+	missingRecord := append([]byte(nil), record...)
+	missingRecord[8] = 99
+	payload := append([]byte{snapshotVersion, 2}, record...)
+	payload = append(payload, missingRecord...)
+	payload = append(payload, make([]byte, 4)...)
+
+	before := openFileDescriptorCount(t)
+	_, _, parseErr := parseSnapshotSegments(map[uint64]string{2: segmentPath}, payload)
+	if !errors.Is(parseErr, ErrCorrupt) {
+		t.Fatalf("parseSnapshotSegments() error = %v, want ErrCorrupt", parseErr)
+	}
+	after := openFileDescriptorCount(t)
+	if after != before {
+		t.Fatalf("file descriptors after failed parse = %d, want %d", after, before)
 	}
 }
 
