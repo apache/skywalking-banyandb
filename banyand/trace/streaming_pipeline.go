@@ -58,10 +58,23 @@ func newTraceBatch(seq int, capacity int) traceBatch {
 		seq:      seq,
 		traceIDs: make(map[uint64][]string),
 	}
+	// Keep the initial map allocation bounded; the batch remains semantically
+	// bounded by its caller while large requests cannot force a giant allocation.
+	capacity = traceBatchCapacity(capacity)
 	if capacity > 0 {
 		tb.keys = make(map[string]int64, capacity)
 	}
 	return tb
+}
+
+func traceBatchCapacity(capacity int) int {
+	if capacity > 1024 {
+		return 1024
+	}
+	if capacity < 0 {
+		return 0
+	}
+	return capacity
 }
 
 func staticTraceBatchSource(ctx context.Context, traceIDs []string, maxTraceSize int, keys map[string]int64) <-chan traceBatch {
@@ -79,6 +92,17 @@ func staticTraceBatchSource(ctx context.Context, traceIDs []string, maxTraceSize
 			limit = maxTraceSize
 		}
 
+		var retainedBytes uint64
+		for _, traceID := range traceIDs[:limit] {
+			retainedBytes += uint64(len(traceID)) + 64
+		}
+		if chargeErr := query.Charge(ctx, retainedBytes); chargeErr != nil {
+			select {
+			case out <- traceBatch{err: chargeErr}:
+			case <-ctx.Done():
+			}
+			return
+		}
 		orderedIDs := append([]string(nil), traceIDs[:limit]...)
 
 		// Determine batch size. When maxTraceSize is zero, emit everything in one batch.
@@ -558,6 +582,9 @@ func (r *sidxStreamRunner) consumeShard(shard *sidxStreamShard) (bool, error) {
 		r.duplicates.Add(1)
 		return false, nil
 	}
+	if chargeErr := query.Charge(r.streamCtx, uint64(len(traceID))+128); chargeErr != nil {
+		return false, chargeErr
+	}
 
 	// Extract partID from SIDX response
 	partID := shard.response.PartIDs[shard.idx]
@@ -876,21 +903,26 @@ func (t *trace) scanPartsInlineSync(ctx context.Context, parts []*part, groupedI
 		}
 		hit++
 
-		// Create block cursor and get size before checking quota
-		bc := generateBlockCursor()
 		p := tstIter.piPool[tstIter.idx]
+		blockSize := p.curBlock.uncompressedSpanSizeBytes
+		if chargeErr := query.Charge(ctx, blockSize); chargeErr != nil {
+			spanErr = chargeErr
+			for _, cursor := range cursors {
+				releaseBlockCursor(cursor)
+			}
+			return nil, spanErr
+		}
+		// Create block cursor only after charge and quota checks.
+		bc := generateBlockCursor()
 		bc.init(p.p, p.curBlock, qo)
-		blockSize := bc.bm.uncompressedSpanSizeBytes
 
 		// Check if adding this block would exceed quota
 		if quota >= 0 && spanBlockBytes+blockSize > uint64(quota) {
 			releaseBlockCursor(bc)
-			if cursorCount > 0 {
-				// Have results, return them successfully by just closing channel
-				return cursors, nil
-			}
-			// No results, send error
 			spanErr = fmt.Errorf("block scan quota exceeded: block size %d bytes, quota is %d bytes", blockSize, quota)
+			for _, cursor := range cursors {
+				releaseBlockCursor(cursor)
+			}
 			return nil, spanErr
 		}
 

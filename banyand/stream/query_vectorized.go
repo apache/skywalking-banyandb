@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vstream "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream"
@@ -201,6 +202,12 @@ func (v *streamVecScan) fillFromScanner(ctx context.Context) error {
 		}
 		for i := range batch.bss {
 			bs := &batch.bss[i]
+			if chargeErr := query.Charge(ctx, bs.bm.uncompressedSizeBytes); chargeErr != nil {
+				if v.budgetErr == nil {
+					v.budgetErr = chargeErr
+				}
+				continue
+			}
 			// Metadata preflight for the QueryMemoryMiB soft budget: predict whether
 			// decoding this block would push cumulative uncompressed bytes over the
 			// budget and, if so, FAIL LOUD before the expensive decode. The first block

@@ -32,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	itersort "github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	vtrace "github.com/apache/skywalking-banyandb/pkg/query/vectorized/trace"
 )
@@ -203,6 +204,10 @@ func assembleVectorizedTraceResults(
 
 		cursor.resolveTagProjection()
 		tmpBlock.reset()
+		if chargeErr := query.Charge(ctx, cursor.bm.uncompressedSpanSizeBytes); chargeErr != nil {
+			releaseRemainingBlockCursors(batch, i)
+			return nil, chargeErr
+		}
 		tmpBlock.mustReadFrom(&cursor.tagValuesDecoder, cursor.p, cursor.bm)
 		if len(tmpBlock.spans) == 0 {
 			releaseBlockCursor(cursor)

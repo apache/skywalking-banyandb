@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -130,12 +131,16 @@ func (s *SortedMerge) OutputSchema() *vectorized.BatchSchema {
 // buffer back to the in-order top-N once it outgrows the prune threshold. The
 // batch is retained (not copied); callers must not recycle a consumed batch
 // until this operator is closed.
-func (s *SortedMerge) Consume(_ context.Context, batch *vectorized.RecordBatch) error {
+func (s *SortedMerge) Consume(ctx context.Context, batch *vectorized.RecordBatch) error {
 	if batch == nil || batch.ActiveLen() == 0 {
 		return nil
 	}
 	if batch.Schema != s.schema {
 		return fmt.Errorf("SortedMerge: foreign batch schema")
+	}
+	chargeBytes := vectorized.EstimatedRetainedBytes(batch)
+	if chargeErr := query.Charge(ctx, chargeBytes); chargeErr != nil {
+		return chargeErr
 	}
 	if batch.Selection == nil {
 		for row := 0; row < batch.Len; row++ {

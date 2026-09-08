@@ -33,6 +33,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/accesslog"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -78,6 +79,7 @@ type traceService struct {
 	metrics         *metrics
 	writeTimeout    time.Duration
 	maxWaitDuration time.Duration
+	queryBudget     *protector.QueryBudget
 }
 
 func (s *traceService) setLogger(log *logger.Logger) {
@@ -473,6 +475,23 @@ func (s *traceService) applyClamp(req *tracev1.QueryRequest) bool {
 }
 
 func (s *traceService) Query(ctx context.Context, req *tracev1.QueryRequest) (resp *tracev1.QueryResponse, err error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "query request is nil")
+	}
+	ctx, release, admissionErr := admitQuery(ctx, s.queryBudget, req.GetLimit(), req.GetOffset(), 20)
+	if admissionErr != nil {
+		return nil, admissionErr
+	}
+	defer release()
+	defer func() {
+		if err == nil {
+			err = query.ChargeResponse(ctx, resp)
+			if err != nil {
+				resp = nil
+			}
+		}
+		err = queryStatus(err)
+	}()
 	for _, g := range req.Groups {
 		if acquireErr := s.groupRepo.acquireRequest(g); acquireErr != nil {
 			return nil, status.Errorf(codes.FailedPrecondition, "group %s is pending deletion", g)

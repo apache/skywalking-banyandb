@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime/metrics"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -91,6 +92,14 @@ type memory struct {
 	allowedBytes     run.Bytes
 	limit            atomic.Uint64
 	usage            uint64
+	queryBudgetOnce  sync.Once
+	queryBudget      *QueryBudget
+}
+
+// QueryBudget returns the process-local query reservation pool for this protector.
+func (m *memory) QueryBudget() *QueryBudget {
+	m.queryBudgetOnce.Do(func() { m.queryBudget = NewQueryBudget(m) })
+	return m.queryBudget
 }
 
 // NewMemory creates a new Memory protector.
@@ -282,6 +291,30 @@ func (m *memory) GracefulStop() {
 	close(m.closed)
 }
 
+// RefreshUsage samples runtime memory immediately for query admission.
+func (m *memory) RefreshUsage() { m.refreshUsage() }
+
+func (m *memory) refreshUsage() {
+	samples := []metrics.Sample{
+		{Name: "/memory/classes/heap/objects:bytes"},
+		{Name: "/memory/classes/heap/stacks:bytes"},
+		{Name: "/memory/classes/metadata/mcache/inuse:bytes"},
+		{Name: "/memory/classes/metadata/mspan/inuse:bytes"},
+		{Name: "/memory/classes/metadata/other:bytes"},
+		{Name: "/memory/classes/os-stacks:bytes"},
+		{Name: "/memory/classes/other:bytes"},
+	}
+	metrics.Read(samples)
+	var usedBytes uint64
+	for _, sample := range samples {
+		usedBytes += sample.Value.Uint64()
+	}
+	atomic.StoreUint64(&m.usage, usedBytes)
+	if m.usageGauge != nil {
+		m.usageGauge.Set(float64(usedBytes))
+	}
+}
+
 // Serve starts the protector.
 func (m *memory) Serve() run.StopNotify {
 	if m.limit.Load() == 0 {
@@ -296,23 +329,8 @@ func (m *memory) Serve() run.StopNotify {
 			case <-m.closed:
 				return
 			case <-ticker.C:
-				samples := []metrics.Sample{
-					{Name: "/memory/classes/heap/objects:bytes"},
-					{Name: "/memory/classes/heap/stacks:bytes"},
-					{Name: "/memory/classes/metadata/mcache/inuse:bytes"},
-					{Name: "/memory/classes/metadata/mspan/inuse:bytes"},
-					{Name: "/memory/classes/metadata/other:bytes"},
-					{Name: "/memory/classes/os-stacks:bytes"},
-					{Name: "/memory/classes/other:bytes"},
-				}
-				metrics.Read(samples)
-				var usedBytes uint64
-				for _, sample := range samples {
-					usedBytes += sample.Value.Uint64()
-				}
-
-				atomic.StoreUint64(&m.usage, usedBytes)
-				m.usageGauge.Set(float64(usedBytes))
+				m.refreshUsage()
+				usedBytes := atomic.LoadUint64(&m.usage)
 
 				if usedBytes > m.limit.Load() {
 					m.overLimitCounter.Inc(1)

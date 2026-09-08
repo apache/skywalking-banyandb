@@ -33,6 +33,7 @@ import (
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query"
@@ -169,6 +170,18 @@ func (h *queryListener) Rev(ctx context.Context, message bus.Message) (resp bus.
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("limit is 0"))
 		return
 	}
+	admittedCtx, release, admissionErr := protector.QueryBudgetFor(h.s.pm).AdmitContext(ctx, d.Limit, 0, 100)
+	if admissionErr != nil {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("query admission failed: %v", admissionErr))
+		return
+	}
+	defer release()
+	ctx = admittedCtx
+	defer func() {
+		if chargeErr := query.ChargeResponse(ctx, resp.Data()); chargeErr != nil {
+			resp = bus.NewMessage(resp.ID(), common.NewError("query response memory exhausted: %v", chargeErr))
+		}
+	}()
 	var tracer *query.Tracer
 	var span *query.Span
 	if d.Trace {
@@ -183,16 +196,16 @@ func (h *queryListener) Rev(ctx context.Context, message bus.Message) (resp bus.
 	if err != nil {
 		if tracer != nil {
 			span.Error(err)
-			resp = bus.NewMessage(bus.MessageID(now), &propertyv1.InternalQueryResponse{
-				Trace: tracer.ToProto(),
-			})
-			return
 		}
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to query property: %v", err))
 		return
 	}
 	qResp := &propertyv1.InternalQueryResponse{}
 	for _, p := range properties {
+		if chargeErr := query.Charge(ctx, 128); chargeErr != nil {
+			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to materialize property response: %v", chargeErr))
+			return
+		}
 		qResp.Sources = append(qResp.Sources, p.Source())
 		qResp.Deletes = append(qResp.Deletes, p.DeleteTime())
 		qResp.SortedValues = append(qResp.SortedValues, p.SortedValue())

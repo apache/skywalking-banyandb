@@ -29,7 +29,33 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 )
+
+type traceTinyLease struct{ remaining uint64 }
+
+func (l *traceTinyLease) Charge(bytes uint64) error {
+	if bytes > l.remaining {
+		return errors.New("trace test budget exhausted")
+	}
+	l.remaining -= bytes
+	return nil
+}
+func (*traceTinyLease) Limit() uint64  { return 1024 }
+func (l *traceTinyLease) Used() uint64 { return 1024 - l.remaining }
+func (*traceTinyLease) Owner() any     { return "trace-test" }
+
+func TestStaticTraceBatchSourceReportsChargeFailure(t *testing.T) {
+	ctx := query.WithBudgetLease(context.Background(), &traceTinyLease{remaining: 1})
+	ids := []string{string(make([]byte, 4096))}
+	batch, ok := <-staticTraceBatchSource(ctx, ids, 0, nil)
+	if !ok {
+		t.Fatal("source closed without reporting charge failure")
+	}
+	if batch.err == nil {
+		t.Fatal("expected charge failure")
+	}
+}
 
 type fakeSIDX struct {
 	responses []*sidx.QueryResponse

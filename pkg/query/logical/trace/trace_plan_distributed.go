@@ -71,12 +71,16 @@ func (t *unresolvedTraceDistributed) Analyze(s logical.Schema) (logical.Plan, er
 	if limit == 0 {
 		limit = defaultLimit
 	}
+	window, validWindow := query.AddWindow(limit, t.originalQuery.Offset)
+	if !validWindow {
+		return nil, fmt.Errorf("query limit and offset exceed supported range")
+	}
 	temp := &tracev1.QueryRequest{
 		TagProjection: t.originalQuery.TagProjection,
 		Name:          t.originalQuery.Name,
 		Groups:        t.originalQuery.Groups,
 		Criteria:      t.originalQuery.Criteria,
-		Limit:         limit + t.originalQuery.Offset,
+		Limit:         uint32(window),
 		OrderBy:       t.originalQuery.OrderBy,
 	}
 	if t.originalQuery.OrderBy == nil {

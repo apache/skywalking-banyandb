@@ -559,6 +559,7 @@ func (s *sidx) buildCursorsForBatch(
 
 	jobCh := make(chan blockScanResult, workerCount)
 	resultCh := make(chan *blockCursor, len(batch.bss))
+	errCh := make(chan error, 1)
 
 	var workerWg sync.WaitGroup
 	workerWg.Add(workerCount)
@@ -579,6 +580,13 @@ func (s *sidx) buildCursorsForBatch(
 						return
 					}
 
+					if chargeErr := query.Charge(ctx, bsResult.bm.uncompressedSize); chargeErr != nil {
+						select {
+						case errCh <- chargeErr:
+						default:
+						}
+						continue
+					}
 					bc := generateBlockCursor()
 					bc.init(bsResult.p, &bsResult.bm, req)
 
@@ -620,6 +628,14 @@ func (s *sidx) buildCursorsForBatch(
 
 	workerWg.Wait()
 	close(resultCh)
+	select {
+	case chargeErr := <-errCh:
+		for cursor := range resultCh {
+			releaseBlockCursor(cursor)
+		}
+		return nil, chargeErr
+	default:
+	}
 
 	cursors := make([]*blockCursor, 0, len(batch.bss))
 	for bc := range resultCh {
@@ -657,6 +673,12 @@ func (s *sidx) buildCursorsForBatchSync(
 				releaseBlockCursor(cursor)
 			}
 			return nil, ctxErr
+		}
+		if chargeErr := query.Charge(ctx, bsResult.bm.uncompressedSize); chargeErr != nil {
+			for i := range cursors {
+				releaseBlockCursor(cursors[i])
+			}
+			return nil, chargeErr
 		}
 		bc := generateBlockCursor()
 		bc.init(bsResult.p, &bsResult.bm, req)

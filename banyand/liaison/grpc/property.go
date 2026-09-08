@@ -41,6 +41,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	propertydb "github.com/apache/skywalking-banyandb/banyand/property/db"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/accesslog"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -65,6 +66,7 @@ type propertyServer struct {
 	metrics            *metrics
 	repairQueue        *repairQueue
 	repairQueueCount   int
+	queryBudget        *protector.QueryBudget
 }
 
 func (ps *propertyServer) activeIngestionAccessLog(root string, sampled bool) (err error) {
@@ -424,6 +426,23 @@ func (ps *propertyServer) Delete(ctx context.Context, req *propertyv1.DeleteRequ
 }
 
 func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryRequest) (resp *propertyv1.QueryResponse, err error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "query request is nil")
+	}
+	ctx, release, admissionErr := admitQuery(ctx, ps.queryBudget, req.GetLimit(), 0, 100)
+	if admissionErr != nil {
+		return nil, admissionErr
+	}
+	defer release()
+	defer func() {
+		if err == nil {
+			err = query.ChargeResponse(ctx, resp)
+			if err != nil {
+				resp = nil
+			}
+		}
+		err = queryStatus(err)
+	}()
 	for _, g := range req.Groups {
 		if acquireErr := ps.groupRepo.acquireRequest(g); acquireErr != nil {
 			return nil, status.Errorf(codes.FailedPrecondition, "group %s is pending deletion", g)
@@ -465,6 +484,11 @@ func (ps *propertyServer) Query(ctx context.Context, req *propertyv1.QueryReques
 		return &propertyv1.QueryResponse{Properties: nil, Trace: trace}, nil
 	}
 
+	// Reserve merge containers, revision replacements, entity keys and projection
+	// slices before deduplication. Count all replicas, not just the requested limit.
+	if mergeChargeErr := chargePropertyMerge(ctx, nodeProperties); mergeChargeErr != nil {
+		return nil, mergeChargeErr
+	}
 	var properties []*propertyWithCount
 
 	// Choose processing path based on whether ordering is requested
@@ -534,7 +558,7 @@ func (ps *propertyServer) sortedQueryWithDedup(
 	// seenIDs tracks entity -> propertyWithCount for deduplication
 	seenIDs := make(map[string]*propertyWithCount)
 	// resultBuffer maintains sorted list of unique properties
-	resultBuffer := make([]*propertyWithCount, 0, req.Limit)
+	resultBuffer := make([]*propertyWithCount, 0, propertyQueryCapacity(req.Limit))
 
 	// Process items from k-way merge
 	for mergeIter.Next() {
@@ -787,6 +811,9 @@ func (ps *propertyServer) queryProperties(
 			switch v := d.(type) {
 			case *propertyv1.InternalQueryResponse:
 				for i, s := range v.Sources {
+					if chargeErr := query.Charge(ctx, uint64(len(s))*8+256); chargeErr != nil {
+						return nil, groups, trace, chargeErr
+					}
 					var p propertyv1.Property
 					var deleteTime int64
 					unmarshalErr := protojson.Unmarshal(s, &p)
@@ -802,6 +829,9 @@ func (ps *propertyServer) queryProperties(
 						sortedValue = v.SortedValues[i]
 					}
 
+					if chargeErr := query.Charge(ctx, 128); chargeErr != nil {
+						return nil, groups, trace, chargeErr
+					}
 					property := &propertyWithMetadata{
 						Property:    &p,
 						sortedValue: sortedValue,

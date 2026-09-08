@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -36,6 +37,36 @@ func mergePipeline(t *testing.T, source *staticBatchSource, desc bool, batchSize
 	defer func() { require.NoError(t, pipe.Close()) }()
 	tss, _, _ := drainRows(t, pipe)
 	return tss
+}
+
+type tinyMergeLease struct{ remaining uint64 }
+
+func (l *tinyMergeLease) Charge(bytes uint64) error {
+	if bytes > l.remaining {
+		return fmt.Errorf("budget exhausted")
+	}
+	l.remaining -= bytes
+	return nil
+}
+func (*tinyMergeLease) Limit() uint64  { return 1 << 20 }
+func (l *tinyMergeLease) Used() uint64 { return (1 << 20) - l.remaining }
+func (*tinyMergeLease) Owner() any     { return "merge-test" }
+
+func TestSortedMergeChargesRetainedVariablePayloadBeforeRows(t *testing.T) {
+	schema := idxSchema()
+	large := buildBatch(schema, []testRow{{ts: 1, elemID: 1, tag: string(make([]byte, 1<<20))}})
+	merge := NewSortedMerge(schema, false, 8)
+	require.NoError(t, merge.Init(context.Background()))
+	ctx := query.WithBudgetLease(context.Background(), &tinyMergeLease{remaining: 1024})
+	require.Error(t, merge.Consume(ctx, large))
+	require.Empty(t, merge.rows)
+
+	small := buildBatch(schema, []testRow{{ts: 1, elemID: 1, tag: "small"}})
+	merge = NewSortedMerge(schema, false, 8)
+	require.NoError(t, merge.Init(context.Background()))
+	ctx = query.WithBudgetLease(context.Background(), &tinyMergeLease{remaining: 1024})
+	require.NoError(t, merge.Consume(ctx, small))
+	require.Len(t, merge.rows, 1)
 }
 
 func TestSortedMergeTimeOrderAscending(t *testing.T) {

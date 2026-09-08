@@ -52,7 +52,7 @@ type idxResult struct {
 
 func (qr *idxResult) Pull(ctx context.Context) *model.StreamResult {
 	if !qr.loaded {
-		qr.elementIDsSorted = make([]uint64, 0, qr.qo.MaxElementSize)
+		qr.elementIDsSorted = make([]uint64, 0, queryCapacity(qr.qo.MaxElementSize))
 		return qr.loadSortingData(ctx)
 	}
 	if v := qr.nextValue(); v != nil {
@@ -100,8 +100,11 @@ func (qr *idxResult) scanParts(ctx context.Context, qo queryOptions) error {
 			}
 		}
 		hit++
-		bc := generateBlockCursor()
 		p := ti.piHeap[0]
+		if chargeErr := query.Charge(ctx, p.curBlock.uncompressedSizeBytes); chargeErr != nil {
+			return chargeErr
+		}
+		bc := generateBlockCursor()
 		bc.init(p.p, p.curBlock, qo)
 		qr.data = append(qr.data, bc)
 		totalBlockBytes += bc.bm.uncompressedSizeBytes
@@ -228,6 +231,9 @@ func (qr *idxResult) loadSortingData(ctx context.Context) *model.StreamResult {
 		if seenElementIDs[val.DocID] {
 			count--
 			continue
+		}
+		if chargeErr := query.Charge(ctx, 64); chargeErr != nil {
+			return &model.StreamResult{Error: chargeErr}
 		}
 		seenElementIDs[val.DocID] = true
 		qo.elementFilter.Insert(val.DocID)
