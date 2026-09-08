@@ -58,10 +58,6 @@ const (
 // Callers classify with errors.Is.
 var ErrInvalidRepairPage = errors.New("inverted: invalid repair page request")
 
-// errRepairPageNotImplemented marks the parts of the pinned-generation surface
-// whose behavior this package has declared but not yet built.
-var errRepairPageNotImplemented = errors.New("inverted: repair tuple page")
-
 // RepairPageRequest describes one bounded, ordered page of a pinned
 // generation's live documents.
 //
@@ -142,7 +138,18 @@ type ReadOnlyGeneration struct {
 // grammar, and which therefore offers no generation to pin, reports an error
 // wrapping ErrCorruptIndex.
 func OpenReadOnlyGeneration(path string) (*ReadOnlyGeneration, error) {
-	return nil, fmt.Errorf("open pinned generation %q: %w: not implemented", path, errRepairPageNotImplemented)
+	reader, openErr := nativeice.Open(path)
+	if openErr != nil {
+		switch {
+		case errors.Is(openErr, nativeice.ErrNoSnapshot):
+			return nil, fmt.Errorf("open pinned generation %q: %w", path, errors.Join(ErrNoCommittedIndex, openErr))
+		case errors.Is(openErr, nativeice.ErrCorrupt):
+			return nil, fmt.Errorf("open pinned generation %q: %w", path, errors.Join(ErrCorruptIndex, openErr))
+		default:
+			return nil, fmt.Errorf("open pinned generation %q: %w", path, openErr)
+		}
+	}
+	return &ReadOnlyGeneration{reader: reader, path: path}, nil
 }
 
 // SnapshotID returns the identifier of the committed generation the view is
@@ -150,7 +157,10 @@ func OpenReadOnlyGeneration(path string) (*ReadOnlyGeneration, error) {
 // manifests are numbered by, so a caller can record which generation a read
 // covered and later decide whether the directory has moved on.
 func (g *ReadOnlyGeneration) SnapshotID() uint64 {
-	return 0
+	if g == nil || g.reader == nil {
+		return 0
+	}
+	return g.reader.SnapshotID()
 }
 
 // RepairTuplePage returns one bounded page of the pinned generation's live
@@ -184,7 +194,22 @@ func (g *ReadOnlyGeneration) RepairTuplePage(ctx context.Context, request Repair
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, ctxErr
 	}
-	return nil, fmt.Errorf("page %d rows of %q: %w: not implemented", request.PageSize, g.path, errRepairPageNotImplemented)
+	nativeRows, pageErr := g.reader.RepairTuplePage(ctx, request.SortFields, request.ProjectField, request.After, request.PageSize)
+	if pageErr != nil {
+		switch {
+		case errors.Is(pageErr, nativeice.ErrInvalidRepairPage):
+			return nil, errors.Join(ErrInvalidRepairPage, pageErr)
+		case errors.Is(pageErr, nativeice.ErrCorrupt):
+			return nil, errors.Join(ErrCorruptIndex, pageErr)
+		default:
+			return nil, pageErr
+		}
+	}
+	rows := make([]RepairRow, len(nativeRows))
+	for rowIndex, nativeRow := range nativeRows {
+		rows[rowIndex] = RepairRow{SortValues: nativeRow.SortValues, Value: nativeRow.Value}
+	}
+	return rows, nil
 }
 
 // Close releases the segment files and mapped regions the pinned generation

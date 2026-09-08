@@ -467,8 +467,16 @@ func TestNativeRepairTuplePageBoundsResidentStateAcrossPages(t *testing.T) {
 
 	tester.Equal(nidx01eBoundedRowCount, rows)
 	tester.Equal(nidx01eBoundedRowCount/nidx01eBoundedPageSize, pages)
-	tester.Less(nidx01eRetainedBytes()-baseline, uint64(nidx01eBoundedGrowthBytes),
-		"paging %d pages must not accumulate resident state", pages)
+
+	// Compared as a ceiling rather than as a difference: retained heap may end
+	// below the baseline when a collection during the walk releases something
+	// the baseline still counted, and a pager that gave memory back has met
+	// this requirement, not failed it. Differencing two unsigned readings turns
+	// that case into a near-maximal "growth" instead.
+	retained := nidx01eRetainedBytes()
+	tester.Less(retained, baseline+uint64(nidx01eBoundedGrowthBytes),
+		"paging %d pages must not accumulate resident state: retained %d bytes against a %d byte baseline",
+		pages, retained, baseline)
 }
 
 // TestNativeRepairTuplePageBoundarySurface guards the boundary itself rather

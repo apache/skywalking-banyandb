@@ -29,7 +29,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,8 +36,6 @@ import (
 	"time"
 
 	"github.com/benbjohnson/clock"
-	"github.com/blugelabs/bluge"
-	"github.com/blugelabs/bluge/index"
 	"github.com/cespare/xxhash/v2"
 	"github.com/pkg/errors"
 	"github.com/robfig/cron/v3"
@@ -144,22 +141,22 @@ func newRepair(
 }
 
 func (r *repair) checkHasUpdates() (bool, error) {
-	state, err := r.readState()
-	if err != nil {
-		return false, fmt.Errorf("reading state failure: %w", err)
+	state, stateErr := r.readState()
+	if stateErr != nil {
+		return false, fmt.Errorf("reading state failure: %w", stateErr)
 	}
-	indexConfig := index.DefaultConfig(r.shardPath)
-	items, err := indexConfig.DirectoryFunc().List(index.ItemKindSnapshot)
-	if err != nil {
-		return false, fmt.Errorf("reading item kind snapshot failure: %w", err)
-	}
-	sort.Sort(snapshotIDList(items))
-	// check the snapshot ID have any updated
-	// if no updates, the building Trees should be skipped
-	if state != nil && len(items) != 0 && items[len(items)-1] == state.LastSnpID {
+	generation, generationErr := r.openGeneration(r.shardPath)
+	if errors.Is(generationErr, inverted.ErrNoCommittedIndex) {
 		return false, nil
 	}
-	if len(items) == 0 {
+	if generationErr != nil {
+		return false, fmt.Errorf("opening pinned generation failure: %w", generationErr)
+	}
+	snapshotID := generation.SnapshotID()
+	if closeErr := generation.Close(); closeErr != nil {
+		return false, fmt.Errorf("closing pinned generation failure: %w", closeErr)
+	}
+	if state != nil && snapshotID == state.LastSnpID {
 		return false, nil
 	}
 	return true, nil
@@ -175,95 +172,81 @@ func (r *repair) buildStatus(ctx context.Context, snapshotPath string) (err erro
 		}
 		r.metrics.totalBuildTreeDuration.Inc(time.Since(startTime).Seconds())
 	}()
-	indexConfig := index.DefaultConfig(snapshotPath)
-	items, err := indexConfig.DirectoryFunc().List(index.ItemKindSnapshot)
-	if err != nil {
-		return fmt.Errorf("reading item kind segment failure: %w", err)
+	generation, openErr := r.openGeneration(snapshotPath)
+	if errors.Is(openErr, inverted.ErrNoCommittedIndex) {
+		return nil
 	}
-	sort.Sort(snapshotIDList(items))
+	if openErr != nil {
+		return fmt.Errorf("opening pinned generation failure: %w", openErr)
+	}
+	defer func() {
+		if closeErr := generation.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("closing pinned generation failure: %w", closeErr)
+		}
+	}()
+	if buildErr := r.buildTree(ctx, generation); buildErr != nil {
+		return fmt.Errorf("building trees failure: %w", buildErr)
+	}
 
-	blugeConf := bluge.DefaultConfig(snapshotPath)
-	err = r.buildTree(ctx, blugeConf)
-	if err != nil {
-		return fmt.Errorf("building trees failure: %w", err)
-	}
-
-	var latestSnapshotID uint64
-	if len(items) > 0 {
-		latestSnapshotID = items[len(items)-1]
-	}
-	// save the Trees to the state
 	state := &repairStatus{
-		LastSnpID:    latestSnapshotID,
+		LastSnpID:    generation.SnapshotID(),
 		LastSyncTime: time.Now(),
 	}
-	stateVal, err := json.Marshal(state)
-	if err != nil {
-		return fmt.Errorf("marshall state failure: %w", err)
+	stateVal, marshalErr := json.Marshal(state)
+	if marshalErr != nil {
+		return fmt.Errorf("marshall state failure: %w", marshalErr)
 	}
-	if err = os.MkdirAll(filepath.Dir(r.statePath), storage.DirPerm); err != nil {
-		return fmt.Errorf("creating state directory failure: %w", err)
+	if mkdirErr := os.MkdirAll(filepath.Dir(r.statePath), storage.DirPerm); mkdirErr != nil {
+		return fmt.Errorf("creating state directory failure: %w", mkdirErr)
 	}
-	err = os.WriteFile(r.statePath, stateVal, storage.FilePerm)
-	if err != nil {
-		return fmt.Errorf("writing state file failure: %w", err)
+	if writeErr := os.WriteFile(r.statePath, stateVal, storage.FilePerm); writeErr != nil {
+		return fmt.Errorf("writing state file failure: %w", writeErr)
 	}
 	return nil
 }
 
-func (r *repair) buildTree(ctx context.Context, conf bluge.Config) error {
-	reader, err := bluge.OpenReader(conf)
-	if err != nil {
-		// means no data found
-		if strings.Contains(err.Error(), "unable to find a usable snapshot") {
-			return nil
-		}
-		return fmt.Errorf("opening index reader failure: %w", err)
-	}
-	defer func() {
-		_ = reader.Close()
-	}()
-	query := bluge.Query(bluge.NewMatchAllQuery())
-	topNSearch := bluge.NewTopNSearch(r.batchSearchSize, query)
-	topNSearch.SortBy([]string{
-		fmt.Sprintf("+%s", groupField),
-		fmt.Sprintf("+%s", nameField),
-		fmt.Sprintf("+%s", entityID),
-		fmt.Sprintf("+%s", timestampField),
-	})
-
+func (r *repair) buildTree(ctx context.Context, generation repairGeneration) error {
 	var latestProperty *searchingProperty
 	treeComposer := newRepairTreeComposer(r.composeSlotAppendFilePath, r.composeTreeFilePath, r.treeSlotCount, r.l)
-	err = r.pageSearch(ctx, reader, topNSearch, func(sortValue [][]byte, shaValue string) error {
-		if len(sortValue) != 4 {
-			return fmt.Errorf("unexpected sort value length: %d", len(sortValue))
+	var after [][]byte
+	for {
+		rows, pageErr := generation.RepairTuplePage(ctx, inverted.RepairPageRequest{
+			SortFields:   repairSortFields,
+			ProjectField: shaValueField,
+			After:        after,
+			PageSize:     r.batchSearchSize,
+		})
+		if pageErr != nil {
+			return fmt.Errorf("paging pinned generation failure: %w", pageErr)
 		}
-		groupName := convert.BytesToString(sortValue[0])
-		name := convert.BytesToString(sortValue[1])
-		entity := r.buildLeafNodeEntity(groupName, name, convert.BytesToString(sortValue[2]))
-
-		s := newSearchingProperty(groupName, shaValue, entity)
-		if latestProperty != nil && latestProperty.entityID != entity {
-			if appendErr := treeComposer.append(latestProperty.entityID, latestProperty.shaValue); appendErr != nil {
-				return fmt.Errorf("appending property to tree composer failure: %w", appendErr)
+		if len(rows) == 0 {
+			break
+		}
+		for rowIndex, row := range rows {
+			if len(row.SortValues) != inverted.RepairSortFieldCount {
+				return fmt.Errorf("unexpected sort value length at row %d: %d", rowIndex, len(row.SortValues))
 			}
+			groupName := convert.BytesToString(row.SortValues[0])
+			name := convert.BytesToString(row.SortValues[1])
+			entity := r.buildLeafNodeEntity(groupName, name, convert.BytesToString(row.SortValues[2]))
+			property := newSearchingProperty(groupName, convert.BytesToString(row.Value), entity)
+			if latestProperty != nil && latestProperty.entityID != entity {
+				if appendErr := treeComposer.append(latestProperty.entityID, latestProperty.shaValue); appendErr != nil {
+					return fmt.Errorf("appending property to tree composer failure: %w", appendErr)
+				}
+			}
+			latestProperty = property
 		}
-		latestProperty = s
-		return nil
-	})
-	if err != nil {
-		return err
+		after = rows[len(rows)-1].SortValues
 	}
-	// if the latestProperty is not nil, it means the latest property need to be saved
 	if latestProperty != nil {
-		if err = treeComposer.append(latestProperty.entityID, latestProperty.shaValue); err != nil {
-			return fmt.Errorf("appending latest property to tree composer failure: %w", err)
+		if appendErr := treeComposer.append(latestProperty.entityID, latestProperty.shaValue); appendErr != nil {
+			return fmt.Errorf("appending latest property to tree composer failure: %w", appendErr)
 		}
-		if err = treeComposer.composeAndSave(); err != nil {
-			return fmt.Errorf("composing tree failure: %w", err)
+		if composeErr := treeComposer.composeAndSave(); composeErr != nil {
+			return fmt.Errorf("composing tree failure: %w", composeErr)
 		}
 	}
-
 	return nil
 }
 
@@ -277,53 +260,6 @@ func (r *repair) parseLeafNodeEntity(entity string) (string, string, string, err
 		return "", "", "", fmt.Errorf("invalid leaf node entity format: %s", entity)
 	}
 	return parts[0], parts[1], parts[2], nil
-}
-
-func (r *repair) pageSearch(
-	ctx context.Context,
-	reader *bluge.Reader,
-	searcher *bluge.TopNSearch,
-	each func(sortValue [][]byte, shaValue string) error,
-) error {
-	var latestDocValues [][]byte
-	for {
-		searcher.After(latestDocValues)
-		result, err := reader.Search(ctx, searcher)
-		if err != nil {
-			return fmt.Errorf("searching index failure: %w", err)
-		}
-
-		next, err := result.Next()
-		var hitNumber int
-		if err != nil {
-			return errors.WithMessage(err, "iterate document match iterator")
-		}
-		// if next is nil, it means no more documents to process
-		if next == nil {
-			return nil
-		}
-		var shaValue string
-		for err == nil && next != nil {
-			hitNumber = next.HitNumber
-			var errTime error
-			err = next.VisitStoredFields(func(field string, value []byte) bool {
-				if field == shaValueField {
-					shaValue = convert.BytesToString(value)
-					return false
-				}
-				return true
-			})
-			if err = multierr.Combine(err, errTime); err != nil {
-				return errors.WithMessagef(err, "visit stored fields, hit: %d", hitNumber)
-			}
-			err = each(next.SortValue, shaValue)
-			if err != nil {
-				return errors.WithMessagef(err, "processing source failure, hit: %d", hitNumber)
-			}
-			latestDocValues = next.SortValue
-			next, err = result.Next()
-		}
-	}
 }
 
 func (r *repair) buildShaValue(source []byte, deleteTime int64) (string, error) {
@@ -686,12 +622,6 @@ type repairTreeFooter struct {
 	slotNodeFinishedOffset int64
 	rootNodeLen            int64
 }
-
-type snapshotIDList []uint64
-
-func (s snapshotIDList) Len() int           { return len(s) }
-func (s snapshotIDList) Less(i, j int) bool { return s[i] < s[j] }
-func (s snapshotIDList) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
 type repairTreeComposer struct {
 	l             *logger.Logger
