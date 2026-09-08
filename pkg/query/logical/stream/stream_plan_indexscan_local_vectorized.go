@@ -40,8 +40,9 @@ var _ executor.StreamVecExecutable = (*localIndexScan)(nil)
 // case the inner scan already projects the criteria + hidden tags and pushes the
 // INDEXED criteria into its sqo (invertedFilter/skippingFilter); the caller then
 // applies the SAME per-element tagFilter.Match + hidden-tag strip that
-// tagFilterPlan.Execute does (via VecTagFilter) so the result is byte-identical to
-// the row path. A multi-group merger or any other shape does not resolve to a
+// tagFilterPlan.Execute does (via VecTagFilter). Results match the row path except
+// for duplicate ElementIDs, whose contract is filter-first — see
+// BuildStreamMergePipeline. A multi-group merger or any other shape does not resolve to a
 // *localIndexScan, so we decline and the caller runs the row path.
 func VecExecutable(plan logical.Plan) executor.StreamVecExecutable {
 	l, ok := plan.(*limit)
@@ -74,11 +75,12 @@ func scanFromInput(input logical.Plan) *localIndexScan {
 		return in
 	case *tagFilterPlan:
 		if scan, ok := in.parent.(*localIndexScan); ok {
-			// The vec merge must reproduce exactly the element set the row scan would
-			// hand its tagFilterPlan. Whether the criteria filter may run AHEAD of the
-			// merge depends on the order type — see scanResumesAcrossPulls. Only an
-			// index-order scan takes the filter; a timestamp-order scan leaves it at
-			// the egress, behind the cap.
+			// The vec merge reproduces the element set the row scan would hand its
+			// tagFilterPlan, except for duplicate ElementIDs, whose contract is
+			// filter-first — see BuildStreamMergePipeline. Whether the criteria filter
+			// may run AHEAD of the merge depends on the order type — see
+			// scanResumesAcrossPulls. Only an index-order scan takes the filter; a
+			// timestamp-order scan leaves it at the egress, behind the cap.
 			if scanResumesAcrossPulls(scan) && in.tagFilter != nil && in.tagFilter != logical.DummyFilter {
 				scan.preMergeFilter, scan.filterRegistry = in.tagFilter, in.s
 			}
@@ -101,9 +103,10 @@ func scanFromInput(input logical.Plan) *localIndexScan {
 //   - index-order (idxResult): the sorted iterator persists across Pulls and each
 //     Pull drains the next maxElementSize entries (query_by_idx.go:262), so row keeps
 //     pulling and DOES fill the limit out of the whole FILTERED ordered set. Vec
-//     reproduces that by running the tag filter before the merge, so the
+//     bounds the same set by running the tag filter before the merge, so the
 //     maxElementSize cap bounds the top-N of the filtered set rather than truncating
-//     the input the filter has yet to see.
+//     the input the filter has yet to see (duplicate ElementIDs excepted — see
+//     BuildStreamMergePipeline).
 //   - timestamp order (tsResult): one Pull consumes a whole segment and caps the
 //     result at maxElementSize (query_by_ts.go:136,159); the next Pull only advances
 //     to a further segment. For data inside a single segment the scan is then

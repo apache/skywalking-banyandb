@@ -38,10 +38,15 @@ const (
 	pushdownOrderTag   = "duration"
 	pushdownFilterTag  = "state"
 	pushdownFilterWant = "open"
+	pushdownFilterFail = "closed"
 	// pushdownCorpus is far larger than pushdownMaxElements so an unbounded merge is
 	// distinguishable from a bounded one by the returned element count alone.
 	pushdownCorpus      = 200
 	pushdownMaxElements = 25
+	// pushdownFailHead is a run of NON-matching rows at the head of the ascending
+	// corpus, longer than the cap. Without it every row matches and the cap alone
+	// decides the answer, so the test passes even with the pushdown disconnected.
+	pushdownFailHead = 50
 )
 
 // pushdownVecSource replays pre-built batches as an executor.StreamVecScanSource.
@@ -104,9 +109,10 @@ func pushdownStreamSchema() *databasev1.Stream {
 }
 
 // pushdownCorpusBatch builds one batch of pushdownCorpus rows, each a distinct
-// ElementID, in ascending order-key order and all matching the criteria — so the
-// element count ExecuteVectorized returns is decided by the merge cap alone, not
-// by predicate selectivity.
+// ElementID, in ascending order-key order. The first pushdownFailHead rows FAIL the
+// criteria, which is what makes the corpus discriminating: a merge that caps before
+// the filter runs keeps only rows from that head, so the elements it returns are
+// disjoint from the ones the pushdown returns.
 func pushdownCorpusBatch(schema *vectorized.BatchSchema) *vectorized.RecordBatch {
 	batch := vectorized.NewRecordBatch(schema, pushdownCorpus)
 	tsCol := batch.Columns[schema.TimestampIndex()].(*vectorized.TypedColumn[int64])
@@ -124,7 +130,11 @@ func pushdownCorpusBatch(schema *vectorized.BatchSchema) *vectorized.RecordBatch
 		elemCol.Append(vstream.ElementIDToColumn(uint64(rowIdx + 1)))
 		seriesCol.Append(vstream.SeriesIDToColumn(1))
 		orderTagCol.Append(pushdownStr(string(key)))
-		stateCol.Append(pushdownStr(pushdownFilterWant))
+		state := pushdownFilterWant
+		if rowIdx < pushdownFailHead {
+			state = pushdownFilterFail
+		}
+		stateCol.Append(pushdownStr(state))
 		keyCol.Append(key)
 		batch.Len++
 	}
@@ -182,21 +192,55 @@ func newPushdownFilteredPlan(t *testing.T) *localIndexScan {
 }
 
 // TestPushdown_FilteredIndexOrder_BoundsMerge is the #14056 acceptance assertion:
-// a filtered index-order stream query must bound its vec merge at limit+offset.
-// The criteria tag filter runs ahead of the merge, so the cap keeps the top-N of
-// the FILTERED set and ExecuteVectorized never returns more than maxElementSize
-// elements. Before the pushdown the merge ran uncapped and returned the whole
-// ordered set, which is what this assertion caught.
+// a filtered index-order stream query must bound its vec merge at limit+offset AND
+// bound it over the FILTERED set. It drives the production wiring — scanFromInput
+// stashes the filter, ExecuteVectorized hands it to the pipeline — so removing
+// either fails here.
+//
+// It asserts the exact ordered element ids rather than a count, because a cap taken
+// before the filter returns the same NUMBER of elements; the two differ only in
+// WHICH elements those are, and the pre-change shape returns rows that the egress
+// then discards.
 func TestPushdown_FilteredIndexOrder_BoundsMerge(t *testing.T) {
 	scan := newPushdownFilteredPlan(t)
-	batches, _, err := scan.ExecuteVectorized(context.Background())
+	batches, schema, err := scan.ExecuteVectorized(context.Background())
 	require.NoError(t, err)
 
-	rows := 0
+	stateIdx, ok := schema.TagIndex(pushdownFamily, pushdownFilterTag)
+	require.True(t, ok)
+	var ids []uint64
 	for _, batch := range batches {
-		rows += batch.ActiveLen()
+		idData := batch.Columns[schema.ElementIDIndex()].(*vectorized.TypedColumn[int64]).Data()
+		stateData := batch.Columns[stateIdx].(*vectorized.TypedColumn[*modelv1.TagValue]).Data()
+		for _, rowIdx := range pushdownActiveRows(batch) {
+			id := vstream.ColumnToElementID(idData[rowIdx])
+			ids = append(ids, id)
+			require.Equal(t, pushdownFilterWant, stateData[rowIdx].GetStr().GetValue(),
+				"the merge was capped before the filter ran: element %d does not match the criteria", id)
+		}
 	}
-	require.Positive(t, rows, "corpus is degenerate: the vec pipeline returned nothing")
-	require.LessOrEqual(t, rows, pushdownMaxElements,
-		"filtered index-order merge is unbounded: returned %d elements for a limit+offset of %d", rows, pushdownMaxElements)
+	// Element ids are 1-based and the first pushdownFailHead rows fail, so the
+	// filtered top-N in ascending order starts at pushdownFailHead+1.
+	want := make([]uint64, 0, pushdownMaxElements)
+	for offset := 0; offset < pushdownMaxElements; offset++ {
+		want = append(want, uint64(pushdownFailHead+1+offset))
+	}
+	require.Equal(t, want, ids,
+		"filtered index-order merge must return the top %d of the FILTERED set", pushdownMaxElements)
+}
+
+// pushdownActiveRows lists the row indices a batch's selection leaves active.
+func pushdownActiveRows(batch *vectorized.RecordBatch) []int {
+	if batch.Selection == nil {
+		rows := make([]int, 0, batch.Len)
+		for rowIdx := 0; rowIdx < batch.Len; rowIdx++ {
+			rows = append(rows, rowIdx)
+		}
+		return rows
+	}
+	rows := make([]int, 0, len(batch.Selection))
+	for _, rowIdx := range batch.Selection {
+		rows = append(rows, int(rowIdx))
+	}
+	return rows
 }

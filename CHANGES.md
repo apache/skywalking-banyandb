@@ -7,6 +7,7 @@ Release Notes.
 ### Features
 
 - Add logging related flags to the FODC proxy and agent. Every BanyanDB binary now shares the same logging flags and the matching `BYDB_LOGGING_*` environment variables.
+- Push the criteria tag filter ahead of the vectorized stream merge, so a filtered index-order query bounds its merge at limit+offset. For such a query, where several rows share an ElementID, the criteria is now evaluated first and the element is represented by its first matching row in the requested sort order. Filtered timestamp-order queries are unchanged.
 
 ### Bug Fixes
 
@@ -20,7 +21,6 @@ Release Notes.
 ### Chores
 
 - Bump canopy and mcp npm dependencies to clear Dependabot CVEs (fast-uri, fastify, qs).
-- Push the criteria tag filter ahead of the vectorized stream merge, so a filtered index-order query bounds its merge at limit+offset.
 
 ## 0.11.1
 

@@ -156,6 +156,9 @@ func filterSchema() *vectorized.BatchSchema {
 // a cell empty without marking it. Both shapes must reach the accessor.
 type filterRow struct {
 	state *modelv1.TagValue
+	// service is the non-criteria tag value, which identifies WHICH version of a
+	// duplicate ElementID a query selected. Empty falls back to a shared constant.
+	service string
 	// orderKey is the explicit index-order key. Left nil, the key falls back to
 	// the row's index WITHIN its batch, which restarts at 0 in every batch and so
 	// cannot express a corpus that is globally ordered across several batches.
@@ -179,7 +182,11 @@ func buildFilterBatch(schema *vectorized.BatchSchema, rows []filterRow) *vectori
 		tsCol.Append(int64(rowIdx))
 		elemCol.Append(ElementIDToColumn(row.elemID))
 		seriesCol.Append(0)
-		serviceCol.Append(strTagValue("svc"))
+		service := row.service
+		if service == "" {
+			service = "svc"
+		}
+		serviceCol.Append(strTagValue(service))
 		stateCol.Append(row.state)
 		if row.stateNull {
 			stateCol.MarkNullAt(rowIdx)

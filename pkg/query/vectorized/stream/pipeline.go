@@ -30,6 +30,13 @@ import "github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 // what makes a cap sound for a criteria query at all. A pre-merge fusible must be
 // row-level and must never signal ErrLimitExhausted, which would truncate the scan.
 //
+// Filtering first also settles duplicate ElementIDs. The criteria is evaluated
+// before Distinct picks a winner, so an element is represented by its first
+// MATCHING row in the requested sort order, and one matching version makes the
+// element eligible even when another version fails. Two rows of one element
+// commonly carry the same ordered-tag value and therefore the same sort key; among
+// equal keys the first row the scan yields wins, in both directions.
+//
 // maxRows bounds the merge to the in-order top-N (0 = unbounded). This is the
 // per-node scan cap (maxElementSize = limit+offset), applied AFTER the merge
 // sorts — the correct top-N in sort order — matching the row path, which caps

@@ -223,7 +223,8 @@ func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan lo
 	}
 
 	// A criteria query carries a per-element tag filter (VecTagFilter) that must be
-	// applied to materialized Elements (byte-identical to the row tagFilterPlan). The
+	// applied to materialized Elements (the same Match + hidden-tag strip the row
+	// tagFilterPlan applies). The
 	// frame path operates on columnar batches and has no element-level filter stage,
 	// so a filter query forces the proto egress; the liaison merges proto Elements
 	// and frame bodies interchangeably (mixed-mode), so this stays correct.

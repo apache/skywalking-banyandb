@@ -128,8 +128,10 @@ func TestScanCap_FilteredTimeOrder_CapsMerge(t *testing.T) {
 // drains the next maxElementSize entries), so row keeps pulling and DOES fill the
 // limit. A cap taken BEFORE the filter would starve it, so the filter moves ahead
 // of the merge instead: the merge then orders only surviving rows, and its cap
-// bounds the top-N of the filtered set — the same element set row fills its limit
-// from. scanFromInput must therefore stash the filter on the scan.
+// bounds the top-N of the filtered set. That set matches the one row fills its
+// limit from, except for duplicate ElementIDs, whose contract is filter-first —
+// see BuildStreamMergePipeline. scanFromInput must therefore stash the filter on
+// the scan.
 func TestScanCap_FilteredIndexOrder_PushesFilterDown(t *testing.T) {
 	order := &logical.OrderBy{
 		Index: &databasev1.IndexRule{
