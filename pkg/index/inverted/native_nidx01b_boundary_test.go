@@ -94,15 +94,17 @@ func TestNIDX01BBoundarySurface(t *testing.T) {
 	tester.NotErrorIs(ErrNoCommittedIndex, ErrCorruptIndex,
 		"an absent committed generation and damaged committed bytes must stay separately classifiable")
 
-	observed := exportedSurfaceOf(t, nativeReaderDir)
+	observed := exportedSurfaceOf(t)
 	tester.Equal(nativeReaderSurface, observed,
 		"the native reader's exported surface changed; NIDX-01B may only extend private generation selection")
 }
 
 // exportedSurfaceOf lists the exported top-level identifiers and exported
-// methods on exported types declared by the non-test Go sources in dir, sorted.
-func exportedSurfaceOf(t *testing.T, dir string) []string {
+// methods on exported types declared by the non-test Go sources of the private
+// native reader package, sorted.
+func exportedSurfaceOf(t *testing.T) []string {
 	t.Helper()
+	dir := nativeReaderDir
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err, "the native reader package must exist at %s", dir)
 	var surface []string

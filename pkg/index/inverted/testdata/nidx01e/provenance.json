@@ -1,0 +1,103 @@
+{
+  "oracle": {
+    "go_mod_sha256": "23076127a0a072d3a06b157fc063c483fe0d8293e0e77bea7fed76658423c28d",
+    "writer": "pkg/index/inverted.NewStore"
+  },
+  "file_sha256": {
+    "shard-0/000000000002.seg": "26e6b5f513816a2413e958ac33a8ebdbdaf19f9efb820c77c5314516ff211ab2",
+    "shard-0/000000000003.snp": "9637119e2fb9100019dd9822f3f64a22393de2937708f746d598b5a2a4fbccf5"
+  },
+  "generator_command": "GENERATE_NIDX01E_FIXTURE=1 go test ./pkg/index/inverted/ -run TestGenerateNIDX01EFixture -count=1",
+  "notes": "One Property shard generation holding five physical rows of three entities. Ascending by (_group, _im_name, _entity_id, _timestamp) the visible rows are (g-a,n-a,e-1,10,sha-a), (g-a,n-a,e-1,20,sha-b), (g-a,n-b,e-2,5,sha-c), (g-b,n-a,e-3,7,sha-d). Row (g-a,n-a,e-1,15,sha-x) is deleted in this generation and sorts between the first two visible rows, so a page that ignored the deletion masks is caught inside the first page rather than at the end. At page size 2 the first page is the first two visible rows, the strict cursor is (g-a,n-a,e-1,20), and the second page is the last two. The repair tree these rows complete maps g-a/n-a/e-1 to sha-b, g-a/n-b/e-2 to sha-c and g-b/n-a/e-3 to sha-d. Every row also stores a _source payload that no repair page decodes.",
+  "rows": [
+    {
+      "group": "g-a",
+      "name": "n-a",
+      "entity_id": "e-1",
+      "sha_value": "sha-a",
+      "doc_id": "g-a/n-a/e-1/10",
+      "timestamp": 10,
+      "deleted": false
+    },
+    {
+      "group": "g-a",
+      "name": "n-a",
+      "entity_id": "e-1",
+      "sha_value": "sha-x",
+      "doc_id": "g-a/n-a/e-1/15",
+      "timestamp": 15,
+      "deleted": true
+    },
+    {
+      "group": "g-a",
+      "name": "n-a",
+      "entity_id": "e-1",
+      "sha_value": "sha-b",
+      "doc_id": "g-a/n-a/e-1/20",
+      "timestamp": 20,
+      "deleted": false
+    },
+    {
+      "group": "g-a",
+      "name": "n-b",
+      "entity_id": "e-2",
+      "sha_value": "sha-c",
+      "doc_id": "g-a/n-b/e-2/5",
+      "timestamp": 5,
+      "deleted": false
+    },
+    {
+      "group": "g-b",
+      "name": "n-a",
+      "entity_id": "e-3",
+      "sha_value": "sha-d",
+      "doc_id": "g-b/n-a/e-3/7",
+      "timestamp": 7,
+      "deleted": false
+    }
+  ],
+  "declared_pages": [
+    [
+      {
+        "group": "g-a",
+        "name": "n-a",
+        "entity_id": "e-1",
+        "sha_value": "sha-a",
+        "doc_id": "g-a/n-a/e-1/10",
+        "timestamp": 10,
+        "deleted": false
+      },
+      {
+        "group": "g-a",
+        "name": "n-a",
+        "entity_id": "e-1",
+        "sha_value": "sha-b",
+        "doc_id": "g-a/n-a/e-1/20",
+        "timestamp": 20,
+        "deleted": false
+      }
+    ],
+    [
+      {
+        "group": "g-a",
+        "name": "n-b",
+        "entity_id": "e-2",
+        "sha_value": "sha-c",
+        "doc_id": "g-a/n-b/e-2/5",
+        "timestamp": 5,
+        "deleted": false
+      },
+      {
+        "group": "g-b",
+        "name": "n-a",
+        "entity_id": "e-3",
+        "sha_value": "sha-d",
+        "doc_id": "g-b/n-a/e-3/7",
+        "timestamp": 7,
+        "deleted": false
+      }
+    ]
+  ],
+  "snapshot_id": 3,
+  "visible_row_count": 4
+}

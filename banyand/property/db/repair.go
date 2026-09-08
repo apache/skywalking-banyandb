@@ -52,6 +52,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -62,10 +63,51 @@ const (
 	repairBatchSearchSize = 100
 )
 
+// repairGeneration is the pinned committed generation one repair build pages
+// through. Pinning is what makes a build reproducible: every page a build reads
+// comes from the same generation, so a generation published while the build
+// runs contributes no leaf to the tree the build writes, and the generation
+// state the build records names the generation it actually read.
+//
+// Its production implementation is *inverted.ReadOnlyGeneration.
+type repairGeneration interface {
+	// RepairTuplePage returns one bounded page of the pinned generation's
+	// repair rows, ordered ascending and resuming strictly after the request's
+	// cursor.
+	RepairTuplePage(ctx context.Context, request inverted.RepairPageRequest) ([]inverted.RepairRow, error)
+	// SnapshotID identifies the pinned generation.
+	SnapshotID() uint64
+	// Close releases the files the pinned generation holds.
+	Close() error
+}
+
+// repairGenerationOpener pins the committed generation of a shard directory
+// that one repair build reads. It is the seam a build's source of pages is
+// chosen at, so a build can be pointed at an instrumented or a retained
+// generation without changing the build itself.
+type repairGenerationOpener func(shardPath string) (repairGeneration, error)
+
+// repairSortFields are the ascending components a repair page orders by, most
+// significant first. The order is the repair tree's own: leaves are grouped by
+// group, then name, then entity, and the newest revision of an entity is the
+// last row that entity contributes.
+var repairSortFields = [inverted.RepairSortFieldCount]string{groupField, nameField, entityID, timestampField}
+
+// openNativeRepairGeneration pins the newest committed generation of a shard
+// directory through BanyanDB's own read-only reader.
+func openNativeRepairGeneration(shardPath string) (repairGeneration, error) {
+	generation, err := inverted.OpenReadOnlyGeneration(shardPath)
+	if err != nil {
+		return nil, err
+	}
+	return generation, nil
+}
+
 type repair struct {
 	metrics                   *repairMetrics
 	l                         *logger.Logger
 	scheduler                 *repairScheduler
+	openGeneration            repairGenerationOpener
 	shardPath                 string
 	repairBasePath            string
 	snapshotDir               string
@@ -97,6 +139,7 @@ func newRepair(
 		metrics:                   newRepairMetrics(metricsFactory),
 		scheduler:                 scheduler,
 		treeSlotCount:             treeSlotCount,
+		openGeneration:            openNativeRepairGeneration,
 	}
 }
 
