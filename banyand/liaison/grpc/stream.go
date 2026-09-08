@@ -65,9 +65,9 @@ type streamService struct {
 	*discoveryService
 	l               *logger.Logger
 	metrics         *metrics
+	queryBudget     *protector.QueryBudget
 	writeTimeout    time.Duration
 	maxWaitDuration time.Duration
-	queryBudget     *protector.QueryBudget
 }
 
 func (s *streamService) setLogger(log *logger.Logger) {
@@ -373,6 +373,10 @@ func (s *streamService) Query(ctx context.Context, req *streamv1.QueryRequest) (
 		}
 		err = queryStatus(err)
 	}()
+	return s.query(ctx, req)
+}
+
+func (s *streamService) query(ctx context.Context, req *streamv1.QueryRequest) (resp *streamv1.QueryResponse, err error) {
 	for _, g := range req.Groups {
 		if acquireErr := s.groupRepo.acquireRequest(g); acquireErr != nil {
 			return nil, status.Errorf(codes.FailedPrecondition, "group %s is pending deletion", g)

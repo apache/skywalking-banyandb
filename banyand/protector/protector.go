@@ -88,12 +88,12 @@ type memory struct {
 	l                *logger.Logger
 	closed           chan struct{}
 	blockedChan      chan struct{}
+	queryBudget      *QueryBudget
 	allowedPercent   int
 	allowedBytes     run.Bytes
 	limit            atomic.Uint64
 	usage            uint64
 	queryBudgetOnce  sync.Once
-	queryBudget      *QueryBudget
 }
 
 // QueryBudget returns the process-local query reservation pool for this protector.

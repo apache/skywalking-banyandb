@@ -65,8 +65,8 @@ type propertyServer struct {
 	nodeRegistry       NodeRegistry
 	metrics            *metrics
 	repairQueue        *repairQueue
-	repairQueueCount   int
 	queryBudget        *protector.QueryBudget
+	repairQueueCount   int
 }
 
 func (ps *propertyServer) activeIngestionAccessLog(root string, sampled bool) (err error) {

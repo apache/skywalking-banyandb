@@ -1029,7 +1029,7 @@ func (p *traceQueryProcessor) setupTraceMonitor(ctx context.Context, queryCriter
 	}
 }
 
-func (tm *traceMonitor) finishTrace(resp *bus.Message, messageID int64) {
+func (tm *traceMonitor) finishTrace(resp *bus.Message) {
 	if tm == nil {
 		return
 	}
@@ -1289,7 +1289,7 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 
 	ctx, traceMonitor := p.setupTraceMonitor(ctx, queryCriteria, plan, n)
 	if traceMonitor != nil {
-		defer traceMonitor.finishTrace(&resp, now)
+		defer traceMonitor.finishTrace(&resp)
 	}
 
 	te := plan.(executor.TraceExecutable)

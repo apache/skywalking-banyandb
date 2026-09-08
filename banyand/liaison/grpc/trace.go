@@ -77,9 +77,9 @@ type traceService struct {
 	*discoveryService
 	l               *logger.Logger
 	metrics         *metrics
+	queryBudget     *protector.QueryBudget
 	writeTimeout    time.Duration
 	maxWaitDuration time.Duration
-	queryBudget     *protector.QueryBudget
 }
 
 func (s *traceService) setLogger(log *logger.Logger) {
