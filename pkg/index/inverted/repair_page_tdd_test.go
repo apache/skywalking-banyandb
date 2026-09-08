@@ -65,14 +65,20 @@ func repairTupleTieDocument(identifier, shaValue string) index.Document {
 	}
 }
 
-// TestRepairTuplePageReturnsAllAbsentSortValuesWithoutDocValueSection covers
-// C44's historical whole-section absence path through the native reader.
+// TestRepairTuplePagePagesAllRowsWithNilSortValuesWhenRequestedFieldsHaveNoDocValueLocations verifies that a generation recording no doc-value
+// locations for any of the four requested sort fields pages every live row with all four SortValues nil.
 //
 // All four sort components are absent, so every row ties. The page size covers
 // every live row deliberately: the four-component cursor cannot resume past a
 // tie without an identity component, and the contract deliberately exposes no
 // identity component.
-func TestRepairTuplePageReturnsAllAbsentSortValuesWithoutDocValueSection(t *testing.T) {
+//
+// No fixture reaches the whole-section branch at nativeice.go:1319 or the
+// footer relaxations at nativeice.go:548-550 and nativeice.go:927-929. A
+// store written through NewStore always emits a doc-value section, and forging
+// a footer with docValueOffset == math.MaxUint64 requires ICE types outside
+// this issue's seam.
+func TestRepairTuplePagePagesAllRowsWithNilSortValuesWhenRequestedFieldsHaveNoDocValueLocations(t *testing.T) {
 	tester := require.New(t)
 	shardPath := t.TempDir()
 	writer, writerErr := NewStore(StoreOpts{Path: shardPath})
