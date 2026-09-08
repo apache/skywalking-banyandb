@@ -65,12 +65,19 @@ type Filter struct {
 	AgentIDs  []string
 }
 
+// agentSubscription is one collection's claim on an agent's next metrics push.
+type agentSubscription struct {
+	collectCh chan []*AggregatedMetric
+	subID     uint64
+}
+
 // Aggregator aggregates and enriches metrics from all agents.
 type Aggregator struct {
 	registry     *registry.AgentRegistry
 	logger       *logger.Logger
 	grpcService  RequestSender
-	collecting   map[string]chan []*AggregatedMetric
+	collecting   map[string]map[uint64]chan []*AggregatedMetric
+	nextSubID    uint64
 	mu           sync.RWMutex
 	collectingMu sync.RWMutex
 }
@@ -86,7 +93,7 @@ func NewAggregator(registry *registry.AgentRegistry, grpcService RequestSender, 
 		registry:    registry,
 		grpcService: grpcService,
 		logger:      logger,
-		collecting:  make(map[string]chan []*AggregatedMetric),
+		collecting:  make(map[string]map[uint64]chan []*AggregatedMetric),
 	}
 }
 
@@ -161,24 +168,75 @@ func (ma *Aggregator) ProcessMetricsFromAgent(ctx context.Context, agentID strin
 		aggregatedMetrics = append(aggregatedMetrics, aggregatedMetric)
 	}
 
+	// Deliver to every collection waiting on this agent. Holding the read lock keeps
+	// unsubscribe (which closes the channel) from running between the lookup and the
+	// send, so this can never send on a closed channel.
 	ma.collectingMu.RLock()
 	defer ma.collectingMu.RUnlock()
 
-	collectCh, exists := ma.collecting[agentID]
+	subscribers := ma.collecting[agentID]
+	if len(subscribers) == 0 {
+		// Expected whenever scrapes overlap: each one asks the agent separately, so the
+		// second reply arrives after the first has already satisfied every subscriber.
+		ma.logger.Debug().Str("agent_id", agentID).Msg("Metrics collection channel not found, dropping metrics")
+		return nil
+	}
 
-	if exists {
+	// Every subscriber gets the same slice; consumers must treat it as read-only.
+	// No send can block - each channel is buffered and the select has a default - so the
+	// loop always runs to completion. Bailing out on a canceled context part-way through
+	// would strand the subscribers not yet visited, and each of those collections would
+	// then wait out its whole timeout for data that had already arrived.
+	for _, collectCh := range subscribers {
 		select {
 		case collectCh <- aggregatedMetrics:
-		case <-ctx.Done():
-			return ctx.Err()
 		default:
 			ma.logger.Warn().Str("agent_id", agentID).Msg("Metrics collection channel full, dropping metrics")
 		}
-	} else {
-		ma.logger.Warn().Str("agent_id", agentID).Msg("Metrics collection channel not found, dropping metrics")
 	}
 
-	return nil
+	return ctx.Err()
+}
+
+// subscribe registers a channel to receive this agent's next metrics push and returns
+// the subscription ID needed to release it. Each collection subscribes separately, so a
+// scrape that starts while another is in flight can never take over - or, on cleanup,
+// close - the other one's channel.
+func (ma *Aggregator) subscribe(agentID string) (uint64, chan []*AggregatedMetric) {
+	collectCh := make(chan []*AggregatedMetric, 1)
+
+	ma.collectingMu.Lock()
+	defer ma.collectingMu.Unlock()
+
+	ma.nextSubID++
+	subID := ma.nextSubID
+	subscribers, exists := ma.collecting[agentID]
+	if !exists {
+		subscribers = make(map[uint64]chan []*AggregatedMetric)
+		ma.collecting[agentID] = subscribers
+	}
+	subscribers[subID] = collectCh
+
+	return subID, collectCh
+}
+
+// unsubscribe releases one subscription and closes its channel. It is a no-op if the
+// subscription is already gone.
+func (ma *Aggregator) unsubscribe(agentID string, subID uint64) {
+	ma.collectingMu.Lock()
+	defer ma.collectingMu.Unlock()
+
+	subscribers, exists := ma.collecting[agentID]
+	if !exists {
+		return
+	}
+	if collectCh, ok := subscribers[subID]; ok {
+		delete(subscribers, subID)
+		close(collectCh)
+	}
+	if len(subscribers) == 0 {
+		delete(ma.collecting, agentID)
+	}
 }
 
 // CollectMetricsFromAgents requests metrics from all agents (or filtered agents) when external client queries.
@@ -188,26 +246,18 @@ func (ma *Aggregator) CollectMetricsFromAgents(ctx context.Context, filter *Filt
 		return []*AggregatedMetric{}, nil
 	}
 
-	collectChs := make(map[string]chan []*AggregatedMetric)
-	agentIDs := make([]string, 0, len(agents))
-	ma.collectingMu.Lock()
+	agents = dedupeAgents(agents)
+
+	subscriptions := make(map[string]agentSubscription, len(agents))
 	for _, agentInfo := range agents {
-		collectCh := make(chan []*AggregatedMetric, 1)
-		collectChs[agentInfo.AgentID] = collectCh
-		ma.collecting[agentInfo.AgentID] = collectCh
-		agentIDs = append(agentIDs, agentInfo.AgentID)
+		subID, collectCh := ma.subscribe(agentInfo.AgentID)
+		subscriptions[agentInfo.AgentID] = agentSubscription{subID: subID, collectCh: collectCh}
 	}
-	ma.collectingMu.Unlock()
 
 	defer func() {
-		ma.collectingMu.Lock()
-		for _, agentID := range agentIDs {
-			if collectCh, exists := ma.collecting[agentID]; exists {
-				close(collectCh)
-				delete(ma.collecting, agentID)
-			}
+		for agentID, sub := range subscriptions {
+			ma.unsubscribe(agentID, sub.subID)
 		}
-		ma.collectingMu.Unlock()
 	}()
 
 	for _, agentInfo := range agents {
@@ -222,13 +272,8 @@ func (ma *Aggregator) CollectMetricsFromAgents(ctx context.Context, filter *Filt
 				Err(requestErr).
 				Str("agent_id", agentInfo.AgentID).
 				Msg("Failed to request metrics from agent")
-			ma.collectingMu.Lock()
-			if collectCh, exists := ma.collecting[agentInfo.AgentID]; exists {
-				close(collectCh)
-				delete(ma.collecting, agentInfo.AgentID)
-			}
-			ma.collectingMu.Unlock()
-			delete(collectChs, agentInfo.AgentID)
+			ma.unsubscribe(agentInfo.AgentID, subscriptions[agentInfo.AgentID].subID)
+			delete(subscriptions, agentInfo.AgentID)
 		}
 	}
 
@@ -246,7 +291,7 @@ func (ma *Aggregator) CollectMetricsFromAgents(ctx context.Context, filter *Filt
 	var metricsMu sync.Mutex
 	var wg sync.WaitGroup
 
-	for agentID, collectCh := range collectChs {
+	for agentID, sub := range subscriptions {
 		wg.Add(1)
 		go func(id string, ch chan []*AggregatedMetric) {
 			defer wg.Done()
@@ -263,7 +308,7 @@ func (ma *Aggregator) CollectMetricsFromAgents(ctx context.Context, filter *Filt
 				allMetrics = append(allMetrics, metrics...)
 				metricsMu.Unlock()
 			}
-		}(agentID, collectCh)
+		}(agentID, sub.collectCh)
 	}
 
 	wg.Wait()
@@ -293,6 +338,23 @@ func (ma *Aggregator) GetMetricsWindow(ctx context.Context, startTime, endTime t
 	filter.StartTime = &startTime
 	filter.EndTime = &endTime
 	return ma.CollectMetricsFromAgents(ctx, filter)
+}
+
+// dedupeAgents drops repeated agents so each one is subscribed to, asked and cleaned up
+// exactly once. Filter.AgentIDs is caller-supplied and may name the same agent twice; a
+// second subscription for it would be stranded forever, because only one subscription per
+// agent is tracked for cleanup.
+func dedupeAgents(agents []*registry.AgentInfo) []*registry.AgentInfo {
+	seen := make(map[string]struct{}, len(agents))
+	deduped := make([]*registry.AgentInfo, 0, len(agents))
+	for _, agentInfo := range agents {
+		if _, ok := seen[agentInfo.AgentID]; ok {
+			continue
+		}
+		seen[agentInfo.AgentID] = struct{}{}
+		deduped = append(deduped, agentInfo)
+	}
+	return deduped
 }
 
 // getFilteredAgents returns agents filtered by the provided filter.

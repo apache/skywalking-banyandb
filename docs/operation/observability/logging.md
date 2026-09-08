@@ -1,10 +1,21 @@
 # Logging
 
-BanyanDB uses the [zerolog](https://github.com/rs/zerolog) library for logging. The log level can be set using the `log-level` flag. The supported log levels are `debug`, `info`, `warn`, `error`, and `fatal`. The default log level is `info`.
+BanyanDB uses the [zerolog](https://github.com/rs/zerolog) library for logging. The log level can be set using the `logging-level` flag. The supported log levels are `debug`, `info`, `warn`, `error`, and `fatal`. The default log level is `info`.
+
+Every shipped BanyanDB binary accepts the same four logging flags: the server (`standalone`, `data`, `liaison`), `backup`, `restore`, `lifecycle`, `migration`, the FODC proxy and the FODC agent. Each flag is also bound to an environment variable named after it, prefixed with `BYDB_` and upper-cased with dashes replaced by underscores, which is the usual way to configure them in a container:
+
+| Flag | Environment variable |
+|---|---|
+| `--logging-level` | `BYDB_LOGGING_LEVEL` |
+| `--logging-env` | `BYDB_LOGGING_ENV` |
+| `--logging-modules` | `BYDB_LOGGING_MODULES` |
+| `--logging-levels` | `BYDB_LOGGING_LEVELS` |
 
 `logging-env` is used to set the logging environment. The default value is `prod`. The logging environment can be set to `dev` for development or `prod` for production. The logging environment affects the log format and output. In the `dev` environment, logs are output in a human-readable format, while in the `prod` environment, logs are output in JSON format.
 
-`logging-modules` and `logging-levels` are used to set the log level for specific modules. The `logging-modules` flag is a comma-separated list of module names, and the `logging-levels` flag is a comma-separated list of log levels corresponding to the module names. The log level for a specific module can be set using these flags. Available modules are `storage`, `distributed-query`, `liaison-grpc`, `liaison-http`, `measure`, `stream`, `trace`, `metadata`, `property-schema-registry`, `metrics`, `pprof-service`, `query`, `server-queue-sub`, `server-queue-pub`. For example, to set the log level for the `storage` module to `debug`, you can use the following flags:
+`logging-modules` and `logging-levels` are used to set the log level for specific modules. The `logging-modules` flag is a comma-separated list of module names, and the `logging-levels` flag is a comma-separated list of log levels corresponding to the module names. The log level for a specific module can be set using these flags. Modules on the server include `storage`, `distributed-query`, `liaison-grpc`, `liaison-http`, `measure`, `stream`, `trace`, `metadata`, `property-schema-registry`, `metrics`, `pprof-service`, `query`, `server-queue-sub`, `server-queue-pub`. The other binaries name theirs differently: `migration` in `banyand-migration`, `fodc-proxy` in the FODC proxy, and `fodc`, `server` and `watchdog` in the FODC agent.
+
+Those lists are not exhaustive. A module name is whatever scope the code passes to `logger.GetLogger`, and every log line carries it in its `module` field, so reading one off a log line is the reliable way to find the name you need. Matching is case-insensitive. For example, to set the log level for the `storage` module to `debug`, you can use the following flags:
 
 ```sh
 --logging-modules=storage --logging-levels=debug

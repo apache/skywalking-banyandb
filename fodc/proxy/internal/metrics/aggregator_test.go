@@ -186,10 +186,7 @@ func TestProcessMetricsFromAgent_WithCollectionChannel(t *testing.T) {
 	agentInfo, getErr := testRegistry.GetAgentByID(agentID)
 	require.NoError(t, getErr)
 
-	aggregator.collectingMu.Lock()
-	collectCh := make(chan []*AggregatedMetric, 1)
-	aggregator.collecting[agentID] = collectCh
-	aggregator.collectingMu.Unlock()
+	_, collectCh := aggregator.subscribe(agentID)
 
 	ctx := context.Background()
 	now := time.Now()
@@ -229,10 +226,7 @@ func TestProcessMetricsFromAgent_WithAgentLabels(t *testing.T) {
 	agentInfo, getErr := testRegistry.GetAgentByID(agentID)
 	require.NoError(t, getErr)
 
-	aggregator.collectingMu.Lock()
-	collectCh := make(chan []*AggregatedMetric, 1)
-	aggregator.collecting[agentID] = collectCh
-	aggregator.collectingMu.Unlock()
+	_, collectCh := aggregator.subscribe(agentID)
 
 	ctx := context.Background()
 	now := time.Now()
@@ -270,10 +264,7 @@ func TestProcessMetricsFromAgent_WithoutTimestamp(t *testing.T) {
 	agentInfo, getErr := testRegistry.GetAgentByID(agentID)
 	require.NoError(t, getErr)
 
-	aggregator.collectingMu.Lock()
-	collectCh := make(chan []*AggregatedMetric, 1)
-	aggregator.collecting[agentID] = collectCh
-	aggregator.collectingMu.Unlock()
+	_, collectCh := aggregator.subscribe(agentID)
 
 	ctx := context.Background()
 	req := createTestStreamMetricsRequest("cpu_usage", 75.5, nil, nil)
@@ -298,10 +289,7 @@ func TestProcessMetricsFromAgent_MultipleMetrics(t *testing.T) {
 	agentInfo, getErr := testRegistry.GetAgentByID(agentID)
 	require.NoError(t, getErr)
 
-	aggregator.collectingMu.Lock()
-	collectCh := make(chan []*AggregatedMetric, 1)
-	aggregator.collecting[agentID] = collectCh
-	aggregator.collectingMu.Unlock()
+	_, collectCh := aggregator.subscribe(agentID)
 
 	ctx := context.Background()
 	now := time.Now()
@@ -339,9 +327,10 @@ func TestProcessMetricsFromAgent_ContextCancelled(t *testing.T) {
 	agentInfo, getErr := testRegistry.GetAgentByID(agentID)
 	require.NoError(t, getErr)
 
+	// Unbuffered and unread, so nothing can be delivered: the call must still report the
+	// canceled context rather than swallowing it.
 	aggregator.collectingMu.Lock()
-	collectCh := make(chan []*AggregatedMetric)
-	aggregator.collecting[agentID] = collectCh
+	aggregator.collecting[agentID] = map[uint64]chan []*AggregatedMetric{1: make(chan []*AggregatedMetric)}
 	aggregator.collectingMu.Unlock()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -826,10 +815,8 @@ func collectOneMetric(t *testing.T, aggregator *Aggregator, agentID string, agen
 	req *fodcv1.StreamMetricsRequest,
 ) *AggregatedMetric {
 	t.Helper()
-	aggregator.collectingMu.Lock()
-	collectCh := make(chan []*AggregatedMetric, 1)
-	aggregator.collecting[agentID] = collectCh
-	aggregator.collectingMu.Unlock()
+	subID, collectCh := aggregator.subscribe(agentID)
+	t.Cleanup(func() { aggregator.unsubscribe(agentID, subID) })
 
 	require.NoError(t, aggregator.ProcessMetricsFromAgent(context.Background(), agentID, agentInfo, req))
 

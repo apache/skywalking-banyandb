@@ -41,10 +41,16 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/apache/skywalking-banyandb/pkg/config"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 func main() {
-	var pprofAddr string
+	var (
+		pprofAddr string
+		logging   logger.Logging
+	)
 	root := &cobra.Command{
 		Use:   "migration",
 		Short: "BanyanDB measure / stream data migration tool",
@@ -66,9 +72,15 @@ measure and stream groups.
             (entry, group): scans src parts and the target group, reports
             within-part dup rows and the src-vs-target multiset diff to
             explain any row-count gap reported by 'verify'. Read-only.`,
-		PersistentPreRun: func(_ *cobra.Command, _ []string) {
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			if err := config.Load("logging", cmd.Flags()); err != nil {
+				return err
+			}
+			if err := logger.Init(logging); err != nil {
+				return err
+			}
 			if pprofAddr == "" {
-				return
+				return nil
 			}
 			go func() {
 				log.Printf("pprof listening on http://%s/debug/pprof/", pprofAddr)
@@ -76,11 +88,13 @@ measure and stream groups.
 					log.Printf("pprof server exited: %v", err)
 				}
 			}()
+			return nil
 		},
 	}
 
 	root.PersistentFlags().StringVar(&pprofAddr, "pprof-addr", "",
 		"if non-empty, expose net/http/pprof on this host:port (e.g. 127.0.0.1:6060)")
+	logger.RegisterFlags(root.PersistentFlags(), &logging)
 
 	root.AddCommand(newCopyCmd())
 	root.AddCommand(newVerifyCmd())
