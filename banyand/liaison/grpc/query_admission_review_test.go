@@ -35,9 +35,9 @@ func TestQueryAdmissionBeforeSchemaAccess(t *testing.T) {
 	// Empty services intentionally have no schema, pipeline, or metric dependencies.
 	// Rejection must happen before accessing any of those dependencies.
 	//
-	// Cases map to the three reported request shapes:
+	// Cases cover oversized request windows:
 	//   property/stream/trace maximum → Limit=math.MaxUint32
-	//   stream/trace overflow       → Limit=1, Offset=math.MaxUint32
+	//   stream/trace overflow         → Limit=1, Offset=math.MaxUint32
 	testCases := []struct {
 		call func(context.Context) error
 		name string

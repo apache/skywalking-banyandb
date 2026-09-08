@@ -27,10 +27,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
-// Reporter pattern: Stream index-order path derived MaxElementSize from
-// limit+offset and preallocated elementIDsSorted with that capacity (~32 GiB for
-// MaxUint32). Vectorized decline (order tag omitted from projection) falls back
-// to this row path, so the capacity hint must stay bounded.
+// The stream index-order path derived MaxElementSize from limit+offset and
+// preallocated elementIDsSorted with that capacity. When the vectorized path
+// declines (order tag omitted from projection), this row path must stay bounded.
 func TestQueryCapacityCapsIndexOrderElementIDs(t *testing.T) {
 	if got := queryCapacity(math.MaxInt32); got != queryCapacityHint {
 		t.Fatalf("queryCapacity(MaxInt32)=%d, want %d", got, queryCapacityHint)

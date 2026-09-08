@@ -27,9 +27,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
-// Reporter pattern: PropertyService.Query with Limit=math.MaxUint32 previously sized
-// shard/db result slices with that capacity (~32–64 GiB). The capacity hint must stay
-// bounded even if an oversized limit reaches the allocation site.
+// Property queries with an oversized Limit previously sized shard/db result slices from
+// that value. The capacity hint must stay bounded even if such a limit reaches allocation.
 func TestQueryCapacityCapsOversizedLimit(t *testing.T) {
 	if got := queryCapacity(math.MaxInt32); got != queryCapacityHint {
 		t.Fatalf("queryCapacity(MaxInt32)=%d, want %d", got, queryCapacityHint)

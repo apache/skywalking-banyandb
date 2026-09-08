@@ -20,12 +20,12 @@ import (
 	"testing"
 )
 
-// Reporter patterns: Property limit=MaxUint32; Trace/Stream limit+offset overflow
-// or MaxUint32 windows. Admission must reject before any make(..., limit).
+// Oversized Property/Trace/Stream limit and limit+offset windows must be rejected
+// at admission before any make(..., limit).
 //
 // Use a 32 GiB mocked budget so the dynamic window ceiling admits 100000 and
 // only queryAbsoluteWindow rejects 100001 with ErrQueryTooLarge.
-func TestAdmitContextRejectsReporterWindows(t *testing.T) {
+func TestAdmitContextRejectsOversizedWindows(t *testing.T) {
 	budget := NewQueryBudget(&budgetProtector{limit: 32 << 30, avail: 32 << 30})
 	cases := []struct {
 		name          string

@@ -22,8 +22,8 @@ import (
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 )
 
-// Reporter pattern: liaison ordered-property merge buffer previously used req.Limit
-// as make capacity. Keep the hint capped for oversized limits.
+// Ordered property merge buffers previously used req.Limit as make capacity.
+// Keep the hint capped for oversized limits.
 func TestPropertyQueryCapacityCapsOversizedLimit(t *testing.T) {
 	if got := propertyQueryCapacity(math.MaxUint32); got != propertyQueryCapacityHint {
 		t.Fatalf("propertyQueryCapacity(MaxUint32)=%d, want %d", got, propertyQueryCapacityHint)

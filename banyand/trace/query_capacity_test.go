@@ -19,9 +19,9 @@ import (
 	"testing"
 )
 
-// Reporter pattern: TraceService.Query limit(+offset) became MaxTraceSize /
-// MaxBatchSize and sized the legacy keys map with that capacity. newTraceBatch
-// must keep the initial map hint bounded for oversized requests.
+// Trace queries previously turned limit(+offset) into MaxTraceSize / MaxBatchSize
+// and sized the legacy keys map from that value. newTraceBatch must keep the
+// initial map hint bounded for oversized requests.
 func TestTraceBatchCapacityCapsOversizedLimit(t *testing.T) {
 	if got := traceBatchCapacity(math.MaxInt32); got != 1024 {
 		t.Fatalf("traceBatchCapacity(MaxInt32)=%d, want 1024", got)

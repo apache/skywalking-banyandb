@@ -21,9 +21,9 @@ func TestAddWindowRejectsUint32Overflow(t *testing.T) {
 	}
 }
 
-// Reporter pattern: Trace/Stream combined limit+offset must be computed in uint64
-// so MaxUint32+1 is detected instead of wrapping to 0.
-func TestAddWindowReporterPatterns(t *testing.T) {
+// Combined limit+offset must be computed in uint64 so MaxUint32+1 is detected
+// instead of wrapping to 0.
+func TestAddWindowOversizedPatterns(t *testing.T) {
 	cases := []struct {
 		name          string
 		limit, offset uint32
