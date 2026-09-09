@@ -107,6 +107,26 @@ func TestEarlyLogging(t *testing.T) {
 			wantEnv:   "prod",
 			wantLevel: "debug",
 		},
+		{
+			name:      "an explicitly empty env flag wins over the environment",
+			env:       map[string]string{envLoggingEnv: "dev"},
+			args:      []string{"liaison", "--logging-env="},
+			wantEnv:   "",
+			wantLevel: "debug",
+		},
+		{
+			name:      "an explicitly empty level flag wins over the environment",
+			env:       map[string]string{envLoggingLevel: "error"},
+			args:      []string{"liaison", "--logging-level="},
+			wantEnv:   "prod",
+			wantLevel: "",
+		},
+		{
+			name:      "an empty environment value does not override the default",
+			env:       map[string]string{envLoggingEnv: "", envLoggingLevel: ""},
+			wantEnv:   "prod",
+			wantLevel: "debug",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

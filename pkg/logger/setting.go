@@ -80,45 +80,62 @@ func defaultLogging() Logging {
 // proper error once it runs.
 func earlyLogging(args []string, getenv func(string) string) Logging {
 	cfg := Logging{Env: "prod", Level: "debug"}
+	// An unset variable and one set to an empty string are the same thing to viper, which
+	// ignores both, so only a non-empty value counts here.
 	if env := getenv(envLoggingEnv); env != "" {
 		cfg.Env = env
 	}
-	cfg.Level = acceptLevel(cfg.Level, getenv(envLoggingLevel))
-	flagEnv, flagLevel := loggingFlagsFromArgs(args)
-	if flagEnv != "" {
-		cfg.Env = flagEnv
+	if level := getenv(envLoggingLevel); level != "" {
+		cfg.Level = acceptLevel(cfg.Level, level)
 	}
-	cfg.Level = acceptLevel(cfg.Level, flagLevel)
+	// A flag, on the other hand, is applied whenever it appears, empty value included: that is
+	// what pflag reports as changed and what config.Load hands to Init later on.
+	flags := loggingFlagsFromArgs(args)
+	if flags.envSet {
+		cfg.Env = flags.env
+	}
+	if flags.levelSet {
+		cfg.Level = acceptLevel(cfg.Level, flags.level)
+	}
 	return cfg
 }
 
-// acceptLevel returns candidate when zerolog can parse it, and current otherwise.
+// acceptLevel returns candidate when zerolog can parse it, and current otherwise. An empty
+// candidate parses to NoLevel, the same value Init would end up with.
 func acceptLevel(current, candidate string) string {
-	if candidate == "" {
-		return current
-	}
 	if _, err := zerolog.ParseLevel(candidate); err != nil {
 		return current
 	}
 	return candidate
 }
 
+// earlyFlags carries the two logging flags scanned out of a raw command line. Each value
+// comes with whether the flag was given at all, because an explicit empty value is a value:
+// pflag reports it as changed and config.Load then keeps the environment out of the way.
+type earlyFlags struct {
+	env      string
+	level    string
+	envSet   bool
+	levelSet bool
+}
+
 // loggingFlagsFromArgs reads the two logging flags out of a raw argument list. It reuses
 // pflag so the values match what cobra resolves later, and tolerates everything else in
 // the list: the flags of the real command are not declared here, and the subcommand name
-// is just a positional argument.
-func loggingFlagsFromArgs(args []string) (env, level string) {
+// is just a positional argument. A malformed command line is the real parser's business to
+// report, so whatever was read before the error is kept.
+func loggingFlagsFromArgs(args []string) earlyFlags {
+	var flags earlyFlags
 	fs := pflag.NewFlagSet("early-logging", pflag.ContinueOnError)
 	fs.ParseErrorsAllowlist.UnknownFlags = true
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
-	fs.StringVar(&env, "logging-env", "", "")
-	fs.StringVar(&level, "logging-level", "", "")
-	if err := fs.Parse(args); err != nil {
-		// A malformed command line is the real parser's business to report.
-		return env, level
-	}
-	return env, level
+	fs.StringVar(&flags.env, "logging-env", "", "")
+	fs.StringVar(&flags.level, "logging-level", "", "")
+	_ = fs.Parse(args)
+	flags.envSet = fs.Changed("logging-env")
+	flags.levelSet = fs.Changed("logging-level")
+	return flags
 }
 
 func (rl *rootLogger) set(cfg Logging) error {
