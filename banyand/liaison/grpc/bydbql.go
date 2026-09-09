@@ -329,7 +329,7 @@ func (d *topKDumper) logTopK(entries []topKSlot, minCount uint64, msg string, li
 	if len(lines) == 0 {
 		return
 	}
-	d.l.Info().Strs("top", lines).Msg(msg)
+	d.l.Error().Strs("top", lines).Msg(msg)
 }
 
 // formatTopK renders the entries with at least minCount occurrences into log lines.
