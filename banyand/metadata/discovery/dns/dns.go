@@ -321,7 +321,7 @@ func (s *Service) discoveryLoop(ctx context.Context) {
 
 	for {
 		if err := s.queryDNSAndUpdateNodes(ctx); err != nil {
-			s.GetLogger().Err(err).Msg("failed to query DNS and update nodes")
+			s.GetLogger().Warn().Err(err).Msg("failed to query DNS and update nodes")
 		}
 
 		// wait for next interval
