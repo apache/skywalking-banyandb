@@ -72,23 +72,23 @@ func (m *MetricCollection) FlushMetrics(ctx context.Context) {
 	m.mu.RLock()
 	if len(m.collectors) == 0 {
 		m.mu.RUnlock()
-		log.Debug().Msg("native metric collection skipped: no collectors registered")
+		nativeLogger().Debug().Msg("native metric collection skipped: no collectors registered")
 		return
 	}
 	collectorsCopy := append([]collector(nil), m.collectors...)
 	m.mu.RUnlock()
 
-	log.Debug().Int("collector_count", len(collectorsCopy)).Msg("native metric collection started")
+	nativeLogger().Debug().Int("collector_count", len(collectorsCopy)).Msg("native metric collection started")
 	publisher := m.pipeline.NewBatchPublisher(writeTimeout)
 	defer publisher.Close()
 	var messages []bus.Message
 	for _, collector := range collectorsCopy {
 		name, metrics := collector.Collect()
 		if len(metrics) == 0 {
-			log.Debug().Str("metric_name", name).Msg("native metric collector returned no metrics")
+			nativeLogger().Debug().Str("metric_name", name).Msg("native metric collector returned no metrics")
 			continue
 		}
-		log.Debug().Str("metric_name", name).Int("metric_count", len(metrics)).Msg("native metric collector collected metrics")
+		nativeLogger().Debug().Str("metric_name", name).Int("metric_count", len(metrics)).Msg("native metric collector collected metrics")
 		for _, metric := range metrics {
 			iwr := m.buildIWR(name, metric)
 			nodeID := ""
@@ -97,7 +97,7 @@ func (m *MetricCollection) FlushMetrics(ctx context.Context) {
 			if m.nodeSelector != nil {
 				nodeID, err = m.nodeSelector.Locate(iwr.GetRequest().GetMetadata().GetGroup(), iwr.GetRequest().GetMetadata().GetName(), uint32(0), uint32(0))
 				if err != nil {
-					log.Error().Err(err).Msg("Failed to locate nodeID")
+					nativeLogger().Error().Err(err).Msg("Failed to locate nodeID")
 				}
 			}
 			messages = append(messages, bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), nodeID, iwr))
@@ -105,10 +105,10 @@ func (m *MetricCollection) FlushMetrics(ctx context.Context) {
 	}
 	_, err := publisher.Publish(ctx, data.TopicMeasureWrite, messages...)
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to publish messages")
+		nativeLogger().Error().Err(err).Msg("Failed to publish messages")
 		return
 	}
-	log.Debug().Int("message_count", len(messages)).Msg("native metric collection published messages")
+	nativeLogger().Debug().Int("message_count", len(messages)).Msg("native metric collection published messages")
 }
 
 func (m *MetricCollection) buildIWR(metricName string, metric metricWithLabelValues) *measurev1.InternalWriteRequest {
