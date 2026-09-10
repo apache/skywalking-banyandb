@@ -46,27 +46,31 @@ var (
 )
 
 type localIndexScan struct {
+	// preMergeFilter is the criteria filter carried by the wrapping tagFilterPlan,
+	// stashed by scanFromInput so ExecuteVectorized can run it as a PRE-MERGE
+	// fusible — which is what lets the merge cap at maxElementSize for a criteria
+	// query. Nil when the query has no criteria, when the criteria collapsed to
+	// DummyFilter, or for a timestamp-order scan, whose filter stays at the egress
+	// behind the cap (see scanResumesAcrossPulls). Field order here is
+	// fieldalignment's, not grouped by meaning.
+	preMergeFilter logical.TagFilter
+	invertedFilter index.Filter
+	skippingFilter index.Filter
+	result         model.StreamQueryResult
+	ec             executor.StreamExecutionContext
+	// filterRegistry resolves preMergeFilter's tag names to the (family, tag)
+	// coordinates of the PROJECTED schema, so it must be the tagFilterPlan's
+	// schema and not the scan's unprojected one.
+	filterRegistry    logical.Schema
 	schema            logical.Schema
-	invertedFilter    index.Filter
-	skippingFilter    index.Filter
-	result            model.StreamQueryResult
-	ec                executor.StreamExecutionContext
-	order             *logical.OrderBy
 	metadata          *commonv1.Metadata
 	l                 *logger.Logger
+	order             *logical.OrderBy
 	timeRange         timestamp.TimeRange
 	projectionTagRefs [][]*logical.TagRef
 	projectionTags    []model.TagProjection
 	entities          [][]*modelv1.TagValue
 	maxElementSize    int
-	// deferLimitToEgress is set when this scan is wrapped by a tagFilterPlan (a
-	// criteria query). A non-indexed tag filter is applied AFTER the scan at egress,
-	// so a maxElementSize cap inside the vec merge would truncate the ordered set
-	// BEFORE the filter runs and starve it (row-path divergence: the row scan streams
-	// the whole ordered set in chunks and the filter/limit loops pull as many batches
-	// as needed). When set, ExecuteVectorized runs the merge UNCAPPED and the egress
-	// applies filter → then the client offset:offset+limit slice.
-	deferLimitToEgress bool
 }
 
 func (i *localIndexScan) Close() {
