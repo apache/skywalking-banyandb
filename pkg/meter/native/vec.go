@@ -91,7 +91,7 @@ func (n *metricVec) Collect() (string, []metricWithLabelValues) {
 func seriesHash(tagValues []*modelv1.TagValue) []byte {
 	entities, err := pbv1.EntityValues(tagValues).ToEntity()
 	if err != nil {
-		log.Error().Err(err).Msg("Failed to convert tagValues to Entity")
+		nativeLogger().Error().Err(err).Msg("Failed to convert tagValues to Entity")
 	}
 	return pbv1.HashEntity(entities)
 }
