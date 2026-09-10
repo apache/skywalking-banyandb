@@ -84,12 +84,6 @@ type repairGeneration interface {
 // generation without changing the build itself.
 type repairGenerationOpener func(shardPath string) (repairGeneration, error)
 
-// repairSortFields are the ascending components a repair page orders by, most
-// significant first. The order is the repair tree's own: leaves are grouped by
-// group, then name, then entity, and the newest revision of an entity is the
-// last row that entity contributes.
-var repairSortFields = [inverted.RepairSortFieldCount]string{groupField, nameField, entityID, timestampField}
-
 // openNativeRepairGeneration pins the newest committed generation of a shard
 // directory through BanyanDB's own read-only reader.
 func openNativeRepairGeneration(shardPath string) (repairGeneration, error) {
@@ -208,13 +202,11 @@ func (r *repair) buildStatus(ctx context.Context, snapshotPath string) (err erro
 func (r *repair) buildTree(ctx context.Context, generation repairGeneration) error {
 	var latestProperty *searchingProperty
 	treeComposer := newRepairTreeComposer(r.composeSlotAppendFilePath, r.composeTreeFilePath, r.treeSlotCount, r.l)
-	var after [][]byte
+	var after *inverted.RepairCursor
 	for {
 		rows, pageErr := generation.RepairTuplePage(ctx, inverted.RepairPageRequest{
-			SortFields:   repairSortFields,
-			ProjectField: shaValueField,
-			After:        after,
-			PageSize:     r.batchSearchSize,
+			After:    after,
+			PageSize: r.batchSearchSize,
 		})
 		if pageErr != nil {
 			return fmt.Errorf("paging pinned generation failure: %w", pageErr)
@@ -237,7 +229,7 @@ func (r *repair) buildTree(ctx context.Context, generation repairGeneration) err
 			}
 			latestProperty = property
 		}
-		after = rows[len(rows)-1].SortValues
+		after = rows[len(rows)-1].Cursor
 	}
 	if latestProperty != nil {
 		if appendErr := treeComposer.append(latestProperty.entityID, latestProperty.shaValue); appendErr != nil {

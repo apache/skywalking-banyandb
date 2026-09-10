@@ -41,15 +41,13 @@ func TestRepairTuplePageOrdersEqualTuplesByLocalDocumentNumber(t *testing.T) {
 		tester.NoError(generation.Close())
 	})
 	page, pageErr := generation.RepairTuplePage(context.Background(), RepairPageRequest{
-		SortFields:   [RepairSortFieldCount]string{nidx01eGroupField, nidx01eNameField, nidx01eEntityField, timestampField},
-		ProjectField: nidx01eSHAField,
-		PageSize:     2,
+		PageSize: 2,
 	})
 	tester.NoError(pageErr)
 	tester.Equal([]RepairRow{
 		{SortValues: [][]byte{[]byte("g-tie"), []byte("n-tie"), []byte("e-tie"), nidx01eEncodedTimestamps[10]}, Value: []byte("sha-first")},
 		{SortValues: [][]byte{[]byte("g-tie"), []byte("n-tie"), []byte("e-tie"), nidx01eEncodedTimestamps[10]}, Value: []byte("sha-second")},
-	}, page)
+	}, nidx01eWithoutCursors(page))
 }
 
 func repairTupleTieDocument(identifier, shaValue string) index.Document {
@@ -65,47 +63,54 @@ func repairTupleTieDocument(identifier, shaValue string) index.Document {
 	}
 }
 
-// TestRepairTuplePagePagesAllRowsWithNilSortValuesWhenRequestedFieldsHaveNoDocValueLocations verifies that a generation recording no doc-value
-// locations for any of the four requested sort fields pages every live row with all four SortValues nil.
-//
-// All four sort components are absent, so every row ties. The page size covers
-// every live row deliberately: the four-component cursor cannot resume past a
-// tie without an identity component, and the contract deliberately exposes no
-// identity component.
-//
-// No fixture reaches the whole-section branch at nativeice.go:1319 or the
-// footer relaxations at nativeice.go:548-550 and nativeice.go:927-929. A
-// store written through NewStore always emits a doc-value section, and forging
-// a footer with docValueOffset == math.MaxUint64 requires ICE types outside
-// this issue's seam.
-func TestRepairTuplePagePagesAllRowsWithNilSortValuesWhenRequestedFieldsHaveNoDocValueLocations(t *testing.T) {
+// TestRepairTuplePageRejectsFieldsWithoutDocValueLocations verifies that stored
+// fields cannot substitute for the four required sortable doc values.
+func TestRepairTuplePageRejectsFieldsWithoutDocValueLocations(t *testing.T) {
 	tester := require.New(t)
 	shardPath := t.TempDir()
 	writer, writerErr := NewStore(StoreOpts{Path: shardPath})
 	tester.NoError(writerErr)
-	documents := index.Documents{
+	tester.NoError(writer.UpdateSeriesBatch(index.Batch{Documents: index.Documents{
 		repairTupleNoSortDocument("document-1", "sha-first"),
-		repairTupleNoSortDocument("document-2", "sha-second"),
-	}
-	tester.NoError(writer.UpdateSeriesBatch(index.Batch{Documents: documents}))
+	}}))
 	tester.NoError(writer.Close())
-	generation, generationErr := OpenReadOnlyGeneration(shardPath)
-	tester.NoError(generationErr)
-	tester.NotErrorIs(generationErr, ErrCorruptIndex)
-	t.Cleanup(func() {
-		tester.NoError(generation.Close())
-	})
-	page, pageErr := generation.RepairTuplePage(context.Background(), RepairPageRequest{
-		SortFields:   [RepairSortFieldCount]string{nidx01eGroupField, nidx01eNameField, nidx01eEntityField, timestampField},
-		ProjectField: nidx01eSHAField,
-		PageSize:     len(documents),
-	})
-	tester.NoError(pageErr)
-	expected := []RepairRow{
-		{SortValues: [][]byte{nil, nil, nil, nil}, Value: []byte("sha-first")},
-		{SortValues: [][]byte{nil, nil, nil, nil}, Value: []byte("sha-second")},
-	}
-	tester.Equal(expected, page)
+	generation := nidx01eOpen(t, shardPath)
+	page, pageErr := generation.RepairTuplePage(context.Background(), RepairPageRequest{PageSize: 1})
+	tester.ErrorIs(pageErr, ErrCorruptIndex)
+	tester.Empty(page)
+}
+
+// TestRepairTuplePageResumesEqualTuples verifies that continuation includes the
+// physical row identity instead of skipping rows with the same visible tuple.
+func TestRepairTuplePageResumesEqualTuples(t *testing.T) {
+	tester := require.New(t)
+	shardPath := t.TempDir()
+	writer, writerErr := NewStore(StoreOpts{Path: shardPath})
+	tester.NoError(writerErr)
+	tester.NoError(writer.UpdateSeriesBatch(index.Batch{Documents: index.Documents{
+		repairTupleTieDocument("document-1", "sha-first"),
+		repairTupleTieDocument("document-2", "sha-second"),
+	}}))
+	tester.NoError(writer.Close())
+	generation := nidx01eOpen(t, shardPath)
+	first, firstErr := generation.RepairTuplePage(context.Background(), RepairPageRequest{PageSize: 1})
+	tester.NoError(firstErr)
+	tester.Len(first, 1)
+	tester.NotNil(first[0].Cursor)
+	second, secondErr := generation.RepairTuplePage(context.Background(), RepairPageRequest{PageSize: 1, After: first[0].Cursor})
+	tester.NoError(secondErr)
+	tester.Len(second, 1)
+	tester.Equal(first[0].SortValues, second[0].SortValues)
+	tester.Equal("sha-first", string(first[0].Value))
+	tester.Equal("sha-second", string(second[0].Value))
+	last, lastErr := generation.RepairTuplePage(context.Background(), RepairPageRequest{PageSize: 1, After: second[0].Cursor})
+	tester.NoError(lastErr)
+	tester.Empty(last)
+
+	otherGeneration := nidx01eOpen(t, shardPath)
+	foreign, foreignErr := otherGeneration.RepairTuplePage(context.Background(), RepairPageRequest{PageSize: 1, After: first[0].Cursor})
+	tester.ErrorIs(foreignErr, ErrInvalidRepairPage)
+	tester.Empty(foreign)
 }
 
 func repairTupleNoSortDocument(identifier, shaValue string) index.Document {

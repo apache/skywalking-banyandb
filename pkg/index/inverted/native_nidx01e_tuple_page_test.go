@@ -51,12 +51,6 @@ const (
 	nidx01eBoundedGrowthBytes = 8 << 20
 )
 
-// nidx01eSortFields are the four ascending components issue #14012 declares the
-// repair order over, most significant first.
-var nidx01eSortFields = [RepairSortFieldCount]string{
-	nidx01eGroupField, nidx01eNameField, nidx01eEntityField, timestampField,
-}
-
 // nidx01eEncodedTimestamps are the exact doc values the corpus records for each
 // declared revision. They are literals lifted from the checked-in generation,
 // not a re-encoding: an eleven-byte historical prefix-coded signed int64 whose
@@ -93,6 +87,8 @@ var nidx01ePermittedReaderSurface = map[string]struct{}{
 	"Reader.VisibleDocCount":        {},
 	"Reader.VisitLiveDocuments":     {},
 	"Reader.VisitSelectedDocuments": {},
+	"RepairCursor":                  {},
+	"RepairPageRequest":             {},
 	"RepairTupleRow":                {},
 	"StoredDocument":                {},
 }
@@ -115,7 +111,7 @@ func TestNativeRepairTuplePageReturnsTheDeclaredFirstPage(t *testing.T) {
 	tester.NoError(err)
 
 	declared := nidx01eVisibleRows()
-	tester.Equal(nidx01eDeclaredRows(declared[0], declared[1]), page)
+	tester.Equal(nidx01eDeclaredRows(declared[0], declared[1]), nidx01eWithoutCursors(page))
 }
 
 // TestNativeRepairTuplePageResumesStrictlyAfterTheDeclaredCursor asks for the
@@ -130,12 +126,14 @@ func TestNativeRepairTuplePageResumesStrictlyAfterTheDeclaredCursor(t *testing.T
 	tester := require.New(t)
 	generation := nidx01eOpen(t, nidx01eShardDir)
 	declared := nidx01eVisibleRows()
+	first, firstErr := generation.RepairTuplePage(context.Background(), nidx01eRequest(nidx01eDeclaredPageSize, nil))
+	tester.NoError(firstErr)
 
 	page, err := generation.RepairTuplePage(context.Background(),
-		nidx01eRequest(nidx01eDeclaredPageSize, nidx01eDeclaredTuple(declared[1])))
+		nidx01eRequest(nidx01eDeclaredPageSize, first[len(first)-1].Cursor))
 	tester.NoError(err)
 
-	tester.Equal(nidx01eDeclaredRows(declared[2], declared[3]), page)
+	tester.Equal(nidx01eDeclaredRows(declared[2], declared[3]), nidx01eWithoutCursors(page))
 }
 
 // TestNativeRepairTuplePagePagesTheWholeGenerationExactlyOnce walks the corpus
@@ -217,15 +215,15 @@ func TestNativeRepairTuplePageIgnoresAGenerationPublishedBetweenPages(t *testing
 
 	first, err := generation.RepairTuplePage(context.Background(), nidx01eRequest(nidx01eDeclaredPageSize, nil))
 	tester.NoError(err)
-	tester.Equal(nidx01eDeclaredRows(declared[0], declared[1]), first)
+	tester.Equal(nidx01eDeclaredRows(declared[0], declared[1]), nidx01eWithoutCursors(first))
 
 	published := nidx01eRow{group: "g-a", name: "n-a", entityID: "e-1", timestamp: 30, sha: "sha-published", source: "source-published"}
 	nidx01ePublish(t, shard, published)
 
 	second, err := generation.RepairTuplePage(context.Background(),
-		nidx01eRequest(nidx01eDeclaredPageSize, nidx01eDeclaredTuple(declared[1])))
+		nidx01eRequest(nidx01eDeclaredPageSize, first[len(first)-1].Cursor))
 	tester.NoError(err)
-	tester.Equal(nidx01eDeclaredRows(declared[2], declared[3]), second)
+	tester.Equal(nidx01eDeclaredRows(declared[2], declared[3]), nidx01eWithoutCursors(second))
 
 	republished := nidx01eOpen(t, shard)
 	tester.NotEqual(nidx01eSnapshotID, republished.SnapshotID(),
@@ -235,41 +233,18 @@ func TestNativeRepairTuplePageIgnoresAGenerationPublishedBetweenPages(t *testing
 	tester.Len(after, len(declared)+1, "a view opened after the publication must see the published row")
 }
 
-// TestNativeRepairTuplePageOrdersMissingSortValuesLast pages a generation whose
-// rows do not all record a value for the least significant component.
-//
-// A Property revision written with no modification revision records no
-// timestamp at all, so this is not a hypothetical: every Property shard holding
-// such a revision reaches the repair build through this path, and refusing it
-// would make the build fail on data that reads perfectly well today.
-//
-// Requirement proved here:
-//
-//	R6 -- a row that records no doc value for a sort component orders after
-//	      every row that does, among the rows sharing the components before it,
-//	      and reports that component as absent. A cursor carrying the absent
-//	      component resumes strictly after that row, so paging still covers the
-//	      generation exactly once.
-func TestNativeRepairTuplePageOrdersMissingSortValuesLast(t *testing.T) {
+// TestNativeRepairTuplePageRejectsMissingSortValues verifies R4: a missing
+// sort component is corrupt repair input and never produces a partial page.
+func TestNativeRepairTuplePageRejectsMissingSortValues(t *testing.T) {
 	tester := require.New(t)
 	shard := nidx01eSeed(t,
 		nidx01eRow{group: "g-a", name: "n-a", entityID: "e-1", timestamp: 10, sha: "sha-present"},
 		nidx01eRow{group: "g-a", name: "n-a", entityID: "e-1", sha: "sha-absent"},
-		nidx01eRow{group: "g-b", name: "n-a", entityID: "e-2", timestamp: 4, sha: "sha-later-group"},
 	)
 	generation := nidx01eOpen(t, shard)
-
-	page, err := generation.RepairTuplePage(context.Background(), nidx01eRequest(2, nil))
-	tester.NoError(err)
-	tester.Len(page, 2)
-	tester.Equal("sha-present", string(page[0].Value))
-	tester.Equal("sha-absent", string(page[1].Value), "a row with no timestamp doc value must order after one that has it")
-	tester.Nil(page[1].SortValues[3], "an absent sort component must be reported absent, not defaulted")
-
-	resumed, err := generation.RepairTuplePage(context.Background(), nidx01eRequest(2, page[1].SortValues))
-	tester.NoError(err)
-	tester.Len(resumed, 1, "resuming after the absent component must skip it and find the remaining row")
-	tester.Equal("sha-later-group", string(resumed[0].Value))
+	page, err := generation.RepairTuplePage(context.Background(), nidx01eRequest(1, nil))
+	tester.ErrorIs(err, ErrCorruptIndex)
+	tester.Empty(page)
 }
 
 // TestNativeRepairTuplePageRejectsRequestsOutsideItsBounds asks for pages the
@@ -283,32 +258,31 @@ func TestNativeRepairTuplePageOrdersMissingSortValuesLast(t *testing.T) {
 //	      mistake a rejection for the end of the order and record a generation
 //	      it never finished reading.
 func TestNativeRepairTuplePageRejectsRequestsOutsideItsBounds(t *testing.T) {
-	declared := nidx01eVisibleRows()
-	shortCursor := nidx01eDeclaredTuple(declared[1])[:RepairSortFieldCount-1]
-	longCursor := append(nidx01eDeclaredTuple(declared[1]), []byte("extra"))
-	oversizeCursor := nidx01eDeclaredTuple(declared[1])
-	oversizeCursor[0] = make([]byte, MaxRepairSortValueLength+1)
-
+	generation := nidx01eOpen(t, nidx01eShardDir)
+	first, firstErr := generation.RepairTuplePage(context.Background(), nidx01eRequest(1, nil))
+	require.NoError(t, firstErr)
+	require.Len(t, first, 1)
 	cases := []struct {
 		mutate func(*RepairPageRequest)
 		name   string
 	}{
+		{name: "short cursor", mutate: func(r *RepairPageRequest) { r.After.cursor.SortValues = r.After.cursor.SortValues[:3] }},
+		{name: "long cursor", mutate: func(r *RepairPageRequest) {
+			r.After.cursor.SortValues = append(r.After.cursor.SortValues, []byte("extra"))
+		}},
+		{name: "oversize cursor component", mutate: func(r *RepairPageRequest) { r.After.cursor.SortValues[0] = make([]byte, MaxRepairSortValueLength+1) }},
+		{name: "zero cursor", mutate: func(r *RepairPageRequest) { r.After = &RepairCursor{} }},
 		{name: "page size zero", mutate: func(r *RepairPageRequest) { r.PageSize = 0 }},
 		{name: "page size negative", mutate: func(r *RepairPageRequest) { r.PageSize = -1 }},
 		{name: "page size over the bound", mutate: func(r *RepairPageRequest) { r.PageSize = MaxRepairPageSize + 1 }},
-		{name: "empty sort field", mutate: func(r *RepairPageRequest) { r.SortFields[2] = "" }},
-		{name: "repeated sort field", mutate: func(r *RepairPageRequest) { r.SortFields[2] = r.SortFields[0] }},
-		{name: "empty projection field", mutate: func(r *RepairPageRequest) { r.ProjectField = "" }},
-		{name: "short cursor", mutate: func(r *RepairPageRequest) { r.After = shortCursor }},
-		{name: "long cursor", mutate: func(r *RepairPageRequest) { r.After = longCursor }},
-		{name: "oversize cursor component", mutate: func(r *RepairPageRequest) { r.After = oversizeCursor }},
 	}
 
-	generation := nidx01eOpen(t, nidx01eShardDir)
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			tester := require.New(t)
-			request := nidx01eRequest(nidx01eDeclaredPageSize, nil)
+			cursor := *first[0].Cursor
+			cursor.cursor.SortValues = append([][]byte(nil), cursor.cursor.SortValues...)
+			request := nidx01eRequest(nidx01eDeclaredPageSize, &cursor)
 			testCase.mutate(&request)
 
 			page, err := generation.RepairTuplePage(context.Background(), request)
@@ -396,7 +370,7 @@ func TestNativeRepairTuplePageIgnoresReservedCRC32(t *testing.T) {
 	tester.NoError(err)
 
 	declared := nidx01eVisibleRows()
-	tester.Equal(nidx01eDeclaredRows(declared[0], declared[1]), page)
+	tester.Equal(nidx01eDeclaredRows(declared[0], declared[1]), nidx01eWithoutCursors(page))
 }
 
 // TestNativeRepairTuplePageLeavesTheDirectoryUnchanged inventories the corpus
@@ -431,7 +405,7 @@ func TestNativeRepairTuplePageLeavesTheDirectoryUnchanged(t *testing.T) {
 	page, besideErr := beside.RepairTuplePage(context.Background(), nidx01eRequest(nidx01eDeclaredPageSize, nil))
 	tester.NoError(besideErr)
 	declared := nidx01eVisibleRows()
-	tester.Equal(nidx01eDeclaredRows(declared[0], declared[1]), page,
+	tester.Equal(nidx01eDeclaredRows(declared[0], declared[1]), nidx01eWithoutCursors(page),
 		"an open writer must not change what the pinned committed generation pages")
 }
 
@@ -451,7 +425,7 @@ func TestNativeRepairTuplePageBoundsResidentStateAcrossPages(t *testing.T) {
 	generation := nidx01eOpen(t, shard)
 
 	baseline := nidx01eRetainedBytes()
-	var after [][]byte
+	var after *RepairCursor
 	rows, pages := 0, 0
 	for {
 		page, err := generation.RepairTuplePage(context.Background(), nidx01eRequest(nidx01eBoundedPageSize, after))
@@ -462,7 +436,7 @@ func TestNativeRepairTuplePageBoundsResidentStateAcrossPages(t *testing.T) {
 		}
 		rows += len(page)
 		pages++
-		after = page[len(page)-1].SortValues
+		after = page[len(page)-1].Cursor
 	}
 
 	tester.Equal(nidx01eBoundedRowCount, rows)
@@ -486,8 +460,7 @@ func TestNativeRepairTuplePageBoundsResidentStateAcrossPages(t *testing.T) {
 //
 //	R2 -- the milestone is delivered entirely behind
 //	      inverted.OpenReadOnlyGeneration and the bounded page it serves. The
-//	      request carries four sort field names, one projection field, one
-//	      cursor and one page size and nothing else; the sentinel an
+//	      request carries one opaque cursor and one page size and nothing else; the sentinel an
 //	      out-of-bounds request is classified with stays distinct from the two
 //	      the boundary already publishes; and the private native reader gains
 //	      no export beyond the pinned generation's identifier, the page, and
@@ -503,14 +476,12 @@ func TestNativeRepairTuplePageBoundarySurface(t *testing.T) {
 	tester.NotErrorIs(ErrInvalidRepairPage, ErrInvalidSelection)
 
 	tester.Equal([]string{
-		"SortFields:[4]string",
-		"ProjectField:string",
-		"After:[][]uint8",
+		"After:*inverted.RepairCursor",
 		"PageSize:int",
 	}, structShape(RepairPageRequest{}),
-		"a repair page request is four sort fields, one projection, one cursor and one page size; anything more is a query language")
-	tester.Equal([]string{"SortValues:[][]uint8", "Value:[]uint8"}, structShape(RepairRow{}),
-		"a repair row is its encoded sort values and the projected stored value; anything more is a search hit")
+		"a repair page request is an opaque cursor and page size; sort fields and projection are fixed")
+	tester.Equal([]string{"Cursor:*inverted.RepairCursor", "SortValues:[][]uint8", "Value:[]uint8"}, structShape(RepairRow{}),
+		"a repair row carries its encoded sort values, stored SHA value and opaque continuation cursor")
 
 	for _, exported := range exportedSurfaceOf(t) {
 		_, permitted := nidx01ePermittedReaderSurface[exported]
@@ -533,12 +504,10 @@ func nidx01eOpen(t *testing.T, dir string) *ReadOnlyGeneration {
 
 // nidx01eRequest builds the repair page request the Property repair build
 // issues, at the given page size and cursor.
-func nidx01eRequest(pageSize int, after [][]byte) RepairPageRequest {
+func nidx01eRequest(pageSize int, after *RepairCursor) RepairPageRequest {
 	return RepairPageRequest{
-		SortFields:   nidx01eSortFields,
-		ProjectField: nidx01eSHAField,
-		After:        after,
-		PageSize:     pageSize,
+		After:    after,
+		PageSize: pageSize,
 	}
 }
 
@@ -569,15 +538,15 @@ func nidx01eDeclaredRows(rows ...nidx01eRow) []RepairRow {
 func nidx01eWalk(t *testing.T, generation *ReadOnlyGeneration, pageSize int) ([]RepairRow, int) {
 	t.Helper()
 	var walked []RepairRow
-	var after [][]byte
+	var after *RepairCursor
 	for pages := 1; ; pages++ {
 		page, err := generation.RepairTuplePage(context.Background(), nidx01eRequest(pageSize, after))
 		require.NoError(t, err)
 		if len(page) == 0 {
 			return walked, pages
 		}
-		walked = append(walked, page...)
-		after = page[len(page)-1].SortValues
+		walked = append(walked, nidx01eWithoutCursors(page)...)
+		after = page[len(page)-1].Cursor
 		require.LessOrEqual(t, len(walked), len(nidx01eRows), "paging must terminate rather than repeat rows")
 	}
 }
@@ -682,4 +651,13 @@ func structShape(value any) []string {
 		shape = append(shape, fmt.Sprintf("%s:%s", field.Name, field.Type))
 	}
 	return shape
+}
+
+// nidx01eWithoutCursors isolates the declared row values from continuation state.
+func nidx01eWithoutCursors(rows []RepairRow) []RepairRow {
+	values := make([]RepairRow, len(rows))
+	for rowIndex, row := range rows {
+		values[rowIndex] = RepairRow{SortValues: row.SortValues, Value: row.Value}
+	}
+	return values
 }

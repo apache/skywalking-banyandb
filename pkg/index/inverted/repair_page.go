@@ -22,93 +22,44 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted/internal/nativeice"
 )
 
-// RepairSortFieldCount is the number of ascending components a repair tuple
-// page orders by. It is fixed at four -- group, name, entity identifier and
-// timestamp -- because BDB-NIDX-SPEC-001 revision 0.2 NIDX-01 admits exactly
-// the Property repair tuple order and denies a general sort surface. The count
-// is part of the type of a request, so an arity other than four is a
-// compilation failure rather than a runtime rejection.
+// RepairSortFieldCount is the number of fixed Property repair sort components.
 const RepairSortFieldCount = 4
 
 const (
-	// MaxRepairPageSize is the largest page a single RepairTuplePage call
-	// serves. A request above it is rejected before any doc value is read, so
-	// the reader's resident state stays bounded by a value it chose rather than
-	// by one a caller supplied.
+	// MaxRepairPageSize bounds the number of rows returned by a repair page.
 	MaxRepairPageSize = 1 << 16
-
-	// MaxRepairSortValueLength is the longest encoded sort value a cursor
-	// component may carry. It matches the term-length bound the reader's other
-	// bounded operations hold.
+	// MaxRepairSortValueLength bounds each encoded repair sort component.
 	MaxRepairSortValueLength = 64 << 10
 )
 
-// ErrInvalidRepairPage reports that a repair tuple page request lies outside
-// the bounds the read-only reader serves: a page size that is not positive or
-// exceeds MaxRepairPageSize, an empty or repeated sort field name, an empty
-// projection field name, a resume cursor whose component count is neither zero
-// nor RepairSortFieldCount, or a cursor component longer than
-// MaxRepairSortValueLength.
-//
-// It is distinct from ErrCorruptIndex: nothing on disk is damaged, the request
-// itself is out of bounds, so no doc value is decoded and no page is built.
-// Callers classify with errors.Is.
+// ErrInvalidRepairPage identifies invalid page sizes or resume cursors.
 var ErrInvalidRepairPage = errors.New("inverted: invalid repair page request")
 
-// RepairPageRequest describes one bounded, ordered page of a pinned
-// generation's live documents.
-//
-// It is deliberately not a query language, and NIDX-01 denies it becoming one.
-// There is no filter, no descending direction, no offset, no relevance order
-// and no projection beyond the single stored field a page carries: the request
-// selects every live document of the pinned generation, orders them by exactly
-// RepairSortFieldCount ascending components, and returns one bounded window of
-// that order.
+// RepairCursor is an opaque position in one pinned generation, including the
+// document identity needed to resume across equal four-component tuples.
+type RepairCursor struct {
+	generation *ReadOnlyGeneration
+	cursor     nativeice.RepairCursor
+}
+
+// RepairPageRequest selects a page in the fixed ascending Property repair order.
+// Sorting and projection cannot be customized.
 type RepairPageRequest struct {
-	// SortFields names the indexed fields whose encoded doc values order the
-	// page, most significant component first. The names must be distinct and
-	// non-empty.
-	SortFields [RepairSortFieldCount]string
-
-	// ProjectField names the stored field whose value each row carries. It is
-	// the only stored field a page decodes.
-	ProjectField string
-
-	// After is the complete tuple to resume strictly after: a page returns only
-	// rows ordering after it. It holds either no component, which starts the
-	// order at its first row, or exactly RepairSortFieldCount components, which
-	// are the SortValues of a row a previous page returned. Any other component
-	// count is an invalid cursor.
-	//
-	// A nil component means the row After names records no doc value for that
-	// sort field, and it compares as such: a missing component orders after
-	// every present one.
-	After [][]byte
-
-	// PageSize is the largest number of rows the page holds. It must be
-	// positive and at most MaxRepairPageSize.
+	// After must be a cursor returned by this generation; nil starts the scan.
+	After *RepairCursor
+	// PageSize must be positive and no greater than MaxRepairPageSize.
 	PageSize int
 }
 
-// RepairRow is one ordered row of a repair tuple page.
+// RepairRow contains encoded (group, name, entity ID, timestamp) values and stored SHA.
 type RepairRow struct {
-	// SortValues holds the row's encoded doc values, one per component of the
-	// request's SortFields and in the same order, so its length is always
-	// RepairSortFieldCount. A component is nil when the row records no doc
-	// value for that sort field.
-	//
-	// The values are the bytes the generation encodes, handed back unchanged:
-	// the reader neither decodes nor reinterprets them, so a caller that needs
-	// a typed value decodes it with the codec its own writer used.
+	Cursor     *RepairCursor
 	SortValues [][]byte
-
-	// Value is the row's stored ProjectField value, and is nil when the row
-	// stores no value for that field. A row that stores the field more than
-	// once carries the first value it records.
-	Value []byte
+	Value      []byte
 }
 
 // ReadOnlyGeneration is a pinned, immutable read-only view of exactly one
@@ -163,38 +114,27 @@ func (g *ReadOnlyGeneration) SnapshotID() uint64 {
 	return g.reader.SnapshotID()
 }
 
-// RepairTuplePage returns one bounded page of the pinned generation's live
-// documents, ordered ascending by the request's sort components and resuming
-// strictly after its cursor.
-//
-// Ordering compares rows component by component, most significant first. A
-// present component compares against another present one as raw bytes, exactly
-// as the encoded doc values are stored; a present component orders before a
-// missing one, so a row lacking a sort value sorts last among the rows sharing
-// the components before it; two missing components compare equal. A row that
-// records several doc values for one sort field is ordered by the smallest of
-// them. Rows equal on every component are ordered by the segment and local
-// document number they occupy, which is stable for a pinned generation.
-//
-// The page holds at most PageSize rows and returns fewer only when the order is
-// exhausted, so an empty page means the cursor has reached the end. Documents
-// the pinned generation's deletion masks cover are never returned. Resident
-// state is bounded by the page and the comparison state its ordering needs,
-// never by the number of documents scanned, so paging through a generation does
-// not grow with the number of pages already served.
-//
-// A request outside the reader's bounds reports an error wrapping
-// ErrInvalidRepairPage before any doc value is read. A doc-value section whose
-// chunk table, offsets, lengths, varints or term encodings violate the ICE v3
-// grammar, or that would require decoding past a configured bound, reports an
-// error wrapping ErrCorruptIndex. Canceling ctx stops the page and returns
-// ctx.Err(). Every failure returns no rows, so a caller never observes a
-// partial page.
+// RepairTuplePage returns a bounded page in ascending Property repair order.
+// Equal tuples are ordered by segment and local document identity. Missing sort
+// values and malformed sections return ErrCorruptIndex without a partial page.
 func (g *ReadOnlyGeneration) RepairTuplePage(ctx context.Context, request RepairPageRequest) ([]RepairRow, error) {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, ctxErr
 	}
-	nativeRows, pageErr := g.reader.RepairTuplePage(ctx, request.SortFields, request.ProjectField, request.After, request.PageSize)
+	if g == nil || g.reader == nil {
+		return nil, fmt.Errorf("page unopened generation: %w", ErrInvalidRepairPage)
+	}
+	var after *nativeice.RepairCursor
+	if request.After != nil {
+		if request.After.generation != g {
+			return nil, fmt.Errorf("cursor belongs to another generation: %w", ErrInvalidRepairPage)
+		}
+		after = &request.After.cursor
+	}
+	nativeRows, pageErr := g.reader.RepairTuplePage(ctx, nativeice.RepairPageRequest{
+		SortFields:   [RepairSortFieldCount]string{"_group", index.IndexModeName, "_entity_id", timestampField},
+		ProjectField: "_sha_value", After: after, PageSize: request.PageSize,
+	})
 	if pageErr != nil {
 		switch {
 		case errors.Is(pageErr, nativeice.ErrInvalidRepairPage):
@@ -207,7 +147,12 @@ func (g *ReadOnlyGeneration) RepairTuplePage(ctx context.Context, request Repair
 	}
 	rows := make([]RepairRow, len(nativeRows))
 	for rowIndex, nativeRow := range nativeRows {
-		rows[rowIndex] = RepairRow{SortValues: nativeRow.SortValues, Value: nativeRow.Value}
+		cursor := nativeRow.Cursor
+		cursor.SortValues = make([][]byte, len(nativeRow.SortValues))
+		for valueIndex, value := range nativeRow.SortValues {
+			cursor.SortValues[valueIndex] = append([]byte{}, value...)
+		}
+		rows[rowIndex] = RepairRow{SortValues: nativeRow.SortValues, Value: nativeRow.Value, Cursor: &RepairCursor{cursor: cursor, generation: g}}
 	}
 	return rows, nil
 }
@@ -218,5 +163,8 @@ func (g *ReadOnlyGeneration) Close() error {
 	if g == nil || g.reader == nil {
 		return nil
 	}
-	return g.reader.Close()
+	if closeErr := g.reader.Close(); closeErr != nil {
+		return fmt.Errorf("close pinned generation %q: %w", g.path, closeErr)
+	}
+	return nil
 }

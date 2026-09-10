@@ -75,6 +75,8 @@ var nativeReaderSurface = []string{
 	"Reader.VisibleDocCount",
 	"Reader.VisitLiveDocuments",
 	"Reader.VisitSelectedDocuments",
+	"RepairCursor",
+	"RepairPageRequest",
 	"RepairTupleRow",
 	"StoredDocument",
 }
