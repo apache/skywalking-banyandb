@@ -11,6 +11,15 @@ Every shipped BanyanDB binary accepts the same four logging flags: the server (`
 | `--logging-modules` | `BYDB_LOGGING_MODULES` |
 | `--logging-levels` | `BYDB_LOGGING_LEVELS` |
 
+A process logs a little before the configured logger exists: the command tree registers its
+flags, and `GOMAXPROCS` is resolved. Those early lines honor `--logging-level` / `--logging-env`
+and their environment variables all the same -- the level is read straight from the command line
+and the environment at that point, with the flag winning over the environment, as everywhere else.
+Only `--logging-modules` and `--logging-levels` are not applied that early; they take effect once
+the logger is initialized. Without any of them the early lines stay at `debug`, which is the
+historical behavior. The ASCII banner is printed directly to the console and is not a log line,
+so no level silences it.
+
 `logging-env` is used to set the logging environment. The default value is `prod`. The logging environment can be set to `dev` for development or `prod` for production. The logging environment affects the log format and output. In the `dev` environment, logs are output in a human-readable format, while in the `prod` environment, logs are output in JSON format.
 
 `logging-modules` and `logging-levels` are used to set the log level for specific modules. The `logging-modules` flag is a comma-separated list of module names, and the `logging-levels` flag is a comma-separated list of log levels corresponding to the module names. The log level for a specific module can be set using these flags. Modules on the server include `storage`, `distributed-query`, `liaison-grpc`, `liaison-http`, `measure`, `stream`, `trace`, `metadata`, `property-schema-registry`, `metrics`, `pprof-service`, `query`, `server-queue-sub`, `server-queue-pub`. The other binaries name theirs differently: `migration` in `banyand-migration`, `fodc-proxy` in the FODC proxy, and `fodc`, `server` and `watchdog` in the FODC agent.
