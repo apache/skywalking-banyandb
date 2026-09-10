@@ -45,7 +45,9 @@ const (
 	tagHTTPAddress         = "http_address"
 )
 
-var log = logger.GetLogger("observability", "metrics", "system")
+func nativeLogger() *logger.Logger {
+	return logger.GetLogger("observability", "metrics", "system")
+}
 
 // NodeInfo is the struct that contains information used in native observability mode.
 type NodeInfo struct {
@@ -88,7 +90,7 @@ func InitSchema(ctx context.Context, p meter.Provider) {
 	np.initialized.Store(true)
 	groupErr := np.createNativeObservabilityGroup(ctx)
 	if groupErr != nil && !errors.Is(groupErr, schema.ErrGRPCAlreadyExists) {
-		log.Error().Err(groupErr).Msg("Failed to create native observability group")
+		nativeLogger().Error().Err(groupErr).Msg("Failed to create native observability group")
 	}
 	np.mu.Lock()
 	pending := np.pendingMeasures
@@ -97,7 +99,7 @@ func InitSchema(ctx context.Context, p meter.Provider) {
 	for _, pm := range pending {
 		_, measureErr := np.createMeasure(ctx, pm.name, pm.labels...)
 		if measureErr != nil && !errors.Is(measureErr, schema.ErrGRPCAlreadyExists) {
-			log.Error().Err(measureErr).Msgf("Failed to create measure %s", pm.name)
+			nativeLogger().Error().Err(measureErr).Msgf("Failed to create measure %s", pm.name)
 		}
 	}
 }
@@ -135,7 +137,7 @@ func (p *provider) registerOrDefer(name string, labels []string) {
 		defer cancel()
 		_, measureErr := p.createMeasure(ctx, name, labels...)
 		if measureErr != nil && !errors.Is(measureErr, schema.ErrGRPCAlreadyExists) {
-			log.Error().Err(measureErr).Msgf("Failed to create measure %s", name)
+			nativeLogger().Error().Err(measureErr).Msgf("Failed to create measure %s", name)
 		}
 		return
 	}
