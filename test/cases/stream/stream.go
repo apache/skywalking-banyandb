@@ -73,6 +73,17 @@ var streamEntries = []any{
 	g.Entry("filter with bound parameters", helpers.Args{Input: "params_bind", Want: "filter_tag", Duration: 1 * time.Hour}),
 	g.Entry("filter hidden tag projection", helpers.Args{Input: "filter_hidden_tag", Duration: 1 * time.Hour}),
 	g.Entry("filter by non-indexed tag order by duration desc with limit 3", helpers.Args{Input: "sort_duration_no_index_limit", Duration: 1 * time.Hour}),
+	// Pins the ORDERED element sequence of a filtered index-order query with a
+	// non-zero offset, on both engines, against a committed want file: the criteria
+	// keeps durations 60, 300 and 500 of the five seeded, so offset 1 + limit 2 must
+	// yield 300 then 500. The offset earns its place because the merge cap is
+	// limit+offset while the egress slice is offset:offset+limit, so a double-offset
+	// error shows here and not in a limit-only case. This is NOT a tag-filter pushdown
+	// guard: duration carries an inverted index rule, so the scan drops every
+	// non-matching row before the merge sees it. sort_duration_no_index_limit is that
+	// guard, because its criteria tag span_id carries no index rule.
+	g.Entry("filter by indexed range order by duration asc with limit and offset",
+		helpers.Args{Input: "sort_duration_filter_range_limit_offset", Duration: 1 * time.Hour}),
 	g.Entry("get empty result by non-indexed tag", helpers.Args{Input: "filter_tag_empty", Duration: 1 * time.Hour, WantEmpty: true}),
 	g.Entry("get results by no non-index tag", helpers.Args{Input: "filter_no_indexed", Duration: 1 * time.Hour}),
 	g.Entry("numeric local index: less", helpers.Args{Input: "less", Duration: 1 * time.Hour}),

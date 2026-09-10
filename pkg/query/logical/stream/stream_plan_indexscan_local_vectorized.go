@@ -19,7 +19,6 @@ package stream
 
 import (
 	"context"
-	"math"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -41,8 +40,9 @@ var _ executor.StreamVecExecutable = (*localIndexScan)(nil)
 // case the inner scan already projects the criteria + hidden tags and pushes the
 // INDEXED criteria into its sqo (invertedFilter/skippingFilter); the caller then
 // applies the SAME per-element tagFilter.Match + hidden-tag strip that
-// tagFilterPlan.Execute does (via VecTagFilter) so the result is byte-identical to
-// the row path. A multi-group merger or any other shape does not resolve to a
+// tagFilterPlan.Execute does (via VecTagFilter). Results match the row path except
+// for duplicate ElementIDs, whose contract is filter-first — see
+// BuildStreamMergePipeline. A multi-group merger or any other shape does not resolve to a
 // *localIndexScan, so we decline and the caller runs the row path.
 func VecExecutable(plan logical.Plan) executor.StreamVecExecutable {
 	l, ok := plan.(*limit)
@@ -75,11 +75,15 @@ func scanFromInput(input logical.Plan) *localIndexScan {
 		return in
 	case *tagFilterPlan:
 		if scan, ok := in.parent.(*localIndexScan); ok {
-			// A criteria query applies the tag filter at egress, AFTER the scan, so the
-			// vec merge must reproduce exactly the element set the row scan would hand
-			// its tagFilterPlan. Where the row scan caps depends on the order type —
-			// see scanResumesAcrossPulls.
-			scan.deferLimitToEgress = scanResumesAcrossPulls(scan)
+			// The vec merge reproduces the element set the row scan would hand its
+			// tagFilterPlan, except for duplicate ElementIDs, whose contract is
+			// filter-first — see BuildStreamMergePipeline. Whether the criteria filter
+			// may run AHEAD of the merge depends on the order type — see
+			// scanResumesAcrossPulls. Only an index-order scan takes the filter; a
+			// timestamp-order scan leaves it at the egress, behind the cap.
+			if scanResumesAcrossPulls(scan) && in.tagFilter != nil && in.tagFilter != logical.DummyFilter {
+				scan.preMergeFilter, scan.filterRegistry = in.tagFilter, in.s
+			}
 			return scan
 		}
 	}
@@ -87,8 +91,8 @@ func scanFromInput(input logical.Plan) *localIndexScan {
 }
 
 // scanResumesAcrossPulls reports whether the row scan backing this plan keeps
-// yielding new elements on successive Pulls, which decides where the vec merge may
-// cap for a criteria (filtered) query.
+// yielding new elements on successive Pulls, which decides whether a criteria
+// (filtered) query may run its tag filter AHEAD of the vec merge.
 //
 // The row path nests three loops: *limit.Execute pulls tagFilterPlan.Execute until
 // it has accumulated limit+offset elements, tagFilterPlan.Execute pulls the scan
@@ -98,14 +102,18 @@ func scanFromInput(input logical.Plan) *localIndexScan {
 //
 //   - index-order (idxResult): the sorted iterator persists across Pulls and each
 //     Pull drains the next maxElementSize entries (query_by_idx.go:262), so row keeps
-//     pulling and DOES fill the limit. The vec merge must stay uncapped, letting the
-//     egress filter the whole ordered set and then apply the limit.
+//     pulling and DOES fill the limit out of the whole FILTERED ordered set. Vec
+//     bounds the same set by running the tag filter before the merge, so the
+//     maxElementSize cap bounds the top-N of the filtered set rather than truncating
+//     the input the filter has yet to see (duplicate ElementIDs excepted — see
+//     BuildStreamMergePipeline).
 //   - timestamp order (tsResult): one Pull consumes a whole segment and caps the
 //     result at maxElementSize (query_by_ts.go:136,159); the next Pull only advances
 //     to a further segment. For data inside a single segment the scan is then
 //     exhausted, so row returns only the matches from that first capped batch and
 //     legitimately UNDER-fills the limit (e.g. 30 scanned, 2 rejected ⇒ 28 returned).
-//     The vec merge must cap at maxElementSize to reproduce that same input set.
+//     Vec reproduces that under-fill only by capping BEFORE filtering, so the filter
+//     is NOT pushed down here and stays at the egress.
 //
 // Caveat (documented, not emulated): for timestamp order spanning MULTIPLE segments
 // the row scan does resume per segment, so row could accumulate past the first
@@ -253,9 +261,10 @@ func VecOffsetLimit(plan logical.Plan) (offsetNum, limitNum uint32, ok bool) {
 // offset:offset+limit slice at egress. For a criteria-less query the vec pipeline
 // caps at maxElementSize (offset 0, limit=maxElementSize) exactly like the
 // scan-level cap, and the outer limit node trims — no double offset. For a criteria
-// query (deferLimitToEgress) the merge runs UNCAPPED and the egress applies the tag
-// filter before the outer offset:offset+limit slice, so the filter is never starved
-// by a premature cap (row-path parity — the row scan streams the whole ordered set).
+// query the merge caps at maxElementSize like any other, because the criteria tag
+// filter runs as a pre-merge fusible: the cap therefore bounds the top-N of the
+// FILTERED set. The egress re-applies the same filter (it is also the hidden-tag
+// strip) before the outer offset:offset+limit slice.
 func (i *localIndexScan) ExecuteVectorized(ctx context.Context) ([]*vectorized.RecordBatch, *vectorized.BatchSchema, error) {
 	select {
 	case <-ctx.Done():
@@ -310,32 +319,24 @@ func (i *localIndexScan) ExecuteVectorized(ctx context.Context) ([]*vectorized.R
 	// applies the SAME limit with offset 0 as a defensive client slice; the final
 	// client offset:offset+limit slice is the enclosing *limit node's job (row path
 	// parity).
-	// A criteria query applies a tag filter at egress AFTER this merge. Capping the
-	// merge at maxElementSize here would keep only the top-N BEFORE the filter runs
-	// and starve it (the row path streams the whole ordered set and filters lazily).
-	// So defer the cap to the egress: run the merge UNCAPPED (mergeCap 0) and make the
-	// trailing pipeline Limit a pass-through (MaxUint32, since a 0 limit emits
-	// NOTHING) — the egress then applies the tag filter and the true
-	// offset:offset+limit slice.
-	//
-	// This path is therefore NOT bounded by limit+offset, and cannot be until the
-	// tag filter moves ahead of the merge. Any cap here is unsound in general: the
-	// filter's selectivity is unknown, so the top-(limit+offset) rows BEFORE it can
-	// contain arbitrarily few surviving rows — including zero — while the row path
-	// keeps pulling until it has enough. Bounding it needs columnar tag-filter
-	// pushdown (out of scope here), not a bigger cap.
+	// A criteria query runs its tag filter as a PRE-MERGE fusible, so the merge sees
+	// only surviving rows and the cap keeps the top-N of the FILTERED set — not a
+	// top-N taken before the filter, which the filter's unknown selectivity could
+	// leave empty. The egress still applies the same filter; on rows that already
+	// passed here that re-check is a no-op, and it remains the hidden-tag strip.
+	var preMerge []vectorized.FusibleOperator
+	if i.preMergeFilter != nil {
+		preMerge = append(preMerge,
+			vstream.NewTagFilter(schema, i.projectionTags, i.preMergeFilter, i.filterRegistry))
+	}
 	limitRows := uint32(0)
-	mergeCap := i.maxElementSize
-	if i.deferLimitToEgress {
-		mergeCap = 0
-		limitRows = math.MaxUint32
-	} else if i.maxElementSize > 0 {
+	if i.maxElementSize > 0 {
 		limitRows = uint32(i.maxElementSize)
 	}
 
 	pipeline, buildErr := vstream.BuildStreamMergePipeline(
 		&vecSourceOperator{source: source, schema: schema},
-		schema, desc, 0, limitRows, batchSize, mergeCap)
+		schema, desc, 0, limitRows, batchSize, i.maxElementSize, preMerge...)
 	if buildErr != nil {
 		source.Release()
 		return nil, nil, buildErr
