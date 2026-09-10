@@ -241,7 +241,8 @@ func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan lo
 	}
 
 	// A criteria query carries a per-element tag filter (VecTagFilter) that must be
-	// applied to materialized Elements (byte-identical to the row tagFilterPlan). The
+	// applied to materialized Elements (the same Match + hidden-tag strip the row
+	// tagFilterPlan applies). The
 	// frame path operates on columnar batches and has no element-level filter stage,
 	// so a filter query forces the proto egress; the liaison merges proto Elements
 	// and frame bodies interchangeably (mixed-mode), so this stays correct.
@@ -274,9 +275,12 @@ func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan lo
 	}
 	// Criteria query: apply the SAME per-element tagFilter.Match + hidden-tag strip
 	// as the row tagFilterPlan.Execute, BEFORE the outer offset:offset+limit slice
-	// (row order: scan → merge → distinct → filter → limit). The element set handed
-	// to the filter already matches row's, because the merge capped (or deliberately
-	// did not cap) according to the scan's order type — see scanResumesAcrossPulls.
+	// (row order: scan → merge → distinct → filter → limit). The merge caps for every
+	// plan. For timestamp order this is the only tag filter, and it runs behind that
+	// cap, as before. For index order the scan already ran the SAME logical.TagFilter
+	// ahead of the merge (see scanResumesAcrossPulls), so this stage receives the
+	// FILTERED top-N: the Match re-check is a no-op and the hidden-tag strip is the
+	// work that remains.
 	if hasFilter {
 		filtered, filterErr := applyStreamTagFilter(elements, tagFilter, hiddenTags, filterSchema)
 		if filterErr != nil {
