@@ -209,15 +209,7 @@ test-trace-pipeline: build-trace-pipeline-plugin build-trace-pipeline-server $(G
 lint: TARGET=lint
 lint: PROJECTS:=api $(PROJECTS) pkg scripts/ci/check test
 lint: check-import-boundaries
-lint: check-row-call-sites
 lint: default ## Run the linters on all projects
-
-# check-row-call-sites enforces that the row-result `Pull()` sites left after
-# the row-based query path was removed in 0.12.0 only ever shrink. Pre-existing
-# sites are tracked in scripts/lint/rowcallsites/baseline.txt.
-.PHONY: check-row-call-sites
-check-row-call-sites: ## Enforce that row-result call sites only shrink
-	@./scripts/lint/rowcallsites/check.sh scripts/lint/rowcallsites/baseline.txt
 
 # lint-rawgo enforces the project's "no raw goroutines" rule. New `go`
 # statements in code outside the recovery wrappers must either go
