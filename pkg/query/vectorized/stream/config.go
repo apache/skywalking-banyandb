@@ -48,8 +48,10 @@ type VectorizedConfig struct {
 // The row path uses the same key but allocates its seen-set per merge round
 // (blockCursorHeap.merge / model.MergeStreamResults, one per runTabScanner call), so
 // it only collapses duplicates that land in the same round. That is a weaker
-// guarantee than this path gives, not a different semantic; a fixture that reuses an
-// element_id across two writes is malformed either way.
+// guarantee than this path gives, not a different semantic. A reused element_id is
+// supported rather than malformed: for a filtered index-order query the criteria is
+// evaluated first and the element is represented by its first MATCHING row in the
+// requested sort order — see BuildStreamMergePipeline.
 //
 // Enabled also selects the liaison<->data wire format: a flag-on distributed data
 // node emits the native columnar frame instead of protobuf. A liaison decodes both
