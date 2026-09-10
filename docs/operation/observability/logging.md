@@ -2,6 +2,15 @@
 
 BanyanDB uses the [zerolog](https://github.com/rs/zerolog) library for logging. The log level can be set using the `log-level` flag. The supported log levels are `debug`, `info`, `warn`, `error`, and `fatal`. The default log level is `info`.
 
+A process logs a little before the configured logger exists: the command tree registers its
+flags, and `GOMAXPROCS` is resolved. Those early lines honor `--logging-level` / `--logging-env`
+and their environment variables all the same -- the level is read straight from the command line
+and the environment at that point, with the flag winning over the environment, as everywhere else.
+Only `--logging-modules` and `--logging-levels` are not applied that early; they take effect once
+the logger is initialized. Without any of them the early lines stay at `debug`, which is the
+historical behavior. The ASCII banner is printed directly to the console and is not a log line,
+so no level silences it.
+
 `logging-env` is used to set the logging environment. The default value is `prod`. The logging environment can be set to `dev` for development or `prod` for production. The logging environment affects the log format and output. In the `dev` environment, logs are output in a human-readable format, while in the `prod` environment, logs are output in JSON format.
 
 `logging-modules` and `logging-levels` are used to set the log level for specific modules. The `logging-modules` flag is a comma-separated list of module names, and the `logging-levels` flag is a comma-separated list of log levels corresponding to the module names. The log level for a specific module can be set using these flags. Available modules are `storage`, `distributed-query`, `liaison-grpc`, `liaison-http`, `measure`, `stream`, `trace`, `metadata`, `property-schema-registry`, `metrics`, `pprof-service`, `query`, `server-queue-sub`, `server-queue-pub`. For example, to set the log level for the `storage` module to `debug`, you can use the following flags:
