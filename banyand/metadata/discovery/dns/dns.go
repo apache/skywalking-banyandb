@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rs/zerolog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -315,13 +316,34 @@ func (s *Service) retryScheduler(ctx context.Context) {
 	}
 }
 
+// consecutiveDNSFailuresBeforeError is how many queries have to fail in a row, once the init
+// phase is over, before the discovery loop reports the failure at error level.
+const consecutiveDNSFailuresBeforeError = 3
+
+// dnsFailureLevel picks the level a failed DNS query is reported at. Nodes come up in no
+// particular order, so misses while the cluster is still forming are expected and stay at warn
+// however many there are; afterwards the query is retried every interval and recovers on its
+// own, so a single miss is still only a warning and error is kept for a run of them.
+func dnsFailureLevel(inInitPhase bool, consecutiveFailures int) zerolog.Level {
+	if inInitPhase || consecutiveFailures < consecutiveDNSFailuresBeforeError {
+		return zerolog.WarnLevel
+	}
+	return zerolog.ErrorLevel
+}
+
 func (s *Service) discoveryLoop(ctx context.Context) {
 	// add the init phase finish time
 	initPhaseEnd := time.Now().Add(s.initDuration)
+	var consecutiveFailures int
 
 	for {
 		if err := s.queryDNSAndUpdateNodes(ctx); err != nil {
-			s.GetLogger().Err(err).Msg("failed to query DNS and update nodes")
+			consecutiveFailures++
+			level := dnsFailureLevel(time.Now().Before(initPhaseEnd), consecutiveFailures)
+			s.GetLogger().WithLevel(level).Err(err).Int("consecutive_failures", consecutiveFailures).
+				Msg("failed to query DNS and update nodes")
+		} else {
+			consecutiveFailures = 0
 		}
 
 		// wait for next interval
