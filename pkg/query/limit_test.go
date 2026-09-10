@@ -13,7 +13,10 @@
 
 package query
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestAddWindowRejectsUint32Overflow(t *testing.T) {
 	if window, valid := AddWindow(^uint32(0), 1); valid || window != uint64(^uint32(0))+1 {
@@ -50,8 +53,14 @@ func TestIsUnboundedLimit(t *testing.T) {
 	if !IsUnboundedLimit(^uint32(0), 0) {
 		t.Fatal("MaxUint32 with zero offset is the list-all sentinel")
 	}
+	if !IsUnboundedLimit(math.MaxInt32, 0) {
+		t.Fatal("MaxInt32 with zero offset is the OAP list-all sentinel")
+	}
 	if IsUnboundedLimit(^uint32(0), 1) {
 		t.Fatal("MaxUint32 with offset must not be treated as unbounded")
+	}
+	if IsUnboundedLimit(math.MaxInt32, 1) {
+		t.Fatal("MaxInt32 with offset must not be treated as unbounded")
 	}
 	if IsUnboundedLimit(100001, 0) {
 		t.Fatal("finite oversized windows are not the list-all sentinel")

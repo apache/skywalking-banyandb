@@ -811,7 +811,10 @@ func (ps *propertyServer) queryProperties(
 			switch v := d.(type) {
 			case *propertyv1.InternalQueryResponse:
 				for i, s := range v.Sources {
-					if chargeErr := query.ChargeResult(ctx, uint64(len(s))*8+256); chargeErr != nil {
+					// Source bytes are already JSON; reserve payload plus a small
+					// structural overhead rather than an 8x inflate that exhausts
+					// the liaison fallback pool during OAP UI-template list-all.
+					if chargeErr := query.ChargeResult(ctx, uint64(len(s))+256); chargeErr != nil {
 						return nil, groups, trace, chargeErr
 					}
 					var p propertyv1.Property

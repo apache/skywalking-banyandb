@@ -81,17 +81,19 @@ func TestQueryAdmissionBeforeSchemaAccess(t *testing.T) {
 }
 
 func TestQueryAdmissionAllowsUnboundedLimitSentinel(t *testing.T) {
-	budget := protector.NewQueryBudget(nil)
-	ctx, release, err := admitQuery(context.Background(), budget, math.MaxUint32, 0, 20)
-	if err != nil {
-		t.Fatalf("MaxUint32 list-all must be admitted as a scan: %v", err)
-	}
-	release()
-	if _, ok := query.BudgetLeaseFromContext(ctx); !ok {
-		t.Fatal("expected admitted scan lease")
-	}
-	if budget.Reserved() != 0 {
-		t.Fatalf("release leaked %d reserved bytes", budget.Reserved())
+	for _, limit := range []uint32{math.MaxUint32, math.MaxInt32} {
+		budget := protector.NewQueryBudget(nil)
+		ctx, release, err := admitQuery(context.Background(), budget, limit, 0, 20)
+		if err != nil {
+			t.Fatalf("list-all sentinel %d must be admitted as a scan: %v", limit, err)
+		}
+		release()
+		if _, ok := query.BudgetLeaseFromContext(ctx); !ok {
+			t.Fatal("expected admitted scan lease")
+		}
+		if budget.Reserved() != 0 {
+			t.Fatalf("release leaked %d reserved bytes", budget.Reserved())
+		}
 	}
 }
 

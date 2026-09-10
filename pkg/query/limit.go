@@ -13,15 +13,18 @@
 
 package query
 
+import "math"
+
 // AddWindow adds a result limit and offset without uint32 overflow.
 func AddWindow(limit, offset uint32) (uint64, bool) {
 	window := uint64(limit) + uint64(offset)
 	return window, window <= uint64(^uint32(0))
 }
 
-// IsUnboundedLimit reports the historical list-all / max-limit sentinel
-// (limit=MaxUint32 with no offset). Callers should admit these as scans and
-// bound retained results incrementally instead of pre-reserving the window.
+// IsUnboundedLimit reports historical list-all / max-limit sentinels with no
+// offset. OAP uses Integer.MAX_VALUE (MaxInt32); some fixtures use MaxUint32.
+// Callers should admit these as scans and bound retained results incrementally
+// instead of pre-reserving the window.
 func IsUnboundedLimit(limit, offset uint32) bool {
-	return limit == ^uint32(0) && offset == 0
+	return offset == 0 && (limit == math.MaxUint32 || limit == math.MaxInt32)
 }
