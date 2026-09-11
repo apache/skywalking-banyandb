@@ -46,6 +46,7 @@ type unresolvedTraceTagFilter struct {
 	traceIDTagName   string
 	spanIDTagName    string
 	orderByTag       string
+	indexRuleName    string
 	timestampTagName string
 	projectionTags   [][]*logical.Tag
 	groupIndex       int
@@ -54,6 +55,9 @@ type unresolvedTraceTagFilter struct {
 func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, error) {
 	ctx := newTraceAnalyzerContext(s)
 	entityList := s.EntityList()
+	if ok, selectedRule := s.IndexRuleDefined(uis.indexRuleName); ok && len(selectedRule.GetTags()) > 0 {
+		entityList = selectedRule.GetTags()[:len(selectedRule.GetTags())-1]
+	}
 	entityDict := make(map[string]int)
 	entity := make([]*modelv1.TagValue, len(entityList))
 	for idx, e := range entityList {
@@ -137,7 +141,7 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 	var tagFilter logical.TagFilter
 	if uis.criteria != nil {
 		var orderByTags []string
-		if ok, indexRule := s.IndexRuleDefined(uis.orderByTag); ok {
+		if ok, indexRule := s.IndexRuleDefined(uis.indexRuleName); ok {
 			orderByTags = indexRule.Tags
 		}
 		skippedTagNames := make([]string, 0, len(orderByTags)+2)
