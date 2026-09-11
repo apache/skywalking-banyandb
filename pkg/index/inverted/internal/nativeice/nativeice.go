@@ -85,10 +85,14 @@ var errManifestTooLarge = errors.New("nativeice: snapshot exceeds read limit")
 // directory. The generation is chosen at Open and fixed for the Reader's
 // lifetime, so generations committed afterwards stay invisible to it.
 type Reader struct {
-	closeErr        error
-	segments        []pinnedSegment
-	visibleDocCount int64
-	closeOnce       sync.Once
+	closeErr             error
+	repairPageSortFields [repairSortFieldCount]string
+	segments             []pinnedSegment
+	repairPageReaders    []*repairSegmentPageReader
+	snapshotID           uint64
+	visibleDocCount      int64
+	repairPageMu         sync.Mutex
+	closeOnce            sync.Once
 }
 
 // StoredDocument is one live document of the pinned generation, borrowed for
@@ -178,7 +182,11 @@ func openWithSnapshots(path string, listSnapshots snapshotLister) (*Reader, erro
 				lastCandidatePath = snapshotPath
 				continue
 			}
-			return &Reader{visibleDocCount: visibleDocCount, segments: segments}, nil
+			snapshotID, validID := parseFinalName(filepath.Base(snapshotPath), ".snp")
+			if !validID {
+				return nil, corruptError("snapshot %q has an invalid identifier", snapshotPath)
+			}
+			return &Reader{snapshotID: snapshotID, visibleDocCount: visibleDocCount, segments: segments}, nil
 		}
 	}
 	if lastCandidateErr != nil {
@@ -194,10 +202,17 @@ func (r *Reader) VisibleDocCount() (int64, error) {
 	return r.visibleDocCount, nil
 }
 
+// SnapshotID returns the identifier of the committed generation the Reader pins.
+func (r *Reader) SnapshotID() uint64 {
+	return r.snapshotID
+}
+
 // Close releases the file handles the Reader pinned at Open. It is idempotent.
 // Callers must not close a Reader concurrently with a document visit.
 func (r *Reader) Close() error {
 	r.closeOnce.Do(func() {
+		r.repairPageReaders = nil
+		r.repairPageSortFields = [repairSortFieldCount]string{}
 		r.closeErr = closePinnedSegments(r.segments)
 	})
 	return r.closeErr
@@ -527,12 +542,16 @@ func readSegmentFooter(file *os.File, size uint64, path string) (segmentFooter, 
 	if binary.BigEndian.Uint32(payload[52:56]) != segmentVersion {
 		return segmentFooter{}, corruptError("unsupported segment version %d", binary.BigEndian.Uint32(payload[52:56]))
 	}
-	if footer.chunkMode == 0 || footer.storedIndexOffset > footer.docValueOffset ||
-		footer.docValueOffset > footer.fieldsIndexOffset || footer.fieldsIndexOffset > footer.footerOffset {
+	storedIndexEnd := footer.docValueOffset
+	if storedIndexEnd == math.MaxUint64 {
+		storedIndexEnd = footer.fieldsIndexOffset
+	}
+	if footer.chunkMode == 0 || footer.storedIndexOffset > storedIndexEnd ||
+		storedIndexEnd > footer.fieldsIndexOffset || footer.fieldsIndexOffset > footer.footerOffset {
 		return segmentFooter{}, corruptError("segment %q has invalid section roots", path)
 	}
 	if footer.documentCount > uint64(math.MaxInt64) ||
-		footer.documentCount > (footer.docValueOffset-footer.storedIndexOffset)/storedDocumentOffsetByteWidth {
+		footer.documentCount > (storedIndexEnd-footer.storedIndexOffset)/storedDocumentOffsetByteWidth {
 		return segmentFooter{}, corruptError("segment %q has invalid document count", path)
 	}
 	if (footer.footerOffset-footer.fieldsIndexOffset)%fieldsIndexAddressByteWidth != 0 {
@@ -902,8 +921,12 @@ func (s *storedSegmentReader) documentOffset(documentNumber uint64) (uint64, err
 	if documentNumber >= s.footer.documentCount {
 		return 0, corruptError("segment %q has an out-of-range stored document number", s.path)
 	}
+	storedIndexEnd := s.footer.docValueOffset
+	if storedIndexEnd == math.MaxUint64 {
+		storedIndexEnd = s.footer.fieldsIndexOffset
+	}
 	indexOffset := s.footer.storedIndexOffset + documentNumber*storedDocumentOffsetByteWidth
-	if indexOffset > s.footer.docValueOffset-storedDocumentOffsetByteWidth {
+	if indexOffset > storedIndexEnd-storedDocumentOffsetByteWidth {
 		return 0, corruptError("segment %q has a stored document offset outside its index", s.path)
 	}
 	var offsetData [storedDocumentOffsetByteWidth]byte
