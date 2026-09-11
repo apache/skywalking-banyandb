@@ -458,6 +458,6 @@ func TestNativeStoredDocumentWalkBoundarySurface(t *testing.T) {
 	}
 	tester.NotEmpty(dirInventory(t, filepath.Dir(nidx01cManifest)))
 
-	tester.Equal(nativeReaderSurface, exportedSurfaceOf(t, nativeReaderDir),
+	tester.Equal(nativeReaderSurface, exportedSurfaceOf(t),
 		"the native reader's exported surface changed; NIDX-01C may only add the live document walk")
 }

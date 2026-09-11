@@ -504,7 +504,7 @@ func TestNativeExactTermsBoundarySurface(t *testing.T) {
 	tester.Equal([]string{"Field:string", "Terms:[][]uint8"}, selectionShape(),
 		"TermSelection is one field name and its literal terms; anything more is a query language")
 
-	tester.Equal(nativeReaderSurface, exportedSurfaceOf(t, nativeReaderDir),
+	tester.Equal(nativeReaderSurface, exportedSurfaceOf(t),
 		"the native reader's exported surface changed; NIDX-01D may only add the exact-term selection")
 }
 
