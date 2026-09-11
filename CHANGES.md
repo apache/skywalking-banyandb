@@ -13,6 +13,7 @@ Release Notes.
 
 - Honor the configured logging level in native observability metrics instead of retaining the pre-initialization debug logger.
 - Fix FODC proxy `/metrics` returning partial data or timing out when concurrent scrapes overlap.
+- Enforce trace query time ranges independently of the sort index, skipping row timestamp checks when the query fully covers a part.
 
 ### Document
 
