@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -432,4 +433,48 @@ func TestBuildFilterDeduplicatesCollectedTagNames(t *testing.T) {
 		criteriaOR, schema, entityDict, entity, "trace_id", "span_id", "")
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"service_id"}, collectedTagNamesOR, "service_id should appear only once")
+}
+
+func TestTraceAnalyzerUsesSelectedIndexRuleEntityLayout(t *testing.T) {
+	trace := &databasev1.Trace{
+		Metadata:         &commonv1.Metadata{Name: "trace", Group: "default"},
+		TraceIdTagName:   "trace_id",
+		SpanIdTagName:    "span_id",
+		TimestampTagName: "timestamp",
+		Tags: []*databasev1.TraceTagSpec{
+			{Name: "trace_id", Type: databasev1.TagType_TAG_TYPE_STRING},
+			{Name: "span_id", Type: databasev1.TagType_TAG_TYPE_STRING},
+			{Name: "service", Type: databasev1.TagType_TAG_TYPE_STRING},
+			{Name: "region", Type: databasev1.TagType_TAG_TYPE_STRING},
+			{Name: "duration", Type: databasev1.TagType_TAG_TYPE_INT},
+		},
+	}
+	firstRule := &databasev1.IndexRule{Metadata: &commonv1.Metadata{Name: "first_rule"}, Tags: []string{"service", "duration"}}
+	compositeRule := &databasev1.IndexRule{Metadata: &commonv1.Metadata{Name: "custom_composite"}, Tags: []string{"service", "region", "duration"}}
+	singleRule := &databasev1.IndexRule{Metadata: &commonv1.Metadata{Name: "custom_single"}, Tags: []string{"duration"}}
+	schema, schemaErr := BuildSchema(trace, []*databasev1.IndexRule{firstRule, compositeRule, singleRule})
+	assert.NoError(t, schemaErr)
+
+	for _, testCase := range []struct {
+		name          string
+		indexRuleName string
+		wantEntityLen int
+	}{
+		{name: "non_first_composite", indexRuleName: "custom_composite", wantEntityLen: 2},
+		{name: "non_first_single", indexRuleName: "custom_single", wantEntityLen: 0},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			plan, analyzeErr := (&unresolvedTraceTagFilter{
+				traceIDTagName: "trace_id",
+				spanIDTagName:  "span_id",
+				orderByTag:     "duration",
+				indexRuleName:  testCase.indexRuleName,
+			}).Analyze(schema)
+			require.NoError(t, analyzeErr)
+			scan, ok := plan.(*localScan)
+			require.True(t, ok)
+			require.Len(t, scan.entities, 1)
+			assert.Len(t, scan.entities[0], testCase.wantEntityLen)
+		})
+	}
 }

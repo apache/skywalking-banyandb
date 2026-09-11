@@ -537,6 +537,54 @@ func determineTagsToLoad(req QueryRequest) map[string]struct{} {
 	return tagsToLoad
 }
 
+// requestForPart returns immutable request and tag-loading variants for a part. Timestamp
+// envelopes can only prove that every row is in range; any partial or unknown envelope
+// must keep the exact row predicate.
+func requestForPart(req QueryRequest, tagsToLoad map[string]struct{}, p *part) (QueryRequest, map[string]struct{}) {
+	if !partNeedsTimeFilter(req, p) {
+		return req, tagsToLoad
+	}
+
+	effectiveReq := req
+	effectiveReq.TagFilter = req.TimeTagFilter
+	effectiveReq.FilterTagNames = append([]string(nil), req.FilterTagNames...)
+	if req.TimeTagName != "" {
+		effectiveReq.FilterTagNames = append(effectiveReq.FilterTagNames, req.TimeTagName)
+	}
+	// An empty set deliberately means "load all tags". Preserve that behavior instead
+	// of turning an empty user projection into a timestamp-only projection.
+	if len(tagsToLoad) == 0 || req.TimeTagName == "" {
+		return effectiveReq, tagsToLoad
+	}
+	effectiveTagsToLoad := make(map[string]struct{}, len(tagsToLoad)+1)
+	for tagName := range tagsToLoad {
+		effectiveTagsToLoad[tagName] = struct{}{}
+	}
+	effectiveTagsToLoad[req.TimeTagName] = struct{}{}
+	return effectiveReq, effectiveTagsToLoad
+}
+
+func partNeedsTimeFilter(req QueryRequest, p *part) bool {
+	if req.TimeTagFilter == nil {
+		return false
+	}
+	if req.MinTimestamp == nil || req.MaxTimestamp == nil || p == nil || p.partMetadata == nil {
+		return true
+	}
+	partMin := p.partMetadata.MinTimestamp
+	partMax := p.partMetadata.MaxTimestamp
+	if partMin == nil || partMax == nil {
+		return true
+	}
+	if *req.MinTimestamp > *partMin || *partMax > *req.MaxTimestamp {
+		return true
+	}
+	if *req.MinTimestamp == *partMin && !req.TimeIncludeStart {
+		return true
+	}
+	return *req.MaxTimestamp == *partMax && !req.TimeIncludeEnd
+}
+
 func (s *sidx) buildCursorsForBatch(
 	ctx context.Context,
 	batch *blockScanResultBatch,
@@ -587,10 +635,11 @@ func (s *sidx) buildCursorsForBatch(
 						}
 						continue
 					}
+					effectiveReq, effectiveTagsToLoad := requestForPart(req, tagsToLoad, bsResult.p)
 					bc := generateBlockCursor()
-					bc.init(bsResult.p, &bsResult.bm, req)
+					bc.init(bsResult.p, &bsResult.bm, effectiveReq)
 
-					if s.loadBlockCursor(bc, tmpBlock, bsResult, tagsToLoad, req, s.pm, metrics) {
+					if s.loadBlockCursor(bc, tmpBlock, bsResult, effectiveTagsToLoad, effectiveReq, s.pm, metrics) {
 						if asc {
 							bc.idx = 0
 						} else {
@@ -680,9 +729,10 @@ func (s *sidx) buildCursorsForBatchSync(
 			}
 			return nil, chargeErr
 		}
+		effectiveReq, effectiveTagsToLoad := requestForPart(req, tagsToLoad, bsResult.p)
 		bc := generateBlockCursor()
-		bc.init(bsResult.p, &bsResult.bm, req)
-		if s.loadBlockCursor(bc, tmpBlock, bsResult, tagsToLoad, req, s.pm, metrics) {
+		bc.init(bsResult.p, &bsResult.bm, effectiveReq)
+		if s.loadBlockCursor(bc, tmpBlock, bsResult, effectiveTagsToLoad, effectiveReq, s.pm, metrics) {
 			if asc {
 				bc.idx = 0
 			} else {
