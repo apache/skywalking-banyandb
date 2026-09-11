@@ -63,8 +63,8 @@ const defaultRecvSize = 10 << 20
 
 // for the property based registry connect to the metadata node.
 const (
-	propertyRegistryInitRetryCount = 30
-	propertyRegistryInitRetrySleep = time.Second * 5
+	propertyRegistryInitRetryLogInterval = 10
+	propertyRegistryInitRetrySleep       = time.Second * 5
 )
 
 // NewClient returns a new metadata client.
@@ -326,11 +326,17 @@ func (s *clientService) initPropertySchemaRegistry(ctx context.Context, l *logge
 		TLSEnabled:          s.propertySchemaClientTLS,
 		CACertPath:          s.propertySchemaClientCACert,
 	}
-	for attempt := 1; attempt <= propertyRegistryInitRetryCount; attempt++ {
+	for attempt := 1; ; attempt++ {
 		registry, createErr := property.NewSchemaRegistryClient(cfg) //nolint:contextcheck // healthCheck uses its own 2s timeout via context.Background()
 		if createErr != nil {
-			l.Warn().Int("attempt", attempt).Err(createErr).Msg("failed to create property schema registry, retrying...")
-			time.Sleep(propertyRegistryInitRetrySleep)
+			if attempt%propertyRegistryInitRetryLogInterval == 0 {
+				l.Error().Int("attempt", attempt).Err(createErr).Msg("failed to create property schema registry, keep retrying...")
+			}
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("context canceled while creating property schema registry after %d attempts: %w", attempt, ctx.Err())
+			case <-time.After(propertyRegistryInitRetrySleep):
+			}
 			continue
 		}
 		// Register as KindNode handler so future node events update ConnManager
@@ -341,7 +347,6 @@ func (s *clientService) initPropertySchemaRegistry(ctx context.Context, l *logge
 		l.Info().Msg("property-based schema registry initialized")
 		return nil
 	}
-	return fmt.Errorf("failed to create property schema registry after %d attempts", propertyRegistryInitRetryCount)
 }
 
 func (s *clientService) Serve() run.StopNotify {
