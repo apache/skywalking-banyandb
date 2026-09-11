@@ -24,6 +24,7 @@ Release Notes.
 ### Chores
 
 - Bump canopy and mcp npm dependencies to clear Dependabot CVEs (fast-uri, fastify, qs).
+- Bump mcp/canopy npm deps (hono, js-yaml, vitest 5) to clear Dependabot CVEs.
 
 ## 0.11.1
 
