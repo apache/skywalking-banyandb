@@ -12,6 +12,7 @@ Release Notes.
 
 ### Bug Fixes
 
+- Honor the configured logging level in native observability metrics instead of retaining the pre-initialization debug logger.
 - Fix FODC proxy `/metrics` returning partial data or timing out when concurrent scrapes overlap.
 
 ### Document
