@@ -52,26 +52,32 @@ var nidx01bBoundary committedGenerationCounter = ReadOnlyDocCount
 // permitted to export. Methods appear as Type.Method.
 //
 // The list is the read-only slice NIDX-01 allows and nothing else: open a
-// committed generation, report its visible document count, walk its live
-// documents' stored fields, walk the subset of them one field's exact terms
-// select, close it, and classify the three failures a caller must distinguish.
+// committed generation, report its identifier and visible document count, walk
+// its live documents' stored fields, walk the subset of them one field's exact
+// terms select, serve the bounded repair tuple page, close it, and classify the
+// four failures a caller must distinguish.
 // Issue #14009 placed the document walk outside NIDX-01B; issue #14010 added it;
-// issue #14011 adds the exact-term selection and nothing more. Term dictionaries
-// and postings are what that selection is built from, so they stay private:
-// doc values, sort/search-after, ranges, prefix and wildcard expansion,
-// analyzers, writers and merge remain outside the milestone, and an entry
-// appearing here for any of them is the milestone growing surface it was
-// explicitly denied.
+// issue #14011 added exact-term selection; and issue #14012 adds the bounded
+// repair tuple page. Term dictionaries and postings are what those operations
+// are built from, so they stay private: ranges, prefix and wildcard expansion,
+// analyzers, writers and merge remain outside the milestone, and an entry here
+// for any of them is the milestone growing surface it was explicitly denied.
 var nativeReaderSurface = []string{
 	"ErrCorrupt",
+	"ErrInvalidRepairPage",
 	"ErrInvalidSelection",
 	"ErrNoSnapshot",
 	"Open",
 	"Reader",
 	"Reader.Close",
+	"Reader.RepairTuplePage",
+	"Reader.SnapshotID",
 	"Reader.VisibleDocCount",
 	"Reader.VisitLiveDocuments",
 	"Reader.VisitSelectedDocuments",
+	"RepairCursor",
+	"RepairPageRequest",
+	"RepairTupleRow",
 	"StoredDocument",
 }
 
@@ -94,15 +100,17 @@ func TestNIDX01BBoundarySurface(t *testing.T) {
 	tester.NotErrorIs(ErrNoCommittedIndex, ErrCorruptIndex,
 		"an absent committed generation and damaged committed bytes must stay separately classifiable")
 
-	observed := exportedSurfaceOf(t, nativeReaderDir)
+	observed := exportedSurfaceOf(t)
 	tester.Equal(nativeReaderSurface, observed,
 		"the native reader's exported surface changed; NIDX-01B may only extend private generation selection")
 }
 
 // exportedSurfaceOf lists the exported top-level identifiers and exported
-// methods on exported types declared by the non-test Go sources in dir, sorted.
-func exportedSurfaceOf(t *testing.T, dir string) []string {
+// methods on exported types declared by the non-test Go sources of the private
+// native reader package, sorted.
+func exportedSurfaceOf(t *testing.T) []string {
 	t.Helper()
+	dir := nativeReaderDir
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err, "the native reader package must exist at %s", dir)
 	var surface []string

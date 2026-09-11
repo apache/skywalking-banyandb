@@ -283,7 +283,7 @@ func writeProperty(t *testing.T, d db.Database, name, id string, version int64) 
 func ensureShard(t *testing.T, nodes []*testNode) {
 	t.Helper()
 	for _, n := range nodes {
-		writeProperty(t, n.srv.db, "seed", "seed-init", 0)
+		writeProperty(t, n.srv.db, "seed", "seed-init", 1)
 	}
 }
 
