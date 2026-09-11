@@ -211,18 +211,23 @@ func (s *clientService) Validate() error {
 }
 
 func (s *clientService) PreRun(ctx context.Context) error {
-	stopCh := make(chan struct{})
+	// initCtx is canceled by process signals or service close so that the
+	// unbounded registry init retry below can be interrupted during shutdown.
+	initCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	sn := make(chan os.Signal, 1)
 	l := logger.GetLogger(s.Name())
 	signal.Notify(sn,
 		syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
+	defer signal.Stop(sn)
 	go func() {
 		select {
 		case si := <-sn:
-			logger.GetLogger(s.Name()).Info().Msgf("signal received: %s", si)
-			close(stopCh)
+			l.Info().Msgf("signal received: %s", si)
+			cancel()
 		case <-s.closer.CloseNotify():
-			close(stopCh)
+			cancel()
+		case <-initCtx.Done():
 		}
 	}()
 
@@ -282,7 +287,7 @@ func (s *clientService) PreRun(ctx context.Context) error {
 		s.nodeDiscoveryRegistry = none.NewService(ctx)
 	}
 
-	initErr := s.initPropertySchemaRegistry(ctx, l)
+	initErr := s.initPropertySchemaRegistry(initCtx, l)
 	if initErr != nil {
 		return initErr
 	}
