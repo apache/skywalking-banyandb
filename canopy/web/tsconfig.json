@@ -3,12 +3,12 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["vitest/globals"],
+    "types": ["vitest/globals", "@testing-library/jest-dom"],
     "noEmit": true,
     "paths": {
       "canopy-shared": ["../shared/src/index.ts"],
       "canopy-shared/*": ["../shared/src/*"]
     }
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*", "src/test-setup.ts"]
 }
