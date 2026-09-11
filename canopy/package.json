@@ -31,7 +31,7 @@
   },
   "dependencies": {
     "@rollup/rollup-linux-x64-gnu": "^4.62.2",
-    "@vitest/coverage-v8": "^4.1.9"
+    "@vitest/coverage-v8": "^5.0.0"
   },
   "overrides": {
     "brace-expansion": "^5.0.9",

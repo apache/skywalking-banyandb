@@ -42,7 +42,8 @@
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.66.0",
-    "vitest": "^3.2.6"
+    "vite": "^6.4.0",
+    "vitest": "^5.0.0"
   },
   "engines": {
     "node": ">=24.6.0"
@@ -50,6 +51,7 @@
   "overrides": {
     "@hono/node-server": "^2.1.0",
     "fast-uri": "^4.1.4",
+    "hono": "^4.13.7",
     "qs": "^6.16.0"
   }
 }
