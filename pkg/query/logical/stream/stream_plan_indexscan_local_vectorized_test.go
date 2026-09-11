@@ -29,20 +29,43 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
+// vecTestSchema is the stream schema the plan-level vec tests resolve the ordered
+// tag's family against.
+func vecTestSchema(t *testing.T) logical.Schema {
+	t.Helper()
+	s, err := BuildSchema(&databasev1.Stream{
+		Metadata: &commonv1.Metadata{Name: "vec-test"},
+		TagFamilies: []*databasev1.TagFamilySpec{{
+			Name: "searchable",
+			Tags: []*databasev1.TagSpec{
+				{Name: "service", Type: databasev1.TagType_TAG_TYPE_STRING},
+				{Name: "endpoint", Type: databasev1.TagType_TAG_TYPE_STRING},
+				{Name: "status", Type: databasev1.TagType_TAG_TYPE_STRING},
+				{Name: "duration", Type: databasev1.TagType_TAG_TYPE_INT},
+				{Name: "span_id", Type: databasev1.TagType_TAG_TYPE_STRING},
+				{Name: "state", Type: databasev1.TagType_TAG_TYPE_STRING},
+			},
+		}},
+	}, nil)
+	require.NoError(t, err)
+	return s
+}
+
 // newVecEligiblePlan builds a minimal *limit → *localIndexScan plan (the only
 // vec-eligible shape) with the given order and tag projection so VecExecutable's
 // eligibility decision can be exercised in isolation.
-func newVecEligiblePlan(order *logical.OrderBy, projection []model.TagProjection) logical.Plan {
-	scan := &localIndexScan{order: order, projectionTags: projection}
-	return &limit{Parent: &Parent{Input: scan}}
+func newVecEligiblePlan(t *testing.T, order *logical.OrderBy, projection []model.TagProjection) (logical.Plan, *localIndexScan) {
+	scan := &localIndexScan{order: order, projectionTags: projection, schema: vecTestSchema(t)}
+	return &limit{Parent: &Parent{Input: scan}}, scan
 }
 
-// TestVecExecutable_IndexOrder_TagNotProjected_DeclinesVec is the H2 regression:
-// an index-order query whose sort tag is NOT in the projection cannot populate the
-// vec OrderKey column, so the vec merge would silently fall back to timestamp
-// order (wrong result). VecExecutable must DECLINE (return nil) so the engine runs
-// the row path, which sorts via the inverted index regardless of projection.
-func TestVecExecutable_IndexOrder_TagNotProjected_DeclinesVec(t *testing.T) {
+// TestVecExecutable_IndexOrder_TagNotProjected_ProjectsItInternally covers the
+// R-1 gap: an index-order query whose sort tag is absent from the projection used
+// to fall back to the row path, because vec derives its OrderKey from the
+// projected cell. Vec now asks the scan for the tag anyway and keeps it out of
+// ProjectionTags(), so the query stays on the vec path and the extra tag never
+// reaches the egress.
+func TestVecExecutable_IndexOrder_TagNotProjected_ProjectsItInternally(t *testing.T) {
 	order := &logical.OrderBy{
 		Index: &databasev1.IndexRule{
 			Metadata: &commonv1.Metadata{Name: "by-status"},
@@ -52,10 +75,36 @@ func TestVecExecutable_IndexOrder_TagNotProjected_DeclinesVec(t *testing.T) {
 	}
 	// The ordered tag "status" is absent from the projection.
 	projection := []model.TagProjection{{Family: "searchable", Names: []string{"service", "endpoint"}}}
-	plan := newVecEligiblePlan(order, projection)
+	plan, scan := newVecEligiblePlan(t, order, projection)
+
+	require.NotNil(t, VecExecutable(plan), "vec must accept an index-order query whose sort tag is not projected")
+	scanProjection, hidden, resolved := scan.vecTagProjection()
+	require.True(t, resolved)
+	require.True(t, hidden, "the ordered tag must be reported as hidden so the frame egress is skipped")
+	require.Equal(t, []model.TagProjection{{Family: "searchable", Names: []string{"service", "endpoint", "status"}}}, scanProjection)
+	require.Equal(t, projection, scan.ProjectionTags(), "the client projection must not gain the ordered tag")
+	require.True(t, scan.HidesOrderTag())
+}
+
+// TestVecExecutable_IndexOrder_TagNotInSchema_DeclinesVec is the one remaining
+// decline: a stale index rule naming a tag the schema no longer defines cannot be
+// added to the projection, and running vec anyway would sort by timestamp without
+// saying so. The row path sorts via the inverted index regardless, so decline.
+func TestVecExecutable_IndexOrder_TagNotInSchema_DeclinesVec(t *testing.T) {
+	order := &logical.OrderBy{
+		Index: &databasev1.IndexRule{
+			Metadata: &commonv1.Metadata{Name: "by-dropped"},
+			Tags:     []string{"dropped-tag"},
+		},
+		Sort: modelv1.Sort_SORT_ASC,
+	}
+	projection := []model.TagProjection{{Family: "searchable", Names: []string{"service"}}}
+	plan, _ := newVecEligiblePlan(t, order, projection)
 
 	require.Nil(t, VecExecutable(plan),
-		"vec must decline an index-order query whose sort tag is not projected")
+		"vec must decline when the ordered tag cannot be resolved against the schema")
+	require.Equal(t, "the order-by tag does not resolve against the stream schema", VecDeclineReason(plan),
+		"the decline must name the tag-resolution failure, not a generic shape mismatch")
 }
 
 // TestVecExecutable_IndexOrder_TagProjected_AcceptsVec is the positive control:
@@ -70,7 +119,7 @@ func TestVecExecutable_IndexOrder_TagProjected_AcceptsVec(t *testing.T) {
 		Sort: modelv1.Sort_SORT_ASC,
 	}
 	projection := []model.TagProjection{{Family: "searchable", Names: []string{"service", "status"}}}
-	plan := newVecEligiblePlan(order, projection)
+	plan, _ := newVecEligiblePlan(t, order, projection)
 
 	require.NotNil(t, VecExecutable(plan),
 		"vec must accept an index-order query whose sort tag is projected")
@@ -82,7 +131,7 @@ func TestVecExecutable_IndexOrder_TagProjected_AcceptsVec(t *testing.T) {
 func TestVecExecutable_TimeOrder_AcceptsVec(t *testing.T) {
 	order := &logical.OrderBy{Sort: modelv1.Sort_SORT_DESC}
 	projection := []model.TagProjection{{Family: "searchable", Names: []string{"service"}}}
-	plan := newVecEligiblePlan(order, projection)
+	plan, _ := newVecEligiblePlan(t, order, projection)
 
 	require.NotNil(t, VecExecutable(plan),
 		"vec must accept a time-order query regardless of projection")
@@ -101,7 +150,7 @@ func newVecFilteredPlan(t *testing.T, order *logical.OrderBy, projection []model
 		Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "open"}}},
 	}}})
 	require.NoError(t, err)
-	scan := &localIndexScan{order: order, projectionTags: projection}
+	scan := &localIndexScan{order: order, projectionTags: projection, schema: vecTestSchema(t)}
 	filter := &tagFilterPlan{parent: scan, tagFilter: tagFilter, hiddenTags: logical.HiddenTagSet{}}
 	return &limit{Parent: &Parent{Input: filter}}, scan
 }

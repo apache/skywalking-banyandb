@@ -75,10 +75,6 @@ type pushdownExecContext struct {
 	src *pushdownVecSource
 }
 
-func (e *pushdownExecContext) Query(context.Context, model.StreamQueryOptions) (model.StreamQueryResult, error) {
-	return nil, nil
-}
-
 func (e *pushdownExecContext) QueryVectorized(context.Context, model.StreamQueryOptions) (executor.StreamVecScanSource, error) {
 	return e.src, nil
 }
