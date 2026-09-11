@@ -120,25 +120,25 @@ func (s *sidx) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, par
 	if err != nil {
 		return nil, err
 	}
-	// Aggregate optional timestamp range from merged parts
+	// A merged envelope is trustworthy only when every input supplies both bounds.
+	// Aggregating known inputs while silently ignoring a legacy unknown part could make
+	// the resulting metadata prove a disjoint or fully-covered range incorrectly.
 	var minVal, maxVal int64
-	var hasMinTS, hasMaxTS bool
+	hasTimestampEnvelope := len(parts) > 0
 	for i := range parts {
-		p := parts[i].p.partMetadata
-		if p.MinTimestamp != nil {
-			if !hasMinTS || *p.MinTimestamp < minVal {
-				minVal = *p.MinTimestamp
-				hasMinTS = true
-			}
+		partMetadata := parts[i].p.partMetadata
+		if partMetadata == nil || partMetadata.MinTimestamp == nil || partMetadata.MaxTimestamp == nil {
+			hasTimestampEnvelope = false
+			break
 		}
-		if p.MaxTimestamp != nil {
-			if !hasMaxTS || *p.MaxTimestamp > maxVal {
-				maxVal = *p.MaxTimestamp
-				hasMaxTS = true
-			}
+		if i == 0 || *partMetadata.MinTimestamp < minVal {
+			minVal = *partMetadata.MinTimestamp
+		}
+		if i == 0 || *partMetadata.MaxTimestamp > maxVal {
+			maxVal = *partMetadata.MaxTimestamp
 		}
 	}
-	if hasMinTS && hasMaxTS {
+	if hasTimestampEnvelope {
 		pm.MinTimestamp = &minVal
 		pm.MaxTimestamp = &maxVal
 	}
