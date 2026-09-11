@@ -112,6 +112,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	units = append(units,
 		metricSvc,
 		metaSvc,
+		pm,
 		localPipeline,
 		internalPipeline,
 		tire1Client,
