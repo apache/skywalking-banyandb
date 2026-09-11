@@ -304,8 +304,8 @@ type sidxStreamRunner struct {
 	errEvents      chan sidxStreamError
 	heap           *sidxStreamHeap
 	seenTraceIDs   map[string]struct{}
-	req            sidx.QueryRequest
 	batch          traceBatch
+	req            sidx.QueryRequest
 	errWg          sync.WaitGroup
 	nextSeq        int
 	total          atomic.Int64

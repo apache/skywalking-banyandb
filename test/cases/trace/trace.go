@@ -49,6 +49,19 @@ var traceEntries = []any{
 	g.Entry("query by empty span ids", helpers.Args{Input: "in_empty_span_ids", Duration: 1 * time.Hour, WantEmpty: true}),
 	g.Entry("order by timestamp", helpers.Args{Input: "order_timestamp_desc", Duration: 1 * time.Hour}),
 	g.Entry("order by duration", helpers.Args{Input: "order_duration_desc", Duration: 1 * time.Hour}),
+	// The seed occupies the first seconds of each minute. This gap stays within
+	// the populated segment even when BaseTime is the last minute of the day.
+	g.Entry("timestamp order excludes same-segment time gap",
+		helpers.Args{Input: "order_timestamp_desc", Offset: 20 * time.Second, Duration: 10 * time.Second, WantEmpty: true}),
+	g.Entry("duration order excludes same-segment time gap",
+		helpers.Args{Input: "order_duration_desc", Offset: 20 * time.Second, Duration: 10 * time.Second, WantEmpty: true}),
+	g.Entry("duration order filters time before pagination",
+		helpers.Args{
+			Input:  "gen_feat_order_duration_asc_limit2_offset1_proj_explicit_1",
+			Offset: 20 * time.Second, Duration: 10 * time.Second, WantEmpty: true,
+		}),
+	g.Entry("duration order selects a qualifying span and preserves its complete trace",
+		helpers.Args{Input: "order_duration_desc", Want: "time_range_trace_001", Offset: 750 * time.Millisecond, Duration: 500 * time.Millisecond}),
 	g.Entry("duration range 10-1000 order by timestamp",
 		helpers.Args{Input: "duration_range_order_timestamp", Duration: 1 * time.Hour}),
 	g.Entry("duration range with bound parameters",

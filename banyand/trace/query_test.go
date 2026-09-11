@@ -26,8 +26,10 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/testing/protocmp"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -489,4 +491,96 @@ func allPartsFlushed(tst *tsTable) func() bool {
 		}
 		return true
 	}
+}
+
+func TestTimestampTagFilterMatcherHonorsRangeBeforeDelegate(t *testing.T) {
+	instant := time.Unix(0, 100)
+	matcher := newTimestampTagFilterMatcher(timestamp.NewTimeRange(instant, instant, true, true), "timestamp", nil)
+	matched, matchErr := matcher.Match([]*modelv1.Tag{{
+		Key: "timestamp",
+		Value: &modelv1.TagValue{Value: &modelv1.TagValue_Timestamp{
+			Timestamp: timestamppb.New(instant),
+		}},
+	}})
+	require.NoError(t, matchErr)
+	require.True(t, matched)
+
+	exclusiveMatcher := newTimestampTagFilterMatcher(timestamp.NewTimeRange(instant, instant, true, false), "timestamp", nil)
+	matched, matchErr = exclusiveMatcher.Match([]*modelv1.Tag{{
+		Key: "timestamp",
+		Value: &modelv1.TagValue{Value: &modelv1.TagValue_Timestamp{
+			Timestamp: timestamppb.New(instant),
+		}},
+	}})
+	require.NoError(t, matchErr)
+	require.False(t, matched)
+}
+
+func TestTimestampTagFilterMatcherDelegatesOnlyForEligibleRows(t *testing.T) {
+	start := time.Unix(0, 100)
+	delegateCalls := 0
+	delegate := &traceTestTagMatcher{match: func(_ []*modelv1.Tag) (bool, error) {
+		delegateCalls++
+		return true, nil
+	}}
+	matcher := newTimestampTagFilterMatcher(timestamp.NewInclusiveTimeRange(start, start.Add(time.Nanosecond)), "timestamp", delegate)
+	for _, testCase := range []struct {
+		name    string
+		nanos   int64
+		matched bool
+	}{
+		{name: "before", nanos: 99, matched: false},
+		{name: "start", nanos: 100, matched: true},
+		{name: "end", nanos: 101, matched: true},
+		{name: "after", nanos: 102, matched: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			matched, matchErr := matcher.Match([]*modelv1.Tag{{
+				Key: "timestamp",
+				Value: &modelv1.TagValue{Value: &modelv1.TagValue_Timestamp{
+					Timestamp: timestamppb.New(time.Unix(0, testCase.nanos)),
+				}},
+			}})
+			require.NoError(t, matchErr)
+			require.Equal(t, testCase.matched, matched)
+		})
+	}
+	require.Equal(t, 2, delegateCalls)
+}
+
+func TestFilterTimestampEntitySeries(t *testing.T) {
+	indexRule := &databasev1.IndexRule{Tags: []string{"service", "timestamp", "duration"}}
+	series := map[common.SeriesID][]*modelv1.TagValue{
+		1: {strTagValue("a"), timestampTagValue(0, 100)},
+		2: {strTagValue("a"), timestampTagValue(0, 200)},
+	}
+	seriesIDs, filterErr := filterTimestampEntitySeries(series, indexRule, "timestamp", timestamp.NewInclusiveTimeRange(time.Unix(0, 100), time.Unix(0, 100)))
+	require.NoError(t, filterErr)
+	require.Equal(t, []common.SeriesID{1}, seriesIDs)
+
+	seriesIDs, filterErr = filterTimestampEntitySeries(series, indexRule, "timestamp", timestamp.NewInclusiveTimeRange(time.Unix(0, 300), time.Unix(0, 300)))
+	require.NoError(t, filterErr)
+	require.Empty(t, seriesIDs)
+
+	emptyRange := timestamp.NewTimeRange(time.Unix(0, 100), time.Unix(0, 100), true, false)
+	seriesIDs, filterErr = filterTimestampEntitySeries(series, indexRule, "timestamp", emptyRange)
+	require.NoError(t, filterErr)
+	require.Empty(t, seriesIDs)
+
+	inconsistentSeries := map[common.SeriesID][]*modelv1.TagValue{1: {strTagValue("a")}}
+	inconsistentRange := timestamp.NewInclusiveTimeRange(time.Unix(0, 0), time.Unix(0, 1))
+	_, filterErr = filterTimestampEntitySeries(inconsistentSeries, indexRule, "timestamp", inconsistentRange)
+	require.Error(t, filterErr)
+}
+
+type traceTestTagMatcher struct {
+	match func([]*modelv1.Tag) (bool, error)
+}
+
+func (tttm *traceTestTagMatcher) Match(tags []*modelv1.Tag) (bool, error) {
+	return tttm.match(tags)
+}
+
+func (tttm *traceTestTagMatcher) GetDecoder() model.TagValueDecoder {
+	return mustDecodeTagValueAndArray
 }

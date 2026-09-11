@@ -374,7 +374,7 @@ func (b *blockCursorBuilder) processWithFilter(req QueryRequest, log *logger.Log
 
 	tags := make([]*modelv1.Tag, 0, len(b.block.tags))
 	decoder := req.TagFilter.GetDecoder()
-	orderedTagNames := b.orderedTagNamesForFilter(req.TagProjection)
+	orderedTagNames := b.orderedTagNamesForFilter(req.TagProjection, req.FilterTagNames)
 
 	for i := 0; i < len(b.block.userKeys); i++ {
 		dataBytes := b.block.data[i]
@@ -441,23 +441,33 @@ func (b *blockCursorBuilder) collectTagsForFilter(
 	return buf
 }
 
-func (b *blockCursorBuilder) orderedTagNamesForFilter(projections []model.TagProjection) []string {
+func (b *blockCursorBuilder) orderedTagNamesForFilter(projections []model.TagProjection, filterTagNames ...[]string) []string {
+	var extraTagNames []string
+	if len(filterTagNames) > 0 {
+		extraTagNames = filterTagNames[0]
+	}
 	// Preserve projection order for reproducible matcher inputs and diagnostics.
 	// Logical matchers resolve values by tag key rather than relying on this order.
 	if len(projections) > 0 {
 		seenTagNames := make(map[string]struct{}, len(b.block.tags))
 		tagNames := make([]string, 0, len(b.block.tags))
+		appendTagName := func(tagName string) {
+			if _, exists := seenTagNames[tagName]; exists {
+				return
+			}
+			if _, exists := b.block.tags[tagName]; !exists {
+				return
+			}
+			tagNames = append(tagNames, tagName)
+			seenTagNames[tagName] = struct{}{}
+		}
 		for _, proj := range projections {
 			for _, tagName := range proj.Names {
-				if _, exists := seenTagNames[tagName]; exists {
-					continue
-				}
-				if _, exists := b.block.tags[tagName]; !exists {
-					continue
-				}
-				tagNames = append(tagNames, tagName)
-				seenTagNames[tagName] = struct{}{}
+				appendTagName(tagName)
 			}
+		}
+		for _, tagName := range extraTagNames {
+			appendTagName(tagName)
 		}
 		return tagNames
 	}

@@ -110,8 +110,15 @@ type WriteRequest struct {
 
 // QueryRequest specifies parameters for a query operation, following StreamQueryOptions pattern.
 type QueryRequest struct {
-	Filter         index.Filter
-	TagFilter      model.TagFilterMatcher
+	Filter    index.Filter
+	TagFilter model.TagFilterMatcher
+	// TimeTagFilter combines exact timestamp eligibility AND TagFilter. It replaces
+	// TagFilter only for partial or unknown timestamp-envelope parts.
+	TimeTagFilter model.TagFilterMatcher
+	// TimeTagName is an internal filter-only column dependency; it is never added
+	// to response projections.
+	TimeTagName    string
+	FilterTagNames []string
 	Order          *index.OrderBy
 	MinKey         *int64
 	MaxKey         *int64
@@ -121,6 +128,10 @@ type QueryRequest struct {
 	SeriesIDs      []common.SeriesID
 	TagProjection  []model.TagProjection
 	MaxBatchSize   int
+	// TimeIncludeStart and TimeIncludeEnd are used only when proving full-part
+	// coverage; exact TimeTagFilter membership remains authoritative.
+	TimeIncludeStart bool
+	TimeIncludeEnd   bool
 }
 
 // ScanProgressFunc is a callback for reporting scan progress.
@@ -369,6 +380,12 @@ func (sqr ScanQueryRequest) Validate() error {
 func (qr *QueryRequest) Reset() {
 	qr.SeriesIDs = nil
 	qr.Filter = nil
+	qr.TagFilter = nil
+	qr.TimeTagFilter = nil
+	qr.TimeTagName = ""
+	qr.TimeIncludeStart = false
+	qr.TimeIncludeEnd = false
+	qr.FilterTagNames = nil
 	qr.Order = nil
 	qr.TagProjection = nil
 	qr.MaxBatchSize = 0
@@ -388,6 +405,12 @@ func (qr *QueryRequest) CopyFrom(other *QueryRequest) {
 	}
 
 	qr.Filter = other.Filter
+	qr.TagFilter = other.TagFilter
+	qr.TimeTagFilter = other.TimeTagFilter
+	qr.TimeTagName = other.TimeTagName
+	qr.TimeIncludeStart = other.TimeIncludeStart
+	qr.TimeIncludeEnd = other.TimeIncludeEnd
+	qr.FilterTagNames = append(qr.FilterTagNames[:0], other.FilterTagNames...)
 	qr.Order = other.Order
 
 	if other.TagProjection != nil {
