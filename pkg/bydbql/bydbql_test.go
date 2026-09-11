@@ -790,6 +790,22 @@ var _ = Describe("Parser", func() {
 					Expect(err).ToNot(BeNil())
 					Expect(grammar).To(BeNil())
 				})
+
+				It("rejects deeply nested WHERE parentheses instead of crashing", func() {
+					nested := "SELECT * FROM STREAM sw IN default WHERE " +
+						strings.Repeat("(", 500000) + "x=1" + strings.Repeat(")", 500000)
+					grammar, err := ParseQuery(nested)
+					Expect(err).ToNot(BeNil())
+					Expect(grammar).To(BeNil())
+				})
+
+				It("still parses WHERE parentheses nested within the accepted limit", func() {
+					nested := "SELECT * FROM STREAM sw IN default WHERE " +
+						strings.Repeat("(", 10) + "x=1" + strings.Repeat(")", 10)
+					grammar, err := ParseQuery(nested)
+					Expect(err).To(BeNil())
+					Expect(grammar).NotTo(BeNil())
+				})
 			})
 		})
 
