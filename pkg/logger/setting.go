@@ -31,7 +31,15 @@ import (
 	"github.com/spf13/pflag"
 )
 
-const rootName = "ROOT"
+const (
+	rootName = "ROOT"
+
+	// Environment variables bound to the --logging-env and --logging-level flags by
+	// pkg/config. They are read directly here because the root logger has to produce
+	// output before the command tree that owns those flags exists.
+	envLoggingEnv   = "BYDB_LOGGING_ENV"
+	envLoggingLevel = "BYDB_LOGGING_LEVEL"
+)
 
 var root = rootLogger{}
 
@@ -53,14 +61,81 @@ func (rl *rootLogger) setDefault() {
 	if rl.done == 0 {
 		defer atomic.StoreUint32(&rl.done, 1)
 		var err error
-		rl.l, err = getLogger(Logging{
-			Env:   "prod",
-			Level: "debug",
-		})
+		rl.l, err = getLogger(defaultLogging())
 		if err != nil {
 			panic(err)
 		}
 	}
+}
+
+// defaultLogging returns the configuration the root logger falls back to until Init runs.
+func defaultLogging() Logging {
+	return earlyLogging(os.Args[1:], os.Getenv)
+}
+
+// earlyLogging resolves the logging configuration from the sources available before the
+// command tree exists, so that the lines emitted while it is built follow the level the
+// operator asked for. Flags win over the environment, the order config.Load applies later.
+// An unusable level is ignored rather than fatal here, because Init reports it with a
+// proper error once it runs.
+func earlyLogging(args []string, getenv func(string) string) Logging {
+	cfg := Logging{Env: "prod", Level: "debug"}
+	// An unset variable and one set to an empty string are the same thing to viper, which
+	// ignores both, so only a non-empty value counts here.
+	if env := getenv(envLoggingEnv); env != "" {
+		cfg.Env = env
+	}
+	if level := getenv(envLoggingLevel); level != "" {
+		cfg.Level = acceptLevel(cfg.Level, level)
+	}
+	// A flag, on the other hand, is applied whenever it appears, empty value included: that is
+	// what pflag reports as changed and what config.Load hands to Init later on.
+	flags := loggingFlagsFromArgs(args)
+	if flags.envSet {
+		cfg.Env = flags.env
+	}
+	if flags.levelSet {
+		cfg.Level = acceptLevel(cfg.Level, flags.level)
+	}
+	return cfg
+}
+
+// acceptLevel returns candidate when zerolog can parse it, and current otherwise. An empty
+// candidate parses to NoLevel, the same value Init would end up with.
+func acceptLevel(current, candidate string) string {
+	if _, err := zerolog.ParseLevel(candidate); err != nil {
+		return current
+	}
+	return candidate
+}
+
+// earlyFlags carries the two logging flags scanned out of a raw command line. Each value
+// comes with whether the flag was given at all, because an explicit empty value is a value:
+// pflag reports it as changed and config.Load then keeps the environment out of the way.
+type earlyFlags struct {
+	env      string
+	level    string
+	envSet   bool
+	levelSet bool
+}
+
+// loggingFlagsFromArgs reads the two logging flags out of a raw argument list. It reuses
+// pflag so the values match what cobra resolves later, and tolerates everything else in
+// the list: the flags of the real command are not declared here, and the subcommand name
+// is just a positional argument. A malformed command line is the real parser's business to
+// report, so whatever was read before the error is kept.
+func loggingFlagsFromArgs(args []string) earlyFlags {
+	var flags earlyFlags
+	fs := pflag.NewFlagSet("early-logging", pflag.ContinueOnError)
+	fs.ParseErrorsAllowlist.UnknownFlags = true
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
+	fs.StringVar(&flags.env, "logging-env", "", "")
+	fs.StringVar(&flags.level, "logging-level", "", "")
+	_ = fs.Parse(args)
+	flags.envSet = fs.Changed("logging-env")
+	flags.levelSet = fs.Changed("logging-level")
+	return flags
 }
 
 func (rl *rootLogger) set(cfg Logging) error {
