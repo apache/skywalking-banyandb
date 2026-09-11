@@ -16,8 +16,10 @@
 package nativeice
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -179,6 +181,171 @@ func TestEncodeServesSortableDocument(t *testing.T) {
 	for valueIndex, want := range wantSortValues {
 		if string(page[0].SortValues[valueIndex]) != want {
 			t.Fatalf("sort value %d = %x, want %x", valueIndex, page[0].SortValues[valueIndex], want)
+		}
+	}
+}
+
+func TestNativeEncodePreservesEscapedSortValue(t *testing.T) {
+	directory := t.TempDir()
+	sortValue := []byte{0x01, 0xff, 0x5c, 0x7f, 0x5c}
+	generation := Generation{
+		SegmentID:  2,
+		SnapshotID: 3,
+		Documents: []EncodeDocument{{
+			Identifier: []byte("doc-1"),
+			Fields: []EncodeField{
+				{Name: "group", Value: sortValue, Sort: true},
+				{Name: "name", Value: []byte("n-a"), Sort: true},
+				{Name: "entity", Value: []byte("e-1"), Sort: true},
+				{Name: "timestamp", Value: []byte("t-1"), Sort: true},
+				{Name: "sha", Value: []byte("sha-1"), Store: true},
+			},
+		}},
+	}
+
+	if encodeErr := Encode(directory, generation); encodeErr != nil {
+		t.Fatal(encodeErr)
+	}
+	reader, openErr := Open(directory)
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	t.Cleanup(func() {
+		if closeErr := reader.Close(); closeErr != nil {
+			t.Error(closeErr)
+		}
+	})
+	page, pageErr := reader.RepairTuplePage(context.Background(), RepairPageRequest{
+		SortFields:   [repairSortFieldCount]string{"group", "name", "entity", "timestamp"},
+		ProjectField: "sha",
+		PageSize:     1,
+	})
+	if pageErr != nil {
+		t.Fatal(pageErr)
+	}
+	if len(page) != 1 {
+		t.Fatalf("page length = %d, want 1", len(page))
+	}
+	if len(page[0].SortValues) != repairSortFieldCount {
+		t.Fatalf("sort value count = %d, want %d", len(page[0].SortValues), repairSortFieldCount)
+	}
+	if !bytes.Equal(page[0].SortValues[0], sortValue) {
+		t.Fatalf("escaped sort value = %x, want %x", page[0].SortValues[0], sortValue)
+	}
+}
+
+func TestNativeEncodeRoundTripsMultipleStoredAndDocValueChunks(t *testing.T) {
+	const (
+		documentCount    = 2100
+		selectedDocument = 1024
+		pageSize         = 173
+	)
+	documents := make([]EncodeDocument, 0, documentCount)
+	for documentIndex := 0; documentIndex < documentCount; documentIndex++ {
+		tagValue := []byte("other")
+		if documentIndex == selectedDocument {
+			tagValue = []byte("needle")
+		}
+		documents = append(documents, EncodeDocument{
+			Identifier: []byte(fmt.Sprintf("doc-%04d", documentIndex)),
+			Fields: []EncodeField{
+				{Name: "payload", Value: []byte(fmt.Sprintf("payload-%04d", documentIndex)), Store: true},
+				{Name: "tag", Value: tagValue, Index: true},
+				{Name: "group", Value: []byte("g"), Sort: true},
+				{Name: "name", Value: []byte(fmt.Sprintf("n-%04d", documentIndex)), Sort: true},
+				{Name: "entity", Value: []byte("e"), Sort: true},
+				{Name: "timestamp", Value: []byte("t"), Sort: true},
+			},
+		})
+	}
+
+	directory := t.TempDir()
+	generation := Generation{SegmentID: 2, SnapshotID: 3, Documents: documents}
+	if encodeErr := Encode(directory, generation); encodeErr != nil {
+		t.Fatal(encodeErr)
+	}
+	reader, openErr := Open(directory)
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	t.Cleanup(func() {
+		if closeErr := reader.Close(); closeErr != nil {
+			t.Error(closeErr)
+		}
+	})
+
+	var storedFields []string
+	walkErr := reader.VisitLiveDocuments(context.Background(), func(document StoredDocument) error {
+		return document.VisitStoredFields(func(name string, value []byte) bool {
+			storedFields = append(storedFields, name+"="+string(value))
+			return true
+		})
+	})
+	if walkErr != nil {
+		t.Fatal(walkErr)
+	}
+	if len(storedFields) != documentCount*2 {
+		t.Fatalf("stored field count = %d, want %d", len(storedFields), documentCount*2)
+	}
+	for documentIndex := 0; documentIndex < documentCount; documentIndex++ {
+		wantIdentifier := fmt.Sprintf("_id=doc-%04d", documentIndex)
+		if storedFields[documentIndex*2] != wantIdentifier {
+			t.Fatalf("stored identifier at document %d = %q, want %q", documentIndex, storedFields[documentIndex*2], wantIdentifier)
+		}
+		wantPayload := fmt.Sprintf("payload=payload-%04d", documentIndex)
+		if storedFields[documentIndex*2+1] != wantPayload {
+			t.Fatalf("stored payload at document %d = %q, want %q", documentIndex, storedFields[documentIndex*2+1], wantPayload)
+		}
+	}
+
+	var selected []string
+	selectionErr := reader.VisitSelectedDocuments(context.Background(), "tag", [][]byte{[]byte("needle")}, func(document StoredDocument) error {
+		return document.VisitStoredFields(func(name string, value []byte) bool {
+			if name == identifierField {
+				selected = append(selected, string(value))
+			}
+			return true
+		})
+	})
+	if selectionErr != nil {
+		t.Fatal(selectionErr)
+	}
+	wantSelected := fmt.Sprintf("doc-%04d", selectedDocument)
+	if len(selected) != 1 || selected[0] != wantSelected {
+		t.Fatalf("selected documents = %v, want [%s]", selected, wantSelected)
+	}
+
+	var after *RepairCursor
+	repaired := make([]string, 0, documentCount)
+	for {
+		page, pageErr := reader.RepairTuplePage(context.Background(), RepairPageRequest{
+			After:        after,
+			SortFields:   [repairSortFieldCount]string{"group", "name", "entity", "timestamp"},
+			ProjectField: "payload",
+			PageSize:     pageSize,
+		})
+		if pageErr != nil {
+			t.Fatal(pageErr)
+		}
+		if len(page) == 0 {
+			break
+		}
+		for _, row := range page {
+			repaired = append(repaired, string(row.Value))
+		}
+		if len(repaired) > documentCount {
+			t.Fatalf("repair returned %d rows, want at most %d", len(repaired), documentCount)
+		}
+		nextCursor := page[len(page)-1].Cursor
+		after = &nextCursor
+	}
+	if len(repaired) != documentCount {
+		t.Fatalf("repair row count = %d, want %d", len(repaired), documentCount)
+	}
+	for documentIndex, payload := range repaired {
+		wantPayload := fmt.Sprintf("payload-%04d", documentIndex)
+		if payload != wantPayload {
+			t.Fatalf("repair payload at row %d = %q, want %q", documentIndex, payload, wantPayload)
 		}
 	}
 }
