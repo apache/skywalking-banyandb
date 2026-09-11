@@ -14,6 +14,7 @@ Release Notes.
 
 - Honor the configured logging level in native observability metrics instead of retaining the pre-initialization debug logger.
 - Fix FODC proxy `/metrics` returning partial data or timing out when concurrent scrapes overlap.
+- Enforce trace query time ranges independently of the sort index, skipping row timestamp checks when the query fully covers a part.
 
 ### Document
 
@@ -23,6 +24,7 @@ Release Notes.
 ### Chores
 
 - Bump canopy and mcp npm dependencies to clear Dependabot CVEs (fast-uri, fastify, qs).
+- Bump mcp/canopy npm deps (hono, js-yaml, vitest 5) to clear Dependabot CVEs.
 
 ## 0.11.1
 

@@ -19,6 +19,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -35,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
@@ -69,12 +71,12 @@ func TestBuildTree(t *testing.T) {
 			name: "single property",
 			existingDoc: func(s *shard) ([]index.Document, error) {
 				return buildPropertyDocuments(s,
-					propertyBuilder{id: "test1"},
+					propertyBuilder{id: "test1", version: 1},
 				)
 			},
 			statusVerify: func(t *testing.T, s *shard, data *repairData) {
 				basicStatusVerify(t, data, defaultGroupName, 1)
-				verifyContainsProperty(t, s, data, defaultGroupName, propertyBuilder{id: "test1"})
+				verifyContainsProperty(t, s, data, defaultGroupName, propertyBuilder{id: "test1", version: 1})
 			},
 		},
 		{
@@ -99,26 +101,26 @@ func TestBuildTree(t *testing.T) {
 					propertyBuilder{id: "test1", version: 4, value: 2},
 					propertyBuilder{id: "test2", version: 1, value: 1},
 					propertyBuilder{id: "test2", version: 2, value: 2},
-					propertyBuilder{id: "test3"},
+					propertyBuilder{id: "test3", version: 1},
 				)
 			},
 			statusVerify: func(t *testing.T, s *shard, data *repairData) {
 				basicStatusVerify(t, data, defaultGroupName, 3)
 				verifyContainsProperty(t, s, data, defaultGroupName, propertyBuilder{id: "test1", version: 4, value: 2})
 				verifyContainsProperty(t, s, data, defaultGroupName, propertyBuilder{id: "test2", version: 2, value: 2})
-				verifyContainsProperty(t, s, data, defaultGroupName, propertyBuilder{id: "test3"})
+				verifyContainsProperty(t, s, data, defaultGroupName, propertyBuilder{id: "test3", version: 1})
 			},
 		},
 		{
 			name: "build multiple times",
 			existingDoc: func(s *shard) ([]index.Document, error) {
 				return buildPropertyDocuments(s,
-					propertyBuilder{id: "test1"},
+					propertyBuilder{id: "test1", version: 1},
 				)
 			},
 			statusVerify: func(t *testing.T, s *shard, data *repairData) {
 				basicStatusVerify(t, data, defaultGroupName, 1)
-				verifyContainsProperty(t, s, data, defaultGroupName, propertyBuilder{id: "test1"})
+				verifyContainsProperty(t, s, data, defaultGroupName, propertyBuilder{id: "test1", version: 1})
 			},
 			nextStatusVerify: func(t *testing.T, _ *shard, before, after *repairData) {
 				basicStatusVerify(t, before, defaultGroupName, 1)
@@ -133,23 +135,23 @@ func TestBuildTree(t *testing.T) {
 			name: "build multiple times with new properties",
 			existingDoc: func(s *shard) ([]index.Document, error) {
 				return buildPropertyDocuments(s,
-					propertyBuilder{id: "test1"},
+					propertyBuilder{id: "test1", version: 1},
 				)
 			},
 			statusVerify: func(t *testing.T, s *shard, data *repairData) {
 				basicStatusVerify(t, data, defaultGroupName, 1)
-				verifyContainsProperty(t, s, data, defaultGroupName, propertyBuilder{id: "test1"})
+				verifyContainsProperty(t, s, data, defaultGroupName, propertyBuilder{id: "test1", version: 1})
 			},
 			afterFirstBuild: func(s *shard) ([]index.Document, error) {
 				return buildPropertyDocuments(s,
-					propertyBuilder{id: "test2"},
+					propertyBuilder{id: "test2", version: 1},
 				)
 			},
 			nextStatusVerify: func(t *testing.T, s *shard, before, after *repairData) {
 				basicStatusVerify(t, after, defaultGroupName, 2)
 				verifyContainsProperty(t, s, after, defaultGroupName,
-					propertyBuilder{id: "test1"},
-					propertyBuilder{id: "test2"},
+					propertyBuilder{id: "test1", version: 1},
+					propertyBuilder{id: "test2", version: 1},
 				)
 				if before.LastSnpID == after.LastSnpID {
 					t.Fatalf("expected last snapshot ID to be incremented by 1, got before: %d, after: %d",
@@ -318,7 +320,7 @@ func TestDocumentUpdatesNotify(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	p1 := buildProperties(propertyBuilder{id: "1"})
+	p1 := buildProperties(propertyBuilder{id: "1", version: 1})
 	err = newShard.update(GetPropertyID(p1), p1)
 	if err != nil {
 		t.Fatalf("failed to update property: %v", err)
@@ -652,4 +654,22 @@ func copyDirRecursive(srcDir, dstDir string) error {
 
 		return copyFile(path, dstPath)
 	})
+}
+
+// TestRepairRejectsZeroRevision verifies that a missing timestamp doc value is
+// rejected without publishing a repair tree or generation marker.
+func TestRepairRejectsZeroRevision(t *testing.T) {
+	shardPath := t.TempDir()
+	nidx01ePublishRevision(t, shardPath, "group", "name", "entity", 0, "sha-zero")
+	repairState, _ := nidx01eRepair(t, shardPath, nil)
+	buildErr := repairState.buildStatus(context.Background(), shardPath)
+	if !errors.Is(buildErr, inverted.ErrCorruptIndex) {
+		t.Fatalf("expected corrupt repair input for a zero revision, got %v", buildErr)
+	}
+	for _, unpublishedPath := range []string{repairState.statePath, repairState.composeTreeFilePath} {
+		_, statErr := os.Stat(unpublishedPath)
+		if !os.IsNotExist(statErr) {
+			t.Fatalf("failed repair must not publish %s: %v", unpublishedPath, statErr)
+		}
+	}
 }

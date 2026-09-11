@@ -27,9 +27,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 // writeTestDataWithTimeRange writes test data with optional min/max timestamps (back-compat: nil means no timestamps).
@@ -395,4 +397,142 @@ func TestMerge_TimestampPropagation(t *testing.T) {
 		assert.Equal(t, int64(100), *m.MinTimestamp)
 		assert.Equal(t, int64(300), *m.MaxTimestamp)
 	})
+}
+
+func TestRequestForPartUsesTimestampFilterOnlyWhenNeeded(t *testing.T) {
+	minTimestamp := int64(100)
+	maxTimestamp := int64(200)
+	timeFilter := &mockTagFilterMatcher{}
+	req := QueryRequest{
+		MinTimestamp:  &minTimestamp,
+		MaxTimestamp:  &maxTimestamp,
+		TagFilter:     nil,
+		TimeTagFilter: timeFilter,
+		TimeTagName:   "timestamp",
+	}
+	baseTags := map[string]struct{}{"service": {}}
+
+	coveredMin, coveredMax := int64(120), int64(180)
+	coveredPart := &part{partMetadata: &partMetadata{MinTimestamp: &coveredMin, MaxTimestamp: &coveredMax}}
+	coveredRequest, coveredTags := requestForPart(req, baseTags, coveredPart)
+	assert.Nil(t, coveredRequest.TagFilter)
+	assert.Equal(t, baseTags, coveredTags)
+
+	partialMin, partialMax := int64(80), int64(180)
+	partialPart := &part{partMetadata: &partMetadata{MinTimestamp: &partialMin, MaxTimestamp: &partialMax}}
+	partialRequest, partialTags := requestForPart(req, baseTags, partialPart)
+	assert.Same(t, timeFilter, partialRequest.TagFilter)
+	assert.Contains(t, partialTags, "timestamp")
+	assert.NotContains(t, baseTags, "timestamp")
+
+	unknownPart := &part{partMetadata: &partMetadata{}}
+	unknownRequest, _ := requestForPart(req, baseTags, unknownPart)
+	assert.Same(t, timeFilter, unknownRequest.TagFilter)
+}
+
+func TestTimestampFilterPartVariantsPreserveBaseFilterAndNilProjection(t *testing.T) {
+	sidx := createTestSIDX(t)
+	defer func() {
+		assert.NoError(t, sidx.Close())
+	}()
+
+	partMin, partMax := int64(0), int64(20)
+	requests := []WriteRequest{createTestWriteRequest(1, 1, "trace", Tag{Name: "other", Value: []byte("present"), ValueType: pbv1.ValueTypeStr})}
+	writeTestDataWithTimeRange(t, sidx, requests, 1, 1, &partMin, &partMax)
+	waitForIntroducerLoop()
+
+	queryMin, queryMax := int64(0), int64(20)
+	baseFilter := &mockTagFilterMatcher{decoder: testTagValueDecoder, matchFunc: func(_ []*modelv1.Tag) (bool, error) { return false, nil }}
+	coveredResponses, queryErr := sidx.QuerySync(context.Background(), QueryRequest{
+		SeriesIDs:        []common.SeriesID{1},
+		TagFilter:        baseFilter,
+		TimeTagFilter:    &mockTagFilterMatcher{},
+		TimeTagName:      "timestamp",
+		MinTimestamp:     &queryMin,
+		MaxTimestamp:     &queryMax,
+		TimeIncludeStart: true,
+		TimeIncludeEnd:   true,
+	})
+	require.NoError(t, queryErr)
+	require.Empty(t, coveredResponses, "coverage bypass must retain the original predicate")
+
+	// Widening the conservative envelope makes the same row partial. A nil projection
+	// retains its historic all-tags behavior so the time matcher can still inspect
+	// non-projected delegate inputs.
+	partialMin := int64(-1)
+	memPart, convertErr := sidx.ConvertToMemPart(requests, 2, &partialMin, &partMax)
+	require.NoError(t, convertErr)
+	sidx.IntroduceMemPart(2, memPart)
+	waitForIntroducerLoop()
+	seenOtherTag := false
+	partialResponses, queryErr := sidx.QuerySync(context.Background(), QueryRequest{
+		SeriesIDs: []common.SeriesID{1},
+		TimeTagFilter: &mockTagFilterMatcher{decoder: testTagValueDecoder, matchFunc: func(tags []*modelv1.Tag) (bool, error) {
+			for _, tag := range tags {
+				if tag.GetKey() == "other" {
+					seenOtherTag = true
+				}
+			}
+			return true, nil
+		}},
+		TimeTagName:      "timestamp",
+		MinTimestamp:     &queryMin,
+		MaxTimestamp:     &queryMax,
+		TimeIncludeStart: true,
+		TimeIncludeEnd:   true,
+	})
+	require.NoError(t, queryErr)
+	require.NotEmpty(t, partialResponses)
+	require.True(t, seenOtherTag)
+}
+
+func TestMergeUnknownTimestampEnvelopeCannotSkipOrBypassFiltering(t *testing.T) {
+	instance := createTestSIDX(t)
+	t.Cleanup(func() {
+		assert.NoError(t, instance.Close())
+	})
+	knownMin, knownMax := int64(100), int64(200)
+	writeTestDataWithTimeRange(t, instance, []WriteRequest{createTestWriteRequest(1, 1, "known")}, 1, 1, &knownMin, &knownMax)
+	writeTestDataWithTimeRange(t, instance, []WriteRequest{createTestWriteRequest(1, 2, "unknown")}, 1, 2, nil, nil)
+	partIDs := map[uint64]struct{}{1: {}, 2: {}}
+	flushIntroduction, flushErr := instance.Flush(partIDs)
+	require.NoError(t, flushErr)
+	require.NotNil(t, flushIntroduction)
+	instance.IntroduceFlushed(flushIntroduction)
+	flushIntroduction.Release()
+	mergeIntroduction, mergeErr := instance.Merge(nil, partIDs, 10, nil)
+	require.NoError(t, mergeErr)
+	require.NotNil(t, mergeIntroduction)
+	instance.IntroduceMerged(mergeIntroduction)()
+
+	queryMin, queryMax := int64(300), int64(400)
+	request := QueryRequest{
+		SeriesIDs:    []common.SeriesID{1},
+		MinTimestamp: &queryMin,
+		MaxTimestamp: &queryMax,
+	}
+	responses, queryErr := instance.QuerySync(context.Background(), request)
+	require.NoError(t, queryErr)
+	var values []string
+	for _, response := range responses {
+		for _, value := range response.Data {
+			values = append(values, string(value))
+		}
+	}
+	require.ElementsMatch(t, []string{"known", "unknown"}, values, "unknown merged bounds cannot prove disjointness")
+
+	request.MinTimestamp, request.MaxTimestamp = &knownMin, &knownMax
+	request.TimeIncludeStart, request.TimeIncludeEnd = true, true
+	filterCalls := 0
+	request.TimeTagFilter = &mockTagFilterMatcher{
+		decoder: testTagValueDecoder,
+		matchFunc: func(_ []*modelv1.Tag) (bool, error) {
+			filterCalls++
+			return false, nil
+		},
+	}
+	responses, queryErr = instance.QuerySync(context.Background(), request)
+	require.NoError(t, queryErr)
+	require.Empty(t, responses)
+	require.Equal(t, 2, filterCalls, "known input bounds cannot prove coverage of the unknown input")
 }

@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"math"
 	"sort"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
@@ -38,6 +40,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	vtrace "github.com/apache/skywalking-banyandb/pkg/query/vectorized/trace"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var traceQueryResultTracker = pool.RegisterTracker("trace.queryResult")
@@ -48,6 +51,57 @@ const (
 )
 
 var nilResult = model.TraceQueryResult(nil)
+
+type timestampTagFilterMatcher struct {
+	delegate  model.TagFilterMatcher
+	decoder   model.TagValueDecoder
+	timeRange timestamp.TimeRange
+	tagName   string
+	empty     bool
+}
+
+func newTimestampTagFilterMatcher(timeRange timestamp.TimeRange, tagName string, delegate model.TagFilterMatcher) model.TagFilterMatcher {
+	matcher := &timestampTagFilterMatcher{
+		timeRange: timeRange,
+		tagName:   tagName,
+		delegate:  delegate,
+		decoder:   mustDecodeTagValueAndArray,
+		empty:     traceTimeRangeEmpty(timeRange),
+	}
+	if delegate != nil && delegate.GetDecoder() != nil {
+		matcher.decoder = delegate.GetDecoder()
+	}
+	return matcher
+}
+
+func (ttfm *timestampTagFilterMatcher) Match(tags []*modelv1.Tag) (bool, error) {
+	if ttfm.empty {
+		return false, nil
+	}
+	for _, tag := range tags {
+		if tag.GetKey() != ttfm.tagName {
+			continue
+		}
+		timestampValue := tag.GetValue().GetTimestamp()
+		if timestampValue == nil || !ttfm.timeRange.Contains(timestampValue.AsTime().UnixNano()) {
+			return false, nil
+		}
+		if ttfm.delegate == nil {
+			return true, nil
+		}
+		return ttfm.delegate.Match(tags)
+	}
+	return false, nil
+}
+
+func (ttfm *timestampTagFilterMatcher) GetDecoder() model.TagValueDecoder {
+	return ttfm.decoder
+}
+
+func traceTimeRangeEmpty(timeRange timestamp.TimeRange) bool {
+	return timeRange.Start.After(timeRange.End) ||
+		timeRange.Start.Equal(timeRange.End) && (!timeRange.IncludeStart || !timeRange.IncludeEnd)
+}
 
 type queryOptions struct {
 	seriesToEntity map[common.SeriesID][]*modelv1.TagValue
@@ -128,7 +182,12 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 
 	tables := collectTables(segments)
 
-	sidxInstances, sidxQueryRequest, useSIDXStreaming := t.prepareSIDXStreaming(storageTQO, qo, tables)
+	sidxInstances, sidxQueryRequest, useSIDXStreaming, prepareErr := t.prepareSIDXStreaming(storageTQO, qo, tables)
+	if prepareErr != nil {
+		// Assign the outer error so the deferred result cleanup releases segments.
+		err = prepareErr
+		return nil, err
+	}
 	if len(qo.traceIDs) == 0 && !useSIDXStreaming {
 		result.Release()
 		return nilResult, nil
@@ -249,9 +308,12 @@ func (t *trace) prepareSIDXStreaming(
 	tqo model.TraceQueryOptions,
 	qo queryOptions,
 	tables []*tsTable,
-) ([]sidx.SIDX, sidx.QueryRequest, bool) {
+) ([]sidx.SIDX, sidx.QueryRequest, bool, error) {
 	if len(tqo.TraceIDs) > 0 || tqo.Order == nil {
-		return nil, sidx.QueryRequest{}, false
+		return nil, sidx.QueryRequest{}, false, nil
+	}
+	if traceTimeRangeEmpty(*tqo.TimeRange) {
+		return nil, sidx.QueryRequest{}, false, nil
 	}
 
 	sidxName := "default"
@@ -266,32 +328,167 @@ func (t *trace) prepareSIDXStreaming(
 		}
 	}
 	if len(sidxInstances) == 0 {
-		return nil, sidx.QueryRequest{}, false
+		return nil, sidx.QueryRequest{}, false, nil
 	}
 
+	selectedRule := t.selectedIndexRule(sidxName)
+	if selectedRule == nil && sidxName != "default" {
+		return nil, sidx.QueryRequest{}, false, fmt.Errorf("selected trace index %q has no schema rule", sidxName)
+	}
+	timestampRepresentation := t.selectedIndexTimestampRepresentation(sidxName)
 	seriesIDs := make([]common.SeriesID, 0, len(qo.seriesToEntity))
-	for seriesID := range qo.seriesToEntity {
-		seriesIDs = append(seriesIDs, seriesID)
-	}
-	if len(seriesIDs) == 0 {
-		seriesIDs = []common.SeriesID{1}
+	if timestampRepresentation == timestampEntity {
+		var filterErr error
+		seriesIDs, filterErr = filterTimestampEntitySeries(qo.seriesToEntity, selectedRule, t.schema.GetTimestampTagName(), *tqo.TimeRange)
+		if filterErr != nil {
+			return nil, sidx.QueryRequest{}, false, filterErr
+		}
+		if len(seriesIDs) == 0 {
+			return nil, sidx.QueryRequest{}, false, nil
+		}
+	} else {
+		for seriesID := range qo.seriesToEntity {
+			seriesIDs = append(seriesIDs, seriesID)
+		}
+		if len(seriesIDs) == 0 {
+			seriesIDs = []common.SeriesID{1}
+		}
 	}
 
+	minTimestamp := tqo.TimeRange.Start.UnixNano()
+	maxTimestamp := tqo.TimeRange.End.UnixNano()
+	minKey, maxKey := tqo.MinVal, tqo.MaxVal
+	if timestampRepresentation == timestampOrderingKey {
+		if !tqo.TimeRange.IncludeStart {
+			if minTimestamp == math.MaxInt64 {
+				return nil, sidx.QueryRequest{}, false, nil
+			}
+			minTimestamp++
+		}
+		if !tqo.TimeRange.IncludeEnd {
+			if maxTimestamp == math.MinInt64 {
+				return nil, sidx.QueryRequest{}, false, nil
+			}
+			maxTimestamp--
+		}
+		if minTimestamp > maxTimestamp {
+			return nil, sidx.QueryRequest{}, false, nil
+		}
+		if minKey < minTimestamp {
+			minKey = minTimestamp
+		}
+		if maxKey > maxTimestamp {
+			maxKey = maxTimestamp
+		}
+		if minKey > maxKey {
+			return nil, sidx.QueryRequest{}, false, nil
+		}
+	}
 	req := sidx.QueryRequest{
-		Filter:         tqo.SkippingFilter,
-		TagFilter:      tqo.TagFilter,
-		Order:          tqo.Order,
-		MaxBatchSize:   tqo.MaxTraceSize,
-		MinKey:         &tqo.MinVal,
-		MaxKey:         &tqo.MaxVal,
-		SeriesIDs:      seriesIDs,
-		SchemaTagTypes: qo.schemaTagTypes,
+		Filter:           tqo.SkippingFilter,
+		TagFilter:        tqo.TagFilter,
+		Order:            tqo.Order,
+		MaxBatchSize:     tqo.MaxTraceSize,
+		MinKey:           &minKey,
+		MaxKey:           &maxKey,
+		MinTimestamp:     &minTimestamp,
+		MaxTimestamp:     &maxTimestamp,
+		TimeIncludeStart: tqo.TimeRange.IncludeStart,
+		TimeIncludeEnd:   tqo.TimeRange.IncludeEnd,
+		SeriesIDs:        seriesIDs,
+		SchemaTagTypes:   qo.schemaTagTypes,
+	}
+	if timestampRepresentation == timestampStoredTag {
+		req.TimeTagName = t.schema.GetTimestampTagName()
+		req.TimeTagFilter = newTimestampTagFilterMatcher(*tqo.TimeRange, req.TimeTagName, tqo.TagFilter)
 	}
 	if tqo.TagProjection != nil {
 		req.TagProjection = []model.TagProjection{*tqo.TagProjection}
 	}
 
-	return sidxInstances, req, true
+	return sidxInstances, req, true, nil
+}
+
+// selectedIndexRule returns the configured rule for an SIDX name.
+func (t *trace) selectedIndexRule(sidxName string) *databasev1.IndexRule {
+	for _, indexRule := range t.GetIndexRules() {
+		if indexRule.GetMetadata().GetName() == sidxName {
+			return indexRule
+		}
+	}
+	return nil
+}
+
+// filterTimestampEntitySeries applies the time range to timestamp values carried
+// by the selected index's series prefix. The logical planner derives the same
+// selected-rule layout before resolving these series.
+func filterTimestampEntitySeries(seriesToEntity map[common.SeriesID][]*modelv1.TagValue,
+	indexRule *databasev1.IndexRule, timestampTagName string, timeRange timestamp.TimeRange,
+) ([]common.SeriesID, error) {
+	if indexRule == nil {
+		return nil, fmt.Errorf("timestamp entity index rule is missing")
+	}
+	if traceTimeRangeEmpty(timeRange) {
+		return nil, nil
+	}
+	timestampPosition := -1
+	for index, tagName := range indexRule.GetTags()[:len(indexRule.GetTags())-1] {
+		if tagName == "" {
+			return nil, fmt.Errorf("timestamp entity index has an empty tag name")
+		}
+		if tagName == timestampTagName {
+			timestampPosition = index
+			break
+		}
+	}
+	if timestampPosition < 0 {
+		return nil, fmt.Errorf("timestamp entity is absent from the selected index prefix")
+	}
+	seriesIDs := make([]common.SeriesID, 0, len(seriesToEntity))
+	for seriesID, entityValues := range seriesToEntity {
+		if len(entityValues) != len(indexRule.GetTags())-1 {
+			return nil, fmt.Errorf("series %d has %d entities, selected index requires %d", seriesID, len(entityValues), len(indexRule.GetTags())-1)
+		}
+		timestampValue := entityValues[timestampPosition].GetTimestamp()
+		if timestampValue != nil && timeRange.Contains(timestampValue.AsTime().UnixNano()) {
+			seriesIDs = append(seriesIDs, seriesID)
+		}
+	}
+	return seriesIDs, nil
+}
+
+type timestampIndexRepresentation uint8
+
+const (
+	timestampOrderingKey timestampIndexRepresentation = iota
+	timestampStoredTag
+	timestampEntity
+)
+
+// selectedIndexTimestampRepresentation identifies where the selected SIDX keeps
+// timestamp. Every index-rule tag is removed from stored tags; only its final tag
+// is the ordering key.
+func (t *trace) selectedIndexTimestampRepresentation(sidxName string) timestampIndexRepresentation {
+	timestampTagName := t.schema.GetTimestampTagName()
+	for _, indexRule := range t.GetIndexRules() {
+		if indexRule.GetMetadata().GetName() != sidxName {
+			continue
+		}
+		tags := indexRule.GetTags()
+		for idx, tagName := range tags {
+			if tagName != timestampTagName {
+				continue
+			}
+			if idx == len(tags)-1 {
+				return timestampOrderingKey
+			}
+			return timestampEntity
+		}
+		return timestampStoredTag
+	}
+	// A default index is timestamp ordered by the logical planner. Unknown named
+	// indexes must not infer a stored timestamp tag and silently filter all rows.
+	return timestampOrderingKey
 }
 
 type queryResult struct {
