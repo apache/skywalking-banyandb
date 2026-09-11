@@ -245,6 +245,7 @@ func parseTraceTags(criteria *tracev1.QueryRequest, metadata *commonv1.Metadata,
 		traceIDTagName:   traceIDTagName,
 		spanIDTagName:    spanIDTagName,
 		orderByTag:       orderByTag,
+		indexRuleName:    criteria.GetOrderBy().GetIndexRuleName(),
 		timestampTagName: timestampTagName,
 		groupIndex:       groupIndex,
 	}
