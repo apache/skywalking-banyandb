@@ -33,6 +33,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/accesslog"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -64,6 +65,7 @@ type streamService struct {
 	*discoveryService
 	l               *logger.Logger
 	metrics         *metrics
+	queryBudget     *protector.QueryBudget
 	writeTimeout    time.Duration
 	maxWaitDuration time.Duration
 }
@@ -354,6 +356,27 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 var emptyStreamQueryResponse = &streamv1.QueryResponse{Elements: make([]*streamv1.Element, 0)}
 
 func (s *streamService) Query(ctx context.Context, req *streamv1.QueryRequest) (resp *streamv1.QueryResponse, err error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "query request is nil")
+	}
+	ctx, release, admissionErr := admitQuery(ctx, s.queryBudget, req.GetLimit(), req.GetOffset(), 20)
+	if admissionErr != nil {
+		return nil, admissionErr
+	}
+	defer release()
+	defer func() {
+		if err == nil {
+			err = query.ChargeResponse(ctx, resp)
+			if err != nil {
+				resp = nil
+			}
+		}
+		err = queryStatus(err)
+	}()
+	return s.query(ctx, req)
+}
+
+func (s *streamService) query(ctx context.Context, req *streamv1.QueryRequest) (resp *streamv1.QueryResponse, err error) {
 	for _, g := range req.Groups {
 		if acquireErr := s.groupRepo.acquireRequest(g); acquireErr != nil {
 			return nil, status.Errorf(codes.FailedPrecondition, "group %s is pending deletion", g)

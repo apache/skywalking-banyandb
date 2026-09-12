@@ -13,6 +13,10 @@ Release Notes.
 
 - Honor the configured logging level in native observability metrics instead of retaining the pre-initialization debug logger.
 - Fix FODC proxy `/metrics` returning partial data or timing out when concurrent scrapes overlap.
+- Bound Property, Stream, and Trace query allocations with shared memory admission and capacity hints so oversized limit/offset windows cannot force huge result buffers.
+- Preserve list-all / max-limit queries (`limit=MaxUint32` or OAP `Integer.MAX_VALUE`) with incremental scan admission and result-count accounting, without over-charging Property source payloads against the liaison fallback pool.
+- Register the memory protector on the liaison role so query admission uses the cgroup-backed pool instead of the 64MiB fallback.
+- Bound Cluster and Rover e2e BanyanDB memory so cgroup limits enable the query budget under resource-constrained environments.
 - Enforce trace query time ranges independently of the sort index, skipping row timestamp checks when the query fully covers a part.
 - Retry property schema registry initialization indefinitely, logging an error every 10 attempts.
 

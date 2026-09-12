@@ -40,6 +40,8 @@ var (
 
 var propertyEntries = []any{
 	g.Entry("all", helpers.Args{Input: "all"}),
+	g.Entry("all with large signed limit", helpers.Args{Input: "all_max_int", Want: "all"}),
+	g.Entry("all with large unsigned limit", helpers.Args{Input: "all_max_uint", Want: "all"}),
 	g.Entry("limit", helpers.Args{Input: "limit"}),
 	g.Entry("query by criteria", helpers.Args{Input: "query_by_criteria"}),
 	g.Entry("query by criteria with bound parameters", helpers.Args{Input: "params_bind", Want: "query_by_criteria"}),

@@ -167,6 +167,7 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		discoveryService: newDiscoveryService(schema.KindStream, schemaRegistry, nr.StreamLiaisonNodeRegistry, gr),
 		pipeline:         tir1Client,
 		broadcaster:      broadcaster,
+		queryBudget:      protector.QueryBudgetFor(protectorService),
 	}
 	measureSVC := &measureService{
 		discoveryService: newDiscoveryServiceWithEntityRepo(schema.KindMeasure, schemaRegistry, nr.MeasureLiaisonNodeRegistry, gr, er),
@@ -177,12 +178,14 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		discoveryService: newDiscoveryService(schema.KindTrace, schemaRegistry, nr.TraceLiaisonNodeRegistry, gr),
 		pipeline:         tir1Client,
 		broadcaster:      broadcaster,
+		queryBudget:      protector.QueryBudgetFor(protectorService),
 	}
 	propertyService := &propertyServer{
 		schemaRegistry:   schemaRegistry,
 		pipeline:         tir2Client,
 		nodeRegistry:     nr.PropertyNodeRegistry,
 		discoveryService: newDiscoveryService(schema.KindProperty, schemaRegistry, nr.PropertyNodeRegistry, gr),
+		queryBudget:      protector.QueryBudgetFor(protectorService),
 	}
 	bydbQLSVC := &bydbQLService{
 		repo:           schemaRegistry,
@@ -612,6 +615,7 @@ func (s *server) Serve() run.StopNotify {
 	}
 
 	opts = append(opts, grpclib.MaxRecvMsgSize(int(s.maxRecvMsgSize)),
+		grpclib.StatsHandler(queryAdmissionStatsHandler{}),
 		grpclib.ChainUnaryInterceptor(unaryChain...),
 		grpclib.ChainStreamInterceptor(streamChain...),
 	)

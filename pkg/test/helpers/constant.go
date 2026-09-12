@@ -22,6 +22,7 @@ import (
 
 	"github.com/onsi/gomega"
 	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -74,6 +75,7 @@ type Args struct {
 	Stages          []string
 	Offset          time.Duration
 	Duration        time.Duration
+	WantErrCode     codes.Code
 	WantEmpty       bool
 	WantErr         bool
 	DisOrder        bool
