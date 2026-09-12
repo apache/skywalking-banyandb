@@ -91,36 +91,36 @@ var _ = g.Describe("Native self-observability metrics in _monitoring group", fun
 
 	g.It("serves dashboard-shaped queries with well-formed label values", func() {
 		gm.Eventually(func() error {
-			if _, err := QueryObservabilityMeasure("up_time"); err != nil {
-				return err
+			if _, upTimeErr := QueryObservabilityMeasure("up_time"); upTimeErr != nil {
+				return upTimeErr
 			}
-			cpuPoints, err := QueryObservabilityMeasure("cpu_state", "kind")
-			if err != nil {
-				return err
+			cpuPoints, cpuErr := QueryObservabilityMeasure("cpu_state", "kind")
+			if cpuErr != nil {
+				return cpuErr
 			}
-			if err := requireLabeledSeries(cpuPoints, "kind", cpuStateKinds, true); err != nil {
-				return err
+			if labelErr := requireLabeledSeries(cpuPoints, "kind", cpuStateKinds, true); labelErr != nil {
+				return labelErr
 			}
-			memoryPoints, err := QueryObservabilityMeasure("memory_state", "kind")
-			if err != nil {
-				return err
+			memoryPoints, memoryErr := QueryObservabilityMeasure("memory_state", "kind")
+			if memoryErr != nil {
+				return memoryErr
 			}
-			if err := requireLabeledSeries(memoryPoints, "kind", memoryStateKinds, true); err != nil {
-				return err
+			if labelErr := requireLabeledSeries(memoryPoints, "kind", memoryStateKinds, true); labelErr != nil {
+				return labelErr
 			}
-			diskPoints, err := QueryObservabilityMeasure("disk", "path", "kind")
-			if err != nil {
-				return err
+			diskPoints, diskErr := QueryObservabilityMeasure("disk", "path", "kind")
+			if diskErr != nil {
+				return diskErr
 			}
-			if err := requireLabeledSeries(diskPoints, "kind", diskStateKinds, false); err != nil {
-				return err
+			if labelErr := requireLabeledSeries(diskPoints, "kind", diskStateKinds, false); labelErr != nil {
+				return labelErr
 			}
-			if _, err := QueryObservabilityMeasure("cpu_num"); err != nil {
-				return err
+			if _, cpuNumErr := QueryObservabilityMeasure("cpu_num"); cpuNumErr != nil {
+				return cpuNumErr
 			}
 			// net_state may be empty when the host has no eth*/en* interfaces; schema+query must still succeed.
-			if _, err := QueryObservabilityMeasure("net_state", "kind", "name"); err != nil {
-				return err
+			if _, netErr := QueryObservabilityMeasure("net_state", "kind", "name"); netErr != nil {
+				return netErr
 			}
 			return nil
 		}, 90*time.Second, 2*time.Second).Should(gm.Succeed())
