@@ -63,8 +63,8 @@ const defaultRecvSize = 10 << 20
 
 // for the property based registry connect to the metadata node.
 const (
-	propertyRegistryInitRetryCount = 30
-	propertyRegistryInitRetrySleep = time.Second * 5
+	propertyRegistryInitRetryLogInterval = 10
+	propertyRegistryInitRetrySleep       = time.Second * 5
 )
 
 // NewClient returns a new metadata client.
@@ -211,18 +211,23 @@ func (s *clientService) Validate() error {
 }
 
 func (s *clientService) PreRun(ctx context.Context) error {
-	stopCh := make(chan struct{})
+	// initCtx is canceled by process signals or service close so that the
+	// unbounded registry init retry below can be interrupted during shutdown.
+	initCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	sn := make(chan os.Signal, 1)
 	l := logger.GetLogger(s.Name())
 	signal.Notify(sn,
 		syscall.SIGHUP, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
+	defer signal.Stop(sn)
 	go func() {
 		select {
 		case si := <-sn:
-			logger.GetLogger(s.Name()).Info().Msgf("signal received: %s", si)
-			close(stopCh)
+			l.Info().Msgf("signal received: %s", si)
+			cancel()
 		case <-s.closer.CloseNotify():
-			close(stopCh)
+			cancel()
+		case <-initCtx.Done():
 		}
 	}()
 
@@ -282,7 +287,7 @@ func (s *clientService) PreRun(ctx context.Context) error {
 		s.nodeDiscoveryRegistry = none.NewService(ctx)
 	}
 
-	initErr := s.initPropertySchemaRegistry(ctx, l)
+	initErr := s.initPropertySchemaRegistry(initCtx, l)
 	if initErr != nil {
 		return initErr
 	}
@@ -326,11 +331,17 @@ func (s *clientService) initPropertySchemaRegistry(ctx context.Context, l *logge
 		TLSEnabled:          s.propertySchemaClientTLS,
 		CACertPath:          s.propertySchemaClientCACert,
 	}
-	for attempt := 1; attempt <= propertyRegistryInitRetryCount; attempt++ {
+	for attempt := 1; ; attempt++ {
 		registry, createErr := property.NewSchemaRegistryClient(cfg) //nolint:contextcheck // healthCheck uses its own 2s timeout via context.Background()
 		if createErr != nil {
-			l.Warn().Int("attempt", attempt).Err(createErr).Msg("failed to create property schema registry, retrying...")
-			time.Sleep(propertyRegistryInitRetrySleep)
+			if attempt%propertyRegistryInitRetryLogInterval == 0 {
+				l.Error().Int("attempt", attempt).Err(createErr).Msg("failed to create property schema registry, keep retrying...")
+			}
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("context canceled while creating property schema registry after %d attempts: %w", attempt, ctx.Err())
+			case <-time.After(propertyRegistryInitRetrySleep):
+			}
 			continue
 		}
 		// Register as KindNode handler so future node events update ConnManager
@@ -341,7 +352,6 @@ func (s *clientService) initPropertySchemaRegistry(ctx context.Context, l *logge
 		l.Info().Msg("property-based schema registry initialized")
 		return nil
 	}
-	return fmt.Errorf("failed to create property schema registry after %d attempts", propertyRegistryInitRetryCount)
 }
 
 func (s *clientService) Serve() run.StopNotify {
