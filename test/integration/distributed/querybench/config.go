@@ -38,7 +38,6 @@ const (
 	envReportDir         = "DQB_REPORT_DIR"
 	envProfile           = "DQB_PROFILE"
 	envWarmupIters       = "DQB_WARMUP_ITERATIONS"
-	envSmallExactRows    = "DQB_SMALL_EXACT_ROWS"
 	envDockerImage       = "DQB_DOCKER_IMAGE"
 	envCPULimit          = "DQB_CPU_LIMIT"
 	envMemoryLimit       = "DQB_MEMORY_LIMIT"
@@ -69,7 +68,6 @@ const (
 	defaultByIDIters         = 1000
 	defaultWarmupIters       = 3
 	defaultWriters           = 4
-	defaultSmallExactRows    = 10000
 	defaultSpansPerTrace     = 20
 	defaultSpanDist          = spanDistUniform
 	defaultSelectivity       = 0.01
@@ -87,7 +85,6 @@ const (
 	matrixB    = "B"
 	matrixBoth = "both"
 
-	modeRow = "row"
 	modeVec = "vec"
 
 	spanDistUniform   = "uniform"
@@ -141,7 +138,6 @@ type Config struct {
 	ByIDIterations       int
 	WarmupIterations     int
 	Writers              int
-	SmallExactRows       int
 	FilterSelectivity    float64
 	RunBench             bool
 	InContainer          bool
@@ -182,7 +178,6 @@ func LoadConfig() Config {
 		ByIDIterations:       getInt(envByIDIters, defaultByIDIters),
 		WarmupIterations:     getInt(envWarmupIters, defaultWarmupIters),
 		Writers:              getInt(envWriters, defaultWriters),
-		SmallExactRows:       getInt(envSmallExactRows, defaultSmallExactRows),
 	}
 }
 
@@ -224,10 +219,9 @@ func (c Config) Validate() error {
 			envMode, envScenario, envCardinality, envMerge,
 		)
 	}
-	switch c.Mode {
-	case modeRow, modeVec:
-	default:
-		return fmt.Errorf("%s must be %q or %q, got %q", envMode, modeRow, modeVec, c.Mode)
+	if c.Mode != modeVec {
+		return fmt.Errorf("%s must be %q, got %q: the row-based query path was removed in 0.12.0, see apache/skywalking#13998",
+			envMode, modeVec, c.Mode)
 	}
 	switch c.Engine {
 	case engineMeasure:
@@ -265,9 +259,6 @@ func (c Config) Validate() error {
 	}
 	if c.Writers <= 0 {
 		return fmt.Errorf("%s must be > 0", envWriters)
-	}
-	if c.SmallExactRows <= 0 {
-		return fmt.Errorf("%s must be > 0", envSmallExactRows)
 	}
 	return nil
 }

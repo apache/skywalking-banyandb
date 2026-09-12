@@ -121,7 +121,7 @@ func TestTraceVecSoak(t *testing.T) {
 	parityCfg.TraceIDBatch = 1
 	parityCfg.Writers = 4
 	parityCfg.WarmupIterations = 3
-	parityCluster, parityBase, parityClusterErr := startSoakCluster(t, parityCfg, true)
+	parityCluster, parityBase, parityClusterErr := startSoakCluster(t, parityCfg)
 	if parityClusterErr != nil {
 		t.Fatalf("start parity cluster: %v", parityClusterErr)
 	}
@@ -243,7 +243,7 @@ func TestTraceVecSoak(t *testing.T) {
 	budgetCfg.TraceIDBatch = 1
 	budgetCfg.Writers = 4
 	budgetCfg.WarmupIterations = 3
-	budgetCluster, budgetBase, budgetClusterErr := startSoakCluster(t, budgetCfg, true)
+	budgetCluster, budgetBase, budgetClusterErr := startSoakCluster(t, budgetCfg)
 	if budgetClusterErr != nil {
 		t.Fatalf("start budget cluster: %v", budgetClusterErr)
 	}
@@ -417,7 +417,7 @@ func dumpHeapProfile(t *testing.T, path string) {
 
 // startSoakCluster is a thin wrapper around startBenchCluster that supplies the
 // soak-specific defaults (no profiling, trace engine always).
-func startSoakCluster(t *testing.T, cfg Config, vectorized bool) (benchCluster, time.Time, error) {
+func startSoakCluster(t *testing.T, cfg Config) (benchCluster, time.Time, error) {
 	t.Helper()
 	savedWireModeRaw := data.MeasureWireModeRaw()
 	tmpDir, cleanup, spaceErr := test.NewSpace()
@@ -426,7 +426,7 @@ func startSoakCluster(t *testing.T, cfg Config, vectorized bool) (benchCluster, 
 	}
 	dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
 	config := setup.PropertyClusterConfig(dfWriter)
-	flags := clusterFlags(cfg, vectorized)
+	flags := clusterFlags(cfg)
 	dataNodeCount := cfg.DataNodes
 	if dataNodeCount <= 0 {
 		dataNodeCount = 2

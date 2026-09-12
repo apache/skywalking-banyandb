@@ -3,6 +3,13 @@
 This document covers how to run and interpret the G5d soak test for the
 vectorized-query path in SkyWalking BanyanDB.
 
+> **Historical record — superseded by 0.12.0.** This document describes the vectorized-query
+> rollout gate as it ran while the row-based query path still existed. The
+> `--measure-vectorized-enabled` flag it toggles no longer selects a query engine: the row path
+> was removed in 0.12.0 ([apache/skywalking#13998](https://github.com/apache/skywalking/issues/13998)),
+> the flag is a no-op that fails fast on `=false`, and it is removed entirely in 0.13.0. The
+> procedure is preserved verbatim for provenance — do not run it against a 0.12.0 or later build.
+
 ## Prerequisites
 
 - Docker daemon running and reachable (`docker info` succeeds).

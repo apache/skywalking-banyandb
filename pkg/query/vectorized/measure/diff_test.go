@@ -56,7 +56,7 @@ func runDiff(t *testing.T, fx diffFixture) (rowOut, vecOut []*measurev1.Internal
 	rowOut = rowSerialize(rowQR, fx.opts)
 
 	vecQR := &fakeMeasureQueryResult{seq: cloneResults(fx.results)}
-	cfg := VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 64}
+	cfg := VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 64}
 	it, err := NewMIterator(context.Background(), vecQR, fx.schema, fx.opts, cfg)
 	if err != nil {
 		t.Fatalf("%s: NewMIterator: %v", fx.name, err)
@@ -428,7 +428,7 @@ func TestDiff_CanceledContext(t *testing.T) {
 		opts:    diffOptsAllTagsAllFields(),
 		results: []*model.MeasureResult{rowSet(1, 100), rowSet(2, 200)},
 	}
-	cfg := VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 64}
+	cfg := VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 64}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	qr := &fakeMeasureQueryResult{seq: cloneResults(fx.results)}
@@ -537,7 +537,7 @@ func TestDiff_CanceledMidIteration(t *testing.T) {
 		opts:    diffOptsAllTagsAllFields(),
 		results: []*model.MeasureResult{rowMulti(1, 1000, 9)},
 	}
-	cfg := VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 64}
+	cfg := VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 64}
 	ctx, cancel := context.WithCancel(context.Background())
 	qr := &fakeMeasureQueryResult{seq: cloneResults(fx.results)}
 	it, err := NewMIterator(ctx, qr, fx.schema, fx.opts, cfg)
@@ -575,7 +575,7 @@ func TestDiff_StorageError_PropagatesViaErr(t *testing.T) {
 			{Error: boom},
 		},
 	}
-	cfg := VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 64}
+	cfg := VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 64}
 	qr := &fakeMeasureQueryResult{seq: cloneResults(fx.results)}
 	it, err := NewMIterator(context.Background(), qr, fx.schema, fx.opts, cfg)
 	if err != nil {

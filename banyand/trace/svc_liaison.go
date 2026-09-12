@@ -143,7 +143,7 @@ func (l *liaison) FlagSet() *run.FlagSet {
 		"percentage of BanyanDB's allowed disk usage allocated to failed parts storage. "+
 			"Calculated as: totalDisk * trace-max-disk-usage-percent * failed-parts-max-size-percent / 10000. "+
 			"Set to 0 to disable copying failed parts. Valid range: 0-100")
-	bindVectorizedFlags(fs, &l.option.vectorized)
+	bindVectorizedFlags(fs, &l.option.vectorized, &l.option.vectorizedEnabled)
 	return fs
 }
 
@@ -165,6 +165,9 @@ func (l *liaison) Validate() error {
 	if l.failedPartsMaxSizePercent < 0 || l.failedPartsMaxSizePercent > 100 {
 		return fmt.Errorf("invalid failed-parts-max-size-percent: %d%%. Must be between 0 and 100", l.failedPartsMaxSizePercent)
 	}
+	if !l.option.vectorizedEnabled {
+		return errRowQueryRemoved
+	}
 	return l.option.vectorized.Validate()
 }
 
@@ -178,8 +181,7 @@ func (l *liaison) Role() databasev1.Role {
 
 func (l *liaison) PreRun(ctx context.Context) error {
 	l.l = logger.GetLogger(l.Name())
-	data.SetTraceWireModeRaw(l.option.vectorized.Enabled)
-	l.l.Info().Bool("trace_wire_mode_raw", l.option.vectorized.Enabled).Msg("trace wire mode published (liaison)")
+	data.SetTraceWireModeRaw(true)
 	l.l.Info().Msg("memory protector is initialized in PreRun")
 	l.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(l.l, l.pm.GetLimit())
 	var err error

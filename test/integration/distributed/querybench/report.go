@@ -324,9 +324,8 @@ func renderMarkdown(report Report) string {
 	var b strings.Builder
 	b.WriteString("# Distributed Query Benchmark\n\n")
 	b.WriteString(fmt.Sprintf("Generated: %s\n\n", report.GeneratedAt.Format(time.RFC3339)))
-	b.WriteString("## Per-mode results\n\n")
+	b.WriteString("## Results\n\n")
 	renderPerModeTable(&b, report)
-	renderRatioTable(&b, report)
 	b.WriteString("\n## Profile artifacts\n\n")
 	for _, result := range report.Results {
 		if len(result.Profiles) == 0 {
@@ -366,71 +365,12 @@ func renderPerModeTable(b *strings.Builder, report Report) {
 	}
 }
 
-func renderRatioTable(b *strings.Builder, report Report) {
-	type modeKey struct {
-		scenario    Scenario
-		variant     string
-		cardinality int
-	}
-	byMode := make(map[modeKey]map[string]Result)
-	for _, result := range report.Results {
-		key := modeKey{scenario: result.Scenario, cardinality: result.Cardinality, variant: result.variantKey()}
-		if byMode[key] == nil {
-			byMode[key] = make(map[string]Result)
-		}
-		byMode[key][result.Mode] = result
-	}
-	keys := make([]modeKey, 0, len(byMode))
-	for key := range byMode {
-		keys = append(keys, key)
-	}
-	sort.Slice(keys, func(left, right int) bool {
-		if keys[left].scenario != keys[right].scenario {
-			return keys[left].scenario < keys[right].scenario
-		}
-		if keys[left].cardinality != keys[right].cardinality {
-			return keys[left].cardinality < keys[right].cardinality
-		}
-		return keys[left].variant < keys[right].variant
-	})
-	b.WriteString("\n## Vec/Row Ratios\n\n")
-	b.WriteString("Vec divided by row; < 1.00x means vec is faster or lighter.\n\n")
-	b.WriteString("| Scenario | Cardinality | p50 | p95 | p99 | QPS | CPU sec | RSS | Mallocs/query | Bytes/query |\n")
-	b.WriteString("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
-	for _, key := range keys {
-		rowResult, rowOk := byMode[key][modeRow]
-		vecResult, vecOk := byMode[key][modeVec]
-		if !rowOk || !vecOk {
-			continue
-		}
-		b.WriteString(fmt.Sprintf("| %s | %d | %s | %s | %s | %s | %s | %s | %s | %s |\n",
-			key.scenario,
-			key.cardinality,
-			ratioString(vecResult.Latency.P50Ms, rowResult.Latency.P50Ms),
-			ratioString(vecResult.Latency.P95Ms, rowResult.Latency.P95Ms),
-			ratioString(vecResult.Latency.P99Ms, rowResult.Latency.P99Ms),
-			ratioString(vecResult.QPS, rowResult.QPS),
-			ratioString(vecResult.Resources.CPUSecondsDelta, rowResult.Resources.CPUSecondsDelta),
-			ratioString(float64(vecResult.Resources.RSSBytes), float64(rowResult.Resources.RSSBytes)),
-			ratioString(vecResult.Allocations.MallocsPerQuery, rowResult.Allocations.MallocsPerQuery),
-			ratioString(vecResult.Allocations.AllocBytesPerQuery, rowResult.Allocations.AllocBytesPerQuery),
-		))
-	}
-}
-
 func (r Result) variantKey() string {
 	if r.Engine != engineTrace {
 		return ""
 	}
 	return fmt.Sprintf("s=%d,dist=%s,sel=%s,k=%d,shard=%d,nodes=%d,bytes=%d",
 		r.SpansPerTrace, r.SpanDist, sanitizeFloat(r.FilterSelectivity), r.TraceIDBatch, r.ShardNum, r.DataNodes, r.SpanBytes)
-}
-
-func ratioString(numerator, denominator float64) string {
-	if denominator == 0 {
-		return "n/a"
-	}
-	return fmt.Sprintf("%.2fx", numerator/denominator)
 }
 
 func detectCgroupVersion() string {

@@ -18,14 +18,12 @@
 package stream
 
 import (
-	"context"
 	"fmt"
 	"time"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -160,8 +158,8 @@ func newAnalyzerContext(s logical.Schema) *analyzeContext {
 }
 
 var (
-	_ logical.Plan              = (*tagFilterPlan)(nil)
-	_ executor.StreamExecutable = (*tagFilterPlan)(nil)
+	_ logical.Plan          = (*tagFilterPlan)(nil)
+	_ executor.StreamCloser = (*tagFilterPlan)(nil)
 )
 
 type tagFilterPlan struct {
@@ -172,7 +170,7 @@ type tagFilterPlan struct {
 }
 
 func (t *tagFilterPlan) Close() {
-	t.parent.(executor.StreamExecutable).Close()
+	t.parent.(executor.StreamCloser).Close()
 }
 
 func newTagFilter(s logical.Schema, parent logical.Plan, tagFilter logical.TagFilter, hiddenTags logical.HiddenTagSet) logical.Plan {
@@ -182,36 +180,6 @@ func newTagFilter(s logical.Schema, parent logical.Plan, tagFilter logical.TagFi
 		tagFilter:  tagFilter,
 		hiddenTags: hiddenTags,
 	}
-}
-
-func (t *tagFilterPlan) Execute(ec context.Context) ([]*streamv1.Element, error) {
-	var filteredElements []*streamv1.Element
-
-	for {
-		entities, err := t.parent.(executor.StreamExecutable).Execute(ec)
-		if err != nil {
-			return nil, err
-		}
-		if len(entities) == 0 {
-			break
-		}
-		for _, e := range entities {
-			ok, err := t.tagFilter.Match(logical.TagFamilies(e.TagFamilies), t.s)
-			if err != nil {
-				return nil, err
-			}
-			if ok {
-				// Strip hidden tags using shared utility
-				e.TagFamilies = t.hiddenTags.StripHiddenTags(e.TagFamilies)
-				filteredElements = append(filteredElements, e)
-			}
-		}
-		if len(filteredElements) > 0 {
-			break
-		}
-	}
-
-	return filteredElements, nil
 }
 
 func (t *tagFilterPlan) String() string {

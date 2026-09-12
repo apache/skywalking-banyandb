@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -38,7 +37,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-	logicalstream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vstream "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream"
@@ -91,7 +89,6 @@ func buildVecTestStream(t *testing.T, p parameter) (*stream, timestamp.TimeRange
 		pm:         protector.Nop{},
 		vectorized: vstream.DefaultConfig(),
 	}
-	s.vectorized.Enabled = true
 	s.name, s.group = "benchmark", "test"
 	var is indexSchema
 	is.parse(schema)
@@ -155,211 +152,6 @@ func indexByElementID(t *testing.T, elements []*streamv1.Element) map[string]*st
 		out[e.ElementId] = e
 	}
 	return out
-}
-
-func assertElementsEqual(t *testing.T, want, got *streamv1.Element) {
-	require.True(t, proto.Equal(want.Timestamp, got.Timestamp),
-		"timestamp mismatch for %s: want %v got %v", want.ElementId, want.Timestamp, got.Timestamp)
-	require.Equal(t, len(want.TagFamilies), len(got.TagFamilies), "tag family count mismatch for %s", want.ElementId)
-	for i := range want.TagFamilies {
-		wf, gf := want.TagFamilies[i], got.TagFamilies[i]
-		require.Equal(t, wf.Name, gf.Name)
-		require.Equal(t, len(wf.Tags), len(gf.Tags), "tag count mismatch in family %s", wf.Name)
-		for j := range wf.Tags {
-			require.Equal(t, wf.Tags[j].Key, gf.Tags[j].Key)
-			require.True(t, proto.Equal(wf.Tags[j].Value, gf.Tags[j].Value),
-				"tag value mismatch for %s.%s.%s", want.ElementId, wf.Name, wf.Tags[j].Key)
-		}
-	}
-}
-
-// TestQueryVectorized_NoOrder_MatchesRowPath scans a real fixture part with both
-// the row path (Query -> BuildElementsFromStreamResult) and the vec path
-// (queryVectorized -> BuildElementsFromVecBatches) for a no-order query with a
-// two-tag projection, and asserts the produced element SETS are equal (keyed by
-// elementID). Ordering/dedup across sources is M4; comparison is set-based.
-func TestQueryVectorized_NoOrder_MatchesRowPath(t *testing.T) {
-	// A single write batch keeps the fixture to one part / one disjoint block
-	// group, so the row egress (BuildElementsFromStreamResult reads exactly one
-	// non-empty Pull) and the drain-everything vec egress see the identical set.
-	// Cross-part multi-Pull merge is a M4 operator concern, not an M3 scan one.
-	p := parameter{
-		batchCount:     1,
-		timestampCount: 20,
-		seriesCount:    5,
-		tagCardinality: 4,
-		startTimestamp: 1,
-		endTimestamp:   1000,
-		scenario:       "vec-parity",
-	}
-	s, tr := buildVecTestStream(t, p)
-	entities := make([][]*modelv1.TagValue, 0, p.seriesCount)
-	for i := 1; i <= p.seriesCount; i++ {
-		entities = append(entities, []*modelv1.TagValue{
-			{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: entityTagValuePrefix + strconv.Itoa(i)}}},
-		})
-	}
-	tagProjection := []model.TagProjection{{
-		Family: "benchmark-family",
-		Names:  []string{"entity-tag", "filter-tag"},
-	}}
-	// No-order query over the full fixture range (no inverted filter) so the
-	// fixture yields a representative, non-degenerate set for the parity check.
-	sqo := model.StreamQueryOptions{
-		Name:           "benchmark",
-		TimeRange:      &tr,
-		Entities:       entities,
-		TagProjection:  tagProjection,
-		MaxElementSize: math.MaxInt32,
-	}
-
-	ctx := context.Background()
-
-	rowRes, err := s.Query(ctx, sqo)
-	require.NoError(t, err)
-	require.NotNil(t, rowRes)
-	defer rowRes.Release()
-	rowElements, err := logicalstream.BuildElementsFromStreamResult(ctx, rowRes, sqo.TagProjection)
-	require.NoError(t, err)
-
-	src, err := s.queryVectorized(ctx, sqo)
-	require.NoError(t, err)
-	require.NotNil(t, src)
-	defer src.Release()
-	vecElements, err := BuildElementsFromVecBatches(ctx, src, sqo.TagProjection)
-	require.NoError(t, err)
-
-	require.NotEmpty(t, rowElements, "row path produced no elements; fixture is degenerate")
-
-	rowByID := indexByElementID(t, rowElements)
-	// The vec path does not dedup across cursors in M3; collapse to first-seen
-	// per elementID so the SET comparison matches the row path's deduped set.
-	vecByID := make(map[string]*streamv1.Element, len(vecElements))
-	for _, e := range vecElements {
-		if _, ok := vecByID[e.ElementId]; !ok {
-			vecByID[e.ElementId] = e
-		}
-	}
-
-	require.Equal(t, len(rowByID), len(vecByID), "element-set size mismatch between row and vec paths")
-	for id, wantElem := range rowByID {
-		gotElem, ok := vecByID[id]
-		require.True(t, ok, "vec path missing elementID present in row path: %s", id)
-		assertElementsEqual(t, wantElem, gotElem)
-	}
-}
-
-// TestQueryVectorized_FullPipeline_MatchesRowPath is the M6 standalone-parity
-// test: it drives the vec scan through the FULL M4 pipeline (merge → distinct →
-// limit) and the batch egress (BuildElementsFromBatches), exactly as the data-node
-// standalone processor path does, then asserts the produced []*streamv1.Element is
-// identical (order + values) to the row path for representative queries.
-func TestQueryVectorized_FullPipeline_MatchesRowPath(t *testing.T) {
-	// A single write batch keeps the fixture to one part so the row egress
-	// (BuildElementsFromStreamResult reads exactly one non-empty Pull) sees the
-	// same complete set the drain-everything vec pipeline does. Cross-part
-	// dedup/merge is covered by the M4 operator unit tests, not this end-to-end
-	// engine parity check.
-	p := parameter{
-		batchCount:     1,
-		timestampCount: 20,
-		seriesCount:    5,
-		tagCardinality: 4,
-		startTimestamp: 1,
-		endTimestamp:   1000,
-		scenario:       "vec-full-pipeline",
-	}
-	s, tr := buildVecTestStream(t, p)
-	entities := make([][]*modelv1.TagValue, 0, p.seriesCount)
-	for i := 1; i <= p.seriesCount; i++ {
-		entities = append(entities, []*modelv1.TagValue{
-			{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: entityTagValuePrefix + strconv.Itoa(i)}}},
-		})
-	}
-	tagProjection := []model.TagProjection{{
-		Family: "benchmark-family",
-		Names:  []string{"entity-tag", "filter-tag"},
-	}}
-
-	cases := []struct {
-		name string
-		desc bool
-	}{
-		{name: "ts-order-asc", desc: false},
-		{name: "ts-order-desc", desc: true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			order := &index.OrderBy{Sort: modelv1.Sort_SORT_ASC}
-			if tc.desc {
-				order.Sort = modelv1.Sort_SORT_DESC
-			}
-			sqo := model.StreamQueryOptions{
-				Name:           "benchmark",
-				TimeRange:      &tr,
-				Entities:       entities,
-				TagProjection:  tagProjection,
-				Order:          order,
-				MaxElementSize: math.MaxInt32,
-			}
-
-			ctx := context.Background()
-
-			rowRes, err := s.Query(ctx, sqo)
-			require.NoError(t, err)
-			require.NotNil(t, rowRes)
-			defer rowRes.Release()
-			rowElements, err := logicalstream.BuildElementsFromStreamResult(ctx, rowRes, sqo.TagProjection)
-			require.NoError(t, err)
-			require.NotEmpty(t, rowElements, "row path produced no elements; fixture is degenerate")
-
-			src, err := s.queryVectorized(ctx, sqo)
-			require.NoError(t, err)
-			require.NotNil(t, src)
-			schema := src.Schema()
-			pipeline, err := vstream.BuildStreamMergePipeline(
-				&testVecSource{src: src, schema: schema}, schema, tc.desc, 0, uint32(len(rowElements)*4), vstream.DefaultConfig().BatchSize, 0)
-			require.NoError(t, err)
-			require.NoError(t, pipeline.Init(ctx))
-			var batches []*vectorized.RecordBatch
-			for {
-				batch, nextErr := pipeline.Next(ctx)
-				require.NoError(t, nextErr)
-				if batch == nil {
-					break
-				}
-				batches = append(batches, batch)
-			}
-			vecElements, err := BuildElementsFromBatches(batches, sqo.TagProjection)
-			require.NoError(t, err)
-			require.NoError(t, pipeline.Close())
-
-			// Equal-timestamp rows have no cross-path-stable tie-break (the row
-			// ts-order and the vec SortedMerge tie differently), so parity is
-			// asserted as: (1) identical element SET keyed by elementID with
-			// identical values, and (2) the vec output is monotonically ordered by
-			// timestamp per asc/desc. This is the same set-based discipline the
-			// no-order parity test uses.
-			require.Equal(t, len(rowElements), len(vecElements), "element count mismatch")
-			rowByID := indexByElementID(t, rowElements)
-			vecByID := indexByElementID(t, vecElements)
-			require.Equal(t, len(rowByID), len(vecByID), "element-set size mismatch")
-			for id, wantElem := range rowByID {
-				gotElem, ok := vecByID[id]
-				require.True(t, ok, "vec path missing elementID present in row path: %s", id)
-				assertElementsEqual(t, wantElem, gotElem)
-			}
-			for i := 1; i < len(vecElements); i++ {
-				prev := vecElements[i-1].Timestamp.AsTime().UnixNano()
-				cur := vecElements[i].Timestamp.AsTime().UnixNano()
-				if tc.desc {
-					require.GreaterOrEqual(t, prev, cur, "vec output not desc-ordered by ts at %d", i)
-				} else {
-					require.LessOrEqual(t, prev, cur, "vec output not asc-ordered by ts at %d", i)
-				}
-			}
-		})
-	}
 }
 
 // testVecSource adapts a vecScanSource to a vectorized.PullOperator so the test

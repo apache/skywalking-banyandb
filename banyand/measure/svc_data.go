@@ -242,15 +242,12 @@ func (s *dataSVC) PreRun(ctx context.Context) error {
 	s.l.Info().Msg("memory protector is initialized in PreRun")
 	// Publish the per-process wire mode for TopicInternalMeasureQuery so
 	// the queue's per-topic ResponseCodec dispatcher selects RawFrameCodec
-	// when this process is flag-on (G9f.5.b's vec raw columnar frame body
-	// path emits the body as []byte; sub.go passes it through under
-	// flag-on) and ProtoCodec when flag-off. The data-node Rev now
-	// branches on data.MeasureWireModeRaw() + the vec MIterator's
-	// RawFrameSource capability, so this flip lands the synchronized
-	// cutover that G9f.5.a's runbook describes.
-	data.SetMeasureWireModeRaw(s.option.vectorized.Enabled)
+	// for the vec raw columnar frame body (G9f.5.b emits the body as
+	// []byte; sub.go passes it through). The data-node Rev branches on
+	// data.MeasureWireModeRaw() + the vec MIterator's RawFrameSource
+	// capability.
+	data.SetMeasureWireModeRaw(true)
 	s.l.Info().
-		Bool("measure_vectorized_enabled", s.option.vectorized.Enabled).
 		Bool("measure_wire_mode_raw", data.MeasureWireModeRaw()).
 		Msg("G9f wire mode published for TopicInternalMeasureQuery (data svc)")
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())

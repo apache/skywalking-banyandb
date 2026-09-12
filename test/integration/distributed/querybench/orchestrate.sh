@@ -42,7 +42,7 @@ if [[ "${ENGINE}" == "trace" ]]; then
 else
   SCENARIOS="${DQB_SCENARIOS:-scan_all,top_with_filter}"
 fi
-MODES="${DQB_MODES:-row,vec}"
+MODES="${DQB_MODES:-vec}"
 
 echo "[orchestrate] report_dir=${REPORT_DIR}"
 echo "[orchestrate] engine=${ENGINE}"

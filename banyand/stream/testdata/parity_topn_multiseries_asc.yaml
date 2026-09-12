@@ -1,0 +1,47 @@
+# Golden expectation captured from the ROW query path (stream.Query ->
+# BuildElementsFromStreamResult) on branch rowdrop/base, before the row path was
+# removed (apache/skywalking#13998). It cannot be re-captured afterwards.
+#
+# Normalization, forced by the fixture generator:
+#   ts   - nanosecond offset from the query time range start. generateData anchors
+#          element timestamps at time.Now(), so absolute timestamps differ per run.
+#   tags - only entity-tag is recorded. The sibling filter-tag is drawn from
+#          crypto/rand per run (benchmark_test.go generateRandomNumber), so its
+#          value is not reproducible and no golden can pin it.
+# Element order is as the row path returned it.
+name: parity_topn_multiseries_asc
+cases:
+  - name: asc
+    query: fixture{ts=40,series=5} order=ts-asc max=30
+    element_count: 30
+    elements:
+      - {id: 228d3fa5008c9ec2, ts: 0, entity-tag: entity1}
+      - {id: a224fe72b38b9e57, ts: 0, entity-tag: entity3}
+      - {id: bc94b2dc46775a9f, ts: 0, entity-tag: entity5}
+      - {id: 78c64d47e69118b9, ts: 0, entity-tag: entity4}
+      - {id: 537fef459947c66f, ts: 0, entity-tag: entity2}
+      - {id: 1a2698b8a9775f34, ts: 1000000000, entity-tag: entity2}
+      - {id: 3880e6e1dc9cb59a, ts: 1000000000, entity-tag: entity5}
+      - {id: 5460f49adbe7aba2, ts: 1000000000, entity-tag: entity1}
+      - {id: bb62ce8f2e1f2c09, ts: 1000000000, entity-tag: entity3}
+      - {id: 6de6f5d076d742b9, ts: 1000000000, entity-tag: entity4}
+      - {id: 6090b2aae0582978, ts: 2000000000, entity-tag: entity4}
+      - {id: 22e84c6060359bac, ts: 2000000000, entity-tag: entity1}
+      - {id: 511172adf1230e52, ts: 2000000000, entity-tag: entity2}
+      - {id: 5aa57a07d47ee7ea, ts: 2000000000, entity-tag: entity5}
+      - {id: 495e5792411ce777, ts: 2000000000, entity-tag: entity3}
+      - {id: 5e8d522ca93563ed, ts: 3000000000, entity-tag: entity3}
+      - {id: 19a82d369be44096, ts: 3000000000, entity-tag: entity2}
+      - {id: 7fee13f22a02b186, ts: 3000000000, entity-tag: entity4}
+      - {id: 9deb1683a072e62a, ts: 3000000000, entity-tag: entity1}
+      - {id: 6c7cab198703ee9f, ts: 3000000000, entity-tag: entity5}
+      - {id: bebfbdcd407e2ccf, ts: 4000000000, entity-tag: entity5}
+      - {id: fd6817dc570d1402, ts: 4000000000, entity-tag: entity4}
+      - {id: 7410f56e4c878bd6, ts: 4000000000, entity-tag: entity3}
+      - {id: a77d430237b307e6, ts: 4000000000, entity-tag: entity2}
+      - {id: ee7276ee58e4421c, ts: 4000000000, entity-tag: entity1}
+      - {id: adc82a95b2af3502, ts: 5000000000, entity-tag: entity1}
+      - {id: 14f994dd7433eaca, ts: 5000000000, entity-tag: entity3}
+      - {id: f0397cf91106fb01, ts: 5000000000, entity-tag: entity5}
+      - {id: 93ae3f61954ee5de, ts: 5000000000, entity-tag: entity4}
+      - {id: 7d4be3cf97db3464, ts: 5000000000, entity-tag: entity2}
