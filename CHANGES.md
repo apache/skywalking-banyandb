@@ -18,6 +18,7 @@ Release Notes.
 - Register the memory protector on the liaison role so query admission uses the cgroup-backed pool instead of the 64MiB fallback.
 - Bound Cluster and Rover e2e BanyanDB memory so cgroup limits enable the query budget under resource-constrained environments.
 - Enforce trace query time ranges independently of the sort index, skipping row timestamp checks when the query fully covers a part.
+- Retry property schema registry initialization indefinitely, logging an error every 10 attempts.
 
 ### Document
 
