@@ -49,7 +49,7 @@ type metrics struct {
 
 	memoryLoadSheddingRejections meter.Counter
 	grpcBufferSize               meter.Gauge // Shared gauge for both conn and stream buffer sizes
-	memoryState                  meter.Gauge
+	memoryLoadSheddingState      meter.Gauge
 
 	// Step 2.7 — schema-barrier observability. The three Await* RPCs each
 	// emit one histogram observation per call labeled by `result`
@@ -105,7 +105,7 @@ func newMetrics(factory observability.Factory, rbacFactories ...observability.Fa
 		totalRegistryLatency:               factory.NewCounter("total_registry_latency", "group", "service", "method"),
 		memoryLoadSheddingRejections:       factory.NewCounter("memory_load_shedding_rejections_total", "service"),
 		grpcBufferSize:                     factory.NewGauge("grpc_buffer_size_bytes", "type"),
-		memoryState:                        factory.NewGauge("memory_state"),
+		memoryLoadSheddingState:            factory.NewGauge("memory_load_shedding_state"),
 		schemaAwaitRevisionAppliedDuration: factory.NewHistogram("schema_await_revision_applied_duration_seconds", meter.DefBuckets, "result"),
 		schemaAwaitSchemaAppliedDuration:   factory.NewHistogram("schema_await_schema_applied_duration_seconds", meter.DefBuckets, "result"),
 		schemaAwaitSchemaDeletedDuration:   factory.NewHistogram("schema_await_schema_deleted_duration_seconds", meter.DefBuckets, "result"),
@@ -160,7 +160,9 @@ func (m *metrics) updateBufferSizeMetrics(connSize, streamSize int32) {
 	}
 }
 
-// updateMemoryState updates the memory state metric.
+// updateMemoryState updates the memory load-shedding state metric.
+// Named distinctly from the system host gauge "memory_state" so native
+// self-observability does not collide on the _monitoring measure schema.
 func (m *metrics) updateMemoryState(state int) {
-	m.memoryState.Set(float64(state))
+	m.memoryLoadSheddingState.Set(float64(state))
 }
