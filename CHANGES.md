@@ -11,6 +11,7 @@ Release Notes.
 - Fix stream queries failing with `query memory pool exhausted` although they return few rows (apache/skywalking#14165). The vectorized stream scan now decodes blocks on demand and refunds a block's query-budget charge when its cursor is released, the sorted merge refunds a batch once its last retained row is pruned, and the block scanner counts each block once against its quota.
 - Charge large tag and field values against the query allowance by their size instead of eight times their size, so a query that reads multi-MB values (for example OAP ai-agent session files stored as a `body` tag) no longer runs out of its allowance.
 - Without `--allowed-bytes` or a container memory limit, size the query memory pool from host memory (75% of it, divided by 4, each query getting an eighth) instead of a fixed 64 MiB. The memory protector itself stays disabled.
+- Retry property schema registry initialization indefinitely, logging an error every 10 attempts.
 
 ## 0.11.1
 
