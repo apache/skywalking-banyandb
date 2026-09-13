@@ -449,10 +449,13 @@ var _ = Describe("DNS Discovery Service", func() {
 			// Verify DNS was queried successfully
 			Expect(mockResolver.getCallCount("_grpc._tcp.test.local")).To(Equal(1))
 
-			// Verify no nodes were added to the cache
-			nodes, err := svc.ListNode(ctx, databasev1.Role_ROLE_UNSPECIFIED)
-			Expect(err).NotTo(HaveOccurred())
+			// Verify no nodes were added to the cache. Before Start, ListNode
+			// re-fetches retry-queued addresses and surfaces the same failure.
+			nodes, listErr := svc.ListNode(ctx, databasev1.Role_ROLE_UNSPECIFIED)
+			Expect(listErr).To(HaveOccurred())
+			Expect(listErr.Error()).To(ContainSubstring("failed to get current node"))
 			Expect(nodes).To(BeEmpty())
+			Expect(svc.GetCacheSize()).To(Equal(0))
 		})
 
 		It("should use fallback cache after DNS failure (🎯 critical scenario)", func() {
@@ -515,10 +518,11 @@ var _ = Describe("DNS Discovery Service", func() {
 			mockResolver.setError("_grpc._tcp.zone2.local", fmt.Errorf("zone2 DNS server down"))
 
 			// Call queryDNSAndUpdateNodes again
-			// One DNS fails, so it should fallback to cached addresses (all 4 nodes)
-			// With retry mechanism, nodes already in retry queue are skipped, so no errors returned
+			// One DNS fails, so it should fallback to cached addresses (all 4 nodes).
+			// Before Start, retry-queued addresses are re-fetched synchronously (PreRun
+			// recovery); those gRPC failures surface again as joined errors.
 			queryErr2 := svc.QueryDNSAndUpdateNodes(ctx)
-			Expect(queryErr2).NotTo(HaveOccurred())
+			Expect(queryErr2).To(HaveOccurred())
 
 			// Verify fallback happened - cache still has all 4 nodes from first success
 			cachedAfterFailure := svc.GetLastSuccessfulDNS()

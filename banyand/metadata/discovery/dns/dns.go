@@ -59,6 +59,7 @@ type Service struct {
 	lastQueryMutex    sync.RWMutex
 	addressMutex      sync.RWMutex
 	tlsEnabled        bool
+	started           bool
 }
 
 // Config holds configuration for DNS discovery service.
@@ -292,6 +293,10 @@ func (s *Service) Start(ctx context.Context) error {
 		}
 	}
 
+	// mark as started so updateNodeCache can defer unchanged retry-queue
+	// addresses to retryScheduler instead of re-fetching on every list.
+	s.started = true
+
 	go s.discoveryLoop(ctx)
 	go s.retryScheduler(ctx)
 
@@ -507,7 +512,13 @@ func (s *Service) updateNodeCache(ctx context.Context, srvToAddresses map[string
 
 			if !exists {
 				if s.RetryManager.IsInRetry(addr) {
-					continue
+					// After Start, retryScheduler owns recovery. Before Start
+					// (schema-registry init in PreRun), re-fetch synchronously so
+					// unbounded PreRun retries can succeed once peers come up.
+					if s.started {
+						continue
+					}
+					s.RetryManager.RemoveFromRetry(addr)
 				}
 
 				// fetch node metadata from gRPC
