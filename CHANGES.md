@@ -15,6 +15,7 @@ Release Notes.
 - Fix FODC proxy `/metrics` returning partial data or timing out when concurrent scrapes overlap.
 - Enforce trace query time ranges independently of the sort index, skipping row timestamp checks when the query fully covers a part.
 - Retry property schema registry initialization indefinitely, logging an error every 10 attempts.
+- Fix un-interruptible sleep on shutdown during measure snapshot sync retry and add jittered backoff.
 
 ### Document
 

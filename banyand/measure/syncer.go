@@ -20,6 +20,7 @@ package measure
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -35,6 +36,25 @@ import (
 
 // PartTypeCore is the type of the core part.
 const PartTypeCore = "core"
+
+const (
+	snapshotSyncRetryDelay  = 2 * time.Second
+	snapshotSyncRetryJitter = 500 * time.Millisecond
+)
+
+func syncRetryDelay() time.Duration {
+	// #nosec G404 -- not security-critical, just for retry jitter
+	return snapshotSyncRetryDelay + time.Duration(rand.Int64N(int64(snapshotSyncRetryJitter)))
+}
+
+func waitSyncRetry(closeNotify <-chan struct{}) bool {
+	select {
+	case <-closeNotify:
+		return true
+	case <-time.After(syncRetryDelay()):
+		return false
+	}
+}
 
 type syncIntroduction struct {
 	synced  map[uint64]struct{}
@@ -98,8 +118,7 @@ func (tst *tsTable) syncLoop(syncCh chan *syncIntroduction, flusherNotifier watc
 				}
 				tst.l.Error().Err(err).Msgf("cannot sync snapshot: %d", curSnapshot.epoch)
 				tst.incTotalSyncLoopErr(1)
-				time.Sleep(2 * time.Second)
-				return false
+				return waitSyncRetry(tst.loopCloser.CloseNotify())
 			}
 			epoch = curSnapshot.epoch
 			lastTriggerTime = triggerTime
