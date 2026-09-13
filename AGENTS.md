@@ -1,286 +1,39 @@
-# AI Assistant Rules for SkyWalking BanyanDB Go Project
-# This file provides coding standards and guidelines for AI assistants
-# Compatible with Claude, Cursor, GitHub Copilot, and other LLMs
+# BanyanDB Agent Guide
 
-## PROJECT OVERVIEW
-This is the SkyWalking BanyanDB project - a distributed time-series database written in Go.
-Follow these strict coding standards when generating or modifying Go code.
+BanyanDB is a distributed time-series database written in Go. Follow nearby code
+and tests; keep changes focused on the requested behavior.
 
-## FORMATTING RULES
-1. Maximum line length: 170 characters
+## Completion and scope
 
-## LINTING RULES
-1. Variable shadowing prevention (govet shadow enabled)
-2. Import aliases for specific packages (importas settings)
-3. Error handling patterns (errcheck, errorlint, errname)
-4. Code style and conventions (gosimple, staticcheck, stylecheck)
-5. Security considerations (gosec)
-6. Documentation standards (godot scope: toplevel)
+- Finish the requested change and relevant verification without asking about
+  routine next steps. Stop when the requested outcome is verified or a concrete
+  blocker requires user input; do not expand into unrelated fixes or redesigns.
+- Preserve unrelated working-tree changes. Do not commit, push, publish, or change
+  external resources unless requested or already authorized.
+- Use independent subagents when their work saves time; small tasks do not need
+  delegation or a separate review workflow.
 
-## IMPORT ORGANIZATION
-Follow the sections order:
-1. Standard library imports
-2. Default imports
-3. github.com/apache/skywalking-banyandb/ prefix imports
+## Go conventions
 
-## IMPORT ALIASES
-Use these specific aliases for protobuf packages:
-- github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1 → commonv1
-- github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1 → databasev1
-- github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1 → modelv1
-- github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1 → propertyv1
-- github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1 → measurev1
-- github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1 → streamv1
-- github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1 → clusterv1
-- github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1 → tracev1
-- github.com/apache/skywalking-banyandb/pkg/pb/v1 → pbv1
+- `.golangci.yml` is authoritative for lint rules, protobuf import aliases,
+  exclusions, and the 170-character line limit. `.golangci-format.yml` controls
+  formatting with gci and gofumpt; its exclusions are not general lint exclusions.
+- Import groups: standard library, third-party packages, then this repository.
+- Avoid shadowing existing variables. Short names and `if err := ...` are valid
+  when they do not shadow another variable; use descriptive names where useful.
+- Check errors and add meaningful context with `%w` when wrapping. Preserve error
+  identity and the relevant API's error-handling conventions.
+- Document exported functions and types with concise, punctuated comments. Add
+  implementation comments only for non-obvious logic.
 
-## ERROR HANDLING PATTERNS
-1. Always check errors immediately after function calls
-2. Use descriptive error variable names to avoid shadowing
-3. Follow the errname convention for error types
-4. Use errorlint for consistent error handling
-5. Wrap errors with context using fmt.Errorf and %w verb
+## Correctness and validation
 
-## VARIABLE SHADOWING PREVENTION
-1. NEVER shadow variables in the same scope
-2. Use unique variable names in nested scopes
-3. Be especially careful with common variable names like 'err', 'ctx', 'v', 'i', 'n', etc.
-4. When using range loops, use descriptive variable names instead of single letters
-5. In if statements with variable declarations, ensure the variable name doesn't conflict with outer scope
-
-## CODE STYLE
-1. Use gocritic enabled checks for code quality
-2. Follow exhaustive switch/map patterns
-3. Use proper field alignment (govet fieldalignment)
-4. Avoid unnecessary conversions (unconvert)
-5. Use standard library variables when available (usestdlibvars)
-6. Follow whitespace rules (whitespace linter)
-7. Keep code compact - group related code together with minimal blank lines
-
-## SECURITY
-1. Follow gosec security guidelines
-2. Be aware of integer overflow conversions (G115 excluded in config)
-
-## DOCUMENTATION
-1. Add top-level comments for exported functions and types (godot scope: toplevel)
-2. Follow docStub patterns for documentation
-3. Use proper sentence structure and punctuation
-4. Describe what the function does, not how it does it
-5. Minimize comments - add only when necessary for exported functions/types or complex logic
-
-## CONSTANTS AND MAGIC NUMBERS
-1. Use goconst for repeated string literals (min-occurrences: 4)
-2. Avoid magic numbers, use named constants
-
-## COMPLEXITY
-1. Keep cyclomatic complexity low (gocyclo)
-2. Avoid deeply nested structures
-3. Use proper abstraction levels
-
-## NAMING CONVENTIONS
-1. Use descriptive names for variables, especially in nested scopes
-2. Follow Go naming conventions
-3. Use proper package naming
-4. Follow the project's specific naming patterns
-
-## TESTING
-1. Follow proper test naming conventions
-2. Use appropriate test helpers
-3. Follow the project's testing patterns
-
-## EXCLUDED PATTERNS
-The following file patterns are excluded from linting:
-- *.pb.go (protobuf generated files)
-- *.pb.gw.go (protobuf gateway files)
-- *.gen.go (generated files)
-- *_mock.go (mock files)
-- *_test.go files have relaxed errcheck rules
-
-## PATTERNS TO AVOID
-
-### Variable Shadowing Patterns (BAD):
-```go
-if err := someFunc(); err != nil {
-if v := someValue(); v != nil {
-for _, v := range items {
-for i, v := range items {
-switch v := someValue(); v {
-defer func() { if err := cleanup(); err != nil {
-```
-
-### Import Organization Violations (BAD):
-```go
-import (
-	"fmt"
-	"github.com/apache/skywalking-banyandb/pkg/something"
-	"os"
-)
-```
-
-### Error Handling Violations (BAD):
-```go
-someFunc() // ignoring error
-if err != nil {
-	return
-}
-```
-
-### Style Violations (BAD):
-```go
-if x == true {
-if x == false {
-if x != nil && x.y == true {
-```
-
-### Documentation Violations (BAD):
-```go
-// Function does something
-// This function does something
-x := 1  // set x to 1
-for _, v := range items {  // iterate over items
-	doSomething(v)  // process item
-}
-func (r *Request) Data() []byte {  // return data
-	return r.data
-}
-```
-
-## PREFERRED PATTERNS
-
-### Proper Variable Naming to Avoid Shadowing (GOOD):
-```go
-if resultErr := someFunc(); resultErr != nil {
-if item := someValue(); item != nil {
-for _, item := range items {
-for idx, item := range items {
-switch value := someValue(); value {
-defer func() { if cleanupErr := cleanup(); cleanupErr != nil {
-```
-
-### Proper Import Organization (GOOD):
-```go
-import (
-	"fmt"
-	"os"
-
-	"github.com/apache/skywalking-banyandb/pkg/something"
-)
-```
-
-### Proper Error Handling (GOOD):
-```go
-if err := someFunc(); err != nil {
-	return fmt.Errorf("failed to do something: %w", err)
-}
-```
-
-### Proper Style (GOOD):
-```go
-if x {
-if !x {
-if x != nil && x.y {
-```
-
-### Proper Documentation (GOOD):
-```go
-// ProcessData processes the given data and returns the result.
-func ProcessData(ctx context.Context, data []byte) ([]byte, error) {
-	if len(data) == 0 {
-		return nil, fmt.Errorf("data cannot be empty")
-	}
-	for idx, item := range data {
-		if processErr := processItem(ctx, item); processErr != nil {
-			return nil, fmt.Errorf("failed to process item at index %d: %w", idx, processErr)
-		}
-	}
-	return finalizeProcessing(ctx, data)
-}
-
-// Data returns the request body.
-func (r *Request) Data() []byte {
-	return r.data
-}
-```
-
-## CODE GENERATION GUIDELINES
-
-### IMPORTANT: Always follow these steps:
-1. Check for existing variable names in the current scope before declaring new ones
-2. Use descriptive variable names to avoid shadowing
-3. Organize imports according to "IMPORT ORGANIZATION" sections
-4. Use proper import aliases for the project's protobuf packages
-5. Follow error handling patterns with proper error wrapping
-6. Add appropriate documentation for exported functions and types
-7. Keep line length under 170 characters
-8. Use gofumpt formatting style
-
-### Example of Good Code Structure:
-```go
-package example
-
-import (
-	"context"
-	"fmt"
-	"time"
-
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
-)
-
-// ProcessData processes the given data and returns the result.
-func ProcessData(ctx context.Context, data []byte) ([]byte, error) {
-	if len(data) == 0 {
-		return nil, fmt.Errorf("data cannot be empty")
-	}
-	for idx, item := range data {
-		if processErr := processItem(ctx, item); processErr != nil {
-			return nil, fmt.Errorf("failed to process item at index %d: %w", idx, processErr)
-		}
-	}
-	result, err := finalizeProcessing(ctx, data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to finalize processing: %w", err)
-	}
-	return result, nil
-}
-```
-
-### Example of Bad Code (violates multiple rules):
-```go
-package example
-
-import (
-	"fmt"
-	"github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1" // wrong alias
-	"os"
-)
-
-func ProcessData(ctx context.Context, data []byte) ([]byte, error) {
-	for _, v := range data {
-		if err := processItem(ctx, v); err != nil { // 'err' shadows outer scope
-			return err
-		}
-		
-		for i, v := range v.SubItems { // 'v' shadows outer 'v'
-			if err := processSubItem(v); err != nil { // 'err' shadows outer 'err'
-				return err
-			}
-		}
-	}
-	return nil
-}
-```
-
-## COMMON VARIABLE NAMES TO BE EXTRA CAREFUL WITH
-err, error, ctx, context, v, value, i, idx, index,
-n, num, count, size, len, length, k, key, val,
-result, res, data, item, obj, object, msg, message,
-resp, response, req, request, client, conn, connection
-
-## NAMING CONVENTIONS FOR NESTED SCOPES
-When dealing with nested scopes, use these naming patterns:
-- Outer scope: 'err', 'ctx', 'v', 'i'
-- Inner scope: 'innerErr', 'innerCtx', 'item', 'idx'
-- Deep nested: 'deepErr', 'deepCtx', 'subItem', 'subIdx'
-- Or use descriptive prefixes: 'processErr', 'validateErr', 'parseErr'
+- Follow existing test conventions and run the smallest relevant suites first.
+  Expand validation for affected integration boundaries, generated code, or shared
+  infrastructure; avoid unrelated full builds during read-only or wording tasks.
+- Preserve persisted-data and wire compatibility. For format, schema, or protocol
+  changes, check existing data and mixed-version behavior as applicable.
+- For concurrent or stateful changes, consider cancellation, resource ownership,
+  bounded memory, and recovery. Use the repository's established helpers.
+- Read design documents only for the subsystem or contract being changed. Follow
+  any more-specific `AGENTS.md` in the affected directory.
