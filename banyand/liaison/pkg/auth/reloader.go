@@ -119,16 +119,17 @@ func (ar *Reloader) loadConfig(filePath string) error {
 
 // Reloader manages dynamic reloading of auth config.
 type Reloader struct {
-	policyObserver PolicyObserver
-	debounceTimer  *time.Timer
-	updateCh       chan struct{}
-	Config         *Config
-	watcher        *fsnotify.Watcher
-	log            *logger.Logger
-	snapshot       atomic.Pointer[compiledSnapshot]
-	configFile     string
-	lastConfigHash []byte
-	mu             sync.RWMutex
+	policyObserver     PolicyObserver
+	debounceTimer      *time.Timer
+	updateCh           chan struct{}
+	Config             *Config
+	watcher            *fsnotify.Watcher
+	log                *logger.Logger
+	snapshot           atomic.Pointer[compiledSnapshot]
+	configFile         string
+	resolvedConfigFile string
+	lastConfigHash     []byte
+	mu                 sync.RWMutex
 }
 
 // InitAuthReloader returns Reloader with default values.
@@ -174,19 +175,80 @@ func (ar *Reloader) ConfigAuthReloader(configFile string, healthAuthEnabled bool
 	ar.updateCh = make(chan struct{}, 1)
 	ar.lastConfigHash = lastConfigHash
 	ar.mu.Unlock()
+	ar.refreshResolvedConfigPath()
 
 	return nil
 }
 
 // Start begins monitoring the config file.
 func (ar *Reloader) Start() error {
-	configDir := filepath.Dir(ar.configFile)
-	if watchErr := ar.watcher.Add(configDir); watchErr != nil {
-		return fmt.Errorf("failed to watch auth config directory %s: %w", configDir, watchErr)
+	if watchErr := ar.syncWatches(); watchErr != nil {
+		return watchErr
 	}
 
 	go ar.watchFiles()
 	return nil
+}
+
+// refreshResolvedConfigPath records the symlink target when configFile is a symlink
+// so writes to the target (common ConfigMap/..data layouts) also trigger reload.
+func (ar *Reloader) refreshResolvedConfigPath() {
+	if ar == nil {
+		return
+	}
+	ar.mu.RLock()
+	configFile := ar.configFile
+	ar.mu.RUnlock()
+	if configFile == "" {
+		return
+	}
+	resolved := ""
+	if evaluated, evalErr := filepath.EvalSymlinks(configFile); evalErr == nil {
+		resolved = filepath.Clean(evaluated)
+		if resolved == filepath.Clean(configFile) {
+			resolved = ""
+		}
+	}
+	ar.mu.Lock()
+	ar.resolvedConfigFile = resolved
+	ar.mu.Unlock()
+}
+
+// syncWatches ensures the directories of the config path and any resolved symlink
+// target are watched.
+func (ar *Reloader) syncWatches() error {
+	ar.mu.RLock()
+	watcher := ar.watcher
+	configFile := ar.configFile
+	resolved := ar.resolvedConfigFile
+	ar.mu.RUnlock()
+	if watcher == nil {
+		return errors.New("watcher is nil")
+	}
+	dirs := map[string]struct{}{
+		filepath.Dir(configFile): {},
+	}
+	if resolved != "" {
+		dirs[filepath.Dir(resolved)] = struct{}{}
+	}
+	for dir := range dirs {
+		if watchErr := watcher.Add(dir); watchErr != nil {
+			return fmt.Errorf("failed to watch auth config directory %s: %w", dir, watchErr)
+		}
+	}
+	return nil
+}
+
+// isConfigPathEvent reports whether an fsnotify event path refers to the configured
+// auth file or the file it currently resolves to through symlinks.
+func (ar *Reloader) isConfigPathEvent(eventName string) bool {
+	cleaned := filepath.Clean(eventName)
+	ar.mu.RLock()
+	defer ar.mu.RUnlock()
+	if cleaned == filepath.Clean(ar.configFile) {
+		return true
+	}
+	return ar.resolvedConfigFile != "" && cleaned == ar.resolvedConfigFile
 }
 
 // SetPolicyObserver installs reload observability and reports the current accepted policy.
@@ -245,7 +307,7 @@ func (ar *Reloader) watchFiles() {
 			if !ok {
 				return
 			}
-			if filepath.Clean(event.Name) != filepath.Clean(ar.configFile) {
+			if !ar.isConfigPathEvent(event.Name) {
 				continue
 			}
 			ar.log.Debug().Str("file", event.Name).Str("op", event.Op.String()).Msg("Detected auth file event")
@@ -291,6 +353,10 @@ func (ar *Reloader) tryReload() {
 	ar.mu.Lock()
 	ar.lastConfigHash = newHash
 	ar.mu.Unlock()
+	ar.refreshResolvedConfigPath()
+	if watchErr := ar.syncWatches(); watchErr != nil {
+		ar.log.Error().Err(watchErr).Msg("failed to refresh auth config watches after reload")
+	}
 
 	// notify
 	select {
