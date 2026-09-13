@@ -15,6 +15,8 @@ Release Notes.
 - Fix FODC proxy `/metrics` returning partial data or timing out when concurrent scrapes overlap.
 - Enforce trace query time ranges independently of the sort index, skipping row timestamp checks when the query fully covers a part.
 - Retry property schema registry initialization indefinitely, logging an error every 10 attempts.
+- Authorize frames on write streams that were opened before RBAC was hot-enabled, so enabling RBAC mid-stream cannot leave long-lived Measure/Stream/Trace writes unchecked.
+- Reload auth config when the watched path is a symlink and its target file changes (ConfigMap-style layouts).
 
 ### Document
 

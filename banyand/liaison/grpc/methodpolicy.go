@@ -520,6 +520,16 @@ func NewAuthorizationStreamInterceptor(
 		handlerContext := ContextWithSnapshot(context.WithValue(stream.Context(), principalContextKey{}, principal), snapshot)
 		trustedStream := &principalServerStream{ServerStream: stream, ctx: handlerContext}
 		if !snapshot.RBACEnabled() {
+			// Still wrap write streams so a later hot-enable of RBAC authorizes
+			// frames on already-open streams. FrameAuthorizer is a no-op while RBAC is off.
+			if policy.Scope == ScopeFrameGroups {
+				return handler(server, NewFrameAuthorizer(trustedStream, FrameAuthorization{
+					Snapshots: reloader,
+					Observer:  observer,
+					Principal: principal,
+					Policy:    policy,
+				}))
+			}
 			return handler(server, trustedStream)
 		}
 
