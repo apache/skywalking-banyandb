@@ -172,7 +172,7 @@ jobs:
         if: ${{ (failure() && startsWith(matrix.test.name, 'Lifecycle')) }}
         name: Upload generated data
         with:
-          name: lifecycle-data
+          name: lifecycle-data-${{ matrix.test.name }}${{ matrix.engine.suffix }}
           path: "test/e2e-v2/cases/lifecycle/data-generator/tmp"
 
   Storage:

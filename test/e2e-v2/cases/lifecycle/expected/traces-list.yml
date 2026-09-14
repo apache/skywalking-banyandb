@@ -13,8 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-debuggingtrace: null
-
 # Cold trace list for mock_a_service in the Trace V2 shape: every returned trace
 # must contain the Entry span of the queried endpoint carrying the queried tag.
 debuggingtrace: null

@@ -112,3 +112,6 @@ progress.txt
 verify-*.png
 sw-tiered-*.png
 handoff-login.png
+
+# rendered by test/e2e-v2/cases/lifecycle/data-generator/gen.sh
+test/e2e-v2/cases/lifecycle/dns-discovery/kind.yaml
