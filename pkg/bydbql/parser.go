@@ -76,8 +76,20 @@ func init() {
 	}
 }
 
+// maxParenDepth bounds the parenthesis nesting ParseQuery accepts. Participle's
+// recursive-descent parser calls back into GrammarOrExpr once per nesting level
+// with no built-in recursion limit, so a query with enough nested parentheses
+// can exhaust the goroutine stack and crash the process via runtime.throw — a
+// fatal error recover() cannot catch. Rejecting excess nesting with a flat,
+// non-recursive scan before the query ever reaches the parser keeps the fix
+// itself immune to the same failure mode.
+const maxParenDepth = 64
+
 // ParseQuery parses a BydbQL query string into a Grammar struct.
 func ParseQuery(query string) (*Grammar, error) {
+	if err := checkParenDepth(query); err != nil {
+		return nil, err
+	}
 	// Parse using Participle
 	grammar, err := particpleParser.ParseString("", query)
 	if err != nil {
@@ -85,4 +97,39 @@ func ParseQuery(query string) (*Grammar, error) {
 	}
 
 	return grammar, nil
+}
+
+// checkParenDepth rejects queries whose parenthesis nesting exceeds maxParenDepth.
+// It skips over quoted string content — which may contain unbalanced or
+// backslash-escaped quote characters, per the String lexer rule — so literal
+// values never distort the depth count.
+func checkParenDepth(query string) error {
+	depth := 0
+	var quote byte
+	for i := 0; i < len(query); i++ {
+		c := query[i]
+		if quote != 0 {
+			switch c {
+			case '\\':
+				i++
+			case quote:
+				quote = 0
+			}
+			continue
+		}
+		switch c {
+		case '\'', '"':
+			quote = c
+		case '(':
+			depth++
+			if depth > maxParenDepth {
+				return fmt.Errorf("syntax error: parenthesis nesting exceeds maximum depth of %d", maxParenDepth)
+			}
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		}
+	}
+	return nil
 }
