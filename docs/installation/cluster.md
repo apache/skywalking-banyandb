@@ -37,6 +37,19 @@ nodes:
     grpc_address: 192.168.1.10:17912
 ```
 
+> **Port Guidance:**
+> The default `--grpc-port` for both `banyand data` and `banyand liaison` is **17912**.
+> - **Separate hosts/IPs**: When data and liaison nodes run on distinct hosts or IP addresses (as shown above), both can use the default port `17912`.
+> - **Co-located on one host/IP**: When data and liaison share the same host or IP (e.g., in a local test or single-machine setup), they cannot bind to the same port on that IP. Assign different ports (e.g., data on `17912` and liaison on `18912` via `--grpc-port=18912`), and list the matching ports in `nodes.yaml`:
+>   ```yaml
+>   nodes:
+>     - name: data-0
+>       grpc_address: 10.100.11.1:17912
+>     - name: liaison-0
+>       grpc_address: 10.100.11.1:18912
+>   ```
+> `nodes.yaml` must list the exact gRPC port that each process actually listens on.
+
 The file is reread at the `--node-discovery-file-fetch-interval` cadence (default 5m), so adding or removing a node after startup only requires editing the file on each host; failed nodes are retried with exponential backoff. TLS fields (`tls_enabled`, `ca_cert_path`) can be added per entry — see the [node discovery documentation](../operation/node-discovery.md#file-based-discovery) for the full schema.
 
 ### DNS Mode: Publish SRV Records
@@ -105,7 +118,14 @@ Liaison nodes are stateless and use the same discovery source to locate data nod
 **File mode example:**
 
 ```shell
+# Dedicated host (default port 17912)
 banyand liaison \
+  --node-discovery-mode=file \
+  --node-discovery-file-path=/etc/banyandb/nodes.yaml
+
+# Co-located on the same host/IP as a data node (override port, e.g. 18912)
+banyand liaison \
+  --grpc-port=18912 \
   --node-discovery-mode=file \
   --node-discovery-file-path=/etc/banyandb/nodes.yaml
 ```
