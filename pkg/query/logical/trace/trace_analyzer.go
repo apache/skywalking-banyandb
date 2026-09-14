@@ -24,6 +24,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/pkg/iter"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -84,6 +85,10 @@ func Analyze(criteria *tracev1.QueryRequest, metadata []*commonv1.Metadata, ss [
 	if limitParameter == 0 {
 		limitParameter = defaultLimit
 	}
+	window, validWindow := query.AddWindow(limitParameter, criteria.GetOffset())
+	if !validWindow {
+		return nil, fmt.Errorf("query limit and offset exceed supported range")
+	}
 	plan = newTraceLimit(plan, criteria.GetOffset(), limitParameter)
 
 	p, err := plan.Analyze(s)
@@ -92,7 +97,7 @@ func Analyze(criteria *tracev1.QueryRequest, metadata []*commonv1.Metadata, ss [
 	}
 	rules := []logical.OptimizeRule{
 		logical.NewPushDownOrder(criteria.OrderBy),
-		logical.NewPushDownMaxSize(int(limitParameter + criteria.GetOffset())),
+		logical.NewPushDownMaxSize(int(window)),
 	}
 	if err := logical.ApplyRules(p, rules...); err != nil {
 		return nil, err
@@ -118,6 +123,9 @@ func DistributedAnalyze(criteria *tracev1.QueryRequest, ss []logical.Schema) (lo
 	limitParameter := criteria.GetLimit()
 	if limitParameter == 0 {
 		limitParameter = defaultLimit
+	}
+	if _, validWindow := query.AddWindow(limitParameter, criteria.GetOffset()); !validWindow {
+		return nil, fmt.Errorf("query limit and offset exceed supported range")
 	}
 	plan = newDistributedTraceLimit(plan, criteria.Offset, limitParameter)
 	return plan.Analyze(s)
