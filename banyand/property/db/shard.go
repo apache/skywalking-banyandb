@@ -299,9 +299,12 @@ func (s *shard) search(ctx context.Context, q index.Query, orderBy *propertyv1.Q
 		if len(ss) == 0 {
 			return nil, nil
 		}
-		data = make([]*queryProperty, 0, len(ss))
+		data = make([]*queryProperty, 0)
 		for _, s := range ss {
 			bytes := s.Fields[sourceField]
+			if chargeErr := query.Charge(ctx, uint64(len(bytes))+128); chargeErr != nil {
+				return nil, chargeErr
+			}
 			var deleteTime int64
 			if s.Fields[deleteField] != nil {
 				deleteTime = convert.BytesToInt64(s.Fields[deleteField])
@@ -331,9 +334,12 @@ func (s *shard) search(ctx context.Context, q index.Query, orderBy *propertyv1.Q
 	defer func() {
 		err = multierr.Append(err, iter.Close())
 	}()
-	data = make([]*queryProperty, 0, limit)
+	data = make([]*queryProperty, 0, queryCapacity(limit))
 	for iter.Next() {
 		val := iter.Val()
+		if chargeErr := query.Charge(ctx, uint64(len(val.Values[sourceField]))+uint64(len(val.SortedValue))+128); chargeErr != nil {
+			return nil, chargeErr
+		}
 
 		var deleteTime int64
 		if val.Values[deleteField] != nil {
