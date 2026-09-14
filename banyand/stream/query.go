@@ -18,102 +18,18 @@
 package stream
 
 import (
-	"context"
-	"fmt"
-	"time"
-
-	"github.com/pkg/errors"
+	"errors"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
-	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
-	itersort "github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-	"github.com/apache/skywalking-banyandb/pkg/pool"
-	logicalstream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
-
-var streamQueryResultTracker = pool.RegisterTracker("stream.queryResult")
-
-const checkDoneEvery = 128
-
-func (s *stream) Query(ctx context.Context, sqo model.StreamQueryOptions) (sqr model.StreamQueryResult, err error) {
-	ctx = panicdiag.WithBreadcrumb(ctx, "start stream query", "stream", map[string]string{
-		"group":  s.group,
-		"stream": sqo.Name,
-	})
-	if err = validateQueryInput(sqo); err != nil {
-		return nil, err
-	}
-
-	tsdb, err := s.getTSDB()
-	if err != nil {
-		return nil, err
-	}
-
-	segments, err := tsdb.SelectSegments(*sqo.TimeRange, true)
-	if err != nil {
-		return nil, err
-	}
-	if len(segments) < 1 {
-		return bypassQueryResultInstance, nil
-	}
-	ctx = panicdiag.WithBreadcrumb(ctx, "selected stream segments", "stream", map[string]string{
-		"group":    s.group,
-		"segments": fmt.Sprintf("%d", len(segments)),
-	})
-
-	segmentsNeedRelease := true
-	defer func() {
-		if !segmentsNeedRelease {
-			return
-		}
-		for i := range segments {
-			segments[i].DecRef()
-		}
-	}()
-
-	series := prepareSeriesData(sqo)
-
-	schemaTagTypes := make(map[string]pbv1.ValueType)
-	for _, tf := range s.schema.GetTagFamilies() {
-		for _, tag := range tf.GetTags() {
-			vt := pbv1.TagValueSpecToValueType(tag.GetType())
-			if vt != pbv1.ValueTypeUnknown {
-				schemaTagTypes[tag.GetName()] = vt
-			}
-		}
-	}
-
-	qo := prepareQueryOptions(sqo, schemaTagTypes)
-	tr := index.NewIntRangeOpts(qo.minTimestamp, qo.maxTimestamp, true, true)
-
-	if sqo.Order == nil || sqo.Order.Index == nil {
-		sqr = s.executeTimeSeriesQuery(segments, series, qo, &tr)
-		segmentsNeedRelease = false
-		return sqr, nil
-	}
-
-	ctx = panicdiag.WithBreadcrumb(ctx, "execute stream indexed query", "stream", map[string]string{
-		"group":  s.group,
-		"stream": sqo.Name,
-	})
-	sqr, err = s.executeIndexedQuery(ctx, segments, series, sqo, schemaTagTypes, &tr)
-	if err != nil {
-		return nil, err
-	}
-	segmentsNeedRelease = false
-	return sqr, nil
-}
 
 func validateQueryInput(sqo model.StreamQueryOptions) error {
 	if sqo.TimeRange == nil || len(sqo.Entities) < 1 {
@@ -161,141 +77,6 @@ func prepareQueryOptions(sqo model.StreamQueryOptions, schemaTagTypes map[string
 	}
 }
 
-func (s *stream) executeTimeSeriesQuery(
-	segments []storage.Segment[*tsTable, option],
-	series []*pbv1.Series,
-	qo queryOptions,
-	tr *index.RangeOpts,
-) model.StreamQueryResult {
-	result := &tsResult{
-		segments: segments,
-		series:   series,
-		qo:       qo,
-		sm:       s,
-		pm:       s.pm,
-		l:        s.l,
-		tr:       tr,
-	}
-
-	// Determine ascending order
-	if qo.Order == nil {
-		result.asc = true
-	} else if qo.Order.Sort == modelv1.Sort_SORT_ASC || qo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
-		result.asc = true
-	}
-
-	streamQueryResultTracker.Acquire(result)
-	return result
-}
-
-func (s *stream) executeIndexedQuery(
-	ctx context.Context,
-	segments []storage.Segment[*tsTable, option],
-	series []*pbv1.Series,
-	sqo model.StreamQueryOptions,
-	schemaTagTypes map[string]pbv1.ValueType,
-	tr *index.RangeOpts,
-) (model.StreamQueryResult, error) {
-	result, seriesFilter, resultTS, err := s.processSegmentsAndBuildFilters(ctx, segments, series, sqo, schemaTagTypes, tr)
-	if err != nil {
-		return nil, err
-	}
-
-	if seriesFilter.IsEmpty() {
-		result.Release()
-		return nil, nil
-	}
-
-	// Update time range if needed
-	sids := seriesFilter.ToSlice()
-	startTS := sqo.TimeRange.Start.UnixNano()
-	endTS := sqo.TimeRange.End.UnixNano()
-	minTS, maxTS := updateTimeRange(resultTS, startTS, endTS)
-	if minTS > startTS || maxTS < endTS {
-		newTR := timestamp.NewTimeRange(time.Unix(0, minTS), time.Unix(0, maxTS), sqo.TimeRange.IncludeStart, sqo.TimeRange.IncludeEnd)
-		sqo.TimeRange = &newTR
-	}
-
-	// Perform index-based sorting
-	if result.sortingIter, err = s.indexSort(ctx, sqo, result.tabs, sids); err != nil {
-		return nil, err
-	}
-
-	// Set ascending flag
-	if sqo.Order.Sort == modelv1.Sort_SORT_ASC || sqo.Order.Sort == modelv1.Sort_SORT_UNSPECIFIED {
-		result.asc = true
-	}
-
-	streamQueryResultTracker.Acquire(&result)
-	return &result, nil
-}
-
-func (s *stream) processSegmentsAndBuildFilters(
-	ctx context.Context,
-	segments []storage.Segment[*tsTable, option],
-	series []*pbv1.Series,
-	sqo model.StreamQueryOptions,
-	schemaTagTypes map[string]pbv1.ValueType,
-	tr *index.RangeOpts,
-) (idxResult, posting.List, posting.List, error) {
-	var result idxResult
-	result.pm = s.pm
-	result.segments = segments
-	result.sm = s
-	result.qo = queryOptions{
-		StreamQueryOptions: sqo,
-		schemaTagTypes:     schemaTagTypes,
-		seriesToEntity:     make(map[common.SeriesID][]*modelv1.TagValue),
-	}
-
-	seriesFilter := roaring.NewPostingList()
-	var resultTS posting.List
-	var sl pbv1.SeriesList
-	var err error
-
-	for i := range result.segments {
-		sl, err = result.segments[i].Lookup(ctx, series)
-		if err != nil {
-			return result, nil, nil, err
-		}
-
-		var filter, filterTS posting.List
-		tables, _ := segments[i].Tables()
-		if filter, filterTS, err = indexSearch(ctx, sqo, tables, sl.ToList().ToSlice(), tr); err != nil {
-			return result, nil, nil, err
-		}
-
-		if filter != nil && filter.IsEmpty() {
-			continue
-		}
-
-		if result.qo.elementFilter == nil {
-			result.qo.elementFilter = filter
-			resultTS = filterTS
-		} else {
-			if err = result.qo.elementFilter.Union(filter); err != nil {
-				return result, nil, nil, err
-			}
-			if err = resultTS.Union(filterTS); err != nil {
-				return result, nil, nil, err
-			}
-		}
-
-		for j := range sl {
-			if seriesFilter.Contains(uint64(sl[j].ID)) {
-				continue
-			}
-			seriesFilter.Insert(uint64(sl[j].ID))
-			result.qo.seriesToEntity[sl[j].ID] = sl[j].EntityValues
-		}
-
-		tables, _ = result.segments[i].Tables()
-		result.tabs = append(result.tabs, tables...)
-	}
-
-	return result, seriesFilter, resultTS, nil
-}
-
 type queryOptions struct {
 	elementFilter  posting.List
 	seriesToEntity map[common.SeriesID][]*modelv1.TagValue
@@ -324,75 +105,6 @@ func (qo *queryOptions) copyFrom(other *queryOptions) {
 	qo.schemaTagTypes = other.schemaTagTypes
 	qo.minTimestamp = other.minTimestamp
 	qo.maxTimestamp = other.maxTimestamp
-}
-
-func indexSearch(ctx context.Context, sqo model.StreamQueryOptions,
-	tabs []*tsTable, seriesList []uint64, tr *index.RangeOpts,
-) (posting.List, posting.List, error) {
-	if sqo.InvertedFilter == nil || sqo.InvertedFilter == logicalstream.ENode {
-		return nil, nil, nil
-	}
-	result, resultTS := roaring.NewPostingList(), roaring.NewPostingList()
-	for _, tw := range tabs {
-		index := tw.Index()
-		pl, plTS, err := index.Search(ctx, seriesList, sqo.InvertedFilter, tr)
-		if err != nil {
-			return nil, nil, err
-		}
-		if pl == nil || pl.IsEmpty() {
-			continue
-		}
-		if err := result.Union(pl); err != nil {
-			return nil, nil, err
-		}
-		if plTS == nil || plTS.IsEmpty() {
-			continue
-		}
-		if err := resultTS.Union(plTS); err != nil {
-			return nil, nil, err
-		}
-	}
-	return result, resultTS, nil
-}
-
-func (s *stream) indexSort(ctx context.Context, sqo model.StreamQueryOptions, tabs []*tsTable,
-	sids []uint64,
-) (itersort.Iterator[*index.DocumentResult], error) {
-	if sqo.Order == nil || sqo.Order.Index == nil {
-		return nil, nil
-	}
-	seriesList := make([]common.SeriesID, len(sids))
-	for i := range sids {
-		seriesList[i] = common.SeriesID(sids[i])
-	}
-	iters, err := s.buildItersByIndex(ctx, tabs, seriesList, sqo)
-	if err != nil {
-		return nil, err
-	}
-	desc := sqo.Order != nil && sqo.Order.Sort == modelv1.Sort_SORT_DESC
-	return itersort.NewItemIter[*index.DocumentResult](iters, desc), nil
-}
-
-func (s *stream) buildItersByIndex(ctx context.Context, tables []*tsTable,
-	sids []common.SeriesID, sqo model.StreamQueryOptions,
-) (iters []itersort.Iterator[*index.DocumentResult], err error) {
-	indexRuleForSorting := sqo.Order.Index
-	if len(indexRuleForSorting.Tags) != 1 {
-		return nil, fmt.Errorf("only support one tag for sorting, but got %d", len(indexRuleForSorting.Tags))
-	}
-	for _, tw := range tables {
-		var iter index.FieldIterator[*index.DocumentResult]
-		fieldKey := index.FieldKey{
-			IndexRuleID: indexRuleForSorting.GetMetadata().GetId(),
-			Analyzer:    indexRuleForSorting.GetAnalyzer(),
-		}
-		iter, err = tw.Index().Sort(ctx, sids, fieldKey, sqo.Order.Sort, sqo.TimeRange, sqo.MaxElementSize)
-		if err != nil {
-			return nil, err
-		}
-		iters = append(iters, iter)
-	}
-	return
 }
 
 func mustEncodeTagValue(name string, tagType databasev1.TagType, tagValue *modelv1.TagValue, num int) [][]byte {
@@ -502,4 +214,38 @@ func updateTimeRange(filterTS posting.List, minTimestamp, maxTimestamp int64) (i
 		}
 	}
 	return minTimestamp, maxTimestamp
+}
+
+func loadBlockCursor(bc *blockCursor, tmpBlock *block, qo queryOptions, is indexSchema) bool {
+	tmpBlock.reset()
+	if !bc.loadData(tmpBlock) {
+		releaseBlockCursor(bc)
+		return false
+	}
+	entityValues := qo.seriesToEntity[bc.bm.seriesID]
+
+	tagFamilyMap := make(map[string]int)
+	for idx, tagFamily := range bc.tagFamilies {
+		tagFamilyMap[tagFamily.name] = idx + 1
+	}
+	for _, tagFamilyProj := range bc.tagProjection {
+		for j, tagProj := range tagFamilyProj.Names {
+			tagSpec := is.tagMap[tagProj]
+			if tagSpec == nil {
+				continue
+			}
+			entityPos := is.indexRuleLocators.EntitySet[tagProj]
+			if entityPos == 0 {
+				continue
+			}
+			tagFamilyPos := tagFamilyMap[tagFamilyProj.Family]
+			valueType := pbv1.MustTagValueToValueType(entityValues[entityPos-1])
+			bc.tagFamilies[tagFamilyPos-1].tags[j] = tag{
+				name:      tagProj,
+				values:    mustEncodeTagValue(tagProj, tagSpec.GetType(), entityValues[entityPos-1], len(bc.timestamps)),
+				valueType: valueType,
+			}
+		}
+	}
+	return true
 }

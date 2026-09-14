@@ -24,9 +24,10 @@ import (
 )
 
 // Distinct deduplicates stream rows by ElementID, keeping the first occurrence
-// in the (already merged, and for a criteria query already FILTERED) input order. It is stateful across batches via a seen
-// set keyed by the raw uint64 element id, mirroring the row path's first-seen
-// dedup (stream_plan_distributed.go seen map keyed by ElementId). It MUST run
+// in the (already merged, and for a filtered index-order query already FILTERED)
+// input order. It is stateful across batches via a seen set keyed by the raw
+// uint64 element id, mirroring the row path's first-seen dedup
+// (stream_plan_distributed.go seen map keyed by ElementId). It MUST run
 // downstream of SortedMerge so "first occurrence" reflects the global order.
 type Distinct struct {
 	schema  *vectorized.BatchSchema

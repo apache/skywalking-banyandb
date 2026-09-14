@@ -29,7 +29,7 @@ import (
 )
 
 func execCfg() measure.VectorizedConfig {
-	return measure.VectorizedConfig{Enabled: true, BatchSize: 1024, QueryMemoryMiB: 16}
+	return measure.VectorizedConfig{BatchSize: 1024, QueryMemoryMiB: 16}
 }
 
 func TestExecute_NilPlan_Errors(t *testing.T) {

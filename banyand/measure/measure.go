@@ -21,6 +21,9 @@
 package measure
 
 import (
+	"errors"
+	"fmt"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -174,12 +177,35 @@ func (m *measure) VectorizedConfig() vmeasure.VectorizedConfig {
 	return m.vectorized
 }
 
+// removedRowQueryFlag accepts --<engine>-vectorized-enabled=true as a no-op and
+// rejects =false, so an operator whose rollback command line survived the
+// upgrade gets a message naming the issue instead of "unknown flag". The flag
+// is removed entirely in 0.13.0.
+type removedRowQueryFlag string
+
+func (f *removedRowQueryFlag) Set(value string) error {
+	parsed, parseErr := strconv.ParseBool(value)
+	if parseErr != nil {
+		return fmt.Errorf("invalid boolean value %q: %w", value, parseErr)
+	}
+	if !parsed {
+		return errors.New("row-based query was removed in 0.12.0, see apache/skywalking#13998")
+	}
+	*f = removedRowQueryFlag(value)
+	return nil
+}
+
+func (f *removedRowQueryFlag) String() string { return string(*f) }
+
+func (*removedRowQueryFlag) Type() string { return "bool" }
+
 // bindVectorizedFlags wires VectorizedConfig fields to a run.FlagSet. The
 // defaults match vmeasure.DefaultConfig.
 func bindVectorizedFlags(flagS *run.FlagSet, cfg *vmeasure.VectorizedConfig) {
 	defaults := vmeasure.DefaultConfig()
-	flagS.BoolVar(&cfg.Enabled, "measure-vectorized-enabled", defaults.Enabled,
-		"enable the vectorized measure query path")
+	removed := removedRowQueryFlag("true")
+	flagS.Var(&removed, "measure-vectorized-enabled", "deprecated no-op; removed in 0.13.0")
+	flagS.Lookup("measure-vectorized-enabled").NoOptDefVal = "true"
 	flagS.IntVar(&cfg.BatchSize, "measure-vectorized-batch-size", defaults.BatchSize,
 		"row count per vectorized batch")
 	flagS.IntVar(&cfg.QueryMemoryMiB, "measure-vectorized-query-memory-mib", defaults.QueryMemoryMiB,

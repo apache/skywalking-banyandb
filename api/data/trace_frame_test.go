@@ -67,43 +67,30 @@ func TestTraceCodec_RawEmptyBody(t *testing.T) {
 	require.Empty(t, decoded.GetInternalTraces())
 }
 
-// TestTraceCodec_FlagOffIsProto verifies flag-off encodes byte-identically to
-// plain proto.Marshal and round-trips through the proto path.
-func TestTraceCodec_FlagOffIsProto(t *testing.T) {
-	SetTraceWireModeRaw(false)
-	c := newTraceCodec()
-	orig := &tracev1.InternalQueryResponse{
-		InternalTraces: []*tracev1.InternalTrace{
-			{TraceId: "trace-1", Key: -42, Spans: []*tracev1.Span{{SpanId: "span-1", Span: []byte("payload-1")}}},
-		},
-	}
-
-	body, err := c.Marshal(orig)
-	require.NoError(t, err)
-	want, err := proto.Marshal(orig)
-	require.NoError(t, err)
-	require.Equal(t, want, body, "flag-off must encode byte-identically to proto.Marshal")
-
-	got, err := c.Unmarshal(body)
-	require.NoError(t, err)
-	require.True(t, proto.Equal(orig, got.(*tracev1.InternalQueryResponse)))
-}
-
-// TestTraceCodec_FlagOnProtoFallback verifies that flag-on, a proto.Message
-// value (e.g. the tracing path) still goes through the proto path.
-func TestTraceCodec_FlagOnProtoFallback(t *testing.T) {
+// TestTraceCodec_ProtoFallback verifies that a proto.Message value (the tracing
+// path, or any shape the columnar egress declines) still encodes byte-identically
+// to plain proto.Marshal and round-trips through the proto path. The non-empty
+// case matters on its own: it produces a body Unmarshal must route to proto
+// despite the raw-frame magic being 0x00, which an empty body never exercises.
+func TestTraceCodec_ProtoFallback(t *testing.T) {
 	SetTraceWireModeRaw(true)
 	defer SetTraceWireModeRaw(false)
 	c := newTraceCodec()
-	orig := &tracev1.InternalQueryResponse{}
 
-	body, err := c.Marshal(orig)
-	require.NoError(t, err)
-	want, err := proto.Marshal(orig)
-	require.NoError(t, err)
-	require.Equal(t, want, body)
+	for _, orig := range []*tracev1.InternalQueryResponse{
+		{},
+		{InternalTraces: []*tracev1.InternalTrace{
+			{TraceId: "trace-1", Key: -42, Spans: []*tracev1.Span{{SpanId: "span-1", Span: []byte("payload-1")}}},
+		}},
+	} {
+		body, err := c.Marshal(orig)
+		require.NoError(t, err)
+		want, err := proto.Marshal(orig)
+		require.NoError(t, err)
+		require.Equal(t, want, body, "proto fallback must encode byte-identically to proto.Marshal")
 
-	got, err := c.Unmarshal(body)
-	require.NoError(t, err)
-	require.True(t, proto.Equal(orig, got.(*tracev1.InternalQueryResponse)))
+		got, err := c.Unmarshal(body)
+		require.NoError(t, err)
+		require.True(t, proto.Equal(orig, got.(*tracev1.InternalQueryResponse)))
+	}
 }

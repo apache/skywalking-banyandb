@@ -162,8 +162,7 @@ func (s *liaison) Role() databasev1.Role {
 
 func (s *liaison) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
-	data.SetStreamWireModeRaw(s.option.vectorized.Enabled)
-	s.l.Info().Bool("stream_wire_mode_raw", s.option.vectorized.Enabled).Msg("stream wire mode published (liaison)")
+	data.SetStreamWireModeRaw(true)
 	s.l.Info().Msg("memory protector is initialized in PreRun")
 	s.lfs = fs.NewLocalFileSystemWithLoggerAndLimit(s.l, s.pm.GetLimit())
 	var err error
