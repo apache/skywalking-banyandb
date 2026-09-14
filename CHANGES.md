@@ -12,6 +12,7 @@ Release Notes.
 - Charge large tag and field values against the query allowance by their size instead of eight times their size, so a query that reads multi-MB values (for example OAP ai-agent session files stored as a `body` tag) no longer runs out of its allowance.
 - Without `--allowed-bytes` or a container memory limit, size the query memory pool from host memory (75% of it, divided by 4, each query getting an eighth) instead of a fixed 64 MiB. The memory protector itself stays disabled.
 - Retry property schema registry initialization indefinitely, logging an error every 10 attempts.
+- Re-fetch file/DNS discovery nodes that are parked in the retry queue while discovery has not Start()-ed yet, so unbounded PreRun schema-registry retries can recover once peers become reachable without restarting liaison.
 
 ## 0.11.1
 

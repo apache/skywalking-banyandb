@@ -270,19 +270,23 @@ func (s *Service) updateNodeCache(ctx context.Context, newNodes []NodeConfig) {
 			continue
 		}
 
-		// node in retry queue - check if config changed
+		// node in retry queue - check if config changed or PreRun still owns recovery
 		if s.RetryManager.IsInRetry(nodeConfig.Address) {
 			oldConfig, hasOldConfig := oldAddressToNodeConfig[nodeConfig.Address]
-
-			if hasOldConfig && nodeConfigChanged(oldConfig, nodeConfig) {
+			configChanged := hasOldConfig && nodeConfigChanged(oldConfig, nodeConfig)
+			// After Start, the retry scheduler owns unchanged addresses. Before Start
+			// (schema-registry init in PreRun), that scheduler is not running yet, so
+			// each ListNode must re-fetch synchronously or unbounded PreRun retries
+			// never observe a peer that becomes reachable later.
+			if s.started && !configChanged {
+				continue
+			}
+			if configChanged {
 				s.GetLogger().Info().
 					Str("address", nodeConfig.Address).
 					Msg("Node configuration changed, resetting retry state")
-				s.RetryManager.RemoveFromRetry(nodeConfig.Address)
-			} else {
-				// config unchanged, let retry scheduler handle it
-				continue
 			}
+			s.RetryManager.RemoveFromRetry(nodeConfig.Address)
 		}
 
 		// try to fetch metadata for new node
