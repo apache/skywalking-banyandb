@@ -20,6 +20,7 @@ services:
     extends:
       file: ../../script/docker-compose/base-compose.yml
       service: data
+    mem_limit: 1536m
     command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml ${BANYANDB_MEASURE_VECTORIZED_FLAGS:---measure-vectorized-enabled=false} ${BANYANDB_TRACE_VECTORIZED_FLAGS:---trace-vectorized-enabled=false}
     volumes:
       - ./nodes.yaml:/etc/banyandb/nodes.yaml
@@ -30,6 +31,7 @@ services:
     extends:
       file: ../../script/docker-compose/base-compose.yml
       service: liaison
+    mem_limit: 512m
     command: liaison --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml ${BANYANDB_MEASURE_VECTORIZED_FLAGS:---measure-vectorized-enabled=false} ${BANYANDB_TRACE_VECTORIZED_FLAGS:---trace-vectorized-enabled=false}
     volumes:
       - ./nodes.yaml:/etc/banyandb/nodes.yaml

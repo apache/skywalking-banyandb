@@ -36,6 +36,7 @@ import (
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/banyand/trace"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -88,6 +89,22 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("invalid event data type"))
 		return
 	}
+	budget := p.queryBudget
+	if budget == nil {
+		budget = protector.QueryBudgetFor(nil)
+	}
+	admittedCtx, release, admissionErr := budget.AdmitRequestContext(ctx, queryCriteria.GetLimit(), queryCriteria.GetOffset(), 20)
+	if admissionErr != nil {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("query admission failed: %v", admissionErr))
+		return
+	}
+	defer release()
+	ctx = admittedCtx
+	defer func() {
+		if chargeErr := query.ChargeResponse(ctx, resp.Data()); chargeErr != nil {
+			resp = bus.NewMessage(resp.ID(), common.NewError("query response memory exhausted: %v", chargeErr))
+		}
+	}()
 	if p.log.Debug().Enabled() {
 		p.log.Debug().RawJSON("criteria", logger.Proto(queryCriteria)).Msg("received a query request")
 	}
@@ -145,7 +162,8 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 			case *common.Error:
 				span.Error(errors.New(d.Error()))
 				span.Stop()
-				resp = bus.NewMessage(bus.MessageID(now), &streamv1.QueryResponse{Trace: tracer.ToProto()})
+				// Preserve the error response. A tracing request must not turn
+				// admission or execution failures into a successful empty result.
 			default:
 				panic("unexpected data type")
 			}
@@ -897,6 +915,22 @@ func (p *traceQueryProcessor) Rev(ctx context.Context, message bus.Message) (res
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("invalid event data type"))
 		return
 	}
+	budget := p.queryBudget
+	if budget == nil {
+		budget = protector.QueryBudgetFor(nil)
+	}
+	admittedCtx, release, admissionErr := budget.AdmitRequestContext(ctx, queryCriteria.GetLimit(), queryCriteria.GetOffset(), 20)
+	if admissionErr != nil {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("query admission failed: %v", admissionErr))
+		return
+	}
+	defer release()
+	ctx = admittedCtx
+	defer func() {
+		if chargeErr := query.ChargeResponse(ctx, resp.Data()); chargeErr != nil {
+			resp = bus.NewMessage(resp.ID(), common.NewError("query response memory exhausted: %v", chargeErr))
+		}
+	}()
 	if p.log.Debug().Enabled() {
 		p.log.Debug().RawJSON("criteria", logger.Proto(queryCriteria)).Msg("received a trace query request")
 	}
@@ -999,7 +1033,7 @@ func (p *traceQueryProcessor) setupTraceMonitor(ctx context.Context, queryCriter
 	}
 }
 
-func (tm *traceMonitor) finishTrace(resp *bus.Message, messageID int64) {
+func (tm *traceMonitor) finishTrace(resp *bus.Message) {
 	if tm == nil {
 		return
 	}
@@ -1013,7 +1047,7 @@ func (tm *traceMonitor) finishTrace(resp *bus.Message, messageID int64) {
 	case *common.Error:
 		tm.span.Error(errors.New(d.Error()))
 		tm.span.Stop()
-		*resp = bus.NewMessage(bus.MessageID(messageID), &tracev1.QueryResponse{TraceQueryResult: tm.tracer.ToProto()})
+		// Preserve the error response; tracing must not make failures look successful.
 	default:
 		panic("unexpected data type")
 	}
@@ -1259,7 +1293,7 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 
 	ctx, traceMonitor := p.setupTraceMonitor(ctx, queryCriteria, plan, n)
 	if traceMonitor != nil {
-		defer traceMonitor.finishTrace(&resp, now)
+		defer traceMonitor.finishTrace(&resp)
 	}
 
 	te := plan.(executor.TraceExecutable)
