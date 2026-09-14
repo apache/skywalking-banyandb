@@ -183,6 +183,7 @@ var _ = Describe("Failure Scenarios", func() {
 
 	It("handles agent disconnection gracefully", func() {
 		agent := startAgentForFixture(fixture, "127.0.0.10", "liaison")
+		defer stopAgent(agent)
 		registerAgent(agent)
 
 		Expect(testhelper.UpdateMetrics(agent.flight, []testhelper.RawMetric{{
@@ -195,19 +196,15 @@ var _ = Describe("Failure Scenarios", func() {
 		}})).To(Succeed())
 
 		var metricsList []map[string]interface{}
-		Eventually(func() error {
+		Eventually(func(g Gomega) {
 			resp, err := http.Get(fmt.Sprintf("http://%s/metrics-windows", fixture.proxyHTTPAddr))
-			if err != nil {
-				return err
-			}
+			g.Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-			}
-			return json.NewDecoder(resp.Body).Decode(&metricsList)
+			g.Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			g.Expect(json.NewDecoder(resp.Body).Decode(&metricsList)).To(Succeed())
+			g.Expect(metricsList).NotTo(BeEmpty())
 		}, 10*time.Second, 500*time.Millisecond).Should(Succeed())
 
-		Expect(len(metricsList)).To(BeNumerically(">=", 1))
 		Expect(fixture.aggregator.ActiveCollections()).To(Equal(0))
 
 		stopAgent(agent)
@@ -240,7 +237,9 @@ var _ = Describe("Failure Scenarios", func() {
 
 	It("continues metrics collection when part of the cluster is partitioned", func() {
 		first := startAgentForFixture(fixture, "127.0.0.21", "datanode-hot")
+		defer stopAgent(first)
 		second := startAgentForFixture(fixture, "127.0.0.22", "datanode-warm")
+		defer stopAgent(second)
 
 		registerAgent(first)
 		registerAgent(second)
@@ -276,19 +275,15 @@ var _ = Describe("Failure Scenarios", func() {
 		}, 5*time.Second, 500*time.Millisecond).Should(Equal(1))
 
 		var metricsList []map[string]interface{}
-		Eventually(func() error {
+		Eventually(func(g Gomega) {
 			resp, err := http.Get(fmt.Sprintf("http://%s/metrics-windows?pod_name=%s", fixture.proxyHTTPAddr, first.podName))
-			if err != nil {
-				return err
-			}
+			g.Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-			}
-			return json.NewDecoder(resp.Body).Decode(&metricsList)
+			g.Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			g.Expect(json.NewDecoder(resp.Body).Decode(&metricsList)).To(Succeed())
+			g.Expect(metricsList).NotTo(BeEmpty())
 		}, 15*time.Second, 500*time.Millisecond).Should(Succeed())
 
-		Expect(len(metricsList)).To(BeNumerically(">=", 1))
 		for _, metric := range metricsList {
 			Expect(metric["labels"].(map[string]interface{})["node_role"]).To(Equal("datanode-hot"))
 		}
@@ -299,6 +294,7 @@ var _ = Describe("Failure Scenarios", func() {
 
 	It("recovers after the proxy's gRPC service restarts", func() {
 		agent := startAgentForFixture(fixture, "127.0.0.30", "datanode-cold")
+		defer stopAgent(agent)
 		registerAgent(agent)
 
 		Expect(testhelper.UpdateMetrics(agent.flight, []testhelper.RawMetric{{
@@ -311,19 +307,14 @@ var _ = Describe("Failure Scenarios", func() {
 		}})).To(Succeed())
 
 		var metricsList []map[string]interface{}
-		Eventually(func() error {
+		Eventually(func(g Gomega) {
 			resp, err := http.Get(fmt.Sprintf("http://%s/metrics-windows", fixture.proxyHTTPAddr))
-			if err != nil {
-				return err
-			}
+			g.Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-			}
-			return json.NewDecoder(resp.Body).Decode(&metricsList)
+			g.Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			g.Expect(json.NewDecoder(resp.Body).Decode(&metricsList)).To(Succeed())
+			g.Expect(metricsList).NotTo(BeEmpty())
 		}, 10*time.Second, 500*time.Millisecond).Should(Succeed())
-
-		Expect(len(metricsList)).To(BeNumerically(">=", 1))
 
 		agent.cancel()
 		Expect(agent.client.Disconnect()).To(Succeed())
@@ -338,6 +329,7 @@ var _ = Describe("Failure Scenarios", func() {
 
 		// Create a new agent client for reconnection after server restart
 		agent = startAgentForFixture(fixture, "127.0.0.30", "datanode-cold")
+		defer stopAgent(agent)
 		registerAgent(agent)
 
 		Expect(testhelper.UpdateMetrics(agent.flight, []testhelper.RawMetric{{
@@ -349,32 +341,28 @@ var _ = Describe("Failure Scenarios", func() {
 			},
 		}})).To(Succeed())
 
-		Eventually(func() error {
+		Eventually(func(g Gomega) {
 			resp, err := http.Get(fmt.Sprintf("http://%s/metrics-windows", fixture.proxyHTTPAddr))
-			if err != nil {
-				return err
-			}
+			g.Expect(err).NotTo(HaveOccurred())
 			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-			}
+			g.Expect(resp.StatusCode).To(Equal(http.StatusOK))
 			metricsList = nil
-			return json.NewDecoder(resp.Body).Decode(&metricsList)
-		}, 20*time.Second, 500*time.Millisecond).Should(Succeed())
+			g.Expect(json.NewDecoder(resp.Body).Decode(&metricsList)).To(Succeed())
 
-		found := false
-		for _, metric := range metricsList {
-			if metric["name"].(string) == "recovery_metric" {
-				Expect(metric["data"]).NotTo(BeNil())
-				for _, data := range metric["data"].([]interface{}) {
-					dataPoint := data.(map[string]interface{})
-					if dataPoint["value"].(float64) == 500.0 {
-						found = true
+			found := false
+			for _, metric := range metricsList {
+				if metric["name"].(string) == "recovery_metric" {
+					g.Expect(metric["data"]).NotTo(BeNil())
+					for _, data := range metric["data"].([]interface{}) {
+						dataPoint := data.(map[string]interface{})
+						if dataPoint["value"].(float64) == 500.0 {
+							found = true
+						}
 					}
 				}
 			}
-		}
-		Expect(found).To(BeTrue())
+			g.Expect(found).To(BeTrue())
+		}, 20*time.Second, 500*time.Millisecond).Should(Succeed())
 
 		stopAgent(agent)
 	})
