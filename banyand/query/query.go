@@ -30,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/banyand/trace"
@@ -41,6 +42,7 @@ type queryService struct {
 	metaService metadata.Repo
 	pipeline    queue.Server
 	log         *logger.Logger
+	queryBudget *protector.QueryBudget
 	sqp         *streamQueryProcessor
 	mqp         *measureQueryProcessor
 	imqp        *measureInternalQueryProcessor
@@ -53,10 +55,16 @@ type queryService struct {
 // NewService return a new query service.
 func NewService(_ context.Context, streamService stream.Service, measureService measure.Service, traceService trace.Service,
 	metaService metadata.Repo, pipeline queue.Server, metricSvc observability.MetricsRegistry, distributed bool,
+	protectors ...protector.Memory,
 ) (run.Unit, error) {
+	var pm protector.Memory
+	if len(protectors) > 0 {
+		pm = protectors[0]
+	}
 	svc := &queryService{
 		metaService: metaService,
 		pipeline:    pipeline,
+		queryBudget: protector.QueryBudgetFor(pm),
 	}
 	// measure query processor
 	svc.mqp = &measureQueryProcessor{

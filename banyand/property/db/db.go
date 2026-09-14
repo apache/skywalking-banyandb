@@ -47,6 +47,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
 const (
@@ -293,8 +294,11 @@ func (db *database) Query(ctx context.Context, req *propertyv1.QueryRequest) ([]
 	defer mergeIter.Close()
 
 	// Collect merged results up to limit
-	result := make([]QueriedProperty, 0, req.Limit)
+	result := make([]QueriedProperty, 0, queryCapacityUint(req.Limit))
 	for mergeIter.Next() {
+		if chargeErr := query.Charge(ctx, 128); chargeErr != nil {
+			return nil, chargeErr
+		}
 		result = append(result, mergeIter.Val())
 	}
 

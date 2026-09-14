@@ -38,6 +38,13 @@ spec:
             - standalone
             - --measure-vectorized-enabled=false
             - --trace-vectorized-enabled=false
+          resources:
+            requests:
+              memory: 512Mi
+            limits:
+              # Bound cgroup memory so the query budget uses a real pool instead of
+              # the 64MiB fallback (Kind pods are otherwise often unlimited).
+              memory: 2Gi
           ports:
             - name: grpc
               containerPort: 17912
