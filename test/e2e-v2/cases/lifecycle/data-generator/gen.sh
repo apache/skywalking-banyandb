@@ -54,3 +54,10 @@ else
 fi
 
 docker compose -f "$COMPOSE_FILE" down -v
+
+# Render the kind config for the dns-discovery variant. kind only accepts an
+# absolute hostPath and the e2e runner does not expand variables in kind.yaml,
+# so bake in the absolute path of the data generated above.
+KIND_DIR="$DIR/../dns-discovery"
+sed "s|__LIFECYCLE_DATA_DIR__|$DIR/tmp|" "$KIND_DIR/kind.yaml.tpl" > "$KIND_DIR/kind.yaml"
+echo "✅ rendered $KIND_DIR/kind.yaml"
