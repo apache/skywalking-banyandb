@@ -573,10 +573,13 @@ func (s *Service) updateNodeCache(ctx context.Context, srvToAddresses map[string
 		s.metrics.totalNodesCount.Set(float64(s.GetCacheSize()))
 	}
 
-	if len(addErrors) > 0 {
+	// Unreachable peers only fail the update when nothing was discovered at all.
+	// With at least one cached node the caller can proceed while the retry queue
+	// keeps chasing the rest. This matters during PreRun: the node's own address
+	// is already published but its gRPC port only opens after PreRun completes.
+	if len(addErrors) > 0 && s.GetCacheSize() == 0 {
 		return errors.Join(addErrors...)
 	}
-
 	return nil
 }
 

@@ -93,9 +93,10 @@ jobs:
           - name: Rover eBPF - Istio mesh, Kind
             config: test/e2e-v2/cases/rover/process/istio/banyandb/e2e-banyandb.yaml
             runs-on: ubuntu-24.04
-          # TODO: Enable Lifecycle test when it is ready
-          # - name: Lifecycle
-          #   config: test/e2e-v2/cases/lifecycle/e2e.yaml
+          - name: Lifecycle File Discovery
+            config: test/e2e-v2/cases/lifecycle/file-discovery/e2e.yaml
+          - name: Lifecycle DNS Discovery
+            config: test/e2e-v2/cases/lifecycle/dns-discovery/e2e.yaml
         engine:
           - suffix: ""
           - suffix: " Vec"
@@ -146,7 +147,7 @@ jobs:
               ;;
           esac
       - name: Generate data for lifecycle
-        if: ${{ matrix.test.name == 'Lifecycle' }}
+        if: ${{ startsWith(matrix.test.name, 'Lifecycle') }}
         run: |
           bash test/e2e-v2/cases/lifecycle/data-generator/gen.sh
       - name: ${{ matrix.test.name }}
@@ -154,7 +155,7 @@ jobs:
         with:
           e2e-file: $GITHUB_WORKSPACE/${{ matrix.test.config }}
       - name: Fix directory permissions
-        if: ${{ (failure() && matrix.test.name == 'Lifecycle') }}
+        if: ${{ (failure() && startsWith(matrix.test.name, 'Lifecycle')) }}
         run: sudo chmod -R 777 test/e2e-v2/cases/lifecycle/data-generator/tmp
       - if: ${{ failure() }}
         run: |
@@ -168,7 +169,7 @@ jobs:
           name: test-logs-${{ matrix.test.name }}
           path: "${{ env.SW_INFRA_E2E_LOG_DIR }}"
       - uses: actions/upload-artifact@v7
-        if: ${{ (failure() && matrix.test.name == 'Lifecycle') }}
+        if: ${{ (failure() && startsWith(matrix.test.name, 'Lifecycle')) }}
         name: Upload generated data
         with:
           name: lifecycle-data
