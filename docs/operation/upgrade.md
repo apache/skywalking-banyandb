@@ -120,7 +120,7 @@ The new path includes the `<group>` directory under `property/data/`. Existing d
 
 ### Node discovery default changed (breaking)
 
-The default node discovery mode changed from `etcd` to `none`. Cluster deployments **must** explicitly set `--node-discovery-mode=etcd` (or another supported mode such as `dns` or `file`) on each node to maintain the previous behavior. Without this flag, the cluster nodes will not discover each other after the upgrade. For configuration details, see [Node Discovery](../operation/node-discovery.md).
+The default node discovery mode changed to `none`. Cluster deployments **must** explicitly set a supported discovery mode (`dns` or `file`, e.g., `--node-discovery-mode=dns` or `--node-discovery-mode=file`) on each node. Without this flag, the cluster nodes will not discover each other after the upgrade. For configuration details, see [Node Discovery](../operation/node-discovery.md).
 
 Standalone deployments are unaffected since they do not use node discovery.
 

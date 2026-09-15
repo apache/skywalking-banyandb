@@ -55,7 +55,7 @@ message StreamRegistryServiceDeleteResponse {
   bool deleted = 1;
   // delete_time is the server-assigned tombstone timestamp in unix nanos.
   int64 delete_time = 2;
-  // mod_revision is the etcd revision of the tombstone; zero if the server did not record one.
+  // mod_revision is the schema revision of the tombstone; zero if the server did not record one.
   int64 mod_revision = 3;
 }
 
@@ -120,7 +120,7 @@ message IndexRuleBindingRegistryServiceCreateRequest {
 }
 
 message IndexRuleBindingRegistryServiceCreateResponse {
-  // mod_revision is the etcd revision assigned by the server on successful create/update.
+  // mod_revision is the schema revision assigned by the server on successful create/update.
   int64 mod_revision = 1;
 }
 
@@ -129,7 +129,7 @@ message IndexRuleBindingRegistryServiceUpdateRequest {
 }
 
 message IndexRuleBindingRegistryServiceUpdateResponse {
-  // mod_revision is the etcd revision assigned by the server on successful create/update.
+  // mod_revision is the schema revision assigned by the server on successful create/update.
   int64 mod_revision = 1;
 }
 
@@ -141,7 +141,7 @@ message IndexRuleBindingRegistryServiceDeleteResponse {
   bool deleted = 1;
   // delete_time is the server-assigned tombstone timestamp in unix nanos.
   int64 delete_time = 2;
-  // mod_revision is the etcd revision of the tombstone; zero if the server did not record one.
+  // mod_revision is the schema revision of the tombstone; zero if the server did not record one.
   int64 mod_revision = 3;
 }
 
@@ -206,7 +206,7 @@ message IndexRuleRegistryServiceCreateRequest {
 }
 
 message IndexRuleRegistryServiceCreateResponse {
-  // mod_revision is the etcd revision assigned by the server on successful create/update.
+  // mod_revision is the schema revision assigned by the server on successful create/update.
   int64 mod_revision = 1;
 }
 
@@ -215,7 +215,7 @@ message IndexRuleRegistryServiceUpdateRequest {
 }
 
 message IndexRuleRegistryServiceUpdateResponse {
-  // mod_revision is the etcd revision assigned by the server on successful create/update.
+  // mod_revision is the schema revision assigned by the server on successful create/update.
   int64 mod_revision = 1;
 }
 
@@ -227,7 +227,7 @@ message IndexRuleRegistryServiceDeleteResponse {
   bool deleted = 1;
   // delete_time is the server-assigned tombstone timestamp in unix nanos.
   int64 delete_time = 2;
-  // mod_revision is the etcd revision of the tombstone; zero if the server did not record one.
+  // mod_revision is the schema revision of the tombstone; zero if the server did not record one.
   int64 mod_revision = 3;
 }
 
@@ -311,7 +311,7 @@ message MeasureRegistryServiceDeleteResponse {
   bool deleted = 1;
   // delete_time is the server-assigned tombstone timestamp in unix nanos.
   int64 delete_time = 2;
-  // mod_revision is the etcd revision of the tombstone; zero if the server did not record one.
+  // mod_revision is the schema revision of the tombstone; zero if the server did not record one.
   int64 mod_revision = 3;
 }
 
@@ -376,7 +376,7 @@ message GroupRegistryServiceCreateRequest {
 }
 
 message GroupRegistryServiceCreateResponse {
-  // mod_revision is the etcd revision assigned by the server on successful create/update.
+  // mod_revision is the schema revision assigned by the server on successful create/update.
   int64 mod_revision = 1;
 }
 
@@ -385,7 +385,7 @@ message GroupRegistryServiceUpdateRequest {
 }
 
 message GroupRegistryServiceUpdateResponse {
-  // mod_revision is the etcd revision assigned by the server on successful create/update.
+  // mod_revision is the schema revision assigned by the server on successful create/update.
   int64 mod_revision = 1;
 }
 
@@ -410,7 +410,7 @@ message GroupRegistryServiceDeleteResponse {
   SchemaInfo schema_info = 1;
   // delete_time is the server-assigned tombstone timestamp in unix nanos.
   int64 delete_time = 2;
-  // mod_revision is the etcd revision of the tombstone; zero if the server did not record one.
+  // mod_revision is the schema revision of the tombstone; zero if the server did not record one.
   int64 mod_revision = 3;
 }
 
@@ -746,7 +746,7 @@ message TopNAggregationRegistryServiceCreateRequest {
 }
 
 message TopNAggregationRegistryServiceCreateResponse {
-  // mod_revision is the etcd revision assigned by the server on successful create/update.
+  // mod_revision is the schema revision assigned by the server on successful create/update.
   int64 mod_revision = 1;
 }
 
@@ -755,7 +755,7 @@ message TopNAggregationRegistryServiceUpdateRequest {
 }
 
 message TopNAggregationRegistryServiceUpdateResponse {
-  // mod_revision is the etcd revision assigned by the server on successful create/update.
+  // mod_revision is the schema revision assigned by the server on successful create/update.
   int64 mod_revision = 1;
 }
 
@@ -767,7 +767,7 @@ message TopNAggregationRegistryServiceDeleteResponse {
   bool deleted = 1;
   // delete_time is the server-assigned tombstone timestamp in unix nanos.
   int64 delete_time = 2;
-  // mod_revision is the etcd revision of the tombstone; zero if the server did not record one.
+  // mod_revision is the schema revision of the tombstone; zero if the server did not record one.
   int64 mod_revision = 3;
 }
 
@@ -876,7 +876,7 @@ message PropertyRegistryServiceDeleteResponse {
   bool deleted = 1;
   // delete_time is the server-assigned tombstone timestamp in unix nanos.
   int64 delete_time = 2;
-  // mod_revision is the etcd revision of the tombstone; zero if the server did not record one.
+  // mod_revision is the schema revision of the tombstone; zero if the server did not record one.
   int64 mod_revision = 3;
 }
 
@@ -960,7 +960,7 @@ message TraceRegistryServiceDeleteResponse {
   bool deleted = 1;
   // delete_time is the server-assigned tombstone timestamp in unix nanos.
   int64 delete_time = 2;
-  // mod_revision is the etcd revision of the tombstone; zero if the server did not record one.
+  // mod_revision is the schema revision of the tombstone; zero if the server did not record one.
   int64 mod_revision = 3;
 }
 
