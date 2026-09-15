@@ -53,7 +53,7 @@ func TestSyncReceiver_SegmentRefOwnership(t *testing.T) {
 	defer cleanup()
 
 	var openShardCount atomic.Int32
-	db := openTestTSDBForRefTest(t, tmpPath, &openShardCount)
+	db := openTestTSDBForRefTest(t, tmpPath, 1, &openShardCount)
 	defer db.Close()
 
 	segTime := time.Date(2026, 4, 17, 0, 0, 0, 0, time.UTC)
@@ -119,7 +119,7 @@ func TestSyncChunkCallback_CreatePartHandler_StoresSegment(t *testing.T) {
 	defer cleanup()
 
 	var openShardCount atomic.Int32
-	db := openTestTSDBForRefTest(t, tmpPath, &openShardCount)
+	db := openTestTSDBForRefTest(t, tmpPath, 1, &openShardCount)
 	defer db.Close()
 
 	// CreatePartHandler reinterprets ctx.MinTimestamp via time.Unix in Local
@@ -182,11 +182,11 @@ func TestSyncChunkCallback_CreatePartHandler_StoresSegment(t *testing.T) {
 		"after Close the dormant segment and its already-open shard are reused, no new shard")
 }
 
-func openTestTSDBForRefTest(t *testing.T, tmpPath string, openShardCount *atomic.Int32) storage.TSDB[*tsTable, option] {
+func openTestTSDBForRefTest(t *testing.T, tmpPath string, shardNum uint32, openShardCount *atomic.Int32) storage.TSDB[*tsTable, option] {
 	t.Helper()
 	ir := storage.IntervalRule{Unit: storage.DAY, Num: 1}
 	opts := storage.TSDBOpts[*tsTable, option]{
-		ShardNum: 1,
+		ShardNum: shardNum,
 		Location: filepath.Join(tmpPath, "tab"),
 		TSTableCreator: func(fileSystem fs.FileSystem, root string, p common.Position,
 			l *logger.Logger, tr timestamp.TimeRange, opt option, m any,
