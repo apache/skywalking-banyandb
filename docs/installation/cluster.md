@@ -25,7 +25,7 @@ The same discovery configuration must be supplied to every data node and every l
 
 ### File Mode: Prepare a `nodes.yaml`
 
-Create a file reachable by every process that will participate in the cluster (e.g. `/etc/banyandb/nodes.yaml`). List every data node and every liaison node — each entry needs a unique `name` and the gRPC endpoint:
+Create a file reachable by every process that will participate in the cluster (e.g. `/etc/banyandb/nodes.yaml`). List every data node and every liaison node — each entry should have a descriptive `name` (recommended for diagnostics, not enforced by the parser) and the gRPC endpoint:
 
 ```yaml
 nodes:

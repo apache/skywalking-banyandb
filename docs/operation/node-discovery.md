@@ -31,7 +31,7 @@ The `--node-discovery-*` flag set is registered in the metadata client that ever
 
 ### Overview
 
-None mode is the default discovery mode since 0.10.0. In this mode, nodes do not perform any service discovery. `--node-discovery-mode=none` disables external node discovery entirely. The discovery registry is wired to a stub that returns no peers, so no remote schema server, request routing target, or lifecycle migration target can be located. This is the default, and it is the only valid mode for `banyand standalone`.
+None mode is the default discovery mode since 0.10.0. `--node-discovery-mode=none` disables discovery of remote peers. The discovery registry caches only the local node (if the current process carries a discoverable role) and does not locate any remote nodes. A `banyand data` node can still bootstrap its own property schema endpoint from its local `CurNode`, but liaison routing tables and lifecycle migration targets remain empty because no remote peers are ever discovered. This is the default, and it is the only valid mode for `banyand standalone`.
 
 ### Configuration
 
@@ -51,7 +51,7 @@ banyand standalone --node-discovery-mode=none
 
 ### Caveats
 
-- **Not valid for clusters.** Running any of `banyand data`, `banyand liaison`, or `lifecycle` with `--node-discovery-mode=none` will leave the schema client with no server to talk to, liaison routing tables empty, and lifecycle migrations as no-ops. Use `dns` or `file` for every clustered deployment.
+- **Not valid for multi-node clusters.** In `none` mode a `banyand data` node can bootstrap its own property schema endpoint locally, but it will not discover any remote peers. Running `banyand liaison` or `lifecycle` with `--node-discovery-mode=none` leaves liaison routing tables empty and lifecycle migrations as no-ops, because neither process can locate data nodes. Use `dns` or `file` for every clustered deployment.
 - None mode has no additional flags; there is nothing else to configure.
 
 ## DNS-Based Discovery
@@ -222,8 +222,8 @@ The service periodically reloads the configuration file and automatically update
 1. Read node configurations from a YAML file on startup
 2. Attempt to connect to each node via gRPC to fetch full metadata
 3. Successfully connected nodes are added to the cache
-4. Nodes that fail to connect are skipped and will be attempted again on the next periodic file reload
-5. Reload the file at the `node-discovery-file-fetch-interval` cadence as a backup to fsnotify-based reloads, reprocessing every entry (including nodes that previously failed)
+4. Nodes that fail to connect are queued for exponential-backoff retry by a separate retry scheduler (see the `node-discovery-file-retry-*` flags below)
+5. Reload the file at the `node-discovery-file-fetch-interval` cadence as a backup to fsnotify-based reloads; new or configuration-changed entries are processed, while unchanged failed entries continue to be retried by the backoff scheduler
 6. Notify registered handlers when nodes are added or removed
 
 ### Configuration Flags
@@ -265,7 +265,7 @@ nodes:
 
 **Configuration Fields:**
 
-- **name** (required): Identifier for the node
+- **name** (recommended): Diagnostic label for the node, used in log messages and error output. The parser does not enforce its presence or uniqueness, but assigning a unique name to each entry is strongly recommended for operational clarity.
 - **grpc_address** (required): gRPC endpoint in `host:port` format
 - **tls_enabled** (optional): Enable TLS for gRPC connection (default: false)
 - **ca_cert_path** (optional): Path to CA certificate file (required when TLS is enabled)
@@ -347,7 +347,7 @@ When the service starts:
 - Missing required fields → service fails to start
 
 **Runtime Errors:**
-- gRPC connection failure → node skipped; retried on next file reload
+- gRPC connection failure → node queued for exponential-backoff retry
 - File read error → keep existing cache, log error
 - File deleted → keep existing cache, log error
 
