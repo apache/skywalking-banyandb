@@ -1,0 +1,103 @@
+{
+  "oracle": {
+    "go_mod_sha256": "23076127a0a072d3a06b157fc063c483fe0d8293e0e77bea7fed76658423c28d",
+    "writer": "pkg/index/inverted.NewStore"
+  },
+  "file_sha256": {
+    "shard-0/000000000002.seg": "50264f9dba9ab2e1c7a4d83a19b6549385273de2bf2c51c3f8dd865bf3c118ff",
+    "shard-0/000000000003.snp": "e248cd0fda8c0b84bcbd7a119f60b91ec9af617394114390c3637dec2d7ff1e7"
+  },
+  "generator_command": "GENERATE_NIDX02A_FIXTURE=1 go test ./pkg/index/inverted/ -run TestGenerateNIDX02AFixture -count=1",
+  "notes": "One Property shard generation holding six physical rows of four entities. Ascending by (_group, _im_name, _entity_id, _timestamp) the rows order as e-1@10, e-1@15, e-1@20, e-2@5, e-3@7, e-4@30. Rows e-1@15 and e-4@30 are masked by the generation's deletion masks: the first sorts between the two leading visible rows so a page built without the masks is caught inside the first page, and the second sorts last so a mask dropped only at the tail is caught too. Row e-1@10 records two _source stored values, so an encoder that collapsed repeated stored values is caught. Row e-2@5 carries the Property _deleted marker as a stored field while staying a live document of the generation. Every row also carries one indexed, sortable Property tag recorded under the hash of its key.",
+  "tag_field_name_hex": "1e1e9004",
+  "rows": [
+    {
+      "group": "g-a",
+      "name": "n-a",
+      "entity_id": "e-1",
+      "sha_value": "sha-a",
+      "doc_id": "g-a/n-a/e-1/10",
+      "tag": "red",
+      "sources": [
+        "source-a1",
+        "source-a2"
+      ],
+      "timestamp": 10,
+      "deleted_at": 0,
+      "masked": false
+    },
+    {
+      "group": "g-a",
+      "name": "n-a",
+      "entity_id": "e-1",
+      "sha_value": "sha-x",
+      "doc_id": "g-a/n-a/e-1/15",
+      "tag": "red",
+      "sources": [
+        "source-x"
+      ],
+      "timestamp": 15,
+      "deleted_at": 0,
+      "masked": true
+    },
+    {
+      "group": "g-a",
+      "name": "n-a",
+      "entity_id": "e-1",
+      "sha_value": "sha-b",
+      "doc_id": "g-a/n-a/e-1/20",
+      "tag": "blue",
+      "sources": [
+        "source-b"
+      ],
+      "timestamp": 20,
+      "deleted_at": 0,
+      "masked": false
+    },
+    {
+      "group": "g-a",
+      "name": "n-b",
+      "entity_id": "e-2",
+      "sha_value": "sha-c",
+      "doc_id": "g-a/n-b/e-2/5",
+      "tag": "red",
+      "sources": [
+        "source-c"
+      ],
+      "timestamp": 5,
+      "deleted_at": 99,
+      "masked": false
+    },
+    {
+      "group": "g-b",
+      "name": "n-a",
+      "entity_id": "e-3",
+      "sha_value": "sha-d",
+      "doc_id": "g-b/n-a/e-3/7",
+      "tag": "blue",
+      "sources": [
+        "source-d"
+      ],
+      "timestamp": 7,
+      "deleted_at": 0,
+      "masked": false
+    },
+    {
+      "group": "g-b",
+      "name": "n-b",
+      "entity_id": "e-4",
+      "sha_value": "sha-e",
+      "doc_id": "g-b/n-b/e-4/30",
+      "tag": "red",
+      "sources": [
+        "source-e"
+      ],
+      "timestamp": 30,
+      "deleted_at": 0,
+      "masked": true
+    }
+  ],
+  "physical_row_count": 6,
+  "snapshot_id": 3,
+  "visible_row_count": 4
+}
