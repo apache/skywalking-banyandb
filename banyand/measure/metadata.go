@@ -473,11 +473,11 @@ func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string) (*datab
 	var totalDataSize int64
 	for _, segment := range segments {
 		timeRange := segment.GetTimeRange()
-		tables, _ := segment.Tables()
+		tables, shardIDs, _ := segment.TablesWithShardIDs()
 		var shardInfoList []*databasev1.ShardInfo
 		if len(tables) > 0 {
-			for shardIdx, table := range tables {
-				shardInfo := sr.collectShardInfo(table, uint32(shardIdx))
+			for i, table := range tables {
+				shardInfo := sr.collectShardInfo(table, uint32(shardIDs[i]))
 				shardInfoList = append(shardInfoList, shardInfo)
 				totalDataSize += shardInfo.DataSizeBytes
 			}
