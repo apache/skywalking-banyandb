@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -29,11 +30,44 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
 )
 
-const reservedTagSeparator = "#"
+const (
+	reservedTagSeparator = "#"
+	// maxResourceNameLen caps group and resource names used as filesystem path elements.
+	maxResourceNameLen = 255
+)
+
+// validResourceNamePattern is the human-readable form of validResourceName.
+// Names must be a single path element: start and end with alphanumeric, with
+// only letters, digits, `_`, `-`, and `.` in between (no separators or `..`).
+const validResourceNamePattern = `^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$`
+
+var validResourceName = regexp.MustCompile(validResourceNamePattern)
 
 func validateTagName(name string) error {
 	if strings.Contains(name, reservedTagSeparator) {
 		return fmt.Errorf("tag name %q must not contain reserved character %q", name, reservedTagSeparator)
+	}
+	return nil
+}
+
+// validateResourceNameFormat reports whether name is a valid group or resource
+// name for use as a single filesystem path element under a catalog data root.
+func validateResourceNameFormat(name string) error {
+	if len(name) > maxResourceNameLen {
+		return fmt.Errorf("must be at most %d characters", maxResourceNameLen)
+	}
+	if !validResourceName.MatchString(name) {
+		return fmt.Errorf("must match %s", validResourceNamePattern)
+	}
+	return nil
+}
+
+func validateResourceName(kind, name string) error {
+	if name == "" {
+		return fmt.Errorf("%s is empty", kind)
+	}
+	if formatErr := validateResourceNameFormat(name); formatErr != nil {
+		return fmt.Errorf("%s %q is invalid: %w", kind, name, formatErr)
 	}
 	return nil
 }
@@ -45,6 +79,9 @@ func Group(group *commonv1.Group) error {
 	}
 	if group.Metadata.Name == "" {
 		return errors.New("metadata.name is required")
+	}
+	if nameErr := validateResourceNameFormat(group.Metadata.Name); nameErr != nil {
+		return fmt.Errorf("metadata.name %q is invalid: %w", group.Metadata.Name, nameErr)
 	}
 	if group.Catalog == commonv1.Catalog_CATALOG_UNSPECIFIED {
 		return errors.New("catalog is unspecified")
@@ -76,8 +113,8 @@ func GroupForNonProperty(group *commonv1.Group) error {
 	if group.Metadata == nil {
 		return errors.New("group metadata is nil")
 	}
-	if group.Metadata.Name == "" {
-		return errors.New("group name is empty")
+	if nameErr := validateResourceName("group name", group.Metadata.Name); nameErr != nil {
+		return nameErr
 	}
 	if group.Catalog == commonv1.Catalog_CATALOG_UNSPECIFIED {
 		return errors.New("group catalog is unspecified")
@@ -160,11 +197,11 @@ func Stream(stream *databasev1.Stream) error {
 	if stream.Metadata == nil {
 		return errors.New("stream metadata is nil")
 	}
-	if stream.Metadata.Name == "" {
-		return errors.New("stream name is empty")
+	if nameErr := validateResourceName("stream name", stream.Metadata.Name); nameErr != nil {
+		return nameErr
 	}
-	if stream.Metadata.Group == "" {
-		return errors.New("stream group is empty")
+	if groupErr := validateResourceName("stream group", stream.Metadata.Group); groupErr != nil {
+		return groupErr
 	}
 	if len(stream.TagFamilies) == 0 {
 		return errors.New("stream tag families is empty")
@@ -187,11 +224,11 @@ func Measure(measure *databasev1.Measure) error {
 	if measure.Metadata == nil {
 		return errors.New("measure metadata is nil")
 	}
-	if measure.Metadata.Name == "" {
-		return errors.New("measure name is empty")
+	if nameErr := validateResourceName("measure name", measure.Metadata.Name); nameErr != nil {
+		return nameErr
 	}
-	if measure.Metadata.Group == "" {
-		return errors.New("measure group is empty")
+	if groupErr := validateResourceName("measure group", measure.Metadata.Group); groupErr != nil {
+		return groupErr
 	}
 	if measure.Entity == nil {
 		return errors.New("measure entity is nil")
@@ -263,11 +300,11 @@ func Trace(trace *databasev1.Trace) error {
 	if trace.Metadata == nil {
 		return errors.New("trace metadata is nil")
 	}
-	if trace.Metadata.Name == "" {
-		return errors.New("trace name is empty")
+	if nameErr := validateResourceName("trace name", trace.Metadata.Name); nameErr != nil {
+		return nameErr
 	}
-	if trace.Metadata.Group == "" {
-		return errors.New("trace group is empty")
+	if groupErr := validateResourceName("trace group", trace.Metadata.Group); groupErr != nil {
+		return groupErr
 	}
 	if len(trace.Tags) == 0 {
 		return errors.New("trace tags is empty")
@@ -355,11 +392,11 @@ func IndexRule(indexRule *databasev1.IndexRule) error {
 	if indexRule.Metadata == nil {
 		return errors.New("indexRule metadata is nil")
 	}
-	if indexRule.Metadata.Name == "" {
-		return errors.New("indexRule name is empty")
+	if nameErr := validateResourceName("indexRule name", indexRule.Metadata.Name); nameErr != nil {
+		return nameErr
 	}
-	if indexRule.Metadata.Group == "" {
-		return errors.New("indexRule group is empty")
+	if groupErr := validateResourceName("indexRule group", indexRule.Metadata.Group); groupErr != nil {
+		return groupErr
 	}
 	if indexRule.Metadata.Id <= 0 {
 		return errors.New("indexRule id is invalid")
@@ -382,17 +419,17 @@ func IndexRuleBinding(indexRuleBinding *databasev1.IndexRuleBinding) error {
 	if indexRuleBinding.Metadata == nil {
 		return errors.New("indexRuleBinding metadata is nil")
 	}
-	if indexRuleBinding.Metadata.Name == "" {
-		return errors.New("indexRuleBinding name is empty")
+	if nameErr := validateResourceName("indexRuleBinding name", indexRuleBinding.Metadata.Name); nameErr != nil {
+		return nameErr
 	}
-	if indexRuleBinding.Metadata.Group == "" {
-		return errors.New("indexRuleBinding group is empty")
+	if groupErr := validateResourceName("indexRuleBinding group", indexRuleBinding.Metadata.Group); groupErr != nil {
+		return groupErr
 	}
 	if indexRuleBinding.Subject == nil {
 		return errors.New("indexRuleBinding subject is nil")
 	}
-	if indexRuleBinding.Subject.Name == "" {
-		return errors.New("indexRuleBinding subject name is empty")
+	if subjectErr := validateResourceName("indexRuleBinding subject name", indexRuleBinding.Subject.Name); subjectErr != nil {
+		return subjectErr
 	}
 	if indexRuleBinding.Subject.Catalog == commonv1.Catalog_CATALOG_UNSPECIFIED {
 		return errors.New("indexRuleBinding subject catalog is unspecified")
@@ -412,20 +449,20 @@ func TopNAggregation(topNAggregation *databasev1.TopNAggregation) error {
 	if topNAggregation.Metadata == nil {
 		return errors.New("topNAggregation metadata is nil")
 	}
-	if topNAggregation.Metadata.Name == "" {
-		return errors.New("topNAggregation name is empty")
+	if nameErr := validateResourceName("topNAggregation name", topNAggregation.Metadata.Name); nameErr != nil {
+		return nameErr
 	}
-	if topNAggregation.Metadata.Group == "" {
-		return errors.New("topNAggregation group is empty")
+	if groupErr := validateResourceName("topNAggregation group", topNAggregation.Metadata.Group); groupErr != nil {
+		return groupErr
 	}
 	if topNAggregation.SourceMeasure == nil {
 		return errors.New("topNAggregation sourceMeasure is nil")
 	}
-	if topNAggregation.SourceMeasure.Name == "" {
-		return errors.New("topNAggregation sourceMeasure name is empty")
+	if sourceNameErr := validateResourceName("topNAggregation sourceMeasure name", topNAggregation.SourceMeasure.Name); sourceNameErr != nil {
+		return sourceNameErr
 	}
-	if topNAggregation.SourceMeasure.Group == "" {
-		return errors.New("topNAggregation sourceMeasure group is empty")
+	if sourceGroupErr := validateResourceName("topNAggregation sourceMeasure group", topNAggregation.SourceMeasure.Group); sourceGroupErr != nil {
+		return sourceGroupErr
 	}
 	if topNAggregation.CountersNumber <= 0 {
 		return errors.New("topNAggregation countersNumber is invalid")

@@ -18,6 +18,7 @@
 package validate
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,6 +26,71 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
+
+func TestValidateResourceNameFormat(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{name: "plain", input: "sw_metric", wantErr: false},
+		{name: "hyphen_underscore", input: "my-group_01", wantErr: false},
+		{name: "single_char", input: "g", wantErr: false},
+		{name: "internal_dot", input: "service.cpm", wantErr: false},
+		{name: "uppercase", input: "RBAC-ALPHA", wantErr: false},
+		{name: "empty", input: "", wantErr: true},
+		{name: "dot", input: ".", wantErr: true},
+		{name: "dotdot", input: "..", wantErr: true},
+		{name: "parent_escape", input: "../outside", wantErr: true},
+		{name: "nested_parent", input: "foo/../../etc", wantErr: true},
+		{name: "slash", input: "a/b", wantErr: true},
+		{name: "backslash", input: `a\b`, wantErr: true},
+		{name: "absolute_unix", input: "/tmp/evil", wantErr: true},
+		{name: "drive_prefix", input: "C:evil", wantErr: true},
+		{name: "leading_hyphen", input: "-bad", wantErr: true},
+		{name: "trailing_dot", input: "bad.", wantErr: true},
+		{name: "space", input: "bad name", wantErr: true},
+		{name: "too_long", input: strings.Repeat("a", maxResourceNameLen+1), wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			formatErr := validateResourceNameFormat(tt.input)
+			if tt.wantErr {
+				assert.Error(t, formatErr)
+			} else {
+				assert.NoError(t, formatErr)
+			}
+		})
+	}
+}
+
+func TestGroupRejectsPathEscapeName(t *testing.T) {
+	group := &commonv1.Group{
+		Metadata: &commonv1.Metadata{Name: "../outside"},
+		Catalog:  commonv1.Catalog_CATALOG_STREAM,
+		ResourceOpts: &commonv1.ResourceOpts{
+			ShardNum:        1,
+			SegmentInterval: &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: 1},
+			Ttl:             &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: 7},
+		},
+	}
+	err := Group(group)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid")
+}
+
+func TestStreamRejectsPathEscapeName(t *testing.T) {
+	stream := &databasev1.Stream{
+		Metadata: &commonv1.Metadata{Name: "ok", Group: "foo/../bar"},
+		Entity:   &databasev1.Entity{TagNames: []string{"id"}},
+		TagFamilies: []*databasev1.TagFamilySpec{
+			{Name: "default", Tags: []*databasev1.TagSpec{{Name: "id", Type: databasev1.TagType_TAG_TYPE_STRING}}},
+		},
+	}
+	err := Stream(stream)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "stream group")
+}
 
 func TestMeasureShardingKeyNil(t *testing.T) {
 	measure := &databasev1.Measure{
