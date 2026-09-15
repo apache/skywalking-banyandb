@@ -40,13 +40,15 @@ nodes:
 > **Port Guidance:**
 > The default `--grpc-port` for both `banyand data` and `banyand liaison` is **17912**.
 > - **Separate hosts/IPs**: When data and liaison nodes run on distinct hosts or IP addresses (as shown above), both can use the default port `17912`.
-> - **Co-located on one host/IP**: When data and liaison share the same host or IP (e.g., in a local test or single-machine setup), they cannot bind to the same port on that IP. Assign different ports (e.g., data on `17912` and liaison on `18912` via `--grpc-port=18912`), and list the matching ports in `nodes.yaml`:
+> - **Co-located on one host/IP**: When data and liaison share the same host or IP (e.g., in a local test or single-machine setup), they cannot bind to the same port on that IP. They also compete for the default HTTP port (`17913`), observability listener (`:2121`), and pprof listener (`:6060`).
+>   Furthermore, the liaison process runs an internal pipeline server that listens on gRPC port `18912` and HTTP port `18913` by default. Overriding liaison's public gRPC port to `18912` or HTTP port to `18913` collides with this internal listener.
+>   Therefore, when co-locating data and liaison on the same host, keep data on the defaults and configure liaison with distinct, non-conflicting public and diagnostic ports (e.g., public gRPC `19912`, public HTTP `19913`, observability `:2122`, and pprof `:6061`), pointing `http-grpc-addr` to the updated gRPC port:
 >   ```yaml
 >   nodes:
 >     - name: data-0
 >       grpc_address: 10.100.11.1:17912
 >     - name: liaison-0
->       grpc_address: 10.100.11.1:18912
+>       grpc_address: 10.100.11.1:19912
 >   ```
 > `nodes.yaml` must list the exact gRPC port that each process actually listens on.
 
@@ -123,9 +125,16 @@ banyand liaison \
   --node-discovery-mode=file \
   --node-discovery-file-path=/etc/banyandb/nodes.yaml
 
-# Co-located on the same host/IP as a data node (override port, e.g. 18912)
+# Co-located on the same host/IP as a data node:
+# Assign non-conflicting public gRPC/HTTP ports (e.g. 19912/19913), redirect HTTP to the new gRPC port,
+# and separate observability (:2122) and pprof (:6061) listeners.
+# Note: 18912 and 18913 are used by liaison's internal pipeline server by default.
 banyand liaison \
-  --grpc-port=18912 \
+  --grpc-port=19912 \
+  --http-port=19913 \
+  --http-grpc-addr=localhost:19912 \
+  --observability-listener-addr=:2122 \
+  --pprof-listener-addr=:6061 \
   --node-discovery-mode=file \
   --node-discovery-file-path=/etc/banyandb/nodes.yaml
 ```
