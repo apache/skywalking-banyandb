@@ -24,6 +24,8 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/meter/native"
@@ -33,6 +35,39 @@ import (
 type Point struct {
 	Tags  map[string]string
 	Value float64
+}
+
+var baseEntityTags = []string{"node_type", "node_id", "grpc_address", "http_address"}
+
+// GetObservabilityMeasureTags returns the tag names declared on a _monitoring measure schema.
+func GetObservabilityMeasureTags(metricName string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	client := databasev1.NewMeasureRegistryServiceClient(sharedContext.Connection)
+	resp, err := client.Get(ctx, &databasev1.MeasureRegistryServiceGetRequest{
+		Metadata: &commonv1.Metadata{
+			Group: native.ObservabilityGroupName,
+			Name:  metricName,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get measure schema %s failed: %w", metricName, err)
+	}
+	measure := resp.GetMeasure()
+	if measure == nil {
+		return nil, fmt.Errorf("get measure schema %s returned nil measure", metricName)
+	}
+	var tags []string
+	for _, family := range measure.GetTagFamilies() {
+		for _, tag := range family.GetTags() {
+			if tag.GetName() == "" {
+				continue
+			}
+			tags = append(tags, tag.GetName())
+		}
+	}
+	return tags, nil
 }
 
 // QueryObservabilityMeasure queries a measure from the _monitoring group and returns flattened datapoints.
@@ -56,7 +91,7 @@ func QueryObservabilityMeasure(metricName string, tagNames ...string) ([]Point, 
 			TagFamilies: []*modelv1.TagProjection_TagFamily{
 				{
 					Name: "default",
-					Tags: append([]string{"node_type", "node_id", "grpc_address", "http_address"}, tagNames...),
+					Tags: append(append([]string{}, baseEntityTags...), tagNames...),
 				},
 			},
 		},
