@@ -39,9 +39,17 @@ enum Catalog {
 message Metadata {
   // group contains a set of options, like retention policy, max
   // Empty for Group itself; otherwise a path-safe identifier (max 255).
-  string group = 1 [(validate.rules).string = {max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$", ignore_empty: true}];
+  string group = 1 [(validate.rules).string = {
+    max_len: 255
+    pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+    ignore_empty: true
+  }];
   // name of the entity — path-safe identifier used under catalog data roots.
-  string name = 2 [(validate.rules).string = {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}];
+  string name = 2 [(validate.rules).string = {
+    min_len: 1
+    max_len: 255
+    pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+  }];
   // id is the unique identifier of the entity
   // if id is not set, the system will generate a unique id
   uint32 id = 3;
@@ -60,17 +68,27 @@ message IntervalRule {
   }
   // unit can only be UNIT_HOUR or UNIT_DAY
   Unit unit = 1 [(validate.rules).enum.defined_only = true];
-  uint32 num = 2 [(validate.rules).uint32 = {gt: 0, lte: 3650}];
+  uint32 num = 2 [(validate.rules).uint32 = {
+    gt: 0
+    lte: 3650
+  }];
 }
 
 message LifecycleStage {
   // The stage name (e.g., "warm", "cold").
   // This should be a non-empty string.
-  string name = 1 [(validate.rules).string = {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}];
+  string name = 1 [(validate.rules).string = {
+    min_len: 1
+    max_len: 255
+    pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+  }];
 
   // Number of shards allocated for this stage.
   // Must be greater than zero.
-  uint32 shard_num = 2 [(validate.rules).uint32 = {gt: 0, lte: 1024}];
+  uint32 shard_num = 2 [(validate.rules).uint32 = {
+    gt: 0
+    lte: 1024
+  }];
 
   // Defines the interval for data segmentation in this stage.
   // This is a required field and uses the IntervalRule structure.
@@ -82,7 +100,10 @@ message LifecycleStage {
 
   // Node selector specifying target nodes for this stage.
   // Optional; if provided, it must be a non-empty string.
-  string node_selector = 5 [(validate.rules).string = {min_len: 1, max_len: 1024}];
+  string node_selector = 5 [(validate.rules).string = {
+    min_len: 1
+    max_len: 1024
+  }];
 
   // Indicates whether segments that are no longer live should be closed.
   bool close = 6;
@@ -96,7 +117,10 @@ message LifecycleStage {
 
 message ResourceOpts {
   // shard_num is the number of shards
-  uint32 shard_num = 1 [(validate.rules).uint32 = {gt: 0, lte: 1024}];
+  uint32 shard_num = 1 [(validate.rules).uint32 = {
+    gt: 0
+    lte: 1024
+  }];
   // segment_interval indicates the length of a segment
   IntervalRule segment_interval = 2;
   // ttl indicates time to live, how long the data will be cached
@@ -107,7 +131,11 @@ message ResourceOpts {
   repeated string default_stages = 5 [(validate.rules).repeated = {
     max_items: 16
     items: {
-      string: {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}
+      string: {
+        min_len: 1
+        max_len: 255
+        pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+      }
     }
   }];
   // replicas is the number of replicas. This is used to ensure high availability and fault tolerance.
@@ -130,11 +158,22 @@ enum PipelineEvent {
 // keep/drop verdict over a vectorized batch of traces.
 message SamplerPlugin {
   // path is the plugin .so basename, resolved inside the trusted plugin directory.
-  string path = 1 [(validate.rules).string = {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}];
+  string path = 1 [(validate.rules).string = {
+    min_len: 1
+    max_len: 255
+    pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+  }];
   // symbol is the constructor symbol the engine looks up; defaults to "NewSampler" if empty.
-  string symbol = 2 [(validate.rules).string = {max_len: 255, pattern: "^[A-Za-z_][A-Za-z0-9_]*$", ignore_empty: true}];
+  string symbol = 2 [(validate.rules).string = {
+    max_len: 255
+    pattern: "^[A-Za-z_][A-Za-z0-9_]*$"
+    ignore_empty: true
+  }];
   // abi_version is the ABI version the plugin was built against.
-  uint32 abi_version = 3 [(validate.rules).uint32 = {gte: 1, lte: 100}];
+  uint32 abi_version = 3 [(validate.rules).uint32 = {
+    gte: 1
+    lte: 100
+  }];
   // config is the plugin-defined configuration serialized to canonical JSON for the constructor.
   google.protobuf.Struct config = 4;
 }
@@ -142,7 +181,11 @@ message SamplerPlugin {
 // Plugin is one link in a pipeline's processing chain.
 message Plugin {
   // name is the operator-facing identity for this link.
-  string name = 1 [(validate.rules).string = {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}];
+  string name = 1 [(validate.rules).string = {
+    min_len: 1
+    max_len: 255
+    pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+  }];
   // kind selects the plugin type; exactly one arm must be set.
   oneof kind {
     // sampler owns a keep/drop verdict over a vectorized batch of traces.
@@ -154,7 +197,11 @@ message Plugin {
 // retention plugin chain.
 message StageRule {
   // stage is the stage name from the Group's ResourceOpts.stages.
-  string stage = 1 [(validate.rules).string = {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}];
+  string stage = 1 [(validate.rules).string = {
+    min_len: 1
+    max_len: 255
+    pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+  }];
   // plugins is the ordered retention chain for this stage.
   repeated Plugin plugins = 2;
 }
@@ -185,7 +232,13 @@ message TracePipelineConfig {
   // schema_names lists explicit schema names to target within the Group.
   repeated string schema_names = 6 [(validate.rules).repeated = {
     max_items: 256
-    items: {string: {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}}
+    items: {
+      string: {
+        min_len: 1
+        max_len: 255
+        pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+      }
+    }
   }];
   // schema_name_regex is an RE2 pattern matched against schema names.
   string schema_name_regex = 7;

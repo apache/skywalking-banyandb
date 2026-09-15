@@ -52,9 +52,17 @@ message ApplyResponse {
 
 message DeleteRequest {
   // groups indicate where the data points are stored.
-  string group = 1 [(validate.rules).string = {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}];
+  string group = 1 [(validate.rules).string = {
+    min_len: 1
+    max_len: 255
+    pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+  }];
   // name is the identity of a property.
-  string name = 2 [(validate.rules).string = {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}];
+  string name = 2 [(validate.rules).string = {
+    min_len: 1
+    max_len: 255
+    pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+  }];
   // id is the identity of item in the property.
   string id = 3;
 }
@@ -76,7 +84,13 @@ message QueryRequest {
   repeated string groups = 1 [(validate.rules).repeated = {
     min_items: 1
     max_items: 64
-    items: {string: {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}}
+    items: {
+      string: {
+        min_len: 1
+        max_len: 255
+        pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+      }
+    }
   }];
   // name is created when it receives the first property
   string name = 2;

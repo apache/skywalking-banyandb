@@ -94,10 +94,20 @@ message QueryRequest {
   repeated string groups = 1 [(validate.rules).repeated = {
     min_items: 1
     max_items: 64
-    items: {string: {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}}
+    items: {
+      string: {
+        min_len: 1
+        max_len: 255
+        pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+      }
+    }
   }];
   // name is the identity of a measure.
-  string name = 2 [(validate.rules).string = {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}];
+  string name = 2 [(validate.rules).string = {
+    min_len: 1
+    max_len: 255
+    pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+  }];
   // time_range is a range query with begin/end time of entities in the timeunit of milliseconds.
   model.v1.TimeRange time_range = 3 [(validate.rules).message.required = true];
   // tag_families are indexed.

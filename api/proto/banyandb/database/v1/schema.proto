@@ -39,13 +39,24 @@ enum TagType {
 }
 
 message TagFamilySpec {
-  string name = 1 [(validate.rules).string = {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}];
+  string name = 1 [(validate.rules).string = {
+    min_len: 1
+    max_len: 255
+    pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+  }];
   // tags defines accepted tags
-  repeated TagSpec tags = 2 [(validate.rules).repeated = {min_items: 1, max_items: 512}];
+  repeated TagSpec tags = 2 [(validate.rules).repeated = {
+    min_items: 1
+    max_items: 512
+  }];
 }
 
 message TagSpec {
-  string name = 1 [(validate.rules).string = {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}];
+  string name = 1 [(validate.rules).string = {
+    min_len: 1
+    max_len: 255
+    pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+  }];
   TagType type = 2 [(validate.rules).enum.defined_only = true];
 }
 
@@ -54,7 +65,10 @@ message Stream {
   // metadata is the identity of a trace series
   common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
   // tag_families
-  repeated TagFamilySpec tag_families = 2 [(validate.rules).repeated = {min_items: 1, max_items: 32}];
+  repeated TagFamilySpec tag_families = 2 [(validate.rules).repeated = {
+    min_items: 1
+    max_items: 32
+  }];
   // entity indicates how to generate a series and shard a stream
   Entity entity = 3 [(validate.rules).message.required = true];
   // updated_at indicates when the stream is updated
@@ -67,7 +81,13 @@ message Entity {
   repeated string tag_names = 1 [(validate.rules).repeated = {
     min_items: 1
     max_items: 64
-    items: {string: {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}}
+    items: {
+      string: {
+        min_len: 1
+        max_len: 255
+        pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+      }
+    }
   }];
 }
 
@@ -75,7 +95,13 @@ message ShardingKey {
   repeated string tag_names = 1 [(validate.rules).repeated = {
     min_items: 1
     max_items: 64
-    items: {string: {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}}
+    items: {
+      string: {
+        min_len: 1
+        max_len: 255
+        pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+      }
+    }
   }];
 }
 
@@ -100,7 +126,11 @@ enum CompressionMethod {
 // FieldSpec is the specification of field
 message FieldSpec {
   // name is the identity of a field
-  string name = 1 [(validate.rules).string = {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}];
+  string name = 1 [(validate.rules).string = {
+    min_len: 1
+    max_len: 255
+    pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+  }];
   // field_type denotes the type of field value
   FieldType field_type = 2 [(validate.rules).enum.defined_only = true];
   // encoding_method indicates how to encode data during writing
@@ -114,7 +144,10 @@ message Measure {
   // metadata is the identity of a measure
   common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
   // tag_families are for filter measures
-  repeated TagFamilySpec tag_families = 2 [(validate.rules).repeated = {min_items: 1, max_items: 32}];
+  repeated TagFamilySpec tag_families = 2 [(validate.rules).repeated = {
+    min_items: 1
+    max_items: 32
+  }];
   // fields denote measure values
   repeated FieldSpec fields = 3;
   // entity indicates which tags will be to generate a series and shard a measure
@@ -140,7 +173,11 @@ message TopNAggregation {
   // source_measure denotes the data source of this aggregation
   common.v1.Metadata source_measure = 2 [(validate.rules).message.required = true];
   // field_name is the name of field used for ranking
-  string field_name = 3 [(validate.rules).string = {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}];
+  string field_name = 3 [(validate.rules).string = {
+    min_len: 1
+    max_len: 255
+    pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+  }];
   // field_value_sort indicates how to sort fields
   // ASC: bottomN
   // DESC: topN
@@ -172,7 +209,13 @@ message IndexRule {
   repeated string tags = 2 [(validate.rules).repeated = {
     min_items: 1
     max_items: 64
-    items: {string: {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}}
+    items: {
+      string: {
+        min_len: 1
+        max_len: 255
+        pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+      }
+    }
   }];
   // Type determine the index structure under the hood
   enum Type {
@@ -208,7 +251,11 @@ message Subject {
   // todo validate plugin exist bug https://github.com/bufbuild/protoc-gen-validate/issues/672
   common.v1.Catalog catalog = 1;
   // name refers to a stream or measure in a particular catalog
-  string name = 2 [(validate.rules).string = {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}];
+  string name = 2 [(validate.rules).string = {
+    min_len: 1
+    max_len: 255
+    pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+  }];
 }
 
 // IndexRuleBinding is a bridge to connect severalIndexRules to a subject
@@ -221,7 +268,13 @@ message IndexRuleBinding {
   repeated string rules = 2 [(validate.rules).repeated = {
     min_items: 1
     max_items: 128
-    items: {string: {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}}
+    items: {
+      string: {
+        min_len: 1
+        max_len: 255
+        pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+      }
+    }
   }];
   // subject indicates the subject of binding action
   Subject subject = 3 [(validate.rules).message.required = true];
@@ -251,7 +304,11 @@ message Property {
 // TraceTagSpec defines the specification of a tag in a trace.
 message TraceTagSpec {
   // name is the name of the tag.
-  string name = 1 [(validate.rules).string = {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}];
+  string name = 1 [(validate.rules).string = {
+    min_len: 1
+    max_len: 255
+    pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+  }];
   // type is the type of the tag.
   TagType type = 2 [(validate.rules).enum.defined_only = true];
 }
@@ -264,15 +321,30 @@ message Trace {
   // metadata is the identity of the trace resource.
   common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
   // tags are the specification of tags.
-  repeated TraceTagSpec tags = 2 [(validate.rules).repeated = {min_items: 1, max_items: 512}];
+  repeated TraceTagSpec tags = 2 [(validate.rules).repeated = {
+    min_items: 1
+    max_items: 512
+  }];
   // trace_id_tag_name is the name of the tag that stores the trace ID.
-  string trace_id_tag_name = 3 [(validate.rules).string = {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}];
+  string trace_id_tag_name = 3 [(validate.rules).string = {
+    min_len: 1
+    max_len: 255
+    pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+  }];
   // timestamp_tag_name is the name of the tag that stores the timestamp.
-  string timestamp_tag_name = 4 [(validate.rules).string = {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}];
+  string timestamp_tag_name = 4 [(validate.rules).string = {
+    min_len: 1
+    max_len: 255
+    pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+  }];
   // updated_at indicates when the trace resource is updated.
   google.protobuf.Timestamp updated_at = 5;
   // span_id_tag_name is the name of the tag that stores the span ID.
-  string span_id_tag_name = 6 [(validate.rules).string = {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}];
+  string span_id_tag_name = 6 [(validate.rules).string = {
+    min_len: 1
+    max_len: 255
+    pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+  }];
   // created_at is the first-appearance timestamp; survives updates unchanged.
   google.protobuf.Timestamp created_at = 7;
 }
