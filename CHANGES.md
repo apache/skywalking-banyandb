@@ -2,6 +2,24 @@
 
 Release Notes.
 
+## 0.11.1
+
+### Bug Fixes
+
+- Fix standalone TopN write ordering.
+- Fix stale Canopy query clauses after resource changes.
+- Bound the vectorized stream Top-N merge by limit+offset, and bound the filtered index-order vectorized Top-N merge.
+- Enforce the Canopy readonly role on the `/monitoring/*` proxy the same way as `/api/*`.
+- Fix FODC proxy `/metrics` returning partial data or timing out when concurrent scrapes overlap.
+- Pre-set the logging level before flag parsing and honor the configured logging level in native observability metrics.
+- Enforce trace query time ranges independently of the sort index, skipping row timestamp checks when the query fully covers a part.
+- Retry property schema registry initialization indefinitely, logging an error every 10 attempts.
+- Bound Property, Stream, and Trace query allocations with shared memory admission and capacity hints so oversized limit/offset windows cannot force huge result buffers.
+- Preserve list-all / max-limit queries (`limit=MaxUint32` or OAP `Integer.MAX_VALUE`) with incremental scan admission and result-count accounting, without over-charging Property source payloads against the liaison fallback pool.
+- Register the memory protector on the liaison role so query admission uses the cgroup-backed pool instead of the 64MiB fallback.
+- Reject deeply nested ByDBQL WHERE parentheses to prevent stack overflow.
+- Keep system native `memory_state` (with `kind` labels) from being overwritten by the liaison load-shedding gauge so self-observability dashboard queries succeed.
+
 ## 0.11.0
 
 ### Features
