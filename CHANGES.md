@@ -23,6 +23,7 @@ Release Notes.
 - Re-fetch file/DNS discovery nodes that are parked in the retry queue while discovery has not Start()-ed yet, so unbounded PreRun schema-registry retries can recover once peers become reachable without restarting liaison.
 - Keep DNS discovery `ListNode` successful when some SRV addresses refuse connections but at least one node was discovered, so non-meta nodes no longer deadlock in PreRun on their own not-yet-listening gRPC address.
 - Fix un-interruptible sleep on shutdown during snapshot sync retry and add jittered backoff for stream, measure, and trace.
+- Report the real shard ID in `CollectDataInfo` shard info for stream, measure, and trace instead of the live table's slice index, so a node that owns only higher-numbered shards is no longer attributed to shard 0 in cross-node shard-load analysis.
 
 ### Document
 
