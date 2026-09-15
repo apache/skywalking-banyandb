@@ -18,13 +18,114 @@
 package observability
 
 import (
+	"fmt"
+	"slices"
 	"time"
 
 	g "github.com/onsi/ginkgo/v2"
 	gm "github.com/onsi/gomega"
 )
 
+// System host metrics that native self-observability must publish into _monitoring.
+// Extra tags beyond the shared entity tags must match the dashboard query shape.
+var systemNativeMetrics = []struct {
+	name      string
+	extraTags []string
+}{
+	{name: "up_time"},
+	{name: "cpu_num"},
+	{name: "cpu_state", extraTags: []string{"kind"}},
+	{name: "memory_state", extraTags: []string{"kind"}},
+	{name: "disk", extraTags: []string{"path", "kind"}},
+	{name: "net_state", extraTags: []string{"kind", "name"}},
+}
+
+var (
+	cpuStateKinds    = []string{"user", "system", "idle", "nice", "iowait", "irq", "softirq", "steal"}
+	memoryStateKinds = []string{"used", "total", "used_percent"}
+	diskStateKinds   = []string{"used", "total", "used_percent"}
+)
+
 var _ = g.Describe("Native self-observability metrics in _monitoring group", func() {
+	g.It("declares the expected system measure schemas and label tags", func() {
+		for _, metric := range systemNativeMetrics {
+			expected := append(append([]string{}, baseEntityTags...), metric.extraTags...)
+			gm.Eventually(func() error {
+				tags, err := GetObservabilityMeasureTags(metric.name)
+				if err != nil {
+					return err
+				}
+				for _, want := range expected {
+					if !slices.Contains(tags, want) {
+						return fmt.Errorf("measure %s missing tag %q; have %v", metric.name, want, tags)
+					}
+				}
+				return nil
+			}, 90*time.Second, 2*time.Second).Should(gm.Succeed(),
+				"measure %s must keep entity tags plus %v", metric.name, metric.extraTags)
+		}
+	})
+
+	g.It("keeps liaison load-shedding memory pressure off the system memory_state measure", func() {
+		// The liaison gauge used to register as "memory_state" and stole the
+		// system schema (no kind tag), breaking dashboard queries that project kind.
+		gm.Eventually(func() error {
+			tags, err := GetObservabilityMeasureTags("memory_load_shedding_state")
+			if err != nil {
+				return err
+			}
+			for _, want := range baseEntityTags {
+				if !slices.Contains(tags, want) {
+					return fmt.Errorf("memory_load_shedding_state missing tag %q; have %v", want, tags)
+				}
+			}
+			return nil
+		}, 90*time.Second, 2*time.Second).Should(gm.Succeed(),
+			"liaison load-shedding must use a distinct measure name")
+
+		tags, err := GetObservabilityMeasureTags("memory_state")
+		gm.Expect(err).NotTo(gm.HaveOccurred())
+		gm.Expect(tags).To(gm.ContainElement("kind"),
+			"system memory_state must retain the kind tag after liaison metrics register")
+	})
+
+	g.It("serves dashboard-shaped queries with well-formed label values", func() {
+		gm.Eventually(func() error {
+			if _, upTimeErr := QueryObservabilityMeasure("up_time"); upTimeErr != nil {
+				return upTimeErr
+			}
+			cpuPoints, cpuErr := QueryObservabilityMeasure("cpu_state", "kind")
+			if cpuErr != nil {
+				return cpuErr
+			}
+			if labelErr := requireLabeledSeries(cpuPoints, "kind", cpuStateKinds, true); labelErr != nil {
+				return labelErr
+			}
+			memoryPoints, memoryErr := QueryObservabilityMeasure("memory_state", "kind")
+			if memoryErr != nil {
+				return memoryErr
+			}
+			if labelErr := requireLabeledSeries(memoryPoints, "kind", memoryStateKinds, true); labelErr != nil {
+				return labelErr
+			}
+			diskPoints, diskErr := QueryObservabilityMeasure("disk", "path", "kind")
+			if diskErr != nil {
+				return diskErr
+			}
+			if labelErr := requireLabeledSeries(diskPoints, "kind", diskStateKinds, false); labelErr != nil {
+				return labelErr
+			}
+			if _, cpuNumErr := QueryObservabilityMeasure("cpu_num"); cpuNumErr != nil {
+				return cpuNumErr
+			}
+			// net_state may be empty when the host has no eth*/en* interfaces; schema+query must still succeed.
+			if _, netErr := QueryObservabilityMeasure("net_state", "kind", "name"); netErr != nil {
+				return netErr
+			}
+			return nil
+		}, 90*time.Second, 2*time.Second).Should(gm.Succeed())
+	})
+
 	g.It("collects up_time metric", func() {
 		gm.Eventually(func() (float64, error) {
 			points, err := QueryObservabilityMeasure("up_time")
@@ -70,23 +171,55 @@ var _ = g.Describe("Native self-observability metrics in _monitoring group", fun
 		}, 90*time.Second, 5*time.Second).Should(gm.BeTrue())
 	})
 
-	g.It("collects memory_state metric with basic sanity", func() {
-		// Note: memory_state may be created by liaison without "kind" tag, so we query with base tags only.
-		// Validate that we get at least one datapoint with a positive value (total/used bytes or used_percent).
+	g.It("collects memory_state metric with kind labels", func() {
 		gm.Eventually(func() (bool, error) {
-			points, err := QueryObservabilityMeasure("memory_state")
+			points, err := QueryObservabilityMeasure("memory_state", "kind")
 			if err != nil {
 				return false, err
 			}
 			if len(points) == 0 {
 				return false, nil
 			}
+			seen := map[string]bool{}
 			for _, p := range points {
-				if p.Value > 0 {
-					return true, nil
+				kind, ok := p.Tags["kind"]
+				if !ok || !slices.Contains(memoryStateKinds, kind) {
+					return false, nil
 				}
+				if kind == "used" || kind == "total" {
+					if p.Value <= 0 {
+						return false, nil
+					}
+				}
+				if kind == "used_percent" {
+					if p.Value < 0.0 || p.Value > 1.0 {
+						return false, nil
+					}
+				}
+				seen[kind] = true
 			}
-			return false, nil
+			return seen["used"] && seen["total"] && seen["used_percent"], nil
 		}, 90*time.Second, 5*time.Second).Should(gm.BeTrue())
 	})
 })
+
+func requireLabeledSeries(points []Point, label string, allowed []string, requireData bool) error {
+	if requireData && len(points) == 0 {
+		return fmt.Errorf("expected datapoints with label %q", label)
+	}
+	for _, p := range points {
+		value, ok := p.Tags[label]
+		if !ok || value == "" {
+			return fmt.Errorf("datapoint missing non-empty %q label: tags=%v", label, p.Tags)
+		}
+		if !slices.Contains(allowed, value) {
+			return fmt.Errorf("unexpected %q=%q; allowed=%v tags=%v", label, value, allowed, p.Tags)
+		}
+		for _, entityTag := range baseEntityTags {
+			if p.Tags[entityTag] == "" {
+				return fmt.Errorf("datapoint missing entity tag %q: tags=%v", entityTag, p.Tags)
+			}
+		}
+	}
+	return nil
+}
