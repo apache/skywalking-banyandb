@@ -70,7 +70,7 @@ func TestCollectDataInfo_OpenSegmentReportsRealShardID(t *testing.T) {
 			db := openTestTSDBForRefTest(t, tmpPath, 2, nil)
 			defer db.Close()
 
-			seg, err := db.CreateSegmentIfNotExist(time.Now())
+			seg, err := db.CreateSegmentIfNotExist(time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC))
 			require.NoError(t, err)
 			defer seg.DecRef()
 			for _, id := range tt.create {
