@@ -11,6 +11,8 @@ Release Notes.
 
 ### Bug Fixes
 
+- Reject group / stream / measure / trace (and related) resource names that are not a single path-safe identifier (`[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?`), so names cannot escape catalog storage roots.
+- Bound protobuf `validate.rules` on schema and query identifiers (max length, allowlist pattern, repeated max_items, numeric ceilings) so untrusted inputs cannot escape storage roots or force unbounded allocations.
 - Honor the configured logging level in native observability metrics instead of retaining the pre-initialization debug logger.
 - Fix FODC proxy `/metrics` returning partial data or timing out when concurrent scrapes overlap.
 - Bound Property, Stream, and Trace query allocations with shared memory admission and capacity hints so oversized limit/offset windows cannot force huge result buffers.
