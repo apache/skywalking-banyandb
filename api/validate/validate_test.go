@@ -38,6 +38,7 @@ func TestValidateResourceNameFormat(t *testing.T) {
 		{name: "single_char", input: "g", wantErr: false},
 		{name: "internal_dot", input: "service.cpm", wantErr: false},
 		{name: "uppercase", input: "RBAC-ALPHA", wantErr: false},
+		{name: "leading_underscore", input: "_schema", wantErr: false},
 		{name: "empty", input: "", wantErr: true},
 		{name: "dot", input: ".", wantErr: true},
 		{name: "dotdot", input: "..", wantErr: true},

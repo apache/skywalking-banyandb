@@ -31,10 +31,11 @@ option java_package = "org.apache.skywalking.banyandb.property.v1";
 message Property {
   // metadata is the identity of a property
   common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
-  // id is the identity of a property
-  string id = 2 [(validate.rules).string.min_len = 1];
+  // id uniquely identifies a property entity within a group/name.
+  // May include '/' (schema registry keys); not used as a filesystem path element.
+  string id = 2 [(validate.rules).string = {min_len: 1, max_len: 512}];
   // tag stores the content of a property
-  repeated model.v1.Tag tags = 3 [(validate.rules).repeated.min_items = 1];
+  repeated model.v1.Tag tags = 3 [(validate.rules).repeated = {min_items: 1, max_items: 512}];
   // updated_at indicates when the property is updated
   google.protobuf.Timestamp updated_at = 4;
 }

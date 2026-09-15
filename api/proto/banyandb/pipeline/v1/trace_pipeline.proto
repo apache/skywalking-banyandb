@@ -74,7 +74,7 @@ message TracePipelineRegistryServiceExistResponse {
 }
 
 message TracePipelineRegistryServiceListRequest {
-  string group = 1 [(validate.rules).string.min_len = 1];
+  string group = 1 [(validate.rules).string = {min_len: 1, max_len: 255, pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"}];
 }
 
 message TracePipelineRegistryServiceListResponse {

@@ -39,13 +39,16 @@ const (
 // validResourceNamePattern is the human-readable form of validResourceName.
 // Names must be a single path element: start and end with alphanumeric, with
 // only letters, digits, `_`, `-`, and `.` in between (no separators or `..`).
-const validResourceNamePattern = `^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$`
+const validResourceNamePattern = `^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$`
 
 var validResourceName = regexp.MustCompile(validResourceNamePattern)
 
 func validateTagName(name string) error {
 	if strings.Contains(name, reservedTagSeparator) {
 		return fmt.Errorf("tag name %q must not contain reserved character %q", name, reservedTagSeparator)
+	}
+	if formatErr := validateResourceNameFormat(name); formatErr != nil {
+		return fmt.Errorf("tag name %q is invalid: %w", name, formatErr)
 	}
 	return nil
 }
@@ -92,6 +95,12 @@ func Group(group *commonv1.Group) error {
 		}
 		if group.ResourceOpts.ShardNum <= 0 {
 			return errors.New("shardNum is invalid")
+		}
+		if group.ResourceOpts.ShardNum > 1024 {
+			return fmt.Errorf("shardNum %d exceeds maximum 1024", group.ResourceOpts.ShardNum)
+		}
+		if group.ResourceOpts.Replicas > 16 {
+			return fmt.Errorf("replicas %d exceeds maximum 16", group.ResourceOpts.Replicas)
 		}
 		if group.ResourceOpts.SegmentInterval != nil {
 			return errors.New("segmentInterval should be nil")
@@ -143,9 +152,53 @@ func GroupForNonProperty(group *commonv1.Group) error {
 	if group.ResourceOpts.Ttl.Unit == commonv1.IntervalRule_UNIT_UNSPECIFIED {
 		return errors.New("group ttl unit is unspecified")
 	}
+	if shardErr := validateResourceOptsBounds(group.ResourceOpts); shardErr != nil {
+		return shardErr
+	}
 	if pipelineCfg := group.GetPipeline(); pipelineCfg != nil {
 		if validateErr := validateTracePipelineConfig(pipelineCfg); validateErr != nil {
 			return fmt.Errorf("group pipeline config is invalid: %w", validateErr)
+		}
+	}
+	return nil
+}
+
+func validateResourceOptsBounds(opts *commonv1.ResourceOpts) error {
+	if opts.ShardNum > 1024 {
+		return fmt.Errorf("group shardNum %d exceeds maximum 1024", opts.ShardNum)
+	}
+	if opts.Replicas > 16 {
+		return fmt.Errorf("group replicas %d exceeds maximum 16", opts.Replicas)
+	}
+	if opts.SegmentInterval != nil && opts.SegmentInterval.Num > 3650 {
+		return fmt.Errorf("group segmentInterval num %d exceeds maximum 3650", opts.SegmentInterval.Num)
+	}
+	if opts.Ttl != nil && opts.Ttl.Num > 3650 {
+		return fmt.Errorf("group ttl num %d exceeds maximum 3650", opts.Ttl.Num)
+	}
+	if len(opts.Stages) > 16 {
+		return fmt.Errorf("group stages count %d exceeds maximum 16", len(opts.Stages))
+	}
+	for idx, stage := range opts.Stages {
+		if nameErr := validateResourceName(fmt.Sprintf("group stages[%d].name", idx), stage.GetName()); nameErr != nil {
+			return nameErr
+		}
+		if stage.GetShardNum() > 1024 {
+			return fmt.Errorf("group stages[%d].shardNum %d exceeds maximum 1024", idx, stage.GetShardNum())
+		}
+		if stage.GetReplicas() > 16 {
+			return fmt.Errorf("group stages[%d].replicas %d exceeds maximum 16", idx, stage.GetReplicas())
+		}
+		if stage.GetNodeSelector() != "" && len(stage.GetNodeSelector()) > 1024 {
+			return fmt.Errorf("group stages[%d].node_selector exceeds maximum 1024 characters", idx)
+		}
+	}
+	if len(opts.DefaultStages) > 16 {
+		return fmt.Errorf("group default_stages count %d exceeds maximum 16", len(opts.DefaultStages))
+	}
+	for idx, stageName := range opts.DefaultStages {
+		if nameErr := validateResourceName(fmt.Sprintf("group default_stages[%d]", idx), stageName); nameErr != nil {
+			return nameErr
 		}
 	}
 	return nil
@@ -212,6 +265,11 @@ func Stream(stream *databasev1.Stream) error {
 	if len(stream.Entity.TagNames) == 0 {
 		return errors.New("stream entity tag names is empty")
 	}
+	for idx, tagName := range stream.Entity.TagNames {
+		if tagErr := validateTagName(tagName); tagErr != nil {
+			return fmt.Errorf("stream entity tag_names[%d]: %w", idx, tagErr)
+		}
+	}
 	return tagFamily(stream.TagFamilies)
 }
 
@@ -236,15 +294,17 @@ func Measure(measure *databasev1.Measure) error {
 	if len(measure.Entity.TagNames) == 0 {
 		return errors.New("measure entity tag names is empty")
 	}
+	for idx, tagName := range measure.Entity.TagNames {
+		if tagErr := validateTagName(tagName); tagErr != nil {
+			return fmt.Errorf("measure entity tag_names[%d]: %w", idx, tagErr)
+		}
+	}
 	for i := range measure.Fields {
-		if measure.Fields[i].Name == "" {
-			return errors.New("field name is empty")
+		if nameErr := validateResourceName("field name", measure.Fields[i].Name); nameErr != nil {
+			return nameErr
 		}
 		if measure.Fields[i].FieldType == databasev1.FieldType_FIELD_TYPE_UNSPECIFIED {
 			return errors.New("field type is unspecified")
-		}
-		if measure.Fields[i].CompressionMethod == databasev1.CompressionMethod_COMPRESSION_METHOD_UNSPECIFIED {
-			return errors.New("compression method is unspecified")
 		}
 		if measure.Fields[i].CompressionMethod == databasev1.CompressionMethod_COMPRESSION_METHOD_UNSPECIFIED {
 			return errors.New("compression method is unspecified")
@@ -255,6 +315,13 @@ func Measure(measure *databasev1.Measure) error {
 	}
 	if measure.IndexMode && len(measure.Fields) > 0 {
 		return errors.New("index mode is enabled, but fields are not empty")
+	}
+	if measure.ShardingKey != nil {
+		for idx, tagName := range measure.ShardingKey.TagNames {
+			if tagErr := validateTagName(tagName); tagErr != nil {
+				return fmt.Errorf("measure sharding_key tag_names[%d]: %w", idx, tagErr)
+			}
+		}
 	}
 
 	return tagFamily(measure.TagFamilies)
@@ -328,9 +395,6 @@ func Trace(trace *databasev1.Trace) error {
 		return err
 	}
 	for i := range trace.Tags {
-		if trace.Tags[i].Name == "" {
-			return errors.New("trace tag name is empty")
-		}
 		if err := validateTagName(trace.Tags[i].Name); err != nil {
 			return err
 		}
@@ -364,20 +428,51 @@ func TraceUpdate(prevTrace, newTrace *databasev1.Trace) error {
 }
 
 func tagFamily(tagFamilies []*databasev1.TagFamilySpec) error {
+	if len(tagFamilies) > 32 {
+		return fmt.Errorf("tag families count %d exceeds maximum 32", len(tagFamilies))
+	}
 	for i := range tagFamilies {
-		if tagFamilies[i].Name == "" {
-			return errors.New("tag family name is empty")
+		if nameErr := validateResourceName("tag family name", tagFamilies[i].Name); nameErr != nil {
+			return nameErr
+		}
+		if len(tagFamilies[i].Tags) > 512 {
+			return fmt.Errorf("tag family %q tags count %d exceeds maximum 512", tagFamilies[i].Name, len(tagFamilies[i].Tags))
 		}
 		for j := range tagFamilies[i].Tags {
-			if tagFamilies[i].Tags[j].Name == "" {
-				return errors.New("tag name is empty")
-			}
 			if err := validateTagName(tagFamilies[i].Tags[j].Name); err != nil {
 				return err
 			}
 			if tagFamilies[i].Tags[j].Type == databasev1.TagType_TAG_TYPE_UNSPECIFIED {
 				return errors.New("tag type is unspecified")
 			}
+		}
+	}
+	return nil
+}
+
+// Property validates the provided Property schema object.
+func Property(property *databasev1.Property) error {
+	if property == nil {
+		return errors.New("property is nil")
+	}
+	if property.Metadata == nil {
+		return errors.New("property metadata is nil")
+	}
+	if nameErr := validateResourceName("property name", property.Metadata.Name); nameErr != nil {
+		return nameErr
+	}
+	if groupErr := validateResourceName("property group", property.Metadata.Group); groupErr != nil {
+		return groupErr
+	}
+	if len(property.Tags) > 512 {
+		return fmt.Errorf("property tags count %d exceeds maximum 512", len(property.Tags))
+	}
+	for i := range property.Tags {
+		if err := validateTagName(property.Tags[i].Name); err != nil {
+			return err
+		}
+		if property.Tags[i].Type == databasev1.TagType_TAG_TYPE_UNSPECIFIED {
+			return errors.New("property tag type is unspecified")
 		}
 	}
 	return nil
@@ -403,6 +498,14 @@ func IndexRule(indexRule *databasev1.IndexRule) error {
 	}
 	if len(indexRule.Tags) == 0 {
 		return errors.New("indexRule tags is empty")
+	}
+	if len(indexRule.Tags) > 64 {
+		return fmt.Errorf("indexRule tags count %d exceeds maximum 64", len(indexRule.Tags))
+	}
+	for idx, tagName := range indexRule.Tags {
+		if tagErr := validateTagName(tagName); tagErr != nil {
+			return fmt.Errorf("indexRule tags[%d]: %w", idx, tagErr)
+		}
 	}
 	if indexRule.Type == databasev1.IndexRule_TYPE_UNSPECIFIED {
 		return errors.New("indexRule type is unspecified")
@@ -437,6 +540,14 @@ func IndexRuleBinding(indexRuleBinding *databasev1.IndexRuleBinding) error {
 	if len(indexRuleBinding.Rules) == 0 {
 		return errors.New("indexRuleBinding rules is empty")
 	}
+	if len(indexRuleBinding.Rules) > 128 {
+		return fmt.Errorf("indexRuleBinding rules count %d exceeds maximum 128", len(indexRuleBinding.Rules))
+	}
+	for idx, ruleName := range indexRuleBinding.Rules {
+		if ruleErr := validateResourceName(fmt.Sprintf("indexRuleBinding rules[%d]", idx), ruleName); ruleErr != nil {
+			return ruleErr
+		}
+	}
 	return nil
 }
 
@@ -467,8 +578,19 @@ func TopNAggregation(topNAggregation *databasev1.TopNAggregation) error {
 	if topNAggregation.CountersNumber <= 0 {
 		return errors.New("topNAggregation countersNumber is invalid")
 	}
-	if topNAggregation.FieldName == "" {
-		return errors.New("topNAggregation fieldName is empty")
+	if topNAggregation.CountersNumber > 100000 {
+		return fmt.Errorf("topNAggregation countersNumber %d exceeds maximum 100000", topNAggregation.CountersNumber)
+	}
+	if fieldErr := validateResourceName("topNAggregation fieldName", topNAggregation.FieldName); fieldErr != nil {
+		return fieldErr
+	}
+	if len(topNAggregation.GroupByTagNames) > 64 {
+		return fmt.Errorf("topNAggregation group_by_tag_names count %d exceeds maximum 64", len(topNAggregation.GroupByTagNames))
+	}
+	for idx, tagName := range topNAggregation.GroupByTagNames {
+		if tagErr := validateTagName(tagName); tagErr != nil {
+			return fmt.Errorf("topNAggregation group_by_tag_names[%d]: %w", idx, tagErr)
+		}
 	}
 	return nil
 }
