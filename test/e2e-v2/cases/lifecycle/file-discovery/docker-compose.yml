@@ -16,19 +16,19 @@
 services:
   data-hot1:
     extends:
-      file: ../../script/docker-compose/base-compose.yml
+      file: ../../../script/docker-compose/base-compose.yml
       service: data
     hostname: data-hot1
     command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --node-labels type=hot
     volumes:
-      - ./data-generator/tmp/metadata:/tmp/measure/data/sw_metadata
+      - ../data-generator/tmp/sw_metadata:/tmp/measure/data/sw_metadata
       - ./nodes.yaml:/etc/banyandb/nodes.yaml
     networks:
       - e2e
 
   data-warm1:
     extends:
-      file: ../../script/docker-compose/base-compose.yml
+      file: ../../../script/docker-compose/base-compose.yml
       service: data
     hostname: data-warm1
     command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --node-labels type=warm
@@ -39,22 +39,22 @@ services:
 
   data-cold1:
     extends:
-      file: ../../script/docker-compose/base-compose.yml
+      file: ../../../script/docker-compose/base-compose.yml
       service: data
     hostname: data-cold1
     command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --node-labels type=cold
     volumes:
-      - ./data-generator/tmp/measure:/tmp/measure
-      - ./data-generator/tmp/stream:/tmp/stream
-      - ./data-generator/tmp/property:/tmp/property
-      - ./data-generator/tmp/trace:/tmp/trace
+      - ../data-generator/tmp/measure:/tmp/measure
+      - ../data-generator/tmp/stream:/tmp/stream
+      - ../data-generator/tmp/property:/tmp/property
+      - ../data-generator/tmp/trace:/tmp/trace
       - ./nodes.yaml:/etc/banyandb/nodes.yaml
     networks:
       - e2e
 
   liaison:
     extends:
-      file: ../../script/docker-compose/base-compose.yml
+      file: ../../../script/docker-compose/base-compose.yml
       service: liaison
     command: liaison --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --data-node-selector type=hot
     volumes:
@@ -64,7 +64,7 @@ services:
 
   oap:
     extends:
-      file: ../../script/docker-compose/base-compose.yml
+      file: ../../../script/docker-compose/base-compose.yml
       service: oap
     environment:
       SW_STORAGE: banyandb
@@ -88,14 +88,14 @@ services:
 
   agent:
     extends:
-      file: ../../script/docker-compose/base-compose.yml
+      file: ../../../script/docker-compose/base-compose.yml
       service: agent
     networks:
       - e2e
 
   provider:
     extends:
-      file: ../../script/docker-compose/base-compose.yml
+      file: ../../../script/docker-compose/base-compose.yml
       service: provider
     ports:
       - 9090
@@ -109,7 +109,7 @@ services:
 
   consumer:
     extends:
-      file: ../../script/docker-compose/base-compose.yml
+      file: ../../../script/docker-compose/base-compose.yml
       service: consumer
     ports:
       - 9092

@@ -34,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/analyzer"
+	querypkg "github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -223,7 +224,7 @@ func (s *store) Search(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	return parseResult(dmi, projection, limit)
+	return parseResult(ctx, dmi, projection, limit)
 }
 
 // StoredFields implements index.SeriesStore.
@@ -279,63 +280,82 @@ func (s *store) StoredFields(ctx context.Context, docID []byte, projection ...in
 	return fields, nil
 }
 
-func parseResult(dmi search.DocumentMatchIterator, loadedFields []index.FieldKey, limit int) ([]index.SeriesDocument, error) {
+func parseResult(ctx context.Context, dmi search.DocumentMatchIterator, loadedFields []index.FieldKey, limit int) ([]index.SeriesDocument, error) {
+	if chargeErr := querypkg.Charge(ctx, 1024+uint64(len(loadedFields))*64); chargeErr != nil {
+		return nil, chargeErr
+	}
 	result := make([]index.SeriesDocument, 0, 10)
-	next, err := dmi.Next()
-	if err != nil {
-		return nil, errors.WithMessage(err, "iterate document match iterator")
-	}
 	fields := make([]string, 0, len(loadedFields))
-	for i := range loadedFields {
-		fields = append(fields, loadedFields[i].Marshal())
+	for _, loadedField := range loadedFields {
+		fields = append(fields, loadedField.Marshal())
 	}
-	var hitNumber int
-	for err == nil && next != nil {
-		hitNumber = next.HitNumber
-		var doc index.SeriesDocument
-		if len(loadedFields) > 0 {
-			doc.Fields = make(map[string][]byte)
-			for i := range loadedFields {
-				doc.Fields[fields[i]] = nil
-			}
+	for {
+		if contextErr := ctx.Err(); contextErr != nil {
+			return nil, contextErr
 		}
-		var errTime error
-		err = next.VisitStoredFields(func(field string, value []byte) bool {
-			switch field {
-			case docIDField:
-				doc.Key.EntityValues = value
-			case timestampField:
-				var ts time.Time
-				ts, errTime = bluge.DecodeDateTime(value)
-				if errTime != nil {
-					err = errTime
-					return false
-				}
-				doc.Timestamp = ts.UnixNano()
-			case versionField:
-				doc.Version = convert.BytesToInt64(value)
-			default:
-				if _, ok := doc.Fields[field]; ok {
-					doc.Fields[field] = bytes.Clone(value)
-				}
-			}
-			return true
-		})
-		if err = multierr.Combine(err, errTime); err != nil {
-			return nil, errors.WithMessagef(err, "visit stored fields, hit: %d", hitNumber)
+		next, nextErr := dmi.Next()
+		if nextErr != nil {
+			return nil, errors.WithMessage(nextErr, "iterate document match iterator")
+		}
+		if next == nil {
+			return result, nil
+		}
+		doc, readErr := readSeriesDocument(ctx, next, fields)
+		if readErr != nil {
+			return nil, readErr
 		}
 		if len(doc.Key.EntityValues) > 0 {
 			result = append(result, doc)
 		}
 		if limit > 0 && len(result) >= limit {
-			break
+			return result, nil
 		}
-		next, err = dmi.Next()
 	}
-	if err != nil {
-		return nil, errors.WithMessagef(err, "iterate document match iterator, hit: %d", hitNumber)
+}
+
+func readSeriesDocument(ctx context.Context, match *search.DocumentMatch, fields []string) (index.SeriesDocument, error) {
+	var doc index.SeriesDocument
+	// Charge the result container and projected-field map before retaining this hit.
+	if chargeErr := querypkg.ChargeResult(ctx, 256+uint64(len(fields))*64); chargeErr != nil {
+		return doc, chargeErr
 	}
-	return result, nil
+	if len(fields) > 0 {
+		doc.Fields = make(map[string][]byte, len(fields))
+		for _, fieldName := range fields {
+			doc.Fields[fieldName] = nil
+		}
+	}
+	var fieldErr error
+	visitErr := match.VisitStoredFields(func(field string, value []byte) bool {
+		switch field {
+		case docIDField:
+			if fieldErr = querypkg.Charge(ctx, uint64(len(value))); fieldErr != nil {
+				return false
+			}
+			doc.Key.EntityValues = bytes.Clone(value)
+		case timestampField:
+			var ts time.Time
+			ts, fieldErr = bluge.DecodeDateTime(value)
+			if fieldErr != nil {
+				return false
+			}
+			doc.Timestamp = ts.UnixNano()
+		case versionField:
+			doc.Version = convert.BytesToInt64(value)
+		default:
+			if _, ok := doc.Fields[field]; ok {
+				if fieldErr = querypkg.Charge(ctx, uint64(len(value))); fieldErr != nil {
+					return false
+				}
+				doc.Fields[field] = bytes.Clone(value)
+			}
+		}
+		return true
+	})
+	if readErr := multierr.Combine(visitErr, fieldErr); readErr != nil {
+		return index.SeriesDocument{}, errors.WithMessagef(readErr, "visit stored fields, hit: %d", match.HitNumber)
+	}
+	return doc, nil
 }
 
 func (s *store) SeriesSort(ctx context.Context, indexQuery index.Query, orderBy *index.OrderBy,

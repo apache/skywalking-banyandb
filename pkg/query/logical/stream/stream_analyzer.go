@@ -23,6 +23,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -82,6 +83,10 @@ func Analyze(criteria *streamv1.QueryRequest, metadata []*commonv1.Metadata, ss 
 	if limitParameter == 0 {
 		limitParameter = defaultLimit
 	}
+	window, validWindow := query.AddWindow(limitParameter, criteria.GetOffset())
+	if !validWindow {
+		return nil, fmt.Errorf("query limit and offset exceed supported range")
+	}
 	plan = newLimit(plan, criteria.GetOffset(), limitParameter)
 
 	p, err := plan.Analyze(s)
@@ -90,7 +95,7 @@ func Analyze(criteria *streamv1.QueryRequest, metadata []*commonv1.Metadata, ss 
 	}
 	rules := []logical.OptimizeRule{
 		logical.NewPushDownOrder(criteria.OrderBy),
-		logical.NewPushDownMaxSize(int(limitParameter + criteria.GetOffset())),
+		logical.NewPushDownMaxSize(int(window)),
 	}
 	if err := logical.ApplyRules(p, rules...); err != nil {
 		return nil, err
@@ -116,6 +121,9 @@ func DistributedAnalyze(criteria *streamv1.QueryRequest, ss []logical.Schema) (l
 	limitParameter := criteria.GetLimit()
 	if limitParameter == 0 {
 		limitParameter = defaultLimit
+	}
+	if _, validWindow := query.AddWindow(limitParameter, criteria.GetOffset()); !validWindow {
+		return nil, fmt.Errorf("query limit and offset exceed supported range")
 	}
 	plan = newDistributedLimit(plan, criteria.Offset, limitParameter)
 	return plan.Analyze(s)
