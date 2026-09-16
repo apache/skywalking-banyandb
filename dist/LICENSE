@@ -266,7 +266,7 @@ Apache-2.0 licenses
     google.golang.org/genproto v0.0.0-20260810153831-ec0a7760b754 Apache-2.0
     google.golang.org/genproto/googleapis/api v0.0.0-20260810153831-ec0a7760b754 Apache-2.0
     google.golang.org/genproto/googleapis/rpc v0.0.0-20260810153831-ec0a7760b754 Apache-2.0
-    google.golang.org/grpc v1.83.0 Apache-2.0
+    google.golang.org/grpc v1.83.2 Apache-2.0
     gopkg.in/ini.v1 v1.67.3 Apache-2.0
     skywalking.apache.org/repo/goapi v0.0.0-20260521015734-5c05525a3cce Apache-2.0
 

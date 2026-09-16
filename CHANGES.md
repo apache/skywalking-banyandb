@@ -19,6 +19,12 @@ Release Notes.
 - Register the memory protector on the liaison role so query admission uses the cgroup-backed pool instead of the 64MiB fallback.
 - Reject deeply nested ByDBQL WHERE parentheses to prevent stack overflow.
 - Keep system native `memory_state` (with `kind` labels) from being overwritten by the liaison load-shedding gauge so self-observability dashboard queries succeed.
+- Reject group / stream / measure / trace (and related) resource names that are not a single path-safe identifier (`[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?`), so names cannot escape catalog storage roots.
+- Bound protobuf `validate.rules` on schema and query identifiers (max length, allowlist pattern, repeated max_items, numeric ceilings) so untrusted inputs cannot escape storage roots or force unbounded allocations.
+
+### Chores
+
+- Bump google.golang.org/grpc to v1.83.2 to clear GO-2026-6443, GO-2026-6441, and GO-2026-6348.
 
 ## 0.11.0
 
