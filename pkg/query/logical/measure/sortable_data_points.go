@@ -15,29 +15,35 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package stream
+package measure
 
 import (
-	"fmt"
-	"time"
-
-	"github.com/dustin/go-humanize"
+	"github.com/apache/skywalking-banyandb/pkg/query/executor"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
-func (pm *partMetadata) String() string {
-	minTimestamp := time.Unix(0, pm.MinTimestamp).Format(time.Stamp)
-	maxTimestamp := time.Unix(0, pm.MaxTimestamp).Format(time.Stamp)
-
-	return fmt.Sprintf("%s, %s, %s, %s, %s, %s",
-		minTimestamp, maxTimestamp, humanize.Bytes(pm.CompressedSizeBytes),
-		humanize.Bytes(pm.UncompressedSizeBytes), humanize.Comma(int64(pm.TotalCount)),
-		humanize.Comma(int64(pm.BlocksCount)))
+type sortableDataPoints struct {
+	iter        executor.MIterator
+	current     *comparableDataPoint
+	sortTagSpec logical.TagSpec
+	sortByTime  bool
 }
 
-func (bc *blockCursor) String() string {
-	minTimestamp := time.Unix(0, bc.minTimestamp).Format(time.Stamp)
-	maxTimestamp := time.Unix(0, bc.maxTimestamp).Format(time.Stamp)
+func (s *sortableDataPoints) Next() bool {
+	if !s.iter.Next() {
+		return false
+	}
 
-	return fmt.Sprintf("%d, %d, %s, %s, %d, %s",
-		bc.p.partMetadata.ID, bc.bm.seriesID, minTimestamp, maxTimestamp, bc.bm.count, humanize.Bytes(bc.bm.uncompressedSizeBytes))
+	dp := s.iter.Current()[0]
+	var err error
+	s.current, err = newComparableElement(dp, s.sortByTime, s.sortTagSpec)
+	return err == nil
+}
+
+func (s *sortableDataPoints) Val() *comparableDataPoint {
+	return s.current
+}
+
+func (s *sortableDataPoints) Close() error {
+	return s.iter.Close()
 }
