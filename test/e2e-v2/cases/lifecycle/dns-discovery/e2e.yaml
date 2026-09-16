@@ -46,10 +46,6 @@ setup:
       command: bash test/e2e-v2/script/prepare/setup-e2e-shell/install.sh kubectl
     - name: install helm
       command: bash test/e2e-v2/script/prepare/setup-e2e-shell/install.sh helm
-    - name: default the vectorized engine flags
-      # The CI engine axis exports these to switch the engine; envsubst has no
-      # default syntax, so fill in the compose defaults when they are unset.
-      command: |
     - name: Deploy BanyanDB hot/warm/cold cluster
       command: envsubst < test/e2e-v2/cases/lifecycle/dns-discovery/banyandb-cluster.yaml | kubectl apply -f -
     - name: Deploy SkyWalking OAP with helm

@@ -25,9 +25,9 @@
 # address is already published but not yet listening.
 #
 # The cold node is pre-loaded with the data produced by ../data-generator, which
-# kind.yaml mounts into the node at /lifecycle-data. Applied through envsubst so
-# ${BANYANDB_*_VECTORIZED_FLAGS} resolve; container args use $(POD_NAME), which
-# Kubernetes expands and envsubst leaves alone.
+# kind.yaml mounts into the node at /lifecycle-data. Applied through envsubst.
+# Container args use $(POD_NAME), which Kubernetes expands and envsubst leaves
+# alone.
 ---
 apiVersion: v1
 kind: Service
@@ -148,8 +148,6 @@ spec:
             - --node-host-provider=flag
             - --node-host=$(POD_NAME).data-hot.default
             - --node-labels=type=hot
-            - ${BANYANDB_MEASURE_VECTORIZED_FLAGS}
-            - ${BANYANDB_TRACE_VECTORIZED_FLAGS}
           env:
             - name: POD_NAME
               valueFrom:
@@ -220,8 +218,6 @@ spec:
             - --node-host=$(POD_NAME).data-warm.default
             - --node-labels=type=warm
             - --has-meta-role=false
-            - ${BANYANDB_MEASURE_VECTORIZED_FLAGS}
-            - ${BANYANDB_TRACE_VECTORIZED_FLAGS}
           env:
             - name: POD_NAME
               valueFrom:
@@ -278,8 +274,6 @@ spec:
             - --node-host=$(POD_NAME).data-cold.default
             - --node-labels=type=cold
             - --has-meta-role=false
-            - ${BANYANDB_MEASURE_VECTORIZED_FLAGS}
-            - ${BANYANDB_TRACE_VECTORIZED_FLAGS}
           env:
             - name: POD_NAME
               valueFrom:
@@ -352,8 +346,6 @@ spec:
             - --node-host-provider=flag
             - --node-host=$(POD_NAME).liaison-headless.default
             - --data-node-selector=type=hot
-            - ${BANYANDB_MEASURE_VECTORIZED_FLAGS}
-            - ${BANYANDB_TRACE_VECTORIZED_FLAGS}
           env:
             - name: POD_NAME
               valueFrom:
