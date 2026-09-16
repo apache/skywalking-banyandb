@@ -440,7 +440,7 @@ The research suite must cover at least the following rows across create, persist
 Names may change during review, but ownership should remain clear:
 
 ```text
-docs/design/archive/0.12.0/native-inverted-index/
+docs/design/0.12.0/native-inverted-index/
   research-baseline.md
   provenance.md
   native-index-requirements.md
