@@ -93,6 +93,32 @@ func TestStreamRejectsPathEscapeName(t *testing.T) {
 	assert.Contains(t, err.Error(), "stream group")
 }
 
+func TestMeasureAcceptsInternalTopNResultSchema(t *testing.T) {
+	measure := &databasev1.Measure{
+		Metadata: &commonv1.Metadata{Name: "_top_n_result", Group: "group1"},
+		TagFamilies: []*databasev1.TagFamilySpec{
+			{
+				Name: "_topN",
+				Tags: []*databasev1.TagSpec{
+					{Name: "name", Type: databasev1.TagType_TAG_TYPE_STRING},
+					{Name: "direction", Type: databasev1.TagType_TAG_TYPE_INT},
+					{Name: "group", Type: databasev1.TagType_TAG_TYPE_STRING},
+					{Name: "parameters", Type: databasev1.TagType_TAG_TYPE_STRING},
+				},
+			},
+		},
+		Fields: []*databasev1.FieldSpec{{
+			Name:              "value",
+			FieldType:         databasev1.FieldType_FIELD_TYPE_DATA_BINARY,
+			EncodingMethod:    databasev1.EncodingMethod_ENCODING_METHOD_GORILLA,
+			CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
+		}},
+		Entity: &databasev1.Entity{TagNames: []string{"name", "direction", "group", "parameters"}},
+	}
+	assert.NoError(t, Measure(measure))
+	assert.NoError(t, measure.Validate())
+}
+
 func TestMeasureShardingKeyNil(t *testing.T) {
 	measure := &databasev1.Measure{
 		Metadata: &commonv1.Metadata{
