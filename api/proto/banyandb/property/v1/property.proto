@@ -33,9 +33,10 @@ message Property {
   common.v1.Metadata metadata = 1 [(validate.rules).message.required = true];
   // id uniquely identifies a property entity within a group/name.
   // May include '/' (schema registry keys); not used as a filesystem path element.
+  // 1024 covers BuildPropertyID (kind + "_" + group + "/" + name) at the 255-character name ceiling.
   string id = 2 [(validate.rules).string = {
     min_len: 1
-    max_len: 512
+    max_len: 1024
   }];
   // tag stores the content of a property
   repeated model.v1.Tag tags = 3 [(validate.rules).repeated = {

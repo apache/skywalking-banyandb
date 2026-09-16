@@ -1598,7 +1598,7 @@ Property stores the user defined data
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | metadata is the identity of a property |
-| id | [string](#string) |  | id uniquely identifies a property entity within a group/name. May include &#39;/&#39; (schema registry keys); not used as a filesystem path element. |
+| id | [string](#string) |  | id uniquely identifies a property entity within a group/name. May include &#39;/&#39; (schema registry keys); not used as a filesystem path element. 1024 covers BuildPropertyID (kind &#43; &#34;_&#34; &#43; group &#43; &#34;/&#34; &#43; name) at the 255-character name ceiling. |
 | tags | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated | tag stores the content of a property |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the property is updated |
 

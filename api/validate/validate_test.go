@@ -80,6 +80,26 @@ func TestGroupRejectsPathEscapeName(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid")
 }
 
+func TestGroupAcceptsEmptyStageNodeSelector(t *testing.T) {
+	group := &commonv1.Group{
+		Metadata: &commonv1.Metadata{Name: "sw_metric"},
+		Catalog:  commonv1.Catalog_CATALOG_STREAM,
+		ResourceOpts: &commonv1.ResourceOpts{
+			ShardNum:        1,
+			SegmentInterval: &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: 1},
+			Ttl:             &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: 7},
+			Stages: []*commonv1.LifecycleStage{{
+				Name:            "warm",
+				ShardNum:        1,
+				SegmentInterval: &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: 1},
+				Ttl:             &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: 7},
+			}},
+		},
+	}
+	assert.NoError(t, Group(group))
+	assert.NoError(t, group.Validate())
+}
+
 func TestStreamRejectsPathEscapeName(t *testing.T) {
 	stream := &databasev1.Stream{
 		Metadata: &commonv1.Metadata{Name: "ok", Group: "foo/../bar"},
