@@ -1426,8 +1426,8 @@ Metadata is for multi-tenant, multi-model use
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| group | [string](#string) |  | group contains a set of options, like retention policy, max |
-| name | [string](#string) |  | name of the entity |
+| group | [string](#string) |  | group contains a set of options, like retention policy, max Empty for Group itself; otherwise a path-safe identifier (max 255). |
+| name | [string](#string) |  | name of the entity — path-safe identifier used under catalog data roots. |
 | id | [uint32](#uint32) |  | id is the unique identifier of the entity if id is not set, the system will generate a unique id |
 | create_revision | [int64](#int64) |  | readonly. create_revision is the revision of last creation on this key. |
 | mod_revision | [int64](#int64) |  | readonly. mod_revision is the revision of last modification on this key. |
@@ -1482,7 +1482,7 @@ keep/drop verdict over a vectorized batch of traces.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| path | [string](#string) |  | path is the plugin .so filename, resolved within the data node&#39;s trusted plugin directory. |
+| path | [string](#string) |  | path is the plugin .so basename, resolved inside the trusted plugin directory. |
 | symbol | [string](#string) |  | symbol is the constructor symbol the engine looks up; defaults to &#34;NewSampler&#34; if empty. |
 | abi_version | [uint32](#uint32) |  | abi_version is the ABI version the plugin was built against. |
 | config | [google.protobuf.Struct](#google-protobuf-Struct) |  | config is the plugin-defined configuration serialized to canonical JSON for the constructor. |
@@ -1598,7 +1598,7 @@ Property stores the user defined data
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | metadata is the identity of a property |
-| id | [string](#string) |  | id is the identity of a property |
+| id | [string](#string) |  | id uniquely identifies a property entity within a group/name. May include &#39;/&#39; (schema registry keys); not used as a filesystem path element. 1024 covers BuildPropertyID (kind &#43; &#34;_&#34; &#43; group &#43; &#34;/&#34; &#43; name) at the 255-character name ceiling. |
 | tags | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated | tag stores the content of a property |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the property is updated |
 
