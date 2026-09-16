@@ -193,19 +193,20 @@ entity:
 		Expect(err).NotTo(HaveOccurred())
 		out := buf.String()
 		Expect(out).To(ContainSubstring("measure group1.name2 is created"))
-		// list
-		rootCmd.SetArgs([]string{"measure", "list", "-g", "group1"})
-		buf.Reset()
-		rootCmd.SetOut(&buf)
-		rootCmd.SetErr(&buf)
-
-		err = rootCmd.Execute()
-		Expect(err).NotTo(HaveOccurred())
-		out = buf.String()
-		resp := new(databasev1.MeasureRegistryServiceListResponse)
-		helpers.UnmarshalYAML([]byte(out), resp)
-		// There is a _topn_result measure created by default
-		Expect(resp.Measure).To(HaveLen(3))
+		// list — wait for the async internal _top_n_result measure as well as name1/name2
+		listMeasures := func() int {
+			rootCmd.SetArgs([]string{"measure", "list", "-g", "group1"})
+			var listBuf bytes.Buffer
+			rootCmd.SetOut(&listBuf)
+			rootCmd.SetErr(&listBuf)
+			if listErr := rootCmd.Execute(); listErr != nil {
+				return -1
+			}
+			resp := new(databasev1.MeasureRegistryServiceListResponse)
+			helpers.UnmarshalYAML(listBuf.Bytes(), resp)
+			return len(resp.Measure)
+		}
+		Eventually(listMeasures, flags.EventuallyTimeout).Should(Equal(3))
 	})
 
 	AfterEach(func() {
