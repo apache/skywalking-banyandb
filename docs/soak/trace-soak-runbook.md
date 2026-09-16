@@ -118,11 +118,10 @@ SOAK_ENGINE=trace \
   ./scripts/soak-vectorized.sh
 ```
 
-### Phase 0 — vec-off, capture golden baseline
+### Phase 0 — capture golden baseline
 
-1. `BANYANDB_VEC_ENABLED=false docker compose up -d banyandb` — standalone
-   BanyanDB with `--trace-vectorized-enabled=false`, resource-limited (2 GB /
-   2 CPU).
+1. `docker compose up -d banyandb` — standalone BanyanDB, resource-limited
+   (2 GB / 2 CPU).
 2. Health-check `http://localhost:17913/api/healthz` (120-attempt cap, 5 s
    intervals).
 3. `docker compose run --rm soak-driver seed-fixture --engine trace
@@ -142,17 +141,14 @@ SOAK_ENGINE=trace \
    if any catalog query returns zero traces** (engine-agnostic guard).
 6. Stop BanyanDB → `cp -a data/. data-snapshot/` → `docker compose down -v`.
 
-### Phase 1 — vec-on, soak
+### Phase 1 — soak
 
-1. Restore snapshot → `BANYANDB_VEC_ENABLED=true docker compose up -d banyandb`.
-2. Health-check; then **vec-flag-honored gate**: grep startup logs for
-   `trace-vectorized-enabled=true`. This grep is load-bearing because the
-   parity-clean S=5 fixture produces identical vec-on/vec-off output by design,
-   so parity alone cannot distinguish "vec engaged" from "vec silently disabled".
-3. Initial pprof-grab (heap + goroutine) → `pprof-start/`.
-4. Background loops (fail-tolerant — WARN on a bad tick, never abort):
+1. Restore snapshot → `docker compose up -d banyandb`; health-check.
+2. Initial pprof-grab (heap + goroutine) → `pprof-start/`.
+3. Background loops (fail-tolerant — WARN on a bad tick, never abort):
    - **parity** (every `PARITY_INTERVAL_MIN`): `replay-and-diff --engine trace`
-     re-runs the catalog vs vec-on live data; writes `diff-<ts>.json`.
+     re-runs the catalog against the live post-restore data; writes
+     `diff-<ts>.json`.
    - **pprof** (every `PPROF_INTERVAL_MIN`): heap + goroutine snapshots.
    - **write-load** (continuous, rate-capped at `SOAK_WRITE_RPS` spans/s):
      deterministic writes into `bench-trace-load` using timestamps offset 365
@@ -162,7 +158,7 @@ SOAK_ENGINE=trace \
    - **log capture** (rotation-bounded `--since 60s` snapshots → `banyand.log`)
      and memory-alert grep
      (`budget|MemoryTracker|panic|vectorized` → `memory-alerts.log`).
-5. Wait `SOAK_HOURS` → kill loops → final pprof-grab (`pprof-end/`) → final
+4. Wait `SOAK_HOURS` → kill loops → final pprof-grab (`pprof-end/`) → final
    `replay-and-diff` (sets `FINAL_PASS`) → write `summary.json`.
 
 ### Tapered monitor (recommended for unattended runs)
@@ -234,7 +230,7 @@ test/integration/distributed/querybench/run-docker.sh
 
 **Phase 1 — parity fixture (200 iterations, liveness + leak gate)**
 
-- Boots in-process cluster vec-on; seeds 1000-trace × 20-span uniform fixture
+- Boots an in-process cluster; seeds 1000-trace × 20-span uniform fixture
   (budget 256 MiB, never truncates → parity clean).
 - Warmup: 3 query iterations to stabilize JIT paths and GC.
 - Snapshots post-warmup `vtrace.QueryCount()` + `runtime.ReadMemStats.HeapInuse`.
@@ -272,7 +268,6 @@ test/integration/distributed/querybench/run-docker.sh
 | **No crash/restart** | BanyanDB container uptime continuous; `banyand.log` not stale (`soak-monitor.sh`) |
 | **No memory-alert lines** | `memory-alerts.log` has 0 lines matching `budget\|MemoryTracker\|panic\|vectorized` |
 | **Write-load alive** | `write_load_spans > 0` in `summary.json` |
-| **Vec flag honored** | Startup log grep confirms `--trace-vectorized-enabled=true` was honored |
 
 ### Advisory signals (human review only, not gates)
 
@@ -320,7 +315,7 @@ All artifacts land under `dist/soak/<YYYYMMDDTHHMMSS>/`:
 dist/soak/<ts>/
   run.log                    # tee'd full orchestrator log
   baseline.json              # array of traceBaselineRecord (proto-JSON Traces)
-  data-snapshot/             # raw BanyanDB /data dir from Phase 0 (vec-off)
+  data-snapshot/             # raw BanyanDB /data dir from Phase 0
   pprof-start/
     heap-<unix>.pb.gz        # gzip pprof heap
     goroutine-<unix>.txt     # goroutine dump (debug=1 text format)
@@ -345,7 +340,6 @@ dist/soak/<ts>/
   "soak_hours": 48,
   "t1_ms": 1704067200000,
   "final_parity_pass": true,
-  "vec_flag_honored": true,
   "goroutine_count_start": 120,
   "goroutine_count_end": 122,
   "memory_alert_lines": 0,
@@ -389,8 +383,8 @@ dist/soak/<ts>/
 ### Quick all-green check
 
 ```bash
-# Instrument 1: final parity + vec flag + write-load + alerts
-jq '{final_parity_pass, vec_flag_honored, write_load_alive, memory_alert_lines,
+# Instrument 1: final parity + write-load + alerts
+jq '{final_parity_pass, write_load_alive, memory_alert_lines,
      goroutine_count_start, goroutine_count_end}' dist/soak/<ts>/summary.json
 
 # Instrument 1: all intermediate diffs
@@ -430,22 +424,27 @@ jq '.divergences' dist/soak/<ts>/diff-<ts>.json
 ```
 
 **Parity-FAIL disambiguation**: a divergence after Phase 1 could be caused by
-the vec reader or by a merge/data artifact on the Phase-1 data. To distinguish:
+the reader or by a merge/data artifact accumulated on the Phase-1 data. There is
+no second query engine to cross-check against — the row path was removed in
+0.12.0 — so the control is the Phase-0 snapshot, which the soak has not written
+to. Restore it into a scratch data dir and replay the same catalog:
 
 ```bash
-# Re-run the failing catalog query with vec-off on Phase-1 data:
-BANYANDB_VEC_ENABLED=false \
+# Replay the failing catalog query against the untouched Phase-0 snapshot:
+rm -rf /tmp/soak-replay && cp -a dist/soak/<ts>/data-snapshot /tmp/soak-replay
+SOAK_DATA_DIR=/tmp/soak-replay \
   docker compose -f test/soak/docker-compose.soak.yaml up -d banyandb
 docker compose -f test/soak/docker-compose.soak.yaml run --rm soak-driver \
   replay-and-diff --engine trace \
   --addr banyandb:17912 \
   --catalog /catalog/trace.json \
   --baseline /artifacts/baseline.json \
-  --report /artifacts/diff-vec-off-debug.json
+  --report /artifacts/diff-snapshot-debug.json
 ```
 
-If `diff-vec-off-debug.json` also diverges, the cause is in the
-data/merge path, not the vec reader. If it passes, the vec reader is at fault.
+If `diff-snapshot-debug.json` passes, the baseline data still reads correctly and
+the divergence came from what Phase 1 did to the data — merge, compaction or
+expiry. If it also diverges, the reader is at fault.
 
 ### Memory-alert lines
 
@@ -466,10 +465,9 @@ bug against the vectorized trace pipeline with the diff attached.
 
 **Symptom**: `liveness_pass: false` — `query_count_delta < 200`.
 
-**Meaning**: the vec query path was not reached on every iteration. This can
-happen if the `--trace-vectorized-enabled` flag was not honored in-process, or
-if a dispatch branch fell through to the row path. Examine the test's `t.Log`
-output for iteration-level error messages.
+**Meaning**: the query path was not reached on every iteration — iterations are
+erroring out before they query. Examine the test's `t.Log` output for
+iteration-level error messages.
 
 ### Instrument 2 heap-leak gate FAIL
 
@@ -510,20 +508,14 @@ A stall means no flush/merge/compaction stress during Phase 1.
    DQB_SOAK=1 DQB_ENGINE=trace ./test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g
    ```
    Both should complete without errors, `summary.json` should have
-   `final_parity_pass: true` and `vec_flag_honored: true`;
+   `final_parity_pass: true`;
    `soak-trace-vec-result.json` should have all pass fields `true`.
 
 2. **Parity has teeth** (negative control): inject one extra span into the
    Phase-1 fixture and re-run `replay-and-diff` — `diff-final.json` must show
    `"pass": false`.
 
-3. **Vec-engaged confirmation** (separate run): run the soak with a deliberately
-   divergent fixture (e.g. extra span on the vec-on side only) and confirm
-   `diff-final.json` FAILs. The parity-clean S=5 fixture cannot distinguish
-   vec-engaged from vec-silently-disabled by result content alone; this
-   divergent-fixture run corroborates the startup-log grep gate.
-
-4. **Measure regression**: `SOAK_ENGINE=measure SMOKE=1 ./scripts/soak-vectorized.sh`
+3. **Measure regression**: `SOAK_ENGINE=measure SMOKE=1 ./scripts/soak-vectorized.sh`
    must still pass unchanged (measure path is byte-for-byte unmodified).
 
 ## Named v1 Gap — Production Distributed-Topology Soak
@@ -544,15 +536,11 @@ covering real network fan-out, on-wire frames, and multi-node container RSS.
 The in-process wire/merge path is already covered for correctness; what remains
 is the production transport layer.
 
-## Rollback
+## Teardown
 
-To re-run Phase 1 with vec disabled (reproducing baseline behavior):
-
-```bash
-BANYANDB_VEC_ENABLED=false \
-SOAK_DATA_DIR=./test/soak/data \
-docker compose -f test/soak/docker-compose.soak.yaml up -d banyandb
-```
+The row-based query path was removed in 0.12.0
+([apache/skywalking#13998](https://github.com/apache/skywalking/issues/13998)),
+so there is no engine to roll back to; a run is torn down, not reverted.
 
 Tear down with:
 

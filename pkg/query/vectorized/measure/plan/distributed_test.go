@@ -49,7 +49,7 @@ func TestAnalyzeDistributed_AllowsGroupByTopWithoutAgg(t *testing.T) {
 		Limit:  7,
 		Offset: 3,
 	}
-	_, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	_, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed must accept GroupBy+Top without Agg natively (Phase 5): %v", analyzeErr)
 	}
@@ -64,7 +64,7 @@ func TestAnalyzeDistributed_AllowsSupportedNonAggRows(t *testing.T) {
 		Limit:           7,
 		Offset:          3,
 	}
-	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 	}
@@ -173,7 +173,7 @@ func TestAnalyzeDistributed_NodeTemplatePushesAggPartials(t *testing.T) {
 			FieldValueSort: modelv1.Sort_SORT_ASC,
 		},
 	}
-	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 	}
@@ -238,7 +238,7 @@ func TestAnalyzeDistributed_TopAggUnboundsNodeLimit_Matrix(t *testing.T) {
 				Limit:  tc.limit,
 				Offset: tc.offset,
 			}
-			p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+			p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
 			if analyzeErr != nil {
 				t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 			}
@@ -292,7 +292,7 @@ func TestAnalyzeDistributed_TopWithoutAgg_NodeLimitIsUnbounded(t *testing.T) {
 				Limit: tc.limit,
 			}
 			p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil,
-				vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+				vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
 			if analyzeErr != nil {
 				t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 			}
@@ -346,7 +346,7 @@ func TestAnalyzeDistributed_TopWithoutAgg_HiddenFieldProjectionAdded(t *testing.
 		},
 	}
 	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{ms}, nil,
-		vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+		vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 	}
@@ -394,7 +394,7 @@ func TestAnalyzeDistributed_TopWithoutAgg_FieldNotInSchema(t *testing.T) {
 		Limit: 10,
 	}
 	_, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil,
-		vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+		vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
 	if analyzeErr == nil {
 		t.Fatal("AnalyzeDistributed must return an error when Top.FieldName is not in the schema")
 	}
@@ -435,7 +435,7 @@ func TestAnalyzeDistributed_OrderByByIndexRule_AcceptedNatively(t *testing.T) {
 		req,
 		[]*databasev1.Measure{testMeasureSchema()},
 		[][]*databasev1.IndexRule{indexRules},
-		vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1},
+		vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1},
 	)
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
@@ -480,7 +480,7 @@ func TestAnalyzeDistributed_OrderByByIndexRule_HiddenProjectionAdded(t *testing.
 		req,
 		[]*databasev1.Measure{testMeasureSchema()},
 		[][]*databasev1.IndexRule{indexRules},
-		vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1},
+		vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1},
 	)
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
@@ -526,7 +526,7 @@ func TestAnalyzeDistributed_OrderByByIndexRule_UnknownRuleErrors(t *testing.T) {
 		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		OrderBy:         &modelv1.QueryOrder{IndexRuleName: "nope"},
 	}
-	_, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	_, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
 	if analyzeErr == nil {
 		t.Fatal("AnalyzeDistributed must reject an unknown index rule")
 	}
@@ -576,7 +576,7 @@ func TestAnalyzeDistributed_MultiGroup_AcceptedNatively(t *testing.T) {
 		req,
 		[]*databasev1.Measure{msA, msB},
 		nil,
-		vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1},
+		vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1},
 	)
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed multi-group: %v", analyzeErr)
@@ -621,7 +621,7 @@ func TestAnalyzeDistributed_MultiGroup_UnionsSchemaAcrossGroups(t *testing.T) {
 		req,
 		[]*databasev1.Measure{msA, msB},
 		nil,
-		vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1},
+		vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1},
 	)
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
@@ -750,7 +750,7 @@ func TestAnalyzeDistributed_TopNonAggUnboundsNodeLimit_MultiGroup(t *testing.T) 
 				Limit: 10,
 			}
 			p, analyzeErr := AnalyzeDistributed(req, schemas, nil,
-				vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+				vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
 			if analyzeErr != nil {
 				t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 			}
@@ -799,7 +799,7 @@ func TestAnalyzeDistributed_RawGroupBy_NodeTemplateKeepsGroupBy(t *testing.T) {
 		Limit: 10,
 	}
 	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil,
-		vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+		vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 	}

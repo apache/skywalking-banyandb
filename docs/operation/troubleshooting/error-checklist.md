@@ -46,4 +46,3 @@ Follow this procedure to address the identified error type:
 - [Troubleshooting Query Issues](./query.md)
 - [Troubleshooting Installation Issues](./install.md)
 - [Common Issues](./common-issues.md)
-- [Measure Vec Flag-Off Rollback](./measure-vec-flag-off-rollback.md)

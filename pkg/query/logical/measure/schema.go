@@ -20,19 +20,32 @@ package measure
 
 import (
 	"github.com/google/go-cmp/cmp"
-	"github.com/pkg/errors"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
-// errFieldNotDefined indicated the field is not defined in the measure schema.
-var errFieldNotDefined = errors.New("field is not defined")
+// BuildSchema returns Schema loaded from the metadata repository.
+func BuildSchema(md *databasev1.Measure, indexRules []*databasev1.IndexRule) (logical.Schema, error) {
+	ms := &schema{
+		common: &logical.CommonSchema{
+			IndexRules: indexRules,
+			TagSpecMap: make(map[string]*logical.TagSpec),
+			EntityList: md.GetEntity().GetTagNames(),
+		},
+		measure:  md,
+		fieldMap: make(map[string]*logical.FieldSpec),
+	}
 
-// Deprecated: row-path measure plan; see .omc/g8-plan.md. The vec
-// subsystem consumes *databasev1.Measure directly via
-// measure.BuildBatchSchema and produces a *vectorized.BatchSchema with
-// no intermediate logical.Schema indirection.
+	ms.common.RegisterTagFamilies(md.GetTagFamilies())
+
+	for fieldIdx, spec := range md.GetFields() {
+		ms.registerField(fieldIdx, spec)
+	}
+
+	return ms, nil
+}
+
 type schema struct {
 	measure  *databasev1.Measure
 	fieldMap map[string]*logical.FieldSpec
@@ -68,16 +81,6 @@ func (m *schema) CreateFieldRef(fields ...*logical.Field) ([]*logical.FieldRef, 
 		}
 	}
 	return fieldRefs, nil
-}
-
-// ValidateProjectionFields checks if all fields in the projection exist in the schema.
-func (m *schema) ValidateProjectionFields(fields ...string) error {
-	for _, field := range fields {
-		if _, ok := m.fieldMap[field]; !ok {
-			return errors.Errorf("field %s not found in schema", field)
-		}
-	}
-	return nil
 }
 
 func (m *schema) ProjTags(refs ...[]*logical.TagRef) logical.Schema {
