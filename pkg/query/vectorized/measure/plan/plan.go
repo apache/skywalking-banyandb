@@ -17,10 +17,8 @@
 
 // Package plan is the vectorized measure-query plan tree (G8).
 //
-// This package is a peer of pkg/query/logical/measure (deprecated, row
-// path); the two share no plan-node types, executor wiring, or iterator
-// machinery. Top-level dispatch (banyand/query/processor.go, G8d) routes
-// requests to one OR the other based on VectorizedConfig.Enabled.
+// Top-level dispatch (banyand/query/processor.go, G8d) routes every
+// measure query here.
 //
 // A VecPlan node knows its output BatchSchema, its children, and how to
 // append itself to a *vectorized.PipelineBuilder during Build. Build is
