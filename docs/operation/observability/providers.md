@@ -82,7 +82,7 @@ flowchart LR
     ep == "TopicMeasureWrite (target = selected node)" ==> ts
 ```
 
-Node selection (the liaison's `nodeSelector`) resolves targets through the cluster node registry — the property-based schema registry with `dns` / `file` node discovery; **etcd is no longer used**.
+Node selection (the liaison's `nodeSelector`) resolves targets through the cluster node registry — the property-based schema registry with `dns` / `file` node discovery.
 
 ### Read Flow
 
