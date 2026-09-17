@@ -327,6 +327,19 @@ license-dep: default ## Generate dependency LICENSE texts via SkyWalking Eyes
 	cat $(mk_dir)/ui/LICENSE >> $(mk_dir)/dist/LICENSE
 	mv $(mk_dir)/mcp/mcp-licenses $(mk_dir)/dist/licenses
 	cat $(mk_dir)/mcp/LICENSE >> $(mk_dir)/dist/LICENSE
+	@# Eyes can leave empty license files when upstream publishes no LICENSE.
+	@# Reviewed texts under dist/legal/license-texts/ replace those empties.
+	@if [ -d $(mk_dir)/dist/legal/license-texts ]; then \
+		for f in $(mk_dir)/dist/legal/license-texts/*; do \
+			[ -f "$$f" ] || continue; \
+			base=$$(basename "$$f"); \
+			dest="$(mk_dir)/dist/licenses/$$base"; \
+			if [ ! -s "$$dest" ]; then \
+				cp -f "$$f" "$$dest"; \
+				echo "filled empty license text: $$base"; \
+			fi; \
+		done; \
+	fi
 
 LICENSE_COMPLIANCE_DIR := $(mk_dir)/build/license-compliance
 LICENSE_CATALOG_DIR := $(mk_dir)/dist/legal/catalog

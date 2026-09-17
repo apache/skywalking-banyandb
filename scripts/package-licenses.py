@@ -209,13 +209,17 @@ def filter_license(go_license: str, allowed: set[str]) -> tuple[str, set[str], d
     return "\n".join(out), kept_names, versions, expressions
 
 
-def copy_license_texts(licenses_dir: Path, dest_dir: Path, names: set[str]) -> None:
+def copy_license_texts(licenses_dir: Path, dest_dir: Path, names: set[str], fallback_dir: Path | None = None) -> None:
     """Copy license-eye text files for names from licenses_dir into dest_dir."""
     dest_dir.mkdir(parents=True, exist_ok=True)
     missing: list[str] = []
     for name in sorted(names):
         filename = license_filename(name)
         src = licenses_dir / filename
+        if (not src.is_file() or src.stat().st_size == 0) and fallback_dir is not None:
+            fallback = fallback_dir / filename
+            if fallback.is_file() and fallback.stat().st_size > 0:
+                src = fallback
         if not src.is_file() or src.stat().st_size == 0:
             missing.append(f"{name} -> {filename}")
             continue
@@ -359,6 +363,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--obligations", type=Path, help="dist/legal/obligations.json")
     parser.add_argument("--legal-root", type=Path, help="root for notice fragments (defaults to obligations parent)")
     parser.add_argument("--inventory-out", type=Path, help="optional machine-readable inventory path")
+    parser.add_argument(
+        "--license-texts-fallback",
+        type=Path,
+        help="optional directory of reviewed license texts for Eyes empties",
+    )
     return parser.parse_args()
 
 
@@ -390,7 +399,7 @@ def main() -> int:
     if dest_licenses.exists():
         shutil.rmtree(dest_licenses)
     dest_licenses.mkdir(parents=True)
-    copy_license_texts(args.licenses_dir, dest_licenses, kept)
+    copy_license_texts(args.licenses_dir, dest_licenses, kept, fallback_dir=args.license_texts_fallback)
     extras: list[str] = []
     for license_path, extra_dir in zip(args.extra_license, args.extra_licenses_dir):
         extras.append(license_path.read_text(encoding="utf-8").rstrip() + "\n")

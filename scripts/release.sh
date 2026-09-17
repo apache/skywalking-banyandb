@@ -112,6 +112,7 @@ stage_binary_package() {
         --readme ./README.md \
         --obligations ./dist/legal/obligations.json \
         --legal-root ./dist/legal \
+        --license-texts-fallback ./dist/legal/license-texts \
         --inventory-out "${BUILDDIR}/license-compliance/inventories/${pkg}.json" \
         "${extra_args[@]}"
     python3 ./scripts/license-compliance.py validate-dir \
