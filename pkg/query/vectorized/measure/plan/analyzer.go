@@ -24,6 +24,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	measure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -48,7 +49,9 @@ const defaultLimit uint32 = 100
 //   - nil schema
 //   - tag/field projection naming columns not in the schema
 //   - GroupBy referencing a tag absent from the schema
-//   - Agg referencing a field absent from the schema
+//   - Agg referencing a field or tag absent from the schema, naming both or
+//     neither of field_name/tag_name, or naming a tag whose type or family
+//     qualification the target function does not support (design §6)
 //
 // GroupBy and Agg may travel together (group + aggregate), or either
 // alone: Agg without GroupBy is a scalar reduce (single output row);
@@ -103,6 +106,7 @@ func Analyze(req *measurev1.QueryRequest, measureSchema *databasev1.Measure, mod
 	// field always materialize a column, instead of falling through to
 	// the row path when the request omitted them from its projection.
 	tagProjection = ensureGroupByProjected(tagProjection, gbModel)
+	tagProjection = ensureAggTagProjected(tagProjection, aggModel)
 	fieldProjection = ensureAggFieldProjected(fieldProjection, aggModel)
 
 	opts := model.MeasureQueryOptions{
@@ -201,20 +205,47 @@ func translateGroupBy(req *measurev1.QueryRequest, measureSchema *databasev1.Mea
 	if validateErr := validateGroupByTags(measureSchema, gb); validateErr != nil {
 		return nil, validateErr
 	}
+	// time_bucket is wire-additive only in this delivery stage: the value is
+	// carried onto the model unchanged, but nothing resolves or validates it
+	// yet, and no operator acts on it (design §12 stage 0). Resolution,
+	// validation, and the bucketing operator land in a later stage (§5.3, §7.2).
+	if tb := req.GetGroupBy().GetTimeBucket(); tb != nil {
+		gb.TimeBucket = &model.MeasureTimeBucket{Width: tb.GetWidth()}
+	}
 	return gb, nil
 }
 
-// translateAgg builds the model Agg struct from the proto, validating
-// that the Agg field exists in the Measure schema.
+// translateAgg builds the model Agg struct from the proto. Exactly one of
+// field_name / tag_name must be set; a tag target additionally requires
+// tag_family (tag names are only unique within a family — design §5.1) and
+// is validated against the §6 semantics matrix for the five functions this
+// issue implements. COUNT_DISTINCT's matrix row is accepted here (its type
+// rules match COUNT's) but has no execution support yet: an unmapped
+// function is rejected downstream, at protoAggFuncToInternal.
 func translateAgg(req *measurev1.QueryRequest, measureSchema *databasev1.Measure) (*model.MeasureAgg, error) {
 	aggProto := req.GetAgg()
-	if validateErr := validateAggField(measureSchema, aggProto.GetFieldName()); validateErr != nil {
-		return nil, validateErr
+	fieldName := aggProto.GetFieldName()
+	tagName := aggProto.GetTagName()
+	tagFamily := aggProto.GetTagFamily()
+
+	switch {
+	case fieldName != "" && tagName != "":
+		return nil, fmt.Errorf("plan.Analyze: Agg must target exactly one of field_name or tag_name, got both (%q, %q)", fieldName, tagName)
+	case fieldName == "" && tagName == "":
+		return nil, fmt.Errorf("plan.Analyze: Agg must set exactly one of field_name or tag_name")
+	case tagName != "" && tagFamily == "":
+		return nil, fmt.Errorf("plan.Analyze: Agg.tag_name %q requires tag_family to be set", tagName)
+	case fieldName != "":
+		if validateErr := validateAggField(measureSchema, fieldName); validateErr != nil {
+			return nil, validateErr
+		}
+		return &model.MeasureAgg{FieldName: fieldName, Func: aggProto.GetFunction()}, nil
+	default:
+		if validateErr := validateAggTag(measureSchema, tagFamily, tagName, aggProto.GetFunction()); validateErr != nil {
+			return nil, validateErr
+		}
+		return &model.MeasureAgg{TagName: tagName, TagFamily: tagFamily, Func: aggProto.GetFunction()}, nil
 	}
-	return &model.MeasureAgg{
-		FieldName: aggProto.GetFieldName(),
-		Func:      aggProto.GetFunction(),
-	}, nil
 }
 
 // ensureGroupByProjected returns a TagProjection slice guaranteed to
@@ -274,6 +305,38 @@ func ensureAggFieldProjected(fp []string, agg *model.MeasureAgg) []string {
 	return append(out, agg.FieldName)
 }
 
+// ensureAggTagProjected mirrors ensureGroupByProjected for an Agg tag
+// target: when the caller's tag_projection already names it, agg.HideTag
+// stays false and the caller gets both a tag and a field of that name in
+// the output (design §5.2 — separate namespaces, nothing collides).
+// Otherwise the tag is appended to its family (creating the family if
+// absent) and agg.HideTag is set so the injected copy is not also emitted
+// as a first-seen tag column alongside the aggregation result.
+func ensureAggTagProjected(tp []model.TagProjection, agg *model.MeasureAgg) []model.TagProjection {
+	if agg == nil || agg.TagName == "" {
+		return tp
+	}
+	for _, fam := range tp {
+		if fam.Family != agg.TagFamily {
+			continue
+		}
+		for _, n := range fam.Names {
+			if n == agg.TagName {
+				return tp
+			}
+		}
+	}
+	agg.HideTag = true
+	out := append([]model.TagProjection(nil), tp...)
+	for i := range out {
+		if out[i].Family == agg.TagFamily {
+			out[i].Names = append(append([]string(nil), out[i].Names...), agg.TagName)
+			return out
+		}
+	}
+	return append(out, model.TagProjection{Family: agg.TagFamily, Names: []string{agg.TagName}})
+}
+
 // validateGroupByTags ensures every name in gb.TagNames exists within the
 // configured tag family of measureSchema.
 func validateGroupByTags(measureSchema *databasev1.Measure, gb *model.MeasureGroupBy) error {
@@ -305,4 +368,56 @@ func validateAggField(measureSchema *databasev1.Measure, fieldName string) error
 		}
 	}
 	return fmt.Errorf("plan.Analyze: Agg field %q not present in measure schema", fieldName)
+}
+
+// validateAggTag resolves (tagFamily, tagName) against measureSchema and
+// enforces the §6 semantics matrix: array and TIMESTAMP tags are rejected
+// outright (mirroring keyComponentSupported, the operator's own key-encoding
+// limit, so the two cannot drift apart); SUM/MIN/MAX/MEAN additionally
+// require TAG_TYPE_INT, while COUNT and COUNT_DISTINCT accept any tag type
+// that survives the array/timestamp check.
+func validateAggTag(measureSchema *databasev1.Measure, tagFamily, tagName string, fn modelv1.AggregationFunction) error {
+	spec := findTagSpec(measureSchema, tagFamily, tagName)
+	if spec == nil {
+		return fmt.Errorf("plan.Analyze: Agg tag %s.%s not present in measure schema", tagFamily, tagName)
+	}
+	colType, typeErr := tagTypeToColumnTypeMG(spec.GetType())
+	if typeErr != nil {
+		return fmt.Errorf("plan.Analyze: Agg tag %s.%s has type %s, which cannot be an aggregation target", tagFamily, tagName, spec.GetType())
+	}
+	if !measure.KeyComponentSupported(colType) {
+		return fmt.Errorf("plan.Analyze: Agg tag %s.%s has type %s, which cannot be an aggregation target", tagFamily, tagName, spec.GetType())
+	}
+	switch fn {
+	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT,
+		modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT:
+		return nil
+	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
+		modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN,
+		modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX,
+		modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN:
+		if colType != vectorized.ColumnTypeInt64 {
+			return fmt.Errorf("plan.Analyze: Agg tag %s.%s: %s is not supported over tag type %s", tagFamily, tagName, fn, spec.GetType())
+		}
+		return nil
+	default:
+		return fmt.Errorf("plan.Analyze: Agg.Function is UNSPECIFIED or unknown")
+	}
+}
+
+// findTagSpec returns the TagSpec named (tagFamily, tagName) in
+// measureSchema, or nil if no such family or tag exists.
+func findTagSpec(measureSchema *databasev1.Measure, tagFamily, tagName string) *databasev1.TagSpec {
+	for _, tf := range measureSchema.GetTagFamilies() {
+		if tf.GetName() != tagFamily {
+			continue
+		}
+		for _, ts := range tf.GetTags() {
+			if ts.GetName() == tagName {
+				return ts
+			}
+		}
+		return nil
+	}
+	return nil
 }

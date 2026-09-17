@@ -100,6 +100,12 @@ type AggSpec struct {
 	Output   string
 	Func     AggFunc
 	InputCol int // index into the input schema; must be int64 or float64
+	// HideTag is true when InputCol is a RoleTag column the analyzer
+	// injected into the projection solely so this spec could bind to it
+	// (design §5.2, model.MeasureAgg.HideTag). NewBatchAggregation excludes
+	// such a column from the carried-forward tag set so it is not also
+	// emitted as a first-seen tag beside its own result field.
+	HideTag bool
 }
 
 // BatchAggregation is a BreakerOperator that groups input rows by the configured
@@ -204,7 +210,7 @@ func NewBatchAggregation(
 	aggs []AggSpec, mode AggMode, batchSize int,
 	tracker *vectorized.MemoryTracker, entrySize int64,
 ) *BatchAggregation {
-	tagIndices := collectTagIndices(input, keyIndices)
+	tagIndices := collectTagIndices(input, keyIndices, hiddenTagExclusionSet(aggs))
 	layout := buildAggOutputLayout(input, tagIndices, aggs, mode)
 	return &BatchAggregation{
 		inputSchema:      input,
@@ -244,22 +250,46 @@ func deriveAggValuePath(input *vectorized.BatchSchema, aggs []AggSpec) AggValueP
 }
 
 // collectTagIndices returns every tag column index in input, in input
-// schema order. When the schema has no RoleTag columns at all (synthetic
-// unit-test fixtures that pre-date the storage bridge), fall back to
-// keyIndices so the operator still produces the keys-only output those
-// tests expect. Production paths always have RoleTag columns because
-// BuildBatchSchema emits one per projected tag.
-func collectTagIndices(input *vectorized.BatchSchema, keyIndices []int) []int {
+// schema order, except those in exclude. When the schema has no RoleTag
+// columns at all (synthetic unit-test fixtures that pre-date the storage
+// bridge), fall back to keyIndices so the operator still produces the
+// keys-only output those tests expect. Production paths always have
+// RoleTag columns because BuildBatchSchema emits one per projected tag.
+func collectTagIndices(input *vectorized.BatchSchema, keyIndices []int, exclude map[int]struct{}) []int {
+	hasTagCols := false
 	out := make([]int, 0, len(input.Columns))
 	for i, def := range input.Columns {
-		if def.Role == vectorized.RoleTag {
-			out = append(out, i)
+		if def.Role != vectorized.RoleTag {
+			continue
 		}
+		hasTagCols = true
+		if _, skip := exclude[i]; skip {
+			continue
+		}
+		out = append(out, i)
 	}
-	if len(out) == 0 {
+	if !hasTagCols {
 		return slices.Clone(keyIndices)
 	}
 	return out
+}
+
+// hiddenTagExclusionSet collects the input-schema column index of every
+// AggSpec whose HideTag is set — the tag column it targets should not also
+// be carried forward as a first-seen tag (design §5.2). Returns nil when no
+// spec hides its tag.
+func hiddenTagExclusionSet(aggs []AggSpec) map[int]struct{} {
+	var excl map[int]struct{}
+	for _, spec := range aggs {
+		if !spec.HideTag {
+			continue
+		}
+		if excl == nil {
+			excl = make(map[int]struct{}, 1)
+		}
+		excl[spec.InputCol] = struct{}{}
+	}
+	return excl
 }
 
 // Init prepares the group map. It does NOT validate the mode — mode rejection
@@ -435,8 +465,10 @@ func (a *BatchAggregation) newGroup(b *vectorized.RecordBatch, rowIdx int, key s
 	}
 	slots := make([]aggSlot, len(a.aggs))
 	for i, spec := range a.aggs {
-		inputIsFloat := a.inputSchema.Columns[spec.InputCol].Type == vectorized.ColumnTypeFloat64
-		slot, slotErr := newAggSlot(spec.Func, inputIsFloat, a.mode)
+		inputDef := a.inputSchema.Columns[spec.InputCol]
+		inputIsFloat := inputDef.Type == vectorized.ColumnTypeFloat64
+		isTagTarget := inputDef.Role == vectorized.RoleTag
+		slot, slotErr := newAggSlot(spec.Func, inputIsFloat, isTagTarget, a.mode)
 		if slotErr != nil {
 			return nil, slotErr
 		}
@@ -461,9 +493,19 @@ func (a *BatchAggregation) newGroup(b *vectorized.RecordBatch, rowIdx int, key s
 
 // fold delegates one row's value to the slot's underlying aggregation.Map.
 // Nulls are skipped — neither the count nor the running min/max/sum is touched.
+//
+// COUNT over a non-numeric column (string/bytes tag, design §6) must not
+// read the value at all — there is nothing to parse, and countFunc.In
+// ignores its argument regardless (pkg/query/aggregation/function.go), so a
+// dummy 0 is enough to advance the count.
 func (a *BatchAggregation) fold(b *vectorized.RecordBatch, rowIdx int, slot *aggSlot, spec AggSpec) {
 	col := b.Columns[spec.InputCol]
 	if col.IsNull(rowIdx) {
+		return
+	}
+	colType := a.inputSchema.Columns[spec.InputCol].Type
+	if spec.Func == AggCount && colType != vectorized.ColumnTypeInt64 && colType != vectorized.ColumnTypeFloat64 {
+		slot.intMap.In(0)
 		return
 	}
 	if slot.intMap != nil {
@@ -531,25 +573,36 @@ func (a *BatchAggregation) computeKey(b *vectorized.RecordBatch, rowIdx int) str
 	return string(buf)
 }
 
-// newAggSlot builds the accumulator for the (function, input type, mode)
-// triple. AggModeAll / AggModeMap allocate an aggregation.Map (raw fold +
-// optional Partial export); AggModeReduce allocates an aggregation.Reduce
-// (Combine partials + final Val). The numeric type mirrors aggOutputType so
-// the slot's value can be Append'd directly to the typed output column.
-func newAggSlot(fn AggFunc, inputIsFloat bool, mode AggMode) (aggSlot, error) {
+// newAggSlot builds the accumulator for the (function, input type, target
+// kind, mode) tuple. AggModeAll / AggModeMap allocate an aggregation.Map (raw
+// fold + optional Partial export); AggModeReduce allocates an
+// aggregation.Reduce (Combine partials + final Val). The numeric type
+// mirrors aggOutputType so the slot's value can be Append'd directly to the
+// typed output column.
+func newAggSlot(fn AggFunc, inputIsFloat, isTagTarget bool, mode AggMode) (aggSlot, error) {
 	af, modelErr := toModelAggFunc(fn)
 	if modelErr != nil {
 		return aggSlot{}, modelErr
 	}
 	slot := aggSlot{fn: fn, inputIsFloat: inputIsFloat}
-	// All functions follow the input type to match the row path, whose
+	// SUM/MIN/MAX/COUNT follow the input type to match the row path, whose
 	// aggregation.NewMap[int64] / [float64] is dispatched on the field's
 	// declared type in pkg/query/logical/measure/measure_plan_aggregation.go
 	// (FIELD_TYPE_INT → int64; FIELD_TYPE_FLOAT → float64). COUNT is
 	// included: the row path's countFunc[N] is parameterized by N and
 	// ToFieldValue[N] emits FieldValue_Int / FieldValue_Float by N, so
 	// COUNT on a float field must emit a float (e.g. float_top_count).
-	useFloat := inputIsFloat
+	//
+	// MEAN over a TAG forces a float64 accumulator (design §6 — "MEAN over
+	// an INT tag yields float64"): there is no FLOAT tag type, so an int64
+	// accumulator would silently truncate. fold already reads an int64
+	// input column and converts to float64 before feeding floatMap.In, so
+	// this is safe. MEAN over a FIELD is unchanged (still follows
+	// inputIsFloat) — AggModeMap's int64 sum/count partial for an INT field
+	// is pinned by TestBatchAggregation_AggModeMap_MeanEmitsValueAndCount;
+	// widening it is a separate, pre-existing correctness question outside
+	// this issue's scope.
+	useFloat := inputIsFloat || (fn == AggMean && isTagTarget)
 	if mode == AggModeReduce {
 		if useFloat {
 			r, reduceErr := aggregation.NewReduce[float64](af)
@@ -680,7 +733,8 @@ func buildAggOutputLayout(
 	}
 	for i, agg := range aggs {
 		layout.aggOutOffsets[i] = len(defs)
-		valueType := aggOutputType(input.Columns[agg.InputCol].Type, agg.Func)
+		inputDef := input.Columns[agg.InputCol]
+		valueType := aggOutputType(inputDef.Type, agg.Func, inputDef.Role == vectorized.RoleTag)
 		defs = append(defs, vectorized.ColumnDef{
 			Role: vectorized.RoleField,
 			Name: agg.Output,
@@ -712,16 +766,37 @@ func findShardIDIndex(schema *vectorized.BatchSchema) int {
 	return -1
 }
 
-// aggOutputType maps (input type, agg func) to the output column type.
-// Every function (COUNT included) preserves the input type so vec egress
-// emits the same FieldValue oneof variant the row path uses: the row
-// path's accumulator and ToFieldValue[N] are dispatched on the field's
-// declared type (FIELD_TYPE_INT → int64 → FieldValue_Int;
-// FIELD_TYPE_FLOAT → float64 → FieldValue_Float; see
-// measure_plan_aggregation.go and pkg/query/aggregation).
-func aggOutputType(in vectorized.ColumnType, _ AggFunc) vectorized.ColumnType {
+// aggOutputType maps (input type, agg func, target kind) to the output
+// column type. SUM/MIN/MAX preserve the input type so vec egress emits the
+// same FieldValue oneof variant the row path uses: the row path's
+// accumulator and ToFieldValue[N] are dispatched on the field's declared
+// type (FIELD_TYPE_INT → int64 → FieldValue_Int; FIELD_TYPE_FLOAT →
+// float64 → FieldValue_Float; see measure_plan_aggregation.go and
+// pkg/query/aggregation). Two functions diverge from "preserve input type":
+//
+//   - MEAN over a tag outputs float64 — matches newAggSlot's isTagTarget
+//     float64 accumulator (design §6). MEAN over a field preserves the
+//     input type unchanged (see newAggSlot for why).
+//   - COUNT preserves int64/float64 (unchanged, including the row-path
+//     quirk of a float count over a float field) but forces int64 for any
+//     other input — string/bytes tag columns (design §6) have no numeric
+//     representation to preserve.
+func aggOutputType(in vectorized.ColumnType, fn AggFunc, isTagTarget bool) vectorized.ColumnType {
 	if in == vectorized.ColumnTypeFieldValue {
 		return vectorized.ColumnTypeInt64
 	}
-	return in
+	switch fn {
+	case AggMean:
+		if isTagTarget {
+			return vectorized.ColumnTypeFloat64
+		}
+		return in
+	case AggCount:
+		if in == vectorized.ColumnTypeFloat64 {
+			return vectorized.ColumnTypeFloat64
+		}
+		return vectorized.ColumnTypeInt64
+	default:
+		return in
+	}
 }

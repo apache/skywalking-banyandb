@@ -124,6 +124,19 @@ message QueryRequest {
     model.v1.TagProjection tag_projection = 1;
     // field_name must be one of fields indicated by field_projection
     string field_name = 2;
+    message TimeBucket {
+      // width is a duration string using the same units as Measure.interval
+      // ("ns", "us", "ms", "s", "m", "h", "d"). Empty means "use the measure's
+      // interval"; if the measure has no interval either, the request is
+      // rejected.
+      string width = 1;
+    }
+    // time_bucket adds the data point's timestamp, floored to a bucket boundary,
+    // as the leading group key, and re-emits it as the result row's timestamp.
+    // Buckets are anchored at the Unix epoch: bucket_start = ts - ts % width,
+    // matching DATE_BIN with a Unix-epoch origin. Unset means no time bucketing
+    // — the whole time_range collapses to one row per tag group, as today.
+    TimeBucket time_bucket = 3;
   }
   // group_by groups data points based on their field value for a specific tag and use field_name as the projection name
   GroupBy group_by = 7;
@@ -131,8 +144,15 @@ message QueryRequest {
     model.v1.AggregationFunction function = 1;
     // field_name must be one of files indicated by the field_projection
     string field_name = 2;
+    // tag_name aggregates over a tag instead of a field. Exactly one of
+    // field_name and tag_name must be set.
+    string tag_name = 3;
+    // tag_family qualifies tag_name; required when tag_name is set. Tag
+    // names are only unique within a family, so an unqualified tag_name
+    // would be ambiguous on schemas that repeat a name across families.
+    string tag_family = 4;
   }
-  // agg aggregates data points based on a field
+  // agg aggregates data points based on a field or a tag
   Aggregation agg = 8;
   message Top {
     // number set the how many items should be returned

@@ -96,9 +96,9 @@ func BuildOperators(
 		return []vectorized.BreakerOperator{gb}, nil
 	}
 
-	fieldIdx, fieldErr := lookupFieldColumnIndex(schema, opts.Agg.FieldName)
-	if fieldErr != nil {
-		return nil, fieldErr
+	inputIdx, inputErr := lookupAggInputColumnIndex(schema, opts.Agg)
+	if inputErr != nil {
+		return nil, inputErr
 	}
 
 	aggFn, fnErr := protoAggFuncToInternal(opts.Agg.Func)
@@ -106,8 +106,8 @@ func BuildOperators(
 		return nil, fnErr
 	}
 
-	// The agg result column inherits the input field's name to match the
-	// row-path aggregator (aggGroupIterator.Current() in
+	// The agg result column inherits the target's name — field or tag —
+	// to match the row-path aggregator (aggGroupIterator.Current() in
 	// pkg/query/logical/measure/measure_plan_aggregation.go). Row-path
 	// fixtures expect a single output field named after the original
 	// input (e.g. "value"), not an auto-derived "<field>_<func>" suffix
@@ -122,12 +122,22 @@ func BuildOperators(
 	// equivalent of the row path's aggAllIterator.
 	spec := AggSpec{
 		Func:     aggFn,
-		InputCol: fieldIdx,
-		Output:   opts.Agg.FieldName,
+		InputCol: inputIdx,
+		Output:   aggTargetName(opts.Agg),
+		HideTag:  opts.Agg.HideTag,
 	}
 	agg := NewBatchAggregation(schema, keyIndices, []AggSpec{spec},
 		mode, batchSize, tracker, aggEntrySize)
 	return []vectorized.BreakerOperator{agg}, nil
+}
+
+// aggTargetName returns the name the agg result column inherits (design
+// §5.2): the tag name when Agg targets a tag, otherwise the field name.
+func aggTargetName(agg *model.MeasureAgg) string {
+	if agg.TagName != "" {
+		return agg.TagName
+	}
+	return agg.FieldName
 }
 
 // lookupGroupByKeyIndices resolves each GroupBy tag name to its column index
@@ -161,6 +171,22 @@ func lookupFieldColumnIndex(schema *vectorized.BatchSchema, name string) (int, e
 	return -1, fmt.Errorf("vectorized.measure: Agg field %q not present in schema", name)
 }
 
+// lookupAggInputColumnIndex resolves agg's target column: a tag sibling of
+// lookupGroupByKeyIndices when agg.TagName is set (matched on RoleTag +
+// TagFamily + Name, since tag names are only unique within a family),
+// otherwise the existing field lookup.
+func lookupAggInputColumnIndex(schema *vectorized.BatchSchema, agg *model.MeasureAgg) (int, error) {
+	if agg.TagName == "" {
+		return lookupFieldColumnIndex(schema, agg.FieldName)
+	}
+	for i, def := range schema.Columns {
+		if def.Role == vectorized.RoleTag && def.TagFamily == agg.TagFamily && def.Name == agg.TagName {
+			return i, nil
+		}
+	}
+	return -1, fmt.Errorf("vectorized.measure: Agg tag %s.%s not present in schema", agg.TagFamily, agg.TagName)
+}
+
 // protoAggFuncToInternal maps the proto AggregationFunction enum to the
 // internal AggFunc constant. UNSPECIFIED is rejected — Aggregation must
 // name a concrete function.
@@ -178,6 +204,8 @@ func protoAggFuncToInternal(f modelv1.AggregationFunction) (AggFunc, error) {
 		return AggMean, nil
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED:
 		return 0, fmt.Errorf("vectorized.measure: Agg.Function is UNSPECIFIED")
+	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT:
+		return 0, fmt.Errorf("vectorized.measure: COUNT_DISTINCT is not implemented yet")
 	}
 	return 0, fmt.Errorf("vectorized.measure: unknown AggregationFunction %v", f)
 }

@@ -130,5 +130,9 @@ func (g *GroupByAgg) String() string {
 	if g.Agg == nil {
 		return fmt.Sprintf("GroupByAgg(keys=%s, raw)", tagNames)
 	}
-	return fmt.Sprintf("GroupByAgg(keys=%s, fn=%v, field=%s)", tagNames, g.Agg.Func, g.Agg.FieldName)
+	target := g.Agg.FieldName
+	if g.Agg.TagName != "" {
+		target = g.Agg.TagName
+	}
+	return fmt.Sprintf("GroupByAgg(keys=%s, fn=%v, target=%s)", tagNames, g.Agg.Func, target)
 }

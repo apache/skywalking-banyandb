@@ -50,6 +50,7 @@
     - [QueryRequest.Aggregation](#banyandb-measure-v1-QueryRequest-Aggregation)
     - [QueryRequest.FieldProjection](#banyandb-measure-v1-QueryRequest-FieldProjection)
     - [QueryRequest.GroupBy](#banyandb-measure-v1-QueryRequest-GroupBy)
+    - [QueryRequest.GroupBy.TimeBucket](#banyandb-measure-v1-QueryRequest-GroupBy-TimeBucket)
     - [QueryRequest.GroupModRevisionsEntry](#banyandb-measure-v1-QueryRequest-GroupModRevisionsEntry)
     - [QueryRequest.Top](#banyandb-measure-v1-QueryRequest-Top)
     - [QueryResponse](#banyandb-measure-v1-QueryResponse)
@@ -720,6 +721,7 @@ Trace is the top level message of a trace.
 | AGGREGATION_FUNCTION_MIN | 3 |  |
 | AGGREGATION_FUNCTION_COUNT | 4 |  |
 | AGGREGATION_FUNCTION_SUM | 5 |  |
+| AGGREGATION_FUNCTION_COUNT_DISTINCT | 6 | COUNT_DISTINCT counts the distinct non-null values of the target. It is exact and bounded by the per-query memory budget. |
 
 
  
@@ -1128,7 +1130,7 @@ QueryRequest is the request contract for query.
 | tag_projection | [banyandb.model.v1.TagProjection](#banyandb-model-v1-TagProjection) |  | tag_projection can be used to select tags of the data points in the response |
 | field_projection | [QueryRequest.FieldProjection](#banyandb-measure-v1-QueryRequest-FieldProjection) |  | field_projection can be used to select fields of the data points in the response |
 | group_by | [QueryRequest.GroupBy](#banyandb-measure-v1-QueryRequest-GroupBy) |  | group_by groups data points based on their field value for a specific tag and use field_name as the projection name |
-| agg | [QueryRequest.Aggregation](#banyandb-measure-v1-QueryRequest-Aggregation) |  | agg aggregates data points based on a field |
+| agg | [QueryRequest.Aggregation](#banyandb-measure-v1-QueryRequest-Aggregation) |  | agg aggregates data points based on a field or a tag |
 | top | [QueryRequest.Top](#banyandb-measure-v1-QueryRequest-Top) |  | top limits the result based on a particular field. If order_by is specified, top sorts the dataset based on order_by&#39;s output |
 | offset | [uint32](#uint32) |  | offset is used to support pagination, together with the following limit. If top is specified, offset processes the dataset based on top&#39;s output |
 | limit | [uint32](#uint32) |  | limit is used to impose a boundary on the number of records being returned. If top is specified, limit processes the dataset based on top&#39;s output |
@@ -1153,6 +1155,8 @@ QueryRequest is the request contract for query.
 | ----- | ---- | ----- | ----------- |
 | function | [banyandb.model.v1.AggregationFunction](#banyandb-model-v1-AggregationFunction) |  |  |
 | field_name | [string](#string) |  | field_name must be one of files indicated by the field_projection |
+| tag_name | [string](#string) |  | tag_name aggregates over a tag instead of a field. Exactly one of field_name and tag_name must be set. |
+| tag_family | [string](#string) |  | tag_family qualifies tag_name; required when tag_name is set. Tag names are only unique within a family, so an unqualified tag_name would be ambiguous on schemas that repeat a name across families. |
 
 
 
@@ -1184,6 +1188,22 @@ QueryRequest is the request contract for query.
 | ----- | ---- | ----- | ----------- |
 | tag_projection | [banyandb.model.v1.TagProjection](#banyandb-model-v1-TagProjection) |  | tag_projection must be a subset of the tag_projection of QueryRequest |
 | field_name | [string](#string) |  | field_name must be one of fields indicated by field_projection |
+| time_bucket | [QueryRequest.GroupBy.TimeBucket](#banyandb-measure-v1-QueryRequest-GroupBy-TimeBucket) |  | time_bucket adds the data point&#39;s timestamp, floored to a bucket boundary, as the leading group key, and re-emits it as the result row&#39;s timestamp. Buckets are anchored at the Unix epoch: bucket_start = ts - ts % width, matching DATE_BIN with a Unix-epoch origin. Unset means no time bucketing — the whole time_range collapses to one row per tag group, as today. |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-QueryRequest-GroupBy-TimeBucket"></a>
+
+### QueryRequest.GroupBy.TimeBucket
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| width | [string](#string) |  | width is a duration string using the same units as Measure.interval (&#34;ns&#34;, &#34;us&#34;, &#34;ms&#34;, &#34;s&#34;, &#34;m&#34;, &#34;h&#34;, &#34;d&#34;). Empty means &#34;use the measure&#39;s interval&#34;; if the measure has no interval either, the request is rejected. |
 
 
 

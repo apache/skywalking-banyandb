@@ -945,3 +945,187 @@ func TestBatchAggregation_Correctness_MatchesManualComputation(t *testing.T) {
 		t.Fatalf("sum/min/max: want 14/1/5, got %d/%d/%d", sum, mn, mx)
 	}
 }
+
+// aggTagRow is one input row for aggTagSchema / feedAggTag.
+type aggTagRow struct {
+	g string
+	s string
+	v int64
+}
+
+// aggTagSchema is "tag.default.g (string, groupby key), tag.default.v
+// (int64, agg target tag), tag.default.s (string, agg target tag)". Used to
+// pin SUM/MIN/MAX/MEAN/COUNT binding to a RoleTag input column instead of a
+// RoleField column (design §7.1) — unlike aggIntSchema/aggFloatSchema, whose
+// agg column is always RoleField.
+func aggTagSchema() *vectorized.BatchSchema {
+	return vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "g", Type: vectorized.ColumnTypeString},
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "v", Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "s", Type: vectorized.ColumnTypeString},
+	})
+}
+
+// feedAggTag builds a single batch of (g,v,s) rows and Consumes it. A row
+// with s == "" and null=true (via the sentinel nullS) leaves the s column
+// null at that row.
+func feedAggTag(t *testing.T, op *BatchAggregation, schema *vectorized.BatchSchema, rows ...aggTagRow) {
+	t.Helper()
+	b := vectorized.NewRecordBatch(schema, len(rows))
+	gCol := b.Columns[0].(*vectorized.TypedColumn[string])
+	vCol := b.Columns[1].(*vectorized.TypedColumn[int64])
+	sCol := b.Columns[2].(*vectorized.TypedColumn[string])
+	for _, r := range rows {
+		gCol.Append(r.g)
+		vCol.Append(r.v)
+		if r.s == nullMarker {
+			sCol.AppendNull()
+		} else {
+			sCol.Append(r.s)
+		}
+	}
+	b.Len = len(rows)
+	if err := op.Consume(context.Background(), b); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// nullMarker flags an aggTagRow.s value that feedAggTag should append as
+// null rather than as a literal string.
+const nullMarker = "\x00null\x00"
+
+// TestBatchAggregation_AggModeAll_SumOverIntTag pins SUM binding to a
+// RoleTag INT column (design §7.1): everything downstream of
+// AggSpec.InputCol is index-based, so the fold path needs no change from
+// the RoleField case.
+func TestBatchAggregation_AggModeAll_SumOverIntTag(t *testing.T) {
+	s := aggTagSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggSum, InputCol: 1, Output: "v"}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+	feedAggTag(t, op, s,
+		aggTagRow{g: "a", v: 1, s: "x"},
+		aggTagRow{g: "a", v: 2, s: "x"},
+		aggTagRow{g: "b", v: 5, s: "y"},
+	)
+	_ = op.Finalize(context.Background())
+	out, _ := op.NextBatch(context.Background())
+	// Output columns: g(tag), v(tag, first-seen), s(tag, first-seen), v(field, SUM result).
+	sums := out.Columns[3].(*vectorized.TypedColumn[int64]).Data()
+	if got := sums[findAggRow(t, out, "a")]; got != 3 {
+		t.Fatalf("sum(a) over tag v: want 3, got %d", got)
+	}
+	if got := sums[findAggRow(t, out, "b")]; got != 5 {
+		t.Fatalf("sum(b) over tag v: want 5, got %d", got)
+	}
+}
+
+// TestBatchAggregation_AggModeAll_MeanOverIntTag_YieldsFloat64 pins design
+// §6: "MEAN over an INT tag yields float64". There is no FLOAT tag type, so
+// an int64 accumulator would silently truncate the division.
+func TestBatchAggregation_AggModeAll_MeanOverIntTag_YieldsFloat64(t *testing.T) {
+	s := aggTagSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggMean, InputCol: 1, Output: "v"}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+	feedAggTag(t, op, s,
+		aggTagRow{g: "a", v: 1, s: "x"},
+		aggTagRow{g: "a", v: 2, s: "x"},
+	)
+	_ = op.Finalize(context.Background())
+	out, _ := op.NextBatch(context.Background())
+	meanCol, ok := out.Columns[3].(*vectorized.TypedColumn[float64])
+	if !ok {
+		t.Fatalf("MEAN over an INT tag must output a float64 column, got %T", out.Columns[3])
+	}
+	if got := meanCol.Data()[findAggRow(t, out, "a")]; got != 1.5 {
+		t.Fatalf("mean(a) over tag v: want 1.5, got %v", got)
+	}
+}
+
+// TestBatchAggregation_AggModeAll_CountOverStringTag_NullExcluded pins
+// design §6: COUNT accepts a non-numeric (string) tag. fold must not parse
+// the value at all — only null-check it — since a string column can't be
+// read as int64/float64.
+func TestBatchAggregation_AggModeAll_CountOverStringTag_NullExcluded(t *testing.T) {
+	s := aggTagSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggCount, InputCol: 2, Output: "s"}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+	feedAggTag(t, op, s,
+		aggTagRow{g: "a", v: 0, s: "x"},
+		aggTagRow{g: "a", v: 0, s: nullMarker}, // null — must be excluded
+		aggTagRow{g: "a", v: 0, s: "y"},
+		aggTagRow{g: "b", v: 0, s: "z"},
+	)
+	_ = op.Finalize(context.Background())
+	out, _ := op.NextBatch(context.Background())
+	countCol, ok := out.Columns[3].(*vectorized.TypedColumn[int64])
+	if !ok {
+		t.Fatalf("COUNT over a string tag must output an int64 column, got %T", out.Columns[3])
+	}
+	if got := countCol.Data()[findAggRow(t, out, "a")]; got != 2 {
+		t.Fatalf("count(a) over tag s: null must be excluded; want 2, got %d", got)
+	}
+	if got := countCol.Data()[findAggRow(t, out, "b")]; got != 1 {
+		t.Fatalf("count(b) over tag s: want 1, got %d", got)
+	}
+}
+
+// TestBatchAggregation_HideTag_ExcludesTargetFromCarriedForwardTags pins
+// design §5.2: when the analyzer injected the agg's tag target into the
+// projection (AggSpec.HideTag), the injected copy must not also appear as a
+// first-seen tag column beside the aggregation result.
+func TestBatchAggregation_HideTag_ExcludesTargetFromCarriedForwardTags(t *testing.T) {
+	s := aggTagSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggSum, InputCol: 1, Output: "v", HideTag: true}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+	feedAggTag(t, op, s, aggTagRow{g: "a", v: 1, s: "x"})
+	_ = op.Finalize(context.Background())
+	out, _ := op.NextBatch(context.Background())
+	// tagIndices excludes InputCol 1 ("v"): output is [g(tag), s(tag), v(field, SUM result)].
+	if len(out.Schema.Columns) != 3 {
+		t.Fatalf("HideTag output column count: want 3 (g, s, v-field), got %d: %+v", len(out.Schema.Columns), out.Schema.Columns)
+	}
+	for _, def := range out.Schema.Columns {
+		if def.Role == vectorized.RoleTag && def.Name == "v" {
+			t.Fatalf("HideTag must exclude the hidden tag column from output, found %+v", def)
+		}
+	}
+}
+
+// TestBatchAggregation_NoHideTag_EmitsBothTagAndAggField pins the other
+// half of design §5.2: when the caller explicitly projected the tag
+// (HideTag false), the output carries both a tag and a field of that name
+// — separate namespaces, nothing collides.
+func TestBatchAggregation_NoHideTag_EmitsBothTagAndAggField(t *testing.T) {
+	s := aggTagSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggSum, InputCol: 1, Output: "v"}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+	feedAggTag(t, op, s, aggTagRow{g: "a", v: 1, s: "x"})
+	_ = op.Finalize(context.Background())
+	out, _ := op.NextBatch(context.Background())
+	var tagCount, fieldCount int
+	for _, def := range out.Schema.Columns {
+		if def.Name != "v" {
+			continue
+		}
+		switch def.Role {
+		case vectorized.RoleTag:
+			tagCount++
+		case vectorized.RoleField:
+			fieldCount++
+		default:
+		}
+	}
+	if tagCount != 1 || fieldCount != 1 {
+		t.Fatalf("without HideTag, want one tag %q and one field %q, got tagCount=%d fieldCount=%d", "v", "v", tagCount, fieldCount)
+	}
+}
