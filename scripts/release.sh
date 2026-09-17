@@ -29,6 +29,10 @@ BUILDDIR=${ROOTDIR}/build
 
 RELEASE_TAG=$(git describe --tags $(git rev-list --tags --max-count=1))
 RELEASE_VERSION=${RELEASE_TAG#"v"}
+# Component Makefiles stamp pkg/version.build from RELEASE_VERSION. The binary()
+# extract is not a git checkout, so this must be exported or every official
+# executable is linked with build=-.
+export RELEASE_VERSION
 
 SOURCE_FILE_NAME=skywalking-banyandb-${RELEASE_VERSION}-src.tgz
 SOURCE_FILE=${BUILDDIR}/${SOURCE_FILE_NAME}
@@ -44,54 +48,68 @@ binary(){
     trap 'popd' EXIT
     tar -xvf ${SOURCE_FILE}
     make generate && make -C ui build
-    make -C mcp release
-    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make -C banyand release
-    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make -C fodc/agent release
-    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make -C fodc/proxy release
+    RELEASE_VERSION="${RELEASE_VERSION}" make -C mcp release
+    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 RELEASE_VERSION="${RELEASE_VERSION}" make -C banyand release
+    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 RELEASE_VERSION="${RELEASE_VERSION}" make -C fodc/agent release
+    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 RELEASE_VERSION="${RELEASE_VERSION}" make -C fodc/proxy release
     bindir=./build
-    mkdir -p ${bindir}/bin
-    # Copy relevant files
-    copy_binaries banyand
-    cp -Rfv ./CHANGES.md ${bindir}
-    cp -Rfv ./README.md ${bindir}
-    cp -Rfv ./dist/* ${bindir}
-    # Copy MCP server
-    mkdir -p ${bindir}/mcp
-    cp -Rfv ./mcp/dist ${bindir}/mcp/
-    cp -Rfv ./mcp/package.json ${bindir}/mcp/
-    # Package
+    stage_binary_package banyand banyand --with-mcp
     tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-banyand.tgz \
       --exclude="._*" --exclude="__MACOSX" \
       -C ${bindir} .
 
     # Cross compile bydbctl
-    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64,linux/386 make -C bydbctl release
-    TARGET_OS=windows PLATFORMS=windows/amd64,windows/386 make -C bydbctl release
-    TARGET_OS=darwin PLATFORMS=darwin/amd64,darwin/arm64 make -C bydbctl release
-    rm -rf ${bindir}/bin
-    mkdir -p ${bindir}/bin
-    # Copy relevant files
-    copy_binaries bydbctl
-    # Package
+    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64,linux/386 RELEASE_VERSION="${RELEASE_VERSION}" make -C bydbctl release
+    TARGET_OS=windows PLATFORMS=windows/amd64,windows/386 RELEASE_VERSION="${RELEASE_VERSION}" make -C bydbctl release
+    TARGET_OS=darwin PLATFORMS=darwin/amd64,darwin/arm64 RELEASE_VERSION="${RELEASE_VERSION}" make -C bydbctl release
+    stage_binary_package bydbctl bydbctl
     tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-bydbctl.tgz \
       --exclude="._*" --exclude="__MACOSX" \
       -C ${bindir} .
 
-    # Build fodc-agent
-    rm -rf ${bindir}/bin
-    mkdir -p ${bindir}/bin
-    copy_binaries fodc/agent
+    stage_binary_package fodc/agent fodc-agent
     tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-fodc-agent.tgz \
       --exclude="._*" --exclude="__MACOSX" \
       -C ${bindir} .
 
-    # Build fodc-proxy
-    rm -rf ${bindir}/bin
-    mkdir -p ${bindir}/bin
-    copy_binaries fodc/proxy
+    stage_binary_package fodc/proxy fodc-proxy
     tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-fodc-proxy.tgz \
       --exclude="._*" --exclude="__MACOSX" \
       -C ${bindir} .
+}
+
+stage_binary_package() {
+    local module=$1
+    local pkg=$2
+    local with_mcp=0
+    local extra_args=()
+    if [ "${3:-}" = "--with-mcp" ]; then
+        with_mcp=1
+    fi
+    echo "Staging ${pkg} package"
+    rm -rf "${bindir}"
+    mkdir -p "${bindir}/bin"
+    copy_binaries "${module}"
+    cp -Rfv ./CHANGES.md "${bindir}"
+    cp -Rfv ./README.md "${bindir}"
+    cp -Rfv ./dist/NOTICE "${bindir}"
+    if [ "${with_mcp}" -eq 1 ]; then
+        mkdir -p "${bindir}/mcp"
+        cp -Rfv ./mcp/dist "${bindir}/mcp/"
+        cp -Rfv ./mcp/package.json "${bindir}/mcp/"
+        extra_args+=(
+            --extra-license ./ui/LICENSE
+            --extra-licenses-dir ./dist/licenses/ui-licenses
+            --extra-license ./mcp/LICENSE
+            --extra-licenses-dir ./dist/licenses/mcp-licenses
+        )
+    fi
+    python3 ./scripts/package-licenses.py \
+        --license ./dist/LICENSE \
+        --licenses-dir ./dist/licenses \
+        --bins "${bindir}/bin" \
+        --out "${bindir}" \
+        "${extra_args[@]}"
 }
 
 copy_binaries() {

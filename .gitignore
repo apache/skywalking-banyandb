@@ -35,6 +35,8 @@ tmp
 .gocache
 .gomodcache
 .cache
+__pycache__/
+*.pyc
 
 # Test binary, build with `go test -c`
 *.test

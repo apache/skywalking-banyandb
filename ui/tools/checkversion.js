@@ -31,11 +31,10 @@ if (!engines) {
 }
 const nodeVersion = engines['node']
 const running = process.version;
-
-if (semver.lt(running, nodeVersion)) {
+if (!semver.satisfies(running, nodeVersion)) {
   console.error(
-    `You are running Node ${running} but version ^${nodeVersion} is expected. ` +
-      `Use nvm or another version manager to install ${nodeVersion}, and then activate it.`
+    `You are running Node ${running} but engines.node "${nodeVersion}" is expected. ` +
+      `Use nvm or another version manager to install a matching Node.js, and then activate it.`
   );
   process.exit(1);
 }

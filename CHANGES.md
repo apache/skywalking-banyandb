@@ -6,6 +6,9 @@ Release Notes.
 
 ### Bug Fixes
 
+- Stamp `RELEASE_VERSION` into official release binaries so `--version` reports the release instead of `-`.
+- Generate per-package `LICENSE` files from the modules linked into each binary archive, and point UI/MCP license paths at `licenses/*/license-*.txt`.
+- Upgrade MCP production npm overrides (`fast-uri` 4.1.5, `hono` 4.13.8, `qs` 6.16.0) to clear `npm audit` findings.
 - Fix standalone TopN write ordering.
 - Fix stale Canopy query clauses after resource changes.
 - Bound the vectorized stream Top-N merge by limit+offset, and bound the filtered index-order vectorized Top-N merge.
