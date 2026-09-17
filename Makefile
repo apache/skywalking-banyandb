@@ -387,7 +387,8 @@ release-validate: ## Validate staged release archives under build/
 		[ -e "$$archive" ] || continue; \
 		found=1; \
 		python3 $(mk_dir)/scripts/license-compliance.py validate-tgz \
-			--tarball "$$archive"; \
+			--tarball "$$archive" \
+			--source; \
 	done; \
 	if [ "$$found" -eq 0 ]; then \
 		echo "release-validate: no archives found under build/"; \

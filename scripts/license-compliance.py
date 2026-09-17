@@ -247,11 +247,22 @@ def license_filename(dep_name: str) -> str:
     return "license-" + LICENSE_FILE_UNSAFE.sub("-", dep_name) + ".txt"
 
 
-def validate_package_dir(pkg_dir: Path, obligations: Path | None, legal_root: Path | None) -> list[str]:
+def validate_package_dir(
+    pkg_dir: Path,
+    obligations: Path | None,
+    legal_root: Path | None,
+    *,
+    source_layout: bool = False,
+) -> list[str]:
     """Validate a staged package directory. Returns error messages."""
     errors: list[str] = []
     license_text = _require_file(pkg_dir / "LICENSE", "LICENSE", errors)
     notice_text = _require_file(pkg_dir / "NOTICE", "NOTICE", errors)
+    if source_layout:
+        # Source archives ship project LICENSE/NOTICE and keep dependency texts under dist/.
+        if not (pkg_dir / "dist" / "licenses").is_dir() and not (pkg_dir / "dist" / "LICENSE").is_file():
+            errors.append("source archive missing dist/LICENSE or dist/licenses/")
+        return errors
     readme_text = _require_file(pkg_dir / "README.md", "README.md", errors)
     licenses_dir = pkg_dir / "licenses"
     if not licenses_dir.is_dir():
@@ -286,7 +297,12 @@ def validate_package_dir(pkg_dir: Path, obligations: Path | None, legal_root: Pa
 
 
 def cmd_validate_dir(args: argparse.Namespace) -> int:
-    errors = validate_package_dir(args.package, args.obligations, args.legal_root)
+    errors = validate_package_dir(
+        args.package,
+        args.obligations,
+        args.legal_root,
+        source_layout=args.source,
+    )
     if errors:
         print("package validation failed:", file=sys.stderr)
         for err in errors:
@@ -312,7 +328,12 @@ def cmd_validate_tgz(args: argparse.Namespace) -> int:
                 archive.extractall(tmp_path)
         children = [child for child in tmp_path.iterdir() if not child.name.startswith(".")]
         pkg_dir = children[0] if len(children) == 1 and children[0].is_dir() else tmp_path
-        errors = validate_package_dir(pkg_dir, args.obligations, args.legal_root)
+        errors = validate_package_dir(
+            pkg_dir,
+            args.obligations,
+            args.legal_root,
+            source_layout=args.source,
+        )
         if args.require_bins:
             bin_dir = pkg_dir / "bin"
             if not bin_dir.is_dir() or not any(bin_dir.iterdir()):
@@ -352,6 +373,7 @@ def build_parser() -> argparse.ArgumentParser:
     validate_dir.add_argument("--package", type=Path, required=True)
     validate_dir.add_argument("--obligations", type=Path)
     validate_dir.add_argument("--legal-root", type=Path)
+    validate_dir.add_argument("--source", action="store_true", help="source-archive layout checks")
     validate_dir.set_defaults(func=cmd_validate_dir)
 
     validate_tgz = sub.add_parser("validate-tgz", help="validate a release tarball")
@@ -359,6 +381,7 @@ def build_parser() -> argparse.ArgumentParser:
     validate_tgz.add_argument("--obligations", type=Path)
     validate_tgz.add_argument("--legal-root", type=Path)
     validate_tgz.add_argument("--require-bins", action="store_true")
+    validate_tgz.add_argument("--source", action="store_true", help="source-archive layout checks")
     validate_tgz.set_defaults(func=cmd_validate_tgz)
     return parser
 
