@@ -35,6 +35,7 @@ Release Notes.
 - Add the [native inverted-index replacement design package](docs/design/0.12.0/native-inverted-index/README.md), including the implementation specification, ICE walkthrough, research plan, and visual report.
 - Add the [tag aggregation and time bucketing design](docs/design/0.12.0/tag-aggregation/README.md) for the measure query engine, covering aggregation over tags, `COUNT_DISTINCT`, and `GROUP BY` time buckets.
 - Add mandatory size and TDD-feasibility audits to the BanyanDB GitHub issue skill.
+- Align cluster and node-discovery port documentation and remove leftover etcd references.
 
 ### Chores
 

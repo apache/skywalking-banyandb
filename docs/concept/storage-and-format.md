@@ -360,7 +360,7 @@ So an index rule on a `Trace` does not merely "add an index" — it instantiates
 
 ### 6.1 The Property resource (API)
 
-`Property` presents a **mutable key/value** API, keyed by `group/name/id`, with etcd-style `ModRevision`/`CreateRevision`. There are two proto messages named `Property`: the **schema** (`database.v1.Property`, the tag-type contract registered once) and the **data** (`property.v1.Property`, the actual values).
+`Property` presents a **mutable key/value** API, keyed by `group/name/id`, with `ModRevision`/`CreateRevision`. There are two proto messages named `Property`: the **schema** (`database.v1.Property`, the tag-type contract registered once) and the **data** (`property.v1.Property`, the actual values).
 
 - **Apply** (`PropertyService.Apply`) — upsert with `strategy` `MERGE` (default, union of previous + current tags) or `REPLACE` (full overwrite).
 - **Delete** — soft delete (tombstone). `id` is optional (omit to delete all ids under a name).
