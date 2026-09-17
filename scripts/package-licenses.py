@@ -29,7 +29,6 @@ their license directories.
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import shutil
 import subprocess
@@ -43,11 +42,39 @@ DEP_LINE = re.compile(r"^    (\S+) (\S+) (.+?)\s*$")
 SECTION_START = re.compile(r"^={8,}\s*$")
 UI_OR_MCP_MARKER = re.compile(r"(?i)(UI related licenses|mcp related licenses)")
 GO_VERSION_DEP = re.compile(r"^\t(?:dep|mod)\t(\S+)\t")
+GO_VERSION_REPLACE = re.compile(r"^\t=>\t(\S+)\t")
 
 
 def license_filename(dep_name: str) -> str:
     """Return the license-eye filename for a dependency name."""
     return "license-" + LICENSE_FILE_UNSAFE.sub("-", dep_name) + ".txt"
+
+
+def modules_from_version_m(text: str) -> set[str]:
+    """Return linked module paths from `go version -m` output.
+
+    When a dep is replaced, license-eye lists the replacement path (the code
+    actually linked), so prefer the `=>` path over the original require path.
+    """
+    modules: set[str] = set()
+    pending: str | None = None
+    for line in text.splitlines():
+        replace_match = GO_VERSION_REPLACE.match(line)
+        if replace_match and pending is not None:
+            modules.discard(pending)
+            replacement = replace_match.group(1)
+            if replacement != MAIN_MODULE:
+                modules.add(replacement)
+            pending = None
+            continue
+        match = GO_VERSION_DEP.match(line)
+        if not match:
+            pending = None
+            continue
+        pending = match.group(1)
+        if pending != MAIN_MODULE:
+            modules.add(pending)
+    return modules
 
 
 def modules_from_bins(bin_dir: Path) -> set[str]:
@@ -68,13 +95,7 @@ def modules_from_bins(bin_dir: Path) -> set[str]:
         if result.returncode != 0:
             continue
         scanned += 1
-        for line in result.stdout.splitlines():
-            match = GO_VERSION_DEP.match(line)
-            if not match:
-                continue
-            module = match.group(1)
-            if module != MAIN_MODULE:
-                modules.add(module)
+        modules.update(modules_from_version_m(result.stdout))
     if scanned == 0:
         raise SystemExit(f"no Go executables found under {bin_dir}")
     if not modules:

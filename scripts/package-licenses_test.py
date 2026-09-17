@@ -28,6 +28,7 @@ _MOD = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MOD)
 filter_license = _MOD.filter_license
 license_filename = _MOD.license_filename
+modules_from_version_m = _MOD.modules_from_version_m
 split_go_license = _MOD.split_go_license
 
 
@@ -85,6 +86,25 @@ class PackageLicenseTest(unittest.TestCase):
         self.assertNotIn("vue 3.5.41", filtered)
         self.assertIn("Apache-2.0 licenses", filtered)
         self.assertIn("MIT licenses", filtered)
+
+    def test_replace_uses_replacement_module_path(self):
+        text = (
+            "\tdep\tgithub.com/blugelabs/bluge\tv0.2.2\th1:abc=\n"
+            "\t=>\tgithub.com/SkyAPM/bluge\tv0.0.0-20260625022800-42385daf66b8\th1:def=\n"
+            "\tdep\tgithub.com/blugelabs/bluge_segment_api\tv0.2.0\th1:abc=\n"
+            "\t=>\tgithub.com/zinclabs/bluge_segment_api\tv1.0.0\th1:def=\n"
+            "\tdep\tgithub.com/spf13/cobra\tv1.10.2\th1:abc=\n"
+        )
+        modules = modules_from_version_m(text)
+        self.assertEqual(
+            modules,
+            {
+                "github.com/SkyAPM/bluge",
+                "github.com/zinclabs/bluge_segment_api",
+                "github.com/spf13/cobra",
+            },
+        )
+        self.assertNotIn("github.com/blugelabs/bluge", modules)
 
 
 if __name__ == "__main__":
