@@ -53,17 +53,37 @@ type TagProjection struct {
 // MeasureGroupBy describes a GroupBy clause for a measure query. v1 supports
 // a single tag family; each entry in TagNames is a key column. An empty
 // TagNames slice means the query carries no GroupBy clause.
+//
+// TimeBucket carries the request's optional time_bucket clause (design §5.3);
+// a nil TimeBucket means no bucketing. Resolution and execution land in a
+// later delivery stage — this field is only plumbed through from the wire.
 type MeasureGroupBy struct {
-	TagFamily string
-	TagNames  []string
+	TimeBucket *MeasureTimeBucket
+	TagFamily  string
+	TagNames   []string
+}
+
+// MeasureTimeBucket describes a GroupBy.time_bucket clause. Width is the
+// requested bucket duration string; empty means "use the measure's own
+// interval" (design §5.3).
+type MeasureTimeBucket struct {
+	Width string
 }
 
 // MeasureAgg describes a single aggregation for a measure query. v1 supports
 // one aggregation per query — matches the singular QueryRequest.agg proto
-// field. FieldName must reference a field in MeasureQueryOptions.FieldProjection.
+// field. Exactly one of FieldName / TagName is set: FieldName must reference
+// a field in MeasureQueryOptions.FieldProjection; TagName + TagFamily
+// reference a tag instead (design §5.1, §7.1). HideTag is set when the
+// analyzer injected TagName into the tag projection because the caller
+// didn't request it — the injected copy is then stripped from the output
+// (design §5.2).
 type MeasureAgg struct {
 	FieldName string
+	TagName   string
+	TagFamily string
 	Func      modelv1.AggregationFunction
+	HideTag   bool
 }
 
 // MeasureQueryOptions is the options of a measure query.

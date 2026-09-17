@@ -192,6 +192,50 @@ func TestAnalyzeDistributed_NodeTemplatePushesAggPartials(t *testing.T) {
 	}
 }
 
+// TestAnalyzeDistributed_NodeTemplatePushesAggPartials_TagTarget mirrors
+// TestAnalyzeDistributed_NodeTemplatePushesAggPartials for a tag-targeted
+// Agg (design §7.1): the proto request travels to the node template
+// unchanged, so a data node resolves the tag column the same way the
+// standalone path does.
+func TestAnalyzeDistributed_NodeTemplatePushesAggPartials_TagTarget(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		GroupBy: &measurev1.QueryRequest_GroupBy{
+			TagProjection: projTagProj(),
+		},
+		Agg: &measurev1.QueryRequest_Aggregation{
+			Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
+			TagName:   tagCount,
+			TagFamily: defaultName,
+		},
+	}
+	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
+	if analyzeErr != nil {
+		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
+	}
+	if p.nodeTemplate.GetAgg().GetTagName() != tagCount || p.nodeTemplate.GetAgg().GetTagFamily() != defaultName {
+		t.Fatalf("node template should push the tag-targeted Agg unchanged, got %+v", p.nodeTemplate.GetAgg())
+	}
+}
+
+// TestAggOutputName_ResolvesTagOrFieldTarget is the regression pin for the
+// distributed-reduce OutputName bug this issue fixed: executeAgg used to
+// read req.GetAgg().GetFieldName() unconditionally, which is empty for a
+// tag-targeted Agg — bindAggReduceSpecs would then fail to find the
+// partial's value column (a RoleField column named after the tag, not "").
+func TestAggOutputName_ResolvesTagOrFieldTarget(t *testing.T) {
+	fieldAgg := &measurev1.QueryRequest_Aggregation{FieldName: fieldValue}
+	if got := aggOutputName(fieldAgg); got != fieldValue {
+		t.Fatalf("field target: want %s, got %s", fieldValue, got)
+	}
+	tagAgg := &measurev1.QueryRequest_Aggregation{TagName: tagCount, TagFamily: defaultName}
+	if got := aggOutputName(tagAgg); got != tagCount {
+		t.Fatalf("tag target: want %s, got %s", tagCount, got)
+	}
+}
+
 // TestAnalyzeDistributed_TopAggUnboundsNodeLimit_Matrix is the regression
 // gate for the per-node Limit truncation bug in distributed Top-over-Agg:
 // each (Top.N, request Limit) combination must produce a node template with

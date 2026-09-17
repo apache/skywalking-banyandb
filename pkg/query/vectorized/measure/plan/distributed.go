@@ -641,7 +641,7 @@ func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *
 	if aggErr != nil {
 		return nil, aggErr
 	}
-	aggSpecs := []vmeasure.AggReduceSpec{{OutputName: req.GetAgg().GetFieldName(), Func: aggFunc}}
+	aggSpecs := []vmeasure.AggReduceSpec{{OutputName: aggOutputName(req.GetAgg()), Func: aggFunc}}
 	var topSpec *vmeasure.ReduceTopSpec
 	if top := req.GetTop(); top != nil {
 		topSpec = &vmeasure.ReduceTopSpec{FieldName: top.GetFieldName(), N: int(top.GetNumber()), Asc: top.GetFieldValueSort() == modelv1.Sort_SORT_ASC}
@@ -1128,6 +1128,18 @@ func calibratedTopWithoutAggLimit(top *measurev1.QueryRequest_Top, nGroups int) 
 	return uint32(perNode)
 }
 
+// aggOutputName returns the name of the AggModeMap partial's value column
+// for agg — the target's name (design §5.2), whichever of field_name /
+// tag_name is set. This must agree with BuildOperators' aggTargetName so
+// the liaison's AggReduceSpec.OutputName binds to the column the data node
+// actually emitted.
+func aggOutputName(agg *measurev1.QueryRequest_Aggregation) string {
+	if tagName := agg.GetTagName(); tagName != "" {
+		return tagName
+	}
+	return agg.GetFieldName()
+}
+
 func distributedGroupByTagNames(groupBy *measurev1.QueryRequest_GroupBy) []string {
 	if groupBy == nil || groupBy.GetTagProjection() == nil {
 		return nil
@@ -1153,6 +1165,8 @@ func distributedAggFunc(fn modelv1.AggregationFunction) (vmeasure.AggFunc, error
 		return vmeasure.AggMean, nil
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED:
 		return 0, fmt.Errorf("vec distributed plan: aggregation function is unspecified")
+	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT:
+		return 0, fmt.Errorf("vec distributed plan: COUNT_DISTINCT is not implemented yet")
 	}
 	return 0, fmt.Errorf("vec distributed plan: unknown aggregation function %v", fn)
 }
