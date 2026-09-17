@@ -113,12 +113,16 @@ copy_binaries() {
 }
 
 source(){
-    # Package
+    # Package only the git tree (plus .env) so untracked/local binaries cannot leak
+    # into the Apache source archive.
     tmpdir=`mktemp -d`
     trap "rm -rf ${tmpdir}" EXIT
     rm -rf ${SOURCE_FILE}
+    srcdir=${tmpdir}/src
+    mkdir -p "${srcdir}"
     pushd ${ROOTDIR}
-    echo "RELEASE_VERSION=${RELEASE_VERSION}" > .env
+    git archive --format=tar HEAD | tar -x -C "${srcdir}"
+    echo "RELEASE_VERSION=${RELEASE_VERSION}" > "${srcdir}/.env"
     tar \
     --exclude=".DS_Store" \
     --exclude="._*" \
@@ -130,7 +134,15 @@ source(){
     --exclude=".vscode" \
     --exclude="bin" \
     -czf ${tmpdir}/${SOURCE_FILE_NAME} \
-    .
+    -C "${srcdir}" .
+
+    checkdir=${tmpdir}/check
+    mkdir -p "${checkdir}"
+    tar -xzf ${tmpdir}/${SOURCE_FILE_NAME} -C "${checkdir}"
+    if find "${checkdir}" -type f -print0 | xargs -0 file | grep -E 'ELF |Mach-O '; then
+        echo "ERROR: source archive contains compiled binaries" >&2
+        exit 1
+    fi
 
     mkdir -p ${BUILDDIR}
     mv ${tmpdir}/${SOURCE_FILE_NAME} ${BUILDDIR}

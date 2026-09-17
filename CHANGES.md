@@ -25,6 +25,8 @@ Release Notes.
 ### Chores
 
 - Bump google.golang.org/grpc to v1.83.2 to clear GO-2026-6443, GO-2026-6441, and GO-2026-6348.
+- Remove the accidentally committed `test_table` ELF binary from the source tree.
+- Update NOTICE copyright year to 2026.
 
 ## 0.11.0
 
