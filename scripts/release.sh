@@ -91,8 +91,6 @@ stage_binary_package() {
     mkdir -p "${bindir}/bin"
     copy_binaries "${module}"
     cp -Rfv ./CHANGES.md "${bindir}"
-    cp -Rfv ./README.md "${bindir}"
-    cp -Rfv ./dist/NOTICE "${bindir}"
     if [ "${with_mcp}" -eq 1 ]; then
         mkdir -p "${bindir}/mcp"
         cp -Rfv ./mcp/dist "${bindir}/mcp/"
@@ -104,12 +102,22 @@ stage_binary_package() {
             --extra-licenses-dir ./dist/licenses/mcp-licenses
         )
     fi
+    mkdir -p "${BUILDDIR}/license-compliance/inventories"
     python3 ./scripts/package-licenses.py \
         --license ./dist/LICENSE \
         --licenses-dir ./dist/licenses \
         --bins "${bindir}/bin" \
         --out "${bindir}" \
+        --notice ./dist/NOTICE \
+        --readme ./README.md \
+        --obligations ./dist/legal/obligations.json \
+        --legal-root ./dist/legal \
+        --inventory-out "${BUILDDIR}/license-compliance/inventories/${pkg}.json" \
         "${extra_args[@]}"
+    python3 ./scripts/license-compliance.py validate-dir \
+        --package "${bindir}" \
+        --obligations ./dist/legal/obligations.json \
+        --legal-root ./dist/legal
 }
 
 copy_binaries() {

@@ -1,0 +1,119 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: License Compliance
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - 'v*.x'
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      full_release:
+        description: 'Also build and validate unsigned release archives'
+        required: false
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      full_release:
+        description: 'Also build and validate unsigned release archives'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: license-compliance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  license-compliance:
+    name: License Compliance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup build environment
+        uses: ./.github/actions/setup-build-env
+        with:
+          download-artifacts: 'false'
+          setup-docker: 'false'
+
+      - name: Cache Tools
+        uses: actions/cache@v4
+        with:
+          path: bin
+          key: ${{ runner.os }}-${{ runner.arch }}-license-tool-${{ hashFiles('scripts/build/version.mk') }}
+
+      - name: Record identity
+        run: |
+          mkdir -p build/license-compliance
+          {
+            echo "commit=$(git rev-parse HEAD)"
+            echo "ref=${GITHUB_REF}"
+            echo "eyes=$(grep LICENSE_EYE_VERSION scripts/build/version.mk)"
+            echo "go=$(go version)"
+            sha256sum go.mod go.sum ui/package-lock.json mcp/package-lock.json 2>/dev/null || true
+          } | tee build/license-compliance/identity.txt
+
+      - name: Check license headers
+        run: make license-check
+
+      - name: Regenerate Eyes outputs and catalogs
+        run: |
+          make license-dep
+          make license-catalog
+
+      - name: Review obligations
+        run: make license-review-check
+
+      - name: Packaging tests
+        run: make license-tests
+
+      - name: Detect generated drift
+        run: make license-drift-check
+
+      - name: Full release archive validation
+        if: ${{ inputs.full_release == true }}
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          if [ -z "$ver" ] || [ "$ver" = "main" ]; then
+            ver="0.0.0-ci"
+          fi
+          export VERSION="$ver"
+          export RELEASE_VERSION="$ver"
+          make release-binary
+          make release-validate
+
+      - name: Upload compliance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: license-compliance-${{ github.run_id }}
+          path: |
+            build/license-compliance/
+            dist/legal/catalog/
+          if-no-files-found: warn

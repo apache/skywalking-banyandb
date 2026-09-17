@@ -24,7 +24,15 @@ git push --tags
 make clean && make release-assembly
 ```
 
-The `skywalking-banyandb-${VERSION}-bin.tgz`, `skywalking-banyandb-${VERSION}-src.tgz`, and their corresponding `asc`, `sha512`. **In total, six files should be automatically generated in the directory.**
+`make release-assembly` writes five archives under `build/`, each with `.asc` and `.sha512` (15 files):
+
+* `skywalking-banyandb-${VERSION}-src.tgz`
+* `skywalking-banyandb-${VERSION}-banyand.tgz`
+* `skywalking-banyandb-${VERSION}-bydbctl.tgz`
+* `skywalking-banyandb-${VERSION}-fodc-agent.tgz`
+* `skywalking-banyandb-${VERSION}-fodc-proxy.tgz`
+
+Binary packages get package-specific `LICENSE`, `NOTICE`, and README disclosures assembled by `scripts/package-licenses.py` from SkyWalking Eyes output plus reviewed obligations in `dist/legal/`. Before signing, `make release-validate` inspects the archives. Locally and in CI, run `make license-compliance` to regenerate Eyes catalogs, check reviewed NOTICE/disclosure obligations, run packaging tests, and fail on generated licensing drift. See [license-compliance-design.md](../contribute/license-compliance-design.md) for the full design.
 
 ## Upload to Apache svn
 
@@ -54,8 +62,11 @@ Release Candidate:
 
  * https://dist.apache.org/repos/dist/dev/skywalking/banyandb/$VERSION
  * sha512 checksums
-   - sha512xxxxyyyzzz apache-skywalking-banyandb-src-x.x.x.tgz
-   - sha512xxxxyyyzzz apache-skywalking-banyandb-bin-x.x.x.tgz
+   - sha512xxxxyyyzzz skywalking-banyandb-$VERSION-src.tgz
+   - sha512xxxxyyyzzz skywalking-banyandb-$VERSION-banyand.tgz
+   - sha512xxxxyyyzzz skywalking-banyandb-$VERSION-bydbctl.tgz
+   - sha512xxxxyyyzzz skywalking-banyandb-$VERSION-fodc-agent.tgz
+   - sha512xxxxyyyzzz skywalking-banyandb-$VERSION-fodc-proxy.tgz
 
 Release Tag :
 
@@ -71,7 +82,7 @@ Keys to verify the Release Candidate :
 
 Guide to build the release from source :
 
- * https://github.com/apache/skywalking-banyandb/blob/v$VERSION/docs/installation/binaries.md#Build-From-Source
+ * https://github.com/apache/skywalking-banyandb/blob/v$VERSION/docs/installation/binaries.md#build-from-source
 
 Voting will start now and will remain open for at least 72 hours, all PMC members are required to give their votes.
 
@@ -89,12 +100,12 @@ Thanks.
 All PMC members and committers should check these before voting +1:
 
 1. Features test.
-1. All artifacts in staging repository are published with `.asc`, `.md5`, and `sha` files.
-1. Source codes and distribution packages (`apache-skywalking-banyandb-{src,bin}-$VERSION.tgz`)
-are in `https://dist.apache.org/repos/dist/dev/skywalking/banyandb/$VERSION` with `.asc`, `.sha512`.
-1. `LICENSE` and `NOTICE` are in source codes and distribution package.
-1. Check `shasum -c apache-skywalking-banyandb-{src,bin}-$VERSION.tgz.sha512`.
-1. Check GPG signature. Download KEYS and import them by `curl https://www.apache.org/dist/skywalking/KEYS -o KEYS && gpg --import KEYS`. Check `gpg --batch --verify apache-skywalking-banyandb-{src,bin}-$VERSION.tgz.asc apache-skywalking-banyandb-{src,bin}-$VERSION.tgz`
+1. All artifacts in the staging repository are published with `.asc` and `.sha512` files.
+1. Source and distribution packages (`skywalking-banyandb-$VERSION-{src,banyand,bydbctl,fodc-agent,fodc-proxy}.tgz`, 15 files)
+are in `https://dist.apache.org/repos/dist/dev/skywalking/banyandb/$VERSION` with `.asc` and `.sha512`.
+1. `LICENSE` and `NOTICE` are in source codes and distribution packages. Binary packages must include applicable third-party NOTICE attribution and Category B disclosures in README when those components are bundled.
+1. Check `sha512sum -c skywalking-banyandb-*$VERSION*.tgz.sha512`.
+1. Check GPG signature. Download KEYS and import them by `curl https://www.apache.org/dist/skywalking/KEYS -o KEYS && gpg --import KEYS`. Check `gpg --batch --verify skywalking-banyandb-*$VERSION*.tgz.asc skywalking-banyandb-*$VERSION*.tgz`.
 1. Build distribution from source code package by following this [the build guide](#build-and-sign-the-source-code-package).
 1. Licenses header check.
 

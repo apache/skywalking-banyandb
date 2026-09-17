@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "components": [
+    {
+      "ecosystem": "go",
+      "name": "github.com/prometheus/common",
+      "version": "v0.70.1",
+      "review": {
+        "status": "approved",
+        "evidence": "ASF licensing-howto: preserve applicable upstream NOTICE when bundling Apache-2.0 dependencies. Reviewed prometheus/common v0.70.1 NOTICE (Prometheus Authors / SoundCloud attribution).",
+        "input_fingerprint": "6401eb2f0ef64305dd6a71348d0615a669d6029c9c6d43dd4cca58006d1bd75b"
+      },
+      "upstream_legal_files": [
+        {
+          "kind": "NOTICE",
+          "path": "NOTICE",
+          "url": "https://raw.githubusercontent.com/prometheus/common/v0.70.1/NOTICE",
+          "sha256": "600244c8052c8c1d307043fafacbc83b429c171dd8e08f5a537c0a54014585ee"
+        }
+      ],
+      "notice": {
+        "decision": "include",
+        "fragment": "notices/prometheus-common.txt",
+        "reason": "Applicable upstream attribution from prometheus/common NOTICE."
+      },
+      "disclosure": null
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/hashicorp/golang-lru",
+      "version": "v1.0.2",
+      "review": {
+        "status": "approved",
+        "evidence": "ASF Category B: MPL-2.0 requires prominent disclosure of component, license, homepage, and corresponding source. Reviewed hashicorp/golang-lru v1.0.2; no additional NOTICE text required.",
+        "input_fingerprint": "a3aa5afeaa8b6d1f9e49ce29c545bed9e07a64969ca0b09fcc45c7069346065f"
+      },
+      "upstream_legal_files": [],
+      "notice": {
+        "decision": "none",
+        "fragment": null,
+        "reason": "Reviewed; no additional applicable NOTICE text."
+      },
+      "disclosure": {
+        "required": true,
+        "homepage": "https://github.com/hashicorp/golang-lru",
+        "source_url": "https://github.com/hashicorp/golang-lru/tree/v1.0.2"
+      }
+    },
+    {
+      "ecosystem": "go",
+      "name": "github.com/shoenig/go-m1cpu",
+      "version": "v0.2.2",
+      "review": {
+        "status": "approved",
+        "evidence": "ASF Category B: MPL-2.0 requires prominent disclosure. Reviewed shoenig/go-m1cpu v0.2.2 (typically Darwin arm64); no additional NOTICE text required.",
+        "input_fingerprint": "03c824ac499e0b412a9518326d435dcdeda0d7807b302fe2b891df7ad9577691"
+      },
+      "upstream_legal_files": [],
+      "notice": {
+        "decision": "none",
+        "fragment": null,
+        "reason": "Reviewed; no additional applicable NOTICE text."
+      },
+      "disclosure": {
+        "required": true,
+        "homepage": "https://github.com/shoenig/go-m1cpu",
+        "source_url": "https://github.com/shoenig/go-m1cpu/tree/v0.2.2"
+      }
+    }
+  ]
+}

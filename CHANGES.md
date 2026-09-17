@@ -8,6 +8,7 @@ Release Notes.
 
 - Stamp `RELEASE_VERSION` into official release binaries so `--version` reports the release instead of `-`.
 - Generate per-package `LICENSE` files from the modules linked into each binary archive, and point UI/MCP license paths at `licenses/*/license-*.txt`.
+- Assemble package-specific `NOTICE` attribution and Category B README disclosures from reviewed obligations in `dist/legal/`, and enforce them in packaging and CI.
 - Upgrade MCP production npm overrides (`fast-uri` 4.1.5, `hono` 4.13.8, `qs` 6.16.0) to clear `npm audit` findings.
 - Fix standalone TopN write ordering.
 - Fix stale Canopy query clauses after resource changes.
@@ -30,6 +31,12 @@ Release Notes.
 - Bump google.golang.org/grpc to v1.83.2 to clear GO-2026-6443, GO-2026-6441, and GO-2026-6348.
 - Remove the accidentally committed `test_table` ELF binary from the source tree.
 - Update NOTICE copyright year to 2026.
+
+### Documentation
+
+- Document the five release archives (src, banyand, bydbctl, fodc-agent, fodc-proxy) and their 15 signed files.
+- Align the build-from-source prerequisites with `go.mod` (Go 1.25.13) and the UI engines range (`Node.js >= 24.6.0`).
+- Assemble package-specific NOTICE and Category B README disclosures from reviewed obligations, and gate them in CI via `make license-compliance`.
 
 ## 0.11.0
 

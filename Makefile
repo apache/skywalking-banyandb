@@ -320,13 +320,66 @@ license-fix: $(LICENSE_EYE) ## Fix license header issues
 license-dep: $(LICENSE_EYE)
 license-dep: TARGET=license-dep
 license-dep: PROJECTS:=ui mcp
-license-dep: default ## Fix license header issues
+license-dep: default ## Generate dependency LICENSE texts via SkyWalking Eyes
 	@rm -rf $(mk_dir)/dist/licenses
 	$(LICENSE_EYE) dep resolve -o $(mk_dir)/dist/licenses -s $(mk_dir)/dist/LICENSE.tpl
 	mv $(mk_dir)/ui/ui-licenses $(mk_dir)/dist/licenses
 	cat $(mk_dir)/ui/LICENSE >> $(mk_dir)/dist/LICENSE
 	mv $(mk_dir)/mcp/mcp-licenses $(mk_dir)/dist/licenses
 	cat $(mk_dir)/mcp/LICENSE >> $(mk_dir)/dist/LICENSE
+
+LICENSE_COMPLIANCE_DIR := $(mk_dir)/build/license-compliance
+LICENSE_CATALOG_DIR := $(mk_dir)/dist/legal/catalog
+
+license-catalog: $(LICENSE_EYE) ## Generate machine-readable Eyes dependency catalogs
+	@mkdir -p $(LICENSE_CATALOG_DIR) $(LICENSE_COMPLIANCE_DIR)/catalog
+	$(LICENSE_EYE) dep resolve \
+		-s $(mk_dir)/dist/legal/dependency-catalog.tpl \
+		-l $(LICENSE_CATALOG_DIR)/go.json
+	@cp $(LICENSE_CATALOG_DIR)/go.json $(LICENSE_COMPLIANCE_DIR)/catalog/go.json
+
+license-review-check: ## Validate reviewed NOTICE/disclosure obligations
+	python3 $(mk_dir)/scripts/license-compliance.py review-check \
+		--obligations $(mk_dir)/dist/legal/obligations.json \
+		--legal-root $(mk_dir)/dist/legal \
+		--license $(mk_dir)/dist/LICENSE \
+		--catalog $(LICENSE_CATALOG_DIR)/go.json
+
+license-drift-check: ## Detect generated licensing output drift against git
+	python3 $(mk_dir)/scripts/license-compliance.py drift-check \
+		--repo $(mk_dir) \
+		--report-dir $(LICENSE_COMPLIANCE_DIR)
+
+license-tests: ## Run licensing and packaging unit tests
+	python3 $(mk_dir)/scripts/package_licenses_test.py
+
+license-compliance: license-check license-dep license-catalog license-review-check license-tests license-drift-check ## PR-level license compliance gate
+
+release-validate: ## Validate staged release archives under build/
+	@set -e; \
+	found=0; \
+	for archive in $(mk_dir)/build/skywalking-banyandb-*-banyand.tgz \
+		$(mk_dir)/build/skywalking-banyandb-*-bydbctl.tgz \
+		$(mk_dir)/build/skywalking-banyandb-*-fodc-agent.tgz \
+		$(mk_dir)/build/skywalking-banyandb-*-fodc-proxy.tgz; do \
+		[ -e "$$archive" ] || continue; \
+		found=1; \
+		python3 $(mk_dir)/scripts/license-compliance.py validate-tgz \
+			--tarball "$$archive" \
+			--obligations $(mk_dir)/dist/legal/obligations.json \
+			--legal-root $(mk_dir)/dist/legal \
+			--require-bins; \
+	done; \
+	for archive in $(mk_dir)/build/skywalking-banyandb-*-src.tgz; do \
+		[ -e "$$archive" ] || continue; \
+		found=1; \
+		python3 $(mk_dir)/scripts/license-compliance.py validate-tgz \
+			--tarball "$$archive"; \
+	done; \
+	if [ "$$found" -eq 0 ]; then \
+		echo "release-validate: no archives found under build/"; \
+		exit 1; \
+	fi
 
 ##@ Docker targets
 
@@ -362,14 +415,18 @@ release-binary: release-source ## Package binary archive
 release-source: ## Package source archive
 	${RELEASE_SCRIPTS} -s
 
-release-sign: ## Sign artifacts
+release-sign: ## Sign artifacts (re-validates archives first)
+	$(MAKE) release-validate
 	${RELEASE_SCRIPTS} -k banyand
 	${RELEASE_SCRIPTS} -k bydbctl
 	${RELEASE_SCRIPTS} -k fodc-agent
 	${RELEASE_SCRIPTS} -k fodc-proxy
 	${RELEASE_SCRIPTS} -k src
 
-release-assembly: release-binary release-sign ## Generate release package
+release-assembly: ## Build, validate, then sign release archives
+	$(MAKE) release-binary
+	$(MAKE) release-validate
+	$(MAKE) release-sign
 
 PUSH_RELEASE_SCRIPTS := $(mk_dir)/scripts/push-release.sh
 
@@ -380,6 +437,6 @@ release-push-candidate: ## Push release candidate
 .PHONY: lint check tidy format pre-push generate-test-cases capture-test-cases generate-trace-test-cases capture-trace-test-cases generate-stream-test-cases capture-stream-test-cases check-import-boundaries
 .PHONY: test test-race test-coverage test-ci test-docker
 .PHONY: build-trace-pipeline-plugin build-trace-pipeline-telemetry-plugins build-trace-pipeline-server test-trace-pipeline
-.PHONY: license-check license-fix license-dep
-.PHONY: release release-binary release-source release-sign release-assembly
+.PHONY: license-check license-fix license-dep license-catalog license-review-check license-drift-check license-tests license-compliance
+.PHONY: release release-binary release-source release-sign release-assembly release-validate
 .PHONY: vendor-update

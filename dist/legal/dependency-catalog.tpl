@@ -1,0 +1,1 @@
+{"schema_version":1,"dependencies":[{{ range $gi, $g := .Groups }}{{ range $di, $d := $g.Deps }}{{ if or $gi $di }},{{ end }}{"name":{{ toJson $d.Name }},"version":{{ toJson $d.Version }},"license_expression":{{ toJson $d.LicenseID }}}{{ end }}{{ end }}]}
