@@ -27,8 +27,13 @@ SCRIPTDIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
 ROOTDIR=${SCRIPTDIR}/..
 BUILDDIR=${ROOTDIR}/build
 
-RELEASE_TAG=$(git describe --tags $(git rev-list --tags --max-count=1))
-RELEASE_VERSION=${RELEASE_TAG#"v"}
+# Prefer an explicit RELEASE_VERSION (e.g. make RELEASE_VERSION=0.11.1).
+# Otherwise use the nearest tag reachable from HEAD (not "newest tagged
+# commit repo-wide", which can pick the wrong line during retags).
+if [ -z "${RELEASE_VERSION:-}" ]; then
+    RELEASE_TAG=$(git describe --tags --abbrev=0)
+    RELEASE_VERSION=${RELEASE_TAG#"v"}
+fi
 # Component Makefiles stamp pkg/version.build from RELEASE_VERSION. The binary()
 # extract is not a git checkout, so this must be exported or every official
 # executable is linked with build=-.
