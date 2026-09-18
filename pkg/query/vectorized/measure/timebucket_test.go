@@ -19,6 +19,7 @@ package measure
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"testing"
 
@@ -337,6 +338,65 @@ func TestBatchTimeBucket_MapMode_EmitsBucketsInAscendingOrder(t *testing.T) {
 		if gotTS[i] != want {
 			t.Fatalf("bucket timestamps = %v, want ascending %v", gotTS, wantTS)
 		}
+	}
+}
+
+// TestBatchTimeBucket_MapMode_DrainsTerminalAggregatorIncrementally pins the
+// PR review finding that motivated drainMapModeAggregator: map mode's
+// terminal aggregator represents the whole scan (unlike a streaming
+// instance, which only ever holds one bucket), so materializing every one
+// of its pages into pending before the first NextBatch call returns would
+// re-introduce the same unbounded-queue shape the PullOperator rewrite
+// exists to avoid. With one group per bucket, batchSize=8, and the
+// per-bucket aggregator pool capped at bucketAggPoolCapacity=64 internally,
+// draining must proceed in small increments — not all 100 groups at once —
+// so no single NextBatch call should return a batch of more than batchSize
+// rows, and pending must never hold more than a couple of batches' worth at
+// a time while the drain is in progress.
+func TestBatchTimeBucket_MapMode_DrainsTerminalAggregatorIncrementally(t *testing.T) {
+	s := bucketTestSchema()
+	spec := []AggSpec{{Func: AggSum, InputCol: 2, Output: "v"}}
+	const numGroups = 100
+	const batchSize = 8
+	rows := make([]bucketTestRow, 0, numGroups)
+	for i := 0; i < numGroups; i++ {
+		// Distinct tag per row forces one group per row; map mode never
+		// flushes mid-scan regardless of bucket, so all numGroups groups
+		// stay live in the single terminal aggregator until upstream EOF.
+		rows = append(rows, bucketTestRow{fmt.Sprintf("tag-%d", i), 0, int64(i)})
+	}
+	batch := buildBucketBatch(s, rows...)
+	upstream := &fakeBucketUpstream{schema: s, batches: []*vectorized.RecordBatch{batch}}
+	bt := NewBatchTimeBucket(upstream, s, []int{1}, 0, 1000, spec, AggModeAll, batchSize, vectorized.NewMemoryTracker(1<<30), 0, false)
+	if initErr := bt.Init(context.Background()); initErr != nil {
+		t.Fatal(initErr)
+	}
+	defer bt.Close()
+
+	total := 0
+	batches := 0
+	for {
+		if len(bt.pending) > 2 {
+			t.Fatalf("pending holds %d batches mid-drain, want the terminal aggregator drained incrementally, not materialized all at once", len(bt.pending))
+		}
+		nb, err := bt.NextBatch(context.Background())
+		if err != nil {
+			t.Fatalf("NextBatch: %v", err)
+		}
+		if nb == nil {
+			break
+		}
+		batches++
+		if nb.Len > batchSize {
+			t.Fatalf("output batch Len = %d, exceeds batchSize %d", nb.Len, batchSize)
+		}
+		total += nb.Len
+	}
+	if total != numGroups {
+		t.Fatalf("total rows drained = %d, want %d", total, numGroups)
+	}
+	if wantBatches := (numGroups + batchSize - 1) / batchSize; batches != wantBatches {
+		t.Fatalf("got %d output batches, want %d", batches, wantBatches)
 	}
 }
 

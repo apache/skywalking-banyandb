@@ -133,6 +133,7 @@ type BatchTimeBucket struct {
 	hasBucket     bool
 	streaming     bool
 	upstreamDone  bool
+	mapDrainReady bool
 	closed        bool
 }
 
@@ -191,6 +192,14 @@ func (bt *BatchTimeBucket) OutputSchema() *vectorized.BatchSchema { return bt.ou
 // bounds the flushed-but-unemitted queue to "whatever closed while
 // processing one upstream batch" instead of "everything the whole scan will
 // ever produce" — see the type doc.
+//
+// Map mode's terminal aggregator is the one exception a per-upstream-batch
+// bound doesn't cover on its own: it can represent the entire scan, not one
+// bucket. Once upstream is exhausted, drainMapModeAggregator takes over and
+// pulls that aggregator one page at a time — interleaved with normal
+// pending/commitBuilder draining — rather than flushCurrentBucket's
+// loop-until-nil, which would materialize every page into pending before
+// this call ever returns the first one.
 func (bt *BatchTimeBucket) NextBatch(ctx context.Context) (*vectorized.RecordBatch, error) {
 	for {
 		if len(bt.pending) > 0 {
@@ -199,7 +208,18 @@ func (bt *BatchTimeBucket) NextBatch(ctx context.Context) (*vectorized.RecordBat
 			return nb, nil
 		}
 		if bt.upstreamDone {
-			return nil, nil
+			if bt.currentAgg == nil {
+				return nil, nil
+			}
+			drained, drainErr := bt.drainMapModeAggregator(ctx)
+			if drainErr != nil {
+				return nil, drainErr
+			}
+			if !drained {
+				continue
+			}
+			bt.commitBuilder()
+			continue
 		}
 		b, pullErr := bt.upstream.NextBatch(ctx)
 		if pullErr != nil {
@@ -207,12 +227,18 @@ func (bt *BatchTimeBucket) NextBatch(ctx context.Context) (*vectorized.RecordBat
 		}
 		if b == nil {
 			bt.upstreamDone = true
-			// The scan has ended; flush whatever bucket is still open. No
-			// further row will ever trigger an advance-driven flush.
-			if flushErr := bt.flushCurrentBucket(ctx); flushErr != nil {
-				return nil, flushErr
+			if bt.streaming {
+				// The scan has ended; flush whatever bucket is still
+				// open — bounded to one bucket's groups, same as any
+				// mid-scan advance-driven flush, so draining it in one
+				// shot here is fine.
+				if flushErr := bt.flushCurrentBucket(ctx); flushErr != nil {
+					return nil, flushErr
+				}
+				bt.commitBuilder()
 			}
-			bt.commitBuilder()
+			// Map mode leaves currentAgg open; the loop's upstreamDone
+			// branch above drains it incrementally instead.
 			continue
 		}
 		if consumeErr := bt.consumeBatch(ctx, b); consumeErr != nil {
@@ -225,6 +251,33 @@ func (bt *BatchTimeBucket) NextBatch(ctx context.Context) (*vectorized.RecordBat
 		// already made queued output visible, so latency is unchanged.
 		bt.commitBuilder()
 	}
+}
+
+// drainMapModeAggregator pulls exactly one page from the terminal (map-mode)
+// aggregator into the output builder, finalizing and sorting it first on the
+// first call. Returns drained=true once the aggregator is exhausted and
+// closed (currentAgg is nil at that point) — the caller should then check
+// pending/commitBuilder's result rather than loop here, keeping this method
+// symmetric with the main pull loop's one-unit-of-work-per-call discipline.
+func (bt *BatchTimeBucket) drainMapModeAggregator(ctx context.Context) (drained bool, err error) {
+	if !bt.mapDrainReady {
+		if finalizeErr := bt.currentAgg.Finalize(ctx); finalizeErr != nil {
+			return false, finalizeErr
+		}
+		bt.currentAgg.SortInsertionByBucket()
+		bt.mapDrainReady = true
+	}
+	nb, nextErr := bt.currentAgg.NextBatch(ctx)
+	if nextErr != nil {
+		return false, nextErr
+	}
+	if nb == nil {
+		closeErr := bt.currentAgg.Close()
+		bt.currentAgg = nil
+		return true, closeErr
+	}
+	bt.appendOutput(nb)
+	return false, nil
 }
 
 // Close is idempotent; it closes any still-open bucket aggregator (the
@@ -331,9 +384,15 @@ func (bt *BatchTimeBucket) feedRun(ctx context.Context, b *vectorized.RecordBatc
 	return bt.currentAgg.Consume(ctx, view)
 }
 
-// flushCurrentBucket finalizes and drains the open bucket's aggregator,
-// compacting its output into the shared builder (see appendOutput), then
-// closes it. A no-op when no bucket is open.
+// flushCurrentBucket finalizes and drains a closed streaming-mode bucket's
+// aggregator, compacting its output into the shared builder (see
+// appendOutput), then closes it. A no-op when no bucket is open.
+//
+// Streaming-only: a streaming instance's aggregator holds exactly one
+// bucket's groups by construction, so draining it in one shot here is
+// bounded the same way the group map itself is. Map mode's terminal
+// aggregator can span the whole scan and is drained incrementally instead
+// by drainMapModeAggregator, which flushCurrentBucket is never called for.
 //
 // A closed bucket's own BatchAggregation.NextBatch pages come from a
 // pool sized for a full batchSize batch regardless of how many groups the
@@ -351,12 +410,6 @@ func (bt *BatchTimeBucket) flushCurrentBucket(ctx context.Context) error {
 	if finalizeErr := bt.currentAgg.Finalize(ctx); finalizeErr != nil {
 		return finalizeErr
 	}
-	// Map mode's single persistent aggregator accumulates groups in
-	// first-seen order over input that may not be time-ordered; sort by
-	// bucket before emission so the output satisfies the bucket-ascending
-	// contract (design §7.5) map mode would otherwise silently violate.
-	// A no-op for a streaming-mode instance, which covers only one bucket.
-	bt.currentAgg.SortInsertionByBucket()
 	for {
 		nb, nextErr := bt.currentAgg.NextBatch(ctx)
 		if nextErr != nil {

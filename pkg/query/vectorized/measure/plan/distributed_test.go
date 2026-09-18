@@ -220,6 +220,40 @@ func TestAnalyzeDistributed_NodeTemplatePushesAggPartials_TagTarget(t *testing.T
 	}
 }
 
+// TestDistributedGroupByTagKey_PreservesFamily is the regression pin for
+// the PR review finding on executeAgg's reduce call: distributedGroupByTagKey
+// must return the tag family alongside the names, not just names, because
+// tag-family validation does not reject the same tag name in two families
+// (design doc §5.1) — dropping the family would let resolveKeyIndices bind
+// a bucketed distributed reduce to the wrong family's column on a valid
+// schema with a repeated tag name.
+func TestDistributedGroupByTagKey_PreservesFamily(t *testing.T) {
+	groupBy := &measurev1.QueryRequest_GroupBy{
+		TagProjection: &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
+			{Name: "fam2", Tags: []string{"g"}},
+		}},
+	}
+	family, names := distributedGroupByTagKey(groupBy)
+	if family != "fam2" {
+		t.Fatalf("family = %q, want %q", family, "fam2")
+	}
+	if len(names) != 1 || names[0] != "g" {
+		t.Fatalf("names = %v, want [g]", names)
+	}
+}
+
+// TestDistributedGroupByTagKey_NilGroupBy pins the nil/empty-projection
+// no-op cases return an empty family alongside nil names, matching
+// resolveKeyIndices's existing "no keyTagNames" contract.
+func TestDistributedGroupByTagKey_NilGroupBy(t *testing.T) {
+	if family, names := distributedGroupByTagKey(nil); family != "" || names != nil {
+		t.Fatalf("nil GroupBy: got (%q, %v), want (\"\", nil)", family, names)
+	}
+	if family, names := distributedGroupByTagKey(&measurev1.QueryRequest_GroupBy{}); family != "" || names != nil {
+		t.Fatalf("no TagProjection: got (%q, %v), want (\"\", nil)", family, names)
+	}
+}
+
 // TestAggOutputName_ResolvesTagOrFieldTarget is the regression pin for the
 // distributed-reduce OutputName bug this issue fixed: executeAgg used to
 // read req.GetAgg().GetFieldName() unconditionally, which is empty for a

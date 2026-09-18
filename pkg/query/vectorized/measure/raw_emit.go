@@ -588,6 +588,7 @@ func appendActive(dst, src *vectorized.RecordBatch) {
 // an empty distributed result.
 func ReduceFramesToInternalDataPoints(
 	frames [][]byte,
+	keyTagFamily string,
 	keyTagNames []string,
 	aggSpecs []AggReduceSpec,
 	topSpec *ReduceTopSpec,
@@ -597,7 +598,7 @@ func ReduceFramesToInternalDataPoints(
 	// This bridge predates time bucketing (see the doc comment above) and
 	// has no caller that could ever set a bucketed GroupBy through it, so
 	// it is unconditionally not bucketed.
-	reduced, _, reduceErr := ReduceRawFrames(frames, keyTagNames, false, aggSpecs, batchSize, tracker)
+	reduced, _, reduceErr := ReduceRawFrames(frames, keyTagFamily, keyTagNames, false, aggSpecs, batchSize, tracker)
 	if reduceErr != nil {
 		return nil, reduceErr
 	}

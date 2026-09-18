@@ -56,7 +56,7 @@ func BenchmarkG9f_DistributedFanout(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				idps, err := ReduceFramesToInternalDataPoints(frames,
-					[]string{"g"},
+					"default", []string{"g"},
 					[]AggReduceSpec{{OutputName: "out", Func: AggSum}},
 					nil, 1024, vectorized.NewMemoryTracker(1<<30))
 				if err != nil {

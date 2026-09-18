@@ -636,7 +636,7 @@ func collectRawFrameResponsesWithNodes(ff []bus.Future) ([][]byte, []*commonv1.T
 }
 
 func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *measurev1.QueryRequest) (executor.MIterator, error) {
-	keyTagNames := distributedGroupByTagNames(req.GetGroupBy())
+	keyTagFamily, keyTagNames := distributedGroupByTagKey(req.GetGroupBy())
 	bucketed := req.GetGroupBy().GetTimeBucket() != nil
 	aggFunc, aggErr := distributedAggFunc(req.GetAgg().GetFunction())
 	if aggErr != nil {
@@ -652,7 +652,7 @@ func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *
 	addTraceTagf(reduceSpan, tracelabels.TagFramesIn, "%d", len(frames))
 	frameDecodeDurations := collectFrameDecodeDurations(frames)
 	// nolint:contextcheck // pure in-memory reducer; no cancelable I/O downstream
-	batches, aggValuePath, reduceErr := vmeasure.ReduceRawFrames(frames, keyTagNames, bucketed, aggSpecs, p.cfg.BatchSize, tracker)
+	batches, aggValuePath, reduceErr := vmeasure.ReduceRawFrames(frames, keyTagFamily, keyTagNames, bucketed, aggSpecs, p.cfg.BatchSize, tracker)
 	if reduceErr != nil {
 		if reduceSpan != nil {
 			reduceSpan.Error(reduceErr)
@@ -1141,15 +1141,24 @@ func aggOutputName(agg *measurev1.QueryRequest_Aggregation) string {
 	return agg.GetFieldName()
 }
 
-func distributedGroupByTagNames(groupBy *measurev1.QueryRequest_GroupBy) []string {
+// distributedGroupByTagKey extracts the GroupBy key tag family and names
+// from req.GroupBy.TagProjection (first family, v1 single-family
+// limitation — same convention as applyBatchGroupByFirstToRows). The family
+// must travel with the names: tag-family validation does not reject the
+// same tag name in two families (design doc §5.1), so a bare name is
+// ambiguous on a valid schema and the liaison-side reduce must resolve key
+// columns the same (family, name) way the node-side GroupBy already does
+// (plan.go's lookupGroupByKeyIndices, distributed.go's
+// applyBatchGroupByFirstToRows).
+func distributedGroupByTagKey(groupBy *measurev1.QueryRequest_GroupBy) (family string, names []string) {
 	if groupBy == nil || groupBy.GetTagProjection() == nil {
-		return nil
+		return "", nil
 	}
 	families := groupBy.GetTagProjection().GetTagFamilies()
 	if len(families) == 0 {
-		return nil
+		return "", nil
 	}
-	return append([]string(nil), families[0].GetTags()...)
+	return families[0].GetName(), append([]string(nil), families[0].GetTags()...)
 }
 
 func distributedAggFunc(fn modelv1.AggregationFunction) (vmeasure.AggFunc, error) {

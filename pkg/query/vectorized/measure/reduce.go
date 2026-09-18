@@ -66,11 +66,15 @@ type ReduceTopSpec struct {
 // any structural mismatch is a producer bug, not a recoverable data error,
 // and is reported loudly.
 //
-// keyTagNames selects which tags form the group key — the same names the
-// request's GroupBy used. Tags present in the partial schema but NOT
-// listed here are still carried forward in the output as the first-seen
-// value per group (mirrors the data-node operator's first-seen non-key
-// tag rule).
+// keyTagFamily and keyTagNames select which tags form the group key — the
+// same family and names the request's GroupBy used. The family must travel
+// with the names: tag-family validation does not reject the same tag name
+// in two families (design doc §5.1), so resolveKeyIndices matches on
+// (family, name), not name alone — matching the node-side GroupBy's own
+// (plan.go's lookupGroupByKeyIndices). Tags present in the partial schema
+// but NOT listed here are still carried forward in the output as the
+// first-seen value per group (mirrors the data-node operator's first-seen
+// non-key tag rule).
 //
 // bucketed is true for a time-bucketed GroupBy (design §7.2): the bucket
 // column is resolved as an additional leading key, ahead of keyTagNames.
@@ -84,6 +88,7 @@ type ReduceTopSpec struct {
 // was resolved. Callers walk the batches sequentially; one row per group.
 func ReduceRawFrames(
 	frames [][]byte,
+	keyTagFamily string,
 	keyTagNames []string,
 	bucketed bool,
 	aggSpecs []AggReduceSpec,
@@ -101,7 +106,7 @@ func ReduceRawFrames(
 		}
 		decoded = append(decoded, b)
 	}
-	return ReducePartialBatches(decoded, keyTagNames, bucketed, aggSpecs, batchSize, tracker)
+	return ReducePartialBatches(decoded, keyTagFamily, keyTagNames, bucketed, aggSpecs, batchSize, tracker)
 }
 
 // ReducePartialBatches is the in-memory counterpart of ReduceRawFrames —
@@ -114,6 +119,7 @@ func ReduceRawFrames(
 // value column was resolved (typed, fieldvalue-fallback, or unresolved).
 func ReducePartialBatches(
 	partials []*vectorized.RecordBatch,
+	keyTagFamily string,
 	keyTagNames []string,
 	bucketed bool,
 	aggSpecs []AggReduceSpec,
@@ -131,7 +137,7 @@ func ReducePartialBatches(
 	if refSchema == nil {
 		return nil, AggValuePathTyped, nil
 	}
-	keyIndices, indicesErr := resolveKeyIndices(refSchema, keyTagNames, bucketed)
+	keyIndices, indicesErr := resolveKeyIndices(refSchema, keyTagFamily, keyTagNames, bucketed)
 	if indicesErr != nil {
 		return nil, AggValuePathUnresolved, indicesErr
 	}
@@ -180,12 +186,16 @@ func ReducePartialBatches(
 	return out, path, nil
 }
 
-// resolveKeyIndices binds the bucket column (when bucketed) and keyTagNames
-// to column indices in the partial schema. Returns an error if a tag name
-// does not resolve, or if bucketed is true but the schema carries no
-// RoleTimestamp column (design §10's mixed-version guard). Neither bucketed
-// nor any keyTagNames is allowed (scalar reduce) and returns nil keyIndices.
-func resolveKeyIndices(schema *vectorized.BatchSchema, keyTagNames []string, bucketed bool) ([]int, error) {
+// resolveKeyIndices binds the bucket column (when bucketed) and
+// (keyTagFamily, keyTagNames) to column indices in the partial schema.
+// Matching requires both family and name — tag-family validation does not
+// reject the same tag name in two families (design doc §5.1), so matching
+// by name alone could silently bind to the wrong family's column on a
+// valid schema. Returns an error if a tag does not resolve, or if bucketed
+// is true but the schema carries no RoleTimestamp column (design §10's
+// mixed-version guard). Neither bucketed nor any keyTagNames is allowed
+// (scalar reduce) and returns nil keyIndices; keyTagFamily is unused then.
+func resolveKeyIndices(schema *vectorized.BatchSchema, keyTagFamily string, keyTagNames []string, bucketed bool) ([]int, error) {
 	var out []int
 	if bucketed {
 		idx := schema.TimestampIndex()
@@ -197,13 +207,13 @@ func resolveKeyIndices(schema *vectorized.BatchSchema, keyTagNames []string, buc
 	for _, name := range keyTagNames {
 		idx := -1
 		for i, def := range schema.Columns {
-			if def.Role == vectorized.RoleTag && def.Name == name {
+			if def.Role == vectorized.RoleTag && def.TagFamily == keyTagFamily && def.Name == name {
 				idx = i
 				break
 			}
 		}
 		if idx < 0 {
-			return nil, fmt.Errorf("key tag %q not present in partial schema", name)
+			return nil, fmt.Errorf("key tag %s.%s not present in partial schema", keyTagFamily, name)
 		}
 		out = append(out, idx)
 	}

@@ -65,7 +65,7 @@ func bucketPartialBatch(rows ...bucketPartialRow) *vectorized.RecordBatch {
 // index ahead of any tag key indices.
 func TestResolveKeyIndices_Bucketed_ResolvesTimestampAsLeadingKey(t *testing.T) {
 	s := bucketPartialSchema()
-	idx, err := resolveKeyIndices(s, []string{"g"}, true)
+	idx, err := resolveKeyIndices(s, "default", []string{"g"}, true)
 	if err != nil {
 		t.Fatalf("resolveKeyIndices: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestResolveKeyIndices_Bucketed_ResolvesTimestampAsLeadingKey(t *testing.T) 
 // keyIndices (grouping by bucket alone), not the scalar-reduce nil.
 func TestResolveKeyIndices_BucketOnly_NoTagKeys(t *testing.T) {
 	s := bucketPartialSchema()
-	idx, err := resolveKeyIndices(s, nil, true)
+	idx, err := resolveKeyIndices(s, "default", nil, true)
 	if err != nil {
 		t.Fatalf("resolveKeyIndices: %v", err)
 	}
@@ -98,15 +98,40 @@ func TestResolveKeyIndices_Bucketed_MissingTimestampColumn_Errors(t *testing.T) 
 		{Role: vectorized.RoleTag, TagFamily: "default", Name: "g", Type: vectorized.ColumnTypeString},
 		{Role: vectorized.RoleField, Name: "out", Type: vectorized.ColumnTypeInt64},
 	})
-	if _, err := resolveKeyIndices(s, []string{"g"}, true); err == nil {
+	if _, err := resolveKeyIndices(s, "default", []string{"g"}, true); err == nil {
 		t.Fatal("a bucketed reduce over a schema with no RoleTimestamp column must error")
+	}
+}
+
+// TestResolveKeyIndices_DuplicateNameAcrossFamilies_ResolvesRequestedFamily
+// pins the PR review finding that motivated adding keyTagFamily:
+// tag-family validation does not reject the same tag name in two families
+// (design doc §5.1), so a valid schema can have "g" in both "fam1" and
+// "fam2". Matching by name alone would silently bind to whichever family
+// happens to come first in schema.Columns, corrupting a distributed
+// bucketed reduce whose GroupBy actually targets the other family. The fix
+// must resolve the column belonging to the REQUESTED family regardless of
+// column order.
+func TestResolveKeyIndices_DuplicateNameAcrossFamilies_ResolvesRequestedFamily(t *testing.T) {
+	s := vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleShardID, Name: shardIDOutputName, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleTag, TagFamily: "fam1", Name: "g", Type: vectorized.ColumnTypeString},
+		{Role: vectorized.RoleTag, TagFamily: "fam2", Name: "g", Type: vectorized.ColumnTypeString},
+		{Role: vectorized.RoleField, Name: "out", Type: vectorized.ColumnTypeInt64},
+	})
+	idx, err := resolveKeyIndices(s, "fam2", []string{"g"}, false)
+	if err != nil {
+		t.Fatalf("resolveKeyIndices: %v", err)
+	}
+	if len(idx) != 1 || idx[0] != 2 {
+		t.Fatalf("keyIndices = %v, want [2] (fam2's g column, not fam1's at index 1)", idx)
 	}
 }
 
 // TestResolveKeyIndices_NotBucketed_Unaffected pins that bucketed=false
 // preserves the pre-existing behavior exactly (no timestamp resolution).
 func TestResolveKeyIndices_NotBucketed_Unaffected(t *testing.T) {
-	idx, err := resolveKeyIndices(bucketPartialSchema(), nil, false)
+	idx, err := resolveKeyIndices(bucketPartialSchema(), "default", nil, false)
 	if err != nil {
 		t.Fatalf("resolveKeyIndices: %v", err)
 	}
@@ -129,7 +154,7 @@ func TestReducePartialBatches_Bucketed_CombinesAcrossShards(t *testing.T) {
 	)
 	batches, _, err := ReducePartialBatches(
 		[]*vectorized.RecordBatch{p1, p2},
-		[]string{"g"}, true,
+		"default", []string{"g"}, true,
 		[]AggReduceSpec{{OutputName: "out", Func: AggSum}},
 		64, vectorized.NewMemoryTracker(1<<30),
 	)
@@ -175,7 +200,7 @@ func TestReducePartialBatches_Bucketed_GloballySortsAcrossNodePartials(t *testin
 	)
 	batches, _, err := ReducePartialBatches(
 		[]*vectorized.RecordBatch{nodeA, nodeB},
-		[]string{"g"}, true,
+		"default", []string{"g"}, true,
 		[]AggReduceSpec{{OutputName: "out", Func: AggSum}},
 		64, vectorized.NewMemoryTracker(1<<30),
 	)
@@ -218,7 +243,7 @@ func TestReducePartialBatches_Bucketed_MixedVersionOldNodeFirst_Errors(t *testin
 
 	_, _, err := ReducePartialBatches(
 		[]*vectorized.RecordBatch{oldPartial},
-		[]string{"g"}, true,
+		"default", []string{"g"}, true,
 		[]AggReduceSpec{{OutputName: "out", Func: AggSum}},
 		64, vectorized.NewMemoryTracker(1<<30),
 	)
@@ -248,7 +273,7 @@ func TestReducePartialBatches_Bucketed_MixedVersionOldNodeSecond_Errors(t *testi
 
 	_, _, err := ReducePartialBatches(
 		[]*vectorized.RecordBatch{newPartial, oldPartial},
-		[]string{"g"}, true,
+		"default", []string{"g"}, true,
 		[]AggReduceSpec{{OutputName: "out", Func: AggSum}},
 		64, vectorized.NewMemoryTracker(1<<30),
 	)
