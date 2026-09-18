@@ -126,22 +126,27 @@ func BuildOperators(
 		Output:   aggTargetName(opts.Agg),
 		HideTag:  opts.Agg.HideTag,
 	}
-	// COUNT_DISTINCT's map-phase precondition (design §7.4): a single node
-	// typically scans rows from more than one of its local shards in one
-	// AggModeMap operator instance (the scan fans out across shards before
-	// reaching the vectorized layer), and computeKey otherwise ignores
-	// shard id — so two shards' rows for the same GroupBy key would
-	// collapse into one group, tagged with whichever shard happened to be
-	// first-seen (newGroup already documents this as harmless for
-	// SUM/COUNT, since summing is associative regardless of grouping
-	// granularity). For COUNT_DISTINCT it is not harmless: under
-	// replication, two replicas of the same node can merge shards into
-	// that "incidental" group in a different order, so the same true
-	// per-shard contribution gets tagged with different shard ids on
-	// different replicas — markDedupSeen's (shardID, groupKey) dedup key
-	// then fails to recognize them as duplicates, and the liaison
-	// double-counts. Forcing one group per (shard, GroupBy-key) makes the
-	// emitted shard_id deterministic and dedup reliable.
+	// COUNT_DISTINCT's map-phase precondition (design §7.4 "De-duplicating
+	// the partials", part (a)). computeKey ignores shard id, and a node
+	// holding more than one shard emits one merged partial per group,
+	// labeled with whichever shard's row created it first — a hint, not
+	// an identity. Under replication, staggered shard placement
+	// (pkg/node/round_robin.go's roundRobinSelector) means no two nodes
+	// hold the same shard set, so two nodes' partials for the same group
+	// can collide on that incidental label. Depending on which of the
+	// colliding partials markDedupSeen's (shardID, groupKey) check keeps
+	// vs. drops, the result can either double-count (the survivor still
+	// includes a shard the dropped one also counted) or undercount (the
+	// dropped one carried a shard the survivor never had) — the design
+	// doc's worked 4-node/replicas=1 example walks both outcomes from the
+	// same topology. Forcing one group per (shard, GroupBy-key) makes the
+	// emitted shard_id exact rather than incidental, so only a genuine
+	// replica duplicate can ever share a dedup key.
+	//
+	// This same defect is latent in every distributed agg today, not only
+	// COUNT_DISTINCT — design §7.4 tracks that as a parallel, non-gating
+	// investigation (stage 4a) rather than fixing it here for every
+	// function.
 	if aggFn == AggCountDistinct && mode == AggModeMap {
 		if shardIdx := findShardIDIndex(schema); shardIdx >= 0 {
 			keyIndices = append(keyIndices, shardIdx)
