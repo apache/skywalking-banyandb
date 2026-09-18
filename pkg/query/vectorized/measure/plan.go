@@ -211,12 +211,14 @@ func BuildTimeBucketOperator(
 		return nil, fmt.Errorf("vectorized.measure: time_bucket requires a RoleTimestamp column in the scan schema")
 	}
 	var specs []AggSpec
+	var aggFn AggFunc
 	if opts.Agg != nil {
 		inputIdx, inputErr := lookupAggInputColumnIndex(schema, opts.Agg)
 		if inputErr != nil {
 			return nil, inputErr
 		}
-		aggFn, fnErr := protoAggFuncToInternal(opts.Agg.Func)
+		var fnErr error
+		aggFn, fnErr = protoAggFuncToInternal(opts.Agg.Func)
 		if fnErr != nil {
 			return nil, fnErr
 		}
@@ -226,6 +228,18 @@ func BuildTimeBucketOperator(
 			Output:   aggTargetName(opts.Agg),
 			HideTag:  opts.Agg.HideTag,
 		}}
+	}
+	// Same COUNT_DISTINCT map-phase precondition as BuildOperators (see its
+	// comment for the full derivation): a data node's per-bucket aggregator
+	// can still see rows from more than one of its local shards in a
+	// single upstream batch, so the shard-id column must be part of the
+	// group key — otherwise BatchTimeBucket would merge those shards into
+	// one incidentally-labeled partial per bucket, exactly the shape the
+	// fix in BuildOperators exists to prevent for the unbucketed case.
+	if opts.Agg != nil && aggFn == AggCountDistinct && mode == AggModeMap {
+		if shardIdx := findShardIDIndex(schema); shardIdx >= 0 {
+			tagKeyIndices = append(tagKeyIndices, shardIdx)
+		}
 	}
 	tb := opts.GroupBy.TimeBucket
 	return NewBatchTimeBucket(upstream, schema, tagKeyIndices, timestampIdx, tb.WidthNanos,

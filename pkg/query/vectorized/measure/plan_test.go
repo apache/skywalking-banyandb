@@ -245,6 +245,92 @@ func TestBuildTimeBucketOperator_CountDistinctTagTarget_HideTag(t *testing.T) {
 	}
 }
 
+// countDistinctBucketedShardRow is one input row for
+// TestBuildTimeBucketOperator_CountDistinctMapMode_SeparatesShards.
+type countDistinctBucketedShardRow struct {
+	g, target string
+	ts, shard int64
+}
+
+// TestBuildTimeBucketOperator_CountDistinctMapMode_SeparatesShards is the
+// bucketed sibling of TestCountDistinct_MapThenReduce_SumsDisjointShardsDedupsReplicas
+// (aggregation_test.go), pinning the P1 review finding on the first
+// version of this fix: BuildOperators' shard-id-in-keyIndices fix did not
+// extend to BuildTimeBucketOperator, so a distributed bucketed
+// COUNT_DISTINCT still merged a data node's shards into one
+// incidentally-labeled partial per bucket — exactly the shape the fix
+// exists to prevent for the unbucketed case. Two shards contribute
+// disjoint target values inside the same bucket; the map phase must emit
+// one partial per (shard, bucket, group), not one merged partial per
+// (bucket, group).
+func TestBuildTimeBucketOperator_CountDistinctMapMode_SeparatesShards(t *testing.T) {
+	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleTimestamp, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleShardID, Name: shardIDOutputName, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "g", Type: vectorized.ColumnTypeString},
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "target", Type: vectorized.ColumnTypeString},
+	})
+	b := vectorized.NewRecordBatch(schema, 4)
+	tsCol := b.Columns[0].(*vectorized.TypedColumn[int64])
+	shardCol := b.Columns[1].(*vectorized.TypedColumn[int64])
+	gCol := b.Columns[2].(*vectorized.TypedColumn[string])
+	targetCol := b.Columns[3].(*vectorized.TypedColumn[string])
+	for _, row := range []countDistinctBucketedShardRow{
+		{ts: 13, shard: 1, g: "a", target: "v1"},
+		{ts: 20, shard: 1, g: "a", target: "v2"},
+		{ts: 30, shard: 2, g: "a", target: "v3"},
+		{ts: 40, shard: 2, g: "a", target: "v4"},
+	} {
+		tsCol.Append(row.ts)
+		shardCol.Append(row.shard)
+		gCol.Append(row.g)
+		targetCol.Append(row.target)
+	}
+	b.Len = 4
+
+	upstream := &fakeBucketUpstream{schema: schema, batches: []*vectorized.RecordBatch{b}}
+	opts := model.MeasureQueryOptions{
+		GroupBy: &model.MeasureGroupBy{TagFamily: "default", TagNames: []string{"g"}, TimeBucket: &model.MeasureTimeBucket{WidthNanos: 1000}},
+		Agg:     &model.MeasureAgg{TagFamily: "default", TagName: "target", Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT, HideTag: true},
+	}
+	tracker := vectorized.NewMemoryTracker(1 << 20)
+	bucket, buildErr := BuildTimeBucketOperator(upstream, opts, schema, tracker, 8, AggModeMap)
+	if buildErr != nil {
+		t.Fatalf("BuildTimeBucketOperator: %v", buildErr)
+	}
+	if initErr := bucket.Init(context.Background()); initErr != nil {
+		t.Fatal(initErr)
+	}
+	defer bucket.Close()
+
+	// Output layout for AggModeMap + bucketed: [shard_id(0), timestamp(1,
+	// bucket start), g(2, tag), target(3, agg result field)].
+	gotByShard := map[int64]int64{}
+	for {
+		out, nextErr := bucket.NextBatch(context.Background())
+		if nextErr != nil {
+			t.Fatal(nextErr)
+		}
+		if out == nil {
+			break
+		}
+		shardOut := out.Columns[0].(*vectorized.TypedColumn[int64])
+		valOut := out.Columns[3].(*vectorized.TypedColumn[int64])
+		for i := 0; i < out.Len; i++ {
+			gotByShard[shardOut.Data()[i]] = valOut.Data()[i]
+		}
+	}
+	want := map[int64]int64{1: 2, 2: 2}
+	if len(gotByShard) != len(want) {
+		t.Fatalf("got %d distinct-per-shard partials, want %d (one per shard): %v", len(gotByShard), len(want), gotByShard)
+	}
+	for shard, wantCount := range want {
+		if got := gotByShard[shard]; got != wantCount {
+			t.Errorf("shard %d distinct count = %d, want %d", shard, got, wantCount)
+		}
+	}
+}
+
 // TestBuildOperators_AggWithoutGroupBy_EmitsBatchAggregation pins the
 // scalar-reduce shape: a BatchAggregation with no key columns, so every
 // row collapses into a single output row carrying the first-seen tags
