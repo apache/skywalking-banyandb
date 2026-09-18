@@ -133,6 +133,35 @@ var measureEntries = []any{
 		helpers.Args{Input: "group_count_distinct_off_cadence", Duration: time.Minute, Offset: time.Minute, SkipQL: true}),
 	g.Entry("group by time bucket, count off-cadence",
 		helpers.Args{Input: "group_count_off_cadence", Duration: time.Minute, Offset: time.Minute, SkipQL: true}),
+	// GROUP BY entity_id (the routing key), COUNT_DISTINCT over an unrelated
+	// normal tag -- decomposable via §7.4's "GroupBy covers the routing key"
+	// branch, not "target covers the routing key" (see test/cases/init.go).
+	// SkipQL: BydbQL has no DISTINCT grammar or tag-Agg fallback yet --
+	// apache/skywalking#14091.
+	g.Entry("group by entity, count distinct a normal tag",
+		helpers.Args{Input: "group_count_distinct_by_entity", Duration: time.Minute, Offset: 2 * time.Minute, SkipQL: true}),
+	g.Entry("group by entity, count a normal tag",
+		helpers.Args{Input: "group_count_by_entity", Duration: time.Minute, Offset: 2 * time.Minute, SkipQL: true}),
+	// composite_entity_metric's entity is [tag_b, tag_a]. GROUP BY tag_b,
+	// COUNT_DISTINCT(tag_a): tag_b is covered because it's a GroupBy key,
+	// tag_a is covered because it's the Agg target -- the two entity
+	// components covered by *different* branches of §7.4's per-routing-tag
+	// check simultaneously (see test/cases/init.go). SkipQL: BydbQL has no
+	// DISTINCT grammar or tag-Agg fallback yet -- apache/skywalking#14091.
+	g.Entry("group by one entity tag, count distinct the other entity tag",
+		helpers.Args{Input: "group_count_distinct_composite_entity", Duration: 2 * time.Minute, Offset: -time.Minute, SkipQL: true}),
+	g.Entry("group by one entity tag, count the other entity tag",
+		helpers.Args{Input: "group_count_composite_entity", Duration: 2 * time.Minute, Offset: -time.Minute, SkipQL: true}),
+	// index_mode_distinct_metric carries a real IndexRule on tag_x (a
+	// non-entity tag) and is itself index_mode=true. GROUP BY the indexed
+	// tag_x, COUNT_DISTINCT(entity_id): the target covers the routing key on
+	// its own, so an indexed-but-unrelated GroupBy tag must not block
+	// acceptance (see test/cases/init.go). SkipQL: BydbQL has no DISTINCT
+	// grammar or tag-Agg fallback yet -- apache/skywalking#14091.
+	g.Entry("group by an indexed tag, count distinct the entity tag",
+		helpers.Args{Input: "group_count_distinct_index_mode", Duration: 2 * time.Minute, Offset: -time.Minute, SkipQL: true}),
+	g.Entry("group by an indexed tag, count the entity tag",
+		helpers.Args{Input: "group_count_index_mode", Duration: 2 * time.Minute, Offset: -time.Minute, SkipQL: true}),
 	g.Entry("top N with filter", helpers.Args{Input: "top_with_filter", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("index mode filter by NE", helpers.Args{Input: "index_mode_ne", Duration: 25 * time.Minute, Offset: -20 * time.Minute, DisOrder: true}),
 	g.Entry("index mode filter by LE on int", helpers.Args{Input: "index_mode_le", Duration: 25 * time.Minute, Offset: -20 * time.Minute, DisOrder: true}),
@@ -205,6 +234,18 @@ var measureEntries = []any{
 		helpers.Args{Input: "gen_feat_count_group_order_desc_8", Want: "gen_feat_count_group_order_desc_8", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("gen: sum group order desc",
 		helpers.Args{Input: "gen_feat_sum_group_order_desc_9", Want: "gen_feat_sum_group_order_desc_9", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
+	// COUNT_DISTINCT closes the design's own flagged gap (§11): the layer-3
+	// pairwise generator hard-coded {MEAN,MAX,MIN,COUNT,SUM} and would have
+	// silently under-covered the sixth function. SkipQL: RenderQL has no
+	// COUNT_DISTINCT/tag-Agg support yet, so the generated .ql would be
+	// wrong (it renders a bogus SUM() call) -- deleted rather than shipped;
+	// same BydbQL gap as every other COUNT_DISTINCT fixture here --
+	// apache/skywalking#14091.
+	g.Entry("gen: count distinct group order desc",
+		helpers.Args{
+			Input: "gen_feat_count_distinct_group_order_desc_10", Want: "gen_feat_count_distinct_group_order_desc_10",
+			Duration: 25 * time.Minute, Offset: -20 * time.Minute, SkipQL: true,
+		}),
 }
 
 // RegisterTable registers the measure test table with the given description.

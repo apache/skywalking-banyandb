@@ -1,0 +1,29 @@
+{
+  "metadata": {
+    "name": "index_mode_distinct_metric",
+    "group": "sw_metric"
+  },
+  "tag_families": [
+    {
+      "name": "default",
+      "tags": [
+        {
+          "name": "entity_id",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "tag_x",
+          "type": "TAG_TYPE_STRING"
+        }
+      ]
+    }
+  ],
+  "entity": {
+    "tag_names": [
+      "entity_id"
+    ]
+  },
+  "index_mode": true,
+  "interval": "20s",
+  "updated_at": "2021-04-15T01:30:15.01Z"
+}

@@ -292,6 +292,52 @@ func TestAnalyzeDistributed_CountDistinct_MultiGroup_AlwaysRejected(t *testing.T
 	}
 }
 
+// TestAnalyzeDistributed_CountDistinct_IndexRuleOnRoutingTags_DoesNotAffectAcceptance
+// pins that validateCountDistinctPushdown's decision is IndexRule-agnostic:
+// it only ever reads ShardingKey/Entity from the Measure schema, never
+// indexRules. A composite routing key ([tagSvc, tagCount], no narrower
+// ShardingKey) with each component covered by a different branch — the
+// same accept case as
+// TestValidateCountDistinctPushdown_CompositeEntity_DifferentBranchesCoverDifferentTags_Accepts
+// — must still accept when both routing tags additionally carry a real
+// IndexRule, proving indexedness never confuses which branch covers what.
+func TestAnalyzeDistributed_CountDistinct_IndexRuleOnRoutingTags_DoesNotAffectAcceptance(t *testing.T) {
+	ms := entityShardingSchema([]string{tagSvc, tagCount}, nil)
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		GroupBy:         groupByReq(defaultName, []string{tagSvc}),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg:             countDistinctAgg(defaultName, tagCount),
+	}
+	indexRules := []*databasev1.IndexRule{
+		testIndexRuleOnTag("svc_idx", tagSvc),
+		testIndexRuleOnTag("count_idx", tagCount),
+	}
+	cfg := vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1}
+	if _, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{ms}, [][]*databasev1.IndexRule{indexRules}, cfg); analyzeErr != nil {
+		t.Fatalf("an IndexRule on a covered routing tag must not affect acceptance: %v", analyzeErr)
+	}
+}
+
+// TestAnalyzeDistributed_CountDistinct_IndexRuleOnUncoveredRoutingTag_StillRejects
+// is the negative twin: an IndexRule on the uncovered sharding key must not
+// make validateCountDistinctPushdown treat it as covered — indexedness and
+// routing coverage are unrelated concepts, and only the latter decides
+// decomposability.
+func TestAnalyzeDistributed_CountDistinct_IndexRuleOnUncoveredRoutingTag_StillRejects(t *testing.T) {
+	ms := entityShardingSchema([]string{tagCount}, []string{tagSvc})
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg:             countDistinctAgg(defaultName, tagCount),
+	}
+	indexRules := []*databasev1.IndexRule{testIndexRuleOnTag("svc_idx", tagSvc)}
+	cfg := vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1}
+	if _, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{ms}, [][]*databasev1.IndexRule{indexRules}, cfg); analyzeErr == nil {
+		t.Fatal("an IndexRule on the uncovered routing tag must not make the request acceptable")
+	}
+}
+
 // TestAnalyzeDistributed_SumAgg_MultiGroup_StillAccepted pins that the new
 // multi-group rejection is COUNT_DISTINCT-specific: every other function
 // composes with multi-group requests exactly as before (an existing,

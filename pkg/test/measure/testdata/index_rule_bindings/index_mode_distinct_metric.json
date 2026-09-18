@@ -1,0 +1,16 @@
+{
+  "metadata": {
+    "name": "index_mode_distinct_metric_rule_binding",
+    "group": "sw_metric"
+  },
+  "rules": [
+    "idx_tag_x"
+  ],
+  "subject": {
+    "catalog": "CATALOG_MEASURE",
+    "name": "index_mode_distinct_metric"
+  },
+  "begin_at": "2021-04-15T01:30:15.01Z",
+  "expire_at": "2121-04-15T01:30:15.01Z",
+  "updated_at": "2021-04-15T01:30:15.01Z"
+}
