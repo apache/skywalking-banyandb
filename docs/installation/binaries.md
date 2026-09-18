@@ -6,7 +6,7 @@ This page shows how to get binaries of Banyand.
                            
 Go to the [SkyWalking download page](https://skywalking.apache.org/downloads/#Database) .
 
-Select and download the distribution from the suggested location for your platform, such as `skywalking-banyandb-x.x.x-banyand.tgz` and `skywalking-bydbctl-x.x.x-bydbctl.tgz`.
+Select and download the distribution from the suggested location for your platform, such as `skywalking-banyandb-x.x.x-banyand.tgz`, `skywalking-banyandb-x.x.x-bydbctl.tgz`, and `skywalking-banyandb-x.x.x-canopy.tgz`.
 
 > It is essential that you verify the integrity of the downloaded file using the PGP signature ( .asc file) or a hash ( .md5 or .sha* file).
 
@@ -47,6 +47,8 @@ The banyand and bydbctl directory structure is as follows.
 │   └── bydbctl-cli-static-darwin-arm64
 └── licenses
 ```
+
+The Canopy archive (`skywalking-banyandb-x.y.z-canopy.tgz`) is a separate Node.js distribution (built SPA + BFF). After unpacking, run `npm ci --omit=dev` and start the BFF from `server/` as described in the packaged `README.md`.
 
 ## Build From Source
 

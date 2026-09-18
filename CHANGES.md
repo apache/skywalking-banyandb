@@ -19,7 +19,8 @@ Release Notes.
 - Stamp `RELEASE_VERSION` into official release binaries so `--version` reports the release instead of `-`.
 - Pack the source release from `git archive` and reject archives that contain ELF/Mach-O binaries.
 - Stop declaring unbundled MCP npm dependencies in binary-package `LICENSE` files (MCP Eyes output remains under `mcp/` only).
-- Keep MCP and Canopy dependency license texts under `mcp/licenses/` and `canopy/licenses/` (checked in; not copied into binary packages).
+- Keep MCP and Canopy dependency license texts under `mcp/licenses/` and `canopy/licenses/` (checked in; not copied into Go binary packages).
+- Ship Canopy as an independent release archive (`skywalking-banyandb-*-canopy.tgz`) with built SPA/BFF artifacts and Canopy Eyes licenses.
 - Reject group / stream / measure / trace (and related) resource names that are not a single path-safe identifier (`[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?`), so names cannot escape catalog storage roots.
 - Bound protobuf `validate.rules` on schema and query identifiers (max length, allowlist pattern, repeated max_items, numeric ceilings) so untrusted inputs cannot escape storage roots or force unbounded allocations.
 - Honor the configured logging level in native observability metrics instead of retaining the pre-initialization debug logger.
@@ -38,7 +39,7 @@ Release Notes.
 
 ### Document
 
-- Document the five release archives (src, banyand, bydbctl, fodc-agent, fodc-proxy) and their 15 signed files.
+- Document the six release archives (src, banyand, bydbctl, fodc-agent, fodc-proxy, canopy) and their 18 signed files.
 - Add the [native inverted-index replacement design package](docs/design/0.12.0/native-inverted-index/README.md), including the implementation specification, ICE walkthrough, research plan, and visual report.
 - Add the [tag aggregation and time bucketing design](docs/design/0.12.0/tag-aggregation/README.md) for the measure query engine, covering aggregation over tags, `COUNT_DISTINCT`, and `GROUP BY` time buckets.
 - Add mandatory size and TDD-feasibility audits to the BanyanDB GitHub issue skill.

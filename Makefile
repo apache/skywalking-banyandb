@@ -368,6 +368,7 @@ release-sign: ## Sign artifacts
 	${RELEASE_SCRIPTS} -k bydbctl
 	${RELEASE_SCRIPTS} -k fodc-agent
 	${RELEASE_SCRIPTS} -k fodc-proxy
+	${RELEASE_SCRIPTS} -k canopy
 	${RELEASE_SCRIPTS} -k src
 
 release-assembly: release-binary release-sign ## Assemble and sign release archives

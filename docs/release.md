@@ -24,15 +24,16 @@ git push --tags
 make clean && make release-assembly
 ```
 
-`make release-assembly` writes five archives under `build/`, each with `.asc` and `.sha512` (15 files):
+`make release-assembly` writes six archives under `build/`, each with `.asc` and `.sha512` (18 files):
 
 * `skywalking-banyandb-${VERSION}-src.tgz`
 * `skywalking-banyandb-${VERSION}-banyand.tgz`
 * `skywalking-banyandb-${VERSION}-bydbctl.tgz`
 * `skywalking-banyandb-${VERSION}-fodc-agent.tgz`
 * `skywalking-banyandb-${VERSION}-fodc-proxy.tgz`
+* `skywalking-banyandb-${VERSION}-canopy.tgz`
 
-Binary packages include the SkyWalking Eyes output from `dist/` (`LICENSE`, `NOTICE`, `licenses/`). `make license-dep` concatenates Go and UI Eyes inventories into `dist/LICENSE`. MCP and Canopy Eyes output stays under `mcp/licenses/` and `canopy/licenses/` and is not copied into the binary packages, because those Node dependency trees are not shipped as bundled content in the Apache binary archives.
+Go binary packages include the SkyWalking Eyes output from `dist/` (`LICENSE`, `NOTICE`, `licenses/`). `make license-dep` concatenates Go and UI Eyes inventories into `dist/LICENSE`. The Canopy archive ships `canopy/LICENSE` and `canopy/licenses/` instead. MCP Eyes output stays under `mcp/licenses/` and is not copied into binary packages; the banyand archive still includes MCP as transpiled JS (`mcp/dist` + `package.json`) without `node_modules`.
 
 ## Upload to Apache svn
 
@@ -67,6 +68,7 @@ Release Candidate:
    - sha512xxxxyyyzzz skywalking-banyandb-$VERSION-bydbctl.tgz
    - sha512xxxxyyyzzz skywalking-banyandb-$VERSION-fodc-agent.tgz
    - sha512xxxxyyyzzz skywalking-banyandb-$VERSION-fodc-proxy.tgz
+   - sha512xxxxyyyzzz skywalking-banyandb-$VERSION-canopy.tgz
 
 Release Tag :
 
@@ -101,7 +103,7 @@ All PMC members and committers should check these before voting +1:
 
 1. Features test.
 1. All artifacts in the staging repository are published with `.asc` and `.sha512` files.
-1. Source and distribution packages (`skywalking-banyandb-$VERSION-{src,banyand,bydbctl,fodc-agent,fodc-proxy}.tgz`, 15 files)
+1. Source and distribution packages (`skywalking-banyandb-$VERSION-{src,banyand,bydbctl,fodc-agent,fodc-proxy,canopy}.tgz`, 18 files)
 are in `https://dist.apache.org/repos/dist/dev/skywalking/banyandb/$VERSION` with `.asc` and `.sha512`.
 1. `LICENSE` and `NOTICE` are in source codes and distribution packages.
 1. Check `sha512sum -c skywalking-banyandb-*$VERSION*.tgz.sha512`.
