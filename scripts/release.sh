@@ -29,6 +29,10 @@ BUILDDIR=${ROOTDIR}/build
 
 RELEASE_TAG=$(git describe --tags $(git rev-list --tags --max-count=1))
 RELEASE_VERSION=${RELEASE_TAG#"v"}
+# Component Makefiles stamp pkg/version.build from RELEASE_VERSION. The binary()
+# extract is not a git checkout, so this must be exported or every official
+# executable is linked with build=-.
+export RELEASE_VERSION
 
 SOURCE_FILE_NAME=skywalking-banyandb-${RELEASE_VERSION}-src.tgz
 SOURCE_FILE=${BUILDDIR}/${SOURCE_FILE_NAME}
@@ -44,18 +48,19 @@ binary(){
     trap 'popd' EXIT
     tar -xvf ${SOURCE_FILE}
     make generate && make -C ui build
-    make -C mcp release
-    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make -C banyand release
-    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make -C fodc/agent release
-    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make -C fodc/proxy release
+    RELEASE_VERSION="${RELEASE_VERSION}" make -C mcp release
+    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 RELEASE_VERSION="${RELEASE_VERSION}" make -C banyand release
+    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 RELEASE_VERSION="${RELEASE_VERSION}" make -C fodc/agent release
+    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 RELEASE_VERSION="${RELEASE_VERSION}" make -C fodc/proxy release
     bindir=./build
     mkdir -p ${bindir}/bin
     # Copy relevant files
     copy_binaries banyand
     cp -Rfv ./CHANGES.md ${bindir}
     cp -Rfv ./README.md ${bindir}
+    # Eyes-generated Go + UI licensing from dist/ (MCP npm deps are not bundled).
     cp -Rfv ./dist/* ${bindir}
-    # Copy MCP server
+    # Copy MCP server (transpiled JS only; no node_modules / no MCP LICENSE inventory)
     mkdir -p ${bindir}/mcp
     cp -Rfv ./mcp/dist ${bindir}/mcp/
     cp -Rfv ./mcp/package.json ${bindir}/mcp/
@@ -65,9 +70,9 @@ binary(){
       -C ${bindir} .
 
     # Cross compile bydbctl
-    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64,linux/386 make -C bydbctl release
-    TARGET_OS=windows PLATFORMS=windows/amd64,windows/386 make -C bydbctl release
-    TARGET_OS=darwin PLATFORMS=darwin/amd64,darwin/arm64 make -C bydbctl release
+    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64,linux/386 RELEASE_VERSION="${RELEASE_VERSION}" make -C bydbctl release
+    TARGET_OS=windows PLATFORMS=windows/amd64,windows/386 RELEASE_VERSION="${RELEASE_VERSION}" make -C bydbctl release
+    TARGET_OS=darwin PLATFORMS=darwin/amd64,darwin/arm64 RELEASE_VERSION="${RELEASE_VERSION}" make -C bydbctl release
     rm -rf ${bindir}/bin
     mkdir -p ${bindir}/bin
     # Copy relevant files
@@ -113,12 +118,16 @@ copy_binaries() {
 }
 
 source(){
-    # Package
+    # Package only the git tree (plus .env) so untracked/local binaries cannot leak
+    # into the Apache source archive.
     tmpdir=`mktemp -d`
     trap "rm -rf ${tmpdir}" EXIT
     rm -rf ${SOURCE_FILE}
+    srcdir=${tmpdir}/src
+    mkdir -p "${srcdir}"
     pushd ${ROOTDIR}
-    echo "RELEASE_VERSION=${RELEASE_VERSION}" > .env
+    git archive --format=tar HEAD | tar -x -C "${srcdir}"
+    echo "RELEASE_VERSION=${RELEASE_VERSION}" > "${srcdir}/.env"
     tar \
     --exclude=".DS_Store" \
     --exclude="._*" \
@@ -130,7 +139,15 @@ source(){
     --exclude=".vscode" \
     --exclude="bin" \
     -czf ${tmpdir}/${SOURCE_FILE_NAME} \
-    .
+    -C "${srcdir}" .
+
+    checkdir=${tmpdir}/check
+    mkdir -p "${checkdir}"
+    tar -xzf ${tmpdir}/${SOURCE_FILE_NAME} -C "${checkdir}"
+    if find "${checkdir}" -type f -print0 | xargs -0 file | grep -E 'ELF |Mach-O '; then
+        echo "ERROR: source archive contains compiled binaries" >&2
+        exit 1
+    fi
 
     mkdir -p ${BUILDDIR}
     mv ${tmpdir}/${SOURCE_FILE_NAME} ${BUILDDIR}

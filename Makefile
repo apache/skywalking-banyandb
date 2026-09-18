@@ -320,13 +320,14 @@ license-fix: $(LICENSE_EYE) ## Fix license header issues
 license-dep: $(LICENSE_EYE)
 license-dep: TARGET=license-dep
 license-dep: PROJECTS:=ui mcp
-license-dep: default ## Fix license header issues
+license-dep: default ## Generate dependency LICENSE texts via SkyWalking Eyes
 	@rm -rf $(mk_dir)/dist/licenses
 	$(LICENSE_EYE) dep resolve -o $(mk_dir)/dist/licenses -s $(mk_dir)/dist/LICENSE.tpl
 	mv $(mk_dir)/ui/ui-licenses $(mk_dir)/dist/licenses
 	cat $(mk_dir)/ui/LICENSE >> $(mk_dir)/dist/LICENSE
-	mv $(mk_dir)/mcp/mcp-licenses $(mk_dir)/dist/licenses
-	cat $(mk_dir)/mcp/LICENSE >> $(mk_dir)/dist/LICENSE
+	@# MCP Eyes output stays under mcp/ (mcp/LICENSE, mcp/mcp-licenses). Do not
+	@# append it to dist/LICENSE: binary packages ship MCP as transpiled JS
+	@# without node_modules, so MCP npm dependency licenses are not bundled.
 
 ##@ Docker targets
 
@@ -369,7 +370,7 @@ release-sign: ## Sign artifacts
 	${RELEASE_SCRIPTS} -k fodc-proxy
 	${RELEASE_SCRIPTS} -k src
 
-release-assembly: release-binary release-sign ## Generate release package
+release-assembly: release-binary release-sign ## Assemble and sign release archives
 
 PUSH_RELEASE_SCRIPTS := $(mk_dir)/scripts/push-release.sh
 
