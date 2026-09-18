@@ -19,6 +19,7 @@ Release Notes.
 - Stamp `RELEASE_VERSION` into official release binaries so `--version` reports the release instead of `-`.
 - Pack the source release from `git archive` and reject archives that contain ELF/Mach-O binaries.
 - Stop declaring unbundled MCP npm dependencies in binary-package `LICENSE` files (MCP Eyes output remains under `mcp/` only).
+- Keep MCP and Canopy dependency license texts under `mcp/licenses/` and `canopy/licenses/` (checked in; not copied into binary packages).
 - Reject group / stream / measure / trace (and related) resource names that are not a single path-safe identifier (`[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?`), so names cannot escape catalog storage roots.
 - Bound protobuf `validate.rules` on schema and query identifiers (max length, allowlist pattern, repeated max_items, numeric ceilings) so untrusted inputs cannot escape storage roots or force unbounded allocations.
 - Honor the configured logging level in native observability metrics instead of retaining the pre-initialization debug logger.

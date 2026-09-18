@@ -32,7 +32,7 @@ make clean && make release-assembly
 * `skywalking-banyandb-${VERSION}-fodc-agent.tgz`
 * `skywalking-banyandb-${VERSION}-fodc-proxy.tgz`
 
-Binary packages include the SkyWalking Eyes output from `dist/` (`LICENSE`, `NOTICE`, `licenses/`). `make license-dep` concatenates Go and UI Eyes inventories into `dist/LICENSE`. MCP Eyes output stays under `mcp/` and is not copied into binary packages, because the release ships MCP as transpiled JS without `node_modules`.
+Binary packages include the SkyWalking Eyes output from `dist/` (`LICENSE`, `NOTICE`, `licenses/`). `make license-dep` concatenates Go and UI Eyes inventories into `dist/LICENSE`. MCP and Canopy Eyes output stays under `mcp/licenses/` and `canopy/licenses/` and is not copied into the binary packages, because those Node dependency trees are not shipped as bundled content in the Apache binary archives.
 
 ## Upload to Apache svn
 
