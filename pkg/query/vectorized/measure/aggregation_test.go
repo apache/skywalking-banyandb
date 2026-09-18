@@ -26,6 +26,7 @@ import (
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -826,6 +827,123 @@ func TestBatchAggregation_AggModeReduce_DedupsSameShardSameGroup(t *testing.T) {
 	}
 	if got := batches[0].Columns[1].(*vectorized.TypedColumn[int64]).Data()[0]; got != 10 {
 		t.Fatalf("sum_v = %d, want 10 (replica duplicate must be dropped)", got)
+	}
+}
+
+// countDistinctShardRow is one input row for
+// TestCountDistinct_MapThenReduce_SumsDisjointShardsDedupsReplicas's map
+// phase: a scan row carrying a shard id, a GroupBy key tag, and the
+// COUNT_DISTINCT target tag.
+type countDistinctShardRow struct {
+	g, target string
+	shard     int64
+}
+
+// TestCountDistinct_MapThenReduce_SumsDisjointShardsDedupsReplicas is the
+// end-to-end proof that the two Phase 2 fixes (design §7.4) compose
+// correctly: BuildOperators' shard-id-in-keyIndices fix makes the map
+// phase emit one COUNT_DISTINCT partial per (shard, group) instead of
+// merging shards into one incidentally-labeled group, and
+// distributedAggFunc's COUNT_DISTINCT→AggSum mapping lets the liaison
+// reduce those partials with the ordinary reduce path — no new code for
+// either side beyond the two fixes themselves.
+//
+// Two shards hold disjoint target values for the same group ("a"): shard 1
+// has {v1, v2} (distinct=2), shard 2 has {v3, v4} (distinct=2). Summing
+// disjoint per-shard counts must equal the true total (4) — the
+// decomposability condition's whole guarantee. Feeding shard 1's partial
+// twice (a replica duplicate) must not double it.
+func TestCountDistinct_MapThenReduce_SumsDisjointShardsDedupsReplicas(t *testing.T) {
+	scanSchema := vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleShardID, Name: shardIDOutputName, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "g", Type: vectorized.ColumnTypeString},
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "target", Type: vectorized.ColumnTypeString},
+	})
+	opts := model.MeasureQueryOptions{
+		GroupBy: &model.MeasureGroupBy{TagFamily: "default", TagNames: []string{"g"}},
+		Agg:     &model.MeasureAgg{TagFamily: "default", TagName: "target", Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT, HideTag: true},
+	}
+	tracker := vectorized.NewMemoryTracker(1 << 30)
+
+	// Map phase: one data node's BatchAggregation instance sees rows from
+	// both shards (a node commonly holds more than one shard) in one batch.
+	runMapPhase := func(rows ...countDistinctShardRow) []*vectorized.RecordBatch {
+		ops, buildErr := BuildOperators(opts, scanSchema, tracker, 8, AggModeMap)
+		if buildErr != nil {
+			t.Fatalf("BuildOperators: %v", buildErr)
+		}
+		agg := ops[0].(*BatchAggregation)
+		defer agg.Close()
+		b := vectorized.NewRecordBatch(scanSchema, len(rows))
+		shardCol := b.Columns[0].(*vectorized.TypedColumn[int64])
+		gCol := b.Columns[1].(*vectorized.TypedColumn[string])
+		targetCol := b.Columns[2].(*vectorized.TypedColumn[string])
+		for _, r := range rows {
+			shardCol.Append(r.shard)
+			gCol.Append(r.g)
+			targetCol.Append(r.target)
+		}
+		b.Len = len(rows)
+		return feedReduce(t, agg, b) // Init+Consume+Finalize+drain; works for AggModeMap too.
+	}
+
+	partials := runMapPhase(
+		countDistinctShardRow{shard: 1, g: "a", target: "v1"},
+		countDistinctShardRow{shard: 1, g: "a", target: "v2"},
+		countDistinctShardRow{shard: 2, g: "a", target: "v3"},
+		countDistinctShardRow{shard: 2, g: "a", target: "v4"},
+	)
+
+	sumOf := func(batches []*vectorized.RecordBatch) int64 {
+		var total int64
+		for _, b := range batches {
+			valIdx := len(b.Schema.Columns) - 1
+			col := b.Columns[valIdx].(*vectorized.TypedColumn[int64])
+			for i := 0; i < b.Len; i++ {
+				total += col.Data()[i]
+			}
+		}
+		return total
+	}
+	rowsOf := func(batches []*vectorized.RecordBatch) int {
+		var total int
+		for _, b := range batches {
+			total += b.Len
+		}
+		return total
+	}
+
+	// Sanity: the map phase itself must have produced 2 partial rows (one
+	// per shard), each counting 2 — proving the shard-id fix actually
+	// split the group instead of merging both shards into one. (Both rows
+	// land in a single output batch here since batchSize=8 comfortably
+	// fits 2 groups — row count is what matters, not batch count.)
+	if gotRows := rowsOf(partials); gotRows != 2 {
+		t.Fatalf("map phase produced %d partial rows, want 2 (one per shard)", gotRows)
+	}
+	if got := sumOf(partials); got != 4 {
+		t.Fatalf("map phase partials sum to %d, want 4 (2 per shard, sanity check before reduce)", got)
+	}
+
+	reduce := func(bodies []*vectorized.RecordBatch) int64 {
+		reduced, _, reduceErr := ReducePartialBatches(bodies, "default", []string{"g"}, false,
+			[]AggReduceSpec{{OutputName: "target", Func: AggSum}}, 8, vectorized.NewMemoryTracker(1<<30))
+		if reduceErr != nil {
+			t.Fatalf("ReducePartialBatches: %v", reduceErr)
+		}
+		return sumOf(reduced)
+	}
+
+	if got := reduce(partials); got != 4 {
+		t.Fatalf("reduced COUNT_DISTINCT = %d, want 4 (2+2, disjoint per-shard counts)", got)
+	}
+
+	// Replica duplicate: shard 1's partial arrives twice (e.g. from two
+	// replica nodes reporting the same shard). markDedupSeen must drop the
+	// duplicate, not add it again.
+	withReplica := append(append([]*vectorized.RecordBatch{}, partials...), partials[0])
+	if got := reduce(withReplica); got != 4 {
+		t.Fatalf("reduced COUNT_DISTINCT with a replica duplicate = %d, want 4 (duplicate must be deduped, not summed again)", got)
 	}
 }
 
