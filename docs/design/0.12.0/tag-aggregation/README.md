@@ -194,6 +194,18 @@ Shipping either feature alone leaves half the dashboard unservable.
 - **Arbitrary bucket origins.** Buckets are anchored at the Unix epoch, matching the `DATE_BIN`
   call above with `TIMESTAMP '1970-01-01 00:00:00'`. A configurable origin is not in scope.
 
+**Current limitation, not a design decision: `group_by.time_bucket` requires `agg`.** This
+document never states whether a *raw* bucketed `GroupBy` (`time_bucket` set, no `agg`) is
+supported — it is written throughout as if `agg` is always present. Implementing §7.2 found a
+concrete reason it cannot be, as things stand: the no-`agg` shape reuses `BatchAggregation`'s
+empty-`AggSpec` output layout, which — unlike `BatchGroupByFirst`, the row-preserving raw-GroupBy
+operator — does not carry the full input schema forward (it drops other fields, the series id,
+and the version), and the distributed row-merge path has no bucket-aware counterpart either. The
+analyzer rejects this combination explicitly (`plan.Analyze: time_bucket requires Agg`) rather
+than shipping a silently-truncated result. Lifting this is legitimate future work, but it needs
+schema-preservation and distributed-merge work of its own; it is not a small extension of the
+`agg` case.
+
 ---
 
 ## 4. Background: how measure aggregation works today
@@ -509,6 +521,37 @@ input via Consume, then produces output via NextBatch") relaxes to a pipelined o
 bucketed case. This also mirrors how the codebase already aggregates over time on the write path:
 `pkg/flow/streaming` assigns tumbling windows and emits them as they close, using the same
 `getWindowStart` formula.
+
+**"Relaxes to a pipelined operator" is not a small tweak to `BreakerOperator` — it needed a new
+operator shape.** `BreakerOperator` is driven by `breakerStage`, which fully drains upstream via
+repeated `Consume` calls before it ever calls the breaker's own `NextBatch` — by contract, not by
+a fixable oversight. Wrapping `BatchTimeBucket` as a `BreakerOperator` would therefore have pulled
+every upstream batch, closing every bucket the whole scan will ever produce, before emitting the
+first one: exactly the `buckets × tagGroups` cost this section exists to avoid, just moved from
+the group map into an output queue. (This is precisely the failure mode §11's testing strategy
+calls out under "Pipelining": *"A `BreakerOperator`-shaped implementation passes every correctness
+test and fails this one."*)
+
+The actual fix: `BatchTimeBucket` is a genuine `vectorized.PullOperator` that owns and pulls from
+its upstream directly inside its own `NextBatch`, rather than being driven by `breakerStage`. It
+is spliced into the pipeline via a new `PipelineBuilder.Transform(fn func(upstream PullOperator)
+PullOperator)` method (`pkg/query/vectorized/pipeline.go`) — it closes whatever has been built so
+far into one concrete `PullOperator`, hands it to `fn`, and makes `fn`'s result the new base for
+whatever follows. `Transform` is now general pipeline infrastructure, available to any future
+operator with the same requirement: pull upstream lazily, batch by batch, rather than draining it
+before serving anything. (COUNT_DISTINCT, §7.3–§7.4, does not need it — it reuses
+`BatchAggregation`'s existing `Consume`/`NextBatch` contract unchanged.)
+
+A related pitfall surfaced during review even after the `PullOperator` rewrite: `BatchTimeBucket`
+originally still drained a closed bucket's aggregator in one synchronous loop before returning
+anything. That is harmless for the streaming path (one bucket's groups are bounded by construction
+either way), but index mode's non-streaming aggregator can represent the *entire* scan — so
+draining it in one shot re-introduced the same "materialize everything before returning the first
+batch" shape this whole design exists to avoid, just at the output-queue layer instead of the
+group-map layer. The fix (`drainMapModeAggregator`) pulls that terminal aggregator one page at a
+time, interleaved with normal output commits, the same discipline the upstream pull loop already
+follows. Any future operator that holds one aggregator across an entire unordered scan — a
+candidate shape for other index-mode fallbacks — should drain it the same way.
 
 **Index mode does not get this guarantee, and must not stream.** `query.go:140-147` returns
 through the index-mode branch *before* the ordering setup above ever runs; `buildIndexQueryResult`
@@ -916,17 +959,36 @@ top.FieldName` on the reduced batch, and the aggregate result is exactly such a 
 `offset`/`limit` are applied by `iteratorFromBatches` (`distributed.go:988`). The ranked case
 therefore falls out of §7.4 with no extra work.
 
-**Ordering needs no sort pass.** Because §7.2 streams buckets in ascending order, and
-`BatchAggregation` already emits groups in insertion order (`BatchAggregation.insertion`), a
-bucketed result is bucket-ascending by construction — on each node, and at the liaison after the
-k-way merge. Ordering by the bucket ascending — the default a bucketed query wants — is satisfied by the scan
-ordering the engine already provides, not by re-sorting the aggregate. Within a bucket, groups
-keep insertion order unless `top` or `order_by` says otherwise.
+**Node-local ordering needs no sort pass — but that is the only place it's free.** Because §7.2
+streams buckets in ascending order, and `BatchAggregation` already emits groups in insertion
+order (`BatchAggregation.insertion`), one node's own bucketed output is bucket-ascending by
+construction, with no extra pass. This is the second dividend of streaming: a sort over
+`buckets × tagGroups` rows would have been cheap in absolute terms but would have re-imposed a
+blocking stage on an otherwise pipelined query, forfeiting the latency win. The third dividend is
+that the bucket-advance check this operator already performs is exactly the span boundary
+run-folding needs (§7.7).
 
-This is the second dividend of streaming: a sort over `buckets × tagGroups` rows would have been
-cheap in absolute terms but would have re-imposed a blocking stage on an otherwise pipelined
-query, forfeiting the latency win. The third is that the bucket-advance check this operator
-already performs is exactly the span boundary run-folding needs (§7.7).
+**An earlier version of this section claimed the liaison merge and index mode inherit that same
+ordering "by construction." They do not, and implementing §7.2 surfaced both gaps:**
+
+- **The liaison reduce.** `ReducePartialBatches` consumes each node's partial fully before moving
+  to the next, so `BatchAggregation.insertion` ends up only *piecewise* ascending — node A's
+  `[2000, 3000]` followed by node B's `[1000, 2000]` inserts as `[2000, 3000, 1000]`, not merged.
+  `iteratorFromBatches`'s offset/limit pagination needs the globally merged order, not the
+  per-partial one.
+- **Index mode's map fallback.** §7.2's non-streaming path holds one persistent aggregator across
+  the whole scan precisely because its input may not be time-ordered — so its insertion order is
+  first-seen, not bucket order, by design.
+
+Both are fixed the same way: `BatchAggregation.SortInsertionByBucket()` stable-sorts
+`a.insertion` by each group's captured bucket timestamp immediately before it is drained (once in
+`ReducePartialBatches`, after `Finalize`; once in `BatchTimeBucket`'s map-mode terminal drain). It
+is a no-op for a streaming-mode instance, since every group in one such instance already shares
+the same bucket by construction — so the fix costs nothing on the already-correct path and only
+does real work where ordering was not actually free. **Any future aggregate that reuses this
+reduce path (COUNT_DISTINCT included — see §7.4, which pushes down through the same
+`AggModeMap`/`AggModeReduce` machinery) inherits this fix automatically and must not re-introduce
+the "ordering is free" assumption.**
 
 Ordering and `top` interact in the obvious way — `top` selects globally (§3), then the surviving
 rows are emitted in bucket order. A client wanting "the global top 20 devices, plotted over time"
