@@ -183,6 +183,22 @@ func AnalyzeDistributed(
 	if cfgErr := cfg.Validate(); cfgErr != nil {
 		return nil, fmt.Errorf("vec distributed analyze: %w", cfgErr)
 	}
+	// COUNT_DISTINCT does not support multi-group requests. Shard ids are
+	// scoped per measure group, not globally unique — two independent
+	// groups can each report "shard 0" for the same GroupBy key, and
+	// markDedupSeen's (shardID, groupKey) dedup key cannot tell that
+	// collision apart from a genuine replica duplicate. Depending on which
+	// partial the collision drops, the result can undercount (two
+	// groups' distinct target values collapse to one) or double-count
+	// (the same target value happens to appear on both groups' colliding
+	// shards). Rejecting outright is the honest signal until cross-group
+	// distinctness has its own identity to dedup on — the same posture
+	// design §7.4 takes for multi-stage requests, one layer up.
+	if len(measureSchemas) > 1 && req.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT {
+		return nil, fmt.Errorf("vec distributed analyze: COUNT_DISTINCT does not support multi-group requests — " +
+			"shard ids are not unique across measure groups, so replica dedup cannot distinguish a genuine " +
+			"duplicate from an unrelated partial; query each group separately")
+	}
 	// COUNT_DISTINCT's decomposability condition (design §7.4) must hold
 	// for every group in a multi-group request — the same check Analyze
 	// runs for standalone, since the rule is deliberately uniform across

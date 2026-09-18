@@ -250,8 +250,65 @@ func TestAnalyzeDistributed_CountDistinct_MultiGroup_AnyGroupCanReject(t *testin
 		Agg:             countDistinctAgg(defaultName, tagCount),
 	}
 	cfg := vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1}
+	// Both this scenario (a decomposability failure on one of two groups)
+	// and the blanket multi-group rejection below reject the same request
+	// today — the blanket check fires first, per AnalyzeDistributed's
+	// ordering. This assertion holds regardless of which one is
+	// responsible, so it stays valid if the blanket rejection is ever
+	// lifted and per-group decomposability becomes reachable again for
+	// multi-group requests.
 	if _, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{okSchema, badSchema}, nil, cfg); analyzeErr == nil {
-		t.Fatal("a multi-group COUNT_DISTINCT request must reject when any group's schema fails the decomposability condition")
+		t.Fatal("a multi-group COUNT_DISTINCT request with a decomposability failure must reject")
+	}
+}
+
+// TestAnalyzeDistributed_CountDistinct_MultiGroup_AlwaysRejected pins the
+// P2 review finding on the first version of the decomposability check:
+// checking routing coverage independently per group does not make distinct
+// counts additive ACROSS groups. Shard ids are scoped per measure group,
+// not globally unique, so two different groups can each report "shard 0"
+// for the same GroupBy key — markDedupSeen's (shardID, groupKey) dedup key
+// cannot tell that apart from a genuine replica duplicate, and depending
+// on which partial the collision drops, the result can undercount or
+// double-count. Multi-group COUNT_DISTINCT is rejected outright,
+// regardless of whether every individual group would otherwise satisfy
+// the decomposability condition.
+func TestAnalyzeDistributed_CountDistinct_MultiGroup_AlwaysRejected(t *testing.T) {
+	msA := entityShardingSchema([]string{tagCount}, nil)
+	msA.Metadata = &commonv1.Metadata{Name: "demo", Group: "groupA"}
+	msB := entityShardingSchema([]string{tagCount}, nil)
+	msB.Metadata = &commonv1.Metadata{Name: "demo", Group: "groupB"}
+
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		Groups:          []string{"groupA", "groupB"},
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg:             countDistinctAgg(defaultName, tagCount),
+	}
+	cfg := vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1}
+	if _, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{msA, msB}, nil, cfg); analyzeErr == nil {
+		t.Fatal("COUNT_DISTINCT must reject a multi-group request even when every group independently satisfies the decomposability condition")
+	}
+}
+
+// TestAnalyzeDistributed_SumAgg_MultiGroup_StillAccepted pins that the new
+// multi-group rejection is COUNT_DISTINCT-specific: every other function
+// composes with multi-group requests exactly as before (an existing,
+// already-shipped feature this issue must not regress).
+func TestAnalyzeDistributed_SumAgg_MultiGroup_StillAccepted(t *testing.T) {
+	msA := testMeasureSchemaForGroup("groupA")
+	msB := testMeasureSchemaForGroup("groupB")
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		Groups:          []string{"groupA", "groupB"},
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg:             &measurev1.QueryRequest_Aggregation{Function: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, FieldName: fieldValue},
+	}
+	cfg := vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1}
+	if _, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{msA, msB}, nil, cfg); analyzeErr != nil {
+		t.Fatalf("a multi-group SUM request must still be accepted: %v", analyzeErr)
 	}
 }
 
