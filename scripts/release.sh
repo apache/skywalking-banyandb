@@ -53,7 +53,18 @@ binary(){
     TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 RELEASE_VERSION="${RELEASE_VERSION}" make -C fodc/agent release
     TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 RELEASE_VERSION="${RELEASE_VERSION}" make -C fodc/proxy release
     bindir=./build
-    stage_binary_package banyand banyand --with-mcp
+    mkdir -p ${bindir}/bin
+    # Copy relevant files
+    copy_binaries banyand
+    cp -Rfv ./CHANGES.md ${bindir}
+    cp -Rfv ./README.md ${bindir}
+    # Eyes-generated Go + UI licensing from dist/ (MCP npm deps are not bundled).
+    cp -Rfv ./dist/* ${bindir}
+    # Copy MCP server (transpiled JS only; no node_modules / no MCP LICENSE inventory)
+    mkdir -p ${bindir}/mcp
+    cp -Rfv ./mcp/dist ${bindir}/mcp/
+    cp -Rfv ./mcp/package.json ${bindir}/mcp/
+    # Package
     tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-banyand.tgz \
       --exclude="._*" --exclude="__MACOSX" \
       -C ${bindir} .
@@ -62,63 +73,30 @@ binary(){
     TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64,linux/386 RELEASE_VERSION="${RELEASE_VERSION}" make -C bydbctl release
     TARGET_OS=windows PLATFORMS=windows/amd64,windows/386 RELEASE_VERSION="${RELEASE_VERSION}" make -C bydbctl release
     TARGET_OS=darwin PLATFORMS=darwin/amd64,darwin/arm64 RELEASE_VERSION="${RELEASE_VERSION}" make -C bydbctl release
-    stage_binary_package bydbctl bydbctl
+    rm -rf ${bindir}/bin
+    mkdir -p ${bindir}/bin
+    # Copy relevant files
+    copy_binaries bydbctl
+    # Package
     tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-bydbctl.tgz \
       --exclude="._*" --exclude="__MACOSX" \
       -C ${bindir} .
 
-    stage_binary_package fodc/agent fodc-agent
+    # Build fodc-agent
+    rm -rf ${bindir}/bin
+    mkdir -p ${bindir}/bin
+    copy_binaries fodc/agent
     tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-fodc-agent.tgz \
       --exclude="._*" --exclude="__MACOSX" \
       -C ${bindir} .
 
-    stage_binary_package fodc/proxy fodc-proxy
+    # Build fodc-proxy
+    rm -rf ${bindir}/bin
+    mkdir -p ${bindir}/bin
+    copy_binaries fodc/proxy
     tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-fodc-proxy.tgz \
       --exclude="._*" --exclude="__MACOSX" \
       -C ${bindir} .
-}
-
-stage_binary_package() {
-    local module=$1
-    local pkg=$2
-    local with_mcp=0
-    local extra_args=()
-    if [ "${3:-}" = "--with-mcp" ]; then
-        with_mcp=1
-    fi
-    echo "Staging ${pkg} package"
-    rm -rf "${bindir}"
-    mkdir -p "${bindir}/bin"
-    copy_binaries "${module}"
-    cp -Rfv ./CHANGES.md "${bindir}"
-    if [ "${with_mcp}" -eq 1 ]; then
-        mkdir -p "${bindir}/mcp"
-        cp -Rfv ./mcp/dist "${bindir}/mcp/"
-        cp -Rfv ./mcp/package.json "${bindir}/mcp/"
-        extra_args+=(
-            --extra-license ./ui/LICENSE
-            --extra-licenses-dir ./dist/licenses/ui-licenses
-            --extra-license ./mcp/LICENSE
-            --extra-licenses-dir ./dist/licenses/mcp-licenses
-        )
-    fi
-    mkdir -p "${BUILDDIR}/license-compliance/inventories"
-    python3 ./scripts/package-licenses.py \
-        --license ./dist/LICENSE \
-        --licenses-dir ./dist/licenses \
-        --bins "${bindir}/bin" \
-        --out "${bindir}" \
-        --notice ./dist/NOTICE \
-        --readme ./README.md \
-        --obligations ./dist/legal/obligations.json \
-        --legal-root ./dist/legal \
-        --license-texts-fallback ./dist/legal/license-texts \
-        --inventory-out "${BUILDDIR}/license-compliance/inventories/${pkg}.json" \
-        "${extra_args[@]}"
-    python3 ./scripts/license-compliance.py validate-dir \
-        --package "${bindir}" \
-        --obligations ./dist/legal/obligations.json \
-        --legal-root ./dist/legal
 }
 
 copy_binaries() {

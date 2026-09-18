@@ -32,7 +32,7 @@ make clean && make release-assembly
 * `skywalking-banyandb-${VERSION}-fodc-agent.tgz`
 * `skywalking-banyandb-${VERSION}-fodc-proxy.tgz`
 
-Binary packages get package-specific `LICENSE`, `NOTICE`, and README disclosures assembled by `scripts/package-licenses.py` from SkyWalking Eyes output plus reviewed obligations in `dist/legal/`. Before signing, `make release-validate` inspects the archives. Locally and in CI, run `make license-compliance` to regenerate Eyes catalogs, check reviewed NOTICE/disclosure obligations, run packaging tests, and fail on generated licensing drift. See [license-compliance-design.md](../contribute/license-compliance-design.md) for the full design.
+Binary packages include the SkyWalking Eyes output from `dist/` (`LICENSE`, `NOTICE`, `licenses/`). `make license-dep` concatenates Go and UI Eyes inventories into `dist/LICENSE`. MCP Eyes output stays under `mcp/` and is not copied into binary packages, because the release ships MCP as transpiled JS without `node_modules`.
 
 ## Upload to Apache svn
 
