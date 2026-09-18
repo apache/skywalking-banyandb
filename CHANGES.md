@@ -21,6 +21,7 @@ Release Notes.
 - Stop declaring unbundled MCP npm dependencies in binary-package root `LICENSE` files (MCP Eyes output stays under `mcp/`).
 - Keep MCP and Canopy dependency license texts under `mcp/licenses/` and `canopy/licenses/` (checked in). Go binary packages that stage MCP also ship `mcp/LICENSE`, `mcp/licenses/`, and `mcp/package-lock.json` with `mcp/dist`.
 - Ship Canopy as an independent release archive (`skywalking-banyandb-*-canopy.tgz`) with built SPA/BFF artifacts and Canopy Eyes licenses.
+- Include the full Apache-2.0 text in Canopy's root `LICENSE` and drop the accidental Linux-only `@rollup/rollup-linux-x64-gnu` hard dependency so `npm ci --omit=dev` works on macOS ARM64.
 - Reject group / stream / measure / trace (and related) resource names that are not a single path-safe identifier (`[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?`), so names cannot escape catalog storage roots.
 - Bound protobuf `validate.rules` on schema and query identifiers (max length, allowlist pattern, repeated max_items, numeric ceilings) so untrusted inputs cannot escape storage roots or force unbounded allocations.
 - Honor the configured logging level in native observability metrics instead of retaining the pre-initialization debug logger.
