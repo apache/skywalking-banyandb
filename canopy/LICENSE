@@ -1,0 +1,468 @@
+========================================================================
+Canopy related licenses
+========================================================================
+
+The following components are used in Canopy. See project link for details.
+The text of each license is also included at licenses/license-[project].txt.
+ 
+
+========================================================================
+Apache-2.0 licenses
+========================================================================
+
+    @eslint/config-array 0.21.2 Apache-2.0
+    @eslint/config-helpers 0.4.2 Apache-2.0
+    @eslint/core 0.17.0 Apache-2.0
+    @eslint/object-schema 2.1.7 Apache-2.0
+    @eslint/plugin-kit 0.4.1 Apache-2.0
+    @humanfs/core 0.19.2 Apache-2.0
+    @humanfs/node 0.16.8 Apache-2.0
+    @humanfs/types 0.15.0 Apache-2.0
+    @humanwhocodes/module-importer 1.0.1 Apache-2.0
+    @humanwhocodes/retry 0.4.3 Apache-2.0
+    b4a 1.8.1 Apache-2.0
+    bare-addon-resolve 1.10.1 Apache-2.0
+    bare-ansi-escapes 2.2.3 Apache-2.0
+    bare-assert 1.2.0 Apache-2.0
+    bare-events 2.9.1 Apache-2.0
+    bare-inspect 3.1.5 Apache-2.0
+    bare-module-resolve 1.12.4 Apache-2.0
+    bare-semver 1.1.0 Apache-2.0
+    bare-stream 2.13.3 Apache-2.0
+    bare-type 1.1.0 Apache-2.0
+    canopy-server 0.1.0 Apache-2.0
+    canopy-shared 0.1.0 Apache-2.0
+    canopy-web 0.1.0 Apache-2.0
+    detect-libc 2.1.2 Apache-2.0
+    doctrine 2.1.0 Apache-2.0
+    eslint-visitor-keys 3.4.3 Apache-2.0
+    eslint/node_modules/eslint-visitor-keys 4.2.1 Apache-2.0
+    espree/node_modules/eslint-visitor-keys 4.2.1 Apache-2.0
+    events-universal 1.0.1 Apache-2.0
+    expect-type 1.4.0 Apache-2.0
+    require-addon 1.2.0 Apache-2.0
+    text-decoder 1.2.7 Apache-2.0
+    which-runtime 1.4.0 Apache-2.0
+    xml-name-validator 5.0.0 Apache-2.0
+
+========================================================================
+BSD-2-Clause licenses
+========================================================================
+
+    entities 6.0.1 BSD-2-Clause
+    eslint-scope 8.4.0 BSD-2-Clause
+    espree 10.4.0 BSD-2-Clause
+    esrecurse 4.3.0 BSD-2-Clause
+    estraverse 5.3.0 BSD-2-Clause
+    esutils 2.0.3 BSD-2-Clause
+    uri-js 4.4.1 BSD-2-Clause
+    webidl-conversions 7.0.0 BSD-2-Clause
+
+========================================================================
+BSD-3-Clause licenses
+========================================================================
+
+    @fastify/ajv-compiler/node_modules/ajv/node_modules/fast-uri 3.1.5 BSD-3-Clause
+    ajv-formats/node_modules/fast-uri 3.1.5 BSD-3-Clause
+    bcryptjs 3.0.3 BSD-3-Clause
+    esquery 1.7.0 BSD-3-Clause
+    fast-json-stringify/node_modules/ajv/node_modules/fast-uri 3.1.5 BSD-3-Clause
+    fast-uri 4.1.2 BSD-3-Clause
+    istanbul-lib-coverage 3.2.2 BSD-3-Clause
+    istanbul-lib-report 3.0.1 BSD-3-Clause
+    istanbul-reports 3.2.0 BSD-3-Clause
+    light-my-request 6.6.0 BSD-3-Clause
+    secure-json-parse 4.1.0 BSD-3-Clause
+    source-map-js 1.2.1 BSD-3-Clause
+    tough-cookie 5.1.2 BSD-3-Clause
+
+========================================================================
+BlueOak-1.0.0 licenses
+========================================================================
+
+    glob 13.0.6 BlueOak-1.0.0
+    minimatch 10.2.6 BlueOak-1.0.0
+    minipass 7.1.3 BlueOak-1.0.0
+    path-scurry 2.0.2 BlueOak-1.0.0
+    path-scurry/node_modules/lru-cache 11.5.2 BlueOak-1.0.0
+
+========================================================================
+ISC licenses
+========================================================================
+
+    eslint-plugin-react/node_modules/semver 6.3.1 ISC
+    fastq 1.20.1 ISC
+    flatted 3.4.4 ISC
+    glob-parent 6.0.2 ISC
+    inherits 2.0.4 ISC
+    isexe 2.0.0 ISC
+    lru-cache 10.4.3 ISC
+    node-exports-info/node_modules/semver 6.3.1 ISC
+    picocolors 1.1.1 ISC
+    saxes 6.0.0 ISC
+    semver 7.8.5 ISC
+    setprototypeof 1.2.0 ISC
+    siginfo 2.0.0 ISC
+    split2 4.2.0 ISC
+    which 2.0.2 ISC
+
+========================================================================
+MIT licenses
+========================================================================
+
+    ../web/node_modules/@fastify/static 10.1.2 MIT
+    @asamuzakjp/css-color 3.2.0 MIT
+    @babel/helper-string-parser 7.29.7 MIT
+    @babel/helper-validator-identifier 7.29.7 MIT
+    @babel/parser 7.29.8 MIT
+    @babel/types 7.29.8 MIT
+    @bcoe/v8-coverage 1.0.2 MIT
+    @csstools/css-calc 2.1.4 MIT
+    @csstools/css-color-parser 3.1.0 MIT
+    @csstools/css-parser-algorithms 3.0.5 MIT
+    @csstools/css-tokenizer 3.0.4 MIT
+    @esbuild/linux-x64 0.28.2 MIT
+    @eslint-community/eslint-utils 4.10.1 MIT
+    @eslint-community/regexpp 4.12.2 MIT
+    @eslint/eslintrc 3.3.6 MIT
+    @eslint/eslintrc/node_modules/ignore 5.3.2 MIT
+    @eslint/js 9.39.5 MIT
+    @fastify/accept-negotiator 2.1.0 MIT
+    @fastify/ajv-compiler 4.0.6 MIT
+    @fastify/ajv-compiler/node_modules/ajv 8.20.0 MIT
+    @fastify/ajv-compiler/node_modules/json-schema-traverse 1.0.0 MIT
+    @fastify/cookie 11.1.2 MIT
+    @fastify/error 4.2.0 MIT
+    @fastify/fast-json-stringify-compiler 5.1.0 MIT
+    @fastify/forwarded 3.0.2 MIT
+    @fastify/merge-json-schemas 0.2.1 MIT
+    @fastify/proxy-addr 5.1.0 MIT
+    @fastify/secure-session 8.3.0 MIT
+    @fastify/secure-session/node_modules/fastify-plugin 5.1.0 MIT
+    @fastify/send 4.1.1 MIT
+    @fastify/static 10.1.3 MIT
+    @jridgewell/resolve-uri 3.1.2 MIT
+    @jridgewell/sourcemap-codec 1.5.5 MIT
+    @jridgewell/trace-mapping 0.3.31 MIT
+    @lukeed/ms 2.0.2 MIT
+    @oxc-project/types 0.144.0 MIT
+    @pinojs/redact 0.4.0 MIT
+    @rolldown/binding-linux-x64-gnu 1.2.4 MIT
+    @rolldown/pluginutils 1.0.1 MIT
+    @rollup/rollup-linux-x64-gnu 4.62.4 MIT
+    @standard-schema/spec 1.1.0 MIT
+    @tanstack/query-core 5.101.4 MIT
+    @tanstack/react-query 5.101.4 MIT
+    @types/chai 5.2.3 MIT
+    @types/deep-eql 4.0.2 MIT
+    @types/estree 1.0.9 MIT
+    @types/json-schema 7.0.15 MIT
+    @types/node 24.13.3 MIT
+    @types/react 19.2.18 MIT
+    @vitest/coverage-v8 4.1.10 MIT
+    @vitest/expect 4.1.10 MIT
+    @vitest/mocker 4.1.10 MIT
+    @vitest/pretty-format 4.1.10 MIT
+    @vitest/runner 4.1.10 MIT
+    @vitest/snapshot 4.1.10 MIT
+    @vitest/spy 4.1.10 MIT
+    @vitest/utils 4.1.10 MIT
+    abstract-logging 2.0.1 MIT
+    acorn 8.18.0 MIT
+    acorn-jsx 5.3.2 MIT
+    agent-base 7.1.4 MIT
+    ajv 6.15.0 MIT
+    ajv-formats 3.0.1 MIT
+    ajv-formats/node_modules/ajv 8.20.0 MIT
+    ajv-formats/node_modules/json-schema-traverse 1.0.0 MIT
+    array-buffer-byte-length 1.0.2 MIT
+    array-includes 3.1.9 MIT
+    array.prototype.findlast 1.2.5 MIT
+    array.prototype.flat 1.3.3 MIT
+    array.prototype.flatmap 1.3.3 MIT
+    array.prototype.tosorted 1.1.4 MIT
+    arraybuffer.prototype.slice 1.0.4 MIT
+    assertion-error 2.0.1 MIT
+    ast-v8-to-istanbul 1.0.5 MIT
+    ast-v8-to-istanbul/node_modules/js-tokens 10.0.0 MIT
+    async-function 1.0.0 MIT
+    atomic-sleep 1.0.0 MIT
+    available-typed-arrays 1.0.7 MIT
+    avvio 9.3.0 MIT
+    balanced-match 4.0.4 MIT
+    brace-expansion 5.0.9 MIT
+    call-bind 1.0.9 MIT
+    call-bind-apply-helpers 1.0.2 MIT
+    call-bound 1.0.4 MIT
+    callsites 3.1.0 MIT
+    chai 6.2.2 MIT
+    chalk 4.1.2 MIT
+    chalk/node_modules/ansi-styles 4.3.0 MIT
+    color-convert 2.0.1 MIT
+    color-name 1.1.4 MIT
+    content-disposition 2.0.1 MIT
+    convert-source-map 2.0.0 MIT
+    cookie 2.0.1 MIT
+    cookie-es 3.1.1 MIT
+    cross-spawn 7.0.6 MIT
+    cssstyle 4.6.0 MIT
+    csstype 3.2.3 MIT
+    data-urls 5.0.0 MIT
+    data-view-buffer 1.0.2 MIT
+    data-view-byte-length 1.0.2 MIT
+    data-view-byte-offset 1.0.1 MIT
+    debug 4.4.3 MIT
+    decimal.js 10.6.0 MIT
+    deep-is 0.1.4 MIT
+    define-data-property 1.1.4 MIT
+    define-properties 1.2.1 MIT
+    depd 2.0.0 MIT
+    dequal 2.0.3 MIT
+    dunder-proto 1.0.1 MIT
+    es-abstract 1.24.2 MIT
+    es-abstract-get 1.0.0 MIT
+    es-define-property 1.0.1 MIT
+    es-errors 1.3.0 MIT
+    es-iterator-helpers 1.4.0 MIT
+    es-module-lexer 2.3.2 MIT
+    es-object-atoms 1.1.2 MIT
+    es-set-tostringtag 2.1.0 MIT
+    es-shim-unscopables 1.1.0 MIT
+    es-to-primitive 1.3.4 MIT
+    esbuild 0.28.2 MIT
+    escape-html 1.0.3 MIT
+    escape-string-regexp 4.0.0 MIT
+    eslint 9.39.5 MIT
+    eslint-plugin-react 7.37.5 MIT
+    eslint/node_modules/ignore 5.3.2 MIT
+    estree-walker 3.0.3 MIT
+    fast-decode-uri-component 1.0.1 MIT
+    fast-deep-equal 3.1.3 MIT
+    fast-fifo 1.3.2 MIT
+    fast-json-stable-stringify 2.1.0 MIT
+    fast-json-stringify 7.0.1 MIT
+    fast-json-stringify/node_modules/ajv 8.20.0 MIT
+    fast-json-stringify/node_modules/json-schema-traverse 1.0.0 MIT
+    fast-levenshtein 2.0.6 MIT
+    fast-querystring 1.1.2 MIT
+    fastify 5.12.0 MIT
+    fastify-plugin 6.0.0 MIT
+    fdir 6.5.0 MIT
+    file-entry-cache 8.0.0 MIT
+    find-my-way 9.8.0 MIT
+    find-up 5.0.0 MIT
+    flat-cache 4.0.1 MIT
+    for-each 0.3.5 MIT
+    function-bind 1.1.2 MIT
+    function.prototype.name 1.2.0 MIT
+    functions-have-names 1.2.3 MIT
+    generator-function 2.0.1 MIT
+    get-intrinsic 1.3.0 MIT
+    get-proto 1.0.1 MIT
+    get-symbol-description 1.1.0 MIT
+    globals 14.0.0 MIT
+    globalthis 1.0.4 MIT
+    gopd 1.2.0 MIT
+    has-bigints 1.1.0 MIT
+    has-flag 4.0.0 MIT
+    has-property-descriptors 1.0.2 MIT
+    has-proto 1.2.0 MIT
+    has-symbols 1.1.0 MIT
+    has-tostringtag 1.0.2 MIT
+    hasown 2.0.4 MIT
+    html-encoding-sniffer 4.0.0 MIT
+    html-escaper 2.0.2 MIT
+    http-errors 2.0.1 MIT
+    http-proxy-agent 7.0.2 MIT
+    https-proxy-agent 7.0.6 MIT
+    iconv-lite 0.6.3 MIT
+    import-fresh 3.3.1 MIT
+    imurmurhash 0.1.4 MIT
+    internal-slot 1.1.0 MIT
+    ipaddr.js 2.5.0 MIT
+    is-array-buffer 3.0.5 MIT
+    is-async-function 2.1.1 MIT
+    is-bigint 1.1.0 MIT
+    is-boolean-object 1.2.2 MIT
+    is-callable 1.2.7 MIT
+    is-core-module 2.16.2 MIT
+    is-data-view 1.0.2 MIT
+    is-date-object 1.1.0 MIT
+    is-document.all 1.0.0 MIT
+    is-extglob 2.1.1 MIT
+    is-finalizationregistry 1.1.1 MIT
+    is-generator-function 1.1.2 MIT
+    is-glob 4.0.3 MIT
+    is-map 2.0.3 MIT
+    is-negative-zero 2.0.3 MIT
+    is-number-object 1.1.1 MIT
+    is-potential-custom-element-name 1.0.1 MIT
+    is-regex 1.2.1 MIT
+    is-set 2.0.3 MIT
+    is-shared-array-buffer 1.0.4 MIT
+    is-string 1.1.1 MIT
+    is-symbol 1.1.1 MIT
+    is-typed-array 1.1.15 MIT
+    is-weakmap 2.0.2 MIT
+    is-weakref 1.1.1 MIT
+    is-weakset 2.0.4 MIT
+    isarray 2.0.5 MIT
+    iterator.prototype 1.1.5 MIT
+    js-tokens 4.0.0 MIT
+    js-yaml 4.3.1 MIT
+    jsdom 26.1.0 MIT
+    json-buffer 3.0.1 MIT
+    json-schema-ref-resolver 3.0.0 MIT
+    json-schema-traverse 0.4.1 MIT
+    json-stable-stringify-without-jsonify 1.0.1 MIT
+    jsx-ast-utils 3.3.5 MIT
+    keyv 4.5.4 MIT
+    levn 0.4.1 MIT
+    light-my-request/node_modules/cookie 1.1.1 MIT
+    light-my-request/node_modules/process-warning 4.0.1 MIT
+    locate-path 6.0.0 MIT
+    lodash.merge 4.6.2 MIT
+    loose-envify 1.4.0 MIT
+    magic-string 0.30.21 MIT
+    magicast 0.5.4 MIT
+    make-dir 4.0.0 MIT
+    math-intrinsics 1.1.0 MIT
+    mime 3.0.0 MIT
+    ms 2.1.3 MIT
+    nanoid 3.3.18 MIT
+    natural-compare 1.4.0 MIT
+    node-exports-info 1.6.2 MIT
+    nwsapi 2.2.24 MIT
+    object-assign 4.1.1 MIT
+    object-inspect 1.13.4 MIT
+    object-keys 1.1.1 MIT
+    object.assign 4.1.7 MIT
+    object.entries 1.1.9 MIT
+    object.fromentries 2.0.8 MIT
+    object.values 1.2.1 MIT
+    obug 2.1.4 MIT
+    on-exit-leak-free 2.1.2 MIT
+    optionator 0.9.4 MIT
+    own-keys 1.0.2 MIT
+    p-limit 3.1.0 MIT
+    p-locate 5.0.0 MIT
+    parent-module 1.0.1 MIT
+    parse5 7.3.0 MIT
+    path-exists 4.0.0 MIT
+    path-key 3.1.1 MIT
+    path-parse 1.0.7 MIT
+    pathe 2.0.3 MIT
+    picomatch 4.0.5 MIT
+    pino 10.3.1 MIT
+    pino-abstract-transport 3.0.0 MIT
+    pino-std-serializers 7.1.0 MIT
+    possible-typed-array-names 1.1.0 MIT
+    postcss 8.5.26 MIT
+    prelude-ls 1.2.1 MIT
+    process-warning 5.1.0 MIT
+    prop-types 15.8.1 MIT
+    prop-types/node_modules/react-is 16.13.1 MIT
+    punycode 2.3.1 MIT
+    quick-format-unescaped 4.0.4 MIT
+    react 19.2.8 MIT
+    react-dom 19.2.8 MIT
+    react-router 8.3.0 MIT
+    real-require 0.2.0 MIT
+    reflect.getprototypeof 1.0.10 MIT
+    regexp.prototype.flags 1.5.4 MIT
+    require-from-string 2.0.2 MIT
+    resolve 2.0.0-next.7 MIT
+    resolve-from 4.0.0 MIT
+    ret 0.5.0 MIT
+    reusify 1.1.0 MIT
+    rfdc 1.4.1 MIT
+    rolldown 1.2.4 MIT
+    rrweb-cssom 0.8.0 MIT
+    safe-array-concat 1.1.4 MIT
+    safe-push-apply 1.0.0 MIT
+    safe-regex-test 1.1.0 MIT
+    safe-regex2 5.1.1 MIT
+    safe-stable-stringify 2.5.0 MIT
+    safer-buffer 2.1.2 MIT
+    scheduler 0.27.0 MIT
+    set-cookie-parser 2.7.2 MIT
+    set-function-length 1.2.2 MIT
+    set-function-name 2.0.2 MIT
+    set-proto 1.0.0 MIT
+    shebang-command 2.0.0 MIT
+    shebang-regex 3.0.0 MIT
+    side-channel 1.1.1 MIT
+    side-channel-list 1.0.1 MIT
+    side-channel-map 1.0.1 MIT
+    side-channel-weakmap 1.0.2 MIT
+    sodium-native 5.1.0 MIT
+    sonic-boom 4.2.1 MIT
+    stackback 0.0.2 MIT
+    statuses 2.0.2 MIT
+    std-env 4.2.0 MIT
+    stop-iteration-iterator 1.1.0 MIT
+    streamx 2.28.0 MIT
+    string.prototype.matchall 4.0.12 MIT
+    string.prototype.repeat 1.0.0 MIT
+    string.prototype.trim 1.2.11 MIT
+    string.prototype.trimend 1.0.10 MIT
+    string.prototype.trimstart 1.0.8 MIT
+    strip-json-comments 3.1.1 MIT
+    supports-color 7.2.0 MIT
+    supports-preserve-symlinks-flag 1.0.0 MIT
+    symbol-tree 3.2.4 MIT
+    teex 1.0.1 MIT
+    thread-stream 4.2.0 MIT
+    thread-stream/node_modules/real-require 1.0.0 MIT
+    tinybench 2.9.0 MIT
+    tinyexec 1.3.0 MIT
+    tinyglobby 0.2.17 MIT
+    tinyrainbow 3.1.1 MIT
+    tldts 6.1.86 MIT
+    tldts-core 6.1.86 MIT
+    toad-cache 3.7.4 MIT
+    toidentifier 1.0.1 MIT
+    tr46 5.1.1 MIT
+    type-check 0.4.0 MIT
+    typed-array-buffer 1.0.3 MIT
+    typed-array-byte-length 1.0.3 MIT
+    typed-array-byte-offset 1.0.4 MIT
+    typed-array-length 1.0.8 MIT
+    unbox-primitive 1.1.0 MIT
+    undici 7.29.0 MIT
+    undici-types 7.18.2 MIT
+    vite 8.2.1 MIT
+    vitest 4.1.10 MIT
+    w3c-xmlserializer 5.0.0 MIT
+    whatwg-encoding 3.1.1 MIT
+    whatwg-mimetype 4.0.0 MIT
+    whatwg-url 14.2.0 MIT
+    which-boxed-primitive 1.1.1 MIT
+    which-builtin-type 1.2.1 MIT
+    which-collection 1.0.2 MIT
+    which-typed-array 1.1.22 MIT
+    why-is-node-running 2.3.0 MIT
+    word-wrap 1.2.5 MIT
+    ws 8.21.3 MIT
+    xmlchars 2.2.0 MIT
+    yocto-queue 0.1.0 MIT
+    zustand 5.0.15 MIT
+
+========================================================================
+MIT-0 licenses
+========================================================================
+
+    @csstools/color-helpers 5.1.0 MIT-0
+
+========================================================================
+MPL-2.0 licenses
+========================================================================
+
+    lightningcss 1.33.0 MPL-2.0
+
+========================================================================
+Python-2.0 licenses
+========================================================================
+
+    argparse 2.0.1 Python-2.0
+

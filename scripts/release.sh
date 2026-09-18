@@ -97,6 +97,36 @@ binary(){
     tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-fodc-proxy.tgz \
       --exclude="._*" --exclude="__MACOSX" \
       -C ${bindir} .
+
+    # Build Canopy as its own archive (SPA + BFF). Ship built artifacts and
+    # package manifests only — runtime deps are installed with npm ci --omit=dev.
+    RELEASE_VERSION="${RELEASE_VERSION}" make -C canopy release
+    stage_canopy_package
+    tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-canopy.tgz \
+      --exclude="._*" --exclude="__MACOSX" \
+      -C ${bindir} .
+}
+
+stage_canopy_package() {
+    echo "Staging canopy package"
+    rm -rf "${bindir}"
+    mkdir -p "${bindir}"
+    cp -Rfv ./CHANGES.md "${bindir}"
+    cp -Rfv ./canopy/README.md "${bindir}"
+    cp -Rfv ./dist/NOTICE "${bindir}"
+    cp -Rfv ./canopy/LICENSE "${bindir}"
+    mkdir -p "${bindir}/licenses"
+    cp -Rfv ./canopy/licenses/. "${bindir}/licenses/"
+    cp -Rfv ./canopy/package.json "${bindir}"
+    cp -Rfv ./canopy/package-lock.json "${bindir}"
+    mkdir -p "${bindir}/shared" "${bindir}/web" "${bindir}/server"
+    cp -Rfv ./canopy/shared/package.json "${bindir}/shared/"
+    cp -Rfv ./canopy/shared/src "${bindir}/shared/"
+    cp -Rfv ./canopy/web/package.json "${bindir}/web/"
+    cp -Rfv ./canopy/web/dist "${bindir}/web/"
+    cp -Rfv ./canopy/server/package.json "${bindir}/server/"
+    mkdir -p "${bindir}/server/dist"
+    cp -Rfv ./canopy/server/dist/src "${bindir}/server/dist/"
 }
 
 copy_binaries() {

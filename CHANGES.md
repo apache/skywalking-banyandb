@@ -8,6 +8,8 @@ Release Notes.
 
 - Stamp `RELEASE_VERSION` into official release binaries so `--version` reports the release instead of `-`.
 - Stop declaring unbundled MCP npm dependencies in binary-package `LICENSE` files (MCP Eyes output remains under `mcp/` only).
+- Keep MCP and Canopy dependency license texts under `mcp/licenses/` and `canopy/licenses/` (checked in; not copied into Go binary packages).
+- Ship Canopy as an independent release archive (`skywalking-banyandb-*-canopy.tgz`) with built SPA/BFF artifacts and Canopy Eyes licenses.
 - Upgrade MCP production npm overrides (`fast-uri` 4.1.5, `hono` 4.13.8, `qs` 6.16.0) to clear `npm audit` findings.
 - Fix standalone TopN write ordering.
 - Fix stale Canopy query clauses after resource changes.
@@ -29,11 +31,13 @@ Release Notes.
 
 - Bump google.golang.org/grpc to v1.83.2 to clear GO-2026-6443, GO-2026-6441, and GO-2026-6348.
 - Remove the accidentally committed `test_table` ELF binary from the source tree.
+- Remove accidentally committed local design notes from the repository root.
 - Update NOTICE copyright year to 2026.
+- Tolerate CI shallow checkouts without git tags when resolving `VERSION_STRING`.
 
 ### Documentation
 
-- Document the five release archives (src, banyand, bydbctl, fodc-agent, fodc-proxy) and their 15 signed files.
+- Document the six release archives (src, banyand, bydbctl, fodc-agent, fodc-proxy, canopy) and their 18 signed files.
 - Align the build-from-source prerequisites with `go.mod` (Go 1.25.13) and the UI engines range (`Node.js >= 24.6.0`).
 
 ## 0.11.0
