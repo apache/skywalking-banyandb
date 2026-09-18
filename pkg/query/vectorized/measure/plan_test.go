@@ -120,6 +120,67 @@ func TestBuildOperators_GroupByWithoutAgg_EmitsFirstOnlyGroupBy(t *testing.T) {
 	}
 }
 
+// TestBuildTimeBucketOperator_BucketOnly_ReturnsBatchTimeBucket pins the
+// bucket-only GroupBy shape (design §7.2): no tag key at all, grouping
+// purely by the resolved bucket width. This exercises BuildTimeBucketOperator
+// directly (opts.Agg nil) to pin the mechanical routing; plan/analyzer.go's
+// Analyze rejects this combination for real requests today (a bucketed raw
+// GroupBy has no execution support — BatchAggregation's empty-AggSpec output
+// layout drops every projected field, unlike BatchGroupByFirst's
+// full-schema passthrough for the non-bucketed case), so this shape isn't
+// reachable outside a direct BuildTimeBucketOperator call like this one.
+// upstream is nil: this test never calls Init/NextBatch on the result.
+func TestBuildTimeBucketOperator_BucketOnly_ReturnsBatchTimeBucket(t *testing.T) {
+	opts := model.MeasureQueryOptions{
+		GroupBy: &model.MeasureGroupBy{TimeBucket: &model.MeasureTimeBucket{WidthNanos: 1000}},
+	}
+	bucket, err := BuildTimeBucketOperator(nil, opts, bucketTestSchema(), vectorized.NewMemoryTracker(1<<20), 1024, AggModeAll)
+	if err != nil {
+		t.Fatalf("BuildTimeBucketOperator: %v", err)
+	}
+	if bucket == nil {
+		t.Fatal("want a non-nil *BatchTimeBucket")
+	}
+}
+
+// TestBuildTimeBucketOperator_BucketPlusTagGroupByPlusAgg pins the combined
+// shape: bucket + tag GroupBy + Agg all route to the same BatchTimeBucket
+// operator (design §7.2), which internally binds the agg spec exactly like
+// the non-bucketed path.
+func TestBuildTimeBucketOperator_BucketPlusTagGroupByPlusAgg(t *testing.T) {
+	opts := model.MeasureQueryOptions{
+		GroupBy: &model.MeasureGroupBy{
+			TagFamily:  "default",
+			TagNames:   []string{"g"},
+			TimeBucket: &model.MeasureTimeBucket{WidthNanos: 1000},
+		},
+		Agg: &model.MeasureAgg{FieldName: "v", Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
+	}
+	bucket, err := BuildTimeBucketOperator(nil, opts, bucketTestSchema(), vectorized.NewMemoryTracker(1<<20), 1024, AggModeAll)
+	if err != nil {
+		t.Fatalf("BuildTimeBucketOperator: %v", err)
+	}
+	if bucket == nil {
+		t.Fatal("want a non-nil *BatchTimeBucket")
+	}
+}
+
+// TestBuildTimeBucketOperator_MissingTimestampColumn_Errors pins the
+// defensive guard: a schema with no RoleTimestamp column (should never
+// happen in production — BuildBatchSchema always emits one) is rejected
+// rather than panicking downstream.
+func TestBuildTimeBucketOperator_MissingTimestampColumn_Errors(t *testing.T) {
+	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "g", Type: vectorized.ColumnTypeString},
+	})
+	opts := model.MeasureQueryOptions{
+		GroupBy: &model.MeasureGroupBy{TimeBucket: &model.MeasureTimeBucket{WidthNanos: 1000}},
+	}
+	if _, err := BuildTimeBucketOperator(nil, opts, schema, vectorized.NewMemoryTracker(1<<20), 1024, AggModeAll); err == nil {
+		t.Fatal("a schema with no RoleTimestamp column must error, not panic")
+	}
+}
+
 // TestBuildOperators_AggWithoutGroupBy_EmitsBatchAggregation pins the
 // scalar-reduce shape: a BatchAggregation with no key columns, so every
 // row collapses into a single output row carrying the first-seen tags

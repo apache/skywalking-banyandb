@@ -236,6 +236,33 @@ func TestAggOutputName_ResolvesTagOrFieldTarget(t *testing.T) {
 	}
 }
 
+// TestAnalyzeDistributed_NodeTemplatePushesTimeBucket pins design §7.2's
+// distributed seam: GroupBy.time_bucket travels to the node template
+// unchanged (proto.Clone carries it verbatim), so each data node floors
+// independently and no liaison-side coordination is needed to distribute it.
+func TestAnalyzeDistributed_NodeTemplatePushesTimeBucket(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		GroupBy: &measurev1.QueryRequest_GroupBy{
+			TagProjection: projTagProj(),
+			TimeBucket:    &measurev1.QueryRequest_GroupBy_TimeBucket{Width: "5m"},
+		},
+		Agg: &measurev1.QueryRequest_Aggregation{
+			Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
+			FieldName: fieldValue,
+		},
+	}
+	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
+	if analyzeErr != nil {
+		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
+	}
+	if got := p.nodeTemplate.GetGroupBy().GetTimeBucket().GetWidth(); got != "5m" {
+		t.Fatalf("node template should push time_bucket unchanged, got width %q", got)
+	}
+}
+
 // TestAnalyzeDistributed_TopAggUnboundsNodeLimit_Matrix is the regression
 // gate for the per-node Limit truncation bug in distributed Top-over-Agg:
 // each (Top.N, request Limit) combination must produce a node template with

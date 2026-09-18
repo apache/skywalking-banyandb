@@ -52,22 +52,30 @@ type TagProjection struct {
 
 // MeasureGroupBy describes a GroupBy clause for a measure query. v1 supports
 // a single tag family; each entry in TagNames is a key column. An empty
-// TagNames slice means the query carries no GroupBy clause.
+// TagNames slice means the query carries no tag GroupBy clause — the query
+// may still bucket by time alone (TimeBucket set, TagNames empty).
 //
-// TimeBucket carries the request's optional time_bucket clause (design §5.3);
-// a nil TimeBucket means no bucketing. Resolution and execution land in a
-// later delivery stage — this field is only plumbed through from the wire.
+// TimeBucket carries the request's resolved time_bucket clause (design §5.3);
+// a nil TimeBucket means no bucketing.
 type MeasureGroupBy struct {
 	TimeBucket *MeasureTimeBucket
 	TagFamily  string
 	TagNames   []string
 }
 
-// MeasureTimeBucket describes a GroupBy.time_bucket clause. Width is the
-// requested bucket duration string; empty means "use the measure's own
-// interval" (design §5.3).
+// MeasureTimeBucket describes a resolved GroupBy.time_bucket clause (design
+// §5.3). Width is the raw requested/resolved duration string, kept for
+// diagnostics; WidthNanos is its parsed value in nanoseconds and is what
+// execution actually uses — always > 0 once translateGroupBy has resolved it
+// (a zero or negative width is rejected at analyze time, never carried this
+// far). UseIndexModeMap is set when measureSchema.GetIndexMode() is true: an
+// index-mode measure's scan has no ascending-timestamp guarantee, so
+// execution must take the non-streaming map path (design §7.2) instead of
+// the streaming operator, decided once here rather than guessed at runtime.
 type MeasureTimeBucket struct {
-	Width string
+	Width           string
+	WidthNanos      int64
+	UseIndexModeMap bool
 }
 
 // MeasureAgg describes a single aggregation for a measure query. v1 supports

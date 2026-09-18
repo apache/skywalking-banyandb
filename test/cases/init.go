@@ -71,6 +71,13 @@ func Initialize(addr string, now time.Time) {
 	casesmeasuredata.Write(conn, "endpoint_resp_time_minute", "sw_metric", "endpoint_resp_time_minute_data1.json", now.Add(10*time.Second), interval)
 	casesmeasuredata.Write(conn, "service_instance_metric_topn_test", "sw_metric", "service_instance_metric_topn_test_data.json", now, interval)
 	casesmeasuredata.Write(conn, "service_instance_float_metric", "sw_metric", "service_instance_float_metric_data.json", now, interval)
+	// time_bucket_metric is seeded at its own 20s interval (not the shared
+	// 1m `interval`) so its 6 points land 20s apart ending at `now`. `now`
+	// is guaranteed minute-aligned (see the suite's `now` construction), so
+	// a 1-minute time_bucket width deterministically splits them 2/3/1
+	// across three buckets regardless of the wall-clock minute `now` lands
+	// on — see test/cases/measure/data/input/group_time_bucket*.yaml.
+	casesmeasuredata.Write(conn, "time_bucket_metric", "sw_metric", "time_bucket_metric_data.json", now, 20*time.Second)
 	casesmeasuredata.WriteMixed(conn, now.Add(30*time.Minute), interval,
 		casesmeasuredata.WriteSpec{
 			Metadata: &commonv1.Metadata{Name: "service_cpm_minute", Group: "sw_spec"},

@@ -181,38 +181,114 @@ func buildTagProjection(req *measurev1.QueryRequest) []model.TagProjection {
 	return out
 }
 
-// translateGroupBy builds the model GroupBy struct from the proto,
-// validating that:
-//   - the GroupBy tag_projection names exactly one family with non-empty tags
-//     (v1 single-family limitation)
-//   - the named GroupBy tags exist in the Measure schema
+// translateGroupBy builds the model GroupBy struct from the proto. A
+// GroupBy must set tag_projection, time_bucket, or both (design §7.2 —
+// bucketing alone, with no tag key, is a legal grouping). When
+// tag_projection is present it must name exactly one family with non-empty
+// tags (v1 single-family limitation), and every named tag must exist in the
+// Measure schema. When time_bucket is present, its width is resolved per
+// §5.3 and the request is checked against the bucketed streaming
+// precondition (time-ascending input).
 func translateGroupBy(req *measurev1.QueryRequest, measureSchema *databasev1.Measure) (*model.MeasureGroupBy, error) {
-	families := req.GetGroupBy().GetTagProjection().GetTagFamilies()
-	if len(families) == 0 {
-		return nil, fmt.Errorf("plan.Analyze: GroupBy.tag_projection must list at least one tag family")
+	groupByProto := req.GetGroupBy()
+	families := groupByProto.GetTagProjection().GetTagFamilies()
+	tbProto := groupByProto.GetTimeBucket()
+	if len(families) == 0 && tbProto == nil {
+		return nil, fmt.Errorf("plan.Analyze: GroupBy must set tag_projection, time_bucket, or both")
 	}
-	if len(families) > 1 {
-		return nil, fmt.Errorf("plan.Analyze: GroupBy.tag_projection v1 supports a single tag family, got %d", len(families))
+
+	gb := &model.MeasureGroupBy{}
+	if len(families) > 0 {
+		if len(families) > 1 {
+			return nil, fmt.Errorf("plan.Analyze: GroupBy.tag_projection v1 supports a single tag family, got %d", len(families))
+		}
+		family := families[0]
+		if len(family.GetTags()) == 0 {
+			return nil, fmt.Errorf("plan.Analyze: GroupBy.tag_projection family %q has no tags", family.GetName())
+		}
+		gb.TagFamily = family.GetName()
+		gb.TagNames = append([]string(nil), family.GetTags()...)
+		if validateErr := validateGroupByTags(measureSchema, gb); validateErr != nil {
+			return nil, validateErr
+		}
 	}
-	family := families[0]
-	if len(family.GetTags()) == 0 {
-		return nil, fmt.Errorf("plan.Analyze: GroupBy.tag_projection family %q has no tags", family.GetName())
-	}
-	gb := &model.MeasureGroupBy{
-		TagFamily: family.GetName(),
-		TagNames:  append([]string(nil), family.GetTags()...),
-	}
-	if validateErr := validateGroupByTags(measureSchema, gb); validateErr != nil {
-		return nil, validateErr
-	}
-	// time_bucket is wire-additive only in this delivery stage: the value is
-	// carried onto the model unchanged, but nothing resolves or validates it
-	// yet, and no operator acts on it (design §12 stage 0). Resolution,
-	// validation, and the bucketing operator land in a later stage (§5.3, §7.2).
-	if tb := req.GetGroupBy().GetTimeBucket(); tb != nil {
-		gb.TimeBucket = &model.MeasureTimeBucket{Width: tb.GetWidth()}
+
+	if tbProto != nil {
+		// A time-bucketed GroupBy without an Agg has no execution support:
+		// BatchTimeBucket's raw (no-AggSpec) shape reuses BatchAggregation's
+		// output layout, which — unlike BatchGroupByFirst's full schema
+		// passthrough — carries only tags and the bucket timestamp, silently
+		// dropping every projected field (and, on the distributed path, the
+		// series-id/version columns raw row merging requires). Reject rather
+		// than silently lose data; a bucketed raw GroupBy is a possible
+		// follow-up, not something this design ships.
+		if req.GetAgg() == nil {
+			return nil, fmt.Errorf("plan.Analyze: time_bucket requires Agg; a bucketed raw GroupBy (no aggregate) is not supported yet")
+		}
+		tb, tbErr := resolveTimeBucket(tbProto, measureSchema)
+		if tbErr != nil {
+			return nil, tbErr
+		}
+		if orderErr := validateBucketableOrdering(req); orderErr != nil {
+			return nil, orderErr
+		}
+		gb.TimeBucket = tb
 	}
 	return gb, nil
+}
+
+// resolveTimeBucket implements the §5.3 width-resolution table: an explicit
+// tb.Width wins; an empty Width falls back to the measure's own interval;
+// both empty is rejected, and so is any width that fails to parse or is not
+// strictly positive. There is deliberately no "must be a multiple of the
+// interval" rule — Measure.interval is a declared write cadence, not an
+// enforced storage invariant, so every positive width is equally meaningful.
+func resolveTimeBucket(tb *measurev1.QueryRequest_GroupBy_TimeBucket, measureSchema *databasev1.Measure) (*model.MeasureTimeBucket, error) {
+	raw := tb.GetWidth()
+	if raw == "" {
+		raw = measureSchema.GetInterval()
+		if raw == "" {
+			return nil, fmt.Errorf("plan.Analyze: time_bucket needs a width: measure %q declares no interval", measureSchema.GetMetadata().GetName())
+		}
+	}
+	width, parseErr := timestamp.ParseDuration(raw)
+	if parseErr != nil {
+		return nil, fmt.Errorf("plan.Analyze: time_bucket width %q is not a valid duration: %w", raw, parseErr)
+	}
+	if width <= 0 {
+		return nil, fmt.Errorf("plan.Analyze: time_bucket width %q must be positive, got %s", raw, width)
+	}
+	return &model.MeasureTimeBucket{
+		Width:           raw,
+		WidthNanos:      int64(width),
+		UseIndexModeMap: measureSchema.GetIndexMode(),
+	}, nil
+}
+
+// validateBucketableOrdering rejects a bucketed request whose order_by names
+// a non-time index rule (design §7.2: both the streaming operator and the
+// index-mode map fallback assume the request carries no ordering that would
+// contradict time-ascending scan input). An aggregation request already
+// carries no effective order_by today — Analyze never reads
+// req.GetOrderBy(), and the distributed planner skips OrderBy resolution
+// whenever Agg is set — so this is a belt-and-suspenders guard against a
+// caller relying on a setting the engine would otherwise silently ignore,
+// applied uniformly regardless of the streaming/map choice for a
+// consistent contract.
+func validateBucketableOrdering(req *measurev1.QueryRequest) error {
+	orderBy := req.GetOrderBy()
+	if ruleName := orderBy.GetIndexRuleName(); ruleName != "" {
+		return fmt.Errorf("plan.Analyze: time_bucket requires time ordering; order_by.index_rule_name %q is not supported on a bucketed query", ruleName)
+	}
+	// An empty index_rule_name with Sort == SORT_DESC still resolves to a
+	// time-ordered scan (index.OrderByTypeTime) per applyMeasureQueryOrdering
+	// — just descending instead of ascending. BatchTimeBucket's streaming
+	// path assumes ascending input specifically, not merely "time-ordered",
+	// so this must be rejected too.
+	if orderBy.GetSort() == modelv1.Sort_SORT_DESC {
+		return fmt.Errorf("plan.Analyze: time_bucket requires ascending time order; order_by.sort SORT_DESC is not supported on a bucketed query")
+	}
+	return nil
 }
 
 // translateAgg builds the model Agg struct from the proto. Exactly one of

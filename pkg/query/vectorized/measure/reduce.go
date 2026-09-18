@@ -72,12 +72,20 @@ type ReduceTopSpec struct {
 // value per group (mirrors the data-node operator's first-seen non-key
 // tag rule).
 //
+// bucketed is true for a time-bucketed GroupBy (design §7.2): the bucket
+// column is resolved as an additional leading key, ahead of keyTagNames.
+// A bucketed reduce whose reference schema carries no RoleTimestamp column
+// is the mixed-version case (design §10) — an older data node ignored
+// time_bucket and returned whole-range partials — and resolveKeyIndices
+// hard-errors rather than silently collapsing the series to one row.
+//
 // Returns the final reduced batches in group-insertion order (paginated
 // by batchSize) and the AggValuePath that describes how the value column
 // was resolved. Callers walk the batches sequentially; one row per group.
 func ReduceRawFrames(
 	frames [][]byte,
 	keyTagNames []string,
+	bucketed bool,
 	aggSpecs []AggReduceSpec,
 	batchSize int,
 	tracker *vectorized.MemoryTracker,
@@ -93,7 +101,7 @@ func ReduceRawFrames(
 		}
 		decoded = append(decoded, b)
 	}
-	return ReducePartialBatches(decoded, keyTagNames, aggSpecs, batchSize, tracker)
+	return ReducePartialBatches(decoded, keyTagNames, bucketed, aggSpecs, batchSize, tracker)
 }
 
 // ReducePartialBatches is the in-memory counterpart of ReduceRawFrames —
@@ -107,6 +115,7 @@ func ReduceRawFrames(
 func ReducePartialBatches(
 	partials []*vectorized.RecordBatch,
 	keyTagNames []string,
+	bucketed bool,
 	aggSpecs []AggReduceSpec,
 	batchSize int,
 	tracker *vectorized.MemoryTracker,
@@ -122,7 +131,7 @@ func ReducePartialBatches(
 	if refSchema == nil {
 		return nil, AggValuePathTyped, nil
 	}
-	keyIndices, indicesErr := resolveKeyIndices(refSchema, keyTagNames)
+	keyIndices, indicesErr := resolveKeyIndices(refSchema, keyTagNames, bucketed)
 	if indicesErr != nil {
 		return nil, AggValuePathUnresolved, indicesErr
 	}
@@ -149,6 +158,14 @@ func ReducePartialBatches(
 	if finalErr := op.Finalize(context.Background()); finalErr != nil {
 		return nil, path, fmt.Errorf("ReducePartialBatches: finalize: %w", finalErr)
 	}
+	// Each partial arrives already bucket-ascending (design §7.2 streams
+	// per node), but op consumes partials frame by frame, so insertion
+	// order is only piecewise ascending — e.g. node A's [2000, 3000]
+	// followed by node B's [1000, 2000] inserts as [2000, 3000, 1000].
+	// Sort once before draining so the merged result is globally
+	// bucket-ascending, which iteratorFromBatches's offset/limit pagination
+	// (design §7.5) requires to page correctly. A no-op when unbucketed.
+	op.SortInsertionByBucket()
 	var out []*vectorized.RecordBatch
 	for {
 		nb, nextErr := op.NextBatch(context.Background())
@@ -163,14 +180,20 @@ func ReducePartialBatches(
 	return out, path, nil
 }
 
-// resolveKeyIndices binds keyTagNames to column indices in the partial
-// schema. Returns an error if a name does not resolve. Empty list is
-// allowed (scalar reduce) and returns nil keyIndices.
-func resolveKeyIndices(schema *vectorized.BatchSchema, keyTagNames []string) ([]int, error) {
-	if len(keyTagNames) == 0 {
-		return nil, nil
+// resolveKeyIndices binds the bucket column (when bucketed) and keyTagNames
+// to column indices in the partial schema. Returns an error if a tag name
+// does not resolve, or if bucketed is true but the schema carries no
+// RoleTimestamp column (design §10's mixed-version guard). Neither bucketed
+// nor any keyTagNames is allowed (scalar reduce) and returns nil keyIndices.
+func resolveKeyIndices(schema *vectorized.BatchSchema, keyTagNames []string, bucketed bool) ([]int, error) {
+	var out []int
+	if bucketed {
+		idx := schema.TimestampIndex()
+		if idx < 0 {
+			return nil, fmt.Errorf("bucketed query expected a RoleTimestamp column in the partial schema (an older data node may have ignored time_bucket)")
+		}
+		out = append(out, idx)
 	}
-	out := make([]int, 0, len(keyTagNames))
 	for _, name := range keyTagNames {
 		idx := -1
 		for i, def := range schema.Columns {

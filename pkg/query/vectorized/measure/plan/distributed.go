@@ -637,6 +637,7 @@ func collectRawFrameResponsesWithNodes(ff []bus.Future) ([][]byte, []*commonv1.T
 
 func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *measurev1.QueryRequest) (executor.MIterator, error) {
 	keyTagNames := distributedGroupByTagNames(req.GetGroupBy())
+	bucketed := req.GetGroupBy().GetTimeBucket() != nil
 	aggFunc, aggErr := distributedAggFunc(req.GetAgg().GetFunction())
 	if aggErr != nil {
 		return nil, aggErr
@@ -651,7 +652,7 @@ func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *
 	addTraceTagf(reduceSpan, tracelabels.TagFramesIn, "%d", len(frames))
 	frameDecodeDurations := collectFrameDecodeDurations(frames)
 	// nolint:contextcheck // pure in-memory reducer; no cancelable I/O downstream
-	batches, aggValuePath, reduceErr := vmeasure.ReduceRawFrames(frames, keyTagNames, aggSpecs, p.cfg.BatchSize, tracker)
+	batches, aggValuePath, reduceErr := vmeasure.ReduceRawFrames(frames, keyTagNames, bucketed, aggSpecs, p.cfg.BatchSize, tracker)
 	if reduceErr != nil {
 		if reduceSpan != nil {
 			reduceSpan.Error(reduceErr)

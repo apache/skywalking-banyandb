@@ -594,7 +594,10 @@ func ReduceFramesToInternalDataPoints(
 	batchSize int,
 	tracker *vectorized.MemoryTracker,
 ) ([]*measurev1.InternalDataPoint, error) {
-	reduced, _, reduceErr := ReduceRawFrames(frames, keyTagNames, aggSpecs, batchSize, tracker)
+	// This bridge predates time bucketing (see the doc comment above) and
+	// has no caller that could ever set a bucketed GroupBy through it, so
+	// it is unconditionally not bucketed.
+	reduced, _, reduceErr := ReduceRawFrames(frames, keyTagNames, false, aggSpecs, batchSize, tracker)
 	if reduceErr != nil {
 		return nil, reduceErr
 	}

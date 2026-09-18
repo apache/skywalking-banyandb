@@ -113,6 +113,13 @@ var measureEntries = []any{
 	g.Entry("filter by tag with GE", helpers.Args{Input: "tag_filter_ge", Duration: 25 * time.Minute, Offset: -20 * time.Minute, DisOrder: true}),
 	g.Entry("complex AND/OR", helpers.Args{Input: "complex_and_or", Duration: 25 * time.Minute, Offset: -20 * time.Minute, DisOrder: true}),
 	g.Entry("group sum with filter", helpers.Args{Input: "group_sum_with_filter", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
+	// time_bucket_metric is seeded at now-100s..now (20s apart); a 1-minute
+	// bucket deterministically splits them 2/3/1 across three buckets
+	// regardless of which wall-clock minute `now` lands on (see
+	// test/cases/init.go). SkipQL: BydbQL has no TIME_BUCKET(...) grammar
+	// yet — apache/skywalking#14091.
+	g.Entry("group by time bucket", helpers.Args{Input: "group_time_bucket", Duration: 4 * time.Minute, Offset: -3 * time.Minute, SkipQL: true}),
+	g.Entry("group by time bucket and tag", helpers.Args{Input: "group_time_bucket_with_tag", Duration: 4 * time.Minute, Offset: -3 * time.Minute, SkipQL: true}),
 	g.Entry("top N with filter", helpers.Args{Input: "top_with_filter", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("index mode filter by NE", helpers.Args{Input: "index_mode_ne", Duration: 25 * time.Minute, Offset: -20 * time.Minute, DisOrder: true}),
 	g.Entry("index mode filter by LE on int", helpers.Args{Input: "index_mode_le", Duration: 25 * time.Minute, Offset: -20 * time.Minute, DisOrder: true}),

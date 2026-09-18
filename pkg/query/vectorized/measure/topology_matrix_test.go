@@ -84,7 +84,7 @@ func TestTopologyMatrix(t *testing.T) {
 					t.Run(name, func(t *testing.T) {
 						frames := buildPartialFrames(t, rows, shards, replicas, tc.fn)
 						got, _, reduceErr := ReduceRawFrames(frames,
-							[]string{"g"},
+							[]string{"g"}, false,
 							[]AggReduceSpec{{OutputName: "out", Func: tc.fn}},
 							1024, vectorized.NewMemoryTracker(1<<30))
 						if reduceErr != nil {
@@ -343,7 +343,7 @@ func TestTopologyMatrix_WithTop(t *testing.T) {
 					t.Run(name, func(t *testing.T) {
 						frames := buildPartialFrames(t, rows, shards, replicas, AggSum)
 						reduced, _, reduceErr := ReduceRawFrames(frames,
-							[]string{"g"},
+							[]string{"g"}, false,
 							[]AggReduceSpec{{OutputName: "out", Func: AggSum}},
 							1024, vectorized.NewMemoryTracker(1<<30))
 						if reduceErr != nil {
