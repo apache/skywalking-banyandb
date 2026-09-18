@@ -18,8 +18,8 @@ Release Notes.
 
 - Stamp `RELEASE_VERSION` into official release binaries so `--version` reports the release instead of `-`.
 - Pack the source release from `git archive` and reject archives that contain ELF/Mach-O binaries.
-- Stop declaring unbundled MCP npm dependencies in binary-package `LICENSE` files (MCP Eyes output remains under `mcp/` only).
-- Keep MCP and Canopy dependency license texts under `mcp/licenses/` and `canopy/licenses/` (checked in; not copied into Go binary packages).
+- Stop declaring unbundled MCP npm dependencies in binary-package root `LICENSE` files (MCP Eyes output stays under `mcp/`).
+- Keep MCP and Canopy dependency license texts under `mcp/licenses/` and `canopy/licenses/` (checked in). Go binary packages that stage MCP also ship `mcp/LICENSE`, `mcp/licenses/`, and `mcp/package-lock.json` with `mcp/dist`.
 - Ship Canopy as an independent release archive (`skywalking-banyandb-*-canopy.tgz`) with built SPA/BFF artifacts and Canopy Eyes licenses.
 - Reject group / stream / measure / trace (and related) resource names that are not a single path-safe identifier (`[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?`), so names cannot escape catalog storage roots.
 - Bound protobuf `validate.rules` on schema and query identifiers (max length, allowlist pattern, repeated max_items, numeric ceilings) so untrusted inputs cannot escape storage roots or force unbounded allocations.
