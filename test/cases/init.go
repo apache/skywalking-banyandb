@@ -78,6 +78,18 @@ func Initialize(addr string, now time.Time) {
 	// across three buckets regardless of the wall-clock minute `now` lands
 	// on — see test/cases/measure/data/input/group_time_bucket*.yaml.
 	casesmeasuredata.Write(conn, "time_bucket_metric", "sw_metric", "time_bucket_metric_data.json", now, 20*time.Second)
+	// The off-cadence fixture (design §11's "COUNT and COUNT_DISTINCT must be
+	// allowed to disagree at the interval width" case): two points for the
+	// SAME entity, 34s apart — off the measure's own 20s write cadence, but
+	// both landing inside the single 1-minute bucket [now+1m, now+2m).
+	// `now+73s` and `now+107s` are both in that bucket regardless of
+	// interval, since `now` is minute-aligned; the window is offset a full
+	// minute past `now` (not [now, now+1m)) because the base
+	// time_bucket_metric_data.json's last point lands exactly AT `now`,
+	// which a [now, ...) query would otherwise include as a third, unwanted
+	// row. See group_count_distinct_off_cadence.yaml /
+	// group_count_off_cadence.yaml.
+	casesmeasuredata.Write(conn, "time_bucket_metric", "sw_metric", "time_bucket_metric_off_cadence_data.json", now.Add(107*time.Second), 34*time.Second)
 	casesmeasuredata.WriteMixed(conn, now.Add(30*time.Minute), interval,
 		casesmeasuredata.WriteSpec{
 			Metadata: &commonv1.Metadata{Name: "service_cpm_minute", Group: "sw_spec"},

@@ -18,6 +18,7 @@
 package measure
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -178,6 +179,69 @@ func TestBuildTimeBucketOperator_MissingTimestampColumn_Errors(t *testing.T) {
 	}
 	if _, err := BuildTimeBucketOperator(nil, opts, schema, vectorized.NewMemoryTracker(1<<20), 1024, AggModeAll); err == nil {
 		t.Fatal("a schema with no RoleTimestamp column must error, not panic")
+	}
+}
+
+// TestBuildTimeBucketOperator_CountDistinctTagTarget_HideTag pins the
+// composition of two independently-shipped features: time-bucket grouping
+// (#14089) and a tag-targeted COUNT_DISTINCT with HideTag (#14090). Two
+// rows share the same target tag value ("entity_id") but differ on another
+// carried-forward tag ("id") and land in the same bucket — the target's
+// hidden tag column must not leak into the carried-forward tag set (design
+// §5.2), and the distinct count must still collapse to 1.
+func TestBuildTimeBucketOperator_CountDistinctTagTarget_HideTag(t *testing.T) {
+	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleTimestamp, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "id", Type: vectorized.ColumnTypeString},
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "entity_id", Type: vectorized.ColumnTypeString},
+		{Role: vectorized.RoleField, Name: "value", Type: vectorized.ColumnTypeInt64},
+	})
+	b := vectorized.NewRecordBatch(schema, 2)
+	b.Columns[0].(*vectorized.TypedColumn[int64]).Append(13)
+	b.Columns[0].(*vectorized.TypedColumn[int64]).Append(47)
+	b.Columns[1].(*vectorized.TypedColumn[string]).Append("off1")
+	b.Columns[1].(*vectorized.TypedColumn[string]).Append("off2")
+	b.Columns[2].(*vectorized.TypedColumn[string]).Append("off_cadence_entity")
+	b.Columns[2].(*vectorized.TypedColumn[string]).Append("off_cadence_entity")
+	b.Columns[3].(*vectorized.TypedColumn[int64]).Append(10)
+	b.Columns[3].(*vectorized.TypedColumn[int64]).Append(20)
+	b.Len = 2
+
+	upstream := &fakeBucketUpstream{schema: schema, batches: []*vectorized.RecordBatch{b}}
+	opts := model.MeasureQueryOptions{
+		GroupBy: &model.MeasureGroupBy{TimeBucket: &model.MeasureTimeBucket{WidthNanos: 1000}},
+		Agg:     &model.MeasureAgg{TagFamily: "default", TagName: "entity_id", Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT, HideTag: true},
+	}
+	tracker := vectorized.NewMemoryTracker(1 << 20)
+	bucket, buildErr := BuildTimeBucketOperator(upstream, opts, schema, tracker, 8, AggModeAll)
+	if buildErr != nil {
+		t.Fatalf("BuildTimeBucketOperator: %v", buildErr)
+	}
+	if initErr := bucket.Init(context.Background()); initErr != nil {
+		t.Fatal(initErr)
+	}
+	defer bucket.Close()
+	out, nextErr := bucket.NextBatch(context.Background())
+	if nextErr != nil {
+		t.Fatal(nextErr)
+	}
+	if out == nil {
+		t.Fatal("want a non-nil output batch")
+	}
+	// Output layout: [timestamp(bucket start), id(carried-forward tag),
+	// entity_id(agg result field)] — entity_id must NOT also appear as a
+	// separate tag column (HideTag).
+	if len(out.Schema.Columns) != 3 {
+		t.Fatalf("output column count = %d, want 3 (timestamp, id tag, entity_id field): %+v", len(out.Schema.Columns), out.Schema.Columns)
+	}
+	for _, col := range out.Schema.Columns {
+		if col.Role == vectorized.RoleTag && col.Name == "entity_id" {
+			t.Fatalf("HideTag must exclude entity_id from the carried-forward tag set, found %+v", col)
+		}
+	}
+	valCol := out.Columns[2].(*vectorized.TypedColumn[int64])
+	if got := valCol.Data()[0]; got != 1 {
+		t.Fatalf("distinct entity_id = %d, want 1 (both rows share the same entity_id)", got)
 	}
 }
 
