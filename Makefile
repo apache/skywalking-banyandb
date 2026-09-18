@@ -326,8 +326,8 @@ license-dep: default ## Generate dependency LICENSE texts via SkyWalking Eyes
 	mv $(mk_dir)/ui/ui-licenses $(mk_dir)/dist/licenses
 	cat $(mk_dir)/ui/LICENSE >> $(mk_dir)/dist/LICENSE
 	@# MCP and Canopy Eyes output stay under mcp/licenses and canopy/licenses.
-	@# Do not append them to dist/LICENSE: binary packages do not ship those
-	@# Node dependency trees as bundled content.
+	@# Do not append them to dist/LICENSE: Go packages ship MCP under mcp/
+	@# (LICENSE + licenses/ + package-lock.json), and Canopy has its own archive.
 
 ##@ Docker targets
 

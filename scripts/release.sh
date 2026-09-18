@@ -58,12 +58,17 @@ binary(){
     copy_binaries banyand
     cp -Rfv ./CHANGES.md ${bindir}
     cp -Rfv ./README.md ${bindir}
-    # Eyes-generated Go + UI licensing from dist/ (MCP npm deps are not bundled).
+    # Eyes-generated Go + UI licensing from dist/.
     cp -Rfv ./dist/* ${bindir}
-    # Copy MCP server (transpiled JS only; no node_modules / no MCP LICENSE inventory)
+    # MCP has no independent release archive, so ship its Eyes inventory with the
+    # Go packages that carry mcp/dist (no node_modules).
     mkdir -p ${bindir}/mcp
     cp -Rfv ./mcp/dist ${bindir}/mcp/
     cp -Rfv ./mcp/package.json ${bindir}/mcp/
+    cp -Rfv ./mcp/package-lock.json ${bindir}/mcp/
+    cp -Rfv ./mcp/LICENSE ${bindir}/mcp/
+    mkdir -p ${bindir}/mcp/licenses
+    cp -Rfv ./mcp/licenses/. ${bindir}/mcp/licenses/
     # Package
     tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-banyand.tgz \
       --exclude="._*" --exclude="__MACOSX" \
