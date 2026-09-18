@@ -1200,15 +1200,22 @@ scan metadata-only.
 
 ## 8. The deprecated row engine
 
-`pkg/query/logical/measure` rejects all three new shapes — `agg.tag_name`, `COUNT_DISTINCT`, and
-`group_by.time_bucket` — with
-`"tag aggregation and time bucketing require the vectorized measure engine
-(--measure-vectorized-enabled=true)"`.
+**This section is stale — the package it describes no longer exists.** It originally said
+`pkg/query/logical/measure` would reject all three new shapes (`agg.tag_name`, `COUNT_DISTINCT`,
+`group_by.time_bucket`) with a `--measure-vectorized-enabled=true` message, on the reasoning that
+implementing parity in the row iterators would roughly double the work to protect a rollback path
+that was itself being retired.
 
-The package carries an explicit *"Do not extend with new features"* note
-(`measure_analyzer.go:62-68`), the vectorized engine is on by default, and implementing parity in
-the row iterators would roughly double the work to protect a rollback path that is itself being
-retired. A clear error is more honest than a second implementation that will rot.
+That rollback path was removed outright — `chore: remove the row-based query path from measure,
+stream and trace` (#1326) deleted `pkg/query/logical/measure` entirely, *before* this design doc
+was even merged (#1326 landed 2026-09-16; #1360 merged 2026-09-17). There is no row-path analyzer
+left to add a guard to, for any of the three shapes, because there is no row path. The
+`--measure-vectorized-enabled` flag itself is now a no-op compatibility shim
+(`removedRowQueryFlag` in `banyand/measure/measure.go`): `=true` (or omitting the flag) is
+accepted; `=false` hard-fails at startup with `"row-based query was removed in 0.12.0, see
+apache/skywalking#13998"`. The vectorized engine (`pkg/query/vectorized/measure`) is the only
+engine, and each new shape's validation lives directly in its analyzer
+(`pkg/query/vectorized/measure/plan/analyzer.go`) rather than in a parallel rejection guard.
 
 ---
 

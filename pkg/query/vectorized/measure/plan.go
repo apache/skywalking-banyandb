@@ -271,7 +271,7 @@ func protoAggFuncToInternal(f modelv1.AggregationFunction) (AggFunc, error) {
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED:
 		return 0, fmt.Errorf("vectorized.measure: Agg.Function is UNSPECIFIED")
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT:
-		return 0, fmt.Errorf("vectorized.measure: COUNT_DISTINCT is not implemented yet")
+		return AggCountDistinct, nil
 	}
 	return 0, fmt.Errorf("vectorized.measure: unknown AggregationFunction %v", f)
 }

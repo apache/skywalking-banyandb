@@ -19,6 +19,9 @@ package measure
 
 import (
 	"context"
+	"encoding/binary"
+	"fmt"
+	"strings"
 	"testing"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -894,6 +897,239 @@ func TestBatchAggregation_DelegatesToAggregationPackage(t *testing.T) {
 		t.Fatalf("BatchAggregation SUM (%d) must equal aggregation.NewMap SUM (%d) — divergence indicates delegation broke",
 			gotSum, wantSum)
 	}
+}
+
+// TestBatchAggregation_CountDistinct_IntTagTarget pins COUNT_DISTINCT over
+// an int64 tag target (design §6): repeated values within a group collapse
+// to one, and different groups keep independent sets.
+func TestBatchAggregation_CountDistinct_IntTagTarget(t *testing.T) {
+	s := aggTagSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggCountDistinct, InputCol: 1, Output: "distinct_v", HideTag: true}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+	feedAggTag(t, op, s,
+		aggTagRow{g: "a", v: 1, s: "x"},
+		aggTagRow{g: "a", v: 2, s: "x"},
+		aggTagRow{g: "a", v: 2, s: "x"},
+		aggTagRow{g: "a", v: 3, s: "x"},
+		aggTagRow{g: "b", v: 5, s: "x"},
+		aggTagRow{g: "b", v: 5, s: "x"},
+	)
+	_ = op.Finalize(context.Background())
+	out, _ := op.NextBatch(context.Background())
+	valCol := out.Columns[2].(*vectorized.TypedColumn[int64])
+	if got := valCol.Data()[findAggRow(t, out, "a")]; got != 3 {
+		t.Fatalf("distinct_v[a] = %d, want 3 (values 1,2,3)", got)
+	}
+	if got := valCol.Data()[findAggRow(t, out, "b")]; got != 1 {
+		t.Fatalf("distinct_v[b] = %d, want 1 (value 5, seen twice)", got)
+	}
+}
+
+// TestBatchAggregation_CountDistinct_StringTagTarget pins COUNT_DISTINCT
+// over a string tag target (design §6 — COUNT_DISTINCT accepts any scalar
+// tag, unlike SUM/MIN/MAX/MEAN which require TAG_TYPE_INT).
+func TestBatchAggregation_CountDistinct_StringTagTarget(t *testing.T) {
+	s := aggTagSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggCountDistinct, InputCol: 2, Output: "distinct_s", HideTag: true}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+	feedAggTag(t, op, s,
+		aggTagRow{g: "a", v: 0, s: "x"},
+		aggTagRow{g: "a", v: 0, s: "y"},
+		aggTagRow{g: "a", v: 0, s: "x"},
+		aggTagRow{g: "b", v: 0, s: "z"},
+	)
+	_ = op.Finalize(context.Background())
+	out, _ := op.NextBatch(context.Background())
+	valCol := out.Columns[2].(*vectorized.TypedColumn[int64])
+	if got := valCol.Data()[findAggRow(t, out, "a")]; got != 2 {
+		t.Fatalf("distinct_s[a] = %d, want 2 (x, y)", got)
+	}
+	if got := valCol.Data()[findAggRow(t, out, "b")]; got != 1 {
+		t.Fatalf("distinct_s[b] = %d, want 1 (z)", got)
+	}
+}
+
+// TestBatchAggregation_CountDistinct_ExcludesNulls pins that a null target
+// value neither enters the distinct set nor is counted (design §6, matching
+// the existing field behavior: null values are excluded).
+func TestBatchAggregation_CountDistinct_ExcludesNulls(t *testing.T) {
+	s := aggTagSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggCountDistinct, InputCol: 2, Output: "distinct_s", HideTag: true}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+	feedAggTag(t, op, s,
+		aggTagRow{g: "a", v: 0, s: "x"},
+		aggTagRow{g: "a", v: 0, s: nullMarker},
+		aggTagRow{g: "a", v: 0, s: nullMarker},
+	)
+	_ = op.Finalize(context.Background())
+	out, _ := op.NextBatch(context.Background())
+	valCol := out.Columns[2].(*vectorized.TypedColumn[int64])
+	if got := valCol.Data()[findAggRow(t, out, "a")]; got != 1 {
+		t.Fatalf("distinct_s[a] = %d, want 1 (only \"x\"; both nulls excluded)", got)
+	}
+}
+
+// aggBytesSchema is "tag.default.g (string, groupby key), field raw (bytes,
+// agg target)" — used to pin COUNT_DISTINCT over a []byte-backed column,
+// the one target type aggTagSchema/aggIntSchema don't cover.
+func aggBytesSchema() *vectorized.BatchSchema {
+	return vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "g", Type: vectorized.ColumnTypeString},
+		{Role: vectorized.RoleField, Name: "raw", Type: vectorized.ColumnTypeBytes},
+	})
+}
+
+// TestBatchAggregation_CountDistinct_BytesTarget pins COUNT_DISTINCT over a
+// ColumnTypeBytes field (design §6's "TAG_TYPE_DATA_BINARY" row applies the
+// same encoding path — appendKeyComponent handles []byte uniformly whether
+// the column started life as a field or a tag).
+func TestBatchAggregation_CountDistinct_BytesTarget(t *testing.T) {
+	s := aggBytesSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggCountDistinct, InputCol: 1, Output: "distinct_raw"}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+
+	b := vectorized.NewRecordBatch(s, 3)
+	gCol := b.Columns[0].(*vectorized.TypedColumn[string])
+	rawCol := b.Columns[1].(*vectorized.TypedColumn[[]byte])
+	for _, row := range []struct {
+		g   string
+		raw []byte
+	}{
+		{"a", []byte{1, 2, 3}},
+		{"a", []byte{1, 2, 3}},
+		{"a", []byte{4, 5}},
+	} {
+		gCol.Append(row.g)
+		rawCol.Append(row.raw)
+	}
+	b.Len = 3
+	if err := op.Consume(context.Background(), b); err != nil {
+		t.Fatal(err)
+	}
+	_ = op.Finalize(context.Background())
+	out, _ := op.NextBatch(context.Background())
+	valCol := out.Columns[1].(*vectorized.TypedColumn[int64])
+	if got := valCol.Data()[findAggRow(t, out, "a")]; got != 2 {
+		t.Fatalf("distinct_raw[a] = %d, want 2 ({1,2,3} and {4,5})", got)
+	}
+}
+
+// TestBatchAggregation_CountDistinct_BudgetExceeded pins design §7.6: a
+// high-cardinality target fails loud against the per-query memory budget
+// with the existing "aggregation memory budget exceeded" message, rather
+// than growing the set unbounded.
+func TestBatchAggregation_CountDistinct_BudgetExceeded(t *testing.T) {
+	s := aggTagSchema()
+	tracker := vectorized.NewMemoryTracker(64)
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggCountDistinct, InputCol: 2, Output: "distinct_s", HideTag: true}}, AggModeAll, 8, tracker, 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+
+	b := vectorized.NewRecordBatch(s, 1)
+	gCol := b.Columns[0].(*vectorized.TypedColumn[string])
+	vCol := b.Columns[1].(*vectorized.TypedColumn[int64])
+	sCol := b.Columns[2].(*vectorized.TypedColumn[string])
+	var consumeErr error
+	for i := 0; i < 100 && consumeErr == nil; i++ {
+		b.Reset()
+		gCol.Append("a")
+		vCol.Append(0)
+		sCol.Append(fmt.Sprintf("distinct-value-%d", i))
+		b.Len = 1
+		consumeErr = op.Consume(context.Background(), b)
+	}
+	if consumeErr == nil {
+		t.Fatal("want a budget-exceeded error once the distinct set outgrows a 64-byte tracker")
+	}
+	if !strings.Contains(consumeErr.Error(), "aggregation memory budget exceeded") {
+		t.Fatalf("error = %q, want it to contain %q", consumeErr.Error(), "aggregation memory budget exceeded")
+	}
+}
+
+// TestBatchAggregation_CountDistinct_DelegatesToAggregationPackage mirrors
+// TestBatchAggregation_DelegatesToAggregationPackage's convention for
+// COUNT_DISTINCT: the same values fed through BatchAggregation and through
+// a directly-constructed aggregation.NewDistinct() (keyed by the same
+// appendKeyComponent encoding) must agree, proving the distinct set lives
+// in pkg/query/aggregation rather than being reimplemented locally.
+func TestBatchAggregation_CountDistinct_DelegatesToAggregationPackage(t *testing.T) {
+	s := aggTagSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggCountDistinct, InputCol: 1, Output: "distinct_v", HideTag: true}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+
+	values := []int64{3, 1, 4, 1, 5, 9, 2, 6, 5, 3}
+	for _, v := range values {
+		feedAggTag(t, op, s, aggTagRow{g: "a", v: v, s: "x"})
+	}
+	_ = op.Finalize(context.Background())
+	out, _ := op.NextBatch(context.Background())
+	gotDistinct := out.Columns[2].(*vectorized.TypedColumn[int64]).Data()[findAggRow(t, out, "a")]
+
+	ref := aggregation.NewDistinct()
+	for _, v := range values {
+		var buf [8]byte
+		binary.LittleEndian.PutUint64(buf[:], uint64(v))
+		ref.In(buf[:])
+	}
+	if wantDistinct := ref.Val(); gotDistinct != wantDistinct {
+		t.Fatalf("BatchAggregation COUNT_DISTINCT (%d) must equal aggregation.NewDistinct (%d) — divergence indicates delegation broke",
+			gotDistinct, wantDistinct)
+	}
+}
+
+// TestBatchAggregation_CountDistinct_AggModeReduce_Errors pins the
+// defensive assertion in newAggSlot: the liaison never constructs a
+// distinct slot directly — it combines already-local-distinct partials via
+// ordinary AggSum (design §7.4) — so an AggCountDistinct spec reaching
+// AggModeReduce is a producer/planner bug and must fail loud, not silently
+// produce a zero-valued or nil accumulator.
+func TestBatchAggregation_CountDistinct_AggModeReduce_Errors(t *testing.T) {
+	s := aggTagSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggCountDistinct, InputCol: 1, Output: "distinct_v"}}, AggModeReduce, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+	if err := op.Consume(context.Background(), mustBuildTagBatch(t, s, aggTagRow{g: "a", v: 1, s: "x"})); err == nil {
+		t.Fatal("AggCountDistinct under AggModeReduce must error, not silently construct a distinct slot")
+	}
+}
+
+// TestBatchAggregation_CountDistinct_OutputTypeIsInt64 pins that the output
+// column type is always int64, even when the target is a string tag — a
+// distinct count is always an integer, unlike SUM/MIN/MAX which preserve
+// the input type.
+func TestBatchAggregation_CountDistinct_OutputTypeIsInt64(t *testing.T) {
+	s := aggTagSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggCountDistinct, InputCol: 2, Output: "distinct_s", HideTag: true}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	outSchema := op.OutputSchema()
+	if outSchema.Columns[2].Type != vectorized.ColumnTypeInt64 {
+		t.Fatalf("output type for COUNT_DISTINCT over a string tag = %v, want ColumnTypeInt64", outSchema.Columns[2].Type)
+	}
+}
+
+// mustBuildTagBatch is a one-row aggTagSchema batch builder for tests that
+// need to call Consume a second time without going through feedAggTag
+// (which always Consumes immediately).
+func mustBuildTagBatch(t *testing.T, s *vectorized.BatchSchema, row aggTagRow) *vectorized.RecordBatch {
+	t.Helper()
+	b := vectorized.NewRecordBatch(s, 1)
+	b.Columns[0].(*vectorized.TypedColumn[string]).Append(row.g)
+	b.Columns[1].(*vectorized.TypedColumn[int64]).Append(row.v)
+	b.Columns[2].(*vectorized.TypedColumn[string]).Append(row.s)
+	b.Len = 1
+	return b
 }
 
 // TestBatchAggregation_Correctness_MatchesManualComputation pins parity-relevant
