@@ -126,6 +126,27 @@ func BuildOperators(
 		Output:   aggTargetName(opts.Agg),
 		HideTag:  opts.Agg.HideTag,
 	}
+	// COUNT_DISTINCT's map-phase precondition (design §7.4): a single node
+	// typically scans rows from more than one of its local shards in one
+	// AggModeMap operator instance (the scan fans out across shards before
+	// reaching the vectorized layer), and computeKey otherwise ignores
+	// shard id — so two shards' rows for the same GroupBy key would
+	// collapse into one group, tagged with whichever shard happened to be
+	// first-seen (newGroup already documents this as harmless for
+	// SUM/COUNT, since summing is associative regardless of grouping
+	// granularity). For COUNT_DISTINCT it is not harmless: under
+	// replication, two replicas of the same node can merge shards into
+	// that "incidental" group in a different order, so the same true
+	// per-shard contribution gets tagged with different shard ids on
+	// different replicas — markDedupSeen's (shardID, groupKey) dedup key
+	// then fails to recognize them as duplicates, and the liaison
+	// double-counts. Forcing one group per (shard, GroupBy-key) makes the
+	// emitted shard_id deterministic and dedup reliable.
+	if aggFn == AggCountDistinct && mode == AggModeMap {
+		if shardIdx := findShardIDIndex(schema); shardIdx >= 0 {
+			keyIndices = append(keyIndices, shardIdx)
+		}
+	}
 	agg := NewBatchAggregation(schema, keyIndices, []AggSpec{spec},
 		mode, batchSize, tracker, aggEntrySize)
 	return []vectorized.BreakerOperator{agg}, nil

@@ -192,6 +192,69 @@ func TestAnalyzeDistributed_NodeTemplatePushesAggPartials(t *testing.T) {
 	}
 }
 
+// TestAnalyzeDistributed_CountDistinct_RequiresSingleStage pins that a
+// COUNT_DISTINCT plan signals RequiresSingleStage (design §7.4) — the
+// analyzer cannot itself count resolved stages (it never sees node
+// selectors), so this is the signal banyand/dquery checks after stage
+// resolution.
+func TestAnalyzeDistributed_CountDistinct_RequiresSingleStage(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg:             countDistinctAgg(defaultName, tagCount),
+	}
+	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
+	if analyzeErr != nil {
+		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
+	}
+	if !p.RequiresSingleStage() {
+		t.Fatal("a COUNT_DISTINCT plan must require a single resolved stage")
+	}
+}
+
+// TestAnalyzeDistributed_SumAgg_DoesNotRequireSingleStage pins the negative
+// case: every other function composes with multi-stage queries exactly as
+// before (design §7.4 is COUNT_DISTINCT-specific).
+func TestAnalyzeDistributed_SumAgg_DoesNotRequireSingleStage(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg:             &measurev1.QueryRequest_Aggregation{Function: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, FieldName: fieldValue},
+	}
+	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
+	if analyzeErr != nil {
+		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
+	}
+	if p.RequiresSingleStage() {
+		t.Fatal("a non-COUNT_DISTINCT plan must not require a single resolved stage")
+	}
+}
+
+// TestAnalyzeDistributed_CountDistinct_MultiGroup_AnyGroupCanReject pins
+// that the decomposability condition (design §7.4) is checked for every
+// group in a multi-group request — a query must not be accepted just
+// because the FIRST group's schema happens to satisfy it.
+func TestAnalyzeDistributed_CountDistinct_MultiGroup_AnyGroupCanReject(t *testing.T) {
+	okSchema := entityShardingSchema([]string{tagCount}, nil) // routing covered by the Agg target
+	okSchema.Metadata = &commonv1.Metadata{Name: "demo", Group: "groupA"}
+	badSchema := entityShardingSchema([]string{tagCount}, []string{tagSvc}) // sharding key uncovered
+	badSchema.Metadata = &commonv1.Metadata{Name: "demo", Group: "groupB"}
+
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		Groups:          []string{"groupA", "groupB"},
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg:             countDistinctAgg(defaultName, tagCount),
+	}
+	cfg := vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1}
+	if _, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{okSchema, badSchema}, nil, cfg); analyzeErr == nil {
+		t.Fatal("a multi-group COUNT_DISTINCT request must reject when any group's schema fails the decomposability condition")
+	}
+}
+
 // TestAnalyzeDistributed_NodeTemplatePushesAggPartials_TagTarget mirrors
 // TestAnalyzeDistributed_NodeTemplatePushesAggPartials for a tag-targeted
 // Agg (design §7.1): the proto request travels to the node template
