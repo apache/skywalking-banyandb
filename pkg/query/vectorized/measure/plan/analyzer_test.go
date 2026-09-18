@@ -580,12 +580,11 @@ func TestAnalyze_AggTagTarget_AlreadyProjected_HideTagFalse(t *testing.T) {
 	}
 }
 
-// TestAnalyze_GroupByTimeBucket_WireOnly_NoExecutionYet pins this issue's
-// scope boundary (design §12 stage 0): GroupBy.time_bucket is carried onto
-// model.MeasureGroupBy unchanged, but nothing resolves, validates, or
-// executes it yet — Analyze must not error and must not alter the plan
-// shape just because time_bucket is set.
-func TestAnalyze_GroupByTimeBucket_WireOnly_NoExecutionYet(t *testing.T) {
+// TestAnalyze_GroupByTimeBucket_ResolvesWidth pins design §5.3's
+// explicit-width case end to end: GroupBy.time_bucket resolves to a
+// model.MeasureTimeBucket carrying both the raw string and its parsed
+// nanosecond width.
+func TestAnalyze_GroupByTimeBucket_ResolvesWidth(t *testing.T) {
 	req := &measurev1.QueryRequest{
 		Name:            "demo",
 		TagProjection:   projTagProj(),
@@ -595,14 +594,19 @@ func TestAnalyze_GroupByTimeBucket_WireOnly_NoExecutionYet(t *testing.T) {
 			FieldName:     fieldValue,
 			TimeBucket:    &measurev1.QueryRequest_GroupBy_TimeBucket{Width: "5m"},
 		},
+		Agg: &measurev1.QueryRequest_Aggregation{
+			Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
+			FieldName: fieldValue,
+		},
 	}
 	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
 	if err != nil {
-		t.Fatalf("a set time_bucket must not error in this delivery stage: %v", err)
+		t.Fatalf("Analyze: %v", err)
 	}
 	gba := p.(*Limit).Child.(*GroupByAgg)
-	if gba.GroupBy.TimeBucket == nil || gba.GroupBy.TimeBucket.Width != "5m" {
-		t.Fatalf("GroupBy.TimeBucket must carry the wire value through, got %+v", gba.GroupBy.TimeBucket)
+	const wantNanos = int64(5 * 60 * 1e9)
+	if gba.GroupBy.TimeBucket == nil || gba.GroupBy.TimeBucket.Width != "5m" || gba.GroupBy.TimeBucket.WidthNanos != wantNanos {
+		t.Fatalf("GroupBy.TimeBucket: want Width=5m WidthNanos=%d, got %+v", wantNanos, gba.GroupBy.TimeBucket)
 	}
 }
 
@@ -636,5 +640,178 @@ func TestQueryRequest_TagAggAndTimeBucket_SurviveWireRoundTrip(t *testing.T) {
 	}
 	if got.GetGroupBy().GetTimeBucket().GetWidth() != "1h" {
 		t.Fatalf("GroupBy.TimeBucket did not survive the wire round trip: %+v", got.GetGroupBy())
+	}
+}
+
+// timeBucketReq builds a request with a bare time_bucket GroupBy (no tag
+// key) and no Agg, for exercising resolveTimeBucket's width table directly
+// through Analyze.
+func timeBucketReq(width string) *measurev1.QueryRequest {
+	return &measurev1.QueryRequest{
+		Name:            "demo",
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		GroupBy: &measurev1.QueryRequest_GroupBy{
+			TimeBucket: &measurev1.QueryRequest_GroupBy_TimeBucket{Width: width},
+		},
+		// A bucketed GroupBy requires Agg (translateGroupBy rejects a
+		// bucketed raw GroupBy — no execution support carries the projected
+		// fields for that shape yet), so every width-table case needs one.
+		Agg: &measurev1.QueryRequest_Aggregation{
+			Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
+			FieldName: fieldValue,
+		},
+	}
+}
+
+// TestAnalyze_TimeBucket_WidthResolutionTable pins the full §5.3 table as
+// literal test cases, including the explicit non-rejection of a width that
+// is not a multiple of the measure's interval — the rule an earlier draft
+// wrongly proposed.
+func TestAnalyze_TimeBucket_WidthResolutionTable(t *testing.T) {
+	schemaWithInterval := testMeasureSchema()
+	schemaWithInterval.Interval = "1m"
+
+	cases := []struct {
+		schema    *databasev1.Measure
+		name      string
+		width     string
+		wantNanos int64
+		wantErr   bool
+	}{
+		{name: "width from request", width: "5m", schema: testMeasureSchema(), wantNanos: 5 * 60 * 1e9},
+		{name: "width empty, measure interval present", width: "", schema: schemaWithInterval, wantNanos: 60 * 1e9},
+		{name: "width empty, measure interval absent", width: "", schema: testMeasureSchema(), wantErr: true},
+		{name: "width unparseable", width: "banana", schema: testMeasureSchema(), wantErr: true},
+		{name: "width zero", width: "0s", schema: testMeasureSchema(), wantErr: true},
+		{name: "width negative", width: "-5m", schema: testMeasureSchema(), wantErr: true},
+		{
+			name: "width not a multiple of the interval is accepted", width: "7m",
+			schema: schemaWithInterval, wantNanos: 7 * 60 * 1e9,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := Analyze(timeBucketReq(tc.width), tc.schema, measure.AggModeAll)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("want error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Analyze: %v", err)
+			}
+			gba := p.(*Limit).Child.(*GroupByAgg)
+			if gba.GroupBy.TimeBucket.WidthNanos != tc.wantNanos {
+				t.Fatalf("WidthNanos: want %d, got %d", tc.wantNanos, gba.GroupBy.TimeBucket.WidthNanos)
+			}
+		})
+	}
+}
+
+// TestAnalyze_TimeBucket_BoundaryTimestampAcceptedAsWidth is a design-§5.3
+// aside folded into the width table: a boundary-aligned width string is
+// just an ordinary positive duration — nothing about "boundary" is special
+// at resolution time (only bucketStart's floor arithmetic cares about
+// boundaries), so this doubles as a plain sanity check on parsing.
+func TestAnalyze_TimeBucket_BoundaryTimestampAcceptedAsWidth(t *testing.T) {
+	p, err := Analyze(timeBucketReq("1000ns"), testMeasureSchema(), measure.AggModeAll)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	gba := p.(*Limit).Child.(*GroupByAgg)
+	if gba.GroupBy.TimeBucket.WidthNanos != 1000 {
+		t.Fatalf("WidthNanos: want 1000, got %d", gba.GroupBy.TimeBucket.WidthNanos)
+	}
+}
+
+// TestAnalyze_TimeBucket_BucketOnly_NoTagKey pins design §7.2: a GroupBy may
+// bucket by time alone, with no tag key at all.
+func TestAnalyze_TimeBucket_BucketOnly_NoTagKey(t *testing.T) {
+	p, err := Analyze(timeBucketReq("5m"), testMeasureSchema(), measure.AggModeAll)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	gba := p.(*Limit).Child.(*GroupByAgg)
+	if gba.GroupBy.TagFamily != "" || len(gba.GroupBy.TagNames) != 0 {
+		t.Fatalf("bucket-only GroupBy must carry no tag key, got %+v", gba.GroupBy)
+	}
+	if gba.GroupBy.TimeBucket == nil {
+		t.Fatal("bucket-only GroupBy must still carry TimeBucket")
+	}
+}
+
+// TestAnalyze_GroupBy_NeitherTagProjectionNorTimeBucket_Errors pins that an
+// empty GroupBy message (no tag_projection, no time_bucket) is rejected —
+// there is nothing to group by.
+func TestAnalyze_GroupBy_NeitherTagProjectionNorTimeBucket_Errors(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		GroupBy:         &measurev1.QueryRequest_GroupBy{},
+	}
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err == nil {
+		t.Fatal("an empty GroupBy message must error")
+	}
+}
+
+// TestAnalyze_TimeBucket_RejectsNonTimeOrderBy pins the analyzer guard
+// (design §7.2): a bucketed request whose order_by names a non-time index
+// rule is rejected rather than silently ignored.
+func TestAnalyze_TimeBucket_RejectsNonTimeOrderBy(t *testing.T) {
+	req := timeBucketReq("5m")
+	req.OrderBy = &modelv1.QueryOrder{IndexRuleName: "some_index"}
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err == nil {
+		t.Fatal("a bucketed request with a non-time order_by must error")
+	}
+}
+
+// TestAnalyze_TimeBucket_RejectsDescendingTimeOrderBy pins the other half of
+// the ordering guard: an empty index_rule_name with Sort=SORT_DESC still
+// resolves to a time-ordered scan (index.OrderByTypeTime), just descending
+// instead of ascending — which would trip BatchTimeBucket's monotonicity
+// guard on the very first bucket transition. This must be rejected at
+// analyze time with a clear error, not surface as a confusing "bucket
+// regressed" failure deep in the scan.
+func TestAnalyze_TimeBucket_RejectsDescendingTimeOrderBy(t *testing.T) {
+	req := timeBucketReq("5m")
+	req.OrderBy = &modelv1.QueryOrder{Sort: modelv1.Sort_SORT_DESC}
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err == nil {
+		t.Fatal("a bucketed request with order_by.sort=SORT_DESC must error")
+	}
+}
+
+// TestAnalyze_TimeBucket_WithoutAgg_Rejected pins that a bucketed raw
+// GroupBy (time_bucket set, Agg nil) is rejected rather than silently
+// dropping every projected field: BatchTimeBucket's no-Agg shape reuses
+// BatchAggregation's output layout (tags + bucket timestamp only), unlike
+// BatchGroupByFirst's full-schema passthrough for the non-bucketed raw
+// GroupBy case.
+func TestAnalyze_TimeBucket_WithoutAgg_Rejected(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		GroupBy: &measurev1.QueryRequest_GroupBy{
+			TimeBucket: &measurev1.QueryRequest_GroupBy_TimeBucket{Width: "5m"},
+		},
+	}
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err == nil {
+		t.Fatal("a bucketed GroupBy without Agg must error")
+	}
+}
+
+// TestAnalyze_TimeBucket_UsesIndexModeMap pins that the analyzer decides
+// streaming vs. the index-mode map fallback once, from
+// measureSchema.GetIndexMode(), rather than leaving it to be guessed later.
+func TestAnalyze_TimeBucket_UsesIndexModeMap(t *testing.T) {
+	indexModeSchema := testMeasureSchema()
+	indexModeSchema.IndexMode = true
+	p, err := Analyze(timeBucketReq("5m"), indexModeSchema, measure.AggModeAll)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	gba := p.(*Limit).Child.(*GroupByAgg)
+	if !gba.GroupBy.TimeBucket.UseIndexModeMap {
+		t.Fatal("an index-mode measure must resolve UseIndexModeMap=true")
 	}
 }

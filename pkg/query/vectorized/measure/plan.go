@@ -140,6 +140,72 @@ func aggTargetName(agg *model.MeasureAgg) string {
 	return agg.FieldName
 }
 
+// BuildTimeBucketOperator builds the BatchTimeBucket operator for a
+// time-bucketed GroupBy (design §7.2), wrapping upstream directly. Unlike
+// BuildOperators, this does not return a BreakerOperator to be attached via
+// PipelineBuilder.Break: BatchTimeBucket is a PullOperator that pulls from
+// upstream lazily inside its own NextBatch, which is what makes its memory
+// bound real (see BatchTimeBucket's doc). Callers wire it in via
+// PipelineBuilder.Transform instead. Check opts.GroupBy.GetTimeBucket() != nil
+// before calling this rather than BuildOperators.
+//
+// tagKeyIndices are the already resolved tag GroupBy keys (empty for a
+// bucket-only GroupBy, i.e. no tag key at all). Agg is optional, exactly as
+// for the non-bucketed case: when absent this is a bucketed raw GroupBy
+// (first-seen row per (bucket, tags)), when present it is a bucketed
+// aggregate — both shapes reuse the same BatchTimeBucket, since
+// BatchAggregation with zero AggSpecs already produces the raw-GroupBy
+// shape. (The analyzer currently rejects the no-Agg case for real requests
+// — BatchAggregation's empty-AggSpec output layout drops every projected
+// field, unlike BatchGroupByFirst's full-schema passthrough — but
+// BuildTimeBucketOperator itself stays agnostic to that policy choice.)
+func BuildTimeBucketOperator(
+	upstream vectorized.PullOperator, opts model.MeasureQueryOptions, schema *vectorized.BatchSchema,
+	tracker *vectorized.MemoryTracker, batchSize int, mode AggMode,
+) (*BatchTimeBucket, error) {
+	if tracker == nil {
+		return nil, fmt.Errorf("vectorized.measure: BuildTimeBucketOperator requires a non-nil shared MemoryTracker")
+	}
+	if batchSize <= 0 {
+		return nil, fmt.Errorf("vectorized.measure: batchSize must be > 0, got %d", batchSize)
+	}
+	if mode == AggModeReduce {
+		return nil, fmt.Errorf("vectorized.measure: BuildTimeBucketOperator does not build AggModeReduce — that operator is built by the liaison reduce plan")
+	}
+	var tagKeyIndices []int
+	if opts.GroupBy != nil && opts.GroupBy.TagFamily != "" && len(opts.GroupBy.TagNames) > 0 {
+		var keyErr error
+		tagKeyIndices, keyErr = lookupGroupByKeyIndices(schema, opts.GroupBy)
+		if keyErr != nil {
+			return nil, keyErr
+		}
+	}
+	timestampIdx := schema.TimestampIndex()
+	if timestampIdx < 0 {
+		return nil, fmt.Errorf("vectorized.measure: time_bucket requires a RoleTimestamp column in the scan schema")
+	}
+	var specs []AggSpec
+	if opts.Agg != nil {
+		inputIdx, inputErr := lookupAggInputColumnIndex(schema, opts.Agg)
+		if inputErr != nil {
+			return nil, inputErr
+		}
+		aggFn, fnErr := protoAggFuncToInternal(opts.Agg.Func)
+		if fnErr != nil {
+			return nil, fnErr
+		}
+		specs = []AggSpec{{
+			Func:     aggFn,
+			InputCol: inputIdx,
+			Output:   aggTargetName(opts.Agg),
+			HideTag:  opts.Agg.HideTag,
+		}}
+	}
+	tb := opts.GroupBy.TimeBucket
+	return NewBatchTimeBucket(upstream, schema, tagKeyIndices, timestampIdx, tb.WidthNanos,
+		specs, mode, batchSize, tracker, aggEntrySize, !tb.UseIndexModeMap), nil
+}
+
 // lookupGroupByKeyIndices resolves each GroupBy tag name to its column index
 // in schema. All names must exist within the configured tag family.
 func lookupGroupByKeyIndices(schema *vectorized.BatchSchema, gb *model.MeasureGroupBy) ([]int, error) {

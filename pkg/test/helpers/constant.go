@@ -80,6 +80,12 @@ type Args struct {
 	WantErr         bool
 	DisOrder        bool
 	IgnoreElementID bool
+	// SkipQL skips the BydbQL round-trip check (input/<Input>.ql) for this
+	// case. Temporary escape hatch for query shapes BydbQL cannot express
+	// yet — e.g. GroupBy.time_bucket, which has no TIME_BUCKET(...) grammar
+	// until apache/skywalking#14091 lands. Remove a case's SkipQL (and add
+	// its .ql fixture) once BydbQL supports the shape.
+	SkipQL bool
 }
 
 // UnmarshalYAML decodes YAML raw bytes to proto.Message.

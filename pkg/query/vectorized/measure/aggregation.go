@@ -141,9 +141,11 @@ type BatchAggregation struct {
 	aggInputCountIdx []int
 	insertion        []*aggGroup
 	outputShardIdx   int
+	outputTimeIdx    int
 	tagOutOffset     int
 	mode             AggMode
 	shardIDIdx       int
+	bucketIdx        int
 	entrySize        int64
 	reserved         int64
 	rowsIn           int64
@@ -153,7 +155,7 @@ type BatchAggregation struct {
 	closed           bool
 }
 
-// aggGroup carries one bucket's reduction state plus a copy of every
+// aggGroup carries one group's reduction state plus a copy of every
 // projected tag column for this group. tagCols is indexed by position in
 // BatchAggregation.tagIndices (NOT just the GroupBy keys), so non-key
 // projected tags can be emitted as their first-seen value.
@@ -165,11 +167,18 @@ type BatchAggregation struct {
 // read by AggModeMap emit; AggModeAll ignores it. Stays zero when
 // keyIndices is empty (scalar reduce) so the emitted partial matches the
 // row path's aggAllIterator.Current() hardcoding ShardId: 0.
+//
+// timeValue is captured by newGroup from the input batch's (already
+// bucket-floored) RoleTimestamp column at the group's creating row, exactly
+// like shardID — it is constant for every row in the group by construction,
+// since the bucket-floored timestamp is itself part of the group key
+// (design §7.2). Read only when bucketIdx >= 0; ignored otherwise.
 type aggGroup struct {
-	key     string
-	tagCols []vectorized.Column
-	slots   []aggSlot
-	shardID int64
+	key       string
+	tagCols   []vectorized.Column
+	slots     []aggSlot
+	shardID   int64
+	timeValue int64
 }
 
 // aggSlot holds either:
@@ -205,13 +214,28 @@ type aggSlot struct {
 // reserved per new group bucket (key columns + slots + map entry overhead).
 // Pass entrySize=0 to disable per-group bookkeeping. tracker must not be nil
 // — use a large NewMemoryTracker for unit tests that don't care about budget.
+//
+// Time bucketing (design §7.2) needs no dedicated parameter: when keyIndices
+// contains a RoleTimestamp column, that column is treated as the bucket key
+// — grouping by it is already handled generically by computeKey, and the
+// only bucket-specific behavior (conditional D2 reversal: re-emitting the
+// bucket start as a RoleTimestamp output column) is derived here from that
+// same column. RoleTimestamp never legitimately appears in keyIndices for
+// any other reason, so this inference is unambiguous.
 func NewBatchAggregation(
 	input *vectorized.BatchSchema, keyIndices []int,
 	aggs []AggSpec, mode AggMode, batchSize int,
 	tracker *vectorized.MemoryTracker, entrySize int64,
 ) *BatchAggregation {
+	bucketIdx := -1
+	for _, idx := range keyIndices {
+		if input.Columns[idx].Role == vectorized.RoleTimestamp {
+			bucketIdx = idx
+			break
+		}
+	}
 	tagIndices := collectTagIndices(input, keyIndices, hiddenTagExclusionSet(aggs))
-	layout := buildAggOutputLayout(input, tagIndices, aggs, mode)
+	layout := buildAggOutputLayout(input, tagIndices, aggs, mode, bucketIdx)
 	return &BatchAggregation{
 		inputSchema:      input,
 		outputSchema:     layout.schema,
@@ -223,8 +247,10 @@ func NewBatchAggregation(
 		aggOutOffsets:    layout.aggOutOffsets,
 		aggHasCount:      layout.aggHasCount,
 		outputShardIdx:   layout.outputShardIdx,
+		outputTimeIdx:    layout.outputTimestampIdx,
 		tagOutOffset:     layout.tagOutOffset,
 		shardIDIdx:       findShardIDIndex(input),
+		bucketIdx:        bucketIdx,
 		aggInputCountIdx: buildAggInputCountIdx(input, aggs, mode),
 		mode:             mode,
 		aggValuePath:     deriveAggValuePath(input, aggs),
@@ -420,6 +446,34 @@ func (a *BatchAggregation) NextBatch(_ context.Context) (*vectorized.RecordBatch
 	return out, nil
 }
 
+// SortInsertionByBucket stable-sorts emission order by each group's
+// captured bucket timestamp (aggGroup.timeValue, design §7.2), ascending.
+// A no-op when this aggregation carries no bucket key (bucketIdx < 0).
+//
+// This exists for BatchTimeBucket's map-mode drain: its single persistent
+// aggregator accumulates groups across the whole scan in first-seen order,
+// but map mode exists precisely because the input may not be
+// time-ordered — so emission order needs an explicit sort to satisfy the
+// bucket-ascending output contract (design §7.5). Calling this on a
+// streaming-mode instance is also safe but a no-op in effect: each such
+// instance covers exactly one bucket, so every group already shares the
+// same timeValue and the stable sort leaves insertion order untouched.
+func (a *BatchAggregation) SortInsertionByBucket() {
+	if a.bucketIdx < 0 {
+		return
+	}
+	slices.SortStableFunc(a.insertion, func(x, y *aggGroup) int {
+		switch {
+		case x.timeValue < y.timeValue:
+			return -1
+		case x.timeValue > y.timeValue:
+			return 1
+		default:
+			return 0
+		}
+	})
+}
+
 // Close releases the group map and refunds the outstanding memory
 // reservation. Idempotent.
 func (a *BatchAggregation) Close() error {
@@ -488,6 +542,17 @@ func (a *BatchAggregation) newGroup(b *vectorized.RecordBatch, rowIdx int, key s
 			}
 		}
 	}
+	// Capture the bucket start for a time-bucketed group (design §7.2). Every
+	// row in the group shares the same value by construction — the bucket is
+	// itself part of keyIndices — so the creating row's value is definitive.
+	if a.bucketIdx >= 0 {
+		if tsCol, ok := b.Columns[a.bucketIdx].(*vectorized.TypedColumn[int64]); ok {
+			data := tsCol.Data()
+			if rowIdx >= 0 && rowIdx < len(data) {
+				g.timeValue = data[rowIdx]
+			}
+		}
+	}
 	return g, nil
 }
 
@@ -532,6 +597,11 @@ func (a *BatchAggregation) emitGroupRow(out *vectorized.RecordBatch, group *aggG
 	// -1 in AggModeAll, 0 in AggModeMap (see buildAggOutputLayout).
 	if a.outputShardIdx >= 0 {
 		out.Columns[a.outputShardIdx].(*vectorized.TypedColumn[int64]).Append(group.shardID)
+	}
+	// Conditional D2 reversal (design §7.2): re-emit the bucket start as a
+	// RoleTimestamp column, present only when this aggregation is bucketed.
+	if a.outputTimeIdx >= 0 {
+		out.Columns[a.outputTimeIdx].(*vectorized.TypedColumn[int64]).Append(group.timeValue)
 	}
 	// Projected tag columns, in tagIndices order — including non-key tags
 	// carried forward as the first-seen value. tagOutOffset is 0 in
@@ -699,25 +769,34 @@ type aggOutputLayout struct {
 	// RoleShardID column. -1 in AggModeAll (no shard column emitted);
 	// 0 in AggModeMap (the partial batch always carries shard id first).
 	outputShardIdx int
+	// outputTimestampIdx is the output-batch column index of the RoleTimestamp
+	// column re-emitted for a time-bucketed aggregation (design §7.2's
+	// conditional D2 reversal). -1 when the aggregation is not bucketed —
+	// the unbucketed case still drops the timestamp entirely, unchanged.
+	outputTimestampIdx int
 	// tagOutOffset is the output-batch column index where the tag columns
-	// begin (0 in AggModeAll; 1 in AggModeMap).
+	// begin: 0 in AggModeAll, plus 1 for a leading shard-id column (AggModeMap)
+	// and plus 1 more for a leading bucket timestamp column (if bucketed).
 	tagOutOffset int
 }
 
 // buildAggOutputLayout derives the output-batch ColumnDef list AND the
-// per-agg / shard-id index bookkeeping for a given (input schema, tag
-// indices, agg specs, mode). It is the sole place that decides Map-mode's
-// shard-id-first + MEAN-emits-two-columns layout, so emit-time code can
-// just consult precomputed offsets.
+// per-agg / shard-id / timestamp index bookkeeping for a given (input
+// schema, tag indices, agg specs, mode, bucket index). It is the sole place
+// that decides Map-mode's shard-id-first + MEAN-emits-two-columns layout,
+// plus the bucketed case's leading timestamp column, so emit-time code can
+// just consult precomputed offsets. bucketIdx is the input-schema index of
+// the bucket key column, or -1 when the aggregation is not bucketed.
 func buildAggOutputLayout(
-	input *vectorized.BatchSchema, tagIndices []int, aggs []AggSpec, mode AggMode,
+	input *vectorized.BatchSchema, tagIndices []int, aggs []AggSpec, mode AggMode, bucketIdx int,
 ) aggOutputLayout {
-	// Worst-case capacity: shard-id (1) + tags + 2 per agg (MEAN value + count).
-	defs := make([]vectorized.ColumnDef, 0, 1+len(tagIndices)+2*len(aggs))
+	// Worst-case capacity: shard-id (1) + timestamp (1) + tags + 2 per agg.
+	defs := make([]vectorized.ColumnDef, 0, 2+len(tagIndices)+2*len(aggs))
 	layout := aggOutputLayout{
-		aggOutOffsets:  make([]int, len(aggs)),
-		aggHasCount:    make([]bool, len(aggs)),
-		outputShardIdx: -1,
+		aggOutOffsets:      make([]int, len(aggs)),
+		aggHasCount:        make([]bool, len(aggs)),
+		outputShardIdx:     -1,
+		outputTimestampIdx: -1,
 	}
 	if mode == AggModeMap {
 		defs = append(defs, vectorized.ColumnDef{
@@ -726,6 +805,10 @@ func buildAggOutputLayout(
 			Type: vectorized.ColumnTypeInt64,
 		})
 		layout.outputShardIdx = 0
+	}
+	if bucketIdx >= 0 {
+		layout.outputTimestampIdx = len(defs)
+		defs = append(defs, vectorized.ColumnDef{Role: vectorized.RoleTimestamp, Type: vectorized.ColumnTypeInt64})
 	}
 	layout.tagOutOffset = len(defs)
 	for _, ti := range tagIndices {

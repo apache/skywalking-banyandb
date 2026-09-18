@@ -1208,12 +1208,18 @@ retired. A clear error is more honest than a second implementation that will rot
 - **Follow-up: gap filling.** Needs a declared bucket set and a zero value per aggregate; SUM and
   COUNT fill with 0, MIN/MAX/MEAN have no defensible fill.
 
-### Known adjacent inconsistency (note, do not fix here)
+### Fixed: adjacent inconsistency in the liaison-side key resolution
 
-`reduce.go:169 resolveKeyIndices` matches key tags by `Name` only, ignoring `TagFamily`, unlike
-`plan.go:140` and `distributed.go:945`, which both compare the family. It is safe in practice —
-tag names are unique per measure (§5.1) — and `distributedGroupByTagNames` (`:1131`) discards the
-family before calling it anyway. New code should resolve on `(family, name)`.
+`reduce.go resolveKeyIndices` used to match key tags by `Name` only, ignoring `TagFamily`, unlike
+`plan.go:140` and `distributed.go:945`, which both compare the family. An earlier version of
+this note claimed that was safe because "tag names are unique per measure" — that directly
+contradicts §5.1 above, which debunks exactly that assumption (tag-family validation does not
+reject a name repeated across families, and `pkg/query/vectorized/schema_test.go` exercises it
+as a valid case). A bucketed or tag-keyed distributed reduce over such a schema could silently
+bind to the wrong family's column. Fixed by threading the key's `TagFamily` alongside its names
+end to end — `distributedGroupByTagKey` (`distributed.go`) now returns `(family, names)` instead
+of discarding the family, and `resolveKeyIndices` matches on `(family, name)`, same as `plan.go`
+and `distributed.go`'s row-merge path.
 
 ---
 

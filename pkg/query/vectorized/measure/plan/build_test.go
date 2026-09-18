@@ -19,6 +19,7 @@ package plan
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -230,4 +231,84 @@ func TestGroupByAgg_Schema_DropsTimestampAddsAggField(t *testing.T) {
 	if out.Columns[1].Name != fieldValue {
 		t.Fatalf("col 1 should be 'value' (row-path parity), got %s", out.Columns[1].Name)
 	}
+}
+
+// TestGroupByAgg_TimeBucket_Schema_KeepsTimestampAtBucketStart is the
+// bucketed sibling of TestGroupByAgg_Schema_DropsTimestampAddsAggField
+// (design §7.2's conditional D2 reversal): the two together pin D2 as
+// conditional rather than repealed — an unbucketed aggregation still drops
+// the timestamp, a bucketed one carries it as the bucket start.
+func TestGroupByAgg_TimeBucket_Schema_KeepsTimestampAtBucketStart(t *testing.T) {
+	schema, batch := buildScanInput(t)
+	src := &fakePullSource{schema: schema, batches: []*vectorized.RecordBatch{batch}}
+	scan := NewScan(schema, ScanParams{})
+	scan.Source = src
+	gba, err := NewGroupByAgg(scan,
+		&model.MeasureGroupBy{
+			TagFamily:  "default",
+			TagNames:   []string{tagSvc},
+			TimeBucket: &model.MeasureTimeBucket{WidthNanos: 2},
+		},
+		&model.MeasureAgg{FieldName: fieldValue, Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
+		measure.AggModeAll,
+	)
+	if err != nil {
+		t.Fatalf("NewGroupByAgg: %v", err)
+	}
+	out := gba.Schema()
+	if out == nil {
+		t.Fatal("GroupByAgg.Schema must not be nil")
+	}
+	if out.TimestampIndex() < 0 {
+		t.Fatal("a bucketed aggregation must carry a RoleTimestamp column (design §7.2 D2 reversal)")
+	}
+
+	root := NewLimit(gba, 0, 10)
+	tracker := vectorized.NewMemoryTracker(1 << 20)
+	bc := &BuildContext{
+		Builder: vectorized.NewPipelineBuilder().WithMemoryTracker(tracker),
+		Tracker: tracker,
+		Config:  measure.VectorizedConfig{BatchSize: 1024, QueryMemoryMiB: 1},
+	}
+	if buildErr := root.Build(context.Background(), bc); buildErr != nil {
+		t.Fatalf("Build: %v", buildErr)
+	}
+	pipeline, buildErr := bc.Builder.Build()
+	if buildErr != nil {
+		t.Fatalf("PipelineBuilder.Build: %v", buildErr)
+	}
+	if initErr := pipeline.Init(context.Background()); initErr != nil {
+		t.Fatal(initErr)
+	}
+	batches := drainPipeline(t, pipeline)
+
+	// buildScanInput rows: (ts=1,a,1) (ts=2,b,4) (ts=3,a,2) (ts=4,a,3) (ts=5,b,5).
+	// Width 2 buckets: ts1->0, ts2/ts3->2, ts4/ts5->4.
+	got := map[string]int64{}
+	for _, b := range batches {
+		tsIdx := b.Schema.TimestampIndex()
+		if tsIdx < 0 {
+			t.Fatalf("bucketed output batch must carry a RoleTimestamp column, got schema %+v", b.Schema.Columns)
+		}
+		tsCol := b.Columns[tsIdx].(*vectorized.TypedColumn[int64])
+		svcCol := b.Columns[tsIdx+1].(*vectorized.TypedColumn[string])
+		sumCol := b.Columns[tsIdx+2].(*vectorized.TypedColumn[int64])
+		for i := 0; i < b.Len; i++ {
+			key := svcColKey(tsCol.Data()[i], svcCol.Data()[i])
+			got[key] = sumCol.Data()[i]
+		}
+	}
+	want := map[string]int64{svcColKey(0, "a"): 1, svcColKey(2, "b"): 4, svcColKey(2, "a"): 2, svcColKey(4, "a"): 3, svcColKey(4, "b"): 5}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("sum[%s] = %d, want %d (full result: %v)", k, got[k], v, got)
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("result set size = %d, want %d: %v", len(got), len(want), got)
+	}
+}
+
+func svcColKey(bucket int64, svc string) string {
+	return fmt.Sprintf("%d|%s", bucket, svc)
 }
