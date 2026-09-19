@@ -17,6 +17,10 @@
 
 name: "composite_entity_metric"
 groups: ["sw_metric"]
+tagProjection:
+  tagFamilies:
+  - name: "default"
+    tags: ["tag_b"]
 groupBy:
   tagProjection:
     tagFamilies:

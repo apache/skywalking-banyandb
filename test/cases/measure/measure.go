@@ -116,10 +116,9 @@ var measureEntries = []any{
 	// time_bucket_metric is seeded at now-100s..now (20s apart); a 1-minute
 	// bucket deterministically splits them 2/3/1 across three buckets
 	// regardless of which wall-clock minute `now` lands on (see
-	// test/cases/init.go). SkipQL: BydbQL has no TIME_BUCKET(...) grammar
-	// yet — apache/skywalking#14091.
-	g.Entry("group by time bucket", helpers.Args{Input: "group_time_bucket", Duration: 4 * time.Minute, Offset: -3 * time.Minute, SkipQL: true}),
-	g.Entry("group by time bucket and tag", helpers.Args{Input: "group_time_bucket_with_tag", Duration: 4 * time.Minute, Offset: -3 * time.Minute, SkipQL: true}),
+	// test/cases/init.go).
+	g.Entry("group by time bucket", helpers.Args{Input: "group_time_bucket", Duration: 4 * time.Minute, Offset: -3 * time.Minute}),
+	g.Entry("group by time bucket and tag", helpers.Args{Input: "group_time_bucket_with_tag", Duration: 4 * time.Minute, Offset: -3 * time.Minute}),
 	// The off-cadence disagreement fixture (design §11): two points for the
 	// same entity, 34s apart, both inside the single 1-minute bucket
 	// [now+1m, now+2m) (see test/cases/init.go — offset a full minute past
@@ -127,41 +126,56 @@ var measureEntries = []any{
 	// `now` doesn't leak into this window). COUNT_DISTINCT(entity_id) must
 	// report 1 (one distinct entity) while COUNT(entity_id) reports 2 (two
 	// rows) — the exact case a "one row per (entity, bucket)" assumption
-	// would get wrong. SkipQL: BydbQL has no DISTINCT grammar or tag-Agg
-	// fallback yet — apache/skywalking#14091.
+	// would get wrong.
 	g.Entry("group by time bucket, count distinct off-cadence",
-		helpers.Args{Input: "group_count_distinct_off_cadence", Duration: time.Minute, Offset: time.Minute, SkipQL: true}),
+		helpers.Args{Input: "group_count_distinct_off_cadence", Duration: time.Minute, Offset: time.Minute}),
 	g.Entry("group by time bucket, count off-cadence",
-		helpers.Args{Input: "group_count_off_cadence", Duration: time.Minute, Offset: time.Minute, SkipQL: true}),
+		helpers.Args{Input: "group_count_off_cadence", Duration: time.Minute, Offset: time.Minute}),
 	// GROUP BY entity_id (the routing key), COUNT_DISTINCT over an unrelated
 	// normal tag -- decomposable via §7.4's "GroupBy covers the routing key"
 	// branch, not "target covers the routing key" (see test/cases/init.go).
-	// SkipQL: BydbQL has no DISTINCT grammar or tag-Agg fallback yet --
-	// apache/skywalking#14091.
 	g.Entry("group by entity, count distinct a normal tag",
-		helpers.Args{Input: "group_count_distinct_by_entity", Duration: time.Minute, Offset: 2 * time.Minute, SkipQL: true}),
+		helpers.Args{Input: "group_count_distinct_by_entity", Duration: time.Minute, Offset: 2 * time.Minute}),
 	g.Entry("group by entity, count a normal tag",
-		helpers.Args{Input: "group_count_by_entity", Duration: time.Minute, Offset: 2 * time.Minute, SkipQL: true}),
+		helpers.Args{Input: "group_count_by_entity", Duration: time.Minute, Offset: 2 * time.Minute}),
 	// composite_entity_metric's entity is [tag_b, tag_a]. GROUP BY tag_b,
 	// COUNT_DISTINCT(tag_a): tag_b is covered because it's a GroupBy key,
 	// tag_a is covered because it's the Agg target -- the two entity
 	// components covered by *different* branches of §7.4's per-routing-tag
-	// check simultaneously (see test/cases/init.go). SkipQL: BydbQL has no
-	// DISTINCT grammar or tag-Agg fallback yet -- apache/skywalking#14091.
+	// check simultaneously (see test/cases/init.go).
 	g.Entry("group by one entity tag, count distinct the other entity tag",
-		helpers.Args{Input: "group_count_distinct_composite_entity", Duration: 2 * time.Minute, Offset: -time.Minute, SkipQL: true}),
+		helpers.Args{Input: "group_count_distinct_composite_entity", Duration: 2 * time.Minute, Offset: -time.Minute}),
 	g.Entry("group by one entity tag, count the other entity tag",
-		helpers.Args{Input: "group_count_composite_entity", Duration: 2 * time.Minute, Offset: -time.Minute, SkipQL: true}),
+		helpers.Args{Input: "group_count_composite_entity", Duration: 2 * time.Minute, Offset: -time.Minute}),
 	// index_mode_distinct_metric carries a real IndexRule on tag_x (a
 	// non-entity tag) and is itself index_mode=true. GROUP BY the indexed
 	// tag_x, COUNT_DISTINCT(entity_id): the target covers the routing key on
 	// its own, so an indexed-but-unrelated GroupBy tag must not block
-	// acceptance (see test/cases/init.go). SkipQL: BydbQL has no DISTINCT
-	// grammar or tag-Agg fallback yet -- apache/skywalking#14091.
+	// acceptance (see test/cases/init.go).
 	g.Entry("group by an indexed tag, count distinct the entity tag",
-		helpers.Args{Input: "group_count_distinct_index_mode", Duration: 2 * time.Minute, Offset: -time.Minute, SkipQL: true}),
+		helpers.Args{Input: "group_count_distinct_index_mode", Duration: 2 * time.Minute, Offset: -time.Minute}),
 	g.Entry("group by an indexed tag, count the entity tag",
-		helpers.Args{Input: "group_count_index_mode", Duration: 2 * time.Minute, Offset: -time.Minute, SkipQL: true}),
+		helpers.Args{Input: "group_count_index_mode", Duration: 2 * time.Minute, Offset: -time.Minute}),
+	// cardinality_metric's entity is [user_id]; GROUP BY TIME_BUCKET('1m'),
+	// user_id combines the time-bucket and tag-group branches of §7.4's
+	// per-routing-tag pushdown check at once (design §7.2+§11 together).
+	// See test/cases/init.go's cardinalityBase comment for the exact
+	// per-bucket layout.
+	g.Entry("group by time bucket, count distinct api key",
+		helpers.Args{Input: "group_count_distinct_time_bucket", Duration: 3 * time.Minute, Offset: 5 * time.Minute}),
+	// Same query, narrower bucket width -- proves the width is actually
+	// read (5 rows spanning finer-grained buckets, some now empty), not
+	// silently ignored.
+	g.Entry("group by a narrower time bucket, count distinct api key",
+		helpers.Args{Input: "group_count_distinct_time_bucket_30s", Duration: 3 * time.Minute, Offset: 5 * time.Minute}),
+	// GROUP BY user_id (no time bucket), TOP 2 ranked by the COUNT_DISTINCT
+	// tag-Agg's own output column (api_key) DESC, then LIMIT/OFFSET paginate
+	// beneath TOP's truncation: user1 (3 distinct keys) ranks above user2
+	// (2), and OFFSET 1/LIMIT 1 skips user1 to return user2 alone --
+	// exercises convertTOP's widened tag-output resolution together with
+	// pagination.
+	g.Entry("top by count distinct api key, paged",
+		helpers.Args{Input: "group_count_distinct_top_by_user", Duration: 3 * time.Minute, Offset: 5 * time.Minute}),
 	g.Entry("top N with filter", helpers.Args{Input: "top_with_filter", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("index mode filter by NE", helpers.Args{Input: "index_mode_ne", Duration: 25 * time.Minute, Offset: -20 * time.Minute, DisOrder: true}),
 	g.Entry("index mode filter by LE on int", helpers.Args{Input: "index_mode_le", Duration: 25 * time.Minute, Offset: -20 * time.Minute, DisOrder: true}),

@@ -17,6 +17,10 @@
 
 name: "index_mode_distinct_metric"
 groups: ["sw_metric"]
+tagProjection:
+  tagFamilies:
+  - name: "default"
+    tags: ["tag_x"]
 groupBy:
   tagProjection:
     tagFamilies:
