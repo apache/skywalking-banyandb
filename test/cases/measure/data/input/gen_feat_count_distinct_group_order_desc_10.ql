@@ -15,4 +15,4 @@
 # specific language governing permissions and limitations
 # under the License.
 
-SELECT id, entity_id, SUM(), total::field, value::field FROM MEASURE service_cpm_minute IN sw_metric TIME > '-15m' GROUP BY id, value::field ORDER BY DESC
+SELECT id, entity_id, COUNT(DISTINCT entity_id), total::field, value::field FROM MEASURE service_cpm_minute IN sw_metric TIME > '-15m' GROUP BY id, value::field ORDER BY DESC
