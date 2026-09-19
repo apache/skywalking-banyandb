@@ -3536,7 +3536,7 @@ GroupDeletionTask represents the status of a group deletion operation.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision assigned by the server on successful create/update. |
 
 
 
@@ -3571,7 +3571,7 @@ GroupRegistryServiceDeleteResponse is the response for deleting a group.
 | ----- | ---- | ----- | ----------- |
 | schema_info | [SchemaInfo](#banyandb-database-v1-SchemaInfo) |  | schema_info contains the schema resources that would be deleted (populated in dry-run mode). |
 | delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision of the tombstone; zero if the server did not record one. |
 
 
 
@@ -3749,7 +3749,7 @@ GroupRegistryServiceQueryResponse is the response for querying a group deletion 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision assigned by the server on successful create/update. |
 
 
 
@@ -3779,7 +3779,7 @@ GroupRegistryServiceQueryResponse is the response for querying a group deletion 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision assigned by the server on successful create/update. |
 
 
 
@@ -3811,7 +3811,7 @@ GroupRegistryServiceQueryResponse is the response for querying a group deletion 
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
 | delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision of the tombstone; zero if the server did not record one. |
 
 
 
@@ -3932,7 +3932,7 @@ GroupRegistryServiceQueryResponse is the response for querying a group deletion 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision assigned by the server on successful create/update. |
 
 
 
@@ -3962,7 +3962,7 @@ GroupRegistryServiceQueryResponse is the response for querying a group deletion 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision assigned by the server on successful create/update. |
 
 
 
@@ -3994,7 +3994,7 @@ GroupRegistryServiceQueryResponse is the response for querying a group deletion 
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
 | delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision of the tombstone; zero if the server did not record one. |
 
 
 
@@ -4115,7 +4115,7 @@ GroupRegistryServiceQueryResponse is the response for querying a group deletion 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision assigned by the server on successful create/update. |
 
 
 
@@ -4212,7 +4212,7 @@ LiaisonInfo contains information about pending operations in liaison.
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
 | delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision of the tombstone; zero if the server did not record one. |
 
 
 
@@ -4418,7 +4418,7 @@ materialized yet -- the agent then takes the runtime fingerprint from cache.
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
 | delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision of the tombstone; zero if the server did not record one. |
 
 
 
@@ -4885,7 +4885,7 @@ error).
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
 | delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision of the tombstone; zero if the server did not record one. |
 
 
 
@@ -5036,7 +5036,7 @@ error).
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision assigned by the server on successful create/update. |
 
 
 
@@ -5068,7 +5068,7 @@ error).
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
 | delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision of the tombstone; zero if the server did not record one. |
 
 
 
@@ -5189,7 +5189,7 @@ error).
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision assigned by the server on successful create/update. |
 
 
 
@@ -5251,7 +5251,7 @@ error).
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
 | delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision of the tombstone; zero if the server did not record one. |
 
 
 
