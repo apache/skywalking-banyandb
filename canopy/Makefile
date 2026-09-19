@@ -79,6 +79,17 @@ license-check: $(LICENSE_EYE) ## Check license header
 license-fix: $(LICENSE_EYE) ## Fix license header issues
 	$(LICENSE_EYE) -c $(repo_root)/.licenserc.yaml header fix
 
+.PHONY: license-dep
+license-dep: $(LICENSE_EYE) ## Generate dependency LICENSE texts via SkyWalking Eyes
+	@rm -rf licenses
+	@lock_backup=$$(mktemp); \
+	tpl_dir=$$(mktemp -d); \
+	cp package-lock.json "$$lock_backup"; \
+	trap 'cp "$$lock_backup" package-lock.json; rm -f "$$lock_backup"; rm -rf "$$tpl_dir"' EXIT; \
+	cp $(repo_root)/dist/LICENSE.tpl "$$tpl_dir/LICENSE.tpl"; \
+	$(LICENSE_EYE) dep resolve -o "$(mk_dir)licenses" -s "$$tpl_dir/LICENSE.tpl"; \
+	cp "$$tpl_dir/LICENSE" "$(mk_dir)LICENSE"
+
 .PHONY: vendor-update
 vendor-update: ## Update all workspace dependencies
 	npm update

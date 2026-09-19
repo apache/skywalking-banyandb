@@ -41,8 +41,8 @@ Once we've discussed your changes and you've got your code ready, make sure that
 
 Users who want to build a binary from sources have to set up:
 
-* Go 1.25
-* Node 24.6.0
+* Go 1.25.13
+* Node.js >= 24.6.0
 * Git >= 2.30
 * Linux, macOS or Windows + WSL2
 * GNU make
