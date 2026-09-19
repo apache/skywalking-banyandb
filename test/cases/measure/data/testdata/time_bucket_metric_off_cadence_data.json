@@ -1,0 +1,52 @@
+[
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "off1"
+            }
+          },
+          {
+            "str": {
+              "value": "off_cadence_entity"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 10
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "off2"
+            }
+          },
+          {
+            "str": {
+              "value": "off_cadence_entity"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 20
+        }
+      }
+    ]
+  }
+]

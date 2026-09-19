@@ -336,3 +336,16 @@ func TestBlockCursor_MergeTopNResult_Float64(t *testing.T) {
 		})
 	}
 }
+
+// TestTopNPostProcessor_RejectsCountDistinct pins design doc §7.3: a
+// COUNT_DISTINCT TopNAggregation rule must fail loudly, not mis-aggregate.
+// The guard is aggregation.NewMap's existing errUnknownFunc rejection
+// (Flush propagates the error rather than swallowing it) — this test locks
+// that behavior in against regression, without changing any code.
+func TestTopNPostProcessor_RejectsCountDistinct(t *testing.T) {
+	pp := CreateTopNPostProcessorInt(5, modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT, modelv1.Sort_SORT_DESC)
+	pp.Put(pbv1.EntityValues{&modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc"}}}}, int64(1), 1000, 0)
+	if _, err := pp.Val(nil); err == nil {
+		t.Fatal("a COUNT_DISTINCT TopNAggregation rule must be rejected, not silently mis-aggregated")
+	}
+}
