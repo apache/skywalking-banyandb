@@ -70,6 +70,37 @@ func TestDistinct_Reset(t *testing.T) {
 	}
 }
 
+// TestDistinct_Contains_DoesNotMutate pins that Contains is a pure
+// membership check: calling it never grows the set, regardless of how many
+// times it's called or whether the key was already present. foldDistinct
+// (pkg/query/vectorized/measure/aggregation.go) relies on this to check
+// before reserving memory, without pre-committing an unreserved value.
+func TestDistinct_Contains_DoesNotMutate(t *testing.T) {
+	d := NewDistinct()
+	if d.Contains([]byte("a")) {
+		t.Fatal("Contains on an empty set must report false")
+	}
+	if got := d.Val(); got != 0 {
+		t.Fatalf("Contains must not mutate the set: Val() = %d, want 0", got)
+	}
+	if d.Contains([]byte("a")) {
+		t.Fatal("repeated Contains calls on an absent key must keep reporting false")
+	}
+	if got := d.Val(); got != 0 {
+		t.Fatalf("Val() after repeated Contains calls = %d, want 0", got)
+	}
+
+	if added := d.In([]byte("a")); !added {
+		t.Fatal("In(\"a\") must report added=true once actually inserted")
+	}
+	if !d.Contains([]byte("a")) {
+		t.Fatal("Contains must report true for a key inserted via In")
+	}
+	if got := d.Val(); got != 1 {
+		t.Fatalf("Val() after In+Contains = %d, want 1", got)
+	}
+}
+
 // TestDistinct_DistinguishesByteContentNotIdentity pins that keys are
 // compared by content — two separately-allocated []byte slices with the
 // same bytes must be treated as the same key, not as distinct ones by

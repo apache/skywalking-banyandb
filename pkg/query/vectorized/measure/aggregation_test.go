@@ -1173,6 +1173,54 @@ func TestBatchAggregation_CountDistinct_BudgetExceeded(t *testing.T) {
 	}
 }
 
+// TestBatchAggregation_CountDistinct_FailedReservation_DoesNotRecordValue
+// pins the fix for a Copilot-flagged issue: foldDistinct checks
+// Contains (a pure read) before reserving, not In — In mutates the set
+// unconditionally, so calling it first would leave a value that fails the
+// budget check resident (and uncharged) in the distinct set even though
+// the operator reported a budget-exceeded error for it. A second distinct
+// value that gets rejected must not grow distinct.Val() past what was
+// already reserved.
+func TestBatchAggregation_CountDistinct_FailedReservation_DoesNotRecordValue(t *testing.T) {
+	s := aggTagSchema()
+	tracker := vectorized.NewMemoryTracker(64)
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggCountDistinct, InputCol: 2, Output: "distinct_s", HideTag: true}}, AggModeAll, 8, tracker, 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+
+	b := vectorized.NewRecordBatch(s, 1)
+	gCol := b.Columns[0].(*vectorized.TypedColumn[string])
+	vCol := b.Columns[1].(*vectorized.TypedColumn[int64])
+	sCol := b.Columns[2].(*vectorized.TypedColumn[string])
+	feed := func(v string) error {
+		b.Reset()
+		gCol.Append("a")
+		vCol.Append(0)
+		sCol.Append(v)
+		b.Len = 1
+		return op.Consume(context.Background(), b)
+	}
+
+	if err := feed("s"); err != nil {
+		t.Fatalf("first, small distinct value must fit the 64-byte budget: %v", err)
+	}
+	if err := feed("a-second-distinct-value-that-blows-the-remaining-budget"); err == nil {
+		t.Fatal("want a budget-exceeded error for the second distinct value")
+	}
+
+	var group *aggGroup
+	for _, gp := range op.groups {
+		group = gp
+	}
+	if group == nil {
+		t.Fatal("expected the \"a\" group to exist after the first successful fold")
+	}
+	if got := group.slots[0].distinct.Val(); got != 1 {
+		t.Fatalf("distinct.Val() = %d, want 1 — the rejected second value must not be recorded", got)
+	}
+}
+
 // TestBatchAggregation_CountDistinct_DelegatesToAggregationPackage mirrors
 // TestBatchAggregation_DelegatesToAggregationPackage's convention for
 // COUNT_DISTINCT: the same values fed through BatchAggregation and through

@@ -25,6 +25,14 @@ package aggregation
 // encoder BatchAggregation's group key already uses) and pass the encoded
 // bytes here.
 type Distinct interface {
+	// Contains reports whether key has already been recorded, without
+	// mutating the set. A caller that must reserve memory before growing
+	// the set (pkg/query/vectorized/measure's foldDistinct) checks this
+	// first and only calls In — which does mutate — once the reservation
+	// for a genuinely new key has succeeded. Checking via In itself would
+	// insert the key before the reservation is known to succeed, leaving a
+	// rejected value resident (and uncharged) in the set.
+	Contains(key []byte) bool
 	// In records key as seen. It returns true the first time a given key
 	// is seen, false for a repeat — the caller uses this to charge memory
 	// only for values that actually grow the set.
@@ -46,6 +54,11 @@ func NewDistinct() Distinct {
 	d := &distinctFunc{}
 	d.Reset()
 	return d
+}
+
+func (d *distinctFunc) Contains(key []byte) bool {
+	_, ok := d.seen[string(key)]
+	return ok
 }
 
 func (d *distinctFunc) In(key []byte) bool {

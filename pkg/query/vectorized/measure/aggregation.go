@@ -625,10 +625,17 @@ func (a *BatchAggregation) fold(b *vectorized.RecordBatch, rowIdx int, slot *agg
 // memory is charged per newly-added value here, not once per group in
 // Consume — refunded together with every other charge this operator holds
 // via the shared a.reserved counter in Close.
+//
+// Contains is checked (not In) before reserving: In mutates the set
+// unconditionally, so calling it first would insert a rejected value into
+// the set before its reservation is known to succeed, leaving that value
+// resident — and uncharged — in memory even though the budget guard
+// rejected it. In is only called once the reservation for a genuinely new
+// key has actually succeeded.
 func (a *BatchAggregation) foldDistinct(col vectorized.Column, rowIdx int, slot *aggSlot) error {
 	var sb [64]byte
 	encoded := appendKeyComponent(sb[:0], col, rowIdx)
-	if !slot.distinct.In(encoded) {
+	if slot.distinct.Contains(encoded) {
 		return nil
 	}
 	charge := int64(len(encoded)) + distinctEntryOverhead
@@ -636,6 +643,7 @@ func (a *BatchAggregation) foldDistinct(col vectorized.Column, rowIdx int, slot 
 		return fmt.Errorf("aggregation memory budget exceeded: %w", reserveErr)
 	}
 	a.reserved += charge
+	slot.distinct.In(encoded)
 	return nil
 }
 
