@@ -111,10 +111,10 @@ func validateSelectShape(plan QueryPlan) error {
 	if plan.Resource.Type != session.ResourceTypeMeasure && aggregateCount != 0 {
 		return fmt.Errorf("aggregations are supported only for MEASURE queries")
 	}
-	if plan.Resource.Type != session.ResourceTypeMeasure && len(plan.GroupBy) != 0 {
+	if plan.Resource.Type != session.ResourceTypeMeasure && (len(plan.GroupBy) != 0 || plan.TimeBucket != nil) {
 		return fmt.Errorf("GROUP BY is supported only for MEASURE queries")
 	}
-	if len(plan.GroupBy) != 0 && aggregateCount != 1 {
+	if (len(plan.GroupBy) != 0 || plan.TimeBucket != nil) && aggregateCount != 1 {
 		return fmt.Errorf("GROUP BY requires exactly one aggregate")
 	}
 	if plan.ProjectionMode == ProjectionModeNone && aggregateCount != 0 {
@@ -181,7 +181,7 @@ func compileSelect(plan QueryPlan, schema session.SchemaSnapshot) (string, error
 	if projectionErr != nil {
 		return "", projectionErr
 	}
-	groups, groupsErr := compileGroups(plan.GroupBy, plan.Projection, plan.ProjectionMode, schema)
+	groups, groupsErr := compileGroups(plan.GroupBy, plan.TimeBucket, plan.Projection, plan.ProjectionMode, schema)
 	if groupsErr != nil {
 		return "", groupsErr
 	}
@@ -241,6 +241,12 @@ func compileTopN(plan QueryPlan, schema session.SchemaSnapshot) (string, error) 
 	}
 	if !isAggregateFunction(function) {
 		return "", fmt.Errorf("unsupported TOPN aggregation %q", function)
+	}
+	// GrammarTopNAggregateFunction (the legacy SHOW TOP N ... AGGREGATE BY
+	// grammar) has no DISTINCT production at all — isAggregateFunction alone
+	// would let this compile to text the parser can't accept.
+	if function == AggregateCountDistinct {
+		return "", fmt.Errorf("TOPN aggregation does not support COUNT_DISTINCT")
 	}
 	direction := OrderDescending
 	if plan.OrderBy != nil {
@@ -329,6 +335,26 @@ func compileAggregate(aggregate Aggregate, resource Resource, schema session.Sch
 	if columnErr != nil {
 		return "", columnErr
 	}
+	// COUNT_DISTINCT is tag-only (design §7.3/§7.4) — a different column-kind
+	// gate than every other function here, which is field-only — so it must
+	// branch before the Field/numeric checks below, not extend them.
+	if aggregate.Function == AggregateCountDistinct {
+		if column.Kind != session.SchemaColumnTag && column.Kind != session.SchemaColumnEntityTag {
+			return "", diagnosticError("AGGREGATE_COLUMN_NOT_TAG", "/aggregate/column", fmt.Sprintf("COUNT_DISTINCT column %q must be a tag", aggregate.Column))
+		}
+		switch column.Type {
+		case session.SchemaValueTypeStringArray, session.SchemaValueTypeIntArray, session.SchemaValueTypeTimestamp:
+			return "", diagnosticError("AGGREGATE_TAG_TYPE_UNSUPPORTED", "/aggregate/column",
+				fmt.Sprintf("COUNT_DISTINCT column %q has an unsupported tag type %q", aggregate.Column, column.Type))
+		case session.SchemaValueTypeUnknown, session.SchemaValueTypeString, session.SchemaValueTypeInt,
+			session.SchemaValueTypeFloat, session.SchemaValueTypeBinary:
+			// Every other tag type is supported (design §6 matrix: COUNT_DISTINCT
+			// accepts any tag type that isn't an array or a timestamp).
+		}
+		// COUNT(DISTINCT col), not COUNT_DISTINCT(col) — the generic
+		// "%s(%s)" formatter below would emit invalid BYDBQL syntax.
+		return fmt.Sprintf("COUNT(DISTINCT %s)", column.Name), nil
+	}
 	if column.Kind != session.SchemaColumnField {
 		return "", diagnosticError("AGGREGATE_COLUMN_NOT_FIELD", "/aggregate/column", fmt.Sprintf("aggregation column %q must be a field", aggregate.Column))
 	}
@@ -338,11 +364,23 @@ func compileAggregate(aggregate Aggregate, resource Resource, schema session.Sch
 	return fmt.Sprintf("%s(%s)", aggregate.Function, column.Name), nil
 }
 
-func compileGroups(groups []string, projections []Projection, projectionMode ProjectionMode, schema session.SchemaSnapshot) (string, error) {
-	if len(groups) == 0 {
+func compileGroups(
+	groups []string, timeBucket *GroupByTimeBucket, projections []Projection, projectionMode ProjectionMode, schema session.SchemaSnapshot,
+) (string, error) {
+	if len(groups) == 0 && timeBucket == nil {
 		return "", nil
 	}
-	compiled := make([]string, 0, len(groups))
+	compiled := make([]string, 0, len(groups)+1)
+	// TIME_BUCKET is the leading group key when present — a synthetic
+	// pseudo-column, not a real schema column, so it bypasses typedColumn
+	// resolution and the "must also be projected" check below.
+	if timeBucket != nil {
+		if timeBucket.Width != "" {
+			compiled = append(compiled, fmt.Sprintf("TIME_BUCKET('%s')", timeBucket.Width))
+		} else {
+			compiled = append(compiled, "TIME_BUCKET()")
+		}
+	}
 	fieldCount := 0
 	for _, group := range groups {
 		column, columnErr := typedColumn(group, schema)
