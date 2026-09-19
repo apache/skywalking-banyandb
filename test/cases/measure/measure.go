@@ -236,15 +236,13 @@ var measureEntries = []any{
 		helpers.Args{Input: "gen_feat_sum_group_order_desc_9", Want: "gen_feat_sum_group_order_desc_9", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	// COUNT_DISTINCT closes the design's own flagged gap (§11): the layer-3
 	// pairwise generator hard-coded {MEAN,MAX,MIN,COUNT,SUM} and would have
-	// silently under-covered the sixth function. SkipQL: RenderQL has no
-	// COUNT_DISTINCT/tag-Agg support yet, so the generated .ql would be
-	// wrong (it renders a bogus SUM() call) -- deleted rather than shipped;
-	// same BydbQL gap as every other COUNT_DISTINCT fixture here --
-	// apache/skywalking#14091.
+	// silently under-covered the sixth function. BydbQL now supports
+	// COUNT_DISTINCT/tag-Agg (apache/skywalking#14091), so RenderQL's
+	// generated .ql renders correctly and this case verifies end to end.
 	g.Entry("gen: count distinct group order desc",
 		helpers.Args{
 			Input: "gen_feat_count_distinct_group_order_desc_10", Want: "gen_feat_count_distinct_group_order_desc_10",
-			Duration: 25 * time.Minute, Offset: -20 * time.Minute, SkipQL: true,
+			Duration: 25 * time.Minute, Offset: -20 * time.Minute,
 		}),
 }
 

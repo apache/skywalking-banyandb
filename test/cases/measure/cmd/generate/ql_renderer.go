@@ -49,6 +49,15 @@ func RenderQL(req *measurev1.QueryRequest) (string, error) {
 	// GROUP BY
 	if req.GetGroupBy() != nil {
 		var groupCols []string
+		// TIME_BUCKET is the leading group key when present (matches the
+		// proto's own "leading group key" doc comment on GroupBy.time_bucket).
+		if tb := req.GetGroupBy().GetTimeBucket(); tb != nil {
+			if tb.GetWidth() != "" {
+				groupCols = append(groupCols, fmt.Sprintf("TIME_BUCKET('%s')", tb.GetWidth()))
+			} else {
+				groupCols = append(groupCols, "TIME_BUCKET()")
+			}
+		}
 		if tp := req.GetGroupBy().GetTagProjection(); tp != nil {
 			for _, family := range tp.GetTagFamilies() {
 				groupCols = append(groupCols, family.GetTags()...)
@@ -102,11 +111,16 @@ func renderProjection(req *measurev1.QueryRequest) string {
 		}
 	}
 
-	// Aggregation in projection
+	// Aggregation in projection. COUNT_DISTINCT is tag-only (design scope) and
+	// renders as COUNT(DISTINCT tag), not the aggFunctionName(field) shape
+	// every other function uses — matching layer3_features.go's
+	// countDistinctTargetTag convention.
 	if agg := req.GetAgg(); agg != nil {
-		aggFn := aggFunctionName(agg.GetFunction())
-		fieldName := agg.GetFieldName()
-		cols = append(cols, fmt.Sprintf("%s(%s)", aggFn, fieldName))
+		if tagName := agg.GetTagName(); tagName != "" {
+			cols = append(cols, fmt.Sprintf("COUNT(DISTINCT %s)", tagName))
+		} else {
+			cols = append(cols, fmt.Sprintf("%s(%s)", aggFunctionName(agg.GetFunction()), agg.GetFieldName()))
+		}
 	}
 
 	// Field projection — all fields need the ::field suffix to disambiguate from tags
@@ -134,6 +148,12 @@ func aggFunctionName(fn modelv1.AggregationFunction) string {
 		return "COUNT"
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM:
 		return "SUM"
+	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT:
+		// Never actually reached: COUNT_DISTINCT is tag-only, and
+		// renderProjection special-cases it (agg.GetTagName() != "") before
+		// this is ever called. Kept explicit so this switch can't silently
+		// mis-map it to SUM if a future caller ever bypasses that check.
+		return "COUNT"
 	default:
 		return "SUM"
 	}
