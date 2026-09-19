@@ -119,6 +119,14 @@ var measureEntries = []any{
 	// test/cases/init.go).
 	g.Entry("group by time bucket", helpers.Args{Input: "group_time_bucket", Duration: 4 * time.Minute, Offset: -3 * time.Minute}),
 	g.Entry("group by time bucket and tag", helpers.Args{Input: "group_time_bucket_with_tag", Duration: 4 * time.Minute, Offset: -3 * time.Minute}),
+	// The three-way shape: TIME_BUCKET + a GroupBy tag that is NOT the
+	// routing key (id), with COUNT_DISTINCT targeting the routing key
+	// (entity_id) instead. validateCountDistinctPushdown never inspects
+	// GroupBy.time_bucket, so the target-covers-the-routing-key branch is
+	// what legalizes this -- the bucket is orthogonal. Same 4 groups as
+	// group_time_bucket_with_tag above, counted distinctly rather than summed.
+	g.Entry("group by time bucket and a non-routing tag, count distinct the entity tag",
+		helpers.Args{Input: "group_count_distinct_time_bucket_with_tag", Duration: 4 * time.Minute, Offset: -3 * time.Minute}),
 	// The off-cadence disagreement fixture (design §11): two points for the
 	// same entity, 34s apart, both inside the single 1-minute bucket
 	// [now+1m, now+2m) (see test/cases/init.go — offset a full minute past
