@@ -126,6 +126,32 @@ func BuildOperators(
 		Output:   aggTargetName(opts.Agg),
 		HideTag:  opts.Agg.HideTag,
 	}
+	// COUNT_DISTINCT's map-phase precondition (design §7.4 "De-duplicating
+	// the partials", part (a)). computeKey ignores shard id, and a node
+	// holding more than one shard emits one merged partial per group,
+	// labeled with whichever shard's row created it first — a hint, not
+	// an identity. Under replication, staggered shard placement
+	// (pkg/node/round_robin.go's roundRobinSelector) means no two nodes
+	// hold the same shard set, so two nodes' partials for the same group
+	// can collide on that incidental label. Depending on which of the
+	// colliding partials markDedupSeen's (shardID, groupKey) check keeps
+	// vs. drops, the result can either double-count (the survivor still
+	// includes a shard the dropped one also counted) or undercount (the
+	// dropped one carried a shard the survivor never had) — the design
+	// doc's worked 4-node/replicas=1 example walks both outcomes from the
+	// same topology. Forcing one group per (shard, GroupBy-key) makes the
+	// emitted shard_id exact rather than incidental, so only a genuine
+	// replica duplicate can ever share a dedup key.
+	//
+	// This same defect is latent in every distributed agg today, not only
+	// COUNT_DISTINCT — design §7.4 tracks that as a parallel, non-gating
+	// investigation (stage 4a) rather than fixing it here for every
+	// function.
+	if aggFn == AggCountDistinct && mode == AggModeMap {
+		if shardIdx := findShardIDIndex(schema); shardIdx >= 0 {
+			keyIndices = append(keyIndices, shardIdx)
+		}
+	}
 	agg := NewBatchAggregation(schema, keyIndices, []AggSpec{spec},
 		mode, batchSize, tracker, aggEntrySize)
 	return []vectorized.BreakerOperator{agg}, nil
@@ -185,12 +211,14 @@ func BuildTimeBucketOperator(
 		return nil, fmt.Errorf("vectorized.measure: time_bucket requires a RoleTimestamp column in the scan schema")
 	}
 	var specs []AggSpec
+	var aggFn AggFunc
 	if opts.Agg != nil {
 		inputIdx, inputErr := lookupAggInputColumnIndex(schema, opts.Agg)
 		if inputErr != nil {
 			return nil, inputErr
 		}
-		aggFn, fnErr := protoAggFuncToInternal(opts.Agg.Func)
+		var fnErr error
+		aggFn, fnErr = protoAggFuncToInternal(opts.Agg.Func)
 		if fnErr != nil {
 			return nil, fnErr
 		}
@@ -200,6 +228,18 @@ func BuildTimeBucketOperator(
 			Output:   aggTargetName(opts.Agg),
 			HideTag:  opts.Agg.HideTag,
 		}}
+	}
+	// Same COUNT_DISTINCT map-phase precondition as BuildOperators (see its
+	// comment for the full derivation): a data node's per-bucket aggregator
+	// can still see rows from more than one of its local shards in a
+	// single upstream batch, so the shard-id column must be part of the
+	// group key — otherwise BatchTimeBucket would merge those shards into
+	// one incidentally-labeled partial per bucket, exactly the shape the
+	// fix in BuildOperators exists to prevent for the unbucketed case.
+	if opts.Agg != nil && aggFn == AggCountDistinct && mode == AggModeMap {
+		if shardIdx := findShardIDIndex(schema); shardIdx >= 0 {
+			tagKeyIndices = append(tagKeyIndices, shardIdx)
+		}
 	}
 	tb := opts.GroupBy.TimeBucket
 	return NewBatchTimeBucket(upstream, schema, tagKeyIndices, timestampIdx, tb.WidthNanos,
@@ -271,7 +311,7 @@ func protoAggFuncToInternal(f modelv1.AggregationFunction) (AggFunc, error) {
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED:
 		return 0, fmt.Errorf("vectorized.measure: Agg.Function is UNSPECIFIED")
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT:
-		return 0, fmt.Errorf("vectorized.measure: COUNT_DISTINCT is not implemented yet")
+		return AggCountDistinct, nil
 	}
 	return 0, fmt.Errorf("vectorized.measure: unknown AggregationFunction %v", f)
 }

@@ -140,7 +140,23 @@ type DistributedPlan struct {
 	hiddenTopField string
 	indexRules     [][]*databasev1.IndexRule
 	cfg            vmeasure.VectorizedConfig
+	// requiresSingleStage is true for a COUNT_DISTINCT Agg (design §7.4):
+	// distinct counts are not additive across lifecycle stages (a value
+	// can legitimately recur in both a hot and a warm stage), so a
+	// request resolving to more than one stage must be rejected. The
+	// analyzer has no visibility into resolved node selectors — stage
+	// resolution happens later, in banyand/dquery — so this is a signal
+	// for that caller to check post-resolution, not a rejection performed
+	// here.
+	requiresSingleStage bool
 }
+
+// RequiresSingleStage reports whether p's Agg is a COUNT_DISTINCT that
+// must resolve to exactly one lifecycle stage (design §7.4). Callers that
+// resolve node selectors from stages (banyand/dquery) must check this
+// after resolution and before dispatch — AnalyzeDistributed cannot check
+// it itself, since it never resolves stages.
+func (p *DistributedPlan) RequiresSingleStage() bool { return p.requiresSingleStage }
 
 // AnalyzeDistributed builds the vectorized distributed liaison plan.
 // measureSchemas is the per-group slice of Measure schemas (one entry per
@@ -166,6 +182,31 @@ func AnalyzeDistributed(
 	}
 	if cfgErr := cfg.Validate(); cfgErr != nil {
 		return nil, fmt.Errorf("vec distributed analyze: %w", cfgErr)
+	}
+	// COUNT_DISTINCT does not support multi-group requests. Shard ids are
+	// scoped per measure group, not globally unique — two independent
+	// groups can each report "shard 0" for the same GroupBy key, and
+	// markDedupSeen's (shardID, groupKey) dedup key cannot tell that
+	// collision apart from a genuine replica duplicate. Depending on which
+	// partial the collision drops, the result can undercount (two
+	// groups' distinct target values collapse to one) or double-count
+	// (the same target value happens to appear on both groups' colliding
+	// shards). Rejecting outright is the honest signal until cross-group
+	// distinctness has its own identity to dedup on — the same posture
+	// design §7.4 takes for multi-stage requests, one layer up.
+	if len(measureSchemas) > 1 && req.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT {
+		return nil, fmt.Errorf("vec distributed analyze: COUNT_DISTINCT does not support multi-group requests — " +
+			"shard ids are not unique across measure groups, so replica dedup cannot distinguish a genuine " +
+			"duplicate from an unrelated partial; query each group separately")
+	}
+	// COUNT_DISTINCT's decomposability condition (design §7.4) must hold
+	// for every group in a multi-group request — the same check Analyze
+	// runs for standalone, since the rule is deliberately uniform across
+	// deployment shapes.
+	for _, ms := range measureSchemas {
+		if pushdownErr := validateCountDistinctPushdown(req, ms); pushdownErr != nil {
+			return nil, pushdownErr
+		}
 	}
 	queryTemplate := proto.Clone(req).(*measurev1.QueryRequest)
 	nodeTemplate := proto.Clone(req).(*measurev1.QueryRequest)
@@ -236,11 +277,12 @@ func AnalyzeDistributed(
 		}
 	}
 	plan := &DistributedPlan{
-		queryTemplate:  queryTemplate,
-		nodeTemplate:   nodeTemplate,
-		measureSchemas: measureSchemas,
-		indexRules:     indexRules,
-		cfg:            cfg,
+		queryTemplate:       queryTemplate,
+		nodeTemplate:        nodeTemplate,
+		measureSchemas:      measureSchemas,
+		indexRules:          indexRules,
+		cfg:                 cfg,
+		requiresSingleStage: req.GetAgg().GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT,
 	}
 	// Resolve OrderBy by index rule for the non-agg row path. Agg requests
 	// reduce on the liaison anyway and so do not need the cross-source
@@ -1176,7 +1218,12 @@ func distributedAggFunc(fn modelv1.AggregationFunction) (vmeasure.AggFunc, error
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED:
 		return 0, fmt.Errorf("vec distributed plan: aggregation function is unspecified")
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT:
-		return 0, fmt.Errorf("vec distributed plan: COUNT_DISTINCT is not implemented yet")
+		// The liaison reduces COUNT_DISTINCT partials with ordinary SUM:
+		// each node's partial is already a local exact distinct count
+		// (design §7.3), and summing disjoint per-shard counts is exactly
+		// the decomposability condition's guarantee (§7.4) — no new
+		// reduce path, no new wire type.
+		return vmeasure.AggSum, nil
 	}
 	return 0, fmt.Errorf("vec distributed plan: unknown aggregation function %v", fn)
 }

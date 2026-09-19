@@ -192,6 +192,172 @@ func TestAnalyzeDistributed_NodeTemplatePushesAggPartials(t *testing.T) {
 	}
 }
 
+// TestAnalyzeDistributed_CountDistinct_RequiresSingleStage pins that a
+// COUNT_DISTINCT plan signals RequiresSingleStage (design §7.4) — the
+// analyzer cannot itself count resolved stages (it never sees node
+// selectors), so this is the signal banyand/dquery checks after stage
+// resolution.
+func TestAnalyzeDistributed_CountDistinct_RequiresSingleStage(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg:             countDistinctAgg(defaultName, tagCount),
+	}
+	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
+	if analyzeErr != nil {
+		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
+	}
+	if !p.RequiresSingleStage() {
+		t.Fatal("a COUNT_DISTINCT plan must require a single resolved stage")
+	}
+}
+
+// TestAnalyzeDistributed_SumAgg_DoesNotRequireSingleStage pins the negative
+// case: every other function composes with multi-stage queries exactly as
+// before (design §7.4 is COUNT_DISTINCT-specific).
+func TestAnalyzeDistributed_SumAgg_DoesNotRequireSingleStage(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg:             &measurev1.QueryRequest_Aggregation{Function: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, FieldName: fieldValue},
+	}
+	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
+	if analyzeErr != nil {
+		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
+	}
+	if p.RequiresSingleStage() {
+		t.Fatal("a non-COUNT_DISTINCT plan must not require a single resolved stage")
+	}
+}
+
+// TestAnalyzeDistributed_CountDistinct_MultiGroup_AnyGroupCanReject pins
+// that the decomposability condition (design §7.4) is checked for every
+// group in a multi-group request — a query must not be accepted just
+// because the FIRST group's schema happens to satisfy it.
+func TestAnalyzeDistributed_CountDistinct_MultiGroup_AnyGroupCanReject(t *testing.T) {
+	okSchema := entityShardingSchema([]string{tagCount}, nil) // routing covered by the Agg target
+	okSchema.Metadata = &commonv1.Metadata{Name: "demo", Group: "groupA"}
+	badSchema := entityShardingSchema([]string{tagCount}, []string{tagSvc}) // sharding key uncovered
+	badSchema.Metadata = &commonv1.Metadata{Name: "demo", Group: "groupB"}
+
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		Groups:          []string{"groupA", "groupB"},
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg:             countDistinctAgg(defaultName, tagCount),
+	}
+	cfg := vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1}
+	// Both this scenario (a decomposability failure on one of two groups)
+	// and the blanket multi-group rejection below reject the same request
+	// today — the blanket check fires first, per AnalyzeDistributed's
+	// ordering. This assertion holds regardless of which one is
+	// responsible, so it stays valid if the blanket rejection is ever
+	// lifted and per-group decomposability becomes reachable again for
+	// multi-group requests.
+	if _, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{okSchema, badSchema}, nil, cfg); analyzeErr == nil {
+		t.Fatal("a multi-group COUNT_DISTINCT request with a decomposability failure must reject")
+	}
+}
+
+// TestAnalyzeDistributed_CountDistinct_MultiGroup_AlwaysRejected pins the
+// P2 review finding on the first version of the decomposability check:
+// checking routing coverage independently per group does not make distinct
+// counts additive ACROSS groups. Shard ids are scoped per measure group,
+// not globally unique, so two different groups can each report "shard 0"
+// for the same GroupBy key — markDedupSeen's (shardID, groupKey) dedup key
+// cannot tell that apart from a genuine replica duplicate, and depending
+// on which partial the collision drops, the result can undercount or
+// double-count. Multi-group COUNT_DISTINCT is rejected outright,
+// regardless of whether every individual group would otherwise satisfy
+// the decomposability condition.
+func TestAnalyzeDistributed_CountDistinct_MultiGroup_AlwaysRejected(t *testing.T) {
+	msA := entityShardingSchema([]string{tagCount}, nil)
+	msA.Metadata = &commonv1.Metadata{Name: "demo", Group: "groupA"}
+	msB := entityShardingSchema([]string{tagCount}, nil)
+	msB.Metadata = &commonv1.Metadata{Name: "demo", Group: "groupB"}
+
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		Groups:          []string{"groupA", "groupB"},
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg:             countDistinctAgg(defaultName, tagCount),
+	}
+	cfg := vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1}
+	if _, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{msA, msB}, nil, cfg); analyzeErr == nil {
+		t.Fatal("COUNT_DISTINCT must reject a multi-group request even when every group independently satisfies the decomposability condition")
+	}
+}
+
+// TestAnalyzeDistributed_CountDistinct_IndexRuleOnRoutingTags_DoesNotAffectAcceptance
+// pins that validateCountDistinctPushdown's decision is IndexRule-agnostic:
+// it only ever reads ShardingKey/Entity from the Measure schema, never
+// indexRules. A composite routing key ([tagSvc, tagCount], no narrower
+// ShardingKey) with each component covered by a different branch — the
+// same accept case as
+// TestValidateCountDistinctPushdown_CompositeEntity_DifferentBranchesCoverDifferentTags_Accepts
+// — must still accept when both routing tags additionally carry a real
+// IndexRule, proving indexedness never confuses which branch covers what.
+func TestAnalyzeDistributed_CountDistinct_IndexRuleOnRoutingTags_DoesNotAffectAcceptance(t *testing.T) {
+	ms := entityShardingSchema([]string{tagSvc, tagCount}, nil)
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		GroupBy:         groupByReq(defaultName, []string{tagSvc}),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg:             countDistinctAgg(defaultName, tagCount),
+	}
+	indexRules := []*databasev1.IndexRule{
+		testIndexRuleOnTag("svc_idx", tagSvc),
+		testIndexRuleOnTag("count_idx", tagCount),
+	}
+	cfg := vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1}
+	if _, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{ms}, [][]*databasev1.IndexRule{indexRules}, cfg); analyzeErr != nil {
+		t.Fatalf("an IndexRule on a covered routing tag must not affect acceptance: %v", analyzeErr)
+	}
+}
+
+// TestAnalyzeDistributed_CountDistinct_IndexRuleOnUncoveredRoutingTag_StillRejects
+// is the negative twin: an IndexRule on the uncovered sharding key must not
+// make validateCountDistinctPushdown treat it as covered — indexedness and
+// routing coverage are unrelated concepts, and only the latter decides
+// decomposability.
+func TestAnalyzeDistributed_CountDistinct_IndexRuleOnUncoveredRoutingTag_StillRejects(t *testing.T) {
+	ms := entityShardingSchema([]string{tagCount}, []string{tagSvc})
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg:             countDistinctAgg(defaultName, tagCount),
+	}
+	indexRules := []*databasev1.IndexRule{testIndexRuleOnTag("svc_idx", tagSvc)}
+	cfg := vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1}
+	if _, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{ms}, [][]*databasev1.IndexRule{indexRules}, cfg); analyzeErr == nil {
+		t.Fatal("an IndexRule on the uncovered routing tag must not make the request acceptable")
+	}
+}
+
+// TestAnalyzeDistributed_SumAgg_MultiGroup_StillAccepted pins that the new
+// multi-group rejection is COUNT_DISTINCT-specific: every other function
+// composes with multi-group requests exactly as before (an existing,
+// already-shipped feature this issue must not regress).
+func TestAnalyzeDistributed_SumAgg_MultiGroup_StillAccepted(t *testing.T) {
+	msA := testMeasureSchemaForGroup("groupA")
+	msB := testMeasureSchemaForGroup("groupB")
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		Groups:          []string{"groupA", "groupB"},
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg:             &measurev1.QueryRequest_Aggregation{Function: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, FieldName: fieldValue},
+	}
+	cfg := vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1}
+	if _, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{msA, msB}, nil, cfg); analyzeErr != nil {
+		t.Fatalf("a multi-group SUM request must still be accepted: %v", analyzeErr)
+	}
+}
+
 // TestAnalyzeDistributed_NodeTemplatePushesAggPartials_TagTarget mirrors
 // TestAnalyzeDistributed_NodeTemplatePushesAggPartials for a tag-targeted
 // Agg (design §7.1): the proto request travels to the node template
