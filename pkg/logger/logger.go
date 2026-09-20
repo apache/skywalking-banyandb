@@ -22,6 +22,7 @@ package logger
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -46,8 +47,12 @@ type Logging struct {
 // Logger is wrapper for rs/zerolog logger with module, it is singleton.
 type Logger struct {
 	*zerolog.Logger
-	modules        map[string]zerolog.Level
+	modules map[string]zerolog.Level
+	// consoleTarget is where normal logging writes. Named needs it to build a
+	// gate per module rather than sharing the root's writer.
+	consoleTarget  io.Writer
 	module         string
+	consoleLevel   zerolog.Level
 	development    bool
 	isDefaultLevel bool
 }
@@ -81,8 +86,27 @@ func (l *Logger) Named(name ...string) *Logger {
 			break
 		}
 	}
-	subLogger := root.get().With().Str("module", moduleBuilder.String()).Logger().Level(level)
-	return &Logger{module: module, modules: l.modules, development: l.development, Logger: &subLogger, isDefaultLevel: isDefaultLevel}
+	// Both thresholds are resolved here, once per module, and baked into this
+	// logger's writers. Nothing downstream has to recover the module from the
+	// encoded event to decide where it belongs.
+	stamped := moduleBuilder.String()
+	parent := root.get()
+	base := *parent.Logger
+	nativeLvl, excluded := resolveNative(stamped)
+	nativeOn := NativeEnabled()
+	if nativeOn && parent.consoleTarget != nil {
+		base = base.Output(zerolog.MultiLevelWriter(
+			&consoleWriter{out: parent.consoleTarget, level: level},
+			&nativeWriter{module: stamped, level: nativeLvl, excluded: excluded},
+		))
+	}
+	subLogger := base.With().Str("module", stamped).Logger().
+		Level(admissionFloor(level, nativeLvl, nativeOn))
+	return &Logger{
+		module: module, modules: l.modules, development: l.development,
+		Logger: &subLogger, isDefaultLevel: isDefaultLevel,
+		consoleTarget: parent.consoleTarget, consoleLevel: level,
+	}
 }
 
 // ToZapConfig outputs the zap config is derived from l.

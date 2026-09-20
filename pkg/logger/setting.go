@@ -179,12 +179,22 @@ func RegisterFlags(fs *pflag.FlagSet, logging *Logging) {
 
 // Init initializes a rs/zerolog logger from user config.
 func Init(cfg Logging) (err error) {
+	return InitWithNative(cfg, NativeLogging{})
+}
+
+// InitWithNative initializes the logger with both destinations configured. The
+// native configuration is resolved first: if it is unusable the root logger is
+// left untouched, so a bad native flag cannot cost the process its logging.
+func InitWithNative(cfg Logging, native NativeLogging) (err error) {
 	switch cfg.Env {
 	case "prob", "":
 		os.Setenv("GRPC_GO_LOG_SEVERITY_LEVEL", "ERROR")
 		os.Setenv("GRPC_GO_LOG_FORMATTER", "json")
 	case "dev":
 		os.Setenv("GRPC_GO_LOG_SEVERITY_LEVEL", "INFO")
+	}
+	if err = applyNative(native); err != nil {
+		return err
 	}
 	return root.set(cfg)
 }
@@ -220,10 +230,24 @@ func getLogger(cfg Logging) (*Logger, error) {
 	} else {
 		w = os.Stderr
 	}
-	ctx := zerolog.New(w).Level(lvl).With().Timestamp()
+	// The console target is kept so that Named can build a gate per module
+	// without reaching back through the root logger's writer.
+	consoleTarget := w
+	nativeLvl, excluded := resolveNative(rootName)
+	nativeOn := NativeEnabled()
+	if nativeOn {
+		w = zerolog.MultiLevelWriter(
+			&consoleWriter{out: consoleTarget, level: lvl},
+			&nativeWriter{module: rootName, level: nativeLvl, excluded: excluded},
+		)
+	}
+	ctx := zerolog.New(w).Level(admissionFloor(lvl, nativeLvl, nativeOn)).With().Timestamp()
 	if development {
 		ctx = ctx.Stack().Caller()
 	}
 	l := ctx.Logger()
-	return &Logger{module: rootName, Logger: &l, modules: modules, development: development}, nil
+	return &Logger{
+		module: rootName, Logger: &l, modules: modules, development: development,
+		consoleTarget: consoleTarget, consoleLevel: lvl,
+	}, nil
 }
