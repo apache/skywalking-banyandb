@@ -68,6 +68,33 @@ func TestSemanticValidatorAcceptsKnownProjection(t *testing.T) {
 	}
 }
 
+// TestSemanticValidatorHandlesCountDistinctAndTimeBucket pins that adding
+// GrammarAggregateFunction.Distinct and the TIME_BUCKET(...) pseudo-column
+// (apache/skywalking#14091) didn't introduce a nil-pointer panic here.
+// selectIdentifiers only reads column.Aggregate.Column (unaffected by the
+// new Distinct field), and groupByIdentifiers already guards
+// column.Identifier == nil before dereferencing it — a TIME_BUCKET column
+// (Identifier is nil, TimeBucket is set) is silently skipped, not a crash.
+func TestSemanticValidatorHandlesCountDistinctAndTimeBucket(t *testing.T) {
+	validator := NewSemanticValidator()
+	schema := &session.SchemaSnapshot{
+		Type:   session.ResourceTypeMeasure,
+		Tags:   []string{"endpoint"},
+		Fields: []string{"latency"},
+	}
+	report, validateErr := validator.Validate(
+		context.Background(),
+		"SELECT endpoint, COUNT(DISTINCT endpoint) FROM MEASURE service_latency IN production TIME > '-30m' GROUP BY TIME_BUCKET('5m'), endpoint LIMIT 10",
+		schema,
+	)
+	if validateErr != nil {
+		t.Fatalf("Validate returned error: %v", validateErr)
+	}
+	if !report.Valid {
+		t.Fatalf("expected valid report, got %q", report.Message)
+	}
+}
+
 func TestSemanticValidatorAcceptsUnambiguousTagFamilySuffix(t *testing.T) {
 	validator := NewSemanticValidator()
 	report, validateErr := validator.Validate(context.Background(),

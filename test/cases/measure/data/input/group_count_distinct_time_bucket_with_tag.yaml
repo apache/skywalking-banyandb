@@ -20,13 +20,15 @@ groups: ["sw_metric"]
 tagProjection:
   tagFamilies:
   - name: "default"
-    tags: ["entity_id"]
+    tags: ["id"]
 groupBy:
   tagProjection:
     tagFamilies:
     - name: "default"
-      tags: ["entity_id"]
+      tags: ["id"]
+  timeBucket:
+    width: "1m"
 agg:
   function: "AGGREGATION_FUNCTION_COUNT_DISTINCT"
-  tagName: "id"
+  tagName: "entity_id"
   tagFamily: "default"

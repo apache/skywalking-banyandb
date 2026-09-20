@@ -15,18 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-name: "time_bucket_metric"
-groups: ["sw_metric"]
-tagProjection:
-  tagFamilies:
-  - name: "default"
-    tags: ["entity_id"]
-groupBy:
-  tagProjection:
-    tagFamilies:
-    - name: "default"
-      tags: ["entity_id"]
-agg:
-  function: "AGGREGATION_FUNCTION_COUNT_DISTINCT"
-  tagName: "id"
-  tagFamily: "default"
+
+SELECT tag_x, COUNT(DISTINCT entity_id) FROM MEASURE index_mode_distinct_metric IN sw_metric
+TIME > '-15m'
+GROUP BY tag_x
