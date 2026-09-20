@@ -62,11 +62,6 @@ type NodeInfo struct {
 	HTTPAddress string
 }
 
-// Sink buffers admitted log events and hands them to a consumer for writing.
-//
-// It is constructed before logger.Init, so the buffer exists for the lines a
-// process emits while it is still starting, and activated once the services it
-// publishes through are running.
 // entry pairs a request with the bytes reserved for it, so the accounting
 // settled at flush is exactly the accounting taken at admission.
 type entry struct {
@@ -74,6 +69,11 @@ type entry struct {
 	size int64
 }
 
+// Sink buffers admitted log events and hands them to a consumer for writing.
+//
+// It is constructed before logger.Init, so the buffer exists for the lines a
+// process emits while it is still starting, and activated once the services it
+// publishes through are running.
 type Sink struct {
 	queue    chan entry
 	dropped  map[string]*atomic.Uint64
