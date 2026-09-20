@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 const (
@@ -335,19 +336,22 @@ func compileAggregate(aggregate Aggregate, resource Resource, schema session.Sch
 	if columnErr != nil {
 		return "", columnErr
 	}
-	// COUNT_DISTINCT is tag-only (design §7.3/§7.4) — a different column-kind
-	// gate than every other function here, which is field-only — so it must
-	// branch before the Field/numeric checks below, not extend them.
+	// COUNT_DISTINCT is the one function that accepts either column kind
+	// (design §6 matrix: numeric fields plus every tag type that is not an
+	// array or a timestamp), so it must branch before the field-only checks
+	// below rather than extend them.
 	if aggregate.Function == AggregateCountDistinct {
-		if column.Kind != session.SchemaColumnTag && column.Kind != session.SchemaColumnEntityTag {
-			return "", diagnosticError("AGGREGATE_COLUMN_NOT_TAG", "/aggregate/column", fmt.Sprintf("COUNT_DISTINCT column %q must be a tag", aggregate.Column))
+		if column.Kind == session.SchemaColumnField {
+			if column.Type != session.SchemaValueTypeInt && column.Type != session.SchemaValueTypeFloat {
+				return "", diagnosticError("AGGREGATE_FIELD_NOT_NUMERIC", "/aggregate/column", fmt.Sprintf("aggregation field %q must be numeric", aggregate.Column))
+			}
+			return fmt.Sprintf("COUNT(DISTINCT %s)", column.Name), nil
 		}
 		switch column.Type {
 		case session.SchemaValueTypeStringArray, session.SchemaValueTypeIntArray, session.SchemaValueTypeTimestamp:
 			return "", diagnosticError("AGGREGATE_TAG_TYPE_UNSUPPORTED", "/aggregate/column",
 				fmt.Sprintf("COUNT_DISTINCT column %q has an unsupported tag type %q", aggregate.Column, column.Type))
-		case session.SchemaValueTypeUnknown, session.SchemaValueTypeString, session.SchemaValueTypeInt,
-			session.SchemaValueTypeFloat, session.SchemaValueTypeBinary:
+		default:
 			// Every other tag type is supported (design §6 matrix: COUNT_DISTINCT
 			// accepts any tag type that isn't an array or a timestamp).
 		}
@@ -376,6 +380,21 @@ func compileGroups(
 	// resolution and the "must also be projected" check below.
 	if timeBucket != nil {
 		if timeBucket.Width != "" {
+			// Apply the server's own rule (plan.resolveTimeBucket) before the
+			// width reaches the rendered literal: it must parse as a duration
+			// and be positive. Every other value compiled here is resolved
+			// against the schema, so this is the one free-form string that
+			// would otherwise be interpolated unchecked -- a non-duration or
+			// quote-bearing width would render BYDBQL the parser rejects.
+			width, widthErr := timestamp.ParseDuration(timeBucket.Width)
+			if widthErr != nil {
+				return "", diagnosticError("GROUP_BY_TIME_BUCKET_WIDTH_INVALID", "/time_bucket/width",
+					fmt.Sprintf("time_bucket width %q is not a valid duration", timeBucket.Width))
+			}
+			if width <= 0 {
+				return "", diagnosticError("GROUP_BY_TIME_BUCKET_WIDTH_INVALID", "/time_bucket/width",
+					fmt.Sprintf("time_bucket width %q must be positive", timeBucket.Width))
+			}
 			compiled = append(compiled, fmt.Sprintf("TIME_BUCKET('%s')", timeBucket.Width))
 		} else {
 			compiled = append(compiled, "TIME_BUCKET()")

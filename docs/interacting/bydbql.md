@@ -577,7 +577,7 @@ The `SELECT` clause for measures is highly flexible, allowing for the selection 
 - **`FROM MEASURE name IN groups`** or **`FROM MEASURE name IN (groups)`**: Maps to the `name` and `groups` fields. Both are required.
 - **`SELECT <tag1>, <field1>, <field2>`**: The transformer inspects each identifier. Those identified as tags (either by schema lookup or `::tag`) are added to `tag_projection`. Those identified as fields (by schema lookup or `::field`) are added to `field_projection`.
 - **`SELECT SUM(field)`**: Maps to `agg`, setting `agg.field_name`.
-- **`SELECT COUNT(DISTINCT tag)`**: Maps to `agg` with `function = AGGREGATION_FUNCTION_COUNT_DISTINCT`, setting `agg.tag_name` and `agg.tag_family` instead of `agg.field_name`. The output column is named after the tag (`tag`), not after the function.
+- **`SELECT COUNT(DISTINCT tag)`**: Maps to `agg` with `function = AGGREGATION_FUNCTION_COUNT_DISTINCT`, setting `agg.tag_name` and `agg.tag_family` instead of `agg.field_name`. The output column is named after the tag (`tag`), not after the function. A `COUNT(DISTINCT field)` over an INT or FLOAT field is also accepted, and sets `agg.field_name` as any other field aggregation does.
 - **`TIME` clause (required)**: Maps to `time_range`:
   - **`TIME = '2023-01-01T00:00:00Z'`**: Sets `begin` and `end` to the same timestamp.
   - **`TIME > '2023-01-01T00:00:00Z'`**: Sets `begin` to the timestamp.
