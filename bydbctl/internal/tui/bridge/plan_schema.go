@@ -75,6 +75,7 @@ func selectPlanSchema() map[string]any {
 			"order_by":        selectOrderSchema(),
 			"time_range":      timeRangeSchema(),
 			"group_by":        stringArraySchema(1),
+			"time_bucket":     timeBucketSchema(),
 			"limit":           boundedIntegerSchema(1, 1000),
 			"id":              map[string]any{"type": "string", "minLength": 1},
 		},
@@ -138,15 +139,35 @@ func projectionSchema() map[string]any {
 	}
 }
 
-func aggregateSchema(requireColumn bool) map[string]any {
-	required := []string{"function"}
-	properties := map[string]any{
-		"function": map[string]any{"type": "string", "enum": []string{"MEAN", "COUNT", "MAX", "MIN", "SUM"}},
+// timeBucketSchema exposes GROUP BY TIME_BUCKET(width). The width is optional
+// -- an omitted one defers to the measure's own interval -- and, when given,
+// must be a duration the server accepts (ns, us, ms, s, m, h, or the custom d
+// suffix). Only SELECT plans over a MEASURE carry it, and only alongside
+// exactly one aggregate; Compile enforces both.
+func timeBucketSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"width": map[string]any{"type": "string", "minLength": 1},
+		},
 	}
+}
+
+// aggregateSchema describes one aggregation. COUNT_DISTINCT is offered only
+// where a column is required: it always needs an explicit target, and
+// compileTopN rejects it outright because the TOPN grammar has no DISTINCT
+// production to render into.
+func aggregateSchema(requireColumn bool) map[string]any {
+	functions := []string{"MEAN", "COUNT", "MAX", "MIN", "SUM"}
+	required := []string{"function"}
+	properties := map[string]any{}
 	if requireColumn {
+		functions = append(functions, "COUNT_DISTINCT")
 		required = append(required, "column")
 		properties["column"] = map[string]any{"type": "string", "minLength": 1}
 	}
+	properties["function"] = map[string]any{"type": "string", "enum": functions}
 	return map[string]any{
 		"type":                 "object",
 		"required":             required,
@@ -257,6 +278,8 @@ func queryPlanSchemaHint() string {
 	return "Submit exactly one strict SelectPlan or TopNPlan. " +
 		"SelectPlan uses MEASURE|STREAM|TRACE|PROPERTY and order_by.index_rule. " +
 		"TopNPlan uses a real TOPN aggregation resource, top_n, aggregate.function, and direction-only order_by. " +
+		"COUNT_DISTINCT targets a count_distinct_columns entry and is unavailable to TopNPlan. " +
+		"time_bucket groups a MEASURE SelectPlan by time and requires exactly one aggregate. " +
 		"Unknown fields and structural coercions are rejected."
 }
 
@@ -265,6 +288,10 @@ func planConstraintsForSnapshot(snapshot session.SchemaSnapshot) map[string]any 
 	filterColumns := make([]string, 0, len(snapshot.Columns)+1)
 	numericFields := make([]string, 0, len(snapshot.Fields))
 	groupByColumns := make([]string, 0, len(snapshot.Columns))
+	// COUNT_DISTINCT accepts a wider target set than every other function --
+	// numeric fields plus any tag that is not an array or a timestamp -- so it
+	// needs its own advertised list. numeric_fields alone would understate it.
+	countDistinctColumns := make([]string, 0, len(snapshot.Columns))
 	for _, column := range snapshot.Columns {
 		projectionColumns = append(projectionColumns, column.Name)
 		if column.Kind == session.SchemaColumnTag || column.Kind == session.SchemaColumnEntityTag {
@@ -272,11 +299,17 @@ func planConstraintsForSnapshot(snapshot session.SchemaSnapshot) map[string]any 
 				filterColumns = append(filterColumns, column.Name)
 			}
 			groupByColumns = append(groupByColumns, column.Name)
+			switch column.Type {
+			case session.SchemaValueTypeStringArray, session.SchemaValueTypeIntArray, session.SchemaValueTypeTimestamp:
+			default:
+				countDistinctColumns = append(countDistinctColumns, column.Name)
+			}
 		}
 		if column.Kind == session.SchemaColumnField {
 			groupByColumns = append(groupByColumns, column.Name)
 			if column.Type == session.SchemaValueTypeInt || column.Type == session.SchemaValueTypeFloat {
 				numericFields = append(numericFields, column.Name)
+				countDistinctColumns = append(countDistinctColumns, column.Name)
 			}
 		}
 	}
@@ -296,16 +329,17 @@ func planConstraintsForSnapshot(snapshot session.SchemaSnapshot) map[string]any 
 			"name":   snapshot.Name,
 			"groups": append([]string(nil), snapshot.Groups...),
 		},
-		"projection_columns": projectionColumns,
-		"filter_columns":     filterColumns,
-		"numeric_fields":     numericFields,
-		"group_by_columns":   groupByColumns,
-		"sortable_indexes":   sortableIndexes,
-		"source_measure":     snapshot.SourceMeasure,
-		"source_group":       snapshot.SourceMeasureGroup,
-		"topn_field_sort":    snapshot.FieldValueSort,
-		"schema_fingerprint": snapshot.Fingerprint,
-		"limit_maximum":      1000,
+		"projection_columns":     projectionColumns,
+		"filter_columns":         filterColumns,
+		"numeric_fields":         numericFields,
+		"count_distinct_columns": countDistinctColumns,
+		"group_by_columns":       groupByColumns,
+		"sortable_indexes":       sortableIndexes,
+		"source_measure":         snapshot.SourceMeasure,
+		"source_group":           snapshot.SourceMeasureGroup,
+		"topn_field_sort":        snapshot.FieldValueSort,
+		"schema_fingerprint":     snapshot.Fingerprint,
+		"limit_maximum":          1000,
 	}
 	if snapshot.Type == session.ResourceTypeTrace {
 		constraints["trace_scan_requirement"] = traceScanRequirement(snapshot)
