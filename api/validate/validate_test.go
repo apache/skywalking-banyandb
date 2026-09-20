@@ -299,3 +299,80 @@ func TestCheckShardingKeySubset(t *testing.T) {
 		})
 	}
 }
+
+// TestMeasureRejectsDuplicateTagNameAcrossFamilies pins the resource-wide tag
+// name invariant. The query layer resolves a bare tag name against a flat map
+// (logical.CommonSchema.CreateRef, and BydbQL's allTags), so two families
+// sharing a name would make resolution depend on iteration order. Nothing
+// enforced this before, which let such a schema register and then behave
+// differently depending on which query path read it.
+func TestMeasureRejectsDuplicateTagNameAcrossFamilies(t *testing.T) {
+	measure := &databasev1.Measure{
+		Metadata: &commonv1.Metadata{Name: "test_measure", Group: "group1"},
+		Entity:   &databasev1.Entity{TagNames: []string{"id"}},
+		TagFamilies: []*databasev1.TagFamilySpec{
+			{Name: "default", Tags: []*databasev1.TagSpec{
+				{Name: "id", Type: databasev1.TagType_TAG_TYPE_STRING},
+				{Name: "svc", Type: databasev1.TagType_TAG_TYPE_STRING},
+			}},
+			{Name: "other", Tags: []*databasev1.TagSpec{
+				{Name: "svc", Type: databasev1.TagType_TAG_TYPE_INT},
+			}},
+		},
+	}
+	err := Measure(measure)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), `tag name "svc" is duplicated in tag families "default" and "other"`)
+}
+
+// TestStreamRejectsDuplicateTagNameAcrossFamilies covers the same invariant for
+// streams, which share the tagFamily helper.
+func TestStreamRejectsDuplicateTagNameAcrossFamilies(t *testing.T) {
+	stream := &databasev1.Stream{
+		Metadata: &commonv1.Metadata{Name: "test_stream", Group: "group1"},
+		Entity:   &databasev1.Entity{TagNames: []string{"id"}},
+		TagFamilies: []*databasev1.TagFamilySpec{
+			{Name: "default", Tags: []*databasev1.TagSpec{{Name: "id", Type: databasev1.TagType_TAG_TYPE_STRING}}},
+			{Name: "searchable", Tags: []*databasev1.TagSpec{{Name: "id", Type: databasev1.TagType_TAG_TYPE_STRING}}},
+		},
+	}
+	err := Stream(stream)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), `tag name "id" is duplicated in tag families "default" and "searchable"`)
+}
+
+// TestMeasureRejectsDuplicateTagNameWithinOneFamily falls out of the same flat
+// map and was likewise unchecked; it reports the single family rather than
+// naming the same one twice.
+func TestMeasureRejectsDuplicateTagNameWithinOneFamily(t *testing.T) {
+	measure := &databasev1.Measure{
+		Metadata: &commonv1.Metadata{Name: "test_measure", Group: "group1"},
+		Entity:   &databasev1.Entity{TagNames: []string{"id"}},
+		TagFamilies: []*databasev1.TagFamilySpec{
+			{Name: "default", Tags: []*databasev1.TagSpec{
+				{Name: "id", Type: databasev1.TagType_TAG_TYPE_STRING},
+				{Name: "id", Type: databasev1.TagType_TAG_TYPE_INT},
+			}},
+		},
+	}
+	err := Measure(measure)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), `tag name "id" is duplicated in tag family "default"`)
+}
+
+// TestMeasureAcceptsSameTagNameInDifferentMeasures guards against over-reach:
+// the invariant is per resource, so an unrelated measure may reuse the name.
+func TestMeasureAcceptsSameTagNameInDifferentMeasures(t *testing.T) {
+	newMeasure := func(name string) *databasev1.Measure {
+		return &databasev1.Measure{
+			Metadata: &commonv1.Metadata{Name: name, Group: "group1"},
+			Entity:   &databasev1.Entity{TagNames: []string{"id"}},
+			TagFamilies: []*databasev1.TagFamilySpec{
+				{Name: "default", Tags: []*databasev1.TagSpec{{Name: "id", Type: databasev1.TagType_TAG_TYPE_STRING}}},
+				{Name: "other", Tags: []*databasev1.TagSpec{{Name: "svc", Type: databasev1.TagType_TAG_TYPE_STRING}}},
+			},
+		}
+	}
+	assert.NoError(t, Measure(newMeasure("measure_a")))
+	assert.NoError(t, Measure(newMeasure("measure_b")))
+}
