@@ -15,18 +15,9 @@
 # specific language governing permissions and limitations
 # under the License.
 
-name: "time_bucket_metric"
-groups: ["sw_metric"]
-tagProjection:
-  tagFamilies:
-  - name: "default"
-    tags: ["entity_id"]
-groupBy:
-  tagProjection:
-    tagFamilies:
-    - name: "default"
-      tags: ["entity_id"]
-agg:
-  function: "AGGREGATION_FUNCTION_COUNT_DISTINCT"
-  tagName: "id"
-  tagFamily: "default"
+
+SELECT TOP 2 api_key DESC, user_id, COUNT(DISTINCT api_key) FROM MEASURE cardinality_metric IN sw_metric
+TIME > '-15m'
+GROUP BY user_id
+LIMIT 1
+OFFSET 1

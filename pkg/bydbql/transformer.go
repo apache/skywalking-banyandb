@@ -363,21 +363,22 @@ func (r *transformRun) transformMeasureQuery(ctx context.Context, grammar *Gramm
 	}
 
 	// convert aggregation
-	agg, err := r.convertAggregation(statement.Projection, allFields)
+	agg, err := r.convertAggregation(statement.Projection, allTags, allFields)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert aggregation: %w", err)
 	}
 
-	// convert group by
+	// convert group by. Unlike the deleted row-path engine, the vectorized
+	// engine never reads GroupBy.field_name (confirmed: zero references in
+	// plan/analyzer.go / plan.go) — a tag-only or time-bucket-only GroupBy
+	// is a valid, already-shipped shape (#14089/#14090), so there is no
+	// "GroupBy must include a field" requirement to enforce here.
 	groupBy, err := r.convertGroupBy(statement.GroupBy, projection, fields)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert group by: %w", err)
 	}
-	if agg != nil && groupBy != nil && groupBy.FieldName == "" {
-		return nil, errors.New("when aggregation and group by are both present, group by must include a field")
-	}
 
-	top, err := r.convertTOP(statement.Projection, allFields)
+	top, err := r.convertTOP(statement.Projection, allFields, agg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert top: %w", err)
 	}
@@ -652,7 +653,7 @@ func (r *transformRun) transformTopNMeasureQuery(ctx context.Context, grammar *G
 	// convert agg
 	var aggFunc modelv1.AggregationFunction
 	if statement.AggregateBy != nil {
-		aggFunc, err = r.convertAggregationFunc(statement.AggregateBy.Function.Function)
+		aggFunc, err = r.convertAggregationFunc(statement.AggregateBy.Function.Function, false)
 		if err != nil {
 			return nil, err
 		}
@@ -772,6 +773,21 @@ func (r *transformRun) convertGroupBy(g *GrammarGroupByClause, queryTags *modelv
 	}
 
 	for _, c := range g.Columns {
+		if c.TimeBucket != nil {
+			if c.TypeSpec != nil {
+				return nil, errors.New("TIME_BUCKET does not support ::TAG/::FIELD")
+			}
+			if groupBy.TimeBucket != nil {
+				return nil, errors.New("only one TIME_BUCKET is allowed in GROUP BY")
+			}
+			width := ""
+			if c.TimeBucket.Width != nil {
+				width = *c.TimeBucket.Width
+			}
+			groupBy.TimeBucket = &measurev1.QueryRequest_GroupBy_TimeBucket{Width: width}
+			continue
+		}
+
 		colName, nameErr := c.Identifier.ToString(c.TypeSpec != nil)
 		if nameErr != nil {
 			return nil, fmt.Errorf("failed to parse column identifier: %w", nameErr)
@@ -836,14 +852,29 @@ func (r *transformRun) convertGroupBy(g *GrammarGroupByClause, queryTags *modelv
 			Tags: names,
 		})
 	}
-	groupBy.TagProjection = &modelv1.TagProjection{
-		TagFamilies: tagFamilies,
+	// Only set TagProjection when there's actually a tag key — a nil field
+	// (no GROUP BY tag key at all, e.g. a TIME_BUCKET-only or field-only
+	// GROUP BY) must stay nil, not a non-nil-but-empty message: the QL
+	// fixture comparison (test/cases/measure/data/data.go) does a strict
+	// protocmp.Equal against a hand-written request, and a YAML fixture
+	// with no tagProjection key unmarshals to nil, which never
+	// protocmp-equals a present-but-empty TagProjection.
+	if len(tagFamilies) > 0 {
+		groupBy.TagProjection = &modelv1.TagProjection{
+			TagFamilies: tagFamilies,
+		}
 	}
 
 	return groupBy, nil
 }
 
-func (r *transformRun) convertAggregation(projection *GrammarProjection, allFields map[string]*databasev1.FieldSpec) (*measurev1.QueryRequest_Aggregation, error) {
+// convertAggregation resolves the projection's single aggregation column
+// against both tags and fields (design §5.4: an aggregate target can be a
+// tag, not just a field), mirroring the ambiguity rule
+// checkOrAddGrammarTagOrField already applies to plain projection columns.
+func (r *transformRun) convertAggregation(
+	projection *GrammarProjection, allTags map[string]*tagSpecWithFamily, allFields map[string]*databasev1.FieldSpec,
+) (*measurev1.QueryRequest_Aggregation, error) {
 	var columns []*GrammarColumn
 	if projection != nil && len(projection.Columns) > 0 {
 		columns = append(columns, projection.Columns...)
@@ -867,29 +898,43 @@ func (r *transformRun) convertAggregation(projection *GrammarProjection, allFiel
 		return nil, nil
 	}
 
-	// check the aggregation column in the field list
 	aggColName, nameErr := aggCol.Aggregate.Column.ToString(true)
 	if nameErr != nil {
 		return nil, fmt.Errorf("failed to parse aggregate column identifier: %w", nameErr)
 	}
 
-	_, exist := allFields[aggColName]
-	if !exist {
-		return nil, fmt.Errorf("field %s not found in schema", aggColName)
-	}
-
-	aggFunc, err := r.convertAggregationFunc(aggCol.Aggregate.Function)
+	aggFunc, err := r.convertAggregationFunc(aggCol.Aggregate.Function, aggCol.Aggregate.Distinct)
 	if err != nil {
 		return nil, err
 	}
 
-	return &measurev1.QueryRequest_Aggregation{
-		Function:  aggFunc,
-		FieldName: aggColName,
-	}, nil
+	tag, tagExists := allTags[aggColName]
+	_, fieldExists := allFields[aggColName]
+	switch {
+	case tagExists && fieldExists:
+		return nil, fmt.Errorf("ambiguous aggregation column %s found in both tags and fields", aggColName)
+	case fieldExists:
+		return &measurev1.QueryRequest_Aggregation{
+			Function:  aggFunc,
+			FieldName: aggColName,
+		}, nil
+	case tagExists:
+		return &measurev1.QueryRequest_Aggregation{
+			Function:  aggFunc,
+			TagName:   aggColName,
+			TagFamily: tag.family,
+		}, nil
+	default:
+		return nil, fmt.Errorf("column %s not found in schema", aggColName)
+	}
 }
 
-func (r *transformRun) convertAggregationFunc(f string) (modelv1.AggregationFunction, error) {
+// convertAggregationFunc maps a grammar aggregate function name to its proto
+// value. distinct is true only for a COUNT(DISTINCT ...) — the grammar
+// accepts DISTINCT after any function (ParseQuery's checkAggregateAndGroupByShape
+// rejects it outside COUNT before this is ever called), so distinct is
+// meaningless for every other case here.
+func (r *transformRun) convertAggregationFunc(f string, distinct bool) (modelv1.AggregationFunction, error) {
 	switch strings.ToUpper(f) {
 	case "MEAN", "AVG":
 		return modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN, nil
@@ -898,6 +943,9 @@ func (r *transformRun) convertAggregationFunc(f string) (modelv1.AggregationFunc
 	case "MIN":
 		return modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN, nil
 	case "COUNT":
+		if distinct {
+			return modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT, nil
+		}
 		return modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT, nil
 	case "SUM":
 		return modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, nil
@@ -1651,7 +1699,14 @@ func (r *transformRun) convertCompareOp(op string) modelv1.Condition_BinaryOp {
 	}
 }
 
-func (r *transformRun) convertTOP(projection *GrammarProjection, fields map[string]*databasev1.FieldSpec) (*measurev1.QueryRequest_Top, error) {
+// convertTOP resolves a SELECT TOP N <col> ranking column against either the
+// field list or, when the query aggregates over a tag (e.g. COUNT_DISTINCT),
+// the aggregation's own output column name — the server's HideTag convention
+// (#14088) names a tag-targeted agg's output after the tag itself, so
+// ranking by that tag name refers to the agg's result, not a raw projection.
+func (r *transformRun) convertTOP(
+	projection *GrammarProjection, fields map[string]*databasev1.FieldSpec, agg *measurev1.QueryRequest_Aggregation,
+) (*measurev1.QueryRequest_Top, error) {
 	if projection == nil || projection.TopN == nil {
 		return nil, nil
 	}
@@ -1662,9 +1717,9 @@ func (r *transformRun) convertTOP(projection *GrammarProjection, fields map[stri
 		return nil, fmt.Errorf("failed to parse order field identifier: %w", nameErr)
 	}
 
-	// check the field exists in the field list
-	_, exist := fields[orderFieldName]
-	if !exist {
+	_, existsAsField := fields[orderFieldName]
+	matchesAggTagOutput := agg != nil && agg.GetTagName() != "" && agg.GetTagName() == orderFieldName
+	if !existsAsField && !matchesAggTagOutput {
 		return nil, fmt.Errorf("field %s not found in schema", orderFieldName)
 	}
 

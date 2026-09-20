@@ -96,10 +96,14 @@ type GrammarColumn struct {
 	TypeSpec   *string                   `parser:"( '::' @('TAG'|'FIELD') )?"`
 }
 
-// GrammarAggregateFunction represents aggregate functions.
+// GrammarAggregateFunction represents aggregate functions. DISTINCT is
+// grammatically accepted after any function — participle struct tags can't
+// express a per-alternative semantic predicate — ParseQuery's post-parse
+// check (checkAggregateAndGroupByShape) rejects it outside COUNT.
 type GrammarAggregateFunction struct {
 	Function string                 `parser:"@('SUM'|'MEAN'|'AVG'|'COUNT'|'MAX'|'MIN')"`
-	Column   *GrammarIdentifierPath `parser:"'(' @@ ')'"`
+	Distinct bool                   `parser:"'(' @'DISTINCT'?"`
+	Column   *GrammarIdentifierPath `parser:"@@ ')'"`
 }
 
 // GrammarTopNAggregateFunction represents aggregate functions without column (for TOP N).
@@ -301,10 +305,22 @@ type GrammarGroupByClause struct {
 	Columns []*GrammarGroupByColumn `parser:"@@ ( ',' @@ )*"`
 }
 
-// GrammarGroupByColumn represents a column in GROUP BY.
+// GrammarGroupByColumn represents a column in GROUP BY: a plain tag/field
+// identifier, or the TIME_BUCKET(...) pseudo-column.
 type GrammarGroupByColumn struct {
-	Identifier *GrammarIdentifierPath `parser:"@@"`
+	TimeBucket *GrammarTimeBucket     `parser:"(  @@"`
+	Identifier *GrammarIdentifierPath `parser:" | @@ )"`
 	TypeSpec   *string                `parser:"( '::' @('TAG'|'FIELD') )?"`
+}
+
+// GrammarTimeBucket represents TIME_BUCKET(<duration>), valid only inside
+// GROUP BY. Width is optional; an empty width defers to the measure's own
+// interval (design §5.3).
+type GrammarTimeBucket struct {
+	TimeBucket string  `parser:"@'TIME_BUCKET'"`
+	LParen     string  `parser:"'('"`
+	Width      *string `parser:"@String?"`
+	RParen     string  `parser:"')'"`
 }
 
 // GrammarSelectOrderByClause represents ORDER BY clause in SELECT statement.
