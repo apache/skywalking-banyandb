@@ -33,10 +33,10 @@ This feature adds a second, optional destination for logs: native self-storage i
 |---|---|---|
 | In scope | standalone, data, liaison | reach stream storage directly |
 | In scope | lifecycle, backup | colocated producers, using the receiver on their host's data node |
-| In scope | FODC — the on-demand diagnostics collector, agents plus a proxy — delivered in the final phase (§6) | a generic receiver/forwarder serves it, so BanyanDB imports nothing from FODC |
+| In scope | FODC — the on-demand diagnostics collector, agents plus a proxy | a generic receiver/forwarder serves it, so BanyanDB imports nothing from FODC |
 | Out of scope | restore, migration | they run when the data tier is unavailable |
 
-The sections that follow go roles, approach, configuration, failure modes, phases.
+The sections that follow go roles, approach, configuration, failure modes.
 
 ## 2. Role → function → log destination
 
@@ -194,7 +194,7 @@ budget = min(max-bytes, memory-fraction * max(0, availableBytes - memory-reserve
 availableBytes < 0  ->  budget = max-bytes          # unknown is not unlimited
 ```
 
-All three terms are native flags whose defaults are proposals. The budget is recomputed every 5s, counting queued and in-flight bytes alike. The sink reads `AvailableBytes()` only — never the blocking `AcquireResource` on the logging path, never waiting, never reclaiming bytes in flight; over budget it drops and counts. Phase 1 runs on the cap alone, the adaptive term arriving in phase 2.
+All three terms are native flags whose defaults are proposals. The budget is recomputed every 5s, counting queued and in-flight bytes alike. The sink reads `AvailableBytes()` only — never the blocking `AcquireResource` on the logging path, never waiting, never reclaiming bytes in flight; over budget it drops and counts. Where no protector is registered the cap alone applies; the adaptive term binds only where one is.
 
 | Process | Adaptive term | Why |
 |---|---|---|
@@ -206,18 +206,3 @@ That gap is pre-existing. The liaison's protector is deliberately left unregiste
 > Normal logging is never degraded by the sink. Native is the more verbose sink, so at normal `error` and native `info` a dropped native `info` event has no normal copy anywhere — the drop counters are the only record it existed.
 
 > With `--observability-modes=native` alone those counters travel the same transport as the logs, so the same outage loses both. The sink therefore also emits a periodic drop summary straight to stderr, and we recommend keeping `prometheus` enabled alongside.
-
-## 6. Implementation phases
-
-Each phase adds exactly one new failure domain, so a breakage is never ambiguous about which layer is at fault.
-
-| Phase | Scope | What it de-risks |
-|---|---|---|
-| 1 | Writer seam in `pkg/logger`, both gates, ring, consumer, `_monitoring_log` group and `log` stream; standalone and data in-process | Capture and schema, with no network hop or node selection |
-| 2 | Liaison route — tier-2 registry and its own selector over `tire2Client` — adaptive budget, metrics | Cross-node routing, and the adaptive budget where a protector is registered |
-| 3 | Generic native receiver and forwarder on liaison and data nodes. Also: a batch message for the new topic — no `repeated WriteRequest` exists in `write.proto` today — plus method-policy rows and their contract test, without which the liaison refuses to boot | Foreign-event admission: validation, identity passthrough, back-pressure |
-| 4 | Colocated producers (backup, lifecycle, FODC agent beside data) and the FODC proxy, onto the phase-3 receiver. `backup` and `lifecycle` reuse their existing connection settings; the FODC binaries have none to reuse — every FODC dial is currently insecure and the proxy has no outbound BanyanDB client, so both need new address and TLS flags | Producer integration alone; the receiver is proven |
-
-The receiver precedes those producers by design, so they never need a metadata client or their own copy of the shard rule.
-
-> Phase 1 is independently shippable: standalone and single-data-node deployments get queryable, retained logs without cross-node routing or the adaptive budget.
