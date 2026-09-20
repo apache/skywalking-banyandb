@@ -531,14 +531,20 @@ BydbQL for measures is tailored for analytical queries on aggregated numerical d
 ### 5.1. Grammar
 
 ```
-measure_query     ::= SELECT projection from_measure_clause TIME time_condition [WHERE criteria] [GROUP BY column_list] [ORDER BY order_expression] [LIMIT integer] [OFFSET integer] [WITH QUERY_TRACE]
-from_measure_clause ::= "FROM MEASURE" identifier "IN" ["("] group_list [")"] [ON ["("] stage_list [")"] STAGES]
-projection        ::= "*" | (column_list | agg_function "(" identifier ")" | top_clause)
+measure_query     ::= SELECT projection from_measure_clause TIME time_condition [WHERE criteria] [GROUP BY group_list] [ORDER BY order_expression] [LIMIT integer] [OFFSET integer] [WITH QUERY_TRACE]
+from_measure_clause ::= "FROM MEASURE" identifier "IN" ["("] group_list_id [")"] [ON ["("] stage_list [")"] STAGES]
+projection        ::= "*" | (column_list | agg_function "(" ["DISTINCT"] identifier ")" | top_clause)
 top_clause        ::= "TOP" integer identifier ["ASC" | "DESC"] ["," column_list]
 column_list       ::= identifier ("," identifier)* ["::tag" | "::field"]
 stage_list        ::= identifier ("," identifier)+
 agg_function      ::= "SUM" | "MEAN" | "COUNT" | "MAX" | "MIN"
-group_list        ::= identifier ("," identifier)+
+	/* "DISTINCT" is only valid with COUNT: COUNT(DISTINCT identifier) */
+group_list        ::= group_column ("," group_column)+
+group_column      ::= identifier | time_bucket_function
+time_bucket_function ::= "TIME_BUCKET" "(" [string_literal] ")"
+	/* at most one TIME_BUCKET(...) per GROUP BY clause; empty width defers
+	   to the measure's own interval */
+group_list_id     ::= identifier ("," identifier)+
 criteria          ::= condition (("AND" | "OR") condition)*
 condition         ::= identifier binary_op (value | value_list)
 time_condition    ::= "=" timestamp | ">" timestamp | "<" timestamp | ">=" timestamp | "<=" timestamp | "BETWEEN" timestamp "AND" timestamp
@@ -564,12 +570,14 @@ The `SELECT` clause for measures is highly flexible, allowing for the selection 
 - `SELECT <field_key>, <tag_key>`: Returns specific fields and tags. The parser will infer the type of each identifier from the measure's schema.
 - `SELECT <identifier>::field, <identifier>::tag`: If a field and a tag share the same name, the `::field` or `::tag` syntax **must** be used to disambiguate the identifier's type.
 - The clause also supports aggregation functions (`SUM`, `MEAN`, `COUNT`, `MAX`, `MIN`) and a `TOP N` clause for ranked results.
+- An aggregate function's column resolves against both tags and fields, not just fields — `SUM(latency)` aggregates a field, `COUNT(DISTINCT user_id)` aggregates a tag. `DISTINCT` is only accepted inside `COUNT`; `SUM(DISTINCT x)` and similar are rejected as a parse error.
 
 ### 5.3. Mapping to `measure.v1.QueryRequest`
 
 - **`FROM MEASURE name IN groups`** or **`FROM MEASURE name IN (groups)`**: Maps to the `name` and `groups` fields. Both are required.
 - **`SELECT <tag1>, <field1>, <field2>`**: The transformer inspects each identifier. Those identified as tags (either by schema lookup or `::tag`) are added to `tag_projection`. Those identified as fields (by schema lookup or `::field`) are added to `field_projection`.
-- **`SELECT SUM(field)`**: Maps to `agg`.
+- **`SELECT SUM(field)`**: Maps to `agg`, setting `agg.field_name`.
+- **`SELECT COUNT(DISTINCT tag)`**: Maps to `agg` with `function = AGGREGATION_FUNCTION_COUNT_DISTINCT`, setting `agg.tag_name` and `agg.tag_family` instead of `agg.field_name`. The output column is named after the tag (`tag`), not after the function. A `COUNT(DISTINCT field)` over an INT or FLOAT field is also accepted, and sets `agg.field_name` as any other field aggregation does.
 - **`TIME` clause (required)**: Maps to `time_range`:
   - **`TIME = '2023-01-01T00:00:00Z'`**: Sets `begin` and `end` to the same timestamp.
   - **`TIME > '2023-01-01T00:00:00Z'`**: Sets `begin` to the timestamp.
@@ -579,10 +587,12 @@ The `SELECT` clause for measures is highly flexible, allowing for the selection 
   - **`TIME BETWEEN '2023-01-01T00:00:00Z' AND '2023-01-02T00:00:00Z'`**: Sets `begin` and `end` to the respective timestamps.
   - **`TIME > '-30m'`**: Sets `begin` to 30 minutes ago.
   - **`TIME BETWEEN '-1h' AND 'now'`**: Sets `begin` to 1 hour ago and `end` to current time.
-- **`GROUP BY <tag1>, <tag2>`**: The `GROUP BY` clause takes a simple list of tags and maps to `group_by.tag_projection`.
-  - **Note**: When the query contains an aggregate function (e.g., `SUM`, `AVG`, `COUNT`, `MAX`, `MIN`) with `GROUP BY`, the `GROUP BY` clause **must include at least one field**. This ensures proper aggregation behavior in measure queries.
-- **`SELECT TOP N ...`**: Maps to the `top` message.
+- **`GROUP BY <tag1>, <tag2>`**: The `GROUP BY` clause takes a list of tags and maps to `group_by.tag_projection`. Each grouped tag must also appear in the query's own `SELECT` projection.
+- **`GROUP BY TIME_BUCKET(width), <tag>`**: Maps to `group_by.time_bucket`, setting `group_by.time_bucket.width`. An empty `width` (`TIME_BUCKET()`) defers to the measure's own `interval`; a duration string (e.g. `'5m'`) uses the same units as `Measure.interval` (`ns`, `us`/`µs`, `ms`, `s`, `m`, `h`, plus the custom `d` suffix — see `pkg/timestamp.ParseDuration`). At most one `TIME_BUCKET(...)` is allowed per `GROUP BY` clause. Results are pre-ordered by bucket ascending, so a bucketed query needs no `ORDER BY` for that purpose — a non-time `ORDER BY DESC` is rejected on a bucketed query.
+- **`SELECT TOP N ...`**: Maps to the `top` message. `TOP` can rank by a tag-targeted aggregation's own output column (e.g. `TOP 10 user_id DESC` when `COUNT(DISTINCT user_id)` is projected), not only by a field.
 - **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
+
+**Note on `LIMIT` and `TIME_BUCKET`**: `LIMIT` defaults to 100 when omitted. A bucketed `GROUP BY` returns one row per (bucket, tag-group), so a wide time window with a narrow bucket width can produce far more than 100 rows; without an explicit `LIMIT` sized to the expected row count, the response is silently truncated to the first 100 rows in bucket-ascending order rather than returning an error. Always set `LIMIT` explicitly for a bucketed query.
 
 ### 5.4. Examples
 
@@ -701,6 +711,23 @@ SELECT
 FROM MEASURE service_cpm IN us-west ON (warn, cold) STAGES
 TIME > '-30m'
 GROUP BY region;
+
+-- Count distinct users per region
+SELECT
+    region,
+    COUNT(DISTINCT user_id)
+FROM MEASURE service_cpm IN us-west
+TIME > '-30m'
+GROUP BY region;
+
+-- Bucket a metric into 5-minute windows, per region
+SELECT
+    region,
+    SUM(latency)
+FROM MEASURE service_cpm IN us-west
+TIME > '-2h'
+GROUP BY TIME_BUCKET('5m'), region
+LIMIT 500;
 ```
 
 ## 6. BydbQL for Top-N

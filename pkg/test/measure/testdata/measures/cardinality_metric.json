@@ -1,0 +1,36 @@
+{
+  "metadata": {
+    "name": "cardinality_metric",
+    "group": "sw_metric"
+  },
+  "tag_families": [
+    {
+      "name": "default",
+      "tags": [
+        {
+          "name": "user_id",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "api_key",
+          "type": "TAG_TYPE_STRING"
+        }
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "name": "value",
+      "field_type": "FIELD_TYPE_INT",
+      "encoding_method": "ENCODING_METHOD_GORILLA",
+      "compression_method": "COMPRESSION_METHOD_ZSTD"
+    }
+  ],
+  "entity": {
+    "tag_names": [
+      "user_id"
+    ]
+  },
+  "interval": "20s",
+  "updated_at": "2021-04-15T01:30:15.01Z"
+}

@@ -15,18 +15,40 @@
 # specific language governing permissions and limitations
 # under the License.
 
-name: "time_bucket_metric"
-groups: ["sw_metric"]
-tagProjection:
+dataPoints:
+- fields:
+  - name: api_key
+    value:
+      int:
+        value: "2"
   tagFamilies:
-  - name: "default"
-    tags: ["entity_id"]
-groupBy:
-  tagProjection:
-    tagFamilies:
-    - name: "default"
-      tags: ["entity_id"]
-agg:
-  function: "AGGREGATION_FUNCTION_COUNT_DISTINCT"
-  tagName: "id"
-  tagFamily: "default"
+  - name: default
+    tags:
+    - key: user_id
+      value:
+        str:
+          value: user1
+- fields:
+  - name: api_key
+    value:
+      int:
+        value: "2"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: user_id
+      value:
+        str:
+          value: user2
+- fields:
+  - name: api_key
+    value:
+      int:
+        value: "2"
+  tagFamilies:
+  - name: default
+    tags:
+    - key: user_id
+      value:
+        str:
+          value: user1
