@@ -59,14 +59,14 @@ type Service struct {
 	l        *logger.Logger
 	pm       protector.Memory
 	node     NodeInfo
-	cfg      logger.NativeLogging
+	cfg      *logger.NativeLogging
 	ready    bool
 }
 
 // NewService returns the service that drains sink. The sink is constructed
 // separately and installed on the logger before Init, so that the buffer
 // exists for the lines emitted while the process is still starting.
-func NewService(sink *Sink, cfg logger.NativeLogging, md metadata.Repo,
+func NewService(sink *Sink, cfg *logger.NativeLogging, md metadata.Repo,
 	pipeline queue.Client, pm protector.Memory,
 ) *Service {
 	return &Service{

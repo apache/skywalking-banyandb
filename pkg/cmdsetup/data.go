@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/service"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/observability/logging"
 	"github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/property"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
@@ -56,6 +57,10 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 	metaSvc.SetSnapshotPipeline(pipeline)
 	propertyStreamPipeline := queue.Local()
 	metaSvc.SetPropertyPipelineClient(propertyStreamPipeline)
+	// The sink is the process-wide one, installed on the logger before Init so
+	// the buffer exists for the lines emitted while starting.
+	logSvc := logging.NewService(NativeLogSink, NativeLoggingConfig, metaSvc, propertyStreamPipeline, pm)
+	logSvc.SetNodeType("data")
 	propertySvc, err := property.NewService(metaSvc, pipeline, propertyStreamPipeline, metricSvc, pm)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate property service")
@@ -89,6 +94,7 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 		metricSvc,
 		metaSvc,
 		pm,
+		logSvc,
 		pipeline,
 		propertyStreamPipeline,
 		propertySvc,

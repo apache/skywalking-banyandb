@@ -35,7 +35,7 @@ const sampleLine = `{"level":"warn","module":"MEASURE","group":"sw_metric",` +
 
 func testSink(t *testing.T) *Sink {
 	t.Helper()
-	s := NewSink(logger.NativeLogging{
+	s := NewSink(&logger.NativeLogging{
 		Enabled:       true,
 		MaxBytes:      1 << 20,
 		MaxEventBytes: 64 << 10,

@@ -24,6 +24,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	nativelog "github.com/apache/skywalking-banyandb/banyand/observability/logging"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -44,6 +45,9 @@ const logo = `
 // NewRoot returns a root command.
 func NewRoot(runners ...run.Unit) *cobra.Command {
 	logging := logger.Logging{}
+	// The native configuration is resolved alongside the normal one, so that a
+	// process knows both destinations before it emits its first line.
+	nativeLogging := logger.NativeLogging{}
 	crashOutputConfig := panicdiag.NewCrashOutputConfig()
 	cmd := &cobra.Command{
 		DisableAutoGenTag: true,
@@ -64,7 +68,7 @@ BanyanDB, as an observability database, aims to ingest, analyze and store Metric
 				return err
 			}
 
-			if err = logger.Init(logging); err != nil {
+			if err = logger.InitWithNative(logging, nativeLogging); err != nil {
 				return err
 			}
 
@@ -82,6 +86,16 @@ BanyanDB, as an observability database, aims to ingest, analyze and store Metric
 	cmd.PersistentFlags().StringVar(&common.FlagNodeHost, "node-host", "", "the node host of the server only used when node-host-provider is \"flag\"")
 	cmd.PersistentFlags().StringSliceVar(&common.FlagNodeLabels, "node-labels", nil, "the node labels. e.g. key1=value1,key2=value2")
 	logger.RegisterFlags(cmd.PersistentFlags(), &logging)
+	// Registered on the persistent set rather than a group's, because the sink
+	// has to be configured before the command tree hands control to the group.
+	logger.RegisterNativeFlags(cmd.PersistentFlags(), &nativeLogging)
+	NativeLoggingConfig = &nativeLogging
+	// One sink for the process. NewRoot builds every role's command, so a sink
+	// created per role would be installed several times over and the logger
+	// would admit into whichever was constructed last -- not the one whose
+	// consumer actually runs.
+	NativeLogSink = nativelog.NewSink(NativeLoggingConfig)
+	logger.SetNativeSink(NativeLogSink)
 	crashOutputConfig.RegisterFlags(cmd.PersistentFlags())
 	cmd.AddCommand(newStandaloneCmd(runners...))
 	cmd.AddCommand(newDataCmd(runners...))
@@ -109,3 +123,11 @@ func (c *nodeIDProviderValue) String() string {
 func (c *nodeIDProviderValue) Type() string {
 	return "nodeIDProvider"
 }
+
+// NativeLoggingConfig is the native logging configuration the root command
+// parsed. The role commands read it when they build their log service: the
+// flags live on the persistent set, so they are resolved once for every role.
+var NativeLoggingConfig *logger.NativeLogging
+
+// NativeLogSink is the single buffer this process admits into.
+var NativeLogSink *nativelog.Sink

@@ -73,7 +73,7 @@ type Sink struct {
 	budget   func() int64
 	node     atomic.Pointer[NodeInfo]
 	pool     sync.Pool
-	cfg      logger.NativeLogging
+	cfg      *logger.NativeLogging
 	queued   atomic.Int64
 	inFlight atomic.Int64
 	seq      atomic.Uint64
@@ -82,8 +82,11 @@ type Sink struct {
 }
 
 // NewSink allocates the buffer. It performs no I/O and reaches no service, so
-// it is safe to call while the command tree is still being built.
-func NewSink(cfg logger.NativeLogging) *Sink {
+// it is safe to call while the command tree is still being built -- which is
+// where it is called, before the flags are parsed. It keeps the configuration
+// by reference for that reason: the values arrive later, and nothing reads
+// them until Init has admitted the first event.
+func NewSink(cfg *logger.NativeLogging) *Sink {
 	s := &Sink{
 		cfg:     cfg,
 		queue:   make(chan *streamv1.WriteRequest, queueDepth),
