@@ -201,7 +201,7 @@ All three terms are native flags whose defaults are proposals. The budget is rec
 | standalone, data | binds | protector registered as a run unit |
 | everything else | cap only | availability reports `-1`, or no protector is registered. We leave the liaison as it is today rather than registering one, since that would arm load shedding that has never run |
 
-That gap is pre-existing, and registering the liaison protector is an open question below; the sink needs no change either way, so the cap is sized to be safe alone.
+That gap is pre-existing. The liaison's protector is deliberately left unregistered here, because registering it would also arm liaison load shedding that has never run in production, which does not belong in a logging change. The sink needs no change if it is registered later — the same formula simply begins to adapt — so the cap is sized to be safe on its own.
 
 > Normal logging is never degraded by the sink. Native is the more verbose sink, so at normal `error` and native `info` a dropped native `info` event has no normal copy anywhere — the drop counters are the only record it existed.
 
