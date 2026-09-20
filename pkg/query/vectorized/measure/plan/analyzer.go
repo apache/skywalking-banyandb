@@ -300,8 +300,8 @@ func validateBucketableOrdering(req *measurev1.QueryRequest) error {
 // field_name / tag_name must be set; a tag target additionally requires
 // tag_family so the target is addressed explicitly and resolved against the
 // right spec. That is belt-and-braces rather than disambiguation: a tag name
-// is unique across a resource's families, which api/validate.tagFamily
-// enforces. The target is then checked against the §6 semantics matrix.
+// is unique across a resource's families, which api/validate.UniqueTagNames
+// enforces at registration. The target is then checked against the §6 matrix.
 func translateAgg(req *measurev1.QueryRequest, measureSchema *databasev1.Measure) (*model.MeasureAgg, error) {
 	aggProto := req.GetAgg()
 	fieldName := aggProto.GetFieldName()

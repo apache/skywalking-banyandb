@@ -431,14 +431,6 @@ func tagFamily(tagFamilies []*databasev1.TagFamilySpec) error {
 	if len(tagFamilies) > 32 {
 		return fmt.Errorf("tag families count %d exceeds maximum 32", len(tagFamilies))
 	}
-	// A tag name identifies a tag across the whole resource, not merely within
-	// its own family: the query layer resolves a bare name against a flat map
-	// keyed by name alone -- logical.CommonSchema.CreateRef states the
-	// invariant outright, and the BydbQL transformer's allTags map relies on it
-	// for every identifier it resolves. Two families sharing a name would make
-	// those lookups depend on iteration order. This is the one place every
-	// writer passes through, so it is where the invariant can actually hold.
-	familyOfTag := make(map[string]string)
 	for i := range tagFamilies {
 		if nameErr := validateResourceName("tag family name", tagFamilies[i].Name); nameErr != nil {
 			return nameErr
@@ -447,21 +439,46 @@ func tagFamily(tagFamilies []*databasev1.TagFamilySpec) error {
 			return fmt.Errorf("tag family %q tags count %d exceeds maximum 512", tagFamilies[i].Name, len(tagFamilies[i].Tags))
 		}
 		for j := range tagFamilies[i].Tags {
-			tagName := tagFamilies[i].Tags[j].Name
-			if err := validateTagName(tagName); err != nil {
+			if err := validateTagName(tagFamilies[i].Tags[j].Name); err != nil {
 				return err
 			}
-			if previousFamily, duplicated := familyOfTag[tagName]; duplicated {
-				if previousFamily == tagFamilies[i].Name {
-					return fmt.Errorf("tag name %q is duplicated in tag family %q", tagName, previousFamily)
-				}
-				return fmt.Errorf("tag name %q is duplicated in tag families %q and %q: tag names must be unique across all tag families",
-					tagName, previousFamily, tagFamilies[i].Name)
-			}
-			familyOfTag[tagName] = tagFamilies[i].Name
 			if tagFamilies[i].Tags[j].Type == databasev1.TagType_TAG_TYPE_UNSPECIFIED {
 				return errors.New("tag type is unspecified")
 			}
+		}
+	}
+	return nil
+}
+
+// UniqueTagNames rejects a tag name that appears more than once across a
+// resource's tag families.
+//
+// A tag name identifies a tag across the whole resource, not merely within its
+// own family: the query layer resolves a bare name against a flat map keyed by
+// name alone -- logical.CommonSchema.CreateRef states the invariant outright,
+// and BydbQL's transformer relies on it for every identifier it resolves. Two
+// families sharing a name make those lookups depend on iteration order. A
+// single resource-wide set also catches a name duplicated within one family.
+//
+// This is deliberately separate from Measure and Stream, which the data nodes
+// also run when loading an already-persisted schema. A schema registered
+// before this check existed must keep loading rather than be dropped, so only
+// the registry's create and update paths call this.
+func UniqueTagNames(tagFamilies []*databasev1.TagFamilySpec) error {
+	familyOfTag := make(map[string]string)
+	for i := range tagFamilies {
+		for j := range tagFamilies[i].Tags {
+			tagName := tagFamilies[i].Tags[j].Name
+			previousFamily, duplicated := familyOfTag[tagName]
+			if !duplicated {
+				familyOfTag[tagName] = tagFamilies[i].Name
+				continue
+			}
+			if previousFamily == tagFamilies[i].Name {
+				return fmt.Errorf("tag name %q is duplicated in tag family %q", tagName, previousFamily)
+			}
+			return fmt.Errorf("tag name %q is duplicated in tag families %q and %q: tag names must be unique across all tag families",
+				tagName, previousFamily, tagFamilies[i].Name)
 		}
 	}
 	return nil
