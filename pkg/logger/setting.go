@@ -33,7 +33,12 @@ import (
 
 const (
 	rootName = "ROOT"
+)
 
+// testConsoleTarget redirects normal logging in tests. It is nil in production.
+var testConsoleTarget io.Writer
+
+const (
 	// Environment variables bound to the --logging-env and --logging-level flags by
 	// pkg/config. They are read directly here because the root logger has to produce
 	// output before the command tree that owns those flags exists.
@@ -229,6 +234,9 @@ func getLogger(cfg Logging) (*Logger, error) {
 		w = io.Writer(cw)
 	} else {
 		w = os.Stderr
+	}
+	if testConsoleTarget != nil {
+		w = testConsoleTarget
 	}
 	// The console target is kept so that Named can build a gate per module
 	// without reaching back through the root logger's writer.

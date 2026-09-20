@@ -18,6 +18,7 @@
 package logger
 
 import (
+	"fmt"
 	"io"
 	"strings"
 	"sync/atomic"
@@ -141,6 +142,27 @@ func applyNative(cfg NativeLogging) error {
 	lvl, err := zerolog.ParseLevel(cfg.Level)
 	if err != nil {
 		return err
+	}
+	// Rejected here rather than at first use: a non-positive interval makes
+	// time.NewTicker panic inside the consumer, which would leave the feature
+	// enabled and the buffer permanently undrained.
+	if cfg.FlushInterval <= 0 {
+		return fmt.Errorf("logging-native-flush-interval must be positive, got %s", cfg.FlushInterval)
+	}
+	if cfg.FlushSize <= 0 {
+		return fmt.Errorf("logging-native-flush-size must be positive, got %d", cfg.FlushSize)
+	}
+	if cfg.MaxBytes <= 0 {
+		return fmt.Errorf("logging-native-max-bytes must be positive, got %d", cfg.MaxBytes)
+	}
+	if cfg.MaxEventBytes <= 0 {
+		return fmt.Errorf("logging-native-max-event-bytes must be positive, got %d", cfg.MaxEventBytes)
+	}
+	if cfg.ShardNum == 0 {
+		return fmt.Errorf("logging-native-shard-num must be positive")
+	}
+	if cfg.TTLDays == 0 {
+		return fmt.Errorf("logging-native-ttl-days must be positive")
 	}
 	excluded := defaultExcludedModules
 	if len(cfg.ExcludeModules) > 0 {

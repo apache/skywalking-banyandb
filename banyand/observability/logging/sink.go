@@ -67,10 +67,17 @@ type NodeInfo struct {
 // It is constructed before logger.Init, so the buffer exists for the lines a
 // process emits while it is still starting, and activated once the services it
 // publishes through are running.
+// entry pairs a request with the bytes reserved for it, so the accounting
+// settled at flush is exactly the accounting taken at admission.
+type entry struct {
+	req  *streamv1.WriteRequest
+	size int64
+}
+
 type Sink struct {
-	queue    chan *streamv1.WriteRequest
+	queue    chan entry
 	dropped  map[string]*atomic.Uint64
-	budget   func() int64
+	budget   atomic.Pointer[func() int64]
 	node     atomic.Pointer[NodeInfo]
 	pool     sync.Pool
 	cfg      *logger.NativeLogging
@@ -89,8 +96,8 @@ type Sink struct {
 func NewSink(cfg *logger.NativeLogging) *Sink {
 	s := &Sink{
 		cfg:     cfg,
-		queue:   make(chan *streamv1.WriteRequest, queueDepth),
-		epoch:   time.Now().Unix(),
+		queue:   make(chan entry, queueDepth),
+		epoch:   time.Now().UnixNano(),
 		dropped: make(map[string]*atomic.Uint64),
 	}
 	for _, r := range []string{
@@ -100,7 +107,8 @@ func NewSink(cfg *logger.NativeLogging) *Sink {
 		s.dropped[r] = &atomic.Uint64{}
 	}
 	s.pool.New = func() any { return &streamv1.WriteRequest{} }
-	s.budget = func() int64 { return cfg.MaxBytes }
+	initial := func() int64 { return cfg.MaxBytes }
+	s.budget.Store(&initial)
 	return s
 }
 
@@ -114,8 +122,18 @@ func (s *Sink) SetNode(n NodeInfo) {
 // steady state wherever no memory protector is registered.
 func (s *Sink) SetBudget(f func() int64) {
 	if f != nil {
-		s.budget = f
+		// Published atomically: Admit reads this from every goroutine that
+		// logs, and Serve installs it while those are already running.
+		s.budget.Store(&f)
 	}
+}
+
+// budgetBytes is the byte budget in force right now.
+func (s *Sink) budgetBytes() int64 {
+	if f := s.budget.Load(); f != nil {
+		return (*f)()
+	}
+	return 0
 }
 
 // Dropped reports how many events were lost for one reason.
@@ -156,21 +174,30 @@ func (s *Sink) Admit(level zerolog.Level, module string, line []byte) {
 		s.drop(reasonOversizeEvent)
 		return
 	}
-	if budget := s.budget(); budget > 0 && s.queued.Load()+s.inFlight.Load()+size > budget {
+	budget := s.budgetBytes()
+	if budget <= 0 {
+		// Zero is what the adaptive term reports when nothing is available. It
+		// means no budget, not an absent limit.
+		s.drop(reasonMemoryReserve)
+		return
+	}
+	// Reserve before building, so two goroutines cannot both read the same
+	// total and both enqueue. Every failure path below returns the reservation.
+	if s.queued.Add(size)+s.inFlight.Load() > budget {
+		s.queued.Add(-size)
 		s.drop(reasonBufferFull)
 		return
 	}
 	req, err := s.build(level, module, line)
 	if err != nil {
+		s.queued.Add(-size)
 		s.drop(reasonEncodeFailed)
 		return
 	}
-	// Account by the same measure the consumer settles with, so the counter
-	// cannot drift between admission and flush.
 	select {
-	case s.queue <- req:
-		s.queued.Add(sizeOf(req))
+	case s.queue <- entry{req: req, size: size}:
 	default:
+		s.queued.Add(-size)
 		s.release(req)
 		s.drop(reasonBufferFull)
 	}
@@ -273,27 +300,6 @@ func binaryTag(v []byte) *modelv1.TagValue {
 		return &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
 	}
 	return &modelv1.TagValue{Value: &modelv1.TagValue_BinaryData{BinaryData: v}}
-}
-
-// sizeOf is the accounting unit: what the buffer charges an event. It tracks
-// the encoded line rather than the request graph, and the two are within a
-// small constant of each other because the request carries the same bytes.
-func sizeOf(req *streamv1.WriteRequest) int64 {
-	if req == nil || req.Element == nil {
-		return 0
-	}
-	var n int64
-	for _, fam := range req.Element.TagFamilies {
-		for _, tag := range fam.Tags {
-			switch v := tag.GetValue().(type) {
-			case *modelv1.TagValue_Str:
-				n += int64(len(v.Str.GetValue()))
-			case *modelv1.TagValue_BinaryData:
-				n += int64(len(v.BinaryData))
-			}
-		}
-	}
-	return n + int64(len(req.Element.ElementId))
 }
 
 // moduleFieldName is the key zerolog stamps the module under. It has a tag of

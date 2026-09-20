@@ -72,7 +72,10 @@ func (l *Logger) Named(name ...string) *Logger {
 	}
 	var moduleBuilder strings.Builder
 	var module string
-	level := l.GetLevel()
+	// The console threshold, not the logger's own level: with native enabled
+	// that level is the admission floor -- the more verbose of the two sinks --
+	// and reusing it here would print everything the native sink admitted.
+	level := l.consoleLevel
 	isDefaultLevel := true
 	for i, m := range mm {
 		if i != 0 {

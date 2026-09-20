@@ -92,11 +92,12 @@ func (s *Service) PreRun(ctx context.Context) error {
 	s.l = logger.GetLogger(s.Name())
 	if val := ctx.Value(common.ContextNodeKey); val != nil {
 		if node, ok := val.(common.Node); ok {
-			s.node = NodeInfo{
-				NodeID:      node.NodeID,
-				GRPCAddress: node.GrpcAddress,
-				HTTPAddress: node.HTTPAddress,
-			}
+			// Only the runtime identity: the role was set at construction
+			// and replacing the whole struct would blank it, leaving every
+			// stored row without the node_type the schema separates roles by.
+			s.node.NodeID = node.NodeID
+			s.node.GRPCAddress = node.GrpcAddress
+			s.node.HTTPAddress = node.HTTPAddress
 		}
 	}
 	return nil
@@ -177,7 +178,7 @@ func (s *Service) consume(ctx context.Context) {
 	retry := time.NewTicker(schemaRetryInterval)
 	defer retry.Stop()
 
-	batch := make([]*streamv1.WriteRequest, 0, s.cfg.FlushSize)
+	batch := make([]entry, 0, s.cfg.FlushSize)
 	stop := s.closer.CloseNotify()
 	for {
 		select {
@@ -192,8 +193,8 @@ func (s *Service) consume(ctx context.Context) {
 				s.flush(ctx, batch)
 				batch = batch[:0]
 			}
-		case req := <-s.sink.queue:
-			batch = append(batch, req)
+		case e := <-s.sink.queue:
+			batch = append(batch, e)
 			if len(batch) >= s.cfg.FlushSize {
 				s.flush(ctx, batch)
 				batch = batch[:0]
@@ -226,29 +227,43 @@ func (s *Service) retrySchema(ctx context.Context) {
 // drain publishes whatever is still held at shutdown, bounded so that teardown
 // is never blocked. Admission has already stopped by this point, so the set it
 // publishes is exactly the set admitted before the cutoff.
-func (s *Service) drain(ctx context.Context, batch []*streamv1.WriteRequest) {
+func (s *Service) drain(ctx context.Context, batch []entry) {
 	deadline := time.Now().Add(drainTimeout)
-	for {
-		select {
-		case req := <-s.sink.queue:
-			batch = append(batch, req)
-			if len(batch) < s.cfg.FlushSize && time.Now().Before(deadline) {
-				continue
+	// Successive chunks, not one: a shutdown with more than FlushSize queued
+	// would otherwise publish the first chunk and count the rest as lost while
+	// the deadline still had room.
+	for time.Now().Before(deadline) {
+		drained := false
+		for len(batch) < s.cfg.FlushSize {
+			select {
+			case e := <-s.sink.queue:
+				batch = append(batch, e)
+				drained = true
+			default:
 			}
-		default:
+			if !drained || len(batch) == 0 {
+				break
+			}
+			if len(s.sink.queue) == 0 {
+				break
+			}
 		}
-		break
-	}
-	if len(batch) > 0 {
+		if len(batch) == 0 {
+			break
+		}
 		s.flush(ctx, batch)
+		batch = batch[:0]
+		if len(s.sink.queue) == 0 {
+			break
+		}
 	}
 	// Anything still queued past the deadline is lost, and counted rather than
 	// discarded silently.
 	for {
 		select {
-		case req := <-s.sink.queue:
-			s.sink.queued.Add(-sizeOf(req))
-			s.sink.release(req)
+		case e := <-s.sink.queue:
+			s.sink.queued.Add(-e.size)
+			s.sink.release(e.req)
 			s.sink.drop(reasonShutdown)
 		default:
 			return
@@ -259,16 +274,16 @@ func (s *Service) drain(ctx context.Context, batch []*streamv1.WriteRequest) {
 // flush turns one batch into write requests and publishes it. Every path
 // releases the requests back to the pool and settles the byte accounting, so a
 // failure costs the batch and nothing more.
-func (s *Service) flush(ctx context.Context, batch []*streamv1.WriteRequest) {
+func (s *Service) flush(ctx context.Context, batch []entry) {
 	var size int64
-	for _, req := range batch {
-		size += sizeOf(req)
+	for _, e := range batch {
+		size += e.size
 	}
 	defer func() {
 		s.sink.queued.Add(-size)
 		s.sink.inFlight.Add(-size)
-		for _, req := range batch {
-			s.sink.release(req)
+		for _, e := range batch {
+			s.sink.release(e.req)
 		}
 	}()
 	s.sink.inFlight.Add(size)
@@ -279,8 +294,8 @@ func (s *Service) flush(ctx context.Context, batch []*streamv1.WriteRequest) {
 	}
 
 	messages := make([]bus.Message, 0, len(batch))
-	for _, req := range batch {
-		iwr, err := s.internalRequest(req)
+	for _, e := range batch {
+		iwr, err := s.internalRequest(e.req)
 		if err != nil {
 			s.sink.drop(reasonEncodeFailed)
 			continue

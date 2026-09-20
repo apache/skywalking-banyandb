@@ -18,9 +18,11 @@
 package logger
 
 import (
+	"io"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 )
@@ -60,6 +62,28 @@ func withNative(t *testing.T, cfg Logging, native NativeLogging) *recordingSink 
 	t.Helper()
 	sink := &recordingSink{}
 	SetNativeSink(sink)
+	if native.Enabled {
+		// Fill in the timing and sizing the validator requires, so a test only
+		// has to state the part it is about.
+		if native.FlushInterval == 0 {
+			native.FlushInterval = time.Second
+		}
+		if native.FlushSize == 0 {
+			native.FlushSize = 100
+		}
+		if native.MaxBytes == 0 {
+			native.MaxBytes = 1 << 20
+		}
+		if native.MaxEventBytes == 0 {
+			native.MaxEventBytes = 64 << 10
+		}
+		if native.ShardNum == 0 {
+			native.ShardNum = 2
+		}
+		if native.TTLDays == 0 {
+			native.TTLDays = 7
+		}
+	}
 	if err := InitWithNative(cfg, native); err != nil {
 		t.Fatalf("InitWithNative: %v", err)
 	}
@@ -70,6 +94,13 @@ func withNative(t *testing.T, cfg Logging, native NativeLogging) *recordingSink 
 		}
 	})
 	return sink
+}
+
+// swapConsoleTarget redirects normal logging for one test.
+func swapConsoleTarget(w io.Writer) func() {
+	prev := testConsoleTarget
+	testConsoleTarget = w
+	return func() { testConsoleTarget = prev }
 }
 
 // TestNativeDisabledAdmitsNothing is the guarantee that matters most to every
@@ -242,5 +273,33 @@ func TestNativeLevelIsRejectedWhenUnusable(t *testing.T) {
 		NativeLogging{Enabled: true, Level: "not-a-level"})
 	if err == nil {
 		t.Fatal("InitWithNative accepted an unusable native level")
+	}
+}
+
+// TestConsoleGateIsNotTheAdmissionFloor pins the independence of the two
+// thresholds. The floor is the more verbose of the pair, so a console gate that
+// reused it would print everything the native sink admitted and the quiet
+// console the operator asked for would be silently undone.
+func TestConsoleGateIsNotTheAdmissionFloor(t *testing.T) {
+	var console strings.Builder
+	restore := swapConsoleTarget(&console)
+	t.Cleanup(restore)
+
+	withNative(t, Logging{Env: "prod", Level: "error"},
+		NativeLogging{Enabled: true, Level: "info"})
+
+	l := GetLogger("measure")
+	l.Info().Msg("info-line")
+	l.Warn().Msg("warn-line")
+	l.Error().Msg("error-line")
+
+	out := console.String()
+	for _, quiet := range []string{"info-line", "warn-line"} {
+		if strings.Contains(out, quiet) {
+			t.Fatalf("console printed %q at --logging-level=error; output was %q", quiet, out)
+		}
+	}
+	if !strings.Contains(out, "error-line") {
+		t.Fatalf("console did not print the error line; output was %q", out)
 	}
 }

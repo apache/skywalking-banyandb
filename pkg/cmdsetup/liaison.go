@@ -144,6 +144,14 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 			// PersistentPostRunE on a non-nil RunE error, so we must
 			// drain the artifact sink here.
 			defer ShutdownSupervisor()
+			if NativeLoggingConfig != nil && NativeLoggingConfig.Enabled {
+				// The flags are registered for every role, but only a role that
+				// runs a consumer installs the sink. Say so, rather than letting
+				// an operator believe these logs are being stored.
+				logger.GetLogger("liaison").Warn().Msg(
+					"--logging-native-enabled is not supported on the liaison yet; " +
+						"this process's logs are not stored natively")
+			}
 			// Derive from SupervisorContext so that a panic recovered anywhere
 			// in the process, including goroutines spawned via run.Go, fires
 			// cancellation here.

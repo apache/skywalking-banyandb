@@ -26,7 +26,6 @@ import (
 	"github.com/rs/zerolog"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -171,7 +170,7 @@ func TestOverBudgetDropsTheNewest(t *testing.T) {
 func TestAdmitNeverBlocks(t *testing.T) {
 	s := testSink(t)
 	// A buffer with no room at all, and no consumer to make room.
-	s.queue = make(chan *streamv1.WriteRequest)
+	s.queue = make(chan entry)
 
 	done := make(chan struct{})
 	//panicdiag:allow-rawgo test goroutine asserting that Admit returns rather than blocking

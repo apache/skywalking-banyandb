@@ -67,5 +67,5 @@ func (m *metrics) observe(s *Sink) {
 	}
 	m.written.Set(float64(s.Written()))
 	m.bufferBytes.Set(float64(s.QueuedBytes()))
-	m.bufferBudget.Set(float64(s.budget()))
+	m.bufferBudget.Set(float64(s.budgetBytes()))
 }

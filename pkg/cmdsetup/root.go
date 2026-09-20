@@ -95,7 +95,6 @@ BanyanDB, as an observability database, aims to ingest, analyze and store Metric
 	// would admit into whichever was constructed last -- not the one whose
 	// consumer actually runs.
 	NativeLogSink = nativelog.NewSink(NativeLoggingConfig)
-	logger.SetNativeSink(NativeLogSink)
 	crashOutputConfig.RegisterFlags(cmd.PersistentFlags())
 	cmd.AddCommand(newStandaloneCmd(runners...))
 	cmd.AddCommand(newDataCmd(runners...))
@@ -129,5 +128,7 @@ func (c *nodeIDProviderValue) Type() string {
 // flags live on the persistent set, so they are resolved once for every role.
 var NativeLoggingConfig *logger.NativeLogging
 
-// NativeLogSink is the single buffer this process admits into.
+// NativeLogSink is the single buffer this process admits into. It is
+// installed on the logger only by a role that also runs a consumer for it:
+// a role without one would fill the buffer and drop for ever.
 var NativeLogSink *nativelog.Sink
