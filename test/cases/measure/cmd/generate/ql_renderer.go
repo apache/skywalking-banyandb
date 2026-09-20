@@ -111,15 +111,22 @@ func renderProjection(req *measurev1.QueryRequest) string {
 		}
 	}
 
-	// Aggregation in projection. COUNT_DISTINCT is tag-only (design scope) and
-	// renders as COUNT(DISTINCT tag), not the aggFunctionName(field) shape
-	// every other function uses — matching layer3_features.go's
-	// countDistinctTargetTag convention.
+	// Aggregation in projection. The function and the target vary
+	// independently: COUNT_DISTINCT renders as COUNT(DISTINCT x) over either a
+	// tag or a numeric field (design §6), while every other function keeps the
+	// aggFunctionName(x) shape over either kind. Deriving the syntax from the
+	// target alone would rewrite a tag-targeted COUNT(id) into
+	// COUNT(DISTINCT id) and silently drop DISTINCT from a field-targeted
+	// COUNT_DISTINCT.
 	if agg := req.GetAgg(); agg != nil {
+		operand := agg.GetFieldName()
 		if tagName := agg.GetTagName(); tagName != "" {
-			cols = append(cols, fmt.Sprintf("COUNT(DISTINCT %s)", tagName))
+			operand = tagName
+		}
+		if agg.GetFunction() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT {
+			cols = append(cols, fmt.Sprintf("COUNT(DISTINCT %s)", operand))
 		} else {
-			cols = append(cols, fmt.Sprintf("%s(%s)", aggFunctionName(agg.GetFunction()), agg.GetFieldName()))
+			cols = append(cols, fmt.Sprintf("%s(%s)", aggFunctionName(agg.GetFunction()), operand))
 		}
 	}
 
@@ -149,10 +156,10 @@ func aggFunctionName(fn modelv1.AggregationFunction) string {
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM:
 		return "SUM"
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT:
-		// Never actually reached: COUNT_DISTINCT is tag-only, and
-		// renderProjection special-cases it (agg.GetTagName() != "") before
-		// this is ever called. Kept explicit so this switch can't silently
-		// mis-map it to SUM if a future caller ever bypasses that check.
+		// renderProjection emits the COUNT(DISTINCT x) form directly, so this
+		// arm is unreachable from there. Kept explicit so the switch can't
+		// silently mis-map COUNT_DISTINCT to SUM via the default arm if a
+		// future caller reaches it another way.
 		return "COUNT"
 	default:
 		return "SUM"
