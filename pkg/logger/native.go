@@ -80,8 +80,8 @@ var (
 
 // nativeState is the resolved native configuration, published once by Init.
 type nativeState struct {
-	level    zerolog.Level
 	excluded []string
+	level    zerolog.Level
 	enabled  bool
 }
 

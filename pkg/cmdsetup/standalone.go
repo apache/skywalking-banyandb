@@ -56,7 +56,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	pm := protector.NewMemory(metricSvc)
 	// The sink is the process-wide one, installed on the logger before Init so
 	// the buffer exists for the lines emitted while starting.
-	logSvc := logging.NewService(NativeLogSink, NativeLoggingConfig, metaSvc, dataPipeline, pm)
+	logSvc := logging.NewService(NativeLogSink, NativeLoggingConfig, metaSvc, dataPipeline, pm, metricSvc)
 	logSvc.SetNodeType("standalone")
 	propertySvc, err := property.NewService(metaSvc, dataPipeline, nil, metricSvc, pm)
 	if err != nil {

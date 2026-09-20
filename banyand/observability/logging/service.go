@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/data"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -53,13 +54,15 @@ const (
 // and never in PreRun, because PreRun runs before the services it depends on.
 type Service struct {
 	metadata metadata.Repo
+	omr      observability.MetricsRegistry
+	metrics  *metrics
 	pipeline queue.Client
 	sink     *Sink
 	closer   *run.Closer
 	l        *logger.Logger
 	pm       protector.Memory
-	node     NodeInfo
 	cfg      *logger.NativeLogging
+	node     NodeInfo
 	ready    bool
 }
 
@@ -67,10 +70,11 @@ type Service struct {
 // separately and installed on the logger before Init, so that the buffer
 // exists for the lines emitted while the process is still starting.
 func NewService(sink *Sink, cfg *logger.NativeLogging, md metadata.Repo,
-	pipeline queue.Client, pm protector.Memory,
+	pipeline queue.Client, pm protector.Memory, omr observability.MetricsRegistry,
 ) *Service {
 	return &Service{
 		sink:     sink,
+		omr:      omr,
 		cfg:      cfg,
 		metadata: md,
 		pipeline: pipeline,
@@ -111,6 +115,7 @@ func (s *Service) Serve() run.StopNotify {
 	}
 	s.sink.SetNode(s.node)
 	s.bindBudget()
+	s.metrics = newMetrics(s.omr)
 
 	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
 	if err := createSchema(ctx, s.metadata, s.cfg.ShardNum, s.cfg.TTLDays); err != nil {
@@ -122,7 +127,11 @@ func (s *Service) Serve() run.StopNotify {
 	}
 	cancel()
 
-	go s.consume()
+	// run.Go rather than a raw goroutine, so a panic in the consumer is
+	// recovered and counted instead of taking the process down.
+	run.Go(context.Background(), s.Name(), s.l, func(runCtx context.Context) {
+		s.consume(runCtx)
+	})
 	return s.closer.CloseNotify()
 }
 
@@ -138,29 +147,29 @@ func (s *Service) bindBudget() {
 		fraction = 0.02
 		reserve  = int64(64 << 20)
 	)
-	cap := s.cfg.MaxBytes
+	configured := s.cfg.MaxBytes
 	s.sink.SetBudget(func() int64 {
 		available := s.pm.AvailableBytes()
 		if available < 0 {
 			// Unknown is not unlimited.
-			return cap
+			return configured
 		}
 		headroom := available - reserve
 		if headroom < 0 {
 			headroom = 0
 		}
 		adaptive := int64(float64(headroom) * fraction)
-		if adaptive < cap {
+		if adaptive < configured {
 			return adaptive
 		}
-		return cap
+		return configured
 	})
 }
 
 // consume is the single goroutine that drains the buffer. It selects over the
 // closer, the flush ticker and the buffer itself, so both the interval and the
 // size trigger can fire; a scheduled callback could only serve the first.
-func (s *Service) consume() {
+func (s *Service) consume(ctx context.Context) {
 	defer s.closer.Done()
 
 	ticker := time.NewTicker(s.cfg.FlushInterval)
@@ -173,32 +182,43 @@ func (s *Service) consume() {
 	for {
 		select {
 		case <-stop:
-			s.drain(batch)
+			s.drain(ctx, batch)
 			return
 		case <-retry.C:
-			s.retrySchema()
+			s.retrySchema(ctx)
 		case <-ticker.C:
+			s.report()
 			if len(batch) > 0 {
-				s.flush(batch)
+				s.flush(ctx, batch)
 				batch = batch[:0]
 			}
 		case req := <-s.sink.queue:
 			batch = append(batch, req)
 			if len(batch) >= s.cfg.FlushSize {
-				s.flush(batch)
+				s.flush(ctx, batch)
 				batch = batch[:0]
 			}
 		}
 	}
 }
 
-func (s *Service) retrySchema() {
+// report publishes the sink's own counters. They travel the same transport as
+// the events they count, so under native-only observability an outage loses
+// both; keeping Prometheus enabled alongside is what makes the loss visible.
+func (s *Service) report() {
+	if s.metrics == nil {
+		return
+	}
+	s.metrics.observe(s.sink)
+}
+
+func (s *Service) retrySchema(ctx context.Context) {
 	if s.ready {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+	retryCtx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
-	if err := createSchema(ctx, s.metadata, s.cfg.ShardNum, s.cfg.TTLDays); err == nil {
+	if err := createSchema(retryCtx, s.metadata, s.cfg.ShardNum, s.cfg.TTLDays); err == nil {
 		s.ready = true
 	}
 }
@@ -206,7 +226,7 @@ func (s *Service) retrySchema() {
 // drain publishes whatever is still held at shutdown, bounded so that teardown
 // is never blocked. Admission has already stopped by this point, so the set it
 // publishes is exactly the set admitted before the cutoff.
-func (s *Service) drain(batch []*streamv1.WriteRequest) {
+func (s *Service) drain(ctx context.Context, batch []*streamv1.WriteRequest) {
 	deadline := time.Now().Add(drainTimeout)
 	for {
 		select {
@@ -220,7 +240,7 @@ func (s *Service) drain(batch []*streamv1.WriteRequest) {
 		break
 	}
 	if len(batch) > 0 {
-		s.flush(batch)
+		s.flush(ctx, batch)
 	}
 	// Anything still queued past the deadline is lost, and counted rather than
 	// discarded silently.
@@ -239,7 +259,7 @@ func (s *Service) drain(batch []*streamv1.WriteRequest) {
 // flush turns one batch into write requests and publishes it. Every path
 // releases the requests back to the pool and settles the byte accounting, so a
 // failure costs the batch and nothing more.
-func (s *Service) flush(batch []*streamv1.WriteRequest) {
+func (s *Service) flush(ctx context.Context, batch []*streamv1.WriteRequest) {
 	var size int64
 	for _, req := range batch {
 		size += sizeOf(req)
@@ -273,9 +293,9 @@ func (s *Service) flush(batch []*streamv1.WriteRequest) {
 	}
 
 	publisher := s.pipeline.NewBatchPublisher(writeTimeout)
-	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+	pubCtx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
-	_, err := publisher.Publish(ctx, data.TopicStreamWrite, messages...)
+	_, err := publisher.Publish(pubCtx, data.TopicStreamWrite, messages...)
 	if _, closeErr := publisher.Close(); err == nil {
 		err = closeErr
 	}

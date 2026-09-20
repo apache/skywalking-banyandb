@@ -59,7 +59,7 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 	metaSvc.SetPropertyPipelineClient(propertyStreamPipeline)
 	// The sink is the process-wide one, installed on the logger before Init so
 	// the buffer exists for the lines emitted while starting.
-	logSvc := logging.NewService(NativeLogSink, NativeLoggingConfig, metaSvc, propertyStreamPipeline, pm)
+	logSvc := logging.NewService(NativeLogSink, NativeLoggingConfig, metaSvc, propertyStreamPipeline, pm, metricSvc)
 	logSvc.SetNodeType("data")
 	propertySvc, err := property.NewService(metaSvc, pipeline, propertyStreamPipeline, metricSvc, pm)
 	if err != nil {

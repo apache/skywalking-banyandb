@@ -30,6 +30,55 @@ Those lists are not exhaustive. A module name is whatever scope the code passes 
 --logging-modules=storage --logging-levels=debug
 ```
 
+## Native Self-Storage
+
+BanyanDB can store its own log events in BanyanDB, alongside the measures native observability already writes into `_monitoring`. It is off by default and adds a second destination rather than replacing the normal one, which stays enabled and is never degraded by it.
+
+```sh
+banyand standalone --logging-native-enabled --logging-native-level=info
+```
+
+Events land in the `_monitoring_log` group as elements of a stream named `log`, queryable through the ordinary stream API:
+
+```sh
+bydbctl stream query -f - <<EOF
+name: "log"
+groups: ["_monitoring_log"]
+projection:
+  tagFamilies:
+    - name: "searchable"
+      tags: ["node_id", "module", "level", "message"]
+EOF
+```
+
+The flags live in their own namespace, `--logging-native-*` with `BYDB_LOGGING_NATIVE_*`, which inherits nothing from `--logging-*`. An explicit flag beats its environment variable, as everywhere else.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--logging-native-enabled` | `false` | store this process's own logs |
+| `--logging-native-level` | `info` | minimum level reaching storage, independent of `--logging-level` |
+| `--logging-native-exclude-modules` | built-in set | module prefixes never stored; replaces the built-in set rather than adding to it |
+| `--logging-native-flush-interval` | `1s` | longest a buffered event waits |
+| `--logging-native-flush-size` | `100` | buffered events that trigger a write ahead of the interval |
+| `--logging-native-max-bytes` | `32mb` | cap on the buffer |
+| `--logging-native-max-event-bytes` | `64kb` | larger events are dropped whole rather than truncated |
+| `--logging-native-shard-num` | `2` | shards of `_monitoring_log`; raisable later through the group schema |
+| `--logging-native-ttl-days` | `7` | retention |
+
+Because the two destinations have independent thresholds, native can be the more verbose of the two. Running normal logging at `error` and native at `info` keeps stderr quiet while the database retains the `info` and `warn` events that describe what a node was doing beforehand:
+
+| Event | Normal logging | Native storage |
+|---|---|---|
+| `debug` | – | – |
+| `info`, `warn` | dropped | stored |
+| `error` | printed | stored |
+
+Note the consequence: an `info` event dropped by the buffer has no copy on stderr. Losses are counted rather than silent, under `banyandb_logging_native_log_dropped_total{reason}`, with `banyandb_logging_native_log_written_total` and the buffer gauges alongside. Those counters travel the same transport as the events they count, so keeping `--observability-modes=prometheus` enabled is what makes a loss visible during an outage.
+
+The modules on the write path the sink publishes through are never stored: admitting them would let one stored line produce the next. The buffer is bounded and in-memory only -- no queue files, no write-ahead log, no disk fallback -- and it never blocks the caller: over budget the newest event is dropped and counted, so a burst keeps the head that explains it.
+
+`restore` and `migration` do not offer these flags at all. Both run when the data tier is unavailable, and a tool that runs while the database is down cannot log into it.
+
 ## Slow Query Logging
 
 BanyanDB supports slow query logging. The `slow-query` flag is used to set the slow query threshold. If a query takes longer than the threshold, it will be logged as a slow query. The default value is `0`, which means no slow query logging. This flag is only used for the data and standalone servers.

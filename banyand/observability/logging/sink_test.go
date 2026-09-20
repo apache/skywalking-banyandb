@@ -174,6 +174,7 @@ func TestAdmitNeverBlocks(t *testing.T) {
 	s.queue = make(chan *streamv1.WriteRequest)
 
 	done := make(chan struct{})
+	//panicdiag:allow-rawgo test goroutine asserting that Admit returns rather than blocking
 	go func() {
 		s.Admit(zerolog.ErrorLevel, "MEASURE", []byte(sampleLine))
 		close(done)

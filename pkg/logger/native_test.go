@@ -28,8 +28,8 @@ import (
 // recordingSink stands in for the real buffer. It records what was admitted so
 // a test can assert on the split between the two destinations.
 type recordingSink struct {
-	mu      sync.Mutex
 	entries []sinkEntry
+	mu      sync.Mutex
 }
 
 type sinkEntry struct {
