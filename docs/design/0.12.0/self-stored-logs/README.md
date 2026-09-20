@@ -13,10 +13,6 @@ rather than sampled state: a missed metric flush costs nothing because the next 
 current value, while a dropped log line is data loss. That single difference is the source of most
 departures here.
 
-The design was settled on the tracking issue,
-[apache/skywalking#14076](https://github.com/apache/skywalking/issues/14076), which carries the
-discussion behind each decision.
-
 ---
 
 ## 1. Feature introduction and scope
@@ -37,7 +33,7 @@ This feature adds a second, optional destination for logs: native self-storage i
 |---|---|---|
 | In scope | standalone, data, liaison | reach stream storage directly |
 | In scope | lifecycle, backup | colocated producers, using the receiver on their host's data node |
-| In scope | FODC — the on-demand diagnostics collector, agents plus a proxy — [final phase](https://github.com/apache/skywalking/issues/14076#issuecomment-5633893088) | a generic receiver/forwarder serves it, so BanyanDB imports nothing from FODC |
+| In scope | FODC — the on-demand diagnostics collector, agents plus a proxy — delivered in the final phase (§6) | a generic receiver/forwarder serves it, so BanyanDB imports nothing from FODC |
 | Out of scope | restore, migration | they run when the data tier is unavailable |
 
 The sections that follow go roles, approach, configuration, failure modes, phases.
@@ -55,7 +51,7 @@ One binary, several roles. One property decides the destination: whether the pro
 | FODC proxy, FODC agent beside a liaison | diagnostics, no colocated data node | liaison gRPC port (`--grpc-port`, default 17912) |
 | `restore`, `migration` | offline tools | normal logging only |
 
-> A liaison has local disk: it runs a two-tier write queue whose normal `StreamService/Write` route ends in part files — [more involved than the name suggests](https://github.com/apache/skywalking/issues/14076#issuecomment-5633309173). What it lacks is the storage engine, so it can hold a batch in flight but can never be where logs are read back from.
+> A liaison has local disk: it runs a two-tier write queue whose normal `StreamService/Write` route ends in part files. What it lacks is the storage engine, so it can hold a batch in flight but can never be where logs are read back from.
 
 Three shapes: in-process; the liaison selecting a data node by shard; and every other producer publishing into the generic receiver, subscribed on data nodes' cluster server and on the liaison.
 
@@ -91,7 +87,7 @@ Per-module thresholds resolve once when a logger is built, with normal level, na
 
 | property | value |
 |---|---|
-| unit | one stream `WriteRequest` per event, drawn from and returned to a **pool** |
+| unit | one stream `WriteRequest` per event, drawn from and returned to a **pool**. Requests and their nested allocations are reused; a request returns to the pool only after its publish completes or it is dropped, with retained references cleared and oversized buffers discarded rather than kept |
 | payload | values carried in tags. The `data:fields` tag holds **only** keys with no tag of their own — no duplicated body |
 | bounds | `--logging-native-max-bytes` `32mb`, `--logging-native-max-event-bytes` `64kb` (proposed defaults, section 4) |
 | triggers | `--logging-native-flush-interval` `1s` and `--logging-native-flush-size` `100` |
@@ -103,9 +99,9 @@ The consumer is a dedicated goroutine selecting over the closer, the flush ticke
 
 ### 3.3 Routing and shard selection
 
-Shard IDs are deterministic and real, computed as the normal write path computes them — entity locator from the fetched schema, then hash modulo shard count — not the hardcoded shard `0` of native metrics. At `--logging-native-shard-num=1` every event keys to one shard, funnelling the cluster onto a single data node.
+Shard IDs are deterministic and real, computed as the normal write path computes them — entity locator from the fetched schema, then hash modulo shard count — not the hardcoded shard `0` of native metrics. The default is `--logging-native-shard-num=2`; at `1` every event keys to one shard and the whole cluster funnels onto a single data node. The count can be raised later through the group schema, though lowering it silently hides shards already written.
 
-> **Amendment to a stated requirement — maintainer sign-off needed.** The issue description requires the liaison to reuse existing shard-based routing, then dispatch to data nodes. That route terminates in the liaison's [disk-backed write queue](https://github.com/apache/skywalking/issues/14076#issuecomment-5633309173) and writes part files, which cannot satisfy the memory-only rule. This design keeps the **selection** and replaces the **transport** with a direct tier-2 batch publish to the selected data node, bypassing the write queue. The new native log topic serves the receiver's foreign producers, not the liaison's own route.
+> **Decided: keep the selection, replace the transport.** Reusing the liaison's existing shard-based routing and never touching disk cannot both hold, because that route terminates in the disk-backed write queue and writes part files. The liaison therefore keeps the shard and node **selection** and publishes directly to the selected data node over its tier-2 client, bypassing the write queue entirely. The new native log topic serves the receiver's foreign producers, not the liaison's own route. Two facts make this modest rather than novel: nothing enforces shard ownership on ingest, and `lifecycle` already publishes straight into a colocated data node in production today.
 
 The receiver is deliberately thin.
 
@@ -157,7 +153,7 @@ Every dashed flag binds to `BYDB_<UPPER_SNAKE>`, and the env value applies only 
 | `--logging-native-max-event-bytes` \* | `64kb` | oversize events dropped whole |
 | `--logging-native-memory-fraction` \* | `0.02` | fraction of available memory in the adaptive budget |
 | `--logging-native-memory-reserve` \* | `64mb` | reserve subtracted before the fraction |
-| `--logging-native-shard-num` | `1` | shards of `_monitoring_log` (open question) |
+| `--logging-native-shard-num` | `2` | shards of `_monitoring_log`; raisable later through the group schema |
 | `--logging-native-ttl-days` | `7` | retention |
 | `--logging-native-receiver-enabled` | `false` | accept forwarded writes, wherever hosted; independent of collection |
 
@@ -178,7 +174,7 @@ Every stage that can fail has a row, carrying one behaviour and one reason from 
 | Stage | Situation | Behaviour | Counter reason |
 |---|---|---|---|
 | producer | event over `--logging-native-max-event-bytes` | dropped whole, never truncated — a truncated JSON body is unparseable | `oversize_event` |
-| buffer | ring over budget | drop the newest event, the writer still returning `(len(p), nil)`; queued events are never evicted, so a burst keeps its head | `buffer_full` / `memory_pressure` |
+| buffer | ring over budget | drop the newest event, the writer still returning `(len(p), nil)`; admission never waits for capacity and queued events are never evicted, so a burst keeps its head | `buffer_full` / `memory_pressure` |
 | consumer | stalled in a slow publish | the ring absorbs it; batches capped at 25% of budget, one in flight, so a stall cannot pin admission | – gauge `native_buffer_bytes{state=in_flight}` |
 | schema | create fails for anything but `AlreadyExists`, or the group is dropped at runtime | retry next flush, batch in hand dropped | `schema_unavailable` |
 | schema | existing `log` stream is incompatible | refuse, one error through normal logging, sink stays disabled | `schema_incompatible` |
@@ -222,24 +218,6 @@ Each phase adds exactly one new failure domain, so a breakage is never ambiguous
 | 3 | Generic native receiver and forwarder on liaison and data nodes. Also: a batch message for the new topic — no `repeated WriteRequest` exists in `write.proto` today — plus method-policy rows and their contract test, without which the liaison refuses to boot | Foreign-event admission: validation, identity passthrough, back-pressure |
 | 4 | Colocated producers (backup, lifecycle, FODC agent beside data) and the FODC proxy, onto the phase-3 receiver. `backup` and `lifecycle` reuse their existing connection settings; the FODC binaries have none to reuse — every FODC dial is currently insecure and the proxy has no outbound BanyanDB client, so both need new address and TLS flags | Producer integration alone; the receiver is proven |
 
-The receiver precedes those producers by design, so they never need a metadata client or their own copy of the shard rule. Background: [implementation phases](https://github.com/apache/skywalking/issues/14076#issuecomment-5633893088).
+The receiver precedes those producers by design, so they never need a metadata client or their own copy of the shard rule.
 
 > Phase 1 is independently shippable: standalone and single-data-node deployments get queryable, retained logs without cross-node routing or the adaptive budget.
-
-### Decisions taken
-
-All five open questions are answered and folded in above.
-
-| | Decision |
-|---|---|
-| Liaison transport | direct tier-2 publish, reusing shard and node selection, bypassing the disk-backed write queue |
-| Shard count | **`2`**, changeable later through the group schema |
-| Ring representation | **pooled `WriteRequest` objects**. Requests and their nested allocations are reused; they return to the pool only after a publish completes or the request is dropped, with retained references cleared and oversized buffers discarded. Byte limits still account for queued **and** in-flight requests |
-| Overflow policy | **drop newest**; admission never waits for capacity |
-| Entity | **`[node_id, level]`**, `module` as an ordinary tag. Selecting several levels uses `IN` |
-
-Inherited rather than decided, following what the project already does: a data node stores its own logs locally, as native metrics do; `Replicas` `0`, matching `_monitoring`; the liaison's memory protector is left unregistered, so the cap is the only term there; and the schema-propagation window is accepted, as it is pre-existing for any group created while the cluster is running.
-
-Two consequences of the ring decision are raised separately below this comment: where the remaining structured fields live, and where the parse happens.
-
-The design doc is updated to match and will land with the implementation PR.
