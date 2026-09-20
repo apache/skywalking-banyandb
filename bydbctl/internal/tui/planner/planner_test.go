@@ -551,3 +551,44 @@ func TestCompileTimeBucketWidthValidation(t *testing.T) {
 		t.Fatalf("expected TIME_BUCKET('5m') in query, got: %s", compiled.Query)
 	}
 }
+
+// TestCompileBucketedOrderingRejected mirrors the server's own
+// validateBucketableOrdering: a bucketed query may not name an index rule and
+// may not order descending. Compiling either would produce a query that only
+// fails once it reaches the server.
+func TestCompileBucketedOrderingRejected(t *testing.T) {
+	resource := Resource{Type: session.ResourceTypeMeasure, Name: "service_latency", Groups: []string{"production"}}
+	plan := func(order *Order) QueryPlan {
+		return QueryPlan{
+			Resource:   resource,
+			Projection: []Projection{{Column: "service"}, {Aggregate: &Aggregate{Function: AggregateCountDistinct, Column: "service"}}},
+			GroupBy:    []string{"service"},
+			TimeBucket: &GroupByTimeBucket{Width: "5m"},
+			OrderBy:    order,
+			TimeRange:  TimeRange{Start: "-30m"},
+		}
+	}
+	if _, compileErr := Compile(plan(&Order{IndexRule: "latency_index", Direction: OrderAscending}), countDistinctSchema()); compileErr == nil {
+		t.Fatal("expected an index-rule order on a bucketed query to be rejected")
+	}
+	if _, compileErr := Compile(plan(&Order{Direction: OrderDescending}), countDistinctSchema()); compileErr == nil {
+		t.Fatal("expected a descending order on a bucketed query to be rejected")
+	}
+	if _, compileErr := Compile(plan(&Order{Direction: OrderAscending}), countDistinctSchema()); compileErr != nil {
+		t.Fatalf("ascending time order on a bucketed query must compile: %v", compileErr)
+	}
+}
+
+// TestCompileTopNRejectsTimeBucket pins that a TOPN plan cannot carry a
+// time_bucket, which compileTopN has no way to render and would drop.
+func TestCompileTopNRejectsTimeBucket(t *testing.T) {
+	_, compileErr := Compile(QueryPlan{
+		Resource:   Resource{Type: session.ResourceTypeTopN, Name: "service_latency_topn", Groups: []string{"production"}},
+		TopN:       5,
+		TimeBucket: &GroupByTimeBucket{Width: "5m"},
+		TimeRange:  TimeRange{Start: "-30m"},
+	}, countDistinctSchema())
+	if compileErr == nil {
+		t.Fatal("expected a TOPN plan carrying time_bucket to be rejected")
+	}
+}

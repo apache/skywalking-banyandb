@@ -118,8 +118,30 @@ func validateSelectShape(plan QueryPlan) error {
 	if (len(plan.GroupBy) != 0 || plan.TimeBucket != nil) && aggregateCount != 1 {
 		return fmt.Errorf("GROUP BY requires exactly one aggregate")
 	}
+	if orderingErr := validateBucketedOrdering(plan); orderingErr != nil {
+		return orderingErr
+	}
 	if plan.ProjectionMode == ProjectionModeNone && aggregateCount != 0 {
 		return fmt.Errorf("projection_mode NONE cannot be combined with an aggregate")
+	}
+	return nil
+}
+
+// validateBucketedOrdering mirrors the server's own validateBucketableOrdering:
+// a bucketed query may name no index rule, because a non-time rule resolves to
+// a different scan order entirely, and may not order descending, because
+// BatchTimeBucket's streaming path assumes ascending time specifically rather
+// than merely time-ordered input. Rejecting here keeps the planner from
+// compiling a query that could only fail once it reached the server.
+func validateBucketedOrdering(plan QueryPlan) error {
+	if plan.TimeBucket == nil || plan.OrderBy == nil {
+		return nil
+	}
+	if strings.TrimSpace(plan.OrderBy.IndexRule) != "" {
+		return fmt.Errorf("time_bucket requires time ordering; order_by.index_rule is not supported on a bucketed query")
+	}
+	if plan.OrderBy.Direction == OrderDescending {
+		return fmt.Errorf("time_bucket requires ascending time order; order_by.direction DESC is not supported on a bucketed query")
 	}
 	return nil
 }
@@ -220,8 +242,10 @@ func compileSelect(plan QueryPlan, schema session.SchemaSnapshot) (string, error
 }
 
 func compileTopN(plan QueryPlan, schema session.SchemaSnapshot) (string, error) {
-	if len(plan.Projection) != 0 || plan.ProjectionMode != "" || len(plan.GroupBy) != 0 || plan.Limit != 0 {
-		return "", fmt.Errorf("TOPN plans do not support projection, projection_mode, group_by, or limit")
+	// TimeBucket belongs here too: compileTopN never renders it, so a TOPN
+	// plan carrying one would otherwise drop it silently.
+	if len(plan.Projection) != 0 || plan.ProjectionMode != "" || len(plan.GroupBy) != 0 || plan.Limit != 0 || plan.TimeBucket != nil {
+		return "", fmt.Errorf("TOPN plans do not support projection, projection_mode, group_by, time_bucket, or limit")
 	}
 	if plan.Aggregate != nil && strings.TrimSpace(plan.Aggregate.Column) != "" {
 		return "", fmt.Errorf("TOPN aggregation cannot select a column")
