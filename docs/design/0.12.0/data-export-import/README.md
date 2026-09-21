@@ -58,6 +58,7 @@ export:                               # Export only: scope and options
   includeSchema: true
   parallelism: max
   nodeRateLimit: 0                    # per-node byte rate limit, 0 = unlimited, e.g. "50MiB/s"
+  nodeRowLimit: 0                     # CSV only: per-node row rate limit (rows/s), 0 = unlimited
   selectors:                          # Empty or omitted = all catalogs, groups, and time ranges
     - catalog: stream
       groups: [sw_record, sw_log]     # One selector can include multiple groups under the same catalog
@@ -145,9 +146,40 @@ TOTAL                        49                          1.87G   320.1GiB / 1.09
 5. **Execute export** — connect to the available liaisons and send export requests.
 6. **Write manifest** — write the summary file to the export root.
 
-The export side performs **no source selection**. Every source node's copy of a unit is carried away verbatim into its own `nodes/<node-id>/` subtree, and all multi-source judgement happens on the import side (§6). This is deliberate: a wrong judgement on the export side loses bytes permanently, while a wrong judgement on the import side costs a re-run.
+The export side performs **no source selection**. Every source node's copy of a unit is carried away verbatim into its own `nodes/<node-dir>/` subtree, and all multi-source judgement happens on the import side (§6). This is deliberate: a wrong judgement on the export side loses bytes permanently, while a wrong judgement on the import side costs a re-run.
 
-`node_id` becomes a directory name, so the client must validate every frame's `node_id` against a whitelist (`[A-Za-z0-9._-]`, and neither `.` nor `..`) before writing, and must reject the export when two node IDs collide after case folding. macOS and Windows filesystems are case-insensitive by default, so `data-A` and `data-a` would silently merge into one subtree and overwrite each other. This also makes **cluster-unique node IDs a prerequisite**; `ConnManager` already indexes connections by name and silently drops same-named nodes.
+#### 4.1.1 Node IDs are not path-safe
+
+A node ID is **not** a friendly name. `GenerateNode` builds it as `net.JoinHostPort(host, port)` (`api/common/id.go`), so a normal ID is `10.0.0.5:17912`, and an IPv6 one is `[::1]:17912`. Those contain `:`, `[` and `]`, which are illegal in a Windows path component and awkward everywhere. The artifact must therefore never use the raw ID as a directory name.
+
+Two values are kept, and they have different jobs:
+
+| | Value | Where it lives |
+|---|---|---|
+| **Raw ID** | `10.0.0.5:17912` | `manifest.source.nodes[].id`, and every `node_id` field on the wire. This is the identity |
+| **Directory component** | `10-0-0-5-17912-3f9a1c2d` | `manifest.source.nodes[].dir`, and the `nodes/<node-dir>/` path. This is only a filename |
+
+The directory component is derived from the raw ID by:
+
+1. lowercase the raw ID;
+2. replace every run of characters outside `[a-z0-9]` with a single `-`;
+3. trim leading and trailing `-`; if nothing is left, use `node`;
+4. truncate to 32 characters;
+5. append `-` followed by the first 8 hex characters of `SHA-256` over the **raw** UTF-8 bytes.
+
+**Reversal is by lookup in the manifest, not by decoding.** Step 2 and step 4 are lossy on purpose — the readable prefix exists so an operator can tell subtrees apart, and the manifest carries the exact ID for anything that needs it. Import resolves a subtree by matching `dir`, and uses the paired `id` wherever identity matters.
+
+The hash suffix is what makes the mapping injective, and it covers the collision cases a plain sanitizer misses:
+
+| Raw IDs | Sanitized prefix | Result |
+|---|---|---|
+| `10.0.0.5:17912`, `10.0.0.5:17913` | both `10-0-0-5-1791x` after truncation of a longer host | distinct, the suffixes differ |
+| `data-A`, `data-a` | both `data-a` | distinct — macOS and Windows fold case, the suffix does not |
+| `[::1]:17912` | `1-17912` | usable, where the raw ID is not |
+
+Only `manifest.source.nodes[]` and the paths inside it spell a directory component out in full. Every other example in this document abbreviates it to `data-1`, `data-a` and so on, purely for readability.
+
+The client still refuses the export if two nodes in one `Plan` produce the same **full** directory component, which after the hash means a genuine duplicate node ID. That remains a prerequisite: `ConnManager` indexes connections by ID and silently drops same-ID nodes, so a duplicate is already broken at the cluster level, not just in the artifact.
 
 ### 4.2 Native export
 
@@ -199,10 +231,19 @@ Exporting in CSV format:
 
 1. **Create snapshot** for the required data types.
 2. **Traverse segments** of every group.
-3. **Iterate shards** — use the dump readers to read rows shard by shard, encode as CSV, gzip on the fly, and emit one chunk frame per 1 MiB of **compressed** bytes. Rate limiting here is by **rows**, not bytes.
+3. **Iterate shards** — use the dump readers to read rows shard by shard, encode as CSV, gzip on the fly, and emit one chunk frame per 1 MiB of **compressed** bytes. Both rate limits apply here — see below.
 4. **Complete export** — finish the gRPC stream.
 
 The existing dump readers `banyand/internal/dump/{stream,measure,trace}` already support row-level export and can be reused. `property` has no dump reader, so `SeriesIterator` is used instead.
+
+**Rate limiting has two knobs, and CSV honours both.** They throttle different resources, so neither subsumes the other and whichever binds first wins:
+
+| Knob | Plan field | Protobuf field | Measured | native | CSV |
+|---|---|---|---|---|---|
+| Bytes | `export.nodeRateLimit` | `RateLimit.bytes_per_second` | On the wire, so **after** gzip for CSV | yes | yes |
+| Rows | `export.nodeRowLimit` | `RateLimit.rows_per_second` | At the dump reader, before encoding | no — native moves opaque bytes and has no row concept | yes |
+
+The byte knob protects the liaison and the network; the row knob protects the data node, whose cost for CSV is row iteration rather than transfer. A CSV export that sets only `nodeRateLimit` can still saturate a data node's CPU on a highly compressible group, which is why the row knob exists as well as, not instead of, the byte knob.
 
 #### 4.3.1 Value encoding
 
@@ -272,8 +313,8 @@ The top-level artifact structure is identical for both formats; only the leaf fi
 |---|---|
 | `manifest.json` | Written last |
 | `schema/` | One JSON Lines file per kind, one protojson object per line |
-| `nodes/<node-id>/` | Organized by source node. The same unit from different nodes gets separate subtrees and never overwrites |
-| `nodes/<node-id>/<catalog>/<group>/` | Further organized by catalog and group |
+| `nodes/<node-dir>/` | Organized by source node, keyed by the derived directory component (§4.1.1), never the raw node ID |
+| `nodes/<node-dir>/<catalog>/<group>/` | Further organized by catalog and group |
 
 Below that level:
 
@@ -295,7 +336,8 @@ Below that level:
   "exportedAt": "2026-09-07T12:00:00Z",
   "source": {
     "banyandVersion": "0.11",
-    "nodes": [{"name": "data-1", "address": "10.0.0.5:17912", "timezone": "Asia/Shanghai"}]
+    "nodes": [{"id": "10.0.0.5:17912", "dir": "10-0-0-5-17912-3f9a1c2d",
+               "timezone": "Asia/Shanghai"}]
   },
   "groups": [{
     "name": "sw_metric", "catalog": "MEASURE", "indexMode": false,
@@ -306,11 +348,11 @@ Below that level:
     "minTimestamp": 1757203200000000000, "maxTimestamp": 1757289599999999999,
     "segmentVersion": "1.5.0",
     "sources": [{
-      "node": "data-1",
+      "node": "10.0.0.5:17912",
       "segmentFiles": [
-        {"path": "nodes/data-1/measure/sw_metric/seg-20260907/metadata",
+        {"path": "nodes/10-0-0-5-17912-3f9a1c2d/measure/sw_metric/seg-20260907/metadata",
          "bytes": 34, "crc32": "0x1f4a03bb"},
-        {"path": "nodes/data-1/measure/sw_metric/seg-20260907/sidx-001.bnc",
+        {"path": "nodes/10-0-0-5-17912-3f9a1c2d/measure/sw_metric/seg-20260907/sidx-001.bnc",
          "bytes": 4194618, "crc32": "0x3a91c7e2", "entryCount": 3}
       ],
       "sidxCoversShards": [0, 1],
@@ -328,9 +370,9 @@ Below that level:
         "estimatedCompressedBytes": 10737418,
         "estimatedUncompressedBytes": 41943040,
         "files": [
-          {"path": "nodes/data-1/measure/sw_metric/seg-20260907/shard-0-001.bnc",
+          {"path": "nodes/10-0-0-5-17912-3f9a1c2d/measure/sw_metric/seg-20260907/shard-0-001.bnc",
            "bytes": 402653184, "crc32": "0x9f2a1b34", "entryCount": 47},
-          {"path": "nodes/data-1/measure/sw_metric/seg-20260907/shard-0-002.bnc",
+          {"path": "nodes/10-0-0-5-17912-3f9a1c2d/measure/sw_metric/seg-20260907/shard-0-002.bnc",
            "bytes": 118374400, "crc32": "0x77e0aa15", "entryCount": 12}
         ]
       }]
@@ -568,7 +610,8 @@ message UnitStarted {
 }
 
 message FileStarted {
-  // The client prefixes nodes/<target_node>/ when writing locally.
+  // The client prefixes nodes/<dir of target_node>/ when writing locally,
+  // where the directory component is derived per section 4.1.1.
   //
   // Examples:
   // "stream/sw_record/seg-20260907/shard-0-001.bnc"
@@ -610,7 +653,7 @@ message UnitFinished {
 
 | # | Direction | Frame | Liaison behavior |
 |---|---|---|---|
-| 1 | ctl → liaison | `Plan{selectors=[…], create_session=true}` | Generate a single `session_id` shared by the whole cluster |
+| 1 | ctl → liaison | `Plan{selectors=[…], create_session=true}` | Generate one `session_id` for the whole fan-out. A node already holding a different live session rejects the create and returns the incumbent's ID (§4.8.1) |
 | 2 | liaison → data-1 / data-2 | One `Plan{…, session_id="xx…", create_session=true}` per node | — |
 | 3 | Each data node | Create an `export-9f2a…` snapshot, write `.lease`, inventory from the snapshot | — |
 | 4 | data-* → liaison → ctl | Stream `PlanResponse{units[…]}` frames | Forward each frame as it arrives |
@@ -652,7 +695,25 @@ Each data node uses one stream. The example shows `data-1`; `data-2` runs in par
 
 ### 4.8 Session management
 
-Each export uses one cluster-wide session, corresponding to one snapshot at the data layer. Only one session can exist in a cluster at a time.
+Each export uses one session, corresponding to one snapshot per data node. One export should own the whole cluster at a time — but that is an outcome the protocol converges to, **not an invariant any single component enforces**, and the difference matters for implementers.
+
+#### 4.8.1 There is no coordinator, so uniqueness is per node
+
+BanyanDB has no etcd, no lock service, and no CAS primitive anywhere in the tree; node discovery is file-, DNS- or flag-based. A session therefore cannot be claimed atomically cluster-wide before fan-out. The only real enforcement point is **each data node's own snapshot directory**.
+
+That leaves a genuine race. Two clients calling `Plan(create_session=true)` through two different liaisons can each win on a different subset of data nodes, producing two live, partial sessions whose heartbeats keep either from looking dead. Left unhandled they would deadlock each other. The protocol resolves it without a coordinator:
+
+1. **A node accepts a create only if it holds no live session.** If it already holds one under a different `session_id`, it rejects the create and returns the **incumbent's** ID rather than a bare error.
+2. **Any rejection aborts the whole attempt.** A client that sees even one node reject must call `ReleaseSession` for its own ID on every node that did accept, then fail with a concurrent-export error naming the incumbent IDs it saw.
+3. **Retry with jittered backoff.** Because the loser releases everything it took, the next attempt finds a clean subset. Two clients retrying in lockstep is the only livelock risk, and jitter bounds it.
+
+Step 2 is the load-bearing one: a client that keeps a partial session after a partial win is what creates the deadlock. Releasing is cheap — the snapshots are hard links.
+
+`ProbeSessionResponse` returns `leases` **per node** precisely so this state is observable. A probe that comes back with two distinct `session_id` values, or with leases on only some nodes, is reporting a partial session, not a healthy one. The client must surface that verbatim; `--preempt` in that state releases **every** ID it found before creating its own, rather than taking over one of them.
+
+Beyond the race, a partial session left behind by a client that died mid-abort is reclaimed by the hourly expiry sweep (step 5 below) with no operator action.
+
+#### 4.8.2 Taking over an existing session
 
 Starting a new export does **not** silently remove an existing session. The client first calls `ProbeSession`, which is read-only, and decides from `last_renewed_at`:
 
@@ -1112,7 +1173,7 @@ Example, with `data-1 [00:00,23:59]` / 120,000 rows already selected:
 | `data-3 [08:00,10:00]` | Fully contained | 5,000, difference 95.8% | Push + warning; possible orphan |
 | `data-4 [00:00,06:00] + [18:00,next day 04:00]` | Extends beyond 23:59 | — | Push; new time coverage |
 
-**measure does not apply the row-count condition** — a fully contained source is skipped outright. Its background merge collapses multiple versions of the same `(seriesID, timestamp)`, so the legitimate row-count skew is `(K−1)/K` for a source pushed K times: 66.7% at K=3. Any threshold below 100% is broken by the entirely normal "pushed a few times, not yet compacted" case. The cost is that a measure orphan whose time range happens to be contained is skipped silently (§9).
+**measure does not apply the row-count condition** — a fully contained source is skipped outright. Its background merge collapses multiple versions of the same `(seriesID, timestamp)`, so the legitimate row-count skew is `(K−1)/K` for a source pushed K times: 66.7% at K=3. Any threshold below 100% is broken by the entirely normal "pushed a few times, not yet compacted" case. The cost is that a measure orphan whose time range happens to be contained is skipped silently.
 
 Every decision and its reason is printed in the dry-run `MULTI-SRC` detail, because this is the only place in the import that can decide to *send less data*. `--strict-coverage` promotes a multi-source unit to an error and writes nothing; `--all-sources` skips the judgement and pushes everything. `--all-sources` must disable both the shard-level and the segment-level judgement — the escape hatch is one switch, not two. Including the segment-level sidx changes the stream count by only 1.5–2% but raises bytes by roughly 24% at `replicas=1` and 35% at `replicas=2`.
 
