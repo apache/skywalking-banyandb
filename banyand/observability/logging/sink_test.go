@@ -19,6 +19,7 @@ package logging
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -45,7 +46,13 @@ func testSink(t *testing.T) *Sink {
 		FlushSize:     100,
 		ShardNum:      2,
 	})
-	s.SetNode(NodeInfo{NodeID: "data-hot-0", NodeType: "data", GRPCAddress: "10.1.2.3:17912"})
+	// Every field is distinct and non-empty, so a test can assert on all eight
+	// positions. An identity with blanks in it would let a tag written into the
+	// wrong position pass unnoticed, because both sides would read empty.
+	s.SetNode(NodeInfo{
+		NodeID: "data-hot-0", NodeType: "data",
+		GRPCAddress: "10.1.2.3:17912", HTTPAddress: "10.1.2.3:17913",
+	})
 	return s
 }
 
@@ -71,13 +78,25 @@ func TestBuildSplitsKnownKeysFromTheRest(t *testing.T) {
 		t.Fatalf("searchable family has %d tags, schema declares %d",
 			len(searchable), len(searchableTags))
 	}
-	for i, want := range map[int]string{
-		0: "data-hot-0", 1: "data", 2: "MEASURE", 3: "warn",
-		4: "10.1.2.3:17912", 6: "flush took longer than expected",
-	} {
-		if got := tagStr(t, searchable[i]); got != want {
-			t.Fatalf("tag %s = %q, want %q", searchableTags[i], got, want)
+	// Every position, not a subset. A tag left out here is a position the write
+	// path could fill with anything -- including a value that belongs to its
+	// neighbor -- without a single test noticing.
+	want := []string{
+		"data-hot-0", "data", "MEASURE", "warn",
+		"10.1.2.3:17912", "10.1.2.3:17913",
+		"flush took longer than expected",
+		req.Element.ElementId,
+	}
+	if len(want) != len(searchableTags) {
+		t.Fatalf("this test checks %d positions, the schema has %d", len(want), len(searchableTags))
+	}
+	for i, w := range want {
+		if got := tagStr(t, searchable[i]); got != w {
+			t.Fatalf("tag %s = %q, want %q", searchableTags[i], got, w)
 		}
+	}
+	if req.Element.ElementId == "" {
+		t.Fatal("log_id and element id are both empty, so the position check above proved nothing")
 	}
 
 	fields := req.Element.TagFamilies[1].Tags[0].GetBinaryData()
@@ -229,7 +248,9 @@ func TestSchemaAndWritePathAgreeOnTagOrder(t *testing.T) {
 		}
 	}
 	for _, name := range entityTags {
-		if !strings.Contains(strings.Join(searchableTags, ","), name) {
+		// A whole-element match, not a substring one: joining and searching
+		// would accept "node" as evidence that "node_id" is declared.
+		if !slices.Contains(searchableTags, name) {
 			t.Fatalf("entity tag %q is not among the searchable tags", name)
 		}
 	}
@@ -290,11 +311,16 @@ func TestIdentityIsStampedAtFlushNotAdmission(t *testing.T) {
 	}
 
 	// The node starts and publishes its identity; the consumer stamps it.
-	s.SetNode(NodeInfo{NodeID: "data-hot-0", NodeType: "data", GRPCAddress: "10.1.2.3:17912"})
+	s.SetNode(NodeInfo{
+		NodeID: "data-hot-0", NodeType: "data",
+		GRPCAddress: "10.1.2.3:17912", HTTPAddress: "10.1.2.3:17913",
+	})
 	s.stamp(e)
 
 	tags := e.req.Element.TagFamilies[0].Tags
-	for i, want := range map[int]string{0: "data-hot-0", 1: "data", 4: "10.1.2.3:17912"} {
+	for i, want := range map[int]string{
+		0: "data-hot-0", 1: "data", 4: "10.1.2.3:17912", 5: "10.1.2.3:17913",
+	} {
 		if got := tags[i].GetStr().GetValue(); got != want {
 			t.Fatalf("after stamping, tag %s = %q, want %q", searchableTags[i], got, want)
 		}

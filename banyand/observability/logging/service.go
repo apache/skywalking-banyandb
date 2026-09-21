@@ -19,6 +19,7 @@ package logging
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -64,6 +65,11 @@ type Service struct {
 	cfg      *logger.NativeLogging
 	node     NodeInfo
 	ready    bool
+	// incompatible records that the stream exists with the wrong shape. The
+	// retry stays in place -- an operator can drop and recreate it without
+	// restarting the node -- but until then the drops are counted under their
+	// own reason, because waiting will not fix this one.
+	incompatible bool
 }
 
 // NewService returns the service that drains sink. The sink is constructed
@@ -119,13 +125,7 @@ func (s *Service) Serve() run.StopNotify {
 	s.metrics = newMetrics(s.omr)
 
 	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
-	if err := createSchema(ctx, s.metadata, s.cfg.ShardNum, s.cfg.TTLDays); err != nil {
-		// A failure here is not fatal: the buffer keeps accepting and the
-		// consumer retries, so a late metadata service costs nothing permanent.
-		s.l.Error().Err(err).Msg("failed to create the native log schema; will retry")
-	} else {
-		s.ready = true
-	}
+	s.applySchema(createSchema(ctx, s.metadata, s.cfg.ShardNum, s.cfg.TTLDays))
 	cancel()
 
 	// run.Go rather than a raw goroutine, so a panic in the consumer is
@@ -219,9 +219,31 @@ func (s *Service) retrySchema(ctx context.Context) {
 	}
 	retryCtx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
-	if err := createSchema(retryCtx, s.metadata, s.cfg.ShardNum, s.cfg.TTLDays); err == nil {
+	s.applySchema(createSchema(retryCtx, s.metadata, s.cfg.ShardNum, s.cfg.TTLDays))
+}
+
+// applySchema records the outcome of one schema attempt. It is the only writer
+// of ready and incompatible, so the two can never disagree: a later success
+// clears the incompatible flag an earlier attempt set, which is what lets an
+// operator fix the stream without restarting the node.
+func (s *Service) applySchema(err error) {
+	if err == nil {
 		s.ready = true
+		s.incompatible = false
+		return
 	}
+	s.ready = false
+	s.incompatible = errors.Is(err, errSchemaIncompatible)
+	if s.incompatible {
+		s.l.Error().Err(err).Msgf(
+			"the %q stream in %q cannot store this version's log events; "+
+				"drop and recreate it to enable native logging",
+			StreamName, GroupName)
+		return
+	}
+	// Not fatal: the buffer keeps accepting and the consumer retries, so a late
+	// metadata service costs nothing permanent.
+	s.l.Error().Err(err).Msg("failed to create the native log schema; will retry")
 }
 
 // drain publishes whatever is still held at shutdown, bounded so that teardown
@@ -297,7 +319,11 @@ func (s *Service) flush(ctx context.Context, batch []entry) {
 	s.sink.inFlight.Add(size)
 
 	if !s.ready {
-		s.sink.dropN(reasonSchemaMissing, len(batch))
+		reason := reasonSchemaMissing
+		if s.incompatible {
+			reason = reasonSchemaIncompatible
+		}
+		s.sink.dropN(reason, len(batch))
 		return
 	}
 

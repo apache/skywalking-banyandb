@@ -20,6 +20,8 @@ package logging
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -65,9 +67,22 @@ var searchableTags = []string{
 // levels at once uses IN rather than a negation.
 var entityTags = []string{tagNodeID, tagLevel}
 
+// errSchemaIncompatible reports that a stream of this name already exists but
+// does not have the shape the write path fills. It is distinguished from an
+// ordinary failure because retrying cannot fix it: the stream has to be
+// dropped and recreated by hand.
+var errSchemaIncompatible = errors.New("the existing native log stream is not compatible with this version")
+
 // createSchema creates the group and the stream. Both are idempotent: a
 // process that finds them already there carries on, which is the normal case
 // for every node after the first.
+//
+// "Already there" is not taken as "already correct". A write request carries
+// its tags positionally -- modelv1.TagFamilyForWrite has no name, and neither
+// do the values inside it -- so a stream whose families or tags are in a
+// different order would accept every event and file each value under the wrong
+// tag. That failure is silent and it is counted as a success, which is worse
+// than not writing at all, so an existing stream is compared before it is used.
 func createSchema(ctx context.Context, repo metadata.Repo, shardNum, ttlDays uint32) error {
 	group := &commonv1.Group{
 		Metadata: &commonv1.Metadata{Name: GroupName},
@@ -82,9 +97,60 @@ func createSchema(ctx context.Context, repo metadata.Repo, shardNum, ttlDays uin
 		!errors.Is(err, schema.ErrGRPCAlreadyExists) {
 		return err
 	}
-	if _, err := repo.StreamRegistry().CreateStream(ctx, streamSpec()); err != nil &&
-		!errors.Is(err, schema.ErrGRPCAlreadyExists) {
+	want := streamSpec()
+	_, err := repo.StreamRegistry().CreateStream(ctx, want)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, schema.ErrGRPCAlreadyExists) {
 		return err
+	}
+	got, err := repo.StreamRegistry().GetStream(ctx, want.Metadata)
+	if err != nil {
+		return err
+	}
+	return compatible(want, got)
+}
+
+// compatible reports whether an existing stream can be written to by the
+// request Sink.build produces. Names are compared in order rather than as
+// sets, because order is the whole of the mapping: the nth value in the nth
+// family is the nth declared tag, and nothing in the request says otherwise.
+func compatible(want, got *databasev1.Stream) error {
+	wantFamilies, gotFamilies := want.GetTagFamilies(), got.GetTagFamilies()
+	if len(wantFamilies) != len(gotFamilies) {
+		return fmt.Errorf("%w: it has %d tag families, want %d",
+			errSchemaIncompatible, len(gotFamilies), len(wantFamilies))
+	}
+	for i, wf := range wantFamilies {
+		gf := gotFamilies[i]
+		if wf.GetName() != gf.GetName() {
+			return fmt.Errorf("%w: tag family %d is %q, want %q",
+				errSchemaIncompatible, i, gf.GetName(), wf.GetName())
+		}
+		wantTags, gotTags := wf.GetTags(), gf.GetTags()
+		if len(wantTags) != len(gotTags) {
+			return fmt.Errorf("%w: tag family %q has %d tags, want %d",
+				errSchemaIncompatible, wf.GetName(), len(gotTags), len(wantTags))
+		}
+		for j, wt := range wantTags {
+			gt := gotTags[j]
+			if wt.GetName() != gt.GetName() {
+				return fmt.Errorf("%w: tag %d of family %q is %q, want %q",
+					errSchemaIncompatible, j, wf.GetName(), gt.GetName(), wt.GetName())
+			}
+			if wt.GetType() != gt.GetType() {
+				return fmt.Errorf("%w: tag %q is a %s, want %s",
+					errSchemaIncompatible, wt.GetName(), gt.GetType(), wt.GetType())
+			}
+		}
+	}
+	// The entity decides the shard, so a difference here would send events to a
+	// shard no reader looks in for them.
+	wantEntity, gotEntity := want.GetEntity().GetTagNames(), got.GetEntity().GetTagNames()
+	if !slices.Equal(wantEntity, gotEntity) {
+		return fmt.Errorf("%w: its entity is %v, want %v",
+			errSchemaIncompatible, gotEntity, wantEntity)
 	}
 	return nil
 }

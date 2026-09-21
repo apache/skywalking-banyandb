@@ -45,7 +45,12 @@ const (
 	reasonEncodeFailed  = "encode_failed"
 	reasonPublishFailed = "publish_failed"
 	reasonSchemaMissing = "schema_unavailable"
-	reasonShutdown      = "shutdown_deadline"
+	// reasonSchemaIncompatible is separate from schema_unavailable because the
+	// two call for opposite responses: an unavailable schema is a wait, an
+	// incompatible one is a stream that has to be dropped by hand and will
+	// never resolve on its own.
+	reasonSchemaIncompatible = "schema_incompatible"
+	reasonShutdown           = "shutdown_deadline"
 )
 
 // queueDepth bounds the ring by count as well as by bytes. The byte budget is
@@ -103,10 +108,7 @@ func NewSink(cfg *logger.NativeLogging) *Sink {
 		epoch:   time.Now().UnixNano(),
 		dropped: make(map[string]*atomic.Uint64),
 	}
-	for _, r := range []string{
-		reasonBufferFull, reasonMemoryReserve, reasonOversizeEvent,
-		reasonEncodeFailed, reasonPublishFailed, reasonSchemaMissing, reasonShutdown,
-	} {
+	for _, r := range allReasons {
 		s.dropped[r] = &atomic.Uint64{}
 	}
 	s.pool.New = func() any { return &streamv1.WriteRequest{} }

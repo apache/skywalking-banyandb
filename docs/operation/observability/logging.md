@@ -51,6 +51,46 @@ projection:
 EOF
 ```
 
+### What is stored where
+
+A log line is split across two tag families, and nothing is stored twice.
+
+| Tag family | Tags | Holds |
+|---|---|---|
+| `searchable` | `node_id`, `node_type`, `module`, `level`, `grpc_address`, `http_address`, `message`, `log_id` | the keys with a tag of their own |
+| `data` | `fields` (binary) | **everything else on the line**, as a JSON object; absent when the line has no extra keys |
+
+The split matters when you go looking for a value. A call site that writes
+
+```go
+l.Warn().Str("group", "sw_metric").Dur("took", d).Msg("flush took longer than expected")
+```
+
+stores `message` in `searchable` and `{"group":"sw_metric","took":1200}` in `fields`. The query above would not show `group` at all — project the `data` family to get it:
+
+```sh
+bydbctl stream query -f - <<EOF
+name: "log"
+groups: ["_monitoring_log"]
+projection:
+  tagFamilies:
+    - name: "searchable"
+      tags: ["node_id", "module", "level", "message"]
+    - name: "data"
+      tags: ["fields"]
+EOF
+```
+
+`fields` is a binary tag holding JSON, so it is returned as an opaque blob and is not filterable. A call site that adds a new key needs no schema change for it to be kept.
+
+### Filtering
+
+`node_id` and `level` are the entity, so filtering on them selects series directly. Entity tags accept only `=` and `IN`, which is why several levels are selected with `IN` rather than by negating one.
+
+Every other tag is filterable but **unindexed** in this version: there are no index rules on the stream, so a condition on `module` or `message` is evaluated after the scan rather than through a posting list. Narrow the time range and the entity first.
+
+`MATCH` on `message` does **not** do what it does elsewhere. An analyzer comes from an index rule, and this stream has none, so the value is compared whole instead of being tokenized: searching for `timeout` will not find `write timeout exceeded`. The condition does not error — it just fails to match — so an empty result may be this rather than an absence of logs. Use `=` on the full message, or project `message` and filter outside the database.
+
 The flags live in their own namespace, `--logging-native-*` with `BYDB_LOGGING_NATIVE_*`, which inherits nothing from `--logging-*`. An explicit flag beats its environment variable, as everywhere else.
 
 | Flag | Default | Meaning |
@@ -74,6 +114,19 @@ Because the two destinations have independent thresholds, native can be the more
 | `error` | printed | stored |
 
 Note the consequence: an `info` event dropped by the buffer has no copy on stderr. Losses are counted rather than silent, under `banyandb_logging_native_log_dropped_total{reason}`, with `banyandb_logging_native_log_written_total` and the buffer gauges alongside. Those counters travel the same transport as the events they count, so keeping `--observability-modes=prometheus` enabled is what makes a loss visible during an outage.
+
+The `reason` label takes one of eight values, so a loss is always attributable to a stage:
+
+| `reason` | Meaning | What to do |
+|---|---|---|
+| `buffer_full` | the buffer was at its cap | raise `--logging-native-max-bytes`, or raise `--logging-native-level` to admit less |
+| `memory_pressure` | the adaptive budget was exhausted | the node is short of memory; this is the sink yielding, as intended |
+| `oversize_event` | one event exceeded `--logging-native-max-event-bytes` | raise it, or shorten the log line |
+| `encode_failed` | the line was not the JSON the sink expects | a bug; report it with the module name |
+| `publish_failed` | the batch did not reach storage | look at the write path — the whole batch is lost, never re-queued |
+| `schema_unavailable` | the group or stream could not be created yet | usually transient at startup; retried every 10s |
+| `schema_incompatible` | a `log` stream exists with a shape this version cannot write | drop and recreate the `_monitoring_log` group; retrying will not fix it |
+| `shutdown_deadline` | still buffered when the drain deadline passed | expected on a busy node during shutdown |
 
 The modules on the write path the sink publishes through are never stored: admitting them would let one stored line produce the next. The buffer is bounded and in-memory only -- no queue files, no write-ahead log, no disk fallback -- and it never blocks the caller: over budget the newest event is dropped and counted, so a burst keeps the head that explains it.
 

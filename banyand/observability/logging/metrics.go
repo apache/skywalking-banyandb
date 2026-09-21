@@ -27,12 +27,14 @@ import (
 // name as the measure name, unlike the Prometheus provider which prefixes it.
 var logScope = observability.RootScope.SubScope("logging")
 
-// allReasons is the closed set a drop can name. Publishing every one of them,
-// including the zeroes, means an operator can tell "no drops" from "that reason
-// never fires here".
+// allReasons is the closed set a drop can name. It is also what NewSink
+// allocates a counter for, so a reason added here is countable without a second
+// edit. Publishing every one of them, including the zeroes, means an operator
+// can tell "no drops" from "that reason never fires here".
 var allReasons = []string{
 	reasonBufferFull, reasonMemoryReserve, reasonOversizeEvent,
-	reasonEncodeFailed, reasonPublishFailed, reasonSchemaMissing, reasonShutdown,
+	reasonEncodeFailed, reasonPublishFailed, reasonSchemaMissing,
+	reasonSchemaIncompatible, reasonShutdown,
 }
 
 // metrics reports what the sink lost and what it wrote. They are gauges rather

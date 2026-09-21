@@ -128,6 +128,8 @@ The receiver is deliberately thin.
 
 `level` is an entity tag; entity tags accept only equality and set membership, so selecting several levels uses `IN` rather than a negation. `module` stays an ordinary tag — module strings splice in group, measure and task names, so entity membership would give unbounded series cardinality. Nothing stores the original line verbatim: known keys become tags, and only the remainder lands in `fields`.
 
+Having no index rules costs more than scan speed. An analyzer is configured on an index rule, so with none defined `MATCH` has no analyzer to tokenize with and falls back to comparing the value whole — `MATCH "timeout"` does not find `write timeout exceeded`, and it reports no match rather than an error. Full-text search over `message` is therefore an index rule away, not available now; `=` and the time range are what narrow a query in v1.
+
 ## 4. Parameters and configuration
 
 Two independent namespaces; neither inherits from the other.
@@ -139,27 +141,29 @@ Two independent namespaces; neither inherits from the other.
 
 Every dashed flag binds to `BYDB_<UPPER_SNAKE>`, and the env value applies only when the flag was not set on the command line, so an explicit flag wins.
 
-| flag | default | meaning |
-|---|---|---|
-| `--logging-native-enabled` | `false` | collect this process's own logs natively |
-| `--logging-native-level` | `info` | root level of the native sink |
-| `--logging-native-modules` / `--logging-native-levels` | `nil` | per-module overrides, prefix-matched, length-checked |
-| `--logging-native-exclude-modules` | built-in prefix set | modules never sent natively, breaking the write-path feedback loop; replaces, not appends |
-| `--logging-native-flush-interval` | `1s` | longest a buffered event waits |
-| `--logging-native-flush-size` | `100` | events that trigger a batch |
-| `--logging-native-write-timeout` | `5s` | per-batch publish timeout |
-| `--logging-native-drain-timeout` | `5s` | bound on the final drain at shutdown |
-| `--logging-native-max-bytes` \* | `32mb` | configured ring cap |
-| `--logging-native-max-event-bytes` \* | `64kb` | oversize events dropped whole |
-| `--logging-native-memory-fraction` \* | `0.02` | fraction of available memory in the adaptive budget |
-| `--logging-native-memory-reserve` \* | `64mb` | reserve subtracted before the fraction |
-| `--logging-native-shard-num` | `2` | shards of `_monitoring_log`; raisable later through the group schema |
-| `--logging-native-ttl-days` | `7` | retention |
-| `--logging-native-receiver-enabled` | `false` | accept forwarded writes, wherever hosted; independent of collection |
+Nine of these are flags today. The rest are values the design calls for that are currently fixed constants in the code, or belong to a later phase; the `status` column says which, so that nothing here reads as configurable before it is.
 
-\* Names and defaults for the four starred flags are proposals, not settled. Level semantics are in section 3.1; the four existing `--logging-*` flags keep their names and defaults.
+| flag | default | meaning | status |
+|---|---|---|---|
+| `--logging-native-enabled` | `false` | collect this process's own logs natively | flag |
+| `--logging-native-level` | `info` | root level of the native sink | flag |
+| `--logging-native-exclude-modules` | built-in prefix set | modules never sent natively, breaking the write-path feedback loop; replaces, not appends | flag |
+| `--logging-native-flush-interval` | `1s` | longest a buffered event waits | flag |
+| `--logging-native-flush-size` | `100` | events that trigger a batch | flag |
+| `--logging-native-max-bytes` | `32mb` | configured ring cap | flag |
+| `--logging-native-max-event-bytes` | `64kb` | oversize events dropped whole | flag |
+| `--logging-native-shard-num` | `2` | shards of `_monitoring_log`; raisable later through the group schema | flag |
+| `--logging-native-ttl-days` | `7` | retention | flag |
+| `--logging-native-modules` / `--logging-native-levels` | `nil` | per-module overrides, prefix-matched, length-checked | not implemented — the root level and the exclude set are the only controls today |
+| `--logging-native-write-timeout` | `5s` | per-batch publish timeout | constant `writeTimeout` |
+| `--logging-native-drain-timeout` | `5s` | bound on the final drain at shutdown | constant `drainTimeout` |
+| `--logging-native-memory-fraction` | `0.02` | fraction of available memory in the adaptive budget | constant in `bindBudget` |
+| `--logging-native-memory-reserve` | `64mb` | reserve subtracted before the fraction | constant in `bindBudget` |
+| `--logging-native-receiver-enabled` | `false` | accept forwarded writes, wherever hosted; independent of collection | phase 2 — nothing forwards yet |
 
-> With `--logging-native-enabled=false` — the default — behaviour is exactly as today: the ring is never allocated, no schema and no counters are created, and the cost is one atomic pointer load per event.
+The constants are held back deliberately: each would be a supported name the moment it is a flag, and none has a use case yet beyond the value already chosen. Level semantics are in section 3.1; the four existing `--logging-*` flags keep their names and defaults.
+
+> With `--logging-native-enabled=false` — the default — no schema and no counters are created, nothing is admitted, and the cost is one atomic pointer load per event. The ring itself is allocated either way: the sink is built while the command tree is, before the flags are parsed, so the buffer exists for the lines emitted during startup. It is one channel of `8192` entry headers and holds nothing.
 
 ## 5. Failure modes
 
@@ -169,19 +173,20 @@ event -> producer -> buffer(ring) -> consumer -> schema -> selection -> publish 
                       GracefulStop: stop admission, then bounded drain ----------------+
 ```
 
-Every stage that can fail has a row, carrying one behaviour and one reason from the closed nine-value `reason` set on `native_dropped_total`.
+Every stage that can fail has a row, carrying one behaviour and one reason from the closed `reason` set on `native_dropped_total`. Eight of the reasons exist today; the two marked *phase 2* are stages a single node does not have, and they arrive with remote routing.
 
 | Stage | Situation | Behaviour | Counter reason |
 |---|---|---|---|
 | producer | event over `--logging-native-max-event-bytes` | dropped whole, never truncated — a truncated JSON body is unparseable | `oversize_event` |
+| producer | the encoded line is not the JSON the sink expects | dropped and counted; the caller is never made to care | `encode_failed` |
 | buffer | ring over budget | drop the newest event, the writer still returning `(len(p), nil)`; admission never waits for capacity and queued events are never evicted, so a burst keeps its head | `buffer_full` / `memory_pressure` |
 | consumer | stalled in a slow publish | the ring absorbs it; batches capped at 25% of budget, one in flight, so a stall cannot pin admission | – gauge `native_buffer_bytes{state=in_flight}` |
-| schema | create fails for anything but `AlreadyExists`, or the group is dropped at runtime | retry next flush, batch in hand dropped | `schema_unavailable` |
-| schema | existing `log` stream is incompatible | refuse, one error through normal logging, sink stays disabled | `schema_incompatible` |
-| selection | `Locate` errors or returns an empty node ID | count and return; never publish to an empty node | `locate_failed` |
+| schema | create fails for anything but `AlreadyExists`, or the group is dropped at runtime | retry every 10s, batch in hand dropped | `schema_unavailable` |
+| schema | a `log` stream exists whose families, tag order or entity differ from this version's | refuse and count; the retry stays in place so an operator can drop and recreate the group without restarting, but waiting alone never clears it | `schema_incompatible` |
+| selection | `Locate` errors or returns an empty node ID | count and return; never publish to an empty node | `locate_failed` — *phase 2* |
 | local publish | listener unhealthy | the bus skips it and drops the payload while returning an error, so any error means full batch loss | `publish_failed` |
-| remote publish | error, breaker open, admission timeout, auth rejection | batch dropped, never re-queued; classified from the per-node error map from `Close` | `publish_failed` |
-| destination | local topic not yet subscribed | retain, N retries, then drop | `destination_unready` |
+| remote publish | error, breaker open, admission timeout, auth rejection | batch dropped, never re-queued; classified from the per-node error map from `Close` | `publish_failed` — *phase 2* |
+| destination | local topic not yet subscribed | retain, N retries, then drop | `destination_unready` — *phase 2* |
 | read path | a data node has not yet caught up on the schema | its query processor returns stream-not-exist and the distributed planner discards the whole response, blanking the query. **Pre-existing** for any group created while the cluster is running, user groups included — not introduced here. Mitigation is a one-site change in the planner, out of scope for this feature | – |
 | shutdown | buffer still full at the deadline | remainder dropped once `--logging-native-drain-timeout` expires; teardown never blocked | `shutdown_deadline` |
 
