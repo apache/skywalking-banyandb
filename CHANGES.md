@@ -31,6 +31,7 @@ Release Notes.
 - Keep DNS discovery `ListNode` successful when some SRV addresses refuse connections but at least one node was discovered, so non-meta nodes no longer deadlock in PreRun on their own not-yet-listening gRPC address.
 - Fix un-interruptible sleep on shutdown during snapshot sync retry and add jittered backoff for stream, measure, and trace.
 - Report the real shard ID in `CollectDataInfo` shard info for stream, measure, and trace instead of the live table's slice index, so a node that owns only higher-numbered shards is no longer attributed to shard 0 in cross-node shard-load analysis.
+- Reject a measure or stream whose tag name appears in more than one tag family, or twice within one family, when it is created or updated. The query layer resolves a bare tag name against a flat map keyed by name alone, so such a schema previously registered successfully and then resolved that name differently depending on which query path read it. Already-persisted schemas keep loading unchanged; only the registry's create and update paths enforce the rule.
 
 ### Document
 
