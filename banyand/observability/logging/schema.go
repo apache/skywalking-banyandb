@@ -73,17 +73,39 @@ var entityTags = []string{tagNodeID, tagLevel}
 // dropped and recreated by hand.
 var errSchemaIncompatible = errors.New("the existing native log stream is not compatible with this version")
 
-// createSchema creates the group and the stream. Both are idempotent: a
-// process that finds them already there carries on, which is the normal case
-// for every node after the first.
+// schemaState is what one successful schema pass established. The shard count
+// is the group's, not the flag's: the flag only proposes a value when the group
+// is created, and every node after the first finds it already there.
+type schemaState struct {
+	// shardMismatch and ttlMismatch record that the running configuration
+	// disagrees with what is persisted, so the caller can say so once rather
+	// than leaving an inert flag looking effective.
+	shardMismatch string
+	ttlMismatch   string
+	shardNum      uint32
+}
+
+// createSchema creates the group and the stream and reports what is actually in
+// force. Both creations are idempotent: a process that finds them already there
+// carries on, which is the normal case for every node after the first.
 //
-// "Already there" is not taken as "already correct". A write request carries
-// its tags positionally -- modelv1.TagFamilyForWrite has no name, and neither
-// do the values inside it -- so a stream whose families or tags are in a
-// different order would accept every event and file each value under the wrong
-// tag. That failure is silent and it is counted as a success, which is worse
-// than not writing at all, so an existing stream is compared before it is used.
-func createSchema(ctx context.Context, repo metadata.Repo, shardNum, ttlDays uint32) error {
+// "Already there" is not taken as "already correct", for either object.
+//
+// A write request carries its tags positionally -- modelv1.TagFamilyForWrite
+// has no name, and neither do the values inside it -- so a stream whose
+// families or tags are in a different order would accept every event and file
+// each value under the wrong tag.
+//
+// The group matters for the same reason one step further out: the shard a write
+// is routed to is computed modulo a shard count, and the storage layer does not
+// range-check it. Routing on the flag while the group holds a different count
+// produces shard directories above the group's own count, which segment
+// loadShards skips on the next open -- so the events are written, acked,
+// counted and queryable, and then silently invisible after an idle close or a
+// restart. Both failures are counted as successes, which is worse than not
+// writing at all.
+func createSchema(ctx context.Context, repo metadata.Repo, shardNum, ttlDays uint32) (schemaState, error) {
+	state := schemaState{shardNum: shardNum}
 	group := &commonv1.Group{
 		Metadata: &commonv1.Metadata{Name: GroupName},
 		Catalog:  commonv1.Catalog_CATALOG_STREAM,
@@ -93,23 +115,56 @@ func createSchema(ctx context.Context, repo metadata.Repo, shardNum, ttlDays uin
 			Ttl:             &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: ttlDays},
 		},
 	}
-	if _, err := repo.GroupRegistry().CreateGroup(ctx, group); err != nil &&
-		!errors.Is(err, schema.ErrGRPCAlreadyExists) {
-		return err
+	switch _, err := repo.GroupRegistry().CreateGroup(ctx, group); {
+	case err == nil:
+		// This process created it, so the flag is what is in force.
+	case errors.Is(err, schema.ErrGRPCAlreadyExists):
+		existing, getErr := repo.GroupRegistry().GetGroup(ctx, GroupName)
+		if getErr != nil {
+			return state, getErr
+		}
+		state = groupState(existing.GetResourceOpts(), shardNum, ttlDays)
+	default:
+		return state, err
 	}
+
 	want := streamSpec()
 	_, err := repo.StreamRegistry().CreateStream(ctx, want)
 	if err == nil {
-		return nil
+		return state, nil
 	}
 	if !errors.Is(err, schema.ErrGRPCAlreadyExists) {
-		return err
+		return state, err
 	}
-	got, err := repo.StreamRegistry().GetStream(ctx, want.Metadata)
-	if err != nil {
-		return err
+	got, getErr := repo.StreamRegistry().GetStream(ctx, want.Metadata)
+	if getErr != nil {
+		return state, getErr
 	}
-	return compatible(want, got)
+	return state, compatible(want, got)
+}
+
+// groupState reads what the persisted group actually says and notes where the
+// running configuration disagrees with it. Neither value is updated in place:
+// raising a group's shard count is a data operation, not something a node
+// should do to a shared group on its way up.
+func groupState(opts *commonv1.ResourceOpts, shardNum, ttlDays uint32) schemaState {
+	state := schemaState{shardNum: opts.GetShardNum()}
+	if state.shardNum == 0 {
+		// Nothing persisted, so the flag is the only value left to divide by.
+		state.shardNum = shardNum
+	}
+	if state.shardNum != shardNum {
+		state.shardMismatch = fmt.Sprintf(
+			"--logging-native-shard-num=%d is ignored; %q already exists with %d shards, and routing follows the group",
+			shardNum, GroupName, state.shardNum)
+	}
+	if ttl := opts.GetTtl(); ttl != nil &&
+		(ttl.GetUnit() != commonv1.IntervalRule_UNIT_DAY || ttl.GetNum() != ttlDays) {
+		state.ttlMismatch = fmt.Sprintf(
+			"--logging-native-ttl-days=%d is ignored; %q already exists with a retention of %d %s",
+			ttlDays, GroupName, ttl.GetNum(), ttl.GetUnit())
+	}
+	return state
 }
 
 // compatible reports whether an existing stream can be written to by the

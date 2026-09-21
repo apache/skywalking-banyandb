@@ -23,6 +23,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 )
 
@@ -113,5 +114,69 @@ func TestCompatibleAcceptsItsOwnSpec(t *testing.T) {
 	if err := compatible(streamSpec(), streamSpec()); err != nil {
 		t.Fatalf("the spec this version creates was rejected as incompatible with "+
 			"itself: %v", err)
+	}
+}
+
+// TestGroupStateFollowsTheGroupNotTheFlag is the falsifying assertion for
+// routing. The shard count divides the entity hash, and the storage layer does
+// not range-check the result: a shard id above the group's own count is
+// accepted, written, acked and queryable, and then skipped by loadShards on the
+// next open -- so the events leave every query with no error and no metric.
+// Routing must therefore follow what the group was created with, never the
+// local flag.
+func TestGroupStateFollowsTheGroupNotTheFlag(t *testing.T) {
+	dayTTL := func(n uint32) *commonv1.IntervalRule {
+		return &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: n}
+	}
+	tests := []struct {
+		opts         *commonv1.ResourceOpts
+		name         string
+		wantShard    uint32
+		flagShard    uint32
+		flagTTL      uint32
+		wantShardMsg bool
+		wantTTLMsg   bool
+	}{
+		{
+			name:      "flag agrees with the group",
+			opts:      &commonv1.ResourceOpts{ShardNum: 2, Ttl: dayTTL(7)},
+			flagShard: 2, flagTTL: 7, wantShard: 2,
+		},
+		{
+			name:      "flag raised above the group",
+			opts:      &commonv1.ResourceOpts{ShardNum: 2, Ttl: dayTTL(7)},
+			flagShard: 8, flagTTL: 7, wantShard: 2, wantShardMsg: true,
+		},
+		{
+			name:      "flag lowered below the group",
+			opts:      &commonv1.ResourceOpts{ShardNum: 8, Ttl: dayTTL(7)},
+			flagShard: 2, flagTTL: 7, wantShard: 8, wantShardMsg: true,
+		},
+		{
+			name:      "ttl differs",
+			opts:      &commonv1.ResourceOpts{ShardNum: 2, Ttl: dayTTL(30)},
+			flagShard: 2, flagTTL: 7, wantShard: 2, wantTTLMsg: true,
+		},
+		{
+			name:      "group reports no shard count",
+			opts:      &commonv1.ResourceOpts{Ttl: dayTTL(7)},
+			flagShard: 3, flagTTL: 7, wantShard: 3,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := groupState(tt.opts, tt.flagShard, tt.flagTTL)
+			if got.shardNum != tt.wantShard {
+				t.Fatalf("routing would divide by %d, want %d -- every event whose "+
+					"hash exceeds the group's count lands in a shard no reader opens",
+					got.shardNum, tt.wantShard)
+			}
+			if (got.shardMismatch != "") != tt.wantShardMsg {
+				t.Fatalf("shardMismatch = %q, want a message: %v", got.shardMismatch, tt.wantShardMsg)
+			}
+			if (got.ttlMismatch != "") != tt.wantTTLMsg {
+				t.Fatalf("ttlMismatch = %q, want a message: %v", got.ttlMismatch, tt.wantTTLMsg)
+			}
+		})
 	}
 }

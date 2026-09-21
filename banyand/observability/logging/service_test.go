@@ -19,6 +19,8 @@ package logging
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -29,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -47,6 +50,9 @@ type fakeClient struct {
 	published      atomic.Int64
 	mu             sync.Mutex
 	panicOnPublish atomic.Bool
+	// rejectOnClose makes Close answer the way localBatchPublisher answers a
+	// refused batch: a populated per-node map alongside a NIL error.
+	rejectOnClose atomic.Bool
 }
 
 func (f *fakeClient) seenNodeIDs() []string {
@@ -103,7 +109,17 @@ func (p *fakePublisher) Publish(_ context.Context, _ bus.Topic, messages ...bus.
 	return nil, nil
 }
 
-func (p *fakePublisher) Close() (map[string]*common.Error, error) { return nil, nil }
+func (p *fakePublisher) Close() (map[string]*common.Error, error) {
+	if p.client.rejectOnClose.Load() {
+		// Exactly banyand/queue/local.go:163-167 -- the map carries the
+		// rejection and the error return is nil.
+		return map[string]*common.Error{
+			"local": common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL,
+				"disk usage is too high, stop writing"),
+		}, nil
+	}
+	return nil, nil
+}
 
 func testService(t *testing.T, client queue.Client) (*Service, *Sink) {
 	t.Helper()
@@ -116,8 +132,10 @@ func testService(t *testing.T, client queue.Client) (*Service, *Sink) {
 	svc := NewService(sink, cfg, nil, client, nil, nil)
 	svc.l = logger.GetLogger("native-log-test")
 	// The schema is created in Serve against a metadata repo; these tests drive
-	// the consumer directly, so mark it ready and start the loop.
+	// the consumer directly, so stand in for what one successful pass would
+	// have established -- including the shard count, which routing divides by.
 	svc.ready = true
+	svc.shardNum = cfg.ShardNum
 	go svc.consume(context.Background()) //panicdiag:allow-rawgo test consumer, no recovery wrapper needed
 	t.Cleanup(func() { svc.closer.CloseThenWait() })
 	return svc, sink
@@ -232,5 +250,96 @@ func TestFlushStampsIdentityOnWhatItPublishes(t *testing.T) {
 		if got != "data-hot-0" {
 			t.Fatalf("published element %d carries node_id %q, want the node's own id", i, got)
 		}
+	}
+}
+
+// TestRejectedBatchIsCountedAsLostNotWritten is the falsifying assertion for
+// the sink's central promise -- that loss is always counted. A local publisher
+// reports a refusal in Close's per-node map and returns a nil error beside it,
+// so a flush that reads only the error sees success. The assertion is on
+// written_total staying at zero: counting a discarded batch as written is worse
+// than losing it, because the counter an operator is told to watch says the
+// feature is healthy while every line is being thrown away.
+func TestRejectedBatchIsCountedAsLostNotWritten(t *testing.T) {
+	client := &fakeClient{}
+	_, sink := testService(t, client)
+	client.rejectOnClose.Store(true)
+
+	const admitted = 10
+	for i := 0; i < admitted; i++ {
+		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+	}
+	waitFor(t, "the refused batches to be counted", func() bool {
+		return sink.Dropped(reasonPublishFailed) >= admitted
+	})
+
+	if got := sink.Written(); got != 0 {
+		t.Fatalf("written_total = %d after every batch was refused; "+
+			"Close reported the rejection in its map, not its error", got)
+	}
+	if got := sink.QueuedBytes(); got != 0 {
+		t.Fatalf("%d bytes still charged after the refused batches settled", got)
+	}
+}
+
+// TestAcceptedBatchIsStillCountedAsWritten guards the other direction: reading
+// Close's map must not turn an empty map into a failure.
+func TestAcceptedBatchIsStillCountedAsWritten(t *testing.T) {
+	client := &fakeClient{}
+	_, sink := testService(t, client)
+
+	const admitted = 10
+	for i := 0; i < admitted; i++ {
+		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+	}
+	waitFor(t, "the batches to be written", func() bool {
+		return sink.Written() >= admitted
+	})
+	if got := sink.Dropped(reasonPublishFailed); got != 0 {
+		t.Fatalf("publish_failed = %d on the healthy path", got)
+	}
+}
+
+// TestSchemaStateSurvivesATransientMetadataFailure pins the retry semantics.
+// The schema pass now runs on every tick rather than latching on first success,
+// so a momentary metadata failure reaches applySchema while the node is healthy.
+// Treating that as "schema gone" would drop batches that would have been
+// written -- the retry must not be able to make things worse than the latch did.
+func TestSchemaStateSurvivesATransientMetadataFailure(t *testing.T) {
+	svc := &Service{l: logger.GetLogger("native-log-test")}
+
+	svc.applySchema(schemaState{shardNum: 4}, nil)
+	if !svc.ready || svc.shardNum != 4 {
+		t.Fatalf("after a successful pass: ready=%v shardNum=%d, want true/4", svc.ready, svc.shardNum)
+	}
+
+	svc.applySchema(schemaState{}, errors.New("etcd: context deadline exceeded"))
+	if !svc.ready {
+		t.Fatal("a transient metadata error cleared ready; batches that would " +
+			"have been written are now dropped as schema_unavailable")
+	}
+	if svc.shardNum != 4 {
+		t.Fatalf("shardNum moved to %d on a failed pass; routing must not follow a reading that failed", svc.shardNum)
+	}
+
+	svc.applySchema(schemaState{}, fmt.Errorf("%w: tag 2 is wrong", errSchemaIncompatible))
+	if svc.ready || !svc.incompatible {
+		t.Fatalf("an incompatible schema left ready=%v incompatible=%v", svc.ready, svc.incompatible)
+	}
+
+	svc.applySchema(schemaState{shardNum: 2}, nil)
+	if !svc.ready || svc.incompatible || svc.shardNum != 2 {
+		t.Fatalf("recovery left ready=%v incompatible=%v shardNum=%d",
+			svc.ready, svc.incompatible, svc.shardNum)
+	}
+}
+
+// TestNeverReadyStaysNotReady covers the startup case: a node that has never
+// established the schema must not be nudged into publishing by a failure.
+func TestNeverReadyStaysNotReady(t *testing.T) {
+	svc := &Service{l: logger.GetLogger("native-log-test")}
+	svc.applySchema(schemaState{}, errors.New("metadata not up yet"))
+	if svc.ready {
+		t.Fatal("ready was set by a failed schema pass")
 	}
 }

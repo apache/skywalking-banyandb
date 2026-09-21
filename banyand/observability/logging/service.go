@@ -64,12 +64,19 @@ type Service struct {
 	pm       protector.Memory
 	cfg      *logger.NativeLogging
 	node     NodeInfo
+	// shardNum is the group's shard count, not the flag's. Routing must divide
+	// by what the group was created with: the storage layer does not range-check
+	// an incoming shard id, and a shard above the group's count is skipped on the
+	// next open, taking its events out of every query without an error.
+	shardNum uint32
 	ready    bool
 	// incompatible records that the stream exists with the wrong shape. The
 	// retry stays in place -- an operator can drop and recreate it without
 	// restarting the node -- but until then the drops are counted under their
 	// own reason, because waiting will not fix this one.
 	incompatible bool
+	warnedShard  bool
+	warnedTTL    bool
 }
 
 // NewService returns the service that drains sink. The sink is constructed
@@ -213,37 +220,62 @@ func (s *Service) report() {
 	s.metrics.observe(s.sink)
 }
 
+// retrySchema re-runs the schema pass on every tick, including when the last
+// one succeeded. Latching on the first success would mean the schema is checked
+// exactly once per process: a group dropped at runtime would never be noticed,
+// and because a refused local write is not reported per event, every later
+// batch would be published into nothing and counted as written. createSchema is
+// idempotent, so the healthy path costs two AlreadyExists replies and a read.
 func (s *Service) retrySchema(ctx context.Context) {
-	if s.ready {
-		return
-	}
 	retryCtx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
 	s.applySchema(createSchema(retryCtx, s.metadata, s.cfg.ShardNum, s.cfg.TTLDays))
 }
 
 // applySchema records the outcome of one schema attempt. It is the only writer
-// of ready and incompatible, so the two can never disagree: a later success
-// clears the incompatible flag an earlier attempt set, which is what lets an
-// operator fix the stream without restarting the node.
-func (s *Service) applySchema(err error) {
-	if err == nil {
+// of ready, incompatible and shardNum, so they can never disagree: a later
+// success clears the incompatible flag an earlier attempt set, which is what
+// lets an operator fix the stream without restarting the node.
+//
+// A transient metadata failure does not clear ready. Once the schema is known
+// to exist, an unreachable metadata service is a reason to keep publishing on
+// what was already established, not a reason to start dropping batches that
+// would have been written.
+func (s *Service) applySchema(state schemaState, err error) {
+	switch {
+	case err == nil:
 		s.ready = true
 		s.incompatible = false
-		return
-	}
-	s.ready = false
-	s.incompatible = errors.Is(err, errSchemaIncompatible)
-	if s.incompatible {
+		s.shardNum = state.shardNum
+		s.warnOnce(&s.warnedShard, state.shardMismatch)
+		s.warnOnce(&s.warnedTTL, state.ttlMismatch)
+	case errors.Is(err, errSchemaIncompatible):
+		s.ready = false
+		s.incompatible = true
 		s.l.Error().Err(err).Msgf(
 			"the %q stream in %q cannot store this version's log events; "+
 				"drop and recreate it to enable native logging",
 			StreamName, GroupName)
+	case !s.ready:
+		// Never established. Not fatal: the buffer keeps accepting and the
+		// consumer retries, so a late metadata service costs nothing permanent.
+		s.l.Error().Err(err).Msg("failed to create the native log schema; will retry")
+	default:
+		// Established before and metadata is momentarily unreachable. Keep
+		// publishing; a real rejection is reported by the publisher.
+		s.l.Debug().Err(err).Msg("could not re-check the native log schema; keeping the last known state")
+	}
+}
+
+// warnOnce reports a configuration that is being ignored, once per process.
+// The schema pass now runs every tick, so an unguarded warning here would be
+// the noisiest line the node emits.
+func (s *Service) warnOnce(done *bool, msg string) {
+	if msg == "" || *done {
 		return
 	}
-	// Not fatal: the buffer keeps accepting and the consumer retries, so a late
-	// metadata service costs nothing permanent.
-	s.l.Error().Err(err).Msg("failed to create the native log schema; will retry")
+	*done = true
+	s.l.Warn().Msg(msg)
 }
 
 // drain publishes whatever is still held at shutdown, bounded so that teardown
@@ -347,8 +379,17 @@ func (s *Service) flush(ctx context.Context, batch []entry) {
 	pubCtx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
 	_, err := publisher.Publish(pubCtx, data.TopicStreamWrite, messages...)
-	if _, closeErr := publisher.Close(); err == nil {
+	nodeErrs, closeErr := publisher.Close()
+	if err == nil {
 		err = closeErr
+	}
+	if err == nil {
+		// Close reports a destination's refusal in its map and returns a nil
+		// error alongside it. On the local pipeline that map is the only report
+		// there is -- Publish buffers and cannot fail, and the bus drops the
+		// payload of an unhealthy listener while returning the reason here. So
+		// discarding it means a refused batch is counted as written.
+		err = rejection(nodeErrs)
 	}
 	if err != nil {
 		// The sink never logs through the logging path it publishes on, so a
@@ -360,6 +401,22 @@ func (s *Service) flush(ctx context.Context, batch []entry) {
 	s.sink.written.Add(uint64(len(messages)))
 }
 
+// rejection turns a publisher's per-destination error map into one error. Any
+// entry means the batch did not land: this sink publishes a batch to a single
+// destination, so there is no partial success to preserve.
+func rejection(nodeErrs map[string]*common.Error) error {
+	for node, ce := range nodeErrs {
+		if ce == nil {
+			continue
+		}
+		if node == "" {
+			node = "the destination"
+		}
+		return fmt.Errorf("%s refused the batch: %w", node, ce)
+	}
+	return nil
+}
+
 // internalRequest adds the routing the internal write path needs. The shard is
 // computed from the entity the way the normal write path computes it, rather
 // than the fixed shard zero the metric collector writes with.
@@ -369,7 +426,7 @@ func (s *Service) internalRequest(req *streamv1.WriteRequest) (*streamv1.Interna
 	if err != nil {
 		return nil, err
 	}
-	shardID, err := partition.ShardID(key.Marshal(), s.cfg.ShardNum)
+	shardID, err := partition.ShardID(key.Marshal(), s.shardNum)
 	if err != nil {
 		return nil, err
 	}
