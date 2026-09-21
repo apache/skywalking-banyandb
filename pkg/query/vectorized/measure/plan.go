@@ -279,9 +279,10 @@ func lookupFieldColumnIndex(schema *vectorized.BatchSchema, name string) (int, e
 
 // lookupAggInputColumnIndex resolves agg's target column: a tag sibling of
 // lookupGroupByKeyIndices when agg.TagName is set (matched on RoleTag +
-// TagFamily + Name -- the family is matched for exactness, not because a bare
-// name could be ambiguous; api/validate.UniqueTagNames keeps tag names unique
-// across a resource's families), otherwise the existing field lookup.
+// TagFamily + Name, which disambiguates a schema carrying the same tag name in
+// two families; api/validate.UniqueTagNames rejects that shape on the
+// registry's create and update paths only, so an older persisted schema can
+// still carry it), otherwise the existing field lookup.
 func lookupAggInputColumnIndex(schema *vectorized.BatchSchema, agg *model.MeasureAgg) (int, error) {
 	if agg.TagName == "" {
 		return lookupFieldColumnIndex(schema, agg.FieldName)

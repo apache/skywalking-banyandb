@@ -298,10 +298,12 @@ func validateBucketableOrdering(req *measurev1.QueryRequest) error {
 
 // translateAgg builds the model Agg struct from the proto. Exactly one of
 // field_name / tag_name must be set; a tag target additionally requires
-// tag_family so the target is addressed explicitly and resolved against the
-// right spec. That is belt-and-braces rather than disambiguation: a tag name
-// is unique across a resource's families, which api/validate.UniqueTagNames
-// enforces at registration. The target is then checked against the §6 matrix.
+// tag_family, which is what keeps the target resolvable when a schema carries
+// the same tag name in two families. api/validate.UniqueTagNames rejects that
+// shape, but only on the registry's create and update paths, so a schema
+// registered before that check still loads and can reach here with a
+// duplicate: the family qualifier is load-bearing, not decoration. The target
+// is then checked against the §6 semantics matrix.
 func translateAgg(req *measurev1.QueryRequest, measureSchema *databasev1.Measure) (*model.MeasureAgg, error) {
 	aggProto := req.GetAgg()
 	fieldName := aggProto.GetFieldName()
