@@ -1,0 +1,236 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package logging
+
+import (
+	"context"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/rs/zerolog"
+
+	"github.com/apache/skywalking-banyandb/api/common"
+	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
+)
+
+// fakeClient is a queue.Client that records what was published, and can be told
+// to panic so that the consumer's recovery can be exercised.
+type fakeClient struct {
+	// nodeIDs records the node_id tag of every published element, so a test can
+	// assert on what actually reached the write path rather than on what the
+	// sink held.
+	nodeIDs        []string
+	published      atomic.Int64
+	mu             sync.Mutex
+	panicOnPublish atomic.Bool
+}
+
+func (f *fakeClient) seenNodeIDs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.nodeIDs...)
+}
+
+func (f *fakeClient) NewBatchPublisher(time.Duration) queue.BatchPublisher {
+	return &fakePublisher{client: f}
+}
+
+func (f *fakeClient) Publish(context.Context, bus.Topic, ...bus.Message) (bus.Future, error) {
+	return nil, nil
+}
+
+func (f *fakeClient) Broadcast(time.Duration, bus.Topic, bus.Message) ([]bus.Future, error) {
+	return nil, nil
+}
+
+func (f *fakeClient) NewChunkedSyncClient(string, uint32) (queue.ChunkedSyncClient, error) {
+	return nil, nil
+}
+
+func (f *fakeClient) NewNodeSchemaStatusClient(string) (clusterv1.NodeSchemaStatusServiceClient, error) {
+	return nil, nil
+}
+func (f *fakeClient) SetSelfNode(_, _, _ string)              {}
+func (f *fakeClient) Register(bus.Topic, schema.EventHandler) {}
+func (f *fakeClient) OnAddOrUpdate(schema.Metadata)           {}
+func (f *fakeClient) GracefulStop()                           {}
+func (f *fakeClient) HealthyNodes() []string                  { return nil }
+func (f *fakeClient) Name() string                            { return "fake-queue" }
+func (f *fakeClient) Serve() run.StopNotify                   { return nil }
+func (f *fakeClient) GetRouteTable() *databasev1.RouteTable   { return nil }
+
+type fakePublisher struct{ client *fakeClient }
+
+func (p *fakePublisher) Publish(_ context.Context, _ bus.Topic, messages ...bus.Message) (bus.Future, error) {
+	if p.client.panicOnPublish.Load() {
+		panic("induced publish panic")
+	}
+	p.client.published.Add(int64(len(messages)))
+	p.client.mu.Lock()
+	defer p.client.mu.Unlock()
+	for _, m := range messages {
+		iwr, ok := m.Data().(*streamv1.InternalWriteRequest)
+		if !ok {
+			continue
+		}
+		tags := iwr.GetRequest().GetElement().GetTagFamilies()[0].GetTags()
+		p.client.nodeIDs = append(p.client.nodeIDs, tags[0].GetStr().GetValue())
+	}
+	return nil, nil
+}
+
+func (p *fakePublisher) Close() (map[string]*common.Error, error) { return nil, nil }
+
+func testService(t *testing.T, client queue.Client) (*Service, *Sink) {
+	t.Helper()
+	cfg := &logger.NativeLogging{
+		Enabled: true, Level: "debug", FlushInterval: 20 * time.Millisecond,
+		FlushSize: 5, MaxBytes: 1 << 20, MaxEventBytes: 64 << 10, ShardNum: 2, TTLDays: 7,
+	}
+	sink := NewSink(cfg)
+	sink.SetNode(NodeInfo{NodeID: "data-hot-0", NodeType: "data"})
+	svc := NewService(sink, cfg, nil, client, nil, nil)
+	svc.l = logger.GetLogger("native-log-test")
+	// The schema is created in Serve against a metadata repo; these tests drive
+	// the consumer directly, so mark it ready and start the loop.
+	svc.ready = true
+	go svc.consume(context.Background()) //panicdiag:allow-rawgo test consumer, no recovery wrapper needed
+	t.Cleanup(func() { svc.closer.CloseThenWait() })
+	return svc, sink
+}
+
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+// TestEveryAdmittedEventIsWrittenOrCounted is the accounting invariant: on the
+// healthy path nothing is admitted and then silently lost.
+func TestEveryAdmittedEventIsWrittenOrCounted(t *testing.T) {
+	client := &fakeClient{}
+	_, sink := testService(t, client)
+
+	const admitted = 40
+	for i := 0; i < admitted; i++ {
+		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+	}
+	waitFor(t, "all events to be published", func() bool {
+		return client.published.Load() == int64(admitted)
+	})
+
+	var dropped uint64
+	for _, r := range allReasons {
+		dropped += sink.Dropped(r)
+	}
+	if got := sink.Written() + dropped; got != admitted {
+		t.Fatalf("admitted %d, but written+dropped = %d; events were lost silently", admitted, got)
+	}
+	if sink.QueuedBytes() != 0 {
+		t.Fatalf("%d bytes still charged after every event was written", sink.QueuedBytes())
+	}
+}
+
+// TestConsumerSurvivesAPanicInFlush is the falsifying assertion for the
+// recovery boundary: run.Go recovers a panic but does not restart the consumer,
+// so recovering at the goroutine would end native logging for the process. The
+// assertion is that events admitted AFTER a panic are still written.
+func TestConsumerSurvivesAPanicInFlush(t *testing.T) {
+	client := &fakeClient{}
+	_, sink := testService(t, client)
+
+	client.panicOnPublish.Store(true)
+	for i := 0; i < 5; i++ {
+		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+	}
+	waitFor(t, "the panicking batch to be counted", func() bool {
+		return sink.Dropped(reasonPublishFailed) >= 5
+	})
+
+	client.panicOnPublish.Store(false)
+	for i := 0; i < 5; i++ {
+		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+	}
+	waitFor(t, "the consumer to keep working after the panic", func() bool {
+		return client.published.Load() >= 5
+	})
+
+	if sink.QueuedBytes() != 0 {
+		t.Fatalf("%d bytes still charged after a panicking flush; the accounting leaked",
+			sink.QueuedBytes())
+	}
+}
+
+// TestShutdownDrainsWhatWasAdmitted covers the drain path: admission stops
+// first, so everything admitted before the cutoff is published rather than
+// counted as lost.
+func TestShutdownDrainsWhatWasAdmitted(t *testing.T) {
+	client := &fakeClient{}
+	svc, sink := testService(t, client)
+
+	const admitted = 12
+	for i := 0; i < admitted; i++ {
+		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+	}
+	svc.closer.CloseThenWait()
+
+	if got := client.published.Load(); got != admitted {
+		t.Fatalf("published %d of %d admitted events at shutdown; the rest were stranded",
+			got, admitted)
+	}
+	if got := sink.Dropped(reasonShutdown); got != 0 {
+		t.Fatalf("%d events counted as shutdown_deadline while the deadline had room", got)
+	}
+}
+
+// TestFlushStampsIdentityOnWhatItPublishes is the falsifying assertion for the
+// wiring, not the helper: stamp existing is not enough, flush has to call it.
+// Without it every published element carries an empty node_id -- half the
+// series key, and an input to the shard.
+func TestFlushStampsIdentityOnWhatItPublishes(t *testing.T) {
+	client := &fakeClient{}
+	_, sink := testService(t, client)
+
+	for i := 0; i < 6; i++ {
+		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+	}
+	waitFor(t, "the batch to be published", func() bool {
+		return client.published.Load() >= 6
+	})
+
+	for i, got := range client.seenNodeIDs() {
+		if got != "data-hot-0" {
+			t.Fatalf("published element %d carries node_id %q, want the node's own id", i, got)
+		}
+	}
+}

@@ -65,7 +65,10 @@ type NodeInfo struct {
 // entry pairs a request with the bytes reserved for it, so the accounting
 // settled at flush is exactly the accounting taken at admission.
 type entry struct {
-	req  *streamv1.WriteRequest
+	req *streamv1.WriteRequest
+	// seq is assigned at admission, so the identity stamped later at flush
+	// still reflects the order events arrived in.
+	seq  uint64
 	size int64
 }
 
@@ -195,7 +198,7 @@ func (s *Sink) Admit(level zerolog.Level, module string, line []byte) {
 		return
 	}
 	select {
-	case s.queue <- entry{req: req, size: size}:
+	case s.queue <- entry{req: req, size: size, seq: s.seq.Add(1)}:
 	default:
 		s.queued.Add(-size)
 		s.release(req)
@@ -224,18 +227,16 @@ func (s *Sink) build(level zerolog.Level, module string, line []byte) (*streamv1
 		return nil, err
 	}
 
-	eventTime := time.Now()
-	if t, ok := raw[zerolog.TimestampFieldName]; ok {
-		var parsed string
-		if json.Unmarshal(t, &parsed) == nil {
-			if ts, err := time.Parse(time.RFC3339Nano, parsed); err == nil {
-				eventTime = ts
-			}
-		}
-	}
-	// A sub-millisecond timestamp is rejected by both the liaison validator and
-	// the data node, and zerolog stamps nanoseconds.
-	eventTime = eventTime.Truncate(time.Millisecond)
+	// Taken here rather than parsed back out of the line. zerolog's default
+	// TimeFieldFormat is RFC3339, which carries whole seconds, so the encoded
+	// string cannot order two events from the same second -- and with no index
+	// rules the timestamp is the only orderable key this stream has.
+	//
+	// build runs on the goroutine that emitted the line, microseconds after
+	// zerolog encoded it, so this is still the event's own time rather than the
+	// flush time. Truncated because both the liaison validator and the data node
+	// reject a sub-millisecond remainder.
+	eventTime := time.Now().Truncate(time.Millisecond)
 
 	var message string
 	if m, ok := raw[zerolog.MessageFieldName]; ok {
@@ -259,36 +260,59 @@ func (s *Sink) build(level zerolog.Level, module string, line []byte) (*streamv1
 		fields = encoded
 	}
 
-	node := s.node.Load()
-	if node == nil {
-		node = &NodeInfo{}
-	}
-	elementID := fmt.Sprintf("%s-%d-%d", node.NodeID, s.epoch, s.seq.Add(1))
-
 	req, _ := s.pool.Get().(*streamv1.WriteRequest)
 	if req == nil {
 		req = &streamv1.WriteRequest{}
 	}
 	req.Metadata = &commonv1.Metadata{Group: GroupName, Name: StreamName}
 	req.MessageId = uint64(time.Now().UnixNano())
+	// The identity tags are left blank here and filled by stamp at flush. The
+	// node's own id is not known until its services start, while admission
+	// begins as soon as logging is initialized, so stamping them now would
+	// store the whole startup window under an empty node id -- half the series
+	// key, and an input to the shard.
 	req.Element = &streamv1.ElementValue{
-		ElementId: elementID,
 		Timestamp: timestamppb.New(eventTime),
 		TagFamilies: []*modelv1.TagFamilyForWrite{
 			{Tags: []*modelv1.TagValue{
-				strTag(node.NodeID),
-				strTag(node.NodeType),
+				strTag(""), // node_id, filled by stamp
+				strTag(""), // node_type, filled by stamp
 				strTag(module),
 				strTag(level.String()),
-				strTag(node.GRPCAddress),
-				strTag(node.HTTPAddress),
+				strTag(""), // grpc_address, filled by stamp
+				strTag(""), // http_address, filled by stamp
 				strTag(message),
-				strTag(elementID),
+				strTag(""), // log_id, filled by stamp
 			}},
 			{Tags: []*modelv1.TagValue{binaryTag(fields)}},
 		},
 	}
 	return req, nil
+}
+
+// stamp fills the identity a request could not carry at admission. It runs on
+// the consumer, by which point the node has started and published its own
+// identity, so a line buffered during startup is stored under the same node as
+// one emitted an hour later.
+func (s *Sink) stamp(e entry) {
+	node := s.node.Load()
+	if node == nil {
+		node = &NodeInfo{}
+	}
+	elementID := fmt.Sprintf("%s-%d-%d", node.NodeID, s.epoch, e.seq)
+	tags := e.req.GetElement().GetTagFamilies()[0].GetTags()
+	setStr(tags[0], node.NodeID)
+	setStr(tags[1], node.NodeType)
+	setStr(tags[4], node.GRPCAddress)
+	setStr(tags[5], node.HTTPAddress)
+	setStr(tags[7], elementID)
+	e.req.Element.ElementId = elementID
+}
+
+func setStr(t *modelv1.TagValue, v string) {
+	if str, ok := t.GetValue().(*modelv1.TagValue_Str); ok {
+		str.Str.Value = v
+	}
 }
 
 func strTag(v string) *modelv1.TagValue {

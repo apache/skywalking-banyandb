@@ -71,6 +71,18 @@ BanyanDB, as an observability database, aims to ingest, analyze and store Metric
 			if err = logger.InitWithNative(logging, nativeLogging); err != nil {
 				return err
 			}
+			// Installed for the command actually being run, not in each role's
+			// constructor: NewRoot builds every subcommand, so a constructor
+			// install would attach the sink even when another role was invoked.
+			// A role without a consumer would then admit into a buffer nobody
+			// drains, paying the full build cost per line to count it lost.
+			if cmd.Annotations[nativeLoggingAnnotation] == "supported" {
+				logger.SetNativeSink(NativeLogSink)
+			} else if nativeLogging.Enabled {
+				logger.Warningf(
+					"--logging-native-enabled is not supported by %q; this process's logs are not stored natively",
+					cmd.Name())
+			}
 
 			logger.Infof("CPU Number: %d", cgroups.CPUs())
 			return nil
@@ -122,6 +134,10 @@ func (c *nodeIDProviderValue) String() string {
 func (c *nodeIDProviderValue) Type() string {
 	return "nodeIDProvider"
 }
+
+// nativeLoggingAnnotation marks a role command whose unit list includes a
+// consumer for the native log sink.
+const nativeLoggingAnnotation = "banyandb.io/native-logging"
 
 // NativeLoggingConfig is the native logging configuration the root command
 // parsed. The role commands read it when they build their log service: the

@@ -280,6 +280,14 @@ func (s *Service) flush(ctx context.Context, batch []entry) {
 		size += e.size
 	}
 	defer func() {
+		// Recovered here rather than at the goroutine: run.Go recovers a panic
+		// but does not restart the consumer, and consume settles the closer on
+		// its way out, so one bad batch would end native logging for the life of
+		// the process and leave the buffer charged and undrained.
+		if r := recover(); r != nil {
+			s.sink.dropN(reasonPublishFailed, len(batch))
+			reportf("native log flush panicked, batch dropped: %v", r)
+		}
 		s.sink.queued.Add(-size)
 		s.sink.inFlight.Add(-size)
 		for _, e := range batch {
@@ -295,6 +303,8 @@ func (s *Service) flush(ctx context.Context, batch []entry) {
 
 	messages := make([]bus.Message, 0, len(batch))
 	for _, e := range batch {
+		// The identity is known now even when it was not at admission.
+		s.sink.stamp(e)
 		iwr, err := s.internalRequest(e.req)
 		if err != nil {
 			s.sink.drop(reasonEncodeFailed)

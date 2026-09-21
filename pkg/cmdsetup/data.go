@@ -57,10 +57,6 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 	metaSvc.SetSnapshotPipeline(pipeline)
 	propertyStreamPipeline := queue.Local()
 	metaSvc.SetPropertyPipelineClient(propertyStreamPipeline)
-	// This role runs a consumer, so it is safe to admit into the buffer. The
-	// sink is installed before Init, so the buffer already exists for the
-	// lines emitted while the process is still starting.
-	logger.SetNativeSink(NativeLogSink)
 	logSvc := logging.NewService(NativeLogSink, NativeLoggingConfig, metaSvc, propertyStreamPipeline, pm, metricSvc)
 	logSvc.SetNodeType("data")
 	propertySvc, err := property.NewService(metaSvc, pipeline, propertyStreamPipeline, metricSvc, pm)
@@ -134,5 +130,11 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 		},
 	}
 	dataCmd.Flags().AddFlagSet(dataGroup.RegisterFlags().FlagSet)
+	// This role registers a consumer for the native log sink, so the root
+	// command may safely attach it when this is the command being run.
+	if dataCmd.Annotations == nil {
+		dataCmd.Annotations = map[string]string{}
+	}
+	dataCmd.Annotations[nativeLoggingAnnotation] = "supported"
 	return dataCmd
 }

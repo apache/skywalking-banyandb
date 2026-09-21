@@ -29,8 +29,12 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
+// sampleLine is a real zerolog line: its time is RFC3339 with whole seconds,
+// which is what the default TimeFieldFormat produces. An earlier version of
+// this constant carried nanoseconds, which zerolog never emits, and a test
+// built on it reported that truncation worked on an input that cannot occur.
 const sampleLine = `{"level":"warn","module":"MEASURE","group":"sw_metric",` +
-	`"time":"2026-09-11T10:23:45.123456789Z","message":"flush took longer than expected"}`
+	`"time":"2026-09-11T10:23:45Z","message":"flush took longer than expected"}`
 
 func testSink(t *testing.T) *Sink {
 	t.Helper()
@@ -60,6 +64,8 @@ func TestBuildSplitsKnownKeysFromTheRest(t *testing.T) {
 		t.Fatalf("build: %v", err)
 	}
 
+	// Identity arrives from the consumer, so stamp before asserting on it.
+	s.stamp(entry{req: req, seq: 1})
 	searchable := req.Element.TagFamilies[0].Tags
 	if len(searchable) != len(searchableTags) {
 		t.Fatalf("searchable family has %d tags, schema declares %d",
@@ -86,25 +92,6 @@ func TestBuildSplitsKnownKeysFromTheRest(t *testing.T) {
 		if _, dup := leftover[stored]; dup {
 			t.Fatalf("fields repeats %q, which already has a tag", stored)
 		}
-	}
-}
-
-// TestBuildTruncatesToMilliseconds pins the constraint that would otherwise
-// reject every write: both the liaison validator and the data node refuse a
-// timestamp carrying a sub-millisecond remainder, and zerolog stamps nanoseconds.
-func TestBuildTruncatesToMilliseconds(t *testing.T) {
-	s := testSink(t)
-	req, err := s.build(zerolog.WarnLevel, "MEASURE", []byte(sampleLine))
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	ts := req.Element.Timestamp.AsTime()
-	if ts.Nanosecond()%int(time.Millisecond) != 0 {
-		t.Fatalf("timestamp %v carries a sub-millisecond remainder", ts)
-	}
-	if want := int64(1789122225123); ts.UnixMilli() != want {
-		t.Fatalf("timestamp = %d ms, want %d — the event's own time, not the flush time",
-			ts.UnixMilli(), want)
 	}
 }
 
@@ -207,6 +194,9 @@ func TestEntityOfFollowsTheSchemaOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
+	// Identity is stamped by the consumer, so the entity is only complete once
+	// the request has been through it -- exactly as the write path sees it.
+	s.stamp(entry{req: req, seq: 1})
 	entity := entityOf(req)
 	if len(entity) != len(entityTags) {
 		t.Fatalf("entity has %d values, schema declares %d", len(entity), len(entityTags))
@@ -242,5 +232,77 @@ func TestSchemaAndWritePathAgreeOnTagOrder(t *testing.T) {
 		if !strings.Contains(strings.Join(searchableTags, ","), name) {
 			t.Fatalf("entity tag %q is not among the searchable tags", name)
 		}
+	}
+}
+
+// TestTimestampComesFromAdmissionNotTheEncodedLine is the falsifying assertion
+// for the stored-order property. zerolog's default TimeFieldFormat is RFC3339,
+// which carries whole seconds, so a timestamp parsed back out of the line
+// cannot order two events from the same second -- and with no index rules the
+// timestamp is the only orderable key this stream has.
+//
+// The assertion is that the stored time is NOT the one written in the line.
+func TestTimestampComesFromAdmissionNotTheEncodedLine(t *testing.T) {
+	s := testSink(t)
+	// A whole-second time, exactly as zerolog emits it, and far in the past so
+	// that reusing it would be unmistakable.
+	line := []byte(`{"level":"info","module":"MEASURE","time":"2020-01-01T00:00:00Z","message":"a"}`)
+
+	req, err := s.build(zerolog.InfoLevel, "MEASURE", line)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	ts := req.Element.Timestamp.AsTime()
+	if ts.Year() == 2020 {
+		t.Fatalf("stored timestamp %v was parsed out of the line; it carries only whole seconds", ts)
+	}
+	if ts.Nanosecond()%int(time.Millisecond) != 0 {
+		t.Fatalf("timestamp %v carries a sub-millisecond remainder, which both write paths reject", ts)
+	}
+
+	// Two events more than a millisecond apart must be distinguishable, which
+	// is what a second-resolution source could never provide.
+	time.Sleep(2 * time.Millisecond)
+	later, err := s.build(zerolog.InfoLevel, "MEASURE", line)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if later.Element.Timestamp.AsTime().UnixMilli() == ts.UnixMilli() {
+		t.Fatalf("two events 2ms apart share timestamp %v; stored logs cannot be ordered", ts)
+	}
+}
+
+// TestIdentityIsStampedAtFlushNotAdmission is the falsifying assertion for the
+// startup window: an event admitted before the node knows its own identity must
+// NOT be stored with an empty node_id, because node_id is half the series key
+// and an input to the shard.
+func TestIdentityIsStampedAtFlushNotAdmission(t *testing.T) {
+	s := NewSink(&logger.NativeLogging{
+		Enabled: true, MaxBytes: 1 << 20, MaxEventBytes: 64 << 10, FlushSize: 100, ShardNum: 2,
+	})
+	// No SetNode yet: this is the window between logger initialisation and the
+	// node's services starting.
+	s.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+
+	e := <-s.queue
+	if got := e.req.Element.TagFamilies[0].Tags[0].GetStr().GetValue(); got != "" {
+		t.Fatalf("node_id was %q at admission; it cannot be known yet", got)
+	}
+
+	// The node starts and publishes its identity; the consumer stamps it.
+	s.SetNode(NodeInfo{NodeID: "data-hot-0", NodeType: "data", GRPCAddress: "10.1.2.3:17912"})
+	s.stamp(e)
+
+	tags := e.req.Element.TagFamilies[0].Tags
+	for i, want := range map[int]string{0: "data-hot-0", 1: "data", 4: "10.1.2.3:17912"} {
+		if got := tags[i].GetStr().GetValue(); got != want {
+			t.Fatalf("after stamping, tag %s = %q, want %q", searchableTags[i], got, want)
+		}
+	}
+	if e.req.Element.ElementId == "" || !strings.HasPrefix(e.req.Element.ElementId, "data-hot-0-") {
+		t.Fatalf("element id %q does not carry the node identity", e.req.Element.ElementId)
+	}
+	if got := tags[7].GetStr().GetValue(); got != e.req.Element.ElementId {
+		t.Fatalf("log_id %q does not mirror the element id %q", got, e.req.Element.ElementId)
 	}
 }

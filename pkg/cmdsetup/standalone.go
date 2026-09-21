@@ -54,10 +54,6 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	metricSvc := services.NewMetricService(metaSvc, dataPipeline, "standalone", nil)
 	metaSvc.SetMetricsRegistry(metricSvc)
 	pm := protector.NewMemory(metricSvc)
-	// This role runs a consumer, so it is safe to admit into the buffer. The
-	// sink is installed before Init, so the buffer already exists for the
-	// lines emitted while the process is still starting.
-	logger.SetNativeSink(NativeLogSink)
 	logSvc := logging.NewService(NativeLogSink, NativeLoggingConfig, metaSvc, dataPipeline, pm, metricSvc)
 	logSvc.SetNodeType("standalone")
 	propertySvc, err := property.NewService(metaSvc, dataPipeline, nil, metricSvc, pm)
@@ -145,5 +141,11 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 		},
 	}
 	standaloneCmd.Flags().AddFlagSet(standaloneGroup.RegisterFlags().FlagSet)
+	// This role registers a consumer for the native log sink, so the root
+	// command may safely attach it when this is the command being run.
+	if standaloneCmd.Annotations == nil {
+		standaloneCmd.Annotations = map[string]string{}
+	}
+	standaloneCmd.Annotations[nativeLoggingAnnotation] = "supported"
 	return standaloneCmd
 }
