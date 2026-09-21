@@ -17,6 +17,10 @@
 
 name: "time_bucket_metric"
 groups: ["sw_metric"]
+tagProjection:
+  tagFamilies:
+  - name: "default"
+    tags: ["entity_id"]
 groupBy:
   tagProjection:
     tagFamilies:
