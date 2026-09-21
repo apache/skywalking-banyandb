@@ -1,0 +1,24 @@
+[
+  {
+    "tag_families": [
+      {
+        "tags": [
+          { "str": { "value": "user2" } },
+          { "str": { "value": "keyX" } }
+        ]
+      }
+    ],
+    "fields": [ { "int": { "value": 4 } } ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          { "str": { "value": "user2" } },
+          { "str": { "value": "keyY" } }
+        ]
+      }
+    ],
+    "fields": [ { "int": { "value": 5 } } ]
+  }
+]

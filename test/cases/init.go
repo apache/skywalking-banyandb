@@ -140,6 +140,32 @@ func Initialize(addr string, now time.Time) {
 	// cover that on regular time-series measures). See
 	// group_count_distinct_index_mode.yaml / group_count_index_mode.yaml.
 	casesmeasuredata.Write(conn, "index_mode_distinct_metric", "sw_metric", "index_mode_distinct_metric_data.json", now, 10*time.Second)
+	// cardinality_metric exercises COUNT_DISTINCT combined with
+	// GroupBy.time_bucket (design §7.2/§11 together). Its entity is
+	// [user_id], so a bucketed query must include user_id in GROUP BY (or
+	// target user_id itself) to satisfy §7.4's per-routing-tag pushdown
+	// check -- a pure `GROUP BY TIME_BUCKET(...)` with no tag component,
+	// counting DISTINCT on an unrelated tag (api_key), is correctly
+	// rejected the same way a GroupBy/Agg pair that covers neither the
+	// routing key nor the target always is. `cardinalityBase` is offset
+	// from `now` by a whole number of minutes so it stays minute-aligned,
+	// matching bucketStart's Unix-epoch-origin flooring
+	// (pkg/query/vectorized/measure/timebucket.go) -- every fixture here
+	// uses a bucket width of 1m or a divisor of it (30s). Each bucket
+	// belongs to exactly one user, so no fixture needs a tie-break rule for
+	// two users landing in the same bucket:
+	//   bucket0 [+0s,  +60s):   user1 keyA,keyA,keyB (distinct 2)
+	//   bucket1 [+60s, +120s):  user2 keyX,keyY       (distinct 2)
+	//   bucket2 [+120s,+180s):  user1 keyB,keyB,keyC  (distinct 2)
+	// Across the whole window: user1 sees 3 distinct keys (keyA/keyB/keyC
+	// -- bucket0 ∪ bucket2), user2 sees 2 (keyX/keyY). See
+	// group_count_distinct_time_bucket.yaml,
+	// group_count_distinct_time_bucket_30s.yaml, and
+	// group_count_distinct_top_by_user.yaml.
+	cardinalityBase := now.Add(5 * time.Minute)
+	casesmeasuredata.Write(conn, "cardinality_metric", "sw_metric", "cardinality_metric_u1_b0_data.json", cardinalityBase.Add(30*time.Second), 10*time.Second)
+	casesmeasuredata.Write(conn, "cardinality_metric", "sw_metric", "cardinality_metric_u2_b1_data.json", cardinalityBase.Add(80*time.Second), 10*time.Second)
+	casesmeasuredata.Write(conn, "cardinality_metric", "sw_metric", "cardinality_metric_u1_b2_data.json", cardinalityBase.Add(150*time.Second), 10*time.Second)
 	casesmeasuredata.WriteMixed(conn, now.Add(30*time.Minute), interval,
 		casesmeasuredata.WriteSpec{
 			Metadata: &commonv1.Metadata{Name: "service_cpm_minute", Group: "sw_spec"},
