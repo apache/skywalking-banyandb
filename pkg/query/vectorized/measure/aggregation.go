@@ -376,7 +376,10 @@ func (a *BatchAggregation) Consume(_ context.Context, b *vectorized.RecordBatch)
 	if a.mode != AggModeAll && a.mode != AggModeMap && a.mode != AggModeReduce {
 		return ErrAggModeNotImplemented
 	}
-	active := activeIndices(b)
+	active, activeErr := activeIndices(b)
+	if activeErr != nil {
+		return activeErr
+	}
 	if a.span != nil {
 		a.rowsIn += int64(len(active))
 	}

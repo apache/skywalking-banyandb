@@ -310,7 +310,10 @@ func (bt *BatchTimeBucket) Close() error {
 // whose bucket regresses in streaming mode is a monotonicity violation and
 // fails loudly rather than reopening an already-flushed bucket.
 func (bt *BatchTimeBucket) consumeBatch(ctx context.Context, b *vectorized.RecordBatch) error {
-	active := activeIndices(b)
+	active, activeErr := activeIndices(b)
+	if activeErr != nil {
+		return activeErr
+	}
 	if len(active) == 0 {
 		return nil
 	}
