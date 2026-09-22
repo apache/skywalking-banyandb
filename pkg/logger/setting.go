@@ -201,7 +201,13 @@ func InitWithNative(cfg Logging, native NativeLogging) (err error) {
 	if err = applyNative(native); err != nil {
 		return err
 	}
-	return root.set(cfg)
+	if err = root.set(cfg); err != nil {
+		return err
+	}
+	// After the root is replaced, so a Lazy that sees the new generation
+	// builds from the new root.
+	initGeneration.Add(1)
+	return nil
 }
 
 // getLogger initializes a root logger.

@@ -757,7 +757,7 @@ func (bc *blockCursor) mergeTopNResult(r *model.MeasureResult, storedIndexValue 
 			fieldType,
 		)
 		if mergeErr != nil {
-			log.Error().Err(mergeErr).Msg("failed to merge topN values, skip current batch")
+			log.Get().Error().Err(mergeErr).Msg("failed to merge topN values, skip current batch")
 			continue
 		}
 
@@ -938,7 +938,7 @@ func (bi *blockPointer) appendAll(b *blockPointer) {
 	bi.append(b, len(b.timestamps))
 }
 
-var log = logger.GetLogger("measure").Named("block")
+var log = logger.NewLazy("measure", "block")
 
 func (bi *blockPointer) append(b *blockPointer, offset int) {
 	if offset <= b.idx {
@@ -951,8 +951,8 @@ func (bi *blockPointer) append(b *blockPointer, offset int) {
 		fullFieldAppend(bi, b, offset)
 	} else {
 		if err := fastFieldAppend(bi, b, offset); err != nil {
-			if log.Debug().Enabled() {
-				log.Debug().Msgf("fastFieldAppend failed: %v; falling back to fullFieldAppend", err)
+			if log.Get().Debug().Enabled() {
+				log.Get().Debug().Msgf("fastFieldAppend failed: %v; falling back to fullFieldAppend", err)
 			}
 			fullFieldAppend(bi, b, offset)
 		}
@@ -1179,7 +1179,7 @@ func (bi *blockPointer) mergeAndAppendTopN(
 			fieldType,
 		)
 		if mergeErr != nil {
-			log.Error().Err(mergeErr).Msg("both sides of topN value are malformed, append empty value")
+			log.Get().Error().Err(mergeErr).Msg("both sides of topN value are malformed, append empty value")
 			bi.field.columns[idx].values = append(bi.field.columns[idx].values, []byte{})
 			continue
 		}
@@ -1204,8 +1204,8 @@ func (bi *blockPointer) appendTagFamilies(b *blockPointer, offset int) {
 	}
 
 	if err := fastTagAppend(bi, b, offset); err != nil {
-		if log.Debug().Enabled() {
-			log.Debug().Msgf("fastTagAppend failed: %v; falling back to fullTagAppend", err)
+		if log.Get().Debug().Enabled() {
+			log.Get().Debug().Msgf("fastTagAppend failed: %v; falling back to fullTagAppend", err)
 		}
 		fullTagAppend(bi, b, offset)
 	}

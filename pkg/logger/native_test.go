@@ -428,3 +428,33 @@ func TestApplyNativeRejectsBadValues(t *testing.T) {
 		})
 	}
 }
+
+// TestLazyLoggerGetsNativeAfterInit is the falsifying assertion for the early
+// loggers. Both loggers are created before InitWithNative, as a package-level
+// var is. The one from GetLogger keeps the writers it was built with and never
+// reaches the sink; the Lazy one, although used once before initialization,
+// rebuilds after it and does.
+func TestLazyLoggerGetsNativeAfterInit(t *testing.T) {
+	defer swapConsoleTarget(io.Discard)()
+	early := GetLogger("early")
+	lazy := NewLazy("early")
+	_ = lazy.Get()
+
+	sink := withNative(t, Logging{Env: "prod", Level: "error"}, NativeLogging{Enabled: true, Level: "info"})
+	early.Info().Msg("from the eager logger")
+	lazy.Get().Info().Msg("from the lazy logger")
+
+	var eager, lazyLine bool
+	sink.mu.Lock()
+	for _, e := range sink.entries {
+		eager = eager || strings.Contains(e.line, "from the eager logger")
+		lazyLine = lazyLine || strings.Contains(e.line, "from the lazy logger")
+	}
+	sink.mu.Unlock()
+	if !lazyLine {
+		t.Fatal("the Lazy logger used before InitWithNative did not reach the sink after it")
+	}
+	if eager {
+		t.Fatal("a logger built before InitWithNative reached the sink; the test no longer shows the problem it guards")
+	}
+}

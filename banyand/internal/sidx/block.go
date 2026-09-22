@@ -451,7 +451,7 @@ func (bi *blockPointer) appendAll(b *blockPointer) {
 	bi.append(b, len(b.userKeys))
 }
 
-var log = logger.GetLogger("sidx").Named("block")
+var log = logger.NewLazy("sidx", "block")
 
 func (bi *blockPointer) append(b *blockPointer, offset int) {
 	if offset <= b.idx {
@@ -461,8 +461,8 @@ func (bi *blockPointer) append(b *blockPointer, offset int) {
 		fullTagAppend(bi, b, offset)
 	} else {
 		if err := fastTagAppend(bi, b, offset); err != nil {
-			if log.Debug().Enabled() {
-				log.Debug().Msgf("fastTagMerge failed: %v; falling back to fullTagMerge", err)
+			if log.Get().Debug().Enabled() {
+				log.Get().Debug().Msgf("fastTagMerge failed: %v; falling back to fullTagMerge", err)
 			}
 			fullTagAppend(bi, b, offset)
 		}
