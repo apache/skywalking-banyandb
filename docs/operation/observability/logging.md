@@ -97,13 +97,20 @@ The flags live in their own namespace, `--logging-native-*` with `BYDB_LOGGING_N
 |---|---|---|
 | `--logging-native-enabled` | `false` | store this process's own logs |
 | `--logging-native-level` | `info` | minimum level reaching storage, independent of `--logging-level` |
+| `--logging-native-modules` / `--logging-native-levels` | – | per-module native levels, one level per module, matched like `--logging-modules`; an excluded module stays excluded |
 | `--logging-native-exclude-modules` | built-in set | module prefixes never stored; replaces the built-in set rather than adding to it |
 | `--logging-native-flush-interval` | `1s` | longest a buffered event waits |
-| `--logging-native-flush-size` | `100` | buffered events that trigger a write ahead of the interval |
+| `--logging-native-flush-size` | `100` | buffered events that trigger a write ahead of the interval; a batch also closes at a quarter of the buffer budget |
+| `--logging-native-write-timeout` | `5s` | time limit for one batch write |
+| `--logging-native-drain-timeout` | `5s` | time limit for writing what is still buffered at shutdown; the last write can add up to `--logging-native-write-timeout` |
 | `--logging-native-max-bytes` | `32mb` | cap on the buffer |
 | `--logging-native-max-event-bytes` | `64kb` | larger events are dropped whole rather than truncated |
-| `--logging-native-shard-num` | `2` | shards of `_monitoring_log`; raisable later through the group schema |
-| `--logging-native-ttl-days` | `7` | retention |
+| `--logging-native-memory-fraction` | `0.02` | where a memory protector runs, the buffer may use this fraction of available memory after the reserve; in `(0, 1]` |
+| `--logging-native-memory-reserve` | `64mb` | available memory kept out of that budget |
+| `--logging-native-shard-num` | `2` | shards of `_monitoring_log`, used when the group is created; a node that finds the group already there follows the group's count and logs a warning if the flag differs |
+| `--logging-native-ttl-days` | `7` | retention, used when the group is created; a different value on a later node is reported and ignored |
+
+The buffer budget is `min(max-bytes, memory-fraction × (available − memory-reserve))` where a memory protector runs, and `max-bytes` elsewhere.
 
 Because the two destinations have independent thresholds, native can be the more verbose of the two. Running normal logging at `error` and native at `info` keeps stderr quiet while the database retains the `info` and `warn` events that describe what a node was doing beforehand:
 
@@ -113,9 +120,9 @@ Because the two destinations have independent thresholds, native can be the more
 | `info`, `warn` | dropped | stored |
 | `error` | printed | stored |
 
-Note the consequence: an `info` event dropped by the buffer has no copy on stderr. Losses are counted rather than silent, under `banyandb_logging_native_log_dropped_total{reason}`, with `banyandb_logging_native_log_written_total` and the buffer gauges alongside. Those counters travel the same transport as the events they count, so keeping `--observability-modes=prometheus` enabled is what makes a loss visible during an outage.
+Note the consequence: an `info` event dropped by the buffer has no copy on stderr. Losses are counted rather than silent, under `banyandb_logging_native_log_dropped_total{reason}`, with `banyandb_logging_native_log_written_total` and the buffer gauges alongside. `banyandb_logging_native_log_buffer_bytes` has a `state` label: `queued` is waiting to be written and `in_flight` is being written, so a stalled write shows as `in_flight` that does not fall. Those counters travel the same transport as the events they count, so keeping `--observability-modes=prometheus` enabled is what makes a loss visible during an outage.
 
-The `reason` label takes one of eight values, so a loss is always attributable to a stage:
+The `reason` label takes one of nine values, so a loss is always attributable to a stage:
 
 | `reason` | Meaning | What to do |
 |---|---|---|
@@ -125,7 +132,8 @@ The `reason` label takes one of eight values, so a loss is always attributable t
 | `encode_failed` | the line was not the JSON the sink expects | a bug; report it with the module name |
 | `publish_failed` | the batch did not reach storage | look at the write path — the whole batch is lost, never re-queued |
 | `schema_unavailable` | the group or stream could not be created yet | usually transient at startup; retried every 10s |
-| `schema_incompatible` | a `log` stream exists with a shape this version cannot write | drop and recreate the `_monitoring_log` group; retrying will not fix it |
+| `schema_incompatible` | a `log` stream exists with a shape this version cannot write | drop and recreate the `_monitoring_log` group; retrying will not fix it. The error is logged once |
+| `destination_unready` | the local write path still had no subscriber after 10 retries, one per flush interval | expected only at startup; if it persists, the stream service did not start |
 | `shutdown_deadline` | still buffered when the drain deadline passed | expected on a busy node during shutdown |
 
 The modules on the write path the sink publishes through are never stored: admitting them would let one stored line produce the next. The buffer is bounded and in-memory only -- no queue files, no write-ahead log, no disk fallback -- and it never blocks the caller: over budget the newest event is dropped and counted, so a burst keeps the head that explains it.
