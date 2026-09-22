@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/tui/session"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 const (
@@ -111,14 +112,36 @@ func validateSelectShape(plan QueryPlan) error {
 	if plan.Resource.Type != session.ResourceTypeMeasure && aggregateCount != 0 {
 		return fmt.Errorf("aggregations are supported only for MEASURE queries")
 	}
-	if plan.Resource.Type != session.ResourceTypeMeasure && len(plan.GroupBy) != 0 {
+	if plan.Resource.Type != session.ResourceTypeMeasure && (len(plan.GroupBy) != 0 || plan.TimeBucket != nil) {
 		return fmt.Errorf("GROUP BY is supported only for MEASURE queries")
 	}
-	if len(plan.GroupBy) != 0 && aggregateCount != 1 {
+	if (len(plan.GroupBy) != 0 || plan.TimeBucket != nil) && aggregateCount != 1 {
 		return fmt.Errorf("GROUP BY requires exactly one aggregate")
+	}
+	if orderingErr := validateBucketedOrdering(plan); orderingErr != nil {
+		return orderingErr
 	}
 	if plan.ProjectionMode == ProjectionModeNone && aggregateCount != 0 {
 		return fmt.Errorf("projection_mode NONE cannot be combined with an aggregate")
+	}
+	return nil
+}
+
+// validateBucketedOrdering mirrors the server's own validateBucketableOrdering:
+// a bucketed query may name no index rule, because a non-time rule resolves to
+// a different scan order entirely, and may not order descending, because
+// BatchTimeBucket's streaming path assumes ascending time specifically rather
+// than merely time-ordered input. Rejecting here keeps the planner from
+// compiling a query that could only fail once it reached the server.
+func validateBucketedOrdering(plan QueryPlan) error {
+	if plan.TimeBucket == nil || plan.OrderBy == nil {
+		return nil
+	}
+	if strings.TrimSpace(plan.OrderBy.IndexRule) != "" {
+		return fmt.Errorf("time_bucket requires time ordering; order_by.index_rule is not supported on a bucketed query")
+	}
+	if plan.OrderBy.Direction == OrderDescending {
+		return fmt.Errorf("time_bucket requires ascending time order; order_by.direction DESC is not supported on a bucketed query")
 	}
 	return nil
 }
@@ -181,7 +204,7 @@ func compileSelect(plan QueryPlan, schema session.SchemaSnapshot) (string, error
 	if projectionErr != nil {
 		return "", projectionErr
 	}
-	groups, groupsErr := compileGroups(plan.GroupBy, plan.Projection, plan.ProjectionMode, schema)
+	groups, groupsErr := compileGroups(plan.GroupBy, plan.TimeBucket, plan.Projection, plan.ProjectionMode, schema)
 	if groupsErr != nil {
 		return "", groupsErr
 	}
@@ -219,8 +242,10 @@ func compileSelect(plan QueryPlan, schema session.SchemaSnapshot) (string, error
 }
 
 func compileTopN(plan QueryPlan, schema session.SchemaSnapshot) (string, error) {
-	if len(plan.Projection) != 0 || plan.ProjectionMode != "" || len(plan.GroupBy) != 0 || plan.Limit != 0 {
-		return "", fmt.Errorf("TOPN plans do not support projection, projection_mode, group_by, or limit")
+	// TimeBucket belongs here too: compileTopN never renders it, so a TOPN
+	// plan carrying one would otherwise drop it silently.
+	if len(plan.Projection) != 0 || plan.ProjectionMode != "" || len(plan.GroupBy) != 0 || plan.Limit != 0 || plan.TimeBucket != nil {
+		return "", fmt.Errorf("TOPN plans do not support projection, projection_mode, group_by, time_bucket, or limit")
 	}
 	if plan.Aggregate != nil && strings.TrimSpace(plan.Aggregate.Column) != "" {
 		return "", fmt.Errorf("TOPN aggregation cannot select a column")
@@ -241,6 +266,12 @@ func compileTopN(plan QueryPlan, schema session.SchemaSnapshot) (string, error) 
 	}
 	if !isAggregateFunction(function) {
 		return "", fmt.Errorf("unsupported TOPN aggregation %q", function)
+	}
+	// GrammarTopNAggregateFunction (the legacy SHOW TOP N ... AGGREGATE BY
+	// grammar) has no DISTINCT production at all — isAggregateFunction alone
+	// would let this compile to text the parser can't accept.
+	if function == AggregateCountDistinct {
+		return "", fmt.Errorf("TOPN aggregation does not support COUNT_DISTINCT")
 	}
 	direction := OrderDescending
 	if plan.OrderBy != nil {
@@ -329,6 +360,29 @@ func compileAggregate(aggregate Aggregate, resource Resource, schema session.Sch
 	if columnErr != nil {
 		return "", columnErr
 	}
+	// COUNT_DISTINCT is the one function that accepts either column kind
+	// (design §6 matrix: numeric fields plus every tag type that is not an
+	// array or a timestamp), so it must branch before the field-only checks
+	// below rather than extend them.
+	if aggregate.Function == AggregateCountDistinct {
+		if column.Kind == session.SchemaColumnField {
+			if column.Type != session.SchemaValueTypeInt && column.Type != session.SchemaValueTypeFloat {
+				return "", diagnosticError("AGGREGATE_FIELD_NOT_NUMERIC", "/aggregate/column", fmt.Sprintf("aggregation field %q must be numeric", aggregate.Column))
+			}
+			return fmt.Sprintf("COUNT(DISTINCT %s)", column.Name), nil
+		}
+		switch column.Type {
+		case session.SchemaValueTypeStringArray, session.SchemaValueTypeIntArray, session.SchemaValueTypeTimestamp:
+			return "", diagnosticError("AGGREGATE_TAG_TYPE_UNSUPPORTED", "/aggregate/column",
+				fmt.Sprintf("COUNT_DISTINCT column %q has an unsupported tag type %q", aggregate.Column, column.Type))
+		default:
+			// Every other tag type is supported (design §6 matrix: COUNT_DISTINCT
+			// accepts any tag type that isn't an array or a timestamp).
+		}
+		// COUNT(DISTINCT col), not COUNT_DISTINCT(col) — the generic
+		// "%s(%s)" formatter below would emit invalid BYDBQL syntax.
+		return fmt.Sprintf("COUNT(DISTINCT %s)", column.Name), nil
+	}
 	if column.Kind != session.SchemaColumnField {
 		return "", diagnosticError("AGGREGATE_COLUMN_NOT_FIELD", "/aggregate/column", fmt.Sprintf("aggregation column %q must be a field", aggregate.Column))
 	}
@@ -338,11 +392,38 @@ func compileAggregate(aggregate Aggregate, resource Resource, schema session.Sch
 	return fmt.Sprintf("%s(%s)", aggregate.Function, column.Name), nil
 }
 
-func compileGroups(groups []string, projections []Projection, projectionMode ProjectionMode, schema session.SchemaSnapshot) (string, error) {
-	if len(groups) == 0 {
+func compileGroups(
+	groups []string, timeBucket *GroupByTimeBucket, projections []Projection, projectionMode ProjectionMode, schema session.SchemaSnapshot,
+) (string, error) {
+	if len(groups) == 0 && timeBucket == nil {
 		return "", nil
 	}
-	compiled := make([]string, 0, len(groups))
+	compiled := make([]string, 0, len(groups)+1)
+	// TIME_BUCKET is the leading group key when present — a synthetic
+	// pseudo-column, not a real schema column, so it bypasses typedColumn
+	// resolution and the "must also be projected" check below.
+	if timeBucket != nil {
+		if timeBucket.Width != "" {
+			// Apply the server's own rule (plan.resolveTimeBucket) before the
+			// width reaches the rendered literal: it must parse as a duration
+			// and be positive. Every other value compiled here is resolved
+			// against the schema, so this is the one free-form string that
+			// would otherwise be interpolated unchecked -- a non-duration or
+			// quote-bearing width would render BYDBQL the parser rejects.
+			width, widthErr := timestamp.ParseDuration(timeBucket.Width)
+			if widthErr != nil {
+				return "", diagnosticError("GROUP_BY_TIME_BUCKET_WIDTH_INVALID", "/time_bucket/width",
+					fmt.Sprintf("time_bucket width %q is not a valid duration", timeBucket.Width))
+			}
+			if width <= 0 {
+				return "", diagnosticError("GROUP_BY_TIME_BUCKET_WIDTH_INVALID", "/time_bucket/width",
+					fmt.Sprintf("time_bucket width %q must be positive", timeBucket.Width))
+			}
+			compiled = append(compiled, fmt.Sprintf("TIME_BUCKET('%s')", timeBucket.Width))
+		} else {
+			compiled = append(compiled, "TIME_BUCKET()")
+		}
+	}
 	fieldCount := 0
 	for _, group := range groups {
 		column, columnErr := typedColumn(group, schema)

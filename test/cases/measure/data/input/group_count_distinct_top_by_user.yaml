@@ -15,18 +15,24 @@
 # specific language governing permissions and limitations
 # under the License.
 
-name: "time_bucket_metric"
+name: "cardinality_metric"
 groups: ["sw_metric"]
 tagProjection:
   tagFamilies:
   - name: "default"
-    tags: ["entity_id"]
+    tags: ["user_id"]
 groupBy:
   tagProjection:
     tagFamilies:
     - name: "default"
-      tags: ["entity_id"]
+      tags: ["user_id"]
 agg:
   function: "AGGREGATION_FUNCTION_COUNT_DISTINCT"
-  tagName: "id"
+  tagName: "api_key"
   tagFamily: "default"
+top:
+  number: 2
+  fieldName: "api_key"
+  fieldValueSort: "SORT_DESC"
+limit: 1
+offset: 1
