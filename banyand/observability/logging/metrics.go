@@ -34,7 +34,7 @@ var logScope = observability.RootScope.SubScope("logging")
 var allReasons = []string{
 	reasonBufferFull, reasonMemoryReserve, reasonOversizeEvent,
 	reasonEncodeFailed, reasonPublishFailed, reasonSchemaMissing,
-	reasonSchemaIncompatible, reasonShutdown,
+	reasonSchemaIncompatible, reasonDestinationUnready, reasonShutdown,
 }
 
 // metrics reports what the sink lost and what it wrote. They are gauges rather
@@ -55,7 +55,7 @@ func newMetrics(omr observability.MetricsRegistry) *metrics {
 	return &metrics{
 		dropped:      factory.NewGauge("native_log_dropped_total", "reason"),
 		written:      factory.NewGauge("native_log_written_total"),
-		bufferBytes:  factory.NewGauge("native_log_buffer_bytes"),
+		bufferBytes:  factory.NewGauge("native_log_buffer_bytes", "state"),
 		bufferBudget: factory.NewGauge("native_log_buffer_budget_bytes"),
 	}
 }
@@ -68,6 +68,15 @@ func (m *metrics) observe(s *Sink) {
 		m.dropped.Set(float64(s.Dropped(reason)), reason)
 	}
 	m.written.Set(float64(s.Written()))
-	m.bufferBytes.Set(float64(s.QueuedBytes()))
+	// QueuedBytes includes the batch in flight, so the two states are split
+	// here. The loads are not atomic together; a negative difference is a
+	// flush settling between them, not bytes that exist.
+	inFlight := s.InFlightBytes()
+	waiting := s.QueuedBytes() - inFlight
+	if waiting < 0 {
+		waiting = 0
+	}
+	m.bufferBytes.Set(float64(waiting), "queued")
+	m.bufferBytes.Set(float64(inFlight), "in_flight")
 	m.bufferBudget.Set(float64(s.budgetBytes()))
 }

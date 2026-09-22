@@ -45,6 +45,10 @@ const (
 	schemaTimeout = 5 * time.Second
 	// schemaRetryInterval is how often a failed schema creation is retried.
 	schemaRetryInterval = 10 * time.Second
+	// destinationRetries bounds how many ticks a batch is held while the local
+	// write topic has no subscriber. At the default one-second interval that
+	// covers ten seconds of startup; past it the batch is dropped and counted.
+	destinationRetries = 10
 )
 
 // Service owns the consumer that drains the sink and writes what it finds.
@@ -62,6 +66,11 @@ type Service struct {
 	pm       protector.Memory
 	cfg      *logger.NativeLogging
 	node     NodeInfo
+	// pending is a batch held back because the local write topic had no
+	// subscriber yet. It is retried with the next tick's batch.
+	pending []entry
+	// unreadyAttempts counts the consecutive attempts that found no subscriber.
+	unreadyAttempts int
 	// shardNum is the group's shard count, not the flag's. Routing must divide
 	// by what the group was created with: the storage layer does not range-check
 	// an incoming shard id, and a shard above the group's count is skipped on the
@@ -182,28 +191,63 @@ func (s *Service) consume(ctx context.Context) {
 	defer retry.Stop()
 
 	batch := make([]entry, 0, s.cfg.FlushSize)
+	var batchBytes int64
 	stop := s.closer.CloseNotify()
 	for {
 		select {
 		case <-stop:
-			s.drain(ctx, batch)
+			// A batch held back for a retry is drained with the rest.
+			s.drain(ctx, append(s.pending, batch...))
+			s.pending = nil
 			return
 		case <-retry.C:
 			s.retrySchema(ctx)
 		case <-ticker.C:
 			s.report()
-			if len(batch) > 0 {
-				s.flush(ctx, batch)
-				batch = batch[:0]
+			if len(batch) > 0 || len(s.pending) > 0 {
+				batch = s.flushPending(ctx, batch)
+				batchBytes = 0
 			}
 		case e := <-s.sink.queue:
 			batch = append(batch, e)
-			if len(batch) >= s.cfg.FlushSize {
-				s.flush(ctx, batch)
-				batch = batch[:0]
+			batchBytes += e.size
+			// While a batch is held back, new entries wait for the next tick, so
+			// the retries run once per interval and not once per incoming event.
+			if len(s.pending) == 0 && s.batchFull(len(batch), batchBytes) {
+				batch = s.flushPending(ctx, batch)
+				batchBytes = 0
 			}
 		}
 	}
+}
+
+// batchFull reports whether a batch has reached a flush trigger: the event
+// count, or a quarter of the byte budget. The byte limit keeps one slow
+// publish from holding most of the budget in flight, which would stall
+// admission while it runs.
+func (s *Service) batchFull(n int, bytes int64) bool {
+	if n >= s.cfg.FlushSize {
+		return true
+	}
+	limit := s.sink.budgetBytes() / 4
+	return limit > 0 && bytes >= limit
+}
+
+// flushPending publishes what an earlier attempt held back together with
+// batch, and returns batch emptied for reuse.
+func (s *Service) flushPending(ctx context.Context, batch []entry) []entry {
+	work := batch
+	if len(s.pending) > 0 {
+		work = make([]entry, 0, len(s.pending)+len(batch))
+		work = append(work, s.pending...)
+		work = append(work, batch...)
+	}
+	s.pending = nil
+	if kept := s.flush(ctx, work, true); kept != nil {
+		// Copied, because batch's backing array is reused by the caller.
+		s.pending = append([]entry(nil), kept...)
+	}
+	return batch[:0]
 }
 
 // report publishes the sink's own counters. They travel the same transport as
@@ -246,12 +290,19 @@ func (s *Service) applySchema(state schemaState, err error) {
 		s.warnOnce(&s.warnedShard, state.shardMismatch)
 		s.warnOnce(&s.warnedTTL, state.ttlMismatch)
 	case errors.Is(err, errSchemaIncompatible):
+		// Logged when the stream becomes incompatible, not on every pass: the
+		// pass repeats every schemaRetryInterval, and an error line every ten
+		// seconds for as long as the stream is wrong would bury everything
+		// else. A later success clears the flag, so a recurrence is logged too.
+		first := !s.incompatible
 		s.ready = false
 		s.incompatible = true
-		s.l.Error().Err(err).Msgf(
-			"the %q stream in %q cannot store this version's log events; "+
-				"drop and recreate it to enable native logging",
-			StreamName, GroupName)
+		if first {
+			s.l.Error().Err(err).Msgf(
+				"the %q stream in %q cannot store this version's log events; "+
+					"drop and recreate it to enable native logging",
+				StreamName, GroupName)
+		}
 	case !s.ready:
 		// Never established. Not fatal: the buffer keeps accepting and the
 		// consumer retries, so a late metadata service costs nothing permanent.
@@ -301,7 +352,8 @@ func (s *Service) drain(ctx context.Context, batch []entry) {
 		if len(batch) == 0 {
 			break
 		}
-		s.flush(ctx, batch)
+		// Not retainable: at shutdown there is no next tick to retry on.
+		s.flush(ctx, batch, false)
 		batch = batch[:0]
 		if len(s.sink.queue) == 0 {
 			break
@@ -322,24 +374,36 @@ func (s *Service) drain(ctx context.Context, batch []entry) {
 }
 
 // flush turns one batch into write requests and publishes it. Every path
-// releases the requests back to the pool and settles the byte accounting, so a
-// failure costs the batch and nothing more.
-func (s *Service) flush(ctx context.Context, batch []entry) {
+// that does not keep the batch releases the requests back to the pool and
+// settles the byte accounting, so a failure costs the batch and nothing more.
+//
+// It keeps the batch -- still charged, still alive -- only when retainable is
+// set and the local write topic has no subscriber yet. The stream service
+// registers that topic and can start after the first flush, and the lines that
+// lose that race are the startup lines, which are the ones worth keeping. The
+// caller retries a kept batch on the next tick, up to destinationRetries times.
+func (s *Service) flush(ctx context.Context, batch []entry, retainable bool) (kept []entry) {
 	var size int64
 	for _, e := range batch {
 		size += e.size
 	}
+	encodeFailed := 0
 	defer func() {
 		// Recovered here rather than at the goroutine: run.Go recovers a panic
 		// but does not restart the consumer, and consume settles the closer on
 		// its way out, so one bad batch would end native logging for the life of
 		// the process and leave the buffer charged and undrained.
 		if r := recover(); r != nil {
-			s.sink.dropN(reasonPublishFailed, len(batch))
+			kept = nil
+			s.sink.dropN(reasonPublishFailed, len(batch)-encodeFailed)
 			reportf("native log flush panicked, batch dropped: %v", r)
 		}
-		s.sink.queued.Add(-size)
 		s.sink.inFlight.Add(-size)
+		if kept != nil {
+			// Still charged as queued: the bytes are held until the retry.
+			return
+		}
+		s.sink.queued.Add(-size)
 		for _, e := range batch {
 			s.sink.release(e.req)
 		}
@@ -352,7 +416,7 @@ func (s *Service) flush(ctx context.Context, batch []entry) {
 			reason = reasonSchemaIncompatible
 		}
 		s.sink.dropN(reason, len(batch))
-		return
+		return nil
 	}
 
 	messages := make([]bus.Message, 0, len(batch))
@@ -361,6 +425,7 @@ func (s *Service) flush(ctx context.Context, batch []entry) {
 		s.sink.stamp(e)
 		iwr, err := s.internalRequest(e.req)
 		if err != nil {
+			encodeFailed++
 			s.sink.drop(reasonEncodeFailed)
 			continue
 		}
@@ -368,7 +433,7 @@ func (s *Service) flush(ctx context.Context, batch []entry) {
 			bus.MessageID(time.Now().UnixNano()), "", iwr))
 	}
 	if len(messages) == 0 {
-		return
+		return nil
 	}
 
 	publisher := s.pipeline.NewBatchPublisher(s.cfg.WriteTimeout)
@@ -387,14 +452,28 @@ func (s *Service) flush(ctx context.Context, batch []entry) {
 		// discarding it means a refused batch is counted as written.
 		err = rejection(nodeErrs)
 	}
-	if err != nil {
-		// The sink never logs through the logging path it publishes on, so a
-		// failure here goes straight to stderr rather than back into itself.
+	unready := errors.Is(err, bus.ErrTopicNotExist)
+	// A batch with an encode failure is not kept: that entry is already
+	// counted, and a retry would count it again on every attempt.
+	if unready && retainable && encodeFailed == 0 && s.unreadyAttempts < destinationRetries {
+		s.unreadyAttempts++
+		return batch
+	}
+	// The sink never logs through the logging path it publishes on, so a
+	// failure here goes straight to stderr rather than back into itself.
+	switch {
+	case unready:
+		s.unreadyAttempts = 0
+		s.sink.dropN(reasonDestinationUnready, len(messages))
+		reportf("native log destination still has no subscriber, batch dropped: %v", err)
+	case err != nil:
 		s.sink.dropN(reasonPublishFailed, len(messages))
 		reportf("native log publish failed: %v", err)
-		return
+	default:
+		s.unreadyAttempts = 0
+		s.sink.written.Add(uint64(len(messages)))
 	}
-	s.sink.written.Add(uint64(len(messages)))
+	return nil
 }
 
 // rejection turns a publisher's per-destination error map into one error. Any

@@ -50,6 +50,10 @@ const (
 	// incompatible one is a stream that has to be dropped by hand and will
 	// never resolve on its own.
 	reasonSchemaIncompatible = "schema_incompatible"
+	// reasonDestinationUnready counts a batch dropped because the local write
+	// topic still had no subscriber after the bounded retries. The stream
+	// service registers that topic and can start after the first flush.
+	reasonDestinationUnready = "destination_unready"
 	reasonShutdown           = "shutdown_deadline"
 )
 
@@ -152,8 +156,12 @@ func (s *Sink) Dropped(reason string) uint64 {
 // Written reports how many events reached a destination.
 func (s *Sink) Written() uint64 { return s.written.Load() }
 
-// QueuedBytes reports the bytes currently held in the buffer.
+// QueuedBytes reports the bytes currently held in the buffer, including the
+// batch being published.
 func (s *Sink) QueuedBytes() int64 { return s.queued.Load() }
+
+// InFlightBytes reports the bytes of the batch being published.
+func (s *Sink) InFlightBytes() int64 { return s.inFlight.Load() }
 
 func (s *Sink) drop(reason string) {
 	if c, ok := s.dropped[reason]; ok {

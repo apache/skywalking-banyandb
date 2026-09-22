@@ -18,9 +18,11 @@
 package logging
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -49,15 +51,28 @@ type fakeClient struct {
 	// sink held.
 	nodeIDs []string
 	// timeouts records the timeout each publisher was created with.
-	timeouts  []time.Duration
-	published atomic.Int64
+	timeouts []time.Duration
+	// batchSizes records the message count of every Publish.
+	batchSizes []int
+	published  atomic.Int64
 	// publishDelay slows every Publish, in nanoseconds, to hold a batch in flight.
-	publishDelay   atomic.Int64
+	publishDelay atomic.Int64
+	// unreadyFor makes the next N Close calls answer as a local bus with no
+	// subscriber on the topic: a nil map and bus.ErrTopicNotExist.
+	unreadyFor atomic.Int64
+	// closes counts Close calls, which is one per publish attempt.
+	closes         atomic.Int64
 	mu             sync.Mutex
 	panicOnPublish atomic.Bool
 	// rejectOnClose makes Close answer the way localBatchPublisher answers a
 	// refused batch: a populated per-node map alongside a NIL error.
 	rejectOnClose atomic.Bool
+}
+
+func (f *fakeClient) seenBatchSizes() []int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]int(nil), f.batchSizes...)
 }
 
 func (f *fakeClient) seenTimeouts() []time.Duration {
@@ -115,6 +130,7 @@ func (p *fakePublisher) Publish(_ context.Context, _ bus.Topic, messages ...bus.
 	p.client.published.Add(int64(len(messages)))
 	p.client.mu.Lock()
 	defer p.client.mu.Unlock()
+	p.client.batchSizes = append(p.client.batchSizes, len(messages))
 	for _, m := range messages {
 		iwr, ok := m.Data().(*streamv1.InternalWriteRequest)
 		if !ok {
@@ -127,6 +143,11 @@ func (p *fakePublisher) Publish(_ context.Context, _ bus.Topic, messages ...bus.
 }
 
 func (p *fakePublisher) Close() (map[string]*common.Error, error) {
+	p.client.closes.Add(1)
+	if p.client.unreadyFor.Load() > 0 {
+		p.client.unreadyFor.Add(-1)
+		return nil, bus.ErrTopicNotExist
+	}
 	if p.client.rejectOnClose.Load() {
 		// Exactly banyand/queue/local.go:163-167 -- the map carries the
 		// rejection and the error return is nil.
@@ -178,6 +199,17 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
+// waitSettled waits until nothing is charged. flush counts an outcome in its
+// body and settles the bytes in its defer, so a test that reads the byte
+// counters the moment an outcome is counted can still see them charged. A real
+// leak never settles, so it still fails, by timeout.
+func waitSettled(t *testing.T, sink *Sink) {
+	t.Helper()
+	waitFor(t, "every charged byte to be settled", func() bool {
+		return sink.QueuedBytes() == 0 && sink.InFlightBytes() == 0
+	})
+}
+
 // TestEveryAdmittedEventIsWrittenOrCounted is the accounting invariant: on the
 // healthy path nothing is admitted and then silently lost.
 func TestEveryAdmittedEventIsWrittenOrCounted(t *testing.T) {
@@ -192,16 +224,15 @@ func TestEveryAdmittedEventIsWrittenOrCounted(t *testing.T) {
 		return client.published.Load() == int64(admitted)
 	})
 
-	var dropped uint64
-	for _, r := range allReasons {
-		dropped += sink.Dropped(r)
-	}
-	if got := sink.Written() + dropped; got != admitted {
-		t.Fatalf("admitted %d, but written+dropped = %d; events were lost silently", admitted, got)
-	}
-	if sink.QueuedBytes() != 0 {
-		t.Fatalf("%d bytes still charged after every event was written", sink.QueuedBytes())
-	}
+	// Publish is counted before the outcome is, so wait for the outcome.
+	waitFor(t, "every admitted event to be written or counted as dropped", func() bool {
+		var dropped uint64
+		for _, r := range allReasons {
+			dropped += sink.Dropped(r)
+		}
+		return sink.Written()+dropped == admitted
+	})
+	waitSettled(t, sink)
 }
 
 // TestConsumerSurvivesAPanicInFlush is the falsifying assertion for the
@@ -228,10 +259,7 @@ func TestConsumerSurvivesAPanicInFlush(t *testing.T) {
 		return client.published.Load() >= 5
 	})
 
-	if sink.QueuedBytes() != 0 {
-		t.Fatalf("%d bytes still charged after a panicking flush; the accounting leaked",
-			sink.QueuedBytes())
-	}
+	waitSettled(t, sink)
 }
 
 // TestShutdownDrainsWhatWasAdmitted covers the drain path: admission stops
@@ -302,9 +330,7 @@ func TestRejectedBatchIsCountedAsLostNotWritten(t *testing.T) {
 		t.Fatalf("written_total = %d after every batch was refused; "+
 			"Close reported the rejection in its map, not its error", got)
 	}
-	if got := sink.QueuedBytes(); got != 0 {
-		t.Fatalf("%d bytes still charged after the refused batches settled", got)
-	}
+	waitSettled(t, sink)
 }
 
 // TestAcceptedBatchIsStillCountedAsWritten guards the other direction: reading
@@ -443,4 +469,183 @@ func TestMemoryFlagsShapeTheAdaptiveBudget(t *testing.T) {
 	if got := sink.budgetBytes(); got != 500 {
 		t.Fatalf("budget = %d, want 500 from the configured fraction and reserve", got)
 	}
+}
+
+// TestIncompatibleSchemaIsLoggedOnce pins the design's "one error through
+// normal logging". The schema pass repeats every ten seconds, so logging on
+// every pass would repeat the same error forever. A recurrence after a
+// recovery is a new event and is logged again.
+func TestIncompatibleSchemaIsLoggedOnce(t *testing.T) {
+	var buf bytes.Buffer
+	zl := zerolog.New(&buf)
+	svc := &Service{l: &logger.Logger{Logger: &zl}}
+	incompatible := fmt.Errorf("%w: tag 2 is wrong", errSchemaIncompatible)
+
+	for i := 0; i < 3; i++ {
+		svc.applySchema(schemaState{}, incompatible)
+	}
+	if n := strings.Count(buf.String(), "cannot store"); n != 1 {
+		t.Fatalf("three passes on the same incompatible stream logged %d errors, want 1", n)
+	}
+
+	svc.applySchema(schemaState{shardNum: 2}, nil)
+	svc.applySchema(schemaState{}, incompatible)
+	if n := strings.Count(buf.String(), "cannot store"); n != 2 {
+		t.Fatalf("an incompatibility after a recovery logged %d errors in total, want 2", n)
+	}
+}
+
+// TestBatchIsCappedAtAQuarterOfTheBudget is the falsifying assertion for the
+// byte cap. The count trigger (1000) and the interval (1h) can never fire, so
+// only the cap -- a quarter of a 12-line budget, which is 3 lines -- can make
+// anything reach the destination.
+func TestBatchIsCappedAtAQuarterOfTheBudget(t *testing.T) {
+	line := int64(len(sampleLine))
+	client := &fakeClient{}
+	_, sink := testService(t, client, func(c *logger.NativeLogging) {
+		c.FlushSize = 1000
+		c.FlushInterval = time.Hour
+		c.MaxBytes = 12 * line
+	})
+
+	const admitted = 9
+	for i := 0; i < admitted; i++ {
+		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+	}
+	waitFor(t, "the byte cap to flush every batch", func() bool {
+		return client.published.Load() == admitted
+	})
+	for _, n := range client.seenBatchSizes() {
+		if n > 3 {
+			t.Fatalf("published a batch of %d lines, over the 3-line quarter of the budget", n)
+		}
+	}
+}
+
+// fakeGauge records the last value set for each label combination.
+type fakeGauge struct {
+	vals map[string]float64
+	mu   sync.Mutex
+}
+
+func (g *fakeGauge) Set(v float64, labels ...string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.vals == nil {
+		g.vals = map[string]float64{}
+	}
+	g.vals[strings.Join(labels, ",")] = v
+}
+func (g *fakeGauge) Add(float64, ...string) {}
+func (g *fakeGauge) Delete(...string) bool  { return false }
+
+// TestBufferGaugeSplitsQueuedFromInFlight is the falsifying assertion for the
+// state label. QueuedBytes includes the batch being published, so the queued
+// state must subtract it; a single unlabelled value cannot show a stalled
+// publish.
+func TestBufferGaugeSplitsQueuedFromInFlight(t *testing.T) {
+	sink := testSink(t)
+	sink.queued.Store(300)
+	sink.inFlight.Store(100)
+	buffer := &fakeGauge{}
+	m := &metrics{dropped: &fakeGauge{}, written: &fakeGauge{}, bufferBytes: buffer, bufferBudget: &fakeGauge{}}
+
+	m.observe(sink)
+
+	if got := buffer.vals["queued"]; got != 200 {
+		t.Fatalf(`buffer_bytes{state="queued"} = %v, want 200 (held minus in flight)`, got)
+	}
+	if got := buffer.vals["in_flight"]; got != 100 {
+		t.Fatalf(`buffer_bytes{state="in_flight"} = %v, want 100`, got)
+	}
+}
+
+// TestUnreadyDestinationIsRetriedThenWritten is the falsifying assertion for
+// the retain-and-retry. The first three attempts find no subscriber on the
+// local topic, as at startup before the stream service registers it; the
+// fourth succeeds. Every event must be written and none dropped.
+func TestUnreadyDestinationIsRetriedThenWritten(t *testing.T) {
+	client := &fakeClient{}
+	client.unreadyFor.Store(3)
+	_, sink := testService(t, client)
+
+	const admitted = 5
+	for i := 0; i < admitted; i++ {
+		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+	}
+	waitFor(t, "the held-back batch to be written", func() bool { return sink.Written() == admitted })
+
+	if got := sink.Dropped(reasonDestinationUnready) + sink.Dropped(reasonPublishFailed); got != 0 {
+		t.Fatalf("%d events dropped although the destination became ready within the retries", got)
+	}
+	waitSettled(t, sink)
+}
+
+// TestUnreadyDestinationIsDroppedAfterBoundedRetries pins the bound: a topic
+// that never gets a subscriber costs destinationRetries attempts and then the
+// batch, counted under its own reason.
+func TestUnreadyDestinationIsDroppedAfterBoundedRetries(t *testing.T) {
+	client := &fakeClient{}
+	client.unreadyFor.Store(1 << 30)
+	_, sink := testService(t, client)
+
+	const admitted = 5
+	for i := 0; i < admitted; i++ {
+		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+	}
+	waitFor(t, "the batch to be dropped after the retries", func() bool {
+		return sink.Dropped(reasonDestinationUnready) == admitted
+	})
+
+	if got := client.closes.Load(); got != destinationRetries+1 {
+		t.Fatalf("%d publish attempts, want %d: the retries are not bounded", got, destinationRetries+1)
+	}
+	waitSettled(t, sink)
+}
+
+// TestDrainDoesNotHoldBackForAnUnreadyDestination covers shutdown: there is
+// no next tick to retry on, so a batch held back there would stay charged and
+// never be released.
+func TestDrainDoesNotHoldBackForAnUnreadyDestination(t *testing.T) {
+	client := &fakeClient{}
+	client.unreadyFor.Store(1 << 30)
+	svc, sink := testService(t, client, func(c *logger.NativeLogging) {
+		c.FlushSize = 1000
+		c.FlushInterval = time.Hour
+	})
+
+	const admitted = 5
+	for i := 0; i < admitted; i++ {
+		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+	}
+	svc.closer.CloseThenWait()
+
+	if got := sink.Dropped(reasonDestinationUnready); got != admitted {
+		t.Fatalf("drain dropped %d as destination_unready, want %d", got, admitted)
+	}
+	if got := sink.QueuedBytes(); got != 0 {
+		t.Fatalf("%d bytes still charged after shutdown", got)
+	}
+}
+
+// TestCollectionResumesInTheSameProcess covers what the restart-based
+// integration test cannot: a running sink recovers by itself once the
+// destination stops refusing, because nothing latches on a refused batch.
+func TestCollectionResumesInTheSameProcess(t *testing.T) {
+	client := &fakeClient{}
+	client.rejectOnClose.Store(true)
+	_, sink := testService(t, client)
+
+	for i := 0; i < 5; i++ {
+		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+	}
+	waitFor(t, "the refused batch to be counted", func() bool {
+		return sink.Dropped(reasonPublishFailed) >= 5
+	})
+
+	client.rejectOnClose.Store(false)
+	for i := 0; i < 5; i++ {
+		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+	}
+	waitFor(t, "collection to resume without a restart", func() bool { return sink.Written() >= 5 })
 }
