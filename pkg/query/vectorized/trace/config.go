@@ -19,6 +19,7 @@ package trace
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
@@ -52,6 +53,11 @@ func DefaultConfig() VectorizedConfig {
 func (c VectorizedConfig) Validate() error {
 	if c.BatchSize <= 0 {
 		return fmt.Errorf("vectorized.trace: BatchSize must be > 0, got %d", c.BatchSize)
+	}
+	// A batch's Selection is []uint16, so a batch cannot hold more than
+	// math.MaxUint16 rows without overflowing the selection index.
+	if c.BatchSize > math.MaxUint16 {
+		return fmt.Errorf("vectorized.trace: BatchSize must be <= %d, got %d", math.MaxUint16, c.BatchSize)
 	}
 	if c.QueryMemoryMiB <= 0 {
 		return fmt.Errorf("vectorized.trace: QueryMemoryMiB must be > 0, got %d", c.QueryMemoryMiB)

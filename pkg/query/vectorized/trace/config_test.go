@@ -18,6 +18,7 @@
 package trace
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -36,4 +37,15 @@ func TestVectorizedConfigValidate(t *testing.T) {
 	require.Error(t, VectorizedConfig{BatchSize: 0, QueryMemoryMiB: 256}.Validate())
 	require.Error(t, VectorizedConfig{BatchSize: 1, QueryMemoryMiB: 0}.Validate())
 	require.NoError(t, VectorizedConfig{BatchSize: 1, QueryMemoryMiB: 1}.Validate())
+}
+
+// TestVectorizedConfigValidateBatchSizeCeiling pins the ceiling's boundary: a
+// batch's Selection is []uint16, so math.MaxUint16 is the largest BatchSize
+// that still indexes without wrapping. The trace path's activeIndices
+// materializes [0, Len) as []uint16, and --trace-vectorized-batch-size is
+// operator-settable, so without this bound a configured batch size above the
+// ceiling would silently wrap rather than fail at startup.
+func TestVectorizedConfigValidateBatchSizeCeiling(t *testing.T) {
+	require.NoError(t, VectorizedConfig{BatchSize: math.MaxUint16, QueryMemoryMiB: 1}.Validate())
+	require.Error(t, VectorizedConfig{BatchSize: math.MaxUint16 + 1, QueryMemoryMiB: 1}.Validate())
 }
