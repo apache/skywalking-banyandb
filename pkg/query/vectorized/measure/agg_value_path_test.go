@@ -42,7 +42,9 @@ func TestReduceRawFramesTracing_Path_Typed(t *testing.T) {
 
 	_, path, reduceErr := ReducePartialBatches(
 		[]*vectorized.RecordBatch{b},
+		"f",
 		[]string{"g"},
+		false,
 		[]AggReduceSpec{{OutputName: "sum_v", Func: AggSum}},
 		64,
 		vectorized.NewMemoryTracker(1<<30),
@@ -76,7 +78,9 @@ func TestReduceRawFramesTracing_Path_FieldValueFallback(t *testing.T) {
 
 	_, path, reduceErr := ReducePartialBatches(
 		[]*vectorized.RecordBatch{b},
+		"f",
 		[]string{"g"},
+		false,
 		[]AggReduceSpec{{OutputName: "sum_v", Func: AggSum}},
 		64,
 		vectorized.NewMemoryTracker(1<<30),
@@ -107,7 +111,9 @@ func TestReduceRawFramesTracing_Path_Unresolved(t *testing.T) {
 
 	_, path, reduceErr := ReducePartialBatches(
 		[]*vectorized.RecordBatch{b},
+		"f",
 		[]string{"g"},
+		false,
 		[]AggReduceSpec{{OutputName: "sum_v", Func: AggSum}},
 		64,
 		vectorized.NewMemoryTracker(1<<30),

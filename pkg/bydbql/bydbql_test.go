@@ -790,6 +790,22 @@ var _ = Describe("Parser", func() {
 					Expect(err).ToNot(BeNil())
 					Expect(grammar).To(BeNil())
 				})
+
+				It("rejects deeply nested WHERE parentheses instead of crashing", func() {
+					nested := "SELECT * FROM STREAM sw IN default WHERE " +
+						strings.Repeat("(", 500000) + "x=1" + strings.Repeat(")", 500000)
+					grammar, err := ParseQuery(nested)
+					Expect(err).ToNot(BeNil())
+					Expect(grammar).To(BeNil())
+				})
+
+				It("still parses WHERE parentheses nested within the accepted limit", func() {
+					nested := "SELECT * FROM STREAM sw IN default WHERE " +
+						strings.Repeat("(", 10) + "x=1" + strings.Repeat(")", 10)
+					grammar, err := ParseQuery(nested)
+					Expect(err).To(BeNil())
+					Expect(grammar).NotTo(BeNil())
+				})
 			})
 		})
 
@@ -1490,6 +1506,42 @@ var _ = Describe("Parser", func() {
 				Expect(aggColName).To(Equal("metrics.response.latency"))
 			})
 
+			It("parses COUNT(DISTINCT ...)", func() {
+				grammar, err := ParseQuery("SELECT COUNT(DISTINCT entity_id) FROM MEASURE m IN default TIME > '-30m'")
+				Expect(err).To(BeNil())
+				Expect(grammar).NotTo(BeNil())
+
+				stmt := grammar.Select
+				Expect(stmt.Projection.Columns).To(HaveLen(1))
+				agg := stmt.Projection.Columns[0].Aggregate
+				Expect(agg).NotTo(BeNil())
+				Expect(strings.ToUpper(agg.Function)).To(Equal("COUNT"))
+				Expect(agg.Distinct).To(BeTrue())
+				aggColName, aggErr := agg.Column.ToString(false)
+				Expect(aggErr).To(BeNil())
+				Expect(aggColName).To(Equal("entity_id"))
+			})
+
+			It("parses COUNT(col) without DISTINCT", func() {
+				grammar, err := ParseQuery("SELECT COUNT(entity_id) FROM MEASURE m IN default TIME > '-30m'")
+				Expect(err).To(BeNil())
+				Expect(grammar).NotTo(BeNil())
+
+				Expect(grammar.Select.Projection.Columns[0].Aggregate.Distinct).To(BeFalse())
+			})
+
+			It("rejects SUM(DISTINCT ...)", func() {
+				_, err := ParseQuery("SELECT SUM(DISTINCT value) FROM MEASURE m IN default TIME > '-30m'")
+				Expect(err).NotTo(BeNil())
+				Expect(err.Error()).To(ContainSubstring("DISTINCT is only valid inside COUNT"))
+			})
+
+			It("rejects MEAN(DISTINCT ...)", func() {
+				_, err := ParseQuery("SELECT MEAN(DISTINCT value) FROM MEASURE m IN default TIME > '-30m'")
+				Expect(err).NotTo(BeNil())
+				Expect(err.Error()).To(ContainSubstring("DISTINCT is only valid inside COUNT"))
+			})
+
 			It("parses complex query with multiple nested paths", func() {
 				grammar, err := ParseQuery(`SELECT
 				trace.span.id,
@@ -1759,6 +1811,56 @@ var _ = Describe("Parser", func() {
 				Expect(strings.ToUpper(*stmt.GroupBy.Columns[0].TypeSpec)).To(Equal("TAG"))
 				Expect(strings.ToUpper(*stmt.GroupBy.Columns[1].TypeSpec)).To(Equal("TAG"))
 				Expect(strings.ToUpper(*stmt.GroupBy.Columns[2].TypeSpec)).To(Equal("FIELD"))
+			})
+		})
+
+		Describe("TIME_BUCKET in GROUP BY", func() {
+			It("parses TIME_BUCKET with an explicit width", func() {
+				grammar, err := ParseQuery("SELECT SUM(value) FROM MEASURE m IN default TIME > '-30m' GROUP BY TIME_BUCKET('5m')")
+				Expect(err).To(BeNil())
+				Expect(grammar).NotTo(BeNil())
+
+				stmt := grammar.Select
+				Expect(stmt.GroupBy).NotTo(BeNil())
+				Expect(stmt.GroupBy.Columns).To(HaveLen(1))
+				tb := stmt.GroupBy.Columns[0].TimeBucket
+				Expect(tb).NotTo(BeNil())
+				Expect(stmt.GroupBy.Columns[0].Identifier).To(BeNil())
+				Expect(tb.Width).NotTo(BeNil())
+				Expect(*tb.Width).To(Equal("5m"))
+			})
+
+			It("parses TIME_BUCKET with no width", func() {
+				grammar, err := ParseQuery("SELECT SUM(value) FROM MEASURE m IN default TIME > '-30m' GROUP BY TIME_BUCKET()")
+				Expect(err).To(BeNil())
+				Expect(grammar).NotTo(BeNil())
+
+				tb := grammar.Select.GroupBy.Columns[0].TimeBucket
+				Expect(tb).NotTo(BeNil())
+				Expect(tb.Width).To(BeNil())
+			})
+
+			It("parses TIME_BUCKET combined with a tag key", func() {
+				grammar, err := ParseQuery("SELECT region, SUM(value) FROM MEASURE m IN default TIME > '-30m' GROUP BY TIME_BUCKET('1h'), region")
+				Expect(err).To(BeNil())
+				Expect(grammar).NotTo(BeNil())
+
+				stmt := grammar.Select
+				Expect(stmt.GroupBy.Columns).To(HaveLen(2))
+				Expect(stmt.GroupBy.Columns[0].TimeBucket).NotTo(BeNil())
+				Expect(stmt.GroupBy.Columns[1].TimeBucket).To(BeNil())
+				Expect(stmt.GroupBy.Columns[1].Identifier).NotTo(BeNil())
+			})
+
+			It("rejects a second TIME_BUCKET in the same GROUP BY", func() {
+				_, err := ParseQuery("SELECT SUM(value) FROM MEASURE m IN default TIME > '-30m' GROUP BY TIME_BUCKET('1h'), TIME_BUCKET('5m')")
+				Expect(err).NotTo(BeNil())
+				Expect(err.Error()).To(ContainSubstring("at most one TIME_BUCKET"))
+			})
+
+			It("rejects TIME_BUCKET in the SELECT projection", func() {
+				_, err := ParseQuery("SELECT TIME_BUCKET('1m') FROM MEASURE m IN default TIME > '-30m'")
+				Expect(err).NotTo(BeNil())
 			})
 		})
 

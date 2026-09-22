@@ -31,7 +31,7 @@ var bydbqlKeywords = []string{
 	"IN", "ON", "STAGES", "TIME", "BETWEEN", "AND", "OR", "WHERE", "GROUP", "BY", "ORDER",
 	"ASC", "DESC", "LIMIT", "OFFSET", "WITH", "QUERY_TRACE", "SUM", "MEAN",
 	"AVG", "COUNT", "MAX", "MIN", "TAG", "FIELD", "NOT", "HAVING", "MATCH",
-	"AGGREGATE", "NULL",
+	"AGGREGATE", "NULL", "DISTINCT", "TIME_BUCKET",
 }
 
 // Lexer and parser are initialized in init().
@@ -76,13 +76,105 @@ func init() {
 	}
 }
 
+// maxParenDepth bounds the parenthesis nesting ParseQuery accepts. Participle's
+// recursive-descent parser calls back into GrammarOrExpr once per nesting level
+// with no built-in recursion limit, so a query with enough nested parentheses
+// can exhaust the goroutine stack and crash the process via runtime.throw — a
+// fatal error recover() cannot catch. Rejecting excess nesting with a flat,
+// non-recursive scan before the query ever reaches the parser keeps the fix
+// itself immune to the same failure mode.
+const maxParenDepth = 64
+
 // ParseQuery parses a BydbQL query string into a Grammar struct.
 func ParseQuery(query string) (*Grammar, error) {
+	if err := checkParenDepth(query); err != nil {
+		return nil, err
+	}
 	// Parse using Participle
 	grammar, err := particpleParser.ParseString("", query)
 	if err != nil {
 		return nil, fmt.Errorf("syntax error: %w", err)
 	}
+	if err := checkAggregateAndGroupByShape(grammar); err != nil {
+		return nil, err
+	}
 
 	return grammar, nil
+}
+
+// checkAggregateAndGroupByShape enforces two constraints participle's
+// struct-tag grammar cannot express as per-alternative predicates:
+//   - DISTINCT is only valid inside COUNT — SUM(DISTINCT x) etc. is rejected.
+//   - At most one TIME_BUCKET(...) pseudo-column is allowed per GROUP BY.
+//
+// Both are semantic rules, but are enforced here (rather than at transform
+// time) so a malformed query fails exactly like any other syntax error, one
+// step after the raw participle parse — the same precedent checkParenDepth
+// already set for a pre-parse check.
+func checkAggregateAndGroupByShape(g *Grammar) error {
+	if g.Select == nil {
+		return nil
+	}
+	if proj := g.Select.Projection; proj != nil {
+		var columns []*GrammarColumn
+		columns = append(columns, proj.Columns...)
+		if proj.TopN != nil {
+			columns = append(columns, proj.TopN.OtherColumns...)
+		}
+		for _, col := range columns {
+			if col.Aggregate == nil {
+				continue
+			}
+			if col.Aggregate.Distinct && !strings.EqualFold(col.Aggregate.Function, "COUNT") {
+				return fmt.Errorf("syntax error: DISTINCT is only valid inside COUNT, got %s(DISTINCT ...)", col.Aggregate.Function)
+			}
+		}
+	}
+	if gb := g.Select.GroupBy; gb != nil {
+		bucketCount := 0
+		for _, col := range gb.Columns {
+			if col.TimeBucket != nil {
+				bucketCount++
+			}
+		}
+		if bucketCount > 1 {
+			return fmt.Errorf("syntax error: at most one TIME_BUCKET(...) is allowed in GROUP BY, got %d", bucketCount)
+		}
+	}
+	return nil
+}
+
+// checkParenDepth rejects queries whose parenthesis nesting exceeds maxParenDepth.
+// It skips over quoted string content — which may contain unbalanced or
+// backslash-escaped quote characters, per the String lexer rule — so literal
+// values never distort the depth count.
+func checkParenDepth(query string) error {
+	depth := 0
+	var quote byte
+	for i := 0; i < len(query); i++ {
+		c := query[i]
+		if quote != 0 {
+			switch c {
+			case '\\':
+				i++
+			case quote:
+				quote = 0
+			}
+			continue
+		}
+		switch c {
+		case '\'', '"':
+			quote = c
+		case '(':
+			depth++
+			if depth > maxParenDepth {
+				return fmt.Errorf("syntax error: parenthesis nesting exceeds maximum depth of %d", maxParenDepth)
+			}
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		}
+	}
+	return nil
 }

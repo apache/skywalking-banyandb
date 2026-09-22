@@ -131,7 +131,7 @@ func TestReduceFramesToInternalDataPoints_AggRoundTrip(t *testing.T) {
 	frames := [][]byte{shard1Body, shard1Body, shard2Body, nil}
 
 	idps, reduceErr := ReduceFramesToInternalDataPoints(frames,
-		[]string{"g"},
+		"default", []string{"g"},
 		[]AggReduceSpec{{OutputName: "sum_v", Func: AggSum}},
 		nil, 1024, vectorized.NewMemoryTracker(1<<30))
 	if reduceErr != nil {
@@ -376,7 +376,7 @@ func TestReduceFramesToInternalDataPoints_MeanInt(t *testing.T) {
 	}
 
 	idps, reduceErr := ReduceFramesToInternalDataPoints([][]byte{body},
-		[]string{"g"},
+		"default", []string{"g"},
 		[]AggReduceSpec{{OutputName: "value", Func: AggMean}},
 		nil, 1024, vectorized.NewMemoryTracker(1<<30))
 	if reduceErr != nil {

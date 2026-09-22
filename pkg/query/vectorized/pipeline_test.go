@@ -273,3 +273,111 @@ func TestPipelineBuilder_ApplyAfterBreak_RunsAfterBreaker(t *testing.T) {
 		t.Fatalf("post-break fusible should see breaker output %v (not source rows), got %v", wantPost, postSeen)
 	}
 }
+
+// doublingPull wraps an upstream PullOperator and doubles every int64 value
+// it sees — a minimal stand-in for an operator that genuinely transforms
+// its upstream via NextBatch, the shape Transform exists for.
+type doublingPull struct {
+	upstream PullOperator
+}
+
+func (d *doublingPull) Init(ctx context.Context) error { return d.upstream.Init(ctx) }
+func (d *doublingPull) OutputSchema() *BatchSchema     { return d.upstream.OutputSchema() }
+func (d *doublingPull) Close() error                   { return d.upstream.Close() }
+func (d *doublingPull) NextBatch(ctx context.Context) (*RecordBatch, error) {
+	b, err := d.upstream.NextBatch(ctx)
+	if err != nil || b == nil {
+		return b, err
+	}
+	col := b.Columns[0].(*TypedColumn[int64])
+	data := col.Data()
+	for i, v := range data {
+		col.SetAt(i, v*2)
+	}
+	return b, nil
+}
+
+func TestPipelineBuilder_Transform_WrapsSourceDirectly(t *testing.T) {
+	s := NewBatchSchema([]ColumnDef{{Role: RoleTimestamp, Type: ColumnTypeInt64}})
+	src := &fakePull{schema: s, batches: []*RecordBatch{mkInt64Batch(s, 1, 2, 3)}}
+	p, err := NewPipelineBuilder().
+		From(src).
+		Transform(func(upstream PullOperator) PullOperator { return &doublingPull{upstream: upstream} }).
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if initErr := p.head.Init(context.Background()); initErr != nil {
+		t.Fatal(initErr)
+	}
+	out, err := p.Next(context.Background())
+	if err != nil || out == nil {
+		t.Fatalf("Transform-wrapped pipeline should yield a batch: out=%v err=%v", out, err)
+	}
+	got := out.Columns[0].(*TypedColumn[int64]).Data()
+	want := []int64{2, 4, 6}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("Transform should apply doublingPull to the source's rows: got %v, want %v", got, want)
+		}
+	}
+}
+
+// TestPipelineBuilder_Transform_ClosesPendingSegmentFirst pins that
+// Transform sees the fully-fused upstream — any Applied fusibles queued
+// before it must already have run — not the raw source.
+func TestPipelineBuilder_Transform_ClosesPendingSegmentFirst(t *testing.T) {
+	s := NewBatchSchema([]ColumnDef{{Role: RoleTimestamp, Type: ColumnTypeInt64}})
+	src := &fakePull{schema: s, batches: []*RecordBatch{mkInt64Batch(s, 1, 2, 3)}}
+	incrementBeforeTransform := &fakeFusible{schema: s} // +1
+	p, err := NewPipelineBuilder().
+		From(src).
+		Apply(incrementBeforeTransform).
+		Transform(func(upstream PullOperator) PullOperator { return &doublingPull{upstream: upstream} }).
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = p.head.Init(context.Background())
+	out, err := p.Next(context.Background())
+	if err != nil || out == nil {
+		t.Fatalf("pipeline should yield a batch: out=%v err=%v", out, err)
+	}
+	got := out.Columns[0].(*TypedColumn[int64]).Data()
+	want := []int64{4, 6, 8} // (v+1)*2
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("Transform's upstream must be the fully-fused chain (+1 then *2): got %v, want %v", got, want)
+		}
+	}
+}
+
+// TestPipelineBuilder_BreakAfterTransform_RunsOnTransformedOutput pins that
+// a Break following a Transform drains the Transform-wrapped operator, not
+// the original source — proving Transform correctly becomes the new base
+// for subsequent stages.
+func TestPipelineBuilder_BreakAfterTransform_RunsOnTransformedOutput(t *testing.T) {
+	s := NewBatchSchema([]ColumnDef{{Role: RoleTimestamp, Type: ColumnTypeInt64}})
+	src := &fakePull{schema: s, batches: []*RecordBatch{mkInt64Batch(s, 1, 2, 3)}}
+	br := &fakeBreaker{schema: s}
+	p, err := NewPipelineBuilder().
+		From(src).
+		Transform(func(upstream PullOperator) PullOperator { return &doublingPull{upstream: upstream} }).
+		Break(br).
+		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = p.head.Init(context.Background())
+	_, _ = p.Next(context.Background())
+	if len(br.consumed) != 1 {
+		t.Fatalf("breaker should have consumed exactly 1 batch, got %d", len(br.consumed))
+	}
+	got := br.consumed[0].Columns[0].(*TypedColumn[int64]).Data()
+	want := []int64{2, 4, 6}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("breaker after Transform should see doubled rows: got %v, want %v", got, want)
+		}
+	}
+}

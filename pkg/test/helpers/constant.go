@@ -22,6 +22,7 @@ import (
 
 	"github.com/onsi/gomega"
 	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -74,10 +75,16 @@ type Args struct {
 	Stages          []string
 	Offset          time.Duration
 	Duration        time.Duration
+	WantErrCode     codes.Code
 	WantEmpty       bool
 	WantErr         bool
 	DisOrder        bool
 	IgnoreElementID bool
+	// SkipQL skips the BydbQL round-trip check (input/<Input>.ql) for this
+	// case. Temporary escape hatch for query shapes BydbQL cannot express
+	// yet. Remove a case's SkipQL (and add its .ql fixture) once BydbQL
+	// supports the shape.
+	SkipQL bool
 }
 
 // UnmarshalYAML decodes YAML raw bytes to proto.Message.

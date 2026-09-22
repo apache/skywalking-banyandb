@@ -72,7 +72,7 @@ func TestDrainVectorizedPhase1(t *testing.T) {
 }
 
 func TestBuildVectorizedPhase1TraceBatchStatic(t *testing.T) {
-	tr := &trace{vectorized: vtrace.VectorizedConfig{Enabled: true, BatchSize: 1, QueryMemoryMiB: 1}}
+	tr := &trace{vectorized: vtrace.VectorizedConfig{BatchSize: 1, QueryMemoryMiB: 1}}
 	batch, err := tr.buildVectorizedPhase1TraceBatch(context.Background(), queryOptions{
 		traceIDs: []string{"trace-a", "trace-b"},
 	}, nil, sidx.QueryRequest{}, false, 1)
@@ -88,7 +88,7 @@ func TestBuildVectorizedPhase1TraceBatchStatic(t *testing.T) {
 // Push path: traceIDs[:limit] → emit first occurrence only.
 // Vectorized (fixed): same — truncate first, then dedup within the window.
 func TestBuildVectorizedPhase1TraceBatchStaticDedupLimitParity(t *testing.T) {
-	tr := &trace{vectorized: vtrace.VectorizedConfig{Enabled: true, BatchSize: 10, QueryMemoryMiB: 1}}
+	tr := &trace{vectorized: vtrace.VectorizedConfig{BatchSize: 10, QueryMemoryMiB: 1}}
 	// [a, a, b] limit 2: push takes first 2 raw = [a, a], emits a once.
 	// Vectorized must do the same: truncate to [a, a], dedup → [a].
 	batch, err := tr.buildVectorizedPhase1TraceBatch(context.Background(), queryOptions{

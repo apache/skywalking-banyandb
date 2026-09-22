@@ -27,7 +27,6 @@ type VectorizedConfig struct {
 	BroadcastTimeout time.Duration
 	BatchSize        int
 	QueryMemoryMiB   int
-	Enabled          bool
 }
 
 // DefaultBroadcastTimeout is the per-broadcast wait the vec distributed
@@ -36,13 +35,10 @@ type VectorizedConfig struct {
 // unchanged when the operator does not set --dst-broadcast-timeout.
 const DefaultBroadcastTimeout = 15 * time.Second
 
-// DefaultConfig returns the v1 default — enabled, 1024-row batches, 256 MiB
-// per-query memory budget, 15 s broadcast timeout. To roll back the vec
-// path entirely, pass --measure-vectorized-enabled=false on the standalone
-// or data-node command line and restart.
+// DefaultConfig returns the v1 default — 1024-row batches, 256 MiB
+// per-query memory budget, 15 s broadcast timeout.
 func DefaultConfig() VectorizedConfig {
 	return VectorizedConfig{
-		Enabled:          true,
 		BatchSize:        1024,
 		QueryMemoryMiB:   256,
 		BroadcastTimeout: DefaultBroadcastTimeout,

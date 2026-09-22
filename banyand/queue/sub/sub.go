@@ -34,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
 func checkVersionCompatibility(versionInfo *clusterv1.VersionInfo) (*clusterv1.VersionCompatibility, modelv1.Status) {
@@ -264,13 +265,15 @@ func (s *server) dispatchMessage(
 	if len(listeners) > 1 {
 		logger.Panicf("multiple listeners found for topic %s", topic)
 	}
+	queryCtx, queryScope := query.NewTransportScope(stream.Context())
+	defer queryScope.Close()
 	// Tick started immediately before Rev so that started and finished are always paired;
 	// pre-Rev early returns (no-listener) produce no metric change.
 	if s.metrics != nil {
 		s.metrics.totalStarted.Inc(1, identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier)
 		s.metrics.totalMessageStarted.Inc(1, identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier)
 	}
-	m = listeners[0].Rev(stream.Context(), m)
+	m = listeners[0].Rev(queryCtx, m)
 	// The BatchMod fork in Send routes each SendRequest to exactly one of
 	// handleBatch→handleEOF (batch) or dispatchMessage (non-batch), so no message is double-counted.
 	if s.metrics != nil {

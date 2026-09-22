@@ -27,6 +27,16 @@ import (
 
 const strNone = "none"
 
+// countDistinctTargetTag is the tag COUNT_DISTINCT targets in the generated
+// layer-3 cases. Unlike every other function here (which aggregates the
+// "value" field), COUNT_DISTINCT is tag-only (design §7.3/§7.4), and its
+// decomposability condition requires the routing key -- service_cpm_minute's
+// entity, entity_id, with no narrower sharding_key -- to be covered by the
+// GroupBy key or the Agg target. buildLayer3Request's "group" dimension
+// always groups by "id", which never covers entity_id, so the target must
+// cover it directly, regardless of "group"/"top"/"order"/"filter".
+const countDistinctTargetTag = "entity_id"
+
 // GenerateLayer3 produces test cases for query feature combinations.
 // Uses pairwise testing across AggFunction, TopN, GroupBy, OrderBy, and CriteriaPresence.
 func GenerateLayer3() []*TestCase {
@@ -36,7 +46,7 @@ func GenerateLayer3() []*TestCase {
 	}
 
 	params := map[string][]string{
-		"agg":    {"MEAN", "MAX", "MIN", "COUNT", "SUM", strNone},
+		"agg":    {"MEAN", "MAX", "MIN", "COUNT", "SUM", "COUNT_DISTINCT", strNone},
 		"top":    {"desc", "asc", strNone},
 		"group":  {"true", "false"},
 		"order":  {"asc", "desc", strNone},
@@ -140,23 +150,41 @@ func buildLayer3Request(m *Measure, tv TestVector) *measurev1.QueryRequest {
 		}
 	}
 
-	// Aggregation
+	// Aggregation. COUNT_DISTINCT targets a tag (countDistinctTargetTag),
+	// not the "value" field every other function here aggregates -- see
+	// countDistinctTargetTag's doc comment.
 	if tv["agg"] != strNone {
-		req.Agg = &measurev1.QueryRequest_Aggregation{
-			Function:  parseAggFunction(tv["agg"]),
-			FieldName: "value",
+		if tv["agg"] == "COUNT_DISTINCT" {
+			req.Agg = &measurev1.QueryRequest_Aggregation{
+				Function:  parseAggFunction(tv["agg"]),
+				TagFamily: "default",
+				TagName:   countDistinctTargetTag,
+			}
+		} else {
+			req.Agg = &measurev1.QueryRequest_Aggregation{
+				Function:  parseAggFunction(tv["agg"]),
+				FieldName: "value",
+			}
 		}
 	}
 
-	// TopN
+	// TopN. Ranks by the Agg's own output column, which the row-path-parity
+	// convention names after the aggregation's input (countDistinctTargetTag
+	// for COUNT_DISTINCT, "value" for every other function) -- ranking by
+	// "value" here would look for a column the COUNT_DISTINCT case never
+	// produces.
 	if tv["top"] != strNone {
 		sortVal := modelv1.Sort_SORT_DESC
 		if tv["top"] == "asc" {
 			sortVal = modelv1.Sort_SORT_ASC
 		}
+		topField := "value"
+		if tv["agg"] == "COUNT_DISTINCT" {
+			topField = countDistinctTargetTag
+		}
 		req.Top = &measurev1.QueryRequest_Top{
 			Number:         2,
-			FieldName:      "value",
+			FieldName:      topField,
 			FieldValueSort: sortVal,
 		}
 	}
@@ -183,6 +211,8 @@ func parseAggFunction(name string) modelv1.AggregationFunction {
 		return modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT
 	case "SUM":
 		return modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM
+	case "COUNT_DISTINCT":
+		return modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT
 	default:
 		return modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED
 	}
@@ -194,7 +224,7 @@ func ensureAggCoverage(vectors []TestVector) []TestVector {
 	for _, tv := range vectors {
 		covered[tv["agg"]] = true
 	}
-	aggFunctions := []string{"MEAN", "MAX", "MIN", "COUNT", "SUM"}
+	aggFunctions := []string{"MEAN", "MAX", "MIN", "COUNT", "SUM", "COUNT_DISTINCT"}
 	for _, aggFn := range aggFunctions {
 		if covered[aggFn] {
 			continue

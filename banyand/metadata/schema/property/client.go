@@ -1158,6 +1158,9 @@ func (r *SchemaRegistry) ListProperty(ctx context.Context, opt schema.ListOpt) (
 
 // CreateProperty creates a property schema.
 func (r *SchemaRegistry) CreateProperty(ctx context.Context, property *databasev1.Property) error {
+	if validateErr := validate.Property(property); validateErr != nil {
+		return validateErr
+	}
 	if property.UpdatedAt == nil {
 		property.UpdatedAt = timestamppb.Now()
 	}
@@ -1168,6 +1171,9 @@ func (r *SchemaRegistry) CreateProperty(ctx context.Context, property *databasev
 
 // UpdateProperty updates a property schema.
 func (r *SchemaRegistry) UpdateProperty(ctx context.Context, property *databasev1.Property) error {
+	if validateErr := validate.Property(property); validateErr != nil {
+		return validateErr
+	}
 	if property.UpdatedAt == nil {
 		property.UpdatedAt = timestamppb.Now()
 	}

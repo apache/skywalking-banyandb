@@ -32,23 +32,17 @@ type VectorizedConfig struct {
 	// The first block always loads regardless of the budget (first-block exception),
 	// so a single oversized block may exceed this value.
 	QueryMemoryMiB int
-	Enabled        bool
 }
 
-// DefaultConfig returns the default trace vectorized configuration — enabled,
-// with the shared default batch size and a 256 MiB per-query memory budget.
+// DefaultConfig returns the default trace vectorized configuration — the shared
+// default batch size and a 256 MiB per-query memory budget.
 //
-// Enabled also selects the liaison<->data wire format: a flag-on distributed data
-// node emits the native columnar frame instead of protobuf. A liaison decodes both
-// (it dispatches on the frame magic byte per message), but an older liaison has no
-// frame decoder at all, so a cluster must upgrade liaison nodes BEFORE data nodes.
-// See docs/operation/upgrade.md.
-//
-// To roll back the vec path entirely, pass --trace-vectorized-enabled=false on the
-// standalone or data-node command line and restart; the row path resumes immediately.
+// A distributed data node always emits the native columnar frame instead of
+// protobuf. A liaison decodes both (it dispatches on the frame magic byte per
+// message), but an older liaison has no frame decoder at all, so a cluster must
+// upgrade liaison nodes BEFORE data nodes. See docs/operation/upgrade.md.
 func DefaultConfig() VectorizedConfig {
 	return VectorizedConfig{
-		Enabled:        true,
 		BatchSize:      vectorized.DefaultBatchSize,
 		QueryMemoryMiB: 256,
 	}

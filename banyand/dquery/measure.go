@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -33,8 +32,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
-	"github.com/apache/skywalking-banyandb/pkg/query/logical"
-	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
 	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 	vecplan "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/plan"
@@ -54,6 +51,13 @@ type measureVectorizedExecutionContext interface {
 type measureDistributedExecutable interface {
 	executor.MeasureExecutable
 	fmt.Stringer
+	// RequiresSingleStage reports whether the plan's Agg is a
+	// COUNT_DISTINCT that must resolve to exactly one lifecycle stage
+	// (design §7.4) — distinct counts are not additive across stages.
+	// The plan itself cannot check this (AnalyzeDistributed never
+	// resolves node selectors), so Rev checks it here, after
+	// buildNodeSelectors resolves them and before dispatch.
+	RequiresSingleStage() bool
 }
 
 func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
@@ -69,20 +73,18 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 		e.RawJSON("req", logger.Proto(queryCriteria)).Msg("received a query event")
 	}
 
-	schemas, measureSchemas, measureIndexRules, vecCfg, loadErr := p.loadMeasureSchemas(queryCriteria)
+	measureSchemas, measureIndexRules, vecCfg, loadErr := p.loadMeasureSchemas(queryCriteria)
 	if loadErr != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%s", loadErr.Error()))
 		return
 	}
-	// Operator-configured broadcast timeout overrides each plan's historical
+	// Operator-configured broadcast timeout overrides the plan's historical
 	// 15 s default. Setting it on vecCfg.BroadcastTimeout flows through
-	// vecplan.AnalyzeDistributed into DistributedPlan.broadcastTimeout(); the
-	// row path receives it as an explicit parameter on DistributedAnalyze.
-	// Either way the two plans stay lockstep with the same liaison config.
+	// vecplan.AnalyzeDistributed into DistributedPlan.broadcastTimeout().
 	if p.broadcastTimeout > 0 {
 		vecCfg.BroadcastTimeout = p.broadcastTimeout
 	}
-	plan, err := p.analyzeDistributedPlan(queryCriteria, schemas, measureSchemas, measureIndexRules, vecCfg)
+	plan, err := p.analyzeDistributedPlan(queryCriteria, measureSchemas, measureIndexRules, vecCfg)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for measure %s: %v", queryCriteria.Name, err))
 		return
@@ -100,6 +102,26 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 		ml.Error().RawJSON("req", logger.Proto(queryCriteria)).Msg("no stage found")
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("no stage found"))
 		return
+	}
+	// COUNT_DISTINCT's decomposability condition (design §7.4) does not
+	// extend across lifecycle stages: a distinct value can legitimately
+	// recur in both a hot and a warm stage, so summing per-shard counts
+	// from more than one resolved stage would double-count. The analyzer
+	// cannot check this itself (AnalyzeDistributed never resolves node
+	// selectors), so it is checked here, once stage resolution has
+	// actually run.
+	if plan.RequiresSingleStage() {
+		resolvedStages := 0
+		for _, selectors := range nodeSelectors {
+			resolvedStages += len(selectors)
+		}
+		if resolvedStages > 1 {
+			ml.Error().RawJSON("req", logger.Proto(queryCriteria)).Int("resolved_stages", resolvedStages).
+				Msg("COUNT_DISTINCT resolved to more than one lifecycle stage")
+			resp = bus.NewMessage(bus.MessageID(now),
+				common.NewError("COUNT_DISTINCT cannot be evaluated across more than one lifecycle stage; restrict the query to a single stage"))
+			return
+		}
 	}
 	var tracer *query.Tracer
 	var span *query.Span
@@ -176,9 +198,8 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 }
 
 func (p *measureQueryProcessor) loadMeasureSchemas(queryCriteria *measurev1.QueryRequest) (
-	[]logical.Schema, []*databasev1.Measure, [][]*databasev1.IndexRule, vmeasure.VectorizedConfig, error,
+	[]*databasev1.Measure, [][]*databasev1.IndexRule, vmeasure.VectorizedConfig, error,
 ) {
-	var schemas []logical.Schema
 	var measureSchemas []*databasev1.Measure
 	var measureIndexRules [][]*databasev1.IndexRule
 	var vecCfg vmeasure.VectorizedConfig
@@ -186,53 +207,31 @@ func (p *measureQueryProcessor) loadMeasureSchemas(queryCriteria *measurev1.Quer
 		meta := &commonv1.Metadata{Name: queryCriteria.Name, Group: g}
 		ec, measureErr := p.measureService.Measure(meta)
 		if measureErr != nil {
-			return nil, nil, nil, vecCfg, fmt.Errorf("fail to get execution context for measure %s: %w", meta.GetName(), measureErr)
+			return nil, nil, vecCfg, fmt.Errorf("fail to get execution context for measure %s: %w", meta.GetName(), measureErr)
 		}
-		// nolint:staticcheck // SA1019 - row schema is still used for the flag-off rollback path.
-		s, schemaErr := logical_measure.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
-		if schemaErr != nil {
-			return nil, nil, nil, vecCfg, fmt.Errorf("fail to build schema for measure %s: %w", meta.GetName(), schemaErr)
-		}
-		schemas = append(schemas, s)
 		measureSchemas = append(measureSchemas, ec.GetSchema())
 		measureIndexRules = append(measureIndexRules, ec.GetIndexRules())
-		if vecEC, ok := ec.(measureVectorizedExecutionContext); ok {
-			if groupIdx == 0 {
-				vecCfg = vecEC.VectorizedConfig()
-			}
-		} else if data.MeasureWireModeRaw() {
-			return nil, nil, nil, vecCfg, fmt.Errorf("measure %s is not vectorized-capable under raw wire mode", meta.GetName())
+		vecEC, ok := ec.(measureVectorizedExecutionContext)
+		if !ok {
+			return nil, nil, vecCfg, fmt.Errorf("measure %s is not vectorized-capable", meta.GetName())
+		}
+		if groupIdx == 0 {
+			vecCfg = vecEC.VectorizedConfig()
 		}
 	}
-	return schemas, measureSchemas, measureIndexRules, vecCfg, nil
+	return measureSchemas, measureIndexRules, vecCfg, nil
 }
 
-// analyzeDistributedPlan picks the vec plan when raw wire mode is on, otherwise
-// falls back to the row distributed plan (kill-switch / rollback rail).
-// See docs/operation/troubleshooting/measure-vec-flag-off-rollback.md.
 func (p *measureQueryProcessor) analyzeDistributedPlan(
 	queryCriteria *measurev1.QueryRequest,
-	schemas []logical.Schema,
 	measureSchemas []*databasev1.Measure,
 	measureIndexRules [][]*databasev1.IndexRule,
 	vecCfg vmeasure.VectorizedConfig,
 ) (measureDistributedExecutable, error) {
-	if data.MeasureWireModeRaw() {
-		if len(measureSchemas) == 0 {
-			return nil, fmt.Errorf("vec distributed plan requires at least one measure schema")
-		}
-		return vecplan.AnalyzeDistributed(queryCriteria, measureSchemas, measureIndexRules, vecCfg)
+	if len(measureSchemas) == 0 {
+		return nil, fmt.Errorf("vec distributed plan requires at least one measure schema")
 	}
-	// nolint:staticcheck // SA1019 - row distributed plan is the flag-off rollback path only.
-	rowPlan, analyzeErr := logical_measure.DistributedAnalyze(queryCriteria, schemas, p.broadcastTimeout)
-	if analyzeErr != nil {
-		return nil, analyzeErr
-	}
-	plan, ok := rowPlan.(measureDistributedExecutable)
-	if !ok {
-		return nil, fmt.Errorf("distributed measure plan %T is not executable", rowPlan)
-	}
-	return plan, nil
+	return vecplan.AnalyzeDistributed(queryCriteria, measureSchemas, measureIndexRules, vecCfg)
 }
 
 func (p *measureQueryProcessor) buildNodeSelectors(queryCriteria *measurev1.QueryRequest, ml *logger.Logger) (map[string][]string, error) {

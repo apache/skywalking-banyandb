@@ -66,18 +66,31 @@ type ReduceTopSpec struct {
 // any structural mismatch is a producer bug, not a recoverable data error,
 // and is reported loudly.
 //
-// keyTagNames selects which tags form the group key — the same names the
-// request's GroupBy used. Tags present in the partial schema but NOT
-// listed here are still carried forward in the output as the first-seen
-// value per group (mirrors the data-node operator's first-seen non-key
-// tag rule).
+// keyTagFamily and keyTagNames select which tags form the group key — the
+// same family and names the request's GroupBy used. The family must travel
+// with the names: tag-family validation does not reject the same tag name
+// in two families (design doc §5.1), so resolveKeyIndices matches on
+// (family, name), not name alone — matching the node-side GroupBy's own
+// (plan.go's lookupGroupByKeyIndices). Tags present in the partial schema
+// but NOT listed here are still carried forward in the output as the
+// first-seen value per group (mirrors the data-node operator's first-seen
+// non-key tag rule).
+//
+// bucketed is true for a time-bucketed GroupBy (design §7.2): the bucket
+// column is resolved as an additional leading key, ahead of keyTagNames.
+// A bucketed reduce whose reference schema carries no RoleTimestamp column
+// is the mixed-version case (design §10) — an older data node ignored
+// time_bucket and returned whole-range partials — and resolveKeyIndices
+// hard-errors rather than silently collapsing the series to one row.
 //
 // Returns the final reduced batches in group-insertion order (paginated
 // by batchSize) and the AggValuePath that describes how the value column
 // was resolved. Callers walk the batches sequentially; one row per group.
 func ReduceRawFrames(
 	frames [][]byte,
+	keyTagFamily string,
 	keyTagNames []string,
+	bucketed bool,
 	aggSpecs []AggReduceSpec,
 	batchSize int,
 	tracker *vectorized.MemoryTracker,
@@ -93,7 +106,7 @@ func ReduceRawFrames(
 		}
 		decoded = append(decoded, b)
 	}
-	return ReducePartialBatches(decoded, keyTagNames, aggSpecs, batchSize, tracker)
+	return ReducePartialBatches(decoded, keyTagFamily, keyTagNames, bucketed, aggSpecs, batchSize, tracker)
 }
 
 // ReducePartialBatches is the in-memory counterpart of ReduceRawFrames —
@@ -106,7 +119,9 @@ func ReduceRawFrames(
 // value column was resolved (typed, fieldvalue-fallback, or unresolved).
 func ReducePartialBatches(
 	partials []*vectorized.RecordBatch,
+	keyTagFamily string,
 	keyTagNames []string,
+	bucketed bool,
 	aggSpecs []AggReduceSpec,
 	batchSize int,
 	tracker *vectorized.MemoryTracker,
@@ -122,7 +137,7 @@ func ReducePartialBatches(
 	if refSchema == nil {
 		return nil, AggValuePathTyped, nil
 	}
-	keyIndices, indicesErr := resolveKeyIndices(refSchema, keyTagNames)
+	keyIndices, indicesErr := resolveKeyIndices(refSchema, keyTagFamily, keyTagNames, bucketed)
 	if indicesErr != nil {
 		return nil, AggValuePathUnresolved, indicesErr
 	}
@@ -130,7 +145,7 @@ func ReducePartialBatches(
 	if specsErr != nil {
 		return nil, AggValuePathUnresolved, specsErr
 	}
-	op := NewBatchAggregation(refSchema, keyIndices, specs, AggModeReduce, batchSize, tracker, 0)
+	op := NewBatchAggregation(refSchema, keyIndices, specs, AggModeReduce, batchSize, tracker, aggEntrySize)
 	defer op.Close()
 	if initErr := op.Init(context.Background()); initErr != nil {
 		return nil, path, fmt.Errorf("ReducePartialBatches: init: %w", initErr)
@@ -149,6 +164,14 @@ func ReducePartialBatches(
 	if finalErr := op.Finalize(context.Background()); finalErr != nil {
 		return nil, path, fmt.Errorf("ReducePartialBatches: finalize: %w", finalErr)
 	}
+	// Each partial arrives already bucket-ascending (design §7.2 streams
+	// per node), but op consumes partials frame by frame, so insertion
+	// order is only piecewise ascending — e.g. node A's [2000, 3000]
+	// followed by node B's [1000, 2000] inserts as [2000, 3000, 1000].
+	// Sort once before draining so the merged result is globally
+	// bucket-ascending, which iteratorFromBatches's offset/limit pagination
+	// (design §7.5) requires to page correctly. A no-op when unbucketed.
+	op.SortInsertionByBucket()
 	var out []*vectorized.RecordBatch
 	for {
 		nb, nextErr := op.NextBatch(context.Background())
@@ -163,24 +186,34 @@ func ReducePartialBatches(
 	return out, path, nil
 }
 
-// resolveKeyIndices binds keyTagNames to column indices in the partial
-// schema. Returns an error if a name does not resolve. Empty list is
-// allowed (scalar reduce) and returns nil keyIndices.
-func resolveKeyIndices(schema *vectorized.BatchSchema, keyTagNames []string) ([]int, error) {
-	if len(keyTagNames) == 0 {
-		return nil, nil
+// resolveKeyIndices binds the bucket column (when bucketed) and
+// (keyTagFamily, keyTagNames) to column indices in the partial schema.
+// Matching requires both family and name — tag-family validation does not
+// reject the same tag name in two families (design doc §5.1), so matching
+// by name alone could silently bind to the wrong family's column on a
+// valid schema. Returns an error if a tag does not resolve, or if bucketed
+// is true but the schema carries no RoleTimestamp column (design §10's
+// mixed-version guard). Neither bucketed nor any keyTagNames is allowed
+// (scalar reduce) and returns nil keyIndices; keyTagFamily is unused then.
+func resolveKeyIndices(schema *vectorized.BatchSchema, keyTagFamily string, keyTagNames []string, bucketed bool) ([]int, error) {
+	var out []int
+	if bucketed {
+		idx := schema.TimestampIndex()
+		if idx < 0 {
+			return nil, fmt.Errorf("bucketed query expected a RoleTimestamp column in the partial schema (an older data node may have ignored time_bucket)")
+		}
+		out = append(out, idx)
 	}
-	out := make([]int, 0, len(keyTagNames))
 	for _, name := range keyTagNames {
 		idx := -1
 		for i, def := range schema.Columns {
-			if def.Role == vectorized.RoleTag && def.Name == name {
+			if def.Role == vectorized.RoleTag && def.TagFamily == keyTagFamily && def.Name == name {
 				idx = i
 				break
 			}
 		}
 		if idx < 0 {
-			return nil, fmt.Errorf("key tag %q not present in partial schema", name)
+			return nil, fmt.Errorf("key tag %s.%s not present in partial schema", keyTagFamily, name)
 		}
 		out = append(out, idx)
 	}

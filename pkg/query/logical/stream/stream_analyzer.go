@@ -18,12 +18,12 @@
 package stream
 
 import (
-	"context"
 	"fmt"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
@@ -83,6 +83,10 @@ func Analyze(criteria *streamv1.QueryRequest, metadata []*commonv1.Metadata, ss 
 	if limitParameter == 0 {
 		limitParameter = defaultLimit
 	}
+	window, validWindow := query.AddWindow(limitParameter, criteria.GetOffset())
+	if !validWindow {
+		return nil, fmt.Errorf("query limit and offset exceed supported range")
+	}
 	plan = newLimit(plan, criteria.GetOffset(), limitParameter)
 
 	p, err := plan.Analyze(s)
@@ -91,7 +95,7 @@ func Analyze(criteria *streamv1.QueryRequest, metadata []*commonv1.Metadata, ss 
 	}
 	rules := []logical.OptimizeRule{
 		logical.NewPushDownOrder(criteria.OrderBy),
-		logical.NewPushDownMaxSize(int(limitParameter + criteria.GetOffset())),
+		logical.NewPushDownMaxSize(int(window)),
 	}
 	if err := logical.ApplyRules(p, rules...); err != nil {
 		return nil, err
@@ -118,14 +122,17 @@ func DistributedAnalyze(criteria *streamv1.QueryRequest, ss []logical.Schema) (l
 	if limitParameter == 0 {
 		limitParameter = defaultLimit
 	}
+	if _, validWindow := query.AddWindow(limitParameter, criteria.GetOffset()); !validWindow {
+		return nil, fmt.Errorf("query limit and offset exceed supported range")
+	}
 	plan = newDistributedLimit(plan, criteria.Offset, limitParameter)
 	return plan.Analyze(s)
 }
 
 var (
-	_ logical.Plan              = (*limit)(nil)
-	_ logical.UnresolvedPlan    = (*limit)(nil)
-	_ executor.StreamExecutable = (*limit)(nil)
+	_ logical.Plan           = (*limit)(nil)
+	_ logical.UnresolvedPlan = (*limit)(nil)
+	_ executor.StreamCloser  = (*limit)(nil)
 )
 
 // Parent refers to a parent node in the execution tree(plan).
@@ -141,41 +148,7 @@ type limit struct {
 }
 
 func (l *limit) Close() {
-	l.Parent.Input.(executor.StreamExecutable).Close()
-}
-
-func (l *limit) Execute(ec context.Context) ([]*streamv1.Element, error) {
-	var allEntities []*streamv1.Element
-	targetCount := int(l.limitNum)
-	offset := int(l.offsetNum)
-
-	for len(allEntities) < targetCount+offset {
-		entities, err := l.Parent.Input.(executor.StreamExecutable).Execute(ec)
-		if err != nil {
-			return nil, err
-		}
-		if len(entities) == 0 {
-			break
-		}
-
-		needed := targetCount + offset - len(allEntities)
-		if len(entities) > needed {
-			allEntities = append(allEntities, entities[:needed]...)
-		} else {
-			allEntities = append(allEntities, entities...)
-		}
-	}
-
-	if len(allEntities) <= offset {
-		return []*streamv1.Element{}, nil
-	}
-
-	endIndex := offset + targetCount
-	if endIndex > len(allEntities) {
-		endIndex = len(allEntities)
-	}
-
-	return allEntities[offset:endIndex], nil
+	l.Parent.Input.(executor.StreamCloser).Close()
 }
 
 func (l *limit) Analyze(s logical.Schema) (logical.Plan, error) {

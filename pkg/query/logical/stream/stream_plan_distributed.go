@@ -73,12 +73,16 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 	if limit == 0 {
 		limit = defaultLimit
 	}
+	window, validWindow := query.AddWindow(limit, ud.originalQuery.Offset)
+	if !validWindow {
+		return nil, fmt.Errorf("query limit and offset exceed supported range")
+	}
 	temp := &streamv1.QueryRequest{
 		Projection: ud.originalQuery.Projection,
 		Name:       ud.originalQuery.Name,
 		Groups:     ud.originalQuery.Groups,
 		Criteria:   ud.originalQuery.Criteria,
-		Limit:      limit + ud.originalQuery.Offset,
+		Limit:      uint32(window),
 		OrderBy:    ud.originalQuery.OrderBy,
 	}
 	if ud.originalQuery.OrderBy == nil {

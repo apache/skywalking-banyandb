@@ -49,7 +49,7 @@ func TestAnalyzeDistributed_AllowsGroupByTopWithoutAgg(t *testing.T) {
 		Limit:  7,
 		Offset: 3,
 	}
-	_, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	_, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed must accept GroupBy+Top without Agg natively (Phase 5): %v", analyzeErr)
 	}
@@ -64,7 +64,7 @@ func TestAnalyzeDistributed_AllowsSupportedNonAggRows(t *testing.T) {
 		Limit:           7,
 		Offset:          3,
 	}
-	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 	}
@@ -173,7 +173,7 @@ func TestAnalyzeDistributed_NodeTemplatePushesAggPartials(t *testing.T) {
 			FieldValueSort: modelv1.Sort_SORT_ASC,
 		},
 	}
-	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 	}
@@ -189,6 +189,277 @@ func TestAnalyzeDistributed_NodeTemplatePushesAggPartials(t *testing.T) {
 	// liaison ever sees the global winners.
 	if got, want := p.nodeTemplate.GetLimit(), uint32(math.MaxUint32); got != want {
 		t.Fatalf("Top+Agg node limit: got %d, want unbounded (%d)", got, want)
+	}
+}
+
+// TestAnalyzeDistributed_CountDistinct_RequiresSingleStage pins that a
+// COUNT_DISTINCT plan signals RequiresSingleStage (design §7.4) — the
+// analyzer cannot itself count resolved stages (it never sees node
+// selectors), so this is the signal banyand/dquery checks after stage
+// resolution.
+func TestAnalyzeDistributed_CountDistinct_RequiresSingleStage(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg:             countDistinctAgg(defaultName, tagCount),
+	}
+	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
+	if analyzeErr != nil {
+		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
+	}
+	if !p.RequiresSingleStage() {
+		t.Fatal("a COUNT_DISTINCT plan must require a single resolved stage")
+	}
+}
+
+// TestAnalyzeDistributed_SumAgg_DoesNotRequireSingleStage pins the negative
+// case: every other function composes with multi-stage queries exactly as
+// before (design §7.4 is COUNT_DISTINCT-specific).
+func TestAnalyzeDistributed_SumAgg_DoesNotRequireSingleStage(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg:             &measurev1.QueryRequest_Aggregation{Function: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, FieldName: fieldValue},
+	}
+	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
+	if analyzeErr != nil {
+		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
+	}
+	if p.RequiresSingleStage() {
+		t.Fatal("a non-COUNT_DISTINCT plan must not require a single resolved stage")
+	}
+}
+
+// TestAnalyzeDistributed_CountDistinct_MultiGroup_AnyGroupCanReject pins
+// that the decomposability condition (design §7.4) is checked for every
+// group in a multi-group request — a query must not be accepted just
+// because the FIRST group's schema happens to satisfy it.
+func TestAnalyzeDistributed_CountDistinct_MultiGroup_AnyGroupCanReject(t *testing.T) {
+	okSchema := entityShardingSchema([]string{tagCount}, nil) // routing covered by the Agg target
+	okSchema.Metadata = &commonv1.Metadata{Name: "demo", Group: "groupA"}
+	badSchema := entityShardingSchema([]string{tagCount}, []string{tagSvc}) // sharding key uncovered
+	badSchema.Metadata = &commonv1.Metadata{Name: "demo", Group: "groupB"}
+
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		Groups:          []string{"groupA", "groupB"},
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg:             countDistinctAgg(defaultName, tagCount),
+	}
+	cfg := vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1}
+	// Both this scenario (a decomposability failure on one of two groups)
+	// and the blanket multi-group rejection below reject the same request
+	// today — the blanket check fires first, per AnalyzeDistributed's
+	// ordering. This assertion holds regardless of which one is
+	// responsible, so it stays valid if the blanket rejection is ever
+	// lifted and per-group decomposability becomes reachable again for
+	// multi-group requests.
+	if _, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{okSchema, badSchema}, nil, cfg); analyzeErr == nil {
+		t.Fatal("a multi-group COUNT_DISTINCT request with a decomposability failure must reject")
+	}
+}
+
+// TestAnalyzeDistributed_CountDistinct_MultiGroup_AlwaysRejected pins the
+// P2 review finding on the first version of the decomposability check:
+// checking routing coverage independently per group does not make distinct
+// counts additive ACROSS groups. Shard ids are scoped per measure group,
+// not globally unique, so two different groups can each report "shard 0"
+// for the same GroupBy key — markDedupSeen's (shardID, groupKey) dedup key
+// cannot tell that apart from a genuine replica duplicate, and depending
+// on which partial the collision drops, the result can undercount or
+// double-count. Multi-group COUNT_DISTINCT is rejected outright,
+// regardless of whether every individual group would otherwise satisfy
+// the decomposability condition.
+func TestAnalyzeDistributed_CountDistinct_MultiGroup_AlwaysRejected(t *testing.T) {
+	msA := entityShardingSchema([]string{tagCount}, nil)
+	msA.Metadata = &commonv1.Metadata{Name: "demo", Group: "groupA"}
+	msB := entityShardingSchema([]string{tagCount}, nil)
+	msB.Metadata = &commonv1.Metadata{Name: "demo", Group: "groupB"}
+
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		Groups:          []string{"groupA", "groupB"},
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg:             countDistinctAgg(defaultName, tagCount),
+	}
+	cfg := vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1}
+	if _, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{msA, msB}, nil, cfg); analyzeErr == nil {
+		t.Fatal("COUNT_DISTINCT must reject a multi-group request even when every group independently satisfies the decomposability condition")
+	}
+}
+
+// TestAnalyzeDistributed_CountDistinct_IndexRuleOnRoutingTags_DoesNotAffectAcceptance
+// pins that validateCountDistinctPushdown's decision is IndexRule-agnostic:
+// it only ever reads ShardingKey/Entity from the Measure schema, never
+// indexRules. A composite routing key ([tagSvc, tagCount], no narrower
+// ShardingKey) with each component covered by a different branch — the
+// same accept case as
+// TestValidateCountDistinctPushdown_CompositeEntity_DifferentBranchesCoverDifferentTags_Accepts
+// — must still accept when both routing tags additionally carry a real
+// IndexRule, proving indexedness never confuses which branch covers what.
+func TestAnalyzeDistributed_CountDistinct_IndexRuleOnRoutingTags_DoesNotAffectAcceptance(t *testing.T) {
+	ms := entityShardingSchema([]string{tagSvc, tagCount}, nil)
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		GroupBy:         groupByReq(defaultName, []string{tagSvc}),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg:             countDistinctAgg(defaultName, tagCount),
+	}
+	indexRules := []*databasev1.IndexRule{
+		testIndexRuleOnTag("svc_idx", tagSvc),
+		testIndexRuleOnTag("count_idx", tagCount),
+	}
+	cfg := vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1}
+	if _, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{ms}, [][]*databasev1.IndexRule{indexRules}, cfg); analyzeErr != nil {
+		t.Fatalf("an IndexRule on a covered routing tag must not affect acceptance: %v", analyzeErr)
+	}
+}
+
+// TestAnalyzeDistributed_CountDistinct_IndexRuleOnUncoveredRoutingTag_StillRejects
+// is the negative twin: an IndexRule on the uncovered sharding key must not
+// make validateCountDistinctPushdown treat it as covered — indexedness and
+// routing coverage are unrelated concepts, and only the latter decides
+// decomposability.
+func TestAnalyzeDistributed_CountDistinct_IndexRuleOnUncoveredRoutingTag_StillRejects(t *testing.T) {
+	ms := entityShardingSchema([]string{tagCount}, []string{tagSvc})
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg:             countDistinctAgg(defaultName, tagCount),
+	}
+	indexRules := []*databasev1.IndexRule{testIndexRuleOnTag("svc_idx", tagSvc)}
+	cfg := vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1}
+	if _, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{ms}, [][]*databasev1.IndexRule{indexRules}, cfg); analyzeErr == nil {
+		t.Fatal("an IndexRule on the uncovered routing tag must not make the request acceptable")
+	}
+}
+
+// TestAnalyzeDistributed_SumAgg_MultiGroup_StillAccepted pins that the new
+// multi-group rejection is COUNT_DISTINCT-specific: every other function
+// composes with multi-group requests exactly as before (an existing,
+// already-shipped feature this issue must not regress).
+func TestAnalyzeDistributed_SumAgg_MultiGroup_StillAccepted(t *testing.T) {
+	msA := testMeasureSchemaForGroup("groupA")
+	msB := testMeasureSchemaForGroup("groupB")
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		Groups:          []string{"groupA", "groupB"},
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg:             &measurev1.QueryRequest_Aggregation{Function: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, FieldName: fieldValue},
+	}
+	cfg := vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1}
+	if _, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{msA, msB}, nil, cfg); analyzeErr != nil {
+		t.Fatalf("a multi-group SUM request must still be accepted: %v", analyzeErr)
+	}
+}
+
+// TestAnalyzeDistributed_NodeTemplatePushesAggPartials_TagTarget mirrors
+// TestAnalyzeDistributed_NodeTemplatePushesAggPartials for a tag-targeted
+// Agg (design §7.1): the proto request travels to the node template
+// unchanged, so a data node resolves the tag column the same way the
+// standalone path does.
+func TestAnalyzeDistributed_NodeTemplatePushesAggPartials_TagTarget(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		GroupBy: &measurev1.QueryRequest_GroupBy{
+			TagProjection: projTagProj(),
+		},
+		Agg: &measurev1.QueryRequest_Aggregation{
+			Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
+			TagName:   tagCount,
+			TagFamily: defaultName,
+		},
+	}
+	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
+	if analyzeErr != nil {
+		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
+	}
+	if p.nodeTemplate.GetAgg().GetTagName() != tagCount || p.nodeTemplate.GetAgg().GetTagFamily() != defaultName {
+		t.Fatalf("node template should push the tag-targeted Agg unchanged, got %+v", p.nodeTemplate.GetAgg())
+	}
+}
+
+// TestDistributedGroupByTagKey_PreservesFamily is the regression pin for
+// the PR review finding on executeAgg's reduce call: distributedGroupByTagKey
+// must return the tag family alongside the names, not just names, because
+// tag-family validation does not reject the same tag name in two families
+// (design doc §5.1) — dropping the family would let resolveKeyIndices bind
+// a bucketed distributed reduce to the wrong family's column on a valid
+// schema with a repeated tag name.
+func TestDistributedGroupByTagKey_PreservesFamily(t *testing.T) {
+	groupBy := &measurev1.QueryRequest_GroupBy{
+		TagProjection: &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
+			{Name: "fam2", Tags: []string{"g"}},
+		}},
+	}
+	family, names := distributedGroupByTagKey(groupBy)
+	if family != "fam2" {
+		t.Fatalf("family = %q, want %q", family, "fam2")
+	}
+	if len(names) != 1 || names[0] != "g" {
+		t.Fatalf("names = %v, want [g]", names)
+	}
+}
+
+// TestDistributedGroupByTagKey_NilGroupBy pins the nil/empty-projection
+// no-op cases return an empty family alongside nil names, matching
+// resolveKeyIndices's existing "no keyTagNames" contract.
+func TestDistributedGroupByTagKey_NilGroupBy(t *testing.T) {
+	if family, names := distributedGroupByTagKey(nil); family != "" || names != nil {
+		t.Fatalf("nil GroupBy: got (%q, %v), want (\"\", nil)", family, names)
+	}
+	if family, names := distributedGroupByTagKey(&measurev1.QueryRequest_GroupBy{}); family != "" || names != nil {
+		t.Fatalf("no TagProjection: got (%q, %v), want (\"\", nil)", family, names)
+	}
+}
+
+// TestAggOutputName_ResolvesTagOrFieldTarget is the regression pin for the
+// distributed-reduce OutputName bug this issue fixed: executeAgg used to
+// read req.GetAgg().GetFieldName() unconditionally, which is empty for a
+// tag-targeted Agg — bindAggReduceSpecs would then fail to find the
+// partial's value column (a RoleField column named after the tag, not "").
+func TestAggOutputName_ResolvesTagOrFieldTarget(t *testing.T) {
+	fieldAgg := &measurev1.QueryRequest_Aggregation{FieldName: fieldValue}
+	if got := aggOutputName(fieldAgg); got != fieldValue {
+		t.Fatalf("field target: want %s, got %s", fieldValue, got)
+	}
+	tagAgg := &measurev1.QueryRequest_Aggregation{TagName: tagCount, TagFamily: defaultName}
+	if got := aggOutputName(tagAgg); got != tagCount {
+		t.Fatalf("tag target: want %s, got %s", tagCount, got)
+	}
+}
+
+// TestAnalyzeDistributed_NodeTemplatePushesTimeBucket pins design §7.2's
+// distributed seam: GroupBy.time_bucket travels to the node template
+// unchanged (proto.Clone carries it verbatim), so each data node floors
+// independently and no liaison-side coordination is needed to distribute it.
+func TestAnalyzeDistributed_NodeTemplatePushesTimeBucket(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		GroupBy: &measurev1.QueryRequest_GroupBy{
+			TagProjection: projTagProj(),
+			TimeBucket:    &measurev1.QueryRequest_GroupBy_TimeBucket{Width: "5m"},
+		},
+		Agg: &measurev1.QueryRequest_Aggregation{
+			Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
+			FieldName: fieldValue,
+		},
+	}
+	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
+	if analyzeErr != nil {
+		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
+	}
+	if got := p.nodeTemplate.GetGroupBy().GetTimeBucket().GetWidth(); got != "5m" {
+		t.Fatalf("node template should push time_bucket unchanged, got width %q", got)
 	}
 }
 
@@ -238,7 +509,7 @@ func TestAnalyzeDistributed_TopAggUnboundsNodeLimit_Matrix(t *testing.T) {
 				Limit:  tc.limit,
 				Offset: tc.offset,
 			}
-			p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+			p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
 			if analyzeErr != nil {
 				t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 			}
@@ -292,7 +563,7 @@ func TestAnalyzeDistributed_TopWithoutAgg_NodeLimitIsUnbounded(t *testing.T) {
 				Limit: tc.limit,
 			}
 			p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil,
-				vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+				vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
 			if analyzeErr != nil {
 				t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 			}
@@ -346,7 +617,7 @@ func TestAnalyzeDistributed_TopWithoutAgg_HiddenFieldProjectionAdded(t *testing.
 		},
 	}
 	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{ms}, nil,
-		vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+		vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 	}
@@ -394,7 +665,7 @@ func TestAnalyzeDistributed_TopWithoutAgg_FieldNotInSchema(t *testing.T) {
 		Limit: 10,
 	}
 	_, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil,
-		vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+		vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
 	if analyzeErr == nil {
 		t.Fatal("AnalyzeDistributed must return an error when Top.FieldName is not in the schema")
 	}
@@ -435,7 +706,7 @@ func TestAnalyzeDistributed_OrderByByIndexRule_AcceptedNatively(t *testing.T) {
 		req,
 		[]*databasev1.Measure{testMeasureSchema()},
 		[][]*databasev1.IndexRule{indexRules},
-		vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1},
+		vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1},
 	)
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
@@ -480,7 +751,7 @@ func TestAnalyzeDistributed_OrderByByIndexRule_HiddenProjectionAdded(t *testing.
 		req,
 		[]*databasev1.Measure{testMeasureSchema()},
 		[][]*databasev1.IndexRule{indexRules},
-		vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1},
+		vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1},
 	)
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
@@ -526,7 +797,7 @@ func TestAnalyzeDistributed_OrderByByIndexRule_UnknownRuleErrors(t *testing.T) {
 		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		OrderBy:         &modelv1.QueryOrder{IndexRuleName: "nope"},
 	}
-	_, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+	_, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
 	if analyzeErr == nil {
 		t.Fatal("AnalyzeDistributed must reject an unknown index rule")
 	}
@@ -576,7 +847,7 @@ func TestAnalyzeDistributed_MultiGroup_AcceptedNatively(t *testing.T) {
 		req,
 		[]*databasev1.Measure{msA, msB},
 		nil,
-		vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1},
+		vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1},
 	)
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed multi-group: %v", analyzeErr)
@@ -621,7 +892,7 @@ func TestAnalyzeDistributed_MultiGroup_UnionsSchemaAcrossGroups(t *testing.T) {
 		req,
 		[]*databasev1.Measure{msA, msB},
 		nil,
-		vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1},
+		vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1},
 	)
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
@@ -750,7 +1021,7 @@ func TestAnalyzeDistributed_TopNonAggUnboundsNodeLimit_MultiGroup(t *testing.T) 
 				Limit: 10,
 			}
 			p, analyzeErr := AnalyzeDistributed(req, schemas, nil,
-				vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+				vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
 			if analyzeErr != nil {
 				t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 			}
@@ -799,7 +1070,7 @@ func TestAnalyzeDistributed_RawGroupBy_NodeTemplateKeepsGroupBy(t *testing.T) {
 		Limit: 10,
 	}
 	p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil,
-		vmeasure.VectorizedConfig{Enabled: true, BatchSize: 4, QueryMemoryMiB: 1})
+		vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
 	if analyzeErr != nil {
 		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
 	}

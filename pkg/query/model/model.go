@@ -19,18 +19,12 @@
 package model
 
 import (
-	"container/heap"
-	"context"
-
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
-
-const maxTopN = 20
 
 // Tag is a tag name and its values.
 type Tag struct {
@@ -58,18 +52,46 @@ type TagProjection struct {
 
 // MeasureGroupBy describes a GroupBy clause for a measure query. v1 supports
 // a single tag family; each entry in TagNames is a key column. An empty
-// TagNames slice means the query carries no GroupBy clause.
+// TagNames slice means the query carries no tag GroupBy clause — the query
+// may still bucket by time alone (TimeBucket set, TagNames empty).
+//
+// TimeBucket carries the request's resolved time_bucket clause (design §5.3);
+// a nil TimeBucket means no bucketing.
 type MeasureGroupBy struct {
-	TagFamily string
-	TagNames  []string
+	TimeBucket *MeasureTimeBucket
+	TagFamily  string
+	TagNames   []string
+}
+
+// MeasureTimeBucket describes a resolved GroupBy.time_bucket clause (design
+// §5.3). Width is the raw requested/resolved duration string, kept for
+// diagnostics; WidthNanos is its parsed value in nanoseconds and is what
+// execution actually uses — always > 0 once translateGroupBy has resolved it
+// (a zero or negative width is rejected at analyze time, never carried this
+// far). UseIndexModeMap is set when measureSchema.GetIndexMode() is true: an
+// index-mode measure's scan has no ascending-timestamp guarantee, so
+// execution must take the non-streaming map path (design §7.2) instead of
+// the streaming operator, decided once here rather than guessed at runtime.
+type MeasureTimeBucket struct {
+	Width           string
+	WidthNanos      int64
+	UseIndexModeMap bool
 }
 
 // MeasureAgg describes a single aggregation for a measure query. v1 supports
 // one aggregation per query — matches the singular QueryRequest.agg proto
-// field. FieldName must reference a field in MeasureQueryOptions.FieldProjection.
+// field. Exactly one of FieldName / TagName is set: FieldName must reference
+// a field in MeasureQueryOptions.FieldProjection; TagName + TagFamily
+// reference a tag instead (design §5.1, §7.1). HideTag is set when the
+// analyzer injected TagName into the tag projection because the caller
+// didn't request it — the injected copy is then stripped from the output
+// (design §5.2).
 type MeasureAgg struct {
 	FieldName string
+	TagName   string
+	TagFamily string
 	Func      modelv1.AggregationFunction
+	HideTag   bool
 }
 
 // MeasureQueryOptions is the options of a measure query.
@@ -155,198 +177,6 @@ func (s *StreamQueryOptions) CopyFrom(other *StreamQueryOptions) {
 	}
 
 	s.MaxElementSize = other.MaxElementSize
-}
-
-// StreamResult is the result of a query.
-type StreamResult struct {
-	Error       error
-	Timestamps  []int64
-	ElementIDs  []uint64
-	TagFamilies []TagFamily
-	SIDs        []common.SeriesID
-	topN        int
-	idx         int
-	asc         bool
-}
-
-// NewStreamResult creates a new StreamResult.
-func NewStreamResult(topN int, asc bool) *StreamResult {
-	capacity := topN
-	if topN > maxTopN {
-		capacity = maxTopN
-	}
-	return &StreamResult{
-		topN:        topN,
-		asc:         asc,
-		Timestamps:  make([]int64, 0, capacity),
-		ElementIDs:  make([]uint64, 0, capacity),
-		TagFamilies: make([]TagFamily, 0, capacity),
-		SIDs:        make([]common.SeriesID, 0, capacity),
-	}
-}
-
-// Len returns the length of the StreamResult.
-func (sr *StreamResult) Len() int {
-	return len(sr.Timestamps)
-}
-
-// Reset resets the StreamResult.
-func (sr *StreamResult) Reset() {
-	sr.Error = nil
-	sr.idx = 0
-	sr.Timestamps = sr.Timestamps[:0]
-	sr.ElementIDs = sr.ElementIDs[:0]
-	sr.TagFamilies = sr.TagFamilies[:0]
-	sr.SIDs = sr.SIDs[:0]
-}
-
-// CopyFrom copies the topN results from other to sr using tmp as a temporary result.
-func (sr *StreamResult) CopyFrom(tmp, other *StreamResult) bool {
-	// Prepare a reusable tmp result
-	tmp.Reset()
-	tmp.topN = sr.topN
-	tmp.asc = sr.asc
-
-	// Prepare heaps
-	sr.idx = 0
-	other.idx = 0
-
-	h := &StreamResultHeap{asc: sr.asc}
-	heap.Init(h)
-
-	if sr.Len() > 0 {
-		heap.Push(h, sr)
-	}
-	if other.Len() > 0 {
-		heap.Push(h, other)
-	}
-
-	seenElementIDs := make(map[uint64]bool)
-
-	// Pop from heap to build tmp with topN
-	for h.Len() > 0 && tmp.Len() < tmp.topN {
-		res := heap.Pop(h).(*StreamResult)
-		elementID := res.ElementIDs[res.idx]
-		if !seenElementIDs[elementID] {
-			seenElementIDs[elementID] = true
-			tmp.CopySingleFrom(res)
-		}
-		res.idx++
-		if res.idx < res.Len() {
-			heap.Push(h, res)
-		}
-	}
-
-	// Copy tmp back to sr
-	sr.Reset()
-	sr.Timestamps = append(sr.Timestamps, tmp.Timestamps...)
-	sr.ElementIDs = append(sr.ElementIDs, tmp.ElementIDs...)
-	sr.SIDs = append(sr.SIDs, tmp.SIDs...)
-	sr.TagFamilies = append(sr.TagFamilies, tmp.TagFamilies...)
-
-	return len(sr.Timestamps) >= sr.topN
-}
-
-// CopySingleFrom copies a single result from other to sr.
-func (sr *StreamResult) CopySingleFrom(other *StreamResult) {
-	sr.SIDs = append(sr.SIDs, other.SIDs[other.idx])
-	sr.Timestamps = append(sr.Timestamps, other.Timestamps[other.idx])
-	sr.ElementIDs = append(sr.ElementIDs, other.ElementIDs[other.idx])
-	if len(sr.TagFamilies) < len(other.TagFamilies) {
-		for i := range other.TagFamilies {
-			tf := TagFamily{
-				Name: other.TagFamilies[i].Name,
-				Tags: make([]Tag, len(other.TagFamilies[i].Tags)),
-			}
-			for j := range tf.Tags {
-				tf.Tags[j].Name = other.TagFamilies[i].Tags[j].Name
-			}
-			sr.TagFamilies = append(sr.TagFamilies, tf)
-		}
-	}
-	if len(sr.TagFamilies) != len(other.TagFamilies) {
-		logger.Panicf("tag family length mismatch: %d != %d", len(sr.TagFamilies), len(other.TagFamilies))
-	}
-	for i := range sr.TagFamilies {
-		if len(sr.TagFamilies[i].Tags) != len(other.TagFamilies[i].Tags) {
-			logger.Panicf("tag length mismatch: %d != %d", len(sr.TagFamilies[i].Tags), len(other.TagFamilies[i].Tags))
-		}
-		for j := range sr.TagFamilies[i].Tags {
-			sr.TagFamilies[i].Tags[j].Values = append(sr.TagFamilies[i].Tags[j].Values, other.TagFamilies[i].Tags[j].Values[other.idx])
-		}
-	}
-}
-
-var bypassStreamResult = &StreamResult{}
-
-// StreamResultHeap is a min-heap of StreamResult pointers.
-type StreamResultHeap struct {
-	data []*StreamResult
-	asc  bool
-}
-
-func (h StreamResultHeap) Len() int { return len(h.data) }
-func (h StreamResultHeap) Less(i, j int) bool {
-	if h.asc {
-		return h.data[i].Timestamps[h.data[i].idx] < h.data[j].Timestamps[h.data[j].idx]
-	}
-	return h.data[i].Timestamps[h.data[i].idx] > h.data[j].Timestamps[h.data[j].idx]
-}
-func (h StreamResultHeap) Swap(i, j int) { h.data[i], h.data[j] = h.data[j], h.data[i] }
-
-// Push pushes a StreamResult pointer to the heap.
-func (h *StreamResultHeap) Push(x interface{}) {
-	h.data = append(h.data, x.(*StreamResult))
-}
-
-// Pop pops a StreamResult pointer from the heap.
-func (h *StreamResultHeap) Pop() interface{} {
-	old := h.data
-	n := len(old)
-	x := old[n-1]
-	h.data = old[0 : n-1]
-	return x
-}
-
-// MergeStreamResults merges multiple StreamResult slices into a single StreamResult.
-func MergeStreamResults(results []*StreamResult, topN int, asc bool) *StreamResult {
-	h := &StreamResultHeap{asc: asc}
-	heap.Init(h)
-
-	for _, result := range results {
-		if result.Len() > 0 {
-			result.idx = 0
-			heap.Push(h, result)
-		}
-	}
-
-	if h.Len() == 0 {
-		return bypassStreamResult
-	}
-
-	mergedResult := NewStreamResult(topN, asc)
-	seenElementIDs := make(map[uint64]bool)
-
-	for h.Len() > 0 && mergedResult.Len() < topN {
-		sr := heap.Pop(h).(*StreamResult)
-		elementID := sr.ElementIDs[sr.idx]
-		if !seenElementIDs[elementID] {
-			seenElementIDs[elementID] = true
-			mergedResult.CopySingleFrom(sr)
-		}
-		sr.idx++
-		if sr.idx < sr.Len() {
-			heap.Push(h, sr)
-		}
-	}
-
-	return mergedResult
-}
-
-// StreamQueryResult is the result of a stream query.
-type StreamQueryResult interface {
-	Pull(context.Context) *StreamResult
-	Release()
 }
 
 // TraceQueryOptions is the options of a trace query.
