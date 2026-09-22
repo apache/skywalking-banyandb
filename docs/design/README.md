@@ -9,6 +9,7 @@ must be added there when it is introduced. When a milestone ships, its directory
 
 - [Native inverted-index replacement](0.12.0/native-inverted-index/README.md)
 - [Tag aggregation and time bucketing in the measure query engine](0.12.0/tag-aggregation/README.md)
+- [Data export and import](0.12.0/data-export-import/README.md)
 
 ## Shipped milestones
 
