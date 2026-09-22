@@ -892,7 +892,7 @@ func (p *DistributedPlan) executeRowsMultiGroup(ctx context.Context, groupFrames
 // discipline, and BatchTop.Consume shares BatchAggregation's exposure to the
 // design/0.12.0/limit-after-aggregation §5 uint16 wraparound (both drive
 // their per-row loop from activeIndices), so a batch larger than batchSize
-// is chunked via vmeasure.ConsumeChunked exactly like ReducePartialBatches,
+// is chunked via vectorized.ConsumeChunked exactly like ReducePartialBatches,
 // rather than assumed away.
 func applyBatchTopToRows(batches []*vectorized.RecordBatch, top *measurev1.QueryRequest_Top, batchSize int) ([]*vectorized.RecordBatch, error) {
 	if top == nil || top.GetNumber() <= 0 || len(batches) == 0 {
@@ -932,7 +932,7 @@ func applyBatchTopToRows(batches []*vectorized.RecordBatch, top *measurev1.Query
 		if scratch == nil {
 			scratch = vectorized.NewRecordBatch(schema, batchSize)
 		}
-		if consumeErr := vmeasure.ConsumeChunked(topOp, scratch, b, batchSize); consumeErr != nil {
+		if consumeErr := vectorized.ConsumeChunked(topOp, scratch, b, batchSize); consumeErr != nil {
 			return nil, fmt.Errorf("applyBatchTopToRows: consume batch %d: %w", idx, consumeErr)
 		}
 	}
@@ -979,7 +979,7 @@ func applyBatchTopToRows(batches []*vectorized.RecordBatch, top *measurev1.Query
 // discipline, and BatchGroupBy.Consume shares BatchAggregation's exposure to
 // the design/0.12.0/limit-after-aggregation §5 uint16 wraparound (both drive
 // their per-row loop from activeIndices), so a batch larger than batchSize is
-// chunked via vmeasure.ConsumeChunked exactly like ReducePartialBatches,
+// chunked via vectorized.ConsumeChunked exactly like ReducePartialBatches,
 // rather than assumed away.
 func applyBatchGroupByFirstToRows(
 	batches []*vectorized.RecordBatch,
@@ -1045,7 +1045,7 @@ func applyBatchGroupByFirstToRows(
 		if scratch == nil {
 			scratch = vectorized.NewRecordBatch(schema, batchSize)
 		}
-		if consumeErr := vmeasure.ConsumeChunked(gbOp, scratch, b, batchSize); consumeErr != nil {
+		if consumeErr := vectorized.ConsumeChunked(gbOp, scratch, b, batchSize); consumeErr != nil {
 			return nil, fmt.Errorf("applyBatchGroupByFirstToRows: consume batch %d: %w", batchIdx, consumeErr)
 		}
 	}

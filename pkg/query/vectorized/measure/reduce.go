@@ -174,7 +174,7 @@ func ReducePartialBatches(
 		if scratch == nil {
 			scratch = vectorized.NewRecordBatch(refSchema, batchSize)
 		}
-		if consumeErr := ConsumeChunked(op, scratch, b, batchSize); consumeErr != nil {
+		if consumeErr := vectorized.ConsumeChunked(op, scratch, b, batchSize); consumeErr != nil {
 			return nil, path, fmt.Errorf("ReducePartialBatches: consume partial %d: %w", i, consumeErr)
 		}
 	}
@@ -201,89 +201,6 @@ func ReducePartialBatches(
 		out = append(out, nb)
 	}
 	return out, path, nil
-}
-
-// ConsumeChunked feeds b's active rows to op.Consume in slices of at most
-// batchSize rows, copied one at a time into the reusable scratch batch,
-// instead of handing op the whole batch in a single call. Callers should use
-// it only when b.ActiveLen() > batchSize; consuming b directly is cheaper
-// (and unchanged from before this existed) whenever it already fits in one
-// chunk -- see ReducePartialBatches for that fast-path/scratch-allocation
-// pattern.
-//
-// Why this exists (design/0.12.0/limit-after-aggregation §5): a data node's
-// DrainPipelineToFrame coalesces its entire pipeline output into a single
-// frame regardless of batchSize, so a decoded batch can legitimately carry
-// far more than 65,536 rows -- the hadTop distributed path sets MaxUint32 as
-// its per-node limit today, so this is already reachable, not hypothetical.
-// Every BreakerOperator this package has (BatchAggregation, BatchTop,
-// BatchGroupBy) drives its per-row loop from activeIndices, which
-// materializes a nil Selection as []uint16; past 65,536 rows that index
-// wraps, silently folding early rows into a group (or a heap, or a
-// first-seen bucket) a second time while never visiting the rows past the
-// wrap. Copying into a batchSize-capped scratch batch before every Consume
-// call is what keeps a batch that large from ever reaching Consume whole.
-//
-// Used by ReducePartialBatches in this package for the liaison-side
-// aggregation reduce, and by pkg/query/vectorized/measure/plan's
-// applyBatchTopToRows / applyBatchGroupByFirstToRows for the liaison's raw
-// (non-agg) Top and GroupBy passes over merged row batches -- any
-// BreakerOperator that shares activeIndices' exposure shares this fix.
-//
-// A []uint32 Selection was considered and rejected in favor of this (§5):
-// widening would let the liaison materialize an arbitrarily large working
-// set and merely survive indexing it, whereas chunking keeps the consumer's
-// per-step footprint bounded by batchSize regardless of what a node sent.
-// That bounds this function's own working set, but it is NOT a memory
-// optimization overall: b itself -- the fully decoded batch -- stays fully
-// resident for the duration of this call; only one chunk's worth is ever
-// copied at a time. Making frames themselves small enough to fix that is
-// design §6's job, not this one's.
-//
-// If b already carries a non-nil Selection, chunking walks that selection
-// rather than [0, b.Len) -- a caller's pre-selection is never discarded.
-func ConsumeChunked(op vectorized.BreakerOperator, scratch, b *vectorized.RecordBatch, batchSize int) error {
-	if b.Selection != nil {
-		for start := 0; start < len(b.Selection); start += batchSize {
-			end := min(start+batchSize, len(b.Selection))
-			scratch.Reset()
-			for _, rowIdx := range b.Selection[start:end] {
-				copyChunkRow(scratch, b, int(rowIdx))
-			}
-			if consumeErr := op.Consume(context.Background(), scratch); consumeErr != nil {
-				return consumeErr
-			}
-		}
-		return nil
-	}
-	// Selection is nil, so b's active rows are implicitly [0, b.Len) -- and
-	// b.Len is exactly the unbounded quantity described above, so it must be
-	// walked with a plain int here and never materialized as a []uint16
-	// selection itself (that materialization, inside activeIndices, is the
-	// wraparound this function exists to avoid triggering).
-	for start := 0; start < b.Len; start += batchSize {
-		end := min(start+batchSize, b.Len)
-		scratch.Reset()
-		for rowIdx := start; rowIdx < end; rowIdx++ {
-			copyChunkRow(scratch, b, rowIdx)
-		}
-		if consumeErr := op.Consume(context.Background(), scratch); consumeErr != nil {
-			return consumeErr
-		}
-	}
-	return nil
-}
-
-// copyChunkRow appends row rowIdx of src to dst -- one column at a time via
-// copyOneValue, which already preserves nulls and handles the TagValue /
-// FieldValue passthrough cases -- and advances dst.Len. dst is assumed
-// freshly Reset (nil Selection), so every appended row is active by
-// construction.
-func copyChunkRow(dst, src *vectorized.RecordBatch, rowIdx int) {
-	for colIdx, srcCol := range src.Columns {
-		copyOneValue(dst.Columns[colIdx], srcCol, rowIdx)
-	}
-	dst.Len++
 }
 
 // resolveKeyIndices binds the bucket column (when bucketed) and
@@ -462,7 +379,7 @@ func ApplyTopToReduce(reduced []*vectorized.RecordBatch, spec ReduceTopSpec, bat
 		if scratch == nil {
 			scratch = vectorized.NewRecordBatch(schema, batchSize)
 		}
-		if consumeErr := ConsumeChunked(top, scratch, b, batchSize); consumeErr != nil {
+		if consumeErr := vectorized.ConsumeChunked(top, scratch, b, batchSize); consumeErr != nil {
 			return nil, fmt.Errorf("ApplyTopToReduce: consume batch %d: %w", i, consumeErr)
 		}
 	}
