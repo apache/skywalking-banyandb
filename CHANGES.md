@@ -32,6 +32,7 @@ Release Notes.
 - Fix un-interruptible sleep on shutdown during snapshot sync retry and add jittered backoff for stream, measure, and trace.
 - Report the real shard ID in `CollectDataInfo` shard info for stream, measure, and trace instead of the live table's slice index, so a node that owns only higher-numbered shards is no longer attributed to shard 0 in cross-node shard-load analysis.
 - Fix a silently wrong result from the vectorized measure liaison's aggregation reduce when a single per-node partial exceeds 65,536 rows: past that boundary the consuming row index wrapped, folding early rows into a group a second time and never visiting the rest, with no error. It is reachable today on `Top`-bearing queries, whose per-node limit is unbounded. The reduce now consumes an oversized partial in bounded chunks, and `BatchSize` is capped at `MaxUint16` so it cannot reopen the same wrap from the output side. The liaison's raw `Top` and raw `GroupBy` passes are chunked the same way; their callers already page at `BatchSize`, so that part is hardening rather than a live fix.
+- Reject a `--trace-vectorized-batch-size` above 65,536 at startup instead of accepting it. The trace query path indexes a batch's active rows through a `uint16` selection, so a batch size above that bound silently wrapped -- reading early rows a second time and never reading the rest. The stream path already enforced this bound; measure now does too. A node configured above the bound will fail to start rather than return wrong results, and must lower the flag.
 
 ### Document
 
