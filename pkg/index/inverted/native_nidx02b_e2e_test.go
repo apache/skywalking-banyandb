@@ -24,7 +24,6 @@ import (
 	"testing"
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
-	segment "github.com/blugelabs/bluge_segment_api"
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted/internal/nativeice"
@@ -78,7 +77,7 @@ func TestNIDX02BLifecycleE2E(t *testing.T) {
 	tester.Equal(uint64(nidx02aPhysicalRowCount-nidx02aVisibleRowCount), drops.GetCardinality(),
 		"the shard masked two of its six rows")
 
-	merger := nidx02bMerge([]segment.Segment{reopened}, []*roaringpkg.Bitmap{drops}, nidx02bMergeBufferSize)
+	merger := nidx02bMerge([]segmentValue{reopened}, []*roaringpkg.Bitmap{drops}, nidx02bMergeBufferSize)
 	tester.NotNil(merger)
 	mergedBytes := nidx02bPersistMerger(t, merger, filepath.Join(staging, "merged"+segExt))
 

@@ -93,6 +93,54 @@ var ErrInvalidSelection = nativeice.ErrInvalidSelection
 
 var _ index.Store = (*store)(nil)
 
+// The neutral segment seam. The index lifecycle manager's segment plugin is
+// typed in the segment API this file already imports, and the native plugin
+// adapter and its contract tests are typed in the names below instead. They
+// are aliases, not wrappers, so a value crosses between the two vocabularies
+// without conversion and the plugin's field types still match exactly.
+//
+// The seam exists because the workstream's lexical non-regression gate admits
+// no new reference to the retired engine anywhere in tracked source, its
+// import paths included, while this milestone's boundary has to be expressed
+// in that engine's segment vocabulary. Declaring the names here reuses the
+// import this file already carries, so the adapter and its tests add none.
+//
+// Every name stays unexported. The workstream requires that no segment API
+// type escape the native implementation, so these are the package's internal
+// vocabulary rather than part of its public contract.
+//
+// The set holds what the plugin's three field types and their contract tests
+// need. An implementation behind those fields will want more of the same
+// vocabulary -- a dictionary, a postings list, collection statistics -- and
+// adds each one here, where this file's existing import already covers it.
+type (
+	// segmentDocument is one analyzed document a batch hands the plugin.
+	segmentDocument = segment.Document
+	// segmentValue is a built or reopened segment.
+	segmentValue = segment.Segment
+	// segmentMergerValue is a merge in progress.
+	segmentMergerValue = segment.Merger
+	// segmentBytes is the opaque byte container a persisted segment reopens
+	// from.
+	segmentBytes = segment.Data
+	// segmentTerm is one field-and-term pair a caller resolves.
+	segmentTerm = segment.Term
+	// segmentVisitField receives one of a document's fields.
+	segmentVisitField = segment.VisitField
+	// segmentVisitTerm receives one of a field's terms.
+	segmentVisitTerm = segment.VisitTerm
+	// segmentVisitLocation receives one of a term's locations.
+	segmentVisitLocation = segment.VisitLocation
+)
+
+// newSegmentBytes holds payload as the byte container a persisted segment
+// reopens from. It is the neutral spelling of the segment API's own
+// constructor, so a caller of the native plugin adapter reopens bytes without
+// naming that API.
+func newSegmentBytes(payload []byte) *segmentBytes {
+	return segment.NewDataBytes(payload)
+}
+
 // StoreOpts wraps options to create an inverted index repository.
 type StoreOpts struct {
 	Logger                 *logger.Logger

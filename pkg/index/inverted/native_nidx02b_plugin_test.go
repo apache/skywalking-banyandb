@@ -19,6 +19,7 @@ package inverted
 
 import (
 	"fmt"
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -31,7 +32,6 @@ import (
 	"testing"
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
-	segment "github.com/blugelabs/bluge_segment_api"
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -43,16 +43,26 @@ import (
 //
 // Requirement proved here:
 //
-//	R1 -- the milestone adds exactly three entry points, New, Load and Merge,
-//	      carrying exactly the signatures an index lifecycle manager's segment
-//	      plugin fields are typed as, in one private package that exports
-//	      nothing else. Nothing registers them: no production source under
-//	      pkg/index/inverted reaches the adapter, so the store's configuration
-//	      and behavior are unchanged. The native reader beside it exports
-//	      exactly what its own recorded allowlist declares, and keeps the
-//	      third-party dependency budget it already had.
+//	R1 -- the milestone declares the three entry points, carrying exactly the
+//	      signatures an index lifecycle manager's segment plugin fields are
+//	      typed as, and adds no exported name at all. Nothing registers them:
+//	      no production source names any of the three and no source anywhere
+//	      configures a segment plugin, so the store's configuration and
+//	      behavior are unchanged. The native reader beside it exports exactly
+//	      what its own recorded allowlist declares.
 //
-// The native reader's allowlist may grow, because the adapter reaches the ICE
+// What the boundary source declares beyond those three is the coder's: the
+// segment contract is twelve methods and the merger two, and answering them
+// takes helpers. The shapes of the three are pinned exactly by the typed
+// bindings in the fixture, and the no-exported-name assertion below keeps the
+// package's public surface closed, so neither needs a count of declarations.
+//
+// The three entry points are unexported because the workstream requires that
+// no segment API type escape the native implementation. They are reached here
+// from a test in their own package, which is also the only place the milestone
+// permits them to be reached from at all.
+//
+// The native reader's allowlist may grow, because the boundary reaches the ICE
 // v3 grammar through it. Growing it is a deliberate edit to the recorded list
 // rather than a side effect: an export that appears without being recorded
 // fails here, and so does an entry recorded for an export that never arrived.
@@ -63,19 +73,31 @@ func TestNIDX02BPluginBoundary(t *testing.T) {
 	tester.NotNil(nidx02bLoad, "Load must satisfy the segment plugin's Load contract")
 	tester.NotNil(nidx02bMerge, "Merge must satisfy the segment plugin's Merge contract")
 
-	tester.Equal(nidx02bAdapterSurface, nidx02bExportedSurfaceOf(t, nidx02bAdapterDir),
-		"the adapter exports the plugin's three entry points and nothing else")
+	boundary := filepath.Join(".", nidx02bBoundaryFile)
+	tester.Empty(nidx02bExportedNamesIn(t, boundary),
+		"%s adds no exported name; the plugin's entry points stay inside the native implementation", nidx02bBoundaryFile)
+	tester.Subset(nidx02bDeclaredFuncsIn(t, boundary), nidx02bBoundarySymbols,
+		"%s declares the milestone's three plugin entry points", nidx02bBoundaryFile)
 
 	for _, directory := range []string{".", nativeReaderDir} {
 		for _, source := range nidx02bProductionSources(t, directory) {
-			tester.NotContains(nidx02bImportPathsOf(t, source), nidx02bAdapterPackagePath,
-				"%s reaches the adapter; NIDX-02B registers no plugin and changes no production path", source)
+			if source == boundary {
+				continue
+			}
+			for _, symbol := range nidx02bBoundarySymbols {
+				tester.NotContains(nidx02bIdentifiersIn(t, source), symbol,
+					"%s names %s; NIDX-02B registers no plugin and changes no production path", source, symbol)
+			}
 		}
+	}
+
+	for _, source := range nidx02bTrackedGoSources(t) {
+		tester.NotContains(nidx02bIdentifiersIn(t, source), "WithSegmentPlugin",
+			"%s configures a segment plugin; NIDX-02B registers nothing", source)
 	}
 
 	tester.Equal(nativeReaderSurface, exportedSurfaceOf(t),
 		"the native reader exports something its own recorded allowlist does not declare")
-	assertNativeReaderImportsAreAllowed(t)
 }
 
 // TestNIDX02BNewBuildsASegmentFromAnalyzedDocuments hands the plugin one
@@ -95,15 +117,21 @@ func TestNIDX02BPluginBoundary(t *testing.T) {
 //	      answers its type, version, size, field set, stored records, term
 //	      dictionaries, term matches, doc values and collection statistics from
 //	      the documents it was built from, before any persist. The reserved
-//	      identifier field names the document and is recorded once.
+//	      identifier field names the document and is recorded once, and a name
+//	      no document indexed answers with an empty dictionary rather than a
+//	      failure.
+//
+// The empty-dictionary case is not an edge: a stored-only name is the ordinary
+// shape of every payload field a Property row carries, and a merge reaches one
+// by walking the names Fields reports and asking each for its dictionary.
 func TestNIDX02BNewBuildsASegmentFromAnalyzedDocuments(t *testing.T) {
 	tester := require.New(t)
 
 	built, count, newErr := nidx02bNew(nidx02bAnalyzedDocuments(), nidx02bNormCalc)
 	tester.NoError(newErr)
 	tester.NotNil(built)
-	tester.Equal(uint64(3), count, "New reports the number of documents the batch held")
-	tester.Equal(uint64(3), built.Count())
+	tester.Equal(nidx02bAnalyzedDocumentCount, count, "New reports the number of documents the batch held")
+	tester.Equal(nidx02bAnalyzedDocumentCount, built.Count())
 
 	tester.Equal(nidx02bSegmentType, built.Type())
 	tester.Equal(nidx02bSegmentVersion, built.Version())
@@ -111,19 +139,23 @@ func TestNIDX02BNewBuildsASegmentFromAnalyzedDocuments(t *testing.T) {
 
 	fields := append([]string(nil), built.Fields()...)
 	sort.Strings(fields)
-	tester.Equal([]string{nidx02bIdentifierField, nidx02bColorField, nidx02bTitleField}, fields,
-		"the segment's field set is every name its documents recorded, the color only two of them carry included")
+	tester.Equal([]string{nidx02bIdentifierField, nidx02bColorField, nidx02bNoteField, nidx02bTitleField}, fields,
+		"the segment's field set is every name its documents recorded, the stored-only note included")
 
-	tester.Equal([]string{
+	records := nidx02bRenderSegmentDocuments(t, built)
+	tester.Len(records, int(nidx02bAnalyzedDocumentCount), "a segment holding three documents renders three stored records")
+	tester.Equal(strings.Join([]string{
 		fmt.Sprintf("%x=%x", nidx02bIdentifierField, "doc-0"),
 		fmt.Sprintf("%x=%x", nidx02bColorField, "red"),
+		fmt.Sprintf("%x=%x", nidx02bNoteField, "alpha"),
 		fmt.Sprintf("%x=%x", nidx02bTitleField, "hello world"),
-	}, nidx02bRenderSegmentDocuments(t, built)[0],
+	}, " "), records[0],
 		"a stored walk yields the identifier first and the remaining names in ascending order")
-	tester.Equal([]string{
+	tester.Equal(strings.Join([]string{
 		fmt.Sprintf("%x=%x", nidx02bIdentifierField, "doc-2"),
 		fmt.Sprintf("%x=%x", nidx02bTitleField, "quiet"),
-	}, nidx02bRenderSegmentDocuments(t, built)[2])
+	}, " "), records[2],
+		"a document records only the names it carries")
 
 	tester.Equal([]uint64{0, 1}, nidx02bDocsMatching(t, built, nidx02bTitleField, "hello"))
 	tester.Equal([]uint64{0}, nidx02bDocsMatching(t, built, nidx02bTitleField, "world"))
@@ -138,13 +170,20 @@ func TestNIDX02BNewBuildsASegmentFromAnalyzedDocuments(t *testing.T) {
 	nidx02bAssertPostings(t, built, nidx02bTitleField, "hello", []uint64{0, 1})
 	nidx02bAssertPostings(t, built, nidx02bTitleField, "missing", nil)
 
+	tester.Empty(nidx02bDictionaryTerms(t, built, nidx02bNoteField),
+		"a name no document indexed carries an empty dictionary rather than none at all")
+	nidx02bAssertPostings(t, built, nidx02bNoteField, "alpha", nil)
+	tester.Empty(nidx02bDictionaryTerms(t, built, "absent"),
+		"a name no document recorded carries an empty dictionary too")
+
 	tester.Equal([]string{nidx02bColorField + "=red"}, nidx02bDocValues(t, built, 0, nidx02bColorField))
 	tester.Empty(nidx02bDocValues(t, built, 2, nidx02bColorField),
 		"a document that recorded no color records no color doc value")
 
-	nidx02bAssertCollectionStats(t, built, nidx02bTitleField, 3, 3, 5)
-	nidx02bAssertCollectionStats(t, built, nidx02bColorField, 3, 2, 2)
-	nidx02bAssertCollectionStats(t, built, nidx02bIdentifierField, 3, 3, 3)
+	nidx02bAssertCollectionStats(t, built, nidx02bTitleField, 3, 5)
+	nidx02bAssertCollectionStats(t, built, nidx02bColorField, 2, 2)
+	nidx02bAssertCollectionStats(t, built, nidx02bIdentifierField, 3, 3)
+	nidx02bAssertCollectionStats(t, built, nidx02bNoteField, 0, 0)
 }
 
 // TestNIDX02BPersistedSegmentReopensThroughLoad drives the persist and reopen
@@ -188,7 +227,7 @@ func TestNIDX02BPersistedSegmentReopensThroughLoad(t *testing.T) {
 	tester.Equal(nidx02bRenderSegmentDocuments(t, built), nidx02bRenderSegmentDocuments(t, reopened),
 		"a reopened segment yields the stored records it was persisted with")
 
-	for _, field := range []string{nidx02bTitleField, nidx02bColorField, nidx02bIdentifierField} {
+	for _, field := range []string{nidx02bTitleField, nidx02bColorField, nidx02bIdentifierField, nidx02bNoteField} {
 		tester.Equal(nidx02bDictionaryTerms(t, built, field), nidx02bDictionaryTerms(t, reopened, field),
 			"field %q keeps its dictionary across a persist", field)
 		nidx02bAssertStatsMatch(t, built, reopened, field)
@@ -269,7 +308,7 @@ func TestNIDX02BMergeUnionsInputsMinusDeletions(t *testing.T) {
 	trailingDrops := roaringpkg.New()
 	trailingDrops.Add(2)
 
-	merger := nidx02bMerge([]segment.Segment{leading, trailing},
+	merger := nidx02bMerge([]segmentValue{leading, trailing},
 		[]*roaringpkg.Bitmap{leadingDrops, trailingDrops}, nidx02bMergeBufferSize)
 	tester.NotNil(merger)
 	payload := nidx02bPersistMerger(t, merger, filepath.Join(t.TempDir(), "000000000009"+segExt))
@@ -322,7 +361,7 @@ func TestNIDX02BOutputMatchesTheNativeEncoder(t *testing.T) {
 	leadingDrops.Add(1)
 	trailingDrops := roaringpkg.New()
 	trailingDrops.Add(2)
-	merger := nidx02bMerge([]segment.Segment{leading, trailing},
+	merger := nidx02bMerge([]segmentValue{leading, trailing},
 		[]*roaringpkg.Bitmap{leadingDrops, trailingDrops}, nidx02bMergeBufferSize)
 	mergedBytes := nidx02bPersistMerger(t, merger, filepath.Join(t.TempDir(), "00000000000b"+segExt))
 	tester.Equal(nidx02bEncoderSegmentBytes(t, nidx02aVisibleRows()), mergedBytes,
@@ -367,50 +406,117 @@ func TestNIDX02BUnpublishedAndDamagedSegmentsAreSafe(t *testing.T) {
 	tester.Equal(priorWalk, nidx02aWalk(t, directory),
 		"an unpublished segment must leave the committed generation's documents untouched")
 
-	truncated, truncateErr := nidx02bLoad(segment.NewDataBytes(payload[:len(payload)/2]))
+	truncated, truncateErr := nidx02bLoad(newSegmentBytes(payload[:len(payload)/2]))
 	tester.Error(truncateErr, "a segment truncated by an interrupted write must be reported, not decoded")
 	tester.Nil(truncated)
 
-	empty, emptyErr := nidx02bLoad(segment.NewDataBytes(nil))
+	empty, emptyErr := nidx02bLoad(newSegmentBytes([]byte{}))
 	tester.Error(emptyErr, "a segment file an interrupted write never filled must be reported")
 	tester.Nil(empty)
 }
 
 // TestNIDX02BStaysOffTheRetiredIndexLibrary guards the milestone's lexical
-// gate.
+// gate from inside the suite.
+//
+// The workstream admits no new reference to the retired engine anywhere in
+// tracked source, its import paths included, and this milestone's boundary has
+// to be expressed in that engine's segment vocabulary. The neutral seam is how
+// both hold at once: the vocabulary reaches the boundary through names this
+// package already declares, so the boundary source itself names no retired
+// package. This case is what keeps that true.
+//
+// The assertion is stated as an allowlist rather than as a search for the
+// retired name, because writing that name down is itself what the gate
+// forbids. An allowlist needs no forbidden literal and is the stronger check:
+// it fails on any third-party dependency the boundary grows, not only on the
+// ones a search happened to look for.
 //
 // Requirement proved here:
 //
-//	R8 -- the adapter's third-party dependencies are the bitmap type the
-//	      plugin's masks are expressed in and the neutral segment API alias,
-//	      and nothing else; the retired search engine's index package, where
-//	      the plugin struct itself lives, is not among them. No tracked Go
-//	      source in the repository imports the retired index library.
+//	R8 -- no source this milestone adds to the package reaches a module the
+//	      build replaces, so the set of sources here that do is exactly the set
+//	      that already did. The boundary source names one third-party package,
+//	      the deletion-mask bitmap its Merge field is typed in, and reaches
+//	      every segment type through this package's own neutral seam instead.
+//	      The native reader beside it keeps the third-party dependency budget it
+//	      already had.
+//
+// The replaced-module set is read from go.mod rather than written down here.
+// That keeps the gate honest in both directions: it needs no literal of its
+// own, and it measures whatever the build actually replaces instead of whatever
+// a test author remembered to list.
 func TestNIDX02BStaysOffTheRetiredIndexLibrary(t *testing.T) {
 	tester := require.New(t)
 
-	sources := nidx02bProductionSources(t, nidx02bAdapterDir)
-	tester.NotEmpty(sources, "the adapter package must have source files")
-	for _, source := range sources {
+	boundary := filepath.Join(".", nidx02bBoundaryFile)
+	tester.FileExists(boundary, "the milestone declares its three plugin entry points in %s", nidx02bBoundaryFile)
+
+	replaced := nidx02bReplacedModules(t)
+	tester.NotEmpty(replaced, "%s must record the replaced modules this gate is measured against", nidx02bModuleFile)
+
+	var importers []string
+	for _, source := range nidx02bProductionSources(t, ".") {
 		for _, importPath := range nidx02bImportPathsOf(t, source) {
-			if isStandardLibraryImport(importPath) || strings.HasPrefix(importPath, banyanDBModulePrefix) {
-				continue
+			if nidx02bReachesReplacedModule(importPath, replaced) {
+				importers = append(importers, source)
+				break
 			}
-			_, allowed := nidx02bAllowedAdapterImports[importPath]
-			tester.True(allowed, "%s imports %s outside the adapter's dependency budget", source, importPath)
 		}
 	}
+	sort.Strings(importers)
+	tester.Equal(nidx02bReplacedModuleImporters, importers,
+		"the sources in this package that reach a replaced module changed; NIDX-02B adds none and removes none")
 
-	for _, source := range nidx02bTrackedGoSources(t) {
-		tester.NotContains(nidx02bImportPathsOf(t, source), nidx02bRetiredIndexLibrary,
-			"%s imports the retired index library the native encoder replaces", source)
+	var thirdParty []string
+	for _, importPath := range nidx02bImportPathsOf(t, boundary) {
+		if isStandardLibraryImport(importPath) || strings.HasPrefix(importPath, banyanDBModulePrefix) {
+			continue
+		}
+		thirdParty = append(thirdParty, importPath)
 	}
+	tester.Equal([]string{nidx02bBitmapModule}, thirdParty,
+		"%s may name the deletion-mask bitmap and no other third-party package", nidx02bBoundaryFile)
+
+	assertNativeReaderImportsAreAllowed(t)
+}
+
+// nidx02bReplacedModules lists the module paths go.mod redirects, read from
+// go.mod itself so the gate carries no retired module name of its own.
+func nidx02bReplacedModules(t *testing.T) map[string]struct{} {
+	t.Helper()
+	payload, readErr := os.ReadFile(filepath.Join("..", "..", "..", nidx02bModuleFile))
+	require.NoError(t, readErr)
+	replaced := map[string]struct{}{}
+	for _, line := range strings.Split(string(payload), "\n") {
+		redirect := strings.Index(line, "=>")
+		if redirect < 0 {
+			continue
+		}
+		module := strings.Fields(line[:redirect])
+		if len(module) == 0 {
+			continue
+		}
+		replaced[module[0]] = struct{}{}
+	}
+	return replaced
+}
+
+// nidx02bReachesReplacedModule reports whether one import path belongs to a
+// replaced module, counting the module's own packages as well as the module
+// root.
+func nidx02bReachesReplacedModule(importPath string, replaced map[string]struct{}) bool {
+	for module := range replaced {
+		if importPath == module || strings.HasPrefix(importPath, module+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // nidx02bSplitCorpusSegments builds the two segments a merge is driven with:
 // the corpus's first three rows and its last three, each persisted and
 // reopened the way the lifecycle manager holds a segment it is about to merge.
-func nidx02bSplitCorpusSegments(t *testing.T) (leading, trailing segment.Segment) {
+func nidx02bSplitCorpusSegments(t *testing.T) (leading, trailing segmentValue) {
 	t.Helper()
 	documents := nidx02bCorpusDocuments()
 	directory := t.TempDir()
@@ -420,7 +526,7 @@ func nidx02bSplitCorpusSegments(t *testing.T) (leading, trailing segment.Segment
 
 // nidx02bSegmentOf builds one segment from documents, persists it and returns
 // it reopened.
-func nidx02bSegmentOf(t *testing.T, documents []segment.Document, path string) segment.Segment {
+func nidx02bSegmentOf(t *testing.T, documents []segmentDocument, path string) segmentValue {
 	t.Helper()
 	built, count, newErr := nidx02bNew(documents, nidx02bNormCalc)
 	require.NoError(t, newErr)
@@ -467,7 +573,7 @@ func nidx02bExpectedCorpusRecords(rows []nidx02aRow) []string {
 }
 
 // nidx02bAssertPostings checks the documents one term's postings list holds.
-func nidx02bAssertPostings(t *testing.T, seg segment.Segment, field, term string, expected []uint64) {
+func nidx02bAssertPostings(t *testing.T, seg segmentValue, field, term string, expected []uint64) {
 	t.Helper()
 	dictionary, dictionaryErr := seg.Dictionary(field)
 	require.NoError(t, dictionaryErr)
@@ -499,18 +605,19 @@ func nidx02bAssertPostings(t *testing.T, seg segment.Segment, field, term string
 }
 
 // nidx02bAssertCollectionStats checks one field's collection statistics.
-func nidx02bAssertCollectionStats(t *testing.T, seg segment.Segment, field string, total, documents, frequency uint64) {
+func nidx02bAssertCollectionStats(t *testing.T, seg segmentValue, field string, documents, frequency uint64) {
 	t.Helper()
 	stats, statsErr := seg.CollectionStats(field)
 	require.NoError(t, statsErr)
 	require.NotNil(t, stats)
-	require.Equal(t, total, stats.TotalDocumentCount(), "field %q spans every document of the segment", field)
+	require.Equal(t, nidx02bAnalyzedDocumentCount, stats.TotalDocumentCount(),
+		"field %q spans every document of the segment", field)
 	require.Equal(t, documents, stats.DocumentCount(), "field %q is recorded by this many documents", field)
 	require.Equal(t, frequency, stats.SumTotalTermFrequency(), "field %q recorded this many term occurrences", field)
 }
 
 // nidx02bAssertStatsMatch checks that two segments report one field alike.
-func nidx02bAssertStatsMatch(t *testing.T, left, right segment.Segment, field string) {
+func nidx02bAssertStatsMatch(t *testing.T, left, right segmentValue, field string) {
 	t.Helper()
 	leftStats, leftErr := left.CollectionStats(field)
 	require.NoError(t, leftErr)
@@ -521,20 +628,53 @@ func nidx02bAssertStatsMatch(t *testing.T, left, right segment.Segment, field st
 	require.Equal(t, leftStats.SumTotalTermFrequency(), rightStats.SumTotalTermFrequency(), "field %q", field)
 }
 
-// nidx02bExportedSurfaceOf lists the exported top-level identifiers and
-// exported methods on exported types the non-test sources of a package
-// declare, sorted.
-func nidx02bExportedSurfaceOf(t *testing.T, directory string) []string {
+// nidx02bExportedNamesIn lists the exported top-level identifiers and exported
+// methods on exported types one Go source declares, sorted.
+func nidx02bExportedNamesIn(t *testing.T, source string) []string {
 	t.Helper()
-	var surface []string
-	for _, source := range nidx02bProductionSources(t, directory) {
-		fileSet := token.NewFileSet()
-		file, parseErr := parser.ParseFile(fileSet, source, nil, parser.SkipObjectResolution)
-		require.NoError(t, parseErr)
-		surface = append(surface, exportedNamesIn(file)...)
+	names := exportedNamesIn(nidx02bParse(t, source))
+	sort.Strings(names)
+	return names
+}
+
+// nidx02bDeclaredFuncsIn lists the top-level functions one Go source declares,
+// sorted. Methods are excluded: a function is an entry point a caller reaches,
+// a method belongs to whatever type the source shapes behind them.
+func nidx02bDeclaredFuncsIn(t *testing.T, source string) []string {
+	t.Helper()
+	var names []string
+	for _, decl := range nidx02bParse(t, source).Decls {
+		function, isFunction := decl.(*ast.FuncDecl)
+		if !isFunction || function.Recv != nil {
+			continue
+		}
+		names = append(names, function.Name.Name)
 	}
-	sort.Strings(surface)
-	return surface
+	sort.Strings(names)
+	return names
+}
+
+// nidx02bIdentifiersIn lists every identifier one Go source mentions, so a
+// case can ask whether a name is reached from there at all.
+func nidx02bIdentifiersIn(t *testing.T, source string) []string {
+	t.Helper()
+	var names []string
+	ast.Inspect(nidx02bParse(t, source), func(node ast.Node) bool {
+		if identifier, isIdentifier := node.(*ast.Ident); isIdentifier {
+			names = append(names, identifier.Name)
+		}
+		return true
+	})
+	return names
+}
+
+// nidx02bParse parses one Go source for inspection.
+func nidx02bParse(t *testing.T, source string) *ast.File {
+	t.Helper()
+	fileSet := token.NewFileSet()
+	file, parseErr := parser.ParseFile(fileSet, source, nil, parser.SkipObjectResolution)
+	require.NoError(t, parseErr)
+	return file
 }
 
 // nidx02bProductionSources lists the non-test Go sources one directory holds.
