@@ -50,6 +50,10 @@ jobs:
         run: make generate
       - name: Build UI
         run: make -C ui build
+      # Suites that launch the server as a separate process, such as the native
+      # self-stored log suites, need this binary. They fail in CI without it.
+      - name: Build server
+        run: make -C banyand banyand-server
       - name: Upload generated files
         uses: actions/upload-artifact@v7
         with:
@@ -60,4 +64,5 @@ jobs:
             **/*.pb.validate.go
             **/*_mock.go
             ui/dist/**
+            banyand/build/bin/dev/banyand-server
           retention-days: 1
