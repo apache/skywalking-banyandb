@@ -415,3 +415,80 @@ func TestReducePartialBatches_OverUint16Boundary_SumsCorrectly(t *testing.T) {
 		}
 	})
 }
+
+// reducedTestSchema is the AggModeReduce output shape ApplyTopToReduce
+// consumes: one tag key column plus a field value column, no shard column
+// (AggModeReduce never emits one).
+func reducedTestSchema() *vectorized.BatchSchema {
+	return vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "g", Type: vectorized.ColumnTypeString},
+		{Role: vectorized.RoleField, Name: "out", Type: vectorized.ColumnTypeInt64},
+	})
+}
+
+func reducedTestBatch(groups []string, values []int64) *vectorized.RecordBatch {
+	s := reducedTestSchema()
+	b := vectorized.NewRecordBatch(s, len(groups))
+	gCol := b.Columns[0].(*vectorized.TypedColumn[string])
+	vCol := b.Columns[1].(*vectorized.TypedColumn[int64])
+	for i := range groups {
+		gCol.Append(groups[i])
+		vCol.Append(values[i])
+	}
+	b.Len = len(groups)
+	return b
+}
+
+func collectReducedValues(batches []*vectorized.RecordBatch) []int64 {
+	var out []int64
+	for _, b := range batches {
+		vCol := b.Columns[1].(*vectorized.TypedColumn[int64])
+		for i := 0; i < b.Len; i++ {
+			out = append(out, vCol.Data()[i])
+		}
+	}
+	return out
+}
+
+// TestApplyTopToReduce_OverUint16Boundary_SelectsCorrectTopN is this
+// follow-up's §9(f)-equivalent gate for ApplyTopToReduce. reduced here is
+// normally ReduceRawFrames/ReducePartialBatches's own NextBatch-paginated
+// output, so this builds the oversized batch directly rather than through
+// a reduce, to prove ApplyTopToReduce is safe on its own terms rather than
+// only because its current callers happen to always pre-page their input.
+//
+// Before this function chunked its own input, BatchTop.Consume drove its
+// per-row loop from activeIndices directly on the whole oversized batch.
+// Design §5's guard in activeIndices turns that into a hard error rather
+// than a silently wrong top-N (verified: reverting this function's
+// chunking reproduces exactly that error on this test). After chunking,
+// the correct top-3 by value is selected regardless.
+func TestApplyTopToReduce_OverUint16Boundary_SelectsCorrectTopN(t *testing.T) {
+	const totalRows = math.MaxUint16 + 2 // one past the []uint16 selection boundary.
+	groups := make([]string, totalRows)
+	values := make([]int64, totalRows)
+	for i := range groups {
+		groups[i] = fmt.Sprintf("g%d", i)
+		values[i] = int64(i)
+	}
+	batch := reducedTestBatch(groups, values)
+
+	topped, topErr := ApplyTopToReduce(
+		[]*vectorized.RecordBatch{batch},
+		ReduceTopSpec{FieldName: "out", N: 3, Asc: false},
+		1024,
+	)
+	if topErr != nil {
+		t.Fatalf("ApplyTopToReduce: %v", topErr)
+	}
+	got := collectReducedValues(topped)
+	want := []int64{totalRows - 1, totalRows - 2, totalRows - 3}
+	if len(got) != len(want) {
+		t.Fatalf("top-3: got %d rows, want %d: %v", len(got), len(want), got)
+	}
+	for i, wantVal := range want {
+		if got[i] != wantVal {
+			t.Fatalf("top-3 row %d: got value=%d, want %d (all: %v)", i, got[i], wantVal, got)
+		}
+	}
+}
