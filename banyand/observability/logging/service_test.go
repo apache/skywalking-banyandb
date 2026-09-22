@@ -34,6 +34,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -46,13 +47,23 @@ type fakeClient struct {
 	// nodeIDs records the node_id tag of every published element, so a test can
 	// assert on what actually reached the write path rather than on what the
 	// sink held.
-	nodeIDs        []string
-	published      atomic.Int64
+	nodeIDs []string
+	// timeouts records the timeout each publisher was created with.
+	timeouts  []time.Duration
+	published atomic.Int64
+	// publishDelay slows every Publish, in nanoseconds, to hold a batch in flight.
+	publishDelay   atomic.Int64
 	mu             sync.Mutex
 	panicOnPublish atomic.Bool
 	// rejectOnClose makes Close answer the way localBatchPublisher answers a
 	// refused batch: a populated per-node map alongside a NIL error.
 	rejectOnClose atomic.Bool
+}
+
+func (f *fakeClient) seenTimeouts() []time.Duration {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]time.Duration(nil), f.timeouts...)
 }
 
 func (f *fakeClient) seenNodeIDs() []string {
@@ -61,7 +72,10 @@ func (f *fakeClient) seenNodeIDs() []string {
 	return append([]string(nil), f.nodeIDs...)
 }
 
-func (f *fakeClient) NewBatchPublisher(time.Duration) queue.BatchPublisher {
+func (f *fakeClient) NewBatchPublisher(timeout time.Duration) queue.BatchPublisher {
+	f.mu.Lock()
+	f.timeouts = append(f.timeouts, timeout)
+	f.mu.Unlock()
 	return &fakePublisher{client: f}
 }
 
@@ -95,6 +109,9 @@ func (p *fakePublisher) Publish(_ context.Context, _ bus.Topic, messages ...bus.
 	if p.client.panicOnPublish.Load() {
 		panic("induced publish panic")
 	}
+	if d := p.client.publishDelay.Load(); d > 0 {
+		time.Sleep(time.Duration(d))
+	}
 	p.client.published.Add(int64(len(messages)))
 	p.client.mu.Lock()
 	defer p.client.mu.Unlock()
@@ -121,11 +138,19 @@ func (p *fakePublisher) Close() (map[string]*common.Error, error) {
 	return nil, nil
 }
 
-func testService(t *testing.T, client queue.Client) (*Service, *Sink) {
+// testService starts a consumer against client. Each opt adjusts the
+// configuration before anything reads it, so a test states only the part it
+// is about.
+func testService(t *testing.T, client queue.Client, opts ...func(*logger.NativeLogging)) (*Service, *Sink) {
 	t.Helper()
 	cfg := &logger.NativeLogging{
 		Enabled: true, Level: "debug", FlushInterval: 20 * time.Millisecond,
 		FlushSize: 5, MaxBytes: 1 << 20, MaxEventBytes: 64 << 10, ShardNum: 2, TTLDays: 7,
+		WriteTimeout: 5 * time.Second, DrainTimeout: 5 * time.Second,
+		MemoryFraction: 0.02, MemoryReserve: 64 << 20,
+	}
+	for _, opt := range opts {
+		opt(cfg)
 	}
 	sink := NewSink(cfg)
 	sink.SetNode(NodeInfo{NodeID: "data-hot-0", NodeType: "data"})
@@ -341,5 +366,81 @@ func TestNeverReadyStaysNotReady(t *testing.T) {
 	svc.applySchema(schemaState{}, errors.New("metadata not up yet"))
 	if svc.ready {
 		t.Fatal("ready was set by a failed schema pass")
+	}
+}
+
+// TestWriteTimeoutFlagReachesThePublisher is the falsifying assertion for
+// --logging-native-write-timeout: the configured value, not a constant, bounds
+// each batch publish.
+func TestWriteTimeoutFlagReachesThePublisher(t *testing.T) {
+	client := &fakeClient{}
+	_, sink := testService(t, client, func(c *logger.NativeLogging) { c.WriteTimeout = 750 * time.Millisecond })
+
+	for i := 0; i < 5; i++ {
+		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+	}
+	waitFor(t, "a batch to be published", func() bool { return client.published.Load() >= 5 })
+
+	seen := client.seenTimeouts()
+	if len(seen) == 0 {
+		t.Fatal("no publisher was created, so the timeout was never checked")
+	}
+	for _, got := range seen {
+		if got != 750*time.Millisecond {
+			t.Fatalf("publisher created with timeout %s, want the configured 750ms", got)
+		}
+	}
+}
+
+// TestDrainTimeoutFlagBoundsShutdown is the falsifying assertion for
+// --logging-native-drain-timeout. Each publish takes 50ms and the drain limit
+// is 10ms, so the drain can publish at most one batch before its deadline and
+// must count the rest as lost. With the old fixed 5s limit, everything drains.
+func TestDrainTimeoutFlagBoundsShutdown(t *testing.T) {
+	client := &fakeClient{}
+	svc, sink := testService(t, client, func(c *logger.NativeLogging) { c.DrainTimeout = 10 * time.Millisecond })
+	client.publishDelay.Store(int64(50 * time.Millisecond))
+
+	const admitted = 100
+	for i := 0; i < admitted; i++ {
+		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+	}
+	svc.closer.CloseThenWait()
+
+	lost := sink.Dropped(reasonShutdown)
+	if lost == 0 {
+		t.Fatal("the drain published everything; the configured 10ms drain limit was not applied")
+	}
+	var dropped uint64
+	for _, r := range allReasons {
+		dropped += sink.Dropped(r)
+	}
+	if got := sink.Written() + dropped; got != admitted {
+		t.Fatalf("admitted %d, but written+dropped = %d", admitted, got)
+	}
+}
+
+// fakeMemory reports a fixed amount of available memory. Only AvailableBytes
+// is implemented: bindBudget calls nothing else.
+type fakeMemory struct {
+	protector.Memory
+	available int64
+}
+
+func (m fakeMemory) AvailableBytes() int64 { return m.available }
+
+// TestMemoryFlagsShapeTheAdaptiveBudget is the falsifying assertion for
+// --logging-native-memory-fraction and --logging-native-memory-reserve.
+// 1100 bytes available, a 100-byte reserve and a fraction of 0.5 give a budget
+// of 500. The old constants (0.02 and 64 MiB) give 0.
+func TestMemoryFlagsShapeTheAdaptiveBudget(t *testing.T) {
+	cfg := &logger.NativeLogging{MaxBytes: 1 << 30, MemoryFraction: 0.5, MemoryReserve: 100}
+	sink := NewSink(cfg)
+	svc := NewService(sink, cfg, nil, nil, fakeMemory{available: 1100}, nil)
+
+	svc.bindBudget()
+
+	if got := sink.budgetBytes(); got != 500 {
+		t.Fatalf("budget = %d, want 500 from the configured fraction and reserve", got)
 	}
 }

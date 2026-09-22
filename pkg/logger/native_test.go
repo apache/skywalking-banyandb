@@ -83,6 +83,15 @@ func withNative(t *testing.T, cfg Logging, native NativeLogging) *recordingSink 
 		if native.TTLDays == 0 {
 			native.TTLDays = 7
 		}
+		if native.WriteTimeout == 0 {
+			native.WriteTimeout = 5 * time.Second
+		}
+		if native.DrainTimeout == 0 {
+			native.DrainTimeout = 5 * time.Second
+		}
+		if native.MemoryFraction == 0 {
+			native.MemoryFraction = 0.02
+		}
 	}
 	if err := InitWithNative(cfg, native); err != nil {
 		t.Fatalf("InitWithNative: %v", err)
@@ -301,5 +310,121 @@ func TestConsoleGateIsNotTheAdmissionFloor(t *testing.T) {
 	}
 	if !strings.Contains(out, "error-line") {
 		t.Fatalf("console did not print the error line; output was %q", out)
+	}
+}
+
+// admittedFrom reports whether the sink received a line from module at level.
+func (s *recordingSink) admittedFrom(module string, level zerolog.Level) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, e := range s.entries {
+		if e.module == module && e.level == level {
+			return true
+		}
+	}
+	return false
+}
+
+// TestNativeModuleOverrideAppliesToOneModule is the falsifying assertion for
+// --logging-native-modules / --logging-native-levels. The root native level is
+// warn, so a debug line reaches storage only through the override -- and only
+// for the module the override names, including its dotted children.
+func TestNativeModuleOverrideAppliesToOneModule(t *testing.T) {
+	defer swapConsoleTarget(io.Discard)()
+	sink := withNative(t, Logging{Env: "prod", Level: "error"}, NativeLogging{
+		Enabled: true, Level: "warn",
+		Modules: []string{"measure"}, Levels: []string{"debug"},
+	})
+
+	GetLogger("measure", "block").Debug().Msg("from the overridden module")
+	GetLogger("trace").Debug().Msg("from a module with no override")
+
+	if !sink.admittedFrom("MEASURE.BLOCK", zerolog.DebugLevel) {
+		t.Fatal("the override for MEASURE did not reach MEASURE.BLOCK; its debug line was not admitted")
+	}
+	if sink.admittedFrom("TRACE", zerolog.DebugLevel) {
+		t.Fatal("a module without an override was admitted at debug; the override leaked to the root level")
+	}
+}
+
+// TestNativeOverrideCannotLiftAnExclusion pins the safety rule: the excluded
+// modules sit on the write path the sink publishes through, so an override
+// that re-admitted one would let a stored line produce the next.
+func TestNativeOverrideCannotLiftAnExclusion(t *testing.T) {
+	defer swapConsoleTarget(io.Discard)()
+	sink := withNative(t, Logging{Env: "prod", Level: "error"}, NativeLogging{
+		Enabled: true, Level: "debug",
+		Modules: []string{"stream"}, Levels: []string{"debug"},
+	})
+
+	GetLogger("stream").Error().Msg("from an excluded module")
+
+	if sink.admittedFrom("STREAM", zerolog.ErrorLevel) {
+		t.Fatal("an override re-admitted STREAM, which is excluded to break the write-path feedback loop")
+	}
+}
+
+// TestApplyNativeRejectsBadValues checks each new flag's validation. The base
+// configuration is valid, and each error must name the flag it is about, so a
+// case cannot pass by failing for some other reason.
+func TestApplyNativeRejectsBadValues(t *testing.T) {
+	base := NativeLogging{
+		Enabled: true, Level: "info", FlushInterval: time.Second, FlushSize: 100,
+		MaxBytes: 1 << 20, MaxEventBytes: 64 << 10, ShardNum: 2, TTLDays: 7,
+		WriteTimeout: 5 * time.Second, DrainTimeout: 5 * time.Second,
+		MemoryFraction: 0.02, MemoryReserve: 64 << 20,
+	}
+	prev := nativeConfig.Load()
+	t.Cleanup(func() { nativeConfig.Store(prev) })
+	if err := applyNative(base); err != nil {
+		t.Fatalf("the base configuration is rejected, so no case below can prove anything: %v", err)
+	}
+
+	tests := []struct {
+		mutate func(*NativeLogging)
+		name   string
+		flag   string
+	}{
+		{
+			name: "modules without levels", flag: "logging-native-modules",
+			mutate: func(c *NativeLogging) { c.Modules = []string{"measure"} },
+		},
+		{
+			name: "unknown level", flag: "native level",
+			mutate: func(c *NativeLogging) { c.Modules = []string{"measure"}; c.Levels = []string{"loud"} },
+		},
+		{
+			name: "zero fraction", flag: "logging-native-memory-fraction",
+			mutate: func(c *NativeLogging) { c.MemoryFraction = 0 },
+		},
+		{
+			name: "fraction above one", flag: "logging-native-memory-fraction",
+			mutate: func(c *NativeLogging) { c.MemoryFraction = 1.5 },
+		},
+		{
+			name: "negative reserve", flag: "logging-native-memory-reserve",
+			mutate: func(c *NativeLogging) { c.MemoryReserve = -1 },
+		},
+		{
+			name: "zero write timeout", flag: "logging-native-write-timeout",
+			mutate: func(c *NativeLogging) { c.WriteTimeout = 0 },
+		},
+		{
+			name: "zero drain timeout", flag: "logging-native-drain-timeout",
+			mutate: func(c *NativeLogging) { c.DrainTimeout = 0 },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := base
+			tt.mutate(&cfg)
+			err := applyNative(cfg)
+			if err == nil {
+				t.Fatal("accepted")
+			}
+			if !strings.Contains(err.Error(), tt.flag) {
+				t.Fatalf("rejected for the wrong reason: %v", err)
+			}
+		})
 	}
 }

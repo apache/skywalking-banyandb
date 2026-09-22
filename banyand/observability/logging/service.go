@@ -39,12 +39,10 @@ import (
 )
 
 const (
-	// writeTimeout bounds one batch publish. The consumer absorbs a slow
-	// destination in the buffer rather than in the caller.
-	writeTimeout = 5 * time.Second
-	// drainTimeout bounds the final drain, so teardown is never held up by a
-	// destination that has already stopped answering.
-	drainTimeout = 5 * time.Second
+	// schemaTimeout bounds one schema pass against metadata. It is separate
+	// from --logging-native-write-timeout, which bounds a batch publish: a slow
+	// destination is not a reason to wait longer on the metadata service.
+	schemaTimeout = 5 * time.Second
 	// schemaRetryInterval is how often a failed schema creation is retried.
 	schemaRetryInterval = 10 * time.Second
 )
@@ -131,7 +129,7 @@ func (s *Service) Serve() run.StopNotify {
 	s.bindBudget()
 	s.metrics = newMetrics(s.omr)
 
-	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), schemaTimeout)
 	s.applySchema(createSchema(ctx, s.metadata, s.cfg.ShardNum, s.cfg.TTLDays))
 	cancel()
 
@@ -151,10 +149,8 @@ func (s *Service) bindBudget() {
 	if s.pm == nil {
 		return
 	}
-	const (
-		fraction = 0.02
-		reserve  = int64(64 << 20)
-	)
+	fraction := s.cfg.MemoryFraction
+	reserve := s.cfg.MemoryReserve
 	configured := s.cfg.MaxBytes
 	s.sink.SetBudget(func() int64 {
 		available := s.pm.AvailableBytes()
@@ -227,7 +223,7 @@ func (s *Service) report() {
 // batch would be published into nothing and counted as written. createSchema is
 // idempotent, so the healthy path costs two AlreadyExists replies and a read.
 func (s *Service) retrySchema(ctx context.Context) {
-	retryCtx, cancel := context.WithTimeout(ctx, writeTimeout)
+	retryCtx, cancel := context.WithTimeout(ctx, schemaTimeout)
 	defer cancel()
 	s.applySchema(createSchema(retryCtx, s.metadata, s.cfg.ShardNum, s.cfg.TTLDays))
 }
@@ -282,7 +278,7 @@ func (s *Service) warnOnce(done *bool, msg string) {
 // is never blocked. Admission has already stopped by this point, so the set it
 // publishes is exactly the set admitted before the cutoff.
 func (s *Service) drain(ctx context.Context, batch []entry) {
-	deadline := time.Now().Add(drainTimeout)
+	deadline := time.Now().Add(s.cfg.DrainTimeout)
 	// Successive chunks, not one: a shutdown with more than FlushSize queued
 	// would otherwise publish the first chunk and count the rest as lost while
 	// the deadline still had room.
@@ -375,8 +371,8 @@ func (s *Service) flush(ctx context.Context, batch []entry) {
 		return
 	}
 
-	publisher := s.pipeline.NewBatchPublisher(writeTimeout)
-	pubCtx, cancel := context.WithTimeout(ctx, writeTimeout)
+	publisher := s.pipeline.NewBatchPublisher(s.cfg.WriteTimeout)
+	pubCtx, cancel := context.WithTimeout(ctx, s.cfg.WriteTimeout)
 	defer cancel()
 	_, err := publisher.Publish(pubCtx, data.TopicStreamWrite, messages...)
 	nodeErrs, closeErr := publisher.Close()

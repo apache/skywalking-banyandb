@@ -44,7 +44,20 @@ type NativeSink interface {
 type NativeLogging struct {
 	Level          string
 	ExcludeModules []string
-	FlushInterval  time.Duration
+	// Modules and Levels override the native level per module, pairwise, the
+	// way --logging-modules and --logging-levels do for the console.
+	Modules       []string
+	Levels        []string
+	FlushInterval time.Duration
+	// WriteTimeout bounds one batch publish; DrainTimeout bounds the final
+	// drain at shutdown. The last publish of a drain may start just before the
+	// drain deadline, so shutdown can take up to their sum.
+	WriteTimeout time.Duration
+	DrainTimeout time.Duration
+	// MemoryFraction and MemoryReserve shape the adaptive budget where a memory
+	// protector runs: min(MaxBytes, MemoryFraction * (available - MemoryReserve)).
+	MemoryFraction float64
+	MemoryReserve  int64
 	MaxBytes       int64
 	MaxEventBytes  int64
 	FlushSize      int
@@ -81,6 +94,8 @@ var (
 
 // nativeState is the resolved native configuration, published once by Init.
 type nativeState struct {
+	// modules maps an upper-cased module prefix to its native level.
+	modules  map[string]zerolog.Level
 	excluded []string
 	level    zerolog.Level
 	enabled  bool
@@ -118,8 +133,20 @@ func RegisterNativeFlags(fs *pflag.FlagSet, cfg *NativeLogging) {
 		"the minimum level reaching native storage, independent of --logging-level")
 	fs.StringSliceVar(&cfg.ExcludeModules, "logging-native-exclude-modules", nil,
 		"module prefixes never sent to native storage; replaces the built-in set rather than adding to it")
+	fs.StringSliceVar(&cfg.Modules, "logging-native-modules", nil,
+		"the modules whose native level overrides --logging-native-level; an excluded module stays excluded")
+	fs.StringSliceVar(&cfg.Levels, "logging-native-levels", nil,
+		"the native level of each module in --logging-native-modules, one per module")
 	fs.DurationVar(&cfg.FlushInterval, "logging-native-flush-interval", time.Second,
 		"longest a buffered event waits before it is written")
+	fs.DurationVar(&cfg.WriteTimeout, "logging-native-write-timeout", 5*time.Second,
+		"time limit for one batch publish; a batch that exceeds it is dropped and counted")
+	fs.DurationVar(&cfg.DrainTimeout, "logging-native-drain-timeout", 5*time.Second,
+		"time limit for writing what is still buffered at shutdown; the last publish can add up to --logging-native-write-timeout")
+	fs.Float64Var(&cfg.MemoryFraction, "logging-native-memory-fraction", 0.02,
+		"fraction of available memory, after the reserve, that the buffer may use where a memory protector runs")
+	fs.Int64Var(&cfg.MemoryReserve, "logging-native-memory-reserve", 64<<20,
+		"bytes of available memory kept out of the buffer budget where a memory protector runs")
 	fs.IntVar(&cfg.FlushSize, "logging-native-flush-size", 100,
 		"buffered events that trigger a write ahead of the interval")
 	fs.Int64Var(&cfg.MaxBytes, "logging-native-max-bytes", 32<<20,
@@ -164,6 +191,24 @@ func applyNative(cfg NativeLogging) error {
 	if cfg.TTLDays == 0 {
 		return fmt.Errorf("logging-native-ttl-days must be positive")
 	}
+	if cfg.WriteTimeout <= 0 {
+		return fmt.Errorf("logging-native-write-timeout must be positive, got %s", cfg.WriteTimeout)
+	}
+	if cfg.DrainTimeout <= 0 {
+		return fmt.Errorf("logging-native-drain-timeout must be positive, got %s", cfg.DrainTimeout)
+	}
+	// Zero would give the buffer no budget at all wherever a memory protector
+	// runs, which reads as a working feature that drops every event.
+	if cfg.MemoryFraction <= 0 || cfg.MemoryFraction > 1 {
+		return fmt.Errorf("logging-native-memory-fraction must be in (0, 1], got %g", cfg.MemoryFraction)
+	}
+	if cfg.MemoryReserve < 0 {
+		return fmt.Errorf("logging-native-memory-reserve must not be negative, got %d", cfg.MemoryReserve)
+	}
+	modules, err := parseModuleLevels(cfg.Modules, cfg.Levels)
+	if err != nil {
+		return err
+	}
 	excluded := defaultExcludedModules
 	if len(cfg.ExcludeModules) > 0 {
 		excluded = make([]string, 0, len(cfg.ExcludeModules))
@@ -171,13 +216,37 @@ func applyNative(cfg NativeLogging) error {
 			excluded = append(excluded, strings.ToUpper(strings.TrimSpace(m)))
 		}
 	}
-	nativeConfig.Store(&nativeState{enabled: true, level: lvl, excluded: excluded})
+	nativeConfig.Store(&nativeState{enabled: true, level: lvl, excluded: excluded, modules: modules})
 	return nil
+}
+
+// parseModuleLevels pairs the native module overrides with their levels. It
+// applies the same rules as the console overrides: the lists must be the same
+// length, and each level must parse.
+func parseModuleLevels(modules, levels []string) (map[string]zerolog.Level, error) {
+	if len(modules) != len(levels) {
+		return nil, fmt.Errorf("logging-native-modules %v don't match logging-native-levels %v", modules, levels)
+	}
+	if len(modules) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]zerolog.Level, len(modules))
+	for i, m := range modules {
+		lvl, err := zerolog.ParseLevel(levels[i])
+		if err != nil {
+			return nil, fmt.Errorf("unknown native level %q for module %s: %w", levels[i], m, err)
+		}
+		out[strings.ToUpper(strings.TrimSpace(m))] = lvl
+	}
+	return out, nil
 }
 
 // resolveNative returns the native threshold for a module and whether the
 // module is excluded. It runs once per module, when the logger is built, so
 // that no event has to be parsed to discover where it belongs.
+//
+// Exclusion is checked first and an override cannot lift it: the excluded
+// modules are the ones on the write path the sink publishes through.
 func resolveNative(module string) (level zerolog.Level, excluded bool) {
 	st := nativeConfig.Load()
 	if st == nil || !st.enabled {
@@ -188,7 +257,30 @@ func resolveNative(module string) (level zerolog.Level, excluded bool) {
 			return zerolog.Disabled, true
 		}
 	}
-	return st.level, false
+	return overrideLevel(st.modules, module, st.level), false
+}
+
+// overrideLevel looks a module up the way Named does for the console: it walks
+// the dotted module from its first component outward and takes the first
+// override that matches, so "MEASURE" also covers "MEASURE.BLOCK".
+func overrideLevel(modules map[string]zerolog.Level, module string, fallback zerolog.Level) zerolog.Level {
+	if len(modules) == 0 {
+		return fallback
+	}
+	end := 0
+	for end < len(module) {
+		next := strings.IndexByte(module[end:], '.')
+		if next < 0 {
+			end = len(module)
+		} else {
+			end += next
+		}
+		if lvl, ok := modules[module[:end]]; ok {
+			return lvl
+		}
+		end++
+	}
+	return fallback
 }
 
 // consoleWriter gates normal logging on its own threshold. Suppression reports
