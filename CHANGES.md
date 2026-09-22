@@ -31,6 +31,7 @@ Release Notes.
 - Keep DNS discovery `ListNode` successful when some SRV addresses refuse connections but at least one node was discovered, so non-meta nodes no longer deadlock in PreRun on their own not-yet-listening gRPC address.
 - Fix un-interruptible sleep on shutdown during snapshot sync retry and add jittered backoff for stream, measure, and trace.
 - Report the real shard ID in `CollectDataInfo` shard info for stream, measure, and trace instead of the live table's slice index, so a node that owns only higher-numbered shards is no longer attributed to shard 0 in cross-node shard-load analysis.
+- Bound the vectorized measure liaison reduce so a distributed aggregation whose per-node partial exceeds 65,536 rows produces a correct result instead of a silently wrong one: past that boundary the reducer's row index used to wrap, double-counting some groups and dropping others with no error, reachable today on `Top`-bearing per-node queries. The reducer now consumes an oversized partial in bounded chunks instead of all at once, and `BatchSize` itself is capped at `MaxUint16` so it cannot reopen the same wrap from its output side.
 
 ### Document
 
