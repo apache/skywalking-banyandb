@@ -24,6 +24,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -61,6 +62,15 @@ const (
 	// initialized is logged when a stream group's storage opens, through the
 	// real logger of that group, under the group's name as the module.
 	initialized = "initialized"
+
+	// steadyRounds and steadyInterval shape the continuous case: a node logs
+	// a line every interval, and every line must end up queryable.
+	steadyRounds   = 12
+	steadyInterval = 500 * time.Millisecond
+
+	// queryLimit is the highest a stream query takes here: above about a
+	// thousand rows the query is refused by the memory budget.
+	queryLimit = 900
 
 	droppedPublishFailed = `banyandb_logging_native_log_dropped_total{reason="publish_failed"}`
 	writtenTotal         = "banyandb_logging_native_log_written_total"
@@ -133,11 +143,19 @@ func RequireBinary() string {
 	return ""
 }
 
+// errTruncated reports that the limit cut the result. A case that expects no
+// row must fail on it instead of reading it as an empty stream.
+var errTruncated = errors.New("truncated result")
+
 // AwaitQueryable waits until a query of the log stream through conn succeeds.
-// A cluster query fails while any data node does not know the stream yet.
+// A cluster query fails while any data node does not know the stream yet. A
+// truncated answer is still an answer, so it ends the wait.
 func AwaitQueryable(conn *grpc.ClientConn) {
 	gm.Eventually(func() error {
-		_, err := query(conn, nil)
+		_, err := query(conn, nil, nil)
+		if errors.Is(err, errTruncated) {
+			return nil
+		}
 		return err
 	}, flags.EventuallyTimeout, time.Second).Should(gm.Succeed())
 }
@@ -177,7 +195,7 @@ var _ = g.Describe("Native self-stored logs", func() {
 		ids = append(ids, SharedContext.Disabled.NodeID)
 		_, module := createNonceGroup(native[0].Conn)
 		gm.Eventually(func(inner gm.Gomega) {
-			rows, err := query(native[0].Conn, and(in("node_id", ids...), and(eq("module", module), eq("message", initialized))))
+			rows, err := query(native[0].Conn, nodeIn(ids...), initializedOf(module))
 			inner.Expect(err).NotTo(gm.HaveOccurred())
 			got := make([]string, 0, len(rows))
 			for _, r := range rows {
@@ -222,7 +240,7 @@ var _ = g.Describe("Native self-stored logs", func() {
 			findInitialized(inner, SharedContext.Native[0], module)
 		}, flags.EventuallyTimeout, time.Second).Should(gm.Succeed())
 		gm.Consistently(func(inner gm.Gomega) {
-			rows, err := query(d.Conn, and(eq("node_id", d.NodeID), eq("module", module)))
+			rows, err := query(d.Conn, nodeEq(d.NodeID), byModule(module))
 			inner.Expect(err).NotTo(gm.HaveOccurred())
 			inner.Expect(rows).To(gm.BeEmpty(), "a node with native logging off stored its own line")
 		}, 5*time.Second, time.Second).Should(gm.Succeed())
@@ -231,7 +249,7 @@ var _ = g.Describe("Native self-stored logs", func() {
 	g.It("TC4a stores startup events under the node's identity", func() {
 		for _, p := range SharedContext.Native {
 			gm.Eventually(func(inner gm.Gomega) {
-				rows, err := query(p.Conn, and(eq("node_id", p.NodeID), eq("module", rootModule)))
+				rows, err := query(p.Conn, nodeEq(p.NodeID), byModule(rootModule))
 				inner.Expect(err).NotTo(gm.HaveOccurred())
 				var found bool
 				for _, r := range rows {
@@ -244,9 +262,6 @@ var _ = g.Describe("Native self-stored logs", func() {
 			}, flags.EventuallyTimeout, time.Second).Should(gm.Succeed())
 		}
 	})
-
-	g.PIt("TC4b keeps events admitted before a graceful shutdown. Pending apache/skywalking#14101: " +
-		"stream writes in the last flush interval before a graceful shutdown are lost, and the shutdown drain always writes in that interval")
 
 	g.It("TC5 counts refused writes and resumes collection after recovery", func() {
 		// Phase 1: the storage refuses every write.
@@ -267,7 +282,7 @@ var _ = g.Describe("Native self-stored logs", func() {
 		gm.Expect(ok).To(gm.BeTrue(), "%s not published", writtenTotal)
 		gm.Expect(written).To(gm.BeZero(), "batches were counted as written while the storage refused them")
 		// Checked before the restart: reopening the group logs its line again.
-		rows, err := query(node.Conn, and(eq("node_id", node.NodeID), eq("module", moduleA)))
+		rows, err := query(node.Conn, nodeEq(node.NodeID), byModule(moduleA))
 		gm.Expect(err).NotTo(gm.HaveOccurred())
 		gm.Expect(rows).To(gm.BeEmpty(), "a line was stored while the storage refused writes")
 		stop()
@@ -281,6 +296,35 @@ var _ = g.Describe("Native self-stored logs", func() {
 		gm.Eventually(func(inner gm.Gomega) {
 			findInitialized(inner, node, moduleB)
 		}, flags.EventuallyTimeout, time.Second).Should(gm.Succeed())
+	})
+
+	g.It("TC6 keeps storing while a node logs continuously", func() {
+		native := SharedContext.Native
+		modules := make([]string, 0, steadyRounds)
+		for i := 0; i < steadyRounds; i++ {
+			_, module := createNonceGroup(native[0].Conn)
+			modules = append(modules, module)
+			time.Sleep(steadyInterval)
+		}
+		for _, p := range native {
+			gm.Eventually(func(inner gm.Gomega) {
+				rows, err := query(p.Conn, nodeEq(p.NodeID), func(r row) bool { return r.tags["message"] == initialized })
+				inner.Expect(err).NotTo(gm.HaveOccurred())
+				stored := make(map[string]bool, len(rows))
+				for _, r := range rows {
+					stored[r.tags["module"]] = true
+				}
+				missing := make([]string, 0, len(modules))
+				for _, module := range modules {
+					if !stored[module] {
+						missing = append(missing, module)
+					}
+				}
+				inner.Expect(missing).To(gm.BeEmpty(),
+					"%s stored %d of %d lines it logged over %s; check native_log_dropped_total for the reason",
+					p.NodeID, len(modules)-len(missing), len(modules), time.Duration(steadyRounds)*steadyInterval)
+			}, flags.EventuallyTimeout, time.Second).Should(gm.Succeed())
+		}
 	})
 })
 
@@ -308,7 +352,7 @@ func createNonceGroup(conn *grpc.ClientConn) (name, module string) {
 
 // findInitialized returns the stored `initialized` line of module from p.
 func findInitialized(inner gm.Gomega, p Producer, module string) row {
-	rows, err := query(p.Conn, and(eq("node_id", p.NodeID), and(eq("module", module), eq("message", initialized))))
+	rows, err := query(p.Conn, nodeEq(p.NodeID), initializedOf(module))
 	inner.Expect(err).NotTo(gm.HaveOccurred())
 	inner.Expect(rows).NotTo(gm.BeEmpty(), "no %q line of %s stored for %s", initialized, module, p.NodeID)
 	return rows[0]
@@ -319,10 +363,17 @@ type row struct {
 	fields []byte
 }
 
-// query reads the log stream. Every case filters on the entity or a module,
-// so the limit is far above what a filter can match: an unfiltered read could
-// be cut short by the limit without an error.
-func query(conn *grpc.ClientConn, criteria *modelv1.Criteria) ([]row, error) {
+// query reads the log stream. The server criteria MUST name only entity tags,
+// node_id and level: the engine applies any other criteria after the limit
+// cuts the scan, so a module filter on a stream that holds more rows than the
+// limit returns nothing although the row is stored. Measured on a node with
+// 506 rows: a module filter with limit 100 found the oldest marker and missed
+// the two later ones, which the same filter with limit 900 returned. Every
+// other condition is therefore applied here, by keep.
+//
+// A full result is refused, because a case that expects no row cannot tell a
+// truncated read from an empty one.
+func query(conn *grpc.ClientConn, entity *modelv1.Criteria, keep func(row) bool) ([]row, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	// The query validator rejects a time with a sub-millisecond remainder.
@@ -331,8 +382,8 @@ func query(conn *grpc.ClientConn, criteria *modelv1.Criteria) ([]row, error) {
 		Groups:    []string{logGroup},
 		Name:      logStream,
 		TimeRange: &modelv1.TimeRange{Begin: timestamppb.New(now.Add(-time.Hour)), End: timestamppb.New(now.Add(time.Hour))},
-		Criteria:  criteria,
-		Limit:     100,
+		Criteria:  entity,
+		Limit:     queryLimit,
 		Projection: &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
 			{Name: "searchable", Tags: []string{"node_id", "node_type", "module", "level", "message"}},
 			{Name: "data", Tags: []string{"fields"}},
@@ -340,6 +391,9 @@ func query(conn *grpc.ClientConn, criteria *modelv1.Criteria) ([]row, error) {
 	})
 	if err != nil {
 		return nil, err
+	}
+	if len(resp.GetElements()) >= queryLimit {
+		return nil, fmt.Errorf("%w: the query returned its limit of %d rows", errTruncated, queryLimit)
 	}
 	rows := make([]row, 0, len(resp.GetElements()))
 	for _, e := range resp.GetElements() {
@@ -354,31 +408,39 @@ func query(conn *grpc.ClientConn, criteria *modelv1.Criteria) ([]row, error) {
 				}
 			}
 		}
-		rows = append(rows, r)
+		if keep == nil || keep(r) {
+			rows = append(rows, r)
+		}
 	}
 	return rows, nil
 }
 
-func eq(name, value string) *modelv1.Criteria {
-	return condition(name, modelv1.Condition_BINARY_OP_EQ,
-		&modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: value}}})
+// byModule keeps the lines a nonce group produced.
+func byModule(module string) func(row) bool {
+	return func(r row) bool { return r.tags["module"] == module }
 }
 
-// in is used for node_id, an entity tag: entity tags accept only equality and
-// set membership.
-func in(name string, values ...string) *modelv1.Criteria {
-	return condition(name, modelv1.Condition_BINARY_OP_IN,
-		&modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: values}}})
+// initializedOf keeps the `initialized` line of one nonce group.
+func initializedOf(module string) func(row) bool {
+	return func(r row) bool { return r.tags["module"] == module && r.tags["message"] == initialized }
+}
+
+// nodeEq selects one node. node_id is an entity tag, so the engine applies it
+// before the limit.
+func nodeEq(id string) *modelv1.Criteria {
+	return condition("node_id", modelv1.Condition_BINARY_OP_EQ,
+		&modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: id}}})
+}
+
+// nodeIn selects several nodes. An entity tag accepts only equality and set
+// membership.
+func nodeIn(ids ...string) *modelv1.Criteria {
+	return condition("node_id", modelv1.Condition_BINARY_OP_IN,
+		&modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: ids}}})
 }
 
 func condition(name string, op modelv1.Condition_BinaryOp, value *modelv1.TagValue) *modelv1.Criteria {
 	return &modelv1.Criteria{Exp: &modelv1.Criteria_Condition{Condition: &modelv1.Condition{Name: name, Op: op, Value: value}}}
-}
-
-func and(left, right *modelv1.Criteria) *modelv1.Criteria {
-	return &modelv1.Criteria{Exp: &modelv1.Criteria_Le{Le: &modelv1.LogicalExpression{
-		Op: modelv1.LogicalExpression_LOGICAL_OP_AND, Left: left, Right: right,
-	}}}
 }
 
 // logged reports whether the node's captured output contains needle.
