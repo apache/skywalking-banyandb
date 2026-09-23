@@ -29,6 +29,8 @@ Release Notes.
 - Enforce trace query time ranges independently of the sort index, skipping row timestamp checks when the query fully covers a part.
 - Keep system native `memory_state` (with `kind` labels) from being overwritten by the liaison load-shedding gauge so self-observability dashboard queries succeed.
 - Retry property schema registry initialization indefinitely, logging an error every 10 attempts.
+- Authorize frames on write streams that were opened before RBAC was hot-enabled, so enabling RBAC mid-stream cannot leave long-lived Measure/Stream/Trace writes unchecked.
+- Reload auth config when the watched path is a symlink and its target file changes (ConfigMap-style layouts).
 - Re-fetch file/DNS discovery nodes that are parked in the retry queue while discovery has not Start()-ed yet, so unbounded PreRun schema-registry retries can recover once peers become reachable without restarting liaison.
 - Keep DNS discovery `ListNode` successful when some SRV addresses refuse connections but at least one node was discovered, so non-meta nodes no longer deadlock in PreRun on their own not-yet-listening gRPC address.
 - Fix un-interruptible sleep on shutdown during snapshot sync retry and add jittered backoff for stream, measure, and trace.
