@@ -25,8 +25,19 @@ npm run -w web dev
 ```
 npm run build
 BANYANDB_TARGET=http://<host>:17913 SESSION_SECRET=<secret> CANOPY_USERS=/etc/canopy/users.yaml \
-  node server/dist/index.js
+  node server/dist/src/index.js
 # open http://localhost:4000
+```
+
+### Apache release tarball
+
+The `skywalking-banyandb-*-canopy.tgz` archive contains the built `web/dist` and `server/dist` trees plus package manifests and Canopy license texts. It does not include `node_modules`. After unpacking:
+
+```bash
+npm ci --omit=dev
+cd server
+BANYANDB_TARGET=http://<host>:17913 SESSION_SECRET=<secret> CANOPY_USERS=/etc/canopy/users.yaml \
+  node dist/src/index.js
 ```
 
 ### Reverse proxy path prefix

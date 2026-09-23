@@ -16,6 +16,12 @@ Release Notes.
 
 ### Bug Fixes
 
+- Stamp `RELEASE_VERSION` into official release binaries so `--version` reports the release instead of `-`.
+- Pack the source release from `git archive` and reject archives that contain ELF/Mach-O binaries.
+- Stop declaring unbundled MCP npm dependencies in binary-package root `LICENSE` files (MCP Eyes output stays under `mcp/`).
+- Keep MCP and Canopy dependency license texts under `mcp/licenses/` and `canopy/licenses/` (checked in). Go binary packages that stage MCP also ship `mcp/LICENSE`, `mcp/licenses/`, and `mcp/package-lock.json` with `mcp/dist`.
+- Ship Canopy as an independent release archive (`skywalking-banyandb-*-canopy.tgz`) with built SPA/BFF artifacts and Canopy Eyes licenses.
+- Include the full Apache-2.0 text in Canopy's root `LICENSE` and drop the accidental Linux-only `@rollup/rollup-linux-x64-gnu` hard dependency so `npm ci --omit=dev` works on macOS ARM64.
 - Reject group / stream / measure / trace (and related) resource names that are not a single path-safe identifier (`[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?`), so names cannot escape catalog storage roots.
 - Bound protobuf `validate.rules` on schema and query identifiers (max length, allowlist pattern, repeated max_items, numeric ceilings) so untrusted inputs cannot escape storage roots or force unbounded allocations.
 - Honor the configured logging level in native observability metrics instead of retaining the pre-initialization debug logger.
@@ -38,6 +44,7 @@ Release Notes.
 
 ### Document
 
+- Document the six release archives (src, banyand, bydbctl, fodc-agent, fodc-proxy, canopy) and their 18 signed files.
 - Add the [native inverted-index replacement design package](docs/design/0.12.0/native-inverted-index/README.md), including the implementation specification, ICE walkthrough, research plan, and visual report.
 - Add the [tag aggregation and time bucketing design](docs/design/0.12.0/tag-aggregation/README.md) for the measure query engine, covering aggregation over tags, `COUNT_DISTINCT`, and `GROUP BY` time buckets.
 - Add mandatory size and TDD-feasibility audits to the BanyanDB GitHub issue skill.
@@ -45,6 +52,9 @@ Release Notes.
 
 ### Chores
 
+- Remove accidentally committed local design notes from the repository root.
+- Remove the accidentally committed `test_table` ELF binary from the source tree.
+- Update NOTICE copyright year to 2026.
 - Bump google.golang.org/grpc to v1.83.2 to clear GO-2026-6443, GO-2026-6441, and GO-2026-6348.
 - Bump canopy and mcp npm dependencies to clear Dependabot CVEs (fast-uri, fastify, qs).
 - Bump mcp/canopy npm deps (hono, js-yaml, vitest 5) to clear Dependabot CVEs.
