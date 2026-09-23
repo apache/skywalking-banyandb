@@ -48,7 +48,7 @@ func TestTimeZoneNameFromEnv(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("TZ", tt.tz)
-			assert.Equal(t, tt.want, TimeZoneName())
+			assert.Equal(t, tt.want, localZoneName())
 		})
 	}
 }
@@ -80,7 +80,7 @@ func TestTimeZoneNameFromLocaltime(t *testing.T) {
 			require.NoError(t, os.WriteFile(target, nil, 0o600))
 			if tt.plain {
 				withLocaltimePath(t, target)
-				assert.Equal(t, tt.want, TimeZoneName())
+				assert.Equal(t, tt.want, localZoneName())
 				return
 			}
 			if tt.chained {
@@ -91,7 +91,7 @@ func TestTimeZoneNameFromLocaltime(t *testing.T) {
 			link := filepath.Join(root, "localtime")
 			require.NoError(t, os.Symlink(target, link))
 			withLocaltimePath(t, link)
-			assert.Equal(t, tt.want, TimeZoneName())
+			assert.Equal(t, tt.want, localZoneName())
 		})
 	}
 }
@@ -126,7 +126,7 @@ func TestTimeZoneNameFromLocaltimeContents(t *testing.T) {
 			}
 			require.NoError(t, os.WriteFile(target, data, 0o600))
 			withLocaltimePath(t, target)
-			assert.Equal(t, tt.want, TimeZoneName())
+			assert.Equal(t, tt.want, localZoneName())
 		})
 	}
 }
@@ -143,7 +143,7 @@ func TestTimeZoneNameFromSymlinkedUTCFile(t *testing.T) {
 	link := filepath.Join(root, "localtime")
 	require.NoError(t, os.Symlink(target, link))
 	withLocaltimePath(t, link)
-	assert.Equal(t, "UTC", TimeZoneName())
+	assert.Equal(t, "UTC", localZoneName())
 }
 
 // A container without TZ and without /etc/localtime must report no name at all:
@@ -151,7 +151,7 @@ func TestTimeZoneNameFromSymlinkedUTCFile(t *testing.T) {
 func TestTimeZoneNameUnresolvable(t *testing.T) {
 	withoutTZ(t)
 	withLocaltimePath(t, filepath.Join(t.TempDir(), "absent"))
-	assert.Empty(t, TimeZoneName())
+	assert.Empty(t, localZoneName())
 }
 
 // Distroless images carry no /etc/localtime, so the runtime's own fallback is the
@@ -172,7 +172,7 @@ func TestTimeZoneNameFromRuntimeFallback(t *testing.T) {
 			withoutTZ(t)
 			withRuntimeZone(t, tt.runtimeZone)
 			withLocaltimePath(t, filepath.Join(t.TempDir(), "absent"))
-			assert.Equal(t, tt.want, TimeZoneName())
+			assert.Equal(t, tt.want, localZoneName())
 		})
 	}
 }

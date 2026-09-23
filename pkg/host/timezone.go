@@ -17,10 +17,17 @@
 
 package host
 
+import "sync"
+
+// resolveZoneName answers once per process. The zone a process runs in is fixed
+// at start — the Go runtime itself reads it once — and resolving it touches the
+// filesystem, so there is nothing to gain from asking twice.
+var resolveZoneName = sync.OnceValue(localZoneName)
+
 // TimeZoneName returns the IANA name of the host's local time zone, such as
 // "Asia/Shanghai", or an empty string when the real name cannot be determined.
 // An empty name means "unknown": callers comparing two hosts must treat it as a
-// mismatch rather than as agreement.
+// mismatch rather than as agreement. The answer is resolved once and reused.
 //
 // There is no portable way to ask for this. The Go runtime resolves the local
 // zone but never exposes its name — time.Local.String() reports the literal
@@ -29,5 +36,5 @@ package host
 // resolves the name the same way its own runtime resolves the zone: see
 // localZoneName in timezone_unix.go and timezone_windows.go.
 func TimeZoneName() string {
-	return localZoneName()
+	return resolveZoneName()
 }

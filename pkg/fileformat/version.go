@@ -23,6 +23,7 @@ package fileformat
 import (
 	"embed"
 	"encoding/json"
+	"fmt"
 	"slices"
 
 	"sigs.k8s.io/yaml"
@@ -30,6 +31,11 @@ import (
 
 // CurrentVersion is the version string a freshly-written segment must carry.
 const CurrentVersion = "1.5.0"
+
+const (
+	versionsFile = "versions.yml"
+	versionsKey  = "versions"
+)
 
 //go:embed versions.yml
 var versionFS embed.FS
@@ -43,22 +49,26 @@ func CompatibleVersions() []string {
 	return slices.Clone(compatibleVersions)
 }
 
+// readCompatibleVersions panics rather than returning an error: versions.yml is
+// embedded at build time, so a failure here means the binary itself is built
+// wrong and must not start. The messages name the file and the key so that is
+// obvious from the crash alone.
 func readCompatibleVersions() []string {
-	i, err := versionFS.ReadFile("versions.yml")
+	i, err := versionFS.ReadFile(versionsFile)
 	if err != nil {
-		panic(err)
+		panic(fmt.Sprintf("fileformat: cannot read embedded %s: %v", versionsFile, err))
 	}
 	j, err := yaml.YAMLToJSON(i)
 	if err != nil {
-		panic(err)
+		panic(fmt.Sprintf("fileformat: embedded %s is not valid YAML: %v", versionsFile, err))
 	}
 	var versions map[string][]string
 	if err := json.Unmarshal(j, &versions); err != nil {
-		panic(err)
+		panic(fmt.Sprintf("fileformat: embedded %s does not decode into map[string][]string: %v", versionsFile, err))
 	}
-	vv, ok := versions["versions"]
+	vv, ok := versions[versionsKey]
 	if !ok {
-		panic("versions not found")
+		panic(fmt.Sprintf("fileformat: embedded %s has no %q key", versionsFile, versionsKey))
 	}
 	return vv
 }

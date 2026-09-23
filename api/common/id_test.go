@@ -26,10 +26,10 @@ import (
 	apiversion "github.com/apache/skywalking-banyandb/api/proto/banyandb"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/fileformat"
+	"github.com/apache/skywalking-banyandb/pkg/host"
 )
 
 func TestToProtoNodeReportsVersionAndTimeZone(t *testing.T) {
-	t.Setenv("TZ", "Asia/Shanghai")
 	n := Node{NodeID: "10.0.0.5:17912", GrpcAddress: "10.0.0.5:17912"}
 
 	pn := n.ToProtoNode([]databasev1.Role{databasev1.Role_ROLE_DATA})
@@ -40,15 +40,8 @@ func TestToProtoNodeReportsVersionAndTimeZone(t *testing.T) {
 	// The gate tests membership in this list, so a node that reports a list its own
 	// version is missing from would reject data it can actually read.
 	assert.Contains(t, pn.Version.CompatibleFileFormatVersion, fileformat.CurrentVersion)
-	assert.Equal(t, "Asia/Shanghai", pn.TzName)
-}
-
-// The gate on the import side rejects a unit when the two sides disagree, so an
-// unresolvable zone has to arrive as an empty name rather than as "Local".
-func TestToProtoNodeLeavesTimeZoneEmptyWhenUnresolvable(t *testing.T) {
-	t.Setenv("TZ", "Mars/Olympus_Mons")
-
-	pn := Node{NodeID: "10.0.0.5:17912"}.ToProtoNode(nil)
-
-	assert.Empty(t, pn.TzName)
+	// Which name the host resolves, and when it declines to name one at all, is
+	// pkg/host's contract and is tested there; here the name only has to reach the
+	// wire unchanged.
+	assert.Equal(t, host.TimeZoneName(), pn.TzName)
 }
