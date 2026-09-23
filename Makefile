@@ -323,14 +323,15 @@ license-fix: $(LICENSE_EYE) ## Fix license header issues
 
 license-dep: $(LICENSE_EYE)
 license-dep: TARGET=license-dep
-license-dep: PROJECTS:=ui mcp
-license-dep: default ## Fix license header issues
+license-dep: PROJECTS:=ui mcp canopy
+license-dep: default ## Generate dependency LICENSE texts via SkyWalking Eyes
 	@rm -rf $(mk_dir)/dist/licenses
 	$(LICENSE_EYE) dep resolve -o $(mk_dir)/dist/licenses -s $(mk_dir)/dist/LICENSE.tpl
 	mv $(mk_dir)/ui/ui-licenses $(mk_dir)/dist/licenses
 	cat $(mk_dir)/ui/LICENSE >> $(mk_dir)/dist/LICENSE
-	mv $(mk_dir)/mcp/mcp-licenses $(mk_dir)/dist/licenses
-	cat $(mk_dir)/mcp/LICENSE >> $(mk_dir)/dist/LICENSE
+	@# MCP and Canopy Eyes output stay under mcp/licenses and canopy/licenses.
+	@# Do not append them to dist/LICENSE: Go packages ship MCP under mcp/
+	@# (LICENSE + licenses/ + package-lock.json), and Canopy has its own archive.
 
 ##@ Docker targets
 
@@ -371,9 +372,10 @@ release-sign: ## Sign artifacts
 	${RELEASE_SCRIPTS} -k bydbctl
 	${RELEASE_SCRIPTS} -k fodc-agent
 	${RELEASE_SCRIPTS} -k fodc-proxy
+	${RELEASE_SCRIPTS} -k canopy
 	${RELEASE_SCRIPTS} -k src
 
-release-assembly: release-binary release-sign ## Generate release package
+release-assembly: release-binary release-sign ## Assemble and sign release archives
 
 PUSH_RELEASE_SCRIPTS := $(mk_dir)/scripts/push-release.sh
 
