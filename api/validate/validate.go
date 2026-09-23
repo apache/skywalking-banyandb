@@ -450,6 +450,40 @@ func tagFamily(tagFamilies []*databasev1.TagFamilySpec) error {
 	return nil
 }
 
+// UniqueTagNames rejects a tag name that appears more than once across a
+// resource's tag families.
+//
+// A tag name identifies a tag across the whole resource, not merely within its
+// own family: the query layer resolves a bare name against a flat map keyed by
+// name alone -- logical.CommonSchema.CreateRef states the invariant outright,
+// and BydbQL's transformer relies on it for every identifier it resolves. Two
+// families sharing a name make those lookups depend on iteration order. A
+// single resource-wide set also catches a name duplicated within one family.
+//
+// This is deliberately separate from Measure and Stream, which the data nodes
+// also run when loading an already-persisted schema. A schema registered
+// before this check existed must keep loading rather than be dropped, so only
+// the registry's create and update paths call this.
+func UniqueTagNames(tagFamilies []*databasev1.TagFamilySpec) error {
+	familyOfTag := make(map[string]string)
+	for i := range tagFamilies {
+		for j := range tagFamilies[i].Tags {
+			tagName := tagFamilies[i].Tags[j].Name
+			previousFamily, duplicated := familyOfTag[tagName]
+			if !duplicated {
+				familyOfTag[tagName] = tagFamilies[i].Name
+				continue
+			}
+			if previousFamily == tagFamilies[i].Name {
+				return fmt.Errorf("tag name %q is duplicated in tag family %q", tagName, previousFamily)
+			}
+			return fmt.Errorf("tag name %q is duplicated in tag families %q and %q: tag names must be unique across all tag families",
+				tagName, previousFamily, tagFamilies[i].Name)
+		}
+	}
+	return nil
+}
+
 // Property validates the provided Property schema object.
 func Property(property *databasev1.Property) error {
 	if property == nil {

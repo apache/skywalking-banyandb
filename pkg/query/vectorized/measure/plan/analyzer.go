@@ -298,11 +298,12 @@ func validateBucketableOrdering(req *measurev1.QueryRequest) error {
 
 // translateAgg builds the model Agg struct from the proto. Exactly one of
 // field_name / tag_name must be set; a tag target additionally requires
-// tag_family (tag names are only unique within a family — design §5.1) and
-// is validated against the §6 semantics matrix for the five functions this
-// issue implements. COUNT_DISTINCT's matrix row is accepted here (its type
-// rules match COUNT's) but has no execution support yet: an unmapped
-// function is rejected downstream, at protoAggFuncToInternal.
+// tag_family, which is what keeps the target resolvable when a schema carries
+// the same tag name in two families. api/validate.UniqueTagNames rejects that
+// shape, but only on the registry's create and update paths, so a schema
+// registered before that check still loads and can reach here with a
+// duplicate: the family qualifier is load-bearing, not decoration. The target
+// is then checked against the §6 semantics matrix.
 func translateAgg(req *measurev1.QueryRequest, measureSchema *databasev1.Measure) (*model.MeasureAgg, error) {
 	aggProto := req.GetAgg()
 	fieldName := aggProto.GetFieldName()
