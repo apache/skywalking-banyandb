@@ -46,6 +46,8 @@ verify:
     # the interval between two retries, in millisecond.
     interval: 10s
   cases:
+  - query: curl -s --max-time 10 http://127.0.0.1:17913/api/v1/cluster/state
+    expected: expected/node-info.yml
   - includes:
     - ../storage/storage-cases.yaml
 

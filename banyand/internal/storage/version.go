@@ -18,21 +18,18 @@
 package storage
 
 import (
-	"embed"
 	"encoding/json"
 	"strings"
 
 	"github.com/pkg/errors"
-	"sigs.k8s.io/yaml"
 
+	"github.com/apache/skywalking-banyandb/pkg/fileformat"
 	"github.com/apache/skywalking-banyandb/pkg/initerror"
 )
 
 const (
-	metadataFilename           = "metadata"
-	currentVersion             = "1.5.0"
-	compatibleVersionsKey      = "versions"
-	compatibleVersionsFilename = "versions.yml"
+	metadataFilename = "metadata"
+	currentVersion   = fileformat.CurrentVersion
 )
 
 // SegmentMetadataFilename is the filename used for the per-segment
@@ -56,10 +53,7 @@ type SegmentMetadata struct {
 
 var errVersionIncompatible = errors.New("version not compatible")
 
-var compatibleVersions = readCompatibleVersions()
-
-//go:embed versions.yml
-var versionFS embed.FS
+var compatibleVersions = fileformat.CompatibleVersions()
 
 func checkVersion(version string) error {
 	for _, v := range compatibleVersions {
@@ -90,26 +84,6 @@ func readSegmentMeta(data []byte) (segmentMeta, error) {
 		return segmentMeta{}, checkErr
 	}
 	return meta, nil
-}
-
-func readCompatibleVersions() []string {
-	i, err := versionFS.ReadFile(compatibleVersionsFilename)
-	if err != nil {
-		panic(err)
-	}
-	j, err := yaml.YAMLToJSON(i)
-	if err != nil {
-		panic(err)
-	}
-	var compatibleVersions map[string][]string
-	if err := json.Unmarshal(j, &compatibleVersions); err != nil {
-		panic(err)
-	}
-	vv, ok := compatibleVersions[compatibleVersionsKey]
-	if !ok {
-		panic("versions not found")
-	}
-	return vv
 }
 
 // GetCurrentVersion returns the current storage version.

@@ -246,6 +246,10 @@ check-import-boundaries: ## Enforce import-boundary invariants for the version-i
 		echo "FAIL: pkg/initerror/ must remain a leaf with zero project-internal imports (test files excepted)"; \
 		bad=1; \
 	fi; \
+	if grep -rln 'github.com/apache/skywalking-banyandb/' pkg/fileformat/*.go 2>/dev/null | grep -v _test.go; then \
+		echo "FAIL: pkg/fileformat/ must remain a leaf with zero project-internal imports (test files excepted)"; \
+		bad=1; \
+	fi; \
 	if [ $$bad -ne 0 ]; then exit 1; fi; \
 	echo "import boundaries OK"
 

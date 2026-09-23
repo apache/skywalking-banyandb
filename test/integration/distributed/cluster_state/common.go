@@ -28,8 +28,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	apiversion "github.com/apache/skywalking-banyandb/api/proto/banyandb"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/fileformat"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/host"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -85,6 +88,44 @@ var _ = ginkgo.Describe("ClusterState API", func() {
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		gomega.Expect(state.GetRouteTables()).To(gomega.HaveKey("tire1"))
 		gomega.Expect(state.GetRouteTables()).To(gomega.HaveKey("tire2"))
+	})
+
+	// The import gates read the file format version and the time zone of every
+	// data node out of this one call, so the fields have to survive registration
+	// and show up on the liaison's tire2 table, not just on the node itself.
+	ginkgo.It("Report the file format version and the time zone of each data node", func() {
+		client := databasev1.NewClusterStateServiceClient(liaisonConnection)
+		var dataNodes []*databasev1.Node
+		gomega.Eventually(func(g gomega.Gomega) {
+			state, err := client.GetClusterState(context.Background(), &databasev1.GetClusterStateRequest{})
+			g.Expect(err).NotTo(gomega.HaveOccurred())
+			dataNodes = state.GetRouteTables()["tire2"].GetRegistered()
+			g.Expect(dataNodes).NotTo(gomega.BeEmpty())
+		}, flags.EventuallyTimeout).Should(gomega.Succeed())
+		for _, n := range dataNodes {
+			name := n.GetMetadata().GetName()
+			gomega.Expect(n.GetRoles()).To(gomega.ContainElement(databasev1.Role_ROLE_DATA), "node %s in tire2 is not a data node", name)
+			gomega.Expect(n.GetVersion()).NotTo(gomega.BeNil(), "node %s reports no version", name)
+			gomega.Expect(n.GetVersion().GetFileFormatVersion()).To(gomega.Equal(fileformat.CurrentVersion))
+			gomega.Expect(n.GetVersion().GetCompatibleFileFormatVersion()).To(gomega.ContainElement(fileformat.CurrentVersion))
+			gomega.Expect(n.GetVersion().GetApiVersion()).To(gomega.Equal(apiversion.Version))
+			// An unresolved zone would make both sides empty and the comparison
+			// vacuous, so require a name first. CI pins the zone per matrix entry.
+			gomega.Expect(n.GetTzName()).NotTo(gomega.BeEmpty(), "node %s resolved no time zone; set TZ or /etc/localtime", name)
+			gomega.Expect(n.GetTzName()).To(gomega.Equal(host.TimeZoneName()))
+		}
+	})
+
+	// GetCurrentNode answers for the liaison itself, and it carries the same two
+	// fields because every node type goes through ToProtoNode.
+	ginkgo.It("Report the file format version and the time zone on the current node", func() {
+		client := databasev1.NewNodeQueryServiceClient(liaisonConnection)
+		resp, err := client.GetCurrentNode(context.Background(), &databasev1.GetCurrentNodeRequest{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(resp.GetNode().GetVersion().GetFileFormatVersion()).To(gomega.Equal(fileformat.CurrentVersion))
+		gomega.Expect(resp.GetNode().GetVersion().GetApiVersion()).To(gomega.Equal(apiversion.Version))
+		gomega.Expect(resp.GetNode().GetTzName()).NotTo(gomega.BeEmpty())
+		gomega.Expect(resp.GetNode().GetTzName()).To(gomega.Equal(host.TimeZoneName()))
 	})
 })
 
