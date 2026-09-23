@@ -235,7 +235,7 @@ func newFS(dest string, config *remoteconfig.FsConfig) (remote.FS, error) {
 	case "file":
 		return local.NewFS(u.Path)
 	case "s3":
-		return aws.NewFS(u.Path, config)
+		return aws.NewFS(u.Host+u.Path, config)
 	case "azure":
 		return azure.NewFS(u.Host+u.Path, config)
 	case "gcs", "gs":
