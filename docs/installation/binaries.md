@@ -6,7 +6,7 @@ This page shows how to get binaries of Banyand.
                            
 Go to the [SkyWalking download page](https://skywalking.apache.org/downloads/#Database) .
 
-Select and download the distribution from the suggested location for your platform, such as `skywalking-banyandb-x.x.x-banyand.tgz` and `skywalking-bydbctl-x.x.x-bydbctl.tgz`.
+Select and download the distribution from the suggested location for your platform, such as `skywalking-banyandb-x.x.x-banyand.tgz`, `skywalking-banyandb-x.x.x-bydbctl.tgz`, and `skywalking-banyandb-x.x.x-canopy.tgz`.
 
 > It is essential that you verify the integrity of the downloaded file using the PGP signature ( .asc file) or a hash ( .md5 or .sha* file).
 
@@ -22,7 +22,6 @@ The banyand and bydbctl directory structure is as follows.
 ```shell
 ├── CHANGES.md
 ├── LICENSE
-├── LICENSE.tpl
 ├── NOTICE
 ├── README.md
 ├── bin
@@ -36,7 +35,6 @@ The banyand and bydbctl directory structure is as follows.
 ```shell
 ├── CHANGES.md
 ├── LICENSE
-├── LICENSE.tpl
 ├── NOTICE
 ├── README.md
 ├── bin
@@ -50,14 +48,16 @@ The banyand and bydbctl directory structure is as follows.
 └── licenses
 ```
 
+The Canopy archive (`skywalking-banyandb-x.y.z-canopy.tgz`) is a separate Node.js distribution (built SPA + BFF). After unpacking, run `npm ci --omit=dev` and start the BFF from `server/` as described in the packaged `README.md`.
+
 ## Build From Source
 
 ### Requirements
 
 Users who want to build a binary from sources have to set up:
 
-* Go 1.23
-* Node 24.6.0
+* Go 1.25.13
+* Node.js >= 24.6.0
 * Git >= 2.30
 * Linux, macOS or Windows+WSL2
 * GNU make
@@ -120,6 +120,10 @@ To reproduce the exact `banyand`, `bydbctl`, `fodc-agent` and `fodc-proxy` artif
 make generate
 make -C ui build
 
+# Official binaries embed $(RELEASE_VERSION)-release. The source tarball ships
+# .env with RELEASE_VERSION set. From a git checkout, pass it explicitly, e.g.
+# RELEASE_VERSION=0.11.1.
+
 # Linux AMD64 + ARM64 — produces the official banyand, fodc-agent, fodc-proxy packages.
 TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make -C banyand     release
 TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make -C fodc/agent release
@@ -134,7 +138,7 @@ TARGET_OS=darwin  PLATFORMS=darwin/amd64,darwin/arm64          make -C bydbctl r
 make -C mcp release
 ```
 
-Each `release` target produces both `*-static-*` and `*-slim-*` variants where applicable. The `static` builds are stripped (`-s -w`) and statically linked; the `slim` builds additionally omit the embedded UI bundle. The resulting binaries land under `<component>/build/bin/<os>/<arch>/`, e.g. `banyand/build/bin/linux/amd64/banyand-server-static`. The version string in these binaries is set by `git describe` and looks like `v0.10.3-0-g<short-sha>-v0.10.x` rather than the `0.10.3-release` string that `make build` embeds.
+Each `release` target produces both `*-static-*` and `*-slim-*` variants where applicable. The `static` builds are stripped (`-s -w`) and statically linked; the `slim` builds additionally omit the embedded UI bundle. The resulting binaries land under `<component>/build/bin/<os>/<arch>/`, e.g. `banyand/build/bin/linux/amd64/banyand-server-static`. With `RELEASE_VERSION` set (from `.env` or the command line), `--version` reports `<version>-release`. Without it, a git checkout falls back to `git describe`.
 
 ### Cross-compile Binaries
 
