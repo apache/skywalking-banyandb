@@ -1,0 +1,499 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package inverted
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+
+	roaringpkg "github.com/RoaringBitmap/roaring"
+	"github.com/stretchr/testify/require"
+
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/index/inverted/internal/nativeice"
+)
+
+// The three function types below are the NIDX-02B boundary. They are the
+// fields an index lifecycle manager's segment plugin is built from, spelled in
+// the neutral seam this package declares rather than in the retired engine's
+// own segment API. The seam is an alias set, so these types are identical to
+// the plugin's field types and a change to either stops compiling here.
+//
+// The coder owns everything behind these three signatures and may move any of
+// it. The coder may not move these: a later milestone registers the plugin by
+// assigning these same three functions to its fields.
+type (
+	// segmentPluginNew builds a segment from one batch's analyzed documents and
+	// reports how many documents it covers.
+	segmentPluginNew func(results []segmentDocument, normCalc func(string, int) float32) (segmentValue, uint64, error)
+
+	// segmentPluginLoad reopens a segment from the bytes it was persisted as.
+	segmentPluginLoad func(data *segmentBytes) (segmentValue, error)
+
+	// segmentPluginMerge returns a merger over segments and their positional
+	// deletion masks.
+	segmentPluginMerge func(segments []segmentValue, drops []*roaringpkg.Bitmap, mergeBufferSize int) segmentMergerValue
+)
+
+// The three bindings below hold the production symbols to the boundary.
+var (
+	nidx02bNew   segmentPluginNew   = nativeSegmentPluginNew
+	nidx02bLoad  segmentPluginLoad  = nativeSegmentPluginLoad
+	nidx02bMerge segmentPluginMerge = nativeSegmentPluginMerge
+)
+
+const (
+	// nidx02bBoundaryFile is the source the milestone's three plugin entry
+	// points are declared in. It sits in this package rather than one of its
+	// own so that the segment vocabulary the signatures need reaches it through
+	// the neutral seam already declared here.
+	nidx02bBoundaryFile = "native_plugin.go"
+
+	// nidx02bBitmapModule is the deletion-mask type the plugin's Merge field is
+	// typed in, and the only third-party package the boundary source may name.
+	nidx02bBitmapModule = "github.com/RoaringBitmap/roaring"
+
+	// nidx02bModuleFile records where the replaced-module set is read from. The
+	// workstream's lexical gate is measured against the modules go.mod already
+	// replaces, so the gate's own needle comes from tracked content rather than
+	// from a literal this milestone would have to add.
+	nidx02bModuleFile = "go.mod"
+
+	// nidx02bSegmentType and nidx02bSegmentVersion are the type and version an
+	// ICE v3 segment reports. They are the values a snapshot manifest records
+	// for the segments it references, pinned here as literals.
+	nidx02bSegmentType    = "ice"
+	nidx02bSegmentVersion = uint32(3)
+
+	// nidx02bMergeBufferSize is the write buffer a merger is driven through.
+	nidx02bMergeBufferSize = 1 << 16
+
+	// nidx02bIdentifierField is the field name ICE v3 reserves for the document
+	// identifier.
+	nidx02bIdentifierField = "_id"
+
+	// nidx02bTitleField and nidx02bColorField are two of the field names the
+	// hand-written document set records. One is analyzed into several terms and
+	// the other is a single keyword, so a segment that indexed a field's whole
+	// value instead of its terms is caught.
+	nidx02bTitleField = "title"
+	nidx02bColorField = "color"
+
+	// nidx02bNoteField is the third: a name one document stores and no document
+	// indexes. The segment records it as a field, because a stored walk yields
+	// it, and that field has no term dictionary at all. Asking a segment for
+	// such a field's dictionary is ordinary -- a merge walks every name Fields
+	// reports and asks each one -- so the contract owes an empty dictionary
+	// there rather than a failure.
+	nidx02bNoteField = "note"
+
+	// nidx02bAnalyzedDocumentCount is how many documents the hand-written batch
+	// holds. Every field's collection statistics span all of them, whether or
+	// not that field recorded a term in each.
+	nidx02bAnalyzedDocumentCount = uint64(3)
+)
+
+// nidx02bBoundarySymbols are the three plugin entry points the milestone adds.
+// A later milestone registers the plugin by assigning these to its fields, and
+// until it does no production source may name them.
+//
+// The boundary source declares these three. It may declare whatever else the
+// implementation behind them needs: the segment contract is twelve methods and
+// the merger two, and shaping an answer to those takes helpers. What it may not
+// do is export a name or reach a new dependency, and those are asserted
+// separately.
+var nidx02bBoundarySymbols = []string{
+	"nativeSegmentPluginLoad",
+	"nativeSegmentPluginMerge",
+	"nativeSegmentPluginNew",
+}
+
+// nidx02bReplacedModuleImporters is every non-test source in this package that
+// reaches a module go.mod replaces, as the package stood before this milestone.
+//
+// It is a ceiling rather than an inventory. The workstream admits no new
+// reference to the retired engine anywhere in tracked source, so the milestone
+// may not add a source to this list: the boundary reaches its segment
+// vocabulary through the neutral seam one of these files already declares. A
+// file that joins the list fails the gate, and a file that leaves it fails too,
+// so shrinking the list stays a deliberate edit rather than a side effect.
+var nidx02bReplacedModuleImporters = []string{
+	"inverted.go",
+	"inverted_series.go",
+	"query.go",
+	"sort.go",
+}
+
+// nidx02bField is one value a hand-written document contributes.
+type nidx02bField struct {
+	name      string
+	terms     [][]byte
+	value     []byte
+	index     bool
+	store     bool
+	docValues bool
+}
+
+func (f *nidx02bField) Name() string {
+	return f.name
+}
+
+func (f *nidx02bField) Value() []byte {
+	return f.value
+}
+
+func (f *nidx02bField) Length() int {
+	return len(f.terms)
+}
+
+func (f *nidx02bField) Index() bool {
+	return f.index
+}
+
+func (f *nidx02bField) Store() bool {
+	return f.store
+}
+
+func (f *nidx02bField) IndexDocValues() bool {
+	return f.docValues
+}
+
+func (f *nidx02bField) EachTerm(visit segmentVisitTerm) {
+	for termIndex := range f.terms {
+		visit(&nidx02bTerm{term: f.terms[termIndex]})
+	}
+}
+
+// nidx02bTerm is one term an indexed field yields.
+type nidx02bTerm struct {
+	term []byte
+}
+
+func (t *nidx02bTerm) Term() []byte {
+	return t.term
+}
+
+func (t *nidx02bTerm) Frequency() int {
+	return 1
+}
+
+func (t *nidx02bTerm) EachLocation(_ segmentVisitLocation) {}
+
+// nidx02bDocument is one analyzed document handed to the plugin's New, in the
+// shape the lifecycle manager hands one over: already analyzed, visiting its
+// fields in the order it records them.
+type nidx02bDocument struct {
+	fields    []nidx02bField
+	timestamp int64
+}
+
+func (d *nidx02bDocument) Analyze() {}
+
+func (d *nidx02bDocument) EachField(visit segmentVisitField) {
+	for fieldIndex := range d.fields {
+		visit(&d.fields[fieldIndex])
+	}
+}
+
+func (d *nidx02bDocument) Timestamp() int64 {
+	return d.timestamp
+}
+
+// nidx02bKeywordField builds a field whose single term is its whole value,
+// which is how every Property field the corpus records is analyzed.
+func nidx02bKeywordField(name string, value []byte, index, store, docValues bool) nidx02bField {
+	field := nidx02bField{name: name, value: value, index: index, store: store, docValues: docValues}
+	if index {
+		field.terms = [][]byte{value}
+	}
+	return field
+}
+
+// nidx02bNormCalc is the length norm the lifecycle manager would score with.
+// The plugin accepts it; the ICE v3 grammar carries a fixed norm, so no
+// assertion in this contract depends on what it returns.
+func nidx02bNormCalc(_ string, length int) float32 {
+	if length <= 0 {
+		return 1
+	}
+	return 1 / float32(length)
+}
+
+// nidx02bAnalyzedDocuments are three documents written by hand for this
+// contract, independent of the checked-in corpus.
+//
+// Document 0 and document 1 share the term "hello" under an analyzed field
+// whose whole value is neither document's term, so a segment that indexed
+// values instead of terms resolves the wrong documents. Document 2 records no
+// color at all, so a field that only some documents carry is covered: it
+// still belongs to the segment's field set, and its collection statistics
+// count two documents out of three.
+//
+// Document 0 alone records a note, which it stores without indexing. That
+// makes the note a name the segment carries and a name no document contributes
+// a term to, which is the ordinary shape of every payload field a Property row
+// stores.
+func nidx02bAnalyzedDocuments() []segmentDocument {
+	return []segmentDocument{
+		&nidx02bDocument{timestamp: 10, fields: []nidx02bField{
+			nidx02bKeywordField(nidx02bIdentifierField, []byte("doc-0"), true, true, false),
+			{
+				name: nidx02bTitleField, value: []byte("hello world"), index: true, store: true,
+				terms: [][]byte{[]byte("hello"), []byte("world")},
+			},
+			nidx02bKeywordField(nidx02bColorField, []byte("red"), true, true, true),
+			nidx02bKeywordField(nidx02bNoteField, []byte("alpha"), false, true, false),
+		}},
+		&nidx02bDocument{timestamp: 20, fields: []nidx02bField{
+			nidx02bKeywordField(nidx02bIdentifierField, []byte("doc-1"), true, true, false),
+			{
+				name: nidx02bTitleField, value: []byte("hello there"), index: true, store: true,
+				terms: [][]byte{[]byte("hello"), []byte("there")},
+			},
+			nidx02bKeywordField(nidx02bColorField, []byte("blue"), true, true, true),
+		}},
+		&nidx02bDocument{timestamp: 30, fields: []nidx02bField{
+			nidx02bKeywordField(nidx02bIdentifierField, []byte("doc-2"), true, true, false),
+			{
+				name: nidx02bTitleField, value: []byte("quiet"), index: true, store: true,
+				terms: [][]byte{[]byte("quiet")},
+			},
+		}},
+	}
+}
+
+// nidx02bCorpusDocument renders one declared corpus row as the analyzed
+// document the lifecycle manager would hand the plugin.
+//
+// This is a third independent mapping of the same declared rows: nidx02aBatch
+// renders a row for the compatibility writer, nidx02aEncodeDocumentOf renders
+// it for the native encoder, and this renders it for the plugin. The corpus's
+// own readings stay the oracle all three are measured against.
+func nidx02bCorpusDocument(row nidx02aRow) segmentDocument {
+	fields := []nidx02bField{
+		nidx02bKeywordField(nidx02bIdentifierField, []byte(nidx02aDocID(row)), true, true, false),
+		nidx02bKeywordField(nidx02aEntityField, []byte(row.entityID), true, false, true),
+		nidx02bKeywordField(nidx02aGroupField, []byte(row.group), true, false, true),
+		nidx02bKeywordField(nidx02aNameField, []byte(row.name), true, false, true),
+		nidx02bKeywordField(nidx02aTagFieldName(), []byte(row.tag), true, false, true),
+	}
+	for _, source := range row.sources {
+		fields = append(fields, nidx02bKeywordField(nidx02aSourceField, []byte(source), false, true, false))
+	}
+	if row.deletedAt > 0 {
+		fields = append(fields,
+			nidx02bKeywordField(nidx02aDeletedField, convert.Int64ToBytes(row.deletedAt), false, true, false))
+	}
+	fields = append(fields,
+		nidx02bKeywordField(nidx02aSHAField, []byte(row.sha), false, true, false),
+		nidx02bKeywordField(nidx02aTimestampField, nidx02aEncodedTimestamps[row.timestamp], true, true, true),
+	)
+	return &nidx02bDocument{fields: fields, timestamp: row.timestamp}
+}
+
+// nidx02bCorpusDocuments renders every declared corpus row, masked rows
+// included. A masked row is a live document of the segment New builds: masking
+// is a property of the generation's deletion masks, which the lifecycle manager
+// supplies to Merge, not of the segment's document set.
+func nidx02bCorpusDocuments() []segmentDocument {
+	documents := make([]segmentDocument, 0, len(nidx02aRows))
+	for _, row := range nidx02aRows {
+		documents = append(documents, nidx02bCorpusDocument(row))
+	}
+	return documents
+}
+
+// nidx02bMaskedDocumentNumbers are the document numbers the corpus's deletion
+// masks cover, read off the declared rows.
+func nidx02bMaskedDocumentNumbers() []uint32 {
+	var masked []uint32
+	for rowIndex, row := range nidx02aRows {
+		if row.masked {
+			masked = append(masked, uint32(rowIndex))
+		}
+	}
+	return masked
+}
+
+// nidx02bEncoderGeneration renders the rows as the generation the native
+// encoder writes, using NIDX-02A's own landed mapping of a row to an encoder
+// document.
+func nidx02bEncoderGeneration(rows []nidx02aRow, segmentID, snapshotID uint64) nativeice.Generation {
+	documents := make([]nativeice.EncodeDocument, 0, len(rows))
+	for _, row := range rows {
+		documents = append(documents, nidx02aEncodeDocumentOf(row))
+	}
+	return nativeice.Generation{SegmentID: segmentID, SnapshotID: snapshotID, Documents: documents}
+}
+
+// nidx02bPersist writes seg the way an index lifecycle manager persists a
+// segment: it creates the segment file, hands the writer to WriteTo, syncs and
+// closes it. It returns the bytes that reached the file.
+func nidx02bPersist(t *testing.T, seg segmentValue, path string) []byte {
+	t.Helper()
+	file, createErr := os.Create(path)
+	require.NoError(t, createErr)
+	written, writeErr := seg.WriteTo(file, nil)
+	if writeErr != nil {
+		require.NoError(t, file.Close())
+		require.NoError(t, writeErr, "the lifecycle manager persists a segment through WriteTo")
+	}
+	require.NoError(t, file.Sync())
+	require.NoError(t, file.Close())
+	payload, readErr := os.ReadFile(path)
+	require.NoError(t, readErr)
+	require.Equal(t, int64(len(payload)), written, "WriteTo must report the number of bytes it wrote")
+	return payload
+}
+
+// nidx02bPersistMerger writes a merger the way the lifecycle manager persists a
+// merged segment, and returns the bytes that reached the file.
+func nidx02bPersistMerger(t *testing.T, merger segmentMergerValue, path string) []byte {
+	t.Helper()
+	file, createErr := os.Create(path)
+	require.NoError(t, createErr)
+	written, writeErr := merger.WriteTo(file, nil)
+	if writeErr != nil {
+		require.NoError(t, file.Close())
+		require.NoError(t, writeErr, "the lifecycle manager persists a merged segment through WriteTo")
+	}
+	require.NoError(t, file.Sync())
+	require.NoError(t, file.Close())
+	payload, readErr := os.ReadFile(path)
+	require.NoError(t, readErr)
+	require.Equal(t, int64(len(payload)), written, "WriteTo must report the number of bytes it wrote")
+	return payload
+}
+
+// nidx02bReopen hands bytes back to the plugin the way the lifecycle manager
+// reopens a persisted segment.
+func nidx02bReopen(t *testing.T, payload []byte) segmentValue {
+	t.Helper()
+	reopened, loadErr := nidx02bLoad(newSegmentBytes(payload))
+	require.NoError(t, loadErr, "Load must reopen the bytes WriteTo persisted")
+	require.NotNil(t, reopened)
+	return reopened
+}
+
+// nidx02bSegmentFile names the only segment file in a directory.
+func nidx02bSegmentFile(t *testing.T, directory string) string {
+	t.Helper()
+	matches, globErr := filepath.Glob(filepath.Join(directory, "*"+segExt))
+	require.NoError(t, globErr)
+	require.Len(t, matches, 1, "%s must hold exactly one segment file", directory)
+	return matches[0]
+}
+
+// nidx02bSnapshotFile names the newest snapshot manifest in a directory.
+func nidx02bSnapshotFile(t *testing.T, directory string) string {
+	t.Helper()
+	matches, globErr := filepath.Glob(filepath.Join(directory, "*"+snpExt))
+	require.NoError(t, globErr)
+	require.NotEmpty(t, matches, "%s must hold a published generation", directory)
+	sort.Strings(matches)
+	return matches[len(matches)-1]
+}
+
+// nidx02bRenderSegmentDocuments renders every document a segment stores as one
+// comparable string per document, keeping the walk's own field order so a
+// collapsed repeated value or a reordered field shows up in the difference.
+func nidx02bRenderSegmentDocuments(t *testing.T, seg segmentValue) []string {
+	t.Helper()
+	rendered := make([]string, 0, seg.Count())
+	for documentNumber := uint64(0); documentNumber < seg.Count(); documentNumber++ {
+		var values []string
+		require.NoError(t, seg.VisitStoredFields(documentNumber, func(field string, value []byte) bool {
+			values = append(values, fmt.Sprintf("%x=%x", field, value))
+			return true
+		}))
+		rendered = append(rendered, strings.Join(values, " "))
+	}
+	return rendered
+}
+
+// nidx02bDocsMatching resolves one field's terms against a segment and returns
+// the matching document numbers in ascending order.
+func nidx02bDocsMatching(t *testing.T, seg segmentValue, field string, terms ...string) []uint64 {
+	t.Helper()
+	asked := make([]segmentTerm, 0, len(terms))
+	for _, term := range terms {
+		asked = append(asked, &nidx02bAskedTerm{field: field, term: []byte(term)})
+	}
+	matching, matchErr := seg.DocsMatchingTerms(asked)
+	require.NoError(t, matchErr)
+	require.NotNil(t, matching)
+	numbers := make([]uint64, 0, matching.GetCardinality())
+	iterator := matching.Iterator()
+	for iterator.HasNext() {
+		numbers = append(numbers, uint64(iterator.Next()))
+	}
+	return numbers
+}
+
+// nidx02bAskedTerm is one field-and-term pair a caller resolves.
+type nidx02bAskedTerm struct {
+	field string
+	term  []byte
+}
+
+func (a *nidx02bAskedTerm) Field() string {
+	return a.field
+}
+
+func (a *nidx02bAskedTerm) Term() []byte {
+	return a.term
+}
+
+// nidx02bDictionaryTerms lists a field's dictionary in ascending term order.
+func nidx02bDictionaryTerms(t *testing.T, seg segmentValue, field string) []string {
+	t.Helper()
+	dictionary, dictionaryErr := seg.Dictionary(field)
+	require.NoError(t, dictionaryErr)
+	require.NotNil(t, dictionary)
+	iterator := dictionary.Iterator(nil, nil, nil)
+	var terms []string
+	for {
+		entry, nextErr := iterator.Next()
+		require.NoError(t, nextErr)
+		if entry == nil {
+			break
+		}
+		terms = append(terms, entry.Term())
+	}
+	require.NoError(t, iterator.Close())
+	require.NoError(t, dictionary.Close())
+	return terms
+}
+
+// nidx02bDocValues lists the doc values one field records for one document.
+func nidx02bDocValues(t *testing.T, seg segmentValue, documentNumber uint64, fields ...string) []string {
+	t.Helper()
+	reader, readerErr := seg.DocumentValueReader(fields)
+	require.NoError(t, readerErr)
+	require.NotNil(t, reader)
+	var values []string
+	require.NoError(t, reader.VisitDocumentValues(documentNumber, func(field string, term []byte) {
+		values = append(values, fmt.Sprintf("%s=%s", field, term))
+	}))
+	sort.Strings(values)
+	return values
+}
