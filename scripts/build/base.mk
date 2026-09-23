@@ -22,6 +22,12 @@ root_dir := $(mk_dir)../..
 tool_bin := $(root_dir)/bin
 tool_include := "$(root_dir)/include"
 
+# The source tarball ships .env with RELEASE_VERSION. Load it so `make -C <mod> release`
+# stamps official binaries without going through the root Makefile.
+ifneq (,$(wildcard $(root_dir)/.env))
+include $(root_dir)/.env
+endif
+
 # The main module path of a repository. For this repo, it is github.com/tetrateio/tetrate.
 # MODULE_PATH is a variable used by some of the scripts in this subdirectory to refer to the main
 # module name of this repository. This allows another project to import this subdirectory (for
@@ -35,8 +41,18 @@ ifdef RELEASE_VERSION
 VERSION_STRING := $(RELEASE_VERSION)
 GIT_BRANCH_NAME := release
 else
-VERSION_STRING  := $(shell git describe --tags --long)
-GIT_BRANCH_NAME := $(shell git rev-parse --abbrev-ref HEAD)
+# CI shallow checkouts may lack tags; fall back so `make generate` still works.
+VERSION_STRING  := $(shell git describe --tags --long 2>/dev/null)
+GIT_BRANCH_NAME := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
+ifeq ($(strip $(VERSION_STRING)),)
+VERSION_STRING := $(shell git rev-parse --short HEAD 2>/dev/null)
+endif
+ifeq ($(strip $(VERSION_STRING)),)
+VERSION_STRING := dev
+endif
+ifeq ($(strip $(GIT_BRANCH_NAME)),)
+GIT_BRANCH_NAME := unknown
+endif
 endif
 
 GO_LINK_VERSION := -X ${VERSION_PATH}.build=${VERSION_STRING}-${GIT_BRANCH_NAME}

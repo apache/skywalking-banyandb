@@ -24,7 +24,16 @@ git push --tags
 make clean && make release-assembly
 ```
 
-The `skywalking-banyandb-${VERSION}-bin.tgz`, `skywalking-banyandb-${VERSION}-src.tgz`, and their corresponding `asc`, `sha512`. **In total, six files should be automatically generated in the directory.**
+`make release-assembly` writes six archives under `build/`, each with `.asc` and `.sha512` (18 files):
+
+* `skywalking-banyandb-${VERSION}-src.tgz`
+* `skywalking-banyandb-${VERSION}-banyand.tgz`
+* `skywalking-banyandb-${VERSION}-bydbctl.tgz`
+* `skywalking-banyandb-${VERSION}-fodc-agent.tgz`
+* `skywalking-banyandb-${VERSION}-fodc-proxy.tgz`
+* `skywalking-banyandb-${VERSION}-canopy.tgz`
+
+Go binary packages include the SkyWalking Eyes output from `dist/` (`LICENSE`, `NOTICE`, `licenses/`). `make license-dep` concatenates Go and UI Eyes inventories into `dist/LICENSE`. Because MCP has no independent archive, each Go binary package that stages `mcp/dist` also ships `mcp/LICENSE`, `mcp/licenses/`, and `mcp/package-lock.json` (still without `node_modules`). The Canopy archive ships `canopy/LICENSE` and `canopy/licenses/` instead.
 
 ## Upload to Apache svn
 
@@ -54,8 +63,12 @@ Release Candidate:
 
  * https://dist.apache.org/repos/dist/dev/skywalking/banyandb/$VERSION
  * sha512 checksums
-   - sha512xxxxyyyzzz apache-skywalking-banyandb-src-x.x.x.tgz
-   - sha512xxxxyyyzzz apache-skywalking-banyandb-bin-x.x.x.tgz
+   - sha512xxxxyyyzzz skywalking-banyandb-$VERSION-src.tgz
+   - sha512xxxxyyyzzz skywalking-banyandb-$VERSION-banyand.tgz
+   - sha512xxxxyyyzzz skywalking-banyandb-$VERSION-bydbctl.tgz
+   - sha512xxxxyyyzzz skywalking-banyandb-$VERSION-fodc-agent.tgz
+   - sha512xxxxyyyzzz skywalking-banyandb-$VERSION-fodc-proxy.tgz
+   - sha512xxxxyyyzzz skywalking-banyandb-$VERSION-canopy.tgz
 
 Release Tag :
 
@@ -71,7 +84,7 @@ Keys to verify the Release Candidate :
 
 Guide to build the release from source :
 
- * https://github.com/apache/skywalking-banyandb/blob/v$VERSION/docs/installation/binaries.md#Build-From-Source
+ * https://github.com/apache/skywalking-banyandb/blob/v$VERSION/docs/installation/binaries.md#build-from-source
 
 Voting will start now and will remain open for at least 72 hours, all PMC members are required to give their votes.
 
@@ -89,12 +102,12 @@ Thanks.
 All PMC members and committers should check these before voting +1:
 
 1. Features test.
-1. All artifacts in staging repository are published with `.asc`, `.md5`, and `sha` files.
-1. Source codes and distribution packages (`apache-skywalking-banyandb-{src,bin}-$VERSION.tgz`)
-are in `https://dist.apache.org/repos/dist/dev/skywalking/banyandb/$VERSION` with `.asc`, `.sha512`.
-1. `LICENSE` and `NOTICE` are in source codes and distribution package.
-1. Check `shasum -c apache-skywalking-banyandb-{src,bin}-$VERSION.tgz.sha512`.
-1. Check GPG signature. Download KEYS and import them by `curl https://www.apache.org/dist/skywalking/KEYS -o KEYS && gpg --import KEYS`. Check `gpg --batch --verify apache-skywalking-banyandb-{src,bin}-$VERSION.tgz.asc apache-skywalking-banyandb-{src,bin}-$VERSION.tgz`
+1. All artifacts in the staging repository are published with `.asc` and `.sha512` files.
+1. Source and distribution packages (`skywalking-banyandb-$VERSION-{src,banyand,bydbctl,fodc-agent,fodc-proxy,canopy}.tgz`, 18 files)
+are in `https://dist.apache.org/repos/dist/dev/skywalking/banyandb/$VERSION` with `.asc` and `.sha512`.
+1. `LICENSE` and `NOTICE` are in source codes and distribution packages.
+1. Check `sha512sum -c skywalking-banyandb-*$VERSION*.tgz.sha512`.
+1. Check GPG signature. Download KEYS and import them by `curl https://www.apache.org/dist/skywalking/KEYS -o KEYS && gpg --import KEYS`. Check `gpg --batch --verify skywalking-banyandb-*$VERSION*.tgz.asc skywalking-banyandb-*$VERSION*.tgz`.
 1. Build distribution from source code package by following this [the build guide](#build-and-sign-the-source-code-package).
 1. Licenses header check.
 
@@ -136,12 +149,6 @@ Vote result should follow these:
 1. Refer to the previous [PR](https://github.com/apache/skywalking-website/pull/118), update news and links on the website. There are seven files need to modify.
 
 1. Update [Github release page](https://github.com/apache/skywalking-banyandb/releases), follow the previous convention.
-
-1. Publish the official multi-platform Docker images manually. In **Actions**, run `publish-docker` with the annotated tag (for example,
-   `v$VERSION`). It publishes `apache/skywalking-banyandb:$VERSION`, `apache/skywalking-banyandb:$VERSION-slim`, and
-   `apache/skywalking-banyandb:$VERSION-canopy`, as well as `apache/skywalking-banyandb-mcp:$VERSION`,
-   `apache/skywalking-banyandb-fodc-agent:$VERSION`, and `apache/skywalking-banyandb-fodc-proxy:$VERSION`. Pushes to `main` continue to
-   publish only SHA-tagged development images to GHCR. The workflow requires the `DOCKERHUB_USER` and `DOCKERHUB_TOKEN` GitHub secrets.
 
 1. Send ANNOUNCE email to `dev@skywalking.apache.org` and `announce@apache.org`, the sender should use his/her Apache email account. You can get the permlink of vote thread at [here](https://lists.apache.org/list.html?dev@skywalking.apache.org).
 
