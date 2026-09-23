@@ -40,14 +40,26 @@ func TestNewFS(t *testing.T) {
 	tests := []struct {
 		name    string
 		dest    string
+		setup   func(cfg *config.FsConfig)
 		wantErr bool
 	}{
-		{"valid file scheme", "file:///tmp", false},
-		{"malformed URL", ":invalid", true},
+		{"valid file scheme", "file:///tmp", nil, false},
+		{"malformed URL", ":invalid", nil, true},
+		{
+			"valid s3 scheme",
+			"s3://my-bucket/backup-prefix",
+			func(cfg *config.FsConfig) {
+				cfg.S3 = &config.S3Config{}
+			},
+			false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := new(config.FsConfig)
+			if tt.setup != nil {
+				tt.setup(cfg)
+			}
 			_, err := newFS(tt.dest, cfg)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("newFS() error = %v, wantErr %v", err, tt.wantErr)
