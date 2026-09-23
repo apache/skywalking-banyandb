@@ -114,6 +114,7 @@ func extractBucketAndBase(path string) (bucket, basePath string) {
 }
 
 func (s *s3FS) getFullPath(p string) string {
+	p = strings.TrimPrefix(p, "/")
 	if s.basePath == "" {
 		return p
 	}
