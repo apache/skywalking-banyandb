@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -29,11 +30,47 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
 )
 
-const reservedTagSeparator = "#"
+const (
+	reservedTagSeparator = "#"
+	// maxResourceNameLen caps group and resource names used as filesystem path elements.
+	maxResourceNameLen = 255
+)
+
+// validResourceNamePattern is the human-readable form of validResourceName.
+// Names must be a single path element: start and end with alphanumeric, with
+// only letters, digits, `_`, `-`, and `.` in between (no separators or `..`).
+const validResourceNamePattern = `^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$`
+
+var validResourceName = regexp.MustCompile(validResourceNamePattern)
 
 func validateTagName(name string) error {
 	if strings.Contains(name, reservedTagSeparator) {
 		return fmt.Errorf("tag name %q must not contain reserved character %q", name, reservedTagSeparator)
+	}
+	if formatErr := validateResourceNameFormat(name); formatErr != nil {
+		return fmt.Errorf("tag name %q is invalid: %w", name, formatErr)
+	}
+	return nil
+}
+
+// validateResourceNameFormat reports whether name is a valid group or resource
+// name for use as a single filesystem path element under a catalog data root.
+func validateResourceNameFormat(name string) error {
+	if len(name) > maxResourceNameLen {
+		return fmt.Errorf("must be at most %d characters", maxResourceNameLen)
+	}
+	if !validResourceName.MatchString(name) {
+		return fmt.Errorf("must match %s", validResourceNamePattern)
+	}
+	return nil
+}
+
+func validateResourceName(kind, name string) error {
+	if name == "" {
+		return fmt.Errorf("%s is empty", kind)
+	}
+	if formatErr := validateResourceNameFormat(name); formatErr != nil {
+		return fmt.Errorf("%s %q is invalid: %w", kind, name, formatErr)
 	}
 	return nil
 }
@@ -46,6 +83,9 @@ func Group(group *commonv1.Group) error {
 	if group.Metadata.Name == "" {
 		return errors.New("metadata.name is required")
 	}
+	if nameErr := validateResourceNameFormat(group.Metadata.Name); nameErr != nil {
+		return fmt.Errorf("metadata.name %q is invalid: %w", group.Metadata.Name, nameErr)
+	}
 	if group.Catalog == commonv1.Catalog_CATALOG_UNSPECIFIED {
 		return errors.New("catalog is unspecified")
 	}
@@ -55,6 +95,12 @@ func Group(group *commonv1.Group) error {
 		}
 		if group.ResourceOpts.ShardNum <= 0 {
 			return errors.New("shardNum is invalid")
+		}
+		if group.ResourceOpts.ShardNum > 1024 {
+			return fmt.Errorf("shardNum %d exceeds maximum 1024", group.ResourceOpts.ShardNum)
+		}
+		if group.ResourceOpts.Replicas > 16 {
+			return fmt.Errorf("replicas %d exceeds maximum 16", group.ResourceOpts.Replicas)
 		}
 		if group.ResourceOpts.SegmentInterval != nil {
 			return errors.New("segmentInterval should be nil")
@@ -76,8 +122,8 @@ func GroupForNonProperty(group *commonv1.Group) error {
 	if group.Metadata == nil {
 		return errors.New("group metadata is nil")
 	}
-	if group.Metadata.Name == "" {
-		return errors.New("group name is empty")
+	if nameErr := validateResourceName("group name", group.Metadata.Name); nameErr != nil {
+		return nameErr
 	}
 	if group.Catalog == commonv1.Catalog_CATALOG_UNSPECIFIED {
 		return errors.New("group catalog is unspecified")
@@ -106,9 +152,53 @@ func GroupForNonProperty(group *commonv1.Group) error {
 	if group.ResourceOpts.Ttl.Unit == commonv1.IntervalRule_UNIT_UNSPECIFIED {
 		return errors.New("group ttl unit is unspecified")
 	}
+	if shardErr := validateResourceOptsBounds(group.ResourceOpts); shardErr != nil {
+		return shardErr
+	}
 	if pipelineCfg := group.GetPipeline(); pipelineCfg != nil {
 		if validateErr := validateTracePipelineConfig(pipelineCfg); validateErr != nil {
 			return fmt.Errorf("group pipeline config is invalid: %w", validateErr)
+		}
+	}
+	return nil
+}
+
+func validateResourceOptsBounds(opts *commonv1.ResourceOpts) error {
+	if opts.ShardNum > 1024 {
+		return fmt.Errorf("group shardNum %d exceeds maximum 1024", opts.ShardNum)
+	}
+	if opts.Replicas > 16 {
+		return fmt.Errorf("group replicas %d exceeds maximum 16", opts.Replicas)
+	}
+	if opts.SegmentInterval != nil && opts.SegmentInterval.Num > 3650 {
+		return fmt.Errorf("group segmentInterval num %d exceeds maximum 3650", opts.SegmentInterval.Num)
+	}
+	if opts.Ttl != nil && opts.Ttl.Num > 3650 {
+		return fmt.Errorf("group ttl num %d exceeds maximum 3650", opts.Ttl.Num)
+	}
+	if len(opts.Stages) > 16 {
+		return fmt.Errorf("group stages count %d exceeds maximum 16", len(opts.Stages))
+	}
+	for idx, stage := range opts.Stages {
+		if nameErr := validateResourceName(fmt.Sprintf("group stages[%d].name", idx), stage.GetName()); nameErr != nil {
+			return nameErr
+		}
+		if stage.GetShardNum() > 1024 {
+			return fmt.Errorf("group stages[%d].shardNum %d exceeds maximum 1024", idx, stage.GetShardNum())
+		}
+		if stage.GetReplicas() > 16 {
+			return fmt.Errorf("group stages[%d].replicas %d exceeds maximum 16", idx, stage.GetReplicas())
+		}
+		if stage.GetNodeSelector() != "" && len(stage.GetNodeSelector()) > 1024 {
+			return fmt.Errorf("group stages[%d].node_selector exceeds maximum 1024 characters", idx)
+		}
+	}
+	if len(opts.DefaultStages) > 16 {
+		return fmt.Errorf("group default_stages count %d exceeds maximum 16", len(opts.DefaultStages))
+	}
+	for idx, stageName := range opts.DefaultStages {
+		if nameErr := validateResourceName(fmt.Sprintf("group default_stages[%d]", idx), stageName); nameErr != nil {
+			return nameErr
 		}
 	}
 	return nil
@@ -160,11 +250,11 @@ func Stream(stream *databasev1.Stream) error {
 	if stream.Metadata == nil {
 		return errors.New("stream metadata is nil")
 	}
-	if stream.Metadata.Name == "" {
-		return errors.New("stream name is empty")
+	if nameErr := validateResourceName("stream name", stream.Metadata.Name); nameErr != nil {
+		return nameErr
 	}
-	if stream.Metadata.Group == "" {
-		return errors.New("stream group is empty")
+	if groupErr := validateResourceName("stream group", stream.Metadata.Group); groupErr != nil {
+		return groupErr
 	}
 	if len(stream.TagFamilies) == 0 {
 		return errors.New("stream tag families is empty")
@@ -174,6 +264,11 @@ func Stream(stream *databasev1.Stream) error {
 	}
 	if len(stream.Entity.TagNames) == 0 {
 		return errors.New("stream entity tag names is empty")
+	}
+	for idx, tagName := range stream.Entity.TagNames {
+		if tagErr := validateTagName(tagName); tagErr != nil {
+			return fmt.Errorf("stream entity tag_names[%d]: %w", idx, tagErr)
+		}
 	}
 	return tagFamily(stream.TagFamilies)
 }
@@ -187,11 +282,11 @@ func Measure(measure *databasev1.Measure) error {
 	if measure.Metadata == nil {
 		return errors.New("measure metadata is nil")
 	}
-	if measure.Metadata.Name == "" {
-		return errors.New("measure name is empty")
+	if nameErr := validateResourceName("measure name", measure.Metadata.Name); nameErr != nil {
+		return nameErr
 	}
-	if measure.Metadata.Group == "" {
-		return errors.New("measure group is empty")
+	if groupErr := validateResourceName("measure group", measure.Metadata.Group); groupErr != nil {
+		return groupErr
 	}
 	if measure.Entity == nil {
 		return errors.New("measure entity is nil")
@@ -199,15 +294,17 @@ func Measure(measure *databasev1.Measure) error {
 	if len(measure.Entity.TagNames) == 0 {
 		return errors.New("measure entity tag names is empty")
 	}
+	for idx, tagName := range measure.Entity.TagNames {
+		if tagErr := validateTagName(tagName); tagErr != nil {
+			return fmt.Errorf("measure entity tag_names[%d]: %w", idx, tagErr)
+		}
+	}
 	for i := range measure.Fields {
-		if measure.Fields[i].Name == "" {
-			return errors.New("field name is empty")
+		if nameErr := validateResourceName("field name", measure.Fields[i].Name); nameErr != nil {
+			return nameErr
 		}
 		if measure.Fields[i].FieldType == databasev1.FieldType_FIELD_TYPE_UNSPECIFIED {
 			return errors.New("field type is unspecified")
-		}
-		if measure.Fields[i].CompressionMethod == databasev1.CompressionMethod_COMPRESSION_METHOD_UNSPECIFIED {
-			return errors.New("compression method is unspecified")
 		}
 		if measure.Fields[i].CompressionMethod == databasev1.CompressionMethod_COMPRESSION_METHOD_UNSPECIFIED {
 			return errors.New("compression method is unspecified")
@@ -218,6 +315,13 @@ func Measure(measure *databasev1.Measure) error {
 	}
 	if measure.IndexMode && len(measure.Fields) > 0 {
 		return errors.New("index mode is enabled, but fields are not empty")
+	}
+	if measure.ShardingKey != nil {
+		for idx, tagName := range measure.ShardingKey.TagNames {
+			if tagErr := validateTagName(tagName); tagErr != nil {
+				return fmt.Errorf("measure sharding_key tag_names[%d]: %w", idx, tagErr)
+			}
+		}
 	}
 
 	return tagFamily(measure.TagFamilies)
@@ -263,11 +367,11 @@ func Trace(trace *databasev1.Trace) error {
 	if trace.Metadata == nil {
 		return errors.New("trace metadata is nil")
 	}
-	if trace.Metadata.Name == "" {
-		return errors.New("trace name is empty")
+	if nameErr := validateResourceName("trace name", trace.Metadata.Name); nameErr != nil {
+		return nameErr
 	}
-	if trace.Metadata.Group == "" {
-		return errors.New("trace group is empty")
+	if groupErr := validateResourceName("trace group", trace.Metadata.Group); groupErr != nil {
+		return groupErr
 	}
 	if len(trace.Tags) == 0 {
 		return errors.New("trace tags is empty")
@@ -291,9 +395,6 @@ func Trace(trace *databasev1.Trace) error {
 		return err
 	}
 	for i := range trace.Tags {
-		if trace.Tags[i].Name == "" {
-			return errors.New("trace tag name is empty")
-		}
 		if err := validateTagName(trace.Tags[i].Name); err != nil {
 			return err
 		}
@@ -327,20 +428,51 @@ func TraceUpdate(prevTrace, newTrace *databasev1.Trace) error {
 }
 
 func tagFamily(tagFamilies []*databasev1.TagFamilySpec) error {
+	if len(tagFamilies) > 32 {
+		return fmt.Errorf("tag families count %d exceeds maximum 32", len(tagFamilies))
+	}
 	for i := range tagFamilies {
-		if tagFamilies[i].Name == "" {
-			return errors.New("tag family name is empty")
+		if nameErr := validateResourceName("tag family name", tagFamilies[i].Name); nameErr != nil {
+			return nameErr
+		}
+		if len(tagFamilies[i].Tags) > 512 {
+			return fmt.Errorf("tag family %q tags count %d exceeds maximum 512", tagFamilies[i].Name, len(tagFamilies[i].Tags))
 		}
 		for j := range tagFamilies[i].Tags {
-			if tagFamilies[i].Tags[j].Name == "" {
-				return errors.New("tag name is empty")
-			}
 			if err := validateTagName(tagFamilies[i].Tags[j].Name); err != nil {
 				return err
 			}
 			if tagFamilies[i].Tags[j].Type == databasev1.TagType_TAG_TYPE_UNSPECIFIED {
 				return errors.New("tag type is unspecified")
 			}
+		}
+	}
+	return nil
+}
+
+// Property validates the provided Property schema object.
+func Property(property *databasev1.Property) error {
+	if property == nil {
+		return errors.New("property is nil")
+	}
+	if property.Metadata == nil {
+		return errors.New("property metadata is nil")
+	}
+	if nameErr := validateResourceName("property name", property.Metadata.Name); nameErr != nil {
+		return nameErr
+	}
+	if groupErr := validateResourceName("property group", property.Metadata.Group); groupErr != nil {
+		return groupErr
+	}
+	if len(property.Tags) > 512 {
+		return fmt.Errorf("property tags count %d exceeds maximum 512", len(property.Tags))
+	}
+	for i := range property.Tags {
+		if err := validateTagName(property.Tags[i].Name); err != nil {
+			return err
+		}
+		if property.Tags[i].Type == databasev1.TagType_TAG_TYPE_UNSPECIFIED {
+			return errors.New("property tag type is unspecified")
 		}
 	}
 	return nil
@@ -355,17 +487,25 @@ func IndexRule(indexRule *databasev1.IndexRule) error {
 	if indexRule.Metadata == nil {
 		return errors.New("indexRule metadata is nil")
 	}
-	if indexRule.Metadata.Name == "" {
-		return errors.New("indexRule name is empty")
+	if nameErr := validateResourceName("indexRule name", indexRule.Metadata.Name); nameErr != nil {
+		return nameErr
 	}
-	if indexRule.Metadata.Group == "" {
-		return errors.New("indexRule group is empty")
+	if groupErr := validateResourceName("indexRule group", indexRule.Metadata.Group); groupErr != nil {
+		return groupErr
 	}
 	if indexRule.Metadata.Id <= 0 {
 		return errors.New("indexRule id is invalid")
 	}
 	if len(indexRule.Tags) == 0 {
 		return errors.New("indexRule tags is empty")
+	}
+	if len(indexRule.Tags) > 64 {
+		return fmt.Errorf("indexRule tags count %d exceeds maximum 64", len(indexRule.Tags))
+	}
+	for idx, tagName := range indexRule.Tags {
+		if tagErr := validateTagName(tagName); tagErr != nil {
+			return fmt.Errorf("indexRule tags[%d]: %w", idx, tagErr)
+		}
 	}
 	if indexRule.Type == databasev1.IndexRule_TYPE_UNSPECIFIED {
 		return errors.New("indexRule type is unspecified")
@@ -382,23 +522,31 @@ func IndexRuleBinding(indexRuleBinding *databasev1.IndexRuleBinding) error {
 	if indexRuleBinding.Metadata == nil {
 		return errors.New("indexRuleBinding metadata is nil")
 	}
-	if indexRuleBinding.Metadata.Name == "" {
-		return errors.New("indexRuleBinding name is empty")
+	if nameErr := validateResourceName("indexRuleBinding name", indexRuleBinding.Metadata.Name); nameErr != nil {
+		return nameErr
 	}
-	if indexRuleBinding.Metadata.Group == "" {
-		return errors.New("indexRuleBinding group is empty")
+	if groupErr := validateResourceName("indexRuleBinding group", indexRuleBinding.Metadata.Group); groupErr != nil {
+		return groupErr
 	}
 	if indexRuleBinding.Subject == nil {
 		return errors.New("indexRuleBinding subject is nil")
 	}
-	if indexRuleBinding.Subject.Name == "" {
-		return errors.New("indexRuleBinding subject name is empty")
+	if subjectErr := validateResourceName("indexRuleBinding subject name", indexRuleBinding.Subject.Name); subjectErr != nil {
+		return subjectErr
 	}
 	if indexRuleBinding.Subject.Catalog == commonv1.Catalog_CATALOG_UNSPECIFIED {
 		return errors.New("indexRuleBinding subject catalog is unspecified")
 	}
 	if len(indexRuleBinding.Rules) == 0 {
 		return errors.New("indexRuleBinding rules is empty")
+	}
+	if len(indexRuleBinding.Rules) > 128 {
+		return fmt.Errorf("indexRuleBinding rules count %d exceeds maximum 128", len(indexRuleBinding.Rules))
+	}
+	for idx, ruleName := range indexRuleBinding.Rules {
+		if ruleErr := validateResourceName(fmt.Sprintf("indexRuleBinding rules[%d]", idx), ruleName); ruleErr != nil {
+			return ruleErr
+		}
 	}
 	return nil
 }
@@ -412,26 +560,37 @@ func TopNAggregation(topNAggregation *databasev1.TopNAggregation) error {
 	if topNAggregation.Metadata == nil {
 		return errors.New("topNAggregation metadata is nil")
 	}
-	if topNAggregation.Metadata.Name == "" {
-		return errors.New("topNAggregation name is empty")
+	if nameErr := validateResourceName("topNAggregation name", topNAggregation.Metadata.Name); nameErr != nil {
+		return nameErr
 	}
-	if topNAggregation.Metadata.Group == "" {
-		return errors.New("topNAggregation group is empty")
+	if groupErr := validateResourceName("topNAggregation group", topNAggregation.Metadata.Group); groupErr != nil {
+		return groupErr
 	}
 	if topNAggregation.SourceMeasure == nil {
 		return errors.New("topNAggregation sourceMeasure is nil")
 	}
-	if topNAggregation.SourceMeasure.Name == "" {
-		return errors.New("topNAggregation sourceMeasure name is empty")
+	if sourceNameErr := validateResourceName("topNAggregation sourceMeasure name", topNAggregation.SourceMeasure.Name); sourceNameErr != nil {
+		return sourceNameErr
 	}
-	if topNAggregation.SourceMeasure.Group == "" {
-		return errors.New("topNAggregation sourceMeasure group is empty")
+	if sourceGroupErr := validateResourceName("topNAggregation sourceMeasure group", topNAggregation.SourceMeasure.Group); sourceGroupErr != nil {
+		return sourceGroupErr
 	}
 	if topNAggregation.CountersNumber <= 0 {
 		return errors.New("topNAggregation countersNumber is invalid")
 	}
-	if topNAggregation.FieldName == "" {
-		return errors.New("topNAggregation fieldName is empty")
+	if topNAggregation.CountersNumber > 100000 {
+		return fmt.Errorf("topNAggregation countersNumber %d exceeds maximum 100000", topNAggregation.CountersNumber)
+	}
+	if fieldErr := validateResourceName("topNAggregation fieldName", topNAggregation.FieldName); fieldErr != nil {
+		return fieldErr
+	}
+	if len(topNAggregation.GroupByTagNames) > 64 {
+		return fmt.Errorf("topNAggregation group_by_tag_names count %d exceeds maximum 64", len(topNAggregation.GroupByTagNames))
+	}
+	for idx, tagName := range topNAggregation.GroupByTagNames {
+		if tagErr := validateTagName(tagName); tagErr != nil {
+			return fmt.Errorf("topNAggregation group_by_tag_names[%d]: %w", idx, tagErr)
+		}
 	}
 	return nil
 }

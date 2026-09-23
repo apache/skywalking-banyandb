@@ -70,8 +70,9 @@ func NewGroupByAgg(child VecPlan, groupBy *model.MeasureGroupBy, agg *model.Meas
 }
 
 // Schema returns the aggregation output schema. The schema is computed
-// lazily on first call by running BuildOperators against the child
-// schema; subsequent calls return the cached value.
+// lazily on first call by running BuildOperators (or, for a time-bucketed
+// GroupBy, BuildTimeBucketOperator with a nil upstream — see its doc)
+// against the child schema; subsequent calls return the cached value.
 func (g *GroupByAgg) Schema() *vectorized.BatchSchema {
 	if g.outputCache != nil {
 		return g.outputCache
@@ -88,6 +89,14 @@ func (g *GroupByAgg) Schema() *vectorized.BatchSchema {
 	// A throwaway tracker; we only need the resulting operator's
 	// OutputSchema, not its bookkeeping.
 	tracker := vectorized.NewMemoryTracker(1 << 30)
+	if g.GroupBy != nil && g.GroupBy.TimeBucket != nil {
+		bucket, err := vmeasure.BuildTimeBucketOperator(nil, opts, inputSchema, tracker, 1024, g.Mode)
+		if err != nil {
+			return nil
+		}
+		g.outputCache = bucket.OutputSchema()
+		return g.outputCache
+	}
 	ops, err := vmeasure.BuildOperators(opts, inputSchema, tracker, 1024, g.Mode)
 	if err != nil || len(ops) != 1 {
 		return nil
@@ -99,15 +108,38 @@ func (g *GroupByAgg) Schema() *vectorized.BatchSchema {
 // Children returns the single child.
 func (g *GroupByAgg) Children() []VecPlan { return []VecPlan{g.Child} }
 
-// Build recurses into child, then constructs the BatchAggregation via
-// BuildOperators and attaches it as a breaker. The pipeline-shared
-// MemoryTracker from bc threads through.
+// Build recurses into child, then attaches the aggregation operator. A
+// time-bucketed GroupBy wires BatchTimeBucket in via
+// PipelineBuilder.Transform, since it is a PullOperator that pulls from
+// upstream directly rather than a BreakerOperator driven by Break's
+// Consume/Finalize contract (see BatchTimeBucket's doc for why that
+// distinction is what makes its memory bound real). Every other shape
+// attaches its BatchAggregation/BatchGroupBy via Break, as before. The
+// pipeline-shared MemoryTracker from bc threads through either way.
 func (g *GroupByAgg) Build(ctx context.Context, bc *BuildContext) error {
 	if buildErr := g.Child.Build(ctx, bc); buildErr != nil {
 		return buildErr
 	}
 	inputSchema := g.Child.Schema()
 	opts := model.MeasureQueryOptions{GroupBy: g.GroupBy, Agg: g.Agg}
+
+	if g.GroupBy != nil && g.GroupBy.TimeBucket != nil {
+		var bucket *vmeasure.BatchTimeBucket
+		var buildErr error
+		bc.Builder.Transform(func(upstream vectorized.PullOperator) vectorized.PullOperator {
+			bucket, buildErr = vmeasure.BuildTimeBucketOperator(upstream, opts, inputSchema, bc.Tracker, bc.Config.BatchSize, g.Mode)
+			if buildErr != nil {
+				return upstream
+			}
+			return bucket
+		})
+		if buildErr != nil {
+			return fmt.Errorf("plan.GroupByAgg.Build: %w", buildErr)
+		}
+		g.outputCache = bucket.OutputSchema()
+		return nil
+	}
+
 	ops, opsErr := vmeasure.BuildOperators(opts, inputSchema, bc.Tracker, bc.Config.BatchSize, g.Mode)
 	if opsErr != nil {
 		return fmt.Errorf("plan.GroupByAgg.Build: %w", opsErr)
@@ -130,5 +162,9 @@ func (g *GroupByAgg) String() string {
 	if g.Agg == nil {
 		return fmt.Sprintf("GroupByAgg(keys=%s, raw)", tagNames)
 	}
-	return fmt.Sprintf("GroupByAgg(keys=%s, fn=%v, field=%s)", tagNames, g.Agg.Func, g.Agg.FieldName)
+	target := g.Agg.FieldName
+	if g.Agg.TagName != "" {
+		target = g.Agg.TagName
+	}
+	return fmt.Sprintf("GroupByAgg(keys=%s, fn=%v, target=%s)", tagNames, g.Agg.Func, target)
 }

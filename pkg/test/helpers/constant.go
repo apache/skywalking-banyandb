@@ -80,6 +80,11 @@ type Args struct {
 	WantErr         bool
 	DisOrder        bool
 	IgnoreElementID bool
+	// SkipQL skips the BydbQL round-trip check (input/<Input>.ql) for this
+	// case. Temporary escape hatch for query shapes BydbQL cannot express
+	// yet. Remove a case's SkipQL (and add its .ql fixture) once BydbQL
+	// supports the shape.
+	SkipQL bool
 }
 
 // UnmarshalYAML decodes YAML raw bytes to proto.Message.

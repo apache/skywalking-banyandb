@@ -71,14 +71,25 @@ var nidx01eEncodedTimestamps = map[int64][]byte{
 //
 // Nothing else may appear. An entry for a collector, a sort expression, a
 // comparator, a heap, a doc-value reader, a chunk decoder, a range, a prefix,
-// a wildcard, an analyzer or any writer is the milestone growing the surface
+// a wildcard or an analyzer is the milestone growing the surface
 // BDB-NIDX-SPEC-001 revision 0.2 NIDX-01 explicitly denied it, however
 // convenient the entry is.
+//
+// Issue #14073 lifts the ceiling by exactly one operation: the generation
+// encoder and the three types its input is expressed in. NIDX-01 denied the
+// reader a writer because a writer was nobody's milestone then; NIDX-02A makes
+// encoding one committed generation the deliverable, and the entries below are
+// bounded to that -- no merger, no segment implementation, no plugin adapter.
 var nidx01ePermittedReaderSurface = map[string]struct{}{
+	"Encode":                        {},
+	"EncodeDocument":                {},
+	"EncodeField":                   {},
 	"ErrCorrupt":                    {},
+	"ErrInvalidGeneration":          {},
 	"ErrInvalidRepairPage":          {},
 	"ErrInvalidSelection":           {},
 	"ErrNoSnapshot":                 {},
+	"Generation":                    {},
 	"Open":                          {},
 	"Reader":                        {},
 	"Reader.Close":                  {},

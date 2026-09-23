@@ -188,6 +188,175 @@ func TestCompileRejectsFieldFiltersAndTagAggregations(t *testing.T) {
 	}
 }
 
+func countDistinctSchema() session.SchemaSnapshot {
+	return session.SchemaSnapshot{
+		Type:   session.ResourceTypeMeasure,
+		Name:   "service_latency",
+		Groups: []string{"production"},
+		Columns: []session.SchemaColumn{
+			{Name: "service", Kind: session.SchemaColumnTag, Type: session.SchemaValueTypeString},
+			{Name: "tags", Kind: session.SchemaColumnTag, Type: session.SchemaValueTypeStringArray},
+			{Name: "latency", Kind: session.SchemaColumnField, Type: session.SchemaValueTypeFloat},
+			{Name: "payload", Kind: session.SchemaColumnField, Type: session.SchemaValueTypeBinary},
+		},
+	}
+}
+
+func TestCompileCountDistinctOverTag_RendersCountDistinctSyntax(t *testing.T) {
+	resource := Resource{Type: session.ResourceTypeMeasure, Name: "service_latency", Groups: []string{"production"}}
+	compiled, compileErr := Compile(QueryPlan{
+		Resource:   resource,
+		Projection: []Projection{{Aggregate: &Aggregate{Function: AggregateCountDistinct, Column: "service"}}},
+		TimeRange:  TimeRange{Start: "-30m"},
+	}, countDistinctSchema())
+	if compileErr != nil {
+		t.Fatalf("Compile returned error: %v", compileErr)
+	}
+	// COUNT(DISTINCT service), not the generic "%s(%s)" shape (which would
+	// render the invalid COUNT_DISTINCT(service)).
+	if !strings.Contains(compiled.Query, "COUNT(DISTINCT service)") {
+		t.Fatalf("expected COUNT(DISTINCT service) in query, got: %s", compiled.Query)
+	}
+}
+
+// TestCompileCountDistinctOverNumericField_RendersCountDistinctSyntax pins the
+// design §6 matrix cell "Field INT / FLOAT x COUNT_DISTINCT": the server
+// analyzer accepts a field-targeted COUNT_DISTINCT (translateAgg routes it
+// through validateAggField, which does not gate on the function), so the
+// planner must compile it rather than insist on a tag.
+func TestCompileCountDistinctOverNumericField_RendersCountDistinctSyntax(t *testing.T) {
+	resource := Resource{Type: session.ResourceTypeMeasure, Name: "service_latency", Groups: []string{"production"}}
+	compiled, compileErr := Compile(QueryPlan{
+		Resource:   resource,
+		Projection: []Projection{{Aggregate: &Aggregate{Function: AggregateCountDistinct, Column: "latency"}}},
+		TimeRange:  TimeRange{Start: "-30m"},
+	}, countDistinctSchema())
+	if compileErr != nil {
+		t.Fatalf("Compile returned error: %v", compileErr)
+	}
+	if !strings.Contains(compiled.Query, "COUNT(DISTINCT latency)") {
+		t.Fatalf("expected COUNT(DISTINCT latency) in query, got: %s", compiled.Query)
+	}
+}
+
+// TestCompileCountDistinctOverNonNumericField_Rejects keeps the field arm
+// bounded by the same numeric rule every other field aggregation obeys.
+func TestCompileCountDistinctOverNonNumericField_Rejects(t *testing.T) {
+	resource := Resource{Type: session.ResourceTypeMeasure, Name: "service_latency", Groups: []string{"production"}}
+	_, compileErr := Compile(QueryPlan{
+		Resource:   resource,
+		Projection: []Projection{{Aggregate: &Aggregate{Function: AggregateCountDistinct, Column: "payload"}}},
+		TimeRange:  TimeRange{Start: "-30m"},
+	}, countDistinctSchema())
+	if compileErr == nil || DescribeError(compileErr).Code != "AGGREGATE_FIELD_NOT_NUMERIC" {
+		t.Fatalf("expected AGGREGATE_FIELD_NOT_NUMERIC diagnostic, got %v", compileErr)
+	}
+}
+
+func TestCompileCountDistinctOverArrayTag_Rejects(t *testing.T) {
+	resource := Resource{Type: session.ResourceTypeMeasure, Name: "service_latency", Groups: []string{"production"}}
+	_, compileErr := Compile(QueryPlan{
+		Resource:   resource,
+		Projection: []Projection{{Aggregate: &Aggregate{Function: AggregateCountDistinct, Column: "tags"}}},
+		TimeRange:  TimeRange{Start: "-30m"},
+	}, countDistinctSchema())
+	if compileErr == nil || DescribeError(compileErr).Code != "AGGREGATE_TAG_TYPE_UNSUPPORTED" {
+		t.Fatalf("expected AGGREGATE_TAG_TYPE_UNSUPPORTED diagnostic, got %v", compileErr)
+	}
+}
+
+func TestCompileTopNRejectsCountDistinct(t *testing.T) {
+	schema := session.SchemaSnapshot{
+		Type:   session.ResourceTypeTopN,
+		Name:   "service_latency_topn",
+		Groups: []string{"production"},
+	}
+	resource := Resource{Type: session.ResourceTypeTopN, Name: "service_latency_topn", Groups: []string{"production"}}
+	_, compileErr := Compile(QueryPlan{
+		Resource:  resource,
+		Aggregate: &Aggregate{Function: AggregateCountDistinct},
+		TimeRange: TimeRange{Start: "-30m"},
+		TopN:      5,
+	}, schema)
+	if compileErr == nil || !strings.Contains(compileErr.Error(), "COUNT_DISTINCT") {
+		t.Fatalf("expected a COUNT_DISTINCT rejection, got %v", compileErr)
+	}
+}
+
+func TestCompileGroupByTimeBucket_RendersLeadingGroupKey(t *testing.T) {
+	resource := Resource{Type: session.ResourceTypeMeasure, Name: "service_latency", Groups: []string{"production"}}
+	compiled, compileErr := Compile(QueryPlan{
+		Resource:   resource,
+		Projection: []Projection{{Aggregate: &Aggregate{Function: AggregateSum, Column: "latency"}}},
+		TimeBucket: &GroupByTimeBucket{Width: "5m"},
+		TimeRange:  TimeRange{Start: "-30m"},
+	}, countDistinctSchema())
+	if compileErr != nil {
+		t.Fatalf("Compile returned error: %v", compileErr)
+	}
+	if !strings.Contains(compiled.Query, "GROUP BY TIME_BUCKET('5m')") {
+		t.Fatalf("expected a leading TIME_BUCKET('5m') group key, got: %s", compiled.Query)
+	}
+}
+
+func TestCompileGroupByTimeBucketNoWidth_RendersEmptyArgs(t *testing.T) {
+	resource := Resource{Type: session.ResourceTypeMeasure, Name: "service_latency", Groups: []string{"production"}}
+	compiled, compileErr := Compile(QueryPlan{
+		Resource:   resource,
+		Projection: []Projection{{Aggregate: &Aggregate{Function: AggregateSum, Column: "latency"}}},
+		TimeBucket: &GroupByTimeBucket{},
+		TimeRange:  TimeRange{Start: "-30m"},
+	}, countDistinctSchema())
+	if compileErr != nil {
+		t.Fatalf("Compile returned error: %v", compileErr)
+	}
+	if !strings.Contains(compiled.Query, "GROUP BY TIME_BUCKET()") {
+		t.Fatalf("expected a leading TIME_BUCKET() group key, got: %s", compiled.Query)
+	}
+}
+
+func TestCompileGroupByTimeBucketAndTag_OrdersTimeBucketFirst(t *testing.T) {
+	resource := Resource{Type: session.ResourceTypeMeasure, Name: "service_latency", Groups: []string{"production"}}
+	compiled, compileErr := Compile(QueryPlan{
+		Resource:   resource,
+		Projection: []Projection{{Column: "service"}, {Aggregate: &Aggregate{Function: AggregateSum, Column: "latency"}}},
+		GroupBy:    []string{"service"},
+		TimeBucket: &GroupByTimeBucket{Width: "1h"},
+		TimeRange:  TimeRange{Start: "-30m"},
+	}, countDistinctSchema())
+	if compileErr != nil {
+		t.Fatalf("Compile returned error: %v", compileErr)
+	}
+	if !strings.Contains(compiled.Query, "GROUP BY TIME_BUCKET('1h'), service::TAG") {
+		t.Fatalf("expected TIME_BUCKET to lead the group list, got: %s", compiled.Query)
+	}
+}
+
+func TestCompileGroupByTimeBucketWithoutAggregate_Rejects(t *testing.T) {
+	resource := Resource{Type: session.ResourceTypeMeasure, Name: "service_latency", Groups: []string{"production"}}
+	_, compileErr := Compile(QueryPlan{
+		Resource:   resource,
+		TimeBucket: &GroupByTimeBucket{Width: "5m"},
+		TimeRange:  TimeRange{Start: "-30m"},
+	}, countDistinctSchema())
+	if compileErr == nil || !strings.Contains(compileErr.Error(), "GROUP BY requires exactly one aggregate") {
+		t.Fatalf("expected a missing-aggregate rejection, got %v", compileErr)
+	}
+}
+
+func TestCompileGroupByTimeBucketOnNonMeasure_Rejects(t *testing.T) {
+	stream := session.SchemaSnapshot{Type: session.ResourceTypeStream, Name: "logs", Groups: []string{"production"}}
+	resource := Resource{Type: session.ResourceTypeStream, Name: "logs", Groups: []string{"production"}}
+	_, compileErr := Compile(QueryPlan{
+		Resource:   resource,
+		TimeBucket: &GroupByTimeBucket{Width: "5m"},
+		TimeRange:  TimeRange{Start: "-30m"},
+	}, stream)
+	if compileErr == nil || !strings.Contains(compileErr.Error(), "GROUP BY is supported only for MEASURE queries") {
+		t.Fatalf("expected a MEASURE-only rejection, got %v", compileErr)
+	}
+}
+
 func TestCompileUsesIndexRuleNameForOrderBy(t *testing.T) {
 	schema := session.SchemaSnapshot{
 		Type:            session.ResourceTypeStream,
@@ -350,5 +519,76 @@ func TestCompileTopNUsesRealAggregationCapabilities(t *testing.T) {
 	}, schema)
 	if operatorErr == nil || DescribeError(operatorErr).Code != "TOPN_FILTER_OPERATOR_UNSUPPORTED" {
 		t.Fatalf("expected non-equality TopN filter rejection, got %v", operatorErr)
+	}
+}
+
+// TestCompileTimeBucketWidthValidation pins that a width is checked with the
+// same duration rule the server applies (plan.resolveTimeBucket) instead of
+// being interpolated into the rendered literal unchecked. A quote-bearing
+// width is the case that would otherwise emit BYDBQL the parser rejects.
+func TestCompileTimeBucketWidthValidation(t *testing.T) {
+	resource := Resource{Type: session.ResourceTypeMeasure, Name: "service_latency", Groups: []string{"production"}}
+	plan := func(width string) QueryPlan {
+		return QueryPlan{
+			Resource:   resource,
+			Projection: []Projection{{Column: "service"}, {Aggregate: &Aggregate{Function: AggregateCountDistinct, Column: "service"}}},
+			GroupBy:    []string{"service"},
+			TimeBucket: &GroupByTimeBucket{Width: width},
+			TimeRange:  TimeRange{Start: "-30m"},
+		}
+	}
+	for _, width := range []string{"nonsense", "0s", "-5m", "1m') OR '"} {
+		_, compileErr := Compile(plan(width), countDistinctSchema())
+		if compileErr == nil || DescribeError(compileErr).Code != "GROUP_BY_TIME_BUCKET_WIDTH_INVALID" {
+			t.Fatalf("width %q: expected GROUP_BY_TIME_BUCKET_WIDTH_INVALID, got %v", width, compileErr)
+		}
+	}
+	compiled, compileErr := Compile(plan("5m"), countDistinctSchema())
+	if compileErr != nil {
+		t.Fatalf("valid width rejected: %v", compileErr)
+	}
+	if !strings.Contains(compiled.Query, "TIME_BUCKET('5m')") {
+		t.Fatalf("expected TIME_BUCKET('5m') in query, got: %s", compiled.Query)
+	}
+}
+
+// TestCompileBucketedOrderingRejected mirrors the server's own
+// validateBucketableOrdering: a bucketed query may not name an index rule and
+// may not order descending. Compiling either would produce a query that only
+// fails once it reaches the server.
+func TestCompileBucketedOrderingRejected(t *testing.T) {
+	resource := Resource{Type: session.ResourceTypeMeasure, Name: "service_latency", Groups: []string{"production"}}
+	plan := func(order *Order) QueryPlan {
+		return QueryPlan{
+			Resource:   resource,
+			Projection: []Projection{{Column: "service"}, {Aggregate: &Aggregate{Function: AggregateCountDistinct, Column: "service"}}},
+			GroupBy:    []string{"service"},
+			TimeBucket: &GroupByTimeBucket{Width: "5m"},
+			OrderBy:    order,
+			TimeRange:  TimeRange{Start: "-30m"},
+		}
+	}
+	if _, compileErr := Compile(plan(&Order{IndexRule: "latency_index", Direction: OrderAscending}), countDistinctSchema()); compileErr == nil {
+		t.Fatal("expected an index-rule order on a bucketed query to be rejected")
+	}
+	if _, compileErr := Compile(plan(&Order{Direction: OrderDescending}), countDistinctSchema()); compileErr == nil {
+		t.Fatal("expected a descending order on a bucketed query to be rejected")
+	}
+	if _, compileErr := Compile(plan(&Order{Direction: OrderAscending}), countDistinctSchema()); compileErr != nil {
+		t.Fatalf("ascending time order on a bucketed query must compile: %v", compileErr)
+	}
+}
+
+// TestCompileTopNRejectsTimeBucket pins that a TOPN plan cannot carry a
+// time_bucket, which compileTopN has no way to render and would drop.
+func TestCompileTopNRejectsTimeBucket(t *testing.T) {
+	_, compileErr := Compile(QueryPlan{
+		Resource:   Resource{Type: session.ResourceTypeTopN, Name: "service_latency_topn", Groups: []string{"production"}},
+		TopN:       5,
+		TimeBucket: &GroupByTimeBucket{Width: "5m"},
+		TimeRange:  TimeRange{Start: "-30m"},
+	}, countDistinctSchema())
+	if compileErr == nil {
+		t.Fatal("expected a TOPN plan carrying time_bucket to be rejected")
 	}
 }

@@ -109,10 +109,18 @@ func verifyWithContext(ctx context.Context, innerGm gm.Gomega, sharedContext hel
 			return a.Timestamp.AsTime().Compare(b.Timestamp.AsTime())
 		})
 	}
-	for i := range resp.DataPoints {
-		if resp.DataPoints[i].Timestamp != nil {
-			innerGm.Expect(resp.DataPoints[i].Version).Should(gm.BeNumerically(">", 0))
-			innerGm.Expect(resp.DataPoints[i].Sid).Should(gm.BeNumerically(">", 0))
+	// Version/Sid describe a single stored row, so this only holds for a
+	// non-aggregated result (raw scan or raw GroupBy's first-seen-row
+	// passthrough). An aggregated result may still carry a non-nil
+	// Timestamp — a time-bucketed GroupBy re-emits the bucket start (design
+	// §7.2's D2 reversal) — but that bucket row can merge many underlying
+	// rows (and series), so no single Version/Sid describes it.
+	if query.GetAgg() == nil {
+		for i := range resp.DataPoints {
+			if resp.DataPoints[i].Timestamp != nil {
+				innerGm.Expect(resp.DataPoints[i].Version).Should(gm.BeNumerically(">", 0))
+				innerGm.Expect(resp.DataPoints[i].Sid).Should(gm.BeNumerically(">", 0))
+			}
 		}
 	}
 	success := innerGm.Expect(cmp.Equal(resp, want,
@@ -153,8 +161,10 @@ var VerifyFn = func(innerGm gm.Gomega, sharedContext helpers.SharedContext, args
 
 // verifyQLWithRequest ensures the generated QL matches the YAML request specification.
 func verifyQLWithRequest(ctx context.Context, innerGm gm.Gomega, args helpers.Args, yamlQuery *measurev1.QueryRequest, conn *grpclib.ClientConn) {
-	// if the test case expects an error, skip the QL verification.
-	if args.WantErr {
+	// if the test case expects an error, or explicitly opts out (a query
+	// shape BydbQL cannot express yet — see helpers.Args.SkipQL), skip the
+	// QL verification.
+	if args.WantErr || args.SkipQL {
 		return
 	}
 	qlContent, err := qlFS.ReadFile("input/" + args.Input + ".ql")

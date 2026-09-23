@@ -28,9 +28,6 @@ import (
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
-	// Enabled is the default: it selects both the vec query path and the native
-	// columnar liaison<->data wire frame. Flipping it is a wire format change — see
-	// docs/operation/upgrade.md for the upgrade ordering rule.
 	require.True(t, cfg.Enabled)
 	require.Equal(t, vectorized.DefaultBatchSize, cfg.BatchSize)
 	require.Equal(t, 256, cfg.QueryMemoryMiB)
@@ -38,10 +35,16 @@ func TestDefaultConfig(t *testing.T) {
 }
 
 func TestVectorizedConfigValidate(t *testing.T) {
-	require.Error(t, VectorizedConfig{BatchSize: 0, QueryMemoryMiB: 256}.Validate())
-	require.Error(t, VectorizedConfig{BatchSize: 1, QueryMemoryMiB: 0}.Validate())
-	require.NoError(t, VectorizedConfig{BatchSize: 1, QueryMemoryMiB: 1}.Validate())
+	require.Error(t, VectorizedConfig{Enabled: true, BatchSize: 0, QueryMemoryMiB: 256}.Validate())
+	require.Error(t, VectorizedConfig{Enabled: true, BatchSize: 1, QueryMemoryMiB: 0}.Validate())
+	require.NoError(t, VectorizedConfig{Enabled: true, BatchSize: 1, QueryMemoryMiB: 1}.Validate())
 	// A batch Selection is []uint16, so BatchSize must fit in a uint16.
-	require.NoError(t, VectorizedConfig{BatchSize: math.MaxUint16, QueryMemoryMiB: 1}.Validate())
-	require.Error(t, VectorizedConfig{BatchSize: math.MaxUint16 + 1, QueryMemoryMiB: 1}.Validate())
+	require.NoError(t, VectorizedConfig{Enabled: true, BatchSize: math.MaxUint16, QueryMemoryMiB: 1}.Validate())
+	require.Error(t, VectorizedConfig{Enabled: true, BatchSize: math.MaxUint16 + 1, QueryMemoryMiB: 1}.Validate())
+}
+
+func TestVectorizedConfigRejectsDisabled(t *testing.T) {
+	err := VectorizedConfig{Enabled: false, BatchSize: 1, QueryMemoryMiB: 1}.Validate()
+	require.ErrorIs(t, err, errRowPathRemoved)
+	require.Contains(t, err.Error(), "apache/skywalking#13998")
 }

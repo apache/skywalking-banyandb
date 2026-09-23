@@ -19,10 +19,14 @@ package measure
 
 import (
 	"context"
+	"encoding/binary"
+	"fmt"
+	"strings"
 	"testing"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -826,6 +830,123 @@ func TestBatchAggregation_AggModeReduce_DedupsSameShardSameGroup(t *testing.T) {
 	}
 }
 
+// countDistinctShardRow is one input row for
+// TestCountDistinct_MapThenReduce_SumsDisjointShardsDedupsReplicas's map
+// phase: a scan row carrying a shard id, a GroupBy key tag, and the
+// COUNT_DISTINCT target tag.
+type countDistinctShardRow struct {
+	g, target string
+	shard     int64
+}
+
+// TestCountDistinct_MapThenReduce_SumsDisjointShardsDedupsReplicas is the
+// end-to-end proof that the two Phase 2 fixes (design §7.4) compose
+// correctly: BuildOperators' shard-id-in-keyIndices fix makes the map
+// phase emit one COUNT_DISTINCT partial per (shard, group) instead of
+// merging shards into one incidentally-labeled group, and
+// distributedAggFunc's COUNT_DISTINCT→AggSum mapping lets the liaison
+// reduce those partials with the ordinary reduce path — no new code for
+// either side beyond the two fixes themselves.
+//
+// Two shards hold disjoint target values for the same group ("a"): shard 1
+// has {v1, v2} (distinct=2), shard 2 has {v3, v4} (distinct=2). Summing
+// disjoint per-shard counts must equal the true total (4) — the
+// decomposability condition's whole guarantee. Feeding shard 1's partial
+// twice (a replica duplicate) must not double it.
+func TestCountDistinct_MapThenReduce_SumsDisjointShardsDedupsReplicas(t *testing.T) {
+	scanSchema := vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleShardID, Name: shardIDOutputName, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "g", Type: vectorized.ColumnTypeString},
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "target", Type: vectorized.ColumnTypeString},
+	})
+	opts := model.MeasureQueryOptions{
+		GroupBy: &model.MeasureGroupBy{TagFamily: "default", TagNames: []string{"g"}},
+		Agg:     &model.MeasureAgg{TagFamily: "default", TagName: "target", Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT, HideTag: true},
+	}
+	tracker := vectorized.NewMemoryTracker(1 << 30)
+
+	// Map phase: one data node's BatchAggregation instance sees rows from
+	// both shards (a node commonly holds more than one shard) in one batch.
+	runMapPhase := func(rows ...countDistinctShardRow) []*vectorized.RecordBatch {
+		ops, buildErr := BuildOperators(opts, scanSchema, tracker, 8, AggModeMap)
+		if buildErr != nil {
+			t.Fatalf("BuildOperators: %v", buildErr)
+		}
+		agg := ops[0].(*BatchAggregation)
+		defer agg.Close()
+		b := vectorized.NewRecordBatch(scanSchema, len(rows))
+		shardCol := b.Columns[0].(*vectorized.TypedColumn[int64])
+		gCol := b.Columns[1].(*vectorized.TypedColumn[string])
+		targetCol := b.Columns[2].(*vectorized.TypedColumn[string])
+		for _, r := range rows {
+			shardCol.Append(r.shard)
+			gCol.Append(r.g)
+			targetCol.Append(r.target)
+		}
+		b.Len = len(rows)
+		return feedReduce(t, agg, b) // Init+Consume+Finalize+drain; works for AggModeMap too.
+	}
+
+	partials := runMapPhase(
+		countDistinctShardRow{shard: 1, g: "a", target: "v1"},
+		countDistinctShardRow{shard: 1, g: "a", target: "v2"},
+		countDistinctShardRow{shard: 2, g: "a", target: "v3"},
+		countDistinctShardRow{shard: 2, g: "a", target: "v4"},
+	)
+
+	sumOf := func(batches []*vectorized.RecordBatch) int64 {
+		var total int64
+		for _, b := range batches {
+			valIdx := len(b.Schema.Columns) - 1
+			col := b.Columns[valIdx].(*vectorized.TypedColumn[int64])
+			for i := 0; i < b.Len; i++ {
+				total += col.Data()[i]
+			}
+		}
+		return total
+	}
+	rowsOf := func(batches []*vectorized.RecordBatch) int {
+		var total int
+		for _, b := range batches {
+			total += b.Len
+		}
+		return total
+	}
+
+	// Sanity: the map phase itself must have produced 2 partial rows (one
+	// per shard), each counting 2 — proving the shard-id fix actually
+	// split the group instead of merging both shards into one. (Both rows
+	// land in a single output batch here since batchSize=8 comfortably
+	// fits 2 groups — row count is what matters, not batch count.)
+	if gotRows := rowsOf(partials); gotRows != 2 {
+		t.Fatalf("map phase produced %d partial rows, want 2 (one per shard)", gotRows)
+	}
+	if got := sumOf(partials); got != 4 {
+		t.Fatalf("map phase partials sum to %d, want 4 (2 per shard, sanity check before reduce)", got)
+	}
+
+	reduce := func(bodies []*vectorized.RecordBatch) int64 {
+		reduced, _, reduceErr := ReducePartialBatches(bodies, "default", []string{"g"}, false,
+			[]AggReduceSpec{{OutputName: "target", Func: AggSum}}, 8, vectorized.NewMemoryTracker(1<<30))
+		if reduceErr != nil {
+			t.Fatalf("ReducePartialBatches: %v", reduceErr)
+		}
+		return sumOf(reduced)
+	}
+
+	if got := reduce(partials); got != 4 {
+		t.Fatalf("reduced COUNT_DISTINCT = %d, want 4 (2+2, disjoint per-shard counts)", got)
+	}
+
+	// Replica duplicate: shard 1's partial arrives twice (e.g. from two
+	// replica nodes reporting the same shard). markDedupSeen must drop the
+	// duplicate, not add it again.
+	withReplica := append(append([]*vectorized.RecordBatch{}, partials...), partials[0])
+	if got := reduce(withReplica); got != 4 {
+		t.Fatalf("reduced COUNT_DISTINCT with a replica duplicate = %d, want 4 (duplicate must be deduped, not summed again)", got)
+	}
+}
+
 // TestBatchAggregation_AggModeReduce_MeanFinalises asserts MEAN finalization
 // happens inside Reduce.Val(): partials carry (Sum, Count) and the final
 // value is Sum/Count. Two shards: (sum=10,count=2) + (sum=20,count=3) ⇒
@@ -896,6 +1017,287 @@ func TestBatchAggregation_DelegatesToAggregationPackage(t *testing.T) {
 	}
 }
 
+// TestBatchAggregation_CountDistinct_IntTagTarget pins COUNT_DISTINCT over
+// an int64 tag target (design §6): repeated values within a group collapse
+// to one, and different groups keep independent sets.
+func TestBatchAggregation_CountDistinct_IntTagTarget(t *testing.T) {
+	s := aggTagSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggCountDistinct, InputCol: 1, Output: "distinct_v", HideTag: true}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+	feedAggTag(t, op, s,
+		aggTagRow{g: "a", v: 1, s: "x"},
+		aggTagRow{g: "a", v: 2, s: "x"},
+		aggTagRow{g: "a", v: 2, s: "x"},
+		aggTagRow{g: "a", v: 3, s: "x"},
+		aggTagRow{g: "b", v: 5, s: "x"},
+		aggTagRow{g: "b", v: 5, s: "x"},
+	)
+	_ = op.Finalize(context.Background())
+	out, _ := op.NextBatch(context.Background())
+	valCol := out.Columns[2].(*vectorized.TypedColumn[int64])
+	if got := valCol.Data()[findAggRow(t, out, "a")]; got != 3 {
+		t.Fatalf("distinct_v[a] = %d, want 3 (values 1,2,3)", got)
+	}
+	if got := valCol.Data()[findAggRow(t, out, "b")]; got != 1 {
+		t.Fatalf("distinct_v[b] = %d, want 1 (value 5, seen twice)", got)
+	}
+}
+
+// TestBatchAggregation_CountDistinct_StringTagTarget pins COUNT_DISTINCT
+// over a string tag target (design §6 — COUNT_DISTINCT accepts any scalar
+// tag, unlike SUM/MIN/MAX/MEAN which require TAG_TYPE_INT).
+func TestBatchAggregation_CountDistinct_StringTagTarget(t *testing.T) {
+	s := aggTagSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggCountDistinct, InputCol: 2, Output: "distinct_s", HideTag: true}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+	feedAggTag(t, op, s,
+		aggTagRow{g: "a", v: 0, s: "x"},
+		aggTagRow{g: "a", v: 0, s: "y"},
+		aggTagRow{g: "a", v: 0, s: "x"},
+		aggTagRow{g: "b", v: 0, s: "z"},
+	)
+	_ = op.Finalize(context.Background())
+	out, _ := op.NextBatch(context.Background())
+	valCol := out.Columns[2].(*vectorized.TypedColumn[int64])
+	if got := valCol.Data()[findAggRow(t, out, "a")]; got != 2 {
+		t.Fatalf("distinct_s[a] = %d, want 2 (x, y)", got)
+	}
+	if got := valCol.Data()[findAggRow(t, out, "b")]; got != 1 {
+		t.Fatalf("distinct_s[b] = %d, want 1 (z)", got)
+	}
+}
+
+// TestBatchAggregation_CountDistinct_ExcludesNulls pins that a null target
+// value neither enters the distinct set nor is counted (design §6, matching
+// the existing field behavior: null values are excluded).
+func TestBatchAggregation_CountDistinct_ExcludesNulls(t *testing.T) {
+	s := aggTagSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggCountDistinct, InputCol: 2, Output: "distinct_s", HideTag: true}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+	feedAggTag(t, op, s,
+		aggTagRow{g: "a", v: 0, s: "x"},
+		aggTagRow{g: "a", v: 0, s: nullMarker},
+		aggTagRow{g: "a", v: 0, s: nullMarker},
+	)
+	_ = op.Finalize(context.Background())
+	out, _ := op.NextBatch(context.Background())
+	valCol := out.Columns[2].(*vectorized.TypedColumn[int64])
+	if got := valCol.Data()[findAggRow(t, out, "a")]; got != 1 {
+		t.Fatalf("distinct_s[a] = %d, want 1 (only \"x\"; both nulls excluded)", got)
+	}
+}
+
+// aggBytesSchema is "tag.default.g (string, groupby key), field raw (bytes,
+// agg target)" — used to pin COUNT_DISTINCT over a []byte-backed column,
+// the one target type aggTagSchema/aggIntSchema don't cover.
+func aggBytesSchema() *vectorized.BatchSchema {
+	return vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "g", Type: vectorized.ColumnTypeString},
+		{Role: vectorized.RoleField, Name: "raw", Type: vectorized.ColumnTypeBytes},
+	})
+}
+
+// TestBatchAggregation_CountDistinct_BytesTarget pins COUNT_DISTINCT over a
+// ColumnTypeBytes field (design §6's "TAG_TYPE_DATA_BINARY" row applies the
+// same encoding path — appendKeyComponent handles []byte uniformly whether
+// the column started life as a field or a tag).
+func TestBatchAggregation_CountDistinct_BytesTarget(t *testing.T) {
+	s := aggBytesSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggCountDistinct, InputCol: 1, Output: "distinct_raw"}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+
+	b := vectorized.NewRecordBatch(s, 3)
+	gCol := b.Columns[0].(*vectorized.TypedColumn[string])
+	rawCol := b.Columns[1].(*vectorized.TypedColumn[[]byte])
+	for _, row := range []struct {
+		g   string
+		raw []byte
+	}{
+		{"a", []byte{1, 2, 3}},
+		{"a", []byte{1, 2, 3}},
+		{"a", []byte{4, 5}},
+	} {
+		gCol.Append(row.g)
+		rawCol.Append(row.raw)
+	}
+	b.Len = 3
+	if err := op.Consume(context.Background(), b); err != nil {
+		t.Fatal(err)
+	}
+	_ = op.Finalize(context.Background())
+	out, _ := op.NextBatch(context.Background())
+	valCol := out.Columns[1].(*vectorized.TypedColumn[int64])
+	if got := valCol.Data()[findAggRow(t, out, "a")]; got != 2 {
+		t.Fatalf("distinct_raw[a] = %d, want 2 ({1,2,3} and {4,5})", got)
+	}
+}
+
+// TestBatchAggregation_CountDistinct_BudgetExceeded pins design §7.6: a
+// high-cardinality target fails loud against the per-query memory budget
+// with the existing "aggregation memory budget exceeded" message, rather
+// than growing the set unbounded.
+func TestBatchAggregation_CountDistinct_BudgetExceeded(t *testing.T) {
+	s := aggTagSchema()
+	tracker := vectorized.NewMemoryTracker(64)
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggCountDistinct, InputCol: 2, Output: "distinct_s", HideTag: true}}, AggModeAll, 8, tracker, 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+
+	b := vectorized.NewRecordBatch(s, 1)
+	gCol := b.Columns[0].(*vectorized.TypedColumn[string])
+	vCol := b.Columns[1].(*vectorized.TypedColumn[int64])
+	sCol := b.Columns[2].(*vectorized.TypedColumn[string])
+	var consumeErr error
+	for i := 0; i < 100 && consumeErr == nil; i++ {
+		b.Reset()
+		gCol.Append("a")
+		vCol.Append(0)
+		sCol.Append(fmt.Sprintf("distinct-value-%d", i))
+		b.Len = 1
+		consumeErr = op.Consume(context.Background(), b)
+	}
+	if consumeErr == nil {
+		t.Fatal("want a budget-exceeded error once the distinct set outgrows a 64-byte tracker")
+	}
+	if !strings.Contains(consumeErr.Error(), "aggregation memory budget exceeded") {
+		t.Fatalf("error = %q, want it to contain %q", consumeErr.Error(), "aggregation memory budget exceeded")
+	}
+}
+
+// TestBatchAggregation_CountDistinct_FailedReservation_DoesNotRecordValue
+// pins the fix for a Copilot-flagged issue: foldDistinct checks
+// Contains (a pure read) before reserving, not In — In mutates the set
+// unconditionally, so calling it first would leave a value that fails the
+// budget check resident (and uncharged) in the distinct set even though
+// the operator reported a budget-exceeded error for it. A second distinct
+// value that gets rejected must not grow distinct.Val() past what was
+// already reserved.
+func TestBatchAggregation_CountDistinct_FailedReservation_DoesNotRecordValue(t *testing.T) {
+	s := aggTagSchema()
+	tracker := vectorized.NewMemoryTracker(64)
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggCountDistinct, InputCol: 2, Output: "distinct_s", HideTag: true}}, AggModeAll, 8, tracker, 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+
+	b := vectorized.NewRecordBatch(s, 1)
+	gCol := b.Columns[0].(*vectorized.TypedColumn[string])
+	vCol := b.Columns[1].(*vectorized.TypedColumn[int64])
+	sCol := b.Columns[2].(*vectorized.TypedColumn[string])
+	feed := func(v string) error {
+		b.Reset()
+		gCol.Append("a")
+		vCol.Append(0)
+		sCol.Append(v)
+		b.Len = 1
+		return op.Consume(context.Background(), b)
+	}
+
+	if err := feed("s"); err != nil {
+		t.Fatalf("first, small distinct value must fit the 64-byte budget: %v", err)
+	}
+	if err := feed("a-second-distinct-value-that-blows-the-remaining-budget"); err == nil {
+		t.Fatal("want a budget-exceeded error for the second distinct value")
+	}
+
+	var group *aggGroup
+	for _, gp := range op.groups {
+		group = gp
+	}
+	if group == nil {
+		t.Fatal("expected the \"a\" group to exist after the first successful fold")
+	}
+	if got := group.slots[0].distinct.Val(); got != 1 {
+		t.Fatalf("distinct.Val() = %d, want 1 — the rejected second value must not be recorded", got)
+	}
+}
+
+// TestBatchAggregation_CountDistinct_DelegatesToAggregationPackage mirrors
+// TestBatchAggregation_DelegatesToAggregationPackage's convention for
+// COUNT_DISTINCT: the same values fed through BatchAggregation and through
+// a directly-constructed aggregation.NewDistinct() (keyed by the same
+// appendKeyComponent encoding) must agree, proving the distinct set lives
+// in pkg/query/aggregation rather than being reimplemented locally.
+func TestBatchAggregation_CountDistinct_DelegatesToAggregationPackage(t *testing.T) {
+	s := aggTagSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggCountDistinct, InputCol: 1, Output: "distinct_v", HideTag: true}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+
+	values := []int64{3, 1, 4, 1, 5, 9, 2, 6, 5, 3}
+	for _, v := range values {
+		feedAggTag(t, op, s, aggTagRow{g: "a", v: v, s: "x"})
+	}
+	_ = op.Finalize(context.Background())
+	out, _ := op.NextBatch(context.Background())
+	gotDistinct := out.Columns[2].(*vectorized.TypedColumn[int64]).Data()[findAggRow(t, out, "a")]
+
+	ref := aggregation.NewDistinct()
+	for _, v := range values {
+		var buf [8]byte
+		binary.LittleEndian.PutUint64(buf[:], uint64(v))
+		ref.In(buf[:])
+	}
+	if wantDistinct := ref.Val(); gotDistinct != wantDistinct {
+		t.Fatalf("BatchAggregation COUNT_DISTINCT (%d) must equal aggregation.NewDistinct (%d) — divergence indicates delegation broke",
+			gotDistinct, wantDistinct)
+	}
+}
+
+// TestBatchAggregation_CountDistinct_AggModeReduce_Errors pins the
+// defensive assertion in newAggSlot: the liaison never constructs a
+// distinct slot directly — it combines already-local-distinct partials via
+// ordinary AggSum (design §7.4) — so an AggCountDistinct spec reaching
+// AggModeReduce is a producer/planner bug and must fail loud, not silently
+// produce a zero-valued or nil accumulator.
+func TestBatchAggregation_CountDistinct_AggModeReduce_Errors(t *testing.T) {
+	s := aggTagSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggCountDistinct, InputCol: 1, Output: "distinct_v"}}, AggModeReduce, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+	if err := op.Consume(context.Background(), mustBuildTagBatch(t, s, aggTagRow{g: "a", v: 1, s: "x"})); err == nil {
+		t.Fatal("AggCountDistinct under AggModeReduce must error, not silently construct a distinct slot")
+	}
+}
+
+// TestBatchAggregation_CountDistinct_OutputTypeIsInt64 pins that the output
+// column type is always int64, even when the target is a string tag — a
+// distinct count is always an integer, unlike SUM/MIN/MAX which preserve
+// the input type.
+func TestBatchAggregation_CountDistinct_OutputTypeIsInt64(t *testing.T) {
+	s := aggTagSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggCountDistinct, InputCol: 2, Output: "distinct_s", HideTag: true}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	outSchema := op.OutputSchema()
+	if outSchema.Columns[2].Type != vectorized.ColumnTypeInt64 {
+		t.Fatalf("output type for COUNT_DISTINCT over a string tag = %v, want ColumnTypeInt64", outSchema.Columns[2].Type)
+	}
+}
+
+// mustBuildTagBatch is a one-row aggTagSchema batch builder for tests that
+// need to call Consume a second time without going through feedAggTag
+// (which always Consumes immediately).
+func mustBuildTagBatch(t *testing.T, s *vectorized.BatchSchema, row aggTagRow) *vectorized.RecordBatch {
+	t.Helper()
+	b := vectorized.NewRecordBatch(s, 1)
+	b.Columns[0].(*vectorized.TypedColumn[string]).Append(row.g)
+	b.Columns[1].(*vectorized.TypedColumn[int64]).Append(row.v)
+	b.Columns[2].(*vectorized.TypedColumn[string]).Append(row.s)
+	b.Len = 1
+	return b
+}
+
 // TestBatchAggregation_Correctness_MatchesManualComputation pins parity-relevant
 // arithmetic against a manual reference, complementing the delegation assertion.
 func TestBatchAggregation_Correctness_MatchesManualComputation(t *testing.T) {
@@ -943,5 +1345,189 @@ func TestBatchAggregation_Correctness_MatchesManualComputation(t *testing.T) {
 	mx := out.Columns[3].(*vectorized.TypedColumn[int64]).Data()[row]
 	if sum != 14 || mn != 1 || mx != 5 {
 		t.Fatalf("sum/min/max: want 14/1/5, got %d/%d/%d", sum, mn, mx)
+	}
+}
+
+// aggTagRow is one input row for aggTagSchema / feedAggTag.
+type aggTagRow struct {
+	g string
+	s string
+	v int64
+}
+
+// aggTagSchema is "tag.default.g (string, groupby key), tag.default.v
+// (int64, agg target tag), tag.default.s (string, agg target tag)". Used to
+// pin SUM/MIN/MAX/MEAN/COUNT binding to a RoleTag input column instead of a
+// RoleField column (design §7.1) — unlike aggIntSchema/aggFloatSchema, whose
+// agg column is always RoleField.
+func aggTagSchema() *vectorized.BatchSchema {
+	return vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "g", Type: vectorized.ColumnTypeString},
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "v", Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleTag, TagFamily: "default", Name: "s", Type: vectorized.ColumnTypeString},
+	})
+}
+
+// feedAggTag builds a single batch of (g,v,s) rows and Consumes it. A row
+// with s == "" and null=true (via the sentinel nullS) leaves the s column
+// null at that row.
+func feedAggTag(t *testing.T, op *BatchAggregation, schema *vectorized.BatchSchema, rows ...aggTagRow) {
+	t.Helper()
+	b := vectorized.NewRecordBatch(schema, len(rows))
+	gCol := b.Columns[0].(*vectorized.TypedColumn[string])
+	vCol := b.Columns[1].(*vectorized.TypedColumn[int64])
+	sCol := b.Columns[2].(*vectorized.TypedColumn[string])
+	for _, r := range rows {
+		gCol.Append(r.g)
+		vCol.Append(r.v)
+		if r.s == nullMarker {
+			sCol.AppendNull()
+		} else {
+			sCol.Append(r.s)
+		}
+	}
+	b.Len = len(rows)
+	if err := op.Consume(context.Background(), b); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// nullMarker flags an aggTagRow.s value that feedAggTag should append as
+// null rather than as a literal string.
+const nullMarker = "\x00null\x00"
+
+// TestBatchAggregation_AggModeAll_SumOverIntTag pins SUM binding to a
+// RoleTag INT column (design §7.1): everything downstream of
+// AggSpec.InputCol is index-based, so the fold path needs no change from
+// the RoleField case.
+func TestBatchAggregation_AggModeAll_SumOverIntTag(t *testing.T) {
+	s := aggTagSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggSum, InputCol: 1, Output: "v"}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+	feedAggTag(t, op, s,
+		aggTagRow{g: "a", v: 1, s: "x"},
+		aggTagRow{g: "a", v: 2, s: "x"},
+		aggTagRow{g: "b", v: 5, s: "y"},
+	)
+	_ = op.Finalize(context.Background())
+	out, _ := op.NextBatch(context.Background())
+	// Output columns: g(tag), v(tag, first-seen), s(tag, first-seen), v(field, SUM result).
+	sums := out.Columns[3].(*vectorized.TypedColumn[int64]).Data()
+	if got := sums[findAggRow(t, out, "a")]; got != 3 {
+		t.Fatalf("sum(a) over tag v: want 3, got %d", got)
+	}
+	if got := sums[findAggRow(t, out, "b")]; got != 5 {
+		t.Fatalf("sum(b) over tag v: want 5, got %d", got)
+	}
+}
+
+// TestBatchAggregation_AggModeAll_MeanOverIntTag_YieldsFloat64 pins design
+// §6: "MEAN over an INT tag yields float64". There is no FLOAT tag type, so
+// an int64 accumulator would silently truncate the division.
+func TestBatchAggregation_AggModeAll_MeanOverIntTag_YieldsFloat64(t *testing.T) {
+	s := aggTagSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggMean, InputCol: 1, Output: "v"}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+	feedAggTag(t, op, s,
+		aggTagRow{g: "a", v: 1, s: "x"},
+		aggTagRow{g: "a", v: 2, s: "x"},
+	)
+	_ = op.Finalize(context.Background())
+	out, _ := op.NextBatch(context.Background())
+	meanCol, ok := out.Columns[3].(*vectorized.TypedColumn[float64])
+	if !ok {
+		t.Fatalf("MEAN over an INT tag must output a float64 column, got %T", out.Columns[3])
+	}
+	if got := meanCol.Data()[findAggRow(t, out, "a")]; got != 1.5 {
+		t.Fatalf("mean(a) over tag v: want 1.5, got %v", got)
+	}
+}
+
+// TestBatchAggregation_AggModeAll_CountOverStringTag_NullExcluded pins
+// design §6: COUNT accepts a non-numeric (string) tag. fold must not parse
+// the value at all — only null-check it — since a string column can't be
+// read as int64/float64.
+func TestBatchAggregation_AggModeAll_CountOverStringTag_NullExcluded(t *testing.T) {
+	s := aggTagSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggCount, InputCol: 2, Output: "s"}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+	feedAggTag(t, op, s,
+		aggTagRow{g: "a", v: 0, s: "x"},
+		aggTagRow{g: "a", v: 0, s: nullMarker}, // null — must be excluded
+		aggTagRow{g: "a", v: 0, s: "y"},
+		aggTagRow{g: "b", v: 0, s: "z"},
+	)
+	_ = op.Finalize(context.Background())
+	out, _ := op.NextBatch(context.Background())
+	countCol, ok := out.Columns[3].(*vectorized.TypedColumn[int64])
+	if !ok {
+		t.Fatalf("COUNT over a string tag must output an int64 column, got %T", out.Columns[3])
+	}
+	if got := countCol.Data()[findAggRow(t, out, "a")]; got != 2 {
+		t.Fatalf("count(a) over tag s: null must be excluded; want 2, got %d", got)
+	}
+	if got := countCol.Data()[findAggRow(t, out, "b")]; got != 1 {
+		t.Fatalf("count(b) over tag s: want 1, got %d", got)
+	}
+}
+
+// TestBatchAggregation_HideTag_ExcludesTargetFromCarriedForwardTags pins
+// design §5.2: when the analyzer injected the agg's tag target into the
+// projection (AggSpec.HideTag), the injected copy must not also appear as a
+// first-seen tag column beside the aggregation result.
+func TestBatchAggregation_HideTag_ExcludesTargetFromCarriedForwardTags(t *testing.T) {
+	s := aggTagSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggSum, InputCol: 1, Output: "v", HideTag: true}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+	feedAggTag(t, op, s, aggTagRow{g: "a", v: 1, s: "x"})
+	_ = op.Finalize(context.Background())
+	out, _ := op.NextBatch(context.Background())
+	// tagIndices excludes InputCol 1 ("v"): output is [g(tag), s(tag), v(field, SUM result)].
+	if len(out.Schema.Columns) != 3 {
+		t.Fatalf("HideTag output column count: want 3 (g, s, v-field), got %d: %+v", len(out.Schema.Columns), out.Schema.Columns)
+	}
+	for _, def := range out.Schema.Columns {
+		if def.Role == vectorized.RoleTag && def.Name == "v" {
+			t.Fatalf("HideTag must exclude the hidden tag column from output, found %+v", def)
+		}
+	}
+}
+
+// TestBatchAggregation_NoHideTag_EmitsBothTagAndAggField pins the other
+// half of design §5.2: when the caller explicitly projected the tag
+// (HideTag false), the output carries both a tag and a field of that name
+// — separate namespaces, nothing collides.
+func TestBatchAggregation_NoHideTag_EmitsBothTagAndAggField(t *testing.T) {
+	s := aggTagSchema()
+	op := NewBatchAggregation(s, []int{0},
+		[]AggSpec{{Func: AggSum, InputCol: 1, Output: "v"}}, AggModeAll, 8, vectorized.NewMemoryTracker(1<<30), 0)
+	_ = op.Init(context.Background())
+	defer op.Close()
+	feedAggTag(t, op, s, aggTagRow{g: "a", v: 1, s: "x"})
+	_ = op.Finalize(context.Background())
+	out, _ := op.NextBatch(context.Background())
+	var tagCount, fieldCount int
+	for _, def := range out.Schema.Columns {
+		if def.Name != "v" {
+			continue
+		}
+		switch def.Role {
+		case vectorized.RoleTag:
+			tagCount++
+		case vectorized.RoleField:
+			fieldCount++
+		default:
+		}
+	}
+	if tagCount != 1 || fieldCount != 1 {
+		t.Fatalf("without HideTag, want one tag %q and one field %q, got tagCount=%d fieldCount=%d", "v", "v", tagCount, fieldCount)
 	}
 }

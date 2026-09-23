@@ -1,0 +1,37 @@
+{
+  "metadata": {
+    "name": "composite_entity_metric",
+    "group": "sw_metric"
+  },
+  "tag_families": [
+    {
+      "name": "default",
+      "tags": [
+        {
+          "name": "tag_a",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "tag_b",
+          "type": "TAG_TYPE_STRING"
+        }
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "name": "value",
+      "field_type": "FIELD_TYPE_INT",
+      "encoding_method": "ENCODING_METHOD_GORILLA",
+      "compression_method": "COMPRESSION_METHOD_ZSTD"
+    }
+  ],
+  "entity": {
+    "tag_names": [
+      "tag_b",
+      "tag_a"
+    ]
+  },
+  "interval": "20s",
+  "updated_at": "2021-04-15T01:30:15.01Z"
+}

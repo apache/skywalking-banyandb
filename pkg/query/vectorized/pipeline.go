@@ -114,6 +114,35 @@ func (b *PipelineBuilder) Break(br BreakerOperator) *PipelineBuilder {
 	return b
 }
 
+// Transform closes the current segment — any queued Applies, plus any
+// completed Break steps — into a single concrete PullOperator, passes it to
+// fn, and makes fn's result the new base for whatever Apply/Break/Transform
+// calls follow (and for the eventual Build).
+//
+// Unlike Break, the operator fn returns is a plain PullOperator, not a
+// BreakerOperator driven by breakerStage's "drain the entire upstream via
+// Consume, then serve via NextBatch" contract. Use Transform for an
+// operator that needs to pull from upstream lazily, batch by batch,
+// interleaving its own flushed output with further upstream consumption —
+// e.g. one whose memory bound depends on never holding more than what a
+// single upstream batch can produce. Wrapping such an operator as a
+// BreakerOperator instead would force the entire upstream to be buffered
+// before anything downstream is emitted, defeating the point.
+func (b *PipelineBuilder) Transform(fn func(upstream PullOperator) PullOperator) *PipelineBuilder {
+	head := b.source
+	for _, step := range b.steps {
+		head = newFusedStage(head, step.preFused)
+		head = newBreakerStage(head, step.breaker)
+	}
+	if len(b.pendingFused) > 0 {
+		head = newFusedStage(head, b.pendingFused)
+	}
+	b.source = fn(head)
+	b.steps = nil
+	b.pendingFused = nil
+	return b
+}
+
 // Build validates and constructs the Pipeline. Each closed segment
 // becomes fusedStage(prev, preFused) → breakerStage(_, breaker); any
 // fusibles still queued after the last Break form a final fused stage

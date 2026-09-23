@@ -1,0 +1,102 @@
+[
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "reqA1"
+            }
+          },
+          {
+            "str": {
+              "value": "tag_group_entity_a"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 1
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "reqA1"
+            }
+          },
+          {
+            "str": {
+              "value": "tag_group_entity_a"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 2
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "reqA2"
+            }
+          },
+          {
+            "str": {
+              "value": "tag_group_entity_a"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 3
+        }
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "reqB1"
+            }
+          },
+          {
+            "str": {
+              "value": "tag_group_entity_b"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": 4
+        }
+      }
+    ]
+  }
+]

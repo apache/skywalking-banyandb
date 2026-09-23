@@ -302,6 +302,24 @@ func appendKeyComponent(dst []byte, col vectorized.Column, rowIdx int) []byte {
 	return dst
 }
 
+// KeyComponentSupported reports whether appendKeyComponent has a real
+// encoding for t. Array column types have none — appendKeyComponent
+// silently leaves dst unchanged for them instead of failing loud — so any
+// caller that keys rows off such a column would collapse every row into one
+// group. The analyzer's Agg/GroupBy tag-target rejection consults this
+// predicate so its rejection list and this operator's actual behavior
+// cannot drift apart (design §6).
+func KeyComponentSupported(t vectorized.ColumnType) bool {
+	switch t {
+	case vectorized.ColumnTypeInt64, vectorized.ColumnTypeFloat64,
+		vectorized.ColumnTypeString, vectorized.ColumnTypeBytes,
+		vectorized.ColumnTypeTagValue, vectorized.ColumnTypeFieldValue:
+		return true
+	default:
+		return false
+	}
+}
+
 func appendIntKey(dst []byte, value int64) []byte {
 	var b [8]byte
 	binary.LittleEndian.PutUint64(b[:], uint64(value))

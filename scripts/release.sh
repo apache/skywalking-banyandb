@@ -27,8 +27,17 @@ SCRIPTDIR=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
 ROOTDIR=${SCRIPTDIR}/..
 BUILDDIR=${ROOTDIR}/build
 
-RELEASE_TAG=$(git describe --tags $(git rev-list --tags --max-count=1))
-RELEASE_VERSION=${RELEASE_TAG#"v"}
+# Prefer an explicit RELEASE_VERSION (e.g. make RELEASE_VERSION=0.11.1).
+# Otherwise use the nearest tag reachable from HEAD (not "newest tagged
+# commit repo-wide", which can pick the wrong line during retags).
+if [ -z "${RELEASE_VERSION:-}" ]; then
+    RELEASE_TAG=$(git describe --tags --abbrev=0)
+    RELEASE_VERSION=${RELEASE_TAG#"v"}
+fi
+# Component Makefiles stamp pkg/version.build from RELEASE_VERSION. The binary()
+# extract is not a git checkout, so this must be exported or every official
+# executable is linked with build=-.
+export RELEASE_VERSION
 
 SOURCE_FILE_NAME=skywalking-banyandb-${RELEASE_VERSION}-src.tgz
 SOURCE_FILE=${BUILDDIR}/${SOURCE_FILE_NAME}
@@ -44,30 +53,36 @@ binary(){
     trap 'popd' EXIT
     tar -xvf ${SOURCE_FILE}
     make generate && make -C ui build
-    make -C mcp release
-    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make -C banyand release
-    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make -C fodc/agent release
-    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make -C fodc/proxy release
+    RELEASE_VERSION="${RELEASE_VERSION}" make -C mcp release
+    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 RELEASE_VERSION="${RELEASE_VERSION}" make -C banyand release
+    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 RELEASE_VERSION="${RELEASE_VERSION}" make -C fodc/agent release
+    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 RELEASE_VERSION="${RELEASE_VERSION}" make -C fodc/proxy release
     bindir=./build
     mkdir -p ${bindir}/bin
     # Copy relevant files
     copy_binaries banyand
     cp -Rfv ./CHANGES.md ${bindir}
     cp -Rfv ./README.md ${bindir}
+    # Eyes-generated Go + UI licensing from dist/.
     cp -Rfv ./dist/* ${bindir}
-    # Copy MCP server
+    # MCP has no independent release archive, so ship its Eyes inventory with the
+    # Go packages that carry mcp/dist (no node_modules).
     mkdir -p ${bindir}/mcp
     cp -Rfv ./mcp/dist ${bindir}/mcp/
     cp -Rfv ./mcp/package.json ${bindir}/mcp/
+    cp -Rfv ./mcp/package-lock.json ${bindir}/mcp/
+    cp -Rfv ./mcp/LICENSE ${bindir}/mcp/
+    mkdir -p ${bindir}/mcp/licenses
+    cp -Rfv ./mcp/licenses/. ${bindir}/mcp/licenses/
     # Package
     tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-banyand.tgz \
       --exclude="._*" --exclude="__MACOSX" \
       -C ${bindir} .
 
     # Cross compile bydbctl
-    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64,linux/386 make -C bydbctl release
-    TARGET_OS=windows PLATFORMS=windows/amd64,windows/386 make -C bydbctl release
-    TARGET_OS=darwin PLATFORMS=darwin/amd64,darwin/arm64 make -C bydbctl release
+    TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64,linux/386 RELEASE_VERSION="${RELEASE_VERSION}" make -C bydbctl release
+    TARGET_OS=windows PLATFORMS=windows/amd64,windows/386 RELEASE_VERSION="${RELEASE_VERSION}" make -C bydbctl release
+    TARGET_OS=darwin PLATFORMS=darwin/amd64,darwin/arm64 RELEASE_VERSION="${RELEASE_VERSION}" make -C bydbctl release
     rm -rf ${bindir}/bin
     mkdir -p ${bindir}/bin
     # Copy relevant files
@@ -92,6 +107,36 @@ binary(){
     tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-fodc-proxy.tgz \
       --exclude="._*" --exclude="__MACOSX" \
       -C ${bindir} .
+
+    # Build Canopy as its own archive (SPA + BFF). Ship built artifacts and
+    # package manifests only — runtime deps are installed with npm ci --omit=dev.
+    RELEASE_VERSION="${RELEASE_VERSION}" make -C canopy release
+    stage_canopy_package
+    tar -czf ${BUILDDIR}/skywalking-banyandb-${RELEASE_VERSION}-canopy.tgz \
+      --exclude="._*" --exclude="__MACOSX" \
+      -C ${bindir} .
+}
+
+stage_canopy_package() {
+    echo "Staging canopy package"
+    rm -rf "${bindir}"
+    mkdir -p "${bindir}"
+    cp -Rfv ./CHANGES.md "${bindir}"
+    cp -Rfv ./canopy/README.md "${bindir}"
+    cp -Rfv ./dist/NOTICE "${bindir}"
+    cp -Rfv ./canopy/LICENSE "${bindir}"
+    mkdir -p "${bindir}/licenses"
+    cp -Rfv ./canopy/licenses/. "${bindir}/licenses/"
+    cp -Rfv ./canopy/package.json "${bindir}"
+    cp -Rfv ./canopy/package-lock.json "${bindir}"
+    mkdir -p "${bindir}/shared" "${bindir}/web" "${bindir}/server"
+    cp -Rfv ./canopy/shared/package.json "${bindir}/shared/"
+    cp -Rfv ./canopy/shared/src "${bindir}/shared/"
+    cp -Rfv ./canopy/web/package.json "${bindir}/web/"
+    cp -Rfv ./canopy/web/dist "${bindir}/web/"
+    cp -Rfv ./canopy/server/package.json "${bindir}/server/"
+    mkdir -p "${bindir}/server/dist"
+    cp -Rfv ./canopy/server/dist/src "${bindir}/server/dist/"
 }
 
 copy_binaries() {
@@ -113,12 +158,16 @@ copy_binaries() {
 }
 
 source(){
-    # Package
+    # Package only the git tree (plus .env) so untracked/local binaries cannot leak
+    # into the Apache source archive.
     tmpdir=`mktemp -d`
     trap "rm -rf ${tmpdir}" EXIT
     rm -rf ${SOURCE_FILE}
+    srcdir=${tmpdir}/src
+    mkdir -p "${srcdir}"
     pushd ${ROOTDIR}
-    echo "RELEASE_VERSION=${RELEASE_VERSION}" > .env
+    git archive --format=tar HEAD | tar -x -C "${srcdir}"
+    echo "RELEASE_VERSION=${RELEASE_VERSION}" > "${srcdir}/.env"
     tar \
     --exclude=".DS_Store" \
     --exclude="._*" \
@@ -130,7 +179,15 @@ source(){
     --exclude=".vscode" \
     --exclude="bin" \
     -czf ${tmpdir}/${SOURCE_FILE_NAME} \
-    .
+    -C "${srcdir}" .
+
+    checkdir=${tmpdir}/check
+    mkdir -p "${checkdir}"
+    tar -xzf ${tmpdir}/${SOURCE_FILE_NAME} -C "${checkdir}"
+    if find "${checkdir}" -type f -print0 | xargs -0 file | grep -E 'ELF |Mach-O '; then
+        echo "ERROR: source archive contains compiled binaries" >&2
+        exit 1
+    fi
 
     mkdir -p ${BUILDDIR}
     mv ${tmpdir}/${SOURCE_FILE_NAME} ${BUILDDIR}

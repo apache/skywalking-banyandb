@@ -60,13 +60,24 @@ var nidx01bBoundary committedGenerationCounter = ReadOnlyDocCount
 // issue #14011 added exact-term selection; and issue #14012 adds the bounded
 // repair tuple page. Term dictionaries and postings are what those operations
 // are built from, so they stay private: ranges, prefix and wildcard expansion,
-// analyzers, writers and merge remain outside the milestone, and an entry here
-// for any of them is the milestone growing surface it was explicitly denied.
+// analyzers and merge remain outside the milestone, and an entry here for any
+// of them is the milestone growing surface it was explicitly denied.
+//
+// Issue #14073 adds the one exception the list now carries: a single generation
+// encoder and the three types its input is expressed in. Encoding is the
+// milestone's whole point rather than a convenience, and it is bounded to
+// writing one committed generation -- there is deliberately no entry for a
+// merger, a segment implementation, a plugin adapter or a lifecycle hook.
 var nativeReaderSurface = []string{
+	"Encode",
+	"EncodeDocument",
+	"EncodeField",
 	"ErrCorrupt",
+	"ErrInvalidGeneration",
 	"ErrInvalidRepairPage",
 	"ErrInvalidSelection",
 	"ErrNoSnapshot",
+	"Generation",
 	"Open",
 	"Reader",
 	"Reader.Close",

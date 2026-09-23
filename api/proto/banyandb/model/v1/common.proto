@@ -78,4 +78,7 @@ enum AggregationFunction {
   AGGREGATION_FUNCTION_MIN = 3;
   AGGREGATION_FUNCTION_COUNT = 4;
   AGGREGATION_FUNCTION_SUM = 5;
+  // COUNT_DISTINCT counts the distinct non-null values of the target.
+  // It is exact and bounded by the per-query memory budget.
+  AGGREGATION_FUNCTION_COUNT_DISTINCT = 6;
 }

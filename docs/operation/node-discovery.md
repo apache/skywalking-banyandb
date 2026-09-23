@@ -8,133 +8,15 @@ Node discovery enables BanyanDB nodes to locate and communicate with each other 
 2. **Request Routing**: Liaison nodes look up data nodes through the registry to send query and write requests.
 3. **Data Migration**: The lifecycle agent lists all data nodes from the registry and filters them by `node_selector` labels to pick the warm/cold targets of a migration.
 
-BanyanDB supports four discovery mechanisms to accommodate different deployment environments:
+BanyanDB supports three discovery mechanisms to accommodate different deployment environments:
 
 - **None Discovery**: Default mode. No service discovery infrastructure is needed. Suitable for standalone deployments.
-- **Etcd-based Discovery**: Traditional distributed consensus approach suitable for VM deployments and multi-cloud scenarios.
 - **DNS-based Discovery**: Cloud-native solution leveraging Kubernetes service discovery infrastructure.
 - **File-based Discovery**: Static configuration file approach for simple deployments and testing environments.
 
 This document provides guidance on configuring and operating all discovery modes.
 
-> **Note**: As of 0.10.0, the default node discovery mode is `none`. Cluster deployments must explicitly configure a discovery mode (`etcd`, `dns`, or `file`). See [Upgrading to 0.10](upgrade.md) for migration notes.
-
-## None Mode
-
-### Overview
-
-None mode is the default discovery mode since 0.10.0. In this mode, nodes do not perform any service discovery. This is suitable for standalone deployments and single-node setups where no inter-node communication is needed.
-
-### Configuration
-
-```shell
-# None mode is the default; no additional flags are required
-banyand standalone
-
-# Explicitly set none mode (equivalent to default)
-banyand data --node-discovery-mode=none
-```
-
-### When to Use None Mode
-
-- **Standalone deployments**: The single process handles all roles internally.
-- **Single-node setups**: No other nodes need to be discovered.
-- **Development and testing**: No external infrastructure dependencies.
-
-## Etcd-Based Discovery
-
-### Overview
-
-Etcd-based discovery uses a distributed key-value store to maintain cluster membership. Each node registers itself in etcd with a time-limited lease and continuously renews the lease through heartbeat mechanisms.
-
-### Configuration Flags
-
-The following flags control etcd-based node discovery:
-
-```shell
-# Basic configuration
---node-discovery-mode=etcd                    # Enable etcd mode (default)
---namespace=banyandb                          # Namespace in etcd (default: banyandb)
---etcd-endpoints=http://localhost:2379        # Comma-separated etcd endpoints
-
-# Authentication
---etcd-username=myuser                        # Etcd username (optional)
---etcd-password=mypass                        # Etcd password (optional)
-
-# TLS configuration
---etcd-tls-ca-file=/path/to/ca.crt           # Trusted CA certificate
---etcd-tls-cert-file=/path/to/client.crt     # Client certificate
---etcd-tls-key-file=/path/to/client.key      # Client private key
-
-# Timeouts and intervals
---node-registry-timeout=2m                    # Node registration timeout (default: 2m)
---etcd-full-sync-interval=30m                 # Full state sync interval (default: 30m)
-```
-
-### Configuration Examples
-
-**Data Node with TLS:**
-
-```shell
-banyand data \
-  --node-discovery-mode=etcd \
-  --etcd-endpoints=https://etcd-1:2379,https://etcd-2:2379,https://etcd-3:2379 \
-  --etcd-tls-ca-file=/etc/banyandb/certs/etcd-ca.crt \
-  --etcd-tls-cert-file=/etc/banyandb/certs/etcd-client.crt \
-  --etcd-tls-key-file=/etc/banyandb/certs/etcd-client.key \
-  --namespace=production-banyandb
-```
-
-**Data Node with Basic Authentication:**
-
-```shell
-banyand data \
-  --node-discovery-mode=etcd \
-  --etcd-endpoints=http://etcd-1:2379,http://etcd-2:2379 \
-  --etcd-username=banyandb-client \
-  --etcd-password=${ETCD_PASSWORD} \
-  --namespace=production-banyandb
-```
-
-### Etcd Key Structure
-
-BanyanDB stores node registrations using the following pattern:
-
-```
-/{namespace}/nodes/{node-id}
-
-Example: /banyandb/nodes/data-node-1:17912
-```
-
-**Key Components:**
-
-- **Namespace**: Configurable via `--namespace` flag (default: `banyandb`). Allows multiple BanyanDB clusters to coexist in the same etcd instance
-- **Node ID**: Format `{hostname}:{port}` or `{ip}:{port}`, uniquely identifying each node
-
-The value stored is a Protocol Buffer serialized `databasev1.Node` message containing node metadata, addresses, roles, and labels.
-
-### Node Lifecycle
-
-#### Registration
-
-When a node starts, it performs the following sequence:
-
-1. **Lease Creation**: Creates a 5-second TTL lease with etcd, automatically renewed through keep-alive heartbeat.
-2. **Key-Value Registration**: Uses etcd transaction to ensure the key doesn't already exist, preventing registration conflicts.
-3. **Keep-Alive Loop**: Background goroutine continuously sends heartbeat with automatic reconnection and exponential backoff on network failures.
-
-#### Health Monitoring
-
-Node health is implicitly monitored through the lease mechanism:
-
-- Nodes with expired leases (>5 seconds without keep-alive) are automatically removed by etcd.
-- Presence in etcd indicates the node is alive.
-- Dead nodes disappear within 5 seconds of failure.
-
-#### Event Watching
-- **None** (default): No external discovery; suitable for standalone mode only.
-- **DNS-based Discovery**: Cloud-native solution leveraging Kubernetes service discovery infrastructure.
-- **File-based Discovery**: Static configuration file approach for simple deployments and testing environments.
+> **Note**: As of 0.10.0, the default node discovery mode is `none`. Cluster deployments must explicitly configure a discovery mode (`dns` or `file`). See [Upgrading to 0.10](upgrade.md) for migration notes.
 
 ### Which Commands Accept These Flags
 
@@ -145,7 +27,32 @@ The `--node-discovery-*` flag set is registered in the metadata client that ever
 - `banyand standalone` (only `none` is meaningful here)
 - `lifecycle` (the lifecycle agent — see the [lifecycle documentation](lifecycle.md) for how it uses the discovery registry to pick migration targets)
 
-This document provides guidance on configuring and operating all discovery modes.
+## None Mode
+
+### Overview
+
+None mode is the default discovery mode since 0.10.0. `--node-discovery-mode=none` disables discovery of remote peers. The discovery registry caches only the local node (if the current process carries a discoverable role) and does not locate any remote nodes. A `banyand data` node can still bootstrap its own property schema endpoint from its local `CurNode`, but liaison routing tables and lifecycle migration targets remain empty because no remote peers are ever discovered. This is the default, and it is the only valid mode for `banyand standalone`.
+
+### Configuration
+
+```shell
+# None mode is the default; no additional flags are required
+banyand standalone
+
+# Explicitly set none mode (equivalent to default)
+banyand standalone --node-discovery-mode=none
+```
+
+### When to Use
+
+- `banyand standalone` — single-process deployments that bundle the liaison and data roles together. The standalone process talks to its own in-process schema server, so no discovery is necessary.
+- Standalone and single-node deployments where no other nodes need to be discovered.
+- Smoke tests and unit tests where a cluster is not needed and there are no external infrastructure dependencies.
+
+### Caveats
+
+- **Not valid for multi-node clusters.** In `none` mode a `banyand data` node can bootstrap its own property schema endpoint locally, but it will not discover any remote peers. Running `banyand liaison` or `lifecycle` with `--node-discovery-mode=none` leaves liaison routing tables empty and lifecycle migrations as no-ops, because neither process can locate data nodes. Use `dns` or `file` for every clustered deployment.
+- None mode has no additional flags; there is nothing else to configure.
 
 ## DNS-Based Discovery
 
@@ -315,8 +222,8 @@ The service periodically reloads the configuration file and automatically update
 1. Read node configurations from a YAML file on startup
 2. Attempt to connect to each node via gRPC to fetch full metadata
 3. Successfully connected nodes are added to the cache
-4. Nodes that fail to connect are skipped and will be attempted again on the next periodic file reload
-5. Reload the file at the `node-discovery-file-fetch-interval` cadence as a backup to fsnotify-based reloads, reprocessing every entry (including nodes that previously failed)
+4. Nodes that fail to connect are queued for exponential-backoff retry by a separate retry scheduler (see the `node-discovery-file-retry-*` flags below)
+5. Reload the file at the `node-discovery-file-fetch-interval` cadence as a backup to fsnotify-based reloads; new or configuration-changed entries are processed, while unchanged failed entries continue to be retried by the backoff scheduler
 6. Notify registered handlers when nodes are added or removed
 
 ### Configuration Flags
@@ -347,7 +254,7 @@ multiplied by the configured factor until the max interval is reached.
 ```yaml
 nodes:
   - name: liaison-0
-    grpc_address: 192.168.1.10:18912
+    grpc_address: 192.168.1.10:17912
   - name: data-hot-0
     grpc_address: 192.168.1.20:17912
     tls_enabled: true
@@ -358,17 +265,54 @@ nodes:
 
 **Configuration Fields:**
 
-- **name** (required): Identifier for the node
+- **name** (recommended): Diagnostic label for the node, used in log messages and error output. The parser does not enforce its presence or uniqueness, but assigning a unique name to each entry is strongly recommended for operational clarity.
 - **grpc_address** (required): gRPC endpoint in `host:port` format
 - **tls_enabled** (optional): Enable TLS for gRPC connection (default: false)
 - **ca_cert_path** (optional): Path to CA certificate file (required when TLS is enabled)
 
+> **Port Guidance:**
+> The default `--grpc-port` for both `banyand data` and `banyand liaison` is **17912**.
+> - **Separate hosts/IPs**: When data and liaison nodes run on distinct hosts or IP addresses (as shown above), both can use the default port `17912`.
+> - **Co-located on one host/IP**: When data and liaison share the same host or IP, they cannot bind to the same port on that IP. They also compete for the default HTTP port (`17913`), observability listener (`:2121`), and pprof listener (`:6060`).
+>   Furthermore, the liaison process runs an internal pipeline server that listens on gRPC port `18912` and HTTP port `18913` by default. Overriding liaison's public gRPC port to `18912` or HTTP port to `18913` collides with this internal listener.
+>   Therefore, when co-locating data and liaison on the same host, keep data on the defaults and configure liaison with distinct, non-conflicting public and diagnostic ports (e.g., public gRPC `19912`, public HTTP `19913`, observability `:2122`, and pprof `:6061`), pointing `http-grpc-addr` to the updated gRPC port:
+>   ```yaml
+>   nodes:
+>     - name: data-0
+>       grpc_address: 10.100.11.1:17912
+>     - name: liaison-0
+>       grpc_address: 10.100.11.1:19912
+>   ```
+> `nodes.yaml` must list the exact gRPC port that each process actually listens on.
+
 ### Configuration Examples
 
-**Basic Configuration:**
+**Basic Configuration (Data Node):**
 
 ```shell
 banyand data \
+  --node-discovery-mode=file \
+  --node-discovery-file-path=/etc/banyandb/nodes.yaml
+```
+
+**Basic Configuration (Liaison Node):**
+
+```shell
+# Dedicated host (default port 17912)
+banyand liaison \
+  --node-discovery-mode=file \
+  --node-discovery-file-path=/etc/banyandb/nodes.yaml
+
+# Co-located on the same host/IP as a data node:
+# Assign non-conflicting public gRPC/HTTP ports (e.g. 19912/19913), redirect HTTP to the new gRPC port,
+# and separate observability (:2122) and pprof (:6061) listeners.
+# Note: 18912 and 18913 are used by liaison's internal pipeline server by default.
+banyand liaison \
+  --grpc-port=19912 \
+  --http-port=19913 \
+  --http-grpc-addr=localhost:19912 \
+  --observability-listener-addr=:2122 \
+  --pprof-listener-addr=:6061 \
   --node-discovery-mode=file \
   --node-discovery-file-path=/etc/banyandb/nodes.yaml
 ```
@@ -403,31 +347,9 @@ When the service starts:
 - Missing required fields → service fails to start
 
 **Runtime Errors:**
-- gRPC connection failure → node skipped; retried on next file reload
+- gRPC connection failure → node queued for exponential-backoff retry
 - File read error → keep existing cache, log error
 - File deleted → keep existing cache, log error
-
-## None Mode
-
-### Overview
-
-### None Mode - Best For
-
-- Standalone and single-node deployments (default mode)
-- Development and testing environments
-- No infrastructure dependencies
-
-`--node-discovery-mode=none` disables external node discovery entirely. The discovery registry is wired to a stub that returns no peers, so no remote schema server, request routing target, or lifecycle migration target can be located. This is the default, and it is the only valid mode for `banyand standalone`.
-
-### When to Use
-
-- `banyand standalone` — single-process deployments that bundle the liaison and data roles together. The standalone process talks to its own in-process schema server, so no discovery is necessary.
-- Smoke tests and unit tests where a cluster is not needed.
-
-### Caveats
-
-- **Not valid for clusters.** Running any of `banyand data`, `banyand liaison`, or `lifecycle` with `--node-discovery-mode=none` will leave the schema client with no server to talk to, liaison routing tables empty, and lifecycle migrations as no-ops. Use `dns` or `file` for every clustered deployment.
-- None mode has no additional flags; there is nothing else to configure.
 
 ## Choosing a Discovery Mode
 

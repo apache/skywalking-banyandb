@@ -22,7 +22,7 @@ The result will include the tracing data in the response. The duration time unit
 
 ## Vectorized Measure Query Tracing
 
-Vectorized distributed measure queries use the existing `pkg/query.Tracer` and `common.v1.Trace` tree. Tracing is opt-in through `QueryRequest.trace`; trace-off raw wire responses remain raw frame bytes.
+Vectorized distributed measure queries use the existing `pkg/query.Tracer` and `common.v1.Trace` tree. Tracing is opt-in through `QueryRequest.trace`; trace-off responses remain raw frame bytes.
 
 ### Span shape
 
@@ -324,4 +324,4 @@ The summary fully represents every frame's decode duration. `decode_ns_p99 ≫ p
 
 ### Wire contract
 
-Under raw wire mode, trace-off responses are still opaque raw frame bytes beginning with `RawFrameMagicLeadingByte`. Trace-on responses use the existing `measure.v1.InternalQueryResponse` envelope with `raw_frame_body` and `trace` populated. Proto `data_points` responses under raw mode are rejected loudly by the vectorized collector.
+Trace-off responses are opaque raw frame bytes beginning with `RawFrameMagicLeadingByte`. Trace-on responses use the existing `measure.v1.InternalQueryResponse` envelope with `raw_frame_body` and `trace` populated. Proto `data_points` responses are rejected loudly by the vectorized collector.

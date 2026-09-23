@@ -43,18 +43,17 @@ import (
 
 // Vec stream independent verification on a distributed cluster.
 //
-// Boots a *separate* distributed cluster — 2 data nodes + 1 liaison, all
-// launched with --stream-vectorized-enabled=true — and replays the same Stream
-// test entries the row-based distributed suite already covers in common.go. Each
-// case asserts the row-path's expected output; every greenness here is an
-// INDEPENDENT verification that the vectorized stream path produces the same
-// results on the cluster wire (data node emits the native columnar frame; the
-// liaison decodes it, merges, dedups, and limits).
+// Boots a *separate* distributed cluster — 2 data nodes + 1 liaison — and
+// replays the Stream test entries against it. The shared cluster in common.go
+// registers no tables, so this Describe is the distributed suite's only Stream
+// coverage. Each case asserts the committed reference yaml; every greenness here
+// is an INDEPENDENT verification that the vectorized stream path produces the
+// same results on the cluster wire (data node emits the native columnar frame;
+// the liaison decodes it, merges, dedups, and limits).
 //
-// The vec-eligible cases (single-group, filter-none, ordered) exercise the vec
-// path; the AfterAll QueryCount delta assertion proves at least one case actually
-// took the vectorized path rather than silently falling back to the row path for
-// a shape vec does not (yet) vectorize (multi-group / criteria-filtered).
+// The AfterAll QueryCount delta assertion proves at least one case actually
+// reached the vectorized scan rather than the table passing on a path that never
+// fired.
 //
 // This is the distributed twin of test/integration/standalone/query/
 // vectorized_stream_test.go and mirrors the trace vec distributed verification.
@@ -77,11 +76,11 @@ var _ = ginkgo.Describe("vec stream independent verification (distributed)", gin
 		gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
 		dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
 		config := setup.PropertyClusterConfig(dfWriter)
-		closeDataNode0 := setup.DataNode(config, "--stream-vectorized-enabled=true")
-		closeDataNode1 := setup.DataNode(config, "--stream-vectorized-enabled=true")
+		closeDataNode0 := setup.DataNode(config)
+		closeDataNode1 := setup.DataNode(config)
 		setup.PreloadSchemaViaProperty(config, test_stream.PreloadSchema, test_measure.PreloadSchema, test_trace.PreloadSchema, test_property.PreloadSchema)
 		config.AddLoadedKinds(schema.KindStream, schema.KindMeasure, schema.KindTrace)
-		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config, "--stream-vectorized-enabled=true")
+		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config)
 		stopFn = func() {
 			closerLiaisonNode()
 			closeDataNode0()
@@ -111,7 +110,7 @@ var _ = ginkgo.Describe("vec stream independent verification (distributed)", gin
 		)
 		gomega.Expect(queryCountDelta).To(gomega.BeNumerically(">", int64(0)),
 			"vec stream dispatch did not fire for any case on the distributed cluster; "+
-				"--stream-vectorized-enabled=true may not have taken effect")
+				"vstream.QueryCount() never moved, so no query reached the vectorized stream scan")
 		// QueryCount above only proves the vec COMPUTE path dispatched — a vec query
 		// still emits protobuf unless the data node is distributed and in raw wire
 		// mode. Assert the columnar frame itself carried traffic, so this suite fails

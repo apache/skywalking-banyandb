@@ -1,0 +1,74 @@
+[
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "idx_entity_a"
+            }
+          },
+          {
+            "str": {
+              "value": "valX1"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "idx_entity_a"
+            }
+          },
+          {
+            "str": {
+              "value": "valX1"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "idx_entity_c"
+            }
+          },
+          {
+            "str": {
+              "value": "valX1"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "str": {
+              "value": "idx_entity_b"
+            }
+          },
+          {
+            "str": {
+              "value": "valX2"
+            }
+          }
+        ]
+      }
+    ]
+  }
+]
