@@ -885,6 +885,15 @@ func (p *DistributedPlan) executeRowsMultiGroup(ctx context.Context, groupFrames
 // first non-nil batch; if there are no batches the input is returned unchanged.
 // Loud-failure: if top.FieldName does not resolve on the merged schema's field
 // columns, an error is returned rather than silently passing through.
+//
+// batches is normally the batchSize-paginated output of mergeDistributedRows
+// / mergeDistributedRowsMulti, so in practice no single b here exceeds
+// batchSize rows. But this function does not control its caller's batching
+// discipline, and BatchTop.Consume shares BatchAggregation's exposure to the
+// design/0.12.0/limit-after-aggregation §5 uint16 wraparound (both drive
+// their per-row loop from activeIndices), so a batch larger than batchSize
+// is chunked via vectorized.ConsumeChunked exactly like ReducePartialBatches,
+// rather than assumed away.
 func applyBatchTopToRows(batches []*vectorized.RecordBatch, top *measurev1.QueryRequest_Top, batchSize int) ([]*vectorized.RecordBatch, error) {
 	if top == nil || top.GetNumber() <= 0 || len(batches) == 0 {
 		return batches, nil
@@ -909,11 +918,21 @@ func applyBatchTopToRows(batches []*vectorized.RecordBatch, top *measurev1.Query
 	if initErr := topOp.Init(context.Background()); initErr != nil {
 		return nil, fmt.Errorf("applyBatchTopToRows: init: %w", initErr)
 	}
+	var scratch *vectorized.RecordBatch
 	for idx, b := range batches {
 		if b == nil || b.Len == 0 {
 			continue
 		}
-		if consumeErr := topOp.Consume(context.Background(), b); consumeErr != nil {
+		if b.ActiveLen() <= batchSize {
+			if consumeErr := topOp.Consume(context.Background(), b); consumeErr != nil {
+				return nil, fmt.Errorf("applyBatchTopToRows: consume batch %d: %w", idx, consumeErr)
+			}
+			continue
+		}
+		if scratch == nil {
+			scratch = vectorized.NewRecordBatch(schema, batchSize)
+		}
+		if consumeErr := vectorized.ConsumeChunked(topOp, scratch, b, batchSize); consumeErr != nil {
 			return nil, fmt.Errorf("applyBatchTopToRows: consume batch %d: %w", idx, consumeErr)
 		}
 	}
@@ -953,6 +972,15 @@ func applyBatchTopToRows(batches []*vectorized.RecordBatch, top *measurev1.Query
 // the column.
 //
 // When req.GroupBy is nil the function is a no-op and returns batches unchanged.
+//
+// batches is normally the batchSize-paginated output of mergeDistributedRows
+// / mergeDistributedRowsMulti, so in practice no single b here exceeds
+// batchSize rows. But this function does not control its caller's batching
+// discipline, and BatchGroupBy.Consume shares BatchAggregation's exposure to
+// the design/0.12.0/limit-after-aggregation §5 uint16 wraparound (both drive
+// their per-row loop from activeIndices), so a batch larger than batchSize is
+// chunked via vectorized.ConsumeChunked exactly like ReducePartialBatches,
+// rather than assumed away.
 func applyBatchGroupByFirstToRows(
 	batches []*vectorized.RecordBatch,
 	groupBy *measurev1.QueryRequest_GroupBy,
@@ -1003,11 +1031,21 @@ func applyBatchGroupByFirstToRows(
 	if initErr := gbOp.Init(context.Background()); initErr != nil {
 		return nil, fmt.Errorf("applyBatchGroupByFirstToRows: init: %w", initErr)
 	}
+	var scratch *vectorized.RecordBatch
 	for batchIdx, b := range batches {
 		if b == nil || b.Len == 0 {
 			continue
 		}
-		if consumeErr := gbOp.Consume(context.Background(), b); consumeErr != nil {
+		if b.ActiveLen() <= batchSize {
+			if consumeErr := gbOp.Consume(context.Background(), b); consumeErr != nil {
+				return nil, fmt.Errorf("applyBatchGroupByFirstToRows: consume batch %d: %w", batchIdx, consumeErr)
+			}
+			continue
+		}
+		if scratch == nil {
+			scratch = vectorized.NewRecordBatch(schema, batchSize)
+		}
+		if consumeErr := vectorized.ConsumeChunked(gbOp, scratch, b, batchSize); consumeErr != nil {
 			return nil, fmt.Errorf("applyBatchGroupByFirstToRows: consume batch %d: %w", batchIdx, consumeErr)
 		}
 	}
