@@ -46,6 +46,13 @@ func TestNativeLogDistributed(t *testing.T) {
 // their console is the console of the test binary.
 var console = &safeBuffer{}
 
+// fastSchemaSync shortens schema convergence. The producing data node creates
+// the log group after the other nodes have started, and a node that does not
+// know a group fails the whole distributed query rather than returning what
+// the others hold (apache/skywalking#14104). With the default 30s interval the
+// full reconcile that repairs it is 150s away.
+const fastSchemaSync = "--schema-property-client-sync-interval=1s"
+
 var (
 	restoreConsole func()
 	stops          []func()
@@ -61,12 +68,25 @@ var _ = BeforeSuite(func() {
 	// lines too. Attribution across nodes therefore lives in the e2e case
 	// test/e2e-v2/cases/nativelog.
 	config := setup.PropertyClusterConfig(setup.NewDiscoveryFileWriter(newSpace()))
-	dataAddr, _, _, stopData := setup.DataNodeWithAddrAndDir(config, cases.NativeFlags...)
-	stops = append(stops, stopData)
-	// The liaison carries the same flags: without them it would turn native
-	// logging off for every node in this process.
-	liaisonAddr, stopLiaison := setup.LiaisonNode(config, cases.NativeFlags...)
+	// The order is load-bearing, in both directions. A liaison needs a data
+	// node's schema server to start, so a data node comes first. Every role
+	// also configures the process-wide logger as it starts, and a role that
+	// cannot store its own logs turns native logging off, so the producer has
+	// to be the last one to configure it. Hence: a plain data node, the
+	// liaison, then the data node the cases are about.
+	//
+	// The first node also syncs schema faster than the default. It never
+	// creates the log group itself, and a data node that does not know a group
+	// fails the whole distributed query rather than returning what the others
+	// hold (apache/skywalking#14104); with the default 30s interval its full
+	// reconcile is 150s away.
+	_, _, _, stopSchema := setup.DataNodeWithAddrAndDir(config, fastSchemaSync)
+	stops = append(stops, stopSchema)
+	liaisonAddr, stopLiaison := setup.LiaisonNode(config, fastSchemaSync)
 	stops = append(stops, stopLiaison)
+	dataAddr, _, _, stopData := setup.DataNodeWithAddrAndDir(config,
+		append(append([]string{}, cases.NativeFlags...), fastSchemaSync)...)
+	stops = append(stops, stopData)
 
 	conn, err := grpchelper.Conn(liaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	Expect(err).NotTo(HaveOccurred())

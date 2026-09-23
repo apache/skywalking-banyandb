@@ -18,13 +18,17 @@
 package logging
 
 import (
+	"context"
 	"errors"
 	"testing"
 
+	"go.uber.org/mock/gomock"
 	"google.golang.org/protobuf/proto"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
 // TestCompatibleRejectsAReorderedSchema is the falsifying assertion for the
@@ -178,5 +182,71 @@ func TestGroupStateFollowsTheGroupNotTheFlag(t *testing.T) {
 				t.Fatalf("ttlMismatch = %q, want a message: %v", got.ttlMismatch, tt.wantTTLMsg)
 			}
 		})
+	}
+}
+
+// repoWith builds a metadata repository whose registries are the given mocks.
+func repoWith(ctrl *gomock.Controller, groups *schema.MockGroup, streams *schema.MockStream) metadata.Repo {
+	repo := metadata.NewMockRepo(ctrl)
+	repo.EXPECT().GroupRegistry().Return(groups).AnyTimes()
+	repo.EXPECT().StreamRegistry().Return(streams).AnyTimes()
+	return repo
+}
+
+// TestCreateTakesTheShardCountFromStorage is the falsifying assertion for shard
+// routing. A create is broadcast to every schema server and reports
+// AlreadyExists only when all of them reject it, so a create that one server
+// accepted returns nil although the group already exists elsewhere with another
+// shard count. Routing divides by that count: taking it from this node's flag
+// sends events to shards the group does not have, and they are written, acked,
+// counted and then invisible after the next open.
+func TestCreateTakesTheShardCountFromStorage(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	groups := schema.NewMockGroup(ctrl)
+	streams := schema.NewMockStream(ctrl)
+	stored := &commonv1.Group{
+		Metadata: &commonv1.Metadata{Name: GroupName},
+		ResourceOpts: &commonv1.ResourceOpts{
+			ShardNum: 8,
+			Ttl:      &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: 7},
+		},
+	}
+	gomock.InOrder(
+		groups.EXPECT().GetGroup(gomock.Any(), GroupName).Return(nil, schema.ErrGRPCResourceNotFound),
+		groups.EXPECT().CreateGroup(gomock.Any(), gomock.Any()).Return(int64(1), nil),
+		groups.EXPECT().GetGroup(gomock.Any(), GroupName).Return(stored, nil),
+	)
+	streams.EXPECT().GetStream(gomock.Any(), gomock.Any()).Return(streamSpec(), nil)
+
+	state, err := createSchema(context.Background(), repoWith(ctrl, groups, streams), 2, 7)
+	if err != nil {
+		t.Fatalf("createSchema: %v", err)
+	}
+	if state.shardNum != 8 {
+		t.Errorf("routing uses %d shards, but the stored group has 8", state.shardNum)
+	}
+	if state.shardMismatch == "" {
+		t.Error("the disagreement between the flag and the group was not reported")
+	}
+}
+
+// TestSettledSchemaIsNotRewritten keeps the retry from becoming a write
+// fan-out. Every node runs this on start and on every retry, and a create
+// reaches every schema server, so creating first makes a settled cluster issue
+// doomed inserts forever.
+func TestSettledSchemaIsNotRewritten(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	groups := schema.NewMockGroup(ctrl)
+	streams := schema.NewMockStream(ctrl)
+	groups.EXPECT().GetGroup(gomock.Any(), GroupName).Return(&commonv1.Group{
+		Metadata:     &commonv1.Metadata{Name: GroupName},
+		ResourceOpts: &commonv1.ResourceOpts{ShardNum: 2, Ttl: &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: 7}},
+	}, nil)
+	streams.EXPECT().GetStream(gomock.Any(), gomock.Any()).Return(streamSpec(), nil)
+	// No CreateGroup and no CreateStream are expected: the mock fails the test
+	// if either is called.
+
+	if _, err := createSchema(context.Background(), repoWith(ctrl, groups, streams), 2, 7); err != nil {
+		t.Fatalf("createSchema: %v", err)
 	}
 }

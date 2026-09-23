@@ -19,6 +19,7 @@ package logging
 
 import (
 	"encoding/json"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -27,6 +28,7 @@ import (
 	"github.com/rs/zerolog"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -158,8 +160,8 @@ func TestOverBudgetDropsTheNewest(t *testing.T) {
 	s.SetBudget(func() int64 { return 1 })
 	s.Admit(zerolog.ErrorLevel, "MEASURE", []byte(sampleLine))
 
-	if got := s.Dropped(reasonBufferFull); got != 1 {
-		t.Fatalf("buffer_full drops = %d, want 1", got)
+	if got := s.Dropped(reasonMemoryPressure); got != 1 {
+		t.Fatalf("memory_pressure drops = %d, want 1", got)
 	}
 	if s.QueuedBytes() != queued {
 		t.Fatalf("queued bytes moved from %d to %d; a queued event was evicted",
@@ -377,5 +379,70 @@ func TestIdentityIsStampedAtFlushNotAdmission(t *testing.T) {
 	}
 	if got := tags[7].GetStr().GetValue(); got != e.req.Element.ElementId {
 		t.Fatalf("log_id %q does not mirror the element id %q", got, e.req.Element.ElementId)
+	}
+}
+
+// TestQueuedEntryFitsItsCharge holds entryOverheadBytes to what an entry
+// really costs. Charging the line alone under-counted the heap by more than
+// ten times, so a 32MiB budget could hold far more than 32MiB.
+func TestQueuedEntryFitsItsCharge(t *testing.T) {
+	s := testSink(t)
+	line := []byte(`{"level":"info","module":"MEASURE","time":"2026-09-23T10:00:00Z","message":"a typical log line with a few fields","shard":3,"path":"/tmp/measure/data"}`)
+	const n = 20000
+	held := make([]*streamv1.WriteRequest, 0, n)
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	for i := 0; i < n; i++ {
+		req, err := s.build(zerolog.InfoLevel, "MEASURE", line)
+		if err != nil {
+			t.Fatalf("build: %v", err)
+		}
+		s.stamp(entry{req: req, seq: uint64(i)})
+		held = append(held, req)
+	}
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+	perEntry := int64(after.HeapAlloc-before.HeapAlloc) / n
+	runtime.KeepAlive(held)
+	if charged := entryCost(int64(len(line))); perEntry > charged {
+		t.Errorf("an entry holds %d bytes and charges %d; raise entryOverheadBytes", perEntry, charged)
+	}
+}
+
+// TestBudgetAndRingReportDifferentReasons keeps the two bounds distinguishable.
+// A budget refusal is memory_pressure and a full ring is buffer_full; reporting
+// both as buffer_full hid which knob was binding.
+func TestBudgetAndRingReportDifferentReasons(t *testing.T) {
+	s := testSink(t)
+	line := []byte(`{"level":"info","module":"MEASURE","message":"x"}`)
+	// A budget below one entry's charge refuses every event.
+	tiny := int64(1)
+	s.SetBudget(func() int64 { return tiny })
+	s.Admit(zerolog.InfoLevel, "MEASURE", line)
+	if got := s.dropped[reasonMemoryPressure].Load(); got != 1 {
+		t.Errorf("memory_pressure counted %d drops, want 1", got)
+	}
+	if got := s.dropped[reasonBufferFull].Load(); got != 0 {
+		t.Errorf("buffer_full counted %d drops for a budget refusal, want 0", got)
+	}
+}
+
+// TestLevelLessEventKeepsItsEntity is the falsifying assertion for the series
+// key. zerolog reports an empty level for an event logged through Log(), and
+// level is half the entity: an empty value makes the row unfindable by its own
+// identity, and every such event shares one series.
+func TestLevelLessEventKeepsItsEntity(t *testing.T) {
+	s := testSink(t)
+	req, err := s.build(zerolog.NoLevel, "MEASURE", []byte(`{"module":"MEASURE","message":"no level"}`))
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	s.stamp(entry{req: req, seq: 1})
+	tags := req.GetElement().GetTagFamilies()[0].GetTags()
+	if got := tags[3].GetStr().GetValue(); got == "" {
+		t.Error("a level-less event is stored with an empty level, which is half the entity")
+	} else if got != "none" {
+		t.Errorf("a level-less event is stored as %q, want \"none\"", got)
 	}
 }

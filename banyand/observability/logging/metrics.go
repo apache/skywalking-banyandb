@@ -32,7 +32,7 @@ var logScope = observability.RootScope.SubScope("logging")
 // edit. Publishing every one of them, including the zeroes, means an operator
 // can tell "no drops" from "that reason never fires here".
 var allReasons = []string{
-	reasonBufferFull, reasonMemoryReserve, reasonOversizeEvent,
+	reasonBufferFull, reasonMemoryPressure, reasonOversizeEvent,
 	reasonEncodeFailed, reasonPublishFailed, reasonSchemaMissing,
 	reasonSchemaIncompatible, reasonDestinationUnready, reasonShutdown,
 }

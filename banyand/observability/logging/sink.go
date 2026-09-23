@@ -39,12 +39,17 @@ import (
 // Drop reasons. The set is closed: every path that loses an event names one of
 // these, so a count is always attributable to a stage.
 const (
-	reasonBufferFull    = "buffer_full"
-	reasonMemoryReserve = "memory_pressure"
-	reasonOversizeEvent = "oversize_event"
-	reasonEncodeFailed  = "encode_failed"
-	reasonPublishFailed = "publish_failed"
-	reasonSchemaMissing = "schema_unavailable"
+	// reasonBufferFull counts an event dropped because the ring was full. The
+	// byte budget is the bound that normally binds first, so this one means
+	// the consumer fell behind on small events.
+	reasonBufferFull = "buffer_full"
+	// reasonMemoryPressure counts an event the byte budget refused, whether
+	// the budget was exhausted or nothing was available at all.
+	reasonMemoryPressure = "memory_pressure"
+	reasonOversizeEvent  = "oversize_event"
+	reasonEncodeFailed   = "encode_failed"
+	reasonPublishFailed  = "publish_failed"
+	reasonSchemaMissing  = "schema_unavailable"
 	// reasonSchemaIncompatible is separate from schema_unavailable because the
 	// two call for opposite responses: an unavailable schema is a wait, an
 	// incompatible one is a stream that has to be dropped by hand and will
@@ -58,9 +63,22 @@ const (
 )
 
 // queueDepth bounds the ring by count as well as by bytes. The byte budget is
-// the limit that matters; this one keeps a flood of very small events from
-// growing the channel without bound before the budget notices.
-const queueDepth = 8192
+// the limit that matters, so the count has to sit above what the budget
+// admits: at the default 32MiB budget and entryOverheadBytes per event, the
+// budget binds at about 17k events. A lower count would make the byte knob
+// inert, which is what an 8192 ring did.
+const queueDepth = 32768
+
+// entryOverheadBytes is what a queued event holds beyond its own line: the
+// built WriteRequest, its tag values and the element. Measured at 1889 bytes
+// held per entry for a 151-byte line, so the line alone under-counts the heap
+// by more than ten times, and a budget charged on the line alone would let the
+// buffer grow far past it. TestQueuedEntryFitsItsCharge holds the constant to
+// what an entry really costs.
+const entryOverheadBytes = 1792
+
+// entryCost is what one event charges against the byte budget.
+func entryCost(size int64) int64 { return size + entryOverheadBytes }
 
 // NodeInfo identifies the process whose logs these are. It is late-bound:
 // the node's identity is not known when the sink is constructed.
@@ -191,26 +209,27 @@ func (s *Sink) Admit(level zerolog.Level, module string, line []byte) {
 	if budget <= 0 {
 		// Zero is what the adaptive term reports when nothing is available. It
 		// means no budget, not an absent limit.
-		s.drop(reasonMemoryReserve)
+		s.drop(reasonMemoryPressure)
 		return
 	}
+	cost := entryCost(size)
 	// Reserve before building, so two goroutines cannot both read the same
 	// total and both enqueue. Every failure path below returns the reservation.
-	if s.queued.Add(size)+s.inFlight.Load() > budget {
-		s.queued.Add(-size)
-		s.drop(reasonBufferFull)
+	if s.queued.Add(cost)+s.inFlight.Load() > budget {
+		s.queued.Add(-cost)
+		s.drop(reasonMemoryPressure)
 		return
 	}
 	req, err := s.build(level, module, line)
 	if err != nil {
-		s.queued.Add(-size)
+		s.queued.Add(-cost)
 		s.drop(reasonEncodeFailed)
 		return
 	}
 	select {
-	case s.queue <- entry{req: req, size: size, seq: s.seq.Add(1)}:
+	case s.queue <- entry{req: req, size: cost, seq: s.seq.Add(1)}:
 	default:
-		s.queued.Add(-size)
+		s.queued.Add(-cost)
 		s.release(req)
 		s.drop(reasonBufferFull)
 	}
@@ -288,7 +307,7 @@ func (s *Sink) build(level zerolog.Level, module string, line []byte) (*streamv1
 				strTag(""), // node_id, filled by stamp
 				strTag(""), // node_type, filled by stamp
 				strTag(module),
-				strTag(level.String()),
+				strTag(levelName(level)),
 				strTag(""), // grpc_address, filled by stamp
 				strTag(""), // http_address, filled by stamp
 				strTag(message),
@@ -323,6 +342,17 @@ func setStr(t *modelv1.TagValue, v string) {
 	if str, ok := t.GetValue().(*modelv1.TagValue_Str); ok {
 		str.Str.Value = v
 	}
+}
+
+// levelName is the stored level. zerolog reports an empty string for an event
+// logged without one, through Log(), and level is half the series key: an
+// empty value would make the row unfindable by its own identity. Such an event
+// is stored as "none", which is what it is.
+func levelName(l zerolog.Level) string {
+	if name := l.String(); name != "" {
+		return name
+	}
+	return "none"
 }
 
 func strTag(v string) *modelv1.TagValue {

@@ -458,3 +458,44 @@ func TestLazyLoggerGetsNativeAfterInit(t *testing.T) {
 		t.Fatal("a logger built before InitWithNative reached the sink; the test no longer shows the problem it guards")
 	}
 }
+
+// TestBlankExcludeEntryIsIgnored pins the shape of the exclusion list: a blank
+// entry is a prefix of every module name, so keeping one would exclude every
+// module while the feature reports itself as enabled and stores nothing.
+func TestBlankExcludeEntryIsIgnored(t *testing.T) {
+	sink := withNative(t, Logging{Env: "prod", Level: "error"},
+		NativeLogging{Enabled: true, Level: "info", ExcludeModules: []string{"stream", "  "}})
+
+	GetLogger("measure").Info().Msg("not on the write path")
+	GetLogger("stream").Info().Msg("on the write path")
+
+	if !sink.admittedFrom("MEASURE", zerolog.InfoLevel) {
+		t.Fatal("MEASURE was not admitted, so the blank entry excluded every module")
+	}
+	if sink.admittedFrom("STREAM", zerolog.InfoLevel) {
+		t.Fatal("STREAM was admitted although the operator listed it")
+	}
+}
+
+// TestSinkOwnGroupStaysExcluded is the falsifying assertion for the feedback
+// loop. A tsdb logger is named after its group, so the storage of the log group
+// logs under _MONITORING_LOG; admitting those lines lets one stored line
+// produce the next. An operator list replaces the defaults, which is why this
+// exclusion cannot live among them.
+func TestSinkOwnGroupStaysExcluded(t *testing.T) {
+	sink := withNative(t, Logging{Env: "prod", Level: "error"},
+		NativeLogging{Enabled: true, Level: "info", ExcludeModules: []string{"something-else"}})
+
+	GetLogger("_monitoring_log").Info().Msg("the log group's own storage")
+	GetLogger("_monitoring_log", "segid-20260923", "shard0").Info().Msg("and its shard")
+	GetLogger("measure").Info().Msg("an ordinary module")
+
+	if !sink.admittedFrom("MEASURE", zerolog.InfoLevel) {
+		t.Fatal("MEASURE was not admitted, so the operator list was not applied as given")
+	}
+	for _, module := range []string{"_MONITORING_LOG", "_MONITORING_LOG.SEGID-20260923.SHARD0"} {
+		if sink.admittedFrom(module, zerolog.InfoLevel) {
+			t.Errorf("%s was admitted, so the log storage feeds itself", module)
+		}
+	}
+}

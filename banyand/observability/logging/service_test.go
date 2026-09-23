@@ -500,12 +500,14 @@ func TestIncompatibleSchemaIsLoggedOnce(t *testing.T) {
 // only the cap -- a quarter of a 12-line budget, which is 3 lines -- can make
 // anything reach the destination.
 func TestBatchIsCappedAtAQuarterOfTheBudget(t *testing.T) {
-	line := int64(len(sampleLine))
+	// An event charges its line plus what its built request holds, so the
+	// budget is expressed in whole events rather than in line lengths.
+	event := entryCost(int64(len(sampleLine)))
 	client := &fakeClient{}
 	_, sink := testService(t, client, func(c *logger.NativeLogging) {
 		c.FlushSize = 1000
 		c.FlushInterval = time.Hour
-		c.MaxBytes = 12 * line
+		c.MaxBytes = 12 * event
 	})
 
 	const admitted = 9

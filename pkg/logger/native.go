@@ -87,6 +87,13 @@ var defaultExcludedModules = []string{
 	"NATIVE-LOG",
 }
 
+// mandatoryExcludedModules can never be admitted, whatever an operator
+// configures. A tsdb logger is named after its group, so the storage of the
+// log group itself logs under _MONITORING_LOG: admitting those lines would let
+// one stored line produce the next. An operator list replaces the defaults, so
+// this one is checked separately rather than living among them.
+var mandatoryExcludedModules = []string{"_MONITORING_LOG"}
+
 var (
 	nativeSink   atomic.Pointer[NativeSink]
 	nativeConfig atomic.Pointer[nativeState]
@@ -211,9 +218,19 @@ func applyNative(cfg NativeLogging) error {
 	}
 	excluded := defaultExcludedModules
 	if len(cfg.ExcludeModules) > 0 {
-		excluded = make([]string, 0, len(cfg.ExcludeModules))
+		configured := make([]string, 0, len(cfg.ExcludeModules))
 		for _, m := range cfg.ExcludeModules {
-			excluded = append(excluded, strings.ToUpper(strings.TrimSpace(m)))
+			name := strings.ToUpper(strings.TrimSpace(m))
+			// A blank entry is a prefix of every module name, so keeping one
+			// would exclude everything and read as a feature that is on and
+			// stores nothing.
+			if name == "" {
+				continue
+			}
+			configured = append(configured, name)
+		}
+		if len(configured) > 0 {
+			excluded = configured
 		}
 	}
 	nativeConfig.Store(&nativeState{enabled: true, level: lvl, excluded: excluded, modules: modules})
@@ -251,6 +268,11 @@ func resolveNative(module string) (level zerolog.Level, excluded bool) {
 	st := nativeConfig.Load()
 	if st == nil || !st.enabled {
 		return zerolog.Disabled, true
+	}
+	for _, prefix := range mandatoryExcludedModules {
+		if strings.HasPrefix(module, prefix) {
+			return zerolog.Disabled, true
+		}
 	}
 	for _, prefix := range st.excluded {
 		if strings.HasPrefix(module, prefix) {

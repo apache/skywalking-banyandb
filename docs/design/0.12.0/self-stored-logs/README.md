@@ -181,7 +181,7 @@ The metric names carry the `native_log_` prefix. The native meter provider names
 | producer | the encoded line is not the JSON the sink expects | dropped and counted; the caller is never made to care | `encode_failed` |
 | buffer | ring over budget | drop the newest event, the writer still returning `(len(p), nil)`; admission never waits for capacity and queued events are never evicted, so a burst keeps its head | `buffer_full` / `memory_pressure` |
 | consumer | stalled in a slow publish | the ring absorbs it; batches capped at 25% of budget, one in flight, so a stall cannot pin admission | – gauge `native_log_buffer_bytes{state="in_flight"}` |
-| schema | create fails for anything but `AlreadyExists`, or the group is dropped at runtime | retry every 10s, batch in hand dropped | `schema_unavailable` |
+| schema | the group or stream cannot be read or created at startup | retry every 10s, batch in hand dropped | `schema_unavailable` |
 | schema | a `log` stream exists whose families, tag order or entity differ from this version's | refuse and count, with one error through normal logging. The schema check keeps running every 10s instead of the sink staying disabled, so an operator can drop and recreate the stream without a restart; waiting alone never clears it | `schema_incompatible` |
 | selection | `Locate` errors or returns an empty node ID | count and return; never publish to an empty node | `locate_failed` — *phase 2* |
 | local publish | listener unhealthy | the bus skips it and drops the payload while returning an error, so any error means full batch loss | `publish_failed` |
@@ -200,7 +200,7 @@ budget = min(max-bytes, memory-fraction * max(0, availableBytes - memory-reserve
 availableBytes < 0  ->  budget = max-bytes          # unknown is not unlimited
 ```
 
-All three terms are native flags whose defaults are proposals. The budget is recomputed every 5s, counting queued and in-flight bytes alike. The sink reads `AvailableBytes()` only — never the blocking `AcquireResource` on the logging path, never waiting, never reclaiming bytes in flight; over budget it drops and counts. Where no protector is registered the cap alone applies; the adaptive term binds only where one is.
+All three terms are native flags whose defaults are proposals. The budget is read on each admission, counting queued and in-flight bytes alike, and an event is charged its line plus the memory its built write request holds, about 1.8KiB. The sink reads `AvailableBytes()` only — never the blocking `AcquireResource` on the logging path, never waiting, never reclaiming bytes in flight; over budget it drops and counts. Where no protector is registered the cap alone applies; the adaptive term binds only where one is.
 
 | Process | Adaptive term | Why |
 |---|---|---|
@@ -211,4 +211,4 @@ That gap is pre-existing. The liaison's protector is deliberately left unregiste
 
 > Normal logging is never degraded by the sink. Native is the more verbose sink, so at normal `error` and native `info` a dropped native `info` event has no normal copy anywhere — the drop counters are the only record it existed.
 
-> With `--observability-modes=native` alone those counters travel the same transport as the logs, so the same outage loses both. The sink therefore also emits a periodic drop summary straight to stderr, and we recommend keeping `prometheus` enabled alongside.
+> With `--observability-modes=native` alone those counters travel the same transport as the logs, so the same outage loses both. Keep `prometheus` enabled alongside, which is what makes a loss visible during an outage. A periodic drop summary on stderr was considered and is not implemented: it would print on the path the outage already degrades, and the counters cover the same ground.

@@ -112,6 +112,8 @@ The flags live in their own namespace, `--logging-native-*` with `BYDB_LOGGING_N
 
 The buffer budget is `min(max-bytes, memory-fraction × (available − memory-reserve))` where a memory protector runs, and `max-bytes` elsewhere.
 
+An event charges its own line plus about 1.8KiB, which is what the built write request and its tags hold in memory. The default 32MiB budget therefore admits roughly 17k buffered events, not 32MiB of log text. Charging the line alone would let the buffer hold ten times the configured budget.
+
 Because the two destinations have independent thresholds, native can be the more verbose of the two. Running normal logging at `error` and native at `info` keeps stderr quiet while the database retains the `info` and `warn` events that describe what a node was doing beforehand:
 
 | Event | Normal logging | Native storage |
@@ -126,8 +128,8 @@ The `reason` label takes one of nine values, so a loss is always attributable to
 
 | `reason` | Meaning | What to do |
 |---|---|---|
-| `buffer_full` | the buffer was at its cap | raise `--logging-native-max-bytes`, or raise `--logging-native-level` to admit less |
-| `memory_pressure` | the adaptive budget was exhausted | the node is short of memory; this is the sink yielding, as intended |
+| `buffer_full` | the ring held its maximum number of events | the writer is behind; raise `--logging-native-level` to admit less |
+| `memory_pressure` | the byte budget was exhausted, or nothing was available | raise `--logging-native-max-bytes`, or accept it: on a node short of memory this is the sink yielding, as intended |
 | `oversize_event` | one event exceeded `--logging-native-max-event-bytes` | raise it, or shorten the log line |
 | `encode_failed` | the line was not the JSON the sink expects | a bug; report it with the module name |
 | `publish_failed` | the batch did not reach storage | look at the write path — the whole batch is lost, never re-queued |
@@ -136,7 +138,9 @@ The `reason` label takes one of nine values, so a loss is always attributable to
 | `destination_unready` | the local write path still had no subscriber after 10 retries, one per flush interval | expected only at startup; if it persists, the stream service did not start |
 | `shutdown_deadline` | still buffered when the drain deadline passed | expected on a busy node during shutdown |
 
-The modules on the write path the sink publishes through are never stored: admitting them would let one stored line produce the next. The buffer is bounded and in-memory only -- no queue files, no write-ahead log, no disk fallback -- and it never blocks the caller: over budget the newest event is dropped and counted, so a burst keeps the head that explains it.
+The modules on the write path the sink publishes through are never stored: admitting them would let one stored line produce the next. `_monitoring_log`, the log group's own storage, is excluded for the same reason and stays excluded whatever `--logging-native-exclude-modules` says; a blank entry in that list is ignored rather than taken as a prefix of every module.
+
+An event logged without a level is stored with the level `none`, because the level is half the series key and an empty one cannot be queried. The buffer is bounded and in-memory only -- no queue files, no write-ahead log, no disk fallback -- and it never blocks the caller: over budget the newest event is dropped and counted, so a burst keeps the head that explains it.
 
 `restore` and `migration` do not offer these flags at all. Both run when the data tier is unavailable, and a tool that runs while the database is down cannot log into it.
 

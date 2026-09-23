@@ -115,32 +115,52 @@ func createSchema(ctx context.Context, repo metadata.Repo, shardNum, ttlDays uin
 			Ttl:             &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: ttlDays},
 		},
 	}
-	switch _, err := repo.GroupRegistry().CreateGroup(ctx, group); {
-	case err == nil:
-		// This process created it, so the flag is what is in force.
-	case errors.Is(err, schema.ErrGRPCAlreadyExists):
-		existing, getErr := repo.GroupRegistry().GetGroup(ctx, GroupName)
-		if getErr != nil {
-			return state, getErr
-		}
+	// Read before writing. Every node runs this on start and again on each
+	// retry, and a create is broadcast to every schema server, so creating
+	// first turns a settled cluster into a permanent write fan-out: 20 data
+	// nodes against 3 servers issue 120 doomed inserts every retry interval.
+	existing, getErr := repo.GroupRegistry().GetGroup(ctx, GroupName)
+	switch {
+	case getErr == nil:
 		state = groupState(existing.GetResourceOpts(), shardNum, ttlDays)
+	case errors.Is(getErr, schema.ErrGRPCResourceNotFound):
+		if _, err := repo.GroupRegistry().CreateGroup(ctx, group); err != nil &&
+			!errors.Is(err, schema.ErrGRPCAlreadyExists) {
+			return state, err
+		}
+		// The create says nothing reliable about what is now in force. It
+		// reports AlreadyExists only when every schema server rejects it, so a
+		// create that one server accepted returns nil although the group
+		// already existed elsewhere with another shard count. Routing divides
+		// by that count, and a count taken from this node's flag would send
+		// events to shards the group does not have: written, acked, counted,
+		// and invisible after the next open.
+		stored, storedErr := repo.GroupRegistry().GetGroup(ctx, GroupName)
+		if storedErr != nil {
+			return state, storedErr
+		}
+		state = groupState(stored.GetResourceOpts(), shardNum, ttlDays)
 	default:
-		return state, err
+		return state, getErr
 	}
 
 	want := streamSpec()
-	_, err := repo.StreamRegistry().CreateStream(ctx, want)
-	if err == nil {
-		return state, nil
-	}
-	if !errors.Is(err, schema.ErrGRPCAlreadyExists) {
-		return state, err
-	}
 	got, getErr := repo.StreamRegistry().GetStream(ctx, want.Metadata)
-	if getErr != nil {
+	switch {
+	case getErr == nil:
+		return state, compatible(want, got)
+	case !errors.Is(getErr, schema.ErrGRPCResourceNotFound):
 		return state, getErr
 	}
-	return state, compatible(want, got)
+	if _, err := repo.StreamRegistry().CreateStream(ctx, want); err != nil &&
+		!errors.Is(err, schema.ErrGRPCAlreadyExists) {
+		return state, err
+	}
+	stored, storedErr := repo.StreamRegistry().GetStream(ctx, want.Metadata)
+	if storedErr != nil {
+		return state, storedErr
+	}
+	return state, compatible(want, stored)
 }
 
 // groupState reads what the persisted group actually says and notes where the
