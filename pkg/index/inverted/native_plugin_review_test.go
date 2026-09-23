@@ -208,22 +208,31 @@ func TestNativePluginReviewDictionaryHonorsAutomaton(t *testing.T) {
 }
 
 type reviewChunkWriter struct {
-	bytes.Buffer
+	state    *reviewChunkWriterState
 	maxWrite int
-	closeCh  chan struct{}
-	closeOn  int
-	calls    int
+	closeOn  uint8
+	calls    uint8
+}
+
+type reviewChunkWriterState struct {
+	payload *bytes.Buffer
+	closeCh chan struct{}
 }
 
 func (w *reviewChunkWriter) Write(payload []byte) (int, error) {
 	w.calls++
 	if w.closeOn > 0 && w.calls == w.closeOn {
-		close(w.closeCh)
+		close(w.state.closeCh)
 	}
 	if len(payload) > w.maxWrite {
 		return 0, io.ErrShortWrite
 	}
-	return w.Buffer.Write(payload)
+	_, _ = w.state.payload.Write(payload)
+	return len(payload), nil
+}
+
+func (w *reviewChunkWriter) Len() int {
+	return w.state.payload.Len()
 }
 
 func TestNativePluginReviewMergeHonorsBufferSizeAndCancellationBetweenWrites(t *testing.T) {
@@ -233,14 +242,14 @@ func TestNativePluginReviewMergeHonorsBufferSizeAndCancellationBetweenWrites(t *
 	require.NoError(t, buildErr)
 
 	merger := nativeSegmentPluginMerge([]segmentValue{built}, nil, 7)
-	writer := &reviewChunkWriter{maxWrite: 7, closeCh: make(chan struct{})}
+	writer := &reviewChunkWriter{maxWrite: 7, state: &reviewChunkWriterState{payload: &bytes.Buffer{}, closeCh: make(chan struct{})}}
 	_, writeErr := merger.WriteTo(writer, nil)
 	require.NoError(t, writeErr)
 	require.Greater(t, writer.calls, 1)
 
 	cancelMerger := nativeSegmentPluginMerge([]segmentValue{built}, nil, 7)
-	cancelWriter := &reviewChunkWriter{maxWrite: 7, closeCh: make(chan struct{}), closeOn: 1}
-	_, cancelErr := cancelMerger.WriteTo(cancelWriter, cancelWriter.closeCh)
+	cancelWriter := &reviewChunkWriter{maxWrite: 7, state: &reviewChunkWriterState{payload: &bytes.Buffer{}, closeCh: make(chan struct{})}, closeOn: 1}
+	_, cancelErr := cancelMerger.WriteTo(cancelWriter, cancelWriter.state.closeCh)
 	require.Error(t, cancelErr)
 	require.Less(t, cancelWriter.Len(), writer.Len())
 }
