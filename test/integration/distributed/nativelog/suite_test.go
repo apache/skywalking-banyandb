@@ -49,8 +49,8 @@ var stops []func()
 // syncFlag shortens schema sync on every node. A node's watch of a schema
 // server it finds later replays only revisions newer than the ones it already
 // has, so it skips an older _monitoring_log schema that a native data node
-// created before. A full reconcile, every fifth sync, repairs that; the
-// default 30s interval would take 150s.
+// created before (apache/skywalking#14103). A full reconcile, every fifth
+// sync, repairs that; the default 30s interval would take 150s.
 const syncFlag = "--schema-property-client-sync-interval=1s"
 
 var _ = BeforeSuite(func() {
