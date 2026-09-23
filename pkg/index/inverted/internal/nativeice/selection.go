@@ -26,6 +26,7 @@ import (
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
 	"github.com/blevesearch/vellum"
+	"github.com/klauspost/compress/s2"
 )
 
 const (
@@ -35,6 +36,9 @@ const (
 	maxSelectionPostingsSize   = 64 << 20
 	selectionPostingBatchSize  = 1024
 	selectionDecodeReadSize    = 32 << 10
+	maxFrequencyChunkCount     = 1 << 20
+	maxFrequencyCompressedSize = 16 << 20
+	maxFrequencyDecodedSize    = 64 << 20
 	fstValueEncodingMask       = uint64(0xc000000000000000)
 	fstValueEncodingOneHit     = uint64(0x8000000000000000)
 	fstValueDocumentMask       = uint64(0x000000007fffffff)
@@ -234,6 +238,248 @@ func (s *storedSegmentReader) dictionaryOffset(field string) (uint64, bool, erro
 		return dictionaryOffset, true, nil
 	}
 	return 0, false, nil
+}
+
+func (s *storedSegmentReader) dictionary(field string) (*vellum.FST, error) {
+	dictionaryOffset, found, offsetErr := s.dictionaryOffset(field)
+	if offsetErr != nil || !found || dictionaryOffset == 0 {
+		return nil, offsetErr
+	}
+	if dictionaryOffset >= s.footer.docValueOffset {
+		return nil, corruptError("segment %q has a term dictionary outside its section", s.path)
+	}
+	cursor := dictionaryOffset
+	length, lengthErr := s.readUvarint(&cursor, s.footer.docValueOffset)
+	if lengthErr != nil {
+		return nil, lengthErr
+	}
+	if length > maxSelectionDictionarySize || length > s.footer.docValueOffset-cursor {
+		return nil, corruptError("segment %q has an oversized term dictionary", s.path)
+	}
+	data, dataErr := s.readBytes(cursor, length)
+	if dataErr != nil {
+		return nil, dataErr
+	}
+	dictionary, loadErr := loadTermDictionary(data)
+	if loadErr != nil {
+		return nil, corruptError("decode term dictionary in segment %q", s.path, loadErr)
+	}
+	return dictionary, nil
+}
+
+func (s *storedSegmentReader) fieldStats(field string) (uint64, uint64, bool, error) {
+	for fieldID, fieldName := range s.fieldNames {
+		if fieldName != field {
+			continue
+		}
+		indexOffset := s.footer.fieldsIndexOffset + uint64(fieldID)*fieldsIndexAddressByteWidth
+		var addressData [fieldsIndexAddressByteWidth]byte
+		if readErr := s.readInto(indexOffset, addressData[:]); readErr != nil {
+			return 0, 0, false, readErr
+		}
+		offset := binary.BigEndian.Uint64(addressData[:])
+		if offset >= s.footer.fieldsIndexOffset {
+			return 0, 0, false, corruptError("segment %q has a field record outside its section", s.path)
+		}
+		if _, offsetErr := s.readUvarint(&offset, s.footer.fieldsIndexOffset); offsetErr != nil {
+			return 0, 0, false, offsetErr
+		}
+		nameLength, nameLengthErr := s.readUvarint(&offset, s.footer.fieldsIndexOffset)
+		if nameLengthErr != nil || nameLength > s.footer.fieldsIndexOffset-offset {
+			if nameLengthErr != nil {
+				return 0, 0, false, nameLengthErr
+			}
+			return 0, 0, false, corruptError("segment %q has an invalid field name", s.path)
+		}
+		offset += nameLength
+		documentCount, documentErr := s.readUvarint(&offset, s.footer.fieldsIndexOffset)
+		if documentErr != nil {
+			return 0, 0, false, documentErr
+		}
+		frequency, frequencyErr := s.readUvarint(&offset, s.footer.fieldsIndexOffset)
+		if frequencyErr != nil {
+			return 0, 0, false, frequencyErr
+		}
+		return documentCount, frequency, true, nil
+	}
+	return 0, 0, false, nil
+}
+
+func (s *storedSegmentReader) termFrequencies(field string, term []byte) ([]TermFrequency, error) {
+	dictionary, dictionaryErr := s.dictionary(field)
+	if dictionaryErr != nil || dictionary == nil {
+		return nil, dictionaryErr
+	}
+	defer func() { _ = dictionary.Close() }()
+	postingOffset, found, lookupErr := lookupTermPosting(dictionary, term)
+	if lookupErr != nil || !found {
+		return nil, lookupErr
+	}
+	if postingOffset&fstValueEncodingMask == fstValueEncodingOneHit {
+		return []TermFrequency{{DocumentNumber: postingOffset & fstValueDocumentMask, Frequency: 1}}, nil
+	}
+	if postingOffset >= s.footer.docValueOffset {
+		return nil, corruptError("segment %q has a posting outside its section", s.path)
+	}
+	cursor := postingOffset
+	frequencyOffset, frequencyErr := s.readUvarint(&cursor, s.footer.docValueOffset)
+	if frequencyErr != nil {
+		return nil, frequencyErr
+	}
+	_, locationErr := s.readUvarint(&cursor, s.footer.docValueOffset)
+	if locationErr != nil {
+		return nil, locationErr
+	}
+	postingsLength, lengthErr := s.readUvarint(&cursor, s.footer.docValueOffset)
+	if lengthErr != nil || postingsLength > s.footer.docValueOffset-cursor {
+		if lengthErr != nil {
+			return nil, lengthErr
+		}
+		return nil, corruptError("segment %q has an oversized posting bitmap", s.path)
+	}
+	postingsData, dataErr := s.readBytes(cursor, postingsLength)
+	if dataErr != nil {
+		return nil, dataErr
+	}
+	postings, decodeErr := decodePostingBitmap(context.Background(), postingsData)
+	if decodeErr != nil {
+		return nil, corruptError("decode posting bitmap in segment %q", s.path, decodeErr)
+	}
+	if postings.GetCardinality() > s.footer.documentCount {
+		return nil, corruptError("segment %q has a posting bitmap with too many documents", s.path)
+	}
+	for _, document := range postings.ToArray() {
+		if uint64(document) >= s.footer.documentCount {
+			return nil, corruptError("segment %q has an out-of-range posting document", s.path)
+		}
+	}
+	result := make([]TermFrequency, 0, postings.GetCardinality())
+	if frequencyOffset == 0 {
+		for _, document := range postings.ToArray() {
+			result = append(result, TermFrequency{DocumentNumber: uint64(document), Frequency: 1})
+		}
+		return result, nil
+	}
+	return s.decodeICEFrequencyStream(frequencyOffset, postingOffset, postings)
+}
+
+func (s *storedSegmentReader) decodeICEFrequencyStream(frequencyOffset, postingOffset uint64, postings *roaringpkg.Bitmap) ([]TermFrequency, error) {
+	if frequencyOffset >= postingOffset {
+		return nil, corruptError("segment %q has an invalid frequency stream offset", s.path)
+	}
+	cursor := frequencyOffset
+	chunkCount, countErr := s.readUvarint(&cursor, postingOffset)
+	if countErr != nil {
+		return nil, countErr
+	}
+	if chunkCount == 0 || chunkCount > maxFrequencyChunkCount {
+		return nil, corruptError("segment %q has an invalid frequency chunk count", s.path)
+	}
+	chunkSize, chunkErr := nativeICEChunkSize(s.footer.chunkMode, postings.GetCardinality(), s.footer.documentCount)
+	if chunkErr != nil {
+		return nil, chunkErr
+	}
+	expectedChunks := (s.footer.documentCount-1)/chunkSize + 1
+	if chunkCount != expectedChunks {
+		return nil, corruptError("segment %q has %d frequency chunks, want %d", s.path, chunkCount, expectedChunks)
+	}
+	offsets := make([]uint64, int(chunkCount))
+	var previous uint64
+	for chunkIndex := range offsets {
+		offset, offsetErr := s.readUvarint(&cursor, postingOffset)
+		if offsetErr != nil {
+			return nil, offsetErr
+		}
+		if offset < previous || offset > postingOffset-cursor {
+			return nil, corruptError("segment %q has invalid frequency chunk offsets", s.path)
+		}
+		offsets[chunkIndex] = offset
+		previous = offset
+	}
+	dataStart := cursor
+	if dataStart > postingOffset || previous > postingOffset-dataStart {
+		return nil, corruptError("segment %q has frequency chunk data outside its posting section", s.path)
+	}
+	documents := postings.ToArray()
+	result := make([]TermFrequency, 0, len(documents))
+	documentIndex := 0
+	for chunkIndex, endOffset := range offsets {
+		startOffset := uint64(0)
+		if chunkIndex > 0 {
+			startOffset = offsets[chunkIndex-1]
+		}
+		chunkDocuments := make([]uint32, 0)
+		for documentIndex < len(documents) && uint64(documents[documentIndex])/chunkSize == uint64(chunkIndex) {
+			chunkDocuments = append(chunkDocuments, documents[documentIndex])
+			documentIndex++
+		}
+		if endOffset == startOffset {
+			if len(chunkDocuments) != 0 {
+				return nil, corruptError("segment %q has no frequency data for chunk %d", s.path, chunkIndex)
+			}
+			continue
+		}
+		compressedLength := endOffset - startOffset
+		if compressedLength > maxFrequencyCompressedSize {
+			return nil, corruptError("segment %q has an oversized frequency chunk", s.path)
+		}
+		compressed, readErr := s.readBytes(dataStart+startOffset, compressedLength)
+		if readErr != nil {
+			return nil, readErr
+		}
+		decoded, decodeErr := decodeICEFrequencyChunk(compressed)
+		if decodeErr != nil {
+			return nil, corruptError("decode frequency chunk in segment %q: %w", s.path, decodeErr)
+		}
+		if len(decoded) > maxFrequencyDecodedSize {
+			return nil, corruptError("segment %q has an oversized decoded frequency chunk", s.path)
+		}
+		decoder := byteDecoder{payload: decoded}
+		for _, document := range chunkDocuments {
+			encodedFrequency, frequencyErr := decoder.uvarint()
+			if frequencyErr != nil {
+				return nil, frequencyErr
+			}
+			frequency := encodedFrequency >> 1
+			if frequency == 0 {
+				return nil, corruptError("segment %q has an invalid term frequency", s.path)
+			}
+			if _, normErr := decoder.uvarint(); normErr != nil {
+				return nil, normErr
+			}
+			result = append(result, TermFrequency{DocumentNumber: uint64(document), Frequency: frequency})
+		}
+		if decoder.remaining() != 0 {
+			return nil, corruptError("segment %q has trailing frequency bytes in chunk %d", s.path, chunkIndex)
+		}
+	}
+	if documentIndex != len(documents) {
+		return nil, corruptError("segment %q has postings outside its frequency chunks", s.path)
+	}
+	return result, nil
+}
+
+func decodeICEFrequencyChunk(compressed []byte) (decoded []byte, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("frequency chunk decoder panicked: %v", recovered)
+		}
+	}()
+	decodedLength, lengthErr := s2.DecodedLen(compressed)
+	if lengthErr != nil {
+		return nil, lengthErr
+	}
+	if decodedLength < 0 || decodedLength > maxFrequencyDecodedSize {
+		return nil, fmt.Errorf("decoded frequency chunk length %d exceeds limit", decodedLength)
+	}
+	decoded, decodeErr := s2.Decode(nil, compressed)
+	if decodeErr != nil {
+		return nil, decodeErr
+	}
+	if len(decoded) != decodedLength {
+		return nil, fmt.Errorf("decoded frequency chunk length %d, want %d", len(decoded), decodedLength)
+	}
+	return decoded, nil
 }
 
 func (s *storedSegmentReader) unionPostings(ctx context.Context, selected *roaringpkg.Bitmap, postingsOffset uint64) error {

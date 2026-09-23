@@ -29,11 +29,17 @@ import (
 	"testing"
 	"time"
 
+	segment "github.com/blugelabs/bluge_segment_api"
+	legacyice "github.com/blugelabs/ice"
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 )
+
+func loadLegacySegment(data *segment.Data) (segment.Segment, error) {
+	return legacyice.Load(data)
+}
 
 // The NIDX-01A corpus is an ICE v3 / snapshot v3 directory produced by the
 // compatibility writer through BanyanDB's store boundary and checked in as

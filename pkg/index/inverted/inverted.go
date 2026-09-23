@@ -130,7 +130,21 @@ type (
 	// segmentVisitTerm receives one of a field's terms.
 	segmentVisitTerm = segment.VisitTerm
 	// segmentVisitLocation receives one of a term's locations.
-	segmentVisitLocation = segment.VisitLocation
+	segmentVisitLocation        = segment.VisitLocation
+	segmentDictionary           = segment.Dictionary
+	segmentPostingsList         = segment.PostingsList
+	segmentPostingsIter         = segment.PostingsIterator
+	segmentPosting              = segment.Posting
+	segmentStats                = segment.CollectionStats
+	segmentDocValues            = segment.DocumentValueReader
+	segmentField                = segment.Field
+	segmentFieldTerm            = segment.FieldTerm
+	segmentStoredVisitor        = segment.StoredFieldVisitor
+	segmentAutomaton            = segment.Automaton
+	segmentDictionaryIterator   = segment.DictionaryIterator
+	segmentDictionaryEntry      = segment.DictionaryEntry
+	segmentLocation             = segment.Location
+	segmentDocumentValueVisitor = segment.DocumentValueVisitor
 )
 
 // newSegmentBytes holds payload as the byte container a persisted segment
