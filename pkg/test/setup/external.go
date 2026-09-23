@@ -47,7 +47,7 @@ const localhost = "127.0.0.1"
 func ResolveBanyandBinary() (string, error) {
 	if envBin := os.Getenv("BANYAND_BIN"); envBin != "" {
 		if _, statErr := os.Stat(envBin); statErr == nil {
-			return envBin, ensureExecutable(envBin)
+			return envBin, nil
 		}
 		return "", fmt.Errorf("BANYAND_BIN=%q does not exist", envBin)
 	}
@@ -70,24 +70,7 @@ func ResolveBanyandBinary() (string, error) {
 			absPath, statErr,
 		)
 	}
-	return absPath, ensureExecutable(absPath)
-}
-
-// ensureExecutable restores the executable bits of the binary. CI ships it to
-// the test jobs as a workflow artifact, and artifacts do not keep file modes,
-// so a downloaded binary cannot be started until its mode is set again.
-func ensureExecutable(path string) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	if info.Mode()&0o111 == 0o111 {
-		return nil
-	}
-	if chmodErr := os.Chmod(path, info.Mode()|0o755); chmodErr != nil {
-		return fmt.Errorf("banyand binary %q is not executable: %w", path, chmodErr)
-	}
-	return nil
+	return absPath, nil
 }
 
 // ExternalCMD launches binPath as a separate OS process with the given flags,

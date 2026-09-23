@@ -18,8 +18,9 @@
 package nativelog_test
 
 import (
+	"bytes"
 	"fmt"
-	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -39,67 +40,85 @@ import (
 
 func TestNativeLogStandalone(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Native Self-Stored Logs Standalone Suite", Label(integration_standalone.Labels...))
+	RunSpecs(t, "Native Self-Stored Logs Suite", Label(integration_standalone.Labels...))
 }
 
-var stops []func()
+// console collects what the nodes print. The cases run servers in this
+// process, so the console of a node is the console of the test binary.
+var console = &safeBuffer{}
+
+var restoreConsole func()
 
 var _ = BeforeSuite(func() {
+	restoreConsole = logger.UseConsoleTarget(console)
 	Expect(logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel})).To(Succeed())
-	binPath := cases.RequireBinary()
 
-	// Each producer is its own standalone server, with its own data: a
-	// standalone serves only its own logs.
-	native, _, stopNative := startStandalone(binPath, newSpace(), mustPorts(), cases.NativeFlags...)
-	stops = append(stops, stopNative)
-	disabled, _, stopDisabled := startStandalone(binPath, newSpace(), mustPorts(), cases.DisabledFlags...)
-	stops = append(stops, stopDisabled)
-
-	recoveryDir, recoveryPorts := newSpace(), mustPorts()
+	// The recovery case stops a node and starts the next one on its data, so
+	// that pair keeps one directory and one set of ports.
+	recoveryDir, recoveryPorts := newSpace(), mustPorts(6)
 	cases.SharedContext = cases.Context{
-		Native:   []cases.Producer{native},
-		Disabled: disabled,
-		Recovery: func(extraFlags ...string) (cases.Producer, string, func()) {
-			return startStandalone(binPath, recoveryDir, recoveryPorts, append(append([]string{}, cases.NativeFlags...), extraFlags...)...)
+		Start: func(extra ...string) (cases.Node, func()) {
+			return start(newSpace(), mustPorts(6), append(append([]string{}, cases.NativeFlags...), extra...)...)
 		},
+		StartDisabled: func(extra ...string) (cases.Node, func()) {
+			return start(newSpace(), mustPorts(6), append(append([]string{}, cases.DisabledFlags...), extra...)...)
+		},
+		Restart: func(extra ...string) (cases.Node, func()) {
+			return start(recoveryDir, recoveryPorts, append(append([]string{}, cases.NativeFlags...), extra...)...)
+		},
+		Console: console.String,
 	}
 })
 
 var _ = AfterSuite(func() {
-	for i := len(stops) - 1; i >= 0; i-- {
-		stops[i]()
+	if restoreConsole != nil {
+		restoreConsole()
 	}
 })
 
-// startStandalone launches a standalone server on dataDir. ports holds the
-// five the launcher needs and a sixth for the metrics listener: every server
-// must have its own, or they would all bind the default one.
-func startStandalone(binPath, dataDir string, ports []int, extraFlags ...string) (cases.Producer, string, func()) {
-	// The launcher always writes <logDir>/standalone.log, so each server needs
-	// a log directory of its own.
-	logDir := newSpace()
+// start runs one standalone server in this process. ports holds the five the
+// launcher needs and a sixth for the metrics listener, which the cases read.
+func start(dataDir string, ports []int, flags ...string) (cases.Node, func()) {
 	metricsAddr := fmt.Sprintf("127.0.0.1:%d", ports[5])
 	config := setup.PropertyClusterConfig(setup.NewDiscoveryFileWriter(newSpace()))
-	grpcAddr, _, stop := setup.ExternalStandalone(config, binPath, dataDir, logDir, ports[:5],
-		append([]string{"--observability-listener-addr=" + metricsAddr}, extraFlags...)...)
-	conn, err := grpchelper.Conn(grpcAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	addr, _, closeFn := setup.ClosableStandalone(config, dataDir, ports[:5],
+		append([]string{"--observability-listener-addr=" + metricsAddr}, flags...)...)
+	conn, err := grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	Expect(err).NotTo(HaveOccurred())
-	producer := cases.Producer{
+	node := cases.Node{
 		Conn: conn,
-		// The launcher sets --node-host=127.0.0.1, and a node's id is its
-		// host and gRPC port.
-		NodeID:   fmt.Sprintf("127.0.0.1:%d", ports[0]),
-		NodeType: "standalone",
-		LogPath:  filepath.Join(logDir, "standalone.log"),
+		// The launcher sets --node-host=127.0.0.1, and a node's id is its host
+		// and gRPC port.
+		NodeID:     fmt.Sprintf("127.0.0.1:%d", ports[0]),
+		NodeType:   "standalone",
+		MetricsURL: "http://" + metricsAddr + "/metrics",
 	}
-	return producer, "http://" + metricsAddr + "/metrics", func() {
+	return node, func() {
 		_ = conn.Close()
-		stop()
+		closeFn()
 	}
 }
 
-func mustPorts() []int {
-	ports, err := test.AllocateFreePorts(6)
+// safeBuffer is written by the server's logging goroutines and read by a case.
+type safeBuffer struct {
+	buf bytes.Buffer
+	mux sync.Mutex
+}
+
+func (b *safeBuffer) Write(p []byte) (int, error) {
+	b.mux.Lock()
+	defer b.mux.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *safeBuffer) String() string {
+	b.mux.Lock()
+	defer b.mux.Unlock()
+	return b.buf.String()
+}
+
+func mustPorts(n int) []int {
+	ports, err := test.AllocateFreePorts(n)
 	Expect(err).NotTo(HaveOccurred())
 	return ports
 }
