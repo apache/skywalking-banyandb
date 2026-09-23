@@ -22,10 +22,7 @@ import (
 	"fmt"
 	"sort"
 
-	"golang.org/x/exp/slices"
-
 	"github.com/apache/skywalking-banyandb/api/common"
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	pkgbytes "github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -476,101 +473,6 @@ func (bc *blockCursor) init(p *part, bm *blockMetadata, opts queryOptions) {
 	bc.tagProjection = opts.TagProjection
 	bc.schemaTagTypes = opts.schemaTagTypes
 	bc.elementFilter = opts.elementFilter
-}
-
-func (bc *blockCursor) copyAllTo(r *model.StreamResult, desc bool) {
-	start, end := 0, bc.idx+1
-	if !desc {
-		start, end = bc.idx, len(bc.timestamps)
-	}
-	if end <= start {
-		return
-	}
-
-	r.Timestamps = append(r.Timestamps, bc.timestamps[start:end]...)
-	r.ElementIDs = append(r.ElementIDs, bc.elementIDs[start:end]...)
-	requiredCapacity := end - start
-	r.SIDs = append(r.SIDs, make([]common.SeriesID, requiredCapacity)...)
-	for i := range r.SIDs[len(r.SIDs)-requiredCapacity:] {
-		r.SIDs[len(r.SIDs)-requiredCapacity+i] = bc.bm.seriesID
-	}
-
-	if desc {
-		slices.Reverse(r.Timestamps)
-		slices.Reverse(r.ElementIDs)
-	}
-
-	if len(r.TagFamilies) != len(bc.tagProjection) {
-		r.TagFamilies = make([]model.TagFamily, len(bc.tagProjection))
-		for i, tp := range bc.tagProjection {
-			r.TagFamilies[i] = model.TagFamily{Name: tp.Family, Tags: make([]model.Tag, len(tp.Names))}
-			for j, n := range tp.Names {
-				r.TagFamilies[i].Tags[j] = model.Tag{Name: n}
-			}
-		}
-	}
-
-	for i, cf := range bc.tagFamilies {
-		for j, c := range cf.tags {
-			values := make([]*modelv1.TagValue, end-start)
-			schemaType, hasSchemaType := bc.schemaTagTypes[c.name]
-			for k := start; k < end; k++ {
-				if len(c.values) > k {
-					if hasSchemaType && c.valueType == schemaType {
-						values[k-start] = mustDecodeTagValue(c.valueType, c.values[k])
-					} else {
-						values[k-start] = pbv1.NullTagValue
-					}
-				} else {
-					values[k-start] = pbv1.NullTagValue
-				}
-			}
-			if desc {
-				slices.Reverse(values)
-			}
-			r.TagFamilies[i].Tags[j].Values = append(r.TagFamilies[i].Tags[j].Values, values...)
-		}
-	}
-}
-
-func (bc *blockCursor) copyTo(r *model.StreamResult) {
-	r.Timestamps = append(r.Timestamps, bc.timestamps[bc.idx])
-	r.ElementIDs = append(r.ElementIDs, bc.elementIDs[bc.idx])
-	r.SIDs = append(r.SIDs, bc.bm.seriesID)
-	if len(r.TagFamilies) != len(bc.tagProjection) {
-		for _, tp := range bc.tagProjection {
-			tf := model.TagFamily{
-				Name: tp.Family,
-			}
-			for _, n := range tp.Names {
-				t := model.Tag{
-					Name: n,
-				}
-				tf.Tags = append(tf.Tags, t)
-			}
-			r.TagFamilies = append(r.TagFamilies, tf)
-		}
-	}
-	if len(bc.tagFamilies) != len(r.TagFamilies) {
-		logger.Panicf("unexpected number of tag families: got %d; want %d", len(bc.tagFamilies), len(r.TagFamilies))
-	}
-	for i, cf := range bc.tagFamilies {
-		if len(r.TagFamilies[i].Tags) != len(cf.tags) {
-			logger.Panicf("unexpected number of tags: got %d; want %d", len(r.TagFamilies[i].Tags), len(bc.tagProjection[i].Names))
-		}
-		for i2, c := range cf.tags {
-			schemaType, hasSchemaType := bc.schemaTagTypes[c.name]
-			if len(c.values) > bc.idx {
-				if hasSchemaType && c.valueType == schemaType {
-					r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, mustDecodeTagValue(c.valueType, c.values[bc.idx]))
-				} else {
-					r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, pbv1.NullTagValue)
-				}
-			} else {
-				r.TagFamilies[i].Tags[i2].Values = append(r.TagFamilies[i].Tags[i2].Values, pbv1.NullTagValue)
-			}
-		}
-	}
 }
 
 func (bc *blockCursor) loadData(tmpBlock *block) bool {

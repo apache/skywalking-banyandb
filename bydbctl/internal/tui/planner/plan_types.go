@@ -31,11 +31,12 @@ type AggregateFunction string
 
 // Aggregate functions.
 const (
-	AggregateMean  AggregateFunction = "MEAN"
-	AggregateCount AggregateFunction = "COUNT"
-	AggregateMax   AggregateFunction = "MAX"
-	AggregateMin   AggregateFunction = "MIN"
-	AggregateSum   AggregateFunction = "SUM"
+	AggregateMean          AggregateFunction = "MEAN"
+	AggregateCount         AggregateFunction = "COUNT"
+	AggregateMax           AggregateFunction = "MAX"
+	AggregateMin           AggregateFunction = "MIN"
+	AggregateSum           AggregateFunction = "SUM"
+	AggregateCountDistinct AggregateFunction = "COUNT_DISTINCT"
 )
 
 // Operator is a supported deterministic filter operator.
@@ -112,19 +113,27 @@ type TimeRange struct {
 	End   string `json:"end,omitempty"`
 }
 
+// GroupByTimeBucket buckets a MEASURE query's GroupBy by time, in addition to
+// (or instead of) any tag/field GroupBy columns. Width is a BYDBQL duration
+// string (e.g. "5m"); an empty Width defers to the measure's own interval.
+type GroupByTimeBucket struct {
+	Width string `json:"width,omitempty"`
+}
+
 // QueryPlan describes one query without embedding any BYDBQL text.
 type QueryPlan struct {
-	Filter         *Predicate     `json:"filter,omitempty"`
-	Aggregate      *Aggregate     `json:"aggregate,omitempty"`
-	OrderBy        *Order         `json:"order_by,omitempty"`
-	TimeRange      TimeRange      `json:"time_range,omitempty"`
-	ProjectionMode ProjectionMode `json:"projection_mode,omitempty"`
-	ID             string         `json:"id,omitempty"`
-	Resource       Resource       `json:"resource"`
-	Projection     []Projection   `json:"projection,omitempty"`
-	GroupBy        []string       `json:"group_by,omitempty"`
-	Limit          int            `json:"limit,omitempty"`
-	TopN           int            `json:"top_n,omitempty"`
+	Filter         *Predicate         `json:"filter,omitempty"`
+	Aggregate      *Aggregate         `json:"aggregate,omitempty"`
+	OrderBy        *Order             `json:"order_by,omitempty"`
+	TimeBucket     *GroupByTimeBucket `json:"time_bucket,omitempty"`
+	TimeRange      TimeRange          `json:"time_range,omitempty"`
+	ProjectionMode ProjectionMode     `json:"projection_mode,omitempty"`
+	ID             string             `json:"id,omitempty"`
+	Resource       Resource           `json:"resource"`
+	Projection     []Projection       `json:"projection,omitempty"`
+	GroupBy        []string           `json:"group_by,omitempty"`
+	Limit          int                `json:"limit,omitempty"`
+	TopN           int                `json:"top_n,omitempty"`
 }
 
 // WorkflowPlan describes a sequence of independently approved query plans.
@@ -170,7 +179,7 @@ func diagnosticError(code, path, message string, allowed ...string) error {
 
 func isAggregateFunction(function AggregateFunction) bool {
 	switch function {
-	case AggregateMean, AggregateCount, AggregateMax, AggregateMin, AggregateSum:
+	case AggregateMean, AggregateCount, AggregateMax, AggregateMin, AggregateSum, AggregateCountDistinct:
 		return true
 	default:
 		return false

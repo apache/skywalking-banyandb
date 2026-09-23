@@ -183,3 +183,76 @@ users:
 		t.Error("expected bob/hunter2 to be valid after atomic replacement")
 	}
 }
+
+func TestReloaderUpdatesWhenSymlinkTargetChanges(t *testing.T) {
+	dir := t.TempDir()
+	targetPath := filepath.Join(dir, "target.yaml")
+	linkPath := filepath.Join(dir, "auth.yaml")
+	initialYAML := `
+users:
+  - username: "alice"
+    password: "old"
+rbac:
+  enabled: true
+  bindings:
+    - principal: "alice"
+      role: "writer"
+      groups: ["payments"]
+`
+	if writeErr := os.WriteFile(targetPath, []byte(initialYAML), 0o600); writeErr != nil {
+		t.Fatalf("writing symlink target: %v", writeErr)
+	}
+	if linkErr := os.Symlink(targetPath, linkPath); linkErr != nil {
+		t.Fatalf("creating auth symlink: %v", linkErr)
+	}
+
+	reloader := InitAuthReloader()
+	log := logger.GetLogger("auth-symlink-target-test")
+	if configureErr := reloader.ConfigAuthReloader(linkPath, false, log); configureErr != nil {
+		t.Fatalf("ConfigAuthReloader failed: %v", configureErr)
+	}
+	if startErr := reloader.Start(); startErr != nil {
+		t.Fatalf("Start failed: %v", startErr)
+	}
+	defer reloader.Stop()
+
+	initialRevision := reloader.CurrentSnapshot().Revision()
+	if !reloader.CheckUsernameAndPassword("alice", "old") {
+		t.Fatal("expected alice/old to authenticate before target update")
+	}
+
+	updatedYAML := `
+users:
+  - username: "alice"
+    password: "new"
+rbac:
+  enabled: true
+  bindings: []
+`
+	if writeErr := os.WriteFile(targetPath, []byte(updatedYAML), 0o600); writeErr != nil {
+		t.Fatalf("updating symlink target: %v", writeErr)
+	}
+
+	select {
+	case <-reloader.GetUpdateChannel():
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for reload after symlink target write")
+	}
+
+	if reloader.CurrentSnapshot().Revision() <= initialRevision {
+		t.Fatalf("revision = %d after target write, want greater than %d", reloader.CurrentSnapshot().Revision(), initialRevision)
+	}
+	if reloader.CheckUsernameAndPassword("alice", "old") {
+		t.Error("alice/old should be rejected after target password rotation")
+	}
+	if !reloader.CheckUsernameAndPassword("alice", "new") {
+		t.Error("expected alice/new to authenticate after target update")
+	}
+	principal, ok := reloader.CurrentSnapshot().Authenticate("alice", "new")
+	if !ok {
+		t.Fatal("Authenticate(alice, new) failed after target update")
+	}
+	if reloader.CurrentSnapshot().Allows(principal, PermissionDataWrite, "payments") {
+		t.Error("writer grant on payments should be cleared after bindings removed")
+	}
+}

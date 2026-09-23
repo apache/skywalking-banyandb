@@ -98,8 +98,7 @@ func (tst *tsTable) syncLoop(syncCh chan *syncIntroduction, flusherNotifier watc
 				}
 				tst.l.Error().Err(err).Msgf("cannot sync snapshot: %d", curSnapshot.epoch)
 				tst.incTotalSyncLoopErr(1)
-				time.Sleep(2 * time.Second)
-				return false
+				return storage.WaitSyncRetry(tst.loopCloser.CloseNotify())
 			}
 			epoch = curSnapshot.epoch
 			lastTriggerTime = triggerTime

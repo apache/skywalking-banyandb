@@ -736,7 +736,7 @@ func runVectorizedPath(spec workloadSpec, results []*model.MeasureResult,
 
 // cfgFor returns the standard bench VectorizedConfig.
 func cfgFor() VectorizedConfig {
-	return VectorizedConfig{Enabled: true, BatchSize: defaultBatch, QueryMemoryMiB: defaultMemMiB}
+	return VectorizedConfig{BatchSize: defaultBatch, QueryMemoryMiB: defaultMemMiB}
 }
 
 func benchmarkRow(b *testing.B, spec workloadSpec) {

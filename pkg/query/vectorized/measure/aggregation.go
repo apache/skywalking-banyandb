@@ -73,6 +73,11 @@ const (
 	AggMin
 	AggMax
 	AggMean
+	// AggCountDistinct counts the distinct non-null values of the target
+	// (design §7.3). It is exact and charged per inserted value against
+	// the shared MemoryTracker, unlike the other functions' fixed-size
+	// per-group accumulators.
+	AggCountDistinct
 )
 
 // ErrAggModeNotImplemented is returned by Consume / Finalize / NextBatch when
@@ -100,6 +105,12 @@ type AggSpec struct {
 	Output   string
 	Func     AggFunc
 	InputCol int // index into the input schema; must be int64 or float64
+	// HideTag is true when InputCol is a RoleTag column the analyzer
+	// injected into the projection solely so this spec could bind to it
+	// (design §5.2, model.MeasureAgg.HideTag). NewBatchAggregation excludes
+	// such a column from the carried-forward tag set so it is not also
+	// emitted as a first-seen tag beside its own result field.
+	HideTag bool
 }
 
 // BatchAggregation is a BreakerOperator that groups input rows by the configured
@@ -135,9 +146,11 @@ type BatchAggregation struct {
 	aggInputCountIdx []int
 	insertion        []*aggGroup
 	outputShardIdx   int
+	outputTimeIdx    int
 	tagOutOffset     int
 	mode             AggMode
 	shardIDIdx       int
+	bucketIdx        int
 	entrySize        int64
 	reserved         int64
 	rowsIn           int64
@@ -147,7 +160,7 @@ type BatchAggregation struct {
 	closed           bool
 }
 
-// aggGroup carries one bucket's reduction state plus a copy of every
+// aggGroup carries one group's reduction state plus a copy of every
 // projected tag column for this group. tagCols is indexed by position in
 // BatchAggregation.tagIndices (NOT just the GroupBy keys), so non-key
 // projected tags can be emitted as their first-seen value.
@@ -159,11 +172,18 @@ type BatchAggregation struct {
 // read by AggModeMap emit; AggModeAll ignores it. Stays zero when
 // keyIndices is empty (scalar reduce) so the emitted partial matches the
 // row path's aggAllIterator.Current() hardcoding ShardId: 0.
+//
+// timeValue is captured by newGroup from the input batch's (already
+// bucket-floored) RoleTimestamp column at the group's creating row, exactly
+// like shardID — it is constant for every row in the group by construction,
+// since the bucket-floored timestamp is itself part of the group key
+// (design §7.2). Read only when bucketIdx >= 0; ignored otherwise.
 type aggGroup struct {
-	key     string
-	tagCols []vectorized.Column
-	slots   []aggSlot
-	shardID int64
+	key       string
+	tagCols   []vectorized.Column
+	slots     []aggSlot
+	shardID   int64
+	timeValue int64
 }
 
 // aggSlot holds either:
@@ -184,10 +204,14 @@ type aggGroup struct {
 // Exactly one of intMap/floatMap is non-nil in Map/All mode; exactly one of
 // intReduce/floatReduce is non-nil in Reduce mode.
 type aggSlot struct {
-	intMap       aggregation.Map[int64]
-	floatMap     aggregation.Map[float64]
-	intReduce    aggregation.Reduce[int64]
-	floatReduce  aggregation.Reduce[float64]
+	intMap      aggregation.Map[int64]
+	floatMap    aggregation.Map[float64]
+	intReduce   aggregation.Reduce[int64]
+	floatReduce aggregation.Reduce[float64]
+	// distinct backs AggCountDistinct only (AggModeAll/AggModeMap). It is
+	// not Number-parameterized like intMap/floatMap, since the target may
+	// be a string/bytes tag, not just numeric — see foldDistinct.
+	distinct     aggregation.Distinct
 	fn           AggFunc
 	inputIsFloat bool
 }
@@ -199,13 +223,28 @@ type aggSlot struct {
 // reserved per new group bucket (key columns + slots + map entry overhead).
 // Pass entrySize=0 to disable per-group bookkeeping. tracker must not be nil
 // — use a large NewMemoryTracker for unit tests that don't care about budget.
+//
+// Time bucketing (design §7.2) needs no dedicated parameter: when keyIndices
+// contains a RoleTimestamp column, that column is treated as the bucket key
+// — grouping by it is already handled generically by computeKey, and the
+// only bucket-specific behavior (conditional D2 reversal: re-emitting the
+// bucket start as a RoleTimestamp output column) is derived here from that
+// same column. RoleTimestamp never legitimately appears in keyIndices for
+// any other reason, so this inference is unambiguous.
 func NewBatchAggregation(
 	input *vectorized.BatchSchema, keyIndices []int,
 	aggs []AggSpec, mode AggMode, batchSize int,
 	tracker *vectorized.MemoryTracker, entrySize int64,
 ) *BatchAggregation {
-	tagIndices := collectTagIndices(input, keyIndices)
-	layout := buildAggOutputLayout(input, tagIndices, aggs, mode)
+	bucketIdx := -1
+	for _, idx := range keyIndices {
+		if input.Columns[idx].Role == vectorized.RoleTimestamp {
+			bucketIdx = idx
+			break
+		}
+	}
+	tagIndices := collectTagIndices(input, keyIndices, hiddenTagExclusionSet(aggs))
+	layout := buildAggOutputLayout(input, tagIndices, aggs, mode, bucketIdx)
 	return &BatchAggregation{
 		inputSchema:      input,
 		outputSchema:     layout.schema,
@@ -217,8 +256,10 @@ func NewBatchAggregation(
 		aggOutOffsets:    layout.aggOutOffsets,
 		aggHasCount:      layout.aggHasCount,
 		outputShardIdx:   layout.outputShardIdx,
+		outputTimeIdx:    layout.outputTimestampIdx,
 		tagOutOffset:     layout.tagOutOffset,
 		shardIDIdx:       findShardIDIndex(input),
+		bucketIdx:        bucketIdx,
 		aggInputCountIdx: buildAggInputCountIdx(input, aggs, mode),
 		mode:             mode,
 		aggValuePath:     deriveAggValuePath(input, aggs),
@@ -244,22 +285,46 @@ func deriveAggValuePath(input *vectorized.BatchSchema, aggs []AggSpec) AggValueP
 }
 
 // collectTagIndices returns every tag column index in input, in input
-// schema order. When the schema has no RoleTag columns at all (synthetic
-// unit-test fixtures that pre-date the storage bridge), fall back to
-// keyIndices so the operator still produces the keys-only output those
-// tests expect. Production paths always have RoleTag columns because
-// BuildBatchSchema emits one per projected tag.
-func collectTagIndices(input *vectorized.BatchSchema, keyIndices []int) []int {
+// schema order, except those in exclude. When the schema has no RoleTag
+// columns at all (synthetic unit-test fixtures that pre-date the storage
+// bridge), fall back to keyIndices so the operator still produces the
+// keys-only output those tests expect. Production paths always have
+// RoleTag columns because BuildBatchSchema emits one per projected tag.
+func collectTagIndices(input *vectorized.BatchSchema, keyIndices []int, exclude map[int]struct{}) []int {
+	hasTagCols := false
 	out := make([]int, 0, len(input.Columns))
 	for i, def := range input.Columns {
-		if def.Role == vectorized.RoleTag {
-			out = append(out, i)
+		if def.Role != vectorized.RoleTag {
+			continue
 		}
+		hasTagCols = true
+		if _, skip := exclude[i]; skip {
+			continue
+		}
+		out = append(out, i)
 	}
-	if len(out) == 0 {
+	if !hasTagCols {
 		return slices.Clone(keyIndices)
 	}
 	return out
+}
+
+// hiddenTagExclusionSet collects the input-schema column index of every
+// AggSpec whose HideTag is set — the tag column it targets should not also
+// be carried forward as a first-seen tag (design §5.2). Returns nil when no
+// spec hides its tag.
+func hiddenTagExclusionSet(aggs []AggSpec) map[int]struct{} {
+	var excl map[int]struct{}
+	for _, spec := range aggs {
+		if !spec.HideTag {
+			continue
+		}
+		if excl == nil {
+			excl = make(map[int]struct{}, 1)
+		}
+		excl[spec.InputCol] = struct{}{}
+	}
+	return excl
 }
 
 // Init prepares the group map. It does NOT validate the mode — mode rejection
@@ -344,7 +409,9 @@ func (a *BatchAggregation) Consume(_ context.Context, b *vectorized.RecordBatch)
 				a.combinePartial(b, int(rowIdx), &group.slots[slotIdx], spec, a.aggInputCountIdx[slotIdx])
 				continue
 			}
-			a.fold(b, int(rowIdx), &group.slots[slotIdx], spec)
+			if foldErr := a.fold(b, int(rowIdx), &group.slots[slotIdx], spec); foldErr != nil {
+				return foldErr
+			}
 		}
 	}
 	return nil
@@ -388,6 +455,34 @@ func (a *BatchAggregation) NextBatch(_ context.Context) (*vectorized.RecordBatch
 		return nil, nil
 	}
 	return out, nil
+}
+
+// SortInsertionByBucket stable-sorts emission order by each group's
+// captured bucket timestamp (aggGroup.timeValue, design §7.2), ascending.
+// A no-op when this aggregation carries no bucket key (bucketIdx < 0).
+//
+// This exists for BatchTimeBucket's map-mode drain: its single persistent
+// aggregator accumulates groups across the whole scan in first-seen order,
+// but map mode exists precisely because the input may not be
+// time-ordered — so emission order needs an explicit sort to satisfy the
+// bucket-ascending output contract (design §7.5). Calling this on a
+// streaming-mode instance is also safe but a no-op in effect: each such
+// instance covers exactly one bucket, so every group already shares the
+// same timeValue and the stable sort leaves insertion order untouched.
+func (a *BatchAggregation) SortInsertionByBucket() {
+	if a.bucketIdx < 0 {
+		return
+	}
+	slices.SortStableFunc(a.insertion, func(x, y *aggGroup) int {
+		switch {
+		case x.timeValue < y.timeValue:
+			return -1
+		case x.timeValue > y.timeValue:
+			return 1
+		default:
+			return 0
+		}
+	})
 }
 
 // Close releases the group map and refunds the outstanding memory
@@ -435,8 +530,10 @@ func (a *BatchAggregation) newGroup(b *vectorized.RecordBatch, rowIdx int, key s
 	}
 	slots := make([]aggSlot, len(a.aggs))
 	for i, spec := range a.aggs {
-		inputIsFloat := a.inputSchema.Columns[spec.InputCol].Type == vectorized.ColumnTypeFloat64
-		slot, slotErr := newAggSlot(spec.Func, inputIsFloat, a.mode)
+		inputDef := a.inputSchema.Columns[spec.InputCol]
+		inputIsFloat := inputDef.Type == vectorized.ColumnTypeFloat64
+		isTagTarget := inputDef.Role == vectorized.RoleTag
+		slot, slotErr := newAggSlot(spec.Func, inputIsFloat, isTagTarget, a.mode)
 		if slotErr != nil {
 			return nil, slotErr
 		}
@@ -456,15 +553,49 @@ func (a *BatchAggregation) newGroup(b *vectorized.RecordBatch, rowIdx int, key s
 			}
 		}
 	}
+	// Capture the bucket start for a time-bucketed group (design §7.2). Every
+	// row in the group shares the same value by construction — the bucket is
+	// itself part of keyIndices — so the creating row's value is definitive.
+	if a.bucketIdx >= 0 {
+		if tsCol, ok := b.Columns[a.bucketIdx].(*vectorized.TypedColumn[int64]); ok {
+			data := tsCol.Data()
+			if rowIdx >= 0 && rowIdx < len(data) {
+				g.timeValue = data[rowIdx]
+			}
+		}
+	}
 	return g, nil
 }
 
-// fold delegates one row's value to the slot's underlying aggregation.Map.
-// Nulls are skipped — neither the count nor the running min/max/sum is touched.
-func (a *BatchAggregation) fold(b *vectorized.RecordBatch, rowIdx int, slot *aggSlot, spec AggSpec) {
+// distinctEntryOverhead estimates the per-value bookkeeping cost of one new
+// entry in a Distinct's backing map[string]struct{} (string header + hash
+// bucket slot), on top of the encoded key's own byte length. A rough,
+// deliberately generous constant — like aggEntrySize's per-group estimate,
+// it only needs to fail the budget before an actual OOM, not be exact.
+const distinctEntryOverhead int64 = 48
+
+// fold delegates one row's value to the slot's underlying aggregation.Map,
+// or to foldDistinct for AggCountDistinct. Nulls are skipped — neither the
+// count nor the running min/max/sum/distinct-set is touched.
+//
+// COUNT over a non-numeric column (string/bytes tag, design §6) must not
+// read the value at all — there is nothing to parse, and countFunc.In
+// ignores its argument regardless (pkg/query/aggregation/function.go), so a
+// dummy 0 is enough to advance the count. COUNT_DISTINCT is different: it
+// must actually read the value (to hash it), so it cannot share this
+// early-return branch.
+func (a *BatchAggregation) fold(b *vectorized.RecordBatch, rowIdx int, slot *aggSlot, spec AggSpec) error {
 	col := b.Columns[spec.InputCol]
 	if col.IsNull(rowIdx) {
-		return
+		return nil
+	}
+	if spec.Func == AggCountDistinct {
+		return a.foldDistinct(col, rowIdx, slot)
+	}
+	colType := a.inputSchema.Columns[spec.InputCol].Type
+	if spec.Func == AggCount && colType != vectorized.ColumnTypeInt64 && colType != vectorized.ColumnTypeFloat64 {
+		slot.intMap.In(0)
+		return nil
 	}
 	if slot.intMap != nil {
 		var v int64
@@ -474,7 +605,7 @@ func (a *BatchAggregation) fold(b *vectorized.RecordBatch, rowIdx int, slot *agg
 			v = col.(*vectorized.TypedColumn[int64]).Data()[rowIdx]
 		}
 		slot.intMap.In(v)
-		return
+		return nil
 	}
 	var v float64
 	if slot.inputIsFloat {
@@ -483,6 +614,37 @@ func (a *BatchAggregation) fold(b *vectorized.RecordBatch, rowIdx int, slot *agg
 		v = float64(col.(*vectorized.TypedColumn[int64]).Data()[rowIdx])
 	}
 	slot.floatMap.In(v)
+	return nil
+}
+
+// foldDistinct encodes col's value at rowIdx with appendKeyComponent (the
+// same per-type byte encoder BatchAggregation's own group key already
+// uses — it already covers every target type the §6 semantics matrix
+// admits) and inserts it into slot's distinct set. Unlike the fixed-size
+// numeric slots, a distinct set grows with cardinality (design §7.6), so
+// memory is charged per newly-added value here, not once per group in
+// Consume — refunded together with every other charge this operator holds
+// via the shared a.reserved counter in Close.
+//
+// Contains is checked (not In) before reserving: In mutates the set
+// unconditionally, so calling it first would insert a rejected value into
+// the set before its reservation is known to succeed, leaving that value
+// resident — and uncharged — in memory even though the budget guard
+// rejected it. In is only called once the reservation for a genuinely new
+// key has actually succeeded.
+func (a *BatchAggregation) foldDistinct(col vectorized.Column, rowIdx int, slot *aggSlot) error {
+	var sb [64]byte
+	encoded := appendKeyComponent(sb[:0], col, rowIdx)
+	if slot.distinct.Contains(encoded) {
+		return nil
+	}
+	charge := int64(len(encoded)) + distinctEntryOverhead
+	if reserveErr := a.tracker.Reserve(charge); reserveErr != nil {
+		return fmt.Errorf("aggregation memory budget exceeded: %w", reserveErr)
+	}
+	a.reserved += charge
+	slot.distinct.In(encoded)
+	return nil
 }
 
 func (a *BatchAggregation) emitGroupRow(out *vectorized.RecordBatch, group *aggGroup) {
@@ -490,6 +652,11 @@ func (a *BatchAggregation) emitGroupRow(out *vectorized.RecordBatch, group *aggG
 	// -1 in AggModeAll, 0 in AggModeMap (see buildAggOutputLayout).
 	if a.outputShardIdx >= 0 {
 		out.Columns[a.outputShardIdx].(*vectorized.TypedColumn[int64]).Append(group.shardID)
+	}
+	// Conditional D2 reversal (design §7.2): re-emit the bucket start as a
+	// RoleTimestamp column, present only when this aggregation is bucketed.
+	if a.outputTimeIdx >= 0 {
+		out.Columns[a.outputTimeIdx].(*vectorized.TypedColumn[int64]).Append(group.timeValue)
 	}
 	// Projected tag columns, in tagIndices order — including non-key tags
 	// carried forward as the first-seen value. tagOutOffset is 0 in
@@ -531,25 +698,49 @@ func (a *BatchAggregation) computeKey(b *vectorized.RecordBatch, rowIdx int) str
 	return string(buf)
 }
 
-// newAggSlot builds the accumulator for the (function, input type, mode)
-// triple. AggModeAll / AggModeMap allocate an aggregation.Map (raw fold +
-// optional Partial export); AggModeReduce allocates an aggregation.Reduce
-// (Combine partials + final Val). The numeric type mirrors aggOutputType so
-// the slot's value can be Append'd directly to the typed output column.
-func newAggSlot(fn AggFunc, inputIsFloat bool, mode AggMode) (aggSlot, error) {
+// newAggSlot builds the accumulator for the (function, input type, target
+// kind, mode) tuple. AggModeAll / AggModeMap allocate an aggregation.Map (raw
+// fold + optional Partial export); AggModeReduce allocates an
+// aggregation.Reduce (Combine partials + final Val). The numeric type
+// mirrors aggOutputType so the slot's value can be Append'd directly to the
+// typed output column.
+func newAggSlot(fn AggFunc, inputIsFloat, isTagTarget bool, mode AggMode) (aggSlot, error) {
+	// AggCountDistinct bypasses the Number-parameterized Map/Reduce
+	// dispatch below entirely: its accumulator (aggregation.Distinct) is
+	// not generic over int64/float64, since the target may be a
+	// string/bytes tag. The liaison never constructs a distinct slot — it
+	// combines already-local-distinct partials via ordinary AggSum (design
+	// §7.4, "local distinct, global SUM") — so AggModeReduce here is a
+	// producer/planner bug, not a data error.
+	if fn == AggCountDistinct {
+		if mode == AggModeReduce {
+			return aggSlot{}, fmt.Errorf("vectorized.measure: AggCountDistinct is never reduced directly — the liaison combines local distinct counts via AggSum")
+		}
+		return aggSlot{fn: fn, distinct: aggregation.NewDistinct()}, nil
+	}
 	af, modelErr := toModelAggFunc(fn)
 	if modelErr != nil {
 		return aggSlot{}, modelErr
 	}
 	slot := aggSlot{fn: fn, inputIsFloat: inputIsFloat}
-	// All functions follow the input type to match the row path, whose
+	// SUM/MIN/MAX/COUNT follow the input type to match the row path, whose
 	// aggregation.NewMap[int64] / [float64] is dispatched on the field's
 	// declared type in pkg/query/logical/measure/measure_plan_aggregation.go
 	// (FIELD_TYPE_INT → int64; FIELD_TYPE_FLOAT → float64). COUNT is
 	// included: the row path's countFunc[N] is parameterized by N and
 	// ToFieldValue[N] emits FieldValue_Int / FieldValue_Float by N, so
 	// COUNT on a float field must emit a float (e.g. float_top_count).
-	useFloat := inputIsFloat
+	//
+	// MEAN over a TAG forces a float64 accumulator (design §6 — "MEAN over
+	// an INT tag yields float64"): there is no FLOAT tag type, so an int64
+	// accumulator would silently truncate. fold already reads an int64
+	// input column and converts to float64 before feeding floatMap.In, so
+	// this is safe. MEAN over a FIELD is unchanged (still follows
+	// inputIsFloat) — AggModeMap's int64 sum/count partial for an INT field
+	// is pinned by TestBatchAggregation_AggModeMap_MeanEmitsValueAndCount;
+	// widening it is a separate, pre-existing correctness question outside
+	// this issue's scope.
+	useFloat := inputIsFloat || (fn == AggMean && isTagTarget)
 	if mode == AggModeReduce {
 		if useFloat {
 			r, reduceErr := aggregation.NewReduce[float64](af)
@@ -584,6 +775,10 @@ func newAggSlot(fn AggFunc, inputIsFloat bool, mode AggMode) (aggSlot, error) {
 
 // write emits the slot's reduced value to the typed output column.
 func (s *aggSlot) write(col vectorized.Column) {
+	if s.distinct != nil {
+		col.(*vectorized.TypedColumn[int64]).Append(s.distinct.Val())
+		return
+	}
 	if s.intMap != nil {
 		col.(*vectorized.TypedColumn[int64]).Append(s.intMap.Val())
 		return
@@ -598,6 +793,13 @@ func (s *aggSlot) write(col vectorized.Column) {
 // the same N for both), matching the row path's per-N FieldValue oneof
 // (FIELD_TYPE_INT → int64, FIELD_TYPE_FLOAT → float64).
 func (s *aggSlot) writePartial(out *vectorized.RecordBatch, valueIdx, countIdx int) {
+	if s.distinct != nil {
+		// The local distinct count is the whole partial — no count
+		// sidecar (aggHasCount is false for AggCountDistinct specs,
+		// unlike MEAN's sum+count shape; see buildAggOutputLayout).
+		out.Columns[valueIdx].(*vectorized.TypedColumn[int64]).Append(s.distinct.Val())
+		return
+	}
 	if s.intMap != nil {
 		p := s.intMap.Partial()
 		out.Columns[valueIdx].(*vectorized.TypedColumn[int64]).Append(p.Value)
@@ -625,6 +827,8 @@ func toModelAggFunc(fn AggFunc) (modelv1.AggregationFunction, error) {
 		return modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX, nil
 	case AggMean:
 		return modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN, nil
+	case AggCountDistinct:
+		return modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT, nil
 	}
 	return modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED,
 		fmt.Errorf("vectorized.measure: unknown AggFunc %d", fn)
@@ -646,25 +850,34 @@ type aggOutputLayout struct {
 	// RoleShardID column. -1 in AggModeAll (no shard column emitted);
 	// 0 in AggModeMap (the partial batch always carries shard id first).
 	outputShardIdx int
+	// outputTimestampIdx is the output-batch column index of the RoleTimestamp
+	// column re-emitted for a time-bucketed aggregation (design §7.2's
+	// conditional D2 reversal). -1 when the aggregation is not bucketed —
+	// the unbucketed case still drops the timestamp entirely, unchanged.
+	outputTimestampIdx int
 	// tagOutOffset is the output-batch column index where the tag columns
-	// begin (0 in AggModeAll; 1 in AggModeMap).
+	// begin: 0 in AggModeAll, plus 1 for a leading shard-id column (AggModeMap)
+	// and plus 1 more for a leading bucket timestamp column (if bucketed).
 	tagOutOffset int
 }
 
 // buildAggOutputLayout derives the output-batch ColumnDef list AND the
-// per-agg / shard-id index bookkeeping for a given (input schema, tag
-// indices, agg specs, mode). It is the sole place that decides Map-mode's
-// shard-id-first + MEAN-emits-two-columns layout, so emit-time code can
-// just consult precomputed offsets.
+// per-agg / shard-id / timestamp index bookkeeping for a given (input
+// schema, tag indices, agg specs, mode, bucket index). It is the sole place
+// that decides Map-mode's shard-id-first + MEAN-emits-two-columns layout,
+// plus the bucketed case's leading timestamp column, so emit-time code can
+// just consult precomputed offsets. bucketIdx is the input-schema index of
+// the bucket key column, or -1 when the aggregation is not bucketed.
 func buildAggOutputLayout(
-	input *vectorized.BatchSchema, tagIndices []int, aggs []AggSpec, mode AggMode,
+	input *vectorized.BatchSchema, tagIndices []int, aggs []AggSpec, mode AggMode, bucketIdx int,
 ) aggOutputLayout {
-	// Worst-case capacity: shard-id (1) + tags + 2 per agg (MEAN value + count).
-	defs := make([]vectorized.ColumnDef, 0, 1+len(tagIndices)+2*len(aggs))
+	// Worst-case capacity: shard-id (1) + timestamp (1) + tags + 2 per agg.
+	defs := make([]vectorized.ColumnDef, 0, 2+len(tagIndices)+2*len(aggs))
 	layout := aggOutputLayout{
-		aggOutOffsets:  make([]int, len(aggs)),
-		aggHasCount:    make([]bool, len(aggs)),
-		outputShardIdx: -1,
+		aggOutOffsets:      make([]int, len(aggs)),
+		aggHasCount:        make([]bool, len(aggs)),
+		outputShardIdx:     -1,
+		outputTimestampIdx: -1,
 	}
 	if mode == AggModeMap {
 		defs = append(defs, vectorized.ColumnDef{
@@ -674,13 +887,18 @@ func buildAggOutputLayout(
 		})
 		layout.outputShardIdx = 0
 	}
+	if bucketIdx >= 0 {
+		layout.outputTimestampIdx = len(defs)
+		defs = append(defs, vectorized.ColumnDef{Role: vectorized.RoleTimestamp, Type: vectorized.ColumnTypeInt64})
+	}
 	layout.tagOutOffset = len(defs)
 	for _, ti := range tagIndices {
 		defs = append(defs, input.Columns[ti])
 	}
 	for i, agg := range aggs {
 		layout.aggOutOffsets[i] = len(defs)
-		valueType := aggOutputType(input.Columns[agg.InputCol].Type, agg.Func)
+		inputDef := input.Columns[agg.InputCol]
+		valueType := aggOutputType(inputDef.Type, agg.Func, inputDef.Role == vectorized.RoleTag)
 		defs = append(defs, vectorized.ColumnDef{
 			Role: vectorized.RoleField,
 			Name: agg.Output,
@@ -712,16 +930,42 @@ func findShardIDIndex(schema *vectorized.BatchSchema) int {
 	return -1
 }
 
-// aggOutputType maps (input type, agg func) to the output column type.
-// Every function (COUNT included) preserves the input type so vec egress
-// emits the same FieldValue oneof variant the row path uses: the row
-// path's accumulator and ToFieldValue[N] are dispatched on the field's
-// declared type (FIELD_TYPE_INT → int64 → FieldValue_Int;
-// FIELD_TYPE_FLOAT → float64 → FieldValue_Float; see
-// measure_plan_aggregation.go and pkg/query/aggregation).
-func aggOutputType(in vectorized.ColumnType, _ AggFunc) vectorized.ColumnType {
+// aggOutputType maps (input type, agg func, target kind) to the output
+// column type. SUM/MIN/MAX preserve the input type so vec egress emits the
+// same FieldValue oneof variant the row path uses: the row path's
+// accumulator and ToFieldValue[N] are dispatched on the field's declared
+// type (FIELD_TYPE_INT → int64 → FieldValue_Int; FIELD_TYPE_FLOAT →
+// float64 → FieldValue_Float; see measure_plan_aggregation.go and
+// pkg/query/aggregation). Two functions diverge from "preserve input type":
+//
+//   - MEAN over a tag outputs float64 — matches newAggSlot's isTagTarget
+//     float64 accumulator (design §6). MEAN over a field preserves the
+//     input type unchanged (see newAggSlot for why).
+//   - COUNT preserves int64/float64 (unchanged, including the row-path
+//     quirk of a float count over a float field) but forces int64 for any
+//     other input — string/bytes tag columns (design §6) have no numeric
+//     representation to preserve.
+func aggOutputType(in vectorized.ColumnType, fn AggFunc, isTagTarget bool) vectorized.ColumnType {
 	if in == vectorized.ColumnTypeFieldValue {
 		return vectorized.ColumnTypeInt64
 	}
-	return in
+	switch fn {
+	case AggMean:
+		if isTagTarget {
+			return vectorized.ColumnTypeFloat64
+		}
+		return in
+	case AggCount:
+		if in == vectorized.ColumnTypeFloat64 {
+			return vectorized.ColumnTypeFloat64
+		}
+		return vectorized.ColumnTypeInt64
+	case AggCountDistinct:
+		// A distinct count is always an integer, regardless of the
+		// target's type — unlike AggCount, there is no float-input
+		// carry-through quirk to preserve here.
+		return vectorized.ColumnTypeInt64
+	default:
+		return in
+	}
 }

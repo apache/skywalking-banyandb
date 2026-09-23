@@ -7,6 +7,13 @@
 **Host:** 32-core Linux, 31 GB RAM, no swap; Docker daemon 29.3.1
 **Harness:** `scripts/soak-vectorized.sh` + `scripts/soak-monitor.sh` + `cmd/soak-driver`
 
+> **Historical record — superseded by 0.12.0.** This document describes the vectorized-query
+> rollout gate as it ran while the row-based query path still existed. The
+> `--measure-vectorized-enabled` flag it toggles no longer selects a query engine: the row path
+> was removed in 0.12.0 ([apache/skywalking#13998](https://github.com/apache/skywalking/issues/13998)),
+> the flag is a no-op that fails fast on `=false`, and it is removed entirely in 0.13.0. The
+> procedure is preserved verbatim for provenance — do not run it against a 0.12.0 or later build.
+
 ## Acceptance criteria
 
 ### 1. ≥48 h staging run with `--measure-vectorized-enabled=true` — **PASS**

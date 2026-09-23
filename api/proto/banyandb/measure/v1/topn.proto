@@ -54,13 +54,30 @@ message TopNResponse {
 // TopNRequest is the request contract for query.
 message TopNRequest {
   // groups indicate where the data points are stored.
-  repeated string groups = 1 [(validate.rules).repeated.min_items = 1];
+  repeated string groups = 1 [(validate.rules).repeated = {
+    min_items: 1
+    max_items: 64
+    items: {
+      string: {
+        min_len: 1
+        max_len: 255
+        pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+      }
+    }
+  }];
   // name is the identity of a measure.
-  string name = 2 [(validate.rules).string.min_len = 1];
+  string name = 2 [(validate.rules).string = {
+    min_len: 1
+    max_len: 255
+    pattern: "^[a-zA-Z0-9_]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+  }];
   // time_range is a range query with begin/end time of entities in the timeunit of milliseconds.
   model.v1.TimeRange time_range = 3 [(validate.rules).message.required = true];
   // top_n set the how many items should be returned in each list.
-  int32 top_n = 4 [(validate.rules).int32.gt = 0];
+  int32 top_n = 4 [(validate.rules).int32 = {
+    gt: 0
+    lte: 10000
+  }];
   // agg aggregates lists grouped by field names in the time_range
   model.v1.AggregationFunction agg = 5;
   // criteria select counters. Only equals are acceptable.

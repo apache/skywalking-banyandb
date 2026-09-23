@@ -19,11 +19,14 @@ package plan
 
 import (
 	"fmt"
+	"slices"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	measure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -48,7 +51,9 @@ const defaultLimit uint32 = 100
 //   - nil schema
 //   - tag/field projection naming columns not in the schema
 //   - GroupBy referencing a tag absent from the schema
-//   - Agg referencing a field absent from the schema
+//   - Agg referencing a field or tag absent from the schema, naming both or
+//     neither of field_name/tag_name, or naming a tag whose type or family
+//     qualification the target function does not support (design §6)
 //
 // GroupBy and Agg may travel together (group + aggregate), or either
 // alone: Agg without GroupBy is a scalar reduce (single output row);
@@ -65,6 +70,9 @@ func Analyze(req *measurev1.QueryRequest, measureSchema *databasev1.Measure, mod
 	}
 	if measureSchema == nil {
 		return nil, fmt.Errorf("plan.Analyze: nil Measure schema")
+	}
+	if pushdownErr := validateCountDistinctPushdown(req, measureSchema); pushdownErr != nil {
+		return nil, pushdownErr
 	}
 
 	tagProjection := buildTagProjection(req)
@@ -103,6 +111,7 @@ func Analyze(req *measurev1.QueryRequest, measureSchema *databasev1.Measure, mod
 	// field always materialize a column, instead of falling through to
 	// the row path when the request omitted them from its projection.
 	tagProjection = ensureGroupByProjected(tagProjection, gbModel)
+	tagProjection = ensureAggTagProjected(tagProjection, aggModel)
 	fieldProjection = ensureAggFieldProjected(fieldProjection, aggModel)
 
 	opts := model.MeasureQueryOptions{
@@ -177,44 +186,147 @@ func buildTagProjection(req *measurev1.QueryRequest) []model.TagProjection {
 	return out
 }
 
-// translateGroupBy builds the model GroupBy struct from the proto,
-// validating that:
-//   - the GroupBy tag_projection names exactly one family with non-empty tags
-//     (v1 single-family limitation)
-//   - the named GroupBy tags exist in the Measure schema
+// translateGroupBy builds the model GroupBy struct from the proto. A
+// GroupBy must set tag_projection, time_bucket, or both (design §7.2 —
+// bucketing alone, with no tag key, is a legal grouping). When
+// tag_projection is present it must name exactly one family with non-empty
+// tags (v1 single-family limitation), and every named tag must exist in the
+// Measure schema. When time_bucket is present, its width is resolved per
+// §5.3 and the request is checked against the bucketed streaming
+// precondition (time-ascending input).
 func translateGroupBy(req *measurev1.QueryRequest, measureSchema *databasev1.Measure) (*model.MeasureGroupBy, error) {
-	families := req.GetGroupBy().GetTagProjection().GetTagFamilies()
-	if len(families) == 0 {
-		return nil, fmt.Errorf("plan.Analyze: GroupBy.tag_projection must list at least one tag family")
+	groupByProto := req.GetGroupBy()
+	families := groupByProto.GetTagProjection().GetTagFamilies()
+	tbProto := groupByProto.GetTimeBucket()
+	if len(families) == 0 && tbProto == nil {
+		return nil, fmt.Errorf("plan.Analyze: GroupBy must set tag_projection, time_bucket, or both")
 	}
-	if len(families) > 1 {
-		return nil, fmt.Errorf("plan.Analyze: GroupBy.tag_projection v1 supports a single tag family, got %d", len(families))
+
+	gb := &model.MeasureGroupBy{}
+	if len(families) > 0 {
+		if len(families) > 1 {
+			return nil, fmt.Errorf("plan.Analyze: GroupBy.tag_projection v1 supports a single tag family, got %d", len(families))
+		}
+		family := families[0]
+		if len(family.GetTags()) == 0 {
+			return nil, fmt.Errorf("plan.Analyze: GroupBy.tag_projection family %q has no tags", family.GetName())
+		}
+		gb.TagFamily = family.GetName()
+		gb.TagNames = append([]string(nil), family.GetTags()...)
+		if validateErr := validateGroupByTags(measureSchema, gb); validateErr != nil {
+			return nil, validateErr
+		}
 	}
-	family := families[0]
-	if len(family.GetTags()) == 0 {
-		return nil, fmt.Errorf("plan.Analyze: GroupBy.tag_projection family %q has no tags", family.GetName())
-	}
-	gb := &model.MeasureGroupBy{
-		TagFamily: family.GetName(),
-		TagNames:  append([]string(nil), family.GetTags()...),
-	}
-	if validateErr := validateGroupByTags(measureSchema, gb); validateErr != nil {
-		return nil, validateErr
+
+	if tbProto != nil {
+		// A time-bucketed GroupBy without an Agg has no execution support:
+		// BatchTimeBucket's raw (no-AggSpec) shape reuses BatchAggregation's
+		// output layout, which — unlike BatchGroupByFirst's full schema
+		// passthrough — carries only tags and the bucket timestamp, silently
+		// dropping every projected field (and, on the distributed path, the
+		// series-id/version columns raw row merging requires). Reject rather
+		// than silently lose data; a bucketed raw GroupBy is a possible
+		// follow-up, not something this design ships.
+		if req.GetAgg() == nil {
+			return nil, fmt.Errorf("plan.Analyze: time_bucket requires Agg; a bucketed raw GroupBy (no aggregate) is not supported yet")
+		}
+		tb, tbErr := resolveTimeBucket(tbProto, measureSchema)
+		if tbErr != nil {
+			return nil, tbErr
+		}
+		if orderErr := validateBucketableOrdering(req); orderErr != nil {
+			return nil, orderErr
+		}
+		gb.TimeBucket = tb
 	}
 	return gb, nil
 }
 
-// translateAgg builds the model Agg struct from the proto, validating
-// that the Agg field exists in the Measure schema.
+// resolveTimeBucket implements the §5.3 width-resolution table: an explicit
+// tb.Width wins; an empty Width falls back to the measure's own interval;
+// both empty is rejected, and so is any width that fails to parse or is not
+// strictly positive. There is deliberately no "must be a multiple of the
+// interval" rule — Measure.interval is a declared write cadence, not an
+// enforced storage invariant, so every positive width is equally meaningful.
+func resolveTimeBucket(tb *measurev1.QueryRequest_GroupBy_TimeBucket, measureSchema *databasev1.Measure) (*model.MeasureTimeBucket, error) {
+	raw := tb.GetWidth()
+	if raw == "" {
+		raw = measureSchema.GetInterval()
+		if raw == "" {
+			return nil, fmt.Errorf("plan.Analyze: time_bucket needs a width: measure %q declares no interval", measureSchema.GetMetadata().GetName())
+		}
+	}
+	width, parseErr := timestamp.ParseDuration(raw)
+	if parseErr != nil {
+		return nil, fmt.Errorf("plan.Analyze: time_bucket width %q is not a valid duration: %w", raw, parseErr)
+	}
+	if width <= 0 {
+		return nil, fmt.Errorf("plan.Analyze: time_bucket width %q must be positive, got %s", raw, width)
+	}
+	return &model.MeasureTimeBucket{
+		Width:           raw,
+		WidthNanos:      int64(width),
+		UseIndexModeMap: measureSchema.GetIndexMode(),
+	}, nil
+}
+
+// validateBucketableOrdering rejects a bucketed request whose order_by names
+// a non-time index rule (design §7.2: both the streaming operator and the
+// index-mode map fallback assume the request carries no ordering that would
+// contradict time-ascending scan input). An aggregation request already
+// carries no effective order_by today — Analyze never reads
+// req.GetOrderBy(), and the distributed planner skips OrderBy resolution
+// whenever Agg is set — so this is a belt-and-suspenders guard against a
+// caller relying on a setting the engine would otherwise silently ignore,
+// applied uniformly regardless of the streaming/map choice for a
+// consistent contract.
+func validateBucketableOrdering(req *measurev1.QueryRequest) error {
+	orderBy := req.GetOrderBy()
+	if ruleName := orderBy.GetIndexRuleName(); ruleName != "" {
+		return fmt.Errorf("plan.Analyze: time_bucket requires time ordering; order_by.index_rule_name %q is not supported on a bucketed query", ruleName)
+	}
+	// An empty index_rule_name with Sort == SORT_DESC still resolves to a
+	// time-ordered scan (index.OrderByTypeTime) per applyMeasureQueryOrdering
+	// — just descending instead of ascending. BatchTimeBucket's streaming
+	// path assumes ascending input specifically, not merely "time-ordered",
+	// so this must be rejected too.
+	if orderBy.GetSort() == modelv1.Sort_SORT_DESC {
+		return fmt.Errorf("plan.Analyze: time_bucket requires ascending time order; order_by.sort SORT_DESC is not supported on a bucketed query")
+	}
+	return nil
+}
+
+// translateAgg builds the model Agg struct from the proto. Exactly one of
+// field_name / tag_name must be set; a tag target additionally requires
+// tag_family (tag names are only unique within a family — design §5.1) and
+// is validated against the §6 semantics matrix for the five functions this
+// issue implements. COUNT_DISTINCT's matrix row is accepted here (its type
+// rules match COUNT's) but has no execution support yet: an unmapped
+// function is rejected downstream, at protoAggFuncToInternal.
 func translateAgg(req *measurev1.QueryRequest, measureSchema *databasev1.Measure) (*model.MeasureAgg, error) {
 	aggProto := req.GetAgg()
-	if validateErr := validateAggField(measureSchema, aggProto.GetFieldName()); validateErr != nil {
-		return nil, validateErr
+	fieldName := aggProto.GetFieldName()
+	tagName := aggProto.GetTagName()
+	tagFamily := aggProto.GetTagFamily()
+
+	switch {
+	case fieldName != "" && tagName != "":
+		return nil, fmt.Errorf("plan.Analyze: Agg must target exactly one of field_name or tag_name, got both (%q, %q)", fieldName, tagName)
+	case fieldName == "" && tagName == "":
+		return nil, fmt.Errorf("plan.Analyze: Agg must set exactly one of field_name or tag_name")
+	case tagName != "" && tagFamily == "":
+		return nil, fmt.Errorf("plan.Analyze: Agg.tag_name %q requires tag_family to be set", tagName)
+	case fieldName != "":
+		if validateErr := validateAggField(measureSchema, fieldName); validateErr != nil {
+			return nil, validateErr
+		}
+		return &model.MeasureAgg{FieldName: fieldName, Func: aggProto.GetFunction()}, nil
+	default:
+		if validateErr := validateAggTag(measureSchema, tagFamily, tagName, aggProto.GetFunction()); validateErr != nil {
+			return nil, validateErr
+		}
+		return &model.MeasureAgg{TagName: tagName, TagFamily: tagFamily, Func: aggProto.GetFunction()}, nil
 	}
-	return &model.MeasureAgg{
-		FieldName: aggProto.GetFieldName(),
-		Func:      aggProto.GetFunction(),
-	}, nil
 }
 
 // ensureGroupByProjected returns a TagProjection slice guaranteed to
@@ -274,6 +386,38 @@ func ensureAggFieldProjected(fp []string, agg *model.MeasureAgg) []string {
 	return append(out, agg.FieldName)
 }
 
+// ensureAggTagProjected mirrors ensureGroupByProjected for an Agg tag
+// target: when the caller's tag_projection already names it, agg.HideTag
+// stays false and the caller gets both a tag and a field of that name in
+// the output (design §5.2 — separate namespaces, nothing collides).
+// Otherwise the tag is appended to its family (creating the family if
+// absent) and agg.HideTag is set so the injected copy is not also emitted
+// as a first-seen tag column alongside the aggregation result.
+func ensureAggTagProjected(tp []model.TagProjection, agg *model.MeasureAgg) []model.TagProjection {
+	if agg == nil || agg.TagName == "" {
+		return tp
+	}
+	for _, fam := range tp {
+		if fam.Family != agg.TagFamily {
+			continue
+		}
+		for _, n := range fam.Names {
+			if n == agg.TagName {
+				return tp
+			}
+		}
+	}
+	agg.HideTag = true
+	out := append([]model.TagProjection(nil), tp...)
+	for i := range out {
+		if out[i].Family == agg.TagFamily {
+			out[i].Names = append(append([]string(nil), out[i].Names...), agg.TagName)
+			return out
+		}
+	}
+	return append(out, model.TagProjection{Family: agg.TagFamily, Names: []string{agg.TagName}})
+}
+
 // validateGroupByTags ensures every name in gb.TagNames exists within the
 // configured tag family of measureSchema.
 func validateGroupByTags(measureSchema *databasev1.Measure, gb *model.MeasureGroupBy) error {
@@ -305,4 +449,110 @@ func validateAggField(measureSchema *databasev1.Measure, fieldName string) error
 		}
 	}
 	return fmt.Errorf("plan.Analyze: Agg field %q not present in measure schema", fieldName)
+}
+
+// validateAggTag resolves (tagFamily, tagName) against measureSchema and
+// enforces the §6 semantics matrix: array and TIMESTAMP tags are rejected
+// outright (mirroring keyComponentSupported, the operator's own key-encoding
+// limit, so the two cannot drift apart); SUM/MIN/MAX/MEAN additionally
+// require TAG_TYPE_INT, while COUNT and COUNT_DISTINCT accept any tag type
+// that survives the array/timestamp check.
+func validateAggTag(measureSchema *databasev1.Measure, tagFamily, tagName string, fn modelv1.AggregationFunction) error {
+	spec := findTagSpec(measureSchema, tagFamily, tagName)
+	if spec == nil {
+		return fmt.Errorf("plan.Analyze: Agg tag %s.%s not present in measure schema", tagFamily, tagName)
+	}
+	colType, typeErr := tagTypeToColumnTypeMG(spec.GetType())
+	if typeErr != nil {
+		return fmt.Errorf("plan.Analyze: Agg tag %s.%s has type %s, which cannot be an aggregation target", tagFamily, tagName, spec.GetType())
+	}
+	if !measure.KeyComponentSupported(colType) {
+		return fmt.Errorf("plan.Analyze: Agg tag %s.%s has type %s, which cannot be an aggregation target", tagFamily, tagName, spec.GetType())
+	}
+	switch fn {
+	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT,
+		modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT:
+		return nil
+	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
+		modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN,
+		modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX,
+		modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN:
+		if colType != vectorized.ColumnTypeInt64 {
+			return fmt.Errorf("plan.Analyze: Agg tag %s.%s: %s is not supported over tag type %s", tagFamily, tagName, fn, spec.GetType())
+		}
+		return nil
+	default:
+		return fmt.Errorf("plan.Analyze: Agg.Function is UNSPECIFIED or unknown")
+	}
+}
+
+// validateCountDistinctPushdown enforces design §7.4's decomposability
+// condition for a COUNT_DISTINCT Agg: every one of the measure's routing
+// tags (its sharding_key if configured, else its entity — the same
+// fallback banyand/liaison/grpc/discovery.go's navigateByLocator already
+// uses) must be covered by the GroupBy keys or be the aggregation target
+// itself. If a routing tag is uncovered, a value sharing that routing tag
+// value can land on more than one shard, so per-shard distinct counts are
+// not disjoint and summing them would double-count.
+//
+// Evaluated identically for standalone and distributed requests — the
+// design's own principle: a query either works everywhere or nowhere. A
+// standalone deployment has no sharding and could serve any COUNT_DISTINCT
+// correctly today, but must not silently diverge from what the same query
+// does once the measure is sharded.
+//
+// Routing tag names are resolved against the schema by bare name — not
+// family — because Entity/ShardingKey.TagNames carry no family qualifier
+// at the schema level; pkg/partition/entity.go's NewEntityLocator /
+// NewShardingKeyLocator already resolve them the same way via
+// pbv1.FindTagByName. This function resolves each routing tag's actual
+// family from the schema before comparing, so it does not introduce a new
+// bare-name ambiguity on the GroupBy/target side, which IS family-qualified.
+func validateCountDistinctPushdown(req *measurev1.QueryRequest, measureSchema *databasev1.Measure) error {
+	agg := req.GetAgg()
+	if agg == nil || agg.GetFunction() != modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT {
+		return nil
+	}
+	routingTagNames := measureSchema.GetShardingKey().GetTagNames()
+	if len(routingTagNames) == 0 {
+		routingTagNames = measureSchema.GetEntity().GetTagNames()
+	}
+	families := measureSchema.GetTagFamilies()
+	groupByFamily, groupByTagNames := distributedGroupByTagKey(req.GetGroupBy())
+	targetFamily, targetName := agg.GetTagFamily(), agg.GetTagName()
+	for _, routingName := range routingTagNames {
+		fi, _, tagSpec := pbv1.FindTagByName(families, routingName)
+		if tagSpec == nil {
+			return fmt.Errorf("plan.Analyze: COUNT_DISTINCT cannot push down: routing tag %q is not present in the measure schema", routingName)
+		}
+		routingFamily := families[fi].GetName()
+		covered := routingFamily == groupByFamily && slices.Contains(groupByTagNames, routingName)
+		if !covered && routingFamily == targetFamily && routingName == targetName {
+			covered = true
+		}
+		if !covered {
+			return fmt.Errorf(
+				"plan.Analyze: COUNT_DISTINCT cannot push down: routing tag %s.%s is neither a GroupBy key nor the aggregation target — "+
+					"add it to GROUP BY, or query it directly instead of aggregating",
+				routingFamily, routingName)
+		}
+	}
+	return nil
+}
+
+// findTagSpec returns the TagSpec named (tagFamily, tagName) in
+// measureSchema, or nil if no such family or tag exists.
+func findTagSpec(measureSchema *databasev1.Measure, tagFamily, tagName string) *databasev1.TagSpec {
+	for _, tf := range measureSchema.GetTagFamilies() {
+		if tf.GetName() != tagFamily {
+			continue
+		}
+		for _, ts := range tf.GetTags() {
+			if ts.GetName() == tagName {
+				return ts
+			}
+		}
+		return nil
+	}
+	return nil
 }

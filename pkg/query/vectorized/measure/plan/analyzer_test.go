@@ -21,6 +21,8 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/protobuf/proto"
+
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -29,21 +31,40 @@ import (
 )
 
 const (
-	tagSvc     = "svc"
-	fieldValue = "value"
+	tagSvc      = "svc"
+	fieldValue  = "value"
+	tagCount    = "count_tag" // TAG_TYPE_INT
+	tagBinary   = "bin_tag"   // TAG_TYPE_DATA_BINARY
+	tagIntArray = "arr_tag"   // TAG_TYPE_INT_ARRAY
+	tagTime     = "ts_tag"    // TAG_TYPE_TIMESTAMP
+	otherFamily = "other"     // a second family, for family-qualification tests
 )
 
 // testMeasureSchema builds a minimal Measure schema with one default tag
-// family containing the svc + region tag specs and one value field.
+// family containing: svc/region (string), count_tag (int, for the agg-tag
+// matrix), bin_tag (data_binary), arr_tag (int array), ts_tag (timestamp);
+// plus one "other" family repeating the svc name with a different type, to
+// pin that agg tag resolution is family-qualified (design §5.1); and one
+// value field.
 func testMeasureSchema() *databasev1.Measure {
 	return &databasev1.Measure{
-		Metadata: &commonv1.Metadata{Name: "demo", Group: "default"},
+		Metadata: &commonv1.Metadata{Name: "demo", Group: defaultName},
 		TagFamilies: []*databasev1.TagFamilySpec{
 			{
-				Name: "default",
+				Name: defaultName,
 				Tags: []*databasev1.TagSpec{
 					{Name: tagSvc, Type: databasev1.TagType_TAG_TYPE_STRING},
 					{Name: "region", Type: databasev1.TagType_TAG_TYPE_STRING},
+					{Name: tagCount, Type: databasev1.TagType_TAG_TYPE_INT},
+					{Name: tagBinary, Type: databasev1.TagType_TAG_TYPE_DATA_BINARY},
+					{Name: tagIntArray, Type: databasev1.TagType_TAG_TYPE_INT_ARRAY},
+					{Name: tagTime, Type: databasev1.TagType_TAG_TYPE_TIMESTAMP},
+				},
+			},
+			{
+				Name: otherFamily,
+				Tags: []*databasev1.TagSpec{
+					{Name: tagSvc, Type: databasev1.TagType_TAG_TYPE_INT},
 				},
 			},
 		},
@@ -55,7 +76,7 @@ func testMeasureSchema() *databasev1.Measure {
 
 func projTagProj() *modelv1.TagProjection {
 	return &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
-		{Name: "default", Tags: []string{tagSvc}},
+		{Name: defaultName, Tags: []string{tagSvc}},
 	}}
 }
 
@@ -256,7 +277,7 @@ func TestAnalyze_UnknownGroupByTag_Errors(t *testing.T) {
 		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		GroupBy: &measurev1.QueryRequest_GroupBy{
 			TagProjection: &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
-				{Name: "default", Tags: []string{"missing"}},
+				{Name: defaultName, Tags: []string{"missing"}},
 			}},
 			FieldName: fieldValue,
 		},
@@ -357,5 +378,669 @@ func TestPrintTree_RendersHierarchy(t *testing.T) {
 	}
 	if !strings.Contains(out, "    Scan(") {
 		t.Fatalf("PrintTree must include double-indented Scan, got: %s", out)
+	}
+}
+
+// aggTagReq builds a scalar-reduce (no GroupBy) request whose Agg targets a
+// tag instead of a field.
+func aggTagReq(fn modelv1.AggregationFunction, family, tag string) *measurev1.QueryRequest {
+	return &measurev1.QueryRequest{
+		Name:            "demo",
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg: &measurev1.QueryRequest_Aggregation{
+			Function:  fn,
+			TagName:   tag,
+			TagFamily: family,
+		},
+	}
+}
+
+// TestAnalyze_AggTagTarget_SumOverIntTag_Succeeds pins the §6 matrix cell
+// "Tag TAG_TYPE_INT × SUM ✅ new": translateAgg resolves the tag, and the
+// resulting model.MeasureAgg carries TagName/TagFamily with FieldName empty.
+func TestAnalyze_AggTagTarget_SumOverIntTag_Succeeds(t *testing.T) {
+	req := aggTagReq(modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, defaultName, tagCount)
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	gba := p.(*Limit).Child.(*GroupByAgg)
+	if gba.Agg.TagName != tagCount || gba.Agg.TagFamily != defaultName || gba.Agg.FieldName != "" {
+		t.Fatalf("Agg: want TagName=%s TagFamily=default FieldName=\"\", got %+v", tagCount, gba.Agg)
+	}
+}
+
+// TestAnalyze_AggTagTarget_CountOverStringTag_Succeeds pins the §6 matrix
+// cell "Tag TAG_TYPE_STRING × COUNT ✅ new".
+func TestAnalyze_AggTagTarget_CountOverStringTag_Succeeds(t *testing.T) {
+	req := aggTagReq(modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT, defaultName, tagSvc)
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err != nil {
+		t.Fatalf("COUNT over a string tag must succeed: %v", err)
+	}
+}
+
+// TestAnalyze_AggTagTarget_CountOverBinaryTag_Succeeds pins the §6 matrix
+// cell "Tag TAG_TYPE_DATA_BINARY × COUNT ✅ new".
+func TestAnalyze_AggTagTarget_CountOverBinaryTag_Succeeds(t *testing.T) {
+	req := aggTagReq(modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT, defaultName, tagBinary)
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err != nil {
+		t.Fatalf("COUNT over a data_binary tag must succeed: %v", err)
+	}
+}
+
+// TestAnalyze_AggTagTarget_SumOverStringTag_Rejected pins the §6 matrix
+// cell "Tag TAG_TYPE_STRING × SUM ❌ reject" — the error must name the tag
+// and its type.
+func TestAnalyze_AggTagTarget_SumOverStringTag_Rejected(t *testing.T) {
+	req := aggTagReq(modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, defaultName, tagSvc)
+	_, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	if err == nil {
+		t.Fatal("SUM over a string tag must be rejected")
+	}
+	if !strings.Contains(err.Error(), tagSvc) || !strings.Contains(err.Error(), "TAG_TYPE_STRING") {
+		t.Fatalf("error must name the tag and its type, got: %v", err)
+	}
+}
+
+// TestAnalyze_AggTagTarget_RejectsArrayTag pins the §6 rule that array tags
+// are rejected explicitly for every function, not left to silently collapse
+// every row into one group (the appendKeyComponent no-op failure mode).
+func TestAnalyze_AggTagTarget_RejectsArrayTag(t *testing.T) {
+	req := aggTagReq(modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT, defaultName, tagIntArray)
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err == nil {
+		t.Fatal("COUNT over an array tag must be rejected")
+	}
+}
+
+// TestAnalyze_AggTagTarget_RejectsTimestampTag pins the §6 rule that
+// TAG_TYPE_TIMESTAMP tags remain rejected as aggregation targets.
+func TestAnalyze_AggTagTarget_RejectsTimestampTag(t *testing.T) {
+	req := aggTagReq(modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT, defaultName, tagTime)
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err == nil {
+		t.Fatal("COUNT over a timestamp tag must be rejected")
+	}
+}
+
+// TestAnalyze_AggTagTarget_UnknownTag_Errors mirrors
+// TestAnalyze_UnknownAggField_Errors for the tag path.
+func TestAnalyze_AggTagTarget_UnknownTag_Errors(t *testing.T) {
+	req := aggTagReq(modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT, defaultName, "ghost")
+	_, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	if err == nil {
+		t.Fatal("unknown agg tag must error")
+	}
+	if !strings.Contains(err.Error(), "ghost") {
+		t.Fatalf("error should mention the missing tag, got %v", err)
+	}
+}
+
+// TestAnalyze_AggTagTarget_FamilyQualification_DistinguishesSameName pins
+// design §5.1: tag names are only unique within a family. "svc" is
+// TAG_TYPE_STRING in the default family (rejects SUM) but TAG_TYPE_INT in
+// "other" (accepts SUM) — the family qualifier must select the right one.
+func TestAnalyze_AggTagTarget_FamilyQualification_DistinguishesSameName(t *testing.T) {
+	req := aggTagReq(modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, otherFamily, tagSvc)
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	if err != nil {
+		t.Fatalf("SUM over other.svc (TAG_TYPE_INT) must succeed: %v", err)
+	}
+	gba := p.(*Limit).Child.(*GroupByAgg)
+	if gba.Agg.TagFamily != otherFamily {
+		t.Fatalf("Agg.TagFamily: want %s, got %s", otherFamily, gba.Agg.TagFamily)
+	}
+}
+
+// TestAnalyze_AggTagTarget_BothFieldAndTagSet_Errors and its neither-set
+// sibling pin translateAgg's "exactly one of field_name/tag_name" rule.
+func TestAnalyze_AggTagTarget_BothFieldAndTagSet_Errors(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg: &measurev1.QueryRequest_Aggregation{
+			Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
+			FieldName: fieldValue,
+			TagName:   tagCount,
+			TagFamily: defaultName,
+		},
+	}
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err == nil {
+		t.Fatal("Agg setting both field_name and tag_name must error")
+	}
+}
+
+func TestAnalyze_AggTagTarget_NeitherFieldNorTagSet_Errors(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Agg:             &measurev1.QueryRequest_Aggregation{Function: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
+	}
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err == nil {
+		t.Fatal("Agg setting neither field_name nor tag_name must error")
+	}
+}
+
+// TestAnalyze_AggTagTarget_TagNameWithoutTagFamily_Errors pins that a tag
+// target must be family-qualified (design §5.1's "qualifying is correct").
+func TestAnalyze_AggTagTarget_TagNameWithoutTagFamily_Errors(t *testing.T) {
+	req := aggTagReq(modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT, "", tagCount)
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err == nil {
+		t.Fatal("tag_name without tag_family must error")
+	}
+}
+
+// TestAnalyze_AggTagTarget_NotProjected_InjectsAndHides pins design §5.2:
+// when the caller didn't project the agg's tag, the analyzer injects it
+// (so BuildBatchSchema materializes a native column) and marks it hidden.
+func TestAnalyze_AggTagTarget_NotProjected_InjectsAndHides(t *testing.T) {
+	// projTagProj only names tagSvc — count_tag is not requested.
+	req := aggTagReq(modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, defaultName, tagCount)
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	gba := p.(*Limit).Child.(*GroupByAgg)
+	if !gba.Agg.HideTag {
+		t.Fatal("agg tag not in the caller's projection must set HideTag")
+	}
+	scan := gba.Children()[0].(*Scan)
+	found := false
+	for _, fam := range scan.Params.TagProjection {
+		if fam.Family != defaultName {
+			continue
+		}
+		for _, n := range fam.Names {
+			if n == tagCount {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("analyzer must inject the agg tag into the projection, got %+v", scan.Params.TagProjection)
+	}
+}
+
+// TestAnalyze_AggTagTarget_AlreadyProjected_HideTagFalse pins the other
+// half of design §5.2: when the caller already projected the tag, HideTag
+// stays false so the output carries both a tag and a field of that name.
+func TestAnalyze_AggTagTarget_AlreadyProjected_HideTagFalse(t *testing.T) {
+	req := aggTagReq(modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, defaultName, tagCount)
+	req.TagProjection = &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
+		{Name: defaultName, Tags: []string{tagSvc, tagCount}},
+	}}
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	gba := p.(*Limit).Child.(*GroupByAgg)
+	if gba.Agg.HideTag {
+		t.Fatal("agg tag already in the caller's projection must leave HideTag false")
+	}
+}
+
+// TestAnalyze_GroupByTimeBucket_ResolvesWidth pins design §5.3's
+// explicit-width case end to end: GroupBy.time_bucket resolves to a
+// model.MeasureTimeBucket carrying both the raw string and its parsed
+// nanosecond width.
+func TestAnalyze_GroupByTimeBucket_ResolvesWidth(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		GroupBy: &measurev1.QueryRequest_GroupBy{
+			TagProjection: projTagProj(),
+			FieldName:     fieldValue,
+			TimeBucket:    &measurev1.QueryRequest_GroupBy_TimeBucket{Width: "5m"},
+		},
+		Agg: &measurev1.QueryRequest_Aggregation{
+			Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
+			FieldName: fieldValue,
+		},
+	}
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	gba := p.(*Limit).Child.(*GroupByAgg)
+	const wantNanos = int64(5 * 60 * 1e9)
+	if gba.GroupBy.TimeBucket == nil || gba.GroupBy.TimeBucket.Width != "5m" || gba.GroupBy.TimeBucket.WidthNanos != wantNanos {
+		t.Fatalf("GroupBy.TimeBucket: want Width=5m WidthNanos=%d, got %+v", wantNanos, gba.GroupBy.TimeBucket)
+	}
+}
+
+// TestQueryRequest_TagAggAndTimeBucket_SurviveWireRoundTrip is the design's
+// explicit wire-compatibility DoD: an old client that never sets the new
+// fields is unaffected (implicit — zero values roundtrip identically), and
+// the new fields survive a real proto Marshal/Unmarshal cycle.
+func TestQueryRequest_TagAggAndTimeBucket_SurviveWireRoundTrip(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name: "demo",
+		Agg: &measurev1.QueryRequest_Aggregation{
+			Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT,
+			TagName:   tagCount,
+			TagFamily: defaultName,
+		},
+		GroupBy: &measurev1.QueryRequest_GroupBy{
+			TimeBucket: &measurev1.QueryRequest_GroupBy_TimeBucket{Width: "1h"},
+		},
+	}
+	wire, marshalErr := proto.Marshal(req)
+	if marshalErr != nil {
+		t.Fatalf("Marshal: %v", marshalErr)
+	}
+	got := &measurev1.QueryRequest{}
+	if unmarshalErr := proto.Unmarshal(wire, got); unmarshalErr != nil {
+		t.Fatalf("Unmarshal: %v", unmarshalErr)
+	}
+	if got.GetAgg().GetTagName() != tagCount || got.GetAgg().GetTagFamily() != defaultName ||
+		got.GetAgg().GetFunction() != modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT {
+		t.Fatalf("Agg did not survive the wire round trip: %+v", got.GetAgg())
+	}
+	if got.GetGroupBy().GetTimeBucket().GetWidth() != "1h" {
+		t.Fatalf("GroupBy.TimeBucket did not survive the wire round trip: %+v", got.GetGroupBy())
+	}
+}
+
+// timeBucketReq builds a request with a bare time_bucket GroupBy (no tag
+// key) and no Agg, for exercising resolveTimeBucket's width table directly
+// through Analyze.
+func timeBucketReq(width string) *measurev1.QueryRequest {
+	return &measurev1.QueryRequest{
+		Name:            "demo",
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		GroupBy: &measurev1.QueryRequest_GroupBy{
+			TimeBucket: &measurev1.QueryRequest_GroupBy_TimeBucket{Width: width},
+		},
+		// A bucketed GroupBy requires Agg (translateGroupBy rejects a
+		// bucketed raw GroupBy — no execution support carries the projected
+		// fields for that shape yet), so every width-table case needs one.
+		Agg: &measurev1.QueryRequest_Aggregation{
+			Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
+			FieldName: fieldValue,
+		},
+	}
+}
+
+// TestAnalyze_TimeBucket_WidthResolutionTable pins the full §5.3 table as
+// literal test cases, including the explicit non-rejection of a width that
+// is not a multiple of the measure's interval — the rule an earlier draft
+// wrongly proposed.
+func TestAnalyze_TimeBucket_WidthResolutionTable(t *testing.T) {
+	schemaWithInterval := testMeasureSchema()
+	schemaWithInterval.Interval = "1m"
+
+	cases := []struct {
+		schema    *databasev1.Measure
+		name      string
+		width     string
+		wantNanos int64
+		wantErr   bool
+	}{
+		{name: "width from request", width: "5m", schema: testMeasureSchema(), wantNanos: 5 * 60 * 1e9},
+		{name: "width empty, measure interval present", width: "", schema: schemaWithInterval, wantNanos: 60 * 1e9},
+		{name: "width empty, measure interval absent", width: "", schema: testMeasureSchema(), wantErr: true},
+		{name: "width unparseable", width: "banana", schema: testMeasureSchema(), wantErr: true},
+		{name: "width zero", width: "0s", schema: testMeasureSchema(), wantErr: true},
+		{name: "width negative", width: "-5m", schema: testMeasureSchema(), wantErr: true},
+		{
+			name: "width not a multiple of the interval is accepted", width: "7m",
+			schema: schemaWithInterval, wantNanos: 7 * 60 * 1e9,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := Analyze(timeBucketReq(tc.width), tc.schema, measure.AggModeAll)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("want error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Analyze: %v", err)
+			}
+			gba := p.(*Limit).Child.(*GroupByAgg)
+			if gba.GroupBy.TimeBucket.WidthNanos != tc.wantNanos {
+				t.Fatalf("WidthNanos: want %d, got %d", tc.wantNanos, gba.GroupBy.TimeBucket.WidthNanos)
+			}
+		})
+	}
+}
+
+// TestAnalyze_TimeBucket_BoundaryTimestampAcceptedAsWidth is a design-§5.3
+// aside folded into the width table: a boundary-aligned width string is
+// just an ordinary positive duration — nothing about "boundary" is special
+// at resolution time (only bucketStart's floor arithmetic cares about
+// boundaries), so this doubles as a plain sanity check on parsing.
+func TestAnalyze_TimeBucket_BoundaryTimestampAcceptedAsWidth(t *testing.T) {
+	p, err := Analyze(timeBucketReq("1000ns"), testMeasureSchema(), measure.AggModeAll)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	gba := p.(*Limit).Child.(*GroupByAgg)
+	if gba.GroupBy.TimeBucket.WidthNanos != 1000 {
+		t.Fatalf("WidthNanos: want 1000, got %d", gba.GroupBy.TimeBucket.WidthNanos)
+	}
+}
+
+// TestAnalyze_TimeBucket_BucketOnly_NoTagKey pins design §7.2: a GroupBy may
+// bucket by time alone, with no tag key at all.
+func TestAnalyze_TimeBucket_BucketOnly_NoTagKey(t *testing.T) {
+	p, err := Analyze(timeBucketReq("5m"), testMeasureSchema(), measure.AggModeAll)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	gba := p.(*Limit).Child.(*GroupByAgg)
+	if gba.GroupBy.TagFamily != "" || len(gba.GroupBy.TagNames) != 0 {
+		t.Fatalf("bucket-only GroupBy must carry no tag key, got %+v", gba.GroupBy)
+	}
+	if gba.GroupBy.TimeBucket == nil {
+		t.Fatal("bucket-only GroupBy must still carry TimeBucket")
+	}
+}
+
+// TestAnalyze_GroupBy_NeitherTagProjectionNorTimeBucket_Errors pins that an
+// empty GroupBy message (no tag_projection, no time_bucket) is rejected —
+// there is nothing to group by.
+func TestAnalyze_GroupBy_NeitherTagProjectionNorTimeBucket_Errors(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		GroupBy:         &measurev1.QueryRequest_GroupBy{},
+	}
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err == nil {
+		t.Fatal("an empty GroupBy message must error")
+	}
+}
+
+// TestAnalyze_TimeBucket_RejectsNonTimeOrderBy pins the analyzer guard
+// (design §7.2): a bucketed request whose order_by names a non-time index
+// rule is rejected rather than silently ignored.
+func TestAnalyze_TimeBucket_RejectsNonTimeOrderBy(t *testing.T) {
+	req := timeBucketReq("5m")
+	req.OrderBy = &modelv1.QueryOrder{IndexRuleName: "some_index"}
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err == nil {
+		t.Fatal("a bucketed request with a non-time order_by must error")
+	}
+}
+
+// TestAnalyze_TimeBucket_RejectsDescendingTimeOrderBy pins the other half of
+// the ordering guard: an empty index_rule_name with Sort=SORT_DESC still
+// resolves to a time-ordered scan (index.OrderByTypeTime), just descending
+// instead of ascending — which would trip BatchTimeBucket's monotonicity
+// guard on the very first bucket transition. This must be rejected at
+// analyze time with a clear error, not surface as a confusing "bucket
+// regressed" failure deep in the scan.
+func TestAnalyze_TimeBucket_RejectsDescendingTimeOrderBy(t *testing.T) {
+	req := timeBucketReq("5m")
+	req.OrderBy = &modelv1.QueryOrder{Sort: modelv1.Sort_SORT_DESC}
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err == nil {
+		t.Fatal("a bucketed request with order_by.sort=SORT_DESC must error")
+	}
+}
+
+// TestAnalyze_TimeBucket_WithoutAgg_Rejected pins that a bucketed raw
+// GroupBy (time_bucket set, Agg nil) is rejected rather than silently
+// dropping every projected field: BatchTimeBucket's no-Agg shape reuses
+// BatchAggregation's output layout (tags + bucket timestamp only), unlike
+// BatchGroupByFirst's full-schema passthrough for the non-bucketed raw
+// GroupBy case.
+func TestAnalyze_TimeBucket_WithoutAgg_Rejected(t *testing.T) {
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		GroupBy: &measurev1.QueryRequest_GroupBy{
+			TimeBucket: &measurev1.QueryRequest_GroupBy_TimeBucket{Width: "5m"},
+		},
+	}
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err == nil {
+		t.Fatal("a bucketed GroupBy without Agg must error")
+	}
+}
+
+// TestAnalyze_TimeBucket_UsesIndexModeMap pins that the analyzer decides
+// streaming vs. the index-mode map fallback once, from
+// measureSchema.GetIndexMode(), rather than leaving it to be guessed later.
+func TestAnalyze_TimeBucket_UsesIndexModeMap(t *testing.T) {
+	indexModeSchema := testMeasureSchema()
+	indexModeSchema.IndexMode = true
+	p, err := Analyze(timeBucketReq("5m"), indexModeSchema, measure.AggModeAll)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	gba := p.(*Limit).Child.(*GroupByAgg)
+	if !gba.GroupBy.TimeBucket.UseIndexModeMap {
+		t.Fatal("an index-mode measure must resolve UseIndexModeMap=true")
+	}
+}
+
+// TestAnalyze_TimeBucket_IndexModeMeasure_CountDistinctTargetCoversEntity_Accepts
+// pins design §11's explicit call-out: "index_mode with the same
+// containment (accept)". validateCountDistinctPushdown runs unconditionally
+// before GroupBy/TimeBucket resolution and never reads GetIndexMode, so an
+// index-mode measure must accept a decomposable COUNT_DISTINCT exactly like
+// a streaming one — and still resolve UseIndexModeMap=true for execution.
+func TestAnalyze_TimeBucket_IndexModeMeasure_CountDistinctTargetCoversEntity_Accepts(t *testing.T) {
+	ms := entityShardingSchema([]string{tagCount}, nil)
+	ms.IndexMode = true
+	req := &measurev1.QueryRequest{
+		Name: "demo",
+		Agg:  countDistinctAgg(defaultName, tagCount),
+		GroupBy: &measurev1.QueryRequest_GroupBy{
+			TimeBucket: &measurev1.QueryRequest_GroupBy_TimeBucket{Width: "5m"},
+		},
+	}
+	p, err := Analyze(req, ms, measure.AggModeAll)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	gba := p.(*Limit).Child.(*GroupByAgg)
+	if !gba.GroupBy.TimeBucket.UseIndexModeMap {
+		t.Fatal("an index-mode measure must resolve UseIndexModeMap=true even with a COUNT_DISTINCT Agg")
+	}
+}
+
+// TestAnalyze_TimeBucket_IndexModeMeasure_CountDistinctDecomposabilityStillEnforced_Rejects
+// is the negative twin: index_mode must not bypass the decomposability
+// check. The sharding key (tagSvc) is narrower than the entity and covered
+// by neither the (bucket-only) GroupBy nor the target — this must reject on
+// an index-mode measure exactly as it does on a streaming one.
+func TestAnalyze_TimeBucket_IndexModeMeasure_CountDistinctDecomposabilityStillEnforced_Rejects(t *testing.T) {
+	ms := entityShardingSchema([]string{tagCount}, []string{tagSvc})
+	ms.IndexMode = true
+	req := &measurev1.QueryRequest{
+		Name: "demo",
+		Agg:  countDistinctAgg(defaultName, tagCount),
+		GroupBy: &measurev1.QueryRequest_GroupBy{
+			TimeBucket: &measurev1.QueryRequest_GroupBy_TimeBucket{Width: "5m"},
+		},
+	}
+	if _, err := Analyze(req, ms, measure.AggModeAll); err == nil {
+		t.Fatal("index_mode must not bypass the COUNT_DISTINCT decomposability check")
+	}
+}
+
+// entityShardingSchema builds a test schema with an explicit Entity and
+// (optionally) a narrower ShardingKey, for validateCountDistinctPushdown
+// tests (design §7.4). entityTags/shardingTags name tags already present
+// in testMeasureSchema()'s "default" family (tagSvc, "region", tagCount);
+// pass nil shardingTags to leave ShardingKey unset (routing falls back to
+// Entity).
+func entityShardingSchema(entityTags, shardingTags []string) *databasev1.Measure {
+	ms := testMeasureSchema()
+	ms.Entity = &databasev1.Entity{TagNames: entityTags}
+	if len(shardingTags) > 0 {
+		ms.ShardingKey = &databasev1.ShardingKey{TagNames: shardingTags}
+	}
+	return ms
+}
+
+func countDistinctAgg(tagFamily, tagName string) *measurev1.QueryRequest_Aggregation {
+	return &measurev1.QueryRequest_Aggregation{
+		Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT,
+		TagFamily: tagFamily,
+		TagName:   tagName,
+	}
+}
+
+func groupByReq(tagFamily string, tagNames []string) *measurev1.QueryRequest_GroupBy {
+	return &measurev1.QueryRequest_GroupBy{
+		TagProjection: &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
+			{Name: tagFamily, Tags: tagNames},
+		}},
+	}
+}
+
+// TestValidateCountDistinctPushdown_NonCountDistinct_NeverRejects pins that
+// the check is a no-op for every function other than COUNT_DISTINCT,
+// including a nil Agg — the design's decomposability condition applies
+// only to COUNT_DISTINCT (design §7.4).
+func TestValidateCountDistinctPushdown_NonCountDistinct_NeverRejects(t *testing.T) {
+	ms := entityShardingSchema([]string{"region"}, nil)
+	if err := validateCountDistinctPushdown(&measurev1.QueryRequest{}, ms); err != nil {
+		t.Fatalf("nil Agg must never be rejected: %v", err)
+	}
+	sumReq := &measurev1.QueryRequest{Agg: &measurev1.QueryRequest_Aggregation{
+		Function: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, FieldName: fieldValue,
+	}}
+	if err := validateCountDistinctPushdown(sumReq, ms); err != nil {
+		t.Fatalf("SUM must never be rejected by the COUNT_DISTINCT decomposability check: %v", err)
+	}
+}
+
+// TestValidateCountDistinctPushdown_TargetCoversEntity_Accepts is design
+// §7.4's motivating case: COUNT_DISTINCT(entity_id) with no GroupBy, on a
+// measure whose entity (and therefore routing) is exactly tagCount — the
+// target itself covers the only routing tag.
+func TestValidateCountDistinctPushdown_TargetCoversEntity_Accepts(t *testing.T) {
+	ms := entityShardingSchema([]string{tagCount}, nil)
+	req := &measurev1.QueryRequest{Agg: countDistinctAgg(defaultName, tagCount)}
+	if err := validateCountDistinctPushdown(req, ms); err != nil {
+		t.Fatalf("target covering the only routing tag must be accepted: %v", err)
+	}
+}
+
+// TestValidateCountDistinctPushdown_GroupByCoversEntity_Accepts pins the
+// other way to cover a routing tag: as a GroupBy key rather than the
+// target itself.
+func TestValidateCountDistinctPushdown_GroupByCoversEntity_Accepts(t *testing.T) {
+	ms := entityShardingSchema([]string{tagCount}, nil)
+	req := &measurev1.QueryRequest{
+		GroupBy: groupByReq(defaultName, []string{tagCount}),
+		Agg:     countDistinctAgg(defaultName, tagSvc),
+	}
+	if err := validateCountDistinctPushdown(req, ms); err != nil {
+		t.Fatalf("routing tag covered by a GroupBy key must be accepted: %v", err)
+	}
+}
+
+// TestValidateCountDistinctPushdown_CompositeEntity_DifferentBranchesCoverDifferentTags_Accepts
+// pins a case neither TargetCoversEntity_Accepts nor GroupByCoversEntity_Accepts
+// exercises: a genuinely composite routing key (entity has two tags, no
+// narrower ShardingKey to collapse it back to one) where each component is
+// covered by a *different* branch of the per-routing-tag check
+// simultaneously — tagSvc via the GroupBy key, tagCount via being the Agg
+// target. Each routing tag is checked independently, so this must accept
+// even though neither branch alone covers the whole routing set.
+func TestValidateCountDistinctPushdown_CompositeEntity_DifferentBranchesCoverDifferentTags_Accepts(t *testing.T) {
+	ms := entityShardingSchema([]string{tagSvc, tagCount}, nil)
+	req := &measurev1.QueryRequest{
+		GroupBy: groupByReq(defaultName, []string{tagSvc}),
+		Agg:     countDistinctAgg(defaultName, tagCount),
+	}
+	if err := validateCountDistinctPushdown(req, ms); err != nil {
+		t.Fatalf("a composite routing key with each component covered by a different branch must be accepted: %v", err)
+	}
+}
+
+// TestValidateCountDistinctPushdown_CompositeEntity_OneComponentUncovered_Rejects
+// is the negative twin: the same composite routing key, but the GroupBy key
+// covers only tagSvc and the target ("region") covers neither routing tag —
+// tagCount is covered by nothing and the request must reject, proving the
+// per-routing-tag loop actually requires every routing tag to be covered,
+// not just at least one.
+func TestValidateCountDistinctPushdown_CompositeEntity_OneComponentUncovered_Rejects(t *testing.T) {
+	ms := entityShardingSchema([]string{tagSvc, tagCount}, nil)
+	req := &measurev1.QueryRequest{
+		GroupBy: groupByReq(defaultName, []string{tagSvc}),
+		Agg:     countDistinctAgg(defaultName, "region"),
+	}
+	if err := validateCountDistinctPushdown(req, ms); err == nil {
+		t.Fatal("a composite routing key with one component covered by neither GroupBy nor target must be rejected")
+	}
+}
+
+// TestValidateCountDistinctPushdown_ShardingKeyNarrowerThanEntity_TableDriven
+// pins the design doc's own worked example (§7.4): entity [service_id,
+// entity_id], sharding_key [service_id]. COUNT_DISTINCT(entity_id) grouped
+// by service_id is accepted (routing tag service_id is a GroupBy key); the
+// same query ungrouped is rejected (service_id is covered by neither).
+func TestValidateCountDistinctPushdown_ShardingKeyNarrowerThanEntity_TableDriven(t *testing.T) {
+	ms := entityShardingSchema([]string{tagSvc, tagCount}, []string{tagSvc})
+	cases := []struct {
+		groupBy *measurev1.QueryRequest_GroupBy
+		name    string
+		wantErr bool
+	}{
+		{groupByReq(defaultName, []string{tagSvc}), "grouped by the routing tag: accept", false},
+		{nil, "ungrouped: reject", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			req := &measurev1.QueryRequest{GroupBy: c.groupBy, Agg: countDistinctAgg(defaultName, tagCount)}
+			err := validateCountDistinctPushdown(req, ms)
+			if c.wantErr && err == nil {
+				t.Fatal("want a decomposability rejection, got nil")
+			}
+			if !c.wantErr && err != nil {
+				t.Fatalf("want acceptance, got %v", err)
+			}
+		})
+	}
+}
+
+// TestValidateCountDistinctPushdown_ShardingKeyCounterexample_Rejects pins
+// the design doc's explicit counterexample for why "distinct over the
+// entity is always supported" is wrong: entity {e}, sharding key {s}, the
+// same e occurring under two s values routes to two shards, each reporting
+// a local count of 1 for one distinct entity — summing gives 2. An
+// entity-based rule would wrongly accept this; the routing-tag-based rule
+// must reject it.
+func TestValidateCountDistinctPushdown_ShardingKeyCounterexample_Rejects(t *testing.T) {
+	ms := entityShardingSchema([]string{tagCount}, []string{tagSvc})
+	req := &measurev1.QueryRequest{Agg: countDistinctAgg(defaultName, tagCount)}
+	if err := validateCountDistinctPushdown(req, ms); err == nil {
+		t.Fatal("routing tag (sharding key) uncovered by GroupBy or target must be rejected")
+	}
+}
+
+// TestValidateCountDistinctPushdown_AmbiguousNameAcrossFamilies_NotConfused
+// pins that covering a routing tag is resolved by (family, name), not
+// bare name: the routing tag "svc" lives in the "default" family, but the
+// request's GroupBy/target both reference "svc" in "other" (a different
+// column, per testMeasureSchema's second family) — that must NOT count as
+// covering the routing tag, even though the bare names match.
+func TestValidateCountDistinctPushdown_AmbiguousNameAcrossFamilies_NotConfused(t *testing.T) {
+	ms := entityShardingSchema([]string{tagSvc}, nil)
+	req := &measurev1.QueryRequest{
+		GroupBy: groupByReq(otherFamily, []string{tagSvc}),
+		Agg:     countDistinctAgg(otherFamily, tagCount),
+	}
+	if err := validateCountDistinctPushdown(req, ms); err == nil {
+		t.Fatal("a GroupBy/target in a different family must not be treated as covering the routing tag, despite the matching bare name")
+	}
+}
+
+// TestValidateCountDistinctPushdown_RoutingTagMissingFromSchema_Errors pins
+// that a routing tag absent from the schema's own tag families (a
+// pre-existing schema inconsistency) is reported loudly rather than
+// silently treated as covered or ignored.
+func TestValidateCountDistinctPushdown_RoutingTagMissingFromSchema_Errors(t *testing.T) {
+	ms := entityShardingSchema([]string{"nonexistent_tag"}, nil)
+	req := &measurev1.QueryRequest{Agg: countDistinctAgg(defaultName, tagCount)}
+	if err := validateCountDistinctPushdown(req, ms); err == nil {
+		t.Fatal("a routing tag absent from the schema must error, not be silently accepted")
 	}
 }

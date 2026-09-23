@@ -160,6 +160,22 @@ func TestE2EDerivedGoldenPlans(t *testing.T) {
 			want:   "SELECT endpoint, MAX(latency) FROM MEASURE service_latency IN production TIME > '-30m' GROUP BY endpoint::TAG LIMIT 10",
 		},
 		{
+			name: "measure/group_count_distinct",
+			plan: QueryPlan{
+				Resource: measureResource, Projection: aggregateProjection(AggregateCountDistinct, "service"), GroupBy: []string{"endpoint"}, TimeRange: defaultRange, Limit: 10,
+			},
+			schema: measure,
+			want:   "SELECT endpoint, COUNT(DISTINCT service) FROM MEASURE service_latency IN production TIME > '-30m' GROUP BY endpoint::TAG LIMIT 10",
+		},
+		{
+			name: "measure/group_time_bucket",
+			plan: QueryPlan{
+				Resource: measureResource, Projection: aggregateProjection(AggregateSum, "cpm"), TimeBucket: &GroupByTimeBucket{Width: "5m"}, TimeRange: defaultRange, Limit: 10,
+			},
+			schema: measure,
+			want:   "SELECT endpoint, SUM(cpm) FROM MEASURE service_latency IN production TIME > '-30m' GROUP BY TIME_BUCKET('5m') LIMIT 10",
+		},
+		{
 			name: "measure/order_tag_asc",
 			plan: QueryPlan{
 				Resource: measureResource, OrderBy: &Order{IndexRule: "endpoint", Direction: OrderAscending}, TimeRange: defaultRange, Limit: 10,
@@ -334,8 +350,8 @@ func TestE2EDerivedGoldenPlans(t *testing.T) {
 			want:   "SHOW TOP 3 FROM MEASURE service_latency_topn IN production TIME > '-30m' AGGREGATE BY COUNT ORDER BY DESC",
 		},
 	}
-	if len(goldens) != 41 {
-		t.Fatalf("expected 41 e2e-derived golden cases, got %d", len(goldens))
+	if len(goldens) != 43 {
+		t.Fatalf("expected 43 e2e-derived golden cases, got %d", len(goldens))
 	}
 	for _, golden := range goldens {
 		t.Run(golden.name, func(t *testing.T) {
