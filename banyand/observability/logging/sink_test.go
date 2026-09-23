@@ -228,9 +228,62 @@ func TestEntityOfFollowsTheSchemaOrder(t *testing.T) {
 	}
 }
 
-// TestSchemaAndWritePathAgreeOnTagOrder is the check that catches a silent
+// TestEachTagHoldsTheValueItsNamePromises is the check that catches a silent
 // mismatch: a tag value written into the wrong position is stored without any
 // error, because a oneof that does not match its declared type lands as empty.
+//
+// The expected values are keyed by tag name, not by position, so the assertion
+// fails when either side of the pairing moves: the declared order in
+// searchableTags, or the order build and stamp fill. Comparing the two lists
+// with each other would pass either way, because both are built from
+// searchableTags.
+func TestEachTagHoldsTheValueItsNamePromises(t *testing.T) {
+	s := testSink(t)
+	line := []byte(`{"level":"warn","module":"MEASURE","time":"2020-01-01T00:00:00Z","message":"a message"}`)
+	req, err := s.build(zerolog.WarnLevel, "MEASURE", line)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	s.stamp(entry{req: req, seq: 7})
+
+	want := map[string]string{
+		"node_id":      "data-hot-0",
+		"node_type":    "data",
+		"module":       "MEASURE",
+		"level":        "warn",
+		"grpc_address": "10.1.2.3:17912",
+		"http_address": "10.1.2.3:17913",
+		"message":      "a message",
+		"log_id":       req.GetElement().GetElementId(),
+	}
+	declaredNames := streamSpec().GetTagFamilies()[0].GetTags()
+	stored := req.GetElement().GetTagFamilies()[0].GetTags()
+	if len(declaredNames) != len(stored) {
+		t.Fatalf("the schema declares %d searchable tags, the write path fills %d", len(declaredNames), len(stored))
+	}
+	for i, tag := range declaredNames {
+		expected, ok := want[tag.GetName()]
+		if !ok {
+			t.Fatalf("tag %q has no expected value; add one when a tag is added", tag.GetName())
+		}
+		if got := stored[i].GetStr().GetValue(); got != expected {
+			t.Errorf("tag %d is %q, which holds %q, want %q", i, tag.GetName(), got, expected)
+		}
+	}
+	for name := range want {
+		var declared bool
+		for _, tag := range declaredNames {
+			declared = declared || tag.GetName() == name
+		}
+		if !declared {
+			t.Errorf("tag %q is expected by this test but is not declared", name)
+		}
+	}
+}
+
+// TestSchemaAndWritePathAgreeOnTagOrder checks the two lists the schema and the
+// write path share, which TestEachTagHoldsTheValueItsNamePromises cannot: the
+// count, and that every entity tag is searchable.
 func TestSchemaAndWritePathAgreeOnTagOrder(t *testing.T) {
 	spec := streamSpec()
 	if len(spec.TagFamilies) != 2 {
@@ -240,12 +293,6 @@ func TestSchemaAndWritePathAgreeOnTagOrder(t *testing.T) {
 	if len(declared) != len(searchableTags) {
 		t.Fatalf("schema declares %d searchable tags, the write path fills %d",
 			len(declared), len(searchableTags))
-	}
-	for i, tag := range declared {
-		if tag.Name != searchableTags[i] {
-			t.Fatalf("searchable tag %d is %q in the schema and %q in the write path",
-				i, tag.Name, searchableTags[i])
-		}
 	}
 	for _, name := range entityTags {
 		// A whole-element match, not a substring one: joining and searching
