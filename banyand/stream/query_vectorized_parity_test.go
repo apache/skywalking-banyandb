@@ -19,14 +19,18 @@ package stream
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -38,7 +42,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-	logicalstream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vstream "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream"
@@ -50,7 +53,91 @@ const (
 	indexOrderRuleID      = 1
 	indexOrderSeriesCount = 4
 	indexOrderTSCount     = 12
+	entityTagName         = "entity-tag"
 )
+
+// parityFixture is a golden expectation file under testdata/. The files were
+// captured from the row query path before it was removed (apache/skywalking#13998)
+// and cannot be regenerated; they are the frozen oracle these tests assert against.
+type parityFixture struct {
+	Name  string       `yaml:"name"`
+	Cases []parityCase `yaml:"cases"`
+}
+
+// parityCase is one query shape within a golden file.
+type parityCase struct {
+	Name         string          `yaml:"name"`
+	Query        string          `yaml:"query"`
+	Elements     []parityElement `yaml:"elements"`
+	ElementCount int             `yaml:"element_count"`
+}
+
+// parityElement is one expected element. TS is a nanosecond OFFSET from the query
+// time range start, because the fixture writer anchors element timestamps at
+// time.Now(); only entity-tag is recorded because the sibling filter-tag is drawn
+// from crypto/rand per run and no golden can pin it.
+type parityElement struct {
+	ID        string `yaml:"id"`
+	EntityTag string `yaml:"entity-tag"`
+	TS        int64  `yaml:"ts"`
+}
+
+// loadParityGolden reads a golden file from testdata/ and indexes its cases by name.
+func loadParityGolden(t *testing.T, name string) map[string]parityCase {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", name+".yaml"))
+	require.NoError(t, err)
+	var fixture parityFixture
+	require.NoError(t, yaml.Unmarshal(raw, &fixture))
+	require.Equal(t, name, fixture.Name, "golden file name does not match its content")
+	byName := make(map[string]parityCase, len(fixture.Cases))
+	for _, c := range fixture.Cases {
+		require.Len(t, c.Elements, c.ElementCount, "golden case %q is self-inconsistent", c.Name)
+		byName[c.Name] = c
+	}
+	return byName
+}
+
+// entityTagValue returns the element's entity-tag value.
+func entityTagValue(t *testing.T, e *streamv1.Element) string {
+	t.Helper()
+	for _, family := range e.TagFamilies {
+		for _, tag := range family.Tags {
+			if tag.Key == entityTagName {
+				return tag.Value.GetStr().GetValue()
+			}
+		}
+	}
+	t.Fatalf("element %s carries no %s", e.ElementId, entityTagName)
+	return ""
+}
+
+// assertGoldenParity asserts the vec elements match the golden case: the same
+// element-id set, each with the recorded timestamp offset from trStart and the
+// recorded entity-tag. exact additionally pins the ORDER, which only holds for
+// fixtures with globally unique timestamps (seriesCount=1); multi-series fixtures
+// stamp duplicate timestamps whose relative order is not path-stable, so those
+// cases assert the set plus ts monotonicity instead.
+func assertGoldenParity(t *testing.T, want parityCase, got []*streamv1.Element, trStart time.Time, exact, desc bool) {
+	t.Helper()
+	// A missing map key yields a zero parityCase, which would make an empty-result
+	// assertion pass vacuously; Name is only set when the lookup actually hit.
+	require.NotEmpty(t, want.Name, "golden case not found in its fixture")
+	require.Len(t, got, want.ElementCount, "case %q: element count mismatch", want.Name)
+	gotByID := indexByElementID(t, got)
+	for idx, wantElem := range want.Elements {
+		gotElem, ok := gotByID[wantElem.ID]
+		require.True(t, ok, "case %q: vec path missing golden elementID %s", want.Name, wantElem.ID)
+		require.Equal(t, wantElem.TS, gotElem.Timestamp.AsTime().UnixNano()-trStart.UnixNano(),
+			"case %q: ts offset mismatch for %s", want.Name, wantElem.ID)
+		require.Equal(t, wantElem.EntityTag, entityTagValue(t, gotElem),
+			"case %q: entity-tag mismatch for %s", want.Name, wantElem.ID)
+		if exact {
+			require.Equal(t, wantElem.ID, got[idx].ElementId, "case %q: element order mismatch at %d", want.Name, idx)
+		}
+	}
+	assertMonotonicTS(t, got, desc)
+}
 
 // parityEntities builds the per-series entity tag-value lists the fixture writer
 // keys on (entity1..entityN), matching the entity index docs writeVecFixture adds.
@@ -68,17 +155,17 @@ func parityEntities(seriesCount int) [][]*modelv1.TagValue {
 func fullProjection() []model.TagProjection {
 	return []model.TagProjection{{
 		Family: "benchmark-family",
-		Names:  []string{"entity-tag", "filter-tag"},
+		Names:  []string{entityTagName, "filter-tag"},
 	}}
 }
 
 // runVecPipeline drives the vec scan through the FULL M4 pipeline
 // (merge → distinct → limit) exactly as localIndexScan.ExecuteVectorized does at
 // the data-node standalone path, then materializes []*streamv1.Element via the
-// batch egress. limitRows/offset are the M4 pipeline caps; pass limitRows=0 for
-// "no cap" (drain everything). This is the vec oracle used by every parity case.
+// batch egress. limitRows is the M4 pipeline cap; pass 0 for "no cap" (drain
+// everything).
 func runVecPipeline(ctx context.Context, t *testing.T, s *stream, sqo model.StreamQueryOptions,
-	desc bool, offset, limitRows uint32,
+	desc bool, limitRows uint32,
 ) []*streamv1.Element {
 	t.Helper()
 	src, err := s.queryVectorized(ctx, sqo)
@@ -92,7 +179,7 @@ func runVecPipeline(ctx context.Context, t *testing.T, s *stream, sqo model.Stre
 		mergeCap = sqo.MaxElementSize
 	}
 	pipeline, err := vstream.BuildStreamMergePipeline(
-		&testVecSource{src: src, schema: schema}, schema, desc, offset, limitRows, vstream.DefaultConfig().BatchSize, mergeCap)
+		&testVecSource{src: src, schema: schema}, schema, desc, 0, limitRows, vstream.DefaultConfig().BatchSize, mergeCap)
 	require.NoError(t, err)
 	require.NoError(t, pipeline.Init(ctx))
 	var batches []*vectorized.RecordBatch
@@ -110,39 +197,6 @@ func runVecPipeline(ctx context.Context, t *testing.T, s *stream, sqo model.Stre
 	return elems
 }
 
-// runRowPath materializes the row oracle's elements: s.Query drains one Pull into
-// a StreamResult, then BuildElementsFromStreamResult converts to elements. The
-// caller controls MaxElementSize via sqo.
-func runRowPath(ctx context.Context, t *testing.T, s *stream, sqo model.StreamQueryOptions) []*streamv1.Element {
-	t.Helper()
-	rowRes, err := s.Query(ctx, sqo)
-	require.NoError(t, err)
-	require.NotNil(t, rowRes)
-	defer rowRes.Release()
-	rowElements, err := logicalstream.BuildElementsFromStreamResult(ctx, rowRes, sqo.TagProjection)
-	require.NoError(t, err)
-	return rowElements
-}
-
-// assertSetParity asserts the two element slices are the SAME set keyed by
-// elementID with identical values (proto.Equal on tags + timestamp), plus the vec
-// output is monotonically ordered by timestamp per asc/desc. This is the tie-break
-// safe discipline the existing parity tests use: equal-timestamp rows have no
-// cross-path-stable order, so only the set (not the per-index order) is compared.
-func assertSetParity(t *testing.T, want, got []*streamv1.Element, desc bool) {
-	t.Helper()
-	require.Equal(t, len(want), len(got), "element-set size mismatch")
-	wantByID := indexByElementID(t, want)
-	gotByID := indexByElementID(t, got)
-	require.Equal(t, len(wantByID), len(gotByID), "unique element-id set size mismatch")
-	for id, wantElem := range wantByID {
-		gotElem, ok := gotByID[id]
-		require.True(t, ok, "vec path missing elementID present in row path: %s", id)
-		assertElementsEqual(t, wantElem, gotElem)
-	}
-	assertMonotonicTS(t, got, desc)
-}
-
 // assertMonotonicTS asserts the elements are monotonically ordered by timestamp
 // (non-decreasing for asc, non-increasing for desc).
 func assertMonotonicTS(t *testing.T, elems []*streamv1.Element, desc bool) {
@@ -158,255 +212,14 @@ func assertMonotonicTS(t *testing.T, elems []*streamv1.Element, desc bool) {
 	}
 }
 
-// assertExactParity asserts the two element slices are identical in ORDER and
-// value. Only valid when the fixture has globally unique timestamps (seriesCount=1)
-// so both paths produce the same deterministic total order with no ties.
-func assertExactParity(t *testing.T, want, got []*streamv1.Element) {
-	t.Helper()
-	require.Equal(t, len(want), len(got), "element count mismatch")
-	for i := range want {
-		require.Equal(t, want[i].ElementId, got[i].ElementId, "elementID order mismatch at %d", i)
-		assertElementsEqual(t, want[i], got[i])
-	}
-}
-
-// TestQueryVectorized_Parity_Order runs the row path (oracle) and the full M4 vec
-// pipeline over the SAME fixture for the vec-eligible no-order shapes: default ts
-// order asc and desc. Comparison is set-based + ts-monotonic (tie-break safe)
-// because the multi-series fixture stamps duplicate timestamps.
-func TestQueryVectorized_Parity_Order(t *testing.T) {
-	p := parameter{
-		batchCount:     1,
-		timestampCount: 20,
-		seriesCount:    5,
-		tagCardinality: 4,
-		startTimestamp: 1,
-		endTimestamp:   1000,
-		scenario:       "vec-parity-order",
-	}
-	s, tr := buildVecTestStream(t, p)
-	entities := parityEntities(p.seriesCount)
-	projection := fullProjection()
-	ctx := context.Background()
-
-	cases := []struct {
-		order *index.OrderBy
-		name  string
-	}{
-		{name: "no-order-asc", order: &index.OrderBy{Sort: modelv1.Sort_SORT_ASC}},
-		{name: "no-order-desc", order: &index.OrderBy{Sort: modelv1.Sort_SORT_DESC}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			desc := tc.order.Sort == modelv1.Sort_SORT_DESC
-			sqo := model.StreamQueryOptions{
-				Name:           "benchmark",
-				TimeRange:      &tr,
-				Entities:       entities,
-				TagProjection:  projection,
-				Order:          tc.order,
-				MaxElementSize: math.MaxInt32,
-			}
-
-			rowElements := runRowPath(ctx, t, s, sqo)
-			require.NotEmpty(t, rowElements, "row path produced no elements; fixture is degenerate")
-
-			vecElements := runVecPipeline(ctx, t, s, sqo, desc, 0, uint32(len(rowElements)*4))
-			assertSetParity(t, rowElements, vecElements, desc)
-		})
-	}
-}
-
-// TestQueryVectorized_Parity_IndexOrder runs the row index-sort oracle and the vec
-// OrderKey path over a DEDICATED index-order fixture (buildIndexOrderStream) for
-// order-by-indexed-tag asc + desc. The shared generateData fixture cannot serve as
-// an index-sort oracle (its sortable docs use DocID=timestamp, not the element id
-// the row index-sort resolves against, and set no timestampField for the sort
-// query's date range) — see the writer's doc comment. Comparison is set-based (the
-// order key is the tag term; ties on it are path-specific) with tag-value parity.
-func TestQueryVectorized_Parity_IndexOrder(t *testing.T) {
-	// The index rule the dedicated fixture stamps its sortable docs with. Its single
-	// tag "filter-tag" is the order key resolveOrderTag maps to the projection cell.
-	indexRule := &databasev1.IndexRule{
-		Metadata: &commonv1.Metadata{Name: "filter-idx", Id: indexOrderRuleID},
-		Tags:     []string{"filter-tag"},
-	}
-	s, tr := buildIndexOrderStream(t)
-	entities := parityEntities(indexOrderSeriesCount)
-	projection := fullProjection()
-	ctx := context.Background()
-
-	cases := []struct {
-		name string
-		sort modelv1.Sort
-	}{
-		{name: "index-order-asc", sort: modelv1.Sort_SORT_ASC},
-		{name: "index-order-desc", sort: modelv1.Sort_SORT_DESC},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			desc := tc.sort == modelv1.Sort_SORT_DESC
-			sqo := model.StreamQueryOptions{
-				Name:           "benchmark",
-				TimeRange:      &tr,
-				Entities:       entities,
-				TagProjection:  projection,
-				Order:          &index.OrderBy{Index: indexRule, Sort: tc.sort},
-				MaxElementSize: math.MaxInt32,
-			}
-			rowElements := runRowPath(ctx, t, s, sqo)
-			require.NotEmpty(t, rowElements, "row index-sort produced no elements; fixture is degenerate")
-			vecElements := runVecPipeline(ctx, t, s, sqo, desc, 0, uint32(len(rowElements)*4))
-
-			// Order key is the tag term, not ts — ties on equal tag values order
-			// path-specifically, so assert set parity (values + membership) only.
-			require.Equal(t, len(rowElements), len(vecElements), "element-set size mismatch")
-			rowByID := indexByElementID(t, rowElements)
-			vecByID := indexByElementID(t, vecElements)
-			require.Equal(t, len(rowByID), len(vecByID))
-			for id, wantElem := range rowByID {
-				gotElem, ok := vecByID[id]
-				require.True(t, ok, "vec path missing elementID present in row path: %s", id)
-				assertElementsEqual(t, wantElem, gotElem)
-			}
-		})
-	}
-}
-
-// TestQueryVectorized_Parity_Projection covers projection subsets over the SAME
-// fixture: full projection, a single-tag projection, and a projection of a tag
-// absent from every element (exercising the NullTagValue fill on both paths).
-func TestQueryVectorized_Parity_Projection(t *testing.T) {
-	p := parameter{
-		batchCount:     1,
-		timestampCount: 20,
-		seriesCount:    5,
-		tagCardinality: 4,
-		startTimestamp: 1,
-		endTimestamp:   1000,
-		scenario:       "vec-parity-projection",
-	}
-	s, tr := buildVecTestStream(t, p)
-	entities := parityEntities(p.seriesCount)
-	ctx := context.Background()
-
-	cases := []struct {
-		name       string
-		projection []model.TagProjection
-	}{
-		{name: "full", projection: fullProjection()},
-		{name: "single-tag", projection: []model.TagProjection{{Family: "benchmark-family", Names: []string{"filter-tag"}}}},
-		{
-			name: "absent-tag-nulltagvalue",
-			// "missing-tag" is declared in the projection but written by no element,
-			// so both egresses must NullTagValue-fill its column.
-			projection: []model.TagProjection{{Family: "benchmark-family", Names: []string{"entity-tag", "missing-tag"}}},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			sqo := model.StreamQueryOptions{
-				Name:           "benchmark",
-				TimeRange:      &tr,
-				Entities:       entities,
-				TagProjection:  tc.projection,
-				Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-				MaxElementSize: math.MaxInt32,
-			}
-			rowElements := runRowPath(ctx, t, s, sqo)
-			require.NotEmpty(t, rowElements, "row path produced no elements; fixture is degenerate")
-			vecElements := runVecPipeline(ctx, t, s, sqo, false, 0, uint32(len(rowElements)*4))
-			assertSetParity(t, rowElements, vecElements, false)
-		})
-	}
-}
-
-// TestQueryVectorized_Parity_OffsetLimit covers the offset/limit egress split over
-// a single-series fixture (globally UNIQUE timestamps), enabling exact order+value
-// parity (no ties). The row oracle and vec pipeline both cap the scan at
-// limit+offset and slice [offset:offset+limit], exactly as the *limit plan node
-// does. Cases: limit-only, offset>0+limit, limit>result (all rows), limit<result
-// (top-N).
-func TestQueryVectorized_Parity_OffsetLimit(t *testing.T) {
-	// seriesCount=1 => one element per timestamp => globally unique, totally
-	// ordered timestamps => deterministic total order on BOTH paths => exact parity.
-	p := parameter{
-		batchCount:     1,
-		timestampCount: 30,
-		seriesCount:    1,
-		tagCardinality: 4,
-		startTimestamp: 1,
-		endTimestamp:   1000,
-		scenario:       "vec-parity-offsetlimit",
-	}
-	s, tr := buildVecTestStream(t, p)
-	entities := parityEntities(p.seriesCount)
-	projection := fullProjection()
-	ctx := context.Background()
-
-	const total = 30 // timestampCount*seriesCount, all in one batch/segment.
-
-	cases := []struct {
-		name   string
-		offset uint32
-		limit  uint32
-	}{
-		{name: "limit-only", offset: 0, limit: 10},
-		{name: "offset-plus-limit", offset: 5, limit: 10},
-		{name: "limit-larger-than-result", offset: 0, limit: total + 20},
-		{name: "limit-smaller-than-result-topN", offset: 0, limit: 3},
-		{name: "offset-into-tail", offset: total - 2, limit: 10},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			// maxElementSize = limit+offset, mirroring PushDownMaxSize at
-			// stream_analyzer.go:94 (the scan-level cap the *limit node feeds down).
-			maxSize := int(tc.limit) + int(tc.offset)
-			sqo := model.StreamQueryOptions{
-				Name:           "benchmark",
-				TimeRange:      &tr,
-				Entities:       entities,
-				TagProjection:  projection,
-				Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-				MaxElementSize: maxSize,
-			}
-
-			rowAll := runRowPath(ctx, t, s, sqo)
-			// Apply the *limit node's egress slice to the row oracle (query.go/Query
-			// does not itself apply offset/limit — that is the plan node's job).
-			rowSliced := sliceOffsetLimit(rowAll, tc.offset, tc.limit)
-
-			// The vec pipeline applies offset/limit inside NewLimit at egress, so pass
-			// the SAME offset/limit; no post-slice needed.
-			vecElements := runVecPipeline(ctx, t, s, sqo, false, tc.offset, tc.limit)
-
-			// Unique timestamps => exact order+value parity is provable.
-			assertExactParity(t, rowSliced, vecElements)
-			assertMonotonicTS(t, vecElements, false)
-		})
-	}
-}
-
-// sliceOffsetLimit reproduces the *limit plan node's egress slice
-// (allEntities[offset:offset+limit], clamped) so the row oracle can be compared to
-// the vec pipeline's built-in Limit operator.
-func sliceOffsetLimit(elems []*streamv1.Element, offset, limit uint32) []*streamv1.Element {
-	off := int(offset)
-	lim := int(limit)
-	if len(elems) <= off {
-		return []*streamv1.Element{}
-	}
-	end := off + lim
-	if end > len(elems) {
-		end = len(elems)
-	}
-	return elems[off:end]
-}
-
 // TestQueryVectorized_Parity_Boundary covers the degenerate result shapes: empty
 // (query window with no data), single-element, and a >=2-block fixture so
-// cross-block ordering is exercised. Each asserts set parity + ts monotonicity.
+// cross-block ordering is exercised, against the parity_boundary golden. These
+// shapes sit below the server layer (maxElementSize caps, physical block splits)
+// and are unreachable by the server-level fixtures in test/cases/stream/data/want.
 func TestQueryVectorized_Parity_Boundary(t *testing.T) {
+	golden := loadParityGolden(t, "parity_boundary")
+
 	t.Run("empty-result", func(t *testing.T) {
 		p := parameter{
 			batchCount:     1,
@@ -423,7 +236,7 @@ func TestQueryVectorized_Parity_Boundary(t *testing.T) {
 
 		// A time range entirely BEFORE the fixture window (which starts at ~now-1h):
 		// SelectSegments still returns the recent segment but the scan yields no rows
-		// in [tr.Start, tr.Start] shifted 100 years back, so both paths are empty.
+		// in [tr.Start, tr.Start] shifted 100 years back, so the result is empty.
 		emptyStart := tr.Start.Add(-100 * 365 * 24 * time.Hour)
 		emptyTR := timestamp.NewInclusiveTimeRange(emptyStart, tr.Start.Add(-time.Nanosecond))
 		sqo := model.StreamQueryOptions{
@@ -434,13 +247,11 @@ func TestQueryVectorized_Parity_Boundary(t *testing.T) {
 			Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
 			MaxElementSize: math.MaxInt32,
 		}
-		rowElements := runRowPath(ctx, t, s, sqo)
-		require.Empty(t, rowElements, "expected empty row result for a no-data window")
 		// Pass a real (non-zero) limit so the emptiness comes from the no-data window,
 		// not from Limit(0) emitting nothing by construction (which would make this a
 		// tautology). A large limit lets any wrongly-returned row through and fail.
-		vecElements := runVecPipeline(ctx, t, s, sqo, false, 0, math.MaxUint32)
-		require.Empty(t, vecElements, "expected empty vec result for a no-data window")
+		vecElements := runVecPipeline(ctx, t, s, sqo, false, math.MaxUint32)
+		assertGoldenParity(t, golden["empty-result"], vecElements, emptyTR.Start, true, false)
 	})
 
 	t.Run("single-element", func(t *testing.T) {
@@ -465,21 +276,15 @@ func TestQueryVectorized_Parity_Boundary(t *testing.T) {
 			Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
 			MaxElementSize: math.MaxInt32,
 		}
-		rowElements := runRowPath(ctx, t, s, sqo)
-		require.Len(t, rowElements, 1, "expected exactly one row element")
-		vecElements := runVecPipeline(ctx, t, s, sqo, false, 0, uint32(len(rowElements)*4))
-		assertExactParity(t, rowElements, vecElements)
+		vecElements := runVecPipeline(ctx, t, s, sqo, false, 4)
+		assertGoldenParity(t, golden["single-element"], vecElements, tr.Start, true, false)
 	})
 
 	t.Run("multi-block-cross-block-order", func(t *testing.T) {
 		// A block splits on series-id change (part.go:204), so seriesCount=3 forces
 		// >=3 physical blocks within the single part; the vec SortedMerge must order
-		// across those blocks identically to the row path's cross-block merge. The
-		// element count (3*50=150) stays well under one scan batch round (32 blocks)
-		// so the row oracle's ONE non-empty Pull covers the COMPLETE result — the
-		// documented one-Pull limitation of BuildElementsFromStreamResult. Multiple
-		// series share timestamps (ties), so parity is set-based + ts-monotonic, the
-		// same tie-break-safe discipline the existing parity tests use.
+		// across those blocks. Multiple series share timestamps (ties), so the golden
+		// comparison is set-based + ts-monotonic rather than order-exact.
 		p := parameter{
 			batchCount:     1,
 			timestampCount: 50,
@@ -500,63 +305,17 @@ func TestQueryVectorized_Parity_Boundary(t *testing.T) {
 			Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
 			MaxElementSize: math.MaxInt32,
 		}
-		rowElements := runRowPath(ctx, t, s, sqo)
-		require.NotEmpty(t, rowElements)
-		vecElements := runVecPipeline(ctx, t, s, sqo, false, 0, uint32(len(rowElements)*4))
-		assertSetParity(t, rowElements, vecElements, false)
+		ascCase := golden["multi-block-cross-block-order-asc"]
+		vecElements := runVecPipeline(ctx, t, s, sqo, false, uint32(ascCase.ElementCount*4))
+		assertGoldenParity(t, ascCase, vecElements, tr.Start, false, false)
 
 		// Same fixture, DESC, to exercise the desc cross-block merge direction.
 		sqoDesc := sqo
 		sqoDesc.Order = &index.OrderBy{Sort: modelv1.Sort_SORT_DESC}
-		rowDesc := runRowPath(ctx, t, s, sqoDesc)
-		require.NotEmpty(t, rowDesc)
-		vecDesc := runVecPipeline(ctx, t, s, sqoDesc, true, 0, uint32(len(rowDesc)*4))
-		assertSetParity(t, rowDesc, vecDesc, true)
+		descCase := golden["multi-block-cross-block-order-desc"]
+		vecDesc := runVecPipeline(ctx, t, s, sqoDesc, true, uint32(descCase.ElementCount*4))
+		assertGoldenParity(t, descCase, vecDesc, tr.Start, false, true)
 	})
-}
-
-// TestQueryVectorized_Parity_Fallback_RowPathCorrect asserts that a shape M6 does
-// NOT vectorize (VecExecutable declines) still returns correct elements via the
-// row path. A tag-filter-wrapped scan (criteria tags needing row-side re-matching)
-// is the canonical non-vectorizable shape: VecExecutable returns nil for it, so
-// the engine runs Query. Here we assert the row path itself is correct on the
-// fixture (the fallback destination), which is the guarantee that matters.
-func TestQueryVectorized_Parity_Fallback_RowPathCorrect(t *testing.T) {
-	p := parameter{
-		batchCount:     1,
-		timestampCount: 20,
-		seriesCount:    5,
-		tagCardinality: 4,
-		startTimestamp: 1,
-		endTimestamp:   1000,
-		scenario:       "vec-parity-fallback",
-	}
-	s, tr := buildVecTestStream(t, p)
-	entities := parityEntities(p.seriesCount)
-	ctx := context.Background()
-	sqo := model.StreamQueryOptions{
-		Name:           "benchmark",
-		TimeRange:      &tr,
-		Entities:       entities,
-		TagProjection:  fullProjection(),
-		Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
-		MaxElementSize: math.MaxInt32,
-	}
-	rowElements := runRowPath(ctx, t, s, sqo)
-	require.NotEmpty(t, rowElements, "fallback row path produced no elements; fixture is degenerate")
-	// Every element carries the full projection with non-null values (the fixture
-	// writes entity-tag + filter-tag on every element), and ts is asc-ordered.
-	for _, e := range rowElements {
-		require.Len(t, e.TagFamilies, 1)
-		require.Equal(t, "benchmark-family", e.TagFamilies[0].Name)
-		require.Len(t, e.TagFamilies[0].Tags, 2)
-		require.NotEmpty(t, e.ElementId)
-	}
-	assertMonotonicTS(t, rowElements, false)
-
-	// The decline contract itself: VecExecutable returns nil for a plan that is not
-	// the vectorizable *limit→*localIndexScan shape, so the engine runs the row path.
-	require.Nil(t, logicalstream.VecExecutable(nil), "VecExecutable must decline a non-limit plan")
 }
 
 // TestQueryVectorized_Parity_LargeSingleBlock is the C1 regression: a single
@@ -564,9 +323,9 @@ func TestQueryVectorized_Parity_Fallback_RowPathCorrect(t *testing.T) {
 // uncompressed BYTES (2 MiB), not row count, so a block can hold >1024 rows; the
 // scan must drain a cursor across multiple batchSize batches. Before the fix the
 // scan emitted only the first batchSize rows of a cursor and silently dropped the
-// rest, so the vec set would be a strict subset of the row set. seriesCount=1 =>
-// one series => one physical block => globally unique, totally ordered timestamps
-// => exact order+value parity is provable.
+// rest, so the result would be a strict subset of the golden. seriesCount=1 =>
+// one series => one physical block => globally unique timestamps => the golden
+// pins the exact order.
 func TestQueryVectorized_Parity_LargeSingleBlock(t *testing.T) {
 	const rows = 1500 // > DefaultBatchSize (1024), single series => single block.
 	p := parameter{
@@ -589,19 +348,15 @@ func TestQueryVectorized_Parity_LargeSingleBlock(t *testing.T) {
 		Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
 		MaxElementSize: math.MaxInt32,
 	}
-	rowElements := runRowPath(ctx, t, s, sqo)
-	require.Len(t, rowElements, rows, "fixture must yield every row in one Pull")
-	vecElements := runVecPipeline(ctx, t, s, sqo, false, 0, uint32(rows*4))
-	// No row loss: the vec path must return the SAME 1500 rows in the same order.
-	assertExactParity(t, rowElements, vecElements)
+	vecElements := runVecPipeline(ctx, t, s, sqo, false, uint32(rows*4))
+	assertGoldenParity(t, loadParityGolden(t, "parity_large_single_block")["asc"], vecElements, tr.Start, true, false)
 }
 
 // TestQueryVectorized_Parity_TopN_Desc is the C2 regression for descending
 // top-N: ORDER BY ts DESC with MaxElementSize < total must return the NEWEST N
 // rows, not the oldest N. Before the fix the scan truncated the first N rows in
 // storage (ascending) order before the merge, so a desc query returned the
-// OLDEST N. seriesCount=1 => unique timestamps => exact parity against the row
-// oracle (which caps AFTER its in-order desc heap merge).
+// OLDEST N. seriesCount=1 => unique timestamps => the golden pins the exact order.
 func TestQueryVectorized_Parity_TopN_Desc(t *testing.T) {
 	const total = 100
 	const topN = 10
@@ -625,24 +380,20 @@ func TestQueryVectorized_Parity_TopN_Desc(t *testing.T) {
 		Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_DESC},
 		MaxElementSize: topN, // per-node cap < total => in-order top-N.
 	}
-	rowElements := runRowPath(ctx, t, s, sqo)
-	require.Len(t, rowElements, topN, "row oracle must cap at MaxElementSize (newest N)")
 	// The vec merge caps at MaxElementSize (topN) in DESC sort order; no client
 	// offset/limit slice (limit=topN, offset=0) so egress keeps all N.
-	vecElements := runVecPipeline(ctx, t, s, sqo, true, 0, uint32(topN))
-	// Newest N kept, in desc order, byte-identical to the row oracle.
-	assertExactParity(t, rowElements, vecElements)
-	assertMonotonicTS(t, vecElements, true)
+	vecElements := runVecPipeline(ctx, t, s, sqo, true, uint32(topN))
+	assertGoldenParity(t, loadParityGolden(t, "parity_topn_desc")["desc"], vecElements, tr.Start, true, true)
 }
 
 // TestQueryVectorized_Parity_TopN_MultiSeries_Asc is the C2 cross-series
 // regression: an ASC query over MULTIPLE series with MaxElementSize < total.
 // Blocks are seriesID-major, so a pre-merge storage-order cap would keep rows
 // from the first series(es) only, not the globally-oldest N across all series.
-// The cap must apply AFTER the cross-series merge (in ts order). Multiple series
-// share timestamps (ties), so parity is the set of kept elementIDs + ts
-// monotonicity, the same tie-break-safe discipline the other multi-series cases
-// use.
+// The cap must apply AFTER the cross-series merge (in ts order). The five series
+// share timestamps, so the boundary timestamp has ties and the kept element-id set
+// at that boundary is not path-stable; the golden's invariant is therefore the
+// KEPT TS WINDOW (its largest offset), not the exact id set.
 func TestQueryVectorized_Parity_TopN_MultiSeries_Asc(t *testing.T) {
 	p := parameter{
 		batchCount:     1,
@@ -665,16 +416,11 @@ func TestQueryVectorized_Parity_TopN_MultiSeries_Asc(t *testing.T) {
 		Order:          &index.OrderBy{Sort: modelv1.Sort_SORT_ASC},
 		MaxElementSize: topN,
 	}
-	rowElements := runRowPath(ctx, t, s, sqo)
-	require.Len(t, rowElements, topN, "row oracle must cap at MaxElementSize across series")
-	vecElements := runVecPipeline(ctx, t, s, sqo, false, 0, uint32(topN))
-	require.Len(t, vecElements, topN, "vec must keep exactly the in-order top-N across series")
-	// The kept ts window must match the row oracle's (globally-oldest N): assert the
-	// max kept ts on both paths is identical, so vec did not keep later rows the
-	// oracle excluded. Ties at the boundary ts can pick different elementIDs, so the
-	// boundary ts (not the exact id set) is the cross-path invariant.
-	require.Equal(t, maxTS(rowElements), maxTS(vecElements),
-		"vec kept a different ts window than the row oracle (wrong cross-series top-N)")
+	want := loadParityGolden(t, "parity_topn_multiseries_asc")["asc"]
+	vecElements := runVecPipeline(ctx, t, s, sqo, false, uint32(topN))
+	require.Len(t, vecElements, want.ElementCount, "vec must keep exactly the in-order top-N across series")
+	require.Equal(t, maxGoldenTS(want), maxTS(vecElements)-tr.Start.UnixNano(),
+		"vec kept a different ts window than the golden (wrong cross-series top-N)")
 	assertMonotonicTS(t, vecElements, false)
 }
 
@@ -689,17 +435,22 @@ func maxTS(elems []*streamv1.Element) int64 {
 	return m
 }
 
+// maxGoldenTS returns the largest recorded timestamp offset in a golden case.
+func maxGoldenTS(c parityCase) int64 {
+	var m int64
+	for _, e := range c.Elements {
+		if e.TS > m {
+			m = e.TS
+		}
+	}
+	return m
+}
+
 // buildIndexOrderStream builds a stream over a DEDICATED index-order fixture whose
-// sortable index docs are shaped for BOTH oracles:
-//   - the ROW index-sort (query_by_idx.go) resolves elements by the sort doc's
-//     DocID == elementID and filters the sort query by the seriesIDField and the
-//     timestampField date range, so each doc sets DocID=elementID and Timestamp=ts.
-//   - the VEC OrderKey path keys on the "filter-tag" tag value (resolveOrderTag),
-//     so the element's filter-tag value equals the sortable field's term.
-//
-// The shared generateData fixture cannot serve as an index-sort oracle: it stamps
-// DocID=timestamp (never matching an element id) and sets no Timestamp on its docs
-// (so the sort query's date range matches nothing). Hence this dedicated writer.
+// sortable index docs carry DocID=elementID and Timestamp=ts, and whose element
+// "filter-tag" value equals the sortable field's term so the vec OrderKey path
+// (resolveOrderTag) can key on it. The shared generateData fixture cannot serve
+// here: it stamps DocID=timestamp and sets no Timestamp on its docs.
 //
 // Sort values are assigned so index order deliberately DIFFERS from ts order (the
 // per-series value decreases as ts increases), proving the test exercises the
@@ -735,12 +486,10 @@ func buildIndexOrderStream(t *testing.T) (*stream, timestamp.TimeRange) {
 			if ts > maxTS {
 				maxTS = ts
 			}
-			elementIDStr := strconv.Itoa(k) + "-" + strconv.Itoa(j)
-			elementID := convert.HashStr(elementIDStr)
+			elementID := convert.HashStr(strconv.Itoa(k) + "-" + strconv.Itoa(j))
 			// Sort value decreases as ts increases => index order != ts order. Zero-pad
 			// so lexicographic term order equals numeric order.
-			sortRank := indexOrderTSCount - j
-			sortValue := filterTagValuePrefix + fmt.Sprintf("%03d", sortRank)
+			sortValue := filterTagValuePrefix + fmt.Sprintf("%03d", indexOrderTSCount-j)
 
 			elems.seriesIDs = append(elems.seriesIDs, sid)
 			elems.timestamps = append(elems.timestamps, ts)
@@ -748,7 +497,7 @@ func buildIndexOrderStream(t *testing.T) (*stream, timestamp.TimeRange) {
 			elems.tagFamilies = append(elems.tagFamilies, []tagValues{{
 				tag: "benchmark-family",
 				values: []*tagValue{
-					{tag: "entity-tag", value: []byte(entityTagValuePrefix + strconv.Itoa(k)), valueType: pbv1.ValueTypeStr},
+					{tag: entityTagName, value: []byte(entityTagValuePrefix + strconv.Itoa(k)), valueType: pbv1.ValueTypeStr},
 					{tag: "filter-tag", value: []byte(sortValue), valueType: pbv1.ValueTypeStr},
 				},
 			}})
@@ -774,11 +523,11 @@ func buildIndexOrderStream(t *testing.T) (*stream, timestamp.TimeRange) {
 	tst.Index().Write(sortDocs)
 	seg.DecRef()
 
-	entity := &databasev1.Entity{TagNames: []string{"entity-tag"}}
+	entity := &databasev1.Entity{TagNames: []string{entityTagName}}
 	tagFamily := &databasev1.TagFamilySpec{
 		Name: "benchmark-family",
 		Tags: []*databasev1.TagSpec{
-			{Name: "entity-tag", Type: databasev1.TagType_TAG_TYPE_STRING},
+			{Name: entityTagName, Type: databasev1.TagType_TAG_TYPE_STRING},
 			{Name: "filter-tag", Type: databasev1.TagType_TAG_TYPE_STRING},
 		},
 	}
@@ -793,7 +542,6 @@ func buildIndexOrderStream(t *testing.T) (*stream, timestamp.TimeRange) {
 		pm:         protector.Nop{},
 		vectorized: vstream.DefaultConfig(),
 	}
-	s.vectorized.Enabled = true
 	s.name, s.group = "benchmark", "test"
 	var is indexSchema
 	is.parse(schema)
@@ -801,4 +549,101 @@ func buildIndexOrderStream(t *testing.T) (*stream, timestamp.TimeRange) {
 	s.indexSchema.Store(is)
 	s.tsdb.Store(db)
 	return s, timestamp.NewInclusiveTimeRange(time.Unix(0, minTS), time.Unix(0, maxTS))
+}
+
+// runVecHiddenOrderTag mirrors localIndexScan.ExecuteVectorized for an index-order
+// query whose ordered tag is NOT in the client projection: the scan is asked for
+// scanProjection (client tags + the ordered tag) so the OrderKey column can be
+// populated, and the egress materializes only clientProjection, so the ordered tag
+// never reaches the result.
+func runVecHiddenOrderTag(ctx context.Context, t *testing.T, s *stream, sqo model.StreamQueryOptions,
+	scanProjection, clientProjection []model.TagProjection, desc bool,
+) []*streamv1.Element {
+	t.Helper()
+	scanSQO := sqo
+	scanSQO.TagProjection = scanProjection
+	src, err := s.queryVectorized(ctx, scanSQO)
+	require.NoError(t, err)
+	require.NotNil(t, src)
+	schema := src.Schema()
+	pipeline, err := vstream.BuildStreamMergePipeline(
+		&testVecSource{src: src, schema: schema}, schema, desc, 0, math.MaxUint32, vstream.DefaultConfig().BatchSize, 0)
+	require.NoError(t, err)
+	require.NoError(t, pipeline.Init(ctx))
+	var batches []*vectorized.RecordBatch
+	for {
+		batch, nextErr := pipeline.Next(ctx)
+		require.NoError(t, nextErr)
+		if batch == nil {
+			break
+		}
+		batches = append(batches, batch)
+	}
+	elems, err := BuildElementsFromBatches(batches, clientProjection)
+	require.NoError(t, err)
+	require.NoError(t, pipeline.Close())
+	return elems
+}
+
+// TestQueryVectorized_Parity_IndexOrder_TagNotProjected covers the R-1 gap: an
+// index-order query whose ordered tag is absent from the projection. Vec derives
+// its OrderKey from the ordered tag's projected cell, so such a query used to fall
+// back to the row path; it now projects the tag internally and strips it before
+// egress.
+//
+// The expectation is analytic rather than captured: buildIndexOrderStream assigns
+// each element j (1..indexOrderTSCount) the sort term indexOrderTSCount-j and the
+// timestamp base+j seconds, so index-asc order is j descending — the exact REVERSE
+// of timestamp order. A silent timestamp fallback, the failure this closes, would
+// produce the opposite sequence and fail.
+func TestQueryVectorized_Parity_IndexOrder_TagNotProjected(t *testing.T) {
+	indexRule := &databasev1.IndexRule{
+		Metadata: &commonv1.Metadata{Name: "filter-idx", Id: indexOrderRuleID},
+		Tags:     []string{"filter-tag"},
+	}
+	s, tr := buildIndexOrderStream(t)
+	ctx := context.Background()
+	// One series, so the order key has no cross-series ties and the total order is
+	// fully determined by the fixture.
+	entities := parityEntities(1)
+	clientProjection := []model.TagProjection{{Family: "benchmark-family", Names: []string{entityTagName}}}
+	scanProjection := []model.TagProjection{{Family: "benchmark-family", Names: []string{entityTagName, "filter-tag"}}}
+
+	for _, tc := range []struct {
+		name string
+		sort modelv1.Sort
+	}{
+		{name: "index-order-asc", sort: modelv1.Sort_SORT_ASC},
+		{name: "index-order-desc", sort: modelv1.Sort_SORT_DESC},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			desc := tc.sort == modelv1.Sort_SORT_DESC
+			sqo := model.StreamQueryOptions{
+				Name:           "benchmark",
+				TimeRange:      &tr,
+				Entities:       entities,
+				TagProjection:  clientProjection,
+				Order:          &index.OrderBy{Index: indexRule, Sort: tc.sort},
+				MaxElementSize: math.MaxInt32,
+			}
+			vecElements := runVecHiddenOrderTag(ctx, t, s, sqo, scanProjection, clientProjection, desc)
+			require.Len(t, vecElements, indexOrderTSCount, "index-sort produced an unexpected element count")
+
+			for idx, e := range vecElements {
+				// index-asc walks j from indexOrderTSCount down to 1; index-desc walks it up.
+				j := indexOrderTSCount - idx
+				if desc {
+					j = idx + 1
+				}
+				wantID := hex.EncodeToString(convert.Uint64ToBytes(convert.HashStr("1-" + strconv.Itoa(j))))
+				require.Equal(t, wantID, e.ElementId, "element order mismatch at %d", idx)
+				require.Len(t, e.TagFamilies, 1)
+				require.Len(t, e.TagFamilies[0].Tags, 1, "the ordered tag must not reach the egress")
+				require.Equal(t, entityTagName, e.TagFamilies[0].Tags[0].Key)
+			}
+			// The fixture's sort value decreases as ts increases, so index order is
+			// the reverse of ts order — a timestamp fallback would fail here.
+			assertMonotonicTS(t, vecElements, !desc)
+		})
+	}
 }

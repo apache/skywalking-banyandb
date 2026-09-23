@@ -18,6 +18,7 @@
 package property
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -313,6 +314,26 @@ func TestBuildPropertyID(t *testing.T) {
 	assert.Equal(t, "stream_g1/name1", BuildPropertyID(schema.KindStream, &commonv1.Metadata{Group: "g1", Name: "name1"}))
 	assert.Equal(t, "group_test-group", BuildPropertyID(schema.KindGroup, &commonv1.Metadata{Name: "test-group"}))
 	assert.Equal(t, "measure_g1/m1", BuildPropertyID(schema.KindMeasure, &commonv1.Metadata{Group: "g1", Name: "m1"}))
+}
+
+func TestBuildPropertyIDFitsPGVCeiling(t *testing.T) {
+	groupName := strings.Repeat("g", 255)
+	resourceName := strings.Repeat("n", 255)
+	kinds := []schema.Kind{
+		schema.KindStream, schema.KindMeasure, schema.KindTrace,
+		schema.KindIndexRule, schema.KindIndexRuleBinding, schema.KindTopNAggregation, schema.KindProperty,
+	}
+	for _, kind := range kinds {
+		id := BuildPropertyID(kind, &commonv1.Metadata{Group: groupName, Name: resourceName})
+		prop := &propertyv1.Property{
+			Metadata: &commonv1.Metadata{Name: kind.String()},
+			Id:       id,
+			Tags: []*modelv1.Tag{
+				{Key: "k", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v"}}}},
+			},
+		}
+		assert.NoError(t, prop.Validate(), "kind=%s idLen=%d", kind, len(id))
+	}
 }
 
 func TestBuildPropertyIDFromMeta(t *testing.T) {

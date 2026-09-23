@@ -96,9 +96,9 @@ func BuildOperators(
 		return []vectorized.BreakerOperator{gb}, nil
 	}
 
-	fieldIdx, fieldErr := lookupFieldColumnIndex(schema, opts.Agg.FieldName)
-	if fieldErr != nil {
-		return nil, fieldErr
+	inputIdx, inputErr := lookupAggInputColumnIndex(schema, opts.Agg)
+	if inputErr != nil {
+		return nil, inputErr
 	}
 
 	aggFn, fnErr := protoAggFuncToInternal(opts.Agg.Func)
@@ -106,8 +106,8 @@ func BuildOperators(
 		return nil, fnErr
 	}
 
-	// The agg result column inherits the input field's name to match the
-	// row-path aggregator (aggGroupIterator.Current() in
+	// The agg result column inherits the target's name — field or tag —
+	// to match the row-path aggregator (aggGroupIterator.Current() in
 	// pkg/query/logical/measure/measure_plan_aggregation.go). Row-path
 	// fixtures expect a single output field named after the original
 	// input (e.g. "value"), not an auto-derived "<field>_<func>" suffix
@@ -122,12 +122,128 @@ func BuildOperators(
 	// equivalent of the row path's aggAllIterator.
 	spec := AggSpec{
 		Func:     aggFn,
-		InputCol: fieldIdx,
-		Output:   opts.Agg.FieldName,
+		InputCol: inputIdx,
+		Output:   aggTargetName(opts.Agg),
+		HideTag:  opts.Agg.HideTag,
+	}
+	// COUNT_DISTINCT's map-phase precondition (design §7.4 "De-duplicating
+	// the partials", part (a)). computeKey ignores shard id, and a node
+	// holding more than one shard emits one merged partial per group,
+	// labeled with whichever shard's row created it first — a hint, not
+	// an identity. Under replication, staggered shard placement
+	// (pkg/node/round_robin.go's roundRobinSelector) means no two nodes
+	// hold the same shard set, so two nodes' partials for the same group
+	// can collide on that incidental label. Depending on which of the
+	// colliding partials markDedupSeen's (shardID, groupKey) check keeps
+	// vs. drops, the result can either double-count (the survivor still
+	// includes a shard the dropped one also counted) or undercount (the
+	// dropped one carried a shard the survivor never had) — the design
+	// doc's worked 4-node/replicas=1 example walks both outcomes from the
+	// same topology. Forcing one group per (shard, GroupBy-key) makes the
+	// emitted shard_id exact rather than incidental, so only a genuine
+	// replica duplicate can ever share a dedup key.
+	//
+	// This same defect is latent in every distributed agg today, not only
+	// COUNT_DISTINCT — design §7.4 tracks that as a parallel, non-gating
+	// investigation (stage 4a) rather than fixing it here for every
+	// function.
+	if aggFn == AggCountDistinct && mode == AggModeMap {
+		if shardIdx := findShardIDIndex(schema); shardIdx >= 0 {
+			keyIndices = append(keyIndices, shardIdx)
+		}
 	}
 	agg := NewBatchAggregation(schema, keyIndices, []AggSpec{spec},
 		mode, batchSize, tracker, aggEntrySize)
 	return []vectorized.BreakerOperator{agg}, nil
+}
+
+// aggTargetName returns the name the agg result column inherits (design
+// §5.2): the tag name when Agg targets a tag, otherwise the field name.
+func aggTargetName(agg *model.MeasureAgg) string {
+	if agg.TagName != "" {
+		return agg.TagName
+	}
+	return agg.FieldName
+}
+
+// BuildTimeBucketOperator builds the BatchTimeBucket operator for a
+// time-bucketed GroupBy (design §7.2), wrapping upstream directly. Unlike
+// BuildOperators, this does not return a BreakerOperator to be attached via
+// PipelineBuilder.Break: BatchTimeBucket is a PullOperator that pulls from
+// upstream lazily inside its own NextBatch, which is what makes its memory
+// bound real (see BatchTimeBucket's doc). Callers wire it in via
+// PipelineBuilder.Transform instead. Check opts.GroupBy.GetTimeBucket() != nil
+// before calling this rather than BuildOperators.
+//
+// tagKeyIndices are the already resolved tag GroupBy keys (empty for a
+// bucket-only GroupBy, i.e. no tag key at all). Agg is optional, exactly as
+// for the non-bucketed case: when absent this is a bucketed raw GroupBy
+// (first-seen row per (bucket, tags)), when present it is a bucketed
+// aggregate — both shapes reuse the same BatchTimeBucket, since
+// BatchAggregation with zero AggSpecs already produces the raw-GroupBy
+// shape. (The analyzer currently rejects the no-Agg case for real requests
+// — BatchAggregation's empty-AggSpec output layout drops every projected
+// field, unlike BatchGroupByFirst's full-schema passthrough — but
+// BuildTimeBucketOperator itself stays agnostic to that policy choice.)
+func BuildTimeBucketOperator(
+	upstream vectorized.PullOperator, opts model.MeasureQueryOptions, schema *vectorized.BatchSchema,
+	tracker *vectorized.MemoryTracker, batchSize int, mode AggMode,
+) (*BatchTimeBucket, error) {
+	if tracker == nil {
+		return nil, fmt.Errorf("vectorized.measure: BuildTimeBucketOperator requires a non-nil shared MemoryTracker")
+	}
+	if batchSize <= 0 {
+		return nil, fmt.Errorf("vectorized.measure: batchSize must be > 0, got %d", batchSize)
+	}
+	if mode == AggModeReduce {
+		return nil, fmt.Errorf("vectorized.measure: BuildTimeBucketOperator does not build AggModeReduce — that operator is built by the liaison reduce plan")
+	}
+	var tagKeyIndices []int
+	if opts.GroupBy != nil && opts.GroupBy.TagFamily != "" && len(opts.GroupBy.TagNames) > 0 {
+		var keyErr error
+		tagKeyIndices, keyErr = lookupGroupByKeyIndices(schema, opts.GroupBy)
+		if keyErr != nil {
+			return nil, keyErr
+		}
+	}
+	timestampIdx := schema.TimestampIndex()
+	if timestampIdx < 0 {
+		return nil, fmt.Errorf("vectorized.measure: time_bucket requires a RoleTimestamp column in the scan schema")
+	}
+	var specs []AggSpec
+	var aggFn AggFunc
+	if opts.Agg != nil {
+		inputIdx, inputErr := lookupAggInputColumnIndex(schema, opts.Agg)
+		if inputErr != nil {
+			return nil, inputErr
+		}
+		var fnErr error
+		aggFn, fnErr = protoAggFuncToInternal(opts.Agg.Func)
+		if fnErr != nil {
+			return nil, fnErr
+		}
+		specs = []AggSpec{{
+			Func:     aggFn,
+			InputCol: inputIdx,
+			Output:   aggTargetName(opts.Agg),
+			HideTag:  opts.Agg.HideTag,
+		}}
+	}
+	// Same COUNT_DISTINCT map-phase precondition as BuildOperators (see its
+	// comment for the full derivation): a data node's per-bucket aggregator
+	// can still see rows from more than one of its local shards in a
+	// single upstream batch, so the shard-id column must be part of the
+	// group key — otherwise BatchTimeBucket would merge those shards into
+	// one incidentally-labeled partial per bucket, exactly the shape the
+	// fix in BuildOperators exists to prevent for the unbucketed case.
+	if opts.Agg != nil && aggFn == AggCountDistinct && mode == AggModeMap {
+		if shardIdx := findShardIDIndex(schema); shardIdx >= 0 {
+			tagKeyIndices = append(tagKeyIndices, shardIdx)
+		}
+	}
+	tb := opts.GroupBy.TimeBucket
+	return NewBatchTimeBucket(upstream, schema, tagKeyIndices, timestampIdx, tb.WidthNanos,
+		specs, mode, batchSize, tracker, aggEntrySize, !tb.UseIndexModeMap), nil
 }
 
 // lookupGroupByKeyIndices resolves each GroupBy tag name to its column index
@@ -161,6 +277,22 @@ func lookupFieldColumnIndex(schema *vectorized.BatchSchema, name string) (int, e
 	return -1, fmt.Errorf("vectorized.measure: Agg field %q not present in schema", name)
 }
 
+// lookupAggInputColumnIndex resolves agg's target column: a tag sibling of
+// lookupGroupByKeyIndices when agg.TagName is set (matched on RoleTag +
+// TagFamily + Name, since tag names are only unique within a family),
+// otherwise the existing field lookup.
+func lookupAggInputColumnIndex(schema *vectorized.BatchSchema, agg *model.MeasureAgg) (int, error) {
+	if agg.TagName == "" {
+		return lookupFieldColumnIndex(schema, agg.FieldName)
+	}
+	for i, def := range schema.Columns {
+		if def.Role == vectorized.RoleTag && def.TagFamily == agg.TagFamily && def.Name == agg.TagName {
+			return i, nil
+		}
+	}
+	return -1, fmt.Errorf("vectorized.measure: Agg tag %s.%s not present in schema", agg.TagFamily, agg.TagName)
+}
+
 // protoAggFuncToInternal maps the proto AggregationFunction enum to the
 // internal AggFunc constant. UNSPECIFIED is rejected — Aggregation must
 // name a concrete function.
@@ -178,6 +310,8 @@ func protoAggFuncToInternal(f modelv1.AggregationFunction) (AggFunc, error) {
 		return AggMean, nil
 	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED:
 		return 0, fmt.Errorf("vectorized.measure: Agg.Function is UNSPECIFIED")
+	case modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT:
+		return AggCountDistinct, nil
 	}
 	return 0, fmt.Errorf("vectorized.measure: unknown AggregationFunction %v", f)
 }

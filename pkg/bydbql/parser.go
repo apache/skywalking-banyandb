@@ -31,7 +31,7 @@ var bydbqlKeywords = []string{
 	"IN", "ON", "STAGES", "TIME", "BETWEEN", "AND", "OR", "WHERE", "GROUP", "BY", "ORDER",
 	"ASC", "DESC", "LIMIT", "OFFSET", "WITH", "QUERY_TRACE", "SUM", "MEAN",
 	"AVG", "COUNT", "MAX", "MIN", "TAG", "FIELD", "NOT", "HAVING", "MATCH",
-	"AGGREGATE", "NULL",
+	"AGGREGATE", "NULL", "DISTINCT", "TIME_BUCKET",
 }
 
 // Lexer and parser are initialized in init().
@@ -95,8 +95,53 @@ func ParseQuery(query string) (*Grammar, error) {
 	if err != nil {
 		return nil, fmt.Errorf("syntax error: %w", err)
 	}
+	if err := checkAggregateAndGroupByShape(grammar); err != nil {
+		return nil, err
+	}
 
 	return grammar, nil
+}
+
+// checkAggregateAndGroupByShape enforces two constraints participle's
+// struct-tag grammar cannot express as per-alternative predicates:
+//   - DISTINCT is only valid inside COUNT — SUM(DISTINCT x) etc. is rejected.
+//   - At most one TIME_BUCKET(...) pseudo-column is allowed per GROUP BY.
+//
+// Both are semantic rules, but are enforced here (rather than at transform
+// time) so a malformed query fails exactly like any other syntax error, one
+// step after the raw participle parse — the same precedent checkParenDepth
+// already set for a pre-parse check.
+func checkAggregateAndGroupByShape(g *Grammar) error {
+	if g.Select == nil {
+		return nil
+	}
+	if proj := g.Select.Projection; proj != nil {
+		var columns []*GrammarColumn
+		columns = append(columns, proj.Columns...)
+		if proj.TopN != nil {
+			columns = append(columns, proj.TopN.OtherColumns...)
+		}
+		for _, col := range columns {
+			if col.Aggregate == nil {
+				continue
+			}
+			if col.Aggregate.Distinct && !strings.EqualFold(col.Aggregate.Function, "COUNT") {
+				return fmt.Errorf("syntax error: DISTINCT is only valid inside COUNT, got %s(DISTINCT ...)", col.Aggregate.Function)
+			}
+		}
+	}
+	if gb := g.Select.GroupBy; gb != nil {
+		bucketCount := 0
+		for _, col := range gb.Columns {
+			if col.TimeBucket != nil {
+				bucketCount++
+			}
+		}
+		if bucketCount > 1 {
+			return fmt.Errorf("syntax error: at most one TIME_BUCKET(...) is allowed in GROUP BY, got %d", bucketCount)
+		}
+	}
+	return nil
 }
 
 // checkParenDepth rejects queries whose parenthesis nesting exceeds maxParenDepth.

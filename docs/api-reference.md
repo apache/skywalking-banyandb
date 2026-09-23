@@ -50,6 +50,7 @@
     - [QueryRequest.Aggregation](#banyandb-measure-v1-QueryRequest-Aggregation)
     - [QueryRequest.FieldProjection](#banyandb-measure-v1-QueryRequest-FieldProjection)
     - [QueryRequest.GroupBy](#banyandb-measure-v1-QueryRequest-GroupBy)
+    - [QueryRequest.GroupBy.TimeBucket](#banyandb-measure-v1-QueryRequest-GroupBy-TimeBucket)
     - [QueryRequest.GroupModRevisionsEntry](#banyandb-measure-v1-QueryRequest-GroupModRevisionsEntry)
     - [QueryRequest.Top](#banyandb-measure-v1-QueryRequest-Top)
     - [QueryResponse](#banyandb-measure-v1-QueryResponse)
@@ -720,6 +721,7 @@ Trace is the top level message of a trace.
 | AGGREGATION_FUNCTION_MIN | 3 |  |
 | AGGREGATION_FUNCTION_COUNT | 4 |  |
 | AGGREGATION_FUNCTION_SUM | 5 |  |
+| AGGREGATION_FUNCTION_COUNT_DISTINCT | 6 | COUNT_DISTINCT counts the distinct non-null values of the target. It is exact and bounded by the per-query memory budget. |
 
 
  
@@ -1106,7 +1108,7 @@ Contains shard information for proper deduplication.
 | ----- | ---- | ----- | ----------- |
 | data_points | [InternalDataPoint](#banyandb-measure-v1-InternalDataPoint) | repeated | data_points with shard information |
 | trace | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace contains the trace information of the query when trace is enabled |
-| raw_frame_body | [bytes](#bytes) |  | raw_frame_body contains the vectorized raw frame body when raw wire mode is enabled |
+| raw_frame_body | [bytes](#bytes) |  | raw_frame_body contains the vectorized raw frame body |
 
 
 
@@ -1128,7 +1130,7 @@ QueryRequest is the request contract for query.
 | tag_projection | [banyandb.model.v1.TagProjection](#banyandb-model-v1-TagProjection) |  | tag_projection can be used to select tags of the data points in the response |
 | field_projection | [QueryRequest.FieldProjection](#banyandb-measure-v1-QueryRequest-FieldProjection) |  | field_projection can be used to select fields of the data points in the response |
 | group_by | [QueryRequest.GroupBy](#banyandb-measure-v1-QueryRequest-GroupBy) |  | group_by groups data points based on their field value for a specific tag and use field_name as the projection name |
-| agg | [QueryRequest.Aggregation](#banyandb-measure-v1-QueryRequest-Aggregation) |  | agg aggregates data points based on a field |
+| agg | [QueryRequest.Aggregation](#banyandb-measure-v1-QueryRequest-Aggregation) |  | agg aggregates data points based on a field or a tag |
 | top | [QueryRequest.Top](#banyandb-measure-v1-QueryRequest-Top) |  | top limits the result based on a particular field. If order_by is specified, top sorts the dataset based on order_by&#39;s output |
 | offset | [uint32](#uint32) |  | offset is used to support pagination, together with the following limit. If top is specified, offset processes the dataset based on top&#39;s output |
 | limit | [uint32](#uint32) |  | limit is used to impose a boundary on the number of records being returned. If top is specified, limit processes the dataset based on top&#39;s output |
@@ -1153,6 +1155,8 @@ QueryRequest is the request contract for query.
 | ----- | ---- | ----- | ----------- |
 | function | [banyandb.model.v1.AggregationFunction](#banyandb-model-v1-AggregationFunction) |  |  |
 | field_name | [string](#string) |  | field_name must be one of files indicated by the field_projection |
+| tag_name | [string](#string) |  | tag_name aggregates over a tag instead of a field. Exactly one of field_name and tag_name must be set. |
+| tag_family | [string](#string) |  | tag_family qualifies tag_name; required when tag_name is set. Tag names are only unique within a family, so an unqualified tag_name would be ambiguous on schemas that repeat a name across families. |
 
 
 
@@ -1184,6 +1188,22 @@ QueryRequest is the request contract for query.
 | ----- | ---- | ----- | ----------- |
 | tag_projection | [banyandb.model.v1.TagProjection](#banyandb-model-v1-TagProjection) |  | tag_projection must be a subset of the tag_projection of QueryRequest |
 | field_name | [string](#string) |  | field_name must be one of fields indicated by field_projection |
+| time_bucket | [QueryRequest.GroupBy.TimeBucket](#banyandb-measure-v1-QueryRequest-GroupBy-TimeBucket) |  | time_bucket adds the data point&#39;s timestamp, floored to a bucket boundary, as the leading group key, and re-emits it as the result row&#39;s timestamp. Buckets are anchored at the Unix epoch: bucket_start = ts - ts % width, matching DATE_BIN with a Unix-epoch origin. Unset means no time bucketing — the whole time_range collapses to one row per tag group, as today. |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-QueryRequest-GroupBy-TimeBucket"></a>
+
+### QueryRequest.GroupBy.TimeBucket
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| width | [string](#string) |  | width is a duration string using the same units as Measure.interval (&#34;ns&#34;, &#34;us&#34;, &#34;ms&#34;, &#34;s&#34;, &#34;m&#34;, &#34;h&#34;, &#34;d&#34;). Empty means &#34;use the measure&#39;s interval&#34;; if the measure has no interval either, the request is rejected. |
 
 
 
@@ -1426,8 +1446,8 @@ Metadata is for multi-tenant, multi-model use
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| group | [string](#string) |  | group contains a set of options, like retention policy, max |
-| name | [string](#string) |  | name of the entity |
+| group | [string](#string) |  | group contains a set of options, like retention policy, max Empty for Group itself; otherwise a path-safe identifier (max 255). |
+| name | [string](#string) |  | name of the entity — path-safe identifier used under catalog data roots. |
 | id | [uint32](#uint32) |  | id is the unique identifier of the entity if id is not set, the system will generate a unique id |
 | create_revision | [int64](#int64) |  | readonly. create_revision is the revision of last creation on this key. |
 | mod_revision | [int64](#int64) |  | readonly. mod_revision is the revision of last modification on this key. |
@@ -1482,7 +1502,7 @@ keep/drop verdict over a vectorized batch of traces.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| path | [string](#string) |  | path is the plugin .so filename, resolved within the data node&#39;s trusted plugin directory. |
+| path | [string](#string) |  | path is the plugin .so basename, resolved inside the trusted plugin directory. |
 | symbol | [string](#string) |  | symbol is the constructor symbol the engine looks up; defaults to &#34;NewSampler&#34; if empty. |
 | abi_version | [uint32](#uint32) |  | abi_version is the ABI version the plugin was built against. |
 | config | [google.protobuf.Struct](#google-protobuf-Struct) |  | config is the plugin-defined configuration serialized to canonical JSON for the constructor. |
@@ -1598,7 +1618,7 @@ Property stores the user defined data
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | metadata is the identity of a property |
-| id | [string](#string) |  | id is the identity of a property |
+| id | [string](#string) |  | id uniquely identifies a property entity within a group/name. May include &#39;/&#39; (schema registry keys); not used as a filesystem path element. 1024 covers BuildPropertyID (kind &#43; &#34;_&#34; &#43; group &#43; &#34;/&#34; &#43; name) at the 255-character name ceiling. |
 | tags | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated | tag stores the content of a property |
 | updated_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  | updated_at indicates when the property is updated |
 
@@ -3516,7 +3536,7 @@ GroupDeletionTask represents the status of a group deletion operation.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision assigned by the server on successful create/update. |
 
 
 
@@ -3551,7 +3571,7 @@ GroupRegistryServiceDeleteResponse is the response for deleting a group.
 | ----- | ---- | ----- | ----------- |
 | schema_info | [SchemaInfo](#banyandb-database-v1-SchemaInfo) |  | schema_info contains the schema resources that would be deleted (populated in dry-run mode). |
 | delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision of the tombstone; zero if the server did not record one. |
 
 
 
@@ -3729,7 +3749,7 @@ GroupRegistryServiceQueryResponse is the response for querying a group deletion 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision assigned by the server on successful create/update. |
 
 
 
@@ -3759,7 +3779,7 @@ GroupRegistryServiceQueryResponse is the response for querying a group deletion 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision assigned by the server on successful create/update. |
 
 
 
@@ -3791,7 +3811,7 @@ GroupRegistryServiceQueryResponse is the response for querying a group deletion 
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
 | delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision of the tombstone; zero if the server did not record one. |
 
 
 
@@ -3912,7 +3932,7 @@ GroupRegistryServiceQueryResponse is the response for querying a group deletion 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision assigned by the server on successful create/update. |
 
 
 
@@ -3942,7 +3962,7 @@ GroupRegistryServiceQueryResponse is the response for querying a group deletion 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision assigned by the server on successful create/update. |
 
 
 
@@ -3974,7 +3994,7 @@ GroupRegistryServiceQueryResponse is the response for querying a group deletion 
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
 | delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision of the tombstone; zero if the server did not record one. |
 
 
 
@@ -4095,7 +4115,7 @@ GroupRegistryServiceQueryResponse is the response for querying a group deletion 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision assigned by the server on successful create/update. |
 
 
 
@@ -4192,7 +4212,7 @@ LiaisonInfo contains information about pending operations in liaison.
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
 | delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision of the tombstone; zero if the server did not record one. |
 
 
 
@@ -4398,7 +4418,7 @@ materialized yet -- the agent then takes the runtime fingerprint from cache.
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
 | delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision of the tombstone; zero if the server did not record one. |
 
 
 
@@ -4865,7 +4885,7 @@ error).
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
 | delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision of the tombstone; zero if the server did not record one. |
 
 
 
@@ -5016,7 +5036,7 @@ error).
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision assigned by the server on successful create/update. |
 
 
 
@@ -5048,7 +5068,7 @@ error).
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
 | delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision of the tombstone; zero if the server did not record one. |
 
 
 
@@ -5169,7 +5189,7 @@ error).
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision assigned by the server on successful create/update. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision assigned by the server on successful create/update. |
 
 
 
@@ -5231,7 +5251,7 @@ error).
 | ----- | ---- | ----- | ----------- |
 | deleted | [bool](#bool) |  |  |
 | delete_time | [int64](#int64) |  | delete_time is the server-assigned tombstone timestamp in unix nanos. |
-| mod_revision | [int64](#int64) |  | mod_revision is the etcd revision of the tombstone; zero if the server did not record one. |
+| mod_revision | [int64](#int64) |  | mod_revision is the schema revision of the tombstone; zero if the server did not record one. |
 
 
 

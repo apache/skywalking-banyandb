@@ -1,0 +1,35 @@
+[
+  {
+    "tag_families": [
+      {
+        "tags": [
+          { "str": { "value": "user1" } },
+          { "str": { "value": "keyA" } }
+        ]
+      }
+    ],
+    "fields": [ { "int": { "value": 1 } } ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          { "str": { "value": "user1" } },
+          { "str": { "value": "keyA" } }
+        ]
+      }
+    ],
+    "fields": [ { "int": { "value": 2 } } ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          { "str": { "value": "user1" } },
+          { "str": { "value": "keyB" } }
+        ]
+      }
+    ],
+    "fields": [ { "int": { "value": 3 } } ]
+  }
+]

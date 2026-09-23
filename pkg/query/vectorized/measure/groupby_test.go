@@ -431,3 +431,28 @@ func TestBatchGroupBy_Close_Idempotent_NoDoubleRelease(t *testing.T) {
 		_ = used2 // unused-import guard
 	}
 }
+
+// TestKeyComponentSupported_MatchesAppendKeyComponentTypeSwitch pins
+// KeyComponentSupported's contract with appendKeyComponent: every type
+// appendKeyComponent actually encodes must report true, and array types —
+// which appendKeyComponent silently no-ops for — must report false. This is
+// the predicate the analyzer's tag-target rejection (design §6) consults so
+// the two behaviors cannot drift apart.
+func TestKeyComponentSupported_MatchesAppendKeyComponentTypeSwitch(t *testing.T) {
+	supported := []vectorized.ColumnType{
+		vectorized.ColumnTypeInt64, vectorized.ColumnTypeFloat64,
+		vectorized.ColumnTypeString, vectorized.ColumnTypeBytes,
+		vectorized.ColumnTypeTagValue, vectorized.ColumnTypeFieldValue,
+	}
+	for _, ct := range supported {
+		if !KeyComponentSupported(ct) {
+			t.Errorf("KeyComponentSupported(%v) = false, want true", ct)
+		}
+	}
+	unsupported := []vectorized.ColumnType{vectorized.ColumnTypeInt64Array, vectorized.ColumnTypeStrArray}
+	for _, ct := range unsupported {
+		if KeyComponentSupported(ct) {
+			t.Errorf("KeyComponentSupported(%v) = true, want false (appendKeyComponent has no encoding for it)", ct)
+		}
+	}
+}

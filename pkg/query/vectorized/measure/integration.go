@@ -77,7 +77,7 @@ func BuildBatchSchema(measureSchema *databasev1.Measure, opts model.MeasureQuery
 		tagSpecs[tf.GetName()] = byName
 	}
 
-	nativeTagSet := buildNativeTagSet(opts.GroupBy)
+	nativeTagSet := buildNativeTagSet(opts.GroupBy, opts.Agg)
 	nativeFieldSet := buildNativeFieldSet(opts.Agg)
 
 	for _, tp := range opts.TagProjection {
@@ -134,15 +134,20 @@ func BuildBatchSchema(measureSchema *databasev1.Measure, opts model.MeasureQuery
 func nativeKey(family, name string) string { return family + "\x00" + name }
 
 // buildNativeTagSet collects the (family, name) tuples that should be
-// materialized as native typed columns because a GroupBy clause keys
-// off them. Returns an empty set when GroupBy is unset.
-func buildNativeTagSet(gb *model.MeasureGroupBy) map[string]struct{} {
+// materialized as native typed columns because a GroupBy clause keys off
+// them, or because Agg targets a tag directly. Returns an empty set when
+// neither is set. The Agg case is load-bearing (design §7.1): without it
+// the agg target column stays a ColumnTypeTagValue passthrough and
+// BatchAggregation.fold panics on its type assertion.
+func buildNativeTagSet(gb *model.MeasureGroupBy, agg *model.MeasureAgg) map[string]struct{} {
 	out := make(map[string]struct{})
-	if gb == nil || gb.TagFamily == "" {
-		return out
+	if gb != nil && gb.TagFamily != "" {
+		for _, name := range gb.TagNames {
+			out[nativeKey(gb.TagFamily, name)] = struct{}{}
+		}
 	}
-	for _, name := range gb.TagNames {
-		out[nativeKey(gb.TagFamily, name)] = struct{}{}
+	if agg != nil && agg.TagName != "" {
+		out[nativeKey(agg.TagFamily, agg.TagName)] = struct{}{}
 	}
 	return out
 }

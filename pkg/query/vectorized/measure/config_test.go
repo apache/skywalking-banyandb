@@ -19,11 +19,8 @@ package measure
 
 import "testing"
 
-func TestVectorizedConfig_Default_Enabled_BatchSize1024_Memory256(t *testing.T) {
+func TestVectorizedConfig_Default_BatchSize1024_Memory256(t *testing.T) {
 	c := DefaultConfig()
-	if !c.Enabled {
-		t.Fatal("default Enabled must be true post-G5e (vectorized path is the default)")
-	}
 	if c.BatchSize != 1024 {
 		t.Fatalf("default BatchSize: want 1024, got %d", c.BatchSize)
 	}

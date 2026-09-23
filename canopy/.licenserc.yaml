@@ -72,4 +72,20 @@ header:
     - '.env'
     - '.gitignore'
     - '.prettierignore'
+    - 'licenses'
+
   comment: on-failure
+dependency:
+  files:
+    - package.json
+  licenses:
+    # Workspace packages are this project's own Apache-2.0 code.
+    - name: canopy-server
+      version: 0.1.0
+      license: Apache-2.0
+    - name: canopy-shared
+      version: 0.1.0
+      license: Apache-2.0
+    - name: canopy-web
+      version: 0.1.0
+      license: Apache-2.0

@@ -40,14 +40,9 @@ func TestWriteReportFromShards(t *testing.T) {
 	cfg := Config{ReportDir: dir, QueryWorkers: 1, QueryIterations: 5, WarmupIterations: 0, Writers: 1}
 	results := []Result{
 		{
-			Mode: modeRow, Scenario: ScenarioScanAll, Cardinality: 1024, ResponseRows: 1024,
-			Latency: LatencyStats{P50Ms: 1}, Allocations: AllocationStats{MallocsPerQuery: 2},
-			QueryIterations: 5, QueryWorkers: 1,
-		},
-		{
 			Mode: modeVec, Scenario: ScenarioScanAll, Cardinality: 1024, ResponseRows: 1024,
-			Latency: LatencyStats{P50Ms: 2}, Allocations: AllocationStats{MallocsPerQuery: 4},
-			QueryIterations: 5, QueryWorkers: 1, Correctness: "matched",
+			Latency: LatencyStats{P50Ms: 1}, Allocations: AllocationStats{MallocsPerQuery: 2},
+			QueryIterations: 5, QueryWorkers: 1, Correctness: "baseline",
 		},
 	}
 	report := newReportFromShards(cfg, results)
@@ -74,9 +69,6 @@ func TestWriteReportFromShards(t *testing.T) {
 	if !strings.Contains(contents, "Distributed Query Benchmark") || !strings.Contains(contents, "scan_all") {
 		t.Fatalf("markdown report missing expected content: %s", contents)
 	}
-	if !strings.Contains(contents, "Vec/Row Ratios") {
-		t.Fatalf("markdown report missing ratio section: %s", contents)
-	}
 }
 
 func TestWriteTraceReportUsesTraceLabels(t *testing.T) {
@@ -84,7 +76,7 @@ func TestWriteTraceReportUsesTraceLabels(t *testing.T) {
 	cfg := Config{Engine: engineTrace, ReportDir: dir, QueryWorkers: 1, QueryIterations: 5, WarmupIterations: 0, Writers: 1}
 	results := []Result{
 		{
-			Engine: engineTrace, Mode: modeRow, Scenario: ScenarioTraceByID, Cardinality: 1000, ResponseTraces: 1, ResponseSpans: 20,
+			Engine: engineTrace, Mode: modeVec, Scenario: ScenarioTraceByID, Cardinality: 1000, ResponseTraces: 1, ResponseSpans: 20,
 			Latency: LatencyStats{P50Ms: 1}, Allocations: AllocationStats{MallocsPerQuery: 2},
 			QueryIterations: 5, QueryWorkers: 1,
 		},
@@ -107,7 +99,7 @@ func TestWriteTraceReportUsesTraceLabels(t *testing.T) {
 func TestShardRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	original := Result{
-		Mode:             modeRow,
+		Mode:             modeVec,
 		Scenario:         ScenarioTopWithFilter,
 		Cardinality:      10000,
 		Entities:         100,
@@ -125,7 +117,7 @@ func TestShardRoundTrip(t *testing.T) {
 	if writeErr != nil {
 		t.Fatalf("writeShard() failed: %v", writeErr)
 	}
-	expectedName := "row_top_with_filter_10000.json"
+	expectedName := "vec_top_with_filter_10000.json"
 	if filepath.Base(shardPath) != expectedName {
 		t.Fatalf("unexpected shard filename: got %s, want %s", filepath.Base(shardPath), expectedName)
 	}

@@ -43,12 +43,12 @@ import (
 
 // Vec trace independent verification on a distributed cluster.
 //
-// Boots a *separate* distributed cluster — 2 data nodes + 1 liaison, all
-// launched with --trace-vectorized-enabled=true — and replays the same
-// Trace test entries the row-based distributed suite already covers in
-// common.go. Each case asserts the row-path's expected output; every
-// greenness here is an INDEPENDENT verification that the vectorized trace
-// path produces the same results on the cluster wire.
+// Boots a *separate* distributed cluster — 2 data nodes + 1 liaison — and
+// replays the Trace test entries against it. The shared cluster in common.go
+// registers no tables, so this Describe is the distributed suite's only Trace
+// coverage. Each case asserts the committed reference yaml; every greenness here
+// is an INDEPENDENT verification that the vectorized trace path produces the
+// same results on the cluster wire.
 //
 // This is the distributed twin of test/integration/standalone/query/
 // vectorized_trace_test.go. Together they satisfy the directive that
@@ -72,11 +72,11 @@ var _ = ginkgo.Describe("vec trace independent verification (distributed)", gink
 		gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
 		dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
 		config := setup.PropertyClusterConfig(dfWriter)
-		closeDataNode0 := setup.DataNode(config, "--trace-vectorized-enabled=true")
-		closeDataNode1 := setup.DataNode(config, "--trace-vectorized-enabled=true")
+		closeDataNode0 := setup.DataNode(config)
+		closeDataNode1 := setup.DataNode(config)
 		setup.PreloadSchemaViaProperty(config, test_stream.PreloadSchema, test_measure.PreloadSchema, test_trace.PreloadSchema, test_property.PreloadSchema)
 		config.AddLoadedKinds(schema.KindStream, schema.KindMeasure, schema.KindTrace)
-		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config, "--trace-vectorized-enabled=true")
+		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config)
 		stopFn = func() {
 			closerLiaisonNode()
 			closeDataNode0()
@@ -106,7 +106,7 @@ var _ = ginkgo.Describe("vec trace independent verification (distributed)", gink
 		)
 		gomega.Expect(queryCountDelta).To(gomega.BeNumerically(">", int64(0)),
 			"vec trace dispatch did not fire for any case on the distributed cluster; "+
-				"--trace-vectorized-enabled=true may not have taken effect")
+				"vtrace.QueryCount() never moved, so no query reached the vectorized trace scan")
 		// QueryCount above only proves the vec COMPUTE path dispatched — a vec query
 		// still emits protobuf unless the data node is distributed and in raw wire
 		// mode. Assert the columnar frame itself carried traffic, so this suite fails
