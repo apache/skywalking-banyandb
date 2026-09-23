@@ -163,9 +163,10 @@ func (t *BatchTop) Consume(_ context.Context, b *vectorized.RecordBatch) error {
 		ri := int(rowIdx)
 		seq := t.inputCount
 		t.inputCount++
-		// Heap not yet full: the row is retained, so pay the full
-		// per-column deep copy now (the batch is recycled after Consume
-		// returns, so a retained row cannot defer its copy).
+		// Heap not yet full: the row is retained, so copy its cells out
+		// now -- the batch's columns are reset or recycled after Consume
+		// returns, so a retained row cannot defer the copy. See
+		// materializeCols for what that copy does and does not duplicate.
 		if t.heapState.Len() < t.n {
 			row := &topRow{seq: seq}
 			t.extractKey(b, ri, row)
@@ -262,7 +263,7 @@ func (t *BatchTop) Close() error {
 }
 
 // extractKey reads only the sort key for row rowIdx from the configured
-// field column into row — no per-column deep copy. This is the cheap
+// field column into row — no per-column cell copy. This is the cheap
 // half of the old materialize: it runs for every input row, while the
 // expensive materializeCols runs only for rows admitted to the heap.
 //
@@ -323,9 +324,20 @@ func (t *BatchTop) extractKey(b *vectorized.RecordBatch, rowIdx int, row *topRow
 	}
 }
 
-// materializeCols deep-copies row rowIdx of b into schema-shaped 1-row
-// columns. Only called for rows admitted to the bounded heap (heap not
-// full, or the row displaces the root) — rejected rows never pay this.
+// materializeCols copies row rowIdx of b into freshly allocated,
+// schema-shaped 1-row columns. Only called for rows admitted to the
+// bounded heap (heap not full, or the row displaces the root) — rejected
+// rows never pay this.
+//
+// It is a cell copy, not a deep copy. Scalars are copied by value, but a
+// slice-typed cell ([]byte / []int64 / []string) and a TagValue or
+// FieldValue pointer are copied as the header or pointer, leaving the
+// payload shared with b. That is still what makes the result safe to
+// retain: the row stops referencing b's column backing arrays -- which
+// Reset truncates and later appends overwrite, including between the
+// chunks vectorized.ConsumeChunked feeds through a single reused scratch
+// batch -- while the payloads it does alias are owned upstream (storage
+// decoders produce owned cell slices) and outlive b.
 func (t *BatchTop) materializeCols(b *vectorized.RecordBatch, rowIdx int) []vectorized.Column {
 	cols := make([]vectorized.Column, len(t.schema.Columns))
 	for i, def := range t.schema.Columns {
