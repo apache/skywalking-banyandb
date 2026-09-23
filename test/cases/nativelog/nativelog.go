@@ -225,7 +225,10 @@ var _ = g.Describe("Native self-stored logs", func() {
 		droppedBefore, _ := metric(node.MetricsURL, droppedPublishFailed)
 		writtenBefore, ok := metric(node.MetricsURL, writtenTotal)
 		gm.Expect(ok).To(gm.BeTrue(), "%s not published", writtenTotal)
-		_, moduleA := createNonceGroup(node.Conn)
+		// The node's own startup lines drive the sink here. Nothing else is
+		// created: a nonce group would outlive this phase, and a stream group
+		// without a stream stops the next start, because the launcher waits
+		// for every stream group to hold one.
 		gm.Eventually(func(inner gm.Gomega) {
 			v, found := metric(node.MetricsURL, droppedPublishFailed)
 			inner.Expect(found).To(gm.BeTrue(), "%s not published", droppedPublishFailed)
@@ -234,10 +237,11 @@ var _ = g.Describe("Native self-stored logs", func() {
 		written, ok := metric(node.MetricsURL, writtenTotal)
 		gm.Expect(ok).To(gm.BeTrue(), "%s not published", writtenTotal)
 		gm.Expect(written).To(gm.Equal(writtenBefore), "batches were counted as written while the storage refused them")
-		// Checked before the restart: reopening the group logs its line again.
-		rows, err := query(node.Conn, nodeEq(node.NodeID), byModule(moduleA))
+		// Checked before the restart, and on every line the node logged: with
+		// the storage refusing writes, it has no row at all.
+		rows, err := query(node.Conn, nodeEq(node.NodeID), nil)
 		gm.Expect(err).NotTo(gm.HaveOccurred())
-		gm.Expect(rows).To(gm.BeEmpty(), "a line was stored while the storage refused writes")
+		gm.Expect(rows).To(gm.BeEmpty(), "%d lines were stored while the storage refused writes", len(rows))
 		stop()
 		stopped = true
 
