@@ -120,10 +120,26 @@ type Context struct {
 	Restart Starter
 	// Console reports what the console has printed in this process.
 	Console func() string
+	// Distributed tells the cases that Start returns a data node whose rows
+	// are read through a liaison, and that the suite owns the node's lifetime.
+	Distributed bool
 }
 
 // SharedContext is set by the suite before the specs run.
 var SharedContext Context
+
+// AwaitQueryable waits until a query of the log stream through conn succeeds.
+// A cluster query fails while the liaison or a data node does not know the
+// stream yet. A truncated answer is still an answer, so it ends the wait.
+func AwaitQueryable(conn *grpc.ClientConn) {
+	gm.Eventually(func() error {
+		_, err := query(conn, nil, nil)
+		if errors.Is(err, errTruncated) {
+			return nil
+		}
+		return err
+	}, flags.EventuallyTimeout, time.Second).Should(gm.Succeed())
+}
 
 var _ = g.Describe("Native self-stored logs", func() {
 	g.It("TC1 stores a node's own events with its identity and structured fields", func() {
@@ -155,6 +171,12 @@ var _ = g.Describe("Native self-stored logs", func() {
 	})
 
 	g.It("TC3b stores nothing from a node with native logging off, its default", func() {
+		if SharedContext.Distributed {
+			// A node with native logging off would turn the sink off for every
+			// node in the process, and the group exists anyway, created by the
+			// node that has native logging on.
+			g.Skip("a node with native logging off cannot run beside one that has it on")
+		}
 		node, stop := SharedContext.StartDisabled()
 		defer stop()
 		_, module := createNonceGroup(node.Conn)
@@ -187,6 +209,9 @@ var _ = g.Describe("Native self-stored logs", func() {
 	})
 
 	g.It("TC5 counts refused writes and resumes collection after recovery", func() {
+		if SharedContext.Distributed {
+			g.Skip("the recovery case restarts the only producer, which the cluster suite keeps running")
+		}
 		// Phase 1: the storage refuses every write.
 		node, stop := SharedContext.Restart(readOnlyFlags...)
 		stopped := false

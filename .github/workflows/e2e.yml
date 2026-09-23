@@ -82,6 +82,8 @@ jobs:
           - name: Rover eBPF - Istio mesh, Kind
             config: test/e2e-v2/cases/rover/process/istio/banyandb/e2e-banyandb.yaml
             runs-on: ubuntu-24.04
+          - name: Native Logs
+            config: test/e2e-v2/cases/nativelog/e2e.yaml
           - name: Lifecycle File Discovery
             config: test/e2e-v2/cases/lifecycle/file-discovery/e2e.yaml
           - name: Lifecycle DNS Discovery
