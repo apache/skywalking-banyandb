@@ -329,7 +329,8 @@ func (c *chunkedSyncClient) streamPartsAsChunks(
 			if errors.Is(err, io.EOF) {
 				fileState.finished = true
 				currentFileIdx++
-			} else if err != nil {
+			}
+			if err != nil && !errors.Is(err, io.EOF) {
 				errMsg := fmt.Sprintf("failed to read from file %s: %v", fileState.info.Name, err)
 				c.log.Error().Err(err).Str("part-id", fmt.Sprint(part.ID)).Msg(errMsg)
 				if _, failed := failedPartIDs[part.ID]; !failed {
