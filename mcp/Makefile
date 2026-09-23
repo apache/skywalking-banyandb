@@ -108,7 +108,7 @@ license-dep: $(LICENSE_EYE)
 	@lock_backup=$$(mktemp); \
 	cp package-lock.json "$$lock_backup"; \
 	trap 'cp "$$lock_backup" package-lock.json; rm -f "$$lock_backup"' EXIT; \
-	$(LICENSE_EYE) dep resolve -o mcp-licenses -s LICENSE.tpl
+	$(LICENSE_EYE) dep resolve -o licenses -s LICENSE.tpl
 
 .PHONY: vendor-update
 vendor-update:

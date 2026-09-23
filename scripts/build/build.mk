@@ -32,8 +32,10 @@ OS := ${TARGET_OS}
 # Define SUB_DIR var if the project is not at root level project
 SOURCE_DIR ?= $(if $(SUB_DIR),$(SUB_DIR)/$(NAME),$(NAME))
 
-# Sentinel to guard against stale compiled binaries
-BUILD_LOCK := $(BUILD_DIR)/$(shell git rev-parse HEAD).lock
+# Sentinel to guard against stale compiled binaries. Fall back to VERSION_STRING
+# when building from the source tarball (not a git checkout).
+GIT_HEAD := $(shell git rev-parse HEAD 2>/dev/null)
+BUILD_LOCK := $(BUILD_DIR)/$(if $(GIT_HEAD),$(GIT_HEAD),$(VERSION_STRING)).lock
 
 # Build Go binaries for multiple architectures in the CI pipeline.
 GOBUILD_ARCHS := $(shell echo "${PLATFORMS}" | sed "s/linux\///g; s/darwin\///g; s/windows\///g; s/\,/ /g" | tr ' ' '\n' | sort | uniq | tr '\n' ' ')
