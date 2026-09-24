@@ -815,3 +815,232 @@ func TestAnalyze_TimeBucket_UsesIndexModeMap(t *testing.T) {
 		t.Fatal("an index-mode measure must resolve UseIndexModeMap=true")
 	}
 }
+
+// TestAnalyze_TimeBucket_IndexModeMeasure_CountDistinctTargetCoversEntity_Accepts
+// pins design §11's explicit call-out: "index_mode with the same
+// containment (accept)". validateCountDistinctPushdown runs unconditionally
+// before GroupBy/TimeBucket resolution and never reads GetIndexMode, so an
+// index-mode measure must accept a decomposable COUNT_DISTINCT exactly like
+// a streaming one — and still resolve UseIndexModeMap=true for execution.
+func TestAnalyze_TimeBucket_IndexModeMeasure_CountDistinctTargetCoversEntity_Accepts(t *testing.T) {
+	ms := entityShardingSchema([]string{tagCount}, nil)
+	ms.IndexMode = true
+	req := &measurev1.QueryRequest{
+		Name: "demo",
+		Agg:  countDistinctAgg(defaultName, tagCount),
+		GroupBy: &measurev1.QueryRequest_GroupBy{
+			TimeBucket: &measurev1.QueryRequest_GroupBy_TimeBucket{Width: "5m"},
+		},
+	}
+	p, err := Analyze(req, ms, measure.AggModeAll)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	gba := p.(*Limit).Child.(*GroupByAgg)
+	if !gba.GroupBy.TimeBucket.UseIndexModeMap {
+		t.Fatal("an index-mode measure must resolve UseIndexModeMap=true even with a COUNT_DISTINCT Agg")
+	}
+}
+
+// TestAnalyze_TimeBucket_IndexModeMeasure_CountDistinctDecomposabilityStillEnforced_Rejects
+// is the negative twin: index_mode must not bypass the decomposability
+// check. The sharding key (tagSvc) is narrower than the entity and covered
+// by neither the (bucket-only) GroupBy nor the target — this must reject on
+// an index-mode measure exactly as it does on a streaming one.
+func TestAnalyze_TimeBucket_IndexModeMeasure_CountDistinctDecomposabilityStillEnforced_Rejects(t *testing.T) {
+	ms := entityShardingSchema([]string{tagCount}, []string{tagSvc})
+	ms.IndexMode = true
+	req := &measurev1.QueryRequest{
+		Name: "demo",
+		Agg:  countDistinctAgg(defaultName, tagCount),
+		GroupBy: &measurev1.QueryRequest_GroupBy{
+			TimeBucket: &measurev1.QueryRequest_GroupBy_TimeBucket{Width: "5m"},
+		},
+	}
+	if _, err := Analyze(req, ms, measure.AggModeAll); err == nil {
+		t.Fatal("index_mode must not bypass the COUNT_DISTINCT decomposability check")
+	}
+}
+
+// entityShardingSchema builds a test schema with an explicit Entity and
+// (optionally) a narrower ShardingKey, for validateCountDistinctPushdown
+// tests (design §7.4). entityTags/shardingTags name tags already present
+// in testMeasureSchema()'s "default" family (tagSvc, "region", tagCount);
+// pass nil shardingTags to leave ShardingKey unset (routing falls back to
+// Entity).
+func entityShardingSchema(entityTags, shardingTags []string) *databasev1.Measure {
+	ms := testMeasureSchema()
+	ms.Entity = &databasev1.Entity{TagNames: entityTags}
+	if len(shardingTags) > 0 {
+		ms.ShardingKey = &databasev1.ShardingKey{TagNames: shardingTags}
+	}
+	return ms
+}
+
+func countDistinctAgg(tagFamily, tagName string) *measurev1.QueryRequest_Aggregation {
+	return &measurev1.QueryRequest_Aggregation{
+		Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT,
+		TagFamily: tagFamily,
+		TagName:   tagName,
+	}
+}
+
+func groupByReq(tagFamily string, tagNames []string) *measurev1.QueryRequest_GroupBy {
+	return &measurev1.QueryRequest_GroupBy{
+		TagProjection: &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
+			{Name: tagFamily, Tags: tagNames},
+		}},
+	}
+}
+
+// TestValidateCountDistinctPushdown_NonCountDistinct_NeverRejects pins that
+// the check is a no-op for every function other than COUNT_DISTINCT,
+// including a nil Agg — the design's decomposability condition applies
+// only to COUNT_DISTINCT (design §7.4).
+func TestValidateCountDistinctPushdown_NonCountDistinct_NeverRejects(t *testing.T) {
+	ms := entityShardingSchema([]string{"region"}, nil)
+	if err := validateCountDistinctPushdown(&measurev1.QueryRequest{}, ms); err != nil {
+		t.Fatalf("nil Agg must never be rejected: %v", err)
+	}
+	sumReq := &measurev1.QueryRequest{Agg: &measurev1.QueryRequest_Aggregation{
+		Function: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, FieldName: fieldValue,
+	}}
+	if err := validateCountDistinctPushdown(sumReq, ms); err != nil {
+		t.Fatalf("SUM must never be rejected by the COUNT_DISTINCT decomposability check: %v", err)
+	}
+}
+
+// TestValidateCountDistinctPushdown_TargetCoversEntity_Accepts is design
+// §7.4's motivating case: COUNT_DISTINCT(entity_id) with no GroupBy, on a
+// measure whose entity (and therefore routing) is exactly tagCount — the
+// target itself covers the only routing tag.
+func TestValidateCountDistinctPushdown_TargetCoversEntity_Accepts(t *testing.T) {
+	ms := entityShardingSchema([]string{tagCount}, nil)
+	req := &measurev1.QueryRequest{Agg: countDistinctAgg(defaultName, tagCount)}
+	if err := validateCountDistinctPushdown(req, ms); err != nil {
+		t.Fatalf("target covering the only routing tag must be accepted: %v", err)
+	}
+}
+
+// TestValidateCountDistinctPushdown_GroupByCoversEntity_Accepts pins the
+// other way to cover a routing tag: as a GroupBy key rather than the
+// target itself.
+func TestValidateCountDistinctPushdown_GroupByCoversEntity_Accepts(t *testing.T) {
+	ms := entityShardingSchema([]string{tagCount}, nil)
+	req := &measurev1.QueryRequest{
+		GroupBy: groupByReq(defaultName, []string{tagCount}),
+		Agg:     countDistinctAgg(defaultName, tagSvc),
+	}
+	if err := validateCountDistinctPushdown(req, ms); err != nil {
+		t.Fatalf("routing tag covered by a GroupBy key must be accepted: %v", err)
+	}
+}
+
+// TestValidateCountDistinctPushdown_CompositeEntity_DifferentBranchesCoverDifferentTags_Accepts
+// pins a case neither TargetCoversEntity_Accepts nor GroupByCoversEntity_Accepts
+// exercises: a genuinely composite routing key (entity has two tags, no
+// narrower ShardingKey to collapse it back to one) where each component is
+// covered by a *different* branch of the per-routing-tag check
+// simultaneously — tagSvc via the GroupBy key, tagCount via being the Agg
+// target. Each routing tag is checked independently, so this must accept
+// even though neither branch alone covers the whole routing set.
+func TestValidateCountDistinctPushdown_CompositeEntity_DifferentBranchesCoverDifferentTags_Accepts(t *testing.T) {
+	ms := entityShardingSchema([]string{tagSvc, tagCount}, nil)
+	req := &measurev1.QueryRequest{
+		GroupBy: groupByReq(defaultName, []string{tagSvc}),
+		Agg:     countDistinctAgg(defaultName, tagCount),
+	}
+	if err := validateCountDistinctPushdown(req, ms); err != nil {
+		t.Fatalf("a composite routing key with each component covered by a different branch must be accepted: %v", err)
+	}
+}
+
+// TestValidateCountDistinctPushdown_CompositeEntity_OneComponentUncovered_Rejects
+// is the negative twin: the same composite routing key, but the GroupBy key
+// covers only tagSvc and the target ("region") covers neither routing tag —
+// tagCount is covered by nothing and the request must reject, proving the
+// per-routing-tag loop actually requires every routing tag to be covered,
+// not just at least one.
+func TestValidateCountDistinctPushdown_CompositeEntity_OneComponentUncovered_Rejects(t *testing.T) {
+	ms := entityShardingSchema([]string{tagSvc, tagCount}, nil)
+	req := &measurev1.QueryRequest{
+		GroupBy: groupByReq(defaultName, []string{tagSvc}),
+		Agg:     countDistinctAgg(defaultName, "region"),
+	}
+	if err := validateCountDistinctPushdown(req, ms); err == nil {
+		t.Fatal("a composite routing key with one component covered by neither GroupBy nor target must be rejected")
+	}
+}
+
+// TestValidateCountDistinctPushdown_ShardingKeyNarrowerThanEntity_TableDriven
+// pins the design doc's own worked example (§7.4): entity [service_id,
+// entity_id], sharding_key [service_id]. COUNT_DISTINCT(entity_id) grouped
+// by service_id is accepted (routing tag service_id is a GroupBy key); the
+// same query ungrouped is rejected (service_id is covered by neither).
+func TestValidateCountDistinctPushdown_ShardingKeyNarrowerThanEntity_TableDriven(t *testing.T) {
+	ms := entityShardingSchema([]string{tagSvc, tagCount}, []string{tagSvc})
+	cases := []struct {
+		groupBy *measurev1.QueryRequest_GroupBy
+		name    string
+		wantErr bool
+	}{
+		{groupByReq(defaultName, []string{tagSvc}), "grouped by the routing tag: accept", false},
+		{nil, "ungrouped: reject", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			req := &measurev1.QueryRequest{GroupBy: c.groupBy, Agg: countDistinctAgg(defaultName, tagCount)}
+			err := validateCountDistinctPushdown(req, ms)
+			if c.wantErr && err == nil {
+				t.Fatal("want a decomposability rejection, got nil")
+			}
+			if !c.wantErr && err != nil {
+				t.Fatalf("want acceptance, got %v", err)
+			}
+		})
+	}
+}
+
+// TestValidateCountDistinctPushdown_ShardingKeyCounterexample_Rejects pins
+// the design doc's explicit counterexample for why "distinct over the
+// entity is always supported" is wrong: entity {e}, sharding key {s}, the
+// same e occurring under two s values routes to two shards, each reporting
+// a local count of 1 for one distinct entity — summing gives 2. An
+// entity-based rule would wrongly accept this; the routing-tag-based rule
+// must reject it.
+func TestValidateCountDistinctPushdown_ShardingKeyCounterexample_Rejects(t *testing.T) {
+	ms := entityShardingSchema([]string{tagCount}, []string{tagSvc})
+	req := &measurev1.QueryRequest{Agg: countDistinctAgg(defaultName, tagCount)}
+	if err := validateCountDistinctPushdown(req, ms); err == nil {
+		t.Fatal("routing tag (sharding key) uncovered by GroupBy or target must be rejected")
+	}
+}
+
+// TestValidateCountDistinctPushdown_AmbiguousNameAcrossFamilies_NotConfused
+// pins that covering a routing tag is resolved by (family, name), not
+// bare name: the routing tag "svc" lives in the "default" family, but the
+// request's GroupBy/target both reference "svc" in "other" (a different
+// column, per testMeasureSchema's second family) — that must NOT count as
+// covering the routing tag, even though the bare names match.
+func TestValidateCountDistinctPushdown_AmbiguousNameAcrossFamilies_NotConfused(t *testing.T) {
+	ms := entityShardingSchema([]string{tagSvc}, nil)
+	req := &measurev1.QueryRequest{
+		GroupBy: groupByReq(otherFamily, []string{tagSvc}),
+		Agg:     countDistinctAgg(otherFamily, tagCount),
+	}
+	if err := validateCountDistinctPushdown(req, ms); err == nil {
+		t.Fatal("a GroupBy/target in a different family must not be treated as covering the routing tag, despite the matching bare name")
+	}
+}
+
+// TestValidateCountDistinctPushdown_RoutingTagMissingFromSchema_Errors pins
+// that a routing tag absent from the schema's own tag families (a
+// pre-existing schema inconsistency) is reported loudly rather than
+// silently treated as covered or ignored.
+func TestValidateCountDistinctPushdown_RoutingTagMissingFromSchema_Errors(t *testing.T) {
+	ms := entityShardingSchema([]string{"nonexistent_tag"}, nil)
+	req := &measurev1.QueryRequest{Agg: countDistinctAgg(defaultName, tagCount)}
+	if err := validateCountDistinctPushdown(req, ms); err == nil {
+		t.Fatal("a routing tag absent from the schema must error, not be silently accepted")
+	}
+}

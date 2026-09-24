@@ -78,6 +78,94 @@ func Initialize(addr string, now time.Time) {
 	// across three buckets regardless of the wall-clock minute `now` lands
 	// on — see test/cases/measure/data/input/group_time_bucket*.yaml.
 	casesmeasuredata.Write(conn, "time_bucket_metric", "sw_metric", "time_bucket_metric_data.json", now, 20*time.Second)
+	// The off-cadence fixture (design §11's "COUNT and COUNT_DISTINCT must be
+	// allowed to disagree at the interval width" case): two points for the
+	// SAME entity, 34s apart — off the measure's own 20s write cadence, but
+	// both landing inside the single 1-minute bucket [now+1m, now+2m).
+	// `now+73s` and `now+107s` are both in that bucket regardless of
+	// interval, since `now` is minute-aligned; the window is offset a full
+	// minute past `now` (not [now, now+1m)) because the base
+	// time_bucket_metric_data.json's last point lands exactly AT `now`,
+	// which a [now, ...) query would otherwise include as a third, unwanted
+	// row. See group_count_distinct_off_cadence.yaml /
+	// group_count_off_cadence.yaml.
+	casesmeasuredata.Write(conn, "time_bucket_metric", "sw_metric", "time_bucket_metric_off_cadence_data.json", now.Add(107*time.Second), 34*time.Second)
+	// The §7.4 "GroupBy covers the routing key" push-down branch, on a real
+	// sharded cluster: GROUP BY the entity tag (entity_id) itself while
+	// COUNT_DISTINCT targets an unrelated, non-entity tag (id) -- decomposable
+	// because the routing key is covered by GroupBy, not because it's the
+	// target (that's the off-cadence fixture above). entity_a gets 3 rows
+	// with a repeated `id` value (reqA1 twice, reqA2 once): COUNT_DISTINCT(id)
+	// must report 2 while COUNT(id) reports 3. entity_b gets a single row so
+	// the two groups' distinct sets are proven not to leak into each other --
+	// exactly what the per-(shard, group) dedup key exists to prevent. Offset
+	// past the off-cadence window ([now+1m, now+2m)) to avoid overlap. See
+	// group_count_distinct_by_entity.yaml / group_count_by_entity.yaml.
+	casesmeasuredata.Write(conn, "time_bucket_metric", "sw_metric", "time_bucket_metric_tag_group_data.json", now.Add(2*time.Minute+40*time.Second), 10*time.Second)
+	// composite_entity_metric's entity is [tag_b, tag_a] (both tags, no
+	// separate sharding_key), so the full entity -- not just one component --
+	// is the routing key. GROUP BY tag_b, COUNT_DISTINCT(tag_a): tag_b is
+	// covered by GroupBy, tag_a is covered because it's the Agg target --
+	// each entity component covered by a *different* branch of §7.4's
+	// per-routing-tag check, which neither of the single-tag-entity fixtures
+	// above exercises. cegroup_x gets 3 rows (tag_a: valA1, valA1, valA2) --
+	// COUNT_DISTINCT must report 2 while COUNT reports 3; cegroup_y gets one
+	// row so groups don't leak into each other. Because tag_a differs
+	// between the valA1 and valA2 rows, those two rows carry different full
+	// entities and may land on different shards, so this also exercises a
+	// real cross-shard SUM-reduce merge within a single GroupBy group (the
+	// entity_id-covers-itself fixture above never splits a group across
+	// shards, since GroupBy there *is* the whole entity). See
+	// group_count_distinct_composite_entity.yaml /
+	// group_count_composite_entity.yaml.
+	casesmeasuredata.Write(conn, "composite_entity_metric", "sw_metric", "composite_entity_metric_data.json", now, 10*time.Second)
+	// index_mode_distinct_metric is index_mode=true and carries a real
+	// IndexRule (idx_tag_x) bound to tag_x, a plain non-entity tag --
+	// covering the "indexed tag" axis the pushdown check never special-cases
+	// (it only reads ShardingKey/Entity, never IndexRuleBinding, so an
+	// indexed GroupBy key must accept/reject identically to an unindexed
+	// one). GROUP BY tag_x (indexed, unrelated to routing), COUNT_DISTINCT
+	// (entity_id): the target covers the entity/routing key on its own, so
+	// an unrelated -- if indexed -- GroupBy tag must not block acceptance.
+	// The two idx_entity_a rows are written as duplicates to probe whether
+	// they'd surface as two rows the way a regular time-series measure's
+	// would (see composite_entity_metric above) -- they don't: an
+	// index_mode measure is an entity directory (one document per entity),
+	// not an append-only series, so rewriting the same entity_id collapses
+	// to one row regardless of timestamp. valX1 ends up with 2 rows
+	// (idx_entity_a, idx_entity_c), so COUNT and COUNT_DISTINCT necessarily
+	// agree here -- this fixture is about proving the indexed-tag/index_mode
+	// combination pushes down and executes correctly, not about a
+	// COUNT-vs-COUNT_DISTINCT disagreement (the other fixtures already
+	// cover that on regular time-series measures). See
+	// group_count_distinct_index_mode.yaml / group_count_index_mode.yaml.
+	casesmeasuredata.Write(conn, "index_mode_distinct_metric", "sw_metric", "index_mode_distinct_metric_data.json", now, 10*time.Second)
+	// cardinality_metric exercises COUNT_DISTINCT combined with
+	// GroupBy.time_bucket (design §7.2/§11 together). Its entity is
+	// [user_id], so a bucketed query must include user_id in GROUP BY (or
+	// target user_id itself) to satisfy §7.4's per-routing-tag pushdown
+	// check -- a pure `GROUP BY TIME_BUCKET(...)` with no tag component,
+	// counting DISTINCT on an unrelated tag (api_key), is correctly
+	// rejected the same way a GroupBy/Agg pair that covers neither the
+	// routing key nor the target always is. `cardinalityBase` is offset
+	// from `now` by a whole number of minutes so it stays minute-aligned,
+	// matching bucketStart's Unix-epoch-origin flooring
+	// (pkg/query/vectorized/measure/timebucket.go) -- every fixture here
+	// uses a bucket width of 1m or a divisor of it (30s). Each bucket
+	// belongs to exactly one user, so no fixture needs a tie-break rule for
+	// two users landing in the same bucket:
+	//   bucket0 [+0s,  +60s):   user1 keyA,keyA,keyB (distinct 2)
+	//   bucket1 [+60s, +120s):  user2 keyX,keyY       (distinct 2)
+	//   bucket2 [+120s,+180s):  user1 keyB,keyB,keyC  (distinct 2)
+	// Across the whole window: user1 sees 3 distinct keys (keyA/keyB/keyC
+	// -- bucket0 ∪ bucket2), user2 sees 2 (keyX/keyY). See
+	// group_count_distinct_time_bucket.yaml,
+	// group_count_distinct_time_bucket_30s.yaml, and
+	// group_count_distinct_top_by_user.yaml.
+	cardinalityBase := now.Add(5 * time.Minute)
+	casesmeasuredata.Write(conn, "cardinality_metric", "sw_metric", "cardinality_metric_u1_b0_data.json", cardinalityBase.Add(30*time.Second), 10*time.Second)
+	casesmeasuredata.Write(conn, "cardinality_metric", "sw_metric", "cardinality_metric_u2_b1_data.json", cardinalityBase.Add(80*time.Second), 10*time.Second)
+	casesmeasuredata.Write(conn, "cardinality_metric", "sw_metric", "cardinality_metric_u1_b2_data.json", cardinalityBase.Add(150*time.Second), 10*time.Second)
 	casesmeasuredata.WriteMixed(conn, now.Add(30*time.Minute), interval,
 		casesmeasuredata.WriteSpec{
 			Metadata: &commonv1.Metadata{Name: "service_cpm_minute", Group: "sw_spec"},

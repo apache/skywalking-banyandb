@@ -73,6 +73,11 @@ const (
 	AggMin
 	AggMax
 	AggMean
+	// AggCountDistinct counts the distinct non-null values of the target
+	// (design §7.3). It is exact and charged per inserted value against
+	// the shared MemoryTracker, unlike the other functions' fixed-size
+	// per-group accumulators.
+	AggCountDistinct
 )
 
 // ErrAggModeNotImplemented is returned by Consume / Finalize / NextBatch when
@@ -199,10 +204,14 @@ type aggGroup struct {
 // Exactly one of intMap/floatMap is non-nil in Map/All mode; exactly one of
 // intReduce/floatReduce is non-nil in Reduce mode.
 type aggSlot struct {
-	intMap       aggregation.Map[int64]
-	floatMap     aggregation.Map[float64]
-	intReduce    aggregation.Reduce[int64]
-	floatReduce  aggregation.Reduce[float64]
+	intMap      aggregation.Map[int64]
+	floatMap    aggregation.Map[float64]
+	intReduce   aggregation.Reduce[int64]
+	floatReduce aggregation.Reduce[float64]
+	// distinct backs AggCountDistinct only (AggModeAll/AggModeMap). It is
+	// not Number-parameterized like intMap/floatMap, since the target may
+	// be a string/bytes tag, not just numeric — see foldDistinct.
+	distinct     aggregation.Distinct
 	fn           AggFunc
 	inputIsFloat bool
 }
@@ -400,7 +409,9 @@ func (a *BatchAggregation) Consume(_ context.Context, b *vectorized.RecordBatch)
 				a.combinePartial(b, int(rowIdx), &group.slots[slotIdx], spec, a.aggInputCountIdx[slotIdx])
 				continue
 			}
-			a.fold(b, int(rowIdx), &group.slots[slotIdx], spec)
+			if foldErr := a.fold(b, int(rowIdx), &group.slots[slotIdx], spec); foldErr != nil {
+				return foldErr
+			}
 		}
 	}
 	return nil
@@ -556,22 +567,35 @@ func (a *BatchAggregation) newGroup(b *vectorized.RecordBatch, rowIdx int, key s
 	return g, nil
 }
 
-// fold delegates one row's value to the slot's underlying aggregation.Map.
-// Nulls are skipped — neither the count nor the running min/max/sum is touched.
+// distinctEntryOverhead estimates the per-value bookkeeping cost of one new
+// entry in a Distinct's backing map[string]struct{} (string header + hash
+// bucket slot), on top of the encoded key's own byte length. A rough,
+// deliberately generous constant — like aggEntrySize's per-group estimate,
+// it only needs to fail the budget before an actual OOM, not be exact.
+const distinctEntryOverhead int64 = 48
+
+// fold delegates one row's value to the slot's underlying aggregation.Map,
+// or to foldDistinct for AggCountDistinct. Nulls are skipped — neither the
+// count nor the running min/max/sum/distinct-set is touched.
 //
 // COUNT over a non-numeric column (string/bytes tag, design §6) must not
 // read the value at all — there is nothing to parse, and countFunc.In
 // ignores its argument regardless (pkg/query/aggregation/function.go), so a
-// dummy 0 is enough to advance the count.
-func (a *BatchAggregation) fold(b *vectorized.RecordBatch, rowIdx int, slot *aggSlot, spec AggSpec) {
+// dummy 0 is enough to advance the count. COUNT_DISTINCT is different: it
+// must actually read the value (to hash it), so it cannot share this
+// early-return branch.
+func (a *BatchAggregation) fold(b *vectorized.RecordBatch, rowIdx int, slot *aggSlot, spec AggSpec) error {
 	col := b.Columns[spec.InputCol]
 	if col.IsNull(rowIdx) {
-		return
+		return nil
+	}
+	if spec.Func == AggCountDistinct {
+		return a.foldDistinct(col, rowIdx, slot)
 	}
 	colType := a.inputSchema.Columns[spec.InputCol].Type
 	if spec.Func == AggCount && colType != vectorized.ColumnTypeInt64 && colType != vectorized.ColumnTypeFloat64 {
 		slot.intMap.In(0)
-		return
+		return nil
 	}
 	if slot.intMap != nil {
 		var v int64
@@ -581,7 +605,7 @@ func (a *BatchAggregation) fold(b *vectorized.RecordBatch, rowIdx int, slot *agg
 			v = col.(*vectorized.TypedColumn[int64]).Data()[rowIdx]
 		}
 		slot.intMap.In(v)
-		return
+		return nil
 	}
 	var v float64
 	if slot.inputIsFloat {
@@ -590,6 +614,37 @@ func (a *BatchAggregation) fold(b *vectorized.RecordBatch, rowIdx int, slot *agg
 		v = float64(col.(*vectorized.TypedColumn[int64]).Data()[rowIdx])
 	}
 	slot.floatMap.In(v)
+	return nil
+}
+
+// foldDistinct encodes col's value at rowIdx with appendKeyComponent (the
+// same per-type byte encoder BatchAggregation's own group key already
+// uses — it already covers every target type the §6 semantics matrix
+// admits) and inserts it into slot's distinct set. Unlike the fixed-size
+// numeric slots, a distinct set grows with cardinality (design §7.6), so
+// memory is charged per newly-added value here, not once per group in
+// Consume — refunded together with every other charge this operator holds
+// via the shared a.reserved counter in Close.
+//
+// Contains is checked (not In) before reserving: In mutates the set
+// unconditionally, so calling it first would insert a rejected value into
+// the set before its reservation is known to succeed, leaving that value
+// resident — and uncharged — in memory even though the budget guard
+// rejected it. In is only called once the reservation for a genuinely new
+// key has actually succeeded.
+func (a *BatchAggregation) foldDistinct(col vectorized.Column, rowIdx int, slot *aggSlot) error {
+	var sb [64]byte
+	encoded := appendKeyComponent(sb[:0], col, rowIdx)
+	if slot.distinct.Contains(encoded) {
+		return nil
+	}
+	charge := int64(len(encoded)) + distinctEntryOverhead
+	if reserveErr := a.tracker.Reserve(charge); reserveErr != nil {
+		return fmt.Errorf("aggregation memory budget exceeded: %w", reserveErr)
+	}
+	a.reserved += charge
+	slot.distinct.In(encoded)
+	return nil
 }
 
 func (a *BatchAggregation) emitGroupRow(out *vectorized.RecordBatch, group *aggGroup) {
@@ -650,6 +705,19 @@ func (a *BatchAggregation) computeKey(b *vectorized.RecordBatch, rowIdx int) str
 // mirrors aggOutputType so the slot's value can be Append'd directly to the
 // typed output column.
 func newAggSlot(fn AggFunc, inputIsFloat, isTagTarget bool, mode AggMode) (aggSlot, error) {
+	// AggCountDistinct bypasses the Number-parameterized Map/Reduce
+	// dispatch below entirely: its accumulator (aggregation.Distinct) is
+	// not generic over int64/float64, since the target may be a
+	// string/bytes tag. The liaison never constructs a distinct slot — it
+	// combines already-local-distinct partials via ordinary AggSum (design
+	// §7.4, "local distinct, global SUM") — so AggModeReduce here is a
+	// producer/planner bug, not a data error.
+	if fn == AggCountDistinct {
+		if mode == AggModeReduce {
+			return aggSlot{}, fmt.Errorf("vectorized.measure: AggCountDistinct is never reduced directly — the liaison combines local distinct counts via AggSum")
+		}
+		return aggSlot{fn: fn, distinct: aggregation.NewDistinct()}, nil
+	}
 	af, modelErr := toModelAggFunc(fn)
 	if modelErr != nil {
 		return aggSlot{}, modelErr
@@ -707,6 +775,10 @@ func newAggSlot(fn AggFunc, inputIsFloat, isTagTarget bool, mode AggMode) (aggSl
 
 // write emits the slot's reduced value to the typed output column.
 func (s *aggSlot) write(col vectorized.Column) {
+	if s.distinct != nil {
+		col.(*vectorized.TypedColumn[int64]).Append(s.distinct.Val())
+		return
+	}
 	if s.intMap != nil {
 		col.(*vectorized.TypedColumn[int64]).Append(s.intMap.Val())
 		return
@@ -721,6 +793,13 @@ func (s *aggSlot) write(col vectorized.Column) {
 // the same N for both), matching the row path's per-N FieldValue oneof
 // (FIELD_TYPE_INT → int64, FIELD_TYPE_FLOAT → float64).
 func (s *aggSlot) writePartial(out *vectorized.RecordBatch, valueIdx, countIdx int) {
+	if s.distinct != nil {
+		// The local distinct count is the whole partial — no count
+		// sidecar (aggHasCount is false for AggCountDistinct specs,
+		// unlike MEAN's sum+count shape; see buildAggOutputLayout).
+		out.Columns[valueIdx].(*vectorized.TypedColumn[int64]).Append(s.distinct.Val())
+		return
+	}
 	if s.intMap != nil {
 		p := s.intMap.Partial()
 		out.Columns[valueIdx].(*vectorized.TypedColumn[int64]).Append(p.Value)
@@ -748,6 +827,8 @@ func toModelAggFunc(fn AggFunc) (modelv1.AggregationFunction, error) {
 		return modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX, nil
 	case AggMean:
 		return modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN, nil
+	case AggCountDistinct:
+		return modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT, nil
 	}
 	return modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED,
 		fmt.Errorf("vectorized.measure: unknown AggFunc %d", fn)
@@ -878,6 +959,11 @@ func aggOutputType(in vectorized.ColumnType, fn AggFunc, isTagTarget bool) vecto
 		if in == vectorized.ColumnTypeFloat64 {
 			return vectorized.ColumnTypeFloat64
 		}
+		return vectorized.ColumnTypeInt64
+	case AggCountDistinct:
+		// A distinct count is always an integer, regardless of the
+		// target's type — unlike AggCount, there is no float-input
+		// carry-through quirk to preserve here.
 		return vectorized.ColumnTypeInt64
 	default:
 		return in

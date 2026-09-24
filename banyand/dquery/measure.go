@@ -51,6 +51,13 @@ type measureVectorizedExecutionContext interface {
 type measureDistributedExecutable interface {
 	executor.MeasureExecutable
 	fmt.Stringer
+	// RequiresSingleStage reports whether the plan's Agg is a
+	// COUNT_DISTINCT that must resolve to exactly one lifecycle stage
+	// (design §7.4) — distinct counts are not additive across stages.
+	// The plan itself cannot check this (AnalyzeDistributed never
+	// resolves node selectors), so Rev checks it here, after
+	// buildNodeSelectors resolves them and before dispatch.
+	RequiresSingleStage() bool
 }
 
 func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
@@ -95,6 +102,26 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 		ml.Error().RawJSON("req", logger.Proto(queryCriteria)).Msg("no stage found")
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("no stage found"))
 		return
+	}
+	// COUNT_DISTINCT's decomposability condition (design §7.4) does not
+	// extend across lifecycle stages: a distinct value can legitimately
+	// recur in both a hot and a warm stage, so summing per-shard counts
+	// from more than one resolved stage would double-count. The analyzer
+	// cannot check this itself (AnalyzeDistributed never resolves node
+	// selectors), so it is checked here, once stage resolution has
+	// actually run.
+	if plan.RequiresSingleStage() {
+		resolvedStages := 0
+		for _, selectors := range nodeSelectors {
+			resolvedStages += len(selectors)
+		}
+		if resolvedStages > 1 {
+			ml.Error().RawJSON("req", logger.Proto(queryCriteria)).Int("resolved_stages", resolvedStages).
+				Msg("COUNT_DISTINCT resolved to more than one lifecycle stage")
+			resp = bus.NewMessage(bus.MessageID(now),
+				common.NewError("COUNT_DISTINCT cannot be evaluated across more than one lifecycle stage; restrict the query to a single stage"))
+			return
+		}
 	}
 	var tracer *query.Tracer
 	var span *query.Span

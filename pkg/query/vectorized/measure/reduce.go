@@ -145,7 +145,7 @@ func ReducePartialBatches(
 	if specsErr != nil {
 		return nil, AggValuePathUnresolved, specsErr
 	}
-	op := NewBatchAggregation(refSchema, keyIndices, specs, AggModeReduce, batchSize, tracker, 0)
+	op := NewBatchAggregation(refSchema, keyIndices, specs, AggModeReduce, batchSize, tracker, aggEntrySize)
 	defer op.Close()
 	if initErr := op.Init(context.Background()); initErr != nil {
 		return nil, path, fmt.Errorf("ReducePartialBatches: init: %w", initErr)

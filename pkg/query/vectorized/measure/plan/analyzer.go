@@ -19,10 +19,12 @@ package plan
 
 import (
 	"fmt"
+	"slices"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	measure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
@@ -68,6 +70,9 @@ func Analyze(req *measurev1.QueryRequest, measureSchema *databasev1.Measure, mod
 	}
 	if measureSchema == nil {
 		return nil, fmt.Errorf("plan.Analyze: nil Measure schema")
+	}
+	if pushdownErr := validateCountDistinctPushdown(req, measureSchema); pushdownErr != nil {
+		return nil, pushdownErr
 	}
 
 	tagProjection := buildTagProjection(req)
@@ -479,6 +484,60 @@ func validateAggTag(measureSchema *databasev1.Measure, tagFamily, tagName string
 	default:
 		return fmt.Errorf("plan.Analyze: Agg.Function is UNSPECIFIED or unknown")
 	}
+}
+
+// validateCountDistinctPushdown enforces design §7.4's decomposability
+// condition for a COUNT_DISTINCT Agg: every one of the measure's routing
+// tags (its sharding_key if configured, else its entity — the same
+// fallback banyand/liaison/grpc/discovery.go's navigateByLocator already
+// uses) must be covered by the GroupBy keys or be the aggregation target
+// itself. If a routing tag is uncovered, a value sharing that routing tag
+// value can land on more than one shard, so per-shard distinct counts are
+// not disjoint and summing them would double-count.
+//
+// Evaluated identically for standalone and distributed requests — the
+// design's own principle: a query either works everywhere or nowhere. A
+// standalone deployment has no sharding and could serve any COUNT_DISTINCT
+// correctly today, but must not silently diverge from what the same query
+// does once the measure is sharded.
+//
+// Routing tag names are resolved against the schema by bare name — not
+// family — because Entity/ShardingKey.TagNames carry no family qualifier
+// at the schema level; pkg/partition/entity.go's NewEntityLocator /
+// NewShardingKeyLocator already resolve them the same way via
+// pbv1.FindTagByName. This function resolves each routing tag's actual
+// family from the schema before comparing, so it does not introduce a new
+// bare-name ambiguity on the GroupBy/target side, which IS family-qualified.
+func validateCountDistinctPushdown(req *measurev1.QueryRequest, measureSchema *databasev1.Measure) error {
+	agg := req.GetAgg()
+	if agg == nil || agg.GetFunction() != modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT {
+		return nil
+	}
+	routingTagNames := measureSchema.GetShardingKey().GetTagNames()
+	if len(routingTagNames) == 0 {
+		routingTagNames = measureSchema.GetEntity().GetTagNames()
+	}
+	families := measureSchema.GetTagFamilies()
+	groupByFamily, groupByTagNames := distributedGroupByTagKey(req.GetGroupBy())
+	targetFamily, targetName := agg.GetTagFamily(), agg.GetTagName()
+	for _, routingName := range routingTagNames {
+		fi, _, tagSpec := pbv1.FindTagByName(families, routingName)
+		if tagSpec == nil {
+			return fmt.Errorf("plan.Analyze: COUNT_DISTINCT cannot push down: routing tag %q is not present in the measure schema", routingName)
+		}
+		routingFamily := families[fi].GetName()
+		covered := routingFamily == groupByFamily && slices.Contains(groupByTagNames, routingName)
+		if !covered && routingFamily == targetFamily && routingName == targetName {
+			covered = true
+		}
+		if !covered {
+			return fmt.Errorf(
+				"plan.Analyze: COUNT_DISTINCT cannot push down: routing tag %s.%s is neither a GroupBy key nor the aggregation target — "+
+					"add it to GROUP BY, or query it directly instead of aggregating",
+				routingFamily, routingName)
+		}
+	}
+	return nil
 }
 
 // findTagSpec returns the TagSpec named (tagFamily, tagName) in
