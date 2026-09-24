@@ -49,6 +49,11 @@ services:
       service: liaison
     mem_limit: 512m
     command: liaison --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml
+    # Declared here, and not only inherited: the e2e runner exports
+    # ${liaison_host} and ${liaison_17913} from the ports a case names itself.
+    # Without this the case receives an empty address.
+    ports:
+      - 17913
     volumes:
       - ./nodes.yaml:/etc/banyandb/nodes.yaml
     networks:
