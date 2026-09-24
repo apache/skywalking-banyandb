@@ -273,6 +273,24 @@ These flags configure the connections a liaison holds to the data nodes it queri
 - `--logging-level string`: The root level of logging (default: "info").
 - `--logging-levels strings`: The logging level of each module, one per module.
 - `--logging-modules strings`: The modules whose logging level overrides the root one.
+- `--logging-native-drain-timeout duration`: Time limit for writing what is still buffered at shutdown; the last write can add up to `--logging-native-write-timeout` (default: 5s).
+- `--logging-native-enabled`: Store this process's own logs in BanyanDB, in addition to normal logging. Supported by `standalone` and `data`; `liaison` warns and ignores it.
+- `--logging-native-exclude-modules strings`: Module prefixes never sent to native storage; replaces the built-in set rather than adding to it.
+- `--logging-native-flush-interval duration`: Longest a buffered event waits before it is written (default: 1s).
+- `--logging-native-flush-size int`: Buffered events that trigger a write ahead of the interval (default: 100).
+- `--logging-native-level string`: The minimum level reaching native storage, independent of `--logging-level` (default: "info").
+- `--logging-native-levels strings`: The native level of each module in `--logging-native-modules`, one per module.
+- `--logging-native-max-bytes int`: Cap on the native log buffer, in bytes (default: 33554432).
+- `--logging-native-max-event-bytes int`: Events larger than this are dropped whole rather than truncated (default: 65536).
+- `--logging-native-memory-fraction float`: Fraction of available memory, after the reserve, that the buffer may use where a memory protector runs (default: 0.02).
+- `--logging-native-memory-reserve int`: Bytes of available memory kept out of the buffer budget where a memory protector runs (default: 67108864).
+- `--logging-native-modules strings`: The modules whose native level overrides `--logging-native-level`; an excluded module stays excluded.
+- `--logging-native-shard-num uint32`: Shards of the `_monitoring_log` group, used when the group is created (default: 2).
+- `--logging-native-ttl-days uint32`: Retention of the `_monitoring_log` group in days, used when the group is created (default: 7).
+- `--logging-native-write-timeout duration`: Time limit for one batch write (default: 5s).
+
+See [Logging](observability/logging.md#native-self-storage) for how native self-storage works.
+
 - `--node-host string`: The node host of the server, only used when `node-host-provider` is "flag".
 - `--node-host-provider nodeIDProvider`: The node host provider, can be hostname, IP, or flag (default: Hostname).
 
