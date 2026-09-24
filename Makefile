@@ -194,15 +194,15 @@ build-trace-pipeline-server: ## Build banyand-server with explicit CGO_ENABLED=1
 # NOTE: no -race flag — see comment above.  Plugins and -race require both the
 # .so and the host to be race-built; the simple CGO_ENABLED=1 targets here do
 # not pass -race, so the suite is intentionally excluded from the race lane.
-test-trace-pipeline: build-trace-pipeline-plugin build-trace-pipeline-server $(GINKGO) ## Build the .so + CGO server, then run the pipeline integration suites (Linux/macOS only; excluded from test-race)
-	BANYAND_BIN=$(mk_dir)$(BANYAND_SERVER_CGO_BIN) \
-	BANYAND_TRACE_PLUGIN=$(mk_dir)$(PLUGIN_OUTPUT_DIR)/latencystatussampler.so \
-	$(GINKGO) \
-	  --tags trace_pipeline \
-	  -ldflags "-X github.com/apache/skywalking-banyandb/pkg/test/flags.eventuallyTimeout=30s -X github.com/apache/skywalking-banyandb/pkg/test/flags.consistentlyTimeout=10s -X github.com/apache/skywalking-banyandb/pkg/test/flags.LogLevel=error" \
-	  -timeout 10m \
-	  ./test/integration/standalone/pipeline/... \
-	  ./test/integration/distributed/pipeline/...
+#
+# This is now an e2e gate: the bash orchestrator in test/e2e/tracepipeline/
+# builds the artifacts, launches a real banyand-server, runs the ginkgo
+# entrypoint against it (lifecycle + schema-store-replay-after-restart
+# phases), and tears everything down. It replaces the in-process
+# integration suites under test/integration/{standalone,distributed}/pipeline
+# that previously forked the binary via pkg/test/setup/external.go.
+test-trace-pipeline: build-trace-pipeline-plugin build-trace-pipeline-server ## Build the .so + CGO server, then run the trace-pipeline e2e gate (Linux/macOS only; excluded from test-race)
+	test/e2e/tracepipeline/run.sh
 
 ##@ Code quality targets
 
