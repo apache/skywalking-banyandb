@@ -120,7 +120,10 @@ while :; do
 			echo "the ${module} lines carry node types ${types}, want data" >&2
 			exit 1
 		else
-			echo "each data node stored its own line: ${nodes}"
+			# Only the contract goes to stdout: the runner parses it as YAML
+			# and compares it with expected/success.yaml, so any extra line
+			# here becomes an extra key and fails the comparison.
+			echo "each data node stored its own line: ${nodes}" >&2
 			echo "status: success"
 			exit 0
 		fi
