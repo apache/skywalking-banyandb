@@ -27,11 +27,14 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	apiversion "github.com/apache/skywalking-banyandb/api/proto/banyandb"
+	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
+	"github.com/apache/skywalking-banyandb/pkg/fileformat"
 	"github.com/apache/skywalking-banyandb/pkg/host"
 )
 
@@ -163,7 +166,10 @@ type Node struct {
 	PropertySchemaGossipGrpcAddress string
 }
 
-// ToProtoNode converts a Node to a databasev1.Node with the given roles.
+// ToProtoNode converts a Node to a databasev1.Node with the given roles. The
+// version and time zone describe the running process, so consumers of the node
+// registry can tell which file formats the node reads and which segment
+// boundaries its timestamps fall on.
 func (n Node) ToProtoNode(roles []databasev1.Role) *databasev1.Node {
 	return &databasev1.Node{
 		Metadata: &commonv1.Metadata{
@@ -177,6 +183,12 @@ func (n Node) ToProtoNode(roles []databasev1.Role) *databasev1.Node {
 		PropertyRepairGossipGrpcAddress: n.PropertyGossipGrpcAddress,
 		PropertySchemaGrpcAddress:       n.PropertySchemaGrpcAddress,
 		PropertySchemaGossipGrpcAddress: n.PropertySchemaGossipGrpcAddress,
+		Version: &clusterv1.VersionInfo{
+			ApiVersion:                  apiversion.Version,
+			FileFormatVersion:           fileformat.CurrentVersion,
+			CompatibleFileFormatVersion: fileformat.CompatibleVersions(),
+		},
+		TzName: host.TimeZoneName(),
 	}
 }
 

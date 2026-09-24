@@ -2952,6 +2952,8 @@ Service is the service for the API
 | property_repair_gossip_grpc_address | [string](#string) |  |  |
 | property_schema_grpc_address | [string](#string) |  |  |
 | property_schema_gossip_grpc_address | [string](#string) |  |  |
+| version | [banyandb.cluster.v1.VersionInfo](#banyandb-cluster-v1-VersionInfo) |  | version reports the file format versions the node accepts and its API version. |
+| tz_name | [string](#string) |  | tz_name is the IANA name of the node&#39;s local time zone, for example &#34;Asia/Shanghai&#34;. It is empty when the node cannot determine the name, which means &#34;unknown&#34; rather than &#34;matches whatever the other side reports&#34;. |
 
 
 

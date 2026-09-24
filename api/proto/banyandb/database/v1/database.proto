@@ -19,6 +19,7 @@ syntax = "proto3";
 
 package banyandb.database.v1;
 
+import "banyandb/cluster/v1/rpc.proto";
 import "banyandb/common/v1/common.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -43,6 +44,12 @@ message Node {
   string property_repair_gossip_grpc_address = 7;
   string property_schema_grpc_address = 8;
   string property_schema_gossip_grpc_address = 9;
+  // version reports the file format versions the node accepts and its API version.
+  cluster.v1.VersionInfo version = 10;
+  // tz_name is the IANA name of the node's local time zone, for example
+  // "Asia/Shanghai". It is empty when the node cannot determine the name, which
+  // means "unknown" rather than "matches whatever the other side reports".
+  string tz_name = 11;
 }
 
 message Shard {
