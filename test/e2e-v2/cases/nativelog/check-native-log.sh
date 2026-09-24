@@ -36,12 +36,22 @@ http_addr=$1
 api="http://${http_addr}/api/v1"
 # Above about a thousand rows the query is refused by the memory budget.
 limit=900
-deadline=$((SECONDS + 180))
+deadline=$((SECONDS + 240))
 
 nonce="nl_e2e_$(date +%s)"
 module=$(echo "$nonce" | tr '[:lower:]' '[:upper:]')
 
-curl -sf -m 10 -XPOST "${api}/group/schema" -d "{
+# The case runs as soon as the containers exist, which is before the liaison
+# serves anything, so every request here waits for it rather than failing once.
+until curl -sf -m 5 "http://${http_addr}/api/healthz" 2>/dev/null | grep -q SERVING; do
+	if [[ $SECONDS -ge $deadline ]]; then
+		echo "the liaison did not become healthy" >&2
+		exit 1
+	fi
+	sleep 2
+done
+
+until curl -sf -m 10 -XPOST "${api}/group/schema" -d "{
   \"group\": {
     \"metadata\": {\"name\": \"${nonce}\"},
     \"catalog\": \"CATALOG_STREAM\",
@@ -51,7 +61,13 @@ curl -sf -m 10 -XPOST "${api}/group/schema" -d "{
       \"ttl\": {\"unit\": \"UNIT_DAY\", \"num\": 1}
     }
   }
-}" >/dev/null || { echo "failed to create the group ${nonce}" >&2; exit 1; }
+}" >/dev/null; do
+	if [[ $SECONDS -ge $deadline ]]; then
+		echo "failed to create the group ${nonce}" >&2
+		exit 1
+	fi
+	sleep 2
+done
 
 while :; do
 	begin=$(date -u -d '-10 minutes' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-10M +%Y-%m-%dT%H:%M:%SZ)
