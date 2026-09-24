@@ -17,17 +17,20 @@
 
 package host
 
-// Resolving a zone by name needs a zone database, and the minimal images do not
-// ship one -- busybox, alpine and even ubuntu leave out /usr/share/zoneinfo.
-// Without it TimeZoneName cannot confirm the zone TZ names and answers "unknown",
-// and, worse, the Go runtime cannot load that zone either: it falls back to UTC,
-// so a node ends up aligning its segments on a grid the operator did not ask for
-// while reporting no time zone at all. The images this project publishes disagree
-// among themselves about carrying a database, which is how a data node and a
-// lifecycle sidecar of one cluster can read the same segment directory eight
-// hours apart.
-//
-// Embedding it here rather than in the storage engine ties the guarantee to the
-// function that needs it instead of to whichever binary happens to link the
-// engine, and the engine still gets it through api/common. It costs about 400KiB.
-import _ "time/tzdata"
+import (
+	// Resolving a zone by name needs a zone database, and the minimal images do not
+	// ship one -- busybox, alpine and even ubuntu leave out /usr/share/zoneinfo.
+	// Without it TimeZoneName cannot confirm the zone TZ names and answers
+	// "unknown", and, worse, the Go runtime cannot load that zone either: it falls
+	// back to UTC, so a node ends up aligning its segments on a grid the operator
+	// did not ask for while reporting no time zone at all. The images this project
+	// publishes disagree among themselves about carrying a database, which is how a
+	// data node and a lifecycle sidecar of one cluster can read the same segment
+	// directory eight hours apart.
+	//
+	// Embedding it here rather than in the storage engine ties the guarantee to the
+	// function that needs it instead of to whichever binary happens to link the
+	// engine, and the engine still gets it through api/common. It costs about
+	// 400KiB.
+	_ "time/tzdata"
+)

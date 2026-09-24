@@ -57,9 +57,9 @@ func TestTimeZoneNameFromLocaltime(t *testing.T) {
 	tests := []struct {
 		name     string
 		zonePath string
+		want     string
 		chained  bool
 		plain    bool
-		want     string
 	}{
 		{name: "linux layout", zonePath: "usr/share/zoneinfo/Asia/Shanghai", want: "Asia/Shanghai"},
 		{name: "macos layout", zonePath: "var/db/timezone/zoneinfo/Europe/Paris", want: "Europe/Paris"},

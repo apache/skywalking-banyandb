@@ -39,6 +39,11 @@ var runtimeZoneName = time.Local.String
 // layout: /usr/share/zoneinfo on Linux, /var/db/timezone/zoneinfo on macOS.
 const zoneinfoMarker = "zoneinfo"
 
+// utcName is both an IANA zone and the name the Go runtime gives the local zone
+// on the branches where it gave up and fell back to UTC, which is why it turns
+// up as an answer, as a probe and as a marker of that fallback.
+const utcName = "UTC"
+
 // A zone that is UTC now but not always is not UTC. January and July of every
 // year in this range catch both daylight saving and the historical offset
 // changes that every non-UTC zone carries.
@@ -56,7 +61,7 @@ func localZoneName() string {
 		// zone, so the name has to be recovered from the path.
 		name := strings.TrimPrefix(tz, ":")
 		if name == "" {
-			return "UTC"
+			return utcName
 		}
 		if strings.HasPrefix(name, "/") {
 			name = zoneNameFromPath(name)
@@ -80,8 +85,8 @@ func localZoneName() string {
 	// only on the branches where it gave up and used UTC — a zone it loaded by
 	// name keeps that name, and one loaded from /etc/localtime is called "Local".
 	// So when this reports UTC, UTC is what the process is really running.
-	if runtimeZoneName() == "UTC" {
-		return "UTC"
+	if runtimeZoneName() == utcName {
+		return utcName
 	}
 	return ""
 }
@@ -107,12 +112,12 @@ func utcZoneName(path string) string {
 	for year := firstProbeYear; year <= lastProbeYear; year++ {
 		for _, month := range [...]time.Month{time.January, time.July} {
 			name, offset := time.Date(year, month, 1, 0, 0, 0, 0, time.UTC).In(loc).Zone()
-			if offset != 0 || name != "UTC" {
+			if offset != 0 || name != utcName {
 				return ""
 			}
 		}
 	}
-	return "UTC"
+	return utcName
 }
 
 // zoneNameFromPath extracts the part of a zoneinfo file path that follows the
