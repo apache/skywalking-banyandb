@@ -18,6 +18,7 @@
 package logger
 
 import (
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -498,4 +499,28 @@ func TestSinkOwnGroupStaysExcluded(t *testing.T) {
 			t.Errorf("%s was admitted, so the log storage feeds itself", module)
 		}
 	}
+}
+
+// TestLevelLessEventObeysTheThreshold is the falsifying assertion for the
+// gate. zerolog's io.Writer logs at NoLevel, which is numerically above every
+// real level, so an unnormalized comparison admits such an event whatever
+// --logging-native-level says. The path is live: the index library reports
+// through a stdlib log.Logger writing into one of ours.
+func TestLevelLessEventObeysTheThreshold(t *testing.T) {
+	t.Run("refused below the threshold", func(t *testing.T) {
+		sink := withNative(t, Logging{Env: "prod", Level: "error"},
+			NativeLogging{Enabled: true, Level: "error"})
+		fmt.Fprintln(GetLogger("measure"), "a line from a library")
+		if sink.admittedFrom("MEASURE", zerolog.NoLevel) {
+			t.Fatal("a level-less event was stored although the native level is error")
+		}
+	})
+	t.Run("admitted at the threshold", func(t *testing.T) {
+		sink := withNative(t, Logging{Env: "prod", Level: "error"},
+			NativeLogging{Enabled: true, Level: "info"})
+		fmt.Fprintln(GetLogger("measure"), "a line from a library")
+		if !sink.admittedFrom("MEASURE", zerolog.NoLevel) {
+			t.Fatal("a level-less event was not stored although the native level is info")
+		}
+	})
 }

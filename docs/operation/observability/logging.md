@@ -140,7 +140,7 @@ The `reason` label takes one of nine values, so a loss is always attributable to
 
 The modules on the write path the sink publishes through are never stored: admitting them would let one stored line produce the next. `_monitoring_log`, the log group's own storage, is excluded for the same reason and stays excluded whatever `--logging-native-exclude-modules` says; a blank entry in that list is ignored rather than taken as a prefix of every module.
 
-An event logged without a level is stored with the level `none`, because the level is half the series key and an empty one cannot be queried. The buffer is bounded and in-memory only -- no queue files, no write-ahead log, no disk fallback -- and it never blocks the caller: over budget the newest event is dropped and counted, so a burst keeps the head that explains it.
+An event logged without a level is stored with the level `none`, because the level is half the series key and an empty one cannot be queried. Such an event arrives with no severity at all — a library writing through a standard `log.Logger` produces one — so it is admitted as an informational event and obeys `--logging-native-level` like any other. The buffer is bounded and in-memory only -- no queue files, no write-ahead log, no disk fallback -- and it never blocks the caller: over budget the newest event is dropped and counted, so a burst keeps the head that explains it.
 
 `restore` and `migration` do not offer these flags at all. Both run when the data tier is unavailable, and a tool that runs while the database is down cannot log into it.
 

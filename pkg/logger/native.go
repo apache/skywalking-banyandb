@@ -339,7 +339,17 @@ func (w *nativeWriter) Write(p []byte) (int, error) {
 }
 
 func (w *nativeWriter) WriteLevel(l zerolog.Level, p []byte) (int, error) {
-	if w.excluded || l < w.level {
+	// An event logged without a level arrives as NoLevel, which outranks every
+	// real one and would therefore ignore the threshold entirely. That path is
+	// live: a stdlib log.Logger writing into one of ours goes through
+	// zerolog's io.Writer, which logs at NoLevel, and that is how the index
+	// library reports. Such an event carries no severity, so it is admitted as
+	// an informational one, and stored under its own name.
+	gate := l
+	if gate == zerolog.NoLevel {
+		gate = zerolog.InfoLevel
+	}
+	if w.excluded || gate < w.level {
 		return len(p), nil
 	}
 	if s := nativeSink.Load(); s != nil {
