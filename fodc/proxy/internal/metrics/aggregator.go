@@ -289,26 +289,43 @@ func collectionKey(filter *Filter) string {
 // CollectMetricsFromAgents returns one round of metrics from the agents filter selects.
 // Concurrent callers with the same filter share a single round: the first starts it and
 // the rest wait for it, so two scrapers landing together cost one round of agent traffic
-// and hold one copy of the data. The round runs detached from the first caller's context
-// (each agent already has its own timeout), so a scraper that disconnects mid-round
-// cannot fail the others; the caller that started the round still receives its result,
-// while a caller waiting on someone else's round returns as soon as its context ends.
+// and hold one copy of the data. A caller with a different filter waits for the round in
+// flight to finish before starting its own: agent replies carry no request ID and
+// ProcessMetricsFromAgent hands each reply to every subscriber of that agent, so two
+// rounds asking the same agent for different things (latest values vs. a time window)
+// would each consume whichever reply arrived first. The round runs detached from the
+// first caller's context (each agent already has its own timeout), so a scraper that
+// disconnects mid-round cannot fail the others; the caller that started the round still
+// receives its result, while a caller waiting on someone else's round returns as soon as
+// its context ends.
 func (ma *Aggregator) CollectMetricsFromAgents(ctx context.Context, filter *Filter) ([]*AggregatedMetric, error) {
 	key := collectionKey(filter)
 
-	ma.inflightMu.Lock()
-	if current, ok := ma.inflight[key]; ok {
-		ma.inflightMu.Unlock()
-		select {
-		case <-current.done:
-			return current.metrics, current.err
-		case <-ctx.Done():
-			return nil, ctx.Err()
+	var current *collection
+	for current == nil {
+		ma.inflightMu.Lock()
+		if same, ok := ma.inflight[key]; ok {
+			ma.inflightMu.Unlock()
+			select {
+			case <-same.done:
+				return same.metrics, same.err
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
 		}
+		if other := ma.anyInflightLocked(); other != nil {
+			ma.inflightMu.Unlock()
+			select {
+			case <-other.done:
+				continue // the agents are free again; re-check for a round to join or start
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		current = &collection{done: make(chan struct{})}
+		ma.inflight[key] = current
+		ma.inflightMu.Unlock()
 	}
-	current := &collection{done: make(chan struct{})}
-	ma.inflight[key] = current
-	ma.inflightMu.Unlock()
 
 	current.metrics, current.err = ma.collectOnce(context.WithoutCancel(ctx), filter)
 
@@ -319,6 +336,14 @@ func (ma *Aggregator) CollectMetricsFromAgents(ctx context.Context, filter *Filt
 	ma.inflightMu.Unlock()
 	close(current.done)
 	return current.metrics, current.err
+}
+
+// anyInflightLocked returns one round currently in flight, or nil. The caller holds inflightMu.
+func (ma *Aggregator) anyInflightLocked() *collection {
+	for _, c := range ma.inflight {
+		return c
+	}
+	return nil
 }
 
 // collectOnce asks every filtered agent for metrics and gathers the replies. The returned

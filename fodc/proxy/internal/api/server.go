@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -549,9 +550,8 @@ type metricLineWriter struct {
 	keys []string
 }
 
-// write emits `name{k="v",...} value\n`. Labels are sorted by key; that yields the
-// same order as sorting the rendered `k="v"` pairs because '=' (0x3D) sorts before
-// every legal label-name character.
+// write emits `name{k="v",...} value\n`. Labels keep the order the previous formatter
+// produced by sorting the rendered `k="v"` pairs; see compareRenderedKeys.
 func (lw *metricLineWriter) write(w *bufio.Writer, m *metrics.AggregatedMetric) {
 	buf := lw.buf[:0]
 	buf = append(buf, m.Name...)
@@ -560,7 +560,7 @@ func (lw *metricLineWriter) write(w *bufio.Writer, m *metrics.AggregatedMetric) 
 		for k := range m.Labels {
 			keys = append(keys, k)
 		}
-		sort.Strings(keys)
+		slices.SortFunc(keys, compareRenderedKeys)
 		buf = append(buf, '{')
 		for i, k := range keys {
 			if i > 0 {
@@ -579,6 +579,28 @@ func (lw *metricLineWriter) write(w *bufio.Writer, m *metrics.AggregatedMetric) 
 	buf = append(buf, '\n')
 	lw.buf = buf
 	_, _ = w.Write(buf)
+}
+
+// compareRenderedKeys orders two distinct label keys the way sorting their rendered
+// `key="value"` pairs would: as if each key were followed by '='. Plain key order is not
+// the same thing, because digits (0x30-0x39) sort before '=' (0x3D) while letters and '_'
+// sort after it, so `a0` must precede `a` although "a" < "a0". Two different keys always
+// differ before the value is reached, since '=' can never appear inside a key.
+func compareRenderedKeys(a, b string) int {
+	n := min(len(a), len(b))
+	for i := 0; i < n; i++ {
+		if a[i] != b[i] {
+			return int(a[i]) - int(b[i])
+		}
+	}
+	switch {
+	case len(a) == len(b):
+		return 0
+	case len(a) < len(b):
+		return int('=') - int(b[n])
+	default:
+		return int(a[n]) - int('=')
+	}
 }
 
 // appendEscapedLabelValue applies the Prometheus text-format escapes for a label value

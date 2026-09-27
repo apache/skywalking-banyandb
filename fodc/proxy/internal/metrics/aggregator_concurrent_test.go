@@ -40,9 +40,15 @@ type replyingSender struct {
 	requests   atomic.Int64
 }
 
-func (s *replyingSender) RequestMetrics(agentID string, _ *time.Time, _ *time.Time) error {
+func (s *replyingSender) RequestMetrics(agentID string, startTime *time.Time, _ *time.Time) error {
 	s.requests.Add(1)
 	s.wg.Add(1)
+	// A windowed request is answered with a differently named metric so a test can tell
+	// whether a round consumed a reply meant for another round.
+	name := "banyandb_system_up_time"
+	if startTime != nil {
+		name = "banyandb_windowed_sample"
+	}
 	//panicdiag:allow-rawgo test-only agent stub; a panic here must fail the test loudly rather than be recovered and hidden
 	go func() {
 		defer s.wg.Done()
@@ -52,7 +58,7 @@ func (s *replyingSender) RequestMetrics(agentID string, _ *time.Time, _ *time.Ti
 			return
 		}
 		now := time.Now()
-		req := createTestStreamMetricsRequest("banyandb_system_up_time", 1, nil, &now)
+		req := createTestStreamMetricsRequest(name, 1, nil, &now)
 		_ = s.aggregator.ProcessMetricsFromAgent(context.Background(), agentID, agentInfo, req)
 	}()
 	return nil

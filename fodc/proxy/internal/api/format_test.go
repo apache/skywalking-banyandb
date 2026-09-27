@@ -50,11 +50,33 @@ func TestMetricLineWriter_SortsByLabelKeyAndEscapes(t *testing.T) {
 			"pod_name": "hot-0",
 		},
 	}
-	// The legacy formatter sorted the rendered `k="v"` pairs; sorting by key gives the
-	// same order because '=' sorts before every legal label-name character.
+	// Same order the legacy formatter produced by sorting the rendered `k="v"` pairs.
 	require.Equal(t,
 		"banyandb_test{a=\"q\\\"uote\\\\back\\nline\",ab=\"second\",pod_name=\"hot-0\"} 1.5\n",
 		renderLine(t, m))
+}
+
+func TestMetricLineWriter_KeysWithDigitsKeepLegacyOrder(t *testing.T) {
+	// Digits sort before '=', letters and '_' after it, so the rendered-pair order is
+	// A, a0, a, a_ even though plain key order would be A, a, a0, a_.
+	m := &metrics.AggregatedMetric{
+		Name:   "v",
+		Value:  1,
+		Labels: map[string]string{"a": "3", "a0": "2", "a_": "4", "A": "1"},
+	}
+	require.Equal(t, "v{A=\"1\",a0=\"2\",a=\"3\",a_=\"4\"} 1\n", renderLine(t, m))
+}
+
+func TestCompareRenderedKeys_MatchesSortingRenderedPairs(t *testing.T) {
+	keys := []string{"a", "a0", "a_", "A", "ab", "a9z", "b", "_a", "Z0", "a1"}
+	for _, x := range keys {
+		for _, y := range keys {
+			want := strings.Compare(x+`="`, y+`="`)
+			got := compareRenderedKeys(x, y)
+			require.Equal(t, want < 0, got < 0, "%q vs %q", x, y)
+			require.Equal(t, want == 0, got == 0, "%q vs %q", x, y)
+		}
+	}
 }
 
 func TestMetricLineWriter_NoLabels(t *testing.T) {
@@ -100,6 +122,7 @@ func TestWritePrometheusText_MatchesLegacyOnTypedFamilies(t *testing.T) {
 		{Name: "banyandb_lat_count", Type: "histogram", Description: "Lat.", Value: 5, Labels: map[string]string{"pod_name": "a"}},
 		{Name: "banyandb_errors_total", Type: "counter", Value: 7, Labels: map[string]string{"pod_name": "b"}},
 		{Name: "banyandb_lat_count", Value: 9, Labels: map[string]string{"pod_name": "legacy"}}, // untyped, absorbed by the typed family
+		{Name: "banyandb_digits", Type: "gauge", Value: 2, Labels: map[string]string{"a": "x", "a0": "y", "a_": "z", "shard": "0", "shard0": "1"}},
 	}
 	s := &Server{}
 	require.Equal(t, legacyFormatPrometheusText(list), s.formatPrometheusText(list))

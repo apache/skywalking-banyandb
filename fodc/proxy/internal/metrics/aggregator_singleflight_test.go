@@ -111,6 +111,54 @@ func TestCollectMetricsFromAgents_DifferentFiltersAreNotCoalesced(t *testing.T) 
 	require.EqualValues(t, 2, sender.requests.Load(), "one collection per distinct filter")
 }
 
+// Two rounds with different filters that share an agent must not run at the same time:
+// the agent's reply carries no request ID and is handed to every subscriber, so a
+// latest-values round and a time-window round overlapping on one agent would each take
+// whichever reply landed first. The later round waits for the earlier one instead.
+func TestCollectMetricsFromAgents_DifferentFiltersOnSharedAgentsRunInTurn(t *testing.T) {
+	const agents = 2
+	aggregator, sender := newReplyingSetup(t, agents, 200*time.Millisecond)
+
+	var wg sync.WaitGroup
+	var latest, windowed []*AggregatedMetric
+	var latestErr, windowedErr error
+	wg.Add(1)
+	//panicdiag:allow-rawgo test-only scrape driver; a panic here must fail the test loudly rather than be recovered and hidden
+	go func() {
+		defer wg.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		latest, latestErr = aggregator.GetLatestMetrics(ctx, nil)
+	}()
+	require.Eventually(t, func() bool { return aggregator.ActiveCollections() == agents }, time.Second, 5*time.Millisecond)
+
+	wg.Add(1)
+	//panicdiag:allow-rawgo test-only scrape driver; a panic here must fail the test loudly rather than be recovered and hidden
+	go func() {
+		defer wg.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		end := time.Now()
+		start := end.Add(-time.Minute)
+		windowed, windowedErr = aggregator.GetMetricsWindow(ctx, start, end, nil)
+	}()
+	wg.Wait()
+	sender.wg.Wait()
+
+	require.NoError(t, latestErr)
+	require.NoError(t, windowedErr)
+	require.Len(t, latest, agents)
+	require.Len(t, windowed, agents)
+	for _, m := range latest {
+		require.Equal(t, "banyandb_system_up_time", m.Name, "the latest-values round must only see latest-values replies")
+	}
+	for _, m := range windowed {
+		require.Equal(t, "banyandb_windowed_sample", m.Name, "the window round must only see windowed replies")
+	}
+	require.EqualValues(t, 2*agents, sender.requests.Load(), "distinct filters still collect separately, just not at the same time")
+	require.Equal(t, 0, aggregator.ActiveCollections())
+}
+
 func TestCollectMetricsFromAgents_FollowerCancelDoesNotAffectLeader(t *testing.T) {
 	const agents = 2
 	aggregator, sender := newReplyingSetup(t, agents, 300*time.Millisecond)
