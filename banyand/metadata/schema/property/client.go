@@ -736,6 +736,9 @@ func (r *SchemaRegistry) CreateStream(ctx context.Context, stream *databasev1.St
 	if validateErr := validate.Stream(stream); validateErr != nil {
 		return 0, validateErr
 	}
+	if uniqueErr := validate.UniqueTagNames(stream.GetTagFamilies()); uniqueErr != nil {
+		return 0, uniqueErr
+	}
 	now := time.Now().UnixNano()
 	stream.Metadata.ModRevision = now
 	stream.UpdatedAt = timestamppb.Now()
@@ -746,6 +749,9 @@ func (r *SchemaRegistry) CreateStream(ctx context.Context, stream *databasev1.St
 func (r *SchemaRegistry) UpdateStream(ctx context.Context, stream *databasev1.Stream) (int64, error) {
 	if validateErr := validate.Stream(stream); validateErr != nil {
 		return 0, validateErr
+	}
+	if uniqueErr := validate.UniqueTagNames(stream.GetTagFamilies()); uniqueErr != nil {
+		return 0, uniqueErr
 	}
 	now := time.Now().UnixNano()
 	stream.Metadata.ModRevision = now
@@ -783,6 +789,9 @@ func (r *SchemaRegistry) CreateMeasure(ctx context.Context, measure *databasev1.
 	if validateErr := validate.Measure(measure); validateErr != nil {
 		return 0, validateErr
 	}
+	if uniqueErr := validate.UniqueTagNames(measure.GetTagFamilies()); uniqueErr != nil {
+		return 0, uniqueErr
+	}
 	if subsetWarn := validate.CheckShardingKeySubset(measure); subsetWarn != nil {
 		r.l.Warn().Err(subsetWarn).Str("measure", measure.GetMetadata().GetName()).Msg("sharding key is not a subset of entity tags")
 	}
@@ -801,6 +810,9 @@ func (r *SchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.
 	}
 	if validateErr := validate.Measure(measure); validateErr != nil {
 		return 0, validateErr
+	}
+	if uniqueErr := validate.UniqueTagNames(measure.GetTagFamilies()); uniqueErr != nil {
+		return 0, uniqueErr
 	}
 	if subsetWarn := validate.CheckShardingKeySubset(measure); subsetWarn != nil {
 		r.l.Warn().Err(subsetWarn).Str("measure", measure.GetMetadata().GetName()).Msg("sharding key is not a subset of entity tags")
