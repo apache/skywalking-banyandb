@@ -13,6 +13,7 @@ Release Notes.
 - Push the criteria tag filter ahead of the vectorized stream merge, so a filtered index-order query bounds its merge at limit+offset. For such a query, where several rows share an ElementID, the criteria is now evaluated first and the element is represented by its first matching row in the requested sort order. Filtered timestamp-order queries are unchanged.
 - `measure.v1.QueryRequest.Aggregation` can now target a tag (`tag_name` + `tag_family`) instead of a field: `SUM`/`MIN`/`MAX`/`MEAN` over an `INT` tag, and `COUNT` over any scalar tag, in both standalone and distributed queries. Wire-additive only — existing clients that only ever set `field_name` are unaffected. `COUNT_DISTINCT` is not yet implemented; see the [tag aggregation and time bucketing design](docs/design/0.12.0/tag-aggregation/README.md).
 - `measure.v1.QueryRequest.GroupBy.time_bucket` groups a measure query by tumbling time windows, alone or combined with a tag `GroupBy`, in both standalone and distributed queries. The bucket width comes from the request or falls back to the measure's own `interval`. The part-scan path streams bucket-by-bucket so live memory never exceeds one bucket's groups; index-mode measures (no ascending-timestamp guarantee) use a bounded non-streaming fallback instead. A mixed-version cluster where an older data node ignores `time_bucket` is rejected with a clear error rather than silently collapsing the series to one row.
+- `databasev1.Node` now reports its supported file format versions and IANA time zone name.
 
 ### Bug Fixes
 
