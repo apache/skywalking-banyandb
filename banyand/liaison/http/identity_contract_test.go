@@ -210,20 +210,20 @@ func TestR2_UsersOnlyDeploymentIsUnchangedAtTheHTTPSeam(t *testing.T) {
 	}
 }
 
-// TestR2_StaticAssetsBypassAuthentication proves the last compatibility carve-out the
-// existing middleware has: the UI's static assets are served without credentials, so
-// turning RBAC on does not break the console's first paint.
-func TestR2_StaticAssetsBypassAuthentication(t *testing.T) {
-	for _, path := range []string{"/favicon.ico", "/banyandb.ico", "/assets/index.js"} {
+// TestR2_NoPathBypassesAuthentication proves the embedded-UI static-asset carve-out is
+// gone with the UI itself: every path the middleware guards now requires credentials, so
+// no request reaches the gateway unauthenticated regardless of what it asks for.
+func TestR2_NoPathBypassesAuthentication(t *testing.T) {
+	for _, path := range []string{"/", "/favicon.ico", "/banyandb.ico", "/assets/index.js", "/index.html"} {
 		next := &forwarded{}
 		handler := liaisonhttp.NewAuthMiddleware(reloaderFor(t, httpPolicyYAML))(next)
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
-		if !next.called {
-			t.Errorf("static path %s was not forwarded, want it served without credentials", path)
+		if next.called {
+			t.Errorf("path %s was forwarded without credentials, want it rejected at the middleware", path)
 		}
-		if rec.Code != http.StatusOK {
-			t.Errorf("static path %s returned %d, want %d", path, rec.Code, http.StatusOK)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("path %s returned %d, want %d", path, rec.Code, http.StatusUnauthorized)
 		}
 	}
 }

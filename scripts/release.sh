@@ -52,7 +52,7 @@ binary(){
     pushd ${tmpdir}
     trap 'popd' EXIT
     tar -xvf ${SOURCE_FILE}
-    make generate && make -C ui build
+    make generate
     RELEASE_VERSION="${RELEASE_VERSION}" make -C mcp release
     TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 RELEASE_VERSION="${RELEASE_VERSION}" make -C banyand release
     TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 RELEASE_VERSION="${RELEASE_VERSION}" make -C fodc/agent release

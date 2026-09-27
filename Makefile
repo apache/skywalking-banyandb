@@ -27,7 +27,7 @@ endif
 
 include scripts/build/version.mk
 
-PROJECTS := ui banyand bydbctl mcp fodc/agent fodc/proxy
+PROJECTS := banyand bydbctl mcp fodc/agent fodc/proxy
 
 TEST_CI_OPTS ?=
 
@@ -179,11 +179,6 @@ build-trace-pipeline-server: ## Build banyand-server with explicit CGO_ENABLED=1
 		echo "ERROR: build-trace-pipeline-server requires a C toolchain (gcc or clang) but neither was found in PATH."; \
 		exit 1; \
 	fi
-	@# ui/dist must contain at least one embeddable (non-hidden) file for
-	@# ui/embed.go's //go:embed dist to succeed.  Create a placeholder when the
-	@# UI has not been built (dev / CI without the UI step).
-	@mkdir -p ui/dist
-	@if [ ! -f ui/dist/index.html ]; then touch ui/dist/index.html; fi
 	@mkdir -p $(dir $(BANYAND_SERVER_CGO_BIN))
 	CGO_ENABLED=1 go build -trimpath \
 		-o $(BANYAND_SERVER_CGO_BIN) \
@@ -266,7 +261,6 @@ format: default ## Run the linters on all projects
 
 check-req: ## Check the requirements
 	@$(MAKE) -C scripts/ci/check test
-	@$(MAKE) -C ui check-version
 	@$(MAKE) -C mcp check-version
 
 include scripts/build/vuln.mk
@@ -303,14 +297,11 @@ pre-push: ## Check source files before pushing to the remote repo
 include scripts/build/license.mk
 
 # License-check / license-fix run a SINGLE license-eye invocation from the
-# repo root with the root .licenserc.yaml. This avoids:
-#   - editing ui/.licenserc.yaml (forbidden by plan §Principle 3),
-#   - the per-subdir loop over PROJECTS (each subdir would otherwise load
-#     its own .licenserc.yaml and miss the root config's OMC-runtime-state
-#     / handoff-import / playwright-mcp exclusions).
-# The root config already includes 'ui' in paths-ignore so the Vue app is
-# not double-scanned; canopy files are scanned from the root, which is the
-# desired surface for the license header check.
+# repo root with the root .licenserc.yaml. This avoids the per-subdir loop
+# over PROJECTS: each subdir would otherwise load its own .licenserc.yaml and
+# miss the root config's OMC-runtime-state / handoff-import / playwright-mcp
+# exclusions. canopy files are scanned from the root, which is the desired
+# surface for the license header check.
 license-check: $(LICENSE_EYE) ## Check license header
 	$(LICENSE_EYE) header check
 
@@ -319,12 +310,10 @@ license-fix: $(LICENSE_EYE) ## Fix license header issues
 
 license-dep: $(LICENSE_EYE)
 license-dep: TARGET=license-dep
-license-dep: PROJECTS:=ui mcp canopy
+license-dep: PROJECTS:=mcp canopy
 license-dep: default ## Generate dependency LICENSE texts via SkyWalking Eyes
 	@rm -rf $(mk_dir)/dist/licenses
 	$(LICENSE_EYE) dep resolve -o $(mk_dir)/dist/licenses -s $(mk_dir)/dist/LICENSE.tpl
-	mv $(mk_dir)/ui/ui-licenses $(mk_dir)/dist/licenses
-	cat $(mk_dir)/ui/LICENSE >> $(mk_dir)/dist/LICENSE
 	@# MCP and Canopy Eyes output stay under mcp/licenses and canopy/licenses.
 	@# Do not append them to dist/LICENSE: Go packages ship MCP under mcp/
 	@# (LICENSE + licenses/ + package-lock.json), and Canopy has its own archive.
