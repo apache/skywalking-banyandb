@@ -50,18 +50,22 @@ type nativePluginDocument struct {
 type nativePluginMode struct{ index, store, sort bool }
 
 type nativePluginSegment struct {
-	fields      map[string]*nativePluginField
-	frequencies map[string]uint64
-	documents   []nativePluginDocument
-	payload     []byte
-	timeMin     int64
-	timeMax     int64
-	decoded     bool
+	fields             map[string]*nativePluginField
+	frequencies        map[string]uint64
+	emptyIndexedFields map[string]struct{}
+	documents          []nativePluginDocument
+	payload            []byte
+	timeMin            int64
+	timeMax            int64
+	decoded            bool
 }
 
 func nativeSegmentPluginNew(results []segmentDocument, normCalc func(string, int) float32) (segmentValue, uint64, error) {
 	_ = normCalc
-	segment := &nativePluginSegment{fields: make(map[string]*nativePluginField), frequencies: make(map[string]uint64)}
+	segment := &nativePluginSegment{
+		fields: make(map[string]*nativePluginField), frequencies: make(map[string]uint64),
+		emptyIndexedFields: make(map[string]struct{}),
+	}
 	generation := nativeice.Generation{SegmentID: 1, SnapshotID: 1}
 	for _, result := range results {
 		if result == nil {
@@ -71,6 +75,7 @@ func nativeSegmentPluginNew(results []segmentDocument, normCalc func(string, int
 			terms: make(map[string][][]byte), termFreqs: make(map[string]map[string]uint64),
 			docValues: make(map[string][][]byte), modes: make(map[string]nativePluginMode),
 		}
+		seenTerms := make(map[string]map[string]struct{})
 		encoded := nativeice.EncodeDocument{}
 		result.EachField(func(field segmentField) {
 			name := field.Name()
@@ -91,11 +96,18 @@ func nativeSegmentPluginNew(results []segmentDocument, normCalc func(string, int
 				analyzedTerms = make([]nativeice.EncodeTerm, 0)
 				field.EachTerm(func(term segmentFieldTerm) {
 					termValue := append([]byte(nil), term.Term()...)
-					document.terms[name] = append(document.terms[name], termValue)
 					if document.termFreqs[name] == nil {
 						document.termFreqs[name] = make(map[string]uint64)
 					}
-					document.termFreqs[name][string(termValue)] = uint64(term.Frequency())
+					termKey := string(termValue)
+					document.termFreqs[name][termKey] += uint64(term.Frequency())
+					if seenTerms[name] == nil {
+						seenTerms[name] = make(map[string]struct{})
+					}
+					if _, seen := seenTerms[name][termKey]; !seen {
+						document.terms[name] = append(document.terms[name], termValue)
+						seenTerms[name][termKey] = struct{}{}
+					}
 					analyzedTerms = append(analyzedTerms, nativeice.EncodeTerm{Value: termValue, Frequency: uint64(term.Frequency())})
 				})
 			}
@@ -233,7 +245,7 @@ func nativeSegmentPluginLoad(data *segmentBytes) (segmentValue, error) {
 	}
 	segment := &nativePluginSegment{
 		payload: append([]byte(nil), payload...), fields: make(map[string]*nativePluginField),
-		frequencies: make(map[string]uint64), decoded: true,
+		frequencies: make(map[string]uint64), emptyIndexedFields: make(map[string]struct{}), decoded: true,
 	}
 	for _, document := range documents {
 		segment.documents = append(segment.documents, nativePluginDocument{fields: document.Fields, termFreqs: make(map[string]map[string]uint64)})
@@ -324,6 +336,25 @@ func nativeSegmentPluginLoad(data *segmentBytes) (segmentValue, error) {
 	}
 	segment.rebuild()
 	for _, fieldName := range fieldNames {
+		represented := false
+		for documentIndex := range segment.documents {
+			if len(segment.documents[documentIndex].terms[fieldName]) > 0 || len(segment.documents[documentIndex].docValues[fieldName]) > 0 {
+				represented = true
+				break
+			}
+			for _, field := range segment.documents[documentIndex].fields {
+				if field.Name == fieldName {
+					represented = true
+					break
+				}
+			}
+			if represented {
+				break
+			}
+		}
+		if !represented {
+			segment.emptyIndexedFields[fieldName] = struct{}{}
+		}
 		if segment.fields[fieldName] == nil {
 			segment.fields[fieldName] = &nativePluginField{name: fieldName, terms: make(map[string][]uint64), termFreqs: make(map[string]map[uint64]uint64)}
 		}
@@ -361,11 +392,15 @@ func (m *nativeSegmentMerger) WriteTo(writer io.Writer, closeCh chan struct{}) (
 	}
 	generation := nativeice.Generation{SegmentID: 1, SnapshotID: 1}
 	frequencyWritten := make(map[string]bool)
+	emptyIndexedFields := make(map[string]struct{})
 	m.newDocumentNumbers = make([][]uint64, len(m.segments))
 	for segmentIndex, value := range m.segments {
 		current, ok := value.(*nativePluginSegment)
 		if !ok {
 			return 0, errors.New("inverted: unsupported segment implementation")
+		}
+		for name := range current.emptyIndexedFields {
+			emptyIndexedFields[name] = struct{}{}
 		}
 		mapping := make([]uint64, len(current.documents))
 		for idx := range mapping {
@@ -407,6 +442,9 @@ func (m *nativeSegmentMerger) WriteTo(writer io.Writer, closeCh chan struct{}) (
 					names[name] = struct{}{}
 				}
 			}
+			for name := range current.emptyIndexedFields {
+				names[name] = struct{}{}
+			}
 			orderedNames := make([]string, 0, len(names))
 			for name := range names {
 				if name != docIDField {
@@ -416,6 +454,7 @@ func (m *nativeSegmentMerger) WriteTo(writer io.Writer, closeCh chan struct{}) (
 			sort.Strings(orderedNames)
 			for _, name := range orderedNames {
 				mode := document.modes[name]
+				_, emptyIndexed := emptyIndexedFields[name]
 				terms := make([]nativeice.EncodeTerm, 0, len(document.terms[name]))
 				for _, term := range document.terms[name] {
 					frequency := uint64(1)
@@ -437,12 +476,13 @@ func (m *nativeSegmentMerger) WriteTo(writer io.Writer, closeCh chan struct{}) (
 				sortValues := document.docValues[name]
 				separateSort := mode.sort && len(fieldValues) > 0 && len(sortValues) > 0 && !bytes.Equal(fieldValues[0], sortValues[0])
 				if len(fieldValues) == 0 {
-					fieldValues = document.docValues[name]
-					if len(fieldValues) == 0 {
+					if len(document.docValues[name]) > 0 {
+						fieldValues = document.docValues[name]
+					} else {
 						fieldValues = [][]byte{nil}
-					}
-					if len(fieldValues) == 1 && fieldValues[0] == nil && len(document.terms[name]) > 0 {
-						fieldValues[0] = append([]byte(nil), document.terms[name][0]...)
+						if len(document.terms[name]) > 0 {
+							fieldValues[0] = append([]byte(nil), document.terms[name][0]...)
+						}
 					}
 				}
 				for valueIndex, value := range fieldValues {
@@ -452,7 +492,7 @@ func (m *nativeSegmentMerger) WriteTo(writer io.Writer, closeCh chan struct{}) (
 					}
 					sortThisValue := mode.sort && !separateSort && valueIndex < len(sortValues)
 					encoded.Fields = append(encoded.Fields, nativeice.EncodeField{
-						Name: name, Value: value, Terms: fieldTerms, Index: mode.index && valueIndex == 0,
+						Name: name, Value: value, Terms: fieldTerms, Index: (mode.index || emptyIndexed) && valueIndex == 0,
 						Store: mode.store, Sort: sortThisValue,
 					})
 				}

@@ -25,9 +25,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted/internal/nativeice"
 )
 
-// This compatibility contract intentionally remains red until the native
-// writer emits the documented ICE frequency stream: the retired ICE reader is
-// the independent grammar oracle, not the native reader under test.
+// The retired ICE reader is the independent grammar oracle for the native
+// writer's frequency stream, not the native reader under test.
 func TestNativeFrequencyStreamLoadsInLegacyICE(t *testing.T) {
 	payload, encodeErr := nativeice.EncodeSegment(nativeice.Generation{Documents: []nativeice.EncodeDocument{
 		{Identifier: []byte("id-0"), Fields: []nativeice.EncodeField{{Name: "keyword", Index: true, Terms: []nativeice.EncodeTerm{{Value: []byte("term"), Frequency: 3}}}}},

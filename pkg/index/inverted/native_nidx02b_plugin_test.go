@@ -418,12 +418,13 @@ func TestNIDX02BUnpublishedAndDamagedSegmentsAreSafe(t *testing.T) {
 // TestNIDX02BStaysOffTheRetiredIndexLibrary guards the milestone's lexical
 // gate from inside the suite.
 //
-// The workstream admits no new reference to the retired engine anywhere in
-// tracked source, its import paths included, and this milestone's boundary has
-// to be expressed in that engine's segment vocabulary. The neutral seam is how
-// both hold at once: the vocabulary reaches the boundary through names this
-// package already declares, so the boundary source itself names no retired
-// package. This case is what keeps that true.
+// The workstream admits no new reference to the retired engine in production
+// source, its import paths included, and this milestone's boundary has to be
+// expressed in that engine's segment vocabulary. Compatibility oracles in test
+// files may import the retired reader explicitly. The neutral seam is how both
+// constraints hold for production: the vocabulary reaches the boundary
+// through names this package already declares, so the boundary source itself
+// names no retired package. This case is what keeps that true.
 //
 // The assertion is stated as an allowlist rather than as a search for the
 // retired name, because writing that name down is itself what the gate

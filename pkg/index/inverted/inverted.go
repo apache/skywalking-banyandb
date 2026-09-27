@@ -100,10 +100,11 @@ var _ index.Store = (*store)(nil)
 // without conversion and the plugin's field types still match exactly.
 //
 // The seam exists because the workstream's lexical non-regression gate admits
-// no new reference to the retired engine anywhere in tracked source, its
-// import paths included, while this milestone's boundary has to be expressed
-// in that engine's segment vocabulary. Declaring the names here reuses the
-// import this file already carries, so the adapter and its tests add none.
+// no new reference to the retired engine in production source, its import
+// paths included, while this milestone's boundary has to be expressed in that
+// engine's segment vocabulary. Compatibility oracles may import the retired
+// reader from test files. Declaring the names here reuses the import this file
+// already carries, so the adapter adds none.
 //
 // Every name stays unexported. The workstream requires that no segment API
 // type escape the native implementation, so these are the package's internal

@@ -131,11 +131,12 @@ var nidx02bBoundarySymbols = []string{
 // reaches a module go.mod replaces, as the package stood before this milestone.
 //
 // It is a ceiling rather than an inventory. The workstream admits no new
-// reference to the retired engine anywhere in tracked source, so the milestone
-// may not add a source to this list: the boundary reaches its segment
-// vocabulary through the neutral seam one of these files already declares. A
-// file that joins the list fails the gate, and a file that leaves it fails too,
-// so shrinking the list stays a deliberate edit rather than a side effect.
+// reference to the retired engine in production source, so the milestone may
+// not add a source to this list: the boundary reaches its segment vocabulary
+// through the neutral seam one of these files already declares. Compatibility
+// oracles in test files may import the retired reader explicitly. A production
+// file that joins the list fails the gate, and one that leaves it fails too, so
+// shrinking the list stays a deliberate edit rather than a side effect.
 var nidx02bReplacedModuleImporters = []string{
 	"inverted.go",
 	"inverted_series.go",

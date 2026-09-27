@@ -138,11 +138,42 @@ func TestNativePluginReviewPreservesTermFrequencyAcrossLifecycle(t *testing.T) {
 	}
 }
 
+func TestNativePluginReviewAccumulatesRepeatedTermFrequency(t *testing.T) {
+	document := reviewSegmentDocument("id", &reviewField{
+		name: "frequency", value: []byte("raw"), index: true, store: true,
+		terms: []reviewTerm{{value: []byte("term"), frequency: 2}},
+	}, &reviewField{
+		name: "frequency", value: []byte("raw"), index: true, store: true,
+		terms: []reviewTerm{{value: []byte("term"), frequency: 3}},
+	})
+	built, _, buildErr := nativeSegmentPluginNew([]segmentDocument{document}, nil)
+	require.NoError(t, buildErr)
+	for _, value := range []segmentValue{built, reviewRoundTrip(t, built), reviewMerge(t, built)} {
+		require.Equal(t, 5, reviewPostingFrequency(t, value, "frequency", "term"))
+		stats, statsErr := value.CollectionStats("frequency")
+		require.NoError(t, statsErr)
+		require.Equal(t, uint64(5), stats.SumTotalTermFrequency())
+	}
+}
+
+func TestNativePluginReviewPreservesNilDocumentValue(t *testing.T) {
+	document := reviewSegmentDocument("id", &reviewField{
+		name: "sort", index: true, docValues: true,
+		terms: []reviewTerm{{value: []byte("term"), frequency: 1}},
+	})
+	built, _, buildErr := nativeSegmentPluginNew([]segmentDocument{document}, nil)
+	require.NoError(t, buildErr)
+	for _, value := range []segmentValue{built, reviewRoundTrip(t, built), reviewMerge(t, built)} {
+		require.Equal(t, []string{"sort="}, nidx02bDocValues(t, value, 0, "sort"))
+	}
+}
+
 func TestNativePluginReviewKeepsEmptyIndexedFieldsAcrossLifecycle(t *testing.T) {
 	document := reviewSegmentDocument("id", &reviewField{name: "empty", value: []byte("raw"), index: true})
 	built, _, buildErr := nativeSegmentPluginNew([]segmentDocument{document}, nil)
 	require.NoError(t, buildErr)
-	for _, value := range []segmentValue{built, reviewRoundTrip(t, built), reviewMerge(t, built)} {
+	loaded := reviewRoundTrip(t, built)
+	for _, value := range []segmentValue{built, loaded, reviewMerge(t, loaded)} {
 		require.Contains(t, value.Fields(), "empty")
 		dictionary, dictionaryErr := value.Dictionary("empty")
 		require.NoError(t, dictionaryErr)
