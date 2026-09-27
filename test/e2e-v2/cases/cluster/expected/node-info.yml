@@ -1,0 +1,71 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements. See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+routeTables:
+  tire1:
+    registered:
+      - metadata:
+          group: ""
+          name: liaison:18912
+          id: 0
+          createRevision: "0"
+          modRevision: "0"
+        roles:
+          - ROLE_LIAISON
+        grpcAddress: liaison:18912
+        httpAddress: liaison:17913
+        createdAt: {{ notEmpty (index . "routeTables" "tire1" "registered" 0 "createdAt") }}
+        labels: {}
+        propertyRepairGossipGrpcAddress: ""
+        propertySchemaGrpcAddress: ""
+        propertySchemaGossipGrpcAddress: ""
+        version:
+          fileFormatVersion: "1.5.0"
+          compatibleFileFormatVersion:
+            - "1.4.0"
+            - "1.5.0"
+          apiVersion: "0.11"
+        tzName: {{ notEmpty (index . "routeTables" "tire1" "registered" 0 "tzName") }}
+    active:
+      - liaison:18912
+    evictable: []
+  tire2:
+    registered:
+      - metadata:
+          group: ""
+          name: data:17912
+          id: 0
+          createRevision: "0"
+          modRevision: "0"
+        roles:
+          - ROLE_META
+          - ROLE_DATA
+        grpcAddress: data:17912
+        httpAddress: ""
+        createdAt: {{ notEmpty (index . "routeTables" "tire2" "registered" 0 "createdAt") }}
+        labels: {}
+        propertyRepairGossipGrpcAddress: data:17932
+        propertySchemaGrpcAddress: data:17916
+        propertySchemaGossipGrpcAddress: ""
+        version:
+          fileFormatVersion: "1.5.0"
+          compatibleFileFormatVersion:
+            - "1.4.0"
+            - "1.5.0"
+          apiVersion: "0.11"
+        tzName: {{ notEmpty (index . "routeTables" "tire2" "registered" 0 "tzName") }}
+    active:
+      - data:17912
+    evictable: []
