@@ -150,6 +150,11 @@ func ReducePartialBatches(
 	if initErr := op.Init(context.Background()); initErr != nil {
 		return nil, path, fmt.Errorf("ReducePartialBatches: init: %w", initErr)
 	}
+	// scratch is allocated lazily -- only the first partial that actually
+	// needs chunking pays for it -- and then reused for every later chunk
+	// and every later partial, so the overwhelming common case (every
+	// partial fits in one chunk) never allocates it at all.
+	var scratch *vectorized.RecordBatch
 	for i, b := range partials {
 		if b == nil || b.Len == 0 {
 			continue
@@ -157,7 +162,19 @@ func ReducePartialBatches(
 		if compatErr := schemaCompatible(refSchema, b.Schema); compatErr != nil {
 			return nil, path, fmt.Errorf("ReducePartialBatches: partial %d schema mismatch: %w", i, compatErr)
 		}
-		if consumeErr := op.Consume(context.Background(), b); consumeErr != nil {
+		if b.ActiveLen() <= batchSize {
+			// Fast path, unchanged from before chunking existed: a partial
+			// that already fits in one chunk is consumed directly, with no
+			// copy and no scratch batch involved.
+			if consumeErr := op.Consume(context.Background(), b); consumeErr != nil {
+				return nil, path, fmt.Errorf("ReducePartialBatches: consume partial %d: %w", i, consumeErr)
+			}
+			continue
+		}
+		if scratch == nil {
+			scratch = vectorized.NewRecordBatch(refSchema, batchSize)
+		}
+		if consumeErr := vectorized.ConsumeChunked(op, scratch, b, batchSize); consumeErr != nil {
 			return nil, path, fmt.Errorf("ReducePartialBatches: consume partial %d: %w", i, consumeErr)
 		}
 	}
@@ -320,6 +337,14 @@ func schemaCompatible(want, got *vectorized.BatchSchema) error {
 // fieldName MUST match a RoleField column in the reduced output schema
 // (typically the AggReduceSpec.OutputName). N <= 0 returns reduced input
 // unchanged.
+//
+// reduced is normally ReduceRawFrames/ReducePartialBatches's own
+// NextBatch-paginated output, so in practice no single batch here exceeds
+// batchSize rows. But this function does not control its caller's batching
+// discipline either, and BatchTop.Consume shares BatchAggregation's exposure
+// to the design/0.12.0/limit-after-aggregation §5 uint16 wraparound (both
+// drive their per-row loop from activeIndices), so an oversized batch is
+// chunked via ConsumeChunked rather than assumed away.
 func ApplyTopToReduce(reduced []*vectorized.RecordBatch, spec ReduceTopSpec, batchSize int) ([]*vectorized.RecordBatch, error) {
 	if spec.N <= 0 || len(reduced) == 0 {
 		return reduced, nil
@@ -340,11 +365,21 @@ func ApplyTopToReduce(reduced []*vectorized.RecordBatch, spec ReduceTopSpec, bat
 	if initErr := top.Init(context.Background()); initErr != nil {
 		return nil, fmt.Errorf("ApplyTopToReduce: init: %w", initErr)
 	}
+	var scratch *vectorized.RecordBatch
 	for i, b := range reduced {
 		if compatErr := schemaCompatible(schema, b.Schema); compatErr != nil {
 			return nil, fmt.Errorf("ApplyTopToReduce: batch %d schema mismatch: %w", i, compatErr)
 		}
-		if consumeErr := top.Consume(context.Background(), b); consumeErr != nil {
+		if b.ActiveLen() <= batchSize {
+			if consumeErr := top.Consume(context.Background(), b); consumeErr != nil {
+				return nil, fmt.Errorf("ApplyTopToReduce: consume batch %d: %w", i, consumeErr)
+			}
+			continue
+		}
+		if scratch == nil {
+			scratch = vectorized.NewRecordBatch(schema, batchSize)
+		}
+		if consumeErr := vectorized.ConsumeChunked(top, scratch, b, batchSize); consumeErr != nil {
 			return nil, fmt.Errorf("ApplyTopToReduce: consume batch %d: %w", i, consumeErr)
 		}
 	}

@@ -41,7 +41,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -245,16 +244,14 @@ func (l *lifecycleService) Validate() error {
 				return errors.New("missing key file when TLS is enabled")
 			}
 		}
-		l.currentNode = &databasev1.Node{
-			Metadata: &commonv1.Metadata{
-				Name: l.lifecycleGRPCAddr,
-			},
+		// Built through ToProtoNode so this node reports the same file format
+		// version and time zone as every other one; GetCurrentNode serves it.
+		l.currentNode = common.Node{
+			NodeID:      l.lifecycleGRPCAddr,
 			GrpcAddress: l.lifecycleGRPCAddr,
-			HttpAddress: l.lifecycleHTTPAddr,
-			Roles:       make([]databasev1.Role, 0),
+			HTTPAddress: l.lifecycleHTTPAddr,
 			Labels:      common.ParseNodeFlags(),
-			CreatedAt:   timestamppb.Now(),
-		}
+		}.ToProtoNode(nil)
 	}
 	policy, err := parseOrphanPolicy(l.orphanPolicyStr)
 	if err != nil {
