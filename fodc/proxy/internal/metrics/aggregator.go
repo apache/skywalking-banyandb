@@ -20,7 +20,8 @@ package metrics
 
 import (
 	"context"
-	"maps"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -77,9 +78,20 @@ type Aggregator struct {
 	logger       *logger.Logger
 	grpcService  RequestSender
 	collecting   map[string]map[uint64]chan []*AggregatedMetric
+	inflight     map[string]*collection
 	nextSubID    uint64
 	mu           sync.RWMutex
 	collectingMu sync.RWMutex
+	inflightMu   sync.Mutex
+}
+
+// collection is one in-flight round of asking every filtered agent for metrics.
+// Requests with the same filter that arrive while it runs wait on done and share
+// metrics, so overlapping scrapes cost one round of agent traffic and one copy.
+type collection struct {
+	err     error
+	done    chan struct{}
+	metrics []*AggregatedMetric
 }
 
 // RequestSender is an interface for sending metrics requests to agents.
@@ -94,6 +106,7 @@ func NewAggregator(registry *registry.AgentRegistry, grpcService RequestSender, 
 		grpcService: grpcService,
 		logger:      logger,
 		collecting:  make(map[string]map[uint64]chan []*AggregatedMetric),
+		inflight:    make(map[string]*collection),
 	}
 }
 
@@ -128,21 +141,28 @@ func (ma *Aggregator) ProcessMetricsFromAgent(ctx context.Context, agentID strin
 	aggregatedMetrics := make([]*AggregatedMetric, 0, len(req.Metrics))
 
 	for _, metric := range req.Metrics {
-		labels := make(map[string]string, len(metric.Labels))
-		maps.Copy(labels, metric.Labels)
-
+		// req was decoded by this proxy's gRPC stream and is owned by it from here on, so
+		// the node-label overlay mutates metric.Labels in place instead of copying every
+		// map. Everything downstream only reads labels (see the read-only note on the
+		// fan-out below).
+		//
 		// Overlay the agent's node labels under a "node_" prefix so they can never collide
 		// with a metric-intrinsic label of the same name (e.g. the merge "type"). pod_name and
 		// container_name are already first-class labels and are skipped. A namespaced label
 		// already present (stamped per metric by the agent) is left untouched.
+		labels := metric.Labels
 		for key, value := range agentInfo.Labels {
 			if value == "" || key == podNameLabelName || key == containerNameLabelName {
 				continue
 			}
 			prefixed := nodeLabelPrefix + key
-			if _, exists := labels[prefixed]; !exists {
-				labels[prefixed] = value
+			if _, exists := labels[prefixed]; exists {
+				continue
 			}
+			if labels == nil {
+				labels = make(map[string]string, len(agentInfo.Labels))
+			}
+			labels[prefixed] = value
 		}
 
 		var timestamp time.Time
@@ -239,8 +259,72 @@ func (ma *Aggregator) unsubscribe(agentID string, subID uint64) {
 	}
 }
 
-// CollectMetricsFromAgents requests metrics from all agents (or filtered agents) when external client queries.
+// collectionKey identifies the set of agents and time window a Filter selects; two
+// requests with equal keys are interchangeable and share one in-flight collection.
+func collectionKey(filter *Filter) string {
+	if filter == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(filter.Role)
+	b.WriteByte(0)
+	b.WriteString(filter.PodName)
+	b.WriteByte(0)
+	if len(filter.AgentIDs) > 0 {
+		ids := append([]string(nil), filter.AgentIDs...)
+		sort.Strings(ids)
+		b.WriteString(strings.Join(ids, ","))
+	}
+	b.WriteByte(0)
+	if filter.StartTime != nil {
+		b.WriteString(strconv.FormatInt(filter.StartTime.UnixNano(), 10))
+	}
+	b.WriteByte(0)
+	if filter.EndTime != nil {
+		b.WriteString(strconv.FormatInt(filter.EndTime.UnixNano(), 10))
+	}
+	return b.String()
+}
+
+// CollectMetricsFromAgents returns one round of metrics from the agents filter selects.
+// Concurrent callers with the same filter share a single round: the first starts it and
+// the rest wait for it, so two scrapers landing together cost one round of agent traffic
+// and hold one copy of the data. The round runs detached from the first caller's context
+// (each agent already has its own timeout), so a scraper that disconnects mid-round
+// cannot fail the others; the caller that started the round still receives its result,
+// while a caller waiting on someone else's round returns as soon as its context ends.
 func (ma *Aggregator) CollectMetricsFromAgents(ctx context.Context, filter *Filter) ([]*AggregatedMetric, error) {
+	key := collectionKey(filter)
+
+	ma.inflightMu.Lock()
+	if current, ok := ma.inflight[key]; ok {
+		ma.inflightMu.Unlock()
+		select {
+		case <-current.done:
+			return current.metrics, current.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	current := &collection{done: make(chan struct{})}
+	ma.inflight[key] = current
+	ma.inflightMu.Unlock()
+
+	current.metrics, current.err = ma.collectOnce(context.WithoutCancel(ctx), filter)
+
+	// Unregister before signaling so a request arriving after completion starts a
+	// fresh round instead of reading this one.
+	ma.inflightMu.Lock()
+	delete(ma.inflight, key)
+	ma.inflightMu.Unlock()
+	close(current.done)
+	return current.metrics, current.err
+}
+
+// collectOnce asks every filtered agent for metrics and gathers the replies. The returned
+// slice has no spare capacity: callers append onto their own copy, never into memory
+// another waiter of the same round is reading.
+func (ma *Aggregator) collectOnce(ctx context.Context, filter *Filter) ([]*AggregatedMetric, error) {
 	agents := ma.getFilteredAgents(filter)
 	if len(agents) == 0 {
 		return []*AggregatedMetric{}, nil
@@ -312,7 +396,7 @@ func (ma *Aggregator) CollectMetricsFromAgents(ctx context.Context, filter *Filt
 	}
 
 	wg.Wait()
-	return allMetrics, nil
+	return allMetrics[:len(allMetrics):len(allMetrics)], nil
 }
 
 // ActiveCollections returns the number of agents currently being collected.

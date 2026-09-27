@@ -20,6 +20,7 @@ package metrics
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,9 +37,11 @@ type replyingSender struct {
 	reg        *registry.AgentRegistry
 	delay      time.Duration
 	wg         sync.WaitGroup
+	requests   atomic.Int64
 }
 
 func (s *replyingSender) RequestMetrics(agentID string, _ *time.Time, _ *time.Time) error {
+	s.requests.Add(1)
 	s.wg.Add(1)
 	//panicdiag:allow-rawgo test-only agent stub; a panic here must fail the test loudly rather than be recovered and hidden
 	go func() {
@@ -58,6 +61,8 @@ func (s *replyingSender) RequestMetrics(agentID string, _ *time.Time, _ *time.Ti
 // TestCollectMetricsFromAgents_ConcurrentScrapes reproduces the production failure:
 // the OTel collector scrapes /metrics every 10s and Prometheus every 30s, so their
 // collections regularly overlap. Every scrape must get every agent's metrics.
+// Overlapping scrapes now share one collection (see aggregator_singleflight_test.go), so
+// this holds by construction; the test stays as the end-to-end guard.
 func TestCollectMetricsFromAgents_ConcurrentScrapes(t *testing.T) {
 	initTestLogger(t)
 	aggregator, testRegistry, _ := newTestAggregator(t)
