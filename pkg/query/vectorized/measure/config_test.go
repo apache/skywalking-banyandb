@@ -17,7 +17,10 @@
 
 package measure
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestVectorizedConfig_Default_BatchSize1024_Memory256(t *testing.T) {
 	c := DefaultConfig()
@@ -45,5 +48,24 @@ func TestVectorizedConfig_Validate_NegativeMemoryMiB_ReturnsError(t *testing.T) 
 	c.QueryMemoryMiB = -1
 	if err := c.Validate(); err == nil {
 		t.Fatal("negative QueryMemoryMiB must fail Validate")
+	}
+}
+
+// TestVectorizedConfig_Validate_BatchSizeAtMaxUint16_Passes pins the ceiling's
+// boundary: a batch's Selection is []uint16, so BatchSize == math.MaxUint16
+// is the largest value that still fits without wrapping.
+func TestVectorizedConfig_Validate_BatchSizeAtMaxUint16_Passes(t *testing.T) {
+	c := DefaultConfig()
+	c.BatchSize = math.MaxUint16
+	if err := c.Validate(); err != nil {
+		t.Fatalf("BatchSize == MaxUint16 must Validate cleanly, got %v", err)
+	}
+}
+
+func TestVectorizedConfig_Validate_BatchSizeAboveMaxUint16_ReturnsError(t *testing.T) {
+	c := DefaultConfig()
+	c.BatchSize = math.MaxUint16 + 1
+	if err := c.Validate(); err == nil {
+		t.Fatal("BatchSize > MaxUint16 must fail Validate")
 	}
 }
