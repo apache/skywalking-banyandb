@@ -37,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
@@ -63,6 +64,7 @@ var (
 	httpWriteTimeout  time.Duration
 	heartbeatInterval time.Duration
 	logging           logger.Logging
+	crashOutputCfg    = panicdiag.NewCrashOutputConfig()
 
 	rootCmd = &cobra.Command{
 		Use:     "fodc-proxy",
@@ -94,6 +96,7 @@ func init() {
 	rootCmd.Flags().DurationVar(&heartbeatInterval, "heartbeat-interval", defaultHeartbeatInterval,
 		"Default heartbeat interval for agents")
 	logger.RegisterFlags(rootCmd.Flags(), &logging)
+	crashOutputCfg.RegisterFlags(rootCmd.Flags())
 }
 
 func main() {
@@ -104,6 +107,13 @@ func main() {
 }
 
 func runProxy(cmd *cobra.Command, _ []string) error {
+	// Same crash-diagnostics setup as the agent and the BanyanDB nodes. Besides the panic
+	// artifacts it sets GOMEMLIMIT from the cgroup memory limit, so the GC starts working
+	// harder before the kernel's OOM killer does; the proxy's /metrics scrapes are short
+	// bursts of allocation that the default pacer otherwise lets run into the limit.
+	if installErr := crashOutputCfg.InstallGlobalCrashOutput(); installErr != nil {
+		return fmt.Errorf("failed to install crash output: %w", installErr)
+	}
 	if loadErr := config.Load("logging", cmd.Flags()); loadErr != nil {
 		return fmt.Errorf("failed to load logging config: %w", loadErr)
 	}
