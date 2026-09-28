@@ -158,10 +158,6 @@ It saves the implementer a discovery pass and it scopes the suite they run:
 | Canopy end-to-end | `npx playwright test --config=e2e/playwright.config.ts` |
 | everything, before pushing | `make generate && make build && make pre-push` |
 
-`make build` before `make pre-push`: `pre-push` runs `lint`, which typechecks
-`ui/`, and `ui/` embeds `dist` — which only exists after a build. A fresh clone
-fails otherwise, with `pattern dist: no matching files found`.
-
 ## What a database issue owes that a service issue does not
 
 Weight the criteria by what fails silently and late. If the change touches any of
