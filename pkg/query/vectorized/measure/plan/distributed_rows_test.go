@@ -18,6 +18,7 @@
 package plan
 
 import (
+	"math"
 	"runtime"
 	"strings"
 	"sync"
@@ -915,5 +916,153 @@ func TestMergeDistributedRows_TopWithoutAgg_UnknownFieldErrors(t *testing.T) {
 	}
 	if !strings.Contains(topErr.Error(), "no_such_field") {
 		t.Fatalf("error must mention the missing field name; got %v", topErr)
+	}
+}
+
+// buildDistributedRowsBatchDirect constructs a RecordBatch directly from
+// rows, matching encodeDistributedRows's column layout, without a
+// frame.Encode/Decode round trip. Used for the boundary tests below, where
+// the row count is large enough that skipping the round trip meaningfully
+// speeds up the test.
+func buildDistributedRowsBatchDirect(schema *vectorized.BatchSchema, rows []rowMergeOutput) *vectorized.RecordBatch {
+	b := vectorized.NewRecordBatch(schema, len(rows))
+	tsCol := b.Columns[0].(*vectorized.TypedColumn[int64])
+	verCol := b.Columns[1].(*vectorized.TypedColumn[int64])
+	sidCol := b.Columns[2].(*vectorized.TypedColumn[int64])
+	shardCol := b.Columns[3].(*vectorized.TypedColumn[int64])
+	valueCol := b.Columns[4].(*vectorized.TypedColumn[int64])
+	for _, row := range rows {
+		tsCol.Append(row.ts)
+		verCol.Append(row.ver)
+		sidCol.Append(row.sid)
+		shardCol.Append(1)
+		valueCol.Append(row.value)
+	}
+	b.Len = len(rows)
+	return b
+}
+
+// buildOrderByRowsBatchDirect is buildDistributedRowsBatchDirect's
+// counterpart for distributedRowsOrderBySchema (adds the svc/rank tag
+// columns encodeOrderByRows also writes), again skipping the frame
+// encode/decode round trip.
+func buildOrderByRowsBatchDirect(schema *vectorized.BatchSchema, rows []orderByRow) *vectorized.RecordBatch {
+	b := vectorized.NewRecordBatch(schema, len(rows))
+	tsCol := b.Columns[0].(*vectorized.TypedColumn[int64])
+	verCol := b.Columns[1].(*vectorized.TypedColumn[int64])
+	sidCol := b.Columns[2].(*vectorized.TypedColumn[int64])
+	shardCol := b.Columns[3].(*vectorized.TypedColumn[int64])
+	valueCol := b.Columns[4].(*vectorized.TypedColumn[int64])
+	svcCol := b.Columns[5].(*vectorized.TypedColumn[string])
+	rankCol := b.Columns[6].(*vectorized.TypedColumn[int64])
+	for _, row := range rows {
+		tsCol.Append(row.ts)
+		verCol.Append(row.ver)
+		sidCol.Append(row.sid)
+		shardCol.Append(1)
+		valueCol.Append(row.value)
+		svcCol.Append(row.svc)
+		rankCol.Append(row.rank)
+	}
+	b.Len = len(rows)
+	return b
+}
+
+// TestApplyBatchTopToRows_OverUint16Boundary_SelectsCorrectTopN is this
+// follow-up's §9(f)-equivalent gate for applyBatchTopToRows. batches here is
+// normally the batchSize-paginated output of mergeDistributedRows, so this
+// builds the oversized batch directly rather than through the merge, to
+// prove applyBatchTopToRows is safe on its own terms rather than only
+// because its one current caller happens to always pre-page its input.
+//
+// Before this function chunked its own input, BatchTop.Consume drove its
+// per-row loop from activeIndices directly on the whole oversized batch.
+// Design §5's guard in activeIndices turns that into a hard error rather
+// than a silently wrong top-N (verified: reverting this function's
+// chunking reproduces exactly that error on this test). After chunking, the
+// correct top-3 by value is selected regardless.
+func TestApplyBatchTopToRows_OverUint16Boundary_SelectsCorrectTopN(t *testing.T) {
+	schema := distributedRowsTestSchema()
+	const totalRows = math.MaxUint16 + 2 // one past the []uint16 selection boundary.
+	rows := make([]rowMergeOutput, totalRows)
+	for i := range rows {
+		rows[i] = rowMergeOutput{ts: int64(i) + 1, ver: 1, sid: int64(i) + 1, value: int64(i)}
+	}
+	batch := buildDistributedRowsBatchDirect(schema, rows)
+
+	top := &measurev1.QueryRequest_Top{Number: 3, FieldName: fieldValue, FieldValueSort: modelv1.Sort_SORT_DESC}
+	topped, topErr := applyBatchTopToRows([]*vectorized.RecordBatch{batch}, top, 1024)
+	if topErr != nil {
+		t.Fatalf("applyBatchTopToRows: %v", topErr)
+	}
+	got := collectDistributedRows(topped)
+	if len(got) != 3 {
+		t.Fatalf("top-3: got %d rows, want 3: %+v", len(got), got)
+	}
+	wantValues := []int64{totalRows - 1, totalRows - 2, totalRows - 3}
+	for i, want := range wantValues {
+		if got[i].value != want {
+			t.Fatalf("top-3 row %d: got value=%d, want %d (all: %+v)", i, got[i].value, want, got)
+		}
+	}
+}
+
+// TestApplyBatchGroupByFirstToRows_OverUint16Boundary_KeepsEveryGroup is the
+// GroupBy-side counterpart. A single batch spanning more than
+// math.MaxUint16+1 rows must retain every group's first-seen row, including
+// a group ("unique_last") whose only occurrence is the batch's very last
+// row — exactly the row a nil-Selection activeIndices materialization would
+// wrap over and never visit (out[Len-1] = uint16(Len-1) overflows to 0,
+// re-referencing row 0 instead of row Len-1). A wrapped consume would drop
+// that group from the output entirely, silently, with no error; distinct
+// per-row values on the two common groups (commonA/commonB) additionally
+// pin that their recorded first-seen row is truly row 0 / row 1 rather than
+// some other row a wraparound substituted in.
+//
+// Before this function chunked its own input, this reproduced exactly the
+// activeIndices hard error design §5 introduced (verified by reverting the
+// chunking and re-running this test).
+func TestApplyBatchGroupByFirstToRows_OverUint16Boundary_KeepsEveryGroup(t *testing.T) {
+	schema := distributedRowsOrderBySchema()
+	const totalRows = math.MaxUint16 + 2 // one past the []uint16 selection boundary.
+	rows := make([]orderByRow, totalRows)
+	for i := range rows[:totalRows-1] {
+		svc := "commonA"
+		if i%2 == 1 {
+			svc = "commonB"
+		}
+		rows[i] = orderByRow{ts: int64(i) + 1, ver: 1, sid: int64(i) + 1, value: int64(i), svc: svc, rank: 0}
+	}
+	rows[totalRows-1] = orderByRow{ts: totalRows, ver: 1, sid: totalRows, value: 999999, svc: "unique_last", rank: 0}
+	batch := buildOrderByRowsBatchDirect(schema, rows)
+
+	groupBy := &measurev1.QueryRequest_GroupBy{
+		TagProjection: &modelv1.TagProjection{
+			TagFamilies: []*modelv1.TagProjection_TagFamily{
+				{Name: "default", Tags: []string{"svc"}},
+			},
+		},
+	}
+	tracker := vectorized.NewMemoryTracker(256 * 1024 * 1024)
+	grouped, gbErr := applyBatchGroupByFirstToRows([]*vectorized.RecordBatch{batch}, groupBy, 1024, tracker)
+	if gbErr != nil {
+		t.Fatalf("applyBatchGroupByFirstToRows: %v", gbErr)
+	}
+	got := collectOrderByRows(grouped)
+	seen := make(map[string]orderByRow, len(got))
+	for _, r := range got {
+		seen[r.svc] = r
+	}
+	if len(seen) != 3 {
+		t.Fatalf("GroupByFirst: expected 3 groups (commonA, commonB, unique_last), got %d: %+v", len(seen), got)
+	}
+	if r, ok := seen["unique_last"]; !ok || r.value != 999999 {
+		t.Fatalf("GroupByFirst: unique_last group missing or wrong: %+v (all: %+v)", r, got)
+	}
+	if r, ok := seen["commonA"]; !ok || r.value != 0 {
+		t.Fatalf("GroupByFirst: commonA first-seen should be row 0 (value=0): %+v", r)
+	}
+	if r, ok := seen["commonB"]; !ok || r.value != 1 {
+		t.Fatalf("GroupByFirst: commonB first-seen should be row 1 (value=1): %+v", r)
 	}
 }

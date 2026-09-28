@@ -19,10 +19,13 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -175,14 +178,19 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// Schema consistency is a cluster-wide, per-group verdict, not a node-scoped
 		// metric, so it only rides on the unfiltered scrape Grafana uses.
+		// aggregatedMetrics may be shared with a concurrent scrape; it comes back with
+		// cap == len so this append always reallocates instead of writing into it.
 		aggregatedMetrics = append(aggregatedMetrics, s.schemaConsistencyMetrics()...)
 	}
 
-	prometheusText := s.formatPrometheusText(aggregatedMetrics)
-
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(prometheusText))
+	bw := bufio.NewWriterSize(w, prometheusWriteBufferSize)
+	if writeErr := s.writePrometheusText(bw, aggregatedMetrics); writeErr != nil {
+		// The status line is already out; a mid-body failure means the scraper went
+		// away, which it observes as a truncated response.
+		s.logger.Debug().Err(writeErr).Msg("Failed to stream metrics response")
+	}
 }
 
 // schemaConsistencyMetrics turns the cached per-group schema consistency verdict
@@ -321,9 +329,17 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // Metrics with a known Type (non-empty) are emitted using the real type. Metrics with
 // Type=="" (pre-upgrade agents) fall back to the legacy suffix-heuristic path so behavior
 // is unchanged for those metrics.
-func (s *Server) formatPrometheusText(aggregatedMetrics []*metrics.AggregatedMetric) string {
+//
+// The text is streamed to w and never materialized as a whole: grouping works on
+// pointer slices and every line is rendered into one reusable buffer, so a scrape
+// costs a few MB of allocation instead of ~12x its output size.
+func (s *Server) writePrometheusText(w io.Writer, aggregatedMetrics []*metrics.AggregatedMetric) error {
 	if len(aggregatedMetrics) == 0 {
-		return ""
+		return nil
+	}
+	bw, ok := w.(*bufio.Writer)
+	if !ok {
+		bw = bufio.NewWriterSize(w, prometheusWriteBufferSize)
 	}
 
 	// Partition into typed (type known from agent) and untyped (legacy/unknown).
@@ -337,10 +353,31 @@ func (s *Server) formatPrometheusText(aggregatedMetrics []*metrics.AggregatedMet
 		}
 	}
 
-	var builder strings.Builder
-	remainingUntyped := writeTypedFamilies(&builder, typed, untyped)
-	writeUntypedFamilies(&builder, remainingUntyped)
-	return builder.String()
+	var lw metricLineWriter
+	remainingUntyped := writeTypedFamilies(bw, &lw, typed, untyped)
+	writeUntypedFamilies(bw, &lw, remainingUntyped)
+	return bw.Flush()
+}
+
+// prometheusWriteBufferSize is the response buffer for /metrics; 64KB keeps syscalls
+// per 9MB scrape in the low hundreds without pinning a large buffer per request.
+const prometheusWriteBufferSize = 64 << 10
+
+// writeFamilyHeader emits the "# HELP" (when a description exists) and "# TYPE" lines
+// that open one metric family.
+func writeFamilyHeader(w *bufio.Writer, name, description, metricType string) {
+	if description != "" {
+		_, _ = w.WriteString("# HELP ")
+		_, _ = w.WriteString(name)
+		_ = w.WriteByte(' ')
+		_, _ = w.WriteString(description)
+		_ = w.WriteByte('\n')
+	}
+	_, _ = w.WriteString("# TYPE ")
+	_, _ = w.WriteString(name)
+	_ = w.WriteByte(' ')
+	_, _ = w.WriteString(metricType)
+	_ = w.WriteByte('\n')
 }
 
 // writeTypedFamilies groups typed metrics by family base and emits one "# TYPE" line per
@@ -350,9 +387,9 @@ func (s *Server) formatPrometheusText(aggregatedMetrics []*metrics.AggregatedMet
 // collides with a typed family are absorbed under the authoritative typed line — this
 // prevents a mixed-version rollout from emitting two conflicting "# TYPE" lines for one
 // name. The untyped metrics with no typed-family collision are returned for the legacy path.
-func writeTypedFamilies(builder *strings.Builder, typed, untyped []*metrics.AggregatedMetric) []*metrics.AggregatedMetric {
-	typedFamilyOrder := make([]string, 0)
-	typedFamilies := make(map[string]*metricGroup) // base → group
+func writeTypedFamilies(w *bufio.Writer, lw *metricLineWriter, typed, untyped []*metrics.AggregatedMetric) []*metrics.AggregatedMetric {
+	typedFamilyOrder := make([]string, 0, 256)
+	typedFamilies := make(map[string]*metricGroup, 256) // base → group
 	for _, m := range typed {
 		base := typedFamilyBase(m.Name, m.Type)
 		grp, exists := typedFamilies[base]
@@ -385,12 +422,9 @@ func writeTypedFamilies(builder *strings.Builder, typed, untyped []*metrics.Aggr
 	sort.Strings(typedFamilyOrder)
 	for _, base := range typedFamilyOrder {
 		grp := typedFamilies[base]
-		if grp.description != "" {
-			builder.WriteString(fmt.Sprintf("# HELP %s %s\n", base, grp.description))
-		}
-		builder.WriteString(fmt.Sprintf("# TYPE %s %s\n", base, grp.metricType))
+		writeFamilyHeader(w, base, grp.description, grp.metricType)
 		for _, m := range grp.metrics {
-			builder.WriteString(formatMetricLine(m))
+			lw.write(w, m)
 		}
 	}
 	return remainingUntyped
@@ -399,7 +433,7 @@ func writeTypedFamilies(builder *strings.Builder, typed, untyped []*metrics.Aggr
 // writeUntypedFamilies emits metrics with no known type using the legacy suffix heuristic:
 // a base name with a _bucket/_sum/_count sibling is treated as a histogram, everything else
 // as a gauge. This preserves pre-typed behavior for pre-upgrade agents.
-func writeUntypedFamilies(builder *strings.Builder, untyped []*metrics.AggregatedMetric) {
+func writeUntypedFamilies(w *bufio.Writer, lw *metricLineWriter, untyped []*metrics.AggregatedMetric) {
 	if len(untyped) == 0 {
 		return
 	}
@@ -442,12 +476,9 @@ func writeUntypedFamilies(builder *strings.Builder, untyped []*metrics.Aggregate
 		if len(allM) == 0 {
 			continue
 		}
-		if description := allM[0].Description; description != "" {
-			builder.WriteString(fmt.Sprintf("# HELP %s %s\n", baseName, description))
-		}
-		builder.WriteString(fmt.Sprintf("# TYPE %s histogram\n", baseName))
+		writeFamilyHeader(w, baseName, allM[0].Description, "histogram")
 		for _, m := range allM {
-			builder.WriteString(formatMetricLine(m))
+			lw.write(w, m)
 		}
 	}
 
@@ -458,12 +489,9 @@ func writeUntypedFamilies(builder *strings.Builder, untyped []*metrics.Aggregate
 	sort.Strings(regularNames)
 	for _, name := range regularNames {
 		grp := regularMetrics[name]
-		if grp.description != "" {
-			builder.WriteString(fmt.Sprintf("# HELP %s %s\n", grp.name, grp.description))
-		}
-		builder.WriteString(fmt.Sprintf("# TYPE %s gauge\n", grp.name))
+		writeFamilyHeader(w, grp.name, grp.description, "gauge")
 		for _, m := range grp.metrics {
-			builder.WriteString(formatMetricLine(m))
+			lw.write(w, m)
 		}
 	}
 }
@@ -514,18 +542,83 @@ func typedFamilyBase(name, metricType string) string {
 // applied in a single left-to-right pass, so an escaped backslash is not re-escaped.
 var labelValueEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`)
 
-// formatMetricLine renders a single metric sample as a Prometheus text line.
-func formatMetricLine(m *metrics.AggregatedMetric) string {
-	labelParts := make([]string, 0, len(m.Labels))
-	for k, v := range m.Labels {
-		labelParts = append(labelParts, fmt.Sprintf(`%s="%s"`, k, labelValueEscaper.Replace(v)))
+// metricLineWriter renders one Prometheus sample line per call, reusing its scratch
+// buffers so a 40k-series scrape does not allocate per line. It is not safe for
+// concurrent use; each response owns one instance.
+type metricLineWriter struct {
+	buf  []byte
+	keys []string
+}
+
+// write emits `name{k="v",...} value\n`. Labels keep the order the previous formatter
+// produced by sorting the rendered `k="v"` pairs; see compareRenderedKeys.
+func (lw *metricLineWriter) write(w *bufio.Writer, m *metrics.AggregatedMetric) {
+	buf := lw.buf[:0]
+	buf = append(buf, m.Name...)
+	if len(m.Labels) > 0 {
+		keys := lw.keys[:0]
+		for k := range m.Labels {
+			keys = append(keys, k)
+		}
+		slices.SortFunc(keys, compareRenderedKeys)
+		buf = append(buf, '{')
+		for i, k := range keys {
+			if i > 0 {
+				buf = append(buf, ',')
+			}
+			buf = append(buf, k...)
+			buf = append(buf, '=', '"')
+			buf = appendEscapedLabelValue(buf, m.Labels[k])
+			buf = append(buf, '"')
+		}
+		buf = append(buf, '}')
+		lw.keys = keys
 	}
-	sort.Strings(labelParts)
-	labelStr := ""
-	if len(labelParts) > 0 {
-		labelStr = "{" + strings.Join(labelParts, ",") + "}"
+	buf = append(buf, ' ')
+	buf = strconv.AppendFloat(buf, m.Value, 'f', -1, 64)
+	buf = append(buf, '\n')
+	lw.buf = buf
+	_, _ = w.Write(buf)
+}
+
+// compareRenderedKeys orders two distinct label keys the way sorting their rendered
+// `key="value"` pairs would: as if each key were followed by '='. Plain key order is not
+// the same thing, because digits (0x30-0x39) sort before '=' (0x3D) while letters and '_'
+// sort after it, so `a0` must precede `a` although "a" < "a0". Two different keys always
+// differ before the value is reached, since '=' can never appear inside a key.
+func compareRenderedKeys(a, b string) int {
+	n := min(len(a), len(b))
+	for i := 0; i < n; i++ {
+		if a[i] != b[i] {
+			return int(a[i]) - int(b[i])
+		}
 	}
-	return fmt.Sprintf("%s%s %s\n", m.Name, labelStr, formatFloat(m.Value))
+	switch {
+	case len(a) == len(b):
+		return 0
+	case len(a) < len(b):
+		return int('=') - int(b[n])
+	default:
+		return int(a[n]) - int('=')
+	}
+}
+
+// appendEscapedLabelValue applies the Prometheus text-format escapes for a label value
+// (backslash, double quote, line feed) in one pass without allocating.
+func appendEscapedLabelValue(buf []byte, v string) []byte {
+	for i := 0; i < len(v); i++ {
+		switch v[i] {
+		case '\\':
+			buf = append(buf, '\\', '\\')
+		case '"':
+			buf = append(buf, '\\', '"')
+		case '\n':
+			buf = append(buf, '\\', 'n')
+		default:
+			buf = append(buf, v[i])
+		}
+	}
+	return buf
 }
 
 // formatMetricsWindowJSON formats aggregated metrics as JSON for metrics-windows endpoint.

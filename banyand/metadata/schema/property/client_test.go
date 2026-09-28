@@ -1948,3 +1948,67 @@ func TestWatchPush(t *testing.T) {
 		assert.Equal(t, "test-group", restartEvt.Group)
 	})
 }
+
+// duplicateTagFamily returns a second tag family reusing a tag name already
+// present in the helper schemas' "default" family.
+func duplicateTagFamily() *databasev1.TagFamilySpec {
+	return &databasev1.TagFamilySpec{
+		Name: "searchable",
+		Tags: []*databasev1.TagSpec{
+			{Name: "service_name", Type: databasev1.TagType_TAG_TYPE_STRING},
+		},
+	}
+}
+
+// TestCreateRejectsDuplicateTagNameAcrossFamilies proves the registry actually
+// calls validate.UniqueTagNames. The unit tests in api/validate cover the rule
+// itself; this covers the wiring, which a mis-wired call site would otherwise
+// pass silently. The rule lives here rather than in validate.Measure/Stream
+// because the data nodes run those when loading an already-persisted schema.
+func TestCreateRejectsDuplicateTagNameAcrossFamilies(t *testing.T) {
+	addr := startTestSchemaServer(t)
+	reg := newTestRegistry(t, addr)
+	ctx := context.Background()
+	createTestGroup(t, reg)
+
+	m := testMeasure("test-group")
+	m.TagFamilies = append(m.TagFamilies, duplicateTagFamily())
+	_, measureErr := reg.CreateMeasure(ctx, m)
+	require.Error(t, measureErr)
+	assert.Contains(t, measureErr.Error(), `tag name "service_name" is duplicated`)
+
+	s := testStream()
+	s.TagFamilies = append(s.TagFamilies, duplicateTagFamily())
+	_, streamErr := reg.CreateStream(ctx, s)
+	require.Error(t, streamErr)
+	assert.Contains(t, streamErr.Error(), `tag name "service_name" is duplicated`)
+}
+
+// TestUpdateRejectsDuplicateTagNameAcrossFamilies covers the update path, which
+// is wired separately from create.
+func TestUpdateRejectsDuplicateTagNameAcrossFamilies(t *testing.T) {
+	addr := startTestSchemaServer(t)
+	reg := newTestRegistry(t, addr)
+	ctx := context.Background()
+	createTestGroup(t, reg)
+
+	m := testMeasure("test-group")
+	_, createErr := reg.CreateMeasure(ctx, m)
+	require.NoError(t, createErr)
+	stored, getErr := reg.GetMeasure(ctx, &commonv1.Metadata{Group: "test-group", Name: "test-measure"})
+	require.NoError(t, getErr)
+	stored.TagFamilies = append(stored.TagFamilies, duplicateTagFamily())
+	_, updateErr := reg.UpdateMeasure(ctx, stored)
+	require.Error(t, updateErr)
+	assert.Contains(t, updateErr.Error(), `tag name "service_name" is duplicated`)
+
+	s := testStream()
+	_, createStreamErr := reg.CreateStream(ctx, s)
+	require.NoError(t, createStreamErr)
+	storedStream, getStreamErr := reg.GetStream(ctx, &commonv1.Metadata{Group: "test-group", Name: testStreamName})
+	require.NoError(t, getStreamErr)
+	storedStream.TagFamilies = append(storedStream.TagFamilies, duplicateTagFamily())
+	_, updateStreamErr := reg.UpdateStream(ctx, storedStream)
+	require.Error(t, updateStreamErr)
+	assert.Contains(t, updateStreamErr.Error(), `tag name "service_name" is duplicated`)
+}
