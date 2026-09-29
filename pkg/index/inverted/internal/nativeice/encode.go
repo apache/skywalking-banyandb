@@ -59,6 +59,10 @@ type EncodeField struct {
 	Name string
 	// Value is the field's raw bytes.
 	Value []byte
+	// Terms, when non-nil, are the analyzed terms recorded for this value.
+	// A nil slice retains the compatibility behavior of indexing Value as one
+	// term; a non-nil empty slice deliberately records no terms.
+	Terms []EncodeTerm
 	// Index records Value as a term in Name's dictionary, so a selection on
 	// Name and Value reaches the document.
 	Index bool
@@ -66,6 +70,13 @@ type EncodeField struct {
 	Store bool
 	// Sort records Value as a doc value, so a repair page may sort on Name.
 	Sort bool
+}
+
+// EncodeTerm is one analyzed term and its occurrence frequency. A frequency
+// other than one is retained in the term's ICE frequency stream.
+type EncodeTerm struct {
+	Value     []byte
+	Frequency uint64
 }
 
 // EncodeDocument is one physical document of a generation.
@@ -145,6 +156,20 @@ func Encode(path string, generation Generation) error {
 	return nil
 }
 
+// EncodeSegment returns the native ICE segment bytes for generation without
+// publishing a snapshot. Callers that own a segment lifecycle can persist
+// these bytes through their own WriteTo seam and publish them separately.
+func EncodeSegment(generation Generation) ([]byte, error) {
+	if generationErr := validateGeneration(generation); generationErr != nil {
+		return nil, generationErr
+	}
+	segmentPayload, _, encodeErr := encodeNativeSegment(generation)
+	if encodeErr != nil {
+		return nil, encodeErr
+	}
+	return segmentPayload, nil
+}
+
 func validateGeneration(generation Generation) error {
 	for documentIndex, document := range generation.Documents {
 		if len(document.Identifier) == 0 {
@@ -159,12 +184,16 @@ func validateGeneration(generation Generation) error {
 	return nil
 }
 
-const nativeICEOneHitNorm uint64 = 1
+const (
+	nativeICEOneHitNorm  uint64 = 1
+	nativeICEChunkModeV1 uint32 = 1025
+)
 
 type nativeICEField struct {
 	documentNumbers map[uint64]struct{}
 	sortValues      map[uint64][][]byte
 	termDocuments   map[string][]uint64
+	termFrequencies map[string]map[uint64]uint64
 	name            string
 	documentCount   uint64
 	frequency       uint64
@@ -201,7 +230,7 @@ func encodeNativeSegment(generation Generation) ([]byte, []byte, error) {
 	for fieldIndex, field := range fields {
 		var dictionaryOffset uint64
 		var termsErr error
-		segment, dictionaryOffset, termsErr = appendNativeICETerms(segment, field)
+		segment, dictionaryOffset, termsErr = appendNativeICETerms(segment, field, uint64(len(generation.Documents)))
 		if termsErr != nil {
 			return nil, nil, termsErr
 		}
@@ -229,7 +258,7 @@ func encodeNativeSegment(generation Generation) ([]byte, []byte, error) {
 	binary.BigEndian.PutUint64(footer[8:16], storedIndexOffset)
 	binary.BigEndian.PutUint64(footer[16:24], fieldsIndexOffset)
 	binary.BigEndian.PutUint64(footer[24:32], docValueOffset)
-	binary.BigEndian.PutUint32(footer[32:36], 1)
+	binary.BigEndian.PutUint32(footer[32:36], nativeICEChunkModeV1)
 	binary.BigEndian.PutUint32(footer[52:56], segmentVersion)
 	segment = append(segment, footer...)
 	deletionBitmap, deletionErr := encodeDeletionBitmap(generation.Documents)
@@ -308,14 +337,20 @@ func nativeICEFields(generation Generation) []nativeICEField {
 	identifier := nativeICEFieldFor(fieldsByName, identifierField)
 	for documentIndex, document := range generation.Documents {
 		documentNumber := uint64(documentIndex)
-		registerNativeICETerm(identifier, document.Identifier, documentNumber)
+		registerNativeICETerm(identifier, document.Identifier, documentNumber, 1)
 		for _, field := range document.Fields {
 			if !field.Store && !field.Index && !field.Sort {
 				continue
 			}
 			nativeField := nativeICEFieldFor(fieldsByName, field.Name)
 			if field.Index {
-				registerNativeICETerm(nativeField, field.Value, documentNumber)
+				if field.Terms == nil {
+					registerNativeICETerm(nativeField, field.Value, documentNumber, 1)
+				} else {
+					for _, term := range field.Terms {
+						registerNativeICETerm(nativeField, term.Value, documentNumber, term.Frequency)
+					}
+				}
 			}
 			if field.Sort {
 				nativeField.sortValues[documentNumber] = append(nativeField.sortValues[documentNumber], field.Value)
@@ -345,22 +380,32 @@ func nativeICEFieldFor(fieldsByName map[string]*nativeICEField, name string) *na
 		documentNumbers: make(map[uint64]struct{}),
 		sortValues:      make(map[uint64][][]byte),
 		termDocuments:   make(map[string][]uint64),
+		termFrequencies: make(map[string]map[uint64]uint64),
 	}
 	fieldsByName[name] = field
 	return field
 }
 
-func registerNativeICETerm(field *nativeICEField, value []byte, documentNumber uint64) {
+func registerNativeICETerm(field *nativeICEField, value []byte, documentNumber uint64, frequency uint64) {
+	if frequency == 0 {
+		frequency = 1
+	}
 	term := string(value)
 	documents := field.termDocuments[term]
 	if len(documents) == 0 || documents[len(documents)-1] != documentNumber {
 		field.termDocuments[term] = append(documents, documentNumber)
 	}
+	frequencies := field.termFrequencies[term]
+	if frequencies == nil {
+		frequencies = make(map[uint64]uint64)
+		field.termFrequencies[term] = frequencies
+	}
+	frequencies[documentNumber] += frequency
 	field.documentNumbers[documentNumber] = struct{}{}
-	field.frequency++
+	field.frequency += frequency
 }
 
-func appendNativeICETerms(segment []byte, field nativeICEField) ([]byte, uint64, error) {
+func appendNativeICETerms(segment []byte, field nativeICEField, documentCount uint64) ([]byte, uint64, error) {
 	if len(field.termDocuments) == 0 {
 		return segment, 0, nil
 	}
@@ -372,13 +417,21 @@ func appendNativeICETerms(segment []byte, field nativeICEField) ([]byte, uint64,
 	values := make(map[string]uint64, len(terms))
 	for _, term := range terms {
 		documents := field.termDocuments[term]
-		if len(documents) == 1 && documents[0] <= fstValueDocumentMask {
+		frequencies := field.termFrequencies[term]
+		allFrequencyOne := true
+		for _, document := range documents {
+			if frequencies[document] != 1 {
+				allFrequencyOne = false
+				break
+			}
+		}
+		if len(documents) == 1 && allFrequencyOne && documents[0] <= fstValueDocumentMask {
 			values[term] = fstValueEncodingOneHit | (nativeICEOneHitNorm << 31) | documents[0]
 			continue
 		}
-		postingsOffset := uint64(len(segment))
+		var postingsOffset uint64
 		var postingsErr error
-		segment, postingsErr = appendNativeICEPosting(segment, documents)
+		segment, postingsOffset, postingsErr = appendNativeICEPosting(segment, documents, frequencies, documentCount, !allFrequencyOne)
 		if postingsErr != nil {
 			return nil, 0, postingsErr
 		}
@@ -403,22 +456,99 @@ func appendNativeICETerms(segment []byte, field nativeICEField) ([]byte, uint64,
 	return segment, dictionaryOffset, nil
 }
 
-func appendNativeICEPosting(segment []byte, documents []uint64) ([]byte, error) {
+func appendNativeICEPosting(segment []byte, documents []uint64, frequencies map[uint64]uint64, documentCount uint64, includeFrequency bool) ([]byte, uint64, error) {
 	postings := roaringpkg.New()
 	for _, documentNumber := range documents {
 		if documentNumber > math.MaxUint32 {
-			return nil, fmt.Errorf("document %d exceeds the posting range: %w", documentNumber, ErrInvalidGeneration)
+			return nil, 0, fmt.Errorf("document %d exceeds the posting range: %w", documentNumber, ErrInvalidGeneration)
 		}
 		postings.Add(uint32(documentNumber))
 	}
 	payload, marshalErr := postings.MarshalBinary()
 	if marshalErr != nil {
-		return nil, fmt.Errorf("encode posting bitmap: %w", marshalErr)
+		return nil, 0, fmt.Errorf("encode posting bitmap: %w", marshalErr)
 	}
-	segment = appendNativeUvarint(segment, 0)
+	frequencyOffset := uint64(0)
+	postingOffset := uint64(len(segment))
+	if includeFrequency {
+		frequencyStream, streamErr := encodeNativeICEFrequencyStream(documents, frequencies, documentCount)
+		if streamErr != nil {
+			return nil, 0, streamErr
+		}
+		frequencyOffset = postingOffset
+		segment = append(segment, frequencyStream...)
+		postingOffset = uint64(len(segment))
+	}
+	segment = appendNativeUvarint(segment, frequencyOffset)
 	segment = appendNativeUvarint(segment, 0)
 	segment = appendNativeUvarint(segment, uint64(len(payload)))
-	return append(segment, payload...), nil
+	return append(segment, payload...), postingOffset, nil
+}
+
+func encodeNativeICEFrequencyStream(documents []uint64, frequencies map[uint64]uint64, documentCount uint64) ([]byte, error) {
+	if len(documents) == 0 || documentCount == 0 {
+		return nil, fmt.Errorf("frequency stream has no documents: %w", ErrInvalidGeneration)
+	}
+	chunkSize, chunkErr := nativeICEChunkSize(nativeICEChunkModeV1, uint64(len(documents)), documentCount)
+	if chunkErr != nil {
+		return nil, chunkErr
+	}
+	chunkCount := (documentCount-1)/chunkSize + 1
+	chunkLengths := make([]uint64, chunkCount)
+	var final []byte
+	var chunkData []byte
+	currentChunk := uint64(0)
+	for _, document := range documents {
+		chunk := document / chunkSize
+		if chunk >= chunkCount {
+			return nil, fmt.Errorf("document %d exceeds frequency chunk range: %w", document, ErrInvalidGeneration)
+		}
+		if chunk != currentChunk {
+			compressed := s2.EncodeBetter(nil, chunkData)
+			chunkLengths[currentChunk] = uint64(len(compressed))
+			final = append(final, compressed...)
+			chunkData = chunkData[:0]
+			currentChunk = chunk
+		}
+		frequency := frequencies[document]
+		if frequency == 0 {
+			return nil, fmt.Errorf("document %d has no frequency: %w", document, ErrInvalidGeneration)
+		}
+		if frequency > ^uint64(0)>>1 {
+			return nil, fmt.Errorf("document %d has an unrepresentable frequency: %w", document, ErrInvalidGeneration)
+		}
+		chunkData = appendNativeUvarint(chunkData, frequency<<1)
+		chunkData = appendNativeUvarint(chunkData, uint64(math.Float32bits(1)))
+	}
+	compressed := s2.EncodeBetter(nil, chunkData)
+	chunkLengths[currentChunk] = uint64(len(compressed))
+	final = append(final, compressed...)
+	result := appendNativeUvarint(nil, chunkCount)
+	var cumulative uint64
+	for _, length := range chunkLengths {
+		cumulative += length
+		result = appendNativeUvarint(result, cumulative)
+	}
+	return append(result, final...), nil
+}
+
+func nativeICEChunkSize(chunkMode uint32, cardinality, maxDocuments uint64) (uint64, error) {
+	switch {
+	case chunkMode <= 1024:
+		if chunkMode == 0 {
+			return 0, fmt.Errorf("zero frequency chunk mode: %w", ErrCorrupt)
+		}
+		return uint64(chunkMode), nil
+	case chunkMode == nativeICEChunkModeV1:
+		numChunks := cardinality/1024 + 1
+		chunkSize := maxDocuments / numChunks
+		if chunkSize == 0 {
+			return 0, fmt.Errorf("zero frequency chunk size: %w", ErrCorrupt)
+		}
+		return chunkSize, nil
+	default:
+		return 0, fmt.Errorf("unknown frequency chunk mode %d: %w", chunkMode, ErrCorrupt)
+	}
 }
 
 func encodeStoredDocuments(generation Generation, fieldIDs map[string]uint64) ([]byte, []uint64) {
