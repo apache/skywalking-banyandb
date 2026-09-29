@@ -1,5 +1,9 @@
 # Clients
 
+## Web Console
+
+Canopy is the official web console of BanyanDB. It connects to the same HTTP endpoints as the clients below and lets you browse schemas and query data from a browser. Refer to the [Web Console](./interacting/canopy.md) page for how to set it up.
+
 ## Command Line
 
 The command line tool named `bydbctl` improves users' interactive experience. The examples listed in this folder show how to use this command to create, update, read and delete schemas. Furthermore, `bydbctl` could help in querying data stored in streams, measures, traces and properties.
@@ -26,10 +30,6 @@ Users could select any HTTP client to access the HTTP based endpoints. The defau
 ## Java Client
 
 The java native client is hosted at [skywalking-banyandb-java-client](https://github.com/apache/skywalking-banyandb-java-client).
-
-## Web application
-
-The web application is hosted at [skywalking-banyandb-webapp](http://localhost:17913/) when you boot up the BanyanDB server.
 
 ## gRPC command-line tool
 

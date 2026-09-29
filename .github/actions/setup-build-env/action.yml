@@ -50,9 +50,7 @@ runs:
       with:
         node-version: 24.6.0
         cache: 'npm'
-        cache-dependency-path: |
-          ui/package-lock.json
-          mcp/package-lock.json
+        cache-dependency-path: mcp/package-lock.json
 
     - name: Install Go
       uses: actions/setup-go@v6

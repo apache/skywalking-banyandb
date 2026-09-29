@@ -86,17 +86,6 @@ jobs:
           grep -r "has(" web/dist/assets/*.css && echo "✓ :has() preserved in built CSS"
           grep -r "color-mix(" web/dist/assets/*.css && echo "✓ color-mix() preserved in built CSS"
 
-      - name: Check ui/ guardrail (must be empty)
-        working-directory: ${{ github.workspace }}
-        run: |
-          CHANGES=$(git status --short -- ui/ ui/embed.go)
-          if [ -n "$CHANGES" ]; then
-            echo "ERROR: ui/ was modified — this is forbidden"
-            echo "$CHANGES"
-            exit 1
-          fi
-          echo "✓ ui/ untouched"
-
   # ── Canopy console image ────────────────────────────────────────────────────
   # Builds ghcr.io/apache/skywalking-banyandb:<sha>-canopy (the tag suffix is
   # applied inside scripts/build/docker.mk). On PRs the image is only built

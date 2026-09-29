@@ -42,15 +42,13 @@ Install the optional [BanyanDB — Trace Sampling Plugins (FODC Proxy)](../grafa
 
 ## Native
 
-If the `observability-modes` flag is set to `native`, the self-observability metrics provider will be enabled. Some of the metrics will be displayed in the dashboard of [banyandb-ui](http://localhost:17913/)
-
-![dashboard](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/dashboard.png)
+If the `observability-modes` flag is set to `native`, the self-observability metrics provider will be enabled.
 
 ### Metrics storage
 
 In self-observability, the metrics data is stored in BanyanDB within the ` _monitoring` internal group. Each metric will be created as a new `measure` within this group.
 
-You can use BanyanDB-UI or bydbctl to retrieve the data.
+You can retrieve the data with bydbctl, or browse and query it in the [Canopy](../../interacting/canopy.md) web console.
 
 ### Write Flow
 
