@@ -83,12 +83,6 @@ jobs:
       - name: Generate code
         run: make generate
 
-      - name: Build UI
-        run: |
-          cd ui
-          npm ci
-          npm run build
-
       - name: Build BanyanDB image
         run: |
           make -C banyand release

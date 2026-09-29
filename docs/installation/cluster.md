@@ -164,9 +164,3 @@ Every node advertises itself to the rest of the cluster using a host part that i
 - `node-host-provider=flag`: the value of `--node-host` is used.
 
 Pick the option that matches how other nodes in the cluster can reach this process. In container environments where hostnames are not routable, `ip` or an explicit `flag` value is usually safer than the default.
-
-## Self-observability dashboard
-
-If self-observability mode is on, there will be a dashboard in [banyandb-ui](http://localhost:17913/) to monitor the nodes status in the cluster.
-
-![dashboard](https://skywalking.apache.org/doc-graph/banyandb/v0.7.0/dashboard.png) 
