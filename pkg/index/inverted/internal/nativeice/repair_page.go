@@ -25,7 +25,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"os"
 	"sort"
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
@@ -381,7 +380,7 @@ func (r *repairSegmentPageReader) projectedValue(documentNumber uint64, projectF
 
 type repairDocValueReader struct {
 	path               string
-	file               *os.File
+	file               segmentFile
 	chunkOffsets       []uint64
 	compressedBuffer   []byte
 	decodedBuffer      []byte
@@ -460,6 +459,20 @@ func newRepairDocValueReader(storedReader *storedSegmentReader, fieldStart, fiel
 }
 
 func (r *repairDocValueReader) smallestValue(documentNumber uint64) ([]byte, error) {
+	values, valuesErr := r.values(documentNumber)
+	if valuesErr != nil || len(values) == 0 {
+		return nil, valuesErr
+	}
+	smallest := values[0]
+	for _, value := range values[1:] {
+		if bytes.Compare(value, smallest) < 0 {
+			smallest = value
+		}
+	}
+	return smallest, nil
+}
+
+func (r *repairDocValueReader) values(documentNumber uint64) ([][]byte, error) {
 	chunkNumber := documentNumber / docValueDocumentsPerChunk
 	if r.chunkNumber != chunkNumber {
 		if chunkErr := r.loadChunk(chunkNumber); chunkErr != nil {
@@ -480,7 +493,7 @@ func (r *repairDocValueReader) smallestValue(documentNumber uint64) ([]byte, err
 	if end < start || end > uint64(len(r.decodedBuffer)) {
 		return nil, corruptError("segment %q has invalid doc-value bounds in a chunk", r.path)
 	}
-	return decodeRepairDocValueTerms(r.decodedBuffer[start:end], r.path)
+	return decodeRepairDocValueTermsAll(r.decodedBuffer[start:end], r.path)
 }
 
 func (r *repairDocValueReader) loadChunk(chunkNumber uint64) error {
@@ -586,7 +599,7 @@ func (r *repairDocValueReader) loadChunk(chunkNumber uint64) error {
 	return nil
 }
 
-func readRepairDocValueBytes(file *os.File, size, offset uint64, data []byte, path string) error {
+func readRepairDocValueBytes(file segmentFile, size, offset uint64, data []byte, path string) error {
 	length := uint64(len(data))
 	if offset > size || length > size-offset {
 		return corruptError("segment %q reads outside its doc-value data", path)
@@ -598,24 +611,17 @@ func readRepairDocValueBytes(file *os.File, size, offset uint64, data []byte, pa
 	return nil
 }
 
-func decodeRepairDocValueTerms(encoded []byte, path string) ([]byte, error) {
-	var smallest []byte
-	found := false
+func decodeRepairDocValueTermsAll(encoded []byte, path string) ([][]byte, error) {
+	values := make([][]byte, 0)
 	for len(encoded) > 0 {
 		value, remaining, valueErr := decodeRepairDocValueTerm(encoded)
 		if valueErr != nil {
 			return nil, corruptError("decode doc-value term in segment %q: %w", path, valueErr)
 		}
-		if !found || bytes.Compare(value, smallest) < 0 {
-			smallest = value
-			found = true
-		}
+		values = append(values, append([]byte(nil), value...))
 		encoded = remaining
 	}
-	if !found {
-		return nil, corruptError("segment %q has an empty doc-value entry", path)
-	}
-	return smallest, nil
+	return values, nil
 }
 
 func decodeRepairDocValueTerm(encoded []byte) ([]byte, []byte, error) {
