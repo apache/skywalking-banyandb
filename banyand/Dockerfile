@@ -100,15 +100,6 @@ COPY --from=reporoot . .
 # -s/-w stripping, so the host's build-id/module-graph metadata that
 # plugin.Open's package-hash check relies on matches the plugin builder below.
 #
-# `mkdir -p ui/dist && touch ui/dist/index.html` is the same placeholder
-# `build-trace-pipeline-server` uses for local dev builds: ui/embed.go's
-# `//go:embed dist` needs at least one non-hidden file to embed. It is NOT
-# destructive — `touch` only updates mtime and never truncates an existing
-# file — so when the CI job that builds this stage has already run
-# `make generate` (which builds the real ui/dist via the ui/ subproject)
-# before invoking this Dockerfile, the real UI is what gets embedded; this
-# line only kicks in as a fallback when ui/dist is missing entirely.
-#
 # GO_LINK_VERSION carries the same `-X <pkg>.build=... -X <pkg>.revision=...`
 # version-stamp ldflags `make release` uses (scripts/build/base.mk), passed
 # through docker.mk so `banyand version` reports the correct build in the
@@ -116,19 +107,14 @@ COPY --from=reporoot . .
 # NOT change the compiled module graph, so host/plugin plugin.Open parity is
 # unaffected.
 #
-# `-tags slim` matches the `-slim` release binary: it selects
-# banyand/liaison/http/rpath_empty.go over rpath_ui.go (`//go:build !slim`),
-# dropping the `//go:embed ui/dist` web console. A plugin-hosting data node has
-# no need for the UI, so omitting it cuts image size and CVE surface. The
-# `mkdir -p ui/dist && touch ui/dist/index.html` placeholder is still needed:
-# ui/embed.go's `//go:embed dist` requires at least one non-hidden file to
-# embed even under slim (the slim build path compiles ui/embed.go but the
-# empty embed is never served). CGO_ENABLED=1 (from build-plugins-base) and all
-# other flags are unchanged, so host<->.so plugin.Open parity holds.
+# `-tags slim` matches the `-slim` release binary: it stubs out the memory-pool
+# reference/leak tracker (pkg/pool/pool_debug.go vs pool_nop.go, tracker.go vs
+# tracker_stub.go) which a plugin-hosting data node does not need, cutting image
+# size and CVE surface. CGO_ENABLED=1 (from build-plugins-base) and all other
+# flags are unchanged, so host<->.so plugin.Open parity holds.
 FROM build-plugins-base AS build-plugins-server
 ARG GO_LINK_VERSION
-RUN mkdir -p ui/dist && touch ui/dist/index.html \
-    && go build -trimpath -ldflags "${GO_LINK_VERSION}" -tags slim -o /out/banyand-server-plugins ./banyand/cmd/server
+RUN go build -trimpath -ldflags "${GO_LINK_VERSION}" -tags slim -o /out/banyand-server-plugins ./banyand/cmd/server
 
 # build-plugins-so compiles every first-party plugin under plugins/<vendor>/<name>
 # with the IDENTICAL toolchain/flags as build-plugins-server above (same base

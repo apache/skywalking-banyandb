@@ -33,14 +33,10 @@ import (
 // strips every header in IdentityHeaders from the incoming request, authenticates Basic
 // credentials against the current security snapshot, and forwards only the verified
 // identity to gRPC. Authorization remains the responsibility of the gRPC interceptor.
-// Static assets and health checks with authentication disabled pass through unchanged.
+// Health checks with authentication disabled pass through unchanged.
 func NewAuthMiddleware(authReloader *auth.Reloader) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if isStaticPath(r.URL.Path) {
-				next.ServeHTTP(w, r)
-				return
-			}
 			if authReloader == nil {
 				next.ServeHTTP(w, r)
 				return
@@ -100,23 +96,6 @@ func NewAuthMiddleware(authReloader *auth.Reloader) func(http.Handler) http.Hand
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-var staticPaths = []string{
-	"/favicon.ico",
-	"/banyandb.ico",
-	"/assets/",
-	"/index.html",
-	"index.html",
-}
-
-func isStaticPath(path string) bool {
-	for _, prefix := range staticPaths {
-		if strings.HasPrefix(path, prefix) {
-			return true
-		}
-	}
-	return false
 }
 
 func buildGRPCContextForHealthCheck(authReloader *auth.Reloader, r *http.Request) (context.Context, error) {

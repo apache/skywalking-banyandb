@@ -62,6 +62,7 @@ Release Notes.
 
 ### Chores
 
+- Remove the legacy embedded web UI (`ui/`) from the BanyanDB binaries, Docker images and release packages. Use the standalone [Canopy](docs/interacting/canopy.md) web console instead; the HTTP port (`17913`) now serves only the HTTP API under `/api`. The `-slim` builds now only stub out the memory-pool diagnostic tracking.
 - Remove accidentally committed local design notes from the repository root.
 - Remove the accidentally committed `test_table` ELF binary from the source tree.
 - Update NOTICE copyright year to 2026.

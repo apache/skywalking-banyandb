@@ -7,7 +7,7 @@ The BanyanDB images are hosted on Docker Hub. You can pull the images from the f
 There are six types of images:
 
 - `apache/skywalking-banyandb:<version>` - The specific version of the BanyanDB.
-- `apache/skywalking-banyandb:<version>-slim` - The slim version of the BanyanDB. It does not contain the Web UI.
+- `apache/skywalking-banyandb:<version>-slim` - The slim version of the BanyanDB, built without the memory-pool diagnostic tracking.
 - `apache/skywalking-banyandb:<version>-canopy` - The Canopy web console.
 - `apache/skywalking-banyandb-mcp:<version>` - The BanyanDB Model Context Protocol server.
 - `apache/skywalking-banyandb-fodc-agent:<version>` - The FODC agent.
@@ -22,8 +22,8 @@ The BanyanDB images are hosted on GitHub Container Registry for development or t
 There are three types of images:
 
 - `ghcr.io/apache/skywalking-banyandb:<github-sha>` - The specific version of the BanyanDB. We pushed `linux/amd64` and `linux/arm64` for each type of image.
-- `ghcr.io/apache/skywalking-banyandb:<github-sha>-slim` - The slim version of the BanyanDB. It does not contain the Web UI. We pushed `linux/amd64` and `linux/arm64` for each type of image.
-- `ghcr.io/apache/skywalking-banyandb:<github-sha>-testing` - The testing version of the BanyanDB. It contains the Web UI and the `bydbctl`. We pushed `linux/amd64` and  `linux/arm64` for each type of image.
+- `ghcr.io/apache/skywalking-banyandb:<github-sha>-slim` - The slim version of the BanyanDB, built without the memory-pool diagnostic tracking. We pushed `linux/amd64` and `linux/arm64` for each type of image.
+- `ghcr.io/apache/skywalking-banyandb:<github-sha>-testing` - The testing version of the BanyanDB. It contains the `bydbctl`. We pushed `linux/amd64` and  `linux/arm64` for each type of image.
 
 ## Start a container in `standalone mode`
 The following commands pull the docker image and run the BanyanDB on Docker. Replace `latest` with the version of the BanyanDB you want to run.
@@ -43,9 +43,13 @@ docker run -d \
 
 The BanyanDB server would be listening on the `0.0.0.0:17912` to access gRPC requests. if no errors occurred.
 
-At the same time, the BanyanDB server would be listening on the `0.0.0.0:17913` to access HTTP requests. if no errors occurred. The HTTP server is used for CLI and Web UI.
+At the same time, the BanyanDB server would be listening on the `0.0.0.0:17913` to access HTTP requests. if no errors occurred. The HTTP server serves the HTTP API under `/api`, which is used by the CLI (`bydbctl`), HTTP clients, and the standalone Canopy web console.
 
-The Web UI is hosted at `http://localhost:17913/`.
+## Run the Canopy web console
+
+The BanyanDB image does not bundle a web console. To browse and query data from a browser, run the separate Canopy image alongside the server — it needs a users file and a session secret, and reaches BanyanDB over port `17913`.
+
+See the [Web Console](../interacting/canopy.md) page for the image tag, the `docker run` invocation and the password-hash recipe.
 
 ## Build and Push the Custom Docker image
 
