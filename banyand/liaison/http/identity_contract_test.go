@@ -210,9 +210,9 @@ func TestR2_UsersOnlyDeploymentIsUnchangedAtTheHTTPSeam(t *testing.T) {
 	}
 }
 
-// TestR2_NoPathBypassesAuthentication proves the embedded-UI static-asset carve-out is
-// gone with the UI itself: every path the middleware guards now requires credentials, so
-// no request reaches the gateway unauthenticated regardless of what it asks for.
+// TestR2_NoPathBypassesAuthentication proves the middleware has no unauthenticated
+// carve-out: every path it guards requires credentials, so no request reaches the
+// gateway unauthenticated regardless of what it asks for.
 func TestR2_NoPathBypassesAuthentication(t *testing.T) {
 	for _, path := range []string{"/", "/favicon.ico", "/banyandb.ico", "/assets/index.js", "/index.html"} {
 		next := &forwarded{}
