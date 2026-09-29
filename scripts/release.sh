@@ -52,7 +52,7 @@ binary(){
     pushd ${tmpdir}
     trap 'popd' EXIT
     tar -xvf ${SOURCE_FILE}
-    make generate && make -C ui build
+    make generate
     RELEASE_VERSION="${RELEASE_VERSION}" make -C mcp release
     TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 RELEASE_VERSION="${RELEASE_VERSION}" make -C banyand release
     TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 RELEASE_VERSION="${RELEASE_VERSION}" make -C fodc/agent release
@@ -63,7 +63,7 @@ binary(){
     copy_binaries banyand
     cp -Rfv ./CHANGES.md ${bindir}
     cp -Rfv ./README.md ${bindir}
-    # Eyes-generated Go + UI licensing from dist/.
+    # Eyes-generated Go licensing from dist/.
     cp -Rfv ./dist/* ${bindir}
     # MCP has no independent release archive, so ship its Eyes inventory with the
     # Go packages that carry mcp/dist (no node_modules).

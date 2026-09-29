@@ -38,9 +38,7 @@ jobs:
         with:
           node-version: 24.6.0
           cache: 'npm'
-          cache-dependency-path: |
-            ui/package-lock.json
-            mcp/package-lock.json
+          cache-dependency-path: mcp/package-lock.json
       - name: Install Go
         uses: actions/setup-go@v6
         with:
@@ -48,8 +46,6 @@ jobs:
           cache: true
       - name: Generate codes
         run: make generate
-      - name: Build UI
-        run: make -C ui build
       - name: Upload generated files
         uses: actions/upload-artifact@v7
         with:
@@ -59,5 +55,4 @@ jobs:
             **/*.pb.gw.go
             **/*.pb.validate.go
             **/*_mock.go
-            ui/dist/**
           retention-days: 1
