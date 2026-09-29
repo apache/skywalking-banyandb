@@ -74,9 +74,6 @@ To issue the below command to get basic binaries of banyand and bydbctl.
 make generate
 ...
 make build
---- ui: all ---
-...
-Done building ui
 --- banyand: all ---
 ...
 chmod +x build/bin/banyand-server;
@@ -102,7 +99,7 @@ The build system provides a series of binary options as well.
 
 * `make -C banyand banyand-server` generates a basic `banyand-server`.
 * `make -C banyand banyand-server-static` builds out a static binary `banyand-server-static` which is statically linked with all dependencies.
-* `make -C banyand banyand-server-slim` builds out a slim binary `banyand-server-slim` which doesn't include `UI`.
+* `make -C banyand banyand-server-slim` builds out a slim binary `banyand-server-slim`, built without the memory-pool diagnostic tracking.
 * `make -C banyand release` builds out the static and slim binaries for releasing.
 * `make -C bydbctl bydbctl-cli` generates a basic `bydbctl-cli`.
 * `make -C bydbctl release` or `make -C banyand bydbctl-cli-static` builds out a static binary `bydbctl-cli-static` for releasing. This binary is statically linked with all dependencies.
@@ -118,7 +115,6 @@ To reproduce the exact `banyand`, `bydbctl`, `fodc-agent` and `fodc-proxy` artif
 ```shell
 # Prerequisite: code generation must run first.
 make generate
-make -C ui build
 
 # Official binaries embed $(RELEASE_VERSION)-release. The source tarball ships
 # .env with RELEASE_VERSION set. From a git checkout, pass it explicitly, e.g.
@@ -138,7 +134,7 @@ TARGET_OS=darwin  PLATFORMS=darwin/amd64,darwin/arm64          make -C bydbctl r
 make -C mcp release
 ```
 
-Each `release` target produces both `*-static-*` and `*-slim-*` variants where applicable. The `static` builds are stripped (`-s -w`) and statically linked; the `slim` builds additionally omit the embedded UI bundle. The resulting binaries land under `<component>/build/bin/<os>/<arch>/`, e.g. `banyand/build/bin/linux/amd64/banyand-server-static`. With `RELEASE_VERSION` set (from `.env` or the command line), `--version` reports `<version>-release`. Without it, a git checkout falls back to `git describe`.
+Each `release` target produces both `*-static-*` and `*-slim-*` variants where applicable. The `static` builds are stripped (`-s -w`) and statically linked; the `slim` builds additionally stub out the memory-pool diagnostic tracking. The resulting binaries land under `<component>/build/bin/<os>/<arch>/`, e.g. `banyand/build/bin/linux/amd64/banyand-server-static`. With `RELEASE_VERSION` set (from `.env` or the command line), `--version` reports `<version>-release`. Without it, a git checkout falls back to `git describe`.
 
 ### Cross-compile Binaries
 

@@ -70,7 +70,7 @@ release: build
 # canopy/.licenserc.yaml, so the OMC runtime state + handoff / playwright
 # artefacts (which live outside this directory but inside the repo) are
 # excluded by patterns defined ONCE in the root config. This avoids editing
-# ui/ or any other subproject's .licenserc.yaml.
+# any other subproject's .licenserc.yaml.
 .PHONY: license-check
 license-check: $(LICENSE_EYE) ## Check license header
 	$(LICENSE_EYE) -c $(repo_root)/.licenserc.yaml header check

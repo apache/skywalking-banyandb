@@ -63,11 +63,6 @@ func buildLocalImage(ctx context.Context, repoRoot string) error {
 	env := map[string]string{
 		"RELEASE_VERSION": "local",
 	}
-	if strings.EqualFold(getEnvString("BANYANDB_BENCH_BUILD_UI", "false"), "true") {
-		if _, err := runCommandEnv(ctx, env, "make", "-C", filepath.Join(repoRoot, "ui"), "build"); err != nil {
-			return err
-		}
-	}
 	if _, err := runCommandEnv(ctx, env, "make", "-C", filepath.Join(repoRoot, "banyand"), "release"); err != nil {
 		return err
 	}

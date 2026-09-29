@@ -33,6 +33,4 @@ Then the server running as a standalone process.
 
 The banyand server would be listening on the `0.0.0.0:17912` to access gRPC requests. if no errors occurred.
 
-At the same time, the banyand server would be listening on the `0.0.0.0:17913` to access HTTP requests. if no errors occurred. The HTTP server is used for CLI and Web UI.
-
-The Web UI is hosted at `http://localhost:17913/`.
+At the same time, the banyand server would be listening on the `0.0.0.0:17913` to access HTTP requests. if no errors occurred. The HTTP server serves the HTTP API under `/api`, which is used by the CLI (`bydbctl`), HTTP clients, and the standalone Canopy web console.

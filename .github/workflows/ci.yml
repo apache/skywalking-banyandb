@@ -20,7 +20,6 @@ on:
   pull_request:
     paths-ignore:
       - 'canopy/**'
-      - 'ui/**'
       - 'docs/**'
       - '**.md'
       - '.github/workflows/canopy.yml'
@@ -59,12 +58,6 @@ jobs:
         with:
           path: bin
           key: ${{ runner.os }}-${{ runner.arch }}-generate-tool-${{ hashFiles('scripts/build/version.mk') }}
-      - name: npm ci and format
-        run: |
-          make -C ui install
-          cd ui
-          npm run format
-          cd ../
       - name: Run consistency check
         run: |
           if [ ! -z "`git status -s`" ]; then \
@@ -83,7 +76,7 @@ jobs:
         run: make license-check
       - name: Check requirements
         run: make check-req
-      - name: Build binaries, UI dist and MCP dist
+      - name: Build binaries and MCP dist
         run: make build
       - name: Test MCP (Go validator tool + TypeScript safety layer)
         run: make -C mcp test

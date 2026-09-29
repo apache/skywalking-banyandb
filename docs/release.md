@@ -33,7 +33,7 @@ make clean && make release-assembly
 * `skywalking-banyandb-${VERSION}-fodc-proxy.tgz`
 * `skywalking-banyandb-${VERSION}-canopy.tgz`
 
-Go binary packages include the SkyWalking Eyes output from `dist/` (`LICENSE`, `NOTICE`, `licenses/`). `make license-dep` concatenates Go and UI Eyes inventories into `dist/LICENSE`. Because MCP has no independent archive, each Go binary package that stages `mcp/dist` also ships `mcp/LICENSE`, `mcp/licenses/`, and `mcp/package-lock.json` (still without `node_modules`). The Canopy archive ships `canopy/LICENSE` and `canopy/licenses/` instead.
+Go binary packages include the SkyWalking Eyes output from `dist/` (`LICENSE`, `NOTICE`, `licenses/`). `make license-dep` writes the Go Eyes inventory into `dist/LICENSE`. Because MCP has no independent archive, each Go binary package that stages `mcp/dist` also ships `mcp/LICENSE`, `mcp/licenses/`, and `mcp/package-lock.json` (still without `node_modules`). The Canopy archive ships `canopy/LICENSE` and `canopy/licenses/` instead.
 
 ## Upload to Apache svn
 
