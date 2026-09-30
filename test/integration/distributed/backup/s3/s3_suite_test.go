@@ -62,7 +62,7 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
 	backup.SetupSharedContext(testVars,
-		"s3:///"+dockertesthelper.BucketName+testVars.DestDir,
+		"s3://"+dockertesthelper.BucketName+testVars.DestDir,
 		[]string{
 			"--s3-credential-file", dockertesthelper.S3CredentialsPath,
 			"--s3-config-file", dockertesthelper.S3ConfigPath,
