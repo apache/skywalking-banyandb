@@ -475,7 +475,7 @@ func mergeTwoBlocks(target, left, right *blockPointer) {
 	if isTopNBlock(left) {
 		sort, limit, ft, err := parseTopNMeta(left)
 		if err != nil {
-			log.Error().Err(err).Msg("failed to parse TopN metadata, falling back to normal merge")
+			log.Get().Error().Err(err).Msg("failed to parse TopN metadata, falling back to normal merge")
 			isTopN = false
 		} else {
 			isTopN = true

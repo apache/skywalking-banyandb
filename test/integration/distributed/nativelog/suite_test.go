@@ -1,0 +1,155 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package nativelog_test
+
+import (
+	"bytes"
+	"sync"
+	"testing"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
+	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
+	"github.com/apache/skywalking-banyandb/pkg/test/setup"
+	cases "github.com/apache/skywalking-banyandb/test/cases/nativelog"
+	integration_distributed "github.com/apache/skywalking-banyandb/test/integration/distributed"
+)
+
+func TestNativeLogDistributed(t *testing.T) {
+	RegisterFailHandler(Fail)
+	RunSpecs(t, "Native Self-Stored Logs Cluster Suite", Label(integration_distributed.Labels...))
+}
+
+// console collects what the nodes print. The nodes run in this process, so
+// their console is the console of the test binary.
+var console = &safeBuffer{}
+
+// fastSchemaSync shortens schema convergence. The producing data node creates
+// the log group after the other nodes have started, and a node that does not
+// know a group fails the whole distributed query rather than returning what
+// the others hold (apache/skywalking#14104). With the default 30s interval the
+// full reconcile that repairs it is 150s away.
+const fastSchemaSync = "--schema-property-client-sync-interval=1s"
+
+var (
+	restoreConsole func()
+	stops          []func()
+)
+
+var _ = BeforeSuite(func() {
+	restoreConsole = logger.UseConsoleTarget(console)
+	Expect(logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel})).To(Succeed())
+
+	// One data node produces the log events, and the liaison answers the
+	// queries. A second data node would take the native sink over: the sink is
+	// process-global, so its identity would be stamped on the first node's
+	// lines too. Attribution across nodes therefore lives in the e2e case
+	// test/e2e-v2/cases/nativelog.
+	config := setup.PropertyClusterConfig(setup.NewDiscoveryFileWriter(newSpace()))
+	// The order is load-bearing, in both directions. A liaison needs a data
+	// node's schema server to start, so a data node comes first. Every role
+	// also configures the process-wide logger as it starts, and a role that
+	// cannot store its own logs turns native logging off, so the producer has
+	// to be the last one to configure it. Hence: a plain data node, the
+	// liaison, then the data node the cases are about.
+	//
+	// The first node also syncs schema faster than the default. It never
+	// creates the log group itself, and a data node that does not know a group
+	// fails the whole distributed query rather than returning what the others
+	// hold (apache/skywalking#14104); with the default 30s interval its full
+	// reconcile is 150s away.
+	_, _, _, stopSchema := setup.DataNodeWithAddrAndDir(config, fastSchemaSync)
+	stops = append(stops, stopSchema)
+	liaisonAddr, stopLiaison := setup.LiaisonNode(config, fastSchemaSync)
+	stops = append(stops, stopLiaison)
+	dataAddr, _, _, stopData := setup.DataNodeWithAddrAndDir(config,
+		append(append([]string{}, cases.NativeFlags...), fastSchemaSync)...)
+	stops = append(stops, stopData)
+
+	conn, err := grpchelper.Conn(liaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	Expect(err).NotTo(HaveOccurred())
+	stops = append(stops, func() { _ = conn.Close() })
+
+	node := cases.Node{
+		Conn: conn,
+		// The launcher sets --node-host=127.0.0.1, and a node's id is its host
+		// and gRPC port.
+		NodeID:   "127.0.0.1:" + port(dataAddr),
+		NodeType: "data",
+	}
+	// The suite owns the node, so a case starts nothing and stops nothing.
+	shared := func(_ ...string) (cases.Node, func()) { return node, func() {} }
+	cases.SharedContext = cases.Context{
+		Distributed:   true,
+		Start:         shared,
+		StartDisabled: shared,
+		Restart:       shared,
+		Console:       console.String,
+	}
+	cases.AwaitQueryable(conn)
+})
+
+var _ = AfterSuite(func() {
+	for i := len(stops) - 1; i >= 0; i-- {
+		stops[i]()
+	}
+	if restoreConsole != nil {
+		restoreConsole()
+	}
+})
+
+// port returns the port of a host:port address.
+func port(addr string) string {
+	for i := len(addr) - 1; i >= 0; i-- {
+		if addr[i] == ':' {
+			return addr[i+1:]
+		}
+	}
+	return addr
+}
+
+// safeBuffer is written by the server's logging goroutines and read by a case.
+type safeBuffer struct {
+	buf bytes.Buffer
+	mux sync.Mutex
+}
+
+func (b *safeBuffer) Write(p []byte) (int, error) {
+	b.mux.Lock()
+	defer b.mux.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *safeBuffer) String() string {
+	b.mux.Lock()
+	defer b.mux.Unlock()
+	return b.buf.String()
+}
+
+func newSpace() string {
+	dir, _, err := test.NewSpace()
+	Expect(err).NotTo(HaveOccurred())
+	return dir
+}

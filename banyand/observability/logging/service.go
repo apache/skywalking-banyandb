@@ -1,0 +1,542 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package logging
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/api/data"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/partition"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/run"
+)
+
+const (
+	// schemaTimeout bounds one schema pass against metadata. It is separate
+	// from --logging-native-write-timeout, which bounds a batch publish: a slow
+	// destination is not a reason to wait longer on the metadata service.
+	schemaTimeout = 5 * time.Second
+	// schemaRetryInterval is how often a failed schema creation is retried.
+	schemaRetryInterval = 10 * time.Second
+	// destinationRetries bounds how many ticks a batch is held while the local
+	// write topic has no subscriber. At the default one-second interval that
+	// covers ten seconds of startup; past it the batch is dropped and counted.
+	destinationRetries = 10
+)
+
+// Service owns the consumer that drains the sink and writes what it finds.
+//
+// It is a run.Unit: everything that can fail against metadata happens in Serve
+// and never in PreRun, because PreRun runs before the services it depends on.
+type Service struct {
+	metadata metadata.Repo
+	omr      observability.MetricsRegistry
+	metrics  *metrics
+	pipeline queue.Client
+	sink     *Sink
+	closer   *run.Closer
+	l        *logger.Logger
+	pm       protector.Memory
+	cfg      *logger.NativeLogging
+	node     NodeInfo
+	// pending is a batch held back because the local write topic had no
+	// subscriber yet. It is retried with the next tick's batch.
+	pending []entry
+	// unreadyAttempts counts the consecutive attempts that found no subscriber.
+	unreadyAttempts int
+	// shardNum is the group's shard count, not the flag's. Routing must divide
+	// by what the group was created with: the storage layer does not range-check
+	// an incoming shard id, and a shard above the group's count is skipped on the
+	// next open, taking its events out of every query without an error.
+	shardNum uint32
+	ready    bool
+	// incompatible records that the stream exists with the wrong shape. The
+	// retry stays in place -- an operator can drop and recreate it without
+	// restarting the node -- but until then the drops are counted under their
+	// own reason, because waiting will not fix this one.
+	incompatible bool
+	warnedShard  bool
+	warnedTTL    bool
+}
+
+// NewService returns the service that drains sink. The sink is constructed
+// separately and installed on the logger before Init, so that the buffer
+// exists for the lines emitted while the process is still starting.
+func NewService(sink *Sink, cfg *logger.NativeLogging, md metadata.Repo,
+	pipeline queue.Client, pm protector.Memory, omr observability.MetricsRegistry,
+) *Service {
+	return &Service{
+		sink:     sink,
+		omr:      omr,
+		cfg:      cfg,
+		metadata: md,
+		pipeline: pipeline,
+		pm:       pm,
+		closer:   run.NewCloser(1),
+	}
+}
+
+// Name implements run.Unit.
+func (s *Service) Name() string { return "native-log" }
+
+// PreRun implements run.PreRunner. It takes the node identity out of the
+// context and touches nothing else: no metadata call, no publish.
+func (s *Service) PreRun(ctx context.Context) error {
+	s.l = logger.GetLogger(s.Name())
+	if val := ctx.Value(common.ContextNodeKey); val != nil {
+		if node, ok := val.(common.Node); ok {
+			// Only the runtime identity: the role was set at construction
+			// and replacing the whole struct would blank it, leaving every
+			// stored row without the node_type the schema separates roles by.
+			s.node.NodeID = node.NodeID
+			s.node.GRPCAddress = node.GrpcAddress
+			s.node.HTTPAddress = node.HTTPAddress
+		}
+	}
+	return nil
+}
+
+// SetNodeType records which role these logs belong to.
+func (s *Service) SetNodeType(t string) { s.node.NodeType = t }
+
+// Serve creates the schema, binds the budget to the memory protector and
+// starts the consumer. It returns immediately: the consumer runs until the
+// closer is notified.
+func (s *Service) Serve() run.StopNotify {
+	if !s.cfg.Enabled {
+		s.closer.Done()
+		return s.closer.CloseNotify()
+	}
+	s.sink.SetNode(s.node)
+	s.bindBudget()
+	s.metrics = newMetrics(s.omr)
+
+	ctx, cancel := context.WithTimeout(context.Background(), schemaTimeout)
+	s.applySchema(createSchema(ctx, s.metadata, s.cfg.ShardNum, s.cfg.TTLDays))
+	cancel()
+
+	// run.Go rather than a raw goroutine, so a panic in the consumer is
+	// recovered and counted instead of taking the process down.
+	run.Go(context.Background(), s.Name(), s.l, func(runCtx context.Context) {
+		s.consume(runCtx)
+	})
+	return s.closer.CloseNotify()
+}
+
+// bindBudget replaces the configured cap with the adaptive budget wherever a
+// memory protector is actually running. Where availability is unknown the cap
+// is the only term, which is the steady state on any role whose protector is
+// not registered.
+func (s *Service) bindBudget() {
+	if s.pm == nil {
+		return
+	}
+	fraction := s.cfg.MemoryFraction
+	reserve := s.cfg.MemoryReserve
+	configured := s.cfg.MaxBytes
+	s.sink.SetBudget(func() int64 {
+		available := s.pm.AvailableBytes()
+		if available < 0 {
+			// Unknown is not unlimited.
+			return configured
+		}
+		headroom := available - reserve
+		if headroom < 0 {
+			headroom = 0
+		}
+		adaptive := int64(float64(headroom) * fraction)
+		if adaptive < configured {
+			return adaptive
+		}
+		return configured
+	})
+}
+
+// consume is the single goroutine that drains the buffer. It selects over the
+// closer, the flush ticker and the buffer itself, so both the interval and the
+// size trigger can fire; a scheduled callback could only serve the first.
+func (s *Service) consume(ctx context.Context) {
+	defer s.closer.Done()
+
+	ticker := time.NewTicker(s.cfg.FlushInterval)
+	defer ticker.Stop()
+	retry := time.NewTicker(schemaRetryInterval)
+	defer retry.Stop()
+
+	batch := make([]entry, 0, s.cfg.FlushSize)
+	var batchBytes int64
+	stop := s.closer.CloseNotify()
+	for {
+		select {
+		case <-stop:
+			// A batch held back for a retry is drained with the rest.
+			s.drain(ctx, append(s.pending, batch...))
+			s.pending = nil
+			return
+		case <-retry.C:
+			s.retrySchema(ctx)
+		case <-ticker.C:
+			s.report()
+			if len(batch) > 0 || len(s.pending) > 0 {
+				batch = s.flushPending(ctx, batch)
+				batchBytes = 0
+			}
+		case e := <-s.sink.queue:
+			batch = append(batch, e)
+			batchBytes += e.size
+			// While a batch is held back, new entries wait for the next tick, so
+			// the retries run once per interval and not once per incoming event.
+			if len(s.pending) == 0 && s.batchFull(len(batch), batchBytes) {
+				batch = s.flushPending(ctx, batch)
+				batchBytes = 0
+			}
+		}
+	}
+}
+
+// batchFull reports whether a batch has reached a flush trigger: the event
+// count, or a quarter of the byte budget. The byte limit keeps one slow
+// publish from holding most of the budget in flight, which would stall
+// admission while it runs.
+func (s *Service) batchFull(n int, bytes int64) bool {
+	if n >= s.cfg.FlushSize {
+		return true
+	}
+	limit := s.sink.budgetBytes() / 4
+	return limit > 0 && bytes >= limit
+}
+
+// flushPending publishes what an earlier attempt held back together with
+// batch, and returns batch emptied for reuse.
+func (s *Service) flushPending(ctx context.Context, batch []entry) []entry {
+	work := batch
+	if len(s.pending) > 0 {
+		work = make([]entry, 0, len(s.pending)+len(batch))
+		work = append(work, s.pending...)
+		work = append(work, batch...)
+	}
+	s.pending = nil
+	if kept := s.flush(ctx, work, true); kept != nil {
+		// Copied, because batch's backing array is reused by the caller.
+		s.pending = append([]entry(nil), kept...)
+	}
+	return batch[:0]
+}
+
+// report publishes the sink's own counters. They travel the same transport as
+// the events they count, so under native-only observability an outage loses
+// both; keeping Prometheus enabled alongside is what makes the loss visible.
+func (s *Service) report() {
+	if s.metrics == nil {
+		return
+	}
+	s.metrics.observe(s.sink)
+}
+
+// retrySchema re-runs the schema pass on every tick, including when the last
+// one succeeded. Latching on the first success would mean the schema is checked
+// exactly once per process: a group dropped at runtime would never be noticed,
+// and because a refused local write is not reported per event, every later
+// batch would be published into nothing and counted as written. createSchema is
+// idempotent, so the healthy path costs two AlreadyExists replies and a read.
+func (s *Service) retrySchema(ctx context.Context) {
+	retryCtx, cancel := context.WithTimeout(ctx, schemaTimeout)
+	defer cancel()
+	s.applySchema(createSchema(retryCtx, s.metadata, s.cfg.ShardNum, s.cfg.TTLDays))
+}
+
+// applySchema records the outcome of one schema attempt. It is the only writer
+// of ready, incompatible and shardNum, so they can never disagree: a later
+// success clears the incompatible flag an earlier attempt set, which is what
+// lets an operator fix the stream without restarting the node.
+//
+// A transient metadata failure does not clear ready. Once the schema is known
+// to exist, an unreachable metadata service is a reason to keep publishing on
+// what was already established, not a reason to start dropping batches that
+// would have been written.
+func (s *Service) applySchema(state schemaState, err error) {
+	switch {
+	case err == nil:
+		s.ready = true
+		s.incompatible = false
+		s.shardNum = state.shardNum
+		s.warnOnce(&s.warnedShard, state.shardMismatch)
+		s.warnOnce(&s.warnedTTL, state.ttlMismatch)
+	case errors.Is(err, errSchemaIncompatible):
+		// Logged when the stream becomes incompatible, not on every pass: the
+		// pass repeats every schemaRetryInterval, and an error line every ten
+		// seconds for as long as the stream is wrong would bury everything
+		// else. A later success clears the flag, so a recurrence is logged too.
+		first := !s.incompatible
+		s.ready = false
+		s.incompatible = true
+		if first {
+			s.l.Error().Err(err).Msgf(
+				"the %q stream in %q cannot store this version's log events; "+
+					"drop and recreate it to enable native logging",
+				StreamName, GroupName)
+		}
+	case !s.ready:
+		// Never established. Not fatal: the buffer keeps accepting and the
+		// consumer retries, so a late metadata service costs nothing permanent.
+		s.l.Error().Err(err).Msg("failed to create the native log schema; will retry")
+	default:
+		// Established before and metadata is momentarily unreachable. Keep
+		// publishing; a real rejection is reported by the publisher.
+		s.l.Debug().Err(err).Msg("could not re-check the native log schema; keeping the last known state")
+	}
+}
+
+// warnOnce reports a configuration that is being ignored, once per process.
+// The schema pass now runs every tick, so an unguarded warning here would be
+// the noisiest line the node emits.
+func (s *Service) warnOnce(done *bool, msg string) {
+	if msg == "" || *done {
+		return
+	}
+	*done = true
+	s.l.Warn().Msg(msg)
+}
+
+// drain publishes whatever is still held at shutdown, bounded so that teardown
+// is never blocked. Admission has already stopped by this point, so the set it
+// publishes is exactly the set admitted before the cutoff.
+func (s *Service) drain(ctx context.Context, batch []entry) {
+	deadline := time.Now().Add(s.cfg.DrainTimeout)
+	// Successive chunks, not one: a shutdown with more than FlushSize queued
+	// would otherwise publish the first chunk and count the rest as lost while
+	// the deadline still had room.
+	for time.Now().Before(deadline) {
+		drained := false
+		for len(batch) < s.cfg.FlushSize {
+			select {
+			case e := <-s.sink.queue:
+				batch = append(batch, e)
+				drained = true
+			default:
+			}
+			if !drained || len(batch) == 0 {
+				break
+			}
+			if len(s.sink.queue) == 0 {
+				break
+			}
+		}
+		if len(batch) == 0 {
+			break
+		}
+		// Not retainable: at shutdown there is no next tick to retry on.
+		s.flush(ctx, batch, false)
+		batch = batch[:0]
+		if len(s.sink.queue) == 0 {
+			break
+		}
+	}
+	// Anything still queued past the deadline is lost, and counted rather than
+	// discarded silently.
+	for {
+		select {
+		case e := <-s.sink.queue:
+			s.sink.queued.Add(-e.size)
+			s.sink.release(e.req)
+			s.sink.drop(reasonShutdown)
+		default:
+			return
+		}
+	}
+}
+
+// flush turns one batch into write requests and publishes it. Every path
+// that does not keep the batch releases the requests back to the pool and
+// settles the byte accounting, so a failure costs the batch and nothing more.
+//
+// It keeps the batch -- still charged, still alive -- only when retainable is
+// set and the local write topic has no subscriber yet. The stream service
+// registers that topic and can start after the first flush, and the lines that
+// lose that race are the startup lines, which are the ones worth keeping. The
+// caller retries a kept batch on the next tick, up to destinationRetries times.
+func (s *Service) flush(ctx context.Context, batch []entry, retainable bool) (kept []entry) {
+	var size int64
+	for _, e := range batch {
+		size += e.size
+	}
+	encodeFailed := 0
+	defer func() {
+		// Recovered here rather than at the goroutine: run.Go recovers a panic
+		// but does not restart the consumer, and consume settles the closer on
+		// its way out, so one bad batch would end native logging for the life of
+		// the process and leave the buffer charged and undrained.
+		if r := recover(); r != nil {
+			kept = nil
+			s.sink.dropN(reasonPublishFailed, len(batch)-encodeFailed)
+			reportf("native log flush panicked, batch dropped: %v", r)
+		}
+		s.sink.inFlight.Add(-size)
+		if kept != nil {
+			// Still charged as queued: the bytes are held until the retry.
+			return
+		}
+		s.sink.queued.Add(-size)
+		for _, e := range batch {
+			s.sink.release(e.req)
+		}
+	}()
+	s.sink.inFlight.Add(size)
+
+	if !s.ready {
+		reason := reasonSchemaMissing
+		if s.incompatible {
+			reason = reasonSchemaIncompatible
+		}
+		s.sink.dropN(reason, len(batch))
+		return nil
+	}
+
+	messages := make([]bus.Message, 0, len(batch))
+	for _, e := range batch {
+		// The identity is known now even when it was not at admission.
+		s.sink.stamp(e)
+		iwr, err := s.internalRequest(e.req)
+		if err != nil {
+			encodeFailed++
+			s.sink.drop(reasonEncodeFailed)
+			continue
+		}
+		messages = append(messages, bus.NewBatchMessageWithNode(
+			bus.MessageID(time.Now().UnixNano()), "", iwr))
+	}
+	if len(messages) == 0 {
+		return nil
+	}
+
+	publisher := s.pipeline.NewBatchPublisher(s.cfg.WriteTimeout)
+	pubCtx, cancel := context.WithTimeout(ctx, s.cfg.WriteTimeout)
+	defer cancel()
+	_, err := publisher.Publish(pubCtx, data.TopicStreamWrite, messages...)
+	nodeErrs, closeErr := publisher.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		// Close reports a destination's refusal in its map and returns a nil
+		// error alongside it. On the local pipeline that map is the only report
+		// there is -- Publish buffers and cannot fail, and the bus drops the
+		// payload of an unhealthy listener while returning the reason here. So
+		// discarding it means a refused batch is counted as written.
+		err = rejection(nodeErrs)
+	}
+	unready := errors.Is(err, bus.ErrTopicNotExist)
+	// A batch with an encode failure is not kept: that entry is already
+	// counted, and a retry would count it again on every attempt.
+	if unready && retainable && encodeFailed == 0 && s.unreadyAttempts < destinationRetries {
+		s.unreadyAttempts++
+		return batch
+	}
+	// The sink never logs through the logging path it publishes on, so a
+	// failure here goes straight to stderr rather than back into itself.
+	switch {
+	case unready:
+		s.unreadyAttempts = 0
+		s.sink.dropN(reasonDestinationUnready, len(messages))
+		reportf("native log destination still has no subscriber, batch dropped: %v", err)
+	case err != nil:
+		s.sink.dropN(reasonPublishFailed, len(messages))
+		reportf("native log publish failed: %v", err)
+	default:
+		s.unreadyAttempts = 0
+		s.sink.written.Add(uint64(len(messages)))
+	}
+	return nil
+}
+
+// rejection turns a publisher's per-destination error map into one error. Any
+// entry means the batch did not land: this sink publishes a batch to a single
+// destination, so there is no partial success to preserve.
+func rejection(nodeErrs map[string]*common.Error) error {
+	for node, ce := range nodeErrs {
+		if ce == nil {
+			continue
+		}
+		if node == "" {
+			node = "the destination"
+		}
+		return fmt.Errorf("%s refused the batch: %w", node, ce)
+	}
+	return nil
+}
+
+// internalRequest adds the routing the internal write path needs. The shard is
+// computed from the entity the way the normal write path computes it, rather
+// than the fixed shard zero the metric collector writes with.
+func (s *Service) internalRequest(req *streamv1.WriteRequest) (*streamv1.InternalWriteRequest, error) {
+	entity := entityOf(req)
+	key, err := entity.ToEntity()
+	if err != nil {
+		return nil, err
+	}
+	shardID, err := partition.ShardID(key.Marshal(), s.shardNum)
+	if err != nil {
+		return nil, err
+	}
+	return &streamv1.InternalWriteRequest{
+		Request:      req,
+		ShardId:      uint32(shardID),
+		EntityValues: entity.Encode(),
+	}, nil
+}
+
+// entityOf picks the entity tags out of the searchable family, in the order
+// the schema declares them.
+func entityOf(req *streamv1.WriteRequest) pbv1.EntityValues {
+	tags := req.GetElement().GetTagFamilies()[0].GetTags()
+	values := make(pbv1.EntityValues, 0, len(entityTags))
+	for _, name := range entityTags {
+		for i, declared := range searchableTags {
+			if declared == name && i < len(tags) {
+				values = append(values, tags[i])
+			}
+		}
+	}
+	return values
+}
+
+// GracefulStop stops admission before draining. Draining first would leave a
+// window the length of one publish in which lines are admitted and then
+// stranded in a buffer nobody will read again.
+func (s *Service) GracefulStop() {
+	logger.StopNative()
+	s.closer.CloseThenWait()
+}
+
+// reportf writes the sink's own failures straight to stderr. Routing them
+// through the logging path would feed the buffer that just failed.
+func reportf(format string, args ...any) {
+	_, _ = fmt.Fprintf(os.Stderr, format+"\n", args...)
+}

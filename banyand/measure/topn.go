@@ -1256,7 +1256,7 @@ func mergeTopNBinaryValues[K streaming.TopSortKey](
 	hasValidData := false
 
 	if err := topNValue.Unmarshal(left, decoder); err != nil {
-		log.Warn().Err(err).Msg("failed to unmarshal left topN value, ignoring left side")
+		log.Get().Warn().Err(err).Msg("failed to unmarshal left topN value, ignoring left side")
 	} else {
 		valueName = topNValue.valueName
 		entityTagNames = topNValue.entityTagNames
@@ -1266,7 +1266,7 @@ func mergeTopNBinaryValues[K streaming.TopSortKey](
 
 	topNValue.Reset()
 	if err := topNValue.Unmarshal(right, decoder); err != nil {
-		log.Warn().Err(err).Msg("failed to unmarshal right topN value, ignoring right side")
+		log.Get().Warn().Err(err).Msg("failed to unmarshal right topN value, ignoring right side")
 	} else {
 		if !hasValidData {
 			valueName = topNValue.valueName

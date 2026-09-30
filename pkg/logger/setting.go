@@ -33,7 +33,25 @@ import (
 
 const (
 	rootName = "ROOT"
+)
 
+// testConsoleTarget redirects normal logging in tests. It is nil in production.
+var testConsoleTarget io.Writer
+
+// UseConsoleTarget sends normal logging to w instead of stderr, and returns a
+// function that restores the previous target. Init reads the target, so this
+// MUST be called before the logging of the code under test starts.
+//
+// It exists for tests that assert on what the console printed. A test process
+// that runs a server in-process cannot otherwise separate the server's console
+// output from its own.
+func UseConsoleTarget(w io.Writer) func() {
+	previous := testConsoleTarget
+	testConsoleTarget = w
+	return func() { testConsoleTarget = previous }
+}
+
+const (
 	// Environment variables bound to the --logging-env and --logging-level flags by
 	// pkg/config. They are read directly here because the root logger has to produce
 	// output before the command tree that owns those flags exists.
@@ -179,6 +197,13 @@ func RegisterFlags(fs *pflag.FlagSet, logging *Logging) {
 
 // Init initializes a rs/zerolog logger from user config.
 func Init(cfg Logging) (err error) {
+	return InitWithNative(cfg, NativeLogging{})
+}
+
+// InitWithNative initializes the logger with both destinations configured. The
+// native configuration is resolved first: if it is unusable the root logger is
+// left untouched, so a bad native flag cannot cost the process its logging.
+func InitWithNative(cfg Logging, native NativeLogging) (err error) {
 	switch cfg.Env {
 	case "prob", "":
 		os.Setenv("GRPC_GO_LOG_SEVERITY_LEVEL", "ERROR")
@@ -186,7 +211,16 @@ func Init(cfg Logging) (err error) {
 	case "dev":
 		os.Setenv("GRPC_GO_LOG_SEVERITY_LEVEL", "INFO")
 	}
-	return root.set(cfg)
+	if err = applyNative(native); err != nil {
+		return err
+	}
+	if err = root.set(cfg); err != nil {
+		return err
+	}
+	// After the root is replaced, so a Lazy that sees the new generation
+	// builds from the new root.
+	initGeneration.Add(1)
+	return nil
 }
 
 // getLogger initializes a root logger.
@@ -220,10 +254,27 @@ func getLogger(cfg Logging) (*Logger, error) {
 	} else {
 		w = os.Stderr
 	}
-	ctx := zerolog.New(w).Level(lvl).With().Timestamp()
+	if testConsoleTarget != nil {
+		w = testConsoleTarget
+	}
+	// The console target is kept so that Named can build a gate per module
+	// without reaching back through the root logger's writer.
+	consoleTarget := w
+	nativeLvl, excluded := resolveNative(rootName)
+	nativeOn := NativeEnabled()
+	if nativeOn {
+		w = zerolog.MultiLevelWriter(
+			&consoleWriter{out: consoleTarget, level: lvl},
+			&nativeWriter{module: rootName, level: nativeLvl, excluded: excluded},
+		)
+	}
+	ctx := zerolog.New(w).Level(admissionFloor(lvl, nativeLvl, nativeOn)).With().Timestamp()
 	if development {
 		ctx = ctx.Stack().Caller()
 	}
 	l := ctx.Logger()
-	return &Logger{module: rootName, Logger: &l, modules: modules, development: development}, nil
+	return &Logger{
+		module: rootName, Logger: &l, modules: modules, development: development,
+		consoleTarget: consoleTarget, consoleLevel: lvl,
+	}, nil
 }

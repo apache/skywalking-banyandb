@@ -34,7 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
 
-var log = logger.GetLogger("metrics")
+var log = logger.NewLazy("metrics")
 
 var (
 	cpuCount      = 0
@@ -103,18 +103,18 @@ func (p *metricService) initMetrics() {
 func collectCPU() {
 	once4CpuCount.Do(func() {
 		if c, err := cpuCountsFunc(false); err != nil {
-			log.Error().Err(err).Msg("cannot get cpu count")
+			log.Get().Error().Err(err).Msg("cannot get cpu count")
 		} else {
 			cpuCount = c
 		}
 	})
 	s, err := cpuTimesFunc(false)
 	if err != nil {
-		log.Error().Err(err).Msg("cannot get cpu stat")
+		log.Get().Error().Err(err).Msg("cannot get cpu stat")
 		return
 	}
 	if len(s) == 0 {
-		log.Error().Msg("cannot get cpu stat")
+		log.Get().Error().Msg("cannot get cpu stat")
 		return
 	}
 	allStat := s[0]
@@ -139,7 +139,7 @@ func collectCPU() {
 func collectMemory() {
 	m, err := mem.VirtualMemory()
 	if err != nil {
-		log.Error().Err(err).Msg("cannot get memory stat")
+		log.Get().Error().Err(err).Msg("cannot get memory stat")
 		return
 	}
 	gaugesMu.RLock()
@@ -155,7 +155,7 @@ func collectMemory() {
 func collectNet() {
 	stats, err := getNetStat(context.Background())
 	if err != nil {
-		log.Error().Err(err).Msg("cannot get net stat")
+		log.Get().Error().Err(err).Msg("cannot get net stat")
 		return
 	}
 	gaugesMu.RLock()
@@ -222,7 +222,7 @@ func collectDisk() {
 		if err != nil {
 			if _, statErr := os.Stat(path); statErr != nil {
 				if !os.IsNotExist(statErr) {
-					log.Error().Err(statErr).Msgf("failed to get stat for path: %s", path)
+					log.Get().Error().Err(statErr).Msgf("failed to get stat for path: %s", path)
 				}
 			}
 			continue

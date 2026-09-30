@@ -30,6 +30,120 @@ Those lists are not exhaustive. A module name is whatever scope the code passes 
 --logging-modules=storage --logging-levels=debug
 ```
 
+## Native Self-Storage
+
+BanyanDB can store its own log events in BanyanDB, alongside the measures native observability already writes into `_monitoring`. It is off by default and adds a second destination rather than replacing the normal one, which stays enabled and is never degraded by it.
+
+```sh
+banyand standalone --logging-native-enabled --logging-native-level=info
+```
+
+Events land in the `_monitoring_log` group as elements of a stream named `log`, queryable through the ordinary stream API:
+
+```sh
+bydbctl stream query -f - <<EOF
+name: "log"
+groups: ["_monitoring_log"]
+projection:
+  tagFamilies:
+    - name: "searchable"
+      tags: ["node_id", "module", "level", "message"]
+EOF
+```
+
+### What is stored where
+
+A log line is split across two tag families, and nothing is stored twice.
+
+| Tag family | Tags | Holds |
+|---|---|---|
+| `searchable` | `node_id`, `node_type`, `module`, `level`, `grpc_address`, `http_address`, `message`, `log_id` | the keys with a tag of their own |
+| `data` | `fields` (binary) | **everything else on the line**, as a JSON object; absent when the line has no extra keys |
+
+The split matters when you go looking for a value. A call site that writes
+
+```go
+l.Warn().Str("group", "sw_metric").Dur("took", d).Msg("flush took longer than expected")
+```
+
+stores `message` in `searchable` and `{"group":"sw_metric","took":1200}` in `fields`. The query above would not show `group` at all — project the `data` family to get it:
+
+```sh
+bydbctl stream query -f - <<EOF
+name: "log"
+groups: ["_monitoring_log"]
+projection:
+  tagFamilies:
+    - name: "searchable"
+      tags: ["node_id", "module", "level", "message"]
+    - name: "data"
+      tags: ["fields"]
+EOF
+```
+
+`fields` is a binary tag holding JSON, so it is returned as an opaque blob and is not filterable. A call site that adds a new key needs no schema change for it to be kept.
+
+### Filtering
+
+`node_id` and `level` are the entity, so filtering on them selects series directly. Entity tags accept only `=` and `IN`, which is why several levels are selected with `IN` rather than by negating one.
+
+Every other tag is filterable but **unindexed** in this version: there are no index rules on the stream, so a condition on `module` or `message` is evaluated after the scan rather than through a posting list. Narrow the time range and the entity first.
+
+`MATCH` on `message` does **not** do what it does elsewhere. An analyzer comes from an index rule, and this stream has none, so the value is compared whole instead of being tokenized: searching for `timeout` will not find `write timeout exceeded`. The condition does not error — it just fails to match — so an empty result may be this rather than an absence of logs. Use `=` on the full message, or project `message` and filter outside the database.
+
+The flags live in their own namespace, `--logging-native-*` with `BYDB_LOGGING_NATIVE_*`, which inherits nothing from `--logging-*`. An explicit flag beats its environment variable, as everywhere else.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--logging-native-enabled` | `false` | store this process's own logs |
+| `--logging-native-level` | `info` | minimum level reaching storage, independent of `--logging-level` |
+| `--logging-native-modules` / `--logging-native-levels` | – | per-module native levels, one level per module, matched like `--logging-modules`; an excluded module stays excluded |
+| `--logging-native-exclude-modules` | built-in set | module prefixes never stored; replaces the built-in set rather than adding to it |
+| `--logging-native-flush-interval` | `1s` | longest a buffered event waits |
+| `--logging-native-flush-size` | `100` | buffered events that trigger a write ahead of the interval; a batch also closes at a quarter of the buffer budget |
+| `--logging-native-write-timeout` | `5s` | time limit for one batch write |
+| `--logging-native-drain-timeout` | `5s` | time limit for writing what is still buffered at shutdown; the last write can add up to `--logging-native-write-timeout` |
+| `--logging-native-max-bytes` | `32mb` | cap on the buffer |
+| `--logging-native-max-event-bytes` | `64kb` | larger events are dropped whole rather than truncated |
+| `--logging-native-memory-fraction` | `0.02` | where a memory protector runs, the buffer may use this fraction of available memory after the reserve; in `(0, 1]` |
+| `--logging-native-memory-reserve` | `64mb` | available memory kept out of that budget |
+| `--logging-native-shard-num` | `2` | shards of `_monitoring_log`, used when the group is created; a node that finds the group already there follows the group's count and logs a warning if the flag differs |
+| `--logging-native-ttl-days` | `7` | retention, used when the group is created; a different value on a later node is reported and ignored |
+
+The buffer budget is `min(max-bytes, memory-fraction × (available − memory-reserve))` where a memory protector runs, and `max-bytes` elsewhere.
+
+An event charges its own line plus about 1.8KiB, which is what the built write request and its tags hold in memory. The default 32MiB budget therefore admits roughly 17k buffered events, not 32MiB of log text. Charging the line alone would let the buffer hold ten times the configured budget.
+
+Because the two destinations have independent thresholds, native can be the more verbose of the two. Running normal logging at `error` and native at `info` keeps stderr quiet while the database retains the `info` and `warn` events that describe what a node was doing beforehand:
+
+| Event | Normal logging | Native storage |
+|---|---|---|
+| `debug` | – | – |
+| `info`, `warn` | dropped | stored |
+| `error` | printed | stored |
+
+Note the consequence: an `info` event dropped by the buffer has no copy on stderr. Losses are counted rather than silent, under `banyandb_logging_native_log_dropped_total{reason}`, with `banyandb_logging_native_log_written_total` and the buffer gauges alongside. `banyandb_logging_native_log_buffer_bytes` has a `state` label: `queued` is waiting to be written and `in_flight` is being written, so a stalled write shows as `in_flight` that does not fall. Those counters travel the same transport as the events they count, so keeping `--observability-modes=prometheus` enabled is what makes a loss visible during an outage.
+
+The `reason` label takes one of nine values, so a loss is always attributable to a stage:
+
+| `reason` | Meaning | What to do |
+|---|---|---|
+| `buffer_full` | the ring held its maximum number of events | the writer is behind; raise `--logging-native-level` to admit less |
+| `memory_pressure` | the byte budget was exhausted, or nothing was available | raise `--logging-native-max-bytes`, or accept it: on a node short of memory this is the sink yielding, as intended |
+| `oversize_event` | one event exceeded `--logging-native-max-event-bytes` | raise it, or shorten the log line |
+| `encode_failed` | the line was not the JSON the sink expects | a bug; report it with the module name |
+| `publish_failed` | the batch did not reach storage | look at the write path — the whole batch is lost, never re-queued |
+| `schema_unavailable` | the group or stream could not be created yet | usually transient at startup; retried every 10s |
+| `schema_incompatible` | a `log` stream exists with a shape this version cannot write | drop and recreate the `_monitoring_log` group; retrying will not fix it. The error is logged once |
+| `destination_unready` | the local write path still had no subscriber after 10 retries, one per flush interval | expected only at startup; if it persists, the stream service did not start |
+| `shutdown_deadline` | still buffered when the drain deadline passed | expected on a busy node during shutdown |
+
+The modules on the write path the sink publishes through are never stored: admitting them would let one stored line produce the next. `_monitoring_log`, the log group's own storage, is excluded for the same reason and stays excluded whatever `--logging-native-exclude-modules` says; a blank entry in that list is ignored rather than taken as a prefix of every module.
+
+An event logged without a level is stored with the level `none`, because the level is half the series key and an empty one cannot be queried. Such an event arrives with no severity at all — a library writing through a standard `log.Logger` produces one — so it is admitted as an informational event and obeys `--logging-native-level` like any other. The buffer is bounded and in-memory only -- no queue files, no write-ahead log, no disk fallback -- and it never blocks the caller: over budget the newest event is dropped and counted, so a burst keeps the head that explains it.
+
+`restore` and `migration` do not offer these flags at all. Both run when the data tier is unavailable, and a tool that runs while the database is down cannot log into it.
+
 ## Slow Query Logging
 
 BanyanDB supports slow query logging. The `slow-query` flag is used to set the slow query threshold. If a query takes longer than the threshold, it will be logged as a slow query. The default value is `0`, which means no slow query logging. This flag is only used for the data and standalone servers.

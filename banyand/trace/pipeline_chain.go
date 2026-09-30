@@ -31,7 +31,7 @@ import (
 )
 
 var (
-	chainLog = logger.GetLogger("trace").Named("pipeline-chain")
+	chainLog = logger.NewLazy("trace", "pipeline-chain")
 	// samplerExecutionSlots bounds batches retained by sampler calls that ignore
 	// the execution timeout. A slot is released only after Decide returns.
 	samplerExecutionSlots = make(chan struct{}, cgroups.CPUs())
@@ -418,11 +418,11 @@ func (mc *mergeChain) runChainWithSamplers(samplers []sdk.Sampler, batch *sdk.Tr
 ) sdk.Verdict {
 	onBypass := func(_ int, info sdk.BypassInfo) {
 		if info.Reason == sdk.BypassReasonLengthMismatch {
-			chainLog.Warn().Int("got", info.Got).Int("want", info.Want).
+			chainLog.Get().Warn().Int("got", info.Got).Int("want", info.Want).
 				Str("group", mc.group).Str("schema", mc.schema).Msg("sampler verdict length mismatch; bypassing (retain)")
 			return
 		}
-		chainLog.Warn().Err(info.Err).Str("group", mc.group).Str("schema", mc.schema).Msg("sampler link failed; bypassing (retain)")
+		chainLog.Get().Warn().Err(info.Err).Str("group", mc.group).Str("schema", mc.schema).Msg("sampler link failed; bypassing (retain)")
 	}
 	if observation != nil {
 		observation.pluginCalls.Add(uint64(len(mc.samplers)))
