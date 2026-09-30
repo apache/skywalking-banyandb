@@ -24,28 +24,30 @@ name: Trace Pipeline E2E
 # integration suites under test/integration/{standalone,distributed}/pipeline
 # that previously forked a binary via pkg/test/setup/external.go.
 #
-# Self-contained, like test-plugin-sidecar-e2e.yml: own failure domain, own
-# build of the .so and CGO server (CGO_ENABLED=1, no -race — see
-# Makefile "Trace pipeline plugin targets" comment for the rationale).
-# Path filters keep the gate off unrelated changes; workflow_dispatch allows
-# manual runs.
+# Called from ci.yml after prepare, like test-fodc-e2e.yml: the job reuses
+# the prepare.yml build artifacts (generated code) and builds the .so and the
+# CGO server itself (CGO_ENABLED=1, no -race — see Makefile "Trace pipeline
+# plugin targets" comment for the rationale). ci.yml's
+# detect_trace_pipeline_e2e_changes job sets should_run so the gate stays off
+# unrelated changes.
 on:
-  pull_request:
-    paths:
-      - 'banyand/trace/**'
-      - 'pkg/pipeline/sdk/**'
-      - 'test/plugins/_latencystatussampler/**'
-      - 'test/cases/tracepipeline/**'
-      - 'test/e2e/tracepipeline/**'
-      - '.github/workflows/test-trace-pipeline-e2e.yml'
-  push:
-    branches:
-      - main
-  workflow_dispatch: {}
+  workflow_call:
+    inputs:
+      should_run:
+        required: false
+        type: boolean
+        default: true
 
 jobs:
+  skip:
+    if: ${{ !inputs.should_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip trace pipeline E2E
+        run: echo "Skipping trace pipeline E2E because this change does not affect trace-pipeline paths."
+
   trace-pipeline-e2e:
-    if: github.repository == 'apache/skywalking-banyandb'
+    if: ${{ inputs.should_run }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -57,13 +59,7 @@ jobs:
       - name: Setup build environment
         uses: ./.github/actions/setup-build-env
         with:
-          # This workflow runs standalone, not as a ci.yml workflow_call, so the
-          # build-artifacts uploaded by prepare.yml do not exist in this run.
-          # Generate the code in-job instead, like test-plugin-sidecar-e2e.yml.
-          download-artifacts: 'false'
-
-      - name: Generate codes
-        run: make generate
+          download-artifacts: 'true'
 
       - name: Run trace pipeline e2e gate
         run: |
