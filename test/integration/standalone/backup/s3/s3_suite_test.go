@@ -59,7 +59,7 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 }, func(address []byte) {
 	addr := string(address)
 	err := backup.SetupConnection(testVars, addr,
-		"s3:///"+dockertesthelper.BucketName+testVars.DestDir,
+		"s3://"+dockertesthelper.BucketName+testVars.DestDir,
 		[]string{
 			"--s3-credential-file", dockertesthelper.S3CredentialsPath,
 			"--s3-config-file", dockertesthelper.S3ConfigPath,
