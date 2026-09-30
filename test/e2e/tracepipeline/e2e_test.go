@@ -25,7 +25,7 @@
 //
 // The bash orchestrator (run.sh) builds the .so + CGO banyand-server, starts
 // the standalone, and exports the gRPC endpoint + the property-schema
-// endpoint + the trusted-dir + the staged .so name + the http/metrics port +
+// endpoint + the trusted-dir + the staged .so name + the metrics port +
 // the data dir as env vars. This test drives the running process over gRPC
 // and asserts the dynamic-sampler lifecycle end-to-end. The process-restart
 // replay (the property only a process kill+relaunch can prove) is exercised
@@ -34,10 +34,10 @@
 //
 // Phases (selected via E2E_PHASE):
 //   - "lifecycle": Register → Update → Remove → InvalidConfig on a live
-//                  server.
+//     server.
 //   - "restart":   assert sampler_active_count > 0 after process restart
-//                  with no further RegisterSamplerRuntime calls (the schema
-//                  store must have replayed the pipeline on boot).
+//     with no further RegisterSamplerRuntime calls (the schema
+//     store must have replayed the pipeline on boot).
 package tracepipeline_e2e
 
 import (
@@ -72,7 +72,7 @@ import (
 var (
 	grpcAddr     string
 	propertyAddr string
-	httpPort     int
+	metricsPort  int
 	trustedDir   string
 	soName       string
 	dataDir      string
@@ -88,18 +88,20 @@ func TestE2E(t *testing.T) {
 	dataDir = os.Getenv("DATA_DIR")
 	pluginSOPath = os.Getenv("PLUGIN_SO_PATH")
 	phase = os.Getenv("E2E_PHASE")
-	httpPortStr := os.Getenv("HTTP_PORT")
-	if httpPortStr != "" {
+	metricsPortStr := os.Getenv("METRICS_PORT")
+	if metricsPortStr != "" {
 		var parseErr error
-		httpPort, parseErr = strconv.Atoi(httpPortStr)
-		gomega.Expect(parseErr).NotTo(gomega.HaveOccurred(), "HTTP_PORT=%q", httpPortStr)
+		metricsPort, parseErr = strconv.Atoi(metricsPortStr)
+		if parseErr != nil {
+			t.Fatalf("invalid METRICS_PORT=%q: %v", metricsPortStr, parseErr)
+		}
 	}
 
 	if grpcAddr == "" || propertyAddr == "" || trustedDir == "" || soName == "" || phase == "" {
 		t.Skip("E2E env not set; expected to be invoked by test/e2e/tracepipeline/run.sh")
 	}
 
-	gomega.RegisterTestingT(t)
+	gomega.RegisterFailHandler(ginkgo.Fail)
 	ginkgo.RunSpecs(t, "Trace Pipeline E2E", ginkgo.Label("e2e", "trace-pipeline"))
 }
 
@@ -130,8 +132,8 @@ func writeTwoPartMerge(conn *grpc.ClientConn, rowA, rowB tracepipelinedata.Trace
 	tracepipelinedata.WriteBatchEntries(conn, tracepipeline.PipelineGroup,
 		baseTime, time.Millisecond, []tracepipelinedata.TraceRow{rowA})
 	traceIDA := rowA.Tags[0].GetStr().GetValue()
-	gomega.Eventually(func(innerGm gomega.Gomega) {
-		_ = queryByTraceID(innerGm, conn, traceIDA, baseTime).GetTraces()
+	gomega.Eventually(func(innerGm gomega.Gomega) []*tracev1.Trace {
+		return queryByTraceID(innerGm, conn, traceIDA, baseTime).GetTraces()
 	}, 30*time.Second, 500*time.Millisecond).ShouldNot(gomega.BeEmpty(),
 		"part-1 trace %q must be visible before merge", traceIDA)
 	tracepipelinedata.WriteBatchEntries(conn, tracepipeline.PipelineGroup,
@@ -196,11 +198,11 @@ func dialGRPC() *grpc.ClientConn {
 	return conn
 }
 
-// waitForTraceSchema polls the property endpoint until the "filter" trace
-// schema in the pipeline group is visible, proving the property→standalone
-// schema sync has completed.
+// waitForTraceSchema polls the standalone's public gRPC endpoint until the
+// "filter" trace schema in the pipeline group is visible, proving the
+// property→standalone schema sync has completed.
 func waitForTraceSchema() {
-	conn, err := grpchelper.Conn(propertyAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpchelper.Conn(grpcAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	defer func() { _ = conn.Close() }()
 
@@ -241,7 +243,7 @@ func waitForServerReachable() {
 // the lifecycle phase wrote.
 func preloadSchemas() {
 	reg, regErr := property.NewSchemaRegistryClient(&property.ClientConfig{
-		GRPCTimeout: 10 * time.Second,
+		GRPCTimeout:  10 * time.Second,
 		NodeRegistry: &e2eNodeRegistry{addr: propertyAddr},
 	})
 	gomega.Expect(regErr).NotTo(gomega.HaveOccurred())
@@ -263,15 +265,15 @@ func preloadSchemas() {
 // Used by the restart phase to prove the schema store replayed the pipeline
 // without a fresh RegisterSamplerRuntime call.
 func samplerActiveCount(group string) float64 {
-	if httpPort == 0 {
+	if metricsPort == 0 {
 		return 0
 	}
 	host, _, splitErr := net.SplitHostPort(grpcAddr)
 	gomega.Expect(splitErr).NotTo(gomega.HaveOccurred(), "grpcAddr=%q", grpcAddr)
-	url := fmt.Sprintf("http://%s:%d/metrics", host, httpPort)
+	url := fmt.Sprintf("http://%s:%d/metrics", host, metricsPort)
 
 	httpClient := &http.Client{Timeout: 5 * time.Second}
-	resp, err := httpClient.Get(url) // #nosec G107 -- URL is composed from grpcAddr host + caller-supplied httpPort.
+	resp, err := httpClient.Get(url) // #nosec G107 -- URL is composed from grpcAddr host + caller-supplied metricsPort.
 	if err != nil {
 		return 0
 	}
@@ -326,7 +328,7 @@ func (r *e2eNodeRegistry) GetNode(_ context.Context, _ string) (*databasev1.Node
 
 func (r *e2eNodeRegistry) UpdateNode(_ context.Context, _ *databasev1.Node) error { return nil }
 
-var _ = ginkgo.Describe("Trace Pipeline E2E", func() {
+var _ = ginkgo.Describe("Trace Pipeline E2E", ginkgo.Ordered, func() {
 	var conn *grpc.ClientConn
 	var baseTime time.Time
 
@@ -361,6 +363,12 @@ var _ = ginkgo.Describe("Trace Pipeline E2E", func() {
 	})
 
 	ginkgo.When("E2E_PHASE=lifecycle", func() {
+		ginkgo.BeforeEach(func() {
+			if phase != "lifecycle" {
+				ginkgo.Skip("E2E_PHASE=" + phase)
+			}
+		})
+
 		ginkgo.It("registers, updates, removes, and fail-opens the sampler", func() {
 			ctx := context.Background()
 
@@ -447,6 +455,12 @@ var _ = ginkgo.Describe("Trace Pipeline E2E", func() {
 	})
 
 	ginkgo.When("E2E_PHASE=restart", func() {
+		ginkgo.BeforeEach(func() {
+			if phase != "restart" {
+				ginkgo.Skip("E2E_PHASE=" + phase)
+			}
+		})
+
 		ginkgo.It("replays the pipeline config from the schema store after process restart", func() {
 			// No further RegisterSamplerRuntime call. The schema store
 			// should have replayed the pipeline we registered in the

@@ -57,12 +57,13 @@ jobs:
       - name: Setup build environment
         uses: ./.github/actions/setup-build-env
         with:
-          # The prepare.yml artifacts (proto + ui) are not strictly required
-          # here — this job generates + builds what it needs itself — but the
-          # shared action defaults to download-artifacts:true and the proto
-          # generation in this repo is idempotent, so let it pull the artifact
-          # rather than disabling it.
-          download-artifacts: 'true'
+          # This workflow runs standalone, not as a ci.yml workflow_call, so the
+          # build-artifacts uploaded by prepare.yml do not exist in this run.
+          # Generate the code in-job instead, like test-plugin-sidecar-e2e.yml.
+          download-artifacts: 'false'
+
+      - name: Generate codes
+        run: make generate
 
       - name: Run trace pipeline e2e gate
         run: |

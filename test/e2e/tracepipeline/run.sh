@@ -48,7 +48,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 
 BANYAND_SERVER_CGO_BIN="${BANYAND_SERVER_CGO_BIN:-${REPO_ROOT}/banyand/build/bin/dev/banyand-server}"
 PLUGIN_OUTPUT_DIR="${PLUGIN_OUTPUT_DIR:-${REPO_ROOT}/build/bin/plugins}"
@@ -90,20 +90,21 @@ build_binaries() {
 }
 
 allocate_ports() {
-  # Pick 3 ports: grpc (public client), http (metrics + health), property
+  # Pick 4 ports: grpc (public client), http (HTTP API + health), property
   # (property-schema gRPC; same listener as schema-server-grpc-port when mode
-  # is property).
+  # is property), metrics (observability listener serving /metrics).
   local start=$(( ( RANDOM % 10000 ) + 40000 ))
   GRPC_PORT=$(( start ))
   HTTP_PORT=$(( start + 1 ))
   PROPERTY_PORT=$(( start + 2 ))
+  METRICS_PORT=$(( start + 3 ))
 }
 
 start_standalone() {
   local data_dir="$1"
   local log_dir="$2"
   local trusted_dir="$3"
-  log "Launching standalone banyand-server (grpc=${GRPC_PORT}, http=${HTTP_PORT}, property=${PROPERTY_PORT})"
+  log "Launching standalone banyand-server (grpc=${GRPC_PORT}, http=${HTTP_PORT}, property=${PROPERTY_PORT}, metrics=${METRICS_PORT})"
   "${BANYAND_SERVER_CGO_BIN}" standalone \
     --logging-env=dev \
     --logging-level=info \
@@ -112,6 +113,7 @@ start_standalone() {
     --http-host=127.0.0.1 \
     --http-port="${HTTP_PORT}" \
     --http-grpc-addr="127.0.0.1:${GRPC_PORT}" \
+    --observability-listener-addr="127.0.0.1:${METRICS_PORT}" \
     --node-host-provider=flag \
     --node-host=127.0.0.1 \
     --schema-server-grpc-host=127.0.0.1 \
@@ -142,8 +144,8 @@ wait_for_health() {
     fi
     sleep 1
   done
-  fail "standalone did not become reachable on :${GRPC_PORT} within 60s; tail of log:"
-  tail -120 "${WORK_DIR}/log/standalone.log" 2>/dev/null || true
+  tail -120 "${WORK_DIR}/log/standalone.log" 2>/dev/null >&2 || true
+  fail "standalone did not become reachable on :${GRPC_PORT} within 60s; tail of log above"
 }
 
 run_ginkgo() {
@@ -153,7 +155,7 @@ run_ginkgo() {
   ( cd "${REPO_ROOT}" && \
     GRPC_ADDR="127.0.0.1:${GRPC_PORT}" \
     PROPERTY_ADDR="127.0.0.1:${PROPERTY_PORT}" \
-    HTTP_PORT="${HTTP_PORT}" \
+    METRICS_PORT="${METRICS_PORT}" \
     TRUSTED_DIR="${WORK_DIR}/trusted" \
     SO_NAME="latencystatussampler.so" \
     E2E_PHASE="${phase}" \
@@ -179,6 +181,9 @@ main() {
   mkdir -p "${WORK_DIR}/data/stream" "${WORK_DIR}/data/measure" "${WORK_DIR}/data/property" \
            "${WORK_DIR}/data/trace" "${WORK_DIR}/data/schema" \
            "${WORK_DIR}/log" "${WORK_DIR}/trusted"
+  # File discovery requires the file to exist at boot; a standalone has no
+  # peers, so seed an empty node list (as setup.NewDiscoveryFileWriter did).
+  echo "nodes: []" > "${WORK_DIR}/data/nodes.yaml"
 
   # Stage the .so under its bare filename in the trusted dir; the validator
   # requires the schema-stored Path to be relative to the trusted dir.
