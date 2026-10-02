@@ -242,6 +242,9 @@ func (db *database) Update(ctx context.Context, shardID common.ShardID, id []byt
 	if db.closed.Load() {
 		return errors.New("database is closed")
 	}
+	if currentShard, shardExists := db.getShard(property.Metadata.Group, shardID); !shardExists || currentShard != sd {
+		return errors.New("shard is closed")
+	}
 	err = sd.update(id, property)
 	if err != nil {
 		return err
@@ -514,6 +517,9 @@ func (db *database) Repair(ctx context.Context, id []byte, shardID uint64, prope
 	defer db.mu.RUnlock()
 	if db.closed.Load() {
 		return pkgerrors.WithMessagef(errors.New("database is closed"), "failed to load shard %d", id)
+	}
+	if currentShard, shardExists := db.getShard(property.Metadata.Group, common.ShardID(shardID)); !shardExists || currentShard != s {
+		return pkgerrors.WithMessagef(errors.New("shard is closed"), "failed to load shard %d", id)
 	}
 	_, _, err = s.repair(ctx, id, property, deleteTime)
 	return err
