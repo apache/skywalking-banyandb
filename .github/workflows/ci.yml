@@ -143,6 +143,43 @@ jobs:
           fi
 
           echo "should_run=${should_run}" >> "${GITHUB_OUTPUT}"
+  detect_trace_pipeline_e2e_changes:
+    name: Detect Trace Pipeline E2E Changes
+    runs-on: ubuntu-latest
+    needs: [prepare]
+    outputs:
+      should_run: ${{ steps.filter.outputs.should_run }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detect changed files for trace pipeline E2E
+        id: filter
+        run: |
+          set -euo pipefail
+
+          should_run=true
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            should_run=false
+            base_sha="${{ github.event.pull_request.base.sha }}"
+            head_sha="${{ github.event.pull_request.head.sha }}"
+            changed_files="$(git diff --name-only "${base_sha}" "${head_sha}")"
+            while IFS= read -r changed_file; do
+              case "${changed_file}" in
+                banyand/trace/*|pkg/pipeline/sdk/*|test/plugins/_latencystatussampler/*|test/cases/tracepipeline/*|test/e2e/tracepipeline/*)
+                  should_run=true
+                  break
+                  ;;
+                .github/actions/setup-build-env/*|.github/workflows/test-trace-pipeline-e2e.yml|.github/workflows/prepare.yml|.github/workflows/ci.yml)
+                  should_run=true
+                  break
+                  ;;
+              esac
+            done <<< "${changed_files}"
+          fi
+
+          echo "should_run=${should_run}" >> "${GITHUB_OUTPUT}"
   test-gate:
     name: Enable Tests
     if: github.event_name == 'pull_request'
@@ -167,6 +204,12 @@ jobs:
     uses: ./.github/workflows/test-fodc-e2e.yml
     with:
       should_run: ${{ github.event_name != 'pull_request' || needs.detect_fodc_e2e_changes.outputs.should_run == 'true' }}
+  test-trace-pipeline-e2e:
+    name: Test Trace Pipeline E2E
+    needs: [prepare, detect_trace_pipeline_e2e_changes, test-gate]
+    uses: ./.github/workflows/test-trace-pipeline-e2e.yml
+    with:
+      should_run: ${{ github.event_name != 'pull_request' || needs.detect_trace_pipeline_e2e_changes.outputs.should_run == 'true' }}
   test-pkg:
     name: Test Pkg
     needs: [prepare, test-gate]
@@ -192,16 +235,19 @@ jobs:
       needs.check.result == 'success' &&
       needs.vuln-check.result == 'success' &&
       needs.detect_fodc_e2e_changes.result == 'success' &&
+      needs.detect_trace_pipeline_e2e_changes.result == 'success' &&
       (needs.test-gate.result == 'skipped' || success())
     needs:
       - check
       - vuln-check
       - detect_fodc_e2e_changes
+      - detect_trace_pipeline_e2e_changes
       - test-gate
       - test-banyand
       - test-bydbctl
       - test-fodc
       - test-fodc-e2e
+      - test-trace-pipeline-e2e
       - test-pkg
       - test-integration-standalone
       - test-integration-distributed
