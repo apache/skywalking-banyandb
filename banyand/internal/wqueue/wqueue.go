@@ -169,15 +169,16 @@ func Open[S SubQueue, O any](ctx context.Context, opts Opts[S, O], _ string) (*Q
 }
 
 // GetOrCreateShard gets or creates a shard with the given ShardID.
-// If the shard already exists, it returns it without locking.
-// If the shard doesn't exist, it creates a new one with proper locking.
+// Existing shards are read under a shared lock; creation holds an exclusive lock.
 func (q *Queue[S, O]) GetOrCreateShard(shardID common.ShardID) (*Shard[S], error) {
 	if q.closed.Load() {
 		return nil, errQueueClosed
 	}
-	// First check if shard exists without locking
-	if shard := q.getShard(shardID); shard != nil {
-		return shard, nil
+	q.RLock()
+	cachedShard := q.getShard(shardID)
+	q.RUnlock()
+	if cachedShard != nil {
+		return cachedShard, nil
 	}
 
 	// Shard doesn't exist, need to create it with locking
