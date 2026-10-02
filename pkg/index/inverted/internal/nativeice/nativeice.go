@@ -515,12 +515,21 @@ func (r *Reader) Terms(field string) ([][]byte, error) {
 			return nil, corruptError("iterate term dictionary", iteratorErr)
 		}
 		for {
-			term, _ := iterator.Current()
-			if term == nil {
+			term, value := iterator.Current()
+			// Vellum represents the valid empty key with a nil slice.  A
+			// nil key and zero value, on the other hand, means the iterator
+			// is not positioned on an entry.  Do not discard the empty key:
+			// it is a legitimate indexed term and sorts before every other
+			// term in the dictionary.
+			if term == nil && value == 0 {
 				break
 			}
 			result = append(result, append([]byte(nil), term...))
-			if nextErr := iterator.Next(); nextErr != nil && !errors.Is(nextErr, vellum.ErrIteratorDone) && !strings.Contains(strings.ToLower(nextErr.Error()), "iterator") {
+			nextErr := iterator.Next()
+			if nextErr != nil {
+				if errors.Is(nextErr, vellum.ErrIteratorDone) || strings.Contains(strings.ToLower(nextErr.Error()), "iterator") {
+					break
+				}
 				_ = iterator.Close()
 				_ = dictionary.Close()
 				return nil, corruptError("iterate term dictionary", nextErr)

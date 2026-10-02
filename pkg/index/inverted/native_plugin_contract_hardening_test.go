@@ -87,6 +87,29 @@ func TestNativePluginPreservesEncodedFrequencyAcrossLoadAndMerge(t *testing.T) {
 	require.Equal(t, uint64(3), mergedStats.SumTotalTermFrequency())
 }
 
+func TestNativePluginPreservesEmptyAndNonEmptyTermsAcrossLoadAndMerge(t *testing.T) {
+	payload, encodeErr := nativeice.EncodeSegment(nativeice.Generation{Documents: []nativeice.EncodeDocument{
+		{Identifier: []byte("id-empty"), Fields: []nativeice.EncodeField{{Name: "group", Index: true, Terms: []nativeice.EncodeTerm{{Value: nil, Frequency: 1}}}}},
+		{Identifier: []byte("id-g"), Fields: []nativeice.EncodeField{{Name: "group", Index: true, Terms: []nativeice.EncodeTerm{{Value: []byte("g"), Frequency: 1}}}}},
+	}})
+	require.NoError(t, encodeErr)
+	loaded, loadErr := nativeSegmentPluginLoad(newSegmentBytes(payload))
+	require.NoError(t, loadErr)
+	require.Equal(t, []string{"", "g"}, nidx02bDictionaryTerms(t, loaded, "group"))
+	require.Equal(t, []uint64{0}, nidx02bDocsMatching(t, loaded, "group", ""))
+	require.Equal(t, []uint64{1}, nidx02bDocsMatching(t, loaded, "group", "g"))
+
+	merger := nativeSegmentPluginMerge([]segmentValue{loaded}, []*roaringpkg.Bitmap{nil}, 0)
+	var buffer bytes.Buffer
+	_, writeErr := merger.WriteTo(&buffer, nil)
+	require.NoError(t, writeErr)
+	merged, mergedErr := nativeSegmentPluginLoad(newSegmentBytes(buffer.Bytes()))
+	require.NoError(t, mergedErr)
+	require.Equal(t, []string{"", "g"}, nidx02bDictionaryTerms(t, merged, "group"))
+	require.Equal(t, []uint64{0}, nidx02bDocsMatching(t, merged, "group", ""))
+	require.Equal(t, []uint64{1}, nidx02bDocsMatching(t, merged, "group", "g"))
+}
+
 func TestNativePluginMergeDropsTheCorrectTermFrequency(t *testing.T) {
 	payload, encodeErr := nativeice.EncodeSegment(nativeice.Generation{Documents: []nativeice.EncodeDocument{
 		{Identifier: []byte("id-0"), Fields: []nativeice.EncodeField{{Name: "keyword", Index: true, Terms: []nativeice.EncodeTerm{{Value: []byte("term"), Frequency: 3}}}}},
