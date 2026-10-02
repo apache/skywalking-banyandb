@@ -32,6 +32,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
+// actionSoftTimeout is how long an action runs before the scheduler logs that
+// it is still running, and how long Close waits for an action that ignores
+// cancellation.
+const actionSoftTimeout = 5 * time.Minute
+
 var (
 	// ErrSchedulerClosed indicates the scheduler is closed.
 	ErrSchedulerClosed = errors.New("the scheduler is closed")
@@ -159,9 +164,17 @@ func (s *Scheduler) Close() {
 		delete(s.tasks, k)
 	}
 	s.Unlock()
+	// Close tasks concurrently so their shutdown graces overlap: Close is
+	// bounded by one actionSoftTimeout rather than one per task.
+	var wg sync.WaitGroup
 	for _, t := range tasks {
-		t.close()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			t.close()
+		}()
 	}
+	wg.Wait()
 }
 
 // Metrics returns the metrics of all registered tasks.
@@ -245,28 +258,55 @@ func (t *task) run() {
 						t.metrics.TotalTasksPanic.Add(1)
 					}
 				}()
-				timeoutCh := t.clock.Timer(5 * time.Minute).C
+				timeoutCh := t.clock.Timer(actionSoftTimeout).C
 
 				signalCh := run.GoWithSignal(t.taskCtx, "scheduler-action-"+t.name, t.l,
 					func(ctx context.Context) bool {
 						return t.action(ctx, now, t.l)
 					})
 
-				select {
-				case r := <-signalCh:
-					// panicdiag has already logged the panic and persisted
-					// the artifact; here we surface the failure to the
-					// scheduler instead of stalling on timeoutCh for 5min.
-					if r.Outcome != nil && r.Outcome.Panicked {
-						t.metrics.TotalTasksPanic.Add(1)
+				// The 5-minute timer is a soft deadline, not a cancellation:
+				// crossing it (timeoutCh fires at most once) only logs that
+				// the action is still running and keeps waiting for its real
+				// outcome. taskCtx is never canceled here, so a legitimate
+				// long-running action (e.g. a full backup upload) is never
+				// abandoned mid-flight.
+				var timedOut bool
+				var res run.SignalResult[bool]
+				closing := t.closer.CloseNotify()
+				var shutdownGraceCh <-chan time.Time
+			waitForOutcome:
+				for {
+					select {
+					case res = <-signalCh:
+						break waitForOutcome
+					case <-timeoutCh:
+						timedOut = true
+						t.l.Warn().Str("name", t.name).Msg("action running past soft timeout, still waiting for completion")
+						t.metrics.TotalTasksTimeout.Add(1)
+					case <-closing:
+						// taskCtx is already canceled, so a well-behaved action
+						// returns shortly; one that ignores ctx must not hold
+						// Close() forever.
+						closing = nil
+						shutdownGraceCh = t.clock.Timer(actionSoftTimeout).C
+					case <-shutdownGraceCh:
+						t.l.Warn().Str("name", t.name).Msg("action ignored cancellation on close, no longer waiting for it")
 						return true
 					}
-					return r.Value
-				case <-timeoutCh:
-					t.l.Error().Str("name", t.name).Msg("action timed out")
-					t.metrics.TotalTasksTimeout.Add(1)
+				}
+				if timedOut {
+					panicked := res.Outcome != nil && res.Outcome.Panicked
+					t.l.Info().Str("name", t.name).Bool("panicked", panicked).Bool("continue", res.Value).
+						Msg("action finished after exceeding the soft timeout")
+				}
+				// panicdiag has already logged the panic and persisted the
+				// artifact; here we surface the failure to the scheduler.
+				if res.Outcome != nil && res.Outcome.Panicked {
+					t.metrics.TotalTasksPanic.Add(1)
 					return true
 				}
+				return res.Value
 			}() {
 				t.l.Info().Str("name", t.name).Msg("action stops the task")
 				return
@@ -281,10 +321,9 @@ func (t *task) run() {
 
 func (t *task) close() {
 	// Cancel before CloseThenWait so any in-flight SchedulerAction
-	// observing ctx.Done() can unblock and return, which lets the
-	// run() loop's signalCh fire instead of stalling on the 5-minute
-	// timeoutCh. Without this, Scheduler.Close() could pin tasks for
-	// up to 5 minutes even when actions are well-behaved on ctx.
+	// observing ctx.Done() can unblock and return, which lets the run()
+	// loop finish promptly. run() waits up to actionSoftTimeout for an
+	// action that ignores ctx, so Close() stays bounded.
 	t.cancelTaskCtx()
 	t.closer.CloseThenWait()
 }
