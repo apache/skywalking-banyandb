@@ -237,6 +237,11 @@ func (db *database) Update(ctx context.Context, shardID common.ShardID, id []byt
 	if err != nil {
 		return err
 	}
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.closed.Load() {
+		return errors.New("database is closed")
+	}
 	err = sd.update(id, property)
 	if err != nil {
 		return err
@@ -245,6 +250,11 @@ func (db *database) Update(ctx context.Context, shardID common.ShardID, id []byt
 }
 
 func (db *database) Delete(ctx context.Context, docIDs [][]byte, delTime time.Time) error {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.closed.Load() {
+		return errors.New("database is closed")
+	}
 	var err error
 	db.groups.Range(func(_, value any) bool {
 		gs := value.(*groupShards)
@@ -264,6 +274,11 @@ func (db *database) Query(ctx context.Context, req *propertyv1.QueryRequest) ([]
 	iq, err := inverted.BuildPropertyQuery(req, groupField, entityID)
 	if err != nil {
 		return nil, err
+	}
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.closed.Load() {
+		return nil, errors.New("database is closed")
 	}
 	requestedGroups := make(map[string]bool, len(req.Groups))
 	for _, g := range req.Groups {
@@ -351,6 +366,9 @@ func (db *database) loadShard(ctx context.Context, group string, id common.Shard
 	}
 	db.mu.Lock()
 	defer db.mu.Unlock()
+	if db.closed.Load() {
+		return nil, errors.New("database is closed")
+	}
 	if s, ok := db.getShard(group, id); ok {
 		return s, nil
 	}
@@ -406,6 +424,8 @@ func (db *database) getShard(group string, id common.ShardID) (*shard, bool) {
 
 // Drop closes and removes all shards for the given group and deletes the group directory.
 func (db *database) Drop(groupName string) (err error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
 	value, ok := db.groups.LoadAndDelete(groupName)
 	if !ok {
 		return nil
@@ -445,6 +465,8 @@ func (db *database) Close() error {
 	if db.repairScheduler != nil {
 		db.repairScheduler.close()
 	}
+	db.mu.Lock()
+	defer db.mu.Unlock()
 	var err error
 	db.groups.Range(func(_, value any) bool {
 		gs := value.(*groupShards)
@@ -462,6 +484,11 @@ func (db *database) Close() error {
 }
 
 func (db *database) collect() {
+	if db.closed.Load() {
+		return
+	}
+	db.mu.RLock()
+	defer db.mu.RUnlock()
 	if db.closed.Load() {
 		return
 	}
@@ -483,11 +510,21 @@ func (db *database) Repair(ctx context.Context, id []byte, shardID uint64, prope
 	if err != nil {
 		return pkgerrors.WithMessagef(err, "failed to load shard %d", id)
 	}
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.closed.Load() {
+		return pkgerrors.WithMessagef(errors.New("database is closed"), "failed to load shard %d", id)
+	}
 	_, _, err = s.repair(ctx, id, property, deleteTime)
 	return err
 }
 
 func (db *database) TakeSnapShot(ctx context.Context, sn string) *databasev1.Snapshot {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.closed.Load() {
+		return nil
+	}
 	var snapshotResult *databasev1.Snapshot
 	db.groups.Range(func(_, value any) bool {
 		gs := value.(*groupShards)

@@ -1054,6 +1054,7 @@ func (r *repairScheduler) doBuildTree() (err error) {
 	}()
 	hasUpdates := false
 	var checkErr error
+	r.db.mu.RLock()
 	r.db.groups.Range(func(_, value any) bool {
 		gs := value.(*groupShards)
 		sLst := gs.shards.Load()
@@ -1071,6 +1072,7 @@ func (r *repairScheduler) doBuildTree() (err error) {
 		}
 		return true
 	})
+	r.db.mu.RUnlock()
 	if checkErr != nil {
 		return checkErr
 	}
