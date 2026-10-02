@@ -114,30 +114,18 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 			resp = bus.NewMessage(bus.MessageID(time.Now().UnixNano()), common.NewError("panic"))
 		}
 	}()
-	var metadata []*commonv1.Metadata
-	var schemas []logical.Schema
-	var ecc []executor.StreamExecutionContext
-	for i := range queryCriteria.Groups {
-		meta := &commonv1.Metadata{
-			Name:  queryCriteria.Name,
-			Group: queryCriteria.Groups[i],
-		}
-		ec, err := p.streamService.Stream(meta)
-		if err != nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for stream %s: %v", meta.GetName(), err))
-			return
-		}
-		ecc = append(ecc, ec)
-		s, err := logical_stream.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
-		if err != nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for stream %s: %v", meta.GetName(), err))
-			return
-		}
-		schemas = append(schemas, s)
-		metadata = append(metadata, meta)
+	queryForPlan, metadata, schemas, ecc, err := resolveStreamQuerySchemas(
+		p.streamService, queryCriteria, p.distributed)
+	if err != nil {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", err))
+		return
+	}
+	if len(ecc) == 0 {
+		resp = bus.NewMessage(bus.MessageID(now), &streamv1.QueryResponse{})
+		return
 	}
 
-	plan, err := logical_stream.Analyze(queryCriteria, metadata, schemas, ecc)
+	plan, err := logical_stream.Analyze(queryForPlan, metadata, schemas, ecc)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for stream %s: %v", queryCriteria.GetName(), err))
 		return
@@ -175,7 +163,7 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 	// is a hard error rather than a silent proto fallback (same no-silent-fallback
 	// discipline as measure and trace). When tracing is on we MUST return a proto
 	// QueryResponse (it carries common.v1.Trace); the frame emit is gated on tracer == nil.
-	handled, vecResp := p.tryStreamVecDispatch(ctx, plan, queryCriteria, tracer != nil)
+	handled, vecResp := p.tryStreamVecDispatch(ctx, plan, queryForPlan, tracer != nil)
 	// Read the decline reason off the plan before Close, so this does not depend on
 	// Close staying a no-op for every stream node.
 	var declineReason string
@@ -193,6 +181,37 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 	}
 	resp = vecResp
 	return
+}
+
+func resolveStreamQuerySchemas(
+	streamService stream.Query,
+	queryCriteria *streamv1.QueryRequest,
+	tolerateMissing bool,
+) (*streamv1.QueryRequest, []*commonv1.Metadata, []logical.Schema, []executor.StreamExecutionContext, error) {
+	queryForPlan := *queryCriteria
+	queryForPlan.Groups = nil
+	var metadata []*commonv1.Metadata
+	var schemas []logical.Schema
+	var executionContexts []executor.StreamExecutionContext
+	for _, group := range queryCriteria.Groups {
+		meta := &commonv1.Metadata{Name: queryCriteria.Name, Group: group}
+		executionContext, err := streamService.Stream(meta)
+		if err != nil {
+			if tolerateMissing && errors.Is(err, stream.ErrStreamNotExist) {
+				continue
+			}
+			return nil, nil, nil, nil, fmt.Errorf("fail to get execution context for stream %s: %w", meta.GetName(), err)
+		}
+		schema, err := logical_stream.BuildSchema(executionContext.GetSchema(), executionContext.GetIndexRules())
+		if err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("fail to build schema for stream %s: %w", meta.GetName(), err)
+		}
+		queryForPlan.Groups = append(queryForPlan.Groups, group)
+		metadata = append(metadata, meta)
+		schemas = append(schemas, schema)
+		executionContexts = append(executionContexts, executionContext)
+	}
+	return &queryForPlan, metadata, schemas, executionContexts, nil
 }
 
 // tryStreamVecDispatch runs the native columnar (vec) path for a stream query.
