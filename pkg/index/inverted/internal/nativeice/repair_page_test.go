@@ -18,8 +18,16 @@ package nativeice
 import (
 	"bytes"
 	"errors"
+	"math"
 	"testing"
+
+	"github.com/klauspost/compress/s2"
 )
+
+type repairDocValueCheck struct {
+	value    []byte
+	document uint64
+}
 
 func TestRepairCursorOrdersTupleTies(t *testing.T) {
 	values := [repairSortFieldCount][]byte{[]byte("group"), []byte("name"), []byte("entity"), []byte("timestamp")}
@@ -76,4 +84,97 @@ func TestDecodeRepairDocValueTermEscapes(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRepairDocValueReaderAcceptsLegacyEmptyChunkPositions(t *testing.T) {
+	emptyChunk := emptyLegacyDocValueChunk()
+	for _, testCase := range []struct {
+		name   string
+		chunks [][]byte
+		checks []repairDocValueCheck
+	}{
+		{
+			name:   "leading",
+			chunks: [][]byte{emptyChunk, populatedLegacyDocValueChunk(docValueDocumentsPerChunk)},
+			checks: []repairDocValueCheck{{document: 0}, {document: docValueDocumentsPerChunk, value: []byte{'v'}}},
+		},
+		{
+			name:   "interior",
+			chunks: [][]byte{populatedLegacyDocValueChunk(0), emptyChunk, populatedLegacyDocValueChunk(2 * docValueDocumentsPerChunk)},
+			checks: []repairDocValueCheck{{document: 0, value: []byte{'v'}}, {document: docValueDocumentsPerChunk}, {document: 2 * docValueDocumentsPerChunk, value: []byte{'v'}}},
+		},
+		{
+			name:   "trailing",
+			chunks: [][]byte{populatedLegacyDocValueChunk(0), emptyChunk},
+			checks: []repairDocValueCheck{{document: 0, value: []byte{'v'}}, {document: docValueDocumentsPerChunk}},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			reader := newRepairDocValueChunkTestReader(testCase.chunks...)
+			for _, check := range testCase.checks {
+				values, valuesErr := reader.values(check.document)
+				if valuesErr != nil {
+					t.Fatalf("values(%d) error = %v, want no error", check.document, valuesErr)
+				}
+				if check.value == nil {
+					if values != nil {
+						t.Fatalf("values(%d) = %#v, want nil", check.document, values)
+					}
+					continue
+				}
+				if len(values) != 1 || !bytes.Equal(values[0], check.value) {
+					t.Fatalf("values(%d) = %#v, want [[%s]]", check.document, values, check.value)
+				}
+			}
+		})
+	}
+}
+
+func TestRepairDocValueReaderRejectsMalformedLegacyEmptyChunk(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		tail []byte
+	}{
+		{name: "missing compression stream", tail: nil},
+		{name: "malformed compression stream", tail: []byte{1}},
+		{name: "nonempty compression stream", tail: s2.Encode(nil, []byte{'x'})},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			chunk := appendNativeUvarint(nil, 0)
+			chunk = append(chunk, testCase.tail...)
+			reader := newRepairDocValueChunkTestReader(chunk)
+			if loadErr := reader.loadChunk(0); !errors.Is(loadErr, ErrCorrupt) {
+				t.Fatalf("loadChunk() error = %v, want ErrCorrupt", loadErr)
+			}
+		})
+	}
+}
+
+func newRepairDocValueChunkTestReader(chunks ...[]byte) *repairDocValueReader {
+	data := make([]byte, 0)
+	offsets := make([]uint64, len(chunks))
+	for chunkIndex, chunk := range chunks {
+		data = append(data, chunk...)
+		offsets[chunkIndex] = uint64(len(data))
+	}
+	return &repairDocValueReader{
+		chunkNumber:        math.MaxUint64,
+		chunkOffsets:       offsets,
+		path:               "test",
+		file:               &byteSegmentFile{data: data},
+		size:               uint64(len(data)),
+		totalDocumentCount: uint64(len(chunks)) * docValueDocumentsPerChunk,
+	}
+}
+
+func emptyLegacyDocValueChunk() []byte {
+	chunk := appendNativeUvarint(nil, 0)
+	return append(chunk, s2.Encode(nil, nil)...)
+}
+
+func populatedLegacyDocValueChunk(documentNumber uint64) []byte {
+	chunk := appendNativeUvarint(nil, 1)
+	chunk = appendNativeUvarint(chunk, documentNumber)
+	chunk = appendNativeUvarint(chunk, 2)
+	return append(chunk, s2.Encode(nil, []byte{'v', 0xff})...)
 }

@@ -533,7 +533,7 @@ func (r *repairDocValueReader) loadChunk(chunkNumber uint64) error {
 	if countErr != nil {
 		return countErr
 	}
-	if documentCount == 0 || documentCount > docValueDocumentsPerChunk {
+	if documentCount > docValueDocumentsPerChunk {
 		return corruptError("segment %q has an invalid doc-value chunk document count", r.path)
 	}
 	if cap(r.header) < int(documentCount) {
@@ -579,8 +579,8 @@ func (r *repairDocValueReader) loadChunk(chunkNumber uint64) error {
 	if lengthErr != nil {
 		return corruptError("decode doc-value chunk length in segment %q: %w", r.path, lengthErr)
 	}
-	if decodedLength < 0 || decodedLength > maxDocValueDecodedChunkSize {
-		return corruptError("segment %q has an oversized decoded doc-value chunk", r.path)
+	if validateErr := validateDocValueChunkDecodedLength(documentCount, decodedLength, r.path); validateErr != nil {
+		return validateErr
 	}
 	if cap(r.decodedBuffer) < decodedLength {
 		r.decodedBuffer = make([]byte, decodedLength)
@@ -596,6 +596,16 @@ func (r *repairDocValueReader) loadChunk(chunkNumber uint64) error {
 	}
 	r.decodedBuffer = decoded
 	r.chunkNumber = chunkNumber
+	return nil
+}
+
+func validateDocValueChunkDecodedLength(documentCount uint64, decodedLength int, path string) error {
+	if decodedLength < 0 || decodedLength > maxDocValueDecodedChunkSize {
+		return corruptError("segment %q has an oversized decoded doc-value chunk", path)
+	}
+	if documentCount == 0 && decodedLength != 0 {
+		return corruptError("segment %q has nonempty data in an empty doc-value chunk", path)
+	}
 	return nil
 }
 
