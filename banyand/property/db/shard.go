@@ -114,6 +114,7 @@ func (db *database) newShard(
 		Metrics:              inverted.NewMetrics(metricsFactory),
 		BatchWaitSec:         batchWaitSec,
 		PrepareMergeCallback: si.prepareForMerge,
+		NativeWriter:         db.indexConfig.NativeWriter,
 	}
 	var err error
 	if si.store, err = inverted.NewStore(opts); err != nil {

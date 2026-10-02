@@ -38,6 +38,13 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted/internal/nativeice"
 )
 
+// nidx02bWiringFile is the one production source NIDX-02C (issue #14075)
+// registers the plugin from: NewStore conditionally assigns the three
+// boundary symbols to a SegmentPlugin when its caller selects the native
+// writer. It is the sole sanctioned registration site; every other
+// production source is still held to the no-registration boundary below.
+const nidx02bWiringFile = "inverted.go"
+
 // TestNIDX02BPluginBoundary guards the boundary itself rather than any
 // behavior behind it.
 //
@@ -45,11 +52,11 @@ import (
 //
 //	R1 -- the milestone declares the three entry points, carrying exactly the
 //	      signatures an index lifecycle manager's segment plugin fields are
-//	      typed as, and adds no exported name at all. Nothing registers them:
-//	      no production source names any of the three and no source anywhere
-//	      configures a segment plugin, so the store's configuration and
-//	      behavior are unchanged. The native reader beside it exports exactly
-//	      what its own recorded allowlist declares.
+//	      typed as, and adds no exported name at all. Nothing outside
+//	      nidx02bWiringFile registers them: no other production source names
+//	      any of the three and no other source anywhere configures a segment
+//	      plugin. The native reader beside it exports exactly what its own
+//	      recorded allowlist declares.
 //
 // What the boundary source declares beyond those three is the coder's: the
 // segment contract is twelve methods and the merger two, and answering them
@@ -81,19 +88,23 @@ func TestNIDX02BPluginBoundary(t *testing.T) {
 
 	for _, directory := range []string{".", nativeReaderDir} {
 		for _, source := range nidx02bProductionSources(t, directory) {
-			if source == boundary {
+			if source == boundary || source == nidx02bWiringFile {
 				continue
 			}
 			for _, symbol := range nidx02bBoundarySymbols {
 				tester.NotContains(nidx02bIdentifiersIn(t, source), symbol,
-					"%s names %s; NIDX-02B registers no plugin and changes no production path", source, symbol)
+					"%s names %s; only %s may register the plugin", source, symbol, nidx02bWiringFile)
 			}
 		}
 	}
 
+	wiringSource := filepath.Join("..", "..", "..", "pkg", "index", "inverted", nidx02bWiringFile)
 	for _, source := range nidx02bTrackedGoSources(t) {
+		if source == wiringSource {
+			continue
+		}
 		tester.NotContains(nidx02bIdentifiersIn(t, source), "WithSegmentPlugin",
-			"%s configures a segment plugin; NIDX-02B registers nothing", source)
+			"%s configures a segment plugin; only %s may", source, nidx02bWiringFile)
 	}
 
 	tester.Equal(nativeReaderSurface, exportedSurfaceOf(t),

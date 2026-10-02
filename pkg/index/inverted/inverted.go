@@ -166,7 +166,27 @@ type StoreOpts struct {
 	BatchWaitSec           int64
 	CacheMaxBytes          int
 	EnableDeduplication    bool
+	// NativeWriter selects the native segment plugin (nativeSegmentPluginNew/
+	// Load/Merge) in place of the default bluge segment plugin, and disables
+	// the directory's own file lock in favor of the caller's exclusive
+	// ownership. False retains the default bluge writer and directory
+	// unchanged.
+	NativeWriter bool
 }
+
+// nativeDirectory wraps bluge's default filesystem directory and disables its
+// own Lock/Unlock: a native-mode caller establishes exclusive ownership before
+// NewStore is reached, so no per-directory lock file is needed or created.
+type nativeDirectory struct {
+	*blugeIndex.FileSystemDirectory
+}
+
+func newNativeDirectory(path string) blugeIndex.Directory {
+	return &nativeDirectory{FileSystemDirectory: blugeIndex.NewFileSystemDirectory(path)}
+}
+
+func (*nativeDirectory) Lock() error   { return nil }
+func (*nativeDirectory) Unlock() error { return nil }
 
 type store struct {
 	writer  *bluge.Writer
@@ -311,6 +331,16 @@ func NewStore(opts StoreOpts) (index.SeriesStore, error) {
 		opts.Logger = logger.GetLogger("inverted")
 	}
 	indexConfig := blugeIndex.DefaultConfig(opts.Path)
+	if opts.NativeWriter {
+		indexConfig = indexConfig.WithSegmentPlugin(&blugeIndex.SegmentPlugin{
+			Type:    indexConfig.SegmentType,
+			Version: indexConfig.SegmentVersion,
+			New:     nativeSegmentPluginNew,
+			Load:    nativeSegmentPluginLoad,
+			Merge:   nativeSegmentPluginMerge,
+		})
+		indexConfig.DirectoryFunc = func() blugeIndex.Directory { return newNativeDirectory(opts.Path) }
+	}
 	if opts.BatchWaitSec > 0 {
 		indexConfig = indexConfig.WithUnsafeBatches().
 			WithPersisterNapTimeMSec(int(opts.BatchWaitSec * 1000))

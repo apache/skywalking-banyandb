@@ -111,6 +111,10 @@ type SnapshotConfig struct {
 type IndexConfig struct {
 	BatchWaitSec       int64
 	WaitForPersistence bool
+	// NativeWriter selects the native segment plugin for every shard this
+	// database opens, existing and newly created alike. False retains the
+	// legacy bluge writer unchanged.
+	NativeWriter bool
 }
 
 // Config holds the configuration for the property database.
@@ -144,6 +148,12 @@ type database struct {
 }
 
 // OpenDB opens a property database with the given configuration.
+//
+// The exclusive <Location>/lock is acquired before any directory is scanned
+// or any shard writer is opened, so a process that cannot establish ownership
+// fails before touching a shard. Once the lock is held, any later startup
+// failure releases it before returning; only the initial lock acquisition
+// itself panics, unchanged from its prior behavior.
 func OpenDB(ctx context.Context, cfg Config, omr observability.MetricsRegistry, lfs fs.FileSystem) (Database, error) {
 	if cfg.MetricsScopeName == "" {
 		return nil, errors.New("metrics scope name must not be empty")
@@ -152,6 +162,18 @@ func OpenDB(ctx context.Context, cfg Config, omr observability.MetricsRegistry, 
 	lfs.MkdirIfNotExist(loc, storage.DirPerm)
 	l := logger.GetLogger("property")
 	metricsScope := observability.RootScope.SubScope(cfg.MetricsScopeName)
+
+	lockPath := filepath.Join(loc, lockFilename)
+	lock, err := lfs.CreateLockFile(lockPath, storage.FilePerm)
+	if err != nil {
+		logger.Panicf("cannot create lock file %s: %s", lockPath, err)
+	}
+	opened := false
+	defer func() {
+		if !opened {
+			lock.Close()
+		}
+	}()
 
 	db := &database{
 		location:            loc,
@@ -165,8 +187,8 @@ func OpenDB(ctx context.Context, cfg Config, omr observability.MetricsRegistry, 
 		snapshotDir:         cfg.Snapshot.Location,
 		lfs:                 lfs,
 		indexConfig:         cfg.Index,
+		lock:                lock,
 	}
-	var err error
 	// init repair scheduler
 	if cfg.Repair.Enabled {
 		scheduler, schedulerErr := newRepairScheduler(l, omr, metricsScope, cfg.Repair.BuildTreeCron, cfg.Repair.QuickBuildTreeTime,
@@ -180,13 +202,8 @@ func OpenDB(ctx context.Context, cfg Config, omr observability.MetricsRegistry, 
 		return nil, err
 	}
 	db.logger.Info().Str("path", loc).Msg("initialized")
-	lockPath := filepath.Join(loc, lockFilename)
-	lock, err := lfs.CreateLockFile(lockPath, storage.FilePerm)
-	if err != nil {
-		logger.Panicf("cannot create lock file %s: %s", lockPath, err)
-	}
-	db.lock = lock
 	obsservice.MetricsCollector.Register(loc, db.collect)
+	opened = true
 	return db, nil
 }
 
