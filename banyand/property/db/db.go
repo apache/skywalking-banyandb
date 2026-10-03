@@ -139,21 +139,21 @@ type database struct {
 	nativeOwner         *inverted.NativeWriterOwner
 	logger              *logger.Logger
 	repairScheduler     *repairScheduler
+	snapshotFunc        func(context.Context) (string, error)
 	groups              sync.Map
-	location            string
-	snapshotDir         string
 	repairBaseDir       string
+	snapshotDir         string
+	repairBuildTreeCron string
+	location            string
 	indexConfig         IndexConfig
 	flushInterval       time.Duration
 	expireDelete        time.Duration
 	repairTreeSlotCount int
-	repairEnabled       bool
-	repairBuildTreeCron string
 	quickBuildTreeTime  time.Duration
-	snapshotFunc        func(context.Context) (string, error)
 	mu                  sync.RWMutex
 	closed              atomic.Bool
 	transition          atomic.Bool
+	repairEnabled       bool
 }
 
 // OpenDB opens a property database with the given configuration.
