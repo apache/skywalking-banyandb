@@ -232,8 +232,15 @@ docker-license-check: TARGET=license-check
 define require_docker_host
 	@command -v docker >/dev/null 2>&1 || { \
 	  echo "make docker-* needs docker on PATH." >&2; exit 1; }
-	@tar --help 2>&1 | grep -q -- '--exclude' || { \
-	  echo "make docker-* needs a tar with --exclude support (GNU tar or bsdtar)." >&2; exit 1; }
+	@# Probe by USE, not by reading --help. BSD tar (macOS) implements --exclude
+	@# but its --help is a short summary that does not mention it, so grepping the
+	@# help text would reject a perfectly good tar on macOS. Doing it is the only
+	@# portable test.
+	@probe=$$(mktemp -d) && touch $$probe/keep.txt && \
+	  tar -cf /dev/null --exclude=never-matches $$probe 2>/dev/null && rm -rf $$probe || { \
+	    rm -rf $$probe; \
+	    echo "make docker-* needs a tar with --exclude support (GNU tar or bsdtar)." >&2; \
+	    exit 1; }
 endef
 
 # The post-generation verification is a bash script. Where bash is available it

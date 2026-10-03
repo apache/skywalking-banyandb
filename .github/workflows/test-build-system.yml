@@ -86,7 +86,15 @@ jobs:
           echo "os:            ${{ matrix.os }}"
           echo "uname:         $(uname -srm)"
           echo "id:            $(id -u):$(id -g 2>/dev/null || echo 'not available')"
-          echo "tar has --exclude: $(tar --help 2>&1 | grep -qc -- '--exclude' && echo yes || echo no)"
+          # Probe by use: BSD tar implements --exclude but its --help does not
+          # list it, so grepping the help text would misreport macOS.
+          probe=$(mktemp -d); touch "$probe/keep.txt"
+          if tar -cf /dev/null --exclude=never-matches "$probe" 2>/dev/null; then
+            echo "tar has --exclude: yes ($(tar --version 2>/dev/null | head -1 || echo bsdtar))"
+          else
+            echo "tar has --exclude: NO"
+          fi
+          rm -rf "$probe"
           echo "sed is GNU:    $(sed --version 2>/dev/null | head -1 || echo 'BSD sed')"
 
       - name: Shell syntax of the build scripts
@@ -104,18 +112,25 @@ jobs:
           set -e
           echo "resolved: $(bash scripts/ci/check/node_version.sh resolve .)"
           make check-node-version
-          # Negative cases, so a green step cannot mean "the check did nothing".
-          printf '{\n  "engines": {\n    "node": "99.0.0"\n  }\n}\n' > /tmp/canopy-disagree.json
-          cp canopy/package.json /tmp/canopy-package.json.bak
-          sed -i 's/"node": "[^"]*"/"node": "99.0.0"/' canopy/package.json
-          if make check-node-version >/dev/null 2>&1; then
+          # Negative case, so a green step cannot mean "the check did nothing".
+          # Built in a temp tree rather than by editing canopy/package.json:
+          # `sed -i` is not portable (BSD sed needs an argument), and this way
+          # the real worktree cannot be left modified. The macOS leg of the first
+          # CI run failed for exactly the sed reason.
+          tmp=$(mktemp -d)
+          mkdir -p "$tmp/mcp" "$tmp/canopy"
+          cp mcp/package.json "$tmp/mcp/package.json"
+          printf '{\n  "engines": {\n    "node": "99.0.0"\n  }\n}\n' > "$tmp/canopy/package.json"
+          if bash scripts/ci/check/node_version.sh check "$tmp" >/dev/null 2>&1; then
             echo "::error::check-node-version accepted two different pins"
-            cp /tmp/canopy-package.json.bak canopy/package.json
+            rm -rf "$tmp"
             exit 1
           fi
           echo "  ok rejects a disagreeing pin"
-          cp /tmp/canopy-package.json.bak canopy/package.json
-          git diff --exit-code -- canopy/package.json
+          cp canopy/package.json "$tmp/canopy/package.json"
+          bash scripts/ci/check/node_version.sh check "$tmp" >/dev/null
+          echo "  ok accepts agreeing pins"
+          rm -rf "$tmp"
 
       - name: License verifier passes, and can fail
         run: |
