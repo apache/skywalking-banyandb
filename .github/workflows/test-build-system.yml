@@ -182,7 +182,18 @@ jobs:
           set -e
           docker version
           docker buildx version
+          # `set -e` plus a command substitution swallows the output on failure,
+          # which is how the first CI run failed with no diagnostic at all. Capture
+          # the status, print the output, and only then fail.
+          set +e
           out=$(make docker-run TARGET=print-build-args 2>&1)
+          rc=$?
+          set -e
+          echo "$out"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::make docker-run failed (rc=$rc)"
+            exit "$rc"
+          fi
           echo "$out" | grep -E '^(DEBIAN_IMAGE|GO_VERSION|NODE_VERSION|LICENSE_EYE_VERSION)='
           # Go from go.mod, Node from mcp + canopy, license-eye from version.mk.
           want_go=$(sed -n 's/^go //p' go.mod)
