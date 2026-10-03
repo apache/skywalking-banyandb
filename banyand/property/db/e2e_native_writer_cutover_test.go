@@ -39,7 +39,7 @@ import (
 //
 //	(1) lock-first ordering -- a second concurrent OpenDB against a Location
 //	    that already holds a written shard must fail before opening (or
-//	    attempting to open) any shard writer of its own, by panicking on the
+//	    attempting to open) any shard writer of its own, by returning an error from the
 //	    outer lock immediately. Before this fix, ownership was only ever
 //	    discovered as a side effect of load() reaching the shard the first
 //	    process already holds open, which returns a plain error rather than
@@ -87,9 +87,11 @@ func TestE2EPropertyNativeWriterCutoverAndRollback(t *testing.T) {
 	tester.NoError(db1.Update(context.Background(), 0, GetPropertyID(property), property),
 		"a written shard must exist and stay open, so the second OpenDB below has something to race against")
 
-	tester.Panics(func() {
-		_, _ = OpenDB(context.Background(), lockCfg, observability.BypassRegistry, fs.NewLocalFileSystem())
-	}, "a second OpenDB against a live Location holding an open shard must fail at the outer lock, before load() reaches that shard")
+	var contentionErr error
+	tester.NotPanics(func() {
+		_, contentionErr = OpenDB(context.Background(), lockCfg, observability.BypassRegistry, fs.NewLocalFileSystem())
+	}, "lock contention is an expected OpenDB error, not a process-fatal panic")
+	tester.Error(contentionErr, "a second OpenDB against a live Location holding an open shard must fail at the outer lock, before load() reaches that shard")
 
 	tester.NoError(db1.Close())
 
@@ -105,8 +107,24 @@ func TestE2EPropertyNativeWriterCutoverAndRollback(t *testing.T) {
 		Location:         failureDir,
 		MetricsScopeName: "property_native_cutover_failure_test",
 		FlushInterval:    3 * time.Second,
-		Index:            IndexConfig{NativeWriter: true},
+		Repair: RepairConfig{
+			Location:           filepath.Join(failureDir, "repair"),
+			BuildTreeCron:      "@every 10m",
+			QuickBuildTreeTime: 10 * time.Minute,
+			TreeSlotCount:      1,
+			Enabled:            true,
+		},
+		Index: IndexConfig{NativeWriter: true},
 	}
+	// Seed a valid shard. The malformed directory below is deliberately
+	// encountered after this shard, so startup cleanup must close a partially
+	// opened native writer and stop the repair scheduler before unlocking.
+	seedDB, seedErr := OpenDB(context.Background(), failureCfg, observability.BypassRegistry, fs.NewLocalFileSystem())
+	tester.NoError(seedErr)
+	seedProperty := generateProperty("startup-cleanup", time.Now().UnixNano(), 7)
+	tester.NoError(seedDB.Update(context.Background(), 0, GetPropertyID(seedProperty), seedProperty))
+	tester.NoError(seedDB.Close())
+
 	groupDir := filepath.Join(failureDir, testPropertyGroup)
 	tester.NoError(os.MkdirAll(filepath.Join(groupDir, "shard-bogus"), 0o755))
 
@@ -162,27 +180,28 @@ func TestE2EPropertyNativeWriterCutoverAndRollback(t *testing.T) {
 	tester.Equal(int64(1), readTag(legacyDB1), "legacy-v1 must be readable immediately after its durable write")
 	tester.NoError(legacyDB1.Close())
 
-	// Open the same database Native: existing data is readable without bulk
-	// conversion or an opening rewrite, then update it to native-v2.
-	nativeDB1 := openWithNative(true)
-	tester.Equal(int64(1), readTag(nativeDB1), "the Native-selected OpenDB must read the Legacy-written value unchanged")
+	// Transition the same live database to Native while retaining its root
+	// lease. Existing data remains readable without a bulk conversion.
+	legacyDB := openWithNative(false)
+	tester.Equal(int64(1), readTag(legacyDB), "the legacy-written value must be readable before cutover")
+	tester.NoError(legacyDB.SwitchIndexWriter(ctx, true))
+	tester.Equal(int64(1), readTag(legacyDB), "the native-selected transition must read the legacy value unchanged")
 	nativeV2 := generateProperty(compatibilityProbeID, time.Now().UnixNano(), 2)
-	tester.NoError(nativeDB1.Update(ctx, 0, probeID, nativeV2))
-	tester.Equal(int64(2), readTag(nativeDB1), "native-v2 must be readable immediately after its durable write")
-	tester.NoError(nativeDB1.Close())
+	tester.NoError(legacyDB.Update(ctx, 0, probeID, nativeV2))
+	tester.Equal(int64(2), readTag(legacyDB), "native-v2 must be readable immediately after its durable write")
 
-	// Close and reopen Native on the same directory: native-v2 persisted.
-	nativeDB2 := openWithNative(true)
-	tester.Equal(int64(2), readTag(nativeDB2), "native-v2 must survive a Native close and reopen")
-	tester.NoError(nativeDB2.Close())
+	// Reopen all shards in Native mode without releasing the root lease.
+	tester.NoError(legacyDB.SwitchIndexWriter(ctx, true))
+	tester.Equal(int64(2), readTag(legacyDB), "native-v2 must survive a native transition reopen")
 
-	// Roll back: explicitly reopen the same directory with Legacy.
-	legacyDB2 := openWithNative(false)
-	tester.Equal(int64(2), readTag(legacyDB2), "the rollback reopen must serve the Native-written value with no data loss")
+	// Roll back in place. The lease remains held throughout close and reopen,
+	// so another process cannot acquire a writer window between the modes.
+	tester.NoError(legacyDB.SwitchIndexWriter(ctx, false))
+	tester.Equal(int64(2), readTag(legacyDB), "the rollback transition must serve the native-written value with no data loss")
 	legacyV3 := generateProperty(compatibilityProbeID, time.Now().UnixNano(), 3)
-	tester.NoError(legacyDB2.Update(ctx, 0, probeID, legacyV3))
-	tester.Equal(int64(3), readTag(legacyDB2), "legacy-v3 must be readable immediately after its durable write")
-	tester.NoError(legacyDB2.Close())
+	tester.NoError(legacyDB.Update(ctx, 0, probeID, legacyV3))
+	tester.Equal(int64(3), readTag(legacyDB), "legacy-v3 must be readable immediately after its durable write")
+	tester.NoError(legacyDB.Close())
 
 	// Close and reopen Legacy again: legacy-v3 persisted, completing the
 	// [legacy-v1, native-v2, native-v2, legacy-v3] observable trace.
