@@ -74,10 +74,12 @@ building something unpinned.
 Step 4 is why CI runs both the native and the container path and compares them: a broken image must
 not be able to hide a license change, and a license change must not be able to hide a broken image.
 
-There is no cross-host CI matrix. Once `eol=lf` normalizes the checkout and the tree is streamed
-into the container rather than mounted, the host is not a variable in the output; what remains is
-Docker's own container handling. `make check-license-outputs` runs on whatever host a contributor is
-on and fails on any CR byte, which covers the one host-specific defect this was about.
+The build system is checked on Linux, macOS and Windows by
+`.github/workflows/test-build-system.yml`: the Node resolver, the verifier in its passing and failing
+modes, and one container run that builds the pinned image and confirms it carries the versions this
+repository declares. Generation itself is only run on ubuntu, where the check job already does it --
+once `eol=lf` normalizes the checkout and the tree is streamed into the container rather than
+mounted, the host is not a variable in the output.
 
 Host requirements for `make docker-license-dep` are deliberately minimal: `docker`, GNU `make`, and
 a `tar` with `--exclude` (GNU tar, or the bsdtar built into Windows 10+). A POSIX `id` is used when

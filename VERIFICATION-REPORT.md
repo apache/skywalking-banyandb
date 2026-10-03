@@ -190,6 +190,28 @@ not present in HEAD: dist/licenses/license-zzz-staged.txt
 license artifacts drifted from HEAD; run 'make license-dep' and commit the result   rc=1
 ```
 
+## 3a. The cross-host build-system workflow
+
+`.github/workflows/test-build-system.yml` runs 10 steps on each of ubuntu, macos and windows, and is
+gated from `ci.yml`'s result job. It does not regenerate the license artifacts; it checks the build
+system. All 10 steps were executed locally on Linux and pass:
+
+```
+[PASS] report the host                              (id, tar --exclude, GNU vs BSD sed)
+[PASS] shell syntax of the build scripts
+[PASS] Node resolver agrees with the manifests      (and rejects a disagreeing pin)
+[PASS] license verifier passes, and can fail         (rejects CR bytes, rejects an untracked artifact)
+[PASS] manifests agree with the committed blobs
+[PASS] pinned inputs resolve, no version literals
+[PASS] the platform cannot be overridden
+[PASS] image builds and agrees with the declarations
+[PASS] the tree is still clean
+```
+
+The macOS and Windows legs are unexercised until CI runs them. The most likely first failure is
+Windows path translation for `docker run --volume` with a Git Bash path, which is exactly what this
+workflow exists to surface.
+
 ## 4. What is not verified here, stated plainly
 
 | Item | Why | Where covered |
@@ -200,7 +222,9 @@ license artifacts drifted from HEAD; run 'make license-dep' and commit the resul
 | A native Windows run of the wrapper | no Windows host. The host-side requirements were reduced (`id` optional, no `sed -i`, no GNU `date`) but not exercised | — |
 | `make bump-build-image` happy path | it runs here only when `imagetools` resolves; a transient failure is what exposed defect 8 | `scripts/build/README.md` |
 | Release-archive reproducibility | out of scope by design | separate issue |
-| A cross-host CI matrix | dropped by decision; `check-license-outputs` fails on any CR byte on whatever host a contributor is on | design §7.2 |
+| macOS / Windows **generation** | dropped by decision; the build system is checked on both, generation is not | design §7.2 |
+| macOS / Windows legs of the new build-system workflow | written and run on Linux only (10/10 steps) | its own CI run |
+| `test-integration-distributed` and the third standalone lane | left to CI; the lane re-runs specs that already passed | existing CI |
 
 ## 5. State of the change
 

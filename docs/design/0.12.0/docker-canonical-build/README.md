@@ -3,7 +3,8 @@
 Status: **implemented**. Revised after two rounds of review, then rebased onto
 `origin/main` and re-verified there — see §11 for what changed and why.
 
-The cross-host CI matrix was dropped by decision (§7.2), so there is no P6.
+The cross-host *generation* matrix was dropped by decision, and replaced by a cheaper
+cross-host *build-system* workflow (§7.2).
 
 Upstream tracking issue: [apache/skywalking#13996](https://github.com/apache/skywalking/issues/13996)
 ("Introduce Docker-based build system for consistent license-file generation"), milestone
@@ -559,13 +560,15 @@ either a Buildx-capable builder or a documented fallback to the default Docker d
 `--cache-to type=local` support depends on its image-store configuration. The cache key must
 include `scripts/build/version.mk`, `go.mod`, `.node-version`, the entrypoint and the platform.
 
-### 7.2 Cross-host testing — not added, deliberately
+### 7.2 Cross-host coverage: build system yes, generation no
 
-An earlier revision of this design specified a `test-license-determinism.yml` matrix over
-`ubuntu-latest`, `macos-latest` and `windows-latest`, comparing each host's raw-byte manifest
-against the others and against the committed blobs. It was dropped before landing.
+Two revisions got this wrong in opposite directions, so the current position is worth stating
+precisely.
 
-The reason is that after §3 and §6.1 the pipeline no longer has host-specific behaviour to test:
+**Generation on every host — not done, by decision.** An earlier revision specified a
+`test-license-determinism.yml` matrix that regenerated the artifacts on `macos-latest` and
+`windows-latest` and compared manifests. It was dropped, because after §3 and §6.1 the pipeline has
+no host-specific behaviour left to test:
 
 - The working tree is streamed into the container over a pipe, so there is no bind mount, no
   path translation, no daemon locality and no `node_modules` to be rewritten (§6.1).
@@ -583,9 +586,23 @@ is caught by `check-license-outputs` (§4.3), which runs on every host via `make
 fails on any CR byte. That is a stronger guard than a matrix, because it also fires for a
 contributor who never pushes a branch.
 
-**Residual risk, stated plainly:** a Windows or macOS contributor hitting a Docker transport
-problem will hit it locally rather than in CI. `make docker-license-dep` is a single command with
-a single clear failure, and the native `make license-dep` remains available as a fallback.
+**Build system on every host — done.** Dropping the generation matrix initially left nothing at all
+running on macOS or Windows, which is the wrong trade: CONTRIBUTING tells those contributors to run
+the same commands as everyone else, and that should be demonstrated rather than asserted.
+`.github/workflows/test-build-system.yml` runs on all three hosts and checks:
+
+- the Node resolver and the license verifier, **in their failing modes as well as their passing
+  ones**, so a green step cannot mean the check silently did nothing;
+- that the pinned image builds on that host, with one cheap container run that also asserts the
+  image carries the Go, Node and license-eye versions this repository declares;
+- that the wrapper's driver logic holds there — right platform, no version literals, clean tree.
+
+It is gated from `ci.yml`'s `result` job, so a macOS or Windows failure blocks a PR. `shell: bash`
+throughout, because the verifier is a shell script and a Windows runner would otherwise use `cmd`.
+
+**What is still not covered:** the generation itself on macOS and Windows. If a Docker transport
+problem exists there, this workflow is what will surface it, since the image build and the wrapper
+are exercised even though generation is not. The native `make license-dep` remains a fallback.
 
 ### 7.3 Windows-native note
 
@@ -659,8 +676,9 @@ path and the fix is the one in §3, not a per-OS workaround.
    the cost becomes real.
 4. **Source copy per run.** §6.2 copies the tree. For a repository this size that is seconds, but it
    is per invocation and should be measured before the targets are advertised as a fast dev loop.
-5. **No cross-host CI.** Not covered by a matrix, by decision (§7.2). The compensating control is
-   `check-license-outputs`, which runs on whatever host the contributor is on.
+5. **Generation is not exercised on macOS or Windows.** By decision (§7.2); the build system is
+   checked there, generation is not. The compensating control is `check-license-outputs`, which runs
+   on whatever host the contributor is on.
 6. **Base-image maintenance is manual.** `make bump-build-image` is a documented procedure, not
    automation, and it now only covers the Debian digest and the apt snapshot — a Go or Node bump is a
    one-line edit to `go.mod` or `.node-version`. Deliberate for this design; it is the obvious
