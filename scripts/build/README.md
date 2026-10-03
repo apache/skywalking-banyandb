@@ -17,7 +17,7 @@ The image is not published. It is built locally and cached in `bin/.buildkit`.
 | Input | Declared in | Derived or stored |
 | --- | --- | --- |
 | Go version | `go.mod` | derived — see below |
-| Node version | `mcp/package.json` and `canopy/package.json` `engines.node` | both must pin it exactly; `.node-version` is generated from that |
+| Node version | `mcp/package.json` and `canopy/package.json` `engines.node` | both must pin it exactly; read directly |
 | license-eye | `version.mk` `LICENSE_EYE_VERSION` | stored |
 | Build platform | `version.mk` `BUILD_PLATFORM` | stored, not overridable |
 | Debian base image | `version.mk` `DEBIAN_IMAGE` | digest |
@@ -35,10 +35,10 @@ themselves enforce, so declaring either twice would create two sources that can 
 Both are derived and passed to the Dockerfile as build args, and the entrypoint fails the build if the
 image and either declaration drift apart.
 
-.node-version is a generated file, like `go.sum`, because `actions/setup-node` needs a plain version
-file and cannot read a package.json. Regenerate it with `make node-version-file`;
-`make check-node-version` fails if mcp and canopy do not pin the same version, if the generated file has
-drifted, or if any other project is not satisfied by that pin.
+There is no generated version file. `actions/setup-node` reads `engines.node` straight out of a
+`package.json` given as `node-version-file`, so the workflows point at `canopy/package.json` and there
+is nothing to keep in step. `make check-node-version` fails if mcp and canopy do not pin the same
+exact version, or if any other project is not satisfied by that pin.
 
 The Go and Node tarballs are verified against the checksum each vendor publishes for that exact file
 (`https://go.dev/dl/?mode=json` and `https://nodejs.org/dist/v<VERSION>/SHASUMS256.txt`), fetched over
@@ -58,10 +58,11 @@ building something unpinned.
 ## Bumping Go or Node
 
 1. Node: edit `engines.node` in **both** `mcp/package.json` and `canopy/package.json` to the same
-   exact version, then `make node-version-file`. Go: edit `go.mod`. Regenerate the `package-lock.json`
-   files. Nothing else needs to change.
-2. `make check-node-version` — fails if mcp and canopy disagree, if `.node-version` has not been
-   regenerated, or if any other project's `engines.node` is not satisfied by the pin.
+   exact version. Go: edit `go.mod`. Regenerate the `package-lock.json` files — npm records the root
+   `engines` there too, so a stale lockfile is a real (and confusing) failure mode. Nothing else
+   needs to change; CI reads the manifests directly.
+2. `make check-node-version` — fails if mcp and canopy disagree, or if any other project's
+   `engines.node` is not satisfied by the pin.
 3. `make bump-build-image` is only needed to move the Debian base image or the apt snapshot; it
    rewrites `version.mk` through a temp file, so a failed lookup leaves the previous pins intact.
 4. `make license-dep` **natively** — this must stay green. If the bump changes resolved license
@@ -100,6 +101,6 @@ If a cold-cache run OOMs, raise the limits — do not remove them.
 ## Entrypoint
 
 `entrypoint.sh` unpacks the tree streamed in on stdin, cross-checks the image's Go and Node against
-`go.mod`, the mcp and canopy `package.json` files, and `.node-version`, runs the requested make target, and copies only the license artifacts
+`go.mod` and the mcp and canopy `package.json` files, runs the requested make target, and copies only the license artifacts
 into `/out`. It never invokes Git: a linked worktree keeps its `.git` in a file pointing outside the
 tree, which is one of several reasons the worktree is copied rather than bind-mounted.

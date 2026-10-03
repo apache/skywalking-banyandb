@@ -48,9 +48,10 @@ Users who want to build a binary from sources have to set up:
 * GNU make
 * Docker, for the canonical build of committed artifacts (see [Update licenses](#update-licenses))
 
-The Go and Node versions above are derived from `go.mod` and `.node-version` respectively;
-`make check-node-version` fails if the two ever disagree with what a project declares in
-its `package.json`.
+The Go version above is the one in `go.mod`; the Node version is the one both `mcp/package.json` and
+`canopy/package.json` declare in `engines.node`, and those two must pin the same exact version.
+`make check-node-version` fails if they ever disagree, or if another project requires something
+newer. Neither version is restated anywhere else — CI reads the same files.
 
 ### Windows
 

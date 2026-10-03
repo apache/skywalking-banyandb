@@ -249,7 +249,7 @@ digest does not freeze the contents of the apt repository at the time of the iss
 ARG DEBIAN_IMAGE     # debian:bookworm-slim@sha256:... from scripts/build/version.mk
 ARG DEBIAN_SNAPSHOT  # from scripts/build/version.mk
 ARG GO_VERSION       # from go.mod
-ARG NODE_VERSION     # from .node-version
+ARG NODE_VERSION     # from mcp/ and canopy/ package.json
 ARG LICENSE_EYE_VERSION   # from scripts/build/version.mk
 ARG SOURCE_DATE_EPOCH=1700000000
 
@@ -281,8 +281,8 @@ RUN printf 'deb [check-valid-until=no] https://snapshot.debian.org/archive/debia
 #
 # Each download is verified against the checksum the vendor publishes for that
 # exact file, fetched over TLS at build time. Nothing about a toolchain bump is
-# recorded in this repository, so a version bump touches go.mod or .node-version
-# and nothing else. A version with no published checksum fails here rather than
+# recorded in this repository, so a version bump touches go.mod or the two
+# package.json files and nothing else. A version with no published checksum fails here rather than
 # installing unverified bytes.
 ARG GO_VERSION
 RUN set -e; \
@@ -341,7 +341,8 @@ Two deliberate divergences from CI, both stated rather than glossed over:
 $1 = the make target(s) to run, e.g. "license-dep"
 ```
 
-1. Cross-check the image's Go against `go.mod` and its Node against `.node-version`; exit non-zero
+1. Cross-check the image's Go against `go.mod` and its Node against the mcp and canopy
+   `engines.node`; exit non-zero
    with a clear message on mismatch (§5.4).
 2. Confirm `/work` is populated and `LICENSE_EYE=/usr/local/bin/license-eye` is honoured.
 3. Run `make -C /work "$@"` with `LICENSE_EYE` overridden (§6.2).
@@ -365,7 +366,7 @@ only reads and forwards them, with no literal of its own:
 
 ```make
 GO_VERSION   := $(shell sed -n 's/^go //p' $(mk_dir)go.mod)
-NODE_VERSION := $(shell cat $(mk_dir).node-version)
+NODE_VERSION := resolved from mcp and canopy engines.node
 DISTRO       ?= bookworm
 PLATFORM     ?= linux/amd64
 SOURCE_DATE_EPOCH ?= 1700000000
@@ -374,7 +375,7 @@ LICENSE_EYE_VERSION := $(shell sed -n 's/^LICENSE_EYE_VERSION := //p' $(mk_dir)s
 
 Tags are derived, never stored. A `go.mod` bump needs no Dockerfile edit and no lock-file edit: the
 Go and Node tarballs are verified against the checksum each vendor publishes for that exact file, so
-a version bump touches `go.mod` or `.node-version` and nothing else. Only the base-image digest and the
+a version bump touches `go.mod` or the two `package.json` files and nothing else. Only the base-image digest and the
 apt snapshot are recorded rather than resolved, because neither can be derived from a URL the way a
 tarball checksum can.
 
@@ -395,7 +396,7 @@ Dockerfile and this design deliberately keeps no image reference in it.
 `24.6.0` is currently a literal in four places: `.github/actions/setup-build-env/action.yml`,
 `prepare.yml`, `canopy.yml`, `flaky-test.yml`. Note that the last two use `setup-node@v4` while the
 first uses `v6`, and that `canopy/package.json` and `mcp/package.json` carry their own engine
-constraints. Consolidating on `.node-version` via `node-version-file` turned out not to require moving
+constraints. Consolidating on `node-version-file` turned out not to require moving
 `canopy.yml` and `flaky-test.yml` off `setup-node@v4`: v4 accepts `node-version-file` as well. The
 four call sites were switched in place and the majors left alone, since changing them is unrelated
 churn. The `engines` reconciliation is a real obligation and is enforced by
@@ -558,7 +559,8 @@ able to hide a license change, and a license change must not be able to hide a b
 `ci.yml` currently passes `setup-docker: 'false'` to `setup-build-env`; the `check` job needs
 either a Buildx-capable builder or a documented fallback to the default Docker driver, whose
 `--cache-to type=local` support depends on its image-store configuration. The cache key must
-include `scripts/build/version.mk`, `go.mod`, `.node-version`, the entrypoint and the platform.
+include `scripts/build/version.mk`, `go.mod`, the two `package.json` files, the entrypoint and
+the platform.
 
 ### 7.2 Cross-host coverage: build system yes, generation no
 
@@ -655,7 +657,7 @@ path and the fix is the one in §3, not a per-OS workaround.
 |---|---|---|
 | P1 | `.gitattributes` `eof=lf` → `eol=lf` (no renormalization needed — see §11) | Yes — it is a real bug fix |
 | P2 | `license_manifest.sh` + `check-license-outputs` + `check-req` wiring + tests | Yes — makes all later claims falsifiable |
-| P3 | Node consolidation on `.node-version` (§5.5) | Yes |
+| P3 | Node consolidation on the two `package.json` files (§5.5) | Yes |
 | P4 | Dockerfile, entrypoint, `version.mk` entries, `dockerize.mk`, `make docker-license-dep`, resource defaults (§6.4) | Yes |
 | P5 | `ci.yml` canonical step + native/Docker manifest comparison (§7.1) | Yes |
 | P6 | Documentation | Yes |
@@ -681,7 +683,7 @@ path and the fix is the one in §3, not a per-OS workaround.
    on whatever host the contributor is on.
 6. **Base-image maintenance is manual.** `make bump-build-image` is a documented procedure, not
    automation, and it now only covers the Debian digest and the apt snapshot — a Go or Node bump is a
-   one-line edit to `go.mod` or `.node-version`. Deliberate for this design; it is the obvious
+   one-line edit to `go.mod` or to either `package.json`. Deliberate for this design; it is the obvious
    follow-up if the image outlives the issue.
 7. **The 2 CPU / 4 GB default is inherited, not measured.** It matches `test-docker` and is
    deliberately conservative, but no one has profiled `license-dep` under it. If a cold-cache run
@@ -762,6 +764,7 @@ Only the two generated paths inside `dist` are excluded; `--exclude` globs the w
 | `make docker-run TARGET=print-build-args` | pass |
 | Cold-cache rebuild | identical image id |
 
-`.node-version` is added to `.licenserc.yaml`'s ignore list, alongside `go.mod` and `go.sum`: a
-comment header would make the file unparseable by the tool that reads it, so its consistency is
-enforced by `check-node-version` instead.
+Nothing has to be added to `.licenserc.yaml`'s ignore list for this: an earlier revision carried a
+generated `.node-version`, which needed a header exemption because a comment would have made the
+file unparseable. Reading `engines.node` from `canopy/package.json` removes the file, and with it
+the exemption.

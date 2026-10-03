@@ -37,10 +37,14 @@
 name: Build System
 
 on:
+  # ci.yml invokes this as a reusable workflow (jobs.build-system.uses), which
+  # requires workflow_call. Without it the CALLER is rejected before any job runs
+  # -- and GitHub reports that as "this run likely failed because of a workflow
+  # file issue" with no job output at all.
+  workflow_call:
   pull_request:
     paths:
       - '.gitattributes'
-      - '.node-version'
       - 'go.mod'
       - 'Makefile'
       - '.licenserc.yaml'

@@ -22,9 +22,13 @@
 # This is the path that produces identical bytes on Linux, macOS and Windows,
 # and it is the one CI treats as canonical.
 #
-#   make docker-license-dep            # the canonical license generation
-#   make docker-run TARGET=check       # anything else, in the same environment
-#   make bump-build-image              # refresh scripts/build/images.lock
+#   make docker-license-dep                 # the canonical license generation
+#   make docker-run TARGET=<target>         # another target, in the same environment
+#   make bump-build-image                    # refresh the Debian digest and snapshot
+#
+# `make docker-run TARGET=check` is deliberately NOT an example: the tree is
+# streamed in without .git, so `check` and `check-format` cannot run there. See
+# the contract on the docker-run target below.
 #
 # Nothing here writes to the host's bin/ or node_modules: the tree is streamed
 # into the container over stdin and only the license artifacts are copied back.
@@ -52,7 +56,13 @@ include $(VERSION_MK)
 # silently disagree. The entrypoint turns a drift between the image and either
 # declaration into a loud failure.
 GO_VERSION    := $(shell sed -n 's/^go //p' $(root_p)go.mod)
-NODE_VERSION  := $(shell bash $(root_p)scripts/ci/check/node_version.sh resolve $(root_p))
+
+# Recursive, so the resolver runs only when something expands it -- that is, only
+# for the Docker targets. As an immediate assignment it ran on every parse,
+# including `make build` and `make help`, and it needed bash there. A POSIX shell
+# is still a requirement for the recipes themselves, which is documented rather
+# than assumed: on Windows that means Git Bash or WSL2.
+NODE_VERSION   = $(shell bash $(root_p)scripts/ci/check/node_version.sh resolve $(root_p))
 LICENSE_EYE_VERSION := $(strip $(LICENSE_EYE_VERSION))
 
 # --- Image coordinates -------------------------------------------------------
@@ -85,14 +95,20 @@ BUILDKIT_CACHE   ?= $(root_p)bin/.buildkit
 # That is the DEFAULT driver on Docker Desktop, so passing --cache-to
 # unconditionally breaks `make docker-license-dep` for macOS and Windows
 # contributors out of the box. Ask the builder instead of assuming.
-BUILDX_DRIVER := $(shell docker buildx inspect --bootstrap 2>/dev/null \
+# Recursive (`=`), not immediate (`:=`), and no --bootstrap. As an immediate
+# assignment this ran on EVERY parse, so `make build` and `make help` contacted
+# Docker, and --bootstrap can start a builder as a side effect. Deferred, it is
+# expanded only by the Docker recipes, which is where it is actually needed.
+#
+# Without --bootstrap, `inspect` reports the current builder's driver even when
+# that builder is not running yet, which is all this is used for. If buildx is
+# absent the driver reads empty and we enable the cache flags optimistically; a
+# driver that cannot export one is handled by buildImageCacheFlags at build time.
+BUILDX_DRIVER = $(shell docker buildx inspect 2>/dev/null \
                  | sed -n 's/^Driver: *//p' | head -1)
-ifeq ($(BUILDX_DRIVER),docker)
-BUILDKIT_CACHE_FLAGS =
-else
-BUILDKIT_CACHE_FLAGS = --cache-from type=local,src=$(BUILDKIT_CACHE) \
-                        --cache-to type=local,dest=$(BUILDKIT_CACHE),mode=max
-endif
+BUILDKIT_CACHE_FLAGS = $(if $(filter docker,$(BUILDX_DRIVER)),,\
+                        --cache-from type=local,src=$(BUILDKIT_CACHE) \
+                        --cache-to type=local,dest=$(BUILDKIT_CACHE),mode=max)
 STAGE_DIR        ?= $(root_p)bin/.license-stage
 
 # Run the container as the invoking user where that is meaningful. On a POSIX

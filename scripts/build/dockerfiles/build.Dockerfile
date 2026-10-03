@@ -25,7 +25,8 @@
 #
 # Every base image, toolchain tarball and package index is digest- or
 # checksum-pinned, and the versions are passed in as build args derived from
-# go.mod, .node-version and scripts/build/images.lock. There is deliberately
+# go.mod, the mcp and canopy package.json files, and scripts/build/version.mk.
+# There is deliberately
 # no default for any of them: a Dockerfile that carries a version is a second
 # place to forget to update it, and the failure mode is a contributor silently
 # generating different bytes than CI.

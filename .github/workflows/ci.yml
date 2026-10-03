@@ -267,7 +267,7 @@ jobs:
       needs.vuln-check.result == 'success' &&
       needs.detect_fodc_e2e_changes.result == 'success' &&
       needs.detect_trace_pipeline_e2e_changes.result == 'success' &&
-      (needs.test-gate.result == 'skipped' || success()) && \
+      (needs.test-gate.result == 'skipped' || success()) &&
       needs.build-system.result == 'success'
     needs:
       - check
