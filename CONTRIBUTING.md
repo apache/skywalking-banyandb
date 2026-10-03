@@ -178,6 +178,21 @@ thing the container guarantees and a native run cannot. Both paths normalize CRL
 both and compares the two manifests, and `make check-license-outputs` verifies the committed bytes,
 so a divergence is caught rather than discovered later.
 
+### The build system is checked on all three operating systems
+
+CI runs the build system's own checks — the Node resolver, the license verifier in both its passing
+and failing modes, and a single cheap container run that builds the pinned image and confirms it
+carries the versions this repository declares — on Linux, macOS and Windows. It deliberately does
+*not* regenerate the license artifacts on macOS or Windows: that is the expensive part, and the
+ubuntu job already covers it. What this catches is the thing you would hit first as a contributor
+there — a command from this document that does not work on your machine, or a check that silently
+does nothing.
+
+So if `make docker-license-dep` or `make check-license-outputs` fails for you on macOS or Windows,
+that is a bug in the build system rather than in your setup, and the workflow
+(`.github/workflows/test-build-system.yml`) is where it should be fixed. `shell: bash` throughout is
+deliberate: the verifier is a shell script, so on Windows it runs under Git Bash rather than cmd.
+
 To verify the license files in your worktree without regenerating them:
 
 ```shell

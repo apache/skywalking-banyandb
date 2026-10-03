@@ -218,6 +218,10 @@ jobs:
     name: Test FODC
     needs: [prepare, test-gate]
     uses: ./.github/workflows/test-fodc.yml
+  build-system:
+    name: Build System (Linux / macOS / Windows)
+    needs: [prepare, test-gate]
+    uses: ./.github/workflows/test-build-system.yml
   test-fodc-e2e:
     name: Test FODC E2E
     needs: [prepare, detect_fodc_e2e_changes, test-gate]
@@ -256,7 +260,8 @@ jobs:
       needs.vuln-check.result == 'success' &&
       needs.detect_fodc_e2e_changes.result == 'success' &&
       needs.detect_trace_pipeline_e2e_changes.result == 'success' &&
-      (needs.test-gate.result == 'skipped' || success())
+      (needs.test-gate.result == 'skipped' || success()) && \
+      needs.build-system.result == 'success'
     needs:
       - check
       - vuln-check
@@ -267,6 +272,7 @@ jobs:
       - test-bydbctl
       - test-fodc
       - test-fodc-e2e
+      - build-system
       - test-trace-pipeline-e2e
       - test-pkg
       - test-integration-standalone
