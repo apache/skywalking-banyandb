@@ -41,23 +41,14 @@ on:
   # requires workflow_call. Without it the CALLER is rejected before any job runs
   # -- and GitHub reports that as "this run likely failed because of a workflow
   # file issue" with no job output at all.
+  # Called by ci.yml (jobs.build-system.uses) and gated from its result job, so it
+  # runs on every pull_request and on push to main exactly once. It previously
+  # ALSO carried its own pull_request and push triggers, which meant every PR ran
+  # the whole matrix twice -- once standalone and once through the caller -- and
+  # showed two sets of checks under the same names.
   workflow_call:
-  pull_request:
-    paths:
-      - '.gitattributes'
-      - 'go.mod'
-      - 'Makefile'
-      - '.licenserc.yaml'
-      - 'mcp/package.json'
-      - 'canopy/package.json'
-      - 'scripts/build/**'
-      - 'scripts/ci/check/**'
-      - 'test/integration/standalone/**'
-      - '.github/workflows/test-build-system.yml'
-      - '.github/workflows/ci.yml'
-  push:
-    branches:
-      - main
+  # Kept for a one-off run against any branch, e.g. to reproduce a contributor's
+  # failure without pushing a commit.
   workflow_dispatch:
 
 concurrency:
