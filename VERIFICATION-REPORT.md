@@ -71,6 +71,44 @@ Two claims in the earlier report were false and are withdrawn:
 - **"18/18 gates" and the image-id equality** were assertions whose harness lives outside the tree.
   The harness and logs are still in `/tmp/verify/`, which is stated above rather than implied.
 
+## 1a. The CI `check` job, run locally
+
+The `check` job in `.github/workflows/ci.yml` has 13 runnable steps. All 13 were executed in order on
+this branch, after the prerequisite the job declares: `needs: [prepare]`, which is `make generate` and
+an artifact upload. Without that artifact the `api/proto/...` packages do not exist, and five steps
+fail with `no required module provides package …` — a missing prerequisite, not a defect in this change.
+
+```
+[PASS] Run consistency check                                  0s
+[PASS] Generate test cases and check drift                    1s
+[PASS] Check License Header                                  68s
+[PASS] Check requirements                                    10s
+[PASS] Build binaries and MCP dist                          111s
+[PASS] Test MCP                                                1s
+[PASS] Lint                                                   15s
+[PASS] Generate dependency licenses (native baseline)         10s
+[PASS] Capture the native manifest                             2s
+[PASS] Generate dependency licenses (Docker, canonical)       69s
+[PASS] Capture the canonical manifest                          2s
+[PASS] Native and canonical output must be byte-identical      0s
+[PASS] Check (check-format)                                    7s
+```
+
+`make generate` (the prepare job) and the `test-pkg` suite both pass, and the working tree is empty
+afterwards, which is what the consistency check and `check-format` both require.
+
+**Lint found four real defects in this change set**, all in the new test files, and they are fixed:
+
+```
+license_manifest_test.go:45   G204  subprocess with a tainted input   -> #nosec with a reason
+node_version_test.go:49       G204  subprocess with a tainted input   -> #nosec with a reason
+license_manifest_test.go:173  misspell  initialises                 -> initializes
+license_manifest_test.go:242  misspell  initialises                 -> initializes
+```
+
+This is the step I had flagged as most likely to fail, and it did — after the rebase, on code I had
+already reported as green.
+
 ## 2. Identity results
 
 | Check | Result |
