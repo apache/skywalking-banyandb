@@ -109,6 +109,40 @@ license_manifest_test.go:242  misspell  initialises                 -> initializ
 This is the step I had flagged as most likely to fail, and it did — after the rebase, on code I had
 already reported as green.
 
+## 1b. The test jobs
+
+The test jobs that can run without a cluster were run locally, using the exact command the reusable
+suite uses (`test.yml` runs `TEST_CI_OPTS="--cover --covermode atomic --coverprofile=coverage.out …"
+make test-ci PKG=…`, and `test-ci` compiles with `--race`).
+
+```
+[PASS] vuln-check                            5s
+[PASS] test-pkg                            203s      1,230 specs
+[PASS] test-banyand                        581s        324 specs
+[PASS] test-bydbctl                        560s        176 specs
+[PASS] test-fodc                           179s         84 specs
+[PASS] integration standalone / query      965s      1,878 specs
+[PASS] integration standalone / multi_seg  610s      1,220 specs
+```
+
+4,912 specs, all green. They were run sequentially on one machine, whereas CI gives each job its own
+runner, so the 52 minutes here correspond to roughly the slowest single CI job rather than the total.
+
+**Stopped short, by decision:** the third standalone lane (`pkg: ./test/integration/standalone/...`,
+the "Remainder" lane) is the parent directory of the two lanes that already passed, so it re-runs
+their specs; and `test-integration-distributed` is left to CI. Neither was run here.
+
+**Not runnable in this environment, and why:**
+
+| Job | Reason |
+|---|---|
+| `test-fodc-e2e` | `kind create cluster` — needs Kubernetes |
+| `e2e` | loads a prebuilt image tarball and runs the compose-based e2e-v2 suite |
+| `test-plugin-sidecar-e2e` | same: a kind cluster |
+| `canopy` | its own node/browser harness |
+| `flaky-test` | nightly lane |
+| `quick-start` | docker-compose deployment test |
+
 ## 2. Identity results
 
 | Check | Result |
