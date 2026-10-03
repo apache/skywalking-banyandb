@@ -51,7 +51,11 @@ jobs:
         uses: ./.github/actions/setup-build-env
         with:
           download-artifacts: 'true'
-          setup-docker: 'false'
+          # The license artifacts below are generated in the pinned build
+          # environment, which needs a Buildx-capable builder. The default
+          # Docker driver cannot always export a local cache, so the canonical
+          # builder is requested explicitly.
+          setup-docker: 'true'
       - name: Cache Tools
         uses: actions/cache@v4
         id: cache-tool
@@ -82,8 +86,24 @@ jobs:
         run: make -C mcp test
       - name: Lint
         run: make lint
-      - name: Generate dependencies licenses
+      # Both paths run, each snapshotted, then compared, so a broken image
+      # cannot hide a license change and a license change cannot hide a broken
+      # image. There is no cross-host matrix: `eol=lf` normalizes the checkout and
+      # the tree is streamed into the container rather than mounted, so the host
+      # is not a variable in the output. See
+      # docs/design/0.12.0/docker-canonical-build/README.md §7.1 and §7.2.
+      - name: Generate dependency licenses (native baseline)
         run: make license-dep
+      - name: Capture the native manifest
+        # Written outside the worktree: an untracked file here would make the
+        # `make check-format` step below fail on a dirty `git status`.
+        run: make license-manifest > ${{ runner.temp }}/native.manifest
+      - name: Generate dependency licenses (Docker, canonical)
+        run: make docker-license-dep
+      - name: Capture the canonical manifest
+        run: make license-manifest > ${{ runner.temp }}/canonical.manifest
+      - name: Native and canonical output must be byte-identical
+        run: diff -u ${{ runner.temp }}/native.manifest ${{ runner.temp }}/canonical.manifest
       - name: Check
         run: make check-format
   vuln-check:
