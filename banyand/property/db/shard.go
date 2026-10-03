@@ -114,10 +114,13 @@ func (db *database) newShard(
 		Metrics:              inverted.NewMetrics(metricsFactory),
 		BatchWaitSec:         batchWaitSec,
 		PrepareMergeCallback: si.prepareForMerge,
-		NativeWriter:         db.indexConfig.NativeWriter,
 	}
 	var err error
-	if si.store, err = inverted.NewStore(opts); err != nil {
+	if db.nativeOwner != nil {
+		if si.store, err = inverted.NewNativeStore(opts, db.nativeOwner); err != nil {
+			return nil, err
+		}
+	} else if si.store, err = inverted.NewStore(opts); err != nil {
 		return nil, err
 	}
 	repairBaseDir = path.Join(repairBaseDir, group, sName)

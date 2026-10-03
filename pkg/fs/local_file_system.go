@@ -46,6 +46,14 @@ type LocalFile struct {
 	cached    bool // Caching decision from upper layer
 	writable  bool
 	seqSynced bool
+	locked    bool
+}
+
+// IsLocked reports whether this file was acquired through CreateLockFile.
+// It is used by ownership-bound storage adapters; callers cannot set the
+// private marker on a LocalFile obtained through any other constructor.
+func (file *LocalFile) IsLocked() bool {
+	return file != nil && file.locked
 }
 
 // NewLocalFileSystem is used to create the Local File system.
