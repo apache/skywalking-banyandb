@@ -56,6 +56,13 @@ jobs:
           # Docker driver cannot always export a local cache, so the canonical
           # builder is requested explicitly.
           setup-docker: 'true'
+          # Buildx only. The pinned image is amd64-only (PLATFORM is a constant in
+          # dockerize.mk, not an override) and the runner is amd64, so nothing here
+          # is ever emulated. QEMU is disabled deliberately: it needs a privileged
+          # container to install binfmt handlers, and adding a privileged step to
+          # the most important job in CI to support a platform we do not build is a
+          # bad trade.
+          setup-qemu: 'false'
       - name: Cache Tools
         uses: actions/cache@v4
         id: cache-tool
