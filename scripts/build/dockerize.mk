@@ -75,6 +75,24 @@ node_arch = $(if $(filter amd64,$(call go_arch,$(1))),x64,$(call go_arch,$(1)))
 BUILD_IMAGE      ?= skywalking-banyandb-build
 BUILD_IMAGE_TAG  ?= go$(GO_VERSION)-node$(NODE_VERSION)-$(LICENSE_EYE_VERSION)
 BUILDKIT_CACHE   ?= $(root_p)bin/.buildkit
+
+# The local cache is a nice-to-have, not a requirement, and the `docker` driver
+# cannot export one:
+#
+#   ERROR: failed to build: Cache export is not supported for the docker driver.
+#   Switch to a different driver, or turn on the containerd image store.
+#
+# That is the DEFAULT driver on Docker Desktop, so passing --cache-to
+# unconditionally breaks `make docker-license-dep` for macOS and Windows
+# contributors out of the box. Ask the builder instead of assuming.
+BUILDX_DRIVER := $(shell docker buildx inspect --bootstrap 2>/dev/null \
+                 | sed -n 's/^Driver: *//p' | head -1)
+ifeq ($(BUILDX_DRIVER),docker)
+BUILDKIT_CACHE_FLAGS =
+else
+BUILDKIT_CACHE_FLAGS = --cache-from type=local,src=$(BUILDKIT_CACHE) \
+                        --cache-to type=local,dest=$(BUILDKIT_CACHE),mode=max
+endif
 STAGE_DIR        ?= $(root_p)bin/.license-stage
 
 # Run the container as the invoking user where that is meaningful. On a POSIX
@@ -171,6 +189,7 @@ print-build-args:
 	@echo "SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH)"
 
 docker-image: ## Build the pinned build environment (digest- and checksum-verified)
+	@echo "buildx driver: $(if $(BUILDX_DRIVER),$(BUILDX_DRIVER),unknown)$(if $(BUILDKIT_CACHE_FLAGS), (local cache enabled), (no local cache: this driver cannot export one))"
 	@test -n "$(DEBIAN_IMAGE)" || { echo "scripts/build/version.mk is missing DEBIAN_IMAGE; run 'make bump-build-image'" >&2; exit 1; }
 	@test -n "$(DEBIAN_SNAPSHOT)" || { echo "scripts/build/version.mk is missing DEBIAN_SNAPSHOT; run 'make bump-build-image'" >&2; exit 1; }
 	@test -n "$(DEBIAN_DISTRO)" || { echo "DEBIAN_DISTRO is empty; check scripts/build/version.mk and that it is passed as a build arg" >&2; exit 1; }
@@ -189,8 +208,7 @@ docker-image: ## Build the pinned build environment (digest- and checksum-verifi
 	  --build-arg SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH) \
 	  --build-arg EXPECTED_ARCH=$(call go_arch,$(PLATFORM)) \
 	  --build-arg EXPECTED_NODE_ARCH=$(call node_arch,$(PLATFORM)) \
-	  --cache-from type=local,src=$(BUILDKIT_CACHE) \
-	  --cache-to type=local,dest=$(BUILDKIT_CACHE),mode=max \
+	  $(BUILDKIT_CACHE_FLAGS) \
 	  --tag $(BUILD_IMAGE):$(BUILD_IMAGE_TAG) \
 	  $(root_p)
 
