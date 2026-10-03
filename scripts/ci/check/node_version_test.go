@@ -46,7 +46,10 @@ func runNodeVersion(t *testing.T, root string) (string, error) {
 
 func runNodeVersionMode(t *testing.T, mode, root string) (string, error) {
 	t.Helper()
-	out, err := exec.Command("bash", nodeVersionScript(t), mode, root).CombinedOutput()
+	// The script path is this package's own file and mode/root come from the
+	// tests below; nothing here is attacker-controlled.
+	cmd := exec.Command("bash", nodeVersionScript(t), mode, root) //nolint:gosec // fixed local path, literal mode
+	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 

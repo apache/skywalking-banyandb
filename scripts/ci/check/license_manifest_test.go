@@ -42,7 +42,9 @@ func script(t *testing.T) string {
 
 func run(t *testing.T, args ...string) (string, error) {
 	t.Helper()
-	cmd := exec.Command("bash", append([]string{script(t)}, args...)...)
+	// The script path is this package's own file and the arguments are literals
+	// from the tests below; nothing here is attacker-controlled.
+	cmd := exec.Command("bash", append([]string{script(t)}, args...)...) //nolint:gosec // fixed local path, literal args
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -170,7 +172,7 @@ func TestCheckCoverageRejectsUnknownProject(t *testing.T) {
 	assert.Contains(t, out, "brandnew")
 }
 
-// gitTree initialises a repository with one committed artifact.
+// gitTree initializes a repository with one committed artifact.
 func gitTree(t *testing.T, files map[string]string) string {
 	t.Helper()
 	root := tree(t, files)
@@ -239,7 +241,7 @@ func TestNormalizeRewritesCRLFOnly(t *testing.T) {
 	assert.Equal(t, "one\ntwo\n", string(lf))
 }
 
-// gitRepo initialises a repository, commits `files`, and returns its path.
+// gitRepo initializes a repository, commits `files`, and returns its path.
 func gitRepo(t *testing.T, files map[string]string) string {
 	t.Helper()
 	root := tree(t, files)
