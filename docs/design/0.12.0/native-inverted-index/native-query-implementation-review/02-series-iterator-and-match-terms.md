@@ -17,7 +17,7 @@ Classification: **implemented bounded execution ticket; affected verification pa
 
 ## Combined boundary
 
-Merge the existing dictionary-diagnostic `SeriesIterator` operation and Stream exact `MatchTerms` operation into one caller-activated execution ticket. Q2 is cohesive native dictionary access: enumeration and exact membership share Q1's pinned-view ownership. Q2 switches the `bydbctl analyze series` caller and Stream `eq.Execute` in one reviewable unit while keeping their internal implementations and tests separately observable. Q2 depends on Q1's native read-only adapter ownership and creates the series/time-constrained membership and timestamp-projection helper consumed by Q3. Its SeriesIterator portion is committed-read-only; its live MatchTerms portion is blocked on NATIVE-OWNER. It is not two independently queueable leaves.
+Merge the existing dictionary-diagnostic `SeriesIterator` operation and Stream exact `MatchTerms` operation into one caller-activated execution ticket. Q2 is cohesive native dictionary access: enumeration and exact membership share Q1's pinned-view ownership. Q2 activates the `bydbctl analyze series` caller and Stream `eq.Execute` together while keeping their internal implementations and tests separately observable. Q2 depends on Q1's native read-only adapter ownership and creates the series/time-constrained membership and timestamp-projection helper consumed by Q3. Its SeriesIterator portion is committed-read-only; its MatchTerms portion uses the current NRT-capable native owner. It is not two independently queueable leaves.
 
 No legacy `Query`, `Search`, or collector construction/delegation is permitted. Native aggregation, scoring, Boolean composition, MATCH, range, sort, and generic parser/planner work remain excluded.
 
@@ -30,7 +30,14 @@ Replace the dictionary-backed `SeriesIterator` operation for the `bydbctl analyz
 
 ## Boundary
 
-The proposed native SeriesIterator seam is a bounded dictionary iterator on `ReadOnlyGeneration`/nativeice `Reader`, activated by the existing `bydbctl analyze series` caller; `index.SeriesStore.SeriesIterator` is not the native implementation seam. Values are copied before leaving the iterator; iterator close is idempotent. The MatchTerms sub-operation uses a private context-capable native membership seam once NATIVE-OWNER exists. No retired query/search/collector object, parser, wildcard matcher, projection, sort, aggregation, or score crosses either seam.
+The native SeriesIterator seam is a bounded dictionary iterator on the pinned
+native reader, activated by the existing `bydbctl analyze series` caller;
+`index.SeriesStore.SeriesIterator` is not the native implementation seam.
+Values are copied before leaving the iterator; iterator close is idempotent.
+The MatchTerms sub-operation uses the private context-capable native
+membership seam and current owner. No retired query/search/collector object,
+parser, wildcard matcher, projection, sort, aggregation, or score crosses
+either seam.
 
 ## Requirements
 
@@ -47,12 +54,13 @@ The proposed native SeriesIterator seam is a bounded dictionary iterator on `Rea
 - **Compatibility/resource:** retained oracle and native existing segment generations cross-open; no new writer is required; reads do not alter files; malformed dictionary entry fails typed and bounded; concurrent iterators use immutable mappings with independent cursors.
 
 - **Native-path guard:** the test installs a forbidden retired Writer/Reader/plugin-instantiation and Query/Search/collector spy and fails if the iterator invokes it; it also requires a native-execution counter to be non-zero.
-- **Paired microbenchmark (proposed, not run):** first require discovery with `set -o pipefail; go test ./pkg/index/native ./pkg/index/internal/nativeice -list '^BenchmarkNativeSeriesIterator' | grep -q '^BenchmarkNativeSeriesIterator'`; then run `go test ./pkg/index/native ./pkg/index/internal/nativeice -run '^$' -bench '^BenchmarkNativeSeriesIterator/(native|oracle)$' -benchmem -count=5`. Compare five standard Go subbenchmark samples: target native median `ns/op <` oracle and median `B/op <=` oracle; this is initial microbenchmark evidence, not a fresh-process paired macro benchmark; report honestly if unmet.
+- **Historical benchmark proposal:** the original queue plan used five standard Go subbenchmark samples. Current operation-level SeriesIterator and MatchTerms results are recorded in the implementation evidence below; they are not fresh-process macro or 1.2M-document gates.
 ## Scope and readiness (historical boundary; current activation is stated above)
 
 Caller: `bydbctl/internal/cmd/analyze.go` (only this analysis operation). The native SeriesIterator is active for this caller. Exclude `Search`, `StoredFields`, prefix/wildcard semantics, writer/publication changes, and CLI output redesign. The expanded implementation also verifies the Stream element-index factory through its focused integration tests; that verification is not a claim that all repository gates have passed.
 
-Dependencies: Q1 native read-only adapter/ownership, then NATIVE-OWNER for live membership; this Q2 workpackage cannot queue independently. Relevant design rows: NQ-T01, NQ-T04, NQ-T05.
+Dependencies: Q1 native read-only adapter/ownership and the current native
+owner. Relevant design rows: NQ-T01, NQ-T04, NQ-T05.
 
 Decision: this bounded sub-operation remains separately testable, but queues and merges only as Q2 workpackage; no general series-query foundation.
 
@@ -82,18 +90,23 @@ Replace the exact indexed-term posting operation used by Stream equality filters
 - **Compatibility/resource:** retained oracle and native existing bytes cross-open; no new writer is required; read-only files remain identical; malformed term/posting offsets return typed corruption; posting expansion obeys configured bounds and does not retain cursors.
 
 - **Native-path guard:** the test installs a forbidden retired Writer/Reader/plugin-instantiation and Query/Search/collector spy and fails if `eq.Execute` invokes it; it also requires a native-execution counter to be non-zero.
-- **Paired microbenchmark (proposed, not run):** first require discovery with `set -o pipefail; go test ./pkg/query/logical/stream ./pkg/index/native ./pkg/index/internal/nativeice -list '^BenchmarkNativeMatchTerms' | grep -q '^BenchmarkNativeMatchTerms'`; then run `go test ./pkg/query/logical/stream ./pkg/index/native ./pkg/index/internal/nativeice -run '^$' -bench '^BenchmarkNativeMatchTerms/(native|oracle)$' -benchmem -count=5`. Compare five standard Go subbenchmark samples: target native median `ns/op <` oracle and median `B/op <=` oracle; this is initial microbenchmark evidence, not a fresh-process paired macro benchmark; report honestly if unmet.
+- **Historical benchmark proposal:** the original queue plan used five standard Go subbenchmark samples. Current MatchTerms operation-level results are recorded in the implementation evidence below; they are not fresh-process macro or 1.2M-document gates.
 ## Scope and readiness
 
 Caller: `pkg/query/logical/stream/index_filter.go:eq.Execute`. A real native Searcher-backed `eq.Execute` integration test passes. Exclude OR/AND/NOT/HAVING/IN, MATCH/analyzers, range, and sort from this bounded operation; the expanded Stream integration separately covers the factory's write/sort/reopen/snapshot path.
 
-Dependencies: Q1 native read-only adapter/ownership, then NATIVE-OWNER for live membership; this Q2 workpackage cannot queue independently. Relevant design rows: NQ-T01, NQ-T02, NQ-T04, NQ-T05.
+Dependencies: Q1 native read-only adapter/ownership and the current native
+owner. Relevant design rows: NQ-T01, NQ-T02, NQ-T04, NQ-T05.
 
 Decision: this bounded sub-operation remains separately testable, but queues and merges only as Q2 workpackage; not a query-engine foundation.
 
 ## Combined readiness and dependencies
 
-The original queue decision was planned-blocked pending Q1/NATIVE-OWNER. Those prerequisites and the expanded caller/factory seams now have focused evidence. The remaining work is final cross-package verification and any failures it exposes; this document does not claim those gates are complete. Q3 consumes Q2's shared series/time membership and timestamp-projection helper.
+The original queue decision was planned-blocked pending Q1/NATIVE-OWNER. Those
+prerequisites and the expanded caller/factory seams now have focused evidence.
+The remaining work is broader repository/performance verification outside this
+bounded ticket. Q3 consumes Q2's shared series/time membership and
+timestamp-projection helper.
 
 Decision: the two operations fit one bounded review/queue unit as explicitly requested; do not split them into separate issue drafts.
 
@@ -120,16 +133,18 @@ payload until those views release, as required by the read-view contract.
 Q2 bounded operation activation is implemented and covered by focused caller tests: `bydbctl analyze series` uses native SeriesIterator, and a real Stream `eq.Execute` test uses the native Searcher. The native `banyand/stream` element-index constructor is covered by lease, write, sort, reopen, and snapshot-content integration tests; operation-level benchmark evidence remains distinct from full repository gates.
 
 The available read-only SeriesIterator microbenchmark was run with
-`-benchmem -count=5` (fixture setup excluded): native medians were about
-8.17µs/2,520 B/94 allocs versus the oracle's 20.82µs/4,201 B/106 allocs.
+`-benchmem -count=5` (fixture setup excluded): the controlled rerun's native
+median was 7.123µs/2,520 B/94 allocs versus the oracle's 18.234µs/4,193 B/106
+allocs.
 This is native-package evidence only; it is not a product-throughput claim.
 
 A bounded MatchTerms operation benchmark now also runs five samples against a
 closed/reopened native fixture and a separately closed/reopened legacy oracle
 fixture built from the same four documents. It verifies string `ok`, numeric
 canonical token `42`, series filtering, deletion of doc 13, and `100 < ts <=
-300` yielding external doc 12/timestamp 200 before timing. Native medians were
-about 22.0µs/1,611 B/68 allocs versus oracle 62.8µs/34,631 B/265 allocs.
+300` yielding external doc 12/timestamp 200 before timing. The controlled
+rerun's native median was 30.814µs/1,643 B/68 allocs versus oracle
+54.378µs/34,554 B/265 allocs.
 This remains an operation microbenchmark; setup/reopen costs are outside timing.
 
 ## Final verification evidence

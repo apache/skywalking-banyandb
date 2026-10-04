@@ -1,0 +1,64 @@
+{"level":"info","time":"2026-10-04T21:35:10Z","message":"honoring GOMAXPROCS=\"4\" as set in environment"}
+goos: linux
+goarch: amd64
+pkg: github.com/apache/skywalking-banyandb/pkg/index/native
+cpu: AMD EPYC 7B13
+BenchmarkNativeMatchTerms/native-4         	    3848	     30989 ns/op	    1634 B/op	      68 allocs/op
+BenchmarkNativeMatchTerms/native-4         	    3649	     30602 ns/op	    1649 B/op	      68 allocs/op
+BenchmarkNativeMatchTerms/native-4         	    3856	     30585 ns/op	    1621 B/op	      68 allocs/op
+BenchmarkNativeMatchTerms/native-4         	    3822	     31926 ns/op	    1643 B/op	      68 allocs/op
+BenchmarkNativeMatchTerms/native-4         	    3729	     30814 ns/op	    1649 B/op	      68 allocs/op
+BenchmarkNativeMatchTerms/oracle-4         	    2206	     55627 ns/op	   34555 B/op	     265 allocs/op
+BenchmarkNativeMatchTerms/oracle-4         	    2157	     53553 ns/op	   34554 B/op	     265 allocs/op
+BenchmarkNativeMatchTerms/oracle-4         	    2080	     56386 ns/op	   34554 B/op	     265 allocs/op
+BenchmarkNativeMatchTerms/oracle-4         	    2098	     54378 ns/op	   34554 B/op	     265 allocs/op
+BenchmarkNativeMatchTerms/oracle-4         	    2425	     50517 ns/op	   34555 B/op	     265 allocs/op
+BenchmarkNativeStoredFields/native-4       	   34035	      3370 ns/op	    1408 B/op	      25 allocs/op
+BenchmarkNativeStoredFields/native-4       	   32216	      3568 ns/op	    1408 B/op	      25 allocs/op
+BenchmarkNativeStoredFields/native-4       	   34238	      3487 ns/op	    1408 B/op	      25 allocs/op
+BenchmarkNativeStoredFields/native-4       	   33793	      3508 ns/op	    1408 B/op	      25 allocs/op
+BenchmarkNativeStoredFields/native-4       	   33001	      3451 ns/op	    1408 B/op	      25 allocs/op
+BenchmarkNativeStoredFields/oracle-4       	   27574	      3853 ns/op	    3441 B/op	      50 allocs/op
+BenchmarkNativeStoredFields/oracle-4       	   31849	      3877 ns/op	    3441 B/op	      50 allocs/op
+BenchmarkNativeStoredFields/oracle-4       	   27712	      4081 ns/op	    3441 B/op	      50 allocs/op
+BenchmarkNativeStoredFields/oracle-4       	   29515	      3884 ns/op	    3441 B/op	      50 allocs/op
+BenchmarkNativeStoredFields/oracle-4       	   29078	      3690 ns/op	    3442 B/op	      50 allocs/op
+BenchmarkNativeSeriesIterator/native-4     	   17283	      7121 ns/op	    2520 B/op	      94 allocs/op
+BenchmarkNativeSeriesIterator/native-4     	   16214	      7316 ns/op	    2520 B/op	      94 allocs/op
+BenchmarkNativeSeriesIterator/native-4     	   15900	      7755 ns/op	    2520 B/op	      94 allocs/op
+BenchmarkNativeSeriesIterator/native-4     	   15592	      7123 ns/op	    2520 B/op	      94 allocs/op
+BenchmarkNativeSeriesIterator/native-4     	   16413	      7058 ns/op	    2520 B/op	      94 allocs/op
+BenchmarkNativeSeriesIterator/oracle-4     	    7123	     18732 ns/op	    4193 B/op	     106 allocs/op
+BenchmarkNativeSeriesIterator/oracle-4     	    5804	     18234 ns/op	    4193 B/op	     106 allocs/op
+BenchmarkNativeSeriesIterator/oracle-4     	    7132	     17820 ns/op	    4193 B/op	     106 allocs/op
+BenchmarkNativeSeriesIterator/oracle-4     	    5498	     18787 ns/op	    4193 B/op	     106 allocs/op
+BenchmarkNativeSeriesIterator/oracle-4     	    6309	     18027 ns/op	    4193 B/op	     106 allocs/op
+PASS
+ok  	github.com/apache/skywalking-banyandb/pkg/index/native	4.653s
+{"level":"info","time":"2026-10-04T21:35:14Z","message":"honoring GOMAXPROCS=\"4\" as set in environment"}
+goos: linux
+goarch: amd64
+pkg: github.com/apache/skywalking-banyandb/pkg/index/nativeadapter
+cpu: AMD EPYC 7B13
+BenchmarkNativeMatchField/native-4         	    2383	     52950 ns/op	    6280 B/op	     192 allocs/op
+BenchmarkNativeMatchField/native-4         	    2258	     51086 ns/op	    6303 B/op	     192 allocs/op
+BenchmarkNativeMatchField/native-4         	    2304	     51812 ns/op	    6272 B/op	     192 allocs/op
+BenchmarkNativeMatchField/native-4         	    2407	     51485 ns/op	    6272 B/op	     192 allocs/op
+BenchmarkNativeMatchField/native-4         	    2427	     51656 ns/op	    6289 B/op	     192 allocs/op
+BenchmarkNativeMatchField/oracle-4         	     631	    196030 ns/op	  366735 B/op	     446 allocs/op
+BenchmarkNativeMatchField/oracle-4         	     676	    216644 ns/op	  366739 B/op	     446 allocs/op
+BenchmarkNativeMatchField/oracle-4         	     690	    219434 ns/op	  366727 B/op	     446 allocs/op
+BenchmarkNativeMatchField/oracle-4         	     609	    230669 ns/op	  366727 B/op	     446 allocs/op
+BenchmarkNativeMatchField/oracle-4         	     561	    207876 ns/op	  366725 B/op	     446 allocs/op
+BenchmarkNativeRange/native-4              	    2409	     49835 ns/op	    7810 B/op	     201 allocs/op
+BenchmarkNativeRange/native-4              	    2373	     51978 ns/op	    7823 B/op	     201 allocs/op
+BenchmarkNativeRange/native-4              	    2172	     51735 ns/op	    7812 B/op	     201 allocs/op
+BenchmarkNativeRange/native-4              	    2442	     51601 ns/op	    7835 B/op	     201 allocs/op
+BenchmarkNativeRange/native-4              	    2364	     51333 ns/op	    7822 B/op	     201 allocs/op
+BenchmarkNativeRange/oracle-4              	     631	    230275 ns/op	  388361 B/op	     473 allocs/op
+BenchmarkNativeRange/oracle-4              	     637	    206261 ns/op	  388356 B/op	     473 allocs/op
+BenchmarkNativeRange/oracle-4              	     554	    205712 ns/op	  388359 B/op	     473 allocs/op
+BenchmarkNativeRange/oracle-4              	     636	    184785 ns/op	  388359 B/op	     473 allocs/op
+BenchmarkNativeRange/oracle-4              	     525	    213156 ns/op	  388356 B/op	     473 allocs/op
+PASS
+ok  	github.com/apache/skywalking-banyandb/pkg/index/nativeadapter	3.053s

@@ -18,25 +18,43 @@ Drafts:
 - [Q2 — SeriesIterator + MatchTerms](./02-series-iterator-and-match-terms.md)
 - [Q3 — MatchField + Range](./03-match-field-and-range.md)
 
-## Native ownership prerequisite and graph
+## Native ownership and graph (historical boundary plus current implementation)
 
 The rejected upstream getter/bridge plan is not part of these tickets. Native query must not rely on a retired-engine runtime, writer reader, or search/collector plugin. Q1 is a complete committed-generation read-only resolver transition (exact lookup plus bounded identifier visitation) over the planned pure native packages (`pkg/index/native` committed-reader interface and `pkg/index/internal/nativeice` implementation), mechanically moved from the current inverted package without retired imports on the native path (`OpenReadOnlyGeneration`, `Reader`, `Dictionary`/`TermPosting`/`VisitDocument` seams) and can activate the immutable dump resolver without an NRT owner.
 
-`NATIVE-OWNER` is an explicit prerequisite for live Stream membership: a BanyanDB-owned native publication/ownership capability must pin one coherent persisted + NRT segment/deletion view, keep segment coordinates stable, own close/cancellation/lifetime, and publish generation/deletion state atomically. It must expose a typed native seam without a retired-engine runtime, second cache, reflection, or plugin fallback. It is not implemented by these drafts; do not disguise writer/publisher/recovery/merge/GC as Q1.
+The original queue called this capability `NATIVE-OWNER`. The current Q1/Q2
+implementation provides the BanyanDB-owned native publication/root lease,
+coherent persisted plus NRT views, stable segment coordinates, close and
+cancellation ownership, and atomic generation/deletion publication. It uses
+typed native seams without a retired-engine runtime, second cache, reflection,
+or plugin fallback. The paragraphs below retain the original readiness
+contract as historical provenance, not as a current blocker.
 
 ```
 validated nativeice committed-generation/read-only seams
        └── Q1 StoredFields + PartSeriesMap + immutable IndexResolver activation
               └── Q2 SeriesIterator + MatchTerms + series/time helper
                      └── Q3 MatchField + Range
-NATIVE-OWNER blocks Q2 MatchTerms live activation and Q3 live Stream activation. Its readiness contract remains unfinished overall design work, not a fourth ticket or dead foundation.
+Q1 read-only seams feed the native owner; Q2 MatchTerms and Q3 field/range
+callers are activated through the current Stream factory and adapter.
 ```
 
-### NATIVE-OWNER readiness contract (unfinished overall design work)
+### NATIVE-OWNER readiness contract (historical acceptance checklist)
 
-Before Q2/Q3 live portions can queue, an implementation must prove: (1) one native publication root pins persisted and NRT segments plus generation deletes coherently; (2) a query opened before a write/delete/merge remains on its pinned generation while a later query sees the published generation; (3) segment-local document numbers never cross generations; (4) cancellation, caller abandonment, corruption, and close release native readers/cursors exactly once; (5) no retired-engine runtime, fallback, second cache, or reflection path is reachable; and (6) retained native/older fixtures remain readable under mixed-version restart/resource-bound tests. These are acceptance gates for the unfinished owner capability, not a fourth issue or work smuggled into Q1.
+The original checklist required: (1) one native publication root pins persisted
+and NRT segments plus generation deletes coherently; (2) old queries remain
+on their pinned generation while later queries see the published generation;
+(3) segment-local document numbers do not cross generations; (4) cancellation,
+abandonment, corruption, and close release readers/cursors exactly once; (5)
+no retired runtime, fallback, second cache, or reflection is reachable; and
+(6) retained fixtures survive mixed-version restart/resource tests. Focused
+Q1-Q3 tests provide evidence for these items; the full failure-injection and
+large-scale gates remain outside this bounded PR.
 
-Q1 is a planned execution ticket with no external/NRT blocker but is not automation-ready until its native seam/readiness audit is verified. Q2 and Q3 are planned blocked execution tickets until NATIVE-OWNER exists. The requested operation pairs are not tracking parents or independently queueable subissues. Their wider caller/test matrices and seam counts must be revalidated before automation. The three tickets do not implement the complete native owner or full query engine.
+Q1-Q3 are implemented bounded execution tickets, not tracking parents or
+independently queueable leaves. Their focused caller matrices pass; the three
+tickets do not implement the complete query engine or claim every repository
+performance/failure-injection gate.
 
 ## Remaining scope not covered
 
@@ -50,10 +68,10 @@ Fixtures and expected values are authored independently (hand-written corpus + r
 
 Before Q1 implementation queueing, the source audit must verify the selected minimal mechanical move from `pkg/index/inverted/internal/nativeice` to `pkg/index/internal/nativeice` and expose only the pure `pkg/index/native` committed-reader interface. Retired writer/reader/plugin imports may remain in isolated oracle tests only; they must not be reachable from native production code. This is a seam/readiness verification, not a fourth ticket or a new framework.
 
-## Source questions to revalidate before queueing
+## Source questions retained from the original queue review
 
-- `NewIndexResolver` currently constructs the live `SeriesStore` route; `Resolve` caches by series ID while using `Background`, and `PartSeriesMap` uses `r.store.SeriesIterator` for missing-series metadata. Q1 changes both paths to a committed nativeice `ReadOnlyGeneration` owner: exact raw stored fields plus bounded identifier visitation over multi-segment fixtures, without `NewNativeStore`, resolver signature changes, cache-policy changes, or a general public iterator. The audited legacy `StoredFields` primitive advances `dmi.Next` once; the native replacement must stop its `VisitSelectedDocuments` callback after the first live matching physical document, while preserving every repeated value in that document. Duplicate logical IDs therefore have an explicit first-snapshot-order fixture. `PartSeriesMap` only needs a result-map identifier walk and no new global lexical-order guarantee. Direct context tests cover the committed read-only seam; NRT tests remain blocked on NATIVE-OWNER.
+- `NewIndexResolver` originally constructed the live `SeriesStore` route; Q1 changed both resolution paths to the committed native owner/read-only seam while preserving cache and signature contracts. Direct and caller tests cover exact stored fields, bounded identifier visitation, and independent fixtures; NRT ownership is now covered by the current owner tests.
 - `SeriesIterator` is dictionary metadata, not live query hits: with its segment pinned, a fully deleted term remains visible (five fixed fixture terms); a new compacted generation may drop it. Preserve this established diagnostic behavior.
-- `Searcher.MatchTerms`, `MatchField`, and `Range` currently lack context in their public signatures and audited paths use retired search construction/`context.TODO`; Q2 must establish a native context-capable private seam, with Q3 consuming it once NATIVE-OWNER exists.
+- `Searcher.MatchTerms`, `MatchField`, and `Range` now use the native context-capable private seam; Q2/Q3 caller tests cover cancellation and bounded traversal.
 - `RangeOpts` supports both byte and float term values and requires both endpoints; Stream open-ended ranges use finite sentinels. `FieldKey.TimeRange` is separate. Writer omission of timestamps <=0 and DEC-005 are outside this read-only wave.
-- The source audit must verify the existing native multi-segment committed-reader primitive and newest-complete-generation/`SnapshotID` fallback before Q1 queueing. No source audit here proves NATIVE-OWNER exists; revalidate native ownership, NRT deletes, borrow lifetime, and mixed-version behavior before queueing Q2/Q3 live portions. Pending writer/publisher/recovery/merge/GC lifecycle work remains outside these three tickets.
+- The source audit verified the native multi-segment committed-reader primitive, newest-complete-generation fallback, native ownership, NRT deletes, borrow lifetime, and mixed-version reopen behavior. Broader writer/replication/large-scale lifecycle work remains outside these three tickets.

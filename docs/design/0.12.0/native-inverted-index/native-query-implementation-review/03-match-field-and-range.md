@@ -42,7 +42,7 @@ The operation boundary remains narrow:
 | Native dependency guard | `TestAdapterHasNoRetiredTransitiveDependencies` checks the adapter's `go list -deps` closure for retired inverted/Bluge packages. | Passed |
 | Native package regression | `go test ./pkg/index/native -count=1` and the focused race test pass. | Passed |
 | Stream regression | `go test ./pkg/query/logical/stream -count=1` passes. | Passed |
-| Paired operation microbenchmark | `pkg/index/nativeadapter/q3_query_benchmark_test.go`, five 100ms samples over the same copied closed corpus and public native/legacy seams. | Native MatchField 49.974µs/6,449 B/193 allocs vs oracle 290.066µs/368,938 B/446; native Range 48.136µs/7,988 B/202 vs oracle 322.245µs/389,981 B/473 |
+| Paired operation microbenchmark | `pkg/index/nativeadapter/q3_query_benchmark_test.go`, five 100ms samples over the same copied closed corpus and public native/legacy seams. | Native MatchField 51.656µs/6,289 B/192 allocs vs oracle 216.644µs/366,727 B/446; native Range 51.601µs/7,822 B/201 vs oracle 206.261µs/388,359 B/473 |
 
 Commands used for the bounded gates:
 
@@ -91,5 +91,8 @@ by this workpackage.
   fixture, not a production throughput or 1.2M-document gate. The benchmark
   command is `go test ./pkg/index/nativeadapter -run '^$' -bench
   '^BenchmarkNative(MatchField|Range)/(native|oracle)$' -benchmem -count=5`.
+  The six-operation controlled rerun (including StoredFields, SeriesIterator,
+  MatchTerms, and PartSeriesMap) is archived at
+  `verification/benchmarks/results/docker/20261004T2115Z/`.
 - Full repository pre-push and unrelated benchmark artifacts remain outside
   this bounded acceptance update.
