@@ -33,6 +33,86 @@ on:
       - '.github/workflows/canopy.yml'
 
 jobs:
+  # Canopy must be buildable and runnable natively on macOS, including Apple
+  # Silicon, without a container. This is the reproduction of skywalking#14094:
+  # `make -C canopy build` failed on darwin/arm64 during `npm install` with
+  # EBADPLATFORM, because web/package.json listed @esbuild/linux-x64 and
+  # @rolldown/binding-linux-x64-gnu as mandatory devDependencies. Native
+  # platform binaries belong in a tool's own optionalDependencies, never in ours.
+  #
+  # The lockfile and the install are the whole test: EBADPLATFORM is raised by npm
+  # during resolution, before any compilation, so `npm ci` succeeding on
+  # macos-latest is the regression guard. The build then proves the toolchain works
+  # end to end. No Docker is involved, which is the point.
+  #
+  # Native install and build only: the Linux job above remains the full suite
+  # (typecheck, lint, unit and contract tests, CSS assertions).
+  native-macos:
+    name: Native build (macOS)
+    if: github.event_name == 'pull_request'
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: canopy
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.6.0'
+          cache: 'npm'
+          cache-dependency-path: canopy/package-lock.json
+
+      - name: Report the platform
+        run: |
+          echo "os:   $(uname -s)"
+          echo "arch: $(uname -m)"
+          node -e "console.log('node:', process.version, process.platform, process.arch)"
+
+      - name: Install (the step that failed with EBADPLATFORM)
+        run: npm ci
+
+      - name: No platform-pinned binary may be a direct dependency
+        # The failure mode is a devDependency naming one platform's native binary.
+        # npm resolves it strictly and refuses on every other platform, so catch
+        # the shape rather than only the instance.
+        run: |
+          set -e
+          offenders=$(node -e '
+            const fs = require("fs");
+            const bad = [];
+            for (const f of ["web/package.json", "server/package.json", "shared/package.json"]) {
+              if (!fs.existsSync(f)) continue;   // a workspace may be removed
+              const p = JSON.parse(fs.readFileSync(f, "utf8"));
+              for (const field of ["dependencies", "devDependencies"]) {
+                for (const name of Object.keys(p[field] || {})) {
+                  // A native binary is named <tool>-<platform>-<arch>, so the
+                  // platform token is what gives it away. Matching the token
+                  // anywhere (after a dash or a slash) covers both shapes:
+                  // "@esbuild/linux-x64" and "@rolldown/binding-linux-x64-gnu".
+                  if (/(^|[-/])(darwin|linux|windows|android|freebsd|netbsd|sunos|win32)([-/]|$)/.test(name)) {
+                    bad.push(f + " " + field + " " + name);
+                  }
+                }
+              }
+            }
+            console.log(bad.join("\n"));
+          ')
+          if [ -n "$offenders" ]; then
+            echo "::error::platform-specific native binary declared as a direct dependency:"
+            echo "$offenders"
+            echo "Declare it in the tool that owns it, as an optionalDependency."
+            exit 1
+          fi
+          echo "✓ no platform-pinned direct dependencies"
+
+      - name: Build (web)
+        run: npm run -w web build
+
+      - name: Build (server)
+        run: npm run -w server build
+
   # Verification is a PR-time concern. A push to main is a fast-forward of an
   # already-green PR head, so re-running the suite there would only re-prove
   # what the PR proved; main just builds and publishes the image.
@@ -93,11 +173,18 @@ jobs:
   image-build:
     name: Image build (canopy)
     runs-on: ubuntu-latest
-    needs: build-test
-    # On a PR, build-test gates the image. On main it is skipped, and a skipped
-    # dependency would skip this job too — so accept 'skipped' explicitly.
-    # always() is required for the `if` to be evaluated at all in that state.
-    if: always() && (needs.build-test.result == 'success' || needs.build-test.result == 'skipped')
+    # A canopy PR that cannot be built natively on macOS should not produce an
+    # image either: skywalking#14094 is exactly that case, and the image is the
+    # artifact people install.
+    needs: [build-test, native-macos]
+    # On a PR, build-test and native-macos gate the image. On main both are
+    # skipped, and a skipped dependency would skip this job too — so accept
+    # 'skipped' explicitly. always() is required for the `if` to be evaluated at
+    # all in that state.
+    if: >-
+      always() &&
+      (needs.build-test.result == 'success' || needs.build-test.result == 'skipped') &&
+      (needs.native-macos.result == 'success' || needs.native-macos.result == 'skipped')
     permissions:
       contents: read
       packages: write
