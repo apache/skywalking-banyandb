@@ -452,10 +452,25 @@ Consequences, all intended:
 `make docker-run TARGET=<target>` runs any target in the pinned environment under two rules that
 are **checked, not merely documented**:
 
-1. **The target must not need Git metadata.** The tree is streamed in without `.git`, so `check`,
-   `check-format` and `pre-push` (which ends in `check`) cannot run there. Unenforced they fail deep
-   inside `go mod tidy` with a message about unpublished internal modules — nothing like the real
-   cause. The wrapper refuses them up front and names the alternative.
+1. **Git metadata is opt-in, with `GIT=1`.** By default the tree is streamed without `.git`, so
+   `check`, `check-format` and `pre-push` (which ends in `check`) cannot run there. Unenforced they
+   fail deep inside `go mod tidy` with a message about unpublished internal modules — nothing like
+   the real cause. The wrapper refuses them up front and names the alternative.
+
+   With `GIT=1` a **self-contained `.git` is assembled and streamed as well**, and they run:
+   `make docker-run GIT=1 TARGET="generate pre-push"` completes in ~14 minutes. The assembly is not
+   a copy, because a linked worktree cannot be copied: `.git` is a 4 KB file pointing at
+   `<common>/worktrees/<name>`, the objects live in `<common>`, and the **index** lives in the
+   worktree's own gitdir. So the common directory is streamed and this worktree's `HEAD` and `index`
+   are layered on top, with `commondir` dropped. Verified against a real linked worktree: the
+   reconstructed repository produces the same `status`, `diff` and `git add --renormalize` result
+   as the original.
+
+   Two consequences, both intentional. `GIT=1` runs these as **checks, not fixes**:
+   `check-format`'s `git add --renormalize .` edits the container's copy of the index, which is
+   discarded on exit, so a contributor who wants the tree fixed must run it on the host. And
+   `GIT=1` stops excluding the generated license artifacts, because otherwise `git status` would
+   report every one of them as deleted.
 2. **A target that compiles Go needs the generated protos first.** `api/proto/**` is build output,
    not source: `make generate` produces it, and CI receives it as a `prepare`-job artifact, so a
    plain checkout does not contain it. Without it, `go mod tidy` cannot resolve the module's own
@@ -713,10 +728,11 @@ path and the fix is the one in §3, not a per-OS workaround.
    deliberately conservative, but no one has profiled `license-dep` under it. If a cold-cache run
    OOMs or thrashes, the first move is to raise `RUN_MEMORY`, not to remove the limits — an
    uncapped container is what made this class of problem host-dependent in the first place.
-8. **The container is not a full build environment, and that is now enforced rather than
-   documented.** `pre-push` cannot run there: the Git-metadata rule blocks its final `check` step,
-   and every other step would install seven tools over the network at run time (§6.3). Extending the
-   image to cover that is a deliberate, separate change with its own measurement.
+8. **The container is a check environment for the full pre-push, not a fix environment.** With
+   `GIT=1` the whole `pre-push` chain runs there (§6.3), but it runs as a check: the renormalization
+   `check-format` would stage is discarded with the container, and the seven tools it installs come
+   from the network at run time. A contributor wanting a fixed tree still runs `make pre-push` on
+   the host.
 9. **Baking the remaining tools is unpriced work.** The ~2m40s figure in §6.3 is for the run-time
    install path. An image with `buf`, the protoc plugins, `golangci-lint`, `revive`, `ginkgo` and
    `govulncheck` baked in would be hermetic and substantially faster, at a materially larger size.

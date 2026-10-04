@@ -198,9 +198,11 @@ GENERATED_OUTPUTS = \
 # Not excluded wholesale: canopy and mcp read dist/LICENSE.tpl as an INPUT
 # template. --exclude globs the whole path, so dist/LICENSE does not match
 # dist/LICENSE.tpl.
-# GIT=1 streams Git metadata as well, so that git-dependent targets can run.
-# Off by default: it costs ~45 MB and a `go install` per tool, and the license
-# path needs neither.
+# GIT=1 streams a self-contained .git as well, so that git-dependent targets can
+# run. Off by default: the stream grows to ~200 MB, and the license path needs
+# none of it. It also stops excluding the generated license artifacts, because a
+# checker looking at `git status` would otherwise see every one of them as
+# deleted.
 # .git is excluded from the work-tree tar in BOTH cases. With GIT=1 a
 # self-contained one is assembled and added separately, and a linked worktree's
 # 4 KB `gitdir:` pointer file would otherwise collide with that directory.
@@ -360,11 +362,18 @@ endif
 #
 # CONTRACT, and it is enforced rather than documented:
 #
-#   1. The target must not need Git metadata. The tree is streamed in without
-#      .git, so `check`, `check-format` and `pre-push` (which ends in `check`)
-#      cannot run here. Without this guard they die deep inside `go mod tidy`
-#      with a message about unpublished internal modules, which says nothing
-#      about the real cause.
+#   1. The target must not need Git metadata — UNLESS GIT=1 is passed, which
+#      streams a self-contained .git as well. Without either, `check`,
+#      `check-format` and `pre-push` (which ends in `check`) cannot run here,
+#      and unenforced they die deep inside `go mod tidy` with a message about
+#      unpublished internal modules, which says nothing about the real cause.
+#
+#      GIT=1 makes those targets runnable, with one semantic difference worth
+#      stating: the container's `git add --renormalize .` (inside
+#      check-format) edits the container's COPY of the index, which is discarded
+#      when the container exits. So the container runs these as CHECKS and
+#      cannot apply the renormalization they would stage on the host. Run them
+#      on the host when you want the tree fixed rather than reported.
 #   2. A target that compiles Go needs the generated protos, which are build
 #      output rather than source: `api/proto/**` is produced by `make generate`
 #      and reaches CI as a `prepare`-job artifact, so it is absent from a plain

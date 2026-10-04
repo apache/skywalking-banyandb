@@ -7,7 +7,7 @@ in [`docs/design/0.12.0/docker-canonical-build/README.md`](../../docs/design/0.1
 ```shell
 make docker-license-dep        # regenerate the license files, canonically
 make docker-run TARGET=<t>     # run another target that does not need Git
-make docker-run TARGET="generate lint"   # several targets, `generate` first
+make docker-run GIT=1 TARGET="generate pre-push"   # with Git metadata streamed in
 make bump-build-image          # refresh the Debian digest and snapshot in version.mk
 ```
 
@@ -15,10 +15,28 @@ The image is not published. It is built locally and cached in `bin/.buildkit`.
 
 ## The `docker-run` contract, enforced rather than documented
 
-- **No Git metadata.** The tree is streamed in without `.git`, so `check`, `check-format` and
-  `pre-push` (which ends in `check`) are refused up front, with the reason. Without that guard they
-  die deep inside `go mod tidy` complaining about unpublished internal modules, which says nothing
-  about the real cause. Run those on the host.
+- **Git metadata is opt-in with `GIT=1`.** By default the tree is streamed without `.git`, so
+  `check`, `check-format` and `pre-push` (which ends in `check`) are refused up front with the
+  reason. Without that guard they die deep inside `go mod tidy` complaining about unpublished
+  internal modules, which says nothing about the real cause.
+
+  With `GIT=1` a **self-contained `.git` is assembled and streamed too**, and those targets run:
+
+  ```shell
+  make docker-run GIT=1 TARGET="generate pre-push"
+  ```
+
+  Two things to know. First, the assembly handles linked worktrees, which a naive copy does not:
+  there `.git` is a 4 KB file pointing at `<main>/.git/worktrees/<name>`, the objects live in
+  `<main>/.git`, and the **index** lives in the worktree's own gitdir. So the common directory is
+  streamed and this worktree's `HEAD` and `index` are layered on top, with `commondir` dropped.
+  Verified: the reconstructed repository reports the same `status`, `diff` and
+  `add --renormalize` result as the real one.
+
+  Second, `GIT=1` runs these as **checks, not fixes**: `check-format`'s `git add --renormalize .`
+  edits the container's copy of the index, which is discarded on exit. Run them on the host when
+  you want the tree changed rather than reported. It also stops excluding the generated license
+  artifacts, since otherwise `git status` would report every one as deleted.
 - **Anything that compiles Go needs the generated protos first.** `api/proto/**` is build output,
   not source: `make generate` produces it and CI receives it as a `prepare`-job artifact, so a plain
   checkout does not contain it. Passing `generate` as the first target produces them in the same
