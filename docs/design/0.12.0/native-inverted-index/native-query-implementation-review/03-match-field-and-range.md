@@ -1,91 +1,95 @@
-# Draft Q3: native MatchField and Range
+# Q3: native MatchField and Range
 
-> **Status (2026-10-04).** Q2's native owner, shared series/time membership,
-> and expanded Stream element-index cutover prerequisites are present and have
-> focused tests. This remains the historical Q3 plan: the original
-> MatchField/Range acceptance matrix and final repository gates are not claimed
-> complete here.
+> **Status (2026-10-04).** The bounded Q3 operations are implemented and their
+> real Stream callers are covered by native integration tests. This document
+> records the acceptance evidence and the remaining limits; it is no longer a
+> blocked/design-only ticket.
 
-Classification: **planned blocked execution ticket** (two bounded operations, one review/queue unit; not a tracking parent)
+Classification: **implemented bounded execution workpackage** (not a complete
+query engine and not a pure-NOT/live-universe feature).
 
 ## Combined boundary
 
-Merge corrected indexed-presence `MatchField` and full byte/numeric `Range` posting evaluation into one Stream caller-activated execution ticket. Q3 is cohesive native field-dictionary selection: presence and range share Q2's series/time membership helper. Q3 switches Stream `not.Execute` and `rangeOp.Execute` in one reviewable unit while keeping each operation's semantic fixture and guard separately observable. It depends on Q1's native read-only adapter ownership and Q2's shared series/time membership and timestamp-projection helper; live Stream activation also requires NATIVE-OWNER. These are not independently queueable issues.
+Q2's Stream factory activated the real `not.Execute` and `rangeOp.Execute`
+callers; Q3 validates and completes those callers against the native adapter.
+Both operations use the pinned native read view, native
+dictionary/posting traversal, deletion masks, series scope, and timestamp
+scope. They do not construct or delegate to a legacy `Query`, `Search`,
+collector, writer, or plugin.
 
-No legacy `Query`, `Search`, or collector construction/delegation is permitted. Pure live-universe NOT, Boolean composition, MATCH/analyzer, prefix/wildcard, sort, aggregation, and scoring remain excluded.
+The operation boundary remains narrow:
 
-### MatchField operation
+- `MatchField` means indexed posting presence, not schema or stored-field
+  presence. A zero-token field is absent; an encoded empty term is present.
+- `MatchRange` evaluates bounded encoded byte/numeric terms with independent
+  endpoint inclusivity.
+- A NOT leaf subtracts matching IDs from the indexed-present field universe.
+  Pure NOT over every live document, Boolean planner expansion, MATCH/analyzer
+  expansion, prefix/wildcard, sort, aggregation, and scoring remain out of
+  scope.
 
-Classification: **planned blocked sub-operation in this merged workpackage**
+## Acceptance evidence
 
-## Summary
-Implement field-presence membership for Stream negative filters and switch the real `not.Execute` caller. This is the accepted DEC-003 correction: field-aware NOT subtracts from indexed-present documents; bare/pure NOT's live universe is not implemented by this leaf.
+| Area | Public seam and evidence | Result |
+| --- | --- | --- |
+| Field presence | `TestNativeMatchFieldPresence` in `pkg/query/logical/stream/native_presence_integration_test.go` invokes `not.Execute` through `nativeadapter.Searcher`. | Passed |
+| Presence semantics | Stored-only and zero-token fields are absent; empty indexed term is present; deleted and other-series postings are absent. | Passed |
+| Field-aware NOT | Literal IDs are retained-minus-matched IDs, not the live-document universe. | Passed |
+| Time scope | The presence test excludes the timestamp-600 row from a 50..150 query. | Passed |
+| Pinned view/reopen | The test queries a pinned view across deletion, then a fresh view and a reopened durable owner. | Passed |
+| Range caller | `TestNativeRangeExecuteEndpointsDeletionTimeAndPinnedView` and `TestNativeRangeExecuteCancellationAndClosedSearcher` in `pkg/query/logical/stream/native_range_integration_test.go`. | Passed in the focused Stream suite |
+| Cancellation/resource bounds | `TestNativeQ3QueryResourceBoundaries` in `pkg/index/native/q3_query_resource_test.go` deterministically cancels during dictionary traversal, checks term/candidate limits, reuses the view after errors, and verifies idempotent close. | Passed |
+| Native dependency guard | `TestAdapterHasNoRetiredTransitiveDependencies` checks the adapter's `go list -deps` closure for retired inverted/Bluge packages. | Passed |
+| Native package regression | `go test ./pkg/index/native -count=1` and the focused race test pass. | Passed |
+| Stream regression | `go test ./pkg/query/logical/stream -count=1` passes. | Passed |
+| Paired operation microbenchmark | `pkg/index/nativeadapter/q3_query_benchmark_test.go`, five 100ms samples over the same copied closed corpus and public native/legacy seams. | Native MatchField 49.974µs/6,449 B/193 allocs vs oracle 290.066µs/368,938 B/446; native Range 48.136µs/7,988 B/202 vs oracle 322.245µs/389,981 B/473 |
 
-## Boundary
+Commands used for the bounded gates:
 
-The proposed native field-dictionary seam returns postings for documents with an actual posting for the requested field/series/time scope, plus matching timestamps; `Searcher.MatchField` is the compatibility caller contract, not permission to construct retired search objects. Presence is posting membership—not schema `Fields()`, stored-field existence, or an empty range. A zero-token analyzed field is absent; an empty keyword is present only if an encoded empty-term posting exists. No legacy query/search/collector bridge, Boolean algebra, or pure-NOT live-universe API.
+```text
+go test ./pkg/query/logical/stream -run '^TestNativeMatchFieldPresence$' -count=1
+go test -race ./pkg/query/logical/stream -run '^TestNativeMatchFieldPresence$' -count=1 -timeout=5m
+go test ./pkg/query/logical/stream -count=1
+go test ./pkg/index/native -run '^TestNativeQ3QueryResourceBoundaries$' -count=1
+go test -race ./pkg/index/native -run '^TestNativeQ3QueryResourceBoundaries$' -count=1 -timeout=5m
+go test ./pkg/index/native -count=1
+```
 
-## Requirements
+The shared-timestamp regression found that independently subtracting timestamp
+postings can remove a timestamp belonging to a retained ID. The final policy
+keeps timestamps as a conservative pruning candidate set while ID postings
+remain exact; this avoids false negatives without inventing an ID-to-timestamp
+relation that the existing posting API does not carry.
 
-- Distinguish field-present from live-document universe and preserve series/time bounds.
-- Apply deletion masks before results escape; retain empty/singleton posting fast paths with bounded larger sets.
-- Propagate cancellation and close owned dictionary/posting cursors exactly once; typed corruption/resource errors.
+## Resource and corruption limits
 
-## Acceptance criteria
+Native dictionary expansion uses the required `MaxTerms` budget. The optional
+`MaxCandidates` budget bounds candidate materialization when configured (zero
+means no candidate cap). Canceled traversal returns the caller's context
+error, and a failed query can be followed by a successful query on the same
+view. Closing a view is idempotent and a closed view rejects further work.
 
-- **RED planned, not run:** `go test ./pkg/query/logical/stream ./pkg/index/native ./pkg/index/internal/nativeice -run 'TestNativeMatchField(Presence|ZeroToken|EmptyKeyword|Deleted|CallerCutover)$'`. The current audited `MatchField` delegates to an empty `Range`; expected RED is a planned contract gap, not fabricated execution evidence. A required discovery guard before that run is `set -o pipefail; go test ./pkg/query/logical/stream ./pkg/index/native ./pkg/index/internal/nativeice -list '^TestNativeMatchField' | grep -q '^TestNativeMatchField'`; zero matching tests is a failure, not green.
+Malformed committed bytes are covered at the nativeice seam rather than by
+fabricated test spies. Existing named tests include
+`TestOpenStrictDoesNotFallBackFromNewestCorruptSnapshot`,
+`TestOpenMissingReferencedSegmentIsCorrupt`,
+`TestReaderRejectsOversizedOrTruncatedDictionary`, and
+`TestTermDocumentsRejectsMalformedPostingOffset`, plus malformed timestamp
+tests under `pkg/index/internal/nativeice`.
+An end-to-end malformed-file injection through the Stream caller is not claimed
+by this workpackage.
 
-- **Independent fixture:** live docs `d1` indexed `f=x`, `d2` indexed `f=y`, `d3` stores `f` but has no posting, and deleted `d4` indexed `f=x`. Expected `MatchField(f)` is `{d1,d2}`; a field-aware NOT `f=x` uses present universe and returns `{d2}`. A separate pure-NOT test is explicitly expected to use live `{d1,d2,d3}` and is out of this leaf. Empty keyword is present only in a row with an encoded empty-term posting.
-- **End-to-end:** invoke Stream `not.Execute` through the actual index-filter path and assert both field-aware result and absence of a live-universe substitution; restart and repeat.
-- **Compatibility/resource:** retained oracle and native existing bytes cross-open; no new writer is required; no writes during read; cancellation/error cleanup is idempotent; sparse/zero-token fields do not trigger schema-wide scans or unbounded materialization.
+## Remaining gaps
 
-- **Native-path guard:** the test installs a forbidden retired Writer/Reader/plugin-instantiation and Query/Search/collector spy and fails if `not.Execute` invokes it; it also requires a native-execution counter to be non-zero.
-- **Paired microbenchmark (proposed, not run):** first require discovery with `set -o pipefail; go test ./pkg/query/logical/stream ./pkg/index/native ./pkg/index/internal/nativeice -list '^BenchmarkNativeMatchField' | grep -q '^BenchmarkNativeMatchField'`; then run `go test ./pkg/query/logical/stream ./pkg/index/native ./pkg/index/internal/nativeice -run '^$' -bench '^BenchmarkNativeMatchField/(native|oracle)$' -benchmem -count=5`. Compare five standard Go subbenchmark samples: target native median `ns/op <` oracle and median `B/op <=` oracle; this is initial microbenchmark evidence, not a fresh-process paired macro benchmark; report honestly if unmet.
-## Scope and readiness
-
-Caller: `pkg/query/logical/stream/index_filter.go:not.Execute`. Exclude pure Boolean NOT live-universe implementation, MatchTerms, MATCH, range, and sort. **Planned blocked on Q2 and NATIVE-OWNER for live Stream activation; revalidate the corrected field-presence seam before queueing.**
-
-Dependencies: Q1 native read-only adapter ownership, Q2 shared series/time membership helper, and NATIVE-OWNER for live Stream activation; this Q3 workpackage cannot queue independently. Relevant design rows: NQ-T01, NQ-T02, NQ-T04, NQ-T05.
-
-Decision: this bounded sub-operation remains separately testable, but queues and merges only as Q3 workpackage; do not smuggle pure NOT or generic Boolean execution into it.
-
-### Range operation
-
-Classification: **planned blocked sub-operation in this merged workpackage**
-
-## Summary
-Replace the bounded byte/numeric range posting operation used by Stream range filters. Switch only `rangeOp.Execute`; preserve endpoint semantics and timestamp postings.
-
-## Boundary
-
-The proposed native field-dictionary range seam evaluates the full existing byte-term and numeric-term range contract; `Searcher.Range` is the compatibility caller contract: inclusive/exclusive lower and upper endpoints and the caller's series scope. `RangeOpts.Valid` requires both endpoints; Stream open-ended operators must encode finite minimum/maximum sentinels rather than pass nil. `FieldKey.TimeRange` is a separate timestamp filter. The native adapter returns document/timestamp postings and typed errors. No legacy `Query`, `Search`, collector, Boolean planner, MATCH, sort, aggregation, or score.
-
-## Requirements
-
-- Preserve independent endpoint inclusivity (`QUERY-003`), byte and numeric encoded terms, and the finite sentinel encoding used for Stream open-ended operators. Apply `FieldKey.TimeRange` as a separate filter.
-- Apply deletion masks before exposing postings; use bounded dictionary/range traversal and cancellation checks.
-- Keep borrowed read-view ownership with caller; close native cursors/scratch once on all exits.
-
-## Acceptance criteria
-
-- **RED planned, not run:** `go test ./pkg/query/logical/stream ./pkg/index/native ./pkg/index/internal/nativeice -run 'TestNativeRange(Endpoints|Unbounded|Numeric|Timestamp|Deletion|Cancellation|CallerCutover)$'`. At the audited commit this operation still resolves through the legacy search path; the command is a planned RED contract, not reported run output. A required discovery guard before that run is `set -o pipefail; go test ./pkg/query/logical/stream ./pkg/index/native ./pkg/index/internal/nativeice -list '^TestNativeRange' | grep -q '^TestNativeRange'`; zero matching tests is a failure, not green.
-
-- **Independent fixture:** numeric field `latency` has live values `10` at d1, `20` at d2, `30` at d3, deleted `40` at d4. `[10,30)` must yield `{d1,d2}`; `(10,30]` must yield `{d2,d3}`; the minimum sentinel through `20` inclusive must yield `{d1,d2}`; deleted d4 never appears. Byte field `name` has `aa`,`bb`,`cc` at d1,d2,d3; `[bb,cc]` must yield `{d2,d3}`. A timestamp fixture has d1 at ts=100, d2 at ts=200, d3 at ts=300; a separate `FieldKey.TimeRange` `(100,300]` selects `{d2,d3}`. Writer omission of timestamps <=0 and DEC-005 signed-time handling are prerequisites/out of scope; no writer change is hidden here. Expected IDs are declared in fixture metadata independently of native range traversal.
-- **End-to-end:** execute Stream `rangeOp.Execute` with each endpoint form through the actual filter path, restart, and repeat from immutable bytes; assert timestamps alongside document IDs where requested.
-- **Compatibility/resource:** retained oracle and native existing bytes cross-open; no new writer is required; no file mutation; malformed numeric/range offsets return typed corruption within configured bounds; cancellation during dictionary traversal closes state and does not retain candidate buffers.
-
-- **Native-path guard:** the test installs a forbidden retired Writer/Reader/plugin-instantiation and Query/Search/collector spy and fails if `rangeOp.Execute` invokes it; it also requires a native-execution counter to be non-zero.
-- **Paired microbenchmark (proposed, not run):** first require discovery with `set -o pipefail; go test ./pkg/query/logical/stream ./pkg/index/native ./pkg/index/internal/nativeice -list '^BenchmarkNativeRange' | grep -q '^BenchmarkNativeRange'`; then run `go test ./pkg/query/logical/stream ./pkg/index/native ./pkg/index/internal/nativeice -run '^$' -bench '^BenchmarkNativeRange/(native|oracle)$' -benchmem -count=5`. Compare five standard Go subbenchmark samples: target native median `ns/op <` oracle and median `B/op <=` oracle; this is initial microbenchmark evidence, not a fresh-process paired macro benchmark; report honestly if unmet.
-## Scope and readiness
-
-Caller: `pkg/query/logical/stream/index_filter.go:rangeOp.Execute`. Exclude Boolean composition, pure NOT, MATCH/analyzer, prefix/wildcard, and ordering. **Planned blocked on Q2 and NATIVE-OWNER for live Stream activation; revalidate context propagation and endpoint behavior before queueing.**
-
-Dependencies: Q1 native read-only adapter ownership, Q2 shared series/time membership helper, and NATIVE-OWNER for live Stream activation; this Q3 workpackage cannot queue independently. Relevant design rows: NQ-T01, NQ-T02, NQ-T04, NQ-T05.
-
-Decision: this bounded sub-operation remains separately testable, but queues and merges only as Q3 workpackage; no generic query subsystem.
-
-## Combined readiness and dependencies
-
-The ticket is planned blocked until Q1/Q2 are merged and revalidated and NATIVE-OWNER exists for live Stream activation. Nativeice committed-read-only evidence does not provide NRT ownership. Both Stream callers must switch in the same merge; direct operation tests do not satisfy production activation.
-
-Decision: the two operations fit one bounded review/queue unit as explicitly requested; do not split them into separate issue drafts.
+- The Q3 tests prove the native public wrapper and real callers; they do not
+  add forbidden legacy spies or claim a general query-engine dependency guard.
+  The production path is source-audited to use `nativeadapter.Searcher`.
+- Pure live-universe NOT, general Boolean composition, prefix/wildcard,
+  ordering, aggregation, and scoring remain outside this Q3 acceptance. Q2's
+  MATCH/analyzer compatibility is not expanded or re-certified by Q3.
+- The paired results are operation-level evidence on a small five-document
+  fixture, not a production throughput or 1.2M-document gate. The benchmark
+  command is `go test ./pkg/index/nativeadapter -run '^$' -bench
+  '^BenchmarkNative(MatchField|Range)/(native|oracle)$' -benchmem -count=5`.
+- Full repository pre-push and unrelated benchmark artifacts remain outside
+  this bounded acceptance update.

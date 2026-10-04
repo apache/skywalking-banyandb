@@ -203,6 +203,9 @@ func (s *Searcher) MatchTerms(field index.Field) (posting.List, posting.List, er
 // Range performs bounded encoded range membership. An empty range means
 // indexed-field presence, matching the public index contract.
 func (s *Searcher) Range(fieldKey index.FieldKey, options index.RangeOpts) (posting.List, posting.List, error) {
+	if s == nil || s.view == nil {
+		return nil, nil, native.ErrViewClosed
+	}
 	if options.IsEmpty() {
 		return s.MatchField(fieldKey)
 	}
@@ -495,7 +498,13 @@ func validRange(options index.RangeOpts) bool {
 		return ok && bytes.Compare(lower.Value, upper.Value) <= 0
 	case *index.FloatTermValue:
 		upper, ok := options.Upper.(*index.FloatTermValue)
-		return ok && lower.Value <= upper.Value
+		if !ok {
+			return false
+		}
+		// FloatTermValue is also the carrier for sortable encoded integers.
+		// Comparing the decoded float breaks the MinInt64/MaxInt64 open
+		// sentinels (which may decode to NaN); compare their sortable keys.
+		return encoding.Float64ToSortableInt64(lower.Value) <= encoding.Float64ToSortableInt64(upper.Value)
 	default:
 		return false
 	}

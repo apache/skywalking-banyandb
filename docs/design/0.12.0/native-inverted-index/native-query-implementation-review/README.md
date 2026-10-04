@@ -1,6 +1,6 @@
 # Native query implementation review — first execution wave
 
-Status: **historical planning record, partially implemented**. Q1 StoredFields was committed in `044ea235`; the current Q2 SeriesIterator/MatchTerms ownership and native Stream compatibility work are implemented in this working tree. Q3 MatchField/Range acceptance, broader production cutover, and performance gates remain. The original audit source is `8a9f9af2da0b6d275267dd91002bafc661577278` (merged Apache-main `aa145bc34770811fa93e4c38b3641bbfec0b9b3c`); `3f2e866a6a83b9d404b00f61a2cdf300ab6de3c3` is historical evidence only.
+Status: **historical planning record, Q1–Q3 bounded operations implemented**. Q1 StoredFields was committed in `044ea235`; Q2 SeriesIterator/MatchTerms ownership and native Stream compatibility, plus Q3 MatchField/Range acceptance, are implemented in this working tree. Broader query-engine scope, full production performance gates, and 1.2M-document evidence remain. The original audit source is `8a9f9af2da0b6d275267dd91002bafc661577278` (merged Apache-main `aa145bc34770811fa93e4c38b3641bbfec0b9b3c`); `3f2e866a6a83b9d404b00f61a2cdf300ab6de3c3` is historical evidence only.
 
 ## Proposed boundaries
 
