@@ -35,7 +35,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted/internal/nativeice"
+	"github.com/apache/skywalking-banyandb/pkg/index/internal/nativeice"
 )
 
 // nidx02bWiringFile is the one production source NIDX-02C (issue #14075)

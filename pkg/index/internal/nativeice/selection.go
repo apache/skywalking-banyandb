@@ -105,7 +105,11 @@ func (r *Reader) VisitSelectedDocuments(ctx context.Context, field string, terms
 		return nil
 	}
 	for segmentIndex := range r.segments {
-		if visitErr := walkSelectedStoredSegment(ctx, r.segments[segmentIndex], selection, visit); visitErr != nil {
+		storedReader, readerErr := r.storedReader(segmentIndex)
+		if readerErr != nil {
+			return readerErr
+		}
+		if visitErr := walkSelectedStoredSegment(ctx, storedReader, r.segments[segmentIndex].record, selection, visit); visitErr != nil {
 			return visitErr
 		}
 	}
@@ -127,14 +131,21 @@ func validateSelection(selection termSelection) error {
 	return nil
 }
 
-func walkSelectedStoredSegment(ctx context.Context, segment pinnedSegment, selection termSelection, visit func(StoredDocument) error) error {
+func walkSelectedStoredSegment(
+	ctx context.Context,
+	storedReader *storedSegmentReader,
+	record segmentRecord,
+	selection termSelection,
+	visit func(StoredDocument) error,
+) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
 	}
-	storedReader, readerErr := newStoredSegmentReader(segment.file, segment.size, segment.record)
-	if readerErr != nil {
-		return readerErr
-	}
+	// The stored reader owns reusable chunk and field-name buffers. Keep the
+	// complete selection walk under its operation lock so cached readers retain
+	// the same non-concurrent operation contract as the previous per-call reader.
+	storedReader.walkMu.Lock()
+	defer storedReader.walkMu.Unlock()
 	selected, selectedErr := storedReader.selectedDocuments(ctx, selection)
 	if selectedErr != nil {
 		return selectedErr
@@ -142,7 +153,7 @@ func walkSelectedStoredSegment(ctx context.Context, segment pinnedSegment, selec
 	if selected.IsEmpty() {
 		return nil
 	}
-	deleted, deletionErr := deletedDocuments(segment.record)
+	deleted, deletionErr := deletedDocuments(record)
 	if deletionErr != nil {
 		return deletionErr
 	}
@@ -151,33 +162,13 @@ func walkSelectedStoredSegment(ctx context.Context, segment pinnedSegment, selec
 
 func (s *storedSegmentReader) selectedDocuments(ctx context.Context, selection termSelection) (*roaringpkg.Bitmap, error) {
 	selected := roaringpkg.New()
-	dictionaryOffset, found, dictionaryErr := s.dictionaryOffset(selection.field)
+	dictionary, dictionaryErr := s.dictionary(selection.field)
 	if dictionaryErr != nil {
 		return nil, dictionaryErr
 	}
-	if !found || dictionaryOffset == 0 {
+	if dictionary == nil {
 		return selected, nil
 	}
-	if dictionaryOffset >= s.footer.docValueOffset {
-		return nil, corruptError("segment %q has a term dictionary outside its section", s.path)
-	}
-	dictionaryCursor := dictionaryOffset
-	dictionaryLength, lengthErr := s.readUvarint(&dictionaryCursor, s.footer.docValueOffset)
-	if lengthErr != nil {
-		return nil, lengthErr
-	}
-	if dictionaryLength > maxSelectionDictionarySize || dictionaryLength > s.footer.docValueOffset-dictionaryCursor {
-		return nil, corruptError("segment %q has an oversized term dictionary", s.path)
-	}
-	dictionaryData := make([]byte, int(dictionaryLength))
-	if readErr := s.readInto(dictionaryCursor, dictionaryData); readErr != nil {
-		return nil, readErr
-	}
-	dictionary, loadErr := loadTermDictionary(dictionaryData)
-	if loadErr != nil {
-		return nil, corruptError("decode term dictionary in segment %q", s.path, loadErr)
-	}
-	defer func() { _ = dictionary.Close() }()
 	for _, term := range selection.terms {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr

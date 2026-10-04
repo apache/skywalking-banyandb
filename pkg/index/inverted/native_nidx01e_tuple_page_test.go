@@ -119,6 +119,7 @@ var nidx01ePermittedReaderSurface = map[string]struct{}{
 	"Reader.TermDocumentsBatch":            {},
 	"Reader.TermExists":                    {},
 	"Reader.VisitTermPostings":             {},
+	"Reader.VisitTerms":                    {},
 	"Reader.DocValues":                     {},
 	"Reader.FieldStats":                    {},
 	"Reader.Fields":                        {},

@@ -32,6 +32,63 @@ type DictionaryAutomaton interface {
 	Accept(int, byte) int
 }
 
+// VisitTerms walks one field's exact dictionary terms in each pinned segment.
+// Terms are copied before the callback and are not globally ordered across
+// segments. No posting bitmap or frequency stream is decoded. Returning false
+// stops the walk without error.
+func (r *Reader) VisitTerms(ctx context.Context, field string, visit func([]byte) bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	for segmentIndex := range r.segments {
+		storedReader, readerErr := r.storedReader(segmentIndex)
+		if readerErr != nil {
+			return readerErr
+		}
+		fst, dictionaryErr := storedReader.dictionary(field)
+		if dictionaryErr != nil {
+			return dictionaryErr
+		}
+		if fst == nil {
+			continue
+		}
+		iterator, iteratorErr := fst.Search(nil, nil, nil)
+		if iteratorErr != nil {
+			if errors.Is(iteratorErr, vellum.ErrIteratorDone) {
+				continue
+			}
+			return corruptError("search term dictionary", iteratorErr)
+		}
+		for {
+			if err := ctx.Err(); err != nil {
+				_ = iterator.Close()
+				return err
+			}
+			term, postingOffset := iterator.Current()
+			// Vellum represents a valid empty key as a nil byte slice. The
+			// non-zero posting value distinguishes it from iterator exhaustion.
+			if term == nil && postingOffset == 0 {
+				break
+			}
+			if !visit(append([]byte(nil), term...)) {
+				_ = iterator.Close()
+				return nil
+			}
+			if nextErr := iterator.Next(); nextErr != nil {
+				if errors.Is(nextErr, vellum.ErrIteratorDone) {
+					break
+				}
+				_ = iterator.Close()
+				return corruptError("advance term dictionary", nextErr)
+			}
+		}
+		if closeErr := iterator.Close(); closeErr != nil {
+			return closeErr
+		}
+	}
+	return nil
+}
+
 type vellumDictionaryAutomaton struct{ automaton DictionaryAutomaton }
 
 func (a vellumDictionaryAutomaton) Start() int              { return a.automaton.Start() }

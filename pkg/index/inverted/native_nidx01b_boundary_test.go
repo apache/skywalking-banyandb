@@ -123,6 +123,7 @@ var nativeReaderSurface = []string{
 	"Reader.VisitLiveDocuments",
 	"Reader.VisitSelectedDocuments",
 	"Reader.VisitTermPostings",
+	"Reader.VisitTerms",
 	"RepairCursor",
 	"RepairPageRequest",
 	"RepairTupleRow",

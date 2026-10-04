@@ -164,6 +164,30 @@ func TestOpenSegmentTermsPreservesEmptyTerm(t *testing.T) {
 	}
 }
 
+func TestReaderVisitTermsPreservesEmptyTerm(t *testing.T) {
+	payload, encodeErr := EncodeSegment(Generation{Documents: []EncodeDocument{
+		{Identifier: []byte("doc-empty"), Fields: []EncodeField{{Name: "group", Index: true, Terms: []EncodeTerm{{Value: nil, Frequency: 1}}}}},
+	}})
+	if encodeErr != nil {
+		t.Fatal(encodeErr)
+	}
+	reader, openErr := OpenSegment(payload)
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	t.Cleanup(func() { _ = reader.Close() })
+	var terms [][]byte
+	if visitErr := reader.VisitTerms(context.Background(), "group", func(term []byte) bool {
+		terms = append(terms, append([]byte(nil), term...))
+		return true
+	}); visitErr != nil {
+		t.Fatal(visitErr)
+	}
+	if len(terms) != 1 || terms[0] != nil {
+		t.Fatalf("VisitTerms(group) = %#v, want one empty term", terms)
+	}
+}
+
 func TestEncodeServesSortableDocument(t *testing.T) {
 	directory := t.TempDir()
 	generation := Generation{

@@ -18,13 +18,14 @@
 // Package nativeice reads the ICE v3 segment and snapshot v3 manifest grammar
 // defined by BDB-NIDX-SPEC-001 revision 0.2 sections 08 and 09, using only
 // BanyanDB code. It is the bounded read-only container reader that the
-// read-only production paths in pkg/index/inverted open committed index
+// read-only production paths in pkg/index/native open committed index
 // directories through, and it never depends on the retired index libraries.
 //
-// The package is deliberately reachable only from pkg/index/inverted. Footer,
+// The package is deliberately reachable only from pkg/index/native and its
+// legacy adapter. Footer,
 // offset, mapping, and section decoder types are private to it; the contract
 // other packages observe is the behavior of the exported functions in
-// pkg/index/inverted that call it.
+// pkg/index/native that call it.
 package nativeice
 
 import (
