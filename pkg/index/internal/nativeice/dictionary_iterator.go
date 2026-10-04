@@ -189,6 +189,53 @@ func (i *DictionaryTermIterator) Next() ([]byte, uint64, error) {
 	return term, count, nil
 }
 
+// NextTerm returns the next dictionary term without decoding its posting bitmap.
+// A nil term and nil error indicate exhaustion.
+func (i *DictionaryTermIterator) NextTerm() ([]byte, error) {
+	if i.closed || i.iterator == nil {
+		return nil, nil
+	}
+	term, postingOffset := i.iterator.Current()
+	if term == nil && postingOffset == 0 {
+		return nil, i.closeIterator()
+	}
+	owned := append([]byte(nil), term...)
+	if nextErr := i.iterator.Next(); nextErr != nil {
+		if errors.Is(nextErr, vellum.ErrIteratorDone) {
+			if closeErr := i.closeIterator(); closeErr != nil {
+				return nil, closeErr
+			}
+		} else {
+			return nil, errors.Join(corruptError("advance term dictionary", nextErr), i.closeIterator())
+		}
+	}
+	return owned, nil
+}
+
+// NextKey advances to the next matching dictionary key without decoding its
+// posting cardinality. The present flag distinguishes a valid empty key from
+// exhaustion, so range scans do not pay a second posting decode.
+func (i *DictionaryTermIterator) NextKey() ([]byte, bool, error) {
+	if i.closed || i.iterator == nil {
+		return nil, false, nil
+	}
+	term, postingOffset := i.iterator.Current()
+	if term == nil && postingOffset == 0 {
+		return nil, false, i.closeIterator()
+	}
+	owned := append([]byte(nil), term...)
+	if nextErr := i.iterator.Next(); nextErr != nil {
+		if errors.Is(nextErr, vellum.ErrIteratorDone) {
+			if closeErr := i.closeIterator(); closeErr != nil {
+				return nil, false, closeErr
+			}
+		} else {
+			return nil, false, errors.Join(corruptError("advance term dictionary", nextErr), i.closeIterator())
+		}
+	}
+	return owned, true, nil
+}
+
 // NextString returns the next matching term without the intermediate byte
 // slice allocation used by Next. The returned string is owned by the caller.
 func (i *DictionaryTermIterator) NextString() (string, uint64, error) {
@@ -305,4 +352,38 @@ func (s *storedSegmentReader) postingCount(postingOffset uint64) (uint64, error)
 		}
 	}
 	return postings.GetCardinality(), nil
+}
+
+// NewDictionaryTermIterators opens one bounded dictionary cursor per pinned
+// segment. Callers own and must close every returned cursor.
+func (r *Reader) NewDictionaryTermIterators(ctx context.Context, field string) ([]*DictionaryTermIterator, error) {
+	iterators := make([]*DictionaryTermIterator, 0, len(r.segments))
+	for segmentIndex := range r.segments {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		storedReader, err := r.storedReader(segmentIndex)
+		if err != nil {
+			for _, iterator := range iterators {
+				_ = iterator.Close()
+			}
+			return nil, err
+		}
+		dictionary, err := storedReader.dictionary(field)
+		if err != nil {
+			for _, iterator := range iterators {
+				_ = iterator.Close()
+			}
+			return nil, err
+		}
+		iterator, err := newDictionaryTermIterator(storedReader, field, dictionary, nil, nil, nil)
+		if err != nil {
+			for _, existing := range iterators {
+				_ = existing.Close()
+			}
+			return nil, err
+		}
+		iterators = append(iterators, iterator)
+	}
+	return iterators, nil
 }

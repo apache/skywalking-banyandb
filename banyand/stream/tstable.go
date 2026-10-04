@@ -213,6 +213,12 @@ func (tst *tsTable) mustReadSnapshot(snapshot uint64) []uint64 {
 func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	l *logger.Logger, option option, m any, initIndex bool,
 ) (*tsTable, uint64, error) {
+	return initTSTableWithLease(fileSystem, rootPath, p, l, option, m, initIndex, nil)
+}
+
+func initTSTableWithLease(fileSystem fs.FileSystem, rootPath string, p common.Position,
+	l *logger.Logger, option option, m any, initIndex bool, lease storage.RootLease,
+) (*tsTable, uint64, error) {
 	if option.protector == nil {
 		logger.GetLogger("stream").
 			Panic().
@@ -232,7 +238,7 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		indexMetrics = tst.metrics.indexMetrics
 	}
 	if initIndex {
-		index, err := newElementIndex(context.TODO(), rootPath, option.elementIndexFlushTimeout.Nanoseconds()/int64(time.Second), indexMetrics)
+		index, err := newElementIndex(context.TODO(), rootPath, option.elementIndexFlushTimeout.Nanoseconds()/int64(time.Second), indexMetrics, lease)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -322,9 +328,20 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 }
 
 func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
-	l *logger.Logger, _ timestamp.TimeRange, option option, m any,
+	l *logger.Logger, timeRange timestamp.TimeRange, option option, m any,
 ) (*tsTable, error) {
 	t, epoch, err := initTSTable(fileSystem, rootPath, p, l, option, m, true)
+	if err != nil {
+		return nil, err
+	}
+	t.startLoop(epoch)
+	return t, nil
+}
+
+func newTSTableWithLease(fileSystem fs.FileSystem, rootPath string, p common.Position,
+	l *logger.Logger, _ timestamp.TimeRange, option option, m any, lease storage.RootLease,
+) (*tsTable, error) {
+	t, epoch, err := initTSTableWithLease(fileSystem, rootPath, p, l, option, m, true, lease)
 	if err != nil {
 		return nil, err
 	}

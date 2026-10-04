@@ -16,8 +16,10 @@
 package nativeice
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,6 +46,307 @@ func TestOpenVisibleDocCount(t *testing.T) {
 	}
 	if count != 2 {
 		t.Fatalf("VisibleDocCount() = %d, want 2", count)
+	}
+}
+
+func TestPublishSnapshotRetainsExistingSegmentsAndOpensStrictly(t *testing.T) {
+	directory := t.TempDir()
+	firstGeneration := Generation{SegmentID: 1, SnapshotID: 1, Documents: []EncodeDocument{
+		{Identifier: []byte("old-live")},
+		{Identifier: []byte("old-deleted"), Deleted: true},
+	}}
+	if encodeErr := Encode(directory, firstGeneration); encodeErr != nil {
+		t.Fatal(encodeErr)
+	}
+	firstReader, openErr := OpenStrict(directory)
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	firstMetadata := firstReader.SnapshotMetadata()
+	if closeErr := firstReader.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if len(firstMetadata.Segments) != 1 {
+		t.Fatalf("first snapshot segments = %d, want 1", len(firstMetadata.Segments))
+	}
+	secondGeneration := Generation{SegmentID: 2, SnapshotID: 2, Documents: []EncodeDocument{{Identifier: []byte("new")}}}
+	secondPayload, payloadErr := EncodeSegment(secondGeneration)
+	if payloadErr != nil {
+		t.Fatal(payloadErr)
+	}
+	secondMetadata := SnapshotSegment{ID: 2, Size: uint64(len(secondPayload)), DocumentCount: 1}
+	if publishErr := PublishSnapshot(directory, 2, []SnapshotSegmentPayload{
+		{SnapshotSegment: secondMetadata, Payload: secondPayload},
+		{SnapshotSegment: firstMetadata.Segments[0], TrustedExisting: true},
+	}); publishErr != nil {
+		t.Fatal(publishErr)
+	}
+	reader, openErr := OpenStrict(directory)
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	defer func() { _ = reader.Close() }()
+	metadata := reader.SnapshotMetadata()
+	if metadata.ID != 2 || len(metadata.Segments) != 2 {
+		t.Fatalf("snapshot metadata = %#v, want snapshot 2 with 2 segments", metadata)
+	}
+	if metadata.Segments[0].ID != 2 || metadata.Segments[1].ID != 1 {
+		t.Fatalf("snapshot segment order = (%d, %d), want publication order (2, 1)", metadata.Segments[0].ID, metadata.Segments[1].ID)
+	}
+	physicalCount := 0
+	deletedCount := 0
+	if visitErr := reader.VisitPhysicalDocuments(context.Background(), func(document StoredDocument, deleted bool) error {
+		physicalCount++
+		if deleted {
+			deletedCount++
+		}
+		return nil
+	}); visitErr != nil {
+		t.Fatal(visitErr)
+	}
+	if physicalCount != 3 || deletedCount != 1 {
+		t.Fatalf("physical documents = %d (deleted %d), want 3 (deleted 1)", physicalCount, deletedCount)
+	}
+}
+
+func TestPublishSnapshotCopiesValidatedSourcePath(t *testing.T) {
+	sourceDirectory := t.TempDir()
+	destinationDirectory := t.TempDir()
+	payload, encodeErr := EncodeSegment(Generation{Documents: []EncodeDocument{{Identifier: []byte("source")}}})
+	if encodeErr != nil {
+		t.Fatal(encodeErr)
+	}
+	sourcePath := filepath.Join(sourceDirectory, "incoming.seg")
+	if writeErr := os.WriteFile(sourcePath, payload, 0o600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	if publishErr := PublishSnapshot(destinationDirectory, 1, []SnapshotSegmentPayload{{
+		SnapshotSegment: SnapshotSegment{ID: 1, Size: uint64(len(payload)), DocumentCount: 1}, SourcePath: sourcePath,
+	}}); publishErr != nil {
+		t.Fatal(publishErr)
+	}
+	reader, openErr := OpenStrict(destinationDirectory)
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	defer func() { _ = reader.Close() }()
+	posting, found, postingErr := reader.TermPosting("_id", []byte("source"))
+	if postingErr != nil || !found || !posting.OneHit {
+		t.Fatalf("source posting = (%+v, %v, %v), want one hit", posting, found, postingErr)
+	}
+}
+
+func TestPublishSnapshotReportsPostManifestSyncFailure(t *testing.T) {
+	directory := t.TempDir()
+	payload, payloadErr := EncodeSegment(Generation{Documents: []EncodeDocument{{Identifier: []byte("live")}}})
+	if payloadErr != nil {
+		t.Fatal(payloadErr)
+	}
+	metadata := SnapshotSegment{ID: 1, Size: uint64(len(payload)), DocumentCount: 1}
+	syncErr := errors.New("injected directory fsync failure")
+	originalSync := syncNativeICEDirectoryForPublish
+	syncCalls := 0
+	syncNativeICEDirectoryForPublish = func(path string) error {
+		syncCalls++
+		if syncCalls == 2 {
+			return syncErr
+		}
+		return originalSync(path)
+	}
+	t.Cleanup(func() { syncNativeICEDirectoryForPublish = originalSync })
+
+	publishErr := PublishSnapshot(directory, 1, []SnapshotSegmentPayload{{SnapshotSegment: metadata, Payload: payload}})
+	if publishErr == nil {
+		t.Fatal("PublishSnapshot() error = nil, want post-link fsync error")
+	}
+	var typedErr *PublishError
+	if !errors.As(publishErr, &typedErr) {
+		t.Fatalf("PublishSnapshot() error = %T %v, want *PublishError", publishErr, publishErr)
+	}
+	if !typedErr.Published {
+		t.Fatalf("PublishError.Published = false, want true after manifest link")
+	}
+	if !errors.Is(publishErr, syncErr) {
+		t.Fatalf("PublishSnapshot() error = %v, want injected sync error", publishErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(directory, "000000000001.seg")); statErr != nil {
+		t.Fatalf("post-link segment missing after uncertain publication: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(directory, "000000000001.snp")); statErr != nil {
+		t.Fatalf("post-link manifest missing after uncertain publication: %v", statErr)
+	}
+	reader, openErr := OpenStrict(directory)
+	if openErr != nil {
+		t.Fatalf("OpenStrict() after post-link sync failure: %v", openErr)
+	}
+	if closeErr := reader.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+}
+
+func TestPublishSnapshotCleansUpBeforeManifestLink(t *testing.T) {
+	directory := t.TempDir()
+	payload, payloadErr := EncodeSegment(Generation{Documents: []EncodeDocument{{Identifier: []byte("live")}}})
+	if payloadErr != nil {
+		t.Fatal(payloadErr)
+	}
+	metadata := SnapshotSegment{ID: 1, Size: uint64(len(payload)), DocumentCount: 1}
+	syncErr := errors.New("injected segment directory fsync failure")
+	originalSync := syncNativeICEDirectoryForPublish
+	syncNativeICEDirectoryForPublish = func(string) error { return syncErr }
+	t.Cleanup(func() { syncNativeICEDirectoryForPublish = originalSync })
+
+	publishErr := PublishSnapshot(directory, 1, []SnapshotSegmentPayload{{SnapshotSegment: metadata, Payload: payload}})
+	if publishErr == nil {
+		t.Fatal("PublishSnapshot() error = nil, want pre-link fsync error")
+	}
+	var typedErr *PublishError
+	if !errors.As(publishErr, &typedErr) {
+		t.Fatalf("PublishSnapshot() error = %T %v, want *PublishError", publishErr, publishErr)
+	}
+	if typedErr.Published {
+		t.Fatalf("PublishError.Published = true before manifest link")
+	}
+	if !errors.Is(publishErr, syncErr) {
+		t.Fatalf("PublishSnapshot() error = %v, want injected sync error", publishErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(directory, "000000000001.seg")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("pre-link segment was not cleaned up, stat error = %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(directory, "000000000001.snp")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("pre-link manifest exists, stat error = %v", statErr)
+	}
+}
+
+func TestOpenStrictDoesNotFallBackFromNewestCorruptSnapshot(t *testing.T) {
+	directory := t.TempDir()
+	if encodeErr := Encode(directory, Generation{SegmentID: 1, SnapshotID: 1, Documents: []EncodeDocument{{Identifier: []byte("live")}}}); encodeErr != nil {
+		t.Fatal(encodeErr)
+	}
+	if writeErr := os.WriteFile(filepath.Join(directory, "000000000002.snp"), []byte{snapshotVersion}, 0o600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	if _, openErr := OpenStrict(directory); !errors.Is(openErr, ErrCorrupt) {
+		t.Fatalf("OpenStrict() error = %v, want ErrCorrupt", openErr)
+	}
+	reader, openErr := Open(directory)
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	defer func() { _ = reader.Close() }()
+	if reader.SnapshotID() != 1 {
+		t.Fatalf("fallback snapshot ID = %d, want 1", reader.SnapshotID())
+	}
+}
+
+func TestOpenSnapshotSegmentRetainsDiskFileAndMask(t *testing.T) {
+	directory := t.TempDir()
+	if encodeErr := Encode(directory, Generation{SegmentID: 1, SnapshotID: 1, Documents: []EncodeDocument{
+		{Identifier: []byte("live")}, {Identifier: []byte("deleted"), Deleted: true},
+	}}); encodeErr != nil {
+		t.Fatal(encodeErr)
+	}
+	reader, openErr := OpenStrict(directory)
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	metadata := reader.SnapshotMetadata().Segments[0]
+	if closeErr := reader.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	segmentReader, segmentErr := OpenSnapshotSegment(filepath.Join(directory, "000000000001.seg"), metadata)
+	if segmentErr != nil {
+		t.Fatal(segmentErr)
+	}
+	defer func() { _ = segmentReader.Close() }()
+	visible, visibleErr := segmentReader.VisibleDocCount()
+	if visibleErr != nil {
+		t.Fatal(visibleErr)
+	}
+	if visible != 1 {
+		t.Fatalf("segment visible count = %d, want 1", visible)
+	}
+}
+
+func TestDecodePrefixCodedInt64(t *testing.T) {
+	value, decodeErr := DecodePrefixCodedInt64([]byte{0x20, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64})
+	if decodeErr != nil {
+		t.Fatal(decodeErr)
+	}
+	if value != 100 {
+		t.Fatalf("decoded timestamp = %d, want 100", value)
+	}
+	for _, want := range []int64{0, 1, 100, -1, -100, math.MaxInt64, math.MinInt64} {
+		got, roundTripErr := DecodePrefixCodedInt64(EncodePrefixCodedInt64(want))
+		if roundTripErr != nil || got != want {
+			t.Fatalf("prefix-coded round trip %d = %d, err %v", want, got, roundTripErr)
+		}
+	}
+	if _, decodeErr := DecodePrefixCodedInt64([]byte{0x20, 0x01}); !errors.Is(decodeErr, ErrCorrupt) {
+		t.Fatalf("invalid timestamp error = %v, want ErrCorrupt", decodeErr)
+	}
+	overflow := []byte{0x20, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+	if _, decodeErr := DecodePrefixCodedInt64(overflow); !errors.Is(decodeErr, ErrCorrupt) {
+		t.Fatalf("overflow timestamp error = %v, want ErrCorrupt", decodeErr)
+	}
+}
+
+func TestPublishSnapshotRejectsConflictWithoutOrphaningSegment(t *testing.T) {
+	directory := t.TempDir()
+	generation := Generation{SegmentID: 1, SnapshotID: 1, Documents: []EncodeDocument{{Identifier: []byte("first")}}}
+	payload, payloadErr := EncodeSegment(generation)
+	if payloadErr != nil {
+		t.Fatal(payloadErr)
+	}
+	metadata := SnapshotSegment{ID: 1, Size: uint64(len(payload)), DocumentCount: 1}
+	if publishErr := PublishSnapshot(directory, 1, []SnapshotSegmentPayload{{SnapshotSegment: metadata, Payload: payload}}); publishErr != nil {
+		t.Fatal(publishErr)
+	}
+	secondPayload, payloadErr := EncodeSegment(Generation{SegmentID: 2, Documents: []EncodeDocument{{Identifier: []byte("second")}}})
+	if payloadErr != nil {
+		t.Fatal(payloadErr)
+	}
+	conflictErr := PublishSnapshot(directory, 1, []SnapshotSegmentPayload{
+		{SnapshotSegment: metadata},
+		{SnapshotSegment: SnapshotSegment{ID: 2, Size: uint64(len(secondPayload)), DocumentCount: 1}, Payload: secondPayload},
+	})
+	if !errors.Is(conflictErr, ErrPublishConflict) {
+		t.Fatalf("conflicting PublishSnapshot() error = %v, want ErrPublishConflict", conflictErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(directory, "000000000002.seg")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("conflicting publication left segment 2, stat error = %v", statErr)
+	}
+	entries, readErr := os.ReadDir(directory)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".nativeice-") {
+			t.Fatalf("conflicting publication left temporary file %q", entry.Name())
+		}
+	}
+}
+
+func TestNextPublicationIDsIncludesOrphans(t *testing.T) {
+	directory := t.TempDir()
+	segmentID, snapshotID, idErr := NextPublicationIDs(directory)
+	if idErr != nil {
+		t.Fatal(idErr)
+	}
+	if segmentID != 0 || snapshotID != 0 {
+		t.Fatalf("empty directory IDs = (%d, %d), want (0, 0)", segmentID, snapshotID)
+	}
+	for _, name := range []string{"000000000009.seg", "000000000007.snp", "000000000003.seg", "ignored.seg.tmp"} {
+		if writeErr := os.WriteFile(filepath.Join(directory, name), nil, 0o600); writeErr != nil {
+			t.Fatal(writeErr)
+		}
+	}
+	segmentID, snapshotID, idErr = NextPublicationIDs(directory)
+	if idErr != nil {
+		t.Fatal(idErr)
+	}
+	if segmentID != 10 || snapshotID != 8 {
+		t.Fatalf("next IDs = (%d, %d), want (10, 8)", segmentID, snapshotID)
 	}
 }
 

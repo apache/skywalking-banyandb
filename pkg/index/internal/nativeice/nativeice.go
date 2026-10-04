@@ -105,6 +105,59 @@ type Reader struct {
 	keepDictionaries     bool
 }
 
+// SnapshotSegment is the immutable metadata a snapshot manifest records for
+// one segment. DeletionBitmap is copied when metadata is exported and must be
+// treated as read-only by callers.
+//
+//nolint:govet // manifest scalar fields stay grouped for wire-format clarity.
+type SnapshotSegment struct {
+	ID             uint64
+	Size           uint64
+	DocumentCount  uint64
+	TimeMin        uint64
+	TimeMax        uint64
+	DeletionBitmap []byte
+}
+
+// SnapshotMetadata describes the committed generation pinned by a Reader.
+// It contains manifest metadata only; segment payloads remain file-backed by
+// the Reader and are not materialized by this method.
+//
+//nolint:govet // manifest identity and records stay adjacent for API clarity.
+type SnapshotMetadata struct {
+	ID       uint64
+	Segments []SnapshotSegment
+}
+
+// SnapshotMetadata returns a copy of the pinned snapshot's manifest metadata.
+// The returned deletion bitmaps are owned by the caller and may be retained
+// until the Reader closes.
+func (r *Reader) SnapshotMetadata() SnapshotMetadata {
+	if r == nil {
+		return SnapshotMetadata{}
+	}
+	result := SnapshotMetadata{ID: r.snapshotID, Segments: make([]SnapshotSegment, len(r.segments))}
+	for segmentIndex, segment := range r.segments {
+		result.Segments[segmentIndex] = SnapshotSegment{
+			ID:             segment.record.id,
+			Size:           segment.size,
+			DocumentCount:  segment.record.documentCount,
+			TimeMin:        segment.record.timeMin,
+			TimeMax:        segment.record.timeMax,
+			DeletionBitmap: append([]byte(nil), segment.record.deletionBitmap...),
+		}
+	}
+	return result
+}
+
+// SegmentCount returns the number of segments in the pinned snapshot.
+func (r *Reader) SegmentCount() int {
+	if r == nil {
+		return 0
+	}
+	return len(r.segments)
+}
+
 // TimeBounds returns the timestamp bounds recorded by the segment footer.
 func (r *Reader) TimeBounds() (int64, int64) {
 	if len(r.segments) == 0 {
@@ -155,6 +208,32 @@ func (r *Reader) VisitLiveDocuments(ctx context.Context, visit func(StoredDocume
 	return nil
 }
 
+// VisitPhysicalDocuments streams every physical document in the pinned
+// generation. The deleted argument reports the snapshot deletion mask for the
+// document; unlike VisitLiveDocuments this method does not hide deleted
+// documents. Documents are visited in ascending segment and local document
+// order and are borrowed for the callback duration.
+func (r *Reader) VisitPhysicalDocuments(ctx context.Context, visit func(StoredDocument, bool) error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	for segmentIndex := range r.segments {
+		segment := r.segments[segmentIndex]
+		storedReader, readerErr := r.storedReader(segmentIndex)
+		if readerErr != nil {
+			return readerErr
+		}
+		deleted, deletionErr := deletedDocuments(segment.record)
+		if deletionErr != nil {
+			return deletionErr
+		}
+		if visitErr := storedReader.visitPhysical(ctx, deleted, visit); visitErr != nil {
+			return visitErr
+		}
+	}
+	return nil
+}
+
 // Open selects the newest committed generation in the index directory at path,
 // validates its snapshot manifest and every segment that manifest references
 // against the grammar and the reader's configured bounds, and returns a Reader
@@ -174,6 +253,37 @@ func (r *Reader) VisitLiveDocuments(ctx context.Context, visit func(StoredDocume
 // validates.
 func Open(path string) (*Reader, error) {
 	return openWithSnapshots(path, committedSnapshots)
+}
+
+// OpenStrict opens only the newest committed snapshot in path. Unlike Open,
+// it never falls back to an older generation when that newest manifest or one
+// of its segments is damaged. Writers use this fail-closed mode at startup so
+// an acknowledged generation cannot silently disappear after a restart.
+func OpenStrict(path string) (*Reader, error) {
+	snapshotPaths, segmentPaths, snapshotErr := committedSnapshots(path)
+	if snapshotErr != nil {
+		return nil, snapshotErr
+	}
+	if len(snapshotPaths) == 0 {
+		return nil, fmt.Errorf("open %q: %w", path, ErrNoSnapshot)
+	}
+	snapshotPath := snapshotPaths[len(snapshotPaths)-1]
+	manifest, readErr := readManifest(snapshotPath)
+	if readErr != nil {
+		return nil, readErr
+	}
+	visibleDocCount, segments, parseErr := parseSnapshotSegments(segmentPaths, manifest)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	if validationErr := validatePinnedSegments(segments); validationErr != nil {
+		return nil, errors.Join(validationErr, closePinnedSegments(segments))
+	}
+	snapshotID, validID := parseFinalName(filepath.Base(snapshotPath), ".snp")
+	if !validID {
+		return nil, corruptError("snapshot %q has an invalid identifier", snapshotPath)
+	}
+	return &Reader{snapshotID: snapshotID, visibleDocCount: visibleDocCount, segments: segments}, nil
 }
 
 type snapshotLister func(string) ([]string, map[uint64]string, error)
@@ -1257,6 +1367,23 @@ func newStoredSegmentReader(file segmentFile, size uint64, record segmentRecord)
 	return storedReader, nil
 }
 
+func validatePinnedSegments(segments []pinnedSegment) error {
+	for _, segment := range segments {
+		storedReader, readerErr := newStoredSegmentReader(segment.file, segment.size, segment.record)
+		if readerErr != nil {
+			return readerErr
+		}
+		for _, fieldName := range storedReader.fieldNames {
+			if _, dictionaryErr := storedReader.dictionary(fieldName); dictionaryErr != nil {
+				storedReader.close()
+				return dictionaryErr
+			}
+		}
+		storedReader.close()
+	}
+	return nil
+}
+
 func (s *storedSegmentReader) close() {
 	s.dictionaryMu.Lock()
 	defer s.dictionaryMu.Unlock()
@@ -1301,6 +1428,43 @@ func (s *storedSegmentReader) visit(ctx context.Context, deleted *roaringpkg.Bit
 				return documentErr
 			}
 			if visitErr := visit(document); visitErr != nil {
+				return visitErr
+			}
+		}
+	}
+	return nil
+}
+
+func (s *storedSegmentReader) visitPhysical(ctx context.Context, deleted *roaringpkg.Bitmap, visit func(StoredDocument, bool) error) error {
+	s.walkMu.Lock()
+	defer s.walkMu.Unlock()
+	if s.footer.documentCount == 0 {
+		return nil
+	}
+	chunkCount := (s.footer.documentCount + storedDocumentsPerChunk - 1) / storedDocumentsPerChunk
+	for chunkIndex := uint64(0); chunkIndex < chunkCount; chunkIndex++ {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		chunk, chunkErr := s.loadChunk(chunkIndex)
+		if chunkErr != nil {
+			return chunkErr
+		}
+		firstDocument := chunkIndex * storedDocumentsPerChunk
+		lastDocument := firstDocument + storedDocumentsPerChunk
+		if lastDocument > s.footer.documentCount {
+			lastDocument = s.footer.documentCount
+		}
+		for documentNumber := firstDocument; documentNumber < lastDocument; documentNumber++ {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			isDeleted := documentNumber <= math.MaxUint32 && deleted.Contains(uint32(documentNumber))
+			document, documentErr := s.decodeDocument(documentNumber, chunk)
+			if documentErr != nil {
+				return documentErr
+			}
+			if visitErr := visit(document, isDeleted); visitErr != nil {
 				return visitErr
 			}
 		}

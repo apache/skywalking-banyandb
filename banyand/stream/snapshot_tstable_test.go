@@ -49,6 +49,8 @@ func TestStreamMustWriteSnapshotUsesTempThenRename(t *testing.T) {
 	defer deferFn()
 	tabDir := filepath.Join(tmpPath, "tab")
 	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+	lease := newTestRootLease(t, tabDir)
+	_ = lease
 	tst := &tsTable{fileSystem: fileSystem, root: tabDir}
 	const epoch = uint64(0x10)
 	partNames := []string{partName(0x1)}
@@ -70,6 +72,8 @@ func TestStreamMustWriteSnapshotWithMultipleParts(t *testing.T) {
 	defer deferFn()
 	tabDir := filepath.Join(tmpPath, "tab")
 	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+	lease := newTestRootLease(t, tabDir)
+	_ = lease
 	tst := &tsTable{fileSystem: fileSystem, root: tabDir}
 	partNames := []string{partName(0x1), partName(0x2), partName(0xff)}
 	tst.mustWriteSnapshot(1, partNames)
@@ -84,6 +88,8 @@ func TestStreamReadSnapshotReturnsErrorOnEmptyFile(t *testing.T) {
 	defer deferFn()
 	tabDir := filepath.Join(tmpPath, "tab")
 	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+	lease := newTestRootLease(t, tabDir)
+	_ = lease
 	snpPath := filepath.Join(tabDir, snapshotName(1))
 	_, writeErr := fileSystem.Write([]byte{}, snpPath, 0o600)
 	require.NoError(t, writeErr)
@@ -99,6 +105,8 @@ func TestStreamReadSnapshotReturnsErrorOnInvalidJSON(t *testing.T) {
 	defer deferFn()
 	tabDir := filepath.Join(tmpPath, "tab")
 	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+	lease := newTestRootLease(t, tabDir)
+	_ = lease
 	snpPath := filepath.Join(tabDir, snapshotName(1))
 	_, writeErr := fileSystem.Write([]byte("{invalid}"), snpPath, 0o600)
 	require.NoError(t, writeErr)
@@ -114,6 +122,8 @@ func TestStreamReadSnapshotReturnsErrorOnInvalidPartName(t *testing.T) {
 	defer deferFn()
 	tabDir := filepath.Join(tmpPath, "tab")
 	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+	lease := newTestRootLease(t, tabDir)
+	_ = lease
 	partNamesData, marshalErr := json.Marshal([]string{"not-hex"})
 	require.NoError(t, marshalErr)
 	snpPath := filepath.Join(tabDir, snapshotName(1))
@@ -130,6 +140,8 @@ func TestStreamReadSnapshotSucceedsOnValidFile(t *testing.T) {
 	defer deferFn()
 	tabDir := filepath.Join(tmpPath, "tab")
 	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+	lease := newTestRootLease(t, tabDir)
+	_ = lease
 	tst := &tsTable{fileSystem: fileSystem, root: tabDir}
 	tst.mustWriteSnapshot(1, []string{partName(0xa), partName(0xb)})
 	parts, readErr := tst.readSnapshot(1)
@@ -143,6 +155,8 @@ func TestStreamMustReadSnapshotPanicsOnError(t *testing.T) {
 	defer deferFn()
 	tabDir := filepath.Join(tmpPath, "tab")
 	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+	lease := newTestRootLease(t, tabDir)
+	_ = lease
 	snpPath := filepath.Join(tabDir, snapshotName(1))
 	_, writeErr := fileSystem.Write([]byte{}, snpPath, 0o600)
 	require.NoError(t, writeErr)
@@ -156,8 +170,10 @@ func TestStreamInitTSTableEmptyDirectory(t *testing.T) {
 	defer deferFn()
 	tabDir := filepath.Join(tmpPath, "tab")
 	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
-	tst, epoch, initErr := initTSTable(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"),
-		streamSnapshotOption(), nil, false)
+	lease := newTestRootLease(t, tabDir)
+	_ = lease
+	tst, epoch, initErr := initTSTableWithLease(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"),
+		streamSnapshotOption(), nil, false, nil)
 	require.NoError(t, initErr)
 	require.NotNil(t, tst)
 	require.Greater(t, epoch, uint64(0))
@@ -170,11 +186,13 @@ func TestStreamInitTSTableEmptyTableWhenAllSnapshotsCorrupt(t *testing.T) {
 	defer deferFn()
 	tabDir := filepath.Join(tmpPath, "tab")
 	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+	lease := newTestRootLease(t, tabDir)
+	_ = lease
 	snpPath := filepath.Join(tabDir, snapshotName(1))
 	_, writeErr := fileSystem.Write([]byte{}, snpPath, 0o600)
 	require.NoError(t, writeErr)
-	tst, epoch, initErr := initTSTable(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"),
-		streamSnapshotOption(), nil, false)
+	tst, epoch, initErr := initTSTableWithLease(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"),
+		streamSnapshotOption(), nil, false, nil)
 	require.NoError(t, initErr)
 	require.NotNil(t, tst)
 	require.Greater(t, epoch, uint64(0))
@@ -188,8 +206,10 @@ func TestStreamTolerantLoaderFallbackToOlderSnapshot(t *testing.T) {
 	defer deferFn()
 	tabDir := filepath.Join(tmpPath, "tab")
 	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
-	tst, err := newTSTable(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"),
-		timestamp.TimeRange{}, streamSnapshotOption(), nil)
+	lease := newTestRootLease(t, tabDir)
+	_ = lease
+	tst, err := newTSTableWithLease(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"),
+		timestamp.TimeRange{}, streamSnapshotOption(), nil, lease)
 	require.NoError(t, err)
 	tst.mustAddElements(esTS1)
 	// Wait for the flusher to persist a snapshot (.snp) file. The part directory
@@ -220,8 +240,8 @@ func TestStreamTolerantLoaderFallbackToOlderSnapshot(t *testing.T) {
 	corruptPath := filepath.Join(tabDir, snapshotName(corruptEpoch))
 	_, writeErr := fileSystem.Write([]byte{}, corruptPath, 0o600)
 	require.NoError(t, writeErr)
-	tst2, epoch2, initErr := initTSTable(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"),
-		streamSnapshotOption(), nil, true)
+	tst2, epoch2, initErr := initTSTableWithLease(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"),
+		streamSnapshotOption(), nil, true, lease)
 	require.NoError(t, initErr)
 	require.NotNil(t, tst2)
 	require.Equal(t, validEpoch, epoch2, "should load older valid snapshot when newest is corrupt")
@@ -239,8 +259,10 @@ func TestStreamInitTSTableDeletesMultipleFailedSnapshotsOnFallback(t *testing.T)
 	defer deferFn()
 	tabDir := filepath.Join(tmpPath, "tab")
 	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
-	tst, err := newTSTable(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"),
-		timestamp.TimeRange{}, streamSnapshotOption(), nil)
+	lease := newTestRootLease(t, tabDir)
+	_ = lease
+	tst, err := newTSTableWithLease(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"),
+		timestamp.TimeRange{}, streamSnapshotOption(), nil, lease)
 	require.NoError(t, err)
 	tst.mustAddElements(esTS1)
 	// Wait for the flusher to persist a snapshot (.snp) file. The part directory
@@ -276,8 +298,8 @@ func TestStreamInitTSTableDeletesMultipleFailedSnapshotsOnFallback(t *testing.T)
 	require.NoError(t, writeErr)
 	_, writeErr = fileSystem.Write([]byte{}, corruptPath2, 0o600)
 	require.NoError(t, writeErr)
-	tst2, epoch2, initErr := initTSTable(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"),
-		streamSnapshotOption(), nil, true)
+	tst2, epoch2, initErr := initTSTableWithLease(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"),
+		streamSnapshotOption(), nil, true, lease)
 	require.NoError(t, initErr)
 	require.NotNil(t, tst2)
 	require.Equal(t, validEpoch, epoch2, "should load older valid snapshot when newer ones are corrupt")

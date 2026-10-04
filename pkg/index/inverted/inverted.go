@@ -35,7 +35,6 @@ import (
 	"github.com/blugelabs/bluge"
 	"github.com/blugelabs/bluge/analysis"
 	blugeIndex "github.com/blugelabs/bluge/index"
-	"github.com/blugelabs/bluge/numeric"
 	"github.com/blugelabs/bluge/search"
 	segment "github.com/blugelabs/bluge_segment_api"
 	"github.com/pkg/errors"
@@ -44,6 +43,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/analyzer"
@@ -698,8 +698,8 @@ func appendTimeRangeToQuery(query *bluge.BooleanQuery, fieldKey index.FieldKey) 
 	if fieldKey.TimeRange == nil || !fieldKey.TimeRange.Valid() {
 		return nil
 	}
-	lower := numeric.Float64ToInt64(fieldKey.TimeRange.Lower.(*index.FloatTermValue).Value)
-	upper := numeric.Float64ToInt64(fieldKey.TimeRange.Upper.(*index.FloatTermValue).Value)
+	lower := encoding.Float64ToSortableInt64(fieldKey.TimeRange.Lower.(*index.FloatTermValue).Value)
+	upper := encoding.Float64ToSortableInt64(fieldKey.TimeRange.Upper.(*index.FloatTermValue).Value)
 	query.AddMust(bluge.NewDateRangeInclusiveQuery(
 		time.Unix(0, lower),
 		time.Unix(0, upper),

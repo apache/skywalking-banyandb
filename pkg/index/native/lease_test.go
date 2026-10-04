@@ -1,0 +1,50 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with this work for
+// additional information regarding copyright ownership. Apache Software
+// Foundation (ASF) licenses this file to you under the Apache License, Version
+// 2.0 (the "License"); you may not use this file except in compliance with
+// the License. You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+
+package native
+
+import (
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/apache/skywalking-banyandb/pkg/fs"
+)
+
+func TestFileRootLeaseValidatesOwnedPaths(t *testing.T) {
+	root := t.TempDir()
+	fileSystem := fs.NewLocalFileSystem()
+	lock, err := fileSystem.CreateLockFile(filepath.Join(root, "lock"), 0o600)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, lock.Close()) }()
+	lease, err := NewFileRootLease(lock, root)
+	require.NoError(t, err)
+	require.NoError(t, lease.Validate())
+	require.NoError(t, lease.ValidatePath(filepath.Join(root, "idx")))
+	require.ErrorIs(t, lease.ValidatePath(filepath.Join(filepath.Dir(root), "other")), ErrLeaseUnavailable)
+}
+
+func TestFileRootLeaseRevocationSurvivesLockPathReuse(t *testing.T) {
+	root := t.TempDir()
+	fileSystem := fs.NewLocalFileSystem()
+	lockPath := filepath.Join(root, "lock")
+	lock, err := fileSystem.CreateLockFile(lockPath, 0o600)
+	require.NoError(t, err)
+	lease, err := NewFileRootLease(lock, root)
+	require.NoError(t, err)
+	require.NoError(t, lease.Revoke())
+	require.ErrorIs(t, lease.Validate(), ErrLeaseUnavailable)
+	require.NoError(t, lock.Close())
+
+	replacement, err := fileSystem.CreateLockFile(lockPath, 0o600)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, replacement.Close()) }()
+	require.ErrorIs(t, lease.ValidatePath(filepath.Join(root, "index")), ErrLeaseUnavailable)
+}

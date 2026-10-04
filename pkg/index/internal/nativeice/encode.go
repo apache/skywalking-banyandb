@@ -20,11 +20,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"hash/crc32"
 	"io"
 	"math"
 	"os"
-	"path/filepath"
 	"sort"
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
@@ -103,6 +101,9 @@ type Generation struct {
 	// SnapshotID numbers the snapshot manifest that publishes the generation,
 	// and is the identifier Reader.SnapshotID reports once it is opened.
 	SnapshotID uint64
+	// TimeMin and TimeMax are the segment's encoded timestamp bounds.
+	TimeMin uint64
+	TimeMax uint64
 }
 
 // Encode writes generation into the index directory at path as one committed
@@ -141,19 +142,13 @@ func Encode(path string, generation Generation) error {
 	if segmentErr != nil {
 		return segmentErr
 	}
-	if directoryErr := os.MkdirAll(path, 0o755); directoryErr != nil {
-		return fmt.Errorf("create index directory %q: %w", path, directoryErr)
-	}
-	segmentName := nativeICEFileName(generation.SegmentID, ".seg")
-	if publishErr := publishNativeICEFile(path, segmentName, segmentPayload); publishErr != nil {
-		return fmt.Errorf("publish segment %q: %w", segmentName, publishErr)
-	}
-	manifestPayload := encodeNativeSnapshot(generation, uint64(len(segmentPayload)), deletionBitmap)
-	manifestName := nativeICEFileName(generation.SnapshotID, ".snp")
-	if publishErr := publishNativeICEFile(path, manifestName, manifestPayload); publishErr != nil {
-		return fmt.Errorf("publish snapshot %q: %w", manifestName, publishErr)
-	}
-	return nil
+	return PublishSnapshot(path, generation.SnapshotID, []SnapshotSegmentPayload{{
+		SnapshotSegment: SnapshotSegment{
+			ID: generation.SegmentID, Size: uint64(len(segmentPayload)),
+			DocumentCount: uint64(len(generation.Documents)), DeletionBitmap: deletionBitmap,
+		},
+		Payload: segmentPayload,
+	}})
 }
 
 // EncodeSegment returns the native ICE segment bytes for generation without
@@ -259,6 +254,8 @@ func encodeNativeSegment(generation Generation) ([]byte, []byte, error) {
 	binary.BigEndian.PutUint64(footer[16:24], fieldsIndexOffset)
 	binary.BigEndian.PutUint64(footer[24:32], docValueOffset)
 	binary.BigEndian.PutUint32(footer[32:36], nativeICEChunkModeV1)
+	binary.BigEndian.PutUint64(footer[36:44], generation.TimeMin)
+	binary.BigEndian.PutUint64(footer[44:52], generation.TimeMax)
 	binary.BigEndian.PutUint32(footer[52:56], segmentVersion)
 	segment = append(segment, footer...)
 	deletionBitmap, deletionErr := encodeDeletionBitmap(generation.Documents)
@@ -353,6 +350,10 @@ func nativeICEFields(generation Generation) []nativeICEField {
 				}
 			}
 			if field.Sort {
+				// Doc-value-only fields still need a document cardinality in
+				// their field footer; otherwise readers discard their values as
+				// an empty field even though the doc-value section is present.
+				nativeField.documentNumbers[documentNumber] = struct{}{}
 				nativeField.sortValues[documentNumber] = append(nativeField.sortValues[documentNumber], field.Value)
 			}
 		}
@@ -630,23 +631,6 @@ func encodeDeletionBitmap(documents []EncodeDocument) ([]byte, error) {
 	return payload, nil
 }
 
-func encodeNativeSnapshot(generation Generation, segmentSize uint64, deletionBitmap []byte) []byte {
-	manifest := make([]byte, 0, 64+len(deletionBitmap))
-	manifest = appendNativeUvarint(manifest, snapshotVersion)
-	manifest = appendNativeUvarint(manifest, 1)
-	manifest = appendNativeUvarint(manifest, uint64(len("ice")))
-	manifest = append(manifest, "ice"...)
-	manifest = appendNativeUint32(manifest, segmentVersion)
-	manifest = appendNativeUvarint(manifest, generation.SegmentID)
-	manifest = appendNativeUint64(manifest, segmentSize)
-	manifest = appendNativeUint64(manifest, uint64(len(generation.Documents)))
-	manifest = appendNativeUint64(manifest, 0)
-	manifest = appendNativeUint64(manifest, 0)
-	manifest = appendNativeUvarint(manifest, uint64(len(deletionBitmap)))
-	manifest = append(manifest, deletionBitmap...)
-	return appendNativeUint32(manifest, crc32.ChecksumIEEE(manifest))
-}
-
 func appendNativeUvarint(destination []byte, value uint64) []byte {
 	var encoded [binary.MaxVarintLen64]byte
 	encodedLength := binary.PutUvarint(encoded[:], value)
@@ -669,31 +653,6 @@ func nativeICEFileName(identifier uint64, extension string) string {
 	return fmt.Sprintf("%012x%s", identifier, extension)
 }
 
-func publishNativeICEFile(directory, name string, payload []byte) error {
-	temporaryFile, createErr := os.CreateTemp(directory, ".nativeice-")
-	if createErr != nil {
-		return fmt.Errorf("create temporary file: %w", createErr)
-	}
-	temporaryPath := temporaryFile.Name()
-	if writeErr := writeNativeICEFile(temporaryFile, payload); writeErr != nil {
-		return errors.Join(fmt.Errorf("write temporary file: %w", writeErr), closeAndRemoveNativeICEFile(temporaryFile, temporaryPath))
-	}
-	if syncErr := temporaryFile.Sync(); syncErr != nil {
-		return errors.Join(fmt.Errorf("sync temporary file: %w", syncErr), closeAndRemoveNativeICEFile(temporaryFile, temporaryPath))
-	}
-	if closeErr := temporaryFile.Close(); closeErr != nil {
-		return errors.Join(fmt.Errorf("close temporary file: %w", closeErr), os.Remove(temporaryPath))
-	}
-	finalPath := filepath.Join(directory, name)
-	if linkErr := os.Link(temporaryPath, finalPath); linkErr != nil {
-		return errors.Join(fmt.Errorf("link temporary file as %q: %w", finalPath, linkErr), os.Remove(temporaryPath))
-	}
-	if removeErr := os.Remove(temporaryPath); removeErr != nil {
-		return fmt.Errorf("remove temporary file %q: %w", temporaryPath, removeErr)
-	}
-	return syncNativeICEDirectory(directory)
-}
-
 func writeNativeICEFile(file *os.File, payload []byte) error {
 	for len(payload) > 0 {
 		written, writeErr := file.Write(payload)
@@ -706,10 +665,6 @@ func writeNativeICEFile(file *os.File, payload []byte) error {
 		payload = payload[written:]
 	}
 	return nil
-}
-
-func closeAndRemoveNativeICEFile(file *os.File, path string) error {
-	return errors.Join(file.Close(), os.Remove(path))
 }
 
 func syncNativeICEDirectory(path string) error {
