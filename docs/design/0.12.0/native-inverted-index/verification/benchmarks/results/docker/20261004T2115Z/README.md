@@ -40,3 +40,5 @@ Raw Go benchmark output is in [`raw-bench.log`](raw-bench.log), with PartSeriesM
 operation-level observations under the stated container controls; they do not
 generalize to product throughput, full-series scans at production scale, or
 macro service performance.
+
+The PR branch equivalent code commit is `804dfed9`; the benchmark harness recorded `e123ec22`.
