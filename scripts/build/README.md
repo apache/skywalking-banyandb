@@ -5,12 +5,38 @@ artifacts this repository commits — currently the generated license files. The
 in [`docs/design/0.12.0/docker-canonical-build/README.md`](../../docs/design/0.12.0/docker-canonical-build/README.md).
 
 ```shell
-make docker-license-dep     # regenerate the license files, canonically
-make docker-run TARGET=<t>  # run another target that does not need Git
-make bump-build-image        # refresh the Debian digest and snapshot in version.mk
+make docker-license-dep        # regenerate the license files, canonically
+make docker-run TARGET=<t>     # run another target that does not need Git
+make docker-run TARGET="generate lint"   # several targets, `generate` first
+make bump-build-image          # refresh the Debian digest and snapshot in version.mk
 ```
 
 The image is not published. It is built locally and cached in `bin/.buildkit`.
+
+## The `docker-run` contract, enforced rather than documented
+
+- **No Git metadata.** The tree is streamed in without `.git`, so `check`, `check-format` and
+  `pre-push` (which ends in `check`) are refused up front, with the reason. Without that guard they
+  die deep inside `go mod tidy` complaining about unpublished internal modules, which says nothing
+  about the real cause. Run those on the host.
+- **Anything that compiles Go needs the generated protos first.** `api/proto/**` is build output,
+  not source: `make generate` produces it and CI receives it as a `prepare`-job artifact, so a plain
+  checkout does not contain it. Passing `generate` as the first target produces them in the same
+  container run:
+
+  ```shell
+  make docker-run TARGET="generate lint vuln-check"
+  ```
+
+  Measured in the pinned environment: `make generate tidy` completes in ~2m40s, where `tidy` on its
+  own fails because it cannot resolve the module's own packages.
+
+Two costs worth knowing. The image carries only the license toolchain, so `buf`, the protoc
+plugins, `golangci-lint`, `revive`, `ginkgo` and `govulncheck` are `go install`ed **at run time over
+the network**, at the versions pinned in `version.mk` — reproducible in version, but not hermetic,
+and it is the bulk of that 2m40s. Baking them into the image would make it hermetic and much faster,
+at the price of a considerably larger image; that is a separate change and deliberately not done
+here.
 
 ## What is pinned, and where
 

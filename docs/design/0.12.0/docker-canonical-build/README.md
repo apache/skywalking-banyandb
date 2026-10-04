@@ -447,7 +447,31 @@ Consequences, all intended:
 - The cost is a full source copy per run, which is acceptable for a `license-dep`-scale operation and
   is avoided entirely in CI by generating from a fresh checkout.
 
-### 6.3 The wrappers
+### 6.3 The wrappers, and the contract they enforce
+
+`make docker-run TARGET=<target>` runs any target in the pinned environment under two rules that
+are **checked, not merely documented**:
+
+1. **The target must not need Git metadata.** The tree is streamed in without `.git`, so `check`,
+   `check-format` and `pre-push` (which ends in `check`) cannot run there. Unenforced they fail deep
+   inside `go mod tidy` with a message about unpublished internal modules — nothing like the real
+   cause. The wrapper refuses them up front and names the alternative.
+2. **A target that compiles Go needs the generated protos first.** `api/proto/**` is build output,
+   not source: `make generate` produces it, and CI receives it as a `prepare`-job artifact, so a
+   plain checkout does not contain it. Without it, `go mod tidy` cannot resolve the module's own
+   packages — the first thing to break, and a confusing one. Passing `generate` as the first target
+   produces them in the same container run:
+
+   ```shell
+   make docker-run TARGET="generate lint vuln-check"
+   ```
+
+   Measured in the pinned environment: `make generate tidy` completes in ~2m40s, where `tidy` alone
+   fails. The cost is that the image carries only the license toolchain, so `buf`, the protoc
+   plugins, `golangci-lint`, `revive`, `ginkgo` and `govulncheck` are installed **at run time over
+   the network**, at the versions pinned in `version.mk` — reproducible in version, but not
+   hermetic, and the bulk of that 2m40s. Baking them in would fix both at the price of a much
+   larger image; see §10.8.
 
 ```make
 # Resource defaults mirror the existing `make test-docker` target (2 CPUs, 4 GB),
@@ -689,6 +713,14 @@ path and the fix is the one in §3, not a per-OS workaround.
    deliberately conservative, but no one has profiled `license-dep` under it. If a cold-cache run
    OOMs or thrashes, the first move is to raise `RUN_MEMORY`, not to remove the limits — an
    uncapped container is what made this class of problem host-dependent in the first place.
+8. **The container is not a full build environment, and that is now enforced rather than
+   documented.** `pre-push` cannot run there: the Git-metadata rule blocks its final `check` step,
+   and every other step would install seven tools over the network at run time (§6.3). Extending the
+   image to cover that is a deliberate, separate change with its own measurement.
+9. **Baking the remaining tools is unpriced work.** The ~2m40s figure in §6.3 is for the run-time
+   install path. An image with `buf`, the protoc plugins, `golangci-lint`, `revive`, `ginkgo` and
+   `govulncheck` baked in would be hermetic and substantially faster, at a materially larger size.
+   Nobody has measured that size, nor the CI minutes it would save.
 
 ---
 

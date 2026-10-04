@@ -24,6 +24,7 @@
 #
 #   make docker-license-dep                 # the canonical license generation
 #   make docker-run TARGET=<target>         # another target, in the same environment
+#   make docker-run TARGET="generate lint"  # several targets; `generate` first
 #   make bump-build-image                    # refresh the Debian digest and snapshot
 #
 # `make docker-run TARGET=check` is deliberately NOT an example: the tree is
@@ -303,12 +304,34 @@ docker-license-dep docker-license-check: docker-image
 
 # Escape hatch for anything else that should run in the pinned environment.
 #
-# CONTRACT: the target must not need Git metadata. The tree is streamed in
-# without .git, so `check`, `check-format` and anything else shelling out to git
-# cannot run here -- they would fail on a missing repository, not on a real
-# problem. Use them natively; the environment this provides is the toolchain, not
-# a working copy.
+# CONTRACT, and it is enforced rather than documented:
+#
+#   1. The target must not need Git metadata. The tree is streamed in without
+#      .git, so `check`, `check-format` and `pre-push` (which ends in `check`)
+#      cannot run here. Without this guard they die deep inside `go mod tidy`
+#      with a message about unpublished internal modules, which says nothing
+#      about the real cause.
+#   2. A target that compiles Go needs the generated protos, which are build
+#      output rather than source: `api/proto/**` is produced by `make generate`
+#      and reaches CI as a `prepare`-job artifact, so it is absent from a plain
+#      checkout. Pass `generate` as the first target and it is produced in the
+#      same container run, before the target that needs it.
+#
+# The environment this provides is the toolchain, not a working copy.
+GIT_DEPENDENT_TARGETS = check check-format pre-push
+define reject_git_dependent_targets
+	@for t in $(GIT_DEPENDENT_TARGETS); do \
+	  case " $(TARGET) " in *" $$t "*) \
+	    echo "make docker-run: '$$t' needs Git metadata, and the tree is streamed in" >&2; \
+	    echo "  without .git. Run it on the host instead -- or drop it and run the" >&2; \
+	    echo "  container-safe part:  make docker-run TARGET=\"generate lint vuln-check\"" >&2; \
+	    exit 1; \
+	  esac; \
+	done
+endef
+
 docker-run: docker-image
+	$(reject_git_dependent_targets)
 	$(require_docker_host)
 	@rm -rf $(STAGE_DIR) && mkdir -p $(STAGE_DIR)
 	@tar -C $(root_p) $(COPY_EXCLUDES) -cf - . \
