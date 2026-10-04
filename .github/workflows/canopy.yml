@@ -73,39 +73,66 @@ jobs:
       - name: Install (the step that failed with EBADPLATFORM)
         run: npm ci
 
-      - name: No platform-pinned binary may be a direct dependency
-        # The failure mode is a devDependency naming one platform's native binary.
-        # npm resolves it strictly and refuses on every other platform, so catch
-        # the shape rather than only the instance.
+      - name: Platform binaries belong in optionalDependencies, never in dependencies
+        # The failure mode is a platform-pinned native binary in dependencies or
+        # devDependencies: npm resolves those strictly and refuses on every other
+        # platform (EBADPLATFORM). In optionalDependencies an os/cpu mismatch is
+        # SKIPPED, which is what makes a cross-platform lockfile possible.
+        #
+        # This catches the shape rather than the instance, so the same mistake one
+        # package over does not come back.
         run: |
           set -e
           offenders=$(node -e '
             const fs = require("fs");
             const bad = [];
+            // A native binary is named <tool>-<platform>-<arch>, so the platform
+            // token is what gives it away. Matching it after a dash or a slash
+            // covers both "@esbuild/linux-x64" and
+            // "@rolldown/binding-linux-x64-gnu".
+            const isPlatformBinary = (n) =>
+              /(^|[-/])(darwin|linux|windows|android|freebsd|netbsd|sunos|win32)([-/]|$)/.test(n);
             for (const f of ["web/package.json", "server/package.json", "shared/package.json"]) {
               if (!fs.existsSync(f)) continue;   // a workspace may be removed
               const p = JSON.parse(fs.readFileSync(f, "utf8"));
               for (const field of ["dependencies", "devDependencies"]) {
                 for (const name of Object.keys(p[field] || {})) {
-                  // A native binary is named <tool>-<platform>-<arch>, so the
-                  // platform token is what gives it away. Matching the token
-                  // anywhere (after a dash or a slash) covers both shapes:
-                  // "@esbuild/linux-x64" and "@rolldown/binding-linux-x64-gnu".
-                  if (/(^|[-/])(darwin|linux|windows|android|freebsd|netbsd|sunos|win32)([-/]|$)/.test(name)) {
-                    bad.push(f + " " + field + " " + name);
-                  }
+                  if (isPlatformBinary(name)) bad.push(f + " " + field + " " + name);
                 }
               }
             }
             console.log(bad.join("\n"));
           ')
           if [ -n "$offenders" ]; then
-            echo "::error::platform-specific native binary declared as a direct dependency:"
+            echo "::error::platform-specific native binary in a strict dependency field:"
             echo "$offenders"
-            echo "Declare it in the tool that owns it, as an optionalDependency."
+            echo "Move it to optionalDependencies, where npm skips a platform mismatch."
             exit 1
           fi
-          echo "✓ no platform-pinned direct dependencies"
+          echo "✓ no platform-pinned dependency or devDependency"
+
+          # The lockfile must actually carry every supported platform, or npm ci
+          # on another host installs no native binding at all. This is npm bug
+          # #4828, and it is invisible until you build on a second platform.
+          missing=$(node -e '
+            const fs = require("fs");
+            const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+            const present = new Set(Object.keys(lock.packages)
+              .filter((k) => k.startsWith("node_modules/@rolldown/binding-"))
+              .map((k) => k.replace("node_modules/@rolldown/binding-", "")));
+            const want = ["darwin-arm64", "darwin-x64", "linux-arm64-gnu",
+                          "linux-arm64-musl", "linux-x64-gnu",
+                          "win32-arm64-msvc", "win32-x64-msvc"];
+            console.log(want.filter((w) => !present.has(w)).join("\n"));
+          ')
+          if [ -n "$missing" ]; then
+            echo "::error::platform bindings missing from package-lock.json:"
+            echo "$missing"
+            echo "npm pruned them (npm/cli#4828). Declare them in web/package.json"
+            echo "optionalDependencies and regenerate the lockfile."
+            exit 1
+          fi
+          echo "✓ lockfile carries every supported platform binding"
 
       - name: Build (web)
         run: npm run -w web build

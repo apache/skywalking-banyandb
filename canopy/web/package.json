@@ -40,5 +40,14 @@
     "typescript": "^5.8.3",
     "vite": "^8.0.16",
     "vitest": "^5.0.0"
+  },
+  "optionalDependencies": {
+    "@rolldown/binding-darwin-arm64": "1.2.8",
+    "@rolldown/binding-darwin-x64": "1.2.8",
+    "@rolldown/binding-linux-arm64-gnu": "1.2.8",
+    "@rolldown/binding-linux-arm64-musl": "1.2.8",
+    "@rolldown/binding-linux-x64-gnu": "1.2.8",
+    "@rolldown/binding-win32-arm64-msvc": "1.2.8",
+    "@rolldown/binding-win32-x64-msvc": "1.2.8"
   }
 }
