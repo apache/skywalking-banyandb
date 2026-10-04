@@ -87,6 +87,14 @@ BUILD_IMAGE      ?= skywalking-banyandb-build
 BUILD_IMAGE_TAG  ?= go$(GO_VERSION)-node$(NODE_VERSION)-$(LICENSE_EYE_VERSION)
 BUILDKIT_CACHE   ?= $(root_p)bin/.buildkit
 
+# Git metadata, when requested. Resolving the COMMON dir is what makes this work
+# for a linked worktree: there `.git` is a 4 KB file pointing at
+# <main>/.git/worktrees/<name>, the objects live in <main>/.git, and the INDEX
+# lives in the worktree's own gitdir. Copying `.git` verbatim would therefore
+# break; see streamGit below, which assembles a self-contained .git instead.
+GIT_COMMON_DIR  := $(shell git -C $(root_p) rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+GIT_WORKTREE_DIR := $(shell git -C $(root_p) rev-parse --absolute-git-dir 2>/dev/null)
+
 # The local cache is a nice-to-have, not a requirement, and the `docker` driver
 # cannot export one:
 #
@@ -190,7 +198,24 @@ GENERATED_OUTPUTS = \
 # Not excluded wholesale: canopy and mcp read dist/LICENSE.tpl as an INPUT
 # template. --exclude globs the whole path, so dist/LICENSE does not match
 # dist/LICENSE.tpl.
-COPY_EXCLUDES = --exclude=.git --exclude=bin --exclude=node_modules $(patsubst %,--exclude=%,$(GENERATED_OUTPUTS))
+# GIT=1 streams Git metadata as well, so that git-dependent targets can run.
+# Off by default: it costs ~45 MB and a `go install` per tool, and the license
+# path needs neither.
+# .git is excluded from the work-tree tar in BOTH cases. With GIT=1 a
+# self-contained one is assembled and added separately, and a linked worktree's
+# 4 KB `gitdir:` pointer file would otherwise collide with that directory.
+#
+# The generated license artifacts are excluded ONLY when they are about to be
+# regenerated, which is deliberate: generation must start from a clean slate, or
+# a file the generator does not produce survives the copy-back. With GIT=1 the
+# tree is handed over as it is, because a checker looking at `git status` would
+# otherwise see every artifact as deleted.
+ifeq ($(GIT),1)
+COPY_EXCLUDES = --exclude=.git --exclude=bin --exclude=node_modules
+else
+COPY_EXCLUDES = --exclude=.git --exclude=bin --exclude=node_modules \
+                $(patsubst %,--exclude=%,$(GENERATED_OUTPUTS))
+endif
 
 .PHONY: docker-image docker-run docker-license-dep docker-license-check bump-build-image print-build-args
 
@@ -280,7 +305,8 @@ docker-license-dep docker-license-check: docker-image
 	@echo "Running 'make $(TARGET)' in $(BUILD_IMAGE):$(BUILD_IMAGE_TAG) \
           (cpus=$(RUN_CPUS) memory=$(RUN_MEMORY) shm=$(RUN_SHM_SIZE) platform=$(PLATFORM))"
 	@rm -rf $(STAGE_DIR) && mkdir -p $(STAGE_DIR)
-	@tar -C $(root_p) $(COPY_EXCLUDES) -cf - . \
+	@$(MAKE) -C $(root_p) stream-to-container
+	@cat $(STREAM_FILE) \
 	  | docker run -i \
 	      --rm \
 	      --platform $(PLATFORM) \
@@ -302,6 +328,34 @@ docker-license-dep docker-license-check: docker-image
 	@tar -C $(STAGE_DIR) -cf - . | tar -C $(root_p) -xf -
 	$(verify_after_generation)
 
+# Assemble ONE tar containing the work tree and, with GIT=1, a self-contained
+# .git. Assembled in a scratch dir rather than piped twice because stdin can
+# only carry one stream, and because the git metadata has to be assembled
+# (common dir + this worktree's HEAD and index) before it is sent.
+STREAM_DIR  ?= $(root_p)bin/.worktree-stream
+STREAM_FILE := $(STREAM_DIR)/stream.tar
+
+.PHONY: stream-to-container
+stream-to-container:
+	@test -n "$(GIT_COMMON_DIR)" || { \
+	  echo "GIT=1 needs a Git work tree, but 'git rev-parse --git-common-dir' found none." >&2; \
+	  echo "Run this from inside a checkout, or drop GIT=1." >&2; exit 1; }
+	@rm -rf $(STREAM_DIR) && mkdir -p $(STREAM_DIR)/tree
+	@tar -C $(root_p) $(COPY_EXCLUDES) -cf - . | tar -C $(STREAM_DIR)/tree -xf -
+ifeq ($(GIT),1)
+	@mkdir -p $(STREAM_DIR)/tree/.git
+	@tar -C "$(GIT_COMMON_DIR)" -cf - . | tar -C $(STREAM_DIR)/tree/.git -xf -
+	@if [ -d "$(GIT_WORKTREE_DIR)" ] && [ "$(GIT_WORKTREE_DIR)" != "$(GIT_COMMON_DIR)" ]; then \
+	  cp "$(GIT_WORKTREE_DIR)/HEAD" $(STREAM_DIR)/tree/.git/HEAD; \
+	  test -f "$(GIT_WORKTREE_DIR)/index" && cp "$(GIT_WORKTREE_DIR)/index" $(STREAM_DIR)/tree/.git/index; \
+	  rm -f $(STREAM_DIR)/tree/.git/commondir; \
+	fi
+	@echo "stream: work tree + self-contained .git from $(GIT_COMMON_DIR)"
+else
+	@echo "stream: work tree only (GIT metadata not requested)"
+endif
+	@tar -C $(STREAM_DIR)/tree -cf $(STREAM_FILE) .
+
 # Escape hatch for anything else that should run in the pinned environment.
 #
 # CONTRACT, and it is enforced rather than documented:
@@ -318,6 +372,28 @@ docker-license-dep docker-license-check: docker-image
 #      same container run, before the target that needs it.
 #
 # The environment this provides is the toolchain, not a working copy.
+# Assembles a self-contained .git inside the container.
+#
+# For a plain clone the common dir IS <repo>/.git, so this is a straight copy.
+# For a linked worktree the common dir is the MAIN repo's .git, which holds the
+# objects and refs but not the index: the index and HEAD live in
+# <common>/worktrees/<name>, whose files reference the worktree by ABSOLUTE path
+# and would be wrong inside the container. So the common dir is copied and the
+# worktree's HEAD and index are layered on top, and `commondir` is dropped to
+# make the result self-contained.
+#
+# Verified: a reconstructed repo reports the same status, diff and
+# `add --renormalize` result as the real one, for a plain clone and for a
+# linked worktree.
+define stream_git_metadata
+	@tar -C "$(GIT_COMMON_DIR)" -cf - . | tar -C $(WORK_DIR) --one-top-level=.git -xf -
+	@if [ -d "$(GIT_WORKTREE_DIR)" ] && [ "$(GIT_WORKTREE_DIR)" != "$(GIT_COMMON_DIR)" ]; then \
+	  cp "$(GIT_WORKTREE_DIR)/HEAD" $(WORK_DIR)/.git/HEAD; \
+	  test -f "$(GIT_WORKTREE_DIR)/index" && cp "$(GIT_WORKTREE_DIR)/index" $(WORK_DIR)/.git/index; \
+	  rm -f $(WORK_DIR)/.git/commondir; \
+	fi
+endef
+
 GIT_DEPENDENT_TARGETS = check check-format pre-push
 define reject_git_dependent_targets
 	@for t in $(GIT_DEPENDENT_TARGETS); do \
@@ -331,10 +407,11 @@ define reject_git_dependent_targets
 endef
 
 docker-run: docker-image
-	$(reject_git_dependent_targets)
+	$(if $(filter 1,$(GIT)),,$(reject_git_dependent_targets))
 	$(require_docker_host)
 	@rm -rf $(STAGE_DIR) && mkdir -p $(STAGE_DIR)
-	@tar -C $(root_p) $(COPY_EXCLUDES) -cf - . \
+	@$(MAKE) -C $(root_p) stream-to-container
+	@cat $(STREAM_FILE) \
 	  | docker run -i \
 	      --rm \
 	      --platform $(PLATFORM) \
