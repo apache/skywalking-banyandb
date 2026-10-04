@@ -51,12 +51,12 @@ func TestNativeQueryTermSetsPresenceRangeAndSort(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, view.Close()) }()
 
-	any, err := view.MatchTermsSet(context.Background(), TermSetRequest{
+	present, err := view.MatchTermsSet(context.Background(), TermSetRequest{
 		Field: "status", Terms: [][]byte{[]byte("alpha"), []byte("beta")},
 		Scope: QueryScope{SeriesField: "series", SeriesID: []byte("s")},
 	})
 	require.NoError(t, err)
-	require.Equal(t, []string{"d0", "d1", "d2"}, queryIDs(any))
+	require.Equal(t, []string{"d0", "d1", "d2"}, queryIDs(present))
 	all, err := view.MatchTermsSet(context.Background(), TermSetRequest{Field: "status", Terms: [][]byte{[]byte("alpha"), []byte("beta")}, Mode: MatchAllTerms})
 	require.NoError(t, err)
 	require.Equal(t, []string{"d2"}, queryIDs(all))
@@ -66,9 +66,9 @@ func TestNativeQueryTermSetsPresenceRangeAndSort(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"d2"}, queryIDs(windowed))
 
-	present, err := view.MatchField(context.Background(), FieldRequest{Field: "status", MaxTerms: 2})
+	fieldPresent, err := view.MatchField(context.Background(), FieldRequest{Field: "status", MaxTerms: 2})
 	require.NoError(t, err)
-	require.Equal(t, []string{"d0", "d1", "d2"}, queryIDs(present))
+	require.Equal(t, []string{"d0", "d1", "d2"}, queryIDs(fieldPresent))
 	ranged, err := view.MatchRange(context.Background(), RangeRequest{
 		Field: "latency", Lower: encoded(10), Upper: encoded(30),
 		IncludesLower: true, IncludesUpper: false, MaxTerms: 3,
@@ -76,7 +76,7 @@ func TestNativeQueryTermSetsPresenceRangeAndSort(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"d0", "d1"}, queryIDs(ranged))
 
-	ordered, err := view.SortHits(context.Background(), any, SortRequest{Field: "sort", Desc: true, Limit: 2})
+	ordered, err := view.SortHits(context.Background(), present, SortRequest{Field: "sort", Desc: true, Limit: 2})
 	require.NoError(t, err)
 	require.Equal(t, []string{"d2", "d0"}, queryIDs(ordered))
 }

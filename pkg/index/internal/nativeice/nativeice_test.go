@@ -95,7 +95,7 @@ func TestPublishSnapshotRetainsExistingSegmentsAndOpensStrictly(t *testing.T) {
 	}
 	physicalCount := 0
 	deletedCount := 0
-	if visitErr := reader.VisitPhysicalDocuments(context.Background(), func(document StoredDocument, deleted bool) error {
+	if visitErr := reader.VisitPhysicalDocuments(context.Background(), func(_ StoredDocument, deleted bool) error {
 		physicalCount++
 		if deleted {
 			deletedCount++

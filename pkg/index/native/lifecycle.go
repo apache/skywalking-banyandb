@@ -164,8 +164,5 @@ func (o *Owner) TakeFileSnapshot(destination string) error {
 			SourcePath:      sourcePath,
 		})
 	}
-	if err := nativeice.PublishSnapshot(destination, root.generation, segments); err != nil {
-		return err
-	}
-	return nil
+	return nativeice.PublishSnapshot(destination, root.generation, segments)
 }

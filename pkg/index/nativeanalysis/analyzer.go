@@ -12,6 +12,9 @@
 // WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 // License for the specific language governing permissions and limitations
 // under the License.
+
+// Package nativeanalysis contains the bounded analyzers used by the native
+// query adapter.
 package nativeanalysis
 
 import (
@@ -24,6 +27,7 @@ import (
 	"github.com/blevesearch/segment"
 )
 
+// ErrUnknownAnalyzer reports an analyzer name without a native implementation.
 var ErrUnknownAnalyzer = errors.New("nativeanalysis: unknown analyzer")
 
 // Term is an analyzed owned token and its occurrence count.

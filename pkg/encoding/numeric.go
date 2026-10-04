@@ -12,6 +12,8 @@
 // WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 // License for the specific language governing permissions and limitations
 // under the License.
+
+// Package encoding contains sortable numeric encodings shared by index paths.
 package encoding
 
 import "math"
