@@ -43,7 +43,7 @@ import (
 // assigning these same three functions to its fields.
 type (
 	// segmentPluginNew builds a segment from one batch's analyzed documents and
-	// reports how many documents it covers.
+	// reports the encoded buffer size used for memory accounting.
 	segmentPluginNew func(results []segmentDocument, normCalc func(string, int) float32) (segmentValue, uint64, error)
 
 	// segmentPluginLoad reopens a segment from the bytes it was persisted as.

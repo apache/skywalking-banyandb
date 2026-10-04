@@ -943,10 +943,16 @@ func newRepairScheduler(l *logger.Logger, omr observability.MetricsRegistry, met
 		return true
 	})
 	if err != nil {
+		c.Close()
+		s.closer.Done()
+		s.closer.CloseThenWait()
 		return nil, fmt.Errorf("failed to add repair build tree cron task: %w", err)
 	}
 	err = s.initializeInterval()
 	if err != nil {
+		c.Close()
+		s.closer.Done()
+		s.closer.CloseThenWait()
 		return nil, err
 	}
 	return s, nil
@@ -1037,6 +1043,9 @@ func (r *repairScheduler) checkHasBuildTree() (bool, error) {
 
 //nolint:contextcheck
 func (r *repairScheduler) doBuildTree() (err error) {
+	if r.db.transition.Load() || r.db.closed.Load() {
+		return errors.New("database writer transition in progress")
+	}
 	now := time.Now()
 	r.metrics.totalRepairBuildTreeStarted.Inc(1)
 	defer func() {
@@ -1054,6 +1063,11 @@ func (r *repairScheduler) doBuildTree() (err error) {
 	}()
 	hasUpdates := false
 	var checkErr error
+	r.db.mu.RLock()
+	if r.db.transition.Load() || r.db.closed.Load() {
+		r.db.mu.RUnlock()
+		return errors.New("database writer transition in progress")
+	}
 	r.db.groups.Range(func(_, value any) bool {
 		gs := value.(*groupShards)
 		sLst := gs.shards.Load()
@@ -1071,6 +1085,7 @@ func (r *repairScheduler) doBuildTree() (err error) {
 		}
 		return true
 	})
+	r.db.mu.RUnlock()
 	if checkErr != nil {
 		return checkErr
 	}

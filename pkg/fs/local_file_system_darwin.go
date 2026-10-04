@@ -34,13 +34,14 @@ func (*localFileSystem) CreateLockFile(name string, permission Mode) (File, erro
 	switch {
 	case err == nil:
 		if err = unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+			_ = file.Close()
 			return nil, &FileSystemError{
 				Code:    lockError,
 				Message: fmt.Sprintf("Cannot lock file, file name: %s, error message: %s", name, err),
 			}
 		}
 		return &LocalFile{
-			file: file,
+			file: file, locked: true,
 		}, nil
 	case os.IsExist(err):
 		return nil, &FileSystemError{

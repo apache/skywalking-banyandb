@@ -135,6 +135,35 @@ func TestEncodeSelectsIndexedDocuments(t *testing.T) {
 	}
 }
 
+func TestOpenSegmentTermsPreservesEmptyTerm(t *testing.T) {
+	payload, encodeErr := EncodeSegment(Generation{Documents: []EncodeDocument{
+		{Identifier: []byte("doc-empty"), Fields: []EncodeField{{Name: "group", Index: true, Terms: []EncodeTerm{{Value: nil, Frequency: 1}}}}},
+		{Identifier: []byte("doc-g"), Fields: []EncodeField{{Name: "group", Index: true, Terms: []EncodeTerm{{Value: []byte("g"), Frequency: 1}}}}},
+	}})
+	if encodeErr != nil {
+		t.Fatal(encodeErr)
+	}
+	reader, openErr := OpenSegment(payload)
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	t.Cleanup(func() { _ = reader.Close() })
+	terms, termsErr := reader.Terms("group")
+	if termsErr != nil {
+		t.Fatal(termsErr)
+	}
+	if len(terms) != 2 || terms[0] != nil || string(terms[1]) != "g" {
+		t.Fatalf("Terms(group) = %#v, want [empty, g]", terms)
+	}
+	emptyDocuments, emptyErr := reader.TermDocuments("group", nil)
+	if emptyErr != nil {
+		t.Fatal(emptyErr)
+	}
+	if len(emptyDocuments) != 1 || len(emptyDocuments[0].DocumentNumber) != 1 || emptyDocuments[0].DocumentNumber[0] != 0 {
+		t.Fatalf("TermDocuments(group, empty) = %#v, want document 0", emptyDocuments)
+	}
+}
+
 func TestEncodeServesSortableDocument(t *testing.T) {
 	directory := t.TempDir()
 	generation := Generation{

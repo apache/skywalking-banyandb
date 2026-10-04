@@ -19,11 +19,13 @@ package inverted
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"math"
 	"sort"
+	"sync"
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
 
@@ -31,11 +33,8 @@ import (
 )
 
 type nativePluginField struct {
-	name      string
-	stored    [][]byte
 	terms     map[string][]uint64
 	termFreqs map[string]map[uint64]uint64
-	docValues [][]byte
 	docCount  uint64
 	frequency uint64
 }
@@ -49,12 +48,66 @@ type nativePluginDocument struct {
 }
 type nativePluginMode struct{ index, store, sort bool }
 
+// nativeMergeTerm is the compact per-document representation used while
+// rewriting a reader-backed segment. Keeping the frequency beside its term
+// avoids the string-keyed maps materialize used to retain for every document.
+type nativeMergeTerm struct {
+	value     []byte
+	frequency uint64
+}
+
+type nativeMergeField struct {
+	name       string
+	values     [][]byte
+	sortValues [][]byte
+	terms      []nativeMergeTerm
+	mode       nativePluginMode
+}
+
+type nativeMergeDocument struct {
+	fields []nativeMergeField
+}
+
+func nativeMergeValuesEqual(left, right [][]byte) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for valueIndex := range left {
+		if !bytes.Equal(left[valueIndex], right[valueIndex]) {
+			return false
+		}
+	}
+	return true
+}
+
+func (d *nativeMergeDocument) field(name string) *nativeMergeField {
+	for fieldIndex := range d.fields {
+		if d.fields[fieldIndex].name == name {
+			return &d.fields[fieldIndex]
+		}
+	}
+	d.fields = append(d.fields, nativeMergeField{name: name})
+	return &d.fields[len(d.fields)-1]
+}
+
+//nolint:govet // field order keeps the segment state grouped by lifecycle role.
 type nativePluginSegment struct {
 	fields             map[string]*nativePluginField
 	frequencies        map[string]uint64
 	emptyIndexedFields map[string]struct{}
 	documents          []nativePluginDocument
 	payload            []byte
+	data               *segmentBytes
+	reader             *nativeice.Reader
+	readerDictionaries map[string]*nativeice.Dictionary
+	dictionaryWrappers map[string]segmentDictionary
+	fieldNames         []string
+	lazyMu             sync.Mutex
+	materializeMu      sync.Mutex
+	dictionaryMu       sync.Mutex
+	materialized       bool
+	mergeDocuments     []nativeMergeDocument
+	mergePrepared      bool
 	timeMin            int64
 	timeMax            int64
 	decoded            bool
@@ -62,57 +115,25 @@ type nativePluginSegment struct {
 
 func nativeSegmentPluginNew(results []segmentDocument, normCalc func(string, int) float32) (segmentValue, uint64, error) {
 	_ = normCalc
-	segment := &nativePluginSegment{
-		fields: make(map[string]*nativePluginField), frequencies: make(map[string]uint64),
-		emptyIndexedFields: make(map[string]struct{}),
-	}
 	generation := nativeice.Generation{SegmentID: 1, SnapshotID: 1}
 	for _, result := range results {
 		if result == nil {
 			return nil, 0, errors.New("inverted: nil segment document")
 		}
-		document := nativePluginDocument{
-			terms: make(map[string][][]byte), termFreqs: make(map[string]map[string]uint64),
-			docValues: make(map[string][][]byte), modes: make(map[string]nativePluginMode),
-		}
-		seenTerms := make(map[string]map[string]struct{})
 		encoded := nativeice.EncodeDocument{}
 		result.EachField(func(field segmentField) {
 			name := field.Name()
-			mode := document.modes[name]
-			mode.index = mode.index || field.Index()
-			mode.store = mode.store || field.Store()
-			mode.sort = mode.sort || field.IndexDocValues()
-			document.modes[name] = mode
 			value := append([]byte(nil), field.Value()...)
-			if field.Store() {
-				document.fields = append(document.fields, nativeice.DecodedField{Name: name, Value: value})
-			}
 			if name == docIDField && field.Store() {
 				encoded.Identifier = append([]byte(nil), value...)
 			}
 			var analyzedTerms []nativeice.EncodeTerm
 			if field.Index() {
-				analyzedTerms = make([]nativeice.EncodeTerm, 0)
+				analyzedTerms = make([]nativeice.EncodeTerm, 0, field.Length())
 				field.EachTerm(func(term segmentFieldTerm) {
 					termValue := append([]byte(nil), term.Term()...)
-					if document.termFreqs[name] == nil {
-						document.termFreqs[name] = make(map[string]uint64)
-					}
-					termKey := string(termValue)
-					document.termFreqs[name][termKey] += uint64(term.Frequency())
-					if seenTerms[name] == nil {
-						seenTerms[name] = make(map[string]struct{})
-					}
-					if _, seen := seenTerms[name][termKey]; !seen {
-						document.terms[name] = append(document.terms[name], termValue)
-						seenTerms[name][termKey] = struct{}{}
-					}
 					analyzedTerms = append(analyzedTerms, nativeice.EncodeTerm{Value: termValue, Frequency: uint64(term.Frequency())})
 				})
-			}
-			if field.IndexDocValues() {
-				document.docValues[name] = append(document.docValues[name], append([]byte(nil), value...))
 			}
 			if name != docIDField {
 				encoded.Fields = append(encoded.Fields, nativeice.EncodeField{
@@ -120,22 +141,10 @@ func nativeSegmentPluginNew(results []segmentDocument, normCalc func(string, int
 				})
 			}
 		})
-		sort.SliceStable(document.fields, func(leftIndex, rightIndex int) bool {
-			leftName, rightName := document.fields[leftIndex].Name, document.fields[rightIndex].Name
-			if leftName == docIDField {
-				return true
-			}
-			if rightName == docIDField {
-				return false
-			}
-			return leftName < rightName
-		})
 		if len(encoded.Identifier) == 0 {
 			return nil, 0, errors.New("inverted: every segment document needs a stored _id")
 		}
-		document.terms[docIDField] = [][]byte{append([]byte(nil), encoded.Identifier...)}
 		generation.Documents = append(generation.Documents, encoded)
-		segment.documents = append(segment.documents, document)
 		// ICE v3 segment footers reserve timestamp bounds; the native encoder
 		// deliberately writes zero because the lifecycle contract does not carry
 		// document time bounds.
@@ -147,90 +156,28 @@ func nativeSegmentPluginNew(results []segmentDocument, normCalc func(string, int
 	if encodeErr != nil {
 		return nil, 0, encodeErr
 	}
-	segment.payload = payload
-	segment.rebuild()
-	for _, document := range segment.documents {
-		for name, mode := range document.modes {
-			if mode.index && segment.fields[name] == nil {
-				segment.fields[name] = &nativePluginField{name: name, terms: make(map[string][]uint64), termFreqs: make(map[string]map[uint64]uint64)}
-			}
-		}
+	reader, openErr := nativeice.OpenSegmentBorrowed(payload)
+	if openErr != nil {
+		return nil, 0, openErr
 	}
-	for name, field := range segment.fields {
-		segment.frequencies[name] = field.frequency
+	fieldNames, fieldsErr := reader.Fields()
+	if fieldsErr != nil {
+		_ = reader.Close()
+		return nil, 0, fieldsErr
 	}
-	return segment, uint64(len(segment.documents)), nil
+	timeMin, timeMax := reader.TimeBounds()
+	return &nativePluginSegment{
+		payload: payload, reader: reader, fields: make(map[string]*nativePluginField),
+		readerDictionaries: make(map[string]*nativeice.Dictionary), dictionaryWrappers: make(map[string]segmentDictionary),
+		frequencies: make(map[string]uint64), emptyIndexedFields: make(map[string]struct{}),
+		fieldNames: fieldNames, timeMin: timeMin, timeMax: timeMax, decoded: true,
+	}, uint64(len(payload)), nil
 }
 
-func (s *nativePluginSegment) rebuild() {
-	s.fields = make(map[string]*nativePluginField)
-	for documentNumber, document := range s.documents {
-		seen := make(map[string]bool)
-		for _, field := range document.fields {
-			entry := s.fields[field.Name]
-			if entry == nil {
-				entry = &nativePluginField{name: field.Name, terms: make(map[string][]uint64), termFreqs: make(map[string]map[uint64]uint64)}
-				s.fields[field.Name] = entry
-			}
-			entry.stored = append(entry.stored, append([]byte(nil), field.Value...))
-			if document.terms == nil {
-				if !seen[field.Name] {
-					entry.docCount++
-					seen[field.Name] = true
-				}
-				entry.terms[string(field.Value)] = append(entry.terms[string(field.Value)], uint64(documentNumber))
-				entry.frequency++
-			}
-		}
-		for name, terms := range document.terms {
-			entry := s.fields[name]
-			if entry == nil {
-				entry = &nativePluginField{name: name, terms: make(map[string][]uint64), termFreqs: make(map[string]map[uint64]uint64)}
-				s.fields[name] = entry
-			}
-			if len(terms) > 0 && !seen[name] {
-				entry.docCount++
-				seen[name] = true
-			}
-			for _, term := range terms {
-				entry.terms[string(term)] = append(entry.terms[string(term)], uint64(documentNumber))
-				frequency := document.termFreqs[name][string(term)]
-				if frequency == 0 {
-					frequency = 1
-				}
-				if entry.termFreqs[string(term)] == nil {
-					entry.termFreqs[string(term)] = make(map[uint64]uint64)
-				}
-				entry.termFreqs[string(term)][uint64(documentNumber)] = frequency
-				entry.frequency += frequency
-			}
-		}
-		for name, mode := range document.modes {
-			if !mode.index {
-				continue
-			}
-			entry := s.fields[name]
-			if entry == nil {
-				entry = &nativePluginField{name: name, terms: make(map[string][]uint64), termFreqs: make(map[string]map[uint64]uint64)}
-				s.fields[name] = entry
-			}
-			if !seen[name] {
-				entry.docCount++
-				seen[name] = true
-			}
-		}
-		for name, values := range document.docValues {
-			entry := s.fields[name]
-			if entry == nil {
-				entry = &nativePluginField{name: name, terms: make(map[string][]uint64), termFreqs: make(map[string]map[uint64]uint64)}
-				s.fields[name] = entry
-			}
-			entry.docValues = append(entry.docValues, values...)
-		}
-	}
-}
-
-//nolint:gocyclo // Loading reconstructs all native segment modalities in one pass.
+// nativeSegmentPluginLoad validates the segment framing and keeps the native
+// reader as the source of truth. Stored fields, dictionaries, postings, and
+// doc values are decoded when the segment API asks for them rather than when
+// an index writer reopens a generation.
 func nativeSegmentPluginLoad(data *segmentBytes) (segmentValue, error) {
 	if data == nil || data.Len() == 0 {
 		return nil, errors.New("inverted: empty segment")
@@ -239,110 +186,115 @@ func nativeSegmentPluginLoad(data *segmentBytes) (segmentValue, error) {
 	if readErr != nil {
 		return nil, readErr
 	}
-	documents, decodeErr := nativeice.DecodeStoredSegment(payload)
-	if decodeErr != nil {
-		return nil, decodeErr
-	}
-	segment := &nativePluginSegment{
-		payload: append([]byte(nil), payload...), fields: make(map[string]*nativePluginField),
-		frequencies: make(map[string]uint64), emptyIndexedFields: make(map[string]struct{}), decoded: true,
-	}
-	for _, document := range documents {
-		segment.documents = append(segment.documents, nativePluginDocument{fields: document.Fields, termFreqs: make(map[string]map[string]uint64)})
-	}
-	reader, openErr := nativeice.OpenSegment(payload)
+	reader, openErr := nativeice.OpenSegmentBorrowed(payload)
 	if openErr != nil {
 		return nil, openErr
 	}
-	segment.timeMin, segment.timeMax = reader.TimeBounds()
 	fieldNames, fieldsErr := reader.Fields()
 	if fieldsErr != nil {
 		return nil, fieldsErr
 	}
+	timeMin, timeMax := reader.TimeBounds()
+	return &nativePluginSegment{
+		data: data, reader: reader, fields: make(map[string]*nativePluginField),
+		readerDictionaries: make(map[string]*nativeice.Dictionary), dictionaryWrappers: make(map[string]segmentDictionary),
+		frequencies: make(map[string]uint64), emptyIndexedFields: make(map[string]struct{}),
+		documents: nil, fieldNames: fieldNames, timeMin: timeMin, timeMax: timeMax, decoded: true,
+	}, nil
+}
+
+// materialize decodes a lazily loaded segment only when a merge needs to
+// rewrite every field. Query and scan paths remain payload-backed.
+//
+//nolint:gocyclo // materialization preserves every native segment modality.
+func (s *nativePluginSegment) materialize(closeCh chan struct{}) error {
+	s.materializeMu.Lock()
+	defer s.materializeMu.Unlock()
+	if s.reader == nil || s.materialized {
+		return nil
+	}
+	if storedErr := s.ensureStoredDocuments(closeCh); storedErr != nil {
+		return storedErr
+	}
+	fieldNames, fieldsErr := s.reader.Fields()
+	if fieldsErr != nil {
+		return fieldsErr
+	}
 	for _, fieldName := range fieldNames {
-		terms, termsErr := reader.Terms(fieldName)
-		if termsErr != nil {
-			return nil, termsErr
+		if mergeCloseRequested(closeCh) {
+			return errors.New("inverted: merge canceled")
 		}
-		for _, term := range terms {
-			memberships, membershipErr := reader.TermDocuments(fieldName, term)
-			if membershipErr != nil {
-				return nil, membershipErr
+		postingsErr := s.reader.VisitTermPostings(fieldName, nil, func(term []byte, memberships []uint64, frequencies []nativeice.TermFrequency) error {
+			if mergeCloseRequested(closeCh) {
+				return errors.New("inverted: merge canceled")
 			}
-			for _, membership := range memberships {
-				for _, number := range membership.DocumentNumber {
-					if int(number) < len(segment.documents) {
-						if segment.documents[number].terms == nil {
-							segment.documents[number].terms = make(map[string][][]byte)
-						}
-						segment.documents[number].terms[fieldName] = append(segment.documents[number].terms[fieldName], append([]byte(nil), term...))
-						if segment.documents[number].termFreqs == nil {
-							segment.documents[number].termFreqs = make(map[string]map[string]uint64)
-						}
+			for _, number := range memberships {
+				if int(number) < len(s.documents) {
+					if s.documents[number].terms == nil {
+						s.documents[number].terms = make(map[string][][]byte)
 					}
+					s.documents[number].terms[fieldName] = append(s.documents[number].terms[fieldName], append([]byte(nil), term...))
 				}
 			}
-			frequencies, frequencyErr := reader.TermFrequencies(fieldName, term)
-			if frequencyErr != nil {
-				return nil, frequencyErr
-			}
-			for _, frequencySet := range frequencies {
-				for _, frequency := range frequencySet.Values {
-					if frequency.DocumentNumber < uint64(len(segment.documents)) {
-						if segment.documents[frequency.DocumentNumber].termFreqs[fieldName] == nil {
-							segment.documents[frequency.DocumentNumber].termFreqs[fieldName] = make(map[string]uint64)
-						}
-						segment.documents[frequency.DocumentNumber].termFreqs[fieldName][string(term)] = frequency.Frequency
+			for _, frequency := range frequencies {
+				if frequency.DocumentNumber < uint64(len(s.documents)) {
+					if s.documents[frequency.DocumentNumber].termFreqs[fieldName] == nil {
+						s.documents[frequency.DocumentNumber].termFreqs[fieldName] = make(map[string]uint64)
 					}
+					s.documents[frequency.DocumentNumber].termFreqs[fieldName][string(term)] = frequency.Frequency
 				}
 			}
+			return nil
+		})
+		if postingsErr != nil {
+			return postingsErr
 		}
-		docValues, valuesErr := reader.DocValues(fieldName)
+		valuesErr := s.reader.VisitFieldDocumentValues(fieldName, func(documentNumber uint64, documentValues [][]byte) error {
+			if mergeCloseRequested(closeCh) {
+				return errors.New("inverted: merge canceled")
+			}
+			if documentNumber >= uint64(len(s.documents)) || len(documentValues) == 0 {
+				return nil
+			}
+			if s.documents[documentNumber].docValues == nil {
+				s.documents[documentNumber].docValues = make(map[string][][]byte)
+			}
+			for _, value := range documentValues {
+				s.documents[documentNumber].docValues[fieldName] = append(s.documents[documentNumber].docValues[fieldName], append([]byte(nil), value...))
+			}
+			return nil
+		})
 		if valuesErr != nil {
-			return nil, valuesErr
-		}
-		for _, values := range docValues {
-			for documentNumber, documentValues := range values.Values {
-				if documentNumber >= len(segment.documents) {
-					continue
-				}
-				if segment.documents[documentNumber].docValues == nil {
-					segment.documents[documentNumber].docValues = make(map[string][][]byte)
-				}
-				for _, value := range documentValues {
-					segment.documents[documentNumber].docValues[fieldName] = append(segment.documents[documentNumber].docValues[fieldName], append([]byte(nil), value...))
-				}
-			}
+			return valuesErr
 		}
 	}
-	for documentIndex := range segment.documents {
-		segment.documents[documentIndex].modes = make(map[string]nativePluginMode)
-		for name := range segment.documents[documentIndex].terms {
-			segment.documents[documentIndex].modes[name] = nativePluginMode{index: true}
+	for documentIndex := range s.documents {
+		s.documents[documentIndex].modes = make(map[string]nativePluginMode)
+		for name := range s.documents[documentIndex].terms {
+			s.documents[documentIndex].modes[name] = nativePluginMode{index: true}
 		}
-		for name := range segment.documents[documentIndex].docValues {
-			mode := segment.documents[documentIndex].modes[name]
+		for name := range s.documents[documentIndex].docValues {
+			mode := s.documents[documentIndex].modes[name]
 			mode.sort = true
-			segment.documents[documentIndex].modes[name] = mode
+			s.documents[documentIndex].modes[name] = mode
 		}
-		for _, field := range segment.documents[documentIndex].fields {
-			mode := segment.documents[documentIndex].modes[field.Name]
+		for _, field := range s.documents[documentIndex].fields {
+			mode := s.documents[documentIndex].modes[field.Name]
 			mode.store = true
 			if field.Name == docIDField {
 				mode.index = true
 			}
-			segment.documents[documentIndex].modes[field.Name] = mode
+			s.documents[documentIndex].modes[field.Name] = mode
 		}
 	}
-	segment.rebuild()
 	for _, fieldName := range fieldNames {
 		represented := false
-		for documentIndex := range segment.documents {
-			if len(segment.documents[documentIndex].terms[fieldName]) > 0 || len(segment.documents[documentIndex].docValues[fieldName]) > 0 {
+		for documentIndex := range s.documents {
+			if len(s.documents[documentIndex].terms[fieldName]) > 0 || len(s.documents[documentIndex].docValues[fieldName]) > 0 {
 				represented = true
 				break
 			}
-			for _, field := range segment.documents[documentIndex].fields {
+			for _, field := range s.documents[documentIndex].fields {
 				if field.Name == fieldName {
 					represented = true
 					break
@@ -353,26 +305,267 @@ func nativeSegmentPluginLoad(data *segmentBytes) (segmentValue, error) {
 			}
 		}
 		if !represented {
-			segment.emptyIndexedFields[fieldName] = struct{}{}
+			s.emptyIndexedFields[fieldName] = struct{}{}
 		}
-		if segment.fields[fieldName] == nil {
-			segment.fields[fieldName] = &nativePluginField{name: fieldName, terms: make(map[string][]uint64), termFreqs: make(map[string]map[uint64]uint64)}
-		}
-		documents, frequency, statsErr := reader.FieldStats(fieldName)
+		_, frequency, statsErr := s.reader.FieldStats(fieldName)
 		if statsErr != nil {
-			return nil, statsErr
+			return statsErr
 		}
-		if field := segment.fields[fieldName]; field != nil {
-			field.docCount = documents
-			field.frequency = frequency
-			segment.frequencies[fieldName] = frequency
+		s.frequencies[fieldName] = frequency
+	}
+	// Keep the reader alive after materialization. Writer introductions can
+	// query a segment concurrently with a background merge; clearing this
+	// pointer would let a racing DocsMatchingTerms observe it as non-nil and
+	// then dereference nil. The reader is immutable and remains the query
+	// source, while the materialized maps serve merge serialization.
+	s.materialized = true
+	return nil
+}
+
+// prepareMergeDocuments streams a reader-backed segment into compact field
+// slots. Unlike materialize, it does not retain one string-keyed terms,
+// frequency and doc-value map per document. The resulting slots are owned by
+// the merge and are discarded with the segment after EncodeSegment returns.
+// The reader remains immutable and live, so queries can continue concurrently.
+// Plugin readers are opened from raw segment bytes and therefore have no
+// snapshot deletion mask; merger drops are the sole deletion source here and
+// retain the segment's physical document numbering.
+//
+//nolint:gocyclo // each stream contributes one independent field modality.
+func (s *nativePluginSegment) prepareMergeDocuments(closeCh chan struct{}) error {
+	s.materializeMu.Lock()
+	defer s.materializeMu.Unlock()
+	if s.reader == nil || s.mergePrepared {
+		return nil
+	}
+	visibleCount, countErr := s.reader.VisibleDocCount()
+	if countErr != nil {
+		return countErr
+	}
+	documents := make([]nativeMergeDocument, 0, visibleCount)
+	visitContext, stopContext := mergeContext(closeCh)
+	visitErr := s.reader.VisitLiveDocuments(visitContext, func(document nativeice.StoredDocument) error {
+		if mergeCloseRequested(closeCh) {
+			return errors.New("inverted: merge canceled")
+		}
+		decoded := nativeMergeDocument{}
+		if fieldsErr := document.VisitStoredFields(func(name string, value []byte) bool {
+			field := decoded.field(name)
+			field.values = append(field.values, append([]byte(nil), value...))
+			field.mode.store = true
+			if name == docIDField {
+				field.mode.index = true
+			}
+			return true
+		}); fieldsErr != nil {
+			return fieldsErr
+		}
+		documents = append(documents, decoded)
+		return nil
+	})
+	stopContext()
+	if errors.Is(visitErr, context.Canceled) && mergeCloseRequested(closeCh) {
+		return errors.New("inverted: merge canceled")
+	}
+	if visitErr != nil {
+		return visitErr
+	}
+	for _, fieldName := range s.fieldNames {
+		if mergeCloseRequested(closeCh) {
+			return errors.New("inverted: merge canceled")
+		}
+		postingsErr := s.reader.VisitTermPostings(fieldName, nil, func(term []byte, memberships []uint64, frequencies []nativeice.TermFrequency) error {
+			if mergeCloseRequested(closeCh) {
+				return errors.New("inverted: merge canceled")
+			}
+			for membershipIndex, number := range memberships {
+				if number >= uint64(len(documents)) {
+					continue
+				}
+				frequency := uint64(1)
+				if membershipIndex < len(frequencies) && frequencies[membershipIndex].DocumentNumber == number {
+					frequency = frequencies[membershipIndex].Frequency
+				}
+				field := documents[number].field(fieldName)
+				field.mode.index = true
+				field.terms = append(field.terms, nativeMergeTerm{value: append([]byte(nil), term...), frequency: frequency})
+			}
+			return nil
+		})
+		if postingsErr != nil {
+			return postingsErr
+		}
+		valuesErr := s.reader.VisitFieldDocumentValues(fieldName, func(documentNumber uint64, values [][]byte) error {
+			if mergeCloseRequested(closeCh) {
+				return errors.New("inverted: merge canceled")
+			}
+			if documentNumber >= uint64(len(documents)) || len(values) == 0 {
+				return nil
+			}
+			field := documents[documentNumber].field(fieldName)
+			field.mode.sort = true
+			for _, value := range values {
+				field.sortValues = append(field.sortValues, append([]byte(nil), value...))
+			}
+			return nil
+		})
+		if valuesErr != nil {
+			return valuesErr
+		}
+		represented := false
+		for documentIndex := range documents {
+			for fieldIndex := range documents[documentIndex].fields {
+				if documents[documentIndex].fields[fieldIndex].name == fieldName {
+					represented = true
+					break
+				}
+			}
+			if represented {
+				break
+			}
+		}
+		if !represented {
+			s.emptyIndexedFields[fieldName] = struct{}{}
 		}
 	}
-	return segment, nil
+	s.mergeDocuments = documents
+	s.mergePrepared = true
+	return nil
+}
+
+func (s *nativePluginSegment) releaseMergeDocuments() {
+	s.materializeMu.Lock()
+	s.mergeDocuments = nil
+	s.mergePrepared = false
+	s.materializeMu.Unlock()
+}
+
+func (s *nativePluginSegment) ensureStoredDocuments(closeCh chan struct{}) error {
+	s.lazyMu.Lock()
+	defer s.lazyMu.Unlock()
+	if s.reader == nil {
+		return nil
+	}
+	visibleCount, countErr := s.reader.VisibleDocCount()
+	if countErr != nil {
+		return countErr
+	}
+	if visibleCount == int64(len(s.documents)) {
+		return nil
+	}
+	s.documents = make([]nativePluginDocument, 0, visibleCount)
+	visitContext, stopContext := mergeContext(closeCh)
+	defer stopContext()
+	visitErr := s.reader.VisitLiveDocuments(visitContext, func(document nativeice.StoredDocument) error {
+		if mergeCloseRequested(closeCh) {
+			return errors.New("inverted: merge canceled")
+		}
+		decoded := nativePluginDocument{termFreqs: make(map[string]map[string]uint64)}
+		if fieldsErr := document.VisitStoredFields(func(name string, value []byte) bool {
+			decoded.fields = append(decoded.fields, nativeice.DecodedField{Name: name, Value: append([]byte(nil), value...)})
+			return true
+		}); fieldsErr != nil {
+			return fieldsErr
+		}
+		s.documents = append(s.documents, decoded)
+		return nil
+	})
+	if errors.Is(visitErr, context.Canceled) && mergeCloseRequested(closeCh) {
+		return errors.New("inverted: merge canceled")
+	}
+	return visitErr
+}
+
+func mergeContext(closeCh chan struct{}) (context.Context, func()) {
+	if closeCh == nil {
+		return context.Background(), func() {}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-closeCh:
+			cancel()
+		case <-done:
+		}
+	}()
+	return ctx, func() {
+		close(done)
+		cancel()
+	}
 }
 
 func nativeSegmentPluginMerge(segments []segmentValue, drops []*roaringpkg.Bitmap, mergeBufferSize int) segmentMergerValue {
 	return &nativeSegmentMerger{segments: segments, drops: drops, mergeBufferSize: mergeBufferSize}
+}
+
+func (s *nativePluginSegment) encodeMergeDocument(document nativeMergeDocument, emptyIndexedFields map[string]struct{}) nativeice.EncodeDocument {
+	encoded := nativeice.EncodeDocument{}
+	for fieldIndex := range document.fields {
+		field := &document.fields[fieldIndex]
+		if field.name == docIDField && len(field.values) > 0 {
+			encoded.Identifier = append([]byte(nil), field.values[len(field.values)-1]...)
+		}
+	}
+	for _, name := range s.fieldNames {
+		if name == docIDField {
+			continue
+		}
+		var field *nativeMergeField
+		for fieldIndex := range document.fields {
+			if document.fields[fieldIndex].name == name {
+				field = &document.fields[fieldIndex]
+				break
+			}
+		}
+		mode := nativePluginMode{}
+		var values, sortValues [][]byte
+		var terms []nativeMergeTerm
+		if field != nil {
+			mode = field.mode
+			values, sortValues, terms = field.values, field.sortValues, field.terms
+		}
+		_, emptyIndexed := emptyIndexedFields[name]
+		if field == nil && !emptyIndexed {
+			continue
+		}
+		encodedTerms := make([]nativeice.EncodeTerm, 0, len(terms))
+		for _, term := range terms {
+			encodedTerms = append(encodedTerms, nativeice.EncodeTerm{Value: term.value, Frequency: term.frequency})
+		}
+		separateSort := mode.sort && len(values) > 0 && len(sortValues) > 0 && !nativeMergeValuesEqual(values, sortValues)
+		if len(values) == 0 {
+			if len(sortValues) > 0 {
+				values = sortValues
+			} else {
+				values = [][]byte{nil}
+				if len(terms) > 0 {
+					values[0] = terms[0].value
+				}
+			}
+		}
+		for valueIndex, value := range values {
+			fieldTerms := encodedTerms
+			if valueIndex > 0 {
+				fieldTerms = nil
+			}
+			sortThisValue := mode.sort && !separateSort && valueIndex < len(sortValues)
+			encoded.Fields = append(encoded.Fields, nativeice.EncodeField{
+				Name: name, Value: value, Terms: fieldTerms, Index: (mode.index || emptyIndexed) && valueIndex == 0,
+				Store: mode.store, Sort: sortThisValue,
+			})
+		}
+		if separateSort || len(sortValues) > len(values) {
+			start := 0
+			if !separateSort {
+				start = len(values)
+			}
+			for _, sortValue := range sortValues[start:] {
+				encoded.Fields = append(encoded.Fields, nativeice.EncodeField{Name: name, Value: sortValue, Sort: true})
+			}
+		}
+	}
+	return encoded
 }
 
 type nativeSegmentMerger struct {
@@ -394,15 +587,34 @@ func (m *nativeSegmentMerger) WriteTo(writer io.Writer, closeCh chan struct{}) (
 	frequencyWritten := make(map[string]bool)
 	emptyIndexedFields := make(map[string]struct{})
 	m.newDocumentNumbers = make([][]uint64, len(m.segments))
+	preparedSegments := make([]*nativePluginSegment, 0, len(m.segments))
+	defer func() {
+		for _, segment := range preparedSegments {
+			segment.releaseMergeDocuments()
+		}
+	}()
 	for segmentIndex, value := range m.segments {
 		current, ok := value.(*nativePluginSegment)
 		if !ok {
 			return 0, errors.New("inverted: unsupported segment implementation")
 		}
+		readerBacked := current.reader != nil
+		if readerBacked {
+			if prepareErr := current.prepareMergeDocuments(closeCh); prepareErr != nil {
+				return 0, prepareErr
+			}
+			preparedSegments = append(preparedSegments, current)
+		} else if materializeErr := current.materialize(closeCh); materializeErr != nil {
+			return 0, materializeErr
+		}
 		for name := range current.emptyIndexedFields {
 			emptyIndexedFields[name] = struct{}{}
 		}
-		mapping := make([]uint64, len(current.documents))
+		documentCount := len(current.documents)
+		if readerBacked {
+			documentCount = len(current.mergeDocuments)
+		}
+		mapping := make([]uint64, documentCount)
 		for idx := range mapping {
 			mapping[idx] = math.MaxInt64
 		}
@@ -411,13 +623,25 @@ func (m *nativeSegmentMerger) WriteTo(writer io.Writer, closeCh chan struct{}) (
 		if segmentIndex < len(m.drops) {
 			drop = m.drops[segmentIndex]
 		}
-		for documentIndex, document := range current.documents {
+		for documentIndex := 0; documentIndex < documentCount; documentIndex++ {
 			if drop != nil && drop.Contains(uint32(documentIndex)) {
 				continue
 			}
 			if m.closeRequested(closeCh) {
 				return 0, errors.New("inverted: merge canceled")
 			}
+			if readerBacked {
+				encoded := current.encodeMergeDocument(current.mergeDocuments[documentIndex], emptyIndexedFields)
+				generation.Documents = append(generation.Documents, encoded)
+				// EncodeDocument now owns the byte slices through its field and
+				// term views. Drop the compact slot headers as soon as this
+				// document is transferred so the generation does not retain two
+				// copies of the per-document slice metadata during encoding.
+				current.mergeDocuments[documentIndex].fields = nil
+				mapping[documentIndex] = uint64(len(generation.Documents) - 1)
+				continue
+			}
+			document := current.documents[documentIndex]
 			encoded := nativeice.EncodeDocument{}
 			values := make(map[string][][]byte)
 			for _, field := range document.fields {
@@ -554,6 +778,10 @@ func writeNativePayload(writer io.Writer, payload []byte, chunkSize int, closeCh
 }
 
 func (m *nativeSegmentMerger) closeRequested(closeCh chan struct{}) bool {
+	return mergeCloseRequested(closeCh)
+}
+
+func mergeCloseRequested(closeCh chan struct{}) bool {
 	if closeCh == nil {
 		return false
 	}
@@ -567,10 +795,49 @@ func (m *nativeSegmentMerger) closeRequested(closeCh chan struct{}) bool {
 func (m *nativeSegmentMerger) DocumentNumbers() [][]uint64 { return m.newDocumentNumbers }
 
 func (s *nativePluginSegment) Dictionary(field string) (segmentDictionary, error) {
-	return &nativePluginDictionary{field: s.fields[field]}, nil
+	if s.reader != nil {
+		s.dictionaryMu.Lock()
+		defer s.dictionaryMu.Unlock()
+		if s.dictionaryWrappers == nil {
+			s.dictionaryWrappers = make(map[string]segmentDictionary)
+		}
+		if wrapper := s.dictionaryWrappers[field]; wrapper != nil {
+			return wrapper, nil
+		}
+		if dictionary := s.readerDictionaries[field]; dictionary != nil {
+			wrapper := &nativePluginReaderDictionary{dictionary: dictionary}
+			s.dictionaryWrappers[field] = wrapper
+			return wrapper, nil
+		}
+		dictionaryValue, dictionaryErr := s.reader.DictionaryValue(field)
+		if dictionaryErr != nil {
+			return nil, dictionaryErr
+		}
+		dictionary := &dictionaryValue
+		s.readerDictionaries[field] = dictionary
+		wrapper := &nativePluginReaderDictionary{dictionary: dictionary}
+		s.dictionaryWrappers[field] = wrapper
+		return wrapper, nil
+	}
+	s.dictionaryMu.Lock()
+	defer s.dictionaryMu.Unlock()
+	if s.dictionaryWrappers == nil {
+		s.dictionaryWrappers = make(map[string]segmentDictionary)
+	}
+	if wrapper := s.dictionaryWrappers[field]; wrapper != nil {
+		return wrapper, nil
+	}
+	wrapper := &nativePluginDictionary{field: s.fields[field]}
+	s.dictionaryWrappers[field] = wrapper
+	return wrapper, nil
 }
 
 func (s *nativePluginSegment) VisitStoredFields(number uint64, visit segmentStoredVisitor) error {
+	if s.reader != nil {
+		return s.reader.VisitDocument(number, func(document nativeice.StoredDocument) error {
+			return document.VisitStoredFields(func(name string, value []byte) bool { return visit(name, value) })
+		})
+	}
 	if number >= uint64(len(s.documents)) {
 		return fmt.Errorf("inverted: document %d out of range", number)
 	}
@@ -581,9 +848,38 @@ func (s *nativePluginSegment) VisitStoredFields(number uint64, visit segmentStor
 	}
 	return nil
 }
-func (s *nativePluginSegment) Count() uint64 { return uint64(len(s.documents)) }
+
+func (s *nativePluginSegment) Count() uint64 {
+	if s.reader != nil {
+		visibleCount, countErr := s.reader.VisibleDocCount()
+		if countErr != nil || visibleCount < 0 {
+			return 0
+		}
+		return uint64(visibleCount)
+	}
+	return uint64(len(s.documents))
+}
+
 func (s *nativePluginSegment) DocsMatchingTerms(terms []segmentTerm) (*roaringpkg.Bitmap, error) {
 	result := roaringpkg.New()
+	if s.reader != nil {
+		termsByField := make(map[string][][]byte)
+		for _, term := range terms {
+			termsByField[term.Field()] = append(termsByField[term.Field()], term.Term())
+		}
+		for field, fieldTerms := range termsByField {
+			memberships, membershipErr := s.reader.TermDocumentsBatch(field, fieldTerms)
+			if membershipErr != nil {
+				return nil, membershipErr
+			}
+			for _, documents := range memberships {
+				for _, number := range documents {
+					result.Add(uint32(number))
+				}
+			}
+		}
+		return result, nil
+	}
 	for _, term := range terms {
 		if field := s.fields[term.Field()]; field != nil {
 			for _, number := range field.terms[string(term.Term())] {
@@ -595,6 +891,9 @@ func (s *nativePluginSegment) DocsMatchingTerms(terms []segmentTerm) (*roaringpk
 }
 
 func (s *nativePluginSegment) Fields() []string {
+	if s.reader != nil {
+		return append([]string(nil), s.fieldNames...)
+	}
 	result := make([]string, 0, len(s.fields))
 	for name := range s.fields {
 		result = append(result, name)
@@ -604,14 +903,31 @@ func (s *nativePluginSegment) Fields() []string {
 }
 
 func (s *nativePluginSegment) CollectionStats(field string) (segmentStats, error) {
+	if s.reader != nil {
+		documents, frequency, statsErr := s.reader.FieldStats(field)
+		if statsErr != nil {
+			return nil, statsErr
+		}
+		return &nativePluginStats{total: s.Count(), documents: documents, frequency: frequency}, nil
+	}
 	entry := s.fields[field]
 	if entry == nil {
 		entry = &nativePluginField{}
 	}
 	return &nativePluginStats{total: s.Count(), documents: entry.docCount, frequency: entry.frequency}, nil
 }
-func (s *nativePluginSegment) Size() int { return len(s.payload) }
+
+func (s *nativePluginSegment) Size() int {
+	if s.data != nil {
+		return s.data.Len()
+	}
+	return len(s.payload)
+}
+
 func (s *nativePluginSegment) DocumentValueReader(fields []string) (segmentDocValues, error) {
+	if s.reader != nil {
+		return nativePluginDocValues{segment: s, fields: fields}, nil
+	}
 	return nativePluginDocValues{segment: s, fields: fields}, nil
 }
 
@@ -625,6 +941,9 @@ func (s *nativePluginSegment) WriteTo(writer io.Writer, closeCh chan struct{}) (
 			return 0, errors.New("inverted: segment write canceled")
 		default:
 		}
+	}
+	if s.data != nil {
+		return s.data.WriteTo(writer)
 	}
 	written, err := writer.Write(s.payload)
 	if err != nil {
@@ -650,39 +969,166 @@ func (s *nativePluginStats) Merge(other segmentStats) {
 	s.frequency += other.SumTotalTermFrequency()
 }
 
-type nativePluginDictionary struct{ field *nativePluginField }
+type nativePluginDictionary struct {
+	field *nativePluginField
+}
 
-func (d *nativePluginDictionary) Contains(term []byte) (bool, error) {
-	if d.field == nil {
+type nativePluginReaderDictionary struct {
+	dictionary *nativeice.Dictionary
+}
+
+func nativePluginContains(dictionary *nativeice.Dictionary, field *nativePluginField, term []byte) (bool, error) {
+	if dictionary != nil {
+		return dictionary.TermExists(term)
+	}
+	if field == nil {
 		return false, nil
 	}
-	_, ok := d.field.terms[string(term)]
+	_, ok := field.terms[string(term)]
 	return ok, nil
 }
-func (d *nativePluginDictionary) Close() error { return nil }
-func (d *nativePluginDictionary) PostingsList(term []byte, except *roaringpkg.Bitmap, _ segmentPostingsList) (segmentPostingsList, error) {
-	result := roaringpkg.New()
-	if d.field != nil {
-		for _, n := range d.field.terms[string(term)] {
-			result.Add(uint32(n))
-		}
+
+func nativePluginContainsClose(dictionary *nativeice.Dictionary) error {
+	if dictionary != nil {
+		return dictionary.Close()
 	}
-	if except != nil {
-		result.AndNot(except)
-	}
-	frequencies := make(map[uint64]int)
-	if d.field != nil {
-		for number, frequency := range d.field.termFreqs[string(term)] {
-			frequencies[number] = int(frequency)
-		}
-	}
-	return &nativePluginPostings{bitmap: result, frequencies: frequencies}, nil
+	return nil
 }
 
-func (d *nativePluginDictionary) Iterator(automaton segmentAutomaton, start, end []byte) segmentDictionaryIterator {
+func (d *nativePluginDictionary) Contains(term []byte) (bool, error) {
+	return nativePluginContains(nil, d.field, term)
+}
+func (d *nativePluginDictionary) Close() error { return nativePluginContainsClose(nil) }
+
+func (d *nativePluginReaderDictionary) Contains(term []byte) (bool, error) {
+	return nativePluginContains(d.dictionary, nil, term)
+}
+
+func (d *nativePluginReaderDictionary) Close() error {
+	return nativePluginContainsClose(d.dictionary)
+}
+
+func nativePluginPostingsList(
+	dictionary *nativeice.Dictionary,
+	field *nativePluginField,
+	term []byte,
+	except *roaringpkg.Bitmap,
+	prealloc segmentPostingsList,
+) (segmentPostingsList, error) {
+	if dictionary != nil {
+		posting, found, postingsErr := dictionary.TermPosting(term)
+		if postingsErr != nil {
+			return nil, postingsErr
+		}
+		if !found {
+			return emptyNativePluginPostings, nil
+		}
+		if posting.OneHit {
+			if except != nil && except.Contains(uint32(posting.DocumentNumber)) {
+				return emptyNativePluginPostings, nil
+			}
+			postings := nativePluginPostingsFromPrealloc(prealloc)
+			postings.oneHit, postings.oneHitNumber = true, posting.DocumentNumber
+			return postings, nil
+		}
+		values := posting.Documents
+		actualBitmap := posting.Bitmap
+		frequencies := make([]int, len(posting.Frequencies))
+		for frequencyIndex, frequency := range posting.Frequencies {
+			if frequencyIndex >= len(frequencies) {
+				break
+			}
+			frequencies[frequencyIndex] = int(frequency.Frequency)
+		}
+		if except != nil && len(values) > 0 {
+			if actualBitmap != nil {
+				actualBitmap.AndNot(except)
+			}
+			filteredValues := make([]uint64, 0, len(values))
+			filteredFrequencies := make([]int, 0, len(values))
+			for valueIndex, value := range values {
+				if !except.Contains(uint32(value)) {
+					filteredValues = append(filteredValues, value)
+					frequency := 0
+					if valueIndex < len(frequencies) {
+						frequency = frequencies[valueIndex]
+					}
+					filteredFrequencies = append(filteredFrequencies, frequency)
+				}
+			}
+			values, frequencies = filteredValues, filteredFrequencies
+		}
+		if len(values) == 0 {
+			return emptyNativePluginPostings, nil
+		}
+		postings := nativePluginPostingsFromPrealloc(prealloc)
+		postings.values, postings.frequencies, postings.actualBitmap = values, frequencies, actualBitmap
+		return postings, nil
+	}
+	var values []uint64
+	var frequencyMap map[uint64]uint64
+	var actualBitmap *roaringpkg.Bitmap
+	if field != nil {
+		values = field.terms[string(term)]
+		frequencyMap = field.termFreqs[string(term)]
+	}
+	if except != nil && len(values) > 0 {
+		filtered := make([]uint64, 0, len(values))
+		for _, value := range values {
+			if !except.Contains(uint32(value)) {
+				filtered = append(filtered, value)
+			}
+		}
+		values = filtered
+	}
+	if len(values) == 0 {
+		return emptyNativePluginPostings, nil
+	}
+	postings := nativePluginPostingsFromPrealloc(prealloc)
+	if len(values) == 1 && (frequencyMap == nil || frequencyMap[values[0]] <= 1) {
+		postings.oneHit, postings.oneHitNumber = true, values[0]
+		return postings, nil
+	}
+	if len(values) > 0 {
+		actualBitmap = roaringpkg.New()
+		for _, value := range values {
+			actualBitmap.Add(uint32(value))
+		}
+	}
+	postings.values, postings.frequencyMap, postings.actualBitmap = values, frequencyMap, actualBitmap
+	return postings, nil
+}
+
+func (d *nativePluginDictionary) PostingsList(term []byte, except *roaringpkg.Bitmap, prealloc segmentPostingsList) (segmentPostingsList, error) {
+	return nativePluginPostingsList(nil, d.field, term, except, prealloc)
+}
+
+func (d *nativePluginReaderDictionary) PostingsList(term []byte, except *roaringpkg.Bitmap, prealloc segmentPostingsList) (segmentPostingsList, error) {
+	return nativePluginPostingsList(d.dictionary, nil, term, except, prealloc)
+}
+
+func nativePluginPostingsFromPrealloc(prealloc segmentPostingsList) *nativePluginPostings {
+	postings, reusable := prealloc.(*nativePluginPostings)
+	if !reusable || postings == nil || postings == emptyNativePluginPostings {
+		return &nativePluginPostings{}
+	}
+	*postings = nativePluginPostings{}
+	return postings
+}
+
+func nativePluginDictionaryIteratorFor(
+	dictionary *nativeice.Dictionary,
+	field *nativePluginField,
+	automaton segmentAutomaton,
+	start, end []byte,
+) segmentDictionaryIterator {
 	terms := []string{}
-	if d.field != nil {
-		for term := range d.field.terms {
+	if dictionary != nil && dictionary.Bound() {
+		iterator, iteratorErr := dictionary.NewDictionaryTermIterator(automaton, start, end)
+		return &nativePluginDictionaryIterator{nativeIterator: iterator, termsErr: iteratorErr, index: -1}
+	}
+	if field != nil {
+		for term := range field.terms {
 			if (len(start) == 0 || term >= string(start)) && (len(end) == 0 || term < string(end)) {
 				if automaton != nil {
 					state := automaton.Start()
@@ -698,49 +1144,207 @@ func (d *nativePluginDictionary) Iterator(automaton segmentAutomaton, start, end
 		}
 	}
 	sort.Strings(terms)
-	return &nativePluginDictionaryIterator{terms: terms, field: d.field, index: -1}
+	return &nativePluginDictionaryIterator{terms: terms, field: field, index: -1}
 }
 
+func (d *nativePluginDictionary) Iterator(automaton segmentAutomaton, start, end []byte) segmentDictionaryIterator {
+	return nativePluginDictionaryIteratorFor(nil, d.field, automaton, start, end)
+}
+
+func (d *nativePluginReaderDictionary) Iterator(automaton segmentAutomaton, start, end []byte) segmentDictionaryIterator {
+	return nativePluginDictionaryIteratorFor(d.dictionary, nil, automaton, start, end)
+}
+
+//nolint:govet // direct document and frequency slices avoid per-lookup bitmap copies.
 type nativePluginPostings struct {
-	bitmap      *roaringpkg.Bitmap
-	frequencies map[uint64]int
+	values       []uint64
+	frequencies  []int
+	frequencyMap map[uint64]uint64
+	actualBitmap *roaringpkg.Bitmap
+	oneHit       bool
+	oneHitNumber uint64
 }
 
-func (p *nativePluginPostings) Iterator(_, _, _ bool, _ segmentPostingsIter) (segmentPostingsIter, error) {
-	return &nativePluginPostingsIterator{values: p.bitmap.ToArray(), frequencies: p.frequencies, index: -1}, nil
+var emptyNativePluginPostings = &nativePluginPostings{}
+
+func (p *nativePluginPostings) Iterator(_, _, _ bool, prealloc segmentPostingsIter) (segmentPostingsIter, error) {
+	iterator, ok := prealloc.(*nativePluginPostingsIterator)
+	if !ok || iterator == nil {
+		iterator = &nativePluginPostingsIterator{}
+	}
+	iterator.values = p.values
+	iterator.frequencies = p.frequencies
+	iterator.frequencyMap = p.frequencyMap
+	iterator.actualBitmap = p.actualBitmap
+	iterator.bitmapMode = false
+	if iterator.actualBitmap != nil {
+		iterator.actual = iterator.actualBitmap.Iterator()
+	} else {
+		iterator.actual = nil
+	}
+	iterator.oneHit = p.oneHit
+	iterator.oneHitNumber = p.oneHitNumber
+	iterator.index = -1
+	return iterator, nil
 }
-func (p *nativePluginPostings) Size() int     { return int(p.bitmap.GetSizeInBytes()) }
-func (p *nativePluginPostings) Count() uint64 { return p.bitmap.GetCardinality() }
+
+func (p *nativePluginPostings) Size() int {
+	if p.oneHit {
+		return 8
+	}
+	return len(p.values) * 8
+}
+
+func (p *nativePluginPostings) Count() uint64 {
+	if p.oneHit {
+		return 1
+	}
+	return uint64(len(p.values))
+}
 
 type nativePluginPostingsIterator struct {
-	frequencies map[uint64]int
-	values      []uint32
-	index       int
+	actual       roaringpkg.IntPeekable
+	frequencyMap map[uint64]uint64
+	actualBitmap *roaringpkg.Bitmap
+	frequencies  []int
+	values       []uint64
+	posting      nativePluginPosting
+	oneHitNumber uint64
+	index        int
+	bitmapMode   bool
+	oneHit       bool
 }
 
 func (p *nativePluginPostingsIterator) Next() (segmentPosting, error) {
+	if p.oneHit {
+		if p.index >= 0 {
+			return nil, nil
+		}
+		p.index = 0
+		p.posting.number = p.oneHitNumber
+		p.posting.frequency = 1
+		return &p.posting, nil
+	}
+	if p.bitmapMode {
+		if p.actual == nil {
+			return nil, nil
+		}
+		if !p.actual.HasNext() {
+			return nil, nil
+		}
+		p.posting.number = uint64(p.actual.Next())
+		p.posting.frequency = p.frequencyFor(p.posting.number)
+		return &p.posting, nil
+	}
 	p.index++
 	if p.index >= len(p.values) {
 		return nil, nil
 	}
-	number := uint64(p.values[p.index])
-	frequency := p.frequencies[number]
+	number := p.values[p.index]
+	frequency := 0
+	if p.index < len(p.frequencies) {
+		frequency = p.frequencies[p.index]
+	} else {
+		frequency = int(p.frequencyMap[number])
+	}
 	if frequency == 0 {
 		frequency = 1
 	}
-	return &nativePluginPosting{number: number, frequency: frequency}, nil
+	p.posting.number = number
+	p.posting.frequency = frequency
+	return &p.posting, nil
 }
 
 func (p *nativePluginPostingsIterator) Advance(number uint64) (segmentPosting, error) {
-	for p.index+1 < len(p.values) && uint64(p.values[p.index+1]) < number {
+	if p.oneHit {
+		if p.index >= 0 || p.oneHitNumber < number {
+			p.index = 0
+			return nil, nil
+		}
+		return p.Next()
+	}
+	if p.bitmapMode {
+		if p.actual == nil {
+			return nil, nil
+		}
+		p.actual.AdvanceIfNeeded(uint32(number))
+		return p.Next()
+	}
+	for p.index+1 < len(p.values) && p.values[p.index+1] < number {
 		p.index++
 	}
 	return p.Next()
 }
-func (p *nativePluginPostingsIterator) Size() int     { return len(p.values) }
-func (p *nativePluginPostingsIterator) Empty() bool   { return len(p.values) == 0 }
-func (p *nativePluginPostingsIterator) Count() uint64 { return uint64(len(p.values)) }
-func (p *nativePluginPostingsIterator) Close() error  { return nil }
+
+func (p *nativePluginPostingsIterator) Size() int {
+	if p.oneHit {
+		return 1
+	}
+	if p.bitmapMode {
+		if p.actualBitmap == nil {
+			return 0
+		}
+		return int(p.actualBitmap.GetCardinality())
+	}
+	return len(p.values)
+}
+
+func (p *nativePluginPostingsIterator) Empty() bool {
+	if p.bitmapMode {
+		return !p.oneHit && (p.actualBitmap == nil || p.actualBitmap.IsEmpty())
+	}
+	return !p.oneHit && len(p.values) == 0
+}
+
+func (p *nativePluginPostingsIterator) Count() uint64 {
+	if p.oneHit {
+		return 1
+	}
+	if p.bitmapMode {
+		if p.actualBitmap == nil {
+			return 0
+		}
+		return p.actualBitmap.GetCardinality()
+	}
+	return uint64(len(p.values))
+}
+func (p *nativePluginPostingsIterator) Close() error { return nil }
+
+func (p *nativePluginPostingsIterator) ActualBitmap() *roaringpkg.Bitmap {
+	return p.actualBitmap
+}
+
+func (p *nativePluginPostingsIterator) DocNum1Hit() (uint64, bool) {
+	return p.oneHitNumber, p.oneHit
+}
+
+func (p *nativePluginPostingsIterator) ReplaceActual(actual *roaringpkg.Bitmap) {
+	p.index = -1
+	p.bitmapMode = true
+	p.oneHit = false
+	p.oneHitNumber = 0
+	p.actualBitmap = actual
+	if actual == nil {
+		p.actual = nil
+		return
+	}
+	p.actual = actual.Iterator()
+}
+
+func (p *nativePluginPostingsIterator) frequencyFor(documentNumber uint64) int {
+	if p.frequencyMap != nil {
+		frequency := int(p.frequencyMap[documentNumber])
+		if frequency > 0 {
+			return frequency
+		}
+		return 1
+	}
+	index := sort.Search(len(p.values), func(index int) bool { return p.values[index] >= documentNumber })
+	if index < len(p.values) && p.values[index] == documentNumber && index < len(p.frequencies) && p.frequencies[index] > 0 {
+		return p.frequencies[index]
+	}
+	return 1
+}
 
 type nativePluginPosting struct {
 	number    uint64
@@ -760,6 +1364,18 @@ type nativePluginDocValues struct {
 }
 
 func (d nativePluginDocValues) VisitDocumentValues(number uint64, visit segmentDocumentValueVisitor) error {
+	if d.segment.reader != nil {
+		for _, wanted := range d.fields {
+			values, valuesErr := d.segment.reader.DocumentValues(wanted, number)
+			if valuesErr != nil {
+				return valuesErr
+			}
+			for _, value := range values {
+				visit(wanted, value)
+			}
+		}
+		return nil
+	}
 	if number >= uint64(len(d.segment.documents)) {
 		return fmt.Errorf("inverted: document %d out of range", number)
 	}
@@ -772,10 +1388,14 @@ func (d nativePluginDocValues) VisitDocumentValues(number uint64, visit segmentD
 	return nil
 }
 
+//nolint:govet // iterator state is grouped by its two segment representations.
 type nativePluginDictionaryIterator struct {
-	field *nativePluginField
-	terms []string
-	index int
+	field          *nativePluginField
+	nativeIterator *nativeice.DictionaryTermIterator
+	terms          []string
+	index          int
+	termsErr       error
+	entry          nativePluginDictionaryEntry
 }
 
 type nativePluginDictionaryEntry struct {
@@ -786,14 +1406,32 @@ type nativePluginDictionaryEntry struct {
 func (e nativePluginDictionaryEntry) Term() string  { return e.term }
 func (e nativePluginDictionaryEntry) Count() uint64 { return e.count }
 func (i *nativePluginDictionaryIterator) Next() (segmentDictionaryEntry, error) {
+	if i.termsErr != nil {
+		return nil, i.termsErr
+	}
+	if i.nativeIterator != nil {
+		term, count, iteratorErr := i.nativeIterator.NextString()
+		if iteratorErr != nil || (term == "" && count == 0) {
+			return nil, iteratorErr
+		}
+		i.entry.term, i.entry.count = term, count
+		return &i.entry, nil
+	}
 	i.index++
 	if i.index >= len(i.terms) {
 		return nil, nil
 	}
 	term := i.terms[i.index]
-	return nativePluginDictionaryEntry{term: term, count: uint64(len(i.field.terms[term]))}, nil
+	i.entry.term, i.entry.count = term, uint64(len(i.field.terms[term]))
+	return &i.entry, nil
 }
-func (*nativePluginDictionaryIterator) Close() error { return nil }
+
+func (i *nativePluginDictionaryIterator) Close() error {
+	if i.nativeIterator != nil {
+		return i.nativeIterator.Close()
+	}
+	return nil
+}
 
 var (
 	_ segmentValue       = (*nativePluginSegment)(nil)
