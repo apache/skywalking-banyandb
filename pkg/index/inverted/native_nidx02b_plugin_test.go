@@ -124,7 +124,7 @@ func TestNIDX02BPluginBoundary(t *testing.T) {
 //
 // Requirement proved here:
 //
-//	R2 -- New reports how many documents it covers and returns a segment that
+//	R2 -- New reports the encoded buffer size and returns a segment that
 //	      answers its type, version, size, field set, stored records, term
 //	      dictionaries, term matches, doc values and collection statistics from
 //	      the documents it was built from, before any persist. The reserved
@@ -141,7 +141,7 @@ func TestNIDX02BNewBuildsASegmentFromAnalyzedDocuments(t *testing.T) {
 	built, count, newErr := nidx02bNew(nidx02bAnalyzedDocuments(), nidx02bNormCalc)
 	tester.NoError(newErr)
 	tester.NotNil(built)
-	tester.Equal(nidx02bAnalyzedDocumentCount, count, "New reports the number of documents the batch held")
+	tester.Equal(uint64(built.Size()), count, "New reports the encoded buffer size")
 	tester.Equal(nidx02bAnalyzedDocumentCount, built.Count())
 
 	tester.Equal(nidx02bSegmentType, built.Type())
@@ -543,7 +543,7 @@ func nidx02bSegmentOf(t *testing.T, documents []segmentDocument, path string) se
 	built, count, newErr := nidx02bNew(documents, nidx02bNormCalc)
 	require.NoError(t, newErr)
 	require.NotNil(t, built)
-	require.Equal(t, uint64(len(documents)), count)
+	require.Equal(t, uint64(built.Size()), count)
 	return nidx02bReopen(t, nidx02bPersist(t, built, path))
 }
 

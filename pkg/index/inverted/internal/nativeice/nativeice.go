@@ -86,6 +86,8 @@ var errManifestTooLarge = errors.New("nativeice: snapshot exceeds read limit")
 // Reader is a bounded read-only handle on exactly one generation of an index
 // directory. The generation is chosen at Open and fixed for the Reader's
 // lifetime, so generations committed afterwards stay invisible to it.
+//
+//nolint:govet // reader fields are grouped by ownership and synchronization role.
 type Reader struct {
 	closeErr             error
 	repairPageSortFields [repairSortFieldCount]string
@@ -94,7 +96,12 @@ type Reader struct {
 	snapshotID           uint64
 	visibleDocCount      int64
 	repairPageMu         sync.Mutex
+	docValueMu           sync.Mutex
+	docValueReaders      map[string]*repairDocValueReader
 	closeOnce            sync.Once
+	segmentMu            sync.RWMutex
+	segmentReaders       []*storedSegmentReader
+	keepDictionaries     bool
 }
 
 // TimeBounds returns the timestamp bounds recorded by the segment footer.
@@ -218,11 +225,20 @@ func (r *Reader) SnapshotID() uint64 {
 }
 
 // Close releases the file handles the Reader pinned at Open. It is idempotent.
-// Callers must not close a Reader concurrently with a document visit.
+// Callers must not close a Reader concurrently with any Reader operation.
 func (r *Reader) Close() error {
 	r.closeOnce.Do(func() {
 		r.repairPageReaders = nil
 		r.repairPageSortFields = [repairSortFieldCount]string{}
+		r.segmentMu.Lock()
+		for _, storedReader := range r.segmentReaders {
+			if storedReader != nil {
+				storedReader.close()
+			}
+		}
+		r.segmentReaders = nil
+		r.segmentMu.Unlock()
+		r.docValueReaders = nil
 		r.closeErr = closePinnedSegments(r.segments)
 	})
 	return r.closeErr
@@ -413,6 +429,91 @@ type TermFrequency struct {
 	Frequency      uint64
 }
 
+// TermPosting is the exact posting for one dictionary term. OneHit is set for
+// the compact single-document encoding, allowing callers to consume it without
+// allocating document and frequency slices.
+//
+//nolint:govet // keep scalar one-hit fields adjacent to the general posting slices.
+type TermPosting struct {
+	OneHit bool
+	// Bitmap is the caller-owned multi-document posting bitmap. It is exposed
+	// so query engines that support bitmap optimization can combine postings
+	// without materializing a document slice first.
+	Bitmap         *roaringpkg.Bitmap
+	Documents      []uint64
+	Frequencies    []TermFrequency
+	DocumentNumber uint64
+}
+
+// Dictionary is a single-segment exact-term handle. Each handle owns its
+// field-bound decoder pool, matching the segment API's dictionary lifetime:
+// callers must not use one handle concurrently from multiple searches. The
+// parent Reader remains responsible for the FST lifetime.
+type Dictionary struct {
+	owner      *storedSegmentReader
+	fst        *vellum.FST
+	readerPool *sync.Pool
+	field      string
+}
+
+// Dictionary opens a field dictionary without retaining a reader lock or
+// looking up field state on each exact-term operation.
+func (r *Reader) Dictionary(field string) (*Dictionary, error) {
+	dictionary, dictionaryErr := r.DictionaryValue(field)
+	if dictionaryErr != nil {
+		return nil, dictionaryErr
+	}
+	return &dictionary, nil
+}
+
+// DictionaryValue opens a field dictionary as an embeddable value. It avoids
+// a second heap object when a segment adapter stores the handle in its own
+// per-search dictionary wrapper.
+func (r *Reader) DictionaryValue(field string) (Dictionary, error) {
+	if len(r.segments) != 1 {
+		return Dictionary{}, fmt.Errorf("nativeice: dictionary requires one segment, got %d", len(r.segments))
+	}
+	owner, readerErr := r.storedReader(0)
+	if readerErr != nil {
+		return Dictionary{}, readerErr
+	}
+	fst, dictionaryErr := owner.dictionary(field)
+	if dictionaryErr != nil || fst == nil {
+		return Dictionary{owner: owner, field: field}, dictionaryErr
+	}
+	return Dictionary{owner: owner, field: field, fst: fst, readerPool: owner.dictionaryReaderPool(field, fst)}, nil
+}
+
+// Close releases no shared state; the parent Reader owns the dictionary FST.
+func (d *Dictionary) Close() error { return nil }
+
+// Bound reports whether this handle resolved an indexed field dictionary.
+func (d *Dictionary) Bound() bool { return d.readerPool != nil || d.fst != nil }
+
+// TermPosting resolves one exact term through this handle's reusable decoder.
+func (d *Dictionary) TermPosting(term []byte) (TermPosting, bool, error) {
+	if d.readerPool == nil {
+		return TermPosting{}, false, nil
+	}
+	reader := d.readerPool.Get().(*vellum.Reader)
+	defer d.readerPool.Put(reader)
+	return d.owner.termPostingReader(reader, term)
+}
+
+// TermExists reports whether an exact term is present in this dictionary.
+func (d *Dictionary) TermExists(term []byte) (bool, error) {
+	if d.readerPool == nil {
+		return false, nil
+	}
+	reader := d.readerPool.Get().(*vellum.Reader)
+	defer d.readerPool.Put(reader)
+	_, found, lookupErr := lookupTermPostingReader(reader, term)
+	if lookupErr != nil {
+		return false, corruptError("look up term in segment %q", d.owner.path, lookupErr)
+	}
+	return found, nil
+}
+
 // SegmentTermFrequencies identifies term frequencies in one segment.
 type SegmentTermFrequencies struct {
 	Values  []TermFrequency
@@ -430,16 +531,239 @@ type SegmentDocValues struct {
 // payload is copied, so callers may reuse it after this returns.
 func OpenSegment(payload []byte) (*Reader, error) {
 	owned := append([]byte(nil), payload...)
-	file := &byteSegmentFile{data: owned}
-	footer, footerErr := readSegmentFooter(file, uint64(len(owned)), "memory")
+	return openSegmentBytes(owned, false)
+}
+
+// OpenSegmentBorrowed opens an immutable segment view without copying payload.
+// The caller must keep payload unchanged and live until Reader.Close returns.
+// It is intended for adapters whose segment data already has that lifetime;
+// callers needing ownership should use OpenSegment.
+func OpenSegmentBorrowed(payload []byte) (*Reader, error) {
+	return openSegmentBytes(payload, true)
+}
+
+func openSegmentBytes(payload []byte, keepDictionaries bool) (*Reader, error) {
+	file := &byteSegmentFile{data: payload}
+	footer, footerErr := readSegmentFooter(file, uint64(len(payload)), "memory")
 	if footerErr != nil {
 		return nil, footerErr
 	}
 	record := segmentRecord{path: "memory", documentCount: footer.documentCount, timeMin: footer.timeMin, timeMax: footer.timeMax}
-	if _, readerErr := newStoredSegmentReader(file, uint64(len(owned)), record); readerErr != nil {
+	if _, readerErr := newStoredSegmentReader(file, uint64(len(payload)), record); readerErr != nil {
 		return nil, readerErr
 	}
-	return &Reader{segments: []pinnedSegment{{file: file, record: record, size: uint64(len(owned))}}}, nil
+	return &Reader{
+		segments:         []pinnedSegment{{file: file, record: record, size: uint64(len(payload))}},
+		visibleDocCount:  int64(footer.documentCount),
+		keepDictionaries: keepDictionaries,
+	}, nil
+}
+
+// DocumentCount returns the number of physical documents in this reader's
+// generation. It is useful to segment adapters that preserve physical
+// document numbering while decoding individual documents lazily.
+func (r *Reader) DocumentCount() uint64 {
+	if len(r.segments) != 1 {
+		return 0
+	}
+	return r.segments[0].record.documentCount
+}
+
+func (r *Reader) storedReader(segmentIndex int) (*storedSegmentReader, error) {
+	r.segmentMu.RLock()
+	if r.segmentReaders != nil {
+		storedReader := r.segmentReaders[segmentIndex]
+		r.segmentMu.RUnlock()
+		if storedReader != nil {
+			return storedReader, nil
+		}
+	} else {
+		r.segmentMu.RUnlock()
+	}
+	r.segmentMu.Lock()
+	defer r.segmentMu.Unlock()
+	if r.segmentReaders == nil {
+		r.segmentReaders = make([]*storedSegmentReader, len(r.segments))
+	}
+	storedReader := r.segmentReaders[segmentIndex]
+	if storedReader != nil {
+		return storedReader, nil
+	}
+	reader, readerErr := newStoredSegmentReader(r.segments[segmentIndex].file, r.segments[segmentIndex].size, r.segments[segmentIndex].record)
+	if readerErr != nil {
+		return nil, readerErr
+	}
+	reader.keepDictionaries = r.keepDictionaries
+	r.segmentReaders[segmentIndex] = reader
+	return reader, nil
+}
+
+// VisitDocument visits one physical stored document without decoding the
+// surrounding generation.
+func (r *Reader) VisitDocument(number uint64, visit func(StoredDocument) error) error {
+	if len(r.segments) != 1 || number >= r.segments[0].record.documentCount {
+		return fmt.Errorf("nativeice: document %d out of range", number)
+	}
+	storedReader, readerErr := r.storedReader(0)
+	if readerErr != nil {
+		return readerErr
+	}
+	return storedReader.visitDocument(number, visit)
+}
+
+// DocumentValues returns one document's values for field. Returned bytes are
+// owned by the caller.
+func (r *Reader) DocumentValues(field string, number uint64) ([][]byte, error) {
+	if len(r.segments) != 1 || number >= r.segments[0].record.documentCount {
+		return nil, fmt.Errorf("nativeice: document %d out of range", number)
+	}
+	r.docValueMu.Lock()
+	defer r.docValueMu.Unlock()
+	if r.docValueReaders == nil {
+		r.docValueReaders = make(map[string]*repairDocValueReader)
+	}
+	docValueReader := r.docValueReaders[field]
+	if docValueReader == nil {
+		fields := [repairSortFieldCount]string{field, "_nativeice_unused_1", "_nativeice_unused_2", "_nativeice_unused_3"}
+		pageReader, readerErr := newRepairSegmentPageReader(r.segments[0], fields)
+		if readerErr != nil {
+			return nil, readerErr
+		}
+		docValueReader = pageReader.sortReaders[0]
+		r.docValueReaders[field] = docValueReader
+	}
+	if docValueReader == nil {
+		return nil, nil
+	}
+	values, valueErr := docValueReader.values(number)
+	if valueErr != nil {
+		return nil, valueErr
+	}
+	result := make([][]byte, len(values))
+	for valueIndex, value := range values {
+		result[valueIndex] = append([]byte(nil), value...)
+	}
+	return result, nil
+}
+
+// VisitFieldDocumentValues streams one segment's values in physical document
+// order. Values are borrowed until visit returns; callers retaining them must
+// copy each value. A document with no values is still visited with an empty
+// slice.
+func (r *Reader) VisitFieldDocumentValues(field string, visit func(uint64, [][]byte) error) error {
+	if len(r.segments) != 1 {
+		return fmt.Errorf("nativeice: document values requires one segment, got %d", len(r.segments))
+	}
+	r.docValueMu.Lock()
+	defer r.docValueMu.Unlock()
+	fields := [repairSortFieldCount]string{field, "_nativeice_unused_1", "_nativeice_unused_2", "_nativeice_unused_3"}
+	pageReader, readerErr := newRepairSegmentPageReader(r.segments[0], fields)
+	if readerErr != nil {
+		return readerErr
+	}
+	docValueReader := pageReader.sortReaders[0]
+	for documentNumber := uint64(0); documentNumber < r.segments[0].record.documentCount; documentNumber++ {
+		var values [][]byte
+		if docValueReader != nil {
+			values, readerErr = docValueReader.values(documentNumber)
+			if readerErr != nil {
+				return readerErr
+			}
+		}
+		if visitErr := visit(documentNumber, values); visitErr != nil {
+			return visitErr
+		}
+	}
+	return nil
+}
+
+// TermDocumentCounts returns posting cardinalities aligned with terms.
+func (r *Reader) TermDocumentCounts(field string, terms [][]byte) ([]uint64, error) {
+	result := make([]uint64, len(terms))
+	for segmentIndex := range r.segments {
+		storedReader, readerErr := r.storedReader(segmentIndex)
+		if readerErr != nil {
+			return nil, readerErr
+		}
+		counts, countsErr := storedReader.termDocumentCounts(field, terms)
+		if countsErr != nil {
+			return nil, countsErr
+		}
+		for termIndex := range counts {
+			result[termIndex] += counts[termIndex]
+		}
+	}
+	return result, nil
+}
+
+// TermExists reports whether an exact term is present in one segment's field
+// dictionary without decoding its posting list.
+func (r *Reader) TermExists(field string, term []byte) (bool, error) {
+	for segmentIndex := range r.segments {
+		storedReader, readerErr := r.storedReader(segmentIndex)
+		if readerErr != nil {
+			return false, readerErr
+		}
+		found, foundErr := storedReader.termExists(field, term)
+		if foundErr != nil {
+			return false, foundErr
+		}
+		if found {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// TermDocumentsBatch returns local document membership aligned with terms,
+// resolving all terms through one cached field dictionary.
+func (r *Reader) TermDocumentsBatch(field string, terms [][]byte) ([][]uint64, error) {
+	if len(r.segments) != 1 {
+		return nil, fmt.Errorf("nativeice: term documents requires one segment, got %d", len(r.segments))
+	}
+	result := make([][]uint64, len(terms))
+	for segmentIndex := range r.segments {
+		storedReader, readerErr := r.storedReader(segmentIndex)
+		if readerErr != nil {
+			return nil, readerErr
+		}
+		memberships, membershipErr := storedReader.termDocumentsBatch(field, terms)
+		if membershipErr != nil {
+			return nil, membershipErr
+		}
+		for termIndex := range memberships {
+			result[termIndex] = append(result[termIndex], memberships[termIndex]...)
+		}
+	}
+	return result, nil
+}
+
+// VisitTermPostings resolves all terms in one segment while retaining a single
+// dictionary decoder. A nil terms argument enumerates the dictionary. The
+// callback receives local document numbers and frequencies one term at a time.
+func (r *Reader) VisitTermPostings(field string, terms [][]byte, visit func([]byte, []uint64, []TermFrequency) error) error {
+	if len(r.segments) != 1 {
+		return fmt.Errorf("nativeice: term postings requires one segment, got %d", len(r.segments))
+	}
+	storedReader, readerErr := r.storedReader(0)
+	if readerErr != nil {
+		return readerErr
+	}
+	return storedReader.visitTermPostings(field, terms, visit)
+}
+
+// TermPosting resolves one exact term without enumerating the field
+// dictionary. Compact one-hit postings remain scalar; general postings retain
+// the validated slices used by VisitTermPostings.
+func (r *Reader) TermPosting(field string, term []byte) (TermPosting, bool, error) {
+	if len(r.segments) != 1 {
+		return TermPosting{}, false, fmt.Errorf("nativeice: term posting requires one segment, got %d", len(r.segments))
+	}
+	storedReader, readerErr := r.storedReader(0)
+	if readerErr != nil {
+		return TermPosting{}, false, readerErr
+	}
+	return storedReader.termPosting(field, term)
 }
 
 // Fields returns every field represented in the segment, including stored-only,
@@ -447,7 +771,7 @@ func OpenSegment(payload []byte) (*Reader, error) {
 func (r *Reader) Fields() ([]string, error) {
 	result := make([]string, 0)
 	for segmentIndex := range r.segments {
-		storedReader, readerErr := newStoredSegmentReader(r.segments[segmentIndex].file, r.segments[segmentIndex].size, r.segments[segmentIndex].record)
+		storedReader, readerErr := r.storedReader(segmentIndex)
 		if readerErr != nil {
 			return nil, readerErr
 		}
@@ -475,7 +799,7 @@ func (r *Reader) Fields() ([]string, error) {
 func (r *Reader) FieldStats(field string) (uint64, uint64, error) {
 	var documents, frequency uint64
 	for segmentIndex := range r.segments {
-		storedReader, readerErr := newStoredSegmentReader(r.segments[segmentIndex].file, r.segments[segmentIndex].size, r.segments[segmentIndex].record)
+		storedReader, readerErr := r.storedReader(segmentIndex)
 		if readerErr != nil {
 			return 0, 0, readerErr
 		}
@@ -495,7 +819,7 @@ func (r *Reader) FieldStats(field string) (uint64, uint64, error) {
 func (r *Reader) Terms(field string) ([][]byte, error) {
 	result := make([][]byte, 0)
 	for segmentIndex := range r.segments {
-		storedReader, readerErr := newStoredSegmentReader(r.segments[segmentIndex].file, r.segments[segmentIndex].size, r.segments[segmentIndex].record)
+		storedReader, readerErr := r.storedReader(segmentIndex)
 		if readerErr != nil {
 			return nil, readerErr
 		}
@@ -508,7 +832,6 @@ func (r *Reader) Terms(field string) ([][]byte, error) {
 		}
 		iterator, iteratorErr := dictionary.Iterator(nil, nil)
 		if iteratorErr != nil {
-			_ = dictionary.Close()
 			if errors.Is(iteratorErr, vellum.ErrIteratorDone) || strings.Contains(strings.ToLower(iteratorErr.Error()), "iterator") {
 				continue
 			}
@@ -531,12 +854,10 @@ func (r *Reader) Terms(field string) ([][]byte, error) {
 					break
 				}
 				_ = iterator.Close()
-				_ = dictionary.Close()
 				return nil, corruptError("iterate term dictionary", nextErr)
 			}
 		}
 		_ = iterator.Close()
-		_ = dictionary.Close()
 	}
 	return result, nil
 }
@@ -545,22 +866,22 @@ func (r *Reader) Terms(field string) ([][]byte, error) {
 func (r *Reader) TermDocuments(field string, term []byte) ([]SegmentTermDocuments, error) {
 	result := make([]SegmentTermDocuments, 0)
 	for segmentIndex := range r.segments {
-		storedReader, readerErr := newStoredSegmentReader(r.segments[segmentIndex].file, r.segments[segmentIndex].size, r.segments[segmentIndex].record)
+		storedReader, readerErr := r.storedReader(segmentIndex)
 		if readerErr != nil {
 			return nil, readerErr
 		}
-		selected, selectionErr := storedReader.selectedDocuments(context.Background(), termSelection{field: field, terms: [][]byte{term}})
-		if selectionErr != nil {
-			return nil, selectionErr
+		memberships, membershipErr := storedReader.termDocumentsBatch(field, [][]byte{term})
+		if membershipErr != nil {
+			return nil, membershipErr
 		}
-		documents := selected.ToArray()
+		if len(memberships) == 0 {
+			continue
+		}
+		documents := memberships[0]
 		if len(documents) == 0 {
 			continue
 		}
-		values := make([]uint64, len(documents))
-		for documentIndex, document := range documents {
-			values[documentIndex] = uint64(document)
-		}
+		values := append([]uint64(nil), documents...)
 		result = append(result, SegmentTermDocuments{Segment: uint64(segmentIndex), DocumentNumber: values})
 	}
 	return result, nil
@@ -571,7 +892,7 @@ func (r *Reader) TermDocuments(field string, term []byte) ([]SegmentTermDocument
 func (r *Reader) TermFrequencies(field string, term []byte) ([]SegmentTermFrequencies, error) {
 	result := make([]SegmentTermFrequencies, 0)
 	for segmentIndex := range r.segments {
-		storedReader, readerErr := newStoredSegmentReader(r.segments[segmentIndex].file, r.segments[segmentIndex].size, r.segments[segmentIndex].record)
+		storedReader, readerErr := r.storedReader(segmentIndex)
 		if readerErr != nil {
 			return nil, readerErr
 		}
@@ -852,17 +1173,33 @@ func readSegmentFooter(file segmentFile, size uint64, path string) (segmentFoote
 	return footer, nil
 }
 
+//nolint:govet // decoder buffers are grouped with their parsed segment metadata.
 type storedSegmentReader struct {
-	file             segmentFile
-	path             string
-	chunkOffsets     []uint64
-	compressedBuffer []byte
-	decodedBuffer    []byte
-	fieldNames       []string
-	fieldNameBuffer  []byte
-	footer           segmentFooter
-	size             uint64
-	storedDataEnd    uint64
+	file              segmentFile
+	path              string
+	chunkOffsets      []uint64
+	compressedBuffer  []byte
+	decodedBuffer     []byte
+	loadedChunk       uint64
+	fieldNames        []string
+	fieldNameBuffer   []byte
+	footer            segmentFooter
+	size              uint64
+	storedDataEnd     uint64
+	keepDictionaries  bool
+	dictionaryMu      sync.RWMutex
+	dictionaries      map[string]*vellum.FST
+	dictionaryReaders map[string]*sync.Pool
+	fieldStatsMu      sync.RWMutex
+	fieldStatsCache   map[string]cachedFieldStats
+	walkMu            sync.Mutex
+	fieldNameMu       sync.Mutex
+}
+
+type cachedFieldStats struct {
+	documents uint64
+	frequency uint64
+	found     bool
 }
 
 type storedField struct {
@@ -909,7 +1246,7 @@ func newStoredSegmentReader(file segmentFile, size uint64, record segmentRecord)
 	if footer.timeMin != record.timeMin || footer.timeMax != record.timeMax {
 		return nil, corruptError("segment %d time bounds differ from snapshot", record.id)
 	}
-	storedReader := &storedSegmentReader{file: file, path: record.path, size: size, footer: footer}
+	storedReader := &storedSegmentReader{file: file, path: record.path, size: size, footer: footer, loadedChunk: math.MaxUint64}
 	if chunkErr := storedReader.loadChunkOffsets(); chunkErr != nil {
 		return nil, chunkErr
 	}
@@ -919,7 +1256,21 @@ func newStoredSegmentReader(file segmentFile, size uint64, record segmentRecord)
 	return storedReader, nil
 }
 
+func (s *storedSegmentReader) close() {
+	s.dictionaryMu.Lock()
+	defer s.dictionaryMu.Unlock()
+	if s.keepDictionaries {
+		return
+	}
+	for field, dictionary := range s.dictionaries {
+		_ = dictionary.Close()
+		delete(s.dictionaries, field)
+	}
+}
+
 func (s *storedSegmentReader) visit(ctx context.Context, deleted *roaringpkg.Bitmap, visit func(StoredDocument) error) error {
+	s.walkMu.Lock()
+	defer s.walkMu.Unlock()
 	if s.footer.documentCount == 0 {
 		return nil
 	}
@@ -954,6 +1305,21 @@ func (s *storedSegmentReader) visit(ctx context.Context, deleted *roaringpkg.Bit
 		}
 	}
 	return nil
+}
+
+func (s *storedSegmentReader) visitDocument(documentNumber uint64, visit func(StoredDocument) error) error {
+	s.walkMu.Lock()
+	defer s.walkMu.Unlock()
+	chunkIndex := documentNumber / storedDocumentsPerChunk
+	chunk, chunkErr := s.loadChunk(chunkIndex)
+	if chunkErr != nil {
+		return chunkErr
+	}
+	document, documentErr := s.decodeDocument(documentNumber, chunk)
+	if documentErr != nil {
+		return documentErr
+	}
+	return visit(document)
 }
 
 func (s *storedSegmentReader) loadChunkOffsets() error {
@@ -1029,6 +1395,8 @@ func (s *storedSegmentReader) loadFieldNames() error {
 }
 
 func (s *storedSegmentReader) readFieldName(fieldID uint64) (string, error) {
+	s.fieldNameMu.Lock()
+	defer s.fieldNameMu.Unlock()
 	if fieldID >= s.footer.fieldsIndexEntries {
 		return "", corruptError("segment %q has an out-of-range stored field identifier %d", s.path, fieldID)
 	}
@@ -1090,6 +1458,9 @@ func (s *storedSegmentReader) readUvarint(offset *uint64, end uint64) (uint64, e
 }
 
 func (s *storedSegmentReader) loadChunk(chunkIndex uint64) ([]byte, error) {
+	if s.loadedChunk == chunkIndex {
+		return s.decodedBuffer, nil
+	}
 	if chunkIndex+1 >= uint64(len(s.chunkOffsets)) {
 		return nil, corruptError("segment %q has no stored chunk %d", s.path, chunkIndex)
 	}
@@ -1130,6 +1501,7 @@ func (s *storedSegmentReader) loadChunk(chunkIndex uint64) ([]byte, error) {
 		return nil, corruptError("segment %q decoded a stored chunk to an unexpected length", s.path)
 	}
 	s.decodedBuffer = decoded
+	s.loadedChunk = chunkIndex
 	return decoded, nil
 }
 
@@ -1227,6 +1599,26 @@ func (s *storedSegmentReader) documentOffset(documentNumber uint64) (uint64, err
 func (s *storedSegmentReader) readBytes(offset, length uint64) ([]byte, error) {
 	if length > maxStoredChunkTableSize {
 		return nil, corruptError("segment %q requested an oversized read", s.path)
+	}
+	data := make([]byte, int(length))
+	if readErr := s.readInto(offset, data); readErr != nil {
+		return nil, readErr
+	}
+	return data, nil
+}
+
+func (s *storedSegmentReader) readPostingBytes(offset, length uint64) ([]byte, error) {
+	if length > maxSelectionPostingsSize {
+		return nil, corruptError("segment %q requested an oversized posting read", s.path)
+	}
+	if offset > s.size || length > s.size-offset {
+		return nil, corruptError("segment %q posting read exceeds file bounds", s.path)
+	}
+	if memory, ok := s.file.(*byteSegmentFile); ok {
+		if offset > uint64(len(memory.data)) || length > uint64(len(memory.data))-offset {
+			return nil, corruptError("segment %q posting read exceeds file bounds", s.path)
+		}
+		return memory.data[int(offset):int(offset+length)], nil
 	}
 	data := make([]byte, int(length))
 	if readErr := s.readInto(offset, data); readErr != nil {
