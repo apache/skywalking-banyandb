@@ -1,3 +1,19 @@
+# Licensed to the Apache Software Foundation under one or more contributor
+# license agreements. See the NOTICE file distributed with
+# this work for additional information regarding copyright
+# ownership. The Apache Software Foundation licenses this file to you under
+# the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
 b4326ef9621f41082523d9f569dd45461f96c6bbc51f014bf0058391a3d9a724  api/proto/banyandb/bydbql/v1/query.pb.go
 ceb0d0aec288ea2578e8a65224536bc73bea68ee9bd5af05fd58151eda831f9f  api/proto/banyandb/bydbql/v1/rpc.pb.go
 88ae3424493104da06ff2fc60da67dd24ffc499bb3feb3f802c4cbc141a6bfcd  api/proto/banyandb/bydbql/v1/rpc_grpc.pb.go
