@@ -59,11 +59,10 @@ import (
 func TestNIDX02BLifecycleE2E(t *testing.T) {
 	tester := require.New(t)
 
-	built, count, newErr := nidx02bNew(nidx02bCorpusDocuments(), nidx02bNormCalc)
+	built, bufBytes, newErr := nidx02bNew(nidx02bCorpusDocuments(), nidx02bNormCalc)
 	tester.NoError(newErr)
 	tester.NotNil(built)
-	tester.Equal(uint64(nidx02aPhysicalRowCount), count,
-		"the batch holds every declared row, the ones the shard later masked included")
+	tester.Equal(uint64(built.Size()), bufBytes, "New reports the encoded buffer size")
 
 	staging := t.TempDir()
 	reopened := nidx02bReopen(t, nidx02bPersist(t, built,

@@ -34,13 +34,14 @@ func (*localFileSystem) CreateLockFile(name string, permission Mode) (File, erro
 		lockFlags := uint32(windows.LOCKFILE_FAIL_IMMEDIATELY)
 		lockFlags |= uint32(windows.LOCKFILE_EXCLUSIVE_LOCK)
 		if err = windows.LockFileEx(windows.Handle(file.Fd()), lockFlags, 0, 1, 0, &windows.Overlapped{}); err != nil {
+			_ = file.Close()
 			return nil, &FileSystemError{
 				Code:    lockError,
 				Message: fmt.Sprintf("Cannot lock file, file name: %s, error message: %s", name, err),
 			}
 		}
 		return &LocalFile{
-			file: file,
+			file: file, locked: true,
 		}, nil
 	case os.IsExist(err):
 		return nil, &FileSystemError{
