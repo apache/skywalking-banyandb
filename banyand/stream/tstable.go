@@ -328,7 +328,7 @@ func initTSTableWithLease(fileSystem fs.FileSystem, rootPath string, p common.Po
 }
 
 func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
-	l *logger.Logger, timeRange timestamp.TimeRange, option option, m any,
+	l *logger.Logger, _ timestamp.TimeRange, option option, m any,
 ) (*tsTable, error) {
 	t, epoch, err := initTSTable(fileSystem, rootPath, p, l, option, m, true)
 	if err != nil {
