@@ -1523,17 +1523,24 @@ func (s *storedSegmentReader) loadChunkOffsets() error {
 	if offsets[0] != 0 {
 		return corruptError("segment %q has a stored chunk table without a zero origin", s.path)
 	}
+	dataChunks := (s.footer.documentCount + storedDocumentsPerChunk - 1) / storedDocumentsPerChunk
+	expectedChunkCount := dataChunks + 1
+	// A legacy ICE merger at an exact 128-document boundary wrote one
+	// duplicated terminal offset. It describes no data chunk and is safe to
+	// ignore, but only this exact table shape is compatible.
+	legacyTerminalChunk := s.footer.documentCount > 0 && s.footer.documentCount%storedDocumentsPerChunk == 0 &&
+		chunkCount == expectedChunkCount+1 &&
+		offsets[dataChunks] == tableStart && offsets[dataChunks+1] == tableStart
 	for offsetIndex := 1; offsetIndex < len(offsets); offsetIndex++ {
 		if offsets[offsetIndex] < offsets[offsetIndex-1] || offsets[offsetIndex] > tableStart {
 			return corruptError("segment %q has invalid stored chunk offsets", s.path)
 		}
 	}
-	dataChunks := (s.footer.documentCount + storedDocumentsPerChunk - 1) / storedDocumentsPerChunk
 	if s.footer.documentCount == 0 {
 		if chunkCount > 2 {
 			return corruptError("segment %q has too many empty stored chunks", s.path)
 		}
-	} else if chunkCount != dataChunks+1 {
+	} else if !legacyTerminalChunk && chunkCount != expectedChunkCount {
 		return corruptError("segment %q has %d stored chunks for %d documents", s.path, chunkCount, s.footer.documentCount)
 	}
 	for chunkIndex := uint64(0); chunkIndex < dataChunks; chunkIndex++ {

@@ -21,6 +21,7 @@ import (
 	"errors"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -237,6 +238,106 @@ func TestOpenStrictDoesNotFallBackFromNewestCorruptSnapshot(t *testing.T) {
 	if reader.SnapshotID() != 1 {
 		t.Fatalf("fallback snapshot ID = %d, want 1", reader.SnapshotID())
 	}
+}
+
+// TestPublishSnapshotProcessCuts terminates a real publisher at the two
+// directory-sync boundaries. The hook is private to this package's tests, so
+// production publication has no fault-injection surface.
+func TestPublishSnapshotProcessCuts(t *testing.T) {
+	if mode := os.Getenv("NATIVEICE_CRASH_HELPER"); mode != "" {
+		runPublishSnapshotCrashHelper(t, mode, os.Getenv("NATIVEICE_CRASH_PATH"))
+		return
+	}
+	for _, mode := range []string{"pre-manifest", "post-manifest"} {
+		t.Run(mode, func(t *testing.T) {
+			directory := t.TempDir()
+			if encodeErr := Encode(directory, Generation{SegmentID: 1, SnapshotID: 1, Documents: []EncodeDocument{{Identifier: []byte("old-live")}}}); encodeErr != nil {
+				t.Fatal(encodeErr)
+			}
+			//nolint:gosec // the subprocess is this test binary and the arguments
+			// are fixed test flags.
+			command := exec.Command(os.Args[0], "-test.run", "^TestPublishSnapshotProcessCuts$", "-test.v")
+			command.Env = append(os.Environ(), "NATIVEICE_CRASH_HELPER="+mode, "NATIVEICE_CRASH_PATH="+directory)
+			output, runErr := command.CombinedOutput()
+			var exitErr *exec.ExitError
+			if !errors.As(runErr, &exitErr) || exitErr.ExitCode() != 77 {
+				t.Fatalf("crash helper error = %v, output = %s", runErr, output)
+			}
+			if mode == "pre-manifest" {
+				reader, openErr := OpenStrict(directory)
+				if openErr != nil {
+					t.Fatalf("OpenStrict() after pre-manifest cut: %v", openErr)
+				}
+				defer func() { _ = reader.Close() }()
+				if reader.SnapshotID() != 1 {
+					t.Fatalf("pre-manifest snapshot ID = %d, want prior snapshot 1", reader.SnapshotID())
+				}
+				assertCrashPosting(t, reader, "old-live", true)
+				assertCrashPosting(t, reader, "crash-live", false)
+				return
+			}
+			reader, openErr := OpenStrict(directory)
+			if openErr != nil {
+				t.Fatalf("OpenStrict() after post-manifest cut: %v", openErr)
+			}
+			defer func() { _ = reader.Close() }()
+			if reader.SnapshotID() != 2 {
+				t.Fatalf("post-manifest snapshot ID = %d, want new snapshot 2", reader.SnapshotID())
+			}
+			assertCrashPosting(t, reader, "old-live", true)
+			assertCrashPosting(t, reader, "crash-live", true)
+		})
+	}
+}
+
+func assertCrashPosting(t *testing.T, reader *Reader, identifier string, wantFound bool) {
+	t.Helper()
+	found := false
+	visitErr := reader.VisitPhysicalDocuments(context.Background(), func(document StoredDocument, deleted bool) error {
+		if deleted {
+			return nil
+		}
+		return document.VisitStoredFields(func(name string, value []byte) bool {
+			if name == "_id" && string(value) == identifier {
+				found = true
+			}
+			return true
+		})
+	})
+	if visitErr != nil || found != wantFound {
+		t.Fatalf("stored identifier %q = (found=%v, err=%v), want found=%v", identifier, found, visitErr, wantFound)
+	}
+}
+
+func runPublishSnapshotCrashHelper(t *testing.T, mode, directory string) {
+	t.Helper()
+	payload, encodeErr := EncodeSegment(Generation{Documents: []EncodeDocument{{Identifier: []byte("crash-live")}}})
+	if encodeErr != nil {
+		t.Fatal(encodeErr)
+	}
+	metadata := SnapshotSegment{ID: 1, Size: uint64(len(payload)), DocumentCount: 1}
+	oldInfo, statErr := os.Stat(filepath.Join(directory, nativeICEFileName(1, ".seg")))
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	metadata.ID = 2
+	oldMetadata := SnapshotSegment{ID: 1, Size: uint64(oldInfo.Size()), DocumentCount: 1}
+	syncCalls := 0
+	syncNativeICEDirectoryForPublish = func(path string) error {
+		syncCalls++
+		if (mode == "pre-manifest" && syncCalls == 1) || (mode == "post-manifest" && syncCalls == 2) {
+			_ = path
+			os.Exit(77)
+		}
+		return syncNativeICEDirectory(path)
+	}
+	if publishErr := PublishSnapshot(directory, 2, []SnapshotSegmentPayload{
+		{SnapshotSegment: metadata, Payload: payload},
+		{SnapshotSegment: oldMetadata, TrustedExisting: true},
+	}); publishErr != nil {
+		t.Fatal(publishErr)
+	}
+	t.Fatal("crash helper returned without terminating")
 }
 
 func TestOpenSnapshotSegmentRetainsDiskFileAndMask(t *testing.T) {

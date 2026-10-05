@@ -2,6 +2,11 @@
 
 Status: **historical planning record, Q1–Q3 bounded operations implemented**. Q1 StoredFields was committed in `044ea235`; Q2 SeriesIterator/MatchTerms ownership and native Stream compatibility, plus Q3 MatchField/Range acceptance, are implemented in this working tree. Broader query-engine scope, full production performance gates, and 1.2M-document evidence remain. The original audit source is `8a9f9af2da0b6d275267dd91002bafc661577278` (merged Apache-main `aa145bc34770811fa93e4c38b3641bbfec0b9b3c`); `3f2e866a6a83b9d404b00f61a2cdf300ab6de3c3` is historical evidence only.
 
+This PR also records the completed **Property native role cutover**: the native
+owner, mutation/persistence, repair, query, and explicit legacy rollback paths
+are wired for Property and schema-server roles. The executable evidence and
+limitations are summarized in [Property native cutover verification](../verification/property-native-cutover/README.md).
+
 ## Proposed boundaries
 
 This is a deliberately narrow first execution wave: three bounded execution tickets containing five independently observable operations, with each merged ticket switching its named real callers in the same merge. Q2 and Q3 are combined scopes, not tracking parents or silently resplit subissues.
@@ -58,7 +63,7 @@ performance/failure-injection gate.
 
 ## Remaining scope not covered
 
-Full native `Search`, Boolean algebra, `MATCH`/analyzer override, prefix/wildcard dictionary expansion, projection/sort/search-after, Property/Measure/Trace query cutovers beyond the named operations, writer/merge/expiry/GC/replication lifecycle, external segments, admin/migration/rebuild and dependency removal (NIDX-05), aggregation, scoring, and the 1.2M-document performance gate remain out of this wave. No tracking umbrella is created here.
+Full native `Search`, Boolean algebra, `MATCH`/analyzer override, prefix/wildcard dictionary expansion, projection/sort/search-after, Measure/Trace query cutovers, external segments, admin/migration/rebuild and dependency removal (NIDX-05), aggregation, scoring, and the 1.2M-document performance gate remain out of this wave. Property's native owner/query/mutation/repair cutover is covered separately by this PR; Series remains deferred to #14003. No tracking umbrella is created here.
 
 ## Shared implementation constraints
 

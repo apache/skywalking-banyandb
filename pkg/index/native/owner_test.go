@@ -94,6 +94,144 @@ func TestOwnerPinsImmutableRootsAcrossDeleteAndAppend(t *testing.T) {
 	require.Equal(t, []byte("new"), newDocument.Fields[0].Value)
 }
 
+func TestOwnerPrepareMergeCallbackAddsPrivateDrops(t *testing.T) {
+	dropped := 0
+	owner, err := NewOwner(OwnerOptions{
+		Lease: testLease{}, CompactionThreshold: -1,
+		PrepareMergeCallback: func(ctx context.Context, document MergeDocument) (bool, error) {
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
+			shouldDrop := false
+			if err := document.StoredFields(func(name string, value []byte) bool {
+				if name == "_deleted" && string(value) == "expired" {
+					shouldDrop = true
+				}
+				return true
+			}); err != nil {
+				return false, err
+			}
+			if shouldDrop {
+				dropped++
+			}
+			return shouldDrop, nil
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+	require.NoError(t, owner.Batch(context.Background(), Batch{Documents: []Document{
+		{Identifier: []byte("expired"), Fields: []Field{{Name: "_deleted", Value: []byte("expired"), Store: true}}},
+		{Identifier: []byte("live"), Fields: []Field{{Name: "_deleted", Value: []byte("live"), Store: true}}},
+	}}))
+	oldView, err := owner.Acquire(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, oldView.Close()) })
+	require.NoError(t, owner.Compact(context.Background()))
+	view, err := owner.Acquire(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, view.Close()) })
+	_, found, err := view.Lookup(context.Background(), []byte("expired"))
+	require.NoError(t, err)
+	require.False(t, found)
+	_, found, err = view.Lookup(context.Background(), []byte("live"))
+	require.NoError(t, err)
+	require.True(t, found)
+	_, found, err = oldView.Lookup(context.Background(), []byte("expired"))
+	require.NoError(t, err)
+	require.True(t, found, "a pinned pre-compaction view must retain the expired document")
+	require.Equal(t, 1, dropped)
+}
+
+func TestOwnerPrepareMergeFailureDoesNotPublish(t *testing.T) {
+	callbackErr := errors.New("expiry callback failed")
+	owner, err := NewOwner(OwnerOptions{
+		Lease: testLease{}, CompactionThreshold: -1,
+		PrepareMergeCallback: func(context.Context, MergeDocument) (bool, error) {
+			return false, callbackErr
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+	require.NoError(t, owner.Batch(context.Background(), Batch{Documents: []Document{{Identifier: []byte("retained")}}}))
+	before, err := owner.Acquire(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, before.Close()) })
+	generation := before.Generation()
+	require.ErrorIs(t, owner.Compact(context.Background()), callbackErr)
+	after, err := owner.Acquire(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, after.Close()) })
+	require.Equal(t, generation, after.Generation())
+	_, found, err := after.Lookup(context.Background(), []byte("retained"))
+	require.NoError(t, err)
+	require.True(t, found)
+}
+
+func TestOwnerPrepareMergeCancellationDoesNotPublish(t *testing.T) {
+	compactContext, cancel := context.WithCancel(context.Background())
+	owner, err := NewOwner(OwnerOptions{
+		Lease: testLease{}, CompactionThreshold: -1,
+		PrepareMergeCallback: func(ctx context.Context, _ MergeDocument) (bool, error) {
+			cancel()
+			return false, ctx.Err()
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+	require.NoError(t, owner.Batch(context.Background(), Batch{Documents: []Document{{Identifier: []byte("retained")}}}))
+	before, err := owner.Acquire(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, before.Close()) })
+	generation := before.Generation()
+	require.ErrorIs(t, owner.Compact(compactContext), context.Canceled)
+	after, err := owner.Acquire(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, after.Close()) })
+	require.Equal(t, generation, after.Generation())
+	_, found, err := after.Lookup(context.Background(), []byte("retained"))
+	require.NoError(t, err)
+	require.True(t, found)
+}
+
+func TestOwnerPrepareMergePersistsExpiryDropForReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "property")
+	prepare := func(ctx context.Context, document MergeDocument) (bool, error) {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		drop := false
+		err := document.StoredFields(func(name string, value []byte) bool {
+			drop = drop || name == "_deleted" && string(value) == "expired"
+			return true
+		})
+		return drop, err
+	}
+	owner, err := NewOwner(OwnerOptions{
+		Lease: pathBoundLease{expected: path}, Path: path, CompactionThreshold: -1,
+		PrepareMergeCallback: prepare,
+	})
+	require.NoError(t, err)
+	require.NoError(t, owner.Batch(context.Background(), Batch{Documents: []Document{
+		{Identifier: []byte("expired"), Fields: []Field{{Name: "_deleted", Value: []byte("expired"), Store: true}}},
+		{Identifier: []byte("live"), Fields: []Field{{Name: "_deleted", Value: []byte("live"), Store: true}}},
+	}}))
+	require.NoError(t, owner.Compact(context.Background()))
+	require.NoError(t, owner.Close())
+
+	reopened, err := NewOwner(OwnerOptions{Lease: pathBoundLease{expected: path}, Path: path})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reopened.Close()) })
+	view, err := reopened.Acquire(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, view.Close()) })
+	_, found, err := view.Lookup(context.Background(), []byte("expired"))
+	require.NoError(t, err)
+	require.False(t, found)
+	_, found, err = view.Lookup(context.Background(), []byte("live"))
+	require.NoError(t, err)
+	require.True(t, found)
+}
+
 func TestOwnerPersistenceFailureKeepsPublishedRoot(t *testing.T) {
 	persistStarted := make(chan struct{})
 	persistRelease := make(chan struct{})
@@ -273,6 +411,29 @@ func TestOwnerPublishesNativeSnapshotWithoutDocumentRehydration(t *testing.T) {
 	require.Equal(t, int64(10), reopenedDocument.Timestamp)
 	require.NoError(t, reopenedView.Close())
 	require.NoError(t, reopened.Close())
+}
+
+func TestOwnerDurableSnapshotOmitsFullyDeletedSegments(t *testing.T) {
+	path := t.TempDir()
+	owner, err := NewOwner(OwnerOptions{Lease: testLease{}, Path: path})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, owner.Close()) }()
+	firstPersisted := make(chan error, 1)
+	require.NoError(t, owner.Batch(context.Background(), Batch{
+		Documents:          []Document{{Identifier: []byte("series-a"), Fields: []Field{{Name: "status", Value: []byte("old"), Store: true, Index: true}}}},
+		PersistentCallback: func(callbackErr error) { firstPersisted <- callbackErr },
+	}))
+	require.NoError(t, <-firstPersisted)
+	deletedPersisted := make(chan error, 1)
+	require.NoError(t, owner.Batch(context.Background(), Batch{
+		Deletes:            [][]byte{[]byte("series-a")},
+		PersistentCallback: func(callbackErr error) { deletedPersisted <- callbackErr },
+	}))
+	require.NoError(t, <-deletedPersisted)
+	reader, err := nativeice.OpenStrict(path)
+	require.NoError(t, err)
+	require.Empty(t, reader.SnapshotMetadata().Segments)
+	require.NoError(t, reader.Close())
 }
 
 func TestOwnerPromotionPreservesPinnedViewAcrossNewerMutation(t *testing.T) {
@@ -792,6 +953,154 @@ func TestOwnerCompactionPersistsReopenableRoot(t *testing.T) {
 		_, found, lookupErr := view.Lookup(context.Background(), identifier)
 		require.NoError(t, lookupErr)
 		require.True(t, found)
+	}
+}
+
+// TestOwnerBatchWaitsForPersistenceSlotInsteadOfFailing reproduces a bulk
+// write burst (for example schema-registry preload) that admits documents
+// faster than the single serial persistence worker drains them. Before this
+// fix, the admission beyond QueueSize failed synchronously with
+// ErrPersistenceBackpressure instead of waiting for a slot to free.
+func TestOwnerBatchWaitsForPersistenceSlotInsteadOfFailing(t *testing.T) {
+	var calls atomic.Int32
+	started := make(chan struct{}, 3)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	closeRelease := func() { releaseOnce.Do(func() { close(release) }) }
+	owner, err := NewOwner(OwnerOptions{
+		Lease:     testLease{},
+		QueueSize: 1,
+		Persist: func(context.Context, *ReadView) error {
+			calls.Add(1)
+			started <- struct{}{}
+			<-release
+			return nil
+		},
+	})
+	require.NoError(t, err)
+	// Registered before the Close cleanup below so it runs first (t.Cleanup is
+	// LIFO): an early Fatalf must still unblock the gated Persist func, or
+	// Close would hang waiting for a persistence worker that never drains.
+	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+	t.Cleanup(closeRelease)
+
+	require.NoError(t, owner.Batch(context.Background(), Batch{Documents: []Document{{Identifier: []byte("series-a")}}}))
+	<-started // the worker dequeued series-a (releasing its slot) and is now blocked in Persist.
+
+	require.NoError(t, owner.Batch(context.Background(), Batch{Documents: []Document{{Identifier: []byte("series-b")}}}))
+	// series-b now holds the single queue slot while the worker is still busy
+	// with series-a; a third admission must wait for a slot instead of
+	// failing with ErrPersistenceBackpressure.
+	thirdDone := make(chan error, 1)
+	run.Go(context.Background(), "native.test.third-batch", nil, func(ctx context.Context) {
+		thirdDone <- owner.Batch(ctx, Batch{Documents: []Document{{Identifier: []byte("series-c")}}})
+	})
+	select {
+	case err := <-thirdDone:
+		t.Fatalf("third batch admitted before a persistence slot freed: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	closeRelease()
+	require.NoError(t, <-thirdDone)
+	require.Eventually(t, func() bool { return calls.Load() == 3 }, time.Second, time.Millisecond)
+}
+
+// TestOwnerBatchAcquireRespectsContextCancellation confirms that a Batch call
+// blocked waiting for a persistence slot still honors its own context
+// cancellation rather than waiting indefinitely.
+func TestOwnerBatchAcquireRespectsContextCancellation(t *testing.T) {
+	started := make(chan struct{})
+	var startedOnce sync.Once
+	release := make(chan struct{})
+	owner, err := NewOwner(OwnerOptions{
+		Lease:     testLease{},
+		QueueSize: 1,
+		Persist: func(context.Context, *ReadView) error {
+			startedOnce.Do(func() { close(started) })
+			<-release
+			return nil
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { close(release); require.NoError(t, owner.Close()) })
+
+	require.NoError(t, owner.Batch(context.Background(), Batch{Documents: []Document{{Identifier: []byte("series-a")}}}))
+	<-started
+	require.NoError(t, owner.Batch(context.Background(), Batch{Documents: []Document{{Identifier: []byte("series-b")}}}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	blockedDone := make(chan error, 1)
+	run.Go(context.Background(), "native.test.cancel-batch", nil, func(context.Context) {
+		blockedDone <- owner.Batch(ctx, Batch{Documents: []Document{{Identifier: []byte("series-c")}}})
+	})
+	select {
+	case <-blockedDone:
+		t.Fatal("batch returned before a persistence slot freed or ctx was canceled")
+	case <-time.After(20 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case err := <-blockedDone:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("batch did not observe ctx cancellation within 1s")
+	}
+}
+
+// TestOwnerCloseUnblocksPendingBatchAcquire confirms that Close wakes a Batch
+// call parked waiting for a persistence slot instead of leaving it blocked
+// forever once the owner stops draining its queue.
+func TestOwnerCloseUnblocksPendingBatchAcquire(t *testing.T) {
+	started := make(chan struct{})
+	var startedOnce sync.Once
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	closeRelease := func() { releaseOnce.Do(func() { close(release) }) }
+	owner, err := NewOwner(OwnerOptions{
+		Lease:     testLease{},
+		QueueSize: 1,
+		Persist: func(context.Context, *ReadView) error {
+			startedOnce.Do(func() { close(started) })
+			<-release
+			return nil
+		},
+	})
+	require.NoError(t, err)
+	// Registered before closeRelease below so it runs last (t.Cleanup is
+	// LIFO): Close is idempotent, so this is a no-op on the happy path and a
+	// safety net if an assertion fails before the inline Close below runs.
+	t.Cleanup(func() { _ = owner.Close() })
+	t.Cleanup(closeRelease)
+
+	require.NoError(t, owner.Batch(context.Background(), Batch{Documents: []Document{{Identifier: []byte("series-a")}}}))
+	<-started
+	require.NoError(t, owner.Batch(context.Background(), Batch{Documents: []Document{{Identifier: []byte("series-b")}}}))
+
+	blockedDone := make(chan error, 1)
+	run.Go(context.Background(), "native.test.close-unblocks-batch", nil, func(ctx context.Context) {
+		blockedDone <- owner.Batch(ctx, Batch{Documents: []Document{{Identifier: []byte("series-c")}}})
+	})
+	select {
+	case <-blockedDone:
+		t.Fatal("batch returned before Close or a persistence slot freed")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	closeDone := make(chan error, 1)
+	run.Go(context.Background(), "native.test.close-owner", nil, func(context.Context) { closeDone <- owner.Close() })
+	select {
+	case err := <-blockedDone:
+		require.ErrorIs(t, err, ErrOwnerClosed)
+	case <-time.After(time.Second):
+		t.Fatal("blocked batch did not observe owner closing within 1s")
+	}
+	closeRelease()
+	select {
+	case err := <-closeDone:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("owner Close did not finish within 1s after release")
 	}
 }
 

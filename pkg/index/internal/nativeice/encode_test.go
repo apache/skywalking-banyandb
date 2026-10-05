@@ -238,6 +238,45 @@ func TestEncodeServesSortableDocument(t *testing.T) {
 	}
 }
 
+func TestNativeEncodeReservesIdentifierFieldSlot(t *testing.T) {
+	directory := t.TempDir()
+	generation := Generation{
+		SegmentID: 1, SnapshotID: 1,
+		Documents: []EncodeDocument{{
+			Identifier: []byte("doc-1"),
+			Fields: []EncodeField{
+				{Name: "0-before-id", Value: []byte("before"), Store: true, Index: true},
+				{Name: "status", Value: []byte("ready"), Store: true, Index: true},
+			},
+		}},
+	}
+	fields := nativeICEFields(generation)
+	if len(fields) == 0 || fields[0].name != identifierField {
+		t.Fatalf("native field order = %v, want %q first", fields, identifierField)
+	}
+	if encodeErr := Encode(directory, generation); encodeErr != nil {
+		t.Fatal(encodeErr)
+	}
+	reader, openErr := OpenStrict(directory)
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	t.Cleanup(func() { _ = reader.Close() })
+	var stored map[string][]byte
+	if visitErr := reader.VisitSelectedDocuments(context.Background(), identifierField, [][]byte{[]byte("doc-1")}, func(document StoredDocument) error {
+		stored = make(map[string][]byte)
+		return document.VisitStoredFields(func(name string, value []byte) bool {
+			stored[name] = append([]byte(nil), value...)
+			return true
+		})
+	}); visitErr != nil {
+		t.Fatal(visitErr)
+	}
+	if string(stored[identifierField]) != "doc-1" || string(stored["0-before-id"]) != "before" || string(stored["status"]) != "ready" {
+		t.Fatalf("stored fields = %#v, want identifier and values preserved", stored)
+	}
+}
+
 func TestNativeEncodePreservesEscapedSortValue(t *testing.T) {
 	directory := t.TempDir()
 	sortValue := []byte{0x01, 0xff, 0x5c, 0x7f, 0x5c}

@@ -312,6 +312,95 @@ func (v *ReadView) SortHits(ctx context.Context, hits []QueryHit, request SortRe
 	return result, nil
 }
 
+// ProjectedHit contains one candidate's owned stored fields and coordinates.
+// Segment and DocumentNumber remain available for stable physical identity.
+//
+//nolint:govet // embedding preserves the public candidate coordinate shape.
+type ProjectedHit struct {
+	QueryHit
+	Fields map[string][][]byte
+}
+
+// ProjectHit reads one physical candidate from the pinned root without an
+// identifier posting lookup. All returned bytes are owned by the caller.
+func (v *ReadView) ProjectHit(ctx context.Context, hit QueryHit, fields ...string) (ProjectedHit, error) {
+	if err := v.check(ctx); err != nil {
+		return ProjectedHit{}, err
+	}
+	segment, err := v.segmentAt(hit.Segment)
+	if err != nil {
+		return ProjectedHit{}, err
+	}
+	if hit.DocumentNumber >= segment.handle.count {
+		return ProjectedHit{}, fmt.Errorf("document %d is unavailable: %w", hit.DocumentNumber, ErrCorrupt)
+	}
+	if _, deleted := segment.deleted[hit.DocumentNumber]; deleted {
+		return ProjectedHit{}, fmt.Errorf("document %d is deleted: %w", hit.DocumentNumber, ErrCorrupt)
+	}
+	wanted := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		wanted[field] = struct{}{}
+	}
+	result := ProjectedHit{QueryHit: QueryHit{
+		Identifier: bytes.Clone(hit.Identifier), SeriesID: bytes.Clone(hit.SeriesID), Timestamp: hit.Timestamp,
+		Segment: hit.Segment, DocumentNumber: hit.DocumentNumber,
+	}, Fields: make(map[string][][]byte, len(fields))}
+	var timestampErr error
+	visitErr := segment.handle.reader.VisitDocument(hit.DocumentNumber, func(document nativeice.StoredDocument) error {
+		return document.VisitStoredFields(func(name string, value []byte) bool {
+			if err := ctx.Err(); err != nil {
+				timestampErr = err
+				return false
+			}
+			if name == identifierField {
+				result.Identifier = bytes.Clone(value)
+				return true
+			}
+			if name == timestampField {
+				result.Timestamp, timestampErr = nativeice.DecodePrefixCodedInt64(value)
+				return timestampErr == nil
+			}
+			if _, ok := wanted[name]; ok {
+				result.Fields[name] = append(result.Fields[name], bytes.Clone(value))
+			}
+			return true
+		})
+	})
+	if visitErr != nil {
+		return ProjectedHit{}, visitErr
+	}
+	if timestampErr != nil {
+		return ProjectedHit{}, timestampErr
+	}
+	return result, nil
+}
+
+// ProjectSortValue returns the smallest copied doc value for one candidate.
+func (v *ReadView) ProjectSortValue(ctx context.Context, hit QueryHit, field string) ([]byte, bool, error) {
+	if err := v.check(ctx); err != nil {
+		return nil, false, err
+	}
+	segment, err := v.segmentAt(hit.Segment)
+	if err != nil {
+		return nil, false, err
+	}
+	if hit.DocumentNumber >= segment.handle.count {
+		return nil, false, fmt.Errorf("document %d is unavailable: %w", hit.DocumentNumber, ErrCorrupt)
+	}
+	if _, deleted := segment.deleted[hit.DocumentNumber]; deleted {
+		return nil, false, fmt.Errorf("document %d is deleted: %w", hit.DocumentNumber, ErrCorrupt)
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, false, ctxErr
+	}
+	values, err := segment.handle.reader.DocumentValues(field, hit.DocumentNumber)
+	if err != nil {
+		return nil, false, err
+	}
+	value, missing := smallestDocValue(values)
+	return bytes.Clone(value), missing, nil
+}
+
 //nolint:govet // hit coordinates and ordering metadata are intentionally grouped.
 type sortableHit struct {
 	hit     QueryHit

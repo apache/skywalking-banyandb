@@ -33,7 +33,7 @@ func TestNativeQueryTermSetsPresenceRangeAndSort(t *testing.T) {
 	encoded := nativeice.EncodePrefixCodedInt64
 	require.NoError(t, owner.Batch(context.Background(), Batch{Documents: []Document{
 		{Identifier: []byte("d0"), Timestamp: 100, Fields: []Field{
-			{Name: "status", Terms: []Term{{Value: []byte("alpha")}}, Index: true},
+			{Name: "status", Value: []byte("alpha"), Terms: []Term{{Value: []byte("alpha")}}, Store: true, Index: true},
 			{Name: "series", Value: []byte("s"), Index: true},
 			{Name: "latency", Terms: []Term{{Value: encoded(10)}}, Index: true},
 			{Name: "sort", Value: []byte("b"), Sort: true},
@@ -87,6 +87,26 @@ func TestNativeQueryTermSetsPresenceRangeAndSort(t *testing.T) {
 	ordered, err := view.SortHits(context.Background(), present, SortRequest{Field: "sort", Desc: true, Limit: 2})
 	require.NoError(t, err)
 	require.Equal(t, []string{"d2", "d0"}, queryIDs(ordered))
+	projected, err := view.ProjectHit(context.Background(), present[0], "status")
+	require.NoError(t, err)
+	require.Equal(t, []byte("d0"), projected.Identifier)
+	require.Equal(t, int64(100), projected.Timestamp)
+	require.Equal(t, [][]byte{[]byte("alpha")}, projected.Fields["status"])
+	projected.Fields["status"][0][0] = 'x'
+	projected.Identifier[0] = 'x'
+	docValue, missing, err := view.ProjectSortValue(context.Background(), present[0], "sort")
+	require.NoError(t, err)
+	require.False(t, missing)
+	require.Equal(t, []byte("b"), docValue)
+	docValue[0] = 'x'
+	projectedAgain, err := view.ProjectHit(context.Background(), present[0], "status")
+	require.NoError(t, err)
+	require.Equal(t, []byte("d0"), projectedAgain.Identifier)
+	require.Equal(t, [][]byte{[]byte("alpha")}, projectedAgain.Fields["status"])
+	docValueAgain, missing, err := view.ProjectSortValue(context.Background(), present[0], "sort")
+	require.NoError(t, err)
+	require.False(t, missing)
+	require.Equal(t, []byte("b"), docValueAgain)
 }
 
 func TestNativeQueryEmptyTermRangeAndCancellation(t *testing.T) {

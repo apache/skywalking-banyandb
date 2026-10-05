@@ -20,6 +20,7 @@ package db
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"sort"
@@ -39,6 +40,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -71,6 +73,7 @@ var (
 
 type shard struct {
 	store              index.SeriesStore
+	nativeStore        *nativePropertyStore
 	l                  *logger.Logger
 	repairState        *repair
 	location           string
@@ -81,6 +84,9 @@ type shard struct {
 }
 
 func (s *shard) close() error {
+	if s.nativeStore != nil {
+		return s.nativeStore.close()
+	}
 	if s.store != nil {
 		return s.store.Close()
 	}
@@ -108,20 +114,28 @@ func (db *database) newShard(
 	}
 	batchWaitSec := db.indexConfig.BatchWaitSec
 	metricsFactory := db.omr.With(db.metricsScope.ConstLabels(meter.LabelPairs{"group": group, "shard": sName}))
-	opts := inverted.StoreOpts{
-		Path:                 location,
-		Logger:               si.l,
-		Metrics:              inverted.NewMetrics(metricsFactory),
-		BatchWaitSec:         batchWaitSec,
-		PrepareMergeCallback: si.prepareForMerge,
-	}
 	var err error
-	if db.nativeOwner != nil {
-		if si.store, err = inverted.NewNativeStore(opts, db.nativeOwner); err != nil {
+	if db.indexConfig.NativeWriter {
+		nativeMetrics := inverted.NewMetrics(metricsFactory)
+		// NewOwner is a synchronous constructor; the store's Batch path carries
+		// request contexts after construction.
+		//nolint:contextcheck // constructor has no context-bearing API
+		if si.nativeStore, err = newNativePropertyStore(location, db.nativeLease, si.waitForPersistence || batchWaitSec <= 0, func(count, size int64) {
+			nativeMetrics.ObserveNative(count, size)
+		}, si.prepareNativeMerge); err != nil {
 			return nil, err
 		}
-	} else if si.store, err = inverted.NewStore(opts); err != nil {
-		return nil, err
+	} else {
+		opts := inverted.StoreOpts{
+			Path:                 location,
+			Logger:               si.l,
+			Metrics:              inverted.NewMetrics(metricsFactory),
+			BatchWaitSec:         batchWaitSec,
+			PrepareMergeCallback: si.prepareForMerge,
+		}
+		if si.store, err = inverted.NewStore(opts); err != nil {
+			return nil, err
+		}
 	}
 	repairBaseDir = path.Join(repairBaseDir, group, sName)
 	si.repairState = newRepair(location, repairBaseDir, logger.Fetch(ctx, fmt.Sprintf("repair%d", id)),
@@ -129,12 +143,38 @@ func (db *database) newShard(
 	return si, nil
 }
 
-func (s *shard) update(id []byte, property *propertyv1.Property) error {
+func (s *shard) prepareNativeMerge(ctx context.Context, document native.MergeDocument) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	var deleteTime int64
+	if err := document.StoredFields(func(name string, value []byte) bool {
+		if name == deleteField {
+			if len(value) != 8 {
+				deleteTime = -1
+				return false
+			}
+			deleteTime = convert.BytesToInt64(value)
+		}
+		return true
+	}); err != nil {
+		return false, err
+	}
+	if deleteTime == -1 {
+		return false, fmt.Errorf("invalid deletion timestamp: %w", native.ErrCorrupt)
+	}
+	if deleteTime <= 0 {
+		return false, nil
+	}
+	return int64(time.Since(time.Unix(0, deleteTime)).Seconds()) >= s.expireToDeleteSec, nil
+}
+
+func (s *shard) update(ctx context.Context, id []byte, property *propertyv1.Property) error {
 	document, err := s.buildUpdateDocument(id, property, 0)
 	if err != nil {
 		return fmt.Errorf("build update document failure: %w", err)
 	}
-	return s.updateDocuments(index.Documents{*document})
+	return s.updateDocuments(ctx, index.Documents{*document})
 }
 
 func (s *shard) buildUpdateDocument(id []byte, property *propertyv1.Property, deleteTime int64) (*index.Document, error) {
@@ -199,10 +239,29 @@ func (s *shard) deleteFromTime(ctx context.Context, docID [][]byte, delTime time
 	if err != nil {
 		return err
 	}
-	return s.updateDocuments(removeDocList)
+	return s.updateDocuments(ctx, removeDocList)
 }
 
 func (s *shard) buildDeleteFromTimeDocuments(ctx context.Context, docID [][]byte, deleteTime int64) ([]index.Document, error) {
+	if s.nativeStore != nil {
+		existing, err := s.nativeStore.lookup(ctx, docID)
+		if err != nil {
+			return nil, fmt.Errorf("lookup existing documents failure: %w", err)
+		}
+		removeDocList := make([]index.Document, 0, len(existing))
+		for _, property := range existing {
+			p := &propertyv1.Property{}
+			if err := protojson.Unmarshal(property.source, p); err != nil {
+				return nil, fmt.Errorf("unmarshal property failure: %w", err)
+			}
+			document, err := s.buildUpdateDocument(GetPropertyID(p), p, deleteTime)
+			if err != nil {
+				return nil, fmt.Errorf("build delete document failure: %w", err)
+			}
+			removeDocList = append(removeDocList, *document)
+		}
+		return removeDocList, nil
+	}
 	// search the original documents by docID
 	seriesMatchers := make([]index.SeriesMatcher, 0, len(docID))
 	for _, id := range docID {
@@ -238,9 +297,16 @@ func (s *shard) buildDeleteFromTimeDocuments(ctx context.Context, docID [][]byte
 	return removeDocList, nil
 }
 
-func (s *shard) updateDocuments(docs index.Documents) error {
+func (s *shard) updateDocuments(ctx context.Context, docs index.Documents) error {
 	if len(docs) == 0 {
 		return nil
+	}
+	if s.nativeStore != nil {
+		err := s.nativeStore.batch(ctx, docs, nil)
+		if err == nil && s.repairState != nil && s.repairState.scheduler != nil {
+			s.repairState.scheduler.documentUpdatesNotify()
+		}
+		return err
 	}
 	if s.waitForPersistence {
 		var updateErr, persistentError error
@@ -272,6 +338,13 @@ func (s *shard) updateDocuments(docs index.Documents) error {
 		s.repairState.scheduler.documentUpdatesNotify()
 	}
 	return nil
+}
+
+func (s *shard) searchNative(ctx context.Context, request *propertyv1.QueryRequest, order *propertyv1.QueryOrder, limit int) ([]*queryProperty, error) {
+	if s.nativeStore == nil {
+		return nil, errors.New("native property store is not configured")
+	}
+	return s.nativeStore.query(ctx, request, order, limit)
 }
 
 func (s *shard) search(ctx context.Context, q index.Query, orderBy *propertyv1.QueryOrder, limit int,
@@ -330,6 +403,12 @@ func (s *shard) search(ctx context.Context, q index.Query, orderBy *propertyv1.Q
 		},
 		Sort: orderBy.Sort,
 		Type: index.OrderByTypeIndex,
+	}
+	if limit <= 0 {
+		// SeriesSort uses this as its page size, not the final query limit.
+		// One is the smallest non-zero page and still lets the iterator drain
+		// every matching page without asking Bluge to allocate MaxInt hits.
+		limit = 1
 	}
 	iter, err := s.store.SeriesSort(ctx, q, order, limit, projection)
 	if err != nil {
@@ -398,16 +477,21 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 				Msg("slow property repair")
 		}
 	}()
-	iq, err := inverted.BuildPropertyQuery(&propertyv1.QueryRequest{
-		Groups: []string{property.Metadata.Group},
-		Name:   property.Metadata.Name,
-		Ids:    []string{property.Id},
-	}, groupField, entityID)
-	if err != nil {
-		return false, nil, fmt.Errorf("build property query failure: %w", err)
-	}
 	search1Start := time.Now()
-	olderProperties, err := s.search(ctx, iq, nil, 100)
+	var olderProperties []*queryProperty
+	if s.nativeStore != nil {
+		olderProperties, err = s.searchNative(ctx, &propertyv1.QueryRequest{
+			Groups: []string{property.Metadata.Group}, Name: property.Metadata.Name, Ids: []string{property.Id},
+		}, nil, 100)
+	} else {
+		iq, buildErr := inverted.BuildPropertyQuery(&propertyv1.QueryRequest{
+			Groups: []string{property.Metadata.Group}, Name: property.Metadata.Name, Ids: []string{property.Id},
+		}, groupField, entityID)
+		if buildErr != nil {
+			return false, nil, fmt.Errorf("build property query failure: %w", buildErr)
+		}
+		olderProperties, err = s.search(ctx, iq, nil, 100)
+	}
 	search1Elapsed = time.Since(search1Start)
 	if err != nil {
 		return false, nil, fmt.Errorf("query older properties failed: %w", err)
@@ -422,7 +506,7 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 			return false, nil, fmt.Errorf("build update document failed: %w", err)
 		}
 		updateStart := time.Now()
-		err = s.updateDocuments(index.Documents{*doc})
+		err = s.updateDocuments(ctx, index.Documents{*doc})
 		updateElapsed = time.Since(updateStart)
 		if err != nil {
 			return false, nil, fmt.Errorf("update document failed: %w", err)
@@ -447,7 +531,11 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 	}
 	deleteCount = len(deletedDocuments)
 	// update the property to mark it as delete
-	updateDoc, err := s.buildUpdateDocument(id, property, deleteTime)
+	updateID := id
+	if s.nativeStore != nil {
+		updateID = GetPropertyID(property)
+	}
+	updateDoc, err := s.buildUpdateDocument(updateID, property, deleteTime)
 	if err != nil {
 		return false, nil, fmt.Errorf("build repair document failure: %w", err)
 	}
@@ -455,7 +543,7 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 	result = append(result, deletedDocuments...)
 	result = append(result, *updateDoc)
 	updateStart := time.Now()
-	err = s.updateDocuments(result)
+	err = s.updateDocuments(ctx, result)
 	updateElapsed = time.Since(updateStart)
 	if err != nil {
 		return false, nil, fmt.Errorf("update documents failed: %w", err)

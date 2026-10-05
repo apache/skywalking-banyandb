@@ -118,10 +118,29 @@ type PathRootLease interface {
 // it must not mutate the view. The owner releases the view after the callback.
 type PersistFunc func(context.Context, *ReadView) error
 
+// MergeDocument describes one visible physical document while a root is being
+// compacted. StoredFields is borrowed for the duration of the callback; a
+// callback must copy values it retains. Returning true adds the document to
+// the private merge drop set. Existing root deletion masks are applied before
+// this callback is invoked.
+//
+//nolint:govet // the callback payload keeps identity, deletion, and borrowed-field access together.
+type MergeDocument struct {
+	SegmentID      uint64
+	DocumentNumber uint64
+	StoredFields   func(func(name string, value []byte) bool) error
+}
+
+// PrepareMergeCallback supplies product-specific expiry/tombstone policy
+// without exposing ICE readers or allowing a callback to mutate a published
+// root. It runs synchronously while Compact owns a pinned immutable root.
+type PrepareMergeCallback func(context.Context, MergeDocument) (drop bool, err error)
+
 // OwnerOptions supplies database ownership and asynchronous persistence.
 type OwnerOptions struct {
-	Lease   RootLease
-	Persist PersistFunc
+	Lease                RootLease
+	Persist              PersistFunc
+	PrepareMergeCallback PrepareMergeCallback
 	// Path enables the built-in ICE snapshot publisher. An empty path keeps the
 	// owner in memory-only mode unless Persist is supplied for a test seam.
 	Path string
@@ -185,9 +204,10 @@ type persistenceTask struct {
 
 //nolint:govet // queue channels and lifecycle mutex are intentionally grouped.
 type persistenceQueue struct {
-	tasks chan persistenceTask
-	slots chan struct{}
-	done  chan struct{}
+	tasks   chan persistenceTask
+	slots   chan struct{}
+	done    chan struct{}
+	closing chan struct{}
 }
 
 func (q *persistenceQueue) reserve() bool {
@@ -196,6 +216,28 @@ func (q *persistenceQueue) reserve() bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// acquire blocks until a persistence slot is available, the owner starts
+// closing, or ctx is done, whichever happens first. A legitimate write burst
+// (for example bulk schema preload) waits here for the asynchronous
+// persistence worker to drain instead of failing with backpressure; the
+// queue's fixed capacity still bounds how much unpersisted work can be
+// in flight at once.
+func (q *persistenceQueue) acquire(ctx context.Context) error {
+	select {
+	case q.slots <- struct{}{}:
+		return nil
+	default:
+	}
+	select {
+	case q.slots <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-q.closing:
+		return ErrOwnerClosed
 	}
 }
 
@@ -325,7 +367,10 @@ func NewOwner(options OwnerOptions) (*Owner, error) {
 		if queueSize <= 0 {
 			queueSize = 16
 		}
-		queue := &persistenceQueue{tasks: make(chan persistenceTask, queueSize), slots: make(chan struct{}, queueSize), done: make(chan struct{})}
+		queue := &persistenceQueue{
+			tasks: make(chan persistenceTask, queueSize), slots: make(chan struct{}, queueSize),
+			done: make(chan struct{}), closing: make(chan struct{}),
+		}
 		owner.persistQ = queue
 		run.Go(context.Background(), "native.owner.persistence", nil, func(ctx context.Context) {
 			owner.runPersistence(ctx, queue)
@@ -610,6 +655,16 @@ func (o *Owner) persistRoot(root *publishedRoot) error {
 		if !ok {
 			return fmt.Errorf("persist native root: unsupported segment type %T", current)
 		}
+		// Do not expose a fully masked segment to the legacy writer during a
+		// writer transition.  Legacy merge planning treats an all-deleted
+		// segment as an empty merge input; publishing that input can schedule a
+		// merge whose replacement is nil and then panic while closing it.  The
+		// immutable in-memory root still retains the segment for pinned views;
+		// only the durable manifest omits it.  A zero-document segment is also
+		// never useful in a published snapshot.
+		if segmentHasNoLiveDocuments(segment) {
+			continue
+		}
 		metadata := nativeice.SnapshotSegment{
 			ID: segment.handle.id, Size: segment.handle.size, DocumentCount: segment.handle.count,
 			TimeMin: segment.handle.timeMin, TimeMax: segment.handle.timeMax,
@@ -762,8 +817,14 @@ func (o *Owner) Batch(ctx context.Context, batch Batch) error {
 	}
 	queue := o.persistQ
 	reserved := queue != nil
-	if reserved && !queue.reserve() {
-		return finishCallback(batch.PersistentCallback, ErrPersistenceBackpressure)
+	if reserved {
+		// A full queue waits for the asynchronous persistence worker to drain
+		// a slot instead of failing a legitimate write burst (for example bulk
+		// schema preload); ctx cancellation and owner shutdown still bound the
+		// wait.
+		if err := queue.acquire(ctx); err != nil {
+			return finishCallback(batch.PersistentCallback, err)
+		}
 	}
 	o.mu.Lock()
 	if o.closed || o.closing {
@@ -821,6 +882,48 @@ func (o *Owner) Batch(ctx context.Context, batch Batch) error {
 	o.mu.Unlock()
 	o.requestMaintenance()
 	return nil
+}
+
+// prepareMergeDrop evaluates the optional product merge policy against one
+// immutable segment. The reader callback is deliberately synchronous: values
+// borrowed from ICE never escape the callback, and no published reader or
+// deletion map is mutated.
+func (o *Owner) prepareMergeDrop(ctx context.Context, segment *memorySegment) (*roaringpkg.Bitmap, error) {
+	drop := roaringpkg.New()
+	callback := o.options.PrepareMergeCallback
+	if callback == nil {
+		return drop, nil
+	}
+	for documentNumber := uint64(0); documentNumber < segment.handle.count; documentNumber++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if _, alreadyDeleted := segment.deleted[documentNumber]; alreadyDeleted {
+			// The immutable root mask already excludes this document. Product
+			// expiry policy applies only to documents still visible in the root.
+			continue
+		}
+		document := MergeDocument{
+			SegmentID:      segment.handle.id,
+			DocumentNumber: documentNumber,
+			StoredFields: func(visit func(name string, value []byte) bool) error {
+				return segment.handle.reader.VisitDocument(documentNumber, func(stored nativeice.StoredDocument) error {
+					return stored.VisitStoredFields(visit)
+				})
+			},
+		}
+		shouldDrop, err := callback(ctx, document)
+		if err != nil {
+			return nil, fmt.Errorf("prepare native merge document %d: %w", documentNumber, err)
+		}
+		if shouldDrop {
+			if documentNumber > uint64(^uint32(0)) {
+				return nil, fmt.Errorf("merge drop document %d exceeds mask range: %w", documentNumber, ErrInvalidDocument)
+			}
+			drop.Add(uint32(documentNumber))
+		}
+	}
+	return drop, nil
 }
 
 // Compact merges the pinned root's immutable segments outside the admission
@@ -894,7 +997,14 @@ func (o *Owner) Compact(ctx context.Context) error {
 			}
 			return fmt.Errorf("compact native root: unsupported segment type %T", current)
 		}
-		drop := roaringpkg.New()
+		drop, prepareErr := o.prepareMergeDrop(ctx, segment)
+		if prepareErr != nil {
+			base.release()
+			if reserved {
+				queue.releaseReservation()
+			}
+			return prepareErr
+		}
 		for number := range segment.deleted {
 			if number <= uint64(^uint32(0)) {
 				drop.Add(uint32(number))
@@ -1204,6 +1314,10 @@ func releaseSegments(segments []rootSegment) {
 	for _, current := range segments {
 		current.release()
 	}
+}
+
+func segmentHasNoLiveDocuments(segment *memorySegment) bool {
+	return segment.handle.count == 0 || uint64(len(segment.deleted)) >= segment.handle.count
 }
 
 func newMemorySegment(documents []Document, segmentID uint64) (rootSegment, error) {
@@ -1661,6 +1775,13 @@ func (o *Owner) Close() error {
 	// Prevent new admissions, then let an in-flight compaction or collection
 	// finish before releasing the owner-held root and lease responsibility.
 	o.closing = true
+	queue := o.persistQ
+	if queue != nil {
+		// Wake any Batch call blocked in acquire waiting for a persistence
+		// slot now, rather than leaving it to wait for a slot that will never
+		// free once this owner stops draining its queue below.
+		close(queue.closing)
+	}
 	for o.activeOps != 0 {
 		o.stateCond.Wait()
 	}
@@ -1668,7 +1789,6 @@ func (o *Owner) Close() error {
 	o.root = nil
 	oldRoot.release()
 	o.pruneRootsLocked()
-	queue := o.persistQ
 	maintenanceCancel := o.maintenanceCancel
 	maintenanceTask := o.maintenanceTask
 	if queue != nil {

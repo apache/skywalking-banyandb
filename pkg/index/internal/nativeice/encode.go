@@ -360,10 +360,21 @@ func nativeICEFields(generation Generation) []nativeICEField {
 	}
 	fieldNames := make([]string, 0, len(fieldsByName))
 	for fieldName := range fieldsByName {
+		if fieldName == identifierField {
+			continue
+		}
 		fieldNames = append(fieldNames, fieldName)
 	}
 	sort.Strings(fieldNames)
-	fields := make([]nativeICEField, 0, len(fieldNames))
+	// ICE's field table reserves the first field slot for the identifier. The
+	// legacy merge fast path preserves field IDs when all inputs have the same
+	// field order, then reconstructs the output with _id first. Keep native
+	// segments in that same canonical order or a later legacy merge can attach
+	// stored values to the wrong field names.
+	fields := make([]nativeICEField, 0, len(fieldNames)+1)
+	identifierNativeField := fieldsByName[identifierField]
+	identifierNativeField.documentCount = uint64(len(generation.Documents))
+	fields = append(fields, *identifierNativeField)
 	for _, fieldName := range fieldNames {
 		nativeField := fieldsByName[fieldName]
 		nativeField.documentCount = uint64(len(nativeField.documentNumbers))

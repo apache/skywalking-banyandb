@@ -521,7 +521,7 @@ func applyPropertyUpdate(db *database, p property) {
 	if p.deleted {
 		err = s.delete(context.Background(), [][]byte{GetPropertyID(update)})
 	} else {
-		err = s.update(GetPropertyID(update), update)
+		err = s.update(context.Background(), GetPropertyID(update), update)
 	}
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 }

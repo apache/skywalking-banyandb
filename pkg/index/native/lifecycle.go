@@ -131,6 +131,9 @@ func (o *Owner) TakeFileSnapshot(destination string) error {
 		if !ok {
 			return fmt.Errorf("snapshot native root: unsupported segment type %T", current)
 		}
+		if segmentHasNoLiveDocuments(segment) {
+			continue
+		}
 		metadata := nativeice.SnapshotSegment{
 			ID: segment.handle.id, Size: segment.handle.size, DocumentCount: segment.handle.count,
 			TimeMin: segment.handle.timeMin, TimeMax: segment.handle.timeMax,
