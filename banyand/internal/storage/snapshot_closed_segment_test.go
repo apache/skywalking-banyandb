@@ -81,6 +81,7 @@ func snapshotTestDir(t *testing.T) string {
 func openSnapshotTSDB(t *testing.T, dir string, ttlDays int) (TSDB[*MockTSTable, any], *segmentController[*MockTSTable, any]) {
 	t.Helper()
 	opts := TSDBOpts[*MockTSTable, any]{
+		RootLease:          staticTestLease{},
 		Location:           dir,
 		SegmentInterval:    IntervalRule{Unit: DAY, Num: 1},
 		TTL:                IntervalRule{Unit: DAY, Num: ttlDays},

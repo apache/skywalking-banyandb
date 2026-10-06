@@ -25,8 +25,13 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 )
+
+// legacyLockFilename is the previous release's bluge exclusive-lock file
+// name (pkg/index/inverted.LockFilename), duplicated here so this package
+// never imports pkg/index/inverted for series-index work. A stale lock
+// traveling with a copied index dir would block the target from opening it.
+const legacyLockFilename = "bluge.pid"
 
 // NoFsyncFS wraps a local FileSystem and skips per-file fsync /
 // directory sync calls. Migration is a one-shot bulk import: a crash
@@ -97,7 +102,7 @@ func CopyDir(src, dst string) (int64, error) {
 		return 0, err
 	}
 	for _, e := range entries {
-		if !e.IsDir() && e.Name() == inverted.LockFilename {
+		if !e.IsDir() && e.Name() == legacyLockFilename {
 			continue
 		}
 		srcPath := filepath.Join(src, e.Name())

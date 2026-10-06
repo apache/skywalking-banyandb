@@ -19,12 +19,15 @@ package measure
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/blugelabs/bluge"
+	"github.com/blugelabs/bluge/search"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -186,6 +189,112 @@ func fieldByMarshaledName(d index.Document, name string) (index.Field, bool) {
 	return index.Field{}, false
 }
 
+// legacyStoredDocument adapts *bluge's own search.DocumentMatch to
+// storedFieldDocument (migration_verify.go): an explicit wrapper, not a bare
+// structural conversion, because bluge's VisitStoredFields takes its own
+// named segment.StoredFieldVisitor function type rather than the plain
+// func(string, []byte) bool storedFieldDocument expects.
+type legacyStoredDocument struct {
+	match *search.DocumentMatch
+}
+
+func (d legacyStoredDocument) VisitStoredFields(visit func(name string, value []byte) bool) error {
+	return d.match.VisitStoredFields(func(field string, value []byte) bool {
+		return visit(field, value)
+	})
+}
+
+// readIndexModeDocsLegacy is the previous release's own reader
+// (pkg/index/inverted.NewStore's bluge.OpenReader), restored here for TEST
+// verification only (L4): it reuses rebuildOneDoc -- the same rebuild logic
+// readIndexModeDocsNative calls -- so the only thing this function exercises
+// independently of production is the READER half, proving the native
+// writer's on-disk output is byte-compatible with, and genuinely readable
+// by, a previous-release node, not merely round-trippable through the same
+// native code that wrote it.
+func readIndexModeDocsLegacy(ctx context.Context, sidxDir string, ruleByID map[uint32]indexRuleInfo,
+	schemasBySubject map[string]*measureSchemaInfo,
+) ([]index.Document, error) {
+	reader, openErr := bluge.OpenReader(bluge.DefaultConfig(sidxDir))
+	if openErr != nil {
+		if strings.Contains(openErr.Error(), "unable to find a usable snapshot") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("open sidx reader %s: %w", sidxDir, openErr)
+	}
+	defer func() { _ = reader.Close() }()
+	matches, searchErr := reader.Search(ctx, bluge.NewAllMatches(bluge.NewMatchAllQuery()))
+	if searchErr != nil {
+		return nil, fmt.Errorf("search sidx %s: %w", sidxDir, searchErr)
+	}
+	var documents []index.Document
+	tagNames := collectTagNames(schemasBySubject)
+	missingRules := map[uint32]int{}
+	for {
+		match, nextErr := matches.Next()
+		if nextErr != nil {
+			return nil, fmt.Errorf("iterate sidx %s: %w", sidxDir, nextErr)
+		}
+		if match == nil {
+			break
+		}
+		document, rebuildErr := rebuildOneDoc(legacyStoredDocument{match: match}, ruleByID, schemasBySubject, tagNames, missingRules)
+		if rebuildErr != nil {
+			return nil, fmt.Errorf("rebuild doc in %s: %w", sidxDir, rebuildErr)
+		}
+		documents = append(documents, document)
+	}
+	return documents, nil
+}
+
+// indexModeDocsByID converts docs into a map keyed by DocID for
+// order-independent comparison.
+func indexModeDocsByID(docs []index.Document) map[uint64]index.Document {
+	out := make(map[uint64]index.Document, len(docs))
+	for _, d := range docs {
+		out[d.DocID] = d
+	}
+	return out
+}
+
+// indexModeFieldMap flattens a document's Fields into a
+// marshaled-key -> raw-bytes map for order-independent comparison. Every
+// field rebuildOneDoc produces carries a *index.BytesTermValue term.
+func indexModeFieldMap(t *testing.T, fields []index.Field) map[string][]byte {
+	t.Helper()
+	out := make(map[string][]byte, len(fields))
+	for i := range fields {
+		term, ok := fields[i].GetTerm().(*index.BytesTermValue)
+		require.True(t, ok, "field %q has unexpected term type %T", fields[i].Key.Marshal(), fields[i].GetTerm())
+		out[fields[i].Key.Marshal()] = term.Value
+	}
+	return out
+}
+
+// requireIndexModeDocsReadableByLegacyReader is the L4 regression helper:
+// it re-reads sidxDir with the previous release's own bluge reader
+// (readIndexModeDocsLegacy) and asserts its output matches nativeDocs
+// field-for-field, so a test that only asserted against
+// readIndexModeDocsNative's output also proves the migrated sidx opens with
+// a reader independent of the one production itself uses to verify it.
+func requireIndexModeDocsReadableByLegacyReader(t *testing.T, sidxDir string, ruleByID map[uint32]indexRuleInfo,
+	schemasBySubject map[string]*measureSchemaInfo, nativeDocs []index.Document,
+) {
+	t.Helper()
+	legacyDocs, err := readIndexModeDocsLegacy(context.Background(), sidxDir, ruleByID, schemasBySubject)
+	require.NoError(t, err)
+	want := indexModeDocsByID(nativeDocs)
+	got := indexModeDocsByID(legacyDocs)
+	require.Len(t, got, len(want), "the previous release's own reader must see the same document count")
+	for id, w := range want {
+		g, ok := got[id]
+		require.True(t, ok, "previous-release reader missing doc %d", id)
+		require.Equal(t, w.Timestamp, g.Timestamp, "doc %d timestamp", id)
+		require.Equal(t, w.Version, g.Version, "doc %d version", id)
+		require.Equal(t, indexModeFieldMap(t, w.Fields), indexModeFieldMap(t, g.Fields), "doc %d fields", id)
+	}
+}
+
 func TestReadAndRebuildIndexModeDoc(t *testing.T) {
 	dir := t.TempDir()
 	const ruleID = uint32(201559343)
@@ -211,7 +320,7 @@ func TestReadAndRebuildIndexModeDoc(t *testing.T) {
 	}
 	ruleByID := map[uint32]indexRuleInfo{ruleID: {Analyzer: index.AnalyzerURL, NoSort: false}}
 
-	docs, err := readIndexModeDocs(context.Background(), dir, ruleByID, schemasBySubject)
+	docs, err := readIndexModeDocsNative(context.Background(), dir, ruleByID, schemasBySubject)
 	require.NoError(t, err)
 	require.Len(t, docs, 1)
 	d := docs[0]
@@ -276,7 +385,7 @@ func TestReadAndRebuildIndexModeDoc_SkipsIndexedEntityTag(t *testing.T) {
 		},
 	}
 
-	docs, err := readIndexModeDocs(context.Background(), dir, map[uint32]indexRuleInfo{}, schemasBySubject)
+	docs, err := readIndexModeDocsNative(context.Background(), dir, map[uint32]indexRuleInfo{}, schemasBySubject)
 	require.NoError(t, err)
 	require.Len(t, docs, 1)
 
@@ -289,7 +398,7 @@ func TestReadAndRebuildIndexModeDoc_SkipsIndexedEntityTag(t *testing.T) {
 }
 
 func TestReadIndexModeDocs_EmptySidx(t *testing.T) {
-	docs, err := readIndexModeDocs(context.Background(), t.TempDir(), map[uint32]indexRuleInfo{}, nil)
+	docs, err := readIndexModeDocsNative(context.Background(), t.TempDir(), map[uint32]indexRuleInfo{}, nil)
 	require.NoError(t, err)
 	require.Empty(t, docs)
 }
@@ -374,11 +483,17 @@ func svcSchemas() map[string]*measureSchemaInfo {
 	}
 }
 
-// countSidxDocs opens a sidx read-only and returns the number of docs.
+// countSidxDocs opens a sidx read-only and returns the number of docs. It
+// also cross-checks the native reader's output against the previous
+// release's own bluge reader (L4), so every caller -- most read a
+// migration's native-written target sidx -- proves the migrated output is
+// independently readable, not merely round-trippable through the same
+// native code production uses to verify it.
 func countSidxDocs(t *testing.T, sidxDir string) int {
 	t.Helper()
-	docs, err := readIndexModeDocs(context.Background(), sidxDir, map[uint32]indexRuleInfo{}, svcSchemas())
+	docs, err := readIndexModeDocsNative(context.Background(), sidxDir, map[uint32]indexRuleInfo{}, svcSchemas())
 	require.NoError(t, err)
+	requireIndexModeDocsReadableByLegacyReader(t, sidxDir, map[uint32]indexRuleInfo{}, svcSchemas(), docs)
 	return len(docs)
 }
 
@@ -393,7 +508,27 @@ func TestTargetIdxStore_GetSamePathSharesWriter(t *testing.T) {
 	require.Same(t, s1, s2, "same path must share one writer")
 
 	require.NoError(t, pool.closeAll())
-	require.Empty(t, pool.stores, "closeAll must clear the pool")
+	require.Empty(t, pool.owners, "closeAll must clear the pool")
+}
+
+// TestTargetIdxStore_GetSurvivesStaleLockFromPriorCrash is part of L8: a
+// tool crash leaves indexModeLockFilename ("lock", beside the target sidx
+// directory) on disk, since it is removed only in a clean closeAll. The
+// next run's targetIdxStore.get must not be blocked by that stale file --
+// CreateLockFile truncates and re-flocks rather than requiring the path be
+// absent, and an OS-level flock is released when the crashed process exits
+// regardless of whether Close ran, so a leftover lock file with no live
+// holder must never fail a fresh get.
+func TestTargetIdxStore_GetSurvivesStaleLockFromPriorCrash(t *testing.T) {
+	segDir := t.TempDir()
+	path := filepath.Join(segDir, directCopySidxDirName)
+	require.NoError(t, os.MkdirAll(path, storage.DirPerm))
+	require.NoError(t, os.WriteFile(filepath.Join(segDir, indexModeLockFilename), []byte("stale"), storage.FilePerm))
+
+	pool := newTargetIdxStore()
+	_, err := pool.get(path)
+	require.NoError(t, err, "a stale lock file from a prior crash must not block the next run")
+	require.NoError(t, pool.closeAll())
 }
 
 // readDocsByDir reads every dir's index-mode docs into the docsByDir map the
@@ -402,7 +537,7 @@ func readDocsByDir(t *testing.T, dirs []string) map[string][]index.Document {
 	t.Helper()
 	out := make(map[string][]index.Document, len(dirs))
 	for _, dir := range dirs {
-		docs, err := readIndexModeDocs(context.Background(), dir, map[uint32]indexRuleInfo{}, svcSchemas())
+		docs, err := readIndexModeDocsNative(context.Background(), dir, map[uint32]indexRuleInfo{}, svcSchemas())
 		require.NoError(t, err)
 		out[dir] = docs
 	}
@@ -437,9 +572,10 @@ func TestSlowPath_MergeKeepsMaxVersion(t *testing.T) {
 	require.NoError(t, stores.closeAll())
 
 	targetSidx := filepath.Join(dst, "seg-20260621", directCopySidxDirName)
-	docs, err := readIndexModeDocs(context.Background(), targetSidx, map[uint32]indexRuleInfo{}, svcSchemas())
+	docs, err := readIndexModeDocsNative(context.Background(), targetSidx, map[uint32]indexRuleInfo{}, svcSchemas())
 	require.NoError(t, err)
 	require.Len(t, docs, 1)
+	requireIndexModeDocsReadableByLegacyReader(t, targetSidx, map[uint32]indexRuleInfo{}, svcSchemas(), docs)
 	require.Equal(t, int64(9), docs[0].Version, "highest version must win")
 	pf, ok := fieldByMarshaledName(docs[0], "properties")
 	require.True(t, ok)
@@ -544,9 +680,10 @@ func TestCopyIndexModeGroup_MergeAcrossSourcesKeepsMaxVersion(t *testing.T) {
 	require.Equal(t, int64(1), res.Rows, "same series across sources collapses to one row")
 
 	targetSidx := filepath.Join(dst, "seg-20260621", directCopySidxDirName)
-	docs, err := readIndexModeDocs(context.Background(), targetSidx, map[uint32]indexRuleInfo{}, svcSchemas())
+	docs, err := readIndexModeDocsNative(context.Background(), targetSidx, map[uint32]indexRuleInfo{}, svcSchemas())
 	require.NoError(t, err)
 	require.Len(t, docs, 1)
+	requireIndexModeDocsReadableByLegacyReader(t, targetSidx, map[uint32]indexRuleInfo{}, svcSchemas(), docs)
 	require.Equal(t, int64(9), docs[0].Version, "highest version must win across sources")
 	pf, ok := fieldByMarshaledName(docs[0], "properties")
 	require.True(t, ok)
@@ -596,9 +733,10 @@ func TestCopyIndexModeGroup_ByteCopyTargetAlsoReceivesSplitSource_KeepsMaxVersio
 	require.Zero(t, res.Bytes, "no source exclusively owns a target seg, so nothing byte-copies")
 
 	h1Sidx := filepath.Join(dst, "seg-2026062101", directCopySidxDirName)
-	docs, err := readIndexModeDocs(context.Background(), h1Sidx, map[uint32]indexRuleInfo{}, svcSchemas())
+	docs, err := readIndexModeDocsNative(context.Background(), h1Sidx, map[uint32]indexRuleInfo{}, svcSchemas())
 	require.NoError(t, err)
 	require.Len(t, docs, 1, "hour-01 holds exactly the shared series")
+	requireIndexModeDocsReadableByLegacyReader(t, h1Sidx, map[uint32]indexRuleInfo{}, svcSchemas(), docs)
 	require.Equal(t, int64(100), docs[0].Version, "max version must survive across byte-copy + split source")
 	pf, ok := fieldByMarshaledName(docs[0], "properties")
 	require.True(t, ok)
@@ -707,12 +845,15 @@ func TestCopyIndexModeGroup_TimestampZeroSurfacesError(t *testing.T) {
 
 // ── Phase 3 / 4: value digest, verify, analyze tests ─────────────────────────.
 
-// readOneDoc reads exactly one rebuilt doc from a sidx dir, failing otherwise.
+// readOneDoc reads exactly one rebuilt doc from a sidx dir, failing
+// otherwise, and cross-checks it against the previous release's own bluge
+// reader (L4; see countSidxDocs).
 func readOneDoc(t *testing.T, sidxDir string, schemas map[string]*measureSchemaInfo) index.Document {
 	t.Helper()
-	docs, err := readIndexModeDocs(context.Background(), sidxDir, map[uint32]indexRuleInfo{}, schemas)
+	docs, err := readIndexModeDocsNative(context.Background(), sidxDir, map[uint32]indexRuleInfo{}, schemas)
 	require.NoError(t, err)
 	require.Len(t, docs, 1)
+	requireIndexModeDocsReadableByLegacyReader(t, sidxDir, map[uint32]indexRuleInfo{}, schemas, docs)
 	return docs[0]
 }
 
@@ -1353,8 +1494,9 @@ func TestIndexModeMigration_SplitAndMergeRebuild(t *testing.T) {
 		"hour 05 holds svc-c")
 
 	// Max-version merge: the surviving svc-a doc must carry version 5 + p-a-v2.
-	docs, err := readIndexModeDocs(context.Background(), hour01, e2eRuleByID(), e2eSchemasBySubject())
+	docs, err := readIndexModeDocsNative(context.Background(), hour01, e2eRuleByID(), e2eSchemasBySubject())
 	require.NoError(t, err)
+	requireIndexModeDocsReadableByLegacyReader(t, hour01, e2eRuleByID(), e2eSchemasBySubject(), docs)
 	var svcADoc *index.Document
 	for i := range docs {
 		var series pbv1.Series
@@ -1467,13 +1609,15 @@ func TestIndexModeMigration_SearchabilityPreserved(t *testing.T) {
 	}
 }
 
-// countSidxDocsWith opens a sidx read-only with explicit rule/schema tables and
-// returns the rebuilt doc count.
+// countSidxDocsWith opens a sidx read-only with explicit rule/schema tables,
+// returns the rebuilt doc count, and cross-checks against the previous
+// release's own bluge reader (L4; see countSidxDocs).
 func countSidxDocsWith(t *testing.T, sidxDir string, ruleByID map[uint32]indexRuleInfo,
 	schemas map[string]*measureSchemaInfo,
 ) int {
 	t.Helper()
-	docs, err := readIndexModeDocs(context.Background(), sidxDir, ruleByID, schemas)
+	docs, err := readIndexModeDocsNative(context.Background(), sidxDir, ruleByID, schemas)
 	require.NoError(t, err)
+	requireIndexModeDocsReadableByLegacyReader(t, sidxDir, ruleByID, schemas, docs)
 	return len(docs)
 }

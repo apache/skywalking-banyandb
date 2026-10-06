@@ -28,30 +28,39 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/blugelabs/bluge"
-
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	banyanfs "github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-// The union sidx is rebuilt read-only via raw bluge — no banyandb store
-// lifecycle is needed.
+// lfs performs this builder's own lock-file management. It is stateless, so
+// one package-level instance suffices (matching pkg/index/native's own
+// package-level fileSystem).
+var lfs = banyanfs.NewLocalFileSystem()
+
+// The union sidx is rebuilt read-only via a native owner opened directly on
+// stagingPath — no banyandb TSDB/segment lifecycle is needed, just the
+// lock-backed root lease every native.Owner requires.
 const (
-	// Larger batches mean fewer bluge merger ticks; the merger loop
-	// dominates CPU at small batch sizes. 50k keeps the merger work
-	// off the hot path while still fitting in the per-process heap.
+	// Larger batches mean fewer owner admissions, which otherwise dominate
+	// CPU at small batch sizes. 50k keeps per-admission overhead off the hot
+	// path while still fitting in the per-process heap.
 	unionSidxBatchSize = 50000
 
 	segPrefix   = "seg-"
 	sidxDirName = "sidx"
 
-	// Stored bluge field names of sidx (inverted-index) documents, mirroring
-	// the (unexported) layout written by pkg/index/inverted so this builder
-	// can re-emit docs read via raw bluge.
+	// unionSidxLockFilename is the lock file this builder creates to back
+	// its own native.FileRootLease; it is removed once the build finishes.
+	unionSidxLockFilename = "lock"
+
+	// Stored field names of sidx (series-index) documents, mirroring the
+	// (unexported) reserved names pkg/index/native keeps private, so this
+	// builder can re-emit docs read via native.ReadOnlyGeneration.
 	sidxDocIDField     = "_id"
 	sidxTimestampField = "_timestamp"
 	sidxVersionField   = "_version"
@@ -76,15 +85,37 @@ func BuildGroupUnionSidx(ctx context.Context, srcGroupRoots []string, stagingPat
 		return "", fmt.Errorf("mkdir staging %q: %w", stagingPath, err)
 	}
 
-	writer, err := bluge.OpenWriter(bluge.DefaultConfig(stagingPath))
+	// native.FileRootLease requires its owner's Path to be a proper
+	// subdirectory of the lease root (ValidatePath rejects root==Path), the
+	// same relationship a TSDB's lock (at the segment root) and its sidx
+	// subdirectory have. stagingPath is the directory this function's
+	// contract hands back as the series index itself (callers open it
+	// directly), so the lock lives one level up instead.
+	leaseRoot := filepath.Dir(stagingPath)
+	lockPath := filepath.Join(leaseRoot, unionSidxLockFilename)
+	lock, err := lfs.CreateLockFile(lockPath, storage.FilePerm)
 	if err != nil {
-		return "", fmt.Errorf("open union sidx writer at %q: %w", stagingPath, err)
+		return "", fmt.Errorf("create union sidx lock %q: %w", lockPath, err)
+	}
+	defer func() {
+		_ = lock.Close()
+		_ = os.Remove(lockPath)
+	}()
+	lease, err := native.NewFileRootLease(lock, leaseRoot)
+	if err != nil {
+		return "", fmt.Errorf("create union sidx root lease: %w", err)
+	}
+	// NewOwner is a synchronous constructor and has no context-bearing API.
+	//nolint:contextcheck // construction does not perform cancellable I/O
+	owner, err := native.NewOwner(native.OwnerOptions{Lease: lease, Path: stagingPath, IdentifierDocValues: true})
+	if err != nil {
+		return "", fmt.Errorf("open union sidx owner at %q: %w", stagingPath, err)
 	}
 	closed := false
 	published := false
 	defer func() {
 		if !closed {
-			_ = writer.Close()
+			_ = owner.Close()
 		}
 		if !published {
 			_ = os.RemoveAll(stagingPath)
@@ -145,7 +176,7 @@ func BuildGroupUnionSidx(ctx context.Context, srcGroupRoots []string, stagingPat
 					return
 				}
 				logf("union sidx: start scanning %s", srcSidxPath)
-				count, scanned, mergeErr := mergeOneSourceSidxInto(taskCtx, srcSidxPath, writer, seen, &seenMu, &writerMu)
+				count, scanned, mergeErr := mergeOneSourceSidxInto(taskCtx, srcSidxPath, owner, seen, &seenMu, &writerMu)
 				if mergeErr != nil {
 					e := fmt.Errorf("merge %s: %w", srcSidxPath, mergeErr)
 					if firstErr.CompareAndSwap(nil, &e) {
@@ -183,12 +214,12 @@ dispatch:
 	}
 	inserted := int(insertedAtomic.Load())
 	scanned := int(scannedAtomic.Load())
-	logf("union sidx: scan finished — scanned=%d uniqueSeries=%d dedup-skipped=%d; closing writer (final bluge merge)",
+	logf("union sidx: scan finished — scanned=%d uniqueSeries=%d dedup-skipped=%d; closing owner (final persist)",
 		scanned, inserted, scanned-inserted)
 
 	closed = true
-	if closeErr := writer.Close(); closeErr != nil {
-		return "", fmt.Errorf("close union sidx writer: %w", closeErr)
+	if closeErr := owner.Close(); closeErr != nil {
+		return "", fmt.Errorf("close union sidx owner: %w", closeErr)
 	}
 	if inserted == 0 {
 		return "", nil
@@ -228,63 +259,67 @@ func collectSourceSidxPaths(ctx context.Context, srcGroupRoots []string) ([]stri
 func mergeOneSourceSidxInto(
 	ctx context.Context,
 	srcPath string,
-	dst *bluge.Writer,
+	dst *native.Owner,
 	seen map[common.SeriesID]struct{},
 	seenMu *sync.Mutex,
 	writerMu *sync.Mutex,
 ) (inserted, scanned int, err error) {
-	batch := bluge.NewBatch()
-	batched := 0
+	generation, openErr := native.OpenReadOnlyGeneration(srcPath)
+	if openErr != nil {
+		if errors.Is(openErr, native.ErrNoSnapshot) {
+			return 0, 0, nil
+		}
+		return 0, 0, fmt.Errorf("open source %s: %w", srcPath, openErr)
+	}
+	defer func() { _ = generation.Close() }()
+
+	batch := make([]native.Document, 0, unionSidxBatchSize)
 
 	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
 		writerMu.Lock()
 		defer writerMu.Unlock()
-		return dst.Batch(batch)
+		return dst.Batch(ctx, native.Batch{Documents: batch})
 	}
 
-	walkErr := inverted.ReadOnlyWalkDocuments(ctx, srcPath, func(source inverted.StoredDocument) error {
+	walkErr := generation.VisitLiveDocuments(ctx, func(source native.StoredDocument) error {
 		scanned++
 
-		doc, dup, buildErr := buildDocFromStoredDocumentLocked(source, seen, seenMu)
+		doc, dup, buildErr := buildNativeDocumentLocked(source, seen, seenMu)
 		if buildErr != nil {
 			return buildErr
 		}
 		if dup || doc == nil {
 			return nil
 		}
-		batch.Insert(doc)
-		batched++
+		batch = append(batch, *doc)
 		inserted++
-		if batched >= unionSidxBatchSize {
+		if len(batch) >= unionSidxBatchSize {
 			if flushErr := flush(); flushErr != nil {
 				return fmt.Errorf("flush batch: %w", flushErr)
 			}
-			batch = bluge.NewBatch()
-			batched = 0
+			batch = make([]native.Document, 0, unionSidxBatchSize)
 		}
 		return nil
 	})
 	if walkErr != nil {
-		if errors.Is(walkErr, inverted.ErrNoCommittedIndex) {
-			return 0, 0, nil
-		}
 		return inserted, scanned, fmt.Errorf("walk source %s: %w", srcPath, walkErr)
 	}
-	if batched > 0 {
-		if flushErr := flush(); flushErr != nil {
-			return inserted, scanned, fmt.Errorf("flush tail batch: %w", flushErr)
-		}
+	if flushErr := flush(); flushErr != nil {
+		return inserted, scanned, fmt.Errorf("flush tail batch: %w", flushErr)
 	}
 	return inserted, scanned, nil
 }
 
-// buildDocFromStoredDocumentLocked rebuilds one series-index doc from its
-// stored fields, deduplicating by SeriesID under seenMu.
-func buildDocFromStoredDocumentLocked(
-	source inverted.StoredDocument,
+// buildNativeDocumentLocked rebuilds one series-index doc from its stored
+// fields, deduplicating by SeriesID under seenMu.
+func buildNativeDocumentLocked(
+	source native.StoredDocument,
 	seen map[common.SeriesID]struct{},
 	seenMu *sync.Mutex,
-) (*bluge.Document, bool, error) {
+) (*native.Document, bool, error) {
 	var entityValues []byte
 	type storedField struct {
 		name  string
@@ -321,30 +356,35 @@ func buildDocFromStoredDocumentLocked(
 	seen[series.ID] = struct{}{}
 	seenMu.Unlock()
 
-	doc := bluge.NewDocument(string(entityValues))
+	doc := &native.Document{Identifier: entityValues}
 	for _, f := range fields {
 		switch f.name {
 		case sidxTimestampField:
-			ts, decErr := bluge.DecodeDateTime(f.value)
+			ts, decErr := native.DecodeTimestamp(f.value)
 			if decErr != nil {
 				return nil, false, fmt.Errorf("decode timestamp on series %d: %w", series.ID, decErr)
 			}
-			doc.AddField(bluge.NewDateTimeField(f.name, ts).StoreValue())
+			doc.Timestamp = ts
 		case sidxVersionField:
-			doc.AddField(bluge.NewStoredOnlyField(f.name, f.value))
+			// _version is stored-only (storage.EncodeSeriesDocument never
+			// indexes it): Store must be set explicitly here, or the
+			// field carries neither an index entry nor a stored value and
+			// is silently dropped (NIDX-03 §6.1).
+			doc.Fields = append(doc.Fields, native.Field{Name: f.name, Value: f.value, Store: true})
 		default:
 			// Remaining stored fields are the series' entity-tag fields
 			// (e.g. "service"), written by the production series index as
-			// keyword fields (pkg/index/inverted/inverted_series.go toDoc).
-			// VisitStoredFields only returns the stored name+value, not the
-			// original Index/NoSort/Analyzer flags, so they are re-emitted as
-			// keyword+stored. This preserves exact-match (keyword) series
-			// lookups — the only way the union sidx is queried for the
-			// supported catalogs (entity tags are keyword, not analyzed) — but
-			// would NOT preserve a non-keyword analyzer or doc-values sorting.
-			// Such fields don't occur in the current series index; supporting
-			// them would require threading the schema's field metadata in.
-			doc.AddField(bluge.NewKeywordFieldBytes(f.name, f.value).StoreValue())
+			// indexed, stored, sortable keyword fields
+			// (storage.EncodeSeriesDocument). VisitStoredFields only returns
+			// the stored name+value, not the original Index/NoSort/Analyzer
+			// flags, so they are re-emitted the same way: indexed, stored and
+			// sortable, with no analyzer. This preserves exact-match series
+			// lookups -- the only way the union sidx is queried for the
+			// supported catalogs (entity tags are keyword, not analyzed) --
+			// but would NOT preserve a non-keyword analyzer. Such fields
+			// don't occur in the current series index; supporting them would
+			// require threading the schema's field metadata in.
+			doc.Fields = append(doc.Fields, native.Field{Name: f.name, Value: f.value, Index: true, Store: true, Sort: true})
 		}
 	}
 	return doc, false, nil

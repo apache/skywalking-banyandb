@@ -49,9 +49,13 @@ const (
 	indexModeSourceReadFile = "migration_indexmode_copy.go"
 
 	// nativeVisitorPackage and nativeVisitorFunc name the BanyanDB-owned
-	// read-only document visitor issue #14010 introduces.
-	nativeVisitorPackage = "github.com/apache/skywalking-banyandb/pkg/index/inverted"
-	nativeVisitorFunc    = "ReadOnlyWalkDocuments"
+	// read-only document visitor the series index cutover (NIDX-03) moved
+	// this file's source read onto: a native.ReadOnlyGeneration opened
+	// directly, instead of the pkg/index/inverted wrapper issue #14010
+	// introduced (itself already nativeice-backed, but still a
+	// pkg/index/inverted dependency the series-index cutover retires).
+	nativeVisitorPackage = "github.com/apache/skywalking-banyandb/pkg/index/native"
+	nativeVisitorFunc    = "OpenReadOnlyGeneration"
 
 	// retiredReaderEntryPoint is the call that opens a retired third-party
 	// index reader directly on a source directory. The whole point of the

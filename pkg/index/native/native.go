@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/apache/skywalking-banyandb/pkg/index/internal/nativeice"
 )
@@ -58,12 +59,62 @@ func OpenReadOnlyGeneration(path string) (*ReadOnlyGeneration, error) {
 	return &ReadOnlyGeneration{reader: reader}, nil
 }
 
+// OpenReadOnlyGenerationStrict opens only the newest committed snapshot in
+// path, like a writer reopening the directory at startup, and never falls
+// back to an older generation when that newest manifest or one of its
+// segments is damaged: it returns ErrCorrupt (or another decode error)
+// instead. Use this -- instead of the lenient OpenReadOnlyGeneration, which
+// deliberately recovers the newest structurally complete generation for
+// best-effort offline tools -- wherever a silent rollback to stale data
+// would be a correctness bug, for example reading a closed segment's
+// acknowledged generation for a backup or a doc-count report: a corrupt
+// newest manifest must fail loudly there rather than make the backup (or
+// the live owner, which already opens strict) disagree about which
+// generation is current.
+func OpenReadOnlyGenerationStrict(path string) (*ReadOnlyGeneration, error) {
+	reader, err := nativeice.OpenStrict(path)
+	if err != nil {
+		return nil, err
+	}
+	return &ReadOnlyGeneration{reader: reader}, nil
+}
+
 // SnapshotID returns the identifier of the generation pinned at open time.
 func (g *ReadOnlyGeneration) SnapshotID() uint64 {
 	if g == nil || g.reader == nil {
 		return 0
 	}
 	return g.reader.SnapshotID()
+}
+
+// ReferencedFiles returns the on-disk file names (relative to the index
+// directory, not full paths) the pinned generation's manifest references:
+// its own snapshot manifest file and every segment file it lists, in the
+// same "%012x.snp" / "%012x.seg" naming Encode and the owner's persister
+// write. A caller that must copy or hard-link only the current generation --
+// for example snapshotting a closed (cold) index directory -- uses this to
+// exclude superseded snapshots and segments a live owner has not yet
+// garbage collected, instead of copying the whole directory.
+func (g *ReadOnlyGeneration) ReferencedFiles() []string {
+	if g == nil || g.reader == nil {
+		return nil
+	}
+	metadata := g.reader.SnapshotMetadata()
+	files := make([]string, 0, len(metadata.Segments)+1)
+	files = append(files, nativeICEFileName(metadata.ID, ".snp"))
+	for _, segment := range metadata.Segments {
+		files = append(files, nativeICEFileName(segment.ID, ".seg"))
+	}
+	return files
+}
+
+// nativeICEFileName reproduces the on-disk name Encode/PublishSnapshot gives
+// one manifest or segment file. It is duplicated here (rather than exported
+// from pkg/index/internal/nativeice, an internal package pkg/index/native
+// already depends on) because owner.go's own TakeFileSnapshot fallback path
+// already relies on this exact "%012x" format for a segment's source path.
+func nativeICEFileName(identifier uint64, extension string) string {
+	return fmt.Sprintf("%012x%s", identifier, extension)
 }
 
 // StoredFields returns the first live physical document whose identifier is
@@ -113,6 +164,64 @@ func (g *ReadOnlyGeneration) StoredFields(ctx context.Context, docID []byte, pro
 		return nil, err
 	}
 	return result, nil
+}
+
+// VisibleDocCount returns the number of live (non-deleted) documents the
+// pinned generation holds. It is the read-only counterpart to Owner.Stats
+// for a closed/cold index directory: callers that need a document count
+// without reopening a writable owner (for example, reporting a segment's
+// series-index size while it is idle-closed) open a ReadOnlyGeneration and
+// call this instead of reopening the owner.
+func (g *ReadOnlyGeneration) VisibleDocCount() (int64, error) {
+	if g == nil || g.reader == nil {
+		return 0, nil
+	}
+	return g.reader.VisibleDocCount()
+}
+
+// DecodeTimestamp decodes one series/property document's stored "_timestamp"
+// field value, in the same prefix-coded int64 layout the owner's encoder
+// writes (newMemorySegment) and ProjectHit already decodes internally. It is
+// exported for offline tools that walk stored documents directly (via
+// VisitLiveDocuments/StoredFields) instead of going through ProjectHit, so
+// they never need their own encoding of this reserved field.
+func DecodeTimestamp(value []byte) (int64, error) {
+	return nativeice.DecodePrefixCodedInt64(value)
+}
+
+// StoredDocument is one live physical document of a committed generation,
+// borrowed for the duration of a single VisitLiveDocuments callback. It
+// mirrors nativeice.StoredDocument's shape without exposing that internal
+// package to callers outside pkg/index.
+type StoredDocument interface {
+	// VisitStoredFields calls visit once for every stored value the document
+	// records, passing the field's name and its raw value bytes, in the
+	// order the document recorded them. The name and value handed to visit
+	// are borrowed and stay valid only until visit returns.
+	VisitStoredFields(visit func(name string, value []byte) bool) error
+}
+
+// VisitLiveDocuments calls visit once for every live document the pinned
+// generation holds, streaming one document at a time. Documents the
+// generation's deletion masks cover are skipped. Canceling ctx stops the
+// walk between two documents and returns ctx.Err(); an error visit returns
+// stops the walk and is returned as-is.
+//
+// This is the read-only counterpart to a writable owner's full contents that
+// offline tools use instead of opening one: the union-sidx builder and the
+// index-mode Measure copy both need to re-emit every live series document
+// through EncodeSeriesDocument without acquiring the exclusive directory
+// ownership a native.Owner requires.
+func (g *ReadOnlyGeneration) VisitLiveDocuments(ctx context.Context, visit func(doc StoredDocument) error) error {
+	if g == nil || g.reader == nil {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return g.reader.VisitLiveDocuments(ctx, func(doc nativeice.StoredDocument) error {
+		return visit(doc)
+	})
 }
 
 // VisitIdentifiers visits each identifier term in committed segment order.
