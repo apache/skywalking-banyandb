@@ -140,6 +140,52 @@ jobs:
       - name: Build (server)
         run: npm run -w server build
 
+      # skywalking#14094 asks for native macOS BUILD **and run** support: a
+      # Darwin-specific startup or asset-loading failure would pass a
+      # compile-only check. The BFF serves the SPA from ../web/dist, resolved
+      # against process.cwd(), so it must be started from server/ -- itself a cwd
+      # assumption worth having CI assert on macOS.
+      #
+      # No database is needed: BANYANDB_TARGET is only contacted per request and
+      # neither route makes one. SESSION_SECRET is required unless NODE_ENV is
+      # development; CANOPY_DEV_NOAUTH keeps this clearly on the dev path, so it
+      # cannot be mistaken for a production check.
+      - name: Start the BFF and probe it
+        run: |
+          set -e
+          cd server
+          NODE_ENV=development \
+          CANOPY_DEV_NOAUTH=true \
+          SESSION_SECRET=0123456789abcdef0123456789abcdef \
+          PORT=4173 \
+            node dist/src/index.js > /tmp/canopy-bff.log 2>&1 &
+          echo $! > /tmp/canopy-bff.pid
+
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null "http://127.0.0.1:4173/healthz" 2>/dev/null; then ok=1; break; fi
+            if ! kill -0 "$(cat /tmp/canopy-bff.pid)" 2>/dev/null; then
+              echo "::error::the BFF exited during startup:"; cat /tmp/canopy-bff.log; exit 1
+            fi
+            sleep 1
+          done
+          [ "$ok" = "1" ] || { echo "::error::the BFF never became ready:"; cat /tmp/canopy-bff.log; exit 1; }
+
+          health=$(curl -fsS "http://127.0.0.1:4173/healthz")
+          echo "  /healthz -> $health"
+          echo "$health" | grep -q '"status":"ok"' \
+            || { echo "::error::unexpected /healthz body: $health"; exit 1; }
+
+          code=$(curl -s -o /tmp/canopy-root.html -w '%{http_code}' "http://127.0.0.1:4173/")
+          echo "  /        -> HTTP $code"
+          [ "$code" = "200" ] \
+            || { echo "::error::the SPA was not served. Is web/dist present?"; cat /tmp/canopy-bff.log; exit 1; }
+          grep -qi "<title>" /tmp/canopy-root.html \
+            || { echo "::error::/ did not return the SPA HTML"; head -5 /tmp/canopy-root.html; exit 1; }
+
+          kill "$(cat /tmp/canopy-bff.pid)" 2>/dev/null || true
+          echo "  native macOS runtime OK"
+
   # Verification is a PR-time concern. A push to main is a fast-forward of an
   # already-green PR head, so re-running the suite there would only re-prove
   # what the PR proved; main just builds and publishes the image.
@@ -187,6 +233,35 @@ jobs:
 
       - name: Build (server)
         run: npm run -w server build
+
+      # canopy/Dockerfile installs runtime dependencies with
+      # `npm ci --omit=dev --omit=optional`, because the rolldown native bindings
+      # are build-only but optionalDependencies are not dev-scoped. That is safe
+      # only while no runtime workspace needs an optional dependency; this fails
+      # the moment that stops being true, rather than leaving a runtime image
+      # quietly missing a native module.
+      - name: No runtime workspace may declare an optional dependency
+        run: |
+          set -e
+          offenders=$(node -e '
+            const fs = require("fs");
+            const bad = [];
+            for (const w of ["server", "shared"]) {
+              const f = w + "/package.json";
+              const p = JSON.parse(fs.readFileSync(f, "utf8"));
+              const names = Object.keys(p.optionalDependencies || {});
+              if (names.length) bad.push(f + ": " + names.join(", "));
+            }
+            console.log(bad.join("\n"));
+          ')
+          if [ -n "$offenders" ]; then
+            echo "::error::a runtime workspace declares an optional dependency, which"
+            echo "'npm ci --omit=dev --omit=optional' in canopy/Dockerfile would drop:"
+            echo "$offenders"
+            echo "Move it to dependencies, or drop --omit=optional deliberately."
+            exit 1
+          fi
+          echo "✓ no runtime optional dependencies"
 
       - name: Verify CSS preserves :has() and color-mix()
         run: |
