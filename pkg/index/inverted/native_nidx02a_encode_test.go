@@ -30,7 +30,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted/internal/nativeice"
+	"github.com/apache/skywalking-banyandb/pkg/index/internal/nativeice"
 )
 
 const (

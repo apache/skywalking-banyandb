@@ -18,13 +18,14 @@
 // Package nativeice reads the ICE v3 segment and snapshot v3 manifest grammar
 // defined by BDB-NIDX-SPEC-001 revision 0.2 sections 08 and 09, using only
 // BanyanDB code. It is the bounded read-only container reader that the
-// read-only production paths in pkg/index/inverted open committed index
+// read-only production paths in pkg/index/native open committed index
 // directories through, and it never depends on the retired index libraries.
 //
-// The package is deliberately reachable only from pkg/index/inverted. Footer,
+// The package is deliberately reachable only from pkg/index/native and its
+// legacy adapter. Footer,
 // offset, mapping, and section decoder types are private to it; the contract
 // other packages observe is the behavior of the exported functions in
-// pkg/index/inverted that call it.
+// pkg/index/native that call it.
 package nativeice
 
 import (
@@ -44,6 +45,9 @@ import (
 	roaringpkg "github.com/RoaringBitmap/roaring"
 	"github.com/blevesearch/vellum"
 	"github.com/klauspost/compress/s2"
+
+	"github.com/apache/skywalking-banyandb/pkg/filter"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 )
 
 const (
@@ -104,6 +108,59 @@ type Reader struct {
 	keepDictionaries     bool
 }
 
+// SnapshotSegment is the immutable metadata a snapshot manifest records for
+// one segment. DeletionBitmap is copied when metadata is exported and must be
+// treated as read-only by callers.
+//
+//nolint:govet // manifest scalar fields stay grouped for wire-format clarity.
+type SnapshotSegment struct {
+	ID             uint64
+	Size           uint64
+	DocumentCount  uint64
+	TimeMin        uint64
+	TimeMax        uint64
+	DeletionBitmap []byte
+}
+
+// SnapshotMetadata describes the committed generation pinned by a Reader.
+// It contains manifest metadata only; segment payloads remain file-backed by
+// the Reader and are not materialized by this method.
+//
+//nolint:govet // manifest identity and records stay adjacent for API clarity.
+type SnapshotMetadata struct {
+	ID       uint64
+	Segments []SnapshotSegment
+}
+
+// SnapshotMetadata returns a copy of the pinned snapshot's manifest metadata.
+// The returned deletion bitmaps are owned by the caller and may be retained
+// until the Reader closes.
+func (r *Reader) SnapshotMetadata() SnapshotMetadata {
+	if r == nil {
+		return SnapshotMetadata{}
+	}
+	result := SnapshotMetadata{ID: r.snapshotID, Segments: make([]SnapshotSegment, len(r.segments))}
+	for segmentIndex, segment := range r.segments {
+		result.Segments[segmentIndex] = SnapshotSegment{
+			ID:             segment.record.id,
+			Size:           segment.size,
+			DocumentCount:  segment.record.documentCount,
+			TimeMin:        segment.record.timeMin,
+			TimeMax:        segment.record.timeMax,
+			DeletionBitmap: append([]byte(nil), segment.record.deletionBitmap...),
+		}
+	}
+	return result
+}
+
+// SegmentCount returns the number of segments in the pinned snapshot.
+func (r *Reader) SegmentCount() int {
+	if r == nil {
+		return 0
+	}
+	return len(r.segments)
+}
+
 // TimeBounds returns the timestamp bounds recorded by the segment footer.
 func (r *Reader) TimeBounds() (int64, int64) {
 	if len(r.segments) == 0 {
@@ -154,6 +211,32 @@ func (r *Reader) VisitLiveDocuments(ctx context.Context, visit func(StoredDocume
 	return nil
 }
 
+// VisitPhysicalDocuments streams every physical document in the pinned
+// generation. The deleted argument reports the snapshot deletion mask for the
+// document; unlike VisitLiveDocuments this method does not hide deleted
+// documents. Documents are visited in ascending segment and local document
+// order and are borrowed for the callback duration.
+func (r *Reader) VisitPhysicalDocuments(ctx context.Context, visit func(StoredDocument, bool) error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	for segmentIndex := range r.segments {
+		segment := r.segments[segmentIndex]
+		storedReader, readerErr := r.storedReader(segmentIndex)
+		if readerErr != nil {
+			return readerErr
+		}
+		deleted, deletionErr := deletedDocuments(segment.record)
+		if deletionErr != nil {
+			return deletionErr
+		}
+		if visitErr := storedReader.visitPhysical(ctx, deleted, visit); visitErr != nil {
+			return visitErr
+		}
+	}
+	return nil
+}
+
 // Open selects the newest committed generation in the index directory at path,
 // validates its snapshot manifest and every segment that manifest references
 // against the grammar and the reader's configured bounds, and returns a Reader
@@ -172,12 +255,61 @@ func (r *Reader) VisitLiveDocuments(ctx context.Context, visit func(StoredDocume
 // It reports an error wrapping ErrCorrupt only when no committed generation
 // validates.
 func Open(path string) (*Reader, error) {
-	return openWithSnapshots(path, committedSnapshots)
+	return openWithSnapshots(path, committedSnapshots, true)
+}
+
+// OpenStrict opens only the newest committed snapshot in path. Unlike Open,
+// it never falls back to an older generation when that newest manifest or one
+// of its segments is damaged. Writers use this fail-closed mode at startup so
+// an acknowledged generation cannot silently disappear after a restart.
+func OpenStrict(path string) (*Reader, error) {
+	return openStrict(path, true)
+}
+
+// OpenStrictMetadataOnly is OpenStrict for callers that only read the
+// returned Reader's SnapshotMetadata before closing it -- garbage collection
+// scanning the manifest for live segment IDs, for example. It skips the
+// resident-content fast path pinSegment otherwise applies to small segments,
+// since that path exists to speed up repeated document decoding a
+// metadata-only caller never does; applying it here would read every
+// segment's full content into memory and immediately discard it. Under
+// bursty single-document admission (for example OAP's schema-registry
+// preload), where collection runs after nearly every write, that waste
+// dominates CPU and allocation.
+func OpenStrictMetadataOnly(path string) (*Reader, error) {
+	return openStrict(path, false)
+}
+
+func openStrict(path string, residentOK bool) (*Reader, error) {
+	snapshotPaths, segmentPaths, snapshotErr := committedSnapshots(path)
+	if snapshotErr != nil {
+		return nil, snapshotErr
+	}
+	if len(snapshotPaths) == 0 {
+		return nil, fmt.Errorf("open %q: %w", path, ErrNoSnapshot)
+	}
+	snapshotPath := snapshotPaths[len(snapshotPaths)-1]
+	manifest, readErr := readManifest(snapshotPath)
+	if readErr != nil {
+		return nil, readErr
+	}
+	visibleDocCount, segments, parseErr := parseSnapshotSegments(segmentPaths, manifest, residentOK)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	if validationErr := validatePinnedSegments(segments); validationErr != nil {
+		return nil, errors.Join(validationErr, closePinnedSegments(segments))
+	}
+	snapshotID, validID := parseFinalName(filepath.Base(snapshotPath), ".snp")
+	if !validID {
+		return nil, corruptError("snapshot %q has an invalid identifier", snapshotPath)
+	}
+	return &Reader{snapshotID: snapshotID, visibleDocCount: visibleDocCount, segments: segments}, nil
 }
 
 type snapshotLister func(string) ([]string, map[uint64]string, error)
 
-func openWithSnapshots(path string, listSnapshots snapshotLister) (*Reader, error) {
+func openWithSnapshots(path string, listSnapshots snapshotLister, residentOK bool) (*Reader, error) {
 	var lastCandidateErr error
 	var lastCandidatePath string
 	for attempt := 0; attempt < maxOpenAttempts; attempt++ {
@@ -193,7 +325,7 @@ func openWithSnapshots(path string, listSnapshots snapshotLister) (*Reader, erro
 				lastCandidatePath = snapshotPath
 				continue
 			}
-			visibleDocCount, segments, parseErr := parseSnapshotSegments(segmentPaths, manifest)
+			visibleDocCount, segments, parseErr := parseSnapshotSegments(segmentPaths, manifest, residentOK)
 			if parseErr != nil {
 				lastCandidateErr = parseErr
 				lastCandidatePath = snapshotPath
@@ -292,29 +424,21 @@ func committedSnapshots(path string) ([]string, map[uint64]string, error) {
 	return snapshotPaths, segmentPaths, nil
 }
 
-func readDirectoryEntries(path string) ([]os.DirEntry, error) {
-	directory, openErr := os.Open(path)
-	if errors.Is(openErr, os.ErrNotExist) {
+func readDirectoryEntries(path string) ([]fs.DirEntry, error) {
+	entries, readErr := segmentFileSystem.ReadDirLimit(path, directoryReadSize)
+	if errors.Is(readErr, os.ErrNotExist) {
 		return nil, ErrNoSnapshot
 	}
-	if openErr != nil {
-		return nil, corruptError("open index directory %q", path, openErr)
-	}
-	entries, readErr := directory.ReadDir(directoryReadSize)
-	closeErr := directory.Close()
-	if closeErr != nil {
-		return nil, corruptError("close index directory %q", path, closeErr)
+	if readErr != nil {
+		return nil, corruptError("read index directory %q", path, readErr)
 	}
 	if len(entries) > maxDirectoryEntries {
 		return nil, corruptError("index directory %q contains more than %d entries", path, maxDirectoryEntries)
 	}
-	if readErr != nil && !errors.Is(readErr, io.EOF) {
-		return nil, corruptError("read index directory %q", path, readErr)
-	}
 	return entries, nil
 }
 
-func parseSnapshotSegments(segmentPaths map[uint64]string, payload []byte) (visibleDocCount int64, resultSegments []pinnedSegment, err error) {
+func parseSnapshotSegments(segmentPaths map[uint64]string, payload []byte, residentOK bool) (visibleDocCount int64, resultSegments []pinnedSegment, err error) {
 	if len(payload) < 4 {
 		return 0, nil, corruptError("snapshot is shorter than its reserved CRC32", nil)
 	}
@@ -344,7 +468,7 @@ func parseSnapshotSegments(segmentPaths map[uint64]string, payload []byte) (visi
 		if recordErr != nil {
 			return 0, nil, recordErr
 		}
-		pinnedRecord, segmentDocCount, segmentErr := pinSegment(record)
+		pinnedRecord, segmentDocCount, segmentErr := pinSegment(record, residentOK)
 		if segmentErr != nil {
 			return 0, nil, segmentErr
 		}
@@ -404,7 +528,78 @@ func (f *byteSegmentFile) ReadAt(destination []byte, offset int64) (int, error) 
 	return read, nil
 }
 
+// MaxResidentSegmentSize bounds how large a disk-backed segment may be and
+// still be read into memory whole by residentSegmentFile. This project's
+// legacy engine never pays a read cost at decode time at all: its segments
+// are mmap'd, and its decoders (e.g. the compatibility reader's uvarint
+// reader) parse directly off the resulting in-memory []byte, so
+// resolving a dictionary entry, a posting, or a stored document offset is a
+// plain slice index. nativeice's equivalent -- without mmap -- is to read a
+// small-enough segment's full content into memory once via this package's
+// own fs.FileSystem.Read, then serve it through the same byteSegmentFile
+// already used for not-yet-persisted segments: every decoder in this file
+// already treats segmentFile as an opaque ReadAt, so this needs no change
+// anywhere else, and a lookup that used to cost one pread syscall becomes a
+// memory copy. Above this bound a segment keeps the lazy, pread-per-access
+// pkg/fs file path instead of committing a potentially huge file to process
+// memory for the segment's entire lifetime.
+const MaxResidentSegmentSize = 64 << 20
+
+// segmentFileSystem is the sole fs.FileSystem instance nativeice uses to
+// read a qualifying segment's full content; it is stateless (a thin
+// wrapper over the os package plus a logger), so one package-level instance
+// is equivalent to constructing one per call.
+var segmentFileSystem fs.FileSystem = fs.NewLocalFileSystem()
+
+// residentSegmentFile returns a segmentFile backed by file's full content in
+// memory when size qualifies (see MaxResidentSegmentSize); otherwise it
+// returns file unchanged for the existing lazy path. On every path -- qualifying
+// or not, success or error -- the caller remains responsible for closing
+// file itself, matching every other validation step in pinSegment; this
+// keeps that function's existing errors.Join(err, file.Close()) pattern
+// correct instead of risking a double Close on an error from this call.
+func residentSegmentFile(size uint64, path string) (segmentFile, bool, error) {
+	if size > MaxResidentSegmentSize {
+		return nil, false, nil
+	}
+	content, readErr := segmentFileSystem.Read(path)
+	if readErr != nil {
+		return nil, true, fmt.Errorf("read segment %q into memory: %w", path, readErr)
+	}
+	if uint64(len(content)) != size {
+		return nil, true, corruptError("segment %q size changed while opening", path)
+	}
+	return &byteSegmentFile{data: content}, true, nil
+}
+
 func (*byteSegmentFile) Close() error { return nil }
+
+// fsSegmentFile serves a segment that stays on disk through pkg/fs.
+type fsSegmentFile struct{ file fs.File }
+
+func (f *fsSegmentFile) ReadAt(destination []byte, offset int64) (int, error) {
+	return f.file.Read(offset, destination)
+}
+
+func (f *fsSegmentFile) Close() error { return f.file.Close() }
+
+// openSegmentFile opens an immutable segment and returns its size. Segments
+// are read at scattered offsets for the life of their reader, and freshly
+// written ones are read back by the next query or merge, so the open asks the
+// OS to keep the whole file in its page cache. The advice is only a hint; a
+// rejected one leaves the file readable.
+func openSegmentFile(path string) (*fsSegmentFile, uint64, error) {
+	file, openErr := segmentFileSystem.OpenFile(path)
+	if openErr != nil {
+		return nil, 0, openErr
+	}
+	size, sizeErr := file.Size()
+	if sizeErr != nil {
+		return nil, 0, errors.Join(sizeErr, file.Close())
+	}
+	_ = fs.AdvisePageCache(file, fs.PageCacheWillNeed)
+	return &fsSegmentFile{file: file}, uint64(size), nil
+}
 
 // DecodedField is one stored value read from a native ICE segment.
 type DecodedField struct {
@@ -766,6 +961,20 @@ func (r *Reader) TermPosting(field string, term []byte) (TermPosting, bool, erro
 	return storedReader.termPosting(field, term)
 }
 
+// TermPostingBitmap resolves one exact term to a caller-owned document bitmap.
+// Unlike TermPosting it neither decodes the posting's frequency stream nor
+// materializes a document slice, which is all a membership test needs.
+func (r *Reader) TermPostingBitmap(field string, term []byte) (*roaringpkg.Bitmap, bool, error) {
+	if len(r.segments) != 1 {
+		return nil, false, fmt.Errorf("nativeice: term posting requires one segment, got %d", len(r.segments))
+	}
+	storedReader, readerErr := r.storedReader(0)
+	if readerErr != nil {
+		return nil, false, readerErr
+	}
+	return storedReader.termPostingBitmap(field, term)
+}
+
 // Fields returns every field represented in the segment, including stored-only,
 // indexed-only and doc-value-only fields.
 func (r *Reader) Fields() ([]string, error) {
@@ -1081,22 +1290,18 @@ type segmentFooter struct {
 	fieldsIndexEntries uint64
 }
 
-func pinSegment(record segmentRecord) (pinnedSegment, uint64, error) {
-	file, openErr := os.Open(record.path)
+func pinSegment(record segmentRecord, residentOK bool) (pinnedSegment, uint64, error) {
+	file, size, openErr := openSegmentFile(record.path)
 	if errors.Is(openErr, os.ErrNotExist) {
 		return pinnedSegment{}, 0, corruptError("open missing segment %d", record.id)
 	}
 	if openErr != nil {
 		return pinnedSegment{}, 0, corruptError("open segment %q", record.path, openErr)
 	}
-	info, statErr := file.Stat()
-	if statErr != nil {
-		return pinnedSegment{}, 0, errors.Join(corruptError("stat segment %q", record.path, statErr), file.Close())
-	}
-	if !info.Mode().IsRegular() || info.Size() < segmentFooterLength {
+	if size < segmentFooterLength {
 		return pinnedSegment{}, 0, errors.Join(corruptError("segment %q is shorter than its footer", record.path), file.Close())
 	}
-	footer, footerErr := readSegmentFooter(file, uint64(info.Size()), record.path)
+	footer, footerErr := readSegmentFooter(file, size, record.path)
 	if footerErr != nil {
 		return pinnedSegment{}, 0, errors.Join(footerErr, file.Close())
 	}
@@ -1113,7 +1318,23 @@ func pinSegment(record segmentRecord) (pinnedSegment, uint64, error) {
 	if footer.timeMin != record.timeMin || footer.timeMax != record.timeMax {
 		return pinnedSegment{}, 0, errors.Join(corruptError("segment %d time bounds differ from snapshot", record.id), file.Close())
 	}
-	return pinnedSegment{file: file, record: record, size: uint64(info.Size())}, footer.documentCount, nil
+	if !residentOK {
+		return pinnedSegment{file: file, record: record, size: size}, footer.documentCount, nil
+	}
+	resident, qualified, residentErr := residentSegmentFile(size, record.path)
+	if qualified {
+		// The resident copy (or this read attempt) makes the original
+		// handle redundant either way; close it before returning so a
+		// qualifying segment never keeps an unused fd open.
+		if residentErr != nil {
+			return pinnedSegment{}, 0, errors.Join(residentErr, file.Close())
+		}
+		if closeErr := file.Close(); closeErr != nil {
+			return pinnedSegment{}, 0, fmt.Errorf("close segment %q after reading into memory: %w", record.path, closeErr)
+		}
+		return pinnedSegment{file: resident, record: record, size: size}, footer.documentCount, nil
+	}
+	return pinnedSegment{file: file, record: record, size: size}, footer.documentCount, nil
 }
 
 func closePinnedSegments(segments []pinnedSegment) error {
@@ -1175,9 +1396,16 @@ func readSegmentFooter(file segmentFile, size uint64, path string) (segmentFoote
 
 //nolint:govet // decoder buffers are grouped with their parsed segment metadata.
 type storedSegmentReader struct {
-	file              segmentFile
-	path              string
-	chunkOffsets      []uint64
+	file         segmentFile
+	path         string
+	chunkOffsets []uint64
+	// documentOffsets is the fully preloaded per-document offset table
+	// (documentCount fixed-width entries). It is loaded once in
+	// newStoredSegmentReader, the same way chunkOffsets is, rather than
+	// reading one entry at a time per documentOffset call: a single bulk
+	// read trades N tiny pread syscalls (one per document visited, even for
+	// documents already read moments ago) for exactly one per segment.
+	documentOffsets   []uint64
 	compressedBuffer  []byte
 	decodedBuffer     []byte
 	loadedChunk       uint64
@@ -1190,10 +1418,16 @@ type storedSegmentReader struct {
 	dictionaryMu      sync.RWMutex
 	dictionaries      map[string]*vellum.FST
 	dictionaryReaders map[string]*sync.Pool
-	fieldStatsMu      sync.RWMutex
-	fieldStatsCache   map[string]cachedFieldStats
-	walkMu            sync.Mutex
-	fieldNameMu       sync.Mutex
+	// smallTermSets caches each field's exact term set for small segments,
+	// and termBlooms a bloom filter of each field's terms for larger ones (a
+	// nil filter means the dictionary is too large to summarize); see
+	// termAbsent. Both are guarded by dictionaryMu.
+	smallTermSets   map[string]map[string]struct{}
+	termBlooms      map[string]*filter.BloomFilter
+	fieldStatsMu    sync.RWMutex
+	fieldStatsCache map[string]cachedFieldStats
+	walkMu          sync.Mutex
+	fieldNameMu     sync.Mutex
 }
 
 type cachedFieldStats struct {
@@ -1250,10 +1484,30 @@ func newStoredSegmentReader(file segmentFile, size uint64, record segmentRecord)
 	if chunkErr := storedReader.loadChunkOffsets(); chunkErr != nil {
 		return nil, chunkErr
 	}
+	if offsetErr := storedReader.loadDocumentOffsets(); offsetErr != nil {
+		return nil, offsetErr
+	}
 	if fieldsErr := storedReader.loadFieldNames(); fieldsErr != nil {
 		return nil, fieldsErr
 	}
 	return storedReader, nil
+}
+
+func validatePinnedSegments(segments []pinnedSegment) error {
+	for _, segment := range segments {
+		storedReader, readerErr := newStoredSegmentReader(segment.file, segment.size, segment.record)
+		if readerErr != nil {
+			return readerErr
+		}
+		for _, fieldName := range storedReader.fieldNames {
+			if _, dictionaryErr := storedReader.dictionary(fieldName); dictionaryErr != nil {
+				storedReader.close()
+				return dictionaryErr
+			}
+		}
+		storedReader.close()
+	}
+	return nil
 }
 
 func (s *storedSegmentReader) close() {
@@ -1300,6 +1554,43 @@ func (s *storedSegmentReader) visit(ctx context.Context, deleted *roaringpkg.Bit
 				return documentErr
 			}
 			if visitErr := visit(document); visitErr != nil {
+				return visitErr
+			}
+		}
+	}
+	return nil
+}
+
+func (s *storedSegmentReader) visitPhysical(ctx context.Context, deleted *roaringpkg.Bitmap, visit func(StoredDocument, bool) error) error {
+	s.walkMu.Lock()
+	defer s.walkMu.Unlock()
+	if s.footer.documentCount == 0 {
+		return nil
+	}
+	chunkCount := (s.footer.documentCount + storedDocumentsPerChunk - 1) / storedDocumentsPerChunk
+	for chunkIndex := uint64(0); chunkIndex < chunkCount; chunkIndex++ {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		chunk, chunkErr := s.loadChunk(chunkIndex)
+		if chunkErr != nil {
+			return chunkErr
+		}
+		firstDocument := chunkIndex * storedDocumentsPerChunk
+		lastDocument := firstDocument + storedDocumentsPerChunk
+		if lastDocument > s.footer.documentCount {
+			lastDocument = s.footer.documentCount
+		}
+		for documentNumber := firstDocument; documentNumber < lastDocument; documentNumber++ {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			isDeleted := documentNumber <= math.MaxUint32 && deleted.Contains(uint32(documentNumber))
+			document, documentErr := s.decodeDocument(documentNumber, chunk)
+			if documentErr != nil {
+				return documentErr
+			}
+			if visitErr := visit(document, isDeleted); visitErr != nil {
 				return visitErr
 			}
 		}
@@ -1358,17 +1649,24 @@ func (s *storedSegmentReader) loadChunkOffsets() error {
 	if offsets[0] != 0 {
 		return corruptError("segment %q has a stored chunk table without a zero origin", s.path)
 	}
+	dataChunks := (s.footer.documentCount + storedDocumentsPerChunk - 1) / storedDocumentsPerChunk
+	expectedChunkCount := dataChunks + 1
+	// A legacy ICE merger at an exact 128-document boundary wrote one
+	// duplicated terminal offset. It describes no data chunk and is safe to
+	// ignore, but only this exact table shape is compatible.
+	legacyTerminalChunk := s.footer.documentCount > 0 && s.footer.documentCount%storedDocumentsPerChunk == 0 &&
+		chunkCount == expectedChunkCount+1 &&
+		offsets[dataChunks] == tableStart && offsets[dataChunks+1] == tableStart
 	for offsetIndex := 1; offsetIndex < len(offsets); offsetIndex++ {
 		if offsets[offsetIndex] < offsets[offsetIndex-1] || offsets[offsetIndex] > tableStart {
 			return corruptError("segment %q has invalid stored chunk offsets", s.path)
 		}
 	}
-	dataChunks := (s.footer.documentCount + storedDocumentsPerChunk - 1) / storedDocumentsPerChunk
 	if s.footer.documentCount == 0 {
 		if chunkCount > 2 {
 			return corruptError("segment %q has too many empty stored chunks", s.path)
 		}
-	} else if chunkCount != dataChunks+1 {
+	} else if !legacyTerminalChunk && chunkCount != expectedChunkCount {
 		return corruptError("segment %q has %d stored chunks for %d documents", s.path, chunkCount, s.footer.documentCount)
 	}
 	for chunkIndex := uint64(0); chunkIndex < dataChunks; chunkIndex++ {
@@ -1577,23 +1875,47 @@ func (s *storedSegmentReader) decodeDocument(documentNumber uint64, chunk []byte
 	return document, nil
 }
 
-func (s *storedSegmentReader) documentOffset(documentNumber uint64) (uint64, error) {
-	if documentNumber >= s.footer.documentCount {
-		return 0, corruptError("segment %q has an out-of-range stored document number", s.path)
+// loadDocumentOffsets preloads the fixed-width per-document offset table in
+// one bulk read, the same way loadChunkOffsets preloads the chunk table.
+// Without this, documentOffset would issue its own tiny pread for every
+// document visited -- including documents in a segment that was just fully
+// scanned moments earlier -- since the per-document-chunk cache in loadChunk
+// only ever holds the single most recently decoded chunk's data, not this
+// separate offset index.
+func (s *storedSegmentReader) loadDocumentOffsets() error {
+	documentCount := s.footer.documentCount
+	if documentCount == 0 {
+		s.documentOffsets = nil
+		return nil
 	}
 	storedIndexEnd := s.footer.docValueOffset
 	if storedIndexEnd == math.MaxUint64 {
 		storedIndexEnd = s.footer.fieldsIndexOffset
 	}
-	indexOffset := s.footer.storedIndexOffset + documentNumber*storedDocumentOffsetByteWidth
-	if indexOffset > storedIndexEnd-storedDocumentOffsetByteWidth {
-		return 0, corruptError("segment %q has a stored document offset outside its index", s.path)
+	if documentCount > maxStoredChunkTableSize/storedDocumentOffsetByteWidth {
+		return corruptError("segment %q has too many stored documents for its offset index", s.path)
 	}
-	var offsetData [storedDocumentOffsetByteWidth]byte
-	if readErr := s.readInto(indexOffset, offsetData[:]); readErr != nil {
-		return 0, readErr
+	tableLength := documentCount * storedDocumentOffsetByteWidth
+	if s.footer.storedIndexOffset > storedIndexEnd || tableLength > storedIndexEnd-s.footer.storedIndexOffset {
+		return corruptError("segment %q has an invalid stored document offset index", s.path)
 	}
-	return binary.BigEndian.Uint64(offsetData[:]), nil
+	table, tableErr := s.readBytes(s.footer.storedIndexOffset, tableLength)
+	if tableErr != nil {
+		return tableErr
+	}
+	offsets := make([]uint64, documentCount)
+	for index := range offsets {
+		offsets[index] = binary.BigEndian.Uint64(table[index*storedDocumentOffsetByteWidth:])
+	}
+	s.documentOffsets = offsets
+	return nil
+}
+
+func (s *storedSegmentReader) documentOffset(documentNumber uint64) (uint64, error) {
+	if documentNumber >= uint64(len(s.documentOffsets)) {
+		return 0, corruptError("segment %q has an out-of-range stored document number", s.path)
+	}
+	return s.documentOffsets[documentNumber], nil
 }
 
 func (s *storedSegmentReader) readBytes(offset, length uint64) ([]byte, error) {
@@ -1672,25 +1994,28 @@ func deletionCount(payload []byte, documentCount uint64) (uint64, error) {
 }
 
 func readManifest(path string) ([]byte, error) {
-	file, openErr := os.Open(path)
+	file, openErr := segmentFileSystem.OpenFile(path)
 	if openErr != nil {
 		return nil, openErr
 	}
 	defer func() {
 		_ = file.Close()
 	}()
-	info, statErr := file.Stat()
-	if statErr != nil {
-		return nil, statErr
+	size, sizeErr := file.Size()
+	if sizeErr != nil {
+		return nil, sizeErr
 	}
-	if !info.Mode().IsRegular() || info.Size() < 0 {
+	if size < 0 {
 		return nil, fmt.Errorf("unsupported snapshot file %q", path)
 	}
-	if info.Size() > maxManifestSize {
-		return nil, fmt.Errorf("%w: %q is %d bytes", errManifestTooLarge, path, info.Size())
+	if size > maxManifestSize {
+		return nil, fmt.Errorf("%w: %q is %d bytes", errManifestTooLarge, path, size)
 	}
-	payload := make([]byte, int(info.Size()))
-	if _, readErr := io.ReadFull(file, payload); readErr != nil {
+	payload := make([]byte, int(size))
+	if len(payload) == 0 {
+		return payload, nil
+	}
+	if _, readErr := file.Read(0, payload); readErr != nil {
 		return nil, readErr
 	}
 	return payload, nil

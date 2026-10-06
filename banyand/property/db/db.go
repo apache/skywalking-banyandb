@@ -19,6 +19,8 @@
 package db
 
 import (
+	"bytes"
+	"container/heap"
 	"context"
 	"errors"
 	"fmt"
@@ -44,6 +46,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
@@ -114,9 +117,9 @@ type SnapshotConfig struct {
 type IndexConfig struct {
 	BatchWaitSec       int64
 	WaitForPersistence bool
-	// NativeWriter selects the native segment plugin for every shard this
-	// database opens, existing and newly created alike. False retains the
-	// legacy bluge writer unchanged.
+	// NativeWriter selects the native owner and query/mutation path for every
+	// shard this database opens, existing and newly created alike. False keeps
+	// the legacy writer path for rollback and compatibility operation.
 	NativeWriter bool
 }
 
@@ -136,7 +139,7 @@ type database struct {
 	metricsScope        meter.Scope
 	lfs                 fs.FileSystem
 	lock                fs.File
-	nativeOwner         *inverted.NativeWriterOwner
+	nativeLease         *native.FileRootLease
 	logger              *logger.Logger
 	repairScheduler     *repairScheduler
 	snapshotFunc        func(context.Context) (string, error)
@@ -177,13 +180,17 @@ func OpenDB(ctx context.Context, cfg Config, omr observability.MetricsRegistry, 
 		return nil, fmt.Errorf("cannot create lock file %s: %w", lockPath, err)
 	}
 	opened := false
+	var db *database
 	defer func() {
 		if !opened {
+			if db != nil && db.nativeLease != nil {
+				_ = db.nativeLease.Revoke()
+			}
 			_ = lock.Close()
 		}
 	}()
 
-	db := &database{
+	db = &database{
 		location:            loc,
 		logger:              l,
 		omr:                 omr,
@@ -202,7 +209,7 @@ func OpenDB(ctx context.Context, cfg Config, omr observability.MetricsRegistry, 
 		lock:                lock,
 	}
 	if cfg.Index.NativeWriter {
-		db.nativeOwner, err = inverted.NewNativeWriterOwner(lock, loc)
+		db.nativeLease, err = native.NewFileRootLease(lock, loc)
 		if err != nil {
 			return nil, err
 		}
@@ -246,13 +253,19 @@ func (db *database) cleanupStartup() error {
 		}
 		return true
 	})
-	if db.nativeOwner != nil {
-		multierr.AppendInto(&err, db.nativeOwner.Close())
-		db.nativeOwner = nil
-	} else if db.lock != nil {
-		multierr.AppendInto(&err, db.lock.Close())
-	}
+	db.releaseNativeLease(&err)
 	return err
+}
+
+func (db *database) releaseNativeLease(err *error) {
+	if db.nativeLease != nil {
+		multierr.AppendInto(err, db.nativeLease.Revoke())
+		db.nativeLease = nil
+	}
+	if db.lock != nil {
+		multierr.AppendInto(err, db.lock.Close())
+		db.lock = nil
+	}
 }
 
 func (db *database) load(ctx context.Context) error {
@@ -296,7 +309,7 @@ func (db *database) Update(ctx context.Context, shardID common.ShardID, id []byt
 	if currentShard, shardExists := db.getShard(property.Metadata.Group, shardID); !shardExists || currentShard != sd {
 		return errors.New("shard is closed")
 	}
-	err = sd.update(id, property)
+	err = sd.update(ctx, id, property)
 	if err != nil {
 		return err
 	}
@@ -328,12 +341,14 @@ func (db *database) Delete(ctx context.Context, docIDs [][]byte, delTime time.Ti
 }
 
 func (db *database) Query(ctx context.Context, req *propertyv1.QueryRequest) ([]QueriedProperty, error) {
+	if req == nil {
+		return nil, errors.New("property query is nil")
+	}
+	if len(req.Groups) == 0 {
+		return nil, errors.New("property query requires at least one group")
+	}
 	if db.transition.Load() {
 		return nil, errors.New("database writer transition in progress")
-	}
-	iq, err := inverted.BuildPropertyQuery(req, groupField, entityID)
-	if err != nil {
-		return nil, err
 	}
 	db.mu.RLock()
 	defer db.mu.RUnlock()
@@ -341,59 +356,91 @@ func (db *database) Query(ctx context.Context, req *propertyv1.QueryRequest) ([]
 		return nil, errors.New("database is closed")
 	}
 	requestedGroups := make(map[string]bool, len(req.Groups))
-	for _, g := range req.Groups {
-		requestedGroups[g] = true
+	for _, group := range req.Groups {
+		requestedGroups[group] = true
 	}
 	shards := db.collectGroupShards(requestedGroups)
 	if len(shards) == 0 {
 		return nil, nil
 	}
-
+	if db.indexConfig.NativeWriter {
+		if req.OrderBy == nil {
+			var result []QueriedProperty
+			for _, shardRef := range shards {
+				hits, err := shardRef.searchNative(ctx, req, nil, int(req.Limit))
+				if err != nil {
+					return nil, err
+				}
+				for _, hit := range hits {
+					result = append(result, hit)
+				}
+			}
+			return result, nil
+		}
+		return db.queryNativeSorted(ctx, shards, req)
+	}
+	iq, err := inverted.BuildPropertyQuery(req, groupField, entityID)
+	if err != nil {
+		return nil, err
+	}
 	if req.OrderBy == nil {
-		var res []QueriedProperty
-		for _, s := range shards {
-			results, searchErr := s.search(ctx, iq, nil, int(req.Limit))
+		var result []QueriedProperty
+		for _, shardRef := range shards {
+			hits, searchErr := shardRef.search(ctx, iq, nil, int(req.Limit))
 			if searchErr != nil {
 				return nil, searchErr
 			}
-			for _, r := range results {
-				res = append(res, r)
+			for _, hit := range hits {
+				result = append(result, hit)
 			}
 		}
-		return res, nil
+		return result, nil
 	}
-
 	iters := make([]sort.Iterator[*queryProperty], 0, len(shards))
-	for _, s := range shards {
-		// Each shard returns pre-sorted results (via SeriesSort)
-		r, searchErr := s.search(ctx, iq, req.OrderBy, int(req.Limit))
+	for _, shardRef := range shards {
+		hits, searchErr := shardRef.search(ctx, iq, req.OrderBy, int(req.Limit))
 		if searchErr != nil {
 			return nil, searchErr
 		}
-		if len(r) > 0 {
-			// Wrap result slice as iterator and add to merge
-			iters = append(iters, newQueryPropertyIterator(r))
+		if len(hits) > 0 {
+			iters = append(iters, newQueryPropertyIterator(hits))
 		}
 	}
-
 	if len(iters) == 0 {
 		return nil, nil
 	}
-
-	// K-way merge
-	isDesc := req.OrderBy.Sort == modelv1.Sort_SORT_DESC
-	mergeIter := sort.NewItemIter(iters, isDesc)
+	mergeIter := sort.NewItemIter(iters, req.OrderBy.Sort == modelv1.Sort_SORT_DESC)
 	defer mergeIter.Close()
-
-	// Collect merged results up to limit
 	result := make([]QueriedProperty, 0, queryCapacityUint(req.Limit))
 	for mergeIter.Next() {
-		if chargeErr := query.Charge(ctx, 128); chargeErr != nil {
-			return nil, chargeErr
+		result = append(result, mergeIter.Val())
+	}
+	return result, nil
+}
+
+func (db *database) queryNativeSorted(ctx context.Context, shards []*shard, req *propertyv1.QueryRequest) ([]QueriedProperty, error) {
+	iters := make([]*queryPropertyIterator, 0, len(shards))
+	for _, shardRef := range shards {
+		hits, err := shardRef.searchNative(ctx, req, req.OrderBy, int(req.Limit))
+		if err != nil {
+			return nil, err
+		}
+		if len(hits) > 0 {
+			iters = append(iters, newQueryPropertyIterator(hits))
+		}
+	}
+	if len(iters) == 0 {
+		return nil, nil
+	}
+	mergeIter := newNativeQueryPropertyMergeIterator(iters, req.OrderBy.Sort == modelv1.Sort_SORT_DESC)
+	defer mergeIter.Close()
+	result := make([]QueriedProperty, 0, queryCapacityUint(req.Limit))
+	for mergeIter.Next() {
+		if err := query.Charge(ctx, 128); err != nil {
+			return nil, err
 		}
 		result = append(result, mergeIter.Val())
 	}
-
 	return result, nil
 }
 
@@ -549,12 +596,7 @@ func (db *database) Close() error {
 		}
 		return true
 	})
-	if db.nativeOwner != nil {
-		multierr.AppendInto(&err, db.nativeOwner.Close())
-		db.nativeOwner = nil
-	} else {
-		multierr.AppendInto(&err, db.lock.Close())
-	}
+	db.releaseNativeLease(&err)
 	return err
 }
 
@@ -563,7 +605,7 @@ func (db *database) Close() error {
 // shards are then reopened in the requested mode while the root lock remains
 // held. A failed reopen fails closed and releases the lease only after every
 // opened resource has been cleaned up.
-func (db *database) SwitchIndexWriter(ctx context.Context, native bool) error {
+func (db *database) SwitchIndexWriter(ctx context.Context, useNative bool) error {
 	if db.closed.Load() {
 		return errors.New("database is closed")
 	}
@@ -605,27 +647,22 @@ func (db *database) SwitchIndexWriter(ctx context.Context, native bool) error {
 	}
 	if closeErr := closeShards(); closeErr != nil {
 		db.closed.Store(true)
-		if db.nativeOwner != nil {
-			multierr.AppendInto(&closeErr, db.nativeOwner.Close())
-			db.nativeOwner = nil
-		} else {
-			multierr.AppendInto(&closeErr, db.lock.Close())
-		}
+		db.releaseNativeLease(&closeErr)
 		db.transition.Store(false)
 		return fmt.Errorf("close shards for writer transition: %w", closeErr)
 	}
 
-	if native && db.nativeOwner == nil {
-		owner, ownerErr := inverted.NewNativeWriterOwner(db.lock, db.location)
+	if useNative && db.nativeLease == nil {
+		lease, ownerErr := native.NewFileRootLease(db.lock, db.location)
 		if ownerErr != nil {
 			db.closed.Store(true)
 			_ = db.lock.Close()
 			db.transition.Store(false)
 			return fmt.Errorf("acquire native writer ownership: %w", ownerErr)
 		}
-		db.nativeOwner = owner
+		db.nativeLease = lease
 	}
-	db.indexConfig.NativeWriter = native
+	db.indexConfig.NativeWriter = useNative
 
 	var loadErr error
 	for _, groupDir := range lfs.ReadDir(db.location) {
@@ -653,12 +690,7 @@ func (db *database) SwitchIndexWriter(ctx context.Context, native bool) error {
 		}
 		cleanupErr := closeShards()
 		db.closed.Store(true)
-		if db.nativeOwner != nil {
-			multierr.AppendInto(&cleanupErr, db.nativeOwner.Close())
-			db.nativeOwner = nil
-		} else {
-			multierr.AppendInto(&cleanupErr, db.lock.Close())
-		}
+		db.releaseNativeLease(&cleanupErr)
 		db.transition.Store(false)
 		return fmt.Errorf("reopen shards for writer transition: %w", multierr.Append(loadErr, cleanupErr))
 	}
@@ -668,12 +700,7 @@ func (db *database) SwitchIndexWriter(ctx context.Context, native bool) error {
 		if schedulerErr != nil {
 			cleanupErr := closeShards()
 			db.closed.Store(true)
-			if db.nativeOwner != nil {
-				multierr.AppendInto(&cleanupErr, db.nativeOwner.Close())
-				db.nativeOwner = nil
-			} else {
-				multierr.AppendInto(&cleanupErr, db.lock.Close())
-			}
+			db.releaseNativeLease(&cleanupErr)
 			db.transition.Store(false)
 			return fmt.Errorf("recreate repair scheduler for writer transition: %w", multierr.Append(schedulerErr, cleanupErr))
 		}
@@ -708,7 +735,11 @@ func (db *database) collect() {
 			return true
 		}
 		for _, s := range *sLst {
-			s.store.CollectMetrics()
+			if s.nativeStore != nil {
+				s.nativeStore.collectMetrics()
+			} else if s.store != nil {
+				s.store.CollectMetrics()
+			}
 		}
 		return true
 	})
@@ -766,7 +797,12 @@ func (db *database) TakeSnapShot(ctx context.Context, sn string) *databasev1.Sna
 			}
 			snpDir := path.Join(db.snapshotDir, sn, storage.DataDir, shardRef.group, filepath.Base(shardRef.location))
 			db.lfs.MkdirPanicIfExist(snpDir, storage.DirPerm)
-			snapshotErr := shardRef.store.TakeFileSnapshot(snpDir)
+			var snapshotErr error
+			if shardRef.nativeStore != nil {
+				snapshotErr = shardRef.nativeStore.takeFileSnapshot(snpDir)
+			} else {
+				snapshotErr = shardRef.store.TakeFileSnapshot(snpDir)
+			}
 			if snapshotErr != nil {
 				db.logger.Error().Err(snapshotErr).Str("group", shardRef.group).
 					Str("shard", filepath.Base(shardRef.location)).Msg("fail to take shard snapshot")
@@ -809,6 +845,7 @@ type queryProperty struct {
 	id          []byte
 	source      []byte
 	sortedValue []byte
+	sortMissing bool
 	timestamp   int64
 	deleteTime  int64
 }
@@ -842,6 +879,90 @@ func (q *queryProperty) SortedField() []byte {
 type queryPropertyIterator struct {
 	data  []*queryProperty
 	index int
+}
+
+// nativeQueryPropertyMergeIterator preserves missing-value ordering across
+// shards without encoding missing as a byte sentinel that could collide with
+// a valid property tag value.
+type nativeQueryPropertyMergeIterator struct {
+	heap    *nativeQueryPropertyMergeHeap
+	current *queryProperty
+}
+
+func newNativeQueryPropertyMergeIterator(iters []*queryPropertyIterator, desc bool) *nativeQueryPropertyMergeIterator {
+	frontier := &nativeQueryPropertyMergeHeap{desc: desc, items: make([]*nativeQueryPropertyMergeHead, 0, len(iters))}
+	for _, iter := range iters {
+		if iter.Next() {
+			frontier.items = append(frontier.items, &nativeQueryPropertyMergeHead{item: iter.Val(), iter: iter})
+		}
+	}
+	heap.Init(frontier)
+	return &nativeQueryPropertyMergeIterator{heap: frontier}
+}
+
+func (it *nativeQueryPropertyMergeIterator) Next() bool {
+	if it.heap.Len() == 0 {
+		it.current = nil
+		return false
+	}
+	head := heap.Pop(it.heap).(*nativeQueryPropertyMergeHead)
+	it.current = head.item
+	if head.iter.Next() {
+		head.item = head.iter.Val()
+		heap.Push(it.heap, head)
+	}
+	return true
+}
+
+func (it *nativeQueryPropertyMergeIterator) Val() *queryProperty { return it.current }
+
+func (it *nativeQueryPropertyMergeIterator) Close() error { return nil }
+
+type nativeQueryPropertyMergeHead struct {
+	item *queryProperty
+	iter *queryPropertyIterator
+}
+
+type nativeQueryPropertyMergeHeap struct {
+	items []*nativeQueryPropertyMergeHead
+	desc  bool
+}
+
+func (h nativeQueryPropertyMergeHeap) Len() int { return len(h.items) }
+
+func (h nativeQueryPropertyMergeHeap) Less(left, right int) bool {
+	return nativeQueryPropertyLess(h.items[left].item, h.items[right].item, h.desc)
+}
+
+func (h nativeQueryPropertyMergeHeap) Swap(left, right int) {
+	h.items[left], h.items[right] = h.items[right], h.items[left]
+}
+
+func (h *nativeQueryPropertyMergeHeap) Push(value any) {
+	h.items = append(h.items, value.(*nativeQueryPropertyMergeHead))
+}
+
+func (h *nativeQueryPropertyMergeHeap) Pop() any {
+	last := len(h.items) - 1
+	value := h.items[last]
+	h.items = h.items[:last]
+	return value
+}
+
+func nativeQueryPropertyLess(left, right *queryProperty, desc bool) bool {
+	if left.sortMissing != right.sortMissing {
+		return !left.sortMissing
+	}
+	if !left.sortMissing {
+		cmp := bytes.Compare(left.sortedValue, right.sortedValue)
+		if cmp != 0 {
+			if desc {
+				return cmp > 0
+			}
+			return cmp < 0
+		}
+	}
+	return bytes.Compare(left.id, right.id) < 0
 }
 
 func newQueryPropertyIterator(data []*queryProperty) *queryPropertyIterator {

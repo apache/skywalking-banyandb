@@ -29,7 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted/internal/nativeice"
+	"github.com/apache/skywalking-banyandb/pkg/index/internal/nativeice"
 )
 
 // The three function types below are the NIDX-02B boundary. They are the

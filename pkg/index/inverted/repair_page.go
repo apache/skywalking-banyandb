@@ -23,7 +23,7 @@ import (
 	"fmt"
 
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted/internal/nativeice"
+	"github.com/apache/skywalking-banyandb/pkg/index/internal/nativeice"
 )
 
 // RepairSortFieldCount is the number of fixed Property repair sort components.

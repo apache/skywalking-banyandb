@@ -8,6 +8,10 @@ Release Notes.
 
 - Add a native ICE v3 encoder that writes committed index generations compatible with existing readers.
 - Cut the Property database's index writer over to the native segment plugin, selected by both the `property` and `schema-server` roles. `banyand/property/db.OpenDB` now acquires its exclusive `<Location>/lock` before scanning shard directories or opening any writer, and releases it if a later startup step fails. A rollback (flipping the selection back and restarting) reopens the same on-disk shards with the retained legacy writer unchanged.
+- Complete the Property native role cutover for writes, immutable/NRT publication, repair, filtering, ordering, projection, and persistence. Native is the default for the `property` and `schema-server` roles; the legacy writer remains an explicit rollback path. Native ICE segments reserve `_id` as field ID zero and sort all other field names lexically for mixed-version merge compatibility. See the [Property native cutover verification](docs/design/0.12.0/native-inverted-index/verification/property-native-cutover/README.md) report.
+- Serve the Stream element index, the dump index resolver, and `bydbctl analyze` from the native index: exact, existence, range, NOT, MATCH (keyword, simple, standard, and URL analyzers), sort, snapshot, and external-segment receive.
+- [Breaking Change] Property no longer indexes tags named `source`. Schema properties carry their full JSON spec in that tag; the value is still stored, returned, and sortable, but a Property query filtering on a tag named `source` no longer matches.
+- Route native index file operations through `pkg/fs`, which gains page-cache advice (`AdvisePageCache`, `SetCached`) and error-returning `MkdirAll`, `ReadDirLimit`, `Lstat`, and `SyncDir`.
 
 - Add logging related flags to the FODC proxy and agent. Every BanyanDB binary now shares the same logging flags and the matching `BYDB_LOGGING_*` environment variables.
 - [Breaking Change] Remove the row-based query execution path from the Stream, Measure and Trace query engines. Measure TopN pre-aggregation is unchanged and still executes row-based. The `--stream-vectorized-enabled`, `--trace-vectorized-enabled` and `--measure-vectorized-enabled` flags stay registered but no longer select an engine; `=false` now fails fast at startup on standalone, data and liaison nodes. A query shape the vectorized engine cannot plan now returns an error instead of falling through to row execution. See [Upgrading to 0.12](docs/operation/upgrade.md#upgrading-to-012).
@@ -18,6 +22,7 @@ Release Notes.
 
 ### Bug Fixes
 
+- Fix a data race in Measure TopN where a pooled TopN value reused for a query wrote its tag names into the streaming processor's entity tag name slice.
 - Stamp `RELEASE_VERSION` into official release binaries so `--version` reports the release instead of `-`.
 - Pack the source release from `git archive` and reject archives that contain ELF/Mach-O binaries.
 - Stop declaring unbundled MCP npm dependencies in binary-package root `LICENSE` files (MCP Eyes output stays under `mcp/`).

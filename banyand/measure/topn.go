@@ -1095,7 +1095,10 @@ type TopNValue[K streaming.TopSortKey] struct {
 
 func (t *TopNValue[K]) setMetadata(valueName string, entityTagNames []string) {
 	t.valueName = valueName
-	t.entityTagNames = entityTagNames
+	// Copy instead of aliasing: a pooled TopNValue keeps this backing array
+	// across Reset, and a later Unmarshal appends into it, which would race
+	// with and overwrite the caller's long-lived tag names.
+	t.entityTagNames = append(t.entityTagNames[:0], entityTagNames...)
 }
 
 func (t *TopNValue[K]) addValue(value K, entityValues []*modelv1.TagValue) {
