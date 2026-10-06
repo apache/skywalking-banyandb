@@ -41,3 +41,27 @@ func TestOracleParity(t *testing.T) {
 		}
 	}
 }
+
+func TestOracleTokenSequenceParity(t *testing.T) {
+	inputs := [][]byte{
+		[]byte("Mixed 123 café 中文 can't"), []byte("the THE repeated repeated"), []byte(""),
+		{0xff, 'A', '-', '2'},
+		[]byte("http://example.com/a/b?c=d&e=f#g"), []byte("b a b a"),
+	}
+	for _, name := range []string{"keyword", "simple", "standard", "url"} {
+		for _, input := range inputs {
+			got, err := Tokens(name, input)
+			require.NoError(t, err)
+			stream := legacy.Analyzers[name].Analyze(input)
+			want := make([]string, 0, len(stream))
+			for _, token := range stream {
+				want = append(want, string(token.Term))
+			}
+			if len(want) == 0 {
+				require.Empty(t, got, "analyzer=%s input=%q", name, input)
+				continue
+			}
+			require.Equal(t, want, got, "analyzer=%s input=%q", name, input)
+		}
+	}
+}
