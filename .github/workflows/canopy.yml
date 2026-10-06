@@ -33,6 +33,159 @@ on:
       - '.github/workflows/canopy.yml'
 
 jobs:
+  # Canopy must be buildable and runnable natively on macOS, including Apple
+  # Silicon, without a container. This is the reproduction of skywalking#14094:
+  # `make -C canopy build` failed on darwin/arm64 during `npm install` with
+  # EBADPLATFORM, because web/package.json listed @esbuild/linux-x64 and
+  # @rolldown/binding-linux-x64-gnu as mandatory devDependencies. Native
+  # platform binaries belong in a tool's own optionalDependencies, never in ours.
+  #
+  # The lockfile and the install are the whole test: EBADPLATFORM is raised by npm
+  # during resolution, before any compilation, so `npm ci` succeeding on
+  # macos-latest is the regression guard. The build then proves the toolchain works
+  # end to end. No Docker is involved, which is the point.
+  #
+  # Native install and build only: the Linux job above remains the full suite
+  # (typecheck, lint, unit and contract tests, CSS assertions).
+  native-macos:
+    name: Native build (macOS)
+    if: github.event_name == 'pull_request'
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: canopy
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.6.0'
+          cache: 'npm'
+          cache-dependency-path: canopy/package-lock.json
+
+      - name: Report the platform
+        run: |
+          echo "os:   $(uname -s)"
+          echo "arch: $(uname -m)"
+          node -e "console.log('node:', process.version, process.platform, process.arch)"
+
+      - name: Install (the step that failed with EBADPLATFORM)
+        run: npm ci
+
+      - name: Platform binaries belong in optionalDependencies, never in dependencies
+        # The failure mode is a platform-pinned native binary in dependencies or
+        # devDependencies: npm resolves those strictly and refuses on every other
+        # platform (EBADPLATFORM). In optionalDependencies an os/cpu mismatch is
+        # SKIPPED, which is what makes a cross-platform lockfile possible.
+        #
+        # This catches the shape rather than the instance, so the same mistake one
+        # package over does not come back.
+        run: |
+          set -e
+          offenders=$(node -e '
+            const fs = require("fs");
+            const bad = [];
+            // A native binary is named <tool>-<platform>-<arch>, so the platform
+            // token is what gives it away. Matching it after a dash or a slash
+            // covers both "@esbuild/linux-x64" and
+            // "@rolldown/binding-linux-x64-gnu".
+            const isPlatformBinary = (n) =>
+              /(^|[-/])(darwin|linux|windows|android|freebsd|netbsd|sunos|win32)([-/]|$)/.test(n);
+            for (const f of ["web/package.json", "server/package.json", "shared/package.json"]) {
+              if (!fs.existsSync(f)) continue;   // a workspace may be removed
+              const p = JSON.parse(fs.readFileSync(f, "utf8"));
+              for (const field of ["dependencies", "devDependencies"]) {
+                for (const name of Object.keys(p[field] || {})) {
+                  if (isPlatformBinary(name)) bad.push(f + " " + field + " " + name);
+                }
+              }
+            }
+            console.log(bad.join("\n"));
+          ')
+          if [ -n "$offenders" ]; then
+            echo "::error::platform-specific native binary in a strict dependency field:"
+            echo "$offenders"
+            echo "Move it to optionalDependencies, where npm skips a platform mismatch."
+            exit 1
+          fi
+          echo "✓ no platform-pinned dependency or devDependency"
+
+          # The lockfile must actually carry every supported platform, or npm ci
+          # on another host installs no native binding at all. This is npm bug
+          # #4828, and it is invisible until you build on a second platform.
+          missing=$(node -e '
+            const fs = require("fs");
+            const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+            const present = new Set(Object.keys(lock.packages)
+              .filter((k) => k.startsWith("node_modules/@rolldown/binding-"))
+              .map((k) => k.replace("node_modules/@rolldown/binding-", "")));
+            const want = ["darwin-arm64", "darwin-x64", "linux-arm64-gnu",
+                          "linux-arm64-musl", "linux-x64-gnu",
+                          "win32-arm64-msvc", "win32-x64-msvc"];
+            console.log(want.filter((w) => !present.has(w)).join("\n"));
+          ')
+          if [ -n "$missing" ]; then
+            echo "::error::platform bindings missing from package-lock.json:"
+            echo "$missing"
+            echo "npm pruned them (npm/cli#4828). Declare them in web/package.json"
+            echo "optionalDependencies and regenerate the lockfile."
+            exit 1
+          fi
+          echo "✓ lockfile carries every supported platform binding"
+
+      - name: Build (web)
+        run: npm run -w web build
+
+      - name: Build (server)
+        run: npm run -w server build
+
+      # skywalking#14094 asks for native macOS BUILD **and run** support: a
+      # Darwin-specific startup or asset-loading failure would pass a
+      # compile-only check. The BFF serves the SPA from ../web/dist, resolved
+      # against process.cwd(), so it must be started from server/ -- itself a cwd
+      # assumption worth having CI assert on macOS.
+      #
+      # No database is needed: BANYANDB_TARGET is only contacted per request and
+      # neither route makes one. SESSION_SECRET is required unless NODE_ENV is
+      # development; CANOPY_DEV_NOAUTH keeps this clearly on the dev path, so it
+      # cannot be mistaken for a production check.
+      - name: Start the BFF and probe it
+        run: |
+          set -e
+          cd server
+          NODE_ENV=development \
+          CANOPY_DEV_NOAUTH=true \
+          SESSION_SECRET=0123456789abcdef0123456789abcdef \
+          PORT=4173 \
+            node dist/src/index.js > /tmp/canopy-bff.log 2>&1 &
+          echo $! > /tmp/canopy-bff.pid
+
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null "http://127.0.0.1:4173/healthz" 2>/dev/null; then ok=1; break; fi
+            if ! kill -0 "$(cat /tmp/canopy-bff.pid)" 2>/dev/null; then
+              echo "::error::the BFF exited during startup:"; cat /tmp/canopy-bff.log; exit 1
+            fi
+            sleep 1
+          done
+          [ "$ok" = "1" ] || { echo "::error::the BFF never became ready:"; cat /tmp/canopy-bff.log; exit 1; }
+
+          health=$(curl -fsS "http://127.0.0.1:4173/healthz")
+          echo "  /healthz -> $health"
+          echo "$health" | grep -q '"status":"ok"' \
+            || { echo "::error::unexpected /healthz body: $health"; exit 1; }
+
+          code=$(curl -s -o /tmp/canopy-root.html -w '%{http_code}' "http://127.0.0.1:4173/")
+          echo "  /        -> HTTP $code"
+          [ "$code" = "200" ] \
+            || { echo "::error::the SPA was not served. Is web/dist present?"; cat /tmp/canopy-bff.log; exit 1; }
+          grep -qi "<title>" /tmp/canopy-root.html \
+            || { echo "::error::/ did not return the SPA HTML"; head -5 /tmp/canopy-root.html; exit 1; }
+
+          kill "$(cat /tmp/canopy-bff.pid)" 2>/dev/null || true
+          echo "  native macOS runtime OK"
+
   # Verification is a PR-time concern. A push to main is a fast-forward of an
   # already-green PR head, so re-running the suite there would only re-prove
   # what the PR proved; main just builds and publishes the image.
@@ -81,6 +234,35 @@ jobs:
       - name: Build (server)
         run: npm run -w server build
 
+      # canopy/Dockerfile installs runtime dependencies with
+      # `npm ci --omit=dev --omit=optional`, because the rolldown native bindings
+      # are build-only but optionalDependencies are not dev-scoped. That is safe
+      # only while no runtime workspace needs an optional dependency; this fails
+      # the moment that stops being true, rather than leaving a runtime image
+      # quietly missing a native module.
+      - name: No runtime workspace may declare an optional dependency
+        run: |
+          set -e
+          offenders=$(node -e '
+            const fs = require("fs");
+            const bad = [];
+            for (const w of ["server", "shared"]) {
+              const f = w + "/package.json";
+              const p = JSON.parse(fs.readFileSync(f, "utf8"));
+              const names = Object.keys(p.optionalDependencies || {});
+              if (names.length) bad.push(f + ": " + names.join(", "));
+            }
+            console.log(bad.join("\n"));
+          ')
+          if [ -n "$offenders" ]; then
+            echo "::error::a runtime workspace declares an optional dependency, which"
+            echo "'npm ci --omit=dev --omit=optional' in canopy/Dockerfile would drop:"
+            echo "$offenders"
+            echo "Move it to dependencies, or drop --omit=optional deliberately."
+            exit 1
+          fi
+          echo "✓ no runtime optional dependencies"
+
       - name: Verify CSS preserves :has() and color-mix()
         run: |
           grep -r "has(" web/dist/assets/*.css && echo "✓ :has() preserved in built CSS"
@@ -93,11 +275,18 @@ jobs:
   image-build:
     name: Image build (canopy)
     runs-on: ubuntu-latest
-    needs: build-test
-    # On a PR, build-test gates the image. On main it is skipped, and a skipped
-    # dependency would skip this job too — so accept 'skipped' explicitly.
-    # always() is required for the `if` to be evaluated at all in that state.
-    if: always() && (needs.build-test.result == 'success' || needs.build-test.result == 'skipped')
+    # A canopy PR that cannot be built natively on macOS should not produce an
+    # image either: skywalking#14094 is exactly that case, and the image is the
+    # artifact people install.
+    needs: [build-test, native-macos]
+    # On a PR, build-test and native-macos gate the image. On main both are
+    # skipped, and a skipped dependency would skip this job too — so accept
+    # 'skipped' explicitly. always() is required for the `if` to be evaluated at
+    # all in that state.
+    if: >-
+      always() &&
+      (needs.build-test.result == 'success' || needs.build-test.result == 'skipped') &&
+      (needs.native-macos.result == 'success' || needs.native-macos.result == 'skipped')
     permissions:
       contents: read
       packages: write
