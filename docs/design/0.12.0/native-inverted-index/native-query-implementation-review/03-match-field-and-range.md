@@ -39,7 +39,7 @@ The operation boundary remains narrow:
 | Pinned view/reopen | The test queries a pinned view across deletion, then a fresh view and a reopened durable owner. | Passed |
 | Range caller | `TestNativeRangeExecuteEndpointsDeletionTimeAndPinnedView` and `TestNativeRangeExecuteCancellationAndClosedSearcher` in `pkg/query/logical/stream/native_range_integration_test.go`. | Passed in the focused Stream suite |
 | Cancellation/resource bounds | `TestNativeQ3QueryResourceBoundaries` in `pkg/index/native/q3_query_resource_test.go` deterministically cancels during dictionary traversal, checks term/candidate limits, reuses the view after errors, and verifies idempotent close. | Passed |
-| Native dependency guard | `TestAdapterHasNoRetiredTransitiveDependencies` checks the adapter's `go list -deps` closure for retired inverted/Bluge packages. | Passed |
+| Native dependency guard | `TestAdapterHasNoRetiredTransitiveDependencies` checks the adapter's `go list -deps` closure for the legacy inverted package and the retired index modules that `go.mod` redirects. | Passed |
 | Native package regression | `go test ./pkg/index/native -count=1` and the focused race test pass. | Passed |
 | Stream regression | `go test ./pkg/query/logical/stream -count=1` passes. | Passed |
 | Paired operation microbenchmark | `pkg/index/nativeadapter/q3_query_benchmark_test.go`, five 100ms samples over the same copied closed corpus and public native/legacy seams. | Native MatchField 51.656µs/6,289 B/192 allocs vs oracle 216.644µs/366,727 B/446; native Range 51.601µs/7,822 B/201 vs oracle 206.261µs/388,359 B/473 |

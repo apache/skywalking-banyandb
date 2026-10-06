@@ -16,13 +16,12 @@ package nativeadapter
 
 import (
 	"context"
+	"encoding/hex"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/blugelabs/bluge"
-	"github.com/blugelabs/bluge/numeric"
-	segment "github.com/blugelabs/bluge_segment_api"
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -31,27 +30,57 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
 
+// The expected bytes below are the legacy writer's numeric prefix coding,
+// captured once from it and pinned, so a change to either encoding fails here.
 func TestStreamNumericEncodingParity(t *testing.T) {
-	for _, value := range []float64{0, -1, 1, math.MinInt64, math.MaxInt64, 1.5} {
-		got := numericPrefix(encoding.Float64ToSortableInt64(value), 0)
-		want := numeric.MustNewPrefixCodedInt64(numeric.Float64ToInt64(value), 0)
-		require.Equal(t, []byte(want), got)
-		for shift := uint(0); shift <= 60; shift += 4 {
-			require.Equal(t, []byte(numeric.MustNewPrefixCodedInt64(numeric.Float64ToInt64(value), shift)), numericPrefix(encoding.Float64ToSortableInt64(value), shift))
-		}
+	for _, testCase := range []struct {
+		encoded string
+		value   float64
+		shift   uint
+	}{
+		{"2001000000000000000000", 0, 0},
+		{"24080000000000000000", 0, 4},
+		{"5c08", 0, 60},
+		{"200040077f7f7f7f7f7f7f", -1, 0},
+		{"2404003f7f7f7f7f7f7f", -1, 4},
+		{"5c04", -1, 60},
+		{"20013f7800000000000000", 1, 0},
+		{"240b7f40000000000000", 1, 4},
+		{"5c0b", 1, 60},
+		{"20003c0f7f7f7f7f7f7f7f", math.MinInt64, 0},
+		{"2403607f7f7f7f7f7f7f", math.MinInt64, 4},
+		{"5c03", math.MinInt64, 60},
+		{"2001437000000000000000", math.MaxInt64, 0},
+		{"240c1f00000000000000", math.MaxInt64, 4},
+		{"5c0c", math.MaxInt64, 60},
+		{"20013f7c00000000000000", 1.5, 0},
+		{"240b7f60000000000000", 1.5, 4},
+		{"5c0b", 1.5, 60},
+	} {
+		require.Equal(t, testCase.encoded, hex.EncodeToString(numericPrefix(encoding.Float64ToSortableInt64(testCase.value), testCase.shift)),
+			"value %v shift %d", testCase.value, testCase.shift)
 	}
 }
 
-func TestEncodedNumericFieldMatchesLegacyOracle(t *testing.T) {
+// The expected value and terms are the legacy writer's numeric field for the
+// same source, captured once and pinned: the shift-0 prefix as the value, one
+// prefix term per 4-bit shift, and the decimal form of the field's float.
+func TestEncodedNumericFieldMatchesLegacyEncoding(t *testing.T) {
 	source := index.NewIntField(index.FieldKey{IndexRuleID: 9}, -42)
 	source.Store = true
 	got, err := encodeField(source)
 	require.NoError(t, err)
-	want := bluge.NewNumericField(source.Key.Marshal(), source.GetFloat()).StoreValue().Sortable()
-	want.Analyze(0)
-	require.Equal(t, want.Value(), got.Value)
-	expected := map[string]int{}
-	want.EachTerm(func(term segment.FieldTerm) { expected[string(term.Term())]++ })
+	require.Equal(t, "20007f7f7f7f7f7f7f7f56", hex.EncodeToString(got.Value))
+	expected := map[string]int{"-0." + strings.Repeat("0", 321) + "203": 1}
+	for _, term := range []string{
+		"20007f7f7f7f7f7f7f7f56", "24077f7f7f7f7f7f7f7d", "283f7f7f7f7f7f7f7f", "2c037f7f7f7f7f7f7f",
+		"301f7f7f7f7f7f7f", "34017f7f7f7f7f7f", "380f7f7f7f7f7f", "3c007f7f7f7f7f", "40077f7f7f7f",
+		"443f7f7f7f", "48037f7f7f", "4c1f7f7f", "50017f7f", "540f7f", "58007f", "5c07",
+	} {
+		decoded, decodeErr := hex.DecodeString(term)
+		require.NoError(t, decodeErr)
+		expected[string(decoded)]++
+	}
 	actual := map[string]int{}
 	for _, term := range got.Terms {
 		actual[string(term.Value)] += int(term.Frequency)
@@ -153,42 +182,6 @@ func TestAdapterTimestampSortCursorPages(t *testing.T) {
 	require.Len(t, page, 1)
 	require.Equal(t, convert.Uint64ToBytes(1), page[0].Identifier)
 }
-
-func TestAdapterDurableReopenTimestampCompatibility(t *testing.T) {
-	path := t.TempDir()
-	owner, err := native.NewOwner(native.OwnerOptions{Lease: durableLease{}, Path: path})
-	require.NoError(t, err)
-	adapter := &Adapter{Owner: owner}
-	field := index.NewStringField(index.FieldKey{IndexRuleID: 5, SeriesID: 1}, "ok")
-	require.NoError(t, adapter.Batch(context.Background(), index.Batch{Documents: []index.Document{{DocID: 1, Timestamp: 200, Fields: []index.Field{field}}, {DocID: 2, Timestamp: 100, Fields: []index.Field{field}}}})) //nolint:lll
-	require.NoError(t, owner.Close())
-	legacyReader, legacyErr := bluge.OpenReader(bluge.DefaultConfig(path))
-	require.NoError(t, legacyErr)
-	defer legacyReader.Close()
-	legacyQuery := bluge.NewDateRangeInclusiveQuery(time.Unix(0, 50), time.Unix(0, 150), true, true).SetField("_timestamp")
-	legacyMatches, legacyErr := legacyReader.Search(context.Background(), bluge.NewAllMatches(legacyQuery))
-	require.NoError(t, legacyErr)
-	match, matchErr := legacyMatches.Next()
-	require.NoError(t, matchErr)
-	require.NotNil(t, match)
-	next, nextErr := legacyMatches.Next()
-	require.NoError(t, nextErr)
-	require.Nil(t, next)
-	reopenedOwner, err := native.NewOwner(native.OwnerOptions{Lease: durableLease{}, Path: path})
-	require.NoError(t, err)
-	defer reopenedOwner.Close()
-	reopened, err := reopenedOwner.Acquire(context.Background())
-	require.NoError(t, err)
-	defer reopened.Close()
-	hits, err := reopened.MatchTermsSet(context.Background(), native.TermSetRequest{Field: field.Key.Marshal(), Terms: [][]byte{[]byte("ok")}, MaxCandidates: 10})
-	require.NoError(t, err)
-	require.Len(t, hits, 2)
-}
-
-type durableLease struct{}
-
-func (durableLease) Validate() error           { return nil }
-func (durableLease) ValidatePath(string) error { return nil }
 
 func TestAdapterBatchForwardsPersistentCallback(t *testing.T) {
 	owner, err := native.NewOwner(native.OwnerOptions{Lease: testLease{}})

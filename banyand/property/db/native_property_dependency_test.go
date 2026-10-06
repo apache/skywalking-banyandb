@@ -42,8 +42,13 @@ func TestNativePropertyBackendHasNoRetiredQueryEngineImport(t *testing.T) {
 		}
 		for _, imported := range file.Imports {
 			path := strings.Trim(imported.Path.Value, `"`)
-			if strings.Contains(path, "/pkg/index/inverted") || strings.Contains(path, "blugelabs/bluge") {
-				t.Fatalf("native property backend %s imports retired query engine %q", backendPath, path)
+			// An allowlist rather than a list of retired modules: the backend may
+			// import only the standard library and this module, minus the
+			// legacy index package, so no third-party index library can enter.
+			standardLibrary := !strings.Contains(strings.SplitN(path, "/", 2)[0], ".")
+			ownModule := strings.HasPrefix(path, "github.com/apache/skywalking-banyandb/")
+			if strings.Contains(path, "/pkg/index/inverted") || (!standardLibrary && !ownModule) {
+				t.Fatalf("native property backend %s imports %q, outside its dependency budget", backendPath, path)
 			}
 		}
 	}

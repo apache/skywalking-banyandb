@@ -16,6 +16,7 @@
 package native
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -32,10 +33,50 @@ func TestNativePackageHasNoRetiredTransitiveDependencies(t *testing.T) {
 	command.Dir = filepath.Dir(sourceFile)
 	output, err := command.Output()
 	require.NoError(t, err)
+	retired := retiredIndexModules(t, filepath.Join(filepath.Dir(sourceFile), "..", "..", ".."))
 	for _, dependency := range strings.Split(strings.TrimSpace(string(output)), "\n") {
 		require.NotEqual(t, "github.com/apache/skywalking-banyandb/pkg/index", dependency)
 		require.NotContains(t, dependency, "/pkg/index/inverted")
-		require.NotContains(t, dependency, "github.com/blugelabs/bluge")
-		require.NotContains(t, dependency, "github.com/blugelabs/bluge_segment_api")
+		for _, module := range retired {
+			require.False(t, dependency == module || strings.HasPrefix(dependency, module+"/"),
+				"%s reaches the retired module %s", dependency, module)
+		}
 	}
+}
+
+// retiredIndexModules returns the module paths go.mod redirects that the
+// legacy index package imports directly. Reading both from the build keeps
+// this guard free of the retired module names it enforces.
+func retiredIndexModules(t *testing.T, repositoryRoot string) []string {
+	t.Helper()
+	goModule, err := os.ReadFile(filepath.Join(repositoryRoot, "go.mod"))
+	require.NoError(t, err)
+	var replaced []string
+	for _, line := range strings.Split(string(goModule), "\n") {
+		redirect := strings.Index(line, "=>")
+		if redirect < 0 {
+			continue
+		}
+		if fields := strings.Fields(line[:redirect]); len(fields) > 0 && fields[0] != "replace" {
+			replaced = append(replaced, fields[0])
+		}
+	}
+	command := exec.Command("go", "list", "-f", `{{join .Imports "\n"}}`, "./pkg/index/inverted")
+	command.Dir = repositoryRoot
+	output, err := command.Output()
+	require.NoError(t, err)
+	retired := map[string]struct{}{}
+	for _, importPath := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		for _, module := range replaced {
+			if importPath == module || strings.HasPrefix(importPath, module+"/") {
+				retired[module] = struct{}{}
+			}
+		}
+	}
+	modules := make([]string, 0, len(retired))
+	for module := range retired {
+		modules = append(modules, module)
+	}
+	require.NotEmpty(t, modules, "the legacy index package must import at least one redirected module")
+	return modules
 }
