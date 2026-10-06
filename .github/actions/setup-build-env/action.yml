@@ -48,9 +48,17 @@ runs:
       if: inputs.setup-node == 'true'
       uses: actions/setup-node@v6
       with:
-        node-version: 24.6.0
+        node-version-file: 'canopy/package.json'
         cache: 'npm'
-        cache-dependency-path: mcp/package-lock.json
+        # The Node version is read from canopy/package.json, but both workspaces
+        # install dependencies, and `make check-node-version` requires mcp and
+        # canopy to pin the SAME version. Keying the cache on mcp's lockfile
+        # alone meant a change to canopy's dependencies — or to the version the
+        # image is built from — did not invalidate it. Both lockfiles belong in
+        # the key.
+        cache-dependency-path: |
+          canopy/package-lock.json
+          mcp/package-lock.json
 
     - name: Install Go
       uses: actions/setup-go@v6

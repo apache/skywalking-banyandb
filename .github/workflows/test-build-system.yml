@@ -1,0 +1,237 @@
+# Licensed to Apache Software Foundation (ASF) under one or more contributor
+# license agreements. See the NOTICE file distributed with
+# this work for additional information regarding copyright
+# ownership. Apache Software Foundation (ASF) licenses this file to you under
+# the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+# Verifies the build system itself on the operating systems contributors use.
+#
+# This is deliberately NOT the generation test. It does not regenerate the
+# license artifacts, because that is the expensive part and CI already runs it
+# on ubuntu; what it checks is that a macOS or Windows contributor can run the
+# same commands we tell them to in CONTRIBUTING.md, on their own machine:
+#
+#   - the Node resolver agrees with the mcp and canopy package.json files;
+#   - the license verifier passes on a real tree, in every mode, including the
+#     negative cases, so a green CI step means the checks are actually running;
+#   - the pinned image builds on that host and the wrapper's driver logic is
+#     sound (right platform, right limits, no stray version literals);
+#   - the documented `make docker-run` escape hatch works.
+#
+# One cheap container run proves the image builds and the wrapper drives it; the
+# generation suite is left to the ubuntu check job.
+#
+# Design: docs/design/0.12.0/docker-canonical-build/README.md §7.2.
+
+name: Build System
+
+on:
+  # ci.yml invokes this as a reusable workflow (jobs.build-system.uses), which
+  # requires workflow_call. Without it the CALLER is rejected before any job runs
+  # -- and GitHub reports that as "this run likely failed because of a workflow
+  # file issue" with no job output at all.
+  # Called by ci.yml (jobs.build-system.uses) and gated from its result job, so it
+  # runs on every pull_request and on push to main exactly once. It previously
+  # ALSO carried its own pull_request and push triggers, which meant every PR ran
+  # the whole matrix twice -- once standalone and once through the caller -- and
+  # showed two sets of checks under the same names.
+  workflow_call:
+  # Kept for a one-off run against any branch, e.g. to reproduce a contributor's
+  # failure without pushing a commit.
+  workflow_dispatch:
+
+concurrency:
+  group: build-system-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Checks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            container: true
+          - os: macos-latest
+            container: false
+          - os: windows-latest
+            container: false
+    defaults:
+      run:
+        # Git Bash on Windows supplies bash, sed, grep, tar and sha256sum. The
+        # verifier is a shell script, so every step needs a POSIX shell; without
+        # this, windows-latest would run cmd and fail on the first script for a
+        # reason that has nothing to do with the code.
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-tags: true
+
+      - name: Report the host
+        run: |
+          echo "os:            ${{ matrix.os }}"
+          echo "uname:         $(uname -srm)"
+          echo "id:            $(id -u):$(id -g 2>/dev/null || echo 'not available')"
+          # Probe by use: BSD tar implements --exclude but its --help does not
+          # list it, so grepping the help text would misreport macOS.
+          probe=$(mktemp -d); touch "$probe/keep.txt"
+          if tar -cf /dev/null --exclude=never-matches "$probe" 2>/dev/null; then
+            echo "tar has --exclude: yes ($(tar --version 2>/dev/null | head -1 || echo bsdtar))"
+          else
+            echo "tar has --exclude: NO"
+          fi
+          rm -rf "$probe"
+          echo "sed is GNU:    $(sed --version 2>/dev/null | head -1 || echo 'BSD sed')"
+
+      - name: Shell syntax of the build scripts
+        run: |
+          set -e
+          for f in scripts/ci/check/license_manifest.sh \
+                   scripts/ci/check/node_version.sh \
+                   scripts/build/dockerfiles/entrypoint.sh; do
+            bash -n "$f"
+            echo "  ok $f"
+          done
+
+      - name: Node resolver agrees with the project manifests
+        run: |
+          set -e
+          echo "resolved: $(bash scripts/ci/check/node_version.sh resolve .)"
+          make check-node-version
+          # Negative case, so a green step cannot mean "the check did nothing".
+          # Built in a temp tree rather than by editing canopy/package.json:
+          # `sed -i` is not portable (BSD sed needs an argument), and this way
+          # the real worktree cannot be left modified. The macOS leg of the first
+          # CI run failed for exactly the sed reason.
+          tmp=$(mktemp -d)
+          mkdir -p "$tmp/mcp" "$tmp/canopy"
+          cp mcp/package.json "$tmp/mcp/package.json"
+          printf '{\n  "engines": {\n    "node": "99.0.0"\n  }\n}\n' > "$tmp/canopy/package.json"
+          if bash scripts/ci/check/node_version.sh check "$tmp" >/dev/null 2>&1; then
+            echo "::error::check-node-version accepted two different pins"
+            rm -rf "$tmp"
+            exit 1
+          fi
+          echo "  ok rejects a disagreeing pin"
+          cp canopy/package.json "$tmp/canopy/package.json"
+          bash scripts/ci/check/node_version.sh check "$tmp" >/dev/null
+          echo "  ok accepts agreeing pins"
+          rm -rf "$tmp"
+
+      - name: License verifier passes, and can fail
+        run: |
+          set -e
+          make check-license-outputs
+          echo "  ok clean tree passes"
+          # Each negative case must be caught, or this step proves nothing.
+          probe=canopy/licenses/license-ci-eol-probe.txt
+          printf 'a\r\nb\r\n' > "$probe"
+          if bash scripts/ci/check/license_manifest.sh check-eol . >/dev/null 2>&1; then
+            echo "::error::check-eol accepted a CR byte"; rm -f "$probe"; exit 1
+          fi
+          echo "  ok rejects CR bytes"
+          rm -f "$probe"
+          probe=dist/licenses/license-ci-untracked-probe.txt
+          printf 'x\n' > "$probe"
+          if bash scripts/ci/check/license_manifest.sh check-committed . >/dev/null 2>&1; then
+            echo "::error::check-committed accepted an untracked artifact"; rm -f "$probe"; exit 1
+          fi
+          echo "  ok rejects an untracked artifact"
+          rm -f "$probe"
+          make check-license-outputs
+
+      - name: Manifests agree across host and container generation
+        run: |
+          set -e
+          make license-manifest > /tmp/manifest.txt
+          bash scripts/ci/check/license_manifest.sh manifest-committed . > /tmp/committed.txt
+          diff -u /tmp/committed.txt /tmp/manifest.txt
+          echo "  ok $(wc -l </tmp/manifest.txt) artifacts match the committed blobs"
+
+      - name: Pinned inputs resolve, with no version literal in the wrapper
+        run: |
+          set -e
+          make print-build-args
+          if grep -vE '^[[:space:]]*#' scripts/build/dockerize.mk \
+             | grep -qE 'linux/amd64|bookworm|[0-9]{2}\.[0-9]+\.[0-9]+'; then
+            echo "::error::a version literal crept into dockerize.mk"
+            exit 1
+          fi
+          if grep -E 'FROM .*(golang|node|debian):[0-9]' scripts/build/dockerfiles/build.Dockerfile; then
+            echo "::error::a version literal crept into the Dockerfile"
+            exit 1
+          fi
+          echo "  ok no version literals"
+
+      - name: The platform cannot be overridden
+        run: |
+          set -e
+          requested=$(make -n docker-image PLATFORM=linux/arm64 2>/dev/null \
+                      | grep -oE '\-\-platform [a-z0-9/]+' | head -1 | awk '{print $2}')
+          echo "  requested arm64, got: $requested"
+          if [ "$requested" != "linux/amd64" ]; then
+            echo "::error::PLATFORM is overridable; the image would be mislabelled"
+            exit 1
+          fi
+
+      - name: The image builds here and agrees with the repository's declarations
+        # Only where a Linux Docker engine exists. GitHub's hosted macOS runners
+        # have no Docker at all (Apple Silicon cannot run the Linux daemon
+        # natively), and the Windows runners' daemon is in Windows-container mode.
+        # The checks above still run there, which is the point: they are what a
+        # macOS or Windows contributor hits first. Building the image itself is
+        # covered by the ubuntu leg here and by a contributor's own Docker
+        # Desktop or WSL2.
+        if: matrix.container
+        # One step, one container run: this is the expensive part of the job, and
+        # it is deliberately the cheapest possible target. It proves the pinned
+        # image builds on this host and that the wrapper drives it. The generation
+        # suite is not run here on purpose -- CI already runs it on ubuntu.
+        run: |
+          set -e
+          docker version
+          docker buildx version
+          # `set -e` plus a command substitution swallows the output on failure,
+          # which is how the first CI run failed with no diagnostic at all. Capture
+          # the status, print the output, and only then fail.
+          set +e
+          out=$(make docker-run TARGET=print-build-args 2>&1)
+          rc=$?
+          set -e
+          echo "$out"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::make docker-run failed (rc=$rc)"
+            exit "$rc"
+          fi
+          echo "$out" | grep -E '^(DEBIAN_IMAGE|GO_VERSION|NODE_VERSION|LICENSE_EYE_VERSION)='
+          # Go from go.mod, Node from mcp + canopy, license-eye from version.mk.
+          want_go=$(sed -n 's/^go //p' go.mod)
+          want_node=$(bash scripts/ci/check/node_version.sh resolve .)
+          want_eyes=$(sed -n 's/^LICENSE_EYE_VERSION := //p' scripts/build/version.mk)
+          echo "$out" | grep -q "GO_VERSION=$want_go"    || { echo "::error::Go version drift"; exit 1; }
+          echo "$out" | grep -q "NODE_VERSION=$want_node" || { echo "::error::Node version drift"; exit 1; }
+          echo "$out" | grep -q "LICENSE_EYE_VERSION=$want_eyes" || { echo "::error::license-eye drift"; exit 1; }
+          echo "  ok the image carries the versions the repository declares"
+
+      - name: The tree is still clean
+        run: |
+          if [ -n "$(git status -s)" ]; then
+            echo "::error::the build system steps left the tree dirty:"
+            git status -s
+            exit 1
+          fi
