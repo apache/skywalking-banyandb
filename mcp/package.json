@@ -50,7 +50,7 @@
   },
   "overrides": {
     "@hono/node-server": "^2.1.0",
-    "fast-uri": "^4.1.4",
+    "fast-uri": "^4.2.1",
     "hono": "^4.13.7",
     "qs": "^6.16.0"
   }
