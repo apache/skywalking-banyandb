@@ -164,6 +164,30 @@ func TestOpenSegmentTermsPreservesEmptyTerm(t *testing.T) {
 	}
 }
 
+func TestReaderVisitTermsPreservesEmptyTerm(t *testing.T) {
+	payload, encodeErr := EncodeSegment(Generation{Documents: []EncodeDocument{
+		{Identifier: []byte("doc-empty"), Fields: []EncodeField{{Name: "group", Index: true, Terms: []EncodeTerm{{Value: nil, Frequency: 1}}}}},
+	}})
+	if encodeErr != nil {
+		t.Fatal(encodeErr)
+	}
+	reader, openErr := OpenSegment(payload)
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	t.Cleanup(func() { _ = reader.Close() })
+	var terms [][]byte
+	if visitErr := reader.VisitTerms(context.Background(), "group", func(term []byte) bool {
+		terms = append(terms, append([]byte(nil), term...))
+		return true
+	}); visitErr != nil {
+		t.Fatal(visitErr)
+	}
+	if len(terms) != 1 || terms[0] != nil {
+		t.Fatalf("VisitTerms(group) = %#v, want one empty term", terms)
+	}
+}
+
 func TestEncodeServesSortableDocument(t *testing.T) {
 	directory := t.TempDir()
 	generation := Generation{
@@ -211,6 +235,45 @@ func TestEncodeServesSortableDocument(t *testing.T) {
 		if string(page[0].SortValues[valueIndex]) != want {
 			t.Fatalf("sort value %d = %x, want %x", valueIndex, page[0].SortValues[valueIndex], want)
 		}
+	}
+}
+
+func TestNativeEncodeReservesIdentifierFieldSlot(t *testing.T) {
+	directory := t.TempDir()
+	generation := Generation{
+		SegmentID: 1, SnapshotID: 1,
+		Documents: []EncodeDocument{{
+			Identifier: []byte("doc-1"),
+			Fields: []EncodeField{
+				{Name: "0-before-id", Value: []byte("before"), Store: true, Index: true},
+				{Name: "status", Value: []byte("ready"), Store: true, Index: true},
+			},
+		}},
+	}
+	fields := nativeICEFields(generation)
+	if len(fields) == 0 || fields[0].name != identifierField {
+		t.Fatalf("native field order = %v, want %q first", fields, identifierField)
+	}
+	if encodeErr := Encode(directory, generation); encodeErr != nil {
+		t.Fatal(encodeErr)
+	}
+	reader, openErr := OpenStrict(directory)
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	t.Cleanup(func() { _ = reader.Close() })
+	var stored map[string][]byte
+	if visitErr := reader.VisitSelectedDocuments(context.Background(), identifierField, [][]byte{[]byte("doc-1")}, func(document StoredDocument) error {
+		stored = make(map[string][]byte)
+		return document.VisitStoredFields(func(name string, value []byte) bool {
+			stored[name] = append([]byte(nil), value...)
+			return true
+		})
+	}); visitErr != nil {
+		t.Fatal(visitErr)
+	}
+	if string(stored[identifierField]) != "doc-1" || string(stored["0-before-id"]) != "before" || string(stored["status"]) != "ready" {
+		t.Fatalf("stored fields = %#v, want identifier and values preserved", stored)
 	}
 }
 

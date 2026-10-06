@@ -24,10 +24,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"go.uber.org/multierr"
 
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
@@ -48,57 +46,72 @@ func newAnalyzeCmd() *cobra.Command {
 			if len(args) == 0 {
 				return errors.New("series index directory is required, its name should be 'sidx' in a segment 'seg-xxxxxx'")
 			}
-			store, err := inverted.NewStore(inverted.StoreOpts{
-				Path:   args[0],
-				Logger: logger.GetLogger("series-analyzer"),
-			})
-			if err != nil {
-				return err
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			ctx, cancel := context.WithTimeout(cmd.Context(), time.Minute)
 			defer cancel()
-			iter, err := store.SeriesIterator(ctx)
-			if err != nil {
-				return err
+			generation, openErr := native.OpenReadOnlyGeneration(args[0])
+			if errors.Is(openErr, native.ErrNoSnapshot) {
+				if subjectName == "" {
+					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "total, 0")
+				}
+				return nil
 			}
-			defer func() {
-				err = multierr.Append(err, iter.Close())
-			}()
+			if openErr != nil {
+				return openErr
+			}
+			defer func() { err = errors.Join(err, generation.Close()) }()
+			iter, iteratorErr := generation.NewSeriesIterator(ctx)
+			if iteratorErr != nil {
+				return iteratorErr
+			}
+			defer func() { err = errors.Join(err, iter.Close()) }()
 			if subjectName != "" {
 				var found bool
-				for iter.Next() {
-					var s pbv1.Series
-					if err = s.Unmarshal(iter.Val().EntityValues); err != nil {
-						return err
+				for {
+					value, nextErr := iter.Next()
+					if nextErr != nil {
+						return nextErr
 					}
-					if s.Subject == subjectName {
+					if value == nil {
+						break
+					}
+					var series pbv1.Series
+					if unmarshalErr := series.Unmarshal(value); unmarshalErr != nil {
+						return unmarshalErr
+					}
+					if series.Subject == subjectName {
 						found = true
-						for i := range s.EntityValues {
-							fmt.Fprintf(cmd.OutOrStdout(), "%s,", pbv1.MustTagValueToStr(s.EntityValues[i]))
+						for i := range series.EntityValues {
+							fmt.Fprintf(cmd.OutOrStdout(), "%s,", pbv1.MustTagValueToStr(series.EntityValues[i]))
 						}
-						fmt.Fprintln(cmd.OutOrStdout())
+						_, _ = fmt.Fprintln(cmd.OutOrStdout())
 						continue
 					}
 					if found {
 						break
 					}
 				}
-				return
+				return nil
 			}
 			var subject string
 			var count, total int
-			for iter.Next() {
-				total++
-				var s pbv1.Series
-				if err = s.Unmarshal(iter.Val().EntityValues); err != nil {
-					return err
+			for {
+				value, nextErr := iter.Next()
+				if nextErr != nil {
+					return nextErr
 				}
-				if s.Subject != subject {
+				if value == nil {
+					break
+				}
+				total++
+				var series pbv1.Series
+				if unmarshalErr := series.Unmarshal(value); unmarshalErr != nil {
+					return unmarshalErr
+				}
+				if series.Subject != subject {
 					if subject != "" {
 						fmt.Fprintf(cmd.OutOrStdout(), "%s, %d\n", subject, count)
 					}
-					subject = s.Subject
-					count = 1
+					subject, count = series.Subject, 1
 				} else {
 					count++
 				}
@@ -106,7 +119,7 @@ func newAnalyzeCmd() *cobra.Command {
 			if subject != "" {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s, %d\n", subject, count)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "total, %d\n", total)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "total, %d\n", total)
 			return nil
 		},
 	}

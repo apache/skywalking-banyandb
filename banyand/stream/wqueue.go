@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -36,6 +37,21 @@ func newWriteQueue(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	l *logger.Logger, option option, m any, group string, shardID common.ShardID, getNodes func() []string,
 ) (*tsTable, error) {
 	t, epoch, err := initTSTable(fileSystem, rootPath, p, l, option, m, false)
+	if err != nil {
+		return nil, err
+	}
+	t.getNodes = getNodes
+	t.group = group
+	t.shardID = shardID
+	t.startLoopWithConditionalMerge(epoch)
+	return t, nil
+}
+
+func newWriteQueueWithLease(fileSystem fs.FileSystem, rootPath string, p common.Position,
+	l *logger.Logger, option option, m any, group string, shardID common.ShardID, getNodes func() []string,
+	lease storage.RootLease,
+) (*tsTable, error) {
+	t, epoch, err := initTSTableWithLease(fileSystem, rootPath, p, l, option, m, false, lease)
 	if err != nil {
 		return nil, err
 	}

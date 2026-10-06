@@ -22,6 +22,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,6 +40,21 @@ import (
 )
 
 const group = "test"
+
+type testRootLease struct{ revoked atomic.Bool }
+
+func (l *testRootLease) Validate() error {
+	if l.revoked.Load() {
+		return errors.New("test root lease revoked")
+	}
+	return nil
+}
+
+func (l *testRootLease) ValidatePath(string) error { return l.Validate() }
+func (l *testRootLease) Revoke() error {
+	l.revoked.Store(true)
+	return nil
+}
 
 // MockGaugeWithValue wraps MockGauge to track the value.
 type MockGaugeWithValue struct {
@@ -811,6 +827,68 @@ func TestTSDBOpen_LockReleasedAfterFailedOpen(t *testing.T) {
 	require.NoError(t, reopenErr, "second OpenTSDB must succeed after the failed first attempt")
 	require.NotNil(t, tsdb)
 	require.NoError(t, tsdb.Close())
+}
+
+// TestTSDBOpen_LockReleasedAfterRootLeaseFactoryFailure verifies that a
+// lease-construction error cannot strand the database lock before the normal
+// OpenTSDB cleanup defer is installed.
+func TestTSDBOpen_LockReleasedAfterRootLeaseFactoryFailure(t *testing.T) {
+	logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel})
+
+	dir, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	opts := TSDBOpts[*MockTSTable, any]{
+		Location:        dir,
+		SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
+		TTL:             IntervalRule{Unit: DAY, Num: 3},
+		ShardNum:        1,
+		TSTableCreator:  MockTSTableCreator,
+		RootLeaseFactory: func(fs.File, string) (RootLease, error) {
+			return nil, errors.New("lease factory failed")
+		},
+	}
+
+	ctx := context.Background()
+	mc := timestamp.NewMockClock()
+	ts, parseErr := time.ParseInLocation("2006-01-02 15:04:05", "2024-05-01 00:00:00", time.Local)
+	require.NoError(t, parseErr)
+	mc.Set(ts)
+	ctx = timestamp.SetClock(ctx, mc)
+
+	serviceCache := NewServiceCache()
+	_, openErr := OpenTSDB(ctx, opts, serviceCache, group)
+	require.ErrorContains(t, openErr, "create root lease")
+
+	// A second open can acquire the same lock only when the failed factory path
+	// closed and removed the first attempt's lock file.
+	opts.RootLeaseFactory = nil
+	tsdb, reopenErr := OpenTSDB(ctx, opts, serviceCache, group)
+	require.NoError(t, reopenErr)
+	require.NoError(t, tsdb.Close())
+}
+
+func TestTSDBCloseRevokesRootLeaseBeforeReleasingLock(t *testing.T) {
+	logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel})
+
+	dir, defFn := test.Space(require.New(t))
+	defer defFn()
+	lease := &testRootLease{}
+	opts := TSDBOpts[*MockTSTable, any]{
+		Location:        dir,
+		SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
+		TTL:             IntervalRule{Unit: DAY, Num: 3},
+		ShardNum:        1,
+		TSTableCreator:  MockTSTableCreator,
+		RootLeaseFactory: func(fs.File, string) (RootLease, error) {
+			return lease, nil
+		},
+	}
+	tsdb, err := OpenTSDB(context.Background(), opts, NewServiceCache(), group)
+	require.NoError(t, err)
+	require.NoError(t, tsdb.Close())
+	require.True(t, lease.revoked.Load(), "database close must revoke the lease before lock release")
+	require.Error(t, lease.Validate())
 }
 
 // TestTSDBOpen_RejectsIncompatibleSegment verifies that opening a TSDB whose

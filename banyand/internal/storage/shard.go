@@ -78,7 +78,13 @@ func (s *segment[T, O]) openShard(ctx context.Context, id common.ShardID) (*shar
 	l.Info().Int("shard_id", int(id)).Str("path", location).Msg("loading a shard")
 	p := common.GetPosition(ctx)
 	p.Shard = strconv.Itoa(int(id))
-	t, err := s.tsdbOpts.TSTableCreator(s.lfs, location, p, l, s.TimeRange, s.tsdbOpts.Option, s.metrics)
+	var t T
+	var err error
+	if s.tsdbOpts.TSTableCreatorWithLease != nil {
+		t, err = s.tsdbOpts.TSTableCreatorWithLease(s.lfs, location, p, l, s.TimeRange, s.tsdbOpts.Option, s.metrics, s.tsdbOpts.RootLease)
+	} else {
+		t, err = s.tsdbOpts.TSTableCreator(s.lfs, location, p, l, s.TimeRange, s.tsdbOpts.Option, s.metrics)
+	}
 	if err != nil {
 		return nil, err
 	}

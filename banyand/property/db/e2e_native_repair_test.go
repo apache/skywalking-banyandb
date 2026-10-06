@@ -35,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -162,7 +163,7 @@ func TestE2EPropertyRepairNativeIgnoresAGenerationPublishedBetweenPages(t *testi
 	tester := require.New(t)
 	shard := nidx01eShardCopy(t)
 	published := false
-	repairState, observed := nidx01eRepair(t, shard, func(pageIndex int, _ []inverted.RepairRow, _ error) error {
+	repairState, observed := nidx01eRepair(t, shard, func(pageIndex int, _ []native.RepairRow, _ error) error {
 		if pageIndex != 1 || published {
 			return nil
 		}
@@ -184,7 +185,7 @@ func TestE2EPropertyRepairNativeIgnoresAGenerationPublishedBetweenPages(t *testi
 	tester.Equal(nidx01eDeclaredSnapshotID(t), state.LastSnpID,
 		"the build must record the generation it paged, not the one published underneath it")
 
-	newest, err := inverted.OpenReadOnlyGeneration(shard)
+	newest, err := native.OpenReadOnlyGeneration(shard)
 	tester.NoError(err)
 	defer func() {
 		tester.NoError(newest.Close())
@@ -205,7 +206,7 @@ func TestE2EPropertyRepairNativePublishesNoStateWhenAPageFails(t *testing.T) {
 	tester := require.New(t)
 	shard := nidx01eShardCopy(t)
 	failure := errors.New("page failed")
-	repairState, observed := nidx01eRepair(t, shard, func(pageIndex int, _ []inverted.RepairRow, _ error) error {
+	repairState, observed := nidx01eRepair(t, shard, func(pageIndex int, _ []native.RepairRow, _ error) error {
 		if pageIndex < 2 {
 			return nil
 		}
@@ -290,19 +291,19 @@ func nidx01eRepair(t *testing.T, shard string, hook nidx01ePageHook) (*repair, *
 }
 
 // nidx01ePageHook observes one page a build read, and may fail the build.
-type nidx01ePageHook func(pageIndex int, rows []inverted.RepairRow, pageErr error) error
+type nidx01ePageHook func(pageIndex int, rows []native.RepairRow, pageErr error) error
 
 // nidx01eObservedGeneration wraps the pinned generation a build pages so a test
 // can see which pages the build asked for and act between them.
 type nidx01eObservedGeneration struct {
 	repairGeneration
 	hook     nidx01ePageHook
-	requests []inverted.RepairPageRequest
+	requests []native.RepairPageRequest
 }
 
 func (g *nidx01eObservedGeneration) RepairTuplePage(
-	ctx context.Context, request inverted.RepairPageRequest,
-) ([]inverted.RepairRow, error) {
+	ctx context.Context, request native.RepairPageRequest,
+) ([]native.RepairRow, error) {
 	rows, err := g.repairGeneration.RepairTuplePage(ctx, request)
 	g.requests = append(g.requests, request)
 	if g.hook == nil {
