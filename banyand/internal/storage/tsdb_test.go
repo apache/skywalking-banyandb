@@ -929,10 +929,10 @@ func TestTSDBOpen_RejectsIncompatibleSegment(t *testing.T) {
 // leaseAwareTable records whether the database lease was still valid when the
 // table was closed, as a native index table needs it to be for a final flush.
 type leaseAwareTable struct {
+	MockTSTable
 	lease         RootLease
 	closed        *atomic.Int32
 	closedRevoked *atomic.Int32
-	MockTSTable
 }
 
 func (l *leaseAwareTable) Close() error {

@@ -87,7 +87,10 @@ func (e *elementIndex) Write(docs index.Documents) error {
 	return e.WriteContext(context.Background(), docs)
 }
 
-// WriteContext admits documents with the caller's cancellation context.
+// WriteContext admits documents with ctx. Callers that have already stored
+// the raw elements must pass a context without cancellation, so a canceled
+// request cannot leave stored rows missing from the index; the owner still
+// rejects writes once it is closing.
 func (e *elementIndex) WriteContext(ctx context.Context, docs index.Documents) error {
 	return e.store.Batch(ctx, index.Batch{
 		Documents: docs,

@@ -67,3 +67,27 @@ func TestNativeElementIndexRequiresLeaseAndWrites(t *testing.T) {
 	require.Equal(t, uint64(1), iterator.Val().DocID)
 	require.NoError(t, iterator.Close())
 }
+
+func TestNativeElementIndexAdmitsStoredRowsAfterRequestCancellation(t *testing.T) {
+	root := t.TempDir()
+	element, err := newElementIndex(context.Background(), root, 0, nil, newTestRootLease(t, root))
+	require.NoError(t, err)
+	defer element.Close()
+	field := index.NewStringField(index.FieldKey{IndexRuleID: 1, SeriesID: 1}, "ok")
+	field.Store = true
+	docs := index.Documents{{DocID: 1, Timestamp: 100, Fields: []index.Field{field}}}
+
+	// The write handlers store raw elements before indexing them, and the
+	// request context may be canceled in between. Indexing with that context
+	// is rejected, so the handlers pass it through context.WithoutCancel.
+	requestCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(t, element.WriteContext(requestCtx, docs), context.Canceled)
+	require.NoError(t, element.WriteContext(context.WithoutCancel(requestCtx), docs))
+
+	iterator, err := element.Sort(context.Background(), []common.SeriesID{1}, field.Key, modelv1.Sort_SORT_ASC, nil, 1)
+	require.NoError(t, err)
+	require.True(t, iterator.Next(), "the stored row must be indexed")
+	require.Equal(t, uint64(1), iterator.Val().DocID)
+	require.NoError(t, iterator.Close())
+}

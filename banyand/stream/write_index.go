@@ -195,7 +195,9 @@ func (l *localIndexCallback) Rev(ctx context.Context, message bus.Message) (resp
 	}
 
 	// Insert documents into tsTable.index
-	if err := tsTable.Index().WriteContext(ctx, documents); err != nil {
+	// The data path has already stored these elements; finish index admission
+	// even if the request has been canceled since.
+	if err := tsTable.Index().WriteContext(context.WithoutCancel(ctx), documents); err != nil {
 		l.l.Error().Err(err).Str("group", group).Uint32("shardID", shardID).Int("documentCount", len(documents)).Msg("failed to insert documents to tsTable index")
 		return
 	}
