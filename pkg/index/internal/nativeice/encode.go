@@ -104,6 +104,10 @@ type Generation struct {
 	// TimeMin and TimeMax are the segment's encoded timestamp bounds.
 	TimeMin uint64
 	TimeMax uint64
+	// IdentifierDocValues additionally writes "_id" as a doc-value column, as
+	// the previous release's writer does, so a rolled-back node can still
+	// read document identity back from a segment this encoder wrote.
+	IdentifierDocValues bool
 }
 
 // Encode writes generation into the index directory at path as one committed
@@ -359,6 +363,9 @@ func nativeICEFields(generation Generation) []nativeICEField {
 	for documentIndex, document := range generation.Documents {
 		documentNumber := uint64(documentIndex)
 		registerNativeICETerm(identifier, document.Identifier, documentNumber, 1)
+		if generation.IdentifierDocValues {
+			identifier.sortValues[documentNumber] = append(identifier.sortValues[documentNumber], document.Identifier)
+		}
 		for _, field := range document.Fields {
 			if !field.Store && !field.Index && !field.Sort {
 				continue

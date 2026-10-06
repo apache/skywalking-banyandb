@@ -235,7 +235,7 @@ func (o *Owner) introduceExternalSegment(ctx context.Context, stagedPath string)
 	}
 	identifiers := make([][]byte, 0)
 	var visitErr error
-	if o.options.DeduplicateExternal {
+	if o.options.ExternalDedup != ExternalDedupNone {
 		visitErr = segmentReader.VisitTerms(ctx, identifierField, func(identifier []byte) bool {
 			identifiers = append(identifiers, bytes.Clone(identifier))
 			return true
@@ -286,22 +286,12 @@ func (o *Owner) introduceExternalSegment(ctx context.Context, stagedPath string)
 	for _, current := range next.segments {
 		current.retain()
 	}
-	if o.options.DeduplicateExternal {
-		for _, identifier := range identifiers {
-			for index, current := range next.segments {
-				updated, changed, deleteErr := current.Delete(identifier)
-				if deleteErr != nil {
-					releaseSegments(next.segments)
-					external.release()
-					o.mu.Unlock()
-					return deleteErr
-				}
-				if changed {
-					current.release()
-					next.segments[index] = updated
-				}
-			}
-		}
+	external, maskErr := o.maskExternalDuplicates(next.segments, external, identifiers)
+	if maskErr != nil {
+		releaseSegments(next.segments)
+		external.release()
+		o.mu.Unlock()
+		return maskErr
 	}
 	next.segments = append(next.segments, external)
 	next.nextNumber += external.Len()
@@ -315,4 +305,83 @@ func (o *Owner) introduceExternalSegment(ctx context.Context, stagedPath string)
 	o.mu.Unlock()
 	o.requestMaintenance()
 	return nil
+}
+
+// maskExternalDuplicates applies OwnerOptions.ExternalDedup to one incoming
+// external segment against the existing segments it is about to join. It
+// returns the (possibly replaced) external segment the caller should append;
+// existing is mutated in place for ExternalDedupPreferIncoming. It must run
+// under o.mu: liveness checks consult o.admittedIdentifiers/admittedSegments
+// through candidateSegmentIndicesLocked, never decoding a stored document.
+//
+// ExternalDedupNone leaves every segment untouched. ExternalDedupPreferIncoming
+// masks the existing live copy of each incoming identifier, so the incoming
+// document wins. ExternalDedupKeepExisting masks an incoming document whose
+// identifier is already live elsewhere, in the incoming segment's own
+// deletion bitmap, leaving every existing segment untouched.
+func (o *Owner) maskExternalDuplicates(existing []rootSegment, external rootSegment, identifiers [][]byte) (rootSegment, error) {
+	switch o.options.ExternalDedup {
+	case ExternalDedupNone:
+		return external, nil
+	case ExternalDedupPreferIncoming:
+		for _, identifier := range identifiers {
+			for index, current := range existing {
+				updated, changed, err := current.Delete(identifier)
+				if err != nil {
+					return external, err
+				}
+				if changed {
+					current.release()
+					existing[index] = updated
+					// The existing copy just stopped being live: a cached
+					// positive InsertIfAbsent decision for it is now stale.
+					o.presenceCache.invalidate(identifier)
+				}
+			}
+		}
+		return external, nil
+	case ExternalDedupKeepExisting:
+		for _, identifier := range identifiers {
+			live, err := o.identifierLiveLocked(existing, identifier)
+			if err != nil {
+				return external, err
+			}
+			if !live {
+				continue
+			}
+			updated, changed, err := external.Delete(identifier)
+			if err != nil {
+				return external, err
+			}
+			if changed {
+				external.release()
+				external = updated
+			}
+		}
+		return external, nil
+	default:
+		return external, fmt.Errorf("external dedup mode %d: %w", o.options.ExternalDedup, ErrInvalidDocument)
+	}
+}
+
+// identifierLiveLocked reports whether identifier has a live posting in any
+// of segments. It probes only the admission-indexed candidates plus every
+// segment the index does not cover -- the same bounded set InsertIfAbsent
+// uses (candidateSegmentIndicesLocked) -- and checks posting membership only,
+// never decoding a stored document.
+func (o *Owner) identifierLiveLocked(segments []rootSegment, identifier []byte) (bool, error) {
+	for _, index := range o.candidateSegmentIndicesLocked(segments, identifier) {
+		memSeg, ok := segments[index].(*memorySegment)
+		if !ok {
+			return false, fmt.Errorf("check external dedup liveness: unsupported segment type %T", segments[index])
+		}
+		live, err := memSeg.hasLivePosting(identifier)
+		if err != nil {
+			return false, err
+		}
+		if live {
+			return true, nil
+		}
+	}
+	return false, nil
 }

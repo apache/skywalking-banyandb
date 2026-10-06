@@ -74,6 +74,8 @@ func (o *Owner) Reset() error {
 	old := o.root
 	o.root = next
 	o.admittedIdentifiers, o.admittedSegments = nil, nil
+	// Reset drops every document, so no cached presence may survive it.
+	o.presenceCache.reset()
 	o.roots[next] = struct{}{}
 	old.release()
 	o.pruneRootsLocked()

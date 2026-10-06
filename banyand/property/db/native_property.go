@@ -27,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/native"
+	"github.com/apache/skywalking-banyandb/pkg/index/native/criteria"
 	"github.com/apache/skywalking-banyandb/pkg/index/nativeanalysis"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -326,7 +327,7 @@ func (s *nativePropertyStore) matchRequest(ctx context.Context, view *native.Rea
 		return nil, err
 	}
 	if request.Criteria != nil {
-		result, err = s.matchCriteria(ctx, view, result, request.Criteria)
+		result, err = criteria.Filter(ctx, view, result, request.Criteria, propertyFieldResolver{})
 		if err != nil {
 			return nil, err
 		}
@@ -334,177 +335,14 @@ func (s *nativePropertyStore) matchRequest(ctx context.Context, view *native.Rea
 	return result, nil
 }
 
-type nativeHitKey struct {
-	segment  uint64
-	document uint64
-}
+// propertyFieldResolver implements criteria.FieldResolver for Property: every
+// tag name resolves to its hashed engine field, matching propertyTagField's
+// use in the write path (shard.go) and in sort field resolution above. No
+// tag is ever rejected -- an unindexed tag simply has no postings, so EQ
+// finds nothing and NE finds everything -- and MATCH's analyzer always comes
+// from the request, never from a resolved schema value.
+type propertyFieldResolver struct{}
 
-func (s *nativePropertyStore) matchCriteria(
-	ctx context.Context, view *native.ReadView, universe []native.QueryHit, criteria *modelv1.Criteria,
-) ([]native.QueryHit, error) {
-	if criteria == nil {
-		return universe, nil
-	}
-	switch expression := criteria.GetExp().(type) {
-	case *modelv1.Criteria_Condition:
-		return s.matchCondition(ctx, view, universe, expression.Condition)
-	case *modelv1.Criteria_Le:
-		if expression.Le == nil || (expression.Le.Left == nil && expression.Le.Right == nil) {
-			return nil, fmt.Errorf("logical expression has no operands: %w", logical.ErrInvalidLogicalExpression)
-		}
-		if expression.Le.Left == nil {
-			return s.matchCriteria(ctx, view, universe, expression.Le.Right)
-		}
-		if expression.Le.Right == nil {
-			return s.matchCriteria(ctx, view, universe, expression.Le.Left)
-		}
-		left, err := s.matchCriteria(ctx, view, universe, expression.Le.Left)
-		if err != nil {
-			return nil, err
-		}
-		right, err := s.matchCriteria(ctx, view, universe, expression.Le.Right)
-		if err != nil {
-			return nil, err
-		}
-		switch expression.Le.Op {
-		case modelv1.LogicalExpression_LOGICAL_OP_OR:
-			return unionHits(left, right), nil
-		case modelv1.LogicalExpression_LOGICAL_OP_AND:
-			return intersectHits(left, right), nil
-		default:
-			return nil, fmt.Errorf("unsupported logical operator %d: %w", expression.Le.Op, logical.ErrInvalidLogicalExpression)
-		}
-	default:
-		return nil, logical.ErrInvalidCriteriaType
-	}
-}
-
-func (s *nativePropertyStore) matchCondition(
-	ctx context.Context, view *native.ReadView, universe []native.QueryHit, condition *modelv1.Condition,
-) ([]native.QueryHit, error) {
-	if condition == nil || condition.Value == nil || condition.Value.Value == nil {
-		return nil, logical.ErrUnsupportedConditionValue
-	}
-	if condition.Op == modelv1.Condition_BINARY_OP_MATCH {
-		if _, ok := condition.Value.Value.(*modelv1.TagValue_Str); !ok {
-			return nil, logical.ErrUnsupportedConditionValue
-		}
-	}
-	if condition.Op == modelv1.Condition_BINARY_OP_IN || condition.Op == modelv1.Condition_BINARY_OP_NOT_IN {
-		switch condition.Value.Value.(type) {
-		case *modelv1.TagValue_StrArray, *modelv1.TagValue_IntArray:
-		default:
-			return nil, logical.ErrUnsupportedConditionValue
-		}
-	}
-	expr, err := logical.ParseExpr(condition)
-	if err != nil {
-		return nil, err
-	}
-	field := propertyTagField(condition.Name)
-	values := expr.Bytes()
-	match := func(terms [][]byte, mode native.TermSetMode) ([]native.QueryHit, error) {
-		return view.FilterTermsSet(ctx, universe, native.TermSetRequest{Field: field, Terms: terms, Mode: mode})
-	}
-	switch condition.Op {
-	case modelv1.Condition_BINARY_OP_EQ:
-		if len(values) != 1 {
-			return nil, logical.ErrUnsupportedConditionOp
-		}
-		return match(values, native.MatchAnyTerm)
-	case modelv1.Condition_BINARY_OP_IN:
-		return match(values, native.MatchAnyTerm)
-	case modelv1.Condition_BINARY_OP_HAVING:
-		return match(values, native.MatchAllTerms)
-	case modelv1.Condition_BINARY_OP_MATCH:
-		if len(values) != 1 {
-			return nil, logical.ErrUnsupportedConditionOp
-		}
-		terms, analyzeErr := nativeanalysis.Analyze(condition.MatchOption.GetAnalyzer(), values[0])
-		if analyzeErr != nil {
-			return nil, analyzeErr
-		}
-		analyzed := make([][]byte, 0, len(terms))
-		for _, term := range terms {
-			analyzed = append(analyzed, term.Value)
-		}
-		mode := native.MatchAnyTerm
-		if condition.MatchOption.GetOperator() == modelv1.Condition_MatchOption_OPERATOR_AND {
-			mode = native.MatchAllTerms
-		}
-		return match(analyzed, mode)
-	case modelv1.Condition_BINARY_OP_GT, modelv1.Condition_BINARY_OP_GE,
-		modelv1.Condition_BINARY_OP_LT, modelv1.Condition_BINARY_OP_LE:
-		if len(values) != 1 {
-			return nil, logical.ErrUnsupportedConditionOp
-		}
-		request := native.RangeRequest{Field: field, MaxTerms: ^uint64(0), Lower: nil, Upper: nil}
-		switch condition.Op {
-		case modelv1.Condition_BINARY_OP_GT, modelv1.Condition_BINARY_OP_GE:
-			request.Lower, request.IncludesLower = values[0], condition.Op == modelv1.Condition_BINARY_OP_GE
-		default:
-			request.Upper, request.IncludesUpper = values[0], condition.Op == modelv1.Condition_BINARY_OP_LE
-		}
-		return view.FilterRange(ctx, universe, request)
-	case modelv1.Condition_BINARY_OP_NE, modelv1.Condition_BINARY_OP_NOT_IN,
-		modelv1.Condition_BINARY_OP_NOT_HAVING:
-		if condition.Op == modelv1.Condition_BINARY_OP_NE && len(values) != 1 {
-			return nil, logical.ErrUnsupportedConditionOp
-		}
-		var excluded []native.QueryHit
-		mode := native.MatchAnyTerm
-		if condition.Op == modelv1.Condition_BINARY_OP_NOT_HAVING {
-			mode = native.MatchAllTerms
-		}
-		excluded, err = match(values, mode)
-		if err != nil {
-			return nil, err
-		}
-		return subtractHits(universe, excluded), nil
-	default:
-		return nil, logical.ErrUnsupportedConditionOp
-	}
-}
-
-func intersectHits(left, right []native.QueryHit) []native.QueryHit {
-	rightSet := make(map[nativeHitKey]native.QueryHit, len(right))
-	for _, hit := range right {
-		rightSet[nativeHitKey{hit.Segment, hit.DocumentNumber}] = hit
-	}
-	result := make([]native.QueryHit, 0, len(left))
-	for _, hit := range left {
-		if _, ok := rightSet[nativeHitKey{hit.Segment, hit.DocumentNumber}]; ok {
-			result = append(result, hit)
-		}
-	}
-	return result
-}
-
-func unionHits(left, right []native.QueryHit) []native.QueryHit {
-	result := make([]native.QueryHit, 0, len(left)+len(right))
-	seen := make(map[nativeHitKey]struct{}, len(left)+len(right))
-	for _, hits := range [][]native.QueryHit{left, right} {
-		for _, hit := range hits {
-			key := nativeHitKey{hit.Segment, hit.DocumentNumber}
-			if _, ok := seen[key]; !ok {
-				seen[key] = struct{}{}
-				result = append(result, hit)
-			}
-		}
-	}
-	return result
-}
-
-func subtractHits(universe, excluded []native.QueryHit) []native.QueryHit {
-	set := make(map[nativeHitKey]struct{}, len(excluded))
-	for _, hit := range excluded {
-		set[nativeHitKey{hit.Segment, hit.DocumentNumber}] = struct{}{}
-	}
-	result := make([]native.QueryHit, 0, len(universe))
-	for _, hit := range universe {
-		if _, ok := set[nativeHitKey{hit.Segment, hit.DocumentNumber}]; !ok {
-			result = append(result, hit)
-		}
-	}
-	return result
+func (propertyFieldResolver) Field(tagName string) (string, string, bool) {
+	return propertyTagField(tagName), "", true
 }
