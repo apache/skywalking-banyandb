@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -196,6 +197,17 @@ func openTestTSDBForRefTest(t *testing.T, tmpPath string, shardNum uint32, openS
 				openShardCount.Add(1)
 			}
 			return newTSTable(fileSystem, root, p, l, tr, opt, m)
+		},
+		TSTableCreatorWithLease: func(fileSystem fs.FileSystem, root string, p common.Position,
+			l *logger.Logger, tr timestamp.TimeRange, opt option, m any, lease storage.RootLease,
+		) (*tsTable, error) {
+			if openShardCount != nil {
+				openShardCount.Add(1)
+			}
+			return newTSTableWithLease(fileSystem, root, p, l, tr, opt, m, lease)
+		},
+		RootLeaseFactory: func(lock fs.File, root string) (storage.RootLease, error) {
+			return native.NewFileRootLease(lock, root)
 		},
 		SegmentInterval: ir,
 		TTL:             ir,
@@ -366,9 +378,13 @@ func TestSegmentCreateTS_ConsistencyAcrossPaths(t *testing.T) {
 func openTestTSDBWithInterval(t *testing.T, tmpPath, groupName string, ir storage.IntervalRule) storage.TSDB[*tsTable, option] {
 	t.Helper()
 	opts := storage.TSDBOpts[*tsTable, option]{
-		ShardNum:        1,
-		Location:        filepath.Join(tmpPath, "tab"),
-		TSTableCreator:  newTSTable,
+		ShardNum:                1,
+		Location:                filepath.Join(tmpPath, "tab"),
+		TSTableCreator:          newTSTable,
+		TSTableCreatorWithLease: newTSTableWithLease,
+		RootLeaseFactory: func(lock fs.File, root string) (storage.RootLease, error) {
+			return native.NewFileRootLease(lock, root)
+		},
 		SegmentInterval: ir,
 		TTL:             storage.IntervalRule{Unit: ir.Unit, Num: 60},
 		Option:          option{protector: protector.Nop{}, mergePolicy: newDefaultMergePolicyForTesting()},

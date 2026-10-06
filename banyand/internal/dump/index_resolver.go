@@ -20,6 +20,7 @@ package dump
 import (
 	"bytes"
 	"context"
+	"errors"
 	"path/filepath"
 
 	lru "github.com/hashicorp/golang-lru"
@@ -27,9 +28,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
@@ -56,7 +55,7 @@ type IndexedTagSpec struct {
 // caller supplies a IndexRuleID -> IndexedTagSpec mapping, DecodeTagValues
 // additionally decodes a resolved map into typed TagValues keyed by "family.tag".
 type IndexResolver struct {
-	store     index.SeriesStore
+	store     *native.ReadOnlyGeneration
 	cache     *lru.TwoQueueCache
 	ruleToTag map[uint32]IndexedTagSpec
 }
@@ -76,11 +75,8 @@ func NewIndexResolver(segmentPath string, cacheSize int,
 	if err != nil {
 		return nil, err
 	}
-	store, err := inverted.NewStore(inverted.StoreOpts{
-		Path:   filepath.Join(segmentPath, dirNameSidx),
-		Logger: logger.GetLogger(logName),
-	})
-	if err != nil {
+	store, err := native.OpenReadOnlyGeneration(filepath.Join(segmentPath, dirNameSidx))
+	if err != nil && !errors.Is(err, native.ErrNoSnapshot) {
 		return nil, err
 	}
 	return &IndexResolver{
@@ -103,6 +99,9 @@ func (r *IndexResolver) Resolve(seriesID common.SeriesID, entityValues []byte) (
 	if len(entityValues) == 0 {
 		return nil, nil
 	}
+	if r.store == nil {
+		return nil, nil
+	}
 	raw, err := r.store.StoredFields(context.Background(), entityValues)
 	if err != nil {
 		return nil, err
@@ -122,27 +121,20 @@ func (r *IndexResolver) PartSeriesMap(seriesIDs map[common.SeriesID]struct{}) (m
 	if len(seriesIDs) == 0 {
 		return nil, nil
 	}
-	iter, err := r.store.SeriesIterator(context.Background())
-	if err != nil {
-		return nil, err
-	}
 	result := make(map[common.SeriesID][]byte, len(seriesIDs))
-	for iter.Next() {
-		entityValues := iter.Val().EntityValues
-		if len(entityValues) == 0 {
-			continue
-		}
+	if r.store == nil {
+		return result, nil
+	}
+	visitErr := r.store.VisitIdentifiers(context.Background(), func(entityValues []byte) bool {
 		seriesID := common.SeriesID(convert.Hash(entityValues))
 		if _, ok := seriesIDs[seriesID]; !ok {
-			continue
+			return true
 		}
 		result[seriesID] = bytes.Clone(entityValues)
-		if len(result) == len(seriesIDs) {
-			break
-		}
-	}
-	if closeErr := iter.Close(); closeErr != nil {
-		return nil, closeErr
+		return len(result) != len(seriesIDs)
+	})
+	if visitErr != nil {
+		return nil, visitErr
 	}
 	return result, nil
 }
@@ -179,6 +171,9 @@ func (r *IndexResolver) DecodeTagValues(indexed map[uint32][][]byte) map[string]
 
 // Close releases the underlying series index store.
 func (r *IndexResolver) Close() error {
+	if r.store == nil {
+		return nil
+	}
 	return r.store.Close()
 }
 

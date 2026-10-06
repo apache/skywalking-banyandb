@@ -49,7 +49,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -66,12 +66,12 @@ const (
 // runs contributes no leaf to the tree the build writes, and the generation
 // state the build records names the generation it actually read.
 //
-// Its production implementation is *inverted.ReadOnlyGeneration.
+// Its production implementation is *native.ReadOnlyGeneration.
 type repairGeneration interface {
 	// RepairTuplePage returns one bounded page of the pinned generation's
 	// repair rows, ordered ascending and resuming strictly after the request's
 	// cursor.
-	RepairTuplePage(ctx context.Context, request inverted.RepairPageRequest) ([]inverted.RepairRow, error)
+	RepairTuplePage(ctx context.Context, request native.RepairPageRequest) ([]native.RepairRow, error)
 	// SnapshotID identifies the pinned generation.
 	SnapshotID() uint64
 	// Close releases the files the pinned generation holds.
@@ -87,7 +87,7 @@ type repairGenerationOpener func(shardPath string) (repairGeneration, error)
 // openNativeRepairGeneration pins the newest committed generation of a shard
 // directory through BanyanDB's own read-only reader.
 func openNativeRepairGeneration(shardPath string) (repairGeneration, error) {
-	generation, err := inverted.OpenReadOnlyGeneration(shardPath)
+	generation, err := native.OpenReadOnlyGeneration(shardPath)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +140,7 @@ func (r *repair) checkHasUpdates() (bool, error) {
 		return false, fmt.Errorf("reading state failure: %w", stateErr)
 	}
 	generation, generationErr := r.openGeneration(r.shardPath)
-	if errors.Is(generationErr, inverted.ErrNoCommittedIndex) {
+	if errors.Is(generationErr, native.ErrNoSnapshot) {
 		return false, nil
 	}
 	if generationErr != nil {
@@ -167,7 +167,7 @@ func (r *repair) buildStatus(ctx context.Context, snapshotPath string) (err erro
 		r.metrics.totalBuildTreeDuration.Inc(time.Since(startTime).Seconds())
 	}()
 	generation, openErr := r.openGeneration(snapshotPath)
-	if errors.Is(openErr, inverted.ErrNoCommittedIndex) {
+	if errors.Is(openErr, native.ErrNoSnapshot) {
 		return nil
 	}
 	if openErr != nil {
@@ -202,9 +202,9 @@ func (r *repair) buildStatus(ctx context.Context, snapshotPath string) (err erro
 func (r *repair) buildTree(ctx context.Context, generation repairGeneration) error {
 	var latestProperty *searchingProperty
 	treeComposer := newRepairTreeComposer(r.composeSlotAppendFilePath, r.composeTreeFilePath, r.treeSlotCount, r.l)
-	var after *inverted.RepairCursor
+	var after *native.RepairCursor
 	for {
-		rows, pageErr := generation.RepairTuplePage(ctx, inverted.RepairPageRequest{
+		rows, pageErr := generation.RepairTuplePage(ctx, native.RepairPageRequest{
 			After:    after,
 			PageSize: r.batchSearchSize,
 		})
@@ -215,7 +215,7 @@ func (r *repair) buildTree(ctx context.Context, generation repairGeneration) err
 			break
 		}
 		for rowIndex, row := range rows {
-			if len(row.SortValues) != inverted.RepairSortFieldCount {
+			if len(row.SortValues) != native.RepairSortFieldCount {
 				return fmt.Errorf("unexpected sort value length at row %d: %d", rowIndex, len(row.SortValues))
 			}
 			groupName := convert.BytesToString(row.SortValues[0])

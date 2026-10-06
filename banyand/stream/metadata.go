@@ -37,7 +37,9 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/idgen"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
@@ -599,9 +601,13 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 	}
 	group := groupSchema.Metadata.Name
 	opts := storage.TSDBOpts[*tsTable, option]{
-		ShardNum:                       res.ResourceOpts.ShardNum,
-		Location:                       path.Join(s.path, group),
-		TSTableCreator:                 newTSTable,
+		ShardNum:                res.ResourceOpts.ShardNum,
+		Location:                path.Join(s.path, group),
+		TSTableCreator:          newTSTable,
+		TSTableCreatorWithLease: newTSTableWithLease,
+		RootLeaseFactory: func(lock fs.File, root string) (storage.RootLease, error) {
+			return native.NewFileRootLease(lock, root)
+		},
 		TableMetrics:                   s.newMetrics(p),
 		SegmentInterval:                storage.MustToIntervalRule(res.ResourceOpts.SegmentInterval),
 		TTL:                            storage.MustToIntervalRule(res.ResourceOpts.Ttl),
@@ -697,14 +703,18 @@ func (s *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, 
 	group := groupSchema.Metadata.Name
 	metrics, metricsFactory := s.newMetrics(p)
 	opts := wqueue.Opts[*tsTable, option]{
-		Group:           group,
-		ShardNum:        shardNum,
-		SegmentInterval: storage.MustToIntervalRule(ro.SegmentInterval),
-		Location:        path.Join(s.path, group),
-		Option:          s.option,
-		Metrics:         metrics,
-		MetricsFactory:  metricsFactory,
-		SubQueueCreator: newWriteQueue,
+		Group:                    group,
+		ShardNum:                 shardNum,
+		SegmentInterval:          storage.MustToIntervalRule(ro.SegmentInterval),
+		Location:                 path.Join(s.path, group),
+		Option:                   s.option,
+		Metrics:                  metrics,
+		MetricsFactory:           metricsFactory,
+		SubQueueCreator:          newWriteQueue,
+		SubQueueCreatorWithLease: newWriteQueueWithLease,
+		RootLeaseFactory: func(lock fs.File, root string) (storage.RootLease, error) {
+			return native.NewFileRootLease(lock, root)
+		},
 		GetNodes: func(shardID common.ShardID) []string {
 			copies := ro.Replicas + 1
 			nodes, err := s.streamDataNodeRegistry.LocateAll(group, uint32(shardID), int(copies))

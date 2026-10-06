@@ -266,3 +266,30 @@ func requireNativeErrorIs(t testing.TB, err, target error) {
 		t.Fatalf("error = %v, want errors.Is(_, %v)", err, target)
 	}
 }
+
+func TestDictionaryIteratorNextTermDistinguishesEmptyKeyFromExhaustion(t *testing.T) {
+	payload, encodeErr := EncodeSegment(Generation{Documents: []EncodeDocument{{
+		Identifier: []byte("empty-key-document"),
+		Fields: []EncodeField{{Name: "tag", Index: true, Terms: []EncodeTerm{
+			{Value: nil, Frequency: 1},
+			{Value: []byte("alpha"), Frequency: 1},
+		}}},
+	}}})
+	requireNativeNoError(t, encodeErr)
+	reader, openErr := OpenSegment(payload)
+	requireNativeNoError(t, openErr)
+	defer func() { requireNativeNoError(t, reader.Close()) }()
+
+	iterator, iteratorErr := reader.NewDictionaryTermIterator("tag", nil, nil, nil)
+	requireNativeNoError(t, iteratorErr)
+	term, nextErr := iterator.NextTerm()
+	requireNativeNoError(t, nextErr)
+	requireNative(t, term != nil && len(term) == 0, "first term = %#v, want a non-nil empty key", term)
+	term, nextErr = iterator.NextTerm()
+	requireNativeNoError(t, nextErr)
+	requireNative(t, string(term) == "alpha", "second term = %q, want alpha", term)
+	term, nextErr = iterator.NextTerm()
+	requireNativeNoError(t, nextErr)
+	requireNative(t, term == nil, "third term = %#v, want exhaustion", term)
+	requireNativeNoError(t, iterator.Close())
+}

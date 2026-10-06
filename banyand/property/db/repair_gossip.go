@@ -203,13 +203,23 @@ func (b *repairGossipBase) queryProperty(ctx context.Context, syncShard *shard, 
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to parse leaf node entity %s: %w", leafNodeEntity, err)
 	}
-	searchQuery, err := inverted.BuildPropertyQueryFromEntity(groupField, g, n, entityID, entity)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to build query from leaf node entity %s: %w", leafNodeEntity, err)
-	}
-	queriedProperties, err := syncShard.search(ctx, searchQuery, nil, gossipShardQueryDatabaseSize)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to search properties for leaf node entity %s: %w", leafNodeEntity, err)
+	var queriedProperties []*queryProperty
+	if syncShard.nativeStore != nil {
+		queriedProperties, err = syncShard.searchNative(ctx, &propertyv1.QueryRequest{
+			Groups: []string{g}, Name: n, Ids: []string{entity},
+		}, nil, gossipShardQueryDatabaseSize)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to search properties for leaf node entity %s: %w", leafNodeEntity, err)
+		}
+	} else {
+		searchQuery, buildErr := inverted.BuildPropertyQueryFromEntity(groupField, g, n, entityID, entity)
+		if buildErr != nil {
+			return nil, nil, fmt.Errorf("failed to build query from leaf node entity %s: %w", leafNodeEntity, buildErr)
+		}
+		queriedProperties, err = syncShard.search(ctx, searchQuery, nil, gossipShardQueryDatabaseSize)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to search properties for leaf node entity %s: %w", leafNodeEntity, err)
+		}
 	}
 	var latestProperty *queryProperty
 	for _, queried := range queriedProperties {

@@ -130,6 +130,11 @@ func CompareINode(srcPath, destPath string) error {
 	return nil
 }
 
+// adviseFile is a no-op on non-Linux systems.
+func adviseFile(_ uintptr, _ PageCacheAdvice) error {
+	return nil
+}
+
 // applyFadviseToFD is a no-op on non-Linux systems.
 func applyFadviseToFD(_ uintptr, _ int64, _ int64) error {
 	return nil

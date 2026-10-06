@@ -40,10 +40,11 @@ type Metrics struct {
 	totalMergeLatency  meter.Gauge
 	totalMergeErrors   meter.Gauge
 
-	totalMemSegments  meter.Gauge
-	totalFileSegments meter.Gauge
-	curOnDiskBytes    meter.Gauge
-	curOnDiskFiles    meter.Gauge
+	totalMemSegments    meter.Gauge
+	totalFileSegments   meter.Gauge
+	curOnDiskBytes      meter.Gauge
+	curOnDiskFiles      meter.Gauge
+	nativeSnapshotBytes meter.Gauge
 
 	totalDocCount meter.Gauge
 
@@ -74,10 +75,11 @@ func NewMetrics(factory observability.Factory, labelNames ...string) *Metrics {
 		totalMergeLatency:  factory.NewGauge("inverted_index_total_merge_latency", append(labelNames, "type")...),
 		totalMergeErrors:   factory.NewGauge("inverted_index_total_merge_errors", append(labelNames, "type")...),
 
-		totalMemSegments:  factory.NewGauge("inverted_index_total_mem_segments", labelNames...),
-		totalFileSegments: factory.NewGauge("inverted_index_total_file_segments", labelNames...),
-		curOnDiskBytes:    factory.NewGauge("inverted_index_cur_on_disk_bytes", labelNames...),
-		curOnDiskFiles:    factory.NewGauge("inverted_index_cur_on_disk_files", labelNames...),
+		totalMemSegments:    factory.NewGauge("inverted_index_total_mem_segments", labelNames...),
+		totalFileSegments:   factory.NewGauge("inverted_index_total_file_segments", labelNames...),
+		curOnDiskBytes:      factory.NewGauge("inverted_index_cur_on_disk_bytes", labelNames...),
+		curOnDiskFiles:      factory.NewGauge("inverted_index_cur_on_disk_files", labelNames...),
+		nativeSnapshotBytes: factory.NewGauge("inverted_index_native_snapshot_bytes", labelNames...),
 
 		totalDocCount: factory.NewGauge("inverted_index_total_doc_count", labelNames...),
 
@@ -120,6 +122,7 @@ func (m *Metrics) DeleteAll(labelValues ...string) {
 	m.totalFileSegments.Delete(labelValues...)
 	m.curOnDiskBytes.Delete(labelValues...)
 	m.curOnDiskFiles.Delete(labelValues...)
+	m.nativeSnapshotBytes.Delete(labelValues...)
 
 	m.cacheGetCalls.Delete(labelValues...)
 	m.cacheSetCalls.Delete(labelValues...)
@@ -127,6 +130,17 @@ func (m *Metrics) DeleteAll(labelValues ...string) {
 	m.cacheEntriesCount.Delete(labelValues...)
 	m.cacheBytesSize.Delete(labelValues...)
 	m.cacheMaxBytesSize.Delete(labelValues...)
+}
+
+// ObserveNative records metrics available from the native owner. The byte
+// value is the current immutable-root payload size, not the legacy writer's
+// on-disk-byte status (which also accounts for files outside the live root).
+func (m *Metrics) ObserveNative(dataCount, dataSizeBytes int64, labelValues ...string) {
+	if m == nil {
+		return
+	}
+	m.totalDocCount.Set(float64(dataCount), labelValues...)
+	m.nativeSnapshotBytes.Set(float64(dataSizeBytes), labelValues...)
 }
 
 func (s *store) CollectMetrics(labelValues ...string) {

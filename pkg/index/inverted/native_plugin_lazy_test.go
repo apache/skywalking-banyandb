@@ -24,7 +24,7 @@ import (
 	roaringpkg "github.com/RoaringBitmap/roaring"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted/internal/nativeice"
+	"github.com/apache/skywalking-banyandb/pkg/index/internal/nativeice"
 )
 
 func TestNativePluginLoadDoesNotDecodeEveryDocument(t *testing.T) {

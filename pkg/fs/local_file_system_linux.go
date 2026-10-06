@@ -135,6 +135,19 @@ func applyFadviseToFD(fd uintptr, offset int64, length int64) error {
 	return unix.Fadvise(int(fd), offset, length, unix.FADV_DONTNEED)
 }
 
+func adviseFile(fd uintptr, advice PageCacheAdvice) error {
+	switch advice {
+	case PageCacheWillNeed:
+		return unix.Fadvise(int(fd), 0, 0, unix.FADV_WILLNEED)
+	case PageCacheRandom:
+		return unix.Fadvise(int(fd), 0, 0, unix.FADV_RANDOM)
+	case PageCacheDontNeed:
+		return unix.Fadvise(int(fd), 0, 0, unix.FADV_DONTNEED)
+	default:
+		return fmt.Errorf("unknown page cache advice %d", advice)
+	}
+}
+
 // SyncAndDropCache syncs the file data to disk and then drops it from the page cache.
 func SyncAndDropCache(fd uintptr, offset int64, length int64) error {
 	if err := unix.Fdatasync(int(fd)); err != nil {

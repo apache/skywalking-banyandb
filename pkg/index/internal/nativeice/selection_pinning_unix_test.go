@@ -26,7 +26,7 @@ import (
 
 func TestVisitSelectedDocumentsUsesPinnedSegmentAfterUnlink(t *testing.T) {
 	indexPath := filepath.Join(t.TempDir(), "index")
-	copyErr := os.CopyFS(indexPath, os.DirFS(filepath.Join("..", "..", "testdata", "nidx01c", "sourceA")))
+	copyErr := os.CopyFS(indexPath, os.DirFS(filepath.Join("..", "..", "inverted", "testdata", "nidx01c", "sourceA")))
 	if copyErr != nil {
 		t.Fatal(copyErr)
 	}
