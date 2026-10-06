@@ -22,6 +22,7 @@ Release Notes.
 
 ### Bug Fixes
 
+- Fix a data race in Measure TopN where a pooled TopN value reused for a query wrote its tag names into the streaming processor's entity tag name slice.
 - Stamp `RELEASE_VERSION` into official release binaries so `--version` reports the release instead of `-`.
 - Pack the source release from `git archive` and reject archives that contain ELF/Mach-O binaries.
 - Stop declaring unbundled MCP npm dependencies in binary-package root `LICENSE` files (MCP Eyes output stays under `mcp/`).
