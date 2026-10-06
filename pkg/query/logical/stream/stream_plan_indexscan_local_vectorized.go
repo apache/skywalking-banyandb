@@ -298,10 +298,17 @@ func (i *localIndexScan) vecTagProjection() (projection []model.TagProjection, h
 	return augmented, true, true
 }
 
-// HidesOrderTag implements executor.StreamVecExecutable.
-func (i *localIndexScan) HidesOrderTag() bool {
+// HiddenOrderTag implements executor.StreamVecExecutable.
+//
+// It returns a name only when vecTagProjection reports the tag as hidden, and that
+// branch is reached only for a single-tag index order, so indexing GetTags() here
+// cannot run past the end.
+func (i *localIndexScan) HiddenOrderTag() string {
 	_, hidden, _ := i.vecTagProjection()
-	return hidden
+	if !hidden {
+		return ""
+	}
+	return i.order.Index.GetTags()[0]
 }
 
 // VecOffsetLimit returns the client offset/limit the *limit plan node carries, so

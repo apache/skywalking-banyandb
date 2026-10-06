@@ -83,7 +83,8 @@ func TestVecExecutable_IndexOrder_TagNotProjected_ProjectsItInternally(t *testin
 	require.True(t, hidden, "the ordered tag must be reported as hidden so the frame egress is skipped")
 	require.Equal(t, []model.TagProjection{{Family: "searchable", Names: []string{"service", "endpoint", "status"}}}, scanProjection)
 	require.Equal(t, projection, scan.ProjectionTags(), "the client projection must not gain the ordered tag")
-	require.True(t, scan.HidesOrderTag())
+	require.Equal(t, "status", scan.HiddenOrderTag(),
+		"the frame egress drops the hidden column by name, so the name must be exposed")
 }
 
 // TestVecExecutable_IndexOrder_TagNotInSchema_DeclinesVec is the one remaining
@@ -119,10 +120,11 @@ func TestVecExecutable_IndexOrder_TagProjected_AcceptsVec(t *testing.T) {
 		Sort: modelv1.Sort_SORT_ASC,
 	}
 	projection := []model.TagProjection{{Family: "searchable", Names: []string{"service", "status"}}}
-	plan, _ := newVecEligiblePlan(t, order, projection)
+	plan, scan := newVecEligiblePlan(t, order, projection)
 
 	require.NotNil(t, VecExecutable(plan),
 		"vec must accept an index-order query whose sort tag is projected")
+	require.Empty(t, scan.HiddenOrderTag(), "a projected sort tag hides nothing from the client")
 }
 
 // TestVecExecutable_TimeOrder_AcceptsVec confirms non-index-order (time-order)
