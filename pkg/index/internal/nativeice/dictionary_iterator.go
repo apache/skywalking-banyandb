@@ -199,7 +199,8 @@ func (i *DictionaryTermIterator) NextTerm() ([]byte, error) {
 	if term == nil && postingOffset == 0 {
 		return nil, i.closeIterator()
 	}
-	owned := append([]byte(nil), term...)
+	// A non-nil empty slice keeps a valid empty key distinct from exhaustion.
+	owned := append([]byte{}, term...)
 	if nextErr := i.iterator.Next(); nextErr != nil {
 		if errors.Is(nextErr, vellum.ErrIteratorDone) {
 			if closeErr := i.closeIterator(); closeErr != nil {
