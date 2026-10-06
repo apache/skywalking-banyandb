@@ -226,39 +226,37 @@ var _ = ginkgo.Describe("Lifecycle orphan-schema archive", ginkgo.Ordered, func(
 		ginkgo.By("writing rows on the straddling (row-replay) segment to both measures")
 		// The write goes through the liaison, which routes by schema. A freshly
 		// created measure reaches the liaison via schema sync slightly after the
-		// registry returns, so retry the whole write until the liaison has it; a
-		// not-yet-synced write is rejected at routing (nothing is stored), so the
-		// retry lands exactly the two rows once.
-		writeMeasure := func(name string, lv, rv int64) func() error {
+		// registry returns, so retry until the liaison has it. The liaison accepts
+		// or rejects each message on its own, so a stream carrying both rows can
+		// store the second after rejecting the first; retrying that stream would
+		// store the second row twice. Each row is therefore written in its own
+		// stream and retried alone: a rejected attempt stores nothing.
+		writeMeasure := func(name string, ts time.Time, val int64) func() error {
 			return func() error {
 				ws, wErr := writeClient.Write(ctx)
 				if wErr != nil {
 					return wErr
 				}
-				send := func(ts time.Time, val int64, first bool) error {
-					req := &measurev1.WriteRequest{DataPoint: &measurev1.DataPointValue{
+				if sendErr := ws.Send(&measurev1.WriteRequest{
+					Metadata: &commonv1.Metadata{Group: group, Name: name},
+					DataPoint: &measurev1.DataPointValue{
 						Timestamp: timestamppb.New(ts), Version: ts.UnixNano(),
 						TagFamilies: []*modelv1.TagFamilyForWrite{{Tags: []*modelv1.TagValue{
 							{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "ent-1"}}},
 						}}},
 						Fields: []*modelv1.FieldValue{{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: val}}}},
-					}, MessageId: uint64(time.Now().UnixNano())}
-					if first {
-						req.Metadata = &commonv1.Metadata{Group: group, Name: name}
-					}
-					return ws.Send(req)
-				}
-				if sendErr := send(leftTS, lv, true); sendErr != nil {
-					return sendErr
-				}
-				if sendErr := send(rightTS, rv, false); sendErr != nil {
+					},
+					MessageId: uint64(time.Now().UnixNano()),
+				}); sendErr != nil {
 					return sendErr
 				}
 				return drainWriteResult(ws.Recv, ws.CloseSend)
 			}
 		}
-		gomega.Eventually(writeMeasure(toDelete, leftValue, rightValue), flags.EventuallyTimeout).Should(gomega.Succeed())
-		gomega.Eventually(writeMeasure(keep, keepLeftVal, keepRightV), flags.EventuallyTimeout).Should(gomega.Succeed())
+		gomega.Eventually(writeMeasure(toDelete, leftTS, leftValue), flags.EventuallyTimeout).Should(gomega.Succeed())
+		gomega.Eventually(writeMeasure(toDelete, rightTS, rightValue), flags.EventuallyTimeout).Should(gomega.Succeed())
+		gomega.Eventually(writeMeasure(keep, leftTS, keepLeftVal), flags.EventuallyTimeout).Should(gomega.Succeed())
+		gomega.Eventually(writeMeasure(keep, rightTS, keepRightV), flags.EventuallyTimeout).Should(gomega.Succeed())
 		time.Sleep(flags.ConsistentlyTimeout)
 
 		ginkgo.By("deleting the schema of " + toDelete + " (its on-disk data becomes orphan)")
@@ -376,38 +374,34 @@ var _ = ginkgo.Describe("Lifecycle orphan-schema archive", ginkgo.Ordered, func(
 		createStream(keep)
 
 		ginkgo.By("writing elements on the straddling (row-replay) segment to both streams")
-		// Retry the whole write until the liaison has synced the freshly created
-		// stream schema (see the measure case for the rationale).
-		writeStream := func(name string) func() error {
+		// Retry each element alone until the liaison has synced the freshly
+		// created stream schema (see the measure case for the rationale).
+		writeStream := func(name string, ts time.Time, eid, entity string) func() error {
 			return func() error {
 				ws, wErr := writeClient.Write(ctx)
 				if wErr != nil {
 					return wErr
 				}
-				send := func(ts time.Time, eid, biz, entity string, first bool) error {
-					req := &streamv1.WriteRequest{Element: &streamv1.ElementValue{
+				if sendErr := ws.Send(&streamv1.WriteRequest{
+					Metadata: &commonv1.Metadata{Group: group, Name: name},
+					Element: &streamv1.ElementValue{
 						ElementId: eid, Timestamp: timestamppb.New(ts),
 						TagFamilies: []*modelv1.TagFamilyForWrite{{Tags: []*modelv1.TagValue{
-							{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: biz}}},
+							{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "biz-1"}}},
 							{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: entity}}},
 						}}},
-					}, MessageId: uint64(time.Now().UnixNano())}
-					if first {
-						req.Metadata = &commonv1.Metadata{Group: group, Name: name}
-					}
-					return ws.Send(req)
-				}
-				if sendErr := send(leftTS, name+"-L", "biz-1", "ent-L", true); sendErr != nil {
-					return sendErr
-				}
-				if sendErr := send(rightTS, name+"-R", "biz-1", "ent-R", false); sendErr != nil {
+					},
+					MessageId: uint64(time.Now().UnixNano()),
+				}); sendErr != nil {
 					return sendErr
 				}
 				return drainWriteResult(ws.Recv, ws.CloseSend)
 			}
 		}
-		gomega.Eventually(writeStream(toDelete), flags.EventuallyTimeout).Should(gomega.Succeed())
-		gomega.Eventually(writeStream(keep), flags.EventuallyTimeout).Should(gomega.Succeed())
+		for _, name := range []string{toDelete, keep} {
+			gomega.Eventually(writeStream(name, leftTS, name+"-L", "ent-L"), flags.EventuallyTimeout).Should(gomega.Succeed())
+			gomega.Eventually(writeStream(name, rightTS, name+"-R", "ent-R"), flags.EventuallyTimeout).Should(gomega.Succeed())
+		}
 		time.Sleep(flags.ConsistentlyTimeout)
 
 		ginkgo.By("deleting the schema of " + toDelete)

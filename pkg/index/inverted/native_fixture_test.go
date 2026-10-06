@@ -29,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	roaringpkg "github.com/RoaringBitmap/roaring"
 	segment "github.com/blugelabs/bluge_segment_api"
 	legacyice "github.com/blugelabs/ice"
 	"github.com/stretchr/testify/require"
@@ -40,6 +41,15 @@ import (
 func loadLegacySegment(data *segment.Data) (segment.Segment, error) {
 	return legacyice.Load(data)
 }
+
+// mergeLegacySegments merges segments with the compatibility merger, so an
+// oracle test can drive it without naming the retired module.
+func mergeLegacySegments(segments []segmentValue, drops []*roaringpkg.Bitmap) segmentMergerValue {
+	return legacyice.Merge(segments, drops, legacyMergeBufferSize)
+}
+
+// legacyMergeBufferSize is the compatibility merger's write buffer size.
+const legacyMergeBufferSize = 4096
 
 // The NIDX-01A corpus is an ICE v3 / snapshot v3 directory produced by the
 // compatibility writer through BanyanDB's store boundary and checked in as

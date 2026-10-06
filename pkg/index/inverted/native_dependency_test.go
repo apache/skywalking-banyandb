@@ -32,8 +32,8 @@ import (
 
 const (
 	banyanDBModulePrefix    = "github.com/apache/skywalking-banyandb/"
-	nativeReaderPackagePath = banyanDBModulePrefix + "pkg/index/inverted/internal/nativeice"
-	nativeReaderDir         = "internal/nativeice"
+	nativeReaderPackagePath = banyanDBModulePrefix + "pkg/index/internal/nativeice"
+	nativeReaderDir         = "../internal/nativeice"
 	readOnlyDocCountFile    = "inverted.go"
 	readOnlyDocCountFunc    = "ReadOnlyDocCount"
 )

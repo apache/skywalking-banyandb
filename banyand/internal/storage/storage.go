@@ -178,6 +178,28 @@ type TSTable interface {
 type TSTableCreator[T TSTable, O any] func(fileSystem fs.FileSystem, root string, position common.Position,
 	l *logger.Logger, timeRange timestamp.TimeRange, option O, metrics any) (T, error)
 
+// TSTableCreatorWithLease is the ownership-aware constructor used by native
+// index tables. The legacy creator remains supported for read-only/test tables.
+type TSTableCreatorWithLease[T TSTable, O any] func(fileSystem fs.FileSystem, root string, position common.Position,
+	l *logger.Logger, timeRange timestamp.TimeRange, option O, metrics any, lease RootLease) (T, error)
+
+// RootLease is the database-owned writer capability passed to native index
+// tables. Storage never acquires or closes it; the TSDB owns its lifetime.
+type RootLease interface {
+	Validate() error
+	ValidatePath(string) error
+}
+
+// RootLeaseRevoker is implemented by leases backed by the TSDB lock. Storage
+// revokes the capability after tables close and before releasing that lock.
+type RootLeaseRevoker interface {
+	Revoke() error
+}
+
+// RootLeaseFactory adapts the TSDB's already-held lock to a native lease
+// without exposing lock implementation details to TSTable implementations.
+type RootLeaseFactory func(lock fs.File, root string) (RootLease, error)
+
 // Metrics is the interface of metrics.
 type Metrics interface {
 	// DeleteAll deletes all metrics.

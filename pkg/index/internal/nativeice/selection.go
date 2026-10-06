@@ -23,12 +23,15 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
 	"github.com/blevesearch/vellum"
 	"github.com/klauspost/compress/s2"
+
+	"github.com/apache/skywalking-banyandb/pkg/filter"
 )
 
 const (
@@ -105,7 +108,11 @@ func (r *Reader) VisitSelectedDocuments(ctx context.Context, field string, terms
 		return nil
 	}
 	for segmentIndex := range r.segments {
-		if visitErr := walkSelectedStoredSegment(ctx, r.segments[segmentIndex], selection, visit); visitErr != nil {
+		storedReader, readerErr := r.storedReader(segmentIndex)
+		if readerErr != nil {
+			return readerErr
+		}
+		if visitErr := walkSelectedStoredSegment(ctx, storedReader, r.segments[segmentIndex].record, selection, visit); visitErr != nil {
 			return visitErr
 		}
 	}
@@ -127,14 +134,21 @@ func validateSelection(selection termSelection) error {
 	return nil
 }
 
-func walkSelectedStoredSegment(ctx context.Context, segment pinnedSegment, selection termSelection, visit func(StoredDocument) error) error {
+func walkSelectedStoredSegment(
+	ctx context.Context,
+	storedReader *storedSegmentReader,
+	record segmentRecord,
+	selection termSelection,
+	visit func(StoredDocument) error,
+) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
 	}
-	storedReader, readerErr := newStoredSegmentReader(segment.file, segment.size, segment.record)
-	if readerErr != nil {
-		return readerErr
-	}
+	// The stored reader owns reusable chunk and field-name buffers. Keep the
+	// complete selection walk under its operation lock so cached readers retain
+	// the same non-concurrent operation contract as the previous per-call reader.
+	storedReader.walkMu.Lock()
+	defer storedReader.walkMu.Unlock()
 	selected, selectedErr := storedReader.selectedDocuments(ctx, selection)
 	if selectedErr != nil {
 		return selectedErr
@@ -142,7 +156,7 @@ func walkSelectedStoredSegment(ctx context.Context, segment pinnedSegment, selec
 	if selected.IsEmpty() {
 		return nil
 	}
-	deleted, deletionErr := deletedDocuments(segment.record)
+	deleted, deletionErr := deletedDocuments(record)
 	if deletionErr != nil {
 		return deletionErr
 	}
@@ -151,33 +165,13 @@ func walkSelectedStoredSegment(ctx context.Context, segment pinnedSegment, selec
 
 func (s *storedSegmentReader) selectedDocuments(ctx context.Context, selection termSelection) (*roaringpkg.Bitmap, error) {
 	selected := roaringpkg.New()
-	dictionaryOffset, found, dictionaryErr := s.dictionaryOffset(selection.field)
+	dictionary, dictionaryErr := s.dictionary(selection.field)
 	if dictionaryErr != nil {
 		return nil, dictionaryErr
 	}
-	if !found || dictionaryOffset == 0 {
+	if dictionary == nil {
 		return selected, nil
 	}
-	if dictionaryOffset >= s.footer.docValueOffset {
-		return nil, corruptError("segment %q has a term dictionary outside its section", s.path)
-	}
-	dictionaryCursor := dictionaryOffset
-	dictionaryLength, lengthErr := s.readUvarint(&dictionaryCursor, s.footer.docValueOffset)
-	if lengthErr != nil {
-		return nil, lengthErr
-	}
-	if dictionaryLength > maxSelectionDictionarySize || dictionaryLength > s.footer.docValueOffset-dictionaryCursor {
-		return nil, corruptError("segment %q has an oversized term dictionary", s.path)
-	}
-	dictionaryData := make([]byte, int(dictionaryLength))
-	if readErr := s.readInto(dictionaryCursor, dictionaryData); readErr != nil {
-		return nil, readErr
-	}
-	dictionary, loadErr := loadTermDictionary(dictionaryData)
-	if loadErr != nil {
-		return nil, corruptError("decode term dictionary in segment %q", s.path, loadErr)
-	}
-	defer func() { _ = dictionary.Close() }()
 	for _, term := range selection.terms {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
@@ -280,6 +274,139 @@ func (s *storedSegmentReader) dictionary(field string) (*vellum.FST, error) {
 	}
 	s.dictionaries[field] = dictionary
 	return dictionary, nil
+}
+
+// smallSegmentTermSetDocuments bounds the segments that keep an exact
+// in-memory term set per field. Exact-term lookups fan out to every live
+// segment (an upsert probes every segment for the identifier it replaces),
+// and while a burst of single-document writes is pending merge most of those
+// segments are tiny; a map probe answers "not here" for them without walking
+// an FST.
+const smallSegmentTermSetDocuments = 64
+
+// maxBloomFilterTerms bounds the dictionaries larger segments summarize in a
+// bloom filter (about 2 bytes per term), and with it the one-time cost of
+// building one on a field's first lookup. Larger dictionaries keep plain FST
+// lookups.
+const maxBloomFilterTerms = 1 << 16
+
+// termAbsent reports whether term is certainly not in field's dictionary:
+// exactly from a term set on small segments, probabilistically from a bloom
+// filter on larger ones. It reports false (unknown) when neither applies.
+func (s *storedSegmentReader) termAbsent(field string, term []byte) (bool, error) {
+	if s.footer.documentCount > smallSegmentTermSetDocuments {
+		return s.bloomTermAbsent(field, term)
+	}
+	s.dictionaryMu.RLock()
+	terms, built := s.smallTermSets[field]
+	s.dictionaryMu.RUnlock()
+	if !built {
+		var buildErr error
+		if terms, buildErr = s.buildSmallTermSet(field); buildErr != nil {
+			return false, buildErr
+		}
+	}
+	_, present := terms[string(term)]
+	return !present, nil
+}
+
+func (s *storedSegmentReader) bloomTermAbsent(field string, term []byte) (bool, error) {
+	s.dictionaryMu.RLock()
+	bloom, built := s.termBlooms[field]
+	s.dictionaryMu.RUnlock()
+	if !built {
+		var buildErr error
+		if bloom, buildErr = s.buildTermBloom(field); buildErr != nil {
+			return false, buildErr
+		}
+	}
+	if bloom == nil {
+		return false, nil
+	}
+	return !bloom.MightContain(term), nil
+}
+
+func (s *storedSegmentReader) buildTermBloom(field string) (*filter.BloomFilter, error) {
+	dictionary, dictionaryErr := s.dictionary(field)
+	if dictionaryErr != nil {
+		return nil, dictionaryErr
+	}
+	var bloom *filter.BloomFilter
+	switch {
+	case dictionary == nil:
+		bloom = filter.NewBloomFilter(1)
+	case dictionary.Len() <= maxBloomFilterTerms:
+		bloom = filter.NewBloomFilter(dictionary.Len())
+		if visitErr := visitDictionaryTerms(dictionary, func(term []byte) { bloom.Add(term) }); visitErr != nil {
+			return nil, visitErr
+		}
+	}
+	s.dictionaryMu.Lock()
+	defer s.dictionaryMu.Unlock()
+	if existing, built := s.termBlooms[field]; built {
+		return existing, nil
+	}
+	if s.termBlooms == nil {
+		s.termBlooms = make(map[string]*filter.BloomFilter)
+	}
+	s.termBlooms[field] = bloom
+	return bloom, nil
+}
+
+// visitDictionaryTerms calls visit with every term of dictionary in order.
+func visitDictionaryTerms(dictionary *vellum.FST, visit func(term []byte)) error {
+	iterator, iteratorErr := dictionary.Iterator(nil, nil)
+	if iteratorErr != nil {
+		if iteratorDone(iteratorErr) {
+			return nil
+		}
+		return corruptError("iterate term dictionary", iteratorErr)
+	}
+	defer func() { _ = iterator.Close() }()
+	for {
+		term, value := iterator.Current()
+		// Vellum reports the valid empty key as a nil slice; nil with a zero
+		// value means the iterator is not positioned on an entry.
+		if term == nil && value == 0 {
+			return nil
+		}
+		visit(term)
+		if nextErr := iterator.Next(); nextErr != nil {
+			if iteratorDone(nextErr) {
+				return nil
+			}
+			return corruptError("iterate term dictionary", nextErr)
+		}
+	}
+}
+
+func (s *storedSegmentReader) buildSmallTermSet(field string) (map[string]struct{}, error) {
+	dictionary, dictionaryErr := s.dictionary(field)
+	if dictionaryErr != nil {
+		return nil, dictionaryErr
+	}
+	terms := make(map[string]struct{})
+	if dictionary != nil {
+		if visitErr := visitDictionaryTerms(dictionary, func(term []byte) { terms[string(term)] = struct{}{} }); visitErr != nil {
+			return nil, visitErr
+		}
+	}
+	s.dictionaryMu.Lock()
+	defer s.dictionaryMu.Unlock()
+	if existing, built := s.smallTermSets[field]; built {
+		return existing, nil
+	}
+	if s.smallTermSets == nil {
+		s.smallTermSets = make(map[string]map[string]struct{})
+	}
+	s.smallTermSets[field] = terms
+	return terms, nil
+}
+
+// iteratorDone mirrors Reader.Terms: vellum ends iteration, including over an
+// empty dictionary, with ErrIteratorDone or an error naming the iterator.
+func iteratorDone(err error) bool {
+	return errors.Is(err, vellum.ErrIteratorDone) || strings.Contains(strings.ToLower(err.Error()), "iterator")
 }
 
 // acquireDictionaryReader returns a single-threaded vellum Reader from a
@@ -660,6 +787,9 @@ func (s *storedSegmentReader) visitTermPostings(field string, terms [][]byte, vi
 }
 
 func (s *storedSegmentReader) termPosting(field string, term []byte) (TermPosting, bool, error) {
+	if absent, absentErr := s.termAbsent(field, term); absentErr != nil || absent {
+		return TermPosting{}, false, absentErr
+	}
 	reader, readerPool, readerErr := s.acquireDictionaryReader(field)
 	if readerErr != nil || reader == nil {
 		return TermPosting{}, false, readerErr
@@ -706,54 +836,13 @@ func (s *storedSegmentReader) postingValuesAndBitmap(postingOffset uint64) ([]ui
 		}
 		return []uint64{documentNumber}, []TermFrequency{{DocumentNumber: documentNumber, Frequency: 1}}, nil, nil
 	}
-	if postingOffset&fstValueEncodingMask != 0 {
-		return nil, nil, nil, corruptError("segment %q has an unsupported posting encoding", s.path)
-	}
-	if postingOffset >= s.footer.docValueOffset {
-		return nil, nil, nil, corruptError("segment %q has a posting outside its section", s.path)
-	}
-	cursor := postingOffset
-	frequencyOffset, frequencyErr := s.readUvarint(&cursor, s.footer.docValueOffset)
-	if frequencyErr != nil {
-		return nil, nil, nil, frequencyErr
-	}
-	locationOffset, locationErr := s.readUvarint(&cursor, s.footer.docValueOffset)
-	if locationErr != nil {
-		return nil, nil, nil, locationErr
-	}
-	if locationOffset > 0 && frequencyOffset > 0 {
-		if locationOffset > ^uint64(0)-frequencyOffset {
-			return nil, nil, nil, corruptError("segment %q has an overflowing posting detail offset", s.path)
-		}
-		locationOffset += frequencyOffset
-	}
-	if frequencyOffset > postingOffset || locationOffset > postingOffset {
-		return nil, nil, nil, corruptError("segment %q has a posting detail offset outside its section", s.path)
-	}
-	postingsLength, lengthErr := s.readUvarint(&cursor, s.footer.docValueOffset)
-	if lengthErr != nil || postingsLength > maxSelectionPostingsSize || postingsLength > s.footer.docValueOffset-cursor {
-		if lengthErr != nil {
-			return nil, nil, nil, lengthErr
-		}
-		return nil, nil, nil, corruptError("segment %q has an oversized posting bitmap", s.path)
-	}
-	postingsData, dataErr := s.readPostingBytes(cursor, postingsLength)
-	if dataErr != nil {
-		return nil, nil, nil, dataErr
-	}
-	postings, decodeErr := decodePostingBitmap(context.Background(), postingsData)
+	frequencyOffset, postings, decodeErr := s.decodePostingAt(postingOffset)
 	if decodeErr != nil {
-		return nil, nil, nil, corruptError("decode posting bitmap in segment %q", s.path, decodeErr)
-	}
-	if postings.GetCardinality() > s.footer.documentCount {
-		return nil, nil, nil, corruptError("segment %q has a posting bitmap with too many documents", s.path)
+		return nil, nil, nil, decodeErr
 	}
 	documents := postings.ToArray()
 	result := make([]uint64, len(documents))
 	for documentIndex, document := range documents {
-		if uint64(document) >= s.footer.documentCount {
-			return nil, nil, nil, corruptError("segment %q has an out-of-range posting document", s.path)
-		}
 		result[documentIndex] = uint64(document)
 	}
 	if frequencyOffset == 0 {
@@ -768,6 +857,88 @@ func (s *storedSegmentReader) postingValuesAndBitmap(postingOffset uint64) ([]ui
 		return nil, nil, nil, frequencyDecodeErr
 	}
 	return result, frequencies, postings, nil
+}
+
+// decodePostingAt validates and decodes the document bitmap of a general
+// (non one-hit) posting, returning the offset of its frequency stream (zero
+// when the posting has none) without decoding that stream.
+func (s *storedSegmentReader) decodePostingAt(postingOffset uint64) (uint64, *roaringpkg.Bitmap, error) {
+	if postingOffset&fstValueEncodingMask != 0 {
+		return 0, nil, corruptError("segment %q has an unsupported posting encoding", s.path)
+	}
+	if postingOffset >= s.footer.docValueOffset {
+		return 0, nil, corruptError("segment %q has a posting outside its section", s.path)
+	}
+	cursor := postingOffset
+	frequencyOffset, frequencyErr := s.readUvarint(&cursor, s.footer.docValueOffset)
+	if frequencyErr != nil {
+		return 0, nil, frequencyErr
+	}
+	locationOffset, locationErr := s.readUvarint(&cursor, s.footer.docValueOffset)
+	if locationErr != nil {
+		return 0, nil, locationErr
+	}
+	if locationOffset > 0 && frequencyOffset > 0 {
+		if locationOffset > ^uint64(0)-frequencyOffset {
+			return 0, nil, corruptError("segment %q has an overflowing posting detail offset", s.path)
+		}
+		locationOffset += frequencyOffset
+	}
+	if frequencyOffset > postingOffset || locationOffset > postingOffset {
+		return 0, nil, corruptError("segment %q has a posting detail offset outside its section", s.path)
+	}
+	postingsLength, lengthErr := s.readUvarint(&cursor, s.footer.docValueOffset)
+	if lengthErr != nil {
+		return 0, nil, lengthErr
+	}
+	if postingsLength > maxSelectionPostingsSize || postingsLength > s.footer.docValueOffset-cursor {
+		return 0, nil, corruptError("segment %q has an oversized posting bitmap", s.path)
+	}
+	postingsData, dataErr := s.readPostingBytes(cursor, postingsLength)
+	if dataErr != nil {
+		return 0, nil, dataErr
+	}
+	postings, decodeErr := decodePostingBitmap(context.Background(), postingsData)
+	if decodeErr != nil {
+		return 0, nil, corruptError("decode posting bitmap in segment %q", s.path, decodeErr)
+	}
+	if postings.GetCardinality() > s.footer.documentCount {
+		return 0, nil, corruptError("segment %q has a posting bitmap with too many documents", s.path)
+	}
+	if !postings.IsEmpty() && uint64(postings.Maximum()) >= s.footer.documentCount {
+		return 0, nil, corruptError("segment %q has an out-of-range posting document", s.path)
+	}
+	return frequencyOffset, postings, nil
+}
+
+func (s *storedSegmentReader) termPostingBitmap(field string, term []byte) (*roaringpkg.Bitmap, bool, error) {
+	if absent, absentErr := s.termAbsent(field, term); absentErr != nil || absent {
+		return nil, false, absentErr
+	}
+	reader, readerPool, readerErr := s.acquireDictionaryReader(field)
+	if readerErr != nil || reader == nil {
+		return nil, false, readerErr
+	}
+	defer readerPool.Put(reader)
+	postingOffset, found, lookupErr := lookupTermPostingReader(reader, term)
+	if lookupErr != nil {
+		return nil, false, corruptError("look up term in segment %q", s.path, lookupErr)
+	}
+	if !found {
+		return nil, false, nil
+	}
+	if postingOffset&fstValueEncodingMask == fstValueEncodingOneHit {
+		documentNumber := postingOffset & fstValueDocumentMask
+		if documentNumber >= s.footer.documentCount || documentNumber > math.MaxUint32 {
+			return nil, false, corruptError("segment %q has an out-of-range single-hit posting", s.path)
+		}
+		return roaringpkg.BitmapOf(uint32(documentNumber)), true, nil
+	}
+	_, postings, decodeErr := s.decodePostingAt(postingOffset)
+	if decodeErr != nil {
+		return nil, false, decodeErr
+	}
+	return postings, true, nil
 }
 
 func (s *storedSegmentReader) decodeICEFrequencyStream(frequencyOffset, postingOffset uint64, postings *roaringpkg.Bitmap) ([]TermFrequency, error) {

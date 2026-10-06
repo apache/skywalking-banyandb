@@ -22,12 +22,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/initerror"
@@ -39,6 +41,21 @@ import (
 )
 
 const group = "test"
+
+type testRootLease struct{ revoked atomic.Bool }
+
+func (l *testRootLease) Validate() error {
+	if l.revoked.Load() {
+		return errors.New("test root lease revoked")
+	}
+	return nil
+}
+
+func (l *testRootLease) ValidatePath(string) error { return l.Validate() }
+func (l *testRootLease) Revoke() error {
+	l.revoked.Store(true)
+	return nil
+}
 
 // MockGaugeWithValue wraps MockGauge to track the value.
 type MockGaugeWithValue struct {
@@ -813,6 +830,68 @@ func TestTSDBOpen_LockReleasedAfterFailedOpen(t *testing.T) {
 	require.NoError(t, tsdb.Close())
 }
 
+// TestTSDBOpen_LockReleasedAfterRootLeaseFactoryFailure verifies that a
+// lease-construction error cannot strand the database lock before the normal
+// OpenTSDB cleanup defer is installed.
+func TestTSDBOpen_LockReleasedAfterRootLeaseFactoryFailure(t *testing.T) {
+	logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel})
+
+	dir, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	opts := TSDBOpts[*MockTSTable, any]{
+		Location:        dir,
+		SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
+		TTL:             IntervalRule{Unit: DAY, Num: 3},
+		ShardNum:        1,
+		TSTableCreator:  MockTSTableCreator,
+		RootLeaseFactory: func(fs.File, string) (RootLease, error) {
+			return nil, errors.New("lease factory failed")
+		},
+	}
+
+	ctx := context.Background()
+	mc := timestamp.NewMockClock()
+	ts, parseErr := time.ParseInLocation("2006-01-02 15:04:05", "2024-05-01 00:00:00", time.Local)
+	require.NoError(t, parseErr)
+	mc.Set(ts)
+	ctx = timestamp.SetClock(ctx, mc)
+
+	serviceCache := NewServiceCache()
+	_, openErr := OpenTSDB(ctx, opts, serviceCache, group)
+	require.ErrorContains(t, openErr, "create root lease")
+
+	// A second open can acquire the same lock only when the failed factory path
+	// closed and removed the first attempt's lock file.
+	opts.RootLeaseFactory = nil
+	tsdb, reopenErr := OpenTSDB(ctx, opts, serviceCache, group)
+	require.NoError(t, reopenErr)
+	require.NoError(t, tsdb.Close())
+}
+
+func TestTSDBCloseRevokesRootLeaseBeforeReleasingLock(t *testing.T) {
+	logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel})
+
+	dir, defFn := test.Space(require.New(t))
+	defer defFn()
+	lease := &testRootLease{}
+	opts := TSDBOpts[*MockTSTable, any]{
+		Location:        dir,
+		SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
+		TTL:             IntervalRule{Unit: DAY, Num: 3},
+		ShardNum:        1,
+		TSTableCreator:  MockTSTableCreator,
+		RootLeaseFactory: func(fs.File, string) (RootLease, error) {
+			return lease, nil
+		},
+	}
+	tsdb, err := OpenTSDB(context.Background(), opts, NewServiceCache(), group)
+	require.NoError(t, err)
+	require.NoError(t, tsdb.Close())
+	require.True(t, lease.revoked.Load(), "database close must revoke the lease before lock release")
+	require.Error(t, lease.Validate())
+}
+
 // TestTSDBOpen_RejectsIncompatibleSegment verifies that opening a TSDB whose
 // on-disk segment is stamped with an incompatible version surfaces a permanent
 // initialization error so the caller fails fast instead of silently dropping
@@ -845,4 +924,65 @@ func TestTSDBOpen_RejectsIncompatibleSegment(t *testing.T) {
 	require.Error(t, openErr, "OpenTSDB must reject an incompatible-version segment")
 	require.True(t, initerror.IsPermanent(openErr), "incompatible-version error must surface as permanent")
 	require.True(t, errors.Is(openErr, errVersionIncompatible), "error must still match the version-incompatible sentinel")
+}
+
+// leaseAwareTable records whether the database lease was still valid when the
+// table was closed, as a native index table needs it to be for a final flush.
+type leaseAwareTable struct {
+	MockTSTable
+	lease         RootLease
+	closed        *atomic.Int32
+	closedRevoked *atomic.Int32
+}
+
+func (l *leaseAwareTable) Close() error {
+	l.closed.Add(1)
+	if l.lease.Validate() != nil {
+		l.closedRevoked.Add(1)
+	}
+	return nil
+}
+
+func TestTSDBOpenClosesLoadedSegmentsBeforeRevokingLeaseOnLaterSegmentFailure(t *testing.T) {
+	logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel})
+	dir, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	// A valid segment with one shard is loaded first; the next segment's
+	// metadata is incompatible, so the open fails after the first succeeded.
+	validShard := filepath.Join(dir, "seg-20240430", "shard-0")
+	require.NoError(t, os.MkdirAll(validShard, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "seg-20240430", metadataFilename), []byte(currentVersion), FilePerm))
+	newTestSegmentSkeleton(t, dir, "1.3.0")
+
+	lease := &testRootLease{}
+	var created, closed, closedRevoked atomic.Int32
+	opts := TSDBOpts[*leaseAwareTable, any]{
+		Location:        dir,
+		SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
+		TTL:             IntervalRule{Unit: DAY, Num: 3},
+		ShardNum:        1,
+		TSTableCreator: func(fs.FileSystem, string, common.Position, *logger.Logger, timestamp.TimeRange, any, any) (*leaseAwareTable, error) {
+			return nil, errors.New("the lease-aware creator must be used")
+		},
+		TSTableCreatorWithLease: func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger, _ timestamp.TimeRange,
+			_ any, _ any, tableLease RootLease,
+		) (*leaseAwareTable, error) {
+			created.Add(1)
+			return &leaseAwareTable{lease: tableLease, closed: &closed, closedRevoked: &closedRevoked}, nil
+		},
+		RootLeaseFactory: func(fs.File, string) (RootLease, error) { return lease, nil },
+	}
+	mc := timestamp.NewMockClock()
+	ts, parseErr := time.ParseInLocation("2006-01-02 15:04:05", "2024-05-01 00:00:00", time.Local)
+	require.NoError(t, parseErr)
+	mc.Set(ts)
+	ctx := timestamp.SetClock(context.Background(), mc)
+
+	_, openErr := OpenTSDB(ctx, opts, NewServiceCache(), group)
+	require.Error(t, openErr)
+	require.Equal(t, int32(1), created.Load(), "the valid segment's shard table must have been opened")
+	require.Equal(t, int32(1), closed.Load(), "a failed open must close the tables it already opened")
+	require.Zero(t, closedRevoked.Load(), "tables must close before the lease is revoked")
+	require.True(t, lease.revoked.Load(), "the lease is revoked once the tables are closed")
 }

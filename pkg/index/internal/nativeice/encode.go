@@ -20,12 +20,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"hash/crc32"
 	"io"
 	"math"
-	"os"
-	"path/filepath"
 	"sort"
+	"sync"
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
 	"github.com/blevesearch/vellum"
@@ -103,6 +101,9 @@ type Generation struct {
 	// SnapshotID numbers the snapshot manifest that publishes the generation,
 	// and is the identifier Reader.SnapshotID reports once it is opened.
 	SnapshotID uint64
+	// TimeMin and TimeMax are the segment's encoded timestamp bounds.
+	TimeMin uint64
+	TimeMax uint64
 }
 
 // Encode writes generation into the index directory at path as one committed
@@ -141,19 +142,13 @@ func Encode(path string, generation Generation) error {
 	if segmentErr != nil {
 		return segmentErr
 	}
-	if directoryErr := os.MkdirAll(path, 0o755); directoryErr != nil {
-		return fmt.Errorf("create index directory %q: %w", path, directoryErr)
-	}
-	segmentName := nativeICEFileName(generation.SegmentID, ".seg")
-	if publishErr := publishNativeICEFile(path, segmentName, segmentPayload); publishErr != nil {
-		return fmt.Errorf("publish segment %q: %w", segmentName, publishErr)
-	}
-	manifestPayload := encodeNativeSnapshot(generation, uint64(len(segmentPayload)), deletionBitmap)
-	manifestName := nativeICEFileName(generation.SnapshotID, ".snp")
-	if publishErr := publishNativeICEFile(path, manifestName, manifestPayload); publishErr != nil {
-		return fmt.Errorf("publish snapshot %q: %w", manifestName, publishErr)
-	}
-	return nil
+	return PublishSnapshot(path, generation.SnapshotID, []SnapshotSegmentPayload{{
+		SnapshotSegment: SnapshotSegment{
+			ID: generation.SegmentID, Size: uint64(len(segmentPayload)),
+			DocumentCount: uint64(len(generation.Documents)), DeletionBitmap: deletionBitmap,
+		},
+		Payload: segmentPayload,
+	}})
 }
 
 // EncodeSegment returns the native ICE segment bytes for generation without
@@ -189,23 +184,52 @@ const (
 	nativeICEChunkModeV1 uint32 = 1025
 )
 
+// nativeICEField is one field's derived index state. termFrequencies[term] is
+// aligned with termDocuments[term]: documents register terms in ascending
+// document order, and every registration of one term by one document is
+// consecutive, so a document's frequency always accumulates into the last
+// entry.
 type nativeICEField struct {
-	documentNumbers map[uint64]struct{}
 	sortValues      map[uint64][][]byte
 	termDocuments   map[string][]uint64
-	termFrequencies map[string]map[uint64]uint64
+	termFrequencies map[string][]uint64
 	name            string
+	documents       documentSet
 	documentCount   uint64
 	frequency       uint64
 }
 
 func encodeNativeSegment(generation Generation) ([]byte, []byte, error) {
 	fields := nativeICEFields(generation)
+	fieldIDs := nativeICEFieldIDs(fields)
+	storedData, documentOffsets := encodeStoredDocuments(generation, fieldIDs)
+	segment, assembleErr := assembleNativeSegment(fields, storedData, documentOffsets,
+		uint64(len(generation.Documents)), generation.TimeMin, generation.TimeMax)
+	if assembleErr != nil {
+		return nil, nil, assembleErr
+	}
+	deletionBitmap, deletionErr := encodeDeletionBitmap(generation.Documents)
+	if deletionErr != nil {
+		return nil, nil, deletionErr
+	}
+	return segment, deletionBitmap, nil
+}
+
+func nativeICEFieldIDs(fields []nativeICEField) map[string]uint64 {
 	fieldIDs := make(map[string]uint64, len(fields))
 	for fieldIndex, field := range fields {
 		fieldIDs[field.name] = uint64(fieldIndex)
 	}
-	storedData, documentOffsets := encodeStoredDocuments(generation, fieldIDs)
+	return fieldIDs
+}
+
+// assembleNativeSegment serializes already-derived field structures and
+// stored documents into segment bytes. Both EncodeSegment and MergeSegments
+// end here, so a merge that derives the same fields and stored documents
+// produces the same bytes as re-encoding the merged documents.
+func assembleNativeSegment(
+	fields []nativeICEField, storedData []byte, documentOffsets []uint64, documentCount, timeMin, timeMax uint64,
+) ([]byte, error) {
 	segment := make([]byte, 0, len(storedData)+len(documentOffsets)*storedDocumentOffsetByteWidth+segmentFooterLength)
 	segment = append(segment, storedData...)
 	storedIndexOffset := uint64(len(segment))
@@ -223,16 +247,16 @@ func encodeNativeSegment(generation Generation) ([]byte, []byte, error) {
 		}
 		hasDocValues = true
 		docValueStarts[fieldIndex] = uint64(len(segment))
-		segment = append(segment, encodeNativeICEDocValues(uint64(len(generation.Documents)), field.sortValues)...)
+		segment = append(segment, encodeNativeICEDocValues(documentCount, field.sortValues)...)
 		docValueEnds[fieldIndex] = uint64(len(segment))
 	}
 	fieldOffsets := make([]uint64, len(fields))
 	for fieldIndex, field := range fields {
 		var dictionaryOffset uint64
 		var termsErr error
-		segment, dictionaryOffset, termsErr = appendNativeICETerms(segment, field, uint64(len(generation.Documents)))
+		segment, dictionaryOffset, termsErr = appendNativeICETerms(segment, field, documentCount)
 		if termsErr != nil {
-			return nil, nil, termsErr
+			return nil, termsErr
 		}
 		fieldOffsets[fieldIndex] = uint64(len(segment))
 		segment = appendNativeUvarint(segment, dictionaryOffset)
@@ -254,18 +278,15 @@ func encodeNativeSegment(generation Generation) ([]byte, []byte, error) {
 		segment = appendNativeUint64(segment, fieldOffset)
 	}
 	footer := make([]byte, segmentFooterLength)
-	binary.BigEndian.PutUint64(footer[0:8], uint64(len(generation.Documents)))
+	binary.BigEndian.PutUint64(footer[0:8], documentCount)
 	binary.BigEndian.PutUint64(footer[8:16], storedIndexOffset)
 	binary.BigEndian.PutUint64(footer[16:24], fieldsIndexOffset)
 	binary.BigEndian.PutUint64(footer[24:32], docValueOffset)
 	binary.BigEndian.PutUint32(footer[32:36], nativeICEChunkModeV1)
+	binary.BigEndian.PutUint64(footer[36:44], timeMin)
+	binary.BigEndian.PutUint64(footer[44:52], timeMax)
 	binary.BigEndian.PutUint32(footer[52:56], segmentVersion)
-	segment = append(segment, footer...)
-	deletionBitmap, deletionErr := encodeDeletionBitmap(generation.Documents)
-	if deletionErr != nil {
-		return nil, nil, deletionErr
-	}
-	return segment, deletionBitmap, nil
+	return append(segment, footer...), nil
 }
 
 func encodeNativeICEDocValues(documentCount uint64, sortValues map[uint64][][]byte) []byte {
@@ -353,19 +374,40 @@ func nativeICEFields(generation Generation) []nativeICEField {
 				}
 			}
 			if field.Sort {
+				// Doc-value-only fields still need a document cardinality in
+				// their field footer; otherwise readers discard their values as
+				// an empty field even though the doc-value section is present.
+				nativeField.documents.add(documentNumber)
 				nativeField.sortValues[documentNumber] = append(nativeField.sortValues[documentNumber], field.Value)
 			}
 		}
 	}
+	return orderNativeICEFields(fieldsByName, uint64(len(generation.Documents)))
+}
+
+// orderNativeICEFields fixes field order and per-field document counts:
+// the identifier first, then every other field in ascending name order.
+func orderNativeICEFields(fieldsByName map[string]*nativeICEField, documentCount uint64) []nativeICEField {
 	fieldNames := make([]string, 0, len(fieldsByName))
 	for fieldName := range fieldsByName {
+		if fieldName == identifierField {
+			continue
+		}
 		fieldNames = append(fieldNames, fieldName)
 	}
 	sort.Strings(fieldNames)
-	fields := make([]nativeICEField, 0, len(fieldNames))
+	// ICE's field table reserves the first field slot for the identifier. The
+	// legacy merge fast path preserves field IDs when all inputs have the same
+	// field order, then reconstructs the output with _id first. Keep native
+	// segments in that same canonical order or a later legacy merge can attach
+	// stored values to the wrong field names.
+	fields := make([]nativeICEField, 0, len(fieldNames)+1)
+	identifierNativeField := fieldsByName[identifierField]
+	identifierNativeField.documentCount = documentCount
+	fields = append(fields, *identifierNativeField)
 	for _, fieldName := range fieldNames {
 		nativeField := fieldsByName[fieldName]
-		nativeField.documentCount = uint64(len(nativeField.documentNumbers))
+		nativeField.documentCount = nativeField.documents.count
 		fields = append(fields, *nativeField)
 	}
 	return fields
@@ -377,32 +419,54 @@ func nativeICEFieldFor(fieldsByName map[string]*nativeICEField, name string) *na
 	}
 	field := &nativeICEField{
 		name:            name,
-		documentNumbers: make(map[uint64]struct{}),
 		sortValues:      make(map[uint64][][]byte),
 		termDocuments:   make(map[string][]uint64),
-		termFrequencies: make(map[string]map[uint64]uint64),
+		termFrequencies: make(map[string][]uint64),
 	}
 	fieldsByName[name] = field
 	return field
 }
 
 func registerNativeICETerm(field *nativeICEField, value []byte, documentNumber uint64, frequency uint64) {
+	registerNativeICETermKey(field, string(value), documentNumber, frequency)
+}
+
+func registerNativeICETermKey(field *nativeICEField, term string, documentNumber uint64, frequency uint64) {
 	if frequency == 0 {
 		frequency = 1
 	}
-	term := string(value)
 	documents := field.termDocuments[term]
-	if len(documents) == 0 || documents[len(documents)-1] != documentNumber {
-		field.termDocuments[term] = append(documents, documentNumber)
-	}
 	frequencies := field.termFrequencies[term]
-	if frequencies == nil {
-		frequencies = make(map[uint64]uint64)
-		field.termFrequencies[term] = frequencies
+	if last := len(documents) - 1; last >= 0 && documents[last] == documentNumber {
+		frequencies[last] += frequency
+	} else {
+		documents = append(documents, documentNumber)
+		frequencies = append(frequencies, frequency)
+		field.termDocuments[term] = documents
 	}
-	frequencies[documentNumber] += frequency
-	field.documentNumbers[documentNumber] = struct{}{}
+	field.termFrequencies[term] = frequencies
+	field.documents.add(documentNumber)
 	field.frequency += frequency
+}
+
+// documentSet counts the distinct documents a field covers.
+type documentSet struct {
+	words []uint64
+	count uint64
+}
+
+func (s *documentSet) add(documentNumber uint64) {
+	word := documentNumber / 64
+	if word >= uint64(len(s.words)) {
+		grown := make([]uint64, word+1, (word+1)*2)
+		copy(grown, s.words)
+		s.words = grown
+	}
+	bit := uint64(1) << (documentNumber % 64)
+	if s.words[word]&bit == 0 {
+		s.words[word] |= bit
+		s.count++
+	}
 }
 
 func appendNativeICETerms(segment []byte, field nativeICEField, documentCount uint64) ([]byte, uint64, error) {
@@ -419,8 +483,8 @@ func appendNativeICETerms(segment []byte, field nativeICEField, documentCount ui
 		documents := field.termDocuments[term]
 		frequencies := field.termFrequencies[term]
 		allFrequencyOne := true
-		for _, document := range documents {
-			if frequencies[document] != 1 {
+		for _, frequency := range frequencies {
+			if frequency != 1 {
 				allFrequencyOne = false
 				break
 			}
@@ -440,7 +504,8 @@ func appendNativeICETerms(segment []byte, field nativeICEField, documentCount ui
 	}
 	dictionaryOffset := uint64(len(segment))
 	var dictionary bytes.Buffer
-	builder, builderErr := vellum.New(&dictionary, nil)
+	builderClass := dictionaryBuilderClass(len(terms))
+	builder, builderErr := acquireDictionaryBuilder(&dictionary, builderClass)
 	if builderErr != nil {
 		return nil, 0, fmt.Errorf("create term dictionary for field %q: %w", field.name, builderErr)
 	}
@@ -452,12 +517,50 @@ func appendNativeICETerms(segment []byte, field nativeICEField, documentCount ui
 	if closeErr := builder.Close(); closeErr != nil {
 		return nil, 0, fmt.Errorf("close term dictionary for field %q: %w", field.name, closeErr)
 	}
+	dictionaryBuilderClasses[builderClass].pool.Put(builder)
 	segment = appendNativeUvarint(segment, uint64(dictionary.Len()))
 	segment = append(segment, dictionary.Bytes()...)
 	return segment, dictionaryOffset, nil
 }
 
-func appendNativeICEPosting(segment []byte, documents []uint64, frequencies map[uint64]uint64, documentCount uint64, includeFrequency bool) ([]byte, uint64, error) {
+// dictionaryBuilderClasses size vellum's suffix-sharing registry to the
+// dictionary being built. The default 10,000x2-cell table costs ~30us to clear
+// per Reset (~135us to allocate per vellum.New), which dominated encoding the
+// one-term dictionaries of every single-document admission and small merge.
+// The registry only affects how much suffix sharing the encoder finds, never
+// decodability, and above the largest class the default is kept so large
+// dictionaries encode exactly as before. Builders are pooled per class and
+// returned only after a successful Close.
+var dictionaryBuilderClasses = []struct {
+	opts     *vellum.BuilderOpts
+	pool     sync.Pool
+	maxTerms int
+}{
+	{maxTerms: 32, opts: &vellum.BuilderOpts{Encoder: 1, RegistryTableSize: 64, RegistryMRUSize: 2}},
+	{maxTerms: 1024, opts: &vellum.BuilderOpts{Encoder: 1, RegistryTableSize: 2048, RegistryMRUSize: 2}},
+	{maxTerms: math.MaxInt, opts: nil},
+}
+
+func dictionaryBuilderClass(termCount int) int {
+	for index := range dictionaryBuilderClasses {
+		if termCount <= dictionaryBuilderClasses[index].maxTerms {
+			return index
+		}
+	}
+	return len(dictionaryBuilderClasses) - 1
+}
+
+func acquireDictionaryBuilder(w io.Writer, class int) (*vellum.Builder, error) {
+	if builder, ok := dictionaryBuilderClasses[class].pool.Get().(*vellum.Builder); ok {
+		if resetErr := builder.Reset(w); resetErr != nil {
+			return nil, resetErr
+		}
+		return builder, nil
+	}
+	return vellum.New(w, dictionaryBuilderClasses[class].opts)
+}
+
+func appendNativeICEPosting(segment []byte, documents, frequencies []uint64, documentCount uint64, includeFrequency bool) ([]byte, uint64, error) {
 	postings := roaringpkg.New()
 	for _, documentNumber := range documents {
 		if documentNumber > math.MaxUint32 {
@@ -486,7 +589,7 @@ func appendNativeICEPosting(segment []byte, documents []uint64, frequencies map[
 	return append(segment, payload...), postingOffset, nil
 }
 
-func encodeNativeICEFrequencyStream(documents []uint64, frequencies map[uint64]uint64, documentCount uint64) ([]byte, error) {
+func encodeNativeICEFrequencyStream(documents, frequencies []uint64, documentCount uint64) ([]byte, error) {
 	if len(documents) == 0 || documentCount == 0 {
 		return nil, fmt.Errorf("frequency stream has no documents: %w", ErrInvalidGeneration)
 	}
@@ -499,7 +602,7 @@ func encodeNativeICEFrequencyStream(documents []uint64, frequencies map[uint64]u
 	var final []byte
 	var chunkData []byte
 	currentChunk := uint64(0)
-	for _, document := range documents {
+	for documentIndex, document := range documents {
 		chunk := document / chunkSize
 		if chunk >= chunkCount {
 			return nil, fmt.Errorf("document %d exceeds frequency chunk range: %w", document, ErrInvalidGeneration)
@@ -511,7 +614,7 @@ func encodeNativeICEFrequencyStream(documents []uint64, frequencies map[uint64]u
 			chunkData = chunkData[:0]
 			currentChunk = chunk
 		}
-		frequency := frequencies[document]
+		frequency := frequencies[documentIndex]
 		if frequency == 0 {
 			return nil, fmt.Errorf("document %d has no frequency: %w", document, ErrInvalidGeneration)
 		}
@@ -553,18 +656,35 @@ func nativeICEChunkSize(chunkMode uint32, cardinality, maxDocuments uint64) (uin
 }
 
 func encodeStoredDocuments(generation Generation, fieldIDs map[string]uint64) ([]byte, []uint64) {
-	documentOffsets := make([]uint64, len(generation.Documents))
+	return encodeStoredChunks(len(generation.Documents), func(documentIndex int, destination []byte) []byte {
+		document := generation.Documents[documentIndex]
+		values := make([]storedValue, 0, len(document.Fields)+1)
+		values = append(values, storedValue{name: identifierField, value: document.Identifier})
+		for _, field := range document.Fields {
+			if field.Store {
+				values = append(values, storedValue{name: field.Name, value: field.Value})
+			}
+		}
+		return appendStoredDocument(destination, values, fieldIDs)
+	})
+}
+
+// encodeStoredChunks lays documentCount stored documents, produced by
+// appendDocument, into s2-compressed chunks with their offset tables.
+func encodeStoredChunks(documentCount int, appendDocument func(documentIndex int, destination []byte) []byte) ([]byte, []uint64) {
+	documentOffsets := make([]uint64, documentCount)
 	chunkOffsets := []uint64{0}
 	encoded := make([]byte, 0)
-	for firstDocument := 0; firstDocument < len(generation.Documents); firstDocument += storedDocumentsPerChunk {
+	decodedChunk := make([]byte, 0)
+	for firstDocument := 0; firstDocument < documentCount; firstDocument += storedDocumentsPerChunk {
 		lastDocument := firstDocument + storedDocumentsPerChunk
-		if lastDocument > len(generation.Documents) {
-			lastDocument = len(generation.Documents)
+		if lastDocument > documentCount {
+			lastDocument = documentCount
 		}
-		decodedChunk := make([]byte, 0)
+		decodedChunk = decodedChunk[:0]
 		for documentIndex := firstDocument; documentIndex < lastDocument; documentIndex++ {
 			documentOffsets[documentIndex] = uint64(len(decodedChunk))
-			decodedChunk = append(decodedChunk, encodeStoredDocument(generation.Documents[documentIndex], fieldIDs)...)
+			decodedChunk = appendDocument(documentIndex, decodedChunk)
 		}
 		encoded = append(encoded, s2.Encode(nil, decodedChunk)...)
 		chunkOffsets = append(chunkOffsets, uint64(len(encoded)))
@@ -578,33 +698,33 @@ func encodeStoredDocuments(generation Generation, fieldIDs map[string]uint64) ([
 	return appendNativeUint32(encoded, uint32(len(chunkOffsets))), documentOffsets
 }
 
-func encodeStoredDocument(document EncodeDocument, fieldIDs map[string]uint64) []byte {
-	type storedValue struct {
-		name  string
-		value []byte
-	}
-	values := []storedValue{{name: identifierField, value: document.Identifier}}
-	for _, field := range document.Fields {
-		if field.Store {
-			values = append(values, storedValue{name: field.Name, value: field.Value})
-		}
-	}
+type storedValue struct {
+	name  string
+	value []byte
+}
+
+// appendStoredDocument appends one stored document. values[0] must be the
+// identifier; the remaining values are ordered by name, stably, so repeated
+// values of one name keep the order the document lists them in.
+func appendStoredDocument(destination []byte, values []storedValue, fieldIDs map[string]uint64) []byte {
 	sort.SliceStable(values[1:], func(leftIndex, rightIndex int) bool {
 		return values[leftIndex+1].name < values[rightIndex+1].name
 	})
 	meta := make([]byte, 0, len(values)*3)
-	data := make([]byte, 0)
+	var dataLength uint64
 	for _, value := range values {
 		meta = appendNativeUvarint(meta, fieldIDs[value.name])
-		meta = appendNativeUvarint(meta, uint64(len(data)))
+		meta = appendNativeUvarint(meta, dataLength)
 		meta = appendNativeUvarint(meta, uint64(len(value.value)))
-		data = append(data, value.value...)
+		dataLength += uint64(len(value.value))
 	}
-	encoded := make([]byte, 0, len(meta)+len(data)+2*binary.MaxVarintLen64)
-	encoded = appendNativeUvarint(encoded, uint64(len(meta)))
-	encoded = appendNativeUvarint(encoded, uint64(len(data)))
-	encoded = append(encoded, meta...)
-	return append(encoded, data...)
+	destination = appendNativeUvarint(destination, uint64(len(meta)))
+	destination = appendNativeUvarint(destination, dataLength)
+	destination = append(destination, meta...)
+	for _, value := range values {
+		destination = append(destination, value.value...)
+	}
+	return destination
 }
 
 func encodeDeletionBitmap(documents []EncodeDocument) ([]byte, error) {
@@ -630,23 +750,6 @@ func encodeDeletionBitmap(documents []EncodeDocument) ([]byte, error) {
 	return payload, nil
 }
 
-func encodeNativeSnapshot(generation Generation, segmentSize uint64, deletionBitmap []byte) []byte {
-	manifest := make([]byte, 0, 64+len(deletionBitmap))
-	manifest = appendNativeUvarint(manifest, snapshotVersion)
-	manifest = appendNativeUvarint(manifest, 1)
-	manifest = appendNativeUvarint(manifest, uint64(len("ice")))
-	manifest = append(manifest, "ice"...)
-	manifest = appendNativeUint32(manifest, segmentVersion)
-	manifest = appendNativeUvarint(manifest, generation.SegmentID)
-	manifest = appendNativeUint64(manifest, segmentSize)
-	manifest = appendNativeUint64(manifest, uint64(len(generation.Documents)))
-	manifest = appendNativeUint64(manifest, 0)
-	manifest = appendNativeUint64(manifest, 0)
-	manifest = appendNativeUvarint(manifest, uint64(len(deletionBitmap)))
-	manifest = append(manifest, deletionBitmap...)
-	return appendNativeUint32(manifest, crc32.ChecksumIEEE(manifest))
-}
-
 func appendNativeUvarint(destination []byte, value uint64) []byte {
 	var encoded [binary.MaxVarintLen64]byte
 	encodedLength := binary.PutUvarint(encoded[:], value)
@@ -667,57 +770,4 @@ func appendNativeUint64(destination []byte, value uint64) []byte {
 
 func nativeICEFileName(identifier uint64, extension string) string {
 	return fmt.Sprintf("%012x%s", identifier, extension)
-}
-
-func publishNativeICEFile(directory, name string, payload []byte) error {
-	temporaryFile, createErr := os.CreateTemp(directory, ".nativeice-")
-	if createErr != nil {
-		return fmt.Errorf("create temporary file: %w", createErr)
-	}
-	temporaryPath := temporaryFile.Name()
-	if writeErr := writeNativeICEFile(temporaryFile, payload); writeErr != nil {
-		return errors.Join(fmt.Errorf("write temporary file: %w", writeErr), closeAndRemoveNativeICEFile(temporaryFile, temporaryPath))
-	}
-	if syncErr := temporaryFile.Sync(); syncErr != nil {
-		return errors.Join(fmt.Errorf("sync temporary file: %w", syncErr), closeAndRemoveNativeICEFile(temporaryFile, temporaryPath))
-	}
-	if closeErr := temporaryFile.Close(); closeErr != nil {
-		return errors.Join(fmt.Errorf("close temporary file: %w", closeErr), os.Remove(temporaryPath))
-	}
-	finalPath := filepath.Join(directory, name)
-	if linkErr := os.Link(temporaryPath, finalPath); linkErr != nil {
-		return errors.Join(fmt.Errorf("link temporary file as %q: %w", finalPath, linkErr), os.Remove(temporaryPath))
-	}
-	if removeErr := os.Remove(temporaryPath); removeErr != nil {
-		return fmt.Errorf("remove temporary file %q: %w", temporaryPath, removeErr)
-	}
-	return syncNativeICEDirectory(directory)
-}
-
-func writeNativeICEFile(file *os.File, payload []byte) error {
-	for len(payload) > 0 {
-		written, writeErr := file.Write(payload)
-		if writeErr != nil {
-			return writeErr
-		}
-		if written == 0 {
-			return io.ErrShortWrite
-		}
-		payload = payload[written:]
-	}
-	return nil
-}
-
-func closeAndRemoveNativeICEFile(file *os.File, path string) error {
-	return errors.Join(file.Close(), os.Remove(path))
-}
-
-func syncNativeICEDirectory(path string) error {
-	directory, openErr := os.Open(path)
-	if openErr != nil {
-		return fmt.Errorf("open directory %q: %w", path, openErr)
-	}
-	syncErr := directory.Sync()
-	closeErr := directory.Close()
-	return errors.Join(syncErr, closeErr)
 }

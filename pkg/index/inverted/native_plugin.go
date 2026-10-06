@@ -29,7 +29,7 @@ import (
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
 
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted/internal/nativeice"
+	"github.com/apache/skywalking-banyandb/pkg/index/internal/nativeice"
 )
 
 type nativePluginField struct {
