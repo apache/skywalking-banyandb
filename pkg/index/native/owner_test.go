@@ -1355,3 +1355,33 @@ func TestOwnerPersistIntervalSpacesBackgroundPersistsAndCloseFlushesTheRest(t *t
 	require.Equal(t, int32(2), persists.Load(), "Close persists what the interval held back")
 	require.Equal(t, int64(21), persistedDocs.Load())
 }
+
+func TestOwnerFileSnapshotStreamsReopenedDiskBackedSegments(t *testing.T) {
+	path := t.TempDir()
+	owner, err := NewOwner(OwnerOptions{Lease: pathBoundLease{expected: path}, Path: path, CompactionThreshold: -1})
+	require.NoError(t, err)
+	require.NoError(t, owner.Batch(context.Background(), Batch{Documents: []Document{
+		{Identifier: []byte("kept"), Fields: []Field{{Name: "status", Value: []byte("ok"), Store: true, Index: true}}},
+		{Identifier: []byte("removed"), Fields: []Field{{Name: "status", Value: []byte("ok"), Store: true, Index: true}}},
+	}}))
+	require.NoError(t, owner.Close())
+
+	// A reopened owner holds disk-backed segments with neither a payload nor a
+	// staged source path; the snapshot must stream them from their files.
+	reopened, err := NewOwner(OwnerOptions{Lease: pathBoundLease{expected: path}, Path: path, CompactionThreshold: -1})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reopened.Close()) })
+	require.NoError(t, reopened.Batch(context.Background(), Batch{Deletes: [][]byte{[]byte("removed")}}))
+	destination := t.TempDir()
+	require.NoError(t, reopened.TakeFileSnapshot(destination))
+
+	snapshot, err := nativeice.OpenStrict(destination)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, snapshot.Close()) }()
+	_, found, err := snapshot.TermPosting("_id", []byte("kept"))
+	require.NoError(t, err)
+	require.True(t, found)
+	count, err := snapshot.VisibleDocCount()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), count, "the snapshot keeps the reopened segment's deletion mask")
+}

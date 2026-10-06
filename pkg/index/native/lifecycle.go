@@ -16,7 +16,6 @@
 package native
 
 import (
-	"bytes"
 	"fmt"
 	"path/filepath"
 
@@ -138,18 +137,18 @@ func (o *Owner) TakeFileSnapshot(destination string) error {
 			}
 			metadata.DeletionBitmap = bitmap
 		}
+		// The pinned root keeps every payload immutable and every persisted
+		// file alive until PublishSnapshot returns, so neither is copied here.
+		// A disk-backed segment is streamed from its persisted file rather than
+		// read whole, keeping snapshot memory independent of index size.
 		payload := segment.handle.payload
 		sourcePath := segment.handle.sourcePath
 		if payload == nil && sourcePath == "" {
-			var readErr error
-			payload, readErr = fileSystem.Read(filepath.Join(o.options.Path, fmt.Sprintf("%012x.seg", segment.handle.id)))
-			if readErr != nil {
-				return fmt.Errorf("read persisted native segment %d for snapshot: %w", segment.handle.id, readErr)
-			}
+			sourcePath = filepath.Join(o.options.Path, fmt.Sprintf("%012x.seg", segment.handle.id))
 		}
 		segments = append(segments, nativeice.SnapshotSegmentPayload{
 			SnapshotSegment: metadata,
-			Payload:         bytes.Clone(payload),
+			Payload:         payload,
 			SourcePath:      sourcePath,
 		})
 	}
