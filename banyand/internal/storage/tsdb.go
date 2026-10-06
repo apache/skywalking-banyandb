@@ -261,6 +261,10 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache 
 	released := false
 	defer func() {
 		if !released {
+			// Segments opened before a later one failed still hold running
+			// tables; close them first, as Close does, so they finish while
+			// the lease is valid.
+			db.segmentController.close()
 			if revoker, ok := db.rootLease.(RootLeaseRevoker); ok {
 				_ = revoker.Revoke()
 			}
