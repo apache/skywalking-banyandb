@@ -7,6 +7,7 @@ Release Notes.
 ### Features
 
 - Add a native ICE v3 encoder that writes committed index generations compatible with existing readers.
+- Cut the Property database's index writer over to the native segment plugin, selected by both the `property` and `schema-server` roles. `banyand/property/db.OpenDB` now acquires its exclusive `<Location>/lock` before scanning shard directories or opening any writer, and releases it if a later startup step fails. A rollback (flipping the selection back and restarting) reopens the same on-disk shards with the retained legacy writer unchanged.
 
 - Add logging related flags to the FODC proxy and agent. Every BanyanDB binary now shares the same logging flags and the matching `BYDB_LOGGING_*` environment variables.
 - [Breaking Change] Remove the row-based query execution path from the Stream, Measure and Trace query engines. Measure TopN pre-aggregation is unchanged and still executes row-based. The `--stream-vectorized-enabled`, `--trace-vectorized-enabled` and `--measure-vectorized-enabled` flags stay registered but no longer select an engine; `=false` now fails fast at startup on standalone, data and liaison nodes. A query shape the vectorized engine cannot plan now returns an error instead of falling through to row execution. See [Upgrading to 0.12](docs/operation/upgrade.md#upgrading-to-012).

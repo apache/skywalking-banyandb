@@ -44,6 +44,58 @@ func TestNativePluginMergePreservesRepeatedDocValues(t *testing.T) {
 	require.Equal(t, []string{"dv=first", "dv=second"}, nidx02bDocValues(t, loaded, 0, "dv"))
 }
 
+func TestNativePluginMergeSeparatesMismatchedRepeatedStoredAndSortValues(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		stored     [][]byte
+		sortValues [][]byte
+	}{
+		{name: "later value differs", stored: [][]byte{[]byte("a"), []byte("b")}, sortValues: [][]byte{[]byte("a"), []byte("c")}},
+		{name: "length differs", stored: [][]byte{[]byte("a"), []byte("b")}, sortValues: [][]byte{[]byte("a")}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			fields := []nidx02bField{nidx02bKeywordField(nidx02bIdentifierField, []byte("id"), true, true, false)}
+			for _, value := range testCase.stored {
+				fields = append(fields, nidx02bField{name: "mixed", value: value, store: true})
+			}
+			for _, value := range testCase.sortValues {
+				fields = append(fields, nidx02bField{name: "mixed", value: value, docValues: true})
+			}
+			built, _, buildErr := nativeSegmentPluginNew([]segmentDocument{&nidx02bDocument{fields: fields}}, nidx02bNormCalc)
+			require.NoError(t, buildErr)
+			merger := nativeSegmentPluginMerge([]segmentValue{built}, []*roaringpkg.Bitmap{nil}, 0)
+			var buffer bytes.Buffer
+			_, writeErr := merger.WriteTo(&buffer, nil)
+			require.NoError(t, writeErr)
+			loaded, loadErr := nativeSegmentPluginLoad(newSegmentBytes(buffer.Bytes()))
+			require.NoError(t, loadErr)
+			var stored []string
+			require.NoError(t, loaded.VisitStoredFields(0, func(name string, value []byte) bool {
+				if name == "mixed" {
+					stored = append(stored, string(value))
+				}
+				return true
+			}))
+			require.Equal(t, testCase.stored, func() [][]byte {
+				result := make([][]byte, len(stored))
+				for index := range stored {
+					result[index] = []byte(stored[index])
+				}
+				return result
+			}())
+			require.Equal(t, testCase.sortValues, func() [][]byte {
+				reader, readerErr := loaded.DocumentValueReader([]string{"mixed"})
+				require.NoError(t, readerErr)
+				var result [][]byte
+				require.NoError(t, reader.VisitDocumentValues(0, func(_ string, value []byte) {
+					result = append(result, append([]byte(nil), value...))
+				}))
+				return result
+			}())
+		})
+	}
+}
+
 func TestNativePluginStatsMergeIsMutableAndAllDeletedMergeIsEmpty(t *testing.T) {
 	left := &nativePluginStats{total: 2, documents: 1, frequency: 3}
 	right := &nativePluginStats{total: 4, documents: 2, frequency: 5}
@@ -73,6 +125,7 @@ func TestNativePluginPreservesEncodedFrequencyAcrossLoadAndMerge(t *testing.T) {
 	require.NoError(t, encodeErr)
 	loaded, loadErr := nativeSegmentPluginLoad(newSegmentBytes(payload))
 	require.NoError(t, loadErr)
+	loadedSegment := loaded.(*nativePluginSegment)
 	stats, statsErr := loaded.CollectionStats("keyword")
 	require.NoError(t, statsErr)
 	require.Equal(t, uint64(3), stats.SumTotalTermFrequency())
@@ -80,11 +133,36 @@ func TestNativePluginPreservesEncodedFrequencyAcrossLoadAndMerge(t *testing.T) {
 	var buffer bytes.Buffer
 	_, writeErr := merger.WriteTo(&buffer, nil)
 	require.NoError(t, writeErr)
+	require.Nil(t, loadedSegment.mergeDocuments, "reader-backed merge slots must not remain retained after WriteTo")
+	require.False(t, loadedSegment.mergePrepared)
 	merged, mergedErr := nativeSegmentPluginLoad(newSegmentBytes(buffer.Bytes()))
 	require.NoError(t, mergedErr)
 	mergedStats, mergedStatsErr := merged.CollectionStats("keyword")
 	require.NoError(t, mergedStatsErr)
 	require.Equal(t, uint64(3), mergedStats.SumTotalTermFrequency())
+}
+
+func TestNativePluginPreservesEmptyAndNonEmptyTermsAcrossLoadAndMerge(t *testing.T) {
+	payload, encodeErr := nativeice.EncodeSegment(nativeice.Generation{Documents: []nativeice.EncodeDocument{
+		{Identifier: []byte("id-empty"), Fields: []nativeice.EncodeField{{Name: "group", Index: true, Terms: []nativeice.EncodeTerm{{Value: nil, Frequency: 1}}}}},
+		{Identifier: []byte("id-g"), Fields: []nativeice.EncodeField{{Name: "group", Index: true, Terms: []nativeice.EncodeTerm{{Value: []byte("g"), Frequency: 1}}}}},
+	}})
+	require.NoError(t, encodeErr)
+	loaded, loadErr := nativeSegmentPluginLoad(newSegmentBytes(payload))
+	require.NoError(t, loadErr)
+	require.Equal(t, []string{"", "g"}, nidx02bDictionaryTerms(t, loaded, "group"))
+	require.Equal(t, []uint64{0}, nidx02bDocsMatching(t, loaded, "group", ""))
+	require.Equal(t, []uint64{1}, nidx02bDocsMatching(t, loaded, "group", "g"))
+
+	merger := nativeSegmentPluginMerge([]segmentValue{loaded}, []*roaringpkg.Bitmap{nil}, 0)
+	var buffer bytes.Buffer
+	_, writeErr := merger.WriteTo(&buffer, nil)
+	require.NoError(t, writeErr)
+	merged, mergedErr := nativeSegmentPluginLoad(newSegmentBytes(buffer.Bytes()))
+	require.NoError(t, mergedErr)
+	require.Equal(t, []string{"", "g"}, nidx02bDictionaryTerms(t, merged, "group"))
+	require.Equal(t, []uint64{0}, nidx02bDocsMatching(t, merged, "group", ""))
+	require.Equal(t, []uint64{1}, nidx02bDocsMatching(t, merged, "group", "g"))
 }
 
 func TestNativePluginMergeDropsTheCorrectTermFrequency(t *testing.T) {

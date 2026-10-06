@@ -72,8 +72,8 @@ type EncodeField struct {
 	Sort bool
 }
 
-// EncodeTerm is one analyzed term and its occurrence frequency. A frequency
-// other than one is retained in the term's ICE frequency stream.
+// EncodeTerm is one analyzed term and its occurrence frequency. Multi-hit
+// postings retain the ICE frequency stream even when every frequency is one.
 type EncodeTerm struct {
 	Value     []byte
 	Frequency uint64
@@ -431,7 +431,8 @@ func appendNativeICETerms(segment []byte, field nativeICEField, documentCount ui
 		}
 		var postingsOffset uint64
 		var postingsErr error
-		segment, postingsOffset, postingsErr = appendNativeICEPosting(segment, documents, frequencies, documentCount, !allFrequencyOne)
+		includeFrequency := len(documents) > 1 || !allFrequencyOne
+		segment, postingsOffset, postingsErr = appendNativeICEPosting(segment, documents, frequencies, documentCount, includeFrequency)
 		if postingsErr != nil {
 			return nil, 0, postingsErr
 		}

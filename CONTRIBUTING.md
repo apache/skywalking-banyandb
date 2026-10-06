@@ -46,6 +46,12 @@ Users who want to build a binary from sources have to set up:
 * Git >= 2.30
 * Linux, macOS or Windows + WSL2
 * GNU make
+* Docker, for the canonical build of committed artifacts (see [Update licenses](#update-licenses))
+
+The Go version above is the one in `go.mod`; the Node version is the one both `mcp/package.json` and
+`canopy/package.json` declare in `engines.node`, and those two must pin the same exact version.
+`make check-node-version` fails if they ever disagree, or if another project requires something
+newer. Neither version is restated anywhere else — CI reads the same files.
 
 ### Windows
 
@@ -54,6 +60,11 @@ BanyanDB is built on Linux and macOS that introduced several platform-specific c
 #### End of line sequence
 
 BanyanDB ALWAYS uses `LF`(`\n`) as the line endings, even on Windows. So we need your development tool and IDEs to generate new files with `LF` as its end of lines.
+
+Git enforces this for you: `.gitattributes` declares `* text=auto eol=lf`, so a checkout
+produces LF bytes on every platform no matter what your `core.autocrlf` is set to. There is
+nothing to configure. If a file does end up with CRLF, `make check-license-outputs` will
+name it.
 
 ## Building and Testing
 
@@ -130,8 +141,69 @@ If you import new dependencies or upgrade an existing one, trigger the licenses 
 to update the license files.
 
 ```shell
-make license-dep 
+make docker-license-dep
 ```
+
+This is the canonical command, on every operating system. It runs the generator in a pinned,
+digest-verified build environment, so the license files it produces are byte-identical regardless of
+which host you build on: the Go and Node versions, the package index and the module cache all live
+inside the image rather than on your machine. The source tree is streamed into the container over a
+pipe and only the generated license files come back, so your `node_modules` and `bin/` are left
+alone and your line endings cannot reach the output.
+
+**On Windows this works natively.** The image is Linux, but Docker Desktop runs Linux containers
+directly on Windows, so a PowerShell or cmd session with `docker` and GNU `make` is enough; the
+target also needs a `tar` with `--exclude`, which is the bsdtar that ships with Windows 10+. WSL2 is
+the smoother option because it additionally gives you GNU make and GNU tar without extra installs,
+and it remains the recommended way to build BanyanDB for the other reasons already described above.
+Two notes:
+
+- The container is not run as your uid on Windows, because Windows filesystems have no uid
+  ownership; that is not a loss, because there is nothing for it to protect.
+- The post-generation `check-license-outputs` is a bash script. Without WSL2 or Git Bash it is
+  skipped with a notice rather than failing your build — CI runs it unconditionally, and either of
+  those shells can run it locally.
+
+This is enforced, not merely recommended: CI regenerates the artifacts with this command and fails if
+the result differs from what is committed. If you commit license files produced any other way and
+they differ, the build breaks.
+
+If you would rather not use Docker, the native target still works:
+
+```shell
+make license-dep
+```
+
+It produces the same bytes **when your Go and Node match the pinned versions** — that is the one
+thing the container guarantees and a native run cannot. Both paths normalize CRLF to LF, CI runs
+both and compares the two manifests, and `make check-license-outputs` verifies the committed bytes,
+so a divergence is caught rather than discovered later.
+
+### The build system is checked on all three operating systems
+
+CI runs the build system's own checks — the Node resolver, the license verifier in both its passing
+and failing modes, and a single cheap container run that builds the pinned image and confirms it
+carries the versions this repository declares — on Linux, macOS and Windows. It deliberately does
+*not* regenerate the license artifacts on macOS or Windows: that is the expensive part, and the
+ubuntu job already covers it. What this catches is the thing you would hit first as a contributor
+there — a command from this document that does not work on your machine, or a check that silently
+does nothing.
+
+So if `make docker-license-dep` or `make check-license-outputs` fails for you on macOS or Windows,
+that is a bug in the build system rather than in your setup, and the workflow
+(`.github/workflows/test-build-system.yml`) is where it should be fixed. `shell: bash` throughout is
+deliberate: the verifier is a shell script, so on Windows it runs under Git Bash rather than cmd.
+
+To verify the license files in your worktree without regenerating them:
+
+```shell
+make check-license-outputs
+```
+
+This compares the raw bytes on disk against the committed blobs, checks that no
+generated file is missing or untracked, and fails on any CRLF. It deliberately does not
+use `git diff`, which compares blobs after Git's own normalization and cannot see a file
+that was generated and then deleted.
 
 > Caveat: This task is a step of `make pre-push`. You can run it to update licenses.
 

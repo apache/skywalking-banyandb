@@ -26,7 +26,9 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
@@ -42,6 +44,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/analyzer"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted/internal/nativeice"
@@ -167,6 +170,79 @@ type StoreOpts struct {
 	CacheMaxBytes          int
 	EnableDeduplication    bool
 }
+
+// NativeWriterOwner proves that the caller holds the property's root lock.
+// The fields are intentionally private: native writers can only be created
+// from a lock returned by the file-system lock acquisition path.
+type NativeWriterOwner struct {
+	lock   fs.File
+	root   string
+	closed atomic.Bool
+}
+
+// NewNativeWriterOwner binds a root lock to the directory tree it protects.
+// The lock must be the root lock for root; callers must retain it until all
+// native stores have been closed.
+func NewNativeWriterOwner(lock fs.File, root string) (*NativeWriterOwner, error) {
+	if lock == nil {
+		return nil, errors.New("native writer owner requires a lock")
+	}
+	localLock, ok := lock.(*fs.LocalFile)
+	if !ok || !localLock.IsLocked() {
+		return nil, errors.New("native writer owner requires a local filesystem lock")
+	}
+	root = filepath.Clean(root)
+	if root == "." || root == string(filepath.Separator) {
+		return nil, errors.New("native writer owner requires a non-empty root")
+	}
+	lockPath := filepath.Clean(lock.Path())
+	if lockPath != filepath.Join(root, "lock") {
+		return nil, errors.Errorf("native writer owner lock %q is not for root %q", lockPath, root)
+	}
+	if _, err := lock.Size(); err != nil {
+		return nil, errors.Wrap(err, "native writer owner lock is not usable")
+	}
+	return &NativeWriterOwner{lock: lock, root: root}, nil
+}
+
+func (o *NativeWriterOwner) validate(path string) error {
+	if o == nil || o.closed.Load() {
+		return errors.New("native writer owner is closed")
+	}
+	if o.lock == nil {
+		return errors.New("native writer owner has no lock")
+	}
+	if _, err := o.lock.Size(); err != nil {
+		return errors.Wrap(err, "native writer owner lock is closed")
+	}
+	rel, err := filepath.Rel(o.root, filepath.Clean(path))
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return errors.Errorf("native writer path %q is outside owner root %q", path, o.root)
+	}
+	return nil
+}
+
+// Close releases the root lock and invalidates this owner.
+func (o *NativeWriterOwner) Close() error {
+	if o == nil || o.closed.Swap(true) {
+		return nil
+	}
+	return o.lock.Close()
+}
+
+// nativeDirectory wraps bluge's default filesystem directory and disables its
+// own Lock/Unlock: a native-mode caller establishes exclusive ownership before
+// NewStore is reached, so no per-directory lock file is needed or created.
+type nativeDirectory struct {
+	*blugeIndex.FileSystemDirectory
+}
+
+func newNativeDirectory(path string) blugeIndex.Directory {
+	return &nativeDirectory{FileSystemDirectory: blugeIndex.NewFileSystemDirectory(path)}
+}
+
+func (*nativeDirectory) Lock() error   { return nil }
+func (*nativeDirectory) Unlock() error { return nil }
 
 type store struct {
 	writer  *bluge.Writer
@@ -307,10 +383,34 @@ func (s *store) Batch(batch index.Batch) error {
 
 // NewStore create a new inverted index repository.
 func NewStore(opts StoreOpts) (index.SeriesStore, error) {
+	return newStore(opts, nil)
+}
+
+// NewNativeStore creates a native index writer while owner holds the
+// property's root lock. A nil, closed, or mismatched owner is rejected before
+// any writer or directory is opened.
+func NewNativeStore(opts StoreOpts, owner *NativeWriterOwner) (index.SeriesStore, error) {
+	if err := owner.validate(opts.Path); err != nil {
+		return nil, err
+	}
+	return newStore(opts, owner)
+}
+
+func newStore(opts StoreOpts, owner *NativeWriterOwner) (index.SeriesStore, error) {
 	if opts.Logger == nil {
 		opts.Logger = logger.GetLogger("inverted")
 	}
 	indexConfig := blugeIndex.DefaultConfig(opts.Path)
+	if owner != nil {
+		indexConfig = indexConfig.WithSegmentPlugin(&blugeIndex.SegmentPlugin{
+			Type:    indexConfig.SegmentType,
+			Version: indexConfig.SegmentVersion,
+			New:     nativeSegmentPluginNew,
+			Load:    nativeSegmentPluginLoad,
+			Merge:   nativeSegmentPluginMerge,
+		})
+		indexConfig.DirectoryFunc = func() blugeIndex.Directory { return newNativeDirectory(opts.Path) }
+	}
 	if opts.BatchWaitSec > 0 {
 		indexConfig = indexConfig.WithUnsafeBatches().
 			WithPersisterNapTimeMSec(int(opts.BatchWaitSec * 1000))

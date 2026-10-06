@@ -40,6 +40,16 @@ import (
 
 var emptySeries = make([]index.SeriesDocument, 0)
 
+// seriesFilterQuery preserves SeriesStore's document-only contract by
+// disabling scoring before the underlying query builds its searcher. Scores
+// are not exposed by SeriesStore and therefore cannot affect its results.
+type seriesFilterQuery struct{ bluge.Query }
+
+func (q seriesFilterQuery) Searcher(reader search.Reader, options search.SearcherOptions) (search.Searcher, error) {
+	options.Score = "none"
+	return q.Query.Searcher(reader, options)
+}
+
 func (s *store) InsertSeriesBatch(batch index.Batch) error {
 	if len(batch.Documents) == 0 {
 		return nil
@@ -220,7 +230,7 @@ func (s *store) Search(ctx context.Context,
 		_ = reader.Close()
 	}()
 
-	dmi, err := reader.Search(ctx, bluge.NewAllMatches(query.(*queryNode).query))
+	dmi, err := reader.Search(ctx, bluge.NewAllMatches(seriesFilterQuery{Query: query.(*queryNode).query}))
 	if err != nil {
 		return nil, err
 	}
@@ -478,23 +488,25 @@ func (s *store) SeriesIterator(ctx context.Context) (index.FieldIterator[index.S
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		_ = reader.Close()
-	}()
 
 	dict, err := reader.DictionaryIterator(docIDField, nil, nil, nil)
 	if err != nil {
+		_ = reader.Close()
 		return nil, err
 	}
-	return &dictIterator{dict: dict, ctx: ctx}, nil
+	return &dictIterator{dict: dict, ctx: ctx, closer: reader}, nil
 }
 
+//nolint:govet // reader ownership is kept beside the dictionary lifecycle state.
 type dictIterator struct {
-	dict   segment.DictionaryIterator
-	ctx    context.Context
-	err    error
-	series index.Series
-	i      int
+	dict     segment.DictionaryIterator
+	ctx      context.Context
+	err      error
+	series   index.Series
+	i        int
+	closer   io.Closer
+	closed   bool
+	closeErr error
 }
 
 func (d *dictIterator) Next() bool {
@@ -505,6 +517,7 @@ func (d *dictIterator) Next() bool {
 		select {
 		case <-d.ctx.Done():
 			d.err = d.ctx.Err()
+			_ = d.Close()
 			return false
 		default:
 		}
@@ -512,9 +525,11 @@ func (d *dictIterator) Next() bool {
 	de, err := d.dict.Next()
 	if err != nil {
 		d.err = err
+		_ = d.Close()
 		return false
 	}
 	if de == nil {
+		_ = d.Close()
 		return false
 	}
 	d.series = index.Series{
@@ -533,5 +548,14 @@ func (d *dictIterator) Val() index.Series {
 }
 
 func (d *dictIterator) Close() error {
-	return multierr.Combine(d.err, d.dict.Close())
+	if d.closed {
+		return d.closeErr
+	}
+	d.closed = true
+	if d.closer == nil {
+		d.closeErr = multierr.Combine(d.err, d.dict.Close())
+		return d.closeErr
+	}
+	d.closeErr = multierr.Combine(d.err, d.dict.Close(), d.closer.Close())
+	return d.closeErr
 }
