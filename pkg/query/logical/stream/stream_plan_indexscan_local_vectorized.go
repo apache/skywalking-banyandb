@@ -195,6 +195,12 @@ type VecCriteriaFilter struct {
 // It calls scanFromInput itself rather than reading scan.preMergeFilter directly, so
 // the answer does not depend on VecExecutable having run first. scanFromInput is
 // idempotent: it stashes the same filter on the same scan.
+//
+// HAZARD: that makes this getter MUTATE the plan. scanFromInput turns the pre-merge
+// pushdown on. Every caller today executes the plan right after, so the write is the
+// one it wanted. A future caller that inspects a plan to DECIDE whether to execute it
+// would change the plan it only meant to read. Split the decision out of scanFromInput
+// before adding such a caller.
 func nodeTagFilter(plan logical.Plan) (VecCriteriaFilter, bool) {
 	tf, isTagFilter := plan.(*tagFilterPlan)
 	if !isTagFilter {
