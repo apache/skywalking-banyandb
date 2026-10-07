@@ -54,6 +54,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 	vecplan "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/plan"
+	vstream "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream"
 	streamframe "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream/frame"
 )
 
@@ -229,13 +230,12 @@ func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan lo
 		return true, bus.NewMessage(bus.MessageID(now), common.NewError("execute the vectorized query plan for stream %s: %v", queryCriteria.GetName(), execErr))
 	}
 
-	// A criteria query carries a per-element tag filter (VecTagFilter) that is still
-	// applied to materialized Elements (the same Match the row tagFilterPlan applies).
-	// The frame path operates on columnar batches and has no element-level filter
-	// stage yet, so a filter query still forces the proto egress; the liaison merges
-	// proto Elements and frame bodies interchangeably (mixed-mode), so this stays
-	// correct. The hidden-tag STRIP is no longer part of that reason: the frame path
-	// drops those columns in mergeStreamBatches (apache/skywalking#14067 R3).
+	// A criteria query carries the tag filter the row tagFilterPlan applied. Both
+	// egresses now honor it without building protobuf first: the frame path filters
+	// the COLUMNS (pre-merge for index order, here for timestamp order) and drops the
+	// hidden-tag columns in mergeStreamBatches. The liaison merges proto Elements and
+	// frame bodies interchangeably (mixed-mode), so a mixed fleet stays correct.
+	// apache/skywalking#14067.
 	criteria, hasFilter := logical_stream.VecTagFilter(plan)
 
 	// Data-node native wire mode (flag-on, no tracing): emit a columnar frame body
@@ -243,9 +243,15 @@ func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan lo
 	// applies the global offset/limit slice, so the data node emits the whole
 	// (already per-node-capped) batch set — no slice here.
 	//
-	// An index-order scan whose sort tag the client did not project is now eligible:
-	// mergeStreamBatches drops that column by name, so the hidden tag cannot leak.
-	if !hasFilter && streamVecEmitAsFrame(p.distributed, data.StreamWireModeRaw(), traced) {
+	// A filtered query is eligible too: the criteria is honored on the columns, and
+	// mergeStreamBatches drops both hidden-tag sources by name.
+	if streamVecEmitAsFrame(p.distributed, data.StreamWireModeRaw(), traced) {
+		if hasFilter && !criteria.PreMerged {
+			if filterErr := filterStreamBatches(ctx, schema, vecExec.ProjectionTags(), criteria, batches); filterErr != nil {
+				p.log.Error().Err(filterErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to filter the vectorized stream batches")
+				return true, bus.NewMessage(bus.MessageID(now), common.NewError("filter the vectorized stream batches for stream %s: %v", queryCriteria.GetName(), filterErr))
+			}
+		}
 		merged, mergeErr := mergeStreamBatches(schema, batches, criteria.HiddenTags, vecExec.HiddenOrderTag())
 		if mergeErr != nil {
 			p.log.Error().Err(mergeErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to merge the vectorized stream batches")
@@ -453,6 +459,37 @@ func applyStreamTagFilter(elements []*streamv1.Element, criteria logical_stream.
 		}
 	}
 	return filtered, nil
+}
+
+// filterStreamBatches narrows every batch's selection to the rows the criteria tag
+// filter keeps, using the SAME columnar operator the index-order scan runs pre-merge.
+//
+// Only a timestamp-order query reaches it. That order caps BEFORE filtering (one row
+// Pull consumes a segment and caps there — see scanResumesAcrossPulls), so its filter
+// must stay AFTER the cap or the merge would fill the limit from rows the row path
+// never saw. The element filter held exactly this position, so moving it onto the
+// columns leaves the documented under-fill unchanged. apache/skywalking#14067 R2.
+//
+// projection MUST be the scan's ProjectionTags(), because NewTagFilter indexes its
+// cells in that (tagFamilyIdx, tagIdx) space — the same space the element egress
+// materializes from.
+func filterStreamBatches(ctx context.Context, schema *vectorized.BatchSchema,
+	projection []model.TagProjection, criteria logical_stream.VecCriteriaFilter,
+	batches []*vectorized.RecordBatch,
+) error {
+	filter := vstream.NewTagFilter(schema, projection, criteria.TagFilter, criteria.Schema)
+	defer func() {
+		_ = filter.Close()
+	}()
+	for _, batch := range batches {
+		if batch == nil || batch.ActiveLen() == 0 {
+			continue
+		}
+		if processErr := filter.Process(ctx, batch); processErr != nil {
+			return processErr
+		}
+	}
+	return nil
 }
 
 // stripStreamHiddenTags removes the criteria-only tags from elements the scan already
