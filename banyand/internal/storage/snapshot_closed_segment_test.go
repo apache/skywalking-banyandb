@@ -33,6 +33,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -81,6 +82,7 @@ func snapshotTestDir(t *testing.T) string {
 func openSnapshotTSDB(t *testing.T, dir string, ttlDays int) (TSDB[*MockTSTable, any], *segmentController[*MockTSTable, any]) {
 	t.Helper()
 	opts := TSDBOpts[*MockTSTable, any]{
+		RootLease:          staticTestLease{},
 		Location:           dir,
 		SegmentInterval:    IntervalRule{Unit: DAY, Num: 1},
 		TTL:                IntervalRule{Unit: DAY, Num: ttlDays},
@@ -329,7 +331,7 @@ func createSegmentWithSeries(t *testing.T, tsdb TSDB[*MockTSTable, any], ts time
 // under snapshotDir, read-only.
 func snapshotSeriesDocCount(t *testing.T, snapshotDir string, seg *segment[*MockTSTable, any]) int64 {
 	t.Helper()
-	count, err := inverted.ReadOnlyDocCount(filepath.Join(snapshotDir, filepath.Base(seg.location), seriesIndexDirName))
+	count, err := native.ReadOnlyDocCount(filepath.Join(snapshotDir, filepath.Base(seg.location), seriesIndexDirName))
 	require.NoError(t, err)
 	return count
 }

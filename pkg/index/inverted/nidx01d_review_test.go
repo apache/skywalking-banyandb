@@ -20,6 +20,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
 
 // TestNativeExactTermsCancelsBetweenDocuments proves that cancellation after a
@@ -31,8 +33,8 @@ func TestNativeExactTermsCancelsBetweenDocuments(t *testing.T) {
 	t.Cleanup(cancel)
 
 	visited := 0
-	err := ReadOnlySelectDocuments(ctx, nidx01cSourceADir,
-		identitySelection(nidx01dIdentity101, nidx01dIdentity202), func(_ StoredDocument) error {
+	err := native.ReadOnlySelectDocuments(ctx, nidx01cSourceADir,
+		identitySelection(nidx01dIdentity101, nidx01dIdentity202), func(_ native.StoredDocument) error {
 			visited++
 			if visited == 1 {
 				cancel()

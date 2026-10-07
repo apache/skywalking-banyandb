@@ -31,6 +31,8 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
@@ -241,6 +243,70 @@ func TestBuildGroupUnionSidx_DeduplicatesAcrossSegments(t *testing.T) {
 		if got[i] != w {
 			t.Fatalf("SeriesID mismatch at %d: got %d want %d", i, got[i], w)
 		}
+	}
+}
+
+// TestBuildGroupUnionSidx_PreservesVersionField is the L6 regression:
+// buildNativeDocumentLocked built a native.Field{Name, Value} for
+// sidxVersionField with no Store set, so the Index=false, Store=false
+// zero value carried neither an index entry nor a stored value -- _version
+// was silently dropped from the union sidx. It must survive the build,
+// matching storage.EncodeSeriesDocument's own "_version" is stored-only"
+// mapping.
+func TestBuildGroupUnionSidx_PreservesVersionField(t *testing.T) {
+	srcGroupRoot := t.TempDir()
+	stagingPath := filepath.Join(t.TempDir(), "union", "sidx")
+
+	seg := filepath.Join(srcGroupRoot, segPrefix+"20260101")
+	doc, sid := makeSidxSourceDoc(t, "alpha", "svc-a")
+	doc.AddField(bluge.NewKeywordFieldBytes(sidxVersionField, convert.Int64ToBytes(7)).StoreValue())
+	writeSidxAt(t, seg, []*bluge.Document{doc})
+
+	resultPath, err := BuildGroupUnionSidx(context.Background(), []string{srcGroupRoot}, stagingPath, nil)
+	if err != nil {
+		t.Fatalf("BuildGroupUnionSidx: %v", err)
+	}
+
+	generation, err := native.OpenReadOnlyGeneration(resultPath)
+	if err != nil {
+		t.Fatalf("OpenReadOnlyGeneration: %v", err)
+	}
+	defer func() { _ = generation.Close() }()
+
+	var gotVersion []byte
+	var found bool
+	visitErr := generation.VisitLiveDocuments(context.Background(), func(doc native.StoredDocument) error {
+		var entity []byte
+		var version []byte
+		_ = doc.VisitStoredFields(func(field string, value []byte) bool {
+			switch field {
+			case sidxDocIDField:
+				entity = append([]byte(nil), value...)
+			case sidxVersionField:
+				version = append([]byte(nil), value...)
+			}
+			return true
+		})
+		var s pbv1.Series
+		if len(entity) > 0 {
+			if err := s.Unmarshal(entity); err == nil && s.ID == sid {
+				found = true
+				gotVersion = version
+			}
+		}
+		return nil
+	})
+	if visitErr != nil {
+		t.Fatalf("VisitLiveDocuments: %v", visitErr)
+	}
+	if !found {
+		t.Fatalf("expected to find series %d in the union sidx", sid)
+	}
+	if len(gotVersion) == 0 {
+		t.Fatalf("expected a stored _version value, got none")
+	}
+	if got := convert.BytesToInt64(gotVersion); got != 7 {
+		t.Fatalf("expected _version 7, got %d", got)
 	}
 }
 

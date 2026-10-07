@@ -192,56 +192,60 @@ func (m *segmentMerger) addInput(ctx context.Context, input MergeInput) ([]uint6
 		return nil, fieldsErr
 	}
 	for _, name := range fields {
-		if name == identifierField {
-			continue
-		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		var field *nativeICEField
-		//nolint:contextcheck // cancellation is checked per term in the callback.
-		if visitErr := reader.VisitTermPostings(name, nil, func(term []byte, documents []uint64, frequencies []TermFrequency) error {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			aligned := len(frequencies) == len(documents)
-			var frequencyByDocument map[uint64]uint64
-			termKey := ""
-			for documentIndex, documentNumber := range documents {
-				if documentNumber >= physicalCount {
-					return fmt.Errorf("term %q has document %d outside segment: %w", term, documentNumber, ErrCorrupt)
+		// "_id" terms are rebuilt fresh from the merged documents' identifiers
+		// below (one term per document, trivial to regenerate), so only the
+		// VisitTermPostings splice is skipped for it; its doc values -- written
+		// when OwnerOptions.IdentifierDocValues is set -- still flow through
+		// the same VisitFieldDocumentValues splice as any other field.
+		if name != identifierField {
+			//nolint:contextcheck // cancellation is checked per term in the callback.
+			if visitErr := reader.VisitTermPostings(name, nil, func(term []byte, documents []uint64, frequencies []TermFrequency) error {
+				if err := ctx.Err(); err != nil {
+					return err
 				}
-				outputNumber := mapping[documentNumber]
-				if outputNumber == DroppedDocumentNumber {
-					continue
-				}
-				var frequency uint64
-				switch {
-				case aligned && frequencies[documentIndex].DocumentNumber == documentNumber:
-					frequency = frequencies[documentIndex].Frequency
-				default:
-					if frequencyByDocument == nil {
-						frequencyByDocument = make(map[uint64]uint64, len(frequencies))
-						for _, entry := range frequencies {
-							frequencyByDocument[entry.DocumentNumber] = entry.Frequency
+				aligned := len(frequencies) == len(documents)
+				var frequencyByDocument map[uint64]uint64
+				termKey := ""
+				for documentIndex, documentNumber := range documents {
+					if documentNumber >= physicalCount {
+						return fmt.Errorf("term %q has document %d outside segment: %w", term, documentNumber, ErrCorrupt)
+					}
+					outputNumber := mapping[documentNumber]
+					if outputNumber == DroppedDocumentNumber {
+						continue
+					}
+					var frequency uint64
+					switch {
+					case aligned && frequencies[documentIndex].DocumentNumber == documentNumber:
+						frequency = frequencies[documentIndex].Frequency
+					default:
+						if frequencyByDocument == nil {
+							frequencyByDocument = make(map[uint64]uint64, len(frequencies))
+							for _, entry := range frequencies {
+								frequencyByDocument[entry.DocumentNumber] = entry.Frequency
+							}
+						}
+						frequency = frequencyByDocument[documentNumber]
+					}
+					if field == nil {
+						var fieldErr error
+						if field, fieldErr = m.field(name); fieldErr != nil {
+							return fieldErr
 						}
 					}
-					frequency = frequencyByDocument[documentNumber]
-				}
-				if field == nil {
-					var fieldErr error
-					if field, fieldErr = m.field(name); fieldErr != nil {
-						return fieldErr
+					if termKey == "" {
+						termKey = string(term)
 					}
+					registerNativeICETermKey(field, termKey, outputNumber, frequency)
 				}
-				if termKey == "" {
-					termKey = string(term)
-				}
-				registerNativeICETermKey(field, termKey, outputNumber, frequency)
+				return nil
+			}); visitErr != nil {
+				return nil, visitErr
 			}
-			return nil
-		}); visitErr != nil {
-			return nil, visitErr
 		}
 		if visitErr := reader.VisitFieldDocumentValues(name, func(documentNumber uint64, values [][]byte) error {
 			if documentNumber >= physicalCount {

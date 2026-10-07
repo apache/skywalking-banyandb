@@ -361,7 +361,8 @@ func (m *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 
 	for i := range segments {
 		sd, sortedValues, err := segments[i].IndexDB().Search(ctx, series, storage.IndexSearchOpts{
-			Query:       mqo.Query,
+			Criteria:    mqo.Criteria,
+			Fields:      mqo.Fields,
 			Order:       mqo.Order,
 			PreloadSize: preloadSize,
 			Projection:  indexProjection,
@@ -547,11 +548,13 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 	}
 	var err error
 	opts := storage.IndexSearchOpts{
-		Query:       mqo.Query,
-		Order:       mqo.Order,
-		PreloadSize: preloadSize,
-		Projection:  indexProjection,
-		TimeRange:   mqo.TimeRange,
+		Criteria:         mqo.Criteria,
+		Fields:           mqo.Fields,
+		IndexModeSubject: mqo.Name,
+		Order:            mqo.Order,
+		PreloadSize:      preloadSize,
+		Projection:       indexProjection,
+		TimeRange:        mqo.TimeRange,
 	}
 	seriesFilter := roaring.NewPostingList()
 	for i := range segments {
@@ -1119,6 +1122,12 @@ func (sr *segResult) remove(i int) {
 	}
 	sr.Timestamps = append(sr.Timestamps[:i], sr.Timestamps[i+1:]...)
 	sr.Versions = append(sr.Versions[:i], sr.Versions[i+1:]...)
+	if sr.TimestampSet != nil {
+		sr.TimestampSet = append(sr.TimestampSet[:i], sr.TimestampSet[i+1:]...)
+	}
+	if sr.VersionSet != nil {
+		sr.VersionSet = append(sr.VersionSet[:i], sr.VersionSet[i+1:]...)
+	}
 	if sr.sortedValues != nil {
 		sr.sortedValues = append(sr.sortedValues[:i], sr.sortedValues[i+1:]...)
 	}

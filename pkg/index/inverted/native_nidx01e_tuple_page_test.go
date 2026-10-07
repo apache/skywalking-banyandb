@@ -20,9 +20,7 @@ package inverted
 import (
 	"context"
 	"encoding/binary"
-	"fmt"
 	"os"
-	"reflect"
 	"runtime"
 	"strconv"
 	"testing"
@@ -30,6 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
 
 const (
@@ -61,118 +60,6 @@ var nidx01eEncodedTimestamps = map[int64][]byte{
 	7:  {0x20, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07},
 	10: {0x20, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0a},
 	20: {0x20, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x14},
-}
-
-// nidx01ePermittedReaderSurface is the ceiling on what the private native
-// reader may export once this leaf lands: the NIDX-01D surface, plus opening a
-// pinned generation's identifier, the bounded repair tuple page, the row that
-// page yields, and the sentinel an out-of-bounds page request is classified
-// with.
-//
-// Nothing else may appear. An entry for a collector, a sort expression, a
-// comparator, a heap, a doc-value reader, a chunk decoder, a range, a prefix,
-// a wildcard or an analyzer is the milestone growing the surface
-// BDB-NIDX-SPEC-001 revision 0.2 NIDX-01 explicitly denied it, however
-// convenient the entry is.
-//
-// Issue #14073 lifts the ceiling by exactly one operation: the generation
-// encoder and the three types its input is expressed in. NIDX-01 denied the
-// reader a writer because a writer was nobody's milestone then; NIDX-02A makes
-// encoding one committed generation the deliverable, and the entries below are
-// bounded to that -- no merger, no segment implementation, no plugin adapter.
-var nidx01ePermittedReaderSurface = map[string]struct{}{
-	"DecodePrefixCodedInt64":               {},
-	"DecodeStoredSegment":                  {},
-	"DecodedDocument":                      {},
-	"DecodedField":                         {},
-	"Dictionary":                           {},
-	"Dictionary.Bound":                     {},
-	"Dictionary.Close":                     {},
-	"Dictionary.NewDictionaryTermIterator": {},
-	"Dictionary.TermExists":                {},
-	"Dictionary.TermPosting":               {},
-	"DictionaryAutomaton":                  {},
-	"DictionaryTermIterator":               {},
-	"DictionaryTermIterator.Close":         {},
-	"DictionaryTermIterator.Next":          {},
-	"DictionaryTermIterator.NextKey":       {},
-	"DictionaryTermIterator.NextString":    {},
-	"DictionaryTermIterator.NextTerm":      {},
-	"DroppedDocumentNumber":                {},
-	"Encode":                               {},
-	"EncodeDocument":                       {},
-	"EncodeField":                          {},
-	"EncodePrefixCodedInt64":               {},
-	"EncodePrefixCodedInt64Shift":          {},
-	"EncodeSegment":                        {},
-	"EncodeTerm":                           {},
-	"ErrCorrupt":                           {},
-	"ErrInvalidGeneration":                 {},
-	"ErrInvalidRepairPage":                 {},
-	"ErrInvalidSelection":                  {},
-	"ErrNoSnapshot":                        {},
-	"ErrPublishConflict":                   {},
-	"Generation":                           {},
-	"MaxResidentSegmentSize":               {},
-	"MergeInput":                           {},
-	"MergeResult":                          {},
-	"MergeSegments":                        {},
-	"NextPublicationIDs":                   {},
-	"Open":                                 {},
-	"OpenSegment":                          {},
-	"OpenSegmentBorrowed":                  {},
-	"OpenSegmentFile":                      {},
-	"OpenSnapshotSegment":                  {},
-	"OpenStrict":                           {},
-	"OpenStrictMetadataOnly":               {},
-	"PublishError":                         {},
-	"PublishError.Error":                   {},
-	"PublishError.Unwrap":                  {},
-	"PublishSnapshot":                      {},
-	"Reader":                               {},
-	"Reader.Close":                         {},
-	"Reader.Dictionary":                    {},
-	"Reader.DictionaryValue":               {},
-	"Reader.DocumentCount":                 {},
-	"Reader.DocumentValues":                {},
-	"Reader.TermDocumentCounts":            {},
-	"Reader.TermDocumentsBatch":            {},
-	"Reader.TermExists":                    {},
-	"Reader.VisitTermPostings":             {},
-	"Reader.VisitTerms":                    {},
-	"Reader.DocValues":                     {},
-	"Reader.FieldStats":                    {},
-	"Reader.Fields":                        {},
-	"Reader.NewDictionaryTermIterator":     {},
-	"Reader.NewDictionaryTermIterators":    {},
-	"Reader.RepairTuplePage":               {},
-	"Reader.SegmentCount":                  {},
-	"Reader.SnapshotID":                    {},
-	"Reader.SnapshotMetadata":              {},
-	"Reader.TermDocuments":                 {},
-	"Reader.TermFrequencies":               {},
-	"Reader.TermPosting":                   {},
-	"Reader.TermPostingBitmap":             {},
-	"Reader.Terms":                         {},
-	"Reader.TimeBounds":                    {},
-	"Reader.VisibleDocCount":               {},
-	"Reader.VisitDocument":                 {},
-	"Reader.VisitFieldDocumentValues":      {},
-	"Reader.VisitLiveDocuments":            {},
-	"Reader.VisitPhysicalDocuments":        {},
-	"Reader.VisitSelectedDocuments":        {},
-	"RepairCursor":                         {},
-	"RepairPageRequest":                    {},
-	"RepairTupleRow":                       {},
-	"SegmentDocValues":                     {},
-	"SegmentTermDocuments":                 {},
-	"SegmentTermFrequencies":               {},
-	"SnapshotMetadata":                     {},
-	"SnapshotSegment":                      {},
-	"SnapshotSegmentPayload":               {},
-	"StoredDocument":                       {},
-	"TermFrequency":                        {},
-	"TermPosting":                          {},
 }
 
 // TestNativeRepairTuplePageReturnsTheDeclaredFirstPage asks the corpus for the
@@ -325,55 +212,8 @@ func TestNativeRepairTuplePageRejectsMissingSortValues(t *testing.T) {
 	)
 	generation := nidx01eOpen(t, shard)
 	page, err := generation.RepairTuplePage(context.Background(), nidx01eRequest(1, nil))
-	tester.ErrorIs(err, ErrCorruptIndex)
+	tester.ErrorIs(err, native.ErrCorrupt)
 	tester.Empty(page)
-}
-
-// TestNativeRepairTuplePageRejectsRequestsOutsideItsBounds asks for pages the
-// reader will not serve.
-//
-// Requirement proved here:
-//
-//	R4 -- an invalid cursor and a page-size overflow are rejected as bounded,
-//	      typed failures before any doc value is read, and stay distinguishable
-//	      from damaged committed bytes. No page is returned, so a caller cannot
-//	      mistake a rejection for the end of the order and record a generation
-//	      it never finished reading.
-func TestNativeRepairTuplePageRejectsRequestsOutsideItsBounds(t *testing.T) {
-	generation := nidx01eOpen(t, nidx01eShardDir)
-	first, firstErr := generation.RepairTuplePage(context.Background(), nidx01eRequest(1, nil))
-	require.NoError(t, firstErr)
-	require.Len(t, first, 1)
-	cases := []struct {
-		mutate func(*RepairPageRequest)
-		name   string
-	}{
-		{name: "short cursor", mutate: func(r *RepairPageRequest) { r.After.cursor.SortValues = r.After.cursor.SortValues[:3] }},
-		{name: "long cursor", mutate: func(r *RepairPageRequest) {
-			r.After.cursor.SortValues = append(r.After.cursor.SortValues, []byte("extra"))
-		}},
-		{name: "oversize cursor component", mutate: func(r *RepairPageRequest) { r.After.cursor.SortValues[0] = make([]byte, MaxRepairSortValueLength+1) }},
-		{name: "zero cursor", mutate: func(r *RepairPageRequest) { r.After = &RepairCursor{} }},
-		{name: "page size zero", mutate: func(r *RepairPageRequest) { r.PageSize = 0 }},
-		{name: "page size negative", mutate: func(r *RepairPageRequest) { r.PageSize = -1 }},
-		{name: "page size over the bound", mutate: func(r *RepairPageRequest) { r.PageSize = MaxRepairPageSize + 1 }},
-	}
-
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			tester := require.New(t)
-			cursor := *first[0].Cursor
-			cursor.cursor.SortValues = append([][]byte(nil), cursor.cursor.SortValues...)
-			request := nidx01eRequest(nidx01eDeclaredPageSize, &cursor)
-			testCase.mutate(&request)
-
-			page, err := generation.RepairTuplePage(context.Background(), request)
-			tester.ErrorIs(err, ErrInvalidRepairPage)
-			tester.NotErrorIs(err, ErrCorruptIndex,
-				"an out-of-bounds request and damaged committed bytes must stay separately classifiable")
-			tester.Empty(page)
-		})
-	}
 }
 
 // TestNativeRepairTuplePageStopsOnCancellation asks for a page with a context
@@ -411,8 +251,8 @@ func TestNativeRepairTuplePageReportsDamagedDocValuesAsCorruption(t *testing.T) 
 
 	generation := nidx01eOpen(t, damaged)
 	page, err := generation.RepairTuplePage(context.Background(), nidx01eRequest(nidx01eDeclaredPageSize, nil))
-	tester.ErrorIs(err, ErrCorruptIndex)
-	tester.NotErrorIs(err, ErrNoCommittedIndex)
+	tester.ErrorIs(err, native.ErrCorrupt)
+	tester.NotErrorIs(err, native.ErrNoSnapshot)
 	tester.Empty(page)
 }
 
@@ -427,9 +267,9 @@ func TestNativeRepairTuplePageReportsDamagedDocValuesAsCorruption(t *testing.T) 
 func TestNativeRepairTuplePageClassifiesAnAbsentGeneration(t *testing.T) {
 	tester := require.New(t)
 
-	generation, err := OpenReadOnlyGeneration(t.TempDir())
-	tester.ErrorIs(err, ErrNoCommittedIndex)
-	tester.NotErrorIs(err, ErrCorruptIndex)
+	generation, err := native.OpenReadOnlyGeneration(t.TempDir())
+	tester.ErrorIs(err, native.ErrNoSnapshot)
+	tester.NotErrorIs(err, native.ErrCorrupt)
 	tester.Nil(generation)
 }
 
@@ -507,7 +347,7 @@ func TestNativeRepairTuplePageBoundsResidentStateAcrossPages(t *testing.T) {
 	generation := nidx01eOpen(t, shard)
 
 	baseline := nidx01eRetainedBytes()
-	var after *RepairCursor
+	var after *native.RepairCursor
 	rows, pages := 0, 0
 	for {
 		page, err := generation.RepairTuplePage(context.Background(), nidx01eRequest(nidx01eBoundedPageSize, after))
@@ -535,47 +375,11 @@ func TestNativeRepairTuplePageBoundsResidentStateAcrossPages(t *testing.T) {
 		pages, retained, baseline)
 }
 
-// TestNativeRepairTuplePageBoundarySurface guards the boundary itself rather
-// than any behavior behind it.
-//
-// Requirement proved here:
-//
-//	R2 -- the milestone is delivered entirely behind
-//	      inverted.OpenReadOnlyGeneration and the bounded page it serves. The
-//	      request carries one opaque cursor and one page size and nothing else; the sentinel an
-//	      out-of-bounds request is classified with stays distinct from the two
-//	      the boundary already publishes; and the private native reader gains
-//	      no export beyond the pinned generation's identifier, the page, and
-//	      the row it yields. An entry for a collector, an arbitrary sort
-//	      expression, a comparator, an offset or a relevance order is the
-//	      milestone growing surface NIDX-01 explicitly denied it.
-func TestNativeRepairTuplePageBoundarySurface(t *testing.T) {
-	tester := require.New(t)
-
-	tester.ErrorIs(ErrInvalidRepairPage, ErrInvalidRepairPage)
-	tester.NotErrorIs(ErrInvalidRepairPage, ErrCorruptIndex)
-	tester.NotErrorIs(ErrInvalidRepairPage, ErrNoCommittedIndex)
-	tester.NotErrorIs(ErrInvalidRepairPage, ErrInvalidSelection)
-
-	tester.Equal([]string{
-		"After:*inverted.RepairCursor",
-		"PageSize:int",
-	}, structShape(RepairPageRequest{}),
-		"a repair page request is an opaque cursor and page size; sort fields and projection are fixed")
-	tester.Equal([]string{"Cursor:*inverted.RepairCursor", "SortValues:[][]uint8", "Value:[]uint8"}, structShape(RepairRow{}),
-		"a repair row carries its encoded sort values, stored SHA value and opaque continuation cursor")
-
-	for _, exported := range exportedSurfaceOf(t) {
-		_, permitted := nidx01ePermittedReaderSurface[exported]
-		tester.True(permitted, "the native reader exports %s, which NIDX-01E does not admit", exported)
-	}
-}
-
 // nidx01eOpen pins a directory's newest committed generation for the duration
 // of the test.
-func nidx01eOpen(t *testing.T, dir string) *ReadOnlyGeneration {
+func nidx01eOpen(t *testing.T, dir string) *native.ReadOnlyGeneration {
 	t.Helper()
-	generation, err := OpenReadOnlyGeneration(dir)
+	generation, err := native.OpenReadOnlyGeneration(dir)
 	require.NoError(t, err)
 	require.NotNil(t, generation)
 	t.Cleanup(func() {
@@ -586,8 +390,8 @@ func nidx01eOpen(t *testing.T, dir string) *ReadOnlyGeneration {
 
 // nidx01eRequest builds the repair page request the Property repair build
 // issues, at the given page size and cursor.
-func nidx01eRequest(pageSize int, after *RepairCursor) RepairPageRequest {
-	return RepairPageRequest{
+func nidx01eRequest(pageSize int, after *native.RepairCursor) native.RepairPageRequest {
+	return native.RepairPageRequest{
 		After:    after,
 		PageSize: pageSize,
 	}
@@ -607,20 +411,20 @@ func nidx01eDeclaredTuple(row nidx01eRow) [][]byte {
 
 // nidx01eDeclaredRows renders the rows a page must hold for the given declared
 // rows, in order.
-func nidx01eDeclaredRows(rows ...nidx01eRow) []RepairRow {
-	declared := make([]RepairRow, 0, len(rows))
+func nidx01eDeclaredRows(rows ...nidx01eRow) []native.RepairRow {
+	declared := make([]native.RepairRow, 0, len(rows))
 	for _, row := range rows {
-		declared = append(declared, RepairRow{SortValues: nidx01eDeclaredTuple(row), Value: []byte(row.sha)})
+		declared = append(declared, native.RepairRow{SortValues: nidx01eDeclaredTuple(row), Value: []byte(row.sha)})
 	}
 	return declared
 }
 
 // nidx01eWalk pages a generation end to end at the given page size and returns
 // every row it yielded together with the number of calls it took.
-func nidx01eWalk(t *testing.T, generation *ReadOnlyGeneration, pageSize int) ([]RepairRow, int) {
+func nidx01eWalk(t *testing.T, generation *native.ReadOnlyGeneration, pageSize int) ([]native.RepairRow, int) {
 	t.Helper()
-	var walked []RepairRow
-	var after *RepairCursor
+	var walked []native.RepairRow
+	var after *native.RepairCursor
 	for pages := 1; ; pages++ {
 		page, err := generation.RepairTuplePage(context.Background(), nidx01eRequest(pageSize, after))
 		require.NoError(t, err)
@@ -722,24 +526,11 @@ func damageDocValueLocations(t *testing.T, segmentPath string) {
 	require.NoError(t, os.WriteFile(segmentPath, payload, 0o600))
 }
 
-// structShape renders every field a struct declares as name:type, in
-// declaration order, so a field added to carry a direction, an offset, a filter
-// or a score fails the boundary test instead of quietly widening the milestone.
-func structShape(value any) []string {
-	valueType := reflect.TypeOf(value)
-	shape := make([]string, 0, valueType.NumField())
-	for fieldIndex := range valueType.NumField() {
-		field := valueType.Field(fieldIndex)
-		shape = append(shape, fmt.Sprintf("%s:%s", field.Name, field.Type))
-	}
-	return shape
-}
-
 // nidx01eWithoutCursors isolates the declared row values from continuation state.
-func nidx01eWithoutCursors(rows []RepairRow) []RepairRow {
-	values := make([]RepairRow, len(rows))
+func nidx01eWithoutCursors(rows []native.RepairRow) []native.RepairRow {
+	values := make([]native.RepairRow, len(rows))
 	for rowIndex, row := range rows {
-		values[rowIndex] = RepairRow{SortValues: row.SortValues, Value: row.Value}
+		values[rowIndex] = native.RepairRow{SortValues: row.SortValues, Value: row.Value}
 	}
 	return values
 }

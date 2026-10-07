@@ -2,6 +2,26 @@
 
 Status: **design** — not implemented.
 
+> **NIDX-03 note.** This document was written while the per-segment series
+> index (`seg-*/sidx/`) was still Bluge-backed. NIDX-03 cut `seg-*/sidx/` over
+> to the native ICE v3 engine (`pkg/index/native`) and removed the legacy
+> Bluge-backed series store entirely: there is no `bluge.pid` lock, no
+> `bluge.OpenWriter`, and no engine flag for it any more, so every claim below
+> that describes `seg-*/sidx/` as "a Bluge inverted directory" or routes its
+> snapshot/export path through `pkg/index/inverted`'s `ReadOnlyWalkDocuments`
+> / `ReadOnlyDocCount` (now `pkg/index/native`'s own read-only API) needs
+> re-validation against the native engine before this design is implemented.
+> The Stream element index (`shard-N/idx/`) is a separate cutover from
+> NIDX-03: PR #1390 already moved the live element-index write/query path
+> onto the same native ICE v3 engine, so it is **not** "unaffected" in the
+> sense of still being live-Bluge, and every claim below that describes
+> `shard-N/idx/` itself as a Bluge inverted directory needs the same
+> re-validation as `seg-*/sidx/` above. The one thing that still produces
+> legacy Bluge-format output is the **NIDX-04 migration tool**
+> (`banyand/stream/migration_element_index.go`), an offline, one-shot tool
+> that migrates pre-native element-index data; it is not on the live write
+> or query path.
+
 BanyanDB already supports snapshots, backup/restore, and lifecycle management, but it still lacks
 an operations-oriented, cluster-level data import/export workflow. Backup moves a whole node's
 files to remote storage; lifecycle moves data between stages inside one cluster. Neither lets an

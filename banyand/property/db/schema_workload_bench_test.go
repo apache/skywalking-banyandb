@@ -66,19 +66,19 @@ func benchSchemaProperty(index int) *propertyv1.Property {
 	}
 }
 
-func openBenchSchemaDB(b *testing.B, nativeWriter bool) (Database, func()) {
+func openBenchSchemaDB(b *testing.B) (Database, func()) {
 	location, cleanup, err := test.NewSpace()
 	if err != nil {
 		b.Fatal(err)
 	}
 	opened, err := OpenDB(context.Background(), Config{
-		Location: location, MetricsScopeName: fmt.Sprintf("bench_schema_%t_%d", nativeWriter, time.Now().UnixNano()),
+		Location: location, MetricsScopeName: fmt.Sprintf("bench_schema_%d", time.Now().UnixNano()),
 		FlushInterval: 5 * time.Second, ExpireToDeleteDuration: time.Hour,
 		Repair: RepairConfig{
 			Enabled: true, Location: filepath.Join(location, "repair"), TreeSlotCount: 32,
 			BuildTreeCron: "@every 1h", QuickBuildTreeTime: 10 * time.Minute,
 		},
-		Index: IndexConfig{BatchWaitSec: 5, NativeWriter: nativeWriter},
+		Index: IndexConfig{BatchWaitSec: 5},
 	}, observability.BypassRegistry, fs.NewLocalFileSystem())
 	if err != nil {
 		cleanup()
@@ -108,24 +108,19 @@ func insertLikeSchemaServer(ctx context.Context, database Database, property *pr
 }
 
 func benchEngines(b *testing.B, run func(b *testing.B, database Database)) {
-	for _, engine := range []struct {
-		name   string
-		native bool
-	}{{"legacy", false}, {"native", true}} {
-		b.Run(engine.name, func(b *testing.B) {
-			database, cleanup := openBenchSchemaDB(b, engine.native)
-			defer cleanup()
-			ctx := context.Background()
-			for index := 0; index < benchPreload; index++ {
-				if err := insertLikeSchemaServer(ctx, database, benchSchemaProperty(index)); err != nil {
-					b.Fatal(err)
-				}
+	b.Run("native", func(b *testing.B) {
+		database, cleanup := openBenchSchemaDB(b)
+		defer cleanup()
+		ctx := context.Background()
+		for index := 0; index < benchPreload; index++ {
+			if err := insertLikeSchemaServer(ctx, database, benchSchemaProperty(index)); err != nil {
+				b.Fatal(err)
 			}
-			b.ReportAllocs()
-			b.ResetTimer()
-			run(b, database)
-		})
-	}
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		run(b, database)
+	})
 }
 
 func BenchmarkSchemaWorkloadInsert(b *testing.B) {

@@ -36,7 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	idxmetrics "github.com/apache/skywalking-banyandb/pkg/index/metrics"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -46,6 +46,13 @@ import (
 
 const (
 	snapshotSuffix = ".snp"
+
+	// legacyExternalSegmentTempDirName is the previous release's on-disk
+	// staging directory name (pkg/index/inverted.ExternalSegmentTempDirName),
+	// duplicated here so the element index never imports pkg/index/inverted
+	// for this bookkeeping check; banyand/internal/storage's series index
+	// does the same for its own legacy artifact names.
+	legacyExternalSegmentTempDirName = "external-segment-temp"
 )
 
 type tsTable struct {
@@ -232,7 +239,7 @@ func initTSTableWithLease(fileSystem fs.FileSystem, rootPath string, p common.Po
 		p:          p,
 		pm:         option.protector,
 	}
-	var indexMetrics *inverted.Metrics
+	var indexMetrics *idxmetrics.Metrics
 	if m != nil {
 		tst.metrics = m.(*metrics)
 		indexMetrics = tst.metrics.indexMetrics
@@ -257,7 +264,7 @@ func initTSTableWithLease(fileSystem fs.FileSystem, rootPath string, p common.Po
 			if ee[i].Name() == elementIndexFilename {
 				continue
 			}
-			if ee[i].Name() == inverted.ExternalSegmentTempDirName {
+			if ee[i].Name() == legacyExternalSegmentTempDirName {
 				continue
 			}
 			if ee[i].Name() == storage.FailedPartsDirName {

@@ -42,6 +42,19 @@ import (
 
 const group = "test"
 
+// staticTestLease is a trivial always-valid RootLease for tests that need a
+// non-nil lease to satisfy native.Owner's "ownership is an executable
+// invariant" but don't exercise lease lifecycle (validation failure,
+// revocation) themselves. Unlike testRootLease it implements no
+// RootLeaseRevoker, so closing a database holding one never mutates shared
+// state -- safe to reuse the same value across repeated open/close cycles
+// (for example a reopen-existing-TSDB test) within one test, unlike
+// testRootLease, which permanently revokes itself on the first Close.
+type staticTestLease struct{}
+
+func (staticTestLease) Validate() error           { return nil }
+func (staticTestLease) ValidatePath(string) error { return nil }
+
 type testRootLease struct{ revoked atomic.Bool }
 
 func (l *testRootLease) Validate() error {
@@ -116,6 +129,7 @@ func TestOpenTSDB(t *testing.T) {
 		defer defFn()
 
 		opts := TSDBOpts[*MockTSTable, any]{
+			RootLease:       staticTestLease{},
 			Location:        dir,
 			SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
 			TTL:             IntervalRule{Unit: DAY, Num: 3},
@@ -150,6 +164,7 @@ func TestOpenTSDB(t *testing.T) {
 		defer defFn()
 
 		opts := TSDBOpts[*MockTSTable, any]{
+			RootLease:       staticTestLease{},
 			Location:        dir,
 			SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
 			TTL:             IntervalRule{Unit: DAY, Num: 3},
@@ -201,6 +216,7 @@ func TestOpenTSDB(t *testing.T) {
 		defer defFn()
 
 		opts := TSDBOpts[*MockTSTable, any]{
+			RootLease:       staticTestLease{},
 			Location:        dir,
 			SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
 			TTL:             IntervalRule{Unit: DAY, Num: 3},
@@ -257,6 +273,7 @@ func TestSelectSegmentsRetention(t *testing.T) {
 		dir, defFn := test.Space(require.New(t))
 		t.Cleanup(defFn)
 		opts := TSDBOpts[*MockTSTable, any]{
+			RootLease:        staticTestLease{},
 			Location:         dir,
 			SegmentInterval:  IntervalRule{Unit: DAY, Num: 1},
 			TTL:              IntervalRule{Unit: DAY, Num: 3},
@@ -328,6 +345,7 @@ func TestTakeFileSnapshot(t *testing.T) {
 		snapshotDir := filepath.Join(dir, "snapshot")
 
 		opts := TSDBOpts[*MockTSTable, any]{
+			RootLease:       staticTestLease{},
 			Location:        dir,
 			SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
 			TTL:             IntervalRule{Unit: DAY, Num: 3},
@@ -375,6 +393,7 @@ func TestTakeFileSnapshot(t *testing.T) {
 		snapshotDir := filepath.Join(dir, "snapshot")
 
 		opts := TSDBOpts[*MockTSTable, any]{
+			RootLease:       staticTestLease{},
 			Location:        dir,
 			SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
 			TTL:             IntervalRule{Unit: DAY, Num: 3},
@@ -409,6 +428,7 @@ func TestTakeFileSnapshot(t *testing.T) {
 		defer defFn()
 
 		opts := TSDBOpts[*SnapshotMockTSTable, any]{
+			RootLease:       staticTestLease{},
 			Location:        dir,
 			SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
 			TTL:             IntervalRule{Unit: DAY, Num: 7},
@@ -448,6 +468,7 @@ func TestEpochSegmentCleanupOnOpen(t *testing.T) {
 	defer defFn()
 
 	opts := TSDBOpts[*MockTSTable, any]{
+		RootLease:       staticTestLease{},
 		Location:        dir,
 		SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
 		TTL:             IntervalRule{Unit: DAY, Num: 7},
@@ -509,6 +530,7 @@ func TestHalfBornSegmentCleanupOnOpen(t *testing.T) {
 	defer defFn()
 
 	opts := TSDBOpts[*MockTSTable, any]{
+		RootLease:       staticTestLease{},
 		Location:        dir,
 		SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
 		TTL:             IntervalRule{Unit: DAY, Num: 7},
@@ -585,6 +607,7 @@ func TestTSDBCollect(t *testing.T) {
 	}
 
 	opts := TSDBOpts[*MockTSTable, any]{
+		RootLease:       staticTestLease{},
 		Location:        dir,
 		SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
 		TTL:             IntervalRule{Unit: DAY, Num: 3},
@@ -664,6 +687,7 @@ func TestCollectWithPartialClosedSegments(t *testing.T) {
 	}
 
 	opts := TSDBOpts[*MockTSTable, any]{
+		RootLease:          staticTestLease{},
 		Location:           dir,
 		SegmentInterval:    IntervalRule{Unit: DAY, Num: 1},
 		TTL:                IntervalRule{Unit: DAY, Num: 7},
@@ -797,6 +821,7 @@ func TestTSDBOpen_LockReleasedAfterFailedOpen(t *testing.T) {
 	newTestSegmentSkeleton(t, dir, "1.3.0")
 
 	opts := TSDBOpts[*MockTSTable, any]{
+		RootLease:       staticTestLease{},
 		Location:        dir,
 		SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
 		TTL:             IntervalRule{Unit: DAY, Num: 3},
@@ -840,6 +865,7 @@ func TestTSDBOpen_LockReleasedAfterRootLeaseFactoryFailure(t *testing.T) {
 	defer defFn()
 
 	opts := TSDBOpts[*MockTSTable, any]{
+		RootLease:       staticTestLease{},
 		Location:        dir,
 		SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
 		TTL:             IntervalRule{Unit: DAY, Num: 3},
@@ -876,6 +902,7 @@ func TestTSDBCloseRevokesRootLeaseBeforeReleasingLock(t *testing.T) {
 	defer defFn()
 	lease := &testRootLease{}
 	opts := TSDBOpts[*MockTSTable, any]{
+		RootLease:       staticTestLease{},
 		Location:        dir,
 		SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
 		TTL:             IntervalRule{Unit: DAY, Num: 3},
@@ -905,6 +932,7 @@ func TestTSDBOpen_RejectsIncompatibleSegment(t *testing.T) {
 	newTestSegmentSkeleton(t, dir, "1.3.0")
 
 	opts := TSDBOpts[*MockTSTable, any]{
+		RootLease:       staticTestLease{},
 		Location:        dir,
 		SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
 		TTL:             IntervalRule{Unit: DAY, Num: 3},

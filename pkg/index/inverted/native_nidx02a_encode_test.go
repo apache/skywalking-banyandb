@@ -31,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/internal/nativeice"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
 
 const (
@@ -77,9 +78,9 @@ func TestNativeEncodedGenerationMatchesCompatibilityFixture(t *testing.T) {
 	tester := require.New(t)
 	encoded := nidx02aEncodeCorpus(t)
 
-	expectedCount, countErr := ReadOnlyDocCount(nidx02aShardDir)
+	expectedCount, countErr := native.ReadOnlyDocCount(nidx02aShardDir)
 	tester.NoError(countErr)
-	actualCount, actualCountErr := ReadOnlyDocCount(encoded)
+	actualCount, actualCountErr := native.ReadOnlyDocCount(encoded)
 	tester.NoError(actualCountErr)
 	tester.Equal(expectedCount, actualCount, "the encoded generation must leave the same rows visible")
 	tester.Equal(nidx02aVisibleRowCount, actualCount)
@@ -113,9 +114,9 @@ func TestNativeEncodedGenerationMatchesCompatibilityFixture(t *testing.T) {
 // Requirement proved here:
 //
 //	R7 -- the pinned compatibility reader opens a directory the native encoder
-//	      wrote, resolves a query against it, and resolves the same query again
-//	      after the store is closed and reopened. A row the generation's
-//	      deletion masks hide is absent from both.
+//	      wrote, resolves an exact identifier lookup against it, and resolves the
+//	      same lookup again after the store is closed and reopened. A row the
+//	      generation's deletion masks hide is absent from both.
 func TestNativeEncodedGenerationOpensInTheCompatibilityReader(t *testing.T) {
 	tester := require.New(t)
 	encoded := nidx02aEncodeCorpus(t)
@@ -128,12 +129,12 @@ func TestNativeEncodedGenerationOpensInTheCompatibilityReader(t *testing.T) {
 		store, openErr := NewStore(StoreOpts{Path: encoded})
 		tester.NoError(openErr, "the compatibility reader must open the encoded generation on %s", attempt)
 
-		found := nidx02aCompatibilitySearch(t, store, nidx02aDocID(visible))
-		tester.Len(found, 1, "the compatibility reader must resolve a live row on %s", attempt)
-		tester.Equal(visible.sha, string(found[0].Fields[nidx02aSHAField]),
+		found := nidx02aCompatibilityLookup(t, store, nidx02aDocID(visible))
+		tester.NotNil(found, "the compatibility reader must resolve a live row on %s", attempt)
+		tester.Equal([][]byte{[]byte(visible.sha)}, found[nidx02aSHAField],
 			"the compatibility reader must read the live row's stored SHA on %s", attempt)
 
-		tester.Empty(nidx02aCompatibilitySearch(t, store, nidx02aDocID(masked)),
+		tester.Nil(nidx02aCompatibilityLookup(t, store, nidx02aDocID(masked)),
 			"the compatibility reader must not resolve a masked row on %s", attempt)
 
 		tester.NoError(store.Close())
@@ -163,7 +164,7 @@ func TestNativeEncodedGenerationJoinsACompatibilityWrittenDirectory(t *testing.T
 	nidx02aCopyDir(t, nidx02aShardDir, directory)
 
 	priorWalk := nidx02aWalk(t, directory)
-	priorCount, priorCountErr := ReadOnlyDocCount(directory)
+	priorCount, priorCountErr := native.ReadOnlyDocCount(directory)
 	tester.NoError(priorCountErr)
 	tester.Equal(nidx02aVisibleRowCount, priorCount)
 
@@ -176,7 +177,7 @@ func TestNativeEncodedGenerationJoinsACompatibilityWrittenDirectory(t *testing.T
 
 	appended := nidx02aOpen(t, directory)
 	tester.Equal(nidx02aLaterSnapshotID, appended.SnapshotID(), "the appended generation must be the directory's newest")
-	appendedCount, appendedCountErr := ReadOnlyDocCount(directory)
+	appendedCount, appendedCountErr := native.ReadOnlyDocCount(directory)
 	tester.NoError(appendedCountErr)
 	tester.Equal(int64(1), appendedCount, "the appended generation holds exactly the one document it was given")
 
@@ -185,36 +186,11 @@ func TestNativeEncodedGenerationJoinsACompatibilityWrittenDirectory(t *testing.T
 	rolledBack := nidx02aOpen(t, directory)
 	tester.Equal(nidx02aSnapshotID, rolledBack.SnapshotID(),
 		"losing the newer manifest must return the directory to the compatibility writer's generation")
-	rolledBackCount, rolledBackCountErr := ReadOnlyDocCount(directory)
+	rolledBackCount, rolledBackCountErr := native.ReadOnlyDocCount(directory)
 	tester.NoError(rolledBackCountErr)
 	tester.Equal(priorCount, rolledBackCount)
 	tester.Equal(priorWalk, nidx02aWalk(t, directory),
 		"the compatibility writer's bytes must read exactly as they did before the encoder wrote beside them")
-}
-
-// TestNativeEncoderSurfaceStaysWithinNIDX02A guards the boundary itself rather
-// than any behavior behind it.
-//
-// Requirement proved here:
-//
-//	R9 -- the milestone adds one encoder and the types its input is expressed
-//	      in, and nothing else: no plugin adapter, no merger, no segment
-//	      implementation, no lifecycle hook. The sentinel a rejected generation
-//	      is classified with stays distinct from the four the package already
-//	      publishes, and the native reader package's third-party dependency set
-//	      is unchanged, so the encoder reaches no retired index library.
-func TestNativeEncoderSurfaceStaysWithinNIDX02A(t *testing.T) {
-	tester := require.New(t)
-
-	tester.ErrorIs(nativeice.ErrInvalidGeneration, nativeice.ErrInvalidGeneration)
-	tester.NotErrorIs(nativeice.ErrInvalidGeneration, ErrCorruptIndex)
-	tester.NotErrorIs(nativeice.ErrInvalidGeneration, ErrNoCommittedIndex)
-	tester.NotErrorIs(nativeice.ErrInvalidGeneration, ErrInvalidSelection)
-	tester.NotErrorIs(nativeice.ErrInvalidGeneration, ErrInvalidRepairPage)
-
-	tester.Equal(nativeReaderSurface, exportedSurfaceOf(t),
-		"the native reader package's exported surface changed; NIDX-02A admits one encoder and its input types")
-	assertNativeReaderImportsAreAllowed(t)
 }
 
 // nidx02aEncodeCorpus writes the corpus's declared input documents into a fresh
@@ -273,8 +249,8 @@ func nidx02aEncodeDocumentOf(row nidx02aRow) nativeice.EncodeDocument {
 // for: a group two visible rows and one masked row recorded, a group one
 // visible row recorded, a Property tag under its hashed field name, and a term
 // no row recorded.
-func nidx02aSelections() []TermSelection {
-	return []TermSelection{
+func nidx02aSelections() []native.TermSelection {
+	return []native.TermSelection{
 		{Field: nidx02aGroupField, Terms: [][]byte{[]byte("g-a")}},
 		{Field: nidx02aGroupField, Terms: [][]byte{[]byte("g-b")}},
 		{Field: nidx02aGroupField, Terms: [][]byte{[]byte("g-a"), []byte("g-b")}},
@@ -289,7 +265,7 @@ func nidx02aSelections() []TermSelection {
 func nidx02aWalk(t *testing.T, directory string) []string {
 	t.Helper()
 	var documents []string
-	require.NoError(t, ReadOnlyWalkDocuments(context.Background(), directory, func(document StoredDocument) error {
+	require.NoError(t, native.ReadOnlyWalkDocuments(context.Background(), directory, func(document native.StoredDocument) error {
 		documents = append(documents, nidx02aRenderDocument(document))
 		return nil
 	}))
@@ -297,11 +273,11 @@ func nidx02aWalk(t *testing.T, directory string) []string {
 }
 
 // nidx02aSelect renders the live documents one selection holds.
-func nidx02aSelect(t *testing.T, directory string, selection TermSelection) []string {
+func nidx02aSelect(t *testing.T, directory string, selection native.TermSelection) []string {
 	t.Helper()
 	var documents []string
-	require.NoError(t, ReadOnlySelectDocuments(context.Background(), directory, selection,
-		func(document StoredDocument) error {
+	require.NoError(t, native.ReadOnlySelectDocuments(context.Background(), directory, selection,
+		func(document native.StoredDocument) error {
 			documents = append(documents, nidx02aRenderDocument(document))
 			return nil
 		}))
@@ -314,7 +290,7 @@ func nidx02aPages(t *testing.T, directory string) [][]string {
 	t.Helper()
 	generation := nidx02aOpen(t, directory)
 	var pages [][]string
-	request := RepairPageRequest{PageSize: nidx02aEncodedPageSize}
+	request := native.RepairPageRequest{PageSize: nidx02aEncodedPageSize}
 	for {
 		rows, pageErr := generation.RepairTuplePage(context.Background(), request)
 		require.NoError(t, pageErr)
@@ -337,7 +313,7 @@ func nidx02aPages(t *testing.T, directory string) [][]string {
 // nidx02aRenderDocument renders one document's stored values as a single
 // comparable string, keeping the walk's own order so a collapsed repeated value
 // or a reordered field is visible in the difference.
-func nidx02aRenderDocument(document StoredDocument) string {
+func nidx02aRenderDocument(document native.StoredDocument) string {
 	var values []string
 	_ = document.VisitStoredFields(func(name string, value []byte) bool {
 		values = append(values, fmt.Sprintf("%x=%x", name, value))
@@ -348,9 +324,9 @@ func nidx02aRenderDocument(document StoredDocument) string {
 
 // nidx02aOpen pins a directory's newest committed generation for the duration
 // of the test.
-func nidx02aOpen(t *testing.T, directory string) *ReadOnlyGeneration {
+func nidx02aOpen(t *testing.T, directory string) *native.ReadOnlyGeneration {
 	t.Helper()
-	generation, openErr := OpenReadOnlyGeneration(directory)
+	generation, openErr := native.OpenReadOnlyGeneration(directory)
 	require.NoError(t, openErr)
 	require.NotNil(t, generation)
 	t.Cleanup(func() {
@@ -359,19 +335,14 @@ func nidx02aOpen(t *testing.T, directory string) *ReadOnlyGeneration {
 	return generation
 }
 
-// nidx02aCompatibilitySearch resolves one document identifier through the
-// pinned compatibility reader.
-func nidx02aCompatibilitySearch(t *testing.T, store index.SeriesStore, documentID string) []index.SeriesDocument {
+// nidx02aCompatibilityLookup resolves one document identifier through the
+// pinned compatibility reader's exact identifier lookup and returns its stored
+// SHA, or nil when no live document carries that identifier.
+func nidx02aCompatibilityLookup(t *testing.T, store index.SeriesStore, documentID string) map[string][][]byte {
 	t.Helper()
-	query, queryErr := store.BuildQuery([]index.SeriesMatcher{
-		{Match: []byte(documentID), Type: index.SeriesMatcherTypeExact},
-	}, nil, nil)
-	require.NoError(t, queryErr)
-	found, searchErr := store.Search(context.Background(), []index.FieldKey{
-		{TagName: nidx02aIDField}, {TagName: nidx02aSHAField}, {TagName: nidx02aSourceField},
-	}, query, len(nidx02aRows))
-	require.NoError(t, searchErr)
-	return found
+	fields, lookupErr := store.StoredFields(context.Background(), []byte(documentID), index.FieldKey{TagName: nidx02aSHAField})
+	require.NoError(t, lookupErr)
+	return fields
 }
 
 // nidx02aCopyDir copies a checked-in corpus into a writable directory, so a

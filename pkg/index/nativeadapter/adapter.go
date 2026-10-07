@@ -96,7 +96,7 @@ func (a *Adapter) Batch(ctx context.Context, batch index.Batch) error {
 		}
 		docs = append(docs, nd)
 	}
-	return a.Owner.Batch(ctx, native.Batch{Documents: docs, InsertOnly: true, PersistentCallback: batch.PersistentCallback})
+	return a.Owner.Batch(ctx, native.Batch{Documents: docs, Mode: native.BatchInsertOnly, PersistentCallback: batch.PersistentCallback})
 }
 
 // Acquire pins one native read view for query operations.

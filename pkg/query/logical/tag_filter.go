@@ -22,13 +22,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/blugelabs/bluge/analysis"
 	"github.com/pkg/errors"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/index/analyzer"
+	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/nativeanalysis"
 )
 
 var errUnsupportedLogicalOperation = errors.New("unsupported logical operation")
@@ -98,7 +98,7 @@ func BuildTagFilter(criteria *modelv1.Criteria, entityDict map[string]int, schem
 		var expr ComparableExpr
 		var err error
 		_, indexRule := indexChecker.IndexRuleDefined(cond.Name)
-		expr, err = parseExpr(cond.Value, analyzer.Analyzers[indexRule.GetAnalyzer()])
+		expr, err = parseExpr(cond.Value, indexRule.GetAnalyzer())
 		if err != nil {
 			return nil, err
 		}
@@ -192,13 +192,21 @@ func parseFilter(cond *modelv1.Condition, expr ComparableExpr, schema Schema, in
 	}
 }
 
-func parseExpr(value *modelv1.TagValue, analyzer *analysis.Analyzer) (ComparableExpr, error) {
-	if analyzer != nil {
+// textAnalyzers are the analyzer names a tag string is tokenized with; any
+// other name, including empty, leaves the value as a literal.
+var textAnalyzers = map[string]struct{}{
+	index.AnalyzerKeyword:  {},
+	index.AnalyzerSimple:   {},
+	index.AnalyzerStandard: {},
+	index.AnalyzerURL:      {},
+}
+
+func parseExpr(value *modelv1.TagValue, analyzerName string) (ComparableExpr, error) {
+	if _, known := textAnalyzers[analyzerName]; known {
 		if _, ok := value.Value.(*modelv1.TagValue_Str); ok {
-			tokenStream := analyzer.Analyze([]byte(value.GetStr().Value))
-			strArr := make([]string, 0, len(tokenStream))
-			for _, token := range tokenStream {
-				strArr = append(strArr, string(token.Term))
+			strArr, err := nativeanalysis.Tokens(analyzerName, []byte(value.GetStr().Value))
+			if err != nil {
+				return nil, err
 			}
 			return &strArrLiteral{
 				arr: strArr,
@@ -403,7 +411,7 @@ func (h *inTag) String() string {
 }
 
 func (h *inTag) Match(accessor TagValueIndexAccessor, registry TagSpecRegistry) (bool, error) {
-	expr, err := tagExpr(accessor, registry, h.Name, nil)
+	expr, err := tagExpr(accessor, registry, h.Name, "")
 	if err != nil {
 		return false, err
 	}
@@ -424,7 +432,7 @@ func newEqTag(tagName string, values LiteralExpr) *eqTag {
 }
 
 func (eq *eqTag) Match(accessor TagValueIndexAccessor, registry TagSpecRegistry) (bool, error) {
-	expr, err := tagExpr(accessor, registry, eq.Name, nil)
+	expr, err := tagExpr(accessor, registry, eq.Name, "")
 	if err != nil {
 		return false, err
 	}
@@ -463,7 +471,7 @@ func newRangeTag(tagName string, opts rangeOpts) *rangeTag {
 }
 
 func (r *rangeTag) Match(accessor TagValueIndexAccessor, registry TagSpecRegistry) (bool, error) {
-	expr, err := tagExpr(accessor, registry, r.Name, nil)
+	expr, err := tagExpr(accessor, registry, r.Name, "")
 	if err != nil {
 		return false, err
 	}
@@ -531,12 +539,12 @@ func (r *rangeTag) String() string {
 	return convert.JSONToString(r)
 }
 
-func tagExpr(accessor TagValueIndexAccessor, registry TagSpecRegistry, tagName string, analyzer *analysis.Analyzer) (ComparableExpr, error) {
+func tagExpr(accessor TagValueIndexAccessor, registry TagSpecRegistry, tagName string, analyzerName string) (ComparableExpr, error) {
 	tagSpec := registry.FindTagSpecByName(tagName)
 	if tagSpec != nil {
 		tagVal := accessor.GetTagValue(tagSpec.TagFamilyIdx, tagSpec.TagIdx)
 		if tagVal != nil {
-			return parseExpr(tagVal, analyzer)
+			return parseExpr(tagVal, analyzerName)
 		}
 		return nil, errors.WithMessagef(ErrTagNotDefined, "tag value is nil for tag %q, tagSpec: %+v", tagName, tagSpec)
 	}
@@ -560,7 +568,7 @@ func newMatchTag(tagName string, values LiteralExpr, indexChecker IndexChecker) 
 
 func (m *matchTag) Match(accessor TagValueIndexAccessor, registry TagSpecRegistry) (bool, error) {
 	_, indexRule := m.indexChecker.IndexRuleDefined(m.Name)
-	expr, err := tagExpr(accessor, registry, m.Name, analyzer.Analyzers[indexRule.GetAnalyzer()])
+	expr, err := tagExpr(accessor, registry, m.Name, indexRule.GetAnalyzer())
 	if err != nil {
 		return false, err
 	}
@@ -591,7 +599,7 @@ func newHavingTag(tagName string, values LiteralExpr) *havingTag {
 }
 
 func (h *havingTag) Match(accessor TagValueIndexAccessor, registry TagSpecRegistry) (bool, error) {
-	expr, err := tagExpr(accessor, registry, h.Name, nil)
+	expr, err := tagExpr(accessor, registry, h.Name, "")
 	if err != nil {
 		return false, err
 	}

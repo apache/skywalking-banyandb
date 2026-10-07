@@ -20,6 +20,7 @@ package main
 import (
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -33,11 +34,16 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+)
+
+// Property-document field names mirror the unexported layout
+// banyand/property/db writes (banyand/property/db/shard.go).
+const (
+	propertySourceField = "_source"
+	propertyDeleteField = "_deleted"
 )
 
 type propertyDumpOptions struct {
@@ -129,9 +135,8 @@ type propertyRowData struct {
 }
 
 type propertyDumpContext struct {
+	generation     *native.ReadOnlyGeneration
 	tagFilter      logical.TagFilter
-	store          index.SeriesStore
-	seriesMap      map[common.SeriesID]string
 	writer         *csv.Writer
 	opts           propertyDumpOptions
 	projectionTags []string
@@ -144,37 +149,31 @@ func newPropertyDumpContext(opts propertyDumpOptions) (*propertyDumpContext, err
 		opts: opts,
 	}
 
-	// Open inverted index store
-	l := logger.GetLogger("dump-property")
-	store, err := inverted.NewStore(inverted.StoreOpts{
-		Path:   opts.shardPath,
-		Logger: l,
-	})
+	// Open the shard's native index read-only: a read-only generation, never
+	// a writable owner, so no lock is acquired on a directory a live node may
+	// still have open.
+	generation, err := native.OpenReadOnlyGeneration(opts.shardPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open property shard: %w", err)
+		if errors.Is(err, native.ErrNoSnapshot) {
+			fmt.Fprintf(os.Stderr, "Warning: shard has no committed data yet\n")
+			generation = nil
+		} else {
+			return nil, fmt.Errorf("failed to open property shard: %w", err)
+		}
 	}
-	ctx.store = store
-
-	// Load series map
-	ctx.seriesMap, err = loadPropertySeriesMap(opts.shardPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Failed to load series information: %v\n", err)
-		ctx.seriesMap = nil
-	} else {
-		fmt.Fprintf(os.Stderr, "Loaded %d series from shard\n", len(ctx.seriesMap))
-	}
+	ctx.generation = generation
 
 	// Parse criteria if provided
 	if opts.criteriaJSON != "" {
 		var criteria *modelv1.Criteria
 		criteria, err = parsePropertyCriteriaJSON(opts.criteriaJSON)
 		if err != nil {
-			store.Close()
+			ctx.close()
 			return nil, fmt.Errorf("failed to parse criteria: %w", err)
 		}
 		ctx.tagFilter, err = logical.BuildSimpleTagFilter(criteria)
 		if err != nil {
-			store.Close()
+			ctx.close()
 			return nil, fmt.Errorf("failed to build tag filter: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "Applied criteria filter\n")
@@ -191,7 +190,7 @@ func newPropertyDumpContext(opts propertyDumpOptions) (*propertyDumpContext, err
 		if len(ctx.projectionTags) > 0 {
 			ctx.tagColumns = ctx.projectionTags
 		} else {
-			ctx.tagColumns, err = discoverPropertyTagColumns(ctx.store)
+			ctx.tagColumns, err = discoverPropertyTagColumns(ctx.generation)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: Failed to discover tag columns: %v\n", err)
 				ctx.tagColumns = []string{}
@@ -200,7 +199,7 @@ func newPropertyDumpContext(opts propertyDumpOptions) (*propertyDumpContext, err
 	}
 
 	if err := ctx.initOutput(); err != nil {
-		store.Close()
+		ctx.close()
 		return nil, err
 	}
 
@@ -224,103 +223,109 @@ func (ctx *propertyDumpContext) initOutput() error {
 }
 
 func (ctx *propertyDumpContext) close() {
-	if ctx.store != nil {
-		ctx.store.Close()
+	if ctx.generation != nil {
+		_ = ctx.generation.Close()
 	}
 	if ctx.writer != nil {
 		ctx.writer.Flush()
 	}
 }
 
+// walkPropertyRows visits every live document in the shard's native index and
+// decodes it into a propertyRowData. It is factored out so tests can drive the
+// same decode path the dump tool uses.
+func walkPropertyRows(ctx context.Context, generation *native.ReadOnlyGeneration, visit func(propertyRowData) error) error {
+	if generation == nil {
+		return nil
+	}
+	return generation.VisitLiveDocuments(ctx, func(doc native.StoredDocument) error {
+		row, ok, err := decodePropertyRow(doc)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		return visit(row)
+	})
+}
+
+// decodePropertyRow extracts a propertyRowData from one native stored
+// document. The identifier (_id) and timestamp (_timestamp) are written by
+// the native encoder for every document regardless of IdentifierDocValues
+// (NIDX-03 §2.2); _source and _deleted are the only other fields
+// banyand/property/db/shard.go stores (buildUpdateDocument). A document
+// without a _source value is not a property row -- ok is false -- so callers
+// never try to unmarshal an empty payload.
+//
+// A malformed _source or _timestamp is reported as a warning on stderr, not
+// a hard error: one corrupt row must not abort the rest of the dump, the
+// same tolerance the previous (bluge-backed) dump tool had. walkPropertyRows
+// still aborts on a genuine read-path failure (VisitStoredFields itself
+// erroring, which signals the underlying segment is unreadable, not that one
+// document's payload is malformed).
+func decodePropertyRow(doc native.StoredDocument) (propertyRowData, bool, error) {
+	var row propertyRowData
+	var sourceBytes []byte
+	visitErr := doc.VisitStoredFields(func(name string, value []byte) bool {
+		switch name {
+		case identifierFieldName:
+			row.id = append([]byte(nil), value...)
+		case timestampFieldName:
+			ts, decodeErr := native.DecodeTimestamp(value)
+			if decodeErr != nil {
+				fmt.Fprintf(os.Stderr, "warning: skipping _timestamp for document %x: %v\n", value, decodeErr)
+				return true
+			}
+			row.timestamp = ts
+		case propertySourceField:
+			sourceBytes = append([]byte(nil), value...)
+		case propertyDeleteField:
+			if len(value) > 0 {
+				row.deleteTime = convert.BytesToInt64(value)
+			}
+		}
+		return true
+	})
+	if visitErr != nil {
+		return propertyRowData{}, false, fmt.Errorf("visit stored fields: %w", visitErr)
+	}
+	if len(sourceBytes) == 0 {
+		return propertyRowData{}, false, nil
+	}
+	var property propertyv1.Property
+	if err := protojson.Unmarshal(sourceBytes, &property); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: skipping document %x with malformed _source: %v\n", row.id, err)
+		return propertyRowData{}, false, nil
+	}
+	row.property = &property
+	if len(row.id) > 0 {
+		row.seriesID = common.SeriesID(convert.Hash(row.id))
+	}
+	return row, true, nil
+}
+
+const (
+	identifierFieldName = "_id"
+	timestampFieldName  = "_timestamp"
+)
+
 func (ctx *propertyDumpContext) processProperties() error {
-	// Use SeriesIterator to iterate through all series and query properties for each
 	searchCtx := context.Background()
-	iter, err := ctx.store.SeriesIterator(searchCtx)
-	if err != nil {
-		return fmt.Errorf("failed to create series iterator: %w", err)
-	}
-	defer iter.Close()
-
-	projection := []index.FieldKey{
-		{TagName: "_id"},
-		{TagName: "_timestamp"},
-		{TagName: "_source"},
-		{TagName: "_deleted"},
+	var allResults []propertyRowData
+	if walkErr := walkPropertyRows(searchCtx, ctx.generation, func(row propertyRowData) error {
+		allResults = append(allResults, row)
+		return nil
+	}); walkErr != nil {
+		return fmt.Errorf("failed to walk property shard: %w", walkErr)
 	}
 
-	var allResults []index.SeriesDocument
-	seriesCount := 0
+	fmt.Fprintf(os.Stderr, "Found %d properties\n", len(allResults))
 
-	// Iterate through all series
-	for iter.Next() {
-		series := iter.Val()
-		if len(series.EntityValues) == 0 {
-			continue
-		}
-
-		seriesCount++
-		// Build query for this specific series
-		seriesMatchers := []index.SeriesMatcher{
-			{
-				Match: series.EntityValues,
-				Type:  index.SeriesMatcherTypeExact,
-			},
-		}
-
-		iq, err := ctx.store.BuildQuery(seriesMatchers, nil, nil)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to build query for series: %v\n", err)
-			continue
-		}
-
-		// Search properties for this series
-		results, err := ctx.store.Search(searchCtx, projection, iq, 10000)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to search properties for series: %v\n", err)
-			continue
-		}
-
-		allResults = append(allResults, results...)
-	}
-
-	fmt.Fprintf(os.Stderr, "Found %d properties across %d series\n", len(allResults), seriesCount)
-
-	// Process each result
-	for _, result := range allResults {
-		sourceBytes := result.Fields["_source"]
-		if sourceBytes == nil {
-			continue
-		}
-
-		var property propertyv1.Property
-		if err := protojson.Unmarshal(sourceBytes, &property); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to unmarshal property: %v\n", err)
-			continue
-		}
-
-		var deleteTime int64
-		if result.Fields["_deleted"] != nil {
-			deleteTime = convert.BytesToInt64(result.Fields["_deleted"])
-		}
-
-		seriesID := common.SeriesID(0)
-		if len(result.Key.EntityValues) > 0 {
-			seriesID = common.SeriesID(convert.Hash(result.Key.EntityValues))
-		}
-
-		row := propertyRowData{
-			id:         result.Key.EntityValues,
-			property:   &property,
-			timestamp:  result.Timestamp,
-			deleteTime: deleteTime,
-			seriesID:   seriesID,
-		}
-
-		// Apply tag filter if specified
+	for _, row := range allResults {
 		if ctx.shouldSkip(row) {
 			continue
 		}
-
 		if err := ctx.writeRow(row); err != nil {
 			return err
 		}
@@ -355,11 +360,11 @@ func (ctx *propertyDumpContext) shouldSkip(row propertyRowData) bool {
 
 func (ctx *propertyDumpContext) writeRow(row propertyRowData) error {
 	if ctx.opts.csvOutput {
-		if err := writePropertyRowAsCSV(ctx.writer, row, ctx.tagColumns, ctx.seriesMap); err != nil {
+		if err := writePropertyRowAsCSV(ctx.writer, row, ctx.tagColumns); err != nil {
 			return err
 		}
 	} else {
-		writePropertyRowAsText(row, ctx.rowNum+1, ctx.opts.verbose, ctx.projectionTags, ctx.seriesMap)
+		writePropertyRowAsText(row, ctx.rowNum+1, ctx.opts.verbose, ctx.projectionTags)
 	}
 	ctx.rowNum++
 	return nil
@@ -371,38 +376,6 @@ func (ctx *propertyDumpContext) printSummary() {
 		return
 	}
 	fmt.Printf("\nTotal rows: %d\n", ctx.rowNum)
-}
-
-func loadPropertySeriesMap(shardPath string) (map[common.SeriesID]string, error) {
-	l := logger.GetLogger("dump-property")
-
-	store, err := inverted.NewStore(inverted.StoreOpts{
-		Path:   shardPath,
-		Logger: l,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to open series index: %w", err)
-	}
-	defer store.Close()
-
-	ctx := context.Background()
-	iter, err := store.SeriesIterator(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create series iterator: %w", err)
-	}
-	defer iter.Close()
-
-	seriesMap := make(map[common.SeriesID]string)
-	for iter.Next() {
-		series := iter.Val()
-		if len(series.EntityValues) > 0 {
-			seriesID := common.SeriesID(convert.Hash(series.EntityValues))
-			seriesText := string(series.EntityValues)
-			seriesMap[seriesID] = seriesText
-		}
-	}
-
-	return seriesMap, nil
 }
 
 func parsePropertyCriteriaJSON(criteriaJSON string) (*modelv1.Criteria, error) {
@@ -430,43 +403,24 @@ func parsePropertyProjectionTags(projectionStr string) []string {
 	return result
 }
 
-func discoverPropertyTagColumns(store index.SeriesStore) ([]string, error) {
-	// Build query to get a sample property
-	queryReq := &propertyv1.QueryRequest{
-		Limit: 1,
+// discoverPropertyTagColumns samples the first live property row to discover
+// the tag names CSV output should carry as columns.
+func discoverPropertyTagColumns(generation *native.ReadOnlyGeneration) ([]string, error) {
+	var sample *propertyv1.Property
+	errStop := errors.New("dump: stop walk")
+	walkErr := walkPropertyRows(context.Background(), generation, func(row propertyRowData) error {
+		sample = row.property
+		return errStop
+	})
+	if walkErr != nil && !errors.Is(walkErr, errStop) {
+		return nil, fmt.Errorf("failed to sample properties: %w", walkErr)
 	}
-
-	iq, err := inverted.BuildPropertyQuery(queryReq, "_group", "_entity_id")
-	if err != nil {
-		return nil, fmt.Errorf("failed to build property query: %w", err)
-	}
-
-	projection := []index.FieldKey{
-		{TagName: "_source"},
-	}
-
-	searchCtx := context.Background()
-	results, err := store.Search(searchCtx, projection, iq, 1)
-	if err != nil {
-		return nil, fmt.Errorf("failed to search properties: %w", err)
-	}
-
-	if len(results) == 0 {
+	if sample == nil {
 		return []string{}, nil
-	}
-
-	sourceBytes := results[0].Fields["_source"]
-	if sourceBytes == nil {
-		return []string{}, nil
-	}
-
-	var property propertyv1.Property
-	if err := protojson.Unmarshal(sourceBytes, &property); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal property: %w", err)
 	}
 
 	tagNames := make(map[string]bool)
-	for _, tag := range property.Tags {
+	for _, tag := range sample.Tags {
 		tagNames[tag.Key] = true
 	}
 
@@ -479,17 +433,11 @@ func discoverPropertyTagColumns(store index.SeriesStore) ([]string, error) {
 	return result, nil
 }
 
-func writePropertyRowAsText(row propertyRowData, rowNum int, verbose bool, projectionTags []string, seriesMap map[common.SeriesID]string) {
+func writePropertyRowAsText(row propertyRowData, rowNum int, verbose bool, projectionTags []string) {
 	fmt.Printf("Row %d:\n", rowNum)
 	fmt.Printf("  ID: %s\n", string(row.id))
 	fmt.Printf("  Timestamp: %s\n", formatTimestamp(row.timestamp))
 	fmt.Printf("  SeriesID: %d\n", row.seriesID)
-
-	if seriesMap != nil {
-		if seriesText, ok := seriesMap[row.seriesID]; ok {
-			fmt.Printf("  Series: %s\n", seriesText)
-		}
-	}
 
 	if row.property.Metadata != nil {
 		fmt.Printf("  Group: %s\n", row.property.Metadata.Group)
@@ -543,14 +491,7 @@ func writePropertyRowAsText(row propertyRowData, rowNum int, verbose bool, proje
 	fmt.Printf("\n")
 }
 
-func writePropertyRowAsCSV(writer *csv.Writer, row propertyRowData, tagColumns []string, seriesMap map[common.SeriesID]string) error {
-	seriesText := ""
-	if seriesMap != nil {
-		if text, ok := seriesMap[row.seriesID]; ok {
-			seriesText = text
-		}
-	}
-
+func writePropertyRowAsCSV(writer *csv.Writer, row propertyRowData, tagColumns []string) error {
 	group := ""
 	name := ""
 	entityID := ""
@@ -571,7 +512,7 @@ func writePropertyRowAsCSV(writer *csv.Writer, row propertyRowData, tagColumns [
 		string(row.id),
 		formatTimestamp(row.timestamp),
 		fmt.Sprintf("%d", row.seriesID),
-		seriesText,
+		string(row.id),
 		group,
 		name,
 		entityID,

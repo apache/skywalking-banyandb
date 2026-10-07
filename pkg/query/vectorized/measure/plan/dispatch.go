@@ -29,7 +29,6 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -58,10 +57,11 @@ func HandledCount() int64 { return handledCount.Load() }
 // When the request is eligible for the vec subsystem, Dispatch:
 //
 //  1. Analyzes the request into a VecPlan via plan.Analyze (G8b)
-//  2. Resolves the index.Query + entity table the storage layer needs
-//     (using inverted.BuildQuery / BuildIndexModeQuery — the same helpers
-//     the deprecated row path uses; the logical.Schema parameter threads
-//     through unchanged)
+//  2. Resolves the remaining criteria + entity table the storage layer
+//     needs: extractSeriesMatchers (non-index-mode) or the raw request
+//     criteria (index mode) plus a measureFieldResolver, which the series
+//     index evaluates via pkg/index/native/criteria.Filter -- no bluge
+//     query is built (NIDX-03 §5)
 //  3. Calls ec.Query(ctx, opts) to obtain the MeasureQueryResult
 //  4. Wraps the result as a vec PullOperator (BatchSourceFromBatchResult
 //     fast path when available; BatchScan fallback otherwise) and installs
@@ -187,19 +187,38 @@ func Dispatch(
 		return nil, "", orderErr
 	}
 
-	// Resolve the index.Query + entities the same way the row path does
-	// in unresolvedIndexScan.Analyze.
-	var query index.Query
+	// Resolve the remaining criteria + entities the same way the row path's
+	// inverted.BuildQuery did, before the native cutover: index mode passes
+	// the request criteria through unchanged (entity tags stay as ordinary
+	// _im_entity_tag_<tag> filter conditions); normal mode splits entity-tag
+	// conditions into series matchers via extractSeriesMatchers, leaving only
+	// the remaining filter for the resolver below.
+	var criteria *modelv1.Criteria
 	var entities [][]*modelv1.TagValue
-	var qErr error
+	var extractErr error
 	if measureSchema.GetIndexMode() {
-		query, qErr = inverted.BuildIndexModeQuery(metadata.GetName(), req.GetCriteria(), logicalSchema)
+		// Index mode does not extract entity conditions into series
+		// matchers (an index-mode entity tag stays an ordinary
+		// _im_entity_tag_<tag> filter condition), so the previous release's
+		// BuildIndexModeQuery/buildIndexModeCriteria validation -- a
+		// condition's tag must be either index-rule-backed or an entity
+		// tag, and MATCH requires an index rule -- is not covered by
+		// extractSeriesMatchers' checks below and must be run explicitly
+		// here (NIDX-03 §5). criteria.Filter's FieldResolver-miss path is
+		// deliberately permissive (ok=false reads as "no hits"/"unchanged
+		// universe"), so without this the same conditions would silently
+		// under- or un-filter instead of erroring.
+		if validateErr := validateIndexModeCriteria(req.GetCriteria(), logicalSchema, entityMap); validateErr != nil {
+			return nil, "", fmt.Errorf("vec dispatch: build query: %w", validateErr)
+		}
+		criteria = req.GetCriteria()
 	} else {
-		query, entities, _, qErr = inverted.BuildQuery(req.GetCriteria(), logicalSchema, entityMap, entity)
+		criteria, entities, _, extractErr = extractSeriesMatchers(req.GetCriteria(), logicalSchema, entityMap, entity)
 	}
-	if qErr != nil {
-		return nil, "", fmt.Errorf("vec dispatch: build query: %w", qErr)
+	if extractErr != nil {
+		return nil, "", fmt.Errorf("vec dispatch: build query: %w", extractErr)
 	}
+	resolver := measureFieldResolver{schema: logicalSchema}
 
 	// Build the structural plan tree from analyzeReq so the Scan's
 	// BatchSchema + opts.TagProjection carry the hidden criteria tags.
@@ -216,7 +235,8 @@ func Dispatch(
 		req.GetTimeRange().GetEnd().AsTime(),
 	)
 	scan.Params.TimeRange = &tr
-	scan.Params.Query = query
+	scan.Params.Criteria = criteria
+	scan.Params.Fields = resolver
 	scan.Params.Entities = entities
 
 	// Execute the storage query. The vec source is constructed from the
@@ -232,7 +252,8 @@ func Dispatch(
 		Name:            metadata.GetName(),
 		TimeRange:       scan.Params.TimeRange,
 		Entities:        entities,
-		Query:           query,
+		Criteria:        criteria,
+		Fields:          resolver,
 		Order:           indexOrder,
 		GroupBy:         scan.Params.GroupBy,
 		Agg:             scan.Params.Agg,

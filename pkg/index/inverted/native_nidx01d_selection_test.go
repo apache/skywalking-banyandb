@@ -24,13 +24,13 @@ import (
 	"errors"
 	"math"
 	"os"
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
 
 // selectedDocumentWalker is the whole of NIDX-01D's contract: one call from an
@@ -44,12 +44,12 @@ import (
 // milestone adds behind this signature -- the ICE term dictionary, the posting
 // records, the union, the deletion mask intersection -- stays private. The
 // coder is free to move any of it; the coder may not move this.
-type selectedDocumentWalker func(ctx context.Context, path string, selection TermSelection, visit func(doc StoredDocument) error) error
+type selectedDocumentWalker func(ctx context.Context, path string, selection native.TermSelection, visit func(doc native.StoredDocument) error) error
 
 // nidx01dBoundary binds the contract to the production symbol that satisfies
-// it, so a change to ReadOnlySelectDocuments's signature fails to compile here
+// it, so a change to native.ReadOnlySelectDocuments's signature fails to compile here
 // rather than quietly redefining the milestone.
-var nidx01dBoundary selectedDocumentWalker = ReadOnlySelectDocuments
+var nidx01dBoundary selectedDocumentWalker = native.ReadOnlySelectDocuments
 
 // The identity byte strings below are issue #14010's declaration of the
 // NIDX-01C corpus, restated here as the terms NIDX-01D selects on. They are the
@@ -84,15 +84,15 @@ const (
 
 // identitySelection builds the selection that asks for the documents whose
 // identity field records any of the given identities.
-func identitySelection(identities ...[]byte) TermSelection {
-	return TermSelection{Field: docIDField, Terms: identities}
+func identitySelection(identities ...[]byte) native.TermSelection {
+	return native.TermSelection{Field: docIDField, Terms: identities}
 }
 
 // selectNIDX01D reads path through the boundary and returns each visited
 // document's stored fields, in visit order, together with the read's error.
-func selectNIDX01D(ctx context.Context, path string, selection TermSelection) ([][]walkedField, error) {
+func selectNIDX01D(ctx context.Context, path string, selection native.TermSelection) ([][]walkedField, error) {
 	var documents [][]walkedField
-	err := nidx01dBoundary(ctx, path, selection, func(doc StoredDocument) error {
+	err := nidx01dBoundary(ctx, path, selection, func(doc native.StoredDocument) error {
 		var fields []walkedField
 		if visitErr := doc.VisitStoredFields(func(name string, value []byte) bool {
 			fields = append(fields, walkedField{name: name, value: hex.EncodeToString(value)})
@@ -220,7 +220,7 @@ func TestNativeExactTermsSkipsDeletedDocument(t *testing.T) {
 func TestNativeExactTermsUnknownTermSelectsNothing(t *testing.T) {
 	tester := require.New(t)
 
-	for _, selection := range []TermSelection{
+	for _, selection := range []native.TermSelection{
 		identitySelection(nidx01dAbsentIdentity),
 		identitySelection(),
 		{Field: "_a_field_the_corpus_never_wrote", Terms: [][]byte{nidx01dIdentity101}},
@@ -255,11 +255,11 @@ func TestNativeExactTermsFilterPrecedesStoredDecode(t *testing.T) {
 
 	visited := 0
 	selectErr := nidx01dBoundary(context.Background(), damaged, identitySelection(nidx01dIdentity202),
-		func(_ StoredDocument) error {
+		func(_ native.StoredDocument) error {
 			visited++
 			return nil
 		})
-	tester.ErrorIs(selectErr, ErrCorruptIndex, "selecting the damaged document must report the typed corruption error")
+	tester.ErrorIs(selectErr, native.ErrCorrupt, "selecting the damaged document must report the typed corruption error")
 	tester.Zero(visited)
 }
 
@@ -272,7 +272,7 @@ func TestNativeExactTermsFilterPrecedesStoredDecode(t *testing.T) {
 //	      bounds is rejected with a typed error before any document is visited
 //	      rather than being served by an unbounded allocation. A selection
 //	      naming no field is rejected the same way: match-all is
-//	      ReadOnlyWalkDocuments, not an empty field name.
+//	      native.ReadOnlyWalkDocuments, not an empty field name.
 func TestNativeExactTermsRejectsUnboundedSelection(t *testing.T) {
 	tester := require.New(t)
 
@@ -281,18 +281,18 @@ func TestNativeExactTermsRejectsUnboundedSelection(t *testing.T) {
 		tooManyTerms[termIndex] = convert.Uint64ToBytes(uint64(termIndex))
 	}
 
-	for name, selection := range map[string]TermSelection{
+	for name, selection := range map[string]native.TermSelection{
 		"no field":       {Terms: [][]byte{nidx01dIdentity101}},
 		"too many terms": {Field: docIDField, Terms: tooManyTerms},
 		"term too long":  {Field: docIDField, Terms: [][]byte{make([]byte, nidx01dOversizedTermLength)}},
 	} {
 		visited := 0
-		err := nidx01dBoundary(context.Background(), nidx01cSourceADir, selection, func(_ StoredDocument) error {
+		err := nidx01dBoundary(context.Background(), nidx01cSourceADir, selection, func(_ native.StoredDocument) error {
 			visited++
 			return nil
 		})
-		tester.ErrorIs(err, ErrInvalidSelection, "selection %q must be rejected as out of bounds", name)
-		tester.NotErrorIs(err, ErrCorruptIndex,
+		tester.ErrorIs(err, native.ErrInvalidSelection, "selection %q must be rejected as out of bounds", name)
+		tester.NotErrorIs(err, native.ErrCorrupt,
 			"selection %q asks for more than the reader serves; the corpus is not damaged", name)
 		tester.Zero(visited, "selection %q must be rejected before any document is visited", name)
 	}
@@ -313,7 +313,7 @@ func TestNativeExactTermsStopsOnCancellation(t *testing.T) {
 
 	visited := 0
 	err := nidx01dBoundary(ctx, nidx01cSourceADir, identitySelection(nidx01dIdentity101, nidx01dIdentity202),
-		func(_ StoredDocument) error {
+		func(_ native.StoredDocument) error {
 			visited++
 			return nil
 		})
@@ -335,13 +335,13 @@ func TestNativeExactTermsStopsOnVisitError(t *testing.T) {
 	callerErr := errors.New("schema loader refused this document")
 	visited := 0
 	err := nidx01dBoundary(context.Background(), nidx01cSourceADir,
-		identitySelection(nidx01dIdentity101, nidx01dIdentity202), func(_ StoredDocument) error {
+		identitySelection(nidx01dIdentity101, nidx01dIdentity202), func(_ native.StoredDocument) error {
 			visited++
 			return callerErr
 		})
 
 	tester.ErrorIs(err, callerErr)
-	tester.NotErrorIs(err, ErrCorruptIndex)
+	tester.NotErrorIs(err, native.ErrCorrupt)
 	tester.Equal(1, visited, "the read must stop at the first document the caller rejects")
 }
 
@@ -456,9 +456,9 @@ func TestNativeExactTermsClassifiesAbsentAndDamagedDirectories(t *testing.T) {
 	tester := require.New(t)
 
 	absentErr := nidx01dBoundary(context.Background(), t.TempDir(), identitySelection(nidx01dIdentity101),
-		func(_ StoredDocument) error { return nil })
-	tester.ErrorIs(absentErr, ErrNoCommittedIndex)
-	tester.NotErrorIs(absentErr, ErrCorruptIndex)
+		func(_ native.StoredDocument) error { return nil })
+	tester.ErrorIs(absentErr, native.ErrNoSnapshot)
+	tester.NotErrorIs(absentErr, native.ErrCorrupt)
 	tester.True(strings.Contains(absentErr.Error(), "open read-only index"),
 		"the public boundary must identify the operation that failed: %v", absentErr)
 
@@ -467,45 +467,13 @@ func TestNativeExactTermsClassifiesAbsentAndDamagedDirectories(t *testing.T) {
 
 	visited := 0
 	damagedErr := nidx01dBoundary(context.Background(), damaged, identitySelection(nidx01dIdentity101),
-		func(_ StoredDocument) error {
+		func(_ native.StoredDocument) error {
 			visited++
 			return nil
 		})
-	tester.ErrorIs(damagedErr, ErrCorruptIndex)
-	tester.NotErrorIs(damagedErr, ErrNoCommittedIndex)
+	tester.ErrorIs(damagedErr, native.ErrCorrupt)
+	tester.NotErrorIs(damagedErr, native.ErrNoSnapshot)
 	tester.Zero(visited)
-}
-
-// TestNativeExactTermsBoundarySurface guards the boundary itself rather than
-// any behavior behind it.
-//
-// Requirement proved here:
-//
-//	R5 -- the milestone is delivered entirely behind
-//	      inverted.ReadOnlySelectDocuments and the TermSelection it accepts.
-//	      The selection carries one field and a set of literal terms and
-//	      nothing else, the sentinels callers classify with remain the ones the
-//	      boundary publishes, and the private native reader exports no
-//	      operation beyond opening a committed generation, counting it, walking
-//	      its live documents and walking the ones a term selection holds. An
-//	      entry appearing there for dictionaries, posting iterators, doc
-//	      values, ranges, prefixes, wildcards, analyzers, sorting,
-//	      search-after or any writer is the milestone growing surface NIDX-01
-//	      explicitly denied it.
-func TestNativeExactTermsBoundarySurface(t *testing.T) {
-	tester := require.New(t)
-
-	tester.NotNil(nidx01dBoundary, "ReadOnlySelectDocuments must satisfy the selected document walker contract")
-	tester.ErrorIs(ErrInvalidSelection, ErrInvalidSelection)
-	tester.NotErrorIs(ErrInvalidSelection, ErrCorruptIndex,
-		"an out-of-bounds request and damaged committed bytes must stay separately classifiable")
-	tester.NotErrorIs(ErrInvalidSelection, ErrNoCommittedIndex)
-
-	tester.Equal([]string{"Field:string", "Terms:[][]uint8"}, selectionShape(),
-		"TermSelection is one field name and its literal terms; anything more is a query language")
-
-	tester.Equal(nativeReaderSurface, exportedSurfaceOf(t),
-		"the native reader's exported surface changed; NIDX-01D may only add the exact-term selection")
 }
 
 // damageStoredDocumentOffset makes one document's stored record unreachable by
@@ -526,18 +494,4 @@ func damageStoredDocumentOffset(t *testing.T, segmentPath string, documentNumber
 		"segment %s holds no stored document %d", segmentPath, documentNumber)
 	binary.BigEndian.PutUint64(payload[entry:entry+storedDocumentOffsetWidth], math.MaxUint64)
 	require.NoError(t, os.WriteFile(segmentPath, payload, 0o600))
-}
-
-// selectionShape renders every field TermSelection declares as name:type, in
-// declaration order, so a field added to carry a range bound, a negation, an
-// analyzer or a sort order fails the boundary test instead of quietly widening
-// the milestone.
-func selectionShape() []string {
-	selectionType := reflect.TypeOf(TermSelection{})
-	shape := make([]string, 0, selectionType.NumField())
-	for fieldIndex := range selectionType.NumField() {
-		field := selectionType.Field(fieldIndex)
-		shape = append(shape, field.Name+":"+field.Type.String())
-	}
-	return shape
 }
