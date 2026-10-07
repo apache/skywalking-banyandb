@@ -41,7 +41,7 @@ The columnar engines store values **by column** for compression and projection e
         ├── <016x>/                   #     PART (one immutable flush/merge output)
         │   └── … columnar files …
         ├── <016x>.snp               #     snapshot manifest = JSON array of live part dir names
-        ├── idx/                      #     STREAM only: per-shard element inverted index (native ICE v3; only the offline NIDX-04 migration tool still emits legacy Bluge output)
+        ├── idx/                      #     STREAM only: per-shard element inverted index (native ICE v3)
         └── sidx/<ruleName>/<016x>/   #     TRACE only: ordered secondary-index parts (one tree per index rule)
 ```
 
@@ -66,7 +66,7 @@ Key facts (verified against `banyand/internal/storage/segment.go`, `shard.go`, `
 - **Segment** directories are named `seg-` + the segment-start time formatted as `2006010215` (hour granularity) or `20060102` (day granularity), chosen by the group's `segment_interval` unit.
 - **Part** directories are named `<016x>` of a monotonically increasing epoch. A part is immutable once written.
 - **Snapshot (MVCC):** `<016x>.snp` is a JSON array listing which part directories are *live* at that epoch. Readers only see parts in the current snapshot; a part dropped from the snapshot is GC'd at the next flush/merge. The newest `.snp` (highest epoch) is the current one.
-- The **segment-level `sidx/`** is the *series index* (a native ICE v3 inverted index, `pkg/index/native`; `banyand/internal/storage` never imports the retired Bluge-backed engine for it). Note the **name collision**: `Trace` also has a `sidx/` directory, but at the **shard** level and with a completely different meaning (ordered secondary index, see §6). Same name, different depth, different engine.
+- The **segment-level `sidx/`** is the *series index* (a native ICE v3 inverted index, `pkg/index/native`; `banyand/internal/storage` never imports the retired legacy engine for it). Note the **name collision**: `Trace` also has a `sidx/` directory, but at the **shard** level and with a completely different meaning (ordered secondary index, see §6). Same name, different depth, different engine.
 
 `Property` does **not** use this skeleton — see §7.
 
@@ -184,7 +184,7 @@ flowchart LR
 - **Synthetic fields** added only in this mode: `_im_name` (the measure subject) and `_im_entity_tag_<tag>` (so entity components are independently queryable), plus internal `_series_id`, `_timestamp`, `_version`, `_id`.
 - **Write path:** `handleIndexMode` builds the document → `segment.IndexDB().Update(docs)`. `mustAddDataPoints` is never called.
 - **Query path:** short-circuits to `buildIndexQueryResult` → `IndexDB().SearchWithoutSeries` — it reads projected stored fields straight out of the index over a time range and de-dupes by series ID with a roaring bitmap. There is no series-list pre-resolution and no block scan.
-- **What does NOT apply:** field `encoding_method`/`compression_method`, columnar block layout, part compaction, and TopN — all of those are Mode-A concepts. Index-mode segments use the native ICE encoder's own S2 (`github.com/klauspost/compress/s2`) compression for stored fields — the same compression family the retired Bluge-backed engine used, carried forward by `pkg/index/internal/nativeice`, not inherited from Bluge itself.
+- **What does NOT apply:** field `encoding_method`/`compression_method`, columnar block layout, part compaction, and TopN — all of those are Mode-A concepts. Index-mode segments use the native ICE encoder's own S2 (`github.com/klauspost/compress/s2`) compression for stored fields — the same compression family the retired legacy engine used, carried forward by `pkg/index/internal/nativeice`, not inherited from the legacy engine itself.
 
 Index-mode is intended for low-cardinality, non-time-series-shaped data (e.g. service traffic / metadata) where every tag should be searchable.
 
@@ -242,7 +242,7 @@ flowchart TD
 
 (No `fv.bin` — streams have no fields.) Unlike Measure, rows with the same timestamp but different `element_id` are **both** stored (no dedup). Stream defines `maxUncompressedBlockSize`/`maxValuesBlockSize`/`maxTagFamiliesMetadataSize`/`maxUncompressedPrimaryBlockSize` but **no `maxBlockLength`** — blocks are cut by size or series change only.
 
-2. **Shard-level element index `idx/`** — a native ICE v3 inverted index (`pkg/index/native`, via `pkg/index/nativeadapter`) mapping indexed-tag terms → element IDs (with a parallel timestamp posting list). This resolves `TYPE_INVERTED` predicates and sort-by-tag. (This is the element-level analogue of the series index, and is **undocumented** in the older `tsdb.md`.) It was cut over from the legacy Bluge-backed engine separately from the series index's NIDX-03 cutover; the only remaining Bluge producer is the offline **NIDX-04 migration tool** (`banyand/stream/migration_element_index.go`), which writes legacy Bluge-format output when migrating pre-native element-index data — it is not on the live write or query path.
+2. **Shard-level element index `idx/`** — a native ICE v3 inverted index (`pkg/index/native`, via `pkg/index/nativeadapter`) mapping indexed-tag terms → element IDs (with a parallel timestamp posting list). This resolves `TYPE_INVERTED` predicates and sort-by-tag. (This is the element-level analogue of the series index, and is **undocumented** in the older `tsdb.md`.) It was cut over from the legacy engine separately from the series index's NIDX-03 cutover (NIDX-04); the offline migration tool (`banyand/stream/migration_element_index.go`) that once bridged pre-native element-index data now writes the native format too — it is not on the live write or query path.
 
 3. **Segment-level series index** — holds the entity (`seriesID ↔ entity values`), shared with the other engines.
 
@@ -370,7 +370,7 @@ Storage options are on the **group**: only `shard_num` matters; `segment_interva
 
 ### 6.2 Storage: a native inverted-index document store (not KV, not TSDB)
 
-Despite the KV-style API, there is no KV engine and no time-series engine. Each `(group, shard)` is **one native ICE v3 inverted index** (`pkg/index/native`); every property revision is **one document**. The legacy Bluge-backed writer this used before NIDX-03 is gone — there is no engine flag and no switch between engines.
+Despite the KV-style API, there is no KV engine and no time-series engine. Each `(group, shard)` is **one native ICE v3 inverted index** (`pkg/index/native`); every property revision is **one document**. The legacy writer this used before NIDX-03 is gone — there is no engine flag and no switch between engines.
 
 ```
 <property-root>/property/data/<group>/shard-<N>/
@@ -479,7 +479,7 @@ If a part still fails to sync after retries (3 attempts, exponential backoff), i
 | Measure (index-mode) | `seg-…/sidx/` (segment series index) | native ICE v3 `<012x>.seg` · `<012x>.snp` |
 | Series index (all TSDB) | `seg-…/sidx/` | native ICE v3 `<012x>.seg` · `<012x>.snp` |
 | Property | `…/property/data/<group>/shard-N/` | native ICE v3 `<012x>.seg` · `<012x>.snp` |
-| Stream element index | `shard-N/idx/` | native ICE v3 `<012x>.seg` · `<012x>.snp` (legacy Bluge `<012x>.seg` · `<012x>.snp` · `bluge.pid` only as output of the offline NIDX-04 migration tool) |
+| Stream element index | `shard-N/idx/` | native ICE v3 `<012x>.seg` · `<012x>.snp` |
 
 ---
 

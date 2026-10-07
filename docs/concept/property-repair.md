@@ -37,7 +37,7 @@ There are two types of triggers for Merkle Tree construction:
 2. **On Update**: When an update in the shard is detected, the system schedules a delayed build after a short wait period (default 10 minutes).
 
 The construction process follows these steps:
-1. **Check for Updates**: The system compares the snapshot ID recorded from the previous build (persisted in `state.json` as `last_snp_id`) with the shard's current latest snapshot ID (the newest `.snp` file in the shard's Bluge index directory).
+1. **Check for Updates**: The system compares the snapshot ID recorded from the previous build (persisted in `state.json` as `last_snp_id`) with the shard's current latest snapshot ID (the newest `.snp` file in the shard's native index directory).
    If they differ, it indicates that data has changed, and the process continues. If they match, the tree construction is skipped.
 2. **Snapshot the Shard**: A snapshot of the shard data is taken to avoid blocking ongoing business operations during data traversal.
 3. **Build the Tree**: Using the streaming method, the system scans all data in the snapshot and builds a Merkle Tree for each group individually.
@@ -45,7 +45,7 @@ The construction process follows these steps:
 
 ### On-disk State
 
-Repair state is persisted under a dedicated repair base directory (separate from the Bluge data files), laid out per group/shard:
+Repair state is persisted under a dedicated repair base directory (separate from the index data files), laid out per group/shard:
 
 - `state.json` — `{last_sync_time, last_snp_id}`, the change-detection marker described above.
 - `state-tree.data` — the persisted Merkle Tree (a custom self-describing format: a section of leaf nodes, then slot nodes, then the root node, followed by a trailing footer with section offsets).
