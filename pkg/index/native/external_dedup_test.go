@@ -19,6 +19,7 @@ package native
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -149,4 +150,85 @@ func TestOwnerExternalDedupPreferIncomingInvalidatesPresenceCache(t *testing.T) 
 	require.True(t, found)
 	require.Equal(t, "status", document.Fields[0].Name)
 	require.Equal(t, []byte("resurrected"), document.Fields[0].Value, "a stale cache entry must not hide that the incoming copy lacked \"status\"")
+}
+
+// TestOwnerExternalSegmentProceedsDuringGarbageCollection proves a receive
+// that arrives while garbage collection runs is introduced at once, the same
+// as a Batch, instead of failing with ErrPersistenceBusy or waiting for the
+// collection: nothing a receive introduces can be collected.
+func TestOwnerExternalSegmentProceedsDuringGarbageCollection(t *testing.T) {
+	owner, err := NewOwner(OwnerOptions{Lease: testLease{}, Path: t.TempDir(), ExternalDedup: ExternalDedupKeepExisting})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, owner.Close()) })
+	owner.mu.Lock()
+	owner.collecting = true
+	owner.mu.Unlock()
+	receiveExternalSegment(t, owner, externalDuplicatePayload(t))
+	owner.mu.Lock()
+	owner.collecting = false
+	owner.mu.Unlock()
+	view, err := owner.Acquire(context.Background())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, view.Close()) }()
+	_, found, err := view.Lookup(context.Background(), []byte("doc-2"))
+	require.NoError(t, err)
+	require.True(t, found)
+}
+
+// TestOwnerExternalSegmentsSurviveConcurrentCollectionAndCompaction races
+// receives and batches against repeated garbage collection and compaction,
+// then reopens the owner from disk: every received and written document
+// must still be there, so collection never removed a segment that a receive,
+// a batch, or an in-flight merge still needed.
+func TestOwnerExternalSegmentsSurviveConcurrentCollectionAndCompaction(t *testing.T) {
+	path := t.TempDir()
+	owner, err := NewOwner(OwnerOptions{
+		Lease: testLease{}, Path: path, ExternalDedup: ExternalDedupKeepExisting, CompactionThreshold: 2,
+	})
+	require.NoError(t, err)
+	const rounds = 40
+	ctx := context.Background()
+	stop := make(chan struct{})
+	collectorDone := make(chan struct{})
+	go func() {
+		defer close(collectorDone)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_ = owner.CollectGarbage(ctx)
+			_ = owner.Compact(ctx)
+		}
+	}()
+	for round := 0; round < rounds; round++ {
+		payload, encodeErr := nativeice.EncodeSegment(nativeice.Generation{Documents: []nativeice.EncodeDocument{{
+			Identifier: []byte(fmt.Sprintf("external-%03d", round)),
+			Fields:     []nativeice.EncodeField{{Name: "status", Value: []byte("external"), Store: true, Index: true}},
+		}}})
+		require.NoError(t, encodeErr)
+		receiveExternalSegment(t, owner, payload)
+		require.NoError(t, owner.Batch(ctx, Batch{Documents: []Document{{
+			Identifier: []byte(fmt.Sprintf("batch-%03d", round)),
+			Fields:     []Field{{Name: "status", Value: []byte("batch"), Store: true, Index: true}},
+		}}}))
+	}
+	close(stop)
+	<-collectorDone
+	require.NoError(t, owner.Close())
+
+	reopened, err := NewOwner(OwnerOptions{Lease: testLease{}, Path: path})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, reopened.Close()) }()
+	view, err := reopened.Acquire(ctx)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, view.Close()) }()
+	for round := 0; round < rounds; round++ {
+		for _, identifier := range []string{fmt.Sprintf("external-%03d", round), fmt.Sprintf("batch-%03d", round)} {
+			_, found, lookupErr := view.Lookup(ctx, []byte(identifier))
+			require.NoError(t, lookupErr)
+			require.True(t, found, "%s must survive concurrent collection and compaction", identifier)
+		}
+	}
 }

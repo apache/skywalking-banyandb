@@ -266,16 +266,17 @@ func (o *Owner) introduceExternalSegment(ctx context.Context, stagedPath string)
 		return fmt.Errorf("open external native segment: %w", segmentErr)
 	}
 
+	// Introduction does not exclude garbage collection, exactly as Batch does
+	// not. Collection only deletes segment files below the highest segment
+	// ID it saw when it started that neither the durable manifest nor the
+	// root it pinned references. The ID assigned below is newer than any it
+	// saw, and the staged file is not a "<id>.seg" name, so nothing this
+	// introduces can be collected.
 	o.mu.Lock()
 	if o.closed || o.closing {
 		o.mu.Unlock()
 		external.release()
 		return ErrOwnerClosed
-	}
-	if o.collecting {
-		o.mu.Unlock()
-		external.release()
-		return ErrPersistenceBusy
 	}
 	if o.durabilityFault != nil {
 		fault := o.durabilityFault
