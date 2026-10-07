@@ -247,7 +247,7 @@ func receiveExternalSegmentRetryingBusy(t *testing.T, idx IndexDB, payload []byt
 // fields/timestamp/version (unsorted), plus -- the index-rule sorted search
 // -- that the SAME live set comes back and SortedValue is non-decreasing
 // and consistent with each row's own "score" field.
-func verifyRefModel(t *testing.T, ctx context.Context, si *seriesIndex, seriesByIdentity []*pbv1.Series, model *refModel) {
+func verifyRefModel(ctx context.Context, t *testing.T, si *seriesIndex, seriesByIdentity []*pbv1.Series, model *refModel) {
 	t.Helper()
 	projection := make([]index.FieldKey, 0, len(refModelFieldNames)+1)
 	for _, name := range refModelFieldNames {
@@ -357,7 +357,7 @@ func TestSeriesIndex_ReferenceModel(t *testing.T) {
 		identities[i], seriesByIdentity[i] = refModelSeriesIdentity(t, i)
 	}
 
-	verify := func() { verifyRefModel(t, ctx, si, seriesByIdentity, model) }
+	verify := func() { verifyRefModel(ctx, t, si, seriesByIdentity, model) }
 
 	verify() // empty state: both sides agree on zero live documents.
 	iterations := referenceModelIterations()

@@ -13,6 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package metrics holds the index metrics shared by the native index owners.
 package metrics
 
 import (
