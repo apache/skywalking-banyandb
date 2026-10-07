@@ -229,20 +229,24 @@ func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan lo
 		return true, bus.NewMessage(bus.MessageID(now), common.NewError("execute the vectorized query plan for stream %s: %v", queryCriteria.GetName(), execErr))
 	}
 
-	// A criteria query carries a per-element tag filter (VecTagFilter) that must be
-	// applied to materialized Elements (the same Match + hidden-tag strip the row
-	// tagFilterPlan applies). The
-	// frame path operates on columnar batches and has no element-level filter stage,
-	// so a filter query forces the proto egress; the liaison merges proto Elements
-	// and frame bodies interchangeably (mixed-mode), so this stays correct.
+	// A criteria query carries a per-element tag filter (VecTagFilter) that is still
+	// applied to materialized Elements (the same Match the row tagFilterPlan applies).
+	// The frame path operates on columnar batches and has no element-level filter
+	// stage yet, so a filter query still forces the proto egress; the liaison merges
+	// proto Elements and frame bodies interchangeably (mixed-mode), so this stays
+	// correct. The hidden-tag STRIP is no longer part of that reason: the frame path
+	// drops those columns in mergeStreamBatches (apache/skywalking#14067 R3).
 	tagFilter, hiddenTags, filterSchema, hasFilter := logical_stream.VecTagFilter(plan)
 
 	// Data-node native wire mode (flag-on, no tracing): emit a columnar frame body
 	// so the send path passes it through and the liaison decodes it. The liaison
 	// applies the global offset/limit slice, so the data node emits the whole
 	// (already per-node-capped) batch set — no slice here.
-	if !hasFilter && vecExec.HiddenOrderTag() == "" && streamVecEmitAsFrame(p.distributed, data.StreamWireModeRaw(), traced) {
-		merged, mergeErr := mergeStreamBatches(schema, batches)
+	//
+	// An index-order scan whose sort tag the client did not project is now eligible:
+	// mergeStreamBatches drops that column by name, so the hidden tag cannot leak.
+	if !hasFilter && streamVecEmitAsFrame(p.distributed, data.StreamWireModeRaw(), traced) {
+		merged, mergeErr := mergeStreamBatches(schema, batches, hiddenTags, vecExec.HiddenOrderTag())
 		if mergeErr != nil {
 			p.log.Error().Err(mergeErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to merge the vectorized stream batches")
 			return true, bus.NewMessage(bus.MessageID(now), common.NewError("merge the vectorized stream batches for stream %s: %v", queryCriteria.GetName(), mergeErr))
@@ -332,26 +336,93 @@ func streamVecEmitAsFrame(distributed, wireModeRaw, traced bool) bool {
 }
 
 // mergeStreamBatches concatenates the active rows of several columnar batches into
-// a single batch so the frame carries one contiguous columnar block. Selection is
-// respected via the batch schema's active-row semantics at frame encode; here we
-// simply flatten Selection into a fresh dense batch.
-func mergeStreamBatches(schema *vectorized.BatchSchema, batches []*vectorized.RecordBatch) (*vectorized.RecordBatch, error) {
+// a single batch so the frame carries one contiguous columnar block, and drops the
+// tag columns the client must not see. Selection is respected via the batch schema's
+// active-row semantics at frame encode; here we simply flatten Selection into a
+// fresh dense batch.
+//
+// hidden carries the criteria-only tags the analyzer appended to the projection, and
+// orderTag is the ordering tag the scan appended for its OrderKey. Neither appears in
+// the client projection, so the frame must not carry either — this is the columnar
+// equivalent of the per-element HiddenTagSet.StripHiddenTags the proto egress runs.
+func mergeStreamBatches(schema *vectorized.BatchSchema, batches []*vectorized.RecordBatch,
+	hidden logical.HiddenTagSet, orderTag string,
+) (*vectorized.RecordBatch, error) {
+	keptCols, outSchema := projectStreamFrameSchema(schema, hidden, orderTag)
 	total := 0
 	for _, b := range batches {
 		if b != nil {
 			total += b.ActiveLen()
 		}
 	}
-	out := vectorized.NewRecordBatch(schema, total)
+	out := vectorized.NewRecordBatch(outSchema, total)
 	for _, b := range batches {
 		if b == nil || b.ActiveLen() == 0 {
 			continue
 		}
-		if appendErr := vectorized.AppendActiveRows(out, b); appendErr != nil {
+		if appendErr := appendActiveRowsProjected(out, b, keptCols); appendErr != nil {
 			return nil, appendErr
 		}
 	}
 	return out, nil
+}
+
+// projectStreamFrameSchema returns the source column indices the frame keeps, in
+// output order, and the schema those columns form.
+//
+// A column is dropped only when it is a TAG column whose name is hidden. The
+// RoleOrderKey column is NOT a tag column and always survives: the liaison still
+// merges on it, which is what R3's "retain internal ordering keys" asks for.
+//
+// When nothing is dropped the input schema is returned unchanged, so the common
+// unfiltered case does not rebuild the schema's lookup maps. A nil hidden set and an
+// empty orderTag both match no column, so a plain query takes that path.
+func projectStreamFrameSchema(schema *vectorized.BatchSchema, hidden logical.HiddenTagSet, orderTag string,
+) ([]int, *vectorized.BatchSchema) {
+	keptCols := make([]int, 0, len(schema.Columns))
+	keptDefs := make([]vectorized.ColumnDef, 0, len(schema.Columns))
+	for colIdx, def := range schema.Columns {
+		if def.Role == vectorized.RoleTag && (def.Name == orderTag || hidden.Contains(def.Name)) {
+			continue
+		}
+		keptCols = append(keptCols, colIdx)
+		keptDefs = append(keptDefs, def)
+	}
+	if len(keptCols) == len(schema.Columns) {
+		return keptCols, schema
+	}
+	return keptCols, vectorized.NewBatchSchema(keptDefs)
+}
+
+// appendActiveRowsProjected is vectorized.AppendActiveRows with a column
+// projection: srcCols[i] names the source column that feeds dst column i. The
+// exported helper requires equal column counts, so a strip needs this indirection.
+func appendActiveRowsProjected(dst, src *vectorized.RecordBatch, srcCols []int) error {
+	if src == nil || src.ActiveLen() == 0 {
+		return nil
+	}
+	if len(dst.Columns) != len(srcCols) {
+		return fmt.Errorf("appendActiveRowsProjected: dst has %d columns, the projection names %d",
+			len(dst.Columns), len(srcCols))
+	}
+	if src.Selection == nil {
+		for dstIdx, srcIdx := range srcCols {
+			if appendErr := vectorized.AppendColumnRange(dst.Columns[dstIdx], src.Columns[srcIdx], 0, src.Len); appendErr != nil {
+				return appendErr
+			}
+		}
+		dst.Len += src.Len
+		return nil
+	}
+	for _, row := range src.Selection {
+		for dstIdx, srcIdx := range srcCols {
+			if appendErr := vectorized.AppendColumnRange(dst.Columns[dstIdx], src.Columns[srcIdx], int(row), 1); appendErr != nil {
+				return appendErr
+			}
+		}
+	}
+	dst.Len += len(src.Selection)
+	return nil
 }
 
 // applyStreamTagFilter keeps only the elements whose tag families satisfy the

@@ -84,9 +84,9 @@ type StreamVecExecutable interface {
 	ProjectionTags() []model.TagProjection
 	// HiddenOrderTag returns the ordered tag the scan requests but ProjectionTags()
 	// omits, or "" when the client projection already carries it. The columnar frame
-	// egress rebuilds the projection from the batch schema, so it must drop that
-	// column by name or the hidden tag leaks into the result. A bool cannot carry
-	// the name, and the egress has no other way to learn it.
+	// egress rebuilds the projection from the batch schema, so it drops that column
+	// by name; a bool cannot carry the name, and the egress has no other way to
+	// learn it.
 	HiddenOrderTag() string
 }
 

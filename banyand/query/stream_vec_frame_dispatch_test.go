@@ -335,6 +335,49 @@ func TestStreamVecDispatch_UnfilteredQueryEmitsFrame(t *testing.T) {
 	require.True(t, ok, "an unfiltered query emitted %T, not a columnar frame body", resp.Data())
 }
 
+// TestStreamVecDispatch_HiddenOrderTagEmitsFrame is the apache/skywalking#14067 R3
+// assertion for the SECOND hidden-tag source, taken on its own: an UNFILTERED
+// index-order query whose sort tag the client never projects.
+//
+// Before the strip landed, the gate sent this shape to the proto egress, because a
+// frame rebuilt from the batch schema would have carried the sort tag. Now
+// mergeStreamBatches drops that column by name, so the frame is legal. No criteria
+// is involved, which is what isolates the ordering tag from the filter work.
+func TestStreamVecDispatch_HiddenOrderTagEmitsFrame(t *testing.T) {
+	p := newOracleProcessor(t)
+	req := oracleRequest([]string{oracleClientTag}, false)
+	// No criteria, so the analyzer appends nothing; the scan still appends `sequence`
+	// for the OrderKey.
+	plan := newOraclePlan(t, req, []string{oracleClientTag, oracleOrderTag})
+
+	handled, resp := p.tryStreamVecDispatch(context.Background(), plan, req, false)
+	require.True(t, handled)
+	body, ok := resp.Data().([]byte)
+	require.True(t, ok, "a hidden-order-tag query emitted %T, not a columnar frame body", resp.Data())
+
+	batch, err := streamframe.Decode(body)
+	require.NoError(t, err)
+	// Three rows in, two out: the distinct stage keeps one row for each ElementID, and
+	// element A repeats. With no criteria the first row in ascending order wins, so A
+	// resolves to `old` — the opposite winner from the filtered arm, which is exactly
+	// what the filter-first contract means.
+	require.Equal(t, 2, batch.ActiveLen(), "distinct keeps one row for each ElementID")
+
+	_, hasSequence := batch.Schema.TagIndex(oracleFamily, oracleOrderTag)
+	require.False(t, hasSequence, "the hidden ordering tag %q leaked into the frame", oracleOrderTag)
+	_, hasService := batch.Schema.TagIndex(oracleFamily, oracleClientTag)
+	require.True(t, hasService, "the projected tag %q must survive the strip", oracleClientTag)
+	require.NotEqual(t, -1, batch.Schema.OrderKeyIndex(), "the OrderKey column must survive the strip")
+
+	serviceIdx, _ := batch.Schema.TagIndex(oracleFamily, oracleClientTag)
+	serviceData := batch.Columns[serviceIdx].(*vectorized.TypedColumn[*modelv1.TagValue]).Data()
+	var gotServices []string
+	for _, rowIdx := range oracleActiveRows(batch) {
+		gotServices = append(gotServices, serviceData[rowIdx].GetStr().GetValue())
+	}
+	require.Equal(t, []string{"old", "other"}, gotServices)
+}
+
 // oracleActiveRows returns the batch's active row indices, honoring Selection.
 func oracleActiveRows(batch *vectorized.RecordBatch) []int {
 	if batch.Selection == nil {
