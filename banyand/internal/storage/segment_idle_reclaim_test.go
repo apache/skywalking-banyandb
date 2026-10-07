@@ -64,6 +64,7 @@ func newReclaimTestController(
 		return common.Position{Database: "test-db", Stage: "test-stage"}
 	})
 	opts := TSDBOpts[mockTSTable, mockTSTableOpener]{
+		RootLease: staticTestLease{},
 		TSTableCreator: func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger,
 			_ timestamp.TimeRange, _ mockTSTableOpener, _ any,
 		) (mockTSTable, error) {

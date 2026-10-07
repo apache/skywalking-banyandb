@@ -20,15 +20,12 @@ package inverted
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
@@ -44,10 +41,9 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
-	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/analyzer"
-	"github.com/apache/skywalking-banyandb/pkg/index/internal/nativeice"
+	"github.com/apache/skywalking-banyandb/pkg/index/metrics"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -75,94 +71,12 @@ var (
 	defaultProjection       = []string{docIDField, timestampField}
 )
 
-// ErrCorruptIndex reports that an index directory's committed bytes violate
-// the on-disk grammar -- a damaged segment footer, an out-of-range section
-// offset, a malformed manifest record -- or that reading them would exceed a
-// configured bound. Callers classify a read-only failure with errors.Is.
-var ErrCorruptIndex = nativeice.ErrCorrupt
-
-// ErrNoCommittedIndex reports that an index directory holds no committed
-// generation to read: it is absent, empty, or has never been flushed. Callers
-// that treat a cold or unflushed index as empty match this rather than
-// ErrCorruptIndex, which means the committed bytes themselves are damaged.
-var ErrNoCommittedIndex = nativeice.ErrNoSnapshot
-
-// ErrInvalidSelection reports that a TermSelection names no field, or that its
-// term count or one of its term lengths exceeds the bound the read-only reader
-// serves. It is distinct from ErrCorruptIndex: nothing on disk is damaged, the
-// request itself is outside the reader's bounds, so no dictionary is opened and
-// no posting is decoded.
-var ErrInvalidSelection = nativeice.ErrInvalidSelection
-
 var _ index.Store = (*store)(nil)
-
-// The neutral segment seam. The index lifecycle manager's segment plugin is
-// typed in the segment API this file already imports, and the native plugin
-// adapter and its contract tests are typed in the names below instead. They
-// are aliases, not wrappers, so a value crosses between the two vocabularies
-// without conversion and the plugin's field types still match exactly.
-//
-// The seam exists because the workstream's lexical non-regression gate admits
-// no new reference to the retired engine in production source, its import
-// paths included, while this milestone's boundary has to be expressed in that
-// engine's segment vocabulary. Compatibility oracles may import the retired
-// reader from test files. Declaring the names here reuses the import this file
-// already carries, so the adapter adds none.
-//
-// Every name stays unexported. The workstream requires that no segment API
-// type escape the native implementation, so these are the package's internal
-// vocabulary rather than part of its public contract.
-//
-// The set holds what the plugin's three field types and their contract tests
-// need. An implementation behind those fields will want more of the same
-// vocabulary -- a dictionary, a postings list, collection statistics -- and
-// adds each one here, where this file's existing import already covers it.
-type (
-	// segmentDocument is one analyzed document a batch hands the plugin.
-	segmentDocument = segment.Document
-	// segmentValue is a built or reopened segment.
-	segmentValue = segment.Segment
-	// segmentMergerValue is a merge in progress.
-	segmentMergerValue = segment.Merger
-	// segmentBytes is the opaque byte container a persisted segment reopens
-	// from.
-	segmentBytes = segment.Data
-	// segmentTerm is one field-and-term pair a caller resolves.
-	segmentTerm = segment.Term
-	// segmentVisitField receives one of a document's fields.
-	segmentVisitField = segment.VisitField
-	// segmentVisitTerm receives one of a field's terms.
-	segmentVisitTerm = segment.VisitTerm
-	// segmentVisitLocation receives one of a term's locations.
-	segmentVisitLocation        = segment.VisitLocation
-	segmentDictionary           = segment.Dictionary
-	segmentPostingsList         = segment.PostingsList
-	segmentPostingsIter         = segment.PostingsIterator
-	segmentPosting              = segment.Posting
-	segmentStats                = segment.CollectionStats
-	segmentDocValues            = segment.DocumentValueReader
-	segmentField                = segment.Field
-	segmentFieldTerm            = segment.FieldTerm
-	segmentStoredVisitor        = segment.StoredFieldVisitor
-	segmentAutomaton            = segment.Automaton
-	segmentDictionaryIterator   = segment.DictionaryIterator
-	segmentDictionaryEntry      = segment.DictionaryEntry
-	segmentLocation             = segment.Location
-	segmentDocumentValueVisitor = segment.DocumentValueVisitor
-)
-
-// newSegmentBytes holds payload as the byte container a persisted segment
-// reopens from. It is the neutral spelling of the segment API's own
-// constructor, so a caller of the native plugin adapter reopens bytes without
-// naming that API.
-func newSegmentBytes(payload []byte) *segmentBytes {
-	return segment.NewDataBytes(payload)
-}
 
 // StoreOpts wraps options to create an inverted index repository.
 type StoreOpts struct {
 	Logger                 *logger.Logger
-	Metrics                *Metrics
+	Metrics                *metrics.Metrics
 	PrepareMergeCallback   func(src []*roaringpkg.Bitmap, segments []segment.Segment, id uint64) (dest []*roaringpkg.Bitmap, err error)
 	Path                   string
 	ExternalSegmentTempDir string
@@ -171,84 +85,11 @@ type StoreOpts struct {
 	EnableDeduplication    bool
 }
 
-// NativeWriterOwner proves that the caller holds the property's root lock.
-// The fields are intentionally private: native writers can only be created
-// from a lock returned by the file-system lock acquisition path.
-type NativeWriterOwner struct {
-	lock   fs.File
-	root   string
-	closed atomic.Bool
-}
-
-// NewNativeWriterOwner binds a root lock to the directory tree it protects.
-// The lock must be the root lock for root; callers must retain it until all
-// native stores have been closed.
-func NewNativeWriterOwner(lock fs.File, root string) (*NativeWriterOwner, error) {
-	if lock == nil {
-		return nil, errors.New("native writer owner requires a lock")
-	}
-	localLock, ok := lock.(*fs.LocalFile)
-	if !ok || !localLock.IsLocked() {
-		return nil, errors.New("native writer owner requires a local filesystem lock")
-	}
-	root = filepath.Clean(root)
-	if root == "." || root == string(filepath.Separator) {
-		return nil, errors.New("native writer owner requires a non-empty root")
-	}
-	lockPath := filepath.Clean(lock.Path())
-	if lockPath != filepath.Join(root, "lock") {
-		return nil, errors.Errorf("native writer owner lock %q is not for root %q", lockPath, root)
-	}
-	if _, err := lock.Size(); err != nil {
-		return nil, errors.Wrap(err, "native writer owner lock is not usable")
-	}
-	return &NativeWriterOwner{lock: lock, root: root}, nil
-}
-
-func (o *NativeWriterOwner) validate(path string) error {
-	if o == nil || o.closed.Load() {
-		return errors.New("native writer owner is closed")
-	}
-	if o.lock == nil {
-		return errors.New("native writer owner has no lock")
-	}
-	if _, err := o.lock.Size(); err != nil {
-		return errors.Wrap(err, "native writer owner lock is closed")
-	}
-	rel, err := filepath.Rel(o.root, filepath.Clean(path))
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return errors.Errorf("native writer path %q is outside owner root %q", path, o.root)
-	}
-	return nil
-}
-
-// Close releases the root lock and invalidates this owner.
-func (o *NativeWriterOwner) Close() error {
-	if o == nil || o.closed.Swap(true) {
-		return nil
-	}
-	return o.lock.Close()
-}
-
-// nativeDirectory wraps bluge's default filesystem directory and disables its
-// own Lock/Unlock: a native-mode caller establishes exclusive ownership before
-// NewStore is reached, so no per-directory lock file is needed or created.
-type nativeDirectory struct {
-	*blugeIndex.FileSystemDirectory
-}
-
-func newNativeDirectory(path string) blugeIndex.Directory {
-	return &nativeDirectory{FileSystemDirectory: blugeIndex.NewFileSystemDirectory(path)}
-}
-
-func (*nativeDirectory) Lock() error   { return nil }
-func (*nativeDirectory) Unlock() error { return nil }
-
 type store struct {
 	writer  *bluge.Writer
 	closer  *run.Closer
 	l       *logger.Logger
-	metrics *Metrics
+	metrics *metrics.Metrics
 }
 
 // ExternalSegmentWrapper wraps Bluge's ExternalSegmentReceiver for BanyanDB usage.
@@ -383,34 +224,10 @@ func (s *store) Batch(batch index.Batch) error {
 
 // NewStore create a new inverted index repository.
 func NewStore(opts StoreOpts) (index.SeriesStore, error) {
-	return newStore(opts, nil)
-}
-
-// NewNativeStore creates a native index writer while owner holds the
-// property's root lock. A nil, closed, or mismatched owner is rejected before
-// any writer or directory is opened.
-func NewNativeStore(opts StoreOpts, owner *NativeWriterOwner) (index.SeriesStore, error) {
-	if err := owner.validate(opts.Path); err != nil {
-		return nil, err
-	}
-	return newStore(opts, owner)
-}
-
-func newStore(opts StoreOpts, owner *NativeWriterOwner) (index.SeriesStore, error) {
 	if opts.Logger == nil {
 		opts.Logger = logger.GetLogger("inverted")
 	}
 	indexConfig := blugeIndex.DefaultConfig(opts.Path)
-	if owner != nil {
-		indexConfig = indexConfig.WithSegmentPlugin(&blugeIndex.SegmentPlugin{
-			Type:    indexConfig.SegmentType,
-			Version: indexConfig.SegmentVersion,
-			New:     nativeSegmentPluginNew,
-			Load:    nativeSegmentPluginLoad,
-			Merge:   nativeSegmentPluginMerge,
-		})
-		indexConfig.DirectoryFunc = func() blugeIndex.Directory { return newNativeDirectory(opts.Path) }
-	}
 	if opts.BatchWaitSec > 0 {
 		indexConfig = indexConfig.WithUnsafeBatches().
 			WithPersisterNapTimeMSec(int(opts.BatchWaitSec * 1000))
@@ -479,138 +296,6 @@ func (s *store) Close() error {
 
 func (s *store) Reset() {
 	s.writer.ResetCache()
-}
-
-// ReadOnlyDocCount opens the index directory at path read-only and returns the
-// number of indexed documents. Unlike NewStore it never acquires the exclusive
-// directory lock, so it can inspect a closed (or even concurrently open)
-// segment index without reopening its writable index. A missing or unflushed
-// index (no usable snapshot) returns a count of 0 together with the open error,
-// which callers may treat as an empty index.
-func ReadOnlyDocCount(path string) (int64, error) {
-	var count int64
-	readErr := withReadOnlyReader(path, func(reader *nativeice.Reader) error {
-		var countErr error
-		count, countErr = reader.VisibleDocCount()
-		return countErr
-	})
-	return count, readErr
-}
-
-func withReadOnlyReader(path string, operation func(reader *nativeice.Reader) error) (operationErr error) {
-	reader, openErr := nativeice.Open(path)
-	if openErr != nil {
-		return fmt.Errorf("open read-only index %q: %w", path, openErr)
-	}
-	defer func() {
-		if closeErr := reader.Close(); operationErr == nil && closeErr != nil {
-			operationErr = fmt.Errorf("close read-only index %q: %w", path, closeErr)
-		}
-	}()
-	return operation(reader)
-}
-
-// StoredDocument is one live document of a committed index generation,
-// borrowed for the duration of a single ReadOnlyWalkDocuments callback.
-//
-// It is the whole of what a read-only match-all walk exposes: repeated raw
-// stored (field name, value) pairs, and nothing about terms, dictionaries,
-// postings, doc values, sorting or the container format underneath.
-type StoredDocument interface {
-	// VisitStoredFields calls visit once for every stored value the document
-	// records, passing the field's name and its raw value bytes. A field the
-	// document records more than once is visited once per recorded value, in
-	// the order the document records them. Visiting stops early when visit
-	// returns false.
-	//
-	// The name and value handed to visit are borrowed and stay valid only until
-	// visit returns; a caller that keeps either beyond that copies it.
-	VisitStoredFields(visit func(name string, value []byte) bool) error
-}
-
-// ReadOnlyWalkDocuments opens the index directory at path read-only, pins its
-// newest structurally complete committed generation and calls visit once for
-// every live document that generation holds, streaming one document at a time.
-// Documents the pinned generation's deletion masks cover are skipped.
-//
-// Like ReadOnlyDocCount it never acquires the exclusive directory lock and
-// writes no bytes, so a directory a live writer owns can be walked while it is
-// being written, and the walk leaves file contents, modification times and
-// directory entries unchanged.
-//
-// The StoredDocument handed to visit is borrowed: it, and every name and value
-// it yields, stay valid only until visit returns. A caller that retains a value
-// beyond its callback copies it.
-//
-// A directory holding no committed generation reports an error wrapping
-// ErrNoCommittedIndex, which callers that treat a cold or unflushed index as
-// empty match on. Committed bytes that violate the on-disk grammar, or that
-// would require decoding past a configured bound, report an error wrapping
-// ErrCorruptIndex. Canceling ctx stops the walk between two documents and
-// returns ctx.Err(); an error from visit stops the walk and is returned as-is.
-func ReadOnlyWalkDocuments(ctx context.Context, path string, visit func(doc StoredDocument) error) error {
-	return withReadOnlyReader(path, func(reader *nativeice.Reader) error {
-		return reader.VisitLiveDocuments(ctx, func(doc nativeice.StoredDocument) error {
-			return visit(doc)
-		})
-	})
-}
-
-// TermSelection is the one bounded document filter a read-only walk accepts:
-// the documents whose Field records any of the literal byte sequences in Terms.
-//
-// It is deliberately not a query language, and NIDX-01 denies it becoming one.
-// There is exactly one field, the terms are matched as raw bytes with no
-// analysis or normalization, and they are unioned. There is no range, prefix,
-// wildcard, negation, conjunction, existence test, scoring, projection or
-// ordering, and the term dictionary and postings that resolve a selection stay
-// private to the reader.
-type TermSelection struct {
-	// Field is the name of the indexed field whose term dictionary the
-	// selection resolves against.
-	Field string
-	// Terms are the literal term byte sequences to select. The documents
-	// selected are the union of these terms' postings; an empty Terms selects
-	// no document.
-	Terms [][]byte
-}
-
-// ReadOnlySelectDocuments opens the index directory at path read-only, pins its
-// newest structurally complete committed generation and calls visit once for
-// every live document of that generation the selection holds, streaming one
-// document at a time.
-//
-// The selection resolves exact terms against one field's dictionary, unions
-// their postings and removes the pinned generation's deletion masks, so a
-// deleted document is never handed to visit however many terms selected it, and
-// a document several terms select is handed to visit once. A term the
-// dictionary does not hold, and an empty term set, select nothing rather than
-// failing. Selection precedes stored-field decoding, so a document the
-// selection excludes has its stored bytes left unread.
-//
-// Like ReadOnlyWalkDocuments it never acquires the exclusive directory lock and
-// writes no bytes, so a directory a live writer owns can be read while it is
-// being written, and the read leaves file contents, modification times and
-// directory entries unchanged.
-//
-// The StoredDocument handed to visit is borrowed: it, and every name and value
-// it yields, stay valid only until visit returns. A caller that retains a value
-// beyond its callback copies it.
-//
-// A selection naming no field, or exceeding the reader's term-count or
-// term-length bounds, reports an error wrapping ErrInvalidSelection before any
-// document is visited. A directory holding no committed generation reports an
-// error wrapping ErrNoCommittedIndex. Committed bytes that violate the on-disk
-// grammar, or that would require decoding past a configured bound, report an
-// error wrapping ErrCorruptIndex. Canceling ctx stops posting decode, posting
-// union or the read between two documents and returns ctx.Err(); an error from
-// visit stops the read and is returned as-is.
-func ReadOnlySelectDocuments(ctx context.Context, path string, selection TermSelection, visit func(doc StoredDocument) error) error {
-	return withReadOnlyReader(path, func(reader *nativeice.Reader) error {
-		return reader.VisitSelectedDocuments(ctx, selection.Field, selection.Terms, func(doc nativeice.StoredDocument) error {
-			return visit(doc)
-		})
-	})
 }
 
 func (s *store) Iterator(ctx context.Context, fieldKey index.FieldKey, termRange index.RangeOpts, order modelv1.Sort,
@@ -832,6 +517,16 @@ func (s *store) TakeFileSnapshot(dst string) error {
 	defer reader.Close()
 	return reader.Backup(dst, nil)
 }
+
+// CollectMetrics is a no-op. It used to translate the retired bluge writer's
+// Status() API into metrics.Metrics gauges via the now-removed
+// metrics.Metrics.ObserveLegacyStore, but that had no production reader left:
+// the NIDX-03 series-index cutover retired the last caller of those gauges,
+// and the Stream element index's offline migration tool
+// (banyand/stream/migration_element_index.go, NIDX-04) -- the last
+// production user of this store -- never calls CollectMetrics itself. The
+// method is kept only to satisfy the index.Store interface.
+func (s *store) CollectMetrics(...string) {}
 
 // Stats returns the index statistics including document count and disk size.
 func (s *store) Stats() (dataCount int64, dataSizeBytes int64) {

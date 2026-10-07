@@ -252,7 +252,6 @@ func (s *server) PreRun(ctx context.Context) error {
 		Index: db.IndexConfig{
 			BatchWaitSec:       batchWaitSeconds(s.flushTimeout),
 			WaitForPersistence: false,
-			NativeWriter:       true,
 		},
 		Snapshot: db.SnapshotConfig{
 			Location: s.snapshotDir,

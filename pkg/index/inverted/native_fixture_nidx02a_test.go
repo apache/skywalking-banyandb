@@ -31,6 +31,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
 
 // The NIDX-02A corpus is one Property shard generation written by BanyanDB's
@@ -229,7 +230,7 @@ func TestGenerateNIDX02AFixture(t *testing.T) {
 	// generation is newest, and that exactly the declared rows survive its
 	// deletion masks -- are checked here with operations already merged.
 	tester.Equal(nidx02aSnapshotID, snapshots, "regenerating moved the corpus's newest generation; update nidx02aSnapshotID")
-	visible, err := ReadOnlyDocCount(nidx02aShardDir)
+	visible, err := native.ReadOnlyDocCount(nidx02aShardDir)
 	tester.NoError(err)
 	tester.Equal(nidx02aVisibleRowCount, visible, "the corpus must leave exactly the declared visible rows undeleted")
 

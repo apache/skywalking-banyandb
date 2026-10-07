@@ -530,7 +530,7 @@ func TestMemoryOwnerRejectsDurabilityCallback(t *testing.T) {
 
 func TestOwnerExternalSegmentIntroducesAndDeduplicates(t *testing.T) {
 	path := t.TempDir()
-	owner, err := NewOwner(OwnerOptions{Lease: testLease{}, Path: path, DeduplicateExternal: true})
+	owner, err := NewOwner(OwnerOptions{Lease: testLease{}, Path: path, ExternalDedup: ExternalDedupPreferIncoming})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, owner.Close()) })
 	require.NoError(t, owner.Batch(context.Background(), Batch{Documents: []Document{{
@@ -864,7 +864,7 @@ func TestOwnerTimestampKeepsLegacyNumericTermsAndSortValues(t *testing.T) {
 func TestOwnerInsertOnlyPreservesDuplicatePhysicalIdentifiers(t *testing.T) {
 	owner := newTestOwner(t, nil)
 	require.NoError(t, owner.Batch(context.Background(), Batch{
-		InsertOnly: true,
+		Mode: BatchInsertOnly,
 		Documents: []Document{
 			{Identifier: []byte("duplicate"), Fields: []Field{{Name: "status", Terms: []Term{{Value: []byte("ok")}}, Index: true}}},
 			{Identifier: []byte("duplicate"), Fields: []Field{{Name: "status", Terms: []Term{{Value: []byte("ok")}}, Index: true}}},

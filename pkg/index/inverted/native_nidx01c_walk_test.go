@@ -21,13 +21,13 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"path/filepath"
 	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
 
 // liveDocumentWalker is the whole of NIDX-01C's contract: one call from an
@@ -42,12 +42,12 @@ import (
 // meta triples, deletion-aware iteration -- sits behind this signature and
 // stays private. The coder is free to move any of it; the coder may not move
 // this.
-type liveDocumentWalker func(ctx context.Context, path string, visit func(doc StoredDocument) error) error
+type liveDocumentWalker func(ctx context.Context, path string, visit func(doc native.StoredDocument) error) error
 
 // nidx01cBoundary binds the contract to the production symbol that satisfies
-// it, so a change to ReadOnlyWalkDocuments's signature fails to compile here
+// it, so a change to native.ReadOnlyWalkDocuments's signature fails to compile here
 // rather than quietly redefining the milestone.
-var nidx01cBoundary liveDocumentWalker = ReadOnlyWalkDocuments
+var nidx01cBoundary liveDocumentWalker = native.ReadOnlyWalkDocuments
 
 // walkedField is one stored value a document handed the walk, with its bytes
 // rendered as hexadecimal so a mismatch reads as bytes rather than as mojibake.
@@ -60,7 +60,7 @@ type walkedField struct {
 // document's stored fields, in visit order, together with the walk's error.
 func walkNIDX01C(ctx context.Context, path string) ([][]walkedField, error) {
 	var documents [][]walkedField
-	err := nidx01cBoundary(ctx, path, func(doc StoredDocument) error {
+	err := nidx01cBoundary(ctx, path, func(doc native.StoredDocument) error {
 		var fields []walkedField
 		if visitErr := doc.VisitStoredFields(func(name string, value []byte) bool {
 			fields = append(fields, walkedField{name: name, value: hex.EncodeToString(value)})
@@ -140,7 +140,7 @@ func liveDeclaredDocuments(documents []nidx01cDocument) []nidx01cDocument {
 }
 
 // TestNativeStoredDocumentWalkDeclaredDocuments is the boundary contract for
-// NIDX-01C. It exercises inverted.ReadOnlyWalkDocuments, and nothing behind it,
+// NIDX-01C. It exercises native.ReadOnlyWalkDocuments, and nothing behind it,
 // against the checked-in NIDX-01C corpus.
 //
 // Requirement proved here:
@@ -218,7 +218,7 @@ func TestNativeStoredDocumentWalkStopsOnCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	visited := 0
-	err := nidx01cBoundary(ctx, nidx01cSourceADir, func(_ StoredDocument) error {
+	err := nidx01cBoundary(ctx, nidx01cSourceADir, func(_ native.StoredDocument) error {
 		visited++
 		cancel()
 		return nil
@@ -242,7 +242,7 @@ func TestNativeStoredDocumentWalkStopsOnVisitError(t *testing.T) {
 
 	rebuildFailure := errors.New("rebuild refused this document")
 	visited := 0
-	err := nidx01cBoundary(context.Background(), nidx01cSourceADir, func(_ StoredDocument) error {
+	err := nidx01cBoundary(context.Background(), nidx01cSourceADir, func(_ native.StoredDocument) error {
 		visited++
 		return rebuildFailure
 	})
@@ -269,13 +269,13 @@ func TestNativeStoredDocumentWalkDamagedStoredRegionIsCorrupt(t *testing.T) {
 	damageStoredDocumentRegion(t, newestSegmentFile(t, damaged))
 
 	visited := 0
-	err := nidx01cBoundary(context.Background(), damaged, func(_ StoredDocument) error {
+	err := nidx01cBoundary(context.Background(), damaged, func(_ native.StoredDocument) error {
 		visited++
 		return nil
 	})
 
-	tester.ErrorIs(err, ErrCorruptIndex, "damaged stored bytes must be classified as a corrupt index")
-	tester.NotErrorIs(err, ErrNoCommittedIndex,
+	tester.ErrorIs(err, native.ErrCorrupt, "damaged stored bytes must be classified as a corrupt index")
+	tester.NotErrorIs(err, native.ErrNoSnapshot,
 		"a damaged generation is not an absent one; callers classify the two differently")
 	tester.Zero(visited, "no document may be handed to the caller out of a damaged stored region")
 }
@@ -363,13 +363,13 @@ func TestNativeStoredDocumentWalkNoCommittedGeneration(t *testing.T) {
 	tester := require.New(t)
 
 	visited := 0
-	err := nidx01cBoundary(context.Background(), t.TempDir(), func(_ StoredDocument) error {
+	err := nidx01cBoundary(context.Background(), t.TempDir(), func(_ native.StoredDocument) error {
 		visited++
 		return nil
 	})
 
-	tester.ErrorIs(err, ErrNoCommittedIndex)
-	tester.NotErrorIs(err, ErrCorruptIndex,
+	tester.ErrorIs(err, native.ErrNoSnapshot)
+	tester.NotErrorIs(err, native.ErrCorrupt,
 		"an unflushed index is not a damaged one; callers classify the two differently")
 	tester.Zero(visited)
 }
@@ -430,34 +430,4 @@ func identityHexOf(docIDs []uint64) []string {
 	}
 	sort.Strings(identities)
 	return identities
-}
-
-// TestNativeStoredDocumentWalkBoundarySurface guards the boundary itself rather
-// than any behavior behind it.
-//
-// Requirement proved here:
-//
-//	R6 -- the milestone is delivered entirely behind
-//	      inverted.ReadOnlyWalkDocuments and the StoredDocument it hands out.
-//	      The corpus lives where the corpus of every preceding read-only
-//	      milestone lives, the two sentinels callers classify with remain the
-//	      ones the boundary already publishes, and the private native reader
-//	      exports no operation beyond opening a committed generation, counting
-//	      it and walking its live documents. An entry appearing there for
-//	      dictionaries, term postings, doc values, sorting, search-after or any
-//	      writer is the milestone growing surface NIDX-01 explicitly denied it.
-func TestNativeStoredDocumentWalkBoundarySurface(t *testing.T) {
-	tester := require.New(t)
-
-	tester.NotNil(nidx01cBoundary, "ReadOnlyWalkDocuments must satisfy the live document walker contract")
-	tester.ErrorIs(ErrCorruptIndex, ErrCorruptIndex)
-	tester.ErrorIs(ErrNoCommittedIndex, ErrNoCommittedIndex)
-
-	for _, source := range []string{nidx01cSourceADir, nidx01cSourceBDir} {
-		tester.NotEmpty(dirInventory(t, source), "the NIDX-01C corpus source %s must be checked in", source)
-	}
-	tester.NotEmpty(dirInventory(t, filepath.Dir(nidx01cManifest)))
-
-	tester.Equal(nativeReaderSurface, exportedSurfaceOf(t),
-		"the native reader's exported surface changed; NIDX-01C may only add the live document walk")
 }

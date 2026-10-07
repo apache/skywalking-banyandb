@@ -46,6 +46,8 @@ type SortKey struct {
 // SortCursorRequest describes one pinned-view candidate selection and one
 // bounded ordered page. Selection terms are exact encoded bytes; analyzer and
 // numeric conversion remain caller responsibilities.
+//
+//nolint:govet // request fields remain grouped by the public cursor contract.
 type SortCursorRequest struct {
 	Selection TermSetRequest
 	Range     *RangeRequest
@@ -109,6 +111,10 @@ func (v *ReadView) NewSortCursor(ctx context.Context, request SortCursorRequest)
 	if len(v.root.segments) == 0 {
 		return cursor, nil
 	}
+	selectionWildcards, wildcardErr := compileWildcardAutomata(request.Selection.Wildcard)
+	if wildcardErr != nil {
+		return nil, wildcardErr
+	}
 	var total uint64
 	for index, current := range v.root.segments {
 		if err := ctx.Err(); err != nil {
@@ -135,7 +141,7 @@ func (v *ReadView) NewSortCursor(ctx context.Context, request SortCursorRequest)
 				return nil, candidateErr
 			}
 			total += candidates.GetCardinality()
-		case len(request.Selection.Terms) == 0:
+		case len(request.Selection.Terms) == 0 && len(request.Selection.Prefix) == 0 && len(request.Selection.Wildcard) == 0:
 			if request.Selection.Field != "" {
 				return nil, fmt.Errorf("sort cursor empty selection requires no field: %w", ErrQueryLimit)
 			}
@@ -150,9 +156,15 @@ func (v *ReadView) NewSortCursor(ctx context.Context, request SortCursorRequest)
 				total += candidates.GetCardinality()
 			}
 		default:
+			if err := validateTermSetRequest(request.Selection); err != nil {
+				return nil, err
+			}
+			// MaxCandidates is deferred to the cross-segment total check below,
+			// like the original per-term selection already did.
+			selection := request.Selection
+			selection.MaxCandidates = 0
 			var err error
-			candidates, err = exactCandidates(ctx, segment, request.Selection.Field, request.Selection.Terms,
-				request.Selection.Mode, request.Selection.Scope, 0)
+			candidates, err = exactCandidates(ctx, segment, selection, selectionWildcards)
 			if err != nil {
 				return nil, err
 			}

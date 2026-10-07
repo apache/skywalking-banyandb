@@ -63,6 +63,62 @@ func TestReadOnlyGenerationRepairTuplePage(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestReadOnlyGenerationRepairTuplePageRejectsRequestsOutsideItsBounds asks
+// for pages the reader will not serve: an invalid cursor and a page-size
+// overflow are rejected as typed ErrInvalidRepairPage failures, distinct from
+// ErrCorrupt, and return no partial page.
+func TestReadOnlyGenerationRepairTuplePageRejectsRequestsOutsideItsBounds(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "property")
+	owner, err := NewOwner(OwnerOptions{Lease: pathBoundLease{expected: path}, Path: path})
+	require.NoError(t, err)
+	callback := make(chan error, 1)
+	require.NoError(t, owner.Batch(context.Background(), Batch{
+		Documents: []Document{
+			repairDocument("doc-a", "a", 10),
+			repairDocument("doc-b", "b", 20),
+		},
+		PersistentCallback: func(persistErr error) { callback <- persistErr },
+	}))
+	require.NoError(t, <-callback)
+	require.NoError(t, owner.Close())
+
+	generation, err := OpenReadOnlyGeneration(path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, generation.Close()) }()
+	first, err := generation.RepairTuplePage(context.Background(), RepairPageRequest{PageSize: 1})
+	require.NoError(t, err)
+	require.Len(t, first, 1)
+
+	cases := []struct {
+		mutate func(*RepairPageRequest)
+		name   string
+	}{
+		{name: "short cursor", mutate: func(r *RepairPageRequest) { r.After.cursor.SortValues = r.After.cursor.SortValues[:3] }},
+		{name: "long cursor", mutate: func(r *RepairPageRequest) {
+			r.After.cursor.SortValues = append(r.After.cursor.SortValues, []byte("extra"))
+		}},
+		{name: "oversize cursor component", mutate: func(r *RepairPageRequest) { r.After.cursor.SortValues[0] = make([]byte, MaxRepairSortValueLength+1) }},
+		{name: "zero cursor", mutate: func(r *RepairPageRequest) { r.After = &RepairCursor{} }},
+		{name: "page size zero", mutate: func(r *RepairPageRequest) { r.PageSize = 0 }},
+		{name: "page size negative", mutate: func(r *RepairPageRequest) { r.PageSize = -1 }},
+		{name: "page size over the bound", mutate: func(r *RepairPageRequest) { r.PageSize = MaxRepairPageSize + 1 }},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			cursor := *first[0].Cursor
+			cursor.cursor.SortValues = append([][]byte(nil), cursor.cursor.SortValues...)
+			request := RepairPageRequest{PageSize: 2, After: &cursor}
+			testCase.mutate(&request)
+
+			page, pageErr := generation.RepairTuplePage(context.Background(), request)
+			require.ErrorIs(t, pageErr, ErrInvalidRepairPage)
+			require.NotErrorIs(t, pageErr, ErrCorrupt,
+				"an out-of-bounds request and damaged committed bytes must stay separately classifiable")
+			require.Empty(t, page)
+		})
+	}
+}
+
 func repairDocument(identifier, name string, timestamp int64) Document {
 	return Document{
 		Identifier: []byte(identifier), Timestamp: timestamp,

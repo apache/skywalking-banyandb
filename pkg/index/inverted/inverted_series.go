@@ -25,30 +25,15 @@ import (
 	"time"
 
 	"github.com/blugelabs/bluge"
-	"github.com/blugelabs/bluge/search"
 	segment "github.com/blugelabs/bluge_segment_api"
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/analyzer"
-	querypkg "github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
-
-var emptySeries = make([]index.SeriesDocument, 0)
-
-// seriesFilterQuery preserves SeriesStore's document-only contract by
-// disabling scoring before the underlying query builds its searcher. Scores
-// are not exposed by SeriesStore and therefore cannot affect its results.
-type seriesFilterQuery struct{ bluge.Query }
-
-func (q seriesFilterQuery) Searcher(reader search.Reader, options search.SearcherOptions) (search.Searcher, error) {
-	options.Score = "none"
-	return q.Query.Searcher(reader, options)
-}
 
 func (s *store) InsertSeriesBatch(batch index.Batch) error {
 	if len(batch.Documents) == 0 {
@@ -148,93 +133,25 @@ func toDoc(d index.Document, toParseFieldNames bool) (*bluge.Document, []string)
 	return doc, fieldNames
 }
 
-// BuildQuery implements index.SeriesStore.
-func (s *store) BuildQuery(seriesMatchers []index.SeriesMatcher, secondaryQuery index.Query, timeRange *timestamp.TimeRange) (index.Query, error) {
-	if len(seriesMatchers) == 0 && timeRange == nil {
-		return secondaryQuery, nil
-	}
+// errRetiredSeriesQuery reports a call to a series-index query method of this
+// retired store. The series index is served by pkg/index/native since the
+// NIDX-03 cutover; the only production user left, the Stream element index's
+// offline migration tool (NIDX-04, banyand/stream/migration_element_index.go),
+// writes through Batch and Close and never queries.
+var errRetiredSeriesQuery = errors.New("inverted: series-index queries are retired; " +
+	"the NIDX-04 element migration tool only writes through Batch")
 
-	query := bluge.NewBooleanQuery()
-	rootNode := newMustNode()
-	if len(seriesMatchers) > 0 {
-		qs := make([]bluge.Query, len(seriesMatchers))
-		matcherNodes := make([]node, len(seriesMatchers))
-		for i := range seriesMatchers {
-			switch seriesMatchers[i].Type {
-			case index.SeriesMatcherTypeExact:
-				match := convert.BytesToString(seriesMatchers[i].Match)
-				q := bluge.NewTermQuery(match)
-				q.SetField(docIDField)
-				qs[i] = q
-				matcherNodes = append(matcherNodes, newTermNode(match, nil))
-			case index.SeriesMatcherTypePrefix:
-				match := convert.BytesToString(seriesMatchers[i].Match)
-				q := bluge.NewPrefixQuery(match)
-				q.SetField(docIDField)
-				qs[i] = q
-				matcherNodes = append(matcherNodes, newPrefixNode(match))
-			case index.SeriesMatcherTypeWildcard:
-				match := convert.BytesToString(seriesMatchers[i].Match)
-				q := bluge.NewWildcardQuery(match)
-				q.SetField(docIDField)
-				qs[i] = q
-				matcherNodes = append(matcherNodes, newWildcardNode(match))
-			default:
-				return nil, errors.Errorf("unsupported series matcher type: %v", seriesMatchers[i].Type)
-			}
-		}
-		var primaryQuery bluge.Query
-		var primaryNode node
-		if len(qs) > 1 {
-			bq := bluge.NewBooleanQuery()
-			bq.AddShould(qs...)
-			bq.SetMinShould(1)
-			primaryQuery = bq
-			primaryNode = newShouldNode()
-			for i := range matcherNodes {
-				primaryNode.(*shouldNode).Append(matcherNodes[i])
-			}
-		} else {
-			primaryQuery = qs[0]
-			primaryNode = matcherNodes[0]
-		}
-		query.AddMust(primaryQuery)
-		rootNode.Append(primaryNode)
-	}
-	if secondaryQuery != nil && secondaryQuery.(*queryNode).query != nil {
-		query.AddMust(secondaryQuery.(*queryNode).query)
-		rootNode.Append(secondaryQuery.(*queryNode).node)
-	}
-	if timeRange != nil {
-		q := bluge.NewDateRangeInclusiveQuery(timeRange.Start, timeRange.End, timeRange.IncludeStart, timeRange.IncludeEnd)
-		q.SetField(timestampField)
-		query.AddMust(q)
-		rootNode.Append(newTimeRangeNode(timeRange))
-	}
-	return &queryNode{query, rootNode}, nil
+// BuildQuery implements index.SeriesStore. It is retired and always fails:
+// nothing calls it any more, and it exists only because index.SeriesStore
+// declares it.
+func (s *store) BuildQuery([]index.SeriesMatcher, index.Query, *timestamp.TimeRange) (index.Query, error) {
+	return nil, errors.WithMessage(errRetiredSeriesQuery, "BuildQuery")
 }
 
-// Search implements index.SeriesStore.
-func (s *store) Search(ctx context.Context,
-	projection []index.FieldKey, query index.Query, limit int,
-) ([]index.SeriesDocument, error) {
-	reader, err := s.writer.Reader()
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err := recover(); err != nil {
-			_ = reader.Close()
-			panic(err)
-		}
-		_ = reader.Close()
-	}()
-
-	dmi, err := reader.Search(ctx, bluge.NewAllMatches(seriesFilterQuery{Query: query.(*queryNode).query}))
-	if err != nil {
-		return nil, err
-	}
-	return parseResult(ctx, dmi, projection, limit)
+// Search implements index.SeriesStore. It is retired and always fails; see
+// BuildQuery.
+func (s *store) Search(context.Context, []index.FieldKey, index.Query, int) ([]index.SeriesDocument, error) {
+	return nil, errors.WithMessage(errRetiredSeriesQuery, "Search")
 }
 
 // StoredFields implements index.SeriesStore.
@@ -290,197 +207,10 @@ func (s *store) StoredFields(ctx context.Context, docID []byte, projection ...in
 	return fields, nil
 }
 
-func parseResult(ctx context.Context, dmi search.DocumentMatchIterator, loadedFields []index.FieldKey, limit int) ([]index.SeriesDocument, error) {
-	if chargeErr := querypkg.Charge(ctx, 1024+uint64(len(loadedFields))*64); chargeErr != nil {
-		return nil, chargeErr
-	}
-	result := make([]index.SeriesDocument, 0, 10)
-	fields := make([]string, 0, len(loadedFields))
-	for _, loadedField := range loadedFields {
-		fields = append(fields, loadedField.Marshal())
-	}
-	for {
-		if contextErr := ctx.Err(); contextErr != nil {
-			return nil, contextErr
-		}
-		next, nextErr := dmi.Next()
-		if nextErr != nil {
-			return nil, errors.WithMessage(nextErr, "iterate document match iterator")
-		}
-		if next == nil {
-			return result, nil
-		}
-		doc, readErr := readSeriesDocument(ctx, next, fields)
-		if readErr != nil {
-			return nil, readErr
-		}
-		if len(doc.Key.EntityValues) > 0 {
-			result = append(result, doc)
-		}
-		if limit > 0 && len(result) >= limit {
-			return result, nil
-		}
-	}
-}
-
-func readSeriesDocument(ctx context.Context, match *search.DocumentMatch, fields []string) (index.SeriesDocument, error) {
-	var doc index.SeriesDocument
-	// Charge the result container and projected-field map before retaining this hit.
-	if chargeErr := querypkg.ChargeResult(ctx, 256+uint64(len(fields))*64); chargeErr != nil {
-		return doc, chargeErr
-	}
-	if len(fields) > 0 {
-		doc.Fields = make(map[string][]byte, len(fields))
-		for _, fieldName := range fields {
-			doc.Fields[fieldName] = nil
-		}
-	}
-	var fieldErr error
-	visitErr := match.VisitStoredFields(func(field string, value []byte) bool {
-		switch field {
-		case docIDField:
-			if fieldErr = querypkg.Charge(ctx, uint64(len(value))); fieldErr != nil {
-				return false
-			}
-			doc.Key.EntityValues = bytes.Clone(value)
-		case timestampField:
-			var ts time.Time
-			ts, fieldErr = bluge.DecodeDateTime(value)
-			if fieldErr != nil {
-				return false
-			}
-			doc.Timestamp = ts.UnixNano()
-		case versionField:
-			doc.Version = convert.BytesToInt64(value)
-		default:
-			if _, ok := doc.Fields[field]; ok {
-				if fieldErr = querypkg.Charge(ctx, uint64(len(value))); fieldErr != nil {
-					return false
-				}
-				doc.Fields[field] = bytes.Clone(value)
-			}
-		}
-		return true
-	})
-	if readErr := multierr.Combine(visitErr, fieldErr); readErr != nil {
-		return index.SeriesDocument{}, errors.WithMessagef(readErr, "visit stored fields, hit: %d", match.HitNumber)
-	}
-	return doc, nil
-}
-
-func (s *store) SeriesSort(ctx context.Context, indexQuery index.Query, orderBy *index.OrderBy,
-	preLoadSize int, fieldKeys []index.FieldKey,
-) (iter index.FieldIterator[*index.DocumentResult], err error) {
-	var sortedKey string
-	switch orderBy.Type {
-	case index.OrderByTypeTime:
-		sortedKey = timestampField
-	case index.OrderByTypeIndex:
-		fieldKey := index.FieldKey{
-			IndexRuleID: orderBy.Index.Metadata.Id,
-		}
-		sortedKey = fieldKey.Marshal()
-	default:
-		return nil, errors.Errorf("unsupported order by type: %v", orderBy.Type)
-	}
-	if orderBy.Sort == modelv1.Sort_SORT_DESC {
-		sortedKey = "-" + sortedKey
-	}
-	fields := make([]string, 0, len(fieldKeys))
-	for i := range fieldKeys {
-		fields = append(fields, fieldKeys[i].Marshal())
-	}
-
-	if !s.closer.AddRunning() {
-		return nil, nil
-	}
-	reader, err := s.writer.Reader()
-	if err != nil {
-		return nil, err
-	}
-
-	return &sortIterator{
-		query:       indexQuery,
-		fields:      fields,
-		reader:      reader,
-		sortedKey:   sortedKey,
-		size:        preLoadSize,
-		closer:      s.closer,
-		ctx:         ctx,
-		newIterator: newSeriesIterator,
-	}, nil
-}
-
-type seriesIterator struct {
-	*blugeMatchIterator
-}
-
-func newSeriesIterator(delegated search.DocumentMatchIterator, closer io.Closer,
-	needToLoadFields []string,
-) blugeIterator {
-	si := &seriesIterator{
-		blugeMatchIterator: &blugeMatchIterator{
-			delegated: delegated,
-			closer:    closer,
-			ctx:       search.NewSearchContext(1, 0),
-			current:   index.DocumentResult{Values: make(map[string][]byte, len(needToLoadFields))},
-		},
-	}
-	for _, f := range needToLoadFields {
-		si.current.Values[f] = nil
-	}
-	return si
-}
-
-func (si *seriesIterator) Next() bool {
-	var match *search.DocumentMatch
-	match, si.err = si.delegated.Next()
-	if si.err != nil {
-		si.err = errors.WithMessagef(si.err, "failed to get next document, hit: %d", si.hit)
-		return false
-	}
-	if match == nil {
-		si.err = io.EOF
-		return false
-	}
-	si.hit = match.HitNumber
-	for i := range si.current.Values {
-		si.current.Values[i] = nil
-	}
-	si.current.DocID = 0
-	si.current.Timestamp = 0
-	si.current.SortedValue = nil
-	if len(match.SortValue) > 0 {
-		si.current.SortedValue = match.SortValue[0]
-	}
-
-	err := match.VisitStoredFields(si.setVal)
-	si.err = multierr.Combine(si.err, err)
-	if si.err != nil {
-		return false
-	}
-	return si.err == nil
-}
-
-func (si *seriesIterator) setVal(field string, value []byte) bool {
-	switch field {
-	case docIDField:
-		si.current.EntityValues = value
-	case timestampField:
-		ts, errTime := bluge.DecodeDateTime(value)
-		if errTime != nil {
-			si.err = errTime
-			return false
-		}
-		si.current.Timestamp = ts.UnixNano()
-	case versionField:
-		si.current.Version = convert.BytesToInt64(value)
-	default:
-		if _, ok := si.current.Values[field]; ok {
-			si.current.Values[field] = bytes.Clone(value)
-		}
-	}
-	return true
+// SeriesSort implements index.SeriesStore. It is retired and always fails;
+// see BuildQuery.
+func (s *store) SeriesSort(context.Context, index.Query, *index.OrderBy, int, []index.FieldKey) (index.FieldIterator[*index.DocumentResult], error) {
+	return nil, errors.WithMessage(errRetiredSeriesQuery, "SeriesSort")
 }
 
 func (s *store) SeriesIterator(ctx context.Context) (index.FieldIterator[index.Series], error) {

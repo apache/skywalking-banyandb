@@ -36,7 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
@@ -663,7 +663,7 @@ func TestRepairRejectsZeroRevision(t *testing.T) {
 	nidx01ePublishRevision(t, shardPath, "group", "name", "entity", 0, "sha-zero")
 	repairState, _ := nidx01eRepair(t, shardPath, nil)
 	buildErr := repairState.buildStatus(context.Background(), shardPath)
-	if !errors.Is(buildErr, inverted.ErrCorruptIndex) {
+	if !errors.Is(buildErr, native.ErrCorrupt) {
 		t.Fatalf("expected corrupt repair input for a zero revision, got %v", buildErr)
 	}
 	for _, unpublishedPath := range []string{repairState.statePath, repairState.composeTreeFilePath} {

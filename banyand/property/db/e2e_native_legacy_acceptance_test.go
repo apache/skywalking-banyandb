@@ -39,8 +39,7 @@ import (
 )
 
 // TestE2EPropertyNativeLegacyQueryMutationAcceptance exercises only public
-// Database operations in fresh native and legacy roots. It intentionally keeps
-// the two roots independent and compares the observable query/mutation trace.
+// Database operations in a fresh native root.
 func TestE2EPropertyNativeLegacyQueryMutationAcceptance(t *testing.T) {
 	ctx := context.Background()
 	type result struct {
@@ -48,14 +47,14 @@ func TestE2EPropertyNativeLegacyQueryMutationAcceptance(t *testing.T) {
 		rows   []string
 		count  int
 	}
-	run := func(nativeWriter bool) result {
+	run := func() result {
 		location, cleanup, err := test.NewSpace()
 		require.NoError(t, err)
 		defer cleanup()
 		cfg := Config{
 			Location: location, MetricsScopeName: "property_native_legacy_acceptance",
 			FlushInterval: time.Second,
-			Index:         IndexConfig{NativeWriter: nativeWriter, WaitForPersistence: true},
+			Index:         IndexConfig{WaitForPersistence: true},
 		}
 		db, err := OpenDB(ctx, cfg, observability.BypassRegistry, fs.NewLocalFileSystem())
 		require.NoError(t, err)
@@ -90,11 +89,8 @@ func TestE2EPropertyNativeLegacyQueryMutationAcceptance(t *testing.T) {
 		require.Equal(t, fingerprints, reopenedFingerprints)
 		return result{values: reopenedValues, rows: reopenedFingerprints, count: len(reopened)}
 	}
-	legacy := run(false)
-	native := run(true)
-	sort.Slice(legacy.values, func(i, j int) bool { return legacy.values[i] < legacy.values[j] })
+	native := run()
 	sort.Slice(native.values, func(i, j int) bool { return native.values[i] < native.values[j] })
-	require.Equal(t, legacy, native)
 	require.Equal(t, []int64{20, 30}, native.values)
 	require.Len(t, native.rows, 2)
 	require.Equal(t, 2, native.count)
@@ -106,14 +102,14 @@ func propertyRowFingerprint(row QueriedProperty) string {
 		hex.EncodeToString(row.Source())
 }
 
-func TestE2EPropertyNativeRepairSnapshotAndWriterSwitch(t *testing.T) {
+func TestE2EPropertyNativeRepairSnapshotAndReopen(t *testing.T) {
 	ctx := context.Background()
 	location, cleanup, err := test.NewSpace()
 	require.NoError(t, err)
 	defer cleanup()
 	cfg := Config{
 		Location: location, MetricsScopeName: "property_native_repair_snapshot_acceptance",
-		FlushInterval: time.Second, Index: IndexConfig{NativeWriter: true, WaitForPersistence: true},
+		FlushInterval: time.Second, Index: IndexConfig{WaitForPersistence: true},
 		Snapshot: SnapshotConfig{Location: filepath.Join(location, "snapshots")},
 	}
 	db, err := OpenDB(ctx, cfg, observability.BypassRegistry, fs.NewLocalFileSystem())
@@ -135,7 +131,7 @@ func TestE2EPropertyNativeRepairSnapshotAndWriterSwitch(t *testing.T) {
 	require.NoError(t, copyAcceptanceTree(filepath.Join(cfg.Snapshot.Location, "acceptance", "data"), restoreLocation))
 	restored, restoreOpenErr := OpenDB(ctx, Config{
 		Location: restoreLocation, MetricsScopeName: "property_native_restore_acceptance", FlushInterval: time.Second,
-		Index:    IndexConfig{NativeWriter: true, WaitForPersistence: true},
+		Index:    IndexConfig{WaitForPersistence: true},
 		Snapshot: SnapshotConfig{Location: filepath.Join(restoreLocation, "snapshots")},
 	}, observability.BypassRegistry, fs.NewLocalFileSystem())
 	require.NoError(t, restoreOpenErr)
@@ -147,20 +143,12 @@ func TestE2EPropertyNativeRepairSnapshotAndWriterSwitch(t *testing.T) {
 	require.Contains(t, propertyValues(t, queryDB(ctx, t, db, "repair-snapshot")), int64(11))
 	restored, restoreOpenErr = OpenDB(ctx, Config{
 		Location: restoreLocation, MetricsScopeName: "property_native_restore_acceptance_reopen", FlushInterval: time.Second,
-		Index:    IndexConfig{NativeWriter: true, WaitForPersistence: true},
+		Index:    IndexConfig{WaitForPersistence: true},
 		Snapshot: SnapshotConfig{Location: filepath.Join(restoreLocation, "snapshots")},
 	}, observability.BypassRegistry, fs.NewLocalFileSystem())
 	require.NoError(t, restoreOpenErr)
 	require.Contains(t, propertyValues(t, queryDB(ctx, t, restored, "repair-snapshot")), int64(9))
 	require.NoError(t, restored.Close())
-	require.NoError(t, db.SwitchIndexWriter(ctx, false))
-	rows = queryDB(ctx, t, db, "repair-snapshot")
-	require.Len(t, rows, 2)
-	require.Contains(t, propertyValues(t, rows), int64(9))
-	require.NoError(t, db.SwitchIndexWriter(ctx, true))
-	rows = queryDB(ctx, t, db, "repair-snapshot")
-	require.Len(t, rows, 2)
-	require.Contains(t, propertyValues(t, rows), int64(9))
 	require.NoError(t, db.Close())
 	db, err = OpenDB(ctx, cfg, observability.BypassRegistry, fs.NewLocalFileSystem())
 	require.NoError(t, err)
@@ -211,13 +199,13 @@ func propertyValues(t *testing.T, rows []QueriedProperty) []int64 {
 
 func TestE2EPropertyNativeCriteriaAndSort(t *testing.T) {
 	ctx := context.Background()
-	run := func(nativeWriter bool) (map[string][]string, []QueriedProperty, []QueriedProperty) {
+	run := func() (map[string][]string, []QueriedProperty, []QueriedProperty) {
 		location, cleanup, err := test.NewSpace()
 		require.NoError(t, err)
 		defer cleanup()
 		cfg := Config{
 			Location: location, MetricsScopeName: "property_native_criteria_acceptance", FlushInterval: time.Second,
-			Index: IndexConfig{NativeWriter: nativeWriter, WaitForPersistence: true},
+			Index: IndexConfig{WaitForPersistence: true},
 		}
 		db, err := OpenDB(ctx, cfg, observability.BypassRegistry, fs.NewLocalFileSystem())
 		require.NoError(t, err)
@@ -230,15 +218,12 @@ func TestE2EPropertyNativeCriteriaAndSort(t *testing.T) {
 		absent := generateProperty("f", 105, 0)
 		absent.Tags = nil
 		require.NoError(t, db.Update(ctx, 1, GetPropertyID(absent), absent))
-		if nativeWriter {
-			propertyDB := db.(*database)
-			groupValue, loaded := propertyDB.groups.Load(testPropertyGroup)
-			require.True(t, loaded)
-			group := groupValue.(*groupShards)
-			for _, shard := range *group.shards.Load() {
-				require.NotNil(t, shard.nativeStore)
-				require.Nil(t, shard.store)
-			}
+		propertyDB := db.(*database)
+		groupValue, loaded := propertyDB.groups.Load(testPropertyGroup)
+		require.True(t, loaded)
+		group := groupValue.(*groupShards)
+		for _, shard := range *group.shards.Load() {
+			require.NotNil(t, shard.nativeStore)
 		}
 		queries := map[string]*modelv1.Criteria{
 			"eq":     criteriaInt(modelv1.Condition_BINARY_OP_EQ, 30),
@@ -270,11 +255,7 @@ func TestE2EPropertyNativeCriteriaAndSort(t *testing.T) {
 		require.Len(t, queryOrderedLimit(ctx, t, db, modelv1.Sort_SORT_ASC, 1), 6)
 		return results, ascending, descending
 	}
-	legacyResults, legacyAscending, legacyDescending := run(false)
-	nativeResults, nativeAscending, nativeDescending := run(true)
-	require.Equal(t, legacyResults, nativeResults)
-	require.Equal(t, publicPropertyRows(legacyAscending), publicPropertyRows(nativeAscending))
-	require.Equal(t, publicPropertyRows(legacyDescending), publicPropertyRows(nativeDescending))
+	nativeResults, nativeAscending, nativeDescending := run()
 	require.Equal(t, []string{"c"}, nativeResults["eq"])
 	require.Equal(t, []string{"a", "b", "d", "e", "f"}, nativeResults["ne"])
 	require.Equal(t, []string{"d", "e"}, nativeResults["gt"])
@@ -296,14 +277,6 @@ func TestE2EPropertyNativeCriteriaAndSort(t *testing.T) {
 	for i := 1; i < len(nativeDescending); i++ {
 		require.GreaterOrEqual(t, bytes.Compare(nativeDescending[i-1].SortedValue(), nativeDescending[i].SortedValue()), 0)
 	}
-}
-
-func publicPropertyRows(rows []QueriedProperty) []string {
-	result := make([]string, 0, len(rows))
-	for _, row := range rows {
-		result = append(result, propertyRowFingerprint(row)+":"+hex.EncodeToString(row.SortedValue()))
-	}
-	return result
 }
 
 func criteriaInt(op modelv1.Condition_BinaryOp, value int64) *modelv1.Criteria {

@@ -161,6 +161,7 @@ func setUpDB(t *testing.T, ttlDays ...int) (*database[*MockTSTable, any], timest
 	}
 
 	TSDBOpts := TSDBOpts[*MockTSTable, any]{
+		RootLease:       staticTestLease{},
 		Location:        dir,
 		SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
 		TTL:             IntervalRule{Unit: DAY, Num: ttl},
@@ -240,6 +241,7 @@ func TestRotationDisabled(t *testing.T) {
 		defer defFn()
 
 		TSDBOpts := TSDBOpts[*MockTSTable, any]{
+			RootLease:       staticTestLease{},
 			Location:        dir,
 			SegmentInterval: IntervalRule{Unit: DAY, Num: 3},
 			TTL:             IntervalRule{Unit: DAY, Num: 30},
@@ -317,6 +319,7 @@ func TestTickRejectsZeroTimestamp(t *testing.T) {
 	defer defFn()
 
 	opts := TSDBOpts[*MockTSTable, any]{
+		RootLease:       staticTestLease{},
 		Location:        dir,
 		SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
 		TTL:             IntervalRule{Unit: DAY, Num: 7},

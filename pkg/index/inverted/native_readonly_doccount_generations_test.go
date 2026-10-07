@@ -38,7 +38,7 @@ const combinedGenerationCount = nidx01bVisibleCount + nidx01bRestoredCount
 
 // TestReadOnlyDocCountCommittedGenerations is the boundary contract for
 // NIDX-01B. It exercises the committed-generation counter at
-// inverted.ReadOnlyDocCount, and nothing behind it, against the checked-in ICE
+// native.ReadOnlyDocCount, and nothing behind it, against the checked-in ICE
 // v3 / snapshot v3 corpus described by issue #14009: a valid generation 10 over
 // two segments holding five physical documents with one snapshot deletion for
 // doc-22, and an invalid newer generation 11 that references a segment the
