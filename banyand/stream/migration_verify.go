@@ -32,6 +32,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
 
 // SegmentReport summarizes one seg-* directory under a stream group
@@ -148,7 +149,13 @@ func partRowCount(partID uint64, name, shardDir string, fileSystem fs.FileSystem
 }
 
 // CountBlugeDocs opens the bluge index at path read-only and returns
-// the total document count. Used by verify to spot-check idx/ and sidx/.
+// the total document count. Used by verify to spot-check idx/: the element
+// index's "direct stream copy" migration (NIDX-04) can still copy a
+// previous-release, bluge-format idx/ directory byte for byte, so this stays
+// a raw bluge reader -- pkg/index/inverted/migration_element_index.go is
+// this package's last production user of the retired engine, and this
+// function (reading a copied, not live, directory) is a second, narrower one
+// pending the same NIDX-04 removal.
 func CountBlugeDocs(path string) (uint64, error) {
 	reader, err := bluge.OpenReader(bluge.DefaultConfig(path))
 	if err != nil {
@@ -156,6 +163,29 @@ func CountBlugeDocs(path string) (uint64, error) {
 	}
 	defer func() { _ = reader.Close() }()
 	return reader.Count()
+}
+
+// CountSeriesIndexDocs opens the series index (sidx/) a "direct stream copy"
+// migration wrote at path read-only (a native read-only generation, never a
+// writable owner) and returns its live document count. Unlike idx/, sidx/ is
+// always written by BuildGroupUnionSidx (banyand/internal/migration/
+// unionsidx.go), which has written a native owner since NIDX-03 phase 2, so
+// verify reads it with the native read-only API rather than CountBlugeDocs.
+// Mirrors banyand/measure/migration_verify.go's CountSeriesIndexDocs.
+func CountSeriesIndexDocs(path string) (uint64, error) {
+	generation, err := native.OpenReadOnlyGeneration(path)
+	if err != nil {
+		if errors.Is(err, native.ErrNoSnapshot) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	defer func() { _ = generation.Close() }()
+	count, countErr := generation.VisibleDocCount()
+	if countErr != nil {
+		return 0, countErr
+	}
+	return uint64(count), nil
 }
 
 // EnumerateGroupTarget walks <groupRoot>/seg-* and reports per-segment
@@ -245,7 +275,7 @@ func EnumerateGroupTarget(groupRoot string, intervalRule storage.IntervalRule, f
 
 		sidxDir := filepath.Join(segDir, directStreamCopySidxDirName)
 		if info, statErr := os.Stat(sidxDir); statErr == nil && info.IsDir() {
-			count, sidxErr := CountBlugeDocs(sidxDir)
+			count, sidxErr := CountSeriesIndexDocs(sidxDir)
 			if sidxErr != nil {
 				return nil, fmt.Errorf("seg %s sidx open: %w", e.Name(), sidxErr)
 			}

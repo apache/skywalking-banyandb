@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	roaring "github.com/RoaringBitmap/roaring"
+	segment "github.com/blugelabs/bluge_segment_api"
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/index/internal/nativeice"
@@ -42,16 +43,16 @@ func TestLegacyFastCopyMergePreservesStoredFieldsBeforeIdentifier(t *testing.T) 
 		Fields:     []nativeice.EncodeField{{Name: "_a", Value: []byte("two-a"), Index: true, Store: true}},
 	}}})
 	require.NoError(t, err)
-	first, err := loadLegacySegment(newSegmentBytes(firstPayload))
+	first, err := loadLegacySegment(segment.NewDataBytes(firstPayload))
 	require.NoError(t, err)
-	second, err := loadLegacySegment(newSegmentBytes(secondPayload))
+	second, err := loadLegacySegment(segment.NewDataBytes(secondPayload))
 	require.NoError(t, err)
-	merged := mergeLegacySegments([]segmentValue{first, second}, []*roaring.Bitmap{nil, nil})
+	merged := mergeLegacySegments([]segment.Segment{first, second}, []*roaring.Bitmap{nil, nil})
 	var mergedPayload bytes.Buffer
 	_, err = merged.WriteTo(&mergedPayload, nil)
 	require.NoError(t, err)
 
-	legacyMerged, err := loadLegacySegment(newSegmentBytes(mergedPayload.Bytes()))
+	legacyMerged, err := loadLegacySegment(segment.NewDataBytes(mergedPayload.Bytes()))
 	require.NoError(t, err)
 	for documentNumber, expected := range []map[string][]byte{
 		{"_a": []byte("one-a"), "_id": []byte("one")},

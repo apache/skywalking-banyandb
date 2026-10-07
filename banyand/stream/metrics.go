@@ -23,7 +23,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	idxmetrics "github.com/apache/skywalking-banyandb/pkg/index/metrics"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
 
@@ -34,7 +34,7 @@ var (
 )
 
 type metrics struct {
-	indexMetrics *inverted.Metrics
+	indexMetrics *idxmetrics.Metrics
 
 	totalWritten           meter.Counter
 	totalBatch             meter.Counter
@@ -369,7 +369,7 @@ func (s *supplier) newMetrics(p common.Position) storage.Metrics {
 			totalFilePartUncompressedBytes: factory.NewGauge("total_file_part_uncompressed_bytes", common.ShardLabelNames()...),
 			pendingDataCount:               factory.NewGauge("pending_data_count", common.ShardLabelNames()...),
 		},
-		indexMetrics: inverted.NewMetrics(factory, common.SegLabelNames()...),
+		indexMetrics: idxmetrics.NewMetrics(factory, common.SegLabelNames()...),
 	}
 }
 
@@ -416,7 +416,7 @@ func (s *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observab
 			totalFilePartUncompressedBytes: factory.NewGauge("total_file_part_uncompressed_bytes", common.ShardLabelNames()...),
 			pendingDataCount:               factory.NewGauge("pending_data_count", common.ShardLabelNames()...),
 		},
-		indexMetrics: inverted.NewMetrics(factory, common.SegLabelNames()...),
+		indexMetrics: idxmetrics.NewMetrics(factory, common.SegLabelNames()...),
 	}, factory
 }
 

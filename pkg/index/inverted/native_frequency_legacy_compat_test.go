@@ -20,6 +20,7 @@ package inverted
 import (
 	"testing"
 
+	segment "github.com/blugelabs/bluge_segment_api"
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/index/internal/nativeice"
@@ -33,7 +34,7 @@ func TestNativeFrequencyStreamLoadsInLegacyICE(t *testing.T) {
 		{Identifier: []byte("id-1"), Fields: []nativeice.EncodeField{{Name: "keyword", Index: true, Terms: []nativeice.EncodeTerm{{Value: []byte("term"), Frequency: 1}}}}},
 	}})
 	require.NoError(t, encodeErr)
-	loaded, loadErr := loadLegacySegment(newSegmentBytes(payload))
+	loaded, loadErr := loadLegacySegment(segment.NewDataBytes(payload))
 	require.NoError(t, loadErr)
 	dictionary, dictionaryErr := loaded.Dictionary("keyword")
 	require.NoError(t, dictionaryErr)
@@ -66,7 +67,7 @@ func TestNativeAllOneFrequencyPostingLoadsInLegacyICE(t *testing.T) {
 		{Identifier: []byte("id-1"), Fields: []nativeice.EncodeField{{Name: "keyword", Index: true, Terms: []nativeice.EncodeTerm{{Value: []byte("term"), Frequency: 1}}}}},
 	}})
 	require.NoError(t, encodeErr)
-	loaded, loadErr := loadLegacySegment(newSegmentBytes(payload))
+	loaded, loadErr := loadLegacySegment(segment.NewDataBytes(payload))
 	require.NoError(t, loadErr)
 	dictionary, dictionaryErr := loaded.Dictionary("keyword")
 	require.NoError(t, dictionaryErr)

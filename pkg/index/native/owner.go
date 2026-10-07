@@ -596,6 +596,11 @@ func loadPersistedRoot(path string) (*publishedRoot, error) {
 		handle.indexedFields = fields
 		handle.refs.Store(1)
 		handle.persisted.Store(true)
+		// Best effort, see newMemorySegment. This is the owner's own startup
+		// reopen of an existing directory: without this, the first exact
+		// lookup after every process restart rebuilds every segment's
+		// filter lazily, not just after a fresh publish or compaction.
+		_ = segmentReader.PrepareTermFilter(identifierField)
 		root.segments = append(root.segments, &memorySegment{handle: handle, deleted: deleted})
 		root.nextNumber += segmentMetadata.DocumentCount
 	}
@@ -953,6 +958,13 @@ func (o *Owner) persistRoot(root *publishedRoot) error {
 			}
 			return fmt.Errorf("open persisted native segment %d for promotion: %w", handle.id, openErr)
 		}
+		// Best effort, see newMemorySegment. This file-backed reader replaces
+		// a large in-memory segment's original handle (still warm) with one
+		// that has never served a lookup; without this, the first exact
+		// lookup after promotion rebuilds the filter lazily. Opened here,
+		// before promotePersistedHandles takes o.mu, so this also runs
+		// outside the lock.
+		_ = reader.PrepareTermFilter(identifierField)
 		replacement := &segmentHandle{
 			reader: reader, count: handle.count, id: handle.id, size: handle.size,
 			timeMin: handle.timeMin, timeMax: handle.timeMax, hasTime: handle.hasTime,
@@ -2122,6 +2134,9 @@ func newMemorySegment(documents []Document, segmentID uint64, identifierDocValue
 		handle.hasTime = true
 	}
 	handle.refs.Store(1)
+	// Best effort: a failure here simply resurfaces, and is reported, on
+	// the first lookup that then rebuilds the filter lazily instead.
+	_ = reader.PrepareTermFilter(identifierField)
 	return &memorySegment{handle: handle}, nil
 }
 
@@ -2138,6 +2153,10 @@ func newSegmentFromPayload(payload []byte, segmentID uint64) (rootSegment, error
 	if fields, fieldsErr := reader.Fields(); fieldsErr == nil {
 		handle.indexedFields = fields
 	}
+	// Best effort, see newMemorySegment. A merged segment is exactly the
+	// case this warm-up matters most for: it is opened once (here, before
+	// the owner lock is taken) and then stays live for a long time.
+	_ = reader.PrepareTermFilter(identifierField)
 	return &memorySegment{handle: handle}, nil
 }
 
@@ -2158,6 +2177,10 @@ func newSegmentFromFile(path string, metadata nativeice.SnapshotSegment, segment
 		hasTime: timeMin != 0 || timeMax != 0, indexedFields: fields,
 	}
 	handle.refs.Store(1)
+	// Best effort, see newMemorySegment. The external-receive caller opens
+	// this before taking o.mu (introduceExternalSegment), so the warm-up
+	// runs outside the lock there too.
+	_ = reader.PrepareTermFilter(identifierField)
 	return &memorySegment{handle: handle}, nil
 }
 

@@ -45,9 +45,7 @@ import (
 	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/index/native"
-	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/query"
@@ -86,9 +84,6 @@ type Database interface {
 	RegisterGossip(messenger gossip.Messenger)
 	// Close closes the database.
 	Close() error
-	// SwitchIndexWriter drains the database and reopens every shard with the
-	// requested writer while retaining the root ownership lock.
-	SwitchIndexWriter(ctx context.Context, native bool) error
 }
 
 type groupShards struct {
@@ -117,10 +112,6 @@ type SnapshotConfig struct {
 type IndexConfig struct {
 	BatchWaitSec       int64
 	WaitForPersistence bool
-	// NativeWriter selects the native owner and query/mutation path for every
-	// shard this database opens, existing and newly created alike. False keeps
-	// the legacy writer path for rollback and compatibility operation.
-	NativeWriter bool
 }
 
 // Config holds the configuration for the property database.
@@ -142,21 +133,16 @@ type database struct {
 	nativeLease         *native.FileRootLease
 	logger              *logger.Logger
 	repairScheduler     *repairScheduler
-	snapshotFunc        func(context.Context) (string, error)
 	groups              sync.Map
 	repairBaseDir       string
 	snapshotDir         string
-	repairBuildTreeCron string
 	location            string
 	indexConfig         IndexConfig
 	flushInterval       time.Duration
 	expireDelete        time.Duration
 	repairTreeSlotCount int
-	quickBuildTreeTime  time.Duration
 	mu                  sync.RWMutex
 	closed              atomic.Bool
-	transition          atomic.Bool
-	repairEnabled       bool
 }
 
 // OpenDB opens a property database with the given configuration.
@@ -198,21 +184,15 @@ func OpenDB(ctx context.Context, cfg Config, omr observability.MetricsRegistry, 
 		flushInterval:       cfg.FlushInterval,
 		expireDelete:        cfg.ExpireToDeleteDuration,
 		repairTreeSlotCount: cfg.Repair.TreeSlotCount,
-		repairEnabled:       cfg.Repair.Enabled,
-		repairBuildTreeCron: cfg.Repair.BuildTreeCron,
-		quickBuildTreeTime:  cfg.Repair.QuickBuildTreeTime,
-		snapshotFunc:        cfg.Snapshot.Func,
 		repairBaseDir:       cfg.Repair.Location,
 		snapshotDir:         cfg.Snapshot.Location,
 		lfs:                 lfs,
 		indexConfig:         cfg.Index,
 		lock:                lock,
 	}
-	if cfg.Index.NativeWriter {
-		db.nativeLease, err = native.NewFileRootLease(lock, loc)
-		if err != nil {
-			return nil, err
-		}
+	db.nativeLease, err = native.NewFileRootLease(lock, loc)
+	if err != nil {
+		return nil, err
 	}
 	// init repair scheduler
 	if cfg.Repair.Enabled {
@@ -294,9 +274,6 @@ func (db *database) load(ctx context.Context) error {
 }
 
 func (db *database) Update(ctx context.Context, shardID common.ShardID, id []byte, property *propertyv1.Property) error {
-	if db.transition.Load() {
-		return errors.New("database writer transition in progress")
-	}
 	sd, err := db.loadShard(ctx, property.Metadata.Group, shardID)
 	if err != nil {
 		return err
@@ -317,9 +294,6 @@ func (db *database) Update(ctx context.Context, shardID common.ShardID, id []byt
 }
 
 func (db *database) Delete(ctx context.Context, docIDs [][]byte, delTime time.Time) error {
-	if db.transition.Load() {
-		return errors.New("database writer transition in progress")
-	}
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	if db.closed.Load() {
@@ -347,9 +321,6 @@ func (db *database) Query(ctx context.Context, req *propertyv1.QueryRequest) ([]
 	if len(req.Groups) == 0 {
 		return nil, errors.New("property query requires at least one group")
 	}
-	if db.transition.Load() {
-		return nil, errors.New("database writer transition in progress")
-	}
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	if db.closed.Load() {
@@ -363,32 +334,12 @@ func (db *database) Query(ctx context.Context, req *propertyv1.QueryRequest) ([]
 	if len(shards) == 0 {
 		return nil, nil
 	}
-	if db.indexConfig.NativeWriter {
-		if req.OrderBy == nil {
-			var result []QueriedProperty
-			for _, shardRef := range shards {
-				hits, err := shardRef.searchNative(ctx, req, nil, int(req.Limit))
-				if err != nil {
-					return nil, err
-				}
-				for _, hit := range hits {
-					result = append(result, hit)
-				}
-			}
-			return result, nil
-		}
-		return db.queryNativeSorted(ctx, shards, req)
-	}
-	iq, err := inverted.BuildPropertyQuery(req, groupField, entityID)
-	if err != nil {
-		return nil, err
-	}
 	if req.OrderBy == nil {
 		var result []QueriedProperty
 		for _, shardRef := range shards {
-			hits, searchErr := shardRef.search(ctx, iq, nil, int(req.Limit))
-			if searchErr != nil {
-				return nil, searchErr
+			hits, err := shardRef.searchNative(ctx, req, nil, int(req.Limit))
+			if err != nil {
+				return nil, err
 			}
 			for _, hit := range hits {
 				result = append(result, hit)
@@ -396,26 +347,7 @@ func (db *database) Query(ctx context.Context, req *propertyv1.QueryRequest) ([]
 		}
 		return result, nil
 	}
-	iters := make([]sort.Iterator[*queryProperty], 0, len(shards))
-	for _, shardRef := range shards {
-		hits, searchErr := shardRef.search(ctx, iq, req.OrderBy, int(req.Limit))
-		if searchErr != nil {
-			return nil, searchErr
-		}
-		if len(hits) > 0 {
-			iters = append(iters, newQueryPropertyIterator(hits))
-		}
-	}
-	if len(iters) == 0 {
-		return nil, nil
-	}
-	mergeIter := sort.NewItemIter(iters, req.OrderBy.Sort == modelv1.Sort_SORT_DESC)
-	defer mergeIter.Close()
-	result := make([]QueriedProperty, 0, queryCapacityUint(req.Limit))
-	for mergeIter.Next() {
-		result = append(result, mergeIter.Val())
-	}
-	return result, nil
+	return db.queryNativeSorted(ctx, shards, req)
 }
 
 func (db *database) queryNativeSorted(ctx context.Context, shards []*shard, req *propertyv1.QueryRequest) ([]QueriedProperty, error) {
@@ -465,7 +397,7 @@ func (db *database) collectGroupShards(requestedGroups map[string]bool) []*shard
 }
 
 func (db *database) loadShard(ctx context.Context, group string, id common.ShardID) (*shard, error) {
-	if db.closed.Load() || db.transition.Load() {
+	if db.closed.Load() {
 		return nil, errors.New("database is closed")
 	}
 	if s, ok := db.getShard(group, id); ok {
@@ -473,7 +405,7 @@ func (db *database) loadShard(ctx context.Context, group string, id common.Shard
 	}
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	if db.closed.Load() || db.transition.Load() {
+	if db.closed.Load() {
 		return nil, errors.New("database is closed")
 	}
 	return db.loadShardLocked(ctx, group, id)
@@ -538,9 +470,6 @@ func (db *database) getShard(group string, id common.ShardID) (*shard, bool) {
 
 // Drop closes and removes all shards for the given group and deletes the group directory.
 func (db *database) Drop(groupName string) (err error) {
-	if db.transition.Load() {
-		return errors.New("database writer transition in progress")
-	}
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	value, ok := db.groups.LoadAndDelete(groupName)
@@ -600,125 +529,6 @@ func (db *database) Close() error {
 	return err
 }
 
-// SwitchIndexWriter performs a lease-preserving writer transition. Admission
-// is stopped and existing callbacks are drained before shards are closed; all
-// shards are then reopened in the requested mode while the root lock remains
-// held. A failed reopen fails closed and releases the lease only after every
-// opened resource has been cleaned up.
-func (db *database) SwitchIndexWriter(ctx context.Context, useNative bool) error {
-	if db.closed.Load() {
-		return errors.New("database is closed")
-	}
-	if !db.transition.CompareAndSwap(false, true) {
-		return errors.New("database writer transition already in progress")
-	}
-	// The transition flag rejects new callbacks before the scheduler is
-	// drained. Scheduler callbacks acquire db.mu themselves, so this must
-	// happen before taking the database lock to avoid a wait cycle.
-	if db.repairScheduler != nil {
-		db.repairScheduler.close()
-		db.repairScheduler = nil
-	}
-	db.mu.Lock()
-	defer db.mu.Unlock()
-
-	// Taking the lock here drains operations that were already admitted.
-	if db.closed.Load() {
-		db.transition.Store(false)
-		return errors.New("database is closed")
-	}
-
-	closeShards := func() error {
-		var closeErr error
-		db.groups.Range(func(_, value any) bool {
-			gs := value.(*groupShards)
-			if shards := gs.shards.Load(); shards != nil {
-				for _, shardRef := range *shards {
-					multierr.AppendInto(&closeErr, shardRef.close())
-				}
-			}
-			return true
-		})
-		db.groups.Range(func(key, _ any) bool {
-			db.groups.Delete(key)
-			return true
-		})
-		return closeErr
-	}
-	if closeErr := closeShards(); closeErr != nil {
-		db.closed.Store(true)
-		db.releaseNativeLease(&closeErr)
-		db.transition.Store(false)
-		return fmt.Errorf("close shards for writer transition: %w", closeErr)
-	}
-
-	if useNative && db.nativeLease == nil {
-		lease, ownerErr := native.NewFileRootLease(db.lock, db.location)
-		if ownerErr != nil {
-			db.closed.Store(true)
-			_ = db.lock.Close()
-			db.transition.Store(false)
-			return fmt.Errorf("acquire native writer ownership: %w", ownerErr)
-		}
-		db.nativeLease = lease
-	}
-	db.indexConfig.NativeWriter = useNative
-
-	var loadErr error
-	for _, groupDir := range lfs.ReadDir(db.location) {
-		if !groupDir.IsDir() {
-			continue
-		}
-		groupName := groupDir.Name()
-		groupPath := filepath.Join(db.location, groupName)
-		if walkErr := walkDir(groupPath, "shard-", func(suffix string) error {
-			id, parseErr := strconv.Atoi(suffix)
-			if parseErr != nil {
-				return parseErr
-			}
-			_, shardErr := db.loadShardLocked(ctx, groupName, common.ShardID(id))
-			return shardErr
-		}); walkErr != nil {
-			loadErr = walkErr
-			break
-		}
-	}
-	if loadErr != nil {
-		if db.repairScheduler != nil {
-			db.repairScheduler.close()
-			db.repairScheduler = nil
-		}
-		cleanupErr := closeShards()
-		db.closed.Store(true)
-		db.releaseNativeLease(&cleanupErr)
-		db.transition.Store(false)
-		return fmt.Errorf("reopen shards for writer transition: %w", multierr.Append(loadErr, cleanupErr))
-	}
-	if db.repairEnabled {
-		scheduler, schedulerErr := newRepairScheduler(db.logger, db.omr, db.metricsScope,
-			db.repairBuildTreeCron, db.quickBuildTreeTime, db.repairTreeSlotCount, db, db.snapshotFunc)
-		if schedulerErr != nil {
-			cleanupErr := closeShards()
-			db.closed.Store(true)
-			db.releaseNativeLease(&cleanupErr)
-			db.transition.Store(false)
-			return fmt.Errorf("recreate repair scheduler for writer transition: %w", multierr.Append(schedulerErr, cleanupErr))
-		}
-		db.repairScheduler = scheduler
-		db.groups.Range(func(_, value any) bool {
-			gs := value.(*groupShards)
-			if shards := gs.shards.Load(); shards != nil {
-				for _, shardRef := range *shards {
-					shardRef.repairState.scheduler = scheduler
-				}
-			}
-			return true
-		})
-	}
-	db.transition.Store(false)
-	return nil
-}
-
 func (db *database) collect() {
 	if db.closed.Load() {
 		return
@@ -737,8 +547,6 @@ func (db *database) collect() {
 		for _, s := range *sLst {
 			if s.nativeStore != nil {
 				s.nativeStore.collectMetrics()
-			} else if s.store != nil {
-				s.store.CollectMetrics()
 			}
 		}
 		return true
@@ -746,9 +554,6 @@ func (db *database) collect() {
 }
 
 func (db *database) Repair(ctx context.Context, id []byte, shardID uint64, property *propertyv1.Property, deleteTime int64) error {
-	if db.transition.Load() {
-		return errors.New("database writer transition in progress")
-	}
 	s, err := db.loadShard(ctx, property.Metadata.Group, common.ShardID(shardID))
 	if err != nil {
 		return pkgerrors.WithMessagef(err, "failed to load shard %d", id)
@@ -766,9 +571,6 @@ func (db *database) Repair(ctx context.Context, id []byte, shardID uint64, prope
 }
 
 func (db *database) TakeSnapShot(ctx context.Context, sn string) *databasev1.Snapshot {
-	if db.transition.Load() {
-		return nil
-	}
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	if db.closed.Load() {
@@ -797,12 +599,7 @@ func (db *database) TakeSnapShot(ctx context.Context, sn string) *databasev1.Sna
 			}
 			snpDir := path.Join(db.snapshotDir, sn, storage.DataDir, shardRef.group, filepath.Base(shardRef.location))
 			db.lfs.MkdirPanicIfExist(snpDir, storage.DirPerm)
-			var snapshotErr error
-			if shardRef.nativeStore != nil {
-				snapshotErr = shardRef.nativeStore.takeFileSnapshot(snpDir)
-			} else {
-				snapshotErr = shardRef.store.TakeFileSnapshot(snpDir)
-			}
+			snapshotErr := shardRef.nativeStore.takeFileSnapshot(snpDir)
 			if snapshotErr != nil {
 				db.logger.Error().Err(snapshotErr).Str("group", shardRef.group).
 					Str("shard", filepath.Base(shardRef.location)).Msg("fail to take shard snapshot")

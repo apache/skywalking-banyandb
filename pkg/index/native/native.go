@@ -40,6 +40,13 @@ var ErrNoSnapshot = nativeice.ErrNoSnapshot
 // ErrCorrupt reports malformed committed-generation bytes.
 var ErrCorrupt = nativeice.ErrCorrupt
 
+// ErrInvalidSelection reports that a TermSelection names no field, or that its
+// term count or one of its term lengths exceeds the bound the read-only reader
+// serves. It is distinct from ErrCorrupt: nothing on disk is damaged, the
+// request itself is outside the reader's bounds, so no dictionary is opened and
+// no posting is decoded.
+var ErrInvalidSelection = nativeice.ErrInvalidSelection
+
 // ReadOnlyGeneration owns one immutable native ICE generation. The selected
 // snapshot is fixed when it is opened; later files published in the directory
 // are invisible until another generation is opened.
@@ -222,6 +229,105 @@ func (g *ReadOnlyGeneration) VisitLiveDocuments(ctx context.Context, visit func(
 	return g.reader.VisitLiveDocuments(ctx, func(doc nativeice.StoredDocument) error {
 		return visit(doc)
 	})
+}
+
+// TermSelection is the one bounded document filter a read-only walk accepts:
+// the documents whose Field records any of the literal byte sequences in Terms.
+//
+// It is deliberately not a query language. There is exactly one field, the
+// terms are matched as raw bytes with no analysis or normalization, and they
+// are unioned. There is no range, prefix, wildcard, negation, conjunction,
+// existence test, scoring, projection or ordering, and the term dictionary
+// and postings that resolve a selection stay private to the reader.
+type TermSelection struct {
+	// Field is the name of the indexed field whose term dictionary the
+	// selection resolves against.
+	Field string
+	// Terms are the literal term byte sequences to select. The documents
+	// selected are the union of these terms' postings; an empty Terms selects
+	// no document.
+	Terms [][]byte
+}
+
+// VisitSelectedDocuments calls visit once for every live document of the
+// pinned generation the selection holds, streaming one document at a time.
+//
+// The selection resolves exact terms against one field's dictionary, unions
+// their postings and removes the pinned generation's deletion masks, so a
+// deleted document is never handed to visit however many terms selected it,
+// and a document several terms select is handed to visit once. A term the
+// dictionary does not hold, and an empty term set, select nothing rather than
+// failing. Selection precedes stored-field decoding, so a document the
+// selection excludes has its stored bytes left unread.
+//
+// A selection naming no field, or exceeding the reader's term-count or
+// term-length bounds, reports an error wrapping ErrInvalidSelection before any
+// document is visited. Canceling ctx stops posting decode, posting union or
+// the read between two documents and returns ctx.Err(); an error from visit
+// stops the read and is returned as-is.
+func (g *ReadOnlyGeneration) VisitSelectedDocuments(ctx context.Context, selection TermSelection, visit func(doc StoredDocument) error) error {
+	if g == nil || g.reader == nil {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return g.reader.VisitSelectedDocuments(ctx, selection.Field, selection.Terms, func(doc nativeice.StoredDocument) error {
+		return visit(doc)
+	})
+}
+
+// ReadOnlyDocCount opens the index directory at path read-only and returns the
+// number of indexed (live, non-deleted) documents. Unlike a writable owner it
+// never acquires exclusive directory ownership, so it can inspect a closed (or
+// even concurrently open) index without reopening its writer. A missing or
+// unflushed index (no usable committed generation) returns a count of 0
+// together with the open error, which callers may treat as an empty index.
+func ReadOnlyDocCount(path string) (int64, error) {
+	generation, err := OpenReadOnlyGeneration(path)
+	if err != nil {
+		return 0, fmt.Errorf("open read-only index %q: %w", path, err)
+	}
+	defer func() { _ = generation.Close() }()
+	return generation.VisibleDocCount()
+}
+
+// ReadOnlyWalkDocuments opens the index directory at path read-only, pins its
+// newest structurally complete committed generation and calls visit once for
+// every live document that generation holds, streaming one document at a time.
+// Documents the pinned generation's deletion masks cover are skipped.
+//
+// It never acquires exclusive directory ownership and writes no bytes, so a
+// directory a live owner holds can be walked while it is being written, and
+// the walk leaves file contents, modification times and directory entries
+// unchanged.
+//
+// A directory holding no committed generation reports an error wrapping
+// ErrNoSnapshot, which callers that treat a cold or unflushed index as empty
+// match on. Committed bytes that violate the on-disk grammar report an error
+// wrapping ErrCorrupt. Canceling ctx stops the walk between two documents and
+// returns ctx.Err(); an error from visit stops the walk and is returned as-is.
+func ReadOnlyWalkDocuments(ctx context.Context, path string, visit func(doc StoredDocument) error) error {
+	generation, err := OpenReadOnlyGeneration(path)
+	if err != nil {
+		return fmt.Errorf("open read-only index %q: %w", path, err)
+	}
+	defer func() { _ = generation.Close() }()
+	return generation.VisitLiveDocuments(ctx, visit)
+}
+
+// ReadOnlySelectDocuments opens the index directory at path read-only, pins its
+// newest structurally complete committed generation and calls visit once for
+// every live document of that generation the selection holds, streaming one
+// document at a time. See ReadOnlyGeneration.VisitSelectedDocuments for the
+// selection semantics, and ReadOnlyWalkDocuments for the open/error contract.
+func ReadOnlySelectDocuments(ctx context.Context, path string, selection TermSelection, visit func(doc StoredDocument) error) error {
+	generation, err := OpenReadOnlyGeneration(path)
+	if err != nil {
+		return fmt.Errorf("open read-only index %q: %w", path, err)
+	}
+	defer func() { _ = generation.Close() }()
+	return generation.VisitSelectedDocuments(ctx, selection, visit)
 }
 
 // VisitIdentifiers visits each identifier term in committed segment order.

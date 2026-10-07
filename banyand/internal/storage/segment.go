@@ -36,7 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	banyanfs "github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	idxmetrics "github.com/apache/skywalking-banyandb/pkg/index/metrics"
 	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -74,7 +74,7 @@ type segment[T TSTable, O any] struct {
 	index    *seriesIndex
 	sLst     atomic.Pointer[[]*shard[T]]
 	*segmentCache
-	indexMetrics *inverted.Metrics
+	indexMetrics *idxmetrics.Metrics
 	lfs          banyanfs.FileSystem
 	position     common.Position
 	timestamp.TimeRange
@@ -302,9 +302,9 @@ func (s *segment[T, O]) collectOpenMetrics(shardMetrics Metrics) bool {
 		}
 	}
 	// The native series index does not yet publish the detailed
-	// inverted.Metrics gauges (merge counts, analysis time, cache hit/miss,
-	// ...) the legacy bluge store did; pkg/index/native.Owner exposes no
-	// equivalent introspection today. Stats() (dataCount/dataSizeBytes)
+	// idxmetrics.Metrics gauges (merge counts, analysis time, cache hit/miss,
+	// ...) the retired bluge store reported; pkg/index/native.Owner exposes
+	// no equivalent introspection today. Stats() (dataCount/dataSizeBytes)
 	// still flows through SeriesIndexStats below.
 	return true
 }
@@ -668,7 +668,7 @@ type segmentController[T TSTable, O any] struct {
 	metrics      Metrics
 	opts         *TSDBOpts[T, O]
 	l            *logger.Logger
-	indexMetrics *inverted.Metrics
+	indexMetrics *idxmetrics.Metrics
 	*groupCache
 	lfs         banyanfs.FileSystem
 	position    common.Position
@@ -682,7 +682,7 @@ type segmentController[T TSTable, O any] struct {
 }
 
 func newSegmentController[T TSTable, O any](ctx context.Context, location string,
-	l *logger.Logger, opts TSDBOpts[T, O], indexMetrics *inverted.Metrics, metrics Metrics,
+	l *logger.Logger, opts TSDBOpts[T, O], indexMetrics *idxmetrics.Metrics, metrics Metrics,
 	idleTimeout time.Duration, lfs banyanfs.FileSystem, cache Cache, group string,
 ) *segmentController[T, O] {
 	clock, _ := timestamp.GetClock(ctx)

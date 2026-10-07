@@ -39,7 +39,7 @@ func TestNativeExpiredTombstoneCompactionKeepsPinnedView(t *testing.T) {
 		Location: location, MetricsScopeName: "property_native_expiry",
 		ExpireToDeleteDuration: time.Second,
 		Repair:                 RepairConfig{Location: filepath.Join(location, "repair")},
-		Index:                  IndexConfig{NativeWriter: true, WaitForPersistence: true},
+		Index:                  IndexConfig{WaitForPersistence: true},
 	}
 	opened, err := OpenDB(ctx, cfg, observability.BypassRegistry, fs.NewLocalFileSystem())
 	require.NoError(t, err)

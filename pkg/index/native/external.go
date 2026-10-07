@@ -254,33 +254,46 @@ func (o *Owner) introduceExternalSegment(ctx context.Context, stagedPath string)
 	}
 	segmentMetadata := metadata.Segments[0]
 
+	// Opening the staged file (and, inside it, warming the identifier
+	// filter) depends only on the file, so it runs before taking o.mu, the
+	// same as a merge's compacted output and a batch's encoded segment: real
+	// CPU work for a large payload must not stall every concurrent
+	// admission and read view. The segment identifier is a placeholder (0)
+	// until publish, assigned below under the lock once admission is known
+	// to succeed, same as every other segment-construction path.
+	external, segmentErr := newSegmentFromFile(stagedPath, segmentMetadata, 0)
+	if segmentErr != nil {
+		return fmt.Errorf("open external native segment: %w", segmentErr)
+	}
+
 	o.mu.Lock()
 	if o.closed || o.closing {
 		o.mu.Unlock()
+		external.release()
 		return ErrOwnerClosed
 	}
 	if o.collecting {
 		o.mu.Unlock()
+		external.release()
 		return ErrPersistenceBusy
 	}
 	if o.durabilityFault != nil {
 		fault := o.durabilityFault
 		o.mu.Unlock()
+		external.release()
 		return fault
 	}
 	if err := o.validateLease(); err != nil {
 		o.mu.Unlock()
+		external.release()
 		return fmt.Errorf("validate native root lease: %w", err)
 	}
 	if o.root.generation == ^uint64(0) || o.nextSegmentID == ^uint64(0) {
 		o.mu.Unlock()
+		external.release()
 		return fmt.Errorf("external native segment identifiers exhausted: %w", ErrInvalidDocument)
 	}
-	external, segmentErr := newSegmentFromFile(stagedPath, segmentMetadata, o.nextSegmentID)
-	if segmentErr != nil {
-		o.mu.Unlock()
-		return fmt.Errorf("open external native segment: %w", segmentErr)
-	}
+	external.(*memorySegment).handle.id = o.nextSegmentID
 	next := &publishedRoot{generation: o.root.generation + 1, segments: append([]rootSegment(nil), o.root.segments...), nextNumber: o.root.nextNumber}
 	next.refs.Store(1)
 	for _, current := range next.segments {

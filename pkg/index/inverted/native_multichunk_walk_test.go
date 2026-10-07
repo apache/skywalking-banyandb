@@ -26,6 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
 
 const nativeStoredChunkWalkDocumentCount = 129
@@ -72,7 +73,7 @@ func TestNativeStoredDocumentWalksMultipleStoredChunks(t *testing.T) {
 	writerClosed = true
 
 	actual := make(map[string]map[string][]string, nativeStoredChunkWalkDocumentCount)
-	walkErr := ReadOnlyWalkDocuments(context.Background(), indexDir, func(document StoredDocument) error {
+	walkErr := native.ReadOnlyWalkDocuments(context.Background(), indexDir, func(document native.StoredDocument) error {
 		fields := make(map[string][]string)
 		identityHex := ""
 		if visitErr := document.VisitStoredFields(func(name string, value []byte) bool {

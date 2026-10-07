@@ -177,6 +177,42 @@ func TestSeriesIndex_ExternalReceive_DuplicateIdentifierKeepsExisting(t *testing
 	require.Equal(t, "first", string(sd.Fields[0]["marker"]), "the existing document must win over the incoming duplicate")
 }
 
+// TestSeriesIndex_ExternalReceive_LegacyDuplicateKeepsExisting pins the F4
+// combination NIDX-03 §4.3/§7/§12 item 7 implies but the two tests above
+// only establish separately: AcceptsLegacyAndNativeSegments proves a
+// previous-release segment is accepted and searchable, and
+// DuplicateIdentifierKeepsExisting proves the dedup rule using two native
+// segments. Neither, on its own, proves the dedup rule also holds when the
+// already-live document came from the legacy writer. This test receives a
+// legacy-written segment first and a native-written duplicate of the same
+// identifier second, through the same StartSegment/WriteChunk/
+// CompleteSegment receiver both other tests use: the receiver's dedup logic
+// (ExternalDedupKeepExisting) operates on parsed documents and never
+// branches on which writer produced the bytes, so the legacy-authored
+// document must still win.
+func TestSeriesIndex_ExternalReceive_LegacyDuplicateKeepsExisting(t *testing.T) {
+	ctx := context.Background()
+	dir, fn := setUp(require.New(t))
+	defer fn()
+	si, err := newSeriesIndex(ctx, dir, 0, 0, nil, &testRootLease{})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, si.Close()) }()
+
+	identity := externalSegIdentity(t, "legacy-dup")
+	first := buildLegacyExternalSegment(t, identity, "legacy-first")
+	second := buildNativeExternalSegment(t, identity, "native-second")
+
+	require.NoError(t, receiveExternalSegment(t, si, first))
+	require.NoError(t, receiveExternalSegment(t, si, second))
+
+	var series pbv1.Series
+	require.NoError(t, series.Unmarshal(identity))
+	sd, _, err := si.Search(ctx, []*pbv1.Series{&series}, IndexSearchOpts{Projection: []index.FieldKey{{TagName: "marker"}}})
+	require.NoError(t, err)
+	require.Len(t, sd.SeriesList, 1, "a duplicate identifier must not create a second live document")
+	require.Equal(t, "legacy-first", string(sd.Fields[0]["marker"]), "a legacy-written existing document must also win over an incoming native duplicate")
+}
+
 // TestSeriesIndex_ExternalReceive_TruncatedSegmentRejectedNothingVisible pins
 // NIDX-03 §7/§12 item 7: a truncated (corrupt) segment fails validation
 // before introduction and leaves nothing visible.

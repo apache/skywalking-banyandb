@@ -26,6 +26,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
 
 // A read-only count runs in its own process throughout this contract. Three of
@@ -68,15 +70,15 @@ func TestReadOnlyDocCountChildProcess(t *testing.T) {
 	runtime.ReadMemStats(&stats)
 	allocatedBefore := stats.TotalAlloc
 
-	count, err := ReadOnlyDocCount(path)
+	count, err := native.ReadOnlyDocCount(path)
 
 	runtime.ReadMemStats(&stats)
 	observed := countObservation{
 		Count:       count,
 		AllocBytes:  stats.TotalAlloc - allocatedBefore,
 		Succeeded:   err == nil,
-		Corrupt:     errors.Is(err, ErrCorruptIndex),
-		NoCommitted: errors.Is(err, ErrNoCommittedIndex),
+		Corrupt:     errors.Is(err, native.ErrCorrupt),
+		NoCommitted: errors.Is(err, native.ErrNoSnapshot),
 	}
 	if err != nil {
 		observed.Err = err.Error()

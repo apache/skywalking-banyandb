@@ -29,7 +29,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	idxmetrics "github.com/apache/skywalking-banyandb/pkg/index/metrics"
 	"github.com/apache/skywalking-banyandb/pkg/index/nativeadapter"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -39,11 +39,11 @@ import (
 type elementIndex struct {
 	store    *nativeadapter.Store
 	l        *logger.Logger
-	metrics  *inverted.Metrics
+	metrics  *idxmetrics.Metrics
 	location string
 }
 
-func newElementIndex(ctx context.Context, root string, flushTimeoutSeconds int64, metrics *inverted.Metrics, leases ...storage.RootLease) (*elementIndex, error) {
+func newElementIndex(ctx context.Context, root string, flushTimeoutSeconds int64, idxMetrics *idxmetrics.Metrics, leases ...storage.RootLease) (*elementIndex, error) {
 	if len(leases) != 1 || leases[0] == nil {
 		return nil, errors.New("element index: exactly one root lease is required")
 	}
@@ -57,7 +57,7 @@ func newElementIndex(ctx context.Context, root string, flushTimeoutSeconds int64
 	ei := &elementIndex{
 		l:        logger.Fetch(ctx, "element_index"),
 		location: location,
-		metrics:  metrics,
+		metrics:  idxMetrics,
 	}
 	var err error
 	// Native owner workers are database-lifetime goroutines; they are drained

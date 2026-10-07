@@ -29,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
 
 const (
@@ -214,7 +215,7 @@ func observeCountsUntilStopped(path string, ready chan<- struct{}, stop <-chan s
 		}
 
 		startedAt := time.Now()
-		count, countErr := ReadOnlyDocCount(path)
+		count, countErr := native.ReadOnlyDocCount(path)
 		observations = append(observations, publicationObservation{
 			startedAt:  startedAt,
 			finishedAt: time.Now(),

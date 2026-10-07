@@ -1,0 +1,284 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and limitations
+// under the License.
+
+package storage
+
+// NIDX-03 §12 item 2 rollback proof, READ side, for the series index
+// (Measure normal + index mode, and the crash-cut variant). This file is
+// NOT part of the real repository's build: it is a committed TEMPLATE
+// (test/rollback/nidx03/legacy_series_index_read.go.tmpl) that
+// StagePreviousReleaseSeriesIndexTest (test/rollback/nidx03/series_index.go)
+// copies, as plain bytes, into a `git archive v0.11.1` export's
+// banyand/internal/storage/ directory, where it builds as that export's own
+// package storage test file and runs with the PREVIOUS RELEASE's own
+// seriesIndex/newSeriesIndex/Search/SearchWithoutSeries code -- proving that
+// code, not a reimplementation of it, opens sidx directories the current
+// (native-only) code wrote.
+//
+// The shared result type, series/doc builders and query logic
+// (nidx03RollbackQueryResult, nidx03RollbackSeries, nidx03RollbackResult,
+// writeNIDX03QueryResults, nidx03CaptureNormalQueries,
+// nidx03RollbackRegionKey, nidx03RollbackScoreRule) are copied -- not
+// imported -- from the current repo's
+// banyand/internal/storage/nidx03_rollback_write_test.go: a frozen export
+// has no module path back to the current repo's go.mod to import from, and
+// the whole point is that both sides build the SAME query against the
+// directory with each release's own code, not that they share a compiled
+// package.
+//
+// See docs/design/0.12.0/native-inverted-index/verification/
+// nidx-03-series-cutover/README.md for the full procedure, and
+// test/rollback/nidx03/series_index.go for the orchestration
+// (stage/build/run/compare) this template is one input to.
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"testing"
+
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/stretchr/testify/require"
+)
+
+// nidx03RollbackQueryResult mirrors the current repo's copy exactly (see
+// this file's package doc comment); its field order is the JSON key order
+// the require.JSONEq comparisons below depend on only for readability --
+// JSONEq compares structurally, not byte-for-byte.
+//
+//nolint:govet // field order kept identical to the current repo's copy for readability, not correctness.
+type nidx03RollbackQueryResult struct {
+	Name        string            `json:"name"`
+	Identities  []string          `json:"identities"`
+	Timestamps  []int64           `json:"timestamps,omitempty"`
+	Versions    []int64           `json:"versions,omitempty"`
+	Projection  []string          `json:"projection,omitempty"`
+	SortedHex   []string          `json:"sortedHex,omitempty"`
+	FieldValues map[string]string `json:"fieldValues,omitempty"`
+}
+
+const (
+	nidx03RollbackRegionKey = "region"
+	nidx03RollbackScoreRule = uint32(55)
+)
+
+func nidx03RollbackSeries(service, instance string) *pbv1.Series {
+	return &pbv1.Series{
+		Subject: "nidx03_rollback",
+		EntityValues: []*modelv1.TagValue{
+			{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: service}}},
+			{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: instance}}},
+		},
+	}
+}
+
+func nidx03SeriesText(t *testing.T, series *pbv1.Series) string {
+	t.Helper()
+	parts := make([]string, 0, len(series.EntityValues))
+	for _, v := range series.EntityValues {
+		parts = append(parts, v.GetStr().GetValue())
+	}
+	return fmt.Sprintf("%v", parts)
+}
+
+func nidx03RollbackResult(t *testing.T, name string, sd SeriesData, sortedValues [][]byte) nidx03RollbackQueryResult {
+	t.Helper()
+	type row struct {
+		identity  string
+		sorted    string
+		timestamp int64
+		version   int64
+	}
+	rows := make([]row, 0, len(sd.SeriesList))
+	for i, series := range sd.SeriesList {
+		var sortedHex string
+		if i < len(sortedValues) {
+			sortedHex = fmt.Sprintf("%x", sortedValues[i])
+		}
+		rows = append(rows, row{
+			identity:  nidx03SeriesText(t, series),
+			timestamp: sd.Timestamps[i],
+			version:   sd.Versions[i],
+			sorted:    sortedHex,
+		})
+	}
+	if len(sortedValues) == 0 {
+		sort.Slice(rows, func(i, j int) bool { return rows[i].identity < rows[j].identity })
+	}
+	result := nidx03RollbackQueryResult{Name: name}
+	for _, r := range rows {
+		result.Identities = append(result.Identities, r.identity)
+		result.Timestamps = append(result.Timestamps, r.timestamp)
+		result.Versions = append(result.Versions, r.version)
+		if r.sorted != "" {
+			result.SortedHex = append(result.SortedHex, r.sorted)
+		}
+	}
+	return result
+}
+
+func writeNIDX03QueryResults(t *testing.T, path string, results []nidx03RollbackQueryResult) {
+	t.Helper()
+	data, err := json.MarshalIndent(results, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+}
+
+// nidx03AssertMatchesNewCode is the automated-equality half of this proof:
+// it loads the sibling new-code results file writeNIDX03QueryResults (the
+// current repo's own corpus generator) already wrote beside this one, and
+// asserts structural JSON equality -- not a human running `diff`.
+func nidx03AssertMatchesNewCode(t *testing.T, newCodeResultsPath string, previousReleaseResults []nidx03RollbackQueryResult) {
+	t.Helper()
+	newCodeBytes, readErr := os.ReadFile(newCodeResultsPath) //nolint:gosec // test-only, path built from a trusted env var/default.
+	require.NoError(t, readErr, "new-code results must already exist at %s (run TestGenerateNIDX03RollbackCorpus first)", newCodeResultsPath)
+	previousReleaseBytes, marshalErr := json.MarshalIndent(previousReleaseResults, "", "  ")
+	require.NoError(t, marshalErr)
+	require.JSONEq(t, string(newCodeBytes), string(previousReleaseBytes),
+		"the previous release must return exactly the query results the new binary's own data produced")
+}
+
+// nidx03CaptureNormalQueries mirrors the current repo's copy exactly: the
+// fixed query set this proof compares across releases, run against
+// whichever seriesIndex (new- or previous-release-opened) the caller passes.
+func nidx03CaptureNormalQueries(t *testing.T, si *seriesIndex) []nidx03RollbackQueryResult {
+	t.Helper()
+	ctx := context.Background()
+	var results []nidx03RollbackQueryResult
+
+	exact, _, err := si.Search(ctx, []*pbv1.Series{nidx03RollbackSeries("svcA", "inst-00")}, IndexSearchOpts{
+		Projection: []index.FieldKey{{TagName: nidx03RollbackRegionKey}},
+	})
+	require.NoError(t, err)
+	results = append(results, nidx03RollbackResult(t, "exact-updated-svcA-inst-00", exact, nil))
+
+	ext, _, err := si.Search(ctx, []*pbv1.Series{nidx03RollbackSeries("svcExternal", "inst-00")}, IndexSearchOpts{})
+	require.NoError(t, err)
+	results = append(results, nidx03RollbackResult(t, "exact-external-svcExternal-inst-00", ext, nil))
+
+	prefixQuery := &pbv1.Series{Subject: "nidx03_rollback", EntityValues: []*modelv1.TagValue{
+		{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svcB"}}}, pbv1.AnyTagValue,
+	}}
+	prefix, _, err := si.Search(ctx, []*pbv1.Series{prefixQuery}, IndexSearchOpts{})
+	require.NoError(t, err)
+	results = append(results, nidx03RollbackResult(t, "prefix-svcB", prefix, nil))
+
+	wildcardQuery := &pbv1.Series{Subject: "nidx03_rollback", EntityValues: []*modelv1.TagValue{
+		pbv1.AnyTagValue, {Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "inst-02"}}},
+	}}
+	wildcard, _, err := si.Search(ctx, []*pbv1.Series{wildcardQuery}, IndexSearchOpts{})
+	require.NoError(t, err)
+	results = append(results, nidx03RollbackResult(t, "wildcard-inst-02", wildcard, nil))
+
+	svcCQuery := &pbv1.Series{Subject: "nidx03_rollback", EntityValues: []*modelv1.TagValue{
+		{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svcC"}}}, pbv1.AnyTagValue,
+	}}
+	order := &index.OrderBy{Type: index.OrderByTypeIndex, Sort: modelv1.Sort_SORT_ASC, Index: &databasev1.IndexRule{
+		Metadata: &commonv1.Metadata{Id: nidx03RollbackScoreRule},
+	}}
+	sorted, sortedValues, err := si.Search(ctx, []*pbv1.Series{svcCQuery}, IndexSearchOpts{Order: order, PreloadSize: 10})
+	require.NoError(t, err)
+	results = append(results, nidx03RollbackResult(t, "sorted-svcC-by-score", sorted, sortedValues))
+
+	return results
+}
+
+// nidx03RollbackCorpusRoot resolves the directory TestGenerateNIDX03RollbackCorpus
+// (run earlier, from the current repo) wrote its corpus to.
+func nidx03RollbackCorpusRoot(t *testing.T) string {
+	t.Helper()
+	if dir := os.Getenv("NIDX03_ROLLBACK_DIR"); dir != "" {
+		return dir
+	}
+	return "/mnt/d/tmp-gao-build/nidx03-rollback"
+}
+
+// TestNIDX03PreviousReleaseOpensNormalCorpus opens the normal-mode sidx
+// directory the current repo's native-only code wrote
+// (TestGenerateNIDX03RollbackCorpus) with the PREVIOUS RELEASE's own
+// seriesIndex/newSeriesIndex/Search code, runs the same fixed query set, and
+// asserts (automated, via nidx03AssertMatchesNewCode) that it matches the
+// new-code results exactly.
+func TestNIDX03PreviousReleaseOpensNormalCorpus(t *testing.T) {
+	root := nidx03RollbackCorpusRoot(t)
+	dir := filepath.Join(root, "normal")
+	if _, statErr := os.Stat(filepath.Join(dir, "sidx")); statErr != nil {
+		t.Skipf("corpus not found at %s; run TestGenerateNIDX03RollbackCorpus in the current repo first: %v", dir, statErr)
+	}
+	si, err := newSeriesIndex(context.Background(), dir, 0, 0, nil)
+	require.NoError(t, err, "the previous release must open a sidx directory the native-only code wrote")
+	defer func() { _ = si.Close() }()
+
+	results := nidx03CaptureNormalQueries(t, si)
+	writeNIDX03QueryResults(t, filepath.Join(root, "normal-results-previous-release.json"), results)
+	nidx03AssertMatchesNewCode(t, filepath.Join(root, "normal-results.json"), results)
+}
+
+// TestNIDX03PreviousReleaseOpensIndexModeCorpus is
+// TestNIDX03PreviousReleaseOpensNormalCorpus's index-mode counterpart.
+func TestNIDX03PreviousReleaseOpensIndexModeCorpus(t *testing.T) {
+	root := nidx03RollbackCorpusRoot(t)
+	dir := filepath.Join(root, "indexmode")
+	if _, statErr := os.Stat(filepath.Join(dir, "sidx")); statErr != nil {
+		t.Skipf("corpus not found at %s; run TestGenerateNIDX03RollbackCorpus in the current repo first: %v", dir, statErr)
+	}
+	si, err := newSeriesIndex(context.Background(), dir, 0, 0, nil)
+	require.NoError(t, err, "the previous release must open an index-mode sidx directory the native-only code wrote")
+	defer func() { _ = si.Close() }()
+
+	// The previous release (before NIDX-03) has no IndexModeSubject field on
+	// IndexSearchOpts: the caller pre-builds the "_im_name" term query
+	// itself, the same way banyand/measure's old planner did.
+	subjectQuery, buildErr := inverted.BuildIndexModeQuery("idx_measure", nil, nil)
+	require.NoError(t, buildErr)
+	sd, _, searchErr := si.SearchWithoutSeries(context.Background(), IndexSearchOpts{Query: subjectQuery})
+	require.NoError(t, searchErr)
+	results := []nidx03RollbackQueryResult{nidx03RollbackResult(t, "indexmode-idx_measure", sd, nil)}
+	writeNIDX03QueryResults(t, filepath.Join(root, "indexmode-results-previous-release.json"), results)
+	nidx03AssertMatchesNewCode(t, filepath.Join(root, "indexmode-results.json"), results)
+}
+
+// TestNIDX03PreviousReleaseOpensCrashCutCorpus is the crash-cut variant: the
+// directory was left behind by a writer subprocess that was SIGKILLed with
+// an in-flight, possibly unpersisted batch, never Closed. The previous
+// release must still open it (the newest structurally complete committed
+// generation) and find "precut" (admitted and persisted before the kill),
+// without erroring on whatever "midcut" left behind.
+func TestNIDX03PreviousReleaseOpensCrashCutCorpus(t *testing.T) {
+	root := nidx03RollbackCorpusRoot(t)
+	dir := filepath.Join(root, "crashcut")
+	if _, statErr := os.Stat(filepath.Join(dir, "sidx")); statErr != nil {
+		t.Skipf("corpus not found at %s; run TestGenerateNIDX03RollbackCorpus in the current repo first: %v", dir, statErr)
+	}
+	si, err := newSeriesIndex(context.Background(), dir, 0, 0, nil)
+	require.NoError(t, err, "the previous release must open a crash-cut sidx directory without erroring")
+	defer func() { _ = si.Close() }()
+
+	sd, _, searchErr := si.Search(context.Background(), []*pbv1.Series{nidx03RollbackSeries("precut", "inst-00")}, IndexSearchOpts{})
+	require.NoError(t, searchErr)
+	require.Len(t, sd.SeriesList, 1, `"precut" was admitted and persisted before the SIGKILL; it must survive the crash cut`)
+	results := []nidx03RollbackQueryResult{nidx03RollbackResult(t, "crashcut-precut-reference", sd, nil)}
+	writeNIDX03QueryResults(t, filepath.Join(root, "crashcut-results-previous-release.json"), results)
+	nidx03AssertMatchesNewCode(t, filepath.Join(dir, "crashcut-results.json"), results)
+}

@@ -60,7 +60,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	localfs "github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -1015,7 +1015,7 @@ func roundtripAllSidxDirsHaveSnapshot(groupRoot string) bool {
 		// exist (e.g. the live current-day segment while the data lands in the
 		// previous day around midnight); its series index holds no documents and
 		// therefore never gets a committed .snp, so requiring one would hang.
-		if docs, _ := inverted.ReadOnlyDocCount(sidxDir); docs == 0 {
+		if docs, _ := native.ReadOnlyDocCount(sidxDir); docs == 0 {
 			continue
 		}
 		entries, readErr := os.ReadDir(sidxDir)

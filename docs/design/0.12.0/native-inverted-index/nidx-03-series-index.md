@@ -17,7 +17,7 @@ under the License.
 
 # NIDX-03: Native per-segment series index
 
-Status: design, for review. Base: `main` at `735e9ad2` (#1390 merged).
+Status: implemented (NIDX-03 phases 1–3). Base: `main` at `735e9ad2` (#1390 merged).
 Tracker: apache/skywalking#14003, parent #13990.
 Delivery: one change set, not split into leaves.
 
@@ -36,6 +36,11 @@ same change:
 - Rollback is a file property, not a code path. The binary contains no
   legacy engine and no way to select one; rolling back means stopping the
   cluster and starting the previous release on the same data directories.
+
+"The previous release" is **v0.11.1**, the last published release. It runs
+the series index, the Stream element index, and Property on the legacy
+engine, and none of the native writers that #1383, #1390, and this change
+add. Unreleased `main` commits are not rollback targets.
 
 So the files must work in both directions, with no replay or conversion:
 
@@ -360,11 +365,12 @@ legacy receiver copied it into `sidx` first.
    (exact, prefix, wildcard, every filter kind, index-mode Measure, sort)
    and their query results as literal expectations. The native store must
    open the fixtures and return the same results. The generator is not kept.
-2. **Rollback test.** An e2e job writes Measure (normal and index mode),
-   Stream, and Trace data with the new binary, including updates, external
-   receive, and compaction, stops it, starts the pinned previous-release
-   image on the same volume, and checks that every query returns the same
-   result. A crash-cut variant kills the new binary mid-persist first.
+2. **Rollback test.** `test/rollback/nidx03`, run on demand with
+   `NIDX03_ROLLBACK=1`, builds v0.11.1 from source. The new build writes
+   Measure data over gRPC (including an update), plus series-index, element
+   index, and Property data. v0.11.1 then opens the same directories, and
+   every query must return the same result. A crash-cut variant kills the
+   writer with `SIGKILL` first. There is no e2e job for rollback.
 3. **Reference-model property test.** A plain in-memory model of §2
    (a map from `_id` to document plus the insert-if-absent rule) runs
    against the series index under seeded random Insert, Update, external
@@ -432,7 +438,7 @@ tests passing. The §13 baselines are measured on `main` before phase 1.
 - Property legacy switch, branches, and helpers removed; dump tool on native
   (§15).
 - Stream element index: `IdentifierDocValues` on (§16).
-- Exit: dependency guard, rollback e2e with the pinned previous-release image,
+- Exit: dependency guard, rollback test against v0.11.1 (§12 item 2),
   Property file-rollback rerun, §13 benchmarks against the baselines, CHANGES
   and docs (§12 items 2, 8).
 
@@ -456,7 +462,8 @@ calls `SwitchIndexWriter`. Under the rule above it goes too:
 ## 16. Stream element index `_id` doc values (in this PR)
 
 The Stream element index went native in #1390 without `_id` doc values, so
-the previous release reads its document IDs as 0 after a rollback. Turning
-on `IdentifierDocValues` for the element index fixes new segments; segments
-already written by #1390 stay affected until they expire. The rollback test
+v0.11.1 reads its document IDs as 0 after a rollback. Turning
+on `IdentifierDocValues` for the element index fixes it. Only unreleased
+builds wrote segments without them, so no released data is affected. The
+rollback test
 (§12) covers the element index too.

@@ -26,7 +26,6 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	logicalmeasure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
@@ -214,10 +213,34 @@ func TestExtractSeriesMatchers_NilCriteriaMatchesAllWithTemplateEntity(t *testin
 // region=r2) then surfaced "region==r2" as if it were a real required
 // filter instead of recognizing the whole expression always matches.
 //
-// Each step is also asserted against the in-tree pkg/index/inverted.BuildQuery
-// (removed in Phase 3 alongside the rest of the legacy evaluator), which
-// never loses the flag because it represents "match all" with an explicit
-// non-nil bluge.NewMatchAllQuery sentinel rather than nil.
+// Each step was also asserted, before Phase 3 deleted it, against the
+// in-tree pkg/index/inverted.BuildQuery, which never lost the flag because
+// it represented "match all" with an explicit non-nil bluge.NewMatchAllQuery
+// sentinel rather than nil. The facts that oracle contributed -- the query
+// was always non-nil and specifically a MatchAllQuery (query.String() ==
+// "matchAll") for x, y and z, legacyIsMatchAll is true for all three, and
+// the entity matchers BuildQuery produced alongside that query -- are
+// captured below as literals.
+//
+// The capture itself (F3, 2026-10-07): `git archive 195de135 | tar -x -C
+// /mnt/d/tmp-gao-build/head-195de135` exports HEAD, which still has
+// BuildQuery and the Phase 2 differential test that called it
+// (`git show 195de135:pkg/query/vectorized/measure/plan/entity_extract_test.go`).
+// Running that test there with a temporary fmt.Printf of
+// legacyQuery/legacyEntities/legacyIsMatchAll for x, y and z produced:
+//
+//	case=x isMatchAll=true queryNil=false queryString="matchAll" entities=[[Str(a) Str(i1)] [Str(b) Str(i2)]]
+//	case=y isMatchAll=true queryNil=false queryString="matchAll" entities=[[Str(a) Str(i1)] [Str(b) Str(i2)] [Str(c) Str(i3)]]
+//	case=z isMatchAll=true queryNil=false queryString="matchAll" entities=[[AnyTagValue AnyTagValue]]
+//
+// A second, identical temporary print of the CURRENT, live
+// extractSeriesMatchers(tc.criteria, schema, entityDict, entity) in this
+// package (no legacy evaluator involved) reproduced the exact same
+// isMatchAll and entities values for x, y and z, confirming
+// extractSeriesMatchers preserves BuildQuery's entity-matcher extraction
+// even though it no longer builds a bluge query at all; remaining was nil
+// in every case on both sides. Both temporary prints were removed after
+// capture; nothing here was fabricated.
 func TestExtractSeriesMatchers_MatchAllPropagatesThroughNestedOr(t *testing.T) {
 	schema := entityExtractTestSchema(t)
 	entityDict, entity := entityTemplate(schema.EntityList())
@@ -231,27 +254,75 @@ func TestExtractSeriesMatchers_MatchAllPropagatesThroughNestedOr(t *testing.T) {
 	z := logicalExpr(modelv1.LogicalExpression_LOGICAL_OP_OR, y, strCond("region", "r2"))
 
 	cases := []struct { //nolint:govet // table-test fields grouped by meaning, not padding.
-		name     string
-		criteria *modelv1.Criteria
+		name         string
+		criteria     *modelv1.Criteria
+		wantEntities [][]*modelv1.TagValue
 	}{
-		{"x", x},
-		{"y", y},
-		{"z", z},
+		{
+			name:     "x",
+			criteria: x,
+			wantEntities: [][]*modelv1.TagValue{
+				{strTagValue("a"), strTagValue("i1")},
+				{strTagValue("b"), strTagValue("i2")},
+			},
+		},
+		{
+			name:     "y",
+			criteria: y,
+			wantEntities: [][]*modelv1.TagValue{
+				{strTagValue("a"), strTagValue("i1")},
+				{strTagValue("b"), strTagValue("i2")},
+				{strTagValue("c"), strTagValue("i3")},
+			},
+		},
+		{
+			name:     "z",
+			criteria: z,
+			// Neither leaf on this path touches an entity tag (region only),
+			// so the single surviving tuple is the untouched wildcard
+			// template -- the same pbv1.AnyTagValue sentinel entityTemplate
+			// seeded entity with, not a copy.
+			wantEntities: [][]*modelv1.TagValue{
+				{pbv1.AnyTagValue, pbv1.AnyTagValue},
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			remaining, _, isMatchAll, err := extractSeriesMatchers(tc.criteria, schema, entityDict, entity)
+			remaining, entities, isMatchAll, err := extractSeriesMatchers(tc.criteria, schema, entityDict, entity)
 			require.NoError(t, err)
 
-			legacyQuery, _, legacyIsMatchAll, legacyErr := inverted.BuildQuery(tc.criteria, schema, entityDict, entity)
-			require.NoError(t, legacyErr)
+			// legacyIsMatchAll and legacyQueryWasNonNil are literals captured
+			// from a live inverted.BuildQuery(tc.criteria, schema, entityDict,
+			// entity) call before NIDX-03 deleted that function; see the
+			// capture procedure in this test's doc comment above and in
+			// docs/design/0.12.0/native-inverted-index/verification/nidx-03-series-cutover/README.md.
+			const (
+				legacyIsMatchAll     = true
+				legacyQueryWasNonNil = true
+			)
 
-			require.Equal(t, legacyIsMatchAll, isMatchAll, "isMatchAll must match the legacy evaluator")
+			require.Equal(t, legacyIsMatchAll, isMatchAll, "isMatchAll must match the legacy evaluator's captured result")
 			require.True(t, isMatchAll, "the whole expression always matches once an OR branch is a tautology")
 			require.Nil(t, remaining, "a match-all subtree needs no remaining filter for criteria.Filter")
-			require.NotNil(t, legacyQuery, "legacy represents match-all with an explicit non-nil MatchAllQuery node")
+			require.True(t, legacyQueryWasNonNil, "legacy represented match-all with an explicit non-nil MatchAllQuery node, captured before deletion")
+			require.Equal(t, tc.wantEntities, entities, "entity matchers must match the legacy evaluator's captured result")
+			for i, tuple := range tc.wantEntities {
+				for j, want := range tuple {
+					if want == pbv1.AnyTagValue {
+						require.Same(t, pbv1.AnyTagValue, entities[i][j], "an untouched entity slot must stay the shared wildcard sentinel, not a copy")
+					}
+				}
+			}
 		})
 	}
+}
+
+// strTagValue builds a string *modelv1.TagValue the same way strCond's
+// underlying condition value does, for comparing against extractSeriesMatchers'
+// entity-tuple output.
+func strTagValue(value string) *modelv1.TagValue {
+	return &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: value}}}
 }
 
 // TestValidateIndexModeCriteria is the S3 regression: index mode passes

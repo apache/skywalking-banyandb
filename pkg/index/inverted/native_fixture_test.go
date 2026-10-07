@@ -44,7 +44,7 @@ func loadLegacySegment(data *segment.Data) (segment.Segment, error) {
 
 // mergeLegacySegments merges segments with the compatibility merger, so an
 // oracle test can drive it without naming the retired module.
-func mergeLegacySegments(segments []segmentValue, drops []*roaringpkg.Bitmap) segmentMergerValue {
+func mergeLegacySegments(segments []segment.Segment, drops []*roaringpkg.Bitmap) segment.Merger {
 	return legacyice.Merge(segments, drops, legacyMergeBufferSize)
 }
 

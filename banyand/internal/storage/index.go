@@ -33,7 +33,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	idxmetrics "github.com/apache/skywalking-banyandb/pkg/index/metrics"
 	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/index/native/criteria"
 	"github.com/apache/skywalking-banyandb/pkg/index/nativeanalysis"
@@ -103,7 +103,7 @@ func (s *segment[T, O]) Lookup(ctx context.Context, series []*pbv1.Series) (pbv1
 type seriesIndex struct {
 	owner   *native.Owner
 	l       *logger.Logger
-	metrics *inverted.Metrics
+	metrics *idxmetrics.Metrics
 	p       common.Position
 	// wait selects synchronous persistence (SeriesIndexFlushTimeoutSeconds ==
 	// 0): Insert/Update blocks for the owner's durability callback before
@@ -114,7 +114,7 @@ type seriesIndex struct {
 }
 
 func newSeriesIndex(ctx context.Context, root string, flushTimeoutSeconds int64, cacheMaxBytes int,
-	metrics *inverted.Metrics, lease RootLease,
+	metrics *idxmetrics.Metrics, lease RootLease,
 ) (*seriesIndex, error) {
 	si := &seriesIndex{
 		l: logger.Fetch(ctx, "series_index"),

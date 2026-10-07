@@ -1,28 +1,30 @@
-// Licensed to Apache Software Foundation (ASF) under one or more contributor
-// license agreements. See the NOTICE file distributed with
-// this work for additional information regarding copyright
-// ownership. Apache Software Foundation (ASF) licenses this file to you under
-// the Apache License, Version 2.0 (the "License"); you may
-// not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to you under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License. You may obtain a copy of the License at
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing,
-// software distributed under the License is distributed on an
-// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-// KIND, either express or implied.  See the License for the
-// specific language governing permissions and limitations
-// under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
-package inverted
+package metrics
 
 import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
 
-// Metrics is the metrics for the inverted index.
+// Metrics is the metrics surface a native.Owner-backed index (the series
+// index, the Stream element index, and the Property store) reports through.
+// It was formerly pkg/index/inverted.Metrics; every field it exposed for the
+// legacy bluge writer's status either has a native-owner equivalent
+// (ObserveNative) or has no native counterpart and is kept zero.
 type Metrics struct {
 	totalUpdates meter.Gauge
 	totalDeletes meter.Gauge
@@ -56,7 +58,7 @@ type Metrics struct {
 	cacheMaxBytesSize meter.Gauge
 }
 
-// NewMetrics creates a new metrics for the inverted index.
+// NewMetrics creates a new Metrics for a native-owner-backed index.
 func NewMetrics(factory observability.Factory, labelNames ...string) *Metrics {
 	return &Metrics{
 		totalUpdates: factory.NewGauge("inverted_index_total_updates", labelNames...),
@@ -132,68 +134,12 @@ func (m *Metrics) DeleteAll(labelValues ...string) {
 	m.cacheMaxBytesSize.Delete(labelValues...)
 }
 
-// ObserveNative records metrics available from the native owner. The byte
-// value is the current immutable-root payload size, not the legacy writer's
-// on-disk-byte status (which also accounts for files outside the live root).
+// ObserveNative records metrics available from the native owner: the live
+// document count and the current immutable-root payload size.
 func (m *Metrics) ObserveNative(dataCount, dataSizeBytes int64, labelValues ...string) {
 	if m == nil {
 		return
 	}
 	m.totalDocCount.Set(float64(dataCount), labelValues...)
 	m.nativeSnapshotBytes.Set(float64(dataSizeBytes), labelValues...)
-}
-
-func (s *store) CollectMetrics(labelValues ...string) {
-	if s.metrics == nil {
-		return
-	}
-	if !s.closer.AddRunning() {
-		return
-	}
-	defer s.closer.Done()
-	// fixme: data race here
-	status := s.writer.Status()
-	s.metrics.totalUpdates.Set(float64(status.TotUpdates), labelValues...)
-	s.metrics.totalDeletes.Set(float64(status.TotDeletes), labelValues...)
-	s.metrics.totalBatches.Set(float64(status.TotBatches), labelValues...)
-	s.metrics.totalErrors.Set(float64(status.TotOnErrors), labelValues...)
-
-	s.metrics.totalAnalysisTime.Set(float64(status.TotAnalysisTime), labelValues...)
-	s.metrics.totalIndexTime.Set(float64(status.TotIndexTime), labelValues...)
-
-	s.metrics.totalTermSearchersStarted.Set(float64(status.TotTermSearchersStarted), labelValues...)
-	s.metrics.totalTermSearchersFinished.Set(float64(status.TotTermSearchersFinished), labelValues...)
-
-	s.metrics.totalMergeStarted.Set(float64(status.TotMemMergeZapBeg), append(labelValues, "mem")...)
-	s.metrics.totalMergeFinished.Set(float64(status.TotMemMergeZapEnd), append(labelValues, "mem")...)
-	s.metrics.totalMergeLatency.Set(float64(status.TotMemMergeZapTime), append(labelValues, "mem")...)
-	s.metrics.totalMergeErrors.Set(float64(status.TotMemMergeErr), append(labelValues, "mem")...)
-
-	s.metrics.totalMergeStarted.Set(float64(status.TotFileMergeZapBeg), append(labelValues, "file")...)
-	s.metrics.totalMergeFinished.Set(float64(status.TotFileMergeZapEnd), append(labelValues, "file")...)
-	s.metrics.totalMergeLatency.Set(float64(status.TotFileMergeZapTime), append(labelValues, "file")...)
-	s.metrics.totalMergeErrors.Set(float64(status.TotFileMergeLoopErr+status.TotFileMergePlanErr+status.TotFileMergePlanTasksErr), append(labelValues, "file")...)
-
-	s.metrics.totalMemSegments.Set(float64(status.TotMemorySegmentsAtRoot), labelValues...)
-	s.metrics.totalFileSegments.Set(float64(status.TotFileSegmentsAtRoot), labelValues...)
-	s.metrics.curOnDiskBytes.Set(float64(status.CurOnDiskBytes), labelValues...)
-	s.metrics.curOnDiskFiles.Set(float64(status.CurOnDiskFiles), labelValues...)
-
-	s.metrics.cacheGetCalls.Set(float64(status.CacheGetCalls), labelValues...)
-	s.metrics.cacheSetCalls.Set(float64(status.CacheSetCalls), labelValues...)
-	s.metrics.cacheMisses.Set(float64(status.CacheMisses), labelValues...)
-	s.metrics.cacheEntriesCount.Set(float64(status.CacheEntriesCount), labelValues...)
-	s.metrics.cacheBytesSize.Set(float64(status.CacheBytesSize), labelValues...)
-	s.metrics.cacheMaxBytesSize.Set(float64(status.CacheMaxBytesSize), labelValues...)
-
-	r, err := s.writer.Reader()
-	if err != nil {
-		return
-	}
-	defer r.Close()
-	n, err := r.Count()
-	if err != nil {
-		return
-	}
-	s.metrics.totalDocCount.Set(float64(n), labelValues...)
 }

@@ -1043,8 +1043,8 @@ func (r *repairScheduler) checkHasBuildTree() (bool, error) {
 
 //nolint:contextcheck
 func (r *repairScheduler) doBuildTree() (err error) {
-	if r.db.transition.Load() || r.db.closed.Load() {
-		return errors.New("database writer transition in progress")
+	if r.db.closed.Load() {
+		return errors.New("database is closed")
 	}
 	now := time.Now()
 	r.metrics.totalRepairBuildTreeStarted.Inc(1)
@@ -1064,9 +1064,9 @@ func (r *repairScheduler) doBuildTree() (err error) {
 	hasUpdates := false
 	var checkErr error
 	r.db.mu.RLock()
-	if r.db.transition.Load() || r.db.closed.Load() {
+	if r.db.closed.Load() {
 		r.db.mu.RUnlock()
-		return errors.New("database writer transition in progress")
+		return errors.New("database is closed")
 	}
 	r.db.groups.Range(func(_, value any) bool {
 		gs := value.(*groupShards)

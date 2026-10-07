@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
@@ -59,11 +60,8 @@ const (
 	// file shorter than it cannot carry a valid one.
 	iceFooterLength = 60
 
-	// unionSourceTagName is the stored tag the seeded sources carry, and
-	// publishedSeriesLimit bounds a destination lookup so a stray duplicate is
-	// reported rather than silently truncated away.
-	unionSourceTagName   = "service"
-	publishedSeriesLimit = 100
+	// unionSourceTagName is the stored tag the seeded sources carry.
+	unionSourceTagName = "service"
 )
 
 // TestSeriesUnionSourceReadReachesNativeVisitor is the structural half of the
@@ -215,9 +213,10 @@ func seedUnionSourceSidx(t *testing.T, groupRoot, segName string, seriesSet []un
 	return sidxDir
 }
 
-// openPublishedDestination opens a published union index through the retained
-// series-store surface, which this milestone does not touch, so what it reports
-// cannot agree with a faulty source read by construction.
+// openPublishedDestination opens a published union index through the legacy
+// compatibility store, an independent reader from the native visitor the union
+// reads its sources with, so what it reports cannot agree with a faulty source
+// read by construction.
 func openPublishedDestination(t *testing.T, sidxDir string) index.SeriesStore {
 	t.Helper()
 	store, err := inverted.NewStore(inverted.StoreOpts{Path: sidxDir, BatchWaitSec: 0})
@@ -227,23 +226,17 @@ func openPublishedDestination(t *testing.T, sidxDir string) index.SeriesStore {
 
 // publishedUnionSeries looks one identity up in a published union index and
 // reports the stored tag values it holds, or reports that the index holds no
-// live document under that identity. The lookup is an exact one so that the
-// answer for one series can never be contaminated by another's.
+// live document under that identity. The lookup is an exact identifier one so
+// that the answer for one series can never be contaminated by another's.
 func publishedUnionSeries(t *testing.T, store index.SeriesStore, identity []byte) ([]string, bool) {
 	t.Helper()
-	query, err := store.BuildQuery([]index.SeriesMatcher{
-		{Type: index.SeriesMatcherTypeExact, Match: identity},
-	}, nil, nil)
+	fields, err := store.StoredFields(context.Background(), identity, index.FieldKey{TagName: unionSourceTagName})
 	require.NoError(t, err)
-	documents, err := store.Search(context.Background(),
-		[]index.FieldKey{{TagName: unionSourceTagName}}, query, publishedSeriesLimit)
-	require.NoError(t, err)
-	if len(documents) == 0 {
+	if fields == nil {
 		return nil, false
 	}
-	require.Len(t, documents, 1, "identity %q must resolve to at most one live published document", identity)
-	var values []string
-	if value, stored := documents[0].Fields[unionSourceTagName]; stored && value != nil {
+	values := make([]string, 0, len(fields[unionSourceTagName]))
+	for _, value := range fields[unionSourceTagName] {
 		values = append(values, string(value))
 	}
 	sort.Strings(values)
@@ -270,7 +263,7 @@ func truncateUnionSourceSegment(t *testing.T, sidxDir string) {
 // exists for: a lifecycle migration unions the series indexes of several node
 // replicas into one staged index before broadcasting it. The union reads every
 // source through the native document visitor and re-emits the survivors through
-// its retained destination writer, which this milestone does not change.
+// a native destination owner.
 //
 // Requirements proved here:
 //
@@ -299,7 +292,7 @@ func TestE2ESeriesUnionNativeSource(t *testing.T) {
 	tester.NoError(err)
 	tester.Equal(staging, published, "a union that read live series must publish its staged index")
 
-	publishedCount, countErr := inverted.ReadOnlyDocCount(published)
+	publishedCount, countErr := native.ReadOnlyDocCount(published)
 	tester.NoError(countErr)
 	tester.Equal(int64(2), publishedCount,
 		"the union must publish exactly the two live series, each once, even though the first is read twice")
@@ -326,7 +319,7 @@ func TestE2ESeriesUnionNativeSource(t *testing.T) {
 
 	corruptPublished, corruptErr := BuildGroupUnionSidx(context.Background(),
 		[]string{corruptRoot}, corruptStaging, nil)
-	tester.ErrorIs(corruptErr, inverted.ErrCorruptIndex,
+	tester.ErrorIs(corruptErr, native.ErrCorrupt,
 		"a damaged source must be reported as a corrupt index, not as an opaque read failure")
 	tester.Empty(corruptPublished, "a union that failed on a damaged source must publish no staged index")
 }

@@ -30,6 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
 
 // The NIDX-01E corpus is the Property shard issue #14012 declares: one shard
@@ -184,7 +185,7 @@ func TestGenerateNIDX01EFixture(t *testing.T) {
 	// generation is newest, and that exactly the four declared rows survive its
 	// deletion masks -- are checked here with operations already merged.
 	tester.Equal(nidx01eSnapshotID, snapshots, "regenerating moved the corpus's newest generation; update nidx01eSnapshotID")
-	visible, err := ReadOnlyDocCount(nidx01eShardDir)
+	visible, err := native.ReadOnlyDocCount(nidx01eShardDir)
 	tester.NoError(err)
 	tester.Equal(nidx01eVisibleRowCount, visible, "the corpus must leave exactly the declared visible rows undeleted")
 

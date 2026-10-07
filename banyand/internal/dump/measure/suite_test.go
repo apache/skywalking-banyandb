@@ -47,7 +47,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	localfs "github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -638,7 +638,7 @@ func findSidxSegmentPath(t *testing.T, root string) string {
 	count := 0
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err == nil && d.IsDir() && d.Name() == "sidx" {
-			c, e := inverted.ReadOnlyDocCount(p)
+			c, e := native.ReadOnlyDocCount(p)
 			candidates += fmt.Sprintf("{path=%s count=%d err=%v} ", p, c, e)
 			count++
 			if c > best {

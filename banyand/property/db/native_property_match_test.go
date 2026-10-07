@@ -47,84 +47,67 @@ func TestNativePropertyMatchParity(t *testing.T) {
 		{name: "and", analyzer: "standard", operator: modelv1.Condition_MatchOption_OPERATOR_AND, want: []string{}},
 		{name: "or", analyzer: "standard", operator: modelv1.Condition_MatchOption_OPERATOR_OR, want: []string{"two"}},
 	}
-	for _, nativeWriter := range []bool{false, true} {
-		nativeWriter := nativeWriter
-		t.Run("native="+boolString(nativeWriter), func(t *testing.T) {
-			location, cleanup, err := test.NewSpace()
-			require.NoError(t, err)
-			defer cleanup()
-			db, err := OpenDB(ctx, Config{
-				Location: location, MetricsScopeName: "native_match_parity", FlushInterval: time.Second,
-				Index: IndexConfig{NativeWriter: nativeWriter, WaitForPersistence: true},
-			}, observability.BypassRegistry, fs.NewLocalFileSystem())
-			require.NoError(t, err)
-			defer db.Close()
-			for revision, item := range []struct{ id, value string }{{"one", "red blue"}, {"two", "blue"}, {"three", "green"}} {
-				p := &propertyv1.Property{
-					Metadata: &commonv1.Metadata{Group: testPropertyGroup, Name: testPropertyName, ModRevision: int64(revision + 1)}, Id: item.id,
-					Tags: []*modelv1.Tag{{Key: "tag1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: item.value}}}}},
-				}
-				require.NoError(t, db.Update(ctx, 0, GetPropertyID(p), p))
-			}
-			for _, tc := range cases {
-				option := &modelv1.Condition_MatchOption{Analyzer: tc.analyzer, Operator: tc.operator}
-				criteria := &modelv1.Criteria{Exp: &modelv1.Criteria_Condition{Condition: &modelv1.Condition{
-					Name: "tag1", Op: modelv1.Condition_BINARY_OP_MATCH, MatchOption: option,
-					Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "red blue"}}},
-				}}}
-				rows, queryErr := db.Query(ctx, &propertyv1.QueryRequest{Groups: []string{testPropertyGroup}, Criteria: criteria})
-				require.NoError(t, queryErr, tc.name)
-				got := make([]string, 0, len(rows))
-				for _, row := range rows {
-					got = append(got, unmarshalProperty(t, row.Source()).Id)
-				}
-				sort.Strings(got)
-				require.Equal(t, tc.want, got, tc.name)
-			}
-		})
+	location, cleanup, err := test.NewSpace()
+	require.NoError(t, err)
+	defer cleanup()
+	db, err := OpenDB(ctx, Config{
+		Location: location, MetricsScopeName: "native_match_parity", FlushInterval: time.Second,
+		Index: IndexConfig{WaitForPersistence: true},
+	}, observability.BypassRegistry, fs.NewLocalFileSystem())
+	require.NoError(t, err)
+	defer db.Close()
+	for revision, item := range []struct{ id, value string }{{"one", "red blue"}, {"two", "blue"}, {"three", "green"}} {
+		p := &propertyv1.Property{
+			Metadata: &commonv1.Metadata{Group: testPropertyGroup, Name: testPropertyName, ModRevision: int64(revision + 1)}, Id: item.id,
+			Tags: []*modelv1.Tag{{Key: "tag1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: item.value}}}}},
+		}
+		require.NoError(t, db.Update(ctx, 0, GetPropertyID(p), p))
 	}
-}
-
-func boolString(value bool) string {
-	if value {
-		return "true"
+	for _, tc := range cases {
+		option := &modelv1.Condition_MatchOption{Analyzer: tc.analyzer, Operator: tc.operator}
+		criteria := &modelv1.Criteria{Exp: &modelv1.Criteria_Condition{Condition: &modelv1.Condition{
+			Name: "tag1", Op: modelv1.Condition_BINARY_OP_MATCH, MatchOption: option,
+			Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "red blue"}}},
+		}}}
+		rows, queryErr := db.Query(ctx, &propertyv1.QueryRequest{Groups: []string{testPropertyGroup}, Criteria: criteria})
+		require.NoError(t, queryErr, tc.name)
+		got := make([]string, 0, len(rows))
+		for _, row := range rows {
+			got = append(got, unmarshalProperty(t, row.Source()).Id)
+		}
+		sort.Strings(got)
+		require.Equal(t, tc.want, got, tc.name)
 	}
-	return "false"
 }
 
 func TestNativePropertyEmptyStringConditions(t *testing.T) {
 	ctx := context.Background()
-	for _, nativeWriter := range []bool{false, true} {
-		nativeWriter := nativeWriter
-		t.Run("native="+boolString(nativeWriter), func(t *testing.T) {
-			location, cleanup, err := test.NewSpace()
-			require.NoError(t, err)
-			defer cleanup()
-			db, err := OpenDB(ctx, Config{
-				Location: location, MetricsScopeName: "native_empty_conditions", FlushInterval: time.Second,
-				Index: IndexConfig{NativeWriter: nativeWriter, WaitForPersistence: true},
-			}, observability.BypassRegistry, fs.NewLocalFileSystem())
-			require.NoError(t, err)
-			defer db.Close()
-			p := &propertyv1.Property{
-				Metadata: &commonv1.Metadata{Group: testPropertyGroup, Name: testPropertyName, ModRevision: 1}, Id: "empty",
-				Tags: []*modelv1.Tag{{Key: "tag1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: ""}}}}},
-			}
-			require.NoError(t, db.Update(ctx, 0, GetPropertyID(p), p))
-			for _, op := range []modelv1.Condition_BinaryOp{modelv1.Condition_BINARY_OP_EQ, modelv1.Condition_BINARY_OP_IN, modelv1.Condition_BINARY_OP_NOT_IN} {
-				value := &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: ""}}}
-				if op != modelv1.Condition_BINARY_OP_EQ {
-					value = &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: []string{""}}}}
-				}
-				criteria := &modelv1.Criteria{Exp: &modelv1.Criteria_Condition{Condition: &modelv1.Condition{Name: "tag1", Op: op, Value: value}}}
-				rows, queryErr := db.Query(ctx, &propertyv1.QueryRequest{Groups: []string{testPropertyGroup}, Criteria: criteria})
-				require.NoError(t, queryErr, op.String())
-				if op == modelv1.Condition_BINARY_OP_NOT_IN {
-					require.Empty(t, rows, op.String())
-				} else {
-					require.Len(t, rows, 1, op.String())
-				}
-			}
-		})
+	location, cleanup, err := test.NewSpace()
+	require.NoError(t, err)
+	defer cleanup()
+	db, err := OpenDB(ctx, Config{
+		Location: location, MetricsScopeName: "native_empty_conditions", FlushInterval: time.Second,
+		Index: IndexConfig{WaitForPersistence: true},
+	}, observability.BypassRegistry, fs.NewLocalFileSystem())
+	require.NoError(t, err)
+	defer db.Close()
+	p := &propertyv1.Property{
+		Metadata: &commonv1.Metadata{Group: testPropertyGroup, Name: testPropertyName, ModRevision: 1}, Id: "empty",
+		Tags: []*modelv1.Tag{{Key: "tag1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: ""}}}}},
+	}
+	require.NoError(t, db.Update(ctx, 0, GetPropertyID(p), p))
+	for _, op := range []modelv1.Condition_BinaryOp{modelv1.Condition_BINARY_OP_EQ, modelv1.Condition_BINARY_OP_IN, modelv1.Condition_BINARY_OP_NOT_IN} {
+		value := &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: ""}}}
+		if op != modelv1.Condition_BINARY_OP_EQ {
+			value = &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: []string{""}}}}
+		}
+		criteria := &modelv1.Criteria{Exp: &modelv1.Criteria_Condition{Condition: &modelv1.Condition{Name: "tag1", Op: op, Value: value}}}
+		rows, queryErr := db.Query(ctx, &propertyv1.QueryRequest{Groups: []string{testPropertyGroup}, Criteria: criteria})
+		require.NoError(t, queryErr, op.String())
+		if op == modelv1.Condition_BINARY_OP_NOT_IN {
+			require.Empty(t, rows, op.String())
+		} else {
+			require.Len(t, rows, 1, op.String())
+		}
 	}
 }

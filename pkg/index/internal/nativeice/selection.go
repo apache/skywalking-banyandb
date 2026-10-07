@@ -1215,3 +1215,22 @@ func (s *storedSegmentReader) visitSelected(ctx context.Context, selected, delet
 	}
 	return nil
 }
+
+// PrepareTermFilter eagerly builds field's absent-term filter (the exact
+// term set on a small segment, the bloom filter on a larger one) for this
+// reader's one segment, so the first exact lookup against field after the
+// segment is published does not pay to build it lazily. It is a no-op for a
+// reader spanning more than one segment (a merged read view, not a single
+// freshly constructed or reopened segment), since those callers build their
+// own per-segment readers and warm each individually.
+func (r *Reader) PrepareTermFilter(field string) error {
+	if len(r.segments) != 1 {
+		return nil
+	}
+	storedReader, err := r.storedReader(0)
+	if err != nil {
+		return err
+	}
+	_, err = storedReader.termAbsent(field, nil)
+	return err
+}

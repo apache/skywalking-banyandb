@@ -25,6 +25,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/metrics"
 	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/index/nativeadapter"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -54,7 +55,7 @@ func TestLegacyStoreReadsNativeAdapterTimestamps(t *testing.T) {
 	legacy, err := NewStore(StoreOpts{
 		Path:    path,
 		Logger:  logger.GetLogger("test"),
-		Metrics: NewMetrics(observability.BypassRegistry.With(observability.RootScope)),
+		Metrics: metrics.NewMetrics(observability.BypassRegistry.With(observability.RootScope)),
 	})
 	require.NoError(t, err)
 	defer func() { require.NoError(t, legacy.Close()) }()

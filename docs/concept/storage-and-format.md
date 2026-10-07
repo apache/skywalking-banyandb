@@ -19,7 +19,7 @@ Despite five API resources, there are only **two** physical storage engines unde
 | Family | Backs | On disk | Mutability |
 | --- | --- | --- | --- |
 | **Columnar TSDB** (BanyanDB-native) | `Measure` (normal mode), `Stream`, `Trace` (span store) | per-part column files (`*.bin`, `*.tf`, `*.t`, …) inside epoch-named part directories | append-only — immutable parts, mem → flush → merge |
-| **Inverted index** (third-party [Bluge](https://github.com/blugelabs/bluge) + ICE segments) | `Property`, `Measure` (index-mode), and the **series index** used by every TSDB engine | Lucene-style `*.seg` / `*.snp` segment files | mutable — new document + tombstone bitmap, GC at merge |
+| **Inverted index** (native ICE v3 segments, `pkg/index/native`) | `Property`, `Measure` (index-mode), and the **series index** used by every TSDB engine | Lucene-style `*.seg` / `*.snp` segment files | mutable — new document + tombstone bitmap; GC at tiered merge (`Owner.Compact`), gated by a 16-segment compaction threshold — not immediate, not per-write |
 
 So the five resources really decompose into **3 columnar + 2 inverted-index** uses, plus the **sidx** ordered secondary-index store that `Trace` embeds.
 
@@ -36,12 +36,12 @@ The columnar engines store values **by column** for compression and projection e
 ├── lock                              # advisory flock for the whole group's TSDB
 └── seg-<YYYYMMDD|YYYYMMDDHH>/        # SEGMENT = a time bucket (the rotation/retention unit)
     ├── metadata                      #   {"version":"1.5.0","endTime":"<RFC3339Nano>"} (JSON)
-    ├── sidx/                         #   per-SEGMENT series inverted index (Bluge) — shared by all shards
+    ├── sidx/                         #   per-SEGMENT series inverted index (native ICE v3) — shared by all shards
     └── shard-<N>/                    #   SHARD lives *inside* the segment
         ├── <016x>/                   #     PART (one immutable flush/merge output)
         │   └── … columnar files …
         ├── <016x>.snp               #     snapshot manifest = JSON array of live part dir names
-        ├── idx/                      #     STREAM only: per-shard element inverted index (Bluge)
+        ├── idx/                      #     STREAM only: per-shard element inverted index (native ICE v3; only the offline NIDX-04 migration tool still emits legacy Bluge output)
         └── sidx/<ruleName>/<016x>/   #     TRACE only: ordered secondary-index parts (one tree per index rule)
 ```
 
@@ -50,7 +50,7 @@ flowchart TD
     G["group/ (lock)"] --> S1["seg-20240901/"]
     G --> S2["seg-20240902/"]
     S1 --> M["metadata (JSON: version, endTime)"]
-    S1 --> SIDX["sidx/ — segment series index (Bluge)"]
+    S1 --> SIDX["sidx/ — segment series index (native ICE v3)"]
     S1 --> SH0["shard-0/"]
     S1 --> SH1["shard-1/"]
     SH0 --> P1["000…001/ (part)"]
@@ -66,7 +66,7 @@ Key facts (verified against `banyand/internal/storage/segment.go`, `shard.go`, `
 - **Segment** directories are named `seg-` + the segment-start time formatted as `2006010215` (hour granularity) or `20060102` (day granularity), chosen by the group's `segment_interval` unit.
 - **Part** directories are named `<016x>` of a monotonically increasing epoch. A part is immutable once written.
 - **Snapshot (MVCC):** `<016x>.snp` is a JSON array listing which part directories are *live* at that epoch. Readers only see parts in the current snapshot; a part dropped from the snapshot is GC'd at the next flush/merge. The newest `.snp` (highest epoch) is the current one.
-- The **segment-level `sidx/`** is the *series index* (a Bluge inverted index). Note the **name collision**: `Trace` also has a `sidx/` directory, but at the **shard** level and with a completely different meaning (ordered secondary index, see §6). Same name, different depth, different engine.
+- The **segment-level `sidx/`** is the *series index* (a native ICE v3 inverted index, `pkg/index/native`; `banyand/internal/storage` never imports the retired Bluge-backed engine for it). Note the **name collision**: `Trace` also has a `sidx/` directory, but at the **shard** level and with a completely different meaning (ordered secondary index, see §6). Same name, different depth, different engine.
 
 `Property` does **not** use this skeleton — see §7.
 
@@ -170,21 +170,21 @@ A block boundary is also forced whenever the series ID changes.
 
 ### 3.4 Mode B — index-mode (`index_mode = true`)
 
-No part is ever written. The **entire** data point — entity tags, tags, and field values, all as *stored* fields — becomes one document in the segment series index (Bluge), keyed by series ID with **upsert** (Update) semantics.
+No part is ever written. The **entire** data point — entity tags, tags, and field values, all as *stored* fields — becomes one document in the segment series index (native ICE v3), keyed by series ID with **upsert** (Update) semantics.
 
 ```mermaid
 flowchart LR
     DP["data point"] --> DOC["index.Document (DocID = seriesID)"]
-    DOC --> IDB["segment series index 'sidx/' (Bluge ICE segments)"]
+    DOC --> IDB["segment series index 'sidx/' (native ICE v3 segments)"]
     NOPART["tsTable parts"]:::x
     classDef x fill:#fdd,stroke:#900,stroke-dasharray:4
 ```
 
-- **Storage:** Bluge `*.seg` / `*.snp` ICE segments under the segment-level `sidx/`. No columnar part files.
+- **Storage:** native `*.seg` / `*.snp` ICE v3 segments under the segment-level `sidx/`. No columnar part files.
 - **Synthetic fields** added only in this mode: `_im_name` (the measure subject) and `_im_entity_tag_<tag>` (so entity components are independently queryable), plus internal `_series_id`, `_timestamp`, `_version`, `_id`.
 - **Write path:** `handleIndexMode` builds the document → `segment.IndexDB().Update(docs)`. `mustAddDataPoints` is never called.
 - **Query path:** short-circuits to `buildIndexQueryResult` → `IndexDB().SearchWithoutSeries` — it reads projected stored fields straight out of the index over a time range and de-dupes by series ID with a roaring bitmap. There is no series-list pre-resolution and no block scan.
-- **What does NOT apply:** field `encoding_method`/`compression_method`, columnar block layout, part compaction, and TopN — all of those are Mode-A concepts. Index-mode segments use Bluge's own S2 compression for stored fields.
+- **What does NOT apply:** field `encoding_method`/`compression_method`, columnar block layout, part compaction, and TopN — all of those are Mode-A concepts. Index-mode segments use the native ICE encoder's own S2 (`github.com/klauspost/compress/s2`) compression for stored fields — the same compression family the retired Bluge-backed engine used, carried forward by `pkg/index/internal/nativeice`, not inherited from Bluge itself.
 
 Index-mode is intended for low-cardinality, non-time-series-shaped data (e.g. service traffic / metadata) where every tag should be searchable.
 
@@ -223,7 +223,7 @@ A single `Stream` is backed by **three** separate structures, selected implicitl
 ```mermaid
 flowchart TD
     STR["Stream"] --> COL["columnar parts (element values, by tag family)"]
-    STR --> EIDX["shard-level idx/ — element inverted index (Bluge)"]
+    STR --> EIDX["shard-level idx/ — element inverted index (native ICE v3)"]
     STR --> SER["segment-level series index (entity → seriesID)"]
     R["IndexRule type"] -->|INVERTED| EIDX
     R -->|SKIPPING| BLOOM["in-column bloom filter (.tff)"]
@@ -242,7 +242,7 @@ flowchart TD
 
 (No `fv.bin` — streams have no fields.) Unlike Measure, rows with the same timestamp but different `element_id` are **both** stored (no dedup). Stream defines `maxUncompressedBlockSize`/`maxValuesBlockSize`/`maxTagFamiliesMetadataSize`/`maxUncompressedPrimaryBlockSize` but **no `maxBlockLength`** — blocks are cut by size or series change only.
 
-2. **Shard-level element index `idx/`** — a Bluge inverted index mapping indexed-tag terms → element IDs (with a parallel timestamp posting list). This resolves `TYPE_INVERTED` predicates and sort-by-tag. (This is the element-level analogue of the series index, and is **undocumented** in the older `tsdb.md`.)
+2. **Shard-level element index `idx/`** — a native ICE v3 inverted index (`pkg/index/native`, via `pkg/index/nativeadapter`) mapping indexed-tag terms → element IDs (with a parallel timestamp posting list). This resolves `TYPE_INVERTED` predicates and sort-by-tag. (This is the element-level analogue of the series index, and is **undocumented** in the older `tsdb.md`.) It was cut over from the legacy Bluge-backed engine separately from the series index's NIDX-03 cutover; the only remaining Bluge producer is the offline **NIDX-04 migration tool** (`banyand/stream/migration_element_index.go`), which writes legacy Bluge-format output when migrating pre-native element-index data — it is not on the live write or query path.
 
 3. **Segment-level series index** — holds the entity (`seriesID ↔ entity values`), shared with the other engines.
 
@@ -368,18 +368,19 @@ So an index rule on a `Trace` does not merely "add an index" — it instantiates
 
 Storage options are on the **group**: only `shard_num` matters; `segment_interval` and `ttl` on the group are **silently ignored** for properties.
 
-### 6.2 Storage: a Bluge document store (not KV, not TSDB)
+### 6.2 Storage: a native inverted-index document store (not KV, not TSDB)
 
-Despite the KV-style API, there is no KV engine and no time-series engine. Each `(group, shard)` is **one Bluge inverted index**; every property revision is **one document**.
+Despite the KV-style API, there is no KV engine and no time-series engine. Each `(group, shard)` is **one native ICE v3 inverted index** (`pkg/index/native`); every property revision is **one document**. The legacy Bluge-backed writer this used before NIDX-03 is gone — there is no engine flag and no switch between engines.
 
 ```
 <property-root>/property/data/<group>/shard-<N>/
 ├── <012x>.seg     # ICE-v3 segment: documents (stored _source JSON + indexed terms)
-├── <012x>.snp     # snapshot manifest: live segments + per-segment DELETED roaring drop-set
-└── bluge.pid      # writer lock
+└── <012x>.snp     # snapshot manifest: live segments + per-segment DELETED roaring drop-set
 ```
 
-There is **no segment (time) directory** — a single Bluge directory per shard holds all revisions of all properties in that shard.
+The exclusive lock is a single `lock` file at the property database **root** (`native.FileRootLease`, acquired once in `OpenDB`), not a per-shard file.
+
+There is **no segment (time) directory** — a single native inverted index per shard holds all revisions of all properties in that shard.
 
 **Document fields** (`banyand/property/db/shard.go`, the doc keyed by `entity/ModRevision`):
 
@@ -397,7 +398,7 @@ There is **no segment (time) directory** — a single Bluge directory per shard 
 
 ```mermaid
 flowchart LR
-    A["Apply (id, tags)"] --> D["new Bluge doc keyed entity/ModRevision"]
+    A["Apply (id, tags)"] --> D["new native doc keyed entity/ModRevision"]
     D --> SEG["new .seg segment"]
     A -.->|old revision| DROP["marked in .snp deleted bitmap"]
     DEL["Delete"] --> TOMB["new doc with _deleted = now"]
@@ -408,7 +409,7 @@ flowchart LR
 
 - An update writes a brand-new document (new revision); the prior same-`_id` document is added to a **per-segment DELETED roaring bitmap** recorded in `.snp`. Reads `AndNot` the deleted set, so the old revision is masked, not rewritten.
 - A delete writes a new document carrying `_deleted = deleteTime` (soft delete).
-- **Physical removal happens only at Bluge segment merge**, and only `property-expire-delete-timeout` (default 7 days) after the tombstone — so "deleted" data lingers on disk until then. There is no per-property TTL.
+- **Physical removal happens only at native segment merge** (`Owner.Compact`/`PrepareMergeCallback`), and only `property-expire-delete-timeout` (default 7 days) after the tombstone — so "deleted" data lingers on disk until then. `Owner.Compact` is itself a tiered-merge policy gated by a 16-segment compaction threshold (see §1), not a per-write action, so physical removal is neither immediate nor routine. There is no per-property TTL.
 - Conflict resolution is last-writer-wins by `ModRevision` (the physical doc ID is `entity/ModRevision`).
 
 **Compression:** stored fields (`_source`) are chunked (128 docs/chunk) and compressed with **S2** by default (not zstd); postings are roaring bitmaps; term dictionaries are FSTs.
@@ -475,9 +476,10 @@ If a part still fails to sync after retries (3 attempts, exponential backoff), i
 | Stream | `seg-…/shard-N/<016x>/` + `shard-N/idx/` | `metadata.json` · `meta.bin` · `primary.bin` · `timestamps.bin` (ts+elementID) · `<fam>.tf` · `<fam>.tfm` · `<fam>.tff` · `smeta.bin?` |
 | Trace (span store) | `seg-…/shard-N/<016x>/` | `metadata.json` · `meta.bin` · `primary.bin` · `spans.bin` · `<tag>.t` · `<tag>.tm` · `tag.type` · `traceID.filter` · `smeta.bin?` |
 | sidx (trace 2°) | `seg-…/shard-N/sidx/<rule>/<016x>/` | `manifest.json` · `meta.bin` · `primary.bin` · `keys.bin` · `data.bin` · `<tag>.td` · `<tag>.tm` · `<tag>.tf` |
-| Measure (index-mode) | `seg-…/sidx/` (segment series index) | Bluge `<012x>.seg` · `<012x>.snp` |
-| Series index (all TSDB) | `seg-…/sidx/` | Bluge `<012x>.seg` · `<012x>.snp` |
-| Property | `…/property/data/<group>/shard-N/` | Bluge `<012x>.seg` · `<012x>.snp` · `bluge.pid` |
+| Measure (index-mode) | `seg-…/sidx/` (segment series index) | native ICE v3 `<012x>.seg` · `<012x>.snp` |
+| Series index (all TSDB) | `seg-…/sidx/` | native ICE v3 `<012x>.seg` · `<012x>.snp` |
+| Property | `…/property/data/<group>/shard-N/` | native ICE v3 `<012x>.seg` · `<012x>.snp` |
+| Stream element index | `shard-N/idx/` | native ICE v3 `<012x>.seg` · `<012x>.snp` (legacy Bluge `<012x>.seg` · `<012x>.snp` · `bluge.pid` only as output of the offline NIDX-04 migration tool) |
 
 ---
 
