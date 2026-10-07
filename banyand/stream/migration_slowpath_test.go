@@ -356,6 +356,17 @@ func TestMigrationSlowPathElementIndexRebuild(t *testing.T) {
 	assertIdxTerm(d2Seg, "ok", []uint64{eD2ok})
 	assertIdxTerm(d2Seg, "err", []uint64{eD2err})
 
+	// (3) CountElementIndexDocs (the native read-only count the verify CLI
+	// uses) agrees with the term-level check above: each target idx/ --
+	// written by the native migration engine (NIDX-04) -- holds exactly the
+	// 2 docs routed to it.
+	d1IdxCount, idxCountErr := CountElementIndexDocs(filepath.Join(dstGroupRoot, d1Seg, shardN, elementIndexFilename))
+	require.NoError(t, idxCountErr)
+	require.EqualValues(t, 2, d1IdxCount, "day1 target idx must hold 2 docs")
+	d2IdxCount, idxCountErr := CountElementIndexDocs(filepath.Join(dstGroupRoot, d2Seg, shardN, elementIndexFilename))
+	require.NoError(t, idxCountErr)
+	require.EqualValues(t, 2, d2IdxCount, "day2 target idx must hold 2 docs")
+
 	// Sanity: the slow path was actually exercised (source seg split into 2 targets).
 	require.GreaterOrEqual(t, res.Segments, 2, "expected at least two target segments")
 	require.GreaterOrEqual(t, SlowPathHits(), int64(1),
