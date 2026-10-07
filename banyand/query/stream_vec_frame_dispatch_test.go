@@ -192,10 +192,7 @@ func oracleCorpusBatches(schema *vectorized.BatchSchema, tagNames []string, rows
 	rows := oracleRows()
 	var batches []*vectorized.RecordBatch
 	for start := 0; start < len(rows); start += rowsPerBatch {
-		end := start + rowsPerBatch
-		if end > len(rows) {
-			end = len(rows)
-		}
+		end := min(start+rowsPerBatch, len(rows))
 		batches = append(batches, oracleBatchFromRows(schema, tagNames, rows[start:end]))
 	}
 	return batches
@@ -389,6 +386,50 @@ func newOraclePlanWithCorpus(t *testing.T, req *streamv1.QueryRequest, executedT
 	return plan, corpus
 }
 
+// newOracleGroupsPlan analyzes req against one fake execution context for each group,
+// each replaying its own single-batch corpus, and returns those batches so an arm can
+// mutate a cell before the dispatch runs.
+//
+// One group gives the single-scan shape the other tests use. TWO groups give the
+// *limit → *mergePlan shape, which the analyzer builds only from more than one
+// metadata + schema + execution context, so the multi-group dispatch cannot be
+// reached any other way. req.Groups must name one group for each row set, which this
+// also checks.
+//
+// The rows are explicit because the issue's three-row table cannot express either
+// caller: the groups have to be distinguishable by value, and the null-criteria arm
+// needs a second surviving element to compare against.
+func newOracleGroupsPlan(t *testing.T, req *streamv1.QueryRequest, executedTags []string,
+	orderTag string, groups ...[]oracleRow,
+) (logical.Plan, []*vectorized.RecordBatch) {
+	t.Helper()
+	require.Len(t, req.GetGroups(), len(groups), "the request must name one group for each row set")
+	metadata := make([]*commonv1.Metadata, 0, len(groups))
+	schemas := make([]logical.Schema, 0, len(groups))
+	ecc := make([]executor.StreamExecutionContext, 0, len(groups))
+	batches := make([]*vectorized.RecordBatch, 0, len(groups))
+	for groupIdx, rows := range groups {
+		sch, err := logical_stream.BuildSchema(oracleStreamSchema(), oracleIndexRules())
+		require.NoError(t, err)
+		// Each group gets its OWN batch schema pointer. The pipeline validates
+		// batch.Schema by pointer identity, so one shared pointer would let a
+		// cross-group mix-up pass instead of failing on it.
+		batchSchema := oracleBatchSchema(executedTags, orderTag)
+		batch := oracleBatchFromRows(batchSchema, executedTags, rows)
+		md := oracleStreamSchema().GetMetadata()
+		md.Group = req.GetGroups()[groupIdx]
+		metadata = append(metadata, md)
+		schemas = append(schemas, sch)
+		ecc = append(ecc, &oracleExecContext{
+			src: &oracleVecSource{schema: batchSchema, batches: []*vectorized.RecordBatch{batch}},
+		})
+		batches = append(batches, batch)
+	}
+	plan, err := logical_stream.Analyze(req, metadata, schemas, ecc)
+	require.NoError(t, err)
+	return plan, batches
+}
+
 // TestStreamVecDispatch_FilteredQueryEmitsFrame is the apache/skywalking#14067 R4
 // acceptance assertion, and it FAILS on origin/main by construction. The gate at
 // processor.go:244 reads `!hasFilter && !vecExec.HidesOrderTag() && ...`, and the
@@ -463,6 +504,18 @@ func TestStreamVecDispatch_UnfilteredQueryEmitsFrame(t *testing.T) {
 // frame rebuilt from the batch schema would have carried the sort tag. Now
 // mergeStreamBatches drops that column by name, so the frame is legal. No criteria
 // is involved, which is what isolates the ordering tag from the filter work.
+//
+// NO PRODUCTION QUERY REACHES THIS SHAPE TODAY, and the test pins it anyway. The frame
+// egress fires only when p.distributed is true, which exactly one production site sets
+// (pkg/cmdsetup/data.go:79), so a stream request on that path always arrives from the
+// liaison. The liaison's distributedPlan.Execute copies the client projection into its
+// query template verbatim, and its analyzer narrows the schema to that projection
+// (pkg/query/logical/stream/stream_plan_distributed.go:70) BEFORE it looks the sort tag
+// up (:113) — an unprojected sort tag fails there with `tag <name> not found`, so the
+// plan never exists. The strip is therefore defense for a shape the liaison rejects
+// today, required by apache/skywalking#14067 R3, and apache/skywalking#14070 may make
+// it live when it widens frame output to the multi-group and distributed callers. Keep
+// the test and every assertion in it.
 func TestStreamVecDispatch_HiddenOrderTagEmitsFrame(t *testing.T) {
 	p := newOracleProcessor(t)
 	req := oracleRequest([]string{oracleClientTag}, false, oracleIndexRule)
@@ -744,6 +797,226 @@ func TestStreamVecDispatch_NullTagValueSurvivesTheColumnStrip(t *testing.T) {
 		require.IsType(t, &modelv1.TagValue_Null{}, values[1].GetValue(),
 			"element B must read as a null tag, not as the stale cell value")
 	})
+}
+
+// oracleMultiGroupRows is one corpus for each group of the multi-group arms. The two
+// groups carry DIFFERENT service values, so a returned element names the group it came
+// from, and each group holds one row that FAILS the criteria, so a group that skipped
+// its filter shows up as a row that does not match.
+//
+// The sequence values are globally ordered across the groups, so the index-order
+// cross-group merge has one unambiguous answer. The timestamps are per-batch
+// (oracleBatchFromRows numbers from 1), and the two surviving rows sit at DIFFERENT
+// row offsets, so the timestamp-order merge is unambiguous too — in the opposite
+// order, which is what proves the merge sorted rather than concatenated.
+func oracleMultiGroupRows() ([]oracleRow, []oracleRow) {
+	return []oracleRow{
+			{elemID: 1, sequence: "001", state: oracleStateFail, service: "a-closed"},
+			{elemID: 2, sequence: "002", state: oracleStateWant, service: "a-open"},
+		}, []oracleRow{
+			{elemID: 3, sequence: "003", state: oracleStateWant, service: "b-open"},
+			{elemID: 4, sequence: "004", state: oracleStateFail, service: "b-closed"},
+		}
+}
+
+// oracleMultiGroupFailServices are the service values of the rows the criteria must
+// reject. No returned element may carry one.
+func oracleMultiGroupFailServices() []string { return []string{"a-closed", "b-closed"} }
+
+// TestStreamVecDispatch_MultiGroupFilteredDispatch covers the multi-group vec dispatch
+// — *limit → *mergePlan → per-group *tagFilterPlan → *localIndexScan, the shape
+// tryStreamVecDispatch hands to tryVecMergeDispatch. No other test in the repo reaches
+// it, so forcing every group's criteria to be skipped (PreMerged = true inside
+// VecMergeExecutable) kept the whole suite green. This test fails under that mutation.
+//
+// The multi-group path merges ELEMENTS across groups, so it always emits
+// *streamv1.QueryResponse and never a frame. Both arms therefore run on a data node
+// with the raw wire mode on, which pins that too.
+func TestStreamVecDispatch_MultiGroupFilteredDispatch(t *testing.T) {
+	// The schema's own group plus a second one. Only the count drives the merge shape;
+	// the names reach the fake execution context, which ignores them.
+	groupNames := []string{"test", "test-b"}
+	rowsA, rowsB := oracleMultiGroupRows()
+
+	// TIMESTAMP order is the arm the mutation breaks: it pushes no filter down, so
+	// every group's criteria has to run on that group's elements.
+	t.Run("timestamp order filters each group", func(t *testing.T) {
+		p := newOracleProcessor(t)
+		req := oracleRequest([]string{oracleClientTag}, true, "")
+		req.Groups = groupNames
+		// No ordering tag, so no OrderKey column; the analyzer appends `state` for the
+		// criteria in each group.
+		plan, _ := newOracleGroupsPlan(t, req, []string{oracleClientTag, oracleCriteriaTag}, "", rowsA, rowsB)
+
+		merge, ok := logical_stream.VecMergeExecutable(plan)
+		require.True(t, ok, "two groups must give the multi-group vec shape")
+		require.Len(t, merge.Groups, 2)
+		require.True(t, merge.SortByTime, "an index-rule-less order must merge on time")
+		for groupIdx, group := range merge.Groups {
+			require.True(t, group.HasFilter, "group %d lost its criteria", groupIdx)
+		}
+
+		handled, resp := p.tryStreamVecDispatch(context.Background(), plan, req, false)
+		require.True(t, handled, "the multi-group filtered shape must be vec-eligible")
+		response, ok := resp.Data().(*streamv1.QueryResponse)
+		require.True(t, ok, "the multi-group path emitted %T, not a proto response", resp.Data())
+
+		services := oracleProtoServices(t, response.GetElements())
+		// The discriminating assertion, and it comes FIRST so that it is the one a
+		// skipped criteria reports: a group that did not filter returns rows that do not
+		// match the criteria.
+		for _, service := range services {
+			require.NotContains(t, oracleMultiGroupFailServices(), service,
+				"an element that fails the criteria came back, so a group skipped its filter")
+		}
+		// b-open sits at row offset 0 of its batch and a-open at offset 1, so ascending
+		// timestamp order puts b-open first.
+		require.Equal(t, []string{"b-open", "a-open"}, services)
+
+		// The fixture guard sits BEHIND the answer deliberately. A timestamp-order group
+		// must not push its filter down, or the per-element filter this arm targets never
+		// runs — but checking that first would abort on a forced PreMerged before the
+		// answer assertions above could catch it, which is the whole point of them.
+		for groupIdx, group := range merge.Groups {
+			require.False(t, group.Criteria.PreMerged,
+				"group %d pushed its filter down, so this arm proves nothing", groupIdx)
+		}
+	})
+
+	// INDEX order covers the other branch of the same loop: the scan filtered the
+	// columns ahead of the merge, so the group owes only the criteria-tag strip.
+	t.Run("index order strips the criteria tag", func(t *testing.T) {
+		p := newOracleProcessor(t)
+		// The merger narrows the merged schema to the client projection and only THEN
+		// looks the sort tag up (stream_plan_merge.go:59 then :91), so a multi-group index-order
+		// query must PROJECT its sort tag or the plan does not analyze at all. The
+		// liaison narrows the same way — see TestStreamVecDispatch_HiddenOrderTagEmitsFrame.
+		req := oracleRequest([]string{oracleClientTag, oracleOrderTag}, true, oracleIndexRule)
+		req.Groups = groupNames
+		plan, _ := newOracleGroupsPlan(t, req,
+			[]string{oracleClientTag, oracleOrderTag, oracleCriteriaTag}, oracleOrderTag, rowsA, rowsB)
+
+		merge, ok := logical_stream.VecMergeExecutable(plan)
+		require.True(t, ok, "two groups must give the multi-group vec shape")
+		require.Len(t, merge.Groups, 2)
+		require.False(t, merge.SortByTime, "an index-rule order must merge on the sort tag")
+		for groupIdx, group := range merge.Groups {
+			require.True(t, group.HasFilter, "group %d lost its criteria", groupIdx)
+			require.True(t, group.Criteria.PreMerged,
+				"group %d must push its filter onto the columns, which is the strip-only branch", groupIdx)
+		}
+
+		handled, resp := p.tryStreamVecDispatch(context.Background(), plan, req, false)
+		require.True(t, handled)
+		response, ok := resp.Data().(*streamv1.QueryResponse)
+		require.True(t, ok, "the multi-group path emitted %T, not a proto response", resp.Data())
+
+		// oracleProtoServices is not usable here: this arm PROJECTS the ordering tag, so
+		// `sequence` legitimately reaches the client and only `state` must be gone.
+		services := make([]string, 0, len(response.GetElements()))
+		for _, element := range response.GetElements() {
+			for _, family := range element.GetTagFamilies() {
+				for _, tag := range family.GetTags() {
+					require.NotEqual(t, oracleCriteriaTag, tag.GetKey(),
+						"the criteria-only tag survived the per-group strip")
+					if tag.GetKey() == oracleClientTag {
+						services = append(services, tag.GetValue().GetStr().GetValue())
+					}
+				}
+			}
+		}
+		// Ascending `sequence` across both groups: 002 then 003.
+		require.Equal(t, []string{"a-open", "b-open"}, services)
+		for _, service := range services {
+			require.NotContains(t, oracleMultiGroupFailServices(), service,
+				"an element that fails the criteria came back, so a group skipped its filter")
+		}
+	})
+}
+
+// TestStreamVecDispatch_NullCriteriaCellFailsBothFilters is the null case for the
+// column the criteria READS. TestStreamVecDispatch_NullTagValueSurvivesTheColumnStrip
+// nulls a PROJECTED tag, which cannot change a filter decision; a null in the criteria
+// column can.
+//
+// Two independent readers substitute pbv1.NullTagValue for a null cell: the columnar
+// tagRowAccessor the criteria filter uses (pkg/query/vectorized/stream/tag_filter.go)
+// and the element egress (pkg/query/vectorized/stream/egress.go). Both read the
+// validity bitmap, not the cell, so a null criteria cell must fail an equality
+// criteria on both — the cell here keeps its stale matching pointer, which is what a
+// reader trusting Data() alone would wrongly let through.
+//
+// Honest scope: only the TIMESTAMP arm compares the two readers against each other
+// (the frame path filters the columns, the proto path filters the elements). An
+// index-order query filters on the columns for BOTH egresses, so that arm pins the
+// columnar reader and the strip, not a cross-reader agreement.
+func TestStreamVecDispatch_NullCriteriaCellFailsBothFilters(t *testing.T) {
+	// Both rows match the criteria, so nulling the first row's criteria cell is the ONLY
+	// reason it can be missing from the answer. The second row keeps the answer
+	// non-empty, so the frame/proto comparison cannot pass vacuously.
+	rows := []oracleRow{
+		{elemID: oracleElementA, sequence: "001", state: oracleStateWant, service: "nulled"},
+		{elemID: oracleElementB, sequence: "002", state: oracleStateWant, service: "kept"},
+	}
+	const nulledRow = 0
+
+	nullTheCriteriaCell := func(t *testing.T, batch *vectorized.RecordBatch) {
+		t.Helper()
+		stateIdx, ok := batch.Schema.TagIndex(oracleFamily, oracleCriteriaTag)
+		require.True(t, ok, "the criteria column must be in the executed schema")
+		stateCol := batch.Columns[stateIdx].(*vectorized.TypedColumn[*modelv1.TagValue])
+		stateCol.MarkNullAt(nulledRow)
+		require.True(t, stateCol.IsNull(nulledRow))
+		require.Equal(t, oracleStateWant, stateCol.Data()[nulledRow].GetStr().GetValue(),
+			"precondition: the stale MATCHING value must still be present, or the test proves nothing")
+	}
+
+	for _, arm := range []struct {
+		name      string
+		indexRule string
+		orderTag  string
+	}{
+		{name: "index order, the columnar filter reads the null", indexRule: oracleIndexRule, orderTag: oracleOrderTag},
+		{name: "timestamp order, the element filter reads the null", indexRule: "", orderTag: ""},
+	} {
+		t.Run(arm.name, func(t *testing.T) {
+			executedTags := []string{oracleClientTag, oracleCriteriaTag}
+			if arm.orderTag != "" {
+				executedTags = append(executedTags, arm.orderTag)
+			}
+
+			dataNode := newOracleProcessor(t)
+			frameReq := oracleRequest([]string{oracleClientTag}, true, arm.indexRule)
+			framePlan, frameCorpus := newOracleGroupsPlan(t, frameReq, executedTags, arm.orderTag, rows)
+			nullTheCriteriaCell(t, frameCorpus[0])
+
+			handled, frameResp := dataNode.tryStreamVecDispatch(context.Background(), framePlan, frameReq, false)
+			require.True(t, handled)
+			body, ok := frameResp.Data().([]byte)
+			require.True(t, ok, "the data node emitted %T, not a columnar frame body", frameResp.Data())
+			batch, err := streamframe.Decode(body)
+			require.NoError(t, err)
+			gotFrame := oracleFrameServices(t, batch)
+
+			standalone := newOracleStandaloneProcessor(t)
+			protoReq := oracleRequest([]string{oracleClientTag}, true, arm.indexRule)
+			protoPlan, protoCorpus := newOracleGroupsPlan(t, protoReq, executedTags, arm.orderTag, rows)
+			nullTheCriteriaCell(t, protoCorpus[0])
+
+			handled, protoResp := standalone.tryStreamVecDispatch(context.Background(), protoPlan, protoReq, false)
+			require.True(t, handled)
+			response, ok := protoResp.Data().(*streamv1.QueryResponse)
+			require.True(t, ok, "standalone emitted %T, not a proto response", protoResp.Data())
+			gotProto := oracleProtoServices(t, response.GetElements())
+
+			// Guard against a vacuous pass: two empty lists compare equal and prove nothing.
+			require.NotEmpty(t, gotProto, "the proto answer is empty, so the parity check is empty")
+			require.Equal(t, []string{"kept"}, gotProto,
+				"the null criteria cell must fail the equality, so only the other row survives")
+			require.Equal(t, gotProto, gotFrame,
+				"the columnar reader and the element reader disagree about a null criteria cell")
+		})
+	}
 }
 
 // oracleFrameServices reads the projected tag out of a decoded frame batch.
