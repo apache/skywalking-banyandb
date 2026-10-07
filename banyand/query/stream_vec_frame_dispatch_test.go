@@ -183,7 +183,25 @@ func oracleRows() []oracleRow {
 // oracleCorpusBatch materializes oracleRows() in ascending OrderKey order. The keys
 // are zero-padded so lexicographic byte order equals the numeric sequence order.
 func oracleCorpusBatch(schema *vectorized.BatchSchema, tagNames []string) *vectorized.RecordBatch {
+	return oracleBatchFromRows(schema, tagNames, oracleRows())
+}
+
+// oracleCorpusBatches splits the oracle rows into batches of rowsPerBatch, so a test
+// can prove the egress works across batch boundaries and not only inside one batch.
+func oracleCorpusBatches(schema *vectorized.BatchSchema, tagNames []string, rowsPerBatch int) []*vectorized.RecordBatch {
 	rows := oracleRows()
+	var batches []*vectorized.RecordBatch
+	for start := 0; start < len(rows); start += rowsPerBatch {
+		end := start + rowsPerBatch
+		if end > len(rows) {
+			end = len(rows)
+		}
+		batches = append(batches, oracleBatchFromRows(schema, tagNames, rows[start:end]))
+	}
+	return batches
+}
+
+func oracleBatchFromRows(schema *vectorized.BatchSchema, tagNames []string, rows []oracleRow) *vectorized.RecordBatch {
 	batch := vectorized.NewRecordBatch(schema, len(rows))
 	tsCol := batch.Columns[schema.TimestampIndex()].(*vectorized.TypedColumn[int64])
 	elemCol := batch.Columns[schema.ElementIDIndex()].(*vectorized.TypedColumn[int64])
@@ -341,17 +359,34 @@ func TestStreamVecDispatch_FilteredIndexOrderProtoStillStrips(t *testing.T) {
 // client projection plus any criteria-only tag plus the ordering tag.
 func newOraclePlan(t *testing.T, req *streamv1.QueryRequest, executedTags []string, orderTag string) logical.Plan {
 	t.Helper()
+	return newOracleBatchedPlan(t, req, executedTags, orderTag, len(oracleRows()))
+}
+
+// newOracleBatchedPlan is newOraclePlan with the corpus split across batches of
+// rowsPerBatch rows.
+func newOracleBatchedPlan(t *testing.T, req *streamv1.QueryRequest, executedTags []string,
+	orderTag string, rowsPerBatch int,
+) logical.Plan {
+	t.Helper()
+	plan, _ := newOraclePlanWithCorpus(t, req, executedTags, orderTag, rowsPerBatch)
+	return plan
+}
+
+// newOraclePlanWithCorpus also returns the batches the fake source will replay, so a
+// test can mutate a cell — marking it null, for instance — before the dispatch runs.
+func newOraclePlanWithCorpus(t *testing.T, req *streamv1.QueryRequest, executedTags []string,
+	orderTag string, rowsPerBatch int,
+) (logical.Plan, []*vectorized.RecordBatch) {
+	t.Helper()
 	sch, err := logical_stream.BuildSchema(oracleStreamSchema(), oracleIndexRules())
 	require.NoError(t, err)
 	batchSchema := oracleBatchSchema(executedTags, orderTag)
-	ec := &oracleExecContext{src: &oracleVecSource{
-		schema:  batchSchema,
-		batches: []*vectorized.RecordBatch{oracleCorpusBatch(batchSchema, executedTags)},
-	}}
+	corpus := oracleCorpusBatches(batchSchema, executedTags, rowsPerBatch)
+	ec := &oracleExecContext{src: &oracleVecSource{schema: batchSchema, batches: corpus}}
 	plan, err := logical_stream.Analyze(req, []*commonv1.Metadata{oracleStreamSchema().GetMetadata()},
 		[]logical.Schema{sch}, []executor.StreamExecutionContext{ec})
 	require.NoError(t, err)
-	return plan
+	return plan, corpus
 }
 
 // TestStreamVecDispatch_FilteredQueryEmitsFrame is the apache/skywalking#14067 R4
@@ -578,6 +613,150 @@ func TestFilterStreamBatches_ForeignSchemaFailsClosed(t *testing.T) {
 		logical_stream.VecCriteriaFilter{TagFilter: tagFilter, Schema: sch}, []*vectorized.RecordBatch{batch})
 	require.Error(t, filterErr, "a foreign batch schema must fail, not filter silently")
 	require.Equal(t, before, batch.ActiveLen(), "the rejected batch must keep its selection")
+}
+
+// TestStreamVecDispatch_FilteredQueryAcrossBatches is the "tested across batches" box.
+// The oracle corpus arrives as three single-row batches instead of one, so the merge,
+// the pre-merge filter and the columnar strip each cross a batch boundary. The answer
+// must not change.
+func TestStreamVecDispatch_FilteredQueryAcrossBatches(t *testing.T) {
+	p := newOracleProcessor(t)
+	req := oracleRequest([]string{oracleClientTag}, true, oracleIndexRule)
+	plan := newOracleBatchedPlan(t, req, []string{oracleClientTag, oracleCriteriaTag, oracleOrderTag},
+		oracleOrderTag, 1)
+
+	handled, resp := p.tryStreamVecDispatch(context.Background(), plan, req, false)
+	require.True(t, handled)
+	body, ok := resp.Data().([]byte)
+	require.True(t, ok, "a multi-batch filtered query emitted %T, not a columnar frame body", resp.Data())
+
+	batch, err := streamframe.Decode(body)
+	require.NoError(t, err)
+	require.Equal(t, 2, batch.ActiveLen())
+	_, hasState := batch.Schema.TagIndex(oracleFamily, oracleCriteriaTag)
+	require.False(t, hasState, "the criteria-only tag %q leaked into the frame", oracleCriteriaTag)
+	require.Equal(t, []string{"new", "other"}, oracleFrameServices(t, batch),
+		"three single-row batches must give the same answer as one three-row batch")
+}
+
+// TestStreamVecDispatch_TracedFilteredQueryStaysProto is the "traced responses retain
+// tracing information" box, taken through the dispatch rather than through the emit
+// predicate alone. A frame carries no field for common.v1.Trace, so tracing must keep
+// forcing the proto egress even now that a filtered query is otherwise eligible.
+func TestStreamVecDispatch_TracedFilteredQueryStaysProto(t *testing.T) {
+	p := newOracleProcessor(t)
+	req := oracleRequest([]string{oracleClientTag}, true, oracleIndexRule)
+	plan := newOraclePlan(t, req, []string{oracleClientTag, oracleCriteriaTag, oracleOrderTag}, oracleOrderTag)
+
+	// traced=true is the only difference from TestStreamVecDispatch_FilteredQueryEmitsFrame.
+	handled, resp := p.tryStreamVecDispatch(context.Background(), plan, req, true)
+	require.True(t, handled)
+	_, isFrame := resp.Data().([]byte)
+	require.False(t, isFrame, "a traced query emitted a frame, so its trace channel is lost")
+	response, ok := resp.Data().(*streamv1.QueryResponse)
+	require.True(t, ok, "a traced query emitted %T, not a proto response", resp.Data())
+	require.Equal(t, []string{"new", "other"}, oracleProtoServices(t, response.GetElements()),
+		"the traced proto answer must match the untraced frame answer")
+}
+
+// TestStreamVecDispatch_NullTagValueSurvivesTheColumnStrip is the "null behavior" box.
+//
+// A column tracks nullness in a validity bitmap that is independent of the cell it
+// holds, and the two legitimately disagree: AppendColumnRange copies the source value
+// unconditionally and only then marks the destination row null, so a null row keeps a
+// stale pointer. The columnar strip copies columns with that same helper, so this test
+// proves the strip carries the BITMAP and not just the cell, and that the frame codec
+// round-trips it.
+//
+// Marking the cell without clearing it is the shape that produces silently wrong
+// output rather than a crash. The same trap is pinned for the element egress in
+// pkg/query/vectorized/stream/egress_null_test.go.
+func TestStreamVecDispatch_NullTagValueSurvivesTheColumnStrip(t *testing.T) {
+	executedTags := []string{oracleClientTag, oracleCriteriaTag, oracleOrderTag}
+	// Row 2 is element B, which survives the criteria. Nulling its projected tag does
+	// not change the filter, which matches on `state`.
+	const nulledRow = 2
+
+	nullServiceOnRowB := func(t *testing.T, corpus []*vectorized.RecordBatch) {
+		t.Helper()
+		require.Len(t, corpus, 1, "this arm expects one batch, so the row index is absolute")
+		batch := corpus[0]
+		serviceIdx, ok := batch.Schema.TagIndex(oracleFamily, oracleClientTag)
+		require.True(t, ok)
+		serviceCol := batch.Columns[serviceIdx].(*vectorized.TypedColumn[*modelv1.TagValue])
+		serviceCol.MarkNullAt(nulledRow)
+		require.True(t, serviceCol.IsNull(nulledRow))
+		require.NotNil(t, serviceCol.Data()[nulledRow],
+			"precondition: the stale pointer must still be present, or the test proves nothing")
+	}
+
+	t.Run("frame carries the null", func(t *testing.T) {
+		p := newOracleProcessor(t)
+		req := oracleRequest([]string{oracleClientTag}, true, oracleIndexRule)
+		plan, corpus := newOraclePlanWithCorpus(t, req, executedTags, oracleOrderTag, len(oracleRows()))
+		nullServiceOnRowB(t, corpus)
+
+		handled, resp := p.tryStreamVecDispatch(context.Background(), plan, req, false)
+		require.True(t, handled)
+		body, ok := resp.Data().([]byte)
+		require.True(t, ok, "the data node emitted %T, not a columnar frame body", resp.Data())
+
+		batch, err := streamframe.Decode(body)
+		require.NoError(t, err)
+		require.Equal(t, 2, batch.ActiveLen())
+
+		serviceIdx, ok := batch.Schema.TagIndex(oracleFamily, oracleClientTag)
+		require.True(t, ok, "the projected tag column must survive the strip")
+		serviceCol := batch.Columns[serviceIdx].(*vectorized.TypedColumn[*modelv1.TagValue])
+		rows := oracleActiveRows(batch)
+		require.Len(t, rows, 2)
+		// Row 0 is element A, which keeps its value. Row 1 is element B, now null.
+		require.False(t, serviceCol.IsNull(rows[0]), "element A must keep its value")
+		require.Equal(t, "new", serviceCol.Data()[rows[0]].GetStr().GetValue())
+		require.True(t, serviceCol.IsNull(rows[1]),
+			"the strip or the frame codec lost the validity bit, so a null reads as a value")
+	})
+
+	t.Run("proto carries the same null", func(t *testing.T) {
+		p := newOracleStandaloneProcessor(t)
+		req := oracleRequest([]string{oracleClientTag}, true, oracleIndexRule)
+		plan, corpus := newOraclePlanWithCorpus(t, req, executedTags, oracleOrderTag, len(oracleRows()))
+		nullServiceOnRowB(t, corpus)
+
+		handled, resp := p.tryStreamVecDispatch(context.Background(), plan, req, false)
+		require.True(t, handled)
+		response, ok := resp.Data().(*streamv1.QueryResponse)
+		require.True(t, ok, "standalone emitted %T, not a proto response", resp.Data())
+		require.Len(t, response.GetElements(), 2)
+
+		values := make([]*modelv1.TagValue, 0, 2)
+		for _, element := range response.GetElements() {
+			for _, family := range element.GetTagFamilies() {
+				for _, tag := range family.GetTags() {
+					if tag.GetKey() == oracleClientTag {
+						values = append(values, tag.GetValue())
+					}
+				}
+			}
+		}
+		require.Len(t, values, 2)
+		require.Equal(t, "new", values[0].GetStr().GetValue(), "element A must keep its value")
+		require.IsType(t, &modelv1.TagValue_Null{}, values[1].GetValue(),
+			"element B must read as a null tag, not as the stale cell value")
+	})
+}
+
+// oracleFrameServices reads the projected tag out of a decoded frame batch.
+func oracleFrameServices(t *testing.T, batch *vectorized.RecordBatch) []string {
+	t.Helper()
+	serviceIdx, ok := batch.Schema.TagIndex(oracleFamily, oracleClientTag)
+	require.True(t, ok, "the projected tag %q must survive the strip", oracleClientTag)
+	serviceData := batch.Columns[serviceIdx].(*vectorized.TypedColumn[*modelv1.TagValue]).Data()
+	services := make([]string, 0, batch.ActiveLen())
+	for _, rowIdx := range oracleActiveRows(batch) {
+		services = append(services, serviceData[rowIdx].GetStr().GetValue())
+	}
+	return services
 }
 
 // oracleActiveRows returns the batch's active row indices, honoring Selection.
