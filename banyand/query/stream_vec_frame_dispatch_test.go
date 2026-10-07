@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -516,6 +517,67 @@ func TestStreamVecDispatch_TimeOrderFilterStaysBehindTheCap(t *testing.T) {
 	}
 	require.Equal(t, wantServices, gotServices,
 		"the columnar filter changed the timestamp-order answer, so the under-fill moved")
+}
+
+// TestStreamVecDispatch_CancelledFilteredQueryFailsClosed is the
+// apache/skywalking#14067 batch-ownership box for cancellation. A canceled filtered
+// query must surface an error, not a short frame: a frame that silently dropped the
+// rows the merge never produced would read as a complete result on the liaison.
+//
+// Cancellation is honored inside the pipeline, at SortedMerge.NextBatch, which
+// returns its in-flight batch to the pool before erroring. So the processor never
+// receives that batch, and filterStreamBatches never runs on it.
+func TestStreamVecDispatch_CancelledFilteredQueryFailsClosed(t *testing.T) {
+	p := newOracleProcessor(t)
+	req := oracleRequest([]string{oracleClientTag}, true, oracleIndexRule)
+	plan := newOraclePlan(t, req, []string{oracleClientTag, oracleCriteriaTag, oracleOrderTag}, oracleOrderTag)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	handled, resp := p.tryStreamVecDispatch(ctx, plan, req, false)
+	require.True(t, handled, "a canceled query is still handled, as an error response")
+
+	_, isFrame := resp.Data().([]byte)
+	require.False(t, isFrame, "a canceled query emitted a frame, which would look complete")
+	_, isProto := resp.Data().(*streamv1.QueryResponse)
+	require.False(t, isProto, "a canceled query emitted a result response")
+
+	queryErr, ok := resp.Data().(*common.Error)
+	require.True(t, ok, "a canceled query emitted %T, not an error", resp.Data())
+	require.Contains(t, queryErr.Error(), "execute the vectorized query plan",
+		"the error must name the execution stage the cancellation hit")
+}
+
+// TestFilterStreamBatches_ForeignSchemaFailsClosed pins the columnar filter's own
+// error path. The operator rejects a batch whose schema is not the one it indexed its
+// columns against, and filterStreamBatches must return that error rather than leave a
+// half-filtered batch for the encode step.
+func TestFilterStreamBatches_ForeignSchemaFailsClosed(t *testing.T) {
+	sch, err := logical_stream.BuildSchema(oracleStreamSchema(), oracleIndexRules())
+	require.NoError(t, err)
+	tagFilter, err := logical.BuildSimpleTagFilter(&modelv1.Criteria{Exp: &modelv1.Criteria_Condition{
+		Condition: &modelv1.Condition{
+			Name:  oracleCriteriaTag,
+			Op:    modelv1.Condition_BINARY_OP_EQ,
+			Value: oracleStr(oracleStateWant),
+		},
+	}})
+	require.NoError(t, err)
+
+	executedTags := []string{oracleClientTag, oracleCriteriaTag, oracleOrderTag}
+	projection := []model.TagProjection{{Family: oracleFamily, Names: executedTags}}
+	indexed := oracleBatchSchema(executedTags, oracleOrderTag)
+	// A second builder call gives an equal schema with a DIFFERENT pointer, which is
+	// exactly the identity mismatch the operator guards against.
+	foreign := oracleBatchSchema(executedTags, oracleOrderTag)
+	batch := oracleCorpusBatch(foreign, executedTags)
+	before := batch.ActiveLen()
+
+	filterErr := filterStreamBatches(context.Background(), indexed, projection,
+		logical_stream.VecCriteriaFilter{TagFilter: tagFilter, Schema: sch}, []*vectorized.RecordBatch{batch})
+	require.Error(t, filterErr, "a foreign batch schema must fail, not filter silently")
+	require.Equal(t, before, batch.ActiveLen(), "the rejected batch must keep its selection")
 }
 
 // oracleActiveRows returns the batch's active row indices, honoring Selection.
