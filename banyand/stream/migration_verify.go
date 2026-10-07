@@ -28,8 +28,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/blugelabs/bluge"
-
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/native"
@@ -57,7 +55,7 @@ type SegmentReport struct {
 }
 
 // ShardReport summarizes one shard-N directory inside a segment,
-// including the element index (idx/) bluge doc count (stream-only).
+// including the element index (idx/) doc count (stream-only).
 type ShardReport struct {
 	Shard       string
 	IdxDocCount uint64
@@ -148,31 +146,33 @@ func partRowCount(partID uint64, name, shardDir string, fileSystem fs.FileSystem
 	return p.partMetadata.TotalCount, nil
 }
 
-// CountBlugeDocs opens the bluge index at path read-only and returns
-// the total document count. Used by verify to spot-check idx/: the element
-// index's "direct stream copy" migration (NIDX-04) can still copy a
-// previous-release, bluge-format idx/ directory byte for byte, so this stays
-// a raw bluge reader -- pkg/index/inverted/migration_element_index.go is
-// this package's last production user of the retired engine, and this
-// function (reading a copied, not live, directory) is a second, narrower one
-// pending the same NIDX-04 removal.
-func CountBlugeDocs(path string) (uint64, error) {
-	reader, err := bluge.OpenReader(bluge.DefaultConfig(path))
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = reader.Close() }()
-	return reader.Count()
+// CountElementIndexDocs opens the element index (idx/) at path read-only (a
+// native read-only generation, never a writable owner) and returns its live
+// document count. Used by verify to spot-check idx/: the element index's
+// "direct stream copy" migration (NIDX-04) can either byte-copy a
+// previous-release, legacy-format (ICE v3) idx/ directory, or rebuild one with
+// the native engine, and native readers open both layouts transparently, so
+// this stays a single reader for either case.
+func CountElementIndexDocs(path string) (uint64, error) {
+	return countNativeIndexDocs(path)
 }
 
 // CountSeriesIndexDocs opens the series index (sidx/) a "direct stream copy"
 // migration wrote at path read-only (a native read-only generation, never a
-// writable owner) and returns its live document count. Unlike idx/, sidx/ is
-// always written by BuildGroupUnionSidx (banyand/internal/migration/
-// unionsidx.go), which has written a native owner since NIDX-03 phase 2, so
-// verify reads it with the native read-only API rather than CountBlugeDocs.
-// Mirrors banyand/measure/migration_verify.go's CountSeriesIndexDocs.
+// writable owner) and returns its live document count. sidx/ is always
+// written by BuildGroupUnionSidx (banyand/internal/migration/unionsidx.go),
+// which has written a native owner since NIDX-03 phase 2. Mirrors
+// banyand/measure/migration_verify.go's CountSeriesIndexDocs.
 func CountSeriesIndexDocs(path string) (uint64, error) {
+	return countNativeIndexDocs(path)
+}
+
+// countNativeIndexDocs is the shared native read-only doc-count core for both
+// CountElementIndexDocs and CountSeriesIndexDocs: a target directory that was
+// never written (ErrNoSnapshot) counts as 0 docs rather than an error, since
+// verify walks every seg/shard directory that exists on disk regardless of
+// whether it ended up with any live documents.
+func countNativeIndexDocs(path string) (uint64, error) {
 	generation, err := native.OpenReadOnlyGeneration(path)
 	if err != nil {
 		if errors.Is(err, native.ErrNoSnapshot) {
@@ -260,7 +260,7 @@ func EnumerateGroupTarget(groupRoot string, intervalRule storage.IntervalRule, f
 			// Stream-only: count element index docs in idx/.
 			idxDir := filepath.Join(shardDir, elementIndexFilename)
 			if info, statErr := os.Stat(idxDir); statErr == nil && info.IsDir() {
-				count, idxErr := CountBlugeDocs(idxDir)
+				count, idxErr := CountElementIndexDocs(idxDir)
 				if idxErr != nil {
 					return nil, fmt.Errorf("shard %s idx open: %w", shardDir, idxErr)
 				}
