@@ -51,7 +51,7 @@ import (
 // /mnt/d/tmp-gao-build/nidx03-rollback), then runs the same fixed set of
 // queries (exact/prefix/wildcard lookup, index-order sort, projection,
 // timestamps/versions) the design's rollback test names and dumps the
-// results as JSON beside the data. docs/design/0.12.0/native-inverted-index/
+// results as JSON beside the data. docs/design/archive/0.12.0/native-inverted-index/
 // verification/nidx-03-series-cutover/README.md records the procedure and
 // the comparison against the previous release's own reader, run from the
 // 735e9ad2 export.

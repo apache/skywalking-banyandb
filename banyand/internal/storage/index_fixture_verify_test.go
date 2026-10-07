@@ -33,6 +33,26 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
+// nidx03FixtureDir is the checked-in sidx compatibility-oracle fixture
+// directory pair (normal/sidx, indexmode/sidx) the tests below open with the
+// native series index to prove it reads a directory written by the previous
+// release's index writer identically. The fixture is immutable, hand-sized
+// data: it was produced by commit 8c172364 (NIDX-03, #1397) and its tracked
+// bytes hash to sha256
+// 23e1d6ce5ef5ab704229a1ebca4244ea625734198fc65d4fc45e9a89880c23f0
+// (concatenation of normal/sidx/*, indexmode/sidx/*, each path-sorted).
+// There is no generator test: regenerating the fixture would require the
+// retired third-party index library this repository no longer depends on,
+// so the checked-in bytes themselves are the provenance.
+const nidx03FixtureDir = "testdata/nidx03_fixture"
+
+// nidx03ScoreRuleID is the index-rule ID the fixture's "score" field is
+// keyed by, so the sort test can exercise the real OrderByTypeIndex path
+// (FieldKey{IndexRuleID}.Marshal()) the same way a production Measure
+// index-rule sort does, instead of a TagName-keyed field no OrderBy path
+// addresses.
+const nidx03ScoreRuleID = 42
+
 // fixtureResolver implements criteria.FieldResolver for the NIDX-03 fixture:
 // "region"/"tag" are TagName-keyed fields (their own name is the engine
 // field); "score" is IndexRuleID-keyed (nidx03ScoreRuleID), the same way a
@@ -109,7 +129,7 @@ func openNIDX03Fixture(t *testing.T, name string) *seriesIndex {
 	fixtureRoot, err := filepath.Abs(nidx03FixtureDir)
 	require.NoError(t, err)
 	src := filepath.Join(fixtureRoot, name)
-	require.DirExists(t, src, "fixture missing; run TestGenerateNIDX03Fixture with GENERATE_NIDX03_FIXTURE=1")
+	require.DirExists(t, src, "checked-in fixture missing from testdata/nidx03_fixture")
 
 	workDir := t.TempDir()
 	copyDirForTest(t, src, workDir)
@@ -156,19 +176,18 @@ func sortedFixtureLabels(sl pbv1.SeriesList) []string {
 }
 
 // TestSeriesIndex_OpensPreviousReleaseFixture_NormalMode is NIDX-03 §12 item
-// 1: the fixture testdata/nidx03_fixture/normal/sidx, produced by the
-// CURRENT legacy store (TestGenerateNIDX03Fixture), is opened by the native
-// series index and every canned query -- exact, prefix, wildcard, and every
+// 1: the checked-in fixture testdata/nidx03_fixture/normal/sidx (see
+// nidx03FixtureDir's provenance comment) is opened by the native series
+// index and every canned query -- exact, prefix, wildcard, and every
 // criteria.Filter kind -- returns exactly the pinned expected result,
 // proving the previous release's on-disk sidx is read identically.
 //
 // Expected results below (per design §12.1, "literal expectations" from a
-// legacy-store run) were cross-checked against an independent, direct read
-// of the checked-in fixture's raw stored fields with the legacy bluge
-// reader (bluge.OpenReader + DocumentMatch.VisitStoredFields, computing
-// each scenario's matches programmatically from the on-disk data rather
-// than from nidx03FixtureNormalDocs' declared Go literal) before being
-// pinned here; every one matched exactly.
+// previous-release run) were cross-checked against an independent, direct
+// read of the checked-in fixture's raw stored fields with the previous
+// release's own reader, computing each scenario's matches programmatically
+// from the on-disk data rather than from the fixture's declared Go literal
+// content, before being pinned here; every one matched exactly.
 func TestSeriesIndex_OpensPreviousReleaseFixture_NormalMode(t *testing.T) {
 	si := openNIDX03Fixture(t, "normal")
 	all := []*pbv1.Series{

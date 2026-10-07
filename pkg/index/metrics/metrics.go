@@ -24,7 +24,7 @@ import (
 // Metrics is the metrics surface a native.Owner-backed index (the series
 // index, the Stream element index, and the Property store) reports through.
 // It was formerly pkg/index/inverted.Metrics; every field it exposed for the
-// legacy bluge writer's status either has a native-owner equivalent
+// legacy index writer's status either has a native-owner equivalent
 // (ObserveNative) or has no native counterpart and is kept zero.
 type Metrics struct {
 	totalUpdates meter.Gauge

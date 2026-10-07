@@ -349,8 +349,8 @@ func TestTagFilterOpRangeWithCache(t *testing.T) {
 func TestNumericRangeBoundEncodingIsByteStable(t *testing.T) {
 	tests := []struct {
 		name     string
-		value    int64
 		expected []byte
+		value    int64
 	}{
 		{name: "zero", value: 0, expected: []byte{0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}},
 		{name: "one", value: 1, expected: []byte{0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}},

@@ -60,7 +60,7 @@ func HandledCount() int64 { return handledCount.Load() }
 //  2. Resolves the remaining criteria + entity table the storage layer
 //     needs: extractSeriesMatchers (non-index-mode) or the raw request
 //     criteria (index mode) plus a measureFieldResolver, which the series
-//     index evaluates via pkg/index/native/criteria.Filter -- no bluge
+//     index evaluates via pkg/index/native/criteria.Filter -- no legacy-engine
 //     query is built (NIDX-03 §5)
 //  3. Calls ec.Query(ctx, opts) to obtain the MeasureQueryResult
 //  4. Wraps the result as a vec PullOperator (BatchSourceFromBatchResult

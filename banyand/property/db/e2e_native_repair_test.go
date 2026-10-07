@@ -34,7 +34,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -45,8 +44,8 @@ const (
 	// corpus lives beside the reader that pages it because the reader's own
 	// boundary suite reads the same bytes; this package reads them through the
 	// repair build instead.
-	nidx01eCorpus         = "../../../pkg/index/inverted/testdata/nidx01e/shard-0"
-	nidx01eProvenanceFile = "../../../pkg/index/inverted/testdata/nidx01e/provenance.json"
+	nidx01eCorpus         = "../../../pkg/index/testdata/nidx01e/shard-0"
+	nidx01eProvenanceFile = "../../../pkg/index/testdata/nidx01e/provenance.json"
 
 	// nidx01ePageSize is the page size issue #14012 declares the end-to-end
 	// repair build runs at, and nidx01eExpectedPages is how many calls it takes
@@ -332,13 +331,21 @@ func nidx01eTreeLeaves(t *testing.T, repairState *repair) map[string]string {
 	return leaves
 }
 
+// nidx01ePublishRevisionLease is a minimal native.PathRootLease stub for
+// publishing directly into a disposable fixture copy: this helper has no
+// surrounding database lock to validate against.
+type nidx01ePublishRevisionLease struct{}
+
+func (nidx01ePublishRevisionLease) Validate() error           { return nil }
+func (nidx01ePublishRevisionLease) ValidatePath(string) error { return nil }
+
 // nidx01ePublishRevision commits one more Property revision into a shard
 // directory, which publishes a new generation over it. The revision is shaped
-// the way the Property writer shapes one, so a build that read it would gain a
-// leaf for it.
+// the way the Property writer shapes one (encodeNativePropertyDocument is the
+// production encoder itself), so a build that read it would gain a leaf for it.
 func nidx01ePublishRevision(t *testing.T, shard, group, name, entity string, revision int64, sha string) {
 	t.Helper()
-	writer, err := inverted.NewStore(inverted.StoreOpts{Path: shard})
+	owner, err := native.NewOwner(native.OwnerOptions{Lease: nidx01ePublishRevisionLease{}, Path: shard})
 	require.NoError(t, err)
 	document := index.Document{
 		EntityValues: []byte(group + "/" + name + "/" + entity + "/" + strconv.FormatInt(revision, 10)),
@@ -351,8 +358,15 @@ func nidx01ePublishRevision(t *testing.T, shard, group, name, entity string, rev
 			nidx01eStoredField(shaValueField, sha),
 		},
 	}
-	require.NoError(t, writer.UpdateSeriesBatch(index.Batch{Documents: index.Documents{document}}))
-	require.NoError(t, writer.Close())
+	nativeDocument, encodeErr := encodeNativePropertyDocument(document)
+	require.NoError(t, encodeErr)
+	done := make(chan error, 1)
+	require.NoError(t, owner.Batch(context.Background(), native.Batch{
+		Documents:          []native.Document{nativeDocument},
+		PersistentCallback: func(batchErr error) { done <- batchErr },
+	}))
+	require.NoError(t, <-done)
+	require.NoError(t, owner.Close())
 }
 
 func nidx01eIndexedField(name, value string) index.Field {

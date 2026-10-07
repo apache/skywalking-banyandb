@@ -178,7 +178,7 @@ func TestSumGroupSourceRows_NoSnpFile(t *testing.T) {
 //   - target shard has exactly one .snp file
 //   - target segment has a valid metadata file with endTime
 //
-// Note: the test does NOT build a real schema-property catalog or a real bluge
+// Note: the test does NOT build a real schema-property catalog or a real
 // element index (idx/) — creating those requires the full write-path with
 // index rules. What's covered:
 //   - part flush via BuildPartForDump + memPart (fast-path data copy)
@@ -187,8 +187,8 @@ func TestSumGroupSourceRows_NoSnpFile(t *testing.T) {
 //   - streamSegStateRegistry registration + snapshot
 //
 // What's NOT covered (stubbed/unverified):
-//   - Bluge element index rebuild on slow path (requires index rules + entity resolution)
-//   - Series index union (requires real bluge sidx in source)
+//   - Element index rebuild on slow path (requires index rules + entity resolution)
+//   - Series index union (requires a real sidx in source)
 //   - End-to-end migration copy (requires full schema-property catalog)
 func TestMigrationFastPath(t *testing.T) {
 	tmpDir := t.TempDir()

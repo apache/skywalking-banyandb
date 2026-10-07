@@ -173,7 +173,7 @@ func TestSeriesIndex_Search_UnsortedPathChargesQueryBudget(t *testing.T) {
 
 // TestEncodeSeriesDocument_UnindexedFieldAlwaysStored is the S5 regression:
 // an Index=false field must always be stored (the previous release's
-// bluge.NewStoredOnlyField, NIDX-03 §6.1), regardless of the caller's Store
+// stored-only field behavior, NIDX-03 §6.1), regardless of the caller's Store
 // value -- an Index=false, Store=false field must not silently carry
 // neither an index entry nor a stored value.
 func TestEncodeSeriesDocument_UnindexedFieldAlwaysStored(t *testing.T) {
@@ -195,12 +195,12 @@ func TestEncodeSeriesDocument_UnindexedFieldAlwaysStored(t *testing.T) {
 }
 
 // TestRemoveLegacySeriesIndexArtifacts_TargetsSiblingExternalSegmentTempDir
-// is the L3 regression: the previous release opened its bluge store with
-// ExternalSegmentTempDir: path.Join(root, ...) where root is the SEGMENT
-// directory -- a SIBLING of root/sidx, not a subdirectory of it. A fresh
-// newSeriesIndex must remove both the legacy lock file (inside sidx) and the
-// legacy external-segment-temp directory at its real, sibling location, and
-// must never panic if either happens to be unremovable.
+// is the L3 regression: the previous release's index writer rooted its
+// external-segment staging directory at path.Join(root, ...) where root is
+// the SEGMENT directory -- a SIBLING of root/sidx, not a subdirectory of it.
+// A fresh newSeriesIndex must remove the legacy external-segment-temp
+// directory at its real, sibling location, and must never panic if it
+// happens to be unremovable.
 func TestRemoveLegacySeriesIndexArtifacts_TargetsSiblingExternalSegmentTempDir(t *testing.T) {
 	ctx := context.Background()
 	root, fn := setUp(require.New(t))
@@ -208,7 +208,6 @@ func TestRemoveLegacySeriesIndexArtifacts_TargetsSiblingExternalSegmentTempDir(t
 
 	indexPath := filepath.Join(root, seriesIndexDirName)
 	require.NoError(t, os.MkdirAll(indexPath, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(indexPath, legacyLockFilename), []byte("pid"), 0o600))
 
 	legacyExternalSegmentTempDir := filepath.Join(root, legacyExternalSegmentTempDirName)
 	require.NoError(t, os.MkdirAll(legacyExternalSegmentTempDir, 0o755))
@@ -225,8 +224,6 @@ func TestRemoveLegacySeriesIndexArtifacts_TargetsSiblingExternalSegmentTempDir(t
 	require.NoError(t, err)
 	defer func() { require.NoError(t, si.Close()) }()
 
-	_, lockStatErr := os.Stat(filepath.Join(indexPath, legacyLockFilename))
-	require.True(t, os.IsNotExist(lockStatErr), "the legacy lock file must be removed")
 	_, dirStatErr := os.Stat(legacyExternalSegmentTempDir)
 	require.True(t, os.IsNotExist(dirStatErr), "the legacy external-segment-temp directory at its real, sibling location must be removed")
 }

@@ -301,7 +301,7 @@ func TestRepair(t *testing.T) {
 			// surviving document is the one shard.repair's own batch writes
 			// last (the deletion mark this case asks for), not two distinct
 			// documents. (A previous version of this test, written against
-			// the legacy bluge engine, expected two documents to survive a
+			// the legacy index engine, expected two documents to survive a
 			// same-batch "_id" collision; that was an artifact of the retired
 			// engine's batch semantics, not a documented contract, and the
 			// native engine deliberately does not reproduce it.)

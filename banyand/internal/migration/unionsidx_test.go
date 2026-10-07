@@ -25,8 +25,6 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/blugelabs/bluge"
-
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -35,6 +33,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
+
+// unionSidxTestLease is a minimal native.PathRootLease stub for writing
+// throwaway source fixtures directly: these tests have no surrounding
+// database lock to validate against.
+type unionSidxTestLease struct{}
+
+func (unionSidxTestLease) Validate() error           { return nil }
+func (unionSidxTestLease) ValidatePath(string) error { return nil }
 
 // Src-root resolution tests.
 
@@ -118,11 +124,12 @@ func TestCollectAllSrcGroupRoots_BackupNodes(t *testing.T) {
 
 // Union sidx build tests.
 
-// makeSidxSourceDoc builds one bluge doc whose layout mirrors what the
-// measure write path emits into <segment>/sidx/: bluge _id is the marshaled
-// pbv1.Series buffer and the doc carries one stored+indexed tag field plus
-// (optionally) a stored version field. Returns the SeriesID for assertions.
-func makeSidxSourceDoc(t *testing.T, entity, tagValue string) (*bluge.Document, common.SeriesID) {
+// makeSidxSourceDoc builds one native series-index document whose layout
+// mirrors what the measure write path emits into <segment>/sidx/: the
+// identifier is the marshaled pbv1.Series buffer and the doc carries one
+// stored+indexed tag field plus (optionally) a stored version field.
+// Returns the SeriesID for assertions.
+func makeSidxSourceDoc(t *testing.T, entity, tagValue string) (native.Document, common.SeriesID) {
 	t.Helper()
 	series := &pbv1.Series{
 		Subject:      "m1",
@@ -131,70 +138,75 @@ func makeSidxSourceDoc(t *testing.T, entity, tagValue string) (*bluge.Document, 
 	if err := series.Marshal(); err != nil {
 		t.Fatalf("series.Marshal: %v", err)
 	}
-	doc := bluge.NewDocument(string(series.Buffer))
-	doc.AddField(bluge.NewKeywordFieldBytes("service", []byte(tagValue)).StoreValue())
+	doc := native.Document{
+		Identifier: append([]byte(nil), series.Buffer...),
+		Fields:     []native.Field{{Name: "service", Value: []byte(tagValue), Store: true, Index: true}},
+	}
 	return doc, series.ID
 }
 
-// writeSidxAt creates a bluge sidx at <seg>/sidx/ populated with docs.
-func writeSidxAt(t *testing.T, segDir string, docs []*bluge.Document) {
+// writeSidxAt creates a native sidx at <seg>/sidx/ populated with docs. A nil
+// or empty docs slice leaves the directory present but uncommitted (no
+// generation ever published), the same shape
+// TestBuildGroupUnionSidx_UncommittedSourceSidxIsEmpty exercises directly.
+func writeSidxAt(t *testing.T, segDir string, docs []native.Document) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Join(segDir, sidxDirName), storage.DirPerm); err != nil {
+	sidxPath := filepath.Join(segDir, sidxDirName)
+	if err := os.MkdirAll(sidxPath, storage.DirPerm); err != nil {
 		t.Fatalf("mkdir sidx: %v", err)
 	}
-	w, err := bluge.OpenWriter(bluge.DefaultConfig(filepath.Join(segDir, sidxDirName)))
+	if len(docs) == 0 {
+		return
+	}
+	owner, err := native.NewOwner(native.OwnerOptions{Lease: unionSidxTestLease{}, Path: sidxPath, IdentifierDocValues: true})
 	if err != nil {
 		t.Fatalf("open writer: %v", err)
 	}
-	batch := bluge.NewBatch()
-	for _, d := range docs {
-		batch.Insert(d)
-	}
-	if err := w.Batch(batch); err != nil {
+	done := make(chan error, 1)
+	if err := owner.Batch(context.Background(), native.Batch{
+		Documents:          docs,
+		PersistentCallback: func(batchErr error) { done <- batchErr },
+	}); err != nil {
 		t.Fatalf("batch: %v", err)
 	}
-	if err := w.Close(); err != nil {
+	if err := <-done; err != nil {
+		t.Fatalf("persist: %v", err)
+	}
+	if err := owner.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
 }
 
-// countDocsInSidx opens a bluge sidx and returns the count of docs whose
-// _id unmarshals into a pbv1.Series, plus the sorted list of SeriesIDs.
+// countDocsInSidx opens a native sidx and returns the sorted list of
+// SeriesIDs of docs whose _id unmarshals into a pbv1.Series.
 func countDocsInSidx(t *testing.T, path string) []common.SeriesID {
 	t.Helper()
-	r, err := bluge.OpenReader(bluge.DefaultConfig(path))
+	generation, err := native.OpenReadOnlyGeneration(path)
 	if err != nil {
 		t.Fatalf("open reader: %v", err)
 	}
-	defer r.Close()
-	dmi, err := r.Search(context.Background(), bluge.NewAllMatches(bluge.NewMatchAllQuery()))
-	if err != nil {
-		t.Fatalf("search: %v", err)
-	}
+	defer func() { _ = generation.Close() }()
 	var ids []common.SeriesID
-	for {
-		next, e := dmi.Next()
-		if e != nil {
-			t.Fatalf("iterate: %v", e)
-		}
-		if next == nil {
-			break
-		}
+	visitErr := generation.VisitLiveDocuments(context.Background(), func(doc native.StoredDocument) error {
 		var entity []byte
-		_ = next.VisitStoredFields(func(field string, value []byte) bool {
+		_ = doc.VisitStoredFields(func(field string, value []byte) bool {
 			if field == sidxDocIDField {
 				entity = append([]byte(nil), value...)
 			}
 			return true
 		})
 		if len(entity) == 0 {
-			continue
+			return nil
 		}
 		var s pbv1.Series
 		if err := s.Unmarshal(entity); err != nil {
-			continue
+			return nil
 		}
 		ids = append(ids, s.ID)
+		return nil
+	})
+	if visitErr != nil {
+		t.Fatalf("iterate: %v", visitErr)
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	return ids
@@ -221,9 +233,9 @@ func TestBuildGroupUnionSidx_DeduplicatesAcrossSegments(t *testing.T) {
 		t.Fatalf("setup mismatch: beta SeriesID should be stable across segments, got %d vs %d", sidBeta, sidBetaB)
 	}
 
-	writeSidxAt(t, segA, []*bluge.Document{docAlpha, docBetaA})
-	writeSidxAt(t, segB, []*bluge.Document{docBetaB, docGamma})
-	writeSidxAt(t, segC, []*bluge.Document{docDelta})
+	writeSidxAt(t, segA, []native.Document{docAlpha, docBetaA})
+	writeSidxAt(t, segB, []native.Document{docBetaB, docGamma})
+	writeSidxAt(t, segC, []native.Document{docDelta})
 
 	resultPath, err := BuildGroupUnionSidx(context.Background(), []string{srcGroupRoot}, stagingPath, nil)
 	if err != nil {
@@ -259,8 +271,8 @@ func TestBuildGroupUnionSidx_PreservesVersionField(t *testing.T) {
 
 	seg := filepath.Join(srcGroupRoot, segPrefix+"20260101")
 	doc, sid := makeSidxSourceDoc(t, "alpha", "svc-a")
-	doc.AddField(bluge.NewKeywordFieldBytes(sidxVersionField, convert.Int64ToBytes(7)).StoreValue())
-	writeSidxAt(t, seg, []*bluge.Document{doc})
+	doc.Fields = append(doc.Fields, native.Field{Name: sidxVersionField, Value: convert.Int64ToBytes(7), Store: true})
+	writeSidxAt(t, seg, []native.Document{doc})
 
 	resultPath, err := BuildGroupUnionSidx(context.Background(), []string{srcGroupRoot}, stagingPath, nil)
 	if err != nil {

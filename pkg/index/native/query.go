@@ -765,7 +765,8 @@ func successor(prefix []byte) []byte {
 
 // wildcardRegexpReplacer escapes regexp metacharacters (including `|` and
 // `\`) and rewrites `*`/`?` to their regexp equivalents, matching the
-// conversion the legacy series index relied on through bluge's WildcardQuery.
+// conversion the legacy series index relied on through the previous
+// release's wildcard-query support.
 var wildcardRegexpReplacer = strings.NewReplacer(
 	"+", `\+`,
 	"(", `\(`,

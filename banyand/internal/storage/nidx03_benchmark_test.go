@@ -63,7 +63,7 @@ import (
 //   - nidx03SettleCompaction: a no-op in the ported copy. Here it brings the
 //     native owner to a quiescent state (tiered plan exhausted, root
 //     durable) so no background merge or persist overlaps a timed region;
-//     the retired bluge engine has no equivalent Compact call to drive.
+//     the retired legacy index engine has no equivalent Compact call to drive.
 //
 // Methodology: every operation benchmark closes its fixture in a b.Cleanup
 // (outside the timed region), runs the operation once untimed (reported as
@@ -150,7 +150,7 @@ func buildBenchSeriesIndex(b *testing.B) (*seriesIndex, string) {
 // nidx03BenchTakeFileSnapshot is the second (and last) constructor-shaped
 // difference a 735e9ad2 port of this file changes: IndexDB there (added in
 // NIDX-03 phase 2, before this phase 3 change) has no TakeFileSnapshot
-// method, so the ported copy opens si's package-private bluge-backed store
+// method, so the ported copy opens si's package-private legacy-backed store
 // field directly -- `return si.store.TakeFileSnapshot(dir)` -- instead of
 // calling through seriesIndex.
 func nidx03BenchTakeFileSnapshot(si *seriesIndex, dir string) error {
@@ -439,7 +439,7 @@ func BenchmarkSeriesIndexSearchIndexOrder(b *testing.B) {
 
 	search := func() {
 		// PreloadSize is unused by the current engine's Search but is the
-		// previous release's bluge sortIterator page size: a zero value
+		// previous release's sortIterator page size: a zero value
 		// starves it to zero results there, so every benchmark in this file
 		// sets it explicitly to keep both trees' call shape identical.
 		sd, sortedValues, err := fixture.si.Search(ctx, []*pbv1.Series{prefixQuery}, IndexSearchOpts{Order: order, PreloadSize: fixture.perGroup})

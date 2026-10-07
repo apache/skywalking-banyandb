@@ -50,7 +50,7 @@ func (e *MigrationExecutor) LogPrefix() string { return streamMigrationLogPrefix
 // given groups from the schema-property catalog.
 func (e *MigrationExecutor) Prepare(_ context.Context, schemaRoot string, groups []string) error {
 	logStreamStep("loading stream schemas")
-	//nolint:contextcheck // bluge reader.Search inside reader.WalkShard already uses its own context.
+	//nolint:contextcheck // reader.WalkShard's native document visitor already uses its own context.
 	sc, err := reader.LoadStreamSchemaContext(schemaRoot, groups)
 	if err != nil {
 		return fmt.Errorf("load stream schemas: %w", err)

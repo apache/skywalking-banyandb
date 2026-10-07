@@ -244,7 +244,7 @@ const indexModeLockFilename = "lock"
 // targetIdxStore lazily opens one native owner per target sidx path and
 // closes them all at the end, so multiple source segs feeding the same
 // target sidx share a single writer. Adapted (cross-package, unexported)
-// from stream/migration_element_index.go's original inverted-store pool.
+// from stream/migration_element_index.go's original native-owner pool.
 type targetIdxStore struct {
 	owners map[string]*native.Owner
 	locks  map[string]fs.File
@@ -291,7 +291,7 @@ func (t *targetIdxStore) get(path string) (*native.Owner, error) {
 // writeDocs upserts docs into the target sidx at path (opening it on first
 // use), through the same series document mapping the live series index uses
 // (storage.EncodeSeriesDocument), and blocks until the batch is durable --
-// matching the previous release's inverted.NewStore(StoreOpts{BatchWaitSec:
+// matching the previous release's index writer's StoreOpts{BatchWaitSec:
 // 0}) synchronous-write contract, which callers (including the verify/
 // analyze readers that immediately re-open the target sidx) depend on.
 func (t *targetIdxStore) writeDocs(path string, docs index.Documents) error {
@@ -984,11 +984,11 @@ func IsIndexModeGroup(schemaRoot, group string) (bool, error) {
 // source sidx dir under srcRoots, and runs the sidx-document analysis.
 func AnalyzeIndexModeGroup(ctx context.Context, schemaRoot, group string, srcRoots []string, sampleCap int) (AnalyzeGroupResult, error) {
 	var res AnalyzeGroupResult
-	schemas, err := loadMeasureSchemas(schemaRoot, []string{group}) //nolint:contextcheck // offline bluge schema read, no cancellation
+	schemas, err := loadMeasureSchemas(schemaRoot, []string{group}) //nolint:contextcheck // offline schema read, no cancellation
 	if err != nil {
 		return res, fmt.Errorf("load measure schemas: %w", err)
 	}
-	ruleByID, err := loadIndexRuleInfoByID(schemaRoot, []string{group}) //nolint:contextcheck // offline bluge schema read, no cancellation
+	ruleByID, err := loadIndexRuleInfoByID(schemaRoot, []string{group}) //nolint:contextcheck // offline schema read, no cancellation
 	if err != nil {
 		return res, fmt.Errorf("load index rules: %w", err)
 	}

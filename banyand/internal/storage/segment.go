@@ -303,7 +303,7 @@ func (s *segment[T, O]) collectOpenMetrics(shardMetrics Metrics) bool {
 	}
 	// The native series index does not yet publish the detailed
 	// idxmetrics.Metrics gauges (merge counts, analysis time, cache hit/miss,
-	// ...) the retired bluge store reported; pkg/index/native.Owner exposes
+	// ...) the retired index engine reported; pkg/index/native.Owner exposes
 	// no equivalent introspection today. Stats() (dataCount/dataSizeBytes)
 	// still flows through SeriesIndexStats below.
 	return true
@@ -453,7 +453,7 @@ func closedSeriesIndexDocCount(indexPath string) (int64, error) {
 // snapshotInto writes a point-in-time snapshot of this segment under dst.
 //
 // It NEVER reopens a closed segment -- reopening an idle-closed cold segment is
-// the root cause of the nil-index panic and the bluge "exclusive lock" churn.
+// the root cause of the nil-index panic and the legacy index engine's "exclusive lock" churn.
 // A closed (quiescent) segment is hard-linked directly from its immutable
 // on-disk files; an open segment is snapshotted through its live series index
 // and shard tables while a reference is held to keep it open.
@@ -558,18 +558,17 @@ func closedSnapshotFilter(sidxPath string, keep map[string]struct{}) func(string
 
 // includeInClosedSnapshot reports whether a file or directory under a closed
 // segment should be hard-linked into a snapshot. It excludes the transient and
-// non-current artifacts that the open-path snapshot never copies: the bluge
-// lock file, a seg-*/lock exclusive-lock file (lockFilename; the offline
-// index-mode copy tool's targetIdxStore creates one beside the sidx
-// directory of every target segment it writes and only removes it in
-// closeAll, so a tool crash leaves it on disk -- it must never leak into a
-// backup, the same way the TSDB root's own same-named lock file never does),
-// the failed-parts directory, the external-segment temp directory, and
-// partial ".tmp" atomic-write files. Current part directories and their
-// ".snp" manifests are kept.
+// non-current artifacts that the open-path snapshot never copies: a
+// seg-*/lock exclusive-lock file (lockFilename; the offline index-mode copy
+// tool's targetIdxStore creates one beside the sidx directory of every target
+// segment it writes and only removes it in closeAll, so a tool crash leaves
+// it on disk -- it must never leak into a backup, the same way the TSDB
+// root's own same-named lock file never does), the failed-parts directory,
+// the external-segment temp directory, and partial ".tmp" atomic-write
+// files. Current part directories and their ".snp" manifests are kept.
 func includeInClosedSnapshot(p string) bool {
 	switch base := filepath.Base(p); {
-	case base == legacyLockFilename, base == lockFilename, base == FailedPartsDirName, base == legacyExternalSegmentTempDirName:
+	case base == lockFilename, base == FailedPartsDirName, base == legacyExternalSegmentTempDirName:
 		return false
 	default:
 		return filepath.Ext(base) != ".tmp"
