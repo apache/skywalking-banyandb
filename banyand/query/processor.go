@@ -236,7 +236,7 @@ func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan lo
 	// proto Elements and frame bodies interchangeably (mixed-mode), so this stays
 	// correct. The hidden-tag STRIP is no longer part of that reason: the frame path
 	// drops those columns in mergeStreamBatches (apache/skywalking#14067 R3).
-	tagFilter, hiddenTags, filterSchema, hasFilter := logical_stream.VecTagFilter(plan)
+	criteria, hasFilter := logical_stream.VecTagFilter(plan)
 
 	// Data-node native wire mode (flag-on, no tracing): emit a columnar frame body
 	// so the send path passes it through and the liaison decodes it. The liaison
@@ -246,7 +246,7 @@ func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan lo
 	// An index-order scan whose sort tag the client did not project is now eligible:
 	// mergeStreamBatches drops that column by name, so the hidden tag cannot leak.
 	if !hasFilter && streamVecEmitAsFrame(p.distributed, data.StreamWireModeRaw(), traced) {
-		merged, mergeErr := mergeStreamBatches(schema, batches, hiddenTags, vecExec.HiddenOrderTag())
+		merged, mergeErr := mergeStreamBatches(schema, batches, criteria.HiddenTags, vecExec.HiddenOrderTag())
 		if mergeErr != nil {
 			p.log.Error().Err(mergeErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to merge the vectorized stream batches")
 			return true, bus.NewMessage(bus.MessageID(now), common.NewError("merge the vectorized stream batches for stream %s: %v", queryCriteria.GetName(), mergeErr))
@@ -266,21 +266,26 @@ func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan lo
 		p.log.Error().Err(buildErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to materialize vectorized stream elements")
 		return true, bus.NewMessage(bus.MessageID(now), common.NewError("materialize vectorized stream elements for stream %s: %v", queryCriteria.GetName(), buildErr))
 	}
-	// Criteria query: apply the SAME per-element tagFilter.Match + hidden-tag strip
-	// as the row tagFilterPlan.Execute, BEFORE the outer offset:offset+limit slice
-	// (row order: scan → merge → distinct → filter → limit). The merge caps for every
-	// plan. For timestamp order this is the only tag filter, and it runs behind that
-	// cap, as before. For index order the scan already ran the SAME logical.TagFilter
-	// ahead of the merge (see scanResumesAcrossPulls), so this stage receives the
-	// FILTERED top-N: the Match re-check is a no-op and the hidden-tag strip is the
-	// work that remains.
+	// Criteria query, BEFORE the outer offset:offset+limit slice (row order: scan →
+	// merge → distinct → filter → limit). The merge caps for every plan.
+	//
+	//   - preMerged (index order): the scan already ran the SAME logical.TagFilter on
+	//     the columns ahead of the merge (see scanResumesAcrossPulls), so every element
+	//     here already matches. Re-matching per element is pure waste, so only the
+	//     hidden-tag strip runs. apache/skywalking#14067 R1.
+	//   - otherwise (timestamp order): this is the only tag filter, and it stays here,
+	//     behind the cap, so the documented under-fill does not change. R2.
 	if hasFilter {
-		filtered, filterErr := applyStreamTagFilter(elements, tagFilter, hiddenTags, filterSchema)
-		if filterErr != nil {
-			p.log.Error().Err(filterErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to apply the vectorized stream tag filter")
-			return true, bus.NewMessage(bus.MessageID(now), common.NewError("apply the vectorized stream tag filter for stream %s: %v", queryCriteria.GetName(), filterErr))
+		if criteria.PreMerged {
+			stripStreamHiddenTags(elements, criteria.HiddenTags)
+		} else {
+			filtered, filterErr := applyStreamTagFilter(elements, criteria)
+			if filterErr != nil {
+				p.log.Error().Err(filterErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to apply the vectorized stream tag filter")
+				return true, bus.NewMessage(bus.MessageID(now), common.NewError("apply the vectorized stream tag filter for stream %s: %v", queryCriteria.GetName(), filterErr))
+			}
+			elements = filtered
 		}
-		elements = filtered
 	}
 	if offset, limit, ok := logical_stream.VecOffsetLimit(plan); ok {
 		elements = sliceStreamElements(elements, offset, limit)
@@ -312,12 +317,17 @@ func (p *streamQueryProcessor) tryVecMergeDispatch(ctx context.Context, merge *l
 			return true, bus.NewMessage(bus.MessageID(now), common.NewError("materialize vectorized stream elements for stream %s: %v", queryCriteria.GetName(), buildErr))
 		}
 		if group.HasFilter {
-			filtered, filterErr := applyStreamTagFilter(elements, group.TagFilter, group.HiddenTags, group.FilterSchema)
-			if filterErr != nil {
-				p.log.Error().Err(filterErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to apply the vectorized stream group tag filter")
-				return true, bus.NewMessage(bus.MessageID(now), common.NewError("apply the vectorized stream tag filter for stream %s: %v", queryCriteria.GetName(), filterErr))
+			if group.Criteria.PreMerged {
+				// R1 again, per group: this group's scan filtered on the columns.
+				stripStreamHiddenTags(elements, group.Criteria.HiddenTags)
+			} else {
+				filtered, filterErr := applyStreamTagFilter(elements, group.Criteria)
+				if filterErr != nil {
+					p.log.Error().Err(filterErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to apply the vectorized stream group tag filter")
+					return true, bus.NewMessage(bus.MessageID(now), common.NewError("apply the vectorized stream tag filter for stream %s: %v", queryCriteria.GetName(), filterErr))
+				}
+				elements = filtered
 			}
-			elements = filtered
 		}
 		perGroup = append(perGroup, elements)
 	}
@@ -429,21 +439,33 @@ func appendActiveRowsProjected(dst, src *vectorized.RecordBatch, srcCols []int) 
 // criteria tag filter, then strips the filter-only (hidden) tags from the kept
 // elements — mirroring the row tagFilterPlan.Execute per-element loop exactly so
 // the vec result is byte-identical.
-func applyStreamTagFilter(elements []*streamv1.Element, tagFilter logical.TagFilter,
-	hiddenTags logical.HiddenTagSet, s logical.Schema,
+func applyStreamTagFilter(elements []*streamv1.Element, criteria logical_stream.VecCriteriaFilter,
 ) ([]*streamv1.Element, error) {
 	filtered := make([]*streamv1.Element, 0, len(elements))
 	for _, e := range elements {
-		ok, matchErr := tagFilter.Match(logical.TagFamilies(e.TagFamilies), s)
+		ok, matchErr := criteria.TagFilter.Match(logical.TagFamilies(e.TagFamilies), criteria.Schema)
 		if matchErr != nil {
 			return nil, matchErr
 		}
 		if ok {
-			e.TagFamilies = hiddenTags.StripHiddenTags(e.TagFamilies)
+			e.TagFamilies = criteria.HiddenTags.StripHiddenTags(e.TagFamilies)
 			filtered = append(filtered, e)
 		}
 	}
 	return filtered, nil
+}
+
+// stripStreamHiddenTags removes the criteria-only tags from elements the scan already
+// filtered on its columns. It is applyStreamTagFilter without the Match: both run the
+// SAME hidden-tag strip the row tagFilterPlan.Execute ran, but a pre-merge-filtered
+// batch has nothing left to match. apache/skywalking#14067 R1.
+func stripStreamHiddenTags(elements []*streamv1.Element, hiddenTags logical.HiddenTagSet) {
+	if hiddenTags.IsEmpty() {
+		return
+	}
+	for _, e := range elements {
+		e.TagFamilies = hiddenTags.StripHiddenTags(e.TagFamilies)
+	}
 }
 
 // sliceStreamElements applies the client offset:offset+limit window, matching the

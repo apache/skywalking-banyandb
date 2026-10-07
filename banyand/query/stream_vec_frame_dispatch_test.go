@@ -249,6 +249,79 @@ func newOracleProcessor(t *testing.T) *streamQueryProcessor {
 	}
 }
 
+// newOracleStandaloneProcessor returns a standalone stream processor. Standalone
+// answers the client directly, so it always takes the proto egress — that is the arm
+// where the per-element hidden-tag strip still has to happen.
+func newOracleStandaloneProcessor(t *testing.T) *streamQueryProcessor {
+	t.Helper()
+	return &streamQueryProcessor{
+		distributed:  false,
+		queryService: &queryService{log: logger.GetLogger("test-oracle-standalone"), nodeID: "test-node"},
+	}
+}
+
+// oracleProtoServices reads the projected tag out of a proto response and asserts no
+// element carries a hidden tag.
+func oracleProtoServices(t *testing.T, elements []*streamv1.Element) []string {
+	t.Helper()
+	services := make([]string, 0, len(elements))
+	for _, element := range elements {
+		var found bool
+		for _, family := range element.GetTagFamilies() {
+			for _, tag := range family.GetTags() {
+				require.NotEqual(t, oracleCriteriaTag, tag.GetKey(),
+					"the criteria-only tag survived the per-element strip")
+				require.NotEqual(t, oracleOrderTag, tag.GetKey(),
+					"the hidden ordering tag reached the client")
+				if tag.GetKey() == oracleClientTag {
+					services = append(services, tag.GetValue().GetStr().GetValue())
+					found = true
+				}
+			}
+		}
+		require.True(t, found, "the projected tag %q is missing from an element", oracleClientTag)
+	}
+	return services
+}
+
+// TestStreamVecDispatch_FilteredIndexOrderProtoStillStrips is the
+// apache/skywalking#14067 R1 guard. The element-level tagFilter.Match is gone for an
+// index-order query, because the scan already ran that same filter on the columns
+// ahead of the merge. The hidden-tag STRIP is not redundant, so it stays — and this
+// test fails if the R1 change takes it away with the match.
+//
+// It runs standalone, which forces the proto egress, so the per-element path is the
+// one under test. It also pins the oracle's offset/limit answer.
+func TestStreamVecDispatch_FilteredIndexOrderProtoStillStrips(t *testing.T) {
+	executedTags := []string{oracleClientTag, oracleCriteriaTag, oracleOrderTag}
+
+	t.Run("whole window", func(t *testing.T) {
+		p := newOracleStandaloneProcessor(t)
+		req := oracleRequest([]string{oracleClientTag}, true)
+		plan := newOraclePlan(t, req, executedTags)
+
+		handled, resp := p.tryStreamVecDispatch(context.Background(), plan, req, false)
+		require.True(t, handled)
+		response, ok := resp.Data().(*streamv1.QueryResponse)
+		require.True(t, ok, "standalone emitted %T, not a proto response", resp.Data())
+		require.Equal(t, []string{"new", "other"}, oracleProtoServices(t, response.GetElements()))
+	})
+
+	t.Run("offset 1 limit 1", func(t *testing.T) {
+		p := newOracleStandaloneProcessor(t)
+		req := oracleRequest([]string{oracleClientTag}, true)
+		req.Offset, req.Limit = 1, 1
+		plan := newOraclePlan(t, req, executedTags)
+
+		handled, resp := p.tryStreamVecDispatch(context.Background(), plan, req, false)
+		require.True(t, handled)
+		response, ok := resp.Data().(*streamv1.QueryResponse)
+		require.True(t, ok, "standalone emitted %T, not a proto response", resp.Data())
+		// The issue's hand-calculated answer for offset 1, limit 1.
+		require.Equal(t, []string{"other"}, oracleProtoServices(t, response.GetElements()))
+	})
+}
+
 // newOraclePlan runs the production analyzer over the request, so the
 // *limit → *tagFilterPlan → *localIndexScan shape and the hasFilter decision are
 // the real ones rather than a struct literal written to match.

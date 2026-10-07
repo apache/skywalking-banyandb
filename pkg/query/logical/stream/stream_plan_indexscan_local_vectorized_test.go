@@ -172,6 +172,10 @@ func TestScanCap_FilteredTimeOrder_CapsMerge(t *testing.T) {
 	require.NotNil(t, VecExecutable(plan), "a filtered time-order query is vec-eligible")
 	require.Nil(t, scan.preMergeFilter,
 		"time-order scans do not resume within a segment, so the filter must stay at the egress behind the cap")
+	criteria, ok := VecTagFilter(plan)
+	require.True(t, ok)
+	require.False(t, criteria.PreMerged,
+		"the egress owns the only Match for timestamp order, so it must not be told to skip it")
 }
 
 // TestScanCap_FilteredIndexOrder_PushesFilterDown is the other arm, and the shape
@@ -197,4 +201,8 @@ func TestScanCap_FilteredIndexOrder_PushesFilterDown(t *testing.T) {
 	require.NotNil(t, VecExecutable(plan), "a filtered index-order query with the sort tag projected is vec-eligible")
 	require.NotNil(t, scan.preMergeFilter,
 		"index-order scans resume across Pulls, so the filter must run pre-merge to make the merge cap sound")
+	criteria, ok := VecTagFilter(plan)
+	require.True(t, ok)
+	require.True(t, criteria.PreMerged,
+		"the columns already matched, so the egress must be told to skip the redundant per-element Match")
 }
