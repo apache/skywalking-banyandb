@@ -481,7 +481,19 @@ func filterStreamBatches(ctx context.Context, schema *vectorized.BatchSchema,
 	defer func() {
 		_ = filter.Close()
 	}()
+	// Init is a documented no-op today, but the pipeline always calls it before
+	// Process. Calling it here keeps this caller correct if the operator ever gains
+	// per-query setup, rather than depending on the no-op staying one.
+	if initErr := filter.Init(ctx); initErr != nil {
+		return initErr
+	}
 	for _, batch := range batches {
+		// TagFilter.Process ignores its context, and the element loop this replaced
+		// ignored cancellation too. Check between batches so a canceled query stops
+		// here instead of filtering the whole capped set first.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		if batch == nil || batch.ActiveLen() == 0 {
 			continue
 		}
