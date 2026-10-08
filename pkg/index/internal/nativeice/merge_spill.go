@@ -46,8 +46,8 @@ func (f *spillFactory) nextPath() string {
 // spillBuffer stages a merge section whose length must be written before its
 // bytes. It holds up to mergeSpillThreshold bytes in memory and appends the
 // rest to a spill file, so a staged section costs bounded memory however
-// large it grows. A spill file lives only until the buffer is reset or
-// closed.
+// large it grows. A spill file is unlinked as soon as it is created and
+// lives, nameless, only until the buffer is reset.
 type spillBuffer struct {
 	factory *spillFactory
 	file    fs.File
@@ -79,7 +79,13 @@ func (b *spillBuffer) startSpill() error {
 	if createErr != nil {
 		return fmt.Errorf("create merge spill file: %w", createErr)
 	}
-	// The spill file is read back moments later and deleted; keep its pages.
+	// The name is removed at once: the open file stays readable and
+	// writable, and a crash can then leave nothing behind in the index
+	// directory, where the previous release's engine would never clean it.
+	if deleteErr := segmentFileSystem.DeleteFile(path); deleteErr != nil {
+		return errors.Join(fmt.Errorf("unlink merge spill file: %w", deleteErr), file.Close())
+	}
+	// The spill file is read back moments later; keep its pages.
 	fs.SetCached(file, true)
 	b.file, b.path = file, path
 	b.writer = file.SequentialWrite()
@@ -131,7 +137,7 @@ func (b *spillBuffer) closeFile() error {
 		b.writer = nil
 	}
 	if b.file != nil {
-		closeErr = errors.Join(closeErr, b.file.Close(), segmentFileSystem.DeleteFile(b.path))
+		closeErr = errors.Join(closeErr, b.file.Close())
 		b.file, b.path = nil, ""
 	}
 	return closeErr

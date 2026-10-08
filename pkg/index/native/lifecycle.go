@@ -113,6 +113,15 @@ func (o *Owner) TakeFileSnapshot(destination string) error {
 	defer root.release()
 
 	segments := make([]nativeice.SnapshotSegmentPayload, 0, len(root.segments))
+	// A staged segment's file is renamed to "<id>.seg" by persistence. Hold
+	// each staged handle's path, so the name read here is the one the copy
+	// below opens.
+	locked := make(map[*segmentHandle]struct{})
+	defer func() {
+		for handle := range locked {
+			handle.pathMu.RUnlock()
+		}
+	}()
 	for _, current := range root.segments {
 		segment, ok := current.(*memorySegment)
 		if !ok {
@@ -120,6 +129,10 @@ func (o *Owner) TakeFileSnapshot(destination string) error {
 		}
 		if segmentHasNoLiveDocuments(segment) {
 			continue
+		}
+		if _, held := locked[segment.handle]; segment.handle.staged && !held {
+			segment.handle.pathMu.RLock()
+			locked[segment.handle] = struct{}{}
 		}
 		metadata := nativeice.SnapshotSegment{
 			ID: segment.handle.id, Size: segment.handle.size, DocumentCount: segment.handle.count,

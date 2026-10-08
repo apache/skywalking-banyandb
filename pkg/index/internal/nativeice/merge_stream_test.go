@@ -190,12 +190,12 @@ func TestMergeSegmentsToFileRemovesOutputOnFailure(t *testing.T) {
 	path := filepath.Join(directory, ".native-merge-canceled")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	// Cancel once the merge is well under way, after spill files exist.
+	// Cancel once the merge is well under way, after it has written output
+	// and spilled staged sections.
 	input := MergeInput{Reader: reader}
 	go func() {
 		for {
-			entries, _ := os.ReadDir(directory)
-			if len(entries) > 1 {
+			if info, statErr := os.Stat(path); statErr == nil && info.Size() > 0 {
 				cancel()
 				return
 			}
@@ -265,5 +265,36 @@ func TestDocValueTermLengthMatchesDecoder(t *testing.T) {
 		if length != len(encoded)-len(rest) || !bytes.Equal(appendNativeICEDocValueTerm(nil, value), encoded[:length]) {
 			t.Fatalf("%q: length %d, decoded %q rest %q", encoded, length, value, rest)
 		}
+	}
+}
+
+// TestMergeSpillFilesNeverKeepAName proves a spill file is nameless while it
+// holds staged bytes, so a crash cannot leave it in the index directory.
+func TestMergeSpillFilesNeverKeepAName(t *testing.T) {
+	forceMergeSpill(t)
+	directory := t.TempDir()
+	factory := spillFactory{prefix: filepath.Join(directory, ".native-merge-spill-test")}
+	buffer := factory.newBuffer()
+	payload := bytes.Repeat([]byte("staged"), mergeSpillThreshold)
+	for round := 0; round < 3; round++ {
+		if _, writeErr := buffer.Write(payload); writeErr != nil {
+			t.Fatal(writeErr)
+		}
+	}
+	if buffer.file == nil {
+		t.Fatal("the buffer did not spill")
+	}
+	if entries, readErr := os.ReadDir(directory); readErr != nil || len(entries) != 0 {
+		t.Fatalf("spilled buffer left names %v (err %v)", entries, readErr)
+	}
+	var copied bytes.Buffer
+	if copyErr := buffer.copyTo(&copied); copyErr != nil {
+		t.Fatal(copyErr)
+	}
+	if !bytes.Equal(copied.Bytes(), bytes.Repeat(payload, 3)) {
+		t.Fatal("spilled bytes differ from the written bytes")
+	}
+	if resetErr := buffer.reset(); resetErr != nil {
+		t.Fatal(resetErr)
 	}
 }

@@ -127,12 +127,6 @@ type SnapshotSegmentPayload struct {
 	// SourcePath is a validated standalone segment file to copy as a new
 	// immutable segment. It is mutually exclusive with Payload.
 	SourcePath string
-	// LinkSource publishes SourcePath by hard-linking it into place instead
-	// of validating and copying it. It is valid only for a fsynced, immutable
-	// source in the same directory that the caller has already opened and
-	// validated itself, as an owner does with its merge output; publication
-	// still checks the source's regular-file kind and size.
-	LinkSource bool
 	// TrustedExisting skips reparsing an existing segment's dictionaries. It
 	// is valid only for a nil Payload after the caller has opened the same
 	// immutable directory with OpenStrict and still holds the owner lease.
@@ -231,7 +225,6 @@ type preparedSnapshotSegment struct {
 	payload  []byte
 	source   string
 	trusted  bool
-	link     bool
 }
 
 func prepareSnapshotPublication(path string, segments []SnapshotSegmentPayload) ([]preparedSnapshotSegment, error) {
@@ -241,7 +234,7 @@ func prepareSnapshotPublication(path string, segments []SnapshotSegmentPayload) 
 			ID: candidate.ID, Size: candidate.Size, DocumentCount: candidate.DocumentCount,
 			TimeMin: candidate.TimeMin, TimeMax: candidate.TimeMax,
 			DeletionBitmap: append([]byte(nil), candidate.DeletionBitmap...),
-		}, payload: candidate.Payload, source: candidate.SourcePath, trusted: candidate.TrustedExisting, link: candidate.LinkSource}
+		}, payload: candidate.Payload, source: candidate.SourcePath, trusted: candidate.TrustedExisting}
 	}
 	seenIDs := make(map[uint64]struct{}, len(prepared))
 	for index := range prepared {
@@ -256,9 +249,6 @@ func prepareSnapshotPublication(path string, segments []SnapshotSegmentPayload) 
 		if segment.payload != nil && segment.source != "" {
 			return nil, fmt.Errorf("segment %d has both payload and source path: %w", segment.metadata.ID, ErrPublishConflict)
 		}
-		if segment.link && segment.source == "" {
-			return nil, fmt.Errorf("segment %d links no source path: %w", segment.metadata.ID, ErrPublishConflict)
-		}
 		if deletionErr := validateDeletionBitmap(segment.metadata); deletionErr != nil {
 			return nil, deletionErr
 		}
@@ -268,11 +258,7 @@ func prepareSnapshotPublication(path string, segments []SnapshotSegmentPayload) 
 				return nil, fmt.Errorf("segment %d already exists: %w", segment.metadata.ID, ErrPublishConflict)
 			}
 			if segment.source != "" {
-				validate := validateExistingSegment
-				if segment.link {
-					validate = validateExistingSegmentMetadata
-				}
-				if validationErr := validate(segment.source, segment.metadata); validationErr != nil {
+				if validationErr := validateExistingSegment(segment.source, segment.metadata); validationErr != nil {
 					return nil, validationErr
 				}
 			} else {
@@ -411,16 +397,9 @@ func stageSnapshotSegments(directory string, prepared []preparedSnapshotSegment)
 			segment := pending[index]
 			segmentName := nativeICEFileName(segment.metadata.ID, ".seg")
 			var stageErr error
-			switch {
-			case segment.link:
-				staged[index], stageErr = stageNativeICEFileLink(directory, segmentName, segment.source)
-				if stageErr != nil {
-					// A file system without hard links still publishes, by copy.
-					staged[index], stageErr = stageNativeICEFileFromPath(directory, segmentName, segment.source)
-				}
-			case segment.source != "":
+			if segment.source != "" {
 				staged[index], stageErr = stageNativeICEFileFromPath(directory, segmentName, segment.source)
-			default:
+			} else {
 				staged[index], stageErr = stageNativeICEFile(directory, segmentName, payloadWriter(segment.payload))
 			}
 			if stageErr != nil {
@@ -482,18 +461,6 @@ func publishNativeICEFileTracked(directory, name string, payload []byte) (bool, 
 		return linked, linkErr
 	}
 	return true, syncNativeICEDirectoryForPublish(directory)
-}
-
-// stageNativeICEFileLink stages an already fsynced source by hard-linking it
-// under a temporary name, so the final link and the cleanup paths treat it
-// exactly like a written temporary file. The source name is left in place;
-// both names refer to the same immutable file.
-func stageNativeICEFileLink(directory, name, sourcePath string) (stagedNativeICEFile, error) {
-	temporaryPath := filepath.Join(directory, fmt.Sprintf(".nativeice-%d-%d", os.Getpid(), temporaryFileSequence.Add(1)))
-	if linkErr := segmentFileSystem.CreateHardLink(sourcePath, temporaryPath, nil); linkErr != nil {
-		return stagedNativeICEFile{}, fmt.Errorf("link source segment %q: %w", sourcePath, linkErr)
-	}
-	return stagedNativeICEFile{temporaryPath: temporaryPath, finalPath: filepath.Join(directory, name)}, nil
 }
 
 func stageNativeICEFileFromPath(directory, name, sourcePath string) (stagedNativeICEFile, error) {

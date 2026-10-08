@@ -343,14 +343,19 @@ type memorySegment struct {
 
 //nolint:govet // reader, payload, and atomic lifecycle state share ownership.
 type segmentHandle struct {
-	reader     *nativeice.Reader
-	payload    []byte
+	reader  *nativeice.Reader
+	payload []byte
+	// sourcePath is the staged file a merge output or an external receive
+	// is served from until publication renames it to "<id>.seg"; it is empty
+	// afterwards, and for every other segment. pathMu guards it against a
+	// concurrent file snapshot, which copies from the current name.
 	sourcePath string
-	// linkSource marks a handle whose sourcePath is the owner's own fsynced
-	// merge output. Publication hard-links it into its "<id>.seg" name, and
-	// the handle keeps serving from the same file afterwards, so it is never
-	// promoted to a second reader.
-	linkSource    bool
+	pathMu     sync.RWMutex
+	// staged marks a handle whose sourcePath is a fsynced, immutable file
+	// this owner wrote in its own directory. Publication renames it into its
+	// "<id>.seg" name, so no staged name outlives the publication, and the
+	// handle keeps serving from the same open file across the rename.
+	staged        bool
 	refs          atomic.Int64
 	count         uint64
 	id            uint64
@@ -423,8 +428,8 @@ func NewOwner(options OwnerOptions) (*Owner, error) {
 		if err := pathLease.ValidatePath(options.Path); err != nil {
 			return nil, fmt.Errorf("validate native root lease path: %w", err)
 		}
-		if err := removeStagedMerges(options.Path); err != nil {
-			return nil, fmt.Errorf("remove staged native merges: %w", err)
+		if err := removeStagedFiles(options.Path); err != nil {
+			return nil, fmt.Errorf("remove staged native files: %w", err)
 		}
 	}
 	generation := uint64(1)
@@ -877,6 +882,7 @@ func (o *Owner) persistRoot(root *publishedRoot) error {
 	segments := make([]nativeice.SnapshotSegmentPayload, 0, len(root.segments))
 	handles := make([]*segmentHandle, 0, len(root.segments))
 	unpersisted := make(map[*segmentHandle]struct{}, len(root.segments))
+	renamedAny := false
 	for _, current := range root.segments {
 		segment, ok := current.(*memorySegment)
 		if !ok {
@@ -913,6 +919,7 @@ func (o *Owner) persistRoot(root *publishedRoot) error {
 		payload := []byte(nil)
 		sourcePath := ""
 		persisted := segment.handle.persisted.Load()
+		trusted := persisted
 		if !persisted {
 			// The captured root pins this immutable handle for the synchronous
 			// publisher call; avoid copying the payload solely for persistence.
@@ -927,14 +934,35 @@ func (o *Owner) persistRoot(root *publishedRoot) error {
 			// that promotion never clears on the original handle, so it must
 			// not gate whether this segment is re-validated as brand new.
 			payload = segment.handle.payload
-			sourcePath = segment.handle.sourcePath
+			renamed, renameErr := o.renameStagedSegment(segment.handle)
+			if renameErr != nil {
+				return renameErr
+			}
+			if renamed {
+				// The owner wrote, fsynced and validated this file itself; it
+				// now carries its final name and only needs the manifest.
+				trusted = true
+				renamedAny = true
+			} else {
+				sourcePath = segment.handle.currentSourcePath()
+			}
 			unpersisted[segment.handle] = struct{}{}
 		}
 		segments = append(segments, nativeice.SnapshotSegmentPayload{
 			SnapshotSegment: metadata, Payload: payload, SourcePath: sourcePath,
-			LinkSource: sourcePath != "" && segment.handle.linkSource, TrustedExisting: persisted,
+			TrustedExisting: trusted,
 		})
 		handles = append(handles, segment.handle)
+	}
+	if renamedAny {
+		// Every rename must be durable before the manifest that references
+		// its "<id>.seg" can be.
+		if err := syncOwnerDirectory(o.options.Path); err != nil {
+			return fmt.Errorf("sync renamed native segments: %w", err)
+		}
+		if persistRenamedHook != nil {
+			persistRenamedHook()
+		}
 	}
 	if err := nativeice.PublishSnapshot(o.options.Path, root.generation, segments); err != nil {
 		return err
@@ -955,10 +983,10 @@ func (o *Owner) persistRoot(root *publishedRoot) error {
 		if handle.payload != nil && handle.size <= nativeice.MaxResidentSegmentSize {
 			continue
 		}
-		// A merge output is already file-backed, and its "<id>.seg" name is a
-		// hard link to the file its reader holds open; reopening it would only
-		// discard the warm reader.
-		if handle.linkSource {
+		// A staged segment's reader already serves the file publication
+		// renamed to "<id>.seg"; reopening it would only discard the warm
+		// reader.
+		if handle.staged {
 			continue
 		}
 		segmentPath := filepath.Join(o.options.Path, fmt.Sprintf("%012x.seg", handle.id))
@@ -2198,7 +2226,7 @@ func newSegmentFromFile(path string, metadata nativeice.SnapshotSegment, segment
 	}
 	timeMin, timeMax := reader.TimeBounds()
 	handle := &segmentHandle{
-		reader: reader, sourcePath: path, count: metadata.DocumentCount, id: segmentID,
+		reader: reader, sourcePath: path, staged: true, count: metadata.DocumentCount, id: segmentID,
 		size: metadata.Size, timeMin: uint64(timeMin), timeMax: uint64(timeMax),
 		hasTime: timeMin != 0 || timeMax != 0, indexedFields: fields,
 	}
@@ -2401,9 +2429,8 @@ func (s *memorySegment) retain() { s.handle.refs.Add(1) }
 func (s *memorySegment) release() {
 	if s.handle.refs.Add(-1) == 0 {
 		_ = s.handle.reader.Close()
-		if s.handle.sourcePath != "" {
-			_ = fileSystem.DeleteFile(s.handle.sourcePath)
-			s.handle.sourcePath = ""
+		if path := s.handle.clearSourcePath(); path != "" {
+			_ = fileSystem.DeleteFile(path)
 		}
 		s.handle.payload = nil
 	}
