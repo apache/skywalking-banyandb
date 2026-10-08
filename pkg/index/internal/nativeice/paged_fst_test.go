@@ -76,25 +76,45 @@ func buildFSTFixture(t *testing.T, keys [][]byte) ([]byte, map[string]uint64) {
 	return buffer.Bytes(), values
 }
 
-func collect(t *testing.T, iterator termIterator, iteratorErr error) []string {
+// pagedFSTFixtureKeys sizes the random and series dictionaries: tens of
+// pages each, far beyond the retained top region and the narrowest window,
+// while keeping the differential walk fast under the race detector.
+const pagedFSTFixtureKeys = 4000
+
+// pagedFSTFixtureBounds is how many random key ranges each shape iterates.
+const pagedFSTFixtureBounds = 10
+
+// requireSameIteration walks want and got in lockstep and fails at the first
+// differing term, without materializing either result.
+func requireSameIteration(t *testing.T, want termIterator, wantErr error, got termIterator, gotErr error, bound [2][]byte, shape fstWindowShape) {
 	t.Helper()
-	if iteratorErr != nil {
-		if errors.Is(iteratorErr, vellum.ErrIteratorDone) {
-			return nil
-		}
-		t.Fatal(iteratorErr)
-	}
-	var result []string
-	for {
-		key, value := iterator.Current()
-		result = append(result, fmt.Sprintf("%x=%d", key, value))
-		if nextErr := iterator.Next(); nextErr != nil {
-			if errors.Is(nextErr, vellum.ErrIteratorDone) {
-				return result
+	wantDone, gotDone := iterationDone(t, wantErr), iterationDone(t, gotErr)
+	for position := 0; ; position++ {
+		if wantDone || gotDone {
+			if wantDone != gotDone {
+				t.Fatalf("Search(%x, %x) with window %v: paged done=%v at term %d, vellum done=%v", bound[0], bound[1], shape, gotDone, position, wantDone)
 			}
-			t.Fatal(nextErr)
+			return
 		}
+		wantKey, wantValue := want.Current()
+		gotKey, gotValue := got.Current()
+		if !bytes.Equal(gotKey, wantKey) || gotValue != wantValue {
+			t.Fatalf("Search(%x, %x) with window %v: term %d is %x=%d, want %x=%d", bound[0], bound[1], shape, position, gotKey, gotValue, wantKey, wantValue)
+		}
+		wantDone, gotDone = iterationDone(t, want.Next()), iterationDone(t, got.Next())
 	}
+}
+
+func iterationDone(t *testing.T, err error) bool {
+	t.Helper()
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, vellum.ErrIteratorDone) {
+		return true
+	}
+	t.Fatal(err)
+	return true
 }
 
 // TestPagedFSTMatchesVellum differentially checks lookups and bounded,
@@ -111,7 +131,7 @@ func TestPagedFSTMatchesVellum(t *testing.T) {
 	}
 	shapes["every-byte"] = every
 	var random [][]byte
-	for index := 0; index < 20000; index++ {
+	for index := 0; index < pagedFSTFixtureKeys; index++ {
 		key := make([]byte, 1+rng.Intn(40))
 		for position := range key {
 			key[position] = byte(rng.Intn(256))
@@ -120,7 +140,7 @@ func TestPagedFSTMatchesVellum(t *testing.T) {
 	}
 	shapes["random"] = random
 	var series [][]byte
-	for index := 0; index < 20000; index++ {
+	for index := 0; index < pagedFSTFixtureKeys; index++ {
 		series = append(series, []byte(fmt.Sprintf("service_%d/instance-%06d/endpoint-%x", index%17, index, rng.Int63())))
 	}
 	shapes["series"] = series
@@ -163,7 +183,7 @@ func TestPagedFSTMatchesVellum(t *testing.T) {
 			}
 			batch.close()
 			bounds := [][2][]byte{{nil, nil}}
-			for index := 0; index < 30; index++ {
+			for index := 0; index < pagedFSTFixtureBounds; index++ {
 				low, high := keys[rng.Intn(len(keys))], keys[rng.Intn(len(keys))]
 				if bytes.Compare(low, high) > 0 {
 					low, high = high, low
@@ -177,14 +197,10 @@ func TestPagedFSTMatchesVellum(t *testing.T) {
 					automata = append(automata, prefixAutomaton{prefix: key[:1+rng.Intn(len(key))]})
 				}
 				for _, automaton := range automata {
-					wantIterator, wantErr := wrapSearch(reference, automaton, bound[0], bound[1])
-					want := collect(t, wantIterator, wantErr)
 					for _, shape := range []fstWindowShape{pagedFSTIteratorWindow, iteratorWindow(50), {shift: 9, slots: 2}} {
+						wantIterator, wantErr := wrapSearch(reference, automaton, bound[0], bound[1])
 						gotIterator, gotErr := paged.search(automaton, bound[0], bound[1], shape)
-						got := collect(t, gotIterator, gotErr)
-						if fmt.Sprint(got) != fmt.Sprint(want) {
-							t.Fatalf("Search(%x, %x) with window %v returned %d terms, want %d", bound[0], bound[1], shape, len(got), len(want))
-						}
+						requireSameIteration(t, wantIterator, wantErr, gotIterator, gotErr, bound, shape)
 					}
 				}
 			}

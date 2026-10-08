@@ -226,6 +226,9 @@ func TestStreamingMergeMemoryIsBounded(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds 3M documents of merge fixtures")
 	}
+	if raceEnabled {
+		t.Skip("heap growth is not meaningful under the race detector")
+	}
 	compare := os.Getenv("NIDX_MERGE_COMPARE") != ""
 	var streamed []mergeMeasurement
 	for _, documentsPerSegment := range []int{100_000, 200_000} {
