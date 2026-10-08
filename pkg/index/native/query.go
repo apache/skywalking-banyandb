@@ -25,8 +25,10 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
+	vellumregexp "github.com/blevesearch/vellum/regexp"
 
 	"github.com/apache/skywalking-banyandb/pkg/index/internal/nativeice"
 )
@@ -64,16 +66,29 @@ type QueryScope struct {
 	TimeRange   *TimeRange
 }
 
-// TermSetRequest selects exact encoded terms from one field. The caller owns
-// term analysis and encoding; native execution only performs byte-exact
-// dictionary membership.
+// TermSetRequest selects exact encoded terms from one field, ORed with every
+// term the dictionary expansion of Prefix and Wildcard matches. The caller
+// owns term analysis and encoding; native execution only performs byte-exact
+// dictionary membership and, for Prefix/Wildcard, dictionary-bounded pattern
+// matching. Field combination (Any/All, via Mode) treats Terms, each Prefix
+// expansion, and each Wildcard expansion as one operand apiece. MaxTerms
+// bounds the number of dictionary terms Prefix and Wildcard may expand to and
+// is required when either is non-empty, like MatchRange.
 //
 //nolint:govet // request fields remain grouped by the public query contract.
 type TermSetRequest struct {
-	Field         string
-	Terms         [][]byte
+	Field string
+	Terms [][]byte
+	// Prefix selects every dictionary term in the half-open byte range
+	// [p, successor(p)) for each p.
+	Prefix [][]byte
+	// Wildcard selects every dictionary term a `*`/`?` pattern matches. `*`
+	// matches zero or more bytes, `?` matches exactly one byte, and every
+	// other regexp metacharacter (including `|` and `\`) is matched literally.
+	Wildcard      [][]byte
 	Mode          TermSetMode
 	Scope         QueryScope
+	MaxTerms      uint64
 	MaxCandidates uint64
 }
 
@@ -133,8 +148,15 @@ func (v *ReadView) MatchTermsSet(ctx context.Context, request TermSetRequest) ([
 	if err := v.check(ctx); err != nil {
 		return nil, err
 	}
-	if request.Field == "" || len(request.Terms) == 0 {
+	if termSetRequestEmpty(request) {
 		return nil, nil
+	}
+	if err := validateTermSetRequest(request); err != nil {
+		return nil, err
+	}
+	wildcards, wildcardErr := compileWildcardAutomata(request.Wildcard)
+	if wildcardErr != nil {
+		return nil, wildcardErr
 	}
 	result := make([]QueryHit, 0)
 	var totalCandidates uint64
@@ -146,7 +168,7 @@ func (v *ReadView) MatchTermsSet(ctx context.Context, request TermSetRequest) ([
 		if !ok {
 			return nil, fmt.Errorf("match terms segment %d has type %T", segmentIndex, current)
 		}
-		candidates, err := exactCandidates(ctx, segment, request.Field, request.Terms, request.Mode, request.Scope, request.MaxCandidates)
+		candidates, err := exactCandidates(ctx, segment, request, wildcards)
 		if err != nil {
 			return nil, err
 		}
@@ -163,6 +185,21 @@ func (v *ReadView) MatchTermsSet(ctx context.Context, request TermSetRequest) ([
 	return result, nil
 }
 
+// termSetRequestEmpty reports a request with no literal terms and no pattern
+// to expand, which every term-set entry point treats as a no-op match.
+func termSetRequestEmpty(request TermSetRequest) bool {
+	return request.Field == "" || (len(request.Terms) == 0 && len(request.Prefix) == 0 && len(request.Wildcard) == 0)
+}
+
+// validateTermSetRequest enforces that Prefix/Wildcard expansion, like
+// MatchRange, is always bounded.
+func validateTermSetRequest(request TermSetRequest) error {
+	if (len(request.Prefix) != 0 || len(request.Wildcard) != 0) && request.MaxTerms == 0 {
+		return fmt.Errorf("term set on %q requires MaxTerms: %w", request.Field, ErrQueryLimit)
+	}
+	return nil
+}
+
 // MatchAllTermSets intersects several exact term sets at posting level and
 // projects only the documents every set matches, so a selective conjunct
 // bounds stored-document decoding no matter how broad the others are. The
@@ -175,13 +212,22 @@ func (v *ReadView) MatchAllTermSets(ctx context.Context, requests []TermSetReque
 	if len(requests) == 0 {
 		return nil, nil
 	}
+	requestWildcards := make([][]nativeice.DictionaryAutomaton, len(requests))
 	for index, request := range requests {
-		if request.Field == "" || len(request.Terms) == 0 {
+		if termSetRequestEmpty(request) {
 			return nil, nil
+		}
+		if err := validateTermSetRequest(request); err != nil {
+			return nil, err
 		}
 		if index > 0 && request.Scope.TimeRange != nil {
 			return nil, fmt.Errorf("term set %d sets a time range only the first may set: %w", index, ErrInvalidQuery)
 		}
+		wildcards, wildcardErr := compileWildcardAutomata(request.Wildcard)
+		if wildcardErr != nil {
+			return nil, wildcardErr
+		}
+		requestWildcards[index] = wildcards
 	}
 	result := make([]QueryHit, 0)
 	for segmentIndex, current := range v.root.segments {
@@ -193,8 +239,8 @@ func (v *ReadView) MatchAllTermSets(ctx context.Context, requests []TermSetReque
 			return nil, fmt.Errorf("match term sets segment %d has type %T", segmentIndex, current)
 		}
 		var candidates *roaringpkg.Bitmap
-		for _, request := range requests {
-			matched, err := exactCandidates(ctx, segment, request.Field, request.Terms, request.Mode, request.Scope, request.MaxCandidates)
+		for requestIndex, request := range requests {
+			matched, err := exactCandidates(ctx, segment, request, requestWildcards[requestIndex])
 			if err != nil {
 				return nil, err
 			}
@@ -220,14 +266,21 @@ func (v *ReadView) MatchAllTermSets(ctx context.Context, requests []TermSetReque
 // match request. It tests posting membership only, so no stored document is
 // decoded. request must not set Scope.TimeRange.
 func (v *ReadView) FilterTermsSet(ctx context.Context, hits []QueryHit, request TermSetRequest) ([]QueryHit, error) {
-	if request.Field == "" || len(request.Terms) == 0 {
+	if termSetRequestEmpty(request) {
 		return nil, nil
 	}
 	if request.Scope.TimeRange != nil {
 		return nil, fmt.Errorf("filter terms on %q cannot apply a time range: %w", request.Field, ErrInvalidQuery)
 	}
+	if err := validateTermSetRequest(request); err != nil {
+		return nil, err
+	}
+	wildcards, wildcardErr := compileWildcardAutomata(request.Wildcard)
+	if wildcardErr != nil {
+		return nil, wildcardErr
+	}
 	return v.filterHits(ctx, hits, request.MaxCandidates, func(segment *memorySegment) (*roaringpkg.Bitmap, error) {
-		return exactCandidates(ctx, segment, request.Field, request.Terms, request.Mode, request.Scope, request.MaxCandidates)
+		return exactCandidates(ctx, segment, request, wildcards)
 	})
 }
 
@@ -566,48 +619,198 @@ func (h *sortFrontier) Pop() any {
 	return last
 }
 
+// exactCandidates resolves one term-set request to the bitmap of documents it
+// selects within segment. Terms, each Prefix entry's dictionary-range
+// expansion, and each Wildcard entry's automaton-filtered expansion are each
+// treated as one operand, combined under Mode (Any = Or, All = And) exactly
+// as a plain literal-terms request combines its operands. Prefix and Wildcard
+// expansion is capped by MaxTerms, counted across every Prefix and Wildcard
+// entry for this segment, mirroring MatchRange.
+//
 //nolint:contextcheck // nativeice exact posting decode has no context-capable variant yet.
 func exactCandidates(
-	ctx context.Context, segment *memorySegment, field string, terms [][]byte, mode TermSetMode,
-	scope QueryScope, maxCandidates uint64,
+	ctx context.Context, segment *memorySegment, request TermSetRequest, wildcards []nativeice.DictionaryAutomaton,
 ) (*roaringpkg.Bitmap, error) {
-	if mode != MatchAnyTerm && mode != MatchAllTerms {
-		return nil, fmt.Errorf("term mode %d: %w", mode, ErrInvalidQuery)
+	if request.Mode != MatchAnyTerm && request.Mode != MatchAllTerms {
+		return nil, fmt.Errorf("term mode %d: %w", request.Mode, ErrInvalidQuery)
 	}
 	var result *roaringpkg.Bitmap
-	for index, term := range terms {
+	combine := func(candidate *roaringpkg.Bitmap) {
+		switch {
+		case result == nil:
+			result = candidate
+		case request.Mode == MatchAllTerms:
+			result.And(candidate)
+		default:
+			result.Or(candidate)
+		}
+	}
+	// Once an All-mode intersection is already empty, it can never become
+	// non-empty again: skip remaining operands, including dictionary
+	// expansion and its budget accounting, since it cannot change the result.
+	stopped := func() bool {
+		return request.Mode == MatchAllTerms && result != nil && result.IsEmpty()
+	}
+	for _, term := range request.Terms {
+		if stopped() {
+			break
+		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		candidate, found, err := segment.handle.reader.TermPostingBitmap(field, term)
+		candidate, found, err := segment.handle.reader.TermPostingBitmap(request.Field, term)
 		if err != nil {
 			return nil, err
 		}
 		if !found {
 			candidate = roaringpkg.New()
 		}
-		switch {
-		case result == nil:
-			result = candidate
-		case mode == MatchAllTerms:
-			result.And(candidate)
-		default:
-			result.Or(candidate)
-		}
-		if exceedsCandidates(result, maxCandidates) {
+		combine(candidate)
+		if exceedsCandidates(result, request.MaxCandidates) {
 			return nil, ErrQueryLimit
 		}
-		if mode == MatchAllTerms && result.IsEmpty() {
+	}
+	var expanded uint64
+	for _, prefix := range request.Prefix {
+		if stopped() {
 			break
 		}
-		if index == len(terms)-1 {
+		candidate, err := dictionaryMatchCandidates(ctx, segment, request.Field, nil, prefix, successor(prefix), request.MaxTerms, &expanded)
+		if err != nil {
+			return nil, err
+		}
+		combine(candidate)
+		if exceedsCandidates(result, request.MaxCandidates) {
+			return nil, ErrQueryLimit
+		}
+	}
+	for patternIndex := range request.Wildcard {
+		if stopped() {
 			break
+		}
+		var automaton nativeice.DictionaryAutomaton
+		if patternIndex < len(wildcards) {
+			automaton = wildcards[patternIndex]
+		}
+		candidate, err := dictionaryMatchCandidates(ctx, segment, request.Field, automaton, nil, nil, request.MaxTerms, &expanded)
+		if err != nil {
+			return nil, err
+		}
+		combine(candidate)
+		if exceedsCandidates(result, request.MaxCandidates) {
+			return nil, ErrQueryLimit
 		}
 	}
 	if result == nil {
 		result = roaringpkg.New()
 	}
-	return applySeries(ctx, segment, result, scope, maxCandidates)
+	return applySeries(ctx, segment, result, request.Scope, request.MaxCandidates)
+}
+
+// dictionaryMatchCandidates ORs the posting bitmaps of every dictionary term
+// in [start, end) that automaton also accepts (a nil automaton accepts every
+// term in range). Each matched term counts against maxTerms, shared across
+// every Prefix/Wildcard entry of one exactCandidates call via expanded.
+//
+//nolint:contextcheck // nativeice dictionary/posting cursors are synchronously bounded.
+func dictionaryMatchCandidates(
+	ctx context.Context, segment *memorySegment, field string, automaton nativeice.DictionaryAutomaton,
+	start, end []byte, maxTerms uint64, expanded *uint64,
+) (*roaringpkg.Bitmap, error) {
+	iterator, err := segment.handle.reader.NewDictionaryTermIterator(field, automaton, start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = iterator.Close() }()
+	result := roaringpkg.New()
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		term, present, nextErr := iterator.NextKey()
+		if nextErr != nil {
+			return nil, nextErr
+		}
+		if !present {
+			break
+		}
+		*expanded++
+		if maxTerms != 0 && *expanded > maxTerms {
+			return nil, ErrQueryLimit
+		}
+		posting, found, postingErr := segment.handle.reader.TermPostingBitmap(field, term)
+		if postingErr != nil {
+			return nil, postingErr
+		}
+		if found {
+			result.Or(posting)
+		}
+	}
+	return result, nil
+}
+
+// successor returns the exclusive upper bound of the half-open byte range
+// sharing prefix as a common prefix, or nil when prefix has no successor
+// (every byte already 0xFF), which leaves the range unbounded above.
+func successor(prefix []byte) []byte {
+	bound := append([]byte(nil), prefix...)
+	for index := len(bound) - 1; index >= 0; index-- {
+		if bound[index] != 0xFF {
+			bound[index]++
+			return bound[:index+1]
+		}
+	}
+	return nil
+}
+
+// wildcardRegexpReplacer escapes regexp metacharacters (including `|` and
+// `\`) and rewrites `*`/`?` to their regexp equivalents, matching the
+// conversion the legacy series index relied on through the previous
+// release's wildcard-query support.
+var wildcardRegexpReplacer = strings.NewReplacer(
+	"+", `\+`,
+	"(", `\(`,
+	")", `\)`,
+	"^", `\^`,
+	"$", `\$`,
+	".", `\.`,
+	"{", `\{`,
+	"}", `\}`,
+	"[", `\[`,
+	"]", `\]`,
+	`|`, `\|`,
+	`\`, `\\`,
+	"*", ".*",
+	"?", ".",
+)
+
+// compileWildcardAutomaton converts one `*`/`?` wildcard pattern into the
+// dictionary automaton that selects every term it matches.
+func compileWildcardAutomaton(pattern []byte) (nativeice.DictionaryAutomaton, error) {
+	escaped := wildcardRegexpReplacer.Replace(string(pattern))
+	automaton, err := vellumregexp.New(escaped)
+	if err != nil {
+		return nil, fmt.Errorf("compile wildcard pattern %q: %w", pattern, err)
+	}
+	return automaton, nil
+}
+
+// compileWildcardAutomata compiles every wildcard pattern once, index-aligned
+// with patterns, so a multi-segment request pays each pattern's regexp
+// compilation once rather than once per segment.
+func compileWildcardAutomata(patterns [][]byte) ([]nativeice.DictionaryAutomaton, error) {
+	if len(patterns) == 0 {
+		return nil, nil
+	}
+	automata := make([]nativeice.DictionaryAutomaton, len(patterns))
+	for index, pattern := range patterns {
+		automaton, err := compileWildcardAutomaton(pattern)
+		if err != nil {
+			return nil, err
+		}
+		automata[index] = automaton
+	}
+	return automata, nil
 }
 
 //nolint:contextcheck // nativeice dictionary/posting cursors are synchronously bounded.

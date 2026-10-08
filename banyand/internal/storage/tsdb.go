@@ -33,7 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	idxmetrics "github.com/apache/skywalking-banyandb/pkg/index/metrics"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -223,9 +223,9 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache 
 	clock, _ := timestamp.GetClock(ctx)
 	scheduler := timestamp.NewScheduler(l, clock)
 
-	var indexMetrics *inverted.Metrics
+	var indexMetrics *idxmetrics.Metrics
 	if opts.StorageMetricsFactory != nil {
-		indexMetrics = inverted.NewMetrics(opts.StorageMetricsFactory, common.SegLabelNames()...)
+		indexMetrics = idxmetrics.NewMetrics(opts.StorageMetricsFactory, common.SegLabelNames()...)
 	}
 	var sc Cache
 	if cache != nil {
@@ -354,8 +354,8 @@ func (d *database[T, O]) TakeFileSnapshot(dst string) (success bool, err error) 
 	}
 
 	// The snapshot must NOT reopen a closed segment: reopening an idle-closed
-	// cold segment is the source of the nil-index panic and the bluge
-	// "exclusive lock" churn. Take the current segment objects WITHOUT forcing
+	// cold segment is the source of the nil-index panic and the legacy index
+	// engine's "exclusive lock" churn. Take the current segment objects WITHOUT forcing
 	// a reopen. A closed (quiescent) segment is hard-linked directly from its
 	// immutable on-disk files; an open segment is snapshotted through its live
 	// series index and shard tables.

@@ -40,6 +40,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
@@ -587,7 +588,7 @@ func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string) (*datab
 			// No live shard tables (a closed segment, or a brand-new open one
 			// with no data yet): read shard part stats from disk without
 			// reopening. The per-shard SidxInfo is reported empty here: reading
-			// it would reopen the shard's sidx/bluge index (the exclusive-lock
+			// it would reopen the shard's sidx index (the exclusive-lock
 			// churn this change exists to avoid), so it is populated only for
 			// open segments.
 			closedShards, closedSize := storage.CollectClosedShardInfo(segment.Location())
@@ -859,9 +860,12 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 	opt.isHot = !res.Matched
 	group := groupSchema.Metadata.Name
 	opts := storage.TSDBOpts[*tsTable, option]{
-		ShardNum:                       res.ResourceOpts.ShardNum,
-		Location:                       path.Join(s.path, group),
-		TSTableCreator:                 newTSTable,
+		ShardNum:       res.ResourceOpts.ShardNum,
+		Location:       path.Join(s.path, group),
+		TSTableCreator: newTSTable,
+		RootLeaseFactory: func(lock fs.File, root string) (storage.RootLease, error) {
+			return native.NewFileRootLease(lock, root)
+		},
 		TableMetrics:                   s.newMetrics(p),
 		SegmentInterval:                storage.MustToIntervalRule(res.ResourceOpts.SegmentInterval),
 		TTL:                            storage.MustToIntervalRule(res.ResourceOpts.Ttl),

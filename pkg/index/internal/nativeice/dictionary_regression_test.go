@@ -188,7 +188,10 @@ func TestDictionaryIteratorOwnsRangeBounds(t *testing.T) {
 	requireNativeNoError(t, iterator.Close())
 }
 
-func TestBorrowedDictionaryIteratorSurvivesReaderClose(t *testing.T) {
+// TestBorrowedDictionaryIteratorReportsReaderClose checks an iterator that
+// outlives its Reader neither reads freed state nor keeps serving: it
+// reports ErrReaderClosed.
+func TestBorrowedDictionaryIteratorReportsReaderClose(t *testing.T) {
 	payload, encodeErr := EncodeSegment(Generation{Documents: []EncodeDocument{{
 		Identifier: []byte("iterator-document"),
 		Fields:     []EncodeField{{Name: "tag", Index: true, Terms: []EncodeTerm{{Value: []byte("term"), Frequency: 1}}}},
@@ -201,9 +204,8 @@ func TestBorrowedDictionaryIteratorSurvivesReaderClose(t *testing.T) {
 	requireNativeNoError(t, reader.Close())
 	runtime.GC()
 
-	term, count, nextErr := iterator.NextString()
-	requireNativeNoError(t, nextErr)
-	requireNative(t, term == "term" && count == 1, "term = %q/%d, want term/1", term, count)
+	_, _, nextErr := iterator.NextString()
+	requireNative(t, errors.Is(nextErr, ErrReaderClosed), "next after close = %v, want ErrReaderClosed", nextErr)
 	requireNativeNoError(t, iterator.Close())
 }
 
@@ -292,4 +294,44 @@ func TestDictionaryIteratorNextTermDistinguishesEmptyKeyFromExhaustion(t *testin
 	requireNativeNoError(t, nextErr)
 	requireNative(t, term == nil, "third term = %#v, want exhaustion", term)
 	requireNativeNoError(t, iterator.Close())
+}
+
+// TestConcurrentFieldMetadataReads reads a segment's field metadata and probes
+// its term dictionary from two goroutines at once, so the race detector sees
+// the lazily initialized field state shared between Fields and TermExists.
+func TestConcurrentFieldMetadataReads(t *testing.T) {
+	payload, encodeErr := EncodeSegment(Generation{Documents: []EncodeDocument{{
+		Identifier: []byte("id"),
+		Fields:     []EncodeField{{Name: "series", Value: []byte("series"), Index: true, Terms: []EncodeTerm{{Value: []byte("series"), Frequency: 1}}}},
+	}}})
+	requireNativeNoError(t, encodeErr)
+	reader, openErr := OpenSegment(payload)
+	requireNativeNoError(t, openErr)
+	defer func() { requireNativeNoError(t, reader.Close()) }()
+	var wait sync.WaitGroup
+	errs := make(chan error, 2)
+	wait.Add(2)
+	go func() {
+		defer wait.Done()
+		for range 100 {
+			if _, fieldsErr := reader.Fields(); fieldsErr != nil {
+				errs <- fieldsErr
+				return
+			}
+		}
+	}()
+	go func() {
+		defer wait.Done()
+		for range 100 {
+			if _, existsErr := reader.TermExists("series", []byte("series")); existsErr != nil {
+				errs <- existsErr
+				return
+			}
+		}
+	}()
+	wait.Wait()
+	close(errs)
+	for readErr := range errs {
+		requireNativeNoError(t, readErr)
+	}
 }

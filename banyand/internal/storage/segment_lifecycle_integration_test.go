@@ -25,8 +25,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 )
 
 // TestSegmentLifecycle_EndToEnd is a full-flow integration test that drives the
@@ -86,10 +84,8 @@ func TestSegmentLifecycle_EndToEnd(t *testing.T) {
 	require.Equal(t, int64(seriesCount), snapshotSeriesDocCount(t, openSnap, seg), "open-path snapshot holds all docs")
 
 	// 5. Idle reclaim: closes the segment, flushing the index to disk and
-	// releasing the bluge exclusive writer lock.
+	// releasing the native index owner's in-memory resources.
 	idleClose(t, sc, seg)
-	require.NoFileExists(t, filepath.Join(seg.location, seriesIndexDirName, inverted.LockFilename),
-		"idle-close releases the bluge writer lock (bluge.pid)")
 
 	// 6. Closed segment: stats are read from disk read-only and must NOT reopen
 	// the writable index.

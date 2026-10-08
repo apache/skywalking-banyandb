@@ -88,7 +88,7 @@ func TestNativeMatchFieldPresence(t *testing.T) {
 		}},
 		{Identifier: convert.Uint64ToBytes(7), Timestamp: 700, Fields: []native.Field{presentField("x"), seriesField(seriesTwo)}},
 	}
-	require.NoError(t, owner.Batch(context.Background(), native.Batch{Documents: docs, InsertOnly: true}))
+	require.NoError(t, owner.Batch(context.Background(), native.Batch{Documents: docs, Mode: native.BatchInsertOnly}))
 	require.NoError(t, owner.Batch(context.Background(), native.Batch{Deletes: [][]byte{convert.Uint64ToBytes(4)}}))
 	waitPersist()
 

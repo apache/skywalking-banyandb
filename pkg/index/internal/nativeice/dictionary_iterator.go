@@ -37,6 +37,10 @@ type DictionaryAutomaton interface {
 // segments. No posting bitmap or frequency stream is decoded. Returning false
 // stops the walk without error.
 func (r *Reader) VisitTerms(ctx context.Context, field string, visit func([]byte) bool) error {
+	if useErr := r.use(); useErr != nil {
+		return useErr
+	}
+	defer r.endUse()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -107,7 +111,7 @@ func (a vellumDictionaryAutomaton) Accept(state int, character byte) int {
 // only that bitmap's cardinality and never decodes the frequency stream.
 // Terms returned by Next are owned by the caller.
 type DictionaryTermIterator struct {
-	iterator *vellum.FSTIterator
+	iterator termIterator
 	reader   *storedSegmentReader
 	field    string
 	closed   bool
@@ -117,6 +121,10 @@ type DictionaryTermIterator struct {
 // segment. The end key is exclusive, and nil or empty bounds retain vellum's
 // unbounded semantics. Close is safe to call more than once.
 func (r *Reader) NewDictionaryTermIterator(field string, automaton DictionaryAutomaton, start, end []byte) (*DictionaryTermIterator, error) {
+	if useErr := r.use(); useErr != nil {
+		return nil, useErr
+	}
+	defer r.endUse()
 	if len(r.segments) != 1 {
 		return nil, errors.New("nativeice: dictionary iterator requires one segment")
 	}
@@ -128,21 +136,22 @@ func (r *Reader) NewDictionaryTermIterator(field string, automaton DictionaryAut
 	if dictionaryErr != nil {
 		return nil, dictionaryErr
 	}
-	return newDictionaryTermIterator(storedReader, field, dictionary, automaton, start, end)
+	return newDictionaryTermIterator(storedReader, field, dictionary, automaton, start, end, 1)
 }
 
 // NewDictionaryTermIterator opens an iterator using this dictionary handle's
 // already-loaded FST, avoiding repeated field-cache lookups.
 func (d *Dictionary) NewDictionaryTermIterator(automaton DictionaryAutomaton, start, end []byte) (*DictionaryTermIterator, error) {
-	return newDictionaryTermIterator(d.owner, d.field, d.fst, automaton, start, end)
+	return newDictionaryTermIterator(d.owner, d.field, d.index, automaton, start, end, 1)
 }
 
 func newDictionaryTermIterator(
 	storedReader *storedSegmentReader,
 	field string,
-	dictionary *vellum.FST,
+	dictionary termIndex,
 	automaton DictionaryAutomaton,
 	start, end []byte,
+	fanIn int,
 ) (*DictionaryTermIterator, error) {
 	if dictionary == nil {
 		return &DictionaryTermIterator{reader: storedReader, field: field, closed: true}, nil
@@ -168,7 +177,7 @@ func newDictionaryTermIterator(
 	if end != nil {
 		end = append([]byte(nil), end...)
 	}
-	iterator, iteratorErr := dictionary.Search(vellumAutomaton, start, end)
+	iterator, iteratorErr := searchDictionary(dictionary, vellumAutomaton, start, end, fanIn)
 	if iteratorErr != nil {
 		if errors.Is(iteratorErr, vellum.ErrIteratorDone) {
 			return &DictionaryTermIterator{reader: storedReader, field: field, closed: true}, nil
@@ -192,6 +201,9 @@ func (i *DictionaryTermIterator) Next() ([]byte, uint64, error) {
 // NextTerm returns the next dictionary term without decoding its posting bitmap.
 // A nil term and nil error indicate exhaustion.
 func (i *DictionaryTermIterator) NextTerm() ([]byte, error) {
+	if i.reader != nil && i.reader.isClosed() {
+		return nil, ErrReaderClosed
+	}
 	if i.closed || i.iterator == nil {
 		return nil, nil
 	}
@@ -217,6 +229,9 @@ func (i *DictionaryTermIterator) NextTerm() ([]byte, error) {
 // posting cardinality. The present flag distinguishes a valid empty key from
 // exhaustion, so range scans do not pay a second posting decode.
 func (i *DictionaryTermIterator) NextKey() ([]byte, bool, error) {
+	if i.reader != nil && i.reader.isClosed() {
+		return nil, false, ErrReaderClosed
+	}
 	if i.closed || i.iterator == nil {
 		return nil, false, nil
 	}
@@ -248,6 +263,9 @@ func (i *DictionaryTermIterator) NextString() (string, uint64, error) {
 }
 
 func (i *DictionaryTermIterator) nextEntry(asString bool) ([]byte, string, uint64, bool, error) {
+	if i.reader != nil && i.reader.isClosed() {
+		return nil, "", 0, false, ErrReaderClosed
+	}
 	if i.closed || i.iterator == nil {
 		return nil, "", 0, true, nil
 	}
@@ -358,6 +376,10 @@ func (s *storedSegmentReader) postingCount(postingOffset uint64) (uint64, error)
 // NewDictionaryTermIterators opens one bounded dictionary cursor per pinned
 // segment. Callers own and must close every returned cursor.
 func (r *Reader) NewDictionaryTermIterators(ctx context.Context, field string) ([]*DictionaryTermIterator, error) {
+	if useErr := r.use(); useErr != nil {
+		return nil, useErr
+	}
+	defer r.endUse()
 	iterators := make([]*DictionaryTermIterator, 0, len(r.segments))
 	for segmentIndex := range r.segments {
 		if err := ctx.Err(); err != nil {
@@ -377,7 +399,7 @@ func (r *Reader) NewDictionaryTermIterators(ctx context.Context, field string) (
 			}
 			return nil, err
 		}
-		iterator, err := newDictionaryTermIterator(storedReader, field, dictionary, nil, nil, nil)
+		iterator, err := newDictionaryTermIterator(storedReader, field, dictionary, nil, nil, nil, len(r.segments))
 		if err != nil {
 			for _, existing := range iterators {
 				_ = existing.Close()

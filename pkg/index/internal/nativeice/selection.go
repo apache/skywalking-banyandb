@@ -24,8 +24,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"strings"
-	"sync"
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
 	"github.com/blevesearch/vellum"
@@ -97,6 +97,10 @@ type termSelection struct {
 // v3 grammar, or that would require decoding past a configured bound, stops the
 // walk with an error wrapping ErrCorrupt.
 func (r *Reader) VisitSelectedDocuments(ctx context.Context, field string, terms [][]byte, visit func(StoredDocument) error) error {
+	if useErr := r.use(); useErr != nil {
+		return useErr
+	}
+	defer r.endUse()
 	selection := termSelection{field: field, terms: terms}
 	if selectionErr := validateSelection(selection); selectionErr != nil {
 		return selectionErr
@@ -172,13 +176,15 @@ func (s *storedSegmentReader) selectedDocuments(ctx context.Context, selection t
 	if dictionary == nil {
 		return selected, nil
 	}
+	lookups := newTermLookups(dictionary)
+	defer lookups.close()
 	for _, term := range selection.terms {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
-		postingsOffset, exists, lookupErr := lookupTermPosting(dictionary, term)
+		postingsOffset, exists, lookupErr := lookups.get(term)
 		if lookupErr != nil {
-			return nil, corruptError("look up term in segment %q", s.path, lookupErr)
+			return nil, lookupError(s.path, lookupErr)
 		}
 		if !exists {
 			continue
@@ -200,7 +206,7 @@ func loadTermDictionary(data []byte) (dictionary *vellum.FST, err error) {
 	return vellum.Load(data)
 }
 
-func lookupTermPosting(dictionary *vellum.FST, term []byte) (postingOffset uint64, exists bool, err error) {
+func lookupTermPosting(dictionary termIndex, term []byte) (postingOffset uint64, exists bool, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			postingOffset = 0
@@ -234,46 +240,74 @@ func (s *storedSegmentReader) dictionaryOffset(field string) (uint64, bool, erro
 	return 0, false, nil
 }
 
-func (s *storedSegmentReader) dictionary(field string) (*vellum.FST, error) {
-	s.dictionaryMu.RLock()
-	if dictionary := s.dictionaries[field]; dictionary != nil {
-		s.dictionaryMu.RUnlock()
-		return dictionary, nil
+// dictionary returns field's term dictionary, or nil for a field without
+// terms. An admitted segment's dictionary is loaded whole: it borrows the
+// payload already in memory. A persisted segment's is read in place, state
+// by state (pagedFST), so it keeps only the dictionary's top page in the
+// heap; see the policy note on storedSegmentReader.
+func (s *storedSegmentReader) dictionary(field string) (termIndex, error) {
+	if cached, found := s.dictionaries.Load(field); found {
+		return cached.(termIndex), nil
 	}
-	s.dictionaryMu.RUnlock()
-	s.dictionaryMu.Lock()
-	defer s.dictionaryMu.Unlock()
-	if dictionary := s.dictionaries[field]; dictionary != nil {
-		return dictionary, nil
+	var index termIndex
+	if _, payload := s.file.(*byteSegmentFile); payload {
+		fst, _, loadErr := s.loadDictionary(field)
+		if loadErr != nil || fst == nil {
+			return nil, loadErr
+		}
+		index = newVellumIndex(fst)
+	} else {
+		base, length, found, locateErr := s.locateDictionary(field)
+		if locateErr != nil || !found {
+			return nil, locateErr
+		}
+		paged, openErr := openPagedFST(s.file, s.path, base, length)
+		if openErr != nil {
+			return nil, openErr
+		}
+		index = paged
 	}
+	cached, keepErr := s.keep(&s.dictionaries, field, index)
+	if keepErr != nil {
+		return nil, keepErr
+	}
+	return cached.(termIndex), nil
+}
+
+// locateDictionary returns the file offset and length of field's FST bytes.
+func (s *storedSegmentReader) locateDictionary(field string) (uint64, uint64, bool, error) {
 	dictionaryOffset, found, offsetErr := s.dictionaryOffset(field)
 	if offsetErr != nil || !found || dictionaryOffset == 0 {
-		return nil, offsetErr
+		return 0, 0, false, offsetErr
 	}
 	if dictionaryOffset >= s.footer.docValueOffset {
-		return nil, corruptError("segment %q has a term dictionary outside its section", s.path)
+		return 0, 0, false, corruptError("segment %q has a term dictionary outside its section", s.path)
 	}
 	cursor := dictionaryOffset
 	length, lengthErr := s.readUvarint(&cursor, s.footer.docValueOffset)
 	if lengthErr != nil {
-		return nil, lengthErr
+		return 0, 0, false, lengthErr
 	}
 	if length > maxSelectionDictionarySize || length > s.footer.docValueOffset-cursor {
-		return nil, corruptError("segment %q has an oversized term dictionary", s.path)
+		return 0, 0, false, corruptError("segment %q has an oversized term dictionary", s.path)
 	}
-	data, dataErr := s.readDictionaryBytes(cursor, length)
+	return cursor, length, true, nil
+}
+
+func (s *storedSegmentReader) loadDictionary(field string) (*vellum.FST, uint64, error) {
+	base, length, found, locateErr := s.locateDictionary(field)
+	if locateErr != nil || !found {
+		return nil, 0, locateErr
+	}
+	data, dataErr := s.readDictionaryBytes(base, length)
 	if dataErr != nil {
-		return nil, dataErr
+		return nil, 0, dataErr
 	}
 	dictionary, loadErr := loadTermDictionary(data)
 	if loadErr != nil {
-		return nil, corruptError("decode term dictionary in segment %q", s.path, loadErr)
+		return nil, 0, corruptError("decode term dictionary in segment %q", s.path, loadErr)
 	}
-	if s.dictionaries == nil {
-		s.dictionaries = make(map[string]*vellum.FST)
-	}
-	s.dictionaries[field] = dictionary
-	return dictionary, nil
+	return dictionary, length, nil
 }
 
 // smallSegmentTermSetDocuments bounds the segments that keep an exact
@@ -285,10 +319,16 @@ func (s *storedSegmentReader) dictionary(field string) (*vellum.FST, error) {
 const smallSegmentTermSetDocuments = 64
 
 // maxBloomFilterTerms bounds the dictionaries larger segments summarize in a
-// bloom filter (about 2 bytes per term), and with it the one-time cost of
-// building one on a field's first lookup. Larger dictionaries keep plain FST
-// lookups.
-const maxBloomFilterTerms = 1 << 16
+// bloom filter (about 2 bytes per term, so at most about 2 MiB per filter),
+// and with it the one-time cost of building one on a field's first lookup.
+// Larger dictionaries keep plain FST lookups. The bound matches the native
+// merge planner's maxLiveCount, the live document count past which it
+// retires a segment from merging, so it covers the merged segments
+// compaction produces: those are exactly the segments every upsert probes
+// for an identifier they almost never hold, and without a filter each probe
+// walks the segment's identifier FST. It is a variable only so tests can
+// lower it.
+var maxBloomFilterTerms = 1 << 20
 
 // termAbsent reports whether term is certainly not in field's dictionary:
 // exactly from a term set on small segments, probabilistically from a bloom
@@ -297,10 +337,10 @@ func (s *storedSegmentReader) termAbsent(field string, term []byte) (bool, error
 	if s.footer.documentCount > smallSegmentTermSetDocuments {
 		return s.bloomTermAbsent(field, term)
 	}
-	s.dictionaryMu.RLock()
-	terms, built := s.smallTermSets[field]
-	s.dictionaryMu.RUnlock()
-	if !built {
+	var terms map[string]struct{}
+	if cached, built := s.termSets.Load(field); built {
+		terms = cached.(map[string]struct{})
+	} else {
 		var buildErr error
 		if terms, buildErr = s.buildSmallTermSet(field); buildErr != nil {
 			return false, buildErr
@@ -310,11 +350,17 @@ func (s *storedSegmentReader) termAbsent(field string, term []byte) (bool, error
 	return !present, nil
 }
 
+// termFilter is a field's retained bloom filter; a nil filter records a
+// dictionary too large to summarize.
+type termFilter struct {
+	bloom *filter.BloomFilter
+}
+
 func (s *storedSegmentReader) bloomTermAbsent(field string, term []byte) (bool, error) {
-	s.dictionaryMu.RLock()
-	bloom, built := s.termBlooms[field]
-	s.dictionaryMu.RUnlock()
-	if !built {
+	var bloom *filter.BloomFilter
+	if cached, built := s.termFilters.Load(field); built {
+		bloom = cached.(*termFilter).bloom
+	} else {
 		var buildErr error
 		if bloom, buildErr = s.buildTermBloom(field); buildErr != nil {
 			return false, buildErr
@@ -341,20 +387,15 @@ func (s *storedSegmentReader) buildTermBloom(field string) (*filter.BloomFilter,
 			return nil, visitErr
 		}
 	}
-	s.dictionaryMu.Lock()
-	defer s.dictionaryMu.Unlock()
-	if existing, built := s.termBlooms[field]; built {
-		return existing, nil
+	cached, keepErr := s.keep(&s.termFilters, field, &termFilter{bloom: bloom})
+	if keepErr != nil {
+		return nil, keepErr
 	}
-	if s.termBlooms == nil {
-		s.termBlooms = make(map[string]*filter.BloomFilter)
-	}
-	s.termBlooms[field] = bloom
-	return bloom, nil
+	return cached.(*termFilter).bloom, nil
 }
 
 // visitDictionaryTerms calls visit with every term of dictionary in order.
-func visitDictionaryTerms(dictionary *vellum.FST, visit func(term []byte)) error {
+func visitDictionaryTerms(dictionary termIndex, visit func(term []byte)) error {
 	iterator, iteratorErr := dictionary.Iterator(nil, nil)
 	if iteratorErr != nil {
 		if iteratorDone(iteratorErr) {
@@ -391,66 +432,17 @@ func (s *storedSegmentReader) buildSmallTermSet(field string) (map[string]struct
 			return nil, visitErr
 		}
 	}
-	s.dictionaryMu.Lock()
-	defer s.dictionaryMu.Unlock()
-	if existing, built := s.smallTermSets[field]; built {
-		return existing, nil
+	cached, keepErr := s.keep(&s.termSets, field, terms)
+	if keepErr != nil {
+		return nil, keepErr
 	}
-	if s.smallTermSets == nil {
-		s.smallTermSets = make(map[string]map[string]struct{})
-	}
-	s.smallTermSets[field] = terms
-	return terms, nil
+	return cached.(map[string]struct{}), nil
 }
 
 // iteratorDone mirrors Reader.Terms: vellum ends iteration, including over an
 // empty dictionary, with ErrIteratorDone or an error naming the iterator.
 func iteratorDone(err error) bool {
 	return errors.Is(err, vellum.ErrIteratorDone) || strings.Contains(strings.ToLower(err.Error()), "iterator")
-}
-
-// acquireDictionaryReader returns a single-threaded vellum Reader from a
-// per-field pool. Reader.Get reuses its decoder state, unlike FST.Get, while
-// the pool keeps concurrent lookups independent without serializing them.
-func (s *storedSegmentReader) acquireDictionaryReader(field string) (*vellum.Reader, *sync.Pool, error) {
-	dictionary, dictionaryErr := s.dictionary(field)
-	if dictionaryErr != nil || dictionary == nil {
-		return nil, nil, dictionaryErr
-	}
-	readerPool := s.dictionaryReaderPool(field, dictionary)
-	reader, ok := readerPool.Get().(*vellum.Reader)
-	if !ok || reader == nil {
-		return nil, nil, corruptError("segment %q failed to create a term dictionary reader", s.path)
-	}
-	return reader, readerPool, nil
-}
-
-func (s *storedSegmentReader) dictionaryReaderPool(field string, dictionary *vellum.FST) *sync.Pool {
-	s.dictionaryMu.Lock()
-	if s.dictionaryReaders == nil {
-		s.dictionaryReaders = make(map[string]*sync.Pool)
-	}
-	readerPool := s.dictionaryReaders[field]
-	if readerPool == nil {
-		readerPool = &sync.Pool{New: func() any {
-			reader, _ := dictionary.Reader()
-			return reader
-		}}
-		s.dictionaryReaders[field] = readerPool
-	}
-	s.dictionaryMu.Unlock()
-	return readerPool
-}
-
-func lookupTermPostingReader(reader *vellum.Reader, term []byte) (postingOffset uint64, exists bool, err error) {
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			postingOffset = 0
-			exists = false
-			err = fmt.Errorf("term dictionary lookup panicked: %v", recovered)
-		}
-	}()
-	return reader.Get(term)
 }
 
 // readDictionaryBytes applies the dictionary's 64 MiB bound without changing
@@ -485,6 +477,9 @@ func (s *storedSegmentReader) fieldStats(field string) (uint64, uint64, bool, er
 	documents, frequency, found, statsErr := s.fieldStatsUncached(field)
 	if statsErr != nil {
 		return 0, 0, false, statsErr
+	}
+	if s.released() {
+		return documents, frequency, found, nil
 	}
 	s.fieldStatsMu.Lock()
 	if s.fieldStatsCache == nil {
@@ -612,10 +607,12 @@ func (s *storedSegmentReader) termDocumentCounts(field string, terms [][]byte) (
 	if dictionaryErr != nil || dictionary == nil {
 		return counts, dictionaryErr
 	}
+	lookups := newTermLookups(dictionary)
+	defer lookups.close()
 	for termIndex, term := range terms {
-		postingOffset, found, lookupErr := lookupTermPosting(dictionary, term)
+		postingOffset, found, lookupErr := lookups.get(term)
 		if lookupErr != nil {
-			return nil, corruptError("look up term in segment %q", s.path, lookupErr)
+			return nil, lookupError(s.path, lookupErr)
 		}
 		if !found {
 			continue
@@ -636,7 +633,7 @@ func (s *storedSegmentReader) termExists(field string, term []byte) (bool, error
 	}
 	_, found, lookupErr := lookupTermPosting(dictionary, term)
 	if lookupErr != nil {
-		return false, corruptError("look up term in segment %q", s.path, lookupErr)
+		return false, lookupError(s.path, lookupErr)
 	}
 	return found, nil
 }
@@ -647,10 +644,12 @@ func (s *storedSegmentReader) termDocumentsBatch(field string, terms [][]byte) (
 	if dictionaryErr != nil || dictionary == nil {
 		return result, dictionaryErr
 	}
+	lookups := newTermLookups(dictionary)
+	defer lookups.close()
 	for termIndex, term := range terms {
-		postingOffset, found, lookupErr := lookupTermPosting(dictionary, term)
+		postingOffset, found, lookupErr := lookups.get(term)
 		if lookupErr != nil {
-			return nil, corruptError("look up term in segment %q", s.path, lookupErr)
+			return nil, lookupError(s.path, lookupErr)
 		}
 		if found {
 			postingDocuments, postingErr := s.postingDocuments(postingOffset)
@@ -767,10 +766,12 @@ func (s *storedSegmentReader) visitTermPostings(field string, terms [][]byte, vi
 		}
 	}
 
+	lookups := newTermLookups(dictionary)
+	defer lookups.close()
 	for _, term := range terms {
-		postingOffset, found, lookupErr := lookupTermPosting(dictionary, term)
+		postingOffset, found, lookupErr := lookups.get(term)
 		if lookupErr != nil {
-			return corruptError("look up term in segment %q", s.path, lookupErr)
+			return lookupError(s.path, lookupErr)
 		}
 		if !found {
 			continue
@@ -790,18 +791,17 @@ func (s *storedSegmentReader) termPosting(field string, term []byte) (TermPostin
 	if absent, absentErr := s.termAbsent(field, term); absentErr != nil || absent {
 		return TermPosting{}, false, absentErr
 	}
-	reader, readerPool, readerErr := s.acquireDictionaryReader(field)
-	if readerErr != nil || reader == nil {
-		return TermPosting{}, false, readerErr
+	dictionary, dictionaryErr := s.dictionary(field)
+	if dictionaryErr != nil || dictionary == nil {
+		return TermPosting{}, false, dictionaryErr
 	}
-	defer readerPool.Put(reader)
-	return s.termPostingReader(reader, term)
+	return s.termPostingFrom(dictionary, term)
 }
 
-func (s *storedSegmentReader) termPostingReader(reader *vellum.Reader, term []byte) (TermPosting, bool, error) {
-	postingOffset, found, lookupErr := lookupTermPostingReader(reader, term)
+func (s *storedSegmentReader) termPostingFrom(dictionary termIndex, term []byte) (TermPosting, bool, error) {
+	postingOffset, found, lookupErr := lookupTermPosting(dictionary, term)
 	if lookupErr != nil {
-		return TermPosting{}, false, corruptError("look up term in segment %q", s.path, lookupErr)
+		return TermPosting{}, false, lookupError(s.path, lookupErr)
 	}
 	if !found {
 		return TermPosting{}, false, nil
@@ -915,14 +915,13 @@ func (s *storedSegmentReader) termPostingBitmap(field string, term []byte) (*roa
 	if absent, absentErr := s.termAbsent(field, term); absentErr != nil || absent {
 		return nil, false, absentErr
 	}
-	reader, readerPool, readerErr := s.acquireDictionaryReader(field)
-	if readerErr != nil || reader == nil {
-		return nil, false, readerErr
+	dictionary, dictionaryErr := s.dictionary(field)
+	if dictionaryErr != nil || dictionary == nil {
+		return nil, false, dictionaryErr
 	}
-	defer readerPool.Put(reader)
-	postingOffset, found, lookupErr := lookupTermPostingReader(reader, term)
+	postingOffset, found, lookupErr := lookupTermPosting(dictionary, term)
 	if lookupErr != nil {
-		return nil, false, corruptError("look up term in segment %q", s.path, lookupErr)
+		return nil, false, lookupError(s.path, lookupErr)
 	}
 	if !found {
 		return nil, false, nil
@@ -1214,4 +1213,101 @@ func (s *storedSegmentReader) visitSelected(ctx context.Context, selected, delet
 		}
 	}
 	return nil
+}
+
+// OpenPromotedSegment opens the file an admitted segment was persisted to,
+// as OpenSnapshotSegment does, for an owner promoting the segment's handle
+// to it. promotion is the one that followed the segment's payload through
+// PublishSnapshot. When the file opened is the very file written there, the
+// new Reader takes over the term filters and term sets the admitted Reader
+// already built rather than rebuilding them from the file; otherwise it
+// adopts nothing, and its filters are built as for any segment.
+func OpenPromotedSegment(path string, metadata SnapshotSegment, promotion *Promotion) (*Reader, error) {
+	reader, openErr := OpenSnapshotSegment(path, metadata)
+	if openErr != nil || promotion == nil || promotion.written == nil || promotion.source == nil {
+		return reader, openErr
+	}
+	_ = reader.adoptTermFilters(promotion.written, promotion.source)
+	return reader, nil
+}
+
+// adoptTermFilters copies source's term filters and term sets into r, whose
+// one segment must be the file written -- identified by written -- from
+// source's one in-memory segment. It takes a single snapshot of each of
+// source's maps.
+func (r *Reader) adoptTermFilters(written os.FileInfo, source *Reader) error {
+	if useErr := r.use(); useErr != nil {
+		return useErr
+	}
+	defer r.endUse()
+	if useErr := source.use(); useErr != nil {
+		return useErr
+	}
+	defer source.endUse()
+	if len(r.segments) != 1 || len(source.segments) != 1 {
+		return errAdoptDifferentSegment
+	}
+	if _, inMemory := source.segments[0].file.(*byteSegmentFile); !inMemory || source.segments[0].size != r.segments[0].size {
+		return errAdoptDifferentSegment
+	}
+	file, ok := r.segments[0].file.(*fsSegmentFile)
+	if !ok {
+		return errAdoptDifferentSegment
+	}
+	if sameErr := file.sameAs(written); sameErr != nil {
+		return errors.Join(errAdoptDifferentSegment, sameErr)
+	}
+	from, fromErr := source.storedReader(0)
+	if fromErr != nil {
+		return fromErr
+	}
+	to, toErr := r.storedReader(0)
+	if toErr != nil {
+		return toErr
+	}
+	if from.footer != to.footer {
+		return errAdoptDifferentSegment
+	}
+	type entry struct{ field, value any }
+	var filters, termSets []entry
+	from.termFilters.Range(func(field, filter any) bool {
+		filters = append(filters, entry{field, filter})
+		return true
+	})
+	from.termSets.Range(func(field, terms any) bool {
+		termSets = append(termSets, entry{field, terms})
+		return true
+	})
+	for _, adopted := range filters {
+		to.termFilters.LoadOrStore(adopted.field, adopted.value)
+	}
+	for _, adopted := range termSets {
+		to.termSets.LoadOrStore(adopted.field, adopted.value)
+	}
+	return nil
+}
+
+var errAdoptDifferentSegment = errors.New("nativeice: adopting term filters from a different segment")
+
+// PrepareTermFilter eagerly builds field's absent-term filter (the exact
+// term set on a small segment, the bloom filter on a larger one) for this
+// reader's one segment, so the first exact lookup against field after the
+// segment is published does not pay to build it lazily. It is a no-op for a
+// reader spanning more than one segment (a merged read view, not a single
+// freshly constructed or reopened segment), since those callers build their
+// own per-segment readers and warm each individually.
+func (r *Reader) PrepareTermFilter(field string) error {
+	if useErr := r.use(); useErr != nil {
+		return useErr
+	}
+	defer r.endUse()
+	if len(r.segments) != 1 {
+		return nil
+	}
+	storedReader, err := r.storedReader(0)
+	if err != nil {
+		return err
+	}
+	_, err = storedReader.termAbsent(field, nil)
+	return err
 }

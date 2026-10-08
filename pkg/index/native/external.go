@@ -99,7 +99,7 @@ func (s *externalSegmentStreamer) StartSegment() error {
 		s.owner.mu.Unlock()
 		return fmt.Errorf("create native external staging directory: %w", mkdirErr)
 	}
-	stagedPath := filepath.Join(s.owner.options.Path, fmt.Sprintf(".native-external-%d-%d", os.Getpid(), externalStagingSequence.Add(1)))
+	stagedPath := filepath.Join(s.owner.options.Path, fmt.Sprintf("%s%d-%d", externalStagingPrefix, os.Getpid(), externalStagingSequence.Add(1)))
 	file, createErr := fileSystem.CreateFile(stagedPath, 0o600)
 	if createErr != nil {
 		s.owner.mu.Unlock()
@@ -235,7 +235,7 @@ func (o *Owner) introduceExternalSegment(ctx context.Context, stagedPath string)
 	}
 	identifiers := make([][]byte, 0)
 	var visitErr error
-	if o.options.DeduplicateExternal {
+	if o.options.ExternalDedup != ExternalDedupNone {
 		visitErr = segmentReader.VisitTerms(ctx, identifierField, func(identifier []byte) bool {
 			identifiers = append(identifiers, bytes.Clone(identifier))
 			return true
@@ -254,54 +254,58 @@ func (o *Owner) introduceExternalSegment(ctx context.Context, stagedPath string)
 	}
 	segmentMetadata := metadata.Segments[0]
 
+	// Opening the staged file (and, inside it, warming the identifier
+	// filter) depends only on the file, so it runs before taking o.mu, the
+	// same as a merge's compacted output and a batch's encoded segment: real
+	// CPU work for a large payload must not stall every concurrent
+	// admission and read view. The segment identifier is a placeholder (0)
+	// until publish, assigned below under the lock once admission is known
+	// to succeed, same as every other segment-construction path.
+	external, segmentErr := newSegmentFromFile(stagedPath, segmentMetadata, 0)
+	if segmentErr != nil {
+		return fmt.Errorf("open external native segment: %w", segmentErr)
+	}
+
+	// Introduction does not exclude garbage collection, exactly as Batch does
+	// not. Collection only deletes segment files below the highest segment
+	// ID it saw when it started that neither the durable manifest nor the
+	// root it pinned references. The ID assigned below is newer than any it
+	// saw, and the staged file is not a "<id>.seg" name, so nothing this
+	// introduces can be collected.
 	o.mu.Lock()
 	if o.closed || o.closing {
 		o.mu.Unlock()
+		external.release()
 		return ErrOwnerClosed
-	}
-	if o.collecting {
-		o.mu.Unlock()
-		return ErrPersistenceBusy
 	}
 	if o.durabilityFault != nil {
 		fault := o.durabilityFault
 		o.mu.Unlock()
+		external.release()
 		return fault
 	}
 	if err := o.validateLease(); err != nil {
 		o.mu.Unlock()
+		external.release()
 		return fmt.Errorf("validate native root lease: %w", err)
 	}
 	if o.root.generation == ^uint64(0) || o.nextSegmentID == ^uint64(0) {
 		o.mu.Unlock()
+		external.release()
 		return fmt.Errorf("external native segment identifiers exhausted: %w", ErrInvalidDocument)
 	}
-	external, segmentErr := newSegmentFromFile(stagedPath, segmentMetadata, o.nextSegmentID)
-	if segmentErr != nil {
-		o.mu.Unlock()
-		return fmt.Errorf("open external native segment: %w", segmentErr)
-	}
+	external.(*memorySegment).handle.id = o.nextSegmentID
 	next := &publishedRoot{generation: o.root.generation + 1, segments: append([]rootSegment(nil), o.root.segments...), nextNumber: o.root.nextNumber}
 	next.refs.Store(1)
 	for _, current := range next.segments {
 		current.retain()
 	}
-	if o.options.DeduplicateExternal {
-		for _, identifier := range identifiers {
-			for index, current := range next.segments {
-				updated, changed, deleteErr := current.Delete(identifier)
-				if deleteErr != nil {
-					releaseSegments(next.segments)
-					external.release()
-					o.mu.Unlock()
-					return deleteErr
-				}
-				if changed {
-					current.release()
-					next.segments[index] = updated
-				}
-			}
-		}
+	external, maskErr := o.maskExternalDuplicates(next.segments, external, identifiers)
+	if maskErr != nil {
+		releaseSegments(next.segments)
+		external.release()
+		o.mu.Unlock()
+		return maskErr
 	}
 	next.segments = append(next.segments, external)
 	next.nextNumber += external.Len()
@@ -315,4 +319,83 @@ func (o *Owner) introduceExternalSegment(ctx context.Context, stagedPath string)
 	o.mu.Unlock()
 	o.requestMaintenance()
 	return nil
+}
+
+// maskExternalDuplicates applies OwnerOptions.ExternalDedup to one incoming
+// external segment against the existing segments it is about to join. It
+// returns the (possibly replaced) external segment the caller should append;
+// existing is mutated in place for ExternalDedupPreferIncoming. It must run
+// under o.mu: liveness checks consult o.admittedIdentifiers/admittedSegments
+// through candidateSegmentIndicesLocked, never decoding a stored document.
+//
+// ExternalDedupNone leaves every segment untouched. ExternalDedupPreferIncoming
+// masks the existing live copy of each incoming identifier, so the incoming
+// document wins. ExternalDedupKeepExisting masks an incoming document whose
+// identifier is already live elsewhere, in the incoming segment's own
+// deletion bitmap, leaving every existing segment untouched.
+func (o *Owner) maskExternalDuplicates(existing []rootSegment, external rootSegment, identifiers [][]byte) (rootSegment, error) {
+	switch o.options.ExternalDedup {
+	case ExternalDedupNone:
+		return external, nil
+	case ExternalDedupPreferIncoming:
+		for _, identifier := range identifiers {
+			for index, current := range existing {
+				updated, changed, err := current.Delete(identifier)
+				if err != nil {
+					return external, err
+				}
+				if changed {
+					current.release()
+					existing[index] = updated
+					// The existing copy just stopped being live: a cached
+					// positive InsertIfAbsent decision for it is now stale.
+					o.presenceCache.invalidate(identifier)
+				}
+			}
+		}
+		return external, nil
+	case ExternalDedupKeepExisting:
+		for _, identifier := range identifiers {
+			live, err := o.identifierLiveLocked(existing, identifier)
+			if err != nil {
+				return external, err
+			}
+			if !live {
+				continue
+			}
+			updated, changed, err := external.Delete(identifier)
+			if err != nil {
+				return external, err
+			}
+			if changed {
+				external.release()
+				external = updated
+			}
+		}
+		return external, nil
+	default:
+		return external, fmt.Errorf("external dedup mode %d: %w", o.options.ExternalDedup, ErrInvalidDocument)
+	}
+}
+
+// identifierLiveLocked reports whether identifier has a live posting in any
+// of segments. It probes only the admission-indexed candidates plus every
+// segment the index does not cover -- the same bounded set InsertIfAbsent
+// uses (candidateSegmentIndicesLocked) -- and checks posting membership only,
+// never decoding a stored document.
+func (o *Owner) identifierLiveLocked(segments []rootSegment, identifier []byte) (bool, error) {
+	for _, index := range o.candidateSegmentIndicesLocked(segments, identifier) {
+		memSeg, ok := segments[index].(*memorySegment)
+		if !ok {
+			return false, fmt.Errorf("check external dedup liveness: unsupported segment type %T", segments[index])
+		}
+		live, err := memSeg.hasLivePosting(identifier)
+		if err != nil {
+			return false, err
+		}
+		if live {
+			return true, nil
+		}
+	}
+	return false, nil
 }

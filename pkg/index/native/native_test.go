@@ -53,7 +53,7 @@ func TestReadOnlyGenerationStoredFieldsUsesFirstLiveDocument(t *testing.T) {
 }
 
 func TestReadOnlyGenerationStoredFieldsReadsRetainedCompatibilityFixture(t *testing.T) {
-	fixture := filepath.Join("..", "inverted", "testdata", "nidx01c", "sourceA")
+	fixture := filepath.Join("..", "testdata", "nidx01c", "sourceA")
 	reader, err := OpenReadOnlyGeneration(fixture)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, reader.Close()) }()
@@ -89,7 +89,7 @@ func TestReadOnlyGenerationVisitIdentifiersStopsAndCopies(t *testing.T) {
 }
 
 func TestReadOnlyGenerationVisitIdentifiersIncludesDeletedMetadataTerms(t *testing.T) {
-	fixture := filepath.Join("..", "inverted", "testdata", "nidx01c", "sourceA")
+	fixture := filepath.Join("..", "testdata", "nidx01c", "sourceA")
 	reader, err := OpenReadOnlyGeneration(fixture)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, reader.Close()) }()
@@ -102,7 +102,7 @@ func TestReadOnlyGenerationVisitIdentifiersIncludesDeletedMetadataTerms(t *testi
 }
 
 func TestReadOnlyGenerationVisitIdentifiersWalksMultipleSegments(t *testing.T) {
-	fixture := filepath.Join("..", "inverted", "testdata", "nidx01b", "index")
+	fixture := filepath.Join("..", "testdata", "nidx01b", "index")
 	reader, err := OpenReadOnlyGeneration(fixture)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, reader.Close()) }()
@@ -137,6 +137,98 @@ func TestReadOnlyGenerationVisitIdentifiersHonorsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	require.ErrorIs(t, reader.VisitIdentifiers(ctx, func([]byte) bool { return true }), context.Canceled)
+}
+
+func TestReadOnlyGenerationVisibleDocCountExcludesDeleted(t *testing.T) {
+	path := t.TempDir()
+	require.NoError(t, nativeice.Encode(path, nativeice.Generation{Documents: []nativeice.EncodeDocument{
+		{Identifier: []byte("a")},
+		{Identifier: []byte("b"), Deleted: true},
+		{Identifier: []byte("c")},
+	}}))
+	reader, err := OpenReadOnlyGeneration(path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, reader.Close()) }()
+
+	count, err := reader.VisibleDocCount()
+	require.NoError(t, err)
+	require.Equal(t, int64(2), count)
+}
+
+func TestReadOnlyGenerationVisibleDocCountNilSafe(t *testing.T) {
+	var reader *ReadOnlyGeneration
+	count, err := reader.VisibleDocCount()
+	require.NoError(t, err)
+	require.Zero(t, count)
+}
+
+func TestDecodeTimestampRoundTripsNativeICEEncoding(t *testing.T) {
+	const want = int64(1700000000123456789)
+	// DecodeTimestamp must pair with EncodePrefixCodedInt64, the same
+	// encoding newMemorySegment's writer and ProjectHit's reader already use
+	// for every document's "_timestamp" stored field.
+	got, err := DecodeTimestamp(nativeice.EncodePrefixCodedInt64(want))
+	require.NoError(t, err)
+	require.Equal(t, want, got)
+}
+
+func TestReadOnlyGenerationVisitLiveDocumentsSkipsDeleted(t *testing.T) {
+	path := t.TempDir()
+	require.NoError(t, nativeice.Encode(path, nativeice.Generation{Documents: []nativeice.EncodeDocument{
+		{Identifier: []byte("a"), Fields: []nativeice.EncodeField{{Name: "tag", Value: []byte("one"), Store: true}}},
+		{Identifier: []byte("b"), Deleted: true, Fields: []nativeice.EncodeField{{Name: "tag", Value: []byte("deleted"), Store: true}}},
+		{Identifier: []byte("c"), Fields: []nativeice.EncodeField{{Name: "tag", Value: []byte("two"), Store: true}}},
+	}}))
+	reader, err := OpenReadOnlyGeneration(path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, reader.Close()) }()
+
+	type seen struct {
+		id  string
+		tag string
+	}
+	var got []seen
+	require.NoError(t, reader.VisitLiveDocuments(context.Background(), func(doc StoredDocument) error {
+		var row seen
+		require.NoError(t, doc.VisitStoredFields(func(name string, value []byte) bool {
+			switch name {
+			case identifierField:
+				row.id = string(value)
+			case "tag":
+				row.tag = string(value)
+			}
+			return true
+		}))
+		got = append(got, row)
+		return nil
+	}))
+	require.Equal(t, []seen{{id: "a", tag: "one"}, {id: "c", tag: "two"}}, got)
+}
+
+func TestReadOnlyGenerationVisitLiveDocumentsNilSafe(t *testing.T) {
+	var reader *ReadOnlyGeneration
+	require.NoError(t, reader.VisitLiveDocuments(context.Background(), func(StoredDocument) error {
+		t.Fatal("must not be called")
+		return nil
+	}))
+}
+
+func TestReadOnlyGenerationReferencedFiles(t *testing.T) {
+	path := t.TempDir()
+	require.NoError(t, nativeice.Encode(path, nativeice.Generation{
+		SnapshotID: 7, SegmentID: 3,
+		Documents: []nativeice.EncodeDocument{{Identifier: []byte("a")}},
+	}))
+	reader, err := OpenReadOnlyGeneration(path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, reader.Close()) }()
+
+	require.ElementsMatch(t, []string{"000000000003.seg", "000000000007.snp"}, reader.ReferencedFiles())
+}
+
+func TestReadOnlyGenerationReferencedFilesNilSafe(t *testing.T) {
+	var reader *ReadOnlyGeneration
+	require.Nil(t, reader.ReferencedFiles())
 }
 
 func assertNotStopVisit(t *testing.T, err error) {

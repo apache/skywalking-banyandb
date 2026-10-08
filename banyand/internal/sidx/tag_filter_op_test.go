@@ -20,9 +20,9 @@ package sidx
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"testing"
 
-	"github.com/blugelabs/bluge/numeric"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -284,7 +284,7 @@ func TestTagFilterOpRangeWithCache(t *testing.T) {
 		{
 			name: "lower boundary exclusive miss",
 			rangeOpts: index.RangeOpts{
-				Lower:         &index.FloatTermValue{Value: numeric.Int64ToFloat64(500)},
+				Lower:         &index.FloatTermValue{Value: encoding.SortableInt64ToFloat64(500)},
 				IncludesLower: false,
 			},
 			expectedResult: true,
@@ -294,7 +294,7 @@ func TestTagFilterOpRangeWithCache(t *testing.T) {
 		{
 			name: "upper boundary exclusive miss",
 			rangeOpts: index.RangeOpts{
-				Upper:         &index.FloatTermValue{Value: numeric.Int64ToFloat64(100)},
+				Upper:         &index.FloatTermValue{Value: encoding.SortableInt64ToFloat64(100)},
 				IncludesUpper: false,
 			},
 			expectedResult: true,
@@ -335,6 +335,45 @@ func TestTagFilterOpRangeWithCache(t *testing.T) {
 			}
 
 			assert.Equal(t, tt.expectedResult, result, tt.description)
+		})
+	}
+}
+
+// TestNumericRangeBoundEncodingIsByteStable pins the exact bytes produced by
+// converting a range bound through encoding.Float64ToSortableInt64 and
+// convert.Int64ToBytes. The index-local tag min/max metadata read by this
+// package was written by directories created under the previous release's
+// index writer, so this encoding must keep producing these exact bytes for
+// int64 values (including negative, zero, and the int64 bounds) to stay
+// compatible with historical on-disk data.
+func TestNumericRangeBoundEncodingIsByteStable(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected []byte
+		value    int64
+	}{
+		{name: "zero", value: 0, expected: []byte{0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}},
+		{name: "one", value: 1, expected: []byte{0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}},
+		{name: "negative-one", value: -1, expected: []byte{0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}},
+		{name: "positive", value: 42, expected: []byte{0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2a}},
+		{name: "negative", value: -42, expected: []byte{0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xd6}},
+		{name: "max-int64", value: math.MaxInt64, expected: []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}},
+		{name: "min-int64", value: math.MinInt64, expected: []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}},
+		{name: "large-positive", value: 1 << 32, expected: []byte{0x80, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00}},
+		{name: "large-negative", value: -(1 << 32), expected: []byte{0x7f, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// NewIntRangeOpts is how production code turns the stored int64 bound
+			// into the FloatTermValue later fed back through Range().
+			opts := index.NewIntRangeOpts(tt.value, tt.value, true, true)
+			lower, ok := opts.Lower.(*index.FloatTermValue)
+			require.True(t, ok)
+			got := convert.Int64ToBytes(encoding.Float64ToSortableInt64(lower.Value))
+			assert.Equal(t, tt.expected, got, "round-tripped bound bytes must match the historical encoding")
+			// The round trip must also be lossless against the raw stored value.
+			assert.Equal(t, convert.Int64ToBytes(tt.value), got)
 		})
 	}
 }

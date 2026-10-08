@@ -16,6 +16,7 @@
 package nativeice
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -63,11 +64,22 @@ func TestMergeSegmentsPreservesModesMasksAndMappings(t *testing.T) {
 	if mergeErr != nil {
 		t.Fatal(mergeErr)
 	}
-	if len(merged.Mappings) != 2 || len(merged.Mappings[0]) != 2 || len(merged.Mappings[1]) != 2 {
-		t.Fatalf("mappings shape = %#v", merged.Mappings)
+	reference, referenceErr := referenceMergeSegments(context.Background(), []MergeInput{
+		{Reader: firstReader, IndexedFields: []string{"empty"}},
+		{Reader: secondReader, Drop: drop, IndexedFields: []string{"empty"}},
+	})
+	if referenceErr != nil {
+		t.Fatal(referenceErr)
 	}
-	if merged.Mappings[0][0] != 0 || merged.Mappings[0][1] != DroppedDocumentNumber || merged.Mappings[1][0] != 1 || merged.Mappings[1][1] != DroppedDocumentNumber {
-		t.Fatalf("mappings = %#v", merged.Mappings)
+	if !bytes.Equal(reference.Payload, merged.Payload) {
+		t.Fatal("merged payload differs from the reference re-encoding")
+	}
+	if len(reference.Mappings) != 2 || len(reference.Mappings[0]) != 2 || len(reference.Mappings[1]) != 2 {
+		t.Fatalf("mappings shape = %#v", reference.Mappings)
+	}
+	if reference.Mappings[0][0] != 0 || reference.Mappings[0][1] != DroppedDocumentNumber ||
+		reference.Mappings[1][0] != 1 || reference.Mappings[1][1] != DroppedDocumentNumber {
+		t.Fatalf("mappings = %#v", reference.Mappings)
 	}
 	reader, openErr := OpenSegment(merged.Payload)
 	if openErr != nil {

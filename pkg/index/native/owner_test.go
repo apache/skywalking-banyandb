@@ -457,7 +457,7 @@ func TestOwnerPromotionPreservesPinnedViewAcrossNewerMutation(t *testing.T) {
 	}
 	owner.mu.Unlock()
 	require.True(t, ok)
-	require.NotNil(t, promotedPayload, "a resident-sized written segment must stay open on its payload after persistence")
+	require.Nil(t, promotedPayload, "a persisted segment is served from its file, not its admitted payload")
 	require.True(t, promotedPersisted)
 	oldView, err := owner.Acquire(context.Background())
 	require.NoError(t, err)
@@ -530,7 +530,7 @@ func TestMemoryOwnerRejectsDurabilityCallback(t *testing.T) {
 
 func TestOwnerExternalSegmentIntroducesAndDeduplicates(t *testing.T) {
 	path := t.TempDir()
-	owner, err := NewOwner(OwnerOptions{Lease: testLease{}, Path: path, DeduplicateExternal: true})
+	owner, err := NewOwner(OwnerOptions{Lease: testLease{}, Path: path, ExternalDedup: ExternalDedupPreferIncoming})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, owner.Close()) })
 	require.NoError(t, owner.Batch(context.Background(), Batch{Documents: []Document{{
@@ -864,7 +864,7 @@ func TestOwnerTimestampKeepsLegacyNumericTermsAndSortValues(t *testing.T) {
 func TestOwnerInsertOnlyPreservesDuplicatePhysicalIdentifiers(t *testing.T) {
 	owner := newTestOwner(t, nil)
 	require.NoError(t, owner.Batch(context.Background(), Batch{
-		InsertOnly: true,
+		Mode: BatchInsertOnly,
 		Documents: []Document{
 			{Identifier: []byte("duplicate"), Fields: []Field{{Name: "status", Terms: []Term{{Value: []byte("ok")}}, Index: true}}},
 			{Identifier: []byte("duplicate"), Fields: []Field{{Name: "status", Terms: []Term{{Value: []byte("ok")}}, Index: true}}},
@@ -987,7 +987,20 @@ func TestOwnerCompactionPersistsReopenableRoot(t *testing.T) {
 	require.GreaterOrEqual(t, owner.DurableGeneration(), uint64(3))
 	require.ErrorIs(t, owner.CollectGarbage(context.Background()), ErrPersistenceBusy)
 	require.NoError(t, oldView.Close())
-	require.NoError(t, owner.CollectGarbage(context.Background()))
+	// Closing the view drops its reference, but it does not wait for a background
+	// persist that is already holding an older root, and CollectGarbage refuses to
+	// collect while any root other than the current one is still referenced. So
+	// "busy" is a legitimate answer for a moment after the close, and asserting on
+	// the first call made this test fail on roughly one run in 150 under CI's
+	// narrower GOMAXPROCS. Wait the in-flight persist out instead: a reference that
+	// never drops still fails here, and the deletion set below is only ever built
+	// by a collection that actually ran.
+	var collectErr error
+	require.Eventually(t, func() bool {
+		collectErr = owner.CollectGarbage(context.Background())
+		return !errors.Is(collectErr, ErrPersistenceBusy)
+	}, 30*time.Second, 10*time.Millisecond)
+	require.NoError(t, collectErr)
 	_, err = os.Stat(filepath.Join(path, fmt.Sprintf("%012x.seg", 0)))
 	require.ErrorIs(t, err, os.ErrNotExist)
 	require.NoError(t, owner.Close())

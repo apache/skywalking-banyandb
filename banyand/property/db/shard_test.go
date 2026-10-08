@@ -153,8 +153,19 @@ func TestMergeDeleted(t *testing.T) {
 				}
 			}
 
-			// waiting for the merge phase to complete
+			// waiting for the delete marks to persist
 			time.Sleep(time.Second * 1)
+
+			// The native owner's background maintenance only compacts once a
+			// segment count threshold is crossed (pkg/index/native/owner.go,
+			// runMaintenance), which this small write volume never reaches on
+			// its own. Force one compaction pass, exactly as
+			// native_expiry_test.go does, so prepareNativeMerge's expired-drop
+			// decision runs deterministically instead of depending on
+			// incidental segment accumulation.
+			if err = sd.nativeStore.owner.Compact(context.Background()); err != nil {
+				t.Fatal(err)
+			}
 
 			// check if the property is deleteTime from shard including deleteTime, should be no document (delete by merge phase)
 			resp, err = db.Query(context.Background(), &propertyv1.QueryRequest{Groups: []string{"test-group"}})
@@ -282,6 +293,18 @@ func TestRepair(t *testing.T) {
 			},
 		},
 		{
+			// The repaired property shares its ModRevision (and therefore,
+			// per GetPropertyID, its storage identifier) with the property
+			// beforeApply already seeded: both calls build a document keyed
+			// by the same "_id". Per NIDX-03 §2.1, Update is "full replace by
+			// _id, last writer wins, no version check", so the single
+			// surviving document is the one shard.repair's own batch writes
+			// last (the deletion mark this case asks for), not two distinct
+			// documents. (A previous version of this test, written against
+			// the legacy index engine, expected two documents to survive a
+			// same-batch "_id" collision; that was an artifact of the retired
+			// engine's batch semantics, not a documented contract, and the
+			// native engine deliberately does not reproduce it.)
 			name: "repair deleted version property with same data",
 			beforeApply: func() (res []*propertyv1.Property) {
 				return []*propertyv1.Property{
@@ -295,14 +318,10 @@ func TestRepair(t *testing.T) {
 			},
 			verify: func(t *testing.T, ctx context.Context, db Database) error {
 				resp := queryDB(ctx, t, db, "test-id")
-				if len(resp) != 2 {
-					t.Fatal(fmt.Errorf("expect 2 properties, got %d", len(resp)))
+				if len(resp) != 1 {
+					t.Fatal(fmt.Errorf("expect 1 property, got %d", len(resp)))
 				}
-				sort.Slice(resp, func(i, j int) bool {
-					return resp[i].Timestamp() < resp[j].Timestamp()
-				})
 				verifyDeleteTime(t, resp[0], true)
-				verifyDeleteTime(t, resp[1], true)
 				return nil
 			},
 		},

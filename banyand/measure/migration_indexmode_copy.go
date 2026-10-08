@@ -33,15 +33,16 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/migration"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
-// Reserved bluge stored-field names written by the inverted store's toDoc
-// (pkg/index/inverted/inverted.go:62-65). They are not tags and must be
-// handled explicitly rather than treated as tag fields.
+// Reserved stored-field names the series index writes (NIDX-03 §2.2;
+// storage.EncodeSeriesDocument). They are not tags and must be handled
+// explicitly rather than treated as tag fields.
 const (
 	imDocIDField     = "_id"
 	imTimestampField = "_timestamp"
@@ -129,7 +130,15 @@ func readIndexModeDocsNative(ctx context.Context, sidxDir string, ruleByID map[u
 	var timeless []uint64
 	tagNames := collectTagNames(schemasBySubject)
 	missingRules := map[uint32]int{}
-	walkErr := inverted.ReadOnlyWalkDocuments(ctx, sidxDir, func(source inverted.StoredDocument) error {
+	generation, openErr := native.OpenReadOnlyGeneration(sidxDir)
+	if openErr != nil {
+		if errors.Is(openErr, native.ErrNoSnapshot) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("open sidx %s: %w", sidxDir, openErr)
+	}
+	defer func() { _ = generation.Close() }()
+	walkErr := generation.VisitLiveDocuments(ctx, func(source native.StoredDocument) error {
 		document, rebuildErr := rebuildOneDoc(source, ruleByID, schemasBySubject, tagNames, missingRules)
 		if rebuildErr != nil {
 			return fmt.Errorf("rebuild doc in %s: %w", sidxDir, rebuildErr)
@@ -142,9 +151,6 @@ func readIndexModeDocsNative(ctx context.Context, sidxDir string, ruleByID map[u
 		return nil
 	})
 	if walkErr != nil {
-		if errors.Is(walkErr, inverted.ErrNoCommittedIndex) {
-			return nil, nil
-		}
 		return nil, fmt.Errorf("walk sidx %s: %w", sidxDir, walkErr)
 	}
 	if len(timeless) > 0 {
@@ -225,41 +231,105 @@ func appendRegeneratedEntityFields(fields []index.Field, series *pbv1.Series, sc
 
 // ── Target idx store pool ────────────────────────────────────────────────────.
 
-// targetIdxStore lazily opens one inverted store per target sidx path
-// (BatchWaitSec:0) and closes them all at the end, so multiple source segs
-// feeding the same target sidx share a single writer. Copied (cross-package,
-// unexported) from stream/migration_element_index.go:126-158.
+// indexModeLfs performs this tool's own lock-file management, matching
+// pkg/index/native's own package-level fileSystem and the union-sidx
+// builder's.
+var indexModeLfs = fs.NewLocalFileSystem()
+
+// indexModeLockFilename is the lock file targetIdxStore creates (one per
+// target segment, beside its sidx directory) to back the native.FileRootLease
+// each target owner requires; it is removed once that owner closes.
+const indexModeLockFilename = "lock"
+
+// targetIdxStore lazily opens one native owner per target sidx path and
+// closes them all at the end, so multiple source segs feeding the same
+// target sidx share a single writer. Adapted (cross-package, unexported)
+// from stream/migration_element_index.go's original native-owner pool.
 type targetIdxStore struct {
-	stores map[string]index.SeriesStore
+	owners map[string]*native.Owner
+	locks  map[string]fs.File
 }
 
 func newTargetIdxStore() *targetIdxStore {
-	return &targetIdxStore{stores: map[string]index.SeriesStore{}}
+	return &targetIdxStore{owners: map[string]*native.Owner{}, locks: map[string]fs.File{}}
 }
 
-func (t *targetIdxStore) get(path string) (index.SeriesStore, error) {
-	if s, ok := t.stores[path]; ok {
-		return s, nil
+func (t *targetIdxStore) get(path string) (*native.Owner, error) {
+	if o, ok := t.owners[path]; ok {
+		return o, nil
 	}
 	if err := os.MkdirAll(path, storage.DirPerm); err != nil {
 		return nil, fmt.Errorf("mkdir idx %s: %w", path, err)
 	}
-	s, err := inverted.NewStore(inverted.StoreOpts{Path: path, BatchWaitSec: 0})
-	if err != nil {
-		return nil, fmt.Errorf("open idx store %s: %w", path, err)
+	// native.FileRootLease requires its owner's Path to be a proper
+	// subdirectory of the lease root, so the lock lives one level up from
+	// the sidx directory itself (the target segment directory), matching a
+	// live TSDB's own lock-beside-segment layout.
+	leaseRoot := filepath.Dir(path)
+	lockPath := filepath.Join(leaseRoot, indexModeLockFilename)
+	lock, lockErr := indexModeLfs.CreateLockFile(lockPath, storage.FilePerm)
+	if lockErr != nil {
+		return nil, fmt.Errorf("create idx lock %s: %w", lockPath, lockErr)
 	}
-	t.stores[path] = s
-	return s, nil
+	lease, leaseErr := native.NewFileRootLease(lock, leaseRoot)
+	if leaseErr != nil {
+		_ = lock.Close()
+		return nil, fmt.Errorf("create idx root lease %s: %w", path, leaseErr)
+	}
+	// NewOwner is a synchronous constructor and has no context-bearing API.
+	//nolint:contextcheck // construction does not perform cancellable I/O
+	owner, ownerErr := native.NewOwner(native.OwnerOptions{Lease: lease, Path: path, IdentifierDocValues: true})
+	if ownerErr != nil {
+		_ = lock.Close()
+		return nil, fmt.Errorf("open idx store %s: %w", path, ownerErr)
+	}
+	t.owners[path] = owner
+	t.locks[path] = lock
+	return owner, nil
+}
+
+// writeDocs upserts docs into the target sidx at path (opening it on first
+// use), through the same series document mapping the live series index uses
+// (storage.EncodeSeriesDocument), and blocks until the batch is durable --
+// matching the previous release's index writer's StoreOpts{BatchWaitSec:
+// 0}) synchronous-write contract, which callers (including the verify/
+// analyze readers that immediately re-open the target sidx) depend on.
+func (t *targetIdxStore) writeDocs(path string, docs index.Documents) error {
+	owner, err := t.get(path)
+	if err != nil {
+		return err
+	}
+	nativeDocs := make([]native.Document, len(docs))
+	for i := range docs {
+		nd, encErr := storage.EncodeSeriesDocument(docs[i])
+		if encErr != nil {
+			return fmt.Errorf("encode doc for %s: %w", path, encErr)
+		}
+		nativeDocs[i] = nd
+	}
+	done := make(chan error, 1)
+	if err := owner.Batch(context.Background(), native.Batch{
+		Documents:          nativeDocs,
+		PersistentCallback: func(err error) { done <- err },
+	}); err != nil {
+		return err
+	}
+	return <-done
 }
 
 func (t *targetIdxStore) closeAll() error {
 	var firstErr error
-	for path, s := range t.stores {
-		if err := s.Close(); err != nil && firstErr == nil {
+	for path, o := range t.owners {
+		if err := o.Close(); err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("close idx store %s: %w", path, err)
 		}
 	}
-	t.stores = map[string]index.SeriesStore{}
+	for path, lock := range t.locks {
+		_ = lock.Close()
+		_ = os.Remove(filepath.Join(filepath.Dir(path), indexModeLockFilename))
+	}
+	t.owners = map[string]*native.Owner{}
+	t.locks = map[string]fs.File{}
 	return firstErr
 }
 
@@ -305,17 +375,16 @@ func copyIndexModeSlowDocs(ctx context.Context, srcSidxDirs []string, docsByDir 
 		if ctx.Err() != nil {
 			return rows, ctx.Err()
 		}
-		store, getErr := stores.get(dstSidx)
-		if getErr != nil {
-			return rows, getErr
-		}
-		batch := index.Batch{Documents: make(index.Documents, 0, len(m))}
+		docs := make(index.Documents, 0, len(m))
 		for _, d := range m {
-			batch.Documents = append(batch.Documents, d)
+			docs = append(docs, d)
 			rows++
 		}
-		if updateErr := store.UpdateSeriesBatch(batch); updateErr != nil {
-			return rows, fmt.Errorf("write target sidx %s: %w", dstSidx, updateErr)
+		// writeDocs's lazy native.NewOwner construction is synchronous and has
+		// no context-bearing API (see the nolint on targetIdxStore.get).
+		//nolint:contextcheck
+		if writeErr := stores.writeDocs(dstSidx, docs); writeErr != nil {
+			return rows, fmt.Errorf("write target sidx %s: %w", dstSidx, writeErr)
 		}
 		segDir := filepath.Join(dstGroupRoot, segNameByPath[dstSidx])
 		if _, metaErr := writeIndexModeSegMetadata(segDir, ir); metaErr != nil {
@@ -367,7 +436,7 @@ func copyIndexModeGroup(ctx context.Context, in migration.EntryGroupInput,
 	}
 
 	stores := newTargetIdxStore()
-	// Close() flushes buffered batches and lands bluge's own snapshot; a close
+	// Close() flushes buffered batches and lands the native owner's snapshot; a close
 	// failure means an incomplete sidx on disk, so it must surface even on the
 	// happy path.
 	defer func() {
@@ -472,7 +541,7 @@ func copyIndexModeGroup(ctx context.Context, in migration.EntryGroupInput,
 	}
 
 	// Flush the slow-path stores before counting segments so every target sidx
-	// (and its bluge snapshot) is on disk. closeAll is idempotent; the deferred
+	// (and its native snapshot) is on disk. closeAll is idempotent; the deferred
 	// call becomes a no-op.
 	if closeErr := stores.closeAll(); closeErr != nil {
 		return res, closeErr
@@ -693,7 +762,7 @@ func readAllIndexModeDocs(ctx context.Context, dirs []string, ruleByID map[uint3
 ) ([]index.Document, error) {
 	var out []index.Document
 	for _, dir := range dirs {
-		docs, err := readIndexModeDocs(ctx, dir, ruleByID, schemasBySubject)
+		docs, err := readIndexModeDocsNative(ctx, dir, ruleByID, schemasBySubject)
 		if err != nil {
 			return nil, err
 		}
@@ -731,7 +800,7 @@ func segKeyedDigests(ctx context.Context, dirs []string, ruleByID map[uint32]ind
 	}
 	var segCache alignedSegCache
 	for _, dir := range dirs {
-		docs, readErr := readIndexModeDocs(ctx, dir, ruleByID, schemasBySubject)
+		docs, readErr := readIndexModeDocsNative(ctx, dir, ruleByID, schemasBySubject)
 		if readErr != nil {
 			return nil, readErr
 		}
@@ -915,11 +984,11 @@ func IsIndexModeGroup(schemaRoot, group string) (bool, error) {
 // source sidx dir under srcRoots, and runs the sidx-document analysis.
 func AnalyzeIndexModeGroup(ctx context.Context, schemaRoot, group string, srcRoots []string, sampleCap int) (AnalyzeGroupResult, error) {
 	var res AnalyzeGroupResult
-	schemas, err := loadMeasureSchemas(schemaRoot, []string{group}) //nolint:contextcheck // offline bluge schema read, no cancellation
+	schemas, err := loadMeasureSchemas(schemaRoot, []string{group}) //nolint:contextcheck // offline schema read, no cancellation
 	if err != nil {
 		return res, fmt.Errorf("load measure schemas: %w", err)
 	}
-	ruleByID, err := loadIndexRuleInfoByID(schemaRoot, []string{group}) //nolint:contextcheck // offline bluge schema read, no cancellation
+	ruleByID, err := loadIndexRuleInfoByID(schemaRoot, []string{group}) //nolint:contextcheck // offline schema read, no cancellation
 	if err != nil {
 		return res, fmt.Errorf("load index rules: %w", err)
 	}

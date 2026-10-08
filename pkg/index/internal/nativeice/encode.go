@@ -104,6 +104,10 @@ type Generation struct {
 	// TimeMin and TimeMax are the segment's encoded timestamp bounds.
 	TimeMin uint64
 	TimeMax uint64
+	// IdentifierDocValues additionally writes "_id" as a doc-value column, as
+	// the previous release's writer does, so a rolled-back node can still
+	// read document identity back from a segment this encoder wrote.
+	IdentifierDocValues bool
 }
 
 // Encode writes generation into the index directory at path as one committed
@@ -224,9 +228,9 @@ func nativeICEFieldIDs(fields []nativeICEField) map[string]uint64 {
 }
 
 // assembleNativeSegment serializes already-derived field structures and
-// stored documents into segment bytes. Both EncodeSegment and MergeSegments
-// end here, so a merge that derives the same fields and stored documents
-// produces the same bytes as re-encoding the merged documents.
+// stored documents into segment bytes. MergeSegmentsTo writes the same
+// sections in the same order as a stream, so a merge produces the same bytes
+// as re-encoding the merged documents.
 func assembleNativeSegment(
 	fields []nativeICEField, storedData []byte, documentOffsets []uint64, documentCount, timeMin, timeMax uint64,
 ) ([]byte, error) {
@@ -359,6 +363,9 @@ func nativeICEFields(generation Generation) []nativeICEField {
 	for documentIndex, document := range generation.Documents {
 		documentNumber := uint64(documentIndex)
 		registerNativeICETerm(identifier, document.Identifier, documentNumber, 1)
+		if generation.IdentifierDocValues {
+			identifier.sortValues[documentNumber] = append(identifier.sortValues[documentNumber], document.Identifier)
+		}
 		for _, field := range document.Fields {
 			if !field.Store && !field.Index && !field.Sort {
 				continue
@@ -707,10 +714,21 @@ type storedValue struct {
 // identifier; the remaining values are ordered by name, stably, so repeated
 // values of one name keep the order the document lists them in.
 func appendStoredDocument(destination []byte, values []storedValue, fieldIDs map[string]uint64) []byte {
-	sort.SliceStable(values[1:], func(leftIndex, rightIndex int) bool {
-		return values[leftIndex+1].name < values[rightIndex+1].name
-	})
-	meta := make([]byte, 0, len(values)*3)
+	destination, _ = appendStoredDocumentScratch(destination, values, fieldIDs, make([]byte, 0, len(values)*3))
+	return destination
+}
+
+// appendStoredDocumentScratch is appendStoredDocument with a caller-owned
+// metadata buffer, returned for reuse by the next document.
+func appendStoredDocumentScratch(destination []byte, values []storedValue, fieldIDs map[string]uint64, meta []byte) ([]byte, []byte) {
+	// A stable insertion sort: documents carry few values, often already in
+	// name order, and it allocates nothing.
+	for index := 2; index < len(values); index++ {
+		for previous := index; previous > 1 && values[previous].name < values[previous-1].name; previous-- {
+			values[previous], values[previous-1] = values[previous-1], values[previous]
+		}
+	}
+	meta = meta[:0]
 	var dataLength uint64
 	for _, value := range values {
 		meta = appendNativeUvarint(meta, fieldIDs[value.name])
@@ -724,7 +742,7 @@ func appendStoredDocument(destination []byte, values []storedValue, fieldIDs map
 	for _, value := range values {
 		destination = append(destination, value.value...)
 	}
-	return destination
+	return destination, meta
 }
 
 func encodeDeletionBitmap(documents []EncodeDocument) ([]byte, error) {

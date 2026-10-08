@@ -88,6 +88,26 @@ type Document struct {
 	Timestamp  int64
 }
 
+// BatchMode selects how Batch treats a document whose identifier may already
+// be live elsewhere in the owner.
+type BatchMode uint8
+
+const (
+	// BatchUpsert replaces any live document sharing an identifier. This is
+	// the default (zero value) and Batch's original, only behavior.
+	BatchUpsert BatchMode = iota
+	// BatchInsertOnly preserves every physical document, including duplicate
+	// identifiers, admitting them as new physical documents rather than
+	// replacing an earlier live one.
+	BatchInsertOnly
+	// BatchInsertIfAbsent skips a document when some segment already has a
+	// live posting for its identifier and that segment's field-name set
+	// contains every field name the document carries; otherwise it upserts
+	// exactly like BatchUpsert. The check runs under the owner lock against
+	// the admission root, so it is serialized with every other admission.
+	BatchInsertIfAbsent
+)
+
 // Batch is one serialized admission operation. Deletes are applied before
 // Documents, so an update cannot leave two live physical documents.
 //
@@ -95,9 +115,9 @@ type Document struct {
 type Batch struct {
 	Documents []Document
 	Deletes   [][]byte
-	// InsertOnly preserves every physical document, including duplicate
-	// identifiers. The default false mode keeps update/upsert semantics.
-	InsertOnly         bool
+	// Mode selects upsert, insert-only, or insert-if-absent admission for
+	// Documents. The default zero value is BatchUpsert.
+	Mode               BatchMode
 	PersistentCallback func(error)
 }
 
@@ -147,7 +167,30 @@ type MergeDocument struct {
 // root. It runs synchronously while Compact owns a pinned immutable root.
 type PrepareMergeCallback func(context.Context, MergeDocument) (drop bool, err error)
 
+// ExternalDedupMode controls how introducing an external segment
+// (EnableExternalSegments) treats an identifier the incoming segment shares
+// with one already live elsewhere in the owner.
+type ExternalDedupMode uint8
+
+const (
+	// ExternalDedupNone introduces every incoming document unconditionally.
+	// Neither copy is masked, so a shared identifier ends up live in more than
+	// one segment. This is the default and preserves the legacy native
+	// receiver's append-only semantics.
+	ExternalDedupNone ExternalDedupMode = iota
+	// ExternalDedupPreferIncoming masks the existing live copy of every
+	// identifier the incoming segment also carries, so the incoming document
+	// wins. This is today's DeduplicateExternal=true behavior.
+	ExternalDedupPreferIncoming
+	// ExternalDedupKeepExisting masks an incoming document whose identifier is
+	// already live elsewhere, in the incoming segment's own deletion bitmap,
+	// leaving every existing segment untouched, so the existing document wins.
+	ExternalDedupKeepExisting
+)
+
 // OwnerOptions supplies database ownership and asynchronous persistence.
+//
+//nolint:govet // option fields are grouped by documented purpose, not padding.
 type OwnerOptions struct {
 	Lease                RootLease
 	Persist              PersistFunc
@@ -159,10 +202,11 @@ type OwnerOptions struct {
 	// this many immutable segments are published. Zero uses a conservative
 	// default; a negative value disables scheduling for maintenance tests.
 	CompactionThreshold int
-	// DeduplicateExternal controls whether external segment introduction masks
-	// existing identifiers. It defaults to false to preserve legacy receiver
-	// semantics; callers that enabled external deduplication opt in explicitly.
-	DeduplicateExternal bool
+	// ExternalDedup controls whether external segment introduction masks
+	// existing or incoming identifiers. It defaults to ExternalDedupNone to
+	// preserve legacy receiver semantics; callers that need deduplication opt
+	// into one of the other modes explicitly.
+	ExternalDedup ExternalDedupMode
 	// PersistInterval is the minimum time between two background persists.
 	// Zero persists as soon as an admission wakes the worker. A positive
 	// interval lets compaction merge a write burst's small segments in memory
@@ -170,6 +214,16 @@ type OwnerOptions struct {
 	// callers that wait on PersistentCallback should leave it zero. Close
 	// persists everything admitted regardless.
 	PersistInterval time.Duration
+	// PresenceCacheBytes bounds the memory an InsertIfAbsent presence cache
+	// may use to remember "identifier present with this field set" per root
+	// generation. Zero or negative disables the cache; every InsertIfAbsent
+	// admission then recomputes presence from the admission root.
+	PresenceCacheBytes int
+	// IdentifierDocValues makes the encoder and merger write "_id" as a
+	// doc-value column in addition to its term, matching the layout the
+	// previous release's writer produces so a rolled-back node can still read
+	// document identity back from a segment this owner wrote.
+	IdentifierDocValues bool
 }
 
 // Owner serializes mutation admission and publishes immutable roots. A root
@@ -231,6 +285,9 @@ type Owner struct {
 	// publication has become uncertain, retrying the same immutable filenames
 	// could conflict with a manifest that is already visible on disk.
 	durabilityFault error
+	// presenceCache memoizes InsertIfAbsent presence decisions per root
+	// generation. Nil when OwnerOptions.PresenceCacheBytes is not positive.
+	presenceCache *presenceCache
 }
 
 // persistenceQueue wakes the background persistence worker. It is not a work
@@ -286,9 +343,19 @@ type memorySegment struct {
 
 //nolint:govet // reader, payload, and atomic lifecycle state share ownership.
 type segmentHandle struct {
-	reader        *nativeice.Reader
-	payload       []byte
-	sourcePath    string
+	reader  *nativeice.Reader
+	payload []byte
+	// sourcePath is the staged file a merge output or an external receive
+	// is served from until publication renames it to "<id>.seg"; it is empty
+	// afterwards, and for every other segment. pathMu orders persistence's
+	// rename against the release that deletes an unpublished staged file.
+	sourcePath string
+	pathMu     sync.RWMutex
+	// staged marks a handle whose sourcePath is a fsynced, immutable file
+	// this owner wrote in its own directory. Publication renames it into its
+	// "<id>.seg" name, so no staged name outlives the publication, and the
+	// handle keeps serving from the same open file across the rename.
+	staged        bool
 	refs          atomic.Int64
 	count         uint64
 	id            uint64
@@ -298,11 +365,36 @@ type segmentHandle struct {
 	hasTime       bool
 	indexedFields []string
 	persisted     atomic.Bool
+	// fieldNamesOnce and fieldNameSet cache this handle's complete field-name
+	// set (every field the segment carries, not only indexed ones), computed
+	// once per handle on first InsertIfAbsent admission check.
+	fieldNamesOnce sync.Once
+	fieldNameSet   map[string]struct{}
+	fieldNameErr   error
 }
 
 type persistedPromotion struct {
 	original    *segmentHandle
 	replacement *segmentHandle
+}
+
+// fieldNames returns this handle's complete field-name set -- every field the
+// segment carries, including stored-only, sort-only, and internal fields --
+// computed once per handle and cached for later InsertIfAbsent checks.
+func (h *segmentHandle) fieldNames() (map[string]struct{}, error) {
+	h.fieldNamesOnce.Do(func() {
+		names, err := h.reader.Fields()
+		if err != nil {
+			h.fieldNameErr = err
+			return
+		}
+		set := make(map[string]struct{}, len(names))
+		for _, name := range names {
+			set[name] = struct{}{}
+		}
+		h.fieldNameSet = set
+	})
+	return h.fieldNameSet, h.fieldNameErr
 }
 
 // ReadView pins one immutable published root. It must be closed by its
@@ -335,6 +427,9 @@ func NewOwner(options OwnerOptions) (*Owner, error) {
 		}
 		if err := pathLease.ValidatePath(options.Path); err != nil {
 			return nil, fmt.Errorf("validate native root lease path: %w", err)
+		}
+		if err := removeStagedFiles(options.Path); err != nil {
+			return nil, fmt.Errorf("remove staged native files: %w", err)
 		}
 	}
 	generation := uint64(1)
@@ -369,6 +464,9 @@ func NewOwner(options OwnerOptions) (*Owner, error) {
 	}
 	owner.stateCond = sync.NewCond(&owner.mu)
 	owner.durable.Store(durableGeneration)
+	if options.PresenceCacheBytes > 0 {
+		owner.presenceCache = newPresenceCache(options.PresenceCacheBytes)
+	}
 	if options.Persist != nil || options.Path != "" {
 		queue := &persistenceQueue{wake: make(chan struct{}, 1)}
 		owner.persistQ = queue
@@ -511,6 +609,11 @@ func loadPersistedRoot(path string) (*publishedRoot, error) {
 		handle.indexedFields = fields
 		handle.refs.Store(1)
 		handle.persisted.Store(true)
+		// Best effort, see newMemorySegment. This is the owner's own startup
+		// reopen of an existing directory: without this, the first exact
+		// lookup after every process restart rebuilds every segment's
+		// filter lazily, not just after a fresh publish or compaction.
+		_ = segmentReader.PrepareTermFilter(identifierField)
 		root.segments = append(root.segments, &memorySegment{handle: handle, deleted: deleted})
 		root.nextNumber += segmentMetadata.DocumentCount
 	}
@@ -778,7 +881,10 @@ func (o *Owner) persistRoot(root *publishedRoot) error {
 	}
 	segments := make([]nativeice.SnapshotSegmentPayload, 0, len(root.segments))
 	handles := make([]*segmentHandle, 0, len(root.segments))
-	unpersisted := make(map[*segmentHandle]struct{}, len(root.segments))
+	// unpersisted maps each admitted handle this persistence writes to the
+	// promotion that follows its payload through the publication.
+	unpersisted := make(map[*segmentHandle]*nativeice.Promotion, len(root.segments))
+	renamedAny := false
 	for _, current := range root.segments {
 		segment, ok := current.(*memorySegment)
 		if !ok {
@@ -813,8 +919,8 @@ func (o *Owner) persistRoot(root *publishedRoot) error {
 			metadata.DeletionBitmap = bitmap
 		}
 		payload := []byte(nil)
-		sourcePath := ""
 		persisted := segment.handle.persisted.Load()
+		trusted := persisted
 		if !persisted {
 			// The captured root pins this immutable handle for the synchronous
 			// publisher call; avoid copying the payload solely for persistence.
@@ -825,18 +931,38 @@ func (o *Owner) persistRoot(root *publishedRoot) error {
 			// only swaps the segment reference in the *current* o.root, not in
 			// roots already queued for persistence. handle.persisted is an
 			// atomic bool on that shared handle, so it is the one signal that
-			// correctly reaches every such copy; sourcePath is a plain string
-			// that promotion never clears on the original handle, so it must
-			// not gate whether this segment is re-validated as brand new.
+			// correctly reaches every such copy.
 			payload = segment.handle.payload
-			sourcePath = segment.handle.sourcePath
-			unpersisted[segment.handle] = struct{}{}
+			renamed, renameErr := o.renameStagedSegment(segment.handle)
+			if renameErr != nil {
+				return renameErr
+			}
+			if renamed {
+				// The owner wrote, fsynced and validated this file itself; it
+				// now carries its final name and only needs the manifest.
+				trusted = true
+				renamedAny = true
+			}
+			var promotion *nativeice.Promotion
+			if payload != nil {
+				promotion = nativeice.NewPromotion(segment.handle.reader)
+			}
+			unpersisted[segment.handle] = promotion
 		}
 		segments = append(segments, nativeice.SnapshotSegmentPayload{
-			SnapshotSegment: metadata, Payload: payload, SourcePath: sourcePath,
-			TrustedExisting: persisted,
+			SnapshotSegment: metadata, Payload: payload, TrustedExisting: trusted, Promotion: unpersisted[segment.handle],
 		})
 		handles = append(handles, segment.handle)
+	}
+	if renamedAny {
+		// Every rename must be durable before the manifest that references
+		// its "<id>.seg" can be.
+		if err := syncOwnerDirectory(o.options.Path); err != nil {
+			return fmt.Errorf("sync renamed native segments: %w", err)
+		}
+		if persistRenamedHook != nil {
+			persistRenamedHook()
+		}
 	}
 	if err := nativeice.PublishSnapshot(o.options.Path, root.generation, segments); err != nil {
 		return err
@@ -845,29 +971,34 @@ func (o *Owner) persistRoot(root *publishedRoot) error {
 		handle.persisted.Store(true)
 	}
 	promotions := make([]persistedPromotion, 0, len(unpersisted))
-	for handle := range unpersisted {
-		// A resident-sized segment admitted from an in-memory payload keeps
-		// its original, already-open handle: persisted.Store(true) above
-		// publishes durability to every root sharing it, and swapping in a
-		// second reader would close the original and discard everything it
-		// has warmed (stored-reader, term dictionaries, document offsets).
-		// Larger payloads still move to a file-backed reader so they do not
-		// pin memory for the segment's lifetime, and externally ingested
-		// segments move off the staged file that release() deletes.
-		if handle.payload != nil && handle.size <= nativeice.MaxResidentSegmentSize {
+	for handle, promotion := range unpersisted {
+		// Once persisted, every segment is served from its file: an admitted
+		// payload occupies the heap only until it is durable. A staged
+		// segment's reader already serves the file publication
+		// renamed to "<id>.seg"; reopening it would only discard the warm
+		// reader.
+		if handle.staged {
 			continue
 		}
 		segmentPath := filepath.Join(o.options.Path, fmt.Sprintf("%012x.seg", handle.id))
-		reader, openErr := nativeice.OpenSnapshotSegment(segmentPath, nativeice.SnapshotSegment{
+		// The file is the one PublishSnapshot just wrote from this handle's
+		// payload: the replacement takes over the term filters the handle
+		// already built rather than rebuilding them from the file.
+		reader, openErr := nativeice.OpenPromotedSegment(segmentPath, nativeice.SnapshotSegment{
 			ID: handle.id, Size: handle.size, DocumentCount: handle.count,
 			TimeMin: handle.timeMin, TimeMax: handle.timeMax,
-		})
+		}, promotion)
 		if openErr != nil {
 			for _, promotion := range promotions {
 				_ = promotion.replacement.reader.Close()
 			}
 			return fmt.Errorf("open persisted native segment %d for promotion: %w", handle.id, openErr)
 		}
+		// Best effort, see newMemorySegment: should the replacement have
+		// adopted no filter, it is built here, before promotePersistedHandles
+		// takes o.mu, so outside the lock, instead of lazily by the first
+		// exact lookup.
+		_ = reader.PrepareTermFilter(identifierField)
 		replacement := &segmentHandle{
 			reader: reader, count: handle.count, id: handle.id, size: handle.size,
 			timeMin: handle.timeMin, timeMax: handle.timeMax, hasTime: handle.hasTime,
@@ -968,11 +1099,14 @@ func (o *Owner) Batch(ctx context.Context, batch Batch) error {
 	if err := ctx.Err(); err != nil {
 		return finishCallback(batch.PersistentCallback, err)
 	}
+	if batch.Mode == BatchInsertIfAbsent {
+		return o.batchInsertIfAbsent(ctx, batch)
+	}
 	queue := o.persistQ
 	// Validating the batch and encoding its segment depend only on the batch,
 	// so they run before taking o.mu; only applying it to the current root
 	// is serialized with other admissions, compaction and persistence.
-	prepared, prepareErr := prepareBatch(batch)
+	prepared, prepareErr := prepareBatch(batch, o.options.IdentifierDocValues)
 	o.mu.Lock()
 	if o.closed || o.closing {
 		o.mu.Unlock()
@@ -983,24 +1117,45 @@ func (o *Owner) Batch(ctx context.Context, batch Batch) error {
 		o.mu.Unlock()
 		return finishCallback(batch.PersistentCallback, prepareErr)
 	}
+	if checkErr := o.admitChecksLocked(queue, batch.PersistentCallback != nil); checkErr != nil {
+		o.mu.Unlock()
+		prepared.release()
+		return finishCallback(batch.PersistentCallback, checkErr)
+	}
+	return o.finishPreparedBatchLocked(queue, prepared, batch.PersistentCallback, nil)
+}
+
+// admitChecksLocked runs the checks every admission must pass while o.mu is
+// held: owner shutdown, an existing durability fault, the root lease, and
+// (when the caller supplied a PersistentCallback) that persistence is
+// actually configured. It never unlocks o.mu; the caller does that in every
+// case, including when this returns a non-nil error.
+func (o *Owner) admitChecksLocked(queue *persistenceQueue, hasCallback bool) error {
+	if o.closed || o.closing {
+		return ErrOwnerClosed
+	}
 	// Collection only removes files below its captured root's keep set. New
 	// admissions publish fresh segment IDs and therefore cannot be collected.
 	if o.durabilityFault != nil {
-		fault := o.durabilityFault
-		o.mu.Unlock()
-		prepared.release()
-		return finishCallback(batch.PersistentCallback, fault)
+		return o.durabilityFault
 	}
 	if err := o.validateLease(); err != nil {
-		o.mu.Unlock()
-		prepared.release()
-		return finishCallback(batch.PersistentCallback, fmt.Errorf("validate native root lease: %w", err))
+		return fmt.Errorf("validate native root lease: %w", err)
 	}
-	if queue == nil && batch.PersistentCallback != nil {
-		o.mu.Unlock()
-		prepared.release()
-		return finishCallback(batch.PersistentCallback, ErrPersistenceConfiguration)
+	if queue == nil && hasCallback {
+		return ErrPersistenceConfiguration
 	}
+	return nil
+}
+
+// finishPreparedBatchLocked publishes prepared to the current root, indexes
+// its segment, invalidates the presence cache for every identifier prepared
+// replaces or deletes, runs onPublished (if not nil, after invalidation, so
+// it can safely re-populate cache entries for documents this batch just
+// admitted), and schedules persistence. The common pre-publish checks
+// (admitChecksLocked) must already have passed. o.mu must be held on entry;
+// this always unlocks it before returning.
+func (o *Owner) finishPreparedBatchLocked(queue *persistenceQueue, prepared preparedBatch, callback func(error), onPublished func()) error {
 	next, err := o.publishBatchLocked(prepared)
 	if err == nil {
 		old := o.root
@@ -1010,23 +1165,291 @@ func (o *Owner) Batch(ctx context.Context, batch Batch) error {
 		if prepared.segment != nil {
 			o.indexAdmittedLocked(prepared.segment.(*memorySegment).handle.id, prepared.identifiers)
 		}
+		// Every identifier prepared.deletes names either stopped being live
+		// (an explicit delete) or had its earlier live copy replaced by a
+		// document this batch just admitted (an upsert or a satisfied
+		// InsertIfAbsent). Either way, a presence-cache entry for it,
+		// positive and cached before this publish, is no longer trustworthy.
+		for _, identifier := range prepared.deletes {
+			o.presenceCache.invalidate(identifier)
+		}
+		if onPublished != nil {
+			onPublished()
+		}
 	}
 	if err != nil {
 		o.mu.Unlock()
-		return finishCallback(batch.PersistentCallback, err)
+		return finishCallback(callback, err)
 	}
 	o.roots[next] = struct{}{}
 	if queue == nil {
 		o.mu.Unlock()
-		return finishCallback(batch.PersistentCallback, nil)
+		return finishCallback(callback, nil)
 	}
 	// The persistence worker reads o.root fresh rather than this specific
 	// root, so no pin is needed here on its behalf; it takes its own pin
 	// after reading o.root (see drainPersistence).
-	o.schedulePersistLocked(queue, batch.PersistentCallback, false)
+	o.schedulePersistLocked(queue, callback, false)
 	o.mu.Unlock()
 	o.requestMaintenance()
 	return nil
+}
+
+// insertIfAbsentCandidate is one BatchInsertIfAbsent document after
+// within-batch duplicate collapse (last writer wins) and before its presence
+// is resolved against the admission root. No nativeice encoding has happened
+// yet: a candidate the admission root already satisfies is never encoded.
+//
+//nolint:govet // fields are grouped by meaning, not padding, like preparedBatch.
+type insertIfAbsentCandidate struct {
+	document Document
+	fields   map[string]struct{}
+}
+
+// prepareInsertIfAbsentCandidates validates batch and collapses its
+// Documents into the distinct, last-writer-wins set batchInsertIfAbsent
+// resolves presence against.
+func prepareInsertIfAbsentCandidates(batch Batch) ([]insertIfAbsentCandidate, error) {
+	for documentIndex, document := range batch.Documents {
+		for _, field := range document.Fields {
+			if field.Name == identifierField || field.Name == timestampField {
+				return nil, fmt.Errorf("document %d contains reserved field %q: %w", documentIndex, field.Name, ErrInvalidDocument)
+			}
+		}
+	}
+	for _, identifier := range batch.Deletes {
+		if len(identifier) == 0 {
+			return nil, fmt.Errorf("delete has no identifier: %w", ErrInvalidDocument)
+		}
+	}
+	candidates := make([]insertIfAbsentCandidate, 0, len(batch.Documents))
+	indexByIdentifier := make(map[string]int, len(batch.Documents))
+	for documentIndex, document := range batch.Documents {
+		if len(document.Identifier) == 0 {
+			return nil, fmt.Errorf("document %d has no identifier: %w", documentIndex, ErrInvalidDocument)
+		}
+		fields := make(map[string]struct{}, len(document.Fields))
+		for _, field := range document.Fields {
+			fields[field.Name] = struct{}{}
+		}
+		candidate := insertIfAbsentCandidate{document: cloneDocument(document), fields: fields}
+		key := string(document.Identifier)
+		if previousIndex, found := indexByIdentifier[key]; found {
+			// A batch is one admission boundary: retain only the last physical
+			// value for an identifier so it cannot publish two live updates.
+			candidates[previousIndex] = candidate
+			continue
+		}
+		indexByIdentifier[key] = len(candidates)
+		candidates = append(candidates, candidate)
+	}
+	return candidates, nil
+}
+
+// batchInsertIfAbsent implements Batch for BatchInsertIfAbsent. Presence is
+// resolved before any document is encoded, so a batch whose documents are
+// all already present publishes nothing: no new generation, no segment, and
+// no persist wake. Only the documents admission actually admits are encoded,
+// so a published segment never carries a masked, never-live document.
+//
+// Encoding runs outside o.mu (nativeice encoding does not touch owner
+// state), so the admission root can advance between the presence resolve and
+// the publish attempt. When it does, this discards the encode and re-resolves
+// against the now-current root before retrying, so a document another
+// admission concurrently admitted is never admitted twice.
+func (o *Owner) batchInsertIfAbsent(ctx context.Context, batch Batch) error {
+	candidates, prepareErr := prepareInsertIfAbsentCandidates(batch)
+	if prepareErr != nil {
+		return finishCallback(batch.PersistentCallback, prepareErr)
+	}
+	queue := o.persistQ
+	for {
+		if err := ctx.Err(); err != nil {
+			return finishCallback(batch.PersistentCallback, err)
+		}
+		o.mu.Lock()
+		if checkErr := o.admitChecksLocked(queue, batch.PersistentCallback != nil); checkErr != nil {
+			o.mu.Unlock()
+			return finishCallback(batch.PersistentCallback, checkErr)
+		}
+		generation := o.root.generation
+		admitted, resolveErr := o.filterAbsentLocked(candidates)
+		o.mu.Unlock()
+		if resolveErr != nil {
+			return finishCallback(batch.PersistentCallback, resolveErr)
+		}
+		if len(admitted) == 0 && len(batch.Deletes) == 0 {
+			// Nothing admitted and nothing explicitly deleted: publish
+			// nothing rather than a root whose only change is a bumped
+			// generation and, for a wholly in-memory owner, an empty segment.
+			return finishCallback(batch.PersistentCallback, nil)
+		}
+		prepared, encodeErr := prepareAbsentBatch(admitted, batch.Deletes, o.options.IdentifierDocValues)
+		if encodeErr != nil {
+			return finishCallback(batch.PersistentCallback, encodeErr)
+		}
+		o.mu.Lock()
+		if checkErr := o.admitChecksLocked(queue, batch.PersistentCallback != nil); checkErr != nil {
+			o.mu.Unlock()
+			prepared.release()
+			return finishCallback(batch.PersistentCallback, checkErr)
+		}
+		if o.root.generation != generation {
+			// A concurrent admission published while this batch encoded
+			// outside the lock. Re-resolve every candidate against the
+			// current root; the encode is still valid when the admitted
+			// set is unchanged, which is the common case under steady
+			// concurrent writes of distinct series.
+			current, recheckErr := o.filterAbsentLocked(candidates)
+			if recheckErr != nil {
+				o.mu.Unlock()
+				prepared.release()
+				return finishCallback(batch.PersistentCallback, recheckErr)
+			}
+			if !sameCandidates(current, admitted) {
+				o.mu.Unlock()
+				prepared.release()
+				continue
+			}
+		}
+		return o.finishPreparedBatchLocked(queue, prepared, batch.PersistentCallback, func() {
+			// The admitted documents are now live with exactly their own
+			// field sets: cache that so a repeat InsertIfAbsent of the same
+			// identifier and field set -- the common series-index write
+			// pattern -- hits the cache instead of rescanning segments.
+			for _, candidate := range admitted {
+				o.presenceCache.store(candidate.document.Identifier, candidate.fields)
+			}
+		})
+	}
+}
+
+// sameCandidates reports whether two filterAbsentLocked results, both ordered
+// subsets of the same candidate slice, select the same documents.
+func sameCandidates(left, right []insertIfAbsentCandidate) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if !bytes.Equal(left[index].document.Identifier, right[index].document.Identifier) {
+			return false
+		}
+	}
+	return true
+}
+
+// filterAbsentLocked returns the subset of candidates not already live, in
+// some segment of the current root, with a field set that covers what the
+// candidate carries. It must run under o.mu.
+func (o *Owner) filterAbsentLocked(candidates []insertIfAbsentCandidate) ([]insertIfAbsentCandidate, error) {
+	absent := make([]insertIfAbsentCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		present, err := o.identifierPresentLocked(candidate.document.Identifier, candidate.fields)
+		if err != nil {
+			return nil, err
+		}
+		if !present {
+			absent = append(absent, candidate)
+		}
+	}
+	return absent, nil
+}
+
+// prepareAbsentBatch encodes exactly the candidates admission decided to
+// admit (identical for every repeat of an all-present batch: nothing to
+// encode). explicitDeletes are the batch's own Batch.Deletes, applied
+// unconditionally like any other mode.
+func prepareAbsentBatch(admitted []insertIfAbsentCandidate, explicitDeletes [][]byte, identifierDocValues bool) (preparedBatch, error) {
+	prepared := preparedBatch{deletes: make([][]byte, 0, len(explicitDeletes)+len(admitted))}
+	prepared.deletes = append(prepared.deletes, explicitDeletes...)
+	if len(admitted) == 0 {
+		return prepared, nil
+	}
+	documents := make([]Document, len(admitted))
+	for index, candidate := range admitted {
+		documents[index] = candidate.document
+		// The admitted document's identifier may still have an earlier live
+		// copy with an insufficient field set somewhere (that is exactly why
+		// it was admitted rather than skipped): replace it, the same as
+		// BatchUpsert already does for every document it admits.
+		prepared.deletes = append(prepared.deletes, candidate.document.Identifier)
+	}
+	segment, segmentErr := newMemorySegment(documents, 0, identifierDocValues)
+	if segmentErr != nil {
+		return preparedBatch{}, segmentErr
+	}
+	prepared.segment = segment
+	prepared.documents = uint64(len(documents))
+	prepared.identifiers = make([][]byte, len(documents))
+	for index := range documents {
+		prepared.identifiers[index] = documents[index].Identifier
+	}
+	return prepared, nil
+}
+
+// identifierPresentLocked reports whether identifier already has a live
+// posting in some segment of the current root whose field-name set covers
+// every name in fields. It consults the presence cache first when one is
+// configured; the cache only ever holds positive decisions (see
+// presenceCache), so a hit here is always "present".
+func (o *Owner) identifierPresentLocked(identifier []byte, fields map[string]struct{}) (bool, error) {
+	if o.presenceCache.lookup(identifier, fields) {
+		return true, nil
+	}
+	for _, index := range o.candidateSegmentIndicesLocked(o.root.segments, identifier) {
+		memSeg, ok := o.root.segments[index].(*memorySegment)
+		if !ok {
+			return false, fmt.Errorf("resolve insert-if-absent: unsupported segment type %T", o.root.segments[index])
+		}
+		live, liveErr := memSeg.hasLivePosting(identifier)
+		if liveErr != nil {
+			return false, liveErr
+		}
+		if !live {
+			continue
+		}
+		segmentFields, fieldErr := memSeg.handle.fieldNames()
+		if fieldErr != nil {
+			return false, fieldErr
+		}
+		if fieldSetContainsAll(segmentFields, fields) {
+			o.presenceCache.store(identifier, segmentFields)
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// candidateSegmentIndicesLocked returns the indices into segments that might
+// hold a live posting for identifier: segments the admission index directly
+// names, plus every segment the index does not cover (merge results,
+// segments loaded at startup, and external segments), exactly the probe set
+// publishBatchLocked's own delete application already uses.
+func (o *Owner) candidateSegmentIndicesLocked(segments []rootSegment, identifier []byte) []int {
+	indices := make([]int, 0, len(segments))
+	seen := make(map[int]struct{}, len(segments))
+	if holders := o.admittedIdentifiers[string(identifier)]; len(holders) > 0 {
+		positions := segmentPositions(segments)
+		for _, segmentID := range holders {
+			if index, found := positions[segmentID]; found {
+				if _, dup := seen[index]; !dup {
+					seen[index] = struct{}{}
+					indices = append(indices, index)
+				}
+			}
+		}
+	}
+	for index, segment := range segments {
+		if memSeg, ok := segment.(*memorySegment); ok {
+			if _, indexed := o.admittedSegments[memSeg.handle.id]; indexed {
+				continue
+			}
+		}
+		if _, dup := seen[index]; !dup {
+			indices = append(indices, index)
+		}
+	}
+	return indices
 }
 
 // prepareMergeDrop evaluates the optional product merge policy against one
@@ -1171,6 +1594,7 @@ func (o *Owner) compact(ctx context.Context, plan func([]mergeCandidate) []merge
 
 	inputs := make([]nativeice.MergeInput, 0, len(task.candidates))
 	taskSegments := make(map[rootSegment]struct{}, len(task.candidates))
+	mergeDroppedAny := false
 	for _, candidate := range task.candidates {
 		segment := candidate.segment.(*memorySegment)
 		taskSegments[candidate.segment] = struct{}{}
@@ -1179,6 +1603,14 @@ func (o *Owner) compact(ctx context.Context, plan func([]mergeCandidate) []merge
 			base.release()
 			return prepareErr
 		}
+		if !drop.IsEmpty() {
+			// PrepareMergeCallback dropped a document that was still live
+			// going into this merge (for example an expired tombstone):
+			// whatever the presence cache believed about its identifier no
+			// longer holds. Pre-existing deletion masks, merged into drop
+			// below, were already invalidated when their delete admitted.
+			mergeDroppedAny = true
+		}
 		for number := range segment.deleted {
 			if number <= uint64(^uint32(0)) {
 				drop.Add(uint32(number))
@@ -1186,20 +1618,30 @@ func (o *Owner) compact(ctx context.Context, plan func([]mergeCandidate) []merge
 		}
 		inputs = append(inputs, nativeice.MergeInput{Reader: segment.handle.reader, Drop: drop, IndexedFields: segment.handle.indexedFields})
 	}
-	merged, mergeErr := nativeice.MergeSegments(ctx, inputs)
-	base.release()
-	if mergeErr != nil {
-		return mergeErr
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	// Open the merged segment before taking o.mu: validating and indexing a
-	// large payload under the owner lock would stall every concurrent
-	// admission and read view for its whole duration. It stays private until
-	// published below, so its identifier can be assigned afterwards.
+	// The merge runs, and its output is opened, before taking o.mu:
+	// validating and indexing a large segment under the owner lock would
+	// stall every concurrent admission and read view for its whole duration.
+	// It stays private until published below, so its identifier can be
+	// assigned afterwards. An owner with a directory streams the merge into a
+	// staged file there, so merge memory does not grow with the merged
+	// segment; one without a directory has nowhere to stage it.
 	var compacted rootSegment
-	if len(merged.Payload) != 0 {
+	var mergeErr error
+	if o.options.Path != "" {
+		compacted, mergeErr = o.mergeToStagedSegment(ctx, inputs)
+		base.release()
+		if mergeErr != nil {
+			return mergeErr
+		}
+	} else {
+		merged, inMemoryErr := nativeice.MergeSegments(ctx, inputs)
+		base.release()
+		if inMemoryErr != nil {
+			return inMemoryErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		compacted, mergeErr = newSegmentFromPayload(merged.Payload, 0)
 		if mergeErr != nil {
 			return mergeErr
@@ -1284,7 +1726,15 @@ func (o *Owner) compact(ctx context.Context, plan func([]mergeCandidate) []merge
 	old.release()
 	o.pruneRootsLocked()
 	for segment := range taskSegments {
-		o.unindexSegmentLocked(segment.(*memorySegment).handle.id)
+		handle := segment.(*memorySegment).handle
+		o.unindexSegmentLocked(handle.id)
+	}
+	if mergeDroppedAny {
+		// A merge-dropped identifier is not individually known here (the
+		// callback reports it by segment/document, not by identifier), so
+		// the whole cache is reset rather than tracked per identifier.
+		// Compaction is not the per-write hot path, so this is cheap.
+		o.presenceCache.reset()
 	}
 	if queue != nil {
 		o.schedulePersistLocked(queue, nil, true)
@@ -1340,14 +1790,24 @@ func (o *Owner) CollectGarbage(ctx context.Context) error {
 		o.mu.Unlock()
 	}()
 	defer root.release()
+	// Segments released before this collection may still be being closed;
+	// let that finish so no file is deleted under an open descriptor.
+	segmentDisposals.wait()
 
-	latest, openErr := nativeice.OpenStrictMetadataOnly(o.options.Path)
-	if openErr != nil {
-		return openErr
+	// Segments the pinned root already serves from their validated files
+	// need not be opened and validated again; their paths need only still
+	// name those files.
+	held := make(map[uint64]*nativeice.Reader, len(root.segments))
+	for _, current := range root.segments {
+		if segment, ok := current.(*memorySegment); ok && segment.handle.persisted.Load() && segment.handle.payload == nil {
+			held[segment.handle.id] = segment.handle.reader
+		}
 	}
-	metadata := latest.SnapshotMetadata()
-	if closeErr := latest.Close(); closeErr != nil {
-		return closeErr
+	metadata, metadataErr := nativeice.ReadStrictSnapshotMetadata(o.options.Path, func(segmentID uint64) *nativeice.Reader {
+		return held[segmentID]
+	})
+	if metadataErr != nil {
+		return metadataErr
 	}
 	keepSegments := make(map[uint64]struct{}, len(metadata.Segments)+len(root.segments))
 	for _, segment := range metadata.Segments {
@@ -1447,11 +1907,15 @@ func (p preparedBatch) release() {
 	}
 }
 
-// prepareBatch validates batch and encodes its documents into a new
-// segment, keeping only the last value of a repeated identifier unless the
-// batch is InsertOnly. deletes lists every identifier whose earlier live
-// documents the batch replaces.
-func prepareBatch(batch Batch) (preparedBatch, error) {
+// prepareBatch validates batch and encodes its documents into a new segment,
+// keeping only the last value of a repeated identifier unless the batch is
+// BatchInsertOnly. deletes lists every identifier whose earlier live
+// documents the batch replaces. prepareBatch is used for BatchUpsert and
+// BatchInsertOnly; BatchInsertIfAbsent resolves presence before encoding
+// (see batchInsertIfAbsent) so it never encodes a document only to mask it.
+// identifierDocValues is threaded straight to the segment encoder so "_id"
+// gets a doc-value column when OwnerOptions.IdentifierDocValues is set.
+func prepareBatch(batch Batch, identifierDocValues bool) (preparedBatch, error) {
 	for documentIndex, document := range batch.Documents {
 		for _, field := range document.Fields {
 			if field.Name == identifierField || field.Name == timestampField {
@@ -1469,13 +1933,14 @@ func prepareBatch(batch Batch) (preparedBatch, error) {
 	if len(batch.Documents) == 0 {
 		return prepared, nil
 	}
+	collapseDuplicates := batch.Mode != BatchInsertOnly
 	newDocuments := make([]Document, 0, len(batch.Documents))
 	newDocumentIndexes := make(map[string]int, len(batch.Documents))
 	for documentIndex, document := range batch.Documents {
 		if len(document.Identifier) == 0 {
 			return preparedBatch{}, fmt.Errorf("document %d has no identifier: %w", documentIndex, ErrInvalidDocument)
 		}
-		if !batch.InsertOnly {
+		if collapseDuplicates {
 			key := string(document.Identifier)
 			if previousIndex, found := newDocumentIndexes[key]; found {
 				// A batch is one admission boundary: retain only the last physical
@@ -1489,7 +1954,7 @@ func prepareBatch(batch Batch) (preparedBatch, error) {
 		newDocuments = append(newDocuments, cloneDocument(document))
 	}
 	// The segment identifier is assigned when the batch is published.
-	segment, segmentErr := newMemorySegment(newDocuments, 0)
+	segment, segmentErr := newMemorySegment(newDocuments, 0, identifierDocValues)
 	if segmentErr != nil {
 		return preparedBatch{}, segmentErr
 	}
@@ -1645,8 +2110,10 @@ func segmentHasNoLiveDocuments(segment *memorySegment) bool {
 	return segment.handle.count == 0 || uint64(len(segment.deleted)) >= segment.handle.count
 }
 
-func newMemorySegment(documents []Document, segmentID uint64) (rootSegment, error) {
-	encoded := nativeice.Generation{Documents: make([]nativeice.EncodeDocument, 0, len(documents))}
+func newMemorySegment(documents []Document, segmentID uint64, identifierDocValues bool) (rootSegment, error) {
+	encoded := nativeice.Generation{
+		Documents: make([]nativeice.EncodeDocument, 0, len(documents)), IdentifierDocValues: identifierDocValues,
+	}
 	var timeMin, timeMax uint64
 	hasTime := false
 	indexedFieldSet := make(map[string]struct{})
@@ -1703,7 +2170,9 @@ func newMemorySegment(documents []Document, segmentID uint64) (rootSegment, erro
 	if openErr != nil {
 		return nil, openErr
 	}
-	handle := &segmentHandle{reader: reader, payload: payload, count: uint64(len(documents)), id: segmentID, size: uint64(len(payload))}
+	handle := &segmentHandle{
+		reader: reader, payload: payload, count: uint64(len(documents)), id: segmentID, size: uint64(len(payload)),
+	}
 	for fieldName := range indexedFieldSet {
 		handle.indexedFields = append(handle.indexedFields, fieldName)
 	}
@@ -1722,6 +2191,9 @@ func newMemorySegment(documents []Document, segmentID uint64) (rootSegment, erro
 		handle.hasTime = true
 	}
 	handle.refs.Store(1)
+	// Best effort: a failure here simply resurfaces, and is reported, on
+	// the first lookup that then rebuilds the filter lazily instead.
+	_ = reader.PrepareTermFilter(identifierField)
 	return &memorySegment{handle: handle}, nil
 }
 
@@ -1730,14 +2202,20 @@ func newSegmentFromPayload(payload []byte, segmentID uint64) (rootSegment, error
 	if openErr != nil {
 		return nil, openErr
 	}
+	// The reader borrows payload, which the caller hands over; the handle
+	// keeps it alive for the reader's lifetime.
 	handle := &segmentHandle{
-		reader: reader, payload: bytes.Clone(payload), count: reader.DocumentCount(),
+		reader: reader, payload: payload, count: reader.DocumentCount(),
 		id: segmentID, size: uint64(len(payload)), persisted: atomic.Bool{},
 	}
 	handle.refs.Store(1)
 	if fields, fieldsErr := reader.Fields(); fieldsErr == nil {
 		handle.indexedFields = fields
 	}
+	// Best effort, see newMemorySegment. A merged segment is exactly the
+	// case this warm-up matters most for: it is opened once (here, before
+	// the owner lock is taken) and then stays live for a long time.
+	_ = reader.PrepareTermFilter(identifierField)
 	return &memorySegment{handle: handle}, nil
 }
 
@@ -1753,11 +2231,15 @@ func newSegmentFromFile(path string, metadata nativeice.SnapshotSegment, segment
 	}
 	timeMin, timeMax := reader.TimeBounds()
 	handle := &segmentHandle{
-		reader: reader, sourcePath: path, count: metadata.DocumentCount, id: segmentID,
+		reader: reader, sourcePath: path, staged: true, count: metadata.DocumentCount, id: segmentID,
 		size: metadata.Size, timeMin: uint64(timeMin), timeMax: uint64(timeMax),
 		hasTime: timeMin != 0 || timeMax != 0, indexedFields: fields,
 	}
 	handle.refs.Store(1)
+	// Best effort, see newMemorySegment. The external-receive caller opens
+	// this before taking o.mu (introduceExternalSegment), so the warm-up
+	// runs outside the lock there too.
+	_ = reader.PrepareTermFilter(identifierField)
 	return &memorySegment{handle: handle}, nil
 }
 
@@ -1792,6 +2274,23 @@ func (s *memorySegment) Delete(identifier []byte) (rootSegment, bool, error) {
 		changed = true
 	}
 	return s, changed, nil
+}
+
+// hasLivePosting reports whether identifier has at least one undeleted
+// posting in this segment, without decoding any stored field.
+//
+//nolint:contextcheck // nativeice exact posting lookup is bounded and synchronous.
+func (s *memorySegment) hasLivePosting(identifier []byte) (bool, error) {
+	posting, found, err := s.handle.reader.TermPosting(identifierField, identifier)
+	if err != nil || !found {
+		return false, err
+	}
+	for _, documentIndex := range postingDocuments(posting) {
+		if _, deleted := s.deleted[documentIndex]; !deleted {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 //nolint:contextcheck // nativeice exact posting lookup is bounded and synchronous.
@@ -1934,12 +2433,78 @@ func (s *memorySegment) retain() { s.handle.refs.Add(1) }
 
 func (s *memorySegment) release() {
 	if s.handle.refs.Add(-1) == 0 {
-		_ = s.handle.reader.Close()
-		if s.handle.sourcePath != "" {
-			_ = fileSystem.DeleteFile(s.handle.sourcePath)
-			s.handle.sourcePath = ""
+		handle := s.handle
+		path := handle.clearSourcePath()
+		handle.payload = nil
+		// Closing the reader and deleting a staged source are file I/O, and
+		// the last reference often goes while o.mu is held (a new root
+		// replacing the old one), so they run on their own goroutine.
+		segmentDisposals.run(func() {
+			_ = handle.reader.Close()
+			if path != "" {
+				// Close does not wait for operations in flight on the
+				// reader -- a merge reading it, say -- so the staged file is
+				// deleted only once nothing can read it.
+				handle.reader.WhenReleased(func(error) { _ = fileSystem.DeleteFile(path) })
+			}
+		})
+	}
+}
+
+// segmentDisposals runs the disposal of released segment handles off the
+// goroutine that released them, and lets Owner.Close wait, outside o.mu, for
+// the disposals issued before it.
+var segmentDisposals = newDisposals()
+
+type disposals struct {
+	pending map[uint64]struct{}
+	cond    *sync.Cond
+	mu      sync.Mutex
+	next    uint64
+}
+
+func newDisposals() *disposals {
+	d := &disposals{pending: make(map[uint64]struct{})}
+	d.cond = sync.NewCond(&d.mu)
+	return d
+}
+
+func (d *disposals) run(dispose func()) {
+	d.mu.Lock()
+	ticket := d.next
+	d.next++
+	d.pending[ticket] = struct{}{}
+	d.mu.Unlock()
+	go func() {
+		defer func() {
+			_ = recover()
+			d.mu.Lock()
+			delete(d.pending, ticket)
+			d.cond.Broadcast()
+			d.mu.Unlock()
+		}()
+		dispose()
+	}()
+}
+
+// wait returns once every disposal issued before it ran; later ones, of
+// this or other owners, do not hold it up.
+func (d *disposals) wait() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	limit := d.next
+	for {
+		earlier := false
+		for ticket := range d.pending {
+			if ticket < limit {
+				earlier = true
+				break
+			}
 		}
-		s.handle.payload = nil
+		if !earlier {
+			return
+		}
+		d.cond.Wait()
 	}
 }
 
@@ -2149,6 +2714,9 @@ func (o *Owner) Close() error {
 	oldRoot.release()
 	o.pruneRootsLocked()
 	o.mu.Unlock()
+	// The released segments are disposed of off o.mu; Close returns once
+	// their files are closed.
+	segmentDisposals.wait()
 	o.persistMu.Lock()
 	persistErr := o.persistErr
 	o.persistMu.Unlock()

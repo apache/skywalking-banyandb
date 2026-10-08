@@ -36,20 +36,28 @@ type Term struct {
 	Frequency uint64
 }
 
-// Analyze tokenizes input using keyword, simple, standard, or URL semantics.
-func Analyze(name string, input []byte) ([]Term, error) {
-	var tokens []string
+// Tokens returns the token sequence, in input order and with repeats, that
+// keyword, simple, standard, or URL analysis produces for input.
+func Tokens(name string, input []byte) ([]string, error) {
 	switch strings.ToLower(name) {
 	case "", "keyword":
-		tokens = []string{string(input)}
+		return []string{string(input)}, nil
 	case "simple":
-		tokens = split(input, true, true)
+		return split(input, true, true), nil
 	case "standard":
-		tokens = standardTokens(input)
+		return standardTokens(input), nil
 	case "url":
-		tokens = split(input, false, false)
+		return split(input, false, false), nil
 	default:
 		return nil, ErrUnknownAnalyzer
+	}
+}
+
+// Analyze tokenizes input using keyword, simple, standard, or URL semantics.
+func Analyze(name string, input []byte) ([]Term, error) {
+	tokens, err := Tokens(name, input)
+	if err != nil {
+		return nil, err
 	}
 	counts := make(map[string]uint64, len(tokens))
 	order := make([]string, 0, len(tokens))

@@ -55,7 +55,17 @@ func NewStore(path string, lease RootLease, options SearcherOptions) (*Store, er
 	if options.MaxTerms == 0 {
 		return nil, fmt.Errorf("native adapter: MaxTerms is required: %w", native.ErrQueryLimit)
 	}
-	ownerOptions := native.OwnerOptions{Lease: lease, Path: path}
+	ownerOptions := native.OwnerOptions{
+		Lease: lease,
+		Path:  path,
+		// IdentifierDocValues matches the series index (NIDX-03 §4.4, §16):
+		// banyand/stream/index.go is this package's only production caller,
+		// and it is the Stream element index, whose segments the previous
+		// release's index reader must still be able to read identity back
+		// from after a rollback. Property's own native store stays without
+		// this -- its file rollback is already proven without it.
+		IdentifierDocValues: true,
+	}
 	if options.AsyncPersistence {
 		ownerOptions.PersistInterval = options.PersistInterval
 	}

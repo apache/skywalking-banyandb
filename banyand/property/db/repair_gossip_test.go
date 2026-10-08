@@ -44,8 +44,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -200,32 +198,6 @@ var _ = ginkgo.Describe("Property repair gossip", func() {
 		})
 	})
 
-	ginkgo.It("gossip two data nodes with client missing but server exist (native writer)", func() {
-		// Regression coverage: repairGossipBase.queryProperty previously called
-		// the legacy-only shard.search unconditionally, which nil-derefs a
-		// native-writer shard's unset legacy store. This mirrors the case
-		// above with nativeWriter enabled so the sync actually has to fetch
-		// the missing property through the native path.
-		startingEachTest(&nodes, ctrl, &testCase{
-			nativeWriter: true,
-			groups: []group{
-				{name: testGroup1, shardCount: 2, replicasCount: 1},
-			},
-			nodes: []node{
-				{properties: nil, shardCount: 2, treeBuilt: true},
-				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2}}, shardCount: 2, treeBuilt: true},
-			},
-			propagation: func(nodes []*nodeContext) error {
-				return nodes[0].messenger.Propagation([]string{nodes[0].nodeID, nodes[1].nodeID}, testGroup1, 0)
-			},
-			result: func(original []node) []node {
-				// the first node should get the property from the second node
-				original[0].properties = original[1].properties
-				return original
-			},
-		})
-	})
-
 	ginkgo.It("gossip two data nodes with client exist but server missing", func() {
 		startingEachTest(&nodes, ctrl, &testCase{
 			groups: []group{
@@ -317,15 +289,14 @@ var _ = ginkgo.Describe("Property repair gossip", func() {
 })
 
 type testCase struct {
-	propagation  func(nodes []*nodeContext) error
-	result       func(original []node) []node
-	groups       []group
-	nodes        []node
-	nativeWriter bool
+	propagation func(nodes []*nodeContext) error
+	result      func(original []node) []node
+	groups      []group
+	nodes       []node
 }
 
 func startingEachTest(nodes *[]*nodeContext, ctrl *gomock.Controller, c *testCase) {
-	*nodes = startDataNodes(ctrl, c.nodes, c.groups, c.nativeWriter)
+	*nodes = startDataNodes(ctrl, c.nodes, c.groups)
 
 	// adding the wait group the node context, to make sure the gossip server is synced at least once
 	once := sync.Once{}
@@ -350,7 +321,7 @@ func startingEachTest(nodes *[]*nodeContext, ctrl *gomock.Controller, c *testCas
 	}
 }
 
-func startDataNodes(ctrl *gomock.Controller, nodes []node, groups []group, nativeWriter bool) []*nodeContext {
+func startDataNodes(ctrl *gomock.Controller, nodes []node, groups []group) []*nodeContext {
 	// Allocate every node's gossip port in a single call so all ports are held
 	// simultaneously and are guaranteed distinct. Allocating one port per node
 	// separately releases each port before the async gossip server binds it,
@@ -361,7 +332,7 @@ func startDataNodes(ctrl *gomock.Controller, nodes []node, groups []group, nativ
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	result := make([]*nodeContext, 0, len(nodes))
 	for i, n := range nodes {
-		result = append(result, startEachNode(ctrl, n, groups, ports[i], nativeWriter))
+		result = append(result, startEachNode(ctrl, n, groups, ports[i]))
 	}
 
 	// registering the node in the gossip system
@@ -387,7 +358,7 @@ func startDataNodes(ctrl *gomock.Controller, nodes []node, groups []group, nativ
 	return result
 }
 
-func startEachNode(ctrl *gomock.Controller, node node, groups []group, port int, nativeWriter bool) *nodeContext {
+func startEachNode(ctrl *gomock.Controller, node node, groups []group, port int) *nodeContext {
 	if node.treeSlotCount == 0 {
 		node.treeSlotCount = 32 // default value for tree slot count
 	}
@@ -439,7 +410,7 @@ func startEachNode(ctrl *gomock.Controller, node node, groups []group, port int,
 		MetricsScopeName:       fmt.Sprintf("property_gossip_test_%s", addr),
 		FlushInterval:          time.Minute * 10,
 		ExpireToDeleteDuration: time.Minute * 10,
-		Index:                  IndexConfig{NativeWriter: nativeWriter, WaitForPersistence: true},
+		Index:                  IndexConfig{WaitForPersistence: true},
 		Repair: RepairConfig{
 			Enabled:            true,
 			Location:           repairLocation,
@@ -464,13 +435,7 @@ func startEachNode(ctrl *gomock.Controller, node node, groups []group, port int,
 					for _, s := range *sLst {
 						snpDir := path.Join(snapshotDir, s.group, filepath.Base(s.location))
 						lfs.MkdirPanicIfExist(snpDir, storage.DirPerm)
-						var snapshotErr error
-						if s.nativeStore != nil {
-							snapshotErr = s.nativeStore.takeFileSnapshot(snpDir)
-						} else {
-							snapshotErr = s.store.TakeFileSnapshot(snpDir)
-						}
-						if snapshotErr != nil {
+						if snapshotErr := s.nativeStore.takeFileSnapshot(snpDir); snapshotErr != nil {
 							snpError = multierr.Append(snpError, snapshotErr)
 						}
 					}
@@ -570,20 +535,9 @@ func queryPropertyWithVerify(db *database, p property) {
 		Name:   "test-name",
 		Ids:    []string{p.id},
 	}
-	var query index.Query
-	if s.nativeStore == nil {
-		query, err = inverted.BuildPropertyQuery(request, groupField, entityID)
-		gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	}
 
 	test.EventuallyConsistently(func() *property {
-		var dataList []*queryProperty
-		var err error
-		if s.nativeStore != nil {
-			dataList, err = s.searchNative(context.Background(), request, nil, 10)
-		} else {
-			dataList, err = s.search(context.Background(), query, nil, 10)
-		}
+		dataList, err := s.searchNative(context.Background(), request, nil, 10)
 		if err != nil {
 			return nil
 		}

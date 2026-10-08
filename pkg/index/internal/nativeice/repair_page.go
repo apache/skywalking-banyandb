@@ -69,6 +69,10 @@ type RepairTupleRow struct {
 
 // RepairTuplePage returns a bounded page from the Reader's pinned generation.
 func (r *Reader) RepairTuplePage(ctx context.Context, request RepairPageRequest) ([]RepairTupleRow, error) {
+	if useErr := r.use(); useErr != nil {
+		return nil, useErr
+	}
+	defer r.endUse()
 	if requestErr := validateRepairPageRequest(request); requestErr != nil {
 		return nil, requestErr
 	}
