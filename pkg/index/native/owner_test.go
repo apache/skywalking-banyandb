@@ -457,7 +457,7 @@ func TestOwnerPromotionPreservesPinnedViewAcrossNewerMutation(t *testing.T) {
 	}
 	owner.mu.Unlock()
 	require.True(t, ok)
-	require.NotNil(t, promotedPayload, "a resident-sized written segment must stay open on its payload after persistence")
+	require.Nil(t, promotedPayload, "a persisted segment is served from its file, not its admitted payload")
 	require.True(t, promotedPersisted)
 	oldView, err := owner.Acquire(context.Background())
 	require.NoError(t, err)

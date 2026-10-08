@@ -16,6 +16,7 @@
 package nativeice
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"hash/crc32"
@@ -127,6 +128,12 @@ type SnapshotSegmentPayload struct {
 	// SourcePath is a validated standalone segment file to copy as a new
 	// immutable segment. It is mutually exclusive with Payload.
 	SourcePath string
+	// Source is an open single-segment Reader to copy as a new immutable
+	// segment, read through the Reader itself rather than by path, so the
+	// copy never depends on the name its file has at the time. The caller
+	// keeps it open until PublishSnapshot returns. It is mutually exclusive
+	// with Payload and SourcePath.
+	Source *Reader
 	// TrustedExisting skips reparsing an existing segment's dictionaries. It
 	// is valid only for a nil Payload after the caller has opened the same
 	// immutable directory with OpenStrict and still holds the owner lease.
@@ -134,6 +141,36 @@ type SnapshotSegmentPayload struct {
 	// lease, not those checks, is what guarantees the already-validated file
 	// identity remains immutable.
 	TrustedExisting bool
+	// Promotion, set with Payload, follows the admitted segment whose
+	// payload Payload is through this publication: once the snapshot is
+	// published it records the identity of the file written, for
+	// OpenPromotedSegment. Payload must be that segment's own payload.
+	Promotion *Promotion
+}
+
+// Promotion pairs an admitted, in-memory segment's Reader with the file
+// PublishSnapshot writes from its payload, so the Reader that will serve the
+// file can take over what the admitted one already built, and only from it.
+type Promotion struct {
+	source  *Reader
+	written os.FileInfo
+}
+
+// NewPromotion starts following source, a Reader of one admitted segment,
+// through the publication of its payload.
+func NewPromotion(source *Reader) *Promotion {
+	return &Promotion{source: source}
+}
+
+// payload returns the in-memory payload the promotion's source serves.
+func (p *Promotion) payload() []byte {
+	if p == nil || p.source == nil || len(p.source.segments) != 1 {
+		return nil
+	}
+	if file, ok := p.source.segments[0].file.(*byteSegmentFile); ok {
+		return file.data
+	}
+	return nil
 }
 
 // PublishSnapshot durably publishes one multi-segment ICE v3 snapshot. Every
@@ -149,6 +186,9 @@ type SnapshotSegmentPayload struct {
 // A nil Payload means that the named segment must already exist, which lets a
 // new root retain disk-backed segments without copying their bytes.
 func PublishSnapshot(path string, snapshotID uint64, segments []SnapshotSegmentPayload) error {
+	if promotionErr := validatePromotions(segments); promotionErr != nil {
+		return promotionErr
+	}
 	prepared, validationErr := prepareSnapshotPublication(path, segments)
 	if validationErr != nil {
 		return validationErr
@@ -211,6 +251,11 @@ func PublishSnapshot(path string, snapshotID uint64, segments []SnapshotSegmentP
 			Err:        errors.Join(fmt.Errorf("publish snapshot %d: %w", snapshotID, publishErr), cleanup()),
 		}
 	}
+	for _, file := range staged {
+		if file.promotion != nil {
+			file.promotion.written = file.identity
+		}
+	}
 	return nil
 }
 
@@ -221,20 +266,41 @@ var syncNativeICEDirectoryForPublish = fs.SyncDir
 
 //nolint:govet // prepared fields mirror SnapshotSegmentPayload for validation.
 type preparedSnapshotSegment struct {
-	metadata SnapshotSegment
-	payload  []byte
-	source   string
-	trusted  bool
+	metadata  SnapshotSegment
+	reader    *Reader
+	promotion *Promotion
+	payload   []byte
+	source    string
+	trusted   bool
+}
+
+// validatePromotions checks that every promotion publishes its own
+// segment's payload.
+func validatePromotions(segments []SnapshotSegmentPayload) error {
+	for _, candidate := range segments {
+		if candidate.Promotion == nil {
+			continue
+		}
+		own := candidate.Promotion.payload()
+		if len(candidate.Payload) == 0 || len(own) != len(candidate.Payload) ||
+			(&own[0] != &candidate.Payload[0] && !bytes.Equal(own, candidate.Payload)) {
+			return fmt.Errorf("segment %d: a promotion must publish its own segment's payload", candidate.ID)
+		}
+	}
+	return nil
 }
 
 func prepareSnapshotPublication(path string, segments []SnapshotSegmentPayload) ([]preparedSnapshotSegment, error) {
 	prepared := make([]preparedSnapshotSegment, len(segments))
 	for index, candidate := range segments {
-		prepared[index] = preparedSnapshotSegment{metadata: SnapshotSegment{
-			ID: candidate.ID, Size: candidate.Size, DocumentCount: candidate.DocumentCount,
-			TimeMin: candidate.TimeMin, TimeMax: candidate.TimeMax,
-			DeletionBitmap: append([]byte(nil), candidate.DeletionBitmap...),
-		}, payload: candidate.Payload, source: candidate.SourcePath, trusted: candidate.TrustedExisting}
+		prepared[index] = preparedSnapshotSegment{
+			metadata: SnapshotSegment{
+				ID: candidate.ID, Size: candidate.Size, DocumentCount: candidate.DocumentCount,
+				TimeMin: candidate.TimeMin, TimeMax: candidate.TimeMax,
+				DeletionBitmap: append([]byte(nil), candidate.DeletionBitmap...),
+			}, payload: candidate.Payload, source: candidate.SourcePath, reader: candidate.Source, trusted: candidate.TrustedExisting,
+			promotion: candidate.Promotion,
+		}
 	}
 	seenIDs := make(map[uint64]struct{}, len(prepared))
 	for index := range prepared {
@@ -248,6 +314,26 @@ func prepareSnapshotPublication(path string, segments []SnapshotSegmentPayload) 
 		}
 		if segment.payload != nil && segment.source != "" {
 			return nil, fmt.Errorf("segment %d has both payload and source path: %w", segment.metadata.ID, ErrPublishConflict)
+		}
+		if segment.reader != nil {
+			if segment.payload != nil || segment.source != "" || segment.trusted {
+				return nil, fmt.Errorf("segment %d has a source reader and another source: %w", segment.metadata.ID, ErrPublishConflict)
+			}
+			if segment.reader.SegmentCount() != 1 {
+				return nil, fmt.Errorf("segment %d source reader holds %d segments: %w", segment.metadata.ID, segment.reader.SegmentCount(), ErrPublishConflict)
+			}
+			source := segment.reader.segments[0]
+			if source.size != segment.metadata.Size || source.record.documentCount != segment.metadata.DocumentCount ||
+				source.record.timeMin != segment.metadata.TimeMin || source.record.timeMax != segment.metadata.TimeMax {
+				return nil, fmt.Errorf("segment %d source reader differs from its metadata: %w", segment.metadata.ID, ErrCorrupt)
+			}
+			if deletionErr := validateDeletionBitmap(segment.metadata); deletionErr != nil {
+				return nil, deletionErr
+			}
+			if segmentFileSystem.IsExist(filepath.Join(path, nativeICEFileName(segment.metadata.ID, ".seg"))) {
+				return nil, fmt.Errorf("segment %d already exists: %w", segment.metadata.ID, ErrPublishConflict)
+			}
+			continue
 		}
 		if deletionErr := validateDeletionBitmap(segment.metadata); deletionErr != nil {
 			return nil, deletionErr
@@ -296,7 +382,7 @@ func validateDeletionBitmap(metadata SnapshotSegment) error {
 }
 
 func validateSegmentPayload(payload []byte, metadata SnapshotSegment) error {
-	reader, readerErr := openSegmentBytes(payload, true)
+	reader, readerErr := openSegmentBytes(payload)
 	if readerErr != nil {
 		return fmt.Errorf("validate segment %d payload: %w", metadata.ID, readerErr)
 	}
@@ -369,6 +455,11 @@ const publishConcurrency = 16
 // stagedNativeICEFile is a written and fsynced temporary file awaiting its
 // final name.
 type stagedNativeICEFile struct {
+	// identity is the written file's, which its final name links to; nil
+	// if it could not be determined.
+	identity os.FileInfo
+	// promotion receives identity once the snapshot is published.
+	promotion     *Promotion
 	temporaryPath string
 	finalPath     string
 }
@@ -378,7 +469,7 @@ type stagedNativeICEFile struct {
 func stageSnapshotSegments(directory string, prepared []preparedSnapshotSegment) ([]stagedNativeICEFile, error) {
 	pending := make([]preparedSnapshotSegment, 0, len(prepared))
 	for _, segment := range prepared {
-		if segment.payload != nil || segment.source != "" {
+		if segment.payload != nil || segment.source != "" || segment.reader != nil {
 			pending = append(pending, segment)
 		}
 	}
@@ -397,13 +488,23 @@ func stageSnapshotSegments(directory string, prepared []preparedSnapshotSegment)
 			segment := pending[index]
 			segmentName := nativeICEFileName(segment.metadata.ID, ".seg")
 			var stageErr error
-			if segment.source != "" {
+			switch {
+			case segment.reader != nil:
+				staged[index], stageErr = stageNativeICEFile(directory, segmentName, segment.reader.copySegmentTo, false)
+			case segment.source != "":
 				staged[index], stageErr = stageNativeICEFileFromPath(directory, segmentName, segment.source)
-			} else {
-				staged[index], stageErr = stageNativeICEFile(directory, segmentName, payloadWriter(segment.payload))
+			default:
+				staged[index], stageErr = stageNativeICEFile(directory, segmentName, payloadWriter(segment.payload), true)
 			}
 			if stageErr != nil {
 				stageErrs[index] = fmt.Errorf("publish segment %q: %w", segmentName, stageErr)
+			}
+			if stageErr == nil && segment.promotion != nil {
+				// The final name will be a hard link to the staged file, so
+				// its identity is the published segment's. Described only
+				// for a promotion, which asks for it.
+				staged[index].promotion = segment.promotion
+				staged[index].identity, _ = segmentFileSystem.Lstat(staged[index].temporaryPath)
 			}
 		}(index)
 	}
@@ -452,7 +553,7 @@ func payloadWriter(payload []byte) func(io.Writer) error {
 }
 
 func publishNativeICEFileTracked(directory, name string, payload []byte) (bool, error) {
-	staged, stageErr := stageNativeICEFile(directory, name, payloadWriter(payload))
+	staged, stageErr := stageNativeICEFile(directory, name, payloadWriter(payload), true)
 	if stageErr != nil {
 		return false, stageErr
 	}
@@ -476,7 +577,7 @@ func stageNativeICEFileFromPath(directory, name, sourcePath string) (stagedNativ
 		reader := source.SequentialRead()
 		_, copyErr := io.Copy(writer, reader)
 		return errors.Join(copyErr, reader.Close())
-	})
+	}, false)
 }
 
 // temporaryFileSequence names publication temporaries uniquely within this
@@ -484,16 +585,17 @@ func stageNativeICEFileFromPath(directory, name, sourcePath string) (stagedNativ
 var temporaryFileSequence atomic.Uint64
 
 // stageNativeICEFile writes a file under a temporary name and fsyncs it, so
-// linking it as name never exposes a partial file. The written pages stay in
-// the page cache: the published segment is read back by the next query or
-// merge.
-func stageNativeICEFile(directory, name string, write func(io.Writer) error) (stagedNativeICEFile, error) {
+// linking it as name never exposes a partial file. A cached file keeps its
+// written pages in the page cache, for a segment the next query or merge
+// reads back; a copy of a segment into another directory -- a backup --
+// drops them, since nothing in this process reads the copy.
+func stageNativeICEFile(directory, name string, write func(io.Writer) error, cached bool) (stagedNativeICEFile, error) {
 	temporaryPath := filepath.Join(directory, fmt.Sprintf(".nativeice-%d-%d", os.Getpid(), temporaryFileSequence.Add(1)))
 	temporaryFile, createErr := segmentFileSystem.CreateFile(temporaryPath, 0o600)
 	if createErr != nil {
 		return stagedNativeICEFile{}, fmt.Errorf("create temporary file: %w", createErr)
 	}
-	fs.SetCached(temporaryFile, true)
+	fs.SetCached(temporaryFile, cached)
 	removeTemporary := func() error { return segmentFileSystem.DeleteFile(temporaryPath) }
 	writer := temporaryFile.SequentialWrite()
 	// Closing the sequential writer flushes and fsyncs the file.
@@ -504,4 +606,32 @@ func stageNativeICEFile(directory, name string, write func(io.Writer) error) (st
 		return stagedNativeICEFile{}, errors.Join(fmt.Errorf("close temporary file: %w", closeErr), removeTemporary())
 	}
 	return stagedNativeICEFile{temporaryPath: temporaryPath, finalPath: filepath.Join(directory, name)}, nil
+}
+
+// copySegmentTo streams the Reader's one segment to writer through its own
+// open file, in bounded pieces.
+func (r *Reader) copySegmentTo(writer io.Writer) error {
+	if useErr := r.use(); useErr != nil {
+		return useErr
+	}
+	defer r.endUse()
+	segment := r.segments[0]
+	buffer := make([]byte, 1<<20)
+	for offset := uint64(0); offset < segment.size; {
+		length := min(uint64(len(buffer)), segment.size-offset)
+		read, readErr := segment.file.ReadAt(buffer[:length], int64(offset))
+		if readErr != nil {
+			// A read failure is the file system's or a close's, not a
+			// sign of a damaged segment.
+			return fmt.Errorf("copy segment %q: %w", segment.record.path, readErr)
+		}
+		if uint64(read) != length {
+			return fmt.Errorf("copy segment %q: read %d of %d bytes: %w", segment.record.path, read, length, io.ErrUnexpectedEOF)
+		}
+		if _, writeErr := writer.Write(buffer[:length]); writeErr != nil {
+			return writeErr
+		}
+		offset += length
+	}
+	return nil
 }

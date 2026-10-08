@@ -32,7 +32,7 @@ import (
 
 func TestIndexResolverUsesCommittedNativeGeneration(t *testing.T) {
 	segmentPath := t.TempDir()
-	fixturePath := filepath.Join("..", "..", "..", "pkg", "index", "inverted", "testdata", "nidx01c", "sourceA")
+	fixturePath := filepath.Join("..", "..", "..", "pkg", "index", "testdata", "nidx01c", "sourceA")
 	require.NoError(t, os.CopyFS(filepath.Join(segmentPath, "sidx"), os.DirFS(fixturePath)))
 	oracle, err := native.OpenReadOnlyGeneration(filepath.Join(segmentPath, "sidx"))
 	require.NoError(t, err)

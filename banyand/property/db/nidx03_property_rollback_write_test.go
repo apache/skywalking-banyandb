@@ -32,11 +32,11 @@ import (
 )
 
 // NIDX-03 §15 Property file-rollback rerun, write side. #1390 recorded this
-// check once at 588cc602 (docs/design/0.12.0/native-inverted-index/
+// check once at 588cc602 (docs/design/archive/0.12.0/native-inverted-index/
 // verification/property-native-cutover/README.md), against an unreleased
 // main commit; this reruns it against NIDX-03 §1's actual rollback target,
 // v0.11.1 (the last published release, which runs Property on the retired
-// bluge engine -- unlike 735e9ad2 or 588cc602, both already native), now
+// legacy index engine -- unlike 735e9ad2 or 588cc602, both already native), now
 // that the legacy writer switch itself is gone (IndexConfig.NativeWriter,
 // SwitchIndexWriter, shard.store -- banyand/property/db/{shard,db,
 // repair_gossip}.go). Property's on-disk format is unchanged by NIDX-03

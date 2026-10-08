@@ -30,10 +30,10 @@ import (
 // tuples and the remaining criteria the series index evaluates, replicating
 // the split pkg/index/inverted.BuildQuery performed before the native
 // cutover (NIDX-03 §5) -- unchanged logic, just emitting a *modelv1.Criteria
-// subtree instead of a bluge query. It reuses logical.ParseExprOrEntity and
+// subtree instead of a legacy-engine query. It reuses logical.ParseExprOrEntity and
 // logical.ParseEntities exactly as BuildQuery did; the only thing this
 // function does differently is what a non-entity leaf condition becomes:
-// BuildQuery compiled it to a bluge query node, this returns the condition
+// BuildQuery compiled it to a legacy-engine query node, this returns the condition
 // itself (after confirming it has an index rule, matching BuildQuery's own
 // "mandatory index rule conf" validation) for criteria.Filter to evaluate
 // later via a FieldResolver.

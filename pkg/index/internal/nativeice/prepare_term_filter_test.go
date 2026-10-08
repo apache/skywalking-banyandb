@@ -30,8 +30,8 @@ import (
 // TestPrepareTermFilterBuildsTheSmallTermSetEagerly is half of the proof that
 // PrepareTermFilter does the work a first exact lookup would otherwise do
 // lazily: for a segment at or under smallSegmentTermSetDocuments, termAbsent
-// answers from an exact in-memory term set (storedSegmentReader.smallTermSets),
-// built on first use and cached under dictionaryMu. This asserts the cache
+// answers from an exact in-memory term set (storedSegmentReader.termSets),
+// built on first use and kept with the reader. This asserts the cache
 // already holds the field directly -- never calling termAbsent/TermPosting
 // first, which would build it itself and make the assertion meaningless.
 func TestPrepareTermFilterBuildsTheSmallTermSetEagerly(t *testing.T) {
@@ -47,9 +47,7 @@ func TestPrepareTermFilterBuildsTheSmallTermSetEagerly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	storedReader.dictionaryMu.RLock()
-	_, built := storedReader.smallTermSets[identifierField]
-	storedReader.dictionaryMu.RUnlock()
+	_, built := storedReader.termSets.Load(identifierField)
 	if !built {
 		t.Fatal("PrepareTermFilter did not build the small-segment exact term set for identifierField")
 	}
@@ -57,7 +55,7 @@ func TestPrepareTermFilterBuildsTheSmallTermSetEagerly(t *testing.T) {
 
 // TestPrepareTermFilterBuildsTheBloomFilterEagerly is the bloom-filter half:
 // a segment over smallSegmentTermSetDocuments answers termAbsent from a
-// bloom filter (storedSegmentReader.termBlooms) instead. Same assertion
+// bloom filter (storedSegmentReader.termFilters) instead. Same assertion
 // shape: the cache must already hold the field before any lookup runs.
 func TestPrepareTermFilterBuildsTheBloomFilterEagerly(t *testing.T) {
 	documents := make([]EncodeDocument, smallSegmentTermSetDocuments+1)
@@ -75,9 +73,7 @@ func TestPrepareTermFilterBuildsTheBloomFilterEagerly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	storedReader.dictionaryMu.RLock()
-	_, built := storedReader.termBlooms[identifierField]
-	storedReader.dictionaryMu.RUnlock()
+	_, built := cachedTermFilter(storedReader, identifierField)
 	if !built {
 		t.Fatal("PrepareTermFilter did not build the bloom filter for identifierField")
 	}

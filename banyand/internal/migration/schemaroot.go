@@ -33,7 +33,7 @@ import (
 // a backup-tree discovery but the snapshot omitted the catalog.
 var errSchemaPropertyMissing = errors.New("schema-property catalog not found in backup")
 
-// resolveSchemaRoot picks the `_schema` bluge directory to read schemas from.
+// resolveSchemaRoot picks the `_schema` directory to read schemas from.
 func resolveSchemaRoot(backupDir, date, schemaPropertyPath string) (string, error) {
 	if schemaPropertyPath != "" {
 		return schemaPropertyPath, nil
@@ -44,7 +44,7 @@ func resolveSchemaRoot(backupDir, date, schemaPropertyPath string) (string, erro
 	return findSchemaPropertyRoot(backupDir, date)
 }
 
-// SchemaRoot resolves the `_schema` bluge directory for the plan's source.
+// SchemaRoot resolves the `_schema` directory for the plan's source.
 func (p *CopyPlan) SchemaRoot() (string, error) {
 	if p.Source.Backup != nil {
 		return resolveSchemaRoot(p.Source.Backup.Root, p.Source.Backup.Date, "")

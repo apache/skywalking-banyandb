@@ -19,7 +19,7 @@
 // same query results, under the previous release. NIDX-03 §1 names "the
 // previous release" as v0.11.1 specifically -- the last published release,
 // which runs the series index, the Stream element index, and Property on the
-// retired bluge engine, with none of #1383/#1390/this change's native
+// retired legacy index engine, with none of #1383/#1390/this change's native
 // writers. Unreleased main commits (for example 735e9ad2, which already
 // carries native Property and a native Stream element index) are not
 // rollback targets.

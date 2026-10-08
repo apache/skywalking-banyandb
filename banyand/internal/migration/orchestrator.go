@@ -196,7 +196,7 @@ func (p *CopyPlan) RunCopy(ctx context.Context, stagingDir string, cls *Classifi
 		//   - Cross-replica broadcast invariant: the same series-ID set ends
 		//     up under every target seg's sidx subdir, which is what liaison
 		//     relies on to dedup distributed query fan-outs.
-		//   - We don't rescan the same source bluge index N times per group.
+		//   - We don't rescan the same source series index N times per group.
 		groupUnionSidx := make(map[string]string, len(groups))
 		for _, group := range groups {
 			if ctx.Err() != nil {

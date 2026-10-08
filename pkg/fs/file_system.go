@@ -19,6 +19,7 @@
 package fs
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	iofs "io/fs"
@@ -214,6 +215,29 @@ func AdvisePageCache(f File, advice PageCacheAdvice) error {
 		}
 	}
 	return nil
+}
+
+// ErrNotLocalFile reports an operation that needs a file of the local file
+// system on another kind of File.
+var ErrNotLocalFile = errors.New("fs: not a local file")
+
+// StatFile describes the open file f itself (fstat), not whatever its path
+// names now, so os.SameFile can tell whether a path still names the file f
+// was opened from. It reports ErrNotLocalFile for files not backed by the
+// local file system.
+func StatFile(f File) (os.FileInfo, error) {
+	localFile, ok := f.(*LocalFile)
+	if !ok {
+		return nil, ErrNotLocalFile
+	}
+	info, statErr := localFile.file.Stat()
+	if statErr != nil {
+		return nil, &FileSystemError{
+			Code:    otherError,
+			Message: fmt.Sprintf("Stat file error, file name: %s, error message: %s", localFile.file.Name(), statErr),
+		}
+	}
+	return info, nil
 }
 
 // SyncDir fsyncs the directory at path so that entries created, linked, or

@@ -215,7 +215,7 @@ func TestExtractSeriesMatchers_NilCriteriaMatchesAllWithTemplateEntity(t *testin
 //
 // Each step was also asserted, before Phase 3 deleted it, against the
 // in-tree pkg/index/inverted.BuildQuery, which never lost the flag because
-// it represented "match all" with an explicit non-nil bluge.NewMatchAllQuery
+// it represented "match all" with an explicit non-nil legacy-engine match-all query
 // sentinel rather than nil. The facts that oracle contributed -- the query
 // was always non-nil and specifically a MatchAllQuery (query.String() ==
 // "matchAll") for x, y and z, legacyIsMatchAll is true for all three, and
@@ -238,7 +238,7 @@ func TestExtractSeriesMatchers_NilCriteriaMatchesAllWithTemplateEntity(t *testin
 // package (no legacy evaluator involved) reproduced the exact same
 // isMatchAll and entities values for x, y and z, confirming
 // extractSeriesMatchers preserves BuildQuery's entity-matcher extraction
-// even though it no longer builds a bluge query at all; remaining was nil
+// even though it no longer builds a legacy-engine query at all; remaining was nil
 // in every case on both sides. Both temporary prints were removed after
 // capture; nothing here was fabricated.
 func TestExtractSeriesMatchers_MatchAllPropagatesThroughNestedOr(t *testing.T) {
@@ -296,7 +296,7 @@ func TestExtractSeriesMatchers_MatchAllPropagatesThroughNestedOr(t *testing.T) {
 			// from a live inverted.BuildQuery(tc.criteria, schema, entityDict,
 			// entity) call before NIDX-03 deleted that function; see the
 			// capture procedure in this test's doc comment above and in
-			// docs/design/0.12.0/native-inverted-index/verification/nidx-03-series-cutover/README.md.
+			// docs/design/archive/0.12.0/native-inverted-index/verification/nidx-03-series-cutover/README.md.
 			const (
 				legacyIsMatchAll     = true
 				legacyQueryWasNonNil = true

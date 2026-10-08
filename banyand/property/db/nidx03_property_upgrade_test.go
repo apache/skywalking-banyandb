@@ -18,8 +18,10 @@ package db
 
 import (
 	"context"
-	"fmt"
+	"io"
+	"os"
 	"path"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -30,27 +32,51 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
-// TestNIDX03PropertyUpgradeFromLegacyBlugeLayout is R5's "lost coverage"
+// nidx03PropertyUpgradeFixtureDir holds the checked-in shard directory the
+// previous release's index writer produced for exactly the group/name/ids
+// legacyTestProperty below declares (one alive property, one soft-deleted
+// property committed across three separate revisions). There is no
+// generator test: regenerating these bytes would require the retired
+// third-party index library this repository no longer depends on, so the
+// checked-in bytes themselves are the provenance.
+const nidx03PropertyUpgradeFixtureDir = "testdata/nidx03_property_upgrade"
+
+// copyNIDX03PropertyUpgradeFixture byte-copies the checked-in fixture shard
+// directory into dst.
+func copyNIDX03PropertyUpgradeFixture(t *testing.T, group, dst string) {
+	t.Helper()
+	src := filepath.Join(nidx03PropertyUpgradeFixtureDir, group, "shard-0")
+	require.NoError(t, os.MkdirAll(dst, 0o755))
+	entries, err := os.ReadDir(src)
+	require.NoError(t, err)
+	for _, entry := range entries {
+		require.False(t, entry.IsDir(), "fixture %s must hold only regular files", src)
+		in, openErr := os.Open(filepath.Join(src, entry.Name()))
+		require.NoError(t, openErr)
+		out, createErr := os.Create(filepath.Join(dst, entry.Name()))
+		require.NoError(t, createErr)
+		_, copyErr := io.Copy(out, in)
+		require.NoError(t, copyErr)
+		require.NoError(t, out.Close())
+		require.NoError(t, in.Close())
+	}
+}
+
+// TestNIDX03PropertyUpgradeFromPreviousReleaseLayout is R5's "lost coverage"
 // upgrade-direction companion to the rollback proof under test/rollback/
 // nidx03 (which covers the opposite direction -- v0.11.1 opening data THIS
 // code wrote). It always runs (no NIDX03_ROLLBACK gate): it never builds or
-// runs a previous release, it only writes a shard directory in the exact
-// shape the retired legacy writer (banyand/property/db/shard.go's removed
-// NativeWriter=false path, which called index.SeriesStore.UpdateSeriesBatch
-// with one bluge document keyed by EntityValues per property revision,
-// before NIDX-03 §15 removed the switch) would have left on disk, using
-// pkg/index/inverted.NewStore directly -- still in-tree for the NIDX-04
-// element-index migration tool -- then opens that SAME directory through
-// the current (native-only) OpenDB/Query path and asserts identical query
-// results against hand-written expectations.
+// runs a previous release, it only opens a checked-in shard directory in the
+// exact shape the retired legacy writer (banyand/property/db/shard.go's
+// removed NativeWriter=false path, which called
+// index.SeriesStore.UpdateSeriesBatch with one legacy-engine document keyed
+// by EntityValues per property revision, before NIDX-03 §15 removed the
+// switch) left on disk, through the current (native-only) OpenDB/Query path,
+// and asserts identical query results against hand-written expectations.
 //
 // Field shape mirrors shard.go's buildUpdateDocument exactly (sourceField,
 // entityField, groupField, nameField, deletedField, plus one indexed field
@@ -59,7 +85,7 @@ import (
 // comparison (repair.buildShaValue), never Query -- a missing shaValue
 // changes what a repair round would detect as "differs," not what a query
 // returns, so this still exercises the real read path identically.
-func TestNIDX03PropertyUpgradeFromLegacyBlugeLayout(t *testing.T) {
+func TestNIDX03PropertyUpgradeFromPreviousReleaseLayout(t *testing.T) {
 	tmpPath, cleanup := test.Space(require.New(t))
 	defer cleanup()
 
@@ -69,11 +95,7 @@ func TestNIDX03PropertyUpgradeFromLegacyBlugeLayout(t *testing.T) {
 
 	alive := legacyTestProperty(group, name, "alive-id", 100, map[string]string{"status": "ok"})
 	toDelete := legacyTestProperty(group, name, "deleted-id", 200, map[string]string{"status": "gone"})
-	writeLegacyPropertyShard(t, shardPath, []legacyPropertyWrite{
-		{property: alive},
-		{property: toDelete},
-		{property: toDelete, deleteTime: time.Now().UnixNano()},
-	})
+	copyNIDX03PropertyUpgradeFixture(t, group, shardPath)
 
 	database, err := OpenDB(context.Background(), Config{
 		Location:         tmpPath,
@@ -109,11 +131,6 @@ func TestNIDX03PropertyUpgradeFromLegacyBlugeLayout(t *testing.T) {
 	require.Greater(t, deletedRow.DeleteTime(), int64(0), "the soft-deleted property's deleteTime must be set")
 }
 
-type legacyPropertyWrite struct {
-	property   *propertyv1.Property
-	deleteTime int64
-}
-
 func legacyTestProperty(group, name, id string, modRevision int64, tags map[string]string) *propertyv1.Property {
 	property := &propertyv1.Property{
 		Metadata: &commonv1.Metadata{Group: group, Name: name, ModRevision: modRevision},
@@ -126,66 +143,4 @@ func legacyTestProperty(group, name, id string, modRevision int64, tags map[stri
 		})
 	}
 	return property
-}
-
-// writeLegacyPropertyShard opens path with the retired bluge-backed store
-// (inverted.NewStore, still in-tree for the NIDX-04 element migration tool)
-// and writes each entry through UpdateSeriesBatch -- the same method and
-// document shape shard.go's buildUpdateDocument + updateDocuments used
-// before NIDX-03 removed the legacy writer switch -- then closes it so the
-// directory left behind is exactly what an upgrade finds.
-func writeLegacyPropertyShard(t *testing.T, shardPath string, writes []legacyPropertyWrite) {
-	t.Helper()
-	store, err := inverted.NewStore(inverted.StoreOpts{Path: shardPath, BatchWaitSec: 0})
-	require.NoError(t, err)
-	for _, w := range writes {
-		id := GetPropertyID(w.property)
-		doc, buildErr := legacyBuildUpdateDocument(id, w.property, w.deleteTime)
-		require.NoError(t, buildErr)
-		require.NoError(t, store.UpdateSeriesBatch(index.Batch{Documents: index.Documents{*doc}}))
-	}
-	require.NoError(t, store.Close())
-}
-
-// legacyBuildUpdateDocument mirrors shard.go's buildUpdateDocument (field
-// names, index/store flags) without the shaValueField -- see this file's
-// test doc comment for why that is a safe simplification for a query-path
-// proof.
-func legacyBuildUpdateDocument(id []byte, property *propertyv1.Property, deleteTime int64) (*index.Document, error) {
-	pj, err := protojson.Marshal(property)
-	if err != nil {
-		return nil, err
-	}
-	sourceField := index.NewBytesField(sourceFieldKey, pj)
-	sourceField.NoSort = true
-	sourceField.Store = true
-	entityField := index.NewBytesField(entityFieldKey, []byte(property.Id))
-	entityField.Index = true
-	groupField := index.NewBytesField(groupFieldKey, []byte(property.Metadata.Group))
-	groupField.Index = true
-	nameField := index.NewBytesField(nameFieldKey, []byte(property.Metadata.Name))
-	nameField.Index = true
-
-	doc := index.Document{
-		EntityValues: id,
-		Fields:       []index.Field{entityField, groupField, nameField, sourceField},
-		Timestamp:    property.Metadata.ModRevision,
-	}
-	for i, tag := range property.Tags {
-		tv, marshalErr := pbv1.MarshalTagValue(tag.Value)
-		if marshalErr != nil {
-			return nil, fmt.Errorf("tag %d: %w", i, marshalErr)
-		}
-		tagField := index.NewBytesField(index.FieldKey{IndexRuleID: uint32(convert.HashStr(tag.Key))}, tv)
-		tagField.Index = tag.Key != unindexedSourceTag
-		doc.Fields = append(doc.Fields, tagField)
-	}
-
-	if deleteTime > 0 {
-		deleteField := index.NewBytesField(deletedFieldKey, convert.Int64ToBytes(deleteTime))
-		deleteField.Store = true
-		deleteField.NoSort = true
-		doc.Fields = append(doc.Fields, deleteField)
-	}
-	return &doc, nil
 }

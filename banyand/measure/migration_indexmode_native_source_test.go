@@ -36,7 +36,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
@@ -177,17 +176,18 @@ func indexModeNativeSourceSeries(t *testing.T) []nativeSourceSeries {
 }
 
 // seedNativeSourceSidx writes the declared series into "<root>/<segName>/sidx"
-// with the compatibility writer, then deletes the ones declared deleted, so the
-// source is a directory a released BanyanDB produced rather than one this test
-// hand-assembled.
+// through storage.EncodeSeriesDocument + a native owner -- the same series
+// document mapping the production write path and migration rebuild both use
+// -- then deletes the ones declared deleted, so the source is a directory a
+// released BanyanDB produced rather than one this test hand-assembled.
 func seedNativeSourceSidx(t *testing.T, root, segName string, seriesSet []nativeSourceSeries) string {
 	t.Helper()
 	sidxDir := filepath.Join(root, segName, directCopySidxDirName)
 	require.NoError(t, os.MkdirAll(sidxDir, storage.DirPerm))
 
-	store, err := inverted.NewStore(inverted.StoreOpts{Path: sidxDir, BatchWaitSec: 0})
+	owner, err := native.NewOwner(native.OwnerOptions{Lease: measureIndexTestLease{}, Path: sidxDir, IdentifierDocValues: true})
 	require.NoError(t, err)
-	documents := make(index.Documents, 0, len(seriesSet))
+	documents := make([]native.Document, 0, len(seriesSet))
 	var deletedIdentities [][]byte
 	for _, declared := range seriesSet {
 		identity := nativeSourceIdentity(t, declared)
@@ -201,22 +201,35 @@ func seedNativeSourceSidx(t *testing.T, root, segName string, seriesSet []native
 			convert.StringToBytes(declared.entityValue))
 		entityTag.Index = true
 		entityTag.NoSort = true
-		documents = append(documents, index.Document{
+		doc := index.Document{
 			Fields:       []index.Field{tag, subject, entityTag},
 			EntityValues: identity,
 			Timestamp:    declared.timestamp,
 			DocID:        convert.Hash(identity),
 			Version:      declared.version,
-		})
+		}
+		nd, encErr := storage.EncodeSeriesDocument(doc)
+		require.NoError(t, encErr)
+		documents = append(documents, nd)
 		if declared.deleted {
 			deletedIdentities = append(deletedIdentities, identity)
 		}
 	}
-	require.NoError(t, store.UpdateSeriesBatch(index.Batch{Documents: documents}))
+	done := make(chan error, 1)
+	require.NoError(t, owner.Batch(context.Background(), native.Batch{
+		Documents:          documents,
+		PersistentCallback: func(batchErr error) { done <- batchErr },
+	}))
+	require.NoError(t, <-done)
 	if len(deletedIdentities) > 0 {
-		require.NoError(t, store.Delete(deletedIdentities))
+		deleteDone := make(chan error, 1)
+		require.NoError(t, owner.Batch(context.Background(), native.Batch{
+			Deletes:            deletedIdentities,
+			PersistentCallback: func(batchErr error) { deleteDone <- batchErr },
+		}))
+		require.NoError(t, <-deleteDone)
 	}
-	require.NoError(t, store.Close())
+	require.NoError(t, owner.Close())
 	return sidxDir
 }
 
@@ -315,7 +328,8 @@ func truncateSourceSegment(t *testing.T, sidxDir string) {
 //	      migration aborts on unreadable input instead of silently writing a
 //	      partial target group. The byte-level stored-chunk failures R4 also
 //	      names are proved against the visitor itself in
-//	      pkg/index/inverted, where no retired reader stands in the way.
+//	      pkg/index/native/repair_test.go, where no retired reader stands in
+//	      the way.
 func TestE2EIndexModeCopyNativeSource(t *testing.T) {
 	tester := require.New(t)
 	declared := indexModeNativeSourceSeries(t)

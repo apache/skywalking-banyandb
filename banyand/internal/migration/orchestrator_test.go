@@ -23,10 +23,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/blugelabs/bluge"
 	"github.com/stretchr/testify/require"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
 
 // TestDirtyTargets_AllListedUpFront: every non-empty target the run would
@@ -126,7 +126,7 @@ func TestRunCopy_SkipsUnionSidxForIndexModeGroup(t *testing.T) {
 	// Seed a real source sidx under the normal group so Phase A's union build
 	// yields a non-empty path it can broadcast.
 	doc, _ := makeSidxSourceDoc(t, "alpha", "svc-a")
-	writeSidxAt(t, filepath.Join(root, normalGroup, segPrefix+"20260101"), []*bluge.Document{doc})
+	writeSidxAt(t, filepath.Join(root, normalGroup, segPrefix+"20260101"), []native.Document{doc})
 
 	dayInterval := &commonv1.IntervalRule{
 		Unit: commonv1.IntervalRule_UNIT_DAY,

@@ -260,7 +260,7 @@ func walkPropertyRows(ctx context.Context, generation *native.ReadOnlyGeneration
 //
 // A malformed _source or _timestamp is reported as a warning on stderr, not
 // a hard error: one corrupt row must not abort the rest of the dump, the
-// same tolerance the previous (bluge-backed) dump tool had. walkPropertyRows
+// same tolerance the previous dump tool had. walkPropertyRows
 // still aborts on a genuine read-path failure (VisitStoredFields itself
 // erroring, which signals the underlying segment is unreadable, not that one
 // document's payload is malformed).

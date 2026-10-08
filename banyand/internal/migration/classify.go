@@ -34,7 +34,7 @@ type Classified struct {
 	Buckets map[commonv1.Catalog][]string
 	// Groups carries the schema-property Group proto per group name.
 	Groups map[string]*commonv1.Group
-	// SchemaRoot is the resolved `_schema` bluge directory.
+	// SchemaRoot is the resolved `_schema` directory.
 	SchemaRoot string
 }
 

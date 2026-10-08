@@ -44,7 +44,7 @@ import (
 //      "exclusive lock" flock churn.
 //
 //   2. A genuinely idle segment with no active reference must STILL be
-//      reclaimed so its bluge index writer is released -- the leak PR #1128
+//      reclaimed so its native index owner is released -- the leak PR #1128
 //      (https://github.com/apache/skywalking-banyandb/pull/1128) fixed by
 //      removing the lastAccessed refresh from incRef.
 //
@@ -208,7 +208,7 @@ func TestDelete_KeepsIndexWhileActivelyHeld(t *testing.T) {
 
 // TestCloseIdleSegments_ReclaimsTrulyIdleSegment guards the PR #1128 goal: a
 // segment that is open but has no active reference and has gone idle must be
-// reclaimed so its bluge index writer is released. Passes on the unfixed tree
+// reclaimed so its native index owner is released. Passes on the unfixed tree
 // and must keep passing after the fix.
 func TestCloseIdleSegments_ReclaimsTrulyIdleSegment(t *testing.T) {
 	tempDir, cleanup := setupTestEnvironment(t)
@@ -223,14 +223,14 @@ func TestCloseIdleSegments_ReclaimsTrulyIdleSegment(t *testing.T) {
 	seg.lastAccessed.Store(time.Now().Add(-time.Hour).UnixNano())
 
 	require.Equal(t, 1, sc.closeIdleSegments(), "an idle, unreferenced segment must be reclaimed")
-	require.Nil(t, seg.index, "a reclaimed segment must release its index writer (PR #1128)")
+	require.Nil(t, seg.index, "a reclaimed segment must release its native index owner (PR #1128)")
 }
 
 // TestIncRef_DoesNotRefreshLastAccessed pins the invariant PR #1128 established:
 // incRef -- used by the rotation housekeeping scan that touches every segment
 // via segments(ctx,true) on each tick -- must NOT refresh lastAccessed. If it
 // did, no segment outside the active write window would ever look idle and the
-// reclaimer could never release their bluge writers, reintroducing the exact
+// reclaimer could never release their native index owners, reintroducing the exact
 // leak #1128 fixed.
 //
 // This guards against the tempting-but-wrong fix of re-adding
@@ -350,7 +350,7 @@ func TestDeleteExpiredSegments_DefersWhileHeld(t *testing.T) {
 	require.NoDirExists(t, seg.location, "the directory is removed once the last reference is dropped")
 }
 
-// Many open/reclaim cycles must not leak the bluge writer lock -- every
+// Many open/reclaim cycles must not leak the native index owner -- every
 // reopen (which acquires the exclusive directory lock) must keep succeeding.
 func TestReopenCycles_NoWriterLeak(t *testing.T) {
 	tempDir, cleanup := setupTestEnvironment(t)

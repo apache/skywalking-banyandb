@@ -354,8 +354,8 @@ func (d *database[T, O]) TakeFileSnapshot(dst string) (success bool, err error) 
 	}
 
 	// The snapshot must NOT reopen a closed segment: reopening an idle-closed
-	// cold segment is the source of the nil-index panic and the bluge
-	// "exclusive lock" churn. Take the current segment objects WITHOUT forcing
+	// cold segment is the source of the nil-index panic and the legacy index
+	// engine's "exclusive lock" churn. Take the current segment objects WITHOUT forcing
 	// a reopen. A closed (quiescent) segment is hard-linked directly from its
 	// immutable on-disk files; an open segment is snapshotted through its live
 	// series index and shard tables.

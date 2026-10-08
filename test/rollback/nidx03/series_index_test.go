@@ -40,7 +40,7 @@ const (
 // item 2 rollback proof: Measure normal mode, Measure index mode, and the
 // crash-cut variant, each opened by the previous release's own
 // seriesIndex/newSeriesIndex/Search/SearchWithoutSeries code (not a raw
-// bluge-library proxy).
+// third-party-library proxy).
 //
 // It orchestrates three steps that are each independently reproducible by
 // hand (the commands this function runs are the exact commands a human

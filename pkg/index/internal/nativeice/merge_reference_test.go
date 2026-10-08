@@ -23,6 +23,14 @@ import (
 	"sort"
 )
 
+// referenceMergeResult is the reference merge's encoded segment and one
+// old-local to new-local mapping per input; DroppedDocumentNumber marks an
+// old document omitted from the output.
+type referenceMergeResult struct {
+	Payload  []byte
+	Mappings [][]uint64
+}
+
 // referenceMergeSegments is the original MergeSegments, kept verbatim as the
 // differential-test reference: it decodes every input into documents and
 // re-encodes them. MergeSegments must produce byte-identical results.
@@ -32,19 +40,19 @@ import (
 // terms and frequencies, and repeated doc values are retained. Documents are
 // emitted in input order and context cancellation is checked between physical
 // documents and field walks.
-func referenceMergeSegments(ctx context.Context, inputs []MergeInput) (MergeResult, error) {
+func referenceMergeSegments(ctx context.Context, inputs []MergeInput) (referenceMergeResult, error) {
 	if err := ctx.Err(); err != nil {
-		return MergeResult{}, err
+		return referenceMergeResult{}, err
 	}
 	merged := make([]EncodeDocument, 0)
 	mappings := make([][]uint64, len(inputs))
 	for inputIndex, input := range inputs {
 		if input.Reader == nil || input.Reader.SegmentCount() != 1 {
-			return MergeResult{}, fmt.Errorf("merge input %d must hold one segment: %w", inputIndex, ErrCorrupt)
+			return referenceMergeResult{}, fmt.Errorf("merge input %d must hold one segment: %w", inputIndex, ErrCorrupt)
 		}
 		segmentDocuments, segmentMappings, decodeErr := decodeMergeInput(ctx, input)
 		if decodeErr != nil {
-			return MergeResult{}, decodeErr
+			return referenceMergeResult{}, decodeErr
 		}
 		outputOffset := uint64(len(merged))
 		for mappingIndex, mapping := range segmentMappings {
@@ -57,9 +65,9 @@ func referenceMergeSegments(ctx context.Context, inputs []MergeInput) (MergeResu
 	}
 	payload, encodeErr := EncodeSegment(Generation{Documents: merged})
 	if encodeErr != nil {
-		return MergeResult{}, encodeErr
+		return referenceMergeResult{}, encodeErr
 	}
-	return MergeResult{Payload: payload, Mappings: mappings}, nil
+	return referenceMergeResult{Payload: payload, Mappings: mappings}, nil
 }
 
 //nolint:govet // borrowed field collections are grouped by modality.

@@ -155,7 +155,6 @@ func frequencyTestOffsets(t *testing.T, payload []byte) (frequencyOffset, postin
 	if dictionaryErr != nil {
 		t.Fatal(dictionaryErr)
 	}
-	defer func() { _ = dictionary.Close() }()
 	postingOffset, found, lookupErr := lookupTermPosting(dictionary, []byte("term"))
 	if lookupErr != nil || !found {
 		t.Fatalf("lookup term: found=%t err=%v", found, lookupErr)

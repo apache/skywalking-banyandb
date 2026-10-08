@@ -53,7 +53,7 @@ func TestReadOnlyGenerationStoredFieldsUsesFirstLiveDocument(t *testing.T) {
 }
 
 func TestReadOnlyGenerationStoredFieldsReadsRetainedCompatibilityFixture(t *testing.T) {
-	fixture := filepath.Join("..", "inverted", "testdata", "nidx01c", "sourceA")
+	fixture := filepath.Join("..", "testdata", "nidx01c", "sourceA")
 	reader, err := OpenReadOnlyGeneration(fixture)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, reader.Close()) }()
@@ -89,7 +89,7 @@ func TestReadOnlyGenerationVisitIdentifiersStopsAndCopies(t *testing.T) {
 }
 
 func TestReadOnlyGenerationVisitIdentifiersIncludesDeletedMetadataTerms(t *testing.T) {
-	fixture := filepath.Join("..", "inverted", "testdata", "nidx01c", "sourceA")
+	fixture := filepath.Join("..", "testdata", "nidx01c", "sourceA")
 	reader, err := OpenReadOnlyGeneration(fixture)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, reader.Close()) }()
@@ -102,7 +102,7 @@ func TestReadOnlyGenerationVisitIdentifiersIncludesDeletedMetadataTerms(t *testi
 }
 
 func TestReadOnlyGenerationVisitIdentifiersWalksMultipleSegments(t *testing.T) {
-	fixture := filepath.Join("..", "inverted", "testdata", "nidx01b", "index")
+	fixture := filepath.Join("..", "testdata", "nidx01b", "index")
 	reader, err := OpenReadOnlyGeneration(fixture)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, reader.Close()) }()

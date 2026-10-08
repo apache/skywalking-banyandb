@@ -156,3 +156,8 @@ func SyncAndDropCache(fd uintptr, offset int64, length int64) error {
 
 	return unix.Fadvise(int(fd), offset, length, unix.FADV_DONTNEED)
 }
+
+// OpenFileNamesMutable reports whether a file that is still open can be
+// renamed or unlinked. POSIX file systems allow it: the open descriptor keeps
+// referring to the same file.
+const OpenFileNamesMutable = true

@@ -144,3 +144,8 @@ func applyFadviseToFD(_ uintptr, _ int64, _ int64) error {
 func SyncAndDropCache(fd uintptr, _ int64, _ int64) error {
 	return unix.FcntlFlock(fd, unix.F_FULLFSYNC, &unix.Flock_t{})
 }
+
+// OpenFileNamesMutable reports whether a file that is still open can be
+// renamed or unlinked. POSIX file systems allow it: the open descriptor keeps
+// referring to the same file.
+const OpenFileNamesMutable = true

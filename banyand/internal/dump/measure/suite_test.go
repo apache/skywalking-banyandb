@@ -388,7 +388,7 @@ func TestMeasureIndexedTagResolvedFromIndex(t *testing.T) {
 	}
 	strRuleID, intRuleID, arrRuleID := ruleID("idxr_str_rule"), ruleID("idxr_int_rule"), ruleID("idxr_arr_rule")
 
-	// Stop the live service so it releases bluge's exclusive lock on the series
+	// Stop the live service so it releases the native index's exclusive lock on the series
 	// index; the dump (like the offline CLI) reads the index from a quiesced
 	// database. The write path above is synchronous (safe-batch insert blocks
 	// until the series index is persisted), so the index is already durable on
@@ -410,7 +410,7 @@ func TestMeasureIndexedTagResolvedFromIndex(t *testing.T) {
 	resolver, err := dump.NewIndexResolver(segmentPath, 0, ruleToTag)
 	req.NoError(err)
 	// Closed explicitly before the smeta-path phase reopens the same index
-	// (bluge holds an exclusive lock, so only one store may be open at a time).
+	// (the native index holds an exclusive lock, so only one store may be open at a time).
 
 	fileSystem := localfs.NewLocalFileSystem()
 	seen := 0
