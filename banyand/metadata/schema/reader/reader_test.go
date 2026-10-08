@@ -18,10 +18,10 @@
 package reader
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
-	"github.com/blugelabs/bluge"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -33,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/property"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
 
 // schemaDoc describes one property doc to plant into a test shard.
@@ -52,15 +53,23 @@ func strTag(key, value string) *modelv1.Tag {
 	}
 }
 
-// writeShard persists docs into one bluge shard the same shape the property
+// readerTestLease is a minimal native.PathRootLease stub: these tests write
+// directly into a throwaway shard directory with no surrounding database
+// lock to validate against.
+type readerTestLease struct{}
+
+func (readerTestLease) Validate() error           { return nil }
+func (readerTestLease) ValidatePath(string) error { return nil }
+
+// writeShard persists docs into one native shard the same shape the property
 // schema server writes: _source carries protojson(Property), _deleted is a
 // non-empty stored field on tombstones, and the kind (Metadata.Name) is an
-// indexed keyword field that WalkShard's kind pushdown matches on.
+// indexed term that WalkShard's kind pushdown matches on.
 func writeShard(t *testing.T, shardPath string, docs []schemaDoc) {
 	t.Helper()
-	writer, err := bluge.OpenWriter(bluge.DefaultConfig(shardPath))
+	owner, err := native.NewOwner(native.OwnerOptions{Lease: readerTestLease{}, Path: shardPath})
 	require.NoError(t, err)
-	batch := bluge.NewBatch()
+	documents := make([]native.Document, 0, len(docs))
 	for i, d := range docs {
 		propID := property.BuildPropertyID(d.kind, &commonv1.Metadata{Group: d.group, Name: d.name})
 		prop := &propertyv1.Property{
@@ -78,19 +87,28 @@ func writeShard(t *testing.T, shardPath string, docs []schemaDoc) {
 		}
 		propJSON, mErr := protojson.Marshal(prop)
 		require.NoError(t, mErr)
-		// Distinct bluge doc IDs keep every revision visible to the reader,
-		// matching how the migration reader sees multiple revisions.
-		doc := bluge.NewDocument(propID + "@" + string(rune('a'+i)))
-		doc.AddField(bluge.NewStoredOnlyField(propSourceField, propJSON))
-		doc.AddField(bluge.NewKeywordFieldBytes(index.IndexModeName, []byte(d.kind.String())))
-		doc.AddField(bluge.NewKeywordFieldBytes(propGroupField, []byte(schema.SchemaGroup)))
-		if d.deleted {
-			doc.AddField(bluge.NewStoredOnlyField(propDeleteField, []byte("1")))
+		fields := []native.Field{
+			{Name: propSourceField, Value: propJSON, Store: true},
+			{Name: index.IndexModeName, Value: []byte(d.kind.String()), Index: true},
+			{Name: propGroupField, Value: []byte(schema.SchemaGroup), Index: true},
 		}
-		batch.Insert(doc)
+		if d.deleted {
+			fields = append(fields, native.Field{Name: propDeleteField, Value: []byte("1"), Store: true})
+		}
+		// Distinct identifiers keep every revision visible to the reader,
+		// matching how the migration reader sees multiple revisions.
+		documents = append(documents, native.Document{
+			Identifier: []byte(propID + "@" + string(rune('a'+i))),
+			Fields:     fields,
+		})
 	}
-	require.NoError(t, writer.Batch(batch))
-	require.NoError(t, writer.Close())
+	done := make(chan error, 1)
+	require.NoError(t, owner.Batch(context.Background(), native.Batch{
+		Documents:          documents,
+		PersistentCallback: func(batchErr error) { done <- batchErr },
+	}))
+	require.NoError(t, <-done)
+	require.NoError(t, owner.Close())
 }
 
 func groupProto(name string, catalog commonv1.Catalog, segDays uint32) *commonv1.Group {

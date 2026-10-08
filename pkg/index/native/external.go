@@ -99,7 +99,7 @@ func (s *externalSegmentStreamer) StartSegment() error {
 		s.owner.mu.Unlock()
 		return fmt.Errorf("create native external staging directory: %w", mkdirErr)
 	}
-	stagedPath := filepath.Join(s.owner.options.Path, fmt.Sprintf(".native-external-%d-%d", os.Getpid(), externalStagingSequence.Add(1)))
+	stagedPath := filepath.Join(s.owner.options.Path, fmt.Sprintf("%s%d-%d", externalStagingPrefix, os.Getpid(), externalStagingSequence.Add(1)))
 	file, createErr := fileSystem.CreateFile(stagedPath, 0o600)
 	if createErr != nil {
 		s.owner.mu.Unlock()

@@ -16,7 +16,7 @@ all three: (1) and (2) answer "how many distinct things", (3) answers "over time
 onto BanyanDB (§1.1) — not by the cardinality work. That conversion also needs two things this
 document scopes out, multiple aggregates per request and result aliases; §3 records the gap.
 
-It is a companion to the [native inverted-index design](../native-inverted-index/README.md): the
+It is a companion to the [native inverted-index design](../../archive/0.12.0/native-inverted-index/README.md): the
 scoping work for that package asked whether the native index should grow its own local
 aggregation, and concluded it should not. Aggregation stays in the query engine, which already
 reduces locally on data nodes and combines at the liaison; this design extends that machinery

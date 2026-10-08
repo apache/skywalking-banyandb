@@ -27,7 +27,6 @@ import (
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
@@ -77,26 +76,27 @@ func buildNativeExternalSegment(t *testing.T, identity []byte, markerValue strin
 	return singleSegFile(t, dir)
 }
 
-// buildLegacyExternalSegment creates a fresh *previous-release* series store
-// (pkg/index/inverted) at a temp dir, inserts one document carrying tag
-// "marker"=markerValue under identity, and returns the resulting committed
-// segment's raw bytes -- a stand-in for a segment the previous release's
-// writer produced. Using the legacy writer here is the same sanctioned
-// exception the NIDX-03 fixture generator uses (design §12 item 1): this
-// test's whole point is proving the native external receiver still accepts
-// what the previous release wrote.
-func buildLegacyExternalSegment(t *testing.T, identity []byte, markerValue string) []byte {
+// externalSegmentFixtureDir holds the checked-in raw *.seg bytes a previous
+// release's index writer produced for the two (identity, marker) pairs the
+// tests below need. There is no generator test: regenerating these bytes
+// would require the retired third-party index library this repository no
+// longer depends on, so the checked-in bytes themselves are the provenance.
+// They were produced by commit 8c172364 (NIDX-03, #1397); sha256 of
+// legacy_written.seg is
+// cd97237e5c7867a74b20e37b0632c07dcd4566efa559c5328a08aac346d1ecd5, and of
+// legacy_dup.seg is
+// 051a0d74bec04e1cce1da0b2459492e34631e78d502ca7f92895db0fa3af7bed.
+const externalSegmentFixtureDir = "testdata/nidx03_fixture/external_segments"
+
+// previousReleaseExternalSegment reads the checked-in raw segment fixture
+// name (relative to externalSegmentFixtureDir) -- a stand-in for a segment
+// the previous release's writer produced, used to prove the native external
+// receiver still accepts what the previous release wrote.
+func previousReleaseExternalSegment(t *testing.T, name string) []byte {
 	t.Helper()
-	dir := t.TempDir()
-	store, err := inverted.NewStore(inverted.StoreOpts{Path: dir, BatchWaitSec: 0})
+	data, err := os.ReadFile(filepath.Join(externalSegmentFixtureDir, name))
 	require.NoError(t, err)
-	tag := index.NewBytesField(index.FieldKey{TagName: "marker"}, []byte(markerValue))
-	tag.Store = true
-	require.NoError(t, store.UpdateSeriesBatch(index.Batch{Documents: index.Documents{{
-		Fields: []index.Field{tag}, EntityValues: identity,
-	}}}))
-	require.NoError(t, store.Close())
-	return singleSegFile(t, dir)
+	return data
 }
 
 // receiveExternalSegment drives one StartSegment/WriteChunk/CompleteSegment
@@ -129,7 +129,7 @@ func TestSeriesIndex_ExternalReceive_AcceptsLegacyAndNativeSegments(t *testing.T
 	identityLegacy := externalSegIdentity(t, "legacy-written")
 
 	nativeSeg := buildNativeExternalSegment(t, identityNative, "from-native")
-	legacySeg := buildLegacyExternalSegment(t, identityLegacy, "from-legacy")
+	legacySeg := previousReleaseExternalSegment(t, "legacy_written.seg")
 
 	require.NoError(t, receiveExternalSegment(t, si, nativeSeg))
 	require.NoError(t, receiveExternalSegment(t, si, legacySeg))
@@ -199,7 +199,7 @@ func TestSeriesIndex_ExternalReceive_LegacyDuplicateKeepsExisting(t *testing.T) 
 	defer func() { require.NoError(t, si.Close()) }()
 
 	identity := externalSegIdentity(t, "legacy-dup")
-	first := buildLegacyExternalSegment(t, identity, "legacy-first")
+	first := previousReleaseExternalSegment(t, "legacy_dup.seg")
 	second := buildNativeExternalSegment(t, identity, "native-second")
 
 	require.NoError(t, receiveExternalSegment(t, si, first))

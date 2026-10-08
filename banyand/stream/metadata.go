@@ -347,7 +347,7 @@ func (sr *schemaRepo) CollectDataInfo(ctx context.Context, group string) (*datab
 			// No live shard tables (a closed segment, or a brand-new open one
 			// with no data yet): read shard part stats from disk without
 			// reopening. The per-shard InvertedIndexInfo is reported empty here:
-			// reading it would reopen the shard's bluge index (the exclusive-lock
+			// reading it would reopen the shard's element index (the exclusive-lock
 			// churn this change exists to avoid), so it is populated only for
 			// open segments.
 			closedShards, closedSize := storage.CollectClosedShardInfo(segment.Location())

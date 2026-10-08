@@ -518,7 +518,7 @@ func TestOpenReenumeratesAfterStaleListing(t *testing.T) {
 			}
 		}
 		return snapshotPaths, segmentPaths, nil
-	}, true)
+	})
 	if openErr != nil {
 		t.Fatal(openErr)
 	}
@@ -592,7 +592,9 @@ func TestParseSnapshotSegmentsClosesPinsAfterLaterRecordFails(t *testing.T) {
 	payload = append(payload, make([]byte, 4)...)
 
 	before := openFileDescriptorCount(t)
-	_, _, parseErr := parseSnapshotSegments(map[uint64]string{2: segmentPath}, payload, true)
+	_, _, parseErr := parseSnapshotSegments(map[uint64]string{2: segmentPath}, payload, func(record segmentRecord) (pinnedSegment, uint64, error) {
+		return pinSegment(record, true)
+	})
 	if !errors.Is(parseErr, ErrCorrupt) {
 		t.Fatalf("parseSnapshotSegments() error = %v, want ErrCorrupt", parseErr)
 	}
@@ -643,17 +645,12 @@ func openFileDescriptorCount(t *testing.T) int {
 	return len(descriptors)
 }
 
-// TestResidentSmallSegmentsHoldNoFileDescriptorWhileOpen reproduces the
-// shape of a sustained burst of tiny segments (for example OAP's
-// schema-registry preload): many small segments stay open and in active use
-// at once, not just opened-then-closed in a tight loop. Before this fix,
-// every open segment held its own *os.File for its entire lifetime, so fd
-// usage grew with how many segments were simultaneously live. A small
-// segment now reads its full content into memory once (residentSegmentFile)
-// and releases the real fd immediately, the same way
-// the legacy engine's mmap'd segments never need a live fd per
-// lookup after the initial mapping.
-func TestResidentSmallSegmentsHoldNoFileDescriptorWhileOpen(t *testing.T) {
+// TestPersistedSegmentsHoldOneFileDescriptorWhileOpen keeps many small
+// segments open and in use at once, the shape of a burst of tiny segments
+// (for example OAP's schema-registry preload). Every persisted segment is
+// read through its file, so each holds exactly one descriptor, and closing
+// releases it.
+func TestPersistedSegmentsHoldOneFileDescriptorWhileOpen(t *testing.T) {
 	const segmentCount = 20
 	directory := t.TempDir()
 	readers := make([]*Reader, 0, segmentCount)
@@ -679,10 +676,9 @@ func TestResidentSmallSegmentsHoldNoFileDescriptorWhileOpen(t *testing.T) {
 	}
 	after := openFileDescriptorCount(t)
 	// Each OpenStrict also opens the .snp manifest transiently while
-	// parsing, but that handle does not outlive the call; only the
-	// resident-vs-lazy choice for the .seg file itself should show up here.
-	if after-before >= segmentCount {
-		t.Fatalf("file descriptors grew by %d across %d simultaneously open small segments, want well under one per segment", after-before, segmentCount)
+	// parsing, but that handle does not outlive the call.
+	if after-before != segmentCount {
+		t.Fatalf("file descriptors grew by %d across %d simultaneously open segments, want one per segment", after-before, segmentCount)
 	}
 	for segmentIndex, reader := range readers {
 		var identifier []byte
@@ -701,50 +697,13 @@ func TestResidentSmallSegmentsHoldNoFileDescriptorWhileOpen(t *testing.T) {
 			t.Fatalf("segment %d: identifier = %q, want %q", segmentIndex, identifier, "series")
 		}
 	}
-}
-
-func TestResidentSegmentFileAppliesSizeThresholdWithoutTouchingOversizedFiles(t *testing.T) {
-	directory, segmentPath := writeCommittedIndex(t)
-	info, statErr := os.Stat(segmentPath)
-	if statErr != nil {
-		t.Fatal(statErr)
+	for _, reader := range readers {
+		if closeErr := reader.Close(); closeErr != nil {
+			t.Fatal(closeErr)
+		}
 	}
-
-	resident, qualified, residentErr := residentSegmentFile(uint64(info.Size()), segmentPath)
-	if residentErr != nil {
-		t.Fatal(residentErr)
-	}
-	if !qualified {
-		t.Fatal("a small committed segment should qualify for the resident path")
-	}
-	if _, ok := resident.(*byteSegmentFile); !ok {
-		t.Fatalf("resident segmentFile has type %T, want *byteSegmentFile", resident)
-	}
-
-	// An oversized size must short-circuit before any read of the path, so
-	// an unreadable (here: nonexistent) path is safe to pass.
-	missingPath := filepath.Join(directory, "does-not-exist.seg")
-	_, oversizedQualified, oversizedErr := residentSegmentFile(MaxResidentSegmentSize+1, missingPath)
-	if oversizedErr != nil {
-		t.Fatalf("an oversized segment must not attempt to read its file: %v", oversizedErr)
-	}
-	if oversizedQualified {
-		t.Fatal("a segment above MaxResidentSegmentSize must not qualify for the resident path")
-	}
-}
-
-func TestResidentSegmentFileRejectsSizeMismatch(t *testing.T) {
-	_, segmentPath := writeCommittedIndex(t)
-	info, statErr := os.Stat(segmentPath)
-	if statErr != nil {
-		t.Fatal(statErr)
-	}
-	_, qualified, residentErr := residentSegmentFile(uint64(info.Size())+1, segmentPath)
-	if !qualified {
-		t.Fatal("the declared size still qualifies for the resident path")
-	}
-	if residentErr == nil {
-		t.Fatal("expected an error when the file's actual size differs from the declared size")
+	if closed := openFileDescriptorCount(t); closed != before {
+		t.Fatalf("closing every segment left %d descriptors open", closed-before)
 	}
 }
 

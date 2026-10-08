@@ -2,25 +2,26 @@
 
 Status: **design** — not implemented.
 
-> **NIDX-03 note.** This document was written while the per-segment series
-> index (`seg-*/sidx/`) was still Bluge-backed. NIDX-03 cut `seg-*/sidx/` over
-> to the native ICE v3 engine (`pkg/index/native`) and removed the legacy
-> Bluge-backed series store entirely: there is no `bluge.pid` lock, no
-> `bluge.OpenWriter`, and no engine flag for it any more, so every claim below
-> that describes `seg-*/sidx/` as "a Bluge inverted directory" or routes its
-> snapshot/export path through `pkg/index/inverted`'s `ReadOnlyWalkDocuments`
-> / `ReadOnlyDocCount` (now `pkg/index/native`'s own read-only API) needs
-> re-validation against the native engine before this design is implemented.
-> The Stream element index (`shard-N/idx/`) is a separate cutover from
-> NIDX-03: PR #1390 already moved the live element-index write/query path
-> onto the same native ICE v3 engine, so it is **not** "unaffected" in the
-> sense of still being live-Bluge, and every claim below that describes
-> `shard-N/idx/` itself as a Bluge inverted directory needs the same
-> re-validation as `seg-*/sidx/` above. The one thing that still produces
-> legacy Bluge-format output is the **NIDX-04 migration tool**
-> (`banyand/stream/migration_element_index.go`), an offline, one-shot tool
-> that migrates pre-native element-index data; it is not on the live write
-> or query path.
+> **NIDX-03/04/05 note.** This document was written while the per-segment
+> series index (`seg-*/sidx/`) was still backed by a third-party index
+> library. NIDX-03 cut `seg-*/sidx/` over to the native ICE v3 engine
+> (`pkg/index/native`) and removed the legacy series store entirely: there is
+> no index-local lock file, no legacy writer, and no engine flag for it any
+> more, so every claim below that describes `seg-*/sidx/` as "a legacy
+> inverted directory" or routes its snapshot/export path through the retired
+> `pkg/index/inverted` package's `ReadOnlyWalkDocuments` / `ReadOnlyDocCount`
+> (now `pkg/index/native`'s own read-only API) needs re-validation against the
+> native engine before this design is implemented. The Stream element index
+> (`shard-N/idx/`) is a separate cutover from NIDX-03: PR #1390 already moved
+> the live element-index write/query path onto the same native ICE v3 engine,
+> so it is **not** "unaffected", and every claim below that describes
+> `shard-N/idx/` itself as a legacy inverted directory needs the same
+> re-validation as `seg-*/sidx/` above. NIDX-04 then cut the offline migration
+> tool (`banyand/stream/migration_element_index.go`) that bridges pre-native
+> element-index data onto the native writer too, and NIDX-05 removed the
+> retired third-party index library (and its dependency packages) from the
+> module entirely, so no claim below should assume that library's presence
+> at runtime, on disk, or in `go.mod`.
 
 BanyanDB already supports snapshots, backup/restore, and lifecycle management, but it still lacks
 an operations-oriented, cluster-level data import/export workflow. Backup moves a whole node's
@@ -262,7 +263,7 @@ Two different directories are called `sidx`, and they are not the same thing:
 
 | Source path | Actual content | Container |
 |---|---|---|
-| `seg-XXX/sidx/` | **Series index** — a Bluge inverted directory, no parts | segment-level `sidx-NNN.bnc` |
+| `seg-XXX/sidx/` | **Series index** — a legacy-engine inverted directory, no parts | segment-level `sidx-NNN.bnc` |
 | `shard-N/sidx/<rule>/<016x>/` | **Trace secondary index parts** — real parts, one directory per index rule, each with `manifest.json` | shard-level `shard-N-NNN.bnc` |
 
 #### 4.2.1 BNC file format
@@ -294,7 +295,7 @@ Exporting in CSV format:
 **Two models never reach part iteration, and missing either produces a header-only file with exit code 0 rather than an error.** Index-mode measure has zero parts and no shard directories — the segment-level series index *is* the payload — so its rows come from `readIndexModeDocs`, one CSV row per document, with the three fixed columns taken from the reserved stored fields `_id` / `_timestamp` / `_version` (`_id` holds `EntityValues`, whose first element is the resource name). Property has no parts either.
 4. **Complete export** — finish the gRPC stream.
 
-The existing dump readers `banyand/internal/dump/{stream,measure,trace}` cover the part-iteration shape, but **two of their entry points open the series index in write mode and cannot be used against a snapshot as they stand**: `dump.NewIndexResolver` and `dump.LoadSegmentSeriesMap` both call `inverted.NewStore`, which ends in `bluge.OpenWriter` and creates a `bluge.pid` lock inside the directory it opens. The snapshot machinery deliberately keeps that file out — `includeInClosedSnapshot` excludes it, and the open-segment path copies the index through `reader.Backup` — so opening a snapshot's `sidx/` this way writes the lock back in and streams it into the artifact. CSV export therefore needs one new read-only construction in the dump package, backed by `pkg/index/inverted`'s `ReadOnlyWalkDocuments` / `ReadOnlyDocCount`, neither of which takes the exclusive lock.
+The existing dump readers `banyand/internal/dump/{stream,measure,trace}` cover the part-iteration shape, but **two of their entry points open the series index in write mode and cannot be used against a snapshot as they stand**: `dump.NewIndexResolver` and `dump.LoadSegmentSeriesMap` both call `inverted.NewStore`, which ends in the legacy engine's writer open and creates an index-local lock file inside the directory it opens. The snapshot machinery deliberately keeps that file out — `includeInClosedSnapshot` excludes it, and the open-segment path copies the index through `reader.Backup` — so opening a snapshot's `sidx/` this way writes the lock back in and streams it into the artifact. CSV export therefore needs one new read-only construction in the dump package, backed by `pkg/index/inverted`'s `ReadOnlyWalkDocuments` / `ReadOnlyDocCount`, neither of which takes the exclusive lock.
 
 **Trace is a real gap, not a call-site difference.** `dump/trace`'s `Row` has no `EntityValues` and its reader has no `SetIndexResolver` — only stream and measure do — so the `_name` column has no source in the part. Its `Row.SeriesID` does not help: it is a hash over the span's own tags, and the reader's own comment says it must not be used to look up on-disk series metadata. Trace's `_name` has to be recovered by matching the row's tag-name set against the embedded schemas, and when two `Trace` resources in one group have identical tag-name sets the signature is ambiguous — **reject CSV export for that group** rather than guess, and direct the operator to the native channel, which needs no `_name`.
 
@@ -1059,7 +1060,7 @@ nodes/data-1/measure/sw_metric/seg-20260907/
 | Artifact file | Container | Source data | Generated streams |
 |---|---|---|---|
 | `metadata` | No | `seg-XXX/metadata`, holding `{Version, EndTime}` | None — not sent. The receiver generates it locally when creating the segment |
-| `sidx-NNN.bnc` | Yes | `seg-XXX/sidx/**`, a Bluge inverted directory | `SERIES_INDEX` stream, **one per target node** ([Data transfer](#525-data-transfer)) — not one per shard |
+| `sidx-NNN.bnc` | Yes | `seg-XXX/sidx/**`, a legacy-engine inverted directory | `SERIES_INDEX` stream, **one per target node** ([Data transfer](#525-data-transfer)) — not one per shard |
 | `shard-N-NNN.bnc` | Yes | `shard-N/**`, `<016x>.snp`; also `idx/`, and for trace `sidx/<index-name>/<016x>/` | `PART` and `ELEMENT_INDEX` streams |
 
 Pushing runs in three rounds with a **global barrier** between them: ① segment-level series index, ② core parts, ③ element index. The barrier cannot be per-subtree, because the ordering dependency is per-shard and the same shard routinely appears under several source subtrees.
@@ -1095,7 +1096,7 @@ Footer of sidx-001.bnc, relative to the segment sidx/ directory:
   000000000012.seg     offset=0          size=4_194_304
   000000000013.seg     offset=4_194_304  size=1_048_576
   000000000013.snp     offset=5_242_880  size=1_024
-  (a series index is a Bluge directory — only .seg and .snp, and no metadata.json)
+  (a series index is a legacy-engine directory — only .seg and .snp, and no metadata.json)
 
 Chunk{
   idx=0,
@@ -1115,7 +1116,7 @@ Completion{
 }
 ```
 
-**The series index is segment-scoped, not shard-scoped, so it is delivered once per target node.** `<segment>/sidx` is a single Bluge directory shared by every shard in that segment (`storage/segment.go` builds it from the segment location), and the receive side confirms it: `syncSeriesCallback.CreatePartHandler` — identical in stream, measure and trace — resolves the destination from `ctx.Group` and `ctx.MinTimestamp` only, calls `CreateSegmentIfNotExist`, and **never reads `ctx.ShardID`**. Compare the element index, whose handler does exactly the opposite: `syncElementIndexCallback.CreatePartHandler` calls `segment.CreateTSTableIfNotExist(common.ShardID(ctx.ShardID))`.
+**The series index is segment-scoped, not shard-scoped, so it is delivered once per target node.** `<segment>/sidx` is a single legacy-engine directory shared by every shard in that segment (`storage/segment.go` builds it from the segment location), and the receive side confirms it: `syncSeriesCallback.CreatePartHandler` — identical in stream, measure and trace — resolves the destination from `ctx.Group` and `ctx.MinTimestamp` only, calls `CreateSegmentIfNotExist`, and **never reads `ctx.ShardID`**. Compare the element index, whose handler does exactly the opposite: `syncElementIndexCallback.CreatePartHandler` calls `segment.CreateTSTableIfNotExist(common.ShardID(ctx.ShardID))`.
 
 So `sidxCoversShards` has **one job only: resolving which nodes need this index.** Run `LocateAll(group, shard, copies)` for each shard in the list, take the **union of the node sets, deduplicated**, and open one `SERIES_INDEX` stream per node. `shard_id` on that stream is only a routing hint for the liaison; the receiver ignores it for placement.
 
@@ -1396,7 +1397,7 @@ Every decision and its reason is printed in the dry-run `MULTI-SRC` detail, beca
 
   > **Row-level deduplication was designed and rejected.** The key is cheap — `_element_id` for stream, `(trace_id, span_id)` for trace, both fixed columns needing no schema, measured at 12.1M keys / 92 MB / 2.2 s. It loses because **a content key cannot tell where a duplicate came from**: if the source already held the same span twice (a lifecycle migration window, say), deduplicating removes the source's copy too, and the target stops reproducing the source. So no channel deduplicates rows — native cannot decode them, and CSV will not.
 
-- **The element index cannot be reduced to a covering set.** Each source's `idx/` may be complementary rather than duplicated, and a dropped index entry never reappears. It was measured at exactly ×3.000 for three sources (4,000 → 12,000 documents, 765 KB → 2,295 KB), and Bluge's merge does not reclaim duplicates because the element index does not enable deduplication. Extrapolated to a 167-segment group with a 200 MB per-shard baseline, that is 65 GB at `replicas=1` and 98 GB at `replicas=2`. Provision `idx/` at `(replicas + 1)` times.
+- **The element index cannot be reduced to a covering set.** Each source's `idx/` may be complementary rather than duplicated, and a dropped index entry never reappears. It was measured at exactly ×3.000 for three sources (4,000 → 12,000 documents, 765 KB → 2,295 KB), and the legacy engine's merge does not reclaim duplicates because the element index does not enable deduplication. Extrapolated to a 167-segment group with a 200 MB per-shard baseline, that is 65 GB at `replicas=1` and 98 GB at `replicas=2`. Provision `idx/` at `(replicas + 1)` times.
 - **The segment-level series index follows the core-part selection, source by source.** Push the series index of **every source whose core parts were selected**, and for index-mode measure — which has no core parts, the index *is* the payload — push every source's. Do not compute a separate minimum shard-covering set over `sidxCoversShards`.
 
   > **Why shard coverage is the wrong containment test.** Two sources can both advertise shard 0 and still hold *different series*: that is exactly what topology drift produces. Their core parts cover disjoint time ranges, so [the selection rules](#63-rules) rule 1 selects **both** — but a minimum shard-covering set sees `{0}` ⊇ `{0}` and keeps only one. The pruned source's series then have core data with **no series-index entry**, and `Lookup(series)` never finds them: the rows are on disk and undiscoverable.
@@ -1416,7 +1417,7 @@ Every decision and its reason is printed in the dry-run `MULTI-SRC` detail, beca
 
   So for the series index there is nothing to merge *across shards* — one segment already has exactly one index covering all of them. The axis that does need merging is **across sources**, which is the rule above. For the other three the shard is part of the identity, and merging across shards would matter — but it never arises, because native fast push requires the source and target shard counts to be equal ([Native fast push](#52-native-fast-push)), and the CSV channel rebuilds every index from rows on the target.
 
-- **What deduplication on that index does and does not do**: the winner is the first arrival, not the newest. The discarded copy's index tag values become unqueryable — `Lookup(entity)` still matches, because the Bluge document `_id` is the entity value itself, while a filter on a non-entity indexed tag returns nothing for the losing value.
+- **What deduplication on that index does and does not do**: the winner is the first arrival, not the newest. The discarded copy's index tag values become unqueryable — `Lookup(entity)` still matches, because the legacy engine's document `_id` is the entity value itself, while a filter on a non-entity indexed tag returns nothing for the losing value.
 - **measure's storage does not converge.** The production default merge policy requires a write-amplification score of `≥ max(maxParts/2, minMergeMultiplier) = 4`, and equally sized parts score exactly their own count — three equal parts score 3 and are never merged. Queries are correct immediately regardless, because the read path deduplicates by version before any merge runs.
 
 #### 6.4.1 What a duplicate costs, per catalog

@@ -69,7 +69,7 @@ const (
 // BuildGroupUnionSidx walks every srcGroupRoot/seg-*/sidx/ directory
 // across every supplied group root, scans every series-index doc,
 // deduplicates by SeriesID, and re-emits the surviving docs into a
-// fresh bluge index rooted at stagingPath.
+// fresh series index rooted at stagingPath.
 //
 // The returned path is stagingPath when at least one doc was written;
 // it is "" (without error) when no source sidx contained any doc — the

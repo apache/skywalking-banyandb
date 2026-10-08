@@ -242,7 +242,7 @@ func TestNativeRangeExecuteCancellationAndClosedSearcher(t *testing.T) {
 }
 
 func TestNativeRangeExecuteRetainedLegacyMultiSegment(t *testing.T) {
-	source := filepath.Join("..", "..", "..", "index", "inverted", "testdata", "nidx01b", "index")
+	source := filepath.Join("..", "..", "..", "index", "testdata", "nidx01b", "index")
 	sourceRoot := filepath.Dir(source)
 	before := legacyIndexHashes(t, sourceRoot)
 	root := t.TempDir()

@@ -17,6 +17,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"os"
@@ -27,23 +28,35 @@ import (
 	"github.com/stretchr/testify/require"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
+// analyzeNativeTestLease is a minimal native.PathRootLease stub for writing
+// a throwaway sidx directly: this test has no surrounding database lock to
+// validate against.
+type analyzeNativeTestLease struct{}
+
+func (analyzeNativeTestLease) Validate() error           { return nil }
+func (analyzeNativeTestLease) ValidatePath(string) error { return nil }
+
 func TestAnalyzeSeriesNativePopulated(t *testing.T) {
 	path := t.TempDir()
-	store, err := inverted.NewStore(inverted.StoreOpts{Path: path})
+	owner, err := native.NewOwner(native.OwnerOptions{Lease: analyzeNativeTestLease{}, Path: path, IdentifierDocValues: true})
 	require.NoError(t, err)
-	docs := make([]index.Document, 0, 3)
+	docs := make([]native.Document, 0, 3)
 	for n, subject := range []string{"cpu", "cpu", "db"} {
 		s := &pbv1.Series{Subject: subject, EntityValues: []*modelv1.TagValue{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: fmt.Sprint(n)}}}}}
 		require.NoError(t, s.Marshal())
-		docs = append(docs, index.Document{EntityValues: append([]byte(nil), s.Buffer...)})
+		docs = append(docs, native.Document{Identifier: append([]byte(nil), s.Buffer...)})
 	}
-	require.NoError(t, store.InsertSeriesBatch(index.Batch{Documents: docs}))
-	require.NoError(t, store.Close())
+	done := make(chan error, 1)
+	require.NoError(t, owner.Batch(context.Background(), native.Batch{
+		Documents:          docs,
+		PersistentCallback: func(batchErr error) { done <- batchErr },
+	}))
+	require.NoError(t, <-done)
+	require.NoError(t, owner.Close())
 	before := treeHash(t, path)
 	root := &cobra.Command{Use: "root"}
 	RootCmdFlags(root)

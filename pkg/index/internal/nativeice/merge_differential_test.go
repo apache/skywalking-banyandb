@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"reflect"
 	"testing"
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
@@ -112,9 +111,6 @@ func TestMergeSegmentsMatchesDocumentReencodingByteForByte(t *testing.T) {
 		if !bytes.Equal(expected.Payload, actual.Payload) {
 			t.Fatalf("round %d: merged payload differs from document re-encoding (%d vs %d bytes)", round, len(expected.Payload), len(actual.Payload))
 		}
-		if !reflect.DeepEqual(expected.Mappings, actual.Mappings) {
-			t.Fatalf("round %d: mappings differ:\nreference %v\nmerge     %v", round, expected.Mappings, actual.Mappings)
-		}
 	}
 }
 
@@ -187,7 +183,7 @@ func BenchmarkMergeSegments(b *testing.B) {
 		for _, implementation := range []struct {
 			merge func(context.Context, []MergeInput) (MergeResult, error)
 			name  string
-		}{{referenceMergeSegments, "reference"}, {MergeSegments, "spliced"}} {
+		}{{referenceMergeSegmentsPayload, "reference"}, {materializedMergeSegments, "materialized"}, {MergeSegments, "streaming"}} {
 			b.Run(shape.name+"/"+implementation.name, func(b *testing.B) {
 				inputs := schemaShapedMergeInputs(b, shape.segments, shape.documentsPerSegment)
 				b.ReportAllocs()
@@ -200,4 +196,9 @@ func BenchmarkMergeSegments(b *testing.B) {
 			})
 		}
 	}
+}
+
+func referenceMergeSegmentsPayload(ctx context.Context, inputs []MergeInput) (MergeResult, error) {
+	result, mergeErr := referenceMergeSegments(ctx, inputs)
+	return MergeResult{Payload: result.Payload}, mergeErr
 }

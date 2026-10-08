@@ -116,7 +116,6 @@ func TestNewestSeriesIndexGenerationFilesExcludesSuperseded(t *testing.T) {
 	// Outside indexPath entirely: unchanged includeInClosedSnapshot behavior.
 	outside := filepath.Dir(indexPath)
 	require.True(t, filter(filepath.Join(outside, "shard-0", "metadata.json")))
-	require.False(t, filter(filepath.Join(outside, "shard-0", legacyLockFilename)))
 	// L8 regression: a seg-*/lock exclusive-lock file (lockFilename) is the
 	// offline index-mode copy tool's targetIdxStore lease lock, created
 	// beside the target sidx directory and removed only on a clean

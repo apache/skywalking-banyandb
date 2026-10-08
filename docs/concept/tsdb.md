@@ -13,18 +13,18 @@ The on-disk hierarchy is `group → segment → shard → part`:
 ```mermaid
 flowchart TD
     G["group/"] --> SEG["seg-&lt;date&gt;/ (time segment)"]
-    SEG --> SI["sidx/ — series index (Bluge)"]
+    SEG --> SI["sidx/ — series index (native ICE)"]
     SEG --> SH["shard-&lt;N&gt;/"]
     SH --> P["&lt;016x&gt;/ — part (immutable)"]
     SH --> SNP["&lt;016x&gt;.snp — snapshot manifest"]
     P --> COL["columnar files (meta.bin, primary.bin, …)"]
 ```
 
-For `Property`, there is no time segment: a group contains shards directly, each shard being a single inverted index (see [Storage & File Format](storage-and-format.md#6-property)).
+For `Property`, there is no time segment: a group contains shards directly, each shard being a single native ICE inverted index (see [Storage & File Format](storage-and-format.md#6-property)).
 
 ## Segment
 
-In each segment, the data is spread into shards based on `entity`. The series index (the per-segment `sidx/` directory, a Bluge inverted index) is stored in the segment and is used to locate the data in the shard.
+In each segment, the data is spread into shards based on `entity`. The series index (the per-segment `sidx/` directory, a native ICE inverted index) is stored in the segment and is used to locate the data in the shard.
 
 A segment directory is named `seg-<suffix>`, where the suffix is the segment-start time formatted as `YYYYMMDDHH` (hour granularity) or `YYYYMMDD` (day granularity), selected by the group's `segment_interval` unit.
 
@@ -67,7 +67,7 @@ The inverted index locates data within a segment/shard. It is used in several pl
 - the per-shard **element index** (`Stream`'s `idx/`) — it maps indexed-tag terms to **element ids** (with a parallel timestamp posting list);
 - the **index-mode `Measure`** store and the entire **`Property`** store (see [Storage & File Format](storage-and-format.md)).
 
-The inverted index uses the Bluge/ICE segment format. It stores a `snapshot` file `<012x>.snp` to record the validity of segments; a segment id absent from the snapshot is invalid and will be cleaned up at the next flush or merge.
+The inverted index uses the native ICE segment format (`pkg/index/native`). It stores a `snapshot` file `<012x>.snp` to record the validity of segments; a segment id absent from the snapshot is invalid and will be cleaned up at the next flush or merge.
 
 A segment file `<012x>.seg` contains the inverted index data, with these logical parts:
 

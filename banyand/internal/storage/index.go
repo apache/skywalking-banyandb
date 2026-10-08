@@ -54,14 +54,12 @@ const (
 	timestampFieldName  = "_timestamp"
 	versionFieldName    = "_version"
 
-	// legacyLockFilename and legacyExternalSegmentTempDirName are the
-	// previous release's on-disk artifact names (pkg/index/inverted.LockFilename
-	// and pkg/index/inverted.ExternalSegmentTempDirName), duplicated here so
-	// the series index never imports pkg/index/inverted for series-index work.
-	// newSeriesIndex removes both on open (NIDX-03 §6.3): a rolled-back node's
-	// bluge writer lock and staging directory are meaningless once a native
-	// owner is opened on the same sidx directory.
-	legacyLockFilename               = "bluge.pid"
+	// legacyExternalSegmentTempDirName is the previous release's
+	// external-segment staging directory name, duplicated here so the series
+	// index never needs to import the retired index package for series-index
+	// work. newSeriesIndex removes it on open (NIDX-03 §6.3): a rolled-back
+	// node's staging directory is meaningless once a native owner is opened
+	// on the same sidx directory.
 	legacyExternalSegmentTempDirName = "external-segment-temp"
 )
 
@@ -124,7 +122,7 @@ func newSeriesIndex(ctx context.Context, root string, flushTimeoutSeconds int64,
 		si.metrics = metrics
 	}
 	indexPath := path.Join(root, seriesIndexDirName)
-	removeLegacySeriesIndexArtifacts(si.l, root, indexPath)
+	removeLegacySeriesIndexArtifacts(si.l, root)
 
 	si.wait = flushTimeoutSeconds <= 0
 	var persistInterval time.Duration
@@ -149,22 +147,16 @@ func newSeriesIndex(ctx context.Context, root string, flushTimeoutSeconds int64,
 }
 
 // removeLegacySeriesIndexArtifacts best-effort removes the previous
-// release's bluge exclusive-lock file (indexPath/bluge.pid, inside the sidx
-// directory itself) and external-segment staging directory
-// (root/external-segment-temp, a SIBLING of sidx -- the previous release's
-// inverted.StoreOpts.ExternalSegmentTempDir was rooted at the segment
-// directory, not inside Path). Both are meaningless to (and would otherwise
-// linger forever under) a native owner opened on the same directory. Errors
-// are logged, not panicked or returned: a stray legacy artifact that cannot
-// be removed (for example a permissions issue) must not block the segment
-// from opening.
-func removeLegacySeriesIndexArtifacts(l *logger.Logger, root, indexPath string) {
-	legacyLockPath := filepath.Join(indexPath, legacyLockFilename)
-	if _, statErr := os.Stat(legacyLockPath); statErr == nil {
-		if err := lfs.DeleteFile(legacyLockPath); err != nil {
-			l.Warn().Err(err).Str("path", legacyLockPath).Msg("failed to remove legacy series index lock file")
-		}
-	}
+// release's external-segment staging directory (root/external-segment-temp,
+// a SIBLING of sidx -- the previous release's index writer rooted its
+// external-segment staging directory at the segment directory, not inside
+// the series index path). It is meaningless to (and would otherwise linger
+// forever under) a native owner opened on the same directory. Writer
+// exclusion itself is owned by BanyanDB's database lock, so there is no
+// index-local lock file to clean up here. Errors are logged, not panicked or
+// returned: a stray legacy artifact that cannot be removed (for example a
+// permissions issue) must not block the segment from opening.
+func removeLegacySeriesIndexArtifacts(l *logger.Logger, root string) {
 	legacyExternalSegmentTempDir := filepath.Join(root, legacyExternalSegmentTempDirName)
 	if err := os.RemoveAll(legacyExternalSegmentTempDir); err != nil {
 		l.Warn().Err(err).Str("path", legacyExternalSegmentTempDir).
@@ -204,7 +196,7 @@ func EncodeSeriesDocument(doc index.Document) (native.Document, error) {
 		}
 		value := bytes.Clone(term.Value)
 		// An unindexed field is always stored, matching the previous
-		// release's bluge.NewStoredOnlyField (NIDX-03 §6.1): Store=false on
+		// release's stored-only field behavior (NIDX-03 §6.1): Store=false on
 		// an Index=false field would carry no field at all, silently
 		// dropping data callers expect SortedValue/ProjectHit to return.
 		store := f.Store || !f.Index

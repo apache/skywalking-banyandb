@@ -27,8 +27,29 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 )
+
+// elementIndexFixtureDir holds a checked-in idx/ directory a previous
+// release's index writer produced (three documents across two tag
+// values). There is no generator test: regenerating these bytes would
+// require the retired third-party index library this repository no longer
+// depends on, so the checked-in bytes themselves are the provenance.
+const elementIndexFixtureDir = "testdata/element_index_fixture/idx"
+
+// copyElementIndexFixture byte-copies the checked-in previous-release
+// fixture into dst.
+func copyElementIndexFixture(t *testing.T, dst string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(dst, storage.DirPerm))
+	entries, err := os.ReadDir(elementIndexFixtureDir)
+	require.NoError(t, err)
+	for _, entry := range entries {
+		require.False(t, entry.IsDir())
+		data, readErr := os.ReadFile(filepath.Join(elementIndexFixtureDir, entry.Name()))
+		require.NoError(t, readErr)
+		require.NoError(t, os.WriteFile(filepath.Join(dst, entry.Name()), data, 0o600))
+	}
+}
 
 // TestCountElementIndexDocsNativeMigrationWriter proves CountElementIndexDocs
 // (NIDX-04's rename + native cutover of the former raw-engine doc counter)
@@ -61,34 +82,20 @@ func TestCountElementIndexDocsNativeMigrationWriter(t *testing.T) {
 }
 
 // TestCountElementIndexDocsLegacyWrittenIdx proves CountElementIndexDocs reads
-// an idx/ directory the OLD retired third-party engine wrote
-// (pkg/index/inverted, kept around purely as a legacy-compatibility writer)
-// just as well as a native-written one -- the scenario the element index's
-// "direct stream copy" migration hits when it byte-copies a previous-release
-// idx/ directory instead of rebuilding it.
+// an idx/ directory the previous release's index writer produced just as
+// well as a native-written one -- the scenario the element index's "direct
+// stream copy" migration hits when it byte-copies a previous-release idx/
+// directory instead of rebuilding it. The directory is the checked-in
+// elementIndexFixtureDir (three documents across two tag values), not one
+// this test writes live: regenerating it would require the retired
+// third-party index library this repository no longer depends on.
 func TestCountElementIndexDocsLegacyWrittenIdx(t *testing.T) {
 	idxPath := filepath.Join(t.TempDir(), "shard-0", elementIndexFilename)
-	require.NoError(t, os.MkdirAll(idxPath, storage.DirPerm))
-	legacyStore, err := inverted.NewStore(inverted.StoreOpts{Path: idxPath, BatchWaitSec: 0})
-	require.NoError(t, err)
-
-	field1 := index.NewStringField(index.FieldKey{IndexRuleID: 1, SeriesID: 1}, "ok")
-	field1.Store = true
-	field2 := index.NewStringField(index.FieldKey{IndexRuleID: 1, SeriesID: 2}, "err")
-	field2.Store = true
-	field3 := index.NewStringField(index.FieldKey{IndexRuleID: 1, SeriesID: 3}, "ok")
-	field3.Store = true
-	docs := index.Documents{
-		{DocID: 2001, Timestamp: 100, Fields: []index.Field{field1}},
-		{DocID: 2002, Timestamp: 200, Fields: []index.Field{field2}},
-		{DocID: 2003, Timestamp: 300, Fields: []index.Field{field3}},
-	}
-	require.NoError(t, legacyStore.Batch(index.Batch{Documents: docs}))
-	require.NoError(t, legacyStore.Close())
+	copyElementIndexFixture(t, idxPath)
 
 	count, countErr := CountElementIndexDocs(idxPath)
 	require.NoError(t, countErr)
-	require.EqualValues(t, len(docs), count, "a legacy-engine-written idx/ must count exactly the docs it holds")
+	require.EqualValues(t, 3, count, "a previous-release-written idx/ must count exactly the docs it holds")
 }
 
 // TestCountElementIndexDocsEmptyDirReturnsZero mirrors CountSeriesIndexDocs'

@@ -27,12 +27,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 )
 
-// legacyLockFilename is the previous release's bluge exclusive-lock file
-// name (pkg/index/inverted.LockFilename), duplicated here so this package
-// never imports pkg/index/inverted for series-index work. A stale lock
-// traveling with a copied index dir would block the target from opening it.
-const legacyLockFilename = "bluge.pid"
-
 // NoFsyncFS wraps a local FileSystem and skips per-file fsync /
 // directory sync calls. Migration is a one-shot bulk import: a crash
 // mid-run leaves the target root in an unusable state anyway and the
@@ -87,8 +81,8 @@ func (f NoFsyncFS) WriteAtomic(buffer []byte, name string, permission fs.Mode) (
 func (NoFsyncFS) SyncPath(string) {}
 
 // CopyDir recursively byte-copies the src directory into dst and returns the
-// bytes copied. The bluge exclusive-lock file is never copied: a stale lock
-// traveling with an index dir would block the target from opening it.
+// bytes copied. Writer exclusion is owned by BanyanDB's database lock, so
+// every regular file is copied as-is with no index-local exclusions.
 // Byte copy is deliberate — a hard-link fast path always tripped cross-FS
 // (staging on emptyDir → target on PVC) and was pure overhead. Symlinks are
 // not handled: banyandb's segment/shard trees never contain them.
@@ -102,9 +96,6 @@ func CopyDir(src, dst string) (int64, error) {
 		return 0, err
 	}
 	for _, e := range entries {
-		if !e.IsDir() && e.Name() == legacyLockFilename {
-			continue
-		}
 		srcPath := filepath.Join(src, e.Name())
 		dstPath := filepath.Join(dst, e.Name())
 		if e.IsDir() {

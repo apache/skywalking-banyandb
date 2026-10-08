@@ -21,11 +21,12 @@ import (
 	"os"
 )
 
-// OpenSegmentFile opens and validates one standalone immutable segment. It is
-// used by external-segment ingestion before the segment is introduced into a
-// published snapshot.
+// OpenSegmentFile opens and validates one standalone immutable segment, read
+// through its file like every persisted segment. It is used for external
+// receives and merge outputs before they are introduced into a published
+// snapshot.
 func OpenSegmentFile(path string) (*Reader, error) {
-	file, size, openErr := openSegmentFile(path)
+	file, size, openErr := openSegmentFile(path, false)
 	if openErr != nil {
 		return nil, fmt.Errorf("open segment %q: %w", path, openErr)
 	}
