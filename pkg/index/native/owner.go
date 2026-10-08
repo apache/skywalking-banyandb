@@ -343,9 +343,14 @@ type memorySegment struct {
 
 //nolint:govet // reader, payload, and atomic lifecycle state share ownership.
 type segmentHandle struct {
-	reader        *nativeice.Reader
-	payload       []byte
-	sourcePath    string
+	reader     *nativeice.Reader
+	payload    []byte
+	sourcePath string
+	// linkSource marks a handle whose sourcePath is the owner's own fsynced
+	// merge output. Publication hard-links it into its "<id>.seg" name, and
+	// the handle keeps serving from the same file afterwards, so it is never
+	// promoted to a second reader.
+	linkSource    bool
 	refs          atomic.Int64
 	count         uint64
 	id            uint64
@@ -417,6 +422,9 @@ func NewOwner(options OwnerOptions) (*Owner, error) {
 		}
 		if err := pathLease.ValidatePath(options.Path); err != nil {
 			return nil, fmt.Errorf("validate native root lease path: %w", err)
+		}
+		if err := removeStagedMerges(options.Path); err != nil {
+			return nil, fmt.Errorf("remove staged native merges: %w", err)
 		}
 	}
 	generation := uint64(1)
@@ -924,7 +932,7 @@ func (o *Owner) persistRoot(root *publishedRoot) error {
 		}
 		segments = append(segments, nativeice.SnapshotSegmentPayload{
 			SnapshotSegment: metadata, Payload: payload, SourcePath: sourcePath,
-			TrustedExisting: persisted,
+			LinkSource: sourcePath != "" && segment.handle.linkSource, TrustedExisting: persisted,
 		})
 		handles = append(handles, segment.handle)
 	}
@@ -945,6 +953,12 @@ func (o *Owner) persistRoot(root *publishedRoot) error {
 		// pin memory for the segment's lifetime, and externally ingested
 		// segments move off the staged file that release() deletes.
 		if handle.payload != nil && handle.size <= nativeice.MaxResidentSegmentSize {
+			continue
+		}
+		// A merge output is already file-backed, and its "<id>.seg" name is a
+		// hard link to the file its reader holds open; reopening it would only
+		// discard the warm reader.
+		if handle.linkSource {
 			continue
 		}
 		segmentPath := filepath.Join(o.options.Path, fmt.Sprintf("%012x.seg", handle.id))
@@ -1584,20 +1598,30 @@ func (o *Owner) compact(ctx context.Context, plan func([]mergeCandidate) []merge
 		}
 		inputs = append(inputs, nativeice.MergeInput{Reader: segment.handle.reader, Drop: drop, IndexedFields: segment.handle.indexedFields})
 	}
-	merged, mergeErr := nativeice.MergeSegments(ctx, inputs)
-	base.release()
-	if mergeErr != nil {
-		return mergeErr
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	// Open the merged segment before taking o.mu: validating and indexing a
-	// large payload under the owner lock would stall every concurrent
-	// admission and read view for its whole duration. It stays private until
-	// published below, so its identifier can be assigned afterwards.
+	// The merge runs, and its output is opened, before taking o.mu:
+	// validating and indexing a large segment under the owner lock would
+	// stall every concurrent admission and read view for its whole duration.
+	// It stays private until published below, so its identifier can be
+	// assigned afterwards. An owner with a directory streams the merge into a
+	// staged file there, so merge memory does not grow with the merged
+	// segment; one without a directory has nowhere to stage it.
 	var compacted rootSegment
-	if len(merged.Payload) != 0 {
+	var mergeErr error
+	if o.options.Path != "" {
+		compacted, mergeErr = o.mergeToStagedSegment(ctx, inputs)
+		base.release()
+		if mergeErr != nil {
+			return mergeErr
+		}
+	} else {
+		merged, inMemoryErr := nativeice.MergeSegments(ctx, inputs)
+		base.release()
+		if inMemoryErr != nil {
+			return inMemoryErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		compacted, mergeErr = newSegmentFromPayload(merged.Payload, 0)
 		if mergeErr != nil {
 			return mergeErr
@@ -2145,8 +2169,10 @@ func newSegmentFromPayload(payload []byte, segmentID uint64) (rootSegment, error
 	if openErr != nil {
 		return nil, openErr
 	}
+	// The reader borrows payload, which the caller hands over; the handle
+	// keeps it alive for the reader's lifetime.
 	handle := &segmentHandle{
-		reader: reader, payload: bytes.Clone(payload), count: reader.DocumentCount(),
+		reader: reader, payload: payload, count: reader.DocumentCount(),
 		id: segmentID, size: uint64(len(payload)), persisted: atomic.Bool{},
 	}
 	handle.refs.Store(1)

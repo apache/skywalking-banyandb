@@ -285,10 +285,16 @@ func (s *storedSegmentReader) dictionary(field string) (*vellum.FST, error) {
 const smallSegmentTermSetDocuments = 64
 
 // maxBloomFilterTerms bounds the dictionaries larger segments summarize in a
-// bloom filter (about 2 bytes per term), and with it the one-time cost of
-// building one on a field's first lookup. Larger dictionaries keep plain FST
-// lookups.
-const maxBloomFilterTerms = 1 << 16
+// bloom filter (about 2 bytes per term, so at most about 2 MiB per filter),
+// and with it the one-time cost of building one on a field's first lookup.
+// Larger dictionaries keep plain FST lookups. The bound matches the native
+// merge planner's maxLiveCount, the live document count past which it
+// retires a segment from merging, so it covers the merged segments
+// compaction produces: those are exactly the segments every upsert probes
+// for an identifier they almost never hold, and without a filter each probe
+// walks the segment's identifier FST. It is a variable only so tests can
+// lower it.
+var maxBloomFilterTerms = 1 << 20
 
 // termAbsent reports whether term is certainly not in field's dictionary:
 // exactly from a term set on small segments, probabilistically from a bloom

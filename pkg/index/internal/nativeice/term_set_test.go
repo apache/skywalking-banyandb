@@ -111,6 +111,9 @@ func TestLargeSegmentAnswersLookupsThroughBloomFilter(t *testing.T) {
 }
 
 func TestDictionaryAboveBloomCapKeepsPlainLookups(t *testing.T) {
+	previousCap := maxBloomFilterTerms
+	maxBloomFilterTerms = 1 << 12
+	t.Cleanup(func() { maxBloomFilterTerms = previousCap })
 	documents := make([]EncodeDocument, maxBloomFilterTerms+1)
 	for index := range documents {
 		documents[index] = EncodeDocument{Identifier: []byte(fmt.Sprintf("doc-%06d", index))}

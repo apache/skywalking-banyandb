@@ -1822,57 +1822,65 @@ func decodeStoredChunk(dst, compressed []byte) (decoded []byte, err error) {
 }
 
 func (s *storedSegmentReader) decodeDocument(documentNumber uint64, chunk []byte) (storedDocument, error) {
+	fields, decodeErr := s.decodeDocumentInto(documentNumber, chunk, nil)
+	return storedDocument{fields: fields}, decodeErr
+}
+
+// decodeDocumentInto decodes one stored document's fields, appending them to
+// fields[:0] so a sequential walk can reuse one field buffer. The returned
+// names and values reference chunk and the reader's field-name table.
+func (s *storedSegmentReader) decodeDocumentInto(documentNumber uint64, chunk []byte, fields []storedField) ([]storedField, error) {
+	fields = fields[:0]
 	documentOffset, offsetErr := s.documentOffset(documentNumber)
 	if offsetErr != nil {
-		return storedDocument{}, offsetErr
+		return nil, offsetErr
 	}
 	if documentOffset >= uint64(len(chunk)) {
-		return storedDocument{}, corruptError("segment %q has a stored document offset outside its chunk", s.path)
+		return nil, corruptError("segment %q has a stored document offset outside its chunk", s.path)
 	}
 	decoder := byteDecoder{payload: chunk[documentOffset:]}
 	metaLength, metaLengthErr := decoder.uvarint()
 	if metaLengthErr != nil {
-		return storedDocument{}, metaLengthErr
+		return nil, metaLengthErr
 	}
 	dataLength, dataLengthErr := decoder.uvarint()
 	if dataLengthErr != nil {
-		return storedDocument{}, dataLengthErr
+		return nil, dataLengthErr
 	}
 	meta, metaErr := decoder.bytes(metaLength)
 	if metaErr != nil {
-		return storedDocument{}, metaErr
+		return nil, metaErr
 	}
 	data, dataErr := decoder.bytes(dataLength)
 	if dataErr != nil {
-		return storedDocument{}, dataErr
+		return nil, dataErr
 	}
 	metaDecoder := byteDecoder{payload: meta}
-	document := storedDocument{}
 	for fieldCount := 0; metaDecoder.remaining() > 0; fieldCount++ {
 		if fieldCount >= maxStoredFieldsPerDocument {
-			return storedDocument{}, corruptError("segment %q has too many stored field values in one document", s.path)
+			return nil, corruptError("segment %q has too many stored field values in one document", s.path)
 		}
 		fieldID, fieldIDErr := metaDecoder.uvarint()
 		if fieldIDErr != nil {
-			return storedDocument{}, fieldIDErr
+			return nil, fieldIDErr
 		}
 		valueOffset, valueOffsetErr := metaDecoder.uvarint()
 		if valueOffsetErr != nil {
-			return storedDocument{}, valueOffsetErr
+			return nil, valueOffsetErr
 		}
 		valueLength, valueLengthErr := metaDecoder.uvarint()
 		if valueLengthErr != nil {
-			return storedDocument{}, valueLengthErr
+			return nil, valueLengthErr
 		}
 		if fieldID >= uint64(len(s.fieldNames)) || valueOffset > uint64(len(data)) || valueLength > uint64(len(data))-valueOffset {
-			return storedDocument{}, corruptError("segment %q has invalid stored field metadata", s.path)
+			return nil, corruptError("segment %q has invalid stored field metadata", s.path)
 		}
-		document.fields = append(document.fields, storedField{
+		fields = append(fields, storedField{
 			name:  s.fieldNames[fieldID],
 			value: data[valueOffset : valueOffset+valueLength],
 		})
 	}
-	return document, nil
+	return fields, nil
 }
 
 // loadDocumentOffsets preloads the fixed-width per-document offset table in

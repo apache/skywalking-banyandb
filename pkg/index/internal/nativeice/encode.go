@@ -228,9 +228,9 @@ func nativeICEFieldIDs(fields []nativeICEField) map[string]uint64 {
 }
 
 // assembleNativeSegment serializes already-derived field structures and
-// stored documents into segment bytes. Both EncodeSegment and MergeSegments
-// end here, so a merge that derives the same fields and stored documents
-// produces the same bytes as re-encoding the merged documents.
+// stored documents into segment bytes. MergeSegmentsTo writes the same
+// sections in the same order as a stream, so a merge produces the same bytes
+// as re-encoding the merged documents.
 func assembleNativeSegment(
 	fields []nativeICEField, storedData []byte, documentOffsets []uint64, documentCount, timeMin, timeMax uint64,
 ) ([]byte, error) {
@@ -714,10 +714,21 @@ type storedValue struct {
 // identifier; the remaining values are ordered by name, stably, so repeated
 // values of one name keep the order the document lists them in.
 func appendStoredDocument(destination []byte, values []storedValue, fieldIDs map[string]uint64) []byte {
-	sort.SliceStable(values[1:], func(leftIndex, rightIndex int) bool {
-		return values[leftIndex+1].name < values[rightIndex+1].name
-	})
-	meta := make([]byte, 0, len(values)*3)
+	destination, _ = appendStoredDocumentScratch(destination, values, fieldIDs, make([]byte, 0, len(values)*3))
+	return destination
+}
+
+// appendStoredDocumentScratch is appendStoredDocument with a caller-owned
+// metadata buffer, returned for reuse by the next document.
+func appendStoredDocumentScratch(destination []byte, values []storedValue, fieldIDs map[string]uint64, meta []byte) ([]byte, []byte) {
+	// A stable insertion sort: documents carry few values, often already in
+	// name order, and it allocates nothing.
+	for index := 2; index < len(values); index++ {
+		for previous := index; previous > 1 && values[previous].name < values[previous-1].name; previous-- {
+			values[previous], values[previous-1] = values[previous-1], values[previous]
+		}
+	}
+	meta = meta[:0]
 	var dataLength uint64
 	for _, value := range values {
 		meta = appendNativeUvarint(meta, fieldIDs[value.name])
@@ -731,7 +742,7 @@ func appendStoredDocument(destination []byte, values []storedValue, fieldIDs map
 	for _, value := range values {
 		destination = append(destination, value.value...)
 	}
-	return destination
+	return destination, meta
 }
 
 func encodeDeletionBitmap(documents []EncodeDocument) ([]byte, error) {
