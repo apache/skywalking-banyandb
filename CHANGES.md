@@ -75,6 +75,8 @@ Release Notes.
 - Bump google.golang.org/grpc to v1.83.2 to clear GO-2026-6443, GO-2026-6441, and GO-2026-6348.
 - Bump canopy and mcp npm dependencies to clear Dependabot CVEs (fast-uri, fastify, qs).
 - Bump mcp/canopy npm deps (hono, js-yaml, vitest 5) to clear Dependabot CVEs.
+- Bump the pending mcp npm dependencies (`fast-uri` 4.2.1, `ip-address` 10.7.3, `proxy-addr` 2.0.8, and the `brace-expansion` 5.0.12 dev dependency) and regenerate the committed `mcp/LICENSE`, so `make check-req` passes on the Dependabot PRs that only edit `package-lock.json`.
+- Stop `test-build-system.yml` reporting a version drift when the image carries the pinned version: `grep -q` inside a pipeline exited on its first match, SIGPIPEd the writer, and GitHub's default `bash -eo pipefail` turned that into a pipeline failure. The same pipeline shape hid a real regression in the "no version literal" check, where a false 141 skipped the check. Both now read from a here-string, and the platform probe no longer ends in `head -1`.
 
 ## 0.11.1
 
