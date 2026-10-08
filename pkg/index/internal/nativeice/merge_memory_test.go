@@ -18,13 +18,18 @@
 package nativeice
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"runtime/metrics"
+	"sort"
 	"sync"
 	"syscall"
 	"testing"
@@ -256,6 +261,71 @@ func BenchmarkStreamingMergeSeriesShaped(b *testing.B) {
 	for iteration := 0; iteration < b.N; iteration++ {
 		if _, mergeErr := MergeSegmentsToFile(context.Background(), inputs, path); mergeErr != nil {
 			b.Fatal(mergeErr)
+		}
+	}
+}
+
+// openHighEntropySeriesInputs is openSeriesShapedInputs with hashed series
+// names, whose term dictionaries are as large as production identifiers'
+// rather than compressing to almost nothing.
+func openHighEntropySeriesInputs(t testing.TB, segments, documentsPerSegment int) []MergeInput {
+	t.Helper()
+	inputs := make([]MergeInput, segments)
+	for segment := range inputs {
+		generation := seriesShapedGeneration(fmt.Sprintf("s%02d", segment), documentsPerSegment)
+		for index := range generation.Documents {
+			sum := sha256.Sum256([]byte(fmt.Sprintf("%d/%d", segment, index)))
+			series := base64.RawURLEncoding.EncodeToString(sum[:18])
+			document := &generation.Documents[index]
+			document.Identifier = []byte("service_instance_cpm/" + series)
+			for fieldIndex := range document.Fields {
+				if document.Fields[fieldIndex].Name == "entity" {
+					document.Fields[fieldIndex].Value = []byte(series)
+				}
+			}
+		}
+		sort.Slice(generation.Documents, func(left, right int) bool {
+			return bytes.Compare(generation.Documents[left].Identifier, generation.Documents[right].Identifier) < 0
+		})
+		directory := t.TempDir()
+		if encodeErr := Encode(directory, generation); encodeErr != nil {
+			t.Fatal(encodeErr)
+		}
+		reader, openErr := OpenStrict(directory)
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		t.Cleanup(func() { _ = reader.Close() })
+		inputs[segment] = MergeInput{Reader: reader}
+		for _, field := range []string{identifierField, "_group", "service", "instance", "entity"} {
+			if _, termErr := reader.TermExists(field, []byte("absent")); termErr != nil {
+				t.Fatal(termErr)
+			}
+		}
+	}
+	return inputs
+}
+
+// TestStreamingMergeMemoryWithFanIn merges the same 500K high-entropy
+// documents from 10 and from 50 inputs, with the iterator window budget and
+// with every iterator's window at its default size, and reports each
+// merge's cost. NIDX_MERGE_FANIN=1 runs it; it takes a while.
+func TestStreamingMergeMemoryWithFanIn(t *testing.T) {
+	if os.Getenv("NIDX_MERGE_FANIN") == "" {
+		t.Skip("set NIDX_MERGE_FANIN=1 to measure merge memory by fan-in")
+	}
+	const documents = 500_000
+	for _, fanIn := range []int{10, 50} {
+		inputs := openHighEntropySeriesInputs(t, fanIn, documents/fanIn)
+		for _, budget := range []int{fstWindowBudget, math.MaxInt32} {
+			previous := fstWindowBudget
+			fstWindowBudget = budget
+			shape := iteratorWindow(fanIn)
+			for _, gcPercent := range []int{10, 100} {
+				measurement := streamingMergeMeasurement(t, gcPercent, inputs)
+				t.Logf("fan-in %d, window %d x %d B (GOGC=%d): %v", fanIn, shape.slots, 1<<shape.shift, gcPercent, measurement)
+			}
+			fstWindowBudget = previous
 		}
 	}
 }

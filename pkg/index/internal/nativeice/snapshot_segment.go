@@ -21,23 +21,12 @@ import (
 	"os"
 )
 
-// OpenSegmentFile opens and validates one standalone immutable segment. It is
-// used by external-segment ingestion before the segment is introduced into a
-// published snapshot.
+// OpenSegmentFile opens and validates one standalone immutable segment, read
+// through its file like every persisted segment. It is used for external
+// receives and merge outputs before they are introduced into a published
+// snapshot.
 func OpenSegmentFile(path string) (*Reader, error) {
-	return openStandaloneSegmentFile(path, true)
-}
-
-// OpenSegmentFileOnDisk opens and validates one standalone immutable segment
-// like OpenSegmentFile, but never reads the segment into memory: the Reader
-// serves every access from the file, however small it is. It is used for
-// merge outputs, which should cost page cache rather than heap.
-func OpenSegmentFileOnDisk(path string) (*Reader, error) {
-	return openStandaloneSegmentFile(path, false)
-}
-
-func openStandaloneSegmentFile(path string, residentOK bool) (*Reader, error) {
-	file, size, openErr := openSegmentFile(path)
+	file, size, openErr := openSegmentFile(path, false)
 	if openErr != nil {
 		return nil, fmt.Errorf("open segment %q: %w", path, openErr)
 	}
@@ -49,7 +38,7 @@ func openStandaloneSegmentFile(path string, residentOK bool) (*Reader, error) {
 		return nil, footerErr
 	}
 	record := segmentRecord{path: path, documentCount: footer.documentCount, timeMin: footer.timeMin, timeMax: footer.timeMax}
-	pinned, physicalCount, pinErr := pinSegment(record, residentOK)
+	pinned, physicalCount, pinErr := pinSegment(record, true)
 	if pinErr != nil {
 		return nil, pinErr
 	}

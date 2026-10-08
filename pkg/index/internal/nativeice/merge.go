@@ -138,8 +138,27 @@ func MergeSegmentsToFile(ctx context.Context, inputs []MergeInput, path string) 
 // The output is byte-identical to encoding the merged documents with
 // EncodeSegment. Input readers remain owned by the caller and are not closed.
 func MergeSegmentsTo(ctx context.Context, inputs []MergeInput, output io.Writer, spillPrefix string) (MergeStats, error) {
-	if err := ctx.Err(); err != nil {
-		return MergeStats{}, err
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return MergeStats{}, ctxErr
+	}
+	// Admit the merge on every input: an input closed while the merge runs
+	// keeps its files open until the merge ends, and is released then. Its
+	// release error is the input's (see Reader.WhenReleased), never the
+	// merge's.
+	admitted := make([]*Reader, 0, len(inputs))
+	defer func() {
+		for _, reader := range admitted {
+			reader.endUse()
+		}
+	}()
+	for _, input := range inputs {
+		if input.Reader == nil {
+			continue
+		}
+		if useErr := input.Reader.use(); useErr != nil {
+			return MergeStats{}, useErr
+		}
+		admitted = append(admitted, input.Reader)
 	}
 	merger := acquireStreamMerger(ctx, output, spillPrefix)
 	defer releaseStreamMerger(merger)

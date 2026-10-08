@@ -188,7 +188,10 @@ func TestDictionaryIteratorOwnsRangeBounds(t *testing.T) {
 	requireNativeNoError(t, iterator.Close())
 }
 
-func TestBorrowedDictionaryIteratorSurvivesReaderClose(t *testing.T) {
+// TestBorrowedDictionaryIteratorReportsReaderClose checks an iterator that
+// outlives its Reader neither reads freed state nor keeps serving: it
+// reports ErrReaderClosed.
+func TestBorrowedDictionaryIteratorReportsReaderClose(t *testing.T) {
 	payload, encodeErr := EncodeSegment(Generation{Documents: []EncodeDocument{{
 		Identifier: []byte("iterator-document"),
 		Fields:     []EncodeField{{Name: "tag", Index: true, Terms: []EncodeTerm{{Value: []byte("term"), Frequency: 1}}}},
@@ -201,9 +204,8 @@ func TestBorrowedDictionaryIteratorSurvivesReaderClose(t *testing.T) {
 	requireNativeNoError(t, reader.Close())
 	runtime.GC()
 
-	term, count, nextErr := iterator.NextString()
-	requireNativeNoError(t, nextErr)
-	requireNative(t, term == "term" && count == 1, "term = %q/%d, want term/1", term, count)
+	_, _, nextErr := iterator.NextString()
+	requireNative(t, errors.Is(nextErr, ErrReaderClosed), "next after close = %v, want ErrReaderClosed", nextErr)
 	requireNativeNoError(t, iterator.Close())
 }
 

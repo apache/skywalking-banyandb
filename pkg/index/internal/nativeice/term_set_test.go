@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+
+	"github.com/apache/skywalking-banyandb/pkg/filter"
 )
 
 func TestSmallSegmentTermSetAnswersExactLookups(t *testing.T) {
@@ -105,7 +107,7 @@ func TestLargeSegmentAnswersLookupsThroughBloomFilter(t *testing.T) {
 	if readerErr != nil {
 		t.Fatal(readerErr)
 	}
-	if len(storedReader.smallTermSets) != 0 || storedReader.termBlooms[identifierField] == nil {
+	if termSetCount(storedReader) != 0 || !termFilterBuilt(storedReader, identifierField) {
 		t.Fatalf("a %d-document segment must use a bloom filter, not an exact term set", len(documents))
 	}
 }
@@ -131,7 +133,7 @@ func TestDictionaryAboveBloomCapKeepsPlainLookups(t *testing.T) {
 	if readerErr != nil {
 		t.Fatal(readerErr)
 	}
-	if bloom, built := storedReader.termBlooms[identifierField]; !built || bloom != nil {
+	if bloom, built := cachedTermFilter(storedReader, identifierField); !built || bloom != nil {
 		t.Fatalf("a %d-term dictionary must record a nil filter, got built=%v filter=%v", len(documents), built, bloom)
 	}
 }
@@ -177,7 +179,29 @@ func TestLargeSegmentSkipsTermSet(t *testing.T) {
 	if readerErr != nil {
 		t.Fatal(readerErr)
 	}
-	if len(storedReader.smallTermSets) != 0 {
+	if termSetCount(storedReader) != 0 {
 		t.Fatalf("a %d-document segment built a term set", len(documents))
 	}
+}
+
+func cachedTermFilter(reader *storedSegmentReader, field string) (*filter.BloomFilter, bool) {
+	cached, found := reader.termFilters.Load(field)
+	if !found {
+		return nil, false
+	}
+	return cached.(*termFilter).bloom, true
+}
+
+func termSetCount(reader *storedSegmentReader) int {
+	count := 0
+	reader.termSets.Range(func(any, any) bool {
+		count++
+		return true
+	})
+	return count
+}
+
+func termFilterBuilt(reader *storedSegmentReader, field string) bool {
+	bloom, built := cachedTermFilter(reader, field)
+	return built && bloom != nil
 }

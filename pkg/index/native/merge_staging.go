@@ -135,7 +135,9 @@ func (o *Owner) renameStagedSegment(handle *segmentHandle) (bool, error) {
 	if fileSystem.IsExist(finalPath) {
 		return false, fmt.Errorf("publish staged segment %d: %w", handle.id, nativeice.ErrPublishConflict)
 	}
-	if renameErr := fileSystem.Rename(handle.sourcePath, finalPath); renameErr != nil {
+	// The reader renames its own file, so it keeps serving it -- across a
+	// close and reopen on platforms that cannot rename an open file.
+	if renameErr := handle.reader.RenameSegmentFile(finalPath); renameErr != nil {
 		return false, fmt.Errorf("publish staged segment %d: %w", handle.id, renameErr)
 	}
 	handle.sourcePath = ""
@@ -184,7 +186,7 @@ func (o *Owner) mergeToStagedSegment(ctx context.Context, inputs []nativeice.Mer
 }
 
 func newSegmentFromMergeFile(path string, stats nativeice.MergeStats) (rootSegment, error) {
-	reader, openErr := nativeice.OpenSegmentFileOnDisk(path)
+	reader, openErr := nativeice.OpenSegmentFile(path)
 	if openErr != nil {
 		return nil, fmt.Errorf("open merged native segment: %w", openErr)
 	}

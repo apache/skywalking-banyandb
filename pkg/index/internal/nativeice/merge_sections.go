@@ -327,7 +327,7 @@ func docValueTermLength(encoded []byte) (int, error) {
 
 // termCursor is one input's position in a field's term dictionary.
 type termCursor struct {
-	iterator *vellum.FSTIterator
+	iterator termIterator
 	term     []byte
 	value    uint64
 	input    int
@@ -407,7 +407,7 @@ func (m *streamMerger) writeTerms(field *streamField) error {
 		if dictionary == nil {
 			continue
 		}
-		iterator, iteratorErr := dictionary.Iterator(nil, nil)
+		iterator, iteratorErr := searchDictionary(dictionary, nil, nil, nil, len(m.inputs))
 		if iteratorErr != nil {
 			if iteratorDone(iteratorErr) {
 				continue

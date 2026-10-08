@@ -347,8 +347,8 @@ type segmentHandle struct {
 	payload []byte
 	// sourcePath is the staged file a merge output or an external receive
 	// is served from until publication renames it to "<id>.seg"; it is empty
-	// afterwards, and for every other segment. pathMu guards it against a
-	// concurrent file snapshot, which copies from the current name.
+	// afterwards, and for every other segment. pathMu orders persistence's
+	// rename against the release that deletes an unpublished staged file.
 	sourcePath string
 	pathMu     sync.RWMutex
 	// staged marks a handle whose sourcePath is a fsynced, immutable file
@@ -881,7 +881,9 @@ func (o *Owner) persistRoot(root *publishedRoot) error {
 	}
 	segments := make([]nativeice.SnapshotSegmentPayload, 0, len(root.segments))
 	handles := make([]*segmentHandle, 0, len(root.segments))
-	unpersisted := make(map[*segmentHandle]struct{}, len(root.segments))
+	// unpersisted maps each admitted handle this persistence writes to the
+	// promotion that follows its payload through the publication.
+	unpersisted := make(map[*segmentHandle]*nativeice.Promotion, len(root.segments))
 	renamedAny := false
 	for _, current := range root.segments {
 		segment, ok := current.(*memorySegment)
@@ -917,7 +919,6 @@ func (o *Owner) persistRoot(root *publishedRoot) error {
 			metadata.DeletionBitmap = bitmap
 		}
 		payload := []byte(nil)
-		sourcePath := ""
 		persisted := segment.handle.persisted.Load()
 		trusted := persisted
 		if !persisted {
@@ -930,9 +931,7 @@ func (o *Owner) persistRoot(root *publishedRoot) error {
 			// only swaps the segment reference in the *current* o.root, not in
 			// roots already queued for persistence. handle.persisted is an
 			// atomic bool on that shared handle, so it is the one signal that
-			// correctly reaches every such copy; sourcePath is a plain string
-			// that promotion never clears on the original handle, so it must
-			// not gate whether this segment is re-validated as brand new.
+			// correctly reaches every such copy.
 			payload = segment.handle.payload
 			renamed, renameErr := o.renameStagedSegment(segment.handle)
 			if renameErr != nil {
@@ -943,14 +942,15 @@ func (o *Owner) persistRoot(root *publishedRoot) error {
 				// now carries its final name and only needs the manifest.
 				trusted = true
 				renamedAny = true
-			} else {
-				sourcePath = segment.handle.currentSourcePath()
 			}
-			unpersisted[segment.handle] = struct{}{}
+			var promotion *nativeice.Promotion
+			if payload != nil {
+				promotion = nativeice.NewPromotion(segment.handle.reader)
+			}
+			unpersisted[segment.handle] = promotion
 		}
 		segments = append(segments, nativeice.SnapshotSegmentPayload{
-			SnapshotSegment: metadata, Payload: payload, SourcePath: sourcePath,
-			TrustedExisting: trusted,
+			SnapshotSegment: metadata, Payload: payload, TrustedExisting: trusted, Promotion: unpersisted[segment.handle],
 		})
 		handles = append(handles, segment.handle)
 	}
@@ -971,41 +971,33 @@ func (o *Owner) persistRoot(root *publishedRoot) error {
 		handle.persisted.Store(true)
 	}
 	promotions := make([]persistedPromotion, 0, len(unpersisted))
-	for handle := range unpersisted {
-		// A resident-sized segment admitted from an in-memory payload keeps
-		// its original, already-open handle: persisted.Store(true) above
-		// publishes durability to every root sharing it, and swapping in a
-		// second reader would close the original and discard everything it
-		// has warmed (stored-reader, term dictionaries, document offsets).
-		// Larger payloads still move to a file-backed reader so they do not
-		// pin memory for the segment's lifetime, and externally ingested
-		// segments move off the staged file that release() deletes.
-		if handle.payload != nil && handle.size <= nativeice.MaxResidentSegmentSize {
-			continue
-		}
-		// A staged segment's reader already serves the file publication
+	for handle, promotion := range unpersisted {
+		// Once persisted, every segment is served from its file: an admitted
+		// payload occupies the heap only until it is durable. A staged
+		// segment's reader already serves the file publication
 		// renamed to "<id>.seg"; reopening it would only discard the warm
 		// reader.
 		if handle.staged {
 			continue
 		}
 		segmentPath := filepath.Join(o.options.Path, fmt.Sprintf("%012x.seg", handle.id))
-		reader, openErr := nativeice.OpenSnapshotSegment(segmentPath, nativeice.SnapshotSegment{
+		// The file is the one PublishSnapshot just wrote from this handle's
+		// payload: the replacement takes over the term filters the handle
+		// already built rather than rebuilding them from the file.
+		reader, openErr := nativeice.OpenPromotedSegment(segmentPath, nativeice.SnapshotSegment{
 			ID: handle.id, Size: handle.size, DocumentCount: handle.count,
 			TimeMin: handle.timeMin, TimeMax: handle.timeMax,
-		})
+		}, promotion)
 		if openErr != nil {
 			for _, promotion := range promotions {
 				_ = promotion.replacement.reader.Close()
 			}
 			return fmt.Errorf("open persisted native segment %d for promotion: %w", handle.id, openErr)
 		}
-		// Best effort, see newMemorySegment. This file-backed reader replaces
-		// a large in-memory segment's original handle (still warm) with one
-		// that has never served a lookup; without this, the first exact
-		// lookup after promotion rebuilds the filter lazily. Opened here,
-		// before promotePersistedHandles takes o.mu, so this also runs
-		// outside the lock.
+		// Best effort, see newMemorySegment: should the replacement have
+		// adopted no filter, it is built here, before promotePersistedHandles
+		// takes o.mu, so outside the lock, instead of lazily by the first
+		// exact lookup.
 		_ = reader.PrepareTermFilter(identifierField)
 		replacement := &segmentHandle{
 			reader: reader, count: handle.count, id: handle.id, size: handle.size,
@@ -1734,7 +1726,8 @@ func (o *Owner) compact(ctx context.Context, plan func([]mergeCandidate) []merge
 	old.release()
 	o.pruneRootsLocked()
 	for segment := range taskSegments {
-		o.unindexSegmentLocked(segment.(*memorySegment).handle.id)
+		handle := segment.(*memorySegment).handle
+		o.unindexSegmentLocked(handle.id)
 	}
 	if mergeDroppedAny {
 		// A merge-dropped identifier is not individually known here (the
@@ -1797,14 +1790,24 @@ func (o *Owner) CollectGarbage(ctx context.Context) error {
 		o.mu.Unlock()
 	}()
 	defer root.release()
+	// Segments released before this collection may still be being closed;
+	// let that finish so no file is deleted under an open descriptor.
+	segmentDisposals.wait()
 
-	latest, openErr := nativeice.OpenStrictMetadataOnly(o.options.Path)
-	if openErr != nil {
-		return openErr
+	// Segments the pinned root already serves from their validated files
+	// need not be opened and validated again; their paths need only still
+	// name those files.
+	held := make(map[uint64]*nativeice.Reader, len(root.segments))
+	for _, current := range root.segments {
+		if segment, ok := current.(*memorySegment); ok && segment.handle.persisted.Load() && segment.handle.payload == nil {
+			held[segment.handle.id] = segment.handle.reader
+		}
 	}
-	metadata := latest.SnapshotMetadata()
-	if closeErr := latest.Close(); closeErr != nil {
-		return closeErr
+	metadata, metadataErr := nativeice.ReadStrictSnapshotMetadata(o.options.Path, func(segmentID uint64) *nativeice.Reader {
+		return held[segmentID]
+	})
+	if metadataErr != nil {
+		return metadataErr
 	}
 	keepSegments := make(map[uint64]struct{}, len(metadata.Segments)+len(root.segments))
 	for _, segment := range metadata.Segments {
@@ -2167,7 +2170,9 @@ func newMemorySegment(documents []Document, segmentID uint64, identifierDocValue
 	if openErr != nil {
 		return nil, openErr
 	}
-	handle := &segmentHandle{reader: reader, payload: payload, count: uint64(len(documents)), id: segmentID, size: uint64(len(payload))}
+	handle := &segmentHandle{
+		reader: reader, payload: payload, count: uint64(len(documents)), id: segmentID, size: uint64(len(payload)),
+	}
 	for fieldName := range indexedFieldSet {
 		handle.indexedFields = append(handle.indexedFields, fieldName)
 	}
@@ -2428,11 +2433,78 @@ func (s *memorySegment) retain() { s.handle.refs.Add(1) }
 
 func (s *memorySegment) release() {
 	if s.handle.refs.Add(-1) == 0 {
-		_ = s.handle.reader.Close()
-		if path := s.handle.clearSourcePath(); path != "" {
-			_ = fileSystem.DeleteFile(path)
+		handle := s.handle
+		path := handle.clearSourcePath()
+		handle.payload = nil
+		// Closing the reader and deleting a staged source are file I/O, and
+		// the last reference often goes while o.mu is held (a new root
+		// replacing the old one), so they run on their own goroutine.
+		segmentDisposals.run(func() {
+			_ = handle.reader.Close()
+			if path != "" {
+				// Close does not wait for operations in flight on the
+				// reader -- a merge reading it, say -- so the staged file is
+				// deleted only once nothing can read it.
+				handle.reader.WhenReleased(func(error) { _ = fileSystem.DeleteFile(path) })
+			}
+		})
+	}
+}
+
+// segmentDisposals runs the disposal of released segment handles off the
+// goroutine that released them, and lets Owner.Close wait, outside o.mu, for
+// the disposals issued before it.
+var segmentDisposals = newDisposals()
+
+type disposals struct {
+	pending map[uint64]struct{}
+	cond    *sync.Cond
+	mu      sync.Mutex
+	next    uint64
+}
+
+func newDisposals() *disposals {
+	d := &disposals{pending: make(map[uint64]struct{})}
+	d.cond = sync.NewCond(&d.mu)
+	return d
+}
+
+func (d *disposals) run(dispose func()) {
+	d.mu.Lock()
+	ticket := d.next
+	d.next++
+	d.pending[ticket] = struct{}{}
+	d.mu.Unlock()
+	go func() {
+		defer func() {
+			_ = recover()
+			d.mu.Lock()
+			delete(d.pending, ticket)
+			d.cond.Broadcast()
+			d.mu.Unlock()
+		}()
+		dispose()
+	}()
+}
+
+// wait returns once every disposal issued before it ran; later ones, of
+// this or other owners, do not hold it up.
+func (d *disposals) wait() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	limit := d.next
+	for {
+		earlier := false
+		for ticket := range d.pending {
+			if ticket < limit {
+				earlier = true
+				break
+			}
 		}
-		s.handle.payload = nil
+		if !earlier {
+			return
+		}
+		d.cond.Wait()
 	}
 }
 
@@ -2642,6 +2714,9 @@ func (o *Owner) Close() error {
 	oldRoot.release()
 	o.pruneRootsLocked()
 	o.mu.Unlock()
+	// The released segments are disposed of off o.mu; Close returns once
+	// their files are closed.
+	segmentDisposals.wait()
 	o.persistMu.Lock()
 	persistErr := o.persistErr
 	o.persistMu.Unlock()

@@ -23,6 +23,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 )
 
+// unlinkSpillOnCreate reports whether a spill file's name is removed as soon
+// as the file is created; see fs.OpenFileNamesMutable. A variable so tests can
+// exercise the close-then-delete path on any platform.
+var unlinkSpillOnCreate = fs.OpenFileNamesMutable
+
 // mergeSpillThreshold bounds how many bytes one staged merge section keeps in
 // memory before it moves to a spill file.
 var mergeSpillThreshold = 4 << 20
@@ -46,8 +51,8 @@ func (f *spillFactory) nextPath() string {
 // spillBuffer stages a merge section whose length must be written before its
 // bytes. It holds up to mergeSpillThreshold bytes in memory and appends the
 // rest to a spill file, so a staged section costs bounded memory however
-// large it grows. A spill file is unlinked as soon as it is created and
-// lives, nameless, only until the buffer is reset.
+// large it grows. A spill file lives only until the buffer is reset, and
+// where the platform allows it without a name (see startSpill).
 type spillBuffer struct {
 	factory *spillFactory
 	file    fs.File
@@ -79,11 +84,16 @@ func (b *spillBuffer) startSpill() error {
 	if createErr != nil {
 		return fmt.Errorf("create merge spill file: %w", createErr)
 	}
-	// The name is removed at once: the open file stays readable and
-	// writable, and a crash can then leave nothing behind in the index
-	// directory, where the previous release's engine would never clean it.
-	if deleteErr := segmentFileSystem.DeleteFile(path); deleteErr != nil {
-		return errors.Join(fmt.Errorf("unlink merge spill file: %w", deleteErr), file.Close())
+	// Where an open file can be unlinked, the name is removed at once: the
+	// open file stays readable and writable, and a crash can then leave
+	// nothing behind in the index directory, where the previous release's
+	// engine would never clean it. Windows refuses to unlink an open file,
+	// so there the name is removed once the file is closed (closeFile), and
+	// a crash can leave it for the next owner start to remove.
+	if unlinkSpillOnCreate {
+		if deleteErr := segmentFileSystem.DeleteFile(path); deleteErr != nil {
+			return errors.Join(fmt.Errorf("unlink merge spill file: %w", deleteErr), file.Close())
+		}
 	}
 	// The spill file is read back moments later; keep its pages.
 	fs.SetCached(file, true)
@@ -118,6 +128,9 @@ func (b *spillBuffer) copyTo(destination io.Writer) error {
 	if copyErr == nil && uint64(copied) != b.size {
 		copyErr = fmt.Errorf("merge spill file %q holds %d bytes, want %d: %w", b.path, copied, b.size, io.ErrUnexpectedEOF)
 	}
+	// The spill is never read again; its pages need not wait for the
+	// file's removal to leave the page cache.
+	_ = fs.AdvisePageCache(b.file, fs.PageCacheDontNeed)
 	return copyErr
 }
 
@@ -138,6 +151,9 @@ func (b *spillBuffer) closeFile() error {
 	}
 	if b.file != nil {
 		closeErr = errors.Join(closeErr, b.file.Close())
+		if !unlinkSpillOnCreate {
+			closeErr = errors.Join(closeErr, segmentFileSystem.DeleteFile(b.path))
+		}
 		b.file, b.path = nil, ""
 	}
 	return closeErr

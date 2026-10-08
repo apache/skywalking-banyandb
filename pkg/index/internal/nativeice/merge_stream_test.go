@@ -298,3 +298,40 @@ func TestMergeSpillFilesNeverKeepAName(t *testing.T) {
 		t.Fatal(resetErr)
 	}
 }
+
+// TestMergeSpillFilesRemovedAfterCloseWhereUnlinkingOpenFilesFails runs the
+// spill path platforms that cannot unlink an open file take: the name lives
+// while the file is open and is removed with it.
+func TestMergeSpillFilesRemovedAfterCloseWhereUnlinkingOpenFilesFails(t *testing.T) {
+	forceMergeSpill(t)
+	previous := unlinkSpillOnCreate
+	unlinkSpillOnCreate = false
+	t.Cleanup(func() { unlinkSpillOnCreate = previous })
+	directory := t.TempDir()
+	factory := spillFactory{prefix: filepath.Join(directory, ".native-merge-spill-test")}
+	buffer := factory.newBuffer()
+	payload := bytes.Repeat([]byte("staged"), mergeSpillThreshold)
+	if _, writeErr := buffer.Write(payload); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	if entries, _ := os.ReadDir(directory); len(entries) != 1 {
+		t.Fatalf("an open spill file keeps its name here, got %d names", len(entries))
+	}
+	var copied bytes.Buffer
+	if copyErr := buffer.copyTo(&copied); copyErr != nil || !bytes.Equal(copied.Bytes(), payload) {
+		t.Fatalf("copy = %d bytes, err %v", copied.Len(), copyErr)
+	}
+	if resetErr := buffer.reset(); resetErr != nil {
+		t.Fatal(resetErr)
+	}
+	if entries, _ := os.ReadDir(directory); len(entries) != 0 {
+		t.Fatalf("reset left %d names", len(entries))
+	}
+	rng := rand.New(rand.NewSource(5)) //nolint:gosec // deterministic fixture.
+	inputs := randomMergeInputs(t, rng)
+	expected, expectedErr := referenceMergeSegments(context.Background(), inputs)
+	actual, _, actualErr := mergeToFile(t, inputs)
+	if expectedErr != nil || actualErr != nil || !bytes.Equal(expected.Payload, actual) {
+		t.Fatalf("merge with named spills: reference err %v, merge err %v", expectedErr, actualErr)
+	}
+}

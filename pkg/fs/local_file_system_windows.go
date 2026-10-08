@@ -100,3 +100,8 @@ func SyncAndDropCache(fd uintptr, offset int64, length int64) error {
 		Msg("SyncAndDropCache: flush succeeded, page-cache drop unsupported on windows")
 	return nil
 }
+
+// OpenFileNamesMutable reports whether a file that is still open can be
+// renamed or unlinked. Windows refuses both while a handle opened without
+// FILE_SHARE_DELETE, as os.Open opens files, is still open.
+const OpenFileNamesMutable = false

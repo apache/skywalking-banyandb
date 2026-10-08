@@ -17,7 +17,6 @@ package native
 
 import (
 	"fmt"
-	"path/filepath"
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
 
@@ -113,15 +112,6 @@ func (o *Owner) TakeFileSnapshot(destination string) error {
 	defer root.release()
 
 	segments := make([]nativeice.SnapshotSegmentPayload, 0, len(root.segments))
-	// A staged segment's file is renamed to "<id>.seg" by persistence. Hold
-	// each staged handle's path, so the name read here is the one the copy
-	// below opens.
-	locked := make(map[*segmentHandle]struct{})
-	defer func() {
-		for handle := range locked {
-			handle.pathMu.RUnlock()
-		}
-	}()
 	for _, current := range root.segments {
 		segment, ok := current.(*memorySegment)
 		if !ok {
@@ -130,10 +120,7 @@ func (o *Owner) TakeFileSnapshot(destination string) error {
 		if segmentHasNoLiveDocuments(segment) {
 			continue
 		}
-		if _, held := locked[segment.handle]; segment.handle.staged && !held {
-			segment.handle.pathMu.RLock()
-			locked[segment.handle] = struct{}{}
-		}
+
 		metadata := nativeice.SnapshotSegment{
 			ID: segment.handle.id, Size: segment.handle.size, DocumentCount: segment.handle.count,
 			TimeMin: segment.handle.timeMin, TimeMax: segment.handle.timeMax,
@@ -152,19 +139,20 @@ func (o *Owner) TakeFileSnapshot(destination string) error {
 			}
 			metadata.DeletionBitmap = bitmap
 		}
-		// The pinned root keeps every payload immutable and every persisted
-		// file alive until PublishSnapshot returns, so neither is copied here.
-		// A disk-backed segment is streamed from its persisted file rather than
-		// read whole, keeping snapshot memory independent of index size.
+		// The pinned root keeps every segment's reader open until
+		// PublishSnapshot returns. A payload is written as it is; any other
+		// segment is copied through its open reader, never by path, so the
+		// copy neither depends on whether persistence has renamed a staged
+		// file yet nor holds anything that would block persistence.
 		payload := segment.handle.payload
-		sourcePath := segment.handle.sourcePath
-		if payload == nil && sourcePath == "" {
-			sourcePath = filepath.Join(o.options.Path, fmt.Sprintf("%012x.seg", segment.handle.id))
+		var source *nativeice.Reader
+		if payload == nil {
+			source = segment.handle.reader
 		}
 		segments = append(segments, nativeice.SnapshotSegmentPayload{
 			SnapshotSegment: metadata,
 			Payload:         payload,
-			SourcePath:      sourcePath,
+			Source:          source,
 		})
 	}
 	return nativeice.PublishSnapshot(destination, root.generation, segments)

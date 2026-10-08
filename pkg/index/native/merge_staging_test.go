@@ -321,6 +321,7 @@ func TestOwnerStaleCompactionRemovesStagedMerge(t *testing.T) {
 	admitSeries(t, owner, "series-a", "series-b")
 	require.ErrorIs(t, owner.Compact(context.Background()), ErrStaleCompaction)
 	require.NoError(t, deleteErr)
+	segmentDisposals.wait()
 	require.Empty(t, stagedMergeFiles(t, path), "a discarded merge must remove its staged output")
 }
 
@@ -377,4 +378,98 @@ func TestOwnerCloseDuringCompactionLeavesNoStagedMerge(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, reopened.Close()) }()
 	requireSeries(t, reopened, "series-a", "series-b")
+}
+
+// ownerDescriptors counts this process's open descriptors on files under
+// path. Counting by target, rather than all descriptors, keeps the count
+// immune to unrelated descriptors other goroutines open and close meanwhile,
+// such as a background collection reading a manifest.
+func ownerDescriptors(t *testing.T, path string) int {
+	t.Helper()
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Skipf("descriptor listing unavailable: %v", err)
+	}
+	count := 0
+	for _, entry := range entries {
+		target, linkErr := os.Readlink(filepath.Join("/proc/self/fd", entry.Name()))
+		if linkErr == nil && strings.HasPrefix(target, path+string(filepath.Separator)) {
+			count++
+		}
+	}
+	return count
+}
+
+// TestOwnerServesEveryPersistedSegmentFromItsFile checks every way a segment
+// enters an owner -- admitted, merged, received externally, and reloaded at
+// startup -- ends up the same, before and after a restart: once persisted,
+// it is served from its file, with exactly one descriptor and no heap copy of
+// its bytes.
+func TestOwnerServesEveryPersistedSegmentFromItsFile(t *testing.T) {
+	path := t.TempDir()
+	owner, err := NewOwner(OwnerOptions{Lease: testLease{}, Path: path, CompactionThreshold: -1})
+	require.NoError(t, err)
+	admitSeries(t, owner, "series-a", "series-b")
+	require.NoError(t, owner.Compact(context.Background()))
+	admitSeries(t, owner, "series-c")
+	streamer, err := owner.EnableExternalSegments()
+	require.NoError(t, err)
+	payload, err := nativeice.EncodeSegment(nativeice.Generation{Documents: []nativeice.EncodeDocument{{Identifier: []byte("series-d")}}})
+	require.NoError(t, err)
+	require.NoError(t, streamer.StartSegment())
+	require.NoError(t, streamer.WriteChunk(payload))
+	require.NoError(t, streamer.CompleteSegment())
+	view, err := owner.Acquire(context.Background())
+	require.NoError(t, err)
+	waitDurable(t, owner, view.Generation())
+	require.NoError(t, view.Close())
+
+	requireFileBacked := func(o *Owner) {
+		o.mu.Lock()
+		defer o.mu.Unlock()
+		require.Len(t, o.root.segments, 3)
+		for _, current := range o.root.segments {
+			require.Nil(t, current.(*memorySegment).handle.payload, "a persisted segment holds no heap copy")
+		}
+	}
+	require.Eventually(t, func() bool {
+		owner.mu.Lock()
+		defer owner.mu.Unlock()
+		for _, current := range owner.root.segments {
+			if current.(*memorySegment).handle.payload != nil {
+				return false
+			}
+		}
+		return true
+	}, 10*time.Second, time.Millisecond, "promotion moves the admitted payload to its file")
+	requireFileBacked(owner)
+	require.Equal(t, 3, ownerDescriptors(t, path), "one descriptor per persisted segment")
+	requireSeries(t, owner, "series-a", "series-b", "series-c", "series-d")
+	require.NoError(t, owner.Close())
+	require.Zero(t, ownerDescriptors(t, path))
+
+	reopened, err := NewOwner(OwnerOptions{Lease: testLease{}, Path: path, CompactionThreshold: -1})
+	require.NoError(t, err)
+	requireFileBacked(reopened)
+	require.Equal(t, 3, ownerDescriptors(t, path), "a restarted owner holds the same descriptors")
+	requireSeries(t, reopened, "series-a", "series-b", "series-c", "series-d")
+	require.NoError(t, reopened.Close())
+	require.Zero(t, ownerDescriptors(t, path))
+}
+
+func TestReadOnlyGenerationIteratorReportsClose(t *testing.T) {
+	path := t.TempDir()
+	owner, err := NewOwner(OwnerOptions{Lease: testLease{}, Path: path, CompactionThreshold: -1})
+	require.NoError(t, err)
+	admitSeries(t, owner, "series-a", "series-b")
+	require.NoError(t, owner.Close())
+	generation, err := OpenReadOnlyGenerationStrict(path)
+	require.NoError(t, err)
+	iterator, err := generation.NewSeriesIterator(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, generation.Close())
+	_, err = iterator.Next()
+	require.ErrorIs(t, err, nativeice.ErrReaderClosed)
+	_, err = generation.StoredFields(context.Background(), []byte("series-a"))
+	require.ErrorIs(t, err, nativeice.ErrReaderClosed)
 }
