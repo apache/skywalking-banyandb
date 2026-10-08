@@ -18,10 +18,15 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strconv"
 	"testing"
 	"time"
@@ -110,6 +115,40 @@ func isqrt(n int) int {
 		y = (x + n/x) / 2
 	}
 	return x
+}
+
+// nidx03BenchTarget names one series of the fixture.
+type nidx03BenchTarget struct {
+	group    int
+	instance int
+}
+
+const (
+	// nidx03BenchTargetLookups and nidx03BenchTargetBatches size the target
+	// sets the exact-lookup and insert-existing benchmarks rotate through.
+	nidx03BenchTargetLookups = 1024
+	nidx03BenchTargetBatches = 16
+)
+
+// nidx03BenchSingleTarget restores the single fixed target the lookup
+// benchmarks used before (NIDX03_BENCH_SINGLE_TARGET), whose cost depends on
+// where that one series happens to land in the fixture's segments.
+var nidx03BenchSingleTarget = os.Getenv("NIDX03_BENCH_SINGLE_TARGET") != ""
+
+// targets returns count series spread over the whole fixture in a fixed
+// shuffled order, so a benchmark's cost is not that of wherever one series
+// happens to land.
+func (f *nidx03BenchFixture) targets(count int) []nidx03BenchTarget {
+	if nidx03BenchSingleTarget {
+		return []nidx03BenchTarget{{group: f.groups / 2, instance: f.perGroup / 2}}
+	}
+	total := f.groups * f.perGroup
+	order := rand.New(rand.NewSource(42)).Perm(total) //nolint:gosec // deterministic benchmark targets.
+	result := make([]nidx03BenchTarget, 0, min(count, total))
+	for _, series := range order[:min(count, total)] {
+		result = append(result, nidx03BenchTarget{group: series / f.perGroup, instance: series % f.perGroup})
+	}
+	return result
 }
 
 // nidx03BenchFixture owns the on-disk series index every benchmark below
@@ -231,6 +270,47 @@ func nidx03WarmUp(b *testing.B, op func()) (reportFirstOp func()) {
 	return func() { b.ReportMetric(float64(first.Nanoseconds()), "first-op-ns") }
 }
 
+// nidx03BenchRealisticNames makes entity values high-entropy, like OAP's
+// encoded service and instance identifiers, instead of sequential numbers
+// whose term dictionaries compress to almost nothing (NIDX03_BENCH_REALISTIC).
+var nidx03BenchRealisticNames = os.Getenv("NIDX03_BENCH_REALISTIC") != ""
+
+func nidx03BenchName(kind string, index int) string {
+	name := fmt.Sprintf("%s-%06d", kind, index)
+	if !nidx03BenchRealisticNames {
+		return name
+	}
+	sum := sha256.Sum256([]byte(name))
+	return kind + "-" + base64.RawURLEncoding.EncodeToString(sum[:18])
+}
+
+func nidx03BenchGroupName(index int) string { return nidx03BenchName("group", index) }
+
+func nidx03BenchInstanceName(index int) string { return nidx03BenchName("instance", index) }
+
+// nidx03TimeOps runs op b.N times, reporting the median and 99th percentile
+// latency and the process CPU time per operation alongside ns/op.
+func nidx03TimeOps(b *testing.B, op func()) {
+	b.Helper()
+	latencies := make([]time.Duration, b.N)
+	cpuBefore := nidx03ProcessCPU()
+	for i := 0; i < b.N; i++ {
+		start := time.Now()
+		op()
+		latencies[i] = time.Since(start)
+	}
+	cpu := nidx03ProcessCPU() - cpuBefore
+	b.StopTimer()
+	sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
+	b.ReportMetric(float64(latencies[len(latencies)/2].Nanoseconds()), "p50-ns")
+	b.ReportMetric(float64(latencies[len(latencies)*99/100].Nanoseconds()), "p99-ns")
+	b.ReportMetric(float64(cpu.Nanoseconds())/float64(b.N), "cpu-ns/op")
+	runtime.GC()
+	var stats runtime.MemStats
+	runtime.ReadMemStats(&stats)
+	b.ReportMetric(float64(stats.HeapAlloc)/(1<<20), "live-heap-MiB")
+}
+
 func nidx03BenchSeries(group, instance string) *pbv1.Series {
 	return &pbv1.Series{
 		Subject: nidx03BenchSubject,
@@ -266,9 +346,9 @@ func buildNidx03BenchFixture(b *testing.B) *nidx03BenchFixture {
 	scoreKey := index.FieldKey{IndexRuleID: nidx03BenchScoreRuleID}
 	n := 0
 	for g := 0; g < groups; g++ {
-		group := fmt.Sprintf("group-%06d", g)
+		group := nidx03BenchGroupName(g)
 		for i := 0; i < perGroup; i++ {
-			instance := fmt.Sprintf("instance-%06d", i)
+			instance := nidx03BenchInstanceName(i)
 			series := nidx03BenchSeries(group, instance)
 			if err := series.Marshal(); err != nil {
 				b.Fatal(err)
@@ -288,14 +368,50 @@ func buildNidx03BenchFixture(b *testing.B) *nidx03BenchFixture {
 	}
 	flush()
 	nidx03SettleCompaction(b, si, sidxPath)
+	if os.Getenv("NIDX03_BENCH_REOPEN") != "" {
+		si = reopenBenchSeriesIndex(b, si, sidxPath)
+	}
 	return &nidx03BenchFixture{
 		si:          si,
 		groups:      groups,
 		perGroup:    perGroup,
 		seriesCount: n,
-		groupOf:     func(i int) string { return fmt.Sprintf("group-%06d", i) },
-		instanceOf:  func(i int) string { return fmt.Sprintf("instance-%06d", i) },
+		groupOf:     nidx03BenchGroupName,
+		instanceOf:  nidx03BenchInstanceName,
 	}
+}
+
+// reopenBenchSeriesIndex closes a settled fixture and reopens it from disk,
+// so a benchmark measures segments as a restarted node serves them. Enabled
+// by NIDX03_BENCH_REOPEN; it logs the descriptors and live heap the reopened
+// index holds.
+func reopenBenchSeriesIndex(b *testing.B, si *seriesIndex, sidxPath string) *seriesIndex {
+	b.Helper()
+	if err := si.Close(); err != nil {
+		b.Fatal(err)
+	}
+	countFDs := func() int {
+		entries, err := os.ReadDir("/proc/self/fd")
+		if err != nil {
+			return -1
+		}
+		return len(entries)
+	}
+	liveHeap := func() uint64 {
+		runtime.GC()
+		var stats runtime.MemStats
+		runtime.ReadMemStats(&stats)
+		return stats.HeapAlloc
+	}
+	fdsBefore, heapBefore := countFDs(), liveHeap()
+	reopened, err := newSeriesIndex(context.Background(), filepath.Dir(sidxPath), 0, 0, nil, &testRootLease{})
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() { _ = reopened.Close() })
+	b.Logf("reopened: fds=%+d live-heap=%+.1fMiB", countFDs()-fdsBefore,
+		float64(int64(liveHeap())-int64(heapBefore))/(1<<20))
+	return reopened
 }
 
 // BenchmarkSeriesIndexInsertExisting measures the write hot path NIDX-03 §13
@@ -306,31 +422,42 @@ func BenchmarkSeriesIndexInsertExisting(b *testing.B) {
 	fixture := buildNidx03BenchFixture(b)
 
 	const reinsertBatch = 100
-	docs := make(index.Documents, 0, reinsertBatch)
-	scoreKey := index.FieldKey{IndexRuleID: nidx03BenchScoreRuleID}
-	for i := 0; i < reinsertBatch; i++ {
-		series := nidx03BenchSeries(fixture.groupOf(0), fixture.instanceOf(i))
-		if err := series.Marshal(); err != nil {
-			b.Fatal(err)
+	targets := fixture.targets(nidx03BenchTargetBatches * reinsertBatch)
+	if nidx03BenchSingleTarget {
+		targets = targets[:0]
+		for i := 0; i < reinsertBatch; i++ {
+			targets = append(targets, nidx03BenchTarget{group: 0, instance: i})
 		}
-		score := index.NewBytesField(scoreKey, convert.Int64ToBytes(int64(i)))
-		score.Store, score.Index = true, true
-		docs = append(docs, index.Document{
-			EntityValues: append([]byte(nil), series.Buffer...),
-			Fields:       []index.Field{score},
-			Timestamp:    int64(i + 1),
-		})
+	}
+	batches := make([]index.Documents, 0, nidx03BenchTargetBatches)
+	scoreKey := index.FieldKey{IndexRuleID: nidx03BenchScoreRuleID}
+	for start := 0; start < len(targets); start += reinsertBatch {
+		docs := make(index.Documents, 0, reinsertBatch)
+		for i, target := range targets[start:min(start+reinsertBatch, len(targets))] {
+			series := nidx03BenchSeries(fixture.groupOf(target.group), fixture.instanceOf(target.instance))
+			if err := series.Marshal(); err != nil {
+				b.Fatal(err)
+			}
+			score := index.NewBytesField(scoreKey, convert.Int64ToBytes(int64(i)))
+			score.Store, score.Index = true, true
+			docs = append(docs, index.Document{
+				EntityValues: append([]byte(nil), series.Buffer...),
+				Fields:       []index.Field{score},
+				Timestamp:    int64(i + 1),
+			})
+		}
+		batches = append(batches, docs)
 	}
 
+	next := 0
 	insert := func() {
-		if err := fixture.si.Insert(docs); err != nil {
+		if err := fixture.si.Insert(batches[next%len(batches)]); err != nil {
 			b.Fatal(err)
 		}
+		next++
 	}
 	reportFirstOp := nidx03WarmUp(b, insert)
-	for i := 0; i < b.N; i++ {
-		insert()
-	}
+	nidx03TimeOps(b, insert)
 	reportFirstOp()
 }
 
@@ -340,9 +467,16 @@ func BenchmarkSeriesIndexInsertExisting(b *testing.B) {
 func BenchmarkSeriesIndexLookupExact(b *testing.B) {
 	fixture := buildNidx03BenchFixture(b)
 	ctx := context.Background()
-	target := []*pbv1.Series{nidx03BenchSeries(fixture.groupOf(fixture.groups/2), fixture.instanceOf(fixture.perGroup/2))}
+	sampled := fixture.targets(nidx03BenchTargetLookups)
+	queries := make([][]*pbv1.Series, len(sampled))
+	for index, target := range sampled {
+		queries[index] = []*pbv1.Series{nidx03BenchSeries(fixture.groupOf(target.group), fixture.instanceOf(target.instance))}
+	}
 
+	next := 0
 	lookup := func() {
+		target := queries[next%len(queries)]
+		next++
 		sd, _, err := fixture.si.Search(ctx, target, IndexSearchOpts{})
 		if err != nil {
 			b.Fatal(err)
@@ -352,9 +486,7 @@ func BenchmarkSeriesIndexLookupExact(b *testing.B) {
 		}
 	}
 	reportFirstOp := nidx03WarmUp(b, lookup)
-	for i := 0; i < b.N; i++ {
-		lookup()
-	}
+	nidx03TimeOps(b, lookup)
 	reportFirstOp()
 }
 
@@ -381,9 +513,7 @@ func BenchmarkSeriesIndexLookupPrefix(b *testing.B) {
 		}
 	}
 	reportFirstOp := nidx03WarmUp(b, lookup)
-	for i := 0; i < b.N; i++ {
-		lookup()
-	}
+	nidx03TimeOps(b, lookup)
 	reportFirstOp()
 }
 
