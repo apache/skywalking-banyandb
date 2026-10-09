@@ -43,8 +43,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/bydbctl/internal/cmd"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -106,8 +105,8 @@ tags:
         value: 22
 `, propertyGroup, property2ID)
 
-	deletedFieldKey = index.FieldKey{TagName: "_deleted"}
-	sourceFieldKey  = index.FieldKey{TagName: "_source"}
+	deletedFieldName = "_deleted"
+	sourceFieldName  = "_source"
 )
 
 var _ = Describe("Property Operation", func() {
@@ -537,18 +536,16 @@ var _ = Describe("Property Cluster Operation", func() {
 
 		// check there should have two real properties in the dest database
 		// and one of them should be deleted (marked in the query phase)
-		store1, err := generateInvertedStore(node1Dir)
+		generation1, err := openNativePropertyShard(node1Dir)
 		Expect(err).NotTo(HaveOccurred())
-		store2, err := generateInvertedStore(node2Dir)
+		defer func() { _ = generation1.Close() }()
+		generation2, err := openNativePropertyShard(node2Dir)
 		Expect(err).NotTo(HaveOccurred())
+		defer func() { _ = generation2.Close() }()
 
-		query, err := inverted.BuildPropertyQuery(&propertyv1.QueryRequest{
-			Groups: []string{propertyGroup},
-		}, "_group", "_entity_id")
+		node1Search, err := queryNativePropertyRows(generation1)
 		Expect(err).NotTo(HaveOccurred())
-		node1Search, err := store1.Search(context.Background(), []index.FieldKey{sourceFieldKey, deletedFieldKey}, query, 10)
-		Expect(err).NotTo(HaveOccurred())
-		node2Search, err := store2.Search(context.Background(), []index.FieldKey{sourceFieldKey, deletedFieldKey}, query, 10)
+		node2Search, err := queryNativePropertyRows(generation2)
 		Expect(err).NotTo(HaveOccurred())
 
 		totalProperties := append(node1Search, node2Search...)
@@ -902,21 +899,14 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 		Eventually(func() bool {
 			allNodesConsistent := true
 			for i := 0; i < nodeCount; i++ {
-				store, err := generateInvertedStore(nodeDirs[i])
+				generation, err := openNativePropertyShard(nodeDirs[i])
 				if err != nil {
 					GinkgoWriter.Printf("Node %d store error: %v\n", i, err)
 					allNodesConsistent = false
 					continue
 				}
-				query, err := inverted.BuildPropertyQuery(&propertyv1.QueryRequest{
-					Groups: []string{propertyGroup},
-				}, "_group", "_entity_id")
-				if err != nil {
-					GinkgoWriter.Printf("Node %d query build error: %v\n", i, err)
-					allNodesConsistent = false
-					continue
-				}
-				searchResult, err := store.Search(context.Background(), []index.FieldKey{sourceFieldKey, deletedFieldKey}, query, 10)
+				searchResult, err := queryNativePropertyRows(generation)
+				_ = generation.Close()
 				if err != nil {
 					GinkgoWriter.Printf("Node %d search error: %v\n", i, err)
 					allNodesConsistent = false
@@ -926,8 +916,7 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 				// Filter non-deleted properties
 				nonDeletedCount := 0
 				for _, result := range searchResult {
-					deleted := convert.BytesToBool(result.Fields[deletedFieldKey.TagName])
-					if !deleted {
+					if !result.deleted {
 						nonDeletedCount++
 					}
 				}
@@ -942,15 +931,13 @@ var _ = Describe("Property Cluster Resilience with 5 Data Nodes", func() {
 	})
 })
 
-func filterProperties(doc []index.SeriesDocument, filter func(property *propertyv1.Property, deleted bool) bool) (res []*propertyv1.Property) {
+func filterProperties(doc []nativePropertyRow, filter func(property *propertyv1.Property, deleted bool) bool) (res []*propertyv1.Property) {
 	for _, p := range doc {
-		deleted := convert.BytesToBool(p.Fields[deletedFieldKey.TagName])
-		source := p.Fields[sourceFieldKey.TagName]
-		Expect(source).NotTo(BeNil())
+		Expect(p.source).NotTo(BeNil())
 		var pt propertyv1.Property
-		err := protojson.Unmarshal(source, &pt)
+		err := protojson.Unmarshal(p.source, &pt)
 		Expect(err).NotTo(HaveOccurred())
-		if filter(&pt, deleted) {
+		if filter(&pt, p.deleted) {
 			res = append(res, &pt)
 		}
 	}
@@ -1079,7 +1066,11 @@ func deleteData(rootCmd *cobra.Command, addr, group, name, id string, success bo
 	Expect(out).To(ContainSubstring("deleted: %t", success))
 }
 
-func generateInvertedStore(rootPath string) (index.SeriesStore, error) {
+// openNativePropertyShard opens the first group/shard directory found under
+// rootPath's property data tree, read-only: a native.ReadOnlyGeneration,
+// never a writable owner, so no lock is acquired on a directory a live node
+// may still have open.
+func openNativePropertyShard(rootPath string) (*native.ReadOnlyGeneration, error) {
 	dataParent := path.Join(rootPath, "property", "data")
 	groupList, err := os.ReadDir(dataParent)
 	if err != nil {
@@ -1105,13 +1096,52 @@ func generateInvertedStore(rootPath string) (index.SeriesStore, error) {
 			if !found {
 				continue
 			}
-			return inverted.NewStore(
-				inverted.StoreOpts{
-					Path: path.Join(groupPath, shardEntry.Name()),
-				})
+			return native.OpenReadOnlyGeneration(path.Join(groupPath, shardEntry.Name()))
 		}
 	}
 	return nil, fmt.Errorf("no shard found in %s", rootPath)
+}
+
+// nativePropertyRow is one live property document decoded from a shard's
+// native index: the stored "_source" (the property, as JSON) and "_deleted"
+// (nonzero when the property is tombstoned) fields banyand/property/db/
+// shard.go's buildUpdateDocument writes.
+type nativePropertyRow struct {
+	source  []byte
+	deleted bool
+}
+
+// queryNativePropertyRows walks every live document in generation and decodes
+// its _source/_deleted fields, mirroring banyand/cmd/dump/property.go's
+// decodePropertyRow.
+func queryNativePropertyRows(generation *native.ReadOnlyGeneration) ([]nativePropertyRow, error) {
+	var rows []nativePropertyRow
+	walkErr := generation.VisitLiveDocuments(context.Background(), func(doc native.StoredDocument) error {
+		var row nativePropertyRow
+		var deleteTime []byte
+		visitErr := doc.VisitStoredFields(func(name string, value []byte) bool {
+			switch name {
+			case sourceFieldName:
+				row.source = append([]byte(nil), value...)
+			case deletedFieldName:
+				deleteTime = append([]byte(nil), value...)
+			}
+			return true
+		})
+		if visitErr != nil {
+			return visitErr
+		}
+		if len(row.source) == 0 {
+			return nil
+		}
+		row.deleted = len(deleteTime) > 0 && convert.BytesToInt64(deleteTime) > 0
+		rows = append(rows, row)
+		return nil
+	})
+	if walkErr != nil {
+		return nil, walkErr
+	}
+	return rows, nil
 }
 
 type propertySlice []*propertyv1.Property

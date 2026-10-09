@@ -18,6 +18,7 @@
 package export
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -26,10 +27,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	pkgfs "github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
 
 func writeFile(t *testing.T, p string, body []byte) {
@@ -210,7 +210,7 @@ func TestStatPropertyGroup(t *testing.T) {
 	if len(p.Shards) != 2 || p.Shards[0].ShardId != 0 || p.Shards[1].ShardId != 2 || p.Shards[0].EstimatedBytes != 64 || p.Shards[1].EstimatedBytes != 32 {
 		t.Fatalf("property shard stats wrong: %+v", p.Shards)
 	}
-	// No bluge snapshot in the directory: the document count falls back to 0 without failing.
+	// No committed index snapshot in the directory: the document count falls back to 0 without failing.
 	if p.Shards[0].DocCount != 0 {
 		t.Fatalf("doc_count must be 0 for a shard without a committed index snapshot, got %d", p.Shards[0].DocCount)
 	}
@@ -266,26 +266,42 @@ func TestShardIDOf(t *testing.T) {
 	}
 }
 
-// buildIndex writes a committed bluge index with docs documents into dir, the way the
+// buildIndex writes a committed native index with docs documents into dir, the way the
 // segment-level series index and the property shards are written.
 func buildIndex(t *testing.T, dir string, docs int) {
 	t.Helper()
-	store, err := inverted.NewStore(inverted.StoreOpts{Path: dir})
+	root := filepath.Dir(dir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lockFile, err := pkgfs.NewLocalFileSystem().CreateLockFile(filepath.Join(root, "lock"), 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := index.FieldKey{Analyzer: index.AnalyzerKeyword, SeriesID: common.SeriesID(1), IndexRuleID: 1}
-	documents := make(index.Documents, 0, docs)
-	for i := 0; i < docs; i++ {
-		field := index.NewStringField(key, "v"+strconv.Itoa(i))
-		field.Index = true
-		field.Store = true
-		documents = append(documents, index.Document{DocID: uint64(i + 1), Fields: []index.Field{field}})
-	}
-	if err = store.Batch(index.Batch{Documents: documents}); err != nil {
+	lease, err := native.NewFileRootLease(lockFile, root)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err = store.Close(); err != nil {
+	owner, err := native.NewOwner(native.OwnerOptions{Lease: lease, Path: dir, IdentifierDocValues: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	documents := make([]native.Document, 0, docs)
+	for i := 0; i < docs; i++ {
+		documents = append(documents, native.Document{Identifier: []byte("doc-" + strconv.Itoa(i)), Timestamp: int64(i + 1)})
+	}
+	done := make(chan error, 1)
+	if err = owner.Batch(context.Background(), native.Batch{
+		Documents:          documents,
+		Mode:               native.BatchInsertOnly,
+		PersistentCallback: func(persistErr error) { done <- persistErr },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-done; err != nil {
+		t.Fatal(err)
+	}
+	if err = owner.Close(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -331,7 +347,7 @@ func TestStatTSDBGroup_IndexModeCountsCommittedDocuments(t *testing.T) {
 	// A corrupt index fails the plan instead of reporting zero rows.
 	corruptIndex(t, filepath.Join(seg, sidxDirName))
 	if _, err = statTSDBGroup(group, commonv1.Catalog_CATALOG_MEASURE, "sw_metadata", true, testPartReader(commonv1.Catalog_CATALOG_MEASURE)); err == nil ||
-		!errors.Is(err, inverted.ErrCorruptIndex) {
+		!errors.Is(err, native.ErrCorrupt) {
 		t.Fatalf("a corrupt index must fail the plan, got %v", err)
 	}
 }
@@ -358,7 +374,7 @@ func TestStatPropertyGroup_CountsCommittedDocuments(t *testing.T) {
 		t.Fatalf("a property shard must report its committed document count: %+v", shards)
 	}
 	corruptIndex(t, filepath.Join(group, "shard-0"))
-	if _, err = statPropertyGroup(group, "sw_prop"); !errors.Is(err, inverted.ErrCorruptIndex) {
+	if _, err = statPropertyGroup(group, "sw_prop"); !errors.Is(err, native.ErrCorrupt) {
 		t.Fatalf("a corrupt property shard must fail the plan, got %v", err)
 	}
 }

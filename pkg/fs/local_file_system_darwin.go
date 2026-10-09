@@ -34,13 +34,14 @@ func (*localFileSystem) CreateLockFile(name string, permission Mode) (File, erro
 	switch {
 	case err == nil:
 		if err = unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+			_ = file.Close()
 			return nil, &FileSystemError{
 				Code:    lockError,
 				Message: fmt.Sprintf("Cannot lock file, file name: %s, error message: %s", name, err),
 			}
 		}
 		return &LocalFile{
-			file: file,
+			file: file, locked: true,
 		}, nil
 	case os.IsExist(err):
 		return nil, &FileSystemError{
@@ -129,6 +130,11 @@ func CompareINode(srcPath, destPath string) error {
 	return nil
 }
 
+// adviseFile is a no-op on non-Linux systems.
+func adviseFile(_ uintptr, _ PageCacheAdvice) error {
+	return nil
+}
+
 // applyFadviseToFD is a no-op on non-Linux systems.
 func applyFadviseToFD(_ uintptr, _ int64, _ int64) error {
 	return nil
@@ -138,3 +144,8 @@ func applyFadviseToFD(_ uintptr, _ int64, _ int64) error {
 func SyncAndDropCache(fd uintptr, _ int64, _ int64) error {
 	return unix.FcntlFlock(fd, unix.F_FULLFSYNC, &unix.Flock_t{})
 }
+
+// OpenFileNamesMutable reports whether a file that is still open can be
+// renamed or unlinked. POSIX file systems allow it: the open descriptor keeps
+// referring to the same file.
+const OpenFileNamesMutable = true

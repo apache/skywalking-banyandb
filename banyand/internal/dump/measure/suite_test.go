@@ -47,7 +47,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	localfs "github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -388,7 +388,7 @@ func TestMeasureIndexedTagResolvedFromIndex(t *testing.T) {
 	}
 	strRuleID, intRuleID, arrRuleID := ruleID("idxr_str_rule"), ruleID("idxr_int_rule"), ruleID("idxr_arr_rule")
 
-	// Stop the live service so it releases bluge's exclusive lock on the series
+	// Stop the live service so it releases the native index's exclusive lock on the series
 	// index; the dump (like the offline CLI) reads the index from a quiesced
 	// database. The write path above is synchronous (safe-batch insert blocks
 	// until the series index is persisted), so the index is already durable on
@@ -410,7 +410,7 @@ func TestMeasureIndexedTagResolvedFromIndex(t *testing.T) {
 	resolver, err := dump.NewIndexResolver(segmentPath, 0, ruleToTag)
 	req.NoError(err)
 	// Closed explicitly before the smeta-path phase reopens the same index
-	// (bluge holds an exclusive lock, so only one store may be open at a time).
+	// (the native index holds an exclusive lock, so only one store may be open at a time).
 
 	fileSystem := localfs.NewLocalFileSystem()
 	seen := 0
@@ -638,7 +638,7 @@ func findSidxSegmentPath(t *testing.T, root string) string {
 	count := 0
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err == nil && d.IsDir() && d.Name() == "sidx" {
-			c, e := inverted.ReadOnlyDocCount(p)
+			c, e := native.ReadOnlyDocCount(p)
 			candidates += fmt.Sprintf("{path=%s count=%d err=%v} ", p, c, e)
 			count++
 			if c > best {

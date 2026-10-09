@@ -20,7 +20,6 @@ on:
   pull_request:
     paths-ignore:
       - 'canopy/**'
-      - 'ui/**'
       - 'docs/**'
       - '**.md'
       - '.github/workflows/canopy.yml'
@@ -139,7 +138,7 @@ jobs:
           make -C mcp docker || make -C mcp docker
           docker image ls
       - name: Log in to the Container registry
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         if: github.event_name != 'pull_request'
         with:
           registry: ${{ env.DOCKER_REGISTRY }}
@@ -232,13 +231,6 @@ jobs:
       # banyand/Dockerfile's default path (host image only).
       - name: Build companion binaries (backup/restore/lifecycle/migration)
         run: |
-          # download-artifacts:false above, so the prebuilt ui/dist artifact is
-          # absent and `make release` would fail compiling the UI-embedding
-          # banyand-server-static (ui/embed.go `//go:embed dist`). This job needs
-          # only the non-UI companion binaries; the -plugins host is built
-          # slim/no-UI inside Docker. Stub ui/dist (same placeholder the -plugins
-          # Docker builder stage uses) so the release build compiles.
-          mkdir -p ui/dist && touch ui/dist/index.html
           TARGET_OS=linux PLATFORMS=linux/amd64,linux/arm64 make release
       - name: Build plugin images (host + carrier)
         if: github.event_name == 'pull_request'
@@ -247,7 +239,7 @@ jobs:
           make -C banyand docker.plugins-carrier || make -C banyand docker.plugins-carrier
           docker image ls
       - name: Log in to the Container registry
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         if: github.event_name != 'pull_request'
         with:
           registry: ${{ env.DOCKER_REGISTRY }}

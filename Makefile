@@ -27,7 +27,7 @@ endif
 
 include scripts/build/version.mk
 
-PROJECTS := ui banyand bydbctl mcp fodc/agent fodc/proxy
+PROJECTS := banyand bydbctl mcp fodc/agent fodc/proxy
 
 TEST_CI_OPTS ?=
 
@@ -179,11 +179,6 @@ build-trace-pipeline-server: ## Build banyand-server with explicit CGO_ENABLED=1
 		echo "ERROR: build-trace-pipeline-server requires a C toolchain (gcc or clang) but neither was found in PATH."; \
 		exit 1; \
 	fi
-	@# ui/dist must contain at least one embeddable (non-hidden) file for
-	@# ui/embed.go's //go:embed dist to succeed.  Create a placeholder when the
-	@# UI has not been built (dev / CI without the UI step).
-	@mkdir -p ui/dist
-	@if [ ! -f ui/dist/index.html ]; then touch ui/dist/index.html; fi
 	@mkdir -p $(dir $(BANYAND_SERVER_CGO_BIN))
 	CGO_ENABLED=1 go build -trimpath \
 		-o $(BANYAND_SERVER_CGO_BIN) \
@@ -194,15 +189,15 @@ build-trace-pipeline-server: ## Build banyand-server with explicit CGO_ENABLED=1
 # NOTE: no -race flag — see comment above.  Plugins and -race require both the
 # .so and the host to be race-built; the simple CGO_ENABLED=1 targets here do
 # not pass -race, so the suite is intentionally excluded from the race lane.
-test-trace-pipeline: build-trace-pipeline-plugin build-trace-pipeline-server $(GINKGO) ## Build the .so + CGO server, then run the pipeline integration suites (Linux/macOS only; excluded from test-race)
-	BANYAND_BIN=$(mk_dir)$(BANYAND_SERVER_CGO_BIN) \
-	BANYAND_TRACE_PLUGIN=$(mk_dir)$(PLUGIN_OUTPUT_DIR)/latencystatussampler.so \
-	$(GINKGO) \
-	  --tags trace_pipeline \
-	  -ldflags "-X github.com/apache/skywalking-banyandb/pkg/test/flags.eventuallyTimeout=30s -X github.com/apache/skywalking-banyandb/pkg/test/flags.consistentlyTimeout=10s -X github.com/apache/skywalking-banyandb/pkg/test/flags.LogLevel=error" \
-	  -timeout 10m \
-	  ./test/integration/standalone/pipeline/... \
-	  ./test/integration/distributed/pipeline/...
+#
+# This is now an e2e gate: the bash orchestrator in test/e2e/tracepipeline/
+# builds the artifacts, launches a real banyand-server, runs the ginkgo
+# entrypoint against it (lifecycle + schema-store-replay-after-restart
+# phases), and tears everything down. It replaces the in-process
+# integration suites under test/integration/{standalone,distributed}/pipeline
+# that previously forked the binary via pkg/test/setup/external.go.
+test-trace-pipeline: build-trace-pipeline-plugin build-trace-pipeline-server ## Build the .so + CGO server, then run the trace-pipeline e2e gate (Linux/macOS only; excluded from test-race)
+	test/e2e/tracepipeline/run.sh
 
 ##@ Code quality targets
 
@@ -270,8 +265,39 @@ format: default ## Run the linters on all projects
 
 check-req: ## Check the requirements
 	@$(MAKE) -C scripts/ci/check test
-	@$(MAKE) -C ui check-version
 	@$(MAKE) -C mcp check-version
+	@$(MAKE) check-node-version
+	@$(MAKE) check-license-outputs
+
+# The Node version comes from the two projects that declare one, mcp and canopy,
+# for the same reason Go comes from go.mod: those are the declarations the Node
+# tooling checks at install time. actions/setup-node reads them directly
+# (`node-version-file: canopy/package.json`), so there is no generated file to keep
+# in step. This target verifies the two agree, that both pin exactly, and that
+# every other project's engines.node is satisfied by that pin.
+check-node-version: ## Check the mcp/canopy Node pin and every other engines.node
+	@bash scripts/ci/check/node_version.sh check $(mk_dir)
+
+# Byte-level verification of the license artifacts produced by `make license-dep`.
+# Deliberately not `git diff`: that compares blobs after Git's normalization, so
+# it can pass while the bytes on disk differ, and it cannot see a generated file
+# that was never committed or has since been deleted. The manifest hashes raw
+# bytes and compares complete path sets, so additions, deletions and content
+# changes are all reported.
+#
+# This runs in `check-req` on purpose: it must also fail in jobs that never
+# invoke the generator, because a stale committed artifact is still stale.
+#
+# See docs/design/0.12.0/docker-canonical-build/README.md.
+LICENSE_MANIFEST := scripts/ci/check/license_manifest.sh
+
+check-license-outputs: ## Verify the license artifacts byte-for-byte against the committed blobs
+	@bash $(LICENSE_MANIFEST) check-coverage $(mk_dir)
+	@bash $(LICENSE_MANIFEST) check-eol $(mk_dir)
+	@bash $(LICENSE_MANIFEST) check-committed $(mk_dir)
+
+license-manifest: ## Print the raw-byte manifest of the license artifacts (compare across hosts)
+	@bash $(LICENSE_MANIFEST) manifest $(mk_dir)
 
 include scripts/build/vuln.mk
 
@@ -307,14 +333,11 @@ pre-push: ## Check source files before pushing to the remote repo
 include scripts/build/license.mk
 
 # License-check / license-fix run a SINGLE license-eye invocation from the
-# repo root with the root .licenserc.yaml. This avoids:
-#   - editing ui/.licenserc.yaml (forbidden by plan §Principle 3),
-#   - the per-subdir loop over PROJECTS (each subdir would otherwise load
-#     its own .licenserc.yaml and miss the root config's OMC-runtime-state
-#     / handoff-import / playwright-mcp exclusions).
-# The root config already includes 'ui' in paths-ignore so the Vue app is
-# not double-scanned; canopy files are scanned from the root, which is the
-# desired surface for the license header check.
+# repo root with the root .licenserc.yaml. This avoids the per-subdir loop
+# over PROJECTS: each subdir would otherwise load its own .licenserc.yaml and
+# miss the root config's OMC-runtime-state / handoff-import / playwright-mcp
+# exclusions. canopy files are scanned from the root, which is the desired
+# surface for the license header check.
 license-check: $(LICENSE_EYE) ## Check license header
 	$(LICENSE_EYE) header check
 
@@ -323,15 +346,41 @@ license-fix: $(LICENSE_EYE) ## Fix license header issues
 
 license-dep: $(LICENSE_EYE)
 license-dep: TARGET=license-dep
-license-dep: PROJECTS:=ui mcp canopy
-license-dep: default ## Generate dependency LICENSE texts via SkyWalking Eyes
+license-dep: PROJECTS:=mcp canopy
+license-dep: default ## Generate dependency LICENSE texts, then normalize CRLF to LF
 	@rm -rf $(mk_dir)/dist/licenses
 	$(LICENSE_EYE) dep resolve -o $(mk_dir)/dist/licenses -s $(mk_dir)/dist/LICENSE.tpl
-	mv $(mk_dir)/ui/ui-licenses $(mk_dir)/dist/licenses
-	cat $(mk_dir)/ui/LICENSE >> $(mk_dir)/dist/LICENSE
 	@# MCP and Canopy Eyes output stay under mcp/licenses and canopy/licenses.
 	@# Do not append them to dist/LICENSE: Go packages ship MCP under mcp/
 	@# (LICENSE + licenses/ + package-lock.json), and Canopy has its own archive.
+	@# Normalize CRLF to LF LAST, as a recipe line rather than a sibling
+	@# prerequisite. As a prerequisite its position relative to `default` was
+	@# incidental -- serial make ran them in declaration order, but `make -j` could
+	@# race them -- and dist/licenses is deleted and regenerated by the recipe
+	@# above, so a normalize that ran alongside it would miss exactly the files it
+	@# exists for. Doing it here rather than in the container is also what keeps
+	@# the native and container paths byte-identical: license-eye copies license
+	@# bodies verbatim out of node_modules and a few npm packages ship CRLF, while
+	@# `eol=lf` means the committed blob is LF.
+	@bash $(LICENSE_MANIFEST) normalize $(mk_dir)
+# The canonical way to produce the license artifacts. `make license-dep` above
+# still works and is still exercised in CI as the native baseline, but the
+# container is the path that yields identical bytes on Linux, macOS and Windows:
+# a digest-pinned image, a snapshot-pinned apt index and a verified toolchain
+# tarball, with the tree streamed in rather than bind-mounted so the host's
+# bin/ and node_modules are never touched.
+#
+#   make docker-license-dep             the canonical generation
+#   make docker-run TARGET=<target>     anything else that does not need Git
+#   make bump-build-image               refresh the Debian digest and snapshot
+#   make check-license-outputs          verify the committed bytes
+#
+# The tree is streamed in without .git, so `make docker-run` is for targets that
+# need the toolchain rather than a working copy; `check` and `check-format`
+# belong on the host.
+#
+# Full rationale: docs/design/0.12.0/docker-canonical-build/README.md.
+include scripts/build/dockerize.mk
 
 ##@ Docker targets
 
@@ -383,7 +432,7 @@ release-push-candidate: ## Push release candidate
 	${PUSH_RELEASE_SCRIPTS}
 	
 .PHONY: all $(PROJECTS) clean build check-format default nuke
-.PHONY: lint check tidy format pre-push generate-test-cases capture-test-cases generate-trace-test-cases capture-trace-test-cases generate-stream-test-cases capture-stream-test-cases check-import-boundaries
+.PHONY: lint check tidy format pre-push check-license-outputs check-node-version license-manifest generate-test-cases capture-test-cases generate-trace-test-cases capture-trace-test-cases generate-stream-test-cases capture-stream-test-cases check-import-boundaries
 .PHONY: test test-race test-coverage test-ci test-docker
 .PHONY: build-trace-pipeline-plugin build-trace-pipeline-telemetry-plugins build-trace-pipeline-server test-trace-pipeline
 .PHONY: license-check license-fix license-dep

@@ -36,10 +36,13 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-generate-tool-${{ hashFiles('scripts/build/version.mk') }}
       - uses: actions/setup-node@v6
         with:
-          node-version: 24.6.0
+          node-version-file: 'canopy/package.json'
           cache: 'npm'
+          # See the note in .github/actions/setup-build-env: the version comes
+          # from canopy/package.json while both workspaces install, so the cache
+          # key must cover both lockfiles.
           cache-dependency-path: |
-            ui/package-lock.json
+            canopy/package-lock.json
             mcp/package-lock.json
       - name: Install Go
         uses: actions/setup-go@v6
@@ -48,8 +51,6 @@ jobs:
           cache: true
       - name: Generate codes
         run: make generate
-      - name: Build UI
-        run: make -C ui build
       - name: Upload generated files
         uses: actions/upload-artifact@v7
         with:
@@ -59,5 +60,4 @@ jobs:
             **/*.pb.gw.go
             **/*.pb.validate.go
             **/*_mock.go
-            ui/dist/**
           retention-days: 1

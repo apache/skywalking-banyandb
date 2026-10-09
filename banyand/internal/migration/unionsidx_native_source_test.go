@@ -22,6 +22,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -32,18 +33,19 @@ import (
 	"github.com/stretchr/testify/require"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 const (
 	// nativeVisitorPackage and nativeVisitorFunc name the BanyanDB-owned
-	// read-only document visitor issue #14010 introduces.
-	nativeVisitorPackage = "github.com/apache/skywalking-banyandb/pkg/index/inverted"
-	nativeVisitorFunc    = "ReadOnlyWalkDocuments"
+	// read-only document visitor the series index cutover (NIDX-03) moved
+	// this package onto: a native.ReadOnlyGeneration opened directly,
+	// instead of the pkg/index/inverted wrapper issue #14010 introduced
+	// (itself already nativeice-backed, but still a pkg/index/inverted
+	// dependency the series-index cutover retires).
+	nativeVisitorPackage = "github.com/apache/skywalking-banyandb/pkg/index/native"
+	nativeVisitorFunc    = "OpenReadOnlyGeneration"
 
 	// retiredReaderEntryPoint is the call that opens a retired third-party
 	// index reader directly on a source directory. This package reads sources
@@ -55,11 +57,8 @@ const (
 	// file shorter than it cannot carry a valid one.
 	iceFooterLength = 60
 
-	// unionSourceTagName is the stored tag the seeded sources carry, and
-	// publishedSeriesLimit bounds a destination lookup so a stray duplicate is
-	// reported rather than silently truncated away.
-	unionSourceTagName   = "service"
-	publishedSeriesLimit = 100
+	// unionSourceTagName is the stored tag the seeded sources carry.
+	unionSourceTagName = "service"
 )
 
 // TestSeriesUnionSourceReadReachesNativeVisitor is the structural half of the
@@ -141,10 +140,10 @@ func qualifiersForImport(imports map[string]string, wanted string) map[string]st
 	return names
 }
 
-// unionSourceSeries is one series a legacy-created source segment index holds.
-// The label is issue #14010's name for the document; a series identifier is a
-// hash of the marshaled entity buffer, so the entity value, not the label, is
-// what the fixture chooses.
+// unionSourceSeries is one series a previous-release-created source segment
+// index holds. The label is issue #14010's name for the document; a series
+// identifier is a hash of the marshaled entity buffer, so the entity value,
+// not the label, is what the fixture chooses.
 type unionSourceSeries struct {
 	label       string
 	entityValue string
@@ -162,6 +161,14 @@ var unionNativeSourceSeries = []unionSourceSeries{
 	{label: "303", entityValue: "series-303", tagValue: "gray", timestamp: 300, version: 3, deleted: true},
 }
 
+// unionSourceFixtureDir holds the checked-in sidx directories a previous
+// release's index writer produced for unionNativeSourceSeries: "full" holds
+// all three declared series (303 already deleted), "first" holds only the
+// first (101). There is no generator test: regenerating these bytes would
+// require the retired third-party index library this repository no longer
+// depends on, so the checked-in bytes themselves are the provenance.
+const unionSourceFixtureDir = "testdata/union_source_fixture"
+
 // unionSourceIdentity returns the marshaled entity buffer the store records as
 // one declared series' identity.
 func unionSourceIdentity(t *testing.T, declared unionSourceSeries) []byte {
@@ -173,73 +180,60 @@ func unionSourceIdentity(t *testing.T, declared unionSourceSeries) []byte {
 	return append([]byte(nil), series.Buffer...)
 }
 
-// seedUnionSourceSidx writes the declared series into
-// "<groupRoot>/<segName>/sidx" with the compatibility writer and deletes the
-// ones declared deleted, so the source is a directory a released BanyanDB
-// produced rather than one this test hand-assembled.
-func seedUnionSourceSidx(t *testing.T, groupRoot, segName string, seriesSet []unionSourceSeries) string {
+// seedUnionSourceSidx copies the checked-in previous-release-written fixture
+// (fixtureName: "full" or "first", see unionSourceFixtureDir) into
+// "<groupRoot>/<segName>/sidx", so the source is a directory a released
+// BanyanDB produced rather than one this test hand-assembled.
+func seedUnionSourceSidx(t *testing.T, groupRoot, segName, fixtureName string) string {
 	t.Helper()
 	sidxDir := filepath.Join(groupRoot, segName, sidxDirName)
-	require.NoError(t, os.MkdirAll(sidxDir, storage.DirPerm))
-
-	store, err := inverted.NewStore(inverted.StoreOpts{Path: sidxDir, BatchWaitSec: 0})
-	require.NoError(t, err)
-	documents := make(index.Documents, 0, len(seriesSet))
-	var deletedIdentities [][]byte
-	for _, declared := range seriesSet {
-		identity := unionSourceIdentity(t, declared)
-		tag := index.NewBytesField(index.FieldKey{TagName: unionSourceTagName}, convert.StringToBytes(declared.tagValue))
-		tag.Store = true
-		tag.Index = true
-		tag.NoSort = true
-		documents = append(documents, index.Document{
-			Fields:       []index.Field{tag},
-			EntityValues: identity,
-			Timestamp:    declared.timestamp,
-			DocID:        convert.Hash(identity),
-			Version:      declared.version,
-		})
-		if declared.deleted {
-			deletedIdentities = append(deletedIdentities, identity)
-		}
-	}
-	require.NoError(t, store.UpdateSeriesBatch(index.Batch{Documents: documents}))
-	if len(deletedIdentities) > 0 {
-		require.NoError(t, store.Delete(deletedIdentities))
-	}
-	require.NoError(t, store.Close())
+	require.NoError(t, os.MkdirAll(sidxDir, 0o755))
+	copyFixtureDir(t, filepath.Join(unionSourceFixtureDir, fixtureName, "sidx"), sidxDir)
 	return sidxDir
 }
 
-// openPublishedDestination opens a published union index through the retained
-// series-store surface, which this milestone does not touch, so what it reports
-// cannot agree with a faulty source read by construction.
-func openPublishedDestination(t *testing.T, sidxDir string) index.SeriesStore {
+// copyFixtureDir byte-copies every regular file in src into dst.
+func copyFixtureDir(t *testing.T, src, dst string) {
 	t.Helper()
-	store, err := inverted.NewStore(inverted.StoreOpts{Path: sidxDir, BatchWaitSec: 0})
+	entries, err := os.ReadDir(src)
 	require.NoError(t, err)
-	return store
+	for _, entry := range entries {
+		require.False(t, entry.IsDir(), "fixture %s must hold only regular files", src)
+		in, openErr := os.Open(filepath.Join(src, entry.Name()))
+		require.NoError(t, openErr)
+		out, createErr := os.Create(filepath.Join(dst, entry.Name()))
+		require.NoError(t, createErr)
+		_, copyErr := io.Copy(out, in)
+		require.NoError(t, copyErr)
+		require.NoError(t, out.Close())
+		require.NoError(t, in.Close())
+	}
+}
+
+// openPublishedDestination opens a published union index through the native
+// read-only generation API -- the same one the production destination owner
+// itself is built from -- so the test can inspect what the union actually
+// published.
+func openPublishedDestination(t *testing.T, sidxDir string) *native.ReadOnlyGeneration {
+	t.Helper()
+	generation, err := native.OpenReadOnlyGeneration(sidxDir)
+	require.NoError(t, err)
+	return generation
 }
 
 // publishedUnionSeries looks one identity up in a published union index and
 // reports the stored tag values it holds, or reports that the index holds no
-// live document under that identity. The lookup is an exact one so that the
-// answer for one series can never be contaminated by another's.
-func publishedUnionSeries(t *testing.T, store index.SeriesStore, identity []byte) ([]string, bool) {
+// live document under that identity. The lookup is an exact identifier one so
+// that the answer for one series can never be contaminated by another's.
+func publishedUnionSeries(t *testing.T, generation *native.ReadOnlyGeneration, identity []byte) ([]string, bool) {
 	t.Helper()
-	query, err := store.BuildQuery([]index.SeriesMatcher{
-		{Type: index.SeriesMatcherTypeExact, Match: identity},
-	}, nil, nil)
+	fields, err := generation.StoredFields(context.Background(), identity, unionSourceTagName)
 	require.NoError(t, err)
-	documents, err := store.Search(context.Background(),
-		[]index.FieldKey{{TagName: unionSourceTagName}}, query, publishedSeriesLimit)
-	require.NoError(t, err)
-	if len(documents) == 0 {
+	if fields == nil {
 		return nil, false
 	}
-	require.Len(t, documents, 1, "identity %q must resolve to at most one live published document", identity)
-	var values []string
-	if value, stored := documents[0].Fields[unionSourceTagName]; stored && value != nil {
+	values := make([]string, 0, len(fields[unionSourceTagName]))
+	for _, value := range fields[unionSourceTagName] {
 		values = append(values, string(value))
 	}
 	sort.Strings(values)
@@ -266,7 +260,7 @@ func truncateUnionSourceSegment(t *testing.T, sidxDir string) {
 // exists for: a lifecycle migration unions the series indexes of several node
 // replicas into one staged index before broadcasting it. The union reads every
 // source through the native document visitor and re-emits the survivors through
-// its retained destination writer, which this milestone does not change.
+// a native destination owner.
 //
 // Requirements proved here:
 //
@@ -280,22 +274,22 @@ func truncateUnionSourceSegment(t *testing.T, sidxDir string) {
 //	      native typed corruption error and publishes no staged destination, so
 //	      a migration aborts on unreadable input instead of broadcasting a
 //	      partial series index. The byte-level stored-chunk failures R4 also
-//	      names are proved against the visitor itself in pkg/index/inverted,
-//	      where no retired reader stands in the way.
+//	      names are proved against the native document visitor's own
+//	      corruption-detection tests (pkg/index/native/repair_test.go).
 func TestE2ESeriesUnionNativeSource(t *testing.T) {
 	tester := require.New(t)
 
 	firstRoot := t.TempDir()
 	secondRoot := t.TempDir()
-	seedUnionSourceSidx(t, firstRoot, "seg-20260621", unionNativeSourceSeries)
-	seedUnionSourceSidx(t, secondRoot, "seg-20260622", unionNativeSourceSeries[:1])
+	seedUnionSourceSidx(t, firstRoot, "seg-20260621", "full")
+	seedUnionSourceSidx(t, secondRoot, "seg-20260622", "first")
 
 	staging := filepath.Join(t.TempDir(), "union")
 	published, err := BuildGroupUnionSidx(context.Background(), []string{firstRoot, secondRoot}, staging, nil)
 	tester.NoError(err)
 	tester.Equal(staging, published, "a union that read live series must publish its staged index")
 
-	publishedCount, countErr := inverted.ReadOnlyDocCount(published)
+	publishedCount, countErr := native.ReadOnlyDocCount(published)
 	tester.NoError(countErr)
 	tester.Equal(int64(2), publishedCount,
 		"the union must publish exactly the two live series, each once, even though the first is read twice")
@@ -317,12 +311,12 @@ func TestE2ESeriesUnionNativeSource(t *testing.T) {
 	}
 
 	corruptRoot := t.TempDir()
-	truncateUnionSourceSegment(t, seedUnionSourceSidx(t, corruptRoot, "seg-20260621", unionNativeSourceSeries))
+	truncateUnionSourceSegment(t, seedUnionSourceSidx(t, corruptRoot, "seg-20260621", "full"))
 	corruptStaging := filepath.Join(t.TempDir(), "corrupt-union")
 
 	corruptPublished, corruptErr := BuildGroupUnionSidx(context.Background(),
 		[]string{corruptRoot}, corruptStaging, nil)
-	tester.ErrorIs(corruptErr, inverted.ErrCorruptIndex,
+	tester.ErrorIs(corruptErr, native.ErrCorrupt,
 		"a damaged source must be reported as a corrupt index, not as an opaque read failure")
 	tester.Empty(corruptPublished, "a union that failed on a damaged source must publish no staged index")
 }

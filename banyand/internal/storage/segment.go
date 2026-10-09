@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,7 +36,8 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	banyanfs "github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	idxmetrics "github.com/apache/skywalking-banyandb/pkg/index/metrics"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -72,7 +74,7 @@ type segment[T TSTable, O any] struct {
 	index    *seriesIndex
 	sLst     atomic.Pointer[[]*shard[T]]
 	*segmentCache
-	indexMetrics *inverted.Metrics
+	indexMetrics *idxmetrics.Metrics
 	lfs          banyanfs.FileSystem
 	position     common.Position
 	timestamp.TimeRange
@@ -83,6 +85,12 @@ type segment[T TSTable, O any] struct {
 	refCount      int32
 	mustBeDeleted uint32
 	id            segmentID
+	// closeFailed records that the most recent closeResourcesLocked call
+	// could not cleanly close the series index (the owner's final
+	// persistence flush reported an error). The segment itself stays usable
+	// -- its directory and shards are untouched -- but the failure is
+	// surfaced here instead of panicking the node, per NIDX-03 §8/§11.
+	closeFailed atomic.Bool
 }
 
 func (sc *segmentController[T, O]) openSegment(ctx context.Context, startTime, endTime time.Time, path, suffix string, groupCache *groupCache,
@@ -210,7 +218,8 @@ func (s *segment[T, O]) initialize(ctx context.Context) error {
 		return s.position
 	})
 
-	sir, err := newSeriesIndex(ctx, s.location, s.tsdbOpts.SeriesIndexFlushTimeoutSeconds, s.tsdbOpts.SeriesIndexCacheMaxBytes, s.indexMetrics)
+	sir, err := newSeriesIndex(ctx, s.location, s.tsdbOpts.SeriesIndexFlushTimeoutSeconds, s.tsdbOpts.SeriesIndexCacheMaxBytes,
+		s.indexMetrics, s.tsdbOpts.RootLease)
 	if err != nil {
 		return errors.Wrap(errOpenDatabase, errors.WithMessage(err, "create series index controller failed").Error())
 	}
@@ -222,6 +231,18 @@ func (s *segment[T, O]) initialize(ctx context.Context) error {
 		s.index = nil
 		return errors.Wrap(errOpenDatabase, errors.WithMessage(err, "load shards failed").Error())
 	}
+
+	// A successful reopen clears a previous close's failure: closeFailed
+	// records only the most recent closeResourcesLocked call (see its
+	// field doc), and this segment's directory and on-disk data are exactly
+	// what loadShards and the series index above just validated by opening
+	// them. Leaving the stale flag set would make a segment that reopens
+	// and operates normally forever report CloseFailed()==true from one
+	// transient persistence fault, which is strictly worse than losing the
+	// signal: nothing in this codebase refuses to reuse a failed segment
+	// today, so the flag's only value is observability, and a permanently
+	// stuck true defeats that.
+	s.closeFailed.Store(false)
 
 	s.l.Info().Stringer("seg", s).Msg("segment initialized")
 	return nil
@@ -261,7 +282,7 @@ func (s *segment[T, O]) resetIndex() {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.index != nil {
-		s.index.store.Reset()
+		s.index.ResetCache()
 	}
 }
 
@@ -280,7 +301,11 @@ func (s *segment[T, O]) collectOpenMetrics(shardMetrics Metrics) bool {
 			sh.table.Collect(shardMetrics)
 		}
 	}
-	s.index.store.CollectMetrics(s.index.p.SegLabelValues()...)
+	// The native series index does not yet publish the detailed
+	// idxmetrics.Metrics gauges (merge counts, analysis time, cache hit/miss,
+	// ...) the retired index engine reported; pkg/index/native.Owner exposes
+	// no equivalent introspection today. Stats() (dataCount/dataSizeBytes)
+	// still flows through SeriesIndexStats below.
 	return true
 }
 
@@ -308,10 +333,17 @@ func (s *segment[T, O]) DecRef() {
 // closeResourcesLocked closes the segment's series index and shards but keeps
 // its on-disk directory, leaving it closed (index==nil) and reopenable. Must be
 // called with s.mu held. Idempotent.
+//
+// A series-index close error (for example the native owner's final
+// persistence flush discovering a durability fault) is logged and recorded
+// on closeFailed instead of panicking the node: the in-memory root was
+// already visible and the on-disk directory is untouched by the close
+// itself, so the segment stays usable and reopenable (NIDX-03 §8/§11).
 func (s *segment[T, O]) closeResourcesLocked() {
 	if s.index != nil {
 		if err := s.index.Close(); err != nil {
-			s.l.Panic().Err(err).Msg("failed to close the series index")
+			s.l.Error().Err(err).Stringer("seg", s).Msg("failed to close the series index; marking the segment failed")
+			s.closeFailed.Store(true)
 		}
 		s.index = nil
 	}
@@ -368,10 +400,16 @@ func (s *segment[T, O]) Location() string {
 	return s.location
 }
 
+// CloseFailed reports whether the most recent closeResourcesLocked call
+// could not cleanly close this segment's series index. See closeFailed.
+func (s *segment[T, O]) CloseFailed() bool {
+	return s.closeFailed.Load()
+}
+
 // SeriesIndexStats returns the series index document count and on-disk size.
 // An open segment is reported from its live index; a closed segment is read
-// from disk read-only (via OpenReader + directory walk), so inspecting a cold
-// segment never reopens its writable index.
+// from disk read-only (via a native read-only generation), so inspecting a
+// cold segment never reopens its writable index.
 func (s *segment[T, O]) SeriesIndexStats() (int64, int64) {
 	s.mu.RLock()
 	if s.index != nil {
@@ -385,7 +423,7 @@ func (s *segment[T, O]) SeriesIndexStats() (int64, int64) {
 	// read-only. Best-effort -- a missing/unflushed/concurrently-removed index
 	// reports 0.
 	indexPath := filepath.Join(s.location, seriesIndexDirName)
-	count, err := inverted.ReadOnlyDocCount(indexPath)
+	count, err := closedSeriesIndexDocCount(indexPath)
 	if err != nil {
 		s.l.Debug().Err(err).Str("path", indexPath).Msg("closed series index has no readable doc count")
 	}
@@ -393,10 +431,29 @@ func (s *segment[T, O]) SeriesIndexStats() (int64, int64) {
 	return count, int64(size)
 }
 
+// closedSeriesIndexDocCount opens indexPath's newest committed generation
+// read-only (no lock, no reopen of a writable owner) and reports its live
+// document count. A directory with no committed generation yet reports 0,
+// not an error. The open is strict (native.OpenReadOnlyGenerationStrict, the
+// same fail-closed mode a writer reopening the directory uses): a corrupt
+// newest manifest reports an error rather than silently falling back to an
+// older generation's count, which would misreport a closed segment's size.
+func closedSeriesIndexDocCount(indexPath string) (int64, error) {
+	generation, err := native.OpenReadOnlyGenerationStrict(indexPath)
+	if err != nil {
+		if errors.Is(err, native.ErrNoSnapshot) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	defer func() { _ = generation.Close() }()
+	return generation.VisibleDocCount()
+}
+
 // snapshotInto writes a point-in-time snapshot of this segment under dst.
 //
 // It NEVER reopens a closed segment -- reopening an idle-closed cold segment is
-// the root cause of the nil-index panic and the bluge "exclusive lock" churn.
+// the root cause of the nil-index panic and the legacy index engine's "exclusive lock" churn.
 // A closed (quiescent) segment is hard-linked directly from its immutable
 // on-disk files; an open segment is snapshotted through its live series index
 // and shard tables while a reference is held to keep it open.
@@ -424,26 +481,94 @@ func (s *segment[T, O]) snapshotInto(dst string) (bool, error) {
 	return s.snapshotClosed(dst)
 }
 
-// snapshotClosed hard-links the whole quiescent segment directory into dst.
-// Must be called with s.mu held and s.index == nil.
+// snapshotClosed hard-links a quiescent segment directory into dst. Every
+// shard directory is hard-linked whole (includeInClosedSnapshot's existing
+// exclusions); the series index directory is narrowed further to only its
+// newest committed generation's manifest and the segment files it
+// references (NIDX-03 §8), so a cold sidx directory that still holds
+// superseded snapshots or segments the owner has not yet garbage collected
+// does not carry them into the backup. Must be called with s.mu held and
+// s.index == nil.
 func (s *segment[T, O]) snapshotClosed(dst string) (bool, error) {
 	segDir := filepath.Base(s.location)
 	segPath := filepath.Join(dst, segDir)
-	if err := s.lfs.CreateHardLink(s.location, segPath, includeInClosedSnapshot); err != nil {
+	sidxPath := filepath.Join(s.location, seriesIndexDirName)
+	keep, err := newestSeriesIndexGenerationFiles(sidxPath)
+	if err != nil {
+		return false, errors.Wrapf(err, "failed to resolve newest series index generation for segment %s", segDir)
+	}
+	if err := s.lfs.CreateHardLink(s.location, segPath, closedSnapshotFilter(sidxPath, keep)); err != nil {
 		return false, errors.Wrapf(err, "failed to hard-link closed segment %s", segDir)
 	}
+	// A series index with no committed generation yet (no admission since
+	// the segment was created) has no sidx directory on disk at all, so the
+	// walk above never visits or creates one in the destination. Create an
+	// empty one so a closed, never-written segment's snapshot has the same
+	// shape as the open path's (snapshotOpen always creates the series
+	// index directory, even for a brand-new empty index).
+	s.lfs.MkdirIfNotExist(filepath.Join(segPath, seriesIndexDirName), DirPerm)
 	return true, nil
+}
+
+// newestSeriesIndexGenerationFiles returns the file names (relative to
+// sidxPath, matching native.ReadOnlyGeneration.ReferencedFiles) the series
+// index's newest committed generation references. A directory with no
+// committed generation yet (a brand-new, never-flushed series index) reports
+// an empty set, not an error. The open is strict
+// (native.OpenReadOnlyGenerationStrict): a corrupt newest manifest fails the
+// backup instead of silently hard-linking an older generation's files while
+// claiming it is current, which would make snapshotClosed drop acknowledged
+// data without reporting an error.
+func newestSeriesIndexGenerationFiles(sidxPath string) (map[string]struct{}, error) {
+	generation, err := native.OpenReadOnlyGenerationStrict(sidxPath)
+	if err != nil {
+		if errors.Is(err, native.ErrNoSnapshot) {
+			return map[string]struct{}{}, nil
+		}
+		return nil, err
+	}
+	defer func() { _ = generation.Close() }()
+	files := generation.ReferencedFiles()
+	keep := make(map[string]struct{}, len(files))
+	for _, f := range files {
+		keep[f] = struct{}{}
+	}
+	return keep, nil
+}
+
+// closedSnapshotFilter wraps includeInClosedSnapshot so that, within the
+// series index directory specifically, only a file named in keep (the
+// newest committed generation's manifest and segments) is hard-linked.
+// Everything outside sidxPath keeps includeInClosedSnapshot's existing
+// behavior unchanged.
+func closedSnapshotFilter(sidxPath string, keep map[string]struct{}) func(string) bool {
+	return func(p string) bool {
+		if !includeInClosedSnapshot(p) {
+			return false
+		}
+		rel, relErr := filepath.Rel(sidxPath, p)
+		if relErr != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			// p is sidxPath itself, or outside it entirely: unchanged behavior.
+			return true
+		}
+		_, ok := keep[rel]
+		return ok
+	}
 }
 
 // includeInClosedSnapshot reports whether a file or directory under a closed
 // segment should be hard-linked into a snapshot. It excludes the transient and
-// non-current artifacts that the open-path snapshot never copies: the bluge
-// lock file, the failed-parts directory, the external-segment temp directory,
-// and partial ".tmp" atomic-write files. Current part directories and their
-// ".snp" manifests are kept.
+// non-current artifacts that the open-path snapshot never copies: a
+// seg-*/lock exclusive-lock file (lockFilename; the offline index-mode copy
+// tool's targetIdxStore creates one beside the sidx directory of every target
+// segment it writes and only removes it in closeAll, so a tool crash leaves
+// it on disk -- it must never leak into a backup, the same way the TSDB
+// root's own same-named lock file never does), the failed-parts directory,
+// the external-segment temp directory, and partial ".tmp" atomic-write
+// files. Current part directories and their ".snp" manifests are kept.
 func includeInClosedSnapshot(p string) bool {
 	switch base := filepath.Base(p); {
-	case base == inverted.LockFilename, base == FailedPartsDirName, base == inverted.ExternalSegmentTempDirName:
+	case base == lockFilename, base == FailedPartsDirName, base == legacyExternalSegmentTempDirName:
 		return false
 	default:
 		return filepath.Ext(base) != ".tmp"
@@ -466,7 +591,7 @@ func (s *segment[T, O]) snapshotOpen(dst string, idx *seriesIndex) (bool, error)
 
 	indexPath := filepath.Join(segPath, seriesIndexDirName)
 	s.lfs.MkdirIfNotExist(indexPath, DirPerm)
-	if err := idx.store.TakeFileSnapshot(indexPath); err != nil {
+	if err := idx.TakeFileSnapshot(indexPath); err != nil {
 		return false, errors.Wrapf(err, "failed to snapshot index for segment %s", segDir)
 	}
 
@@ -542,7 +667,7 @@ type segmentController[T TSTable, O any] struct {
 	metrics      Metrics
 	opts         *TSDBOpts[T, O]
 	l            *logger.Logger
-	indexMetrics *inverted.Metrics
+	indexMetrics *idxmetrics.Metrics
 	*groupCache
 	lfs         banyanfs.FileSystem
 	position    common.Position
@@ -556,11 +681,23 @@ type segmentController[T TSTable, O any] struct {
 }
 
 func newSegmentController[T TSTable, O any](ctx context.Context, location string,
-	l *logger.Logger, opts TSDBOpts[T, O], indexMetrics *inverted.Metrics, metrics Metrics,
+	l *logger.Logger, opts TSDBOpts[T, O], indexMetrics *idxmetrics.Metrics, metrics Metrics,
 	idleTimeout time.Duration, lfs banyanfs.FileSystem, cache Cache, group string,
 ) *segmentController[T, O] {
 	clock, _ := timestamp.GetClock(ctx)
 	p := common.GetPosition(ctx)
+	// opts.RootLease is intentionally left nil here when the caller did not
+	// supply one: every series index now opens a pkg/index/native.Owner,
+	// which requires a non-nil lease unconditionally (NewOwner's "ownership
+	// is an executable invariant") and returns native.ErrLeaseUnavailable on
+	// a nil one. Silently substituting a no-op lease would hide a caller
+	// that forgot to configure OpenTSDB's RootLeaseFactory -- every product
+	// today (see banyand/{measure,stream,trace}/metadata.go) sets one before
+	// any segment actually opens (segments open lazily, well after OpenTSDB
+	// returns), so this never weakens a production path. Tests that
+	// construct a segmentController directly must supply their own
+	// RootLease (for example &testRootLease{}), matching the low-level
+	// series-index tests in this package.
 	return &segmentController[T, O]{
 		location:     location,
 		opts:         &opts,

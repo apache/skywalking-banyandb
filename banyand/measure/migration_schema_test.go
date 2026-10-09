@@ -18,12 +18,12 @@
 package measure
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/blugelabs/bluge"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -35,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
 
 // synthMeasure describes one measure to seed into the synthetic
@@ -55,7 +56,7 @@ type synthGroup struct {
 
 // synthBackup builds a minimal backup tree at root with one
 // schema-property shard carrying the given groups and measures so the
-// fetch/load helpers can exercise the full bluge → proto → info path
+// fetch/load helpers can exercise the full native → proto → info path
 // without any real cluster snapshot.
 func synthBackup(t *testing.T, root string, groups []synthGroup, measures []synthMeasure) {
 	t.Helper()
@@ -64,17 +65,8 @@ func synthBackup(t *testing.T, root string, groups []synthGroup, measures []synt
 	if err := os.MkdirAll(shardPath, storage.DirPerm); err != nil {
 		t.Fatalf("mkdir shard: %v", err)
 	}
-	w, err := bluge.OpenWriter(bluge.DefaultConfig(shardPath))
-	if err != nil {
-		t.Fatalf("open bluge writer: %v", err)
-	}
-	defer func() {
-		if cErr := w.Close(); cErr != nil {
-			t.Fatalf("close bluge writer: %v", cErr)
-		}
-	}()
 
-	batch := bluge.NewBatch()
+	var docs []native.Document
 	for _, g := range groups {
 		grp := &commonv1.Group{
 			Metadata:     &commonv1.Metadata{Name: g.name, ModRevision: 1},
@@ -84,7 +76,7 @@ func synthBackup(t *testing.T, root string, groups []synthGroup, measures []synt
 		if mErr != nil {
 			t.Fatalf("marshal group %q: %v", g.name, mErr)
 		}
-		batch.Insert(synthSchemaDoc("group/"+g.name, schema.KindGroup.String(), "", 1, string(grpJSON)))
+		docs = append(docs, synthSchemaDoc("group/"+g.name, schema.KindGroup.String(), "", 1, string(grpJSON)))
 	}
 	for _, m := range measures {
 		measure := &databasev1.Measure{
@@ -108,22 +100,44 @@ func synthBackup(t *testing.T, root string, groups []synthGroup, measures []synt
 		// Use a stable propID (no revision suffix) so multiple revisions
 		// of the same measure share one candidate slot at fetch time.
 		propID := fmt.Sprintf("measure/%s/%s", m.group, m.name)
-		batch.Insert(synthSchemaDocWithPropID(docID, propID,
+		docs = append(docs, synthSchemaDocWithPropID(docID, propID,
 			schema.KindMeasure.String(), m.group, m.modRev, string(mJSON)))
 	}
-	if bErr := w.Batch(batch); bErr != nil {
-		t.Fatalf("write batch: %v", bErr)
+	writeSynthSchemaDocs(t, shardPath, docs)
+}
+
+// writeSynthSchemaDocs opens a native owner at shardPath and durably commits
+// docs -- the schema-property catalog's on-disk shape production code
+// (banyand/metadata/schema/reader) reads.
+func writeSynthSchemaDocs(t *testing.T, shardPath string, docs []native.Document) {
+	t.Helper()
+	owner, err := native.NewOwner(native.OwnerOptions{Lease: measureIndexTestLease{}, Path: shardPath})
+	if err != nil {
+		t.Fatalf("open native owner: %v", err)
+	}
+	done := make(chan error, 1)
+	if batchErr := owner.Batch(context.Background(), native.Batch{
+		Documents:          docs,
+		PersistentCallback: func(batchErr error) { done <- batchErr },
+	}); batchErr != nil {
+		t.Fatalf("batch: %v", batchErr)
+	}
+	if batchErr := <-done; batchErr != nil {
+		t.Fatalf("persist: %v", batchErr)
+	}
+	if closeErr := owner.Close(); closeErr != nil {
+		t.Fatalf("close native owner: %v", closeErr)
 	}
 }
 
-// synthSchemaDoc builds a single bluge doc whose `_source` field carries
-// the inner-proto JSON wrapped in a propertyv1.Property, matching the
-// shape that schema-property bluge indexes use in production.
-func synthSchemaDoc(propID, kind, group string, modRev int64, sourceJSON string) *bluge.Document {
+// synthSchemaDoc builds a single native document whose `_source` field
+// carries the inner-proto JSON wrapped in a propertyv1.Property, matching the
+// shape that schema-property native indexes use in production.
+func synthSchemaDoc(propID, kind, group string, modRev int64, sourceJSON string) native.Document {
 	return synthSchemaDocWithPropID(propID, propID, kind, group, modRev, sourceJSON)
 }
 
-func synthSchemaDocWithPropID(docID, propID, kind, group string, modRev int64, sourceJSON string) *bluge.Document {
+func synthSchemaDocWithPropID(docID, propID, kind, group string, modRev int64, sourceJSON string) native.Document {
 	tags := []*modelv1.Tag{
 		{Key: "source", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: sourceJSON}}}},
 	}
@@ -142,10 +156,14 @@ func synthSchemaDocWithPropID(docID, propID, kind, group string, modRev int64, s
 	if err != nil {
 		panic(fmt.Sprintf("marshal property %q: %v", propID, err))
 	}
-	return bluge.NewDocument(docID).
-		AddField(bluge.NewStoredOnlyField("_source", propJSON)).
-		AddField(bluge.NewKeywordFieldBytes(index.IndexModeName, []byte(kind))).
-		AddField(bluge.NewKeywordFieldBytes("_group", []byte(schema.SchemaGroup)))
+	return native.Document{
+		Identifier: []byte(docID),
+		Fields: []native.Field{
+			{Name: "_source", Value: propJSON, Store: true},
+			{Name: index.IndexModeName, Value: []byte(kind), Index: true},
+			{Name: "_group", Value: []byte(schema.SchemaGroup), Index: true},
+		},
+	}
 }
 
 // synthSchemaRoot resolves the `_schema` root of the synthetic backup the
@@ -212,16 +230,7 @@ func synthIndexRules(t *testing.T, root string, rules []synthIndexRule) {
 	t.Helper()
 	shardPath := filepath.Join(root, "node-0", "2026-05-21",
 		backupsnapshot.SchemaPropertyCatalogName, schema.SchemaGroup, "shard-0")
-	w, err := bluge.OpenWriter(bluge.DefaultConfig(shardPath))
-	if err != nil {
-		t.Fatalf("open bluge writer: %v", err)
-	}
-	defer func() {
-		if cErr := w.Close(); cErr != nil {
-			t.Fatalf("close bluge writer: %v", cErr)
-		}
-	}()
-	batch := bluge.NewBatch()
+	var docs []native.Document
 	for _, r := range rules {
 		rule := &databasev1.IndexRule{
 			Metadata: &commonv1.Metadata{Name: r.name, Group: r.group, Id: r.id, ModRevision: 1},
@@ -233,12 +242,10 @@ func synthIndexRules(t *testing.T, root string, rules []synthIndexRule) {
 			t.Fatalf("marshal index rule %q: %v", r.name, mErr)
 		}
 		propID := fmt.Sprintf("index-rule/%s/%s", r.group, r.name)
-		batch.Insert(synthSchemaDocWithPropID(propID, propID,
+		docs = append(docs, synthSchemaDocWithPropID(propID, propID,
 			schema.KindIndexRule.String(), r.group, 1, string(rJSON)))
 	}
-	if bErr := w.Batch(batch); bErr != nil {
-		t.Fatalf("write index rule batch: %v", bErr)
-	}
+	writeSynthSchemaDocs(t, shardPath, docs)
 }
 
 func TestLoadIndexRuleInfoByID(t *testing.T) {
@@ -349,7 +356,7 @@ func TestLoadMeasureSchemas_missingSchemaRoot(t *testing.T) {
 
 // TestLoadMeasureSchemas_dedupesStaleRevisions asserts that the
 // loader collapses historical revisions of the same schema (different
-// mod_revisions on the same propID, retained across bluge segments) into a
+// mod_revisions on the same propID, retained across index segments) into a
 // single entry. The live cluster's SchemaRegistry already dedupes by
 // propID, and the backup loader must match that contract.
 func TestLoadMeasureSchemas_dedupesStaleRevisions(t *testing.T) {

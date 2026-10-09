@@ -85,7 +85,6 @@ header: # `header` section is configurations for source codes license header.
     - '**/.gitignore'
     - '**/buf.lock'
     - '**/ginkgo.report'
-    - 'ui'
     # `canopy` removed — when the canopy subdir invokes license-eye with this
     # root config via --config, the canopy code IS the surface under check
     # (the canopy/.licenserc.yaml is no longer authoritative for the OMC

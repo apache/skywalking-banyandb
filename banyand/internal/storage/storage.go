@@ -32,8 +32,10 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/native/criteria"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -78,12 +80,28 @@ var (
 type SupplyTSDB[T TSTable] func() T
 
 // IndexSearchOpts is the options for searching index.
+//
+//nolint:govet // option fields are grouped by purpose, not padding.
 type IndexSearchOpts struct {
-	Query       index.Query
-	Order       *index.OrderBy
-	TimeRange   *timestamp.TimeRange
-	Projection  []index.FieldKey
-	PreloadSize int
+	// Criteria is the filter the series index evaluates over the universe
+	// (the series matchers for Search, or IndexModeSubject for
+	// SearchWithoutSeries) via a criteria.FieldResolver-backed
+	// pkg/index/native/criteria.Filter call. A nil Criteria matches every
+	// document the universe already selected.
+	Criteria *modelv1.Criteria
+	// Fields resolves a Criteria condition's tag name to the engine field
+	// (and, for MATCH, the analyzer) that carries it. Required whenever
+	// Criteria is non-nil.
+	Fields criteria.FieldResolver
+	// IndexModeSubject is the literal `_im_name` term value SearchWithoutSeries
+	// scopes its universe to -- the index-mode measure's name. It is ignored
+	// by Search, which scopes its universe to the supplied series matchers
+	// instead.
+	IndexModeSubject string
+	Order            *index.OrderBy
+	TimeRange        *timestamp.TimeRange
+	Projection       []index.FieldKey
+	PreloadSize      int
 }
 
 // FieldResult is the result of a field.
@@ -92,12 +110,21 @@ type FieldResult map[string][]byte
 // FieldResultList is a list of FieldResult.
 type FieldResultList []FieldResult
 
-// SeriesData is the result of a series.
+// SeriesData is the result of a series. Timestamps, Versions, TimestampSet
+// and VersionSet are always exactly len(SeriesList) long -- one entry per
+// row, aligned 1:1 with SeriesList by position. TimestampSet[i]/VersionSet[i]
+// report whether Timestamps[i]/Versions[i] holds a real value (true) or the
+// zero value because that row carried none (false). This replaces a legacy
+// convention that appended Timestamps/Versions only for rows that had one,
+// which silently shifted every later row's values out of alignment with
+// SeriesList whenever an earlier row lacked a timestamp or version.
 type SeriesData struct {
-	SeriesList pbv1.SeriesList
-	Fields     FieldResultList
-	Timestamps []int64
-	Versions   []int64
+	SeriesList   pbv1.SeriesList
+	Fields       FieldResultList
+	Timestamps   []int64
+	Versions     []int64
+	TimestampSet []bool
+	VersionSet   []bool
 }
 
 // IndexDB is the interface of index database.
@@ -180,6 +207,28 @@ type TSTable interface {
 // TSTableCreator creates a TSTable.
 type TSTableCreator[T TSTable, O any] func(fileSystem fs.FileSystem, root string, position common.Position,
 	l *logger.Logger, timeRange timestamp.TimeRange, option O, metrics any) (T, error)
+
+// TSTableCreatorWithLease is the ownership-aware constructor used by native
+// index tables. The legacy creator remains supported for read-only/test tables.
+type TSTableCreatorWithLease[T TSTable, O any] func(fileSystem fs.FileSystem, root string, position common.Position,
+	l *logger.Logger, timeRange timestamp.TimeRange, option O, metrics any, lease RootLease) (T, error)
+
+// RootLease is the database-owned writer capability passed to native index
+// tables. Storage never acquires or closes it; the TSDB owns its lifetime.
+type RootLease interface {
+	Validate() error
+	ValidatePath(string) error
+}
+
+// RootLeaseRevoker is implemented by leases backed by the TSDB lock. Storage
+// revokes the capability after tables close and before releasing that lock.
+type RootLeaseRevoker interface {
+	Revoke() error
+}
+
+// RootLeaseFactory adapts the TSDB's already-held lock to a native lease
+// without exposing lock implementation details to TSTable implementations.
+type RootLeaseFactory func(lock fs.File, root string) (RootLease, error)
 
 // Metrics is the interface of metrics.
 type Metrics interface {

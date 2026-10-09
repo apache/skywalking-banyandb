@@ -50,13 +50,13 @@ Container memory was also flat throughout: BanyanDB ~200 MiB / 2 GiB cap (10 %),
 
 **Root cause is not the vectorized query path.** The growth has a clean signature: two step-function events spaced exactly 24 hours apart, each adding ~76 goroutines, with zero growth between events. Stack-diff between `pprof-start/goroutine-*.txt` and `pprof-end/goroutine-*.txt`:
 
-- **+108 in `github.com/blugelabs/bluge/index.analysisWorker`** (`OpenWriter.func1`, `writer.go:77` → `writer.go:667`)
-- **~+44 orchestration goroutines** around new bluge writers (`pkg/flow.Transmit`, channel waiters)
+- **+108 in the legacy index engine's `index.analysisWorker`** (`OpenWriter.func1`, `writer.go:77` → `writer.go:667`)
+- **~+44 orchestration goroutines** around new legacy index writers (`pkg/flow.Transmit`, channel waiters)
 - Every other stack signature is **identical count** start vs end — `pkg/flow.Transmit` 108→108, `grpc/internal/grpcsync.CallbackSerializer.run` 54→54
 
-The 108 = 2 segment-rotation events × ~54 analysisWorker goroutines per new bluge writer (the pool sizes itself from GOMAXPROCS = 32 on this host). With `SegmentInterval: 1 day`, each UTC midnight crossing rotates the tsTable to a new segment, opening a fresh bluge index writer whose analysis-worker pool is not released when the previous segment goes idle.
+The 108 = 2 segment-rotation events × ~54 analysisWorker goroutines per new legacy index writer (the pool sizes itself from GOMAXPROCS = 32 on this host). With `SegmentInterval: 1 day`, each UTC midnight crossing rotates the tsTable to a new segment, opening a fresh legacy index writer whose analysis-worker pool is not released when the previous segment goes idle.
 
-The vectorized query path does not touch bluge writers — the same growth would appear under vec-off, on a row-path-only build. Filed upstream as **[apache/skywalking#13874](https://github.com/apache/skywalking/issues/13874)** (label: `database`, milestone: `BanyanDB - 0.11.0`).
+The vectorized query path does not touch the legacy index writer — the same growth would appear under vec-off, on a row-path-only build. Filed upstream as **[apache/skywalking#13874](https://github.com/apache/skywalking/issues/13874)** (label: `database`, milestone: `BanyanDB - 0.11.0`).
 
 ## Verdict
 
@@ -65,22 +65,22 @@ The vectorized query path does not touch bluge writers — the same growth would
 | 1 | 48 h vec-on run | ✓ |
 | 2 | Parity vs flag-off | ✓ |
 | 3 | No MemoryTracker exhaustion | ✓ |
-| 4 | Goroutine drift ≤ 5 % | ✗ — root cause attributed to bluge writer lifecycle (apache/skywalking#13874), pre-existing storage-layer behavior independent of the vec path |
+| 4 | Goroutine drift ≤ 5 % | ✗ — root cause attributed to legacy index writer lifecycle (apache/skywalking#13874), pre-existing storage-layer behavior independent of the vec path |
 
 **Recommendation: proceed with G5e (default flip).** The criterion-4 miss does not block the rollout:
 
-- It is caused by code paths the vectorized query layer does not touch (segment-rotation bluge writer creation in the storage layer).
+- It is caused by code paths the vectorized query layer does not touch (segment-rotation legacy index writer creation in the storage layer).
 - It would be reproduced under vec-off on the row path with the same configuration.
 - The growth pattern is bounded by segment count (not query rate or time), so it does not interact with the flag flip in any way that worsens production behavior post-flip.
 - Three of four criteria — including the parity check that the G5b/G5c architectural path was specifically built to satisfy — passed cleanly.
 
-The bluge writer lifecycle fix is tracked at apache/skywalking#13874 and should be picked up under the 0.11.0 milestone independent of G5.
+The legacy index writer lifecycle fix is tracked at apache/skywalking#13874 and should be picked up under the 0.11.0 milestone independent of G5. (The legacy index engine itself was fully removed in a later milestone; this entry remains as the historical record of the soak run.)
 
 ## Next steps
 
 1. **G5e default flip** — pre-drafted at `.omc/g5e-flip-draft.md`: one-line change in `pkg/query/vectorized/measure/config.go` (`Enabled: false` → `true`) plus a CHANGES.md entry. Verification command list and commit message template included.
 2. **G6 operator wiring** — distinct multi-commit arc (BatchLimit / BatchGroupBy / BatchAggregation / BatchTop into `NewMIterator`); recommended in a fresh branch.
-3. **apache/skywalking#13874** — bluge writer pool lifecycle fix; not on the v1 rollout critical path.
+3. **apache/skywalking#13874** — legacy index writer pool lifecycle fix; not on the v1 rollout critical path.
 
 ## Artifact paths (local, gitignored)
 

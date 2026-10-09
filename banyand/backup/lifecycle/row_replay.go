@@ -89,7 +89,7 @@ func parseReplayPartPath(partPath string) (partID uint64, shardPath, segmentPath
 // reusing *cur when it already points at that segment, otherwise closing the prior
 // one and opening a fresh resolver (ruleToTag drives value decoding; nil for
 // stream). Keeping one resolver per segment lets all its shards/parts share one
-// bluge reader instead of reopening the same exclusive-locked dir. mu guards the
+// native reader instead of reopening the same exclusive-locked dir. mu guards the
 // resident *cur/*curPath pair for the call.
 func reloadIndexResolver(mu *sync.Mutex, cur **dump.IndexResolver, curPath *string,
 	segmentPath string, ruleToTag map[uint32]dump.IndexedTagSpec,

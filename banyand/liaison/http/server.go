@@ -20,11 +20,9 @@ package http
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -397,10 +395,6 @@ func (p *server) initGRPCClient() error {
 	// Mount the gateway mux to the HTTP server
 	newMux.Mount("/api", http.StripPrefix("/api", p.gwMux))
 
-	// Replace the old mux with the new one
-	if err := p.setRootPath(newMux); err != nil {
-		return err
-	}
 	p.handlerWrapper.Store(newMux)
 
 	return nil
@@ -426,65 +420,6 @@ func (p *server) GracefulStop() {
 
 	if err := p.srv.Close(); err != nil {
 		p.l.Error().Err(err)
-	}
-}
-
-func intercept404(handler, on404 http.Handler) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		hookedWriter := &hookedResponseWriter{ResponseWriter: w}
-		handler.ServeHTTP(hookedWriter, r)
-
-		if hookedWriter.got404 {
-			on404.ServeHTTP(w, r)
-		}
-	}
-}
-
-type hookedResponseWriter struct {
-	http.ResponseWriter
-	got404 bool
-}
-
-func (hrw *hookedResponseWriter) WriteHeader(status int) {
-	if status == http.StatusNotFound {
-		hrw.got404 = true
-	} else {
-		hrw.ResponseWriter.WriteHeader(status)
-	}
-}
-
-func (hrw *hookedResponseWriter) Write(p []byte) (int, error) {
-	if hrw.got404 {
-		return len(p), nil
-	}
-
-	return hrw.ResponseWriter.Write(p)
-}
-
-func serveFileContents(file string, files http.FileSystem) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !strings.Contains(r.Header.Get("Accept"), "text/html") {
-			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprint(w, "404 not found")
-
-			return
-		}
-		index, err := files.Open(file)
-		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprintf(w, "%s not found", file)
-
-			return
-		}
-		fi, err := index.Stat()
-		if err != nil {
-			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprintf(w, "%s not found", file)
-
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		http.ServeContent(w, r, fi.Name(), fi.ModTime(), index)
 	}
 }
 

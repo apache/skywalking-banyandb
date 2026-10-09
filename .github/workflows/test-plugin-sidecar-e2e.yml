@@ -90,16 +90,6 @@ jobs:
 
       - name: Build companion static binaries
         run: |
-          # This job runs setup-build-env with download-artifacts:false, so the
-          # prebuilt ui/dist artifact (from prepare.yml) is absent. `make release`
-          # builds banyand-server-static, whose ui/embed.go `//go:embed dist`
-          # then fails ("pattern dist: no matching files found"). The kind gate
-          # needs only the NON-UI companion binaries (backup/restore/lifecycle/
-          # migration); the -plugins host is built slim/no-UI inside Docker.
-          # Stub ui/dist (the same placeholder build-trace-pipeline-server and the
-          # -plugins Docker builder stage use) so the UI-embedding server compiles;
-          # that binary is unused by the -plugins image and never ships.
-          mkdir -p ui/dist && touch ui/dist/index.html
           TARGET_OS=linux PLATFORMS=linux/${{ matrix.arch }} make -C banyand release
 
       - name: Build plugin host + carrier images (${{ matrix.arch }})

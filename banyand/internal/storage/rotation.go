@@ -59,7 +59,7 @@ func (d *database[T, O]) startRotationTask() error {
 
 		// Only create the ticker if idleTimeout is at least 1 second.
 		// When disabled, idle segments are never reclaimed and their
-		// bluge writers (analysisWorker pools) accumulate across rotations.
+		// native index owners accumulate across rotations.
 		if d.segmentController.idleTimeout >= time.Second {
 			idleCheckTicker = time.NewTicker(10 * time.Minute)
 			idleCheckC = idleCheckTicker.C
@@ -74,7 +74,7 @@ func (d *database[T, O]) startRotationTask() error {
 		} else {
 			d.logger.Warn().
 				Stringer("idle_timeout", d.segmentController.idleTimeout).
-				Msg("idle segment reclaimer disabled (idle_timeout < 1s); bluge writers will not be released on segment rotation")
+				Msg("idle segment reclaimer disabled (idle_timeout < 1s); native index owners will not be released on segment rotation")
 		}
 
 		for {

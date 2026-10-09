@@ -19,6 +19,7 @@ package dump
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,14 +30,12 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	pkgdump "github.com/apache/skywalking-banyandb/pkg/dump"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
 
 const (
 	dirNameSidx = "sidx"
 	dirNameMeta = "meta"
-	logName     = "dump"
 )
 
 // ReadData reads exactly len(buf) bytes from r at offset. Unlike fs.MustReadData
@@ -82,34 +81,31 @@ func DiscoverPartIDs(shardPath string) ([]uint64, error) {
 	return partIDs, nil
 }
 
-// LoadSegmentSeriesMap loads the segment-level SeriesID -> EntityValues map from
-// the sidx inverted store under segmentPath. Requires a local filesystem path.
+// LoadSegmentSeriesMap loads the segment-level SeriesID -> EntityValues map
+// from the sidx series index under segmentPath, read-only (a native read-only
+// generation, never a writable owner -- no lock is acquired).
 func LoadSegmentSeriesMap(segmentPath string) (map[common.SeriesID]string, error) {
 	seriesIndexPath := filepath.Join(segmentPath, dirNameSidx)
 
-	store, err := inverted.NewStore(inverted.StoreOpts{
-		Path:   seriesIndexPath,
-		Logger: logger.GetLogger(logName),
-	})
+	generation, err := native.OpenReadOnlyGeneration(seriesIndexPath)
 	if err != nil {
+		if errors.Is(err, native.ErrNoSnapshot) {
+			return map[common.SeriesID]string{}, nil
+		}
 		return nil, fmt.Errorf("failed to open series index: %w", err)
 	}
-	defer store.Close()
-
-	ctx := context.Background()
-	iter, err := store.SeriesIterator(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create series iterator: %w", err)
-	}
-	defer iter.Close()
+	defer func() { _ = generation.Close() }()
 
 	seriesMap := make(map[common.SeriesID]string)
-	for iter.Next() {
-		series := iter.Val()
-		if len(series.EntityValues) > 0 {
-			seriesID := common.SeriesID(convert.Hash(series.EntityValues))
-			seriesMap[seriesID] = string(series.EntityValues)
+	visitErr := generation.VisitIdentifiers(context.Background(), func(entityValues []byte) bool {
+		if len(entityValues) > 0 {
+			seriesID := common.SeriesID(convert.Hash(entityValues))
+			seriesMap[seriesID] = string(entityValues)
 		}
+		return true
+	})
+	if visitErr != nil {
+		return nil, fmt.Errorf("failed to visit series identifiers: %w", visitErr)
 	}
 
 	return seriesMap, nil

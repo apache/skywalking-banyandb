@@ -21,7 +21,6 @@ on:
     paths:
       - '**.md'
       - '!vendor/**'
-      - '!ui/**'
       - '!canopy/**'
   schedule:
     - cron: '0 18 * * *'  # TimeZone: UTC 0
@@ -46,7 +45,7 @@ jobs:
           base_sha="${{ github.event.pull_request.base.sha }}"
           head_sha="${{ github.event.pull_request.head.sha }}"
           mapfile -t changed < <(git diff --name-only --diff-filter=ACMRT "${base_sha}..${head_sha}" -- '*.md' \
-            | grep -v '^vendor/' | grep -v '^ui/' | grep -v '^canopy/')
+            | grep -v '^vendor/' | grep -v '^canopy/')
           if [ "${#changed[@]}" -eq 0 ]; then
             echo "No tracked *.md files changed; nothing to scan."
             exit 0
@@ -64,7 +63,7 @@ jobs:
         if: github.event_name == 'schedule'
         run: |
           mapfile -t files < <(find . -name "*.md" \
-            -not -path './vendor/*' -not -path './ui/*' -not -path './canopy/*')
+            -not -path './vendor/*' -not -path './canopy/*')
           echo "Scanning ${#files[@]} markdown file(s)."
           status=0
           for file in "${files[@]}"; do

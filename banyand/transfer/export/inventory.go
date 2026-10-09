@@ -34,7 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
 
 const (
@@ -53,7 +53,7 @@ var segSuffixPattern = regexp.MustCompile(`^[0-9]{8}$|^[0-9]{10}$`)
 type partReadFunc func(partDir string) (queue.StreamingPartData, error)
 
 // statTSDBGroup lists <groupDir>/seg-*/shard-*/<partID>/metadata.json for stream,
-// measure and trace groups. indexMode turns on the bluge document count of the
+// measure and trace groups. indexMode turns on the native-index document count of the
 // segment-level series index, which is the only place index-mode measures store rows.
 // The numbers describe the directory as it is: parts that are on disk but not yet
 // published, or left behind by an interrupted merge, are counted too (design §2.3 calls
@@ -243,9 +243,9 @@ func sidxBytes(sidxDir string) (uint64, uint64, error) {
 	return compressed, uncompressed, nil
 }
 
-// statPropertyGroup lists <groupDir>/shard-*/ bluge directories. Property has no segment
+// statPropertyGroup lists <groupDir>/shard-*/ native index directories. Property has no segment
 // layer, so it yields exactly one PropertyInventory unit per group, or nil when the group
-// has no shard directory on this node. doc_count is the cheap bluge document count: it
+// has no shard directory on this node. doc_count is the cheap native-index document count: it
 // includes every version of an entity and its tombstones (design §3.1).
 func statPropertyGroup(groupDir, group string) (*transferv1.UnitInventory, error) {
 	entries, err := readDirOrEmpty(groupDir)
@@ -277,13 +277,13 @@ func statPropertyGroup(groupDir, group string) (*transferv1.UnitInventory, error
 	return &transferv1.UnitInventory{Kind: &transferv1.UnitInventory_Property{Property: prop}}, nil
 }
 
-// docCount is the committed document count of the bluge index in dir. An index that was
+// docCount is the committed document count of the native index in dir. An index that was
 // never flushed (or is absent) holds no committed generation and counts 0; any other
 // failure, a corrupt index among them, fails the plan rather than reporting 0 rows.
 func docCount(dir string) (uint64, error) {
-	count, err := inverted.ReadOnlyDocCount(dir)
+	count, err := native.ReadOnlyDocCount(dir)
 	if err != nil {
-		if errors.Is(err, inverted.ErrNoCommittedIndex) || errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, native.ErrNoSnapshot) || errors.Is(err, fs.ErrNotExist) {
 			return 0, nil
 		}
 		return 0, fmt.Errorf("count documents of index %s: %w", dir, err)

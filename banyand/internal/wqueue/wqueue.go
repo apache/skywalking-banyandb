@@ -58,28 +58,36 @@ type SubQueue interface {
 type SubQueueCreator[S SubQueue, O any] func(fileSystem fs.FileSystem, root string, position common.Position,
 	l *logger.Logger, option O, metrics any, group string, shardID common.ShardID, getNodes func() []string) (S, error)
 
+// SubQueueCreatorWithLease is the ownership-aware sub-queue constructor.
+type SubQueueCreatorWithLease[S SubQueue, O any] func(fileSystem fs.FileSystem, root string, position common.Position,
+	l *logger.Logger, option O, metrics any, group string, shardID common.ShardID, getNodes func() []string,
+	lease storage.RootLease) (S, error)
+
 // Opts contains configuration options for creating a queue.
 type Opts[S SubQueue, O any] struct {
-	SubQueueCreator SubQueueCreator[S, O]
-	GetNodes        func(common.ShardID) []string
-	Metrics         storage.Metrics
-	MetricsFactory  observability.Factory
-	Option          O
-	Group           string
-	Location        string
-	SegmentInterval storage.IntervalRule
-	ShardNum        uint32
+	SubQueueCreator          SubQueueCreator[S, O]
+	SubQueueCreatorWithLease SubQueueCreatorWithLease[S, O]
+	RootLeaseFactory         storage.RootLeaseFactory
+	GetNodes                 func(common.ShardID) []string
+	Metrics                  storage.Metrics
+	MetricsFactory           observability.Factory
+	Option                   O
+	Group                    string
+	Location                 string
+	SegmentInterval          storage.IntervalRule
+	ShardNum                 uint32
 }
 
 // Queue represents a write queue that manages multiple shards.
 type Queue[S SubQueue, O any] struct {
-	lfs      fs.FileSystem
-	lock     fs.File
-	logger   *logger.Logger
-	p        common.Position
-	location string
-	sLst     []*Shard[S]
-	opts     Opts[S, O]
+	lfs       fs.FileSystem
+	lock      fs.File
+	rootLease storage.RootLease
+	logger    *logger.Logger
+	p         common.Position
+	location  string
+	sLst      []*Shard[S]
+	opts      Opts[S, O]
 	sync.RWMutex
 	closed atomic.Bool
 }
@@ -116,6 +124,9 @@ func (q *Queue[S, O]) Close() error {
 	defer q.Unlock()
 	for _, shard := range q.sLst {
 		shard.Close()
+	}
+	if revoker, ok := q.rootLease.(storage.RootLeaseRevoker); ok {
+		_ = revoker.Revoke()
 	}
 	q.lock.Close()
 	if err := q.lfs.DeleteFile(q.lock.Path()); err != nil {
@@ -165,19 +176,29 @@ func Open[S SubQueue, O any](ctx context.Context, opts Opts[S, O], _ string) (*Q
 		logger.Panicf("cannot create lock file %s: %s", lockPath, err)
 	}
 	q.lock = lock
+	if opts.RootLeaseFactory != nil {
+		rootLease, leaseErr := opts.RootLeaseFactory(lock, location)
+		if leaseErr != nil {
+			_ = lock.Close()
+			_ = lfs.DeleteFile(lockPath)
+			panic(fmt.Errorf("create root lease: %w", leaseErr))
+		}
+		q.rootLease = rootLease
+	}
 	return q, nil
 }
 
 // GetOrCreateShard gets or creates a shard with the given ShardID.
-// If the shard already exists, it returns it without locking.
-// If the shard doesn't exist, it creates a new one with proper locking.
+// Existing shards are read under a shared lock; creation holds an exclusive lock.
 func (q *Queue[S, O]) GetOrCreateShard(shardID common.ShardID) (*Shard[S], error) {
 	if q.closed.Load() {
 		return nil, errQueueClosed
 	}
-	// First check if shard exists without locking
-	if shard := q.getShard(shardID); shard != nil {
-		return shard, nil
+	q.RLock()
+	cachedShard := q.getShard(shardID)
+	q.RUnlock()
+	if cachedShard != nil {
+		return cachedShard, nil
 	}
 
 	// Shard doesn't exist, need to create it with locking
@@ -200,9 +221,14 @@ func (q *Queue[S, O]) GetOrCreateShard(shardID common.ShardID) (*Shard[S], error
 	q.lfs.MkdirIfNotExist(shardPath, storage.DirPerm)
 
 	// Create the sub-queue using the provided creator
-	subQueue, err := q.opts.SubQueueCreator(q.lfs, shardPath, q.p, q.logger, q.opts.Option, q.opts.Metrics, q.opts.Group, shardID, func() []string {
-		return q.opts.GetNodes(shardID)
-	})
+	var subQueue S
+	var err error
+	getNodes := func() []string { return q.opts.GetNodes(shardID) }
+	if q.opts.SubQueueCreatorWithLease != nil {
+		subQueue, err = q.opts.SubQueueCreatorWithLease(q.lfs, shardPath, q.p, q.logger, q.opts.Option, q.opts.Metrics, q.opts.Group, shardID, getNodes, q.rootLease)
+	} else {
+		subQueue, err = q.opts.SubQueueCreator(q.lfs, shardPath, q.p, q.logger, q.opts.Option, q.opts.Metrics, q.opts.Group, shardID, getNodes)
+	}
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to create sub-queue for shard %d", shardID)
 	}

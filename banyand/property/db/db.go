@@ -19,6 +19,8 @@
 package db
 
 import (
+	"bytes"
+	"container/heap"
 	"context"
 	"errors"
 	"fmt"
@@ -44,8 +46,7 @@ import (
 	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
-	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/query"
@@ -132,12 +133,13 @@ type database struct {
 	metricsScope        meter.Scope
 	lfs                 fs.FileSystem
 	lock                fs.File
+	nativeLease         *native.FileRootLease
 	logger              *logger.Logger
 	repairScheduler     *repairScheduler
 	groups              sync.Map
-	location            string
-	snapshotDir         string
 	repairBaseDir       string
+	snapshotDir         string
+	location            string
 	indexConfig         IndexConfig
 	flushInterval       time.Duration
 	expireDelete        time.Duration
@@ -147,6 +149,11 @@ type database struct {
 }
 
 // OpenDB opens a property database with the given configuration.
+//
+// The exclusive <Location>/lock is acquired before any directory is scanned
+// or any shard writer is opened, so a process that cannot establish ownership
+// fails before touching a shard. Once the lock is held, any later startup
+// failure closes all opened resources before returning.
 func OpenDB(ctx context.Context, cfg Config, omr observability.MetricsRegistry, lfs fs.FileSystem) (Database, error) {
 	if cfg.MetricsScopeName == "" {
 		return nil, errors.New("metrics scope name must not be empty")
@@ -156,7 +163,23 @@ func OpenDB(ctx context.Context, cfg Config, omr observability.MetricsRegistry, 
 	l := logger.GetLogger("property")
 	metricsScope := observability.RootScope.SubScope(cfg.MetricsScopeName)
 
-	db := &database{
+	lockPath := filepath.Join(loc, lockFilename)
+	lock, err := lfs.CreateLockFile(lockPath, storage.FilePerm)
+	if err != nil {
+		return nil, fmt.Errorf("cannot create lock file %s: %w", lockPath, err)
+	}
+	opened := false
+	var db *database
+	defer func() {
+		if !opened {
+			if db != nil && db.nativeLease != nil {
+				_ = db.nativeLease.Revoke()
+			}
+			_ = lock.Close()
+		}
+	}()
+
+	db = &database{
 		location:            loc,
 		logger:              l,
 		omr:                 omr,
@@ -168,8 +191,12 @@ func OpenDB(ctx context.Context, cfg Config, omr observability.MetricsRegistry, 
 		snapshotDir:         cfg.Snapshot.Location,
 		lfs:                 lfs,
 		indexConfig:         cfg.Index,
+		lock:                lock,
 	}
-	var err error
+	db.nativeLease, err = native.NewFileRootLease(lock, loc)
+	if err != nil {
+		return nil, err
+	}
 	// init repair scheduler
 	if cfg.Repair.Enabled {
 		scheduler, schedulerErr := newRepairScheduler(l, omr, metricsScope, cfg.Repair.BuildTreeCron, cfg.Repair.QuickBuildTreeTime,
@@ -180,17 +207,48 @@ func OpenDB(ctx context.Context, cfg Config, omr observability.MetricsRegistry, 
 		db.repairScheduler = scheduler
 	}
 	if err = db.load(ctx); err != nil {
+		_ = db.cleanupStartup()
 		return nil, err
 	}
 	db.logger.Info().Str("path", loc).Msg("initialized")
-	lockPath := filepath.Join(loc, lockFilename)
-	lock, err := lfs.CreateLockFile(lockPath, storage.FilePerm)
-	if err != nil {
-		logger.Panicf("cannot create lock file %s: %s", lockPath, err)
-	}
-	db.lock = lock
 	obsservice.MetricsCollector.Register(loc, db.collect)
+	opened = true
 	return db, nil
+}
+
+// cleanupStartup closes resources opened before a failed database startup.
+// The root lock remains held until all shard writers and scheduler callbacks
+// have stopped, preventing another opener from racing leaked resources.
+func (db *database) cleanupStartup() error {
+	if db.repairScheduler != nil {
+		db.repairScheduler.close()
+		db.repairScheduler = nil
+	}
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	var err error
+	db.groups.Range(func(_, value any) bool {
+		gs := value.(*groupShards)
+		if shards := gs.shards.Load(); shards != nil {
+			for _, shardRef := range *shards {
+				multierr.AppendInto(&err, shardRef.close())
+			}
+		}
+		return true
+	})
+	db.releaseNativeLease(&err)
+	return err
+}
+
+func (db *database) releaseNativeLease(err *error) {
+	if db.nativeLease != nil {
+		multierr.AppendInto(err, db.nativeLease.Revoke())
+		db.nativeLease = nil
+	}
+	if db.lock != nil {
+		multierr.AppendInto(err, db.lock.Close())
+		db.lock = nil
+	}
 }
 
 func (db *database) load(ctx context.Context) error {
@@ -223,7 +281,15 @@ func (db *database) Update(ctx context.Context, shardID common.ShardID, id []byt
 	if err != nil {
 		return err
 	}
-	err = sd.update(id, property)
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.closed.Load() {
+		return errors.New("database is closed")
+	}
+	if currentShard, shardExists := db.getShard(property.Metadata.Group, shardID); !shardExists || currentShard != sd {
+		return errors.New("shard is closed")
+	}
+	err = sd.update(ctx, id, property)
 	if err != nil {
 		return err
 	}
@@ -231,6 +297,11 @@ func (db *database) Update(ctx context.Context, shardID common.ShardID, id []byt
 }
 
 func (db *database) Delete(ctx context.Context, docIDs [][]byte, delTime time.Time) error {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.closed.Load() {
+		return errors.New("database is closed")
+	}
 	var err error
 	db.groups.Range(func(_, value any) bool {
 		gs := value.(*groupShards)
@@ -247,64 +318,64 @@ func (db *database) Delete(ctx context.Context, docIDs [][]byte, delTime time.Ti
 }
 
 func (db *database) Query(ctx context.Context, req *propertyv1.QueryRequest) ([]QueriedProperty, error) {
-	iq, err := inverted.BuildPropertyQuery(req, groupField, entityID)
-	if err != nil {
-		return nil, err
+	if req == nil {
+		return nil, errors.New("property query is nil")
+	}
+	if len(req.Groups) == 0 {
+		return nil, errors.New("property query requires at least one group")
+	}
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.closed.Load() {
+		return nil, errors.New("database is closed")
 	}
 	requestedGroups := make(map[string]bool, len(req.Groups))
-	for _, g := range req.Groups {
-		requestedGroups[g] = true
+	for _, group := range req.Groups {
+		requestedGroups[group] = true
 	}
 	shards := db.collectGroupShards(requestedGroups)
 	if len(shards) == 0 {
 		return nil, nil
 	}
-
 	if req.OrderBy == nil {
-		var res []QueriedProperty
-		for _, s := range shards {
-			results, searchErr := s.search(ctx, iq, nil, int(req.Limit))
-			if searchErr != nil {
-				return nil, searchErr
+		var result []QueriedProperty
+		for _, shardRef := range shards {
+			hits, err := shardRef.searchNative(ctx, req, nil, int(req.Limit))
+			if err != nil {
+				return nil, err
 			}
-			for _, r := range results {
-				res = append(res, r)
+			for _, hit := range hits {
+				result = append(result, hit)
 			}
 		}
-		return res, nil
+		return result, nil
 	}
+	return db.queryNativeSorted(ctx, shards, req)
+}
 
-	iters := make([]sort.Iterator[*queryProperty], 0, len(shards))
-	for _, s := range shards {
-		// Each shard returns pre-sorted results (via SeriesSort)
-		r, searchErr := s.search(ctx, iq, req.OrderBy, int(req.Limit))
-		if searchErr != nil {
-			return nil, searchErr
+func (db *database) queryNativeSorted(ctx context.Context, shards []*shard, req *propertyv1.QueryRequest) ([]QueriedProperty, error) {
+	iters := make([]*queryPropertyIterator, 0, len(shards))
+	for _, shardRef := range shards {
+		hits, err := shardRef.searchNative(ctx, req, req.OrderBy, int(req.Limit))
+		if err != nil {
+			return nil, err
 		}
-		if len(r) > 0 {
-			// Wrap result slice as iterator and add to merge
-			iters = append(iters, newQueryPropertyIterator(r))
+		if len(hits) > 0 {
+			iters = append(iters, newQueryPropertyIterator(hits))
 		}
 	}
-
 	if len(iters) == 0 {
 		return nil, nil
 	}
-
-	// K-way merge
-	isDesc := req.OrderBy.Sort == modelv1.Sort_SORT_DESC
-	mergeIter := sort.NewItemIter(iters, isDesc)
+	mergeIter := newNativeQueryPropertyMergeIterator(iters, req.OrderBy.Sort == modelv1.Sort_SORT_DESC)
 	defer mergeIter.Close()
-
-	// Collect merged results up to limit
 	result := make([]QueriedProperty, 0, queryCapacityUint(req.Limit))
 	for mergeIter.Next() {
-		if chargeErr := query.Charge(ctx, 128); chargeErr != nil {
-			return nil, chargeErr
+		if err := query.Charge(ctx, 128); err != nil {
+			return nil, err
 		}
 		result = append(result, mergeIter.Val())
 	}
-
 	return result, nil
 }
 
@@ -337,6 +408,16 @@ func (db *database) loadShard(ctx context.Context, group string, id common.Shard
 	}
 	db.mu.Lock()
 	defer db.mu.Unlock()
+	if db.closed.Load() {
+		return nil, errors.New("database is closed")
+	}
+	return db.loadShardLocked(ctx, group, id)
+}
+
+func (db *database) loadShardLocked(ctx context.Context, group string, id common.ShardID) (*shard, error) {
+	if db.closed.Load() {
+		return nil, errors.New("database is closed")
+	}
 	if s, ok := db.getShard(group, id); ok {
 		return s, nil
 	}
@@ -392,6 +473,8 @@ func (db *database) getShard(group string, id common.ShardID) (*shard, bool) {
 
 // Drop closes and removes all shards for the given group and deletes the group directory.
 func (db *database) Drop(groupName string) (err error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
 	value, ok := db.groups.LoadAndDelete(groupName)
 	if !ok {
 		return nil
@@ -431,6 +514,8 @@ func (db *database) Close() error {
 	if db.repairScheduler != nil {
 		db.repairScheduler.close()
 	}
+	db.mu.Lock()
+	defer db.mu.Unlock()
 	var err error
 	db.groups.Range(func(_, value any) bool {
 		gs := value.(*groupShards)
@@ -443,11 +528,16 @@ func (db *database) Close() error {
 		}
 		return true
 	})
-	db.lock.Close()
+	db.releaseNativeLease(&err)
 	return err
 }
 
 func (db *database) collect() {
+	if db.closed.Load() {
+		return
+	}
+	db.mu.RLock()
+	defer db.mu.RUnlock()
 	if db.closed.Load() {
 		return
 	}
@@ -458,7 +548,9 @@ func (db *database) collect() {
 			return true
 		}
 		for _, s := range *sLst {
-			s.store.CollectMetrics()
+			if s.nativeStore != nil {
+				s.nativeStore.collectMetrics()
+			}
 		}
 		return true
 	})
@@ -469,13 +561,27 @@ func (db *database) Repair(ctx context.Context, id []byte, shardID uint64, prope
 	if err != nil {
 		return pkgerrors.WithMessagef(err, "failed to load shard %d", id)
 	}
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.closed.Load() {
+		return pkgerrors.WithMessagef(errors.New("database is closed"), "failed to load shard %d", id)
+	}
+	if currentShard, shardExists := db.getShard(property.Metadata.Group, common.ShardID(shardID)); !shardExists || currentShard != s {
+		return pkgerrors.WithMessagef(errors.New("shard is closed"), "failed to load shard %d", id)
+	}
 	_, _, err = s.repair(ctx, id, property, deleteTime)
 	return err
 }
 
+// errSnapshotDatabaseClosed is returned by SnapshotShards once the database is closed.
+var errSnapshotDatabaseClosed = errors.New("database is closed")
+
 func (db *database) TakeSnapShot(ctx context.Context, sn string) *databasev1.Snapshot {
 	snp := &databasev1.Snapshot{Name: sn, Catalog: commonv1.Catalog_CATALOG_PROPERTY}
 	if err := db.SnapshotShards(ctx, path.Join(db.snapshotDir, sn, storage.DataDir)); err != nil {
+		if errors.Is(err, errSnapshotDatabaseClosed) {
+			return nil
+		}
 		snp.Error = err.Error()
 	}
 	return snp
@@ -485,8 +591,14 @@ func (db *database) TakeSnapShot(ctx context.Context, sn string) *databasev1.Sna
 // backup, which copies the segment files (they are not hard links), so a snapshot needs as
 // much free space as the shards it copies. A destination shard directory that already
 // exists is an error. It stops at the first failure or when ctx is done, returning
-// ctx.Err() in the latter case.
+// ctx.Err() in the latter case, and fails with errSnapshotDatabaseClosed once the database
+// is closed.
 func (db *database) SnapshotShards(ctx context.Context, dstDir string) error {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.closed.Load() {
+		return errSnapshotDatabaseClosed
+	}
 	var err error
 	db.groups.Range(func(_, value any) bool {
 		gs := value.(*groupShards)
@@ -506,7 +618,7 @@ func (db *database) SnapshotShards(ctx context.Context, dstDir string) error {
 				err = fmt.Errorf("create shard snapshot directory: %w", err)
 				return false
 			}
-			if err = shardRef.store.TakeFileSnapshot(snpDir); err != nil {
+			if err = shardRef.nativeStore.takeFileSnapshot(snpDir); err != nil {
 				db.logger.Error().Err(err).Str("group", shardRef.group).
 					Str("shard", filepath.Base(shardRef.location)).Msg("fail to take shard snapshot")
 				return false
@@ -537,6 +649,7 @@ type queryProperty struct {
 	id          []byte
 	source      []byte
 	sortedValue []byte
+	sortMissing bool
 	timestamp   int64
 	deleteTime  int64
 }
@@ -570,6 +683,90 @@ func (q *queryProperty) SortedField() []byte {
 type queryPropertyIterator struct {
 	data  []*queryProperty
 	index int
+}
+
+// nativeQueryPropertyMergeIterator preserves missing-value ordering across
+// shards without encoding missing as a byte sentinel that could collide with
+// a valid property tag value.
+type nativeQueryPropertyMergeIterator struct {
+	heap    *nativeQueryPropertyMergeHeap
+	current *queryProperty
+}
+
+func newNativeQueryPropertyMergeIterator(iters []*queryPropertyIterator, desc bool) *nativeQueryPropertyMergeIterator {
+	frontier := &nativeQueryPropertyMergeHeap{desc: desc, items: make([]*nativeQueryPropertyMergeHead, 0, len(iters))}
+	for _, iter := range iters {
+		if iter.Next() {
+			frontier.items = append(frontier.items, &nativeQueryPropertyMergeHead{item: iter.Val(), iter: iter})
+		}
+	}
+	heap.Init(frontier)
+	return &nativeQueryPropertyMergeIterator{heap: frontier}
+}
+
+func (it *nativeQueryPropertyMergeIterator) Next() bool {
+	if it.heap.Len() == 0 {
+		it.current = nil
+		return false
+	}
+	head := heap.Pop(it.heap).(*nativeQueryPropertyMergeHead)
+	it.current = head.item
+	if head.iter.Next() {
+		head.item = head.iter.Val()
+		heap.Push(it.heap, head)
+	}
+	return true
+}
+
+func (it *nativeQueryPropertyMergeIterator) Val() *queryProperty { return it.current }
+
+func (it *nativeQueryPropertyMergeIterator) Close() error { return nil }
+
+type nativeQueryPropertyMergeHead struct {
+	item *queryProperty
+	iter *queryPropertyIterator
+}
+
+type nativeQueryPropertyMergeHeap struct {
+	items []*nativeQueryPropertyMergeHead
+	desc  bool
+}
+
+func (h nativeQueryPropertyMergeHeap) Len() int { return len(h.items) }
+
+func (h nativeQueryPropertyMergeHeap) Less(left, right int) bool {
+	return nativeQueryPropertyLess(h.items[left].item, h.items[right].item, h.desc)
+}
+
+func (h nativeQueryPropertyMergeHeap) Swap(left, right int) {
+	h.items[left], h.items[right] = h.items[right], h.items[left]
+}
+
+func (h *nativeQueryPropertyMergeHeap) Push(value any) {
+	h.items = append(h.items, value.(*nativeQueryPropertyMergeHead))
+}
+
+func (h *nativeQueryPropertyMergeHeap) Pop() any {
+	last := len(h.items) - 1
+	value := h.items[last]
+	h.items = h.items[:last]
+	return value
+}
+
+func nativeQueryPropertyLess(left, right *queryProperty, desc bool) bool {
+	if left.sortMissing != right.sortMissing {
+		return !left.sortMissing
+	}
+	if !left.sortMissing {
+		cmp := bytes.Compare(left.sortedValue, right.sortedValue)
+		if cmp != 0 {
+			if desc {
+				return cmp > 0
+			}
+			return cmp < 0
+		}
+	}
+	return bytes.Compare(left.id, right.id) < 0
 }
 
 func newQueryPropertyIterator(data []*queryProperty) *queryPropertyIterator {

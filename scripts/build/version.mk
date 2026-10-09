@@ -36,3 +36,40 @@ GOVULNCHECK_VERSION := v1.1.4
 # Version for bpf2go tool used for eBPF code generation. Keep in sync with
 # pkg/fs/fadvismonitor/Dockerfile ARG BPF2GO_VERSION
 BPF2GO_VERSION := v0.21.0
+
+## Build environment for committed artifacts
+## (scripts/build/dockerfiles/build.Dockerfile, see
+##  docs/design/0.12.0/docker-canonical-build/README.md)
+##
+## This is the only place versions and pins for the pinned build environment are
+## written down. The Dockerfile contains no version literals, the make wrapper
+## contains none, and nothing is duplicated: a bump is one line here.
+##
+## Neither the Go nor the Node version is here, and that is deliberate. `go 1.25.13`
+## in go.mod, and `"node": "24.6.0"` in BOTH mcp/package.json and canopy/package.json,
+## are the declarations the toolchains themselves read and enforce. A second copy here would create two
+## sources of truth that can silently disagree, and the failure mode is subtle: a
+## contributor resolving a different license set from CI. Both are derived and
+## passed to the Dockerfile as build args; the entrypoint fails the build if the
+## image and either declaration drift apart, and `make check-node-version`
+## cross-checks that mcp and canopy pin the same version, and that every other
+## project's engines field is satisfied by it.
+##
+# The single canonical platform for the build environment. Not overridable: the
+# toolchain tarballs are amd64-specific, and BuildKit's cache key does not include
+# the target platform, so a --platform override reuses the amd64 layers and
+# produces a mislabelled image instead of an obvious failure. The Dockerfile
+# asserts its own architecture, so a mismatch fails loudly.
+BUILD_PLATFORM := linux/amd64
+
+# Debian base image, digest-pinned. A digest freezes the OS image but not the
+# contents of the apt repository, so DEBIAN_SNAPSHOT below is what freezes the
+# packages installed into it. These two cannot be derived from a URL the way a
+# tarball checksum can, which is why they are recorded here.
+DEBIAN_DISTRO := bookworm
+DEBIAN_IMAGE := debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
+DEBIAN_SNAPSHOT := 20250929T000000Z
+
+# Fixed timestamp for anything the environment stamps. Archive member
+# normalization is NOT implemented yet; see the design §10.1.
+SOURCE_DATE_EPOCH := 1700000000

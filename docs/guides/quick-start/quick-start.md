@@ -39,8 +39,7 @@ This repository includes a ready-to-use docker-compose file at [docker-compose.y
 | Service | URL | Description |
 |---------|-----|-------------|
 | SkyWalking UI | http://localhost:8080 | Web interface for traces, metrics, topology |
-| BanyanDB HTTP | http://localhost:17913 | HTTP endpoint for bydbctl and embedded UI |
-| BanyanDB UI | http://localhost:17913 | Embedded UI for querying data |
+| BanyanDB HTTP | http://localhost:17913 | HTTP endpoint for bydbctl, HTTP clients and the Canopy web console |
 | OAP HTTP | http://localhost:12800 | OAP REST API |
 | OAP gRPC | localhost:11800 | gRPC endpoint for agents |
 
@@ -123,15 +122,13 @@ You could find the details of the showcase cluster in the [SkyWalking Showcase](
 
 ### Using Docker Compose (Option 1)
 
-Access the UIs at:
+Access the UI at:
 
 - **SkyWalking UI**: http://localhost:8080
-- **BanyanDB UI**: http://localhost:17913
 
 ### Using Showcase (Option 2)
 
 - **SkyWalking UI**: http://localhost:9999
-- **BanyanDB UI**: http://localhost:17913
 
 We can view the final presentation of the metrics/traces/logs/topology for the demo system on the UI dashboards.
 The following image shows the `General-Service` service list in the SkyWalking UI:
@@ -139,14 +136,7 @@ The following image shows the `General-Service` service list in the SkyWalking U
 
 ### Query the Data in BanyanDB
 
-If you are interested in the raw data stored in BanyanDB, you can use the BanyanDB embedded UI or BanyanDB CLI(bydbctl) to query the data.
-
-- BanyanDB embedded UI can be accessed at `http://localhost:17913`.
-  The following image shows how to query all the services from the BanyanDB:
-
-![banyandb-ui.png](https://skywalking.apache.org/doc-graph/banyandb/v0.8.0/banyandb-ui.png)
-
-- BanyanDB CLI(bydbctl) can be used to query the data from the command line.
+If you are interested in the raw data stored in BanyanDB, you can use the BanyanDB CLI(bydbctl) to query the data from the command line, or explore it visually in the [Canopy](../../interacting/canopy.md) web console.
 ```shell
 bydbctl measure query -f - <<EOF
 name: "service_traffic_minute"

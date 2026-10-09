@@ -19,7 +19,10 @@
 package fs
 
 import (
+	"errors"
+	"fmt"
 	"io"
+	iofs "io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -105,6 +108,14 @@ type FileSystem interface {
 	MkdirPanicIfExist(path string, permission Mode)
 	// ReadDir reads the directory named by dirname and returns a list of directory entries sorted by filename.
 	ReadDir(dirname string) []DirEntry
+	// ReadDirLimit reads at most limit entries of dirname in directory order, or every entry when limit
+	// is not positive. Unlike ReadDir it returns failures as errors instead of panicking.
+	ReadDirLimit(dirname string, limit int) ([]DirEntry, error)
+	// MkdirAll creates path and any missing parents. Unlike MkdirIfNotExist it returns failures as
+	// errors instead of panicking.
+	MkdirAll(path string, permission Mode) error
+	// Lstat describes the named file without following a final symbolic link.
+	Lstat(name string) (iofs.FileInfo, error)
 	// Create and open the file by specified name and mode.
 	CreateFile(name string, permission Mode) (File, error)
 	// Create and open lock file by specified name and mode.
@@ -151,6 +162,9 @@ type DirEntry interface {
 
 	// IsDir reports whether the entry describes a directory.
 	IsDir() bool
+
+	// Type returns the entry's type bits.
+	Type() iofs.FileMode
 }
 
 // MustCreateFile creates a new file with the specified name and permission.
@@ -160,13 +174,83 @@ func MustCreateFile(fs FileSystem, path string, permission Mode, cached bool) Fi
 	if err != nil {
 		logger.GetLogger().Panic().Err(err).Str("path", path).Msg("cannot create file")
 	}
+	SetCached(f, cached)
+	return f
+}
 
-	// Pass the cached parameter to the file for use in sequential operations
+// SetCached controls whether sequential reads and writes on f keep its pages
+// in the OS page cache. When cached is false they apply FADV_DONTNEED as data
+// is streamed; when true the pages are left for later reads.
+func SetCached(f File, cached bool) {
 	if localFile, ok := f.(*LocalFile); ok {
 		localFile.cached = cached
 	}
+}
 
-	return f
+// PageCacheAdvice is a hint about how a file's pages will be accessed. It is
+// passed to the OS page cache through fadvise on Linux and ignored elsewhere.
+type PageCacheAdvice int
+
+const (
+	// PageCacheWillNeed asks the OS to read the whole file into the page
+	// cache ahead of access.
+	PageCacheWillNeed PageCacheAdvice = iota
+	// PageCacheRandom disables readahead for a file read at scattered offsets.
+	PageCacheRandom
+	// PageCacheDontNeed drops the file's clean pages from the page cache.
+	PageCacheDontNeed
+)
+
+// AdvisePageCache applies advice to the whole of f. It is a best-effort hint:
+// files not backed by the local file system are left untouched.
+func AdvisePageCache(f File, advice PageCacheAdvice) error {
+	localFile, ok := f.(*LocalFile)
+	if !ok {
+		return nil
+	}
+	if adviseErr := adviseFile(localFile.file.Fd(), advice); adviseErr != nil {
+		return &FileSystemError{
+			Code:    otherError,
+			Message: fmt.Sprintf("Advise page cache error, file name: %s, error message: %s", localFile.file.Name(), adviseErr),
+		}
+	}
+	return nil
+}
+
+// ErrNotLocalFile reports an operation that needs a file of the local file
+// system on another kind of File.
+var ErrNotLocalFile = errors.New("fs: not a local file")
+
+// StatFile describes the open file f itself (fstat), not whatever its path
+// names now, so os.SameFile can tell whether a path still names the file f
+// was opened from. It reports ErrNotLocalFile for files not backed by the
+// local file system.
+func StatFile(f File) (os.FileInfo, error) {
+	localFile, ok := f.(*LocalFile)
+	if !ok {
+		return nil, ErrNotLocalFile
+	}
+	info, statErr := localFile.file.Stat()
+	if statErr != nil {
+		return nil, &FileSystemError{
+			Code:    otherError,
+			Message: fmt.Sprintf("Stat file error, file name: %s, error message: %s", localFile.file.Name(), statErr),
+		}
+	}
+	return info, nil
+}
+
+// SyncDir fsyncs the directory at path so that entries created, linked, or
+// removed in it are durable. It is a no-op where the platform does not expose
+// directory fsync.
+func SyncDir(path string) error {
+	if err := syncDir(path); err != nil {
+		return &FileSystemError{
+			Code:    flushError,
+			Message: fmt.Sprintf("Sync directory error, directory name: %s, error message: %s", path, err),
+		}
+	}
+	return nil
 }
 
 // MustFlush flushes all data to one file and panics if it cannot write all data.

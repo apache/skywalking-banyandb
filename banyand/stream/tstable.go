@@ -36,7 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	idxmetrics "github.com/apache/skywalking-banyandb/pkg/index/metrics"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -46,6 +46,13 @@ import (
 
 const (
 	snapshotSuffix = ".snp"
+
+	// legacyExternalSegmentTempDirName is the previous release's on-disk
+	// staging directory name (pkg/index/inverted.ExternalSegmentTempDirName),
+	// duplicated here so the element index never imports pkg/index/inverted
+	// for this bookkeeping check; banyand/internal/storage's series index
+	// does the same for its own legacy artifact names.
+	legacyExternalSegmentTempDirName = "external-segment-temp"
 )
 
 type tsTable struct {
@@ -213,6 +220,12 @@ func (tst *tsTable) mustReadSnapshot(snapshot uint64) []uint64 {
 func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	l *logger.Logger, option option, m any, initIndex bool,
 ) (*tsTable, uint64, error) {
+	return initTSTableWithLease(fileSystem, rootPath, p, l, option, m, initIndex, nil)
+}
+
+func initTSTableWithLease(fileSystem fs.FileSystem, rootPath string, p common.Position,
+	l *logger.Logger, option option, m any, initIndex bool, lease storage.RootLease,
+) (*tsTable, uint64, error) {
 	if option.protector == nil {
 		logger.GetLogger("stream").
 			Panic().
@@ -226,13 +239,13 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 		p:          p,
 		pm:         option.protector,
 	}
-	var indexMetrics *inverted.Metrics
+	var indexMetrics *idxmetrics.Metrics
 	if m != nil {
 		tst.metrics = m.(*metrics)
 		indexMetrics = tst.metrics.indexMetrics
 	}
 	if initIndex {
-		index, err := newElementIndex(context.TODO(), rootPath, option.elementIndexFlushTimeout.Nanoseconds()/int64(time.Second), indexMetrics)
+		index, err := newElementIndex(context.TODO(), rootPath, option.elementIndexFlushTimeout.Nanoseconds()/int64(time.Second), indexMetrics, lease)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -251,7 +264,7 @@ func initTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 			if ee[i].Name() == elementIndexFilename {
 				continue
 			}
-			if ee[i].Name() == inverted.ExternalSegmentTempDirName {
+			if ee[i].Name() == legacyExternalSegmentTempDirName {
 				continue
 			}
 			if ee[i].Name() == storage.FailedPartsDirName {
@@ -325,6 +338,17 @@ func newTSTable(fileSystem fs.FileSystem, rootPath string, p common.Position,
 	l *logger.Logger, _ timestamp.TimeRange, option option, m any,
 ) (*tsTable, error) {
 	t, epoch, err := initTSTable(fileSystem, rootPath, p, l, option, m, true)
+	if err != nil {
+		return nil, err
+	}
+	t.startLoop(epoch)
+	return t, nil
+}
+
+func newTSTableWithLease(fileSystem fs.FileSystem, rootPath string, p common.Position,
+	l *logger.Logger, _ timestamp.TimeRange, option option, m any, lease storage.RootLease,
+) (*tsTable, error) {
+	t, epoch, err := initTSTableWithLease(fileSystem, rootPath, p, l, option, m, true, lease)
 	if err != nil {
 		return nil, err
 	}

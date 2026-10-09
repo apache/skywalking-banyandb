@@ -25,10 +25,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blugelabs/bluge"
-
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
@@ -68,7 +67,7 @@ func TestSnapshotShards_CopiesEveryShardWithItsDocuments(t *testing.T) {
 	}
 	for _, id := range []string{"1", "2", "3"} {
 		p := buildProperties(propertyBuilder{id: id, version: 1})
-		if err = sh.update(GetPropertyID(p), p); err != nil {
+		if err = sh.update(context.Background(), GetPropertyID(p), p); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -81,14 +80,9 @@ func TestSnapshotShards_CopiesEveryShardWithItsDocuments(t *testing.T) {
 		t.Fatal(err)
 	}
 	shardDir := filepath.Join(dst, defaultGroupName, "shard-0")
-	reader, err := bluge.OpenReader(bluge.DefaultConfig(shardDir))
+	count, err := native.ReadOnlyDocCount(shardDir)
 	if err != nil {
 		t.Fatalf("the shard snapshot must be a readable index: %v", err)
-	}
-	count, err := reader.Count()
-	_ = reader.Close()
-	if err != nil {
-		t.Fatal(err)
 	}
 	if count != 3 {
 		t.Fatalf("the snapshot must hold every written document, including unflushed ones: got %d, want 3", count)

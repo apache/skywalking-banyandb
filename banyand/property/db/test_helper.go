@@ -157,7 +157,7 @@ func CreateTestShardForDump(tmpPath string, fileSystem fs.FileSystem) (string, f
 
 	// Insert properties
 	for _, p := range properties {
-		if err := shard.update(GetPropertyID(p), p); err != nil {
+		if err := shard.update(context.Background(), GetPropertyID(p), p); err != nil {
 			db.Close()
 			panic(err)
 		}

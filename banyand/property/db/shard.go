@@ -18,71 +18,76 @@
 package db
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"sort"
 	"strconv"
-	"sync"
 	"time"
 
-	"github.com/RoaringBitmap/roaring"
-	segment "github.com/blugelabs/bluge_segment_api"
-	"go.uber.org/multierr"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/apache/skywalking-banyandb/api/common"
-	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/metrics"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
-	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
 const (
-	shardTemplate  = "shard-%d"
-	sourceField    = "_source"
-	groupField     = "_group"
-	nameField      = index.IndexModeName
-	entityID       = "_entity_id"
-	deleteField    = "_deleted"
-	idField        = "_id"
-	timestampField = "_timestamp"
-	shaValueField  = "_sha_value"
+	shardTemplate = "shard-%d"
+	sourceField   = "_source"
+	groupField    = "_group"
+	nameField     = index.IndexModeName
+	entityID      = "_entity_id"
+	deleteField   = "_deleted"
+	shaValueField = "_sha_value"
+	// unindexedSourceTag names a Property tag kept out of the inverted index.
+	// Schema properties carry their full JSON spec in it, a large unique term
+	// that dominated dictionary build and merge time while nothing filters
+	// on it; the value is still stored with the property and stays sortable.
+	unindexedSourceTag = "source"
 )
 
 var (
-	sourceFieldKey    = index.FieldKey{TagName: sourceField}
-	entityFieldKey    = index.FieldKey{TagName: entityID}
-	groupFieldKey     = index.FieldKey{TagName: groupField}
-	nameFieldKey      = index.FieldKey{TagName: nameField}
-	deletedFieldKey   = index.FieldKey{TagName: deleteField}
-	idFieldKey        = index.FieldKey{TagName: idField}
-	timestampFieldKey = index.FieldKey{TagName: timestampField}
-	shaValueFieldKey  = index.FieldKey{TagName: shaValueField}
-	projection        = []index.FieldKey{idFieldKey, timestampFieldKey, sourceFieldKey, deletedFieldKey}
+	sourceFieldKey   = index.FieldKey{TagName: sourceField}
+	entityFieldKey   = index.FieldKey{TagName: entityID}
+	groupFieldKey    = index.FieldKey{TagName: groupField}
+	nameFieldKey     = index.FieldKey{TagName: nameField}
+	deletedFieldKey  = index.FieldKey{TagName: deleteField}
+	shaValueFieldKey = index.FieldKey{TagName: shaValueField}
 )
 
 type shard struct {
-	store              index.SeriesStore
-	l                  *logger.Logger
-	repairState        *repair
-	location           string
-	group              string
-	expireToDeleteSec  int64
-	id                 common.ShardID
-	waitForPersistence bool
+	nativeStore *nativePropertyStore
+	l           *logger.Logger
+	repairState *repair
+	// testBeforeNativeRead, when set, is called once, synchronously, at the
+	// start of a native read (buildDeleteFromTimeDocuments's lookup and
+	// searchNative's query) before touching s.nativeStore. It exists only
+	// because native reads (native.Owner.Acquire) are deliberately
+	// lock-free -- unlike Update/Repair's write path, which
+	// db_lifetime_test.go blocks through a real, production seam
+	// (native.OwnerOptions.Persist, combined with nativePropertyStore.wait)
+	// and needs no hook here at all -- so there is no existing seam that
+	// makes an in-flight read observably slow. See db_lifetime_test.go's own
+	// package doc comment for the full reasoning.
+	testBeforeNativeRead func()
+	location             string
+	group                string
+	expireToDeleteSec    int64
+	id                   common.ShardID
+	waitForPersistence   bool
 }
 
 func (s *shard) close() error {
-	if s.store != nil {
-		return s.store.Close()
+	if s.nativeStore != nil {
+		return s.nativeStore.close()
 	}
 	return nil
 }
@@ -108,15 +113,16 @@ func (db *database) newShard(
 	}
 	batchWaitSec := db.indexConfig.BatchWaitSec
 	metricsFactory := db.omr.With(db.metricsScope.ConstLabels(meter.LabelPairs{"group": group, "shard": sName}))
-	opts := inverted.StoreOpts{
-		Path:                 location,
-		Logger:               si.l,
-		Metrics:              inverted.NewMetrics(metricsFactory),
-		BatchWaitSec:         batchWaitSec,
-		PrepareMergeCallback: si.prepareForMerge,
-	}
+	nativeMetrics := metrics.NewMetrics(metricsFactory)
+	// NewOwner is a synchronous constructor; the store's Batch path carries
+	// request contexts after construction.
+	wait := si.waitForPersistence || batchWaitSec <= 0
+	persistInterval := time.Duration(batchWaitSec) * time.Second
 	var err error
-	if si.store, err = inverted.NewStore(opts); err != nil {
+	//nolint:contextcheck // constructor has no context-bearing API
+	if si.nativeStore, err = newNativePropertyStore(location, db.nativeLease, wait, persistInterval, func(count, size int64) {
+		nativeMetrics.ObserveNative(count, size)
+	}, si.prepareNativeMerge); err != nil {
 		return nil, err
 	}
 	repairBaseDir = path.Join(repairBaseDir, group, sName)
@@ -125,12 +131,38 @@ func (db *database) newShard(
 	return si, nil
 }
 
-func (s *shard) update(id []byte, property *propertyv1.Property) error {
+func (s *shard) prepareNativeMerge(ctx context.Context, document native.MergeDocument) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	var deleteTime int64
+	if err := document.StoredFields(func(name string, value []byte) bool {
+		if name == deleteField {
+			if len(value) != 8 {
+				deleteTime = -1
+				return false
+			}
+			deleteTime = convert.BytesToInt64(value)
+		}
+		return true
+	}); err != nil {
+		return false, err
+	}
+	if deleteTime == -1 {
+		return false, fmt.Errorf("invalid deletion timestamp: %w", native.ErrCorrupt)
+	}
+	if deleteTime <= 0 {
+		return false, nil
+	}
+	return int64(time.Since(time.Unix(0, deleteTime)).Seconds()) >= s.expireToDeleteSec, nil
+}
+
+func (s *shard) update(ctx context.Context, id []byte, property *propertyv1.Property) error {
 	document, err := s.buildUpdateDocument(id, property, 0)
 	if err != nil {
 		return fmt.Errorf("build update document failure: %w", err)
 	}
-	return s.updateDocuments(index.Documents{*document})
+	return s.updateDocuments(ctx, index.Documents{*document})
 }
 
 func (s *shard) buildUpdateDocument(id []byte, property *propertyv1.Property, deleteTime int64) (*index.Document, error) {
@@ -160,7 +192,7 @@ func (s *shard) buildUpdateDocument(id []byte, property *propertyv1.Property, de
 			return nil, err
 		}
 		tagField := index.NewBytesField(index.FieldKey{IndexRuleID: uint32(convert.HashStr(t.Key))}, tv)
-		tagField.Index = true
+		tagField.Index = t.Key != unindexedSourceTag
 		tagField.NoSort = false
 		doc.Fields = append(doc.Fields, tagField)
 	}
@@ -195,36 +227,23 @@ func (s *shard) deleteFromTime(ctx context.Context, docID [][]byte, delTime time
 	if err != nil {
 		return err
 	}
-	return s.updateDocuments(removeDocList)
+	return s.updateDocuments(ctx, removeDocList)
 }
 
 func (s *shard) buildDeleteFromTimeDocuments(ctx context.Context, docID [][]byte, deleteTime int64) ([]index.Document, error) {
-	// search the original documents by docID
-	seriesMatchers := make([]index.SeriesMatcher, 0, len(docID))
-	for _, id := range docID {
-		seriesMatchers = append(seriesMatchers, index.SeriesMatcher{
-			Match: id,
-			Type:  index.SeriesMatcherTypeExact,
-		})
+	if s.testBeforeNativeRead != nil {
+		s.testBeforeNativeRead()
 	}
-	if len(seriesMatchers) == 0 {
-		return nil, nil
-	}
-	iq, err := s.store.BuildQuery(seriesMatchers, nil, nil)
+	existing, err := s.nativeStore.lookup(ctx, docID)
 	if err != nil {
-		return nil, fmt.Errorf("build property query failure: %w", err)
+		return nil, fmt.Errorf("lookup existing documents failure: %w", err)
 	}
-	exisingDocList, err := s.search(ctx, iq, nil, len(docID))
-	if err != nil {
-		return nil, fmt.Errorf("search existing documents failure: %w", err)
-	}
-	removeDocList := make([]index.Document, 0, len(exisingDocList))
-	for _, property := range exisingDocList {
+	removeDocList := make([]index.Document, 0, len(existing))
+	for _, property := range existing {
 		p := &propertyv1.Property{}
 		if err := protojson.Unmarshal(property.source, p); err != nil {
 			return nil, fmt.Errorf("unmarshal property failure: %w", err)
 		}
-		// update the property to mark it as delete
 		document, err := s.buildUpdateDocument(GetPropertyID(p), p, deleteTime)
 		if err != nil {
 			return nil, fmt.Errorf("build delete document failure: %w", err)
@@ -234,132 +253,25 @@ func (s *shard) buildDeleteFromTimeDocuments(ctx context.Context, docID [][]byte
 	return removeDocList, nil
 }
 
-func (s *shard) updateDocuments(docs index.Documents) error {
+func (s *shard) updateDocuments(ctx context.Context, docs index.Documents) error {
 	if len(docs) == 0 {
 		return nil
 	}
-	if s.waitForPersistence {
-		var updateErr, persistentError error
-		wg := sync.WaitGroup{}
-		wg.Add(1)
-		updateErr = s.store.UpdateSeriesBatch(index.Batch{
-			Documents: docs,
-			PersistentCallback: func(err error) {
-				persistentError = err
-				wg.Done()
-			},
-		})
-		if updateErr != nil {
-			return updateErr
-		}
-		wg.Wait()
-		if persistentError != nil {
-			return fmt.Errorf("persistent failure: %w", persistentError)
-		}
-	} else {
-		updateErr := s.store.UpdateSeriesBatch(index.Batch{
-			Documents: docs,
-		})
-		if updateErr != nil {
-			return updateErr
-		}
-	}
-	if s.repairState.scheduler != nil {
+	err := s.nativeStore.batch(ctx, docs, nil)
+	if err == nil && s.repairState != nil && s.repairState.scheduler != nil {
 		s.repairState.scheduler.documentUpdatesNotify()
 	}
-	return nil
+	return err
 }
 
-func (s *shard) search(ctx context.Context, q index.Query, orderBy *propertyv1.QueryOrder, limit int,
-) (data []*queryProperty, err error) {
-	tracer := query.GetTracer(ctx)
-	if tracer != nil {
-		span, _ := tracer.StartSpan(ctx, "property.search")
-		span.Tagf("query", "%s", q.String())
-		span.Tagf("shard", "%d", s.id)
-		if orderBy != nil {
-			span.Tagf("order", "%s(%s)", orderBy.TagName, orderBy.Sort)
-		}
-		defer func() {
-			if data != nil {
-				span.Tagf("matched", "%d", len(data))
-			}
-			if err != nil {
-				span.Error(err)
-			}
-			span.Stop()
-		}()
+func (s *shard) searchNative(ctx context.Context, request *propertyv1.QueryRequest, order *propertyv1.QueryOrder, limit int) ([]*queryProperty, error) {
+	if s.testBeforeNativeRead != nil {
+		s.testBeforeNativeRead()
 	}
-	if orderBy == nil {
-		ss, searchErr := s.store.Search(ctx, projection, q, limit)
-		if searchErr != nil {
-			return nil, searchErr
-		}
-
-		if len(ss) == 0 {
-			return nil, nil
-		}
-		data = make([]*queryProperty, 0)
-		for _, s := range ss {
-			bytes := s.Fields[sourceField]
-			if chargeErr := query.Charge(ctx, uint64(len(bytes))+128); chargeErr != nil {
-				return nil, chargeErr
-			}
-			var deleteTime int64
-			if s.Fields[deleteField] != nil {
-				deleteTime = convert.BytesToInt64(s.Fields[deleteField])
-			}
-			data = append(data, &queryProperty{
-				id:         s.Key.EntityValues,
-				timestamp:  s.Timestamp,
-				source:     bytes,
-				deleteTime: deleteTime,
-			})
-		}
-		return data, nil
+	if s.nativeStore == nil {
+		return nil, errors.New("native property store is not configured")
 	}
-	order := &index.OrderBy{
-		Index: &databasev1.IndexRule{
-			Metadata: &commonv1.Metadata{
-				Id: uint32(convert.HashStr(orderBy.TagName)),
-			},
-		},
-		Sort: orderBy.Sort,
-		Type: index.OrderByTypeIndex,
-	}
-	iter, err := s.store.SeriesSort(ctx, q, order, limit, projection)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		err = multierr.Append(err, iter.Close())
-	}()
-	data = make([]*queryProperty, 0, queryCapacity(limit))
-	for iter.Next() {
-		val := iter.Val()
-		if chargeErr := query.Charge(ctx, uint64(len(val.Values[sourceField]))+uint64(len(val.SortedValue))+128); chargeErr != nil {
-			return nil, chargeErr
-		}
-
-		var deleteTime int64
-		if val.Values[deleteField] != nil {
-			deleteTime = convert.BytesToInt64(val.Values[deleteField])
-		}
-
-		var sortedValue []byte
-		if len(val.SortedValue) > 0 {
-			sortedValue = bytes.Clone(val.SortedValue)
-		}
-
-		data = append(data, &queryProperty{
-			id:          val.EntityValues,
-			timestamp:   val.Timestamp,
-			source:      val.Values[sourceField],
-			sortedValue: sortedValue,
-			deleteTime:  deleteTime,
-		})
-	}
-	return data, nil
+	return s.nativeStore.query(ctx, request, order, limit)
 }
 
 func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Property, deleteTime int64) (updated bool, selfNewer *queryProperty, err error) {
@@ -394,16 +306,10 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 				Msg("slow property repair")
 		}
 	}()
-	iq, err := inverted.BuildPropertyQuery(&propertyv1.QueryRequest{
-		Groups: []string{property.Metadata.Group},
-		Name:   property.Metadata.Name,
-		Ids:    []string{property.Id},
-	}, groupField, entityID)
-	if err != nil {
-		return false, nil, fmt.Errorf("build property query failure: %w", err)
-	}
 	search1Start := time.Now()
-	olderProperties, err := s.search(ctx, iq, nil, 100)
+	olderProperties, err := s.searchNative(ctx, &propertyv1.QueryRequest{
+		Groups: []string{property.Metadata.Group}, Name: property.Metadata.Name, Ids: []string{property.Id},
+	}, nil, 100)
 	search1Elapsed = time.Since(search1Start)
 	if err != nil {
 		return false, nil, fmt.Errorf("query older properties failed: %w", err)
@@ -418,7 +324,7 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 			return false, nil, fmt.Errorf("build update document failed: %w", err)
 		}
 		updateStart := time.Now()
-		err = s.updateDocuments(index.Documents{*doc})
+		err = s.updateDocuments(ctx, index.Documents{*doc})
 		updateElapsed = time.Since(updateStart)
 		if err != nil {
 			return false, nil, fmt.Errorf("update document failed: %w", err)
@@ -443,7 +349,7 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 	}
 	deleteCount = len(deletedDocuments)
 	// update the property to mark it as delete
-	updateDoc, err := s.buildUpdateDocument(id, property, deleteTime)
+	updateDoc, err := s.buildUpdateDocument(GetPropertyID(property), property, deleteTime)
 	if err != nil {
 		return false, nil, fmt.Errorf("build repair document failure: %w", err)
 	}
@@ -451,7 +357,7 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 	result = append(result, deletedDocuments...)
 	result = append(result, *updateDoc)
 	updateStart := time.Now()
-	err = s.updateDocuments(result)
+	err = s.updateDocuments(ctx, result)
 	updateElapsed = time.Since(updateStart)
 	if err != nil {
 		return false, nil, fmt.Errorf("update documents failed: %w", err)
@@ -469,49 +375,6 @@ func (s *shard) buildNotDeletedDocIDList(properties []*queryProperty) [][]byte {
 		docIDList = append(docIDList, p.id)
 	}
 	return docIDList
-}
-
-func (s *shard) prepareForMerge(src []*roaring.Bitmap, segments []segment.Segment, _ uint64) (dest []*roaring.Bitmap, err error) {
-	if len(segments) == 0 || len(src) == 0 || len(segments) != len(src) {
-		return src, nil
-	}
-	for segID, seg := range segments {
-		// bluge's drop-set entries point at segment-owned bitmaps that concurrent searches
-		// read via Snapshot.PostingsIterator. Mutating the original aliases would race against
-		// roaring.AndNot in those readers. We take a private copy at most once per segment —
-		// only on the first expired doc — so segments with no expirations cost nothing and
-		// segments with many expirations clone exactly once instead of per-docID.
-		privateOwned := false
-		var docID uint64
-		for ; docID < seg.Count(); docID++ {
-			var deleteTime int64
-			err = seg.VisitStoredFields(docID, func(field string, value []byte) bool {
-				if field == deleteField {
-					deleteTime = convert.BytesToInt64(value)
-				}
-				return true
-			})
-			if err != nil {
-				return src, fmt.Errorf("visit stored field failure: %w", err)
-			}
-
-			if deleteTime <= 0 || int64(time.Since(time.Unix(0, deleteTime)).Seconds()) < s.expireToDeleteSec {
-				continue
-			}
-
-			if !privateOwned {
-				if src[segID] == nil {
-					src[segID] = roaring.New()
-				} else {
-					src[segID] = src[segID].Clone()
-				}
-				privateOwned = true
-			}
-
-			src[segID].Add(uint32(docID))
-		}
-	}
-	return src, nil
 }
 
 type queryPropertySlice []*queryProperty

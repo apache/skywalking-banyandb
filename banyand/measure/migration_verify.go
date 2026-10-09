@@ -18,7 +18,6 @@
 package measure
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,12 +28,11 @@ import (
 	"strings"
 	"time"
 
-	compat "github.com/blugelabs/bluge"
-
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
@@ -189,88 +187,28 @@ func partRowCount(partID uint64, name, shardDir string, fileSystem fs.FileSystem
 	return p.partMetadata.TotalCount, nil
 }
 
-// CountBlugeDocs opens the bluge index at path read-only and returns the
-// total document count. Used to spot-check the broadcast union sidx
-// that `migration copy` writes into every aligned target segment.
-func CountBlugeDocs(path string) (uint64, error) {
-	reader, err := compat.OpenReader(compat.DefaultConfig(path))
+// CountSeriesIndexDocs opens the series index at path read-only (a native
+// read-only generation, never a writable owner) and returns the total live
+// document count. Used to spot-check the broadcast union sidx that
+// `migration copy` writes into every aligned target segment.
+func CountSeriesIndexDocs(path string) (uint64, error) {
+	generation, err := native.OpenReadOnlyGeneration(path)
 	if err != nil {
+		if errors.Is(err, native.ErrNoSnapshot) {
+			return 0, nil
+		}
 		return 0, err
 	}
-	defer func() { _ = reader.Close() }()
-	// Reader.Count sums per-segment doc counts in O(numSegments), not
-	// O(numDocs) — important for `verify` because the union sidx is
-	// broadcast into every aligned target seg of a group and we call
-	// CountBlugeDocs once per seg. Iterating dmi.Next() instead would
-	// scale with total docs × broadcast fan-out and dominate verify
-	// runtime on production-sized datasets.
-	return reader.Count()
+	defer func() { _ = generation.Close() }()
+	count, countErr := generation.VisibleDocCount()
+	if countErr != nil {
+		return 0, countErr
+	}
+	return uint64(count), nil
 }
 
 type storedFieldDocument interface {
 	VisitStoredFields(visit func(name string, value []byte) bool) error
-}
-
-type retainedStoredDocument struct {
-	visitStoredFields func(func(name string, value []byte) bool) error
-}
-
-func (d retainedStoredDocument) VisitStoredFields(visit func(name string, value []byte) bool) error {
-	return d.visitStoredFields(visit)
-}
-
-func readIndexModeDocs(ctx context.Context, sidxDir string, ruleByID map[uint32]indexRuleInfo,
-	schemasBySubject map[string]*measureSchemaInfo,
-) ([]index.Document, error) {
-	reader, openErr := compat.OpenReader(compat.DefaultConfig(sidxDir))
-	if openErr != nil {
-		if strings.Contains(openErr.Error(), "unable to find a usable snapshot") {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("open sidx reader %s: %w", sidxDir, openErr)
-	}
-	defer func() { _ = reader.Close() }()
-	matches, searchErr := reader.Search(ctx, compat.NewAllMatches(compat.NewMatchAllQuery()))
-	if searchErr != nil {
-		return nil, fmt.Errorf("search sidx %s: %w", sidxDir, searchErr)
-	}
-	var documents []index.Document
-	var timeless []uint64
-	tagNames := collectTagNames(schemasBySubject)
-	missingRules := map[uint32]int{}
-	for {
-		match, nextErr := matches.Next()
-		if nextErr != nil {
-			return nil, fmt.Errorf("iterate sidx %s: %w", sidxDir, nextErr)
-		}
-		if match == nil {
-			break
-		}
-		document, rebuildErr := rebuildOneDoc(retainedStoredDocument{visitStoredFields: func(visit func(name string, value []byte) bool) error {
-			return match.VisitStoredFields(func(name string, value []byte) bool {
-				return visit(name, value)
-			})
-		}}, ruleByID, schemasBySubject, tagNames, missingRules)
-		if rebuildErr != nil {
-			return nil, fmt.Errorf("rebuild doc in %s: %w", sidxDir, rebuildErr)
-		}
-		if document.Timestamp == 0 {
-			timeless = append(timeless, document.DocID)
-			continue
-		}
-		documents = append(documents, document)
-	}
-	if len(timeless) > 0 {
-		sample := timeless
-		if len(sample) > 10 {
-			sample = sample[:10]
-		}
-		return nil, fmt.Errorf("sidx %s: %d index-mode doc(s) have a missing or undecodable _timestamp (ts==0), "+
-			"which never occurs for valid data; the source is corrupt or unexpected — sample series IDs (first %d) %v",
-			sidxDir, len(timeless), len(sample), sample)
-	}
-	warnMissingRules(sidxDir, missingRules)
-	return documents, nil
 }
 
 func rebuildOneDoc(source storedFieldDocument, ruleByID map[uint32]indexRuleInfo,
@@ -284,8 +222,8 @@ func rebuildOneDoc(source storedFieldDocument, ruleByID map[uint32]indexRuleInfo
 		case imDocIDField:
 			entityValues = append([]byte(nil), value...)
 		case imTimestampField:
-			if decodedTime, decodeErr := compat.DecodeDateTime(value); decodeErr == nil {
-				timestamp = decodedTime.UnixNano()
+			if decoded, decodeErr := native.DecodeTimestamp(value); decodeErr == nil {
+				timestamp = decoded
 			}
 		case imVersionField:
 			version = convert.BytesToInt64(value)
@@ -401,7 +339,7 @@ func EnumerateGroupTarget(groupRoot string, intervalRule storage.IntervalRule, f
 
 		sidxDir := filepath.Join(segDir, directCopySidxDirName)
 		if info, statErr := os.Stat(sidxDir); statErr == nil && info.IsDir() {
-			count, sidxErr := CountBlugeDocs(sidxDir)
+			count, sidxErr := CountSeriesIndexDocs(sidxDir)
 			if sidxErr != nil {
 				return nil, fmt.Errorf("seg %s sidx open: %w", e.Name(), sidxErr)
 			}
