@@ -371,6 +371,14 @@ type segmentHandle struct {
 	fieldNamesOnce sync.Once
 	fieldNameSet   map[string]struct{}
 	fieldNameErr   error
+
+	// trieOnce caches whether this segment carries the coarse _timestamp term
+	// levels a time-range cover relies on. A segment without them would
+	// silently lose documents under a trie intersection, so it falls back to
+	// the per-document time check instead.
+	trieOnce        sync.Once
+	trieUsableValue bool
+	trieUsableErr   error
 }
 
 type persistedPromotion struct {
