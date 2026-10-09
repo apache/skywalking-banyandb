@@ -1,0 +1,37 @@
+# Licensed to Apache Software Foundation (ASF) under one or more contributor
+# license agreements. See the NOTICE file distributed with this work for
+# additional information regarding copyright ownership. Apache Software
+# Foundation (ASF) licenses this file to you under the Apache License, Version
+# 2.0 (the "License"); you may not use this file except in compliance with
+# the License. You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Runs the stream log-latency sort parity benchmark inside a container, so the
+# numbers come from pinned CPUs and memory rather than whatever the host is
+# doing. The fixture writes a real log stream (service/latency/level/body, with
+# latency indexed) into a real TSDB on disk, so both sort paths read files
+# rather than a warm memtable.
+FROM golang:1.25-alpine
+
+# Fixed CPU count: the benchmark compares two sort paths, so the machine has to
+# stay the same for both. GOMAXPROCS is set at run time as well, because the Go
+# runtime reads it, not the cgroup quota.
+ENV CGO_ENABLED=0 \
+    GOFLAGS=-mod=mod \
+    GOMAXPROCS=4
+
+WORKDIR /src
+COPY . /src
+
+# Build the test binary ahead of the run so the measurement is not competing
+# with compilation for CPU.
+RUN go test -c -o /out/stream-bench ./banyand/stream/
+
+ENTRYPOINT ["/out/stream-bench"]
