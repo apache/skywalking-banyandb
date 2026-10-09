@@ -53,6 +53,9 @@ const (
 	DirPerm = 0o700
 	// SnapshotsDir is the directory for snapshots.
 	SnapshotsDir = "snapshots"
+	// ExportSnapshotsDir is the directory for export session snapshots, kept apart from
+	// SnapshotsDir so the snapshot reclaimers never touch a session.
+	ExportSnapshotsDir = "export-snapshots"
 	// RepairDir is the directory for repairs.
 	RepairDir = "repairs"
 	// DataDir is the directory for data.

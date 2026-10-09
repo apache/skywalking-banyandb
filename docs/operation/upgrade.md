@@ -93,6 +93,19 @@ A stream query the vectorized engine cannot plan now fails with an error. The ro
 
 One shape reaches this: an `orderBy` naming a tag that no longer resolves against the stream's schema, such as an index rule left behind after its tag was dropped. The error names the reason. Drop the stale index rule, or order by a tag that still exists.
 
+### Data export
+
+0.12 adds the `ExportService` used by `bydbctl data export`:
+
+- Each data and standalone server keeps export session snapshots in an `export-snapshots` directory per catalog under the catalog's root
+  path (`--<catalog>-export-snapshot-path`), created when the first session is; nothing is created at start-up. For stream, measure and
+  trace it holds hard links, so it must stay on the data path's filesystem; the default follows the root path, not the data path, so set
+  the flag explicitly when the data path is on another filesystem. A property session snapshot is a full copy of the property index and needs as much free space as the property data.
+  The server refuses to start when it equals or sits inside any catalog's backup snapshot directory (`<root-path>/<catalog>/snapshots`), equals, contains or sits inside any catalog's data path, or overlaps another catalog's export snapshot path; the defaults are unchanged.
+- With RBAC enabled, `ExportService` `Plan` and `Sessions` require `cluster:admin`.
+- During a rolling upgrade a data node that still runs an older version has no `ExportService`; an export
+  dry run reports it as unreachable (a coverage gap, exit `2` with `--strict-coverage`) instead of failing.
+
 ## Upgrading to 0.11
 
 This section describes breaking changes and important behavioral changes when upgrading to BanyanDB 0.11.0.

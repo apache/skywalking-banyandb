@@ -24,6 +24,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 
 	"github.com/apache/skywalking-banyandb/pkg/config"
@@ -51,14 +52,30 @@ var (
 		Version:           version.Build(),
 		Short:             "bydbctl is the command line tool of BanyanDB",
 	}
+	// activeRoot is the root command whose flags initConfig binds; tests build their own.
+	activeRoot = rootCmd
+	// explicitRootFlags records which persistent root flags were given on the command line
+	// of the current invocation. It is captured before config.BindFlags copies viper values
+	// into the flag set, because after that point Changed() is true for every flag that has
+	// a viper default (e.g. addr). The data commands use it to reject -a/--addr.
+	explicitRootFlags = map[string]bool{}
 )
 
-// ResetFlags resets the flags.
+// ResetFlags resets the flags, including the config file path and the test argument
+// vector, so one test's invocation cannot leak into the next.
 func ResetFlags() {
 	filePath = ""
 	name = ""
 	start = ""
 	end = ""
+	cfgFile = ""
+	enableTLS = false
+	insecure = false
+	cert = ""
+	username = ""
+	password = ""
+	testArgs = nil
+	explicitRootFlags = map[string]bool{}
 }
 
 // Execute executes the root command.
@@ -80,7 +97,40 @@ func RootCmdFlags(command *cobra.Command) {
 	_ = viper.BindPFlag("password", command.PersistentFlags().Lookup("password"))
 
 	command.AddCommand(newGroupCmd(), newUseCmd(), newStreamCmd(), newMeasureCmd(), newTopnCmd(),
-		newIndexRuleCmd(), newIndexRuleBindingCmd(), newPropertyCmd(), newTraceCmd(), newHealthCheckCmd(), newAnalyzeCmd(), newAgentCmd(), newAgentToolBridgeCmd())
+		newIndexRuleCmd(), newIndexRuleBindingCmd(), newPropertyCmd(), newTraceCmd(), newHealthCheckCmd(), newAnalyzeCmd(), newAgentCmd(), newAgentToolBridgeCmd(),
+		newDataCmd())
+	activeRoot = command
+}
+
+// testArgs lets tests that drive a private root command through SetArgs tell initConfig
+// which command line to inspect; production always reads os.Args.
+var testArgs []string
+
+// SetTestArgs records the argument vector a test is about to pass to SetArgs.
+func SetTestArgs(args []string) { testArgs = args }
+
+func activeRootArgs() []string {
+	if testArgs != nil {
+		return testArgs
+	}
+	return os.Args[1:]
+}
+
+// snapshotExplicitRootFlags records the persistent root flags the executing command saw
+// on the command line. Cobra parses flags before OnInitialize runs and merges the root's
+// persistent flags into the executed command's flag set, so that set is where Changed()
+// still reflects the command line only.
+func snapshotExplicitRootFlags(root *cobra.Command, args []string) {
+	explicitRootFlags = map[string]bool{}
+	command, _, err := root.Find(args)
+	if err != nil {
+		return
+	}
+	root.PersistentFlags().VisitAll(func(f *pflag.Flag) {
+		if merged := command.Flags().Lookup(f.Name); merged != nil && merged.Changed {
+			explicitRootFlags[f.Name] = true
+		}
+	})
 }
 
 func init() {
@@ -88,9 +138,27 @@ func init() {
 	RootCmdFlags(rootCmd)
 }
 
+// bindEnvAndFlags makes viper fall back from the root's persistent flags to BYDBCTL_* env.
+func bindEnvAndFlags() {
+	viper.SetEnvPrefix(envPrefix)
+	viper.AutomaticEnv()
+	// Bind the package-level root's flags, as before: the explicit-flag snapshot in initConfig
+	// is the only place the executing (possibly test-built) root is consulted, so the viper
+	// fallbacks keep flowing through viper.GetString rather than being copied into the flag
+	// variables of a command built for a single test.
+	cobra.CheckErr(config.BindFlags(rootCmd.PersistentFlags(), viper.GetViper(), envPrefix))
+}
+
 func initConfig() {
-	command, _, findErr := rootCmd.Find(os.Args[1:])
+	snapshotExplicitRootFlags(activeRoot, activeRootArgs())
+	command, _, findErr := activeRoot.Find(activeRootArgs())
 	if findErr == nil && command.Name() == "agent-tool-bridge" {
+		return
+	}
+	// The data commands take their settings from flags, plan.yaml and BYDBCTL_* only: they
+	// neither read nor create the config file, so they never look up the home directory.
+	if findErr == nil && isDataCommand(command) {
+		bindEnvAndFlags()
 		return
 	}
 	if cfgFile != "" {
@@ -109,13 +177,7 @@ func initConfig() {
 		viper.SetConfigType("yaml")
 		viper.SetConfigName(".bydbctl")
 	}
-
-	viper.SetEnvPrefix(envPrefix)
-	viper.AutomaticEnv()
-	err := config.BindFlags(rootCmd.PersistentFlags(), viper.GetViper(), envPrefix)
-	if err != nil {
-		cobra.CheckErr(err)
-	}
+	bindEnvAndFlags()
 
 	readCfg := func() error {
 		if err := viper.ReadInConfig(); err != nil {

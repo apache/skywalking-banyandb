@@ -70,6 +70,9 @@ const (
 type NodeDiscoveryConfig struct {
 	FileWriter *DiscoveryFileWriter
 	Mode       string // ModeFile or ModeNone
+	// KeepStoppedNodes leaves a closed data node's address in the discovery file, so the
+	// liaison keeps the stopped node registered and has to report it as unreachable.
+	KeepStoppedNodes bool
 }
 
 // SchemaRegistryConfig configures schema registry mode.
@@ -631,7 +634,7 @@ func startDataNode(config *ClusterConfig, dataDir string, flags ...string) (grpc
 	}
 
 	closeFn = func() {
-		if config.NodeDiscovery.FileWriter != nil {
+		if config.NodeDiscovery.FileWriter != nil && !config.NodeDiscovery.KeepStoppedNodes {
 			config.NodeDiscovery.FileWriter.RemoveNode(nodeAddr)
 		}
 		unbindNodeWatchControl(addr)

@@ -1,0 +1,105 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# bydbctl data export --dry-run -o yaml against the healthy two-node cluster, shared by the
+# --nodes and --plan cases so both entry points must meet the same expectations (the outputs are
+# not diffed against each other). The report covers all four catalogs. trace-mocker writes only
+# MINUS_DAYS-old traces and OAP derives metrics from them, so after the lifecycle run the trace
+# and minute-metrics segments live on the warm node while the hot node keeps the index-mode
+# sw_metadata group, which has no warm stage (hour/day metrics may sit on either node depending on
+# when the run crosses their segment boundary). The stream group sw_records stays on the hot node:
+# it also gets OAP records derived from the mocker traces (older, still hot), and the events
+# report-events.sh sends through OAP guarantee current rows; OAP flushes in batches, so its row
+# count is only pinned as `gt 0`. OAP's own UI templates fill the property group
+# sw_property on the hot node: it resolves its stage like any group (hot, the default tier) and has
+# no segments, parts or time range, only shards with a document count. contains checks that these five rows are present (the
+# warm trace row is sw_trace, the warm measure row is sw_metricsMinute); extra rows are allowed.
+# The hot measure row is the index-mode sw_metadata group: its rows are a segment-level doc count,
+# its shards hold no parts and the data node leaves partless shards out of the inventory, so
+# shards, parts and the time range are exactly 0 and
+# segments/estRows/compressedBytes/uncompressedBytes are `gt 0`.
+standalone: false
+dataNodes:
+  - data-hot1:17912
+  - data-warm1:17912
+answeredNodes:
+  - data-hot1:17912
+  - data-warm1:17912
+missingNodes: []
+unreachableNodes: []
+multiSource: []
+rows:
+{{- contains .rows }}
+- node: data-hot1:17912
+  catalog: stream
+  group: sw_records
+  stage: hot
+  segments: {{ gt .segments 0 }}
+  shards: {{ gt .shards 0 }}
+  parts: {{ gt .parts 0 }}
+  estRows: {{ gt .estRows 0 }}
+  compressedBytes: {{ gt .compressedBytes 0 }}
+  uncompressedBytes: {{ gt .uncompressedBytes 0 }}
+  minTimestamp: {{ gt .minTimestamp 0 }}
+  maxTimestamp: {{ gt .maxTimestamp 0 }}
+- node: data-hot1:17912
+  catalog: property
+  group: sw_property
+  stage: hot
+  segments: 0
+  shards: {{ gt .shards 0 }}
+  parts: 0
+  estRows: {{ gt .estRows 0 }}
+  compressedBytes: {{ gt .compressedBytes 0 }}
+  uncompressedBytes: {{ gt .uncompressedBytes 0 }}
+  minTimestamp: 0
+  maxTimestamp: 0
+- node: data-hot1:17912
+  catalog: measure
+  group: sw_metadata
+  stage: hot
+  segments: {{ gt .segments 0 }}
+  shards: 0
+  parts: 0
+  estRows: {{ gt .estRows 0 }}
+  compressedBytes: {{ gt .compressedBytes 0 }}
+  uncompressedBytes: {{ gt .uncompressedBytes 0 }}
+  minTimestamp: 0
+  maxTimestamp: 0
+- node: data-warm1:17912
+  catalog: trace
+  group: sw_trace
+  stage: warm
+  segments: {{ gt .segments 0 }}
+  shards: {{ gt .shards 0 }}
+  parts: {{ gt .parts 0 }}
+  estRows: {{ gt .estRows 0 }}
+  compressedBytes: {{ gt .compressedBytes 0 }}
+  uncompressedBytes: {{ gt .uncompressedBytes 0 }}
+  minTimestamp: {{ gt .minTimestamp 0 }}
+  maxTimestamp: {{ gt .maxTimestamp 0 }}
+- node: data-warm1:17912
+  catalog: measure
+  group: sw_metricsMinute
+  stage: warm
+  segments: {{ gt .segments 0 }}
+  shards: {{ gt .shards 0 }}
+  parts: {{ gt .parts 0 }}
+  estRows: {{ gt .estRows 0 }}
+  compressedBytes: {{ gt .compressedBytes 0 }}
+  uncompressedBytes: {{ gt .uncompressedBytes 0 }}
+  minTimestamp: {{ gt .minTimestamp 0 }}
+  maxTimestamp: {{ gt .maxTimestamp 0 }}
+{{- end }}

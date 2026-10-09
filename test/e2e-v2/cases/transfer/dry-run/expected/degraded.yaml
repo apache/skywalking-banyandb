@@ -1,0 +1,152 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Output of scripts/degraded.sh: the dry run while the warm node is stopped, the strict exit
+# code at that point, how many rows of that report name the warm node (contains cannot assert
+# absence, so the script counts them), the dry run after the restart, and the export session
+# snapshots (<catalog>/export-snapshots/<id>) left on either node. File-based discovery keeps
+# the stopped node registered, so dataNodes does not change while answeredNodes shrinks and
+# missingNodes / unreachableNodes name the warm node.
+# The rows are pinned like dry-run.yaml: the hot row is the index-mode sw_metadata group (no
+# shards, parts or time range), the warm rows are sw_trace and sw_metricsMinute.
+stopped:
+  standalone: false
+  dataNodes:
+    - data-hot1:17912
+    - data-warm1:17912
+  answeredNodes:
+    - data-hot1:17912
+  missingNodes:
+    - data-warm1:17912
+  unreachableNodes:
+    - data-warm1:17912
+  multiSource: []
+  rows:
+  {{- contains .stopped.rows }}
+  - node: data-hot1:17912
+    catalog: stream
+    group: sw_records
+    stage: hot
+    segments: {{ gt .segments 0 }}
+    shards: {{ gt .shards 0 }}
+    parts: {{ gt .parts 0 }}
+    estRows: {{ gt .estRows 0 }}
+    compressedBytes: {{ gt .compressedBytes 0 }}
+    uncompressedBytes: {{ gt .uncompressedBytes 0 }}
+    minTimestamp: {{ gt .minTimestamp 0 }}
+    maxTimestamp: {{ gt .maxTimestamp 0 }}
+  - node: data-hot1:17912
+    catalog: property
+    group: sw_property
+    stage: hot
+    segments: 0
+    shards: {{ gt .shards 0 }}
+    parts: 0
+    estRows: {{ gt .estRows 0 }}
+    compressedBytes: {{ gt .compressedBytes 0 }}
+    uncompressedBytes: {{ gt .uncompressedBytes 0 }}
+    minTimestamp: 0
+    maxTimestamp: 0
+  - node: data-hot1:17912
+    catalog: measure
+    group: sw_metadata
+    stage: hot
+    segments: {{ gt .segments 0 }}
+    shards: 0
+    parts: 0
+    estRows: {{ gt .estRows 0 }}
+    compressedBytes: {{ gt .compressedBytes 0 }}
+    uncompressedBytes: {{ gt .uncompressedBytes 0 }}
+    minTimestamp: 0
+    maxTimestamp: 0
+  {{- end }}
+strictCoverageExitWhileStopped: 2
+stoppedWarmRows: 0
+recovered:
+  standalone: false
+  dataNodes:
+    - data-hot1:17912
+    - data-warm1:17912
+  answeredNodes:
+    - data-hot1:17912
+    - data-warm1:17912
+  missingNodes: []
+  unreachableNodes: []
+  multiSource: []
+  rows:
+  {{- contains .recovered.rows }}
+  - node: data-hot1:17912
+    catalog: stream
+    group: sw_records
+    stage: hot
+    segments: {{ gt .segments 0 }}
+    shards: {{ gt .shards 0 }}
+    parts: {{ gt .parts 0 }}
+    estRows: {{ gt .estRows 0 }}
+    compressedBytes: {{ gt .compressedBytes 0 }}
+    uncompressedBytes: {{ gt .uncompressedBytes 0 }}
+    minTimestamp: {{ gt .minTimestamp 0 }}
+    maxTimestamp: {{ gt .maxTimestamp 0 }}
+  - node: data-hot1:17912
+    catalog: property
+    group: sw_property
+    stage: hot
+    segments: 0
+    shards: {{ gt .shards 0 }}
+    parts: 0
+    estRows: {{ gt .estRows 0 }}
+    compressedBytes: {{ gt .compressedBytes 0 }}
+    uncompressedBytes: {{ gt .uncompressedBytes 0 }}
+    minTimestamp: 0
+    maxTimestamp: 0
+  - node: data-hot1:17912
+    catalog: measure
+    group: sw_metadata
+    stage: hot
+    segments: {{ gt .segments 0 }}
+    shards: 0
+    parts: 0
+    estRows: {{ gt .estRows 0 }}
+    compressedBytes: {{ gt .compressedBytes 0 }}
+    uncompressedBytes: {{ gt .uncompressedBytes 0 }}
+    minTimestamp: 0
+    maxTimestamp: 0
+  - node: data-warm1:17912
+    catalog: trace
+    group: sw_trace
+    stage: warm
+    segments: {{ gt .segments 0 }}
+    shards: {{ gt .shards 0 }}
+    parts: {{ gt .parts 0 }}
+    estRows: {{ gt .estRows 0 }}
+    compressedBytes: {{ gt .compressedBytes 0 }}
+    uncompressedBytes: {{ gt .uncompressedBytes 0 }}
+    minTimestamp: {{ gt .minTimestamp 0 }}
+    maxTimestamp: {{ gt .maxTimestamp 0 }}
+  - node: data-warm1:17912
+    catalog: measure
+    group: sw_metricsMinute
+    stage: warm
+    segments: {{ gt .segments 0 }}
+    shards: {{ gt .shards 0 }}
+    parts: {{ gt .parts 0 }}
+    estRows: {{ gt .estRows 0 }}
+    compressedBytes: {{ gt .compressedBytes 0 }}
+    uncompressedBytes: {{ gt .uncompressedBytes 0 }}
+    minTimestamp: {{ gt .minTimestamp 0 }}
+    maxTimestamp: {{ gt .maxTimestamp 0 }}
+  {{- end }}
+strictCoverageExitAfterRestart: 0
+leftoverSnapshots: []

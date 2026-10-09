@@ -26,6 +26,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
@@ -39,8 +40,9 @@ var (
 )
 
 type local struct {
-	local  *bus.Bus
-	stopCh chan struct{}
+	local        *bus.Bus
+	exportServer transferv1.ExportServiceServer
+	stopCh       chan struct{}
 }
 
 // Local return a new local Queue.
@@ -193,6 +195,22 @@ func (l *local) NewChunkedSyncClient(node string, _ uint32) (ChunkedSyncClient, 
 // this sentinel as a signal to degrade to in-process self-probing.
 func (*local) NewNodeSchemaStatusClient(_ string) (clusterv1.NodeSchemaStatusServiceClient, error) {
 	return nil, ErrNotImplemented
+}
+
+// NewExportClient returns an in-process client of the ExportService registered with
+// SetExportServer, whatever the node name: a standalone process is its own only data
+// node. It returns ErrNotImplemented when no server has been registered.
+func (l *local) NewExportClient(_ string) (transferv1.ExportServiceClient, error) {
+	if l.exportServer == nil {
+		return nil, ErrNotImplemented
+	}
+	return localExportClient{srv: l.exportServer}, nil
+}
+
+// SetExportServer implements Server: it keeps the ExportService that NewExportClient
+// serves in-process.
+func (l *local) SetExportServer(srv transferv1.ExportServiceServer) {
+	l.exportServer = srv
 }
 
 type localChunkedSyncClient struct {

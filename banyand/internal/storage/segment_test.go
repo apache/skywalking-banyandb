@@ -774,7 +774,7 @@ func TestOpenReadsPersistedEndTime(t *testing.T) {
 	customEnd := day1.Add(12 * time.Hour)
 	segPath1 := filepath.Join(tempDir, "seg-"+day1.Format(dayFormat))
 	require.NoError(t, os.MkdirAll(segPath1, DirPerm))
-	meta1 := segmentMeta{Version: currentVersion, EndTime: customEnd.Format(time.RFC3339Nano)}
+	meta1 := SegmentMetadata{Version: currentVersion, EndTime: customEnd.Format(time.RFC3339Nano)}
 	meta1Data, marshalErr := json.Marshal(meta1)
 	require.NoError(t, marshalErr)
 	require.NoError(t, os.WriteFile(filepath.Join(segPath1, metadataFilename), meta1Data, FilePerm))
@@ -782,7 +782,7 @@ func TestOpenReadsPersistedEndTime(t *testing.T) {
 	// day2 with standard endTime.
 	segPath2 := filepath.Join(tempDir, "seg-"+day2.Format(dayFormat))
 	require.NoError(t, os.MkdirAll(segPath2, DirPerm))
-	meta2 := segmentMeta{Version: currentVersion, EndTime: day2.Add(24 * time.Hour).Format(time.RFC3339Nano)}
+	meta2 := SegmentMetadata{Version: currentVersion, EndTime: day2.Add(24 * time.Hour).Format(time.RFC3339Nano)}
 	meta2Data, marshalErr := json.Marshal(meta2)
 	require.NoError(t, marshalErr)
 	require.NoError(t, os.WriteFile(filepath.Join(segPath2, metadataFilename), meta2Data, FilePerm))

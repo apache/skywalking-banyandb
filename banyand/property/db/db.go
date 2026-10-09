@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -75,8 +76,10 @@ type Database interface {
 	Query(ctx context.Context, request *propertyv1.QueryRequest) ([]QueriedProperty, error)
 	// Repair repairs a property in the database.
 	Repair(ctx context.Context, id []byte, shardID uint64, property *propertyv1.Property, deleteTime int64) error
-	// TakeSnapShot takes a snapshot of the database.
+	// TakeSnapShot takes a snapshot of the database under the configured snapshot directory.
 	TakeSnapShot(ctx context.Context, sn string) *databasev1.Snapshot
+	// SnapshotShards copies every shard into <dstDir>/<group>/shard-N.
+	SnapshotShards(ctx context.Context, dstDir string) error
 	// Drop closes and removes all shards for the given group and deletes the group directory.
 	Drop(groupName string) error
 	// RegisterGossip registers the repair scheduler's gossip services with the given messenger.
@@ -471,7 +474,20 @@ func (db *database) Repair(ctx context.Context, id []byte, shardID uint64, prope
 }
 
 func (db *database) TakeSnapShot(ctx context.Context, sn string) *databasev1.Snapshot {
-	var snapshotResult *databasev1.Snapshot
+	snp := &databasev1.Snapshot{Name: sn, Catalog: commonv1.Catalog_CATALOG_PROPERTY}
+	if err := db.SnapshotShards(ctx, path.Join(db.snapshotDir, sn, storage.DataDir)); err != nil {
+		snp.Error = err.Error()
+	}
+	return snp
+}
+
+// SnapshotShards writes every shard into <dstDir>/<group>/shard-N through the index's
+// backup, which copies the segment files (they are not hard links), so a snapshot needs as
+// much free space as the shards it copies. A destination shard directory that already
+// exists is an error. It stops at the first failure or when ctx is done, returning
+// ctx.Err() in the latter case.
+func (db *database) SnapshotShards(ctx context.Context, dstDir string) error {
+	var err error
 	db.groups.Range(func(_, value any) bool {
 		gs := value.(*groupShards)
 		sLst := gs.shards.Load()
@@ -479,42 +495,26 @@ func (db *database) TakeSnapShot(ctx context.Context, sn string) *databasev1.Sna
 			return true
 		}
 		for _, shardRef := range *sLst {
-			select {
-			case <-ctx.Done():
-				// Context canceled: record an error snapshot and stop iteration.
-				if ctxErr := ctx.Err(); ctxErr != nil {
-					snapshotResult = &databasev1.Snapshot{
-						Name:    sn,
-						Catalog: commonv1.Catalog_CATALOG_PROPERTY,
-						Error:   ctxErr.Error(),
-					}
-				}
+			if err = ctx.Err(); err != nil {
 				return false
-			default:
 			}
-			snpDir := path.Join(db.snapshotDir, sn, storage.DataDir, shardRef.group, filepath.Base(shardRef.location))
-			db.lfs.MkdirPanicIfExist(snpDir, storage.DirPerm)
-			snapshotErr := shardRef.store.TakeFileSnapshot(snpDir)
-			if snapshotErr != nil {
-				db.logger.Error().Err(snapshotErr).Str("group", shardRef.group).
+			snpDir := path.Join(dstDir, shardRef.group, filepath.Base(shardRef.location))
+			if err = os.MkdirAll(filepath.Dir(snpDir), storage.DirPerm); err != nil {
+				return false
+			}
+			if err = os.Mkdir(snpDir, storage.DirPerm); err != nil {
+				err = fmt.Errorf("create shard snapshot directory: %w", err)
+				return false
+			}
+			if err = shardRef.store.TakeFileSnapshot(snpDir); err != nil {
+				db.logger.Error().Err(err).Str("group", shardRef.group).
 					Str("shard", filepath.Base(shardRef.location)).Msg("fail to take shard snapshot")
-				snapshotResult = &databasev1.Snapshot{
-					Name:    sn,
-					Catalog: commonv1.Catalog_CATALOG_PROPERTY,
-					Error:   snapshotErr.Error(),
-				}
 				return false
 			}
 		}
 		return true
 	})
-	if snapshotResult != nil {
-		return snapshotResult
-	}
-	return &databasev1.Snapshot{
-		Name:    sn,
-		Catalog: commonv1.Catalog_CATALOG_PROPERTY,
-	}
+	return err
 }
 
 type walkFn func(suffix string) error

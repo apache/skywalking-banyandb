@@ -71,6 +71,8 @@ linters-settings:
       alias: clusterv1
     - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1
       alias: tracev1
+    - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1
+      alias: transferv1
     - pkg: github.com/apache/skywalking-banyandb/pkg/pb/v1
       alias: pbv1
   lll:

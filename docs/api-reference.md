@@ -495,6 +495,32 @@
   
     - [TraceService](#banyandb-trace-v1-TraceService)
   
+- [banyandb/transfer/v1/export.proto](#banyandb_transfer_v1_export-proto)
+    - [Ack](#banyandb-transfer-v1-Ack)
+    - [CreateSession](#banyandb-transfer-v1-CreateSession)
+    - [PartStat](#banyandb-transfer-v1-PartStat)
+    - [PlanRequest](#banyandb-transfer-v1-PlanRequest)
+    - [PlanResponse](#banyandb-transfer-v1-PlanResponse)
+    - [PlanSummary](#banyandb-transfer-v1-PlanSummary)
+    - [PropertyInventory](#banyandb-transfer-v1-PropertyInventory)
+    - [PropertyShardStat](#banyandb-transfer-v1-PropertyShardStat)
+    - [ReadSession](#banyandb-transfer-v1-ReadSession)
+    - [SegmentInventory](#banyandb-transfer-v1-SegmentInventory)
+    - [SegmentUnit](#banyandb-transfer-v1-SegmentUnit)
+    - [Selector](#banyandb-transfer-v1-Selector)
+    - [SessionCreated](#banyandb-transfer-v1-SessionCreated)
+    - [SessionLease](#banyandb-transfer-v1-SessionLease)
+    - [SessionsRequest](#banyandb-transfer-v1-SessionsRequest)
+    - [SessionsResponse](#banyandb-transfer-v1-SessionsResponse)
+    - [ShardStat](#banyandb-transfer-v1-ShardStat)
+    - [SidxStat](#banyandb-transfer-v1-SidxStat)
+    - [UnitFrame](#banyandb-transfer-v1-UnitFrame)
+    - [UnitInventory](#banyandb-transfer-v1-UnitInventory)
+  
+    - [SessionsRequest.Action](#banyandb-transfer-v1-SessionsRequest-Action)
+  
+    - [ExportService](#banyandb-transfer-v1-ExportService)
+  
 - [Scalar Value Types](#scalar-value-types)
 
 
@@ -7594,6 +7620,414 @@ TagFamilySpec defines the specification of a tag family.
 | Query | [QueryRequest](#banyandb-trace-v1-QueryRequest) | [QueryResponse](#banyandb-trace-v1-QueryResponse) |  |
 | Write | [WriteRequest](#banyandb-trace-v1-WriteRequest) stream | [WriteResponse](#banyandb-trace-v1-WriteResponse) stream |  |
 | DeleteExpiredSegments | [DeleteExpiredSegmentsRequest](#banyandb-trace-v1-DeleteExpiredSegmentsRequest) | [DeleteExpiredSegmentsResponse](#banyandb-trace-v1-DeleteExpiredSegmentsResponse) |  |
+
+ 
+
+
+
+<a name="banyandb_transfer_v1_export-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## banyandb/transfer/v1/export.proto
+
+
+
+<a name="banyandb-transfer-v1-Ack"></a>
+
+### Ack
+Ack is an outcome that carries no data.
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-CreateSession"></a>
+
+### CreateSession
+CreateSession is the first Plan of an export that will transfer data. Every data node
+snapshots the selected catalogs into a new session and inventories that
+snapshot. One session id covers the whole cluster: the client leaves id empty, the liaison
+generates it, announces it in the first frame and forwards it, so on a data node id is
+always set.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [string](#string) |  |  |
+| preempt | [bool](#bool) |  | Remove every session the node holds, whatever its lease says, before creating this one; the removed ids come back in preempted_session_ids. Without it any other session on the node answers ALREADY_EXISTS naming the occupants. |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-PartStat"></a>
+
+### PartStat
+PartStat is the per-part view of the ShardStat aggregates. Timestamps are Unix nanoseconds.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [uint64](#uint64) |  |  |
+| min_timestamp | [int64](#int64) |  |  |
+| max_timestamp | [int64](#int64) |  |  |
+| total_count | [uint64](#uint64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-PlanRequest"></a>
+
+### PlanRequest
+PlanRequest selects what to enumerate and which view to read. Without a session it reads
+the live directories and creates nothing on any node.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| selectors | [Selector](#banyandb-transfer-v1-Selector) | repeated |  |
+| create | [CreateSession](#banyandb-transfer-v1-CreateSession) |  |  |
+| read | [ReadSession](#banyandb-transfer-v1-ReadSession) |  |  |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-PlanResponse"></a>
+
+### PlanResponse
+PlanResponse is one frame of the Plan stream. The liaison stream is: with CreateSession a
+`created` frame first; then `units` frames, each carrying the units of exactly one
+(node, group); then exactly one `summary` frame. A catalog that fails to snapshot fails the
+whole call and the liaison rolls the session back.
+
+A data node&#39;s own stream (the liaison&#39;s upstream) follows the same order without the
+`created` frame: it never sets node_id or answered_nodes, and its closing `summary`, which
+carries only preempted_session_ids, is sent only with CreateSession when anything was
+removed.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| created | [SessionCreated](#banyandb-transfer-v1-SessionCreated) |  |  |
+| units | [UnitFrame](#banyandb-transfer-v1-UnitFrame) |  |  |
+| summary | [PlanSummary](#banyandb-transfer-v1-PlanSummary) |  |  |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-PlanSummary"></a>
+
+### PlanSummary
+PlanSummary closes the stream.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| preempted_session_ids | [string](#string) | repeated | Sessions removed while creating because preempt was set (deduplicated, sorted). |
+| unreachable_nodes | [string](#string) | repeated | Data nodes the liaison could not plan (live directories and ReadSession only; CreateSession treats any of these as a failure instead): a transport failure, no next frame within the liaison&#39;s maximum wait for a node&#39;s Plan, NotFound (the node no longer holds the requested session), or a data node without ExportService (UNIMPLEMENTED, an older version during a rolling upgrade). Unit frames already stamped with such a node_id are partial and must be dropped. |
+| answered_nodes | [string](#string) | repeated | Data nodes whose Plan stream completed normally, whether or not they held any unit. Every node the liaison planned is in exactly one of answered_nodes and unreachable_nodes, so unreachable_nodes is the coverage gap a client must report. |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-PropertyInventory"></a>
+
+### PropertyInventory
+PropertyInventory is one property group on one node: its shards, each holding a document
+store without parts or timestamps.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  |  |
+| shards | [PropertyShardStat](#banyandb-transfer-v1-PropertyShardStat) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-PropertyShardStat"></a>
+
+### PropertyShardStat
+PropertyShardStat describes one shard of a property group.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| shard_id | [uint32](#uint32) |  |  |
+| estimated_bytes | [uint64](#uint64) |  | On-disk size of the shard&#39;s document store; property has no compressed form, so this is both the compressed and the uncompressed estimate. |
+| doc_count | [uint64](#uint64) |  | Documents in the store, including superseded versions and tombstones. |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-ReadSession"></a>
+
+### ReadSession
+ReadSession is every later Plan of the same export: resuming after an interruption, or
+planning again before transferring. It inventories the session&#39;s snapshot and renews its lease,
+so the result is the same frozen view CreateSession returned.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-SegmentInventory"></a>
+
+### SegmentInventory
+SegmentInventory is a SegmentUnit of a stream, measure or trace group with its statistics.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| unit | [SegmentUnit](#banyandb-transfer-v1-SegmentUnit) |  |  |
+| segment_version | [string](#string) |  | Version string from the segment metadata file; input of the import version gate. |
+| shards | [ShardStat](#banyandb-transfer-v1-ShardStat) | repeated |  |
+| segment_level | [SidxStat](#banyandb-transfer-v1-SidxStat) |  | Segment-level series index (the sidx/ directory). |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-SegmentUnit"></a>
+
+### SegmentUnit
+SegmentUnit keys one physical unit of a stream, measure or trace group on one node: every
+shard the node holds for a segment. Stage is not part of the key: it is a property of the
+node, reported read-only on the frame that carries the unit.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| catalog | [banyandb.common.v1.Catalog](#banyandb-common-v1-Catalog) |  |  |
+| group | [string](#string) |  |  |
+| segment_suffix | [string](#string) |  | Segment directory suffix without the &#34;seg-&#34; prefix: 8 digits for day segments, 10 for hour segments. |
+| shard_ids | [uint32](#uint32) | repeated | Shards that hold at least one part. Empty means the unit only carries segment-level artifacts (index-mode measure, or a segment whose shards have not flushed yet). |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-Selector"></a>
+
+### Selector
+Selector names a catalog and optionally its groups. Empty groups means every group of
+that catalog; an empty selectors list means every group of every catalog.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| catalog | [banyandb.common.v1.Catalog](#banyandb-common-v1-Catalog) |  |  |
+| groups | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-SessionCreated"></a>
+
+### SessionCreated
+SessionCreated announces the id the liaison generated for a CreateSession Plan.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| session_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-SessionLease"></a>
+
+### SessionLease
+SessionLease mirrors the .lease file of an export session plus the catalogs it covers,
+which the data node derives from the &lt;export-snapshot-path&gt;/&lt;id&gt; directories it finds.
+expires_at drives reclamation by the node&#39;s sweeper; last_heartbeat_at tells a refused
+operator when the holder was last seen. Times are Unix nanoseconds of the data node&#39;s
+clock; a session whose .lease is not readable reports zero times.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| session_id | [string](#string) |  |  |
+| started_at | [int64](#int64) |  |  |
+| expires_at | [int64](#int64) |  |  |
+| last_heartbeat_at | [int64](#int64) |  |  |
+| catalogs | [banyandb.common.v1.Catalog](#banyandb-common-v1-Catalog) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-SessionsRequest"></a>
+
+### SessionsRequest
+SessionsRequest runs one session lifecycle action on every data node; the liaison
+streams back one SessionsResponse per node.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| action | [SessionsRequest.Action](#banyandb-transfer-v1-SessionsRequest-Action) |  |  |
+| session_id | [string](#string) |  | Required by ACTION_HEARTBEAT and ACTION_RELEASE, ignored by ACTION_LIST. |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-SessionsResponse"></a>
+
+### SessionsResponse
+SessionsResponse is one data node&#39;s answer.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| node_id | [string](#string) |  |  |
+| session | [SessionLease](#banyandb-transfer-v1-SessionLease) |  | ACTION_LIST: the session this node holds. One session id covers the whole cluster, so a node reports at most one: the newest when leftovers of older sessions exist. |
+| none | [Ack](#banyandb-transfer-v1-Ack) |  | ACTION_LIST: the node holds no session. ACTION_RELEASE: the node did not hold session_id, so there was nothing to delete; this is still a success. |
+| done | [Ack](#banyandb-transfer-v1-Ack) |  | ACTION_HEARTBEAT: the node renewed the lease. ACTION_RELEASE: the node held the session and deleted it. |
+| error | [string](#string) |  | ACTION_HEARTBEAT and ACTION_RELEASE: the node did not complete the action; the frame is still sent so the client can tell which nodes failed. ACTION_HEARTBEAT: the node was unreachable, does not hold the session, or is a data node without ExportService. An expired or unreadable lease, or any other node error, fails the whole call instead (FAILED_PRECONDITION for the lease). ACTION_RELEASE: the node was unreachable, removing the session failed, or it is a data node without ExportService. A node that does not hold the session answers `none`. |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-ShardStat"></a>
+
+### ShardStat
+ShardStat aggregates the parts of one shard. Timestamps are Unix nanoseconds.
+
+For trace, estimated_uncompressed_bytes counts the span payload only (tags are excluded),
+so it can be below estimated_compressed_bytes; estimated_compressed_bytes is the bytes the
+part writer recorded and is a lower bound of the on-disk size.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| shard_id | [uint32](#uint32) |  |  |
+| min_timestamp | [int64](#int64) |  |  |
+| max_timestamp | [int64](#int64) |  |  |
+| estimated_compressed_bytes | [uint64](#uint64) |  | Sizes of the shard&#39;s parts plus its per-shard index directories (stream idx/, trace sidx/). |
+| estimated_uncompressed_bytes | [uint64](#uint64) |  |  |
+| parts_count | [uint32](#uint32) |  |  |
+| total_count | [uint64](#uint64) |  |  |
+| parts | [PartStat](#banyandb-transfer-v1-PartStat) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-SidxStat"></a>
+
+### SidxStat
+SidxStat describes the segment-level series index.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| estimated_bytes | [uint64](#uint64) |  |  |
+| doc_count | [uint64](#uint64) |  | Documents of the series index, computed only when the current schema declares an index-mode measure in the group (0 otherwise). Those documents are the index-mode rows plus the series entries of the group&#39;s regular measures, so the value is an upper bound of the rows. |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-UnitFrame"></a>
+
+### UnitFrame
+UnitFrame carries the units of one group on one node.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| node_id | [string](#string) |  | Stamped by the liaison from the upstream connection; a data node leaves it empty. |
+| stage | [string](#string) |  | The node&#39;s resolved lifecycle stage for this group. Empty for the default tier: the group declares no stages, the node has no labels, or the labels match no stage. Only groups the schema registry knows are listed, in every mode. |
+| units | [UnitInventory](#banyandb-transfer-v1-UnitInventory) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-UnitInventory"></a>
+
+### UnitInventory
+UnitInventory is one unit on one node together with its statistics. Property groups have
+no segments, so they are inventoried per group instead of per segment.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| segment | [SegmentInventory](#banyandb-transfer-v1-SegmentInventory) |  |  |
+| property | [PropertyInventory](#banyandb-transfer-v1-PropertyInventory) |  |  |
+
+
+
+
+
+ 
+
+
+<a name="banyandb-transfer-v1-SessionsRequest-Action"></a>
+
+### SessionsRequest.Action
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ACTION_UNSPECIFIED | 0 |  |
+| ACTION_LIST | 1 | Read-only: every node reports the session it holds (the newest) or none. An unreachable node fails the whole call, so &#34;clean&#34; and &#34;silent&#34; cannot look alike. |
+| ACTION_HEARTBEAT | 2 | The heartbeat: renew the lease of session_id on every node. |
+| ACTION_RELEASE | 3 | Delete the snapshot of session_id on every node; a node that does not hold it still succeeds (answering `none`), so the action is idempotent. |
+
+
+ 
+
+ 
+
+
+<a name="banyandb-transfer-v1-ExportService"></a>
+
+### ExportService
+ExportService is served by the liaison gRPC endpoint (17912) in both cluster and
+standalone deployments. Plan fans out to every data node and relays frames one by one;
+Sessions fans out one lifecycle action and reports per node. Every method must be
+registered in GlobalMethodPolicies(), otherwise the liaison refuses to start.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| Plan | [PlanRequest](#banyandb-transfer-v1-PlanRequest) | [PlanResponse](#banyandb-transfer-v1-PlanResponse) stream | Plan enumerates the per-segment units (per-group for property) a selector hits. Each segment unit lists the shards the node holds for that segment. Without a session it reads the live directories. CreateSession snapshots first and announces the new session id in the first frame; ReadSession reads that snapshot and renews its lease. |
+| Sessions | [SessionsRequest](#banyandb-transfer-v1-SessionsRequest) | [SessionsResponse](#banyandb-transfer-v1-SessionsResponse) stream | Sessions runs one lifecycle action (list, heartbeat, release) on every data node and streams one frame per node, stamped with node_id by the liaison. |
 
  
 

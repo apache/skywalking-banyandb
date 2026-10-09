@@ -76,18 +76,21 @@ type standalone struct {
 	finalizeCloser     *run.Closer
 	schemaRepo         schemaRepo
 	snapshotDir        string
+	exportSnapshotDir  string
 	root               string
 	dataPath           string
 	option             option
 	retentionConfig    storage.RetentionConfig
 	maxFileSnapshotNum int
 	minFileSnapshotAge time.Duration
+	snapshotMux        sync.Mutex
 }
 
 func (s *standalone) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("trace")
 	fs.StringVar(&s.root, "trace-root-path", "/tmp", "the root path for trace data")
 	fs.StringVar(&s.dataPath, "trace-data-path", "", "the path for trace data (optional)")
+	fs.StringVar(&s.exportSnapshotDir, "trace-export-snapshot-path", "", storage.ExportSnapshotPathUsage("trace"))
 	fs.DurationVar(&s.option.flushTimeout, "trace-flush-timeout", defaultFlushTimeout, "the timeout for trace data flush")
 	fs.DurationVar(&s.option.memWaitTimeout, "trace-lifecycle-receive-mem-wait-timeout", 5*time.Minute,
 		"max time the migration receiver waits for memory to recover before introducing an external segment")
@@ -166,6 +169,9 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	}
 	path := path.Join(s.root, s.Name())
 	s.snapshotDir = filepath.Join(path, storage.SnapshotsDir)
+	if s.exportSnapshotDir, err = storage.ResolveExportSnapshotDir(s.exportSnapshotDir, path); err != nil {
+		return err
+	}
 	obsservice.UpdatePath(path)
 	val := ctx.Value(common.ContextNodeKey)
 	if val == nil {
@@ -294,12 +300,22 @@ func (s *standalone) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRa
 
 // RetentionService interface implementation.
 
+// ReadPartMetadata implements export.PartReader with this catalog's own metadata.json reader.
+func (s *standalone) ReadPartMetadata(partDir string) (queue.StreamingPartData, error) {
+	return ParsePartMetadata(s.lfs, partDir)
+}
+
 func (s *standalone) GetDataPath() string {
 	return s.dataPath
 }
 
 func (s *standalone) GetSnapshotDir() string {
 	return s.snapshotDir
+}
+
+// GetExportSnapshotDir returns the directory that holds the export session snapshots of trace.
+func (s *standalone) GetExportSnapshotDir() string {
+	return s.exportSnapshotDir
 }
 
 func (s *standalone) LoadAllGroups() []resourceSchema.Group {
@@ -486,11 +502,24 @@ func (d *standaloneSnapshotListener) compareSnapshotWithData(snapshotDir, dataDi
 			groupName, dataDir, snapshotDir)
 }
 
+// TakeExportSnapshot implements export.Backend: one hard-link snapshot of every group under
+// <exportSnapshotDir>/<name>, retaken until its secondary indexes match its core parts, or
+// an error. It shares the TopicSnapshot listener's mutex so an export session and a periodic
+// backup never snapshot the same groups concurrently, but unlike the listener it neither
+// reclaims old snapshots nor invents a name: the export session owns the directory's lifetime.
+func (s *standalone) TakeExportSnapshot(ctx context.Context, name string) error {
+	s.snapshotMux.Lock()
+	defer s.snapshotMux.Unlock()
+	dst := filepath.Join(s.exportSnapshotDir, name)
+	return takeConsistentSnapshot(dst, s.l, func() error {
+		return resourceSchema.SnapshotGroups(ctx, &s.schemaRepo, s.l, dst, s.takeGroupSnapshot)
+	})
+}
+
 type standaloneSnapshotListener struct {
 	*bus.UnImplementedHealthyListener
 	s           *standalone
 	snapshotSeq uint64
-	snapshotMux sync.Mutex
 }
 
 func (d *standaloneSnapshotListener) Rev(ctx context.Context, message bus.Message) bus.Message {
@@ -513,8 +542,8 @@ func (d *standaloneSnapshotListener) Rev(ctx context.Context, message bus.Messag
 	if len(gg) == 0 {
 		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
 	}
-	d.snapshotMux.Lock()
-	defer d.snapshotMux.Unlock()
+	d.s.snapshotMux.Lock()
+	defer d.s.snapshotMux.Unlock()
 	storage.DeleteStaleSnapshots(d.s.snapshotDir, d.s.maxFileSnapshotNum, d.s.minFileSnapshotAge, d.s.lfs)
 	sn := d.snapshotName()
 	var err error

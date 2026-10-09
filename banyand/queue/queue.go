@@ -25,6 +25,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
+	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
@@ -77,6 +78,11 @@ type Client interface {
 	// The standalone local pipeline returns ErrNotImplemented so callers can
 	// treat it as "no peer to probe" without a type-switch.
 	NewNodeSchemaStatusClient(node string) (clusterv1.NodeSchemaStatusServiceClient, error)
+	// NewExportClient borrows the pooled connection to node and wraps it as an
+	// transferv1.ExportServiceClient so the liaison can fan Plan/Sessions out
+	// without dialing. The standalone local pipeline answers with an in-process
+	// client of the ExportService registered through SetExportServer.
+	NewExportClient(node string) (transferv1.ExportServiceClient, error)
 	Register(bus.Topic, schema.EventHandler)
 	OnAddOrUpdate(md schema.Metadata)
 	GracefulStop()
@@ -97,6 +103,10 @@ type Server interface {
 	// per-node by design (reports the local schema cache); liaison and
 	// data-node processes both call it.
 	SetNodeSchemaStatusRepo(svc metadata.Service)
+	// SetExportServer enables transfer.v1.ExportService on the data-node gRPC server.
+	// The planner is served as-is; the liaison stamps node identity on its frames.
+	// The standalone local pipeline keeps it for NewExportClient.
+	SetExportServer(srv transferv1.ExportServiceServer)
 }
 
 // BatchPublisher is the interface for publishing data in batch.

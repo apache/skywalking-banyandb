@@ -1,0 +1,273 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+syntax = "proto3";
+
+package banyandb.transfer.v1;
+
+import "banyandb/common/v1/common.proto";
+import "validate/validate.proto";
+
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1";
+option java_package = "org.apache.skywalking.banyandb.transfer.v1";
+
+// ExportService is served by the liaison gRPC endpoint (17912) in both cluster and
+// standalone deployments. Plan fans out to every data node and relays frames one by one;
+// Sessions fans out one lifecycle action and reports per node. Every method must be
+// registered in GlobalMethodPolicies(), otherwise the liaison refuses to start.
+service ExportService {
+  // Plan enumerates the per-segment units (per-group for property) a selector hits. Each
+  // segment unit lists the shards the node holds for that segment. Without a session it reads
+  // the live directories. CreateSession snapshots first and announces the new session id
+  // in the first frame; ReadSession reads that snapshot and renews its lease.
+  rpc Plan(PlanRequest) returns (stream PlanResponse);
+  // Sessions runs one lifecycle action (list, heartbeat, release) on every data node and
+  // streams one frame per node, stamped with node_id by the liaison.
+  rpc Sessions(SessionsRequest) returns (stream SessionsResponse);
+}
+
+// Selector names a catalog and optionally its groups. Empty groups means every group of
+// that catalog; an empty selectors list means every group of every catalog.
+message Selector {
+  common.v1.Catalog catalog = 1 [(validate.rules).enum = {defined_only: true, not_in: [0]}];
+  repeated string groups = 2 [(validate.rules).repeated = {max_items: 1024, items: {string: {min_len: 1}}}];
+}
+
+// SegmentUnit keys one physical unit of a stream, measure or trace group on one node: every
+// shard the node holds for a segment. Stage is not part of the key: it is a property of the
+// node, reported read-only on the frame that carries the unit.
+message SegmentUnit {
+  common.v1.Catalog catalog = 1 [(validate.rules).enum = {defined_only: true, not_in: [0, 3]}];
+  string group = 2 [(validate.rules).string.min_len = 1];
+  // Segment directory suffix without the "seg-" prefix: 8 digits for day segments, 10 for
+  // hour segments.
+  string segment_suffix = 3 [(validate.rules).string.pattern = "^([0-9]{8}|[0-9]{10})$"];
+  // Shards that hold at least one part. Empty means the unit only carries segment-level
+  // artifacts (index-mode measure, or a segment whose shards have not flushed yet).
+  repeated uint32 shard_ids = 4;
+}
+
+// UnitInventory is one unit on one node together with its statistics. Property groups have
+// no segments, so they are inventoried per group instead of per segment.
+message UnitInventory {
+  oneof kind {
+    SegmentInventory segment = 1;
+    PropertyInventory property = 2;
+  }
+}
+
+// SegmentInventory is a SegmentUnit of a stream, measure or trace group with its statistics.
+message SegmentInventory {
+  SegmentUnit unit = 1;
+  // Version string from the segment metadata file; input of the import version gate.
+  string segment_version = 2;
+  repeated ShardStat shards = 3;
+  // Segment-level series index (the sidx/ directory).
+  SidxStat segment_level = 4;
+}
+
+// PropertyInventory is one property group on one node: its shards, each holding a document
+// store without parts or timestamps.
+message PropertyInventory {
+  string group = 1 [(validate.rules).string.min_len = 1];
+  repeated PropertyShardStat shards = 2;
+}
+
+// PropertyShardStat describes one shard of a property group.
+message PropertyShardStat {
+  uint32 shard_id = 1;
+  // On-disk size of the shard's document store; property has no compressed form, so this
+  // is both the compressed and the uncompressed estimate.
+  uint64 estimated_bytes = 2;
+  // Documents in the store, including superseded versions and tombstones.
+  uint64 doc_count = 3;
+}
+
+// ShardStat aggregates the parts of one shard. Timestamps are Unix nanoseconds.
+//
+// For trace, estimated_uncompressed_bytes counts the span payload only (tags are excluded),
+// so it can be below estimated_compressed_bytes; estimated_compressed_bytes is the bytes the
+// part writer recorded and is a lower bound of the on-disk size.
+message ShardStat {
+  uint32 shard_id = 1;
+  int64 min_timestamp = 2;
+  int64 max_timestamp = 3;
+  // Sizes of the shard's parts plus its per-shard index directories (stream idx/, trace sidx/).
+  uint64 estimated_compressed_bytes = 4;
+  uint64 estimated_uncompressed_bytes = 5;
+  uint32 parts_count = 6;
+  uint64 total_count = 7;
+  repeated PartStat parts = 8;
+}
+
+// PartStat is the per-part view of the ShardStat aggregates. Timestamps are Unix nanoseconds.
+message PartStat {
+  uint64 id = 1;
+  int64 min_timestamp = 2;
+  int64 max_timestamp = 3;
+  uint64 total_count = 4;
+}
+
+// SidxStat describes the segment-level series index.
+message SidxStat {
+  uint64 estimated_bytes = 1;
+  // Documents of the series index, computed only when the current schema declares an
+  // index-mode measure in the group (0 otherwise). Those documents are the index-mode rows
+  // plus the series entries of the group's regular measures, so the value is an upper bound
+  // of the rows.
+  uint64 doc_count = 2;
+}
+
+// PlanRequest selects what to enumerate and which view to read. Without a session it reads
+// the live directories and creates nothing on any node.
+message PlanRequest {
+  repeated Selector selectors = 1 [(validate.rules).repeated = {max_items: 1024}];
+  // Which export session to drive. Unset: inventory the live directories.
+  oneof session {
+    CreateSession create = 2;
+    ReadSession read = 3;
+  }
+}
+
+// CreateSession is the first Plan of an export that will transfer data. Every data node
+// snapshots the selected catalogs into a new session and inventories that
+// snapshot. One session id covers the whole cluster: the client leaves id empty, the liaison
+// generates it, announces it in the first frame and forwards it, so on a data node id is
+// always set.
+message CreateSession {
+  string id = 1 [(validate.rules).string = {max_len: 64, pattern: "^[0-9a-f]*$"}];
+  // Remove every session the node holds, whatever its lease says, before creating this
+  // one; the removed ids come back in preempted_session_ids. Without it any other session
+  // on the node answers ALREADY_EXISTS naming the occupants.
+  bool preempt = 2;
+}
+
+// ReadSession is every later Plan of the same export: resuming after an interruption, or
+// planning again before transferring. It inventories the session's snapshot and renews its lease,
+// so the result is the same frozen view CreateSession returned.
+message ReadSession {
+  string id = 1 [(validate.rules).string = {min_len: 1, max_len: 64, pattern: "^[0-9a-f]+$"}];
+}
+
+// PlanResponse is one frame of the Plan stream. The liaison stream is: with CreateSession a
+// `created` frame first; then `units` frames, each carrying the units of exactly one
+// (node, group); then exactly one `summary` frame. A catalog that fails to snapshot fails the
+// whole call and the liaison rolls the session back.
+//
+// A data node's own stream (the liaison's upstream) follows the same order without the
+// `created` frame: it never sets node_id or answered_nodes, and its closing `summary`, which
+// carries only preempted_session_ids, is sent only with CreateSession when anything was
+// removed.
+message PlanResponse {
+  oneof frame {
+    SessionCreated created = 1;
+    UnitFrame units = 2;
+    PlanSummary summary = 3;
+  }
+}
+
+// SessionCreated announces the id the liaison generated for a CreateSession Plan.
+message SessionCreated {
+  string session_id = 1;
+}
+
+// UnitFrame carries the units of one group on one node.
+message UnitFrame {
+  // Stamped by the liaison from the upstream connection; a data node leaves it empty.
+  string node_id = 1;
+  // The node's resolved lifecycle stage for this group. Empty for the default tier: the
+  // group declares no stages, the node has no labels, or the labels match no stage. Only
+  // groups the schema registry knows are listed, in every mode.
+  string stage = 2;
+  repeated UnitInventory units = 3;
+}
+
+// PlanSummary closes the stream.
+message PlanSummary {
+  // Sessions removed while creating because preempt was set (deduplicated, sorted).
+  repeated string preempted_session_ids = 1;
+  // Data nodes the liaison could not plan (live directories and ReadSession only;
+  // CreateSession treats any of these as a failure instead): a transport failure, no next
+  // frame within the liaison's maximum wait for a node's Plan, NotFound (the node no longer holds the requested
+  // session), or a data node without ExportService (UNIMPLEMENTED, an older version during a
+  // rolling upgrade). Unit frames already stamped with such a node_id are partial and must
+  // be dropped.
+  repeated string unreachable_nodes = 2;
+  // Data nodes whose Plan stream completed normally, whether or not they held any unit. Every
+  // node the liaison planned is in exactly one of answered_nodes and unreachable_nodes, so
+  // unreachable_nodes is the coverage gap a client must report.
+  repeated string answered_nodes = 3;
+}
+
+// SessionsRequest runs one session lifecycle action on every data node; the liaison
+// streams back one SessionsResponse per node.
+message SessionsRequest {
+  enum Action {
+    ACTION_UNSPECIFIED = 0;
+    // Read-only: every node reports the session it holds (the newest) or none. An unreachable node
+    // fails the whole call, so "clean" and "silent" cannot look alike.
+    ACTION_LIST = 1;
+    // The heartbeat: renew the lease of session_id on every node.
+    ACTION_HEARTBEAT = 2;
+    // Delete the snapshot of session_id on every node; a node that does not hold it still
+    // succeeds (answering `none`), so the action is idempotent.
+    ACTION_RELEASE = 3;
+  }
+  Action action = 1 [(validate.rules).enum = {defined_only: true, not_in: [0]}];
+  // Required by ACTION_HEARTBEAT and ACTION_RELEASE, ignored by ACTION_LIST.
+  string session_id = 2 [(validate.rules).string = {max_len: 64, pattern: "^[0-9a-f]*$"}];
+}
+
+// SessionsResponse is one data node's answer.
+message SessionsResponse {
+  string node_id = 1;
+  oneof outcome {
+    // ACTION_LIST: the session this node holds. One session id covers the whole cluster, so
+    // a node reports at most one: the newest when leftovers of older sessions exist.
+    SessionLease session = 2;
+    // ACTION_LIST: the node holds no session. ACTION_RELEASE: the node did not hold
+    // session_id, so there was nothing to delete; this is still a success.
+    Ack none = 3;
+    // ACTION_HEARTBEAT: the node renewed the lease. ACTION_RELEASE: the node held the session
+    // and deleted it.
+    Ack done = 4;
+    // ACTION_HEARTBEAT and ACTION_RELEASE: the node did not complete the action; the frame is
+    // still sent so the client can tell which nodes failed.
+    // ACTION_HEARTBEAT: the node was unreachable, does not hold the session, or is a data
+    // node without ExportService. An expired or unreadable lease, or any other node error,
+    // fails the whole call instead (FAILED_PRECONDITION for the lease).
+    // ACTION_RELEASE: the node was unreachable, removing the session failed, or it is a data
+    // node without ExportService. A node that does not hold the session answers `none`.
+    string error = 5;
+  }
+}
+
+// Ack is an outcome that carries no data.
+message Ack {}
+
+// SessionLease mirrors the .lease file of an export session plus the catalogs it covers,
+// which the data node derives from the <export-snapshot-path>/<id> directories it finds.
+// expires_at drives reclamation by the node's sweeper; last_heartbeat_at tells a refused
+// operator when the holder was last seen. Times are Unix nanoseconds of the data node's
+// clock; a session whose .lease is not readable reports zero times.
+message SessionLease {
+  string session_id = 1;
+  int64 started_at = 2;
+  int64 expires_at = 3;
+  int64 last_heartbeat_at = 4;
+  repeated common.v1.Catalog catalogs = 5;
+}

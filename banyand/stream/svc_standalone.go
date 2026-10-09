@@ -23,6 +23,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -81,10 +82,12 @@ type standalone struct {
 	root                  string
 	dataPath              string
 	snapshotDir           string
+	exportSnapshotDir     string
 	option                option
 	retentionConfig       storage.RetentionConfig
 	maxFileSnapshotNum    int
 	minFileSnapshotAge    time.Duration
+	snapshotMux           sync.Mutex
 }
 
 func (s *standalone) Stream(metadata *commonv1.Metadata) (Stream, error) {
@@ -109,12 +112,22 @@ func (s *standalone) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRa
 
 // RetentionService interface implementation.
 
+// ReadPartMetadata implements export.PartReader with this catalog's own metadata.json reader.
+func (s *standalone) ReadPartMetadata(partDir string) (queue.StreamingPartData, error) {
+	return ParsePartMetadata(s.lfs, partDir)
+}
+
 func (s *standalone) GetDataPath() string {
 	return s.dataPath
 }
 
 func (s *standalone) GetSnapshotDir() string {
 	return s.snapshotDir
+}
+
+// GetExportSnapshotDir returns the directory that holds the export session snapshots of stream.
+func (s *standalone) GetExportSnapshotDir() string {
+	return s.exportSnapshotDir
 }
 
 func (s *standalone) LoadAllGroups() []resourceSchema.Group {
@@ -182,6 +195,7 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
 	flagS.StringVar(&s.root, "stream-root-path", "/tmp", "the root path of stream")
 	flagS.StringVar(&s.dataPath, "stream-data-path", "", "the data directory path of stream. If not set, <stream-root-path>/stream/data will be used")
+	flagS.StringVar(&s.exportSnapshotDir, "stream-export-snapshot-path", "", storage.ExportSnapshotPathUsage("stream"))
 	flagS.DurationVar(&s.option.flushTimeout, "stream-flush-timeout", defaultFlushTimeout, "the memory data timeout of stream")
 	flagS.DurationVar(&s.option.elementIndexFlushTimeout, "element-index-flush-timeout", defaultFlushTimeout, "the elementIndex timeout of stream")
 	flagS.DurationVar(&s.option.memWaitTimeout, "stream-lifecycle-receive-mem-wait-timeout", 5*time.Minute,
@@ -259,6 +273,9 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	}
 	path := path.Join(s.root, s.Name())
 	s.snapshotDir = filepath.Join(path, storage.SnapshotsDir)
+	if s.exportSnapshotDir, err = storage.ResolveExportSnapshotDir(s.exportSnapshotDir, path); err != nil {
+		return err
+	}
 	obsservice.UpdatePath(path)
 	val := ctx.Value(common.ContextNodeKey)
 	if val == nil {

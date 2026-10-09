@@ -23,6 +23,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -78,12 +79,14 @@ type standalone struct {
 	diskMonitor        *storage.DiskMonitor
 	root               string
 	snapshotDir        string
+	exportSnapshotDir  string
 	dataPath           string
 	option             option
 	retentionConfig    storage.RetentionConfig
 	cc                 storage.CacheConfig
 	maxFileSnapshotNum int
 	minFileSnapshotAge time.Duration
+	snapshotMux        sync.Mutex
 }
 
 func (s *standalone) Measure(metadata *commonv1.Metadata) (Measure, error) {
@@ -108,12 +111,22 @@ func (s *standalone) GetRemovalSegmentsTimeRange(group string) *timestamp.TimeRa
 
 // RetentionService interface implementation.
 
+// ReadPartMetadata implements export.PartReader with this catalog's own metadata.json reader.
+func (s *standalone) ReadPartMetadata(partDir string) (queue.StreamingPartData, error) {
+	return ParsePartMetadata(s.lfs, partDir)
+}
+
 func (s *standalone) GetDataPath() string {
 	return s.dataPath
 }
 
 func (s *standalone) GetSnapshotDir() string {
 	return s.snapshotDir
+}
+
+// GetExportSnapshotDir returns the directory that holds the export session snapshots of measure.
+func (s *standalone) GetExportSnapshotDir() string {
+	return s.exportSnapshotDir
 }
 
 func (s *standalone) LoadAllGroups() []resourceSchema.Group {
@@ -176,6 +189,7 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
 	flagS.StringVar(&s.root, "measure-root-path", "/tmp", "the root path of measure")
 	flagS.StringVar(&s.dataPath, "measure-data-path", "", "the data directory path of measure. If not set, <measure-root-path>/measure/data will be used")
+	flagS.StringVar(&s.exportSnapshotDir, "measure-export-snapshot-path", "", storage.ExportSnapshotPathUsage("measure"))
 	flagS.DurationVar(&s.option.flushTimeout, "measure-flush-timeout", defaultFlushTimeout, "the memory data timeout of measure")
 	flagS.DurationVar(&s.option.memWaitTimeout, "measure-lifecycle-receive-mem-wait-timeout", 5*time.Minute,
 		"max time the migration receiver waits for memory to recover before introducing an external segment")
@@ -272,6 +286,9 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	}
 	path := path.Join(s.root, s.Name())
 	s.snapshotDir = filepath.Join(path, storage.SnapshotsDir)
+	if s.exportSnapshotDir, err = storage.ResolveExportSnapshotDir(s.exportSnapshotDir, path); err != nil {
+		return err
+	}
 	obsservice.UpdatePath(path)
 	if s.dataPath == "" {
 		s.dataPath = filepath.Join(path, storage.DataDir)
