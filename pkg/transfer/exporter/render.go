@@ -105,9 +105,9 @@ func renderTable(w io.Writer, rep *Report) error {
 	if node == "" {
 		node = "-"
 	}
-	fmt.Fprintf(w, "\nSNAPSHOT  each data node pins its own snapshot; the largest node (%s) needs about %s; check df there first\n",
+	_, err := fmt.Fprintf(w, "\nSNAPSHOT  each data node pins its own snapshot; the largest node (%s) needs about %s; check df there first\n",
 		node, humanBytes(size))
-	return nil
+	return err
 }
 
 var (

@@ -28,6 +28,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/apache/skywalking-banyandb/pkg/config"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/exporter"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
 
@@ -80,7 +81,16 @@ func ResetFlags() {
 
 // Execute executes the root command.
 func Execute() error {
-	return rootCmd.Execute()
+	err := rootCmd.Execute()
+	// The data commands return an exporter.ExitError carrying their documented exit code
+	// (1 usage, 2 preflight/refused, 3 runtime); print it and exit with that code. Any other
+	// error goes back to the caller as before.
+	var exitErr *exporter.ExitError
+	if errors.As(err, &exitErr) {
+		_, _ = fmt.Fprintln(os.Stderr, err)
+		os.Exit(exitErr.Code)
+	}
+	return err
 }
 
 // RootCmdFlags bind flags to a command.

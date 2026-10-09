@@ -20,6 +20,7 @@ package exporter
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -374,5 +375,31 @@ func TestReport_LargestNodeCompressedBytes(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "the largest node (-) needs about 0 B") {
 		t.Fatalf("an empty report has no largest node:\n%s", buf.String())
+	}
+}
+
+// failingWriter accepts writes until one contains marker, then fails that write and every
+// later one.
+type failingWriter struct {
+	err    error
+	marker string
+	failed bool
+}
+
+func (w *failingWriter) Write(p []byte) (int, error) {
+	if w.failed || strings.Contains(string(p), w.marker) {
+		w.failed = true
+		return 0, w.err
+	}
+	return len(p), nil
+}
+
+// A failure while writing the closing SNAPSHOT line, which comes after the table flush, is
+// returned rather than reported as a successful render.
+func TestRender_TableReturnsTheSnapshotLineWriteError(t *testing.T) {
+	broken := errors.New("broken pipe")
+	err := Render(&failingWriter{err: broken, marker: "SNAPSHOT"}, "table", sampleReport())
+	if !errors.Is(err, broken) {
+		t.Fatalf("want the SNAPSHOT write error, got %v", err)
 	}
 }
