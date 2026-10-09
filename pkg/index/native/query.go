@@ -172,11 +172,21 @@ func (v *ReadView) MatchTermsSet(ctx context.Context, request TermSetRequest) ([
 		if err != nil {
 			return nil, err
 		}
-		totalCandidates += candidates.GetCardinality()
+		narrowed, projection, skip, err := narrowSegmentForTime(ctx, segment, candidates, request.Scope.TimeRange)
+		if err != nil {
+			return nil, err
+		}
+		if skip {
+			continue
+		}
+		// Counted after narrowing: a document the range excludes was never a
+		// candidate the query has to consider, so it should not spend the
+		// caller's limit.
+		totalCandidates += narrowed.GetCardinality()
 		if request.MaxCandidates != 0 && totalCandidates > request.MaxCandidates {
 			return nil, ErrQueryLimit
 		}
-		hits, err := projectCandidates(ctx, uint64(segmentIndex), segment, candidates, request.Scope.TimeRange)
+		hits, err := projectCandidates(ctx, uint64(segmentIndex), segment, narrowed, request.Scope.TimeRange, projection)
 		if err != nil {
 			return nil, err
 		}
@@ -253,7 +263,14 @@ func (v *ReadView) MatchAllTermSets(ctx context.Context, requests []TermSetReque
 				break
 			}
 		}
-		hits, err := projectCandidates(ctx, uint64(segmentIndex), segment, candidates, requests[0].Scope.TimeRange)
+		narrowed, projection, skip, narrowErr := narrowSegmentForTime(ctx, segment, candidates, requests[0].Scope.TimeRange)
+		if narrowErr != nil {
+			return nil, narrowErr
+		}
+		if skip {
+			continue
+		}
+		hits, err := projectCandidates(ctx, uint64(segmentIndex), segment, narrowed, requests[0].Scope.TimeRange, projection)
 		if err != nil {
 			return nil, err
 		}
@@ -369,7 +386,14 @@ func (v *ReadView) MatchField(ctx context.Context, request FieldRequest) ([]Quer
 		if request.MaxCandidates != 0 && totalCandidates > request.MaxCandidates {
 			return nil, ErrQueryLimit
 		}
-		hits, err := projectCandidates(ctx, uint64(segmentIndex), segment, candidates, request.Scope.TimeRange)
+		narrowed, projection, skip, err := narrowSegmentForTime(ctx, segment, candidates, request.Scope.TimeRange)
+		if err != nil {
+			return nil, err
+		}
+		if skip {
+			continue
+		}
+		hits, err := projectCandidates(ctx, uint64(segmentIndex), segment, narrowed, request.Scope.TimeRange, projection)
 		if err != nil {
 			return nil, err
 		}
@@ -402,11 +426,18 @@ func (v *ReadView) MatchRange(ctx context.Context, request RangeRequest) ([]Quer
 		if err != nil {
 			return nil, err
 		}
-		totalCandidates += candidates.GetCardinality()
+		narrowed, projection, skip, err := narrowSegmentForTime(ctx, segment, candidates, request.Scope.TimeRange)
+		if err != nil {
+			return nil, err
+		}
+		if skip {
+			continue
+		}
+		totalCandidates += narrowed.GetCardinality()
 		if request.MaxCandidates != 0 && totalCandidates > request.MaxCandidates {
 			return nil, ErrQueryLimit
 		}
-		hits, err := projectCandidates(ctx, uint64(segmentIndex), segment, candidates, request.Scope.TimeRange)
+		hits, err := projectCandidates(ctx, uint64(segmentIndex), segment, narrowed, request.Scope.TimeRange, projection)
 		if err != nil {
 			return nil, err
 		}
@@ -918,7 +949,58 @@ func seriesCandidates(ctx context.Context, segment *memorySegment, scope QuerySc
 	return result, nil
 }
 
-func projectCandidates(ctx context.Context, segmentIndex uint64, segment *memorySegment, candidates *roaringpkg.Bitmap, timeRange *TimeRange) ([]QueryHit, error) {
+// timeProjection says what projection must do with a candidate's timestamp.
+type timeProjection uint8
+
+const (
+	// timeProjectionCheck compares each decoded timestamp against the range,
+	// which is what a segment the range only partly covers, or one that cannot
+	// use the trie, still needs.
+	timeProjectionCheck timeProjection = iota
+	// timeProjectionContained skips the range comparison because every
+	// timestamped document in the segment is already known to be in range,
+	// either because the range contains the segment or because the trie
+	// selected exactly the in-range documents. Documents without a timestamp
+	// are still dropped, which the hasTimestamp check keeps doing.
+	timeProjectionContained
+)
+
+// narrowSegmentForTime classifies the segment against the query range and
+// returns the candidates projection should walk.
+//
+// skip is true when the segment cannot contribute any hit, so the caller can
+// move on without decoding anything and without counting those candidates
+// against its limit. The returned candidate set is already narrowed, so a
+// limit check after this point no longer counts documents the range excludes.
+func narrowSegmentForTime(
+	ctx context.Context,
+	segment *memorySegment,
+	candidates *roaringpkg.Bitmap,
+	timeRange *TimeRange,
+) (narrowed *roaringpkg.Bitmap, projection timeProjection, skip bool, err error) {
+	class := classifyTime(segment.handle, timeRange)
+	if class == timeDisjoint {
+		return nil, timeProjectionContained, true, nil
+	}
+	narrowed, exact, narrowErr := narrowCandidatesToRange(ctx, segment, candidates, class, timeRange)
+	if narrowErr != nil {
+		return nil, timeProjectionContained, false, narrowErr
+	}
+	projection = timeProjectionCheck
+	if exact {
+		projection = timeProjectionContained
+	}
+	return narrowed, projection, false, nil
+}
+
+func projectCandidates(
+	ctx context.Context,
+	segmentIndex uint64,
+	segment *memorySegment,
+	candidates *roaringpkg.Bitmap,
+	timeRange *TimeRange,
+	projection timeProjection,
+) ([]QueryHit, error) {
 	if candidates == nil || candidates.IsEmpty() {
 		return nil, nil
 	}
@@ -962,8 +1044,18 @@ func projectCandidates(ctx context.Context, segmentIndex uint64, segment *memory
 		if identifier == nil {
 			return nil, fmt.Errorf("document %d has no identifier: %w", documentNumber, ErrCorrupt)
 		}
-		if timeRange != nil && (!hasTimestamp || !timeRange.contains(timestamp)) {
-			continue
+		// A time range is the only thing that requires a document to carry a
+		// timestamp: with no range, an untimestamped document is a normal
+		// result. Where there is a range, the document must have one, and the
+		// range comparison itself is only needed when the candidate set is not
+		// already known to be in range.
+		if timeRange != nil {
+			if !hasTimestamp {
+				continue
+			}
+			if projection == timeProjectionCheck && !timeRange.contains(timestamp) {
+				continue
+			}
 		}
 		result = append(result, QueryHit{Identifier: identifier, SeriesID: seriesID, Timestamp: timestamp, Segment: segmentIndex, DocumentNumber: documentNumber})
 	}

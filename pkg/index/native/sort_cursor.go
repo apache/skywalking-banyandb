@@ -73,6 +73,12 @@ type sortCursorSegment struct {
 	segmentID  uint64
 	candidates *roaringpkg.Bitmap
 	all        bool
+	// timeExact records that every candidate here is already known to be in
+	// the query's time range, because the range contains the segment's bounds
+	// or the _timestamp trie selected exactly the in-range documents. It lets
+	// project skip the per-document range comparison while still requiring a
+	// timestamp.
+	timeExact bool
 }
 
 // SortCursor retains per-segment candidate bitmaps and one page-sized frontier
@@ -170,6 +176,43 @@ func (v *ReadView) NewSortCursor(ctx context.Context, request SortCursorRequest)
 			}
 			total += candidates.GetCardinality()
 		}
+		// Narrow to the query's time range before the cursor retains anything.
+		// A disjoint segment is dropped outright; an overlapping one keeps only
+		// the documents the range can match, so the per-document comparison
+		// later is redundant for them.
+		// Same source the cursor projects against, so the narrowing and the
+		// later per-document check can never disagree.
+		timeRange := request.Selection.Scope.TimeRange
+		class := classifyTime(segment.handle, timeRange)
+		if class == timeDisjoint {
+			continue
+		}
+		timeExact := true
+		if class == timeOverlap {
+			narrowed, exact, narrowErr := narrowCandidatesToRange(ctx, segment, candidates, class, timeRange)
+			if narrowErr != nil {
+				return nil, narrowErr
+			}
+			if exact {
+				candidates, timeExact = narrowed, true
+				// The "all documents" path walks every ordinal. Once the trie
+				// has selected the in-range ones, the candidates are that set.
+				if all {
+					all = false
+				}
+			} else {
+				timeExact = false
+			}
+		}
+		// Recomputed after narrowing, and after the "all documents" path has
+		// become an explicit candidate set. Counting before the narrowing would
+		// charge the caller for documents the range excludes.
+		total = 0
+		if all {
+			total = segment.handle.count
+		} else if candidates != nil {
+			total = candidates.GetCardinality()
+		}
 		if request.Selection.MaxCandidates != 0 && total > request.Selection.MaxCandidates {
 			return nil, ErrQueryLimit
 		}
@@ -177,7 +220,7 @@ func (v *ReadView) NewSortCursor(ctx context.Context, request SortCursorRequest)
 			return nil, ErrQueryLimit
 		}
 		cursor.segments = append(cursor.segments, sortCursorSegment{
-			segment: segment, segmentID: uint64(index), candidates: candidates, all: all,
+			segment: segment, segmentID: uint64(index), candidates: candidates, all: all, timeExact: timeExact,
 		})
 	}
 	return cursor, nil
@@ -221,7 +264,7 @@ func (c *SortCursor) NextPage(ctx context.Context) ([]SortedHit, error) {
 				return nil, err
 			}
 			documentNumber = nextDocument()
-			hit, value, missing, err := c.project(current.segmentID, current.segment, documentNumber)
+			hit, value, missing, err := c.project(current.segmentID, current.segment, documentNumber, current.timeExact)
 			if err != nil {
 				if errors.Is(err, errSkipSortCandidate) {
 					continue
@@ -269,7 +312,7 @@ func (c *SortCursor) Close() error {
 	return nil
 }
 
-func (c *SortCursor) project(segmentID uint64, segment *memorySegment, documentNumber uint64) (QueryHit, []byte, bool, error) {
+func (c *SortCursor) project(segmentID uint64, segment *memorySegment, documentNumber uint64, timeExact bool) (QueryHit, []byte, bool, error) {
 	if _, deleted := segment.deleted[documentNumber]; deleted {
 		return QueryHit{}, nil, true, errSkipSortCandidate
 	}
@@ -306,8 +349,13 @@ func (c *SortCursor) project(segmentID uint64, segment *memorySegment, documentN
 	if identifier == nil {
 		return QueryHit{}, nil, false, fmt.Errorf("document %d has no identifier: %w", documentNumber, ErrCorrupt)
 	}
-	if c.timeRange != nil && (!hasTimestamp || !c.timeRange.contains(timestamp)) {
-		return QueryHit{}, nil, true, errSkipSortCandidate
+	if c.timeRange != nil {
+		if !hasTimestamp {
+			return QueryHit{}, nil, true, errSkipSortCandidate
+		}
+		if !timeExact && !c.timeRange.contains(timestamp) {
+			return QueryHit{}, nil, true, errSkipSortCandidate
+		}
 	}
 	values, valuesErr := segment.handle.reader.DocumentValues(c.sortField, documentNumber)
 	if valuesErr != nil {

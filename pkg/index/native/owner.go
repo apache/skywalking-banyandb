@@ -2212,9 +2212,16 @@ func newSegmentFromPayload(payload []byte, segmentID uint64) (rootSegment, error
 	}
 	// The reader borrows payload, which the caller hands over; the handle
 	// keeps it alive for the reader's lifetime.
+	// A merged segment records its time bounds in the footer, so read them here
+	// too. Without this the in-memory merge path leaves a merged segment
+	// reporting "no timestamps", which is what made segment-level time pruning
+	// useless for exactly the segments that hold most of the data.
+	timeMin, timeMax := reader.TimeBounds()
 	handle := &segmentHandle{
 		reader: reader, payload: payload, count: reader.DocumentCount(),
 		id: segmentID, size: uint64(len(payload)), persisted: atomic.Bool{},
+		timeMin: uint64(timeMin), timeMax: uint64(timeMax),
+		hasTime: timeMin != 0 || timeMax != 0,
 	}
 	handle.refs.Store(1)
 	if fields, fieldsErr := reader.Fields(); fieldsErr == nil {
@@ -2382,6 +2389,25 @@ func (s *memorySegment) MatchTerms(ctx context.Context, request MatchRequest) (M
 			series[number] = struct{}{}
 		}
 	}
+	// Narrow the term posting to the query's time range before visiting any
+	// document, so a segment the range misses costs no decode and a segment it
+	// partly covers does not decode the documents it excludes.
+	class := classifyTime(s.handle, request.TimeRange)
+	if class == timeDisjoint {
+		return MatchResult{}, nil
+	}
+	timeExact := false
+	if class == timeOverlap {
+		usable, usableErr := s.handle.trieUsable()
+		if usableErr == nil && usable {
+			inRange, narrowErr := trieCandidates(ctx, s, request.TimeRange)
+			if narrowErr != nil {
+				return MatchResult{}, narrowErr
+			}
+			posting = narrowTermPostingToBitmap(posting, inRange)
+			timeExact = true
+		}
+	}
 	result := MatchResult{}
 	for _, documentNumber := range postingDocuments(posting) {
 		if err := ctx.Err(); err != nil {
@@ -2426,8 +2452,13 @@ func (s *memorySegment) MatchTerms(ctx context.Context, request MatchRequest) (M
 		if identifier == nil {
 			return MatchResult{}, fmt.Errorf("document %d has no identifier: %w", documentNumber, ErrInvalidDocument)
 		}
-		if request.TimeRange != nil && (!hasTimestamp || !request.TimeRange.contains(timestamp)) {
-			continue
+		if request.TimeRange != nil {
+			if !hasTimestamp {
+				continue
+			}
+			if !timeExact && !request.TimeRange.contains(timestamp) {
+				continue
+			}
 		}
 		result.Identifiers = append(result.Identifiers, identifier)
 		result.Timestamps = append(result.Timestamps, timestamp)
@@ -2514,6 +2545,32 @@ func (d *disposals) wait() {
 		}
 		d.cond.Wait()
 	}
+}
+
+// narrowTermPostingToBitmap restricts a term posting to the documents in
+// bitmap.
+//
+// It narrows Document numbers because that is what postingDocuments, the only
+// reader of a posting here, iterates: the Bitmap field exists for engines that
+// can combine postings directly, but this path does not. Filtering in place
+// keeps the allocation free.
+func narrowTermPostingToBitmap(posting nativeice.TermPosting, bitmap *roaringpkg.Bitmap) nativeice.TermPosting {
+	if posting.OneHit {
+		if !bitmap.Contains(uint32(posting.DocumentNumber)) {
+			posting.OneHit = false
+			posting.DocumentNumber = 0
+			posting.Documents = nil
+		}
+		return posting
+	}
+	kept := posting.Documents[:0]
+	for _, number := range posting.Documents {
+		if bitmap.Contains(uint32(number)) {
+			kept = append(kept, number)
+		}
+	}
+	posting.Documents = kept
+	return posting
 }
 
 func postingDocuments(posting nativeice.TermPosting) []uint64 {
