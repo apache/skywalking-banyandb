@@ -198,6 +198,10 @@ func newSegmentFromMergeFile(path string, stats nativeice.MergeStats) (rootSegme
 	handle := &segmentHandle{
 		reader: reader, sourcePath: path, staged: true,
 		count: stats.DocumentCount, size: stats.Size, indexedFields: fields,
+		// The merge folds these from the surviving timestamped documents, so
+		// unlike a flush segment a merged one always knows its bounds unless no
+		// document carried a timestamp.
+		timeMin: stats.TimeMin, timeMax: stats.TimeMax, hasTime: stats.HasTime,
 	}
 	handle.refs.Store(1)
 	// Best effort, see newMemorySegment. A merged segment is exactly the case

@@ -60,6 +60,15 @@ type MergeStats struct {
 	DocumentCount uint64
 	// Size is the number of segment bytes written.
 	Size uint64
+	// TimeMin and TimeMax are the merged segment's exact time bounds, encoded
+	// as uint64(int64) exactly as the footer stores them. They cover the
+	// surviving documents that carry a timestamp; HasTime reports whether any
+	// did. A merge of input whose own bounds are unknown still produces exact
+	// bounds, because they are folded from the surviving documents rather than
+	// combined from the inputs.
+	TimeMin uint64
+	TimeMax uint64
+	HasTime bool
 }
 
 // MergeSegments merges native single-segment readers into an in-memory
@@ -170,7 +179,13 @@ func MergeSegmentsTo(ctx context.Context, inputs []MergeInput, output io.Writer,
 	if writeErr := merger.write(); writeErr != nil {
 		return MergeStats{}, writeErr
 	}
-	return MergeStats{DocumentCount: merger.documentCount, Size: merger.output.written}, nil
+	return MergeStats{
+		DocumentCount: merger.documentCount,
+		Size:          merger.output.written,
+		TimeMin:       merger.timeMin,
+		TimeMax:       merger.timeMax,
+		HasTime:       merger.hasTime,
+	}, nil
 }
 
 // countingWriter tracks the running segment offset every section records.
@@ -219,6 +234,9 @@ func acquireStreamMerger(ctx context.Context, output io.Writer, spillPrefix stri
 	merger.spill = spillFactory{prefix: spillPrefix}
 	merger.inputs, merger.fields, merger.fieldIDs = nil, nil, nil
 	merger.documentCount, merger.storedIndex = 0, 0
+	// The bounds are folded per merge, so a pooled merger must not carry the
+	// previous merge's.
+	merger.timeMin, merger.timeMax, merger.hasTime = 0, 0, false
 	return merger
 }
 

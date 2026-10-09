@@ -64,6 +64,7 @@ func (m *streamMerger) writeStored() error {
 			// which stays loaded for this whole document callback.
 			var identifier []byte
 			hasIdentifier := false
+			var timestampValue []byte
 			m.storedValues = append(m.storedValues[:0], storedValue{name: identifierField})
 			for _, field := range fields {
 				if field.name == identifierField {
@@ -71,6 +72,11 @@ func (m *streamMerger) writeStored() error {
 					hasIdentifier = len(field.value) > 0
 					identifier = field.value
 					continue
+				}
+				if field.name == timestampField {
+					// Remember it for the bounds below; it is written like any
+					// other surviving stored value.
+					timestampValue = field.value
 				}
 				if dropped {
 					continue
@@ -85,6 +91,26 @@ func (m *streamMerger) writeStored() error {
 			}
 			if dropped {
 				return nil
+			}
+			// Fold this survivor's timestamp into the merged bounds. The flush
+			// path treats a zero timestamp as "no timestamp", so the merged
+			// segment does too: bounds describe exactly the documents a time
+			// range can match, and a document without one is never matched.
+			if len(timestampValue) > 0 {
+				timestamp, decodeErr := DecodePrefixCodedInt64(timestampValue)
+				if decodeErr != nil {
+					return fmt.Errorf("physical document %d has an undecodable timestamp: %w", local, decodeErr)
+				}
+				if timestamp != 0 {
+					encoded := uint64(timestamp)
+					if !m.hasTime || encoded < m.timeMin {
+						m.timeMin = encoded
+					}
+					if !m.hasTime || encoded > m.timeMax {
+						m.timeMax = encoded
+					}
+					m.hasTime = true
+				}
 			}
 			m.storedValues[0].value = identifier
 			binary.BigEndian.PutUint64(offsetBytes[:], uint64(len(m.decodedChunk)))
