@@ -28,9 +28,7 @@ import (
 func dictionaryTermsFromCover(t *testing.T, terms [][]byte, covers []TimestampCover) [][]byte {
 	t.Helper()
 	sorted := make([][]byte, 0, len(terms))
-	for _, term := range terms {
-		sorted = append(sorted, term)
-	}
+	sorted = append(sorted, terms...)
 	sort.Slice(sorted, func(left, right int) bool { return bytes.Compare(sorted[left], sorted[right]) < 0 })
 
 	selected := make([][]byte, 0, len(terms))

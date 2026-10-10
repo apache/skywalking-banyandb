@@ -24,6 +24,8 @@ import (
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
 	"github.com/stretchr/testify/require"
+
+	"github.com/apache/skywalking-banyandb/pkg/index/internal/nativeice"
 )
 
 // timePruneDocument builds a document with a timestamp and the fields the
@@ -219,9 +221,8 @@ func referenceMatched(result MatchResult, window *TimeRange) []string {
 	return kept
 }
 
-// TestTimePruningFallsBackWithoutTheTrie builds a segment carrying only
-// shift-zero _timestamp terms, which no current writer emits, and checks it
-// still returns the right answers through the per-document path.
+// TestTimePruningFallsBackWithoutTheTrie checks that a natively written
+// segment reports a usable trie.
 func TestTimePruningFallsBackWithoutTheTrie(t *testing.T) {
 	const base = int64(1_700_000_000_000_000_000)
 	documents := make([]Document, 0, 600)
@@ -236,27 +237,111 @@ func TestTimePruningFallsBackWithoutTheTrie(t *testing.T) {
 
 	segment, segmentErr := view.segmentAt(0)
 	require.NoError(t, segmentErr)
-	usable, usableErr := segment.handle.trieUsable()
-	require.NoError(t, usableErr)
-	require.True(t, usable, "a natively written segment must report a usable trie")
+	require.True(t, segment.handle.trieUsable(), "a natively written segment must report a usable trie")
+}
 
-	// The fallback contract: a segment the probe rejects keeps today's results,
-	// which is what a segment without coarse terms has to rely on.
-	window := closedTestRange(base+100, base+200)
-	fallbackHandle := &segmentHandle{
-		reader: segment.handle.reader, count: segment.handle.count,
-		timeMin: segment.handle.timeMin, timeMax: segment.handle.timeMax,
-		hasTime: segment.handle.hasTime, trieUsableValue: false,
+// shiftZeroOnlySegment encodes a real segment through nativeice.EncodeSegment,
+// with a _timestamp field carrying only the shift-0 term -- no current writer
+// emits this, but the compatibility contract requires a segment missing the
+// coarse levels to fall back rather than silently losing documents. Unlike a
+// hand-built segmentHandle, this exercises the real segmentTrieUsable probe
+// against a real dictionary.
+//
+// The returned segment carries the single reference newSegmentFromPayload
+// creates it with -- the same reference a successful merge hands straight to
+// a published root without retaining again. The caller either appends it to
+// an owner's root (whose teardown releases it exactly once) or releases it
+// itself; it must not do both.
+func shiftZeroOnlySegment(t *testing.T, count int, base int64) *memorySegment {
+	t.Helper()
+	documents := make([]nativeice.EncodeDocument, 0, count)
+	var timeMin, timeMax int64
+	for index := range count {
+		timestamp := base + int64(index)
+		if index == 0 || timestamp < timeMin {
+			timeMin = timestamp
+		}
+		if index == 0 || timestamp > timeMax {
+			timeMax = timestamp
+		}
+		status := "ok"
+		if index%3 == 0 {
+			status = "bad"
+		}
+		documents = append(documents, nativeice.EncodeDocument{
+			Identifier: []byte(fmt.Sprintf("doc-%04d", index)),
+			Fields: []nativeice.EncodeField{
+				{
+					Name: "status", Value: []byte(status),
+					Terms: []nativeice.EncodeTerm{{Value: []byte(status), Frequency: 1}},
+					Index: true, Store: true,
+				},
+				{
+					Name: "series", Value: []byte("series-a"),
+					Terms: []nativeice.EncodeTerm{{Value: []byte("series-a"), Frequency: 1}},
+					Index: true, Store: true,
+				},
+				{
+					Name: timestampField, Value: nativeice.EncodePrefixCodedInt64(timestamp),
+					Terms: []nativeice.EncodeTerm{{Value: nativeice.EncodePrefixCodedInt64Shift(timestamp, 0), Frequency: 1}},
+					Index: true, Store: true, Sort: true,
+				},
+			},
+		})
 	}
-	// Mark the lazy probe as already run, or the first call would recompute it
-	// against the real reader and overwrite the forced answer.
-	fallbackHandle.trieOnce.Do(func() {})
-	fallbackSegment := &memorySegment{handle: fallbackHandle}
+	payload, encodeErr := nativeice.EncodeSegment(nativeice.Generation{
+		Documents: documents, SegmentID: 1,
+		TimeMin: uint64(timeMin), TimeMax: uint64(timeMax),
+	})
+	require.NoError(t, encodeErr)
+	root, segmentErr := newSegmentFromPayload(payload, 1)
+	require.NoError(t, segmentErr)
+	segment, ok := root.(*memorySegment)
+	require.True(t, ok, "newSegmentFromPayload returned %T", root)
+	return segment
+}
+
+// TestTimePruningFallsBackForASegmentWithoutCoarseTerms builds a segment
+// through the real encoder emitting only shift-0 _timestamp terms, proves the
+// real probe rejects it, and proves the fallback still returns exactly what
+// the per-document path returns.
+func TestTimePruningFallsBackForASegmentWithoutCoarseTerms(t *testing.T) {
+	const base = int64(1_700_000_000_000_000_000)
+	// The owner is created first so a failed assertion below still leaves the
+	// segment reachable from a root whose teardown closes it; nothing retains
+	// it a second time, so Close releases it exactly once.
+	owner := newTestOwner(t, nil)
+	segment := shiftZeroOnlySegment(t, 600, base)
+	owner.root.segments = append(owner.root.segments, segment)
+
+	require.False(t, segment.handle.trieUsable(), "a segment missing the coarse _timestamp levels must not report a usable trie")
+
+	window := closedTestRange(base+100, base+200)
 	narrowed, exact, narrowErr := narrowCandidatesToRange(
-		context.Background(), fallbackSegment, allOrdinals(fallbackSegment.handle.count), timeOverlap, window)
+		context.Background(), segment, allOrdinals(segment.handle.count), timeOverlap, window)
 	require.NoError(t, narrowErr)
 	require.False(t, exact, "a segment that cannot use the trie must not claim an exact narrowing")
 	require.Equal(t, uint64(600), narrowed.GetCardinality(), "the fallback must leave the candidate set untouched")
+
+	// The fallback must still answer every entry point correctly end to end,
+	// not only at the narrowCandidatesToRange seam.
+	view, viewErr := owner.Acquire(context.Background())
+	require.NoError(t, viewErr)
+	t.Cleanup(func() { require.NoError(t, view.Close()) })
+
+	for _, testWindow := range append(timePruneWindows(), window) {
+		ranged, rangedErr := view.MatchTermsSet(context.Background(), TermSetRequest{
+			Field: "status", Terms: [][]byte{[]byte("ok")}, Mode: MatchAnyTerm,
+			Scope: QueryScope{TimeRange: testWindow},
+		})
+		require.NoError(t, rangedErr)
+		unranged, unrangedErr := view.MatchTermsSet(context.Background(), TermSetRequest{
+			Field: "status", Terms: [][]byte{[]byte("ok")}, Mode: MatchAnyTerm,
+		})
+		require.NoError(t, unrangedErr)
+		require.Equal(t, referenceFiltered(unranged, testWindow), identifiersOf(ranged),
+			"fallback segment disagreed with the per-document path for %+v", testWindow)
+	}
 }
 
 func closedTestRange(lower, upper int64) *TimeRange {
@@ -293,7 +378,10 @@ func TestTrieIsActuallyUsed(t *testing.T) {
 }
 
 // TestDisjointSegmentVisitsNothing proves the strongest saving: a segment the
-// range misses must not decode a single document.
+// range misses must not decode a single document. An empty result could also
+// happen if every candidate were decoded and then filtered out, so the test
+// hook counts the reader's VisitDocument calls directly rather than trusting
+// the result shape.
 func TestDisjointSegmentVisitsNothing(t *testing.T) {
 	const base = int64(1_700_000_000_000_000_000)
 	owner := newTestOwner(t, nil)
@@ -304,6 +392,10 @@ func TestDisjointSegmentVisitsNothing(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, view.Close()) })
 
+	segment, segmentErr := view.segmentAt(0)
+	require.NoError(t, segmentErr)
+	before := segment.handle.reader.VisitDocumentCalls()
+
 	far := closedTestRange(base+1_000_000, base+2_000_000)
 	hits, hitsErr := view.MatchTermsSet(context.Background(), TermSetRequest{
 		Field: "status", Terms: [][]byte{[]byte("ok")}, Mode: MatchAnyTerm,
@@ -311,6 +403,8 @@ func TestDisjointSegmentVisitsNothing(t *testing.T) {
 	})
 	require.NoError(t, hitsErr)
 	require.Empty(t, hits, "a disjoint segment must contribute nothing")
+	require.Equal(t, before, segment.handle.reader.VisitDocumentCalls(),
+		"a disjoint segment must not decode a single document")
 }
 
 // TestTimePruningSurvivesMergedSegments checks the pruning still works after a
@@ -432,9 +526,7 @@ func TestTimestampTermsSurviveAMerge(t *testing.T) {
 
 	for index, current := range view.root.segments {
 		segment := current.(*memorySegment)
-		usable, usableErr := segment.handle.trieUsable()
-		require.NoError(t, usableErr)
-		require.True(t, usable, "merged segment %d lost its coarse timestamp terms", index)
+		require.True(t, segment.handle.trieUsable(), "merged segment %d lost its coarse timestamp terms", index)
 
 		window := closedTestRange(base+1000, base+5000)
 		bitmap, bitmapErr := trieCandidates(context.Background(), segment, window)

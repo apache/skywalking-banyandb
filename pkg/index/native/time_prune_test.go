@@ -33,9 +33,9 @@ func closedRange(lower, upper int64) *TimeRange {
 
 func TestClassifyTime(t *testing.T) {
 	tests := []struct {
-		name      string
 		handle    *segmentHandle
 		timeRange *TimeRange
+		name      string
 		want      timeClass
 	}{
 		{

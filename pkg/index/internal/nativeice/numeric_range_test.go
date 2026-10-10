@@ -16,6 +16,7 @@
 package nativeice
 
 import (
+	"bytes"
 	"math"
 	"math/rand"
 	"testing"
@@ -64,7 +65,7 @@ func checkCover(t *testing.T, lo, hi uint64) {
 			t.Fatalf("cover of [%d, %d] emitted shift %d, above the writer's top level", lo, hi, run.shift)
 		}
 	}
-	// Endpoints and their immediate neighbours pin down both directions
+	// Endpoints and their immediate neighbors pin down both directions
 	// without walking a 64-bit span.
 	probes := []uint64{lo, hi}
 	if lo > 0 {
@@ -77,8 +78,7 @@ func checkCover(t *testing.T, lo, hi uint64) {
 	// endpoint is, which is what makes the cover exact for a whole bucket.
 	for _, probe := range []uint64{lo, hi} {
 		for shift := uint(0); shift <= 60; shift += 4 {
-			probes = append(probes, probe&^(uint64(0xF)<<shift))
-			probes = append(probes, probe|(uint64(0xF)<<shift))
+			probes = append(probes, probe&^(uint64(0xF)<<shift), probe|(uint64(0xF)<<shift))
 		}
 	}
 	for _, probe := range probes {
@@ -206,7 +206,7 @@ func TestEncodePrefixCodedSortableShiftMatchesTheSignedEncoder(t *testing.T) {
 		for shift := uint(0); shift <= 60; shift += 4 {
 			want := EncodePrefixCodedInt64Shift(value, shift)
 			got := encodePrefixCodedSortableShift(sortableInt64(value), shift)
-			if string(want) != string(got) {
+			if !bytes.Equal(want, got) {
 				t.Fatalf("value %d shift %d: sortable encoder = %x, signed encoder = %x", value, shift, got, want)
 			}
 		}
@@ -229,7 +229,7 @@ func TestEncodePrefixCodedSortableShiftPreservesOrder(t *testing.T) {
 					shift, left, leftEncoded, right, rightEncoded)
 			}
 			sameBucket := sortableInt64(left)>>shift == sortableInt64(right)>>shift
-			if !sameBucket && string(leftEncoded) == string(rightEncoded) {
+			if !sameBucket && bytes.Equal(leftEncoded, rightEncoded) {
 				t.Fatalf("shift %d: %d and %d are in different buckets but both encoded to %x",
 					shift, left, right, leftEncoded)
 			}
