@@ -201,10 +201,19 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 	// Assign errors to err so the deferred result.Release() fires on failure,
 	// releasing segments, the timeout context, and the tracing span.
 	var vectorizedScanBatch *scanBatch
-	if vectorizedScanBatch, err = t.buildConsistentVectorizedScanBatch(
-		pipelineCtx, tables, qo, sidxInstances, sidxQueryRequest, useSIDXStreaming, tqo.MaxTraceSize,
+	var extraSegments []storage.Segment[*tsTable, option]
+	if vectorizedScanBatch, extraSegments, err = t.buildConsistentVectorizedScanBatch(
+		pipelineCtx, tables, qo, sidxInstances, sidxQueryRequest, useSIDXStreaming, tqo.MaxTraceSize, tsdb, *tqo.TimeRange,
 	); err != nil {
 		return nil, err
+	}
+	if len(extraSegments) > 0 {
+		// Fold the trace-completion segments into the same release path as the
+		// originally-selected ones before any further fallible step, so a later
+		// failure (e.g. materialization) releases them exactly once via the
+		// deferred result.Release() below.
+		segments = append(segments, extraSegments...)
+		result.segments = segments
 	}
 	var vectorizedResult *vectorizedTraceQueryResult
 	vectorizedResult, err = newVectorizedTraceQueryResult(
