@@ -36,6 +36,14 @@ import (
 // values and a selection resolves it like any other exact term.
 const identifierField = "_id"
 
+// timestampField is the name ICE v3 reserves for a document's timestamp: the
+// shift-zero prefix-coded value Encode stores, plus the multi-precision terms
+// that let a query narrow a time range before decoding any document. The
+// merge reads it back to compute the merged segment's time bounds, which is
+// what lets a query skip or cheaply narrow a segment it would otherwise scan
+// in full.
+const timestampField = "_timestamp"
+
 // ErrInvalidGeneration is the sentinel reported when a caller asks Encode to
 // write a generation the ICE v3 grammar has no representation for: a document
 // carrying no identifier, or a field carrying no name. It is deliberately

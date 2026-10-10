@@ -31,12 +31,12 @@ import (
 
 func TestNativeElementIndexRequiresLeaseAndWrites(t *testing.T) {
 	root := t.TempDir()
-	_, err := newElementIndex(context.Background(), root, 0, nil)
+	_, err := newElementIndex(context.Background(), root, 0, nil, nil)
 	require.Error(t, err)
 	_, statErr := os.Stat(filepath.Join(root, elementIndexFilename))
 	require.ErrorIs(t, statErr, os.ErrNotExist)
 	lease := newTestRootLease(t, root)
-	element, err := newElementIndex(context.Background(), root, 0, nil, lease)
+	element, err := newElementIndex(context.Background(), root, 0, nil, nil, lease)
 	require.NoError(t, err)
 	field := index.NewStringField(index.FieldKey{IndexRuleID: 1, SeriesID: 1}, "ok")
 	field.Store = true
@@ -58,7 +58,7 @@ func TestNativeElementIndexRequiresLeaseAndWrites(t *testing.T) {
 	require.Equal(t, map[string][][]byte{"\x00\x00\x00\x01": {[]byte("ok")}}, stored)
 	require.NoError(t, snapshotReader.Close())
 	require.NoError(t, element.Close())
-	element, err = newElementIndex(context.Background(), root, 0, nil, lease)
+	element, err = newElementIndex(context.Background(), root, 0, nil, nil, lease)
 	require.NoError(t, err)
 	defer element.Close()
 	iterator, err = element.Sort(context.Background(), []common.SeriesID{1}, field.Key, modelv1.Sort_SORT_ASC, nil, 1)
@@ -70,7 +70,7 @@ func TestNativeElementIndexRequiresLeaseAndWrites(t *testing.T) {
 
 func TestNativeElementIndexAdmitsStoredRowsAfterRequestCancellation(t *testing.T) {
 	root := t.TempDir()
-	element, err := newElementIndex(context.Background(), root, 0, nil, newTestRootLease(t, root))
+	element, err := newElementIndex(context.Background(), root, 0, nil, nil, newTestRootLease(t, root))
 	require.NoError(t, err)
 	defer element.Close()
 	field := index.NewStringField(index.FieldKey{IndexRuleID: 1, SeriesID: 1}, "ok")

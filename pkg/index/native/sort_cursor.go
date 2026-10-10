@@ -73,6 +73,12 @@ type sortCursorSegment struct {
 	segmentID  uint64
 	candidates *roaringpkg.Bitmap
 	all        bool
+	// timeExact records that every candidate here is already known to be in
+	// the query's time range, because the range contains the segment's bounds
+	// or the _timestamp trie selected exactly the in-range documents. It lets
+	// project skip the per-document range comparison while still requiring a
+	// timestamp.
+	timeExact bool
 }
 
 // SortCursor retains per-segment candidate bitmaps and one page-sized frontier
@@ -91,6 +97,47 @@ type SortCursor struct {
 	after     *SortKey
 	segments  []sortCursorSegment
 	closed    bool
+}
+
+// sortCursorCandidates computes one segment's starting candidate set for a
+// sort cursor request, before time-range narrowing: a Range selection, an
+// empty selection (every ordinal, or a series' postings when scoped), or an
+// exact term-set selection. all reports the "every ordinal" representation
+// the empty, unscoped selection uses instead of a bitmap.
+func sortCursorCandidates(
+	ctx context.Context, segment *memorySegment, request SortCursorRequest, wildcards []nativeice.DictionaryAutomaton,
+) (candidates *roaringpkg.Bitmap, all bool, err error) {
+	switch {
+	case request.Range != nil:
+		if len(request.Selection.Terms) != 0 || request.Selection.Field != "" {
+			return nil, false, fmt.Errorf("sort cursor cannot combine range and exact selection: %w", ErrInvalidQuery)
+		}
+		rangeRequest := *request.Range
+		if rangeRequest.Scope.SeriesField == "" {
+			rangeRequest.Scope = request.Selection.Scope
+		}
+		candidates, err = rangeCandidates(ctx, segment, rangeRequest)
+		return candidates, false, err
+	case len(request.Selection.Terms) == 0 && len(request.Selection.Prefix) == 0 && len(request.Selection.Wildcard) == 0:
+		if request.Selection.Field != "" {
+			return nil, false, fmt.Errorf("sort cursor empty selection requires no field: %w", ErrQueryLimit)
+		}
+		if request.Selection.Scope.SeriesField == "" {
+			return nil, true, nil
+		}
+		candidates, err = seriesCandidates(ctx, segment, request.Selection.Scope)
+		return candidates, false, err
+	default:
+		if validateErr := validateTermSetRequest(request.Selection); validateErr != nil {
+			return nil, false, validateErr
+		}
+		// MaxCandidates is deferred to the cross-segment total check NewSortCursor
+		// makes after time narrowing, like the original per-term selection already did.
+		selection := request.Selection
+		selection.MaxCandidates = 0
+		candidates, err = exactCandidates(ctx, segment, selection, wildcards)
+		return candidates, false, err
+	}
 }
 
 // NewSortCursor creates a keyset-paginated ordered cursor over one pinned
@@ -124,50 +171,50 @@ func (v *ReadView) NewSortCursor(ctx context.Context, request SortCursorRequest)
 		if !ok {
 			return nil, fmt.Errorf("sort cursor segment %d has type %T", index, current)
 		}
-		var candidates *roaringpkg.Bitmap
-		var candidateErr error
-		all := false
-		switch {
-		case request.Range != nil:
-			if len(request.Selection.Terms) != 0 || request.Selection.Field != "" {
-				return nil, fmt.Errorf("sort cursor cannot combine range and exact selection: %w", ErrInvalidQuery)
+		candidates, all, err := sortCursorCandidates(ctx, segment, request, selectionWildcards)
+		if err != nil {
+			return nil, err
+		}
+		// Narrow to the query's time range before the cursor retains anything.
+		// A disjoint segment is dropped outright; an overlapping one keeps only
+		// the documents the range can match, so the per-document comparison
+		// later is redundant for them.
+		// Same source the cursor projects against, so the narrowing and the
+		// later per-document check can never disagree.
+		timeRange := request.Selection.Scope.TimeRange
+		class := classifyTime(segment.handle, timeRange)
+		if class == timeDisjoint {
+			v.owner.recordTimeClass("disjoint")
+			continue
+		}
+		beforeCardinality := cardinalityOf(segment, candidates)
+		timeExact := true
+		if class == timeOverlap {
+			narrowed, exact, narrowErr := narrowCandidatesToRange(ctx, segment, candidates, class, timeRange)
+			if narrowErr != nil {
+				return nil, narrowErr
 			}
-			rangeRequest := *request.Range
-			if rangeRequest.Scope.SeriesField == "" {
-				rangeRequest.Scope = request.Selection.Scope
-			}
-			candidates, candidateErr = rangeCandidates(ctx, segment, rangeRequest)
-			if candidateErr != nil {
-				return nil, candidateErr
-			}
-			total += candidates.GetCardinality()
-		case len(request.Selection.Terms) == 0 && len(request.Selection.Prefix) == 0 && len(request.Selection.Wildcard) == 0:
-			if request.Selection.Field != "" {
-				return nil, fmt.Errorf("sort cursor empty selection requires no field: %w", ErrQueryLimit)
-			}
-			if request.Selection.Scope.SeriesField == "" {
-				all = true
-				total += segment.handle.count
-			} else {
-				candidates, candidateErr = seriesCandidates(ctx, segment, request.Selection.Scope)
-				if candidateErr != nil {
-					return nil, candidateErr
+			if exact {
+				candidates, timeExact = narrowed, true
+				// The "all documents" path walks every ordinal. Once the trie
+				// has selected the in-range ones, the candidates are that set.
+				if all {
+					all = false
 				}
-				total += candidates.GetCardinality()
+			} else {
+				timeExact = false
 			}
-		default:
-			if err := validateTermSetRequest(request.Selection); err != nil {
-				return nil, err
-			}
-			// MaxCandidates is deferred to the cross-segment total check below,
-			// like the original per-term selection already did.
-			selection := request.Selection
-			selection.MaxCandidates = 0
-			var err error
-			candidates, err = exactCandidates(ctx, segment, selection, selectionWildcards)
-			if err != nil {
-				return nil, err
-			}
+		}
+		recordSegmentTimeClass(v.owner, class, timeExact, beforeCardinality, cardinalityOf(segment, candidates))
+		// Accumulated after narrowing, and after the "all documents" path has
+		// become an explicit candidate set, so a document the range excludes is
+		// never charged against the caller's limit. This must add to total, not
+		// replace it: MaxCandidates is a cross-segment budget (see NewSortCursor's
+		// doc comment), so a document decoded in an earlier segment this call
+		// still counts here.
+		if all {
+			total += segment.handle.count
+		} else if candidates != nil {
 			total += candidates.GetCardinality()
 		}
 		if request.Selection.MaxCandidates != 0 && total > request.Selection.MaxCandidates {
@@ -177,7 +224,7 @@ func (v *ReadView) NewSortCursor(ctx context.Context, request SortCursorRequest)
 			return nil, ErrQueryLimit
 		}
 		cursor.segments = append(cursor.segments, sortCursorSegment{
-			segment: segment, segmentID: uint64(index), candidates: candidates, all: all,
+			segment: segment, segmentID: uint64(index), candidates: candidates, all: all, timeExact: timeExact,
 		})
 	}
 	return cursor, nil
@@ -221,7 +268,7 @@ func (c *SortCursor) NextPage(ctx context.Context) ([]SortedHit, error) {
 				return nil, err
 			}
 			documentNumber = nextDocument()
-			hit, value, missing, err := c.project(current.segmentID, current.segment, documentNumber)
+			hit, value, missing, err := c.project(current.segmentID, current.segment, documentNumber, current.timeExact)
 			if err != nil {
 				if errors.Is(err, errSkipSortCandidate) {
 					continue
@@ -269,7 +316,7 @@ func (c *SortCursor) Close() error {
 	return nil
 }
 
-func (c *SortCursor) project(segmentID uint64, segment *memorySegment, documentNumber uint64) (QueryHit, []byte, bool, error) {
+func (c *SortCursor) project(segmentID uint64, segment *memorySegment, documentNumber uint64, timeExact bool) (QueryHit, []byte, bool, error) {
 	if _, deleted := segment.deleted[documentNumber]; deleted {
 		return QueryHit{}, nil, true, errSkipSortCandidate
 	}
@@ -306,8 +353,13 @@ func (c *SortCursor) project(segmentID uint64, segment *memorySegment, documentN
 	if identifier == nil {
 		return QueryHit{}, nil, false, fmt.Errorf("document %d has no identifier: %w", documentNumber, ErrCorrupt)
 	}
-	if c.timeRange != nil && (!hasTimestamp || !c.timeRange.contains(timestamp)) {
-		return QueryHit{}, nil, true, errSkipSortCandidate
+	if c.timeRange != nil {
+		if !hasTimestamp {
+			return QueryHit{}, nil, true, errSkipSortCandidate
+		}
+		if !timeExact && !c.timeRange.contains(timestamp) {
+			return QueryHit{}, nil, true, errSkipSortCandidate
+		}
 	}
 	values, valuesErr := segment.handle.reader.DocumentValues(c.sortField, documentNumber)
 	if valuesErr != nil {

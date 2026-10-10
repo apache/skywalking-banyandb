@@ -171,6 +171,49 @@ func TestNativeSortCursorKeysetPagesAndMissingValues(t *testing.T) {
 	require.Equal(t, []string{"d0", "d2", "d5", "d1"}, sortedIDs(page))
 }
 
+// TestNativeSortCursorMaxCandidatesIsCumulativeAcrossSegments guards
+// NewSortCursor's documented contract ("A positive MaxCandidates is enforced
+// globally across segments"): two segments each contribute a candidate count
+// under the limit, but their sum is over it.
+func TestNativeSortCursorMaxCandidatesIsCumulativeAcrossSegments(t *testing.T) {
+	owner, err := NewOwner(OwnerOptions{Lease: testLease{}})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, owner.Close()) }()
+	// Two Batch calls land in two segments (seedTimePruneOwner-style corpora
+	// merge these; a single Acquire here does not), each holding two documents
+	// the status selection matches.
+	require.NoError(t, owner.Batch(context.Background(), Batch{Documents: []Document{
+		{Identifier: []byte("a0"), Timestamp: 10, Fields: []Field{
+			{Name: "status", Value: []byte("ok"), Index: true},
+			{Name: "sort", Value: []byte("a"), Sort: true},
+		}},
+		{Identifier: []byte("a1"), Timestamp: 20, Fields: []Field{
+			{Name: "status", Value: []byte("ok"), Index: true},
+			{Name: "sort", Value: []byte("b"), Sort: true},
+		}},
+	}}))
+	require.NoError(t, owner.Batch(context.Background(), Batch{Documents: []Document{
+		{Identifier: []byte("b0"), Timestamp: 30, Fields: []Field{
+			{Name: "status", Value: []byte("ok"), Index: true},
+			{Name: "sort", Value: []byte("c"), Sort: true},
+		}},
+		{Identifier: []byte("b1"), Timestamp: 40, Fields: []Field{
+			{Name: "status", Value: []byte("ok"), Index: true},
+			{Name: "sort", Value: []byte("d"), Sort: true},
+		}},
+	}}))
+	view, err := owner.Acquire(context.Background())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, view.Close()) }()
+	require.Len(t, view.root.segments, 2, "the fixture needs two segments for a cross-segment limit to mean anything")
+
+	_, err = view.NewSortCursor(context.Background(), SortCursorRequest{
+		SortField: "sort", PageSize: 10,
+		Selection: TermSetRequest{Field: "status", Terms: [][]byte{[]byte("ok")}, Mode: MatchAnyTerm, MaxCandidates: 3},
+	})
+	require.ErrorIs(t, err, ErrQueryLimit, "2 candidates in segment 1 plus 2 in segment 2 must exceed a limit of 3")
+}
+
 func TestNativeSortCursorPinnedViewAndCancellation(t *testing.T) {
 	owner, err := NewOwner(OwnerOptions{Lease: testLease{}})
 	require.NoError(t, err)
