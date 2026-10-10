@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package transfer loads the data transfer plan and resolves its selectors and parallelism.
 package transfer
 
 import (
