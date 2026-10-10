@@ -147,14 +147,14 @@ would measure a trace from a later span and understate it.
 A Go plugin is loaded via `plugin.Open`, which requires the `.so` and the
 host process to share the **exact same**:
 
-- Go toolchain version (this repo pins `go 1.25.13` via `go.mod`; `GOTOOLCHAIN=auto`
+- Go toolchain version (this repo pins `go 1.26.9` via `go.mod`; `GOTOOLCHAIN=auto`
   resolves it identically in CI, in the `-plugins` Docker builder stage, and
   in a local `make build-plugins`),
 - `pkg/pipeline/sdk` package build (and its full transitive module graph),
 - CGO mode (`CGO_ENABLED=1`) and race-detector mode (`-race` or not),
 - and a compatible libc (the `-plugins` runtime image is
   `gcr.io/distroless/base-debian12` and its builder stage is
-  `golang:1.25-bookworm` — both Debian 12/bookworm, same glibc 2.36, for
+  `golang:1.26-bookworm` — both Debian 12/bookworm, same glibc 2.36, for
   exactly this reason).
 
 Any drift and `plugin.Open` rejects the `.so` outright ("different version of

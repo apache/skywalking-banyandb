@@ -261,8 +261,13 @@ type Owner struct {
 	persistenceCancel   context.CancelFunc
 	persistenceTask     *run.Task
 	durable             atomic.Uint64
-	persistMu           sync.Mutex
-	persistErr          error
+	// admittedDocuments and acquiredViews are monotonic activity counters
+	// reported through Activity: documents accepted by Batch, and read views
+	// pinned by Acquire (one per searcher).
+	admittedDocuments atomic.Uint64
+	acquiredViews     atomic.Uint64
+	persistMu         sync.Mutex
+	persistErr        error
 	// pendingCallbacks accumulates every PersistentCallback admitted since the
 	// persistence worker's last successful (or failed) flush. Multiple
 	// admissions that land before the worker gets a turn share the single
@@ -1088,6 +1093,7 @@ func (o *Owner) Acquire(ctx context.Context) (*ReadView, error) {
 		return nil, fmt.Errorf("validate native root lease: %w", err)
 	}
 	o.root.refs.Add(1)
+	o.acquiredViews.Add(1)
 	return &ReadView{owner: o, root: o.root}, nil
 }
 
@@ -1099,9 +1105,19 @@ func (o *Owner) Batch(ctx context.Context, batch Batch) error {
 	if err := ctx.Err(); err != nil {
 		return finishCallback(batch.PersistentCallback, err)
 	}
+	var err error
 	if batch.Mode == BatchInsertIfAbsent {
-		return o.batchInsertIfAbsent(ctx, batch)
+		err = o.batchInsertIfAbsent(ctx, batch)
+	} else {
+		err = o.batch(batch)
 	}
+	if err == nil {
+		o.admittedDocuments.Add(uint64(len(batch.Documents)))
+	}
+	return err
+}
+
+func (o *Owner) batch(batch Batch) error {
 	queue := o.persistQ
 	// Validating the batch and encoding its segment depend only on the batch,
 	// so they run before taking o.mu; only applying it to the current root

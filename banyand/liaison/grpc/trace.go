@@ -107,6 +107,12 @@ func (s *traceService) validateWriteRequest(writeEntity *tracev1.WriteRequest,
 ) modelv1.Status {
 	id := getID(metadata)
 	traceEntity, existed := s.entityRepo.getTrace(id)
+	if !existed && metadata.ModRevision > 0 && awaitSchemaPresent(func() bool {
+		_, found := s.entityRepo.getTrace(id)
+		return found
+	}, schemaPresenceWait(s.maxWaitDuration)) {
+		traceEntity, existed = s.entityRepo.getTrace(id)
+	}
 	if !existed {
 		s.l.Error().Stringer("written", writeEntity).Msg("trace schema not found")
 		s.sendReply(metadata, modelv1.Status_STATUS_NOT_FOUND, writeEntity.GetVersion(), stream)

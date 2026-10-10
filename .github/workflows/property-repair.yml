@@ -45,7 +45,7 @@ jobs:
         id: cache-tool
         with:
           path: bin
-          key: ${{ runner.os }}-test-tool-${{ hashFiles('**version.mk') }}
+          key: ${{ runner.os }}-test-tool-${{ hashFiles('**version.mk', 'go.mod') }}
       - name: Generate codes
         run: make generate
       - name: Build Linux binaries

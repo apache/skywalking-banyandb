@@ -78,7 +78,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: bin
-          key: ${{ runner.os }}-generate-tool-${{ hashFiles('**/version.mk') }}
+          key: ${{ runner.os }}-generate-tool-${{ hashFiles('**/version.mk', 'go.mod') }}
 
       - name: Generate code
         run: make generate

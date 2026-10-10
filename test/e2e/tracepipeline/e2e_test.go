@@ -56,11 +56,13 @@ import (
 	"github.com/onsi/gomega"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/property"
@@ -207,15 +209,33 @@ func waitForTraceSchema() {
 	defer func() { _ = conn.Close() }()
 
 	c := databasev1.NewTraceRegistryServiceClient(conn)
+	var revision int64
 	gomega.Eventually(func(innerGm gomega.Gomega) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_, getErr := c.Get(ctx, &databasev1.TraceRegistryServiceGetRequest{
+		resp, getErr := c.Get(ctx, &databasev1.TraceRegistryServiceGetRequest{
 			Metadata: &commonv1.Metadata{Name: "filter", Group: tracepipeline.PipelineGroup},
 		})
 		innerGm.Expect(getErr).NotTo(gomega.HaveOccurred(),
 			"trace schema filter/%s not yet visible on the standalone", tracepipeline.PipelineGroup)
+		revision = resp.GetTrace().GetMetadata().GetModRevision()
 	}, 60*time.Second, 500*time.Millisecond).Should(gomega.Succeed())
+
+	// The registry answering is not enough: writes validate against the
+	// liaison's local schema cache, which can lag the property schema store
+	// and refuses a write with STATUS_NOT_FOUND until it catches up. Barrier
+	// on that cache, as pkg/test/setup does for the integration suites.
+	const barrierTimeout = 60 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), barrierTimeout)
+	defer cancel()
+	resp, awaitErr := schemav1.NewSchemaBarrierServiceClient(conn).AwaitSchemaApplied(ctx, &schemav1.AwaitSchemaAppliedRequest{
+		Keys:         []*schemav1.SchemaKey{{Kind: "trace", Group: tracepipeline.PipelineGroup, Name: "filter"}},
+		MinRevisions: []int64{revision},
+		Timeout:      durationpb.New(barrierTimeout),
+	})
+	gomega.Expect(awaitErr).NotTo(gomega.HaveOccurred())
+	gomega.Expect(resp.GetApplied()).To(gomega.BeTrue(),
+		"trace schema filter/%s not applied to local caches; laggards=%v", tracepipeline.PipelineGroup, resp.GetLaggards())
 }
 
 // waitForServerReachable polls the gRPC endpoint until the standalone
