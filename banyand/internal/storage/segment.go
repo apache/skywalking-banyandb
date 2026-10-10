@@ -301,11 +301,10 @@ func (s *segment[T, O]) collectOpenMetrics(shardMetrics Metrics) bool {
 			sh.table.Collect(shardMetrics)
 		}
 	}
-	// The native series index does not yet publish the detailed
-	// idxmetrics.Metrics gauges (merge counts, analysis time, cache hit/miss,
-	// ...) the retired index engine reported; pkg/index/native.Owner exposes
-	// no equivalent introspection today. Stats() (dataCount/dataSizeBytes)
-	// still flows through SeriesIndexStats below.
+	// The native owner reports its document count, payload size and activity
+	// counters; the retired engine's other gauges (merge counts, analysis
+	// time, cache hit/miss, ...) have no native equivalent and stay unset.
+	s.index.collectMetrics()
 	return true
 }
 

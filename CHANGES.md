@@ -27,6 +27,7 @@ Release Notes.
 
 ### Bug Fixes
 
+- Stop the liaison from refusing a Measure, Stream or Trace write with `STATUS_NOT_FOUND` right after a schema barrier reported the schema applied. The barrier's watermark advances by each processed event's own revision, so an event handled out of revision order could carry it past a schema whose handlers had not yet filled the liaison's entity cache. A write that carries a schema revision now waits for that cache, bounded by the larger of `--{measure,stream,trace}-metadata-cache-wait-duration` and 5s; a schema that never arrives is still refused.
 - Fix a data race in Measure TopN where a pooled TopN value reused for a query wrote its tag names into the streaming processor's entity tag name slice.
 - Stop `pkg/index/native`'s compaction-persistence test from flaking on `Test Pkg`: it asserted that garbage collection succeeds the instant a read view closes, without accounting for a background persist still holding an older root.
 - Stamp `RELEASE_VERSION` into official release binaries so `--version` reports the release instead of `-`.

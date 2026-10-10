@@ -130,3 +130,35 @@ func TestValidateWriteRequest_Stream_ZeroRevision_SkipsCheck(t *testing.T) {
 	assert.Equal(t, modelv1.Status_STATUS_SUCCEED, st)
 	assert.Empty(t, mock.replies)
 }
+
+// TestValidateWriteRequest_Stream_SchemaArrivesLate_ReturnsSucceed verifies that a
+// write naming a schema revision waits for the entity cache to learn that schema
+// instead of failing with STATUS_NOT_FOUND, even with no metadata-cache wait set.
+func TestValidateWriteRequest_Stream_SchemaArrivesLate_ReturnsSucceed(t *testing.T) {
+	withSchemaPresenceGrace(t, 500*time.Millisecond)
+	id := identity{group: "g", name: "s"}
+	er := newEmptyEntityRepo()
+	svc := newTestStreamService(er, 0)
+	mock := &mockBidiServer[streamv1.WriteRequest, streamv1.WriteResponse]{}
+
+	advanceLocatorAfter(er, id, seededLocatorRepoRev, 30*time.Millisecond)
+
+	meta := &commonv1.Metadata{Group: "g", Name: "s", ModRevision: seededLocatorRepoRev}
+	st := svc.validateWriteRequest(validStreamWriteRequest(), meta, mock)
+
+	assert.Equal(t, modelv1.Status_STATUS_SUCCEED, st)
+	assert.Empty(t, mock.replies)
+}
+
+// TestValidateWriteRequest_Stream_SchemaNeverArrives_ReturnsNotFound verifies that
+// the presence wait is bounded: a schema the cache never learns is still refused.
+func TestValidateWriteRequest_Stream_SchemaNeverArrives_ReturnsNotFound(t *testing.T) {
+	withSchemaPresenceGrace(t, 30*time.Millisecond)
+	svc := newTestStreamService(newEmptyEntityRepo(), 0)
+	mock := &mockBidiServer[streamv1.WriteRequest, streamv1.WriteResponse]{}
+
+	meta := &commonv1.Metadata{Group: "g", Name: "s", ModRevision: seededLocatorRepoRev}
+	st := svc.validateWriteRequest(validStreamWriteRequest(), meta, mock)
+
+	assert.Equal(t, modelv1.Status_STATUS_NOT_FOUND, st)
+}
