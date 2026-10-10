@@ -57,6 +57,12 @@ type Metrics struct {
 	cacheEntriesCount meter.Gauge
 	cacheBytesSize    meter.Gauge
 	cacheMaxBytesSize meter.Gauge
+
+	// nativeTimeSegments and nativeTimeCandidatesPruned back NativeTimeMetrics,
+	// the native time-range pruning observability surface (native-index-time-
+	// pruning design, §6).
+	nativeTimeSegments         meter.Counter
+	nativeTimeCandidatesPruned meter.Counter
 }
 
 // NewMetrics creates a new Metrics for a native-owner-backed index.
@@ -92,6 +98,9 @@ func NewMetrics(factory observability.Factory, labelNames ...string) *Metrics {
 		cacheEntriesCount: factory.NewGauge("inverted_index_cache_entries_count", labelNames...),
 		cacheBytesSize:    factory.NewGauge("inverted_index_cache_bytes_size", labelNames...),
 		cacheMaxBytesSize: factory.NewGauge("inverted_index_cache_max_bytes_size", labelNames...),
+
+		nativeTimeSegments:         factory.NewCounter("native_time_segments_total", append(labelNames, "class")...),
+		nativeTimeCandidatesPruned: factory.NewCounter("native_time_candidates_pruned_total", labelNames...),
 	}
 }
 
@@ -133,6 +142,57 @@ func (m *Metrics) DeleteAll(labelValues ...string) {
 	m.cacheEntriesCount.Delete(labelValues...)
 	m.cacheBytesSize.Delete(labelValues...)
 	m.cacheMaxBytesSize.Delete(labelValues...)
+
+	for _, class := range nativeTimeClasses {
+		m.nativeTimeSegments.Delete(append(append([]string{}, labelValues...), class)...)
+	}
+	m.nativeTimeCandidatesPruned.Delete(labelValues...)
+}
+
+// nativeTimeClasses are every value the "class" label on
+// native_time_segments_total takes, mirrored here so DeleteAll can clear each
+// one. pkg/index/native classifies a segment into exactly one of these per
+// query (native-index-time-pruning design, §4.2, §4.5).
+var nativeTimeClasses = [...]string{"disjoint", "contained", "overlap_trie", "overlap_fallback"}
+
+// NativeTimeMetrics returns a recorder bound to labelValues -- the same
+// per-owner identity every other metric on m uses -- implementing the
+// pkg/index/native.TimeMetrics capability. This package does not import
+// native: the two methods below satisfy that interface structurally.
+func (m *Metrics) NativeTimeMetrics(labelValues ...string) *NativeTimeMetrics {
+	if m == nil {
+		return nil
+	}
+	return &NativeTimeMetrics{metrics: m, labelValues: append([]string(nil), labelValues...)}
+}
+
+// NativeTimeMetrics records native time-range pruning counts for one bound
+// label set. A nil *NativeTimeMetrics is valid everywhere its methods are
+// called and drops every count, so native.OwnerOptions.TimeMetrics may be set
+// unconditionally from NativeTimeMetrics's result even when the underlying
+// *Metrics is nil.
+type NativeTimeMetrics struct {
+	metrics     *Metrics
+	labelValues []string
+}
+
+// IncTimeSegments records one segment's time-range classification: one of
+// nativeTimeClasses. It implements pkg/index/native.TimeMetrics.
+func (r *NativeTimeMetrics) IncTimeSegments(class string) {
+	if r == nil || r.metrics == nil {
+		return
+	}
+	r.metrics.nativeTimeSegments.Inc(1, append(append([]string(nil), r.labelValues...), class)...)
+}
+
+// AddTimeCandidatesPruned adds delta candidates removed by intersecting a
+// segment's candidates with the _timestamp trie's coverage. It implements
+// pkg/index/native.TimeMetrics.
+func (r *NativeTimeMetrics) AddTimeCandidatesPruned(delta uint64) {
+	if r == nil || r.metrics == nil || delta == 0 {
+		return
+	}
+	r.metrics.nativeTimeCandidatesPruned.Inc(float64(delta), r.labelValues...)
 }
 
 // ObserveNative records metrics available from the native owner: the live
