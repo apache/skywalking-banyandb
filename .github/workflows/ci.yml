@@ -68,7 +68,7 @@ jobs:
         id: cache-tool
         with:
           path: bin
-          key: ${{ runner.os }}-${{ runner.arch }}-generate-tool-${{ hashFiles('scripts/build/version.mk') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-generate-tool-${{ hashFiles('scripts/build/version.mk', 'go.mod') }}
       - name: Run consistency check
         run: |
           if [ ! -z "`git status -s`" ]; then \
@@ -130,7 +130,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: bin
-          key: ${{ runner.os }}-${{ runner.arch }}-vuln-tool-${{ hashFiles('scripts/build/version.mk') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-vuln-tool-${{ hashFiles('scripts/build/version.mk', 'go.mod') }}
       - name: Run govulncheck (stdlib + dependency CVEs)
         run: make vuln-check
   detect_fodc_e2e_changes:

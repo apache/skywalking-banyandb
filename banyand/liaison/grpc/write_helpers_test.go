@@ -21,6 +21,7 @@ import (
 	"context"
 	"io"
 	"sync"
+	"testing"
 	"time"
 
 	grpcmd "google.golang.org/grpc/metadata"
@@ -115,4 +116,12 @@ func advanceTraceRevAfter(er *entityRepo, id identity, newRev int64, delay time.
 		}
 		er.RWMutex.Unlock()
 	}()
+}
+
+// withSchemaPresenceGrace overrides schemaPresenceGrace for one test.
+func withSchemaPresenceGrace(t *testing.T, grace time.Duration) {
+	t.Helper()
+	previous := schemaPresenceGrace
+	schemaPresenceGrace = grace
+	t.Cleanup(func() { schemaPresenceGrace = previous })
 }

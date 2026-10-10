@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-FROM golang:1.25
+FROM golang:1.26.9
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates git bash procps \

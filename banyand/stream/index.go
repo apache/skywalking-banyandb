@@ -151,4 +151,6 @@ func (e *elementIndex) collectMetrics(labelValues ...string) {
 	}
 	dataCount, dataBytes := e.store.Stats()
 	e.metrics.ObserveNative(dataCount, dataBytes, labelValues...)
+	admitted, acquired := e.store.Activity()
+	e.metrics.ObserveNativeActivity(admitted, acquired, labelValues...)
 }

@@ -290,6 +290,19 @@ func (s *seriesIndex) Stats() (dataCount int64, dataSizeBytes int64) {
 	return s.owner.Stats()
 }
 
+// collectMetrics reports the series index's native-owner stats and activity
+// counters under the segment's label values.
+func (s *seriesIndex) collectMetrics() {
+	if s == nil || s.metrics == nil {
+		return
+	}
+	labelValues := s.p.SegLabelValues()
+	dataCount, dataSizeBytes := s.owner.Stats()
+	s.metrics.ObserveNative(dataCount, dataSizeBytes, labelValues...)
+	admitted, acquired := s.owner.Activity()
+	s.metrics.ObserveNativeActivity(admitted, acquired, labelValues...)
+}
+
 // ResetCache drops the series index's insert-presence cache. It never
 // touches admitted data (pkg/index/native.Owner.ResetPresenceCache).
 func (s *seriesIndex) ResetCache() {
