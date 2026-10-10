@@ -66,6 +66,11 @@ fail() { echo "E2E FAILURE: $*" >&2; exit 1; }
 cleanup() {
   local rc=$?
   if [[ -n "${SERVER_PID}" ]]; then kill "${SERVER_PID}" 2>/dev/null || true; wait "${SERVER_PID}" 2>/dev/null || true; fi
+  if [[ "${rc}" -ne 0 && "${KEEP_TEMP}" != "true" && -f "${WORK_DIR}/log/standalone.log" ]]; then
+    # CI deletes the temp dir below, so print the server's side of a failure first.
+    echo "--- standalone stdout+stderr (last 400 lines, rc=${rc}) ---"
+    tail -400 "${WORK_DIR}/log/standalone.log" || true
+  fi
   if [[ "${KEEP_TEMP}" != "true" && -n "${WORK_DIR}" && -d "${WORK_DIR}" ]]; then
     rm -rf "${WORK_DIR}"
   fi

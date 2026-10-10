@@ -46,6 +46,15 @@ func (o *Owner) Stats() (dataCount int64, dataSizeBytes int64) {
 	return dataCount, dataSizeBytes
 }
 
+// Activity returns the owner's monotonic activity counters: documents
+// admitted by Batch and read views pinned by Acquire.
+func (o *Owner) Activity() (admittedDocuments, acquiredViews uint64) {
+	if o == nil {
+		return 0, 0
+	}
+	return o.admittedDocuments.Load(), o.acquiredViews.Load()
+}
+
 // Reset publishes an empty root. Existing pinned views remain readable until
 // they close; the reset itself is persisted through the same background
 // worker as normal writes.

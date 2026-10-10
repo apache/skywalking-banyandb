@@ -25,7 +25,8 @@ import (
 // index, the Stream element index, and the Property store) reports through.
 // It was formerly pkg/index/inverted.Metrics; every field it exposed for the
 // legacy index writer's status either has a native-owner equivalent
-// (ObserveNative) or has no native counterpart and is kept zero.
+// (ObserveNative, ObserveNativeActivity) or has no native counterpart and is
+// kept zero.
 type Metrics struct {
 	totalUpdates meter.Gauge
 	totalDeletes meter.Gauge
@@ -203,4 +204,15 @@ func (m *Metrics) ObserveNative(dataCount, dataSizeBytes int64, labelValues ...s
 	}
 	m.totalDocCount.Set(float64(dataCount), labelValues...)
 	m.nativeSnapshotBytes.Set(float64(dataSizeBytes), labelValues...)
+}
+
+// ObserveNativeActivity records the native owner's monotonic activity
+// counters under the legacy names: admitted documents as total updates, and
+// acquired read views as term searchers started.
+func (m *Metrics) ObserveNativeActivity(admittedDocuments, acquiredViews uint64, labelValues ...string) {
+	if m == nil {
+		return
+	}
+	m.totalUpdates.Set(float64(admittedDocuments), labelValues...)
+	m.totalTermSearchersStarted.Set(float64(acquiredViews), labelValues...)
 }

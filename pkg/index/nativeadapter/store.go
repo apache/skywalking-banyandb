@@ -155,6 +155,14 @@ func (s *Store) Stats() (int64, int64) {
 	return s.Owner.Stats()
 }
 
+// Activity returns the owner's admitted-document and acquired-view counters.
+func (s *Store) Activity() (uint64, uint64) {
+	if s == nil || s.Owner == nil {
+		return 0, 0
+	}
+	return s.Owner.Activity()
+}
+
 // Close drains native persistence and releases the owner lease reference.
 func (s *Store) Close() error {
 	if s == nil || s.Owner == nil {
