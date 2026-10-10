@@ -18,7 +18,7 @@
 # Multi-stage build: compile soak-driver from the local source tree so
 # it always runs the same binary as the branch under test.
 
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26.9-alpine AS builder
 
 RUN apk add --no-cache git make gcc musl-dev
 

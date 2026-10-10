@@ -33,7 +33,7 @@ jobs:
         id: cache-tool
         with:
           path: bin
-          key: ${{ runner.os }}-${{ runner.arch }}-generate-tool-${{ hashFiles('scripts/build/version.mk') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-generate-tool-${{ hashFiles('scripts/build/version.mk', 'go.mod') }}
       - uses: actions/setup-node@v6
         with:
           node-version-file: 'canopy/package.json'
