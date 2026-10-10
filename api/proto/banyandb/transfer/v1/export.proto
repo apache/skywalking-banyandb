@@ -43,15 +43,29 @@ service ExportService {
 // Selector names a catalog and optionally its groups. Empty groups means every group of
 // that catalog; an empty selectors list means every group of every catalog.
 message Selector {
-  common.v1.Catalog catalog = 1 [(validate.rules).enum = {defined_only: true, not_in: [0]}];
-  repeated string groups = 2 [(validate.rules).repeated = {max_items: 1024, items: {string: {min_len: 1}}}];
+  common.v1.Catalog catalog = 1 [(validate.rules).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+  repeated string groups = 2 [(validate.rules).repeated = {
+    max_items: 1024
+    items: {
+      string: {min_len: 1}
+    }
+  }];
 }
 
 // SegmentUnit keys one physical unit of a stream, measure or trace group on one node: every
 // shard the node holds for a segment. Stage is not part of the key: it is a property of the
 // node, reported read-only on the frame that carries the unit.
 message SegmentUnit {
-  common.v1.Catalog catalog = 1 [(validate.rules).enum = {defined_only: true, not_in: [0, 3]}];
+  common.v1.Catalog catalog = 1 [(validate.rules).enum = {
+    defined_only: true
+    not_in: [
+      0,
+      3
+    ]
+  }];
   string group = 2 [(validate.rules).string.min_len = 1];
   // Segment directory suffix without the "seg-" prefix: 8 digits for day segments, 10 for
   // hour segments.
@@ -149,7 +163,10 @@ message PlanRequest {
 // generates it, announces it in the first frame and forwards it, so on a data node id is
 // always set.
 message CreateSession {
-  string id = 1 [(validate.rules).string = {max_len: 64, pattern: "^[0-9a-f]*$"}];
+  string id = 1 [(validate.rules).string = {
+    max_len: 64
+    pattern: "^[0-9a-f]*$"
+  }];
   // Remove every session the node holds, whatever its lease says, before creating this
   // one; the removed ids come back in preempted_session_ids. Without it any other session
   // on the node answers ALREADY_EXISTS naming the occupants.
@@ -160,7 +177,11 @@ message CreateSession {
 // planning again before transferring. It inventories the session's snapshot and renews its lease,
 // so the result is the same frozen view CreateSession returned.
 message ReadSession {
-  string id = 1 [(validate.rules).string = {min_len: 1, max_len: 64, pattern: "^[0-9a-f]+$"}];
+  string id = 1 [(validate.rules).string = {
+    min_len: 1
+    max_len: 64
+    pattern: "^[0-9a-f]+$"
+  }];
 }
 
 // PlanResponse is one frame of the Plan stream. The liaison stream is: with CreateSession a
@@ -227,9 +248,15 @@ message SessionsRequest {
     // succeeds (answering `none`), so the action is idempotent.
     ACTION_RELEASE = 3;
   }
-  Action action = 1 [(validate.rules).enum = {defined_only: true, not_in: [0]}];
+  Action action = 1 [(validate.rules).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
   // Required by ACTION_HEARTBEAT and ACTION_RELEASE, ignored by ACTION_LIST.
-  string session_id = 2 [(validate.rules).string = {max_len: 64, pattern: "^[0-9a-f]*$"}];
+  string session_id = 2 [(validate.rules).string = {
+    max_len: 64
+    pattern: "^[0-9a-f]*$"
+  }];
 }
 
 // SessionsResponse is one data node's answer.
