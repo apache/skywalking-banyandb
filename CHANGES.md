@@ -58,6 +58,7 @@ Release Notes.
 - Reject a `--trace-vectorized-batch-size` above 65,536 at startup instead of accepting it. The trace query path indexes a batch's active rows through a `uint16` selection, so a batch size above that bound silently wrapped -- reading early rows a second time and never reading the rest. The stream path already enforced this bound; measure now does too. A node configured above the bound will fail to start rather than return wrong results, and must lower the flag.
 - Fix FODC proxy OOM kills on `/metrics`: stream the Prometheus text to the response, stop copying label maps, share one agent collection between concurrent scrapes, and install the same panic diagnostics as the agent.
 - Stop the scheduled backup/lifecycle/retention scheduler from logging a false `action timed out` error for an action that runs longer than 5 minutes but ultimately succeeds. Crossing the internal 5-minute soft deadline now logs a lower-severity "still running" message and keeps waiting for the action's real outcome instead of abandoning it mid-flight; the eventual result is logged and the scheduler only starts the next scheduled run once the current one truly finishes.
+- Fix backup reporting success when an earlier catalog upload fails.
 
 ### Document
 

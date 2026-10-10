@@ -208,6 +208,7 @@ func backupAction(ctx context.Context, options backupOptions) error {
 
 	timeDir := getTimeDir(options.timeStyle)
 
+	var errs error
 	for _, snp := range snapshots {
 		var snapshotDir string
 		snapshotDir, err = snapshot.Dir(snp, options.streamRoot, options.measureRoot, options.propertyRoot, options.traceRoot, options.schemaRoot)
@@ -219,9 +220,9 @@ func backupAction(ctx context.Context, options backupOptions) error {
 		if strings.HasPrefix(snp.Name, snapshot.SchemaPropertyCatalogName+"/") {
 			catalogName = snapshot.SchemaPropertyCatalogName
 		}
-		multierr.AppendInto(&err, backupSnapshot(ctx, fs, snapshotDir, catalogName, timeDir, options.uploadConcurrency))
+		multierr.AppendInto(&errs, backupSnapshot(ctx, fs, snapshotDir, catalogName, timeDir, options.uploadConcurrency))
 	}
-	return err
+	return errs
 }
 
 func newFS(dest string, config *remoteconfig.FsConfig) (remote.FS, error) {
