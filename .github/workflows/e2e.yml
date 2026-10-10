@@ -86,6 +86,11 @@ jobs:
             config: test/e2e-v2/cases/lifecycle/file-discovery/e2e.yaml
           - name: Lifecycle DNS Discovery
             config: test/e2e-v2/cases/lifecycle/dns-discovery/e2e.yaml
+          - name: Transfer Dry Run
+            config: test/e2e-v2/cases/transfer/dry-run/e2e.yaml
+            # Its setup builds bydbctl on the host, which needs the generated protobuf code
+            # (gitignored) from the prepare job's build artifacts.
+            download-artifacts: 'true'
     env:
       TAG: ${{ github.sha }}
     steps:
@@ -96,7 +101,7 @@ jobs:
       - name: Setup build environment
         uses: ./.github/actions/setup-build-env
         with:
-          download-artifacts: 'false'
+          download-artifacts: ${{ matrix.test.download-artifacts || 'false' }}
           setup-node: 'false'
           setup-docker: 'false'
       - name: Download docker image artifact
@@ -143,7 +148,8 @@ jobs:
           du -sh .
           docker images
       - uses: actions/upload-artifact@v7
-        if: ${{ failure() }}
+        # cancelled() keeps the logs of a run that hit timeout-minutes.
+        if: ${{ failure() || cancelled() }}
         name: Upload Logs
         with:
           name: test-logs-${{ matrix.test.name }}

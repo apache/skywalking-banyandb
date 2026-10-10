@@ -1,0 +1,95 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Export dry-run e2e on docker compose: one hot and one warm data node behind a liaison
+# (file-based node discovery), OAP + trace-mocker as the data source. Setup only prepares the
+# environment and its data: it builds bydbctl for the host, waits for the mocker, runs the
+# lifecycle agent once inside the hot node so the warm node holds the segments whose end is
+# older than the one-day hot TTL, and reports a few events through OAP so the stream catalog
+# is guaranteed current rows (OAP may also derive older records from the mocker traces); OAP
+# writes the property catalog itself at startup. Every check runs in verify: the reports cover
+# all four catalogs (stream, measure regular and index-mode, trace and property) and are
+# compared against go-template expectations, retried until the data has settled. Only the
+# degraded-node scenario needs a script, because it has to stop and restart a container
+# between two reports.
+#
+# Run locally after building the testing image (see test/docker/Dockerfile; TARGET_OS=linux):
+#   set -a; source <(grep -v '^#' test/e2e-v2/script/env); set +a
+#   TAG=local e2e run -c test/e2e-v2/cases/transfer/dry-run/e2e.yaml
+
+setup:
+  env: compose
+  file: docker-compose.yml
+  timeout: 25m
+  init-system-environment: ../../../script/env
+  steps:
+    - name: set PATH
+      command: export PATH=/tmp/skywalking-infra-e2e/bin:$PATH
+    - name: build bydbctl for the host
+      command: go build -o /tmp/skywalking-infra-e2e/bin/bydbctl ./bydbctl/cmd/cli
+    - name: wait for trace-mocker data on the hot node
+      command: bash test/e2e-v2/cases/transfer/dry-run/scripts/wait-for-data.sh
+    - name: migrate segments older than the hot TTL to the warm node
+      command: bash test/e2e-v2/cases/transfer/dry-run/scripts/run-lifecycle.sh
+    - name: install swctl
+      command: bash test/e2e-v2/script/prepare/setup-e2e-shell/install.sh swctl
+    - name: report events so the stream catalog holds data
+      command: bash test/e2e-v2/cases/transfer/dry-run/scripts/report-events.sh ${oap_host}:${oap_11800}
+
+verify:
+  # Every case is idempotent (degraded.sh restarts the warm node on every exit path), so a case
+  # is retried until the data it pins has settled: the liaison answering ExportService, OAP
+  # flushing the reported events, and the warm node exposing the parts the lifecycle run
+  # migrated. 30 retries 10s apart give about five minutes.
+  retry:
+    count: 30
+    interval: 10s
+  fail-fast: true
+  cases:
+    # Releasing a session no data node holds: every node answers none through the liaison's
+    # Sessions fan-out, so bydbctl reports the unknown session and exits 2.
+    - query: >-
+        rc=0; out=$(bydbctl data release-session --id deadbeef --nodes ${liaison_host}:${liaison_17912} 2>&1) || rc=$?;
+        echo "exitCode: $rc";
+        echo "message: $(echo "$out" | grep -o 'export session deadbeef is not held on any data node')"
+      expected: expected/release-session.yaml
+    - query: >-
+        bydbctl data export --dry-run --nodes ${liaison_host}:${liaison_17912}
+        --selector catalog=stream --selector catalog=measure --selector catalog=trace --selector catalog=property -o yaml
+      expected: expected/dry-run.yaml
+    - query: bydbctl data export --dry-run --plan test/e2e-v2/cases/transfer/dry-run/plan.yaml -o yaml
+      expected: expected/dry-run.yaml
+    - query: bash test/e2e-v2/cases/transfer/dry-run/scripts/degraded.sh ${liaison_host}:${liaison_17912}
+      expected: expected/degraded.yaml
+
+cleanup:
+  on: always
+  collect:
+    on: failure
+    output-dir: $SW_INFRA_E2E_LOG_DIR/banyandb-data
+    items:
+      - service: data-hot1
+        paths:
+          - /tmp/stream/
+          - /tmp/measure/
+          - /tmp/trace/
+          - /tmp/property/
+          - /tmp/lifecycle-report/ # only present once run-lifecycle.sh ran; missing before that
+      - service: data-warm1
+        paths:
+          - /tmp/stream/
+          - /tmp/measure/
+          - /tmp/trace/
+          - /tmp/property/

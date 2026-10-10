@@ -1,6 +1,6 @@
 # Data Export and Import
 
-Status: **design** — not implemented.
+Status: the export dry run and the server-side session RPCs (`Plan` create/read, `Sessions`) are implemented (2026-10-09); the real export transfer and the whole import are still **design** — see [4.9 Remaining work](#49-remaining-work).
 
 > **NIDX-03/04/05 note.** This document was written while the per-segment
 > series index (`seg-*/sidx/`) was still backed by a third-party index
@@ -122,32 +122,41 @@ import:                               # Import only: import policy; scope is rea
   workDir: /data/import-work     # Local scratch directory, used only to unpack .tar/.tar.gz artifacts
 ```
 
+> **In the tree today** (dry-run step): `LoadPlanFile` is strict and accepts only `connection.nodes`, `connection.nodesTLS`, `export.parallelism` and `export.selectors`. Every other field above is read by the real export or the import and is declared when those land; a file carrying them is rejected until then (2026-10-09).
+
 **An import reproduces what the export captured**, so a policy exists only where that leaves a real choice — and it does so in exactly one place: a resumed run, and there only for payloads carrying no idempotency key. A native `kind=PART` replay is recognised by `import_op_id` and writes nothing; only the element index and the CSV stream / trace payloads can duplicate on re-push or lose on skip. Everything else is pushed as-is. Overlapping sources on a first run are reported as a WARN; `--strict-coverage` turns that into an error.
 
 `workDir` is **not** a rebuild workspace. Neither import channel reconstructs parts locally: the native channel relays opaque bytes and the CSV channel parses rows into write requests. Unpacking an archived artifact is the only local scratch requirement.
 
 ## 3. Dry run
 
-Dry run walks the real workflow without importing or exporting anything. It is a strict prefix of the real run with two deliberate exceptions: `Plan` goes out with `create_session=false`, so no snapshot is created; and schemas are loaded into memory but never written to `schema/`.
+Dry run walks the real workflow without importing or exporting anything. It is a strict prefix of the real run with two deliberate exceptions: `Plan` goes out without a `session`, so no snapshot is created; and schemas are loaded into memory but never written to `schema/`.
 
 ### 3.1 Export dry run
 
 1. **Connection check** — connect to one liaison and call `GetCurrentNode` to confirm the `LIAISON` role, then `GetClusterState` for the other nodes' IDs, labels, versions, and timezones.
-2. **Fetch schema** — call the Schema gRPC service and load schemas into memory.
-3. **Plan request** — send one `Plan{create_session=false}` request to that liaison, which filters all `DATA`-role nodes, forwards the request, and relays each response frame as it arrives. A dry run creates **no session and no snapshot**, so it inventories the online catalog and its numbers have a shelf life; the real export inventories a frozen snapshot.
+2. **Fetch group list** — list every group through the liaison's group registry, so a selector that names an unknown group, or a group of another catalog, fails before anything is planned. The dry run loads no other schema.
+3. **Plan request** — send one `Plan{}` request (no `session`) to that liaison, which filters all `DATA`-role nodes, forwards the request, and relays each response frame as it arrives. A dry run creates **no session and no snapshot**, so it inventories the online catalog and its numbers have a shelf life; the real export inventories a frozen snapshot.
 4. **Client aggregation** — aggregate and print what every node returned.
 
 ```text
-NODES   The cluster reports 3 data nodes [data-1 data-2 data-3]; --nodes listed 2 → ⚠ data-3 is missing, its data will not be exported
+NODES     the cluster reports 4 data node(s) [data-1 data-2 data-3 data-4]; no inventory came back from [data-3] ⚠ (their data would not be exported)
+MULTI-SRC 1 unit(s) have more than one source; all of them are exported, the importer decides which to use
+          stream/sw_record/hot/20260706/shard-1  <- data-1(48.9M rows, 07-06 ~ 07-06) + data-4(48.9M rows, 07-06 ~ 07-06)
 
-NODE    CATALOG   GROUP       STAGE   SEGMENTS  SHARDS  PARTS  EST-ROWS   EST-SIZE(comp/raw)  TIME-RANGE
-data-1  measure   sw_metric   hot     7         2       34     118.2M     18.3GiB / 61.2GiB   06-30 ~ 07-07
-data-1  stream    sw_record   hot     7         2       61     342.7M     96.1GiB / 288GiB    06-30 ~ 07-07
-data-2  measure   sw_metric   warm    28        4       52     1.4G       201.5GiB / 702GiB   05-30 ~ 06-30
-data-2  property  sw_prop     -       -         1       -      12.3K      4.1MiB / 12.0MiB    -
+NODE    CATALOG   GROUP             STAGE  SEGMENTS  SHARDS  PARTS  EST-ROWS  EST-SIZE(comp/raw)     TIME-RANGE
+data-1  measure   sw_metricsMinute  hot    7         2       34     118.2M    18.3 GiB / 61.2 GiB    06-30 ~ 07-07
+data-1  stream    sw_record         hot    7         2       61     342.7M    96.1 GiB / 288.0 GiB   06-30 ~ 07-07
+data-2  measure   sw_metricsMinute  warm   28        4       52     1.4G      201.5 GiB / 702.0 GiB  05-30 ~ 06-30
+data-2  property  sw_prop           warm   -         1       -      12.3K     4.1 MiB / 4.1 MiB      -
+data-4  stream    sw_record         hot    7         2       58     339.1M    95.2 GiB / 285.3 GiB   06-30 ~ 07-07
+
+SNAPSHOT  each data node pins its own snapshot; the largest node (data-2) needs about 201.5 GiB; check df there first
 ```
 
-The table lists only data that exists; it never derives "which shards ought to be here" from the schema's `shardNum`, because shards and segments are created lazily and comparing against an expected set produces large-scale false reports. The `NODES` line is therefore the only completeness check — it diffs the data-node set from `GetClusterState` against `connection.nodes`, which cannot produce a false positive. It is a WARN by default and an error under `--strict-coverage`.
+The `NODES` line has two other forms: `NODES     N data node(s) [...], all answered`, and `NODES     standalone process [self]` for a standalone server. `MULTI-SRC` appears only when some unit is held by more than one node (replicated shards): it lists each key — `catalog/group/stage/segment/shard-N` — with every source's rows and time range. Property groups are not listed, nor are index-mode measure segment-level units: they carry no shard id, so the dry run cannot tell replicas of a segment from different shards of it. The `SNAPSHOT` line budgets the largest per-node compressed subtotal, because each node pins its own snapshot on its own disk.
+
+The table lists only data that exists; it never derives "which shards ought to be here" from the schema's `shardNum`, because shards and segments are created lazily and comparing against an expected set produces large-scale false reports. The `NODES` line is therefore the only completeness check — it lists the nodes the liaison reported unreachable or not holding the session (`unreachable_nodes`), which cannot produce a false positive. It is a WARN by default and an error under `--strict-coverage`. A dry run inventories the live directories, and a session snapshot contains what was flushed to disk when it was taken: rows still in memory (up to one flush interval) are in neither.
 
 ### 3.2 Import dry run
 
@@ -500,28 +509,20 @@ Below that level:
 
 A new gRPC export service carries the workflow. The data node generates the stream directly and the client writes it to local files. The same service backs dry run.
 
+> The listings below are illustrative. Field numbers, validation rules and comments are authoritative in `api/proto/banyandb/transfer/v1/export.proto`; the implementation record is `docs/superpowers/plans/2026-09-28-export-plan-dry-run.md` §0.4.
+
 ```protobuf
 service ExportService {
-  // Plan performs inventory collection.
+  // Plan enumerates the per-segment units (per-group for property) a selector hits.
   // Its behavior is determined by the request fields.
   rpc Plan(PlanRequest) returns (stream PlanResponse);
 
-  // ProbeSession reports whether a session exists and whether it is still live.
-  // Read-only: it never creates, renews, or deletes anything.
-  rpc ProbeSession(ProbeSessionRequest) returns (ProbeSessionResponse);
+  // Sessions runs one lifecycle action (list, heartbeat, release) on every data node
+  // and streams one frame per node, stamped with node_id by the liaison.
+  rpc Sessions(SessionsRequest) returns (stream SessionsResponse);
 
-  // ReleaseSession asks each node to delete the snapshot for the session.
-  rpc ReleaseSession(ReleaseSessionRequest) returns (ReleaseSessionResponse);
-
-  // One export operation may contain multiple Export calls, one per node.
-  // The snapshot belongs to the session rather than to any individual call.
-  rpc Export(stream ExportRequest) returns (stream ExportResponse);
-}
-
-enum Format {
-  FORMAT_UNSPECIFIED = 0;
-  FORMAT_NATIVE = 1;   // .bnc container containing raw engine file bytes
-  FORMAT_CSV = 2;      // Logical rows
+  // The Export RPC (one bidirectional stream per data node, carrying the session's
+  // units) is added with the real transfer; see "Remaining work" below.
 }
 
 message Selector {
@@ -529,20 +530,28 @@ message Selector {
   repeated string groups = 2;
 }
 
-// SegmentUnit is the key of a physical unit.
+// SegmentUnit is the key of a physical unit of a stream, measure or trace group.
 message SegmentUnit {
-  common.v1.Catalog catalog = 1;
+  common.v1.Catalog catalog = 1;  // never PROPERTY
   string group = 2;
 
-  // Example: "20260907"; always empty for property.
+  // Example: "20260907" (day) or "2026090712" (hour).
   string segment_suffix = 3;
 
   repeated uint32 shard_ids = 4;
 }
 
-// UnitInventory is returned by Plan.
-// It contains the unit key and statistics calculated by the server.
+// UnitInventory is one unit returned by Plan. Property groups have no segments, so they
+// are inventoried per group instead of per segment.
 message UnitInventory {
+  oneof kind {
+    SegmentInventory segment = 1;
+    PropertyInventory property = 2;
+  }
+}
+
+// SegmentInventory is a SegmentUnit with the statistics calculated by the server.
+message SegmentInventory {
   SegmentUnit unit = 1;
 
   // Version from the segment root metadata file.
@@ -552,19 +561,39 @@ message UnitInventory {
   // Per-shard statistics.
   repeated ShardStat shards = 3;
 
-  // Statistics for segment-level outputs: metadata + sidx/.
+  // Segment-level series index (the sidx/ directory).
   SidxStat segment_level = 4;
 }
 
-message SidxStat {
-  // On-disk bytes of metadata + sidx/.
-  uint64 estimated_bytes = 1;
+// PropertyInventory is one property group on one node: its shards, each a document store
+// without parts or timestamps.
+message PropertyInventory {
+  string group = 1;
+  repeated PropertyShardStat shards = 2;
+}
 
-  // Number of live documents in segment-level sidx,
-  // obtained from inverted.ReadOnlyDocCount.
+message PropertyShardStat {
+  uint32 shard_id = 1;
+  // On-disk size of the shard's document store: property has no compressed form, so this
+  // is both the compressed and the uncompressed estimate.
+  uint64 estimated_bytes = 2;
+  // Documents in the store, including superseded versions and tombstones.
+  uint64 doc_count = 3;
+}
+
+// SidxStat describes the segment-level series index.
+message SidxStat {
+  uint64 estimated_bytes = 1;
+  // Documents of the series index, computed only for groups that hold an index-mode measure
+  // (0 otherwise). Those documents are the index-mode rows plus the series entries of the
+  // group's regular measures, so the value is an upper bound of the rows.
   uint64 doc_count = 2;
 }
 
+// ShardStat aggregates the parts of one shard. For trace, estimated_uncompressed_bytes
+// counts the span payload only (tags are excluded), so it can be below
+// estimated_compressed_bytes; estimated_compressed_bytes is the bytes the part writer
+// recorded and is a lower bound of the on-disk size.
 message ShardStat {
   uint32 shard_id = 1;
 
@@ -586,173 +615,130 @@ message PartStat {
   uint64 total_count = 4;
 }
 
-// The client probes before it holds an ID of its own, so the request carries none:
-// every node reports whatever it holds.
-message ProbeSessionRequest {}
-
-message ProbeSessionResponse {
-  repeated SessionLease leases = 1;
-  // Nodes that did not answer. A node holding no session contributes no lease,
-  // so "clean" and "silent" must not look alike.
-  repeated string unreachable_nodes = 2;
-}
-
-message SessionLease {
-  string node_id = 1;
+// SessionsRequest runs one session lifecycle action on every data node; the liaison
+// streams back one SessionsResponse per node.
+message SessionsRequest {
+  enum Action {
+    ACTION_UNSPECIFIED = 0;
+    // Read-only: every node reports the session it holds (the newest) or none. An unreachable node
+    // fails the whole call, so "clean" and "silent" cannot look alike.
+    ACTION_LIST = 1;
+    // The heartbeat: renew the lease of session_id on every node.
+    ACTION_HEARTBEAT = 2;
+    // Delete the snapshot of session_id on every node; a node that does not hold it still
+    // succeeds (answering `none`), so the action is idempotent.
+    ACTION_RELEASE = 3;
+  }
+  Action action = 1;
+  // Required by ACTION_HEARTBEAT and ACTION_RELEASE, ignored by ACTION_LIST.
   string session_id = 2;
-  int64 created_at = 3;
-  int64 last_renewed_at = 4;
-  int64 expires_at = 5;
 }
 
-message ReleaseSessionRequest {
+// One frame per data node; node_id is stamped by the liaison. Exactly one outcome is set.
+message SessionsResponse {
+  string node_id = 1;
+  oneof outcome {
+    // ACTION_LIST: the session this node holds. One session id covers the whole cluster, so
+    // a node reports at most one: the newest when leftovers of older sessions exist.
+    SessionLease session = 2;
+    // ACTION_LIST: the node holds no session. ACTION_RELEASE: the node did not hold
+    // session_id, so there was nothing to delete; this is still a success.
+    Ack none = 3;
+    // ACTION_HEARTBEAT: the node renewed the lease. ACTION_RELEASE: the node held the session
+    // and deleted it.
+    Ack done = 4;
+    // ACTION_HEARTBEAT and ACTION_RELEASE: the node did not complete the action; the frame is
+    // still sent so the client can tell which nodes failed.
+    // ACTION_HEARTBEAT: the node was unreachable, does not hold the session, or is a data
+    // node without ExportService. An expired or unreadable lease, or any other node error,
+    // fails the whole call instead (FAILED_PRECONDITION for the lease).
+    // ACTION_RELEASE: the node was unreachable, removing the session failed, or it is a data
+    // node without ExportService. A node that does not hold the session answers `none`.
+    string error = 5;
+  }
+}
+
+// Ack is an outcome that carries no data.
+message Ack {}
+
+// Mirrors the .lease file plus the catalogs, which the node derives from the
+// <export-snapshot-path>/<id> directories it finds. expires_at drives reclamation by the
+// node's sweeper; last_heartbeat_at tells a refused operator when the holder was last seen.
+// Times are Unix nanoseconds of the data node's clock; an unreadable .lease reports zero times.
+message SessionLease {
   string session_id = 1;
-}
-
-message ReleaseSessionResponse {
-  repeated string failed_nodes = 1;
+  int64 started_at = 2;
+  int64 expires_at = 3;
+  int64 last_heartbeat_at = 4;
+  repeated common.v1.Catalog catalogs = 5;
 }
 
 message PlanRequest {
   // Empty = all catalogs and groups in the cluster.
   repeated Selector selectors = 1;
 
-  // Select which view to read:
-  // empty = online directories;
-  // non-empty = snapshot of the given session, and renew its lease.
-  string session_id = 2;
-
-  // Only meaningful when session_id is empty.
-  bool create_session = 3;
-  uint32 lease_seconds = 4;
-  bool renew_only = 5;
-
-  // Take over a session whose holder is judged dead. Requires --preempt.
-  bool preempt = 6;
+  // Unset = inventory the online directories (a dry run).
+  oneof session {
+    CreateSession create = 2;  // snapshot first, then inventory that snapshot
+    ReadSession read = 3;      // read the session's snapshot and renew its lease
+  }
 }
 
+message CreateSession {
+  // Empty at the liaison, which generates the id and forwards it; always set on a data node.
+  string id = 1;
+  // Remove every session the node holds, whatever its lease says, before creating this
+  // one; the removed ids come back in preempted_session_ids. Without it any other session
+  // on the node answers ALREADY_EXISTS naming the occupants. The client sets it for
+  // --preempt (a flag that arrives with the real export).
+  bool preempt = 2;
+}
+
+message ReadSession {
+  string id = 1;  // required
+}
+
+// One frame of the Plan stream. Through the liaison the stream is: with CreateSession a
+// `created` frame first; then `units` frames, one per (node, group); then exactly one
+// `summary` frame. A data node's own stream follows the same order without `created`: it
+// never sets node_id or answered_nodes, and its closing `summary`, carrying only
+// preempted_session_ids, is sent only with CreateSession when anything was removed.
 message PlanResponse {
-  string node_id = 1;
+  oneof frame {
+    SessionCreated created = 1;
+    UnitFrame units = 2;
+    PlanSummary summary = 3;
+  }
+}
+
+message SessionCreated {
+  string session_id = 1;
+}
+
+message UnitFrame {
+  string node_id = 1;  // stamped by the liaison
+  // The node's resolved stage for this group; empty for the default tier (no stages, no
+  // node labels, or no matching stage). Only groups the registry knows are listed.
   string stage = 2;
   repeated UnitInventory units = 3;
-
-  string session_id = 4;
-  int64 expires_at = 5;
-
-  repeated common.v1.Catalog failed_catalogs = 6;
-  repeated string failed_reasons = 7;
-  repeated string unreachable_nodes = 8;
-  repeated string preempted_session_ids = 9;
 }
 
-message ExportRequest {
-  oneof frame {
-    Init init = 1;          // First frame only
-    SegmentUnit unit = 2;   // One unit per subsequent frame
-  }
-
-  message Init {
-    // Snapshot session used for export.
-    string session_id = 1;
-
-    // Target data node for this stream.
-    string target_node = 2;
-
-    Format format = 3;
-
-    // Soft limit for a single output file in bytes.
-    // 0 = unlimited.
-    uint64 max_file_size = 4;
-
-    Compress compress = 5;
-    RateLimit rate_limit = 6;
-  }
+message PlanSummary {
+  // Sessions removed while creating because preempt was set.
+  repeated string preempted_session_ids = 1;
+  // Live directories and ReadSession only: transport failure, liaison Plan max wait,
+  // NotFound (no longer holds the session), or a data node without ExportService.
+  // CreateSession fails on any of these instead.
+  repeated string unreachable_nodes = 2;
+  // Nodes whose Plan stream completed; with unreachable_nodes it covers every planned node.
+  repeated string answered_nodes = 3;
 }
 
-enum Compress {
-  COMPRESS_UNSPECIFIED = 0;
-  COMPRESS_NONE = 1;
-  COMPRESS_GZIP = 2;
-}
-
-// Output rate limit for a single data node.
-// 0 = unlimited.
-message RateLimit {
-  uint64 bytes_per_second = 1;   // Applies to both formats
-  uint64 rows_per_second = 2;    // Applies only to FORMAT_CSV
-}
-
-// Frame order:
-// ready
-// → [unit_started,
-//    (file_started, chunk × N, file_finished) × M,
-//    unit_finished] × number of units
-message ExportResponse {
-  oneof content {
-    Ready ready = 1;                // Response to Init, once per stream
-    UnitStarted unit_started = 2;   // Once per unit
-    FileStarted file_started = 3;
-    DataChunk chunk = 4;
-    FileFinished file_finished = 5;
-    UnitFinished unit_finished = 6; // Once per unit;
-                                    // ctl sends the next unit only after receiving this
-  }
-}
-
-message Ready {
-  Compress effective_compress = 1;
-  RateLimit effective_rate_limit = 2;
-}
-
-message UnitStarted {
-  // len(unit.shard_ids); 0 for index-mode measure.
-  uint32 total_shards = 1;
-
-  // Total number of files generated for this unit,
-  // including split files and segment-level outputs.
-  uint32 total_files = 2;
-
-  // Native: sum of file sizes obtained from ReadDir.
-  // CSV: 0 because it cannot be known in advance.
-  uint64 estimated_total_bytes = 3;
-}
-
-message FileStarted {
-  // The client prefixes nodes/<dir of target_node>/ when writing locally,
-  // where the directory component is derived as "Node IDs are not path-safe" describes.
-  //
-  // Examples:
-  // "stream/sw_record/seg-20260907/shard-0-001.bnc"
-  // ".../sidx-001.bnc"
-  // ".../metadata"
-  string relative_path = 1;
-
-  // Shard this file belongs to.
-  uint32 shard_id = 2;
-
-  // Segment-level output such as metadata or sidx-NNN.bnc.
-  bool segment_level = 3;
-
-  // Progress: shard index within the current unit.
-  uint32 shard_index = 4;
-  uint32 seq = 5;
-}
-
-message DataChunk {
-  bytes content = 1;
-}
-
-message FileFinished {
-  uint64 bytes = 1;
-  uint32 crc32 = 2;
-  uint32 entry_count = 3;
-  map<string, uint64> row_counts = 4;
-  repeated string warnings = 5;
-}
-
-message UnitFinished {
-  repeated string warnings = 1;
-}
+// The Export RPC and its message family (Format, Compress, RateLimit, ExportRequest,
+// ExportResponse, Ready, UnitStarted, FileStarted, DataChunk, FileFinished, UnitFinished)
+// were removed from export.proto on 2026-10-09 and return with the real transfer. Their
+// design is unchanged: the frame sequence is in 4.7.2 and the field-level listing in the
+// specification, docs/superpowers/specs/2026-07-07-data-export-import-design.md §3.1 and §3.6.
 ```
 
 ### 4.7 Full workflow
@@ -761,11 +747,11 @@ message UnitFinished {
 
 | # | Direction | Frame | Liaison behavior |
 |---|---|---|---|
-| 1 | ctl → liaison | `Plan{selectors=[…], create_session=true}` | Generate one `session_id` for the whole fan-out. A node already holding a different live session rejects the create and returns the incumbent's ID ([why session uniqueness is per node](#481-there-is-no-coordinator-so-uniqueness-is-per-node)) |
-| 2 | liaison → data-1 / data-2 | One `Plan{…, session_id="xx…", create_session=true}` per node | — |
-| 3 | Each data node | Create an `export-9f2a…` snapshot, write `.lease`, inventory from the snapshot | — |
-| 4 | data-* → liaison → ctl | Stream `PlanResponse{units[…]}` frames | Forward each frame as it arrives |
-| 5 | ctl | Write the `session_id` and complete unit inventory into `.export-progress.json` | — |
+| 1 | ctl → liaison | `Plan{selectors=[…], create{}}` | Generate one session id for the whole fan-out. A node already holding a different session rejects the create and returns the incumbent's ID ([why session uniqueness is per node](#481-there-is-no-coordinator-so-uniqueness-is-per-node)); any rejection or failure makes the liaison roll the new id back on the nodes that accepted it; nodes whose rollback failed are named in the error as leaked, and only those ids need a manual `bydbctl data release-session` |
+| 2 | liaison → data-1 / data-2 | One `Plan{…, create{id="xx…"}}` per node | — |
+| 3 | Each data node | Refuse if any other session directory exists (or remove them all when `preempt` is set), snapshot every selected catalog under `<export-snapshot-path>/<id>`, then commit the `.lease` in all of them; inventory from the snapshot | — |
+| 4 | data-* → liaison → ctl | Stream `PlanResponse{units{node_id, stage, units[…]}}` frames | Forward each frame as it arrives, stamping `node_id`; fold a node's `summary` (preempted ids) into the final one |
+| 5 | ctl | Write the `session_id` (from the `created` frame) and complete unit inventory into `.export-progress.json` | — |
 | 6 | ctl | Group entries by `node_id` to build the assignment table | — |
 
 Only this phase creates snapshots; they are created once and reused for the whole export. The liaison stamps `node_id` on every frame from the upstream connection and does not trust a node's self-report.
@@ -778,7 +764,7 @@ Each data node uses one stream. The example shows `data-1`; `data-2` runs in par
 |---|---|---|---|
 | 1 | ctl → liaison | `Init{session_id="9f2a…", target_node="data-1", format=NATIVE, max_file_size=512MiB, rate_limit{…}}` | Read `target_node`, take the pooled connection, open an upstream bidirectional `Export` stream |
 | 2 | liaison → data-1 | `Init` | Forward unchanged, without modifying any field |
-| 3 | data-1 | Locate `export-9f2a…` by `session_id` and renew the lease | Forward errors unchanged |
+| 3 | data-1 | Locate `<export-snapshot-path>/9f2a…` by `session_id` and renew the lease | Forward errors unchanged |
 | 4 | data-1 → liaison → ctl | `ready{}` | Forward |
 | 5 | ctl → … → data-1 | `unit{catalog=STREAM, group="sw_record", segment_suffix="20260907", shard_ids=[0,1]}` | Forward. Only one unit at a time |
 | 6 | data-1 | Build paths, stat the two shards and the segment directory, `ReadDir` the file list | — |
@@ -798,56 +784,72 @@ Each data node uses one stream. The example shows `data-1`; `data-2` runs in par
 
 | # | Direction | Frame | Liaison behavior |
 |---|---|---|---|
-| 1 | ctl → liaison | `ReleaseSession{session_id="9f2a…"}` | Fan out to all data nodes |
-| 2 | Each data node | Delete `export-xx…`; if already absent, still return success for idempotency | Aggregate `failed_nodes` |
+| 1 | ctl → liaison | `Sessions{action=ACTION_RELEASE, session_id="9f2a…"}` | Fan out to all data nodes |
+| 2 | Each data node | Delete `<export-snapshot-path>/xx…`; if already absent, still return success for idempotency | One frame per node; a node that failed carries `error` |
 
-A non-empty `failed_nodes` is a **WARN, not a failure**: the artifact is already sealed and valid, so the run still exits 0. The client prints each node with the `bydbctl data release-session --id <id>` retry command, because until those snapshots go the nodes carry them for the rest of the lease — and on a hot node a snapshot costs roughly a second copy of the live data, not the free hard links the cold case suggests.
+A frame with a non-empty `error` is a **WARN, not a failure**: the artifact is already sealed and valid, so the run still exits 0. The liaison only names the failed nodes; the CLI prints each of them together with the `bydbctl data release-session --id <id>` retry command, because until those snapshots go the nodes carry them for the rest of the lease — and on a hot node a snapshot costs roughly a second copy of the live data, not the free hard links the cold case suggests.
 
 ### 4.8 Session management
 
 Each export uses one session, corresponding to one snapshot per data node. One export should own the whole cluster at a time — but that is an outcome the protocol converges to, **not an invariant any single component enforces**, and the difference matters for implementers.
 
+On disk a session is one directory per catalog, `<export-snapshot-path>/<session-id>/` (`<catalog>/export-snapshots/<id>` under the catalog root by default), holding the snapshot of every group as `<group>/…` plus the `.lease` file (hard links for stream, measure and trace; a full copy of the property index for property, see below); property sessions use the same `<group>/shard-N` layout, without the extra `data/` level its backup snapshots keep. The directory is set per catalog with `--stream-export-snapshot-path`, `--measure-export-snapshot-path`, `--trace-export-snapshot-path` and `--property-export-snapshot-path`, and for stream, measure and trace must be on the same filesystem as the data path because their snapshots are hard links; the property directory instead needs as much free space as the property data. The export service refuses to start when one of these paths equals or lies inside any catalog's backup snapshot directory, equals, contains or lies inside any catalog's data path, or when two catalogs' paths are equal or nested. It is deliberately **not** the `snapshots/` directory the backup snapshots live in: the snapshot reclaimers (`DeleteStaleSnapshots`, `DeleteOldSnapshots`) only ever see that directory, so a multi-day export needs no special case in them, and the session sweeper (step 5 below) only ever sees sessions.
+
 #### 4.8.1 There is no coordinator, so uniqueness is per node
 
-BanyanDB has no etcd, no lock service, and no CAS primitive anywhere in the tree; node discovery is file-, DNS- or flag-based. A session therefore cannot be claimed atomically cluster-wide before fan-out. The only real enforcement point is **each data node's own snapshot directory**.
+BanyanDB has no etcd, no lock service, and no CAS primitive anywhere in the tree; node discovery is file-, DNS- or flag-based. A session therefore cannot be claimed atomically cluster-wide before fan-out. The only real enforcement point is **each data node's own export snapshot directory**.
 
-That leaves a genuine race. Two clients calling `Plan(create_session=true)` through two different liaisons can each win on a different subset of data nodes, producing two live, partial sessions whose heartbeats keep either from looking dead. Left unhandled they would deadlock each other. The protocol resolves it without a coordinator:
+That leaves a genuine race. Two clients calling `Plan{create{}}` through two different liaisons can each win on a different subset of data nodes, producing two partial sessions that block each other. Left unhandled they would deadlock each other. The protocol resolves it without a coordinator:
 
-1. **A node accepts a create only if it holds no live session.** If it already holds one under a different `session_id`, it rejects the create and returns the **incumbent's** ID rather than a bare error.
-2. **Any rejection aborts the whole attempt.** A client that sees even one node reject must call `ReleaseSession` for its own ID on every node that did accept, then fail with a concurrent-export error naming the incumbent IDs it saw.
+1. **A node accepts a create only if it holds no other session.** The rule is purely structural: if any other session directory exists on the node, whatever its `.lease` says, the node rejects the create and returns the **incumbent's** ID(s) rather than a bare error. The node takes no liveness decision — the sweeper reclaims expired sessions, the operator reclaims abandoned ones with `--preempt`.
+2. **Any rejection aborts the whole attempt.** When even one node rejects, the liaison releases the new ID on every node that accepted it (`Sessions(ACTION_RELEASE)` semantics, over the nodes the create may have reached) and fails the call with a concurrent-export error naming the incumbent IDs. The client releases by hand only the ids the error reports as leaked.
 3. **Retry with jittered backoff.** Because the loser releases everything it took, the next attempt finds a clean subset. Two clients retrying in lockstep is the only livelock risk, and jitter bounds it.
 
-Step 2 is the load-bearing one: a client that keeps a partial session after a partial win is what creates the deadlock. Releasing is cheap — the snapshots are hard links.
+Step 2 is the load-bearing one: a partial session kept after a partial win is what creates the deadlock. Releasing is cheap — deleting a snapshot only unlinks files (hard links for stream, measure and trace; the property copy's own files).
 
-`ProbeSessionResponse` returns `leases` **per node** precisely so this state is observable. A probe that comes back with two distinct `session_id` values, or with leases on only some nodes, is reporting a partial session, not a healthy one. The client must surface that verbatim; `--preempt` in that state releases **every** ID it found before creating its own, rather than taking over one of them.
+`Sessions(ACTION_LIST)` streams one frame **per node** precisely so this state is observable. A list that comes back with two distinct `session_id` values, or with a session on only some nodes, is reporting a partial session, not a healthy one. The client surfaces that verbatim in the refusal message; `--preempt` in that state removes **every** session the node holds before creating its own, rather than taking over one of them.
 
-Beyond the race, a partial session left behind by a client that died mid-abort is reclaimed by the node-side expiry sweep (step 5 below) within one sweep period of the lease expiring, with no operator action. That is a backstop, not the unblocking path: the next export stops waiting after the 15-minute liveness threshold, not after the full lease.
+A data node that joins the cluster after the session was created holds no snapshot for it. It answers `NOT_FOUND` to a `Plan{read{id}}`, which the liaison reports in `unreachable_nodes` rather than failing the call, and it answers its `ACTION_HEARTBEAT` frame with the `error` outcome, so the client sees it as a coverage gap either way. An expired session is different: until the sweeper removes it, the node answers `FAILED_PRECONDITION` and the call fails; once it is swept the node answers `NOT_FOUND` like any node without the session.
+
+Beyond the race, a partial session left behind by a client that died mid-abort is reclaimed by the node-side expiry sweep (step 5 below) within one sweep period of the lease expiring, with no operator action. Until then it blocks the next export, which is told whose session it is and when that session was last seen; the operator decides whether to `--preempt` it.
 
 #### 4.8.2 Taking over an existing session
 
-Starting a new export does **not** silently remove an existing session. The client first calls `ProbeSession`, which is read-only, and decides from `last_renewed_at`:
+Starting a new export never silently removes another session, and no component classifies a session as alive or dead. A session is held until it is released, preempted, or expires (5 days after its last heartbeat) and gets swept:
 
-- **Live holder** (renewed within the liveness threshold): refuse the new export and report who holds it.
-- **Dead holder** (no renewal past the threshold): still refuse, but tell the user that `--preempt` takes it over. `--preempt` is a confirmation action, not a tuning knob.
+- **Any holder**: the node answers `ALREADY_EXISTS`; the client then lists the sessions once and prints who holds it, where, and when its last heartbeat was, with the hint that `--preempt` takes it over. (The client side of this — create, refusal rendering, heartbeat loop — lands with the real transfer; the tree today drives the session RPCs only from the integration tests and `bydbctl data release-session`.) The last-heartbeat time is what tells the operator whether the holder is still running (heartbeats arrive every 5 minutes) or died hours ago. `--preempt` is a confirmation action, not a tuning knob.
+- **`--preempt`**: the node removes every session it holds before creating the new one and reports the removed ids in `preempted_session_ids`, which the client prints as a WARN. Nothing else ever sets that field.
+
+Earlier revisions (2026-10-07 to 2026-10-09) had the data node reclaim a holder whose last heartbeat was older than 15 minutes without `--preempt`. That classification was dropped on 2026-10-09: a heartbeat lost to a network partition must not cost a running export its snapshot, and the heartbeat time shown to the refused operator carries the same information without the node guessing.
 
 Lifecycle:
 
-1. **Create** — the liaison sends `Plan(create_session=true)` to all data nodes.
+1. **Create** — the liaison sends `Plan{create{id}}` to all data nodes.
 2. **Export** — export requests carry the `session_id` to read the matching snapshot.
-3. **Heartbeat** — `bydbctl` sends `Plan(session_id, renew_only=true)` on a fixed interval.
-4. **Release** — after the export completes and `manifest.json` is written, `bydbctl` calls `ReleaseSession(session_id)`. **On Ctrl-C or a fail-fast abort it deliberately does not**: the session is kept so the run can resume against the same frozen snapshot, and the client prints the session ID plus the `bydbctl data release-session --id <id>` command. There is deliberately no flag for "release on abort": it would make a graceful stop strictly worse than `kill -9`, because the resumed run would then hit `FAILED_PRECONDITION` and have to restart against a new point in time — and `release-session` already covers the case where you really are done.
-5. **Cleanup** — each data node sweeps export snapshots on a one-minute timer and removes any whose lease has expired. The sweep also runs once at process start, so a session survives a data-node restart.
+3. **Heartbeat** — `bydbctl` sends `Sessions{action=ACTION_HEARTBEAT, session_id}` on a fixed interval.
+4. **Release** — after the export completes and `manifest.json` is written, `bydbctl` calls `Sessions{action=ACTION_RELEASE, session_id}`. **On Ctrl-C or a fail-fast abort it deliberately does not**: the session is kept so the run can resume against the same frozen snapshot, and the client prints the session ID plus the `bydbctl data release-session --id <id>` command. There is deliberately no flag for "release on abort": it would make a graceful stop strictly worse than `kill -9`, because a released (or swept) session answers `NOT_FOUND` on every node, so the resumed run would see every node unreachable and have to restart against a new point in time — and `release-session` already covers the case where you really are done.
+5. **Cleanup** — each data node sweeps export snapshots on a one-minute timer and removes any whose lease has expired. A session directory left without a readable lease (a crash mid-create or a failed rollback) is reclaimed once its newest directory is older than a 10-minute orphan grace; until then it still counts as an occupant, so a create without `preempt` answers `ALREADY_EXISTS`. The first sweep runs as soon as the export service starts serving, so after a data-node restart an expired session is reclaimed at once and a live one survives.
 
 | Constant | Value | Why it is not configurable |
 |---|---|---|
-| Default lease | 5 days | Hard guard against an obviously wrong input |
-| Maximum lease | 30 days | Same |
-| Heartbeat interval | 5 min | A client-side timer, deliberately not derived from the lease — otherwise the liveness threshold becomes tunable, and that is part of the mutual-exclusion semantics |
-| Liveness threshold | 15 min (3 heartbeats) | Same. Three heartbeats tolerate one lost heartbeat without declaring a live holder dead |
+| Lease | 5 days | A data-node constant: every heartbeat resets the expiry to now + 5 days, so it only decides how long after the client disappears the snapshot is reclaimed. The request used to carry a lease with a 30-day cap; both were removed because the task length is irrelevant |
+| Heartbeat interval | 5 min | A client-side timer, deliberately not derived from the lease. It keeps the lease fresh and stamps `last_heartbeat_at`, which a refused operator reads to judge whether the holder is still running |
 
-The body of a snapshot is hard links, so it copies zero bytes, and deletion is `unlink` only — a background merge that removes a source part during export leaves the snapshot's link fully readable, which is what makes lock-free reading safe. "Hard links, therefore free" holds only for cold segments, though: the open segment's series index and the whole property database are full byte copies.
+The body of a snapshot is hard links, so it copies zero bytes, and deletion is `unlink` only — a background merge that removes a source part during export leaves the snapshot's link fully readable, which is what makes lock-free reading safe. "Hard links, therefore free" holds only for cold segments, though: the open segment's series index and the whole property database are full byte copies (the property snapshot is the index's own backup, written shard by shard, and also holds documents not yet flushed). The snapshot holds what was flushed to disk when it was taken; rows still in a memtable are not in it, so wait one flush interval after stopping writers for a complete export. Creating a session can be canceled only between groups and shards: the snapshot of a single group or shard is not interruptible. A large property copy can therefore outlast the liaison's per-frame wait for a node (5 minutes); the create then fails and is rolled back on every node.
 
-### 4.9 Node gRPC extension
+The data-node gRPC port has no authentication of its own; the export RPCs are gated by RBAC only on the liaison. Deployments must keep the data-node port on an isolated network or behind mTLS, as they already must for the snapshot and segment-deletion RPCs on that port.
+
+### 4.9 Remaining work
+
+What the tree holds after the dry-run step (2026-10-09) and what is still to come, each with where it will live. The design text for all of it stays in this document and in the specification (`docs/superpowers/specs/2026-07-07-data-export-import-design.md`, "spec" below).
+
+- **`Export` RPC and its message family** (`Format`, `Compress`, `RateLimit`, `ExportRequest`/`ExportResponse`, `Ready`, `UnitStarted`, `FileStarted`, `DataChunk`, `FileFinished`, `UnitFinished`) — removed from `export.proto` on 2026-10-09; re-added with the real transfer. Design: 4.6/4.7.2 here, spec §3.1 and §3.6.
+- **Client session library** (`CreateSession` with retries, the heartbeat loop, `ListSessions`-based refusal rendering) — removed from `pkg/transfer/exporter` on 2026-10-09; it returns with step 3. The server side (`Plan` create/read, `Sessions` LIST/HEARTBEAT/RELEASE on liaison and data node) is complete and tested through `test/integration/{standalone,distributed}/data_export`. Design: 4.8, spec §3.5.
+- **bydbctl flags `--format`, `--include-schema`, `--output`, `--preempt`** and the `plan.yaml` `export.*` fields other than `parallelism`/`selectors` (plus `connection.rateLimit` and the whole `import:` section) — removed; `bydbctl data export` without `--dry-run` keeps answering "not implemented yet". Design: 2 and 2.1 here, spec §2.1/§2.2.
+- **Deferred design items** — a dedicated `bydbctl data sessions` listing command (declined for now: the refusal text already renders the occupant), probe-before-create, pinning the session's node membership, skipping zombie nodes under file discovery, and a stage manifest inside the snapshot — recorded with their reasons in the implementation record (`docs/superpowers/plans/2026-09-28-export-plan-dry-run.md` §0.4 item 46, which cites items 21/24/28, and §0.7).
+- **Step-3 e2e** — the real export session lifecycle (create, heartbeat, release) end to end once `Export` exists; today `test/e2e-v2/cases/transfer/dry-run/` covers the dry run only.
+
+### 4.10 Node gRPC extension
 
 The node response must expose supported file versions and timezone information.
 
@@ -1483,8 +1485,7 @@ Stored by default in `<output>/.export-progress.json`. It holds the `session_id`
   "format": "native",
 
   "session": {
-    "id": "9f2a…",
-    "expiresAt": "2026-09-19T18:00:00Z"
+    "id": "9f2a…"
   },
 
   "startedAt": "…",
@@ -1535,7 +1536,7 @@ Because several nodes export in parallel, a dedicated goroutine persists progres
 
 | Time | Action | Persist |
 |---|---|---|
-| `Plan` first frame returns | Record `session` (`id` + `expiresAt`) | Write on receipt — a resumed run needs the ID, and `release-session` cannot release a session that was never written down |
+| `Plan` `created` frame returns | Record `session.id` | Write on receipt — a resumed run needs the ID, and `release-session` cannot release a session that was never written down |
 | `Plan` last frame returns | Record the complete `plan` | Write — no `Export` may be sent until this lands, or a resume cannot tell "this unit had no data" from "this unit never came up" |
 | Worker starts a unit | Set `inflight[node] = {unit, startedAt}` | Write |
 | Each `file_finished` | Validate bytes/crc32 → fsync → rename → keep the entry in worker memory | No |

@@ -39,6 +39,7 @@ import (
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 )
 
@@ -217,6 +218,7 @@ func registeredServiceDescriptors(activation ServiceActivation) []grpclib.Servic
 		databasev1.TraceRegistryService_ServiceDesc,
 		databasev1.ClusterStateService_ServiceDesc,
 		databasev1.NodeQueryService_ServiceDesc,
+		transferv1.ExportService_ServiceDesc,
 		grpc_health_v1.Health_ServiceDesc,
 	}
 	if activation.SchemaBarrier {
@@ -246,6 +248,8 @@ func GlobalMethodPolicies() MethodPolicyTable {
 		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Inspect", auth.PermissionClusterRead, ScopeGlobal),
 		permissionPolicy("/banyandb.database.v1.GroupRegistryService/Query", auth.PermissionClusterRead, ScopeGlobal),
 		permissionPolicy("/banyandb.database.v1.SnapshotService/Snapshot", auth.PermissionClusterAdmin, ScopeGlobal),
+		permissionPolicy("/banyandb.transfer.v1.ExportService/Plan", auth.PermissionClusterAdmin, ScopeGlobal),
+		permissionPolicy("/banyandb.transfer.v1.ExportService/Sessions", auth.PermissionClusterAdmin, ScopeGlobal),
 		permissionPolicy("/banyandb.stream.v1.StreamService/DeleteExpiredSegments", auth.PermissionClusterAdmin, ScopeGlobal),
 		permissionPolicy("/banyandb.measure.v1.MeasureService/DeleteExpiredSegments", auth.PermissionClusterAdmin, ScopeGlobal),
 		permissionPolicy("/banyandb.trace.v1.TraceService/DeleteExpiredSegments", auth.PermissionClusterAdmin, ScopeGlobal),

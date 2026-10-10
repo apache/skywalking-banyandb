@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -70,6 +71,7 @@ type service struct {
 	l                        *logger.Logger
 	repairScheduler          *repairScheduler
 	snapshotDir              string
+	exportSnapshotDir        string
 	root                     string
 	repairDir                string
 	repairBuildTreeCron      string
@@ -82,12 +84,14 @@ type service struct {
 	maxDiskUsagePercent      int
 	maxFileSnapshotNum       int
 	minFileSnapshotAge       time.Duration
+	snapshotMux              sync.Mutex
 	repairEnabled            bool
 }
 
 func (s *service) FlagSet() *run.FlagSet {
 	flagS := run.NewFlagSet("storage")
 	flagS.StringVar(&s.root, "property-root-path", "/tmp", "the root path of database")
+	flagS.StringVar(&s.exportSnapshotDir, "property-export-snapshot-path", "", storage.ExportSnapshotPathUsage("property"))
 	flagS.DurationVar(&s.flushTimeout, "property-flush-timeout", defaultFlushTimeout, "the memory data timeout of measure")
 	flagS.IntVar(&s.maxDiskUsagePercent, "property-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
 	flagS.IntVar(&s.maxFileSnapshotNum, "property-max-file-snapshot-num", 10, "the maximum number of file snapshots allowed")
@@ -129,6 +133,30 @@ func (s *service) Name() string {
 	return "property"
 }
 
+// GetDataPath returns the directory that holds the property groups on disk.
+func (s *service) GetDataPath() string {
+	return filepath.Join(path.Join(s.root, s.Name()), storage.DataDir)
+}
+
+// GetSnapshotDir returns the directory that holds the property backup snapshots.
+func (s *service) GetSnapshotDir() string {
+	return s.snapshotDir
+}
+
+// GetExportSnapshotDir returns the directory that holds the export session snapshots of property.
+func (s *service) GetExportSnapshotDir() string {
+	return s.exportSnapshotDir
+}
+
+// TakeExportSnapshot implements export.Backend: every shard is copied (not hard-linked)
+// into <exportSnapshotDir>/<name>/<group>/shard-N. It shares the TopicSnapshot listener's mutex
+// so an export session and a periodic backup never snapshot concurrently.
+func (s *service) TakeExportSnapshot(ctx context.Context, name string) error {
+	s.snapshotMux.Lock()
+	defer s.snapshotMux.Unlock()
+	return s.db.SnapshotShards(ctx, filepath.Join(s.exportSnapshotDir, name))
+}
+
 func (s *service) Role() databasev1.Role {
 	return databasev1.Role_ROLE_DATA
 }
@@ -143,6 +171,9 @@ func (s *service) PreRun(ctx context.Context) error {
 	}
 	path := path.Join(s.root, s.Name())
 	s.snapshotDir = filepath.Join(path, storage.SnapshotsDir)
+	if s.exportSnapshotDir, err = storage.ResolveExportSnapshotDir(s.exportSnapshotDir, path); err != nil {
+		return err
+	}
 	s.repairDir = filepath.Join(path, storage.RepairDir)
 	obsservice.UpdatePath(path)
 	val := ctx.Value(common.ContextNodeKey)
@@ -154,7 +185,7 @@ func (s *service) PreRun(ctx context.Context) error {
 
 	snapshotLis := &snapshotListener{s: s}
 	s.db, err = db.OpenDB(ctx, db.Config{
-		Location:               filepath.Join(path, storage.DataDir),
+		Location:               s.GetDataPath(),
 		MetricsScopeName:       "property",
 		FlushInterval:          s.flushTimeout,
 		ExpireToDeleteDuration: s.expireTimeout,
