@@ -43,7 +43,9 @@ type elementIndex struct {
 	location string
 }
 
-func newElementIndex(ctx context.Context, root string, flushTimeoutSeconds int64, idxMetrics *idxmetrics.Metrics, leases ...storage.RootLease) (*elementIndex, error) {
+func newElementIndex(ctx context.Context, root string, flushTimeoutSeconds int64, idxMetrics *idxmetrics.Metrics,
+	labelValues []string, leases ...storage.RootLease,
+) (*elementIndex, error) {
 	if len(leases) != 1 || leases[0] == nil {
 		return nil, errors.New("element index: exactly one root lease is required")
 	}
@@ -67,6 +69,7 @@ func newElementIndex(ctx context.Context, root string, flushTimeoutSeconds int64
 		MaxTerms:         nativeadapter.DefaultMaxTerms,
 		AsyncPersistence: flushTimeoutSeconds > 0,
 		PersistInterval:  time.Duration(flushTimeoutSeconds) * time.Second,
+		TimeMetrics:      idxMetrics.NativeTimeMetrics(labelValues...),
 	}); err != nil {
 		return nil, err
 	}

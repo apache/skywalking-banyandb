@@ -224,6 +224,10 @@ type OwnerOptions struct {
 	// previous release's writer produces so a rolled-back node can still read
 	// document identity back from a segment this owner wrote.
 	IdentifierDocValues bool
+	// TimeMetrics receives time-range pruning classification and savings
+	// counts from every query this owner serves. Nil, the default, drops
+	// every count.
+	TimeMetrics TimeMetrics
 }
 
 // Owner serializes mutation admission and publishes immutable roots. A root
@@ -2394,18 +2398,30 @@ func (s *memorySegment) MatchTerms(ctx context.Context, request MatchRequest) (M
 	// partly covers does not decode the documents it excludes.
 	class := classifyTime(s.handle, request.TimeRange)
 	if class == timeDisjoint {
+		recordTimeClass(request.timeMetrics, "disjoint")
 		return MatchResult{}, nil
+	}
+	if class == timeContained {
+		recordTimeClass(request.timeMetrics, "contained")
 	}
 	timeExact := false
 	if class == timeOverlap {
-		usable, usableErr := s.handle.trieUsable()
-		if usableErr == nil && usable {
+		beforeCardinality := postingCardinality(posting)
+		// Below trieMinCandidates, decoding the posting's few candidates costs
+		// less than OR-ing the cover's postings, exactly as narrowCandidatesToRange
+		// decides for every other entry point (§4.6): a point lookup with a tiny
+		// posting must not pay to build a cover spanning a wide range.
+		if s.handle.trieUsable() && beforeCardinality >= trieMinCandidates {
 			inRange, narrowErr := trieCandidates(ctx, s, request.TimeRange)
 			if narrowErr != nil {
 				return MatchResult{}, narrowErr
 			}
 			posting = narrowTermPostingToBitmap(posting, inRange)
 			timeExact = true
+			recordTimeClass(request.timeMetrics, "overlap_trie")
+			recordTimeCandidatesPruned(request.timeMetrics, beforeCardinality-postingCardinality(posting))
+		} else {
+			recordTimeClass(request.timeMetrics, "overlap_fallback")
 		}
 	}
 	result := MatchResult{}
@@ -2580,6 +2596,15 @@ func postingDocuments(posting nativeice.TermPosting) []uint64 {
 	return posting.Documents
 }
 
+// postingCardinality returns how many documents posting carries, without
+// allocating: a OneHit posting always carries exactly one.
+func postingCardinality(posting nativeice.TermPosting) uint64 {
+	if posting.OneHit {
+		return 1
+	}
+	return uint64(len(posting.Documents))
+}
+
 func finishCallback(callback func(error), err error) error {
 	if callback != nil {
 		callback(err)
@@ -2647,6 +2672,11 @@ type MatchRequest struct {
 	SeriesField string
 	SeriesID    []byte
 	TimeRange   *TimeRange
+	// timeMetrics receives this request's time-range pruning outcome. It is
+	// unexported: only (*ReadView).MatchTerms sets it, from the owner it was
+	// acquired against, so a caller outside this package cannot set it and
+	// always gets the zero value (no recording).
+	timeMetrics TimeMetrics
 }
 
 // TimeRange is an inclusive/exclusive timestamp interval.
@@ -2670,6 +2700,9 @@ type MatchResult struct {
 func (v *ReadView) MatchTerms(ctx context.Context, request MatchRequest) (MatchResult, error) {
 	if err := v.check(ctx); err != nil {
 		return MatchResult{}, err
+	}
+	if v.owner != nil {
+		request.timeMetrics = v.owner.options.TimeMetrics
 	}
 	result := MatchResult{}
 	for _, current := range v.root.segments {

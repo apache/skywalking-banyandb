@@ -91,7 +91,7 @@ func Test_tsTable_mustAddElements(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tmpPath, _ := test.Space(require.New(t))
-			index, _ := newElementIndex(context.TODO(), tmpPath, 0, nil, newTestRootLease(t, tmpPath))
+			index, _ := newElementIndex(context.TODO(), tmpPath, 0, nil, nil, newTestRootLease(t, tmpPath))
 			tst := &tsTable{
 				index:         index,
 				loopCloser:    run.NewCloser(2),
@@ -230,7 +230,7 @@ func Test_tstIter(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				tmpPath, defFn := test.Space(require.New(t))
-				index, _ := newElementIndex(context.TODO(), tmpPath, 0, nil, newTestRootLease(t, tmpPath))
+				index, _ := newElementIndex(context.TODO(), tmpPath, 0, nil, nil, newTestRootLease(t, tmpPath))
 				defer defFn()
 				tst := &tsTable{
 					index:         index,

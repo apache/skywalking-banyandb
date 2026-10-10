@@ -138,6 +138,7 @@ func newSeriesIndex(ctx context.Context, root string, flushTimeoutSeconds int64,
 		PresenceCacheBytes:  cacheMaxBytes,
 		IdentifierDocValues: true,
 		PersistInterval:     persistInterval,
+		TimeMetrics:         si.metrics.NativeTimeMetrics(si.p.SegLabelValues()...),
 	})
 	if err != nil {
 		return nil, err

@@ -245,7 +245,8 @@ func initTSTableWithLease(fileSystem fs.FileSystem, rootPath string, p common.Po
 		indexMetrics = tst.metrics.indexMetrics
 	}
 	if initIndex {
-		index, err := newElementIndex(context.TODO(), rootPath, option.elementIndexFlushTimeout.Nanoseconds()/int64(time.Second), indexMetrics, lease)
+		index, err := newElementIndex(context.TODO(), rootPath, option.elementIndexFlushTimeout.Nanoseconds()/int64(time.Second),
+			indexMetrics, p.SegLabelValues(), lease)
 		if err != nil {
 			return nil, 0, err
 		}

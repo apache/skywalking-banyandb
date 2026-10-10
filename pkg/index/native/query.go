@@ -172,7 +172,7 @@ func (v *ReadView) MatchTermsSet(ctx context.Context, request TermSetRequest) ([
 		if err != nil {
 			return nil, err
 		}
-		narrowed, projection, skip, err := narrowSegmentForTime(ctx, segment, candidates, request.Scope.TimeRange)
+		narrowed, projection, skip, err := narrowSegmentForTime(ctx, v.owner, segment, candidates, request.Scope.TimeRange)
 		if err != nil {
 			return nil, err
 		}
@@ -263,7 +263,7 @@ func (v *ReadView) MatchAllTermSets(ctx context.Context, requests []TermSetReque
 				break
 			}
 		}
-		narrowed, projection, skip, narrowErr := narrowSegmentForTime(ctx, segment, candidates, requests[0].Scope.TimeRange)
+		narrowed, projection, skip, narrowErr := narrowSegmentForTime(ctx, v.owner, segment, candidates, requests[0].Scope.TimeRange)
 		if narrowErr != nil {
 			return nil, narrowErr
 		}
@@ -386,7 +386,7 @@ func (v *ReadView) MatchField(ctx context.Context, request FieldRequest) ([]Quer
 		if request.MaxCandidates != 0 && totalCandidates > request.MaxCandidates {
 			return nil, ErrQueryLimit
 		}
-		narrowed, projection, skip, err := narrowSegmentForTime(ctx, segment, candidates, request.Scope.TimeRange)
+		narrowed, projection, skip, err := narrowSegmentForTime(ctx, v.owner, segment, candidates, request.Scope.TimeRange)
 		if err != nil {
 			return nil, err
 		}
@@ -426,7 +426,7 @@ func (v *ReadView) MatchRange(ctx context.Context, request RangeRequest) ([]Quer
 		if err != nil {
 			return nil, err
 		}
-		narrowed, projection, skip, err := narrowSegmentForTime(ctx, segment, candidates, request.Scope.TimeRange)
+		narrowed, projection, skip, err := narrowSegmentForTime(ctx, v.owner, segment, candidates, request.Scope.TimeRange)
 		if err != nil {
 			return nil, err
 		}
@@ -966,7 +966,9 @@ const (
 )
 
 // narrowSegmentForTime classifies the segment against the query range and
-// returns the candidates projection should walk.
+// returns the candidates projection should walk. It records the
+// classification and, when the trie narrows an existing candidate set, the
+// number of candidates it removed, on owner's TimeMetrics.
 //
 // skip is true when the segment cannot contribute any hit, so the caller can
 // move on without decoding anything and without counting those candidates
@@ -974,14 +976,17 @@ const (
 // limit check after this point no longer counts documents the range excludes.
 func narrowSegmentForTime(
 	ctx context.Context,
+	owner *Owner,
 	segment *memorySegment,
 	candidates *roaringpkg.Bitmap,
 	timeRange *TimeRange,
 ) (narrowed *roaringpkg.Bitmap, projection timeProjection, skip bool, err error) {
 	class := classifyTime(segment.handle, timeRange)
 	if class == timeDisjoint {
+		owner.recordTimeClass("disjoint")
 		return nil, timeProjectionContained, true, nil
 	}
+	before := cardinalityOf(segment, candidates)
 	narrowed, exact, narrowErr := narrowCandidatesToRange(ctx, segment, candidates, class, timeRange)
 	if narrowErr != nil {
 		return nil, timeProjectionContained, false, narrowErr
@@ -990,6 +995,7 @@ func narrowSegmentForTime(
 	if exact {
 		projection = timeProjectionContained
 	}
+	recordSegmentTimeClass(owner, class, exact, before, narrowed.GetCardinality())
 	return narrowed, projection, false, nil
 }
 

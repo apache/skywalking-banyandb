@@ -99,6 +99,47 @@ type SortCursor struct {
 	closed    bool
 }
 
+// sortCursorCandidates computes one segment's starting candidate set for a
+// sort cursor request, before time-range narrowing: a Range selection, an
+// empty selection (every ordinal, or a series' postings when scoped), or an
+// exact term-set selection. all reports the "every ordinal" representation
+// the empty, unscoped selection uses instead of a bitmap.
+func sortCursorCandidates(
+	ctx context.Context, segment *memorySegment, request SortCursorRequest, wildcards []nativeice.DictionaryAutomaton,
+) (candidates *roaringpkg.Bitmap, all bool, err error) {
+	switch {
+	case request.Range != nil:
+		if len(request.Selection.Terms) != 0 || request.Selection.Field != "" {
+			return nil, false, fmt.Errorf("sort cursor cannot combine range and exact selection: %w", ErrInvalidQuery)
+		}
+		rangeRequest := *request.Range
+		if rangeRequest.Scope.SeriesField == "" {
+			rangeRequest.Scope = request.Selection.Scope
+		}
+		candidates, err = rangeCandidates(ctx, segment, rangeRequest)
+		return candidates, false, err
+	case len(request.Selection.Terms) == 0 && len(request.Selection.Prefix) == 0 && len(request.Selection.Wildcard) == 0:
+		if request.Selection.Field != "" {
+			return nil, false, fmt.Errorf("sort cursor empty selection requires no field: %w", ErrQueryLimit)
+		}
+		if request.Selection.Scope.SeriesField == "" {
+			return nil, true, nil
+		}
+		candidates, err = seriesCandidates(ctx, segment, request.Selection.Scope)
+		return candidates, false, err
+	default:
+		if validateErr := validateTermSetRequest(request.Selection); validateErr != nil {
+			return nil, false, validateErr
+		}
+		// MaxCandidates is deferred to the cross-segment total check NewSortCursor
+		// makes after time narrowing, like the original per-term selection already did.
+		selection := request.Selection
+		selection.MaxCandidates = 0
+		candidates, err = exactCandidates(ctx, segment, selection, wildcards)
+		return candidates, false, err
+	}
+}
+
 // NewSortCursor creates a keyset-paginated ordered cursor over one pinned
 // root. A positive MaxCandidates is enforced globally across segments.
 //
@@ -130,51 +171,9 @@ func (v *ReadView) NewSortCursor(ctx context.Context, request SortCursorRequest)
 		if !ok {
 			return nil, fmt.Errorf("sort cursor segment %d has type %T", index, current)
 		}
-		var candidates *roaringpkg.Bitmap
-		var candidateErr error
-		all := false
-		switch {
-		case request.Range != nil:
-			if len(request.Selection.Terms) != 0 || request.Selection.Field != "" {
-				return nil, fmt.Errorf("sort cursor cannot combine range and exact selection: %w", ErrInvalidQuery)
-			}
-			rangeRequest := *request.Range
-			if rangeRequest.Scope.SeriesField == "" {
-				rangeRequest.Scope = request.Selection.Scope
-			}
-			candidates, candidateErr = rangeCandidates(ctx, segment, rangeRequest)
-			if candidateErr != nil {
-				return nil, candidateErr
-			}
-			total += candidates.GetCardinality()
-		case len(request.Selection.Terms) == 0 && len(request.Selection.Prefix) == 0 && len(request.Selection.Wildcard) == 0:
-			if request.Selection.Field != "" {
-				return nil, fmt.Errorf("sort cursor empty selection requires no field: %w", ErrQueryLimit)
-			}
-			if request.Selection.Scope.SeriesField == "" {
-				all = true
-				total += segment.handle.count
-			} else {
-				candidates, candidateErr = seriesCandidates(ctx, segment, request.Selection.Scope)
-				if candidateErr != nil {
-					return nil, candidateErr
-				}
-				total += candidates.GetCardinality()
-			}
-		default:
-			if err := validateTermSetRequest(request.Selection); err != nil {
-				return nil, err
-			}
-			// MaxCandidates is deferred to the cross-segment total check below,
-			// like the original per-term selection already did.
-			selection := request.Selection
-			selection.MaxCandidates = 0
-			var err error
-			candidates, err = exactCandidates(ctx, segment, selection, selectionWildcards)
-			if err != nil {
-				return nil, err
-			}
-			total += candidates.GetCardinality()
+		candidates, all, err := sortCursorCandidates(ctx, segment, request, selectionWildcards)
+		if err != nil {
+			return nil, err
 		}
 		// Narrow to the query's time range before the cursor retains anything.
 		// A disjoint segment is dropped outright; an overlapping one keeps only
@@ -185,8 +184,10 @@ func (v *ReadView) NewSortCursor(ctx context.Context, request SortCursorRequest)
 		timeRange := request.Selection.Scope.TimeRange
 		class := classifyTime(segment.handle, timeRange)
 		if class == timeDisjoint {
+			v.owner.recordTimeClass("disjoint")
 			continue
 		}
+		beforeCardinality := cardinalityOf(segment, candidates)
 		timeExact := true
 		if class == timeOverlap {
 			narrowed, exact, narrowErr := narrowCandidatesToRange(ctx, segment, candidates, class, timeRange)
@@ -204,14 +205,17 @@ func (v *ReadView) NewSortCursor(ctx context.Context, request SortCursorRequest)
 				timeExact = false
 			}
 		}
-		// Recomputed after narrowing, and after the "all documents" path has
-		// become an explicit candidate set. Counting before the narrowing would
-		// charge the caller for documents the range excludes.
-		total = 0
+		recordSegmentTimeClass(v.owner, class, timeExact, beforeCardinality, cardinalityOf(segment, candidates))
+		// Accumulated after narrowing, and after the "all documents" path has
+		// become an explicit candidate set, so a document the range excludes is
+		// never charged against the caller's limit. This must add to total, not
+		// replace it: MaxCandidates is a cross-segment budget (see NewSortCursor's
+		// doc comment), so a document decoded in an earlier segment this call
+		// still counts here.
 		if all {
-			total = segment.handle.count
+			total += segment.handle.count
 		} else if candidates != nil {
-			total = candidates.GetCardinality()
+			total += candidates.GetCardinality()
 		}
 		if request.Selection.MaxCandidates != 0 && total > request.Selection.MaxCandidates {
 			return nil, ErrQueryLimit

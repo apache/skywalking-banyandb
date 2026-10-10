@@ -29,7 +29,91 @@ import (
 // _timestamp trie. Below it, decoding the few candidates costs less than
 // OR-ing the cover's postings, so the per-document time check stays. The
 // "all documents" path has no such candidate set and always builds the trie.
-const trieMinCandidates = 256
+//
+// Set from BenchmarkPointLookupCrossover (time_prune_bench_test.go), which
+// sweeps a point lookup's posting size against a whole-segment range: at 64
+// candidates the per-document check still wins (~280us CPU against the trie's
+// ~290us), and at 128 the trie wins decisively (~260us against ~450us), so
+// 128 is the smallest candidate count the trie reliably pays for.
+const trieMinCandidates = 128
+
+// TimeMetrics receives the outcome of a native query's time-range pruning
+// decisions (native-index-time-pruning design, §6). Implementations must be
+// safe for concurrent use: a query records inline, under no owner-wide lock.
+// A nil TimeMetrics is valid everywhere one is read and simply drops every
+// count, so OwnerOptions.TimeMetrics is optional.
+type TimeMetrics interface {
+	// IncTimeSegments records one segment's time-range classification:
+	// "disjoint", "contained", "overlap_trie", or "overlap_fallback".
+	IncTimeSegments(class string)
+	// AddTimeCandidatesPruned adds delta candidates removed from a segment's
+	// candidate set by intersecting it with the _timestamp trie's coverage.
+	AddTimeCandidatesPruned(delta uint64)
+}
+
+// recordTimeClass increments class's counter on tm, if tm is non-nil. class is
+// one of "disjoint", "contained", "overlap_trie", or "overlap_fallback".
+func recordTimeClass(tm TimeMetrics, class string) {
+	if tm == nil {
+		return
+	}
+	tm.IncTimeSegments(class)
+}
+
+// recordTimeCandidatesPruned adds delta to tm's pruned-candidates counter, if
+// tm is non-nil and delta is non-zero.
+func recordTimeCandidatesPruned(tm TimeMetrics, delta uint64) {
+	if tm == nil || delta == 0 {
+		return
+	}
+	tm.AddTimeCandidatesPruned(delta)
+}
+
+// recordTimeClass increments class's counter on the owner's TimeMetrics, if
+// one was configured. class is one of "disjoint", "contained",
+// "overlap_trie", or "overlap_fallback".
+func (o *Owner) recordTimeClass(class string) {
+	if o == nil {
+		return
+	}
+	recordTimeClass(o.options.TimeMetrics, class)
+}
+
+// recordTimeCandidatesPruned adds delta to the owner's pruned-candidates
+// counter, if a TimeMetrics was configured.
+func (o *Owner) recordTimeCandidatesPruned(delta uint64) {
+	if o == nil {
+		return
+	}
+	recordTimeCandidatesPruned(o.options.TimeMetrics, delta)
+}
+
+// cardinalityOf returns candidates's size, or segment's full document count
+// when candidates is nil -- the "every document in the segment" the "all
+// documents" selection path represents without allocating a bitmap for it.
+func cardinalityOf(segment *memorySegment, candidates *roaringpkg.Bitmap) uint64 {
+	if candidates != nil {
+		return candidates.GetCardinality()
+	}
+	return segment.handle.count
+}
+
+// recordSegmentTimeClass records one segment's time-range classification on
+// owner's TimeMetrics, and -- when the trie narrowed an existing candidate
+// set -- how many candidates it removed. class must not be timeDisjoint: a
+// disjoint segment is recorded by its caller, which never reaches the
+// candidate narrowing this records the result of.
+func recordSegmentTimeClass(owner *Owner, class timeClass, timeExact bool, before, after uint64) {
+	switch {
+	case class == timeContained:
+		owner.recordTimeClass("contained")
+	case timeExact:
+		owner.recordTimeClass("overlap_trie")
+		owner.recordTimeCandidatesPruned(before - after)
+	default:
+		owner.recordTimeClass("overlap_fallback")
+	}
+}
 
 // timeClass is what a query's time range means for one segment.
 type timeClass uint8
@@ -93,7 +177,7 @@ func emptyTimeRange(timeRange *TimeRange) bool {
 // Unknown bounds classify as overlap, never as disjoint. That is the safety
 // property everything else rests on: a segment whose bounds are missing, or
 // whose bounds folded across a sign change so int64(min) > int64(max), keeps
-// exactly today's behaviour instead of being pruned on a guess.
+// exactly today's behavior instead of being pruned on a guess.
 func classifyTime(handle *segmentHandle, timeRange *TimeRange) timeClass {
 	if timeRange == nil {
 		// No restriction at all, so there is nothing to compare and nothing to
@@ -206,17 +290,15 @@ const prefixCodedShiftStart = 0x20
 // trieUsable returns the segment's cached trie capability, computing it once.
 // The probe reads only the pinned reader and immutable handle fields, so it is
 // safe to run concurrently with queries on the same view.
-func (h *segmentHandle) trieUsable() (bool, error) {
+//
+// A segment that cannot be probed reports false rather than an error: it is
+// treated as unusable, which routes it to the per-document check. A wrong
+// answer here costs speed; the other direction would cost results.
+func (h *segmentHandle) trieUsable() bool {
 	h.trieOnce.Do(func() {
 		h.trieUsableValue, h.trieUsableErr = segmentTrieUsable(h)
 	})
-	if h.trieUsableErr != nil {
-		// A segment that cannot be probed is treated as unusable, which routes
-		// it to the per-document check. A wrong answer here costs speed; the
-		// other direction would cost results.
-		return false, nil
-	}
-	return h.trieUsableValue, nil
+	return h.trieUsableErr == nil && h.trieUsableValue
 }
 
 // trieCandidates returns the exact set of documents in a segment whose
@@ -319,11 +401,7 @@ func narrowCandidatesToRange(
 		}
 		return candidates, true, nil
 	default:
-		usable, usableErr := segment.handle.trieUsable()
-		if usableErr != nil {
-			return candidates, false, nil
-		}
-		if !usable {
+		if !segment.handle.trieUsable() {
 			return candidates, false, nil
 		}
 		if candidates == nil {
