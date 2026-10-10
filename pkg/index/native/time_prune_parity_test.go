@@ -178,6 +178,32 @@ func TestTimePruningMatchesThePerDocumentPath(t *testing.T) {
 			require.NoError(t, unrangedMatchedErr)
 			require.Equal(t, referenceMatched(unrangedMatched, window), matchIdentifiersOf(matched),
 				"MatchTerms disagreed with the per-document path")
+
+			// MatchAllTermSets: the conjunction path. A single conjunct behaves
+			// like MatchTermsSet, which is enough to prove this entry point's own
+			// copy of the time-narrowing wiring agrees with the reference.
+			allSets, allSetsErr := view.MatchAllTermSets(context.Background(), []TermSetRequest{terms})
+			require.NoError(t, allSetsErr)
+			unrangedAllSets, unrangedAllSetsErr := view.MatchAllTermSets(context.Background(), []TermSetRequest{unranged})
+			require.NoError(t, unrangedAllSetsErr)
+			require.Equal(t, referenceFiltered(unrangedAllSets, window), identifiersOf(allSets),
+				"MatchAllTermSets disagreed with the per-document path")
+
+			// MatchRange: the encoded-byte-order path. ["a", "z"] covers every
+			// status value the fixture writes ("ok", "bad"), so it selects the
+			// same documents the unranged reference does.
+			rangeRequest := RangeRequest{
+				Field: "status", Lower: []byte("a"), Upper: []byte("z"),
+				IncludesLower: true, IncludesUpper: true, Scope: scope, MaxTerms: 8,
+			}
+			rangedHits, rangedErr := view.MatchRange(context.Background(), rangeRequest)
+			require.NoError(t, rangedErr)
+			unrangedRange := rangeRequest
+			unrangedRange.Scope.TimeRange = nil
+			unrangedRangeHits, unrangedRangeErr := view.MatchRange(context.Background(), unrangedRange)
+			require.NoError(t, unrangedRangeErr)
+			require.Equal(t, referenceFiltered(unrangedRangeHits, window), identifiersOf(rangedHits),
+				"MatchRange disagreed with the per-document path")
 		})
 	}
 }
