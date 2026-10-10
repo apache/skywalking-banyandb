@@ -83,7 +83,8 @@ func TestVecExecutable_IndexOrder_TagNotProjected_ProjectsItInternally(t *testin
 	require.True(t, hidden, "the ordered tag must be reported as hidden so the frame egress is skipped")
 	require.Equal(t, []model.TagProjection{{Family: "searchable", Names: []string{"service", "endpoint", "status"}}}, scanProjection)
 	require.Equal(t, projection, scan.ProjectionTags(), "the client projection must not gain the ordered tag")
-	require.True(t, scan.HidesOrderTag())
+	require.Equal(t, "status", scan.HiddenOrderTag(),
+		"the frame egress drops the hidden column by name, so the name must be exposed")
 }
 
 // TestVecExecutable_IndexOrder_TagNotInSchema_DeclinesVec is the one remaining
@@ -119,10 +120,11 @@ func TestVecExecutable_IndexOrder_TagProjected_AcceptsVec(t *testing.T) {
 		Sort: modelv1.Sort_SORT_ASC,
 	}
 	projection := []model.TagProjection{{Family: "searchable", Names: []string{"service", "status"}}}
-	plan, _ := newVecEligiblePlan(t, order, projection)
+	plan, scan := newVecEligiblePlan(t, order, projection)
 
 	require.NotNil(t, VecExecutable(plan),
 		"vec must accept an index-order query whose sort tag is projected")
+	require.Empty(t, scan.HiddenOrderTag(), "a projected sort tag hides nothing from the client")
 }
 
 // TestVecExecutable_TimeOrder_AcceptsVec confirms non-index-order (time-order)
@@ -170,6 +172,10 @@ func TestScanCap_FilteredTimeOrder_CapsMerge(t *testing.T) {
 	require.NotNil(t, VecExecutable(plan), "a filtered time-order query is vec-eligible")
 	require.Nil(t, scan.preMergeFilter,
 		"time-order scans do not resume within a segment, so the filter must stay at the egress behind the cap")
+	criteria, ok := VecTagFilter(plan)
+	require.True(t, ok)
+	require.False(t, criteria.PreMerged,
+		"the egress owns the only Match for timestamp order, so it must not be told to skip it")
 }
 
 // TestScanCap_FilteredIndexOrder_PushesFilterDown is the other arm, and the shape
@@ -195,4 +201,8 @@ func TestScanCap_FilteredIndexOrder_PushesFilterDown(t *testing.T) {
 	require.NotNil(t, VecExecutable(plan), "a filtered index-order query with the sort tag projected is vec-eligible")
 	require.NotNil(t, scan.preMergeFilter,
 		"index-order scans resume across Pulls, so the filter must run pre-merge to make the merge cap sound")
+	criteria, ok := VecTagFilter(plan)
+	require.True(t, ok)
+	require.True(t, criteria.PreMerged,
+		"the columns already matched, so the egress must be told to skip the redundant per-element Match")
 }
