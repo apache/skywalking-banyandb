@@ -460,7 +460,7 @@ func isAlreadyExistsErr(err error) bool {
 		return false
 	}
 	msg := err.Error()
-	return msg != "" && (containsAny(msg, "already exists", "AlreadyExists"))
+	return msg != "" && containsAny(msg, "already exists", "AlreadyExists")
 }
 
 func containsAny(s string, needles ...string) bool {
