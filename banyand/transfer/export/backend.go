@@ -39,11 +39,12 @@ type Backend interface {
 	// snapshots (--<catalog>-export-snapshot-path). It is separate from the backup snapshot
 	// directory, so the snapshot reclaimers never see a session.
 	GetExportSnapshotDir() string
-	// TakeExportSnapshot snapshots every group of the catalog as <GetExportSnapshotDir()>/<name>/<group>.
-	// It never runs the generic reclaimers and never renames. A catalog or group without
-	// data returns nil; it may still create empty directories (stream and trace do), so
-	// an inventory of the snapshot must tolerate groups without any segment.
-	TakeExportSnapshot(ctx context.Context, name string) error
+	// TakeExportSnapshot snapshots the named groups of the catalog, every group when groups is
+	// empty, as <GetExportSnapshotDir()>/<name>/<group>. It never runs the generic reclaimers
+	// and never renames. A catalog or group without data returns nil; it may still create
+	// empty directories (stream and trace do), so an inventory of the snapshot must tolerate
+	// groups without any segment.
+	TakeExportSnapshot(ctx context.Context, name string, groups []string) error
 }
 
 // PartReader is implemented by the backends whose groups hold parts (stream, measure,

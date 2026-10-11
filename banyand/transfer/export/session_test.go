@@ -39,7 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-// fakeBackend is a Backend over a temp directory: TakeExportSnapshot copies the live
+// fakeBackend is a Backend over a temp directory: TakeExportSnapshot copies the selected live
 // group directories into <exportSnapshotDir>/<name>. onSnapshot, when set, runs after the
 // copy with that session directory so a test can tamper with it.
 type fakeBackend struct {
@@ -76,7 +76,7 @@ func (b *fakeBackend) ReadPartMetadata(partDir string) (queue.StreamingPartData,
 func (b *fakeBackend) GetSnapshotDir() string       { return b.snapshotDir }
 func (b *fakeBackend) GetExportSnapshotDir() string { return b.exportSnapshotDir }
 
-func (b *fakeBackend) TakeExportSnapshot(_ context.Context, name string) error {
+func (b *fakeBackend) TakeExportSnapshot(_ context.Context, name string, groups []string) error {
 	attempt := b.snapshots.Add(1)
 	if b.fail {
 		return errors.New("injected snapshot failure")
@@ -87,7 +87,7 @@ func (b *fakeBackend) TakeExportSnapshot(_ context.Context, name string) error {
 		return err
 	}
 	for _, e := range entries {
-		if !e.IsDir() {
+		if !e.IsDir() || (len(groups) > 0 && !slices.Contains(groups, e.Name())) {
 			continue
 		}
 		if err := os.CopyFS(filepath.Join(dst, e.Name()), os.DirFS(filepath.Join(b.dataDir, e.Name()))); err != nil {
@@ -105,15 +105,16 @@ type fakeClock struct{ t time.Time }
 func (c *fakeClock) now() time.Time          { return c.t }
 func (c *fakeClock) advance(d time.Duration) { c.t = c.t.Add(d) }
 
-func allCatalogs() map[commonv1.Catalog]struct{} {
+func allCatalogs() map[commonv1.Catalog][]string {
 	return catalogSet(commonv1.Catalog_CATALOG_STREAM, commonv1.Catalog_CATALOG_MEASURE,
 		commonv1.Catalog_CATALOG_TRACE, commonv1.Catalog_CATALOG_PROPERTY)
 }
 
-func catalogSet(cs ...commonv1.Catalog) map[commonv1.Catalog]struct{} {
-	out := make(map[commonv1.Catalog]struct{}, len(cs))
+// catalogSet selects every group of each catalog.
+func catalogSet(cs ...commonv1.Catalog) map[commonv1.Catalog][]string {
+	out := make(map[commonv1.Catalog][]string, len(cs))
 	for _, c := range cs {
-		out[c] = struct{}{}
+		out[c] = nil
 	}
 	return out
 }
@@ -155,12 +156,12 @@ func newTestManager(t *testing.T) (*sessionManager, Backends, *fakeClock) {
 	return m, backends, clock
 }
 
-func mustCreate(t *testing.T, m *sessionManager, id string, catalogs map[commonv1.Catalog]struct{}) *createdSession {
+func mustCreate(t *testing.T, m *sessionManager, id string, catalogs map[commonv1.Catalog][]string) *createdSession {
 	t.Helper()
 	return mustCreateWith(t, m, id, catalogs, false)
 }
 
-func mustCreateWith(t *testing.T, m *sessionManager, id string, catalogs map[commonv1.Catalog]struct{}, preempt bool) *createdSession {
+func mustCreateWith(t *testing.T, m *sessionManager, id string, catalogs map[commonv1.Catalog][]string, preempt bool) *createdSession {
 	t.Helper()
 	created, err := m.create(context.Background(), id, catalogs, preempt)
 	if err != nil {

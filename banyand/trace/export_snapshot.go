@@ -30,7 +30,7 @@ import (
 
 // exportSnapshotAttempts bounds how often an export snapshot is retaken when a flush or
 // merge between the core and the secondary-index snapshots leaves them inconsistent
-// (design §3.5: the trace snapshot has no publication fence).
+// (the trace snapshot has no publication fence).
 const exportSnapshotAttempts = 3
 
 // takeConsistentSnapshot runs take into dst until verifyExportSnapshot accepts the result,

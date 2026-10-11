@@ -509,7 +509,7 @@ Below that level:
 
 A new gRPC export service carries the workflow. The data node generates the stream directly and the client writes it to local files. The same service backs dry run.
 
-> The listings below are illustrative. Field numbers, validation rules and comments are authoritative in `api/proto/banyandb/transfer/v1/export.proto`; the implementation record is `docs/superpowers/plans/2026-09-28-export-plan-dry-run.md` §0.4.
+> The listings below are illustrative. Field numbers, validation rules and comments are authoritative in `api/proto/banyandb/transfer/v1/export.proto`.
 
 ```protobuf
 service ExportService {
@@ -737,8 +737,7 @@ message PlanSummary {
 // The Export RPC and its message family (Format, Compress, RateLimit, ExportRequest,
 // ExportResponse, Ready, UnitStarted, FileStarted, DataChunk, FileFinished, UnitFinished)
 // were removed from export.proto on 2026-10-09 and return with the real transfer. Their
-// design is unchanged: the frame sequence is in 4.7.2 and the field-level listing in the
-// specification, docs/superpowers/specs/2026-07-07-data-export-import-design.md §3.1 and §3.6.
+// design is unchanged: the frame sequence is in 4.7.2.
 ```
 
 ### 4.7 Full workflow
@@ -749,7 +748,7 @@ message PlanSummary {
 |---|---|---|---|
 | 1 | ctl → liaison | `Plan{selectors=[…], create{}}` | Generate one session id for the whole fan-out. A node already holding a different session rejects the create and returns the incumbent's ID ([why session uniqueness is per node](#481-there-is-no-coordinator-so-uniqueness-is-per-node)); any rejection or failure makes the liaison roll the new id back on the nodes that accepted it; nodes whose rollback failed are named in the error as leaked, and only those ids need a manual `bydbctl data release-session` |
 | 2 | liaison → data-1 / data-2 | One `Plan{…, create{id="xx…"}}` per node | — |
-| 3 | Each data node | Refuse if any other session directory exists (or remove them all when `preempt` is set), snapshot every selected catalog under `<export-snapshot-path>/<id>`, then commit the `.lease` in all of them; inventory from the snapshot | — |
+| 3 | Each data node | Refuse if any other session directory exists (or remove them all when `preempt` is set), snapshot the selected groups of every selected catalog under `<export-snapshot-path>/<id>`, then commit the `.lease` in all of them; inventory from the snapshot | — |
 | 4 | data-* → liaison → ctl | Stream `PlanResponse{units{node_id, stage, units[…]}}` frames | Forward each frame as it arrives, stamping `node_id`; fold a node's `summary` (preempted ids) into the final one |
 | 5 | ctl | Write the `session_id` (from the `created` frame) and complete unit inventory into `.export-progress.json` | — |
 | 6 | ctl | Group entries by `node_id` to build the assignment table | — |
@@ -793,7 +792,7 @@ A frame with a non-empty `error` is a **WARN, not a failure**: the artifact is a
 
 Each export uses one session, corresponding to one snapshot per data node. One export should own the whole cluster at a time — but that is an outcome the protocol converges to, **not an invariant any single component enforces**, and the difference matters for implementers.
 
-On disk a session is one directory per catalog, `<export-snapshot-path>/<session-id>/` (`<catalog>/export-snapshots/<id>` under the catalog root by default), holding the snapshot of every group as `<group>/…` plus the `.lease` file (hard links for stream, measure and trace; a full copy of the property index for property, see below); property sessions use the same `<group>/shard-N` layout, without the extra `data/` level its backup snapshots keep. The directory is set per catalog with `--stream-export-snapshot-path`, `--measure-export-snapshot-path`, `--trace-export-snapshot-path` and `--property-export-snapshot-path`, and for stream, measure and trace must be on the same filesystem as the data path because their snapshots are hard links; the property directory instead needs as much free space as the property data. The export service refuses to start when one of these paths equals or lies inside any catalog's backup snapshot directory, equals, contains or lies inside any catalog's data path, or when two catalogs' paths are equal or nested. It is deliberately **not** the `snapshots/` directory the backup snapshots live in: the snapshot reclaimers (`DeleteStaleSnapshots`, `DeleteOldSnapshots`) only ever see that directory, so a multi-day export needs no special case in them, and the session sweeper (step 5 below) only ever sees sessions.
+On disk a session is one directory per catalog, `<export-snapshot-path>/<session-id>/` (`<catalog>/export-snapshots/<id>` under the catalog root by default), holding the snapshot of every selected group as `<group>/…` plus the `.lease` file (hard links for stream, measure and trace; a full copy of the property index for property, see below); property sessions use the same `<group>/shard-N` layout, without the extra `data/` level its backup snapshots keep. The directory is set per catalog with `--stream-export-snapshot-path`, `--measure-export-snapshot-path`, `--trace-export-snapshot-path` and `--property-export-snapshot-path`, and for stream, measure and trace must be on the same filesystem as the data path because their snapshots are hard links; the property directory instead needs as much free space as the property data. The export service refuses to start when one of these paths equals or lies inside any catalog's backup snapshot directory, equals, contains or lies inside any catalog's data path, or when two catalogs' paths are equal or nested. It is deliberately **not** the `snapshots/` directory the backup snapshots live in: the snapshot reclaimers (`DeleteStaleSnapshots`, `DeleteOldSnapshots`) only ever see that directory, so a multi-day export needs no special case in them, and the session sweeper (step 5 below) only ever sees sessions.
 
 #### 4.8.1 There is no coordinator, so uniqueness is per node
 
@@ -841,12 +840,12 @@ The data-node gRPC port has no authentication of its own; the export RPCs are ga
 
 ### 4.9 Remaining work
 
-What the tree holds after the dry-run step (2026-10-09) and what is still to come, each with where it will live. The design text for all of it stays in this document and in the specification (`docs/superpowers/specs/2026-07-07-data-export-import-design.md`, "spec" below).
+What the tree holds after the dry-run step (2026-10-09) and what is still to come, each with where it will live. The design text for all of it stays in this document.
 
-- **`Export` RPC and its message family** (`Format`, `Compress`, `RateLimit`, `ExportRequest`/`ExportResponse`, `Ready`, `UnitStarted`, `FileStarted`, `DataChunk`, `FileFinished`, `UnitFinished`) — removed from `export.proto` on 2026-10-09; re-added with the real transfer. Design: 4.6/4.7.2 here, spec §3.1 and §3.6.
-- **Client session library** (`CreateSession` with retries, the heartbeat loop, `ListSessions`-based refusal rendering) — removed from `pkg/transfer/exporter` on 2026-10-09; it returns with step 3. The server side (`Plan` create/read, `Sessions` LIST/HEARTBEAT/RELEASE on liaison and data node) is complete and tested through `test/integration/{standalone,distributed}/data_export`. Design: 4.8, spec §3.5.
-- **bydbctl flags `--format`, `--include-schema`, `--output`, `--preempt`** and the `plan.yaml` `export.*` fields other than `parallelism`/`selectors` (plus `connection.rateLimit` and the whole `import:` section) — removed; `bydbctl data export` without `--dry-run` keeps answering "not implemented yet". Design: 2 and 2.1 here, spec §2.1/§2.2.
-- **Deferred design items** — a dedicated `bydbctl data sessions` listing command (declined for now: the refusal text already renders the occupant), probe-before-create, pinning the session's node membership, skipping zombie nodes under file discovery, and a stage manifest inside the snapshot — recorded with their reasons in the implementation record (`docs/superpowers/plans/2026-09-28-export-plan-dry-run.md` §0.4 item 46, which cites items 21/24/28, and §0.7).
+- **`Export` RPC and its message family** (`Format`, `Compress`, `RateLimit`, `ExportRequest`/`ExportResponse`, `Ready`, `UnitStarted`, `FileStarted`, `DataChunk`, `FileFinished`, `UnitFinished`) — removed from `export.proto` on 2026-10-09; re-added with the real transfer. Design: 4.6 and 4.7.2.
+- **Client session library** (`CreateSession` with retries, the heartbeat loop, `ListSessions`-based refusal rendering) — removed from `pkg/transfer/exporter` on 2026-10-09; it returns with step 3. The server side (`Plan` create/read, `Sessions` LIST/HEARTBEAT/RELEASE on liaison and data node) is complete and tested through `test/integration/{standalone,distributed}/data_export`. Design: 4.8.
+- **bydbctl flags `--format`, `--include-schema`, `--output`, `--preempt`** and the `plan.yaml` `export.*` fields other than `parallelism`/`selectors` (plus `connection.rateLimit` and the whole `import:` section) — removed; `bydbctl data export` without `--dry-run` keeps answering "not implemented yet". Design: 2 and 2.1.
+- **Deferred design items** — a dedicated `bydbctl data sessions` listing command (declined for now: the refusal text already renders the occupant), probe-before-create, pinning the session's node membership, skipping zombie nodes under file discovery, and a stage manifest inside the snapshot — none is required by the dry run, and each is revisited with the real transfer.
 - **Step-3 e2e** — the real export session lifecycle (create, heartbeat, release) end to end once `Export` exists; today `test/e2e-v2/cases/transfer/dry-run/` covers the dry run only.
 
 ### 4.10 Node gRPC extension

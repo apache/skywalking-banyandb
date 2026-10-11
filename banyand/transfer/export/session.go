@@ -189,14 +189,15 @@ type createdSession struct {
 	preempted []string
 }
 
-// create snapshots the selected catalogs under <id> and commits their leases. Any other
+// create snapshots the selected catalogs under <id> and commits their leases. Each catalog maps
+// to the groups to snapshot, nil for the whole catalog. Any other
 // session directory on this node, whatever its lease says, answers ALREADY_EXISTS naming
 // the occupants unless preempt is set, in which case every one of them is removed and
 // reported back; create takes no liveness decision, the sweeper alone reclaims expired
 // and abandoned sessions. A failure in any catalog removes whatever this id created, so a
 // session is all-or-nothing per node.
 func (m *sessionManager) create(
-	ctx context.Context, id string, catalogs map[commonv1.Catalog]struct{}, preempt bool,
+	ctx context.Context, id string, catalogs map[commonv1.Catalog][]string, preempt bool,
 ) (*createdSession, error) {
 	if err := validateSessionID(id); err != nil {
 		return nil, err
@@ -232,7 +233,7 @@ func (m *sessionManager) create(
 	dirs := make(map[commonv1.Catalog]string, len(catalogs))
 	// Sorted so the snapshot order, and therefore what a rollback has to undo, is deterministic.
 	for _, catalog := range slices.Sorted(maps.Keys(catalogs)) {
-		dir, snapErr := m.snapshotCatalog(ctx, catalog, id)
+		dir, snapErr := m.snapshotCatalog(ctx, catalog, id, catalogs[catalog])
 		if snapErr != nil {
 			m.rollback(id)
 			if errors.Is(snapErr, context.Canceled) || errors.Is(snapErr, context.DeadlineExceeded) {
@@ -274,8 +275,8 @@ func (m *sessionManager) rollback(id string) {
 }
 
 // snapshotCatalog creates the session directory of one catalog and takes the export
-// snapshot into it, returning the directory. The lease is committed by the caller.
-func (m *sessionManager) snapshotCatalog(ctx context.Context, catalog commonv1.Catalog, id string) (string, error) {
+// snapshot of groups (every group when empty) into it, returning the directory. The lease is committed by the caller.
+func (m *sessionManager) snapshotCatalog(ctx context.Context, catalog commonv1.Catalog, id string, groups []string) (string, error) {
 	b, ok := m.backends[catalog]
 	if !ok {
 		return "", fmt.Errorf("no backend for catalog %s", catalog)
@@ -284,7 +285,7 @@ func (m *sessionManager) snapshotCatalog(ctx context.Context, catalog commonv1.C
 	if err := os.MkdirAll(dir, storage.DirPerm); err != nil {
 		return "", err
 	}
-	if err := b.TakeExportSnapshot(ctx, id); err != nil {
+	if err := b.TakeExportSnapshot(ctx, id, groups); err != nil {
 		return "", err
 	}
 	return dir, nil
@@ -292,7 +293,7 @@ func (m *sessionManager) snapshotCatalog(ctx context.Context, catalog commonv1.C
 
 // locateAndHeartbeat resolves the per-catalog groups roots of a live session and extends its
 // lease on every copy. A session this node does not hold is NotFound; an expired or
-// unreadable lease is FailedPrecondition (design §3.5). Every copy is validated before
+// unreadable lease is FailedPrecondition. Every copy is validated before
 // any is written, so a refused renewal leaves the copies in step.
 func (m *sessionManager) locateAndHeartbeat(id string) (map[commonv1.Catalog]string, error) {
 	if err := validateSessionID(id); err != nil {

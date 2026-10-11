@@ -53,7 +53,7 @@ var (
 	sessionIDPattern = regexp.MustCompile(`^[0-9a-f]{1,64}$`)
 )
 
-// Lease is the on-disk <session dir>/.lease document (design §3.5). Times are UnixNano;
+// Lease is the on-disk <session dir>/.lease document. Times are UnixNano;
 // lastHeartbeatAt records the last heartbeat (create counts as the first) and a
 // document without expiresAt reads as expired.
 type Lease struct {

@@ -7646,7 +7646,7 @@ Ack is an outcome that carries no data.
 
 ### CreateSession
 CreateSession is the first Plan of an export that will transfer data. Every data node
-snapshots the selected catalogs into a new session and inventories that
+snapshots the selected groups into a new session and inventories that
 snapshot. One session id covers the whole cluster: the client leaves id empty, the liaison
 generates it, announces it in the first frame and forwards it, so on a data node id is
 always set.

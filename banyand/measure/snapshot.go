@@ -228,15 +228,15 @@ func (s *standalone) takeGroupSnapshot(dstDir string, groupName string) (bool, e
 	return created, nil
 }
 
-// TakeExportSnapshot implements export.Backend: one hard-link snapshot of every group under
+// TakeExportSnapshot implements export.Backend: one hard-link snapshot of the selected groups under
 // <exportSnapshotDir>/<name>. It shares the TopicSnapshot listener's mutex so an export session
 // and a periodic backup never snapshot the same groups concurrently, but unlike the listener
 // it neither reclaims old snapshots nor invents a name: the export session owns the
 // directory's lifetime.
-func (s *standalone) TakeExportSnapshot(ctx context.Context, name string) error {
+func (s *standalone) TakeExportSnapshot(ctx context.Context, name string, groups []string) error {
 	s.snapshotMux.Lock()
 	defer s.snapshotMux.Unlock()
-	return schema.SnapshotGroups(ctx, s.schemaRepo, s.l, filepath.Join(s.exportSnapshotDir, name), s.takeGroupSnapshot)
+	return schema.SnapshotGroups(ctx, s.schemaRepo, s.l, filepath.Join(s.exportSnapshotDir, name), groups, s.takeGroupSnapshot)
 }
 
 // collectSegDirs walks a directory tree and collects all seg-* directory paths.

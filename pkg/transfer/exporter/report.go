@@ -67,7 +67,7 @@ type Report struct {
 	DataNodes     []string `json:"dataNodes"`
 	AnsweredNodes []string `json:"answeredNodes"`
 	// MissingNodes are the nodes the liaison reported unreachable or not holding the
-	// session; their data would not be exported (design §2.3 NODES row).
+	// session; their data would not be exported.
 	MissingNodes     []string `json:"missingNodes"`
 	UnreachableNodes []string `json:"unreachableNodes"`
 	Standalone       bool     `json:"standalone"`

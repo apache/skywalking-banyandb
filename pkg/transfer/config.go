@@ -26,7 +26,7 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// Plan is the on-disk plan.yaml of design §2.2, restricted to what the dry-run reads:
+// Plan is the on-disk plan.yaml, restricted to what the dry-run reads:
 // connection.nodes, connection.nodesTLS, export.parallelism and export.selectors. The
 // fields a real export or an import consumes land with those steps, and until then a file
 // that carries them is rejected by LoadPlanFile.

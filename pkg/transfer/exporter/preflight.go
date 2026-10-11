@@ -78,7 +78,7 @@ var errNoDataNode = errors.New("has not discovered any data node yet")
 const maxRecvMsgSize = 32 << 20
 
 // Preflight tries the liaison candidates in order and returns the first one that answers,
-// after checking it is a liaison and reading the data-node table (design §2.3 step 1).
+// after checking it is a liaison and reading the data-node table.
 // A candidate that cannot be reached, whose answer is lost in transport, or whose registry
 // is still empty is skipped; a reachable endpoint that refuses the credentials or is not a
 // liaison is a configuration error, not a retry.

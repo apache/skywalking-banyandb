@@ -19,8 +19,10 @@ package export
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -304,6 +306,48 @@ func TestPlanInventory_CreateSessionOnlySnapshotsSelectedCatalogs(t *testing.T) 
 	lease, _ := fx.planner.sessions.probe()
 	if lease == nil || len(lease.Catalogs) != 1 || lease.Catalogs[0] != commonv1.Catalog_CATALOG_STREAM {
 		t.Fatalf("only the selected catalog must carry a session dir: %+v", lease)
+	}
+}
+
+func TestPlanInventory_CreateSessionOnlySnapshotsSelectedGroups(t *testing.T) {
+	fx := newTestPlanner(t, nil, defaultGroups(), nil)
+	frames := collect(t, fx.planner, createReq(testSessionID, false,
+		&transferv1.Selector{Catalog: commonv1.Catalog_CATALOG_STREAM, Groups: []string{"sw_log"}}))
+	if got := unitFrames(frames); len(got) != 1 || segmentGroup(got[0].Units[0]) != "sw_log" {
+		t.Fatalf("want only the sw_log frame, got %+v", frames)
+	}
+	entries, err := os.ReadDir(mustSessionDir(t, fx.planner.sessions, commonv1.Catalog_CATALOG_STREAM, testSessionID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshotted []string
+	for _, e := range entries {
+		if e.IsDir() {
+			snapshotted = append(snapshotted, e.Name())
+		}
+	}
+	if !slices.Equal(snapshotted, []string{"sw_log"}) {
+		t.Fatalf("the session must snapshot only the selected group, got %v", snapshotted)
+	}
+}
+
+func TestSelectedCatalogs(t *testing.T) {
+	fx := newTestPlanner(t, nil, defaultGroups(), nil)
+	got := fx.planner.selectedCatalogs([]*transferv1.Selector{
+		{Catalog: commonv1.Catalog_CATALOG_STREAM, Groups: []string{"a"}},
+		{Catalog: commonv1.Catalog_CATALOG_STREAM, Groups: []string{"b"}},
+		{Catalog: commonv1.Catalog_CATALOG_MEASURE, Groups: []string{"m"}},
+		{Catalog: commonv1.Catalog_CATALOG_MEASURE},
+	})
+	want := map[commonv1.Catalog][]string{
+		commonv1.Catalog_CATALOG_STREAM:  {"a", "b"},
+		commonv1.Catalog_CATALOG_MEASURE: nil,
+	}
+	if !maps.EqualFunc(got, want, slices.Equal) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if all := fx.planner.selectedCatalogs(nil); len(all) != 4 {
+		t.Fatalf("no selectors must select all four catalogs whole, got %v", all)
 	}
 }
 

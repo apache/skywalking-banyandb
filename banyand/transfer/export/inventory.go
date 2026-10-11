@@ -56,8 +56,8 @@ type partReadFunc func(partDir string) (queue.StreamingPartData, error)
 // measure and trace groups. indexMode turns on the native-index document count of the
 // segment-level series index, which is the only place index-mode measures store rows.
 // The numbers describe the directory as it is: parts that are on disk but not yet
-// published, or left behind by an interrupted merge, are counted too (design §2.3 calls
-// the live-directory inventory an estimate). A segment that vanishes mid-walk, or whose
+// published, or left behind by an interrupted merge, are counted too, so the
+// live-directory inventory is an estimate. A segment that vanishes mid-walk, or whose
 // metadata is still being written by a rollover, is skipped as a whole.
 func statTSDBGroup(groupDir string, catalog commonv1.Catalog, group string, indexMode bool, read partReadFunc) ([]*transferv1.UnitInventory, error) {
 	segEntries, err := readDirOrEmpty(groupDir)
@@ -246,7 +246,7 @@ func sidxBytes(sidxDir string) (uint64, uint64, error) {
 // statPropertyGroup lists <groupDir>/shard-*/ native index directories. Property has no segment
 // layer, so it yields exactly one PropertyInventory unit per group, or nil when the group
 // has no shard directory on this node. doc_count is the cheap native-index document count: it
-// includes every version of an entity and its tombstones (design §3.1).
+// includes every version of an entity and its tombstones.
 func statPropertyGroup(groupDir, group string) (*transferv1.UnitInventory, error) {
 	entries, err := readDirOrEmpty(groupDir)
 	if err != nil {

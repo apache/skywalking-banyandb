@@ -25,7 +25,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// Exit codes shared by data export and import (design §2.1).
+// Exit codes shared by data export and import.
 const (
 	// ExitUsage is a parameter or usage error.
 	ExitUsage = 1

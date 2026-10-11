@@ -216,19 +216,28 @@ func errorFrame(err error) *transferv1.SessionsResponse {
 	return &transferv1.SessionsResponse{Outcome: &transferv1.SessionsResponse_Error{Error: status.Convert(err).Message()}}
 }
 
-// selectedCatalogs returns the catalogs a selector list touches; empty means all four.
-func (p *Planner) selectedCatalogs(selectors []*transferv1.Selector) map[commonv1.Catalog]struct{} {
-	out := map[commonv1.Catalog]struct{}{}
+// selectedCatalogs maps every catalog a selector list touches to the groups it names, nil when
+// a selector takes the whole catalog; no selectors means all four catalogs whole.
+func (p *Planner) selectedCatalogs(selectors []*transferv1.Selector) map[commonv1.Catalog][]string {
+	out := map[commonv1.Catalog][]string{}
 	if len(selectors) == 0 {
 		for c := range p.backends {
-			out[c] = struct{}{}
+			out[c] = nil
 		}
 		return out
 	}
+	wholeCatalog := map[commonv1.Catalog]bool{}
 	for _, s := range selectors {
-		if _, ok := p.backends[s.GetCatalog()]; ok {
-			out[s.GetCatalog()] = struct{}{}
+		if _, ok := p.backends[s.GetCatalog()]; !ok {
+			continue
 		}
+		if len(s.GetGroups()) == 0 {
+			wholeCatalog[s.GetCatalog()] = true
+		}
+		out[s.GetCatalog()] = append(out[s.GetCatalog()], s.GetGroups()...)
+	}
+	for c := range wholeCatalog {
+		out[c] = nil
 	}
 	return out
 }

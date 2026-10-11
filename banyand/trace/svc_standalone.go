@@ -502,17 +502,17 @@ func (d *standaloneSnapshotListener) compareSnapshotWithData(snapshotDir, dataDi
 			groupName, dataDir, snapshotDir)
 }
 
-// TakeExportSnapshot implements export.Backend: one hard-link snapshot of every group under
+// TakeExportSnapshot implements export.Backend: one hard-link snapshot of the selected groups under
 // <exportSnapshotDir>/<name>, retaken until its secondary indexes match its core parts, or
 // an error. It shares the TopicSnapshot listener's mutex so an export session and a periodic
 // backup never snapshot the same groups concurrently, but unlike the listener it neither
 // reclaims old snapshots nor invents a name: the export session owns the directory's lifetime.
-func (s *standalone) TakeExportSnapshot(ctx context.Context, name string) error {
+func (s *standalone) TakeExportSnapshot(ctx context.Context, name string, groups []string) error {
 	s.snapshotMux.Lock()
 	defer s.snapshotMux.Unlock()
 	dst := filepath.Join(s.exportSnapshotDir, name)
 	return takeConsistentSnapshot(dst, s.l, func() error {
-		return resourceSchema.SnapshotGroups(ctx, &s.schemaRepo, s.l, dst, s.takeGroupSnapshot)
+		return resourceSchema.SnapshotGroups(ctx, &s.schemaRepo, s.l, dst, groups, s.takeGroupSnapshot)
 	})
 }
 

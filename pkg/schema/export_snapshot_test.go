@@ -67,7 +67,7 @@ func TestSnapshotGroups_SkipsGroupsDeletedMeanwhile(t *testing.T) {
 		current: map[string]Group{"kept": kept, "failing": failing, "empty": noTSDB},
 	}
 	var taken []string
-	err := SnapshotGroups(context.Background(), loader, logger.GetLogger("test"), "/dst", func(dstDir, groupName string) (bool, error) {
+	err := SnapshotGroups(context.Background(), loader, logger.GetLogger("test"), "/dst", nil, func(dstDir, groupName string) (bool, error) {
 		if dstDir != filepath.Join("/dst", groupName) {
 			t.Errorf("unexpected destination %s for %s", dstDir, groupName)
 		}
@@ -92,11 +92,30 @@ func TestSnapshotGroups_CanceledStops(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	loader := &fakeLoader{all: []Group{&fakeGroup{name: "g", tsdb: fakeTSDB{}}}}
-	err := SnapshotGroups(ctx, loader, logger.GetLogger("test"), "/dst", func(string, string) (bool, error) {
+	err := SnapshotGroups(ctx, loader, logger.GetLogger("test"), "/dst", nil, func(string, string) (bool, error) {
 		t.Fatal("a canceled snapshot must not take any group")
 		return false, nil
 	})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("want context.Canceled, got %v", err)
+	}
+}
+
+func TestSnapshotGroups_OnlySelected(t *testing.T) {
+	loader := &fakeLoader{all: []Group{
+		&fakeGroup{name: "a", tsdb: fakeTSDB{}},
+		&fakeGroup{name: "b", tsdb: fakeTSDB{}},
+		&fakeGroup{name: "c", tsdb: fakeTSDB{}},
+	}}
+	var taken []string
+	err := SnapshotGroups(context.Background(), loader, logger.GetLogger("test"), "/dst", []string{"c", "a"}, func(_, groupName string) (bool, error) {
+		taken = append(taken, groupName)
+		return true, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(taken, []string{"a", "c"}) {
+		t.Fatalf("want only the selected groups snapshotted, got %v", taken)
 	}
 }

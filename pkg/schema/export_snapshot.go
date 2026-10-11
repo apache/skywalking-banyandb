@@ -20,6 +20,7 @@ package schema
 import (
 	"context"
 	"path/filepath"
+	"slices"
 
 	"go.uber.org/multierr"
 
@@ -32,12 +33,12 @@ type GroupLoader interface {
 	LoadAllGroups() []Group
 }
 
-// SnapshotGroups snapshots every group that has an open tsdb into <dstRoot>/<group> through
-// take and joins the failures. It is the shared body of the engines'
+// SnapshotGroups snapshots every selected group that has an open tsdb into <dstRoot>/<group>
+// through take and joins the failures; an empty selected list selects every group. It is the shared body of the engines'
 // export.Backend.TakeExportSnapshot: a group without a tsdb yet has no data and is
 // skipped, so is a group deleted while the loop runs (its take fails and the group is
 // gone, or without a tsdb, when reloaded); a canceled ctx stops the loop.
-func SnapshotGroups(ctx context.Context, groups GroupLoader, l *logger.Logger, dstRoot string,
+func SnapshotGroups(ctx context.Context, groups GroupLoader, l *logger.Logger, dstRoot string, selected []string,
 	take func(dstDir, groupName string) (bool, error),
 ) error {
 	var err error
@@ -46,6 +47,9 @@ func SnapshotGroups(ctx context.Context, groups GroupLoader, l *logger.Logger, d
 			return ctxErr
 		}
 		groupName := g.GetSchema().GetMetadata().GetName()
+		if len(selected) > 0 && !slices.Contains(selected, groupName) {
+			continue
+		}
 		if g.SupplyTSDB() == nil {
 			l.Info().Str("group", groupName).Msg("skip export snapshot of a group without tsdb")
 			continue

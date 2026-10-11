@@ -27,6 +27,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -79,8 +80,9 @@ type Database interface {
 	Repair(ctx context.Context, id []byte, shardID uint64, property *propertyv1.Property, deleteTime int64) error
 	// TakeSnapShot takes a snapshot of the database under the configured snapshot directory.
 	TakeSnapShot(ctx context.Context, sn string) *databasev1.Snapshot
-	// SnapshotShards copies every shard into <dstDir>/<group>/shard-N.
-	SnapshotShards(ctx context.Context, dstDir string) error
+	// SnapshotShards copies every shard of the named groups, of every group when groups is
+	// empty, into <dstDir>/<group>/shard-N.
+	SnapshotShards(ctx context.Context, dstDir string, groups []string) error
 	// Drop closes and removes all shards for the given group and deletes the group directory.
 	Drop(groupName string) error
 	// RegisterGossip registers the repair scheduler's gossip services with the given messenger.
@@ -578,7 +580,7 @@ var errSnapshotDatabaseClosed = errors.New("database is closed")
 
 func (db *database) TakeSnapShot(ctx context.Context, sn string) *databasev1.Snapshot {
 	snp := &databasev1.Snapshot{Name: sn, Catalog: commonv1.Catalog_CATALOG_PROPERTY}
-	if err := db.SnapshotShards(ctx, path.Join(db.snapshotDir, sn, storage.DataDir)); err != nil {
+	if err := db.SnapshotShards(ctx, path.Join(db.snapshotDir, sn, storage.DataDir), nil); err != nil {
 		if errors.Is(err, errSnapshotDatabaseClosed) {
 			return nil
 		}
@@ -587,13 +589,14 @@ func (db *database) TakeSnapShot(ctx context.Context, sn string) *databasev1.Sna
 	return snp
 }
 
-// SnapshotShards writes every shard into <dstDir>/<group>/shard-N through the index's
+// SnapshotShards writes every shard of the named groups, of every group when groups is empty,
+// into <dstDir>/<group>/shard-N through the index's
 // backup, which copies the segment files (they are not hard links), so a snapshot needs as
 // much free space as the shards it copies. A destination shard directory that already
 // exists is an error. It stops at the first failure or when ctx is done, returning
 // ctx.Err() in the latter case, and fails with errSnapshotDatabaseClosed once the database
 // is closed.
-func (db *database) SnapshotShards(ctx context.Context, dstDir string) error {
+func (db *database) SnapshotShards(ctx context.Context, dstDir string, groups []string) error {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	if db.closed.Load() {
@@ -602,6 +605,9 @@ func (db *database) SnapshotShards(ctx context.Context, dstDir string) error {
 	var err error
 	db.groups.Range(func(_, value any) bool {
 		gs := value.(*groupShards)
+		if len(groups) > 0 && !slices.Contains(groups, gs.group) {
+			return true
+		}
 		sLst := gs.shards.Load()
 		if sLst == nil {
 			return true

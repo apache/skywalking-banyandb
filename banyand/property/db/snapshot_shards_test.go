@@ -76,7 +76,7 @@ func TestSnapshotShards_CopiesEveryShardWithItsDocuments(t *testing.T) {
 	// the hard-link check below has something to compare.
 	waitForPersistedSegment(t, sh.location)
 	dst := filepath.Join(t.TempDir(), "session")
-	if err = d.SnapshotShards(context.Background(), dst); err != nil {
+	if err = d.SnapshotShards(context.Background(), dst, nil); err != nil {
 		t.Fatal(err)
 	}
 	shardDir := filepath.Join(dst, defaultGroupName, "shard-0")
@@ -138,7 +138,7 @@ func TestSnapshotShards_ExistingDestinationIsAnError(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dst, defaultGroupName, "shard-0"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.SnapshotShards(context.Background(), dst); err == nil {
+	if err := d.SnapshotShards(context.Background(), dst, nil); err == nil {
 		t.Fatal("an existing shard snapshot directory must be reported as an error")
 	}
 }
@@ -150,7 +150,28 @@ func TestSnapshotShards_CanceledContext(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := d.SnapshotShards(ctx, filepath.Join(t.TempDir(), "session")); !errors.Is(err, context.Canceled) {
+	if err := d.SnapshotShards(ctx, filepath.Join(t.TempDir(), "session"), nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("got %v, want context.Canceled", err)
+	}
+}
+
+func TestSnapshotShards_OnlySelectedGroups(t *testing.T) {
+	d := openSnapshotTestDB(t)
+	const otherGroup = "other-group"
+	for _, group := range []string{defaultGroupName, otherGroup} {
+		if _, err := d.loadShard(context.Background(), group, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dst := filepath.Join(t.TempDir(), "session")
+	if err := d.SnapshotShards(context.Background(), dst, []string{otherGroup}); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != otherGroup {
+		t.Fatalf("only the selected group must be snapshotted, got %v", entries)
 	}
 }

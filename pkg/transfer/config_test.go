@@ -28,7 +28,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 )
 
-// dryRunPlanYAML is the dry-run subset of the design §2.2 example, which strict parsing
+// dryRunPlanYAML is the dry-run subset of a full plan.yaml, which strict parsing
 // must accept.
 const dryRunPlanYAML = `
 connection:
@@ -65,7 +65,7 @@ func TestLoadPlanFile_AcceptsTheDryRunFields(t *testing.T) {
 }
 
 func TestLoadPlanFile_RejectsUnknownFields(t *testing.T) {
-	// A misspelled field, and the design fields that only a real export or an import reads
+	// A misspelled field, and the plan fields that only a real export or an import reads
 	// (they land with those steps), are all unknown to this step's strict parser.
 	for _, body := range []string{
 		"connection:\n  nodes: [a:17912]\nexport:\n  outpt: ./x\n",

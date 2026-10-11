@@ -148,13 +148,13 @@ func (s *service) GetExportSnapshotDir() string {
 	return s.exportSnapshotDir
 }
 
-// TakeExportSnapshot implements export.Backend: every shard is copied (not hard-linked)
+// TakeExportSnapshot implements export.Backend: every shard of the selected groups is copied (not hard-linked)
 // into <exportSnapshotDir>/<name>/<group>/shard-N. It shares the TopicSnapshot listener's mutex
 // so an export session and a periodic backup never snapshot concurrently.
-func (s *service) TakeExportSnapshot(ctx context.Context, name string) error {
+func (s *service) TakeExportSnapshot(ctx context.Context, name string, groups []string) error {
 	s.snapshotMux.Lock()
 	defer s.snapshotMux.Unlock()
-	return s.db.SnapshotShards(ctx, filepath.Join(s.exportSnapshotDir, name))
+	return s.db.SnapshotShards(ctx, filepath.Join(s.exportSnapshotDir, name), groups)
 }
 
 func (s *service) Role() databasev1.Role {
