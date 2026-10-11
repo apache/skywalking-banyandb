@@ -18,6 +18,7 @@
 package test
 
 import (
+	"errors"
 	"reflect"
 	"sync/atomic"
 	"time"
@@ -124,6 +125,35 @@ func countEvaluations(actual interface{}) (interface{}, *int32) {
 		return v.Call(args)
 	}).Interface()
 	return probe, attempts
+}
+
+// EventuallyErr runs fn repeatedly (gomega.Eventually bounded by flags.EventuallyTimeout, or
+// the first entry of intervals if supplied, mirroring gomega.Eventually's own (timeout) /
+// (timeout, polling) signature) and converts the result into a plain error instead of
+// failing the enclosing Ginkgo spec. It is for plain Go helper functions that compose
+// several fallible steps — outside any It/By closure — and need to retry a step that can
+// transiently fail under eventual consistency (a schema-cache lag, a topology race, ...)
+// while still returning an error their caller can wrap with step-level context.
+//
+// fn receives a scoped Gomega; use it (not the package-level gomega.Expect/Ω) so a failed
+// assertion inside fn is treated as "not yet converged" and retried, rather than aborting
+// the whole call stack. Call gomega.StopTrying(...).Now() from within fn to end retrying
+// immediately on a failure that must not be repeated — e.g. a partially-accepted write
+// batch, where resending would duplicate the already-accepted rows.
+func EventuallyErr(fn func(g gomega.Gomega), intervals ...interface{}) error {
+	if len(intervals) == 0 {
+		intervals = []interface{}{flags.EventuallyTimeout}
+	}
+	var failure string
+	localG := gomega.NewGomega(func(message string, callerSkip ...int) {
+		if failure == "" {
+			failure = message
+		}
+	})
+	if localG.Eventually(fn, intervals...).Should(gomega.Succeed()) {
+		return nil
+	}
+	return errors.New(failure)
 }
 
 func (a ECAssertion) eventuallyIntervals() []interface{} {
