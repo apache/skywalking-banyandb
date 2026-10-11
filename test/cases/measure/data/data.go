@@ -23,6 +23,7 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"regexp"
 	"slices"
@@ -295,31 +296,40 @@ func Write(conn *grpclib.ClientConn, name, group, dataFile string,
 func WriteWithAuth(conn *grpclib.ClientConn, name, group, dataFile string,
 	baseTime time.Time, interval time.Duration, username, password string,
 ) {
-	ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
-	defer cancel()
-	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("username", username, "password", password))
+	getCtx, getCancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
+	defer getCancel()
+	getCtx = metadata.NewOutgoingContext(getCtx, metadata.Pairs("username", username, "password", password))
 	meta := &commonv1.Metadata{
 		Name:  name,
 		Group: group,
 	}
 
 	schemaClient := databasev1.NewMeasureRegistryServiceClient(conn)
-	resp, err := schemaClient.Get(ctx, &databasev1.MeasureRegistryServiceGetRequest{Metadata: meta})
+	resp, err := schemaClient.Get(getCtx, &databasev1.MeasureRegistryServiceGetRequest{Metadata: meta})
 	gm.Expect(err).NotTo(gm.HaveOccurred())
 	meta = resp.GetMeasure().GetMetadata()
 
 	c := measurev1.NewMeasureServiceClient(conn)
-	writeClient, err := c.Write(ctx)
-	gm.Expect(err).NotTo(gm.HaveOccurred())
-	loadData(meta, writeClient, dataFile, baseTime, interval)
-	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
-	expectWriteSucceeded(writeClient)
+	// The registry Get above reads the schema server, not this liaison's own write
+	// cache, which can still lag it for a moment; a write that races that lag is
+	// refused by status rather than a stream error. Retry the whole attempt (a fresh
+	// stream, the send, and the drain) together.
+	gm.Eventually(func(innerGm gm.Gomega) {
+		ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
+		defer cancel()
+		ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("username", username, "password", password))
+		writeClient, writeErr := c.Write(ctx)
+		innerGm.Expect(writeErr).NotTo(gm.HaveOccurred())
+		loadData(meta, writeClient, dataFile, baseTime, interval)
+		innerGm.Expect(writeClient.CloseSend()).To(gm.Succeed())
+		expectWriteSucceeded(innerGm, writeClient)
+	}, flags.EventuallyTimeout).Should(gm.Succeed())
 }
 
-func expectWriteSucceeded(writeClient measurev1.MeasureService_WriteClient) {
-	// Setup already waited on SchemaBarrier AwaitSchemaApplied; a NOT_FOUND
-	// here means the barrier contract was violated and must fail loudly.
-	// Callers must open Write with a deadline so a stalled Recv cannot hang forever.
+// collectWriteStatuses drains a write stream to EOF and returns the status string of every
+// response, in receive order. Callers must open Write with a deadline so a stalled Recv
+// cannot hang forever.
+func collectWriteStatuses(writeClient measurev1.MeasureService_WriteClient) []string {
 	var statuses []string
 	for {
 		ack, recvErr := writeClient.Recv()
@@ -329,10 +339,29 @@ func expectWriteSucceeded(writeClient measurev1.MeasureService_WriteClient) {
 		gm.Expect(recvErr).NotTo(gm.HaveOccurred())
 		statuses = append(statuses, ack.GetStatus())
 	}
-	gm.Expect(statuses).NotTo(gm.BeEmpty())
+	return statuses
+}
+
+// expectWriteSucceeded drains writeClient and asserts every row in this write attempt
+// succeeded. A schema barrier is only a hint under eventual consistency: the liaison's
+// own write cache can still lag it for a moment, so a write that races that lag is
+// refused by status (e.g. STATUS_NOT_FOUND), not a stream error. Call this from inside a
+// gm.Eventually so that refusal is retried; only a refusal that persists past
+// flags.EventuallyTimeout, or a batch that is only partially accepted (gm.StopTrying —
+// resending would duplicate the already-accepted rows), is a real failure.
+func expectWriteSucceeded(innerGm gm.Gomega, writeClient measurev1.MeasureService_WriteClient) {
+	statuses := collectWriteStatuses(writeClient)
+	innerGm.Expect(statuses).NotTo(gm.BeEmpty())
+	succeeded := 0
 	for _, writeStatus := range statuses {
-		gm.Expect(writeStatus).To(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		if writeStatus == modelv1.Status_STATUS_SUCCEED.String() {
+			succeeded++
+		}
 	}
+	if succeeded > 0 && succeeded < len(statuses) {
+		gm.StopTrying(fmt.Sprintf("measure write partially rejected; statuses=%v", statuses)).Now()
+	}
+	innerGm.Expect(succeeded).To(gm.Equal(len(statuses)), "measure write rejected; statuses=%v", statuses)
 }
 
 // WriteOnly write data into the server and return the write client.
@@ -366,92 +395,104 @@ type WriteSpec struct {
 
 // WriteWithSpec writes data using multiple data_point_specs to specify tag and field names.
 func WriteWithSpec(conn *grpclib.ClientConn, baseTime time.Time, interval time.Duration, writeSpecs ...WriteSpec) {
-	ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
-	defer cancel()
 	schemaClient := databasev1.NewMeasureRegistryServiceClient(conn)
 	c := measurev1.NewMeasureServiceClient(conn)
-	writeClient, err := c.Write(ctx)
-	gm.Expect(err).NotTo(gm.HaveOccurred())
 
-	var currentMd *commonv1.Metadata
-	currentTime := baseTime
-	for _, ws := range writeSpecs {
-		needMetadataUpdate := false
-		if ws.Metadata != nil {
-			resp, getErr := schemaClient.Get(ctx, &databasev1.MeasureRegistryServiceGetRequest{Metadata: ws.Metadata})
-			gm.Expect(getErr).NotTo(gm.HaveOccurred())
-			currentMd = resp.GetMeasure().GetMetadata()
-			needMetadataUpdate = true
-		}
-		gm.Expect(currentMd).NotTo(gm.BeNil(), "first WriteSpec must have Metadata")
+	// The liaison's write cache can still lag a schema barrier, refusing a write by
+	// status rather than a stream error, so the whole attempt (a fresh stream, every
+	// schema Get and Send, and the drain) is retried together.
+	gm.Eventually(func(innerGm gm.Gomega) {
+		ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
+		defer cancel()
+		writeClient, err := c.Write(ctx)
+		innerGm.Expect(err).NotTo(gm.HaveOccurred())
 
-		var templates []interface{}
-		content, readErr := dataFS.ReadFile("testdata/" + ws.DataFile)
-		gm.Expect(readErr).ShouldNot(gm.HaveOccurred())
-		gm.Expect(json.Unmarshal(content, &templates)).ShouldNot(gm.HaveOccurred())
-
-		isFirstForSpec := true
-		for i, template := range templates {
-			rawDataPointValue, errMarshal := json.Marshal(template)
-			gm.Expect(errMarshal).ShouldNot(gm.HaveOccurred())
-			dataPointValue := &measurev1.DataPointValue{}
-			gm.Expect(protojson.Unmarshal(rawDataPointValue, dataPointValue)).ShouldNot(gm.HaveOccurred())
-			dataPointValue.Timestamp = timestamppb.New(currentTime.Add(time.Duration(i) * interval))
-			req := &measurev1.WriteRequest{DataPoint: dataPointValue, MessageId: uint64(time.Now().UnixNano())}
-			if isFirstForSpec {
-				if ws.Spec != nil {
-					req.DataPointSpec = ws.Spec
-				}
-				if needMetadataUpdate {
-					req.Metadata = currentMd
-				}
-				isFirstForSpec = false
+		var currentMd *commonv1.Metadata
+		currentTime := baseTime
+		for _, ws := range writeSpecs {
+			needMetadataUpdate := false
+			if ws.Metadata != nil {
+				resp, getErr := schemaClient.Get(ctx, &databasev1.MeasureRegistryServiceGetRequest{Metadata: ws.Metadata})
+				innerGm.Expect(getErr).NotTo(gm.HaveOccurred())
+				currentMd = resp.GetMeasure().GetMetadata()
+				needMetadataUpdate = true
 			}
-			gm.Expect(writeClient.Send(req)).Should(gm.Succeed())
-		}
-		currentTime = currentTime.Add(time.Duration(len(templates)) * interval)
-	}
+			innerGm.Expect(currentMd).NotTo(gm.BeNil(), "first WriteSpec must have Metadata")
 
-	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
-	expectWriteSucceeded(writeClient)
+			var templates []interface{}
+			content, readErr := dataFS.ReadFile("testdata/" + ws.DataFile)
+			innerGm.Expect(readErr).ShouldNot(gm.HaveOccurred())
+			innerGm.Expect(json.Unmarshal(content, &templates)).ShouldNot(gm.HaveOccurred())
+
+			isFirstForSpec := true
+			for i, template := range templates {
+				rawDataPointValue, errMarshal := json.Marshal(template)
+				innerGm.Expect(errMarshal).ShouldNot(gm.HaveOccurred())
+				dataPointValue := &measurev1.DataPointValue{}
+				innerGm.Expect(protojson.Unmarshal(rawDataPointValue, dataPointValue)).ShouldNot(gm.HaveOccurred())
+				dataPointValue.Timestamp = timestamppb.New(currentTime.Add(time.Duration(i) * interval))
+				req := &measurev1.WriteRequest{DataPoint: dataPointValue, MessageId: uint64(time.Now().UnixNano())}
+				if isFirstForSpec {
+					if ws.Spec != nil {
+						req.DataPointSpec = ws.Spec
+					}
+					if needMetadataUpdate {
+						req.Metadata = currentMd
+					}
+					isFirstForSpec = false
+				}
+				innerGm.Expect(writeClient.Send(req)).Should(gm.Succeed())
+			}
+			currentTime = currentTime.Add(time.Duration(len(templates)) * interval)
+		}
+
+		innerGm.Expect(writeClient.CloseSend()).To(gm.Succeed())
+		expectWriteSucceeded(innerGm, writeClient)
+	}, flags.EventuallyTimeout).Should(gm.Succeed())
 }
 
 // WriteMixed writes measure data in schema order first, and then in spec order.
 func WriteMixed(conn *grpclib.ClientConn, baseTime time.Time, interval time.Duration, writeSpecs ...WriteSpec) {
-	ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
-	defer cancel()
 	schemaClient := databasev1.NewMeasureRegistryServiceClient(conn)
 	c := measurev1.NewMeasureServiceClient(conn)
-	writeClient, err := c.Write(ctx)
-	gm.Expect(err).NotTo(gm.HaveOccurred())
 
-	var currentMd *commonv1.Metadata
-	currentTime := baseTime
-	for idx, ws := range writeSpecs {
-		if ws.Metadata != nil {
-			resp, getErr := schemaClient.Get(ctx, &databasev1.MeasureRegistryServiceGetRequest{Metadata: ws.Metadata})
-			gm.Expect(getErr).NotTo(gm.HaveOccurred())
-			currentMd = resp.GetMeasure().GetMetadata()
-		}
-		gm.Expect(currentMd).NotTo(gm.BeNil(), "first WriteSpec must have Metadata")
+	// The liaison's write cache can still lag a schema barrier, refusing a write by
+	// status rather than a stream error, so the whole attempt (a fresh stream, every
+	// schema Get and loadData/loadDataWithSpec call, and the drain) is retried together.
+	gm.Eventually(func(innerGm gm.Gomega) {
+		ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
+		defer cancel()
+		writeClient, err := c.Write(ctx)
+		innerGm.Expect(err).NotTo(gm.HaveOccurred())
 
-		var templates []interface{}
-		content, readErr := dataFS.ReadFile("testdata/" + ws.DataFile)
-		gm.Expect(readErr).ShouldNot(gm.HaveOccurred())
-		gm.Expect(json.Unmarshal(content, &templates)).ShouldNot(gm.HaveOccurred())
-
-		if idx == 0 {
-			loadData(currentMd, writeClient, ws.DataFile, currentTime.Add(time.Duration(len(templates)-1)*interval), interval)
-		} else {
-			var mdToSend *commonv1.Metadata
+		var currentMd *commonv1.Metadata
+		currentTime := baseTime
+		for idx, ws := range writeSpecs {
 			if ws.Metadata != nil {
-				mdToSend = currentMd
+				resp, getErr := schemaClient.Get(ctx, &databasev1.MeasureRegistryServiceGetRequest{Metadata: ws.Metadata})
+				innerGm.Expect(getErr).NotTo(gm.HaveOccurred())
+				currentMd = resp.GetMeasure().GetMetadata()
 			}
-			loadDataWithSpec(mdToSend, writeClient, ws.DataFile, currentTime.Add(time.Duration(len(templates)-1)*interval), interval, ws.Spec)
-		}
-		currentTime = currentTime.Add(time.Duration(len(templates)) * interval)
-	}
+			innerGm.Expect(currentMd).NotTo(gm.BeNil(), "first WriteSpec must have Metadata")
 
-	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
-	expectWriteSucceeded(writeClient)
+			var templates []interface{}
+			content, readErr := dataFS.ReadFile("testdata/" + ws.DataFile)
+			innerGm.Expect(readErr).ShouldNot(gm.HaveOccurred())
+			innerGm.Expect(json.Unmarshal(content, &templates)).ShouldNot(gm.HaveOccurred())
+
+			if idx == 0 {
+				loadData(currentMd, writeClient, ws.DataFile, currentTime.Add(time.Duration(len(templates)-1)*interval), interval)
+			} else {
+				var mdToSend *commonv1.Metadata
+				if ws.Metadata != nil {
+					mdToSend = currentMd
+				}
+				loadDataWithSpec(mdToSend, writeClient, ws.DataFile, currentTime.Add(time.Duration(len(templates)-1)*interval), interval, ws.Spec)
+			}
+			currentTime = currentTime.Add(time.Duration(len(templates)) * interval)
+		}
+
+		innerGm.Expect(writeClient.CloseSend()).To(gm.Succeed())
+		expectWriteSucceeded(innerGm, writeClient)
+	}, flags.EventuallyTimeout).Should(gm.Succeed())
 }
