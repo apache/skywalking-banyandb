@@ -193,6 +193,12 @@ func (ms *measureService) validateWriteRequest(writeRequest *measurev1.WriteRequ
 	if metadata.ModRevision > 0 {
 		id := getID(metadata)
 		measureCache, existed := ms.entityRepo.getLocator(id)
+		if !existed && awaitSchemaPresent(func() bool {
+			_, found := ms.entityRepo.getLocator(id)
+			return found
+		}, schemaPresenceWait(ms.maxWaitDuration)) {
+			measureCache, existed = ms.entityRepo.getLocator(id)
+		}
 		if !existed {
 			ms.l.Error().Stringer("written", writeRequest).Msg("measure schema not found")
 			ms.sendReply(metadata, modelv1.Status_STATUS_NOT_FOUND, writeRequest.GetMessageId(), measure)
