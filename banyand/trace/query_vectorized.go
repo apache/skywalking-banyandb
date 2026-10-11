@@ -422,7 +422,9 @@ const traceCompletionWindow = time.Hour
 // When Phase 1 selects at least one trace ID, Phase 2 widens the tables it
 // scans to every segment overlapping the query range extended by
 // traceCompletionWindow on both sides (see widenTablesForTraceCompletion), so
-// a trace whose spans straddle a segment boundary is returned complete. tsdb
+// a trace whose spans straddle a segment boundary is returned complete. The
+// widened lookup is skipped when the segments already selected (selected)
+// cover the widened range with no gap, since it could not add a table. tsdb
 // may be nil (e.g. in tests that do not exercise widening), in which case
 // Phase 2 scans exactly the tables it was given. The returned segments are
 // newly acquired references the caller owns and must release exactly once;
@@ -436,6 +438,7 @@ func (t *trace) buildConsistentVectorizedScanBatch(
 	useSIDX bool,
 	maxTraceSize int,
 	tsdb storage.TSDB[*tsTable, option],
+	selected []storage.Segment[*tsTable, option],
 	timeRange timestamp.TimeRange,
 ) (*scanBatch, []storage.Segment[*tsTable, option], error) {
 	var releasePublicationView func()
@@ -451,7 +454,7 @@ func (t *trace) buildConsistentVectorizedScanBatch(
 
 	scanTables := tables
 	var extraSegments []storage.Segment[*tsTable, option]
-	if tsdb != nil && len(phase1Batch.traceIDsOrder) > 0 {
+	if tsdb != nil && len(phase1Batch.traceIDsOrder) > 0 && !segmentsCover(selected, traceCompletionRange(timeRange)) {
 		var widenErr error
 		scanTables, extraSegments, widenErr = widenTablesForTraceCompletion(tsdb, timeRange, tables)
 		if widenErr != nil {
@@ -465,6 +468,53 @@ func (t *trace) buildConsistentVectorizedScanBatch(
 		return nil, nil, scanErr
 	}
 	return batch, extraSegments, nil
+}
+
+// traceCompletionRange returns timeRange extended by traceCompletionWindow on
+// both sides, inclusive at both ends.
+func traceCompletionRange(timeRange timestamp.TimeRange) timestamp.TimeRange {
+	return timestamp.NewInclusiveTimeRange(
+		timeRange.Start.Add(-traceCompletionWindow),
+		timeRange.End.Add(traceCompletionWindow),
+	)
+}
+
+// segmentsCover reports whether the segments' time ranges cover target with
+// no gap. A query usually selects a single segment, which is checked without
+// allocating.
+func segmentsCover(segments []storage.Segment[*tsTable, option], target timestamp.TimeRange) bool {
+	switch len(segments) {
+	case 0:
+		return false
+	case 1:
+		segmentRange := segments[0].GetTimeRange()
+		return !segmentRange.Start.After(target.Start) && segmentRange.End.After(target.End)
+	}
+	ranges := make([]timestamp.TimeRange, 0, len(segments))
+	for _, segment := range segments {
+		ranges = append(ranges, segment.GetTimeRange())
+	}
+	return rangesCover(ranges, target)
+}
+
+// rangesCover reports whether ranges, taken together, cover target with no
+// gap. Segment ranges are [Start, End); target is inclusive at both ends, so
+// coverage must reach past target.End. ranges is sorted in place.
+func rangesCover(ranges []timestamp.TimeRange, target timestamp.TimeRange) bool {
+	slices.SortFunc(ranges, func(a, b timestamp.TimeRange) int { return a.Start.Compare(b.Start) })
+	covered := target.Start
+	for _, segmentRange := range ranges {
+		if segmentRange.Start.After(covered) {
+			return false
+		}
+		if segmentRange.End.After(covered) {
+			covered = segmentRange.End
+		}
+		if covered.After(target.End) {
+			return true
+		}
+	}
+	return false
 }
 
 // widenTablesForTraceCompletion selects the segments overlapping
@@ -482,11 +532,7 @@ func widenTablesForTraceCompletion(
 	timeRange timestamp.TimeRange,
 	tables []*tsTable,
 ) ([]*tsTable, []storage.Segment[*tsTable, option], error) {
-	widened := timestamp.NewInclusiveTimeRange(
-		timeRange.Start.Add(-traceCompletionWindow),
-		timeRange.End.Add(traceCompletionWindow),
-	)
-	candidateSegments, err := tsdb.SelectSegments(widened, true)
+	candidateSegments, err := tsdb.SelectSegments(traceCompletionRange(timeRange), true)
 	if err != nil {
 		return tables, nil, err
 	}

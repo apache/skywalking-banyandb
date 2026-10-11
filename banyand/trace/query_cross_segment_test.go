@@ -273,3 +273,42 @@ func TestOrderByQueryCompletesSpansAcrossSegmentBoundary(t *testing.T) {
 		"must recover the neighboring segment's span (the fix) but not a span beyond "+
 			"traceCompletionWindow in a third segment (the documented bound)")
 }
+
+func TestRangesCover(t *testing.T) {
+	day := func(d int) time.Time { return time.Date(2026, 1, d, 0, 0, 0, 0, time.Local) }
+	segment := timestamp.NewSectionTimeRange
+	inclusive := timestamp.NewInclusiveTimeRange
+	tests := []struct {
+		target timestamp.TimeRange
+		name   string
+		ranges []timestamp.TimeRange
+		want   bool
+	}{
+		{
+			name: "inside one segment", ranges: []timestamp.TimeRange{segment(day(1), day(2))},
+			target: inclusive(day(1).Add(2*time.Hour), day(1).Add(5*time.Hour)), want: true,
+		},
+		{
+			name: "reaches the exclusive end", ranges: []timestamp.TimeRange{segment(day(1), day(2))},
+			target: inclusive(day(1).Add(2*time.Hour), day(2)), want: false,
+		},
+		{
+			name: "starts before the first segment", ranges: []timestamp.TimeRange{segment(day(1), day(2))},
+			target: inclusive(day(1).Add(-time.Minute), day(1).Add(time.Hour)), want: false,
+		},
+		{
+			name: "two adjacent segments, unsorted", ranges: []timestamp.TimeRange{segment(day(2), day(3)), segment(day(1), day(2))},
+			target: inclusive(day(1).Add(23*time.Hour), day(2).Add(time.Hour)), want: true,
+		},
+		{
+			name: "gap between segments", ranges: []timestamp.TimeRange{segment(day(1), day(2)), segment(day(3), day(4))},
+			target: inclusive(day(1).Add(23*time.Hour), day(3).Add(time.Hour)), want: false,
+		},
+		{name: "no segments", target: inclusive(day(1), day(1).Add(time.Hour)), want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, rangesCover(tc.ranges, tc.target))
+		})
+	}
+}

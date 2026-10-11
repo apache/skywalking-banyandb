@@ -203,7 +203,7 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 	var vectorizedScanBatch *scanBatch
 	var extraSegments []storage.Segment[*tsTable, option]
 	if vectorizedScanBatch, extraSegments, err = t.buildConsistentVectorizedScanBatch(
-		pipelineCtx, tables, qo, sidxInstances, sidxQueryRequest, useSIDXStreaming, tqo.MaxTraceSize, tsdb, *tqo.TimeRange,
+		pipelineCtx, tables, qo, sidxInstances, sidxQueryRequest, useSIDXStreaming, tqo.MaxTraceSize, tsdb, segments, *tqo.TimeRange,
 	); err != nil {
 		return nil, err
 	}
