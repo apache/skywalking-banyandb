@@ -21,7 +21,6 @@ package deletion
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -433,11 +432,11 @@ func sendMeasureBatchToGroup(writeClient measurev1.MeasureServiceClient, group, 
 	return statuses, nil
 }
 
-// writeMeasureDataToGroup retries sendMeasureBatchToGroup while every row in the batch is
-// refused — the liaison's write cache can still lag a schema barrier, and a refused row
-// stores nothing, so repeating the whole batch is safe. If some rows succeed and some are
-// refused, the batch cannot be safely repeated without duplicating the accepted rows, so it
-// stops retrying at once.
+// writeMeasureDataToGroup retries sendMeasureBatchToGroup until every row is accepted. Rows can be
+// refused by status until the liaison's schema cache catches up. A measure row is keyed by
+// series and timestamp with the latest version winning, so resending the batch with the same
+// values is idempotent: any refusal, including a partly accepted batch, is retried within
+// flags.EventuallyTimeout.
 func writeMeasureDataToGroup(writeClient measurev1.MeasureServiceClient, group, measure string, count int) {
 	gm.Eventually(func(innerGm gm.Gomega) {
 		statuses, sendErr := sendMeasureBatchToGroup(writeClient, group, measure, count)
@@ -448,9 +447,6 @@ func writeMeasureDataToGroup(writeClient measurev1.MeasureServiceClient, group, 
 			if writeStatus == modelv1.Status_STATUS_SUCCEED.String() {
 				succeeded++
 			}
-		}
-		if succeeded > 0 && succeeded < count {
-			gm.StopTrying(fmt.Sprintf("measure write to %s/%s partially rejected; statuses=%v", group, measure, statuses)).Now()
 		}
 		innerGm.Expect(succeeded).Should(gm.Equal(count),
 			"measure write to %s/%s rejected; statuses=%v", group, measure, statuses)

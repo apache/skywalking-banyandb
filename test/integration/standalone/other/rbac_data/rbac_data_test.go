@@ -333,12 +333,12 @@ func sendMeasureFrames(a actor, client measurev1.MeasureServiceClient, frames ..
 	return nil
 }
 
-// seedMeasureFrames sends frames and retries while every frame in the batch is refused.
+// seedMeasureFrames sends frames and retries until every frame is accepted.
 // AwaitSchemaApplied in the suite's BeforeEach only confirms the schema registry; this
 // liaison's own entity cache can still lag it for a moment, refusing a frame by status (not by
-// a stream error) until it catches up. A refused frame stores nothing, so retrying the whole
-// batch is safe; a batch that is only partly accepted cannot be retried without duplicating the
-// accepted frames, so it stops trying at once.
+// a stream error) until it catches up. A refused frame stores nothing, and a measure row is keyed
+// by series and timestamp with the latest version winning, so resending the whole batch, even a
+// partly accepted one, is idempotent.
 func seedMeasureFrames(a actor, client measurev1.MeasureServiceClient, frames ...*measurev1.WriteRequest) {
 	gm.EventuallyWithOffset(1, func(innerGm gm.Gomega) {
 		statuses, sendErr := sendMeasureFrameStatuses(a, client, frames...)
@@ -349,9 +349,6 @@ func seedMeasureFrames(a actor, client measurev1.MeasureServiceClient, frames ..
 			if writeStatus == modelv1.Status_STATUS_SUCCEED.String() {
 				succeeded++
 			}
-		}
-		if succeeded > 0 && succeeded < len(frames) {
-			gm.StopTrying(fmt.Sprintf("seed write by %s partially rejected; statuses=%v", a.name, statuses)).Now()
 		}
 		innerGm.Expect(succeeded).To(gm.Equal(len(frames)), "seed write by %s rejected; statuses=%v", a.name, statuses)
 	}, flags.EventuallyTimeout).Should(gm.Succeed())

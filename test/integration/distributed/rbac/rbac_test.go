@@ -18,7 +18,6 @@ package rbac_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -189,13 +188,12 @@ func sendDistributedFrameStatuses(
 	}
 }
 
-// seedDistributedFrames sends frames through actor and retries while every frame in the batch
-// is refused. The schema barrier awaited before this call only confirms liaison B's cache
+// seedDistributedFrames sends frames through actor and retries until every frame is accepted. The schema barrier awaited before this call only confirms liaison B's cache
 // (AwaitSchemaApplied is issued against barrierB); liaison A, which this seed writes through,
 // can still lag the same schema for a moment and refuse a frame by status rather than a stream
-// error. A refused frame stores nothing, so retrying the whole batch is safe; a batch that is
-// only partly accepted cannot be retried without duplicating the accepted frames, so it stops
-// trying at once.
+// error. A refused frame stores nothing, and a measure row is keyed by series and timestamp with
+// the latest version winning, so resending the whole batch, even a partly accepted one, is
+// idempotent.
 func seedDistributedFrames(
 	actor distributedActor,
 	client measurev1.MeasureServiceClient,
@@ -210,9 +208,6 @@ func seedDistributedFrames(
 			if writeStatus == modelv1.Status_STATUS_SUCCEED.String() {
 				succeeded++
 			}
-		}
-		if succeeded > 0 && succeeded < len(frames) {
-			gm.StopTrying(fmt.Sprintf("seed write by %s partially rejected; statuses=%v", actor.username, statuses)).Now()
 		}
 		innerGm.Expect(succeeded).To(gm.Equal(len(frames)), "seed write by %s rejected; statuses=%v", actor.username, statuses)
 	}, flags.EventuallyTimeout).Should(gm.Succeed())

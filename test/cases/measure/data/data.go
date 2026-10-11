@@ -23,7 +23,6 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"regexp"
 	"slices"
@@ -346,9 +345,9 @@ func collectWriteStatuses(writeClient measurev1.MeasureService_WriteClient) []st
 // succeeded. A schema barrier is only a hint under eventual consistency: the liaison's
 // own write cache can still lag it for a moment, so a write that races that lag is
 // refused by status (e.g. STATUS_NOT_FOUND), not a stream error. Call this from inside a
-// gm.Eventually so that refusal is retried; only a refusal that persists past
-// flags.EventuallyTimeout, or a batch that is only partially accepted (gm.StopTrying —
-// resending would duplicate the already-accepted rows), is a real failure.
+// gm.Eventually so that refusal is retried. A measure row is keyed by series and timestamp
+// with the latest version winning, so resending a partly accepted batch is idempotent;
+// only a refusal that persists past flags.EventuallyTimeout is a real failure.
 func expectWriteSucceeded(innerGm gm.Gomega, writeClient measurev1.MeasureService_WriteClient) {
 	statuses := collectWriteStatuses(writeClient)
 	innerGm.Expect(statuses).NotTo(gm.BeEmpty())
@@ -357,9 +356,6 @@ func expectWriteSucceeded(innerGm gm.Gomega, writeClient measurev1.MeasureServic
 		if writeStatus == modelv1.Status_STATUS_SUCCEED.String() {
 			succeeded++
 		}
-	}
-	if succeeded > 0 && succeeded < len(statuses) {
-		gm.StopTrying(fmt.Sprintf("measure write partially rejected; statuses=%v", statuses)).Now()
 	}
 	innerGm.Expect(succeeded).To(gm.Equal(len(statuses)), "measure write rejected; statuses=%v", statuses)
 }
