@@ -325,7 +325,7 @@ func TestStreamVecDispatch_FilteredIndexOrderProtoStillStrips(t *testing.T) {
 	t.Run("whole window", func(t *testing.T) {
 		p := newOracleStandaloneProcessor(t)
 		req := oracleRequest([]string{oracleClientTag}, true, oracleIndexRule)
-		plan := newOraclePlan(t, req, executedTags, oracleOrderTag)
+		plan := newOraclePlan(t, req, executedTags)
 
 		handled, resp := p.tryStreamVecDispatch(context.Background(), plan, req, false)
 		require.True(t, handled)
@@ -338,7 +338,7 @@ func TestStreamVecDispatch_FilteredIndexOrderProtoStillStrips(t *testing.T) {
 		p := newOracleStandaloneProcessor(t)
 		req := oracleRequest([]string{oracleClientTag}, true, oracleIndexRule)
 		req.Offset, req.Limit = 1, 1
-		plan := newOraclePlan(t, req, executedTags, oracleOrderTag)
+		plan := newOraclePlan(t, req, executedTags)
 
 		handled, resp := p.tryStreamVecDispatch(context.Background(), plan, req, false)
 		require.True(t, handled)
@@ -352,11 +352,14 @@ func TestStreamVecDispatch_FilteredIndexOrderProtoStillStrips(t *testing.T) {
 // newOraclePlan runs the production analyzer over the request, so the
 // *limit → *tagFilterPlan → *localIndexScan shape and the hasFilter decision are
 // the real ones rather than a struct literal written to match.
+//
+// It builds the INDEX-order corpus, with the OrderKey column. The timestamp-order
+// arms use newOracleCapPlan instead, which carries its own corpus.
 // executedTags must list the tag columns the ANALYZED scan requests, which is the
 // client projection plus any criteria-only tag plus the ordering tag.
-func newOraclePlan(t *testing.T, req *streamv1.QueryRequest, executedTags []string, orderTag string) logical.Plan {
+func newOraclePlan(t *testing.T, req *streamv1.QueryRequest, executedTags []string) logical.Plan {
 	t.Helper()
-	return newOracleBatchedPlan(t, req, executedTags, orderTag, len(oracleRows()))
+	return newOracleBatchedPlan(t, req, executedTags, oracleOrderTag, len(oracleRows()))
 }
 
 // newOracleBatchedPlan is newOraclePlan with the corpus split across batches of
@@ -445,7 +448,7 @@ func TestStreamVecDispatch_FilteredQueryEmitsFrame(t *testing.T) {
 	req := oracleRequest([]string{oracleClientTag}, true, oracleIndexRule)
 	// The analyzer appends `state` for the criteria, and the scan appends `sequence`
 	// for the OrderKey, so the executed schema carries all three tag columns.
-	plan := newOraclePlan(t, req, []string{oracleClientTag, oracleCriteriaTag, oracleOrderTag}, oracleOrderTag)
+	plan := newOraclePlan(t, req, []string{oracleClientTag, oracleCriteriaTag, oracleOrderTag})
 
 	handled, resp := p.tryStreamVecDispatch(context.Background(), plan, req, false)
 	require.True(t, handled, "the filtered index-order shape must be vec-eligible")
@@ -488,7 +491,7 @@ func TestStreamVecDispatch_FilteredQueryEmitsFrame(t *testing.T) {
 func TestStreamVecDispatch_UnfilteredQueryEmitsFrame(t *testing.T) {
 	p := newOracleProcessor(t)
 	req := oracleRequest([]string{oracleClientTag, oracleOrderTag}, false, oracleIndexRule)
-	plan := newOraclePlan(t, req, []string{oracleClientTag, oracleOrderTag}, oracleOrderTag)
+	plan := newOraclePlan(t, req, []string{oracleClientTag, oracleOrderTag})
 
 	handled, resp := p.tryStreamVecDispatch(context.Background(), plan, req, false)
 	require.True(t, handled)
@@ -521,7 +524,7 @@ func TestStreamVecDispatch_HiddenOrderTagEmitsFrame(t *testing.T) {
 	req := oracleRequest([]string{oracleClientTag}, false, oracleIndexRule)
 	// No criteria, so the analyzer appends nothing; the scan still appends `sequence`
 	// for the OrderKey.
-	plan := newOraclePlan(t, req, []string{oracleClientTag, oracleOrderTag}, oracleOrderTag)
+	plan := newOraclePlan(t, req, []string{oracleClientTag, oracleOrderTag})
 
 	handled, resp := p.tryStreamVecDispatch(context.Background(), plan, req, false)
 	require.True(t, handled)
@@ -551,60 +554,113 @@ func TestStreamVecDispatch_HiddenOrderTagEmitsFrame(t *testing.T) {
 	require.Equal(t, []string{"old", "other"}, gotServices)
 }
 
-// TestStreamVecDispatch_TimeOrderFilterStaysBehindTheCap is the
-// apache/skywalking#14067 R2 guard. A timestamp-order scan caps BEFORE it filters, so
-// its filter has to stay after the cap or the merge fills the limit from rows the row
-// path never saw. Moving that filter from the elements onto the columns must not
-// change the answer, under-fill included.
+// Under-fill fixture for apache/skywalking#14067 R2. Six rows, a limit of three, so
+// the merge cap genuinely excludes rows, which the three-row oracle table could never
+// do against a limit of ten.
 //
-// The oracle here is the PROTO egress, whose element filter this change does not
-// touch. Asserting frame == proto therefore pins "R2 changed nothing" directly,
-// rather than restating a hand-calculated count that could drift with the fixture.
-func TestStreamVecDispatch_TimeOrderFilterStaysBehindTheCap(t *testing.T) {
-	// Timestamp order: no index rule, so scanFromInput pushes no filter down and the
-	// executed schema carries no OrderKey column.
-	executedTags := []string{oracleClientTag, oracleCriteriaTag}
+//	ts=1  ID=1  state=open    service=cap-1    <- inside the cap, matches
+//	ts=2  ID=2  state=closed  service=cap-2    <- inside the cap, REJECTED
+//	ts=3  ID=3  state=open    service=cap-3    <- inside the cap, matches
+//	ts=4  ID=4  state=open    service=past-4   <- MATCHES, but beyond the cap
+//	ts=5  ID=5  state=open    service=past-5
+//	ts=6  ID=6  state=open    service=past-6
+//
+// Hand-calculated expected answer, ascending timestamp order, criteria state=open,
+// limit 3, offset 0:
+//
+//	cap keeps ts 1,2,3  ->  filter drops ts 2  ->  [cap-1, cap-3]
+//
+// TWO rows for a limit of three. That gap IS the under-fill the row path produced and
+// the issue forbids changing. A filter that ran AHEAD of the cap would see five
+// matching rows and fill the limit with [cap-1, cap-3, past-4], so the literal answer
+// below fails the moment the stage order moves.
+const (
+	oracleCapLimit     = 3
+	oracleCapRejectRow = "cap-2"
+	oracleCapBeyondRow = "past-4"
+)
 
-	protoReq := oracleRequest([]string{oracleClientTag}, true, "")
-	protoPlan := newOraclePlan(t, protoReq, executedTags, "")
-	protoCriteria, hasFilter := logical_stream.VecTagFilter(protoPlan)
-	require.True(t, hasFilter)
-	require.False(t, protoCriteria.PreMerged,
-		"a timestamp-order scan must NOT push the filter down, or this test proves nothing")
-
-	standalone := newOracleStandaloneProcessor(t)
-	handled, protoResp := standalone.tryStreamVecDispatch(context.Background(), protoPlan, protoReq, false)
-	require.True(t, handled)
-	response, ok := protoResp.Data().(*streamv1.QueryResponse)
-	require.True(t, ok, "standalone emitted %T, not a proto response", protoResp.Data())
-	wantServices := oracleProtoServices(t, response.GetElements())
-	// Guard against a vacuous pass: two empty lists compare equal and prove nothing.
-	require.NotEmpty(t, wantServices, "the proto oracle returned nothing, so the parity check is empty")
-	t.Logf("timestamp-order oracle, from the untouched proto egress: %v", wantServices)
-
-	// Same query on a data node. The columnar filter replaces the element filter.
-	dataNode := newOracleProcessor(t)
-	frameReq := oracleRequest([]string{oracleClientTag}, true, "")
-	framePlan := newOraclePlan(t, frameReq, executedTags, "")
-	handled, frameResp := dataNode.tryStreamVecDispatch(context.Background(), framePlan, frameReq, false)
-	require.True(t, handled)
-	body, ok := frameResp.Data().([]byte)
-	require.True(t, ok, "a filtered timestamp-order query emitted %T, not a columnar frame body", frameResp.Data())
-
-	batch, err := streamframe.Decode(body)
-	require.NoError(t, err)
-	_, hasState := batch.Schema.TagIndex(oracleFamily, oracleCriteriaTag)
-	require.False(t, hasState, "the criteria-only tag %q leaked into the frame", oracleCriteriaTag)
-
-	serviceIdx, ok := batch.Schema.TagIndex(oracleFamily, oracleClientTag)
-	require.True(t, ok)
-	serviceData := batch.Columns[serviceIdx].(*vectorized.TypedColumn[*modelv1.TagValue]).Data()
-	var gotServices []string
-	for _, rowIdx := range oracleActiveRows(batch) {
-		gotServices = append(gotServices, serviceData[rowIdx].GetStr().GetValue())
+func oracleCapRows() []oracleRow {
+	return []oracleRow{
+		{elemID: 1, state: oracleStateWant, service: "cap-1"},
+		{elemID: 2, state: oracleStateFail, service: oracleCapRejectRow},
+		{elemID: 3, state: oracleStateWant, service: "cap-3"},
+		{elemID: 4, state: oracleStateWant, service: oracleCapBeyondRow},
+		{elemID: 5, state: oracleStateWant, service: "past-5"},
+		{elemID: 6, state: oracleStateWant, service: "past-6"},
 	}
-	require.Equal(t, wantServices, gotServices,
-		"the columnar filter changed the timestamp-order answer, so the under-fill moved")
+}
+
+// newOracleCapPlan builds the timestamp-order plan over oracleCapRows. Timestamp order
+// means no index rule, so the scan takes no pre-merge filter and no OrderKey column.
+func newOracleCapPlan(t *testing.T, req *streamv1.QueryRequest) logical.Plan {
+	t.Helper()
+	executedTags := []string{oracleClientTag, oracleCriteriaTag}
+	sch, err := logical_stream.BuildSchema(oracleStreamSchema(), oracleIndexRules())
+	require.NoError(t, err)
+	batchSchema := oracleBatchSchema(executedTags, "")
+	ec := &oracleExecContext{src: &oracleVecSource{
+		schema:  batchSchema,
+		batches: []*vectorized.RecordBatch{oracleBatchFromRows(batchSchema, executedTags, oracleCapRows())},
+	}}
+	plan, err := logical_stream.Analyze(req, []*commonv1.Metadata{oracleStreamSchema().GetMetadata()},
+		[]logical.Schema{sch}, []executor.StreamExecutionContext{ec})
+	require.NoError(t, err)
+	return plan
+}
+
+// TestStreamVecDispatch_TimeOrderFilterStaysBehindTheCap is the
+// apache/skywalking#14067 R2 guard: a timestamp-order scan caps BEFORE it filters, so
+// its filter must stay after the cap or the merge fills the limit from rows the row
+// path never saw.
+//
+// The expected values are the hand-calculated ones above, not values read back from
+// the protobuf implementation. That matters more now that both egresses share one
+// columnar stage: a frame-against-protobuf comparison would compare the same code
+// with itself and pass whatever the stage did.
+func TestStreamVecDispatch_TimeOrderFilterStaysBehindTheCap(t *testing.T) {
+	wantServices := []string{"cap-1", "cap-3"}
+
+	assertUnderFilled := func(t *testing.T, got []string) {
+		t.Helper()
+		require.Equal(t, wantServices, got,
+			"the timestamp-order answer changed, so the filter no longer sits behind the cap")
+		require.Len(t, got, 2, "the limit is 3 and the answer must stay under-filled at 2")
+		require.NotContains(t, got, oracleCapBeyondRow,
+			"a matching row from beyond the cap came back, so the filter ran ahead of the merge")
+		require.NotContains(t, got, oracleCapRejectRow, "a rejected row came back")
+	}
+
+	t.Run("frame", func(t *testing.T) {
+		p := newOracleProcessor(t)
+		req := oracleRequest([]string{oracleClientTag}, true, "")
+		req.Limit = oracleCapLimit
+		plan := newOracleCapPlan(t, req)
+
+		handled, resp := p.tryStreamVecDispatch(context.Background(), plan, req, false)
+		require.True(t, handled)
+		body, ok := resp.Data().([]byte)
+		require.True(t, ok, "the data node emitted %T, not a columnar frame body", resp.Data())
+
+		batch, err := streamframe.Decode(body)
+		require.NoError(t, err)
+		_, hasState := batch.Schema.TagIndex(oracleFamily, oracleCriteriaTag)
+		require.False(t, hasState, "the criteria-only tag %q leaked into the frame", oracleCriteriaTag)
+		assertUnderFilled(t, oracleFrameServices(t, batch))
+	})
+
+	t.Run("protobuf", func(t *testing.T) {
+		p := newOracleStandaloneProcessor(t)
+		req := oracleRequest([]string{oracleClientTag}, true, "")
+		req.Limit = oracleCapLimit
+		plan := newOracleCapPlan(t, req)
+
+		handled, resp := p.tryStreamVecDispatch(context.Background(), plan, req, false)
+		require.True(t, handled)
+		response, ok := resp.Data().(*streamv1.QueryResponse)
+		require.True(t, ok, "standalone emitted %T, not a proto response", resp.Data())
+		assertUnderFilled(t, oracleProtoServices(t, response.GetElements()))
+	})
 }
 
 // TestStreamVecDispatch_CancelledFilteredQueryFailsClosed is the
@@ -618,7 +674,7 @@ func TestStreamVecDispatch_TimeOrderFilterStaysBehindTheCap(t *testing.T) {
 func TestStreamVecDispatch_CancelledFilteredQueryFailsClosed(t *testing.T) {
 	p := newOracleProcessor(t)
 	req := oracleRequest([]string{oracleClientTag}, true, oracleIndexRule)
-	plan := newOraclePlan(t, req, []string{oracleClientTag, oracleCriteriaTag, oracleOrderTag}, oracleOrderTag)
+	plan := newOraclePlan(t, req, []string{oracleClientTag, oracleCriteriaTag, oracleOrderTag})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -699,7 +755,7 @@ func TestStreamVecDispatch_FilteredQueryAcrossBatches(t *testing.T) {
 func TestStreamVecDispatch_TracedFilteredQueryStaysProto(t *testing.T) {
 	p := newOracleProcessor(t)
 	req := oracleRequest([]string{oracleClientTag}, true, oracleIndexRule)
-	plan := newOraclePlan(t, req, []string{oracleClientTag, oracleCriteriaTag, oracleOrderTag}, oracleOrderTag)
+	plan := newOraclePlan(t, req, []string{oracleClientTag, oracleCriteriaTag, oracleOrderTag})
 
 	// traced=true is the only difference from TestStreamVecDispatch_FilteredQueryEmitsFrame.
 	handled, resp := p.tryStreamVecDispatch(context.Background(), plan, req, true)
