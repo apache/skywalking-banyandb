@@ -24,7 +24,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -65,10 +64,6 @@ const (
 	ModeProperty = metadata.RegistryModeProperty
 	// ModeNone is the none mode for node discovery (standalone).
 	ModeNone = metadata.NodeDiscoveryModeNone
-
-	// internalTopNResultMeasureName is the measure the measure subsystem auto-provisions
-	// in every measure group; collectPreloadedSchemaKeys skips it (see its use below).
-	internalTopNResultMeasureName = "_top_n_result"
 )
 
 // NodeDiscoveryConfig configures node discovery mode.
@@ -861,35 +856,21 @@ func authContext(username, password string) context.Context {
 }
 
 func awaitPreloadedSchemasApplied(conn *grpclib.ClientConn, username, password string) {
+	keys, minRevisions := collectPreloadedSchemaKeys(conn, username, password)
+	if len(keys) == 0 {
+		return
+	}
 	barrierClient := schemav1.NewSchemaBarrierServiceClient(conn)
-	// A distributed cluster can take a few rounds to converge: besides the schemas the
-	// caller preloaded, each data node also auto-creates its own internal objects (e.g. the
-	// property-gossip stream), and those can still be mid-replication when this barrier
-	// first asks. Poll in short chunks within the overall flags.EventuallyTimeout budget
-	// instead of a single all-or-nothing wait, re-collecting keys/revisions each round in
-	// case the registry itself is still changing.
-	const pollTimeout = 2 * time.Second
-	gomega.Eventually(func(g gomega.Gomega) {
-		keys, minRevisions := collectPreloadedSchemaKeys(conn, username, password)
-		if len(keys) == 0 {
-			return
-		}
-		// The client deadline must outlive pollTimeout below: the server blocks internally
-		// for up to that long before replying with applied=false, and a client ctx of the
-		// same duration can expire right as that reply is in flight, surfacing as
-		// DeadlineExceeded instead of the graceful applied=false this loop would otherwise
-		// just retry.
-		ctx, cancel := context.WithTimeout(authContext(username, password), pollTimeout+5*time.Second)
-		defer cancel()
-		resp, awaitErr := barrierClient.AwaitSchemaApplied(ctx, &schemav1.AwaitSchemaAppliedRequest{
-			Keys:         keys,
-			MinRevisions: minRevisions,
-			Timeout:      durationpb.New(pollTimeout),
-		})
-		g.Expect(awaitErr).NotTo(gomega.HaveOccurred())
-		g.Expect(resp.GetApplied()).To(gomega.BeTrue(),
-			"preloaded schemas not applied to local caches; laggards=%v", resp.GetLaggards())
-	}, testflags.EventuallyTimeout).Should(gomega.Succeed())
+	ctx, cancel := context.WithTimeout(authContext(username, password), testflags.EventuallyTimeout)
+	defer cancel()
+	resp, awaitErr := barrierClient.AwaitSchemaApplied(ctx, &schemav1.AwaitSchemaAppliedRequest{
+		Keys:         keys,
+		MinRevisions: minRevisions,
+		Timeout:      durationpb.New(testflags.EventuallyTimeout),
+	})
+	gomega.Expect(awaitErr).NotTo(gomega.HaveOccurred())
+	gomega.Expect(resp.GetApplied()).To(gomega.BeTrue(),
+		"preloaded schemas not applied to local caches; laggards=%v", resp.GetLaggards())
 }
 
 func collectPreloadedSchemaKeys(conn *grpclib.ClientConn, username, password string) ([]*schemav1.SchemaKey, []int64) {
@@ -901,14 +882,6 @@ func collectPreloadedSchemaKeys(conn *grpclib.ClientConn, username, password str
 	var minRevisions []int64
 	for _, grp := range groupResp.GetGroup() {
 		groupName := grp.GetMetadata().GetName()
-		// Internal/system groups (leading underscore, e.g. "_property_gossip",
-		// "_deletion_task") are the product's own bookkeeping, not schema this test
-		// preloaded, and are not necessarily replicated to every data node's cache the
-		// way a user-created schema is — barriering on them can wait forever for a key
-		// that was never meant to be universally present.
-		if strings.HasPrefix(groupName, "_") {
-			continue
-		}
 		switch grp.GetCatalog() {
 		case commonv1.Catalog_CATALOG_STREAM:
 			streamResp, listErr := databasev1.NewStreamRegistryServiceClient(conn).List(
@@ -927,14 +900,6 @@ func collectPreloadedSchemaKeys(conn *grpclib.ClientConn, username, password str
 			gomega.Expect(listErr).NotTo(gomega.HaveOccurred())
 			for _, measure := range measureResp.GetMeasure() {
 				meta := measure.GetMetadata()
-				// _top_n_result is auto-provisioned by the measure subsystem for every
-				// measure group, asynchronously and outside this test's own preload
-				// list; barriering on it races the same out-of-order-event watermark
-				// issue this whole suite of fixes is about, for an object the test
-				// never asked for.
-				if meta.GetName() == internalTopNResultMeasureName {
-					continue
-				}
 				keys = append(keys, &schemav1.SchemaKey{
 					Kind: "measure", Group: groupName, Name: meta.GetName(),
 				})
@@ -1024,13 +989,7 @@ func waitForActiveDataNodesWithAuth(grpcAddr string, config *ClusterConfig, user
 	for _, kind := range config.getLoadedKinds() {
 		waitForSchemaKind(conn, kind, username, password)
 	}
-	// waitForSchemaKind only confirms the registry has synced the preloaded schemas; writes
-	// validate against this liaison's own entityRepo / NodeRepoRegistry, which can still lag
-	// the registry. Barrier on that cache the same way the standalone path
-	// (waitForSchemaSyncWithAuth) already does, instead of a blind sleep that papers over the
-	// common case without bounding the tail. This barrier is itself a hint — a schema event
-	// can be applied out of revision order — so callers seeding data still retry a refusal.
-	awaitPreloadedSchemasApplied(conn, username, password)
+	time.Sleep(5 * time.Second)
 }
 
 func waitForSchemaKind(conn *grpclib.ClientConn, kind schema.Kind, username, password string) {
