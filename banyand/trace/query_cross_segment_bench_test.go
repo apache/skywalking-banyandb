@@ -88,7 +88,9 @@ func benchmarkCrossSegmentTraceIDQuery(b *testing.B, nearBoundary bool) {
 		if err != nil {
 			b.Fatalf("query failed: %v", err)
 		}
-		for result.Pull() != nil {
+		// Drain every result so the benchmark pays the full assembly cost.
+		for pulled := result.Pull(); pulled != nil; pulled = result.Pull() {
+			_ = pulled
 		}
 		result.Release()
 	}
