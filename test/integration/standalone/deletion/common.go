@@ -21,6 +21,7 @@ package deletion
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -34,12 +35,14 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -91,6 +94,7 @@ var _ = g.Describe("GroupDeletion", func() {
 	var groupClient databasev1.GroupRegistryServiceClient
 	var measureRegClient databasev1.MeasureRegistryServiceClient
 	var measureWriteClient measurev1.MeasureServiceClient
+	var measureBarrierClient schemav1.SchemaBarrierServiceClient
 
 	g.BeforeEach(func() {
 		goods = gleak.Goroutines()
@@ -102,6 +106,7 @@ var _ = g.Describe("GroupDeletion", func() {
 		groupClient = databasev1.NewGroupRegistryServiceClient(conn)
 		measureRegClient = databasev1.NewMeasureRegistryServiceClient(conn)
 		measureWriteClient = measurev1.NewMeasureServiceClient(conn)
+		measureBarrierClient = schemav1.NewSchemaBarrierServiceClient(conn)
 	})
 
 	g.AfterEach(func() {
@@ -200,7 +205,7 @@ var _ = g.Describe("GroupDeletion", func() {
 			},
 		})
 		gm.Expect(err).ShouldNot(gm.HaveOccurred())
-		createMeasureInGroup(measureRegClient, groupName, measureName)
+		createMeasureInGroup(measureRegClient, measureBarrierClient, groupName, measureName)
 		writeMeasureDataToGroup(measureWriteClient, groupName, measureName, 5)
 
 		g.By("Verifying group data directory exists on disk")
@@ -267,7 +272,7 @@ var _ = g.Describe("GroupDeletion", func() {
 			},
 		})
 		gm.Expect(err).ShouldNot(gm.HaveOccurred())
-		createMeasureInGroup(measureRegClient, groupName, measureName)
+		createMeasureInGroup(measureRegClient, measureBarrierClient, groupName, measureName)
 		writeMeasureDataToGroup(measureWriteClient, groupName, measureName, 5)
 
 		g.By("Deleting the group with force=true")
@@ -309,7 +314,7 @@ var _ = g.Describe("GroupDeletion", func() {
 			})
 			return createErr
 		}, flags.EventuallyTimeout).Should(gm.Succeed())
-		createMeasureInGroup(measureRegClient, groupName, measureName)
+		createMeasureInGroup(measureRegClient, measureBarrierClient, groupName, measureName)
 		writeMeasureDataToGroup(measureWriteClient, groupName, measureName, 5)
 
 		g.By("Verifying the recreated group data directory exists on disk")
@@ -345,8 +350,20 @@ var _ = g.Describe("GroupDeletion", func() {
 	})
 })
 
-func createMeasureInGroup(regClient databasev1.MeasureRegistryServiceClient, group, measure string) {
-	_, createErr := regClient.Create(context.TODO(), &databasev1.MeasureRegistryServiceCreateRequest{
+// createMeasureInGroup creates measure in group and waits for the cluster's schema
+// watermark to reach the Create response's mod_revision before returning.
+//
+// AwaitRevisionApplied is a hint under eventual consistency: it confirms the cluster
+// watermark, not that this liaison's own entity cache has applied the schema yet.
+// writeMeasureDataToGroup retries a refused write to tolerate that residual per-liaison
+// lag, so the barrier only needs to replace the blind sleep this used to rely on for the
+// common case.
+func createMeasureInGroup(
+	regClient databasev1.MeasureRegistryServiceClient,
+	barrierClient schemav1.SchemaBarrierServiceClient,
+	group, measure string,
+) {
+	createResp, createErr := regClient.Create(context.TODO(), &databasev1.MeasureRegistryServiceCreateRequest{
 		Measure: &databasev1.Measure{
 			Metadata: &commonv1.Metadata{Name: measure, Group: group},
 			Entity:   &databasev1.Entity{TagNames: []string{"id"}},
@@ -363,16 +380,25 @@ func createMeasureInGroup(regClient databasev1.MeasureRegistryServiceClient, gro
 		},
 	})
 	gm.Expect(createErr).ShouldNot(gm.HaveOccurred())
-	time.Sleep(2 * time.Second)
+	barrierResp, barrierErr := barrierClient.AwaitRevisionApplied(context.TODO(), &schemav1.AwaitRevisionAppliedRequest{
+		MinRevision: createResp.GetModRevision(),
+		Timeout:     durationpb.New(flags.EventuallyTimeout),
+	})
+	gm.Expect(barrierErr).ShouldNot(gm.HaveOccurred())
+	gm.Expect(barrierResp.GetApplied()).Should(gm.BeTrue(), "timeout waiting for schema revision %d", createResp.GetModRevision())
 }
 
-func writeMeasureDataToGroup(writeClient measurev1.MeasureServiceClient, group, measure string, count int) {
+// sendMeasureBatchToGroup writes count distinct measure rows on one write stream and returns
+// the status string of every response, in send order.
+func sendMeasureBatchToGroup(writeClient measurev1.MeasureServiceClient, group, measure string, count int) ([]string, error) {
 	wc, wcErr := writeClient.Write(context.TODO())
-	gm.Expect(wcErr).ShouldNot(gm.HaveOccurred())
+	if wcErr != nil {
+		return nil, wcErr
+	}
 	metadata := &commonv1.Metadata{Name: measure, Group: group}
 	baseTime := time.Now().Truncate(time.Millisecond)
 	for idx := 0; idx < count; idx++ {
-		sendErr := wc.Send(&measurev1.WriteRequest{
+		if sendErr := wc.Send(&measurev1.WriteRequest{
 			Metadata: metadata,
 			DataPoint: &measurev1.DataPointValue{
 				Timestamp: timestamppb.New(baseTime.Add(time.Duration(idx) * time.Second)),
@@ -386,16 +412,47 @@ func writeMeasureDataToGroup(writeClient measurev1.MeasureServiceClient, group, 
 				}},
 			},
 			MessageId: uint64(time.Now().UnixNano() + int64(idx)),
-		})
-		gm.Expect(sendErr).ShouldNot(gm.HaveOccurred())
+		}); sendErr != nil {
+			return nil, sendErr
+		}
 	}
-	closeSendErr := wc.CloseSend()
-	gm.Expect(closeSendErr).ShouldNot(gm.HaveOccurred())
+	if closeSendErr := wc.CloseSend(); closeSendErr != nil {
+		return nil, closeSendErr
+	}
+	var statuses []string
 	for {
-		_, recvErr := wc.Recv()
+		resp, recvErr := wc.Recv()
 		if errors.Is(recvErr, io.EOF) {
 			break
 		}
-		gm.Expect(recvErr).ShouldNot(gm.HaveOccurred())
+		if recvErr != nil {
+			return statuses, recvErr
+		}
+		statuses = append(statuses, resp.GetStatus())
 	}
+	return statuses, nil
+}
+
+// writeMeasureDataToGroup retries sendMeasureBatchToGroup while every row in the batch is
+// refused — the liaison's write cache can still lag a schema barrier, and a refused row
+// stores nothing, so repeating the whole batch is safe. If some rows succeed and some are
+// refused, the batch cannot be safely repeated without duplicating the accepted rows, so it
+// stops retrying at once.
+func writeMeasureDataToGroup(writeClient measurev1.MeasureServiceClient, group, measure string, count int) {
+	gm.Eventually(func(innerGm gm.Gomega) {
+		statuses, sendErr := sendMeasureBatchToGroup(writeClient, group, measure, count)
+		innerGm.Expect(sendErr).ShouldNot(gm.HaveOccurred())
+		innerGm.Expect(statuses).Should(gm.HaveLen(count), "one write response per row")
+		succeeded := 0
+		for _, writeStatus := range statuses {
+			if writeStatus == modelv1.Status_STATUS_SUCCEED.String() {
+				succeeded++
+			}
+		}
+		if succeeded > 0 && succeeded < count {
+			gm.StopTrying(fmt.Sprintf("measure write to %s/%s partially rejected; statuses=%v", group, measure, statuses)).Now()
+		}
+		innerGm.Expect(succeeded).Should(gm.Equal(count),
+			"measure write to %s/%s rejected; statuses=%v", group, measure, statuses)
+	}, flags.EventuallyTimeout).Should(gm.Succeed())
 }

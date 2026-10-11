@@ -20,6 +20,7 @@ package inspection
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -109,10 +110,13 @@ var _ = ginkgo.ReportAfterSuite("Standalone Inspect Suite", func(report ginkgo.R
 	}
 })
 
-func writeMeasureData(ctx context.Context, groupName, measureName string, dataCount int) {
+// sendMeasureDataBatch writes dataCount distinct measure rows on one write stream and
+// returns the status string of every response, in send order.
+func sendMeasureDataBatch(ctx context.Context, groupName, measureName string, dataCount int) ([]string, error) {
 	writeClient, writeErr := measureWriteClient.Write(ctx)
-	gomega.Expect(writeErr).ShouldNot(gomega.HaveOccurred())
-
+	if writeErr != nil {
+		return nil, writeErr
+	}
 	metadata := &commonv1.Metadata{
 		Name:  measureName,
 		Group: groupName,
@@ -134,20 +138,58 @@ func writeMeasureData(ctx context.Context, groupName, measureName string, dataCo
 			},
 			MessageId: uint64(time.Now().UnixNano()),
 		}
-		sendErr := writeClient.Send(req)
-		gomega.Expect(sendErr).ShouldNot(gomega.HaveOccurred())
+		if sendErr := writeClient.Send(req); sendErr != nil {
+			return nil, sendErr
+		}
 	}
-	gomega.Expect(writeClient.CloseSend()).To(gomega.Succeed())
-	gomega.Eventually(func() error {
-		_, recvErr := writeClient.Recv()
-		return recvErr
-	}, flags.EventuallyTimeout).Should(gomega.Equal(io.EOF))
+	if closeErr := writeClient.CloseSend(); closeErr != nil {
+		return nil, closeErr
+	}
+	var statuses []string
+	for {
+		resp, recvErr := writeClient.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			break
+		}
+		if recvErr != nil {
+			return statuses, recvErr
+		}
+		statuses = append(statuses, resp.GetStatus())
+	}
+	return statuses, nil
 }
 
-func writeStreamData(ctx context.Context, groupName, streamName string, dataCount int) {
-	writeClient, writeErr := streamWriteClient.Write(ctx)
-	gomega.Expect(writeErr).ShouldNot(gomega.HaveOccurred())
+// writeMeasureData retries sendMeasureDataBatch while every row in the batch is refused —
+// the liaison's write cache can still lag behind the group/schema it was just given, and a
+// refused row stores nothing, so repeating the whole batch is safe. If some rows succeed and
+// some are refused, the batch cannot be safely repeated without duplicating the accepted
+// rows, so it stops retrying at once.
+func writeMeasureData(ctx context.Context, groupName, measureName string, dataCount int) {
+	gomega.Eventually(func(g gomega.Gomega) {
+		statuses, sendErr := sendMeasureDataBatch(ctx, groupName, measureName, dataCount)
+		g.Expect(sendErr).ShouldNot(gomega.HaveOccurred())
+		g.Expect(statuses).Should(gomega.HaveLen(dataCount), "one write response per row")
+		succeeded := 0
+		for _, writeStatus := range statuses {
+			if writeStatus == modelv1.Status_STATUS_SUCCEED.String() {
+				succeeded++
+			}
+		}
+		if succeeded > 0 && succeeded < dataCount {
+			gomega.StopTrying(fmt.Sprintf("measure write to %s/%s partially rejected; statuses=%v", groupName, measureName, statuses)).Now()
+		}
+		g.Expect(succeeded).Should(gomega.Equal(dataCount),
+			"measure write to %s/%s rejected; statuses=%v", groupName, measureName, statuses)
+	}, flags.EventuallyTimeout).Should(gomega.Succeed())
+}
 
+// sendStreamDataBatch writes dataCount distinct stream rows on one write stream and returns
+// the status string of every response, in send order.
+func sendStreamDataBatch(ctx context.Context, groupName, streamName string, dataCount int) ([]string, error) {
+	writeClient, writeErr := streamWriteClient.Write(ctx)
+	if writeErr != nil {
+		return nil, writeErr
+	}
 	metadata := &commonv1.Metadata{
 		Name:  streamName,
 		Group: groupName,
@@ -167,20 +209,58 @@ func writeStreamData(ctx context.Context, groupName, streamName string, dataCoun
 			},
 			MessageId: uint64(time.Now().UnixNano()),
 		}
-		sendErr := writeClient.Send(req)
-		gomega.Expect(sendErr).ShouldNot(gomega.HaveOccurred())
+		if sendErr := writeClient.Send(req); sendErr != nil {
+			return nil, sendErr
+		}
 	}
-	gomega.Expect(writeClient.CloseSend()).To(gomega.Succeed())
-	gomega.Eventually(func() error {
-		_, recvErr := writeClient.Recv()
-		return recvErr
-	}, flags.EventuallyTimeout).Should(gomega.Equal(io.EOF))
+	if closeErr := writeClient.CloseSend(); closeErr != nil {
+		return nil, closeErr
+	}
+	var statuses []string
+	for {
+		resp, recvErr := writeClient.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			break
+		}
+		if recvErr != nil {
+			return statuses, recvErr
+		}
+		statuses = append(statuses, resp.GetStatus())
+	}
+	return statuses, nil
 }
 
-func writeTraceData(ctx context.Context, groupName, traceName string, dataCount int) {
-	writeClient, writeErr := traceWriteClient.Write(ctx)
-	gomega.Expect(writeErr).ShouldNot(gomega.HaveOccurred())
+// writeStreamData retries sendStreamDataBatch while every row in the batch is refused — the
+// liaison's write cache can still lag behind the group/schema it was just given, and a
+// refused row stores nothing, so repeating the whole batch is safe. If some rows succeed and
+// some are refused, the batch cannot be safely repeated without duplicating the accepted
+// rows, so it stops retrying at once.
+func writeStreamData(ctx context.Context, groupName, streamName string, dataCount int) {
+	gomega.Eventually(func(g gomega.Gomega) {
+		statuses, sendErr := sendStreamDataBatch(ctx, groupName, streamName, dataCount)
+		g.Expect(sendErr).ShouldNot(gomega.HaveOccurred())
+		g.Expect(statuses).Should(gomega.HaveLen(dataCount), "one write response per row")
+		succeeded := 0
+		for _, writeStatus := range statuses {
+			if writeStatus == modelv1.Status_STATUS_SUCCEED.String() {
+				succeeded++
+			}
+		}
+		if succeeded > 0 && succeeded < dataCount {
+			gomega.StopTrying(fmt.Sprintf("stream write to %s/%s partially rejected; statuses=%v", groupName, streamName, statuses)).Now()
+		}
+		g.Expect(succeeded).Should(gomega.Equal(dataCount),
+			"stream write to %s/%s rejected; statuses=%v", groupName, streamName, statuses)
+	}, flags.EventuallyTimeout).Should(gomega.Succeed())
+}
 
+// sendTraceDataBatch writes dataCount distinct trace rows on one write stream and returns the
+// status string of every response, in send order.
+func sendTraceDataBatch(ctx context.Context, groupName, traceName string, dataCount int) ([]string, error) {
+	writeClient, writeErr := traceWriteClient.Write(ctx)
+	if writeErr != nil {
+		return nil, writeErr
+	}
 	metadata := &commonv1.Metadata{
 		Name:  traceName,
 		Group: groupName,
@@ -201,14 +281,49 @@ func writeTraceData(ctx context.Context, groupName, traceName string, dataCount 
 			Span:    []byte(fmt.Sprintf("span_data_%d", idx)),
 			Version: uint64(idx + 1),
 		}
-		sendErr := writeClient.Send(req)
-		gomega.Expect(sendErr).ShouldNot(gomega.HaveOccurred())
+		if sendErr := writeClient.Send(req); sendErr != nil {
+			return nil, sendErr
+		}
 	}
-	gomega.Expect(writeClient.CloseSend()).To(gomega.Succeed())
-	gomega.Eventually(func() error {
-		_, recvErr := writeClient.Recv()
-		return recvErr
-	}, flags.EventuallyTimeout).Should(gomega.Equal(io.EOF))
+	if closeErr := writeClient.CloseSend(); closeErr != nil {
+		return nil, closeErr
+	}
+	var statuses []string
+	for {
+		resp, recvErr := writeClient.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			break
+		}
+		if recvErr != nil {
+			return statuses, recvErr
+		}
+		statuses = append(statuses, resp.GetStatus())
+	}
+	return statuses, nil
+}
+
+// writeTraceData retries sendTraceDataBatch while every row in the batch is refused — the
+// liaison's write cache can still lag behind the group/schema it was just given, and a
+// refused row stores nothing, so repeating the whole batch is safe. If some rows succeed and
+// some are refused, the batch cannot be safely repeated without duplicating the accepted
+// rows, so it stops retrying at once.
+func writeTraceData(ctx context.Context, groupName, traceName string, dataCount int) {
+	gomega.Eventually(func(g gomega.Gomega) {
+		statuses, sendErr := sendTraceDataBatch(ctx, groupName, traceName, dataCount)
+		g.Expect(sendErr).ShouldNot(gomega.HaveOccurred())
+		g.Expect(statuses).Should(gomega.HaveLen(dataCount), "one write response per row")
+		succeeded := 0
+		for _, writeStatus := range statuses {
+			if writeStatus == modelv1.Status_STATUS_SUCCEED.String() {
+				succeeded++
+			}
+		}
+		if succeeded > 0 && succeeded < dataCount {
+			gomega.StopTrying(fmt.Sprintf("trace write to %s/%s partially rejected; statuses=%v", groupName, traceName, statuses)).Now()
+		}
+		g.Expect(succeeded).Should(gomega.Equal(dataCount),
+			"trace write to %s/%s rejected; statuses=%v", groupName, traceName, statuses)
+	}, flags.EventuallyTimeout).Should(gomega.Succeed())
 }
 
 var _ = ginkgo.Describe("Inspect measure in standalone mode", ginkgo.Ordered, func() {
@@ -309,22 +424,26 @@ var _ = ginkgo.Describe("Inspect measure in standalone mode", ginkgo.Ordered, fu
 	})
 
 	ginkgo.It("should return data info", func() {
-		ginkgo.By("Inspecting group")
-		resp, err := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: groupName})
-		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-		gomega.Expect(resp).NotTo(gomega.BeNil())
-		ginkgo.By("Verifying data info collected")
-		gomega.Expect(len(resp.DataInfo)).Should(gomega.BeNumerically(">=", 1), "should collect from standalone node")
-		var totalDataSize int64
-		for idx, dataInfo := range resp.DataInfo {
-			gomega.Expect(dataInfo.Node).NotTo(gomega.BeNil(), "data node %d should have node info", idx)
-			gomega.Expect(dataInfo.DataSizeBytes).Should(gomega.BeNumerically(">", 0), "data node %d should have data size > 0", idx)
-			totalDataSize += dataInfo.DataSizeBytes
-			ginkgo.GinkgoWriter.Printf("Data node %d: %s, segments: %d, size: %d bytes\n",
-				idx, dataInfo.Node.Metadata.Name, len(dataInfo.SegmentInfo), dataInfo.DataSizeBytes)
-		}
-		gomega.Expect(totalDataSize).Should(gomega.BeNumerically(">", 0), "total data size should be > 0")
-		ginkgo.GinkgoWriter.Printf("Total data size: %d bytes\n", totalDataSize)
+		// Inspect can race the write path's flush/sync to disk, so a freshly written
+		// measure may transiently report a zero-size node; retry until it settles.
+		gomega.Eventually(func(g gomega.Gomega) {
+			ginkgo.By("Inspecting group")
+			resp, err := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: groupName})
+			g.Expect(err).ShouldNot(gomega.HaveOccurred())
+			g.Expect(resp).NotTo(gomega.BeNil())
+			ginkgo.By("Verifying data info collected")
+			g.Expect(len(resp.DataInfo)).Should(gomega.BeNumerically(">=", 1), "should collect from standalone node")
+			var totalDataSize int64
+			for idx, dataInfo := range resp.DataInfo {
+				g.Expect(dataInfo.Node).NotTo(gomega.BeNil(), "data node %d should have node info", idx)
+				g.Expect(dataInfo.DataSizeBytes).Should(gomega.BeNumerically(">", 0), "data node %d should have data size > 0", idx)
+				totalDataSize += dataInfo.DataSizeBytes
+				ginkgo.GinkgoWriter.Printf("Data node %d: %s, segments: %d, size: %d bytes\n",
+					idx, dataInfo.Node.Metadata.Name, len(dataInfo.SegmentInfo), dataInfo.DataSizeBytes)
+			}
+			g.Expect(totalDataSize).Should(gomega.BeNumerically(">", 0), "total data size should be > 0")
+			ginkgo.GinkgoWriter.Printf("Total data size: %d bytes\n", totalDataSize)
+		}, flags.EventuallyTimeout).Should(gomega.Succeed())
 	})
 
 	ginkgo.It("should return liaison info", func() {
@@ -416,22 +535,26 @@ var _ = ginkgo.Describe("Inspect stream in standalone mode", ginkgo.Ordered, fun
 	})
 
 	ginkgo.It("should return data info", func() {
-		ginkgo.By("Inspecting stream group")
-		resp, err := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: groupName})
-		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-		gomega.Expect(resp).NotTo(gomega.BeNil())
-		ginkgo.By("Verifying stream data info collected")
-		gomega.Expect(len(resp.DataInfo)).Should(gomega.BeNumerically(">=", 1), "should collect from standalone node")
-		var totalDataSize int64
-		for idx, dataInfo := range resp.DataInfo {
-			gomega.Expect(dataInfo.Node).NotTo(gomega.BeNil(), "stream data node %d should have node info", idx)
-			gomega.Expect(dataInfo.DataSizeBytes).Should(gomega.BeNumerically(">", 0), "stream data node %d should have data size > 0", idx)
-			totalDataSize += dataInfo.DataSizeBytes
-			ginkgo.GinkgoWriter.Printf("Stream data node %d: %s, segments: %d, size: %d bytes\n",
-				idx, dataInfo.Node.Metadata.Name, len(dataInfo.SegmentInfo), dataInfo.DataSizeBytes)
-		}
-		gomega.Expect(totalDataSize).Should(gomega.BeNumerically(">", 0), "total stream data size should be > 0")
-		ginkgo.GinkgoWriter.Printf("Total stream data size: %d bytes\n", totalDataSize)
+		// Inspect can race the write path's flush/sync to disk, so a freshly written
+		// stream may transiently report a zero-size node; retry until it settles.
+		gomega.Eventually(func(g gomega.Gomega) {
+			ginkgo.By("Inspecting stream group")
+			resp, err := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: groupName})
+			g.Expect(err).ShouldNot(gomega.HaveOccurred())
+			g.Expect(resp).NotTo(gomega.BeNil())
+			ginkgo.By("Verifying stream data info collected")
+			g.Expect(len(resp.DataInfo)).Should(gomega.BeNumerically(">=", 1), "should collect from standalone node")
+			var totalDataSize int64
+			for idx, dataInfo := range resp.DataInfo {
+				g.Expect(dataInfo.Node).NotTo(gomega.BeNil(), "stream data node %d should have node info", idx)
+				g.Expect(dataInfo.DataSizeBytes).Should(gomega.BeNumerically(">", 0), "stream data node %d should have data size > 0", idx)
+				totalDataSize += dataInfo.DataSizeBytes
+				ginkgo.GinkgoWriter.Printf("Stream data node %d: %s, segments: %d, size: %d bytes\n",
+					idx, dataInfo.Node.Metadata.Name, len(dataInfo.SegmentInfo), dataInfo.DataSizeBytes)
+			}
+			g.Expect(totalDataSize).Should(gomega.BeNumerically(">", 0), "total stream data size should be > 0")
+			ginkgo.GinkgoWriter.Printf("Total stream data size: %d bytes\n", totalDataSize)
+		}, flags.EventuallyTimeout).Should(gomega.Succeed())
 	})
 
 	ginkgo.It("should return schema info", func() {
@@ -525,22 +648,26 @@ var _ = ginkgo.Describe("Inspect trace in standalone mode", ginkgo.Ordered, func
 	})
 
 	ginkgo.It("should return data info", func() {
-		ginkgo.By("Inspecting trace group")
-		resp, err := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: groupName})
-		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
-		gomega.Expect(resp).NotTo(gomega.BeNil())
-		ginkgo.By("Verifying trace data info collected")
-		gomega.Expect(len(resp.DataInfo)).Should(gomega.BeNumerically(">=", 1), "should collect from standalone node")
-		var totalDataSize int64
-		for idx, dataInfo := range resp.DataInfo {
-			gomega.Expect(dataInfo.Node).NotTo(gomega.BeNil(), "trace data node %d should have node info", idx)
-			gomega.Expect(dataInfo.DataSizeBytes).Should(gomega.BeNumerically(">", 0), "trace data node %d should have data size > 0", idx)
-			totalDataSize += dataInfo.DataSizeBytes
-			ginkgo.GinkgoWriter.Printf("Trace data node %d: %s, segments: %d, size: %d bytes\n",
-				idx, dataInfo.Node.Metadata.Name, len(dataInfo.SegmentInfo), dataInfo.DataSizeBytes)
-		}
-		gomega.Expect(totalDataSize).Should(gomega.BeNumerically(">", 0), "total trace data size should be > 0")
-		ginkgo.GinkgoWriter.Printf("Total trace data size: %d bytes\n", totalDataSize)
+		// Inspect can race the write path's flush/sync to disk, so a freshly written
+		// trace may transiently report a zero-size node; retry until it settles.
+		gomega.Eventually(func(g gomega.Gomega) {
+			ginkgo.By("Inspecting trace group")
+			resp, err := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: groupName})
+			g.Expect(err).ShouldNot(gomega.HaveOccurred())
+			g.Expect(resp).NotTo(gomega.BeNil())
+			ginkgo.By("Verifying trace data info collected")
+			g.Expect(len(resp.DataInfo)).Should(gomega.BeNumerically(">=", 1), "should collect from standalone node")
+			var totalDataSize int64
+			for idx, dataInfo := range resp.DataInfo {
+				g.Expect(dataInfo.Node).NotTo(gomega.BeNil(), "trace data node %d should have node info", idx)
+				g.Expect(dataInfo.DataSizeBytes).Should(gomega.BeNumerically(">", 0), "trace data node %d should have data size > 0", idx)
+				totalDataSize += dataInfo.DataSizeBytes
+				ginkgo.GinkgoWriter.Printf("Trace data node %d: %s, segments: %d, size: %d bytes\n",
+					idx, dataInfo.Node.Metadata.Name, len(dataInfo.SegmentInfo), dataInfo.DataSizeBytes)
+			}
+			g.Expect(totalDataSize).Should(gomega.BeNumerically(">", 0), "total trace data size should be > 0")
+			ginkgo.GinkgoWriter.Printf("Total trace data size: %d bytes\n", totalDataSize)
+		}, flags.EventuallyTimeout).Should(gomega.Succeed())
 	})
 
 	ginkgo.It("should return schema info", func() {
