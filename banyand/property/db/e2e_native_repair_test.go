@@ -34,7 +34,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -44,8 +44,8 @@ const (
 	// corpus lives beside the reader that pages it because the reader's own
 	// boundary suite reads the same bytes; this package reads them through the
 	// repair build instead.
-	nidx01eCorpus         = "../../../pkg/index/inverted/testdata/nidx01e/shard-0"
-	nidx01eProvenanceFile = "../../../pkg/index/inverted/testdata/nidx01e/provenance.json"
+	nidx01eCorpus         = "../../../pkg/index/testdata/nidx01e/shard-0"
+	nidx01eProvenanceFile = "../../../pkg/index/testdata/nidx01e/provenance.json"
 
 	// nidx01ePageSize is the page size issue #14012 declares the end-to-end
 	// repair build runs at, and nidx01eExpectedPages is how many calls it takes
@@ -162,7 +162,7 @@ func TestE2EPropertyRepairNativeIgnoresAGenerationPublishedBetweenPages(t *testi
 	tester := require.New(t)
 	shard := nidx01eShardCopy(t)
 	published := false
-	repairState, observed := nidx01eRepair(t, shard, func(pageIndex int, _ []inverted.RepairRow, _ error) error {
+	repairState, observed := nidx01eRepair(t, shard, func(pageIndex int, _ []native.RepairRow, _ error) error {
 		if pageIndex != 1 || published {
 			return nil
 		}
@@ -184,7 +184,7 @@ func TestE2EPropertyRepairNativeIgnoresAGenerationPublishedBetweenPages(t *testi
 	tester.Equal(nidx01eDeclaredSnapshotID(t), state.LastSnpID,
 		"the build must record the generation it paged, not the one published underneath it")
 
-	newest, err := inverted.OpenReadOnlyGeneration(shard)
+	newest, err := native.OpenReadOnlyGeneration(shard)
 	tester.NoError(err)
 	defer func() {
 		tester.NoError(newest.Close())
@@ -205,7 +205,7 @@ func TestE2EPropertyRepairNativePublishesNoStateWhenAPageFails(t *testing.T) {
 	tester := require.New(t)
 	shard := nidx01eShardCopy(t)
 	failure := errors.New("page failed")
-	repairState, observed := nidx01eRepair(t, shard, func(pageIndex int, _ []inverted.RepairRow, _ error) error {
+	repairState, observed := nidx01eRepair(t, shard, func(pageIndex int, _ []native.RepairRow, _ error) error {
 		if pageIndex < 2 {
 			return nil
 		}
@@ -290,19 +290,19 @@ func nidx01eRepair(t *testing.T, shard string, hook nidx01ePageHook) (*repair, *
 }
 
 // nidx01ePageHook observes one page a build read, and may fail the build.
-type nidx01ePageHook func(pageIndex int, rows []inverted.RepairRow, pageErr error) error
+type nidx01ePageHook func(pageIndex int, rows []native.RepairRow, pageErr error) error
 
 // nidx01eObservedGeneration wraps the pinned generation a build pages so a test
 // can see which pages the build asked for and act between them.
 type nidx01eObservedGeneration struct {
 	repairGeneration
 	hook     nidx01ePageHook
-	requests []inverted.RepairPageRequest
+	requests []native.RepairPageRequest
 }
 
 func (g *nidx01eObservedGeneration) RepairTuplePage(
-	ctx context.Context, request inverted.RepairPageRequest,
-) ([]inverted.RepairRow, error) {
+	ctx context.Context, request native.RepairPageRequest,
+) ([]native.RepairRow, error) {
 	rows, err := g.repairGeneration.RepairTuplePage(ctx, request)
 	g.requests = append(g.requests, request)
 	if g.hook == nil {
@@ -331,13 +331,21 @@ func nidx01eTreeLeaves(t *testing.T, repairState *repair) map[string]string {
 	return leaves
 }
 
+// nidx01ePublishRevisionLease is a minimal native.PathRootLease stub for
+// publishing directly into a disposable fixture copy: this helper has no
+// surrounding database lock to validate against.
+type nidx01ePublishRevisionLease struct{}
+
+func (nidx01ePublishRevisionLease) Validate() error           { return nil }
+func (nidx01ePublishRevisionLease) ValidatePath(string) error { return nil }
+
 // nidx01ePublishRevision commits one more Property revision into a shard
 // directory, which publishes a new generation over it. The revision is shaped
-// the way the Property writer shapes one, so a build that read it would gain a
-// leaf for it.
+// the way the Property writer shapes one (encodeNativePropertyDocument is the
+// production encoder itself), so a build that read it would gain a leaf for it.
 func nidx01ePublishRevision(t *testing.T, shard, group, name, entity string, revision int64, sha string) {
 	t.Helper()
-	writer, err := inverted.NewStore(inverted.StoreOpts{Path: shard})
+	owner, err := native.NewOwner(native.OwnerOptions{Lease: nidx01ePublishRevisionLease{}, Path: shard})
 	require.NoError(t, err)
 	document := index.Document{
 		EntityValues: []byte(group + "/" + name + "/" + entity + "/" + strconv.FormatInt(revision, 10)),
@@ -350,8 +358,15 @@ func nidx01ePublishRevision(t *testing.T, shard, group, name, entity string, rev
 			nidx01eStoredField(shaValueField, sha),
 		},
 	}
-	require.NoError(t, writer.UpdateSeriesBatch(index.Batch{Documents: index.Documents{document}}))
-	require.NoError(t, writer.Close())
+	nativeDocument, encodeErr := encodeNativePropertyDocument(document)
+	require.NoError(t, encodeErr)
+	done := make(chan error, 1)
+	require.NoError(t, owner.Batch(context.Background(), native.Batch{
+		Documents:          []native.Document{nativeDocument},
+		PersistentCallback: func(batchErr error) { done <- batchErr },
+	}))
+	require.NoError(t, <-done)
+	require.NoError(t, owner.Close())
 }
 
 func nidx01eIndexedField(name, value string) index.Field {

@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -182,7 +183,10 @@ func openTestTSDBForRefTest(t *testing.T, tmpPath string, shardNum uint32, openS
 		},
 		SegmentInterval: ir,
 		TTL:             ir,
-		Option:          option{protector: protector.Nop{}, mergePolicy: newDefaultMergePolicyForTesting()},
+		RootLeaseFactory: func(lock fs.File, root string) (storage.RootLease, error) {
+			return native.NewFileRootLease(lock, root)
+		},
+		Option: option{protector: protector.Nop{}, mergePolicy: newDefaultMergePolicyForTesting()},
 	}
 	require.NoError(t, os.MkdirAll(opts.Location, storage.DirPerm))
 	ctx := common.SetPosition(
@@ -472,7 +476,10 @@ func openTestTSDBWithInterval(t *testing.T, tmpPath, groupName string, ir storag
 		TSTableCreator:  newTSTable,
 		SegmentInterval: ir,
 		TTL:             storage.IntervalRule{Unit: ir.Unit, Num: 60},
-		Option:          option{protector: protector.Nop{}, mergePolicy: newDefaultMergePolicyForTesting()},
+		RootLeaseFactory: func(lock fs.File, root string) (storage.RootLease, error) {
+			return native.NewFileRootLease(lock, root)
+		},
+		Option: option{protector: protector.Nop{}, mergePolicy: newDefaultMergePolicyForTesting()},
 	}
 	require.NoError(t, os.MkdirAll(opts.Location, storage.DirPerm))
 	ctx := common.SetPosition(

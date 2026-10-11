@@ -36,7 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
@@ -222,7 +222,7 @@ func TestBuildTree(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err = newShard.updateDocuments(docs); err != nil {
+				if err = newShard.updateDocuments(context.Background(), docs); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -244,7 +244,7 @@ func TestBuildTree(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := newShard.updateDocuments(docs); err != nil {
+				if err := newShard.updateDocuments(context.Background(), docs); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -321,7 +321,7 @@ func TestDocumentUpdatesNotify(t *testing.T) {
 	}
 
 	p1 := buildProperties(propertyBuilder{id: "1", version: 1})
-	err = newShard.update(GetPropertyID(p1), p1)
+	err = newShard.update(context.Background(), GetPropertyID(p1), p1)
 	if err != nil {
 		t.Fatalf("failed to update property: %v", err)
 	}
@@ -663,7 +663,7 @@ func TestRepairRejectsZeroRevision(t *testing.T) {
 	nidx01ePublishRevision(t, shardPath, "group", "name", "entity", 0, "sha-zero")
 	repairState, _ := nidx01eRepair(t, shardPath, nil)
 	buildErr := repairState.buildStatus(context.Background(), shardPath)
-	if !errors.Is(buildErr, inverted.ErrCorruptIndex) {
+	if !errors.Is(buildErr, native.ErrCorrupt) {
 		t.Fatalf("expected corrupt repair input for a zero revision, got %v", buildErr)
 	}
 	for _, unpublishedPath := range []string{repairState.statePath, repairState.composeTreeFilePath} {

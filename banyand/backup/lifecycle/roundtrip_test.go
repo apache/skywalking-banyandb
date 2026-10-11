@@ -60,7 +60,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	localfs "github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -164,7 +164,7 @@ func TestRoundtrip_Measure(t *testing.T) {
 
 	// Construct the replayer while the metadata service is still running so it
 	// can enumerate measures + index rules; the IndexResolver below needs
-	// exclusive access to the bluge index dir, so the service must be stopped
+	// exclusive access to the index dir, so the service must be stopped
 	// before any reader opens the segment.
 	replayer, err := newMeasureRowReplayer(context.TODO(), roundtripMeasureGroup, 2, nil, pipeline,
 		metaSvc, localfs.NewLocalFileSystem(), logger.GetLogger("test-replayer"), nil, orphanConfig{}, "")
@@ -710,7 +710,7 @@ func TestRoundtrip_MeasureIndexed(t *testing.T) {
 	}
 	moduleDefer := test.SetupModules(flags, pipeline, metadataService, measureService)
 	// metaDefer + mrDefer always run; moduleDefer is invoked explicitly before
-	// the reverse-decode so the bluge sidx writer commits and releases locks,
+	// the reverse-decode so the native sidx writer commits and releases locks,
 	// but guard against a double-call via the stopped flag.
 	stopped := false
 	stopServices := func() {
@@ -774,7 +774,7 @@ func TestRoundtrip_MeasureIndexed(t *testing.T) {
 	partDirs := findRoundtripPartDirs(groupRoot)
 	req.NotEmpty(partDirs, "expected at least one part dir under %s", groupRoot)
 
-	// Stop the services so the bluge sidx writer commits and releases its
+	// Stop the services so the native sidx writer commits and releases its
 	// exclusive lock before the resolver opens it read-only. Metadata is no
 	// longer needed because the replayer already snapshotted the schema.
 	stopServices()
@@ -998,7 +998,7 @@ func roundtripTagValue(iwr *measurev1.InternalWriteRequest, tagName string) stri
 }
 
 // roundtripAllSidxDirsHaveSnapshot returns true when every non-empty
-// <groupRoot>/seg-*/sidx dir carries at least one .snp file (bluge's snapshot
+// <groupRoot>/seg-*/sidx dir carries at least one .snp file (the index engine's snapshot
 // marker), and at least one such segment exists.
 func roundtripAllSidxDirsHaveSnapshot(groupRoot string) bool {
 	segs, err := os.ReadDir(groupRoot)
@@ -1015,7 +1015,7 @@ func roundtripAllSidxDirsHaveSnapshot(groupRoot string) bool {
 		// exist (e.g. the live current-day segment while the data lands in the
 		// previous day around midnight); its series index holds no documents and
 		// therefore never gets a committed .snp, so requiring one would hang.
-		if docs, _ := inverted.ReadOnlyDocCount(sidxDir); docs == 0 {
+		if docs, _ := native.ReadOnlyDocCount(sidxDir); docs == 0 {
 			continue
 		}
 		entries, readErr := os.ReadDir(sidxDir)
@@ -1324,7 +1324,7 @@ func TestMeasureOrphanDiscarded(t *testing.T) {
 // rows for both through the real write path, flushes them to on-disk parts, then
 // deletes one measure from the registry so it becomes an orphan. The replayer is
 // constructed while metadata is still live (it snapshots ListMeasure, now missing
-// the deleted measure) and the modules are stopped before returning so the bluge
+// the deleted measure) and the modules are stopped before returning so the native
 // sidx dir is unlocked for the read-only IndexResolver during replay. It returns
 // the archive root, the flushed part dirs, the ready replayer, and a stop func.
 func setupMeasureOrphanScenario(t *testing.T, cfg orphanConfig) (string, []string, *measureRowReplayer, func()) {
@@ -1432,7 +1432,7 @@ func setupMeasureOrphanScenario(t *testing.T, cfg orphanConfig) (string, []strin
 		metaSvc, localfs.NewLocalFileSystem(), logger.GetLogger("orphan-replayer"), nil, cfg, orphanRTSrcStage)
 	req.NoError(err)
 
-	// Stop the modules so the bluge sidx writer commits and releases its exclusive
+	// Stop the modules so the native sidx writer commits and releases its exclusive
 	// lock before the read-only IndexResolver opens the segment during replay.
 	stopModules()
 

@@ -31,7 +31,9 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting"
 	"github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -133,9 +135,13 @@ func openDatabase(b testing.TB, path string) storage.TSDB[*tsTable, option] {
 		Num:  1,
 	}
 	opts := storage.TSDBOpts[*tsTable, option]{
-		ShardNum:        1,
-		Location:        path,
-		TSTableCreator:  newTSTable,
+		ShardNum:                1,
+		Location:                path,
+		TSTableCreator:          newTSTable,
+		TSTableCreatorWithLease: newTSTableWithLease,
+		RootLeaseFactory: func(lock fs.File, root string) (storage.RootLease, error) {
+			return native.NewFileRootLease(lock, root)
+		},
 		SegmentInterval: ir,
 		TTL:             ir,
 		Option: option{

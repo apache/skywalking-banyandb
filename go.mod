@@ -1,6 +1,6 @@
 module github.com/apache/skywalking-banyandb
 
-go 1.25.13
+go 1.26.9
 
 require (
 	cloud.google.com/go/storage v1.64.0
@@ -14,7 +14,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.37
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.107.2
 	github.com/benbjohnson/clock v1.3.5
-	github.com/blugelabs/bluge v0.2.2
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
@@ -50,9 +49,9 @@ require (
 	go.uber.org/mock v0.6.0
 	go.uber.org/multierr v1.11.0
 	golang.org/x/exp v0.0.0-20260813180055-c1d0aacb2297
-	golang.org/x/mod v0.40.0
+	golang.org/x/mod v0.41.0
 	golang.org/x/oauth2 v0.36.0
-	golang.org/x/sync v0.22.0
+	golang.org/x/sync v0.23.0
 	google.golang.org/api v0.293.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20260810153831-ec0a7760b754
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260810153831-ec0a7760b754
@@ -79,7 +78,6 @@ require (
 	github.com/Masterminds/semver/v3 v3.5.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/Nvveen/Gotty v0.0.0-20120604004816-cd527374f1e5 // indirect
-	github.com/VictoriaMetrics/fastcache v1.13.3 // indirect
 	github.com/alecthomas/chroma/v2 v2.24.1 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.18 // indirect
@@ -121,13 +119,11 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
-	github.com/golang/snappy v1.0.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.21 // indirect
 	github.com/googleapis/gax-go/v2 v2.23.0 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
-	github.com/kamstrup/intmap v0.5.2 // indirect
 	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/klauspost/crc32 v1.3.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
@@ -171,24 +167,17 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.45.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/term v0.45.0 // indirect
+	golang.org/x/term v0.46.0 // indirect
 	gopkg.in/ini.v1 v1.67.3 // indirect
 )
 
 require (
-	github.com/axiomhq/hyperloglog v0.2.6 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.25.0 // indirect
-	github.com/blevesearch/go-porterstemmer v1.0.3 // indirect
 	github.com/blevesearch/mmap-go v1.2.0 // indirect
-	github.com/blevesearch/segment v0.9.1 // indirect
-	github.com/blevesearch/snowballstem v0.9.0 // indirect
+	github.com/blevesearch/segment v0.9.1
 	github.com/blevesearch/vellum v1.2.0
-	github.com/blugelabs/bluge_segment_api v0.2.0
-	github.com/blugelabs/ice v1.0.0
-	github.com/caio/go-tdigest v3.1.0+incompatible // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0
-	github.com/dgryski/go-metro v0.0.0-20250106013310-edb8663e5e33 // indirect
 	github.com/dustin/go-humanize v1.0.1
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-logr/logr v1.4.4 // indirect
@@ -225,19 +214,14 @@ require (
 	go.opentelemetry.io/otel/sdk v1.45.0 // indirect
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect
 	go.uber.org/zap v1.28.0
-	golang.org/x/crypto v0.55.0 // indirect
-	golang.org/x/net v0.58.0 // indirect
-	golang.org/x/sys v0.47.0
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/crypto v0.57.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/sys v0.48.0
+	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.49.0
 	google.golang.org/genproto v0.0.0-20260810153831-ec0a7760b754 // indirect
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-replace (
-	github.com/benbjohnson/clock v1.3.0 => github.com/SkyAPM/clock v1.3.1-0.20220809233656-dc7607c94a97
-	github.com/blugelabs/bluge => github.com/SkyAPM/bluge v0.0.0-20260625022800-42385daf66b8
-	github.com/blugelabs/bluge_segment_api => github.com/zinclabs/bluge_segment_api v1.0.0
-	github.com/blugelabs/ice => github.com/SkyAPM/ice v0.0.0-20250619023539-b5173603b0b3
-)
+replace github.com/benbjohnson/clock v1.3.0 => github.com/SkyAPM/clock v1.3.1-0.20220809233656-dc7607c94a97

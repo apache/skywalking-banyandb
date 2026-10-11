@@ -32,7 +32,7 @@ import (
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -81,6 +81,7 @@ func snapshotTestDir(t *testing.T) string {
 func openSnapshotTSDB(t *testing.T, dir string, ttlDays int) (TSDB[*MockTSTable, any], *segmentController[*MockTSTable, any]) {
 	t.Helper()
 	opts := TSDBOpts[*MockTSTable, any]{
+		RootLease:          staticTestLease{},
 		Location:           dir,
 		SegmentInterval:    IntervalRule{Unit: DAY, Num: 1},
 		TTL:                IntervalRule{Unit: DAY, Num: ttlDays},
@@ -172,8 +173,7 @@ func TestTakeFileSnapshot_ClosedSegmentExcludesTransientArtifacts(t *testing.T) 
 	writeFile(filepath.Join("shard-0", "0000000000000001", "metadata.json"))
 	writeFile(filepath.Join("shard-0", FailedPartsDirName, "junk.bin"))
 	writeFile(filepath.Join("shard-0", "stale.tmp"))
-	writeFile(filepath.Join(seriesIndexDirName, inverted.ExternalSegmentTempDirName, "t.bin"))
-	writeFile(filepath.Join(seriesIndexDirName, inverted.LockFilename))
+	writeFile(filepath.Join(seriesIndexDirName, legacyExternalSegmentTempDirName, "t.bin"))
 
 	snapshotDir := filepath.Join(dir, "snapshot")
 	created, err := tsdb.TakeFileSnapshot(snapshotDir)
@@ -185,8 +185,7 @@ func TestTakeFileSnapshot_ClosedSegmentExcludesTransientArtifacts(t *testing.T) 
 	require.DirExists(t, filepath.Join(segSnap, seriesIndexDirName), "series index must be copied")
 	require.NoDirExists(t, filepath.Join(segSnap, "shard-0", FailedPartsDirName), "failed-parts must be excluded")
 	require.NoFileExists(t, filepath.Join(segSnap, "shard-0", "stale.tmp"), ".tmp must be excluded")
-	require.NoDirExists(t, filepath.Join(segSnap, seriesIndexDirName, inverted.ExternalSegmentTempDirName), "external-segment temp must be excluded")
-	require.NoFileExists(t, filepath.Join(segSnap, seriesIndexDirName, inverted.LockFilename), "bluge lock file must be excluded")
+	require.NoDirExists(t, filepath.Join(segSnap, seriesIndexDirName, legacyExternalSegmentTempDirName), "external-segment temp must be excluded")
 }
 
 // TestSeriesIndexStats_ClosedSegmentIsNotReopened verifies the inspection
@@ -329,7 +328,7 @@ func createSegmentWithSeries(t *testing.T, tsdb TSDB[*MockTSTable, any], ts time
 // under snapshotDir, read-only.
 func snapshotSeriesDocCount(t *testing.T, snapshotDir string, seg *segment[*MockTSTable, any]) int64 {
 	t.Helper()
-	count, err := inverted.ReadOnlyDocCount(filepath.Join(snapshotDir, filepath.Base(seg.location), seriesIndexDirName))
+	count, err := native.ReadOnlyDocCount(filepath.Join(snapshotDir, filepath.Base(seg.location), seriesIndexDirName))
 	require.NoError(t, err)
 	return count
 }

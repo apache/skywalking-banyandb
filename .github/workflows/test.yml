@@ -67,7 +67,7 @@ jobs:
         id: cache-tool
         with:
           path: bin
-          key: ${{ runner.os }}-${{ runner.arch }}-test-tool-${{ hashFiles('scripts/build/version.mk') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-test-tool-${{ hashFiles('scripts/build/version.mk', 'go.mod') }}
       - name: Test integration and banyand
         env:
           LOAD_TEST_MINUTES: ${{ inputs.load-test-minutes }}

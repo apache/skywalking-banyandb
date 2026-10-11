@@ -106,3 +106,34 @@ gh pr create --title "<title>" --body "<body>"
 ```
 
 Follow the standard PR format with a summary and test plan.
+
+## After the PR Is Merged
+
+Merged branches must be removed, both locally and on `origin`, so they do not pile up. Do this once the PR has actually been merged — never for an open PR, and never for a PR that was closed without merging unless the user asks.
+
+Confirm the merge state first:
+
+```bash
+gh pr view <number> --json state,mergedAt --jq '"\(.state) \(.mergedAt)"'
+```
+
+Only proceed when the state is `MERGED`. Then clean up:
+
+```bash
+git checkout main
+git pull --ff-only origin main
+git branch -D <branch-name>
+git push origin --delete <branch-name>
+git fetch --prune origin
+```
+
+Notes:
+
+- This repo only allows **squash** merges, so the squash commit on `main` never matches the branch's own commits. `git branch -d` therefore refuses to delete even a merged branch; `-D` is required, which is why the `MERGED` check above comes first.
+- If `git push origin --delete` reports `remote ref does not exist`, GitHub already removed the remote branch. That is fine; continue with `git fetch --prune`.
+- Also prune any other local branches whose upstream is already gone (earlier merged PRs). List them, confirm with the user that each was merged, then delete:
+
+  ```bash
+  git fetch --prune origin
+  git branch -vv | grep ': gone\]' | awk '{print $1}'
+  ```

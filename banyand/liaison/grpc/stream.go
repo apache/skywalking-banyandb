@@ -102,6 +102,12 @@ func (s *streamService) validateWriteRequest(writeEntity *streamv1.WriteRequest,
 	if metadata.ModRevision > 0 {
 		id := getID(metadata)
 		streamCache, existed := s.entityRepo.getLocator(id)
+		if !existed && awaitSchemaPresent(func() bool {
+			_, found := s.entityRepo.getLocator(id)
+			return found
+		}, schemaPresenceWait(s.maxWaitDuration)) {
+			streamCache, existed = s.entityRepo.getLocator(id)
+		}
 		if !existed {
 			s.l.Error().Stringer("written", writeEntity).Msg("stream schema not found")
 			s.sendReply(metadata, modelv1.Status_STATUS_NOT_FOUND, writeEntity.GetMessageId(), stream)

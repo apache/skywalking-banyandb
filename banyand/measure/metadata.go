@@ -44,6 +44,8 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
@@ -765,9 +767,12 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 	}
 	group := groupSchema.Metadata.Name
 	opts := storage.TSDBOpts[*tsTable, option]{
-		ShardNum:                       res.ResourceOpts.ShardNum,
-		Location:                       path.Join(s.path, group),
-		TSTableCreator:                 newTSTable,
+		ShardNum:       res.ResourceOpts.ShardNum,
+		Location:       path.Join(s.path, group),
+		TSTableCreator: newTSTable,
+		RootLeaseFactory: func(lock fs.File, root string) (storage.RootLease, error) {
+			return native.NewFileRootLease(lock, root)
+		},
 		TableMetrics:                   metrics,
 		SegmentInterval:                storage.MustToIntervalRule(res.ResourceOpts.SegmentInterval),
 		TTL:                            storage.MustToIntervalRule(res.ResourceOpts.Ttl),

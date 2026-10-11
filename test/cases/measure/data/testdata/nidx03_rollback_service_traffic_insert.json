@@ -1,0 +1,44 @@
+[
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {"str": {"value": "nidx03-svc-01"}},
+          {"str": {"value": "nidx03-group-a"}},
+          {"str": {"value": "NIDX-03 rollback service 01"}},
+          {"str": {"value": "svc01"}},
+          {"str": {"value": "nidx03-rollback"}},
+          {"int": {"value": 1}}
+        ]
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {"str": {"value": "nidx03-svc-02"}},
+          {"str": {"value": "nidx03-group-a"}},
+          {"str": {"value": "NIDX-03 rollback service 02"}},
+          {"str": {"value": "svc02"}},
+          {"str": {"value": "nidx03-rollback"}},
+          {"int": {"value": 2}}
+        ]
+      }
+    ]
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {"str": {"value": "nidx03-svc-03"}},
+          {"str": {"value": "nidx03-group-b"}},
+          {"str": {"value": "NIDX-03 rollback service 03"}},
+          {"str": {"value": "svc03"}},
+          {"str": {"value": "nidx03-rollback"}},
+          {"int": {"value": 3}}
+        ]
+      }
+    ]
+  }
+]

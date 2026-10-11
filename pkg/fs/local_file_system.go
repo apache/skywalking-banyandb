@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	iofs "io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -46,6 +47,14 @@ type LocalFile struct {
 	cached    bool // Caching decision from upper layer
 	writable  bool
 	seqSynced bool
+	locked    bool
+}
+
+// IsLocked reports whether this file was acquired through CreateLockFile.
+// It is used by ownership-bound storage adapters; callers cannot set the
+// private marker on a LocalFile obtained through any other constructor.
+func (file *LocalFile) IsLocked() bool {
+	return file != nil && file.locked
 }
 
 // NewLocalFileSystem is used to create the Local File system.
@@ -150,6 +159,65 @@ func (fs *localFileSystem) ReadDir(dirname string) []DirEntry {
 		result[i] = DirEntry(de)
 	}
 	return result
+}
+
+// ReadDirLimit reads at most limit entries of dirname, or all of them when limit is not positive.
+func (fs *localFileSystem) ReadDirLimit(dirname string, limit int) ([]DirEntry, error) {
+	directory, err := os.Open(dirname)
+	if err != nil {
+		return nil, pathError("Open directory", dirname, err)
+	}
+	des, readErr := directory.ReadDir(limit)
+	closeErr := directory.Close()
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return nil, pathError("Read directory", dirname, readErr)
+	}
+	if closeErr != nil {
+		return nil, &FileSystemError{
+			Code:    closeError,
+			Message: fmt.Sprintf("Close directory error, directory name: %s, error message: %s", dirname, closeErr),
+		}
+	}
+	result := make([]DirEntry, len(des))
+	for i, de := range des {
+		result[i] = DirEntry(de)
+	}
+	return result, nil
+}
+
+// MkdirAll creates path and any missing parents.
+func (fs *localFileSystem) MkdirAll(path string, permission Mode) error {
+	if err := os.MkdirAll(path, os.FileMode(permission)); err != nil {
+		return pathError("Create directory", path, err)
+	}
+	return nil
+}
+
+// Lstat describes the named file without following a final symbolic link.
+func (fs *localFileSystem) Lstat(name string) (iofs.FileInfo, error) {
+	info, err := os.Lstat(name)
+	if err != nil {
+		return nil, pathError("Stat", name, err)
+	}
+	return info, nil
+}
+
+// pathError classifies err from operation on name so that errors.Is keeps
+// matching the io/fs sentinels.
+func pathError(operation, name string, err error) error {
+	code := otherError
+	switch {
+	case os.IsNotExist(err):
+		code = IsNotExistError
+	case os.IsExist(err):
+		code = isExistError
+	case os.IsPermission(err):
+		code = permissionError
+	}
+	return &FileSystemError{
+		Code:    code,
+		Message: fmt.Sprintf("%s error, name: %s, error message: %s", operation, name, err),
+	}
 }
 
 // CreateFile is used to create and open the file by specified name and mode.

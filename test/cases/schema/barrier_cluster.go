@@ -73,6 +73,16 @@ func barrierClusterMeasureSpec(group, name string) *databasev1.Measure {
 	}
 }
 
+// awaitSeeded waits until the seeded measure is in every node's schema cache.
+// AwaitRevisionApplied alone is not enough: a node's revision watermark is a
+// running maximum, so an event with a higher revision that arrives first can
+// carry it past the measure's revision before the measure itself is applied.
+// Pausing that node then would queue the measure's creation, and the spec
+// would observe a node that never held the measure.
+func awaitSeeded(ctx context.Context, clients *Clients, groupName, measureName string) {
+	gm.Expect(clients.AwaitApplied(ctx, []string{fmt.Sprintf("measure:%s/%s", groupName, measureName)}, 10*time.Second)).Should(gm.Succeed())
+}
+
 var _ = g.Describe("Cluster barrier under partial-cluster conditions", func() {
 	var (
 		ctx     context.Context
@@ -120,6 +130,7 @@ var _ = g.Describe("Cluster barrier under partial-cluster conditions", func() {
 		gm.Expect(createMeasureErr).ShouldNot(gm.HaveOccurred())
 		baselineRev := createMeasureResp.GetModRevision()
 		gm.Expect(clients.AwaitRevision(ctx, baselineRev, 10*time.Second)).Should(gm.Succeed())
+		awaitSeeded(ctx, clients, groupName, measureName)
 
 		g.By("Pausing the receiving liaison's schema watch")
 		paused = SharedContext.LiaisonAddr
@@ -179,6 +190,7 @@ var _ = g.Describe("Cluster barrier under partial-cluster conditions", func() {
 		gm.Expect(createMeasureErr).ShouldNot(gm.HaveOccurred())
 		baselineRev := createMeasureResp.GetModRevision()
 		gm.Expect(clients.AwaitRevision(ctx, baselineRev, 10*time.Second)).Should(gm.Succeed())
+		awaitSeeded(ctx, clients, groupName, measureName)
 
 		g.By("Pausing the receiving liaison's schema watch")
 		paused = SharedContext.LiaisonAddr
@@ -235,6 +247,7 @@ var _ = g.Describe("Cluster barrier under partial-cluster conditions", func() {
 		})
 		gm.Expect(createMeasureErr).ShouldNot(gm.HaveOccurred())
 		gm.Expect(clients.AwaitRevision(ctx, createMeasureResp.GetModRevision(), 10*time.Second)).Should(gm.Succeed())
+		awaitSeeded(ctx, clients, groupName, measureName)
 
 		g.By("Pausing the receiving liaison's schema watch")
 		paused = SharedContext.LiaisonAddr
@@ -285,6 +298,7 @@ var _ = g.Describe("Cluster barrier under partial-cluster conditions", func() {
 		gm.Expect(createMeasureErr).ShouldNot(gm.HaveOccurred())
 		baselineRev := createMeasureResp.GetModRevision()
 		gm.Expect(clients.AwaitRevision(ctx, baselineRev, 10*time.Second)).Should(gm.Succeed())
+		awaitSeeded(ctx, clients, groupName, measureName)
 
 		g.By("Pausing the receiving liaison and bumping the measure twice while paused")
 		paused = SharedContext.LiaisonAddr

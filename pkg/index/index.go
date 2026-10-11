@@ -26,8 +26,6 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/blugelabs/bluge/numeric"
-
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -88,7 +86,7 @@ func NewStringField(key FieldKey, value string) Field {
 // NewIntField creates a new int field.
 func NewIntField(key FieldKey, value int64) Field {
 	return Field{
-		term: &FloatTermValue{Value: numeric.Int64ToFloat64(value)},
+		term: &FloatTermValue{Value: encoding.SortableInt64ToFloat64(value)},
 		Key:  key,
 	}
 }
@@ -197,7 +195,7 @@ type FloatTermValue struct {
 func (FloatTermValue) isTermValue() {}
 
 func (fv FloatTermValue) String() string {
-	return strconv.FormatInt(numeric.Float64ToInt64(fv.Value), 10)
+	return strconv.FormatInt(encoding.Float64ToSortableInt64(fv.Value), 10)
 }
 
 // Marshal encodes FloatTermValue to bytes.
@@ -407,8 +405,8 @@ func NewStringRangeOpts(lower, upper string, includesLower, includesUpper bool) 
 // NewIntRangeOpts creates a new int range option.
 func NewIntRangeOpts(lower, upper int64, includesLower, includesUpper bool) RangeOpts {
 	return RangeOpts{
-		Lower:         &FloatTermValue{Value: numeric.Int64ToFloat64(lower)},
-		Upper:         &FloatTermValue{Value: numeric.Int64ToFloat64(upper)},
+		Lower:         &FloatTermValue{Value: encoding.SortableInt64ToFloat64(lower)},
+		Upper:         &FloatTermValue{Value: encoding.SortableInt64ToFloat64(upper)},
 		IncludesLower: includesLower,
 		IncludesUpper: includesUpper,
 	}
@@ -808,7 +806,6 @@ type FieldIterable interface {
 
 // Searcher allows searching a field either by its key or by its key and term.
 type Searcher interface {
-	FieldIterable
 	Match(fieldKey FieldKey, match []string, opts *modelv1.Condition_MatchOption) (list posting.List, timestamps posting.List, err error)
 	MatchField(fieldKey FieldKey) (list posting.List, timestamps posting.List, err error)
 	MatchTerms(field Field) (list posting.List, timestamps posting.List, err error)
@@ -825,6 +822,7 @@ type Store interface {
 	io.Closer
 	Writer
 	Searcher
+	FieldIterable
 	CollectMetrics(...string)
 	Reset()
 	TakeFileSnapshot(dst string) error

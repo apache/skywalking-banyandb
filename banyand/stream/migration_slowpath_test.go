@@ -18,6 +18,7 @@
 package stream
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -32,38 +33,70 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/migration"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
-// matchInvertedTerm opens a fresh store at idxPath and returns the element IDs the
-// (ruleID, seriesID, value) term matches, then closes it. A freshly written index
-// can read empty until its snapshot is flushed and visible (see ReadOnlyDocCount),
-// and only a fresh open re-reads the on-disk snapshot — so callers poll this rather
-// than holding a single reader that is stuck at its open-time view.
+// elementIndexDocIDField is the reserved stored field name native.Document's
+// Identifier is always written under, mirroring pkg/index/native's own
+// (unexported) identifierField constant. elementIndexSeriesIDField is the
+// companion stored+indexed field pkg/index/nativeadapter.Adapter.Batch writes
+// once per document to scope its fields to one series (FieldKey.Marshal()
+// alone carries no SeriesID).
+const (
+	elementIndexDocIDField    = "_id"
+	elementIndexSeriesIDField = "_series_id"
+)
+
+// matchInvertedTerm opens a fresh read-only native generation at idxPath and
+// returns the element IDs the (ruleID, seriesID, value) term matches, then
+// closes it. A freshly written index can read empty until its snapshot is
+// flushed and visible (see ReadOnlyDocCount), and only a fresh open re-reads
+// the on-disk snapshot — so callers poll this rather than holding a single
+// reader that is stuck at its open-time view.
 func matchInvertedTerm(idxPath string, ruleID uint32, seriesID common.SeriesID, value string) (map[uint64]struct{}, error) {
-	store, openErr := inverted.NewStore(inverted.StoreOpts{Path: idxPath, BatchWaitSec: 0})
+	generation, openErr := native.OpenReadOnlyGeneration(idxPath)
 	if openErr != nil {
 		return nil, openErr
 	}
-	defer func() { _ = store.Close() }()
-	list, _, matchErr := store.MatchTerms(index.NewStringField(index.FieldKey{
-		IndexRuleID: ruleID,
-		SeriesID:    seriesID,
-	}, value))
-	if matchErr != nil {
-		return nil, matchErr
-	}
+	defer func() { _ = generation.Close() }()
+	// FieldKey.Marshal() encodes only the IndexRuleID/TagName, not the series --
+	// a document's series scoping lives in a separate "_series_id" stored field
+	// (elementIndexSeriesIDField), the same way the production write path
+	// (pkg/index/nativeadapter.Adapter.Batch) and the retired legacy engine's own
+	// MatchTerms (an AND of the field-name term and "_series_id") both scoped it.
+	// The term selection below narrows to the (ruleID, value) match; the series
+	// check is then applied as a post-filter on each candidate's stored fields.
+	fieldName := index.FieldKey{IndexRuleID: ruleID}.Marshal()
+	wantSeriesID := seriesID.Marshal()
+	selection := native.TermSelection{Field: fieldName, Terms: [][]byte{[]byte(value)}}
 	got := map[uint64]struct{}{}
-	iter := list.Iterator()
-	for iter.Next() {
-		got[iter.Current()] = struct{}{}
+	visitErr := generation.VisitSelectedDocuments(context.Background(), selection, func(doc native.StoredDocument) error {
+		var id []byte
+		var gotSeriesID []byte
+		_ = doc.VisitStoredFields(func(field string, fieldValue []byte) bool {
+			switch field {
+			case elementIndexDocIDField:
+				id = append([]byte(nil), fieldValue...)
+			case elementIndexSeriesIDField:
+				gotSeriesID = append([]byte(nil), fieldValue...)
+			}
+			return true
+		})
+		if len(id) > 0 && bytes.Equal(gotSeriesID, wantSeriesID) {
+			got[convert.BytesToUint64(id)] = struct{}{}
+		}
+		return nil
+	})
+	if visitErr != nil {
+		return nil, visitErr
 	}
-	return got, iter.Close()
+	return got, nil
 }
 
 // eventuallyIdxTerm polls matchInvertedTerm until the term matches exactly want,
@@ -209,8 +242,8 @@ func TestMigrationSlowPath_NumGt1_ReBucketing(t *testing.T) {
 // present. After running directCopyStreamGroup with a 1-day target SegmentInterval
 // (which splits the source rows into two target segs), it asserts:
 //  1. Each target seg's data-part row count summed equals the source total (no loss).
-//  2. Each target seg has an idx/ that, opened via inverted.NewStore (BatchWaitSec:0)
-//     + MatchTerms, returns ONLY the elementIDs whose data is in THAT seg.
+//  2. Each target seg has an idx/ that, opened read-only via the native document
+//     visitor's term selection, returns ONLY the elementIDs whose data is in THAT seg.
 func TestMigrationSlowPathElementIndexRebuild(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -275,9 +308,6 @@ func TestMigrationSlowPathElementIndexRebuild(t *testing.T) {
 	// element index (its contents are never read on the rebuild path).
 	srcIdxDir := filepath.Join(srcShardDir, elementIndexFilename)
 	require.NoError(t, os.MkdirAll(srcIdxDir, storage.DirPerm))
-	seedStore, err := inverted.NewStore(inverted.StoreOpts{Path: srcIdxDir, BatchWaitSec: 0})
-	require.NoError(t, err)
-	require.NoError(t, seedStore.Close())
 
 	// Hand-built locator: one tag family "default" with an INVERTED-indexed
 	// non-entity string tag "status"; entity is meta.name (not indexed).
@@ -355,6 +385,17 @@ func TestMigrationSlowPathElementIndexRebuild(t *testing.T) {
 	// day2: only eD2ok / eD2err.
 	assertIdxTerm(d2Seg, "ok", []uint64{eD2ok})
 	assertIdxTerm(d2Seg, "err", []uint64{eD2err})
+
+	// (3) CountElementIndexDocs (the native read-only count the verify CLI
+	// uses) agrees with the term-level check above: each target idx/ --
+	// written by the native migration engine (NIDX-04) -- holds exactly the
+	// 2 docs routed to it.
+	d1IdxCount, idxCountErr := CountElementIndexDocs(filepath.Join(dstGroupRoot, d1Seg, shardN, elementIndexFilename))
+	require.NoError(t, idxCountErr)
+	require.EqualValues(t, 2, d1IdxCount, "day1 target idx must hold 2 docs")
+	d2IdxCount, idxCountErr := CountElementIndexDocs(filepath.Join(dstGroupRoot, d2Seg, shardN, elementIndexFilename))
+	require.NoError(t, idxCountErr)
+	require.EqualValues(t, 2, d2IdxCount, "day2 target idx must hold 2 docs")
 
 	// Sanity: the slow path was actually exercised (source seg split into 2 targets).
 	require.GreaterOrEqual(t, res.Segments, 2, "expected at least two target segments")
@@ -456,21 +497,24 @@ func TestMigrationSlowPathMultiStreamElementIndexRebuild(t *testing.T) {
 	srcSegPath := filepath.Join(sourceGroupRoot, srcSegName)
 	sidxDir := filepath.Join(srcSegPath, "sidx")
 	require.NoError(t, os.MkdirAll(sidxDir, storage.DirPerm))
-	sidxStore, err := inverted.NewStore(inverted.StoreOpts{Path: sidxDir, BatchWaitSec: 0})
+	sidxLease := newTestRootLease(t, srcSegPath)
+	sidxOwner, err := native.NewOwner(native.OwnerOptions{Lease: sidxLease, Path: sidxDir, IdentifierDocValues: true})
 	require.NoError(t, err)
-	require.NoError(t, sidxStore.InsertSeriesBatch(index.Batch{Documents: index.Documents{
-		{EntityValues: aBuf},
-		{EntityValues: bBuf},
-	}}))
-	require.NoError(t, sidxStore.Close())
+	sidxDone := make(chan error, 1)
+	require.NoError(t, sidxOwner.Batch(context.Background(), native.Batch{
+		Documents: []native.Document{
+			{Identifier: aBuf},
+			{Identifier: bBuf},
+		},
+		PersistentCallback: func(batchErr error) { sidxDone <- batchErr },
+	}))
+	require.NoError(t, <-sidxDone)
+	require.NoError(t, sidxOwner.Close())
 
 	// A source idx/ must exist so the finalize step knows this (seg, shard) carries
 	// an element index (its contents are never read on the rebuild path).
 	srcIdxDir := filepath.Join(srcShardDir, elementIndexFilename)
 	require.NoError(t, os.MkdirAll(srcIdxDir, storage.DirPerm))
-	seedStore, err := inverted.NewStore(inverted.StoreOpts{Path: srcIdxDir, BatchWaitSec: 0})
-	require.NoError(t, err)
-	require.NoError(t, seedStore.Close())
 
 	// Per-stream locators. streamA: entity "name" (not indexed), INVERTED "status".
 	// streamB: entity "service" (INVERTED), INVERTED "code".
@@ -592,7 +636,7 @@ func TestMigrationSlowPathMultiStreamElementIndexRebuild(t *testing.T) {
 // to a single target segment seg-20260601. The snapshot sorts states by srcSegName:
 // seg-20260601 (sourceA) is processed first and its idx is byte-copied, creating the
 // target idx dir on disk. seg-20260602 (sourceB) then detects existsOnDisk=true and
-// falls back to rebuild, appending docs 2001/2002 to the existing bluge index.
+// falls back to rebuild, appending docs 2001/2002 to the existing element index.
 // The final assertion verifies all four elementIDs are present in the target idx.
 func TestMigrationElementIndexByteCopyCollisionFallsBackToRebuild(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -646,19 +690,33 @@ func TestMigrationElementIndexByteCopyCollisionFallsBackToRebuild(t *testing.T) 
 	// Seed sourceA's element index with real docs so the byte-copy carries content.
 	srcAIdxDir := filepath.Join(srcAShardDir, elementIndexFilename)
 	require.NoError(t, os.MkdirAll(srcAIdxDir, storage.DirPerm))
-	seedStoreA, openErrA := inverted.NewStore(inverted.StoreOpts{Path: srcAIdxDir, BatchWaitSec: 0})
+	statusFieldName := index.FieldKey{IndexRuleID: statusRID}.Marshal()
+	aSeriesIDBytes := aSeriesID.Marshal()
+	seedLeaseA := newTestRootLease(t, srcAShardDir)
+	seedOwnerA, openErrA := native.NewOwner(native.OwnerOptions{Lease: seedLeaseA, Path: srcAIdxDir, IdentifierDocValues: true})
 	require.NoError(t, openErrA)
-	require.NoError(t, seedStoreA.Batch(index.Batch{Documents: index.Documents{
-		{
-			DocID: aOk, Timestamp: aTS0,
-			Fields: []index.Field{index.NewStringField(index.FieldKey{IndexRuleID: statusRID, SeriesID: aSeriesID}, "ok")},
+	seedDoneA := make(chan error, 1)
+	require.NoError(t, seedOwnerA.Batch(context.Background(), native.Batch{
+		Documents: []native.Document{
+			{
+				Identifier: convert.Uint64ToBytes(aOk), Timestamp: aTS0,
+				Fields: []native.Field{
+					{Name: statusFieldName, Value: []byte("ok"), Index: true, Sort: true},
+					{Name: elementIndexSeriesIDField, Value: aSeriesIDBytes, Store: true, Index: true},
+				},
+			},
+			{
+				Identifier: convert.Uint64ToBytes(aErr), Timestamp: aTS1,
+				Fields: []native.Field{
+					{Name: statusFieldName, Value: []byte("err"), Index: true, Sort: true},
+					{Name: elementIndexSeriesIDField, Value: aSeriesIDBytes, Store: true, Index: true},
+				},
+			},
 		},
-		{
-			DocID: aErr, Timestamp: aTS1,
-			Fields: []index.Field{index.NewStringField(index.FieldKey{IndexRuleID: statusRID, SeriesID: aSeriesID}, "err")},
-		},
-	}}))
-	require.NoError(t, seedStoreA.Close())
+		PersistentCallback: func(batchErr error) { seedDoneA <- batchErr },
+	}))
+	require.NoError(t, <-seedDoneA)
+	require.NoError(t, seedOwnerA.Close())
 
 	// Build sourceB: two rows ALSO inside targetDay; source seg dir is named "day 2"
 	// but the timestamps are still in 2026-06-01 — row routing is driven by actual
@@ -683,9 +741,6 @@ func TestMigrationElementIndexByteCopyCollisionFallsBackToRebuild(t *testing.T) 
 	// from the part files and regenerates docs from rows).
 	srcBIdxDir := filepath.Join(srcBShardDir, elementIndexFilename)
 	require.NoError(t, os.MkdirAll(srcBIdxDir, storage.DirPerm))
-	seedStoreB, openErrB := inverted.NewStore(inverted.StoreOpts{Path: srcBIdxDir, BatchWaitSec: 0})
-	require.NoError(t, openErrB)
-	require.NoError(t, seedStoreB.Close())
 
 	// Single-stream index locators: non-entity "status" tag with INVERTED rule;
 	// entity tag "name" is not indexed, so no entity resolution is needed and no
@@ -740,8 +795,8 @@ func TestMigrationElementIndexByteCopyCollisionFallsBackToRebuild(t *testing.T) 
 
 	// Verify that the target idx contains the UNION of both sources' element-index docs.
 	// sourceA docs arrived via byte-copy; sourceB docs arrived via the collision rebuild.
-	// Opening a new inverted.Store on the byte-copied path and writing to it (as the
-	// rebuild does) opens the existing bluge index and adds new segments alongside the
+	// Opening a new native owner on the byte-copied path and writing to it (as the
+	// rebuild does) opens the existing element index and adds new segments alongside the
 	// copied ones, so both sets of docs are visible after close.
 	assertIdxContains := func(seriesID common.SeriesID, value string, wantIDs []uint64) {
 		idxPath := filepath.Join(dstGroupRoot, targetSegName, shardN, elementIndexFilename)

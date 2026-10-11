@@ -24,6 +24,7 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"regexp"
 	"slices"
@@ -272,7 +273,10 @@ func WriteBatchEntries(conn *grpclib.ClientConn, group string, baseTime time.Tim
 	md = resp.GetTrace().GetMetadata()
 
 	c := tracev1.NewTraceServiceClient(conn)
-	writeClient, writeErr := c.Write(context.Background())
+	// The deadline bounds the response drain below, which blocks in Recv.
+	writeCtx, writeCancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
+	defer writeCancel()
+	writeClient, writeErr := c.Write(writeCtx)
 	gm.Expect(writeErr).NotTo(gm.HaveOccurred())
 
 	for version, row := range rows {
@@ -299,10 +303,23 @@ func WriteBatchEntries(conn *grpclib.ClientConn, group string, baseTime time.Tim
 	}
 
 	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
-	gm.Eventually(func() error {
-		_, recvErr := writeClient.Recv()
-		return recvErr
-	}, flags.EventuallyTimeout).Should(gm.Equal(io.EOF))
+	// The liaison rejects a write by status, not by stream error, so a row
+	// it refused (schema not found or not applied, invalid timestamp, ...)
+	// would otherwise vanish and surface only as an empty query much later.
+	var statuses []string
+	for {
+		resp, recvErr := writeClient.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			break
+		}
+		gm.Expect(recvErr).NotTo(gm.HaveOccurred())
+		statuses = append(statuses, resp.GetStatus())
+	}
+	gm.Expect(statuses).To(gm.HaveLen(len(rows)), "one write response per row")
+	for _, writeStatus := range statuses {
+		gm.Expect(writeStatus).To(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()),
+			"trace write to %s/%s rejected; statuses=%v", group, md.GetName(), statuses)
+	}
 }
 
 // unmarshalYAMLWithSpanEncoding decodes YAML with special handling for span data.

@@ -33,7 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	idxmetrics "github.com/apache/skywalking-banyandb/pkg/index/metrics"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -52,10 +52,13 @@ const (
 )
 
 // TSDBOpts wraps options to create a tsdb.
+//
+//nolint:govet // options are grouped by API compatibility and lifecycle role.
 type TSDBOpts[T TSTable, O any] struct {
 	Option                         O
 	TableMetrics                   Metrics
 	TSTableCreator                 TSTableCreator[T, O]
+	TSTableCreatorWithLease        TSTableCreatorWithLease[T, O]
 	StorageMetricsFactory          observability.Factory
 	Location                       string
 	SegmentInterval                IntervalRule
@@ -67,6 +70,8 @@ type TSDBOpts[T TSTable, O any] struct {
 	DisableRotation                bool
 	SegmentIdleTimeout             time.Duration
 	MemoryLimit                    uint64
+	RootLeaseFactory               RootLeaseFactory
+	RootLease                      RootLease
 }
 
 type (
@@ -144,6 +149,7 @@ func (gc *groupCache) put(key EntryKey, value Sizable) {
 
 type database[T TSTable, O any] struct {
 	lock              fs.File
+	rootLease         RootLease
 	lfs               fs.FileSystem
 	tsEventCh         chan int64
 	scheduler         *timestamp.Scheduler
@@ -172,6 +178,9 @@ func (d *database[T, O]) Close() error {
 	d.scheduler.Close()
 	close(d.tsEventCh)
 	d.segmentController.close()
+	if revoker, ok := d.rootLease.(RootLeaseRevoker); ok {
+		_ = revoker.Revoke()
+	}
 	d.lock.Close()
 	if err := d.lfs.DeleteFile(d.lock.Path()); err != nil {
 		panic(fmt.Errorf("cannot delete lock file %s: %w", d.lock.Path(), err))
@@ -214,9 +223,9 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache 
 	clock, _ := timestamp.GetClock(ctx)
 	scheduler := timestamp.NewScheduler(l, clock)
 
-	var indexMetrics *inverted.Metrics
+	var indexMetrics *idxmetrics.Metrics
 	if opts.StorageMetricsFactory != nil {
-		indexMetrics = inverted.NewMetrics(opts.StorageMetricsFactory, common.SegLabelNames()...)
+		indexMetrics = idxmetrics.NewMetrics(opts.StorageMetricsFactory, common.SegLabelNames()...)
 	}
 	var sc Cache
 	if cache != nil {
@@ -235,6 +244,7 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache 
 		disableRetention: opts.DisableRetention,
 		lfs:              tsdbLfs,
 		retentionGate:    make(chan struct{}, 1),
+		rootLease:        opts.RootLease,
 	}
 	db.logger.Info().Str("path", opts.Location).Msg("initialized")
 	lockPath := filepath.Join(opts.Location, lockFilename)
@@ -244,17 +254,34 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache 
 	}
 	db.lock = lock
 	// Release the lock fd if any subsequent step in OpenTSDB returns an error.
-	// Otherwise the file descriptor leaks until process exit and a retry on the
-	// same data dir hits "resource temporarily unavailable" from the next
+	// Otherwise the file descriptor leaks until process exit and a retry on
+	// the same data dir hits "resource temporarily unavailable" from the next
 	// CreateLockFile call. Ownership transfers to (*database).Close() only on
 	// success — released = true is set on the success return below.
 	released := false
 	defer func() {
 		if !released {
+			// Segments opened before a later one failed still hold running
+			// tables; close them first, as Close does, so they finish while
+			// the lease is valid.
+			db.segmentController.close()
+			if revoker, ok := db.rootLease.(RootLeaseRevoker); ok {
+				_ = revoker.Revoke()
+			}
 			_ = lock.Close()
 			_ = tsdbLfs.DeleteFile(lockPath)
 		}
 	}()
+	if opts.RootLeaseFactory != nil {
+		rootLease, leaseErr := opts.RootLeaseFactory(lock, location)
+		if leaseErr != nil {
+			return nil, fmt.Errorf("create root lease: %w", leaseErr)
+		}
+		db.segmentController.optsMutex.Lock()
+		db.segmentController.opts.RootLease = rootLease
+		db.segmentController.optsMutex.Unlock()
+		db.rootLease = rootLease
+	}
 	if err := db.segmentController.open(); err != nil {
 		return nil, err
 	}
@@ -327,8 +354,8 @@ func (d *database[T, O]) TakeFileSnapshot(dst string) (success bool, err error) 
 	}
 
 	// The snapshot must NOT reopen a closed segment: reopening an idle-closed
-	// cold segment is the source of the nil-index panic and the bluge
-	// "exclusive lock" churn. Take the current segment objects WITHOUT forcing
+	// cold segment is the source of the nil-index panic and the legacy index
+	// engine's "exclusive lock" churn. Take the current segment objects WITHOUT forcing
 	// a reopen. A closed (quiescent) segment is hard-linked directly from its
 	// immutable on-disk files; an open segment is snapshotted through its live
 	// series index and shard tables.

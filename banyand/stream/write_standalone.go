@@ -290,7 +290,7 @@ func processElements(schemaRepo *schemaRepo, elements *elements, writeEvent *str
 	return nil
 }
 
-func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Message) {
+func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
@@ -340,7 +340,9 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 			releaseElements(es.elements)
 			if len(es.docs) > 0 {
 				index := es.tsTable.Index()
-				if err := index.Write(es.docs); err != nil {
+				// The raw elements are stored above; finish index admission even
+				// if the request has been canceled since.
+				if err := index.WriteContext(context.WithoutCancel(ctx), es.docs); err != nil {
 					w.l.Error().Err(err).Msg("cannot write element index")
 				}
 			}

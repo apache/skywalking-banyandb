@@ -88,6 +88,7 @@ func TestSegmentOpenAndReopen(t *testing.T) {
 	})
 
 	opts := TSDBOpts[mockTSTable, mockTSTableOpener]{
+		RootLease: staticTestLease{},
 		TSTableCreator: func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger,
 			_ timestamp.TimeRange, _ mockTSTableOpener, _ any,
 		) (mockTSTable, error) {
@@ -187,6 +188,7 @@ func TestSegmentCloseIfIdle(t *testing.T) {
 	})
 
 	opts := TSDBOpts[mockTSTable, mockTSTableOpener]{
+		RootLease: staticTestLease{},
 		TSTableCreator: func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger,
 			_ timestamp.TimeRange, _ mockTSTableOpener, _ any,
 		) (mockTSTable, error) {
@@ -276,6 +278,7 @@ func TestCloseIdleAndSelectSegments(t *testing.T) {
 	})
 
 	opts := TSDBOpts[mockTSTable, mockTSTableOpener]{
+		RootLease: staticTestLease{},
 		TSTableCreator: func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger,
 			_ timestamp.TimeRange, _ mockTSTableOpener, _ any,
 		) (mockTSTable, error) {
@@ -406,6 +409,7 @@ func TestOpenExistingSegmentWithShards(t *testing.T) {
 	})
 
 	opts := TSDBOpts[mockTSTable, mockTSTableOpener]{
+		RootLease: staticTestLease{},
 		TSTableCreator: func(_ fs.FileSystem, location string, _ common.Position, _ *logger.Logger,
 			_ timestamp.TimeRange, _ mockTSTableOpener, _ any,
 		) (mockTSTable, error) {
@@ -523,6 +527,7 @@ func TestDeleteExpiredSegmentsWithClosedSegments(t *testing.T) {
 
 	// Use a short TTL for testing - 3 days
 	opts := TSDBOpts[mockTSTable, mockTSTableOpener]{
+		RootLease: staticTestLease{},
 		TSTableCreator: func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger,
 			_ timestamp.TimeRange, _ mockTSTableOpener, _ any,
 		) (mockTSTable, error) {
@@ -672,6 +677,7 @@ func TestCreateSegmentWritesJSONMetadata(t *testing.T) {
 	})
 
 	opts := TSDBOpts[mockTSTable, mockTSTableOpener]{
+		RootLease: staticTestLease{},
 		TSTableCreator: func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger,
 			_ timestamp.TimeRange, _ mockTSTableOpener, _ any,
 		) (mockTSTable, error) {
@@ -739,6 +745,7 @@ func TestOpenReadsPersistedEndTime(t *testing.T) {
 
 	group := "test-group"
 	opts := TSDBOpts[mockTSTable, mockTSTableOpener]{
+		RootLease: staticTestLease{},
 		TSTableCreator: func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger,
 			_ timestamp.TimeRange, _ mockTSTableOpener, _ any,
 		) (mockTSTable, error) {
@@ -820,6 +827,7 @@ func TestOpenFallbackOldFormatMetadata(t *testing.T) {
 
 	group := "test-group"
 	opts := TSDBOpts[mockTSTable, mockTSTableOpener]{
+		RootLease: staticTestLease{},
 		TSTableCreator: func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger,
 			_ timestamp.TimeRange, _ mockTSTableOpener, _ any,
 		) (mockTSTable, error) {
@@ -894,6 +902,7 @@ func TestSegment_IndexDB_ReturnsUntypedNilWhenClosed(t *testing.T) {
 	})
 
 	opts := TSDBOpts[mockTSTable, mockTSTableOpener]{
+		RootLease: staticTestLease{},
 		TSTableCreator: func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger,
 			_ timestamp.TimeRange, _ mockTSTableOpener, _ any,
 		) (mockTSTable, error) {
@@ -987,6 +996,7 @@ func TestSegment_ConcurrentReopen_RefCountConsistent(t *testing.T) {
 	})
 
 	opts := TSDBOpts[mockTSTable, mockTSTableOpener]{
+		RootLease: staticTestLease{},
 		TSTableCreator: func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger,
 			_ timestamp.TimeRange, _ mockTSTableOpener, _ any,
 		) (mockTSTable, error) {
@@ -1102,6 +1112,7 @@ func TestSegment_ConcurrentReopenAndClose_NoPanic(t *testing.T) {
 	})
 
 	opts := TSDBOpts[mockTSTable, mockTSTableOpener]{
+		RootLease: staticTestLease{},
 		TSTableCreator: func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger,
 			_ timestamp.TimeRange, _ mockTSTableOpener, _ any,
 		) (mockTSTable, error) {
@@ -1229,6 +1240,7 @@ func newAlignmentTestController(
 	})
 
 	opts := TSDBOpts[mockTSTable, mockTSTableOpener]{
+		RootLease: staticTestLease{},
 		TSTableCreator: func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger,
 			_ timestamp.TimeRange, _ mockTSTableOpener, _ any,
 		) (mockTSTable, error) {

@@ -38,7 +38,9 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -144,6 +146,9 @@ func openDatabase(b *testing.B, path string, cache storage.Cache) storage.TSDB[*
 		TSTableCreator:  newTSTable,
 		SegmentInterval: ir,
 		TTL:             ir,
+		RootLeaseFactory: func(lock fs.File, root string) (storage.RootLease, error) {
+			return native.NewFileRootLease(lock, root)
+		},
 		Option: option{
 			mergePolicy:        newMergePolicy(math.MaxInt32, math.MaxFloat64, run.Bytes(math.MaxInt64)),
 			flushTimeout:       time.Hour,

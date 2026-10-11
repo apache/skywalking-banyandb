@@ -61,7 +61,7 @@ so tsTable.loadSnapshot picks up the new parts on next startup.
 Schemas (measure tag families + IndexMode bit; stream tag families +
 index-rule bindings) and group resource opts (SegmentInterval per
 LifecycleStage) are read directly from the source's schema-property
-bluge catalog — no liaison access is needed. Each group routes to its
+catalog — no liaison access is needed. Each group routes to its
 catalog's executor, so one plan may mix measure and stream groups.
 IndexMode measure groups take a dedicated path: their data points live
 as documents in the segment-level sidx (no shard parts), so each doc is

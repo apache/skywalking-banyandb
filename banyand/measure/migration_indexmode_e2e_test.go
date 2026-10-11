@@ -20,14 +20,12 @@ package measure_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/blugelabs/bluge"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -46,6 +44,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
 
 // End-to-end migration of an INDEX-MODE measure that carries an index rule.
@@ -356,7 +355,7 @@ func writeIndexModeE2EPoints(svcs *services, group, name string, baseTime time.T
 }
 
 // seedIndexModeE2ESchemaProperty writes the live Group + Measure + IndexRule into
-// a synthetic schema-property bluge catalog so the migration restores the
+// a synthetic schema-property catalog so the migration restores the
 // index-mode schema (and the rule that keeps the indexed tag searchable).
 func seedIndexModeE2ESchemaProperty(svcs *services, root, group, measureName, ruleName string) {
 	ctx := context.TODO()
@@ -369,25 +368,17 @@ func seedIndexModeE2ESchemaProperty(svcs *services, root, group, measureName, ru
 		&commonv1.Metadata{Name: ruleName, Group: group})
 	Expect(err).NotTo(HaveOccurred())
 
-	shardPath := filepath.Join(root, "shard-0")
-	Expect(os.MkdirAll(shardPath, storage.DirPerm)).To(Succeed())
-	w, err := bluge.OpenWriter(bluge.DefaultConfig(shardPath))
-	Expect(err).NotTo(HaveOccurred())
-	defer func() { Expect(w.Close()).To(Succeed()) }()
-
-	batch := bluge.NewBatch()
 	grpJSON, err := protojson.Marshal(grpProto)
 	Expect(err).NotTo(HaveOccurred())
-	batch.Insert(migrationE2EBlugeDoc("group/"+group, schema.KindGroup.String(), "", string(grpJSON)))
 	measureJSON, err := protojson.Marshal(measureProto)
 	Expect(err).NotTo(HaveOccurred())
-	batch.Insert(migrationE2EBlugeDoc("measure/"+group+"/"+measureName,
-		schema.KindMeasure.String(), group, string(measureJSON)))
 	ruleJSON, err := protojson.Marshal(ruleProto)
 	Expect(err).NotTo(HaveOccurred())
-	batch.Insert(migrationE2EBlugeDoc("index-rule/"+group+"/"+ruleName,
-		schema.KindIndexRule.String(), group, string(ruleJSON)))
-	Expect(w.Batch(batch)).To(Succeed())
+	writeMigrationE2ESchemaDocs(filepath.Join(root, "shard-0"), []native.Document{
+		migrationE2ESchemaDoc("group/"+group, schema.KindGroup.String(), "", string(grpJSON)),
+		migrationE2ESchemaDoc("measure/"+group+"/"+measureName, schema.KindMeasure.String(), group, string(measureJSON)),
+		migrationE2ESchemaDoc("index-rule/"+group+"/"+ruleName, schema.KindIndexRule.String(), group, string(ruleJSON)),
+	})
 }
 
 // queryIndexModeE2E runs a measure query (optionally filtered) through the

@@ -23,7 +23,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	idxmetrics "github.com/apache/skywalking-banyandb/pkg/index/metrics"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
 )
@@ -97,7 +97,7 @@ type metrics struct {
 	pipelineDropSetBudgetBytes meter.Gauge
 	pipelineDropSetEntries     meter.Histogram
 	totalBatch                 meter.Counter
-	indexMetrics               *inverted.Metrics
+	indexMetrics               *idxmetrics.Metrics
 	pipelinePluginNames        sync.Map
 	fileSyncTargets            sync.Map
 	pipelinePluginLifecycleMu  sync.RWMutex
@@ -696,7 +696,7 @@ func (s *supplier) newMetrics(p common.Position) storage.Metrics {
 			pendingDataCount:               factory.NewGauge("pending_data_count", common.ShardLabelNames()...),
 			mergeQuarantinedParts:          factory.NewGauge("merge_quarantined_parts", common.ShardLabelNames()...),
 		},
-		indexMetrics: inverted.NewMetrics(factory, common.SegLabelNames()...),
+		indexMetrics: idxmetrics.NewMetrics(factory, common.SegLabelNames()...),
 	}
 }
 
@@ -771,7 +771,7 @@ func (qs *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observa
 			pendingDataCount:               factory.NewGauge("pending_data_count", common.ShardLabelNames()...),
 			mergeQuarantinedParts:          factory.NewGauge("merge_quarantined_parts", common.ShardLabelNames()...),
 		},
-		indexMetrics: inverted.NewMetrics(factory, common.SegLabelNames()...),
+		indexMetrics: idxmetrics.NewMetrics(factory, common.SegLabelNames()...),
 	}, factory
 }
 

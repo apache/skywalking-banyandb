@@ -39,7 +39,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
+	"github.com/apache/skywalking-banyandb/pkg/index/nativeadapter"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -120,29 +121,66 @@ type finalizeStreamElementIndexInput struct {
 	ir            storage.IntervalRule
 }
 
-// targetIdxStore lazily opens one inverted store per target idx path
-// (BatchWaitSec:0) and closes them all at the end, so multiple source segs feeding
-// the same target idx share a single writer.
+// elementIndexMigrationLfs performs this tool's own lock-file management,
+// matching pkg/index/native's own package-level fileSystem and the
+// union-sidx builder's / measure's index-mode copy tool's
+// (banyand/measure/migration_indexmode_copy.go).
+var elementIndexMigrationLfs = fs.NewLocalFileSystem()
+
+// elementIndexMigrationLockFilename is the lock file targetIdxStore creates
+// (one per target shard, beside its idx directory) to back the
+// native.FileRootLease each target owner requires; it is removed once that
+// owner closes.
+const elementIndexMigrationLockFilename = "lock"
+
+// targetIdxStore lazily opens one native store per target idx path and closes
+// them all at the end, so multiple source segs feeding the same target idx
+// share a single writer. Each store is synchronous (AsyncPersistence:
+// false), matching the previous release's inverted.NewStore(StoreOpts{
+// BatchWaitSec: 0}) write contract: Batch blocks until the batch is durable,
+// which the verify/analyze readers that immediately re-open the target idx
+// depend on.
 type targetIdxStore struct {
-	stores map[string]index.SeriesStore
+	stores map[string]*nativeadapter.Store
+	locks  map[string]fs.File
 }
 
 func newTargetIdxStore() *targetIdxStore {
-	return &targetIdxStore{stores: map[string]index.SeriesStore{}}
+	return &targetIdxStore{stores: map[string]*nativeadapter.Store{}, locks: map[string]fs.File{}}
 }
 
-func (t *targetIdxStore) get(path string) (index.SeriesStore, error) {
+func (t *targetIdxStore) get(path string) (*nativeadapter.Store, error) {
 	if s, ok := t.stores[path]; ok {
 		return s, nil
 	}
 	if err := os.MkdirAll(path, storage.DirPerm); err != nil {
 		return nil, fmt.Errorf("mkdir idx %s: %w", path, err)
 	}
-	s, err := inverted.NewStore(inverted.StoreOpts{Path: path, BatchWaitSec: 0})
+	// native.FileRootLease requires its owner's Path to be a proper
+	// subdirectory of the lease root, so the lock lives one level up from the
+	// idx directory itself (the target shard directory), matching a live
+	// TSDB's own lock-beside-shard layout (tstable.go initTSTableWithLease).
+	leaseRoot := filepath.Dir(path)
+	lockPath := filepath.Join(leaseRoot, elementIndexMigrationLockFilename)
+	lock, lockErr := elementIndexMigrationLfs.CreateLockFile(lockPath, storage.FilePerm)
+	if lockErr != nil {
+		return nil, fmt.Errorf("create idx lock %s: %w", lockPath, lockErr)
+	}
+	lease, leaseErr := native.NewFileRootLease(lock, leaseRoot)
+	if leaseErr != nil {
+		_ = lock.Close()
+		return nil, fmt.Errorf("create idx root lease %s: %w", path, leaseErr)
+	}
+	// NewStore's NewOwner is a synchronous constructor and has no
+	// context-bearing API.
+	//nolint:contextcheck // construction does not perform cancellable I/O
+	s, err := nativeadapter.NewStore(path, lease, nativeadapter.SearcherOptions{MaxTerms: nativeadapter.DefaultMaxTerms})
 	if err != nil {
+		_ = lock.Close()
 		return nil, fmt.Errorf("open idx store %s: %w", path, err)
 	}
 	t.stores[path] = s
+	t.locks[path] = lock
 	return s, nil
 }
 
@@ -153,7 +191,12 @@ func (t *targetIdxStore) closeAll() error {
 			firstErr = fmt.Errorf("close idx store %s: %w", path, err)
 		}
 	}
-	t.stores = map[string]index.SeriesStore{}
+	for path, lock := range t.locks {
+		_ = lock.Close()
+		_ = os.Remove(filepath.Join(filepath.Dir(path), elementIndexMigrationLockFilename))
+	}
+	t.stores = map[string]*nativeadapter.Store{}
+	t.locks = map[string]fs.File{}
 	return firstErr
 }
 
@@ -290,17 +333,17 @@ type rebuildStreamElementIndexInput struct {
 }
 
 const (
-	// streamRebuildIdxBatchSize bounds one bluge batch. Smaller batches cap
+	// streamRebuildIdxBatchSize bounds one native batch. Smaller batches cap
 	// the per-worker ice segment-build working set (~0.65GB at 50k docs);
 	// the extra segments are compacted by banyandb's own merger once the
 	// migrated target serves.
 	streamRebuildIdxBatchSize = 25_000
 	// streamRebuildIdxFlushWorkers bounds concurrent store.Batch calls.
-	// bluge's Writer.Batch is safe for concurrent use: analysis runs on a
-	// shared worker pool, the ice segment build runs on the calling
-	// goroutine (this is the parallelism we're after — it dominated the
-	// rebuild at 78% CPU single-threaded), and segment introduction is
-	// serialized internally.
+	// native.Owner.Batch is safe for concurrent use: encoding a batch into an
+	// ice segment (prepareBatch) runs without holding the owner's lock, so it
+	// happens on the calling goroutine (this is the parallelism we're after —
+	// it dominated the rebuild at 78% CPU single-threaded); only admitting
+	// the prepared segment into the current root is serialized internally.
 	streamRebuildIdxFlushWorkers = 4
 )
 
@@ -385,6 +428,9 @@ func rebuildStreamElementIndexFromRows(ctx context.Context, in rebuildStreamElem
 			if !force && len(docs) < streamRebuildIdxBatchSize {
 				continue
 			}
+			// get's lazy nativeadapter.NewStore construction is synchronous and
+			// has no context-bearing API (see the nolint on targetIdxStore.get).
+			//nolint:contextcheck
 			store, getErr := in.idxStores.get(path)
 			if getErr != nil {
 				return getErr
@@ -395,7 +441,7 @@ func rebuildStreamElementIndexFromRows(ctx context.Context, in rebuildStreamElem
 			batchDocs := docs
 			batchPath := path
 			flushG.Go(func() error {
-				if batchErr := store.Batch(index.Batch{Documents: batchDocs}); batchErr != nil {
+				if batchErr := store.Batch(flushCtx, index.Batch{Documents: batchDocs}); batchErr != nil {
 					return fmt.Errorf("batch idx %s: %w", batchPath, batchErr)
 				}
 				return nil
@@ -455,8 +501,9 @@ func rebuildStreamElementIndexFromRows(ctx context.Context, in rebuildStreamElem
 			Int("rows", missingRows).Int("series", missingSeries).
 			Msg("element-index rebuild skipped rows whose seriesID resolved to no stream locator")
 	}
-	// Stores are closed by the caller (shared across source segs); the bluge
-	// segment size is not known until close, so report 0 bytes here.
+	// Stores are closed by the caller (shared across source segs); the
+	// on-disk size of this rebuild's share of a shared target store is not
+	// known until close, so report 0 bytes here.
 	return 0, nil
 }
 

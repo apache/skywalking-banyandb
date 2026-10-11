@@ -414,7 +414,7 @@ func (n *not) Execute(searcher index.GetSearcher, seriesID common.SeriesID, tr *
 	if err != nil {
 		return nil, nil, err
 	}
-	list, listTS, err := n.Inner.Execute(searcher, seriesID, tr)
+	list, _, err := n.Inner.Execute(searcher, seriesID, tr)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -422,10 +422,11 @@ func (n *not) Execute(searcher index.GetSearcher, seriesID common.SeriesID, tr *
 	if err != nil {
 		return nil, nil, err
 	}
-	err = allTS.Difference(listTS)
-	if err != nil {
-		return nil, nil, err
-	}
+	// Timestamp postings are a pruning hint, not an ID-to-timestamp relation.
+	// Subtracting the inner timestamps independently can discard a timestamp
+	// shared by a retained document and an excluded document. Keep the
+	// field-present candidate timestamps conservative; the ID postings above
+	// remain the exact field-aware NOT result.
 	return all, allTS, err
 }
 

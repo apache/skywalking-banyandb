@@ -48,6 +48,21 @@ merge, and expose reconciled low-cardinality aggregates plus serial-attribution 
 
 For developers who want to contribute to this project, see the [Contribution Guide](CONTRIBUTING.md).
 
+Artifacts that are committed to this repository — currently the generated license files — are built
+in a pinned, digest-verified container so that they are byte-identical regardless of the host
+operating system. It works on Linux, macOS and Windows (Docker Desktop); WSL2 is the smoother
+option on Windows but is not required for this target:
+
+```shell
+make docker-license-dep    # canonical: regenerate the license files
+make check-license-outputs # verify the committed bytes without regenerating
+```
+
+The container is streamed the source tree and returns only the generated files; your `node_modules`
+and `bin/` are never touched. The native `make license-dep` still works and produces the same bytes.
+See [CONTRIBUTING.md](CONTRIBUTING.md#update-licenses) and
+[the design](docs/design/0.12.0/docker-canonical-build/README.md).
+
 ## License
 
 [Apache 2.0 License.](LICENSE)

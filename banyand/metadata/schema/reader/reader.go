@@ -35,7 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/property"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
 
 // Property-document field and directory names mirror the unexported layout
@@ -66,11 +66,11 @@ type Doc struct {
 // for every document the requested kinds select. No kinds walks every live
 // document.
 func WalkShard(shardPath string, visit func(Doc) error, kinds ...schema.Kind) error {
-	documentVisit := func(document inverted.StoredDocument) error {
+	documentVisit := func(document native.StoredDocument) error {
 		return decodeSchemaDocument(shardPath, document, visit)
 	}
 	if len(kinds) == 0 {
-		if walkErr := inverted.ReadOnlyWalkDocuments(context.Background(), shardPath, documentVisit); walkErr != nil {
+		if walkErr := native.ReadOnlyWalkDocuments(context.Background(), shardPath, documentVisit); walkErr != nil {
 			return fmt.Errorf("walk schema docs in %s: %w", shardPath, walkErr)
 		}
 		return nil
@@ -79,14 +79,14 @@ func WalkShard(shardPath string, visit func(Doc) error, kinds ...schema.Kind) er
 	for kindIndex, kind := range kinds {
 		terms[kindIndex] = []byte(kind.String())
 	}
-	selection := inverted.TermSelection{Field: index.IndexModeName, Terms: terms}
-	if walkErr := inverted.ReadOnlySelectDocuments(context.Background(), shardPath, selection, documentVisit); walkErr != nil {
+	selection := native.TermSelection{Field: index.IndexModeName, Terms: terms}
+	if walkErr := native.ReadOnlySelectDocuments(context.Background(), shardPath, selection, documentVisit); walkErr != nil {
 		return fmt.Errorf("walk schema docs in %s: %w", shardPath, walkErr)
 	}
 	return nil
 }
 
-func decodeSchemaDocument(shardPath string, document inverted.StoredDocument, visit func(Doc) error) error {
+func decodeSchemaDocument(shardPath string, document native.StoredDocument, visit func(Doc) error) error {
 	var sourceBytes []byte
 	var deleted bool
 	if visitErr := document.VisitStoredFields(func(field string, value []byte) bool {

@@ -34,7 +34,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
 
 // schemaCatalogWalker is the product seam issue #14011 names: the offline
@@ -52,18 +52,18 @@ var (
 	nidx01dCatalogSeam schemaCatalogWalker = WalkDocs
 )
 
-// nativeSeamOfInverted is every identifier the schema reader may use from
-// pkg/index/inverted once the cutover has happened: the two read-only walks,
+// nativeReadOnlySeam is every identifier the schema reader may use from
+// pkg/index/native now that the cutover has happened: the two read-only walks,
 // the one bounded selection they accept, the borrowed document they hand back,
 // and the sentinels a caller classifies a read-only failure with.
 //
-// A query builder, a query type, a store constructor or a segment type
+// A query builder, a query type, an owner constructor or a segment type
 // appearing here is the schema reader building queries again, which is exactly
 // what issue #14011's acceptance criteria forbid.
-var nativeSeamOfInverted = map[string]struct{}{
-	"ErrCorruptIndex":         {},
+var nativeReadOnlySeam = map[string]struct{}{
+	"ErrCorrupt":              {},
 	"ErrInvalidSelection":     {},
-	"ErrNoCommittedIndex":     {},
+	"ErrNoSnapshot":           {},
 	"ReadOnlySelectDocuments": {},
 	"ReadOnlyWalkDocuments":   {},
 	"StoredDocument":          {},
@@ -75,7 +75,7 @@ var nativeSeamOfInverted = map[string]struct{}{
 // catalog payloads with. Everything else it needs is BanyanDB's own code or the
 // standard library.
 //
-// The reader opens index directories through pkg/index/inverted's read-only
+// The reader opens index directories through pkg/index/native's read-only
 // entry points, so it links no search library of its own; an import outside
 // this set is the schema walk reaching past the native seam.
 var allowedReaderExternalImports = map[string]struct{}{
@@ -180,9 +180,9 @@ func TestE2ESchemaWalkNativeMalformedMeasureIsTyped(t *testing.T) {
 	visited, err := walkNIDX01DCatalog(schema.KindMeasure)
 	tester.ErrorIs(err, ErrMalformedPropertyDocument,
 		"a malformed source must reach the caller as the schema reader's typed payload error")
-	tester.NotErrorIs(err, inverted.ErrCorruptIndex,
+	tester.NotErrorIs(err, native.ErrCorrupt,
 		"a valid ICE container with malformed application data is not index corruption")
-	tester.NotErrorIs(err, inverted.ErrNoCommittedIndex,
+	tester.NotErrorIs(err, native.ErrNoSnapshot,
 		"a damaged catalog is not an absent one; callers classify the two differently")
 	tester.Empty(visited, "a walk that fails must not also publish a partial catalog")
 
@@ -255,21 +255,25 @@ func TestE2ESchemaWalkNativeLeavesCorpusUnchanged(t *testing.T) {
 //
 // Requirement proved here:
 //
-//	R5 -- the schema reader links no search library of its own and reaches
-//	      pkg/index/inverted only through its read-only seam. Every third-party
-//	      import of the package is on an explicit allowlist, and every
-//	      identifier the package takes from pkg/index/inverted is one of the
-//	      read-only walks, the bounded selection they accept, the borrowed
-//	      document they yield, or a classification sentinel -- never a query
-//	      builder, a query type or a store constructor.
+//	R5 -- the schema reader links no search library of its own, never imports
+//	      the retired pkg/index/inverted, and reaches pkg/index/native only
+//	      through its read-only seam. Every third-party import of the package
+//	      is on an explicit allowlist, and every identifier the package takes
+//	      from pkg/index/native is one of the read-only walks, the bounded
+//	      selection they accept, the borrowed document they yield, or a
+//	      classification sentinel -- never a query builder, a query type or an
+//	      owner constructor.
 func TestE2ESchemaWalkNativeReachesNativeReader(t *testing.T) {
 	tester := require.New(t)
 
 	sources := 0
+	reachesWalk := false
 	for _, file := range readerPackageSources(t) {
 		sources++
 		imports := importQualifiersOf(t, file.syntax, file.path)
 		for _, importPath := range imports {
+			tester.NotEqual(invertedPackage, importPath,
+				"%s imports the retired %s; the schema walk must read through %s", file.path, invertedPackage, nativePackage)
 			if isStandardLibrary(importPath) || strings.HasPrefix(importPath, banyanDBModule) {
 				continue
 			}
@@ -277,18 +281,23 @@ func TestE2ESchemaWalkNativeReachesNativeReader(t *testing.T) {
 			tester.True(allowed, "%s imports %s outside the schema reader's dependency allowlist",
 				file.path, importPath)
 		}
-		for _, used := range selectorsOnPackage(file.syntax, imports, invertedPackage) {
-			_, allowed := nativeSeamOfInverted[used]
+		for _, used := range selectorsOnPackage(file.syntax, imports, nativePackage) {
+			_, allowed := nativeReadOnlySeam[used]
 			tester.True(allowed, "%s uses %s.%s, which is outside the read-only seam the schema walk may reach",
-				file.path, filepath.Base(invertedPackage), used)
+				file.path, filepath.Base(nativePackage), used)
+			if used == "ReadOnlyWalkDocuments" {
+				reachesWalk = true
+			}
 		}
 	}
 	tester.NotZero(sources, "the schema reader package must have source files")
+	tester.True(reachesWalk, "the schema reader must walk catalog shards through %s.ReadOnlyWalkDocuments", nativePackage)
 }
 
 const (
 	banyanDBModule   = "github.com/apache/skywalking-banyandb/"
 	invertedPackage  = banyanDBModule + "pkg/index/inverted"
+	nativePackage    = banyanDBModule + "pkg/index/native"
 	readerSourceGlob = "*.go"
 )
 

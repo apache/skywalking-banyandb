@@ -94,9 +94,29 @@ type MeasureAgg struct {
 	HideTag   bool
 }
 
+// FieldResolver mirrors pkg/index/native/criteria.FieldResolver's single
+// method without importing that package: pkg/index/native/criteria depends
+// on pkg/query/logical, which this package's tag_filter_adapter.go already
+// imports, so importing criteria here would cycle back. Any
+// criteria.FieldResolver value satisfies this interface structurally (same
+// method, same signature), so callers pass one through directly.
+type FieldResolver interface {
+	// Field returns the engine field (and, for MATCH, the analyzer) a
+	// Criteria condition's tag name resolves to, or ok false when the tag is
+	// not indexed for this caller.
+	Field(tagName string) (field string, analyzer string, ok bool)
+}
+
 // MeasureQueryOptions is the options of a measure query.
 type MeasureQueryOptions struct {
-	Query           index.Query
+	// Criteria is the filter the series index evaluates after series
+	// matchers/IndexModeSubject narrow the universe (NIDX-03 §5/§6.2); it
+	// never builds an engine query itself. A nil Criteria matches every
+	// candidate the universe already selected.
+	Criteria *modelv1.Criteria
+	// Fields resolves a Criteria condition's tag name to its engine field.
+	// Required whenever Criteria is non-nil.
+	Fields          FieldResolver
 	TimeRange       *timestamp.TimeRange
 	Order           *index.OrderBy
 	GroupBy         *MeasureGroupBy

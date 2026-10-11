@@ -39,7 +39,7 @@ type partDiskMetadata struct {
 }
 
 // CollectClosedShardInfo reads per-shard stats for a closed segment directly
-// from disk, WITHOUT opening any table or bluge index (which would reacquire
+// from disk, WITHOUT opening any table or index (which would reacquire
 // the index's exclusive lock). Sub-index stats (inverted index / sidx) are
 // reported empty; callers populate those only for open segments. It returns the
 // shard list and the total on-disk data size.

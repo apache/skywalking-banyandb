@@ -100,6 +100,7 @@ func TestVisitSegmentsInTimeRange(t *testing.T) {
 
 		// Create TSDB with single shard
 		opts := TSDBOpts[*MockTSTable, any]{
+			RootLease:       staticTestLease{},
 			Location:        dir,
 			SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
 			TTL:             IntervalRule{Unit: DAY, Num: 3},
@@ -157,6 +158,7 @@ func TestVisitSegmentsInTimeRange(t *testing.T) {
 
 		// Create TSDB with multiple shards
 		opts := TSDBOpts[*MockTSTable, any]{
+			RootLease:       staticTestLease{},
 			Location:        dir,
 			SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
 			TTL:             IntervalRule{Unit: DAY, Num: 7},
@@ -237,6 +239,7 @@ func TestVisitSegmentsInTimeRange(t *testing.T) {
 
 		// Create TSDB
 		opts := TSDBOpts[*MockTSTable, any]{
+			RootLease:       staticTestLease{},
 			Location:        dir,
 			SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
 			TTL:             IntervalRule{Unit: DAY, Num: 7},
@@ -329,6 +332,7 @@ func TestVisitSegmentsInTimeRange(t *testing.T) {
 
 		// Create TSDB
 		opts := TSDBOpts[*MockTSTable, any]{
+			RootLease:       staticTestLease{},
 			Location:        dir,
 			SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
 			TTL:             IntervalRule{Unit: DAY, Num: 3},
@@ -379,6 +383,7 @@ func TestVisitSegmentsInTimeRange(t *testing.T) {
 
 		// Create TSDB
 		opts := TSDBOpts[*MockTSTable, any]{
+			RootLease:       staticTestLease{},
 			Location:        dir,
 			SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
 			TTL:             IntervalRule{Unit: DAY, Num: 3},
@@ -430,6 +435,7 @@ func TestVisitSegmentsInTimeRange(t *testing.T) {
 
 		// Create TSDB with hour-based segments
 		opts := TSDBOpts[*MockTSTable, any]{
+			RootLease:       staticTestLease{},
 			Location:        dir,
 			SegmentInterval: IntervalRule{Unit: HOUR, Num: 1},
 			TTL:             IntervalRule{Unit: DAY, Num: 1},
@@ -502,6 +508,7 @@ func TestVisitSegmentsInTimeRange(t *testing.T) {
 
 		// Create TSDB with daily segments
 		opts := TSDBOpts[*MockTSTable, any]{
+			RootLease:       staticTestLease{},
 			Location:        dir,
 			SegmentInterval: IntervalRule{Unit: DAY, Num: 1},
 			TTL:             IntervalRule{Unit: DAY, Num: 7},

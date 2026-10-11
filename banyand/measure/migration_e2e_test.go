@@ -27,7 +27,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/blugelabs/bluge"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -52,6 +51,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
@@ -80,7 +80,7 @@ var _ = Describe("migration.RunCopy end-to-end (live service)", func() {
 		// Use ginkgo-owned temp dirs for source + target rootPaths so the
 		// source data survives the deliberate mid-test source-service
 		// shutdown (which must happen before the copy runs so every
-		// per-seg seriesIndex commits its bluge writer to disk).
+		// per-seg seriesIndex commits its native writer to disk).
 		workspace := GinkgoT().TempDir()
 		sourceRoot := filepath.Join(workspace, "source")
 		targetRoot := filepath.Join(workspace, "target")
@@ -139,7 +139,7 @@ var _ = Describe("migration.RunCopy end-to-end (live service)", func() {
 			"expected 2 DAY×2 segments on disk after writes are flushed")
 
 		// Capture sourceDataPath + dump the live registry into a synthetic
-		// schema-property bluge catalog BEFORE shutting down the source
+		// schema-property catalog BEFORE shutting down the source
 		// (the registry calls in seedMigrationE2ESchemaProperty require a
 		// running service).
 		targetDataPath := filepath.Join(targetRoot, "measure", "data")
@@ -148,10 +148,10 @@ var _ = Describe("migration.RunCopy end-to-end (live service)", func() {
 		seedMigrationE2ESchemaProperty(svcs, schemaPropertyRoot, group, measureName)
 		sourceDataPath := svcs.measure.(interface{ GetDataPath() string }).GetDataPath()
 
-		// Wait until every per-seg bluge sidx dir has a `.snp` snapshot
-		// file. Measure's flushTimeout (5s) drives PersisterNapTime in
-		// the underlying inverted.Store, and the persister exits without
-		// writing the `.snp` if the writer is closed before that nap
+		// Wait until every per-seg sidx dir has a `.snp` snapshot
+		// file. Measure's flushTimeout (5s) drives the native owner's
+		// PersistInterval, and persistence exits without writing the
+		// `.snp` if the writer is closed before that interval
 		// elapses — so we poll the disk until persistence is confirmed
 		// before tearing the service down. (Production tolerates the
 		// missing-snapshot case via mergeOneSourceSidxInto, but the test
@@ -164,7 +164,7 @@ var _ = Describe("migration.RunCopy end-to-end (live service)", func() {
 			sourceGroupRoot)
 
 		// Stop the source service so every tsTable + per-segment
-		// seriesIndex commits its bluge writer to disk. Migration must
+		// seriesIndex commits its native writer to disk. Migration must
 		// run against a quiescent tree (the in-cluster runbook scales
 		// the data StatefulSets to 0 for the same reason) — otherwise
 		// the migrated target's `sidx/` carries no committed snapshot
@@ -365,7 +365,7 @@ func queryMigrationE2E(svcs *services, group, measureName string, begin, end tim
 }
 
 // allSidxDirsHaveSnapshot returns true when every `<groupRoot>/seg-*/sidx`
-// directory carries at least one `.snp` file (bluge's snapshot marker).
+// directory carries at least one `.snp` file (the native engine's snapshot marker).
 // Used to wait deterministically for the per-seg seriesIndex persister to
 // fire before the copy scans the source — see the call site for
 // rationale.
@@ -512,10 +512,9 @@ func writeMigrationE2EPoints(svcs *services, group, name string, baseTime time.T
 	}
 }
 
-// seedMigrationE2ESchemaProperty writes a synthetic schema-property bluge
-// catalog at <root>/shard-0/ containing the live registry's Group + Measure
-// docs. The on-disk shape is exactly what walkSchemaPropertyShard reads in
-// production.
+// seedMigrationE2ESchemaProperty writes a synthetic schema-property catalog
+// at <root>/shard-0/ containing the live registry's Group + Measure docs. The
+// on-disk shape is exactly what walkSchemaPropertyShard reads in production.
 func seedMigrationE2ESchemaProperty(svcs *services, root, group, measureName string) {
 	ctx := context.TODO()
 	grpProto, err := svcs.metadataService.GroupRegistry().GetGroup(ctx, group)
@@ -524,26 +523,44 @@ func seedMigrationE2ESchemaProperty(svcs *services, root, group, measureName str
 		&commonv1.Metadata{Name: measureName, Group: group})
 	Expect(err).NotTo(HaveOccurred())
 
-	shardPath := filepath.Join(root, "shard-0")
-	Expect(os.MkdirAll(shardPath, storage.DirPerm)).To(Succeed())
-	w, err := bluge.OpenWriter(bluge.DefaultConfig(shardPath))
-	Expect(err).NotTo(HaveOccurred())
-	defer func() { Expect(w.Close()).To(Succeed()) }()
-
-	batch := bluge.NewBatch()
 	grpJSON, err := protojson.Marshal(grpProto)
 	Expect(err).NotTo(HaveOccurred())
-	batch.Insert(migrationE2EBlugeDoc("group/"+group, schema.KindGroup.String(), "", string(grpJSON)))
 	measureJSON, err := protojson.Marshal(measureProto)
 	Expect(err).NotTo(HaveOccurred())
-	batch.Insert(migrationE2EBlugeDoc("measure/"+group+"/"+measureName,
-		schema.KindMeasure.String(), group, string(measureJSON)))
-	Expect(w.Batch(batch)).To(Succeed())
+	writeMigrationE2ESchemaDocs(filepath.Join(root, "shard-0"), []native.Document{
+		migrationE2ESchemaDoc("group/"+group, schema.KindGroup.String(), "", string(grpJSON)),
+		migrationE2ESchemaDoc("measure/"+group+"/"+measureName, schema.KindMeasure.String(), group, string(measureJSON)),
+	})
 }
 
-// migrationE2EBlugeDoc wraps one inner-proto JSON in a propertyv1.Property
-// and returns a bluge doc whose `_source` field carries the Property JSON.
-func migrationE2EBlugeDoc(id, kind, group, sourceJSON string) *bluge.Document {
+// migrationE2ESchemaTestLease is a minimal native.PathRootLease stub: these
+// tests write directly into a throwaway shard directory with no surrounding
+// database lock to validate against.
+type migrationE2ESchemaTestLease struct{}
+
+func (migrationE2ESchemaTestLease) Validate() error           { return nil }
+func (migrationE2ESchemaTestLease) ValidatePath(string) error { return nil }
+
+// writeMigrationE2ESchemaDocs opens a native owner at shardPath and durably
+// commits docs -- the schema-property catalog's on-disk shape production
+// code (banyand/metadata/schema/reader) reads.
+func writeMigrationE2ESchemaDocs(shardPath string, docs []native.Document) {
+	Expect(os.MkdirAll(shardPath, storage.DirPerm)).To(Succeed())
+	owner, err := native.NewOwner(native.OwnerOptions{Lease: migrationE2ESchemaTestLease{}, Path: shardPath})
+	Expect(err).NotTo(HaveOccurred())
+	done := make(chan error, 1)
+	Expect(owner.Batch(context.Background(), native.Batch{
+		Documents:          docs,
+		PersistentCallback: func(batchErr error) { done <- batchErr },
+	})).To(Succeed())
+	Expect(<-done).NotTo(HaveOccurred())
+	Expect(owner.Close()).To(Succeed())
+}
+
+// migrationE2ESchemaDoc wraps one inner-proto JSON in a propertyv1.Property
+// and returns the native document whose `_source` field carries the Property
+// JSON, matching the field layout banyand/metadata/schema/reader expects.
+func migrationE2ESchemaDoc(id, kind, group, sourceJSON string) native.Document {
 	tags := []*modelv1.Tag{
 		{Key: "source", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: sourceJSON}}}},
 	}
@@ -560,10 +577,14 @@ func migrationE2EBlugeDoc(id, kind, group, sourceJSON string) *bluge.Document {
 	}
 	propJSON, err := protojson.Marshal(prop)
 	Expect(err).NotTo(HaveOccurred())
-	return bluge.NewDocument(id).
-		AddField(bluge.NewStoredOnlyField("_source", propJSON)).
-		AddField(bluge.NewKeywordFieldBytes(index.IndexModeName, []byte(kind))).
-		AddField(bluge.NewKeywordFieldBytes("_group", []byte(schema.SchemaGroup)))
+	return native.Document{
+		Identifier: []byte(id),
+		Fields: []native.Field{
+			{Name: "_source", Value: propJSON, Store: true},
+			{Name: index.IndexModeName, Value: []byte(kind), Index: true},
+			{Name: "_group", Value: []byte(schema.SchemaGroup), Index: true},
+		},
+	}
 }
 
 // setUpMigrationTarget mirrors setUp() from measure_suite_test.go but pins

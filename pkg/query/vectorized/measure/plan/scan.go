@@ -23,7 +23,6 @@ import (
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -35,9 +34,14 @@ import (
 // MeasureExecutionContext and constructs the MeasureBatchResult right
 // before calling Scan.Build.
 type ScanParams struct {
-	Measure         *databasev1.Measure
-	TimeRange       *timestamp.TimeRange
-	Query           index.Query
+	Measure   *databasev1.Measure
+	TimeRange *timestamp.TimeRange
+	// Criteria is the remaining (non-entity) filter the series index
+	// evaluates; Fields resolves its tag names to engine fields. See
+	// pkg/query/vectorized/measure/plan's entity-extraction helper, which
+	// replaces the row path's inverted.BuildQuery (NIDX-03 §5).
+	Criteria        *modelv1.Criteria
+	Fields          model.FieldResolver
 	Entities        [][]*modelv1.TagValue
 	GroupBy         *model.MeasureGroupBy
 	Agg             *model.MeasureAgg
