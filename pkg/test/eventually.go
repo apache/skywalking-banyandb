@@ -145,7 +145,7 @@ func EventuallyErr(fn func(g gomega.Gomega), intervals ...interface{}) error {
 		intervals = []interface{}{flags.EventuallyTimeout}
 	}
 	var failure string
-	localG := gomega.NewGomega(func(message string, callerSkip ...int) {
+	localG := gomega.NewGomega(func(message string, _ ...int) {
 		if failure == "" {
 			failure = message
 		}

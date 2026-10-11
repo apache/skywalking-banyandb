@@ -63,7 +63,7 @@ func TestEventuallyConsistentlyHoldsWindowAfterRetriedConvergence(t *testing.T) 
 
 func TestEventuallyErrSucceedsWithoutRetrying(t *testing.T) {
 	var calls int32
-	err := test.EventuallyErr(func(g gomega.Gomega) {
+	err := test.EventuallyErr(func(_ gomega.Gomega) {
 		atomic.AddInt32(&calls, 1)
 	}, time.Second, 10*time.Millisecond)
 	if err != nil {
@@ -99,7 +99,7 @@ func TestEventuallyErrReturnsErrorWithoutFailingTheTestOnTimeout(t *testing.T) {
 func TestEventuallyErrStopsTryingImmediately(t *testing.T) {
 	var calls int32
 	start := time.Now()
-	err := test.EventuallyErr(func(g gomega.Gomega) {
+	err := test.EventuallyErr(func(_ gomega.Gomega) {
 		atomic.AddInt32(&calls, 1)
 		gomega.StopTrying("partial success cannot be safely retried").Now()
 	}, time.Second, 10*time.Millisecond)
