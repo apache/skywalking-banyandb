@@ -32,6 +32,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -249,10 +250,17 @@ var _ = g.Describe("Schema time-range clamp", func() {
 				Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "h1"}},
 			}},
 		}}
-		writeStatus, writeErr := sendMeasureWriteAtTime(ctx, clients.MeasureWriteClient, group1, measureName, tData1, r1, hostTags)
-		gm.Expect(writeErr).ShouldNot(gm.HaveOccurred())
-		gm.Expect(writeStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()),
-			"write at T_data1 must return STATUS_SUCCEED")
+		// AwaitRevision is a hint under eventual consistency: another event (such as
+		// the _top_n_result measure each node creates for the new group) can carry the
+		// liaison's watermark past r1 before clamp_measure reaches its write cache, so
+		// the first write can be refused with STATUS_NOT_FOUND. A refused write stores
+		// nothing, so retrying it is safe.
+		gm.Eventually(func(innerGm gm.Gomega) {
+			writeStatus, writeErr := sendMeasureWriteAtTime(ctx, clients.MeasureWriteClient, group1, measureName, tData1, r1, hostTags)
+			innerGm.Expect(writeErr).ShouldNot(gm.HaveOccurred())
+			innerGm.Expect(writeStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()),
+				"write at T_data1 must return STATUS_SUCCEED")
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 
 		g.By("Sanity-checking that querying group1 alone returns the datum (legacy unclamped baseline — pass modRevision=0)")
 		// TWO distinct races have to settle before this query can succeed, and the
