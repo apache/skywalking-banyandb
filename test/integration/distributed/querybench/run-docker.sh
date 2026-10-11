@@ -20,7 +20,7 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd "${SCRIPT_DIR}/../../../.." && pwd)
-IMAGE=${DQB_DOCKER_IMAGE:-banyandb-distributed-querybench:go1.25}
+IMAGE=${DQB_DOCKER_IMAGE:-banyandb-distributed-querybench:go1.26}
 ENGINE=${DQB_ENGINE:-measure}
 CPUS=${DQB_CPU_LIMIT:-4}
 MEMORY=${DQB_MEMORY_LIMIT:-8g}

@@ -783,6 +783,34 @@ func TestOwnerStatsResetAndFileSnapshot(t *testing.T) {
 	require.Zero(t, count)
 }
 
+func TestOwnerActivityCountsAdmittedDocumentsAndAcquiredViews(t *testing.T) {
+	owner, err := NewOwner(OwnerOptions{Lease: testLease{}, Path: t.TempDir()})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, owner.Close()) }()
+	admitted, acquired := owner.Activity()
+	require.Zero(t, admitted)
+	require.Zero(t, acquired)
+
+	document := func(identifier string) Document {
+		return Document{Identifier: []byte(identifier), Fields: []Field{{Name: "status", Value: []byte("ok"), Store: true, Index: true}}}
+	}
+	require.NoError(t, owner.Batch(context.Background(), Batch{Documents: []Document{document("doc-1"), document("doc-2")}}))
+	require.NoError(t, owner.Batch(context.Background(), Batch{Mode: BatchInsertIfAbsent, Documents: []Document{document("doc-3")}}))
+	// A rejected admission does not count.
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.Error(t, owner.Batch(canceled, Batch{Documents: []Document{document("doc-4")}}))
+
+	for range 2 {
+		view, acquireErr := owner.Acquire(context.Background())
+		require.NoError(t, acquireErr)
+		require.NoError(t, view.Close())
+	}
+	admitted, acquired = owner.Activity()
+	require.Equal(t, uint64(3), admitted)
+	require.Equal(t, uint64(2), acquired)
+}
+
 func TestOwnerFileSnapshotIncludesAdmittedNRTBeforePersistence(t *testing.T) {
 	path := t.TempDir()
 	lease := &gatedPathLease{reached: make(chan struct{}), release: make(chan struct{})}
