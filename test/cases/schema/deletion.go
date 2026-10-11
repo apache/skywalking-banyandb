@@ -38,6 +38,8 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 )
 
@@ -75,7 +77,7 @@ var _ = g.Describe("Schema deletion", func() {
 		gm.Expect(err).ShouldNot(gm.HaveOccurred())
 
 		g.By("Creating measure schema")
-		err = createMeasureSchema(ctx, clients.MeasureRegClient, groupName, measureName)
+		err = createMeasureSchema(ctx, clients, groupName, measureName)
 		gm.Expect(err).ShouldNot(gm.HaveOccurred())
 
 		g.By("Verifying measure deletion")
@@ -169,7 +171,7 @@ func VerifyMeasureDeletion(ctx context.Context, clients *Clients, groupName, mea
 
 	// Step 4 & 5: Write to different measure and verify
 	secondMeasureName := measureName + "_second"
-	if err := createMeasureSchema(ctx, clients.MeasureRegClient, groupName, secondMeasureName); err != nil {
+	if err := createMeasureSchema(ctx, clients, groupName, secondMeasureName); err != nil {
 		return fmt.Errorf("step 4 failed - create second measure: %w", err)
 	}
 	for i := 0; i < 20; i++ {
@@ -287,8 +289,8 @@ func VerifyTraceDeletion(ctx context.Context, clients *Clients, groupName, trace
 
 // Helper functions.
 
-func createMeasureSchema(ctx context.Context, client databasev1.MeasureRegistryServiceClient, groupName, measureName string) error {
-	_, err := client.Create(ctx, &databasev1.MeasureRegistryServiceCreateRequest{
+func createMeasureSchema(ctx context.Context, clients *Clients, groupName, measureName string) error {
+	resp, err := clients.MeasureRegClient.Create(ctx, &databasev1.MeasureRegistryServiceCreateRequest{
 		Measure: &databasev1.Measure{
 			Metadata: &commonv1.Metadata{Name: measureName, Group: groupName},
 			Entity:   &databasev1.Entity{TagNames: []string{"id"}},
@@ -304,8 +306,14 @@ func createMeasureSchema(ctx context.Context, client databasev1.MeasureRegistryS
 			}},
 		},
 	})
-	time.Sleep(2 * time.Second)
-	return err
+	if err != nil {
+		return err
+	}
+	// AwaitRevision is a hint under eventual consistency: it confirms the cluster watermark,
+	// not that this liaison's own entity cache has applied the schema yet. The write helpers
+	// below retry a refused write for that residual lag, so the barrier only needs to
+	// replace the blind sleep this used to rely on for the common case.
+	return clients.AwaitRevision(ctx, resp.GetModRevision(), flags.EventuallyTimeout)
 }
 
 func createStreamSchema(ctx context.Context, clients *Clients, groupName, streamName string) error {
@@ -333,7 +341,7 @@ func createStreamSchema(ctx context.Context, clients *Clients, groupName, stream
 	if err != nil {
 		return err
 	}
-	_, err = clients.IndexRuleBindingClient.Create(ctx, &databasev1.IndexRuleBindingRegistryServiceCreateRequest{
+	bindingResp, err := clients.IndexRuleBindingClient.Create(ctx, &databasev1.IndexRuleBindingRegistryServiceCreateRequest{
 		IndexRuleBinding: &databasev1.IndexRuleBinding{
 			Metadata: &commonv1.Metadata{Name: streamName + "_binding", Group: groupName},
 			Rules:    []string{indexRuleName},
@@ -348,8 +356,12 @@ func createStreamSchema(ctx context.Context, clients *Clients, groupName, stream
 	if err != nil {
 		return err
 	}
-	time.Sleep(2 * time.Second)
-	return nil
+	// The index rule binding is created last, so its mod_revision is the highest of the
+	// three events this function creates — revisions are a single cluster-wide counter, so
+	// awaiting it is a (hint-only) proxy for all three having reached the watermark. The
+	// write helpers below retry a refused write for the residual per-liaison lag this
+	// barrier does not close.
+	return clients.AwaitRevision(ctx, bindingResp.GetModRevision(), flags.EventuallyTimeout)
 }
 
 func createTraceSchema(ctx context.Context, clients *Clients, groupName, traceName string) error {
@@ -382,7 +394,7 @@ func createTraceSchema(ctx context.Context, clients *Clients, groupName, traceNa
 	if err != nil {
 		return err
 	}
-	_, err = clients.IndexRuleBindingClient.Create(ctx, &databasev1.IndexRuleBindingRegistryServiceCreateRequest{
+	bindingResp, err := clients.IndexRuleBindingClient.Create(ctx, &databasev1.IndexRuleBindingRegistryServiceCreateRequest{
 		IndexRuleBinding: &databasev1.IndexRuleBinding{
 			Metadata: &commonv1.Metadata{Name: traceName + "_binding", Group: groupName},
 			Rules:    []string{indexRuleName},
@@ -397,14 +409,20 @@ func createTraceSchema(ctx context.Context, clients *Clients, groupName, traceNa
 	if err != nil {
 		return err
 	}
-	time.Sleep(2 * time.Second)
-	return nil
+	// The index rule binding is created last, so its mod_revision is the highest of the
+	// three events this function creates — revisions are a single cluster-wide counter, so
+	// awaiting it is a (hint-only) proxy for all three having reached the watermark. The
+	// write helpers below retry a refused write for the residual per-liaison lag this
+	// barrier does not close.
+	return clients.AwaitRevision(ctx, bindingResp.GetModRevision(), flags.EventuallyTimeout)
 }
 
-func writeMeasureData(ctx context.Context, client measurev1.MeasureServiceClient, groupName, measureName string, count int) error {
+// sendMeasureDataBatch writes count distinct measure rows on one write stream and returns
+// the status string of every response, in send order.
+func sendMeasureDataBatch(ctx context.Context, client measurev1.MeasureServiceClient, groupName, measureName string, count int) ([]string, error) {
 	writeClient, err := client.Write(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	metadata := &commonv1.Metadata{Name: measureName, Group: groupName}
 	baseTime := time.Now().Truncate(time.Millisecond)
@@ -424,31 +442,56 @@ func writeMeasureData(ctx context.Context, client measurev1.MeasureServiceClient
 			},
 			MessageId: uint64(time.Now().UnixNano() + int64(idx)),
 		}); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if err := writeClient.CloseSend(); err != nil {
-		return err
+		return nil, err
 	}
+	var statuses []string
 	for {
 		resp, recvErr := writeClient.Recv()
 		if errors.Is(recvErr, io.EOF) {
 			break
 		}
 		if recvErr != nil {
-			return recvErr
+			return statuses, recvErr
 		}
-		if resp != nil && resp.Status != modelv1.Status_STATUS_SUCCEED.String() {
-			return fmt.Errorf("write failed with status: %s", resp.Status)
-		}
+		statuses = append(statuses, resp.GetStatus())
 	}
-	return nil
+	return statuses, nil
 }
 
-func writeStreamData(ctx context.Context, client streamv1.StreamServiceClient, groupName, streamName string, count int) error {
+// writeMeasureData retries sendMeasureDataBatch while every row in the batch is refused —
+// the liaison's write cache can still lag a schema barrier, and a refused row stores
+// nothing, so repeating the whole batch is safe. If some rows succeed and some are
+// refused, the batch cannot be safely repeated without duplicating the accepted rows, so
+// it stops retrying at once.
+func writeMeasureData(ctx context.Context, client measurev1.MeasureServiceClient, groupName, measureName string, count int) error {
+	return test.EventuallyErr(func(innerGm gm.Gomega) {
+		statuses, sendErr := sendMeasureDataBatch(ctx, client, groupName, measureName, count)
+		innerGm.Expect(sendErr).ShouldNot(gm.HaveOccurred())
+		innerGm.Expect(statuses).Should(gm.HaveLen(count), "one write response per row")
+		succeeded := 0
+		for _, writeStatus := range statuses {
+			if writeStatus == modelv1.Status_STATUS_SUCCEED.String() {
+				succeeded++
+			}
+		}
+		if succeeded > 0 && succeeded < count {
+			gm.StopTrying(fmt.Sprintf("measure write to %s/%s partially rejected; statuses=%v", groupName, measureName, statuses)).Now()
+		}
+		innerGm.Expect(succeeded).Should(gm.Equal(count),
+			"measure write to %s/%s rejected; statuses=%v", groupName, measureName, statuses)
+	})
+}
+
+// sendStreamDataBatch writes count distinct stream rows on one write stream and returns the
+// status string of every response, in send order.
+func sendStreamDataBatch(ctx context.Context, client streamv1.StreamServiceClient, groupName, streamName string, count int) ([]string, error) {
 	writeClient, err := client.Write(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	metadata := &commonv1.Metadata{Name: streamName, Group: groupName}
 	baseTime := time.Now().Truncate(time.Millisecond)
@@ -466,31 +509,56 @@ func writeStreamData(ctx context.Context, client streamv1.StreamServiceClient, g
 			},
 			MessageId: uint64(time.Now().UnixNano() + int64(idx)),
 		}); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if err := writeClient.CloseSend(); err != nil {
-		return err
+		return nil, err
 	}
+	var statuses []string
 	for {
 		resp, recvErr := writeClient.Recv()
 		if errors.Is(recvErr, io.EOF) {
 			break
 		}
 		if recvErr != nil {
-			return recvErr
+			return statuses, recvErr
 		}
-		if resp != nil && resp.Status != modelv1.Status_STATUS_SUCCEED.String() {
-			return fmt.Errorf("write failed with status: %s", resp.Status)
-		}
+		statuses = append(statuses, resp.GetStatus())
 	}
-	return nil
+	return statuses, nil
 }
 
-func writeTraceData(ctx context.Context, client tracev1.TraceServiceClient, groupName, traceName string, count int) error {
+// writeStreamData retries sendStreamDataBatch while every row in the batch is refused — the
+// liaison's write cache can still lag a schema barrier, and a refused row stores nothing, so
+// repeating the whole batch is safe. If some rows succeed and some are refused, the batch
+// cannot be safely repeated without duplicating the accepted rows, so it stops retrying at
+// once.
+func writeStreamData(ctx context.Context, client streamv1.StreamServiceClient, groupName, streamName string, count int) error {
+	return test.EventuallyErr(func(innerGm gm.Gomega) {
+		statuses, sendErr := sendStreamDataBatch(ctx, client, groupName, streamName, count)
+		innerGm.Expect(sendErr).ShouldNot(gm.HaveOccurred())
+		innerGm.Expect(statuses).Should(gm.HaveLen(count), "one write response per row")
+		succeeded := 0
+		for _, writeStatus := range statuses {
+			if writeStatus == modelv1.Status_STATUS_SUCCEED.String() {
+				succeeded++
+			}
+		}
+		if succeeded > 0 && succeeded < count {
+			gm.StopTrying(fmt.Sprintf("stream write to %s/%s partially rejected; statuses=%v", groupName, streamName, statuses)).Now()
+		}
+		innerGm.Expect(succeeded).Should(gm.Equal(count),
+			"stream write to %s/%s rejected; statuses=%v", groupName, streamName, statuses)
+	})
+}
+
+// sendTraceDataBatch writes count distinct trace rows on one write stream and returns the
+// status string of every response, in send order.
+func sendTraceDataBatch(ctx context.Context, client tracev1.TraceServiceClient, groupName, traceName string, count int) ([]string, error) {
 	writeClient, err := client.Write(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	metadata := &commonv1.Metadata{Name: traceName, Group: groupName}
 	baseTime := time.Now().Truncate(time.Millisecond)
@@ -507,25 +575,48 @@ func writeTraceData(ctx context.Context, client tracev1.TraceServiceClient, grou
 			Span:    []byte(fmt.Sprintf("span_data_%d", idx)),
 			Version: uint64(idx + 1),
 		}); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if err := writeClient.CloseSend(); err != nil {
-		return err
+		return nil, err
 	}
+	var statuses []string
 	for {
 		resp, recvErr := writeClient.Recv()
 		if errors.Is(recvErr, io.EOF) {
 			break
 		}
 		if recvErr != nil {
-			return recvErr
+			return statuses, recvErr
 		}
-		if resp != nil && resp.Status != modelv1.Status_STATUS_SUCCEED.String() {
-			return fmt.Errorf("write failed with status: %s", resp.Status)
-		}
+		statuses = append(statuses, resp.GetStatus())
 	}
-	return nil
+	return statuses, nil
+}
+
+// writeTraceData retries sendTraceDataBatch while every row in the batch is refused — the
+// liaison's write cache can still lag a schema barrier, and a refused row stores nothing, so
+// repeating the whole batch is safe. If some rows succeed and some are refused, the batch
+// cannot be safely repeated without duplicating the accepted rows, so it stops retrying at
+// once.
+func writeTraceData(ctx context.Context, client tracev1.TraceServiceClient, groupName, traceName string, count int) error {
+	return test.EventuallyErr(func(innerGm gm.Gomega) {
+		statuses, sendErr := sendTraceDataBatch(ctx, client, groupName, traceName, count)
+		innerGm.Expect(sendErr).ShouldNot(gm.HaveOccurred())
+		innerGm.Expect(statuses).Should(gm.HaveLen(count), "one write response per row")
+		succeeded := 0
+		for _, writeStatus := range statuses {
+			if writeStatus == modelv1.Status_STATUS_SUCCEED.String() {
+				succeeded++
+			}
+		}
+		if succeeded > 0 && succeeded < count {
+			gm.StopTrying(fmt.Sprintf("trace write to %s/%s partially rejected; statuses=%v", groupName, traceName, statuses)).Now()
+		}
+		innerGm.Expect(succeeded).Should(gm.Equal(count),
+			"trace write to %s/%s rejected; statuses=%v", groupName, traceName, statuses)
+	})
 }
 
 func verifyMeasureDeletionEffects(ctx context.Context, clients *Clients, groupName, measureName string) error {
@@ -558,8 +649,22 @@ func verifyMeasureDeletionEffects(ctx context.Context, clients *Clients, groupNa
 		}
 	}
 
-	if err := writeMeasureData(ctx, clients.MeasureWriteClient, groupName, measureName, 1); err == nil {
-		return fmt.Errorf("write to deleted measure should fail")
+	// AwaitDeleted confirms only the cluster watermark; this liaison's own entity cache can
+	// still hold the measure's locator for a moment after that, in which case an immediate
+	// write can transiently succeed instead of failing. Retry until the cache has caught up
+	// and the write genuinely fails or returns a non-SUCCEED status.
+	if err := clients.AwaitDeleted(ctx, []string{fmt.Sprintf("measure:%s/%s", groupName, measureName)}, flags.EventuallyTimeout); err != nil {
+		return fmt.Errorf("await measure deletion: %w", err)
+	}
+	convergedErr := test.EventuallyErr(func(innerGm gm.Gomega) {
+		statuses, sendErr := sendMeasureDataBatch(ctx, clients.MeasureWriteClient, groupName, measureName, 1)
+		if sendErr != nil {
+			return
+		}
+		innerGm.Expect(statuses).ShouldNot(gm.ContainElement(modelv1.Status_STATUS_SUCCEED.String()))
+	})
+	if convergedErr != nil {
+		return fmt.Errorf("write to deleted measure should fail: %w", convergedErr)
 	}
 
 	return nil
@@ -595,8 +700,22 @@ func verifyStreamDeletionEffects(ctx context.Context, clients *Clients, groupNam
 		}
 	}
 
-	if err := writeStreamData(ctx, clients.StreamWriteClient, groupName, streamName, 1); err == nil {
-		return fmt.Errorf("write to deleted stream should fail")
+	// AwaitDeleted confirms only the cluster watermark; this liaison's own entity cache can
+	// still hold the stream's locator for a moment after that, in which case an immediate
+	// write can transiently succeed instead of failing. Retry until the cache has caught up
+	// and the write genuinely fails or returns a non-SUCCEED status.
+	if err := clients.AwaitDeleted(ctx, []string{fmt.Sprintf("stream:%s/%s", groupName, streamName)}, flags.EventuallyTimeout); err != nil {
+		return fmt.Errorf("await stream deletion: %w", err)
+	}
+	convergedErr := test.EventuallyErr(func(innerGm gm.Gomega) {
+		statuses, sendErr := sendStreamDataBatch(ctx, clients.StreamWriteClient, groupName, streamName, 1)
+		if sendErr != nil {
+			return
+		}
+		innerGm.Expect(statuses).ShouldNot(gm.ContainElement(modelv1.Status_STATUS_SUCCEED.String()))
+	})
+	if convergedErr != nil {
+		return fmt.Errorf("write to deleted stream should fail: %w", convergedErr)
 	}
 
 	return nil
@@ -654,8 +773,22 @@ func verifyTraceDeletionEffects(ctx context.Context, clients *Clients, groupName
 		}
 	}
 
-	if err := writeTraceData(ctx, clients.TraceWriteClient, groupName, traceName, 1); err == nil {
-		return fmt.Errorf("write to deleted trace should fail")
+	// AwaitDeleted confirms only the cluster watermark; this liaison's own entity cache can
+	// still hold the trace's locator for a moment after that, in which case an immediate
+	// write can transiently succeed instead of failing. Retry until the cache has caught up
+	// and the write genuinely fails or returns a non-SUCCEED status.
+	if err := clients.AwaitDeleted(ctx, []string{fmt.Sprintf("trace:%s/%s", groupName, traceName)}, flags.EventuallyTimeout); err != nil {
+		return fmt.Errorf("await trace deletion: %w", err)
+	}
+	convergedErr := test.EventuallyErr(func(innerGm gm.Gomega) {
+		statuses, sendErr := sendTraceDataBatch(ctx, clients.TraceWriteClient, groupName, traceName, 1)
+		if sendErr != nil {
+			return
+		}
+		innerGm.Expect(statuses).ShouldNot(gm.ContainElement(modelv1.Status_STATUS_SUCCEED.String()))
+	})
+	if convergedErr != nil {
+		return fmt.Errorf("write to deleted trace should fail: %w", convergedErr)
 	}
 
 	return nil

@@ -32,6 +32,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -196,10 +197,16 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 				Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "h1"}},
 			}},
 		}}
-		writeStatus1, writeErr1 := sendMeasureWriteAtTime(ctx, clients.MeasureWriteClient, groupName, measureName, tData1, r1, hostTags1)
-		gm.Expect(writeErr1).ShouldNot(gm.HaveOccurred())
-		gm.Expect(writeStatus1).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()),
-			"initial write must return STATUS_SUCCEED")
+		// AwaitRevision is a hint under eventual consistency: another event (such as the
+		// _top_n_result measure each node creates for the new group) can carry the
+		// liaison's watermark past r1 before this write reaches its cache, refusing it
+		// with a status. A refused write stores nothing, so retrying it is safe.
+		gm.Eventually(func(innerGm gm.Gomega) {
+			writeStatus1, writeErr1 := sendMeasureWriteAtTime(ctx, clients.MeasureWriteClient, groupName, measureName, tData1, r1, hostTags1)
+			innerGm.Expect(writeErr1).ShouldNot(gm.HaveOccurred())
+			innerGm.Expect(writeStatus1).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()),
+				"initial write must return STATUS_SUCCEED")
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 
 		g.By("Querying [CreatedAt1, now+1h] — must return exactly 1 data point")
 		// In distributed mode the write→query path is asynchronous: the
@@ -259,36 +266,53 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 			"CreatedAt2 must be after T_del")
 
 		// Rule 7 clamp: query [T_data1, now+1h] must return empty because T_data1 < CreatedAt2.
-		queryResp2, queryErr2 := queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
-			tData1, time.Now().Add(time.Hour), r2)
-		gm.Expect(queryErr2).ShouldNot(gm.HaveOccurred())
+		// AwaitRevision(r2) confirms only the cluster watermark, not that this liaison's own
+		// cache has applied r2; until it has, the query-gate short-circuits with an empty
+		// response before the clamp logic ever runs, which would make the emptiness below pass
+		// without exercising the clamp. Retry until the gate reports groupName as SUCCEED.
+		var queryResp2 *measurev1.QueryResponse
+		gm.Eventually(func(innerGm gm.Gomega) {
+			var queryErr2 error
+			queryResp2, queryErr2 = queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
+				tData1, time.Now().Add(time.Hour), r2)
+			innerGm.Expect(queryErr2).ShouldNot(gm.HaveOccurred())
+			innerGm.Expect(queryResp2.GetGroupStatuses()[groupName]).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED),
+				"schema gate for %s must report SUCCEED before the clamp assertion is meaningful", groupName)
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 		gm.Expect(queryResp2.GetDataPoints()).Should(gm.BeEmpty(),
 			"Rule 7 clamp must hide pre-CreatedAt2 data points")
 
-		// Stale write with R1 must be rejected.
+		// Stale write with R1 must eventually return STATUS_EXPIRED_SCHEMA. Immediately after
+		// AwaitRevision(r2) the liaison's entity cache can still show R1 as current — the
+		// watermark can advance past r2 via another event before r2's own handler runs — in
+		// which case this write is indistinguishable from a current write and is accepted
+		// (STATUS_SUCCEED), landing a stray row under the old R1 shape. Nothing later in this
+		// spec reads that data, so retrying past the stray success is safe.
 		staleHostTags := []*modelv1.TagFamilyForWrite{{
 			Tags: []*modelv1.TagValue{{
 				Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "h1"}},
 			}},
 		}}
-		writeStatusStale, writeErrStale := sendMeasureWriteAtTime(ctx, clients.MeasureWriteClient, groupName, measureName,
-			time.Now(), r1, staleHostTags)
-		gm.Expect(writeErrStale).ShouldNot(gm.HaveOccurred())
-		gm.Expect(writeStatusStale).Should(gm.Equal(modelv1.Status_STATUS_EXPIRED_SCHEMA.String()),
+		gm.Eventually(func() (string, error) {
+			return sendMeasureWriteAtTime(ctx, clients.MeasureWriteClient, groupName, measureName, time.Now(), r1, staleHostTags)
+		}, flags.EventuallyTimeout).Should(gm.Equal(modelv1.Status_STATUS_EXPIRED_SCHEMA.String()),
 			"write with stale R1 must return STATUS_EXPIRED_SCHEMA")
 
-		// Write with R2 and new tag layout must succeed.
+		// Write with R2 and new tag layout must succeed. Same cache-lag hazard as the R1 write
+		// above, now for r2: a refused write stores nothing, so retrying it is safe.
 		newTags := []*modelv1.TagFamilyForWrite{{
 			Tags: []*modelv1.TagValue{
 				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "h1"}}},
 				{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "inst1"}}},
 			},
 		}}
-		writeStatusNew, writeErrNew := sendMeasureWriteAtTime(ctx, clients.MeasureWriteClient, groupName, measureName,
-			time.Now(), r2, newTags)
-		gm.Expect(writeErrNew).ShouldNot(gm.HaveOccurred())
-		gm.Expect(writeStatusNew).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()),
-			"write with R2 and new tag layout must return STATUS_SUCCEED")
+		gm.Eventually(func(innerGm gm.Gomega) {
+			writeStatusNew, writeErrNew := sendMeasureWriteAtTime(ctx, clients.MeasureWriteClient, groupName, measureName,
+				time.Now(), r2, newTags)
+			innerGm.Expect(writeErrNew).ShouldNot(gm.HaveOccurred())
+			innerGm.Expect(writeStatusNew).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()),
+				"write with R2 and new tag layout must return STATUS_SUCCEED")
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
@@ -450,9 +474,14 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 				Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "h1"}},
 			}},
 		}}
-		writeStatus1, writeErr1 := sendMeasureWriteAtTime(ctx, clients.MeasureWriteClient, groupName, measureName, tData1, r1, hostTags)
-		gm.Expect(writeErr1).ShouldNot(gm.HaveOccurred())
-		gm.Expect(writeStatus1).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		// AwaitRevision is a hint under eventual consistency: another event can carry the
+		// liaison's watermark past r1 before this write reaches its cache, refusing it with a
+		// status. A refused write stores nothing, so retrying it is safe.
+		gm.Eventually(func(innerGm gm.Gomega) {
+			writeStatus1, writeErr1 := sendMeasureWriteAtTime(ctx, clients.MeasureWriteClient, groupName, measureName, tData1, r1, hostTags)
+			innerGm.Expect(writeErr1).ShouldNot(gm.HaveOccurred())
+			innerGm.Expect(writeStatus1).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 
 		// Eventually retry — see the  baseline above for the
 		// distributed write→query visibility race.
@@ -501,19 +530,32 @@ var _ = g.Describe("Schema shape-break rejection", func() {
 			"recreated measure must preserve original entity")
 
 		// Rule 7 clamp: query [T_data1, now+1h] returns empty because T_data1 < CreatedAt2.
-		queryResp2, queryErr2 := queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
-			tData1, time.Now().Add(time.Hour), r2)
-		gm.Expect(queryErr2).ShouldNot(gm.HaveOccurred())
+		// AwaitRevision(r2) confirms only the cluster watermark, not that this liaison's own
+		// cache has applied r2; until it has, the query-gate short-circuits with an empty
+		// response before the clamp logic ever runs, which would make the emptiness below pass
+		// without exercising the clamp. Retry until the gate reports groupName as SUCCEED.
+		var queryResp2 *measurev1.QueryResponse
+		gm.Eventually(func(innerGm gm.Gomega) {
+			var queryErr2 error
+			queryResp2, queryErr2 = queryMeasureRange(ctx, clients.MeasureWriteClient, groupName, measureName,
+				tData1, time.Now().Add(time.Hour), r2)
+			innerGm.Expect(queryErr2).ShouldNot(gm.HaveOccurred())
+			innerGm.Expect(queryResp2.GetGroupStatuses()[groupName]).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED),
+				"schema gate for %s must report SUCCEED before the clamp assertion is meaningful", groupName)
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 		gm.Expect(queryResp2.GetDataPoints()).Should(gm.BeEmpty(),
 			"Rule 7 clamp must hide pre-delete data because T_data1 < CreatedAt2")
 
-		// Write with R2 must succeed.
+		// Write with R2 must succeed. Same cache-lag hazard as the R1 write above, now for r2:
+		// a refused write stores nothing, so retrying it is safe.
 		tNewWrite := time.Now()
-		writeStatus2, writeErr2 := sendMeasureWriteAtTime(ctx, clients.MeasureWriteClient, groupName, measureName,
-			tNewWrite, r2, hostTags)
-		gm.Expect(writeErr2).ShouldNot(gm.HaveOccurred())
-		gm.Expect(writeStatus2).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()),
-			"write with R2 must succeed")
+		gm.Eventually(func(innerGm gm.Gomega) {
+			writeStatus2, writeErr2 := sendMeasureWriteAtTime(ctx, clients.MeasureWriteClient, groupName, measureName,
+				tNewWrite, r2, hostTags)
+			innerGm.Expect(writeErr2).ShouldNot(gm.HaveOccurred())
+			innerGm.Expect(writeStatus2).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()),
+				"write with R2 must succeed")
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 
 		// Post-write query [CreatedAt2, now+1h] must return the newly-written point.
 		// Same write→query visibility race as the  baseline.

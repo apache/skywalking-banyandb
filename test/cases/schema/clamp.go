@@ -104,9 +104,20 @@ var _ = g.Describe("Schema time-range clamp", func() {
 
 		g.By("Querying with a range that ends far in the past (before schema creation)")
 		epoch := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
-		resp, queryErr := sendStreamQueryWithRange(ctx, clients.StreamWriteClient, groupName, streamName,
-			epoch, epoch.Add(time.Millisecond), streamRev)
-		gm.Expect(queryErr).ShouldNot(gm.HaveOccurred())
+		// AwaitApplied confirms the stream key is present, but a schema revision just applied
+		// can still lag this liaison's own cache for a moment; until it catches up, the
+		// query-gate short-circuits with an empty response before the clamp logic runs, which
+		// would make the emptiness below pass without exercising the clamp. Retry until the
+		// gate reports groupName as SUCCEED.
+		var resp *streamv1.QueryResponse
+		gm.Eventually(func(innerGm gm.Gomega) {
+			var queryErr error
+			resp, queryErr = sendStreamQueryWithRange(ctx, clients.StreamWriteClient, groupName, streamName,
+				epoch, epoch.Add(time.Millisecond), streamRev)
+			innerGm.Expect(queryErr).ShouldNot(gm.HaveOccurred())
+			innerGm.Expect(resp.GetGroupStatuses()[groupName]).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED),
+				"schema gate for %s must report SUCCEED before the clamp assertion is meaningful", groupName)
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 		gm.Expect(resp.GetElements()).Should(gm.BeEmpty(),
 			"clamped Begin (≈ CreatedAt) > End (epoch+1ms) must produce an empty response")
 
@@ -192,22 +203,35 @@ var _ = g.Describe("Schema time-range clamp", func() {
 
 		g.By("Querying both groups with a range that ends far in the past")
 		epoch := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
-		resp, queryErr := clients.StreamWriteClient.Query(ctx, &streamv1.QueryRequest{
-			Groups: []string{group1, group2},
-			Name:   streamName,
-			TimeRange: &modelv1.TimeRange{
-				Begin: timestamppb.New(epoch),
-				End:   timestamppb.New(epoch.Add(time.Millisecond)),
-			},
-			Limit:             10,
-			GroupModRevisions: streamRevs,
-			Projection: &modelv1.TagProjection{
-				TagFamilies: []*modelv1.TagProjection_TagFamily{
-					{Name: "default", Tags: []string{"svc"}},
+		// AwaitApplied confirms both stream keys are present, but a just-applied revision can
+		// still lag either liaison's own cache for a moment; until both catch up, the
+		// query-gate short-circuits with an empty response before the clamp logic runs, which
+		// would make the emptiness below pass without exercising the clamp. Retry until the
+		// gate reports both groups as SUCCEED.
+		var resp *streamv1.QueryResponse
+		gm.Eventually(func(innerGm gm.Gomega) {
+			var queryErr error
+			resp, queryErr = clients.StreamWriteClient.Query(ctx, &streamv1.QueryRequest{
+				Groups: []string{group1, group2},
+				Name:   streamName,
+				TimeRange: &modelv1.TimeRange{
+					Begin: timestamppb.New(epoch),
+					End:   timestamppb.New(epoch.Add(time.Millisecond)),
 				},
-			},
-		})
-		gm.Expect(queryErr).ShouldNot(gm.HaveOccurred())
+				Limit:             10,
+				GroupModRevisions: streamRevs,
+				Projection: &modelv1.TagProjection{
+					TagFamilies: []*modelv1.TagProjection_TagFamily{
+						{Name: "default", Tags: []string{"svc"}},
+					},
+				},
+			})
+			innerGm.Expect(queryErr).ShouldNot(gm.HaveOccurred())
+			for _, groupName := range []string{group1, group2} {
+				innerGm.Expect(resp.GetGroupStatuses()[groupName]).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED),
+					"schema gate for %s must report SUCCEED before the clamp assertion is meaningful", groupName)
+			}
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 		gm.Expect(resp.GetElements()).Should(gm.BeEmpty(),
 			"max CreatedAt across both groups > epoch+1ms so the clamped range must be empty")
 
