@@ -375,8 +375,8 @@ func streamVecEmitAsFrame(distributed, wireModeRaw, traced bool) bool {
 //
 // hidden carries the criteria-only tags the analyzer appended to the projection, and
 // orderTag is the ordering tag the scan appended for its OrderKey. Neither appears in
-// the client projection, so the frame must not carry either — this is the columnar
-// equivalent of the per-element HiddenTagSet.StripHiddenTags the proto egress runs.
+// the client projection, so neither response may carry them. This replaced the
+// per-element HiddenTagSet.StripHiddenTags both egresses used to run.
 func mergeStreamBatches(schema *vectorized.BatchSchema, batches []*vectorized.RecordBatch,
 	hidden logical.HiddenTagSet, orderTag string,
 ) (*vectorized.RecordBatch, error) {

@@ -56,7 +56,7 @@ const (
 	oracleCriteriaTag = "state"
 	// oracleOrderTag is the ordering tag the client never projects, so the scan
 	// adds it to its own request to build the OrderKey — the second hidden-tag
-	// source, and the one HidesOrderTag() reduces to a bool.
+	// source, and the one HiddenOrderTag() names for the column drop.
 	oracleOrderTag  = "sequence"
 	oracleIndexRule = "by-sequence"
 	oracleStateWant = "open"
@@ -235,7 +235,7 @@ func oracleBatchFromRows(schema *vectorized.BatchSchema, tagNames []string, rows
 // projection and withCriteria adds the state=open condition.
 //
 // The oracle arm projects `service` alone, so BOTH gate terms block it: a criteria
-// sets hasFilter, and an unprojected ordering tag sets HidesOrderTag. The control
+// sets hasFilter, and an unprojected ordering tag sets HiddenOrderTag. The control
 // arm projects `service` and `sequence` with no criteria, which clears both terms
 // and emits a frame on origin/main already.
 // indexRule is "" for a timestamp-order request, which takes no pre-merge filter.

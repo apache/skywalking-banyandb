@@ -39,8 +39,9 @@ var _ executor.StreamVecExecutable = (*localIndexScan)(nil)
 // *tagFilterPlan (criteria query, stream_plan_tag_filter.go). For the tag-filter
 // case the inner scan already projects the criteria + hidden tags and pushes the
 // INDEXED criteria into its sqo (invertedFilter/skippingFilter); the caller then
-// applies the per-element tagFilter.Match + hidden-tag strip at egress (via
-// VecTagFilter). Results match the filter-first contract for duplicate ElementIDs
+// applies the criteria and the hidden-tag removal to the BATCH COLUMNS before it
+// picks a response format (via VecTagFilter and the processor's shared batch stage).
+// Results match the filter-first contract for duplicate ElementIDs
 // — see BuildStreamMergePipeline. A multi-group merger or any other shape does not
 // resolve to a *localIndexScan, so we decline and the caller fails the query.
 //
@@ -150,9 +151,10 @@ func scanResumesAcrossPulls(scan *localIndexScan) bool {
 }
 
 // VecTagFilter returns the criteria tag filter, the hidden-tag set, and the schema
-// carried by the *limit plan's *tagFilterPlan input, so the standalone vec egress
-// can apply the SAME per-element tagFilter.Match + hidden-tag strip that the row
-// path's tagFilterPlan.Execute applies. Returns ok=false when the plan is not the
+// carried by the *limit plan's *tagFilterPlan input, so the vec egress can apply the
+// SAME logical.TagFilter and the same hidden-tag removal the row path's
+// tagFilterPlan.Execute applied. Both now run on the batch columns, for every
+// response format. Returns ok=false when the plan is not the
 // *limit → *tagFilterPlan shape (a criteria-less query needs no post-filter).
 func VecTagFilter(plan logical.Plan) (VecCriteriaFilter, bool) {
 	l, isLimit := plan.(*limit)
@@ -215,10 +217,11 @@ func nodeTagFilter(plan logical.Plan) (VecCriteriaFilter, bool) {
 	}, true
 }
 
-// VecMergeGroup is one group's resolved vec scan plus its optional per-element
-// tag filter, for the multi-group dispatch. The processor runs Scan.ExecuteVectorized
-// → BuildElementsFromBatches → (if HasFilter) applyStreamTagFilter, yielding that
-// group's ordered []Element; the caller then cross-group merges via MergeGroupElements.
+// VecMergeGroup is one group's resolved vec scan plus its optional criteria stage,
+// for the multi-group dispatch. The processor runs Scan.ExecuteVectorized, then the
+// shared batch stage (criteria filter behind the cap, then the hidden-tag column
+// drop), then BuildElementsFromBatch on the result, yielding that group's ordered
+// []Element; the caller then cross-group merges via MergeGroupElements.
 type VecMergeGroup struct {
 	Scan      executor.StreamVecExecutable
 	Criteria  VecCriteriaFilter
@@ -426,8 +429,9 @@ func (i *localIndexScan) ExecuteVectorized(ctx context.Context) ([]*vectorized.R
 	// A criteria query runs its tag filter as a PRE-MERGE fusible, so the merge sees
 	// only surviving rows and the cap keeps the top-N of the FILTERED set — not a
 	// top-N taken before the filter, which the filter's unknown selectivity could
-	// leave empty. The egress still applies the same filter; on rows that already
-	// passed here that re-check is a no-op, and it remains the hidden-tag strip.
+	// leave empty. The egress no longer re-applies this filter: VecCriteriaFilter
+	// reports the pushdown as PreMerged, so the processor's batch stage skips it and
+	// only drops the hidden-tag columns (apache/skywalking#14067 R1).
 	var preMerge []vectorized.FusibleOperator
 	if i.preMergeFilter != nil {
 		preMerge = append(preMerge,
