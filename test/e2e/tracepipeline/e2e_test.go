@@ -47,6 +47,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -67,6 +68,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/property"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	tracepipeline "github.com/apache/skywalking-banyandb/test/cases/tracepipeline"
 	tracepipelinedata "github.com/apache/skywalking-banyandb/test/cases/tracepipeline/data"
 )
@@ -208,34 +210,61 @@ func waitForTraceSchema() {
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	defer func() { _ = conn.Close() }()
 
-	c := databasev1.NewTraceRegistryServiceClient(conn)
-	var revision int64
+	// Collect the highest mod_revision across everything PreloadSchema creates
+	// (group, trace, index rules, index rule bindings): the writes and the
+	// duration-ordered queries depend on all of them, not on the trace alone.
+	groupClient := databasev1.NewGroupRegistryServiceClient(conn)
+	traceClient := databasev1.NewTraceRegistryServiceClient(conn)
+	indexRuleClient := databasev1.NewIndexRuleRegistryServiceClient(conn)
+	bindingClient := databasev1.NewIndexRuleBindingRegistryServiceClient(conn)
+	var maxRevision int64
 	gomega.Eventually(func(innerGm gomega.Gomega) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		resp, getErr := c.Get(ctx, &databasev1.TraceRegistryServiceGetRequest{
-			Metadata: &commonv1.Metadata{Name: "filter", Group: tracepipeline.PipelineGroup},
+		group := tracepipeline.PipelineGroup
+		groupResp, groupErr := groupClient.Get(ctx, &databasev1.GroupRegistryServiceGetRequest{Group: group})
+		innerGm.Expect(groupErr).NotTo(gomega.HaveOccurred(), "group %s not yet visible on the standalone", group)
+		traceResp, traceErr := traceClient.Get(ctx, &databasev1.TraceRegistryServiceGetRequest{
+			Metadata: &commonv1.Metadata{Name: "filter", Group: group},
 		})
-		innerGm.Expect(getErr).NotTo(gomega.HaveOccurred(),
-			"trace schema filter/%s not yet visible on the standalone", tracepipeline.PipelineGroup)
-		revision = resp.GetTrace().GetMetadata().GetModRevision()
-	}, 60*time.Second, 500*time.Millisecond).Should(gomega.Succeed())
+		innerGm.Expect(traceErr).NotTo(gomega.HaveOccurred(), "trace schema filter/%s not yet visible on the standalone", group)
+		ruleResp, ruleErr := indexRuleClient.List(ctx, &databasev1.IndexRuleRegistryServiceListRequest{Group: group})
+		innerGm.Expect(ruleErr).NotTo(gomega.HaveOccurred())
+		innerGm.Expect(ruleResp.GetIndexRule()).NotTo(gomega.BeEmpty(), "index rules of %s not yet visible", group)
+		bindingResp, bindingErr := bindingClient.List(ctx, &databasev1.IndexRuleBindingRegistryServiceListRequest{Group: group})
+		innerGm.Expect(bindingErr).NotTo(gomega.HaveOccurred())
+		innerGm.Expect(bindingResp.GetIndexRuleBinding()).NotTo(gomega.BeEmpty(), "index rule bindings of %s not yet visible", group)
+
+		revisions := []int64{
+			groupResp.GetGroup().GetMetadata().GetModRevision(),
+			traceResp.GetTrace().GetMetadata().GetModRevision(),
+		}
+		for _, rule := range ruleResp.GetIndexRule() {
+			revisions = append(revisions, rule.GetMetadata().GetModRevision())
+		}
+		for _, binding := range bindingResp.GetIndexRuleBinding() {
+			revisions = append(revisions, binding.GetMetadata().GetModRevision())
+		}
+		maxRevision = slices.Max(revisions)
+	}, flags.EventuallyTimeout).Should(gomega.Succeed())
 
 	// The registry answering is not enough: writes validate against the
-	// liaison's local schema cache, which can lag the property schema store
-	// and refuses a write with STATUS_NOT_FOUND until it catches up. Barrier
-	// on that cache, as pkg/test/setup does for the integration suites.
-	const barrierTimeout = 60 * time.Second
-	ctx, cancel := context.WithTimeout(context.Background(), barrierTimeout)
+	// liaison's local schema cache, which can lag the property schema store.
+	// The standalone applies schema events on one watch session in order, and
+	// PreloadSchema creates them sequentially, so the revision watermark
+	// reaching the highest preloaded revision means every preloaded schema's
+	// handlers have run. Under eventual consistency this is still a hint, not
+	// a guarantee; the writes retry on a refused status.
+	ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
 	defer cancel()
-	resp, awaitErr := schemav1.NewSchemaBarrierServiceClient(conn).AwaitSchemaApplied(ctx, &schemav1.AwaitSchemaAppliedRequest{
-		Keys:         []*schemav1.SchemaKey{{Kind: "trace", Group: tracepipeline.PipelineGroup, Name: "filter"}},
-		MinRevisions: []int64{revision},
-		Timeout:      durationpb.New(barrierTimeout),
+	resp, awaitErr := schemav1.NewSchemaBarrierServiceClient(conn).AwaitRevisionApplied(ctx, &schemav1.AwaitRevisionAppliedRequest{
+		MinRevision: maxRevision,
+		Timeout:     durationpb.New(flags.EventuallyTimeout),
 	})
 	gomega.Expect(awaitErr).NotTo(gomega.HaveOccurred())
 	gomega.Expect(resp.GetApplied()).To(gomega.BeTrue(),
-		"trace schema filter/%s not applied to local caches; laggards=%v", tracepipeline.PipelineGroup, resp.GetLaggards())
+		"preloaded schemas of %s (max revision %d) not applied to local caches; laggards=%v",
+		tracepipeline.PipelineGroup, maxRevision, resp.GetLaggards())
 }
 
 // waitForServerReachable polls the gRPC endpoint until the standalone

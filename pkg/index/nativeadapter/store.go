@@ -65,6 +65,7 @@ func NewStore(path string, lease RootLease, options SearcherOptions) (*Store, er
 		// from after a rollback. Property's own native store stays without
 		// this -- its file rollback is already proven without it.
 		IdentifierDocValues: true,
+		TimeMetrics:         options.TimeMetrics,
 	}
 	if options.AsyncPersistence {
 		ownerOptions.PersistInterval = options.PersistInterval
