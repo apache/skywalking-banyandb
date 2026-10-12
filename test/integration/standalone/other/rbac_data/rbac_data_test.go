@@ -287,34 +287,75 @@ func metricValue(addr, name string, labels ...string) (float64, error) {
 	return 0, nil
 }
 
-// sendMeasureFrames opens a real bidirectional write, sends every frame, closes the send side
-// and returns the terminal status of the stream. A per-frame denial surfaces on Recv rather
-// than on Send, so the send side has to be closed before the status can be read.
-func sendMeasureFrames(a actor, client measurev1.MeasureServiceClient, frames ...*measurev1.WriteRequest) error {
+// sendMeasureFrameStatuses opens a real bidirectional write, sends every frame, closes the
+// send side, and returns the status string of each response in send order. A transport-level
+// error (e.g. codes.PermissionDenied for a refused stream) ends the stream before any status
+// is returned.
+func sendMeasureFrameStatuses(a actor, client measurev1.MeasureServiceClient, frames ...*measurev1.WriteRequest) ([]string, error) {
 	stream, openErr := client.Write(a.ctx())
 	if openErr != nil {
-		return openErr
+		return nil, openErr
 	}
 	for _, frame := range frames {
 		if sendErr := stream.Send(frame); sendErr != nil {
 			if errors.Is(sendErr, io.EOF) {
 				break
 			}
-			return sendErr
+			return nil, sendErr
 		}
 	}
 	if closeErr := stream.CloseSend(); closeErr != nil {
-		return closeErr
+		return nil, closeErr
 	}
+	var statuses []string
 	for {
-		_, recvErr := stream.Recv()
+		resp, recvErr := stream.Recv()
 		if errors.Is(recvErr, io.EOF) {
-			return nil
+			return statuses, nil
 		}
 		if recvErr != nil {
-			return recvErr
+			return statuses, recvErr
+		}
+		statuses = append(statuses, resp.GetStatus())
+	}
+}
+
+// sendMeasureFrames collapses sendMeasureFrameStatuses to a single error: nil only when every
+// frame returned STATUS_SUCCEED. It is a single attempt with no retry, for call sites whose
+// point is the terminal condition itself (e.g. an RBAC refusal, which already ends the stream
+// with a transport-level error rather than a per-frame status).
+func sendMeasureFrames(a actor, client measurev1.MeasureServiceClient, frames ...*measurev1.WriteRequest) error {
+	statuses, err := sendMeasureFrameStatuses(a, client, frames...)
+	if err != nil {
+		return err
+	}
+	for _, writeStatus := range statuses {
+		if writeStatus != modelv1.Status_STATUS_SUCCEED.String() {
+			return fmt.Errorf("write frame rejected with status %s", writeStatus)
 		}
 	}
+	return nil
+}
+
+// seedMeasureFrames sends frames and retries until every frame is accepted.
+// AwaitSchemaApplied in the suite's BeforeEach only confirms the schema registry; this
+// liaison's own entity cache can still lag it for a moment, refusing a frame by status (not by
+// a stream error) until it catches up. A refused frame stores nothing, and a measure row is keyed
+// by series and timestamp with the latest version winning, so resending the whole batch, even a
+// partly accepted one, is idempotent.
+func seedMeasureFrames(a actor, client measurev1.MeasureServiceClient, frames ...*measurev1.WriteRequest) {
+	gm.EventuallyWithOffset(1, func(innerGm gm.Gomega) {
+		statuses, sendErr := sendMeasureFrameStatuses(a, client, frames...)
+		innerGm.Expect(sendErr).NotTo(gm.HaveOccurred())
+		innerGm.Expect(statuses).To(gm.HaveLen(len(frames)), "one write response per frame")
+		succeeded := 0
+		for _, writeStatus := range statuses {
+			if writeStatus == modelv1.Status_STATUS_SUCCEED.String() {
+				succeeded++
+			}
+		}
+		innerGm.Expect(succeeded).To(gm.Equal(len(frames)), "seed write by %s rejected; statuses=%v", a.name, statuses)
+	}, flags.EventuallyTimeout).Should(gm.Succeed())
 }
 
 // httpCall issues one grpc-gateway request with Basic credentials and returns the status code
@@ -441,10 +482,10 @@ var _ = g.Describe("rbac-data group-scoped data authorization through the real l
 	// group, is refused another, and is refused a request that mixes the two rather than being
 	// served the part of it it is allowed. The expected codes are read off issue #14016's R1.
 	g.It("serves a group-scoped reader its own markers and refuses every mixed request", func() {
-		gm.Expect(sendMeasureFrames(adminActor, measures,
+		seedMeasureFrames(adminActor, measures,
 			markerFrame(groupAlpha, markerAlpha, baseTime, 1),
 			markerFrame(groupBeta, markerBeta, baseTime, 2),
-		)).To(gm.Succeed(), "the administrator must be allowed to seed both groups' markers")
+		)
 
 		gm.Eventually(func() []string {
 			resp, queryErr := measures.Query(adminActor.ctx(), markerQuery(baseTime, groupAlpha, groupBeta))
@@ -504,9 +545,7 @@ var _ = g.Describe("rbac-data group-scoped data authorization through the real l
 	// resource-bearing frame is decided against the group it resolves to, and a frame that is
 	// refused never reaches storage — which an administrator's query afterwards is what proves.
 	g.It("refuses a forbidden write frame mid-stream and stores nothing from it", func() {
-		gm.Expect(sendMeasureFrames(writerAlphaActor, measures,
-			markerFrame(groupAlpha, markerAlpha, baseTime, 1),
-		)).To(gm.Succeed(), "the alpha writer must be allowed to write its own group")
+		seedMeasureFrames(writerAlphaActor, measures, markerFrame(groupAlpha, markerAlpha, baseTime, 1))
 
 		gm.Eventually(func() []string {
 			resp, queryErr := measures.Query(adminActor.ctx(), markerQuery(baseTime, groupAlpha))
@@ -523,8 +562,16 @@ var _ = g.Describe("rbac-data group-scoped data authorization through the real l
 		gm.Expect(status.Code(forbiddenErr)).To(gm.Equal(codes.PermissionDenied),
 			"a frame addressing a forbidden group must end the stream with PermissionDenied")
 
-		betaResp, betaErr := measures.Query(adminActor.ctx(), markerQuery(baseTime.Add(time.Second), groupBeta))
-		gm.Expect(betaErr).NotTo(gm.HaveOccurred(), "the administrator must be able to look for the refused frame")
+		// A just-created group's shard can still be opening even after the BeforeEach schema
+		// barrier returns, in which case the query plan transiently fails with "group not
+		// found" rather than answering empty. Retry on error only; a genuine leak still
+		// surfaces as a non-empty successful response, which the assertion below still catches.
+		var betaResp *measurev1.QueryResponse
+		gm.Eventually(func() error {
+			var queryErr error
+			betaResp, queryErr = measures.Query(adminActor.ctx(), markerQuery(baseTime.Add(time.Second), groupBeta))
+			return queryErr
+		}, flags.EventuallyTimeout).ShouldNot(gm.HaveOccurred(), "the administrator must be able to look for the refused frame")
 		gm.Expect(markersIn(betaResp)).To(gm.BeEmpty(), "a refused frame must leave nothing in storage")
 
 		readerErr := sendMeasureFrames(readerAlphaActor, measures, markerFrame(groupAlpha, markerAlpha, baseTime, 4))
@@ -536,10 +583,22 @@ var _ = g.Describe("rbac-data group-scoped data authorization through the real l
 	// connection observes a live revocation, and the next frame on a write stream that was
 	// admitted under the previous revision is denied before it can reach storage.
 	g.It("applies live revocation to unary data calls and an already-open write stream", func() {
+		allowedFrame := markerFrame(groupAlpha, markerAlpha, baseTime, 1)
+		// AwaitSchemaApplied in the BeforeEach only confirms the schema registry; this liaison's
+		// own entity cache can still lag it for a moment, refusing the frame by status. Confirm
+		// it lands using the same all-refused-retry helper as the other specs' seed writes, on
+		// a throwaway stream that is opened and closed as part of that helper.
+		seedMeasureFrames(writerAlphaActor, measures, allowedFrame)
+
+		// The persistent stream used for the rest of this spec (reused below to send a second
+		// frame after revocation) is opened separately: a per-frame WriteResponse on THIS stream
+		// is deferred until it closes, which this spec never does before reusing it, so there is
+		// nothing to retry here. Resending the identical frame is safe — a measure row is keyed
+		// by (entity, timestamp) with last-version-wins dedup enforced even at query time against
+		// still-unmerged parts, not just at compaction — and seedMeasureFrames above already
+		// guarantees the row is stored regardless of how this particular send resolves.
 		writeStream, openErr := measures.Write(writerAlphaActor.ctx())
 		gm.Expect(openErr).NotTo(gm.HaveOccurred())
-
-		allowedFrame := markerFrame(groupAlpha, markerAlpha, baseTime, 1)
 		gm.Expect(writeStream.Send(allowedFrame)).To(gm.Succeed(),
 			"the writer must send an allowed frame before its grant is revoked")
 		gm.Eventually(func() (float64, error) {
@@ -549,8 +608,11 @@ var _ = g.Describe("rbac-data group-scoped data authorization through the real l
 		}, flags.EventuallyTimeout).Should(gm.BeNumerically(">=", 1),
 			"the open stream's first frame must be allowed under the original revision")
 
-		_, allowedQueryErr := measures.Query(readerAlphaActor.ctx(), markerQuery(baseTime, groupAlpha))
-		gm.Expect(allowedQueryErr).NotTo(gm.HaveOccurred(),
+		// Same just-opened-shard race as above: retry on error only.
+		gm.Eventually(func() error {
+			_, queryErr := measures.Query(readerAlphaActor.ctx(), markerQuery(baseTime, groupAlpha))
+			return queryErr
+		}, flags.EventuallyTimeout).ShouldNot(gm.HaveOccurred(),
 			"the reader must be allowed on the existing connection before its grant is revoked")
 
 		replacePolicy(policyFile, revokedDataPolicy)
@@ -612,10 +674,17 @@ var _ = g.Describe("rbac-data group-scoped data authorization through the real l
 		gm.Expect(status.Code(betaApplyErr)).To(gm.Equal(codes.PermissionDenied),
 			"the alpha writer must not apply a property in beta")
 
-		absent, absentErr := properties.Query(adminActor.ctx(), &propertyv1.QueryRequest{
-			Groups: []string{groupAlphaProp, groupBetaProp}, Name: fixtureProp, Ids: []string{"1"},
-		})
-		gm.Expect(absentErr).NotTo(gm.HaveOccurred())
+		// The BeforeEach barrier only awaits the group and measure schema keys, not the two
+		// property schemas it also creates; this query can transiently fail until this
+		// liaison's cache has them. Retry on error only.
+		var absent *propertyv1.QueryResponse
+		gm.Eventually(func() error {
+			var queryErr error
+			absent, queryErr = properties.Query(adminActor.ctx(), &propertyv1.QueryRequest{
+				Groups: []string{groupAlphaProp, groupBetaProp}, Name: fixtureProp, Ids: []string{"1"},
+			})
+			return queryErr
+		}, flags.EventuallyTimeout).ShouldNot(gm.HaveOccurred())
 		gm.Expect(absent.GetProperties()).To(gm.BeEmpty(), "a refused apply must leave the property absent")
 
 		gm.Eventually(func() error {
@@ -650,10 +719,10 @@ var _ = g.Describe("rbac-data group-scoped data authorization through the real l
 	// casing, its comments, its parameters and the route that carried it are not resources, so
 	// none of them can address a group the decision does not see.
 	g.It("decides a ByDBQL query by the groups of the request it transformed into", func() {
-		gm.Expect(sendMeasureFrames(adminActor, measures,
+		seedMeasureFrames(adminActor, measures,
 			markerFrame(groupAlpha, markerAlpha, baseTime, 1),
 			markerFrame(groupBeta, markerBeta, baseTime, 2),
-		)).To(gm.Succeed(), "the administrator must be allowed to seed both groups' markers")
+		)
 
 		allowed := fmt.Sprintf("SELECT * FROM MEASURE %s IN %s", fixtureMeasure, groupAlpha)
 		_, allowedErr := bydbql.Query(readerAlphaActor.ctx(), &bydbqlv1.QueryRequest{Query: allowed})

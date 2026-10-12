@@ -124,9 +124,13 @@ var _ = g.Describe("Schema query gate", func() {
 		gm.Expect(awaitErr).ShouldNot(gm.HaveOccurred())
 
 		g.By("Sending a query with the old ModRevision R1 (stale)")
-		st, queryErr := sendStreamQuery(ctx, clients.StreamWriteClient, groupName, streamName, r1)
-		gm.Expect(queryErr).ShouldNot(gm.HaveOccurred())
-		gm.Expect(st).Should(gm.Equal(modelv1.Status_STATUS_EXPIRED_SCHEMA),
+		// AwaitRevision(r2) confirms only the cluster watermark, not that this liaison's own
+		// cache has applied r2; until it has, the cache still shows r1 as current, so a query
+		// naming r1 passes the gate with STATUS_SUCCEED instead of being refused. Retry until
+		// the cache has caught up and genuinely reports r1 as stale.
+		gm.Eventually(func() (modelv1.Status, error) {
+			return sendStreamQuery(ctx, clients.StreamWriteClient, groupName, streamName, r1)
+		}, flags.EventuallyTimeout).Should(gm.Equal(modelv1.Status_STATUS_EXPIRED_SCHEMA),
 			"query with group ModRevision < cache must return STATUS_EXPIRED_SCHEMA")
 
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
@@ -261,25 +265,35 @@ var _ = g.Describe("Schema query gate", func() {
 
 		g.By("Querying both groups with group1 stale (R1a) and group2 current (R2)")
 		now := timestamp.NowMilli()
-		resp, queryErr := clients.StreamWriteClient.Query(ctx, &streamv1.QueryRequest{
-			Groups: []string{group1, group2},
-			Name:   streamName,
-			TimeRange: &modelv1.TimeRange{
-				Begin: timestamppb.New(now.Add(-time.Hour)),
-				End:   timestamppb.New(now.Add(time.Hour)),
-			},
-			Limit: 10,
-			GroupModRevisions: map[string]int64{
-				group1: r1a,
-				group2: r2,
-			},
-			Projection: &modelv1.TagProjection{
-				TagFamilies: []*modelv1.TagProjection_TagFamily{
-					{Name: "default", Tags: []string{"svc"}},
+		// AwaitRevision(maxRev) confirms only the cluster watermark, not that group1's own
+		// liaison cache has applied r1b; until it has, the cache still shows r1a as current, so
+		// group1 passes the gate with STATUS_SUCCEED (and the query is not short-circuited)
+		// instead of the expected STATUS_EXPIRED_SCHEMA. Retry until group1's cache catches up.
+		var resp *streamv1.QueryResponse
+		gm.Eventually(func(innerGm gm.Gomega) {
+			var queryErr error
+			resp, queryErr = clients.StreamWriteClient.Query(ctx, &streamv1.QueryRequest{
+				Groups: []string{group1, group2},
+				Name:   streamName,
+				TimeRange: &modelv1.TimeRange{
+					Begin: timestamppb.New(now.Add(-time.Hour)),
+					End:   timestamppb.New(now.Add(time.Hour)),
 				},
-			},
-		})
-		gm.Expect(queryErr).ShouldNot(gm.HaveOccurred())
+				Limit: 10,
+				GroupModRevisions: map[string]int64{
+					group1: r1a,
+					group2: r2,
+				},
+				Projection: &modelv1.TagProjection{
+					TagFamilies: []*modelv1.TagProjection_TagFamily{
+						{Name: "default", Tags: []string{"svc"}},
+					},
+				},
+			})
+			innerGm.Expect(queryErr).ShouldNot(gm.HaveOccurred())
+			innerGm.Expect(resp.GetGroupStatuses()[group1]).Should(gm.Equal(modelv1.Status_STATUS_EXPIRED_SCHEMA),
+				"group1 with stale R1a must be STATUS_EXPIRED_SCHEMA")
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 
 		g.By("Asserting group1 status is EXPIRED_SCHEMA and group2 status is SUCCEED")
 		statuses := resp.GetGroupStatuses()
