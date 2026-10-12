@@ -20,6 +20,7 @@ package query
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -1086,6 +1087,105 @@ func oracleFrameServices(t *testing.T, batch *vectorized.RecordBatch) []string {
 		services = append(services, serviceData[rowIdx].GetStr().GetValue())
 	}
 	return services
+}
+
+// oracleNoSourceExecContext returns a nil scan source with a nil error, which is the
+// shape executor.StreamVecScanSource allows and ExecuteVectorized reports back as
+// (nil, nil, nil). The batch schema is then nil.
+type oracleNoSourceExecContext struct{}
+
+func (e *oracleNoSourceExecContext) QueryVectorized(context.Context, model.StreamQueryOptions) (executor.StreamVecScanSource, error) {
+	return nil, nil
+}
+
+func (e *oracleNoSourceExecContext) VectorizedConfig() vstream.VectorizedConfig {
+	return vstream.DefaultConfig()
+}
+
+// TestStreamVecDispatch_NoScanSourceReturnsEmptyResult pins the nil-schema path.
+//
+// The batch stage runs for EVERY egress now, so a scan that found no source at all
+// reaches it with a nil schema. Dereferencing that schema would turn an empty result
+// into a panic, which Rev then reports to the client as an error. Both egresses must
+// answer with an empty result instead.
+func TestStreamVecDispatch_NoScanSourceReturnsEmptyResult(t *testing.T) {
+	newPlan := func(t *testing.T, req *streamv1.QueryRequest) logical.Plan {
+		t.Helper()
+		sch, err := logical_stream.BuildSchema(oracleStreamSchema(), oracleIndexRules())
+		require.NoError(t, err)
+		plan, err := logical_stream.Analyze(req, []*commonv1.Metadata{oracleStreamSchema().GetMetadata()},
+			[]logical.Schema{sch}, []executor.StreamExecutionContext{&oracleNoSourceExecContext{}})
+		require.NoError(t, err)
+		return plan
+	}
+
+	t.Run("protobuf", func(t *testing.T) {
+		p := newOracleStandaloneProcessor(t)
+		req := oracleRequest([]string{oracleClientTag}, true, oracleIndexRule)
+		handled, resp := p.tryStreamVecDispatch(context.Background(), newPlan(t, req), req, false)
+		require.True(t, handled)
+		response, ok := resp.Data().(*streamv1.QueryResponse)
+		require.True(t, ok, "a source-less query emitted %T, not a proto response", resp.Data())
+		require.Empty(t, response.GetElements())
+	})
+
+	t.Run("frame", func(t *testing.T) {
+		p := newOracleProcessor(t)
+		req := oracleRequest([]string{oracleClientTag}, true, oracleIndexRule)
+		handled, resp := p.tryStreamVecDispatch(context.Background(), newPlan(t, req), req, false)
+		require.True(t, handled)
+		body, ok := resp.Data().([]byte)
+		require.True(t, ok, "a source-less query emitted %T, not a columnar frame body", resp.Data())
+		batch, err := streamframe.Decode(body)
+		require.NoError(t, err)
+		require.Equal(t, 0, batch.ActiveLen())
+	})
+}
+
+// TestStageStreamBatches_ProjectsBeforeEitherEgress is the direct guard for the first
+// review comment on apache/skywalking-banyandb#1400.
+//
+// Every other test asserts a RESULT, and the result did not change, so every one of
+// them still passes if the shared stage is reverted into the frame branch. This test
+// asserts the thing that did change: the batch each egress receives already carries
+// only the surviving rows and only the client-projected tag columns. It therefore
+// fails if the stage stops filtering, stops projecting, or moves back inside the
+// frame branch, because the stage itself is the contract.
+func TestStageStreamBatches_ProjectsBeforeEitherEgress(t *testing.T) {
+	executedTags := []string{oracleClientTag, oracleCriteriaTag, oracleOrderTag}
+	req := oracleRequest([]string{oracleClientTag}, true, oracleIndexRule)
+	plan := newOraclePlan(t, req, executedTags)
+
+	vecExec := logical_stream.VecExecutable(plan)
+	require.NotNil(t, vecExec)
+	batches, schema, err := vecExec.ExecuteVectorized(context.Background())
+	require.NoError(t, err)
+	criteria, hasFilter := logical_stream.VecTagFilter(plan)
+	require.True(t, hasFilter)
+
+	p := newOracleStandaloneProcessor(t)
+	merged, stageErr, _ := p.stageStreamBatches(context.Background(), vecExec, schema, batches,
+		criteria, hasFilter, req, time.Now().UnixNano())
+	require.False(t, stageErr)
+	require.NotNil(t, merged)
+
+	// Only the two oracle survivors, so the egress cannot build an Element for a row
+	// the criteria rejects.
+	require.Equal(t, 2, merged.ActiveLen())
+
+	// Only the client projection, so the egress cannot build a tag the client did not
+	// ask for and then remove it again.
+	var tagNames []string
+	for _, def := range merged.Schema.Columns {
+		if def.Role == vectorized.RoleTag {
+			tagNames = append(tagNames, def.Name)
+		}
+	}
+	require.Equal(t, []string{oracleClientTag}, tagNames)
+
+	// The projection the protobuf egress derives from this batch must match.
+	require.Equal(t, []model.TagProjection{{Family: oracleFamily, Names: []string{oracleClientTag}}},
+		vstream.ProjectionFromBatchSchema(merged))
 }
 
 // oracleActiveRows returns the batch's active row indices, honoring Selection.
