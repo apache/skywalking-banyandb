@@ -41,6 +41,7 @@ import (
 	metadatapkg "github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bydbql"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 )
 
@@ -204,6 +205,12 @@ func WriteToGroup(conn *grpclib.ClientConn, name, group, fileName string) {
 	gm.Expect(protojson.Unmarshal(content, &request)).ShouldNot(gm.HaveOccurred())
 	request.Property.Metadata = metadata
 
-	_, err = c.Apply(ctx, &request)
-	gm.Expect(err).ShouldNot(gm.HaveOccurred())
+	// A just-created group/property schema reaches the liaison's in-memory repositories
+	// asynchronously via the schema watch, so an Apply issued right after can transiently
+	// fail. Eventually rides out that propagation window.
+	gm.Eventually(func() error {
+		var applyErr error
+		_, applyErr = c.Apply(ctx, &request)
+		return applyErr
+	}, flags.EventuallyTimeout).Should(gm.Succeed())
 }

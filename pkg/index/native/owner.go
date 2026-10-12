@@ -224,6 +224,10 @@ type OwnerOptions struct {
 	// previous release's writer produces so a rolled-back node can still read
 	// document identity back from a segment this owner wrote.
 	IdentifierDocValues bool
+	// TimeMetrics receives time-range pruning classification and savings
+	// counts from every query this owner serves. Nil, the default, drops
+	// every count.
+	TimeMetrics TimeMetrics
 }
 
 // Owner serializes mutation admission and publishes immutable roots. A root
@@ -376,6 +380,14 @@ type segmentHandle struct {
 	fieldNamesOnce sync.Once
 	fieldNameSet   map[string]struct{}
 	fieldNameErr   error
+
+	// trieOnce caches whether this segment carries the coarse _timestamp term
+	// levels a time-range cover relies on. A segment without them would
+	// silently lose documents under a trie intersection, so it falls back to
+	// the per-document time check instead.
+	trieOnce        sync.Once
+	trieUsableValue bool
+	trieUsableErr   error
 }
 
 type persistedPromotion struct {
@@ -2220,9 +2232,16 @@ func newSegmentFromPayload(payload []byte, segmentID uint64) (rootSegment, error
 	}
 	// The reader borrows payload, which the caller hands over; the handle
 	// keeps it alive for the reader's lifetime.
+	// A merged segment records its time bounds in the footer, so read them here
+	// too. Without this the in-memory merge path leaves a merged segment
+	// reporting "no timestamps", which is what made segment-level time pruning
+	// useless for exactly the segments that hold most of the data.
+	timeMin, timeMax := reader.TimeBounds()
 	handle := &segmentHandle{
 		reader: reader, payload: payload, count: reader.DocumentCount(),
 		id: segmentID, size: uint64(len(payload)), persisted: atomic.Bool{},
+		timeMin: uint64(timeMin), timeMax: uint64(timeMax),
+		hasTime: timeMin != 0 || timeMax != 0,
 	}
 	handle.refs.Store(1)
 	if fields, fieldsErr := reader.Fields(); fieldsErr == nil {
@@ -2390,6 +2409,37 @@ func (s *memorySegment) MatchTerms(ctx context.Context, request MatchRequest) (M
 			series[number] = struct{}{}
 		}
 	}
+	// Narrow the term posting to the query's time range before visiting any
+	// document, so a segment the range misses costs no decode and a segment it
+	// partly covers does not decode the documents it excludes.
+	class := classifyTime(s.handle, request.TimeRange)
+	if class == timeDisjoint {
+		recordTimeClass(request.timeMetrics, "disjoint")
+		return MatchResult{}, nil
+	}
+	if class == timeContained {
+		recordTimeClass(request.timeMetrics, "contained")
+	}
+	timeExact := false
+	if class == timeOverlap {
+		beforeCardinality := postingCardinality(posting)
+		// Below trieMinCandidates, decoding the posting's few candidates costs
+		// less than OR-ing the cover's postings, exactly as narrowCandidatesToRange
+		// decides for every other entry point (§4.6): a point lookup with a tiny
+		// posting must not pay to build a cover spanning a wide range.
+		if s.handle.trieUsable() && beforeCardinality >= trieMinCandidates {
+			inRange, narrowErr := trieCandidates(ctx, s, request.TimeRange)
+			if narrowErr != nil {
+				return MatchResult{}, narrowErr
+			}
+			posting = narrowTermPostingToBitmap(posting, inRange)
+			timeExact = true
+			recordTimeClass(request.timeMetrics, "overlap_trie")
+			recordTimeCandidatesPruned(request.timeMetrics, beforeCardinality-postingCardinality(posting))
+		} else {
+			recordTimeClass(request.timeMetrics, "overlap_fallback")
+		}
+	}
 	result := MatchResult{}
 	for _, documentNumber := range postingDocuments(posting) {
 		if err := ctx.Err(); err != nil {
@@ -2434,8 +2484,13 @@ func (s *memorySegment) MatchTerms(ctx context.Context, request MatchRequest) (M
 		if identifier == nil {
 			return MatchResult{}, fmt.Errorf("document %d has no identifier: %w", documentNumber, ErrInvalidDocument)
 		}
-		if request.TimeRange != nil && (!hasTimestamp || !request.TimeRange.contains(timestamp)) {
-			continue
+		if request.TimeRange != nil {
+			if !hasTimestamp {
+				continue
+			}
+			if !timeExact && !request.TimeRange.contains(timestamp) {
+				continue
+			}
 		}
 		result.Identifiers = append(result.Identifiers, identifier)
 		result.Timestamps = append(result.Timestamps, timestamp)
@@ -2524,11 +2579,46 @@ func (d *disposals) wait() {
 	}
 }
 
+// narrowTermPostingToBitmap restricts a term posting to the documents in
+// bitmap.
+//
+// It narrows Document numbers because that is what postingDocuments, the only
+// reader of a posting here, iterates: the Bitmap field exists for engines that
+// can combine postings directly, but this path does not. Filtering in place
+// keeps the allocation free.
+func narrowTermPostingToBitmap(posting nativeice.TermPosting, bitmap *roaringpkg.Bitmap) nativeice.TermPosting {
+	if posting.OneHit {
+		if !bitmap.Contains(uint32(posting.DocumentNumber)) {
+			posting.OneHit = false
+			posting.DocumentNumber = 0
+			posting.Documents = nil
+		}
+		return posting
+	}
+	kept := posting.Documents[:0]
+	for _, number := range posting.Documents {
+		if bitmap.Contains(uint32(number)) {
+			kept = append(kept, number)
+		}
+	}
+	posting.Documents = kept
+	return posting
+}
+
 func postingDocuments(posting nativeice.TermPosting) []uint64 {
 	if posting.OneHit {
 		return []uint64{posting.DocumentNumber}
 	}
 	return posting.Documents
+}
+
+// postingCardinality returns how many documents posting carries, without
+// allocating: a OneHit posting always carries exactly one.
+func postingCardinality(posting nativeice.TermPosting) uint64 {
+	if posting.OneHit {
+		return 1
+	}
+	return uint64(len(posting.Documents))
 }
 
 func finishCallback(callback func(error), err error) error {
@@ -2598,6 +2688,11 @@ type MatchRequest struct {
 	SeriesField string
 	SeriesID    []byte
 	TimeRange   *TimeRange
+	// timeMetrics receives this request's time-range pruning outcome. It is
+	// unexported: only (*ReadView).MatchTerms sets it, from the owner it was
+	// acquired against, so a caller outside this package cannot set it and
+	// always gets the zero value (no recording).
+	timeMetrics TimeMetrics
 }
 
 // TimeRange is an inclusive/exclusive timestamp interval.
@@ -2621,6 +2716,9 @@ type MatchResult struct {
 func (v *ReadView) MatchTerms(ctx context.Context, request MatchRequest) (MatchResult, error) {
 	if err := v.check(ctx); err != nil {
 		return MatchResult{}, err
+	}
+	if v.owner != nil {
+		request.timeMetrics = v.owner.options.TimeMetrics
 	}
 	result := MatchResult{}
 	for _, current := range v.root.segments {
