@@ -18,6 +18,7 @@
 package exporter
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -121,10 +122,48 @@ func collectPlanFrames(stream transferv1.ExportService_PlanClient) (*PlanResult,
 		}
 		kept = append(kept, f)
 	}
-	result.Frames = kept
+	result.Frames = mergeSegmentPieces(kept)
 	result.UnreachableNodes = uniqueSorted(result.UnreachableNodes)
 	result.AnsweredNodes = uniqueSorted(result.AnsweredNodes)
 	return result, nil
+}
+
+// mergeSegmentPieces folds the pieces of a segment a data node split across frames back into
+// its first piece, so every consumer sees one unit per (node, segment). Pieces carry disjoint
+// shards and only one carries segment_level; a frame left without units is dropped.
+func mergeSegmentPieces(frames []*transferv1.UnitFrame) []*transferv1.UnitFrame {
+	first := map[string]*transferv1.SegmentInventory{}
+	kept := frames[:0]
+	for _, f := range frames {
+		units := f.Units[:0]
+		for _, u := range f.GetUnits() {
+			seg := u.GetSegment()
+			if seg == nil {
+				units = append(units, u)
+				continue
+			}
+			key := f.GetNodeId() + "\x00" + unitCatalog(u).String() + "\x00" + seg.GetUnit().GetGroup() + "\x00" + seg.GetUnit().GetSegmentSuffix()
+			head, ok := first[key]
+			if !ok {
+				first[key] = seg
+				units = append(units, u)
+				continue
+			}
+			head.Unit.ShardIds = append(head.Unit.ShardIds, seg.GetUnit().GetShardIds()...)
+			head.Shards = append(head.Shards, seg.GetShards()...)
+			if head.SegmentLevel == nil {
+				head.SegmentLevel = seg.GetSegmentLevel()
+			}
+		}
+		if f.Units = units; len(units) > 0 {
+			kept = append(kept, f)
+		}
+	}
+	for _, seg := range first {
+		slices.Sort(seg.Unit.ShardIds)
+		slices.SortFunc(seg.Shards, func(a, b *transferv1.ShardStat) int { return cmp.Compare(a.GetShardId(), b.GetShardId()) })
+	}
+	return kept
 }
 
 // unitGroup is the group a unit belongs to, whichever kind it is.

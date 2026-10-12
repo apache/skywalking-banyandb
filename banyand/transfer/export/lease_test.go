@@ -21,6 +21,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -28,7 +29,7 @@ import (
 func TestLeaseRoundTripAndState(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Unix(1_700_000_000, 0)
-	l := Lease{SessionID: "9f2a", StartedAt: now.UnixNano(), ExpiresAt: now.Add(time.Hour).UnixNano(), LastHeartbeatAt: now.UnixNano()}
+	l := Lease{SessionID: "9f2a9f2a9f2a9f2a9f2a9f2a9f2a9f2a", StartedAt: now.UnixNano(), ExpiresAt: now.Add(time.Hour).UnixNano(), LastHeartbeatAt: now.UnixNano()}
 	if err := writeLease(dir, l); err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +53,7 @@ func TestLeaseRoundTripAndState(t *testing.T) {
 
 func TestReadLease_IgnoresKeysOfEarlierBuilds(t *testing.T) {
 	dir := t.TempDir()
-	raw := []byte(`{"sessionId":"9f2a","client":"legacy-client","catalogs":["CATALOG_STREAM"],` +
+	raw := []byte(`{"sessionId":"9f2a9f2a9f2a9f2a9f2a9f2a9f2a9f2a","client":"legacy-client","catalogs":["CATALOG_STREAM"],` +
 		`"startedAt":1,"expiresAt":3,"lastHeartbeatAt":2}`)
 	if err := os.WriteFile(filepath.Join(dir, LeaseFileName), raw, 0o600); err != nil {
 		t.Fatal(err)
@@ -61,18 +62,18 @@ func TestReadLease_IgnoresKeysOfEarlierBuilds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (Lease{SessionID: "9f2a", StartedAt: 1, ExpiresAt: 3, LastHeartbeatAt: 2}); got != want {
+	if want := (Lease{SessionID: "9f2a9f2a9f2a9f2a9f2a9f2a9f2a9f2a", StartedAt: 1, ExpiresAt: 3, LastHeartbeatAt: 2}); got != want {
 		t.Fatalf("readLease() = %+v, want %+v", got, want)
 	}
 }
 
 func TestValidateSessionID(t *testing.T) {
-	for _, ok := range []string{"a", "9f2ac1d4", "0123456789abcdef0123456789abcdef"} {
+	for _, ok := range []string{"0123456789abcdef0123456789abcdef", strings.Repeat("f", 32)} {
 		if err := validateSessionID(ok); err != nil {
 			t.Fatalf("%q must be accepted: %v", ok, err)
 		}
 	}
-	for _, bad := range []string{"", "/../../data", "ABC", "9f2a-1", "..", "x y"} {
+	for _, bad := range []string{"", "a", "abc", "9f2ac1d4", strings.Repeat("a", 33), "/../../data", "ABC", "9f2a-1", "..", "x y"} {
 		if err := validateSessionID(bad); err == nil {
 			t.Fatalf("%q must be rejected", bad)
 		}

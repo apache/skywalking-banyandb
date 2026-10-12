@@ -61,9 +61,9 @@ verify:
     # Releasing a session no data node holds: every node answers none through the liaison's
     # Sessions fan-out, so bydbctl reports the unknown session and exits 2.
     - query: >-
-        rc=0; out=$(bydbctl data release-session --id deadbeef --nodes ${liaison_host}:${liaison_17912} 2>&1) || rc=$?;
+        rc=0; out=$(bydbctl data release-session --id deadbeefdeadbeefdeadbeefdeadbeef --nodes ${liaison_host}:${liaison_17912} 2>&1) || rc=$?;
         echo "exitCode: $rc";
-        echo "message: $(echo "$out" | grep -o 'export session deadbeef is not held on any data node')"
+        echo "message: $(echo "$out" | grep -o 'export session deadbeefdeadbeefdeadbeefdeadbeef is not held on any data node')"
       expected: expected/release-session.yaml
     - query: >-
         bydbctl data export --dry-run --nodes ${liaison_host}:${liaison_17912}

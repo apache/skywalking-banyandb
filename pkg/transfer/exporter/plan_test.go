@@ -27,6 +27,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
@@ -73,8 +74,54 @@ func TestRunPlan_CollectsFramesAndDropsUnreachableNodes(t *testing.T) {
 	}
 }
 
+// TestRunPlan_MergesSegmentPiecesAcrossFrames covers a data node that split a large segment
+// into pieces with disjoint shards over several frames, interleaved with another node's
+// frames: the result must hold the segment as one unit, as if it had arrived whole.
+func TestRunPlan_MergesSegmentPiecesAcrossFrames(t *testing.T) {
+	whole := unitFrame("data-a:17912", "warm", "m", 1, 2, 1)
+	seg := segmentOf(whole)
+	seg.Unit.ShardIds = []uint32{0, 1, 2}
+	for _, id := range []uint32{1, 2} {
+		seg.Shards = append(seg.Shards, &transferv1.ShardStat{ShardId: id, MinTimestamp: 3, MaxTimestamp: 4, TotalCount: 2, PartsCount: 1})
+	}
+	piece := func(level *transferv1.SidxStat, shards ...*transferv1.ShardStat) *transferv1.PlanResponse {
+		p := &transferv1.SegmentInventory{
+			Unit:           &transferv1.SegmentUnit{Catalog: seg.Unit.Catalog, Group: seg.Unit.Group, SegmentSuffix: seg.Unit.SegmentSuffix},
+			SegmentVersion: seg.SegmentVersion,
+			SegmentLevel:   level,
+			Shards:         shards,
+		}
+		for _, sh := range shards {
+			p.Unit.ShardIds = append(p.Unit.ShardIds, sh.ShardId)
+		}
+		return &transferv1.PlanResponse{Frame: &transferv1.PlanResponse_Units{Units: &transferv1.UnitFrame{
+			NodeId: "data-a:17912", Stage: "warm", Units: []*transferv1.UnitInventory{{Kind: &transferv1.UnitInventory_Segment{Segment: p}}},
+		}}}
+	}
+	other := unitFrame("data-b:17912", "warm", "m", 1, 2, 1)
+	f := newFakeLiaison()
+	f.planFrames = []*transferv1.PlanResponse{
+		piece(nil, seg.Shards[2]), other, piece(seg.SegmentLevel, seg.Shards[0]), piece(nil, seg.Shards[1]),
+	}
+	f.summary = &transferv1.PlanSummary{AnsweredNodes: []string{"data-a:17912", "data-b:17912"}}
+	conn := dial(t, serveLiaison(t, f))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	res, err := RunPlan(ctx, conn, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Frames) != 2 || !proto.Equal(res.Frames[0], whole.GetUnits()) || !proto.Equal(res.Frames[1], other.GetUnits()) {
+		t.Fatalf("the pieces must merge into the whole segment, got %+v", res.Frames)
+	}
+	rep := BuildReport(&ClusterInfo{}, res)
+	if len(rep.Rows) != 2 || rep.Rows[0].Segments != 1 || rep.Rows[0].Shards != 3 || len(rep.MultiSource) != 1 {
+		t.Fatalf("a merged segment counts once with no extra sources: %+v %+v", rep.Rows, rep.MultiSource)
+	}
+}
+
 func TestRunPlan_RejectsProtocolViolations(t *testing.T) {
-	created := &transferv1.PlanResponse{Frame: &transferv1.PlanResponse_Created{Created: &transferv1.SessionCreated{SessionId: "feed"}}}
+	created := &transferv1.PlanResponse{Frame: &transferv1.PlanResponse_Created{Created: &transferv1.SessionCreated{SessionId: "feedfeedfeedfeedfeedfeedfeedfeed"}}}
 	summary := summaryFrame(&transferv1.PlanSummary{AnsweredNodes: []string{"data-a:17912"}})
 	for name, tc := range map[string]struct {
 		want   string

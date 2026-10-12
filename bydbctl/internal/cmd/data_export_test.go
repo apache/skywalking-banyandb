@@ -310,7 +310,7 @@ var _ = Describe("Data Export Dry Run", func() {
 		Expect(lease).NotTo(BeAnExistingFile())
 		// Releasing again, or an id that never existed, deletes nothing: no data node holds it,
 		// so the command says so and exits 2.
-		for _, gone := range []string{id, strings.Repeat("ab", 8)} {
+		for _, gone := range []string{id, strings.Repeat("ab", 16)} {
 			_, _, err = run("data", "release-session", "--id", gone, "--nodes", grpcAddr)
 			var exitErr *exporter.ExitError
 			Expect(errors.As(err, &exitErr)).To(BeTrue(), "want an exit error, got %v", err)

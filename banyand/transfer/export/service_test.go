@@ -110,8 +110,8 @@ func TestService_ServeSweepsExpiredAndKeepsLiveSessions(t *testing.T) {
 		}
 		return dir
 	}
-	expired := plant("dead", now.Add(-time.Second))
-	live := plant("beef", now.Add(time.Hour))
+	expired := plant("deaddeaddeaddeaddeaddeaddeaddead", now.Add(-time.Second))
+	live := plant("beefbeefbeefbeefbeefbeefbeefbeef", now.Add(time.Hour))
 
 	pipeline := &fakePipeline{}
 	s := NewService(nil, pipeline, backends)
@@ -139,32 +139,48 @@ func TestService_ServeSweepsExpiredAndKeepsLiveSessions(t *testing.T) {
 func TestService_PreRunRejectsCollidingExportDirs(t *testing.T) {
 	stream := commonv1.Catalog_CATALOG_STREAM
 	measure := commonv1.Catalog_CATALOG_MEASURE
-	for name, tamper := range map[string]func(bs Backends){
-		"shared export dir": func(bs Backends) {
+	for name, tamper := range map[string]func(t *testing.T, bs Backends){
+		"shared export dir": func(_ *testing.T, bs Backends) {
 			bs[measure].(*fakeBackend).exportSnapshotDir = bs[stream].GetExportSnapshotDir()
 		},
-		"nested export dir": func(bs Backends) {
+		"nested export dir": func(_ *testing.T, bs Backends) {
 			bs[measure].(*fakeBackend).exportSnapshotDir = filepath.Join(bs[stream].GetExportSnapshotDir(), "measure")
 		},
-		"export dir is its own snapshot dir": func(bs Backends) {
+		"export dir is its own snapshot dir": func(_ *testing.T, bs Backends) {
 			bs[measure].(*fakeBackend).exportSnapshotDir = bs[measure].GetSnapshotDir()
 		},
-		"export dir inside another catalog's snapshot dir": func(bs Backends) {
+		"export dir inside another catalog's snapshot dir": func(_ *testing.T, bs Backends) {
 			bs[measure].(*fakeBackend).exportSnapshotDir = filepath.Join(bs[stream].GetSnapshotDir(), "export")
 		},
-		"export dir is another catalog's data dir": func(bs Backends) {
+		"export dir is another catalog's data dir": func(_ *testing.T, bs Backends) {
 			bs[measure].(*fakeBackend).exportSnapshotDir = bs[stream].GetDataPath()
 		},
-		"export dir inside its own data dir": func(bs Backends) {
+		"export dir inside its own data dir": func(_ *testing.T, bs Backends) {
 			bs[measure].(*fakeBackend).exportSnapshotDir = filepath.Join(bs[measure].GetDataPath(), "export")
 		},
-		"data dir inside the export dir": func(bs Backends) {
+		"data dir inside the export dir": func(_ *testing.T, bs Backends) {
 			bs[stream].(*fakeBackend).dataDir = filepath.Join(bs[measure].GetExportSnapshotDir(), "data")
+		},
+		"export dir is a symlink to its own data dir": func(t *testing.T, bs Backends) {
+			bs[measure].(*fakeBackend).exportSnapshotDir = symlinkTo(t, bs[measure].GetDataPath())
+		},
+		"export dir is a symlink to another catalog's data dir": func(t *testing.T, bs Backends) {
+			bs[measure].(*fakeBackend).exportSnapshotDir = symlinkTo(t, bs[stream].GetDataPath())
+		},
+		"missing export dir under a symlink to a data dir": func(t *testing.T, bs Backends) {
+			bs[measure].(*fakeBackend).exportSnapshotDir = filepath.Join(symlinkTo(t, bs[stream].GetDataPath()), "export")
+		},
+		"export dir is a symlink to another catalog's export dir": func(t *testing.T, bs Backends) {
+			target := bs[stream].GetExportSnapshotDir()
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			bs[measure].(*fakeBackend).exportSnapshotDir = symlinkTo(t, target)
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			backends, _ := newTestBackends(t)
-			tamper(backends)
+			tamper(t, backends)
 			pipeline := &fakePipeline{}
 			if err := NewService(nil, pipeline, backends).PreRun(context.Background()); err == nil {
 				t.Fatal("PreRun must reject colliding export snapshot directories")
@@ -177,6 +193,42 @@ func TestService_PreRunRejectsCollidingExportDirs(t *testing.T) {
 	backends, _ := newTestBackends(t)
 	if err := backends.validateDirs(); err != nil {
 		t.Fatalf("distinct per-catalog directories must pass: %v", err)
+	}
+}
+
+// symlinkTo creates a symlink to target in a fresh temp directory and returns its path.
+func symlinkTo(t *testing.T, target string) string {
+	t.Helper()
+	link := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	return link
+}
+
+// TestService_PreRunRejectsAnAliasOfALiveDataDirBeforeSweeping covers the orphan sweeper
+// deleting a live group through an export snapshot path that symlinks to a data directory:
+// a hex-named live group older than the orphan grace must survive a PreRun that rejects it.
+func TestService_PreRunRejectsAnAliasOfALiveDataDirBeforeSweeping(t *testing.T) {
+	backends, _ := newTestBackends(t)
+	stream := backends[commonv1.Catalog_CATALOG_STREAM].(*fakeBackend)
+	group := filepath.Join(stream.GetDataPath(), strings.Repeat("ab", 16))
+	writeFile(t, filepath.Join(group, "seg-20260928", "metadata"), []byte(`{"version":"1.5.0"}`))
+	old := time.Now().Add(-2 * orphanGrace)
+	if err := os.Chtimes(group, old, old); err != nil {
+		t.Fatal(err)
+	}
+	stream.exportSnapshotDir = symlinkTo(t, stream.GetDataPath())
+	pipeline := &fakePipeline{}
+	svc := NewService(nil, pipeline, backends)
+	if err := svc.PreRun(context.Background()); err == nil {
+		t.Fatal("PreRun must reject an export snapshot path aliasing a data directory")
+	}
+	if pipeline.registered != nil {
+		t.Fatal("a rejected PreRun must not register the service")
+	}
+	if _, err := os.Stat(group); err != nil {
+		t.Fatalf("the live group must survive: %v", err)
 	}
 }
 

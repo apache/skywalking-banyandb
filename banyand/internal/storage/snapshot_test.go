@@ -19,6 +19,7 @@ package storage
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"testing"
@@ -283,4 +284,29 @@ func TestResolveExportSnapshotDir(t *testing.T) {
 	dir, err = ResolveExportSnapshotDir("rel", "/data/stream")
 	require.NoError(t, err)
 	assert.True(t, filepath.IsAbs(dir), dir)
+}
+
+func TestResolvePath(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	data := filepath.Join(root, "data")
+	require.NoError(t, os.MkdirAll(data, 0o755))
+	alias := filepath.Join(root, "alias")
+	require.NoError(t, os.Symlink(data, alias))
+
+	resolved, err := ResolvePath(data)
+	require.NoError(t, err)
+	assert.Equal(t, data, resolved, "a plain path resolves to itself")
+
+	resolved, err = ResolvePath(alias)
+	require.NoError(t, err)
+	assert.Equal(t, data, resolved, "a symlink resolves to its target")
+
+	resolved, err = ResolvePath(filepath.Join(alias, "missing", "export"))
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(data, "missing", "export"), resolved, "a missing tail is kept under the resolved ancestor")
+
+	resolved, err = ResolvePath(filepath.Join(root, "absent"))
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(root, "absent"), resolved)
 }

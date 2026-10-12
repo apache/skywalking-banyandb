@@ -90,7 +90,8 @@ func Preflight(ctx context.Context, candidates []string, opts ConnectOptions) (*
 	if err != nil {
 		return nil, nil, Exit(ExitUsage, "tls options: %w", err)
 	}
-	// One Plan frame carries every unit of one group, which can exceed gRPC's default 4 MiB.
+	// A data node bounds each Plan frame to a few MiB, which with the liaison's additions can
+	// still exceed gRPC's default 4 MiB; a large group simply spans several frames.
 	dialOpts = append(dialOpts, grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxRecvMsgSize)))
 	if opts.Username != "" {
 		// ConnWithAuth below attaches the credentials to its health check by hand; these

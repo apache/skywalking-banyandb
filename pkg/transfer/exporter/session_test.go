@@ -32,11 +32,11 @@ import (
 func TestReleaseSession(t *testing.T) {
 	f := newFakeLiaison()
 	conn := dial(t, serveLiaison(t, f))
-	result, err := ReleaseSession(context.Background(), conn, "abcd")
+	result, err := ReleaseSession(context.Background(), conn, "abcdabcdabcdabcdabcdabcdabcdabcd")
 	if err != nil || len(result.Failed) != 0 || len(result.NotHeld) != 0 || len(result.Released) == 0 {
 		t.Fatalf("release = %+v %v", result, err)
 	}
-	if r := f.lastSessions(); r.GetAction() != transferv1.SessionsRequest_ACTION_RELEASE || r.GetSessionId() != "abcd" {
+	if r := f.lastSessions(); r.GetAction() != transferv1.SessionsRequest_ACTION_RELEASE || r.GetSessionId() != "abcdabcdabcdabcdabcdabcdabcdabcd" {
 		t.Fatalf("release must send ACTION_RELEASE for the session: %+v", r)
 	}
 }
@@ -52,7 +52,7 @@ func TestReleaseSession_SortsNodesByOutcome(t *testing.T) {
 		errorFrame("data-c:17912", "connection refused"),
 	}
 	conn := dial(t, serveLiaison(t, f))
-	result, err := ReleaseSession(context.Background(), conn, "abcd")
+	result, err := ReleaseSession(context.Background(), conn, "abcdabcdabcdabcdabcdabcdabcdabcd")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestReleaseSession_UnexpectedOutcomeFails(t *testing.T) {
 		{NodeId: "node-3", Outcome: &transferv1.SessionsResponse_Session{Session: &transferv1.SessionLease{}}},
 	}
 	conn := dial(t, serveLiaison(t, f))
-	result, err := ReleaseSession(context.Background(), conn, "abcd")
+	result, err := ReleaseSession(context.Background(), conn, "abcdabcdabcdabcdabcdabcdabcdabcd")
 	if err != nil {
 		t.Fatal(err)
 	}

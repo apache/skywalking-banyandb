@@ -56,7 +56,8 @@ message Selector {
 }
 
 // SegmentUnit keys one physical unit of a stream, measure or trace group on one node: every
-// shard the node holds for a segment. Stage is not part of the key: it is a property of the
+// shard the node holds for a segment. A segment whose inventory is too large for one frame
+// arrives as several SegmentInventory pieces with the same key and disjoint shard_ids. Stage is not part of the key: it is a property of the
 // node, reported read-only on the frame that carries the unit.
 message SegmentUnit {
   common.v1.Catalog catalog = 1 [(validate.rules).enum = {
@@ -90,7 +91,8 @@ message SegmentInventory {
   // Version string from the segment metadata file; input of the import version gate.
   string segment_version = 2;
   repeated ShardStat shards = 3;
-  // Segment-level series index (the sidx/ directory).
+  // Segment-level series index (the sidx/ directory). Only the first piece of a split segment
+  // carries it.
   SidxStat segment_level = 4;
 }
 
@@ -163,10 +165,7 @@ message PlanRequest {
 // generates it, announces it in the first frame and forwards it, so on a data node id is
 // always set.
 message CreateSession {
-  string id = 1 [(validate.rules).string = {
-    max_len: 64
-    pattern: "^[0-9a-f]*$"
-  }];
+  string id = 1 [(validate.rules).string.pattern = "^([0-9a-f]{32})?$"];
   // Remove every session the node holds, whatever its lease says, before creating this
   // one; the removed ids come back in preempted_session_ids. Without it any other session
   // on the node answers ALREADY_EXISTS naming the occupants.
@@ -177,16 +176,15 @@ message CreateSession {
 // planning again before transferring. It inventories the session's snapshot and renews its lease,
 // so the result is the same frozen view CreateSession returned.
 message ReadSession {
-  string id = 1 [(validate.rules).string = {
-    min_len: 1
-    max_len: 64
-    pattern: "^[0-9a-f]+$"
-  }];
+  string id = 1 [(validate.rules).string.pattern = "^[0-9a-f]{32}$"];
 }
 
 // PlanResponse is one frame of the Plan stream. The liaison stream is: with CreateSession a
-// `created` frame first; then `units` frames, each carrying the units of exactly one
-// (node, group); then exactly one `summary` frame. A catalog that fails to snapshot fails the
+// `created` frame first; then `units` frames, each carrying units of exactly one
+// (node, group); then exactly one `summary` frame. A data node bounds the size of each
+// `units` frame, so a large group spans several consecutive frames and a large segment may
+// be split into pieces with disjoint shards; clients aggregate by (node, catalog, group) and
+// by (segment, shard). A catalog that fails to snapshot fails the
 // whole call and the liaison rolls the session back.
 //
 // A data node's own stream (the liaison's upstream) follows the same order without the
@@ -206,7 +204,8 @@ message SessionCreated {
   string session_id = 1;
 }
 
-// UnitFrame carries the units of one group on one node.
+// UnitFrame carries units of one group on one node: all of them, or one bounded slice of a
+// large group.
 message UnitFrame {
   // Stamped by the liaison from the upstream connection; a data node leaves it empty.
   string node_id = 1;
@@ -253,10 +252,7 @@ message SessionsRequest {
     not_in: [0]
   }];
   // Required by ACTION_HEARTBEAT and ACTION_RELEASE, ignored by ACTION_LIST.
-  string session_id = 2 [(validate.rules).string = {
-    max_len: 64
-    pattern: "^[0-9a-f]*$"
-  }];
+  string session_id = 2 [(validate.rules).string.pattern = "^([0-9a-f]{32})?$"];
 }
 
 // SessionsResponse is one data node's answer.

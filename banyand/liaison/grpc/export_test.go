@@ -44,8 +44,9 @@ import (
 )
 
 const (
-	testSessionFeedID = "feed"
-	testSessionOldID  = "01d1"
+	testSessionFeedID = "feedfeedfeedfeedfeedfeedfeedfeed"
+	testSessionOldID  = "01d101d101d101d101d101d101d101d1"
+	testSessionAbcdID = "abcdabcdabcdabcdabcdabcdabcdabcd"
 	testLocalNodeAddr = "127.0.0.1:17912"
 	testNodeA         = "data-a"
 	testNodeB         = "data-b"
@@ -433,10 +434,10 @@ func TestExportPlan_FanOutStampsNodeAndReportsUnreachable(t *testing.T) {
 
 func TestExportPlan_NodeErrorIsFatalNotUnreachable(t *testing.T) {
 	svc := newFanOut(t, map[string]*fakeDataNode{
-		testNodeA: {groups: []string{"g"}, occupant: "abcd"},
-		testNodeB: {expired: map[string]bool{"abcd": true}},
+		testNodeA: {groups: []string{"g"}, occupant: testSessionAbcdID},
+		testNodeB: {expired: map[string]bool{testSessionAbcdID: true}},
 	})
-	err := svc.Plan(transfer.ReadRequest("abcd"), &recordingStream{ctx: context.Background()})
+	err := svc.Plan(transfer.ReadRequest(testSessionAbcdID), &recordingStream{ctx: context.Background()})
 	if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), testNodeB) {
 		t.Fatalf("an expired session must fail the whole call naming the node, got %v", err)
 	}
@@ -552,8 +553,8 @@ func TestExportPlan_NoDataNodesIsFailedPrecondition(t *testing.T) {
 func TestExportPlan_InvalidCombinations(t *testing.T) {
 	svc := newFanOut(t, map[string]*fakeDataNode{testNodeA: {}})
 	for _, req := range []*transferv1.PlanRequest{
-		{Session: &transferv1.PlanRequest_Create{Create: &transferv1.CreateSession{Id: "abcd"}}}, // the liaison generates the id
-		{Session: &transferv1.PlanRequest_Read{Read: &transferv1.ReadSession{}}},                 // needs the session id
+		{Session: &transferv1.PlanRequest_Create{Create: &transferv1.CreateSession{Id: testSessionAbcdID}}}, // the liaison generates the id
+		{Session: &transferv1.PlanRequest_Read{Read: &transferv1.ReadSession{}}},                            // needs the session id
 		{Session: &transferv1.PlanRequest_Read{Read: &transferv1.ReadSession{Id: "NOT-HEX"}}},
 	} {
 		if err := svc.Plan(req, &recordingStream{ctx: context.Background()}); status.Code(err) != codes.InvalidArgument {
@@ -686,18 +687,18 @@ func TestExportSessions_ListAndReleaseFanOut(t *testing.T) {
 func TestExportSessions_InvalidRequests(t *testing.T) {
 	svc := newFanOut(t, map[string]*fakeDataNode{testNodeA: {}})
 	for _, req := range []*transferv1.SessionsRequest{
-		{},                              // the action is required
-		heartbeatReq(""),                // heartbeat needs the session id
-		releaseReq(""),                  // release needs the session id
-		releaseReq("NOT-HEX"),           // the id rule
-		{Action: 99, SessionId: "abcd"}, // an unknown action
+		{},                    // the action is required
+		heartbeatReq(""),      // heartbeat needs the session id
+		releaseReq(""),        // release needs the session id
+		releaseReq("NOT-HEX"), // the id rule
+		{Action: 99, SessionId: testSessionAbcdID}, // an unknown action
 	} {
 		if err := svc.Sessions(req, &recordingSessionsStream{ctx: context.Background()}); status.Code(err) != codes.InvalidArgument {
 			t.Fatalf("%+v must be InvalidArgument, got %v", req, err)
 		}
 	}
 	// ACTION_LIST ignores the id.
-	if frames := sessions(t, svc, &transferv1.SessionsRequest{Action: transferv1.SessionsRequest_ACTION_LIST, SessionId: "abcd"}); len(frames) != 1 {
+	if frames := sessions(t, svc, &transferv1.SessionsRequest{Action: transferv1.SessionsRequest_ACTION_LIST, SessionId: testSessionAbcdID}); len(frames) != 1 {
 		t.Fatalf("list frames = %+v", frames)
 	}
 }
@@ -745,7 +746,7 @@ func TestExportSessions_ReleaseReportsFailedNodeInFrame(t *testing.T) {
 // error frame and the call succeeds, so the client reports the gap and the next tick
 // retries; an expired session fails the call, which stops the heartbeat.
 func TestExportSessions_HeartbeatShapes(t *testing.T) {
-	const id = "abcd01ef"
+	const id = "abcd01efabcd01efabcd01efabcd01ef"
 	a, b := &fakeDataNode{occupant: id}, &fakeDataNode{occupant: id}
 	svc := newFanOut(t, map[string]*fakeDataNode{testNodeA: a, testNodeB: b}, "data-dead")
 	got := errorsByNode(t, sessions(t, svc, heartbeatReq(id)))
@@ -775,8 +776,8 @@ func TestExportLocal_ListAndRelease(t *testing.T) {
 	if len(listed) != 1 || listed[0].NodeId != roleLabelSelf || listed[0].GetSession().GetSessionId() != "local" {
 		t.Fatalf("local list = %+v", listed)
 	}
-	released := sessions(t, svc, releaseReq("abcd"))
-	if len(released) != 1 || released[0].NodeId != roleLabelSelf || released[0].GetDone() == nil || local.released != "abcd" {
+	released := sessions(t, svc, releaseReq(testSessionAbcdID))
+	if len(released) != 1 || released[0].NodeId != roleLabelSelf || released[0].GetDone() == nil || local.released != testSessionAbcdID {
 		t.Fatalf("local release = %+v, released %q", released, local.released)
 	}
 }
@@ -850,7 +851,7 @@ func TestExportPlan_CreateSessionPartialNodeFailureRollsBack(t *testing.T) {
 func TestExportLocal_ErrorPropagation(t *testing.T) {
 	// A local release failure is reported like the fan-out does: an error frame, no RPC error.
 	svc1 := newLocalExportService(&fakeLocalPlanner{releaseErr: errors.New("disk full")}, roleLabelSelf)
-	released := sessions(t, svc1, releaseReq("abcd"))
+	released := sessions(t, svc1, releaseReq(testSessionAbcdID))
 	if len(released) != 1 || released[0].NodeId != roleLabelSelf || released[0].GetError() != "disk full" {
 		t.Fatalf("local release failure must surface in the liaison's own frame, got %+v", released)
 	}
@@ -864,7 +865,7 @@ func TestExportLocal_ErrorPropagation(t *testing.T) {
 
 	// A non-create Plan error keeps its code and gains the node prefix, as the fan-out does.
 	svc3 := newLocalExportService(&fakeLocalPlanner{planErr: status.Error(codes.FailedPrecondition, "export session abcd expired")}, roleLabelSelf)
-	err = svc3.Plan(transfer.ReadRequest("abcd"), &recordingStream{ctx: context.Background()})
+	err = svc3.Plan(transfer.ReadRequest(testSessionAbcdID), &recordingStream{ctx: context.Background()})
 	if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "data node "+roleLabelSelf+": export session abcd expired") {
 		t.Fatalf("local plan error must keep its code and name the node, got %v", err)
 	}
@@ -878,7 +879,7 @@ func TestExportLocal_NotFoundDegradesUnlessStrict(t *testing.T) {
 	svc := newLocalExportService(local, roleLabelSelf)
 	svc.newSessionID = func() string { return testSessionFeedID }
 	{
-		req := transfer.ReadRequest("abcd")
+		req := transfer.ReadRequest(testSessionAbcdID)
 		stream := &recordingStream{ctx: context.Background()}
 		if err := svc.Plan(req, stream); err != nil {
 			t.Fatalf("%+v: NotFound must not fail a non-strict local plan: %v", req, err)
@@ -1121,10 +1122,10 @@ func TestExportPlan_CreateSessionAbortNamesPreempted(t *testing.T) {
 // A node that never held the session answers NotFound: a coverage gap for a ReadSession Plan
 // (the client reports it as unreachable), still fatal when creating.
 func TestExportPlan_NotFoundDegradesUnlessStrict(t *testing.T) {
-	a, b := &fakeDataNode{groups: []string{"g"}, occupant: "abcd"}, &fakeDataNode{}
+	a, b := &fakeDataNode{groups: []string{"g"}, occupant: testSessionAbcdID}, &fakeDataNode{}
 	svc := newFanOut(t, map[string]*fakeDataNode{testNodeA: a, testNodeB: b})
 	{
-		req := transfer.ReadRequest("abcd")
+		req := transfer.ReadRequest(testSessionAbcdID)
 		stream := &recordingStream{ctx: context.Background()}
 		if err := svc.Plan(req, stream); err != nil {
 			t.Fatalf("%+v: NotFound must not fail a non-strict plan: %v", req, err)
@@ -1337,7 +1338,7 @@ func TestExportSessions_StalledNode(t *testing.T) {
 
 // A data node only streams units and summary frames; anything else is a broken node.
 func TestExportPlan_UnexpectedUpstreamFrameIsInternal(t *testing.T) {
-	created := &transferv1.PlanResponse{Frame: &transferv1.PlanResponse_Created{Created: &transferv1.SessionCreated{SessionId: "abcd"}}}
+	created := &transferv1.PlanResponse{Frame: &transferv1.PlanResponse_Created{Created: &transferv1.SessionCreated{SessionId: testSessionAbcdID}}}
 	svc := newFanOut(t, map[string]*fakeDataNode{testNodeA: {groups: []string{"g"}, extraFrame: created}})
 	err := svc.Plan(&transferv1.PlanRequest{}, &recordingStream{ctx: context.Background()})
 	if status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "data node data-a: unexpected plan frame") {
@@ -1448,7 +1449,7 @@ func TestExportSessions_NoOutcomeIsInternal(t *testing.T) {
 
 func TestExportLocal_Heartbeat(t *testing.T) {
 	svc := newLocalExportService(&fakeLocalPlanner{}, roleLabelSelf)
-	frames := sessions(t, svc, heartbeatReq("abcd"))
+	frames := sessions(t, svc, heartbeatReq(testSessionAbcdID))
 	if len(frames) != 1 || frames[0].NodeId != roleLabelSelf || frames[0].GetDone() == nil {
 		t.Fatalf("local heartbeat = %+v", frames)
 	}
@@ -1556,5 +1557,104 @@ func TestExportLocal_WithoutExportServerIsUnsupported(t *testing.T) {
 	got := errorsByNode(t, sessions(t, svc, heartbeatReq(testSessionFeedID)))
 	if got[roleLabelSelf] != "data node "+unsupportedExport {
 		t.Fatalf("heartbeat must answer the unsupported error frame, got %v", got)
+	}
+}
+
+// stalledStream accepts the `created` frame of a CreateSession, then blocks every other Send
+// until unblock is closed, as a client that stays connected but stops reading does. entered
+// closes when the first Send blocks.
+type stalledStream struct {
+	grpclib.ServerStream
+	ctx       context.Context
+	entered   chan struct{}
+	unblock   chan struct{}
+	enterOnce sync.Once
+}
+
+func newStalledStream() *stalledStream {
+	return &stalledStream{ctx: context.Background(), entered: make(chan struct{}), unblock: make(chan struct{})}
+}
+
+func (r *stalledStream) Context() context.Context { return r.ctx }
+func (r *stalledStream) Send(f *transferv1.PlanResponse) error {
+	if f.GetCreated() == nil {
+		r.enterOnce.Do(func() { close(r.entered) })
+		<-r.unblock
+	}
+	return nil
+}
+
+// gateNode makes node open its Plan stream only once gate is closed.
+func gateNode(node string, gate <-chan struct{}) fanOutExtras {
+	return fanOutExtras{wrap: func(n string, c transferv1.ExportServiceClient) transferv1.ExportServiceClient {
+		if n != node {
+			return c
+		}
+		return gatedClient{ExportServiceClient: c, gate: gate}
+	}}
+}
+
+// gatedClient opens a Plan stream only once gate is closed.
+type gatedClient struct {
+	transferv1.ExportServiceClient
+	gate <-chan struct{}
+}
+
+func (c gatedClient) Plan(ctx context.Context, in *transferv1.PlanRequest,
+	opts ...grpclib.CallOption,
+) (grpclib.ServerStreamingClient[transferv1.PlanResponse], error) {
+	select {
+	case <-c.gate:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return c.ExportServiceClient.Plan(ctx, in, opts...)
+}
+
+// planWithin runs Plan and fails the test when it does not return within 5s.
+func planWithin(t *testing.T, svc *exportService, req *transferv1.PlanRequest, stream transferv1.ExportService_PlanServer) error {
+	t.Helper()
+	done := make(chan error, 1)
+	//panicdiag:allow-rawgo deadline guard for a Plan blocked on the downstream client
+	go func() { done <- svc.Plan(req, stream) }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatal("Plan did not return while the downstream client stopped reading")
+		return nil
+	}
+}
+
+// A client that stays connected but stops reading must not hold up a failed create: node a
+// created its snapshot and its inventory waits on the client when node b rejects the create,
+// yet the liaison still fails the call and releases the session on a.
+func TestExportPlan_CreateSessionBlockedDownstreamStillRollsBack(t *testing.T) {
+	stream := newStalledStream()
+	defer close(stream.unblock)
+	a := &fakeDataNode{groups: []string{"g"}}
+	b := &fakeDataNode{groups: []string{"g"}, occupant: testSessionOldID}
+	svc := newFanOutWith(t, map[string]*fakeDataNode{testNodeA: a, testNodeB: b}, gateNode(testNodeB, stream.entered))
+	err := planWithin(t, svc, transfer.CreateRequest(nil, false), stream)
+	if status.Code(err) != codes.AlreadyExists || !strings.Contains(err.Error(), testSessionOldID) {
+		t.Fatalf("want AlreadyExists naming the occupant, got %v", err)
+	}
+	if got := a.releasedIDs(); len(got) != 1 || got[0] != testSessionFeedID {
+		t.Fatalf("the session must be released on the node that created it, got %v", got)
+	}
+}
+
+// A dry run whose client stopped reading still fails promptly with another node's fatal error.
+func TestExportPlan_BlockedDownstreamDoesNotHideNodeError(t *testing.T) {
+	stream := newStalledStream()
+	defer close(stream.unblock)
+	a := &fakeDataNode{groups: []string{"g"}}
+	b := &fakeDataNode{groups: []string{"g"}, extraFrame: &transferv1.PlanResponse{
+		Frame: &transferv1.PlanResponse_Created{Created: &transferv1.SessionCreated{SessionId: testSessionFeedID}},
+	}}
+	svc := newFanOutWith(t, map[string]*fakeDataNode{testNodeA: a, testNodeB: b}, gateNode(testNodeB, stream.entered))
+	err := planWithin(t, svc, &transferv1.PlanRequest{}, stream)
+	if status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "data node "+testNodeB) {
+		t.Fatalf("want node b's Internal error, got %v", err)
 	}
 }

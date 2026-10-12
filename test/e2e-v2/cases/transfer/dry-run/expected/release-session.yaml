@@ -16,4 +16,4 @@
 # bydbctl data release-session for a session no data node holds: every node answers none,
 # so the command names the unknown session and exits 2 (a preflight rejection).
 exitCode: 2
-message: export session deadbeef is not held on any data node
+message: export session deadbeefdeadbeefdeadbeefdeadbeef is not held on any data node

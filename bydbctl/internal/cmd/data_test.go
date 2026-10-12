@@ -160,16 +160,16 @@ func serveRelease(t *testing.T, frames ...*transferv1.SessionsResponse) string {
 // runRelease runs `data release-session --id abcd` against a liaison answering frames.
 func runRelease(t *testing.T, frames ...*transferv1.SessionsResponse) (string, string, error) {
 	t.Helper()
-	return runData(t, "data", "release-session", "--id", "abcd", "--nodes", serveRelease(t, frames...))
+	return runData(t, "data", "release-session", "--id", "abcdabcdabcdabcdabcdabcdabcdabcd", "--nodes", serveRelease(t, frames...))
 }
 
 // Data commands never look up the home directory, so they run with HOME unset.
 func TestReleaseSession_RunsWithoutHome(t *testing.T) {
 	addr := serveRelease(t, releaseFrame("data-a", "done"))
 	t.Setenv("HOME", "")
-	out, _, err := executeOnFreshRoot(t, "data", "release-session", "--id", "abcd", "--nodes", addr)
+	out, _, err := executeOnFreshRoot(t, "data", "release-session", "--id", "abcdabcdabcdabcdabcdabcdabcdabcd", "--nodes", addr)
 	require.NoError(t, err)
-	assert.Equal(t, "export session abcd released\n", out)
+	assert.Equal(t, "export session abcdabcdabcdabcdabcdabcdabcdabcd released\n", out)
 }
 
 func TestReleaseSession_ReportsPartialFailure(t *testing.T) {
@@ -187,7 +187,7 @@ func TestReleaseSession_ReportsTotalFailure(t *testing.T) {
 	var exitErr *exporter.ExitError
 	require.True(t, errors.As(err, &exitErr), "want an exit error, got %v", err)
 	assert.Equal(t, exporter.ExitRuntime, exitErr.Code)
-	assert.Contains(t, err.Error(), "session abcd could not be released on [data-a]")
+	assert.Contains(t, err.Error(), "session abcdabcdabcdabcdabcdabcdabcdabcd could not be released on [data-a]")
 	assert.NotContains(t, err.Error(), "released except on", "nothing was released")
 	assert.Empty(t, out)
 }
@@ -197,15 +197,15 @@ func TestReleaseSession_UnknownSessionIsAnError(t *testing.T) {
 	var exitErr *exporter.ExitError
 	require.True(t, errors.As(err, &exitErr), "want an exit error, got %v", err)
 	assert.Equal(t, exporter.ExitPreflight, exitErr.Code, "a session no node holds is a preflight rejection")
-	assert.Contains(t, err.Error(), "export session abcd is not held on any data node")
+	assert.Contains(t, err.Error(), "export session abcdabcdabcdabcdabcdabcdabcdabcd is not held on any data node")
 	assert.Empty(t, out, "nothing was released")
 }
 
 func TestReleaseSession_NotesNodesThatDidNotHoldIt(t *testing.T) {
 	out, errOut, err := runRelease(t, releaseFrame("data-a", "done"), releaseFrame("data-b", "none"))
 	require.NoError(t, err)
-	assert.Equal(t, "export session abcd released\n", out)
-	assert.Equal(t, "export session abcd was not held on [data-b]\n", errOut)
+	assert.Equal(t, "export session abcdabcdabcdabcdabcdabcdabcdabcd released\n", out)
+	assert.Equal(t, "export session abcdabcdabcdabcdabcdabcdabcdabcd was not held on [data-b]\n", errOut)
 }
 
 func TestDataExport_RejectsPositionalArgs(t *testing.T) {

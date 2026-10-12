@@ -59,11 +59,11 @@ func newReleaseSessionCmd() *cobra.Command {
 			// rather than an INVALID_ARGUMENT round trip; the rule admits the empty id
 			// ACTION_LIST ignores, so emptiness is checked explicitly.
 			if id == "" {
-				return exporter.Exit(exporter.ExitUsage, "--id must be a session id (1-64 lowercase hex characters)")
+				return exporter.Exit(exporter.ExitUsage, "--id must be a session id (32 lowercase hex characters)")
 			}
 			req := &transferv1.SessionsRequest{Action: transferv1.SessionsRequest_ACTION_RELEASE, SessionId: id}
 			if err := req.ValidateAll(); err != nil {
-				return exporter.Exit(exporter.ExitUsage, "--id %q is not a session id (1-64 lowercase hex characters): %w", id, err)
+				return exporter.Exit(exporter.ExitUsage, "--id %q is not a session id (32 lowercase hex characters): %w", id, err)
 			}
 			_, nodes, err := resolveConnection(cmd, f)
 			if err != nil {

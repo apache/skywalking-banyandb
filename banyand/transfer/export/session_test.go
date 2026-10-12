@@ -252,7 +252,7 @@ func TestSession_CreateProbeRenewRelease(t *testing.T) {
 	if status.Code(err) != codes.NotFound || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("released session must be NotFound: %v", err)
 	}
-	if _, err = m.create(ctx, "bbbb", allCatalogs(), false); err != nil {
+	if _, err = m.create(ctx, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", allCatalogs(), false); err != nil {
 		t.Fatalf("a released node must accept a new session: %v", err)
 	}
 }
@@ -283,18 +283,18 @@ func TestSession_CreateRefusesOccupantUnlessPreempt(t *testing.T) {
 	m, _, clock := newTestManager(t)
 	mustCreate(t, m, testSessionID, allCatalogs())
 	clock.advance(time.Hour) // how long ago the occupant last heartbeat is not create's business
-	_, err := m.create(ctx, "bbbb", allCatalogs(), false)
+	_, err := m.create(ctx, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", allCatalogs(), false)
 	if status.Code(err) != codes.AlreadyExists || !strings.Contains(err.Error(), testSessionID) {
 		t.Fatalf("want AlreadyExists naming aaaa, got %v", err)
 	}
 	if got := sessionIDs(t, m); !slices.Equal(got, []string{testSessionID}) {
 		t.Fatalf("the loser must leave no trace: %v", got)
 	}
-	created, err := m.create(ctx, "bbbb", allCatalogs(), true)
+	created, err := m.create(ctx, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", allCatalogs(), true)
 	if err != nil || !slices.Equal(created.preempted, []string{testSessionID}) {
 		t.Fatalf("preempt = %v, %v", created, err)
 	}
-	if got := sessionIDs(t, m); !slices.Equal(got, []string{"bbbb"}) {
+	if got := sessionIDs(t, m); !slices.Equal(got, []string{"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}) {
 		t.Fatalf("old session must be gone: %v", got)
 	}
 }
@@ -304,18 +304,18 @@ func TestSession_CreateRefusesExpiredOccupantWithoutPreempt(t *testing.T) {
 	m, _, clock := newTestManager(t)
 	mustCreate(t, m, testSessionID, allCatalogs())
 	clock.advance(defaultLease + time.Second)
-	_, err := m.create(ctx, "bbbb", catalogSet(commonv1.Catalog_CATALOG_STREAM), false)
+	_, err := m.create(ctx, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", catalogSet(commonv1.Catalog_CATALOG_STREAM), false)
 	if status.Code(err) != codes.AlreadyExists || !strings.Contains(err.Error(), testSessionID) {
 		t.Fatalf("an expired occupant is the sweeper's business, create must still refuse: %v", err)
 	}
 	if got := sessionIDs(t, m); !slices.Equal(got, []string{testSessionID}) {
 		t.Fatalf("the refused create must leave the occupant alone: %v", got)
 	}
-	created, err := m.create(ctx, "bbbb", catalogSet(commonv1.Catalog_CATALOG_STREAM), true)
+	created, err := m.create(ctx, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", catalogSet(commonv1.Catalog_CATALOG_STREAM), true)
 	if err != nil || !slices.Equal(created.preempted, []string{testSessionID}) {
 		t.Fatalf("preempt = %v, %v", created, err)
 	}
-	if got := sessionIDs(t, m); !slices.Equal(got, []string{"bbbb"}) {
+	if got := sessionIDs(t, m); !slices.Equal(got, []string{"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}) {
 		t.Fatalf("only the new session may remain: %v", got)
 	}
 }
@@ -323,24 +323,25 @@ func TestSession_CreateRefusesExpiredOccupantWithoutPreempt(t *testing.T) {
 func TestSession_PreemptRemovesEveryOccupantAndReportsAll(t *testing.T) {
 	ctx := context.Background()
 	m, _, clock := newTestManager(t)
-	mustCreate(t, m, "aaaa", catalogSet(commonv1.Catalog_CATALOG_STREAM))
+	mustCreate(t, m, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", catalogSet(commonv1.Catalog_CATALOG_STREAM))
 	// A second occupant can only get here through preempt; a lease-less leftover is the
 	// other shape a node may hold. Both go, whatever their age or lease says.
-	mustCreateWith(t, m, "bbbb", catalogSet(commonv1.Catalog_CATALOG_MEASURE), true)
-	orphan := mustSessionDir(t, m, commonv1.Catalog_CATALOG_TRACE, "cccc")
+	mustCreateWith(t, m, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", catalogSet(commonv1.Catalog_CATALOG_MEASURE), true)
+	orphan := mustSessionDir(t, m, commonv1.Catalog_CATALOG_TRACE, "cccccccccccccccccccccccccccccccc")
 	if err := os.MkdirAll(orphan, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	age(t, orphan, clock.now())
-	_, err := m.create(ctx, "dddd", allCatalogs(), false)
-	if status.Code(err) != codes.AlreadyExists || !strings.Contains(err.Error(), "bbbb") || !strings.Contains(err.Error(), "cccc") {
+	_, err := m.create(ctx, "dddddddddddddddddddddddddddddddd", allCatalogs(), false)
+	if status.Code(err) != codes.AlreadyExists || !strings.Contains(err.Error(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") ||
+		!strings.Contains(err.Error(), "cccccccccccccccccccccccccccccccc") {
 		t.Fatalf("the refusal must name every occupant, got %v", err)
 	}
-	created := mustCreateWith(t, m, "dddd", allCatalogs(), true)
-	if !slices.Equal(created.preempted, []string{"bbbb", "cccc"}) {
+	created := mustCreateWith(t, m, "dddddddddddddddddddddddddddddddd", allCatalogs(), true)
+	if !slices.Equal(created.preempted, []string{"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccccccccccc"}) {
 		t.Fatalf("preempt must remove and report every occupant, sorted, got %v", created.preempted)
 	}
-	if got := sessionIDs(t, m); !slices.Equal(got, []string{"dddd"}) {
+	if got := sessionIDs(t, m); !slices.Equal(got, []string{"dddddddddddddddddddddddddddddddd"}) {
 		t.Fatalf("only the new session may remain: %v", got)
 	}
 }
@@ -348,19 +349,19 @@ func TestSession_PreemptRemovesEveryOccupantAndReportsAll(t *testing.T) {
 func TestSession_CreateRefusesLeaselessOccupantWithoutPreempt(t *testing.T) {
 	ctx := context.Background()
 	m, _, clock := newTestManager(t)
-	orphan := mustSessionDir(t, m, commonv1.Catalog_CATALOG_STREAM, "dead")
+	orphan := mustSessionDir(t, m, commonv1.Catalog_CATALOG_STREAM, "deaddeaddeaddeaddeaddeaddeaddead")
 	if err := os.MkdirAll(orphan, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	for _, at := range []time.Time{clock.now(), clock.now().Add(-orphanGrace - time.Minute)} {
 		age(t, orphan, at)
 		_, err := m.create(ctx, testSessionID, allCatalogs(), false)
-		if status.Code(err) != codes.AlreadyExists || !strings.Contains(err.Error(), "dead") {
+		if status.Code(err) != codes.AlreadyExists || !strings.Contains(err.Error(), "deaddeaddeaddeaddeaddeaddeaddead") {
 			t.Fatalf("a directory without lease aged %s is an occupant and must be refused, got %v", clock.now().Sub(at), err)
 		}
 	}
 	created := mustCreateWith(t, m, testSessionID, allCatalogs(), true)
-	if !slices.Equal(created.preempted, []string{"dead"}) {
+	if !slices.Equal(created.preempted, []string{"deaddeaddeaddeaddeaddeaddeaddead"}) {
 		t.Fatalf("preempt must remove the lease-less directory, got %v", created.preempted)
 	}
 }
@@ -370,7 +371,7 @@ func TestSession_CreateCanceledBeforeStartRemovesNothing(t *testing.T) {
 	mustCreate(t, m, testSessionID, allCatalogs())
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := m.create(ctx, "bbbb", allCatalogs(), true)
+	_, err := m.create(ctx, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", allCatalogs(), true)
 	if status.Code(err) != codes.Canceled {
 		t.Fatalf("want Canceled, got %v", err)
 	}
@@ -387,7 +388,7 @@ func TestSession_CreateCanceledWhileWaitingForLockRemovesNothing(t *testing.T) {
 	errCh := make(chan error, 1)
 	//panicdiag:allow-rawgo test goroutine blocked on the manager lock; its result is read from errCh
 	go func() {
-		_, err := m.create(ctx, "bbbb", allCatalogs(), true)
+		_, err := m.create(ctx, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", allCatalogs(), true)
 		errCh <- err
 	}()
 	// Give the goroutine time to pass the first ctx check and block on the lock; the result
@@ -419,7 +420,7 @@ func TestSession_CreateSingleCatalogOccupantRemovalFailureKeepsOccupant(t *testi
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
-	_, err := m.create(ctx, "bbbb", catalogSet(commonv1.Catalog_CATALOG_STREAM), true)
+	_, err := m.create(ctx, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", catalogSet(commonv1.Catalog_CATALOG_STREAM), true)
 	if status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "preempt export session "+testSessionID) {
 		t.Fatalf("want Internal naming the occupant, got %v", err)
 	}
@@ -436,7 +437,7 @@ func TestSession_CreateSingleCatalogOccupantRemovalFailureKeepsOccupant(t *testi
 
 func TestSession_ExpiredIsDistinctFromNotFound(t *testing.T) {
 	m, _, clock := newTestManager(t)
-	_, err := m.locateAndHeartbeat("deadbeef")
+	_, err := m.locateAndHeartbeat("deadbeefdeadbeefdeadbeefdeadbeef")
 	if status.Code(err) != codes.NotFound {
 		t.Fatalf("unknown session must be NotFound, got %v", err)
 	}
@@ -506,7 +507,7 @@ func TestSession_SweepKeepsLiveSessions(t *testing.T) {
 
 func TestSession_SweepDeletesOrphansAfterGrace(t *testing.T) {
 	m, _, clock := newTestManager(t)
-	orphan := mustSessionDir(t, m, commonv1.Catalog_CATALOG_STREAM, "dead")
+	orphan := mustSessionDir(t, m, commonv1.Catalog_CATALOG_STREAM, "deaddeaddeaddeaddeaddeaddeaddead")
 	if err := os.MkdirAll(orphan, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -718,7 +719,7 @@ func TestSession_CreateFailureAfterPreemptNamesPreempted(t *testing.T) {
 	m, backends, _ := newTestManager(t)
 	mustCreate(t, m, testSessionID, catalogSet(commonv1.Catalog_CATALOG_STREAM))
 	backends[commonv1.Catalog_CATALOG_TRACE].(*fakeBackend).fail = true
-	_, err := m.create(ctx, "bbbb", allCatalogs(), true)
+	_, err := m.create(ctx, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", allCatalogs(), true)
 	if status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "preempted sessions ["+testSessionID+"] were already removed") {
 		t.Fatalf("want Internal naming the preempted session, got %v", err)
 	}
@@ -780,13 +781,13 @@ func TestSession_HeartbeatDoesNotSnapshot(t *testing.T) {
 
 func TestSession_RootsAreTheSessionDirs(t *testing.T) {
 	m, _, _ := newTestManager(t)
-	created := mustCreate(t, m, "aabb", allCatalogs())
-	roots, err := m.locateAndHeartbeat("aabb")
+	created := mustCreate(t, m, "aabbaabbaabbaabbaabbaabbaabbaabb", allCatalogs())
+	roots, err := m.locateAndHeartbeat("aabbaabbaabbaabbaabbaabbaabbaabb")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for catalog := range allCatalogs() {
-		dir := mustSessionDir(t, m, catalog, "aabb")
+		dir := mustSessionDir(t, m, catalog, "aabbaabbaabbaabbaabbaabbaabbaabb")
 		if created.roots[catalog] != dir || roots[catalog] != dir {
 			t.Fatalf("%s root must be the session dir %s, got create %s, renew %s", catalog, dir, created.roots[catalog], roots[catalog])
 		}
@@ -795,7 +796,7 @@ func TestSession_RootsAreTheSessionDirs(t *testing.T) {
 
 func TestSession_ProbeAllCatalogsMatchesOnDiskLease(t *testing.T) {
 	m, _, _ := newTestManager(t)
-	mustCreate(t, m, "aabb", allCatalogs())
+	mustCreate(t, m, "aabbaabbaabbaabbaabbaabbaabbaabb", allCatalogs())
 	got, err := m.probe()
 	if err != nil || got == nil {
 		t.Fatalf("probe() = %+v, %v", got, err)
@@ -803,7 +804,7 @@ func TestSession_ProbeAllCatalogsMatchesOnDiskLease(t *testing.T) {
 	if !slices.Equal(got.Catalogs, slices.Sorted(maps.Keys(allCatalogs()))) {
 		t.Fatalf("probe must list every catalog that holds the session, sorted: %v", got.Catalogs)
 	}
-	streamDir := mustSessionDir(t, m, commonv1.Catalog_CATALOG_STREAM, "aabb")
+	streamDir := mustSessionDir(t, m, commonv1.Catalog_CATALOG_STREAM, "aabbaabbaabbaabbaabbaabbaabbaabb")
 	diskLease, err := readLease(streamDir)
 	if err != nil {
 		t.Fatal(err)
@@ -829,48 +830,52 @@ func TestSession_ProbeReportsNewestOfSeveralSessions(t *testing.T) {
 	if lease, err := m.probe(); err != nil || lease != nil {
 		t.Fatalf("an empty node must report no session, got %+v, %v", lease, err)
 	}
-	mustCreate(t, m, "bbbb", allCatalogs())
+	mustCreate(t, m, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", allCatalogs())
 	// create never leaves two sessions behind, so the second one is planted on disk the way
 	// an interrupted release or a crashed preempt would leave it.
 	clock.advance(time.Minute)
-	planted := mustSessionDir(t, m, commonv1.Catalog_CATALOG_STREAM, "aaaa")
+	planted := mustSessionDir(t, m, commonv1.Catalog_CATALOG_STREAM, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	if err := os.MkdirAll(planted, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	now := clock.now().UnixNano()
-	if err := writeLease(planted, Lease{SessionID: "aaaa", StartedAt: now, ExpiresAt: clock.now().Add(defaultLease).UnixNano(), LastHeartbeatAt: now}); err != nil {
+	if err := writeLease(planted, Lease{
+		SessionID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", StartedAt: now, ExpiresAt: clock.now().Add(defaultLease).UnixNano(), LastHeartbeatAt: now,
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if got := sessionIDs(t, m); !slices.Equal(got, []string{"aaaa", "bbbb"}) {
+	if got := sessionIDs(t, m); !slices.Equal(got, []string{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}) {
 		t.Fatalf("both session directories must exist, got %v", got)
 	}
 	lease, err := m.probe()
-	if err != nil || lease.GetSessionId() != "aaaa" || !slices.Equal(lease.GetCatalogs(), []commonv1.Catalog{commonv1.Catalog_CATALOG_STREAM}) {
+	if err != nil || lease.GetSessionId() != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" || !slices.Equal(lease.GetCatalogs(), []commonv1.Catalog{commonv1.Catalog_CATALOG_STREAM}) {
 		t.Fatalf("probe must report the session started last, got %+v, %v", lease, err)
 	}
 }
 
 func TestSession_ProbeReportsNewestWhenItSortsLast(t *testing.T) {
 	m, _, clock := newTestManager(t)
-	mustCreate(t, m, "aaaa", allCatalogs())
+	mustCreate(t, m, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", allCatalogs())
 	clock.advance(time.Minute)
-	planted := mustSessionDir(t, m, commonv1.Catalog_CATALOG_MEASURE, "bbbb")
+	planted := mustSessionDir(t, m, commonv1.Catalog_CATALOG_MEASURE, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 	if err := os.MkdirAll(planted, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	now := clock.now().UnixNano()
-	if err := writeLease(planted, Lease{SessionID: "bbbb", StartedAt: now, ExpiresAt: clock.now().Add(defaultLease).UnixNano(), LastHeartbeatAt: now}); err != nil {
+	if err := writeLease(planted, Lease{
+		SessionID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", StartedAt: now, ExpiresAt: clock.now().Add(defaultLease).UnixNano(), LastHeartbeatAt: now,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	lease, err := m.probe()
-	if err != nil || lease.GetSessionId() != "bbbb" || lease.GetStartedAt() != now {
+	if err != nil || lease.GetSessionId() != "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" || lease.GetStartedAt() != now {
 		t.Fatalf("probe must report the session started last even when its id sorts last, got %+v, %v", lease, err)
 	}
 }
 
 func TestSession_ProbeReportsLeaselessDirectoryWithZeroTimes(t *testing.T) {
 	m, _, _ := newTestManager(t)
-	orphan := mustSessionDir(t, m, commonv1.Catalog_CATALOG_MEASURE, "dead")
+	orphan := mustSessionDir(t, m, commonv1.Catalog_CATALOG_MEASURE, "deaddeaddeaddeaddeaddeaddeaddead")
 	if err := os.MkdirAll(orphan, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -878,7 +883,7 @@ func TestSession_ProbeReportsLeaselessDirectoryWithZeroTimes(t *testing.T) {
 	if err != nil || got == nil {
 		t.Fatalf("probe() = %+v, %v", got, err)
 	}
-	if got.SessionId != "dead" || got.StartedAt != 0 || got.ExpiresAt != 0 || got.LastHeartbeatAt != 0 ||
+	if got.SessionId != "deaddeaddeaddeaddeaddeaddeaddead" || got.StartedAt != 0 || got.ExpiresAt != 0 || got.LastHeartbeatAt != 0 ||
 		!slices.Equal(got.Catalogs, []commonv1.Catalog{commonv1.Catalog_CATALOG_MEASURE}) {
 		t.Fatalf("a directory without lease must be reported with zero times and its catalog: %+v", got)
 	}
@@ -892,7 +897,7 @@ func TestSession_ExistingIgnoresMalformedExportDirs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	writeFile(t, filepath.Join(exportDir, "bbbb"), []byte("a file, not a session"))
+	writeFile(t, filepath.Join(exportDir, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"), []byte("a file, not a session"))
 	sessions, err := m.existing()
 	if err != nil || len(sessions) != 0 {
 		t.Fatalf("existing() must skip malformed dirs, got %d sessions, err=%v", len(sessions), err)
@@ -906,7 +911,10 @@ func TestSession_ExistingIgnoresMalformedExportDirs(t *testing.T) {
 func TestSession_ConcurrentCreateAndRelease(t *testing.T) {
 	ctx := context.Background()
 	m, _, _ := newTestManager(t)
-	ids := []string{"aa01", "aa02", "aa03", "aa04", "aa05", "aa06", "aa07", "aa08"}
+	ids := []string{
+		"aa01aa01aa01aa01aa01aa01aa01aa01", "aa02aa02aa02aa02aa02aa02aa02aa02", "aa03aa03aa03aa03aa03aa03aa03aa03", "aa04aa04aa04aa04aa04aa04aa04aa04",
+		"aa05aa05aa05aa05aa05aa05aa05aa05", "aa06aa06aa06aa06aa06aa06aa06aa06", "aa07aa07aa07aa07aa07aa07aa07aa07", "aa08aa08aa08aa08aa08aa08aa08aa08",
+	}
 	var wg sync.WaitGroup
 	errs := make([]error, len(ids))
 	for i, id := range ids {

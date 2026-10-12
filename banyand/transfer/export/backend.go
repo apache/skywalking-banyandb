@@ -74,26 +74,66 @@ func (bs Backends) validatePartReaders() error {
 // sharing one (or one nested in another) would see each other's sessions, one inside
 // any catalog's backup snapshot directory would be reclaimed as a stale backup, and one
 // equal to, inside or containing any catalog's data directory would mix sessions with
-// live groups (the orphan sweeper could remove a live group).
+// live groups (the orphan sweeper could remove a live group). Every path is compared with
+// its symlinks resolved, so an alias of a live directory is caught too; a path that
+// cannot be resolved is rejected because its separation cannot be established.
 func (bs Backends) validateDirs() error {
+	resolved := make(map[commonv1.Catalog]backendDirs, len(bs))
 	for catalog, b := range bs {
-		exportDir := b.GetExportSnapshotDir()
+		dirs, err := resolveDirs(b)
+		if err != nil {
+			return fmt.Errorf("%s: %w", catalog, err)
+		}
+		resolved[catalog] = dirs
+	}
+	for catalog, b := range bs {
+		exportDir := resolved[catalog].export
 		for other, ob := range bs {
-			if nested(exportDir, ob.GetDataPath()) {
+			od := resolved[other]
+			if nested(exportDir, od.data) {
 				return fmt.Errorf("%s: export snapshot path %q and the data path %q of %s must not be equal or nested",
-					catalog, exportDir, ob.GetDataPath(), other)
+					catalog, b.GetExportSnapshotDir(), ob.GetDataPath(), other)
 			}
-			if storage.PathWithin(exportDir, ob.GetSnapshotDir()) {
+			if storage.PathWithin(exportDir, od.snapshot) {
 				return fmt.Errorf("%s: export snapshot path %q must not be the snapshot directory %q or inside it",
-					catalog, exportDir, ob.GetSnapshotDir())
+					catalog, b.GetExportSnapshotDir(), ob.GetSnapshotDir())
 			}
-			if other != catalog && nested(exportDir, ob.GetExportSnapshotDir()) {
+			if other != catalog && nested(exportDir, od.export) {
 				return fmt.Errorf("export snapshot paths of %s (%q) and %s (%q) must not be equal or nested",
-					catalog, exportDir, other, ob.GetExportSnapshotDir())
+					catalog, b.GetExportSnapshotDir(), other, ob.GetExportSnapshotDir())
 			}
 		}
 	}
 	return nil
+}
+
+// backendDirs holds the symlink-resolved directories of one backend.
+type backendDirs struct {
+	data     string
+	snapshot string
+	export   string
+}
+
+func resolveDirs(b Backend) (backendDirs, error) {
+	resolve := func(p string) (string, error) {
+		resolved, err := storage.ResolvePath(p)
+		if err != nil {
+			return "", fmt.Errorf("cannot resolve %q to check it is separate from the export snapshot paths: %w", p, err)
+		}
+		return resolved, nil
+	}
+	var dirs backendDirs
+	var err error
+	if dirs.data, err = resolve(b.GetDataPath()); err != nil {
+		return backendDirs{}, err
+	}
+	if dirs.snapshot, err = resolve(b.GetSnapshotDir()); err != nil {
+		return backendDirs{}, err
+	}
+	if dirs.export, err = resolve(b.GetExportSnapshotDir()); err != nil {
+		return backendDirs{}, err
+	}
+	return dirs, nil
 }
 
 // nested reports whether a and b are the same directory or one lies inside the other.

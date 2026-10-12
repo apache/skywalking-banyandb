@@ -141,7 +141,7 @@ bydbctl data release-session --id <session-id> --nodes liaison-1:17912
 
 `release-session` drops the session snapshot on every data node and prints `export session <id> released`. A node that does not
 hold the session has nothing to delete and is listed on stderr (`export session <id> was not held on [...]`); when no data node holds
-it, the command fails with `export session <id> is not held on any data node` and exits `2`. `--id` is validated locally (1-64 lowercase hex characters, exit `1` otherwise) and the command takes no positional
+it, the command fails with `export session <id> is not held on any data node` and exits `2`. `--id` is validated locally (32 lowercase hex characters, exit `1` otherwise) and the command takes no positional
 arguments. When some nodes fail to release, the command prints one line per failed node with its reason (unreachable, removal failed,
 or a data node without `ExportService`), then `export session <id> released except on [...]` — or `export session <id> could not be
 released on [...]` when no node released it — and exits `3`; retry later, the sweeper reclaims an expired session on its own after its lease

@@ -40,6 +40,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
 // The export timeouts are variables so tests can shorten them.
@@ -52,11 +53,15 @@ var (
 	exportSessionTimeout = 2 * time.Minute
 	// exportPlanNodeMaxWait is the longest the liaison waits for a data node's next Plan frame
 	// before giving the node up. It restarts with every frame and is paused while a frame waits
-	// on the downstream client, so a healthy node streaming a large inventory is never cut off.
+	// for room in the downstream queue, so a healthy node streaming a large inventory is never cut off.
 	// A dry run or ReadSession reports a node that keeps silent as unreachable; a CreateSession
 	// fails with DeadlineExceeded. The wait for the first frame also covers the data node's
 	// snapshot in a CreateSession, so a slower snapshot fails the create.
 	exportPlanNodeMaxWait = 5 * time.Minute
+	// exportPlanSendBuffer is how many `units` frames may wait for the downstream client before
+	// the node workers block on it. A frame can be several MiB, and decoupling the workers from
+	// the client needs only the separate sender, not a deep queue.
+	exportPlanSendBuffer = 1
 )
 
 // unsupportedExport describes a data node without ExportService (an older version during a
@@ -372,8 +377,8 @@ func (s *exportService) planCreateSession(req *transferv1.PlanRequest, stream tr
 	return nil
 }
 
-// fanOutPlan runs one upstream Plan per node and relays `units` frames through send
-// (serialized). Node `summary` frames are folded into the returned final summary,
+// fanOutPlan runs one upstream Plan per node and relays `units` frames through send from a
+// single sender goroutine. Node `summary` frames are folded into the returned final summary,
 // and the nodes that may have received the request are returned so a rollback targets only
 // them and not the nodes that were unreachable before any Plan reached them. unfinished
 // reports whether some node closed without its summary. The error, if any, is a status error;
@@ -389,13 +394,36 @@ func (s *exportService) fanOutPlan(
 	ctx context.Context, req *transferv1.PlanRequest, nodes []planNode, send func(*transferv1.PlanResponse) error,
 ) (*transferv1.PlanResponse, []planNode, bool, error) {
 	strict := req.GetCreate() != nil
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	var sendMu sync.Mutex
-	sendLocked := func(frame *transferv1.PlanResponse) error {
-		sendMu.Lock()
-		defer sendMu.Unlock()
-		return send(frame)
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	// One sender owns the downstream stream and drains a bounded queue, so a client that stops
+	// reading stalls only the sender: the node workers still see another node's failure (or
+	// the client's own send error, which cancels ctx) and the fan-out ends without waiting on
+	// the client.
+	out := make(chan *transferv1.PlanResponse, exportPlanSendBuffer)
+	sender := run.Go(ctx, "liaison.grpc.export.plan-sender", s.l, func(context.Context) {
+		for f := range out {
+			if ctx.Err() != nil {
+				return
+			}
+			if err := send(f); err != nil {
+				cancel(err)
+				return
+			}
+		}
+	})
+	enqueue := func(gctx context.Context, frame *transferv1.PlanResponse) error {
+		select {
+		case out <- frame:
+			return nil
+		case <-sender.Done():
+			if err := context.Cause(ctx); err != nil {
+				return err
+			}
+			return status.Error(codes.Internal, "export plan sender stopped")
+		case <-gctx.Done():
+			return gctx.Err()
+		}
 	}
 	var mu sync.Mutex
 	var established []planNode
@@ -440,11 +468,10 @@ func (s *exportService) fanOutPlan(
 			defer cancelUp(nil)
 			wait := time.AfterFunc(exportPlanNodeMaxWait, func() { cancelUp(errPlanNodeMaxWait) })
 			defer wait.Stop()
-			var sendErr error
 			var summarized bool
 			err := n.plan(upCtx, req, func(frame *transferv1.PlanResponse) error {
 				// The window restarts after every frame and is paused while the frame waits
-				// on the downstream client, so a slow client is never blamed on the node.
+				// for room in the downstream queue, so a slow client is never blamed on the node.
 				wait.Stop()
 				defer wait.Reset(exportPlanNodeMaxWait)
 				if summarized {
@@ -460,8 +487,7 @@ func (s *exportService) fanOutPlan(
 					return nil
 				case *transferv1.PlanResponse_Units:
 					f.Units.NodeId = n.name()
-					sendErr = sendLocked(frame)
-					return sendErr
+					return enqueue(gctx, frame)
 				default:
 					return status.Errorf(codes.Internal, "unexpected plan frame %T", frame.GetFrame())
 				}
@@ -482,8 +508,6 @@ func (s *exportService) fanOutPlan(
 				answered = append(answered, n.name())
 				mu.Unlock()
 				return nil
-			case sendErr != nil:
-				return sendErr
 			case gctx.Err() != nil:
 				return gctx.Err() // another node or the client already failed the call
 			case timedOut && strict:
@@ -502,6 +526,17 @@ func (s *exportService) fanOutPlan(
 	frame := &transferv1.PlanResponse{Frame: &transferv1.PlanResponse_Summary{Summary: summary}}
 	unfinished := finished < len(nodes)
 	if err != nil {
+		// The sender is not waited for: it may still be blocked in send on a client that stopped
+		// reading, and only the handler returning ends that stream. It touches nothing but its own
+		// channels and ctx, and the caller sends nothing more on a failure.
+		if cause := context.Cause(ctx); cause != nil {
+			err = cause // the client failed first; the nodes only saw the cancellation
+		}
+		return frame, established, unfinished, toStatus(err).Err()
+	}
+	close(out)
+	<-sender.Done()
+	if err = context.Cause(ctx); err != nil {
 		return frame, established, unfinished, toStatus(err).Err()
 	}
 	sort.Strings(unreachable)

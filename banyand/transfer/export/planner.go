@@ -63,7 +63,8 @@ func NewPlanner(meta metadata.Repo, backends Backends, nodeLabels map[string]str
 // session snapshot and takes its group list from the snapshot itself; CreateSession snapshots
 // first and, when it preempted anything, closes the stream with a summary frame carrying those
 // ids after the group frames (the liaison announces the session id itself). Every emitted unit
-// frame covers exactly one group and leaves node_id empty for the liaison to stamp.
+// frame covers exactly one group and leaves node_id empty for the liaison to stamp; a large
+// group spans several consecutive frames (see splitUnitFrames).
 func (p *Planner) PlanInventory(ctx context.Context, req *transferv1.PlanRequest, emit func(*transferv1.PlanResponse) error) error {
 	roots, summary, err := p.resolveRoots(ctx, req)
 	if err != nil {
@@ -85,7 +86,7 @@ func (p *Planner) PlanInventory(ctx context.Context, req *transferv1.PlanRequest
 	return nil
 }
 
-// planRoots emits one frame per selected group under roots. In session mode it finally
+// planRoots emits the frames of every selected group under roots. In session mode it finally
 // checks that the session survived the walk, since a snapshot removed meanwhile reads as
 // missing directories rather than as an error.
 func (p *Planner) planRoots(ctx context.Context, req *transferv1.PlanRequest, roots map[commonv1.Catalog]string,
@@ -103,18 +104,17 @@ func (p *Planner) planRoots(ctx context.Context, req *transferv1.PlanRequest, ro
 		if !ok {
 			continue // this catalog has no root on this node
 		}
-		frame, buildErr := p.planGroup(ctx, g, root)
+		frames, buildErr := p.planGroup(ctx, g, root)
 		if buildErr != nil {
 			if errors.Is(buildErr, context.Canceled) || errors.Is(buildErr, context.DeadlineExceeded) {
 				return status.FromContextError(buildErr).Err()
 			}
 			return status.Errorf(codes.Internal, "plan group %s: %v", g.GetMetadata().GetName(), buildErr)
 		}
-		if frame == nil {
-			continue
-		}
-		if err = emit(frame); err != nil {
-			return err
+		for _, frame := range frames {
+			if err = emit(frame); err != nil {
+				return err
+			}
 		}
 	}
 	if req.GetSession() != nil {
@@ -343,9 +343,9 @@ func selectGroups(groups []*commonv1.Group, selectors []*transferv1.Selector) []
 	return out
 }
 
-// planGroup builds the single frame of one group under root, or nil when the group has no
-// data there.
-func (p *Planner) planGroup(ctx context.Context, g *commonv1.Group, root string) (*transferv1.PlanResponse, error) {
+// planGroup builds the frames of one group under root, none when the group has no data
+// there.
+func (p *Planner) planGroup(ctx context.Context, g *commonv1.Group, root string) ([]*transferv1.PlanResponse, error) {
 	name := g.GetMetadata().GetName()
 	stage, err := p.resolveStage(g)
 	if err != nil {
@@ -384,10 +384,7 @@ func (p *Planner) planGroup(ctx context.Context, g *commonv1.Group, root string)
 	if err != nil {
 		return nil, err
 	}
-	if len(units) == 0 {
-		return nil, nil
-	}
-	return &transferv1.PlanResponse{Frame: &transferv1.PlanResponse_Units{Units: &transferv1.UnitFrame{Stage: stage, Units: units}}}, nil
+	return splitUnitFrames(stage, units, planFrameBudget), nil
 }
 
 // resolveStage returns the matched lifecycle stage name, or "" for the default tier.

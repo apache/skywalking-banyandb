@@ -50,7 +50,7 @@ var SweepInterval = time.Minute
 
 var (
 	errNoLease       = errors.New("export session has no lease file")
-	sessionIDPattern = regexp.MustCompile(`^[0-9a-f]{1,64}$`)
+	sessionIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 )
 
 // Lease is the on-disk <session dir>/.lease document. Times are UnixNano;
@@ -102,7 +102,7 @@ func writeLease(sessionDir string, l Lease) error {
 // carries the same rule; this is the defense for the data-node port, which has no auth.
 func validateSessionID(id string) error {
 	if !sessionIDPattern.MatchString(id) {
-		return status.Errorf(codes.InvalidArgument, "invalid export session id %q: want 1-64 lowercase hex characters", id)
+		return status.Errorf(codes.InvalidArgument, "invalid export session id %q: want 32 lowercase hex characters", id)
 	}
 	return nil
 }

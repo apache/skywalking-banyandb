@@ -39,7 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
-const testSessionID = "aaaa"
+const testSessionID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func dayRule(num uint32) *commonv1.IntervalRule {
 	return &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: num}
@@ -136,12 +136,12 @@ func unitFrames(frames []*transferv1.PlanResponse) []*transferv1.UnitFrame {
 // segmentGroup is the group of a segment unit.
 func segmentGroup(u *transferv1.UnitInventory) string { return u.GetSegment().GetUnit().GetGroup() }
 
-func TestPlanInventory_OneFramePerGroupAndSelectorFilter(t *testing.T) {
+func TestPlanInventory_SmallGroupsTakeOneFrameAndSelectorFilter(t *testing.T) {
 	fx := newTestPlanner(t, nil, defaultGroups(), nil)
 
 	all := collect(t, fx.planner, &transferv1.PlanRequest{})
 	if len(all) != 3 {
-		t.Fatalf("want one frame per group (3), got %d", len(all))
+		t.Fatalf("want one frame per small group (3), got %d", len(all))
 	}
 	for _, f := range unitFrames(all) {
 		if f.NodeId != "" {
@@ -350,11 +350,11 @@ func TestSelectedCatalogs(t *testing.T) {
 func TestPlanInventory_PreemptReportsOldSessions(t *testing.T) {
 	fx := newTestPlanner(t, nil, defaultGroups(), nil)
 	_ = collect(t, fx.planner, createReq(testSessionID, false))
-	_, err := collectErr(fx.planner, createReq("bbbb", false))
+	_, err := collectErr(fx.planner, createReq("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", false))
 	if status.Code(err) != codes.AlreadyExists {
 		t.Fatalf("want AlreadyExists, got %v", err)
 	}
-	frames := collect(t, fx.planner, createReq("bbbb", true))
+	frames := collect(t, fx.planner, createReq("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", true))
 	last := frames[len(frames)-1]
 	if got := last.GetSummary().GetPreemptedSessionIds(); last.GetSummary() == nil || len(got) != 1 || got[0] != testSessionID {
 		t.Fatalf("the summary frame must close the stream and list the preempted session: %+v", last)
@@ -365,8 +365,8 @@ func TestPlanInventory_PreemptReportsOldSessions(t *testing.T) {
 	// How long ago the occupant last heartbeat does not change the answer: create takes no
 	// liveness decision, so even a long-silent occupant is refused without preempt.
 	fx.clock.advance(time.Hour)
-	_, err = collectErr(fx.planner, createReq("cccc", false))
-	if status.Code(err) != codes.AlreadyExists || !strings.Contains(err.Error(), "bbbb") {
+	_, err = collectErr(fx.planner, createReq("cccccccccccccccccccccccccccccccc", false))
+	if status.Code(err) != codes.AlreadyExists || !strings.Contains(err.Error(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") {
 		t.Fatalf("want AlreadyExists naming bbbb, got %v", err)
 	}
 }
@@ -378,7 +378,7 @@ func TestPlanInventory_PreemptReportsOldSessionsWhenTheWalkFails(t *testing.T) {
 	meta := filepath.Join(fx.backends[commonv1.Catalog_CATALOG_STREAM].GetDataPath(),
 		"sw_record", "seg-20260928", "shard-0", "0000000000000001", "metadata.json")
 	writeFile(t, meta, []byte(`{broken`))
-	frames, err := collectErr(fx.planner, createReq("bbbb", true))
+	frames, err := collectErr(fx.planner, createReq("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", true))
 	if status.Code(err) != codes.Internal {
 		t.Fatalf("a corrupt part must answer Internal, got %v", err)
 	}
@@ -478,7 +478,7 @@ func TestPlanInventory_InvalidSessionRequests(t *testing.T) {
 			t.Fatalf("%+v must be InvalidArgument, got %v", req, err)
 		}
 	}
-	if _, err := collectErr(fx.planner, readReq("deadbeef")); status.Code(err) != codes.NotFound {
+	if _, err := collectErr(fx.planner, readReq("deadbeefdeadbeefdeadbeefdeadbeef")); status.Code(err) != codes.NotFound {
 		t.Fatalf("unknown session must be NotFound, got %v", err)
 	}
 }
@@ -503,12 +503,12 @@ func TestSessions_Actions(t *testing.T) {
 	}
 	// A session this node does not hold is an error frame, not a failure: the liaison relays
 	// it so the client learns which nodes lost the session.
-	frame, err := fx.planner.Sessions(heartbeat("deadbeef"))
+	frame, err := fx.planner.Sessions(heartbeat("deadbeefdeadbeefdeadbeefdeadbeef"))
 	if err != nil || !strings.Contains(frame.GetError(), "deadbeef not found on this node") {
 		t.Fatalf("heartbeat of an unknown session must answer an error frame, got %+v, %v", frame, err)
 	}
 	// Releasing what is not there succeeds and says so: none, not done.
-	if frame, err = fx.planner.Sessions(release("deadbeef")); err != nil || frame.GetNone() == nil {
+	if frame, err = fx.planner.Sessions(release("deadbeefdeadbeefdeadbeefdeadbeef")); err != nil || frame.GetNone() == nil {
 		t.Fatalf("release of a session the node does not hold must answer none, got %+v, %v", frame, err)
 	}
 
@@ -551,8 +551,8 @@ func TestSessions_Actions(t *testing.T) {
 
 func TestPlanInventory_CreateSessionWritesDefaultLease(t *testing.T) {
 	fx := newTestPlanner(t, nil, defaultGroups(), nil)
-	_ = collect(t, fx.planner, createReq("aabb", false))
-	streamDir := mustSessionDir(t, fx.planner.sessions, commonv1.Catalog_CATALOG_STREAM, "aabb")
+	_ = collect(t, fx.planner, createReq("aabbaabbaabbaabbaabbaabbaabbaabb", false))
+	streamDir := mustSessionDir(t, fx.planner.sessions, commonv1.Catalog_CATALOG_STREAM, "aabbaabbaabbaabbaabbaabbaabbaabb")
 	diskLease, err := readLease(streamDir)
 	if err != nil {
 		t.Fatal(err)

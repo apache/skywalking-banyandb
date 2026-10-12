@@ -7702,8 +7702,11 @@ the live directories and creates nothing on any node.
 
 ### PlanResponse
 PlanResponse is one frame of the Plan stream. The liaison stream is: with CreateSession a
-`created` frame first; then `units` frames, each carrying the units of exactly one
-(node, group); then exactly one `summary` frame. A catalog that fails to snapshot fails the
+`created` frame first; then `units` frames, each carrying units of exactly one
+(node, group); then exactly one `summary` frame. A data node bounds the size of each
+`units` frame, so a large group spans several consecutive frames and a large segment may
+be split into pieces with disjoint shards; clients aggregate by (node, catalog, group) and
+by (segment, shard). A catalog that fails to snapshot fails the
 whole call and the liaison rolls the session back.
 
 A data node&#39;s own stream (the liaison&#39;s upstream) follows the same order without the
@@ -7802,7 +7805,7 @@ SegmentInventory is a SegmentUnit of a stream, measure or trace group with its s
 | unit | [SegmentUnit](#banyandb-transfer-v1-SegmentUnit) |  |  |
 | segment_version | [string](#string) |  | Version string from the segment metadata file; input of the import version gate. |
 | shards | [ShardStat](#banyandb-transfer-v1-ShardStat) | repeated |  |
-| segment_level | [SidxStat](#banyandb-transfer-v1-SidxStat) |  | Segment-level series index (the sidx/ directory). |
+| segment_level | [SidxStat](#banyandb-transfer-v1-SidxStat) |  | Segment-level series index (the sidx/ directory). Only the first piece of a split segment carries it. |
 
 
 
@@ -7813,7 +7816,8 @@ SegmentInventory is a SegmentUnit of a stream, measure or trace group with its s
 
 ### SegmentUnit
 SegmentUnit keys one physical unit of a stream, measure or trace group on one node: every
-shard the node holds for a segment. Stage is not part of the key: it is a property of the
+shard the node holds for a segment. A segment whose inventory is too large for one frame
+arrives as several SegmentInventory pieces with the same key and disjoint shard_ids. Stage is not part of the key: it is a property of the
 node, reported read-only on the frame that carries the unit.
 
 
@@ -7965,7 +7969,8 @@ SidxStat describes the segment-level series index.
 <a name="banyandb-transfer-v1-UnitFrame"></a>
 
 ### UnitFrame
-UnitFrame carries the units of one group on one node.
+UnitFrame carries units of one group on one node: all of them, or one bounded slice of a
+large group.
 
 
 | Field | Type | Label | Description |

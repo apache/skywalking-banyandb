@@ -19,6 +19,7 @@ package storage
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -89,6 +90,37 @@ func PathWithin(child, parent string) bool {
 		return false
 	}
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+// ResolvePath returns p as an absolute path with every symlink resolved. A path that does
+// not exist yet resolves through its longest existing ancestor, so two configured paths
+// that alias one directory resolve to the same name even before either is created.
+func ResolvePath(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	existing, tail := abs, ""
+	for {
+		_, err = os.Lstat(existing)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			return abs, nil
+		}
+		tail = filepath.Join(filepath.Base(existing), tail)
+		existing = parent
+	}
+	resolved, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(resolved, tail), nil
 }
 
 // DeleteStaleSnapshots deletes the stale snapshots in the root directory.
