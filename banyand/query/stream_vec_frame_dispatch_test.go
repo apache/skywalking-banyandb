@@ -19,6 +19,7 @@ package query
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -32,10 +33,12 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	logical_stream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vstream "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream"
 	streamframe "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream/frame"
@@ -1087,6 +1090,124 @@ func oracleFrameServices(t *testing.T, batch *vectorized.RecordBatch) []string {
 		services = append(services, serviceData[rowIdx].GetStr().GetValue())
 	}
 	return services
+}
+
+// TestStreamVecDispatch_NullAndWindowAcrossBatches closes the "tested across batches"
+// box for the two items that only ever ran inside one batch: the null behavior and
+// the offset/limit window. The corpus arrives as three single-row batches, so the
+// merge, the column drop and the window each cross a batch boundary.
+func TestStreamVecDispatch_NullAndWindowAcrossBatches(t *testing.T) {
+	executedTags := []string{oracleClientTag, oracleCriteriaTag, oracleOrderTag}
+
+	t.Run("a null survives the strip across batches", func(t *testing.T) {
+		p := newOracleProcessor(t)
+		req := oracleRequest([]string{oracleClientTag}, true, oracleIndexRule)
+		plan, corpus := newOraclePlanWithCorpus(t, req, executedTags, oracleOrderTag, 1)
+		require.Len(t, corpus, len(oracleRows()), "this arm needs one batch for each row")
+
+		// Element B lives in the last batch. Null its projected cell without clearing
+		// the pointer, so a strip that copied the cell and lost the bitmap would read
+		// the stale value back.
+		last := corpus[len(corpus)-1]
+		serviceIdx, ok := last.Schema.TagIndex(oracleFamily, oracleClientTag)
+		require.True(t, ok)
+		serviceCol := last.Columns[serviceIdx].(*vectorized.TypedColumn[*modelv1.TagValue])
+		serviceCol.MarkNullAt(0)
+		require.NotNil(t, serviceCol.Data()[0], "precondition: the stale pointer must stay")
+
+		handled, resp := p.tryStreamVecDispatch(context.Background(), plan, req, false)
+		require.True(t, handled)
+		body, ok := resp.Data().([]byte)
+		require.True(t, ok, "emitted %T, not a columnar frame body", resp.Data())
+
+		batch, err := streamframe.Decode(body)
+		require.NoError(t, err)
+		require.Equal(t, 2, batch.ActiveLen())
+		idx, ok := batch.Schema.TagIndex(oracleFamily, oracleClientTag)
+		require.True(t, ok)
+		col := batch.Columns[idx].(*vectorized.TypedColumn[*modelv1.TagValue])
+		rows := oracleActiveRows(batch)
+		require.False(t, col.IsNull(rows[0]), "element A keeps its value")
+		require.Equal(t, "new", col.Data()[rows[0]].GetStr().GetValue())
+		require.True(t, col.IsNull(rows[1]), "the validity bit was lost across batches")
+	})
+
+	t.Run("offset 1 limit 1 across batches", func(t *testing.T) {
+		p := newOracleStandaloneProcessor(t)
+		req := oracleRequest([]string{oracleClientTag}, true, oracleIndexRule)
+		req.Offset, req.Limit = 1, 1
+		plan := newOracleBatchedPlan(t, req, executedTags, oracleOrderTag, 1)
+
+		handled, resp := p.tryStreamVecDispatch(context.Background(), plan, req, false)
+		require.True(t, handled)
+		response, ok := resp.Data().(*streamv1.QueryResponse)
+		require.True(t, ok, "standalone emitted %T, not a proto response", resp.Data())
+		// The issue's hand-calculated answer for offset 1, limit 1, unchanged by the
+		// batch split.
+		require.Equal(t, []string{"other"}, oracleProtoServices(t, response.GetElements()))
+	})
+}
+
+// TestFilterStreamBatches_HonorsCancellation pins the guard the batch filter gained
+// when it started running for every response format. The element loop it replaced
+// ignored cancellation, so a canceled standalone query filtered the whole capped set
+// before it returned.
+func TestFilterStreamBatches_HonorsCancellation(t *testing.T) {
+	executedTags := []string{oracleClientTag, oracleCriteriaTag}
+	schema := oracleBatchSchema(executedTags, "")
+	batch := oracleBatchFromRows(schema, executedTags, oracleCapRows())
+	before := batch.ActiveLen()
+	require.Positive(t, before, "precondition: the filter must have rows to walk")
+
+	sch, err := logical_stream.BuildSchema(oracleStreamSchema(), oracleIndexRules())
+	require.NoError(t, err)
+	tagFilter, err := logical.BuildSimpleTagFilter(&modelv1.Criteria{Exp: &modelv1.Criteria_Condition{
+		Condition: &modelv1.Condition{
+			Name:  oracleCriteriaTag,
+			Op:    modelv1.Condition_BINARY_OP_EQ,
+			Value: oracleStr(oracleStateWant),
+		},
+	}})
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	filterErr := filterStreamBatches(ctx, schema, []model.TagProjection{{Family: oracleFamily, Names: executedTags}},
+		logical_stream.VecCriteriaFilter{TagFilter: tagFilter, Schema: sch}, []*vectorized.RecordBatch{batch})
+	require.ErrorIs(t, filterErr, context.Canceled)
+	require.Equal(t, before, batch.ActiveLen(), "a canceled filter must not narrow the batch")
+}
+
+// TestStreamTracedResponseCarriesTrace mirrors the stream success branch of
+// streamQueryProcessor.Rev: the deferred tracer block tags the response count, stops
+// the root span, then attaches tracer.ToProto() to the *streamv1.QueryResponse.
+//
+// It follows the pattern tracing_test.go already uses for the measure processor, and
+// for the same reason: standing up a real stream.Service needs run.PreRunner,
+// run.Config, run.Service and Query. This asserts the one thing the dispatch cannot:
+// a traced stream response carries a populated Trace alongside its Elements.
+func TestStreamTracedResponseCarriesTrace(t *testing.T) {
+	p := newOracleStandaloneProcessor(t)
+	req := oracleRequest([]string{oracleClientTag}, true, oracleIndexRule)
+	plan := newOraclePlan(t, req, []string{oracleClientTag, oracleCriteriaTag, oracleOrderTag})
+
+	tracer, ctx := query.NewTracer(context.Background(), "stream-traced-test")
+	span, ctx := tracer.StartSpan(ctx, "data-%s", p.nodeID)
+
+	handled, resp := p.tryStreamVecDispatch(ctx, plan, req, true)
+	require.True(t, handled)
+	response, ok := resp.Data().(*streamv1.QueryResponse)
+	require.True(t, ok, "a traced query emitted %T, which has no trace channel", resp.Data())
+
+	span.Tag(tracelabels.TagRespCount, fmt.Sprintf("%d", len(response.GetElements())))
+	span.Stop()
+	response.Trace = tracer.ToProto()
+
+	require.NotNil(t, response.Trace, "the traced response lost its trace")
+	require.NotEmpty(t, response.Trace.Spans)
+	require.Positive(t, response.Trace.Spans[0].Duration, "the root span was not stopped before ToProto")
+	require.Equal(t, []string{"new", "other"}, oracleProtoServices(t, response.GetElements()),
+		"tracing must not change the answer")
 }
 
 // oracleNoSourceExecContext returns a nil scan source with a nil error, which is the
