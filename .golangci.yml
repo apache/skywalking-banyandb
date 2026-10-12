@@ -36,7 +36,14 @@ linters:
     - errname
     - errorlint
     - exhaustive
-    - goconst
+    # goconst is intentionally not enabled. v1.64.8's goconst reported nothing
+    # at min-occurrences 4 (the setting it was configured with), so it never
+    # gated anything. v2.14.0 ships a rewritten goconst that counts strictly
+    # more occurrences per string and reports ~269 findings at the same
+    # threshold — mostly cobra `Use:` strings, test-fixture generators and
+    # protocol field names, where a named constant would be noise rather than
+    # a fix. Re-enabling it is a separate, deliberate cleanup.
+    # - goconst
     - gocritic
     - gocyclo
     - godot
@@ -63,9 +70,6 @@ linters:
     exhaustruct:
       exclude:
         - cobra\.Command$
-    goconst:
-      min-occurrences: 4
-      ignore-tests: true
     gocritic:
       enabled-checks:
         - appendCombine

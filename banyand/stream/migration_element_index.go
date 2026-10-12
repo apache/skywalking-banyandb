@@ -242,7 +242,7 @@ func finalizeStreamElementIndex(ctx context.Context, in finalizeStreamElementInd
 			existsOnDisk := statErr == nil
 			_, alreadyRebuilt := rebuiltTargets[dstIdxDir]
 			if existsOnDisk || alreadyRebuilt {
-				logStreamStep("%s stage=%s group %s: idx %s %s/%s -> rebuild (target seg %s idx already written by another source shard)",
+				logStreamStepf("%s stage=%s group %s: idx %s %s/%s -> rebuild (target seg %s idx already written by another source shard)",
 					in.entryTag, in.stage, in.group, progress, st.srcSegName, st.shardName, singleTarget)
 				rb, rbErr := rebuildStreamElementIndexForState(ctx, in, st, idxStores, rebuiltTargets)
 				if rbErr != nil {
@@ -251,7 +251,7 @@ func finalizeStreamElementIndex(ctx context.Context, in finalizeStreamElementInd
 				totalBytes += rb
 				continue
 			}
-			logStreamStep("%s stage=%s group %s: idx %s %s/%s -> byte-copy into seg %s",
+			logStreamStepf("%s stage=%s group %s: idx %s %s/%s -> byte-copy into seg %s",
 				in.entryTag, in.stage, in.group, progress, st.srcSegName, st.shardName, singleTarget)
 			n, copyErr := migration.CopyDir(srcIdxDir, dstIdxDir)
 			if copyErr != nil {
@@ -261,7 +261,7 @@ func finalizeStreamElementIndex(ctx context.Context, in finalizeStreamElementInd
 			continue
 		}
 		// Rows landed in >1 target seg: rebuild per target seg from rows.
-		logStreamStep("%s stage=%s group %s: idx %s %s/%s -> rebuild from rows into %d target seg(s)",
+		logStreamStepf("%s stage=%s group %s: idx %s %s/%s -> rebuild from rows into %d target seg(s)",
 			in.entryTag, in.stage, in.group, progress, st.srcSegName, st.shardName, len(st.targetSegs))
 		rb, rbErr := rebuildStreamElementIndexForState(ctx, in, st, idxStores, rebuiltTargets)
 		if rbErr != nil {
@@ -403,7 +403,7 @@ func rebuildStreamElementIndexFromRows(ctx context.Context, in rebuildStreamElem
 		}
 		defer func() {
 			if cerr := resolver.Close(); cerr != nil {
-				logStreamStep("warning: close index resolver for %s: %v", srcSegPath, cerr)
+				logStreamStepf("warning: close index resolver for %s: %v", srcSegPath, cerr)
 			}
 		}()
 	}
@@ -480,7 +480,7 @@ func rebuildStreamElementIndexFromRows(ctx context.Context, in rebuildStreamElem
 		}
 		missingRows += partMissingRows
 		missingSeries += partMissingSeries
-		logStreamStep("%s stage=%s group %s: idx %s/%s rebuild part %d/%d (%.1f%%) done",
+		logStreamStepf("%s stage=%s group %s: idx %s/%s rebuild part %d/%d (%.1f%%) done",
 			in.entryTag, in.stage, in.group, in.srcSegName, in.shardName,
 			partIdx+1, len(partIDs), float64(partIdx+1)*100/float64(len(partIDs)))
 	}

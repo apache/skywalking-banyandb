@@ -359,14 +359,15 @@ func setUpThrottleTarget(measureRootPath string) (*services, *controllablePM, fu
 		"--measure-root-path=" + measureRootPath,
 	}
 	moduleDeferFunc := test.SetupModules(flags, pipeline, metadataService, preloadSvc, measureService, querySvc)
-	return &services{
-			measure:         measureService,
-			metadataService: metadataService,
-			pipeline:        pipeline,
-		}, pm, func() {
-			moduleDeferFunc()
-			metaDeferFunc()
-		}
+	svcs := &services{
+		measure:         measureService,
+		metadataService: metadataService,
+		pipeline:        pipeline,
+	}
+	return svcs, pm, func() {
+		moduleDeferFunc()
+		metaDeferFunc()
+	}
 }
 
 // startThrottleSyncServer starts a REAL chunked-sync gRPC server and returns it

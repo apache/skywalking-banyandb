@@ -615,12 +615,13 @@ func setUpMigrationTarget(measureRootPath string) (*services, func()) {
 		"--measure-root-path=" + measureRootPath,
 	}
 	moduleDeferFunc := test.SetupModules(flags, pipeline, metadataService, preloadSvc, measureService, querySvc)
-	return &services{
-			measure:         measureService,
-			metadataService: metadataService,
-			pipeline:        pipeline,
-		}, func() {
-			moduleDeferFunc()
-			metaDeferFunc()
-		}
+	svcs := &services{
+		measure:         measureService,
+		metadataService: metadataService,
+		pipeline:        pipeline,
+	}
+	return svcs, func() {
+		moduleDeferFunc()
+		metaDeferFunc()
+	}
 }

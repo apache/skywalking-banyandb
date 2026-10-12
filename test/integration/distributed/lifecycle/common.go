@@ -188,11 +188,12 @@ func verifyClusterNodeRoles(liaisonAddr string) {
 					break
 				}
 			}
-			if labels["type"] == "hot" {
+			switch labels["type"] {
+			case "hot":
 				foundHot = true
 				g.Expect(hasMetaRole).To(gomega.BeTrue(),
 					fmt.Sprintf("hot node %s should have ROLE_META", node.GetMetadata().GetName()))
-			} else if labels["type"] == "warm" {
+			case "warm":
 				foundWarm = true
 				g.Expect(hasMetaRole).To(gomega.BeFalse(),
 					fmt.Sprintf("warm node %s should NOT have ROLE_META", node.GetMetadata().GetName()))
