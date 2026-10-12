@@ -34,8 +34,8 @@ import (
 // a set that was already truncated.
 //
 // It evaluates the same logical.TagFilter the egress evaluates, over the same
-// cells. Hidden-tag stripping is NOT done here — it operates on materialized
-// Elements and stays at the egress.
+// cells. Hidden-tag removal is NOT done here. It drops whole columns, which the
+// processor does once the merge has finished, for every response format.
 type TagFilter struct {
 	filter   logical.TagFilter
 	registry logical.TagSpecRegistry
