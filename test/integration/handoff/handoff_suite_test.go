@@ -23,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -397,12 +396,6 @@ var _ = Describe("trace handoff", func() {
 
 func writeTrace(conn *grpc.ClientConn, traceID string) time.Time {
 	client := tracev1.NewTraceServiceClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	stream, err := client.Write(ctx)
-	Expect(err).NotTo(HaveOccurred())
-
 	baseTime := time.Now().UTC().Truncate(time.Millisecond)
 
 	tags := []*modelv1.TagValue{
@@ -416,19 +409,43 @@ func writeTrace(conn *grpc.ClientConn, traceID string) time.Time {
 		{Value: &modelv1.TagValue_Timestamp{Timestamp: timestamppb.New(baseTime)}},
 	}
 
-	err = stream.Send(&tracev1.WriteRequest{
-		Metadata: &commonv1.Metadata{Name: "sw", Group: "test-trace-group"},
-		Tags:     tags,
-		Span:     []byte("span-" + traceID),
-		Version:  1,
-	})
-	Expect(err).NotTo(HaveOccurred())
-	Expect(stream.CloseSend()).To(Succeed())
+	// This suite's harness hand-rolls data-node/liaison bring-up (newDataNodeHandle,
+	// newLiaisonHandle) instead of going through pkg/test/setup, so it has no
+	// awaitPreloadedSchemasApplied-style barrier: PreloadSchemaViaProperty runs after
+	// the liaison is already serving, and even once the schema lands server-side the
+	// liaison's own write cache can still lag for a moment. A lagging liaison refuses
+	// the single row with a status (e.g. STATUS_NOT_FOUND) rather than a stream error,
+	// so a prior Recv()-only check that ignored the status would silently accept a
+	// refused write. A refused row stores nothing, so retrying the whole
+	// open-stream-send-close-check sequence is safe; baseTime is fixed across
+	// attempts since it is also the timestamp the caller later queries by, and it
+	// stays well within the timestamp validator's wide allowed range for the
+	// duration of a single EventuallyTimeout window.
+	Eventually(func() (string, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 
-	Eventually(func() error {
-		_, err = stream.Recv()
-		return err
-	}, flags.EventuallyTimeout).Should(Equal(io.EOF))
+		stream, err := client.Write(ctx)
+		if err != nil {
+			return "", err
+		}
+		if sendErr := stream.Send(&tracev1.WriteRequest{
+			Metadata: &commonv1.Metadata{Name: "sw", Group: "test-trace-group"},
+			Tags:     tags,
+			Span:     []byte("span-" + traceID),
+			Version:  1,
+		}); sendErr != nil {
+			return "", sendErr
+		}
+		if closeErr := stream.CloseSend(); closeErr != nil {
+			return "", closeErr
+		}
+		resp, recvErr := stream.Recv()
+		if recvErr != nil {
+			return "", recvErr
+		}
+		return resp.GetStatus(), nil
+	}, flags.EventuallyTimeout).Should(Equal(modelv1.Status_STATUS_SUCCEED.String()))
 
 	return baseTime
 }

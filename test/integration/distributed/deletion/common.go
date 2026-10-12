@@ -35,12 +35,14 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -61,15 +63,16 @@ type SetupResult struct {
 var SetupFunc func() SetupResult
 
 var (
-	result             SetupResult
-	connection         *grpc.ClientConn
-	groupClient        databasev1.GroupRegistryServiceClient
-	measureRegClient   databasev1.MeasureRegistryServiceClient
-	measureWriteClient measurev1.MeasureServiceClient
-	dataNode0Path      string
-	dataNode1Path      string
-	liaisonNodePath    string
-	goods              []gleak.Goroutine
+	result               SetupResult
+	connection           *grpc.ClientConn
+	groupClient          databasev1.GroupRegistryServiceClient
+	measureRegClient     databasev1.MeasureRegistryServiceClient
+	measureWriteClient   measurev1.MeasureServiceClient
+	measureBarrierClient schemav1.SchemaBarrierServiceClient
+	dataNode0Path        string
+	dataNode1Path        string
+	liaisonNodePath      string
+	goods                []gleak.Goroutine
 )
 
 var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
@@ -96,6 +99,7 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	groupClient = databasev1.NewGroupRegistryServiceClient(connection)
 	measureRegClient = databasev1.NewMeasureRegistryServiceClient(connection)
 	measureWriteClient = measurev1.NewMeasureServiceClient(connection)
+	measureBarrierClient = schemav1.NewSchemaBarrierServiceClient(connection)
 })
 
 var _ = ginkgo.SynchronizedAfterSuite(func() {
@@ -376,8 +380,16 @@ var _ = ginkgo.Describe("GroupDeletion", func() {
 	})
 })
 
+// createMeasureInGroup creates measure in group and waits for the cluster's schema
+// watermark to reach the Create response's mod_revision before returning.
+//
+// AwaitRevisionApplied is a hint under eventual consistency: it confirms the cluster
+// watermark, not that this liaison's own entity cache has applied the schema yet.
+// writeMeasureDataToGroup retries a refused write to tolerate that residual per-liaison
+// lag, so the barrier only needs to replace the blind sleep this used to rely on for the
+// common case.
 func createMeasureInGroup(regClient databasev1.MeasureRegistryServiceClient, group, measure string) {
-	_, createErr := regClient.Create(context.TODO(), &databasev1.MeasureRegistryServiceCreateRequest{
+	createResp, createErr := regClient.Create(context.TODO(), &databasev1.MeasureRegistryServiceCreateRequest{
 		Measure: &databasev1.Measure{
 			Metadata: &commonv1.Metadata{Name: measure, Group: group},
 			Entity:   &databasev1.Entity{TagNames: []string{"id"}},
@@ -394,16 +406,25 @@ func createMeasureInGroup(regClient databasev1.MeasureRegistryServiceClient, gro
 		},
 	})
 	gomega.Expect(createErr).ShouldNot(gomega.HaveOccurred())
-	time.Sleep(2 * time.Second)
+	barrierResp, barrierErr := measureBarrierClient.AwaitRevisionApplied(context.TODO(), &schemav1.AwaitRevisionAppliedRequest{
+		MinRevision: createResp.GetModRevision(),
+		Timeout:     durationpb.New(flags.EventuallyTimeout),
+	})
+	gomega.Expect(barrierErr).ShouldNot(gomega.HaveOccurred())
+	gomega.Expect(barrierResp.GetApplied()).Should(gomega.BeTrue(), "timeout waiting for schema revision %d", createResp.GetModRevision())
 }
 
-func writeMeasureDataToGroup(writeClient measurev1.MeasureServiceClient, group, measure string, count int) {
+// sendMeasureBatchToGroup writes count distinct measure rows on one write stream and returns
+// the status string of every response, in send order.
+func sendMeasureBatchToGroup(writeClient measurev1.MeasureServiceClient, group, measure string, count int) ([]string, error) {
 	wc, wcErr := writeClient.Write(context.TODO())
-	gomega.Expect(wcErr).ShouldNot(gomega.HaveOccurred())
+	if wcErr != nil {
+		return nil, wcErr
+	}
 	metadata := &commonv1.Metadata{Name: measure, Group: group}
 	baseTime := time.Now().Truncate(time.Millisecond)
 	for idx := 0; idx < count; idx++ {
-		sendErr := wc.Send(&measurev1.WriteRequest{
+		if sendErr := wc.Send(&measurev1.WriteRequest{
 			Metadata: metadata,
 			DataPoint: &measurev1.DataPointValue{
 				Timestamp: timestamppb.New(baseTime.Add(time.Duration(idx) * time.Second)),
@@ -417,16 +438,44 @@ func writeMeasureDataToGroup(writeClient measurev1.MeasureServiceClient, group, 
 				}},
 			},
 			MessageId: uint64(time.Now().UnixNano() + int64(idx)),
-		})
-		gomega.Expect(sendErr).ShouldNot(gomega.HaveOccurred())
+		}); sendErr != nil {
+			return nil, sendErr
+		}
 	}
-	closeSendErr := wc.CloseSend()
-	gomega.Expect(closeSendErr).ShouldNot(gomega.HaveOccurred())
+	if closeSendErr := wc.CloseSend(); closeSendErr != nil {
+		return nil, closeSendErr
+	}
+	var statuses []string
 	for {
-		_, recvErr := wc.Recv()
+		resp, recvErr := wc.Recv()
 		if errors.Is(recvErr, io.EOF) {
 			break
 		}
-		gomega.Expect(recvErr).ShouldNot(gomega.HaveOccurred())
+		if recvErr != nil {
+			return statuses, recvErr
+		}
+		statuses = append(statuses, resp.GetStatus())
 	}
+	return statuses, nil
+}
+
+// writeMeasureDataToGroup retries sendMeasureBatchToGroup until every row is accepted. Rows can be
+// refused by status until the liaison's schema cache catches up. A measure row is keyed by
+// series and timestamp with the latest version winning, so resending the batch with the same
+// values is idempotent: any refusal, including a partly accepted batch, is retried within
+// flags.EventuallyTimeout.
+func writeMeasureDataToGroup(writeClient measurev1.MeasureServiceClient, group, measure string, count int) {
+	gomega.Eventually(func(innerGomega gomega.Gomega) {
+		statuses, sendErr := sendMeasureBatchToGroup(writeClient, group, measure, count)
+		innerGomega.Expect(sendErr).ShouldNot(gomega.HaveOccurred())
+		innerGomega.Expect(statuses).Should(gomega.HaveLen(count), "one write response per row")
+		succeeded := 0
+		for _, writeStatus := range statuses {
+			if writeStatus == modelv1.Status_STATUS_SUCCEED.String() {
+				succeeded++
+			}
+		}
+		innerGomega.Expect(succeeded).Should(gomega.Equal(count),
+			"measure write to %s/%s rejected; statuses=%v", group, measure, statuses)
+	}, flags.EventuallyTimeout).Should(gomega.Succeed())
 }

@@ -34,6 +34,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
 const (
@@ -982,9 +983,15 @@ var _ = g.Describe("Schema tag family move", func() {
 		gm.Expect(clients.AwaitRevision(ctx, max(baseRevision, indexRevision), 10*time.Second)).Should(gm.Succeed())
 
 		g.By("Writing and querying stream data before the tag is moved")
-		writeStatus := writeTagFamilyMoveStream(ctx, clients.StreamWriteClient, groupName, streamName, "stream-pre", preMoveTime,
-			tagFamilyMoveTags("svc-pre", "host-pre", "region-pre", false), tagFamilyMoveInitialWriteSpec())
-		gm.Expect(writeStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		// A single-row write stores nothing when refused, so retrying it after the barrier
+		// above is safe; see the tag-move-in-progress comment below for why a refusal can
+		// still happen here.
+		var writeStatus string
+		gm.Eventually(func(innerGm gm.Gomega) {
+			writeStatus = writeTagFamilyMoveStream(ctx, clients.StreamWriteClient, groupName, streamName, "stream-pre", preMoveTime,
+				tagFamilyMoveTags("svc-pre", "host-pre", "region-pre", false), tagFamilyMoveInitialWriteSpec())
+			innerGm.Expect(writeStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 		beforeElements := queryTagFamilyMoveStream(ctx, clients.StreamWriteClient, groupName, begin, end, false, 1, nil)
 		expectIndexedMovedTagValue(beforeElements, "svc-pre", "host-pre")
 		indexedElements := queryTagFamilyMoveStream(ctx, clients.StreamWriteClient, groupName, begin, end, false, 1, tagFamilyMoveHostCriteria("host-pre"))
@@ -1005,18 +1012,27 @@ var _ = g.Describe("Schema tag family move", func() {
 		indexMoveRevision := moveTagFamilyMoveStreamIndexes(ctx, clients, groupName, streamName)
 
 		g.By("Continuing writes with the old layout while the move is applying")
-		writeInMoveStatus := writeTagFamilyMoveStream(ctx, clients.StreamWriteClient, groupName, streamName, "stream-in-move", inMoveTime,
-			tagFamilyMoveTags("svc-in-move", "host-in-move", "region-in-move", false), tagFamilyMoveInitialWriteSpec())
-		gm.Expect(writeInMoveStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		// The entity cache can still lag the move while it is applying; a refused write
+		// stores nothing, so retrying is safe.
+		gm.Eventually(func(innerGm gm.Gomega) {
+			writeInMoveStatus := writeTagFamilyMoveStream(ctx, clients.StreamWriteClient, groupName, streamName, "stream-in-move", inMoveTime,
+				tagFamilyMoveTags("svc-in-move", "host-in-move", "region-in-move", false), tagFamilyMoveInitialWriteSpec())
+			innerGm.Expect(writeInMoveStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 
 		g.By("Waiting for the moved stream tag schema and index binding to be applied")
 		targetRevision := max(updateResp.GetModRevision(), indexMoveRevision)
 		gm.Expect(clients.AwaitRevision(ctx, targetRevision, 10*time.Second)).Should(gm.Succeed())
 
 		g.By("Writing stream data with the new storage-only host layout")
-		writePostMoveStatus := writeTagFamilyMoveStream(ctx, clients.StreamWriteClient, groupName, streamName, "stream-post", postMoveTime,
-			tagFamilyMoveTags("svc-post", "host-post", "region-post", true), tagFamilyMoveUpdatedWriteSpec())
-		gm.Expect(writePostMoveStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		// AwaitRevision is a hint under eventual consistency: this liaison's own cache can
+		// still lag the just-applied move for a moment. A refused write stores nothing, so
+		// retrying it is safe.
+		gm.Eventually(func(innerGm gm.Gomega) {
+			writePostMoveStatus := writeTagFamilyMoveStream(ctx, clients.StreamWriteClient, groupName, streamName, "stream-post", postMoveTime,
+				tagFamilyMoveTags("svc-post", "host-post", "region-post", true), tagFamilyMoveUpdatedWriteSpec())
+			innerGm.Expect(writePostMoveStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 
 		g.By("Verifying the moved stream schema layout")
 		afterResp, getAfterErr := clients.StreamRegClient.Get(ctx, &databasev1.StreamRegistryServiceGetRequest{
@@ -1065,10 +1081,16 @@ var _ = g.Describe("Schema tag family move", func() {
 		gm.Expect(clients.AwaitRevision(ctx, max(baseRevision, indexRevision), 10*time.Second)).Should(gm.Succeed())
 
 		g.By("Writing and querying stream data before the storage-only tag is moved")
-		writeStatus := writeTagFamilyMoveStream(ctx, clients.StreamWriteClient, groupName, streamName, "stream-storage-pre", preMoveTime,
-			tagFamilyMoveStorageToSearchableTags("svc-storage-pre", "host-storage-pre", "region-storage-pre", false),
-			tagFamilyMoveStorageToSearchableInitialWriteSpec())
-		gm.Expect(writeStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		// A single-row write stores nothing when refused, so retrying it after the barrier
+		// above is safe; see the tag-move-in-progress comment below for why a refusal can
+		// still happen here.
+		var writeStatus string
+		gm.Eventually(func(innerGm gm.Gomega) {
+			writeStatus = writeTagFamilyMoveStream(ctx, clients.StreamWriteClient, groupName, streamName, "stream-storage-pre", preMoveTime,
+				tagFamilyMoveStorageToSearchableTags("svc-storage-pre", "host-storage-pre", "region-storage-pre", false),
+				tagFamilyMoveStorageToSearchableInitialWriteSpec())
+			innerGm.Expect(writeStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 		beforeElements := queryStorageToSearchableMoveStream(ctx, clients.StreamWriteClient, groupName, begin, end, false, 1, nil)
 		expectStorageOnlyMovedTagValue(beforeElements, "svc-storage-pre", "host-storage-pre")
 		storageOnlyCriteriaElements := queryStorageToSearchableMoveStream(ctx, clients.StreamWriteClient, groupName, begin, end, false, 1,
@@ -1090,20 +1112,29 @@ var _ = g.Describe("Schema tag family move", func() {
 		indexMoveRevision := moveTagFamilyMoveStorageToSearchableIndexes(ctx, clients, groupName, streamName)
 
 		g.By("Continuing writes with the old storage-only layout while the move is applying")
-		writeInMoveStatus := writeTagFamilyMoveStream(ctx, clients.StreamWriteClient, groupName, streamName, "stream-storage-in-move", inMoveTime,
-			tagFamilyMoveStorageToSearchableTags("svc-storage-in-move", "host-storage-in-move", "region-storage-in-move", false),
-			tagFamilyMoveStorageToSearchableInitialWriteSpec())
-		gm.Expect(writeInMoveStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		// The entity cache can still lag the move while it is applying; a refused write
+		// stores nothing, so retrying is safe.
+		gm.Eventually(func(innerGm gm.Gomega) {
+			writeInMoveStatus := writeTagFamilyMoveStream(ctx, clients.StreamWriteClient, groupName, streamName, "stream-storage-in-move", inMoveTime,
+				tagFamilyMoveStorageToSearchableTags("svc-storage-in-move", "host-storage-in-move", "region-storage-in-move", false),
+				tagFamilyMoveStorageToSearchableInitialWriteSpec())
+			innerGm.Expect(writeInMoveStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 
 		g.By("Waiting for the moved stream tag schema and index binding to be applied")
 		targetRevision := max(updateResp.GetModRevision(), indexMoveRevision)
 		gm.Expect(clients.AwaitRevision(ctx, targetRevision, 10*time.Second)).Should(gm.Succeed())
 
 		g.By("Writing stream data with the new searchable host layout")
-		writePostMoveStatus := writeTagFamilyMoveStream(ctx, clients.StreamWriteClient, groupName, streamName, "stream-storage-post", postMoveTime,
-			tagFamilyMoveStorageToSearchableTags("svc-storage-post", "host-storage-post", "region-storage-post", true),
-			tagFamilyMoveStorageToSearchableUpdatedWriteSpec())
-		gm.Expect(writePostMoveStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		// AwaitRevision is a hint under eventual consistency: this liaison's own cache can
+		// still lag the just-applied move for a moment. A refused write stores nothing, so
+		// retrying it is safe.
+		gm.Eventually(func(innerGm gm.Gomega) {
+			writePostMoveStatus := writeTagFamilyMoveStream(ctx, clients.StreamWriteClient, groupName, streamName, "stream-storage-post", postMoveTime,
+				tagFamilyMoveStorageToSearchableTags("svc-storage-post", "host-storage-post", "region-storage-post", true),
+				tagFamilyMoveStorageToSearchableUpdatedWriteSpec())
+			innerGm.Expect(writePostMoveStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 
 		g.By("Verifying the moved stream schema layout")
 		afterResp, getAfterErr := clients.StreamRegClient.Get(ctx, &databasev1.StreamRegistryServiceGetRequest{
@@ -1153,9 +1184,15 @@ var _ = g.Describe("Schema tag family move", func() {
 		gm.Expect(clients.AwaitRevision(ctx, max(baseRevision, indexRevision), 10*time.Second)).Should(gm.Succeed())
 
 		g.By("Writing and querying measure data before the tag is moved")
-		writeStatus := writeTagFamilyMoveMeasure(ctx, clients.MeasureWriteClient, groupName, measureName, preMoveTime,
-			tagFamilyMoveTags("measure-svc-pre", "measure-host-pre", "measure-region-pre", false), tagFamilyMoveMeasureInitialWriteSpec(), 1)
-		gm.Expect(writeStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		// A single-row write stores nothing when refused, so retrying it after the barrier
+		// above is safe; see the tag-move-in-progress comment below for why a refusal can
+		// still happen here.
+		var writeStatus string
+		gm.Eventually(func(innerGm gm.Gomega) {
+			writeStatus = writeTagFamilyMoveMeasure(ctx, clients.MeasureWriteClient, groupName, measureName, preMoveTime,
+				tagFamilyMoveTags("measure-svc-pre", "measure-host-pre", "measure-region-pre", false), tagFamilyMoveMeasureInitialWriteSpec(), 1)
+			innerGm.Expect(writeStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 		beforeDataPoints := queryTagFamilyMoveMeasure(ctx, clients.MeasureWriteClient, groupName, begin, end, false, 1, nil)
 		expectMeasureIndexedMovedTagValue(beforeDataPoints, "measure-svc-pre", "measure-host-pre")
 		indexedDataPoints := queryTagFamilyMoveMeasure(ctx, clients.MeasureWriteClient, groupName, begin, end, false, 1, tagFamilyMoveHostCriteria("measure-host-pre"))
@@ -1176,18 +1213,27 @@ var _ = g.Describe("Schema tag family move", func() {
 		indexMoveRevision := moveTagFamilyMoveMeasureIndexes(ctx, clients, groupName, measureName)
 
 		g.By("Continuing measure writes with the old layout while the move is applying")
-		writeInMoveStatus := writeTagFamilyMoveMeasure(ctx, clients.MeasureWriteClient, groupName, measureName, inMoveTime,
-			tagFamilyMoveTags("measure-svc-in-move", "measure-host-in-move", "measure-region-in-move", false), tagFamilyMoveMeasureInitialWriteSpec(), 2)
-		gm.Expect(writeInMoveStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		// The entity cache can still lag the move while it is applying; a refused write
+		// stores nothing, so retrying is safe.
+		gm.Eventually(func(innerGm gm.Gomega) {
+			writeInMoveStatus := writeTagFamilyMoveMeasure(ctx, clients.MeasureWriteClient, groupName, measureName, inMoveTime,
+				tagFamilyMoveTags("measure-svc-in-move", "measure-host-in-move", "measure-region-in-move", false), tagFamilyMoveMeasureInitialWriteSpec(), 2)
+			innerGm.Expect(writeInMoveStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 
 		g.By("Waiting for the moved measure tag schema and index binding to be applied")
 		targetRevision := max(updateResp.GetModRevision(), indexMoveRevision)
 		gm.Expect(clients.AwaitRevision(ctx, targetRevision, 10*time.Second)).Should(gm.Succeed())
 
 		g.By("Writing measure data with the new storage-only host layout")
-		writePostMoveStatus := writeTagFamilyMoveMeasure(ctx, clients.MeasureWriteClient, groupName, measureName, postMoveTime,
-			tagFamilyMoveTags("measure-svc-post", "measure-host-post", "measure-region-post", true), tagFamilyMoveMeasureUpdatedWriteSpec(), 3)
-		gm.Expect(writePostMoveStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		// AwaitRevision is a hint under eventual consistency: this liaison's own cache can
+		// still lag the just-applied move for a moment. A refused write stores nothing, so
+		// retrying it is safe.
+		gm.Eventually(func(innerGm gm.Gomega) {
+			writePostMoveStatus := writeTagFamilyMoveMeasure(ctx, clients.MeasureWriteClient, groupName, measureName, postMoveTime,
+				tagFamilyMoveTags("measure-svc-post", "measure-host-post", "measure-region-post", true), tagFamilyMoveMeasureUpdatedWriteSpec(), 3)
+			innerGm.Expect(writePostMoveStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 
 		g.By("Verifying the moved measure schema layout")
 		afterResp, getAfterErr := clients.MeasureRegClient.Get(ctx, &databasev1.MeasureRegistryServiceGetRequest{
@@ -1235,10 +1281,16 @@ var _ = g.Describe("Schema tag family move", func() {
 		gm.Expect(clients.AwaitRevision(ctx, max(baseRevision, indexRevision), 10*time.Second)).Should(gm.Succeed())
 
 		g.By("Writing and querying measure data before the storage-only tag is moved")
-		writeStatus := writeTagFamilyMoveMeasure(ctx, clients.MeasureWriteClient, groupName, measureName, preMoveTime,
-			tagFamilyMoveStorageToSearchableTags("measure-svc-storage-pre", "measure-host-storage-pre", "measure-region-storage-pre", false),
-			tagFamilyMoveMeasureStorageToSearchableInitialWriteSpec(), 1)
-		gm.Expect(writeStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		// A single-row write stores nothing when refused, so retrying it after the barrier
+		// above is safe; see the tag-move-in-progress comment below for why a refusal can
+		// still happen here.
+		var writeStatus string
+		gm.Eventually(func(innerGm gm.Gomega) {
+			writeStatus = writeTagFamilyMoveMeasure(ctx, clients.MeasureWriteClient, groupName, measureName, preMoveTime,
+				tagFamilyMoveStorageToSearchableTags("measure-svc-storage-pre", "measure-host-storage-pre", "measure-region-storage-pre", false),
+				tagFamilyMoveMeasureStorageToSearchableInitialWriteSpec(), 1)
+			innerGm.Expect(writeStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 		beforeDataPoints := queryStorageToSearchableMoveMeasure(ctx, clients.MeasureWriteClient, groupName, begin, end, false, 1, nil)
 		expectMeasureStorageOnlyMovedTagValue(beforeDataPoints, "measure-svc-storage-pre", "measure-host-storage-pre")
 		expectMeasureHostCriteriaError(ctx, clients.MeasureWriteClient, groupName, measureName, "measure-host-storage-pre", begin, end,
@@ -1259,20 +1311,29 @@ var _ = g.Describe("Schema tag family move", func() {
 		indexMoveRevision := moveTagFamilyMoveMeasureStorageToSearchableIndexes(ctx, clients, groupName, measureName)
 
 		g.By("Continuing measure writes with the old storage-only layout while the move is applying")
-		writeInMoveStatus := writeTagFamilyMoveMeasure(ctx, clients.MeasureWriteClient, groupName, measureName, inMoveTime,
-			tagFamilyMoveStorageToSearchableTags("measure-svc-storage-in-move", "measure-host-storage-in-move", "measure-region-storage-in-move", false),
-			tagFamilyMoveMeasureStorageToSearchableInitialWriteSpec(), 2)
-		gm.Expect(writeInMoveStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		// The entity cache can still lag the move while it is applying; a refused write
+		// stores nothing, so retrying is safe.
+		gm.Eventually(func(innerGm gm.Gomega) {
+			writeInMoveStatus := writeTagFamilyMoveMeasure(ctx, clients.MeasureWriteClient, groupName, measureName, inMoveTime,
+				tagFamilyMoveStorageToSearchableTags("measure-svc-storage-in-move", "measure-host-storage-in-move", "measure-region-storage-in-move", false),
+				tagFamilyMoveMeasureStorageToSearchableInitialWriteSpec(), 2)
+			innerGm.Expect(writeInMoveStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 
 		g.By("Waiting for the moved measure tag schema and index binding to be applied")
 		targetRevision := max(updateResp.GetModRevision(), indexMoveRevision)
 		gm.Expect(clients.AwaitRevision(ctx, targetRevision, 10*time.Second)).Should(gm.Succeed())
 
 		g.By("Writing measure data with the new searchable host layout")
-		writePostMoveStatus := writeTagFamilyMoveMeasure(ctx, clients.MeasureWriteClient, groupName, measureName, postMoveTime,
-			tagFamilyMoveStorageToSearchableTags("measure-svc-storage-post", "measure-host-storage-post", "measure-region-storage-post", true),
-			tagFamilyMoveMeasureStorageToSearchableUpdatedWriteSpec(), 3)
-		gm.Expect(writePostMoveStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		// AwaitRevision is a hint under eventual consistency: this liaison's own cache can
+		// still lag the just-applied move for a moment. A refused write stores nothing, so
+		// retrying it is safe.
+		gm.Eventually(func(innerGm gm.Gomega) {
+			writePostMoveStatus := writeTagFamilyMoveMeasure(ctx, clients.MeasureWriteClient, groupName, measureName, postMoveTime,
+				tagFamilyMoveStorageToSearchableTags("measure-svc-storage-post", "measure-host-storage-post", "measure-region-storage-post", true),
+				tagFamilyMoveMeasureStorageToSearchableUpdatedWriteSpec(), 3)
+			innerGm.Expect(writePostMoveStatus).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		}, flags.EventuallyTimeout).Should(gm.Succeed())
 
 		g.By("Verifying the moved measure schema layout")
 		afterResp, getAfterErr := clients.MeasureRegClient.Get(ctx, &databasev1.MeasureRegistryServiceGetRequest{

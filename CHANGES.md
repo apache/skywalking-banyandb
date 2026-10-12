@@ -26,7 +26,6 @@ Release Notes.
 
 ### Bug Fixes
 
-- Stop the liaison from refusing a Measure, Stream or Trace write with `STATUS_NOT_FOUND` right after a schema barrier reported the schema applied. The barrier's watermark advances by each processed event's own revision, so an event handled out of revision order could carry it past a schema whose handlers had not yet filled the liaison's entity cache. A write that carries a schema revision now waits for that cache, bounded by the larger of `--{measure,stream,trace}-metadata-cache-wait-duration` and 5s; a schema that never arrives is still refused.
 - Fix a data race in Measure TopN where a pooled TopN value reused for a query wrote its tag names into the streaming processor's entity tag name slice.
 - Stop `pkg/index/native`'s compaction-persistence test from flaking on `Test Pkg`: it asserted that garbage collection succeeds the instant a read view closes, without accounting for a background persist still holding an older root.
 - Stamp `RELEASE_VERSION` into official release binaries so `--version` reports the release instead of `-`.
@@ -58,6 +57,7 @@ Release Notes.
 - Reject a `--trace-vectorized-batch-size` above 65,536 at startup instead of accepting it. The trace query path indexes a batch's active rows through a `uint16` selection, so a batch size above that bound silently wrapped -- reading early rows a second time and never reading the rest. The stream path already enforced this bound; measure now does too. A node configured above the bound will fail to start rather than return wrong results, and must lower the flag.
 - Fix FODC proxy OOM kills on `/metrics`: stream the Prometheus text to the response, stop copying label maps, share one agent collection between concurrent scrapes, and install the same panic diagnostics as the agent.
 - Stop the scheduled backup/lifecycle/retention scheduler from logging a false `action timed out` error for an action that runs longer than 5 minutes but ultimately succeeds. Crossing the internal 5-minute soft deadline now logs a lower-severity "still running" message and keeps waiting for the action's real outcome instead of abandoning it mid-flight; the eventual result is logged and the scheduler only starts the next scheduled run once the current one truly finishes.
+- Fix backup reporting success when an earlier catalog upload fails.
 - Return a trace's complete span set when its spans straddle a storage segment boundary (segments are per-day in local time, and each span lands in the segment matching its own timestamp) and the query's time range covers only one side of that boundary. After resolving the qualifying trace IDs from the segments the query range overlaps, fetching those traces' spans now also reopens any segment within one hour of the query range (`traceCompletionWindow`), so the neighboring day's spans are no longer silently dropped. Applies to both ORDER BY and trace-ID trace queries; trace selection, ordering, and limit/offset are unaffected.
 
 ### Document
