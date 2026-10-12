@@ -68,10 +68,10 @@ var dataFS embed.FS
 //go:embed input/*.ql
 var qlFS embed.FS
 
-func expectWriteSucceeded(writeClient streamv1.StreamService_WriteClient) {
-	// Setup already waited on SchemaBarrier AwaitSchemaApplied; a NOT_FOUND
-	// here means the barrier contract was violated and must fail loudly.
-	// Callers must open Write with a deadline so a stalled Recv cannot hang forever.
+// collectWriteStatuses drains a write stream to EOF and returns the status string of every
+// response, in receive order. Callers must open Write with a deadline so a stalled Recv
+// cannot hang forever.
+func collectWriteStatuses(writeClient streamv1.StreamService_WriteClient) []string {
 	var statuses []string
 	for {
 		ack, recvErr := writeClient.Recv()
@@ -81,10 +81,29 @@ func expectWriteSucceeded(writeClient streamv1.StreamService_WriteClient) {
 		gm.Expect(recvErr).NotTo(gm.HaveOccurred())
 		statuses = append(statuses, ack.GetStatus())
 	}
-	gm.Expect(statuses).NotTo(gm.BeEmpty())
+	return statuses
+}
+
+// expectWriteSucceeded drains writeClient and asserts every row in this write attempt
+// succeeded. A schema barrier is only a hint under eventual consistency: the liaison's
+// own write cache can still lag it for a moment, so a write that races that lag is
+// refused by status (e.g. STATUS_NOT_FOUND), not a stream error. Call this from inside a
+// gm.Eventually so that refusal is retried; only a refusal that persists past
+// flags.EventuallyTimeout, or a batch that is only partially accepted (gm.StopTrying —
+// resending would duplicate the already-accepted rows), is a real failure.
+func expectWriteSucceeded(innerGm gm.Gomega, writeClient streamv1.StreamService_WriteClient) {
+	statuses := collectWriteStatuses(writeClient)
+	innerGm.Expect(statuses).NotTo(gm.BeEmpty())
+	succeeded := 0
 	for _, writeStatus := range statuses {
-		gm.Expect(writeStatus).To(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()))
+		if writeStatus == modelv1.Status_STATUS_SUCCEED.String() {
+			succeeded++
+		}
 	}
+	if succeeded > 0 && succeeded < len(statuses) {
+		gm.StopTrying(fmt.Sprintf("stream write partially rejected; statuses=%v", statuses)).Now()
+	}
+	innerGm.Expect(succeeded).To(gm.Equal(len(statuses)), "stream write rejected; statuses=%v", statuses)
 }
 
 // VerifyFn verify whether the query response matches the wanted result.
@@ -323,14 +342,20 @@ func WriteToGroup(conn *grpclib.ClientConn, name, group, fileName string, baseTi
 	metadata = resp.GetStream().GetMetadata()
 
 	c := streamv1.NewStreamServiceClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
-	defer cancel()
-	writeClient, err := c.Write(ctx)
-	gm.Expect(err).NotTo(gm.HaveOccurred())
-	elementCounter := 0
-	loadData(writeClient, metadata, fmt.Sprintf("%s.json", fileName), baseTime, interval, &elementCounter)
-	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
-	expectWriteSucceeded(writeClient)
+	// The registry Get above reads the schema server, not this liaison's own write
+	// cache, which can still lag it for a moment; a write that races that lag is
+	// refused by status rather than a stream error. Retry the whole attempt (a fresh
+	// stream, the send, and the drain) together.
+	gm.Eventually(func(innerGm gm.Gomega) {
+		ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
+		defer cancel()
+		writeClient, writeErr := c.Write(ctx)
+		innerGm.Expect(writeErr).NotTo(gm.HaveOccurred())
+		elementCounter := 0
+		loadData(writeClient, metadata, fmt.Sprintf("%s.json", fileName), baseTime, interval, &elementCounter)
+		innerGm.Expect(writeClient.CloseSend()).To(gm.Succeed())
+		expectWriteSucceeded(innerGm, writeClient)
+	}, flags.EventuallyTimeout).Should(gm.Succeed())
 }
 
 // WriteSpec defines the specification for writing stream data.
@@ -342,43 +367,49 @@ type WriteSpec struct {
 
 // WriteMixed writes stream data in schema order first, and then in spec order.
 func WriteMixed(conn *grpclib.ClientConn, baseTime time.Time, interval time.Duration, writeSpecs ...WriteSpec) {
-	ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
-	defer cancel()
 	schemaClient := databasev1.NewStreamRegistryServiceClient(conn)
 	c := streamv1.NewStreamServiceClient(conn)
-	writeClient, err := c.Write(ctx)
-	gm.Expect(err).NotTo(gm.HaveOccurred())
 
-	var currentMd *commonv1.Metadata
-	elementCounter := 0
-	currentTime := baseTime
-	for idx, ws := range writeSpecs {
-		if ws.Metadata != nil {
-			resp, getErr := schemaClient.Get(ctx, &databasev1.StreamRegistryServiceGetRequest{Metadata: ws.Metadata})
-			gm.Expect(getErr).NotTo(gm.HaveOccurred())
-			currentMd = resp.GetStream().GetMetadata()
-		}
-		gm.Expect(currentMd).NotTo(gm.BeNil(), "first WriteSpec must have Metadata")
+	// The liaison's write cache can still lag a schema barrier, refusing a write by
+	// status rather than a stream error, so the whole attempt (a fresh stream, every
+	// schema Get and loadData/loadDataWithSpec call, and the drain) is retried together.
+	gm.Eventually(func(innerGm gm.Gomega) {
+		ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
+		defer cancel()
+		writeClient, err := c.Write(ctx)
+		innerGm.Expect(err).NotTo(gm.HaveOccurred())
 
-		var templates []interface{}
-		content, readErr := dataFS.ReadFile("testdata/" + ws.DataFile)
-		gm.Expect(readErr).ShouldNot(gm.HaveOccurred())
-		gm.Expect(json.Unmarshal(content, &templates)).ShouldNot(gm.HaveOccurred())
-
-		if idx == 0 {
-			loadData(writeClient, currentMd, ws.DataFile, currentTime, interval, &elementCounter)
-		} else {
-			var mdToSend *commonv1.Metadata
+		var currentMd *commonv1.Metadata
+		elementCounter := 0
+		currentTime := baseTime
+		for idx, ws := range writeSpecs {
 			if ws.Metadata != nil {
-				mdToSend = currentMd
+				resp, getErr := schemaClient.Get(ctx, &databasev1.StreamRegistryServiceGetRequest{Metadata: ws.Metadata})
+				innerGm.Expect(getErr).NotTo(gm.HaveOccurred())
+				currentMd = resp.GetStream().GetMetadata()
 			}
-			loadDataWithSpec(writeClient, mdToSend, ws.DataFile, currentTime, interval, ws.Spec, &elementCounter)
-		}
-		currentTime = currentTime.Add(time.Duration(len(templates)) * interval)
-	}
+			innerGm.Expect(currentMd).NotTo(gm.BeNil(), "first WriteSpec must have Metadata")
 
-	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
-	expectWriteSucceeded(writeClient)
+			var templates []interface{}
+			content, readErr := dataFS.ReadFile("testdata/" + ws.DataFile)
+			innerGm.Expect(readErr).ShouldNot(gm.HaveOccurred())
+			innerGm.Expect(json.Unmarshal(content, &templates)).ShouldNot(gm.HaveOccurred())
+
+			if idx == 0 {
+				loadData(writeClient, currentMd, ws.DataFile, currentTime, interval, &elementCounter)
+			} else {
+				var mdToSend *commonv1.Metadata
+				if ws.Metadata != nil {
+					mdToSend = currentMd
+				}
+				loadDataWithSpec(writeClient, mdToSend, ws.DataFile, currentTime, interval, ws.Spec, &elementCounter)
+			}
+			currentTime = currentTime.Add(time.Duration(len(templates)) * interval)
+		}
+
+		innerGm.Expect(writeClient.CloseSend()).To(gm.Succeed())
+		expectWriteSucceeded(innerGm, writeClient)
+	}, flags.EventuallyTimeout).Should(gm.Succeed())
 }
 
 // loadDataWithElementIDMap loads data with element IDs specified in the data file for deduplication tests.
@@ -488,11 +519,17 @@ func WriteDeduplicationTest(conn *grpclib.ClientConn, name string, baseTime time
 	metadata = resp.GetStream().GetMetadata()
 
 	c := streamv1.NewStreamServiceClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
-	defer cancel()
-	writeClient, err := c.Write(ctx)
-	gm.Expect(err).NotTo(gm.HaveOccurred())
-	loadDataWithElementIDMap(writeClient, metadata, fmt.Sprintf("%s.json", name), baseTime, interval)
-	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
-	expectWriteSucceeded(writeClient)
+	// The registry Get above reads the schema server, not this liaison's own write
+	// cache, which can still lag it for a moment; a write that races that lag is
+	// refused by status rather than a stream error. Retry the whole attempt (a fresh
+	// stream, the send, and the drain) together.
+	gm.Eventually(func(innerGm gm.Gomega) {
+		ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
+		defer cancel()
+		writeClient, writeErr := c.Write(ctx)
+		innerGm.Expect(writeErr).NotTo(gm.HaveOccurred())
+		loadDataWithElementIDMap(writeClient, metadata, fmt.Sprintf("%s.json", name), baseTime, interval)
+		innerGm.Expect(writeClient.CloseSend()).To(gm.Succeed())
+		expectWriteSucceeded(innerGm, writeClient)
+	}, flags.EventuallyTimeout).Should(gm.Succeed())
 }

@@ -151,35 +151,66 @@ func distributedMarkers(response *measurev1.QueryResponse) []string {
 	return markers
 }
 
-func sendDistributedFrames(
+// sendDistributedFrameStatuses opens a real bidirectional write through actor, sends every
+// frame, closes the send side, and returns the status string of each response in send order.
+// A transport-level error (e.g. codes.PermissionDenied for a refused stream) ends the stream
+// before any status is returned.
+func sendDistributedFrameStatuses(
 	actor distributedActor,
 	client measurev1.MeasureServiceClient,
 	frames ...*measurev1.WriteRequest,
-) error {
+) ([]string, error) {
 	stream, openErr := client.Write(actor.context())
 	if openErr != nil {
-		return openErr
+		return nil, openErr
 	}
 	for _, frame := range frames {
 		if sendErr := stream.Send(frame); sendErr != nil {
 			if errors.Is(sendErr, io.EOF) {
 				break
 			}
-			return sendErr
+			return nil, sendErr
 		}
 	}
 	if closeErr := stream.CloseSend(); closeErr != nil {
-		return closeErr
+		return nil, closeErr
 	}
+	var statuses []string
 	for {
-		_, receiveErr := stream.Recv()
+		resp, receiveErr := stream.Recv()
 		if errors.Is(receiveErr, io.EOF) {
-			return nil
+			return statuses, nil
 		}
 		if receiveErr != nil {
-			return receiveErr
+			return statuses, receiveErr
 		}
+		statuses = append(statuses, resp.GetStatus())
 	}
+}
+
+// seedDistributedFrames sends frames through actor and retries until every frame is accepted. The schema barrier awaited before this call only confirms liaison B's cache
+// (AwaitSchemaApplied is issued against barrierB); liaison A, which this seed writes through,
+// can still lag the same schema for a moment and refuse a frame by status rather than a stream
+// error. A refused frame stores nothing, and a measure row is keyed by series and timestamp with
+// the latest version winning, so resending the whole batch, even a partly accepted one, is
+// idempotent.
+func seedDistributedFrames(
+	actor distributedActor,
+	client measurev1.MeasureServiceClient,
+	frames ...*measurev1.WriteRequest,
+) {
+	gm.EventuallyWithOffset(1, func(innerGm gm.Gomega) {
+		statuses, sendErr := sendDistributedFrameStatuses(actor, client, frames...)
+		innerGm.Expect(sendErr).NotTo(gm.HaveOccurred())
+		innerGm.Expect(statuses).To(gm.HaveLen(len(frames)), "one write response per frame")
+		succeeded := 0
+		for _, writeStatus := range statuses {
+			if writeStatus == modelv1.Status_STATUS_SUCCEED.String() {
+				succeeded++
+			}
+		}
+		innerGm.Expect(succeeded).To(gm.Equal(len(frames)), "seed write by %s rejected; statuses=%v", actor.username, statuses)
+	}, flags.EventuallyTimeout).Should(gm.Succeed())
 }
 
 var _ = g.Describe("rbac-data distributed public-path smoke", func() {
@@ -263,10 +294,10 @@ var _ = g.Describe("rbac-data distributed public-path smoke", func() {
 		})
 		gm.Expect(barrierErr).NotTo(gm.HaveOccurred(), "the distributed fixture schema must converge before public data calls")
 
-		gm.Expect(sendDistributedFrames(distributedAdmin, measuresA,
+		seedDistributedFrames(distributedAdmin, measuresA,
 			distributedMarkerFrame(distributedAlpha, alphaMarker, baseTime, 1),
 			distributedMarkerFrame(distributedBeta, betaMarker, baseTime, 2),
-		)).To(gm.Succeed(), "the administrator must seed both groups through liaison A")
+		)
 
 		gm.Eventually(func() []string {
 			response, queryErr := measuresB.Query(distributedAdmin.context(), distributedMarkerQuery(baseTime, distributedAlpha, distributedBeta))

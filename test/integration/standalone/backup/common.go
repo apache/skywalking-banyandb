@@ -146,16 +146,25 @@ func initializeTestData(conn *grpc.ClientConn) error {
 		Name:  "p",
 		Group: "g",
 	}
-	resp, err := client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
-		Metadata: md,
-		Id:       "1",
-		Tags: []*modelv1.Tag{
-			{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v1"}}}},
-			{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v2"}}}},
-		},
-	}})
-	if err != nil {
-		return err
+	// A just-created group and property reach the liaison's in-memory repositories
+	// asynchronously via the schema watch, so the first Apply right after creating them
+	// can transiently fail. EventuallyErr rides out that propagation window while still
+	// returning a plain error, matching this function's error-chaining contract.
+	var resp *propertyv1.ApplyResponse
+	applyErr := test.EventuallyErr(func(g gomega.Gomega) {
+		var err error
+		resp, err = client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
+			Metadata: md,
+			Id:       "1",
+			Tags: []*modelv1.Tag{
+				{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v1"}}}},
+				{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v2"}}}},
+			},
+		}})
+		g.Expect(err).NotTo(gomega.HaveOccurred())
+	})
+	if applyErr != nil {
+		return applyErr
 	}
 
 	gomega.Expect(resp.Created).To(gomega.BeTrue())

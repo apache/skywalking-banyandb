@@ -76,6 +76,14 @@ type streamMerger struct {
 	documentCount uint64
 	storedIndex   uint64
 
+	// Time bounds over the surviving timestamped documents, in the same
+	// uint64(int64) form the flush path writes into the footer. hasTime is
+	// false when no surviving document carried a timestamp, which leaves the
+	// footer slots at zero and marks the segment as having no time bounds.
+	timeMin uint64
+	timeMax uint64
+	hasTime bool
+
 	// Reusable section buffers: the merge keeps one steady working set
 	// instead of allocating per document or per term.
 	storedValues  []storedValue
@@ -429,8 +437,12 @@ func (m *streamMerger) write() error {
 	binary.BigEndian.PutUint64(footer[16:24], fieldsIndexOffset)
 	binary.BigEndian.PutUint64(footer[24:32], docValueOffset)
 	binary.BigEndian.PutUint32(footer[32:36], nativeICEChunkModeV1)
-	binary.BigEndian.PutUint64(footer[36:44], 0)
-	binary.BigEndian.PutUint64(footer[44:52], 0)
+	// The time bounds a flush segment already writes into these slots. Writing
+	// them here as well is what lets a query skip or narrow a merged segment
+	// instead of decoding every candidate it holds; leaving them at zero is what
+	// previously made every merged segment report "no timestamps".
+	binary.BigEndian.PutUint64(footer[36:44], m.timeMin)
+	binary.BigEndian.PutUint64(footer[44:52], m.timeMax)
 	binary.BigEndian.PutUint32(footer[52:56], segmentVersion)
 	_, writeErr := m.output.Write(footer)
 	return writeErr

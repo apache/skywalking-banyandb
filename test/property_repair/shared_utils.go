@@ -42,6 +42,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
 // Constants for property repair performance testing.
@@ -228,20 +229,28 @@ func WriteProperties(ctx context.Context, propertyServiceClient propertyv1.Prope
 				largeData := GenerateLargeData(DataSize)
 				timestamp := time.Now().Format(time.RFC3339Nano)
 
-				_, writeErr := propertyServiceClient.Apply(ctx, &propertyv1.ApplyRequest{
-					Property: &propertyv1.Property{
-						Metadata: &commonv1.Metadata{
-							Name:  PropertyName,
-							Group: GroupName,
+				// A just-created group and property schema reach the liaison's in-memory
+				// repositories asynchronously via the schema watch, so an Apply issued soon
+				// after CreateGroup/CreatePropertySchema can transiently refuse the write.
+				// Eventually rides out that propagation window; GinkgoRecover (deferred above)
+				// catches the failure if it never converges.
+				gomega.Eventually(func() error {
+					var writeErr error
+					_, writeErr = propertyServiceClient.Apply(ctx, &propertyv1.ApplyRequest{
+						Property: &propertyv1.Property{
+							Metadata: &commonv1.Metadata{
+								Name:  PropertyName,
+								Group: GroupName,
+							},
+							Id: propertyID,
+							Tags: []*modelv1.Tag{
+								{Key: "data", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: largeData}}}},
+								{Key: "timestamp", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: timestamp}}}},
+							},
 						},
-						Id: propertyID,
-						Tags: []*modelv1.Tag{
-							{Key: "data", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: largeData}}}},
-							{Key: "timestamp", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: timestamp}}}},
-						},
-					},
-				})
-				gomega.Expect(writeErr).NotTo(gomega.HaveOccurred())
+					})
+					return writeErr
+				}, flags.EventuallyTimeout).Should(gomega.Succeed())
 
 				count++
 				atomic.AddInt64(&totalProcessed, 1)
