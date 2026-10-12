@@ -19,7 +19,6 @@ package export
 
 import (
 	"context"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -339,12 +338,9 @@ func TestSelectedCatalogs(t *testing.T) {
 		{Catalog: commonv1.Catalog_CATALOG_MEASURE, Groups: []string{"m"}},
 		{Catalog: commonv1.Catalog_CATALOG_MEASURE},
 	})
-	want := map[commonv1.Catalog][]string{
-		commonv1.Catalog_CATALOG_STREAM:  {"a", "b"},
-		commonv1.Catalog_CATALOG_MEASURE: nil,
-	}
-	if !maps.EqualFunc(got, want, slices.Equal) {
-		t.Fatalf("got %v, want %v", got, want)
+	measureGroups, hasMeasure := got[commonv1.Catalog_CATALOG_MEASURE]
+	if len(got) != 2 || !slices.Equal(got[commonv1.Catalog_CATALOG_STREAM], []string{"a", "b"}) || !hasMeasure || measureGroups != nil {
+		t.Fatalf("want stream groups [a b] and the whole measure catalog, got %v", got)
 	}
 	if all := fx.planner.selectedCatalogs(nil); len(all) != 4 {
 		t.Fatalf("no selectors must select all four catalogs whole, got %v", all)
