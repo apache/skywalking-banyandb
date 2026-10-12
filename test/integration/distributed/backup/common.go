@@ -129,15 +129,22 @@ func InitializeTestSuite() (*CommonTestVars, error) {
 		Name:  "p",
 		Group: "g",
 	}
-	resp, err := client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
-		Metadata: md,
-		Id:       "1",
-		Tags: []*modelv1.Tag{
-			{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v1"}}}},
-			{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v2"}}}},
-		},
-	}})
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	// A just-created group and property reach the liaison's in-memory repositories
+	// asynchronously via the schema watch, so the first Apply right after creating them
+	// can transiently fail. Eventually rides out that propagation window.
+	var resp *propertyv1.ApplyResponse
+	gomega.Eventually(func() error {
+		var applyErr error
+		resp, applyErr = client.Apply(context.Background(), &propertyv1.ApplyRequest{Property: &propertyv1.Property{
+			Metadata: md,
+			Id:       "1",
+			Tags: []*modelv1.Tag{
+				{Key: "t1", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v1"}}}},
+				{Key: "t2", Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "v2"}}}},
+			},
+		}})
+		return applyErr
+	}, flags.EventuallyTimeout).Should(gomega.Succeed())
 	gomega.Expect(resp.Created).To(gomega.BeTrue())
 	gomega.Expect(resp.TagsNum).To(gomega.Equal(uint32(2)))
 

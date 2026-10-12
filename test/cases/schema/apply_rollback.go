@@ -31,6 +31,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
 // arMeasureGroup creates a CATALOG_MEASURE group suitable for apply-rollback tests.
@@ -399,12 +400,15 @@ var _ = g.Describe("Schema apply rollback", func() {
 			"ListMeasure must contain no user-created entries after deletion")
 
 		g.By("Verifying write to deleted measure fails or returns non-SUCCEED status")
-		writeStatus, writeErr := sendSingleMeasureWrite(ctx, clients.MeasureWriteClient, groupName, measureName, 0)
-		// The measure entity is no longer in the routing cache; write must fail.
-		if writeErr == nil {
-			gm.Expect(writeStatus).ShouldNot(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()),
-				"write to deleted measure must not return STATUS_SUCCEED")
-		}
+		// AwaitDeleted confirms only the cluster watermark; this liaison's own entity cache can
+		// still hold the measure's locator for a moment after that, in which case an immediate
+		// write transiently returns STATUS_SUCCEED (a stray row in a group this spec deletes
+		// right after, so nothing later reads it) instead of failing. Retry until the cache
+		// catches up and the write genuinely fails or returns a non-SUCCEED status.
+		gm.Eventually(func() (string, error) {
+			return sendSingleMeasureWrite(ctx, clients.MeasureWriteClient, groupName, measureName, 0)
+		}, flags.EventuallyTimeout).ShouldNot(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()),
+			"write to deleted measure must not return STATUS_SUCCEED")
 
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})
 	})
@@ -473,9 +477,15 @@ var _ = g.Describe("Schema apply rollback", func() {
 			"ListMeasure must return exactly one user-created entry after recreate")
 
 		g.By("Write with stale R1 must return STATUS_EXPIRED_SCHEMA")
-		writeStatus, writeErr := sendSingleMeasureWrite(ctx, clients.MeasureWriteClient, groupName, measureName, r1)
-		gm.Expect(writeErr).ShouldNot(gm.HaveOccurred())
-		gm.Expect(writeStatus).Should(gm.Equal(modelv1.Status_STATUS_EXPIRED_SCHEMA.String()),
+		// AwaitRevision(r2) confirms only the cluster watermark. Before this liaison's own
+		// cache has replayed both the delete and the recreate, a write naming R1 can see
+		// NOT_FOUND (delete replayed, recreate not yet) or even STATUS_SUCCEED (delete not yet
+		// replayed, so R1 still looks current) — a stray row in a group this spec deletes right
+		// after, so nothing later reads it. Retry until the cache has caught up to R2 and
+		// genuinely reports R1 as stale.
+		gm.Eventually(func() (string, error) {
+			return sendSingleMeasureWrite(ctx, clients.MeasureWriteClient, groupName, measureName, r1)
+		}, flags.EventuallyTimeout).Should(gm.Equal(modelv1.Status_STATUS_EXPIRED_SCHEMA.String()),
 			"write with stale ModRevision R1 must return STATUS_EXPIRED_SCHEMA after recreate")
 
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})

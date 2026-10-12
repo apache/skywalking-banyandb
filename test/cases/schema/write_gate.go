@@ -33,6 +33,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
 // wgStreamGroup returns a CATALOG_STREAM Group proto for the write-gate tests.
@@ -313,9 +314,14 @@ var _ = g.Describe("Schema write gate", func() {
 		gm.Expect(awaitErr).ShouldNot(gm.HaveOccurred())
 
 		g.By("Sending a stream write with the old ModRevision R1 (stale)")
-		writeStatus, writeErr := sendSingleStreamWrite(ctx, clients.StreamWriteClient, groupName, streamName, r1)
-		gm.Expect(writeErr).ShouldNot(gm.HaveOccurred())
-		gm.Expect(writeStatus).Should(gm.Equal(modelv1.Status_STATUS_EXPIRED_SCHEMA.String()),
+		// AwaitRevision(r2) confirms only the cluster watermark, not that this liaison's own
+		// entity cache has applied r2; until it has, the cache still shows r1 as current, so a
+		// write naming r1 is indistinguishable from a current write and is accepted
+		// (STATUS_SUCCEED) instead of refused. That stray write stores data in a stream this
+		// spec deletes right after, so nothing later reads it — retrying past it is safe.
+		gm.Eventually(func() (string, error) {
+			return sendSingleStreamWrite(ctx, clients.StreamWriteClient, groupName, streamName, r1)
+		}, flags.EventuallyTimeout).Should(gm.Equal(modelv1.Status_STATUS_EXPIRED_SCHEMA.String()),
 			"write with client ModRevision < cache must return STATUS_EXPIRED_SCHEMA")
 
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})

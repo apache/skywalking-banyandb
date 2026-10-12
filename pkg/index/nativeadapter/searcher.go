@@ -40,6 +40,8 @@ const nativeSeriesField = "_series_id"
 // SearcherOptions supplies the mandatory native budgets for dictionary
 // expansion and candidate materialization. A zero MaxTerms is rejected by
 // NewSearcher rather than silently turning MatchField into an unbounded walk.
+//
+//nolint:govet // option fields are grouped by construction-time vs per-query role, not padding.
 type SearcherOptions struct {
 	MaxTerms      uint64
 	MaxCandidates uint64
@@ -50,6 +52,10 @@ type SearcherOptions struct {
 	// PersistInterval spaces background persists when AsyncPersistence is
 	// set; see native.OwnerOptions.PersistInterval.
 	PersistInterval time.Duration
+	// TimeMetrics receives time-range pruning counts from every query the
+	// owner NewStore creates serves; see native.OwnerOptions.TimeMetrics. It
+	// is read only by NewStore, not by NewSearcher.
+	TimeMetrics native.TimeMetrics
 }
 
 // Searcher binds one request context and one immutable native ReadView. The
