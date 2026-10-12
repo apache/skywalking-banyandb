@@ -282,12 +282,22 @@ func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan lo
 //     criteria column, and after the pipeline, because ordering finishes there and
 //     the internal order key must survive. R3.
 //
-// ok=false means a stage failed and msg carries the *common.Error to return.
+// It returns ONE dense batch, which the frame encode needs.
+//
+// The second result is a FAILURE flag: true means a stage failed and msg carries the
+// *common.Error to return. On failure the batch is nil; on success it is never nil.
+//
+// A nil schema means the scan found no source, which ExecuteVectorized reports as
+// (nil, nil, nil). Nothing can be filtered or projected, so return an empty batch
+// instead of dereferencing the nil schema.
 func (p *streamQueryProcessor) stageStreamBatches(ctx context.Context, vecExec executor.StreamVecExecutable,
 	schema *vectorized.BatchSchema, batches []*vectorized.RecordBatch,
 	criteria logical_stream.VecCriteriaFilter, hasFilter bool,
 	queryCriteria *streamv1.QueryRequest, now int64,
 ) (*vectorized.RecordBatch, bool, bus.Message) {
+	if schema == nil {
+		return vectorized.NewRecordBatch(vectorized.NewBatchSchema(nil), 0), false, bus.Message{}
+	}
 	if hasFilter && !criteria.PreMerged {
 		if filterErr := filterStreamBatches(ctx, schema, vecExec.ProjectionTags(), criteria, batches); filterErr != nil {
 			p.log.Error().Err(filterErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to filter the vectorized stream batches")
@@ -311,11 +321,16 @@ func (p *streamQueryProcessor) stageStreamBatches(ctx context.Context, vecExec e
 // mergePlan.Execute uses) and applies the outer offset:offset+limit slice.
 //
 // The cross-group merge is element-level, so this always emits proto Elements; the
-// liaison merges proto/frame bodies interchangeably. The merge reads SortTagSpec off
-// each Element, and that tag survives the column projection: the multi-group analyzer
-// narrows its merged schema to the client projection before it resolves the sort tag
-// (stream_plan_merge.go:59 then :91), so a multi-group sort tag is always client
-// projected and never one of the dropped columns.
+// liaison merges proto/frame bodies interchangeably.
+//
+// The merge reads SortTagSpec off each Element, so that tag must survive the column
+// projection. It does whenever the request names at least one tag family: the
+// multi-group analyzer then narrows its merged schema to the client projection before
+// it resolves the sort tag (stream_plan_merge.go:47 then :91), so an unprojected sort
+// tag fails to analyze. A projection that names NO family skips that narrowing, and
+// MergeGroupElements already panics on such a query, both before and after this
+// change, because newComparableElement indexes TagFamilies positionally. That hole
+// belongs to the empty projection, not to this stage.
 func (p *streamQueryProcessor) tryVecMergeDispatch(ctx context.Context, merge *logical_stream.VecMerge,
 	queryCriteria *streamv1.QueryRequest, now int64,
 ) (bool, bus.Message) {
