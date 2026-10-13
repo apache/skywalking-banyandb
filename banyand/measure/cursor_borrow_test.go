@@ -164,6 +164,7 @@ func (f *borrowFixture) requireBatch(t *testing.T, b *model.MeasureBatch, desc b
 }
 
 func TestBlockCursorRefcountLifecycle(t *testing.T) {
+	verifyNoScanLeaks(t)
 	bc := generateBlockCursor()
 	require.EqualValues(t, 1, bc.refs.Load())
 	bc.timestamps = append(bc.timestamps, 1, 2, 3)
@@ -183,6 +184,7 @@ func TestBlockCursorRefcountLifecycle(t *testing.T) {
 }
 
 func TestBlockCursorPoisonsOnLastRelease(t *testing.T) {
+	verifyNoScanLeaks(t)
 	f := newBorrowFixture(t)
 	view := f.bc.tagFamilies[0].columns[0].values[3]
 	want := string(view)
@@ -198,6 +200,7 @@ func TestBlockCursorPoisonsOnLastRelease(t *testing.T) {
 }
 
 func TestBorrowTagRowsMatchesCopy(t *testing.T) {
+	verifyNoScanLeaks(t)
 	for _, desc := range []bool{false, true} {
 		t.Run(fmt.Sprintf("desc=%v", desc), func(t *testing.T) {
 			f := newBorrowFixture(t)
@@ -239,6 +242,7 @@ func TestBorrowTagRowsMatchesCopy(t *testing.T) {
 }
 
 func TestBorrowTagRowsSkippedForPassthroughAndNumeric(t *testing.T) {
+	verifyNoScanLeaks(t)
 	f := newBorrowFixture(t)
 	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{
 		{Role: vectorized.RoleTimestamp, Type: vectorized.ColumnTypeInt64},
@@ -257,6 +261,7 @@ func TestBorrowTagRowsSkippedForPassthroughAndNumeric(t *testing.T) {
 }
 
 func TestBorrowTagRowsMergePathPinsEachCursorOnce(t *testing.T) {
+	verifyNoScanLeaks(t)
 	a, c := newBorrowFixture(t), newBorrowFixture(t)
 	schema := a.schema()
 	b := newMeasureBatchForSchema(schema, 8)

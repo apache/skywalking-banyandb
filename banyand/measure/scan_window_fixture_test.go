@@ -103,7 +103,7 @@ type fxPart []fxRange
 
 type fxFixture struct {
 	written []fxPart
-	parts   []*part
+	parts   []partRef
 	sids    []common.SeriesID // sorted
 }
 
@@ -170,15 +170,15 @@ func fxPoints(ranges fxPart) *dataPoints {
 // Parts are listed oldest first, the order a snapshot would hand them out in.
 func newFixture(t testing.TB, parts ...fxPart) *fxFixture {
 	t.Helper()
+	verifyNoScanLeaks(t)
 	fx := &fxFixture{written: parts}
 	seen := map[common.SeriesID]struct{}{}
 	for i, ranges := range parts {
 		mp := generateMemPart()
 		mp.mustInitFromDataPoints(fxPoints(ranges))
 		p := openMemPart(mp)
-		p.cache = storage.NewShardCache("scan-window-test", 0, 0)
 		p.partMetadata.ID = uint64(i + 1)
-		fx.parts = append(fx.parts, p)
+		fx.parts = append(fx.parts, partRef{p: p, cache: storage.NewShardCache("scan-window-test", 0, 0)})
 		for _, r := range ranges {
 			if _, ok := seen[r.sid]; !ok {
 				seen[r.sid] = struct{}{}

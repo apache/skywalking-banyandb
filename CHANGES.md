@@ -35,6 +35,8 @@ Release Notes.
 
 ### Bug Fixes
 
+- Fix data races in measure queries, which wrote the block cache and shard ID into parts shared with concurrent queries; both are now carried alongside each part.
+- Fix a data node with several measure groups exporting query metrics only for the most recently opened group: opening a group closed every other group's query metrics. Each group now keeps its own.
 - Fix the vectorized measure batch merge emitting a duplicate row when a same-series, same-timestamp duplicate straddled its 4,096-row page boundary; the row path already returned the deduplicated result.
 - Fix a data race in Measure TopN where a pooled TopN value reused for a query wrote its tag names into the streaming processor's entity tag name slice.
 - Stop `pkg/index/native`'s compaction-persistence test from flaking on `Test Pkg`: it asserted that garbage collection succeeds the instant a read view closes, without accounting for a background persist still holding an older root.

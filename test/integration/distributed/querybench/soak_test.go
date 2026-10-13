@@ -95,8 +95,9 @@ const soakBudgetMiB = 2
 //nolint:gocyclo // sequential two-phase soak; splitting the parity/budget phases would scatter shared cluster/ctx/cfg setup.
 func TestTraceVecSoak(t *testing.T) {
 	cfg := LoadConfig()
-	if !cfg.Soak {
-		t.Skipf("set %s=1 and invoke test/integration/distributed/querybench/run-docker.sh to execute the trace vec soak", envSoak)
+	if !cfg.Soak || cfg.Engine != engineTrace {
+		t.Skipf("set %s=1 %s=trace and invoke test/integration/distributed/querybench/run-docker.sh to execute the trace vec soak",
+			envSoak, envEngine)
 	}
 	if validateErr := cfg.ValidateSoak(); validateErr != nil {
 		t.Fatalf("invalid soak config: %v", validateErr)

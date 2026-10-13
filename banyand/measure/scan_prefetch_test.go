@@ -148,6 +148,7 @@ func maxBlockBytes(qr *queryResult) int64 {
 // every scan shape with the decode pool, a loader that finishes later-requested
 // decodes first, and checks the rows match the synchronous scan exactly.
 func TestPrefetchMatchesSynchronousDecodeUnderRandomCompletionOrder(t *testing.T) {
+	verifyNoScanLeaks(t)
 	mixed := mixedFixture(t)
 	oap := oapFixture(t, 24)
 	stag := staggeredFixture(t, 12)
@@ -223,6 +224,7 @@ func stubCursors(n int, size uint64) []*blockCursor {
 func instantLoad(_ context.Context, _ *blockCursor, _ bool) (bool, error) { return true, nil }
 
 func TestPrefetchDepthGrowsWhileReservationsSucceedAndStopsAtTheCap(t *testing.T) {
+	verifyNoScanLeaks(t)
 	pool := newDecodePool(4, nil)
 	defer pool.close()
 	cursors := stubCursors(64, 100)
@@ -251,6 +253,7 @@ func TestPrefetchDepthGrowsWhileReservationsSucceedAndStopsAtTheCap(t *testing.T
 }
 
 func TestPrefetchCapFollowsTheMergeFrontierUpToItsLimit(t *testing.T) {
+	verifyNoScanLeaks(t)
 	pool := newDecodePool(2, nil)
 	defer pool.close()
 	cursors := stubCursors(200, 10)
@@ -279,6 +282,7 @@ func TestPrefetchCapFollowsTheMergeFrontierUpToItsLimit(t *testing.T) {
 }
 
 func TestPrefetchWaitsUnderATightBudgetAndStillCompletes(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fx := manySeries(t, 30, 100)
 	q := prefetchQuery(0, 1000, false, true)
 	schema := q.schema(t)
@@ -306,6 +310,7 @@ func TestPrefetchWaitsUnderATightBudgetAndStillCompletes(t *testing.T) {
 }
 
 func TestScanFailsWithTheQuotaErrorOnlyWhenTheCurrentCursorCannotBeReserved(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fx := manySeries(t, 6, 300)
 	q := prefetchQuery(0, 1000, false, true)
 	schema := q.schema(t)
@@ -358,6 +363,7 @@ func TestScanFailsWithTheQuotaErrorOnlyWhenTheCurrentCursorCannotBeReserved(t *t
 }
 
 func TestScanReservationIsHeldUntilTheBorrowingBatchIsReleased(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fx := manySeries(t, 1, 300)
 	q := prefetchQuery(0, 1000, false, true)
 	schema := q.schema(t)
@@ -391,6 +397,7 @@ func TestScanReservationIsHeldUntilTheBorrowingBatchIsReleased(t *testing.T) {
 }
 
 func TestScanReleasesReservationsOfPrefetchedCursorsOnEarlyClose(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fx := manySeries(t, 40, 100)
 	q := prefetchQuery(0, 1000, false, true)
 	schema := q.schema(t)
@@ -416,6 +423,7 @@ func TestScanReleasesReservationsOfPrefetchedCursorsOnEarlyClose(t *testing.T) {
 }
 
 func TestScanCancellationWhileDecodesAreInFlight(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fx := manySeries(t, 40, 300)
 	q := prefetchQuery(0, 1000, false, true)
 	schema := q.schema(t)
@@ -472,6 +480,7 @@ func TestScanCancellationWhileDecodesAreInFlight(t *testing.T) {
 }
 
 func TestScanCancelBetweenPullsWaitsForTheRunningPrefetchedDecode(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fx := manySeries(t, 40, 300)
 	q := prefetchQuery(0, 1000, false, true)
 	schema := q.schema(t)
@@ -532,6 +541,7 @@ func TestScanCancelBetweenPullsWaitsForTheRunningPrefetchedDecode(t *testing.T) 
 }
 
 func TestScanReportsAContextCanceledWhileWaitingForADecode(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fx := manySeries(t, 10, 100)
 	q := prefetchQuery(0, 1000, false, true)
 	schema := q.schema(t)
@@ -563,6 +573,7 @@ func awaitTask(t *decodeTask) {
 }
 
 func TestDecodePoolCloseCancelsQueuedTasksAndWaitsForRunningOnes(t *testing.T) {
+	verifyNoScanLeaks(t)
 	onlyTheSharedPool(t)
 	pool := newDecodePool(1, nil)
 	gate := make(chan struct{})
@@ -610,6 +621,7 @@ func TestDecodePoolCloseCancelsQueuedTasksAndWaitsForRunningOnes(t *testing.T) {
 }
 
 func TestDecodePoolRecoversFromAPanicInTheLoader(t *testing.T) {
+	verifyNoScanLeaks(t)
 	pool := newDecodePool(1, nil)
 	defer pool.close()
 	cursors := stubCursors(2, 1)
@@ -635,6 +647,7 @@ func TestDecodePoolRecoversFromAPanicInTheLoader(t *testing.T) {
 }
 
 func TestPrefetchPropagatesLoaderErrorsAndFreesTheReservation(t *testing.T) {
+	verifyNoScanLeaks(t)
 	pool := newDecodePool(2, nil)
 	defer pool.close()
 	cursors := stubCursors(4, 50)
@@ -673,6 +686,7 @@ type fakeMemory struct {
 func (f *fakeMemory) AvailableBytes() int64 { return f.avail.Load() }
 
 func TestNodeHeadroomGatesPrefetchButNeverTheCursorTheScanNeeds(t *testing.T) {
+	verifyNoScanLeaks(t)
 	mem := &fakeMemory{}
 	mem.avail.Store(250)
 	pool := newDecodePool(2, mem)
@@ -721,6 +735,7 @@ func (h *holdingMemory) AcquireResource(ctx context.Context, _ uint64) error {
 }
 
 func TestReserveCurrentWaitsOnTheProtectorOnlyWhileTheQueryHoldsNothing(t *testing.T) {
+	verifyNoScanLeaks(t)
 	mem := &holdingMemory{}
 	pool := newDecodePool(1, mem)
 	defer pool.close()
@@ -751,6 +766,7 @@ func TestReserveCurrentWaitsOnTheProtectorOnlyWhileTheQueryHoldsNothing(t *testi
 }
 
 func TestTwoQueriesHoldingFrontiersBeyondTheHeadroomBothComplete(t *testing.T) {
+	verifyNoScanLeaks(t)
 	mem := &holdingMemory{}
 	pool := newDecodePool(2, mem)
 	defer pool.close()
@@ -790,6 +806,7 @@ func TestTwoQueriesHoldingFrontiersBeyondTheHeadroomBothComplete(t *testing.T) {
 }
 
 func TestTakePromotesAQueuedPrefetchAheadOfTheNormalQueue(t *testing.T) {
+	verifyNoScanLeaks(t)
 	onlyTheSharedPool(t)
 	pool := newDecodePool(1, nil)
 	defer pool.close()
@@ -847,6 +864,7 @@ func TestTakePromotesAQueuedPrefetchAheadOfTheNormalQueue(t *testing.T) {
 }
 
 func TestScanSequenceMatchesTheOrderCursorsAreDecoded(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fixtures := []struct {
 		fx *fxFixture
 		q  *fxQuery
@@ -888,6 +906,7 @@ func TestScanSequenceMatchesTheOrderCursorsAreDecoded(t *testing.T) {
 // TestConcurrentQueriesShareTheNodePool runs many queries, some canceled and some
 // closed early, over one pool and one node budget under the race detector.
 func TestConcurrentQueriesShareTheNodePool(t *testing.T) {
+	verifyNoScanLeaks(t)
 	mixed := mixedFixture(t)
 	oap := oapFixture(t, 20)
 	queries := []struct {
@@ -981,6 +1000,7 @@ func TestConcurrentQueriesShareTheNodePool(t *testing.T) {
 // TestConcurrentQueriesStayIdenticalToTheSynchronousScan checks the rows of full
 // drains that share the pool with other queries.
 func TestConcurrentQueriesStayIdenticalToTheSynchronousScan(t *testing.T) {
+	verifyNoScanLeaks(t)
 	oap := oapFixture(t, 20)
 	q := prefetchQuery(0, 1<<20, true, true)
 	schema := q.schema(t)
@@ -1008,6 +1028,7 @@ func TestConcurrentQueriesStayIdenticalToTheSynchronousScan(t *testing.T) {
 }
 
 func TestWholeResultAdmissionStillGuardsThePathsThatLoadEverything(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fx := manySeries(t, 4, 100)
 	q := prefetchQuery(0, 1000, false, true)
 	schema := q.schema(t)
@@ -1039,6 +1060,7 @@ func TestWholeResultAdmissionStillGuardsThePathsThatLoadEverything(t *testing.T)
 // reservations (the decoded memory a scan holds), that decoding ahead keeps a merge
 // within the frontier it already needed plus the prefetch allowance.
 func TestPrefetchAddsAtMostAQuarterOfTheFrontierToTheMergePeak(t *testing.T) {
+	verifyNoScanLeaks(t)
 	const (
 		series = 40
 		blocks = 12

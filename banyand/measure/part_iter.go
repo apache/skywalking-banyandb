@@ -46,12 +46,14 @@ type partIter struct {
 	sidIdx               int
 	minTimestamp         int64
 	maxTimestamp         int64
+	shardID              common.ShardID
 }
 
 func (pi *partIter) reset() {
 	pi.curBlock = nil
 	pi.p = nil
 	pi.c = nil
+	pi.shardID = 0
 	pi.sids = nil
 	pi.sidIdx = 0
 	pi.primaryBlockMetadata = nil
@@ -61,11 +63,13 @@ func (pi *partIter) reset() {
 	pi.err = nil
 }
 
-func (pi *partIter) init(p *part, sids []common.SeriesID, minTimestamp, maxTimestamp int64) {
+func (pi *partIter) init(ref partRef, sids []common.SeriesID, minTimestamp, maxTimestamp int64) {
 	pi.reset()
 	pi.curBlock = &blockMetadata{}
+	p := ref.p
 	pi.p = p
-	pi.c = p.cache
+	pi.c = ref.cache
+	pi.shardID = ref.shardID
 
 	pi.sids = sids
 	pi.minTimestamp = minTimestamp

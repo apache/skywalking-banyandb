@@ -139,7 +139,7 @@ func buildBenchStorageDataPoints(seriesCount, rowsPerSeries int) *dataPoints {
 type benchStorageHarness struct {
 	tst       *tsTable
 	snap      *snapshot
-	parts     []*part
+	parts     []partRef
 	sids      []common.SeriesID
 	queryOpts queryOptions
 }
@@ -164,7 +164,7 @@ func setupBenchStorageHarness(b testing.TB) *benchStorageHarness {
 	require.NotNil(b, snap)
 
 	shardCache := storage.NewShardCache("bench-group", 0, 0)
-	parts, _ := snap.getParts(nil, shardCache, 0, int64(benchStorageRowsPer)+1)
+	parts, _ := snap.getParts(nil, shardCache, 0, 0, int64(benchStorageRowsPer)+1)
 	require.NotEmpty(b, parts)
 
 	sids := make([]common.SeriesID, benchStorageSeries)

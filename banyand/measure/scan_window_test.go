@@ -54,6 +54,7 @@ func segmentBounds(segments []scanSegment) [][][2]int64 {
 }
 
 func TestPlanSegments(t *testing.T) {
+	verifyNoScanLeaks(t)
 	tests := []struct {
 		name    string
 		blocks  [][2]int64
@@ -111,6 +112,7 @@ func TestPlanSegments(t *testing.T) {
 }
 
 func TestPlanSegmentsKeepsArrivalOrderForEqualStarts(t *testing.T) {
+	verifyNoScanLeaks(t)
 	a, b := metaCursor(1, 5, 9), metaCursor(1, 5, 7)
 	segments := planSegments([]*blockCursor{a, b}, false)
 	require.Len(t, segments, 1)
@@ -129,6 +131,7 @@ func unitSIDs(units []scanUnit) [][]common.SeriesID {
 }
 
 func TestPlanUnits(t *testing.T) {
+	verifyNoScanLeaks(t)
 	cursors := func() []*blockCursor {
 		return []*blockCursor{
 			metaCursor(1, 1, 10), metaCursor(2, 20, 30), metaCursor(3, 40, 50), metaCursor(3, 60, 70),
@@ -198,6 +201,7 @@ func mixedFixture(t testing.TB) *fxFixture {
 }
 
 func TestScanWindowCountsFastAndOverlapSegments(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fx := mixedFixture(t)
 	q := &fxQuery{tags: allTags, fields: allFields, minTS: 0, maxTS: 30000}
 	res := fx.run(t, q, false)
@@ -214,6 +218,7 @@ func TestScanWindowCountsFastAndOverlapSegments(t *testing.T) {
 }
 
 func TestScanWindowMatchesLegacyAcrossGeneratedQueries(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fx := mixedFixture(t)
 	rng := rand.New(rand.NewSource(20261013)) //nolint:gosec // a fixed seed makes the generated queries reproducible
 	hidden := map[common.SeriesID]map[string]*modelv1.TagValue{
@@ -258,6 +263,7 @@ func TestScanWindowMatchesLegacyAcrossGeneratedQueries(t *testing.T) {
 }
 
 func TestScanWindowMatchesLegacyForTimeOrders(t *testing.T) {
+	verifyNoScanLeaks(t)
 	// Series with strictly disjoint time ranges: a time-ordered query is the
 	// concatenation of whole series, so the window scan serves it.
 	disjoint := newFixture(t,
@@ -291,6 +297,7 @@ func TestScanWindowMatchesLegacyForTimeOrders(t *testing.T) {
 }
 
 func TestScanWindowDescendingEmitsStorageOrderWithAReversedSelection(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fx := newFixture(t, fxPart{{1, 1, 600, 1}})
 	q := &fxQuery{tags: []string{fxTagURL, fxTagN2}, fields: []string{fxFldInt}, minTS: 0, maxTS: 1000, orderByTS: true}
 	schema := q.schema(t)
@@ -315,6 +322,7 @@ func TestScanWindowDescendingEmitsStorageOrderWithAReversedSelection(t *testing.
 }
 
 func TestScanWindowLendsNumericColumnsAndKeepsTheCursorAlive(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fx := newFixture(t, fxPart{{1, 1, 600, 1}})
 	q := &fxQuery{tags: []string{fxTagN2, fxTagN}, fields: []string{fxFldInt, fxFldFlt, fxFldNul}, minTS: 0, maxTS: 1000, ascTS: true}
 	schema := q.schema(t)
@@ -340,6 +348,7 @@ func TestScanWindowLendsNumericColumnsAndKeepsTheCursorAlive(t *testing.T) {
 }
 
 func TestScanWindowBorrowedNumericsFailVisiblyUnderPoisoningWhenReadAfterRelease(t *testing.T) {
+	verifyNoScanLeaks(t)
 	defer setPoisonReleasedCursor(setPoisonReleasedCursor(true))
 	fx := newFixture(t, fxPart{{1, 1, 600, 1}})
 	q := &fxQuery{tags: []string{fxTagN2}, fields: []string{fxFldInt, fxFldFlt}, minTS: 0, maxTS: 1000, ascTS: true}
@@ -358,6 +367,7 @@ func TestScanWindowBorrowedNumericsFailVisiblyUnderPoisoningWhenReadAfterRelease
 }
 
 func TestScanWindowReleasesEveryCursorOnEarlyReleaseAndOnCancel(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fx := mixedFixture(t)
 	q := &fxQuery{tags: allTags, fields: allFields, minTS: 0, maxTS: 30000}
 	schema := q.schema(t)
@@ -403,6 +413,7 @@ func TestScanWindowReleasesEveryCursorOnEarlyReleaseAndOnCancel(t *testing.T) {
 }
 
 func TestScanWindowCoalescesSmallSegmentsIntoOwnedBatches(t *testing.T) {
+	verifyNoScanLeaks(t)
 	// Forty series of 50 rows each: every window is below model.SmallBatchRows.
 	var part fxPart
 	for sid := common.SeriesID(1); sid <= 40; sid++ {
@@ -451,6 +462,7 @@ func TestScanWindowCoalescesSmallSegmentsIntoOwnedBatches(t *testing.T) {
 }
 
 func TestScanWindowSkipsPlanningForTopN(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fx := newFixture(t, fxPart{{1, 1, 50, 1}})
 	q := &fxQuery{tags: []string{fxTagURL}, fields: []string{fxFldInt}, minTS: 0, maxTS: 100, ascTS: true}
 	schema := q.schema(t)
@@ -462,6 +474,7 @@ func TestScanWindowSkipsPlanningForTopN(t *testing.T) {
 }
 
 func TestLegacySwitchDisablesTheWindowScan(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fx := newFixture(t, fxPart{{1, 1, 50, 1}})
 	q := &fxQuery{tags: []string{fxTagURL}, fields: []string{fxFldInt}, minTS: 0, maxTS: 100, ascTS: true}
 	schema := q.schema(t)
@@ -508,6 +521,7 @@ func (fx *fxFixture) expectedRows(order []common.SeriesID, minTS, maxTS int64, d
 }
 
 func TestScanWindowMatchesAnIndependentModel(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fx := mixedFixture(t)
 	tests := []struct {
 		q    fxQuery
@@ -545,6 +559,7 @@ func TestScanWindowMatchesAnIndependentModel(t *testing.T) {
 }
 
 func TestScanWindowMatchesLegacyThroughGroupByAndAggregation(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fx := mixedFixture(t)
 	groupBy := &model.MeasureGroupBy{TagFamily: fxFamily, TagNames: []string{fxTagSvc}}
 	for _, agg := range []*model.MeasureAgg{
@@ -574,6 +589,7 @@ func TestScanWindowMatchesLegacyThroughGroupByAndAggregation(t *testing.T) {
 }
 
 func TestScanWindowSegmentCounters(t *testing.T) {
+	verifyNoScanLeaks(t)
 	tests := []struct {
 		name         string
 		parts        []fxPart
@@ -651,6 +667,7 @@ func TestScanWindowSegmentCounters(t *testing.T) {
 }
 
 func TestScanWindowPassesBlockSizedBatchesThrough(t *testing.T) {
+	verifyNoScanLeaks(t)
 	// 20,000 rows of one series are three blocks of at most maxBlockLength+1 rows.
 	fx := newFixture(t, fxPart{{1, 1, 20000, 1}})
 	for _, desc := range []bool{false, true} {
@@ -683,6 +700,7 @@ func TestScanWindowPassesBlockSizedBatchesThrough(t *testing.T) {
 }
 
 func TestScanWindowCursorsReturnToThePoolOnlyWhenEveryBatchIsReleased(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fx := newFixture(t, fxPart{{1, 1, 20000, 1}})
 	q := &fxQuery{tags: []string{fxTagURL}, fields: []string{fxFldInt}, minTS: 0, maxTS: 30000, ascTS: true}
 	schema := q.schema(t)

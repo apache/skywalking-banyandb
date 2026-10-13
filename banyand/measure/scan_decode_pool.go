@@ -89,6 +89,7 @@ type decodeTask struct {
 func (t *decodeTask) init(ctx context.Context, load cursorLoader, bc *blockCursor, desc bool, qm *queryMetrics, wake chan struct{}) {
 	t.ctx, t.load, t.bc, t.desc, t.qm, t.wake = ctx, load, bc, desc, qm, wake
 	t.enqueued = time.Now()
+	liveDecodeTasks.Add(1)
 }
 
 // clear drops the references of a task that has ended and whose result was read, or
@@ -123,6 +124,7 @@ func (t *decodeTask) cancel(err error) bool {
 	wake := t.wake
 	t.err = err
 	t.state.Store(taskCanceled)
+	liveDecodeTasks.Add(-1)
 	signal(wake)
 	return true
 }
@@ -143,6 +145,7 @@ func (t *decodeTask) run() {
 				Bytes("stack", debug.Stack()).Msg("panic in the decode pool")
 		}
 		t.state.Store(taskFinished)
+		liveDecodeTasks.Add(-1)
 		signal(wake)
 	}()
 	if err := t.ctx.Err(); err != nil {
@@ -177,6 +180,7 @@ func newDecodePool(workers int, pm protector.Memory) *decodePool {
 	p := &decodePool{pm: pm, workers: workers}
 	p.cond = sync.NewCond(&p.mu)
 	p.wg.Add(workers)
+	liveDecodeWorkers.Add(int64(workers))
 	for range workers {
 		go p.run()
 	}
@@ -185,6 +189,7 @@ func newDecodePool(workers int, pm protector.Memory) *decodePool {
 
 func (p *decodePool) run() {
 	defer p.wg.Done()
+	defer liveDecodeWorkers.Add(-1)
 	for {
 		p.mu.Lock()
 		for len(p.urgent) == 0 && p.head == len(p.queue) && !p.closed {
@@ -347,6 +352,7 @@ func (b *scanBudget) tryReserve(size uint64, ahead bool, r *scanReservation) res
 		return reserveOverNode
 	}
 	b.held.Add(n)
+	liveReservedBytes.Add(n)
 	r.budget, r.bytes = b, n
 	r.released.Store(false)
 	return reserveOK
@@ -354,6 +360,7 @@ func (b *scanBudget) tryReserve(size uint64, ahead bool, r *scanReservation) res
 
 func (b *scanBudget) give(n int64) {
 	b.held.Add(-n)
+	liveReservedBytes.Add(-n)
 	if b.tracker != nil {
 		b.tracker.Release(n)
 	}

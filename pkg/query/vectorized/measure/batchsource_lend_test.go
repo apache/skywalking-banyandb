@@ -143,6 +143,7 @@ func TestBatchSourcePassesAReversedSelectionThrough(t *testing.T) {
 	defer src.Close()
 	batches := drain(t, src)
 	require.Len(t, batches, 1)
+	defer batches[0].ReleaseOwners() // the lent batch pins the owner of the storage batch
 	require.Equal(t, 300, batches[0].Len)
 	require.Equal(t, 300, batches[0].ActiveLen())
 	require.Equal(t, uint16(299), batches[0].Selection[0])
@@ -188,6 +189,7 @@ func TestBatchSourceLendsASmallBatchThatCarriesASelection(t *testing.T) {
 	// A selection marks a batch lendable even when small; the selection is kept.
 	batches := drain(t, src)
 	require.Len(t, batches, 1)
+	defer batches[0].ReleaseOwners() // the lent batch pins the owner of the storage batch
 	require.Equal(t, []uint16{3, 1}, batches[0].Selection)
 	require.Equal(t, 2, batches[0].ActiveLen())
 	require.Equal(t, values[3], batches[0].Columns[fieldIdx(t, schema, "v")].(*vectorized.TypedColumn[int64]).Data()[3])

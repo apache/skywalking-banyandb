@@ -131,7 +131,7 @@ func containsString(list []string, s string) bool {
 type nativeBenchHarness struct {
 	tst   *tsTable
 	snap  *snapshot
-	parts []*part
+	parts []partRef
 	sids  []common.SeriesID
 }
 
@@ -178,7 +178,7 @@ func setupNativeBenchHarness(b testing.TB) *nativeBenchHarness {
 	snap := tst.currentSnapshot()
 	require.NotNil(b, snap)
 	shardCache := storage.NewShardCache("bench-group", 0, 0)
-	parts, _ := snap.getParts(nil, shardCache, 0, int64(nativeBenchRowsPer)+1)
+	parts, _ := snap.getParts(nil, shardCache, 0, 0, int64(nativeBenchRowsPer)+1)
 	require.NotEmpty(b, parts)
 	sids := make([]common.SeriesID, nativeBenchSeries)
 	for i := range sids {

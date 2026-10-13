@@ -256,7 +256,7 @@ var gateTagTypes = map[string]pbv1.ValueType{
 
 // gateHarness is one flushed part holding a gateLayout.
 type gateHarness struct {
-	parts  []*part
+	parts  []partRef
 	sids   []common.SeriesID
 	layout gateLayout
 }
@@ -319,7 +319,7 @@ func setupGateHarness(tb testing.TB, layout gateLayout) *gateHarness {
 	time.Sleep(300 * time.Millisecond)
 	snap := tst.currentSnapshot()
 	require.NotNil(tb, snap)
-	parts, _ := snap.getParts(nil, storage.NewShardCache("gate-group", 0, 0), 0, int64(layout.rowsPer)+1)
+	parts, _ := snap.getParts(nil, storage.NewShardCache("gate-group", 0, 0), 0, 0, int64(layout.rowsPer)+1)
 	require.NotEmpty(tb, parts)
 	tb.Cleanup(func() {
 		snap.decRef()
@@ -330,7 +330,7 @@ func setupGateHarness(tb testing.TB, layout gateLayout) *gateHarness {
 }
 
 // gateMemParts writes a multi-part layout as memory parts, oldest first.
-func gateMemParts(layout gateLayout) []*part {
+func gateMemParts(layout gateLayout) []partRef {
 	var spans []struct {
 		lo, hi  int
 		version int64
@@ -357,14 +357,13 @@ func gateMemParts(layout gateLayout) []*part {
 		)
 	case gatePartsOne:
 	}
-	parts := make([]*part, 0, len(spans))
+	parts := make([]partRef, 0, len(spans))
 	for i, sl := range spans {
 		mp := generateMemPart()
 		mp.mustInitFromDataPoints(gateDataPoints(layout, sl.lo, sl.hi, sl.version))
 		p := openMemPart(mp)
-		p.cache = storage.NewShardCache("gate-group", 0, 0)
 		p.partMetadata.ID = uint64(i + 1)
-		parts = append(parts, p)
+		parts = append(parts, partRef{p: p, cache: storage.NewShardCache("gate-group", 0, 0)})
 	}
 	return parts
 }

@@ -88,6 +88,7 @@ func hiddenTags() map[common.SeriesID]map[string]*modelv1.TagValue {
 }
 
 func TestTimeMergeMatchesLegacyAcrossGeneratedQueries(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fixtures := map[string]*fxFixture{
 		"oap":       oapFixture(t, 100),
 		"staggered": staggeredFixture(t, 24),
@@ -151,6 +152,7 @@ func TestTimeMergeMatchesLegacyAcrossGeneratedQueries(t *testing.T) {
 }
 
 func TestTimeMergeMatchesLegacyThroughGroupByAggregationAndTimeBuckets(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fixtures := map[string]*fxFixture{"oap": oapFixture(t, 60), "staggered": staggeredFixture(t, 16)}
 	groupBy := &model.MeasureGroupBy{TagFamily: fxFamily, TagNames: []string{fxTagSvc}}
 	bucketOnly := &model.MeasureGroupBy{TimeBucket: &model.MeasureTimeBucket{Width: "100ns", WidthNanos: 100}}
@@ -188,6 +190,7 @@ func TestTimeMergeMatchesLegacyThroughGroupByAggregationAndTimeBuckets(t *testin
 }
 
 func TestTimeMergeMatchesAnIndependentModelForInterleavedSeries(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fx := oapFixture(t, 40)
 	order := fx.sids
 	for _, desc := range []bool{false, true} {
@@ -234,6 +237,7 @@ func TestTimeMergeMatchesAnIndependentModelForInterleavedSeries(t *testing.T) {
 // on the cut was emitted twice, once per page; the row merge (queryResult.merge,
 // no page cap) and the independent model emit it once.
 func TestTimeMergeDedupsDuplicatesAcrossPageBoundaries(t *testing.T) {
+	verifyNoScanLeaks(t)
 	// Row i of the series is ts i. The legacy page ends after row 4,096: the newer
 	// part's ts 4096 wins the page, the older part's ts 4096 starts the next one.
 	fx := newFixture(t, fxPart{{1, 1, 9000, 1}}, fxPart{{1, 4096, 6000, 2}})
@@ -280,6 +284,7 @@ func TestTimeMergeDedupsDuplicatesAcrossPageBoundaries(t *testing.T) {
 }
 
 func TestTimeMergeSetsSeriesBoundariesForInterleavedRuns(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fx := oapFixture(t, 6)
 	q := &fxQuery{tags: []string{fxTagURL}, fields: []string{fxFldInt}, minTS: 0, maxTS: 1 << 20, orderByTS: true, ascTS: true}
 	schema := q.schema(t)
@@ -315,6 +320,7 @@ func TestTimeMergeSetsSeriesBoundariesForInterleavedRuns(t *testing.T) {
 // cover the same time range, each flushed in many parts that are disjoint in time,
 // leave one block per series live at any instant, not one per part.
 func TestTimeMergeDecodesCursorsAtTheFrontier(t *testing.T) {
+	verifyNoScanLeaks(t)
 	const (
 		series = 40
 		blocks = 12
@@ -382,6 +388,7 @@ func TestTimeMergeDecodesCursorsAtTheFrontier(t *testing.T) {
 // TestTimeMergeLoaderIsThePlugInPoint checks the hook step 4b needs: every decode
 // goes through windowScan.load, in the order the frontier reaches the cursors.
 func TestTimeMergeLoaderIsThePlugInPoint(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fx := newFixture(t, fxPart{{1, 1, 100, 1}, {2, 50, 150, 1}}, fxPart{{1, 90, 200, 2}, {2, 140, 300, 2}})
 	q := &fxQuery{tags: []string{fxTagURL}, fields: []string{fxFldInt}, minTS: 0, maxTS: 1000, orderByTS: true, ascTS: true}
 	schema := q.schema(t)
@@ -411,6 +418,7 @@ func TestTimeMergeLoaderIsThePlugInPoint(t *testing.T) {
 }
 
 func TestTimeMergeReleasesEverythingOnCancelAndEarlyClose(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fx := oapFixture(t, 30)
 	q := &fxQuery{tags: allTags, fields: allFields, minTS: 0, maxTS: 1 << 20, orderByTS: true, ascTS: true}
 	schema := q.schema(t)
@@ -457,6 +465,7 @@ func TestTimeMergeReleasesEverythingOnCancelAndEarlyClose(t *testing.T) {
 // consumed are back in the pool: the batch's pins must keep exactly the memory it
 // borrows alive.
 func TestTimeMergeBatchesBorrowFromCursorsUnderPoisoning(t *testing.T) {
+	verifyNoScanLeaks(t)
 	defer setPoisonReleasedCursor(setPoisonReleasedCursor(true))
 	fx := oapFixture(t, 12)
 	q := &fxQuery{tags: []string{fxTagURL, fxTagArr, fxTagBin, fxTagSvc}, fields: []string{fxFldInt}, minTS: 0, maxTS: 1 << 20, orderByTS: true, ascTS: true}
@@ -487,6 +496,7 @@ func TestTimeMergeBatchesBorrowFromCursorsUnderPoisoning(t *testing.T) {
 // replace branch of the duplicate rule: rows of one timestamp that sit in one
 // block in ascending version order reach the merge oldest first.
 func TestTimeMergeKeepsTheNewestVersionOfDuplicatesInsideOneBlock(t *testing.T) {
+	verifyNoScanLeaks(t)
 	fx := newFixture(t,
 		fxPart{{1, 1, 40, 1}, {1, 20, 60, 2}, {1, 30, 50, 3}, {2, 1, 40, 1}, {2, 20, 60, 2}},
 		fxPart{{2, 35, 70, 4}},
@@ -530,6 +540,7 @@ func syntheticCursor(sid common.SeriesID, ts, versions []int64) *blockCursor {
 // versions in ascending order, so the legacy replace rule (a higher version
 // overwrites the row just emitted) decides the winner.
 func TestTimeMergeKeysMatchTheLegacyHeapMergeOnUnsortedVersions(t *testing.T) {
+	verifyNoScanLeaks(t)
 	q := &fxQuery{tags: []string{fxTagURL}, fields: []string{fxFldInt}, minTS: 0, maxTS: 1 << 40, orderByTS: true, ascTS: true}
 	schema := q.schema(t)
 	type spec struct {

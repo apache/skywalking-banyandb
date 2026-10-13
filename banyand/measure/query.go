@@ -178,6 +178,7 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		dp:               m.decodePool,
 	}
 	queryResultTracker.Acquire(&result)
+	queriesStarted.Add(1)
 	if m.queryMetrics != nil {
 		m.queryMetrics.totalQueryResultStarted.Inc(1)
 	}
@@ -199,7 +200,7 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		}
 	}
 
-	var parts []*part
+	var parts []partRef
 	qo := queryOptions{
 		MeasureQueryOptions: mqo,
 		schemaTagTypes:      schemaTagTypes,
@@ -213,15 +214,10 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		if s == nil {
 			continue
 		}
-		oldLen := len(parts)
-		parts, n = s.getParts(parts, caches[i], qo.minTimestamp, qo.maxTimestamp)
+		parts, n = s.getParts(parts, caches[i], tableShardIDs[i], qo.minTimestamp, qo.maxTimestamp)
 		if n < 1 {
 			s.decRef()
 			continue
-		}
-		// Set shard ID for newly added parts
-		for j := oldLen; j < len(parts); j++ {
-			parts[j].shardID = tableShardIDs[i]
 		}
 		result.snapshots = append(result.snapshots, s)
 	}
@@ -594,7 +590,7 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 	return r, nil
 }
 
-func (m *measure) searchBlocks(ctx context.Context, result *queryResult, sids []common.SeriesID, parts []*part, qo queryOptions) error {
+func (m *measure) searchBlocks(ctx context.Context, result *queryResult, sids []common.SeriesID, parts []partRef, qo queryOptions) error {
 	defFn := startBlockScanSpan(ctx, len(sids), parts, result)
 	defer defFn()
 	tstIter := generateTstIter()
@@ -626,7 +622,7 @@ func (m *measure) searchBlocks(ctx context.Context, result *queryResult, sids []
 		bc := generateBlockCursor()
 		p := tstIter.piHeap[0]
 		bc.init(p.p, p.curBlock, qo)
-		bc.shardID = p.p.shardID
+		bc.shardID = p.shardID
 		result.data = append(result.data, bc)
 		totalBlockBytes += bc.bm.uncompressedSizeBytes
 		if quota >= 0 {

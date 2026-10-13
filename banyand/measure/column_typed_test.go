@@ -77,6 +77,7 @@ func readBack(t *testing.T, c *column, dst *column, typedNumeric bool) {
 }
 
 func TestColumnTypedDecode(t *testing.T) {
+	verifyNoScanLeaks(t)
 	for _, vt := range []pbv1.ValueType{pbv1.ValueTypeInt64, pbv1.ValueTypeFloat64} {
 		for _, kind := range []string{"counter", "gauge"} {
 			for _, withNull := range []bool{false, true} {
@@ -116,6 +117,7 @@ func TestColumnTypedDecode(t *testing.T) {
 }
 
 func TestColumnTypedReuseDoesNotLeak(t *testing.T) {
+	verifyNoScanLeaks(t)
 	for _, vt := range []pbv1.ValueType{pbv1.ValueTypeInt64, pbv1.ValueTypeFloat64} {
 		t.Run(fmt.Sprint(vt), func(t *testing.T) {
 			clean := &column{name: "c", valueType: vt, values: genTypedValues(vt, "gauge", 32, false)}
@@ -159,6 +161,7 @@ func TestColumnTypedReuseDoesNotLeak(t *testing.T) {
 // TestColumnTypedReuseKeepsBuffer proves the typed slice is owned by the column
 // and survives reset(), so steady-state decoding does not allocate it again.
 func TestColumnTypedReuseKeepsBuffer(t *testing.T) {
+	verifyNoScanLeaks(t)
 	src := &column{name: "c", valueType: pbv1.ValueTypeInt64, values: genTypedValues(pbv1.ValueTypeInt64, "gauge", 1024, false)}
 	c := &column{}
 	readBack(t, src, c, true)
@@ -172,11 +175,13 @@ func TestColumnTypedReuseKeepsBuffer(t *testing.T) {
 // write/read round trip, in the typed form when typedNumeric is set.
 func buildTypedTestCursor(t *testing.T, kind string, withNull, typedNumeric bool) *blockCursor {
 	t.Helper()
-	bc := &blockCursor{
-		bm:             blockMetadata{seriesID: common.SeriesID(7)},
-		shardID:        3,
-		schemaTagTypes: map[string]pbv1.ValueType{"t_int": pbv1.ValueTypeInt64, "t_str": pbv1.ValueTypeStr},
-	}
+	// A pooled cursor, whose creator reference is dropped when the test ends, after
+	// the batches that pin it were released.
+	bc := generateBlockCursor()
+	t.Cleanup(func() { releaseBlockCursor(bc) })
+	bc.bm = blockMetadata{seriesID: common.SeriesID(7)}
+	bc.shardID = 3
+	bc.schemaTagTypes = map[string]pbv1.ValueType{"t_int": pbv1.ValueTypeInt64, "t_str": pbv1.ValueTypeStr}
 	for i := range typedTestRows {
 		bc.timestamps = append(bc.timestamps, int64(i+1))
 		bc.versions = append(bc.versions, int64(100+i))
@@ -259,6 +264,7 @@ func requireBatchesEqual(t *testing.T, want, got *model.MeasureBatch) {
 }
 
 func TestCopyAllToBatchTypedMatchesBytes(t *testing.T) {
+	verifyNoScanLeaks(t)
 	hidden := map[common.SeriesID]map[string]*modelv1.TagValue{
 		7: {"t_int": {Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: 4242}}}},
 	}
@@ -286,6 +292,7 @@ func TestCopyAllToBatchTypedMatchesBytes(t *testing.T) {
 								return bc
 							}
 							want := newMeasureBatchForSchema(schema, typedTestRows)
+							defer want.Release()
 							build(false).copyAllToBatch(want, schema, index, desc)
 							typedCursor := build(true)
 							if !withNull {
@@ -293,6 +300,7 @@ func TestCopyAllToBatchTypedMatchesBytes(t *testing.T) {
 								require.Equal(t, numericFormFloat64, typedCursor.fields.columns[1].form)
 							}
 							got := newMeasureBatchForSchema(schema, typedTestRows)
+							defer got.Release()
 							typedCursor.copyAllToBatch(got, schema, index, desc)
 							require.Positive(t, got.RowCount())
 							requireBatchesEqual(t, want, got)
@@ -305,6 +313,7 @@ func TestCopyAllToBatchTypedMatchesBytes(t *testing.T) {
 }
 
 func TestCopyAndReplaceInBatchTypedMatchesBytes(t *testing.T) {
+	verifyNoScanLeaks(t)
 	hidden := map[common.SeriesID]map[string]*modelv1.TagValue{
 		7: {"t_int": {Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: 4242}}}},
 	}
@@ -331,7 +340,10 @@ func TestCopyAndReplaceInBatchTypedMatchesBytes(t *testing.T) {
 						}
 						return b
 					}
-					requireBatchesEqual(t, run(false), run(true))
+					want, got := run(false), run(true)
+					defer want.Release()
+					defer got.Release()
+					requireBatchesEqual(t, want, got)
 				})
 			}
 		}
@@ -341,6 +353,7 @@ func TestCopyAndReplaceInBatchTypedMatchesBytes(t *testing.T) {
 // TestLoadDataTypedMatchesBytes runs real parts through loadData in both modes
 // and checks the batches are identical, and that the typed mode really is typed.
 func TestLoadDataTypedMatchesBytes(t *testing.T) {
+	verifyNoScanLeaks(t)
 	h := setupBenchStorageHarness(t)
 	for name, schema := range map[string]*vectorized.BatchSchema{"native": benchNativeSchema(), "passthrough": benchPassthroughSchema()} {
 		for _, desc := range []bool{false, true} {
@@ -364,6 +377,15 @@ func TestLoadDataTypedMatchesBytes(t *testing.T) {
 					return out
 				}
 				want, got := collect(false), collect(true)
+				// A batch pins the cursor it borrowed from; release them so the cursors
+				// return to the pool.
+				defer func() {
+					for _, batches := range [][]*model.MeasureBatch{want, got} {
+						for _, b := range batches {
+							b.Release()
+						}
+					}
+				}()
 				require.NotEmpty(t, want)
 				require.Len(t, got, len(want))
 				for i := range want {

@@ -37,6 +37,7 @@ import (
 // Widening this gate to fire on a client Top clause would silently put ordinary
 // multi-block Top queries back on the row merge, which is what this asserts against.
 func TestApplyTopNOptionsOnlyForTopNSchema(t *testing.T) {
+	verifyNoScanLeaks(t)
 	tests := []struct {
 		name        string
 		measureName string
@@ -69,6 +70,7 @@ func TestApplyTopNOptionsOnlyForTopNSchema(t *testing.T) {
 // spanning more than one block cursor and asserts it merges natively, returning
 // every row in timestamp order without the row-path detour.
 func TestPullBatchMultiBlockStaysBatchNative(t *testing.T) {
+	verifyNoScanLeaks(t)
 	h := setupBenchStorageHarness(t)
 
 	var qr queryResult

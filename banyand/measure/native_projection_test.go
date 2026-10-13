@@ -106,11 +106,14 @@ func nativeProjRaw(vt pbv1.ValueType, i int) []byte {
 
 func buildNativeProjCursor(t *testing.T, typedNumeric bool) *blockCursor {
 	t.Helper()
-	bc := &blockCursor{
-		bm:             blockMetadata{seriesID: common.SeriesID(5)},
-		shardID:        1,
-		schemaTagTypes: map[string]pbv1.ValueType{},
-	}
+	// The cursor comes from the pool and its creator reference is dropped when the
+	// test ends, after the batches that pin it were released: releasing a cursor the
+	// pool never handed out would unbalance the pool's count.
+	bc := generateBlockCursor()
+	t.Cleanup(func() { releaseBlockCursor(bc) })
+	bc.bm = blockMetadata{seriesID: common.SeriesID(5)}
+	bc.shardID = 1
+	bc.schemaTagTypes = map[string]pbv1.ValueType{}
 	for i := range nativeProjRows {
 		bc.timestamps = append(bc.timestamps, int64(i+1))
 		bc.versions = append(bc.versions, 1)
@@ -266,6 +269,7 @@ func requireNativeMatchesPassthrough(t *testing.T, want, got *model.MeasureBatch
 // substitution, a schema/stored type mismatch, both directions and the
 // single-row / replace paths.
 func TestNativeProjectionMatchesPassthrough(t *testing.T) {
+	verifyNoScanLeaks(t)
 	hiddenIndex := map[common.SeriesID]map[string]*modelv1.TagValue{
 		5: {
 			"t_str":  {Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "from-index"}}},
@@ -306,6 +310,7 @@ func TestNativeProjectionMatchesPassthrough(t *testing.T) {
 }
 
 func TestNativeProjectionSingleRowAndReplaceMatchPassthrough(t *testing.T) {
+	verifyNoScanLeaks(t)
 	hiddenIndex := map[common.SeriesID]map[string]*modelv1.TagValue{
 		5: {"t_sarr": {Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: []string{"h"}}}}},
 	}

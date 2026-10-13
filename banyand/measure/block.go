@@ -506,6 +506,7 @@ func (bc *blockCursor) reset() {
 	bc.idx = 0
 	bc.p = nil
 	bc.res = nil
+	bc.shardID = 0
 	bc.bm.reset()
 	bc.minTimestamp = 0
 	bc.maxTimestamp = 0

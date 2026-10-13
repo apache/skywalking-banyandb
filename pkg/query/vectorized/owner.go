@@ -17,6 +17,17 @@
 
 package vectorized
 
+import "sync/atomic"
+
+// pinnedOwners counts the references Owners sets hold right now, process-wide. It
+// is one atomic add per pin and release, and lets tests and the soak prove every
+// batch gave back what it borrowed.
+var pinnedOwners atomic.Int64
+
+// OutstandingOwnerPins returns the number of owner references that Owners sets
+// hold and have not released. It is zero when no live batch borrows memory.
+func OutstandingOwnerPins() int64 { return pinnedOwners.Load() }
+
 // Owner is a reference-counted holder of memory that batch columns borrow
 // without copying. A block cursor is the canonical Owner: its decoded value
 // buffers back the string and bytes cells of every batch built from it, and it
@@ -63,6 +74,7 @@ func (s *Owners) Pin(o Owner) {
 		return
 	}
 	o.Retain()
+	pinnedOwners.Add(1)
 	s.list = append(s.list, o)
 }
 
@@ -84,6 +96,7 @@ func (s *Owners) TransferTo(dst *Owners) {
 	for i, o := range s.list {
 		s.list[i] = nil
 		if dst.Contains(o) {
+			pinnedOwners.Add(-1)
 			o.Release()
 			continue
 		}
@@ -98,6 +111,7 @@ func (s *Owners) Release() {
 	list := s.list
 	// Empty the set before releasing so a re-entrant Release cannot see an owner twice.
 	s.list = s.list[:0]
+	pinnedOwners.Add(-int64(len(list)))
 	for i, o := range list {
 		list[i] = nil
 		o.Release()
