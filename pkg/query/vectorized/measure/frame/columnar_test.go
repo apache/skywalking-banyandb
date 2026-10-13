@@ -194,7 +194,7 @@ func TestColumnar_GoldenBytes(t *testing.T) {
 	col.Append(20)
 	col.Append(30)
 	b.Len = 3
-	got, err := EncodeVersion(b, WireVersionColumnar)
+	got, err := Encode(b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func TestColumnar_GoldenBytes_StringWithNull(t *testing.T) {
 	col.AppendNull()
 	col.Append("cde")
 	b.Len = 3
-	got, err := EncodeVersion(b, WireVersionColumnar)
+	got, err := Encode(b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestColumnar_ConstGoldenBytes(t *testing.T) {
 	b := vectorized.NewRecordBatch(schema, 0)
 	b.Columns[0] = vectorized.NewConstString("xyz", 100)
 	b.Len = 100
-	got, err := EncodeVersion(b, WireVersionColumnar)
+	got, err := Encode(b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,47 +274,6 @@ func TestColumnar_ConstGoldenBytes(t *testing.T) {
 	requireSameBatch(t, b, decoded)
 }
 
-func TestColumnar_RoundTripEquivalentToRowLayout(t *testing.T) {
-	for _, rows := range []int{0, 1, 2, 7, 8, 9, 63, 64, 65, 1000} {
-		b := kitchenSink(rows)
-		for _, withSelection := range []bool{false, true} {
-			src := b
-			if withSelection && rows > 3 {
-				cp := *b
-				for i := 0; i < rows; i += 3 {
-					cp.Selection = append(cp.Selection, uint16(i))
-				}
-				if cp.Selection == nil {
-					cp.Selection = []uint16{}
-				}
-				src = &cp
-			}
-			v1, v1Err := EncodeVersion(src, WireVersion)
-			if v1Err != nil {
-				t.Fatalf("rows=%d: v1 encode: %v", rows, v1Err)
-			}
-			v2, v2Err := EncodeVersion(src, WireVersionColumnar)
-			if v2Err != nil {
-				t.Fatalf("rows=%d: v2 encode: %v", rows, v2Err)
-			}
-			if len(v2)%8 != 0 {
-				t.Fatalf("rows=%d: frame length %d is not a multiple of 8", rows, len(v2))
-			}
-			dec1, dec1Err := Decode(v1)
-			if dec1Err != nil {
-				t.Fatalf("rows=%d: v1 decode: %v", rows, dec1Err)
-			}
-			dec2, dec2Err := Decode(v2)
-			if dec2Err != nil {
-				t.Fatalf("rows=%d: v2 decode: %v", rows, dec2Err)
-			}
-			requireSameBatch(t, src, dec2)
-			requireSameBatch(t, dec1, dec2)
-			dec2.ReleaseOwners()
-		}
-	}
-}
-
 // misaligned returns a copy of frame whose first byte is not 8-byte aligned.
 func misaligned(frame []byte) []byte {
 	words := make([]uint64, (len(frame)+16)/8+1)
@@ -328,7 +287,7 @@ func TestColumnar_AlignedMessageIsBorrowedInPlace(t *testing.T) {
 	prev := baseframe.SetPoisonReleasedMessages(false)
 	defer baseframe.SetPoisonReleasedMessages(prev)
 	b := kitchenSink(300)
-	frame, err := EncodeVersion(b, WireVersionColumnar)
+	frame, err := Encode(b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +322,7 @@ func TestColumnar_MisalignedMessageIsCopiedOnce(t *testing.T) {
 	prev := baseframe.SetPoisonReleasedMessages(false)
 	defer baseframe.SetPoisonReleasedMessages(prev)
 	b := kitchenSink(300)
-	frame, err := EncodeVersion(b, WireVersionColumnar)
+	frame, err := Encode(b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -401,7 +360,7 @@ func TestColumnar_PoisonedAfterRelease(t *testing.T) {
 	b.Columns[1].(*vectorized.TypedColumn[int64]).Append(7)
 	b.Columns[1].(*vectorized.TypedColumn[int64]).Append(8)
 	b.Len = 2
-	frame, err := EncodeVersion(b, WireVersionColumnar)
+	frame, err := Encode(b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -428,7 +387,7 @@ func TestColumnar_PoisonedAfterRelease(t *testing.T) {
 
 func TestColumnar_TruncationNeverPanics(t *testing.T) {
 	for _, rows := range []int{0, 1, 5, 40} {
-		frame, err := EncodeVersion(kitchenSink(rows), WireVersionColumnar)
+		frame, err := Encode(kitchenSink(rows))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -450,7 +409,7 @@ func TestColumnar_TruncationNeverPanics(t *testing.T) {
 }
 
 func TestColumnar_TrailingBytesRejected(t *testing.T) {
-	frame, err := EncodeVersion(kitchenSink(10), WireVersionColumnar)
+	frame, err := Encode(kitchenSink(10))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,7 +419,7 @@ func TestColumnar_TrailingBytesRejected(t *testing.T) {
 }
 
 func TestColumnar_CorruptionNeverPanics(t *testing.T) {
-	frame, err := EncodeVersion(kitchenSink(33), WireVersionColumnar)
+	frame, err := Encode(kitchenSink(33))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -517,7 +476,7 @@ func TestColumnar_ConstOverLimitIsExpanded(t *testing.T) {
 	b := vectorized.NewRecordBatch(schema, 0)
 	b.Columns[0] = vectorized.NewConstInt64(9, rows)
 	b.Len = rows
-	frame, err := EncodeVersion(b, WireVersionColumnar)
+	frame, err := Encode(b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -531,77 +490,27 @@ func TestColumnar_ConstOverLimitIsExpanded(t *testing.T) {
 	}
 }
 
-func TestColumnar_DecodeDispatchesOnVersion(t *testing.T) {
+func TestColumnar_DecodeRejectsOtherVersions(t *testing.T) {
 	b := kitchenSink(20)
-	for _, version := range []uint8{WireVersion, WireVersionColumnar} {
-		frame, err := EncodeVersion(b, version)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if frame[MagicLen] != version {
-			t.Fatalf("frame carries version %d, want %d", frame[MagicLen], version)
-		}
-		decoded, decodeErr := Decode(frame)
-		if decodeErr != nil {
-			t.Fatalf("version %d: %v", version, decodeErr)
-		}
-		requireSameBatch(t, b, decoded)
-		decoded.ReleaseOwners()
+	frame, err := Encode(b)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, bad := range []uint8{0, 1, 2, 5, 255} {
-		frame := []byte{0x00, 'V', 'F', 'R', bad, 0, 0}
-		if _, err := Decode(frame); !errors.Is(err, ErrBadVersion) {
+	if frame[MagicLen] != WireVersion {
+		t.Fatalf("frame carries version %d, want %d", frame[MagicLen], WireVersion)
+	}
+	decoded, decodeErr := Decode(frame)
+	if decodeErr != nil {
+		t.Fatal(decodeErr)
+	}
+	requireSameBatch(t, b, decoded)
+	decoded.ReleaseOwners()
+	// Version 3 is the removed row-oriented layout: it fails loudly, never misread.
+	for _, bad := range []uint8{0, 1, 2, 3, 5, 255} {
+		bogus := []byte{0x00, 'V', 'F', 'R', bad, 0, 0}
+		if _, err := Decode(bogus); !errors.Is(err, ErrBadVersion) {
 			t.Fatalf("version %d: got %v, want ErrBadVersion", bad, err)
 		}
-	}
-	if _, err := EncodeVersion(b, 9); !errors.Is(err, ErrBadVersion) {
-		t.Fatalf("encode version 9: got %v", err)
-	}
-}
-
-func TestColumnar_NegotiateVersion(t *testing.T) {
-	defer SetMaxEmitVersion(SetMaxEmitVersion(WireVersionColumnar))
-	cases := []struct {
-		name      string
-		requested uint32
-		nodeMax   uint8
-		want      uint8
-	}{
-		{"old requester, new node", 0, WireVersionColumnar, WireVersion},
-		{"old requester, old node", 0, WireVersion, WireVersion},
-		{"new requester, old node", uint32(WireVersionColumnar), WireVersion, WireVersion},
-		{"new requester, new node", uint32(WireVersionColumnar), WireVersionColumnar, WireVersionColumnar},
-		{"requester v3, new node", uint32(WireVersion), WireVersionColumnar, WireVersion},
-		{"future requester, new node", 9, WireVersionColumnar, WireVersionColumnar},
-		{"garbage requester below v3", 2, WireVersionColumnar, WireVersion},
-	}
-	for _, tc := range cases {
-		SetMaxEmitVersion(tc.nodeMax)
-		if got := NegotiateVersion(tc.requested); got != tc.want {
-			t.Errorf("%s: NegotiateVersion(%d) with node max %d = %d, want %d", tc.name, tc.requested, tc.nodeMax, got, tc.want)
-		}
-	}
-	if prev := SetMaxEmitVersion(0); prev != WireVersionColumnar {
-		t.Fatalf("previous cap = %d", prev)
-	}
-	if got := NegotiateVersion(9); got != WireVersion {
-		t.Fatalf("a cap below the original version clamps to it, got %d", got)
-	}
-}
-
-func TestColumnar_AdvertisedVersion(t *testing.T) {
-	defer SetAdvertisedVersion(SetAdvertisedVersion(WireVersionColumnar))
-	SetAdvertisedVersion(WireVersionColumnar)
-	if got := AdvertisedVersion(); got != uint32(WireVersionColumnar) {
-		t.Fatalf("default advertisement = %d", got)
-	}
-	SetAdvertisedVersion(0)
-	if got := AdvertisedVersion(); got != 0 {
-		t.Fatalf("a liaison that predates negotiation advertises nothing, got %d", got)
-	}
-	SetAdvertisedVersion(200)
-	if got := AdvertisedVersion(); got != uint32(WireVersionColumnar) {
-		t.Fatalf("advertisement is clamped to the newest version, got %d", got)
 	}
 }
 
@@ -609,23 +518,23 @@ func TestColumnar_UnsupportedColumnTypesFailLoud(t *testing.T) {
 	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{{Role: vectorized.RoleTag, Name: "a", Type: vectorized.ColumnTypeStrArray}})
 	b := vectorized.NewRecordBatch(schema, 1)
 	b.Len = 0
-	if _, err := EncodeVersion(b, WireVersionColumnar); !errors.Is(err, ErrUnsupportedColumnType) {
+	if _, err := Encode(b); !errors.Is(err, ErrUnsupportedColumnType) {
 		t.Fatalf("got %v, want ErrUnsupportedColumnType", err)
 	}
 	mismatch := vectorized.NewBatchSchema([]vectorized.ColumnDef{{Role: vectorized.RoleTag, Name: "a", Type: vectorized.ColumnTypeString}})
 	mb := vectorized.NewRecordBatch(mismatch, 1)
 	mb.Columns[0] = vectorized.NewInt64Column(1)
-	if _, err := EncodeVersion(mb, WireVersionColumnar); !errors.Is(err, ErrUnsupportedColumnType) {
+	if _, err := Encode(mb); !errors.Is(err, ErrUnsupportedColumnType) {
 		t.Fatalf("got %v, want ErrUnsupportedColumnType", err)
 	}
-	if _, err := EncodeVersion(nil, WireVersionColumnar); err == nil {
+	if _, err := Encode(nil); err == nil {
 		t.Fatal("nil batch encoded")
 	}
 }
 
 func TestColumnar_ProtoCellsRoundTripThroughProto(t *testing.T) {
 	b := kitchenSink(50)
-	frame, err := EncodeVersion(b, WireVersionColumnar)
+	frame, err := Encode(b)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -659,7 +568,7 @@ func constColumnsFrame(t *testing.T, rows, ncols int, ctype vectorized.ColumnTyp
 		t.Fatal(typeErr)
 	}
 	out := append([]byte(nil), codec.Magic[:]...)
-	out = append(out, codec.ColumnarWireVersion)
+	out = append(out, WireVersion)
 	out = binary.AppendUvarint(out, uint64(rows))
 	out = binary.AppendUvarint(out, uint64(ncols))
 	for i := range ncols {
@@ -728,7 +637,7 @@ func TestColumnar_EncoderFlattensConstColumnsOverBudget(t *testing.T) {
 	}
 	b.Columns[ncols] = flat
 	b.Len = rows
-	frame, err := EncodeVersion(b, WireVersionColumnar)
+	frame, err := Encode(b)
 	if err != nil {
 		t.Fatal(err)
 	}

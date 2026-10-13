@@ -29,24 +29,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/frame"
 )
 
-type frameVersionKey struct{}
-
-// ContextWithFrameVersion returns a context that makes the frame emitters use the given
-// frame wire version, normally frame.NegotiateVersion of the requester's advertisement.
-// Without it they emit the original version, which every node can decode.
-func ContextWithFrameVersion(ctx context.Context, version uint8) context.Context {
-	return context.WithValue(ctx, frameVersionKey{}, version)
-}
-
-// FrameVersionFromContext returns the frame wire version ctx selects, defaulting to the
-// original frame.WireVersion.
-func FrameVersionFromContext(ctx context.Context) uint8 {
-	if version, ok := ctx.Value(frameVersionKey{}).(uint8); ok {
-		return version
-	}
-	return frame.WireVersion
-}
-
 // FrameEmitter is the data-node wire-emit contract under flag-on:
 // any MIterator that participates in a TopicInternalMeasureQuery
 // response must encapsulate its own drain + encode strategy via this
@@ -111,13 +93,12 @@ func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 	if schema == nil {
 		return nil, fmt.Errorf("DrainPipelineToFrame: nil schema")
 	}
-	version := FrameVersionFromContext(ctx)
 	// A columnar frame carries a batch's constant columns as one value and copies each cell
 	// once, into the frame, so a single batch of native columns is encoded as it is instead of
 	// being copied into a coalescing batch first (every pull of a pipeline returns a fresh batch,
 	// so holding the first across the next pull is safe). Batches that need passthrough
-	// conversion, and the row-oriented layout, take the coalescing path.
-	direct := version == frame.WireVersionColumnar && !needsFrameConversion(schema)
+	// conversion take the coalescing path.
+	direct := !needsFrameConversion(schema)
 	var out, single *vectorized.RecordBatch
 	if !direct {
 		out = vectorized.NewRecordBatch(schema, 0)
@@ -165,7 +146,7 @@ func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 		}
 	}
 	if single != nil {
-		return encodeDrainedFrame(ctx, single, version)
+		return encodeDrainedFrame(ctx, single)
 	}
 	if out == nil {
 		out = vectorized.NewRecordBatch(schema, 0)
@@ -191,18 +172,18 @@ func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 	if convErr != nil {
 		return nil, fmt.Errorf("DrainPipelineToFrame: %w", convErr)
 	}
-	return encodeDrainedFrame(ctx, converted, version)
+	return encodeDrainedFrame(ctx, converted)
 }
 
-// encodeDrainedFrame encodes the drained batch with the negotiated frame version, under a
-// frame-encode span when the query is traced.
-func encodeDrainedFrame(ctx context.Context, converted *vectorized.RecordBatch, version uint8) ([]byte, error) {
+// encodeDrainedFrame encodes the drained batch as a columnar frame, under a frame-encode
+// span when the query is traced.
+func encodeDrainedFrame(ctx context.Context, converted *vectorized.RecordBatch) ([]byte, error) {
 	tracer := query.GetTracer(ctx)
 	if tracer == nil {
-		return frame.EncodeVersion(converted, version)
+		return frame.Encode(converted)
 	}
 	span, _ := tracer.StartSpan(ctx, "frame-encode")
-	encoded, encodeErr := frame.EncodeVersion(converted, version)
+	encoded, encodeErr := frame.Encode(converted)
 	if encodeErr != nil {
 		span.Error(encodeErr)
 		span.Stop()
@@ -238,12 +219,6 @@ func encodeDrainedFrame(ctx context.Context, converted *vectorized.RecordBatch, 
 // idps in the empty/zero case yields a nil body, matching the codec
 // layer's RawFrameCodec carve-out for empty distributed results.
 func SerializeDataPointsToFrame(idps []*measurev1.InternalDataPoint) ([]byte, error) {
-	return SerializeDataPointsToFrameVersion(idps, frame.WireVersion)
-}
-
-// SerializeDataPointsToFrameVersion is SerializeDataPointsToFrame emitting the given
-// frame wire version (see frame.NegotiateVersion).
-func SerializeDataPointsToFrameVersion(idps []*measurev1.InternalDataPoint, version uint8) ([]byte, error) {
 	if len(idps) == 0 {
 		return nil, nil
 	}
@@ -256,11 +231,11 @@ func SerializeDataPointsToFrameVersion(idps []*measurev1.InternalDataPoint, vers
 	// cross-group rows can carry the same logical tag/field with divergent
 	// oneof variants. Typed wire columns can't represent mixed variants;
 	// frame.Encode now carries ColumnTypeTagValue / ColumnTypeFieldValue
-	// natively as proto-bytes per cell (wire format v3) so the round trip
+	// natively as proto-bytes per cell so the round trip
 	// is intact. The vec-native DrainPipelineToFrame path keeps the
 	// typed-conversion fast path for AggModeMap output where columns are
 	// uniform.
-	return frame.EncodeVersion(b, version)
+	return frame.Encode(b)
 }
 
 // buildPassthroughBatchFromDataPoints walks idps to derive a unified
@@ -493,7 +468,7 @@ func convertArrayColumn(def vectorized.ColumnDef, col vectorized.Column, n int) 
 // When the inferred wire type is ColumnTypeTagValue (all-null column,
 // array variant, or — as detected mid-conversion — a mixed-variant
 // cell), the function returns the original passthrough column so
-// frame.Encode emits it as proto-bytes-per-cell (wire format v3).
+// frame.Encode emits it as proto-bytes-per-cell.
 func convertTagValueColumn(def vectorized.ColumnDef, col vectorized.Column, n int) (vectorized.ColumnDef, vectorized.Column, error) {
 	tc, ok := col.(*vectorized.TypedColumn[*modelv1.TagValue])
 	if !ok {
@@ -518,7 +493,7 @@ func convertTagValueColumn(def vectorized.ColumnDef, col vectorized.Column, n in
 		// Mixed-variant cells (e.g. a cross-group merged iterator where
 		// the same tag has divergent variants across groups) fall back
 		// to passthrough so frame.Encode emits the column as
-		// ColumnTypeTagValue (proto-bytes per cell, wire format v3).
+		// ColumnTypeTagValue (proto-bytes per cell).
 		switch payload := v.GetValue().(type) {
 		case *modelv1.TagValue_Str:
 			if wireType != vectorized.ColumnTypeString {
@@ -556,7 +531,7 @@ func convertTagValueColumn(def vectorized.ColumnDef, col vectorized.Column, n in
 // whose payload identifies a scalar wire type (Str / Int / BinaryData).
 // Returns ColumnTypeTagValue for all-null columns and for array variants
 // (IntArray / StrArray) — these go through the proto-bytes-per-cell wire
-// (frame v3 ColumnTypeTagValue) which preserves the oneof intact. The
+// (frame ColumnTypeTagValue) which preserves the oneof intact. The
 // receive side reconstructs them as TagValue passthrough so
 // serializeBatchToProto handles them via the pointer-return fast path.
 func inferTagValueWireType(tc *vectorized.TypedColumn[*modelv1.TagValue], n int) vectorized.ColumnType {
@@ -589,7 +564,7 @@ func inferTagValueWireType(tc *vectorized.TypedColumn[*modelv1.TagValue], n int)
 // dispatch: when the column has a uniform Int / Float / Str / BinaryData
 // variant the function returns a typed wire column; otherwise (all-null
 // or mid-conversion variant mismatch) it returns the original passthrough
-// so frame v3 carries it as proto-bytes per cell.
+// so the frame carries it as proto-bytes per cell.
 func convertFieldValueColumn(def vectorized.ColumnDef, col vectorized.Column, n int) (vectorized.ColumnDef, vectorized.Column, error) {
 	fc, ok := col.(*vectorized.TypedColumn[*modelv1.FieldValue])
 	if !ok {
@@ -613,7 +588,7 @@ func convertFieldValueColumn(def vectorized.ColumnDef, col vectorized.Column, n 
 		// Same dispatch as convertTagValueColumn: uniform-variant cells
 		// take the typed wire optimization; mixed-variant cells return
 		// the original passthrough column so frame.Encode emits it as
-		// ColumnTypeFieldValue (proto-bytes per cell, wire format v3).
+		// ColumnTypeFieldValue (proto-bytes per cell).
 		switch payload := v.GetValue().(type) {
 		case *modelv1.FieldValue_Int:
 			if wireType != vectorized.ColumnTypeInt64 {
@@ -651,7 +626,7 @@ func convertFieldValueColumn(def vectorized.ColumnDef, col vectorized.Column, n 
 
 // inferFieldValueWireType is the FieldValue counterpart of
 // inferTagValueWireType. Returns ColumnTypeFieldValue for an all-null
-// column so the caller leaves the passthrough column as-is — frame v3
+// column so the caller leaves the passthrough column as-is — frame
 // carries it as proto-bytes per cell.
 func inferFieldValueWireType(fc *vectorized.TypedColumn[*modelv1.FieldValue], n int) vectorized.ColumnType {
 	for i := range n {

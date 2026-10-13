@@ -24,9 +24,6 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/reflect/protodesc"
-	"google.golang.org/protobuf/reflect/protoregistry"
-	"google.golang.org/protobuf/types/dynamicpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -46,27 +43,26 @@ type fakeFuture struct{ msg bus.Message }
 func (f fakeFuture) Get() (bus.Message, error)      { return f.msg, nil }
 func (f fakeFuture) GetAll() ([]bus.Message, error) { return []bus.Message{f.msg}, nil }
 
-// fakeCluster plays the data nodes: it answers a broadcast with one frame per node, encoded with
-// the version the node would negotiate for the request it received.
+// fakeCluster plays the data nodes: it answers a broadcast with one columnar frame per node, or
+// with rawBody verbatim when set.
 type fakeCluster struct {
-	build     func(node int) *vectorized.RecordBatch
-	requested []uint32
-	sent      []uint8
-	nodes     int
-	traced    bool
+	build   func(node int) *vectorized.RecordBatch
+	rawBody []byte
+	nodes   int
+	traced  bool
 }
 
-func (c *fakeCluster) Broadcast(_ time.Duration, _ bus.Topic, message bus.Message) ([]bus.Future, error) {
-	request := message.Data().(*measurev1.InternalQueryRequest)
-	c.requested = append(c.requested, request.GetMaxFrameVersion())
-	version := frame.NegotiateVersion(request.GetMaxFrameVersion())
+func (c *fakeCluster) Broadcast(_ time.Duration, _ bus.Topic, _ bus.Message) ([]bus.Future, error) {
 	futures := make([]bus.Future, 0, c.nodes)
 	for node := range c.nodes {
-		body, err := frame.EncodeVersion(c.build(node), version)
-		if err != nil {
-			return nil, err
+		body := c.rawBody
+		if body == nil {
+			var err error
+			body, err = frame.Encode(c.build(node))
+			if err != nil {
+				return nil, err
+			}
 		}
-		c.sent = append(c.sent, body[frame.MagicLen])
 		var data any = body
 		if c.traced {
 			data = &measurev1.InternalQueryResponse{RawFrameBody: body}
@@ -141,58 +137,61 @@ func executeRows(t *testing.T, cluster *fakeCluster) []*measurev1.InternalDataPo
 	return out
 }
 
-// TestExecute_FrameVersionMatrix runs the liaison plan against data nodes of every combination of
-// old and new release. A frame is columnar only when both sides are new, and the client sees the
-// same rows whichever frames traveled; no pin on a received frame outlives the query.
-func TestExecute_FrameVersionMatrix(t *testing.T) {
+// TestExecute_Rows runs the liaison plan against data nodes that send columnar frames, with and
+// without tracing: the client sees the same rows either way, and no pin on a received frame
+// outlives the query.
+func TestExecute_Rows(t *testing.T) {
 	prevMode := data.MeasureWireModeRaw()
 	data.SetMeasureWireModeRaw(true)
 	defer data.SetMeasureWireModeRaw(prevMode)
-	defer frame.SetAdvertisedVersion(frame.SetAdvertisedVersion(frame.WireVersionColumnar))
-	defer frame.SetMaxEmitVersion(frame.SetMaxEmitVersion(frame.WireVersionColumnar))
 	pinsBefore := vectorized.OutstandingOwnerPins()
-
-	type combo struct {
-		name      string
-		advertise uint8
-		emitCap   uint8
-		want      uint8
-	}
-	combos := []combo{
-		{"old liaison, old data node", 0, frame.WireVersion, frame.WireVersion},
-		{"old liaison, new data node", 0, frame.WireVersionColumnar, frame.WireVersion},
-		{"new liaison, old data node", frame.WireVersionColumnar, frame.WireVersion, frame.WireVersion},
-		{"new liaison, new data node", frame.WireVersionColumnar, frame.WireVersionColumnar, frame.WireVersionColumnar},
-	}
 	var baseline []*measurev1.InternalDataPoint
-	for _, c := range combos {
-		for _, traced := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s traced=%t", c.name, traced), func(t *testing.T) {
-				frame.SetAdvertisedVersion(c.advertise)
-				frame.SetMaxEmitVersion(c.emitCap)
-				cluster := &fakeCluster{nodes: 3, build: rowsBatch, traced: traced}
-				got := executeRows(t, cluster)
-				if len(got) == 0 {
-					t.Fatal("no rows")
-				}
-				if len(cluster.requested) != 1 || cluster.requested[0] != uint32(c.advertise) {
-					t.Fatalf("the liaison advertised %v, want [%d]", cluster.requested, c.advertise)
-				}
-				for _, v := range cluster.sent {
-					if v != c.want {
-						t.Fatalf("a data node sent frame version %d, want %d", v, c.want)
-					}
-				}
-				if baseline == nil {
-					baseline = got
-					return
-				}
-				requireSameRows(t, baseline, got)
-			})
-		}
+	for _, traced := range []bool{false, true} {
+		t.Run(fmt.Sprintf("traced=%t", traced), func(t *testing.T) {
+			got := executeRows(t, &fakeCluster{nodes: 3, build: rowsBatch, traced: traced})
+			if len(got) == 0 {
+				t.Fatal("no rows")
+			}
+			if baseline == nil {
+				baseline = got
+				return
+			}
+			requireSameRows(t, baseline, got)
+		})
 	}
 	if got := vectorized.OutstandingOwnerPins() - pinsBefore; got != 0 {
 		t.Fatalf("%d pins on received frames outlived the queries", got)
+	}
+}
+
+// TestExecute_RejectsOtherFrameVersions feeds the liaison a frame of the removed row-oriented
+// version 3, as a data node of an older release would send: the query fails with a clear error
+// instead of reading the frame as columnar.
+func TestExecute_RejectsOtherFrameVersions(t *testing.T) {
+	prevMode := data.MeasureWireModeRaw()
+	data.SetMeasureWireModeRaw(true)
+	defer data.SetMeasureWireModeRaw(prevMode)
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		Groups:          []string{defaultName},
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		Limit:           100,
+	}
+	plan, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{BatchSize: 16, QueryMemoryMiB: 64})
+	if analyzeErr != nil {
+		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
+	}
+	cluster := &fakeCluster{nodes: 2, rawBody: []byte{0x00, 'V', 'F', 'R', 3, 0, 0}}
+	iter, execErr := plan.Execute(executor.WithDistributedExecutionContext(t.Context(), cluster))
+	if execErr == nil {
+		for iter.Next() {
+			t.Fatal("a version 3 frame produced rows")
+		}
+		execErr = iter.Close()
+	}
+	if execErr == nil || !strings.Contains(execErr.Error(), "wire version") {
+		t.Fatalf("got %v, want a wire version error", execErr)
 	}
 }
 
@@ -261,14 +260,11 @@ func aggBatch(node int) *vectorized.RecordBatch {
 	return b
 }
 
-// TestExecute_AggFrameVersionMatrix is TestExecute_FrameVersionMatrix for an aggregation: the liaison
-// reduces the partials of data nodes that may each have sent either frame version.
-func TestExecute_AggFrameVersionMatrix(t *testing.T) {
+// TestExecute_Agg is TestExecute_Rows for an aggregation: the liaison reduces the columnar partials of the data nodes.
+func TestExecute_Agg(t *testing.T) {
 	prevMode := data.MeasureWireModeRaw()
 	data.SetMeasureWireModeRaw(true)
 	defer data.SetMeasureWireModeRaw(prevMode)
-	defer frame.SetAdvertisedVersion(frame.SetAdvertisedVersion(frame.WireVersionColumnar))
-	defer frame.SetMaxEmitVersion(frame.SetMaxEmitVersion(frame.WireVersionColumnar))
 	pinsBefore := vectorized.OutstandingOwnerPins()
 	run := func(t *testing.T) []*measurev1.InternalDataPoint {
 		req := &measurev1.QueryRequest{
@@ -299,15 +295,9 @@ func TestExecute_AggFrameVersionMatrix(t *testing.T) {
 		}
 		return out
 	}
-	frame.SetAdvertisedVersion(0)
-	frame.SetMaxEmitVersion(frame.WireVersion)
-	baseline := run(t)
-	if len(baseline) != 5 {
-		t.Fatalf("top-5 returned %d rows", len(baseline))
+	if got := run(t); len(got) != 5 {
+		t.Fatalf("top-5 returned %d rows", len(got))
 	}
-	frame.SetAdvertisedVersion(frame.WireVersionColumnar)
-	frame.SetMaxEmitVersion(frame.WireVersionColumnar)
-	requireSameRows(t, baseline, run(t))
 	if got := vectorized.OutstandingOwnerPins() - pinsBefore; got != 0 {
 		t.Fatalf("%d pins survived", got)
 	}
@@ -387,67 +377,5 @@ func TestExecute_PromotedStringsOutliveTheFrames(t *testing.T) {
 	}
 	if seen == 0 {
 		t.Fatal("no svc string cell reached the client")
-	}
-}
-
-// TestInternalQueryRequest_WireCompatibleWithTheOlderSchema pins the negotiation field's backward
-// compatibility on the wire: a data node of the release before it (the schema without field 3) must read the
-// request a new liaison sends, and a new data node must read the request an old liaison sends as "no
-// advertisement".
-func TestInternalQueryRequest_WireCompatibleWithTheOlderSchema(t *testing.T) {
-	fileProto := protodesc.ToFileDescriptorProto(measurev1.File_banyandb_measure_v1_query_proto)
-	for _, message := range fileProto.MessageType {
-		if message.GetName() != "InternalQueryRequest" {
-			continue
-		}
-		kept := message.Field[:0]
-		for _, field := range message.Field {
-			if field.GetNumber() != 3 {
-				kept = append(kept, field)
-			}
-		}
-		message.Field = kept
-	}
-	oldFile, fileErr := protodesc.NewFile(fileProto, protoregistry.GlobalFiles)
-	if fileErr != nil {
-		t.Fatal(fileErr)
-	}
-	oldDesc := oldFile.Messages().ByName("InternalQueryRequest")
-	if oldDesc.Fields().ByNumber(3) != nil {
-		t.Fatal("the older schema still has field 3")
-	}
-
-	newReq := &measurev1.InternalQueryRequest{
-		Request:          &measurev1.QueryRequest{Name: "demo", Groups: []string{"g"}},
-		AggReturnPartial: true,
-		MaxFrameVersion:  uint32(frame.WireVersionColumnar),
-	}
-	wire, marshalErr := proto.Marshal(newReq)
-	if marshalErr != nil {
-		t.Fatal(marshalErr)
-	}
-	old := dynamicpb.NewMessage(oldDesc)
-	if unmarshalErr := proto.Unmarshal(wire, old); unmarshalErr != nil {
-		t.Fatalf("an older data node cannot read the new request: %v", unmarshalErr)
-	}
-	if got := old.Get(oldDesc.Fields().ByName("agg_return_partial")).Bool(); !got {
-		t.Fatal("the older schema lost agg_return_partial")
-	}
-	oldRequest := old.Get(oldDesc.Fields().ByName("request")).Message()
-	if got := oldRequest.Get(oldRequest.Descriptor().Fields().ByName("name")).String(); got != "demo" {
-		t.Fatalf("the older schema read request.name = %q", got)
-	}
-
-	// An old liaison's request carries no field 3.
-	withoutField, stripErr := proto.Marshal(&measurev1.InternalQueryRequest{Request: newReq.Request, AggReturnPartial: true})
-	if stripErr != nil {
-		t.Fatal(stripErr)
-	}
-	var parsed measurev1.InternalQueryRequest
-	if unmarshalErr := proto.Unmarshal(withoutField, &parsed); unmarshalErr != nil {
-		t.Fatal(unmarshalErr)
-	}
-	if parsed.GetMaxFrameVersion() != 0 || frame.NegotiateVersion(parsed.GetMaxFrameVersion()) != frame.WireVersion {
-		t.Fatalf("a request without the field must negotiate the original version, got %d", frame.NegotiateVersion(parsed.GetMaxFrameVersion()))
 	}
 }

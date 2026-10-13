@@ -31,10 +31,6 @@ func TestMain(m *testing.M) {
 	leakcheck.Main(m, leakcheck.Counter("outstanding owner pins", vectorized.OutstandingOwnerPins))
 }
 
-// testWireVersion is the frame version the fixtures in this package encode with. The
-// merge and reduce paths must produce the same result for either version.
-var testWireVersion = frame.WireVersionColumnar
-
 func encodeTestFrame(b *vectorized.RecordBatch) ([]byte, error) {
-	return frame.EncodeVersion(b, testWireVersion)
+	return frame.Encode(b)
 }

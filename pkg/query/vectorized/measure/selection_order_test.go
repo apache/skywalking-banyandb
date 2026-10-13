@@ -372,6 +372,7 @@ func TestSerializeAndFrame_KeepSelectionOrder(t *testing.T) {
 		if decodeErr != nil {
 			t.Fatal(decodeErr)
 		}
+		defer decoded.ReleaseOwners()
 		ordCompare(t, ordRows(decoded), tc.order)
 
 		flat := vectorized.NewRecordBatch(schema, 0)
@@ -403,6 +404,7 @@ func TestSerializeAndFrame_KeepSelectionOrder(t *testing.T) {
 		if decodeErr != nil {
 			t.Fatal(decodeErr)
 		}
+		defer drained.ReleaseOwners()
 		ordCompare(t, ordRows(drained), tc.order)
 	})
 }

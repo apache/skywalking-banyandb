@@ -75,12 +75,6 @@ message InternalQueryRequest {
   QueryRequest request = 1;
   // agg_return_partial when true asks data nodes to return aggregation partials (for reduce at liaison)
   bool agg_return_partial = 2;
-  // max_frame_version is the highest raw frame wire version this requester can decode.
-  // Zero (absent) means the requester predates version negotiation and decodes only the
-  // original frame version, so a data node must not emit a newer one. A data node answers
-  // with the lower of this value and the newest version it can encode; the frame carries
-  // its own version, so the requester decodes whichever arrives.
-  uint32 max_frame_version = 3;
 }
 
 // InternalQueryResponse is the internal response for distributed query.

@@ -45,56 +45,43 @@ func benchBatch(rows int) *vectorized.RecordBatch {
 	return b
 }
 
-var benchVersions = []struct {
-	name    string
-	version uint8
-}{{"v1", WireVersion}, {"v2", WireVersionColumnar}}
-
 func BenchmarkFrameEncode(b *testing.B) {
 	batch := benchBatch(8192)
-	for _, v := range benchVersions {
-		b.Run(v.name, func(b *testing.B) {
-			b.ReportAllocs()
-			var size int
-			for range b.N {
-				body, err := EncodeVersion(batch, v.version)
-				if err != nil {
-					b.Fatal(err)
-				}
-				size = len(body)
-			}
-			b.ReportMetric(float64(size), "frameB")
-		})
+	b.ReportAllocs()
+	var size int
+	for range b.N {
+		body, err := Encode(batch)
+		if err != nil {
+			b.Fatal(err)
+		}
+		size = len(body)
 	}
+	b.ReportMetric(float64(size), "frameB")
 }
 
 func BenchmarkFrameDecode(b *testing.B) {
 	batch := benchBatch(8192)
-	for _, v := range benchVersions {
-		body, err := EncodeVersion(batch, v.version)
-		if err != nil {
-			b.Fatal(err)
-		}
-		b.Run(v.name, func(b *testing.B) {
-			b.ReportAllocs()
-			retained := retainedAfterDecode(body)
-			b.ResetTimer()
-			for range b.N {
-				decoded, decodeErr := Decode(body)
-				if decodeErr != nil {
-					b.Fatal(decodeErr)
-				}
-				decoded.ReleaseOwners()
-			}
-			b.ReportMetric(float64(len(body)), "frameB")
-			b.ReportMetric(retained, "retainedB")
-		})
+	body, err := Encode(batch)
+	if err != nil {
+		b.Fatal(err)
 	}
+	b.ReportAllocs()
+	retained := retainedAfterDecode(body)
+	b.ResetTimer()
+	for range b.N {
+		decoded, decodeErr := Decode(body)
+		if decodeErr != nil {
+			b.Fatal(decodeErr)
+		}
+		decoded.ReleaseOwners()
+	}
+	b.ReportMetric(float64(len(body)), "frameB")
+	b.ReportMetric(retained, "retainedB")
 }
 
 // retainedAfterDecode is the heap a decoded batch keeps alive besides the message itself: the
 // message is allocated first and counted out, so a columnar batch that borrows it shows only its
-// own headers, and the row-oriented batch shows every string and slice it copied.
+// own headers, and the batch shows only its own headers.
 func retainedAfterDecode(body []byte) float64 {
 	const rounds = 5
 	var total float64

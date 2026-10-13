@@ -198,7 +198,7 @@ func TestConsumersHandleConstColumns(t *testing.T) {
 			b.Selection = []uint16{0, 4, 5, 11}
 			body, err := frame.Encode(b)
 			require.NoError(t, err)
-			return string(body)
+			return dumpFrame(t, body)
 		},
 		"DrainPipelineToFrame": func(t *testing.T, b *vectorized.RecordBatch) string {
 			pipeline, err := vectorized.NewPipelineBuilder().From(&runsSource{schema: schema, batches: []*vectorized.RecordBatch{b}}).Build()
@@ -207,7 +207,7 @@ func TestConsumersHandleConstColumns(t *testing.T) {
 			defer pipeline.Close()
 			body, err := DrainPipelineToFrame(context.Background(), pipeline, schema)
 			require.NoError(t, err)
-			return string(body)
+			return dumpFrame(t, body)
 		},
 		"columnStringAt": func(_ *testing.T, b *vectorized.RecordBatch) string {
 			var sb strings.Builder
@@ -231,6 +231,16 @@ func TestConsumersHandleConstColumns(t *testing.T) {
 			})
 		}
 	}
+}
+
+// dumpFrame decodes a frame body and dumps the batch: a constant column is sent as one value, so the
+// bytes of a frame differ from the bytes of the same rows in a flat column while the rows are equal.
+func dumpFrame(t *testing.T, body []byte) string {
+	t.Helper()
+	decoded, err := frame.Decode(body)
+	require.NoError(t, err)
+	defer decoded.ReleaseOwners()
+	return dumpBatch(decoded)
 }
 
 func TestReduceExpandsConstInputs(t *testing.T) {

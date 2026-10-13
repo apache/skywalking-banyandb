@@ -303,6 +303,7 @@ func TestDrainPipelineToFrameKeepsOwnersUntilEncoded(t *testing.T) {
 
 	decoded, err := frame.Decode(body)
 	require.NoError(t, err)
+	defer decoded.ReleaseOwners()
 	require.Equal(t, 10, decoded.Len)
 	for r := range 10 {
 		require.Equal(t, lifetimeSvc(r%3), decoded.Columns[1].(*vectorized.TypedColumn[string]).Data()[r])

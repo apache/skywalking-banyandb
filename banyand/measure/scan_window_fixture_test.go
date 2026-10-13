@@ -353,7 +353,7 @@ func (fx *fxFixture) run(t testing.TB, q *fxQuery, legacy bool) fxResult {
 	return res
 }
 
-// requireSameResult fails unless got reproduces want row for row and byte for byte.
+// requireSameResult fails unless got reproduces want row for row, in the iterator and in the raw frame.
 func requireSameResult(t testing.TB, want, got fxResult, what string) {
 	t.Helper()
 	require.Equal(t, fmt.Sprint(want.iterErr), fmt.Sprint(got.iterErr), what)
@@ -364,5 +364,16 @@ func requireSameResult(t testing.TB, want, got fxResult, what string) {
 			t.Fatalf("%s: row %d differs\nwant %v\n got %v", what, i, want.points[i], got.points[i])
 		}
 	}
-	require.Equal(t, want.frame, got.frame, "%s: raw frame bytes", what)
+	// A frame sends a constant column as one value, so frames of equal rows may differ in bytes:
+	// compare what they decode to.
+	wantRows, wantErr := vmeasure.DecodeFramesToInternalDataPoints([][]byte{want.frame})
+	require.NoError(t, wantErr, what)
+	gotRows, gotErr := vmeasure.DecodeFramesToInternalDataPoints([][]byte{got.frame})
+	require.NoError(t, gotErr, what)
+	require.Len(t, gotRows, len(wantRows), "%s: raw frame row count", what)
+	for i := range wantRows {
+		if !proto.Equal(wantRows[i], gotRows[i]) {
+			t.Fatalf("%s: raw frame row %d differs\nwant %v\n got %v", what, i, wantRows[i], gotRows[i])
+		}
+	}
 }

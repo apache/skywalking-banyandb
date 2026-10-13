@@ -103,7 +103,7 @@ func (h *hiddenTagsMIterator) Close() error { return h.inner.Close() }
 // the projected columns. The columnar wire then matches what a query
 // without hidden criteria tags would have emitted, byte-identical to
 // the row path.
-func (h *hiddenTagsMIterator) EmitFrame(ctx context.Context) ([]byte, error) {
+func (h *hiddenTagsMIterator) EmitFrame(_ context.Context) ([]byte, error) {
 	var idps []*measurev1.InternalDataPoint
 	for h.Next() {
 		current := h.Current()
@@ -113,7 +113,7 @@ func (h *hiddenTagsMIterator) EmitFrame(ctx context.Context) ([]byte, error) {
 			}
 		}
 	}
-	return vmeasure.SerializeDataPointsToFrameVersion(idps, vmeasure.FrameVersionFromContext(ctx))
+	return vmeasure.SerializeDataPointsToFrame(idps)
 }
 
 // hiddenFieldsMIterator wraps an MIterator and strips a single hidden field
@@ -144,7 +144,7 @@ func (h *hiddenFieldsMIterator) Current() []*measurev1.InternalDataPoint {
 func (h *hiddenFieldsMIterator) Close() error { return h.inner.Close() }
 
 // EmitFrame implements vmeasure.FrameEmitter — mirrors hiddenTagsMIterator.EmitFrame.
-func (h *hiddenFieldsMIterator) EmitFrame(ctx context.Context) ([]byte, error) {
+func (h *hiddenFieldsMIterator) EmitFrame(_ context.Context) ([]byte, error) {
 	var idps []*measurev1.InternalDataPoint
 	for h.Next() {
 		current := h.Current()
@@ -154,7 +154,7 @@ func (h *hiddenFieldsMIterator) EmitFrame(ctx context.Context) ([]byte, error) {
 			}
 		}
 	}
-	return vmeasure.SerializeDataPointsToFrameVersion(idps, vmeasure.FrameVersionFromContext(ctx))
+	return vmeasure.SerializeDataPointsToFrame(idps)
 }
 
 // stripHiddenField removes the field named hiddenField from a slice of

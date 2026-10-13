@@ -38,7 +38,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
-	mframe "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/frame"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -250,8 +249,6 @@ type nativeBenchScenario struct {
 	name  string
 	opts  model.MeasureQueryOptions
 	frame bool
-	// frameVersion is the frame wire version a frame scenario emits; zero means the original one.
-	frameVersion uint8
 }
 
 func groupByStages(opts model.MeasureQueryOptions) nativeBenchBuild {
@@ -295,8 +292,6 @@ func nativeBenchScenarios() []nativeBenchScenario {
 		{name: "groupby", opts: groupBy, build: groupByStages(groupBy)},
 		{name: "frame_scan100", opts: plain, build: none, frame: true},
 		{name: "frame_top10", opts: plain, build: top(nativeBenchRows / 10), frame: true},
-		{name: "frame_scan100_v2", opts: plain, build: none, frame: true, frameVersion: mframe.WireVersionColumnar},
-		{name: "frame_top10_v2", opts: plain, build: top(nativeBenchRows / 10), frame: true, frameVersion: mframe.WireVersionColumnar},
 	}
 }
 
@@ -328,11 +323,7 @@ func runNativeBenchScenario(b *testing.B, h *nativeBenchHarness, sc nativeBenchS
 			b.Fatal(err)
 		}
 		if sc.frame {
-			frameCtx := context.Background()
-			if sc.frameVersion != 0 {
-				frameCtx = vmeasure.ContextWithFrameVersion(frameCtx, sc.frameVersion)
-			}
-			body, frameErr := vmeasure.DrainPipelineToFrame(frameCtx, pipeline, outSchema)
+			body, frameErr := vmeasure.DrainPipelineToFrame(context.Background(), pipeline, outSchema)
 			if frameErr != nil {
 				b.Fatal(frameErr)
 			}

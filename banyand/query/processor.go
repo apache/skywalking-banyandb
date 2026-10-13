@@ -53,7 +53,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
-	mframe "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/frame"
 	vecplan "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/plan"
 	vstream "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream"
 	streamframe "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream/frame"
@@ -885,9 +884,7 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 			resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", emitErr))
 			return
 		}
-		// Emit the newest frame version the requester advertised it can decode; a requester
-		// that advertised nothing predates negotiation and gets the original version.
-		rawBody, drainErr := emitter.EmitFrame(vmeasure.ContextWithFrameVersion(ctx, mframe.NegotiateVersion(internalRequest.GetMaxFrameVersion())))
+		rawBody, drainErr := emitter.EmitFrame(ctx)
 		if drainErr != nil {
 			emitErr := fmt.Errorf("vec raw-frame emit: %w", drainErr)
 			if span != nil {

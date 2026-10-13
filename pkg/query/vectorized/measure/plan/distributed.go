@@ -41,7 +41,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
-	"github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/frame"
 )
 
 // distributedQueryTimeout is the historical hard-coded broadcast deadline.
@@ -514,7 +513,7 @@ func (p *DistributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 		addTraceTagf(broadcastSpan, tracelabels.TagNodeCount, "%d", nodeSelectorCount(dctx.NodeSelectors()))
 		addTraceTagf(broadcastSpan, tracelabels.TagBroadcastTimeoutMS, "%d", p.broadcastTimeout().Milliseconds())
 		addTraceTag(broadcastSpan, tracelabels.TagTimeRange, dctx.TimeRange().String())
-		internalRequest := &measurev1.InternalQueryRequest{Request: nodeRequest, AggReturnPartial: queryRequest.GetAgg() != nil, MaxFrameVersion: frame.AdvertisedVersion()}
+		internalRequest := &measurev1.InternalQueryRequest{Request: nodeRequest, AggReturnPartial: queryRequest.GetAgg() != nil}
 		ff, broadcastErr := dctx.Broadcast(p.broadcastTimeout(), data.TopicInternalMeasureQuery,
 			bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), internalRequest))
 		if broadcastErr != nil {
@@ -568,7 +567,7 @@ func (p *DistributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 		broadcastSpan, broadcastSpanCtx := startTraceSpan(ctx, fmt.Sprintf("broadcast-per-group-%s", groupName))
 		addTraceTag(broadcastSpan, tracelabels.TagGroupName, groupName)
 		addTraceTagf(broadcastSpan, tracelabels.TagNodeCount, "%d", nodeSelectorCount(dctx.NodeSelectors()))
-		internalRequest := &measurev1.InternalQueryRequest{Request: nodeRequest, AggReturnPartial: queryRequest.GetAgg() != nil, MaxFrameVersion: frame.AdvertisedVersion()}
+		internalRequest := &measurev1.InternalQueryRequest{Request: nodeRequest, AggReturnPartial: queryRequest.GetAgg() != nil}
 		ff, broadcastErr := dctx.Broadcast(p.broadcastTimeout(), data.TopicInternalMeasureQuery,
 			bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), internalRequest))
 		if broadcastErr != nil {

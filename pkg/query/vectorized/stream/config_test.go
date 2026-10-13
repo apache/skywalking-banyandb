@@ -28,23 +28,16 @@ import (
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
-	require.True(t, cfg.Enabled)
 	require.Equal(t, vectorized.DefaultBatchSize, cfg.BatchSize)
 	require.Equal(t, 256, cfg.QueryMemoryMiB)
 	require.NoError(t, cfg.Validate())
 }
 
 func TestVectorizedConfigValidate(t *testing.T) {
-	require.Error(t, VectorizedConfig{Enabled: true, BatchSize: 0, QueryMemoryMiB: 256}.Validate())
-	require.Error(t, VectorizedConfig{Enabled: true, BatchSize: 1, QueryMemoryMiB: 0}.Validate())
-	require.NoError(t, VectorizedConfig{Enabled: true, BatchSize: 1, QueryMemoryMiB: 1}.Validate())
+	require.Error(t, VectorizedConfig{BatchSize: 0, QueryMemoryMiB: 256}.Validate())
+	require.Error(t, VectorizedConfig{BatchSize: 1, QueryMemoryMiB: 0}.Validate())
+	require.NoError(t, VectorizedConfig{BatchSize: 1, QueryMemoryMiB: 1}.Validate())
 	// A batch Selection is []uint16, so BatchSize must fit in a uint16.
-	require.NoError(t, VectorizedConfig{Enabled: true, BatchSize: math.MaxUint16, QueryMemoryMiB: 1}.Validate())
-	require.Error(t, VectorizedConfig{Enabled: true, BatchSize: math.MaxUint16 + 1, QueryMemoryMiB: 1}.Validate())
-}
-
-func TestVectorizedConfigRejectsDisabled(t *testing.T) {
-	err := VectorizedConfig{Enabled: false, BatchSize: 1, QueryMemoryMiB: 1}.Validate()
-	require.ErrorIs(t, err, errRowPathRemoved)
-	require.Contains(t, err.Error(), "apache/skywalking#13998")
+	require.NoError(t, VectorizedConfig{BatchSize: math.MaxUint16, QueryMemoryMiB: 1}.Validate())
+	require.Error(t, VectorizedConfig{BatchSize: math.MaxUint16 + 1, QueryMemoryMiB: 1}.Validate())
 }
