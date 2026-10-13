@@ -196,6 +196,8 @@ func columnValueToTagValue(col vectorized.Column, rowIdx int) *modelv1.TagValue 
 		return pbv1NullTagValueRef
 	}
 	switch c := col.(type) {
+	case *vectorized.ConstColumn:
+		return constToTagValue(c)
 	case *vectorized.TypedColumn[int64]:
 		cell := &intTagCell{}
 		cell.v.Value = c.Data()[rowIdx]
@@ -248,6 +250,8 @@ func columnValueToFieldValue(col vectorized.Column, rowIdx int) *modelv1.FieldVa
 		return pbv1NullFieldValueRef
 	}
 	switch c := col.(type) {
+	case *vectorized.ConstColumn:
+		return constToFieldValue(c)
 	case *vectorized.TypedColumn[int64]:
 		cell := &intFieldCell{}
 		cell.v.Value = c.Data()[rowIdx]
@@ -276,4 +280,68 @@ func columnValueToFieldValue(col vectorized.Column, rowIdx int) *modelv1.FieldVa
 		return &cell.fv
 	}
 	return pbv1NullFieldValueRef
+}
+
+// constToTagValue builds the TagValue of a non-null ConstColumn row, with the same
+// ownership rules as the typed cases of columnValueToTagValue.
+func constToTagValue(c *vectorized.ConstColumn) *modelv1.TagValue {
+	switch c.Type() { //nolint:exhaustive // a ConstColumn only stands for these four types
+	case vectorized.ColumnTypeInt64:
+		cell := &intTagCell{}
+		cell.v.Value = c.Int64()
+		cell.w.Int = &cell.v
+		cell.tv.Value = &cell.w
+		return &cell.tv
+	case vectorized.ColumnTypeString:
+		cell := &strTagCell{}
+		cell.v.Value = strings.Clone(c.Str())
+		cell.w.Str = &cell.v
+		cell.tv.Value = &cell.w
+		return &cell.tv
+	case vectorized.ColumnTypeBytes:
+		cell := &binTagCell{}
+		cell.w.BinaryData = copyBytes(c.Bytes())
+		cell.tv.Value = &cell.w
+		return &cell.tv
+	default:
+		return pbv1NullTagValueRef
+	}
+}
+
+// constToFieldValue is constToTagValue for a field.
+func constToFieldValue(c *vectorized.ConstColumn) *modelv1.FieldValue {
+	switch c.Type() { //nolint:exhaustive // a ConstColumn only stands for these four types
+	case vectorized.ColumnTypeInt64:
+		cell := &intFieldCell{}
+		cell.v.Value = c.Int64()
+		cell.w.Int = &cell.v
+		cell.fv.Value = &cell.w
+		return &cell.fv
+	case vectorized.ColumnTypeFloat64:
+		cell := &floatFieldCell{}
+		cell.v.Value = c.Float64()
+		cell.w.Float = &cell.v
+		cell.fv.Value = &cell.w
+		return &cell.fv
+	case vectorized.ColumnTypeString:
+		cell := &strFieldCell{}
+		cell.v.Value = strings.Clone(c.Str())
+		cell.w.Str = &cell.v
+		cell.fv.Value = &cell.w
+		return &cell.fv
+	case vectorized.ColumnTypeBytes:
+		cell := &binFieldCell{}
+		cell.w.BinaryData = copyBytes(c.Bytes())
+		cell.fv.Value = &cell.w
+		return &cell.fv
+	default:
+		return pbv1NullFieldValueRef
+	}
+}
+
+// copyBytes returns a non-nil copy of src, as the typed bytes cases build it.
+func copyBytes(src []byte) []byte {
+	buf := make([]byte, len(src))
+	copy(buf, src)
+	return buf
 }

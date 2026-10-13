@@ -320,8 +320,23 @@ func planSegments(cursors []*blockCursor, desc bool) []scanSegment {
 }
 
 // next returns the next batch, or nil at the end of the scan. The error is
-// sticky.
+// sticky. Every batch is marked with what the scan knows about its rows: where each
+// series ends, and that time runs in the scan's direction within a series (a series'
+// segments are visited in time order, and a merge emits its rows in time order), so
+// an aggregation can split the batch into runs without reading its rows.
 func (s *windowScan) next(ctx context.Context) (*model.MeasureBatch, error) {
+	b, err := s.nextUnmarked(ctx)
+	if b != nil {
+		b.SeriesKnown = true
+		b.TimeOrder = vectorized.TimeOrderAsc
+		if s.desc {
+			b.TimeOrder = vectorized.TimeOrderDesc
+		}
+	}
+	return b, err
+}
+
+func (s *windowScan) nextUnmarked(ctx context.Context) (*model.MeasureBatch, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -581,6 +596,9 @@ func (s *windowScan) takeBuilder() *model.MeasureBatch {
 	if len(s.boundary) > 0 {
 		b.SeriesBoundaries = append(b.SeriesBoundaries[:0], s.boundary...)
 		b.SeriesBoundaries = append(b.SeriesBoundaries, b.RowCount())
+	} else {
+		// One series throughout: its entity tags are constant for the whole batch.
+		constifyEntityTags(b, s.qr.batchSchema)
 	}
 	s.boundary = s.boundary[:0]
 	s.stats.coalesced++

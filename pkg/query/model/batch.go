@@ -117,8 +117,45 @@ type MeasureBatch struct {
 	// owners (vectorized.Owners.PinAll) before releasing the batch.
 	Owners vectorized.Owners
 
+	// consts is storage for the constant columns a producer puts in Tags, so a batch
+	// that lends a series' entity tags allocates nothing for them; nConsts of them are
+	// in use.
+	consts [maxEmbeddedConsts]vectorized.ConstColumn
+
+	nConsts int
+
+	// SeriesKnown is set by a producer that knows exactly which series each row
+	// belongs to: SeriesBoundaries is then exact, and empty means the batch is a
+	// single series. Without it SeriesBoundaries says nothing.
+	SeriesKnown bool
+
+	// TimeOrder is the direction of time within each series run (a whole batch, for
+	// a single series), in the order the batch's rows are read: TimeOrderAsc,
+	// TimeOrderDesc, or TimeOrderUnknown when the producer does not promise one.
+	TimeOrder vectorized.TimeOrder
+
 	// metaBorrowed is set while Timestamps and Versions are borrowed views.
 	metaBorrowed bool
+}
+
+// maxEmbeddedConsts is how many constant columns a MeasureBatch carries in its own
+// storage; further ones come from the column pool.
+const maxEmbeddedConsts = 4
+
+// ConstFrom returns a constant column of n rows holding the value of row of src (see
+// vectorized.AcquireConstFrom), in storage the batch owns when it has room. The
+// caller puts it in Tags, which Release gives back; it reports false, having built
+// nothing, when src cannot be constant.
+func (b *MeasureBatch) ConstFrom(src vectorized.Column, row, n int) (*vectorized.ConstColumn, bool) {
+	if b.nConsts < len(b.consts) {
+		c := &b.consts[b.nConsts]
+		if !vectorized.FillEmbeddedConstFrom(c, src, row, n) {
+			return nil, false
+		}
+		b.nConsts++
+		return c, true
+	}
+	return vectorized.AcquireConstFrom(src, row, n)
 }
 
 // RowCount returns the number of rows in the batch. It reads len(Timestamps);
@@ -167,17 +204,25 @@ func (b *MeasureBatch) MetadataBorrowed() bool { return b.metaBorrowed }
 // held (at least capacity). Callers must call Release exactly once when
 // done with the batch.
 func AcquireMeasureBatch(schema *vectorized.BatchSchema, capacity int) *MeasureBatch {
-	return acquireMeasureBatch(schema, capacity, true)
+	return acquireMeasureBatch(schema, capacity, true, false)
 }
 
 // AcquireBorrowingMeasureBatch is AcquireMeasureBatch for a batch whose
 // Timestamps and Versions will be set with BorrowMetadata: it does not size
 // those two slices, only ShardIDs, SeriesIDs and the columns.
 func AcquireBorrowingMeasureBatch(schema *vectorized.BatchSchema, capacity int) *MeasureBatch {
-	return acquireMeasureBatch(schema, capacity, false)
+	return acquireMeasureBatch(schema, capacity, false, false)
 }
 
-func acquireMeasureBatch(schema *vectorized.BatchSchema, capacity int, sizeMetadata bool) *MeasureBatch {
+// AcquireConstEntityMeasureBatch is AcquireBorrowingMeasureBatch for a batch whose
+// entity tag columns are about to be replaced by constants (see ConstFrom): their
+// placeholder columns are acquired empty instead of sized to capacity rows, so a pool
+// miss does not allocate a column's worth of memory that is released unused.
+func AcquireConstEntityMeasureBatch(schema *vectorized.BatchSchema, capacity int) *MeasureBatch {
+	return acquireMeasureBatch(schema, capacity, false, true)
+}
+
+func acquireMeasureBatch(schema *vectorized.BatchSchema, capacity int, sizeMetadata, emptyEntityTags bool) *MeasureBatch {
 	b := measureBatchPool.Get()
 	if b == nil {
 		b = &MeasureBatch{}
@@ -189,6 +234,9 @@ func acquireMeasureBatch(schema *vectorized.BatchSchema, capacity int, sizeMetad
 	b.ShardIDs = b.ShardIDs[:0]
 	b.SeriesIDs = b.SeriesIDs[:0]
 	b.SeriesBoundaries = b.SeriesBoundaries[:0]
+	b.SeriesKnown = false
+	b.TimeOrder = vectorized.TimeOrderUnknown
+	b.nConsts = 0
 	if capacity > 0 {
 		if sizeMetadata && cap(b.Timestamps) < capacity {
 			b.Timestamps = make([]int64, 0, capacity)
@@ -209,7 +257,11 @@ func acquireMeasureBatch(schema *vectorized.BatchSchema, capacity int, sizeMetad
 		for _, def := range schema.Columns {
 			switch def.Role {
 			case vectorized.RoleTag:
-				b.Tags = append(b.Tags, vectorized.AcquireColumn(def.Type, capacity))
+				tagCapacity := capacity
+				if emptyEntityTags && def.Entity {
+					tagCapacity = 0
+				}
+				b.Tags = append(b.Tags, vectorized.AcquireColumn(def.Type, tagCapacity))
 			case vectorized.RoleField:
 				b.Fields = append(b.Fields, vectorized.AcquireColumn(def.Type, capacity))
 			case vectorized.RoleTimestamp, vectorized.RoleVersion,
@@ -241,6 +293,8 @@ func (b *MeasureBatch) Release() {
 	}
 	b.Schema = nil
 	b.Selection = nil
+	b.SeriesKnown = false
+	b.TimeOrder = vectorized.TimeOrderUnknown
 	if b.metaBorrowed {
 		// The views belong to the pinned owners; get the pooled buffers back.
 		b.Timestamps = b.ownTimestamps[:0]

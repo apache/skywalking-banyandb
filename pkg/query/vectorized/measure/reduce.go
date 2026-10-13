@@ -447,6 +447,8 @@ func columnStringAt(col vectorized.Column, row int) string {
 		return "<null>"
 	}
 	switch c := col.(type) {
+	case *vectorized.ConstColumn:
+		return columnStringAt(c.Expand(), row)
 	case *vectorized.TypedColumn[int64]:
 		return fmt.Sprintf("%d", c.Data()[row])
 	case *vectorized.TypedColumn[float64]:

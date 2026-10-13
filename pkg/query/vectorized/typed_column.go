@@ -58,6 +58,11 @@ func (c *TypedColumn[T]) Len() int { return len(c.data) }
 // IsNull reports whether row i is null.
 func (c *TypedColumn[T]) IsNull(i int) bool { return c.validity.IsNull(i) }
 
+// MayHaveNulls reports whether any row may be null. False is a guarantee, so a
+// range loop over Data can skip the per-row validity check; true only means the
+// check is needed.
+func (c *TypedColumn[T]) MayHaveNulls() bool { return c.validity.marked }
+
 // Data returns the backing slice for bulk access. The caller must not write
 // through it when Borrowed reports true.
 func (c *TypedColumn[T]) Data() []T { return c.data }

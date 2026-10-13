@@ -69,6 +69,11 @@ func (c Codec) Encode(b *vectorized.RecordBatch) ([]byte, error) {
 		buf = append(buf, def.TagFamily...)
 
 		col := b.Columns[colIdx]
+		if constCol, isConst := col.(*vectorized.ConstColumn); isConst {
+			// The wire format has no constant column (frame v2 will); expand it to the
+			// typed column it stands for.
+			col = constCol.Expand()
+		}
 		buf = appendValidityBitmap(buf, col, active)
 		var dataErr error
 		buf, dataErr = appendColumnData(buf, col, def.Type, active)

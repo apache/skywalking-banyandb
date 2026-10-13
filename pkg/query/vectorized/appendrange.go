@@ -66,6 +66,17 @@ func AppendActiveRows(dst, src *RecordBatch) error {
 // whose dst outlives src's batch must pin the same owners on dst's batch
 // (Owners.PinAll) or clone what it keeps.
 func AppendColumnRange(dst, src Column, srcPos, n int) error {
+	if constSrc, isConst := src.(*ConstColumn); isConst {
+		if srcPos < 0 || n < 0 || srcPos+n > constSrc.Len() {
+			return fmt.Errorf("AppendColumnRange: range [%d,%d) outside const column of %d rows", srcPos, srcPos+n, constSrc.Len())
+		}
+		return constSrc.AppendTo(dst, n)
+	}
+	return appendTypedRange(dst, src, srcPos, n)
+}
+
+// appendTypedRange is AppendColumnRange for a source that is a TypedColumn.
+func appendTypedRange(dst, src Column, srcPos, n int) error {
 	startLen := dst.Len()
 	switch d := dst.(type) {
 	case *TypedColumn[int64]:

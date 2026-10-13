@@ -18,6 +18,9 @@
 package measure
 
 import (
+	"fmt"
+	"sync/atomic"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
@@ -27,6 +30,31 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
+
+// disableConstColumns switches the production of ConstColumns off, so a test can
+// compare a scan that carries entity tags as constants with one that does not.
+var disableConstColumns atomic.Bool
+
+// verifyEntityConstants makes every ConstColumn the scan builds be checked against
+// all the rows it stands for. Tests turn it on; production never does.
+var verifyEntityConstants atomic.Bool
+
+func constColumnsEnabled() bool { return !disableConstColumns.Load() }
+
+// assertColumnIsConst panics unless every row of col holds the value of constCol.
+func assertColumnIsConst(col vectorized.Column, constCol *vectorized.ConstColumn, what string) {
+	for i := range col.Len() {
+		rowConst, ok := vectorized.AcquireConstFrom(col, i, 1)
+		if !ok {
+			panic(fmt.Sprintf("measure: %s: cannot read row %d as a constant", what, i))
+		}
+		same := rowConst.Equal(constCol)
+		vectorized.ReleaseColumn(rowConst)
+		if !same {
+			panic(fmt.Sprintf("measure: %s: row %d differs from the constant the batch carries for it", what, i))
+		}
+	}
+}
 
 // G5b/G5c — typed-column emit path on blockCursor.
 //
@@ -148,7 +176,12 @@ func (bc *blockCursor) lendBatch(schema *vectorized.BatchSchema,
 	storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue, desc bool,
 ) *model.MeasureBatch {
 	size := len(bc.timestamps)
-	b := model.AcquireBorrowingMeasureBatch(schema, size)
+	var b *model.MeasureBatch
+	if constColumnsEnabled() {
+		b = model.AcquireConstEntityMeasureBatch(schema, size)
+	} else {
+		b = model.AcquireBorrowingMeasureBatch(schema, size)
+	}
 	b.BorrowMetadata(bc.timestamps, bc.versions)
 	b.Owners.Pin(bc)
 	sid := bc.bm.seriesID
@@ -165,6 +198,10 @@ func (bc *blockCursor) lendBatch(schema *vectorized.BatchSchema,
 		switch def.Role {
 		case vectorized.RoleTag:
 			col := b.Tags[tagIdx]
+			if def.Entity && size > 0 && constColumnsEnabled() && bc.constEntityTag(b, tagIdx, def, indexValue, size) {
+				tagIdx++
+				continue
+			}
 			tagIdx++
 			bc.fillTagColumnAllRows(b, col, def, 0, size, indexValue, false, true)
 		case vectorized.RoleField:
@@ -184,6 +221,47 @@ func (bc *blockCursor) lendBatch(schema *vectorized.BatchSchema,
 		}
 	}
 	return b
+}
+
+// constEntityTag replaces tag column tagIdx of b, which holds one series' rows, with
+// a ConstColumn of size rows holding the entity tag's value. An entity tag is the same
+// in every row of a block, because a block is one series and the series is the entity
+// values; the value is decoded from the first row only, through the same path that
+// fills a whole column, so a missing family or column, a stored type that differs from
+// the schema's, and an index-substituted value all come out as they would row by row
+// (a null becomes a null constant). A string or bytes value borrows the cursor's
+// memory, which b pins. It returns false, having left the column as it was, when the
+// column is not of a type a ConstColumn can stand for.
+func (bc *blockCursor) constEntityTag(b *model.MeasureBatch, tagIdx int, def vectorized.ColumnDef,
+	indexValue map[string]*modelv1.TagValue, size int,
+) bool {
+	col := b.Tags[tagIdx]
+	if !vectorized.ConstSupported(def.Type) || col.Len() != 0 {
+		return false
+	}
+	bc.fillTagColumnAllRows(b, col, def, 0, 1, indexValue, false, false)
+	constCol, ok := b.ConstFrom(col, 0, size)
+	if !ok {
+		col.Reset()
+		return false
+	}
+	if verifyEntityConstants.Load() {
+		bc.verifyConstEntityTag(b, def, constCol, indexValue, size)
+	}
+	vectorized.ReleaseColumn(col)
+	b.Tags[tagIdx] = constCol
+	return true
+}
+
+// verifyConstEntityTag panics unless every row of the block holds the value of
+// constCol. It is the test-mode check of the invariant constEntityTag relies on.
+func (bc *blockCursor) verifyConstEntityTag(b *model.MeasureBatch, def vectorized.ColumnDef, constCol *vectorized.ConstColumn,
+	indexValue map[string]*modelv1.TagValue, size int,
+) {
+	full := vectorized.AcquireColumn(def.Type, size)
+	defer vectorized.ReleaseColumn(full)
+	bc.fillTagColumnAllRows(b, full, def, 0, size, indexValue, false, false)
+	assertColumnIsConst(full, constCol, "block of series "+fmt.Sprint(bc.bm.seriesID)+" tag "+def.Name)
 }
 
 // fillTagColumnAllRows appends rows [idx, offset) of the tag described by
@@ -927,4 +1005,35 @@ func (bc *blockCursor) findFieldColumn(name string) *column {
 		}
 	}
 	return nil
+}
+
+// constifyEntityTags replaces the entity tag columns of b, a batch of one series' rows
+// gathered from several pieces, with ConstColumns holding the first row's value. The
+// caller has established that b holds a single series. A string or bytes value keeps
+// borrowing the memory b pins.
+func constifyEntityTags(b *model.MeasureBatch, schema *vectorized.BatchSchema) {
+	n := b.RowCount()
+	if n == 0 || !constColumnsEnabled() {
+		return
+	}
+	tagIdx := 0
+	for _, def := range schema.Columns {
+		if def.Role != vectorized.RoleTag {
+			continue
+		}
+		idx := tagIdx
+		tagIdx++
+		if !def.Entity || !vectorized.ConstSupported(def.Type) {
+			continue
+		}
+		constCol, ok := b.ConstFrom(b.Tags[idx], 0, n)
+		if !ok {
+			continue
+		}
+		if verifyEntityConstants.Load() {
+			assertColumnIsConst(b.Tags[idx], constCol, "coalesced batch tag "+def.Name)
+		}
+		vectorized.ReleaseColumn(b.Tags[idx])
+		b.Tags[idx] = constCol
+	}
 }

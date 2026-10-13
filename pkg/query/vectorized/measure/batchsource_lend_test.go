@@ -227,3 +227,53 @@ func TestBatchSourceCopySelectedRowsFollowsSelectionOrder(t *testing.T) {
 	mb.Release()
 	pool.Put(out)
 }
+
+func TestBatchSourceLendsConstantTagsAndHints(t *testing.T) {
+	schema := lendSchema()
+	pool := vectorized.NewBatchPool(schema, 64)
+	owner := &lendOwner{}
+	const rows = 600
+	mb, _ := nativeBatch(schema, 7, 100, rows, owner)
+	// Replace the typed tag column by the constant a scan lends for an entity tag.
+	vectorized.ReleaseColumn(mb.Tags[0])
+	constTag, ok := mb.ConstFrom(vectorized.Materialize(vectorized.NewConstString("svc-a", 1)), 0, rows)
+	require.True(t, ok)
+	mb.Tags[0] = constTag
+	mb.SeriesKnown = true
+	mb.TimeOrder = vectorized.TimeOrderAsc
+	src := NewBatchSourceFromBatchResult(&fakeBatchResult{seq: []*model.MeasureBatch{mb}}, schema, pool, 64)
+	defer src.Close()
+
+	batches := drain(t, src)
+	require.Len(t, batches, 1)
+	got := batches[0]
+	tag, isConst := vectorized.AsConst(got.Columns[4])
+	require.True(t, isConst, "the lent batch keeps the constant column as it is")
+	require.Equal(t, "svc-a", tag.Str())
+	require.Equal(t, rows, tag.Len())
+	require.Equal(t, vectorized.BatchHints{SeriesKnown: true, TimeOrder: vectorized.TimeOrderAsc}, got.Hints)
+	runs, known := got.SeriesRuns(nil)
+	require.True(t, known)
+	require.Equal(t, []int{rows}, runs)
+	pool.Put(got)
+	require.Equal(t, 0, owner.refs)
+
+	// A batch the source copies (it is small) is typed and carries no hint.
+	small, _ := nativeBatch(schema, 7, 100, 10, owner)
+	vectorized.ReleaseColumn(small.Tags[0])
+	smallTag, ok := small.ConstFrom(vectorized.Materialize(vectorized.NewConstString("svc-a", 1)), 0, 10)
+	require.True(t, ok)
+	small.Tags[0] = smallTag
+	small.SeriesKnown = true
+	small.TimeOrder = vectorized.TimeOrderAsc
+	copySrc := NewBatchSourceFromBatchResult(&fakeBatchResult{seq: []*model.MeasureBatch{small}}, schema, pool, 64)
+	defer copySrc.Close()
+	copied := drain(t, copySrc)
+	require.Len(t, copied, 1)
+	require.False(t, copied[0].Lent)
+	copiedTag, ok := copied[0].Columns[4].(*vectorized.TypedColumn[string])
+	require.True(t, ok, "copying expands the constant into an ordinary column")
+	require.Equal(t, []string{"svc-a", "svc-a", "svc-a", "svc-a", "svc-a", "svc-a", "svc-a", "svc-a", "svc-a", "svc-a"}, copiedTag.Data())
+	require.Equal(t, vectorized.BatchHints{}, copied[0].Hints)
+	pool.Put(copied[0])
+}

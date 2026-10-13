@@ -175,8 +175,20 @@ func (g *BatchGroupBy) Consume(_ context.Context, b *vectorized.RecordBatch) err
 func (g *BatchGroupBy) consumeRows(b *vectorized.RecordBatch, active []uint16) int64 {
 	var newGroups int64
 	var copiedRows int64
-	for _, rowIdx := range active {
-		bucket, isNew := g.findOrCreate(b, int(rowIdx))
+	// When every key column is a constant all rows share one group: find it once.
+	var shared *groupBucket
+	var sharedNew bool
+	if len(active) > 0 && !runsDisabled.Load() && g.allKeysConst(b) {
+		shared, sharedNew = g.findOrCreate(b, int(active[0]))
+	}
+	for i, rowIdx := range active {
+		var bucket *groupBucket
+		var isNew bool
+		if shared != nil {
+			bucket, isNew = shared, sharedNew && i == 0
+		} else {
+			bucket, isNew = g.findOrCreate(b, int(rowIdx))
+		}
 		if isNew {
 			newGroups++
 		}
@@ -192,6 +204,20 @@ func (g *BatchGroupBy) consumeRows(b *vectorized.RecordBatch, active []uint16) i
 		copiedRows++
 	}
 	return newGroups*g.entrySize + copiedRows*g.rowSize
+}
+
+// allKeysConst reports whether the operator has keys and every one of them is a
+// ConstColumn in b.
+func (g *BatchGroupBy) allKeysConst(b *vectorized.RecordBatch) bool {
+	if len(g.keyIndices) == 0 {
+		return false
+	}
+	for _, kIdx := range g.keyIndices {
+		if _, isConst := vectorized.AsConst(b.Columns[kIdx]); !isConst {
+			return false
+		}
+	}
+	return true
 }
 
 // findOrCreate locates the bucket for the row's key, creating it if absent.
@@ -313,8 +339,28 @@ func appendKeyComponent(dst []byte, col vectorized.Column, rowIdx int) []byte {
 		return appendTagValueKey(dst, c.Data()[rowIdx])
 	case *vectorized.TypedColumn[*modelv1.FieldValue]:
 		return appendFieldValueKey(dst, c.Data()[rowIdx])
+	case *vectorized.ConstColumn:
+		return appendConstKey(dst, c)
 	}
 	return dst
+}
+
+// appendConstKey encodes a ConstColumn's value exactly as appendKeyComponent would
+// encode the same value in any row of an expanded column, including a null, whose
+// typed placeholder is the zero value of the type.
+func appendConstKey(dst []byte, c *vectorized.ConstColumn) []byte {
+	switch c.Type() { //nolint:exhaustive // a ConstColumn only stands for these four types
+	case vectorized.ColumnTypeInt64:
+		return appendIntKey(dst, c.Int64())
+	case vectorized.ColumnTypeFloat64:
+		return appendFloatKey(dst, c.Float64())
+	case vectorized.ColumnTypeString:
+		return appendStringKey(dst, c.Str())
+	case vectorized.ColumnTypeBytes:
+		return appendBytesKey(dst, c.Bytes())
+	default:
+		return dst
+	}
 }
 
 // KeyComponentSupported reports whether appendKeyComponent has a real
@@ -423,6 +469,8 @@ func cloneOneValue(dst, src vectorized.Column, rowIdx int) {
 		return
 	}
 	switch s := src.(type) {
+	case *vectorized.ConstColumn:
+		cloneConstValue(dst, s)
 	case *vectorized.TypedColumn[string]:
 		dst.(*vectorized.TypedColumn[string]).Append(strings.Clone(s.Data()[rowIdx]))
 	case *vectorized.TypedColumn[[]byte]:
@@ -431,6 +479,20 @@ func cloneOneValue(dst, src vectorized.Column, rowIdx int) {
 		dst.(*vectorized.TypedColumn[[]string]).Append(cloneStrings(s.Data()[rowIdx]))
 	default:
 		copyOneValue(dst, src, rowIdx)
+	}
+}
+
+// cloneConstValue appends c's value to dst, copying a string or bytes payload that
+// may borrow storage memory.
+func cloneConstValue(dst vectorized.Column, c *vectorized.ConstColumn) {
+	switch c.Type() { //nolint:exhaustive // a ConstColumn only stands for these four types
+	case vectorized.ColumnTypeString:
+		dst.(*vectorized.TypedColumn[string]).Append(strings.Clone(c.Str()))
+	case vectorized.ColumnTypeBytes:
+		dst.(*vectorized.TypedColumn[[]byte]).Append(bytes.Clone(c.Bytes()))
+	default:
+		// Scalars are copied by value, so copying shares nothing.
+		_ = c.AppendTo(dst, 1)
 	}
 }
 
@@ -455,6 +517,8 @@ func copyOneValue(dst, src vectorized.Column, rowIdx int) {
 		return
 	}
 	switch s := src.(type) {
+	case *vectorized.ConstColumn:
+		_ = s.AppendTo(dst, 1)
 	case *vectorized.TypedColumn[int64]:
 		dst.(*vectorized.TypedColumn[int64]).Append(s.Data()[rowIdx])
 	case *vectorized.TypedColumn[float64]:

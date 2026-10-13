@@ -250,6 +250,10 @@ func (s *BatchSourceFromBatchResult) lend(mb *model.MeasureBatch) *vectorized.Re
 		Len:       n,
 		Lent:      true,
 	}
+	if mb.SeriesKnown {
+		// The series ends are borrowed from mb, which out's owner keeps alive.
+		out.Hints = vectorized.BatchHints{SeriesKnown: true, SeriesEnds: mb.SeriesBoundaries, TimeOrder: mb.TimeOrder}
+	}
 	out.Owners.Pin(holder)
 	holder.Release()
 	return out

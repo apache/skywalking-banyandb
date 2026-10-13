@@ -20,6 +20,7 @@ package measure
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -93,11 +94,13 @@ func BuildBatchSchema(measureSchema *databasev1.Measure, opts model.MeasureQuery
 					colType = mapped
 				}
 			}
+			isEntity := isEntityTag(measureSchema, tp.Family, name)
 			cols = append(cols, vectorized.ColumnDef{
 				Role:      vectorized.RoleTag,
 				TagFamily: tp.Family,
 				Name:      name,
 				Type:      colType,
+				Entity:    isEntity && constSupportedColumn(colType),
 			})
 		}
 	}
@@ -124,6 +127,32 @@ func BuildBatchSchema(measureSchema *databasev1.Measure, opts model.MeasureQuery
 
 	return vectorized.NewBatchSchema(cols), nil
 }
+
+// isEntityTag reports whether the tag name of family is an entity tag of the measure.
+// An entity tag name that more than one family declares is not: the schema does not
+// say which of the columns is the entity tag, and marking the wrong one as a
+// per-series constant would change results.
+func isEntityTag(measureSchema *databasev1.Measure, family, name string) bool {
+	if !slices.Contains(measureSchema.GetEntity().GetTagNames(), name) {
+		return false
+	}
+	declaredIn := 0
+	inFamily := false
+	for _, tf := range measureSchema.GetTagFamilies() {
+		for _, ts := range tf.GetTags() {
+			if ts.GetName() != name {
+				continue
+			}
+			declaredIn++
+			inFamily = inFamily || tf.GetName() == family
+		}
+	}
+	return declaredIn == 1 && inFamily
+}
+
+// constSupportedColumn reports whether a column of type t can be carried as a
+// vectorized.ConstColumn.
+func constSupportedColumn(t vectorized.ColumnType) bool { return vectorized.ConstSupported(t) }
 
 func tagTypeToColumnType(t databasev1.TagType) (vectorized.ColumnType, error) {
 	switch t {

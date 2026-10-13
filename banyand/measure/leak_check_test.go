@@ -83,6 +83,7 @@ func leakStacks() string {
 // still holds a cursor, a reservation, a decode task or a query result. Decode
 // workers are not counted: the shared fixture pool lives for the whole run.
 func TestMain(m *testing.M) {
+	configureInvariantChecks()
 	if os.Getenv("BYDB_LEAK_STACKS") == "1" {
 		pool.EnableStackTracking(true)
 	}

@@ -339,3 +339,42 @@ func TestEgressNativeMatchesPassthrough(t *testing.T) {
 		requireSameDataPoints(t, encode(legacy), encode(native))
 	})
 }
+
+func TestBuildBatchSchemaMarksEntityTags(t *testing.T) {
+	spec := func(name string, typ databasev1.TagType) *databasev1.TagSpec {
+		return &databasev1.TagSpec{Name: name, Type: typ}
+	}
+	m := &databasev1.Measure{
+		Entity: &databasev1.Entity{TagNames: []string{"svc", "inst", "dup", "arr"}},
+		TagFamilies: []*databasev1.TagFamilySpec{
+			{Name: "a", Tags: []*databasev1.TagSpec{
+				spec("svc", databasev1.TagType_TAG_TYPE_STRING),
+				spec("note", databasev1.TagType_TAG_TYPE_STRING),
+				spec("dup", databasev1.TagType_TAG_TYPE_STRING),
+				spec("arr", databasev1.TagType_TAG_TYPE_STRING_ARRAY),
+			}},
+			{Name: "b", Tags: []*databasev1.TagSpec{
+				spec("inst", databasev1.TagType_TAG_TYPE_INT),
+				// An entity tag name declared by two families is ambiguous.
+				spec("dup", databasev1.TagType_TAG_TYPE_STRING),
+			}},
+		},
+		Fields: []*databasev1.FieldSpec{{Name: "v", FieldType: databasev1.FieldType_FIELD_TYPE_INT}},
+	}
+	schema, err := BuildBatchSchema(m, model.MeasureQueryOptions{
+		TagProjection:   []model.TagProjection{{Family: "a", Names: []string{"svc", "note", "dup", "arr", "missing"}}, {Family: "b", Names: []string{"inst", "dup"}}},
+		FieldProjection: []string{"v"},
+	})
+	require.NoError(t, err)
+	entity := map[string]bool{}
+	for _, def := range schema.Columns {
+		if def.Role == vectorized.RoleTag {
+			entity[def.TagFamily+"."+def.Name] = def.Entity
+		} else {
+			require.False(t, def.Entity, "only tags can be entity columns")
+		}
+	}
+	require.Equal(t, map[string]bool{
+		"a.svc": true, "a.note": false, "a.dup": false, "a.arr": false, "a.missing": false, "b.inst": true, "b.dup": false,
+	}, entity, "an ambiguous name and a type a constant cannot stand for are not marked")
+}

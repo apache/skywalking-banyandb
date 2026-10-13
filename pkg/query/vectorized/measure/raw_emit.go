@@ -622,8 +622,15 @@ func appendActive(dst, src *vectorized.RecordBatch) error {
 	if activeErr != nil {
 		return activeErr
 	}
-	for _, rowIdx := range active {
-		for colIdx, srcCol := range src.Columns {
+	for colIdx, srcCol := range src.Columns {
+		if constCol, isConst := srcCol.(*vectorized.ConstColumn); isConst {
+			// One append per row of the constant; no per-row type dispatch.
+			if appendErr := constCol.AppendTo(dst.Columns[colIdx], len(active)); appendErr != nil {
+				return appendErr
+			}
+			continue
+		}
+		for _, rowIdx := range active {
 			copyOneValue(dst.Columns[colIdx], srcCol, int(rowIdx))
 		}
 	}

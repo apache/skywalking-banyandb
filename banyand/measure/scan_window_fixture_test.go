@@ -70,6 +70,11 @@ var fxTagTypes = map[string]pbv1.ValueType{
 
 func fxMeasure() *databasev1.Measure {
 	return &databasev1.Measure{
+		// svc is a function of the series (svc-<sid mod 4>) and hid is the tag the
+		// tests substitute from the index per series (and is absent otherwise), so
+		// both are constant within a series: the entity tags a lent batch carries as
+		// ConstColumns.
+		Entity: &databasev1.Entity{TagNames: []string{fxTagSvc, fxTagHid}},
 		TagFamilies: []*databasev1.TagFamilySpec{{Name: fxFamily, Tags: []*databasev1.TagSpec{
 			{Name: fxTagSvc, Type: databasev1.TagType_TAG_TYPE_STRING},
 			{Name: fxTagURL, Type: databasev1.TagType_TAG_TYPE_STRING},

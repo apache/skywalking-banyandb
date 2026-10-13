@@ -88,6 +88,9 @@ const (
 	gateShapeTop
 	gateShapeReduce // scalar reduce, raw group-by, group-by + agg
 	gateShapeHidden
+	// gateShapeBucket is a time-bucketed group-by with an aggregate (the streaming
+	// BatchTimeBucket), drained to the end without a limit.
+	gateShapeBucket
 )
 
 // gateParts says how a layout's rows are spread over parts.
@@ -114,6 +117,18 @@ type gateLayout struct {
 	parts   gateParts
 	series  int
 	rowsPer int
+	// stagger gives every series its own time range (series s covers
+	// [s*rowsPer+1, (s+1)*rowsPer]), so a time-ordered scan is a concatenation of whole
+	// series instead of an interleaving of all of them.
+	stagger bool
+}
+
+// maxTS is the end of the layout's time range.
+func (l gateLayout) maxTS() int64 {
+	if l.stagger {
+		return int64(l.series*l.rowsPer) + 1
+	}
+	return int64(l.rowsPer) + 1
 }
 
 var (
@@ -122,14 +137,16 @@ var (
 	gateLayoutGroups   = gateLayout{name: "groups_16x6250", series: gateGroupCard, rowsPer: 6250}
 	gateLayoutDisjoint = gateLayout{name: "multi_100x1k_4parts_disjoint", parts: gatePartsDisjoint, series: 100, rowsPer: 1000}
 	gateLayoutOverlap  = gateLayout{name: "multi_100x1k_2parts_overlap", parts: gatePartsOverlap, series: 100, rowsPer: 1000}
+	// gateLayoutStaggered is 100 series with disjoint time ranges, one block each.
+	gateLayoutStaggered = gateLayout{name: "staggered_100x1k", series: 100, rowsPer: 1000, stagger: true}
 )
 
 type gateWorkload struct {
 	id       string
 	topField string
 	hidden   string
-	layout   gateLayout
 	opts     model.MeasureQueryOptions
+	layout   gateLayout
 	topN     int
 	limitN   int
 	wantRows int
@@ -150,7 +167,17 @@ var (
 	gateGroupBy = &model.MeasureGroupBy{TagFamily: gateFamily, TagNames: []string{gateTSTag}}
 	gateSum     = &model.MeasureAgg{FieldName: gateFieldInt, Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM}
 	gateCount   = &model.MeasureAgg{FieldName: gateFieldFlt, Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT}
+	// gateEntityGroupBy groups by every entity tag of the gate measure.
+	gateEntityGroupBy = &model.MeasureGroupBy{TagFamily: gateFamily, TagNames: []string{gateTSTag, gateTagEnv}}
 )
+
+// gateBucketGroupBy buckets time into 100-tick buckets and groups by the given tags.
+func gateBucketGroupBy(tags ...string) *model.MeasureGroupBy {
+	return &model.MeasureGroupBy{
+		TagFamily: gateFamily, TagNames: tags,
+		TimeBucket: &model.MeasureTimeBucket{Width: "100ns", WidthNanos: 100},
+	}
+}
 
 // gateWorkloads keeps the W1..W8 shapes of the retired harness: W1 single-series
 // scan, W2 multi-tag multi-series scan, W3 top-N over a scan, W4 scalar reduce,
@@ -218,6 +245,32 @@ func gateWorkloads() []gateWorkload {
 				TagProjection: gateProj(gateTSTag, gateTagEnv), FieldProjection: []string{gateFieldInt, gateFieldFlt},
 			},
 		},
+		// W13 groups the W2 series by their entity tags: every block is one series, so the
+		// group key is constant per batch. W14 buckets time and groups by an entity tag
+		// over the OAP shape (all 100 series share one time range, so the rows of the
+		// series interleave in time), and W15 does the same over series with disjoint
+		// time ranges, where each series is a long time-ordered run.
+		{
+			id: "W13", layout: gateLayoutMulti, shape: gateShapeReduce, wantRows: 100, limitN: gateLimitN,
+			opts: model.MeasureQueryOptions{
+				TagProjection: gateProj(gateTSTag, gateTagEnv), FieldProjection: []string{gateFieldInt},
+				GroupBy: gateEntityGroupBy, Agg: gateSum,
+			},
+		},
+		{
+			id: "W14", layout: gateLayoutMulti, shape: gateShapeBucket, wantRows: 176, timeOrdered: true,
+			opts: model.MeasureQueryOptions{
+				TagProjection: gateProj(gateTSTag), FieldProjection: []string{gateFieldInt},
+				GroupBy: gateBucketGroupBy(gateTSTag), Agg: gateSum,
+			},
+		},
+		{
+			id: "W15", layout: gateLayoutStaggered, shape: gateShapeBucket, wantRows: 1100, timeOrdered: true,
+			opts: model.MeasureQueryOptions{
+				TagProjection: gateProj(gateTSTag, gateTagEnv), FieldProjection: []string{gateFieldInt},
+				GroupBy: gateBucketGroupBy(gateTSTag, gateTagEnv), Agg: gateSum,
+			},
+		},
 		// W11 and W12 are W10 and W9 as OAP issues them: no ORDER BY, so the rows of
 		// the 100 series that share one time range interleave by timestamp, through
 		// the time-ordered merge (blocks overlapping in time, and time-disjoint).
@@ -238,6 +291,9 @@ func gateWorkloads() []gateWorkload {
 
 func gateMeasure() *databasev1.Measure {
 	return &databasev1.Measure{
+		// svc and env_id are functions of the series (see gateDataPoints): the entity
+		// tags a scan lends as constants.
+		Entity: &databasev1.Entity{TagNames: []string{gateTSTag, gateTagEnv}},
 		TagFamilies: []*databasev1.TagFamilySpec{{Name: gateFamily, Tags: []*databasev1.TagSpec{
 			{Name: gateTSTag, Type: databasev1.TagType_TAG_TYPE_STRING},
 			{Name: gateTagEnv, Type: databasev1.TagType_TAG_TYPE_INT},
@@ -276,7 +332,11 @@ func gateDataPoints(layout gateLayout, rowLo, rowHi int, version int64) *dataPoi
 	for s := range layout.series {
 		for r := rowLo; r < rowHi; r++ {
 			points.seriesIDs = append(points.seriesIDs, common.SeriesID(s+1))
-			points.timestamps = append(points.timestamps, int64(r+1))
+			ts := int64(r + 1)
+			if layout.stagger {
+				ts += int64(s * layout.rowsPer)
+			}
+			points.timestamps = append(points.timestamps, ts)
 			points.versions = append(points.versions, version)
 			points.tagFamilies = append(points.tagFamilies, []nameValues{{name: gateFamily, values: []*nameValue{
 				{name: gateTSTag, valueType: pbv1.ValueTypeStr, value: []byte(fmt.Sprintf("svc-%d", s%gateGroupCard))},
@@ -319,7 +379,7 @@ func setupGateHarness(tb testing.TB, layout gateLayout) *gateHarness {
 	time.Sleep(300 * time.Millisecond)
 	snap := tst.currentSnapshot()
 	require.NotNil(tb, snap)
-	parts, _ := snap.getParts(nil, storage.NewShardCache("gate-group", 0, 0), 0, 0, int64(layout.rowsPer)+1)
+	parts, _ := snap.getParts(nil, storage.NewShardCache("gate-group", 0, 0), 0, 0, layout.maxTS())
 	require.NotEmpty(tb, parts)
 	tb.Cleanup(func() {
 		snap.decRef()
@@ -377,7 +437,7 @@ func (h *gateHarness) newQueryResult(schema *vectorized.BatchSchema, opts model.
 	qo := queryOptions{
 		schemaTagTypes: gateTagTypes,
 		minTimestamp:   0,
-		maxTimestamp:   int64(h.layout.rowsPer) + 1,
+		maxTimestamp:   h.layout.maxTS(),
 	}
 	qo.MeasureQueryOptions.TagProjection = opts.TagProjection
 	qo.MeasureQueryOptions.FieldProjection = opts.FieldProjection
@@ -454,6 +514,15 @@ func runGateWorkload(h *gateHarness, w gateWorkload, legacy bool) int {
 		}
 		builder.Break(ops[0])
 		terminal = ops[0].OutputSchema()
+	case gateShapeBucket:
+		builder.Transform(func(upstream vectorized.PullOperator) vectorized.PullOperator {
+			bucket, err := vmeasure.BuildTimeBucketOperator(upstream, w.opts, schema, tracker, gateBatchSize, vmeasure.AggModeAll)
+			if err != nil {
+				panic(err)
+			}
+			terminal = bucket.OutputSchema()
+			return bucket
+		})
 	}
 	if w.limitN > 0 {
 		builder.Apply(vmeasure.NewBatchLimit(terminal, 0, uint32(w.limitN)))
@@ -576,6 +645,13 @@ const (
 // measured 5436, 2644, 980, 826 and 827. W9 and W10 are new (several parts per
 // series, disjoint and overlapping).
 //
+// Step 5 (ConstColumn entity tags and runs) lowered W4 2700 -> 2650 (measured 2600: a
+// scalar reduce folds each lent batch as one run, with no per-batch selection) and left
+// the others where they were; W13-W15 are new, budgets set at their measured 5017, 6323
+// and 65422. Their time is what the change moves (W13 7.9 -> 2.6 ms, W15 15.9 -> 9.9 ms
+// against the previous commit), and time is gated against the passthrough baseline like
+// the rest.
+//
 // Measured on the reference run recorded with the change that introduced the
 // gates (AMD EPYC 7B13, go1.26.9): native / legacy allocs
 // W1 0.75, W2 0.64, W3 0.05, W4 0.01, W5 0.01, W6 1.00, W7 0.70, W8 1.00.
@@ -586,7 +662,7 @@ var gates = map[string]gate{
 	"W3": {maxNsRatio: 1.10, maxAllocRatio: 0.06, maxBytesRatio: 0.33, allocBudget: 5500},
 	// Scalar reduce and raw group-by: decode wrappers vanish (allocs ~0.01x); time is
 	// decode/IO bound so ns is a tie.
-	"W4": {maxNsRatio: 1.15, maxAllocRatio: 0.03, maxBytesRatio: 0.55, allocBudget: 2700},
+	"W4": {maxNsRatio: 1.15, maxAllocRatio: 0.03, maxBytesRatio: 0.55, allocBudget: 2650},
 	"W5": {maxNsRatio: 1.10, maxAllocRatio: 0.03, maxBytesRatio: 0.55, allocBudget: 1000},
 	// GroupBy+Agg already used native columns in both selections: pin "no worse".
 	"W6": {maxNsRatio: 1.15, maxAllocRatio: 1.02, maxBytesRatio: 1.15, allocBudget: 850},
@@ -600,6 +676,11 @@ var gates = map[string]gate{
 	// a few thousand per query. Time is gated against the passthrough baseline like the rest.
 	"W11": {maxNsRatio: 1.10, maxAllocRatio: 0.68, maxBytesRatio: 1.05, allocBudget: 1407000},
 	"W12": {maxNsRatio: 1.10, maxAllocRatio: 0.68, maxBytesRatio: 1.05, allocBudget: 1412000},
+	// Entity-tag group-by (W13), time bucket over interleaved series (W14) and over series
+	// with disjoint time ranges (W15): see gateWorkloads.
+	"W13": {maxNsRatio: 1.10, maxAllocRatio: 1.02, maxBytesRatio: 1.15, allocBudget: 5050},
+	"W14": {maxNsRatio: 1.10, maxAllocRatio: 1.02, maxBytesRatio: 1.15, allocBudget: 6350},
+	"W15": {maxNsRatio: 1.10, maxAllocRatio: 1.02, maxBytesRatio: 1.15, allocBudget: 65500},
 }
 
 type gateStats struct {

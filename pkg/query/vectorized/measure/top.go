@@ -285,6 +285,18 @@ func (t *BatchTop) Close() error {
 func (t *BatchTop) extractKey(b *vectorized.RecordBatch, rowIdx int, row *topRow) {
 	keyCol := b.Columns[t.fieldCol]
 	switch c := keyCol.(type) {
+	case *vectorized.ConstColumn:
+		switch {
+		case c.IsNull(rowIdx):
+			row.isNull = true
+		case c.Type() == vectorized.ColumnTypeFloat64:
+			row.isFloat = true
+			row.floatVal = c.Float64()
+		case c.Type() == vectorized.ColumnTypeInt64:
+			row.intVal = c.Int64()
+		default:
+			row.isNull = true
+		}
 	case *vectorized.TypedColumn[float64]:
 		row.isFloat = true
 		if c.IsNull(rowIdx) {

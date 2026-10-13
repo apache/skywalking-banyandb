@@ -639,6 +639,9 @@ func unionDistributedRowFrameSchemas(sources []decodedBatchSource) (*vectorized.
 // reshape it will surface here via the delegate's "dst <type> vs src
 // tagvalue" error, which is the correct loud-failure outcome.
 func appendColumnRangeCoerced(dst, src vectorized.Column, srcPos, n int) error {
+	// The coercions below read the source cell by cell; a constant column is
+	// expanded once, which only a batch that did not come off the wire can carry.
+	src = vectorized.Materialize(src)
 	dTagCol, dIsTag := dst.(*vectorized.TypedColumn[*modelv1.TagValue])
 	if dIsTag {
 		if _, sameType := src.(*vectorized.TypedColumn[*modelv1.TagValue]); sameType {

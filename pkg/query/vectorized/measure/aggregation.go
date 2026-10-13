@@ -131,6 +131,7 @@ type AggSpec struct {
 // paginated by batchSize.
 type BatchAggregation struct {
 	dedupSeen        map[string]struct{}
+	lastGroup        *aggGroup
 	keyScratch       []byte
 	dedupScratch     []byte
 	outputSchema     *vectorized.BatchSchema
@@ -141,6 +142,9 @@ type BatchAggregation struct {
 	inputSchema      *vectorized.BatchSchema
 	aggValuePath     AggValuePath
 	tagIndices       []int
+	keyEntity        []bool
+	runScratch       []int
+	zeroScratch      []int64
 	aggs             []AggSpec
 	aggOutOffsets    []int
 	aggHasCount      []bool
@@ -156,6 +160,7 @@ type BatchAggregation struct {
 	entrySize        int64
 	reserved         int64
 	rowsIn           int64
+	runsFolded       int64
 	rowsOut          int64
 	batchSize        int
 	cursor           int
@@ -337,6 +342,7 @@ func hiddenTagExclusionSet(aggs []AggSpec) map[int]struct{} {
 // fresh allocation per call.
 func (a *BatchAggregation) Init(ctx context.Context) error {
 	a.groups = make(map[string]*aggGroup)
+	a.lastGroup = nil
 	if a.mode == AggModeReduce {
 		a.dedupSeen = make(map[string]struct{})
 	}
@@ -378,6 +384,10 @@ func (a *BatchAggregation) Consume(_ context.Context, b *vectorized.RecordBatch)
 	if a.mode != AggModeAll && a.mode != AggModeMap && a.mode != AggModeReduce {
 		return ErrAggModeNotImplemented
 	}
+	b = a.expandConstInputs(b)
+	if handled, runErr := a.consumeRuns(b); handled {
+		return runErr
+	}
 	active, activeErr := activeIndices(b)
 	if activeErr != nil {
 		return activeErr
@@ -393,24 +403,9 @@ func (a *BatchAggregation) Consume(_ context.Context, b *vectorized.RecordBatch)
 			// row so it does not double-count.
 			continue
 		}
-		// The string(keyBuf) conversion in a map index does not allocate; the
-		// owned key string is only materialized when a new group is inserted.
-		group, exists := a.groups[string(keyBuf)]
-		if !exists {
-			key := string(keyBuf)
-			if a.entrySize > 0 {
-				if reserveErr := a.tracker.Reserve(a.entrySize); reserveErr != nil {
-					return fmt.Errorf("aggregation memory budget exceeded: %w", reserveErr)
-				}
-				a.reserved += a.entrySize
-			}
-			newGroup, newErr := a.newGroup(b, int(rowIdx), key)
-			if newErr != nil {
-				return newErr
-			}
-			a.groups[key] = newGroup
-			a.insertion = append(a.insertion, newGroup)
-			group = newGroup
+		group, _, groupErr := a.groupFor(b, int(rowIdx), keyBuf)
+		if groupErr != nil {
+			return groupErr
 		}
 		for slotIdx, spec := range a.aggs {
 			if a.mode == AggModeReduce {
@@ -423,6 +418,39 @@ func (a *BatchAggregation) Consume(_ context.Context, b *vectorized.RecordBatch)
 		}
 	}
 	return nil
+}
+
+// groupFor returns the group of the key encoded in keyBuf, creating it from row
+// rowIdx of b when it does not exist yet. The string(keyBuf) conversion in a map
+// index does not allocate; the owned key string is only materialized when a new
+// group is inserted.
+//
+// Each new group reserves entrySize bytes from the shared MemoryTracker. If the
+// budget is exhausted the group is not added and the wrapped tracker error is
+// returned, so partial-batch state stays consistent.
+func (a *BatchAggregation) groupFor(b *vectorized.RecordBatch, rowIdx int, keyBuf []byte) (group *aggGroup, created bool, err error) {
+	if last := a.lastGroup; last != nil && last.key == string(keyBuf) {
+		return last, false, nil
+	}
+	group, exists := a.groups[string(keyBuf)]
+	if !exists {
+		key := string(keyBuf)
+		if a.entrySize > 0 {
+			if reserveErr := a.tracker.Reserve(a.entrySize); reserveErr != nil {
+				return nil, false, fmt.Errorf("aggregation memory budget exceeded: %w", reserveErr)
+			}
+			a.reserved += a.entrySize
+		}
+		newGroup, newErr := a.newGroup(b, rowIdx, key)
+		if newErr != nil {
+			return nil, false, newErr
+		}
+		a.groups[key] = newGroup
+		a.insertion = append(a.insertion, newGroup)
+		group = newGroup
+	}
+	a.lastGroup = group
+	return group, !exists, nil
 }
 
 // Finalize is a no-op for AggModeAll, AggModeMap, and AggModeReduce —
@@ -905,7 +933,10 @@ func buildAggOutputLayout(
 	}
 	layout.tagOutOffset = len(defs)
 	for _, ti := range tagIndices {
-		defs = append(defs, input.Columns[ti])
+		def := input.Columns[ti]
+		// An aggregated row is not a function of one series any more.
+		def.Entity = false
+		defs = append(defs, def)
 	}
 	for i, agg := range aggs {
 		layout.aggOutOffsets[i] = len(defs)

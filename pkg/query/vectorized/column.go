@@ -76,6 +76,10 @@ type Column interface {
 // Allocation is lazy on first MarkNull.
 type validityBitmap struct {
 	bits []uint64
+	// marked is set by MarkNull and cleared by Reset. It never reads false while a
+	// null is set, but may stay true after ClearNull removed the last one, so a false
+	// value proves the column has no nulls and a true one proves nothing.
+	marked bool
 }
 
 // IsNull reports whether bit i is null.
@@ -92,6 +96,7 @@ func (v *validityBitmap) IsNull(i int) bool {
 
 // MarkNull sets bit i to null, growing the bitmap as needed.
 func (v *validityBitmap) MarkNull(i int) {
+	v.marked = true
 	word := i / 64
 	for word >= len(v.bits) {
 		v.bits = append(v.bits, 0)
@@ -111,7 +116,8 @@ func (v *validityBitmap) ClearNull(i int) {
 
 // Reset clears every null mark but keeps the underlying slice for reuse.
 func (v *validityBitmap) Reset() {
-	for i := range v.bits {
-		v.bits[i] = 0
+	if v.marked {
+		clear(v.bits)
+		v.marked = false
 	}
 }
