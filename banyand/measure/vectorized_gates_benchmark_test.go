@@ -64,6 +64,7 @@ import (
 //
 //	go test ./banyand/measure -run '^$' -bench BenchmarkVectorizedStorage -benchmem -count=6
 //	BYDB_BENCH_LEGACY_SCHEMA=1 go test ... (previous passthrough column selection)
+//	BYDB_BENCH_LEGACY_SCAN=1 go test ...   (decode every block, then merge row by row)
 //	RUN_BENCH_GATES=1 go test ./banyand/measure -run '^TestVectorizedStorageGates$' -count=1 -v
 
 const (
@@ -88,18 +89,38 @@ const (
 	gateShapeHidden
 )
 
+// gateParts says how a layout's rows are spread over parts.
+type gateParts int
+
+const (
+	// gatePartsOne flushes every row through the write path into one part.
+	gatePartsOne gateParts = iota
+	// gatePartsDisjoint writes gatePartCount memory parts, each holding a
+	// disjoint slice of every series' time range: one block per part and series,
+	// none overlapping.
+	gatePartsDisjoint
+	// gatePartsOverlap writes two memory parts that overlap in the middle 40% of
+	// every series' time range; the later part carries a higher version.
+	gatePartsOverlap
+)
+
+const gatePartCount = 4
+
 // gateLayout is the stored data shape; workloads sharing a layout share one
-// flushed part.
+// stored data set.
 type gateLayout struct {
 	name    string
+	parts   gateParts
 	series  int
 	rowsPer int
 }
 
 var (
-	gateLayoutSingle = gateLayout{name: "single_10k", series: 1, rowsPer: 10000}
-	gateLayoutMulti  = gateLayout{name: "multi_100x1k", series: 100, rowsPer: 1000}
-	gateLayoutGroups = gateLayout{name: "groups_16x6250", series: gateGroupCard, rowsPer: 6250}
+	gateLayoutSingle   = gateLayout{name: "single_10k", series: 1, rowsPer: 10000}
+	gateLayoutMulti    = gateLayout{name: "multi_100x1k", series: 100, rowsPer: 1000}
+	gateLayoutGroups   = gateLayout{name: "groups_16x6250", series: gateGroupCard, rowsPer: 6250}
+	gateLayoutDisjoint = gateLayout{name: "multi_100x1k_4parts_disjoint", parts: gatePartsDisjoint, series: 100, rowsPer: 1000}
+	gateLayoutOverlap  = gateLayout{name: "multi_100x1k_2parts_overlap", parts: gatePartsOverlap, series: 100, rowsPer: 1000}
 )
 
 type gateWorkload struct {
@@ -179,6 +200,21 @@ func gateWorkloads() []gateWorkload {
 				TagProjection: gateProj(gateTSTag), FieldProjection: []string{gateFieldFlt}, GroupBy: gateGroupBy, Agg: gateCount,
 			},
 		},
+		// W9 and W10 read the W2 projection over several parts per series: W9 where
+		// every series' blocks are time-disjoint (the zero-copy segments), W10 where
+		// they overlap and every series takes the row merge.
+		{
+			id: "W9", layout: gateLayoutDisjoint, shape: gateShapeScan, wantRows: 100000,
+			opts: model.MeasureQueryOptions{
+				TagProjection: gateProj(gateTSTag, gateTagEnv), FieldProjection: []string{gateFieldInt, gateFieldFlt},
+			},
+		},
+		{
+			id: "W10", layout: gateLayoutOverlap, shape: gateShapeScan, wantRows: 100000,
+			opts: model.MeasureQueryOptions{
+				TagProjection: gateProj(gateTSTag, gateTagEnv), FieldProjection: []string{gateFieldInt, gateFieldFlt},
+			},
+		},
 	}
 }
 
@@ -207,11 +243,50 @@ type gateHarness struct {
 	layout gateLayout
 }
 
-// setupGateHarness writes the layout through the real write path and waits for
-// the part to be flushed. Values are closed-form in (series, row), so the
-// fixture is byte-identical on every run.
+// gateDataPoints builds rows [rowLo, rowHi) of every series of the layout at the
+// given version. Values are closed-form in (series, row), so a fixture is
+// byte-identical on every run; the version only differs in overlapping layouts.
+func gateDataPoints(layout gateLayout, rowLo, rowHi int, version int64) *dataPoints {
+	total := layout.series * (rowHi - rowLo)
+	points := &dataPoints{
+		seriesIDs:   make([]common.SeriesID, 0, total),
+		timestamps:  make([]int64, 0, total),
+		versions:    make([]int64, 0, total),
+		tagFamilies: make([][]nameValues, 0, total),
+		fields:      make([]nameValues, 0, total),
+	}
+	for s := range layout.series {
+		for r := rowLo; r < rowHi; r++ {
+			points.seriesIDs = append(points.seriesIDs, common.SeriesID(s+1))
+			points.timestamps = append(points.timestamps, int64(r+1))
+			points.versions = append(points.versions, version)
+			points.tagFamilies = append(points.tagFamilies, []nameValues{{name: gateFamily, values: []*nameValue{
+				{name: gateTSTag, valueType: pbv1.ValueTypeStr, value: []byte(fmt.Sprintf("svc-%d", s%gateGroupCard))},
+				{name: gateTagEnv, valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(int64(s + 1))},
+				{name: gateTagCrit, valueType: pbv1.ValueTypeStr, value: []byte(fmt.Sprintf("crit-%d", (r+s)%26))},
+			}}})
+			points.fields = append(points.fields, nameValues{name: "skipped", values: []*nameValue{
+				{name: gateFieldInt, valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(int64(r*7 + s))},
+				{name: gateFieldFlt, valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(float64(r) * 0.25)},
+			}})
+		}
+	}
+	return points
+}
+
+// setupGateHarness stores the layout: through the real write path and a flush for
+// a single part, or as memory parts written by the part writer for the
+// multi-part layouts (whose point is how many parts a series spans, not the
+// flush).
 func setupGateHarness(tb testing.TB, layout gateLayout) *gateHarness {
 	tb.Helper()
+	sids := make([]common.SeriesID, layout.series)
+	for i := range sids {
+		sids[i] = common.SeriesID(i + 1)
+	}
+	if layout.parts != gatePartsOne {
+		return &gateHarness{parts: gateMemParts(layout), sids: sids, layout: layout}
+	}
 	tmpPath, defFn := test.Space(require.New(tb))
 	tst, err := newTSTable(
 		fs.NewLocalFileSystem(),
@@ -222,41 +297,12 @@ func setupGateHarness(tb testing.TB, layout gateLayout) *gateHarness {
 		nil,
 	)
 	require.NoError(tb, err)
-	total := layout.series * layout.rowsPer
-	points := &dataPoints{
-		seriesIDs:   make([]common.SeriesID, total),
-		timestamps:  make([]int64, total),
-		versions:    make([]int64, total),
-		tagFamilies: make([][]nameValues, total),
-		fields:      make([]nameValues, total),
-	}
-	for s := range layout.series {
-		for r := range layout.rowsPer {
-			i := s*layout.rowsPer + r
-			points.seriesIDs[i] = common.SeriesID(s + 1)
-			points.timestamps[i] = int64(r + 1)
-			points.versions[i] = 1
-			points.tagFamilies[i] = []nameValues{{name: gateFamily, values: []*nameValue{
-				{name: gateTSTag, valueType: pbv1.ValueTypeStr, value: []byte(fmt.Sprintf("svc-%d", s%gateGroupCard))},
-				{name: gateTagEnv, valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(int64(s + 1))},
-				{name: gateTagCrit, valueType: pbv1.ValueTypeStr, value: []byte(fmt.Sprintf("crit-%d", (r+s)%26))},
-			}}}
-			points.fields[i] = nameValues{name: "skipped", values: []*nameValue{
-				{name: gateFieldInt, valueType: pbv1.ValueTypeInt64, value: convert.Int64ToBytes(int64(r*7 + s))},
-				{name: gateFieldFlt, valueType: pbv1.ValueTypeFloat64, value: convert.Float64ToBytes(float64(r) * 0.25)},
-			}}
-		}
-	}
-	tst.mustAddDataPoints(points)
+	tst.mustAddDataPoints(gateDataPoints(layout, 0, layout.rowsPer, 1))
 	time.Sleep(300 * time.Millisecond)
 	snap := tst.currentSnapshot()
 	require.NotNil(tb, snap)
 	parts, _ := snap.getParts(nil, storage.NewShardCache("gate-group", 0, 0), 0, int64(layout.rowsPer)+1)
 	require.NotEmpty(tb, parts)
-	sids := make([]common.SeriesID, layout.series)
-	for i := range sids {
-		sids[i] = common.SeriesID(i + 1)
-	}
 	tb.Cleanup(func() {
 		snap.decRef()
 		tst.Close()
@@ -265,9 +311,51 @@ func setupGateHarness(tb testing.TB, layout gateLayout) *gateHarness {
 	return &gateHarness{parts: parts, sids: sids, layout: layout}
 }
 
+// gateMemParts writes a multi-part layout as memory parts, oldest first.
+func gateMemParts(layout gateLayout) []*part {
+	var spans []struct {
+		lo, hi  int
+		version int64
+	}
+	switch layout.parts {
+	case gatePartsDisjoint:
+		step := layout.rowsPer / gatePartCount
+		for k := range gatePartCount {
+			spans = append(spans, struct {
+				lo, hi  int
+				version int64
+			}{k * step, (k + 1) * step, 1})
+		}
+	case gatePartsOverlap:
+		spans = append(spans,
+			struct {
+				lo, hi  int
+				version int64
+			}{0, layout.rowsPer * 6 / 10, 1},
+			struct {
+				lo, hi  int
+				version int64
+			}{layout.rowsPer * 4 / 10, layout.rowsPer, 2},
+		)
+	case gatePartsOne:
+	}
+	parts := make([]*part, 0, len(spans))
+	for i, sl := range spans {
+		mp := generateMemPart()
+		mp.mustInitFromDataPoints(gateDataPoints(layout, sl.lo, sl.hi, sl.version))
+		p := openMemPart(mp)
+		p.cache = storage.NewShardCache("gate-group", 0, 0)
+		p.partMetadata.ID = uint64(i + 1)
+		parts = append(parts, p)
+	}
+	return parts
+}
+
 // newQueryResult builds a real queryResult over every block of the part, the way
 // measure.searchBlocks does, so PullBatch runs the production load / merge /
-// copy code.
+// copy code. The query is ordered by series (the order the sids were asked in),
+// not by time: the window scan serves exactly those, and a time-ordered
+// multi-series query interleaves series and keeps the legacy merge.
 func (h *gateHarness) newQueryResult(schema *vectorized.BatchSchema, opts model.MeasureQueryOptions) *queryResult {
 	qo := queryOptions{
 		schemaTagTypes: gateTagTypes,
@@ -276,7 +364,10 @@ func (h *gateHarness) newQueryResult(schema *vectorized.BatchSchema, opts model.
 	}
 	qo.MeasureQueryOptions.TagProjection = opts.TagProjection
 	qo.MeasureQueryOptions.FieldProjection = opts.FieldProjection
-	qr := &queryResult{ctx: context.Background(), batchSchema: schema, tagProjection: opts.TagProjection}
+	qr := &queryResult{ctx: context.Background(), batchSchema: schema, tagProjection: opts.TagProjection, sidToIndex: make(map[common.SeriesID]int, len(h.sids))}
+	for i, sid := range h.sids {
+		qr.sidToIndex[sid] = i
+	}
 	queryResultTracker.Acquire(qr)
 	ti := generateTstIter()
 	defer releaseTstIter(ti)
@@ -403,6 +494,9 @@ func (g *gateHarnesses) get(layout gateLayout) *gateHarness {
 // previous passthrough selection).
 func BenchmarkVectorizedStorage(b *testing.B) {
 	legacy := os.Getenv("BYDB_BENCH_LEGACY_SCHEMA") == "1"
+	if os.Getenv("BYDB_BENCH_LEGACY_SCAN") == "1" {
+		defer setLegacyBatchScan(setLegacyBatchScan(true))
+	}
 	hs := newGateHarnesses(b)
 	for _, w := range gateWorkloads() {
 		b.Run(w.id, func(b *testing.B) { benchGateWorkload(b, hs.get(w.layout), w, legacy) })
@@ -442,6 +536,14 @@ const (
 	gateAbsTolerance = 1.05
 )
 
+// Absolute budgets of W3-W6 and W8 were lowered with the series-window scan (step 4a
+// of the scan path v2 design): the harness now orders the query by series like
+// production does (sidToIndex was nil, which made the legacy merge interleave every
+// series by timestamp), and a query ordered by series is served by whole-series
+// windows. W3 31800 -> 5500, W4 4400 -> 2700, W5 3000 -> 1000, W6 and W8 2800 -> 850;
+// measured 5436, 2644, 980, 826 and 827. W9 and W10 are new (several parts per
+// series, disjoint and overlapping).
+//
 // Measured on the reference run recorded with the change that introduced the
 // gates (AMD EPYC 7B13, go1.26.9): native / legacy allocs
 // W1 0.75, W2 0.64, W3 0.05, W4 0.01, W5 0.01, W6 1.00, W7 0.70, W8 1.00.
@@ -449,15 +551,18 @@ var gates = map[string]gate{
 	// Scans and top-N: native decode removes per-cell wrappers; ns wins too.
 	"W1": {maxNsRatio: 1.10, maxAllocRatio: 0.80, maxBytesRatio: 1.05, allocBudget: 60200},
 	"W2": {maxNsRatio: 1.10, maxAllocRatio: 0.68, maxBytesRatio: 1.05, allocBudget: 1405700},
-	"W3": {maxNsRatio: 1.10, maxAllocRatio: 0.06, maxBytesRatio: 0.33, allocBudget: 31800},
+	"W3": {maxNsRatio: 1.10, maxAllocRatio: 0.06, maxBytesRatio: 0.33, allocBudget: 5500},
 	// Scalar reduce and raw group-by: decode wrappers vanish (allocs ~0.01x); time is
 	// decode/IO bound so ns is a tie.
-	"W4": {maxNsRatio: 1.15, maxAllocRatio: 0.03, maxBytesRatio: 0.55, allocBudget: 4400},
-	"W5": {maxNsRatio: 1.10, maxAllocRatio: 0.03, maxBytesRatio: 0.55, allocBudget: 3000},
+	"W4": {maxNsRatio: 1.15, maxAllocRatio: 0.03, maxBytesRatio: 0.55, allocBudget: 2700},
+	"W5": {maxNsRatio: 1.10, maxAllocRatio: 0.03, maxBytesRatio: 0.55, allocBudget: 1000},
 	// GroupBy+Agg already used native columns in both selections: pin "no worse".
-	"W6": {maxNsRatio: 1.15, maxAllocRatio: 1.02, maxBytesRatio: 1.15, allocBudget: 2800},
+	"W6": {maxNsRatio: 1.15, maxAllocRatio: 1.02, maxBytesRatio: 1.15, allocBudget: 850},
 	"W7": {maxNsRatio: 1.10, maxAllocRatio: 0.75, maxBytesRatio: 1.05, allocBudget: 1406500},
-	"W8": {maxNsRatio: 1.15, maxAllocRatio: 1.02, maxBytesRatio: 1.15, allocBudget: 2800},
+	"W8": {maxNsRatio: 1.15, maxAllocRatio: 1.02, maxBytesRatio: 1.15, allocBudget: 850},
+	// Several parts per series (W2 projection): time-disjoint blocks and overlapping ones.
+	"W9":  {maxNsRatio: 1.10, maxAllocRatio: 0.68, maxBytesRatio: 1.05, allocBudget: 1414000},
+	"W10": {maxNsRatio: 1.10, maxAllocRatio: 0.68, maxBytesRatio: 1.05, allocBudget: 1408000},
 }
 
 type gateStats struct {

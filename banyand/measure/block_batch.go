@@ -120,17 +120,69 @@ func (bc *blockCursor) copyAllToBatch(b *model.MeasureBatch, schema *vectorized.
 		case vectorized.RoleTag:
 			col := b.Tags[tagIdx]
 			tagIdx++
-			bc.fillTagColumnAllRows(b, col, def, idx, offset, indexValue, desc)
+			bc.fillTagColumnAllRows(b, col, def, idx, offset, indexValue, desc, false)
 		case vectorized.RoleField:
 			col := b.Fields[fieldIdx]
 			fieldIdx++
-			bc.fillFieldColumnAllRows(col, def, idx, offset, desc)
+			bc.fillFieldColumnAllRows(b, col, def, idx, offset, desc, false)
 		case vectorized.RoleTimestamp, vectorized.RoleVersion,
 			vectorized.RoleSeriesID, vectorized.RoleShardID,
 			vectorized.RoleElementID, vectorized.RoleOrderKey:
 			// Metadata handled above.
 		}
 	}
+}
+
+// lendBatch builds a batch that lends the whole decoded block instead of copying
+// it: Timestamps, Versions and typed numeric columns are views of the cursor's
+// slices, string, bytes and string-array cells borrow its decoded bytes, and the
+// batch pins the cursor until it is released. Rows stay in storage order; a
+// descending scan sets Selection to [n-1, ..., 0] rather than reversing columns.
+// Hidden (index-substituted) tags, missing columns and columns with nulls are
+// filled into owned columns row by row, as copyAllToBatch does.
+//
+// The caller keeps its own reference to bc and must not hand it a block of more
+// than 65,536 rows when desc is set (a uint16 selection cannot address them).
+func (bc *blockCursor) lendBatch(schema *vectorized.BatchSchema,
+	storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue, desc bool,
+) *model.MeasureBatch {
+	size := len(bc.timestamps)
+	b := model.AcquireBorrowingMeasureBatch(schema, size)
+	b.BorrowMetadata(bc.timestamps, bc.versions)
+	b.Owners.Pin(bc)
+	sid := bc.bm.seriesID
+	for range size {
+		b.ShardIDs = append(b.ShardIDs, bc.shardID)
+		b.SeriesIDs = append(b.SeriesIDs, sid)
+	}
+	var indexValue map[string]*modelv1.TagValue
+	if storedIndexValue != nil {
+		indexValue = storedIndexValue[sid]
+	}
+	tagIdx, fieldIdx := 0, 0
+	for _, def := range schema.Columns {
+		switch def.Role {
+		case vectorized.RoleTag:
+			col := b.Tags[tagIdx]
+			tagIdx++
+			bc.fillTagColumnAllRows(b, col, def, 0, size, indexValue, false, true)
+		case vectorized.RoleField:
+			col := b.Fields[fieldIdx]
+			fieldIdx++
+			bc.fillFieldColumnAllRows(b, col, def, 0, size, false, true)
+		case vectorized.RoleTimestamp, vectorized.RoleVersion,
+			vectorized.RoleSeriesID, vectorized.RoleShardID,
+			vectorized.RoleElementID, vectorized.RoleOrderKey:
+			// Metadata handled above.
+		}
+	}
+	if desc {
+		b.Selection = make([]uint16, size)
+		for i := range b.Selection {
+			b.Selection[i] = uint16(size - 1 - i)
+		}
+	}
+	return b
 }
 
 // fillTagColumnAllRows appends rows [idx, offset) of the tag described by
@@ -149,9 +201,11 @@ func (bc *blockCursor) copyAllToBatch(b *model.MeasureBatch, schema *vectorized.
 //     copyAllTo's hasSchemaType check).
 //  5. Decode each stored byte slice into the typed column. String, bytes and
 //     string-array columns borrow the cursor's decoded bytes instead of copying
-//     them (borrowTagRows); b then pins the cursor.
+//     them (borrowTagRows); b then pins the cursor. When lend is set, a typed
+//     numeric column is lent as a zero-copy view of the cursor's slice too
+//     (lendNumericRows).
 func (bc *blockCursor) fillTagColumnAllRows(b *model.MeasureBatch, col vectorized.Column, def vectorized.ColumnDef,
-	idx, offset int, indexValue map[string]*modelv1.TagValue, desc bool,
+	idx, offset int, indexValue map[string]*modelv1.TagValue, desc, lend bool,
 ) {
 	size := offset - idx
 	// Hidden tag substitution.
@@ -180,14 +234,17 @@ func (bc *blockCursor) fillTagColumnAllRows(b *model.MeasureBatch, col vectorize
 	if bc.borrowTagRows(b, col, def, column, idx, offset, desc) {
 		return
 	}
+	if lend && !desc && bc.lendNumericRows(b, col, def, column, idx, offset) {
+		return
+	}
 	fillTagRows(col, def, column, idx, offset, desc)
 }
 
 // fillFieldColumnAllRows mirrors fillTagColumnAllRows but on the field side.
 // There is no indexValue path for fields and no schemaType check (fields
 // don't have hidden-tag substitutions).
-func (bc *blockCursor) fillFieldColumnAllRows(col vectorized.Column, def vectorized.ColumnDef,
-	idx, offset int, desc bool,
+func (bc *blockCursor) fillFieldColumnAllRows(b *model.MeasureBatch, col vectorized.Column, def vectorized.ColumnDef,
+	idx, offset int, desc, lend bool,
 ) {
 	size := offset - idx
 	column := bc.findFieldColumn(def.Name)
@@ -195,7 +252,47 @@ func (bc *blockCursor) fillFieldColumnAllRows(col vectorized.Column, def vectori
 		appendNullFieldN(col, def, size)
 		return
 	}
+	if lend && !desc && bc.lendNumericRows(b, col, def, column, idx, offset) {
+		return
+	}
 	fillFieldRows(col, def, column, idx, offset, desc)
+}
+
+// lendNumericRows makes col a zero-copy view of rows [idx, offset) of a typed
+// int64 or float64 column and pins bc on b so the slice stays valid until b is
+// released. It returns false, having changed nothing, when it does not apply:
+// the column is passthrough, not in typed form (it has nulls or was decoded to
+// bytes) or of another value type, so the caller takes the copying path.
+//
+// The view is capacity-limited and col is marked borrowed (TypedColumn.Borrow),
+// so neither an append nor a Reset can write into the cursor's slice.
+func (bc *blockCursor) lendNumericRows(b *model.MeasureBatch, col vectorized.Column, def vectorized.ColumnDef,
+	column *column, idx, offset int,
+) bool {
+	switch column.form {
+	case numericFormInt64:
+		if def.Type != vectorized.ColumnTypeInt64 {
+			return false
+		}
+		c, ok := col.(*vectorized.TypedColumn[int64])
+		if !ok || c.Len() != 0 {
+			return false
+		}
+		c.Borrow(column.int64s[idx:offset])
+	case numericFormFloat64:
+		if def.Type != vectorized.ColumnTypeFloat64 {
+			return false
+		}
+		c, ok := col.(*vectorized.TypedColumn[float64])
+		if !ok || c.Len() != 0 {
+			return false
+		}
+		c.Borrow(column.float64s[idx:offset])
+	case numericFormBytes:
+		return false
+	}
+	b.Owners.Pin(bc)
+	return true
 }
 
 // fillTagRows appends rows [idx, offset) of column onto col, reversed when desc.

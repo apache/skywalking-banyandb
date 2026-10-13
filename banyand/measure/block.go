@@ -19,6 +19,7 @@ package measure
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"slices"
 	"sort"
@@ -982,14 +983,41 @@ func releaseBlockCursor(bc *blockCursor) {
 // the decoder buffer (plain encoding) or a block-sized allocation made by the
 // dictionary decoder; overwriting through the values reaches both, and also any
 // array the decoder buffer outgrew while it was filled.
+//
+// Typed numeric columns, timestamps and versions are lent to batches as views of
+// the cursor's slices (blockCursor.lendBatch), so they are overwritten too: a
+// batch that outlives its cursor reads poisonNumeric instead of its values.
 func (bc *blockCursor) poison() {
 	for i := range bc.tagFamilies {
 		for j := range bc.tagFamilies[i].columns {
+			bc.tagFamilies[i].columns[j].poisonNumeric()
 			poisonValues(bc.tagFamilies[i].columns[j].values)
 		}
 	}
 	for i := range bc.fields.columns {
+		bc.fields.columns[i].poisonNumeric()
 		poisonValues(bc.fields.columns[i].values)
+	}
+	for i := range bc.timestamps {
+		bc.timestamps[i] = poisonNumeric
+	}
+	for i := range bc.versions {
+		bc.versions[i] = poisonNumeric
+	}
+}
+
+// poisonNumeric is the sentinel written over released numeric cursor memory: -1
+// as an int64 (all 0xFF bytes) and a NaN as a float64, neither of which a test
+// fixture writes.
+const poisonNumeric = -1
+
+// poisonNumeric overwrites the typed numeric slices of c.
+func (c *column) poisonNumeric() {
+	for i := range c.int64s {
+		c.int64s[i] = poisonNumeric
+	}
+	for i := range c.float64s {
+		c.float64s[i] = math.NaN()
 	}
 }
 

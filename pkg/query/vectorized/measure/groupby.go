@@ -142,22 +142,32 @@ func (g *BatchGroupBy) Consume(_ context.Context, b *vectorized.RecordBatch) err
 	if activeErr != nil {
 		return activeErr
 	}
-	n := int64(len(active))
 	if g.span != nil {
-		g.rowsIn += n
+		g.rowsIn += int64(len(active))
 	}
-	estBytes := n*g.entrySize + n*g.rowSize
-	if estBytes > 0 {
-		if reserveErr := g.tracker.Reserve(estBytes); reserveErr != nil {
-			return fmt.Errorf("group-by memory budget exceeded: %w", reserveErr)
+	// A scan batch may be a whole storage block (up to 8,192 rows), larger than
+	// the pipeline's batchSize. Reserve per batchSize rows, as for a batch of that
+	// size, so the transient worst-case reservation does not grow with the block.
+	chunk := g.batchSize
+	if chunk <= 0 {
+		chunk = vectorized.DefaultBatchSize
+	}
+	for start := 0; start < len(active); start += chunk {
+		rows := active[start:min(start+chunk, len(active))]
+		n := int64(len(rows))
+		estBytes := n*g.entrySize + n*g.rowSize
+		if estBytes > 0 {
+			if reserveErr := g.tracker.Reserve(estBytes); reserveErr != nil {
+				return fmt.Errorf("group-by memory budget exceeded: %w", reserveErr)
+			}
+			g.reserved += estBytes
 		}
-		g.reserved += estBytes
-	}
-	actualBytes := g.consumeRows(b, active)
-	if actualBytes < estBytes {
-		refund := estBytes - actualBytes
-		g.tracker.Release(refund)
-		g.reserved -= refund
+		actualBytes := g.consumeRows(b, rows)
+		if actualBytes < estBytes {
+			refund := estBytes - actualBytes
+			g.tracker.Release(refund)
+			g.reserved -= refund
+		}
 	}
 	return nil
 }

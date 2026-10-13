@@ -17,8 +17,11 @@
 
 package vectorized
 
-// DefaultBatchSize is the canonical batch row capacity.
-// uint16 selection vectors cap batch size at 65536.
+// DefaultBatchSize is the canonical batch row capacity of operator output.
+// uint16 selection vectors cap batch size at 65536. Scan batches lent from
+// storage blocks may be larger (up to a block, 8,192 rows) and are never padded
+// or split to this size, so an operator must size itself from Len/ActiveLen, not
+// from this constant.
 const DefaultBatchSize = 1024
 
 // RecordBatch is the unit of work flowing through the pipeline.
@@ -40,6 +43,11 @@ type RecordBatch struct {
 	// vectorized/measure's cloneOneValue) or pin the same owners.
 	Owners Owners
 	Len    int
+	// Lent marks a batch whose Columns were lent by a storage batch that the
+	// batch's Owners hold. The columns return to their pools when Owners are
+	// released, so a lent batch is single-use: Reset drops its columns instead
+	// of clearing them and BatchPool.Put discards it rather than pooling it.
+	Lent bool
 }
 
 // NewRecordBatch allocates a batch with column capacities sized to capacity rows.
@@ -62,6 +70,12 @@ func (b *RecordBatch) Reset() {
 	b.Owners.Release()
 	b.Len = 0
 	b.Selection = nil
+	if b.Lent {
+		// The columns went back to their pools with the owners; clearing them
+		// here would race with whoever acquired them next.
+		b.Columns = nil
+		return
+	}
 	for _, c := range b.Columns {
 		c.Reset()
 	}

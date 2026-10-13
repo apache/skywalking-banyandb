@@ -136,6 +136,15 @@ type queryMetrics struct {
 	resultPoints             meter.Histogram
 	totalQueryResultStarted  meter.Counter
 	totalQueryResultFinished meter.Counter
+	// Series-window scan (scan path v2): how many series windows a query scanned
+	// and how many of them, by block metadata, had blocks that overlap in time.
+	// The segment counters split the scan's segments into the zero-copy fast path
+	// (one block) and the row merge (two or more overlapping blocks), which is
+	// the number that says whether overlap is rare on a real cluster.
+	scanWindows           meter.Counter
+	scanWindowsOverlapped meter.Counter
+	scanSegmentsFast      meter.Counter
+	scanSegmentsOverlap   meter.Counter
 }
 
 func newQueryMetrics(factory observability.Factory) *queryMetrics {
@@ -148,6 +157,10 @@ func newQueryMetrics(factory observability.Factory) *queryMetrics {
 		resultPoints:             factory.NewHistogram("result_points", meter.DefBuckets),
 		totalQueryResultStarted:  factory.NewCounter("total_query_result_started"),
 		totalQueryResultFinished: factory.NewCounter("total_query_result_finished"),
+		scanWindows:              factory.NewCounter("total_scan_windows"),
+		scanWindowsOverlapped:    factory.NewCounter("total_scan_windows_overlapped"),
+		scanSegmentsFast:         factory.NewCounter("total_scan_segments_fast"),
+		scanSegmentsOverlap:      factory.NewCounter("total_scan_segments_overlap"),
 	}
 }
 

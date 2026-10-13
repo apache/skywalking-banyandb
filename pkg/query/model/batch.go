@@ -25,6 +25,13 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
+// SmallBatchRows is the row count below which a storage batch is copied into a
+// larger owned batch instead of being passed along as it is: per-batch overhead
+// (a RecordBatch, an owner set, one operator call) would otherwise dominate a
+// batch of a few rows. Storage coalesces its small series windows to this
+// threshold, and the scan source applies it to whatever storage hands over.
+const SmallBatchRows = 256
+
 // measureBatchPool recycles *MeasureBatch shells together with their
 // parallel metadata slices (Timestamps / Versions / ShardIDs / SeriesIDs).
 // Tag and Field columns come from the per-type column pool exposed by the
@@ -89,11 +96,27 @@ type MeasureBatch struct {
 	// series.
 	SeriesBoundaries []int
 
+	// Selection, when non-nil, lists the row indices of the batch's columns in
+	// the order the rows are to be emitted; rows not listed are not part of the
+	// batch's result. nil means every row in storage order. A descending scan
+	// emits one block as [n-1, ..., 0] over unreversed columns instead of copying
+	// them backwards. RowCount still reports the column length: use ActiveRows for
+	// the number of rows the consumer sees. Consumers must treat it as read-only.
+	Selection []uint16
+
+	// ownTimestamps and ownVersions keep the pooled buffers while Timestamps and
+	// Versions are borrowed views of storage memory (see BorrowMetadata).
+	ownTimestamps []int64
+	ownVersions   []int64
+
 	// Owners pins the storage memory that string, bytes and string-array cells
 	// in Tags borrow without copying. Release drops the references. A consumer
 	// that keeps a borrowed cell past Release must copy it first or pin the same
 	// owners (vectorized.Owners.PinAll) before releasing the batch.
 	Owners vectorized.Owners
+
+	// metaBorrowed is set while Timestamps and Versions are borrowed views.
+	metaBorrowed bool
 }
 
 // RowCount returns the number of rows in the batch. It reads len(Timestamps);
@@ -105,6 +128,36 @@ func (b *MeasureBatch) RowCount() int {
 	return len(b.Timestamps)
 }
 
+// ActiveRows returns the number of rows a consumer sees: len(Selection) when a
+// selection is set, RowCount otherwise.
+func (b *MeasureBatch) ActiveRows() int {
+	if b == nil {
+		return 0
+	}
+	if b.Selection != nil {
+		return len(b.Selection)
+	}
+	return len(b.Timestamps)
+}
+
+// BorrowMetadata makes Timestamps and Versions zero-copy views of timestamps and
+// versions, which must have equal length and stay valid and unmodified until
+// Release; the caller pins whatever owns them. The slices are capacity-limited,
+// so an append reallocates instead of writing into the owner's memory. Release
+// drops the views and keeps the batch's own pooled buffers.
+func (b *MeasureBatch) BorrowMetadata(timestamps, versions []int64) {
+	if !b.metaBorrowed {
+		b.ownTimestamps = b.Timestamps[:0]
+		b.ownVersions = b.Versions[:0]
+		b.metaBorrowed = true
+	}
+	b.Timestamps = timestamps[:len(timestamps):len(timestamps)]
+	b.Versions = versions[:len(versions):len(versions)]
+}
+
+// MetadataBorrowed reports whether Timestamps and Versions are borrowed views.
+func (b *MeasureBatch) MetadataBorrowed() bool { return b.metaBorrowed }
+
 // AcquireMeasureBatch returns a recycled *MeasureBatch wired to schema with
 // Tag / Field column slots pre-acquired from the per-type column pool. The
 // parallel metadata slices are truncated to length 0 and grown to capacity
@@ -112,21 +165,33 @@ func (b *MeasureBatch) RowCount() int {
 // held (at least capacity). Callers must call Release exactly once when
 // done with the batch.
 func AcquireMeasureBatch(schema *vectorized.BatchSchema, capacity int) *MeasureBatch {
+	return acquireMeasureBatch(schema, capacity, true)
+}
+
+// AcquireBorrowingMeasureBatch is AcquireMeasureBatch for a batch whose
+// Timestamps and Versions will be set with BorrowMetadata: it does not size
+// those two slices, only ShardIDs, SeriesIDs and the columns.
+func AcquireBorrowingMeasureBatch(schema *vectorized.BatchSchema, capacity int) *MeasureBatch {
+	return acquireMeasureBatch(schema, capacity, false)
+}
+
+func acquireMeasureBatch(schema *vectorized.BatchSchema, capacity int, sizeMetadata bool) *MeasureBatch {
 	b := measureBatchPool.Get()
 	if b == nil {
 		b = &MeasureBatch{}
 	}
 	b.Schema = schema
+	b.Selection = nil
 	b.Timestamps = b.Timestamps[:0]
 	b.Versions = b.Versions[:0]
 	b.ShardIDs = b.ShardIDs[:0]
 	b.SeriesIDs = b.SeriesIDs[:0]
 	b.SeriesBoundaries = b.SeriesBoundaries[:0]
 	if capacity > 0 {
-		if cap(b.Timestamps) < capacity {
+		if sizeMetadata && cap(b.Timestamps) < capacity {
 			b.Timestamps = make([]int64, 0, capacity)
 		}
-		if cap(b.Versions) < capacity {
+		if sizeMetadata && cap(b.Versions) < capacity {
 			b.Versions = make([]int64, 0, capacity)
 		}
 		if cap(b.ShardIDs) < capacity {
@@ -173,6 +238,15 @@ func (b *MeasureBatch) Release() {
 		vectorized.ReleaseColumn(c)
 	}
 	b.Schema = nil
+	b.Selection = nil
+	if b.metaBorrowed {
+		// The views belong to the pinned owners; get the pooled buffers back.
+		b.Timestamps = b.ownTimestamps[:0]
+		b.Versions = b.ownVersions[:0]
+		b.ownTimestamps = nil
+		b.ownVersions = nil
+		b.metaBorrowed = false
+	}
 	b.Timestamps = b.Timestamps[:0]
 	b.Versions = b.Versions[:0]
 	b.ShardIDs = b.ShardIDs[:0]

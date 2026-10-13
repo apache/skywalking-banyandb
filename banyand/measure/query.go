@@ -799,12 +799,14 @@ type queryResult struct {
 	sidToIndex       map[common.SeriesID]int
 	storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue
 	batchSchema      *vectorized.BatchSchema
+	scan             *windowScan
 	tagProjection    []model.TagProjection
 	data             []*blockCursor
 	snapshots        []*snapshot
 	segments         []storage.Segment[*tsTable, option]
 	hit              int
 	loaded           bool
+	scanPlanned      bool
 	orderByTS        bool
 	ascTS            bool
 }
@@ -899,6 +901,9 @@ func (qr *queryResult) Release() {
 		qr.data[i] = nil
 	}
 	qr.data = qr.data[:0]
+	if qr.scan != nil {
+		qr.scan.close()
+	}
 	for i := range qr.snapshots {
 		qr.snapshots[i].decRef()
 	}

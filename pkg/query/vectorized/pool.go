@@ -45,13 +45,17 @@ func (p *BatchPool) Get() *RecordBatch {
 }
 
 // Put returns a batch to the pool and releases the owners it pins; the caller
-// is declaring the batch dead. Nil batches and batches with a foreign schema are
-// not pooled (a foreign batch still has its owners released).
+// is declaring the batch dead. Nil batches, lent batches and batches with a
+// foreign schema are not pooled (a foreign batch still has its owners released).
 func (p *BatchPool) Put(b *RecordBatch) {
 	if b == nil {
 		return
 	}
 	b.Owners.Release()
+	if b.Lent {
+		b.Columns = nil
+		return
+	}
 	if b.Schema != p.schema {
 		return
 	}
