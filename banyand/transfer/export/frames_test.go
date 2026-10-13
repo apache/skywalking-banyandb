@@ -59,14 +59,17 @@ func syntheticSegments(segments, shards, parts int) []*transferv1.UnitInventory 
 }
 
 // assertReassembles checks that frames stay within budget and that merging their units by
-// (segment, shard) gives back exactly units, with each segment-level index counted once.
-func assertReassembles(t *testing.T, units []*transferv1.UnitInventory, frames []*transferv1.PlanResponse, budget int) {
+// (segment, shard) gives back exactly units: each segment-level index counted once, no segment
+// piece listing a shard twice, and the pieces of a split shard holding disjoint parts in order
+// with the shard's aggregates on the first piece only. It returns the largest number of pieces
+// any shard was split into.
+func assertReassembles(t *testing.T, units []*transferv1.UnitInventory, frames []*transferv1.PlanResponse, budget int) int {
 	t.Helper()
 	type key struct {
 		suffix string
 		shard  uint32
 	}
-	got := map[key]*transferv1.ShardStat{}
+	got := map[key][]*transferv1.ShardStat{}
 	segLevels := map[string]int{}
 	for i, f := range frames {
 		if size := proto.Size(f); size > budget {
@@ -83,35 +86,54 @@ func assertReassembles(t *testing.T, units []*transferv1.UnitInventory, frames [
 			if seg.GetSegmentLevel() != nil {
 				segLevels[seg.GetUnit().GetSegmentSuffix()]++
 			}
+			inPiece := map[uint32]bool{}
 			for j, sh := range seg.GetShards() {
 				if seg.GetUnit().GetShardIds()[j] != sh.GetShardId() {
 					t.Fatalf("shard_ids must follow the shards")
 				}
-				k := key{seg.GetUnit().GetSegmentSuffix(), sh.GetShardId()}
-				if _, dup := got[k]; dup {
-					t.Fatalf("shard %v is sent twice", k)
+				if inPiece[sh.GetShardId()] {
+					t.Fatalf("a segment piece of %s lists shard %d twice", seg.GetUnit().GetSegmentSuffix(), sh.GetShardId())
 				}
-				got[k] = sh
+				inPiece[sh.GetShardId()] = true
+				k := key{seg.GetUnit().GetSegmentSuffix(), sh.GetShardId()}
+				got[k] = append(got[k], sh)
 			}
 		}
 	}
-	want := 0
+	want, maxPieces := 0, 0
 	for _, u := range units {
 		seg := u.GetSegment()
-		if segLevels[seg.GetUnit().GetSegmentSuffix()] != 1 {
-			t.Fatalf("segment %s must carry its segment-level index exactly once, got %d",
-				seg.GetUnit().GetSegmentSuffix(), segLevels[seg.GetUnit().GetSegmentSuffix()])
+		suffix := seg.GetUnit().GetSegmentSuffix()
+		if segLevels[suffix] != 1 {
+			t.Fatalf("segment %s must carry its segment-level index exactly once, got %d", suffix, segLevels[suffix])
 		}
 		for _, sh := range seg.GetShards() {
 			want++
-			if !proto.Equal(got[key{seg.GetUnit().GetSegmentSuffix(), sh.GetShardId()}], sh) {
-				t.Fatalf("shard %d of %s did not survive the split", sh.GetShardId(), seg.GetUnit().GetSegmentSuffix())
+			pieces := got[key{suffix, sh.GetShardId()}]
+			if len(pieces) == 0 {
+				t.Fatalf("shard %d of %s is missing", sh.GetShardId(), suffix)
+			}
+			maxPieces = max(maxPieces, len(pieces))
+			merged := proto.Clone(pieces[0]).(*transferv1.ShardStat)
+			for _, p := range pieces[1:] {
+				if !proto.Equal(p, &transferv1.ShardStat{ShardId: p.GetShardId(), Parts: p.GetParts()}) {
+					t.Fatalf("a continuation piece of shard %d of %s must carry only shard_id and parts: %v", sh.GetShardId(), suffix, p)
+				}
+				if len(p.GetParts()) == 0 {
+					t.Fatalf("a continuation piece of shard %d of %s carries no parts", sh.GetShardId(), suffix)
+				}
+				merged.Parts = append(merged.Parts, p.GetParts()...)
+			}
+			if !proto.Equal(merged, sh) {
+				t.Fatalf("shard %d of %s did not survive the split: got %d parts, want %d",
+					sh.GetShardId(), suffix, len(merged.GetParts()), len(sh.GetParts()))
 			}
 		}
 	}
 	if len(got) != want {
 		t.Fatalf("want %d shards, got %d", want, len(got))
 	}
+	return maxPieces
 }
 
 func TestSplitUnitFrames_GroupOverTheReceiveLimit(t *testing.T) {
@@ -146,5 +168,128 @@ func TestSplitUnitFrames_SmallGroupIsOneFrame(t *testing.T) {
 	}
 	if frames := splitUnitFrames("warm", nil, planFrameBudget); len(frames) != 0 {
 		t.Fatalf("a group without units has no frame, got %d", len(frames))
+	}
+}
+
+func TestSplitUnitFrames_OneShardOverTheReceiveLimit(t *testing.T) {
+	// One segment with one shard of 1.2 million parts encodes to about 35 MB in one frame.
+	units := syntheticSegments(1, 1, 1_200_000)
+	whole := &transferv1.PlanResponse{Frame: &transferv1.PlanResponse_Units{Units: &transferv1.UnitFrame{Stage: "warm", Units: units}}}
+	if size := proto.Size(whole); size <= receiveLimit {
+		t.Fatalf("the fixture must exceed the receive limit with a single shard, got %d bytes", size)
+	}
+	frames := splitUnitFrames("warm", units, planFrameBudget)
+	if pieces := assertReassembles(t, units, frames, planFrameBudget); pieces < receiveLimit/planFrameBudget {
+		t.Fatalf("the shard must be split into at least %d pieces, got %d", receiveLimit/planFrameBudget, pieces)
+	}
+}
+
+// varyShards gives every part distinct timestamps and counts and makes the shard aggregates
+// match, so a reordered, lost or duplicated part changes the reassembled shard.
+func varyShards(units []*transferv1.UnitInventory) {
+	for _, u := range units {
+		for _, sh := range u.GetSegment().GetShards() {
+			sh.MinTimestamp, sh.MaxTimestamp, sh.TotalCount = 0, 0, 0
+			sh.EstimatedCompressedBytes, sh.EstimatedUncompressedBytes = uint64(len(sh.Parts))*512, uint64(len(sh.Parts))*4096
+			sh.PartsCount = uint32(len(sh.Parts))
+			for i, p := range sh.Parts {
+				p.MinTimestamp = 1_788_739_200_000_000_000 + int64(i)*1_000_000_000
+				p.MaxTimestamp = p.MinTimestamp + 500_000_000
+				p.TotalCount = uint64(i%97 + 1)
+				if sh.MinTimestamp == 0 || p.MinTimestamp < sh.MinTimestamp {
+					sh.MinTimestamp = p.MinTimestamp
+				}
+				sh.MaxTimestamp = max(sh.MaxTimestamp, p.MaxTimestamp)
+				sh.TotalCount += p.TotalCount
+			}
+		}
+	}
+}
+
+func TestSplitUnitFrames_SplitsAShardLargerThanTheBudget(t *testing.T) {
+	units := syntheticSegments(3, 4, 4)
+	// Shard 0 (whose id encodes as nothing) and shard 2 of the middle segment are oversized;
+	// the other shards stay whole and keep sharing pieces.
+	for _, id := range []int{0, 2} {
+		sh := units[1].GetSegment().GetShards()[id]
+		for p := len(sh.Parts); p < 400; p++ {
+			sh.Parts = append(sh.Parts, &transferv1.PartStat{Id: uint64(p + 1)})
+		}
+	}
+	varyShards(units)
+	budget := 2048
+	if size := proto.Size(units[1].GetSegment().GetShards()[0]); size <= budget {
+		t.Fatalf("the oversized shard must exceed the budget, got %d bytes", size)
+	}
+	frames := splitUnitFrames("warm", units, budget)
+	if pieces := assertReassembles(t, units, frames, budget); pieces < 4 {
+		t.Fatalf("the oversized shards must be split into several pieces, got %d", pieces)
+	}
+}
+
+// Every shape and budget, from a budget that barely fits one part next to the piece header to
+// one that holds whole segments, must reassemble without losing, duplicating or reordering a
+// part and without a frame over the budget.
+func TestSplitUnitFrames_ShardSplitBudgetSweep(t *testing.T) {
+	shapes := map[string]func() []*transferv1.UnitInventory{
+		"one shard": func() []*transferv1.UnitInventory { return syntheticSegments(1, 1, 300) },
+		"one oversized shard among many": func() []*transferv1.UnitInventory {
+			units := syntheticSegments(2, 6, 3)
+			sh := units[0].GetSegment().GetShards()[5]
+			for p := len(sh.Parts); p < 250; p++ {
+				sh.Parts = append(sh.Parts, &transferv1.PartStat{Id: uint64(p + 1)})
+			}
+			return units
+		},
+		"every shard oversized": func() []*transferv1.UnitInventory { return syntheticSegments(2, 3, 120) },
+		"shard without parts": func() []*transferv1.UnitInventory {
+			units := syntheticSegments(1, 3, 200)
+			units[0].GetSegment().GetShards()[1].Parts = nil
+			return units
+		},
+	}
+	for name, build := range shapes {
+		for budget := 256; budget <= 16<<10; budget += 61 {
+			units := build()
+			varyShards(units)
+			frames := splitUnitFrames("warm", units, budget)
+			t.Run(fmt.Sprintf("%s/%d", name, budget), func(t *testing.T) {
+				assertReassembles(t, units, frames, budget)
+			})
+		}
+	}
+}
+
+func TestSplitShard_FirstPieceCarriesTheAggregates(t *testing.T) {
+	units := syntheticSegments(1, 1, 50)
+	varyShards(units)
+	shard := units[0].GetSegment().GetShards()[0]
+	shard.ShardId = 7
+	pieces := splitShard(shard, 300)
+	if len(pieces) < 3 {
+		t.Fatalf("want several pieces, got %d", len(pieces))
+	}
+	head := proto.Clone(shard).(*transferv1.ShardStat)
+	head.Parts = pieces[0].GetParts()
+	if !proto.Equal(pieces[0], head) {
+		t.Fatalf("the first piece must carry every aggregate: %v", pieces[0])
+	}
+	var parts []*transferv1.PartStat
+	for i, p := range pieces {
+		if size := entrySize(proto.Size(p)); size > 300 {
+			t.Fatalf("piece %d is %d bytes, over the budget", i, size)
+		}
+		if i > 0 && !proto.Equal(p, &transferv1.ShardStat{ShardId: 7, Parts: p.GetParts()}) {
+			t.Fatalf("piece %d must carry only shard_id and parts: %v", i, p)
+		}
+		parts = append(parts, p.GetParts()...)
+	}
+	if len(parts) != len(shard.GetParts()) {
+		t.Fatalf("want %d parts, got %d", len(shard.GetParts()), len(parts))
+	}
+	for i := range parts {
+		if parts[i] != shard.GetParts()[i] {
+			t.Fatalf("part %d is lost or out of order", i)
+		}
 	}
 }

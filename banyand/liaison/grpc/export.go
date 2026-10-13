@@ -399,16 +399,22 @@ func (s *exportService) fanOutPlan(
 	// One sender owns the downstream stream and drains a bounded queue, so a client that stops
 	// reading stalls only the sender: the node workers still see another node's failure (or
 	// the client's own send error, which cancels ctx) and the fan-out ends without waiting on
-	// the client.
+	// the client. The sender also stops on ctx, because a failed fan-out returns without
+	// closing out and the deferred cancel is then what releases it.
 	out := make(chan *transferv1.PlanResponse, exportPlanSendBuffer)
 	sender := run.Go(ctx, "liaison.grpc.export.plan-sender", s.l, func(context.Context) {
-		for f := range out {
-			if ctx.Err() != nil {
+		for {
+			select {
+			case <-ctx.Done():
 				return
-			}
-			if err := send(f); err != nil {
-				cancel(err)
-				return
+			case f, ok := <-out:
+				if !ok {
+					return
+				}
+				if err := send(f); err != nil {
+					cancel(err)
+					return
+				}
 			}
 		}
 	})

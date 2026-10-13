@@ -22,6 +22,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -1656,5 +1657,55 @@ func TestExportPlan_BlockedDownstreamDoesNotHideNodeError(t *testing.T) {
 	err := planWithin(t, svc, &transferv1.PlanRequest{}, stream)
 	if status.Code(err) != codes.Internal || !strings.Contains(err.Error(), "data node "+testNodeB) {
 		t.Fatalf("want node b's Internal error, got %v", err)
+	}
+}
+
+// fanOutGoroutines counts the goroutines still running inside fanOutPlan, its plan sender
+// included.
+func fanOutGoroutines() int {
+	buf := make([]byte, 1<<20)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			buf = buf[:n]
+			break
+		}
+		buf = make([]byte, 2*len(buf))
+	}
+	count := 0
+	for _, g := range strings.Split(string(buf), "\n\n") {
+		if strings.Contains(g, "(*exportService).fanOutPlan") {
+			count++
+		}
+	}
+	return count
+}
+
+// A create that every node rejects before emitting any unit must not leave the plan sender
+// waiting on an empty queue: repeated attempts would pile up goroutines holding the request
+// and the stream.
+func TestExportPlan_CreateSessionRejectedBeforeUnitsStopsTheSender(t *testing.T) {
+	a := &fakeDataNode{groups: []string{"g"}, occupant: testSessionOldID}
+	b := &fakeDataNode{groups: []string{"g"}, occupant: testSessionOldID}
+	svc := newFanOut(t, map[string]*fakeDataNode{testNodeA: a, testNodeB: b})
+	const attempts = 10
+	for i := 0; i < attempts; i++ {
+		stream := &recordingStream{ctx: context.Background()}
+		err := planWithin(t, svc, transfer.CreateRequest(nil, false), stream)
+		if status.Code(err) != codes.AlreadyExists {
+			t.Fatalf("attempt %d: want AlreadyExists, got %v", i, err)
+		}
+		for _, f := range stream.frames {
+			if f.GetUnits() != nil {
+				t.Fatalf("attempt %d: a rejected create must not relay units, got %+v", i, f)
+			}
+		}
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for fanOutGoroutines() > 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d fan-out goroutines still running after %d rejected creates", fanOutGoroutines(), attempts)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

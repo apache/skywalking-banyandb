@@ -129,8 +129,10 @@ func collectPlanFrames(stream transferv1.ExportService_PlanClient) (*PlanResult,
 }
 
 // mergeSegmentPieces folds the pieces of a segment a data node split across frames back into
-// its first piece, so every consumer sees one unit per (node, segment). Pieces carry disjoint
-// shards and only one carries segment_level; a frame left without units is dropped.
+// its first piece, so every consumer sees one unit per (node, segment) and one ShardStat per
+// shard. Only one segment piece carries segment_level; a shard split into pieces has disjoint
+// parts in each and its aggregates on only one (see mergeShardPieces). A frame left without
+// units is dropped.
 func mergeSegmentPieces(frames []*transferv1.UnitFrame) []*transferv1.UnitFrame {
 	first := map[string]*transferv1.SegmentInventory{}
 	kept := frames[:0]
@@ -160,10 +162,33 @@ func mergeSegmentPieces(frames []*transferv1.UnitFrame) []*transferv1.UnitFrame 
 		}
 	}
 	for _, seg := range first {
-		slices.Sort(seg.Unit.ShardIds)
-		slices.SortFunc(seg.Shards, func(a, b *transferv1.ShardStat) int { return cmp.Compare(a.GetShardId(), b.GetShardId()) })
+		seg.Unit.ShardIds = slices.Compact(slices.Sorted(slices.Values(seg.Unit.ShardIds)))
+		seg.Shards = mergeShardPieces(seg.Shards)
 	}
 	return kept
+}
+
+// mergeShardPieces sorts shards by id and folds the pieces of each shard into one, keeping
+// the parts in arrival order. Only one piece of a split shard carries its aggregates and the
+// others leave them zero, so adding them up counts the shard's statistics once.
+func mergeShardPieces(shards []*transferv1.ShardStat) []*transferv1.ShardStat {
+	slices.SortStableFunc(shards, func(a, b *transferv1.ShardStat) int { return cmp.Compare(a.GetShardId(), b.GetShardId()) })
+	merged := shards[:0]
+	for _, s := range shards {
+		last := len(merged) - 1
+		if last < 0 || merged[last].GetShardId() != s.GetShardId() {
+			merged = append(merged, s)
+			continue
+		}
+		dst := merged[last]
+		dst.Parts = append(dst.Parts, s.GetParts()...)
+		dst.PartsCount += s.GetPartsCount()
+		dst.TotalCount += s.GetTotalCount()
+		dst.EstimatedCompressedBytes += s.GetEstimatedCompressedBytes()
+		dst.EstimatedUncompressedBytes += s.GetEstimatedUncompressedBytes()
+		mergeRange(&dst.MinTimestamp, &dst.MaxTimestamp, s.GetMinTimestamp(), s.GetMaxTimestamp())
+	}
+	return merged
 }
 
 // unitGroup is the group a unit belongs to, whichever kind it is.

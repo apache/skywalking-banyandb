@@ -20,6 +20,7 @@ package exporter
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -117,6 +118,121 @@ func TestRunPlan_MergesSegmentPiecesAcrossFrames(t *testing.T) {
 	rep := BuildReport(&ClusterInfo{}, res)
 	if len(rep.Rows) != 2 || rep.Rows[0].Segments != 1 || rep.Rows[0].Shards != 3 || len(rep.MultiSource) != 1 {
 		t.Fatalf("a merged segment counts once with no extra sources: %+v %+v", rep.Rows, rep.MultiSource)
+	}
+}
+
+// A shard split into pieces with disjoint parts, across frames and next to other segment
+// pieces in one frame, merges back into one ShardStat whose parts keep their order and whose
+// aggregates come from the first piece only; the report counts it exactly like the whole shard.
+func TestRunPlan_MergesShardPiecesAcrossFrames(t *testing.T) {
+	const node = "data-a:17912"
+	parts := func(from, to uint64) []*transferv1.PartStat {
+		var ps []*transferv1.PartStat
+		for id := from; id <= to; id++ {
+			ps = append(ps, &transferv1.PartStat{Id: id, MinTimestamp: int64(100 + id), MaxTimestamp: int64(200 + id), TotalCount: id})
+		}
+		return ps
+	}
+	shard := func(id uint32, ps []*transferv1.PartStat) *transferv1.ShardStat {
+		s := &transferv1.ShardStat{ShardId: id, PartsCount: uint32(len(ps)), EstimatedCompressedBytes: 64 * uint64(len(ps)), EstimatedUncompressedBytes: 256 * uint64(len(ps))}
+		for _, p := range ps {
+			s.TotalCount += p.TotalCount
+			mergeRange(&s.MinTimestamp, &s.MaxTimestamp, p.MinTimestamp, p.MaxTimestamp)
+		}
+		s.Parts = ps
+		return s
+	}
+	// Shard 0 (whose id encodes as nothing) and shard 1 are split; shard 2 travels whole.
+	shards := []*transferv1.ShardStat{shard(0, parts(1, 3)), shard(1, parts(11, 15)), shard(2, parts(21, 22))}
+	whole := &transferv1.SegmentInventory{
+		Unit:           &transferv1.SegmentUnit{Catalog: commonv1.Catalog_CATALOG_MEASURE, Group: "m", SegmentSuffix: "20260930", ShardIds: []uint32{0, 1, 2}},
+		SegmentVersion: "1.5.0",
+		SegmentLevel:   &transferv1.SidxStat{EstimatedBytes: 10},
+		Shards:         shards,
+	}
+	head := func(s *transferv1.ShardStat, n int) *transferv1.ShardStat {
+		h := proto.Clone(s).(*transferv1.ShardStat)
+		h.Parts = h.Parts[:n]
+		return h
+	}
+	rest := func(s *transferv1.ShardStat, from, to int) *transferv1.ShardStat {
+		return &transferv1.ShardStat{ShardId: s.ShardId, Parts: proto.Clone(s).(*transferv1.ShardStat).Parts[from:to]}
+	}
+	piece := func(level *transferv1.SidxStat, ss ...*transferv1.ShardStat) *transferv1.UnitInventory {
+		p := &transferv1.SegmentInventory{
+			Unit:           &transferv1.SegmentUnit{Catalog: whole.Unit.Catalog, Group: whole.Unit.Group, SegmentSuffix: whole.Unit.SegmentSuffix},
+			SegmentVersion: whole.SegmentVersion,
+			SegmentLevel:   level,
+			Shards:         ss,
+		}
+		for _, sh := range ss {
+			p.Unit.ShardIds = append(p.Unit.ShardIds, sh.ShardId)
+		}
+		return &transferv1.UnitInventory{Kind: &transferv1.UnitInventory_Segment{Segment: p}}
+	}
+	frame := func(units ...*transferv1.UnitInventory) *transferv1.PlanResponse {
+		return &transferv1.PlanResponse{Frame: &transferv1.PlanResponse_Units{Units: &transferv1.UnitFrame{NodeId: node, Stage: "warm", Units: units}}}
+	}
+	other := unitFrame("data-b:17912", "warm", "m", 101, 203, 6)
+	f := newFakeLiaison()
+	f.planFrames = []*transferv1.PlanResponse{
+		frame(piece(proto.Clone(whole.SegmentLevel).(*transferv1.SidxStat), head(shards[0], 2), head(shards[1], 2))),
+		other,
+		frame(piece(nil, rest(shards[0], 2, 3)), piece(nil, rest(shards[1], 2, 3))),
+		frame(piece(nil, rest(shards[1], 3, 5), proto.Clone(shards[2]).(*transferv1.ShardStat))),
+	}
+	f.summary = &transferv1.PlanSummary{AnsweredNodes: []string{node, "data-b:17912"}}
+	conn := dial(t, serveLiaison(t, f))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	res, err := RunPlan(ctx, conn, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Frames) != 2 || len(res.Frames[0].GetUnits()) != 1 || !proto.Equal(res.Frames[0].GetUnits()[0].GetSegment(), whole) ||
+		!proto.Equal(res.Frames[1], other.GetUnits()) {
+		t.Fatalf("the shard pieces must merge into the whole segment, got %+v", res.Frames)
+	}
+	got := BuildReport(&ClusterInfo{}, res)
+	want := BuildReport(&ClusterInfo{}, &PlanResult{
+		Frames: []*transferv1.UnitFrame{
+			{NodeId: node, Stage: "warm", Units: []*transferv1.UnitInventory{{Kind: &transferv1.UnitInventory_Segment{Segment: whole}}}},
+			other.GetUnits(),
+		},
+		AnsweredNodes: res.AnsweredNodes,
+	})
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("a split shard must report like the whole shard:\n got %+v\nwant %+v", got, want)
+	}
+	if got.Rows[0].Shards != 3 || got.Rows[0].Parts != 10 || len(got.MultiSource) != 1 {
+		t.Fatalf("a split shard counts once and adds no source: %+v %+v", got.Rows, got.MultiSource)
+	}
+}
+
+func TestMergeShardPieces_AddsContinuationsToTheShard(t *testing.T) {
+	merged := mergeShardPieces([]*transferv1.ShardStat{
+		{ShardId: 3, Parts: []*transferv1.PartStat{{Id: 5}}},
+		{
+			ShardId: 1, MinTimestamp: 10, MaxTimestamp: 20, PartsCount: 3, TotalCount: 30, EstimatedCompressedBytes: 7, EstimatedUncompressedBytes: 9,
+			Parts: []*transferv1.PartStat{{Id: 1}},
+		},
+		{ShardId: 3, MinTimestamp: 1, MaxTimestamp: 2, PartsCount: 1, TotalCount: 4, Parts: []*transferv1.PartStat{{Id: 6}}},
+		{ShardId: 1, Parts: []*transferv1.PartStat{{Id: 2}, {Id: 3}}},
+	})
+	want := []*transferv1.ShardStat{
+		{
+			ShardId: 1, MinTimestamp: 10, MaxTimestamp: 20, PartsCount: 3, TotalCount: 30, EstimatedCompressedBytes: 7, EstimatedUncompressedBytes: 9,
+			Parts: []*transferv1.PartStat{{Id: 1}, {Id: 2}, {Id: 3}},
+		},
+		{ShardId: 3, MinTimestamp: 1, MaxTimestamp: 2, PartsCount: 1, TotalCount: 4, Parts: []*transferv1.PartStat{{Id: 5}, {Id: 6}}},
+	}
+	if len(merged) != len(want) {
+		t.Fatalf("want %d shards, got %d", len(want), len(merged))
+	}
+	for i := range want {
+		if !proto.Equal(merged[i], want[i]) {
+			t.Fatalf("shard %d: got %v, want %v", i, merged[i], want[i])
+		}
 	}
 }
 
