@@ -135,7 +135,8 @@ type measureSoakResult struct {
 //  1. no leak: block cursor pool refs, owner pins, scan reservations and decode
 //     tasks return to their idle baseline, decode workers do not change, and the
 //     goroutine count returns near its baseline;
-//  2. no heap growth beyond SOAK_HEAP_GROWTH_MAX_PCT from the post-warmup baseline;
+//  2. no live-heap growth beyond SOAK_HEAP_GROWTH_MAX_PCT from the settled post-warmup
+//     baseline (see settledHeapLive);
 //  3. liveness: the started-query count never decreases and covers every query that
 //     completed, and the scan was engaged (it held reservations at some point);
 //  4. correctness: every bounded-window query matches an independent expectation
@@ -269,13 +270,17 @@ func TestMeasureVecSoak(t *testing.T) {
 	// Concurrent warmup, not counted.
 	runLoad(ctx, soakWarmupQueries, false)
 	idleBaseline := waitForIdleScan(t, 10*time.Second)
-	runtime.GC()
-	var baseMem runtime.MemStats
-	runtime.ReadMemStats(&baseMem)
+	// The percentage gate is taken of the workload's own live heap; the pooled
+	// encoder buffers warmed next sit in the baseline reading but not in its denominator.
+	workloadHeap := settledHeapLive().HeapAlloc
+	warmZstdEncoders()
+	baseStats := settledHeapLive()
+	baseHeap := baseStats.HeapAlloc
+	dumpHeapProfile(t, filepath.Join(cfg.ReportDir, "measure-heap-baseline.pprof"))
 	goroutineBaseline := runtime.NumGoroutine()
 	startedBaseline := measure.QueriesStarted()
-	t.Logf("[soak] baseline: heap_inuse=%d goroutines=%d scan=%+v queries_started=%d",
-		baseMem.HeapInuse, goroutineBaseline, idleBaseline, startedBaseline)
+	t.Logf("[soak] baseline: heap_alloc=%d goroutines=%d scan=%+v queries_started=%d",
+		baseHeap, goroutineBaseline, idleBaseline, startedBaseline)
 
 	loadCtx, stopLoad := context.WithTimeout(ctx, cfg.SoakMeasureDuration)
 	defer stopLoad()
@@ -347,9 +352,11 @@ func TestMeasureVecSoak(t *testing.T) {
 	// Gates.
 	endScan := waitForIdleScan(t, 15*time.Second)
 	time.Sleep(2 * time.Second) // let the last flushes land and gRPC goroutines exit
-	runtime.GC()
-	var endMem runtime.MemStats
-	runtime.ReadMemStats(&endMem)
+	endStats := settledHeapLive()
+	endHeap := endStats.HeapAlloc
+	t.Logf("[soak] settled heap: base alloc=%d inuse=%d objs=%d | end alloc=%d inuse=%d objs=%d",
+		baseStats.HeapAlloc, baseStats.HeapInuse, baseStats.HeapObjects, endStats.HeapAlloc, endStats.HeapInuse, endStats.HeapObjects)
+	dumpHeapProfile(t, filepath.Join(cfg.ReportDir, "measure-heap-end.pprof"))
 	goroutineEnd := runtime.NumGoroutine()
 	startedDelta := measure.QueriesStarted() - startedBaseline
 
@@ -380,8 +387,8 @@ func TestMeasureVecSoak(t *testing.T) {
 		result.ShapeCounts[key.(string)] = value.(*atomic.Int64).Load()
 		return true
 	})
-	if baseMem.HeapInuse > 0 && endMem.HeapInuse > baseMem.HeapInuse {
-		result.HeapGrowthPct = float64(endMem.HeapInuse-baseMem.HeapInuse) / float64(baseMem.HeapInuse) * 100
+	if workloadHeap > 0 && endHeap > baseHeap {
+		result.HeapGrowthPct = float64(endHeap-baseHeap) / float64(workloadHeap) * 100
 	}
 
 	for _, failure := range failures {
@@ -403,8 +410,8 @@ func TestMeasureVecSoak(t *testing.T) {
 	gate(result.DecodeWorkersDelta == 0, "decode workers changed: baseline=%d end=%d", idleBaseline.DecodeWorkers, endScan.DecodeWorkers)
 	gate(goroutineEnd-goroutineBaseline <= soakGoroutineAllowance, "goroutines did not return near baseline: baseline=%d end=%d allowance=%d",
 		goroutineBaseline, goroutineEnd, soakGoroutineAllowance)
-	gate(result.HeapGrowthPct <= float64(cfg.SoakHeapGrowthMaxPct), "heap growth %.2f%% > max %d%% (baseline=%d end=%d)",
-		result.HeapGrowthPct, cfg.SoakHeapGrowthMaxPct, baseMem.HeapInuse, endMem.HeapInuse)
+	gate(result.HeapGrowthPct <= float64(cfg.SoakHeapGrowthMaxPct), "heap growth %.2f%% > max %d%% (workload=%d baseline=%d end=%d)",
+		result.HeapGrowthPct, cfg.SoakHeapGrowthMaxPct, workloadHeap, baseHeap, endHeap)
 	gate(monotonic, "started-query count went backwards")
 	gate(startedDelta >= completed.Load(), "started-query count %d is below the %d completed queries", startedDelta, completed.Load())
 	gate(peak.reservedBytes > 0, "the scan never held a reservation: the vectorized scan was not engaged")

@@ -21,9 +21,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"runtime/pprof"
 	"testing"
 	"time"
@@ -36,6 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/data"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/compress/zstd"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	vtrace "github.com/apache/skywalking-banyandb/pkg/query/vectorized/trace"
@@ -161,10 +164,7 @@ func TestTraceVecSoak(t *testing.T) {
 	}
 
 	// Snapshot post-warmup baseline.
-	runtime.GC()
-	var baseMemStats runtime.MemStats
-	runtime.ReadMemStats(&baseMemStats)
-	heapInuseBaseline := baseMemStats.HeapInuse
+	heapInuseBaseline := settledHeapLive().HeapAlloc
 	queryCountBaseline := vtrace.QueryCount()
 	t.Logf("[soak] post-warmup baseline: heap_inuse=%d bytes query_count=%d", heapInuseBaseline, queryCountBaseline)
 
@@ -193,10 +193,7 @@ func TestTraceVecSoak(t *testing.T) {
 	}
 
 	// Final heap snapshot — force GC first so freed objects are reclaimed.
-	runtime.GC()
-	var endMemStats runtime.MemStats
-	runtime.ReadMemStats(&endMemStats)
-	heapInuseEnd := endMemStats.HeapInuse
+	heapInuseEnd := settledHeapLive().HeapAlloc
 	queryCountEnd := vtrace.QueryCount()
 	queryCountDelta := queryCountEnd - queryCountBaseline
 
@@ -280,10 +277,7 @@ func TestTraceVecSoak(t *testing.T) {
 		}
 	}
 
-	runtime.GC()
-	var budgetBaseMemStats runtime.MemStats
-	runtime.ReadMemStats(&budgetBaseMemStats)
-	budgetHeapBaseline := budgetBaseMemStats.HeapInuse
+	budgetHeapBaseline := settledHeapLive().HeapAlloc
 	budgetGoroutineBaseline := runtime.NumGoroutine()
 	budgetQueryCountBaseline := vtrace.QueryCount()
 	dumpHeapProfile(t, filepath.Join(cfg.ReportDir, "budget-heap-baseline.pprof"))
@@ -321,10 +315,7 @@ func TestTraceVecSoak(t *testing.T) {
 	// Allow a short settle so in-flight gRPC transport goroutines complete before
 	// the goroutine snapshot. This avoids flaky counts from temporary bursts.
 	time.Sleep(200 * time.Millisecond)
-	runtime.GC()
-	var budgetEndMemStats runtime.MemStats
-	runtime.ReadMemStats(&budgetEndMemStats)
-	budgetHeapEnd := budgetEndMemStats.HeapInuse
+	budgetHeapEnd := settledHeapLive().HeapAlloc
 	budgetGoroutineEnd := runtime.NumGoroutine()
 	dumpHeapProfile(t, filepath.Join(cfg.ReportDir, "budget-heap-end.pprof"))
 	budgetQueryCountEnd := vtrace.QueryCount()
@@ -392,6 +383,55 @@ func TestTraceVecSoak(t *testing.T) {
 	}
 	if !budgetScenarioPass {
 		t.Error("[soak] GATE FAIL: budget-engagement scenario (see details above)")
+	}
+}
+
+const (
+	settleRounds  = 4
+	settleSamples = 5
+)
+
+// settledHeapLive returns the live heap (HeapAlloc: bytes of reachable objects) after
+// the heap has been quiesced the same way for every reading, so a baseline and an end
+// reading are comparable. Two things made the old single runtime.GC + HeapInuse reading
+// flaky: HeapInuse counts whole spans, so allocator fragmentation moved it by 15% or
+// more with no object growth, and one GC leaves sync.Pool victim caches and unswept
+// spans behind, which made the reading bimodal (tens of MB apart). Several GC and
+// FreeOSMemory rounds drain the pools; the minimum of several samples then discards a
+// reading that a background allocation inflated. A retained batch or cursor is
+// reachable, so it survives every round and still shows up in HeapAlloc.
+func settledHeapLive() runtime.MemStats {
+	for round := 0; round < settleRounds; round++ {
+		runtime.GC()
+		debug.FreeOSMemory()
+	}
+	var best runtime.MemStats
+	for sample := 0; sample < settleSamples; sample++ {
+		time.Sleep(100 * time.Millisecond)
+		runtime.GC()
+		debug.FreeOSMemory()
+		var mem runtime.MemStats
+		runtime.ReadMemStats(&mem)
+		if sample == 0 || mem.HeapAlloc < best.HeapAlloc {
+			best = mem
+		}
+	}
+	return best
+}
+
+// warmZstdEncoders drives every pooled encoder of the process-wide zstd encoder through
+// a large input. The encoder owns GOMAXPROCS encoders and each allocates its history
+// buffer on its first large block, so which encoders a flush or merge happened to take
+// during a run moved the end heap by a few MB with no leak behind it. Doing it before
+// the baseline puts that fixed, process-lifetime cost into both readings. The cost is
+// large (tens of MB), so the gate's percentage is taken of the heap measured before it.
+func warmZstdEncoders() {
+	input := make([]byte, 8<<20)
+	rng := rand.New(rand.NewSource(1)) //nolint:gosec // incompressible filler, not a secret
+	rng.Read(input)
+	var dst []byte
+	for call := 0; call < 4*runtime.GOMAXPROCS(0); call++ {
+		dst = zstd.Compress(dst[:0], input, 1)
 	}
 }
 
