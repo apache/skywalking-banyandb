@@ -510,7 +510,7 @@ var _ = ginkgo.Describe("ExportService", ginkgo.Ordered, func() {
 	})
 
 	ginkgo.It("rolls back a half-created session when one node is already occupied", func() {
-		const occupant = "0cc0a7ed"
+		const occupant = "0cc0a7ed0cc0a7ed0cc0a7ed0cc0a7ed"
 		direct := dialDataNode(dataAddrs[0])
 		defer func() { gomega.Expect(direct.Close()).To(gomega.Succeed()) }()
 		// Occupy node 0 alone, the way a session created through another liaison would.
@@ -587,7 +587,7 @@ var _ = ginkgo.Describe("ExportService", ginkgo.Ordered, func() {
 		_, err := transfertest.Sessions(conn, &transferv1.SessionsRequest{Action: transferv1.SessionsRequest_ACTION_LIST})
 		gomega.Expect(status.Code(err)).To(gomega.Equal(codes.Unavailable), "LIST fails while a node does not answer: %v", err)
 		gomega.Expect(err.Error()).To(gomega.ContainSubstring(dead))
-		const absent = "abad1dea"
+		const absent = "abad1deaabad1deaabad1deaabad1dea"
 		renewed := heartbeat(absent)
 		gomega.Expect(renewed).To(gomega.HaveLen(2))
 		gomega.Expect(renewed[dead]).NotTo(gomega.BeEmpty(), "the dead node answers an error frame")
