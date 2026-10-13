@@ -107,8 +107,9 @@ func TestPullBatchMultiBlockStaysBatchNative(t *testing.T) {
 			break
 		}
 		if !checkedMultiBlock {
-			require.Greater(t, len(qr.data), 1,
-				"the merge must run over more than one loaded cursor, not the single-block fast path")
+			require.NotNil(t, qr.scan, "a time-ordered query is served by the window scan")
+			require.Greater(t, qr.scan.stats.mergeCursors, int64(1),
+				"the merge must run over more than one decoded cursor, not the single-block fast path")
 			checkedMultiBlock = true
 		}
 		require.NotEmpty(t, batch.Timestamps, "a non-nil batch must carry rows")

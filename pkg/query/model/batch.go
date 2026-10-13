@@ -73,7 +73,9 @@ type MeasureBatchResult interface {
 // the batch. For example, a batch holding 100 rows of series A followed by
 // 200 rows of series B reports SeriesBoundaries = [100, 300]. Empty (nil
 // or zero-length) means "single series" — every row in the batch belongs
-// to the same series.
+// to the same series. A batch whose rows interleave series (a time-ordered merge)
+// lists the end of every maximal run of one series, so a series can appear in
+// several runs; SeriesIDs says which series a run is.
 type MeasureBatch struct {
 	// Schema describes the column layout. Tags[i] / Fields[i] entries are
 	// indexed via Schema.TagIndex / Schema.FieldIndex.

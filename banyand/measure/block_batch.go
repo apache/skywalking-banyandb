@@ -20,6 +20,7 @@ package measure
 import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -461,36 +462,47 @@ func borrowStrArrRows(c *vectorized.TypedColumn[[]string], column *column, idx, 
 	var slab []string
 	var borrowed bool
 	forEachRow(idx, offset, desc, func(i int) {
-		raw := column.values[i]
-		if raw == nil {
-			c.AppendNull()
-			return
+		if appendBorrowedStrArr(c, column.values[i], &slab, bb) {
+			borrowed = true
 		}
-		start := len(slab)
-		for buf := raw; len(buf) > 0; {
-			var rest []byte
-			var err error
-			bb.Buf, rest, err = unmarshalVarArray(bb.Buf[:0], buf)
-			if err != nil {
-				logger.Panicf("unmarshalVarArray failed: %v", err)
-			}
-			// consumed includes the trailing delimiter; unescaping only ever shrinks
-			// the element, so equal lengths mean the stored bytes are the element.
-			consumed := len(buf) - len(rest)
-			if len(bb.Buf) == consumed-1 {
-				slab = append(slab, convert.BytesToString(buf[:len(bb.Buf)]))
-				borrowed = borrowed || len(bb.Buf) > 0
-			} else {
-				slab = append(slab, string(bb.Buf))
-			}
-			buf = rest
-		}
-		if len(slab) == start {
-			c.Append(nil)
-			return
-		}
-		c.Append(slab[start:len(slab):len(slab)])
 	})
+	return borrowed
+}
+
+// appendBorrowedStrArr appends one stored string-array cell to c: null for a nil
+// raw, nil for a cell with no elements, else a capacity-limited window over slab.
+// Elements borrow raw as borrowStrArrRows describes. It reports whether any element
+// borrows. bb is scratch for unescaping.
+func appendBorrowedStrArr(c *vectorized.TypedColumn[[]string], raw []byte, slab *[]string, bb *bytes.Buffer) bool {
+	if raw == nil {
+		c.AppendNull()
+		return false
+	}
+	borrowed := false
+	start := len(*slab)
+	for buf := raw; len(buf) > 0; {
+		var rest []byte
+		var err error
+		bb.Buf, rest, err = unmarshalVarArray(bb.Buf[:0], buf)
+		if err != nil {
+			logger.Panicf("unmarshalVarArray failed: %v", err)
+		}
+		// consumed includes the trailing delimiter; unescaping only ever shrinks
+		// the element, so equal lengths mean the stored bytes are the element.
+		consumed := len(buf) - len(rest)
+		if len(bb.Buf) == consumed-1 {
+			*slab = append(*slab, convert.BytesToString(buf[:len(bb.Buf)]))
+			borrowed = borrowed || len(bb.Buf) > 0
+		} else {
+			*slab = append(*slab, string(bb.Buf))
+		}
+		buf = rest
+	}
+	if len(*slab) == start {
+		c.Append(nil)
+		return borrowed
+	}
+	c.Append((*slab)[start:len(*slab):len(*slab)])
 	return borrowed
 }
 

@@ -37,13 +37,18 @@ func BenchmarkVectorizedScan(b *testing.B) {
 		TagProjection: gateProj(gateTSTag, gateTagEnv), FieldProjection: []string{gateFieldInt, gateFieldFlt},
 	}
 	layouts := []struct {
-		name   string
-		layout gateLayout
+		name        string
+		layout      gateLayout
+		timeOrdered bool
 	}{
-		{"single_series_10k", gateLayoutSingle},
-		{"multi_series_one_part", gateLayoutMulti},
-		{"multi_series_4parts_disjoint", gateLayoutDisjoint},
-		{"multi_series_2parts_overlap", gateLayoutOverlap},
+		{"single_series_10k", gateLayoutSingle, false},
+		{"multi_series_one_part", gateLayoutMulti, false},
+		{"multi_series_4parts_disjoint", gateLayoutDisjoint, false},
+		{"multi_series_2parts_overlap", gateLayoutOverlap, false},
+		// No ORDER BY: the series share one time range, so their rows interleave.
+		{"time_ordered_multi_series_one_part", gateLayoutMulti, true},
+		{"time_ordered_multi_series_4parts_disjoint", gateLayoutDisjoint, true},
+		{"time_ordered_multi_series_2parts_overlap", gateLayoutOverlap, true},
 	}
 	for _, l := range layouts {
 		h := hs.get(l.layout)
@@ -59,7 +64,7 @@ func BenchmarkVectorizedScan(b *testing.B) {
 				b.ResetTimer()
 				rows := 0
 				for b.Loop() {
-					qr := h.newQueryResult(schema, scanOpts)
+					qr := h.newQueryResult(schema, scanOpts, l.timeOrdered)
 					for {
 						mb, err := qr.PullBatch(context.Background())
 						if err != nil {

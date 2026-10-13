@@ -134,6 +134,8 @@ type gateWorkload struct {
 	wantRows int
 	shape    gateShape
 	topAsc   bool
+	// timeOrdered runs the query without ORDER BY: rows ordered by time across series.
+	timeOrdered bool
 }
 
 func gateProj(tags ...string) []model.TagProjection {
@@ -211,6 +213,21 @@ func gateWorkloads() []gateWorkload {
 		},
 		{
 			id: "W10", layout: gateLayoutOverlap, shape: gateShapeScan, wantRows: 100000,
+			opts: model.MeasureQueryOptions{
+				TagProjection: gateProj(gateTSTag, gateTagEnv), FieldProjection: []string{gateFieldInt, gateFieldFlt},
+			},
+		},
+		// W11 and W12 are W10 and W9 as OAP issues them: no ORDER BY, so the rows of
+		// the 100 series that share one time range interleave by timestamp, through
+		// the time-ordered merge (blocks overlapping in time, and time-disjoint).
+		{
+			id: "W11", layout: gateLayoutOverlap, shape: gateShapeScan, wantRows: 100000, timeOrdered: true,
+			opts: model.MeasureQueryOptions{
+				TagProjection: gateProj(gateTSTag, gateTagEnv), FieldProjection: []string{gateFieldInt, gateFieldFlt},
+			},
+		},
+		{
+			id: "W12", layout: gateLayoutDisjoint, shape: gateShapeScan, wantRows: 100000, timeOrdered: true,
 			opts: model.MeasureQueryOptions{
 				TagProjection: gateProj(gateTSTag, gateTagEnv), FieldProjection: []string{gateFieldInt, gateFieldFlt},
 			},
@@ -353,10 +370,10 @@ func gateMemParts(layout gateLayout) []*part {
 
 // newQueryResult builds a real queryResult over every block of the part, the way
 // measure.searchBlocks does, so PullBatch runs the production load / merge /
-// copy code. The query is ordered by series (the order the sids were asked in),
-// not by time: the window scan serves exactly those, and a time-ordered
-// multi-series query interleaves series and keeps the legacy merge.
-func (h *gateHarness) newQueryResult(schema *vectorized.BatchSchema, opts model.MeasureQueryOptions) *queryResult {
+// copy code. The query is ordered by series (the order the sids were asked in)
+// unless timeOrdered is set: that is the default of a query without ORDER BY, whose
+// rows interleave the series by timestamp (the OAP shape) and take the merge.
+func (h *gateHarness) newQueryResult(schema *vectorized.BatchSchema, opts model.MeasureQueryOptions, timeOrdered bool) *queryResult {
 	qo := queryOptions{
 		schemaTagTypes: gateTagTypes,
 		minTimestamp:   0,
@@ -364,7 +381,10 @@ func (h *gateHarness) newQueryResult(schema *vectorized.BatchSchema, opts model.
 	}
 	qo.MeasureQueryOptions.TagProjection = opts.TagProjection
 	qo.MeasureQueryOptions.FieldProjection = opts.FieldProjection
-	qr := &queryResult{ctx: context.Background(), batchSchema: schema, tagProjection: opts.TagProjection, sidToIndex: make(map[common.SeriesID]int, len(h.sids))}
+	qr := &queryResult{
+		ctx: context.Background(), batchSchema: schema, tagProjection: opts.TagProjection,
+		sidToIndex: make(map[common.SeriesID]int, len(h.sids)), orderByTS: timeOrdered, ascTS: timeOrdered,
+	}
 	for i, sid := range h.sids {
 		qr.sidToIndex[sid] = i
 	}
@@ -401,7 +421,7 @@ func gateSchema(legacy bool, opts model.MeasureQueryOptions) *vectorized.BatchSc
 // number of data points the egress adapter emitted.
 func runGateWorkload(h *gateHarness, w gateWorkload, legacy bool) int {
 	schema := gateSchema(legacy, w.opts)
-	qr := h.newQueryResult(schema, w.opts)
+	qr := h.newQueryResult(schema, w.opts, w.timeOrdered)
 	pool := vectorized.NewBatchPool(schema, gateBatchSize)
 	source := vmeasure.NewBatchSourceFromBatchResult(qr, schema, pool, gateBatchSize)
 	tracker := vectorized.NewMemoryTracker(64 * 1024 * 1024)
@@ -563,6 +583,11 @@ var gates = map[string]gate{
 	// Several parts per series (W2 projection): time-disjoint blocks and overlapping ones.
 	"W9":  {maxNsRatio: 1.10, maxAllocRatio: 0.68, maxBytesRatio: 1.05, allocBudget: 1414000},
 	"W10": {maxNsRatio: 1.10, maxAllocRatio: 0.68, maxBytesRatio: 1.05, allocBudget: 1408000},
+	// The OAP shape: the same 100 series without ORDER BY, so their rows interleave
+	// through the time-ordered merge. Allocations are the egress wrappers; the merge adds
+	// a few thousand per query. Time is gated against the passthrough baseline like the rest.
+	"W11": {maxNsRatio: 1.10, maxAllocRatio: 0.68, maxBytesRatio: 1.05, allocBudget: 1407000},
+	"W12": {maxNsRatio: 1.10, maxAllocRatio: 0.68, maxBytesRatio: 1.05, allocBudget: 1412000},
 }
 
 type gateStats struct {

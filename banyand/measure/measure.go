@@ -145,6 +145,12 @@ type queryMetrics struct {
 	scanWindowsOverlapped meter.Counter
 	scanSegmentsFast      meter.Counter
 	scanSegmentsOverlap   meter.Counter
+	// Time-ordered merge (scan path v2 step 4c): the rows and cursors the merge
+	// handled and, per merge, the most cursors it held decoded at once, which is
+	// what bounds the scan's memory.
+	scanMergeRows     meter.Counter
+	scanMergeCursors  meter.Counter
+	scanMergePeakLive meter.Histogram
 }
 
 func newQueryMetrics(factory observability.Factory) *queryMetrics {
@@ -161,6 +167,9 @@ func newQueryMetrics(factory observability.Factory) *queryMetrics {
 		scanWindowsOverlapped:    factory.NewCounter("total_scan_windows_overlapped"),
 		scanSegmentsFast:         factory.NewCounter("total_scan_segments_fast"),
 		scanSegmentsOverlap:      factory.NewCounter("total_scan_segments_overlap"),
+		scanMergeRows:            factory.NewCounter("total_scan_merge_rows"),
+		scanMergeCursors:         factory.NewCounter("total_scan_merge_cursors"),
+		scanMergePeakLive:        factory.NewHistogram("scan_merge_peak_live_cursors", meter.DefBuckets),
 	}
 }
 

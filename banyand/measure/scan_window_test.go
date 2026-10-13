@@ -118,49 +118,59 @@ func TestPlanSegmentsKeepsArrivalOrderForEqualStarts(t *testing.T) {
 	require.Same(t, b, segments[0].cursors[1])
 }
 
-func windowSIDs(windows []seriesWindow) []common.SeriesID {
-	out := make([]common.SeriesID, len(windows))
-	for i := range windows {
-		out[i] = windows[i].sid
+func unitSIDs(units []scanUnit) [][]common.SeriesID {
+	out := make([][]common.SeriesID, len(units))
+	for i := range units {
+		for j := range units[i].windows {
+			out[i] = append(out[i], units[i].windows[j].sid)
+		}
 	}
 	return out
 }
 
-func TestOrderWindows(t *testing.T) {
+func TestPlanUnits(t *testing.T) {
 	cursors := func() []*blockCursor {
 		return []*blockCursor{
 			metaCursor(1, 1, 10), metaCursor(2, 20, 30), metaCursor(3, 40, 50), metaCursor(3, 60, 70),
 		}
 	}
-	t.Run("without a time order windows follow the requested series order", func(t *testing.T) {
+	t.Run("without a time order every window is a unit in the requested series order", func(t *testing.T) {
 		qr := &queryResult{sidToIndex: map[common.SeriesID]int{3: 0, 1: 1, 2: 2}}
-		windows := groupWindows(cursors())
-		require.True(t, orderWindows(qr, windows))
-		require.Equal(t, []common.SeriesID{3, 1, 2}, windowSIDs(windows))
-		require.Len(t, windows[0].cursors, 2, "both blocks of series 3 are one window")
+		units := planUnits(qr, groupWindows(cursors()), false)
+		require.Equal(t, [][]common.SeriesID{{3}, {1}, {2}}, unitSIDs(units))
+		require.Len(t, units[0].windows[0].cursors, 2, "both blocks of series 3 are one window")
 	})
 	t.Run("a time order over disjoint series follows time", func(t *testing.T) {
-		qr := &queryResult{orderByTS: true, ascTS: true}
-		windows := groupWindows(cursors())
-		require.True(t, orderWindows(qr, windows))
-		require.Equal(t, []common.SeriesID{1, 2, 3}, windowSIDs(windows))
-		qr = &queryResult{orderByTS: true}
-		windows = groupWindows(cursors())
-		require.True(t, orderWindows(qr, windows))
-		require.Equal(t, []common.SeriesID{3, 2, 1}, windowSIDs(windows))
+		units := planUnits(&queryResult{orderByTS: true, ascTS: true}, groupWindows(cursors()), false)
+		require.Equal(t, [][]common.SeriesID{{1}, {2}, {3}}, unitSIDs(units))
+		units = planUnits(&queryResult{orderByTS: true}, groupWindows(cursors()), true)
+		require.Equal(t, [][]common.SeriesID{{3}, {2}, {1}}, unitSIDs(units))
 	})
-	t.Run("a time order over series whose ranges touch interleaves them, so the legacy merge stays", func(t *testing.T) {
-		for _, asc := range []bool{true, false} {
-			qr := &queryResult{orderByTS: true, ascTS: asc}
-			windows := groupWindows([]*blockCursor{metaCursor(1, 1, 10), metaCursor(2, 10, 20)})
-			require.False(t, orderWindows(qr, windows), "series sharing a timestamp are ordered by series id there")
-			windows = groupWindows([]*blockCursor{metaCursor(1, 1, 15), metaCursor(2, 10, 20)})
-			require.False(t, orderWindows(qr, windows))
+	t.Run("series whose ranges touch or overlap are one merge unit", func(t *testing.T) {
+		for _, desc := range []bool{false, true} {
+			qr := &queryResult{orderByTS: true, ascTS: !desc}
+			units := planUnits(qr, groupWindows([]*blockCursor{metaCursor(1, 1, 10), metaCursor(2, 10, 20)}), desc)
+			require.Len(t, units, 1, "series sharing a timestamp are ordered by series id there")
+			require.Len(t, units[0].windows, 2)
+			units = planUnits(qr, groupWindows([]*blockCursor{metaCursor(1, 1, 15), metaCursor(2, 10, 20)}), desc)
+			require.Len(t, units, 1)
 		}
 	})
+	t.Run("only the overlapping series merge, the others stay whole units in time order", func(t *testing.T) {
+		data := func() []*blockCursor {
+			return []*blockCursor{
+				metaCursor(1, 1, 10), metaCursor(2, 5, 20), metaCursor(3, 18, 25), metaCursor(4, 100, 110), metaCursor(5, 200, 210), metaCursor(6, 205, 300),
+			}
+		}
+		units := planUnits(&queryResult{orderByTS: true, ascTS: true}, groupWindows(data()), false)
+		require.Equal(t, [][]common.SeriesID{{1, 2, 3}, {4}, {5, 6}}, unitSIDs(units))
+		units = planUnits(&queryResult{orderByTS: true}, groupWindows(data()), true)
+		require.Equal(t, [][]common.SeriesID{{6, 5}, {4}, {3, 2, 1}}, unitSIDs(units))
+	})
 	t.Run("a single window never needs the merge", func(t *testing.T) {
-		qr := &queryResult{orderByTS: true}
-		require.True(t, orderWindows(qr, groupWindows([]*blockCursor{metaCursor(1, 1, 10), metaCursor(1, 5, 20)})))
+		units := planUnits(&queryResult{orderByTS: true}, groupWindows([]*blockCursor{metaCursor(1, 1, 10), metaCursor(1, 5, 20)}), true)
+		require.Len(t, units, 1)
+		require.Len(t, units[0].windows, 1)
 	})
 }
 
@@ -269,10 +279,9 @@ func TestScanWindowMatchesLegacyForTimeOrders(t *testing.T) {
 						want := fx.run(t, q, true)
 						got := fx.run(t, q, false)
 						requireSameResult(t, want, got, what)
+						require.NotNil(t, got.scan, "%s: every time order is served by the window scan", what)
 						if name == "interleaved" && !single {
-							require.Nil(t, got.scan, "interleaving series keep the legacy merge")
-						} else {
-							require.NotNil(t, got.scan, "%s: whole-series output is served by the window scan", what)
+							require.Positive(t, got.scan.mergeRows, "interleaving series are merged")
 						}
 					})
 				}

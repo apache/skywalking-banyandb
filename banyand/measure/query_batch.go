@@ -106,9 +106,9 @@ func (qr *queryResult) PullBatch(ctx context.Context) (*model.MeasureBatch, erro
 }
 
 // useWindowScan reports whether PullBatch streams series windows, planning the
-// scan on first use. TopN queries (their merge rewrites field payloads) and
-// queries whose legacy output interleaves series by time keep the legacy
-// load-then-merge path, as does everything while the test switch is on.
+// scan on first use. TopN queries (their merge rewrites field payloads) keep the
+// legacy load-then-merge path below, as does everything while the test switch is
+// on; mergeBatch and loadCursorsForBatch are reachable only through those two.
 func (qr *queryResult) useWindowScan() bool {
 	if qr.scan != nil {
 		return true
@@ -121,7 +121,7 @@ func (qr *queryResult) useWindowScan() bool {
 		return false
 	}
 	qr.scan = newWindowScan(qr)
-	return qr.scan != nil
+	return true
 }
 
 // mergeBatch is the batch-aware counterpart of queryResult.merge (query.go).

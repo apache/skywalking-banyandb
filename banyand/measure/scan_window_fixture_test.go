@@ -288,7 +288,16 @@ func (fx *fxFixture) run(t testing.TB, q *fxQuery, legacy bool) fxResult {
 		tracker := vectorized.NewMemoryTracker(64 * 1024 * 1024)
 		builder := vectorized.NewPipelineBuilder().WithMemoryTracker(tracker).From(vmeasure.NewBatchSourceFromBatchResult(qr, schema, pool, 1024))
 		terminal = schema
-		if q.groupBy != nil || q.agg != nil {
+		if q.groupBy != nil && q.groupBy.TimeBucket != nil {
+			var bucketErr error
+			var bucket *vmeasure.BatchTimeBucket
+			builder.Transform(func(upstream vectorized.PullOperator) vectorized.PullOperator {
+				bucket, bucketErr = vmeasure.BuildTimeBucketOperator(upstream, q.options(), schema, tracker, 1024, vmeasure.AggModeAll)
+				return bucket
+			})
+			require.NoError(t, bucketErr)
+			terminal = bucket.OutputSchema()
+		} else if q.groupBy != nil || q.agg != nil {
 			ops, err := vmeasure.BuildOperators(q.options(), schema, tracker, 1024, vmeasure.AggModeAll)
 			require.NoError(t, err)
 			builder.Break(ops[0])

@@ -18,7 +18,6 @@
 package measure
 
 import (
-	"container/heap"
 	"context"
 	"math"
 	"sort"
@@ -31,27 +30,35 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
-// Series-window scan (measure scan path v2, step 4a).
+// Series-window scan (measure scan path v2, steps 4a and 4c).
 //
 // The matching blocks of a query are grouped into series windows: all the
-// in-range blocks of one series, from every part. Windows are visited one after
-// another in the order the legacy heap merge would have produced their rows, and
-// a window is cut into segments from block metadata alone: blocks ordered by
-// their first timestamp, a block that starts at or before the previous segment's
-// last timestamp (an equal boundary may be a duplicate version) joining that
-// segment. A segment is decoded only when the scan reaches it, so decoded memory
-// is bounded by one segment instead of by the whole result.
+// in-range blocks of one series, from every part. The windows are cut into units
+// that are visited one after another in the order the legacy heap merge would have
+// produced their rows:
+//
+//   - Without a time order, a unit is one window, and windows follow the series
+//     order of the query.
+//   - With a time order, windows whose time ranges are disjoint from every other
+//     window are units of their own, in time order. Windows whose ranges overlap
+//     or touch interleave their rows, so they form one merge unit (scan_merge.go).
+//
+// A window is cut into segments from block metadata alone: blocks ordered by their
+// first timestamp, a block that starts at or before the previous segment's last
+// timestamp (an equal boundary may be a duplicate version) joining that segment. A
+// segment is decoded only when the scan reaches it, so decoded memory is bounded
+// by one segment instead of by the whole result.
 //
 //   - A segment of one block is emitted as a batch that lends the block's decoded
 //     columns (blockCursor.lendBatch); nothing is copied.
-//   - A segment of several overlapping blocks goes through the existing row
-//     merge (mergeBatch: the newest version of a timestamp wins), restricted to
-//     that segment. Step 4c replaces it.
+//   - A segment of several overlapping blocks, and a merge unit, go through
+//     timeMerge: keys first, then one gather per column, decoding each block only
+//     when the merge reaches it.
 //
-// Decoding a segment is the one place the node-wide decode pool of step 4b plugs
-// in: decodeSegment is called when a segment is reached and may become "take the
-// segment the pool already decoded"; the plan (windows and their segments) is
-// known up front, which is what lets the pool run ahead.
+// Decoding goes through windowScan.load, the one place the node-wide decode pool of
+// step 4b plugs in: it may become "take the cursor the pool already decoded". The
+// plan (units, windows and their segments) is known up front, which is what lets
+// the pool run ahead.
 
 // coalesceTargetRows is how many rows the scan gathers into one owned batch from
 // segments smaller than model.SmallBatchRows before emitting it.
@@ -77,12 +84,24 @@ type scanStats struct {
 	windowsOverlapped int64
 	// segmentsFast is the number of segments emitted by lending one block.
 	segmentsFast int64
-	// segmentsOverlap is the number of segments of two or more decoded blocks
-	// that took the row merge.
+	// segmentsOverlap is the number of segments of two or more blocks, decided from
+	// metadata, that took the merge.
 	segmentsOverlap int64
 	// coalesced is the number of batches emitted by copying segments smaller
 	// than model.SmallBatchRows together.
 	coalesced int64
+	// mergeUnits is the number of merges started: one per overlapping segment and
+	// one per group of series whose time ranges overlap.
+	mergeUnits int64
+	// mergePages is the number of batches the merges emitted.
+	mergePages int64
+	// mergeRows is the number of rows the merges emitted.
+	mergeRows int64
+	// mergeCursors is the number of cursors the merges decoded, each when the merge
+	// frontier reached it.
+	mergeCursors int64
+	// mergePeakLive is the most cursors any one merge held decoded at once.
+	mergePeakLive int64
 }
 
 // scanSegment is a run of blocks of one series whose time ranges chain together.
@@ -102,37 +121,45 @@ type seriesWindow struct {
 	maxTS    int64
 }
 
-// windowScan streams the windows of one queryResult.
+// scanUnit is what the scan visits as one step: a single window, or a group of
+// windows whose rows interleave in time and are merged together.
+type scanUnit struct {
+	// windows holds one window for a window unit and two or more for a merge unit.
+	windows []seriesWindow
+}
+
+// windowScan streams the units of one queryResult.
 type windowScan struct {
 	qr       *queryResult
 	cur      *seriesWindow
-	merge    *queryResult
+	merge    *timeMerge
+	load     cursorLoader
+	spare    *timeMerge
+	plan     []colPlan
 	builder  *model.MeasureBatch
 	ready    *model.MeasureBatch
 	err      error
-	windows  []seriesWindow
+	units    []scanUnit
 	boundary []int
 	stats    scanStats
-	winIdx   int
+	unitIdx  int
 	segIdx   int
 	desc     bool
 }
 
 // newWindowScan plans the scan over qr.data and takes ownership of its cursors.
-// It returns nil, leaving qr.data untouched, when the windows cannot be emitted
-// in the order the legacy merge would produce.
 func newWindowScan(qr *queryResult) *windowScan {
-	windows := groupWindows(qr.data)
-	if !orderWindows(qr, windows) {
-		return nil
-	}
+	s := &windowScan{qr: qr, desc: qr.orderByTimestampDesc(), load: decodeCursor}
+	s.units = planUnits(qr, groupWindows(qr.data), s.desc)
 	for i := range qr.data {
 		qr.data[i] = nil
 	}
 	qr.data = qr.data[:0]
-	s := &windowScan{qr: qr, windows: windows, desc: qr.orderByTimestampDesc()}
-	for i := range s.windows {
-		w := &s.windows[i]
+	for i := range s.units {
+		if len(s.units[i].windows) != 1 {
+			continue
+		}
+		w := &s.units[i].windows[0]
 		w.segments = planSegments(w.cursors, s.desc)
 		w.cursors = nil
 	}
@@ -164,41 +191,59 @@ func groupWindows(data []*blockCursor) []seriesWindow {
 	return windows
 }
 
-// orderWindows sorts windows into the order the legacy heap yields their rows and
-// reports whether that order is a concatenation of windows at all.
+// planUnits orders windows into the units the scan visits, in the order the legacy
+// heap yields their rows.
 //
 // Without a time order the heap sorts by the series' position in the query, then
-// by time, so windows follow sidToIndex. With a time order it interleaves series
-// by timestamp: the legacy output is a concatenation of whole series only when
-// the series' time ranges are strictly disjoint, in which case windows follow
-// time (ascending, or descending for a descending order). Otherwise the rows of
-// different series interleave and the caller keeps the legacy merge.
-func orderWindows(qr *queryResult, windows []seriesWindow) bool {
-	if len(windows) < 2 {
-		return true
-	}
+// by time, so every window is a unit and units follow sidToIndex. With a time order
+// the heap interleaves series by timestamp, so windows are swept in time (latest
+// first for a descending order) and a window joins the unit before it when its
+// range reaches the unit's range (an equal timestamp counts: there the series are
+// ordered by id). A unit of one window is emitted whole; a unit of several is
+// merged.
+func planUnits(qr *queryResult, windows []seriesWindow, desc bool) []scanUnit {
 	if !qr.orderByTS {
 		sort.SliceStable(windows, func(i, j int) bool {
 			return qr.sidToIndex[windows[i].sid] < qr.sidToIndex[windows[j].sid]
 		})
-		return true
+		units := make([]scanUnit, len(windows))
+		for i := range windows {
+			units[i].windows = windows[i : i+1 : i+1]
+		}
+		return units
 	}
-	if qr.ascTS {
+	if desc {
+		sort.SliceStable(windows, func(i, j int) bool { return windows[i].maxTS > windows[j].maxTS })
+	} else {
 		sort.SliceStable(windows, func(i, j int) bool { return windows[i].minTS < windows[j].minTS })
-		for i := 1; i < len(windows); i++ {
-			if windows[i-1].maxTS >= windows[i].minTS {
-				return false
+	}
+	var units []scanUnit
+	start := 0
+	var edge int64 // the unit's last timestamp (first, descending) reached so far
+	for i := range windows {
+		w := &windows[i]
+		if i > start {
+			if (!desc && w.minTS <= edge) || (desc && w.maxTS >= edge) {
+				if desc {
+					edge = min(edge, w.minTS)
+				} else {
+					edge = max(edge, w.maxTS)
+				}
+				continue
 			}
+			units = append(units, scanUnit{windows: windows[start:i:i]})
+			start = i
 		}
-		return true
-	}
-	sort.SliceStable(windows, func(i, j int) bool { return windows[i].maxTS > windows[j].maxTS })
-	for i := 1; i < len(windows); i++ {
-		if windows[i-1].minTS <= windows[i].maxTS {
-			return false
+		if desc {
+			edge = w.minTS
+		} else {
+			edge = w.maxTS
 		}
 	}
-	return true
+	if len(windows) > 0 {
+		units = append(units, scanUnit{windows: windows[start:]})
+	}
+	return units
 }
 
 // planSegments cuts one series' cursors into segments from block metadata. The
@@ -271,56 +316,72 @@ func (s *windowScan) next(ctx context.Context) (*model.MeasureBatch, error) {
 	}
 }
 
-// nextPiece returns the next batch of one segment: a lent block, or one page of
-// an overlap merge. nil means the scan is exhausted.
+// nextPiece returns the next batch of one unit: a lent block, or one page of a
+// merge. nil means the scan is exhausted.
 func (s *windowScan) nextPiece(ctx context.Context) (*model.MeasureBatch, error) {
-	qr := s.qr
 	for {
 		if s.merge != nil {
-			b, err := s.merge.mergeBatch(qr.storedIndexValue, qr.batchSchema)
+			b, err := s.merge.nextPage(ctx)
 			if err != nil {
 				return nil, err
 			}
 			if b != nil {
 				return b, nil
 			}
-			s.merge = nil
+			s.finishMerge()
 			continue
 		}
 		if s.cur == nil || s.segIdx >= len(s.cur.segments) {
-			if s.winIdx >= len(s.windows) {
+			if s.unitIdx >= len(s.units) {
 				s.cur = nil
 				return nil, nil
 			}
-			s.startWindow(&s.windows[s.winIdx])
-			s.winIdx++
+			unit := &s.units[s.unitIdx]
+			s.unitIdx++
+			if len(unit.windows) == 1 {
+				s.startWindow(&unit.windows[0])
+				continue
+			}
+			s.startMergeUnit(unit)
 			continue
 		}
 		seg := &s.cur.segments[s.segIdx]
 		s.segIdx++
-		live, err := s.decodeSegment(ctx, seg)
+		if len(seg.cursors) > 1 {
+			s.stats.segmentsOverlap++
+			s.countSegment(false)
+			cursors := seg.cursors
+			seg.cursors = nil
+			s.merge = s.newMerge(cursors)
+			continue
+		}
+		bc, err := s.decodeSegment(ctx, seg)
 		if err != nil {
 			return nil, err
 		}
-		switch len(live) {
-		case 0:
-		case 1:
-			s.stats.segmentsFast++
-			s.countSegment(true)
-			return s.lendCursor(live[0]), nil
-		default:
-			s.stats.segmentsOverlap++
-			s.countSegment(false)
-			s.merge = &queryResult{
-				ctx:        qr.ctx,
-				sidToIndex: qr.sidToIndex,
-				data:       live,
-				orderByTS:  qr.orderByTS,
-				ascTS:      qr.ascTS,
-			}
-			heap.Init(s.merge)
+		if bc == nil {
+			continue
 		}
+		s.stats.segmentsFast++
+		s.countSegment(true)
+		return s.lendCursor(bc), nil
 	}
+}
+
+// newMerge starts a merge over cursors, reusing the buffers of the last one.
+func (s *windowScan) newMerge(cursors []*blockCursor) *timeMerge {
+	if s.plan == nil {
+		s.plan = newColPlan(s.qr.batchSchema)
+	}
+	m := newTimeMerge(s.qr, &s.stats, s.load, s.plan, cursors, s.desc, s.spare)
+	s.spare = nil
+	return m
+}
+
+// finishMerge closes the running merge and keeps it as the spare for the next.
+func (s *windowScan) finishMerge() {
+	s.merge.close()
+	s.spare, s.merge = s.merge, nil
 }
 
 func (s *windowScan) startWindow(w *seriesWindow) {
@@ -345,6 +406,27 @@ func (s *windowScan) startWindow(w *seriesWindow) {
 	}
 }
 
+// startMergeUnit starts the merge of windows whose rows interleave in time. The
+// windows are counted as overlapped: their blocks overlap by definition.
+func (s *windowScan) startMergeUnit(unit *scanUnit) {
+	var cursors []*blockCursor
+	for i := range unit.windows {
+		cursors = append(cursors, unit.windows[i].cursors...)
+		unit.windows[i].cursors = nil
+	}
+	n := int64(len(unit.windows))
+	s.stats.windows += n
+	s.stats.windowsOverlapped += n
+	s.stats.segmentsOverlap++
+	if qm := s.qr.qm; qm != nil {
+		qm.scanWindows.Inc(float64(n))
+		qm.scanWindowsOverlapped.Inc(float64(n))
+	}
+	s.countSegment(false)
+	s.cur = nil
+	s.merge = s.newMerge(cursors)
+}
+
 func (s *windowScan) countSegment(fast bool) {
 	qm := s.qr.qm
 	if qm == nil {
@@ -357,35 +439,28 @@ func (s *windowScan) countSegment(fast bool) {
 	qm.scanSegmentsOverlap.Inc(1)
 }
 
-// decodeSegment decodes the cursors of seg and returns those that have rows in
-// the query time range, in the order they were planned. The scan owns the
-// returned cursors; seg gives them up. A cursor with no row in range is
-// released here.
-func (s *windowScan) decodeSegment(ctx context.Context, seg *scanSegment) ([]*blockCursor, error) {
-	cursors := seg.cursors
+// decodeSegment decodes the one cursor of seg and returns it, or nil when the block
+// has no row in the query time range. The scan owns the returned cursor; seg gives
+// it up.
+func (s *windowScan) decodeSegment(ctx context.Context, seg *scanSegment) (*blockCursor, error) {
+	bc := seg.cursors[0]
 	seg.cursors = nil
 	select {
 	case <-ctx.Done():
-		releaseCursors(cursors)
+		releaseBlockCursor(bc)
 		return nil, errors.WithMessagef(ctx.Err(), "interrupt: hit %d", s.qr.hit)
 	default:
 	}
-	// live reuses cursors' array: a write at position k never passes the read at i >= k.
-	live := cursors[:0]
-	for _, bc := range cursors {
-		tmpBlock := generateBlock()
-		ok := bc.loadData(tmpBlock, true)
-		releaseBlock(tmpBlock)
-		if !ok {
-			releaseBlockCursor(bc)
-			continue
-		}
-		if s.desc {
-			bc.idx = len(bc.timestamps) - 1
-		}
-		live = append(live, bc)
+	ok, err := s.load(ctx, bc, s.desc)
+	if err != nil {
+		releaseBlockCursor(bc)
+		return nil, errors.WithMessagef(err, "interrupt: hit %d", s.qr.hit)
 	}
-	return live, nil
+	if !ok {
+		releaseBlockCursor(bc)
+		return nil, nil
+	}
+	return bc, nil
 }
 
 // lendCursor turns one decoded cursor into a batch and drops the scan's
@@ -407,19 +482,19 @@ func (s *windowScan) lendCursor(bc *blockCursor) *model.MeasureBatch {
 
 // appendToBuilder copies every active row of piece onto the coalescing builder
 // and releases piece. The builder pins whatever owners piece pinned, since its
-// cells may still borrow from them.
+// cells may still borrow from them. A row of another series than the row before it
+// starts a new series run.
 func (s *windowScan) appendToBuilder(piece *model.MeasureBatch) {
 	if s.builder == nil {
 		s.builder = newMeasureBatchForSchema(s.qr.batchSchema, coalesceTargetRows)
 		s.boundary = s.boundary[:0]
 	}
 	b := s.builder
-	rows := piece.ActiveRows()
-	if rows > 0 && b.RowCount() > 0 && b.SeriesIDs[len(b.SeriesIDs)-1] != piece.SeriesIDs[0] {
-		s.boundary = append(s.boundary, b.RowCount())
-	}
 	b.Owners.PinAll(&piece.Owners)
 	copyRow := func(r int) {
+		if n := len(b.SeriesIDs); n > 0 && b.SeriesIDs[n-1] != piece.SeriesIDs[r] {
+			s.boundary = append(s.boundary, n)
+		}
 		b.Timestamps = append(b.Timestamps, piece.Timestamps[r])
 		b.Versions = append(b.Versions, piece.Versions[r])
 		b.ShardIDs = append(b.ShardIDs, piece.ShardIDs[r])
@@ -460,18 +535,21 @@ func (s *windowScan) takeBuilder() *model.MeasureBatch {
 // close releases every cursor and batch the scan still holds. It is idempotent.
 func (s *windowScan) close() {
 	if s.merge != nil {
-		releaseCursors(s.merge.data)
-		s.merge.data = nil
-		s.merge = nil
+		s.finishMerge()
 	}
-	for i := range s.windows {
-		segments := s.windows[i].segments
-		for j := range segments {
-			releaseCursors(segments[j].cursors)
-			segments[j].cursors = nil
+	s.spare = nil
+	for i := range s.units {
+		for j := range s.units[i].windows {
+			w := &s.units[i].windows[j]
+			releaseCursors(w.cursors)
+			w.cursors = nil
+			for k := range w.segments {
+				releaseCursors(w.segments[k].cursors)
+				w.segments[k].cursors = nil
+			}
 		}
 	}
-	s.windows = nil
+	s.units = nil
 	s.cur = nil
 	s.builder.Release()
 	s.builder = nil
