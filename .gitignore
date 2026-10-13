@@ -98,6 +98,9 @@ dist/soak/
 test/soak/data/
 # Per-node data dirs for the distributed soak topology (SOAK_TOPOLOGY=distributed).
 test/soak/data-distributed/
+# Native inverted-index stream soak (scripts/soak-stream-index.sh).
+dist/soak-index/
+test/soak/data-index/
 
 # Local runtime crash dumps and investigation notes
 crash/
