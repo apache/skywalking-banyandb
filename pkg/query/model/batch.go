@@ -88,6 +88,12 @@ type MeasureBatch struct {
 	// multi-series batches. nil or empty when the batch contains a single
 	// series.
 	SeriesBoundaries []int
+
+	// Owners pins the storage memory that string, bytes and string-array cells
+	// in Tags borrow without copying. Release drops the references. A consumer
+	// that keeps a borrowed cell past Release must copy it first or pin the same
+	// owners (vectorized.Owners.PinAll) before releasing the batch.
+	Owners vectorized.Owners
 }
 
 // RowCount returns the number of rows in the batch. It reads len(Timestamps);
@@ -151,7 +157,8 @@ func AcquireMeasureBatch(schema *vectorized.BatchSchema, capacity int) *MeasureB
 }
 
 // Release returns the batch's Tag / Field columns to the per-type pool and
-// the batch itself to the MeasureBatch pool. Parallel metadata slices keep
+// the batch itself to the MeasureBatch pool, and drops its owner references,
+// after which no borrowed cell may be read. Parallel metadata slices keep
 // their backing arrays (truncated to length 0) so the next Acquire can
 // reuse them. Calling Release on a nil receiver is a no-op; calling Release
 // twice on the same batch is a use-after-free and not supported.
@@ -173,5 +180,6 @@ func (b *MeasureBatch) Release() {
 	b.Tags = b.Tags[:0]
 	b.Fields = b.Fields[:0]
 	b.SeriesBoundaries = b.SeriesBoundaries[:0]
+	b.Owners.Release()
 	measureBatchPool.Put(b)
 }

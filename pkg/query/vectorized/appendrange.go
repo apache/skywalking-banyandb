@@ -60,9 +60,11 @@ func AppendActiveRows(dst, src *RecordBatch) error {
 // propagated cell-by-cell via dst.MarkNullAt when src.IsNull reports null at
 // the corresponding row.
 //
-// Slice-typed cell values ([]byte / []int64 / []string) are not deep-copied
-// here. Storage decoders already produce owned cell slices, and avoiding a
-// second copy keeps egress paths allocation-stable.
+// String and slice-typed cell values ([]byte / []int64 / []string) are not
+// deep-copied here: dst shares their payloads with src. A cell may borrow
+// storage memory that src's batch pins through RecordBatch.Owners, so a caller
+// whose dst outlives src's batch must pin the same owners on dst's batch
+// (Owners.PinAll) or clone what it keeps.
 func AppendColumnRange(dst, src Column, srcPos, n int) error {
 	startLen := dst.Len()
 	switch d := dst.(type) {

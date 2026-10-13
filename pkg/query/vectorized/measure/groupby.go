@@ -25,6 +25,7 @@ import (
 	"hash/fnv"
 	"math"
 	"slices"
+	"strings"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
@@ -175,7 +176,8 @@ func (g *BatchGroupBy) consumeRows(b *vectorized.RecordBatch, active []uint16) i
 			continue
 		}
 		for colIdx, srcCol := range b.Columns {
-			copyOneValue(bucket.cols[colIdx], srcCol, int(rowIdx))
+			// The bucket outlives b, whose string cells may borrow storage memory.
+			cloneOneValue(bucket.cols[colIdx], srcCol, int(rowIdx))
 		}
 		copiedRows++
 	}
@@ -400,11 +402,43 @@ func newGroupBucket(schema *vectorized.BatchSchema) *groupBucket {
 	return &groupBucket{cols: cols}
 }
 
-// copyOneValue appends src[rowIdx] to dst, preserving null status. The
-// passthrough TagValue / FieldValue cases let BatchAggregation carry
-// non-key projected tag columns forward unchanged (the pointer is
-// owned by the upstream MeasureBatch, which the pipeline keeps live for
-// the duration of aggregation).
+// cloneOneValue is copyOneValue for a destination that outlives src's batch:
+// string, bytes and string-array cells may borrow storage memory that is recycled
+// once the batch is released, so their payloads are copied. Passthrough
+// TagValue / FieldValue pointers and int64 arrays are never borrowed and are
+// carried as is.
+func cloneOneValue(dst, src vectorized.Column, rowIdx int) {
+	if src.IsNull(rowIdx) {
+		dst.AppendNull()
+		return
+	}
+	switch s := src.(type) {
+	case *vectorized.TypedColumn[string]:
+		dst.(*vectorized.TypedColumn[string]).Append(strings.Clone(s.Data()[rowIdx]))
+	case *vectorized.TypedColumn[[]byte]:
+		dst.(*vectorized.TypedColumn[[]byte]).Append(bytes.Clone(s.Data()[rowIdx]))
+	case *vectorized.TypedColumn[[]string]:
+		dst.(*vectorized.TypedColumn[[]string]).Append(cloneStrings(s.Data()[rowIdx]))
+	default:
+		copyOneValue(dst, src, rowIdx)
+	}
+}
+
+// cloneStrings returns a copy of v whose elements own their bytes. A nil v stays nil.
+func cloneStrings(v []string) []string {
+	if v == nil {
+		return nil
+	}
+	out := make([]string, len(v))
+	for i, e := range v {
+		out[i] = strings.Clone(e)
+	}
+	return out
+}
+
+// copyOneValue appends src[rowIdx] to dst, preserving null status. Slice and
+// string payloads are shared with src, so use it only when dst is consumed
+// before src's batch is released; otherwise use cloneOneValue.
 func copyOneValue(dst, src vectorized.Column, rowIdx int) {
 	if src.IsNull(rowIdx) {
 		dst.AppendNull()

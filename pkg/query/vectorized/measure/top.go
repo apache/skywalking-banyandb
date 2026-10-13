@@ -38,6 +38,7 @@ type BatchTop struct {
 	heapState  *topHeap
 	span       *query.Span
 	sorted     []*topRow
+	cand       topRow // scratch candidate for the full-heap fast path
 	fieldCol   int
 	n          int
 	batchSize  int
@@ -179,12 +180,19 @@ func (t *BatchTop) Consume(_ context.Context, b *vectorized.RecordBatch) error {
 		// until the row actually displaces the root — for high-input /
 		// low-N top-N the vast majority of rows lose here and never pay
 		// the copy. cmpTopVal/shouldReplace read only the key fields.
-		cand := topRow{seq: seq}
-		t.extractKey(b, ri, &cand)
+		t.cand = topRow{seq: seq}
+		t.extractKey(b, ri, &t.cand)
 		root := t.heapState.rows[0]
-		if t.shouldReplace(&cand, root) {
-			cand.cols = t.materializeCols(b, ri)
-			t.heapState.rows[0] = &cand
+		if t.shouldReplace(&t.cand, root) {
+			// The displaced root leaves the heap, so its row and column
+			// storage are recycled instead of allocating a fresh copy.
+			cols := root.cols
+			for i := range cols {
+				cols[i].Reset()
+				cloneOneValue(cols[i], b.Columns[i], ri)
+			}
+			*root = t.cand
+			root.cols = cols
 			heap.Fix(t.heapState, 0)
 		}
 	}
@@ -269,9 +277,9 @@ func (t *BatchTop) Close() error {
 //
 // The key column may be a native typed column (ColumnTypeInt64 /
 // ColumnTypeFloat64 — promoted when an Agg reduces over the field) or a
-// passthrough *modelv1.FieldValue column (ColumnTypeFieldValue — the
-// non-Agg Scan→Top→Limit path, where BuildBatchSchema leaves projected
-// fields as passthrough). Both are handled so the float/int decision is
+// passthrough *modelv1.FieldValue column (ColumnTypeFieldValue — a field
+// the Measure schema does not declare, or a multi-group column degraded on
+// type divergence). Both are handled so the float/int decision is
 // per-column-shape, matching the row path's schema-field-type dispatch
 // (pkg/query/logical/measure.topOp.Execute).
 func (t *BatchTop) extractKey(b *vectorized.RecordBatch, rowIdx int, row *topRow) {
@@ -329,20 +337,20 @@ func (t *BatchTop) extractKey(b *vectorized.RecordBatch, rowIdx int, row *topRow
 // bounded heap (heap not full, or the row displaces the root) — rejected
 // rows never pay this.
 //
-// It is a cell copy, not a deep copy. Scalars are copied by value, but a
-// slice-typed cell ([]byte / []int64 / []string) and a TagValue or
-// FieldValue pointer are copied as the header or pointer, leaving the
-// payload shared with b. That is still what makes the result safe to
-// retain: the row stops referencing b's column backing arrays -- which
-// Reset truncates and later appends overwrite, including between the
-// chunks vectorized.ConsumeChunked feeds through a single reused scratch
-// batch -- while the payloads it does alias are owned upstream (storage
-// decoders produce owned cell slices) and outlive b.
+// The copy owns its string, bytes and string-array payloads (cloneOneValue):
+// those cells may borrow storage memory that is recycled when b's owners are
+// released, which happens right after Consume returns, and the row stays in the
+// heap until the operator is drained. Scalars are copied by value. TagValue and
+// FieldValue pointers and int64 arrays are carried as is; they are decoded into
+// their own allocations and never borrow. The copy also stops the row
+// referencing b's column backing arrays, which Reset truncates and later appends
+// overwrite, including between the chunks vectorized.ConsumeChunked feeds
+// through a single reused scratch batch.
 func (t *BatchTop) materializeCols(b *vectorized.RecordBatch, rowIdx int) []vectorized.Column {
 	cols := make([]vectorized.Column, len(t.schema.Columns))
 	for i, def := range t.schema.Columns {
 		cols[i] = vectorized.NewColumnForType(def.Type, 1)
-		copyOneValue(cols[i], b.Columns[i], rowIdx)
+		cloneOneValue(cols[i], b.Columns[i], rowIdx)
 	}
 	return cols
 }

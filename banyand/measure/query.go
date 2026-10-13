@@ -251,11 +251,10 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 	// checks for nil and returns a clean error rather than degrading
 	// the row-path Pull().
 	// Thread GroupBy + Agg through so BuildBatchSchema emits native
-	// column types for the agg-relevant columns. Plain queries get
-	// passthrough; GroupBy+Agg queries get native int64/float64/string
-	// columns the BatchAggregation operator reads directly (computeKey +
-	// fold). Storage decoders (banyand/measure/batch_decode.go) handle
-	// both column shapes.
+	// column types for the agg-relevant columns. Every projected tag and
+	// field whose schema type maps cleanly is a native typed column the
+	// storage decoders (banyand/measure/batch_decode.go) fill without
+	// building protobuf wrappers; only unmapped projections stay passthrough.
 	result.batchSchema, _ = vmeasure.BuildBatchSchema(m.schema, model.MeasureQueryOptions{
 		TagProjection:   result.tagProjection,
 		FieldProjection: mqo.FieldProjection,
@@ -842,7 +841,7 @@ func (qr *queryResult) Pull() *model.MeasureResult {
 				}
 				tmpBlock := generateBlock()
 				defer releaseBlock(tmpBlock)
-				if !qr.data[idx].loadData(tmpBlock) {
+				if !qr.data[idx].loadData(tmpBlock, false) {
 					cursorChan <- idx
 					return
 				}

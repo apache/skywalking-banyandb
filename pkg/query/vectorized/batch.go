@@ -34,7 +34,12 @@ type RecordBatch struct {
 	Schema    *BatchSchema
 	Columns   []Column
 	Selection []uint16
-	Len       int
+	// Owners pins the memory that string, bytes and string-array cells borrow
+	// without copying. Reset and BatchPool.Put release it; an operator that
+	// keeps a cell beyond the batch's life must clone it first (see
+	// vectorized/measure's cloneOneValue) or pin the same owners.
+	Owners Owners
+	Len    int
 }
 
 // NewRecordBatch allocates a batch with column capacities sized to capacity rows.
@@ -46,8 +51,15 @@ func NewRecordBatch(schema *BatchSchema, capacity int) *RecordBatch {
 	return &RecordBatch{Schema: schema, Columns: cols}
 }
 
-// Reset clears every column and the selection vector. Schema is preserved.
+// ReleaseOwners drops the references this batch holds on borrowed memory.
+// After it returns no borrowed string, bytes or string-array cell of the batch
+// may be read. It is idempotent.
+func (b *RecordBatch) ReleaseOwners() { b.Owners.Release() }
+
+// Reset clears every column and the selection vector and releases the batch's
+// owners. Schema is preserved.
 func (b *RecordBatch) Reset() {
+	b.Owners.Release()
 	b.Len = 0
 	b.Selection = nil
 	for _, c := range b.Columns {

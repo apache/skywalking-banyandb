@@ -45,6 +45,9 @@ func (c *TypedColumn[T]) Data() []T { return c.data }
 // Append adds a value, marking it valid.
 func (c *TypedColumn[T]) Append(v T) { c.data = append(c.data, v) }
 
+// AppendSlice adds every value of vs, marking them valid.
+func (c *TypedColumn[T]) AppendSlice(vs []T) { c.data = append(c.data, vs...) }
+
 // AppendNull adds a zero-value placeholder and marks it null.
 func (c *TypedColumn[T]) AppendNull() {
 	idx := len(c.data)

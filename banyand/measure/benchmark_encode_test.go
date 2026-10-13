@@ -95,7 +95,7 @@ func benchmarkColumnEncoding[T any](
 
 						unmarshaled := &column{}
 						decoder := &encoding.BytesBlockDecoder{}
-						unmarshaled.mustReadValues(decoder, buf, *cm, uint64(size))
+						unmarshaled.mustReadValues(decoder, buf, *cm, uint64(size), false)
 
 						b.StopTimer()
 						totalDecodeTimeNs += time.Since(startDecode).Nanoseconds()

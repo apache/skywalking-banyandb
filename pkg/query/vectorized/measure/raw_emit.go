@@ -94,6 +94,10 @@ func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 		return nil, fmt.Errorf("DrainPipelineToFrame: nil schema")
 	}
 	out := vectorized.NewRecordBatch(schema, 0)
+	// out's cells may borrow storage memory pinned by the batches appended to it;
+	// it takes over their owners and holds them until the frame, which copies
+	// every cell into its own buffer, has been encoded.
+	defer out.ReleaseOwners()
 	for {
 		b, pullErr := p.Next(ctx)
 		if pullErr != nil {
@@ -103,9 +107,12 @@ func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 			break
 		}
 		if !schemasEqual(schema, b.Schema) {
+			b.ReleaseOwners()
 			return nil, fmt.Errorf("DrainPipelineToFrame: batch schema mismatch (planner bug)")
 		}
-		if appendErr := appendActive(out, b); appendErr != nil {
+		appendErr := appendActive(out, b)
+		b.Owners.TransferTo(&out.Owners)
+		if appendErr != nil {
 			return nil, fmt.Errorf("DrainPipelineToFrame: %w", appendErr)
 		}
 	}
@@ -320,7 +327,7 @@ func buildPassthroughBatchFromDataPoints(idps []*measurev1.InternalDataPoint) (*
 // frame format is the natural follow-up; until then, scans that materialize
 // array-typed tags on the cluster wire are unsupported.
 func convertPassthroughForFrame(b *vectorized.RecordBatch) (*vectorized.RecordBatch, error) {
-	if !hasPassthroughColumn(b.Schema) {
+	if !needsFrameConversion(b.Schema) {
 		return b, nil
 	}
 	newDefs := make([]vectorized.ColumnDef, 0, len(b.Schema.Columns))
@@ -342,6 +349,13 @@ func convertPassthroughForFrame(b *vectorized.RecordBatch) (*vectorized.RecordBa
 			}
 			newDefs = append(newDefs, newDef)
 			newCols = append(newCols, newCol)
+		case vectorized.ColumnTypeInt64Array, vectorized.ColumnTypeStrArray:
+			newDef, newCol, err := convertArrayColumn(def, col, b.Len)
+			if err != nil {
+				return nil, fmt.Errorf("column %d (%q): %w", i, def.Name, err)
+			}
+			newDefs = append(newDefs, newDef)
+			newCols = append(newCols, newCol)
 		default:
 			newDefs = append(newDefs, def)
 			newCols = append(newCols, col)
@@ -354,15 +368,56 @@ func convertPassthroughForFrame(b *vectorized.RecordBatch) (*vectorized.RecordBa
 	}, nil
 }
 
-// hasPassthroughColumn reports whether any column declares a proto-
-// passthrough type that frame.Encode cannot consume directly.
-func hasPassthroughColumn(s *vectorized.BatchSchema) bool {
+// needsFrameConversion reports whether any column declares a type that
+// frame.Encode cannot consume directly: the proto passthrough types (decoded
+// to typed wire columns) and the native array types (the frame format has no
+// array column, so they travel as proto-bytes TagValue cells).
+func needsFrameConversion(s *vectorized.BatchSchema) bool {
 	for _, def := range s.Columns {
-		if def.Type == vectorized.ColumnTypeTagValue || def.Type == vectorized.ColumnTypeFieldValue {
+		switch def.Type {
+		case vectorized.ColumnTypeTagValue, vectorized.ColumnTypeFieldValue,
+			vectorized.ColumnTypeInt64Array, vectorized.ColumnTypeStrArray:
 			return true
+		default:
 		}
 	}
 	return false
+}
+
+// convertArrayColumn wraps a native int64[] / string[] tag column into a
+// TagValue passthrough column, which frame.Encode carries as proto bytes per
+// cell. The wrappers alias the column's slices; that is safe because the
+// caller encodes the frame before the batch's owners are released. A null
+// cell becomes the pbv1.NullTagValue singleton so the wire bytes match what a
+// passthrough decode of an absent cell produced.
+func convertArrayColumn(def vectorized.ColumnDef, col vectorized.Column, n int) (vectorized.ColumnDef, vectorized.Column, error) {
+	out := vectorized.NewTagValueColumn(n)
+	switch c := col.(type) {
+	case *vectorized.TypedColumn[[]int64]:
+		for i := range n {
+			if c.IsNull(i) {
+				out.Append(pbv1NullTagValueRef)
+				continue
+			}
+			out.Append(&modelv1.TagValue{Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: c.Data()[i]}}})
+		}
+	case *vectorized.TypedColumn[[]string]:
+		for i := range n {
+			if c.IsNull(i) {
+				out.Append(pbv1NullTagValueRef)
+				continue
+			}
+			out.Append(&modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: c.Data()[i]}}})
+		}
+	default:
+		return vectorized.ColumnDef{}, nil, fmt.Errorf("declared array column but column is %T", col)
+	}
+	return vectorized.ColumnDef{
+		Role:      def.Role,
+		TagFamily: def.TagFamily,
+		Name:      def.Name,
+		Type:      vectorized.ColumnTypeTagValue,
+	}, out, nil
 }
 
 // convertTagValueColumn picks a wire-typed column for a TagValue

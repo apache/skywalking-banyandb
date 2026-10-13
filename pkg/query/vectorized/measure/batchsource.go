@@ -125,8 +125,13 @@ func (s *BatchSourceFromBatchResult) NextBatch(ctx context.Context) (*vectorized
 		}
 		rowsAvail := s.pending.RowCount() - s.pendPos
 		rowsTake := min(s.batchSize-out.Len, rowsAvail)
+		// The copied string, bytes and string-array cells may borrow storage
+		// memory the pending MeasureBatch pins. Pin it for out too, before the
+		// pending batch is released, so the cells outlive it.
+		out.Owners.PinAll(&s.pending.Owners)
 		if copyErr := s.copyRowsInto(out, s.pending, s.pendPos, rowsTake); copyErr != nil {
 			s.err = copyErr
+			out.ReleaseOwners()
 			return nil, copyErr
 		}
 		out.Len += rowsTake

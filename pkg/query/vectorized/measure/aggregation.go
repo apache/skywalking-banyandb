@@ -131,6 +131,8 @@ type AggSpec struct {
 // paginated by batchSize.
 type BatchAggregation struct {
 	dedupSeen        map[string]struct{}
+	keyScratch       []byte
+	dedupScratch     []byte
 	outputSchema     *vectorized.BatchSchema
 	pool             *vectorized.BatchPool
 	tracker          *vectorized.MemoryTracker
@@ -384,15 +386,18 @@ func (a *BatchAggregation) Consume(_ context.Context, b *vectorized.RecordBatch)
 		a.rowsIn += int64(len(active))
 	}
 	for _, rowIdx := range active {
-		key := a.computeKey(b, int(rowIdx))
-		if a.mode == AggModeReduce && a.markDedupSeen(b, int(rowIdx), key) {
+		keyBuf := a.computeKey(b, int(rowIdx))
+		if a.mode == AggModeReduce && a.markDedupSeen(b, int(rowIdx), keyBuf) {
 			// markDedupSeen returns true ⇒ this (shard, group_key) pair
 			// already arrived from a replica of the same shard; skip the
 			// row so it does not double-count.
 			continue
 		}
-		group, exists := a.groups[key]
+		// The string(keyBuf) conversion in a map index does not allocate; the
+		// owned key string is only materialized when a new group is inserted.
+		group, exists := a.groups[string(keyBuf)]
 		if !exists {
+			key := string(keyBuf)
 			if a.entrySize > 0 {
 				if reserveErr := a.tracker.Reserve(a.entrySize); reserveErr != nil {
 					return fmt.Errorf("aggregation memory budget exceeded: %w", reserveErr)
@@ -529,7 +534,8 @@ func (a *BatchAggregation) newGroup(b *vectorized.RecordBatch, rowIdx int, key s
 	tagCols := make([]vectorized.Column, len(a.tagIndices))
 	for i, tIdx := range a.tagIndices {
 		tagCols[i] = vectorized.NewColumnForType(a.inputSchema.Columns[tIdx].Type, 1)
-		copyOneValue(tagCols[i], b.Columns[tIdx], rowIdx)
+		// The group outlives b, whose string cells may borrow storage memory.
+		cloneOneValue(tagCols[i], b.Columns[tIdx], rowIdx)
 	}
 	slots := make([]aggSlot, len(a.aggs))
 	for i, spec := range a.aggs {
@@ -690,15 +696,18 @@ func (a *BatchAggregation) emitGroupRow(out *vectorized.RecordBatch, group *aggG
 	}
 }
 
-func (a *BatchAggregation) computeKey(b *vectorized.RecordBatch, rowIdx int) string {
+// computeKey encodes the row's group key into the operator's reusable scratch
+// buffer. The returned slice is only valid until the next computeKey call and
+// must never be retained; copy it with string(...) to own it.
+func (a *BatchAggregation) computeKey(b *vectorized.RecordBatch, rowIdx int) []byte {
 	// Shared encoding with BatchGroupBy (length-prefixed variable components,
 	// canonicalised float zero) — see appendKeyComponent in groupby.go.
-	var sb [64]byte
-	buf := sb[:0]
+	buf := a.keyScratch[:0]
 	for _, kIdx := range a.keyIndices {
 		buf = appendKeyComponent(buf, b.Columns[kIdx], rowIdx)
 	}
-	return string(buf)
+	a.keyScratch = buf
+	return buf
 }
 
 // newAggSlot builds the accumulator for the (function, input type, target

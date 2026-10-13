@@ -241,7 +241,11 @@ func (bt *BatchTimeBucket) NextBatch(ctx context.Context) (*vectorized.RecordBat
 			// branch above drains it incrementally instead.
 			continue
 		}
-		if consumeErr := bt.consumeBatch(ctx, b); consumeErr != nil {
+		consumeErr := bt.consumeBatch(ctx, b)
+		// consumeBatch hands rows to a BatchAggregation, which clones what it
+		// retains, so the memory b borrows is no longer needed.
+		b.ReleaseOwners()
+		if consumeErr != nil {
 			return nil, consumeErr
 		}
 		// Commit whatever the buckets that closed while processing this one

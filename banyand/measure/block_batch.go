@@ -120,7 +120,7 @@ func (bc *blockCursor) copyAllToBatch(b *model.MeasureBatch, schema *vectorized.
 		case vectorized.RoleTag:
 			col := b.Tags[tagIdx]
 			tagIdx++
-			bc.fillTagColumnAllRows(col, def, idx, offset, indexValue, desc)
+			bc.fillTagColumnAllRows(b, col, def, idx, offset, indexValue, desc)
 		case vectorized.RoleField:
 			col := b.Fields[fieldIdx]
 			fieldIdx++
@@ -147,8 +147,10 @@ func (bc *blockCursor) copyAllToBatch(b *model.MeasureBatch, schema *vectorized.
 //  4. Validate the column's stored valueType matches the projection's
 //     schemaType. On mismatch, null-fill (same defensive behavior as
 //     copyAllTo's hasSchemaType check).
-//  5. Decode each stored byte slice into the typed column.
-func (bc *blockCursor) fillTagColumnAllRows(col vectorized.Column, def vectorized.ColumnDef,
+//  5. Decode each stored byte slice into the typed column. String, bytes and
+//     string-array columns borrow the cursor's decoded bytes instead of copying
+//     them (borrowTagRows); b then pins the cursor.
+func (bc *blockCursor) fillTagColumnAllRows(b *model.MeasureBatch, col vectorized.Column, def vectorized.ColumnDef,
 	idx, offset int, indexValue map[string]*modelv1.TagValue, desc bool,
 ) {
 	size := offset - idx
@@ -175,15 +177,10 @@ func (bc *blockCursor) fillTagColumnAllRows(col vectorized.Column, def vectorize
 		appendNullTagN(col, def, size)
 		return
 	}
-	if desc {
-		for i := offset - 1; i >= idx; i-- {
-			fillTagCell(col, def, column.valueType, column.values[i])
-		}
-	} else {
-		for i := idx; i < offset; i++ {
-			fillTagCell(col, def, column.valueType, column.values[i])
-		}
+	if bc.borrowTagRows(b, col, def, column, idx, offset, desc) {
+		return
 	}
+	fillTagRows(col, def, column, idx, offset, desc)
 }
 
 // fillFieldColumnAllRows mirrors fillTagColumnAllRows but on the field side.
@@ -198,15 +195,206 @@ func (bc *blockCursor) fillFieldColumnAllRows(col vectorized.Column, def vectori
 		appendNullFieldN(col, def, size)
 		return
 	}
+	fillFieldRows(col, def, column, idx, offset, desc)
+}
+
+// fillTagRows appends rows [idx, offset) of column onto col, reversed when desc.
+// A typed int64 column is appended in bulk; anything else goes cell by cell.
+func fillTagRows(col vectorized.Column, def vectorized.ColumnDef, column *column, idx, offset int, desc bool) {
+	if column.form == numericFormInt64 &&
+		appendNumericRows(col, def, vectorized.ColumnTypeTagValue, column.int64s[idx:offset], desc, int64TagValue) {
+		return
+	}
 	if desc {
 		for i := offset - 1; i >= idx; i-- {
-			fillFieldCell(col, def, column.valueType, column.values[i])
+			fillTagCell(col, def, column.valueType, column.rowBytes(i))
 		}
 	} else {
 		for i := idx; i < offset; i++ {
-			fillFieldCell(col, def, column.valueType, column.values[i])
+			fillTagCell(col, def, column.valueType, column.rowBytes(i))
 		}
 	}
+}
+
+// fillFieldRows is the field-side counterpart of fillTagRows.
+func fillFieldRows(col vectorized.Column, def vectorized.ColumnDef, column *column, idx, offset int, desc bool) {
+	switch column.form {
+	case numericFormInt64:
+		if appendNumericRows(col, def, vectorized.ColumnTypeFieldValue, column.int64s[idx:offset], desc, int64FieldValue) {
+			return
+		}
+	case numericFormFloat64:
+		if appendNumericRows(col, def, vectorized.ColumnTypeFieldValue, column.float64s[idx:offset], desc, float64FieldValue) {
+			return
+		}
+	case numericFormBytes:
+	}
+	if desc {
+		for i := offset - 1; i >= idx; i-- {
+			fillFieldCell(col, def, column.valueType, column.rowBytes(i))
+		}
+	} else {
+		for i := idx; i < offset; i++ {
+			fillFieldCell(col, def, column.valueType, column.rowBytes(i))
+		}
+	}
+}
+
+// appendNumericRows copies src onto col, reversed when desc. A passthrough
+// column of def.Type == passthroughType receives wrap(v) per row, matching
+// mustDecodeTagValue/mustDecodeFieldValue; a native TypedColumn[T] receives the
+// values themselves. It returns false, having appended nothing, when col is
+// neither, so the caller can take the generic path that reports the mismatch.
+func appendNumericRows[T int64 | float64, P any](col vectorized.Column, def vectorized.ColumnDef,
+	passthroughType vectorized.ColumnType, src []T, desc bool, wrap func(T) P,
+) bool {
+	if def.Type == passthroughType {
+		c, ok := col.(*vectorized.TypedColumn[P])
+		if !ok {
+			return false
+		}
+		if desc {
+			for i := len(src) - 1; i >= 0; i-- {
+				c.Append(wrap(src[i]))
+			}
+		} else {
+			for _, v := range src {
+				c.Append(wrap(v))
+			}
+		}
+		return true
+	}
+	c, ok := col.(*vectorized.TypedColumn[T])
+	if !ok {
+		return false
+	}
+	if desc {
+		for i := len(src) - 1; i >= 0; i-- {
+			c.Append(src[i])
+		}
+	} else {
+		c.AppendSlice(src)
+	}
+	return true
+}
+
+// borrowTagRows appends rows [idx, offset) of a string, bytes or string-array tag
+// as zero-copy views over the cursor's decoded bytes, reversed when desc, and pins
+// bc on b so the bytes stay valid until b is released. It returns false, having
+// appended nothing, when it does not apply: the column is passthrough, typed
+// numeric, or of another value type, so the caller takes the copying path.
+//
+// The views are valid because every value of a bytes-form column points into
+// memory only this cursor writes and only its last release recycles: the decoder
+// buffer for plain encoding, or a block-sized allocation the dictionary decoder
+// makes for dictionary encoding (the pooled Dictionary holds just the headers).
+// Bytes cells are capacity-limited so an append cannot write into a neighbor.
+func (bc *blockCursor) borrowTagRows(b *model.MeasureBatch, col vectorized.Column, def vectorized.ColumnDef,
+	column *column, idx, offset int, desc bool,
+) bool {
+	if def.Type == vectorized.ColumnTypeTagValue || column.form != numericFormBytes {
+		return false
+	}
+	var borrowed bool
+	switch column.valueType {
+	case pbv1.ValueTypeStr:
+		c, ok := col.(*vectorized.TypedColumn[string])
+		if !ok {
+			return false
+		}
+		forEachRow(idx, offset, desc, func(i int) {
+			raw := column.values[i]
+			if raw == nil {
+				c.AppendNull()
+				return
+			}
+			borrowed = borrowed || len(raw) > 0
+			c.Append(convert.BytesToString(raw))
+		})
+	case pbv1.ValueTypeBinaryData:
+		c, ok := col.(*vectorized.TypedColumn[[]byte])
+		if !ok {
+			return false
+		}
+		forEachRow(idx, offset, desc, func(i int) {
+			raw := column.values[i]
+			if raw == nil {
+				c.AppendNull()
+				return
+			}
+			borrowed = borrowed || len(raw) > 0
+			c.Append(raw[:len(raw):len(raw)])
+		})
+	case pbv1.ValueTypeStrArr:
+		c, ok := col.(*vectorized.TypedColumn[[]string])
+		if !ok {
+			return false
+		}
+		borrowed = borrowStrArrRows(c, column, idx, offset, desc)
+	default:
+		return false
+	}
+	if borrowed {
+		b.Owners.Pin(bc)
+	}
+	return true
+}
+
+// forEachRow calls fn for each row in [idx, offset), last to first when desc.
+func forEachRow(idx, offset int, desc bool, fn func(i int)) {
+	if desc {
+		for i := offset - 1; i >= idx; i-- {
+			fn(i)
+		}
+		return
+	}
+	for i := idx; i < offset; i++ {
+		fn(i)
+	}
+}
+
+// borrowStrArrRows appends the string-array cells of rows [idx, offset) to c. An
+// element without escape sequences is a view over the stored bytes; one with
+// escapes is unescaped into a fresh string, since its decoded form is not stored.
+// All cells slice one growing slab instead of allocating a slice per row. It
+// reports whether any element borrows.
+func borrowStrArrRows(c *vectorized.TypedColumn[[]string], column *column, idx, offset int, desc bool) bool {
+	bb := bigValuePool.Generate()
+	defer bigValuePool.Release(bb)
+	var slab []string
+	var borrowed bool
+	forEachRow(idx, offset, desc, func(i int) {
+		raw := column.values[i]
+		if raw == nil {
+			c.AppendNull()
+			return
+		}
+		start := len(slab)
+		for buf := raw; len(buf) > 0; {
+			var rest []byte
+			var err error
+			bb.Buf, rest, err = unmarshalVarArray(bb.Buf[:0], buf)
+			if err != nil {
+				logger.Panicf("unmarshalVarArray failed: %v", err)
+			}
+			// consumed includes the trailing delimiter; unescaping only ever shrinks
+			// the element, so equal lengths mean the stored bytes are the element.
+			consumed := len(buf) - len(rest)
+			if len(bb.Buf) == consumed-1 {
+				slab = append(slab, convert.BytesToString(buf[:len(bb.Buf)]))
+				borrowed = borrowed || len(bb.Buf) > 0
+			} else {
+				slab = append(slab, string(bb.Buf))
+			}
+			buf = rest
+		}
+		if len(slab) == start {
+			c.Append(nil)
+			return
+		}
+		c.Append(slab[start:len(slab):len(slab)])
+	})
+	return borrowed
 }
 
 // fillTagCell decodes one stored cell of valueType into col, dispatching on
@@ -258,7 +446,7 @@ func (bc *blockCursor) copyToBatch(b *model.MeasureBatch, schema *vectorized.Bat
 		case vectorized.RoleTag:
 			col := b.Tags[tagIdx]
 			tagIdx++
-			bc.fillTagCell(col, def, bc.idx, indexValue)
+			bc.fillTagCell(b, col, def, bc.idx, indexValue)
 		case vectorized.RoleField:
 			col := b.Fields[fieldIdx]
 			fieldIdx++
@@ -272,7 +460,7 @@ func (bc *blockCursor) copyToBatch(b *model.MeasureBatch, schema *vectorized.Bat
 }
 
 // fillTagCell appends a single tag cell at row rowIdx from bc into col.
-func (bc *blockCursor) fillTagCell(col vectorized.Column, def vectorized.ColumnDef,
+func (bc *blockCursor) fillTagCell(b *model.MeasureBatch, col vectorized.Column, def vectorized.ColumnDef,
 	rowIdx int, indexValue map[string]*modelv1.TagValue,
 ) {
 	if indexValue != nil && indexValue[def.Name] != nil {
@@ -294,7 +482,10 @@ func (bc *blockCursor) fillTagCell(col vectorized.Column, def vectorized.ColumnD
 		appendNullTagN(col, def, 1)
 		return
 	}
-	fillTagCell(col, def, column.valueType, column.values[rowIdx])
+	if bc.borrowTagRows(b, col, def, column, rowIdx, rowIdx+1, false) {
+		return
+	}
+	fillTagRows(col, def, column, rowIdx, rowIdx+1, false)
 }
 
 // fillFieldCell appends a single field cell at row rowIdx from bc into col.
@@ -304,7 +495,7 @@ func (bc *blockCursor) fillFieldCell(col vectorized.Column, def vectorized.Colum
 		appendNullFieldN(col, def, 1)
 		return
 	}
-	fillFieldCell(col, def, column.valueType, column.values[rowIdx])
+	fillFieldRows(col, def, column, rowIdx, rowIdx+1, false)
 }
 
 // replaceInBatch overwrites the LAST row of b (at index lastRow) with the
@@ -369,7 +560,7 @@ func (bc *blockCursor) setTagCellAt(col vectorized.Column, def vectorized.Column
 		setNullTagAt(col, def, destRow)
 		return
 	}
-	setTagCellAt(col, def, column.valueType, column.values[srcRow], destRow)
+	setTagCellAt(col, def, column.valueType, column.rowBytes(srcRow), destRow)
 }
 
 // setFieldCellAt overwrites column position destRow with the field value
@@ -380,7 +571,7 @@ func (bc *blockCursor) setFieldCellAt(col vectorized.Column, def vectorized.Colu
 		setNullFieldAt(col, def, destRow)
 		return
 	}
-	setFieldCellAt(col, def, column.valueType, column.values[srcRow], destRow)
+	setFieldCellAt(col, def, column.valueType, column.rowBytes(srcRow), destRow)
 }
 
 // setTagCellAt overwrites one cell in col at destRow. Mirrors fillTagCell but

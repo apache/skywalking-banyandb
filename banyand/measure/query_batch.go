@@ -192,6 +192,10 @@ func (qr *queryResult) loadCursorsForBatch() error {
 	if len(qr.data) == 0 {
 		return nil
 	}
+	// Typed numeric columns are understood by the batch readers only. TopN
+	// queries fall back to the row readers (merge / mergeTopNResult), which
+	// need the bytes form.
+	typedNumeric := qr.topNQueryOptions == nil
 	cursorChan := make(chan int, len(qr.data))
 	for i := 0; i < len(qr.data); i++ {
 		go func(i int) {
@@ -203,7 +207,7 @@ func (qr *queryResult) loadCursorsForBatch() error {
 			}
 			tmpBlock := generateBlock()
 			defer releaseBlock(tmpBlock)
-			if !qr.data[i].loadData(tmpBlock) {
+			if !qr.data[i].loadData(tmpBlock, typedNumeric) {
 				cursorChan <- i
 				return
 			}

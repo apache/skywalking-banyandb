@@ -19,8 +19,10 @@ package measure
 
 import (
 	"fmt"
+	"os"
 	"slices"
 	"sort"
+	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -216,7 +218,7 @@ func (b *block) marshalTagFamily(tf columnFamily, bm *blockMetadata, ww *writers
 
 func (b *block) unmarshalTagFamily(decoder *encoding.BytesBlockDecoder, tfIndex int, name string,
 	columnFamilyMetadataBlock *dataBlock, tagProjection []string, metaReader, valueReader fs.Reader, count int,
-	schemaTagTypes map[string]pbv1.ValueType,
+	schemaTagTypes map[string]pbv1.ValueType, typedNumeric bool,
 ) {
 	if len(tagProjection) < 1 {
 		return
@@ -241,7 +243,7 @@ NEXT:
 			typedName := encodeTypedColumn(tp, schemaType)
 			for i := range cfm.columnMetadata {
 				if cfm.columnMetadata[i].name == typedName {
-					cc[j].mustReadValues(decoder, valueReader, cfm.columnMetadata[i], uint64(b.Len()))
+					cc[j].mustReadValues(decoder, valueReader, cfm.columnMetadata[i], uint64(b.Len()), typedNumeric)
 					cc[j].name = tp
 					continue NEXT
 				}
@@ -252,7 +254,7 @@ NEXT:
 				if hasSchemaType && cfm.columnMetadata[i].valueType != schemaType {
 					continue
 				}
-				cc[j].mustReadValues(decoder, valueReader, cfm.columnMetadata[i], uint64(b.Len()))
+				cc[j].mustReadValues(decoder, valueReader, cfm.columnMetadata[i], uint64(b.Len()), typedNumeric)
 				continue NEXT
 			}
 		}
@@ -300,11 +302,7 @@ func (b *block) uncompressedSizeBytes() uint64 {
 		n += uint64(len(tf.name))
 		for _, c := range tf.columns {
 			n += uint64(len(c.name))
-			for _, v := range c.values {
-				if len(v) > 0 {
-					n += uint64(len(v))
-				}
-			}
+			n += c.bytesSize()
 		}
 	}
 
@@ -312,23 +310,33 @@ func (b *block) uncompressedSizeBytes() uint64 {
 	for i := range ff.columns {
 		c := ff.columns[i]
 		nameLen := uint64(len(c.name))
-		for _, v := range c.values {
-			if len(v) > 0 {
-				n += nameLen + uint64(len(v))
+		switch c.form {
+		case numericFormInt64, numericFormFloat64:
+			n += uint64(c.rowCount()) * (nameLen + 8)
+		default:
+			for _, v := range c.values {
+				if len(v) > 0 {
+					n += nameLen + uint64(len(v))
+				}
 			}
 		}
 	}
 	return n
 }
 
-func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm blockMetadata, schemaTagTypes map[string]pbv1.ValueType) {
+// mustReadFrom loads the block bm describes. typedNumeric lets null-free
+// int64/float64 columns load in their typed form (see column.mustReadValues);
+// callers must pass true only if every reader of the block understands it.
+func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm blockMetadata,
+	schemaTagTypes map[string]pbv1.ValueType, typedNumeric bool,
+) {
 	b.reset()
 
 	b.timestamps, b.versions = mustReadTimestampsFrom(b.timestamps, b.versions, &bm.timestamps, int(bm.count), p.timestamps)
 
 	cc := b.field.resizeColumns(len(bm.field.columnMetadata))
 	for i := range cc {
-		cc[i].mustReadValues(decoder, p.fieldValues, bm.field.columnMetadata[i], bm.count)
+		cc[i].mustReadValues(decoder, p.fieldValues, bm.field.columnMetadata[i], bm.count, typedNumeric)
 	}
 
 	_ = b.resizeTagFamilies(len(bm.tagProjection))
@@ -350,7 +358,7 @@ func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm bl
 		}
 		b.unmarshalTagFamily(decoder, i, name, block,
 			bm.tagProjection[i].Names, p.tagFamilyMetadata[name],
-			p.tagFamilies[name], int(bm.count), schemaTagTypes)
+			p.tagFamilies[name], int(bm.count), schemaTagTypes, typedNumeric)
 	}
 }
 
@@ -457,6 +465,14 @@ func releaseBlock(b *block) {
 
 var blockPool = pool.Register[*block]("measure-block")
 
+// blockCursor is one decoded block of one series, read by a query.
+//
+// It is reference-counted. The query holds one reference from generateBlockCursor
+// until it calls releaseBlockCursor; every batch whose string, bytes or
+// string-array cells borrow from the cursor's decoded buffers (see
+// borrowTagRows) holds one more through vectorized.Owners. The cursor is reset
+// and pooled only when the count reaches zero, so a borrowed cell stays valid
+// until the last batch that holds it is released.
 type blockCursor struct {
 	p                   *part
 	fields              columnFamily
@@ -471,8 +487,16 @@ type blockCursor struct {
 	idx                 int
 	minTimestamp        int64
 	maxTimestamp        int64
+	refs                atomic.Int32
 	shardID             common.ShardID
 }
+
+// Retain adds one reference. The caller must already hold one.
+func (bc *blockCursor) Retain() { bc.refs.Add(1) }
+
+// Release drops one reference; at zero the cursor is recycled. It implements
+// vectorized.Owner.
+func (bc *blockCursor) Release() { releaseBlockCursor(bc) }
 
 func (bc *blockCursor) reset() {
 	bc.idx = 0
@@ -815,7 +839,11 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 	}
 }
 
-func (bc *blockCursor) loadData(tmpBlock *block) bool {
+// loadData reads the cursor's block into tmpBlock and copies the rows inside the
+// query time range into bc. typedNumeric keeps null-free int64/float64 columns in
+// their typed form; pass true only when every reader of bc is a batch reader
+// that understands column.form (copyAllToBatch, copyToBatch, replaceInBatch).
+func (bc *blockCursor) loadData(tmpBlock *block, typedNumeric bool) bool {
 	tmpBlock.reset()
 	cfm := make([]columnMetadata, 0, len(bc.fieldProjection))
 NEXT_FIELD:
@@ -845,7 +873,7 @@ NEXT_FIELD:
 		}
 	}
 	bc.bm.tagFamilies = tf
-	tmpBlock.mustReadFrom(&bc.columnValuesDecoder, bc.p, bc.bm, bc.schemaTagTypes)
+	tmpBlock.mustReadFrom(&bc.columnValuesDecoder, bc.p, bc.bm, bc.schemaTagTypes, typedNumeric)
 
 	start, end, ok := timestamp.FindRange(tmpBlock.timestamps, bc.minTimestamp, bc.maxTimestamp)
 	if !ok {
@@ -863,32 +891,32 @@ NEXT_FIELD:
 				name:      cf.columns[i].name,
 				valueType: cf.columns[i].valueType,
 			}
-			if len(cf.columns[i].values) == 0 {
+			if cf.columns[i].rowCount() == 0 {
 				continue
 			}
-			if len(cf.columns[i].values) != len(tmpBlock.timestamps) {
-				logger.Panicf("unexpected number of values for tags %q: got %d; want %d", cf.columns[i].name, len(cf.columns[i].values), len(tmpBlock.timestamps))
+			if cf.columns[i].rowCount() != len(tmpBlock.timestamps) {
+				logger.Panicf("unexpected number of values for tags %q: got %d; want %d", cf.columns[i].name, cf.columns[i].rowCount(), len(tmpBlock.timestamps))
 			}
-			column.values = append(column.values, cf.columns[i].values[start:end+1]...)
+			column.copyRowsFrom(&cf.columns[i], start, end+1)
 			tf.columns = append(tf.columns, column)
 		}
 		bc.tagFamilies = append(bc.tagFamilies, tf)
 	}
 	bc.fields.name = tmpBlock.field.name
 	for i := range tmpBlock.field.columns {
-		if len(tmpBlock.field.columns[i].values) == 0 {
+		if tmpBlock.field.columns[i].rowCount() == 0 {
 			continue
 		}
-		if len(tmpBlock.field.columns[i].values) != len(tmpBlock.timestamps) {
+		if tmpBlock.field.columns[i].rowCount() != len(tmpBlock.timestamps) {
 			logger.Panicf("unexpected number of values for fields %q: got %d; want %d",
-				tmpBlock.field.columns[i].name, len(tmpBlock.field.columns[i].values), len(tmpBlock.timestamps))
+				tmpBlock.field.columns[i].name, tmpBlock.field.columns[i].rowCount(), len(tmpBlock.timestamps))
 		}
 		c := column{
 			name:      tmpBlock.field.columns[i].name,
 			valueType: tmpBlock.field.columns[i].valueType,
 		}
 
-		c.values = append(c.values, tmpBlock.field.columns[i].values[start:end+1]...)
+		c.copyRowsFrom(&tmpBlock.field.columns[i], start, end+1)
 		bc.fields.columns = append(bc.fields.columns, c)
 	}
 	return true
@@ -896,17 +924,81 @@ NEXT_FIELD:
 
 var blockCursorPool = pool.Register[*blockCursor]("measure-blockCursor")
 
+// poisonReleasedCursor makes a cursor overwrite every decoded value it owns with
+// poisonByte when its last reference is dropped, so a borrowed cell read after
+// release returns visibly wrong data, and makes a release beyond the last
+// reference panic. It is a test aid, enabled by BYDB_POISON_RELEASED_CURSOR=1 or
+// setPoisonReleasedCursor; it costs one pass over the decoded bytes per cursor.
+var poisonReleasedCursor atomic.Bool
+
+// poisonByte is the sentinel written over released cursor memory. It is not valid
+// UTF-8 on its own and is unlikely to appear in test data.
+const poisonByte = 0xDD
+
+func init() {
+	poisonReleasedCursor.Store(os.Getenv("BYDB_POISON_RELEASED_CURSOR") == "1")
+}
+
+// setPoisonReleasedCursor switches poisoning and returns the previous setting.
+func setPoisonReleasedCursor(on bool) bool { return poisonReleasedCursor.Swap(on) }
+
+// generateBlockCursor returns a cursor holding exactly one reference.
 func generateBlockCursor() *blockCursor {
 	v := blockCursorPool.Get()
 	if v == nil {
-		return &blockCursor{}
+		v = &blockCursor{}
 	}
+	v.refs.Store(1)
 	return v
 }
 
+// releaseBlockCursor drops one reference. The cursor is reset and returned to the
+// pool only when the last reference goes; until then batches that borrow its
+// decoded buffers keep reading valid data. A release with no reference left is a
+// bug: it panics under poisoning and is otherwise ignored, because pooling the
+// cursor a second time would hand one cursor to two owners.
 func releaseBlockCursor(bc *blockCursor) {
+	n := bc.refs.Add(-1)
+	if n > 0 {
+		return
+	}
+	if n < 0 {
+		bc.refs.Add(1)
+		if poisonReleasedCursor.Load() {
+			logger.Panicf("blockCursor released more times than it was retained")
+		}
+		return
+	}
+	if poisonReleasedCursor.Load() {
+		bc.poison()
+	}
+	// Nothing borrows the decoded buffer any more; let the next block reuse it.
+	bc.columnValuesDecoder.Reset()
 	bc.reset()
 	blockCursorPool.Put(bc)
+}
+
+// poison overwrites the memory every decoded value of bc points at. Values alias
+// the decoder buffer (plain encoding) or a block-sized allocation made by the
+// dictionary decoder; overwriting through the values reaches both, and also any
+// array the decoder buffer outgrew while it was filled.
+func (bc *blockCursor) poison() {
+	for i := range bc.tagFamilies {
+		for j := range bc.tagFamilies[i].columns {
+			poisonValues(bc.tagFamilies[i].columns[j].values)
+		}
+	}
+	for i := range bc.fields.columns {
+		poisonValues(bc.fields.columns[i].values)
+	}
+}
+
+func poisonValues(values [][]byte) {
+	for _, v := range values {
+		for k := range v {
+			v[k] = poisonByte
+		}
+	}
 }
 
 type blockPointer struct {
