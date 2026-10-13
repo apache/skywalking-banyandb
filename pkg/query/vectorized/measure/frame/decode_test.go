@@ -323,10 +323,10 @@ func TestDecode_BadMagic_FailsLoud(t *testing.T) {
 
 // TestDecode_BadVersion_FailsLoud covers Principle 3: any wire-version
 // byte other than the current WireVersion is rejected with ErrBadVersion.
-// The hard-cutover model forbids dual-wire so version skew is a botched
-// rollout, not coexistence.
+// Only versions 3 and 4 exist; any other version byte is a botched rollout or
+// corruption and must not be decoded as either layout.
 func TestDecode_BadVersion_FailsLoud(t *testing.T) {
-	body := []byte{0x00, 'V', 'F', 'R', 0x04, 0x00, 0x00}
+	body := []byte{0x00, 'V', 'F', 'R', 0x05, 0x00, 0x00}
 	_, err := Decode(body)
 	if err == nil {
 		t.Fatal("Decode returned nil error; want ErrBadVersion")

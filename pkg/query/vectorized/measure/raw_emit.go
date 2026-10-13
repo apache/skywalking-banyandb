@@ -29,6 +29,24 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/frame"
 )
 
+type frameVersionKey struct{}
+
+// ContextWithFrameVersion returns a context that makes the frame emitters use the given
+// frame wire version, normally frame.NegotiateVersion of the requester's advertisement.
+// Without it they emit the original version, which every node can decode.
+func ContextWithFrameVersion(ctx context.Context, version uint8) context.Context {
+	return context.WithValue(ctx, frameVersionKey{}, version)
+}
+
+// FrameVersionFromContext returns the frame wire version ctx selects, defaulting to the
+// original frame.WireVersion.
+func FrameVersionFromContext(ctx context.Context) uint8 {
+	if version, ok := ctx.Value(frameVersionKey{}).(uint8); ok {
+		return version
+	}
+	return frame.WireVersion
+}
+
 // FrameEmitter is the data-node wire-emit contract under flag-on:
 // any MIterator that participates in a TopicInternalMeasureQuery
 // response must encapsulate its own drain + encode strategy via this
@@ -93,11 +111,27 @@ func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 	if schema == nil {
 		return nil, fmt.Errorf("DrainPipelineToFrame: nil schema")
 	}
-	out := vectorized.NewRecordBatch(schema, 0)
-	// out's cells may borrow storage memory pinned by the batches appended to it;
-	// it takes over their owners and holds them until the frame, which copies
-	// every cell into its own buffer, has been encoded.
-	defer out.ReleaseOwners()
+	version := FrameVersionFromContext(ctx)
+	// A columnar frame carries a batch's constant columns as one value and copies each cell
+	// once, into the frame, so a single batch of native columns is encoded as it is instead of
+	// being copied into a coalescing batch first (every pull of a pipeline returns a fresh batch,
+	// so holding the first across the next pull is safe). Batches that need passthrough
+	// conversion, and the row-oriented layout, take the coalescing path.
+	direct := version == frame.WireVersionColumnar && !needsFrameConversion(schema)
+	var out, single *vectorized.RecordBatch
+	if !direct {
+		out = vectorized.NewRecordBatch(schema, 0)
+	}
+	// Both batches' cells may borrow storage memory pinned by their owners; they are held until
+	// the frame, which copies every cell into its own buffer, has been encoded.
+	defer func() {
+		if out != nil {
+			out.ReleaseOwners()
+		}
+		if single != nil {
+			single.ReleaseOwners()
+		}
+	}()
 	for {
 		b, pullErr := p.Next(ctx)
 		if pullErr != nil {
@@ -110,11 +144,31 @@ func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 			b.ReleaseOwners()
 			return nil, fmt.Errorf("DrainPipelineToFrame: batch schema mismatch (planner bug)")
 		}
+		if direct && out == nil && single == nil {
+			single = b
+			continue
+		}
+		if out == nil {
+			out = vectorized.NewRecordBatch(schema, 0)
+			appendErr := appendActive(out, single)
+			single.Owners.TransferTo(&out.Owners)
+			single = nil
+			if appendErr != nil {
+				b.ReleaseOwners()
+				return nil, fmt.Errorf("DrainPipelineToFrame: %w", appendErr)
+			}
+		}
 		appendErr := appendActive(out, b)
 		b.Owners.TransferTo(&out.Owners)
 		if appendErr != nil {
 			return nil, fmt.Errorf("DrainPipelineToFrame: %w", appendErr)
 		}
+	}
+	if single != nil {
+		return encodeDrainedFrame(ctx, single, version)
+	}
+	if out == nil {
+		out = vectorized.NewRecordBatch(schema, 0)
 	}
 	// Decode any TagValue / FieldValue passthrough columns into their
 	// typed equivalents before frame.Encode. Storage's vec adapter emits
@@ -137,12 +191,18 @@ func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 	if convErr != nil {
 		return nil, fmt.Errorf("DrainPipelineToFrame: %w", convErr)
 	}
+	return encodeDrainedFrame(ctx, converted, version)
+}
+
+// encodeDrainedFrame encodes the drained batch with the negotiated frame version, under a
+// frame-encode span when the query is traced.
+func encodeDrainedFrame(ctx context.Context, converted *vectorized.RecordBatch, version uint8) ([]byte, error) {
 	tracer := query.GetTracer(ctx)
 	if tracer == nil {
-		return frame.Encode(converted)
+		return frame.EncodeVersion(converted, version)
 	}
 	span, _ := tracer.StartSpan(ctx, "frame-encode")
-	encoded, encodeErr := frame.Encode(converted)
+	encoded, encodeErr := frame.EncodeVersion(converted, version)
 	if encodeErr != nil {
 		span.Error(encodeErr)
 		span.Stop()
@@ -178,6 +238,12 @@ func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 // idps in the empty/zero case yields a nil body, matching the codec
 // layer's RawFrameCodec carve-out for empty distributed results.
 func SerializeDataPointsToFrame(idps []*measurev1.InternalDataPoint) ([]byte, error) {
+	return SerializeDataPointsToFrameVersion(idps, frame.WireVersion)
+}
+
+// SerializeDataPointsToFrameVersion is SerializeDataPointsToFrame emitting the given
+// frame wire version (see frame.NegotiateVersion).
+func SerializeDataPointsToFrameVersion(idps []*measurev1.InternalDataPoint, version uint8) ([]byte, error) {
 	if len(idps) == 0 {
 		return nil, nil
 	}
@@ -194,7 +260,7 @@ func SerializeDataPointsToFrame(idps []*measurev1.InternalDataPoint) ([]byte, er
 	// is intact. The vec-native DrainPipelineToFrame path keeps the
 	// typed-conversion fast path for AggModeMap output where columns are
 	// uniform.
-	return frame.Encode(b)
+	return frame.EncodeVersion(b, version)
 }
 
 // buildPassthroughBatchFromDataPoints walks idps to derive a unified
@@ -712,6 +778,8 @@ func DecodeFramesToInternalDataPoints(frames [][]byte) ([]*measurev1.InternalDat
 			return nil, fmt.Errorf("DecodeFramesToInternalDataPoints: decode frame %d: %w", i, decodeErr)
 		}
 		out = serializeBatchToProto(b, out)
+		// The serializer copies every cell it keeps, so the frame can go.
+		b.ReleaseOwners()
 	}
 	return out, nil
 }
@@ -740,6 +808,7 @@ func DecodeFramesPerSource(frames [][]byte) ([][]*measurev1.InternalDataPoint, e
 			return nil, fmt.Errorf("DecodeFramesPerSource: decode frame %d: %w", i, decodeErr)
 		}
 		idps := serializeBatchToProto(b, nil)
+		b.ReleaseOwners()
 		if len(idps) > 0 {
 			out = append(out, idps)
 		}

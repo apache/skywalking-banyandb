@@ -17,6 +17,8 @@
 
 package vectorized
 
+import "encoding/binary"
+
 // ColumnType is the runtime type tag for a Column.
 type ColumnType int
 
@@ -119,5 +121,36 @@ func (v *validityBitmap) Reset() {
 	if v.marked {
 		clear(v.bits)
 		v.marked = false
+	}
+}
+
+// setFromValidity replaces the null set with an Arrow validity bitmap over n rows:
+// bit i of valid (least significant bit first) set means row i holds a value, clear
+// means it is null. valid must hold at least (n+7)/8 bytes. Bits past n are ignored.
+func (v *validityBitmap) setFromValidity(valid []byte, n int) {
+	words := (n + 63) / 64
+	if cap(v.bits) >= words {
+		v.bits = v.bits[:words]
+	} else {
+		v.bits = make([]uint64, words)
+	}
+	v.marked = false
+	for w := range words {
+		var word uint64
+		if lo := w * 8; lo+8 <= len(valid) {
+			word = binary.LittleEndian.Uint64(valid[lo:])
+		} else {
+			for k := lo; k < len(valid) && k < lo+8; k++ {
+				word |= uint64(valid[k]) << (8 * uint(k-lo))
+			}
+		}
+		nulls := ^word
+		if rem := n - w*64; rem < 64 {
+			nulls &= (uint64(1) << uint(rem)) - 1
+		}
+		v.bits[w] = nulls
+		if nulls != 0 {
+			v.marked = true
+		}
 	}
 }

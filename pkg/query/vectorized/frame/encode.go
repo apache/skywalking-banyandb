@@ -70,8 +70,8 @@ func (c Codec) Encode(b *vectorized.RecordBatch) ([]byte, error) {
 
 		col := b.Columns[colIdx]
 		if constCol, isConst := col.(*vectorized.ConstColumn); isConst {
-			// The wire format has no constant column (frame v2 will); expand it to the
-			// typed column it stands for.
+			// The row-oriented layout has no constant column (the columnar one, see
+			// EncodeColumnar, does); expand it to the typed column it stands for.
 			col = constCol.Expand()
 		}
 		buf = appendValidityBitmap(buf, col, active)

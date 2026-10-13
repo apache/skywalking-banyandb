@@ -224,3 +224,17 @@ func NewColumnForType(t ColumnType, capacity int) Column {
 	}
 	panic("vectorized: unknown ColumnType " + t.String())
 }
+
+// NewColumnFromSlice returns a column of type t that owns data, with no nulls. The
+// column keeps data as its backing array, so the caller must not use data afterwards.
+func NewColumnFromSlice[T any](t ColumnType, data []T) *TypedColumn[T] {
+	return &TypedColumn[T]{typ: t, data: data}
+}
+
+// SetNullsFromValidity replaces the column's null set with an Arrow validity bitmap
+// over the column's rows: bit i of valid (least significant bit first) set means row
+// i holds a value, clear means it is null. valid must hold at least (Len()+7)/8 bytes
+// and is not retained.
+func (c *TypedColumn[T]) SetNullsFromValidity(valid []byte) {
+	c.validity.setFromValidity(valid, len(c.data))
+}

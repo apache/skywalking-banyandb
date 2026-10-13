@@ -96,6 +96,13 @@ func ReduceRawFrames(
 	tracker *vectorized.MemoryTracker,
 ) ([]*vectorized.RecordBatch, AggValuePath, error) {
 	decoded := make([]*vectorized.RecordBatch, 0, len(frames))
+	// A columnar partial borrows its frame; the reduce copies the keys and values it keeps
+	// (the aggregation inserts by copy), so the partials can go once it returns.
+	defer func() {
+		for _, b := range decoded {
+			b.ReleaseOwners()
+		}
+	}()
 	for i, body := range frames {
 		if len(body) == 0 {
 			continue

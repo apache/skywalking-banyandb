@@ -1091,6 +1091,7 @@ Wraps QueryRequest for extensibility.
 | ----- | ---- | ----- | ----------- |
 | request | [QueryRequest](#banyandb-measure-v1-QueryRequest) |  | The actual query request |
 | agg_return_partial | [bool](#bool) |  | agg_return_partial when true asks data nodes to return aggregation partials (for reduce at liaison) |
+| max_frame_version | [uint32](#uint32) |  | max_frame_version is the highest raw frame wire version this requester can decode. Zero (absent) means the requester predates version negotiation and decodes only the original frame version, so a data node must not emit a newer one. A data node answers with the lower of this value and the newest version it can encode; the frame carries its own version, so the requester decodes whichever arrives. |
 
 
 

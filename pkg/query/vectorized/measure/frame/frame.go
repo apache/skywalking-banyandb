@@ -49,22 +49,37 @@
 // v2 → v3: adds two column types — TagValue (5) and FieldValue (6) — that
 // carry proto-marshaled TagValue / FieldValue bytes per cell, so cross-group
 // queries with type-divergent tag/field declarations cross the wire intact.
+//
+// Version 4 (WireVersionColumnar) is the columnar layout: the same magic and
+// header prefix, but each column sends its validity, offsets and value buffers
+// as they sit in memory, padded to 8 bytes, so the receiver builds columns by
+// slicing the message (see the shared base's columnar.go for the byte layout).
+// Version 3 stays the version every node understands; a data node emits version
+// 4 only when the requester says it can decode it (NegotiateVersion), and a
+// requester decodes either version, which the frame carries. Rolling upgrades
+// therefore never put a frame on the wire that the receiver cannot read.
 package frame
 
 import (
 	"fmt"
+	"os"
+	"strconv"
+	"sync/atomic"
 
 	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	baseframe "github.com/apache/skywalking-banyandb/pkg/query/vectorized/frame"
 )
 
-// WireVersion is the on-wire frame format version emitted by Encode. The
-// flag-on decoder MUST reject frames carrying any other version with a loud
-// typed error: the G9f hard-cutover model forbids dual-wire, so a version skew
-// on the wire is by definition a botched operator rollout, not a coexistence
-// to negotiate.
+// WireVersion is the row-oriented frame format version emitted by Encode: the one version
+// every node of every release understands, and the one a data node uses unless the requester
+// advertised that it can decode WireVersionColumnar (see NegotiateVersion). A decoder rejects
+// a frame of any version it does not know with a loud typed error, so a skew that negotiation
+// should have prevented surfaces as ErrBadVersion rather than as misread data.
 const WireVersion uint8 = 3
+
+// WireVersionColumnar is the version of the Arrow-compatible columnar layout.
+const WireVersionColumnar uint8 = 4
 
 // Magic is the 4-byte prefix every raw measure frame body MUST begin with. The
 // first byte is data.RawFrameMagicLeadingByte (0x00), which decodes as a varint
@@ -138,10 +153,12 @@ const (
 var codec = baseframe.Codec{
 	Magic:       Magic,
 	WireVersion: WireVersion,
-	RoleToWire:  roleToWire,
-	WireToRole:  wireToRole,
-	TypeToWire:  typeToWire,
-	WireToType:  wireToType,
+	// ColumnarWireVersion selects the columnar layout for EncodeVersion and Decode.
+	ColumnarWireVersion: WireVersionColumnar,
+	RoleToWire:          roleToWire,
+	WireToRole:          wireToRole,
+	TypeToWire:          typeToWire,
+	WireToType:          wireToType,
 }
 
 func roleToWire(r vectorized.ColumnRole) (uint8, error) {
@@ -225,9 +242,117 @@ func Encode(b *vectorized.RecordBatch) ([]byte, error) {
 	return codec.Encode(b)
 }
 
-// Decode parses a measure raw frame body back into a RecordBatch.
+// framesEncoded and framesDecoded count the frames this process has encoded and decoded, by
+// wire version, so a test can tell which layout actually crossed the wire.
+var framesEncoded, framesDecoded [WireVersionColumnar + 1]atomic.Int64
+
+// EncodedCount returns the number of frames of the given wire version this process has encoded.
+func EncodedCount(version uint8) int64 {
+	if version > WireVersionColumnar {
+		return 0
+	}
+	return framesEncoded[version].Load()
+}
+
+// DecodedCount returns the number of frames of the given wire version this process has decoded.
+func DecodedCount(version uint8) int64 {
+	if version > WireVersionColumnar {
+		return 0
+	}
+	return framesDecoded[version].Load()
+}
+
+// EncodeVersion serializes b with the given wire version: WireVersion (3) is the
+// row-oriented layout every node understands, WireVersionColumnar (4) the columnar one.
+func EncodeVersion(b *vectorized.RecordBatch, version uint8) ([]byte, error) {
+	var body []byte
+	var err error
+	switch version {
+	case WireVersion:
+		body, err = codec.Encode(b)
+	case WireVersionColumnar:
+		body, err = codec.EncodeColumnar(b)
+	default:
+		return nil, fmt.Errorf("%w: cannot encode version %d", ErrBadVersion, version)
+	}
+	if err == nil {
+		framesEncoded[version].Add(1)
+	}
+	return body, err
+}
+
+// Decode parses a measure raw frame body of either wire version back into a RecordBatch.
+// A columnar frame's batch borrows the body and pins it through Owners: the caller releases
+// the batch (RecordBatch.ReleaseOwners) when it is done with it, and copies any cell it
+// keeps beyond that.
 func Decode(b []byte) (*vectorized.RecordBatch, error) {
-	return codec.Decode(b)
+	version := WireVersion
+	var batch *vectorized.RecordBatch
+	var err error
+	if len(b) > MagicLen && [4]byte(b[:MagicLen]) == Magic && b[MagicLen] == WireVersionColumnar {
+		version = WireVersionColumnar
+		batch, err = codec.DecodeColumnar(b)
+	} else {
+		batch, err = codec.Decode(b)
+	}
+	if err == nil {
+		framesDecoded[version].Add(1)
+	}
+	return batch, err
+}
+
+// maxWireVersionEnv caps the newest frame version this process emits and advertises,
+// so an operator can hold a cluster on the original layout during a risky rollout.
+const maxWireVersionEnv = "BANYAND_MEASURE_FRAME_MAX_VERSION"
+
+var (
+	// emitCap is the newest version this process emits when a requester accepts it.
+	emitCap atomic.Uint32
+	// acceptCap is the newest version this process advertises in the requests it sends;
+	// zero advertises nothing, which is what a process that predates negotiation does.
+	acceptCap atomic.Uint32
+)
+
+func init() {
+	emitCap.Store(uint32(WireVersionColumnar))
+	acceptCap.Store(uint32(WireVersionColumnar))
+	if v, parseErr := strconv.ParseUint(os.Getenv(maxWireVersionEnv), 10, 8); parseErr == nil && v < uint64(WireVersionColumnar) {
+		if v < uint64(WireVersion) {
+			v = uint64(WireVersion)
+		}
+		emitCap.Store(uint32(v))
+		acceptCap.Store(uint32(v))
+	}
+}
+
+// AdvertisedVersion is the value a liaison puts in InternalQueryRequest.max_frame_version:
+// the newest frame version it asks data nodes to emit. Zero means it asks for nothing newer
+// than the original WireVersion.
+func AdvertisedVersion() uint32 { return acceptCap.Load() }
+
+// SetAdvertisedVersion caps the version this process advertises and returns the previous cap.
+// A version below WireVersionColumnar makes a requester that never asks for a columnar frame;
+// zero advertises nothing, like a process that predates negotiation. It simulates a liaison of
+// an older release in tests. The process still decodes every version.
+func SetAdvertisedVersion(version uint8) uint8 {
+	return uint8(acceptCap.Swap(uint32(min(version, WireVersionColumnar))))
+}
+
+// SetMaxEmitVersion caps the newest frame version this process emits and returns the previous
+// cap. It simulates a data node of an older release in tests.
+func SetMaxEmitVersion(version uint8) uint8 {
+	return uint8(emitCap.Swap(uint32(min(max(version, WireVersion), WireVersionColumnar))))
+}
+
+// NegotiateVersion returns the frame version a data node emits for a requester that
+// advertised requested (InternalQueryRequest.max_frame_version): the lower of the
+// requester's version and this node's newest. A requester that advertised nothing (zero)
+// predates negotiation and gets the original WireVersion.
+func NegotiateVersion(requested uint32) uint8 {
+	if requested < uint32(WireVersionColumnar) {
+		return WireVersion
+	}
+	return min(WireVersionColumnar, uint8(emitCap.Load()))
 }
 
 // ValidateHeader is the fail-loud preflight a decoder calls before parsing any

@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	itersort "github.com/apache/skywalking-banyandb/pkg/iter/sort"
@@ -260,6 +261,9 @@ func mergeDistributedRows(frames [][]byte, spec distributedRowsSpec) ([]*vectori
 	if decodeErr != nil {
 		return nil, decodeErr
 	}
+	// The output batches pin whatever the sources borrow (see appendRowToCurrent), so the
+	// sources' own references can go once the merge returns.
+	defer releaseSources(sources)
 	if schema == nil {
 		return nil, nil
 	}
@@ -291,7 +295,7 @@ func runDistributedRowMerge(
 	schema *vectorized.BatchSchema,
 	spec distributedRowsSpec,
 	batchSize int,
-) ([]*vectorized.RecordBatch, error) {
+) (merged []*vectorized.RecordBatch, retErr error) {
 	merger := itersort.NewItemIter(iters, spec.Desc)
 	defer func() { _ = merger.Close() }()
 
@@ -308,6 +312,15 @@ func runDistributedRowMerge(
 		indexMode: spec.IndexMode,
 		window:    make(map[distributedRowKey]*distributedRowItem),
 	}
+	defer func() {
+		if retErr != nil {
+			// The batches built so far pin their sources' frames; nobody will consume them.
+			releaseBatches(emitter.output)
+			if emitter.current != nil {
+				emitter.current.ReleaseOwners()
+			}
+		}
+	}()
 
 	for merger.Next() {
 		item := merger.Val()
@@ -328,6 +341,13 @@ func runDistributedRowMerge(
 		return nil, err
 	}
 	return emitter.output, nil
+}
+
+// releaseSources drops the references the decoded source batches hold on their frames.
+func releaseSources(sources []decodedBatchSource) {
+	for _, src := range sources {
+		src.batch.ReleaseOwners()
+	}
 }
 
 // decodedBatchSource pairs a decoded RecordBatch with its source index and
@@ -471,6 +491,9 @@ func (e *distributedRowEmitter) appendRowToCurrent(row *distributedRowItem) erro
 	// a tag/field column to TagValue/FieldValue (e.g. mid-flight tag move
 	// across data nodes). When schemas agree it delegates straight to
 	// measure.AppendColumnRange — the homogeneous fast path is unchanged.
+	// The cells appended below share their payloads with the source batch, which may borrow a
+	// received frame: the output batch pins the same owners.
+	e.current.Owners.PinAll(&row.batch.Owners)
 	for colIdx, srcCol := range row.batch.Columns {
 		if err := appendColumnRangeCoerced(e.current.Columns[colIdx], srcCol, row.rowIdx, 1); err != nil {
 			return fmt.Errorf("merge column %d: %w", colIdx, err)
@@ -557,9 +580,13 @@ func decodeDistributedRowSources(frames [][]byte) ([]decodedBatchSource, *vector
 		}
 		batch, decodeErr := frame.Decode(body)
 		if decodeErr != nil {
+			releaseSources(sources)
 			return nil, nil, fmt.Errorf("decode frame %d: %w", frameIdx, decodeErr)
 		}
 		if batch == nil || batch.ActiveLen() == 0 {
+			if batch != nil {
+				batch.ReleaseOwners()
+			}
 			continue
 		}
 		sources = append(sources, decodedBatchSource{batch: batch, source: frameIdx, group: 0})
@@ -569,6 +596,7 @@ func decodeDistributedRowSources(frames [][]byte) ([]decodedBatchSource, *vector
 	}
 	unioned, unionErr := unionDistributedRowFrameSchemas(sources)
 	if unionErr != nil {
+		releaseSources(sources)
 		return nil, nil, unionErr
 	}
 	return sources, unioned, nil
@@ -659,7 +687,8 @@ func appendColumnRangeCoerced(dst, src vectorized.Column, srcPos, n int) error {
 			case *vectorized.TypedColumn[int64]:
 				tv = &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: sc.Data()[rowIdx]}}}
 			case *vectorized.TypedColumn[string]:
-				tv = &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: sc.Data()[rowIdx]}}}
+				// The cell may borrow a received frame, and the passthrough value travels on to the response.
+				tv = &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: strings.Clone(sc.Data()[rowIdx])}}}
 			case *vectorized.TypedColumn[[]byte]:
 				raw := sc.Data()[rowIdx]
 				buf := make([]byte, len(raw))
@@ -695,7 +724,7 @@ func appendColumnRangeCoerced(dst, src vectorized.Column, srcPos, n int) error {
 			case *vectorized.TypedColumn[float64]:
 				fv = &modelv1.FieldValue{Value: &modelv1.FieldValue_Float{Float: &modelv1.Float{Value: sc.Data()[rowIdx]}}}
 			case *vectorized.TypedColumn[string]:
-				fv = &modelv1.FieldValue{Value: &modelv1.FieldValue_Str{Str: &modelv1.Str{Value: sc.Data()[rowIdx]}}}
+				fv = &modelv1.FieldValue{Value: &modelv1.FieldValue_Str{Str: &modelv1.Str{Value: strings.Clone(sc.Data()[rowIdx])}}}
 			case *vectorized.TypedColumn[[]byte]:
 				raw := sc.Data()[rowIdx]
 				buf := make([]byte, len(raw))
@@ -727,9 +756,13 @@ func decodeMultiGroupSources(groupFrames []groupFrame, mergedSchema *vectorized.
 		}
 		rawBatch, decodeErr := frame.Decode(gf.body)
 		if decodeErr != nil {
+			releaseSources(sources)
 			return nil, fmt.Errorf("decode group %d frame %d: %w", gf.group, frameIdx, decodeErr)
 		}
 		if rawBatch == nil || rawBatch.ActiveLen() == 0 {
+			if rawBatch != nil {
+				rawBatch.ReleaseOwners()
+			}
 			continue
 		}
 		// Build a column-index map from the source schema so we can look up
@@ -753,6 +786,8 @@ func decodeMultiGroupSources(groupFrames []groupFrame, mergedSchema *vectorized.
 					rawBatch.Columns[srcColIdx],
 					0, rawBatch.Len,
 				); copyErr != nil {
+					rawBatch.ReleaseOwners()
+					releaseSources(sources)
 					return nil, fmt.Errorf("reshape group %d frame %d col %d: %w", gf.group, frameIdx, destColIdx, copyErr)
 				}
 			} else {
@@ -761,6 +796,9 @@ func decodeMultiGroupSources(groupFrames []groupFrame, mergedSchema *vectorized.
 				}
 			}
 		}
+		// The reshaped batch shares the raw batch's cells, so it takes over the raw batch's
+		// references on the frame.
+		rawBatch.Owners.TransferTo(&reshapedBatch.Owners)
 		sources = append(sources, decodedBatchSource{
 			batch:  reshapedBatch,
 			source: frameIdx,
@@ -798,6 +836,8 @@ func mergeDistributedRowsMulti(groupFrames []groupFrame, mergedSchema *vectorize
 	if decodeErr != nil {
 		return nil, decodeErr
 	}
+	// The output batches pin whatever the sources borrow (see appendRowToCurrent).
+	defer releaseSources(sources)
 	if len(sources) == 0 {
 		return nil, nil
 	}

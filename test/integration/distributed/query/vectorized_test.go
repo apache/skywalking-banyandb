@@ -28,6 +28,8 @@ import (
 	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/frame"
 	vecplan "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/plan"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
@@ -62,100 +64,157 @@ import (
 // hidden-criteria-tag / trace queries that don't implement RawFrameSource
 // today) surfaces here as a hard error rather than a silent retry on
 // row — that is the loud-failure signal the runbook depends on.
-var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ordered, func() {
-	var (
-		vectorizedConn    *grpc.ClientConn
-		stopFn            func()
-		startHandledCount int64
-		startFrameEnc     int64
-		startFrameDec     int64
-		savedMeasureCtx   helpers.SharedContext
-		savedTopNCtx      helpers.SharedContext
-		savedWireModeRaw  bool
-	)
-	ginkgo.BeforeAll(func() {
-		savedMeasureCtx = casesmeasure.SharedContext
-		savedTopNCtx = casestopn.SharedContext
-		// data.MeasureWireModeRaw is a per-process atomic — the vec
-		// cluster's PreRun flips it to true and the row baseline cluster
-		// (alive in the same test binary) would then start hitting the
-		// flag-on raw-frame guard for its own responses. Save the
-		// current value here and restore it in AfterAll so the row
-		// baseline keeps its proto-codec contract end-to-end.
-		savedWireModeRaw = data.MeasureWireModeRaw()
-		startHandledCount = vecplan.HandledCount()
-		startFrameEnc = data.MeasureFrameEncodedCount()
-		startFrameDec = data.MeasureFrameDecodedCount()
+//
+// The cluster is booted once per frame-version pairing of a rolling upgrade: both sides new (columnar
+// frames), an old liaison that never advertises a version, and an old data node that cannot emit the
+// columnar layout. The same reference yaml must hold for each, and the frames that crossed the wire
+// must be the ones the pairing allows. The pairings simulate the older release through the version
+// caps of the measure frame package; the in-process cluster shares them between its nodes.
+type framePairing struct {
+	name string
+	// advertise is the frame version the liaison advertises, zero for a liaison that predates negotiation.
+	advertise uint8
+	// emit is the newest frame version the data nodes can emit.
+	emit uint8
+	// columnar is whether the pairing negotiates the columnar layout.
+	columnar bool
+}
 
-		tmpDir, tmpDirCleanup, tmpErr := test.NewSpace()
-		gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
-		dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
-		config := setup.PropertyClusterConfig(dfWriter)
-		closeDataNode0 := setup.DataNode(config)
-		closeDataNode1 := setup.DataNode(config)
-		setup.PreloadSchemaViaProperty(config, test_stream.PreloadSchema, test_measure.PreloadSchema, test_trace.PreloadSchema, test_property.PreloadSchema)
-		config.AddLoadedKinds(schema.KindStream, schema.KindMeasure, schema.KindTrace)
-		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config)
-		stopFn = func() {
-			closerLiaisonNode()
-			closeDataNode0()
-			closeDataNode1()
-			tmpDirCleanup()
-		}
-		var connErr error
-		vectorizedConn, connErr = grpchelper.Conn(liaisonAddr, 10*time.Second,
-			grpc.WithTransportCredentials(insecure.NewCredentials()))
-		gomega.Expect(connErr).NotTo(gomega.HaveOccurred())
-		ns := timestamp.NowMilli().UnixNano()
-		now := time.Unix(0, ns-ns%int64(time.Minute))
-		test_cases.Initialize(liaisonAddr, now)
-		sharedCtx := helpers.SharedContext{
-			Connection: vectorizedConn,
-			BaseTime:   now,
-		}
-		casesmeasure.SharedContext = sharedCtx
-		casestopn.SharedContext = sharedCtx
-	})
-	ginkgo.AfterAll(func() {
-		casesmeasure.SharedContext = savedMeasureCtx
-		casestopn.SharedContext = savedTopNCtx
-		// Restore the per-process wire-mode flag BEFORE tearing down so
-		// any subsequent test that targets the row baseline cluster (same
-		// process) sees the original proto codec contract.
-		data.SetMeasureWireModeRaw(savedWireModeRaw)
-		// Observability gate: vec dispatch must fire for at least one
-		// case in the table. If this drops to zero the vec subsystem is
-		// silently 0%-covered on the distributed cluster — either the
-		// eligibility gate or processor.go's dispatchMeasure regressed.
-		handledDelta := vecplan.HandledCount() - startHandledCount
-		ginkgo.GinkgoWriter.Printf(
-			"vec dispatch (distributed): handled=%d (delta across the vec-distributed table)\n", handledDelta)
-		gomega.Expect(handledDelta).To(gomega.BeNumerically(">", int64(0)),
-			"vec dispatch did not fire for any case on the distributed cluster")
-		// HandledCount above only proves the vec COMPUTE path dispatched. A vec query
-		// still emits protobuf unless the data node is distributed and in raw wire
-		// mode, so assert the columnar frame itself carried traffic — otherwise a
-		// silent fallback to proto reads as full coverage.
-		frameEncDelta := data.MeasureFrameEncodedCount() - startFrameEnc
-		frameDecDelta := data.MeasureFrameDecodedCount() - startFrameDec
-		ginkgo.GinkgoWriter.Printf(
-			"vec measure wire (distributed): frames_encoded=%d frames_decoded=%d\n",
-			frameEncDelta, frameDecDelta,
+var framePairings = []framePairing{
+	{name: "new liaison, new data nodes", advertise: frame.WireVersionColumnar, emit: frame.WireVersionColumnar, columnar: true},
+	{name: "old liaison, new data nodes", advertise: 0, emit: frame.WireVersionColumnar},
+	{name: "new liaison, old data nodes", advertise: frame.WireVersionColumnar, emit: frame.WireVersion},
+}
+
+var _ = func() bool {
+	for _, pairing := range framePairings {
+		registerVectorizedDistributed(pairing)
+	}
+	return true
+}()
+
+func registerVectorizedDistributed(pairing framePairing) {
+	ginkgo.Describe("vec independent verification (distributed): "+pairing.name, ginkgo.Ordered, func() {
+		var (
+			vectorizedConn    *grpc.ClientConn
+			stopFn            func()
+			startHandledCount int64
+			startFrameEnc     int64
+			startFrameDec     int64
+			savedMeasureCtx   helpers.SharedContext
+			savedTopNCtx      helpers.SharedContext
+			savedWireModeRaw  bool
+			savedAdvertise    uint8
+			savedEmit         uint8
+			startV3Decoded    int64
+			startV4Decoded    int64
+			startPins         int64
 		)
-		gomega.Expect(frameEncDelta).To(gomega.BeNumerically(">", int64(0)),
-			"no native columnar frame was encoded on the distributed cluster; "+
-				"the data node fell back to protobuf")
-		gomega.Expect(frameDecDelta).To(gomega.BeNumerically(">", int64(0)),
-			"no native columnar frame was decoded on the distributed cluster; "+
-				"the liaison never saw a frame body")
-		if vectorizedConn != nil {
-			gomega.Expect(vectorizedConn.Close()).To(gomega.Succeed())
-		}
-		if stopFn != nil {
-			stopFn()
-		}
-	})
+		ginkgo.BeforeAll(func() {
+			savedAdvertise = frame.SetAdvertisedVersion(pairing.advertise)
+			savedEmit = frame.SetMaxEmitVersion(pairing.emit)
+			startV3Decoded = frame.DecodedCount(frame.WireVersion)
+			startV4Decoded = frame.DecodedCount(frame.WireVersionColumnar)
+			startPins = vectorized.OutstandingOwnerPins()
+			savedMeasureCtx = casesmeasure.SharedContext
+			savedTopNCtx = casestopn.SharedContext
+			// data.MeasureWireModeRaw is a per-process atomic — the vec
+			// cluster's PreRun flips it to true and the row baseline cluster
+			// (alive in the same test binary) would then start hitting the
+			// flag-on raw-frame guard for its own responses. Save the
+			// current value here and restore it in AfterAll so the row
+			// baseline keeps its proto-codec contract end-to-end.
+			savedWireModeRaw = data.MeasureWireModeRaw()
+			startHandledCount = vecplan.HandledCount()
+			startFrameEnc = data.MeasureFrameEncodedCount()
+			startFrameDec = data.MeasureFrameDecodedCount()
 
-	casesmeasure.RegisterTable("Vec (distributed): scanning measures")
-	casestopn.RegisterTable("Vec (distributed): TopN")
-})
+			tmpDir, tmpDirCleanup, tmpErr := test.NewSpace()
+			gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
+			dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
+			config := setup.PropertyClusterConfig(dfWriter)
+			closeDataNode0 := setup.DataNode(config)
+			closeDataNode1 := setup.DataNode(config)
+			setup.PreloadSchemaViaProperty(config, test_stream.PreloadSchema, test_measure.PreloadSchema, test_trace.PreloadSchema, test_property.PreloadSchema)
+			config.AddLoadedKinds(schema.KindStream, schema.KindMeasure, schema.KindTrace)
+			liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config)
+			stopFn = func() {
+				closerLiaisonNode()
+				closeDataNode0()
+				closeDataNode1()
+				tmpDirCleanup()
+			}
+			var connErr error
+			vectorizedConn, connErr = grpchelper.Conn(liaisonAddr, 10*time.Second,
+				grpc.WithTransportCredentials(insecure.NewCredentials()))
+			gomega.Expect(connErr).NotTo(gomega.HaveOccurred())
+			ns := timestamp.NowMilli().UnixNano()
+			now := time.Unix(0, ns-ns%int64(time.Minute))
+			test_cases.Initialize(liaisonAddr, now)
+			sharedCtx := helpers.SharedContext{
+				Connection: vectorizedConn,
+				BaseTime:   now,
+			}
+			casesmeasure.SharedContext = sharedCtx
+			casestopn.SharedContext = sharedCtx
+		})
+		ginkgo.AfterAll(func() {
+			frame.SetAdvertisedVersion(savedAdvertise)
+			frame.SetMaxEmitVersion(savedEmit)
+			casesmeasure.SharedContext = savedMeasureCtx
+			casestopn.SharedContext = savedTopNCtx
+			// Restore the per-process wire-mode flag BEFORE tearing down so
+			// any subsequent test that targets the row baseline cluster (same
+			// process) sees the original proto codec contract.
+			data.SetMeasureWireModeRaw(savedWireModeRaw)
+			// Observability gate: vec dispatch must fire for at least one
+			// case in the table. If this drops to zero the vec subsystem is
+			// silently 0%-covered on the distributed cluster — either the
+			// eligibility gate or processor.go's dispatchMeasure regressed.
+			handledDelta := vecplan.HandledCount() - startHandledCount
+			ginkgo.GinkgoWriter.Printf(
+				"vec dispatch (distributed): handled=%d (delta across the vec-distributed table)\n", handledDelta)
+			gomega.Expect(handledDelta).To(gomega.BeNumerically(">", int64(0)),
+				"vec dispatch did not fire for any case on the distributed cluster")
+			// HandledCount above only proves the vec COMPUTE path dispatched. A vec query
+			// still emits protobuf unless the data node is distributed and in raw wire
+			// mode, so assert the columnar frame itself carried traffic — otherwise a
+			// silent fallback to proto reads as full coverage.
+			frameEncDelta := data.MeasureFrameEncodedCount() - startFrameEnc
+			frameDecDelta := data.MeasureFrameDecodedCount() - startFrameDec
+			ginkgo.GinkgoWriter.Printf(
+				"vec measure wire (distributed): frames_encoded=%d frames_decoded=%d\n",
+				frameEncDelta, frameDecDelta,
+			)
+			gomega.Expect(frameEncDelta).To(gomega.BeNumerically(">", int64(0)),
+				"no native columnar frame was encoded on the distributed cluster; "+
+					"the data node fell back to protobuf")
+			gomega.Expect(frameDecDelta).To(gomega.BeNumerically(">", int64(0)),
+				"no native columnar frame was decoded on the distributed cluster; "+
+					"the liaison never saw a frame body")
+			// The frame layout the pairing negotiates must be the only one that crossed the wire.
+			v3Decoded := frame.DecodedCount(frame.WireVersion) - startV3Decoded
+			v4Decoded := frame.DecodedCount(frame.WireVersionColumnar) - startV4Decoded
+			ginkgo.GinkgoWriter.Printf("vec measure wire (distributed, %s): frames decoded v3=%d v4=%d\n", pairing.name, v3Decoded, v4Decoded)
+			if pairing.columnar {
+				gomega.Expect(v4Decoded).To(gomega.BeNumerically(">", int64(0)), "no columnar frame reached the liaison")
+				gomega.Expect(v3Decoded).To(gomega.BeZero(), "a row-oriented frame crossed a new-to-new cluster")
+			} else {
+				gomega.Expect(v3Decoded).To(gomega.BeNumerically(">", int64(0)), "no row-oriented frame reached the liaison")
+				gomega.Expect(v4Decoded).To(gomega.BeZero(), "a columnar frame was sent to a side that cannot take it")
+			}
+			// Every query is done: the liaison and the data nodes must have released every pin they took.
+			gomega.Eventually(vectorized.OutstandingOwnerPins, 30*time.Second, 100*time.Millisecond).Should(gomega.Equal(startPins),
+				"owner pins outlived the queries")
+			if vectorizedConn != nil {
+				gomega.Expect(vectorizedConn.Close()).To(gomega.Succeed())
+			}
+			if stopFn != nil {
+				stopFn()
+			}
+		})
+
+		casesmeasure.RegisterTable("Vec (distributed, " + pairing.name + "): scanning measures")
+		casestopn.RegisterTable("Vec (distributed, " + pairing.name + "): TopN")
+	})
+}

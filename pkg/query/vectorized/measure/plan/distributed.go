@@ -41,6 +41,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/frame"
 )
 
 // distributedQueryTimeout is the historical hard-coded broadcast deadline.
@@ -513,7 +514,7 @@ func (p *DistributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 		addTraceTagf(broadcastSpan, tracelabels.TagNodeCount, "%d", nodeSelectorCount(dctx.NodeSelectors()))
 		addTraceTagf(broadcastSpan, tracelabels.TagBroadcastTimeoutMS, "%d", p.broadcastTimeout().Milliseconds())
 		addTraceTag(broadcastSpan, tracelabels.TagTimeRange, dctx.TimeRange().String())
-		internalRequest := &measurev1.InternalQueryRequest{Request: nodeRequest, AggReturnPartial: queryRequest.GetAgg() != nil}
+		internalRequest := &measurev1.InternalQueryRequest{Request: nodeRequest, AggReturnPartial: queryRequest.GetAgg() != nil, MaxFrameVersion: frame.AdvertisedVersion()}
 		ff, broadcastErr := dctx.Broadcast(p.broadcastTimeout(), data.TopicInternalMeasureQuery,
 			bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), internalRequest))
 		if broadcastErr != nil {
@@ -567,7 +568,7 @@ func (p *DistributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 		broadcastSpan, broadcastSpanCtx := startTraceSpan(ctx, fmt.Sprintf("broadcast-per-group-%s", groupName))
 		addTraceTag(broadcastSpan, tracelabels.TagGroupName, groupName)
 		addTraceTagf(broadcastSpan, tracelabels.TagNodeCount, "%d", nodeSelectorCount(dctx.NodeSelectors()))
-		internalRequest := &measurev1.InternalQueryRequest{Request: nodeRequest, AggReturnPartial: queryRequest.GetAgg() != nil}
+		internalRequest := &measurev1.InternalQueryRequest{Request: nodeRequest, AggReturnPartial: queryRequest.GetAgg() != nil, MaxFrameVersion: frame.AdvertisedVersion()}
 		ff, broadcastErr := dctx.Broadcast(p.broadcastTimeout(), data.TopicInternalMeasureQuery,
 			bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), internalRequest))
 		if broadcastErr != nil {
@@ -692,7 +693,7 @@ func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *
 	tracker := vectorized.NewMemoryTracker(int64(p.cfg.QueryMemoryMiB) * 1024 * 1024)
 	reduceSpan, reduceSpanCtx := startTraceSpan(ctx, "reduce-raw-frames")
 	addTraceTagf(reduceSpan, tracelabels.TagFramesIn, "%d", len(frames))
-	frameDecodeDurations := collectFrameDecodeDurations(frames)
+	frameDecodeDurations := collectFrameDecodeDurations(ctx, frames)
 	// nolint:contextcheck // pure in-memory reducer; no cancelable I/O downstream
 	batches, aggValuePath, reduceErr := vmeasure.ReduceRawFrames(frames, keyTagFamily, keyTagNames, bucketed, aggSpecs, p.cfg.BatchSize, tracker)
 	if reduceErr != nil {
@@ -748,7 +749,7 @@ func (p *DistributedPlan) executeRows(ctx context.Context, frames [][]byte, req 
 	}
 	mergeSpan, mergeSpanCtx := startTraceSpan(ctx, "merge-distributed-rows")
 	addTraceTagf(mergeSpan, tracelabels.TagSourcesIn, "%d", len(frames))
-	rowsFrameDecodeDurations := collectFrameDecodeDurations(frames)
+	rowsFrameDecodeDurations := collectFrameDecodeDurations(ctx, frames)
 	batches, mergeErr := mergeDistributedRows(frames, spec)
 	if mergeErr != nil {
 		if mergeSpan != nil {
@@ -788,16 +789,20 @@ func (p *DistributedPlan) executeRows(ctx context.Context, frames [][]byte, req 
 	// series per window.
 	if groupBy := req.GetGroupBy(); groupBy != nil {
 		var gbErr error
+		before := batches
 		// nolint:contextcheck // pure in-memory dedup; no cancelable I/O downstream
 		batches, gbErr = applyBatchGroupByFirstToRows(batches, groupBy, p.cfg.BatchSize, tracker)
+		releaseReplaced(before, batches)
 		if gbErr != nil {
 			return nil, fmt.Errorf("vec distributed plan: apply group-by to rows: %w", gbErr)
 		}
 	}
 	if top := req.GetTop(); top != nil {
 		var topErr error
+		before := batches
 		// nolint:contextcheck // pure in-memory top selection; no cancelable I/O downstream
 		batches, topErr = applyBatchTopToRows(batches, top, p.cfg.BatchSize)
+		releaseReplaced(before, batches)
 		if topErr != nil {
 			return nil, fmt.Errorf("vec distributed plan: apply top to rows: %w", topErr)
 		}
@@ -863,16 +868,20 @@ func (p *DistributedPlan) executeRowsMultiGroup(ctx context.Context, groupFrames
 	// to the global Top ranking.
 	if groupBy := req.GetGroupBy(); groupBy != nil {
 		var gbErr error
+		before := batches
 		// nolint:contextcheck // pure in-memory dedup; no cancelable I/O downstream
 		batches, gbErr = applyBatchGroupByFirstToRows(batches, groupBy, p.cfg.BatchSize, tracker)
+		releaseReplaced(before, batches)
 		if gbErr != nil {
 			return nil, fmt.Errorf("vec distributed plan: apply group-by to multi-group rows: %w", gbErr)
 		}
 	}
 	if top := req.GetTop(); top != nil {
 		var topErr error
+		before := batches
 		// nolint:contextcheck // pure in-memory top selection; no cancelable I/O downstream
 		batches, topErr = applyBatchTopToRows(batches, top, p.cfg.BatchSize)
+		releaseReplaced(before, batches)
 		if topErr != nil {
 			return nil, fmt.Errorf("vec distributed plan: apply top to multi-group rows: %w", topErr)
 		}
@@ -1077,6 +1086,7 @@ func (p *DistributedPlan) iteratorFromBatches(ctx context.Context, batches []*ve
 	if schema == nil {
 		vecPlan, analyzeErr := Analyze(req, p.measureSchemas[0], vmeasure.AggModeAll)
 		if analyzeErr != nil {
+			releaseBatches(batches)
 			return nil, fmt.Errorf("vec distributed plan: analyze empty output: %w", analyzeErr)
 		}
 		schema = vecPlan.Schema()
@@ -1090,6 +1100,7 @@ func (p *DistributedPlan) iteratorFromBatches(ctx context.Context, batches []*ve
 	builder.Apply(vmeasure.NewBatchLimit(schema, req.GetOffset(), limit))
 	pipeline, buildErr := builder.Build()
 	if buildErr != nil {
+		releaseBatches(batches)
 		return nil, fmt.Errorf("vec distributed plan: build output pipeline: %w", buildErr)
 	}
 	if initErr := pipeline.Init(ctx); initErr != nil {
@@ -1133,6 +1144,7 @@ func (p *DistributedPlan) iteratorFromBatchesWithSchema(
 	builder.Apply(vmeasure.NewBatchLimit(schema, req.GetOffset(), limit))
 	pipeline, buildErr := builder.Build()
 	if buildErr != nil {
+		releaseBatches(batches)
 		return nil, fmt.Errorf("vec distributed plan: build output pipeline: %w", buildErr)
 	}
 	if initErr := pipeline.Init(ctx); initErr != nil {
@@ -1303,4 +1315,29 @@ func (s *batchSliceSource) NextBatch(context.Context) (*vectorized.RecordBatch, 
 	return nil, nil
 }
 
-func (s *batchSliceSource) Close() error { return nil }
+// Close releases the owners of every batch the pipeline did not consume to the end (a limit
+// that closed early leaves some behind). Releasing is idempotent, so batches the downstream
+// already recycled are unaffected.
+func (s *batchSliceSource) Close() error {
+	releaseBatches(s.batches)
+	return nil
+}
+
+// releaseBatches drops the references each batch holds on borrowed memory.
+func releaseBatches(batches []*vectorized.RecordBatch) {
+	for _, b := range batches {
+		if b != nil {
+			b.ReleaseOwners()
+		}
+	}
+}
+
+// releaseReplaced releases old after an operator replaced it with replacement, unless the
+// operator passed the batches through unchanged. The operators that replace batches copy
+// every cell they keep, so nothing in replacement refers to old's borrowed memory.
+func releaseReplaced(old, replacement []*vectorized.RecordBatch) {
+	if len(old) > 0 && len(replacement) > 0 && old[0] == replacement[0] {
+		return
+	}
+	releaseBatches(old)
+}
