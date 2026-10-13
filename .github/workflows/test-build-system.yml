@@ -167,8 +167,12 @@ jobs:
         run: |
           set -e
           make print-build-args
-          if grep -vE '^[[:space:]]*#' scripts/build/dockerize.mk \
-             | grep -qE 'linux/amd64|bookworm|[0-9]{2}\.[0-9]+\.[0-9]+'; then
+          # No pipelines here either. Under `bash -eo pipefail` an early-exiting
+          # reader (`grep -q`) SIGPIPEs its writer and the pipeline reports 141,
+          # which here would silently *skip* the check instead of reporting a
+          # false positive.
+          non_comment=$(grep -vE '^[[:space:]]*#' scripts/build/dockerize.mk)
+          if grep -qE 'linux/amd64|bookworm|[0-9]{2}\.[0-9]+\.[0-9]+' <<<"$non_comment"; then
             echo "::error::a version literal crept into dockerize.mk"
             exit 1
           fi
@@ -182,7 +186,7 @@ jobs:
         run: |
           set -e
           requested=$(make -n docker-image PLATFORM=linux/arm64 2>/dev/null \
-                      | grep -oE '\-\-platform [a-z0-9/]+' | head -1 | awk '{print $2}')
+                      | grep -oE '\-\-platform [a-z0-9/]+' | awk 'NR == 1 { print $2 }')
           echo "  requested arm64, got: $requested"
           if [ "$requested" != "linux/amd64" ]; then
             echo "::error::PLATFORM is overridable; the image would be mislabelled"
@@ -223,9 +227,20 @@ jobs:
           want_go=$(sed -n 's/^go //p' go.mod)
           want_node=$(bash scripts/ci/check/node_version.sh resolve .)
           want_eyes=$(sed -n 's/^LICENSE_EYE_VERSION := //p' scripts/build/version.mk)
-          echo "$out" | grep -q "GO_VERSION=$want_go"    || { echo "::error::Go version drift"; exit 1; }
-          echo "$out" | grep -q "NODE_VERSION=$want_node" || { echo "::error::Node version drift"; exit 1; }
-          echo "$out" | grep -q "LICENSE_EYE_VERSION=$want_eyes" || { echo "::error::license-eye drift"; exit 1; }
+          # `grep -q` reads one line at a time and exits on the first match, so the
+          # writer on the other end of the pipe takes SIGPIPE. This step runs under
+          # GitHub's default `bash -eo pipefail`, which turns that 141 into a
+          # pipeline failure -- so a version that *does* match was reported as
+          # "version drift", non-deterministically, on whichever line happened to
+          # race (PR #1386 failed here on a matching NODE_VERSION). Redirect from a
+          # here-string instead: no pipeline, no writer to signal.
+          assert_declared() { # assert_declared <label> <expected>
+            grep -q "^$2\$" <<<"$out" \
+              || { echo "::error::$1 version drift: want '$2', image printed:"; printf '%s\n' "$out" | tail -20; exit 1; }
+          }
+          assert_declared Go    "GO_VERSION=$want_go"
+          assert_declared Node  "NODE_VERSION=$want_node"
+          assert_declared license-eye "LICENSE_EYE_VERSION=$want_eyes"
           echo "  ok the image carries the versions the repository declares"
 
       - name: The tree is still clean

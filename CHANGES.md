@@ -60,6 +60,7 @@ Release Notes.
 - Fix FODC proxy OOM kills on `/metrics`: stream the Prometheus text to the response, stop copying label maps, share one agent collection between concurrent scrapes, and install the same panic diagnostics as the agent.
 - Stop the scheduled backup/lifecycle/retention scheduler from logging a false `action timed out` error for an action that runs longer than 5 minutes but ultimately succeeds. Crossing the internal 5-minute soft deadline now logs a lower-severity "still running" message and keeps waiting for the action's real outcome instead of abandoning it mid-flight; the eventual result is logged and the scheduler only starts the next scheduled run once the current one truly finishes.
 - Fix backup reporting success when an earlier catalog upload fails.
+- Return a trace's complete span set when its spans straddle a storage segment boundary (segments are per-day in local time, and each span lands in the segment matching its own timestamp) and the query's time range covers only one side of that boundary. After resolving the qualifying trace IDs from the segments the query range overlaps, fetching those traces' spans now also reopens any segment within one hour of the query range (`traceCompletionWindow`), so the neighboring day's spans are no longer silently dropped. Applies to both ORDER BY and trace-ID trace queries; trace selection, ordering, and limit/offset are unaffected.
 
 ### Document
 
@@ -78,6 +79,8 @@ Release Notes.
 - Bump google.golang.org/grpc to v1.83.2 to clear GO-2026-6443, GO-2026-6441, and GO-2026-6348.
 - Bump canopy and mcp npm dependencies to clear Dependabot CVEs (fast-uri, fastify, qs).
 - Bump mcp/canopy npm deps (hono, js-yaml, vitest 5) to clear Dependabot CVEs.
+- Bump the pending mcp npm dependencies (`fast-uri` 4.2.1, `ip-address` 10.7.3, `proxy-addr` 2.0.8, and the `brace-expansion` 5.0.12 dev dependency) and regenerate the committed `mcp/LICENSE`, so `make check-req` passes on the Dependabot PRs that only edit `package-lock.json`.
+- Stop `test-build-system.yml` reporting a version drift when the image carries the pinned version: `grep -q` inside a pipeline exited on its first match, SIGPIPEd the writer, and GitHub's default `bash -eo pipefail` turned that into a pipeline failure. The same pipeline shape hid a real regression in the "no version literal" check, where a false 141 skipped the check. Both now read from a here-string, and the platform probe no longer ends in `head -1`.
 
 ## 0.11.1
 
