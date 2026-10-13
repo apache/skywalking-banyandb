@@ -60,7 +60,9 @@ import (
 // cursor is released as soon as the merge has consumed its last row; batches that
 // borrow from it keep it alive through their own references.
 //
-// cursorLoader is where step 4b's node-wide decode pool plugs in.
+// cursorLoader is how a merge asks for the next cursor: the scan hands it the
+// prefetcher's take, so the cursors the merge reaches have usually been decoded by
+// the node's decode pool already (scan_prefetch.go).
 
 // mergeFirstPageRows and mergeMaxPageRows bound the rows of one merged batch. The
 // first page is small so a query with a limit does not gather rows it never reads;
@@ -273,6 +275,7 @@ type timeMerge struct {
 	qr          *queryResult
 	stats       *scanStats
 	load        cursorLoader
+	pf          *prefetcher
 	schema      *vectorized.BatchSchema
 	indexValues map[common.SeriesID]map[string]*modelv1.TagValue
 	// pending are the cursors not yet decoded, in the order the frontier reaches
@@ -311,7 +314,7 @@ func newTimeMerge(qr *queryResult, stats *scanStats, load cursorLoader, plan []c
 	if m == nil {
 		m = &timeMerge{}
 	}
-	m.ctx, m.qr, m.stats, m.load = qr.ctx, qr, stats, load
+	m.ctx, m.qr, m.stats, m.load, m.pf = qr.ctx, qr, stats, load, nil
 	m.schema, m.indexValues, m.plan, m.desc = qr.batchSchema, qr.storedIndexValue, plan, desc
 	m.pageRows, m.pi, m.live, m.peakLive, m.frontier = mergeFirstPageRows, 0, 0, 0, 0
 	m.rows, m.cursors, m.page, m.closed = 0, 0, 0, false
@@ -481,6 +484,7 @@ func (m *timeMerge) fill() error {
 		m.heap = append(m.heap, e)
 		m.siftUp(len(m.heap) - 1)
 		m.frontier = max(m.frontier, len(m.heap))
+		m.pf.setFrontier(m.frontier)
 	}
 	return nil
 }

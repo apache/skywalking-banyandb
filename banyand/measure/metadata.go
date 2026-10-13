@@ -704,6 +704,7 @@ type supplier struct {
 	omr                 observability.MetricsRegistry
 	c                   storage.Cache
 	pm                  protector.Memory
+	decodePool          *decodePool
 	l                   *logger.Logger
 	schemaRepo          *schemaRepo
 	nodeLabels          map[string]string
@@ -732,6 +733,7 @@ func newSupplier(path string, svc *standalone, sr *schemaRepo, nodeLabels map[st
 		option:     opt,
 		omr:        svc.omr,
 		pm:         svc.pm,
+		decodePool: svc.decodePool,
 		schemaRepo: sr,
 		nodeLabels: nodeLabels,
 	}
@@ -740,7 +742,8 @@ func newSupplier(path string, svc *standalone, sr *schemaRepo, nodeLabels map[st
 func (s *supplier) OpenResource(spec resourceSchema.Resource) (resourceSchema.IndexListener, error) {
 	measureSchema := spec.Schema().(*databasev1.Measure)
 	return openMeasure(measureSpec{
-		schema: measureSchema,
+		schema:     measureSchema,
+		decodePool: s.decodePool,
 	}, s.l, s.c, s.pm, s.schemaRepo, s.queryMetrics.Load(), s.option.vectorized)
 }
 

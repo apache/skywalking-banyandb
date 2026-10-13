@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
 	"slices"
 	"sync"
 	"testing"
@@ -382,7 +383,7 @@ func (h *gateHarness) newQueryResult(schema *vectorized.BatchSchema, opts model.
 	qo.MeasureQueryOptions.TagProjection = opts.TagProjection
 	qo.MeasureQueryOptions.FieldProjection = opts.FieldProjection
 	qr := &queryResult{
-		ctx: context.Background(), batchSchema: schema, tagProjection: opts.TagProjection,
+		ctx: context.Background(), batchSchema: schema, tagProjection: opts.TagProjection, dp: gateDecodePool(),
 		sidToIndex: make(map[common.SeriesID]int, len(h.sids)), orderByTS: timeOrdered, ascTS: timeOrdered,
 	}
 	for i, sid := range h.sids {
@@ -404,6 +405,18 @@ func (h *gateHarness) newQueryResult(schema *vectorized.BatchSchema, opts model.
 		panic(ti.Error())
 	}
 	return qr
+}
+
+var (
+	gatePool     *decodePool
+	gatePoolOnce sync.Once
+)
+
+// gateDecodePool is the node-wide decode pool the gate queries share, sized like a
+// data node's (GOMAXPROCS), as the harness builds queryResults without a service.
+func gateDecodePool() *decodePool {
+	gatePoolOnce.Do(func() { gatePool = newDecodePool(runtime.GOMAXPROCS(0), nil) })
+	return gatePool
 }
 
 func gateSchema(legacy bool, opts model.MeasureQueryOptions) *vectorized.BatchSchema {

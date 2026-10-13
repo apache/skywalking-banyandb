@@ -55,10 +55,10 @@ import (
 //     timeMerge: keys first, then one gather per column, decoding each block only
 //     when the merge reaches it.
 //
-// Decoding goes through windowScan.load, the one place the node-wide decode pool of
-// step 4b plugs in: it may become "take the cursor the pool already decoded". The
-// plan (units, windows and their segments) is known up front, which is what lets
-// the pool run ahead.
+// Decoding goes through the scan's prefetcher (scan_prefetch.go): the plan (units,
+// windows and their segments) is known up front, so the node-wide decode pool of step
+// 4b decodes the next cursors while the current one is emitted, in the order the scan
+// will take them, each under a reservation released with the cursor.
 
 // coalesceTargetRows is how many rows the scan gathers into one owned batch from
 // segments smaller than model.SmallBatchRows before emitting it.
@@ -102,6 +102,14 @@ type scanStats struct {
 	mergeCursors int64
 	// mergePeakLive is the most cursors any one merge held decoded at once.
 	mergePeakLive int64
+	// prefetchPeak is the most decodes the scan had requested ahead of the one it
+	// was consuming.
+	prefetchPeak int64
+	// reservationWaits is the number of times prefetch found no room in the budget
+	// and waited; reservationFails the number of times the cursor the scan needed
+	// could not be reserved.
+	reservationWaits int64
+	reservationFails int64
 }
 
 // scanSegment is a run of blocks of one series whose time ranges chain together.
@@ -134,6 +142,7 @@ type windowScan struct {
 	cur      *seriesWindow
 	merge    *timeMerge
 	load     cursorLoader
+	pf       *prefetcher
 	spare    *timeMerge
 	plan     []colPlan
 	builder  *model.MeasureBatch
@@ -145,6 +154,7 @@ type windowScan struct {
 	unitIdx  int
 	segIdx   int
 	desc     bool
+	started  bool
 }
 
 // newWindowScan plans the scan over qr.data and takes ownership of its cursors.
@@ -163,7 +173,38 @@ func newWindowScan(qr *queryResult) *windowScan {
 		w.segments = planSegments(w.cursors, s.desc)
 		w.cursors = nil
 	}
+	s.pf = newPrefetcher(qr.ctx, qr.dp, qr.budget, qr.qm, &s.stats, &s.load, s.desc, s.sequence())
 	return s
+}
+
+// sequence lists every cursor of the plan in the order the scan decodes them.
+func (s *windowScan) sequence() []*blockCursor {
+	var seq []*blockCursor
+	for i := range s.units {
+		unit := &s.units[i]
+		if len(unit.windows) == 1 {
+			for _, seg := range unit.windows[0].segments {
+				if len(seg.cursors) == 1 {
+					seq = append(seq, seg.cursors[0])
+					continue
+				}
+				seq = append(seq, orderPending(seg.cursors, s.desc)...)
+			}
+			continue
+		}
+		var all []*blockCursor
+		for j := range unit.windows {
+			all = append(all, unit.windows[j].cursors...)
+		}
+		seq = append(seq, orderPending(all, s.desc)...)
+	}
+	return seq
+}
+
+// loadCursor is the cursorLoader of the scan's merges: it takes the next decode of
+// the sequence.
+func (s *windowScan) loadCursor(ctx context.Context, bc *blockCursor, _ bool) (bool, error) {
+	return s.pf.take(ctx, bc)
 }
 
 // groupWindows groups cursors by series, keeping first-seen series order and the
@@ -284,11 +325,20 @@ func (s *windowScan) next(ctx context.Context) (*model.MeasureBatch, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
+	if !s.started {
+		s.started = true
+		s.pf.pump()
+	}
 	for {
 		if s.ready != nil {
 			b := s.ready
 			s.ready = nil
 			return b, nil
+		}
+		if s.builder != nil && s.pf.waiting() {
+			// The batch being coalesced pins the cursors of the pieces it holds, and the
+			// budget has no room for more: hand it over now rather than wait to fill it.
+			return s.takeBuilder(), nil
 		}
 		piece, err := s.nextPiece(ctx)
 		if err != nil {
@@ -373,7 +423,8 @@ func (s *windowScan) newMerge(cursors []*blockCursor) *timeMerge {
 	if s.plan == nil {
 		s.plan = newColPlan(s.qr.batchSchema)
 	}
-	m := newTimeMerge(s.qr, &s.stats, s.load, s.plan, cursors, s.desc, s.spare)
+	m := newTimeMerge(s.qr, &s.stats, s.loadCursor, s.plan, cursors, s.desc, s.spare)
+	m.pf = s.pf
 	s.spare = nil
 	return m
 }
@@ -381,6 +432,7 @@ func (s *windowScan) newMerge(cursors []*blockCursor) *timeMerge {
 // finishMerge closes the running merge and keeps it as the spare for the next.
 func (s *windowScan) finishMerge() {
 	s.merge.close()
+	s.pf.setFrontier(0)
 	s.spare, s.merge = s.merge, nil
 }
 
@@ -447,11 +499,14 @@ func (s *windowScan) decodeSegment(ctx context.Context, seg *scanSegment) (*bloc
 	seg.cursors = nil
 	select {
 	case <-ctx.Done():
+		// A decode of bc may be running on a pool worker: withdraw or wait for it
+		// before the cursor is reset and pooled.
+		s.pf.discard(bc)
 		releaseBlockCursor(bc)
 		return nil, errors.WithMessagef(ctx.Err(), "interrupt: hit %d", s.qr.hit)
 	default:
 	}
-	ok, err := s.load(ctx, bc, s.desc)
+	ok, err := s.pf.take(ctx, bc)
 	if err != nil {
 		releaseBlockCursor(bc)
 		return nil, errors.WithMessagef(err, "interrupt: hit %d", s.qr.hit)
@@ -534,6 +589,8 @@ func (s *windowScan) takeBuilder() *model.MeasureBatch {
 
 // close releases every cursor and batch the scan still holds. It is idempotent.
 func (s *windowScan) close() {
+	// Stop the decodes first: no worker may read a cursor that is about to be released.
+	s.pf.close()
 	if s.merge != nil {
 		s.finishMerge()
 	}

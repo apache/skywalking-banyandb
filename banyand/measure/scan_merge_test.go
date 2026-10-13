@@ -332,6 +332,7 @@ func TestTimeMergeDecodesCursorsAtTheFrontier(t *testing.T) {
 	for _, desc := range []bool{false, true} {
 		q.ascTS = !desc
 		qr := fx.newResult(t, q, schema)
+		qr.dp = nil // the test reads cursor state between pulls, which decodes ahead would race with
 		all := slices.Clone(qr.data)
 		require.Len(t, all, series*blocks)
 		decodedAndHeld := func() (held, returned int) {
@@ -386,6 +387,7 @@ func TestTimeMergeLoaderIsThePlugInPoint(t *testing.T) {
 	schema := q.schema(t)
 	qr := fx.newResult(t, q, schema)
 	defer qr.Release()
+	qr.dp = nil // the order decodes happen in is what is asserted
 	require.True(t, qr.useWindowScan())
 	var loaded [][2]int64
 	qr.scan.load = func(ctx context.Context, bc *blockCursor, desc bool) (bool, error) {
@@ -438,6 +440,7 @@ func TestTimeMergeReleasesEverythingOnCancelAndEarlyClose(t *testing.T) {
 	ctx, cancel = context.WithCancel(context.Background())
 	qr = fx.newResult(t, q, schema)
 	qr.ctx = ctx
+	qr.dp = nil
 	require.True(t, qr.useWindowScan())
 	qr.scan.load = func(ctx context.Context, bc *blockCursor, desc bool) (bool, error) {
 		cancel()

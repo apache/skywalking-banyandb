@@ -475,7 +475,10 @@ var blockPool = pool.Register[*block]("measure-block")
 // and pooled only when the count reaches zero, so a borrowed cell stays valid
 // until the last batch that holds it is released.
 type blockCursor struct {
-	p                   *part
+	p *part
+	// res is the scan's memory reservation for this cursor, released when the
+	// last reference goes (see releaseBlockCursor). It is nil outside a window scan.
+	res                 *scanReservation
 	fields              columnFamily
 	timestamps          []int64
 	versions            []int64
@@ -502,6 +505,7 @@ func (bc *blockCursor) Release() { releaseBlockCursor(bc) }
 func (bc *blockCursor) reset() {
 	bc.idx = 0
 	bc.p = nil
+	bc.res = nil
 	bc.bm.reset()
 	bc.minTimestamp = 0
 	bc.maxTimestamp = 0
@@ -975,6 +979,10 @@ func releaseBlockCursor(bc *blockCursor) {
 	}
 	// Nothing borrows the decoded buffer any more; let the next block reuse it.
 	bc.columnValuesDecoder.Reset()
+	if res := bc.res; res != nil {
+		bc.res = nil
+		res.release()
+	}
 	bc.reset()
 	blockCursorPool.Put(bc)
 }

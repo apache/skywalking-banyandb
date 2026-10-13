@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -225,6 +226,19 @@ func (q *fxQuery) schema(t testing.TB) *vectorized.BatchSchema {
 	return schema
 }
 
+var (
+	fixturePool     *decodePool
+	fixturePoolOnce sync.Once
+)
+
+// sharedFixturePool is the decode pool every fixture query shares, as the queries of
+// a node share one, so the scan suites run with prefetch on. A test that depends on
+// the order decodes happen in sets qr.dp to nil before the scan is planned.
+func sharedFixturePool() *decodePool {
+	fixturePoolOnce.Do(func() { fixturePool = newDecodePool(4, nil) })
+	return fixturePool
+}
+
 // newResult builds a queryResult over the fixture the way searchBlocks does.
 func (fx *fxFixture) newResult(t testing.TB, q *fxQuery, schema *vectorized.BatchSchema) *queryResult {
 	t.Helper()
@@ -238,6 +252,7 @@ func (fx *fxFixture) newResult(t testing.TB, q *fxQuery, schema *vectorized.Batc
 	}
 	qr := &queryResult{
 		ctx:              context.Background(),
+		dp:               sharedFixturePool(),
 		batchSchema:      schema,
 		tagProjection:    opts.TagProjection,
 		storedIndexValue: q.stored,

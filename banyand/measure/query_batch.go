@@ -214,6 +214,9 @@ func (qr *queryResult) loadCursorsForBatch() error {
 	if len(qr.data) == 0 {
 		return nil
 	}
+	if err := qr.admitWhole(qr.ctx); err != nil {
+		return err
+	}
 	// Typed numeric columns are understood by the batch readers only. TopN
 	// queries fall back to the row readers (merge / mergeTopNResult), which
 	// need the bytes form.

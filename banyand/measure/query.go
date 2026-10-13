@@ -175,6 +175,7 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		segments:         segments,
 		tagProjection:    mqo.TagProjection,
 		storedIndexValue: storedIndexValue,
+		dp:               m.decodePool,
 	}
 	queryResultTracker.Acquire(&result)
 	if m.queryMetrics != nil {
@@ -608,6 +609,11 @@ func (m *measure) searchBlocks(ctx context.Context, result *queryResult, sids []
 	var hit int
 	var totalBlockBytes uint64
 	quota := m.pm.AvailableBytes()
+	// A scan that streams through the window scan reserves memory block by block
+	// (scan_decode_pool.go), so what it must fit is a block, not its whole result. TopN
+	// and the legacy test switch load every block before they merge, so they keep the
+	// check of the sum.
+	streaming := qo.Name != TopNSchemaName && !legacyBatchScan.Load()
 	for tstIter.nextBlock() {
 		if hit%checkDoneEvery == 0 {
 			select {
@@ -623,15 +629,32 @@ func (m *measure) searchBlocks(ctx context.Context, result *queryResult, sids []
 		bc.shardID = p.p.shardID
 		result.data = append(result.data, bc)
 		totalBlockBytes += bc.bm.uncompressedSizeBytes
-		if quota >= 0 && totalBlockBytes > uint64(quota) {
-			return fmt.Errorf("block scan quota exceeded: used %d bytes, quota is %d bytes", totalBlockBytes, quota)
+		if quota >= 0 {
+			// A block larger than the whole quota can never be reserved, streaming or not:
+			// fail before any of it is read. The scans that load everything first also
+			// bound the sum.
+			if used := totalBlockBytes; !streaming && used > uint64(quota) {
+				return fmt.Errorf("block scan quota exceeded: used %d bytes, quota is %d bytes", used, quota)
+			}
+			if size := bc.bm.uncompressedSizeBytes; size > uint64(quota) {
+				return fmt.Errorf("block scan quota exceeded: used %d bytes, quota is %d bytes", size, quota)
+			}
 		}
 	}
 	if tstIter.Error() != nil {
 		return fmt.Errorf("cannot iterate tstIter: %w", tstIter.Error())
 	}
-	if err := m.pm.AcquireResource(ctx, totalBlockBytes); err != nil {
-		return err
+	result.budget = newScanBudget(quota, m.decodePool)
+	result.admit = func(ctx context.Context) error {
+		if quota >= 0 && totalBlockBytes > uint64(quota) {
+			return fmt.Errorf("block scan quota exceeded: used %d bytes, quota is %d bytes", totalBlockBytes, quota)
+		}
+		return m.pm.AcquireResource(ctx, totalBlockBytes)
+	}
+	if !streaming {
+		if err := result.admitWhole(ctx); err != nil {
+			return err
+		}
 	}
 	result.sidToIndex = make(map[common.SeriesID]int)
 	for i, si := range originalSids {
@@ -800,6 +823,9 @@ type queryResult struct {
 	storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue
 	batchSchema      *vectorized.BatchSchema
 	scan             *windowScan
+	dp               *decodePool
+	budget           *scanBudget
+	admit            func(ctx context.Context) error
 	tagProjection    []model.TagProjection
 	data             []*blockCursor
 	snapshots        []*snapshot
@@ -807,8 +833,23 @@ type queryResult struct {
 	hit              int
 	loaded           bool
 	scanPlanned      bool
+	admitted         bool
 	orderByTS        bool
 	ascTS            bool
+}
+
+// admitWhole runs the one-shot admission of the whole result, which the paths that
+// load every block before merging them need; the window scan reserves per cursor
+// instead. It runs once.
+func (qr *queryResult) admitWhole(ctx context.Context) error {
+	if qr.admitted || qr.admit == nil {
+		return nil
+	}
+	if err := qr.admit(ctx); err != nil {
+		return err
+	}
+	qr.admitted = true
+	return nil
 }
 
 func (qr *queryResult) Pull() *model.MeasureResult {
@@ -822,6 +863,9 @@ func (qr *queryResult) Pull() *model.MeasureResult {
 	if !qr.loaded {
 		if len(qr.data) == 0 {
 			return nil
+		}
+		if err := qr.admitWhole(qr.ctx); err != nil {
+			return &model.MeasureResult{Error: err}
 		}
 
 		cursorChan := make(chan int, len(qr.data))

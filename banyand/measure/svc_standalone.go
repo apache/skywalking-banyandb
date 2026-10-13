@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -72,6 +73,7 @@ type standalone struct {
 	omr                observability.MetricsRegistry
 	metadata           metadata.Repo
 	pm                 protector.Memory
+	decodePool         *decodePool
 	cm                 *cacheMetrics
 	l                  *logger.Logger
 	schemaRepo         *schemaRepo
@@ -290,6 +292,7 @@ func (s *standalone) PreRun(ctx context.Context) error {
 		s.c = storage.NewServiceCacheWithConfig(ctx, s.cc)
 	}
 	node := val.(common.Node)
+	s.decodePool = newDecodePool(runtime.GOMAXPROCS(0), s.pm)
 	s.schemaRepo = newSchemaRepo(s.dataPath, s, node.Labels, node.NodeID)
 	if metaSvc, ok := s.metadata.(metadata.Service); ok {
 		metaSvc.RegisterDataCollector(commonv1.Catalog_CATALOG_MEASURE, s.schemaRepo)
@@ -350,6 +353,8 @@ func (s *standalone) GracefulStop() {
 	if s.localPipeline != nil {
 		s.localPipeline.GracefulStop()
 	}
+	// Stop the decode workers before the storage they read is closed.
+	s.decodePool.close()
 	s.schemaRepo.Close()
 	s.c.Close()
 }

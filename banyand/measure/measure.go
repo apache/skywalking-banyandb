@@ -86,6 +86,7 @@ type measure struct {
 	tsdb         atomic.Value
 	c            storage.Cache
 	pm           protector.Memory
+	decodePool   *decodePool
 	l            *logger.Logger
 	schema       *databasev1.Measure
 	schemaRepo   *schemaRepo
@@ -128,6 +129,8 @@ func (m *measure) parseSpec() (err error) {
 
 type measureSpec struct {
 	schema *databasev1.Measure
+	// decodePool is the node's decode pool; nil decodes scans inline.
+	decodePool *decodePool
 }
 
 type queryMetrics struct {
@@ -151,6 +154,14 @@ type queryMetrics struct {
 	scanMergeRows     meter.Counter
 	scanMergeCursors  meter.Counter
 	scanMergePeakLive meter.Histogram
+	// Decode pool and reservations (scan path v2 step 4b): the most decodes a scan had
+	// requested ahead of the one it was consuming, how long a decode waited in the
+	// node's queue, and how often prefetch waited for room in the query's memory
+	// budget or the cursor the scan needed could not be reserved.
+	scanPrefetchDepth       meter.Histogram
+	scanDecodeQueueWait     meter.Histogram
+	scanReservationsWaiting meter.Counter
+	scanReservationsFailed  meter.Counter
 }
 
 func newQueryMetrics(factory observability.Factory) *queryMetrics {
@@ -170,6 +181,11 @@ func newQueryMetrics(factory observability.Factory) *queryMetrics {
 		scanMergeRows:            factory.NewCounter("total_scan_merge_rows"),
 		scanMergeCursors:         factory.NewCounter("total_scan_merge_cursors"),
 		scanMergePeakLive:        factory.NewHistogram("scan_merge_peak_live_cursors", meter.DefBuckets),
+		scanPrefetchDepth:        factory.NewHistogram("scan_prefetch_depth", meter.Buckets{1, 2, 3, 4, 6, 8, 12, 16, 24, 32}),
+		scanDecodeQueueWait: factory.NewHistogram("scan_decode_queue_wait_seconds",
+			meter.Buckets{.0001, .0005, .001, .005, .01, .025, .05, .1, .25, .5, 1}),
+		scanReservationsWaiting: factory.NewCounter("total_scan_reservations_waiting"),
+		scanReservationsFailed:  factory.NewCounter("total_scan_reservations_failed"),
 	}
 }
 
@@ -182,6 +198,7 @@ func openMeasure(spec measureSpec,
 		l:            l,
 		c:            c,
 		pm:           pm,
+		decodePool:   spec.decodePool,
 		schemaRepo:   schemaRepo,
 		queryMetrics: qm,
 		vectorized:   vectorized,
