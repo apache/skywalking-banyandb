@@ -593,7 +593,7 @@ func TestTimeMergeKeysMatchTheLegacyHeapMergeOnUnsortedVersions(t *testing.T) {
 		}
 		qr = &queryResult{ctx: context.Background(), batchSchema: schema, orderByTS: true, ascTS: !desc}
 		var stats scanStats
-		load := func(_ context.Context, bc *blockCursor, _ bool) (bool, error) { return true, nil }
+		load := func(_ context.Context, _ *blockCursor, _ bool) (bool, error) { return true, nil }
 		m := newTimeMerge(qr, &stats, load, newColPlan(schema), cursors, desc, nil)
 		var gotTS, gotVer []int64
 		var gotSID []common.SeriesID

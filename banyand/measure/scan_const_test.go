@@ -215,7 +215,7 @@ func TestScanWindowConstAndRunsMatchPerRowAndLegacy(t *testing.T) {
 		"wide bucket + entity tags": bucket(1000, fxTagSvc, fxTagHid),
 	}
 	orders := map[string]func(q *fxQuery){
-		"no time order": func(q *fxQuery) {},
+		"no time order": func(_ *fxQuery) {},
 		"time asc":      func(q *fxQuery) { q.orderByTS, q.ascTS = true, true },
 		"time desc":     func(q *fxQuery) { q.orderByTS, q.ascTS = true, false },
 	}
