@@ -111,6 +111,12 @@ type AggSpec struct {
 	// such a column from the carried-forward tag set so it is not also
 	// emitted as a first-seen tag beside its own result field.
 	HideTag bool
+	// TargetIndexResolved is true when InputCol resolves from the series
+	// index (an entity tag or an IndexRule-indexed tag), so its value is
+	// guaranteed constant and non-null across every row of one series
+	// (design §7.7, stage 8a run-folding). Only COUNT and COUNT_DISTINCT
+	// use it — see BatchAggregation.foldSpan.
+	TargetIndexResolved bool
 }
 
 // BatchAggregation is a BreakerOperator that groups input rows by the configured
@@ -155,9 +161,19 @@ type BatchAggregation struct {
 	reserved         int64
 	rowsIn           int64
 	rowsOut          int64
-	batchSize        int
-	cursor           int
-	closed           bool
+	// spanFolds counts how many times Consume resolved a group once for an
+	// entire span (consumeSpan) rather than once per row — the
+	// test-observable counter for design §7.7's stage-8a magnitude claim.
+	// Unexported: read directly by in-package tests, no public API.
+	spanFolds int64
+	batchSize int
+	cursor    int
+	// allKeysIndexResolved is true when every column in keyIndices is
+	// guaranteed constant for the whole of any single Consume call — set by
+	// SetAllKeysIndexResolved, never inferred at runtime (design §7.7). It
+	// is false (today's per-row behavior) until a caller opts in.
+	allKeysIndexResolved bool
+	closed               bool
 }
 
 // aggGroup carries one group's reduction state plus a copy of every
@@ -266,6 +282,26 @@ func NewBatchAggregation(
 		batchSize:        batchSize,
 		entrySize:        entrySize,
 	}
+}
+
+// SetAllKeysIndexResolved marks every one of this BatchAggregation's
+// keyIndices as resolved from the series index (an entity tag, or — for
+// the bucket-key case, handled by the caller rather than this flag — any
+// column a single Consume call is already guaranteed to hold constant),
+// enabling the run-folding fast path (design §7.7, stage 8a): a whole
+// Consume call's active rows are folded as one span instead of per row.
+//
+// The caller is responsible for two guarantees this method does not
+// itself verify: every tag in keyIndices is schema-index-resolved (an
+// entity tag or an IndexRule-indexed tag — never inferred by sampling
+// column values). vectorized/measure/plan.BuildOperators derives it from
+// model.MeasureGroupBy.AllTagsIndexResolved (computed at analyze time from
+// static schema facts). Consume itself splits each batch at series-ID
+// boundaries, so a batch may mix series; BatchTimeBucket's streaming mode
+// additionally pre-splits each batch into single-bucket runs. Defaults to
+// false (per-row behavior) until called.
+func (a *BatchAggregation) SetAllKeysIndexResolved(allResolved bool) {
+	a.allKeysIndexResolved = allResolved
 }
 
 // deriveAggValuePath inspects the pre-built AggSpec list to determine which
@@ -383,6 +419,20 @@ func (a *BatchAggregation) Consume(_ context.Context, b *vectorized.RecordBatch)
 	if a.span != nil {
 		a.rowsIn += int64(len(active))
 	}
+	// Run-folding (design §7.7, stage 8a): when every key column is
+	// index-resolved the group key (and an index-resolved COUNT/COUNT_DISTINCT
+	// target) is constant within one series, so each maximal run of
+	// consecutive same-series rows is folded as a single span. A batch can
+	// carry several series (BatchSourceFromBatchResult refills across storage
+	// batches), so the active set is split at series-ID boundaries first; a
+	// schema without a series-ID column cannot prove constancy and takes the
+	// per-row path. AggModeReduce never takes this path: each of its rows is
+	// an independent (shard, group) partial.
+	if a.mode != AggModeReduce && a.allKeysIndexResolved && len(active) > 0 {
+		if sidIdx := b.Schema.SeriesIDIndex(); sidIdx >= 0 {
+			return a.consumeSeriesRuns(b, active, b.Columns[sidIdx].(*vectorized.TypedColumn[int64]).Data())
+		}
+	}
 	for _, rowIdx := range active {
 		key := a.computeKey(b, int(rowIdx))
 		if a.mode == AggModeReduce && a.markDedupSeen(b, int(rowIdx), key) {
@@ -418,6 +468,150 @@ func (a *BatchAggregation) Consume(_ context.Context, b *vectorized.RecordBatch)
 		}
 	}
 	return nil
+}
+
+// consumeSeriesRuns splits active at series-ID boundaries, and additionally
+// at shard-ID boundaries whenever the shard-ID column is itself one of
+// keyIndices, then folds each run through consumeSpan.
+//
+// Series ID alone is not always a sufficient boundary: BuildOperators and
+// BuildTimeBucketOperator append the shard-ID column to keyIndices for
+// AggModeMap COUNT_DISTINCT (design §7.4's per-(shard, group) partial
+// requirement for replica dedup), and a series's shard assignment comes
+// from the sharding key via pkg/partition/route.go's ApplyLocators/Locate,
+// which is independent of the entity values a series ID hashes. A sharding
+// key narrower than (or different from) the entity therefore lets one
+// series span more than one shard, so two consecutive rows can share a
+// series ID yet belong to different (shard, group) partials — folding them
+// as one span under the first row's shard would merge two distinct
+// partials under one shard identity, corrupting AggModeMap's replica
+// dedup. When shard ID is not part of keyIndices (every other caller —
+// AggModeAll, and AggModeMap for every function but COUNT_DISTINCT),
+// shardCol stays nil and this degrades to the original series-ID-only
+// split, unchanged.
+func (a *BatchAggregation) consumeSeriesRuns(b *vectorized.RecordBatch, active []uint16, sids []int64) error {
+	var shardData []int64
+	hasShardKey := false
+	if a.shardIDIdx >= 0 && slices.Contains(a.keyIndices, a.shardIDIdx) {
+		if shardCol, ok := b.Columns[a.shardIDIdx].(*vectorized.TypedColumn[int64]); ok {
+			shardData = shardCol.Data()
+			hasShardKey = true
+		}
+	}
+	sameRun := func(i, j uint16) bool {
+		if sids[i] != sids[j] {
+			return false
+		}
+		return !hasShardKey || shardData[i] == shardData[j]
+	}
+	start := 0
+	for i := 1; i <= len(active); i++ {
+		if i < len(active) && sameRun(active[i], active[start]) {
+			continue
+		}
+		if spanErr := a.consumeSpan(b, active[start:i]); spanErr != nil {
+			return spanErr
+		}
+		start = i
+	}
+	return nil
+}
+
+// consumeSpan folds the whole of active as one maximal span sharing a
+// single group key (design §7.7's run-folding, stage 8a). Safe only when
+// allKeysIndexResolved is true and active lies within a single series — see
+// SetAllKeysIndexResolved.
+func (a *BatchAggregation) consumeSpan(b *vectorized.RecordBatch, active []uint16) error {
+	a.spanFolds++
+	first := int(active[0])
+	key := a.computeKey(b, first)
+	group, exists := a.groups[key]
+	if !exists {
+		if a.entrySize > 0 {
+			if reserveErr := a.tracker.Reserve(a.entrySize); reserveErr != nil {
+				return fmt.Errorf("aggregation memory budget exceeded: %w", reserveErr)
+			}
+			a.reserved += a.entrySize
+		}
+		newGroup, newErr := a.newGroup(b, first, key)
+		if newErr != nil {
+			return newErr
+		}
+		a.groups[key] = newGroup
+		a.insertion = append(a.insertion, newGroup)
+		group = newGroup
+	}
+	for slotIdx, spec := range a.aggs {
+		if foldErr := a.foldSpan(b, active, &group.slots[slotIdx], spec); foldErr != nil {
+			return foldErr
+		}
+	}
+	return nil
+}
+
+// foldSpan folds spec's value for every row in active into slot, which
+// consumeSpan has already resolved once for the whole span. COUNT and
+// COUNT_DISTINCT over an index-resolved target collapse to one operation:
+// the target is guaranteed non-null and constant across the span by the
+// same series-scoped guarantee that makes the group key itself constant
+// (design §7.7 — "count += spanLength" / "one set insert"). Every other
+// case — SUM/MIN/MAX/MEAN, or COUNT/COUNT_DISTINCT over a target that is
+// NOT index-resolved — still folds per row, but the key computation and
+// group-map lookup this saves already happened once in consumeSpan.
+func (a *BatchAggregation) foldSpan(b *vectorized.RecordBatch, active []uint16, slot *aggSlot, spec AggSpec) error {
+	if spec.TargetIndexResolved {
+		first := int(active[0])
+		switch spec.Func {
+		case AggCountDistinct:
+			return a.fold(b, first, slot, spec)
+		case AggCount:
+			col := b.Columns[spec.InputCol]
+			if col.IsNull(first) {
+				// A series-constant target is null for every row in the
+				// span or none of them — nothing to count here.
+				return nil
+			}
+			if bulk, ok := spanBulkCounterOf(slot); ok {
+				bulk.AddN(int64(len(active)))
+				return nil
+			}
+		default:
+			// SUM/MIN/MAX/MEAN never take the one-operation span fast
+			// path, even over an index-resolved target (design §7.7 scopes
+			// the per-span shortcut to COUNT and COUNT_DISTINCT only) —
+			// fall through to the per-row loop below.
+		}
+	}
+	for _, rowIdx := range active {
+		if foldErr := a.fold(b, int(rowIdx), slot, spec); foldErr != nil {
+			return foldErr
+		}
+	}
+	return nil
+}
+
+// spanBulkCounter is satisfied by pkg/query/aggregation's countFunc[N],
+// whose AddN increments by n in one operation instead of n calls to In.
+// Declared locally — rather than widening the shared aggregation.Map[N]
+// interface — so SUM/MIN/MAX/MEAN need no new method; only COUNT's
+// accumulator implements it.
+type spanBulkCounter interface{ AddN(int64) }
+
+// spanBulkCounterOf type-asserts whichever of slot's int/float accumulator
+// is active against spanBulkCounter, since COUNT's accumulator may be
+// either depending on the target column's type (see aggOutputType).
+func spanBulkCounterOf(slot *aggSlot) (spanBulkCounter, bool) {
+	if slot.intMap != nil {
+		if bc, ok := slot.intMap.(spanBulkCounter); ok {
+			return bc, true
+		}
+	}
+	if slot.floatMap != nil {
+		if bc, ok := slot.floatMap.(spanBulkCounter); ok {
+			return bc, true
+		}
+	}
+	return nil, false
 }
 
 // Finalize is a no-op for AggModeAll, AggModeMap, and AggModeReduce —

@@ -84,6 +84,17 @@ func (c *countFunc[N]) In(_ N) {
 	c.count++
 }
 
+// AddN increments the count by n in one operation, equivalent to calling
+// In n times. It is an optional fast path a caller can reach via a type
+// assertion (e.g. `interface{ AddN(int64) }`) when it already knows a run
+// of n rows are all non-null and need no per-row inspection — the
+// vectorized measure engine's run-folding (design §7.7) uses this for
+// COUNT over a series-constant target, where every row in a span shares
+// the same non-null target by construction.
+func (c *countFunc[N]) AddN(n int64) {
+	c.count += N(n)
+}
+
 func (c countFunc[N]) Val() N {
 	return c.count
 }
