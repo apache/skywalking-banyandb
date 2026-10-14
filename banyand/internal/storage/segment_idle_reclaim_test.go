@@ -557,7 +557,7 @@ func TestControllerOpen_LoadsSegmentsDormant(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(segPath, metadataFilename), []byte(currentVersion), FilePerm))
 	}
 
-	require.NoError(t, sc.open())
+	require.NoError(t, sc.open(t.Context()))
 	require.Len(t, sc.lst, 2)
 
 	// Startup invariant: every loaded segment is open yet dormant.

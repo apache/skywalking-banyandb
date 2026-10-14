@@ -2293,6 +2293,10 @@ func readManifest(path string) ([]byte, error) {
 	return payload, nil
 }
 
+func isHexDigit(character rune) bool {
+	return character >= '0' && character <= '9' || character >= 'a' && character <= 'f'
+}
+
 func parseFinalName(name, extension string) (uint64, bool) {
 	if filepath.Ext(name) != extension {
 		return 0, false
@@ -2302,7 +2306,7 @@ func parseFinalName(name, extension string) (uint64, bool) {
 		return 0, false
 	}
 	for _, character := range identifier {
-		if !(character >= '0' && character <= '9' || character >= 'a' && character <= 'f') {
+		if !isHexDigit(character) {
 			return 0, false
 		}
 	}

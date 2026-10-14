@@ -795,7 +795,7 @@ func TestOpenReadsPersistedEndTime(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(segPath2, metadataFilename), meta2Data, FilePerm))
 
 	// Open the controller (loads segments from disk).
-	openErr := sc.open()
+	openErr := sc.open(t.Context())
 	require.NoError(t, openErr)
 
 	// Verify segments loaded correctly.
@@ -868,7 +868,7 @@ func TestOpenFallbackOldFormatMetadata(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(segPath2, metadataFilename), []byte("1.4.0"), FilePerm))
 
 	// Open should succeed with fallback end time computation.
-	openErr := sc.open()
+	openErr := sc.open(t.Context())
 	require.NoError(t, openErr)
 
 	require.Len(t, sc.lst, 2)

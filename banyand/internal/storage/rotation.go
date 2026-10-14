@@ -47,13 +47,13 @@ func (d *database[T, O]) Tick(ts int64) {
 	}
 }
 
-func (d *database[T, O]) startRotationTask() error {
+func (d *database[T, O]) startRotationTask(ctx context.Context) error {
 	options := d.segmentController.getOptions()
 	var rt *retentionTask[T, O]
 	if !d.disableRetention {
 		rt = newRetentionTask(d, options.TTL)
 	}
-	run.Go(context.Background(), "storage-rotation", d.logger, func(taskCtx context.Context) {
+	run.Go(ctx, "storage-rotation", d.logger, func(taskCtx context.Context) {
 		var idleCheckTicker *time.Ticker
 		var idleCheckC <-chan time.Time
 
@@ -142,7 +142,7 @@ func (d *database[T, O]) startRotationTask() error {
 	if rt == nil {
 		return nil
 	}
-	return d.scheduler.Register(context.Background(), "retention", rt.option, rt.expr, rt.run)
+	return d.scheduler.Register(ctx, "retention", rt.option, rt.expr, rt.run)
 }
 
 type retentionTask[T TSTable, O any] struct {
@@ -164,7 +164,7 @@ func newRetentionTask[T TSTable, O any](database *database[T, O], ttl IntervalRu
 	}
 }
 
-func (rc *retentionTask[T, O]) run(_ context.Context, now time.Time, l *logger.Logger) bool {
+func (rc *retentionTask[T, O]) run(ctx context.Context, now time.Time, l *logger.Logger) bool {
 	// Use the new retention gate for exclusivity with forced cleanup
 	select {
 	case rc.database.retentionGate <- struct{}{}:
@@ -188,7 +188,7 @@ func (rc *retentionTask[T, O]) run(_ context.Context, now time.Time, l *logger.L
 	defer rc.database.incTotalRetentionFinished(1)
 	deadline := now.Add(-rc.duration)
 	start := time.Now()
-	hasData, err := rc.database.segmentController.remove(deadline)
+	hasData, err := rc.database.segmentController.remove(ctx, deadline)
 	if hasData {
 		rc.database.incTotalRetentionHasData(1)
 		rc.database.incTotalRetentionHasDataLatency(time.Since(start).Seconds())

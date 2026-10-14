@@ -870,13 +870,15 @@ func TestStreamVecDispatch_NullTagValueSurvivesTheColumnStrip(t *testing.T) {
 // row offsets, so the timestamp-order merge is unambiguous too — in the opposite
 // order, which is what proves the merge sorted rather than concatenated.
 func oracleMultiGroupRows() ([]oracleRow, []oracleRow) {
-	return []oracleRow{
-			{elemID: 1, sequence: "001", state: oracleStateFail, service: "a-closed"},
-			{elemID: 2, sequence: "002", state: oracleStateWant, service: "a-open"},
-		}, []oracleRow{
-			{elemID: 3, sequence: "003", state: oracleStateWant, service: "b-open"},
-			{elemID: 4, sequence: "004", state: oracleStateFail, service: "b-closed"},
-		}
+	groupA := []oracleRow{
+		{elemID: 1, sequence: "001", state: oracleStateFail, service: "a-closed"},
+		{elemID: 2, sequence: "002", state: oracleStateWant, service: "a-open"},
+	}
+	groupB := []oracleRow{
+		{elemID: 3, sequence: "003", state: oracleStateWant, service: "b-open"},
+		{elemID: 4, sequence: "004", state: oracleStateFail, service: "b-closed"},
+	}
+	return groupA, groupB
 }
 
 // oracleMultiGroupFailServices are the service values of the rows the criteria must

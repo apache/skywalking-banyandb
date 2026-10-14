@@ -201,7 +201,7 @@ func TestClassifyTimeAgreesWithPerDocumentCheck(t *testing.T) {
 				if !window.IncludesUpper {
 					upper--
 				}
-				if lower <= upper && !(bound[1] < lower || bound[0] > upper) {
+				if lower <= upper && bound[1] >= lower && bound[0] <= upper {
 					t.Fatalf("bounds %v window %+v: disjoint but the segment overlaps", bound, window)
 				}
 			}
@@ -214,7 +214,7 @@ func TestClassifyTimeAgreesWithPerDocumentCheck(t *testing.T) {
 				if !window.IncludesUpper {
 					upper--
 				}
-				if !(lower <= bound[0] && bound[1] <= upper) {
+				if lower > bound[0] || bound[1] > upper {
 					t.Fatalf("bounds %v window %+v: contained but not fully covered", bound, window)
 				}
 			}

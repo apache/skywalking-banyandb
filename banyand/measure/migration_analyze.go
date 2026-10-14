@@ -796,12 +796,9 @@ func (s *sidGroupStream) nextGroup() (*sidGroup, bool) {
 		s.primed = true
 	}
 	grp := &sidGroup{sid: s.reader.block.bm.seriesID}
-	for {
-		// reader.block is positioned at a block whose sid we may want
-		// to consume. If sid changed, leave it for the next call.
-		if s.reader.block.bm.seriesID != grp.sid {
-			break
-		}
+	// reader.block is positioned at a block whose sid we may want
+	// to consume. If sid changed, leave it for the next call.
+	for s.reader.block.bm.seriesID == grp.sid {
 		s.reader.loadBlockData(s.decoder)
 		path := s.pathByPartID[s.reader.pih[0].partID]
 		n := int(s.reader.block.bm.count)

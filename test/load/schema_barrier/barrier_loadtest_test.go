@@ -70,13 +70,13 @@ import (
 )
 
 var (
-	flagWarmUp        = flag.Duration("loadtest.warm-up", time.Minute, "warm-up duration before sampling begins")
-	flagMeasure       = flag.Duration("loadtest.measure", 5*time.Minute, "measurement window duration")
-	flagCallers       = flag.Int("loadtest.callers", 100, "concurrent AwaitRevisionApplied callers")
-	flagMutateRate    = flag.Int("loadtest.mutate-rate", 10, "successful Group.Update operations per second")
-	flagBarrierTarget = flag.Int("loadtest.barrier-offset", 5, "AwaitRevisionApplied targets latest+offset; tune so each call holds open ~1s on average")
+	flagWarmUp         = flag.Duration("loadtest.warm-up", time.Minute, "warm-up duration before sampling begins")
+	flagMeasure        = flag.Duration("loadtest.measure", 5*time.Minute, "measurement window duration")
+	flagCallers        = flag.Int("loadtest.callers", 100, "concurrent AwaitRevisionApplied callers")
+	flagMutateRate     = flag.Int("loadtest.mutate-rate", 10, "successful Group.Update operations per second")
+	flagBarrierTarget  = flag.Int("loadtest.barrier-offset", 5, "AwaitRevisionApplied targets latest+offset; tune so each call holds open ~1s on average")
 	flagBarrierTimeout = flag.Duration("loadtest.barrier-timeout", 5*time.Second, "AwaitRevisionApplied per-call timeout")
-	flagReportPath    = flag.String("loadtest.report", "load-report.json", "path to write the JSON report; pass '-' for stdout-only")
+	flagReportPath     = flag.String("loadtest.report", "load-report.json", "path to write the JSON report; pass '-' for stdout-only")
 )
 
 // loadReport is serialized to disk at end of the measurement window. The
@@ -84,18 +84,18 @@ var (
 // the p50 / p95 / p99 of client-side per-call duration. Future revisions
 // may add a `ServerSideP99` field when Prometheus scraping is wired.
 type loadReport struct {
-	Profile      profile  `json:"profile"`
-	StartedAt    string   `json:"started_at"`
-	FinishedAt   string   `json:"finished_at"`
-	BarrierCalls int64    `json:"barrier_calls"`
-	BarrierErrs  int64    `json:"barrier_errors"`
-	BarrierTimeouts int64 `json:"barrier_timeouts"`
-	MutateOps    int64    `json:"mutate_ops"`
-	MutateErrs   int64    `json:"mutate_errors"`
-	P50Seconds   float64  `json:"p50_seconds"`
-	P95Seconds   float64  `json:"p95_seconds"`
-	P99Seconds   float64  `json:"p99_seconds"`
-	MaxSeconds   float64  `json:"max_seconds"`
+	Profile         profile `json:"profile"`
+	StartedAt       string  `json:"started_at"`
+	FinishedAt      string  `json:"finished_at"`
+	BarrierCalls    int64   `json:"barrier_calls"`
+	BarrierErrs     int64   `json:"barrier_errors"`
+	BarrierTimeouts int64   `json:"barrier_timeouts"`
+	MutateOps       int64   `json:"mutate_ops"`
+	MutateErrs      int64   `json:"mutate_errors"`
+	P50Seconds      float64 `json:"p50_seconds"`
+	P95Seconds      float64 `json:"p95_seconds"`
+	P99Seconds      float64 `json:"p99_seconds"`
+	MaxSeconds      float64 `json:"max_seconds"`
 }
 
 type profile struct {
