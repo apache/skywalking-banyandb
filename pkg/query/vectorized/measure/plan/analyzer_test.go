@@ -86,7 +86,7 @@ func TestAnalyze_BareRequest_BuildsScanWrappedInLimit(t *testing.T) {
 		TagProjection:   projTagProj(),
 		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 	}
-	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil)
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestAnalyze_GroupByAgg_BuildsGroupByAggBelowLimit(t *testing.T) {
 			FieldName: fieldValue,
 		},
 	}
-	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil)
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestAnalyze_TopBetweenGroupByAggAndLimit(t *testing.T) {
 			FieldValueSort: modelv1.Sort_SORT_DESC,
 		},
 	}
-	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil)
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestAnalyze_TopSortAsc_MapsToAscending(t *testing.T) {
 			FieldValueSort: modelv1.Sort_SORT_ASC,
 		},
 	}
-	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil)
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestAnalyze_GroupByWithoutAgg_BuildsRawGroupBy(t *testing.T) {
 			FieldName:     fieldValue,
 		},
 	}
-	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil)
 	if err != nil {
 		t.Fatalf("GroupBy without Agg (raw groupby) must not error: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestAnalyze_AggWithoutGroupBy_BuildsScalarReduce(t *testing.T) {
 			FieldName: fieldValue,
 		},
 	}
-	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil)
 	if err != nil {
 		t.Fatalf("Agg without GroupBy (scalar reduce) must not error: %v", err)
 	}
@@ -286,7 +286,7 @@ func TestAnalyze_UnknownGroupByTag_Errors(t *testing.T) {
 			FieldName: fieldValue,
 		},
 	}
-	_, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	_, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil)
 	if err == nil {
 		t.Fatal("unknown groupby tag must error")
 	}
@@ -309,7 +309,7 @@ func TestAnalyze_UnknownAggField_Errors(t *testing.T) {
 			FieldName: "ghost",
 		},
 	}
-	_, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	_, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil)
 	if err == nil {
 		t.Fatal("unknown agg field must error")
 	}
@@ -319,7 +319,7 @@ func TestAnalyze_UnknownAggField_Errors(t *testing.T) {
 }
 
 func TestAnalyze_NilRequest_Errors(t *testing.T) {
-	_, err := Analyze(nil, testMeasureSchema(), measure.AggModeAll)
+	_, err := Analyze(nil, testMeasureSchema(), measure.AggModeAll, nil)
 	if err == nil {
 		t.Fatal("nil request must error")
 	}
@@ -327,7 +327,7 @@ func TestAnalyze_NilRequest_Errors(t *testing.T) {
 
 func TestAnalyze_NilSchema_Errors(t *testing.T) {
 	req := &measurev1.QueryRequest{Name: "demo"}
-	_, err := Analyze(req, nil, measure.AggModeAll)
+	_, err := Analyze(req, nil, measure.AggModeAll, nil)
 	if err == nil {
 		t.Fatal("nil schema must error")
 	}
@@ -340,7 +340,7 @@ func TestAnalyze_DefaultLimit_AppliedWhenZero(t *testing.T) {
 		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		// Limit unset (0) → default 100 per defaultLimit constant
 	}
-	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil)
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
@@ -364,7 +364,7 @@ func TestPrintTree_RendersHierarchy(t *testing.T) {
 			FieldName: fieldValue,
 		},
 	}
-	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -401,7 +401,7 @@ func aggTagReq(fn modelv1.AggregationFunction, family, tag string) *measurev1.Qu
 // resulting model.MeasureAgg carries TagName/TagFamily with FieldName empty.
 func TestAnalyze_AggTagTarget_SumOverIntTag_Succeeds(t *testing.T) {
 	req := aggTagReq(modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, defaultName, tagCount)
-	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil)
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
@@ -415,7 +415,7 @@ func TestAnalyze_AggTagTarget_SumOverIntTag_Succeeds(t *testing.T) {
 // cell "Tag TAG_TYPE_STRING × COUNT ✅ new".
 func TestAnalyze_AggTagTarget_CountOverStringTag_Succeeds(t *testing.T) {
 	req := aggTagReq(modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT, defaultName, tagSvc)
-	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err != nil {
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil); err != nil {
 		t.Fatalf("COUNT over a string tag must succeed: %v", err)
 	}
 }
@@ -424,7 +424,7 @@ func TestAnalyze_AggTagTarget_CountOverStringTag_Succeeds(t *testing.T) {
 // cell "Tag TAG_TYPE_DATA_BINARY × COUNT ✅ new".
 func TestAnalyze_AggTagTarget_CountOverBinaryTag_Succeeds(t *testing.T) {
 	req := aggTagReq(modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT, defaultName, tagBinary)
-	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err != nil {
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil); err != nil {
 		t.Fatalf("COUNT over a data_binary tag must succeed: %v", err)
 	}
 }
@@ -434,7 +434,7 @@ func TestAnalyze_AggTagTarget_CountOverBinaryTag_Succeeds(t *testing.T) {
 // and its type.
 func TestAnalyze_AggTagTarget_SumOverStringTag_Rejected(t *testing.T) {
 	req := aggTagReq(modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, defaultName, tagSvc)
-	_, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	_, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil)
 	if err == nil {
 		t.Fatal("SUM over a string tag must be rejected")
 	}
@@ -448,7 +448,7 @@ func TestAnalyze_AggTagTarget_SumOverStringTag_Rejected(t *testing.T) {
 // every row into one group (the appendKeyComponent no-op failure mode).
 func TestAnalyze_AggTagTarget_RejectsArrayTag(t *testing.T) {
 	req := aggTagReq(modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT, defaultName, tagIntArray)
-	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err == nil {
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil); err == nil {
 		t.Fatal("COUNT over an array tag must be rejected")
 	}
 }
@@ -457,7 +457,7 @@ func TestAnalyze_AggTagTarget_RejectsArrayTag(t *testing.T) {
 // TAG_TYPE_TIMESTAMP tags remain rejected as aggregation targets.
 func TestAnalyze_AggTagTarget_RejectsTimestampTag(t *testing.T) {
 	req := aggTagReq(modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT, defaultName, tagTime)
-	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err == nil {
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil); err == nil {
 		t.Fatal("COUNT over a timestamp tag must be rejected")
 	}
 }
@@ -466,7 +466,7 @@ func TestAnalyze_AggTagTarget_RejectsTimestampTag(t *testing.T) {
 // TestAnalyze_UnknownAggField_Errors for the tag path.
 func TestAnalyze_AggTagTarget_UnknownTag_Errors(t *testing.T) {
 	req := aggTagReq(modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT, defaultName, "ghost")
-	_, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	_, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil)
 	if err == nil {
 		t.Fatal("unknown agg tag must error")
 	}
@@ -481,7 +481,7 @@ func TestAnalyze_AggTagTarget_UnknownTag_Errors(t *testing.T) {
 // "other" (accepts SUM) — the family qualifier must select the right one.
 func TestAnalyze_AggTagTarget_FamilyQualification_DistinguishesSameName(t *testing.T) {
 	req := aggTagReq(modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, otherFamily, tagSvc)
-	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil)
 	if err != nil {
 		t.Fatalf("SUM over other.svc (TAG_TYPE_INT) must succeed: %v", err)
 	}
@@ -505,7 +505,7 @@ func TestAnalyze_AggTagTarget_BothFieldAndTagSet_Errors(t *testing.T) {
 			TagFamily: defaultName,
 		},
 	}
-	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err == nil {
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil); err == nil {
 		t.Fatal("Agg setting both field_name and tag_name must error")
 	}
 }
@@ -517,7 +517,7 @@ func TestAnalyze_AggTagTarget_NeitherFieldNorTagSet_Errors(t *testing.T) {
 		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		Agg:             &measurev1.QueryRequest_Aggregation{Function: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
 	}
-	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err == nil {
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil); err == nil {
 		t.Fatal("Agg setting neither field_name nor tag_name must error")
 	}
 }
@@ -526,7 +526,7 @@ func TestAnalyze_AggTagTarget_NeitherFieldNorTagSet_Errors(t *testing.T) {
 // target must be family-qualified (design §5.1's "qualifying is correct").
 func TestAnalyze_AggTagTarget_TagNameWithoutTagFamily_Errors(t *testing.T) {
 	req := aggTagReq(modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT, "", tagCount)
-	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err == nil {
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil); err == nil {
 		t.Fatal("tag_name without tag_family must error")
 	}
 }
@@ -537,7 +537,7 @@ func TestAnalyze_AggTagTarget_TagNameWithoutTagFamily_Errors(t *testing.T) {
 func TestAnalyze_AggTagTarget_NotProjected_InjectsAndHides(t *testing.T) {
 	// projTagProj only names tagSvc — count_tag is not requested.
 	req := aggTagReq(modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, defaultName, tagCount)
-	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil)
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
@@ -570,7 +570,7 @@ func TestAnalyze_AggTagTarget_AlreadyProjected_HideTagFalse(t *testing.T) {
 	req.TagProjection = &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{
 		{Name: defaultName, Tags: []string{tagSvc, tagCount}},
 	}}
-	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil)
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
@@ -599,7 +599,7 @@ func TestAnalyze_GroupByTimeBucket_ResolvesWidth(t *testing.T) {
 			FieldName: fieldValue,
 		},
 	}
-	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll)
+	p, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil)
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
@@ -691,7 +691,7 @@ func TestAnalyze_TimeBucket_WidthResolutionTable(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p, err := Analyze(timeBucketReq(tc.width), tc.schema, measure.AggModeAll)
+			p, err := Analyze(timeBucketReq(tc.width), tc.schema, measure.AggModeAll, nil)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatal("want error, got nil")
@@ -715,7 +715,7 @@ func TestAnalyze_TimeBucket_WidthResolutionTable(t *testing.T) {
 // at resolution time (only bucketStart's floor arithmetic cares about
 // boundaries), so this doubles as a plain sanity check on parsing.
 func TestAnalyze_TimeBucket_BoundaryTimestampAcceptedAsWidth(t *testing.T) {
-	p, err := Analyze(timeBucketReq("1000ns"), testMeasureSchema(), measure.AggModeAll)
+	p, err := Analyze(timeBucketReq("1000ns"), testMeasureSchema(), measure.AggModeAll, nil)
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
@@ -728,7 +728,7 @@ func TestAnalyze_TimeBucket_BoundaryTimestampAcceptedAsWidth(t *testing.T) {
 // TestAnalyze_TimeBucket_BucketOnly_NoTagKey pins design §7.2: a GroupBy may
 // bucket by time alone, with no tag key at all.
 func TestAnalyze_TimeBucket_BucketOnly_NoTagKey(t *testing.T) {
-	p, err := Analyze(timeBucketReq("5m"), testMeasureSchema(), measure.AggModeAll)
+	p, err := Analyze(timeBucketReq("5m"), testMeasureSchema(), measure.AggModeAll, nil)
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
@@ -750,7 +750,7 @@ func TestAnalyze_GroupBy_NeitherTagProjectionNorTimeBucket_Errors(t *testing.T) 
 		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
 		GroupBy:         &measurev1.QueryRequest_GroupBy{},
 	}
-	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err == nil {
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil); err == nil {
 		t.Fatal("an empty GroupBy message must error")
 	}
 }
@@ -761,7 +761,7 @@ func TestAnalyze_GroupBy_NeitherTagProjectionNorTimeBucket_Errors(t *testing.T) 
 func TestAnalyze_TimeBucket_RejectsNonTimeOrderBy(t *testing.T) {
 	req := timeBucketReq("5m")
 	req.OrderBy = &modelv1.QueryOrder{IndexRuleName: "some_index"}
-	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err == nil {
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil); err == nil {
 		t.Fatal("a bucketed request with a non-time order_by must error")
 	}
 }
@@ -776,7 +776,7 @@ func TestAnalyze_TimeBucket_RejectsNonTimeOrderBy(t *testing.T) {
 func TestAnalyze_TimeBucket_RejectsDescendingTimeOrderBy(t *testing.T) {
 	req := timeBucketReq("5m")
 	req.OrderBy = &modelv1.QueryOrder{Sort: modelv1.Sort_SORT_DESC}
-	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err == nil {
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil); err == nil {
 		t.Fatal("a bucketed request with order_by.sort=SORT_DESC must error")
 	}
 }
@@ -795,7 +795,7 @@ func TestAnalyze_TimeBucket_WithoutAgg_Rejected(t *testing.T) {
 			TimeBucket: &measurev1.QueryRequest_GroupBy_TimeBucket{Width: "5m"},
 		},
 	}
-	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll); err == nil {
+	if _, err := Analyze(req, testMeasureSchema(), measure.AggModeAll, nil); err == nil {
 		t.Fatal("a bucketed GroupBy without Agg must error")
 	}
 }
@@ -806,7 +806,7 @@ func TestAnalyze_TimeBucket_WithoutAgg_Rejected(t *testing.T) {
 func TestAnalyze_TimeBucket_UsesIndexModeMap(t *testing.T) {
 	indexModeSchema := testMeasureSchema()
 	indexModeSchema.IndexMode = true
-	p, err := Analyze(timeBucketReq("5m"), indexModeSchema, measure.AggModeAll)
+	p, err := Analyze(timeBucketReq("5m"), indexModeSchema, measure.AggModeAll, nil)
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
@@ -832,7 +832,7 @@ func TestAnalyze_TimeBucket_IndexModeMeasure_CountDistinctTargetCoversEntity_Acc
 			TimeBucket: &measurev1.QueryRequest_GroupBy_TimeBucket{Width: "5m"},
 		},
 	}
-	p, err := Analyze(req, ms, measure.AggModeAll)
+	p, err := Analyze(req, ms, measure.AggModeAll, nil)
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
@@ -857,7 +857,7 @@ func TestAnalyze_TimeBucket_IndexModeMeasure_CountDistinctDecomposabilityStillEn
 			TimeBucket: &measurev1.QueryRequest_GroupBy_TimeBucket{Width: "5m"},
 		},
 	}
-	if _, err := Analyze(req, ms, measure.AggModeAll); err == nil {
+	if _, err := Analyze(req, ms, measure.AggModeAll, nil); err == nil {
 		t.Fatal("index_mode must not bypass the COUNT_DISTINCT decomposability check")
 	}
 }
@@ -1042,5 +1042,159 @@ func TestValidateCountDistinctPushdown_RoutingTagMissingFromSchema_Errors(t *tes
 	req := &measurev1.QueryRequest{Agg: countDistinctAgg(defaultName, tagCount)}
 	if err := validateCountDistinctPushdown(req, ms); err == nil {
 		t.Fatal("a routing tag absent from the schema must error, not be silently accepted")
+	}
+}
+
+// TestTranslateAgg_AmbiguousNameAcrossFamilies_NotConfused pins design
+// §7.7's run-folding precondition against the same cross-family ambiguity
+// TestValidateCountDistinctPushdown_AmbiguousNameAcrossFamilies_NotConfused
+// already pins for routing-tag coverage: isTagIndexResolved must resolve by
+// (family, name), not bare name. The entity's sole tag name is "svc", which
+// testMeasureSchema's family order resolves to default.svc (the "default"
+// family is listed first, and pbv1.FindTagByName returns the first match) —
+// other.svc is a different, non-series-constant column that merely shares
+// the bare name. Treating it as index-resolved would let the run-folding
+// fast path silently fold a per-row-varying COUNT target as if it were
+// constant.
+func TestTranslateAgg_AmbiguousNameAcrossFamilies_NotConfused(t *testing.T) {
+	ms := entityShardingSchema([]string{tagSvc}, nil)
+	req := aggTagReq(modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT, otherFamily, tagSvc)
+	agg, err := translateAgg(req, ms, nil)
+	if err != nil {
+		t.Fatalf("translateAgg: %v", err)
+	}
+	if agg.TargetIndexResolved {
+		t.Fatal("other.svc must not be treated as index-resolved: it is a different column from the entity's default.svc, despite the matching bare name")
+	}
+}
+
+// fakeIndexChecker reports the named tags as covered by a minimal, intact
+// single-tag IndexRule (naming only tagName itself, which every caller here
+// already declares in the schema it checks against).
+type fakeIndexChecker map[string]bool
+
+func (f fakeIndexChecker) IndexDefined(tagName string) (bool, *databasev1.IndexRule) {
+	if !f[tagName] {
+		return false, nil
+	}
+	return true, &databasev1.IndexRule{Tags: []string{tagName}}
+}
+
+func (fakeIndexChecker) IndexRuleDefined(string) (bool, *databasev1.IndexRule) { return false, nil }
+
+// fakeIndexCheckerWithRule reports a caller-supplied IndexRule object per
+// tag, letting a test pin isTagIndexResolved's storage-agreement check
+// (design §7.7, F4): a rule naming a tag absent from the schema's own tag
+// families is a shape pkg/partition/index.go's ParseIndexRuleLocators drops
+// entirely at query time, so isTagIndexResolved must not trust it either,
+// even though IndexChecker.IndexDefined still reports tagName as covered.
+type fakeIndexCheckerWithRule map[string]*databasev1.IndexRule
+
+func (f fakeIndexCheckerWithRule) IndexDefined(tagName string) (bool, *databasev1.IndexRule) {
+	rule, ok := f[tagName]
+	return ok, rule
+}
+
+func (fakeIndexCheckerWithRule) IndexRuleDefined(string) (bool, *databasev1.IndexRule) {
+	return false, nil
+}
+
+// analyzeGroupByEligibility runs Analyze for COUNT grouped by the given tags
+// in the default family and returns the planner-derived eligibility.
+func analyzeGroupByEligibility(t *testing.T, ms *databasev1.Measure, checker fakeIndexChecker, tags ...string) bool {
+	t.Helper()
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		TagProjection:   projTagProj(),
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		GroupBy:         groupByReq(defaultName, tags),
+		Agg: &measurev1.QueryRequest_Aggregation{
+			Function:  modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT,
+			FieldName: fieldValue,
+		},
+	}
+	var ic fakeIndexChecker
+	if checker != nil {
+		ic = checker
+	}
+	p, err := Analyze(req, ms, measure.AggModeAll, ic)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	gba, ok := p.(*Limit).Child.(*GroupByAgg)
+	if !ok {
+		t.Fatalf("expected GroupByAgg under Limit, got %T", p.(*Limit).Child)
+	}
+	return gba.GroupBy.AllTagsIndexResolved
+}
+
+// TestAnalyze_RunFoldEligibility pins the planner-derived all-keys
+// index-resolved classification through Analyze (design §7.7).
+func TestAnalyze_RunFoldEligibility(t *testing.T) {
+	ms := entityShardingSchema([]string{tagSvc}, nil)
+	t.Run("entity tag is eligible", func(t *testing.T) {
+		if !analyzeGroupByEligibility(t, ms, nil, tagSvc) {
+			t.Fatal("GroupBy on an entity tag must be classified index-resolved")
+		}
+	})
+	t.Run("index-rule tag is eligible", func(t *testing.T) {
+		if !analyzeGroupByEligibility(t, ms, fakeIndexChecker{"region": true}, "region") {
+			t.Fatal("GroupBy on an IndexRule-indexed tag must be classified index-resolved")
+		}
+	})
+	t.Run("entity plus index-rule tags are eligible", func(t *testing.T) {
+		if !analyzeGroupByEligibility(t, ms, fakeIndexChecker{"region": true}, tagSvc, "region") {
+			t.Fatal("every key index-resolved must be eligible")
+		}
+	})
+	t.Run("mixed index-resolved and part-resident keys are rejected", func(t *testing.T) {
+		if analyzeGroupByEligibility(t, ms, fakeIndexChecker{"region": true}, tagSvc, tagCount) {
+			t.Fatal("a part-resident key (count_tag) alongside index-resolved keys must not be eligible")
+		}
+		if analyzeGroupByEligibility(t, ms, nil, tagSvc, "region") {
+			t.Fatal("an unindexed region alongside an entity key must not be eligible")
+		}
+	})
+	t.Run("part-resident only is rejected", func(t *testing.T) {
+		if analyzeGroupByEligibility(t, ms, nil, "region") {
+			t.Fatal("an unindexed, non-entity tag must not be eligible")
+		}
+	})
+}
+
+// TestIsTagIndexResolved_IndexRuleIntact_Resolved is the positive control
+// for TestIsTagIndexResolved_IndexRuleReferencesRemovedTag_NotResolved: an
+// IndexRule naming only tags the schema still declares must still be
+// treated as index-resolved, so the companion test's negative result is
+// shown to come from the removed-tag shape, not from isTagIndexResolved
+// always rejecting index-rule-backed tags.
+func TestIsTagIndexResolved_IndexRuleIntact_Resolved(t *testing.T) {
+	ms := testMeasureSchema()
+	checker := fakeIndexCheckerWithRule{"region": {Tags: []string{"region"}}}
+	if !isTagIndexResolved(ms, checker, defaultName, "region") {
+		t.Fatal("an IndexRule naming only still-declared tags must be treated as index-resolved")
+	}
+}
+
+// TestIsTagIndexResolved_IndexRuleReferencesRemovedTag_NotResolved pins
+// design §7.7's storage-agreement requirement (F4): an IndexChecker may
+// report tagName as covered by an IndexRule purely from the schema's
+// configured IndexRules list, without knowing that storage
+// (pkg/partition/index.go's ParseIndexRuleLocators) drops the ENTIRE rule
+// at query-planning time once any one of its member tags no longer exists
+// among the schema's tag families — composite rules in particular can have
+// one member tag removed while a sibling member tag is still declared and
+// still named by IndexChecker.IndexDefined. A surviving member tag of such
+// a dropped rule is read from the part's tag columns at query time, not the
+// series index, so it can vary row to row within one series; folding it as
+// if constant would corrupt COUNT/COUNT_DISTINCT. "removed_tag" stands in
+// for that removed sibling: it is named by the rule but absent from
+// testMeasureSchema()'s tag families.
+func TestIsTagIndexResolved_IndexRuleReferencesRemovedTag_NotResolved(t *testing.T) {
+	ms := testMeasureSchema()
+	checker := fakeIndexCheckerWithRule{"region": {Tags: []string{"region", "removed_tag"}}}
+	if isTagIndexResolved(ms, checker, defaultName, "region") {
+		t.Fatal("an IndexRule referencing a tag the schema no longer declares must not be treated as index-resolved: " +
+			"storage drops the whole rule, leaving the surviving tag part-resident")
 	}
 }

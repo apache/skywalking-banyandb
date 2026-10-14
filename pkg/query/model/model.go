@@ -61,6 +61,14 @@ type MeasureGroupBy struct {
 	TimeBucket *MeasureTimeBucket
 	TagFamily  string
 	TagNames   []string
+	// AllTagsIndexResolved is true when every tag in TagNames resolves from
+	// the series index — an entity tag or a tag carrying an IndexRule —
+	// rather than the part's tag columns, computed once at analyze time
+	// from static schema facts (design §7.7, stage 8a run-folding). Left
+	// false (the zero value) when TagNames is empty; consumers treat an
+	// empty key list as vacuously safe on their own, so this field is only
+	// consulted when TagNames is non-empty.
+	AllTagsIndexResolved bool
 }
 
 // MeasureTimeBucket describes a resolved GroupBy.time_bucket clause (design
@@ -92,6 +100,11 @@ type MeasureAgg struct {
 	TagFamily string
 	Func      modelv1.AggregationFunction
 	HideTag   bool
+	// TargetIndexResolved is true when TagName resolves from the series
+	// index (an entity tag or an IndexRule-indexed tag), so its value is
+	// guaranteed constant and non-null across every row of one series
+	// (design §7.7, stage 8a run-folding). Always false for a field target.
+	TargetIndexResolved bool
 }
 
 // FieldResolver mirrors pkg/index/native/criteria.FieldResolver's single

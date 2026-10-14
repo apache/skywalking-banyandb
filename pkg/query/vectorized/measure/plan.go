@@ -79,12 +79,18 @@ func BuildOperators(
 	}
 
 	var keyIndices []int
+	// allKeysIndexResolved defaults to true: a scalar reduce (no GroupBy)
+	// has zero key columns, so there is nothing that could vary within one
+	// Consume call's series — the run-folding precondition (design §7.7,
+	// stage 8a) holds vacuously.
+	allKeysIndexResolved := true
 	if hasGroupBy {
 		var keyErr error
 		keyIndices, keyErr = lookupGroupByKeyIndices(schema, opts.GroupBy)
 		if keyErr != nil {
 			return nil, keyErr
 		}
+		allKeysIndexResolved = opts.GroupBy.AllTagsIndexResolved
 	}
 
 	if !hasAgg {
@@ -121,10 +127,11 @@ func BuildOperators(
 	// first-seen projected tags plus the agg result — the columnar
 	// equivalent of the row path's aggAllIterator.
 	spec := AggSpec{
-		Func:     aggFn,
-		InputCol: inputIdx,
-		Output:   aggTargetName(opts.Agg),
-		HideTag:  opts.Agg.HideTag,
+		Func:                aggFn,
+		InputCol:            inputIdx,
+		Output:              aggTargetName(opts.Agg),
+		HideTag:             opts.Agg.HideTag,
+		TargetIndexResolved: opts.Agg.TargetIndexResolved,
 	}
 	// COUNT_DISTINCT's map-phase precondition (design §7.4 "De-duplicating
 	// the partials", part (a)). computeKey ignores shard id, and a node
@@ -154,6 +161,7 @@ func BuildOperators(
 	}
 	agg := NewBatchAggregation(schema, keyIndices, []AggSpec{spec},
 		mode, batchSize, tracker, aggEntrySize)
+	agg.SetAllKeysIndexResolved(allKeysIndexResolved)
 	return []vectorized.BreakerOperator{agg}, nil
 }
 
@@ -199,12 +207,16 @@ func BuildTimeBucketOperator(
 		return nil, fmt.Errorf("vectorized.measure: BuildTimeBucketOperator does not build AggModeReduce — that operator is built by the liaison reduce plan")
 	}
 	var tagKeyIndices []int
+	// See BuildOperators' allKeysIndexResolved for why an empty tag-key
+	// list defaults to vacuously true.
+	allTagKeysIndexResolved := true
 	if opts.GroupBy != nil && opts.GroupBy.TagFamily != "" && len(opts.GroupBy.TagNames) > 0 {
 		var keyErr error
 		tagKeyIndices, keyErr = lookupGroupByKeyIndices(schema, opts.GroupBy)
 		if keyErr != nil {
 			return nil, keyErr
 		}
+		allTagKeysIndexResolved = opts.GroupBy.AllTagsIndexResolved
 	}
 	timestampIdx := schema.TimestampIndex()
 	if timestampIdx < 0 {
@@ -223,10 +235,11 @@ func BuildTimeBucketOperator(
 			return nil, fnErr
 		}
 		specs = []AggSpec{{
-			Func:     aggFn,
-			InputCol: inputIdx,
-			Output:   aggTargetName(opts.Agg),
-			HideTag:  opts.Agg.HideTag,
+			Func:                aggFn,
+			InputCol:            inputIdx,
+			Output:              aggTargetName(opts.Agg),
+			HideTag:             opts.Agg.HideTag,
+			TargetIndexResolved: opts.Agg.TargetIndexResolved,
 		}}
 	}
 	// Same COUNT_DISTINCT map-phase precondition as BuildOperators (see its
@@ -242,8 +255,10 @@ func BuildTimeBucketOperator(
 		}
 	}
 	tb := opts.GroupBy.TimeBucket
-	return NewBatchTimeBucket(upstream, schema, tagKeyIndices, timestampIdx, tb.WidthNanos,
-		specs, mode, batchSize, tracker, aggEntrySize, !tb.UseIndexModeMap), nil
+	bucket := NewBatchTimeBucket(upstream, schema, tagKeyIndices, timestampIdx, tb.WidthNanos,
+		specs, mode, batchSize, tracker, aggEntrySize, !tb.UseIndexModeMap)
+	bucket.SetAllKeysIndexResolved(allTagKeysIndexResolved)
+	return bucket, nil
 }
 
 // lookupGroupByKeyIndices resolves each GroupBy tag name to its column index
