@@ -83,7 +83,9 @@ func (r *nodeRegistry) ListNode(_ context.Context, role databasev1.Role) ([]*dat
 	}
 	return out, nil
 }
+
 func (r *nodeRegistry) RegisterNode(_ context.Context, _ *databasev1.Node, _ bool) error { return nil }
+
 func (r *nodeRegistry) GetNode(_ context.Context, name string) (*databasev1.Node, error) {
 	// This register helper's SchemaRegistryClient only exercises ListNode; return
 	// an explicit error rather than an ambiguous (nil, nil) so any future call

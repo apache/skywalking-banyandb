@@ -424,10 +424,13 @@ func (r *repairTreeFileReader) read(parent *repairTreeNode, pagingSize int64, fo
 		}, nil
 	}
 
-	if parent.tp == repairTreeNodeTypeRoot {
+	switch parent.tp {
+	case repairTreeNodeTypeRoot:
 		return r.readSlots(parent, pagingSize, forceReFromStart)
-	} else if parent.tp == repairTreeNodeTypeLeaf {
+	case repairTreeNodeTypeLeaf:
 		return nil, nil
+	default:
+		// repairTreeNodeTypeSlot: read the slots below this node.
 	}
 
 	// otherwise, reading the leaf nodes

@@ -106,13 +106,14 @@ func setUp() (*services, func()) {
 		traceService,
 		querySvc,
 	)
-	return &services{
-			trace:           traceService,
-			metadataService: metadataService,
-			pipeline:        pipeline,
-		}, func() {
-			moduleDeferFunc()
-			metaDeferFunc()
-			deferFunc()
-		}
+	svcs := &services{
+		trace:           traceService,
+		metadataService: metadataService,
+		pipeline:        pipeline,
+	}
+	return svcs, func() {
+		moduleDeferFunc()
+		metaDeferFunc()
+		deferFunc()
+	}
 }

@@ -98,6 +98,10 @@ type actor struct {
 	password string
 }
 
+// Test-only fixture credentials. They are literal here on purpose so the
+// RBAC matrix below cannot pass by accident against a shared secret.
+//
+//nolint:gosec // G101: fixed test fixtures, not real credentials.
 var (
 	adminActor       = actor{name: "bydb-admin", password: "admin-secret"}
 	writerAlphaActor = actor{name: "bydb-writer-alpha", password: "writer-alpha-secret"}
