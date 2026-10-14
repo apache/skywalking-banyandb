@@ -72,7 +72,7 @@ func SlowPathRows() int64 { return slowPathRows.Load() }
 // and executor-side lines stay uniform.
 const measureMigrationLogPrefix = "[migration/measure]"
 
-func logStep(format string, args ...any) {
+func logStepf(format string, args ...any) {
 	fmt.Fprintf(os.Stdout, time.Now().Format("2006/01/02 15:04:05")+" "+measureMigrationLogPrefix+" "+format+"\n", args...)
 }
 
@@ -318,7 +318,7 @@ func directCopyGroup(ctx context.Context,
 					return
 				}
 				done := partsCompleted.Add(1)
-				logStep("%s stage=%s group %s: part %d/%d (%.1f%%) done %s/%s/%s rows=%d targetParts=%d",
+				logStepf("%s stage=%s group %s: part %d/%d (%.1f%%) done %s/%s/%s rows=%d targetParts=%d",
 					entryTag, stage, group, done, totalTasks,
 					100.0*float64(done)/float64(totalTasks),
 					task.srcSegName, task.shardName, task.partIDStr,
@@ -356,7 +356,7 @@ func directCopyGroup(ctx context.Context,
 		}
 	}
 	segSnapshot := segStates.snapshot()
-	logStep("%s stage=%s group %s: finalizing %d aligned target segments (writing metadata + snp + union sidx)",
+	logStepf("%s stage=%s group %s: finalizing %d aligned target segments (writing metadata + snp + union sidx)",
 		entryTag, stage, group, len(segSnapshot))
 	for alignedSeg, ss := range segSnapshot {
 		res.Segments++
@@ -396,7 +396,7 @@ func directCopyGroup(ctx context.Context,
 			}
 			res.Bytes += snpBytes
 		}
-		logStep("%s stage=%s group %s: seg %s finalized (metadata + %d shard snp(s), union sidx=%v)",
+		logStepf("%s stage=%s group %s: seg %s finalized (metadata + %d shard snp(s), union sidx=%v)",
 			entryTag, stage, group, alignedSeg, len(ss.shards), unionSidxAvailable)
 	}
 

@@ -75,7 +75,7 @@ var (
 // and executor-side lines stay uniform.
 const streamMigrationLogPrefix = "[migration/stream]"
 
-func logStreamStep(format string, args ...any) {
+func logStreamStepf(format string, args ...any) {
 	fmt.Fprintf(os.Stdout, time.Now().Format("2006/01/02 15:04:05")+" "+streamMigrationLogPrefix+" "+format+"\n", args...)
 }
 
@@ -334,7 +334,7 @@ func directCopyStreamGroup(
 					return
 				}
 				done := partsCompleted.Add(1)
-				logStreamStep("%s stage=%s group %s: part %d/%d (%.1f%%) done %s/%s/%s rows=%d targetParts=%d",
+				logStreamStepf("%s stage=%s group %s: part %d/%d (%.1f%%) done %s/%s/%s rows=%d targetParts=%d",
 					entryTag, stage, group, done, totalTasks,
 					100.0*float64(done)/float64(totalTasks),
 					task.srcSegName, task.shardName, task.partIDStr,
@@ -372,7 +372,7 @@ func directCopyStreamGroup(
 		}
 	}
 	segSnapshot := segStates.snapshot()
-	logStreamStep("%s stage=%s group %s: finalizing %d aligned target segments (writing metadata + snp + union sidx)",
+	logStreamStepf("%s stage=%s group %s: finalizing %d aligned target segments (writing metadata + snp + union sidx)",
 		entryTag, stage, group, len(segSnapshot))
 	for alignedSeg, ss := range segSnapshot {
 		res.Segments++
@@ -412,7 +412,7 @@ func directCopyStreamGroup(
 			}
 			res.Bytes += snpBytes
 		}
-		logStreamStep("%s stage=%s group %s: seg %s finalized (metadata + %d shard snp(s), union sidx=%v)",
+		logStreamStepf("%s stage=%s group %s: seg %s finalized (metadata + %d shard snp(s), union sidx=%v)",
 			entryTag, stage, group, alignedSeg, len(ss.shards), unionSidxAvailable)
 	}
 

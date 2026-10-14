@@ -147,7 +147,7 @@ func (pq *DedupPriorityQueue) Pop() interface{} {
 // Peek returns the first item of the DedupPriorityQueue without removing it.
 func (pq *DedupPriorityQueue) Peek() Element {
 	if len(pq.Items) > 0 {
-		return (pq.Items)[0]
+		return pq.Items[0]
 	}
 	return nil
 }

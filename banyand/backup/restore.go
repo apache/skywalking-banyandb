@@ -261,10 +261,7 @@ func validatedRemoteRelPath(timeDir, catalogName, remoteFile string) (string, er
 }
 
 func cleanEmptyDirs(dir, stopDir string) {
-	for {
-		if dir == stopDir || dir == "." {
-			break
-		}
+	for dir != stopDir && dir != "." {
 		files, err := getAllFiles(dir)
 		if err != nil || len(files) > 0 {
 			break
