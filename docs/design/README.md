@@ -10,6 +10,8 @@ must be added there when it is introduced. When a milestone ships, its directory
 - [Tag aggregation and time bucketing in the measure query engine](0.12.0/tag-aggregation/README.md)
 - [Data export and import](0.12.0/data-export-import/README.md)
 - [Docker-canonical build and license generation](0.12.0/docker-canonical-build/README.md)
+- [Measure batch v2: reference-counted, columnar data unit](0.12.0/measure-batch-v2/README.md)
+- [Measure scan path v2: streaming series windows and a time-ordered merge](0.12.0/measure-scan-path-v2/README.md)
 
 The native inverted-index replacement design shipped and its legacy engine
 dependency has since been fully removed; see
