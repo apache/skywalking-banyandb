@@ -20,3 +20,4 @@
 export * from './schema.js';
 export * from './api-dto.js';
 export * from './query.js';
+export type * from './monitor.js';

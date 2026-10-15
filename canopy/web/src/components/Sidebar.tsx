@@ -604,6 +604,21 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
           )}
         </div>
 
+        {/* Monitor */}
+        <div className="nav-node">
+          <div className="nav-rowline">
+            <button
+              className={'nav-row lvl-0' + (active === '/monitor' ? ' is-active' : '')}
+              style={{ paddingLeft: 12 }}
+              onClick={() => navigate('/monitor')}
+              title="Monitor"
+            >
+              <span className="nav-ico"><IconMeasures /></span>
+              <span className="nav-label">Monitor</span>
+            </button>
+          </div>
+        </div>
+
         {/* Query */}
         <div className="nav-node">
           <div className="nav-rowline">

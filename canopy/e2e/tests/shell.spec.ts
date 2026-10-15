@@ -31,7 +31,7 @@ test.describe('app shell @e2e @shell', () => {
 
   test('renders sidebar, brand, nav, connection status, and sign out', async ({ shellPage }) => {
     await shellPage.expectShell();
-    await shellPage.expectNavItems(['Home', 'Metadata', 'Properties', 'Pipelines', 'Query']);
+    await shellPage.expectNavItems(['Home', 'Metadata', 'Properties', 'Pipelines', 'Monitor', 'Query']);
   });
 
   test('home page shows the title, welcome copy, and quick-nav cards', async ({ shellPage, page }) => {
