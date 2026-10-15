@@ -1,8 +1,13 @@
 # Streaming API: progressive queries and acknowledged write streams
 
-Status: **accepted, not yet implemented**. Decisions recorded in §13 on 2026-10-14. Implementation
-order: trace, then stream, then measure, one PR per model; BydbQL streaming waits for the measure
-QL-gaps table result.
+Status: **accepted, not yet implemented**. Decisions recorded in §13 on 2026-10-14 and 2026-10-15.
+
+**Milestone split (§1.1).** 0.12.0 implements the streaming *process* behind the existing APIs:
+the internal `Scan` transport, chunked emission on data nodes, an incremental merge on the liaison
+that the existing unary `Query` RPCs run on, and the `Write` rework. No query result changes. The
+public streaming *API* (`StreamQuery`, its gateway route, the streaming bydbctl options and BydbQL
+streaming) moves to the next milestone. Implementation order in both milestones: trace, then
+stream, then measure, one PR per model.
 
 This document analyses the "Frontier Observability Database Streaming APIs" report (an interactive
 survey of Berserk, InfluxDB 3.0, GreptimeDB, Grafana Loki, ClickHouse, OpenObserve, Quickwit and
@@ -39,6 +44,42 @@ message out and a sequence of chunk bodies back. Each chunk is one of the existi
 
 The `Query` RPCs stay as they are. `Write` keeps its signature and its request contract; only its
 acknowledgement timing, its flow control and two added response fields change.
+
+### 1.1 Milestone scope
+
+**0.12.0: the streaming process behind `Query` and `Write`.**
+
+| Part | Sections | Delivered |
+|---|---|---|
+| `Write` rework | §5.3, §7 write path | As specified: per sealed batch acknowledgement and application, the sender queue, in-flight limit, busy retry, `status_code`, `retry_after_ms` and `STATUS_SERVER_BUSY`. |
+| Internal transport | §6 | `cluster.v1.Service/Scan`, `bus.StreamListener`, `queue.Client.Scatter`, node streams opened under the caller's context, the idle deadline with heartbeats of §6.2. |
+| Data nodes | §8, data-node parts | `RevStream` and the chunker: a data node sends its result in chunks of the existing frames as it produces them, instead of materialising it into one message. |
+| Liaison | §8, liaison parts | The distributed plans merge node streams incrementally, decoding one chunk at a time, and the unary `Query` RPCs collect the merged result into today's response. |
+| Pressure | §7.1, "drain, do not hold" | Between chunks, as specified. |
+
+The unary `Query` keeps its exact results. It still holds the whole response, so the liaison
+reads every node stream to its end and keeps today's whole-result dedup: the global trace-ID map
+for trace, and the existing element and data-point rules for stream and measure. The run-scoped
+dedup and its documented difference (§5.5, §13 decision 2) belong to the public stream only. Each
+data node already stops at `limit + offset` as today, so reading to the end costs what it costs
+now. Admission and the response charge are unchanged for the same reason (§3.2).
+
+What the unary `Query` gains:
+
+- **No per-node response size limit.** A data node's result is no longer bounded by the 32 MiB
+  publisher receive limit, because it arrives in chunks.
+- **Lower peak memory.** A data node no longer holds its whole result before sending, and the
+  liaison holds decoded rows plus the chunks in flight instead of every node's frame at once.
+- **Cancellation reaches the data nodes**, which today keep scanning until a fixed deadline.
+- **Long scans can finish.** The fixed 5 s (trace, stream) and 15 s (measure) per-node deadlines
+  become idle deadlines reset by every chunk and heartbeat (§6.2), so a needle search over a large
+  range is bounded by the client's deadline, not by a constant.
+
+**Next milestone: the public streaming API.** `StreamQuery` per model (§5.1, §5.2, §5.5), its
+gateway route, `AdmitStreamContext` and the footprint invariant for streams (§7.1), the streaming
+bydbctl options (§10), BydbQL streaming (§5.4) and their tests and benchmarks. Decisions 1, 2 and
+4 of §13 apply there. It reuses the 0.12.0 transport unchanged: the public stream is the liaison
+merge of 0.12.0 with chunks forwarded to the client instead of collected.
 
 ## 2. What the report describes and what applies here
 
@@ -167,7 +208,8 @@ bidirectional stream with a `SERVER_BUSY` status that tells the sender to back o
 
 ## 4. Goals and non-goals
 
-Goals:
+Goals (the milestone of each is in §1.1; goals 1, 2 and 4 belong to the public stream of the
+next milestone, goals 3, 5 and 6 to 0.12.0):
 
 1. A client can start consuming a query result before the server has finished producing it, and
    can stop it at any point. Stopping stops the scan on every data node.
@@ -181,6 +223,9 @@ Goals:
    except where §5.5 states a documented difference.
 5. No change to the frame formats, the storage engine, or the signatures and request messages of
    the existing RPCs.
+6. The existing unary `Query` RPCs run on the streaming process with byte-for-byte the same
+   results, no per-node response size limit, cancellation that reaches the data nodes, and no
+   fixed whole-call deadline on a node.
 
 Non-goals:
 
@@ -194,6 +239,9 @@ Non-goals:
 ## 5. Public API
 
 ### 5.1 Shared messages
+
+The stream messages below are for the next milestone (§1.1); `STATUS_SERVER_BUSY` ships in
+0.12.0 with the `Write` rework.
 
 Added to `api/proto/banyandb/model/v1/query.proto`:
 
@@ -250,6 +298,8 @@ enum Status {
 ```
 
 ### 5.2 `StreamQuery`
+
+Next milestone (§1.1).
 
 Each model's service gains one server-streaming RPC. The trace definition is shown in full; stream
 and measure differ only in the chunk payload.
@@ -460,6 +510,8 @@ so a client can use one RPC for every query type.
 
 ### 5.5 Semantics of a streaming query
 
+Next milestone (§1.1). The 0.12.0 unary `Query` keeps today's semantics exactly.
+
 - **Order.** Chunks are in the query's order. Concatenating every chunk yields the same sequence
   as the unary response.
 - **Chunk boundaries** are not stable across runs and carry no meaning. A trace is never split
@@ -519,7 +571,8 @@ message ScanRequest {
 }
 
 // ScanResponse is one chunk. The last chunk has last = true and may carry an
-// empty body; an error chunk ends the stream.
+// empty body; an error chunk ends the stream. A response with an empty body and
+// last = false is a heartbeat: the node is still scanning and has nothing to send.
 message ScanResponse {
   uint64 message_id = 1;
   uint32 seq = 2;
@@ -596,6 +649,16 @@ which runs listeners synchronously under the bus lock: it runs the listener on i
 with the same cancellation-aware bounded channel, releases any queued value when the consumer
 closes early, and its sink passes Go values (a `[]model.TraceResult` chunk, not a frame), so
 standalone runs the same liaison code as a cluster without encoding.
+
+**Deadlines.** Today every node call carries a fixed whole-call deadline: 5 s for trace and stream
+(`defaultQueryTimeout` in their distributed plans) and 15 s for measure (`--dst-broadcast-timeout`).
+A long scan, such as a needle search over a large time range, cannot finish inside it. `Scan`
+replaces it with an idle deadline. A node stream lives as long as the caller's context; while a
+data node scans without output it sends a heartbeat every `--scan-heartbeat-interval` (default
+2 s); the liaison fails a node stream that sends nothing, neither chunk nor heartbeat, for
+`--scan-idle-timeout` (default 15 s). A dead or wedged node is still detected within the idle
+timeout, while a slow but live scan is bounded only by the client's own deadline and by
+cancellation.
 
 ### 6.3 Data flow
 
@@ -843,11 +906,13 @@ Aggregation: partial results need every input. The supported shapes:
 
 | Flag | Default | Scope |
 |---|---|---|
-| `--stream-query-max-chunk-rows-{trace,stream,measure}` | 256 / 4096 / 8192 | liaison |
-| `--stream-query-max-chunk-bytes` | 2 MiB (public), 4 MiB (internal) | liaison |
-| `--stream-query-prefetch` | 2 | liaison |
-| `--stream-query-idle-timeout` | 60 s | liaison |
-| `--stream-query-pressure-timeout` | 30 s | liaison and data node |
+| `--stream-query-max-chunk-rows-{trace,stream,measure}` | 256 / 4096 / 8192 | liaison, 0.12.0 |
+| `--stream-query-max-chunk-bytes` | 4 MiB internal (0.12.0); 2 MiB public (next milestone) | liaison |
+| `--stream-query-prefetch` | 2 | liaison, 0.12.0 |
+| `--scan-heartbeat-interval` | 2 s | data node, 0.12.0 |
+| `--scan-idle-timeout` | 15 s | liaison, 0.12.0 |
+| `--stream-query-idle-timeout` | 60 s | liaison, next milestone |
+| `--stream-query-pressure-timeout` | 30 s | liaison and data node, 0.12.0 |
 | `--write-batch-seal-rows` | 4096 | liaison |
 | `--write-batch-seal-bytes` | 8 MiB | liaison |
 | `--write-batch-seal-interval` | 200 ms | liaison |
@@ -870,6 +935,8 @@ Observability:
 
 ## 10. Clients
 
+Next milestone (§1.1). In 0.12.0 clients change only through the `Write` rework of §5.3.
+
 - **bydbctl**: `bydbctl trace|stream|measure query --stream` (and `bydbctl query --stream` for
   BydbQL once decision 4 of §13 is met)
   consume the gateway's newline-delimited JSON and print each chunk as it arrives (YAML by default,
@@ -886,6 +953,11 @@ Observability:
   and keep one stream open across flushes.
 
 ## 11. Verification
+
+This section covers the whole design. The 0.12.0 subset, which verifies the unary `Query` on the
+streaming process and the `Write` rework, is listed in §12.1; the `StreamQuery` verifier, gateway,
+bydbctl, RBAC-for-new-method, slow-consumer and stream-mode benchmark rows belong to the next
+milestone.
 
 ### 11.1 Layers
 
@@ -1034,6 +1106,38 @@ full durations run on demand through `run-docker.sh`.
 
 ## 12. Implementation plan
 
+### 12.1 0.12.0
+
+One PR per model, each building, linting and testing green on its own:
+
+- **Trace PR: shared transport plus trace.** Step 0 below without the public pieces (no
+  `model/v1` stream messages, no `AdmitStreamContext`, no gateway deadline extension), plus the
+  idle deadline and heartbeats; then the trace data-node `RevStream` and chunker, the incremental
+  liaison merge collected by the unary `Query` with today's global trace-ID map, and the trace
+  `Write` rework with `WriteResponse` fields and `STATUS_SERVER_BUSY`.
+- **Stream PR.** `OpenVectorized` and `BatchIterator`, the stream `RevStream`, the incremental
+  merge with today's element dedup, the stream `Write` rework.
+- **Measure PR.** The measure `RevStream`, incremental `executeRows` and aggregation reduce with
+  today's dedup rules, the measure `Write` rework.
+
+Verification per PR (§11): the existing unary query suites, standalone and distributed, are the
+equivalence oracle and must pass unchanged; the internal chunk caps are swept down to one row and
+1 KiB through test hooks so every fixture also runs with many chunks per node; and the behaviour
+cases that apply to the unary path run: cancellation reaching the data nodes, a node result larger
+than 32 MiB, a long needle scan past the old fixed deadline with heartbeats, transport failures,
+node failure, the cancel storm, pressure drain, and every write case. The benchmarks compare the
+unary path before and after on the same data (latency, liaison and data-node peak memory, large
+results, needle scans) and include the write scenarios.
+
+### 12.2 Next milestone: the public API
+
+`StreamQuery` per model on the 0.12.0 transport, the run-scoped dedup of §5.5, `AdmitStreamContext`
+and the stream footprint of §7.1, the gateway route and its deadline extension, the bydbctl
+streaming options, the public-stream rows of §11, then BydbQL streaming. The steps below describe
+the whole design; §12.1 says which parts ship in 0.12.0.
+
+### 12.3 Steps
+
 Each step builds, lints and tests green before the next. The trace work includes the shared
 transport; stream and measure reuse it.
 
@@ -1099,7 +1203,8 @@ reports ship with their model's PR and do not wait.
 
 ## 13. Decisions
 
-Taken on 2026-10-14.
+Taken on 2026-10-14; decision 7 on 2026-10-15. Decisions 1, 2 and 4 apply to the public API of
+the next milestone.
 
 1. **RPC name: `StreamQuery`**, with `StreamQueryRequest` and `StreamQueryResponse` per
    package, and `Scan` with `ScanRequest` and `ScanResponse` on `cluster.v1.Service`. Verified
@@ -1126,6 +1231,10 @@ Taken on 2026-10-14.
    three-engine benchmark report form a later PR after decision 4 is met.
 6. **Defaults as listed** in §7 and §9. They are shipped as flag defaults and tuned from the
    benchmark report of each PR, not before.
+7. **Milestone split.** 0.12.0 implements only the streaming process behind the existing `Query`
+   and `Write` APIs (§1.1, §12.1), with the unary `Query` results unchanged. The public streaming
+   API moves to the next milestone (§12.2). Decision 3 becomes: the internal streaming of `Query`
+   and the `Write` rework ship together per model; decision 5's PRs are the three 0.12.0 model PRs.
 
 Reviewed on 2026-10-14 by Codex (read-only, against the code). Its verified findings are folded
 in: the cancellation gap in `pub.publish`, the 10% admission headroom and `INVALID_ARGUMENT` above
@@ -1158,6 +1267,11 @@ and the querybench, soak-gating and CI corrections in §11.
 - **Measure aggregation.** Only time-bucketed aggregations stream; the others keep unary latency
   and their group state is the one thing streaming does not bound (§7.1). The API is uniform so
   clients need not special-case.
+- **Queries without a client deadline.** Replacing the fixed node deadline with an idle deadline
+  means a query from a client that sets no deadline runs until it finishes or the client
+  disconnects. Heartbeats keep a dead node from hanging it, and cancellation releases everything,
+  but a pathological full scan is no longer cut at 5 or 15 s. If that proves a problem in
+  practice, a liaison-wide maximum query duration is the follow-up.
 - **Internal RPC addition.** `Scan` is new; an old data node would answer `UNIMPLEMENTED`. 0.12
   requires whole-cluster upgrades, so no fallback is built.
 
