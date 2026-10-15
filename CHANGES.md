@@ -28,6 +28,7 @@ Release Notes.
 
 ### Bug Fixes
 
+- Fix stream queries silently dropping the later blocks of a series: the block filter's verdict is per-block, but `findBlock` advanced a whole series on skip.
 - Fix a data race in Measure TopN where a pooled TopN value reused for a query wrote its tag names into the streaming processor's entity tag name slice.
 - Stop `pkg/index/native`'s compaction-persistence test from flaking on `Test Pkg`: it asserted that garbage collection succeeds the instant a read view closes, without accounting for a background persist still holding an older root.
 - Stamp `RELEASE_VERSION` into official release binaries so `--version` reports the release instead of `-`.
