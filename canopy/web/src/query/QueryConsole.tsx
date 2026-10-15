@@ -42,8 +42,8 @@ import { useRunQuery } from '../data/hooks.js';
 import type { Group, MeasureSchema, PropertySchema, QueryResponse, QueryRequest, StreamSchema, TraceSchema, TopNAggregationSchema } from 'canopy-shared';
 
 const QB_STORE = 'canopy.query.v3';
-const QB_RAIL_DEFAULT = 348;
-const QB_RAIL_MIN = 280;
+const QB_RAIL_DEFAULT = 400;
+const QB_RAIL_MIN = 320;
 const QB_RAIL_MAX = 720;
 
 interface QuerySeed {
