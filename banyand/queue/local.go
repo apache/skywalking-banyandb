@@ -21,6 +21,9 @@ package queue
 import (
 	context "context"
 	"errors"
+	"fmt"
+	"io"
+	"sync"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -40,16 +43,19 @@ var (
 )
 
 type local struct {
-	local        *bus.Bus
-	exportServer transferv1.ExportServiceServer
-	stopCh       chan struct{}
+	local           *bus.Bus
+	exportServer    transferv1.ExportServiceServer
+	stopCh          chan struct{}
+	streamListeners map[bus.Topic]bus.StreamListener
+	streamMu        sync.RWMutex
 }
 
 // Local return a new local Queue.
 func Local() Queue {
 	return &local{
-		local:  bus.NewBus(),
-		stopCh: make(chan struct{}),
+		local:           bus.NewBus(),
+		stopCh:          make(chan struct{}),
+		streamListeners: make(map[bus.Topic]bus.StreamListener),
 	}
 }
 
@@ -75,6 +81,131 @@ func (l *local) Subscribe(topic bus.Topic, listener bus.MessageListener) error {
 	return l.local.Subscribe(topic, listener)
 }
 
+// SubscribeStream implements Server.
+func (l *local) SubscribeStream(topic bus.Topic, listener bus.StreamListener) error {
+	l.streamMu.Lock()
+	defer l.streamMu.Unlock()
+	if _, ok := l.streamListeners[topic]; ok {
+		return fmt.Errorf("stream listener already registered for topic %s", topic)
+	}
+	l.streamListeners[topic] = listener
+	return nil
+}
+
+// Scatter implements Client. It runs the topic's stream listener on its own goroutine,
+// outside Bus.Publish which would run it synchronously under the bus lock, and hands
+// the emitted Go values to the consumer as they are, without encoding.
+func (l *local) Scatter(ctx context.Context, topic bus.Topic, message bus.Message, opts ScatterOptions) ([]NodeStream, error) {
+	l.streamMu.RLock()
+	listener, ok := l.streamListeners[topic]
+	l.streamMu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("no stream listener for topic %s", topic)
+	}
+	if ce := listener.CheckHealth(); ce != nil {
+		return nil, ce
+	}
+	prefetch := opts.Prefetch
+	if prefetch <= 0 {
+		prefetch = DefaultScanPrefetch
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	ns := &localNodeStream{
+		ch:     make(chan bus.Message, prefetch),
+		done:   make(chan struct{}),
+		closed: make(chan struct{}),
+		cancel: cancel,
+	}
+	go func() {
+		defer close(ns.done)
+		err := runStreamListener(runCtx, listener, message, localSink{ch: ns.ch})
+		if err == nil {
+			err = io.EOF
+		}
+		ns.err = err
+		close(ns.ch)
+	}()
+	return []NodeStream{ns}, nil
+}
+
+// runStreamListener runs the listener and turns a panic into an error. The listener
+// runs on its own goroutine, where an unrecovered panic would end the process; the
+// remote Scan server gets the same protection from its gRPC recovery interceptor.
+func runStreamListener(ctx context.Context, listener bus.StreamListener, message bus.Message, sink bus.Sink) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("stream listener panicked: %v", r)
+		}
+	}()
+	return listener.RevStream(ctx, message, sink)
+}
+
+type localSink struct {
+	ch chan<- bus.Message
+}
+
+func (s localSink) Send(ctx context.Context, chunk bus.Message) error {
+	// A canceled context wins even when the buffer has room.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case s.ch <- chunk:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+type localNodeStream struct {
+	err    error
+	ch     chan bus.Message
+	done   chan struct{}
+	closed chan struct{}
+	cancel context.CancelFunc
+	once   sync.Once
+}
+
+func (n *localNodeStream) Node() string { return "local" }
+
+// Next implements NodeStream.
+func (n *localNodeStream) Next(ctx context.Context) (bus.Message, error) {
+	select {
+	case <-n.closed:
+		return bus.Message{}, ErrStreamClosed
+	default:
+	}
+	select {
+	case m, ok := <-n.ch:
+		if !ok {
+			// err is written before ch is closed, so the close orders this read.
+			return bus.Message{}, n.err
+		}
+		return m, nil
+	case <-ctx.Done():
+		return bus.Message{}, ctx.Err()
+	}
+}
+
+// Close implements NodeStream. It stops the producer and releases the values still queued.
+func (n *localNodeStream) Close() {
+	n.once.Do(func() {
+		close(n.closed)
+		n.cancel()
+		// Draining while the producer winds down unblocks a Send that raced the cancel.
+		for m := range n.ch {
+			releaseChunk(m)
+		}
+		<-n.done
+	})
+}
+
+func releaseChunk(m bus.Message) {
+	if r, ok := m.Data().(interface{ Release() }); ok {
+		r.Release()
+	}
+}
+
 func (l *local) Publish(ctx context.Context, topic bus.Topic, message ...bus.Message) (bus.Future, error) {
 	return l.local.Publish(ctx, topic, message...)
 }
@@ -93,11 +224,11 @@ func (l *local) OnAddOrUpdate(_ schema.Metadata) {
 	panic("unimplemented")
 }
 
-func (l local) Name() string {
+func (l *local) Name() string {
 	return "local-pipeline"
 }
 
-func (l local) NewBatchPublisher(_ time.Duration) BatchPublisher {
+func (l *local) NewBatchPublisher(_ time.Duration) BatchPublisher {
 	return &localBatchPublisher{
 		local: l.local,
 	}

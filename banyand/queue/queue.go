@@ -62,6 +62,10 @@ type Client interface {
 	bus.Publisher
 	bus.Broadcaster
 	route.TableProvider
+	// Scatter opens one Scan stream per node that matches the message's node
+	// selectors, as Broadcast does, and returns the streams without reading them.
+	// The streams live as long as ctx; canceling it ends every stream.
+	Scatter(ctx context.Context, topic bus.Topic, message bus.Message, opts ScatterOptions) ([]NodeStream, error)
 	// NewBatchPublisher creates a batch publisher whose timeout starts when Close seals the batch.
 	NewBatchPublisher(timeout time.Duration) BatchPublisher
 	NewChunkedSyncClient(node string, chunkSize uint32) (ChunkedSyncClient, error)
@@ -93,6 +97,8 @@ type Client interface {
 type Server interface {
 	run.Unit
 	bus.Subscriber
+	// SubscribeStream registers the listener that serves Scan calls for the topic.
+	SubscribeStream(topic bus.Topic, listener bus.StreamListener) error
 	RegisterChunkedSyncHandler(topic bus.Topic, handler ChunkedSyncHandler)
 	GetPort() *uint32
 	SetRouteProviders(providers map[string]route.TableProvider)
@@ -108,6 +114,37 @@ type Server interface {
 	// The standalone local pipeline keeps it for NewExportClient.
 	SetExportServer(srv transferv1.ExportServiceServer)
 }
+
+// ScatterOptions tunes the node streams opened by Client.Scatter. A zero field
+// selects the implementation default.
+type ScatterOptions struct {
+	// Prefetch is the depth of the per-stream buffer of received chunks.
+	Prefetch int
+	// IdleTimeout fails a node stream that delivers neither a chunk nor a heartbeat for this long.
+	IdleTimeout time.Duration
+	// MaxChunkBytes is the cap for one chunk body, forwarded to the data node.
+	MaxChunkBytes uint64
+	// MaxChunkRows is the cap for the rows of one chunk, forwarded to the data node.
+	MaxChunkRows uint32
+}
+
+// NodeStream is one node's chunk sequence. Next returns io.EOF after the last
+// chunk. A transport or remote error is terminal and never io.EOF. Close cancels
+// the node's scan and is safe to call more than once.
+type NodeStream interface {
+	Node() string
+	Next(ctx context.Context) (bus.Message, error)
+	Close()
+}
+
+// DefaultScanPrefetch is the default depth of a node stream's chunk buffer.
+const DefaultScanPrefetch = 2
+
+// ErrStreamClosed is returned by NodeStream.Next after the stream was closed by its owner.
+var ErrStreamClosed = errors.New("node stream closed")
+
+// ErrScanIdleTimeout is the terminal error of a node stream that went silent.
+var ErrScanIdleTimeout = errors.New("scan stream idle timeout")
 
 // BatchPublisher is the interface for publishing data in batch.
 //

@@ -134,6 +134,19 @@ type MessageListener interface {
 	CheckHealth() *common.Error
 }
 
+// Sink receives the chunks a StreamListener emits. Send blocks while the
+// requester applies backpressure and returns ctx.Err() when the requester is gone.
+type Sink interface {
+	Send(ctx context.Context, chunk Message) error
+}
+
+// StreamListener handles one message by emitting zero or more chunks. Returning
+// nil ends the stream cleanly; returning an error ends it with that error.
+type StreamListener interface {
+	CheckHealth() *common.Error
+	RevStream(ctx context.Context, message Message, sink Sink) error
+}
+
 // Subscriber allow subscribing a Topic's messages.
 type Subscriber interface {
 	Subscribe(topic Topic, listener MessageListener) error
