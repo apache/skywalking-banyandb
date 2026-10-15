@@ -4,6 +4,11 @@ Status: **partially implemented.** Step 3 (the local schema source, §5) ships i
 `pkg/bydbql/schema_source.go` and `banyand/liaison/grpc/bydbql_schema_source.go`; the plan IR, the
 plan cache and the remaining steps are not implemented.
 
+**Catalog B follow-up:** the [reusable QL plan design](../measure-ql-core-sql/plan-reuse.md)
+now includes compiled-template caching for repeated parameterized measure queries.
+It revisits §11.4 for the richer Catalog B planner while retaining this document's
+historical measurements and the implemented local-schema foundation.
+
 This document specifies a restructuring of how the liaison turns a BydbQL measure query into an
 executable request:
 

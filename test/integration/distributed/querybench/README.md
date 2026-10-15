@@ -21,7 +21,7 @@ Default trace cardinalities: `1000,10000,100000,1000000,2000000`.
 
 `run-docker.sh` starts one resource-limited container and invokes `orchestrate.sh` inside it. The inner orchestrator:
 
-1. Builds the test binary once into `/tmp/dqb.test`.
+1. Builds the test binary once into `${DQB_REPORT_DIR}/tmp/dqb.test`.
 2. Clears `${DQB_REPORT_DIR}/shards/` and `${DQB_REPORT_DIR}/profiles/` so the merged report reflects only this run.
 3. Iterates the selected matrix and invokes the binary once per combo with `DQB_ENGINE`, `DQB_MODE`, `DQB_SCENARIO`, `DQB_CARDINALITY`, and any trace variant dimensions set. Each invocation:
    - Boots a fresh cluster.
@@ -118,7 +118,7 @@ Reports default to `.omx/bench-reports/distributed-query/`:
 - `distributed-querybench.json` — full per-result detail plus the environment and config view.
 - `distributed-querybench.md` — the results summary table.
 - `shards/*.json` — one per single-shot invocation, the raw evidence the merge pass aggregates.
-- `profiles/<scenario>/<cardinality>/.../<mode>/{cpu,heap}.pprof` — when `DQB_PROFILE=1`. Trace profiles include the variant key in the path. Each pprof file was captured inside a fresh process so the heap snapshot is not polluted by other scenarios or modes.
+- `profiles/<scenario>/<cardinality>/.../<mode>/{cpu,heap}.pprof` — when `DQB_PROFILE=1`. Trace profiles include the variant key in the path. Each scenario/cardinality/mode runs in a fresh process. QLB T01 runs four RPC variants sequentially in that process, so later variant profiles and heap snapshots include earlier cache and heap residency.
 
 ## Direct invocation contract
 
@@ -132,3 +132,25 @@ Anything else is a hard configuration error so the orchestrator contract stays t
 ## In-process cluster note
 
 `startBenchCluster` runs the two data nodes and the liaison inside the same Go process. CPU, RSS, and allocation metrics in each shard are process-level deltas covering all three nodes plus the client. The report's `environment.resource_note` records this so consumers know the metrics are not per-node.
+
+### QLB T01 baseline
+
+`DQB_SCENARIOS=qlb_t01` runs `native`, `native_rebound`, `legacy_ql`, and
+`legacy_ql_rebound` through the real measure/BydbQL RPC clients. Set
+`DQB_ENGINE=measure DQB_QUERY_WORKERS=1 DQB_QUERY_ITERATIONS=1000`.
+The four variants share one cluster and process and execute sequentially; prior
+variants can affect cache and heap residency in later measurements. This is an
+explicit exception to process isolation per variant. The QL variants share query text and change the bound service ID from svc0 to
+svc1. Warmup and sampled timed responses are checked against independently specified fixture values,
+including timestamps, projection names and types; only storage SID/version are
+ignored. Setup, visibility and warmups precede measurement. Each variant receives
+its own CPU/heap profiles and process allocation record. The report lists counters
+not yet exposed by production as unavailable. Timed responses receive a cheap row-count check; sampled responses are retained
+and checked exactly after profiles and allocation snapshots stop. Exact checksum
+validation is excluded from latency, throughput, CPU and allocation intervals.
+Process heap observations include retained sample responses.
+
+Run five isolated repetitions with cardinalities `1024,100000`, 20 warmups,
+profiling enabled, and unique report directories `qlb-t01-r1` through `r5`.
+The merge rejects missing variants or anything other than 1,000 samples per
+variant. Existing `scan_all` and `top_with_filter` controls remain available.

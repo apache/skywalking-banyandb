@@ -149,5 +149,6 @@ var _ = ginkgo.Describe("vec independent verification (standalone)", ginkgo.Orde
 	})
 
 	casesmeasure.RegisterTable("Vec (standalone): scanning measures")
+	casesmeasure.RegisterQLTable("QL measure RPC verification")
 	casestopn.RegisterTable("Vec (standalone): TopN")
 })

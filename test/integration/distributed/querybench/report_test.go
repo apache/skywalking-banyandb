@@ -160,3 +160,12 @@ func TestTraceShardFilenameIncludesVariantKey(t *testing.T) {
 		t.Fatalf("unexpected trace shard filename: got %s, want %s", filepath.Base(shardPath), expectedName)
 	}
 }
+
+func TestScenarioLabelPreservesControls(t *testing.T) {
+	if got := (Result{Scenario: ScenarioScanAll}).scenarioLabel(); got != "scan_all" {
+		t.Fatalf("control label = %q", got)
+	}
+	if got := (Result{Scenario: ScenarioQLBT01, Variant: "native"}).scenarioLabel(); got != "qlb_t01/native" {
+		t.Fatalf("QLB label = %q", got)
+	}
+}

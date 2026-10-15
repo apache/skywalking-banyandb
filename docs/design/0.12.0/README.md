@@ -1,5 +1,7 @@
 # 0.12.0 Design Documents
 
+- [Measure QL Catalog B: core SQL implementation plan](measure-ql-core-sql/README.md)
+  - [Implementation tickets: per-ticket end-to-end tests and benchmarks](measure-ql-core-sql/implementation-tickets.md)
 - [Tag aggregation and time bucketing in the measure query engine](tag-aggregation/README.md)
 - [Self-stored logs](self-stored-logs/README.md)
 - [Time-range pruning in the native inverted index](native-index-time-pruning/README.md)

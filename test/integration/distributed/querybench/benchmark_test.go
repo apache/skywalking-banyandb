@@ -109,6 +109,18 @@ func runMergeShards(t *testing.T, cfg Config) {
 	if len(results) == 0 {
 		t.Fatalf("no shards found in %s/shards/", cfg.ReportDir)
 	}
+	var flattened []Result
+	for _, result := range results {
+		if result.Scenario == ScenarioQLBT01 {
+			if validationErr := validateQLBT01Result(result); validationErr != nil {
+				t.Fatal(validationErr)
+			}
+			flattened = append(flattened, result.Variants...)
+		} else {
+			flattened = append(flattened, result)
+		}
+	}
+	results = flattened
 	sort.Slice(results, func(i, j int) bool {
 		a, b := results[i], results[j]
 		if a.Cardinality != b.Cardinality {
@@ -134,6 +146,9 @@ func runMergeShards(t *testing.T, cfg Config) {
 // against an already-prepared cluster, capturing CPU and heap profiles for
 // the timed phase.
 func runScenarioBenchmark(ctx context.Context, conn *grpc.ClientConn, cfg Config, scenario Scenario, cardinality int, mode string, base time.Time) (Result, error) {
+	if scenario == ScenarioQLBT01 {
+		return runQLBT01Benchmark(ctx, conn, cfg, cardinality, mode, base)
+	}
 	if cfg.Engine == engineTrace {
 		return runTraceScenarioBenchmark(ctx, conn, cfg, scenario, cardinality, mode, base)
 	}

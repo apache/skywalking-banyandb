@@ -66,6 +66,9 @@ type Environment struct {
 
 // Result records one mode/scenario/cardinality benchmark outcome.
 type Result struct {
+	Variants            []Result          `json:"variants,omitempty"`
+	Variant             string            `json:"variant,omitempty"`
+	UnavailableMetrics  []string          `json:"unavailable_metrics,omitempty"`
 	Profiles            map[string]string `json:"profiles,omitempty"`
 	Scenario            Scenario          `json:"scenario"`
 	SampleDataPointText string            `json:"sample_data_point_text,omitempty"`
@@ -78,6 +81,9 @@ type Result struct {
 	Allocations         AllocationStats   `json:"allocations"`
 	Resources           ResourceStats     `json:"resources"`
 	Latency             LatencyStats      `json:"latency"`
+	TimedSamples        int               `json:"timed_samples,omitempty"`
+	ExpectedRows        int               `json:"expected_rows,omitempty"`
+	ExpectedHash        uint64            `json:"expected_hash,omitempty"`
 	PointsEach          int               `json:"points_each"`
 	QPS                 float64           `json:"qps"`
 	FilterSelectivity   float64           `json:"filter_selectivity,omitempty"`
@@ -326,6 +332,13 @@ func renderMarkdown(report Report) string {
 	b.WriteString(fmt.Sprintf("Generated: %s\n\n", report.GeneratedAt.Format(time.RFC3339)))
 	b.WriteString("## Results\n\n")
 	renderPerModeTable(&b, report)
+	for _, result := range report.Results {
+		if result.Variant != "" {
+			fmt.Fprintf(&b, "\n%s/%d/%s: samples=%d, expected rows=%d, checksum=%x; unavailable: %s.\n",
+				result.Scenario, result.Cardinality, result.Variant, result.TimedSamples,
+				result.ExpectedRows, result.ExpectedHash, strings.Join(result.UnavailableMetrics, ", "))
+		}
+	}
 	b.WriteString("\n## Profile artifacts\n\n")
 	for _, result := range report.Results {
 		if len(result.Profiles) == 0 {
@@ -350,7 +363,7 @@ func renderPerModeTable(b *strings.Builder, report Report) {
 		b.WriteString("| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
 		for _, result := range report.Results {
 			b.WriteString(fmt.Sprintf("| %s | %d | %s | %.2f | %.2f | %.2f | %.2f | %d | %d | %.2f | %.2f |\n",
-				result.Scenario, result.Cardinality, result.Mode, result.Latency.P50Ms, result.Latency.P95Ms,
+				result.scenarioLabel(), result.Cardinality, result.Mode, result.Latency.P50Ms, result.Latency.P95Ms,
 				result.Latency.P99Ms, result.QPS, result.ResponseTraces, result.ResponseSpans,
 				result.Allocations.MallocsPerQuery, result.Allocations.AllocBytesPerQuery))
 		}
@@ -360,14 +373,14 @@ func renderPerModeTable(b *strings.Builder, report Report) {
 	b.WriteString("| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
 	for _, result := range report.Results {
 		b.WriteString(fmt.Sprintf("| %s | %d | %s | %.2f | %.2f | %.2f | %.2f | %d | %.2f | %.2f |\n",
-			result.Scenario, result.Cardinality, result.Mode, result.Latency.P50Ms, result.Latency.P95Ms,
+			result.scenarioLabel(), result.Cardinality, result.Mode, result.Latency.P50Ms, result.Latency.P95Ms,
 			result.Latency.P99Ms, result.QPS, result.ResponseRows, result.Allocations.MallocsPerQuery, result.Allocations.AllocBytesPerQuery))
 	}
 }
 
 func (r Result) variantKey() string {
 	if r.Engine != engineTrace {
-		return ""
+		return r.Variant
 	}
 	return fmt.Sprintf("s=%d,dist=%s,sel=%s,k=%d,shard=%d,nodes=%d,bytes=%d",
 		r.SpansPerTrace, r.SpanDist, sanitizeFloat(r.FilterSelectivity), r.TraceIDBatch, r.ShardNum, r.DataNodes, r.SpanBytes)
@@ -405,4 +418,11 @@ func detectContainerID() string {
 		}
 	}
 	return ""
+}
+
+func (r Result) scenarioLabel() string {
+	if r.Variant == "" {
+		return string(r.Scenario)
+	}
+	return string(r.Scenario) + "/" + r.Variant
 }

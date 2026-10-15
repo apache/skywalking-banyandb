@@ -106,6 +106,8 @@ const (
 	ScenarioScanAll Scenario = "scan_all"
 	// ScenarioTopWithFilter benchmarks the measure Top-N-with-filter fixture.
 	ScenarioTopWithFilter Scenario = "top_with_filter"
+	// ScenarioQLBT01 benchmarks native and legacy QL parameter rebinding.
+	ScenarioQLBT01 Scenario = "qlb_t01"
 	// ScenarioTraceByID benchmarks distributed trace-id lookup.
 	ScenarioTraceByID Scenario = "trace_by_id"
 	// ScenarioTraceTagFilter benchmarks distributed ordered trace tag filters.
@@ -238,7 +240,7 @@ func (c Config) Validate() error {
 	switch c.Engine {
 	case engineMeasure:
 		switch c.Scenario {
-		case ScenarioScanAll, ScenarioTopWithFilter:
+		case ScenarioScanAll, ScenarioTopWithFilter, ScenarioQLBT01:
 		default:
 			return fmt.Errorf("%s unsupported for %s=%s: %q", envScenario, envEngine, c.Engine, c.Scenario)
 		}
@@ -256,6 +258,12 @@ func (c Config) Validate() error {
 		if validateErr := c.validateTrace(); validateErr != nil {
 			return validateErr
 		}
+	}
+	if c.Scenario == ScenarioQLBT01 && c.QueryIterations != 1000 {
+		return fmt.Errorf("qlb_t01 requires exactly DQB_QUERY_ITERATIONS=1000 per variant")
+	}
+	if c.Scenario == ScenarioQLBT01 && c.QueryWorkers != 1 {
+		return fmt.Errorf("qlb_t01 requires DQB_QUERY_WORKERS=1")
 	}
 	if c.QueryWorkers <= 0 {
 		return fmt.Errorf("%s must be > 0", envQueryWorkers)

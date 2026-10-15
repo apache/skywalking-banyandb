@@ -30,7 +30,10 @@ cd /work
 REPORT_DIR="${DQB_REPORT_DIR:-/work/.omx/bench-reports/distributed-query}"
 SHARD_DIR="${REPORT_DIR}/shards"
 PROFILE_DIR="${REPORT_DIR}/profiles"
-BINARY="/tmp/dqb.test"
+# Keep compilation and cluster storage on the mounted workspace as well.
+export TMPDIR="${REPORT_DIR}/tmp"
+mkdir -p "${TMPDIR}"
+BINARY="${TMPDIR}/dqb.test"
 
 ENGINE="${DQB_ENGINE:-measure}"
 MATRIX="${DQB_MATRIX:-A}"
@@ -43,6 +46,13 @@ else
   SCENARIOS="${DQB_SCENARIOS:-scan_all,top_with_filter}"
 fi
 MODES="${DQB_MODES:-vec}"
+# qlb_t01 runs its four named RPC variants within each isolated combo.
+if [[ ",${SCENARIOS}," == *",qlb_t01,"* ]]; then
+  if [[ "${ENGINE}" != "measure" || "${DQB_QUERY_WORKERS:-4}" != "1" || "${DQB_QUERY_ITERATIONS:-50}" != "1000" ]]; then
+    echo "qlb_t01 requires measure, DQB_QUERY_WORKERS=1 and DQB_QUERY_ITERATIONS=1000" >&2
+    exit 2
+  fi
+fi
 
 echo "[orchestrate] report_dir=${REPORT_DIR}"
 echo "[orchestrate] engine=${ENGINE}"
