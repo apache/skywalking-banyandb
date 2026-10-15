@@ -109,7 +109,7 @@ func (l *local) Scatter(ctx context.Context, topic bus.Topic, message bus.Messag
 	if prefetch <= 0 {
 		prefetch = DefaultScanPrefetch
 	}
-	runCtx, cancel := context.WithCancel(ctx)
+	runCtx, cancel := context.WithCancel(bus.WithChunkLimits(ctx, bus.ChunkLimits{MaxBytes: opts.MaxChunkBytes, MaxRows: opts.MaxChunkRows}))
 	ns := &localNodeStream{
 		ch:     make(chan bus.Message, prefetch),
 		done:   make(chan struct{}),

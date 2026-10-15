@@ -127,6 +127,8 @@ func (s *server) Scan(req *clusterv1.ScanRequest, stream clusterv1.Service_ScanS
 	start := time.Now()
 	queryCtx, queryScope := query.NewTransportScope(stream.Context())
 	defer queryScope.Close()
+	queryCtx = bus.WithChunkLimits(queryCtx, bus.ChunkLimits{MaxBytes: req.GetMaxChunkBytes(), MaxRows: req.GetMaxChunkRows()})
+	data.IncrScanStarted()
 	if s.metrics != nil {
 		s.metrics.totalStarted.Inc(1, identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier)
 	}
@@ -199,6 +201,7 @@ func (k *scanSink) Send(ctx context.Context, chunk bus.Message) error {
 		return sendErr
 	}
 	k.lastSent = time.Now()
+	data.IncrScanChunk()
 	return nil
 }
 

@@ -162,6 +162,55 @@ type Broadcaster interface {
 	Broadcast(timeout time.Duration, topic Topic, message Message) ([]Future, error)
 }
 
+// ScatterOptions tunes the node streams opened by Scatterer.Scatter. A zero field
+// selects the implementation default.
+type ScatterOptions struct {
+	// Prefetch is the depth of the per-stream buffer of received chunks.
+	Prefetch int
+	// IdleTimeout fails a node stream that delivers neither a chunk nor a heartbeat for this long.
+	IdleTimeout time.Duration
+	// MaxChunkBytes is the cap for one chunk body, forwarded to the data node.
+	MaxChunkBytes uint64
+	// MaxChunkRows is the cap for the rows of one chunk, forwarded to the data node.
+	MaxChunkRows uint32
+}
+
+// NodeStream is one node's chunk sequence. Next returns io.EOF after the last
+// chunk. A transport or remote error is terminal and never io.EOF. Close cancels
+// the node's scan and is safe to call more than once.
+type NodeStream interface {
+	Node() string
+	Next(ctx context.Context) (Message, error)
+	Close()
+}
+
+// Scatterer opens one server-streaming scan per node that matches the message's node
+// selectors and returns the streams without reading them. The streams live as long as
+// ctx; canceling it ends every stream.
+type Scatterer interface {
+	Scatter(ctx context.Context, topic Topic, message Message, opts ScatterOptions) ([]NodeStream, error)
+}
+
+// ChunkLimits are the caps a requester asks a StreamListener to apply to one chunk.
+// A zero field means the listener's default.
+type ChunkLimits struct {
+	MaxBytes uint64
+	MaxRows  uint32
+}
+
+type chunkLimitsKey struct{}
+
+// WithChunkLimits returns a context that carries the requester's chunk caps to a StreamListener.
+func WithChunkLimits(ctx context.Context, limits ChunkLimits) context.Context {
+	return context.WithValue(ctx, chunkLimitsKey{}, limits)
+}
+
+// ChunkLimitsFrom returns the chunk caps the requester sent, or the zero value.
+func ChunkLimitsFrom(ctx context.Context) ChunkLimits {
+	limits, _ := ctx.Value(chunkLimitsKey{}).(ChunkLimits)
+	return limits
+}
+
 // UnImplementedHealthyListener is a listener that is not implemented. But it is healthy.
 type UnImplementedHealthyListener struct{}
 

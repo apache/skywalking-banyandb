@@ -292,3 +292,15 @@ func TestScanUnhealthyListenerRejectsTheScan(t *testing.T) {
 	assert.Contains(t, err.Error(), "not ready")
 	assert.False(t, ran.Load())
 }
+
+func TestScanForwardsChunkLimitsToTheListener(t *testing.T) {
+	var got atomic.Value
+	setup := startScanNode(t, "scanlimits", "1s", &scanListener{fn: func(ctx context.Context, _ bus.Message, _ bus.Sink) error {
+		got.Store(bus.ChunkLimitsFrom(ctx))
+		return nil
+	}})
+	ns := setup.scatter(context.Background(), t, queue.ScatterOptions{MaxChunkRows: 3, MaxChunkBytes: 1024})
+	_, err := ns.Next(context.Background())
+	require.ErrorIs(t, err, io.EOF)
+	assert.Equal(t, bus.ChunkLimits{MaxRows: 3, MaxBytes: 1024}, got.Load())
+}

@@ -248,3 +248,15 @@ func TestLocalScatterListenerPanicBecomesAnError(t *testing.T) {
 	assert.NotErrorIs(t, err, io.EOF)
 	assert.Contains(t, err.Error(), "panicked")
 }
+
+func TestLocalScatterForwardsChunkLimits(t *testing.T) {
+	var got atomic.Value
+	ns := scatterLocal(context.Background(), t, func(ctx context.Context, _ bus.Message, _ bus.Sink) error {
+		got.Store(bus.ChunkLimitsFrom(ctx))
+		return nil
+	}, ScatterOptions{MaxChunkRows: 7, MaxChunkBytes: 4096})
+	defer ns.Close()
+	_, err := ns.Next(context.Background())
+	require.ErrorIs(t, err, io.EOF)
+	assert.Equal(t, bus.ChunkLimits{MaxRows: 7, MaxBytes: 4096}, got.Load())
+}

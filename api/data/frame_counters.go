@@ -88,3 +88,20 @@ func IncrFrameEncoded(t bus.Topic) {
 	default:
 	}
 }
+
+var (
+	scanStarted atomic.Int64
+	scanChunks  atomic.Int64
+)
+
+// ScanStartedCount returns how many Scan streams this process has served as a data node.
+func ScanStartedCount() int64 { return scanStarted.Load() }
+
+// ScanChunkCount returns how many non-heartbeat chunks this process has sent on Scan streams.
+func ScanChunkCount() int64 { return scanChunks.Load() }
+
+// IncrScanStarted records that a Scan stream began.
+func IncrScanStarted() { scanStarted.Add(1) }
+
+// IncrScanChunk records that a Scan chunk carrying data was sent.
+func IncrScanChunk() { scanChunks.Add(1) }
