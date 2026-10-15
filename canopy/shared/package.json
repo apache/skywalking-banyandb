@@ -9,6 +9,9 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./monitor": {
+      "types": "./src/monitor.d.ts"
     }
   },
   "scripts": {

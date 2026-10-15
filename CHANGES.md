@@ -26,6 +26,8 @@ Release Notes.
 - Improve Canopy text readability: raise the faint and dim text contrast, lift every font size to at least 12px, use heavier sub-navigation weights, stop forcing antialiased font smoothing, and load IBM Plex Mono 600 and Sans 700. The query builder rail is wider by default (400px) to fit the larger text.
 - `databasev1.Node` now reports its supported file format versions and IANA time zone name.
 
+- Add a Canopy Monitor page for cluster routing and storage observations, with admin-only access by default, configurable readonly access, bounded refresh, and independent upstream failure states.
+
 ### Bug Fixes
 
 - Fix stream queries silently dropping the later blocks of a series: the block filter's verdict is per-block, but `findBlock` advanced a whole series on skip.

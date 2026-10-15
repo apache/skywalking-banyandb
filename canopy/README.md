@@ -63,3 +63,35 @@ See `.env.example` for all env vars.
 - `CANOPY_USERS` — **required** in production — path to JSON/YAML user list
 - `CANOPY_DEV_NOAUTH=true` — dev only, seeds admin/admin; fails boot in NODE_ENV=production
 - `BANYANDB_UPSTREAM_USERNAME/PASSWORD` — attach-if-configured service credential for every upstream request
+
+## Monitor
+
+The **Monitor** sidebar entry opens cluster routing and storage observations. It reads
+`/api/v1/cluster/state` from `BANYANDB_TARGET` and Prometheus `/metrics` from
+`MONITOR_TARGET` through the authenticated BFF. Administrators can view the page;
+set `CANOPY_MONITOR_ALLOW_READONLY=true` to also permit readonly accounts.
+
+The page refreshes every 10 seconds while visible. Set
+`CANOPY_MONITOR_REFRESH_INTERVAL_MS` to an integer from 5000 to 300000 to change
+the interval. Invalid values stop startup with a configuration error. Polling stops
+when the page is hidden or closed; **Refresh** requests a new observation manually.
+
+For a cluster-wide metrics view, point `MONITOR_TARGET` at the
+[FODC proxy](../docs/operation/fodc/overview.md), which adds per-node `pod_name`
+and `container_name` labels. A direct BanyanDB metrics endpoint reports only that
+target, not the whole cluster. Unlabeled samples are identified as the configured
+target. Disk paths may share one physical filesystem: their capacities must not be
+summed to estimate fleet capacity.
+
+Cluster states describe routing membership, not a separate health probe. API and
+file-format versions are displayed when the node reports them; they are not the
+application release version. Uptime is shown when the metrics source reports its
+`banyandb_system_up_time` gauge; it is not inferred from creation timestamps.
+A standalone server can report no cluster routes.
+An unavailable source is shown independently, and a failed refresh marks the
+last observation as stale. Missing disk values are shown as unavailable, not zero.
+
+Query, event, and trace pipeline sections are hidden by default. Setting
+`CANOPY_MONITOR_EXPERIMENTAL=true` shows placeholders only; these sections do
+not yet collect data. See the [Monitor design](docs/monitor-design.md) for the
+data contract, limits, and verification commands.

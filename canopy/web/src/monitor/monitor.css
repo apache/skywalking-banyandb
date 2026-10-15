@@ -1,0 +1,28 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more contributor
+ * license agreements. See the NOTICE file distributed with this work for additional
+ * information regarding copyright ownership. The ASF licenses this file to You under
+ * the Apache License, Version 2.0 (the "License"); you may not use this file except in
+ * compliance with the License. You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software distributed
+ * under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+ * CONDITIONS OF ANY KIND, either express or implied. See the License for the specific
+ * language governing permissions and limitations under the License.
+ */
+.monitor-section { margin: 24px 0; padding: 20px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
+.monitor-section h2 { margin: 0 0 12px; font-size: 18px; }
+.monitor-section h3 { margin: 20px 0 8px; font-size: 15px; }
+.monitor-table-wrap { overflow-x: auto; margin-top: 16px; }
+.monitor-table { border-collapse: collapse; width: 100%; font-size: var(--fs-13); text-align: left; }
+.monitor-cluster-table { min-width: 900px; }
+.monitor-table th, .monitor-table td { padding: 12px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.monitor-table thead th { color: var(--text-dim); font-weight: 500; }
+.monitor-table tbody th { font-weight: 500; }
+.monitor-table code { font-family: var(--mono); }
+.monitor-caption { text-align: left; color: var(--text-dim); padding-bottom: 8px; }
+.monitor-notice { padding: 16px; border: 1px solid var(--danger); border-radius: 8px; }
+.monitor-experimental { color: var(--text-dim); font-size: var(--fs-12); font-weight: 400; }
+@media (max-width: 700px) { .monitor-page { padding: 24px 16px; } .monitor-section { padding: 12px; } }

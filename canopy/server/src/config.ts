@@ -28,6 +28,11 @@ export interface CanopyUser {
 }
 
 export interface Config {
+  readonly monitor?: {
+    readonly allowReadonly: boolean;
+    readonly refreshIntervalMs: number;
+    readonly experimentalSections: boolean;
+  };
   readonly port: number;
   readonly sessionSecret: string;
   readonly banyandbTarget: string;
@@ -111,7 +116,25 @@ export function loadConfig(): Config {
   const upstreamPassword = resolveUpstreamPassword();
   const { basePath, baseHref } = normalizeBasePath(process.env.CANOPY_BASE_PATH);
 
+  const monitorBoolean = (name: string): boolean => {
+    const value = process.env[name];
+    if (value !== undefined && value !== 'true' && value !== 'false') {
+      throw new Error(`${name} must be true or false`);
+    }
+    return value === 'true';
+  };
+  const refreshValue = process.env.CANOPY_MONITOR_REFRESH_INTERVAL_MS ?? '10000';
+  const refreshIntervalMs = Number(refreshValue);
+  if (!/^\d+$/.test(refreshValue) || !Number.isInteger(refreshIntervalMs) || refreshIntervalMs < 5000 || refreshIntervalMs > 300000) {
+    throw new Error('CANOPY_MONITOR_REFRESH_INTERVAL_MS must be an integer between 5000 and 300000');
+  }
+
   return {
+    monitor: {
+      allowReadonly: monitorBoolean('CANOPY_MONITOR_ALLOW_READONLY'),
+      refreshIntervalMs,
+      experimentalSections: monitorBoolean('CANOPY_MONITOR_EXPERIMENTAL'),
+    },
     port: parseInt(process.env.PORT || '4000', 10),
     sessionSecret,
     banyandbTarget: process.env.BANYANDB_TARGET || 'http://127.0.0.1:17913',
