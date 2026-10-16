@@ -190,9 +190,10 @@ func buildLayer3Request(m *Measure, tv TestVector) *measurev1.QueryRequest {
 	}
 
 	// Order
-	if tv["order"] == "asc" {
+	switch tv["order"] {
+	case "asc":
 		req.OrderBy = &modelv1.QueryOrder{Sort: modelv1.Sort_SORT_ASC}
-	} else if tv["order"] == "desc" {
+	case "desc":
 		req.OrderBy = &modelv1.QueryOrder{Sort: modelv1.Sort_SORT_DESC}
 	}
 

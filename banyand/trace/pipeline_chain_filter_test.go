@@ -154,16 +154,17 @@ func setUpWithPipelineFlags(t *testing.T, extraFlags ...string) (*filterTestServ
 	)
 	setupFlags = append(setupFlags, extraFlags...)
 	moduleDeferFn := test.SetupModules(setupFlags, pipeline, metadataService, preloadSvc, traceService)
-	return &filterTestServices{
-			trace:           traceService,
-			metadataService: metadataService,
-			pipeline:        pipeline,
-			rootPath:        rootPath,
-		}, func() {
-			moduleDeferFn()
-			metaDeferFn()
-			rootDeferFn()
-		}
+	filterSvcs := &filterTestServices{
+		trace:           traceService,
+		metadataService: metadataService,
+		pipeline:        pipeline,
+		rootPath:        rootPath,
+	}
+	return filterSvcs, func() {
+		moduleDeferFn()
+		metaDeferFn()
+		rootDeferFn()
+	}
 }
 
 func setupFilterTestGroup(t *testing.T, svcs *filterTestServices, groupName, traceName string) {

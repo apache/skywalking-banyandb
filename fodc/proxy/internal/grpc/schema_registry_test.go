@@ -41,11 +41,15 @@ func (m *mockSchemaRegistryServer) Send(resp *fodcv1.StreamSchemaRegistryRespons
 }
 func (m *mockSchemaRegistryServer) Recv() (*fodcv1.StreamSchemaRegistryRequest, error) { select {} }
 func (m *mockSchemaRegistryServer) Context() context.Context                           { return m.ctx }
-func (m *mockSchemaRegistryServer) SendMsg(_ interface{}) error                        { return nil }
-func (m *mockSchemaRegistryServer) RecvMsg(_ interface{}) error                        { return nil }
-func (m *mockSchemaRegistryServer) SetHeader(_ metadata.MD) error                      { return nil }
-func (m *mockSchemaRegistryServer) SendHeader(_ metadata.MD) error                     { return nil }
-func (m *mockSchemaRegistryServer) SetTrailer(_ metadata.MD)                           {}
+
+func (m *mockSchemaRegistryServer) SendMsg(_ interface{}) error { return nil }
+
+func (m *mockSchemaRegistryServer) RecvMsg(_ interface{}) error { return nil }
+
+func (m *mockSchemaRegistryServer) SetHeader(_ metadata.MD) error { return nil }
+
+func (m *mockSchemaRegistryServer) SendHeader(_ metadata.MD) error { return nil }
+func (m *mockSchemaRegistryServer) SetTrailer(_ metadata.MD)       {}
 
 func objFP(kind, name string, fp uint64) *fodcv1.SchemaObjectFingerprint {
 	return &fodcv1.SchemaObjectFingerprint{Kind: kind, Name: name, Fingerprint: fp}
