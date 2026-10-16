@@ -1,6 +1,10 @@
 # Measure QL Catalog B: Core SQL Implementation Plan
 
-Status: **verification infrastructure implemented; 11 capability tickets planned.**
+Status: **T02 shared batch execution and T03 typed raw queries implemented;
+nine capability tickets remain.** T03's generated E2E cases, resource probes and
+five-run capability benchmark pass. An additional legacy/native comparison was
+stopped with partial results and no gate verdict. See [T03 verification](t03-verification.md).
+T02's previously inconclusive performance acceptance remains recorded separately.
 The former T01 work and its [verification record](t01-verification.md) now support
 the first execution ticket, T02. Its real RPC tests and benchmark baseline remain valid.
 
@@ -205,9 +209,11 @@ existing TimeRange. Capture now once across all branches and do not cache resolv
 clock values. Support fixed intervals; calendar/timezone functions belong to C.
 Intersect a legacy TIME range with a new WHERE time predicate when both appear.
 
-Native TimeRange is half-open. Implement strict/inclusive boundaries on the stored
-millisecond lattice with checked arithmetic: equality is a one-millisecond interval;
-`>` advances a representable bound; `<=` advances the exclusive upper endpoint.
+Native TimeRange is inclusive at both endpoints. Keep the typed planner's intervals
+half-open and convert the exclusive upper endpoint to the final included millisecond
+when lowering to the native request. Implement strict/inclusive boundaries on the
+stored millisecond lattice with checked arithmetic: equality is a one-millisecond
+interval; `>` advances a representable bound; `<=` advances the internal exclusive upper endpoint.
 Use correct ceiling/floor rules for sub-millisecond literals. Contradictions produce
 empty input locally. Test storage-domain extremes and reject unrepresentable ranges;
 do not silently apply legacy truncation or invent an implicit upper bound of now.

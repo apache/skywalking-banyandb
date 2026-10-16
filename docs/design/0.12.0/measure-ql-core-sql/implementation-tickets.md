@@ -313,12 +313,18 @@ exact time predicates versus equivalent legacy TIME, and residual OR versus its
 complete-scan reference. Vary time selectivity and changed bound ranges while
 retaining text. Record RPC latency, allocations, copied bytes and scanned rows.
 G3: no per-row name/type resolution; metadata-only aliases copy zero value bytes;
-one clock capture per request; zero scan calls for Empty/LIMIT 0 and one native
-leaf otherwise. Exact time queries retain their native pruning, with G1/G2.
+one clock capture per request; zero scan calls for Empty/LIMIT 0 and one logical
+native scan otherwise (one storage leaf call per data node). Exact time queries
+retain their native pruning, with G1/G2.
 
 **Checks/readiness:** E(T03), P(T03); focused `./pkg/bydbql`, `./pkg/query/ql`,
-`./banyand/liaison/grpc`. Blocked by T02. Alias mapping, time boundaries, ownership
-and final pagination are one raw-query contract; none is a separate ticket.
+`./banyand/liaison/grpc`. Builds on T02's shared execution implementation. Alias
+mapping, time boundaries, ownership and final pagination are one raw-query
+contract; none is a separate ticket. The implementation, 142 generated cases per
+topology, five-run capability benchmark and resource proofs are recorded in
+[T03 verification](t03-verification.md). An additional compatibility comparison
+was stopped with partial results and no gate verdict. This does not change T02's
+previously recorded gate outcome.
 
 ### T05 — Reuse compiled plans safely under concurrent OAP traffic
 

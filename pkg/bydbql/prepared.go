@@ -261,7 +261,11 @@ func (p *preparer) walkPredicate(pred *GrammarPredicate) {
 		p.walkOrExpr(pred.Paren)
 	case pred.Binary != nil && pred.Binary.Tail != nil:
 		if compare := pred.Binary.Tail.Compare; compare != nil && compare.Value != nil && compare.Value.Param {
-			compare.Value.ParamIndex = p.add(phScalar, 0)
+			kind := phScalar
+			if isBuiltinTime(pred.Binary.Identifier) {
+				kind = phTime
+			}
+			compare.Value.ParamIndex = p.add(kind, 0)
 		}
 		if match := pred.Binary.Tail.Match; match != nil && match.Values != nil {
 			p.walkValueList(match.Values.Single, match.Values.Array)

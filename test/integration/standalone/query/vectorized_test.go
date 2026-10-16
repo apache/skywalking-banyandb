@@ -66,7 +66,7 @@ import (
 // the original cluster. The integration suite remains a release-candidate
 // gate; the unit-level differential tests in pkg/query/vectorized/measure
 // gate every PR.
-var _ = ginkgo.Describe("vec independent verification (standalone)", ginkgo.Ordered, func() {
+var _ = ginkgo.Describe("vec independent verification (standalone)", ginkgo.Ordered, ginkgo.ContinueOnFailure, func() {
 	var (
 		vectorizedConn *grpc.ClientConn
 		stopFn         func()
@@ -151,5 +151,6 @@ var _ = ginkgo.Describe("vec independent verification (standalone)", ginkgo.Orde
 	casesmeasure.RegisterTable("Vec (standalone): scanning measures")
 	casesmeasure.RegisterQLTable("QL measure RPC verification")
 	casesmeasure.RegisterQLBatchTable("QL shared batch execution")
+	casesmeasure.RegisterGeneratedQLTable("Generated QL-only measure RPC verification")
 	casestopn.RegisterTable("Vec (standalone): TopN")
 })

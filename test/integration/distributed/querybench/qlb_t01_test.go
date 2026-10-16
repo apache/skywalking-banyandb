@@ -69,9 +69,6 @@ func runQLBT01Benchmark(ctx context.Context, conn *grpc.ClientConn, cfg Config, 
 	if requestErr != nil {
 		return result, requestErr
 	}
-	if visibilityErr := waitForScenarioVisibility(ctx, conn, native, ScenarioScanAll, cardinality); visibilityErr != nil {
-		return result, visibilityErr
-	}
 	native.Criteria = &modelv1.Criteria{Exp: &modelv1.Criteria_Condition{Condition: &modelv1.Condition{
 		Name: benchTagID, Op: modelv1.Condition_BINARY_OP_EQ, Value: strTagValue("svc0"),
 	}}}
@@ -86,6 +83,9 @@ func runQLBT01Benchmark(ctx context.Context, conn *grpc.ClientConn, cfg Config, 
 	}
 	nativeClient := measurev1.NewMeasureServiceClient(conn)
 	qlClient := bydbqlv1.NewBydbQLServiceClient(conn)
+	if visibilityErr := waitForQLBT01Visibility(ctx, qlClient, ql, cardinality, base); visibilityErr != nil {
+		return result, visibilityErr
+	}
 	for _, variant := range []string{"native", "native_rebound", "legacy_ql", "legacy_ql_rebound"} {
 		service := 0
 		if variant == "legacy_ql_rebound" || variant == "native_rebound" {
@@ -179,6 +179,40 @@ func runQLBT01Benchmark(ctx context.Context, conn *grpc.ClientConn, cfg Config, 
 		})
 	}
 	return result, nil
+}
+
+// Readiness verifies the measured service slice, avoiding an unrelated full-table
+// response that can exceed the prerequisite's enforced query budget.
+func waitForQLBT01Visibility(ctx context.Context, client bydbqlv1.BydbQLServiceClient, request *bydbqlv1.QueryRequest,
+	cardinality int, base time.Time,
+) error {
+	expected := qlbT01Expected(cardinality, 0, base)
+	expectedHash := qlbT01Hash(expected)
+	deadline := time.NewTimer(2 * time.Minute)
+	defer deadline.Stop()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	var lastErr error
+	for {
+		queryCtx, cancel := context.WithTimeout(ctx, queryTimeout(cardinality))
+		response, queryErr := client.Query(queryCtx, request)
+		cancel()
+		if queryErr == nil && response.GetMeasureResult() != nil && len(response.GetMeasureResult().DataPoints) == len(expected.DataPoints) &&
+			qlbT01Hash(response.GetMeasureResult()) == expectedHash {
+			return nil
+		}
+		lastErr = queryErr
+		if lastErr == nil {
+			lastErr = fmt.Errorf("expected %d visible rows, got %d", len(expected.DataPoints), len(response.GetMeasureResult().GetDataPoints()))
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("T01 QL fixture did not become visible: %w", lastErr)
+		case <-ticker.C:
+		}
+	}
 }
 
 func validateQLBT01Result(result Result) error {

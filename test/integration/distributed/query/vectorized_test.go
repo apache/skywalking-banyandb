@@ -69,7 +69,7 @@ import (
 // hidden-criteria-tag / trace queries that don't implement RawFrameSource
 // today) surfaces here as a hard error rather than a silent retry on
 // row — that is the loud-failure signal the runbook depends on.
-var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ordered, func() {
+var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ordered, ginkgo.ContinueOnFailure, func() {
 	var (
 		vectorizedConn    *grpc.ClientConn
 		dataNodeAddrs     []string
@@ -205,5 +205,6 @@ var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ord
 	}
 	casesmeasure.RegisterQLTable("QL measure RPC verification", observeQLFixture)
 	casesmeasure.RegisterQLBatchTable("QL shared batch execution", observeQLFixture)
+	casesmeasure.RegisterGeneratedQLTable("Generated QL-only measure RPC verification")
 	casestopn.RegisterTable("Vec (distributed): TopN")
 })

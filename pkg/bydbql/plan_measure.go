@@ -1,0 +1,305 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package bydbql
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"math"
+	"slices"
+	"strings"
+	"time"
+
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/ql"
+)
+
+// ErrInvalidMeasureQuery identifies invalid typed measure syntax or bound values.
+var ErrInvalidMeasureQuery = errors.New("invalid measure query")
+
+// MeasureTemplate contains immutable, schema-resolved measure planning metadata.
+// Each Bind creates independent requests and operators; no parameter or clock value is retained.
+type MeasureTemplate struct {
+	statement  *PreparedStatement
+	request    *measurev1.QueryRequest
+	predicate  *measurePredicate
+	legacyTags map[string]*tagSpecWithFamily
+	slots      []ql.Slot
+	extended   bool
+}
+
+// MeasureExecution is one fresh binding of a measure template.
+// A nil Plan preserves the legacy native execution and output contract.
+type MeasureExecution struct {
+	Request *measurev1.QueryRequest
+	Plan    *ql.RawPlan
+}
+
+func invalidMeasure(err error) error {
+	return fmt.Errorf("%w: %w", ErrInvalidMeasureQuery, err)
+}
+
+// CompileMeasure resolves a prepared measure query against a read-only schema snapshot.
+// Non-measure queries return a nil template and retain their existing dispatch.
+func (t *Transformer) CompileMeasure(ctx context.Context, statement *PreparedStatement) (*MeasureTemplate, error) {
+	if statement == nil || statement.template == nil {
+		return nil, invalidMeasure(errors.New("nil prepared statement"))
+	}
+	grammar := statement.template
+	if grammar.Select == nil || !strings.EqualFold(grammar.Select.From.ResourceType, "MEASURE") {
+		return nil, nil
+	}
+	selectStmt := grammar.Select
+	extended := requiresMeasurePlan(selectStmt)
+	if err := validateGrammarCounts(grammar); err != nil {
+		if extended {
+			return nil, invalidMeasure(err)
+		}
+		return nil, err
+	}
+	run := &transformRun{Transformer: t}
+	groups, name := selectStmt.From.In.Groups, selectStmt.From.ResourceName
+	if err := run.validateGroupOrResourceName(groups, name); err != nil {
+		if extended {
+			return nil, invalidMeasure(err)
+		}
+		return nil, err
+	}
+	snapshots := make(map[string]*databasev1.Measure, len(groups))
+	for _, group := range groups {
+		schema, err := t.getMeasure(ctx, &commonv1.Metadata{Name: name, Group: group})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get measure %s/%s: %w", group, name, err)
+		}
+		if schema == nil {
+			return nil, fmt.Errorf("measure %s/%s has no schema", group, name)
+		}
+		snapshots[group] = proto.Clone(schema).(*databasev1.Measure)
+	}
+	template := &MeasureTemplate{statement: statement, extended: extended}
+	if template.extended {
+		if err := template.compileRaw(snapshots); err != nil {
+			return nil, invalidMeasure(err)
+		}
+	} else {
+		if err := template.compileLegacy(run, snapshots); err != nil {
+			return nil, err
+		}
+	}
+	return template, nil
+}
+
+func (m *MeasureTemplate) compileLegacy(run *transformRun, schemas map[string]*databasev1.Measure) error {
+	stmt := m.statement.template.Select
+	projection, fields, tags, allFields, err := run.convertTagAndField(stmt.From.In.Groups, stmt.From.ResourceName,
+		func(group, _ string) ([]*databasev1.TagFamilySpec, []*databasev1.FieldSpec, error) {
+			schema := schemas[group]
+			return schema.TagFamilies, schema.Fields, nil
+		}, stmt.Projection)
+	if err != nil {
+		return err
+	}
+	agg, err := run.convertAggregation(stmt.Projection, tags, allFields)
+	if err != nil {
+		return err
+	}
+	groupBy, err := run.convertGroupBy(stmt.GroupBy, projection, fields)
+	if err != nil {
+		return err
+	}
+	top, err := run.convertTOP(stmt.Projection, allFields, agg)
+	if err != nil {
+		return err
+	}
+	m.request = baseMeasureRequest(stmt)
+	m.request.TagProjection = projection
+	if len(fields) > 0 {
+		m.request.FieldProjection = &measurev1.QueryRequest_FieldProjection{Names: fields}
+	}
+	m.request.Agg, m.request.GroupBy, m.request.Top = agg, groupBy, top
+	m.request.OrderBy = run.convertSelectOrderBy(stmt.OrderBy)
+	m.legacyTags = tags
+	return nil
+}
+
+func baseMeasureRequest(stmt *GrammarSelectStatement) *measurev1.QueryRequest {
+	request := &measurev1.QueryRequest{Name: stmt.From.ResourceName, Groups: slices.Clone(stmt.From.In.Groups), Trace: stmt.WithQueryTrace != nil}
+	if stmt.From.Stage != nil {
+		request.Stages = slices.Clone(stmt.From.Stage.Stages)
+	}
+	return request
+}
+
+// Bind instantiates a template with fresh parameter values and a single execution clock.
+func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecution, error) {
+	if m == nil || bound == nil || bound.stmt != m.statement || len(bound.values) != len(m.statement.specs) {
+		return nil, invalidMeasure(errors.New("bound query does not belong to this measure template"))
+	}
+	run := &transformRun{bound: bound.values}
+	request := proto.Clone(m.request).(*measurev1.QueryRequest)
+	stmt := m.statement.template.Select
+	legacyRange, err := run.convertTimeRange(now, stmt.Time)
+	if err != nil {
+		if m.extended {
+			return nil, invalidMeasure(err)
+		}
+		return nil, err
+	}
+	request.TimeRange = legacyRange
+	if !m.extended {
+		request.Criteria, err = run.convertSelectCriteria(stmt.Where, m.legacyTags)
+		if err != nil {
+			return nil, err
+		}
+		if stmt.Limit != nil {
+			request.Limit = uint32(run.resolveCount(stmt.Limit.Value, stmt.Limit.Param, stmt.Limit.ParamIndex))
+		}
+		if stmt.Offset != nil {
+			request.Offset = uint32(run.resolveCount(stmt.Offset.Value, stmt.Offset.Param, stmt.Offset.ParamIndex))
+		}
+		if stmt.Projection.TopN != nil {
+			top := stmt.Projection.TopN
+			request.Top.Number = int32(run.resolveCount(top.N, top.NParam, top.NParamIndex))
+		}
+		return &MeasureExecution{Request: request}, nil
+	}
+	plan := &ql.RawPlan{Slots: slices.Clone(m.slots)}
+	if stmt.Limit != nil {
+		limit := uint32(run.resolveCount(stmt.Limit.Value, stmt.Limit.Param, stmt.Limit.ParamIndex))
+		plan.Limit = &limit
+		plan.Empty = limit == 0
+	}
+	if stmt.Offset != nil {
+		plan.Offset = uint32(run.resolveCount(stmt.Offset.Value, stmt.Offset.Param, stmt.Offset.ParamIndex))
+	}
+	ranges := allMeasureTime()
+	if m.predicate != nil {
+		ranges, request.Criteria, err = m.predicate.bind(run, now)
+		if err != nil {
+			return nil, invalidMeasure(err)
+		}
+	}
+	if legacyRange != nil {
+		legacyIntervals, rangeErr := nativeTimeIntervals(legacyRange)
+		if rangeErr != nil {
+			return nil, invalidMeasure(rangeErr)
+		}
+		ranges = intersectTimeRanges(ranges, legacyIntervals)
+	}
+	plan.Ranges = ranges
+	plan.Residual = len(ranges) > 1
+	plan.Empty = plan.Empty || len(ranges) == 0
+	// Native measure scan ranges are inclusive. Keep the SQL lattice half-open
+	// internally and adapt only at this boundary; legacy native semantics stay intact.
+	if len(ranges) == 0 {
+		request.TimeRange = &modelv1.TimeRange{Begin: timestamppb.New(time.UnixMilli(0)), End: timestamppb.New(time.UnixMilli(0))}
+	} else {
+		request.TimeRange = &modelv1.TimeRange{Begin: timestamppb.New(time.UnixMilli(ranges[0].Begin)), End: timestamppb.New(time.UnixMilli(ranges[len(ranges)-1].End - 1))}
+	}
+	// Final SQL pagination belongs after the complete native scan and residual.
+	request.Offset = 0
+	request.Limit = math.MaxUint32
+	return &MeasureExecution{Request: request, Plan: plan}, nil
+}
+
+func requiresMeasurePlan(stmt *GrammarSelectStatement) bool {
+	if stmt.From.Shorthand != nil {
+		return true
+	}
+	if stmt.Projection != nil {
+		for _, column := range stmt.Projection.Columns {
+			if column.Alias != nil || (column.TypeSpec == nil && isBuiltinTime(column.Identifier)) {
+				return true
+			}
+		}
+		if stmt.Projection.TopN != nil {
+			for _, column := range stmt.Projection.TopN.OtherColumns {
+				if column.Alias != nil {
+					return true
+				}
+			}
+		}
+	}
+	return whereHasTime(stmt.Where)
+}
+
+func whereHasTime(where *GrammarSelectWhereClause) bool {
+	if where == nil {
+		return false
+	}
+	var orTime func(*GrammarOrExpr) bool
+	var andTime func(*GrammarAndExpr) bool
+	predTime := func(pred *GrammarPredicate) bool {
+		if pred == nil {
+			return false
+		}
+		if pred.Paren != nil {
+			return orTime(pred.Paren)
+		}
+		if pred.Binary != nil {
+			return isBuiltinTime(pred.Binary.Identifier)
+		}
+		if pred.In != nil {
+			return isBuiltinTime(pred.In.Identifier)
+		}
+		if pred.Having != nil {
+			return isBuiltinTime(pred.Having.Identifier)
+		}
+		return false
+	}
+	andTime = func(expr *GrammarAndExpr) bool {
+		if expr == nil {
+			return false
+		}
+		if predTime(expr.Left) {
+			return true
+		}
+		for _, right := range expr.Right {
+			if predTime(right.Right) {
+				return true
+			}
+		}
+		return false
+	}
+	orTime = func(expr *GrammarOrExpr) bool {
+		if expr == nil {
+			return false
+		}
+		if andTime(expr.Left) {
+			return true
+		}
+		for _, right := range expr.Right {
+			if andTime(right.Right) {
+				return true
+			}
+		}
+		return false
+	}
+	return orTime(where.Expr)
+}
+
+func isBuiltinTime(identifier *GrammarIdentifierPath) bool {
+	return identifier != nil && identifier.QuotedIdent == nil && identifier.First != nil && len(identifier.Rest) == 0 && strings.EqualFold(identifier.First.Value(), "TIME")
+}

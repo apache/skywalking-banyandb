@@ -29,11 +29,17 @@ func main() {
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Subcommands:")
 		fmt.Fprintln(os.Stderr, "  generate [output-dir]  Generate .ql and input/*.yaml files")
+		fmt.Fprintln(os.Stderr, "  generate-ql [--check] [output-dir]  Generate independent QL-only integration cases")
 		fmt.Fprintln(os.Stderr, "  capture [output-dir] [server-addr]  Capture want/*.yaml from live server")
 		os.Exit(1)
 	}
 
 	switch os.Args[1] {
+	case "generate-ql":
+		if err := runGenerateQL(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	case "generate":
 		outputDir := "."
 		if len(os.Args) > 2 {

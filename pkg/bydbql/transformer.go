@@ -205,6 +205,9 @@ func (r *transformRun) transform(ctx context.Context, grammar *Grammar) (*Transf
 		return nil, err
 	}
 	if grammar.Select != nil {
+		if requiresMeasurePlan(grammar.Select) {
+			return nil, fmt.Errorf("extended SELECT constructs require typed measure planning")
+		}
 		// Extract resource type from SELECT statement
 		resourceType := grammar.Select.From.ResourceType
 		switch strings.ToUpper(resourceType) {

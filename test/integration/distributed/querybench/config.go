@@ -110,6 +110,8 @@ const (
 	ScenarioQLBT01 Scenario = "qlb_t01"
 	// ScenarioQLBT02 benchmarks the shared native and QL batch boundary.
 	ScenarioQLBT02 Scenario = "qlb_t02"
+	// ScenarioQLBT03 benchmarks typed raw QL projection and time pruning.
+	ScenarioQLBT03 Scenario = "qlb_t03"
 	// ScenarioTraceByID benchmarks distributed trace-id lookup.
 	ScenarioTraceByID Scenario = "trace_by_id"
 	// ScenarioTraceTagFilter benchmarks distributed ordered trace tag filters.
@@ -242,7 +244,7 @@ func (c Config) Validate() error {
 	switch c.Engine {
 	case engineMeasure:
 		switch c.Scenario {
-		case ScenarioScanAll, ScenarioTopWithFilter, ScenarioQLBT01, ScenarioQLBT02:
+		case ScenarioScanAll, ScenarioTopWithFilter, ScenarioQLBT01, ScenarioQLBT02, ScenarioQLBT03:
 		default:
 			return fmt.Errorf("%s unsupported for %s=%s: %q", envScenario, envEngine, c.Engine, c.Scenario)
 		}
@@ -261,14 +263,8 @@ func (c Config) Validate() error {
 			return validateErr
 		}
 	}
-	if (c.Scenario == ScenarioQLBT01 || c.Scenario == ScenarioQLBT02) && c.QueryIterations != 1000 {
-		return fmt.Errorf("%s requires exactly DQB_QUERY_ITERATIONS=1000 per variant", c.Scenario)
-	}
-	if c.Scenario == ScenarioQLBT02 && c.WarmupIterations != 20 {
-		return fmt.Errorf("qlb_t02 requires DQB_WARMUP_ITERATIONS=20")
-	}
-	if (c.Scenario == ScenarioQLBT01 || c.Scenario == ScenarioQLBT02) && c.QueryWorkers != 1 {
-		return fmt.Errorf("%s requires DQB_QUERY_WORKERS=1", c.Scenario)
+	if err := c.validateCatalogB(); err != nil {
+		return err
 	}
 	if c.QueryWorkers <= 0 {
 		return fmt.Errorf("%s must be > 0", envQueryWorkers)
@@ -467,4 +463,25 @@ func queryTimeout(cardinality int) time.Duration {
 		return 2 * time.Minute
 	}
 	return base
+}
+
+func (c Config) validateCatalogB() error {
+	switch c.Scenario {
+	case ScenarioQLBT01, ScenarioQLBT02, ScenarioQLBT03:
+	default:
+		return nil
+	}
+	if c.QueryIterations != 1000 {
+		return fmt.Errorf("%s requires exactly DQB_QUERY_ITERATIONS=1000 per variant", c.Scenario)
+	}
+	if (c.Scenario == ScenarioQLBT02 || c.Scenario == ScenarioQLBT03) && c.WarmupIterations != 20 {
+		return fmt.Errorf("%s requires DQB_WARMUP_ITERATIONS=20", c.Scenario)
+	}
+	if c.QueryWorkers != 1 {
+		return fmt.Errorf("%s requires DQB_QUERY_WORKERS=1", c.Scenario)
+	}
+	if c.Scenario == ScenarioQLBT03 && c.Cardinality != 1024 && c.Cardinality != 100000 {
+		return fmt.Errorf("qlb_t03 requires cardinality 1024 or 100000")
+	}
+	return nil
 }

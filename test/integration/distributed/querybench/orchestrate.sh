@@ -47,7 +47,7 @@ else
 fi
 MODES="${DQB_MODES:-vec}"
 # Catalog B scenarios run their named RPC variants within each isolated combo.
-if [[ ",${SCENARIOS}," == *",qlb_t01,"* || ",${SCENARIOS}," == *",qlb_t02,"* ]]; then
+if [[ ",${SCENARIOS}," == *",qlb_t01,"* || ",${SCENARIOS}," == *",qlb_t02,"* || ",${SCENARIOS}," == *",qlb_t03,"* ]]; then
   if [[ "${ENGINE}" != "measure" || "${DQB_QUERY_WORKERS:-4}" != "1" || "${DQB_QUERY_ITERATIONS:-50}" != "1000" ]]; then
     echo "Catalog B scenarios require measure, DQB_QUERY_WORKERS=1 and DQB_QUERY_ITERATIONS=1000" >&2
     exit 2

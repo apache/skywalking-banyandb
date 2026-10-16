@@ -154,3 +154,69 @@ Run five isolated repetitions with cardinalities `1024,100000`, 20 warmups,
 profiling enabled, and unique report directories `qlb-t01-r1` through `r5`.
 The merge rejects missing variants or anything other than 1,000 samples per
 variant. Existing `scan_all` and `top_with_filter` controls remain available.
+
+### T03 typed raw QL and time pruning
+
+`qlb_t03` sends every query through `BydbQLService.Query`, including fixture
+readiness. It uses the standard deterministic measure fixture and checks results
+against the write formula, without capturing results or issuing native queries.
+The service-0 partition contains 64 rows at cardinality 1,024 and 6,300 rows at
+cardinality 100,000.
+
+Each isolated cardinality process runs these 13 required variants:
+
+| Variants | Purpose |
+|---|---|
+| `ql_plain_legacy`, `ql_alias`, `ql_shorthand` | Compare equal-width ID/value projections, aliases, and the shorthand source. |
+| `ql_repeated_projection` | Project one value column under 16 independent names. |
+| `ql_time_exact_10pct`, `ql_time_exact_10pct_rebound`, `ql_time_legacy_10pct` | Compare exact WHERE time pruning with legacy TIME; rebind the same WHERE text to the middle of the fixture. |
+| `ql_time_exact_50pct`, `ql_time_legacy_50pct` | Repeat the time comparison at a wider selectivity. |
+| `ql_time_or`, `ql_time_or_fullscan_reference` | Compare an OR envelope with the same result over a complete source scan. |
+| `ql_empty`, `ql_limit_zero` | Verify that contradictory bounds and LIMIT 0 dispatch no native query. |
+
+Time windows are half-open. Legacy TIME uses an inclusive end one millisecond
+before the corresponding SQL end. The OR selects the first point and the middle
+point of each series. Its complete-scan reference adds two timestamp-equality
+arms outside the fixture, widening only the native envelope. The independent
+oracle proves that these arms contribute no rows.
+
+A run requires exactly 20 checked warmups and 1,000 timed queries per variant,
+with one worker. Row counts are checked for every query; full value, type,
+projection-name and timestamp hashes are checked for every warmup and sampled
+responses after timing. Reports retain all 1,000 latency samples, percentiles,
+process CPU/allocation measurements, profiles when enabled, and operator/native
+counters. Missing variants, hashes, samples or required counters fail validation.
+
+Run five independent container invocations, each with both cardinalities:
+
+```sh
+for repetition in 1 2 3 4 5; do
+  DQB_SCENARIOS=qlb_t03 DQB_CARDINALITIES=1024,100000 \
+    DQB_QUERY_WORKERS=1 DQB_QUERY_ITERATIONS=1000 DQB_WARMUP_ITERATIONS=20 \
+    DQB_REPORT_DIR="/work/.omx/bench-reports/t03-r${repetition}" \
+    test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g
+done
+```
+
+Each nonempty query must activate one liaison QL batch execution and two storage
+leaf calls, one per data node. Empty/LIMIT 0 must activate neither. Every request
+captures the execution clock once. Typed projections copy zero value bytes;
+OR residuals must process the complete envelope before final pagination. Exact
+WHERE and equivalent legacy TIME must observe equal native source/frame counts;
+the 10% and 50% cases must reduce source rows, and OR pruning must reduce work
+relative to its full-scan reference. Owners, native flatten-pool references,
+result handles and live reservations must return to their initial values.
+
+`native_source_rows` counts batches emitted by the storage source before native
+operators. It is not a count of physical storage rows examined; that metric is
+explicitly unavailable. These structural checks and correctness checks do not
+turn noisy latency comparisons into pass/fail claims. Compare the five reports
+and profiles for performance conclusions. The separate `TestQLBT03ResourceBounds`
+probe uses 2,048 repeated aliases and accepts either a complete, independently
+verified response or `ResourceExhausted`. Run its instrumented test binary inside
+the same limited container at `DQB_QUERY_MEMORY_MIB=16` and `256`. It writes
+`qlb_t03_resources_<limit>mib.json`, checks cleanup after each request, and bounds
+the process-global reservation peak by the sum of the three node budgets. It
+reports per-tracker peaks and parent lease charges as unavailable. A resource
+error in the successful-query benchmark remains an error and cannot produce a
+passing benchmark shard.

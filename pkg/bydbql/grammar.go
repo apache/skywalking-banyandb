@@ -91,9 +91,10 @@ type GrammarTopNProjection struct {
 
 // GrammarColumn represents a column in projection.
 type GrammarColumn struct {
-	Aggregate  *GrammarAggregateFunction `parser:"  @@"`
-	Identifier *GrammarIdentifierPath    `parser:"| @@"`
+	Aggregate  *GrammarAggregateFunction `parser:"( @@"`
+	Identifier *GrammarIdentifierPath    `parser:"| @@ )"`
 	TypeSpec   *string                   `parser:"( '::' @('TAG'|'FIELD') )?"`
+	Alias      *GrammarIdentifierPath    `parser:"( 'AS' @@ )?"`
 }
 
 // GrammarAggregateFunction represents aggregate functions. DISTINCT is
@@ -113,11 +114,18 @@ type GrammarTopNAggregateFunction struct {
 
 // GrammarFromClause represents FROM clause.
 type GrammarFromClause struct {
-	From         string              `parser:"@'FROM'"`
-	ResourceType string              `parser:"@('STREAM'|'MEASURE'|'TRACE'|'PROPERTY')"`
-	ResourceName string              `parser:"@Ident"`
-	In           *GrammarInClause    `parser:"@@"`
-	Stage        *GrammarStageClause `parser:"@@?"`
+	From         string                `parser:"@'FROM'"`
+	ResourceType string                `parser:"( @('STREAM'|'MEASURE'|'TRACE'|'PROPERTY')"`
+	ResourceName string                `parser:"@Ident"`
+	In           *GrammarInClause      `parser:"@@"`
+	Shorthand    *GrammarMeasureSource `parser:"| @@ )"`
+	Stage        *GrammarStageClause   `parser:"@@?"`
+}
+
+// GrammarMeasureSource is the measure-only group.resource source shorthand.
+type GrammarMeasureSource struct {
+	Group string `parser:"@Ident '.'"`
+	Name  string `parser:"@Ident"`
 }
 
 // GrammarInClause represents IN clause.
@@ -221,8 +229,9 @@ type GrammarBinaryPredicateTail struct {
 
 // GrammarCompareTail represents traditional binary comparison operators.
 type GrammarCompareTail struct {
-	Operator string        `parser:"@( '=' | '!=' | '>=' | '<=' | '>' | '<' )"`
-	Value    *GrammarValue `parser:"@@"`
+	Operator   string                     `parser:"@( '=' | '!=' | '>=' | '<=' | '>' | '<' )"`
+	Value      *GrammarValue              `parser:"@@"`
+	Adjustment *GrammarIntervalAdjustment `parser:"@@?"`
 }
 
 // GrammarMatchTail represents the RHS of a MATCH predicate.
@@ -265,13 +274,25 @@ type GrammarMatchValues struct {
 
 // GrammarValue represents a value.
 type GrammarValue struct {
-	String  *string `parser:"  @String"`
-	Integer *int64  `parser:"| @Int"`
-	Null    bool    `parser:"| @'NULL'"`
-	Param   bool    `parser:"| @Param"`
+	String  *string          `parser:"  @String"`
+	Integer *int64           `parser:"| @Int"`
+	Null    bool             `parser:"| @'NULL'"`
+	Now     *GrammarNowValue `parser:"| @@"`
+	Param   bool             `parser:"| @Param"`
 	// ParamIndex is the placeholder's positional index, assigned by Prepare and
 	// meaningful only when Param is true. It keys the per-request bound overlay.
 	ParamIndex int
+}
+
+// GrammarNowValue represents the execution clock, captured once per query.
+type GrammarNowValue struct {
+	Now string `parser:"@'NOW' '(' ')'"`
+}
+
+// GrammarIntervalAdjustment is fixed-duration arithmetic on a timestamp.
+type GrammarIntervalAdjustment struct {
+	Sign     string `parser:"@('+'|'-') 'INTERVAL'"`
+	Duration string `parser:"@String"`
 }
 
 // GrammarIdentifierPart Can be either an Ident or a Keyword (keywords are allowed in paths, but not as standalone identifiers).

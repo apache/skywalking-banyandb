@@ -80,6 +80,9 @@ func runSingleShotScenario(t *testing.T, cfg Config) {
 	}
 	defer cluster.close()
 	timeout := queryTimeout(cfg.Cardinality) + 10*time.Minute
+	if cfg.Scenario == ScenarioQLBT03 {
+		timeout += 60 * time.Minute
+	}
 	if cfg.Scenario == ScenarioQLBT02 {
 		// Six serial 1,000-query variants include wide protobuf responses.
 		timeout += 30 * time.Minute
@@ -114,9 +117,17 @@ func runMergeShards(t *testing.T, cfg Config) {
 	if len(results) == 0 {
 		t.Fatalf("no shards found in %s/shards/", cfg.ReportDir)
 	}
+	if matrixErr := validateQLBT03Matrix(results); matrixErr != nil {
+		t.Fatal(matrixErr)
+	}
 	var flattened []Result
 	for _, result := range results {
 		switch result.Scenario {
+		case ScenarioQLBT03:
+			if validationErr := validateQLBT03Result(result); validationErr != nil {
+				t.Fatal(validationErr)
+			}
+			flattened = append(flattened, result.Variants...)
 		case ScenarioQLBT02:
 			if validationErr := validateQLBT02Result(result); validationErr != nil {
 				t.Fatal(validationErr)
@@ -157,6 +168,9 @@ func runMergeShards(t *testing.T, cfg Config) {
 // against an already-prepared cluster, capturing CPU and heap profiles for
 // the timed phase.
 func runScenarioBenchmark(ctx context.Context, conn *grpc.ClientConn, cfg Config, scenario Scenario, cardinality int, mode string, base time.Time) (Result, error) {
+	if scenario == ScenarioQLBT03 {
+		return runQLBT03Benchmark(ctx, conn, cfg, cardinality, mode, base)
+	}
 	if scenario == ScenarioQLBT02 {
 		return runQLBT02Benchmark(ctx, conn, cfg, cardinality, mode, base)
 	}
@@ -293,7 +307,7 @@ func clusterFlags(cfg Config) []string {
 	if cfg.Engine == engineTrace {
 		return []string{fmt.Sprintf("--trace-vectorized-query-memory-mib=%d", cfg.QueryMemoryMiB)}
 	}
-	if cfg.Scenario == ScenarioQLBT02 {
+	if cfg.Scenario == ScenarioQLBT02 || cfg.Scenario == ScenarioQLBT03 {
 		return []string{fmt.Sprintf("--measure-vectorized-query-memory-mib=%d", cfg.QueryMemoryMiB)}
 	}
 	if cfg.Soak {

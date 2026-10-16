@@ -403,6 +403,12 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 
 // query shares admission, lifecycle gates and response accounting across both callers.
 func (ms *measureService) query(ctx context.Context, req *measurev1.QueryRequest, batches bool) (resp *measurev1.QueryResponse, err error) {
+	return ms.queryWithRawPlan(ctx, req, batches, nil)
+}
+
+func (ms *measureService) queryWithRawPlan(ctx context.Context, req *measurev1.QueryRequest,
+	batches bool, rawPlan *ql.RawPlan,
+) (resp *measurev1.QueryResponse, err error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "query request is nil")
 	}
@@ -418,7 +424,7 @@ func (ms *measureService) query(ctx context.Context, req *measurev1.QueryRequest
 	defer release()
 	ctx = vectorized.WithQueryMemoryScope(ctx)
 	defer func() { err = queryStatus(err) }()
-	return ms.executeQuery(ctx, req, batches)
+	return ms.executeQueryWithRawPlan(ctx, req, batches, rawPlan)
 }
 
 // finalizeMeasureResponse runs after trace assembly and before query metrics.
@@ -434,7 +440,9 @@ func finalizeMeasureResponse(ctx context.Context, resp **measurev1.QueryResponse
 	}
 }
 
-func (ms *measureService) executeQuery(ctx context.Context, req *measurev1.QueryRequest, batches bool) (resp *measurev1.QueryResponse, err error) {
+func (ms *measureService) executeQueryWithRawPlan(ctx context.Context, req *measurev1.QueryRequest,
+	batches bool, rawPlan *ql.RawPlan,
+) (resp *measurev1.QueryResponse, err error) {
 	acquired := make([]string, 0, len(req.Groups))
 	defer func() {
 		for _, group := range acquired {
@@ -534,6 +542,9 @@ func (ms *measureService) executeQuery(ctx context.Context, req *measurev1.Query
 			req.TimeRange.Begin = timestamppb.New(newBegin)
 		}
 	}
+	if isEmptyRawQuery(rawPlan) {
+		return &measurev1.QueryResponse{GroupStatuses: gatedStatuses}, nil
+	}
 	var payload any = req
 	if batches {
 		payload = &vmeasure.BatchQueryRequest{Request: req}
@@ -549,7 +560,7 @@ func (ms *measureService) executeQuery(ctx context.Context, req *measurev1.Query
 		}
 		return nil, err
 	}
-	resp, err = measureQueryResponse(ctx, msg.Data(), gatedStatuses)
+	resp, err = measureQueryResponseWithPlan(ctx, msg.Data(), gatedStatuses, rawPlan)
 	if resp != nil {
 		responseDataPointCount = len(resp.DataPoints)
 	}
