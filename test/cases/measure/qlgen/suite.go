@@ -39,14 +39,17 @@ type Feature struct {
 
 // Suite is the reproducible QL-only integration artifact.
 type Suite struct {
-	FixtureDigest  string          `json:"fixture_digest"`
-	ReuseScenarios []ReuseScenario `json:"reuse_scenarios"`
-	ReuseReadiness Case            `json:"reuse_readiness"`
-	Features       []Feature       `json:"features"`
-	Cases          []Case          `json:"cases"`
-	Pairs          PairCoverage    `json:"pairs"`
-	Version        int             `json:"version"`
-	Seed           int64           `json:"seed"`
+	AggregateReadiness  []AggregateFixture  `json:"aggregate_readiness"`
+	AggregateRejections []Case              `json:"aggregate_rejections"`
+	AggregateScenarios  []AggregateScenario `json:"aggregate_scenarios"`
+	FixtureDigest       string              `json:"fixture_digest"`
+	ReuseScenarios      []ReuseScenario     `json:"reuse_scenarios"`
+	ReuseReadiness      Case                `json:"reuse_readiness"`
+	Features            []Feature           `json:"features"`
+	Cases               []Case              `json:"cases"`
+	Pairs               PairCoverage        `json:"pairs"`
+	Version             int                 `json:"version"`
+	Seed                int64               `json:"seed"`
 }
 
 // Load checks the generated contract before integration tests consume it.
@@ -93,7 +96,7 @@ func (s Suite) Validate() error {
 	}
 	witnesses := make(map[string]int)
 	names := make(map[string]bool, len(s.Cases))
-	for _, c := range s.Cases {
+	for _, c := range s.witnessCases() {
 		if c.Name == "" || names[c.Name] || strings.TrimSpace(c.Query) == "" || len(c.Features) == 0 {
 			return fmt.Errorf("invalid or duplicate generated QL case %q", c.Name)
 		}
@@ -123,7 +126,22 @@ func (s Suite) Validate() error {
 	if err := validateReuseScenarios(s.ReuseScenarios); err != nil {
 		return err
 	}
+	if err := validateAggregateScenarios(s.AggregateReadiness, s.AggregateScenarios); err != nil {
+		return err
+	}
 	return validatePairWitnesses(s.Pairs, s.Cases)
+}
+
+func (s Suite) witnessCases() []Case {
+	cases := append([]Case(nil), s.Cases...)
+	for _, fixture := range s.AggregateReadiness {
+		cases = append(cases, fixture.Cases...)
+	}
+	cases = append(cases, s.AggregateRejections...)
+	for _, scenario := range s.AggregateScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
+	return cases
 }
 
 // Write generates the suite without reading a running server or capturing output.

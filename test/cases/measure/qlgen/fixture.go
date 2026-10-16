@@ -143,14 +143,20 @@ func FixtureWrites(base time.Time) []*measurev1.WriteRequest {
 // FixtureDigest identifies the exact schema and values used by generated expectations.
 func FixtureDigest() string {
 	data, err := json.Marshal(struct {
-		Schema    *databasev1.Measure
-		Binding   *databasev1.IndexRuleBinding
-		Rules     []*databasev1.IndexRule
-		Rows      []fixtureRow
-		T03Schema *databasev1.Measure
-		T05Schema *databasev1.Measure
-		T03Rows   []fixtureRow
+		Schema          *databasev1.Measure
+		Binding         *databasev1.IndexRuleBinding
+		Rules           []*databasev1.IndexRule
+		Rows            []fixtureRow
+		T03Schema       *databasev1.Measure
+		T05Schema       *databasev1.Measure
+		T03Rows         []fixtureRow
+		T07Schema       *databasev1.Measure
+		T07Rows         []fixtureRow
+		T07GroupsSchema *databasev1.Measure
+		T07GroupsRows   []fixtureRow
 	}{
+		T07Schema: T07FixtureSchema(T07FixtureName), T07Rows: t07Rows(T07FixtureName),
+		T07GroupsSchema: T07FixtureSchema(T07GroupsFixtureName), T07GroupsRows: t07Rows(T07GroupsFixtureName),
 		T05Schema: T05FixtureSchema(), Rows: fixtureRows(), T03Schema: T03FixtureSchema(), T03Rows: t03Rows(),
 		Schema: FixtureSchema(), Binding: FixtureIndexBinding(), Rules: FixtureIndexRules(),
 	})

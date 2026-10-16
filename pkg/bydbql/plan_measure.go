@@ -46,6 +46,7 @@ type MeasureTemplate struct {
 	request    *measurev1.QueryRequest
 	predicate  *measurePredicate
 	legacyTags map[string]*tagSpecWithFamily
+	aggregate  *ql.AggregatePlan
 	slots      []ql.Slot
 	extended   bool
 }
@@ -134,8 +135,14 @@ func (t *Transformer) compileMeasure(
 	}
 	template := &MeasureTemplate{statement: statement, extended: extended}
 	if template.extended {
-		if err := template.compileRaw(snapshots); err != nil {
-			return nil, invalidMeasure(err)
+		var compileErr error
+		if measureAggregateCount(selectStmt) > 0 {
+			compileErr = template.compileAggregate(snapshots)
+		} else {
+			compileErr = template.compileRaw(snapshots)
+		}
+		if compileErr != nil {
+			return nil, invalidMeasure(compileErr)
 		}
 	} else {
 		if err := template.compileLegacy(run, snapshots); err != nil {
@@ -230,6 +237,11 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 		return &MeasureExecution{Request: request}, nil
 	}
 	plan := &ql.RawPlan{Slots: slices.Clone(m.slots)}
+	if m.aggregate != nil {
+		plan.Aggregate = &ql.AggregatePlan{
+			GroupBy: slices.Clone(m.aggregate.GroupBy), Calls: slices.Clone(m.aggregate.Calls), Outputs: slices.Clone(m.aggregate.Outputs),
+		}
+	}
 	if stmt.Limit != nil {
 		limit := uint32(run.resolveCount(stmt.Limit.Value, stmt.Limit.Param, stmt.Limit.ParamIndex))
 		plan.Limit = &limit
@@ -269,7 +281,7 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 }
 
 func requiresMeasurePlan(stmt *GrammarSelectStatement) bool {
-	if stmt.From.Shorthand != nil {
+	if stmt.From.Shorthand != nil || measureAggregateCount(stmt) > 1 {
 		return true
 	}
 	if stmt.Projection != nil {
@@ -287,6 +299,19 @@ func requiresMeasurePlan(stmt *GrammarSelectStatement) bool {
 		}
 	}
 	return whereHasTime(stmt.Where)
+}
+
+func measureAggregateCount(stmt *GrammarSelectStatement) int {
+	if stmt.Projection == nil {
+		return 0
+	}
+	count := 0
+	for _, column := range stmt.Projection.Columns {
+		if column.Aggregate != nil {
+			count++
+		}
+	}
+	return count
 }
 
 func whereHasTime(where *GrammarSelectWhereClause) bool {

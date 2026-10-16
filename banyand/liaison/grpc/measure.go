@@ -534,17 +534,14 @@ func (ms *measureService) executeQueryWithRawPlan(ctx context.Context, req *meas
 		originalBegin := req.TimeRange.GetBegin().AsTime()
 		newBegin, rangeEmpty := clampTimeRangeBegin(originalBegin, endTime, createdAts)
 		if rangeEmpty {
-			if len(gatedStatuses) > 0 {
-				return &measurev1.QueryResponse{GroupStatuses: gatedStatuses}, nil
-			}
-			return emptyMeasureQueryResponse, nil
+			return emptyPlannedMeasure(ctx, gatedStatuses, rawPlan)
 		}
 		if newBegin != originalBegin {
 			req.TimeRange.Begin = timestamppb.New(newBegin)
 		}
 	}
 	if isEmptyRawQuery(rawPlan) {
-		return &measurev1.QueryResponse{GroupStatuses: gatedStatuses}, nil
+		return emptyPlannedMeasure(ctx, gatedStatuses, rawPlan)
 	}
 	var payload any = req
 	if batches {
@@ -557,6 +554,9 @@ func (ms *measureService) executeQueryWithRawPlan(ctx context.Context, req *meas
 	msg, err := feat.Get()
 	if err != nil {
 		if errors.Is(err, io.EOF) {
+			if rawPlan != nil && rawPlan.Aggregate != nil {
+				return emptyPlannedMeasure(ctx, gatedStatuses, rawPlan)
+			}
 			return emptyMeasureQueryResponse, nil
 		}
 		return nil, err

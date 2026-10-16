@@ -431,8 +431,24 @@ groups, and fixed-width aggregate state grows with groups rather than rows.
 Report key/state capacity bytes separately from native residency; G1/G2 apply.
 
 **Checks/readiness:** E(T07), P(T07), K(T07); focused `./pkg/query/ql`,
-`./pkg/bydbql`, `./banyand/liaison/grpc`. Blocked by T03. Bind/query tests expose
+`./pkg/bydbql`, `./banyand/liaison/grpc`. Builds on T03. Bind/query tests expose
 new multi-output semantics; null-collapsing legacy helpers are not the oracle.
+
+**Implementation status:** local aggregation and generated correctness coverage
+are implemented. Both resource-limited topologies pass all 215 selected specs,
+including 48 T07 specs. Five focused RPC repetitions pass at 1,024/32,768 rows;
+the local kernel also executes one million groups. The original successful
+100,000/1,000,000-row RPC performance gate remains unmet: inherited native frame
+reservations reject these queries before the QL aggregate starts. These smaller
+measurements do not replace that requirement. The 16-MiB real-RPC resource probe
+also remains blocked during native readiness. See
+[T07 verification](t07-verification.md) for results, resource limits and retained
+evidence.
+
+**Scope decision:** disk spilling is deferred to a later ticket, with its own
+generated E2E coverage and focused benchmarks. T07 retains current memory limits
+and ResourceExhausted behavior. The blocked measurements above remain recorded
+with their original outcomes.
 
 ### T08 — Execute native multi-aggregate queries with keyed merge
 
