@@ -218,6 +218,8 @@ func parseSnapshot(name string) (uint64, error) {
 }
 
 func (tst *tsTable) TakeFileSnapshot(dst string) (success bool, err error) {
+	tst.snapshotPublicationMu.RLock()
+	defer tst.snapshotPublicationMu.RUnlock()
 	snapshot := tst.currentSnapshot()
 	if snapshot == nil {
 		return false, storage.ErrNoCurrentSnapshot
@@ -229,7 +231,8 @@ func (tst *tsTable) TakeFileSnapshot(dst string) (success bool, err error) {
 		}
 	}()
 
-	for k, v := range tst.sidxMap {
+	sidxMap := tst.getAllSidx()
+	for k, v := range sidxMap {
 		indexDir := filepath.Join(dst, sidxDirName, k)
 		tst.fileSystem.MkdirPanicIfExist(indexDir, storage.DirPerm)
 		if sidxErr := v.TakeFileSnapshot(indexDir); sidxErr != nil {
@@ -253,7 +256,7 @@ func (tst *tsTable) TakeFileSnapshot(dst string) (success bool, err error) {
 		hasDiskParts = true
 	}
 	if !hasDiskParts {
-		return len(tst.sidxMap) > 0, nil
+		return len(sidxMap) > 0, nil
 	}
 	tst.createMetadata(dst, snapshot)
 	parent := filepath.Dir(dst)

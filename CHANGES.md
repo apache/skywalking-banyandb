@@ -25,6 +25,7 @@ Release Notes.
 - `measure.v1.QueryRequest.GroupBy.time_bucket` groups a measure query by tumbling time windows, alone or combined with a tag `GroupBy`, in both standalone and distributed queries. The bucket width comes from the request or falls back to the measure's own `interval`. The part-scan path streams bucket-by-bucket so live memory never exceeds one bucket's groups; index-mode measures (no ascending-timestamp guarantee) use a bounded non-streaming fallback instead. A mixed-version cluster where an older data node ignores `time_bucket` is rejected with a clear error rather than silently collapsing the series to one row.
 - Improve Canopy text readability: raise the faint and dim text contrast, lift every font size to at least 12px, use heavier sub-navigation weights, stop forcing antialiased font smoothing, and load IBM Plex Mono 600 and Sans 700. The query builder rail is wider by default (400px) to fit the larger text.
 - `databasev1.Node` now reports its supported file format versions and IANA time zone name.
+- Add the data export dry-run protocol (`transfer.v1.ExportService`) and `bydbctl data export --dry-run`.
 
 ### Bug Fixes
 
