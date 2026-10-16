@@ -55,6 +55,14 @@ func encodeSortKey(col vectorized.Column, rowIdx int) ([]byte, error) {
 	if col.IsNull(rowIdx) {
 		return nil, nil
 	}
+	if constCol, isConst := col.(*vectorized.ConstColumn); isConst {
+		// Encode the constant as a one-row typed column.
+		one := vectorized.NewColumnForType(constCol.Type(), 1)
+		if appendErr := constCol.AppendTo(one, 1); appendErr != nil {
+			return nil, appendErr
+		}
+		col, rowIdx = one, 0
+	}
 	switch c := col.(type) {
 	case *vectorized.TypedColumn[int64]:
 		out := make([]byte, 8)

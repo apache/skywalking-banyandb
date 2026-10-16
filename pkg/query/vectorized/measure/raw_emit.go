@@ -93,7 +93,26 @@ func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 	if schema == nil {
 		return nil, fmt.Errorf("DrainPipelineToFrame: nil schema")
 	}
-	out := vectorized.NewRecordBatch(schema, 0)
+	// A columnar frame carries a batch's constant columns as one value and copies each cell
+	// once, into the frame, so a single batch of native columns is encoded as it is instead of
+	// being copied into a coalescing batch first (every pull of a pipeline returns a fresh batch,
+	// so holding the first across the next pull is safe). Batches that need passthrough
+	// conversion take the coalescing path.
+	direct := !needsFrameConversion(schema)
+	var out, single *vectorized.RecordBatch
+	if !direct {
+		out = vectorized.NewRecordBatch(schema, 0)
+	}
+	// Both batches' cells may borrow storage memory pinned by their owners; they are held until
+	// the frame, which copies every cell into its own buffer, has been encoded.
+	defer func() {
+		if out != nil {
+			out.ReleaseOwners()
+		}
+		if single != nil {
+			single.ReleaseOwners()
+		}
+	}()
 	for {
 		b, pullErr := p.Next(ctx)
 		if pullErr != nil {
@@ -103,11 +122,34 @@ func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 			break
 		}
 		if !schemasEqual(schema, b.Schema) {
+			b.ReleaseOwners()
 			return nil, fmt.Errorf("DrainPipelineToFrame: batch schema mismatch (planner bug)")
 		}
-		if appendErr := appendActive(out, b); appendErr != nil {
+		if direct && out == nil && single == nil {
+			single = b
+			continue
+		}
+		if out == nil {
+			out = vectorized.NewRecordBatch(schema, 0)
+			appendErr := appendActive(out, single)
+			single.Owners.TransferTo(&out.Owners)
+			single = nil
+			if appendErr != nil {
+				b.ReleaseOwners()
+				return nil, fmt.Errorf("DrainPipelineToFrame: %w", appendErr)
+			}
+		}
+		appendErr := appendActive(out, b)
+		b.Owners.TransferTo(&out.Owners)
+		if appendErr != nil {
 			return nil, fmt.Errorf("DrainPipelineToFrame: %w", appendErr)
 		}
+	}
+	if single != nil {
+		return encodeDrainedFrame(ctx, single)
+	}
+	if out == nil {
+		out = vectorized.NewRecordBatch(schema, 0)
 	}
 	// Decode any TagValue / FieldValue passthrough columns into their
 	// typed equivalents before frame.Encode. Storage's vec adapter emits
@@ -130,6 +172,12 @@ func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 	if convErr != nil {
 		return nil, fmt.Errorf("DrainPipelineToFrame: %w", convErr)
 	}
+	return encodeDrainedFrame(ctx, converted)
+}
+
+// encodeDrainedFrame encodes the drained batch as a columnar frame, under a frame-encode
+// span when the query is traced.
+func encodeDrainedFrame(ctx context.Context, converted *vectorized.RecordBatch) ([]byte, error) {
 	tracer := query.GetTracer(ctx)
 	if tracer == nil {
 		return frame.Encode(converted)
@@ -183,7 +231,7 @@ func SerializeDataPointsToFrame(idps []*measurev1.InternalDataPoint) ([]byte, er
 	// cross-group rows can carry the same logical tag/field with divergent
 	// oneof variants. Typed wire columns can't represent mixed variants;
 	// frame.Encode now carries ColumnTypeTagValue / ColumnTypeFieldValue
-	// natively as proto-bytes per cell (wire format v3) so the round trip
+	// natively as proto-bytes per cell so the round trip
 	// is intact. The vec-native DrainPipelineToFrame path keeps the
 	// typed-conversion fast path for AggModeMap output where columns are
 	// uniform.
@@ -320,7 +368,7 @@ func buildPassthroughBatchFromDataPoints(idps []*measurev1.InternalDataPoint) (*
 // frame format is the natural follow-up; until then, scans that materialize
 // array-typed tags on the cluster wire are unsupported.
 func convertPassthroughForFrame(b *vectorized.RecordBatch) (*vectorized.RecordBatch, error) {
-	if !hasPassthroughColumn(b.Schema) {
+	if !needsFrameConversion(b.Schema) {
 		return b, nil
 	}
 	newDefs := make([]vectorized.ColumnDef, 0, len(b.Schema.Columns))
@@ -342,6 +390,13 @@ func convertPassthroughForFrame(b *vectorized.RecordBatch) (*vectorized.RecordBa
 			}
 			newDefs = append(newDefs, newDef)
 			newCols = append(newCols, newCol)
+		case vectorized.ColumnTypeInt64Array, vectorized.ColumnTypeStrArray:
+			newDef, newCol, err := convertArrayColumn(def, col, b.Len)
+			if err != nil {
+				return nil, fmt.Errorf("column %d (%q): %w", i, def.Name, err)
+			}
+			newDefs = append(newDefs, newDef)
+			newCols = append(newCols, newCol)
 		default:
 			newDefs = append(newDefs, def)
 			newCols = append(newCols, col)
@@ -354,15 +409,56 @@ func convertPassthroughForFrame(b *vectorized.RecordBatch) (*vectorized.RecordBa
 	}, nil
 }
 
-// hasPassthroughColumn reports whether any column declares a proto-
-// passthrough type that frame.Encode cannot consume directly.
-func hasPassthroughColumn(s *vectorized.BatchSchema) bool {
+// needsFrameConversion reports whether any column declares a type that
+// frame.Encode cannot consume directly: the proto passthrough types (decoded
+// to typed wire columns) and the native array types (the frame format has no
+// array column, so they travel as proto-bytes TagValue cells).
+func needsFrameConversion(s *vectorized.BatchSchema) bool {
 	for _, def := range s.Columns {
-		if def.Type == vectorized.ColumnTypeTagValue || def.Type == vectorized.ColumnTypeFieldValue {
+		switch def.Type {
+		case vectorized.ColumnTypeTagValue, vectorized.ColumnTypeFieldValue,
+			vectorized.ColumnTypeInt64Array, vectorized.ColumnTypeStrArray:
 			return true
+		default:
 		}
 	}
 	return false
+}
+
+// convertArrayColumn wraps a native int64[] / string[] tag column into a
+// TagValue passthrough column, which frame.Encode carries as proto bytes per
+// cell. The wrappers alias the column's slices; that is safe because the
+// caller encodes the frame before the batch's owners are released. A null
+// cell becomes the pbv1.NullTagValue singleton so the wire bytes match what a
+// passthrough decode of an absent cell produced.
+func convertArrayColumn(def vectorized.ColumnDef, col vectorized.Column, n int) (vectorized.ColumnDef, vectorized.Column, error) {
+	out := vectorized.NewTagValueColumn(n)
+	switch c := col.(type) {
+	case *vectorized.TypedColumn[[]int64]:
+		for i := range n {
+			if c.IsNull(i) {
+				out.Append(pbv1NullTagValueRef)
+				continue
+			}
+			out.Append(&modelv1.TagValue{Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: c.Data()[i]}}})
+		}
+	case *vectorized.TypedColumn[[]string]:
+		for i := range n {
+			if c.IsNull(i) {
+				out.Append(pbv1NullTagValueRef)
+				continue
+			}
+			out.Append(&modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: c.Data()[i]}}})
+		}
+	default:
+		return vectorized.ColumnDef{}, nil, fmt.Errorf("declared array column but column is %T", col)
+	}
+	return vectorized.ColumnDef{
+		Role:      def.Role,
+		TagFamily: def.TagFamily,
+		Name:      def.Name,
+		Type:      vectorized.ColumnTypeTagValue,
+	}, out, nil
 }
 
 // convertTagValueColumn picks a wire-typed column for a TagValue
@@ -372,7 +468,7 @@ func hasPassthroughColumn(s *vectorized.BatchSchema) bool {
 // When the inferred wire type is ColumnTypeTagValue (all-null column,
 // array variant, or — as detected mid-conversion — a mixed-variant
 // cell), the function returns the original passthrough column so
-// frame.Encode emits it as proto-bytes-per-cell (wire format v3).
+// frame.Encode emits it as proto-bytes-per-cell.
 func convertTagValueColumn(def vectorized.ColumnDef, col vectorized.Column, n int) (vectorized.ColumnDef, vectorized.Column, error) {
 	tc, ok := col.(*vectorized.TypedColumn[*modelv1.TagValue])
 	if !ok {
@@ -397,7 +493,7 @@ func convertTagValueColumn(def vectorized.ColumnDef, col vectorized.Column, n in
 		// Mixed-variant cells (e.g. a cross-group merged iterator where
 		// the same tag has divergent variants across groups) fall back
 		// to passthrough so frame.Encode emits the column as
-		// ColumnTypeTagValue (proto-bytes per cell, wire format v3).
+		// ColumnTypeTagValue (proto-bytes per cell).
 		switch payload := v.GetValue().(type) {
 		case *modelv1.TagValue_Str:
 			if wireType != vectorized.ColumnTypeString {
@@ -435,7 +531,7 @@ func convertTagValueColumn(def vectorized.ColumnDef, col vectorized.Column, n in
 // whose payload identifies a scalar wire type (Str / Int / BinaryData).
 // Returns ColumnTypeTagValue for all-null columns and for array variants
 // (IntArray / StrArray) — these go through the proto-bytes-per-cell wire
-// (frame v3 ColumnTypeTagValue) which preserves the oneof intact. The
+// (frame ColumnTypeTagValue) which preserves the oneof intact. The
 // receive side reconstructs them as TagValue passthrough so
 // serializeBatchToProto handles them via the pointer-return fast path.
 func inferTagValueWireType(tc *vectorized.TypedColumn[*modelv1.TagValue], n int) vectorized.ColumnType {
@@ -468,7 +564,7 @@ func inferTagValueWireType(tc *vectorized.TypedColumn[*modelv1.TagValue], n int)
 // dispatch: when the column has a uniform Int / Float / Str / BinaryData
 // variant the function returns a typed wire column; otherwise (all-null
 // or mid-conversion variant mismatch) it returns the original passthrough
-// so frame v3 carries it as proto-bytes per cell.
+// so the frame carries it as proto-bytes per cell.
 func convertFieldValueColumn(def vectorized.ColumnDef, col vectorized.Column, n int) (vectorized.ColumnDef, vectorized.Column, error) {
 	fc, ok := col.(*vectorized.TypedColumn[*modelv1.FieldValue])
 	if !ok {
@@ -492,7 +588,7 @@ func convertFieldValueColumn(def vectorized.ColumnDef, col vectorized.Column, n 
 		// Same dispatch as convertTagValueColumn: uniform-variant cells
 		// take the typed wire optimization; mixed-variant cells return
 		// the original passthrough column so frame.Encode emits it as
-		// ColumnTypeFieldValue (proto-bytes per cell, wire format v3).
+		// ColumnTypeFieldValue (proto-bytes per cell).
 		switch payload := v.GetValue().(type) {
 		case *modelv1.FieldValue_Int:
 			if wireType != vectorized.ColumnTypeInt64 {
@@ -530,7 +626,7 @@ func convertFieldValueColumn(def vectorized.ColumnDef, col vectorized.Column, n 
 
 // inferFieldValueWireType is the FieldValue counterpart of
 // inferTagValueWireType. Returns ColumnTypeFieldValue for an all-null
-// column so the caller leaves the passthrough column as-is — frame v3
+// column so the caller leaves the passthrough column as-is — frame
 // carries it as proto-bytes per cell.
 func inferFieldValueWireType(fc *vectorized.TypedColumn[*modelv1.FieldValue], n int) vectorized.ColumnType {
 	for i := range n {
@@ -567,8 +663,15 @@ func appendActive(dst, src *vectorized.RecordBatch) error {
 	if activeErr != nil {
 		return activeErr
 	}
-	for _, rowIdx := range active {
-		for colIdx, srcCol := range src.Columns {
+	for colIdx, srcCol := range src.Columns {
+		if constCol, isConst := srcCol.(*vectorized.ConstColumn); isConst {
+			// One append per row of the constant; no per-row type dispatch.
+			if appendErr := constCol.AppendTo(dst.Columns[colIdx], len(active)); appendErr != nil {
+				return appendErr
+			}
+			continue
+		}
+		for _, rowIdx := range active {
 			copyOneValue(dst.Columns[colIdx], srcCol, int(rowIdx))
 		}
 	}
@@ -650,6 +753,8 @@ func DecodeFramesToInternalDataPoints(frames [][]byte) ([]*measurev1.InternalDat
 			return nil, fmt.Errorf("DecodeFramesToInternalDataPoints: decode frame %d: %w", i, decodeErr)
 		}
 		out = serializeBatchToProto(b, out)
+		// The serializer copies every cell it keeps, so the frame can go.
+		b.ReleaseOwners()
 	}
 	return out, nil
 }
@@ -678,6 +783,7 @@ func DecodeFramesPerSource(frames [][]byte) ([][]*measurev1.InternalDataPoint, e
 			return nil, fmt.Errorf("DecodeFramesPerSource: decode frame %d: %w", i, decodeErr)
 		}
 		idps := serializeBatchToProto(b, nil)
+		b.ReleaseOwners()
 		if len(idps) > 0 {
 			out = append(out, idps)
 		}

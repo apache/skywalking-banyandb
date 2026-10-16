@@ -106,7 +106,7 @@ func TestColumn_mustWriteTo_mustReadValues(t *testing.T) {
 
 			decoder := &encoding.BytesBlockDecoder{}
 			unmarshaled := &column{}
-			unmarshaled.mustReadValues(decoder, buf, *cm, uint64(len(original.values)))
+			unmarshaled.mustReadValues(decoder, buf, *cm, uint64(len(original.values)), false)
 
 			assert.Equal(t, original.name, unmarshaled.name)
 			assert.Equal(t, original.valueType, unmarshaled.valueType)
@@ -245,7 +245,7 @@ func TestColumn_HighCardinalityStringEncoding(t *testing.T) {
 			// Test roundtrip: decode and verify all values are preserved
 			decoder := &encoding.BytesBlockDecoder{}
 			unmarshaled := &column{}
-			unmarshaled.mustReadValues(decoder, buf, *cm, uint64(len(testColumn.values)))
+			unmarshaled.mustReadValues(decoder, buf, *cm, uint64(len(testColumn.values)), false)
 
 			assert.Equal(t, testColumn.name, unmarshaled.name)
 			assert.Equal(t, testColumn.valueType, unmarshaled.valueType)

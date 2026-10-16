@@ -37,6 +37,13 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
+// defaultBatch is the batch size the BatchTop microbenchmarks use.
+const defaultBatch = 1024
+
+// benchSink keeps benchmark loop results observable so the compiler cannot
+// elide the measured work.
+var benchSink int
+
 // benchTopN is the heap bound for the BatchTop microbenchmarks.
 const benchTopN = 50
 

@@ -28,7 +28,6 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
-	"github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/frame"
 )
 
 type rowMergeOutput struct {
@@ -50,6 +49,7 @@ func TestMergeDistributedRows_DedupsEqualSortKeyBySidTimestampHighestVersion(t *
 	)
 
 	batches, mergeErr := mergeDistributedRows([][]byte{frameA, nil, frameB}, distributedRowsSpec{BatchSize: 2})
+	t.Cleanup(func() { releaseBatches(batches) })
 	if mergeErr != nil {
 		t.Fatalf("mergeDistributedRows: %v", mergeErr)
 	}
@@ -70,6 +70,7 @@ func TestMergeDistributedRows_DoesNotDedupSidTimestampAcrossSortGroups(t *testin
 	)
 
 	batches, mergeErr := mergeDistributedRows([][]byte{body}, distributedRowsSpec{BatchSize: 4})
+	t.Cleanup(func() { releaseBatches(batches) })
 	if mergeErr != nil {
 		t.Fatalf("mergeDistributedRows: %v", mergeErr)
 	}
@@ -90,6 +91,7 @@ func TestMergeDistributedRows_IndexModeSuppressesRepeatedSidAcrossSortGroups(t *
 	)
 
 	batches, mergeErr := mergeDistributedRows([][]byte{body}, distributedRowsSpec{IndexMode: true, BatchSize: 4})
+	t.Cleanup(func() { releaseBatches(batches) })
 	if mergeErr != nil {
 		t.Fatalf("mergeDistributedRows: %v", mergeErr)
 	}
@@ -110,6 +112,7 @@ func TestMergeDistributedRows_DescTimestampOrder(t *testing.T) {
 	)
 
 	batches, mergeErr := mergeDistributedRows([][]byte{body}, distributedRowsSpec{Desc: true, BatchSize: 4})
+	t.Cleanup(func() { releaseBatches(batches) })
 	if mergeErr != nil {
 		t.Fatalf("mergeDistributedRows: %v", mergeErr)
 	}
@@ -191,6 +194,7 @@ func TestMergeDistributedRows_MillionRowMemoryCeiling(t *testing.T) {
 
 	start := time.Now()
 	batches, mergeErr := mergeDistributedRows(bodies, distributedRowsSpec{BatchSize: 4096})
+	t.Cleanup(func() { releaseBatches(batches) })
 	elapsed := time.Since(start)
 	close(stopSampler)
 	samplerWG.Wait()
@@ -281,7 +285,7 @@ func encodeOrderByRows(t *testing.T, schema *vectorized.BatchSchema, rows ...ord
 		batch.Columns[6].(*vectorized.TypedColumn[int64]).Append(row.rank)
 		batch.Len++
 	}
-	body, encodeErr := frame.Encode(batch)
+	body, encodeErr := encodeTestFrame(batch)
 	if encodeErr != nil {
 		t.Fatalf("frame.Encode: %v", encodeErr)
 	}
@@ -337,6 +341,7 @@ func TestMergeDistributedRows_OrderByString_AscDescAcrossSources(t *testing.T) {
 		OrderByTagName: "svc",
 	}
 	batchesAsc, mergeAscErr := mergeDistributedRows([][]byte{frameA, frameB}, specAsc)
+	t.Cleanup(func() { releaseBatches(batchesAsc) })
 	if mergeAscErr != nil {
 		t.Fatalf("mergeDistributedRows asc: %v", mergeAscErr)
 	}
@@ -359,6 +364,7 @@ func TestMergeDistributedRows_OrderByString_AscDescAcrossSources(t *testing.T) {
 		OrderByTagName: "svc",
 	}
 	batchesDesc, mergeDescErr := mergeDistributedRows([][]byte{frameA, frameB}, specDesc)
+	t.Cleanup(func() { releaseBatches(batchesDesc) })
 	if mergeDescErr != nil {
 		t.Fatalf("mergeDistributedRows desc: %v", mergeDescErr)
 	}
@@ -400,6 +406,7 @@ func TestMergeDistributedRows_OrderByInt64_PreservesPhase15Invariants(t *testing
 		OrderByTagName: "rank",
 	}
 	batches, mergeErr := mergeDistributedRows([][]byte{frameA, frameB}, spec)
+	t.Cleanup(func() { releaseBatches(batches) })
 	if mergeErr != nil {
 		t.Fatalf("mergeDistributedRows: %v", mergeErr)
 	}
@@ -439,6 +446,7 @@ func TestMergeDistributedRows_RawGroupBy_FirstSeenPerGroup(t *testing.T) {
 	// Merge: k-way heap produces ascending-ts order:
 	// ts=10 (alpha,100), ts=20 (alpha,200), ts=30 (beta,300), ts=40 (beta,400)
 	batches, mergeErr := mergeDistributedRows([][]byte{frameA, frameB}, distributedRowsSpec{BatchSize: 8})
+	t.Cleanup(func() { releaseBatches(batches) })
 	if mergeErr != nil {
 		t.Fatalf("mergeDistributedRows: %v", mergeErr)
 	}
@@ -525,6 +533,7 @@ func TestAnalyzeDistributed_GroupByTop_PerNodeRankingPreservesGlobalWinners(t *t
 
 	// Step 1: merge (simulates liaison receiving node frames).
 	batches, mergeErr := mergeDistributedRows([][]byte{body}, distributedRowsSpec{BatchSize: 8})
+	t.Cleanup(func() { releaseBatches(batches) })
 	if mergeErr != nil {
 		t.Fatalf("mergeDistributedRows: %v", mergeErr)
 	}
@@ -651,7 +660,7 @@ func encodeDistributedRows(t *testing.T, schema *vectorized.BatchSchema, rows ..
 		batch.Columns[4].(*vectorized.TypedColumn[int64]).Append(row.value)
 		batch.Len++
 	}
-	body, encodeErr := frame.Encode(batch)
+	body, encodeErr := encodeTestFrame(batch)
 	if encodeErr != nil {
 		t.Fatalf("frame.Encode: %v", encodeErr)
 	}
@@ -734,7 +743,7 @@ func TestMergeDistributedRows_MultiGroup_NullFillsMissingColumn(t *testing.T) {
 	batchGroup1.Columns[4].(*vectorized.TypedColumn[int64]).Append(200)
 	batchGroup1.Columns[5].(*vectorized.TypedColumn[string]).Append("zone-a")
 	batchGroup1.Len = 1
-	frameGroup1, encodeErr := frame.Encode(batchGroup1)
+	frameGroup1, encodeErr := encodeTestFrame(batchGroup1)
 	if encodeErr != nil {
 		t.Fatalf("frame.Encode group1: %v", encodeErr)
 	}
@@ -745,6 +754,7 @@ func TestMergeDistributedRows_MultiGroup_NullFillsMissingColumn(t *testing.T) {
 	}
 	spec := distributedRowsSpec{BatchSize: 4}
 	batches, mergeErr := mergeDistributedRowsMulti(groupFrames, mergedSchema, spec)
+	t.Cleanup(func() { releaseBatches(batches) })
 	if mergeErr != nil {
 		t.Fatalf("mergeDistributedRowsMulti: %v", mergeErr)
 	}
@@ -814,6 +824,7 @@ func TestMergeDistributedRows_IndexMode_PerGroupSidIsolation(t *testing.T) {
 	}
 	spec := distributedRowsSpec{IndexMode: true, BatchSize: 4}
 	batches, mergeErr := mergeDistributedRowsMulti(groupFrames, mergedSchema, spec)
+	t.Cleanup(func() { releaseBatches(batches) })
 	if mergeErr != nil {
 		t.Fatalf("mergeDistributedRowsMulti: %v", mergeErr)
 	}
@@ -845,6 +856,7 @@ func TestMergeDistributedRows_TopWithoutAgg_LiaisonSelectsTopN(t *testing.T) {
 	)
 
 	mergedBatches, mergeErr := mergeDistributedRows([][]byte{frameA, frameB}, distributedRowsSpec{BatchSize: 8})
+	t.Cleanup(func() { releaseBatches(mergedBatches) })
 	if mergeErr != nil {
 		t.Fatalf("mergeDistributedRows: %v", mergeErr)
 	}
@@ -902,6 +914,7 @@ func TestMergeDistributedRows_TopWithoutAgg_UnknownFieldErrors(t *testing.T) {
 		rowMergeOutput{ts: 10, ver: 1, sid: 1, value: 100},
 	)
 	batches, mergeErr := mergeDistributedRows([][]byte{body}, distributedRowsSpec{BatchSize: 4})
+	t.Cleanup(func() { releaseBatches(batches) })
 	if mergeErr != nil {
 		t.Fatalf("mergeDistributedRows: %v", mergeErr)
 	}

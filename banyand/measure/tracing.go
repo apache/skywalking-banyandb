@@ -50,7 +50,7 @@ func (bc *blockCursor) String() string {
 		bc.p.partMetadata.ID, bc.bm.seriesID, minTimestamp, maxTimestamp, bc.bm.count, humanize.Bytes(bc.bm.uncompressedSizeBytes))
 }
 
-func startBlockScanSpan(ctx context.Context, sids int, parts []*part, qr *queryResult) func() {
+func startBlockScanSpan(ctx context.Context, sids int, parts []partRef, qr *queryResult) func() {
 	tracer := query.GetTracer(ctx)
 	if tracer == nil {
 		return func() {}
@@ -61,8 +61,8 @@ func startBlockScanSpan(ctx context.Context, sids int, parts []*part, qr *queryR
 	span.Tag("part_header", partMetadataHeader)
 	span.Tag("part_num", fmt.Sprintf("%d", len(parts)))
 	for i := range parts {
-		span.Tag(fmt.Sprintf("part_%d_%s", parts[i].partMetadata.ID, parts[i].path),
-			parts[i].partMetadata.String())
+		span.Tag(fmt.Sprintf("part_%d_%s", parts[i].p.partMetadata.ID, parts[i].p.path),
+			parts[i].p.partMetadata.String())
 	}
 
 	return func() {

@@ -105,7 +105,7 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	s.option.mergePolicy = newDefaultMergePolicy()
 	fs.IntVar(&s.option.mergePolicy.maxParts, "trace-max-merge-parts", s.option.mergePolicy.maxParts, "the maximum number of parts to merge at once")
 	fs.VarP(&s.option.mergePolicy.maxFanOutSize, "trace-max-fan-out-size", "", "the upper bound of a single file size after merge of trace")
-	bindVectorizedFlags(fs, &s.option.vectorized, &s.option.vectorizedEnabled)
+	bindVectorizedFlags(fs, &s.option.vectorized)
 	s.option.mergeGraceDefault = defaultTracePipelineMergeGrace
 	s.option.finalizeGraceDefault = defaultTracePipelineFinalizeGrace
 	fs.BoolVar(&s.option.nativePipelineEnabled, "trace-pipeline-native-plugin-enabled", false, "enable the native plugin pipeline for in-merge trace retention")
@@ -136,9 +136,6 @@ func (s *standalone) Validate() error {
 	}
 	if s.retentionConfig.Cooldown <= 0 {
 		return errors.New("trace-retention-cooldown must be greater than 0")
-	}
-	if !s.option.vectorizedEnabled {
-		return errRowQueryRemoved
 	}
 	return s.option.vectorized.Validate()
 }
