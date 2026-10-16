@@ -57,7 +57,18 @@ func Generate() (Suite, error) {
 		features = append(features, Feature{ID: id, Status: status})
 	}
 	features = append(features, pendingFeatures()...)
-	suite := Suite{Version: 1, Seed: 1412, FixtureDigest: FixtureDigest(), Features: features, Cases: b.cases, Pairs: pairs}
+	reuseScenarios, reuseErr := generateT05()
+	if reuseErr != nil {
+		return Suite{}, reuseErr
+	}
+	reuseReadiness, reuseReadinessErr := t05ReadinessCase()
+	if reuseReadinessErr != nil {
+		return Suite{}, reuseReadinessErr
+	}
+	suite := Suite{
+		ReuseScenarios: reuseScenarios, ReuseReadiness: reuseReadiness, Version: 1, Seed: 1412,
+		FixtureDigest: FixtureDigest(), Features: features, Cases: b.cases, Pairs: pairs,
+	}
 	return suite, suite.Validate()
 }
 

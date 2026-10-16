@@ -39,12 +39,14 @@ type Feature struct {
 
 // Suite is the reproducible QL-only integration artifact.
 type Suite struct {
-	FixtureDigest string       `json:"fixture_digest"`
-	Features      []Feature    `json:"features"`
-	Cases         []Case       `json:"cases"`
-	Pairs         PairCoverage `json:"pairs"`
-	Version       int          `json:"version"`
-	Seed          int64        `json:"seed"`
+	FixtureDigest  string          `json:"fixture_digest"`
+	ReuseScenarios []ReuseScenario `json:"reuse_scenarios"`
+	ReuseReadiness Case            `json:"reuse_readiness"`
+	Features       []Feature       `json:"features"`
+	Cases          []Case          `json:"cases"`
+	Pairs          PairCoverage    `json:"pairs"`
+	Version        int             `json:"version"`
+	Seed           int64           `json:"seed"`
 }
 
 // Load checks the generated contract before integration tests consume it.
@@ -114,6 +116,12 @@ func (s Suite) Validate() error {
 		if feature.Status != "pending" && witnesses[feature.ID] == 0 {
 			return fmt.Errorf("QL feature %s has no generated witness", feature.ID)
 		}
+	}
+	if err := validateReuseReadiness(s.ReuseReadiness); err != nil {
+		return err
+	}
+	if err := validateReuseScenarios(s.ReuseScenarios); err != nil {
+		return err
 	}
 	return validatePairWitnesses(s.Pairs, s.Cases)
 }

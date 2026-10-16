@@ -19,7 +19,6 @@ package grpc
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -49,6 +48,8 @@ type bydbQLService struct {
 	repo           metadata.Repo
 	transformer    *bydbql.Transformer
 	cache          *preparedCache
+	planCache      *compiledPlanCache
+	planSource     *entityRepoSchemaSource
 	streamSvc      *streamService
 	measureSvc     *measureService
 	traceSvc       *traceService
@@ -78,6 +79,9 @@ func (b *bydbQLService) activeQueryAccessLog(root string, sampled bool) (err err
 }
 
 func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (resp *bydbqlv1.QueryResponse, err error) {
+	if hook := bydbQLPlanCacheHooks().Context; hook != nil {
+		ctx = hook(ctx)
+	}
 	start := time.Now()
 	b.metrics.totalStarted.Inc(1, "", "bydbql", "query")
 	snapshot, _ := SnapshotFromContext(ctx)
@@ -96,6 +100,7 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 	// A "reparse" is folded into "miss" here — it is a miss to anyone searching the
 	// access log; only the top-K tracker cares about the distinction.
 	var cacheResult string
+	var planCacheResult string
 	defer func() {
 		duration := time.Since(start)
 		b.metrics.totalFinished.Inc(1, "", "bydbql", "query")
@@ -117,6 +122,9 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 					tag = "miss"
 				}
 				service = "bydbql-" + tag
+			}
+			if planCacheResult != "" {
+				service += "-plan-" + planCacheResult
 			}
 			if errAccessLog := b.queryAccessLog.WriteQuery(service, start, duration, req, err); errAccessLog != nil {
 				b.l.Error().Err(errAccessLog).Msg("bydbql access log error")
@@ -141,12 +149,10 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to bind parameters: %v", err)
 	}
-	result, rawPlan, err := b.planQuery(ctx, stmt, bound)
+	result, rawPlan, planHandle, planCacheResult, err := b.planQueryWithCache(ctx, stmt, bound)
+	defer planHandle.Release()
 	if err != nil {
-		if errors.Is(err, bydbql.ErrInvalidMeasureQuery) {
-			return nil, status.Errorf(codes.InvalidArgument, "failed to plan measure query: %v", err)
-		}
-		return nil, status.Errorf(codes.Internal, "failed to transform to native request: %v", err)
+		return nil, planQueryStatus(err)
 	}
 	principal, _ := PrincipalFromContext(ctx)
 	decision, reason := AuthorizeTransformedRequest(snapshot, principal, result.QueryRequest)
@@ -166,7 +172,7 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 		if err != nil {
 			dl.Err(err).Msg("failed to marshal the request to json")
 		} else {
-			dl.Str("ql", req.Query).Stringer("type", result.Type).
+			dl.Str("ql", req.Query).Str("plan_cache", planCacheResult).Stringer("type", result.Type).
 				Str("to_request", string(requestJSON)).Stringer("duration", parseDuration).Msg("bydbql query")
 		}
 	}

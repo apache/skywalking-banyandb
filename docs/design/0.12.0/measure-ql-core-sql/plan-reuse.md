@@ -1,6 +1,7 @@
 # Reusable measure QL plans for parameterized OAP traffic
 
-Status: **included in the proposed Catalog B implementation**; not implemented.
+Status: **implemented by T05**, with verification recorded in
+[T05 verification](t05-verification.md).
 This extends the [engine design](datafusion-engine.md) on PR #1412. It changes no
 protobuf, RPC, native request or frame format.
 
@@ -177,7 +178,7 @@ caching as separate scope; their existing parse cache continues to work.
 Expected changes: plan-template and bind/instantiate code in `pkg/bydbql`, a new
 `banyand/liaison/grpc/bydbql_plan_cache.go`, coherent schema-snapshot helpers, cache
 configuration/metrics and QL orchestration. No protobuf or native wire changes.
-This is implementation work for the plan, not code shipped by this document.
+The implementation keeps literal-query and incoherent-schema bypass paths.
 
 Required tests:
 
@@ -198,14 +199,16 @@ Required tests:
 - Cached and uncached plans produce identical results, errors and native requests
   for both legacy and extended QL semantics.
 
-Benchmark an OAP-style working set with the **same parameterized text and changing
-values**, single-threaded and concurrent. Include one hot template, about 2,500
-and 4,000 distinct templates, and a set exceeding each cache limit. Compare:
-(1) existing parse cache plus local schema transform, (2) new typed planner with
-compiled caching disabled, and (3) the compiled cache warm/cold/invalidation paths.
-Measure ns/op, allocations/op, CPU profiles, p50/p95/p99 planning latency, cache
-hit ratio and live/retained bytes. Then measure fixed-data end-to-end Query latency
-separately so native scan/network cost cannot masquerade as planning savings.
+For T05, the user narrowed performance verification to **the same parameterized
+text and changing values, with compiled caching enabled versus disabled**. Use
+one simple legacy shape and one wide typed shape. Measure serial planning ns/op,
+B/op and allocations/op, then fixed-data RPC latency and process CPU/allocations
+with eight workers. Hold the dataset at 1,024 rows, with 20 warmups and 1,000 timed
+requests per variant in each of five resource-limited repetitions. Cache counters
+prove warm reuse and zero timed compilations. Cold concurrency, invalidation and
+capacity stay in correctness tests. The earlier 2,500/4,000/over-limit working-set
+and churn benchmark proposal is superseded for this ticket; defaults are bounded
+starting settings, not tuned from a working-set benchmark.
 
 The architectural acceptance gate is actual immutable plan reuse on a hit with
 correct per-request binding. Record measured benefits and any simple-query

@@ -1,7 +1,11 @@
 # Measure QL Catalog B: Core SQL Implementation Plan
 
-Status: **T02 shared batch execution and T03 typed raw queries implemented;
-nine capability tickets remain.** T03's generated E2E cases, resource probes and
+Status: **T02 shared batch execution, T03 typed raw queries and T05 compiled-plan
+reuse implemented; eight capability tickets remain.** T05 passes generated E2E,
+ownership checks and its planning benchmark. Its process-isolated RPC comparison
+records modest median latency/CPU savings and mixed simple-query tail latency.
+See [T05 verification](t05-verification.md) for results and the corrected benchmark
+isolation. T03's generated E2E cases, resource probes and
 five-run capability benchmark pass. An additional legacy/native comparison was
 stopped with partial results and no gate verdict. See [T03 verification](t03-verification.md).
 T02's previously inconclusive performance acceptance remains recorded separately.

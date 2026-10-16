@@ -64,12 +64,32 @@ func invalidMeasure(err error) error {
 // CompileMeasure resolves a prepared measure query against a read-only schema snapshot.
 // Non-measure queries return a nil template and retain their existing dispatch.
 func (t *Transformer) CompileMeasure(ctx context.Context, statement *PreparedStatement) (*MeasureTemplate, error) {
+	return t.compileMeasure(ctx, statement, nil)
+}
+
+// CompileMeasureWithSchemas resolves a query using only the supplied schema snapshots.
+// Missing snapshots are errors; this entry point never falls back to a registry.
+func (t *Transformer) CompileMeasureWithSchemas(
+	ctx context.Context, statement *PreparedStatement, schemas map[MeasureSource]*databasev1.Measure,
+) (*MeasureTemplate, error) {
+	if schemas == nil {
+		schemas = make(map[MeasureSource]*databasev1.Measure)
+	}
+	return t.compileMeasure(ctx, statement, schemas)
+}
+
+func (t *Transformer) compileMeasure(
+	ctx context.Context, statement *PreparedStatement, captured map[MeasureSource]*databasev1.Measure,
+) (*MeasureTemplate, error) {
 	if statement == nil || statement.template == nil {
 		return nil, invalidMeasure(errors.New("nil prepared statement"))
 	}
 	grammar := statement.template
 	if grammar.Select == nil || !strings.EqualFold(grammar.Select.From.ResourceType, "MEASURE") {
 		return nil, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	selectStmt := grammar.Select
 	extended := requiresMeasurePlan(selectStmt)
@@ -89,7 +109,21 @@ func (t *Transformer) CompileMeasure(ctx context.Context, statement *PreparedSta
 	}
 	snapshots := make(map[string]*databasev1.Measure, len(groups))
 	for _, group := range groups {
-		schema, err := t.getMeasure(ctx, &commonv1.Metadata{Name: name, Group: group})
+		// Repeated requested groups retain their output semantics but share one
+		// privately owned schema clone during compilation.
+		if _, cloned := snapshots[group]; cloned {
+			continue
+		}
+		var schema *databasev1.Measure
+		var err error
+		if err = ctx.Err(); err != nil {
+			return nil, err
+		}
+		if captured != nil {
+			schema = captured[MeasureSource{Group: group, Name: name}]
+		} else {
+			schema, err = t.getMeasure(ctx, &commonv1.Metadata{Name: name, Group: group})
+		}
 		if err != nil {
 			return nil, fmt.Errorf("failed to get measure %s/%s: %w", group, name, err)
 		}
@@ -107,6 +141,9 @@ func (t *Transformer) CompileMeasure(ctx context.Context, statement *PreparedSta
 		if err := template.compileLegacy(run, snapshots); err != nil {
 			return nil, err
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return template, nil
 }
@@ -154,7 +191,10 @@ func baseMeasureRequest(stmt *GrammarSelectStatement) *measurev1.QueryRequest {
 
 // Bind instantiates a template with fresh parameter values and a single execution clock.
 func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecution, error) {
-	if m == nil || bound == nil || bound.stmt != m.statement || len(bound.values) != len(m.statement.specs) {
+	if m == nil || bound == nil || bound.stmt == nil || len(bound.values) != len(m.statement.specs) {
+		return nil, invalidMeasure(errors.New("bound query does not belong to this measure template"))
+	}
+	if bound.stmt != m.statement && (bound.stmt.query != m.statement.query || !slices.Equal(bound.stmt.specs, m.statement.specs)) {
 		return nil, invalidMeasure(errors.New("bound query does not belong to this measure template"))
 	}
 	run := &transformRun{bound: bound.values}

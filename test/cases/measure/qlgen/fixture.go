@@ -148,8 +148,12 @@ func FixtureDigest() string {
 		Rules     []*databasev1.IndexRule
 		Rows      []fixtureRow
 		T03Schema *databasev1.Measure
+		T05Schema *databasev1.Measure
 		T03Rows   []fixtureRow
-	}{Rows: fixtureRows(), T03Schema: T03FixtureSchema(), T03Rows: t03Rows(), Schema: FixtureSchema(), Binding: FixtureIndexBinding(), Rules: FixtureIndexRules()})
+	}{
+		T05Schema: T05FixtureSchema(), Rows: fixtureRows(), T03Schema: T03FixtureSchema(), T03Rows: t03Rows(),
+		Schema: FixtureSchema(), Binding: FixtureIndexBinding(), Rules: FixtureIndexRules(),
+	})
 	if err != nil {
 		panic(fmt.Sprintf("encode fixed QL fixture: %v", err))
 	}

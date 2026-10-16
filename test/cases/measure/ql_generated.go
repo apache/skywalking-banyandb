@@ -182,6 +182,7 @@ func RegisterGeneratedQLTable(description string) bool {
 				}
 			})
 		}
+		registerGeneratedQLReuseScenarios(suite, &base)
 	})
 }
 

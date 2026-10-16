@@ -112,6 +112,8 @@ const (
 	ScenarioQLBT02 Scenario = "qlb_t02"
 	// ScenarioQLBT03 benchmarks typed raw QL projection and time pruning.
 	ScenarioQLBT03 Scenario = "qlb_t03"
+	// ScenarioQLBT05 compares compiled-plan reuse with uncached planning.
+	ScenarioQLBT05 Scenario = "qlb_t05"
 	// ScenarioTraceByID benchmarks distributed trace-id lookup.
 	ScenarioTraceByID Scenario = "trace_by_id"
 	// ScenarioTraceTagFilter benchmarks distributed ordered trace tag filters.
@@ -244,7 +246,7 @@ func (c Config) Validate() error {
 	switch c.Engine {
 	case engineMeasure:
 		switch c.Scenario {
-		case ScenarioScanAll, ScenarioTopWithFilter, ScenarioQLBT01, ScenarioQLBT02, ScenarioQLBT03:
+		case ScenarioScanAll, ScenarioTopWithFilter, ScenarioQLBT01, ScenarioQLBT02, ScenarioQLBT03, ScenarioQLBT05:
 		default:
 			return fmt.Errorf("%s unsupported for %s=%s: %q", envScenario, envEngine, c.Engine, c.Scenario)
 		}
@@ -466,6 +468,12 @@ func queryTimeout(cardinality int) time.Duration {
 }
 
 func (c Config) validateCatalogB() error {
+	if c.Scenario == ScenarioQLBT05 {
+		if c.Cardinality != 1024 || c.QueryWorkers != 8 || c.QueryIterations != 1000 || c.WarmupIterations != 20 {
+			return fmt.Errorf("qlb_t05 requires cardinality 1024, DQB_QUERY_WORKERS=8, DQB_QUERY_ITERATIONS=1000 and DQB_WARMUP_ITERATIONS=20")
+		}
+		return nil
+	}
 	switch c.Scenario {
 	case ScenarioQLBT01, ScenarioQLBT02, ScenarioQLBT03:
 	default:

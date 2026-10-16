@@ -53,6 +53,12 @@ if [[ ",${SCENARIOS}," == *",qlb_t01,"* || ",${SCENARIOS}," == *",qlb_t02,"* || 
     exit 2
   fi
 fi
+if [[ ",${SCENARIOS}," == *",qlb_t05,"* ]]; then
+  if [[ "${ENGINE}" != "measure" || "${CARDINALITIES}" != "1024" || "${DQB_QUERY_WORKERS:-4}" != "8" || "${DQB_QUERY_ITERATIONS:-50}" != "1000" || "${DQB_WARMUP_ITERATIONS:-3}" != "20" ]]; then
+    echo "T05 requires measure, cardinality 1024, DQB_QUERY_WORKERS=8, DQB_QUERY_ITERATIONS=1000 and DQB_WARMUP_ITERATIONS=20" >&2
+    exit 2
+  fi
+fi
 
 echo "[orchestrate] report_dir=${REPORT_DIR}"
 echo "[orchestrate] engine=${ENGINE}"

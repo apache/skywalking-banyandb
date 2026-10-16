@@ -349,20 +349,27 @@ and compiles once while each returns its bound result. `first-waiter-cancel`,
 `all-waiters-cancel`, `evict-in-flight` and `schema-change-during-compile` establish
 lifetime safety under race/owner poisoning; failures are not cached.
 
-**Benchmark:** P(T05), 1,024 input rows, compares base parse/local transformation,
-typed uncached, cold, warm and invalidation paths at workers 1/8/32. Working sets:
-1, 2,500, 4,000 and above both count/byte limits. Warm the whole admitted set, then
-vary values on the same valid texts. Measure RPC and planning latency, planning
-CPU/allocations, miss amplification, churn and live/retired-plan bytes separately.
+**Benchmark:** per the implementation scope decision, P(T05) compares compiled
+caching enabled versus disabled for exactly two query shapes: simple legacy and
+a wide typed projection with eight parameterized time predicates. Keep 1,024
+input rows, eight RPC workers, 20 checked warmups and 1,000 timed requests per
+variant; alternate two bindings without changing query text. Use five repetitions
+in 4-CPU, 8-GiB containers. Report RPC latency, process CPU/allocations and cache
+counters separately from the focused planning measurement. Cold bursts,
+invalidation, cancellation and count/byte bounds are correctness cases, not extra
+performance scenarios. The former working-set, churn, previous-ticket comparison
+and worker-count matrices are outside this ticket's benchmark scope.
 Add `BenchmarkQLBPlanReuse/T05` in `banyand/liaison/grpc`; run with `-run '^$'
 `-bench '^BenchmarkQLBPlanReuse$/^T05$' -benchmem -benchtime=2s -count=5`.
 
-G3: 1,000 serial warm requests perform zero analysis/optimization/recipe builds;
-one compile per synchronized stable-key cold burst; >=99% hits for a warmed set
-fitting both limits. For a wide typed projection with eight parameterized time
+G3: 1,000 warm requests perform zero analysis/optimization/recipe builds and
+record 1,000 hits; cache-disabled execution compiles every request. One compile
+per synchronized stable-key cold burst is checked by generated E2E cases.
+For a wide typed projection with eight parameterized time
 predicates, warm planning median ns/op and B/op each <=0.80x typed uncached.
 Compile and retained-plan caps include in-use retired plans; canceled work leaves
-zero in-flight entries. G1/G2 apply. Report simple-query and RPC results separately;
+zero in-flight entries. Preserve existing QL semantics and request resource
+ownership; do not rerun earlier tickets' performance matrices. Report simple-query and RPC results separately;
 planning savings do not imply an end-to-end speedup.
 
 **Checks/readiness:** E(T05), P(T05), focused planning benchmark;

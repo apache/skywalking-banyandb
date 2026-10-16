@@ -140,6 +140,55 @@ errors assert zero native leaf calls. Clock cases install a serialized Go test
 clock around the actual QL RPC, require exactly one clock capture, and restore
 the clock afterwards. No clock value is added to the protobuf contract.
 
+## T05 compiled-plan reuse processes
+
+The same artifact also declares generated `reuse_scenarios`, which describe
+repeated RPCs and a finite set of cache lifecycle actions. The scenario validator
+requires every rebind family and lifecycle kind, so deleting a generation branch
+cannot silently remove its obligation. The generator evaluates each response
+from the fixture rows and never captures a running server's answer.
+
+The rebind cohorts keep the exact query text while changing scalar values, time
+ranges, array lengths, LIMIT values, nullable projected results, and execution
+clocks. Empty array bindings and NULL time bindings retain their existing
+`InvalidArgument` contract; the next valid binding must still succeed on the
+same cached template. Every cohort then executes again with the compiled cache
+bypassed against those same independent results and errors. The isolated `ql_t05` fixture has the T03 row model under a
+separate schema identity, so schema deletion and recreation do not alter T03's
+fixture.
+
+Generated lifecycle scenarios run 32 callers against a cold compilation barrier,
+cancel the first or every waiter, replace a schema during compilation, evict a
+plan while its RPC owns a handle, replace/delete/recreate a schema, change a
+second queried group, and update an unrelated measure. Additional cases inject
+same or lower local revisions through the real schema watch adapter, reject a
+plan larger than a tiny cache budget while executing it uncached, and preserve
+literal-query bypass. The cold burst keeps all 32 compilation waiters concurrent
+while limiting downstream native execution to four queries; this avoids making
+the cache case a stress test of the finite storage admission pool. Permission
+checks inject real compiled authorization
+snapshots and authenticated principals into the RPC context; the normal
+post-lowering authorization decision must reject a revoked scope on a cache hit.
+The same process then withholds the local borrowed schema object while retaining
+the native locator: the RPC must use the actual registry fallback, execute the
+same independent expected result, and leave no admitted compiled entry.
+
+These instrumented hooks control barriers, schema views and request context.
+They do not replace the planner, storage, authorization decision or QL endpoint.
+Every scenario requires zero in-flight compilations, waiters, compile reservations,
+retired plan bytes, intermediate DataPoints and live result/memory growth after
+its RPCs finish.
+
+```sh
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/standalone/query \
+  -ginkgo.label-filter=QLB-T05
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/query \
+  -ginkgo.label-filter=QLB-T05
+```
+
+Run the two topologies sequentially. These are correctness and ownership cases;
+cache-on/cache-off timing uses the separate, bounded T05 benchmark.
+
 ## Engine regressions exposed by this suite
 
 The initial standalone and distributed runs each execute all 151 cases, with

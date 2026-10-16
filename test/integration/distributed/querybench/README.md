@@ -220,3 +220,65 @@ the process-global reservation peak by the sum of the three node budgets. It
 reports per-tracker peaks and parent lease charges as unavailable. A resource
 error in the successful-query benchmark remains an error and cannot produce a
 passing benchmark shard.
+
+
+### T05 compiled-plan cache comparison
+
+The T05 benchmark has four variants: legacy_simple_cache_off,
+legacy_simple_cache_on, typed_wide_cache_off and typed_wide_cache_on.
+Each cache setting starts a fresh process and distributed cluster, writing the same 1,024
+rows. The simple query projects ID and value. The typed query projects 16 value
+aliases and contains eight parameterized time comparisons. Both alternate two
+binding sets while retaining their query text; each binding returns 32 independently
+specified rows. Cache size is the only configuration change: zero versus 4,000
+entries, with the default 64 MiB byte cap.
+
+This deliberately narrows the original T05 performance matrix to the requested
+cache-on/cache-off comparison. It does not add larger cardinalities, working sets,
+invalidation/churn workloads or comparisons with previous tickets. Cold-miss,
+invalidation and capacity correctness belong to focused tests.
+
+Exactly 20 checked warmups precede 1,000 timed RPCs with eight workers per variant.
+The warm phase must compile once with caching, then record 1,000 hits and zero
+compiles during timing. Disabling caching must compile every request and retain
+zero plans. Timed responses receive row-count checks, with full fixture hashes
+verified outside timing for retained samples of both binding sets. Latencies,
+process CPU/allocations, profiles and cache/resource counters are recorded. The
+client, liaison and two data nodes share one process, so process totals are not
+planning-only measurements. The two query shapes share their child process and
+cluster. The parent starts no cluster and validates distinct child process IDs
+for cache-off and cache-on. Child reports and logs are retained under the
+report directory's children/cache_off and children/cache_on directories.
+
+The initial T05 runs used sequential clusters in one process. Their cache-on
+phase retained the closed first cluster's schema registry graphs through an
+existing process-global test roster, so their RPC latency/CPU comparison was
+confounded. Those artifacts remain available as the initial runs. Isolating the
+two settings fixes the harness without changing production schema lifecycle or
+adding benchmark workloads. The planning benchmark remains unchanged.
+
+Run five repetitions in independent 4-CPU, 8-GiB containers with unique report
+directories:
+
+```sh
+for repetition in 1 2 3 4 5; do
+  DQB_ENGINE=measure DQB_SCENARIOS=qlb_t05 DQB_CARDINALITIES=1024 \
+    DQB_QUERY_WORKERS=8 DQB_QUERY_ITERATIONS=1000 DQB_WARMUP_ITERATIONS=20 \
+    DQB_PROFILE=1 DQB_REPORT_DIR="/work/.omx/bench-reports/t05-isolated-r${repetition}" \
+    test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g
+done
+```
+
+The focused planning benchmark compares the same two shapes and cache settings,
+including fresh binding and native-request construction while excluding parse and
+execution. Run with the same Go version and resource limits:
+
+```sh
+go test ./banyand/liaison/grpc -run '^$' \
+  -bench '^BenchmarkQLBPlanReuse$/^T05$' -benchmem -benchtime=2s -count=5
+```
+
+Report the median planning ns/op and B/op ratios for typed-wide cache-on versus
+cache-off; the T05 design target is at most 0.80 for each. Report simple-query
+planning and RPC results separately. A planning improvement alone does not prove
+an RPC latency improvement.
