@@ -204,3 +204,13 @@ func (dc *distributedContext) TimeRange() *modelv1.TimeRange {
 func (dc *distributedContext) NodeSelectors() map[string][]string {
 	return dc.nodeSelectors
 }
+
+// BroadcastContext preserves query cancellation and the native receive allowance.
+func (dc *distributedContext) BroadcastContext(ctx context.Context, timeout time.Duration, topic bus.Topic, message bus.Message) ([]bus.Future, error) {
+	if broadcaster, ok := dc.Broadcaster.(interface {
+		BroadcastContext(context.Context, time.Duration, bus.Topic, bus.Message) ([]bus.Future, error)
+	}); ok {
+		return broadcaster.BroadcastContext(ctx, timeout, topic, message)
+	}
+	return dc.Broadcast(timeout, topic, message)
+}

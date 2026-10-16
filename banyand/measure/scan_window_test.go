@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
@@ -766,4 +767,27 @@ func vectorizedBatchPool(schema *vectorized.BatchSchema) *vectorized.BatchPool {
 
 func newTestBatchSource(qr *queryResult, schema *vectorized.BatchSchema, pool *vectorized.BatchPool) *vmeasure.BatchSourceFromBatchResult {
 	return vmeasure.NewBatchSourceFromBatchResult(qr, schema, pool, 1024)
+}
+
+func TestMixedScanRejectsRetainedResponseAt64MiB(t *testing.T) {
+	verifyNoScanLeaks(t)
+	fx := mixedFixture(t)
+	q := &fxQuery{tags: allTags, fields: allFields, minTS: 0, maxTS: 30000}
+	schema := q.schema(t)
+	qr := fx.newResult(t, q, schema)
+	tracker := vectorized.NewMemoryTracker(64 << 20)
+	pool := vectorized.NewBatchPool(schema, 1024)
+	pipeline, err := vectorized.NewPipelineBuilder().WithMemoryTracker(tracker).
+		From(vmeasure.NewBatchSourceFromBatchResult(qr, schema, pool, 1024)).Build()
+	require.NoError(t, err)
+	require.NoError(t, pipeline.Init(context.Background()))
+	iterator := vmeasure.NewIteratorFromPipeline(context.Background(), pipeline, schema, pool)
+	var retained []*measurev1.InternalDataPoint
+	for iterator.Next() {
+		retained = append(retained, iterator.Current()...)
+	}
+	require.NotEmpty(t, retained)
+	require.ErrorIs(t, iterator.Err(), vectorized.ErrMemoryBudgetExceeded)
+	require.ErrorIs(t, iterator.Close(), vectorized.ErrMemoryBudgetExceeded)
+	require.Zero(t, tracker.Used(), "failed collection must release reservations")
 }

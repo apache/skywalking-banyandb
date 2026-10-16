@@ -19,10 +19,12 @@ package plan
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	measure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
@@ -251,5 +253,55 @@ func TestExecute_BuildError_SurfacesAsExecuteError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Source") {
 		t.Fatalf("error should mention Source, got %v", err)
+	}
+}
+
+func TestExecuteBatches_NativeLimitAndCancellation(t *testing.T) {
+	schema, batch := buildScanInput(t)
+	source := &fakePullSource{schema: schema, batches: []*vectorized.RecordBatch{batch}}
+	scan := NewScan(schema, ScanParams{})
+	scan.Source = source
+	result, err := ExecuteBatches(context.Background(), NewLimit(scan, 1, 2), execCfg())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := result.NextBatch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.ActiveLen() != 2 {
+		t.Fatalf("wanted native offset/limit of 2, got %v", got)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err = result.NextBatch(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("wanted cancellation, got %v", err)
+	}
+	if err = result.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHiddenBatchProjection_DropsOnlyHiddenTags(t *testing.T) {
+	schema, batch := buildScanInput(t)
+	hidden := logical.NewHiddenTagSet()
+	hidden.Add(tagSvc)
+	source := &fakePullSource{schema: schema, batches: []*vectorized.RecordBatch{batch}}
+	projection := newHiddenBatchProjection(source, hidden)
+	defer projection.Close()
+	got, err := projection.NextBatch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.Len != batch.Len {
+		t.Fatal("projection changed rows")
+	}
+	for _, def := range got.Schema.Columns {
+		if def.Role == vectorized.RoleTag && def.Name == tagSvc {
+			t.Fatal("hidden tag survived batch schema")
+		}
+	}
+	if len(got.Schema.FieldColumns) != len(schema.FieldColumns) {
+		t.Fatal("field projection changed")
 	}
 }

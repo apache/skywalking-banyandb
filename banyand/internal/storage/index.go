@@ -544,6 +544,9 @@ func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series, subject
 		if err != nil {
 			return SeriesData{}, nil, err
 		}
+		if reserveErr := query.ReserveAllocation(ctx, uint64(len(hits))*24); reserveErr != nil {
+			return SeriesData{}, nil, reserveErr
+		}
 		sortedValues = make([][]byte, 0, len(hits))
 	}
 
@@ -552,12 +555,16 @@ func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series, subject
 	// SeriesSort/sortIterator never charged). This one-time charge accounts
 	// for parseResult's fixed per-call overhead plus the requested
 	// projection; per-document and per-field-value charges follow below.
-	if !sorted {
+	_, allocationScoped := query.AllocationScopeFromContext(ctx)
+	if !sorted && !allocationScoped {
 		if chargeErr := query.Charge(ctx, 1024+uint64(len(opts.Projection))*64); chargeErr != nil {
 			return SeriesData{}, nil, chargeErr
 		}
 	}
 
+	if reserveErr := query.ReserveAllocation(ctx, 1024+uint64(len(opts.Projection)+1)*64+uint64(len(hits))*64); reserveErr != nil {
+		return SeriesData{}, nil, reserveErr
+	}
 	fields := make([]string, 0, len(opts.Projection)+1)
 	for i := range opts.Projection {
 		fields = append(fields, opts.Projection[i].Marshal())
@@ -597,13 +604,17 @@ func appendSearchHit(ctx context.Context, view *native.ReadView, hit native.Quer
 	if projectErr != nil {
 		return projectErr
 	}
-	if !sorted {
+	_, allocationScoped := query.AllocationScopeFromContext(ctx)
+	if !sorted && !allocationScoped {
 		if chargeErr := query.ChargeResult(ctx, 256+uint64(len(opts.Projection))*64); chargeErr != nil {
 			return chargeErr
 		}
 		if chargeErr := query.Charge(ctx, uint64(len(projected.Identifier))); chargeErr != nil {
 			return chargeErr
 		}
+	}
+	if reserveErr := reserveSeriesDataHit(ctx, projected.Identifier, len(opts.Projection)); reserveErr != nil {
+		return reserveErr
 	}
 	var ser pbv1.Series
 	if unmarshalErr := ser.Unmarshal(projected.Identifier); unmarshalErr != nil {
@@ -635,7 +646,7 @@ func appendSearchHit(ctx context.Context, view *native.ReadView, hit native.Quer
 				continue
 			}
 			value := values[len(values)-1]
-			if !sorted {
+			if !sorted && !allocationScoped {
 				if chargeErr := query.Charge(ctx, uint64(len(value))); chargeErr != nil {
 					return chargeErr
 				}
@@ -686,4 +697,21 @@ func (s *seriesIndex) Close() error {
 	}
 	s.metrics.DeleteAll(s.p.SegLabelValues()...)
 	return s.owner.Close()
+}
+
+// reserveSeriesDataHit bounds only the selected identifier being decoded. Escaped
+// delimiters are payload; each unescaped delimiter ends one subject/tag value.
+func reserveSeriesDataHit(ctx context.Context, identifier []byte, projection int) error {
+	var values uint64
+	for i := 0; i < len(identifier); i++ {
+		switch identifier[i] {
+		case '\\':
+			i++
+		case '|':
+			values++
+		}
+	}
+	// Buffer growth, copied strings and binary values use at most a conservative
+	// multiple of the encoded payload; protobuf objects scale with value count.
+	return query.ReserveAllocation(ctx, 512+uint64(len(identifier))*8+values*256+uint64(projection)*96)
 }

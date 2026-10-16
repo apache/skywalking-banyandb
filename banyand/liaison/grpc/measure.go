@@ -33,6 +33,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/accesslog"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -40,6 +41,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/query/ql"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
+	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -64,6 +68,7 @@ type measureService struct {
 	*discoveryService
 	l               *logger.Logger
 	metrics         *metrics
+	queryBudget     *protector.QueryBudget
 	writeTimeout    time.Duration
 	maxWaitDuration time.Duration
 }
@@ -392,17 +397,59 @@ func (ms *measureService) handleWriteCleanup(publisher queue.BatchPublisher, suc
 
 var emptyMeasureQueryResponse = &measurev1.QueryResponse{DataPoints: make([]*measurev1.DataPoint, 0)}
 
-func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest) (resp *measurev1.QueryResponse, err error) {
+func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest) (*measurev1.QueryResponse, error) {
+	return ms.query(ctx, req, false)
+}
+
+// query shares admission, lifecycle gates and response accounting across both callers.
+func (ms *measureService) query(ctx context.Context, req *measurev1.QueryRequest, batches bool) (resp *measurev1.QueryResponse, err error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "query request is nil")
+	}
+	budget := ms.queryBudget
+	if budget == nil {
+		budget = protector.QueryBudgetFor(nil)
+	}
+	// Admit a scan to preserve historical measure limit and offset semantics.
+	ctx, release, admissionErr := budget.AdmitMeasureContext(ctx)
+	if admissionErr != nil {
+		return nil, queryStatus(admissionErr)
+	}
+	defer release()
+	ctx = vectorized.WithQueryMemoryScope(ctx)
+	defer func() { err = queryStatus(err) }()
+	return ms.executeQuery(ctx, req, batches)
+}
+
+// finalizeMeasureResponse runs after trace assembly and before query metrics.
+func finalizeMeasureResponse(ctx context.Context, resp **measurev1.QueryResponse, queryErr *error) {
+	if *queryErr != nil {
+		return
+	}
+	release, err := vectorized.ReserveResponseEncoding(ctx, *resp)
+	defer release()
+	if err != nil {
+		*resp = nil
+		*queryErr = err
+	}
+}
+
+func (ms *measureService) executeQuery(ctx context.Context, req *measurev1.QueryRequest, batches bool) (resp *measurev1.QueryResponse, err error) {
+	acquired := make([]string, 0, len(req.Groups))
+	defer func() {
+		for _, group := range acquired {
+			ms.groupRepo.releaseRequest(group)
+		}
+	}()
+	if err = ctx.Err(); err != nil {
+		return nil, err
+	}
 	for _, g := range req.Groups {
 		if acquireErr := ms.groupRepo.acquireRequest(g); acquireErr != nil {
 			return nil, status.Errorf(codes.FailedPrecondition, "group %s is pending deletion", g)
 		}
+		acquired = append(acquired, g)
 	}
-	defer func() {
-		for _, g := range req.Groups {
-			ms.groupRepo.releaseRequest(g)
-		}
-	}()
 	for _, g := range req.Groups {
 		ms.metrics.totalStarted.Inc(1, g, "measure", "query")
 	}
@@ -423,6 +470,7 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 			}
 		}
 	}()
+	defer finalizeMeasureResponse(ctx, &resp, &err)
 	if err = timestamp.CheckTimeRange(req.GetTimeRange()); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v is invalid :%s", req.GetTimeRange(), err)
 	}
@@ -486,7 +534,11 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 			req.TimeRange.Begin = timestamppb.New(newBegin)
 		}
 	}
-	feat, err := ms.broadcaster.Publish(ctx, data.TopicMeasureQuery, bus.NewMessage(bus.MessageID(now.UnixNano()), req))
+	var payload any = req
+	if batches {
+		payload = &vmeasure.BatchQueryRequest{Request: req}
+	}
+	feat, err := ms.broadcaster.Publish(ctx, data.TopicMeasureQuery, bus.NewMessage(bus.MessageID(now.UnixNano()), payload))
 	if err != nil {
 		return nil, err
 	}
@@ -497,18 +549,75 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 		}
 		return nil, err
 	}
-	data := msg.Data()
-	switch d := data.(type) {
-	case *measurev1.QueryResponse:
-		responseDataPointCount = len(d.DataPoints)
-		if len(gatedStatuses) > 0 {
-			d.GroupStatuses = gatedStatuses
+	resp, err = measureQueryResponse(ctx, msg.Data(), gatedStatuses)
+	if resp != nil {
+		responseDataPointCount = len(resp.DataPoints)
+	}
+	return resp, err
+}
+
+func measureQueryResponse(ctx context.Context, data any, gatedStatuses map[string]modelv1.Status) (*measurev1.QueryResponse, error) {
+	switch result := data.(type) {
+	case vmeasure.BatchQueryResult:
+		resp, err := collectMeasureBatches(ctx, result)
+		if err != nil {
+			return nil, queryStatus(err)
 		}
-		return d, nil
+		resp.GroupStatuses = gatedStatuses
+		return resp, nil
+	case *measurev1.QueryResponse:
+		if len(gatedStatuses) > 0 {
+			result.GroupStatuses = gatedStatuses
+		}
+		return result, nil
 	case *common.Error:
-		return nil, errors.WithMessage(errQueryMsg, d.Error())
+		return nil, errors.WithMessage(errQueryMsg, result.Error())
+	case error:
+		return nil, queryStatus(result)
 	}
 	return nil, nil
+}
+
+// collectMeasureBatches serializes only final egress rows after NativeScan consumes batches.
+func collectMeasureBatches(ctx context.Context, result vmeasure.BatchQueryResult) (_ *measurev1.QueryResponse, err error) {
+	scan := ql.NewNativeScan(result)
+	defer func() {
+		if closeErr := scan.Close(); err == nil {
+			err = closeErr
+		}
+	}()
+	iter, err := result.NativeIteratorFrom(ctx, scan)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := iter.Close(); err == nil {
+			err = closeErr
+		}
+	}()
+	resp := &measurev1.QueryResponse{}
+	for iter.Next() {
+		if err = ctx.Err(); err != nil {
+			return nil, err
+		}
+		current := iter.Current()
+		if len(current) > 0 {
+			resp.DataPoints = append(resp.DataPoints, current[0].GetDataPoint())
+		}
+	}
+	if errIterator, ok := iter.(interface{ Err() error }); ok {
+		if err = errIterator.Err(); err != nil {
+			return nil, err
+		}
+	}
+	if err = ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err = iter.Close(); err != nil {
+		return nil, err
+	}
+	resp.Trace = result.QueryTrace()
+	return resp, nil
 }
 
 func (ms *measureService) TopN(ctx context.Context, topNRequest *measurev1.TopNRequest) (resp *measurev1.TopNResponse, err error) {

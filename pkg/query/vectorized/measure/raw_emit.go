@@ -20,6 +20,7 @@ package measure
 import (
 	"context"
 	"fmt"
+	"math"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -81,6 +82,10 @@ type FrameEmitter interface {
 // Returns the encoded frame body and the close error from pipeline.Close
 // joined into a single error (mirrors vectorizedMIterator.Close).
 func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *vectorized.BatchSchema) ([]byte, error) {
+	return drainPipelineToFrame(ctx, p, schema, func(release func()) { release() })
+}
+
+func drainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *vectorized.BatchSchema, retain func(func())) (body []byte, retErr error) {
 	// A nil pipeline is the canonical empty-result signal — emptyMIterator
 	// returns nil from Pipeline() so the data-node Rev can short-circuit
 	// to an empty raw frame body. The codec layer's RawFrameCodec treats
@@ -93,10 +98,35 @@ func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 	if schema == nil {
 		return nil, fmt.Errorf("DrainPipelineToFrame: nil schema")
 	}
+	var reserved int64
+	defer func() {
+		if reserved == 0 {
+			return
+		}
+		release := func() { p.Tracker().Release(reserved) }
+		if retErr != nil {
+			release()
+			return
+		}
+		retain(query.RegisterTransportRelease(ctx, release))
+	}()
+	if tracker := p.Tracker(); tracker != nil {
+		if len(schema.Columns) > (math.MaxInt64-1024)/512 {
+			return nil, vectorized.ErrMemoryBudgetExceeded
+		}
+		base := int64(1024 + len(schema.Columns)*512)
+		if budgetErr := ctx.Err(); budgetErr != nil {
+			return nil, budgetErr
+		}
+		if budgetErr := tracker.Reserve(base); budgetErr != nil {
+			return nil, budgetErr
+		}
+		reserved = base
+	}
 	// A columnar frame carries a batch's constant columns as one value and copies each cell
 	// once, into the frame, so a single batch of native columns is encoded as it is instead of
-	// being copied into a coalescing batch first (every pull of a pipeline returns a fresh batch,
-	// so holding the first across the next pull is safe). Batches that need passthrough
+	// being copied into a coalescing batch first. The held descriptor independently pins its
+	// owners because a source can release its lent descriptor on the next pull. Batches that need passthrough
 	// conversion take the coalescing path.
 	direct := !needsFrameConversion(schema)
 	var out, single *vectorized.RecordBatch
@@ -125,8 +155,23 @@ func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 			b.ReleaseOwners()
 			return nil, fmt.Errorf("DrainPipelineToFrame: batch schema mismatch (planner bug)")
 		}
+		amount, budgetErr := reserveFrameEgressBatch(ctx, p.Tracker(), b)
+		if budgetErr != nil {
+			b.ReleaseOwners()
+			return nil, budgetErr
+		}
+		reserved += amount
 		if direct && out == nil && single == nil {
-			single = b
+			held := *b
+			held.Columns = append([]vectorized.Column(nil), b.Columns...)
+			held.Selection = append([]uint16(nil), b.Selection...)
+			if b.Selection != nil && len(b.Selection) == 0 {
+				held.Selection = []uint16{}
+			}
+			held.Owners = vectorized.Owners{}
+			held.Owners.PinAll(&b.Owners)
+			b.ReleaseOwners()
+			single = &held
 			continue
 		}
 		if out == nil {
@@ -173,6 +218,49 @@ func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 		return nil, fmt.Errorf("DrainPipelineToFrame: %w", convErr)
 	}
 	return encodeDrainedFrame(ctx, converted)
+}
+
+func reserveFrameEgressBatch(ctx context.Context, tracker *vectorized.MemoryTracker, batch *vectorized.RecordBatch) (int64, error) {
+	if tracker == nil {
+		return 0, nil
+	}
+	amount, err := frameEgressReservationBytes(batch)
+	if err != nil {
+		return 0, err
+	}
+	if err = ctx.Err(); err != nil {
+		return 0, err
+	}
+	if err = tracker.Reserve(amount); err != nil {
+		return 0, err
+	}
+	return amount, nil
+}
+
+// frameEgressReservationBytes bounds coalescing growth, typed conversion, frame
+// buffers and transport serialization copies before any egress allocation.
+func frameEgressReservationBytes(batch *vectorized.RecordBatch) (int64, error) {
+	amount, err := serializationReservationBytes(batch)
+	if err != nil || amount > math.MaxInt64/2 {
+		return 0, vectorized.ErrMemoryBudgetExceeded
+	}
+	amount *= 2
+	for idx, col := range batch.Columns {
+		def := batch.Schema.Columns[idx]
+		metadata := uint64(len(def.Name)) + uint64(len(def.TagFamily))
+		if constant, ok := col.(*vectorized.ConstColumn); ok && !constant.IsNullValue() {
+			payload := uint64(len(constant.Str())) + uint64(len(constant.Bytes()))
+			if payload > math.MaxInt64/8/uint64(max(batch.ActiveLen(), 1)) {
+				return 0, vectorized.ErrMemoryBudgetExceeded
+			}
+			metadata += payload * uint64(batch.ActiveLen())
+		}
+		if metadata > uint64(math.MaxInt64-amount)/8 {
+			return 0, vectorized.ErrMemoryBudgetExceeded
+		}
+		amount += int64(metadata * 8)
+	}
+	return amount, nil
 }
 
 // encodeDrainedFrame encodes the drained batch as a columnar frame, under a frame-encode

@@ -68,7 +68,12 @@ func writeBenchmarkData(ctx context.Context, conn *grpc.ClientConn, cfg Config, 
 	if cfg.Engine == engineTrace {
 		return writeTraceData(ctx, conn, cfg, cardinality, base)
 	}
-	return writeMeasureData(ctx, conn, cfg, cardinality, base)
+	summary, err := writeMeasureData(ctx, conn, cfg, cardinality, base)
+	if err == nil && cfg.Scenario == ScenarioQLBT02 {
+		entities, points := splitCardinality(cardinality)
+		err = writeEntityRangeShape(ctx, measurev1.NewMeasureServiceClient(conn), 0, entities, points, base, true)
+	}
+	return summary, err
 }
 
 func writeMeasureData(ctx context.Context, conn *grpc.ClientConn, cfg Config, cardinality int, base time.Time) (writeSummary, error) {
@@ -108,6 +113,10 @@ func writeMeasureData(ctx context.Context, conn *grpc.ClientConn, cfg Config, ca
 }
 
 func writeEntityRange(ctx context.Context, client measurev1.MeasureServiceClient, startEntity, endEntity, pointsEach int, base time.Time) error {
+	return writeEntityRangeShape(ctx, client, startEntity, endEntity, pointsEach, base, false)
+}
+
+func writeEntityRangeShape(ctx context.Context, client measurev1.MeasureServiceClient, startEntity, endEntity, pointsEach int, base time.Time, wide bool) error {
 	stream, streamErr := client.Write(ctx)
 	if streamErr != nil {
 		return fmt.Errorf("open measure write stream: %w", streamErr)
@@ -132,6 +141,10 @@ func writeEntityRange(ctx context.Context, client measurev1.MeasureServiceClient
 	}()
 	metadata := &commonv1.Metadata{Name: benchMeasureName, Group: benchGroupName}
 	spec := benchmarkDataPointSpec()
+	if wide {
+		metadata.Name = qlbT02WideMeasure
+		spec.FieldNames = qlbT02WideFields()
+	}
 	for entityIdx := startEntity; entityIdx < endEntity; entityIdx++ {
 		serviceID := fmt.Sprintf("svc%d", entityIdx%benchServiceMod)
 		entityID := fmt.Sprintf("entity_%d", entityIdx)
@@ -142,6 +155,9 @@ func writeEntityRange(ctx context.Context, client measurev1.MeasureServiceClient
 				DataPointSpec: spec,
 				DataPoint:     benchmarkDataPoint(base, serviceID, entityID, entityIdx, pointIdx),
 				MessageId:     messageID,
+			}
+			if wide {
+				req.DataPoint.Fields = qlbT02WideValues(entityIdx, pointIdx)
 			}
 			if sendErr := stream.Send(req); sendErr != nil {
 				return fmt.Errorf("send measure write request: %w", sendErr)

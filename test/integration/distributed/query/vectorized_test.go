@@ -171,7 +171,7 @@ var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ord
 	})
 
 	casesmeasure.RegisterTable("Vec (distributed): scanning measures")
-	casesmeasure.RegisterQLTable("QL measure RPC verification", func(request *measurev1.QueryRequest, want *measurev1.QueryResponse) {
+	observeQLFixture := func(request *measurev1.QueryRequest, want *measurev1.QueryResponse) {
 		body, marshalErr := proto.Marshal(request)
 		gomega.Expect(marshalErr).NotTo(gomega.HaveOccurred())
 		for nodeIndex, addr := range dataNodeAddrs {
@@ -202,6 +202,8 @@ var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ord
 			}()
 			ginkgo.GinkgoWriter.Printf("QL fixture F: data_node=%d address=%s rows=6 version=2 (direct node RPC)\n", nodeIndex, addr)
 		}
-	})
+	}
+	casesmeasure.RegisterQLTable("QL measure RPC verification", observeQLFixture)
+	casesmeasure.RegisterQLBatchTable("QL shared batch execution", observeQLFixture)
 	casestopn.RegisterTable("Vec (distributed): TopN")
 })

@@ -21,6 +21,7 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
+	"math"
 	"sort"
 
 	"github.com/pkg/errors"
@@ -28,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
@@ -274,10 +276,22 @@ func (qr *queryResult) loadCursorsForBatch() error {
 // mirrors what queryResult.mergeBatch does for blockCursor (committed in
 // 36140ca9) but on the segResult side. Pull() and copyTo() are untouched —
 // the row path remains byte-identical for legacy consumers (C1 invariant).
-func (iqr *indexSortResult) PullBatch(_ context.Context) (*model.MeasureBatch, error) {
+func (iqr *indexSortResult) PullBatch(ctx context.Context) (*model.MeasureBatch, error) {
 	if iqr.batchSchema == nil {
 		return nil, fmt.Errorf("indexSortResult.PullBatch: batchSchema not initialized; " +
 			"the underlying query did not record a vectorized BatchSchema (likely a schema-build error at Query time)")
+	}
+	if len(iqr.segResults.results) == 0 {
+		return nil, nil
+	}
+	const rows = 2 * mergeBatchMaxRows
+	columns := uint64(len(iqr.batchSchema.Columns))
+	if columns > (math.MaxInt64-256*1024-rows*128)/(rows*64) {
+		return nil, vectorized.ErrMemoryBudgetExceeded
+	}
+	workspace := uint64(rows)*(columns*64+128) + 256*1024
+	if err := query.ReserveAllocationOnce(ctx, iqr, workspace); err != nil {
+		return nil, err
 	}
 	return iqr.mergeSegResultsBatch(iqr.batchSchema, mergeBatchMaxRows)
 }

@@ -79,7 +79,12 @@ func runSingleShotScenario(t *testing.T, cfg Config) {
 		t.Fatalf("start cluster: %v", clusterErr)
 	}
 	defer cluster.close()
-	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout(cfg.Cardinality)+10*time.Minute)
+	timeout := queryTimeout(cfg.Cardinality) + 10*time.Minute
+	if cfg.Scenario == ScenarioQLBT02 {
+		// Six serial 1,000-query variants include wide protobuf responses.
+		timeout += 30 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	writeSummary, writeErr := writeBenchmarkData(ctx, cluster.conn, cfg, cfg.Cardinality, base)
 	if writeErr != nil {
@@ -111,12 +116,18 @@ func runMergeShards(t *testing.T, cfg Config) {
 	}
 	var flattened []Result
 	for _, result := range results {
-		if result.Scenario == ScenarioQLBT01 {
+		switch result.Scenario {
+		case ScenarioQLBT02:
+			if validationErr := validateQLBT02Result(result); validationErr != nil {
+				t.Fatal(validationErr)
+			}
+			flattened = append(flattened, result.Variants...)
+		case ScenarioQLBT01:
 			if validationErr := validateQLBT01Result(result); validationErr != nil {
 				t.Fatal(validationErr)
 			}
 			flattened = append(flattened, result.Variants...)
-		} else {
+		default:
 			flattened = append(flattened, result)
 		}
 	}
@@ -146,6 +157,9 @@ func runMergeShards(t *testing.T, cfg Config) {
 // against an already-prepared cluster, capturing CPU and heap profiles for
 // the timed phase.
 func runScenarioBenchmark(ctx context.Context, conn *grpc.ClientConn, cfg Config, scenario Scenario, cardinality int, mode string, base time.Time) (Result, error) {
+	if scenario == ScenarioQLBT02 {
+		return runQLBT02Benchmark(ctx, conn, cfg, cardinality, mode, base)
+	}
 	if scenario == ScenarioQLBT01 {
 		return runQLBT01Benchmark(ctx, conn, cfg, cardinality, mode, base)
 	}
@@ -221,7 +235,11 @@ func startBenchCluster(t *testing.T, cfg Config) (benchCluster, time.Time, error
 		setup.PreloadSchemaViaProperty(config, preloadTraceBenchSchema(cfg.ShardNum))
 		config.AddLoadedKinds(schema.KindTrace)
 	} else {
-		setup.PreloadSchemaViaProperty(config, testmeasure.PreloadSchema)
+		preload := testmeasure.PreloadSchema
+		if cfg.Scenario == ScenarioQLBT02 {
+			preload = preloadQLBT02Schema
+		}
+		setup.PreloadSchemaViaProperty(config, preload)
 		config.AddLoadedKinds(schema.KindMeasure)
 	}
 	liaisonAddr, closeLiaison := setup.LiaisonNode(config, flags...)
@@ -274,6 +292,9 @@ func startBenchCluster(t *testing.T, cfg Config) (benchCluster, time.Time, error
 func clusterFlags(cfg Config) []string {
 	if cfg.Engine == engineTrace {
 		return []string{fmt.Sprintf("--trace-vectorized-query-memory-mib=%d", cfg.QueryMemoryMiB)}
+	}
+	if cfg.Scenario == ScenarioQLBT02 {
+		return []string{fmt.Sprintf("--measure-vectorized-query-memory-mib=%d", cfg.QueryMemoryMiB)}
 	}
 	if cfg.Soak {
 		// The measure soak writes while it queries; a short flush timeout makes the

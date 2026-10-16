@@ -32,6 +32,7 @@ import (
 	"github.com/klauspost/compress/s2"
 
 	"github.com/apache/skywalking-banyandb/pkg/filter"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
 const (
@@ -862,7 +863,13 @@ func (s *storedSegmentReader) postingValuesAndBitmap(postingOffset uint64) ([]ui
 // decodePostingAt validates and decodes the document bitmap of a general
 // (non one-hit) posting, returning the offset of its frequency stream (zero
 // when the posting has none) without decoding that stream.
+//
+//nolint:contextcheck // Legacy context-free maintenance path.
 func (s *storedSegmentReader) decodePostingAt(postingOffset uint64) (uint64, *roaringpkg.Bitmap, error) {
+	return s.decodePostingAtContext(context.Background(), postingOffset)
+}
+
+func (s *storedSegmentReader) decodePostingAtContext(ctx context.Context, postingOffset uint64) (uint64, *roaringpkg.Bitmap, error) {
 	if postingOffset&fstValueEncodingMask != 0 {
 		return 0, nil, corruptError("segment %q has an unsupported posting encoding", s.path)
 	}
@@ -894,11 +901,14 @@ func (s *storedSegmentReader) decodePostingAt(postingOffset uint64) (uint64, *ro
 	if postingsLength > maxSelectionPostingsSize || postingsLength > s.footer.docValueOffset-cursor {
 		return 0, nil, corruptError("segment %q has an oversized posting bitmap", s.path)
 	}
+	if err := query.ReserveAllocation(ctx, postingsLength*16+4096); err != nil {
+		return 0, nil, err
+	}
 	postingsData, dataErr := s.readPostingBytes(cursor, postingsLength)
 	if dataErr != nil {
 		return 0, nil, dataErr
 	}
-	postings, decodeErr := decodePostingBitmap(context.Background(), postingsData)
+	postings, decodeErr := decodePostingBitmap(ctx, postingsData)
 	if decodeErr != nil {
 		return 0, nil, corruptError("decode posting bitmap in segment %q", s.path, decodeErr)
 	}
@@ -911,7 +921,7 @@ func (s *storedSegmentReader) decodePostingAt(postingOffset uint64) (uint64, *ro
 	return frequencyOffset, postings, nil
 }
 
-func (s *storedSegmentReader) termPostingBitmap(field string, term []byte) (*roaringpkg.Bitmap, bool, error) {
+func (s *storedSegmentReader) termPostingBitmapContext(ctx context.Context, field string, term []byte) (*roaringpkg.Bitmap, bool, error) {
 	if absent, absentErr := s.termAbsent(field, term); absentErr != nil || absent {
 		return nil, false, absentErr
 	}
@@ -931,9 +941,12 @@ func (s *storedSegmentReader) termPostingBitmap(field string, term []byte) (*roa
 		if documentNumber >= s.footer.documentCount || documentNumber > math.MaxUint32 {
 			return nil, false, corruptError("segment %q has an out-of-range single-hit posting", s.path)
 		}
+		if err := query.ReserveAllocation(ctx, 512); err != nil {
+			return nil, false, err
+		}
 		return roaringpkg.BitmapOf(uint32(documentNumber)), true, nil
 	}
-	_, postings, decodeErr := s.decodePostingAt(postingOffset)
+	_, postings, decodeErr := s.decodePostingAtContext(ctx, postingOffset)
 	if decodeErr != nil {
 		return nil, false, decodeErr
 	}
@@ -1069,6 +1082,9 @@ func (s *storedSegmentReader) unionPostings(ctx context.Context, selected *roari
 		if documentNumber >= s.footer.documentCount {
 			return corruptError("segment %q has an out-of-range single-hit posting", s.path)
 		}
+		if err := query.ReserveAllocationOnce(ctx, selected, 1024+4*(selected.GetSizeInBytes()+128)); err != nil {
+			return err
+		}
 		selected.Add(uint32(documentNumber))
 		return nil
 	case 0:
@@ -1107,6 +1123,9 @@ func (s *storedSegmentReader) unionGeneralPostings(ctx context.Context, selected
 	if postingsLength > maxSelectionPostingsSize || postingsLength > s.footer.docValueOffset-postingsCursor {
 		return corruptError("segment %q has an oversized posting bitmap", s.path)
 	}
+	if err := query.ReserveAllocation(ctx, postingsLength*16+4096); err != nil {
+		return err
+	}
 	postingsData := make([]byte, int(postingsLength))
 	if readErr := s.readInto(postingsCursor, postingsData); readErr != nil {
 		return readErr
@@ -1128,6 +1147,12 @@ func (s *storedSegmentReader) unionGeneralPostings(ctx context.Context, selected
 }
 
 func unionPostingBitmap(ctx context.Context, selected, postings *roaringpkg.Bitmap, documentCount uint64, path string) error {
+	if err := query.ReserveAllocationOnce(ctx, selected, 8192+4*(selected.GetSizeInBytes()+postings.GetCardinality())); err != nil {
+		return err
+	}
+	if err := query.ReserveAllocation(ctx, selectionPostingBatchSize*4); err != nil {
+		return err
+	}
 	iterator := postings.ManyIterator()
 	documentNumbers := make([]uint32, selectionPostingBatchSize)
 	for {

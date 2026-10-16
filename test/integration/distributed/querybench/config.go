@@ -108,6 +108,8 @@ const (
 	ScenarioTopWithFilter Scenario = "top_with_filter"
 	// ScenarioQLBT01 benchmarks native and legacy QL parameter rebinding.
 	ScenarioQLBT01 Scenario = "qlb_t01"
+	// ScenarioQLBT02 benchmarks the shared native and QL batch boundary.
+	ScenarioQLBT02 Scenario = "qlb_t02"
 	// ScenarioTraceByID benchmarks distributed trace-id lookup.
 	ScenarioTraceByID Scenario = "trace_by_id"
 	// ScenarioTraceTagFilter benchmarks distributed ordered trace tag filters.
@@ -240,7 +242,7 @@ func (c Config) Validate() error {
 	switch c.Engine {
 	case engineMeasure:
 		switch c.Scenario {
-		case ScenarioScanAll, ScenarioTopWithFilter, ScenarioQLBT01:
+		case ScenarioScanAll, ScenarioTopWithFilter, ScenarioQLBT01, ScenarioQLBT02:
 		default:
 			return fmt.Errorf("%s unsupported for %s=%s: %q", envScenario, envEngine, c.Engine, c.Scenario)
 		}
@@ -259,11 +261,14 @@ func (c Config) Validate() error {
 			return validateErr
 		}
 	}
-	if c.Scenario == ScenarioQLBT01 && c.QueryIterations != 1000 {
-		return fmt.Errorf("qlb_t01 requires exactly DQB_QUERY_ITERATIONS=1000 per variant")
+	if (c.Scenario == ScenarioQLBT01 || c.Scenario == ScenarioQLBT02) && c.QueryIterations != 1000 {
+		return fmt.Errorf("%s requires exactly DQB_QUERY_ITERATIONS=1000 per variant", c.Scenario)
 	}
-	if c.Scenario == ScenarioQLBT01 && c.QueryWorkers != 1 {
-		return fmt.Errorf("qlb_t01 requires DQB_QUERY_WORKERS=1")
+	if c.Scenario == ScenarioQLBT02 && c.WarmupIterations != 20 {
+		return fmt.Errorf("qlb_t02 requires DQB_WARMUP_ITERATIONS=20")
+	}
+	if (c.Scenario == ScenarioQLBT01 || c.Scenario == ScenarioQLBT02) && c.QueryWorkers != 1 {
+		return fmt.Errorf("%s requires DQB_QUERY_WORKERS=1", c.Scenario)
 	}
 	if c.QueryWorkers <= 0 {
 		return fmt.Errorf("%s must be > 0", envQueryWorkers)

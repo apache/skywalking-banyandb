@@ -139,6 +139,16 @@ func (bp *BufferPool) Generate() *Buffer {
 	return bbv
 }
 
+// GenerateBounded generates a reset buffer and drops oversized cached backing.
+// Callers reserve limit before attaching the buffer to query work.
+func (bp *BufferPool) GenerateBounded(limit int) *Buffer {
+	buffer := bp.Generate()
+	if cap(buffer.Buf) > limit {
+		buffer.Buf = nil
+	}
+	return buffer
+}
+
 // Release releases a Buffer.
 func (bp *BufferPool) Release(b *Buffer) {
 	b.Reset()

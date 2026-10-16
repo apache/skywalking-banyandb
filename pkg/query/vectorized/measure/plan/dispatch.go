@@ -30,6 +30,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -96,22 +97,106 @@ func Dispatch(
 	emitPartial bool,
 	skipProjectionValidation bool,
 ) (iter executor.MIterator, planStr string, err error) {
+	result, planStr, err := DispatchBatches(ctx, req, metadata, measureSchema, logicalSchema, ec, cfg, emitPartial, skipProjectionValidation)
+	if err != nil {
+		return nil, planStr, err
+	}
+	iter, err = result.NativeIterator(ctx)
+	return iter, planStr, err
+}
+
+// DispatchBatches executes the native scan and reduction path without materializing DataPoints.
+func DispatchBatches(ctx context.Context, req *measurev1.QueryRequest, metadata *commonv1.Metadata,
+	measureSchema *databasev1.Measure, logicalSchema logical.Schema, ec executor.MeasureExecutionContext,
+	cfg measure.VectorizedConfig, emitPartial, skipProjectionValidation bool,
+) (resultBatch *BatchResult, planStr string, err error) {
 	// emitPartial selects the BatchAggregation strategy when GroupBy/Agg is
 	// in the plan: false → AggModeAll (single-node final reduce); true →
 	// AggModeMap (G9f.2 distributed Map phase emitting typed-column
 	// partials). The caller in banyand/query/processor.go sets emitPartial
 	// from internalRequest.AggReturnPartial on the distributed path.
-	mode := measure.AggModeAll
-	if emitPartial {
-		mode = measure.AggModeMap
-	}
+	ctx = vectorized.WithQueryMemoryTracker(ctx, int64(cfg.QueryMemoryMiB)*1024*1024)
 	defer func() {
 		if err == nil {
 			handledCount.Add(1)
 		}
 	}()
+	prepared, prepareErr := prepareBatchDispatch(req, metadata, measureSchema, logicalSchema, ec, emitPartial, skipProjectionValidation)
+	if prepareErr != nil {
+		return nil, "", prepareErr
+	}
+	p, scan, opts, hidden := prepared.plan, prepared.scan, prepared.options, prepared.hidden
+	allocationTracker := vectorized.QueryMemoryTracker(ctx, int64(cfg.QueryMemoryMiB)*1024*1024)
+	ctx, allocationScope := query.WithAllocationScope(ctx, allocationTracker.Reserve, allocationTracker.Release)
+	measure.RecordNativeLeafCall()
+	result, queryErr := ec.Query(ctx, opts)
+	if queryErr != nil {
+		_ = allocationScope.Close()
+		return nil, "", fmt.Errorf("vec dispatch: query measure: %w", queryErr)
+	}
+	if result == nil {
+		_ = allocationScope.Close()
+		// G9c #13: a typed-nil result is the row path's canonical empty
+		// response. The row iterator (resultMIterator{result: nil}) reports
+		// Next()==false immediately and Close()==nil, so the client
+		// observes an empty []*measurev1.InternalDataPoint. Emit the same
+		// empty MIterator directly. Hidden-tag egress strip (below) is
+		// intentionally skipped here: an empty result has no DataPoints,
+		// so there is nothing to strip.
+		empty := &batchSliceSource{schema: p.Schema()}
+		resultBatch, err = NewBatchResult(ctx, empty, p.Schema(), cfg.BatchSize)
+		return resultBatch, p.String(), err
+	}
+
+	pool := vectorized.NewBatchPool(scan.BatchSchema, cfg.BatchSize)
+	var source vectorized.PullOperator
+	if br, ok := result.(model.MeasureBatchResult); ok {
+		source = measure.NewBatchSourceFromBatchResult(br, scan.BatchSchema, pool, cfg.BatchSize)
+	} else {
+		source = measure.NewBatchScan(result, scan.BatchSchema, pool, cfg.BatchSize)
+	}
+	scan.Source = newAllocationScopeSource(&countedBatchSource{PullOperator: source}, allocationScope)
+
+	iter, execErr := ExecuteBatches(ctx, p, cfg)
+	if execErr != nil {
+		_ = scan.Source.Close()
+		// Execute closes the pipeline on Build/Init failure, which
+		// closes the source, which releases result. No extra Release
+		// here.
+		return nil, "", fmt.Errorf("vec dispatch: execute: %w", execErr)
+	}
+	if !hidden.IsEmpty() {
+		// Strip the projected-for-filtering hidden tags before
+		// serialization so the wire bytes match a query without them.
+		projected := newHiddenBatchProjection(iter, hidden)
+		iter, execErr = NewBatchResult(ctx, projected, projected.OutputSchema(), cfg.BatchSize)
+		if execErr != nil {
+			return nil, "", execErr
+		}
+	}
+	return iter, p.String(), nil
+}
+
+// dispatchPreparation is the storage-ready plan, without preparation scratch.
+type dispatchPreparation struct {
+	plan    VecPlan
+	scan    *Scan
+	hidden  logical.HiddenTagSet
+	options model.MeasureQueryOptions
+}
+
+// prepareBatchDispatch returns before storage traversal, so request analysis and
+// entity-resolution scratch do not enlarge the dispatch frame on that hot path.
+func prepareBatchDispatch(req *measurev1.QueryRequest, metadata *commonv1.Metadata,
+	measureSchema *databasev1.Measure, logicalSchema logical.Schema, ec executor.MeasureExecutionContext,
+	emitPartial, skipProjectionValidation bool,
+) (dispatchPreparation, error) {
+	mode := measure.AggModeAll
+	if emitPartial {
+		mode = measure.AggModeMap
+	}
 	if req == nil {
-		return nil, "", fmt.Errorf("vec dispatch: nil request")
+		return dispatchPreparation{}, fmt.Errorf("vec dispatch: nil request")
 	}
 	// Top is handled by the vec subsystem: plan.Analyze emits
 	// Scan → Top → Limit (or Scan → GroupByAgg → Top → Limit) and
@@ -135,7 +220,7 @@ func Dispatch(
 	// (banyand/query/processor.go::buildMeasureContext) must populate all
 	// four. Surface it loudly.
 	if measureSchema == nil || logicalSchema == nil || ec == nil || metadata == nil {
-		return nil, "", fmt.Errorf("vec dispatch: missing runtime context (measureSchema/logicalSchema/ec/metadata)")
+		return dispatchPreparation{}, fmt.Errorf("vec dispatch: missing runtime context (measureSchema/logicalSchema/ec/metadata)")
 	}
 
 	// G9c #11: projection validation. Unknown projection names surface a
@@ -151,7 +236,7 @@ func Dispatch(
 	// (the `multi_group_new_tag_field` integration fixture pins this).
 	if !skipProjectionValidation {
 		if projErr := validateProjectionParity(req, logicalSchema, measureSchema); projErr != nil {
-			return nil, "", projErr
+			return dispatchPreparation{}, projErr
 		}
 	}
 
@@ -184,7 +269,7 @@ func Dispatch(
 
 	indexOrder, orderErr := resolveOrderBy(req.GetOrderBy(), logicalSchema)
 	if orderErr != nil {
-		return nil, "", orderErr
+		return dispatchPreparation{}, orderErr
 	}
 
 	// Resolve the remaining criteria + entities the same way the row path's
@@ -209,14 +294,14 @@ func Dispatch(
 		// universe"), so without this the same conditions would silently
 		// under- or un-filter instead of erroring.
 		if validateErr := validateIndexModeCriteria(req.GetCriteria(), logicalSchema, entityMap); validateErr != nil {
-			return nil, "", fmt.Errorf("vec dispatch: build query: %w", validateErr)
+			return dispatchPreparation{}, fmt.Errorf("vec dispatch: build query: %w", validateErr)
 		}
 		criteria = req.GetCriteria()
 	} else {
 		criteria, entities, _, extractErr = extractSeriesMatchers(req.GetCriteria(), logicalSchema, entityMap, entity)
 	}
 	if extractErr != nil {
-		return nil, "", fmt.Errorf("vec dispatch: build query: %w", extractErr)
+		return dispatchPreparation{}, fmt.Errorf("vec dispatch: build query: %w", extractErr)
 	}
 	resolver := measureFieldResolver{schema: logicalSchema}
 
@@ -224,11 +309,11 @@ func Dispatch(
 	// BatchSchema + opts.TagProjection carry the hidden criteria tags.
 	p, analyzeErr := Analyze(analyzeReq, measureSchema, mode, logicalSchema)
 	if analyzeErr != nil {
-		return nil, "", fmt.Errorf("vec dispatch: analyze: %w", analyzeErr)
+		return dispatchPreparation{}, fmt.Errorf("vec dispatch: analyze: %w", analyzeErr)
 	}
 	scan := locateScan(p)
 	if scan == nil {
-		return nil, "", fmt.Errorf("vec dispatch: plan missing Scan node")
+		return dispatchPreparation{}, fmt.Errorf("vec dispatch: plan missing Scan node")
 	}
 	tr := timestamp.NewInclusiveTimeRange(
 		req.GetTimeRange().GetBegin().AsTime(),
@@ -260,43 +345,7 @@ func Dispatch(
 		TagProjection:   scan.Params.TagProjection,
 		FieldProjection: scan.Params.FieldProjection,
 	}
-	result, queryErr := ec.Query(ctx, opts)
-	if queryErr != nil {
-		return nil, "", fmt.Errorf("vec dispatch: query measure: %w", queryErr)
-	}
-	if result == nil {
-		// G9c #13: a typed-nil result is the row path's canonical empty
-		// response. The row iterator (resultMIterator{result: nil}) reports
-		// Next()==false immediately and Close()==nil, so the client
-		// observes an empty []*measurev1.InternalDataPoint. Emit the same
-		// empty MIterator directly. Hidden-tag egress strip (below) is
-		// intentionally skipped here: an empty result has no DataPoints,
-		// so there is nothing to strip.
-		return emptyMIterator{}, p.String(), nil
-	}
-
-	pool := vectorized.NewBatchPool(scan.BatchSchema, cfg.BatchSize)
-	var source vectorized.PullOperator
-	if br, ok := result.(model.MeasureBatchResult); ok {
-		source = measure.NewBatchSourceFromBatchResult(br, scan.BatchSchema, pool, cfg.BatchSize)
-	} else {
-		source = measure.NewBatchScan(result, scan.BatchSchema, pool, cfg.BatchSize)
-	}
-	scan.Source = source
-
-	iter, execErr := Execute(ctx, p, cfg)
-	if execErr != nil {
-		// Execute closes the pipeline on Build/Init failure, which
-		// closes the source, which releases result. No extra Release
-		// here.
-		return nil, "", fmt.Errorf("vec dispatch: execute: %w", execErr)
-	}
-	if !hidden.IsEmpty() {
-		// Strip the projected-for-filtering hidden tags before
-		// serialization so the wire bytes match a query without them.
-		iter = &hiddenTagsMIterator{inner: iter, hiddenTags: hidden}
-	}
-	return iter, p.String(), nil
+	return dispatchPreparation{plan: p, scan: scan, options: opts, hidden: hidden}, nil
 }
 
 // resolveOrderBy mirrors the row path's PushDownOrder optimizer rule.
@@ -435,32 +484,59 @@ func validateProjectionParity(req *measurev1.QueryRequest, logicalSchema logical
 	return nil
 }
 
-// emptyMIterator is the vec equivalent of the row path's
-// resultMIterator{result: nil}: Next reports no rows, Current is never
-// reached, and Close is a no-op error. Dispatch returns it for the
-// canonical empty response (G9c #13).
-//
-// It implements vmeasure.RawFrameSource so the data-node Rev can
-// short-circuit to an empty raw frame body without constructing a
-// pipeline. nil Pipeline / Schema is the signal that
-// DrainPipelineToFrame interprets as "no rows" and returns a nil body
-// — matching the codec layer's RawFrameCodec empty-body carve-out.
-type emptyMIterator struct{}
+// countedBatchSource observes native leaf batches before reduction and pagination.
+type countedBatchSource struct{ vectorized.PullOperator }
 
-func (emptyMIterator) Next() bool { return false }
+func (s *countedBatchSource) NextBatch(ctx context.Context) (*vectorized.RecordBatch, error) {
+	batch, err := s.PullOperator.NextBatch(ctx)
+	if batch != nil {
+		measure.RecordNativeInputRows(uint64(batch.ActiveLen()))
+	}
+	return batch, err
+}
 
-func (emptyMIterator) Current() []*measurev1.InternalDataPoint { return nil }
+// allocationScopeSource pins selected index allocations for every output view.
+// Copies retain the same owner, so a multigroup merge cannot release residency
+// merely by closing its already-drained group source.
+type allocationScopeSource struct {
+	vectorized.PullOperator
+	owner  *allocationScopeOwner
+	closed bool
+}
 
-// Pipeline returns nil so DrainPipelineToFrame emits an empty body.
-func (emptyMIterator) Pipeline() *vectorized.Pipeline { return nil }
+func newAllocationScopeSource(source vectorized.PullOperator, scope *query.AllocationScope) *allocationScopeSource {
+	owner := &allocationScopeOwner{scope: scope}
+	owner.refs.Store(1)
+	return &allocationScopeSource{PullOperator: source, owner: owner}
+}
 
-// Schema returns nil; with a nil pipeline DrainPipelineToFrame never
-// inspects the schema, so this is just an interface marker.
-func (emptyMIterator) Schema() *vectorized.BatchSchema { return nil }
+func (s *allocationScopeSource) NextBatch(ctx context.Context) (*vectorized.RecordBatch, error) {
+	ctx = query.WithExistingAllocationScope(ctx, s.owner.scope)
+	batch, err := s.PullOperator.NextBatch(ctx)
+	if batch != nil {
+		batch.Owners.Pin(s.owner)
+	}
+	return batch, err
+}
 
-// EmitFrame implements vmeasure.FrameEmitter: an empty result emits a
-// nil body, which is the codec layer's RawFrameCodec carve-out for an
-// empty distributed result (magic-byte guard skipped on decode).
-func (emptyMIterator) EmitFrame(_ context.Context) ([]byte, error) { return nil, nil }
+func (s *allocationScopeSource) Close() error {
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+	err := s.PullOperator.Close()
+	s.owner.Release()
+	return err
+}
 
-func (emptyMIterator) Close() error { return nil }
+type allocationScopeOwner struct {
+	scope *query.AllocationScope
+	refs  atomic.Int64
+}
+
+func (o *allocationScopeOwner) Retain() { o.refs.Add(1) }
+func (o *allocationScopeOwner) Release() {
+	if o.refs.Add(-1) == 0 {
+		_ = o.scope.Close()
+	}
+}

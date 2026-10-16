@@ -66,6 +66,8 @@ type Environment struct {
 
 // Result records one mode/scenario/cardinality benchmark outcome.
 type Result struct {
+	BatchMetrics        map[string]uint64 `json:"batch_metrics,omitempty"`
+	RawLatenciesNS      []time.Duration   `json:"raw_latencies_ns,omitempty"`
 	Variants            []Result          `json:"variants,omitempty"`
 	Variant             string            `json:"variant,omitempty"`
 	UnavailableMetrics  []string          `json:"unavailable_metrics,omitempty"`
@@ -283,8 +285,8 @@ func summarizeLatencies(latencies []time.Duration, elapsed time.Duration) (Laten
 		P90Ms:  percentile(sorted, 0.90),
 		P95Ms:  percentile(sorted, 0.95),
 		P99Ms:  percentile(sorted, 0.99),
-		MaxMs:  float64(sorted[len(sorted)-1].Microseconds()) / 1000,
-		MeanMs: float64(total.Microseconds()) / 1000 / float64(len(sorted)),
+		MaxMs:  float64(sorted[len(sorted)-1]) / float64(time.Millisecond),
+		MeanMs: float64(total) / float64(time.Millisecond) / float64(len(sorted)),
 	}
 	qps := 0.0
 	if elapsed > 0 {
@@ -304,7 +306,7 @@ func percentile(sorted []time.Duration, q float64) float64 {
 	if idx >= len(sorted) {
 		idx = len(sorted) - 1
 	}
-	return float64(sorted[idx].Microseconds()) / 1000
+	return float64(sorted[idx]) / float64(time.Millisecond)
 }
 
 func writeReport(report Report, dir string) (string, string, error) {
@@ -337,6 +339,9 @@ func renderMarkdown(report Report) string {
 			fmt.Fprintf(&b, "\n%s/%d/%s: samples=%d, expected rows=%d, checksum=%x; unavailable: %s.\n",
 				result.Scenario, result.Cardinality, result.Variant, result.TimedSamples,
 				result.ExpectedRows, result.ExpectedHash, strings.Join(result.UnavailableMetrics, ", "))
+			if len(result.BatchMetrics) > 0 {
+				fmt.Fprintf(&b, "Batch metrics: `%v`.\n", result.BatchMetrics)
+			}
 		}
 	}
 	b.WriteString("\n## Profile artifacts\n\n")

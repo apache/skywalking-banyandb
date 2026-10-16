@@ -47,7 +47,7 @@ func bytesDeltaToInt64List(dst []int64, src []byte, firstValue int64, itemsCount
 		logger.Panicf("BUG: itemsCount must be greater than 0; got %d", itemsCount)
 	}
 
-	is := GenerateInt64List(itemsCount - 1)
+	is := generateBoundedInt64List(itemsCount - 1)
 	defer ReleaseInt64List(is)
 
 	tail, err := BytesToVarInt64List(is.L, src)
@@ -93,7 +93,7 @@ func bytesDeltaOfDeltaToInt64s(dst []int64, src []byte, firstValue int64, itemsC
 		logger.Panicf("itemsCount must be greater than 1; got %d", itemsCount)
 	}
 
-	is := GenerateInt64List(itemsCount - 1)
+	is := generateBoundedInt64List(itemsCount - 1)
 	defer ReleaseInt64List(is)
 
 	tail, err := BytesToVarInt64List(is.L, src)

@@ -28,6 +28,8 @@ import (
 	"sort"
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
+
+	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
 const (
@@ -476,12 +478,20 @@ func (r *repairDocValueReader) smallestValue(documentNumber uint64) ([]byte, err
 	return smallest, nil
 }
 
+//nolint:contextcheck // Legacy context-free maintenance path; query callers use the context-aware variant.
 func (r *repairDocValueReader) values(documentNumber uint64) ([][]byte, error) {
+	return r.valuesContext(context.Background(), documentNumber)
+}
+
+func (r *repairDocValueReader) valuesContext(ctx context.Context, documentNumber uint64) ([][]byte, error) {
 	chunkNumber := documentNumber / docValueDocumentsPerChunk
 	if r.chunkNumber != chunkNumber {
-		if chunkErr := r.loadChunk(chunkNumber); chunkErr != nil {
+		if chunkErr := r.loadChunkContext(ctx, chunkNumber); chunkErr != nil {
 			return nil, chunkErr
 		}
+	}
+	if err := r.reserveChunkBuffers(ctx, 0, 0, 0); err != nil {
+		return nil, err
 	}
 	headerIndex := sort.Search(len(r.header), func(index int) bool {
 		return r.header[index].documentNumber >= documentNumber
@@ -497,10 +507,30 @@ func (r *repairDocValueReader) values(documentNumber uint64) ([][]byte, error) {
 	if end < start || end > uint64(len(r.decodedBuffer)) {
 		return nil, corruptError("segment %q has invalid doc-value bounds in a chunk", r.path)
 	}
-	return decodeRepairDocValueTermsAll(r.decodedBuffer[start:end], r.path)
+
+	encoded := r.decodedBuffer[start:end]
+	var count uint64
+	for i := 0; i < len(encoded); i++ {
+		if encoded[i] == '\\' {
+			i++
+			continue
+		}
+		if encoded[i] == 0xff {
+			count++
+		}
+	}
+	if err := query.ReserveAllocation(ctx, uint64(len(encoded))*8+count*96); err != nil {
+		return nil, err
+	}
+	return decodeRepairDocValueTermsAll(encoded, r.path)
 }
 
+//nolint:contextcheck // Legacy context-free maintenance path; query callers use the context-aware variant.
 func (r *repairDocValueReader) loadChunk(chunkNumber uint64) error {
+	return r.loadChunkContext(context.Background(), chunkNumber)
+}
+
+func (r *repairDocValueReader) loadChunkContext(ctx context.Context, chunkNumber uint64) error {
 	if chunkNumber >= uint64(len(r.chunkOffsets)) {
 		return corruptError("segment %q has no doc-value chunk %d", r.path, chunkNumber)
 	}
@@ -523,6 +553,9 @@ func (r *repairDocValueReader) loadChunk(chunkNumber uint64) error {
 	if compressedLength > maxDocValueCompressedChunkSize {
 		return corruptError("segment %q has an oversized doc-value chunk", r.path)
 	}
+	if err := r.reserveChunkBuffers(ctx, int(compressedLength), 0, 0); err != nil {
+		return err
+	}
 	if cap(r.compressedBuffer) < int(compressedLength) {
 		r.compressedBuffer = make([]byte, int(compressedLength))
 	} else {
@@ -539,6 +572,9 @@ func (r *repairDocValueReader) loadChunk(chunkNumber uint64) error {
 	}
 	if documentCount > docValueDocumentsPerChunk {
 		return corruptError("segment %q has an invalid doc-value chunk document count", r.path)
+	}
+	if err := r.reserveChunkBuffers(ctx, 0, 0, int(documentCount)); err != nil {
+		return err
 	}
 	if cap(r.header) < int(documentCount) {
 		r.header = make([]repairDocValueMeta, int(documentCount))
@@ -586,10 +622,8 @@ func (r *repairDocValueReader) loadChunk(chunkNumber uint64) error {
 	if validateErr := validateDocValueChunkDecodedLength(documentCount, decodedLength, r.path); validateErr != nil {
 		return validateErr
 	}
-	if cap(r.decodedBuffer) < decodedLength {
-		r.decodedBuffer = make([]byte, decodedLength)
-	} else {
-		r.decodedBuffer = r.decodedBuffer[:decodedLength]
+	if err := r.prepareDecodedBuffer(ctx, decodedLength); err != nil {
+		return err
 	}
 	decoded, decodeErr := decodeStoredChunk(r.decodedBuffer[:0], compressedValues)
 	if decodeErr != nil {
@@ -601,6 +635,23 @@ func (r *repairDocValueReader) loadChunk(chunkNumber uint64) error {
 	r.decodedBuffer = decoded
 	r.chunkNumber = chunkNumber
 	return nil
+}
+
+func (r *repairDocValueReader) prepareDecodedBuffer(ctx context.Context, length int) error {
+	if err := r.reserveChunkBuffers(ctx, 0, length, 0); err != nil {
+		return err
+	}
+	if cap(r.decodedBuffer) < length {
+		r.decodedBuffer = make([]byte, length)
+	} else {
+		r.decodedBuffer = r.decodedBuffer[:length]
+	}
+	return nil
+}
+
+func (r *repairDocValueReader) reserveChunkBuffers(ctx context.Context, compressed, decoded, header int) error {
+	bytes := uint64(max(cap(r.compressedBuffer), compressed)) + uint64(max(cap(r.decodedBuffer), decoded)) + uint64(max(cap(r.header), header))*16
+	return query.ReserveAllocationOnce(ctx, r, bytes)
 }
 
 func validateDocValueChunkDecodedLength(documentCount uint64, decodedLength int, path string) error {

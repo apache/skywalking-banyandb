@@ -641,6 +641,13 @@ func (m *measure) searchBlocks(ctx context.Context, result *queryResult, sids []
 		return fmt.Errorf("cannot iterate tstIter: %w", tstIter.Error())
 	}
 	result.budget = newScanBudget(quota, m.decodePool)
+	columns := 4 + len(qo.FieldProjection)
+	for _, family := range result.tagProjection {
+		columns += len(family.Names)
+	}
+	if err := result.budget.attachShared(ctx, columns, qo.vectorized.BatchSize, len(result.data)); err != nil {
+		return err
+	}
 	result.admit = func(ctx context.Context) error {
 		if quota >= 0 && totalBlockBytes > uint64(quota) {
 			return fmt.Errorf("block scan quota exceeded: used %d bytes, quota is %d bytes", totalBlockBytes, quota)
@@ -844,6 +851,19 @@ func (qr *queryResult) admitWhole(ctx context.Context) error {
 	if err := qr.admit(ctx); err != nil {
 		return err
 	}
+	if qr.budget != nil && qr.budget.shared != nil {
+		for _, bc := range qr.data {
+			if bc.res != nil {
+				continue
+			}
+			amount := qr.budget.sharedBlockBytes(bc)
+			if err := qr.budget.shared.Reserve(amount); err != nil {
+				return err
+			}
+			qr.budget.active.Add(1)
+			bc.res = &scanReservation{budget: qr.budget, sharedBytes: amount}
+		}
+	}
 	qr.admitted = true
 	return nil
 }
@@ -933,6 +953,7 @@ func (qr *queryResult) Pull() *model.MeasureResult {
 
 func (qr *queryResult) Release() {
 	queryResultTracker.Release(qr)
+	defer qr.budget.releaseWorkspace()
 	if qr.qm != nil {
 		qr.qm.totalQueryResultFinished.Inc(1)
 	}

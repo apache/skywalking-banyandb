@@ -198,13 +198,13 @@ func (s *BatchSourceFromBatchResult) lend(mb *model.MeasureBatch) *vectorized.Re
 	holder.refs.Store(1)
 	cols := make([]vectorized.Column, len(s.schema.Columns))
 	metaColumn := func(rows []int64) vectorized.Column {
-		c := vectorized.AcquireColumn(vectorized.ColumnTypeInt64, 0).(*vectorized.TypedColumn[int64])
+		c := vectorized.AcquireBoundedColumn(vectorized.ColumnTypeInt64, 0).(*vectorized.TypedColumn[int64])
 		holder.columns = append(holder.columns, c)
 		c.Borrow(rows)
 		return c
 	}
 	convertedColumn := func(convert func(c *vectorized.TypedColumn[int64])) vectorized.Column {
-		c := vectorized.AcquireColumn(vectorized.ColumnTypeInt64, n).(*vectorized.TypedColumn[int64])
+		c := vectorized.AcquireBoundedColumn(vectorized.ColumnTypeInt64, n).(*vectorized.TypedColumn[int64])
 		holder.columns = append(holder.columns, c)
 		convert(c)
 		return c

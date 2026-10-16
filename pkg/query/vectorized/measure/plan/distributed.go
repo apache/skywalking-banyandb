@@ -41,6 +41,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
+	measureframe "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/frame"
 )
 
 // distributedQueryTimeout is the historical hard-coded broadcast deadline.
@@ -493,6 +494,34 @@ func intersectFieldProjection(proj *measurev1.QueryRequest_FieldProjection, ms *
 // each carrying a single-element Groups slice, so data nodes can answer with
 // a schema that matches only their local group's columns.
 func (p *DistributedPlan) Execute(ctx context.Context) (executor.MIterator, error) {
+	result, err := p.ExecuteBatches(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return result.NativeIterator(ctx)
+}
+
+// ExecuteBatches executes the native plan without constructing intermediate DataPoints.
+// The returned result owns all batches and must be closed, including after cancellation.
+func (p *DistributedPlan) ExecuteBatches(ctx context.Context) (result *BatchResult, err error) {
+	ctx = vectorized.WithQueryMemoryTracker(ctx, int64(p.cfg.QueryMemoryMiB)*1024*1024)
+	tracker := vectorized.QueryMemoryTracker(ctx, int64(p.cfg.QueryMemoryMiB)*1024*1024)
+	ctx, receiveScope := vectorized.WithNativeReceiveScope(ctx, tracker)
+	var reserved int64
+	defer func() {
+		if result != nil && err == nil {
+			result.tracker = tracker
+			result.reserved += reserved
+			result.receiveRelease = receiveScope.Close
+		} else {
+			tracker.Release(reserved)
+			receiveScope.Close()
+		}
+	}()
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if !data.MeasureWireModeRaw() {
 		return nil, fmt.Errorf("vec distributed plan requires raw measure wire mode")
 	}
@@ -514,7 +543,7 @@ func (p *DistributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 		addTraceTagf(broadcastSpan, tracelabels.TagBroadcastTimeoutMS, "%d", p.broadcastTimeout().Milliseconds())
 		addTraceTag(broadcastSpan, tracelabels.TagTimeRange, dctx.TimeRange().String())
 		internalRequest := &measurev1.InternalQueryRequest{Request: nodeRequest, AggReturnPartial: queryRequest.GetAgg() != nil}
-		ff, broadcastErr := dctx.Broadcast(p.broadcastTimeout(), data.TopicInternalMeasureQuery,
+		ff, broadcastErr := broadcastNativeMeasure(ctx, dctx, p.broadcastTimeout(),
 			bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), internalRequest))
 		if broadcastErr != nil {
 			if broadcastSpan != nil {
@@ -537,6 +566,9 @@ func (p *DistributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 		stopTraceSpan(broadcastSpan)
 		if responseErr != nil {
 			return nil, responseErr
+		}
+		if reserveErr := reserveNativeFrames(tracker, &reserved, frames, p.cfg.BatchSize, receiveScope.IngressReserved()); reserveErr != nil {
+			return nil, reserveErr
 		}
 		if queryRequest.GetAgg() == nil {
 			return p.executeRows(ctx, frames, queryRequest)
@@ -568,7 +600,7 @@ func (p *DistributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 		addTraceTag(broadcastSpan, tracelabels.TagGroupName, groupName)
 		addTraceTagf(broadcastSpan, tracelabels.TagNodeCount, "%d", nodeSelectorCount(dctx.NodeSelectors()))
 		internalRequest := &measurev1.InternalQueryRequest{Request: nodeRequest, AggReturnPartial: queryRequest.GetAgg() != nil}
-		ff, broadcastErr := dctx.Broadcast(p.broadcastTimeout(), data.TopicInternalMeasureQuery,
+		ff, broadcastErr := broadcastNativeMeasure(ctx, dctx, p.broadcastTimeout(),
 			bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), internalRequest))
 		if broadcastErr != nil {
 			wrappedErr := fmt.Errorf("vec distributed plan: broadcast group %s: %w", groupName, broadcastErr)
@@ -591,6 +623,9 @@ func (p *DistributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 			continue
 		}
 		stopTraceSpan(broadcastSpan)
+		if reserveErr := reserveNativeFrames(tracker, &reserved, rawFrames, p.cfg.BatchSize, receiveScope.IngressReserved()); reserveErr != nil {
+			return nil, reserveErr
+		}
 		for _, body := range rawFrames {
 			allGroupFrames = append(allGroupFrames, groupFrame{body: body, group: groupIdx})
 		}
@@ -607,6 +642,69 @@ func (p *DistributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 		flatFrames = append(flatFrames, gf.body)
 	}
 	return p.executeAgg(ctx, flatFrames, queryRequest)
+}
+
+func broadcastNativeMeasure(
+	ctx context.Context, dctx executor.DistributedExecutionContext, timeout time.Duration, message bus.Message,
+) (futures []bus.Future, err error) {
+	if broadcaster, ok := dctx.(interface {
+		BroadcastContext(context.Context, time.Duration, bus.Topic, bus.Message) ([]bus.Future, error)
+	}); ok {
+		futures, err = broadcaster.BroadcastContext(ctx, timeout, data.TopicInternalMeasureQuery, message)
+	} else {
+		futures, err = dctx.Broadcast(timeout, data.TopicInternalMeasureQuery, message)
+	}
+	if err != nil {
+		for _, pending := range futures {
+			if closer, ok := pending.(interface{ Close() error }); ok {
+				err = multierr.Append(err, closer.Close())
+			}
+		}
+	}
+	return futures, err
+}
+
+func reserveNativeFrames(tracker *vectorized.MemoryTracker, reserved *int64, frames [][]byte, batchSize int, ingressReserved bool) error {
+	var workspace int64
+	for _, body := range frames {
+		header, _, headerErr := measureframe.ValidateHeader(body)
+		if headerErr != nil {
+			return headerErr
+		}
+		vmeasure.RecordNativeFrameRows(header.NumRows)
+		// Retain ingress payloads and reserve decoded cells, merge descriptors and
+		// eager output before allocating any of them. Nested protobuf payloads and
+		// copied variable-width cells are conservatively charged by frame bytes.
+		const cellBytes = 128
+		payloadCopies := int64(16)
+		if ingressReserved {
+			payloadCopies -= 3
+		}
+		if header.NumCols > (math.MaxInt64-128)/cellBytes {
+			return fmt.Errorf("native frame residency estimate overflows")
+		}
+		maxRows := uint64(math.MaxInt64) / (header.NumCols*cellBytes + 128)
+		if uint64(batchSize) > maxRows || header.NumRows > maxRows-uint64(batchSize) {
+			return fmt.Errorf("native frame residency estimate overflows")
+		}
+		// Replica frames share one output pool and current batch. Reserve its
+		// capacity once per group; summing group widths also bounds schema unions.
+		workspace = max(workspace, int64(uint64(batchSize)*(header.NumCols*cellBytes+128)))
+		amount := int64(header.NumRows * (header.NumCols*cellBytes + 128))
+		if int64(len(body)) > (math.MaxInt64-amount)/payloadCopies {
+			return fmt.Errorf("native frame residency estimate overflows")
+		}
+		amount += int64(len(body)) * payloadCopies
+		if reserveErr := tracker.Reserve(amount); reserveErr != nil {
+			return reserveErr
+		}
+		*reserved += amount
+	}
+	if reserveErr := tracker.Reserve(workspace); reserveErr != nil {
+		return reserveErr
+	}
+	*reserved += workspace
+	return nil
 }
 
 func collectRawFrameResponses(ff []bus.Future) ([][]byte, []*commonv1.Trace, error) {
@@ -677,7 +775,7 @@ func collectRawFrameResponsesWithNodes(ff []bus.Future) ([][]byte, []*commonv1.T
 	return frames, traces, nodes, err
 }
 
-func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *measurev1.QueryRequest) (executor.MIterator, error) {
+func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *measurev1.QueryRequest) (*BatchResult, error) {
 	keyTagFamily, keyTagNames := distributedGroupByTagKey(req.GetGroupBy())
 	bucketed := req.GetGroupBy().GetTimeBucket() != nil
 	aggFunc, aggErr := distributedAggFunc(req.GetAgg().GetFunction())
@@ -689,7 +787,7 @@ func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *
 	if top := req.GetTop(); top != nil {
 		topSpec = &vmeasure.ReduceTopSpec{FieldName: top.GetFieldName(), N: int(top.GetNumber()), Asc: top.GetFieldValueSort() == modelv1.Sort_SORT_ASC}
 	}
-	tracker := vectorized.NewMemoryTracker(int64(p.cfg.QueryMemoryMiB) * 1024 * 1024)
+	tracker := vectorized.QueryMemoryTracker(ctx, int64(p.cfg.QueryMemoryMiB)*1024*1024)
 	reduceSpan, reduceSpanCtx := startTraceSpan(ctx, "reduce-raw-frames")
 	addTraceTagf(reduceSpan, tracelabels.TagFramesIn, "%d", len(frames))
 	frameDecodeDurations := collectFrameDecodeDurations(ctx, frames)
@@ -730,11 +828,11 @@ func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *
 		stopTraceSpan(topSpan)
 		batches = topped
 	}
-	return p.iteratorFromBatches(ctx, batches, req)
+	return p.batchResult(ctx, batches, req, nil)
 }
 
-func (p *DistributedPlan) executeRows(ctx context.Context, frames [][]byte, req *measurev1.QueryRequest) (executor.MIterator, error) {
-	tracker := vectorized.NewMemoryTracker(int64(p.cfg.QueryMemoryMiB) * 1024 * 1024)
+func (p *DistributedPlan) executeRows(ctx context.Context, frames [][]byte, req *measurev1.QueryRequest) (*BatchResult, error) {
+	tracker := vectorized.QueryMemoryTracker(ctx, int64(p.cfg.QueryMemoryMiB)*1024*1024)
 	spec := distributedRowsSpec{
 		Desc:          req.GetOrderBy().GetSort() == modelv1.Sort_SORT_DESC,
 		IndexMode:     p.measureSchemas[0].GetIndexMode(),
@@ -806,13 +904,13 @@ func (p *DistributedPlan) executeRows(ctx context.Context, frames [][]byte, req 
 			return nil, fmt.Errorf("vec distributed plan: apply top to rows: %w", topErr)
 		}
 	}
-	return p.iteratorFromBatches(ctx, batches, req)
+	return p.batchResult(ctx, batches, req, nil)
 }
 
 // executeRowsMultiGroup is the multi-group non-agg row merge path. It builds
 // the merged BatchSchema by unioning all per-group schemas, then runs the
 // k-way heap merger over all per-group frames decoded into that merged schema.
-func (p *DistributedPlan) executeRowsMultiGroup(ctx context.Context, groupFrames []groupFrame, req *measurev1.QueryRequest) (executor.MIterator, error) {
+func (p *DistributedPlan) executeRowsMultiGroup(ctx context.Context, groupFrames []groupFrame, req *measurev1.QueryRequest) (*BatchResult, error) {
 	schemaSpan, _ := startTraceSpan(ctx, "build-multi-group-schema")
 	addTraceTagf(schemaSpan, tracelabels.TagGroupsIn, "%d", len(p.measureSchemas))
 	mergedSchema, schemaErr := BuildMultiGroupBatchSchema(p.measureSchemas, req)
@@ -828,7 +926,7 @@ func (p *DistributedPlan) executeRowsMultiGroup(ctx context.Context, groupFrames
 	}
 	addTraceTagf(schemaSpan, tracelabels.TagSchemaDegraded, "%t", false)
 	stopTraceSpan(schemaSpan)
-	tracker := vectorized.NewMemoryTracker(int64(p.cfg.QueryMemoryMiB) * 1024 * 1024)
+	tracker := vectorized.QueryMemoryTracker(ctx, int64(p.cfg.QueryMemoryMiB)*1024*1024)
 	// IndexMode is true when ALL groups are index-mode. A mixed-mode
 	// configuration is treated as non-index-mode to avoid over-suppressing rows
 	// from non-index-mode groups.
@@ -885,7 +983,7 @@ func (p *DistributedPlan) executeRowsMultiGroup(ctx context.Context, groupFrames
 			return nil, fmt.Errorf("vec distributed plan: apply top to multi-group rows: %w", topErr)
 		}
 	}
-	return p.iteratorFromBatchesWithSchema(ctx, batches, req, mergedSchema)
+	return p.batchResult(ctx, batches, req, mergedSchema)
 }
 
 // applyBatchTopToRows runs a BatchTop operator over the merged row batches,
@@ -1074,12 +1172,15 @@ func applyBatchGroupByFirstToRows(
 	return out, nil
 }
 
-func (p *DistributedPlan) iteratorFromBatches(ctx context.Context, batches []*vectorized.RecordBatch, req *measurev1.QueryRequest) (executor.MIterator, error) {
-	var schema *vectorized.BatchSchema
-	for _, batch := range batches {
-		if batch != nil && batch.Schema != nil {
-			schema = batch.Schema
-			break
+func (p *DistributedPlan) batchResult(ctx context.Context, batches []*vectorized.RecordBatch,
+	req *measurev1.QueryRequest, schema *vectorized.BatchSchema,
+) (*BatchResult, error) {
+	if schema == nil {
+		for _, batch := range batches {
+			if batch != nil && batch.Schema != nil {
+				schema = batch.Schema
+				break
+			}
 		}
 	}
 	if schema == nil {
@@ -1090,75 +1191,7 @@ func (p *DistributedPlan) iteratorFromBatches(ctx context.Context, batches []*ve
 		}
 		schema = vecPlan.Schema()
 	}
-	builder := vectorized.NewPipelineBuilder().WithMemoryTracker(vectorized.NewMemoryTracker(int64(p.cfg.QueryMemoryMiB) * 1024 * 1024))
-	builder.From(&batchSliceSource{batches: batches, schema: schema})
-	limit := req.GetLimit()
-	if limit == 0 {
-		limit = defaultLimit
-	}
-	builder.Apply(vmeasure.NewBatchLimit(schema, req.GetOffset(), limit))
-	pipeline, buildErr := builder.Build()
-	if buildErr != nil {
-		releaseBatches(batches)
-		return nil, fmt.Errorf("vec distributed plan: build output pipeline: %w", buildErr)
-	}
-	if initErr := pipeline.Init(ctx); initErr != nil {
-		_ = pipeline.Close()
-		return nil, fmt.Errorf("vec distributed plan: init output pipeline: %w", initErr)
-	}
-	pool := vectorized.NewBatchPool(schema, p.cfg.BatchSize)
-	var iter executor.MIterator = vmeasure.NewIteratorFromPipeline(ctx, pipeline, schema, pool)
-	if !p.hiddenOrderBy.IsEmpty() {
-		// Strip the OrderBy tag projected as a hidden column for native
-		// cross-source merge sorting. The visible response matches what a
-		// query without the OrderBy projection would emit byte-for-byte.
-		iter = &hiddenTagsMIterator{inner: iter, hiddenTags: p.hiddenOrderBy}
-	}
-	if p.hiddenTopField != "" {
-		// Strip the Top field appended to the nodeTemplate's FieldProjection
-		// for BatchTop sorting. The visible response matches a query without
-		// the extra field projection.
-		iter = &hiddenFieldsMIterator{inner: iter, hiddenField: p.hiddenTopField}
-	}
-	return iter, nil
-}
-
-// iteratorFromBatchesWithSchema is the multi-group variant of
-// iteratorFromBatches. The merged BatchSchema is supplied by the caller
-// (already computed by BuildMultiGroupBatchSchema) so this function does not
-// fall back to Analyze on empty output — an empty multi-group result simply
-// returns no rows rather than re-deriving a schema from a single group.
-func (p *DistributedPlan) iteratorFromBatchesWithSchema(
-	ctx context.Context,
-	batches []*vectorized.RecordBatch,
-	req *measurev1.QueryRequest,
-	schema *vectorized.BatchSchema,
-) (executor.MIterator, error) {
-	builder := vectorized.NewPipelineBuilder().WithMemoryTracker(vectorized.NewMemoryTracker(int64(p.cfg.QueryMemoryMiB) * 1024 * 1024))
-	builder.From(&batchSliceSource{batches: batches, schema: schema})
-	limit := req.GetLimit()
-	if limit == 0 {
-		limit = defaultLimit
-	}
-	builder.Apply(vmeasure.NewBatchLimit(schema, req.GetOffset(), limit))
-	pipeline, buildErr := builder.Build()
-	if buildErr != nil {
-		releaseBatches(batches)
-		return nil, fmt.Errorf("vec distributed plan: build output pipeline: %w", buildErr)
-	}
-	if initErr := pipeline.Init(ctx); initErr != nil {
-		_ = pipeline.Close()
-		return nil, fmt.Errorf("vec distributed plan: init output pipeline: %w", initErr)
-	}
-	pool := vectorized.NewBatchPool(schema, p.cfg.BatchSize)
-	var iter executor.MIterator = vmeasure.NewIteratorFromPipeline(ctx, pipeline, schema, pool)
-	if !p.hiddenOrderBy.IsEmpty() {
-		iter = &hiddenTagsMIterator{inner: iter, hiddenTags: p.hiddenOrderBy}
-	}
-	if p.hiddenTopField != "" {
-		iter = &hiddenFieldsMIterator{inner: iter, hiddenField: p.hiddenTopField}
-	}
-	return iter, nil
+	return newBatchResult(ctx, p, batches, req, schema)
 }
 
 // calibratedTopWithoutAggLimit computes the per-node row Limit for a

@@ -1,0 +1,38 @@
+[
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "int": {
+              "value": "7"
+            }
+          },
+          {
+            "str": {
+              "value": "d"
+            }
+          },
+          {
+            "str": {
+              "value": "z"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": "10"
+        }
+      },
+      {
+        "float": {
+          "value": 8
+        }
+      }
+    ],
+    "version": "2"
+  }
+]

@@ -243,8 +243,9 @@ These supplement P(Tnn), never replace it. Cache planning benchmarks live in
 
 **Supporting work already complete:** former T01 supplies the QL-only verifier,
 independent F fixtures, four real RPC cases and the five-run `qlb_t01` baseline.
-Its invalid-query case remains a correctness assertion. T02 still requires the
-production batch cutover and its measured execution results before completion.
+Its invalid-query case remains a correctness assertion. The production batch
+cutover and its measured execution results are recorded in
+[T02 verification](t02-verification.md).
 
 **Performance question:** what latency, allocation and retained-buffer cost does
 the shared batch boundary introduce or remove relative to the existing RPC path?
@@ -269,9 +270,16 @@ or reservation delta after 1,000 queries, and G1/G2. Document native eager frame
 residency rather than claiming this extraction makes execution streaming.
 
 **Checks/readiness:** E(T02), P(T02); focused `./banyand/dquery`,
-`./banyand/liaison/grpc`, `./pkg/query/vectorized/measure/...`. Blocked by base/seam
-verification; T01 support is available;
-new-seam contract RED plus real-caller counters prove the compatible cutover.
+`./banyand/liaison/grpc`, `./pkg/query/vectorized/measure/...`. The review fixes
+pass 147 cases per topology, six protected/small-budget real RPC cases, focused
+unit/race checks and normal/tagged lint. V12's full 20-pair small matrix passes
+16 of 18 performance checks; QL raw and aggregate p50 remain inconclusive, so the
+large matrix is held and T02 is not accepted. A separate fixed CPU-placement
+diagnostic did not consistently reduce variation. A later direct v10/v12
+comparison found no material latency difference; the user stopped the fresh
+acceptance rerun after ten complete pairs, with no final verdict. The v10 full
+pass is retained as a historical checkpoint. See [T02 verification](t02-verification.md) for the
+frozen sources, exact intervals, resource proofs and all retained outcomes.
 
 ### T03 — Execute typed raw queries with aliases and time predicates
 

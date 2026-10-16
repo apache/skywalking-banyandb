@@ -46,10 +46,10 @@ else
   SCENARIOS="${DQB_SCENARIOS:-scan_all,top_with_filter}"
 fi
 MODES="${DQB_MODES:-vec}"
-# qlb_t01 runs its four named RPC variants within each isolated combo.
-if [[ ",${SCENARIOS}," == *",qlb_t01,"* ]]; then
+# Catalog B scenarios run their named RPC variants within each isolated combo.
+if [[ ",${SCENARIOS}," == *",qlb_t01,"* || ",${SCENARIOS}," == *",qlb_t02,"* ]]; then
   if [[ "${ENGINE}" != "measure" || "${DQB_QUERY_WORKERS:-4}" != "1" || "${DQB_QUERY_ITERATIONS:-50}" != "1000" ]]; then
-    echo "qlb_t01 requires measure, DQB_QUERY_WORKERS=1 and DQB_QUERY_ITERATIONS=1000" >&2
+    echo "Catalog B scenarios require measure, DQB_QUERY_WORKERS=1 and DQB_QUERY_ITERATIONS=1000" >&2
     exit 2
   fi
 fi
@@ -64,7 +64,7 @@ echo "[orchestrate] scenarios=${SCENARIOS}"
 # row and vec see byte-identical DataPoint timestamps. Without this, each
 # process picks its own time.Now() and the correctness gate hashes diverge
 # even when the logical query results match.
-export DQB_BASE_NANOS=$(date -u +%s%N)
+export DQB_BASE_NANOS=${DQB_BASE_NANOS:-$(date -u +%s%N)}
 echo "[orchestrate] base_nanos=${DQB_BASE_NANOS}"
 
 mkdir -p "${SHARD_DIR}"
@@ -73,7 +73,7 @@ rm -f "${SHARD_DIR}"/*.json
 rm -rf "${PROFILE_DIR}"
 
 echo "[orchestrate] building test binary..."
-go test -c -o "${BINARY}" ./test/integration/distributed/querybench
+go test -tags=querymetrics -c -o "${BINARY}" ./test/integration/distributed/querybench
 
 # DQB_SOAK=1: run the in-process sustained soak (Instrument 2) instead of the
 # matrix benchmark. The soak test hard-fails unless DQB_IN_CONTAINER=1 (already

@@ -42,18 +42,7 @@ var qlCases embed.FS
 func RegisterQLTable(description string, observeNodes ...func(*measurev1.QueryRequest, *measurev1.QueryResponse)) bool {
 	return g.Describe(description, g.Ordered, g.Label("measure-ql", "QLB-T01"), func() {
 		var base time.Time
-		render := func(name, host string) string {
-			content, err := qlCases.ReadFile("ql/" + name)
-			gm.Expect(err).NotTo(gm.HaveOccurred())
-			pairs := []string{
-				"{{start}}", base.Add(-time.Second).Format(time.RFC3339Nano),
-				"{{end}}", base.Add(6 * time.Second).Format(time.RFC3339Nano), "{{host}}", host,
-			}
-			for i := range 6 {
-				pairs = append(pairs, fmt.Sprintf("{{t%d}}", i), base.Add(time.Duration(i)*time.Second).Format(time.RFC3339Nano))
-			}
-			return strings.NewReplacer(pairs...).Replace(string(content))
-		}
+		render := func(name, host string) string { return renderQLFixture(base, name, host) }
 		verify := func(query, expected string) *measurev1.QueryResponse {
 			var result *measurev1.QueryResponse
 			gm.Eventually(func(inner gm.Gomega) {
@@ -121,4 +110,17 @@ fieldProjection:
 			gm.Expect(measuredata.CompareQLResult(got, native, false)).To(gm.Succeed())
 		})
 	})
+}
+
+func renderQLFixture(base time.Time, name, host string) string {
+	content, err := qlCases.ReadFile("ql/" + name)
+	gm.Expect(err).NotTo(gm.HaveOccurred())
+	pairs := []string{
+		"{{start}}", base.Add(-time.Second).Format(time.RFC3339Nano),
+		"{{end}}", base.Add(6 * time.Second).Format(time.RFC3339Nano), "{{host}}", host,
+	}
+	for i := range 6 {
+		pairs = append(pairs, fmt.Sprintf("{{t%d}}", i), base.Add(time.Duration(i)*time.Second).Format(time.RFC3339Nano))
+	}
+	return strings.NewReplacer(pairs...).Replace(string(content))
 }

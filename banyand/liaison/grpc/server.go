@@ -175,6 +175,7 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		discoveryService: newDiscoveryServiceWithEntityRepo(schema.KindMeasure, schemaRegistry, nr.MeasureLiaisonNodeRegistry, gr, er),
 		pipeline:         tir1Client,
 		broadcaster:      broadcaster,
+		queryBudget:      protector.QueryBudgetFor(protectorService),
 	}
 	traceSVC := &traceService{
 		discoveryService: newDiscoveryService(schema.KindTrace, schemaRegistry, nr.TraceLiaisonNodeRegistry, gr),

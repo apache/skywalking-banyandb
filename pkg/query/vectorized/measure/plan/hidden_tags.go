@@ -171,3 +171,19 @@ func stripHiddenField(fields []*measurev1.DataPoint_Field, hiddenField string) [
 	}
 	return out
 }
+
+// Err reports terminal execution failures from the wrapped iterator.
+func (h *hiddenTagsMIterator) Err() error {
+	if inner, ok := h.inner.(interface{ Err() error }); ok {
+		return inner.Err()
+	}
+	return nil
+}
+
+// Err reports terminal execution failures from the wrapped iterator.
+func (h *hiddenFieldsMIterator) Err() error {
+	if inner, ok := h.inner.(interface{ Err() error }); ok {
+		return inner.Err()
+	}
+	return nil
+}
