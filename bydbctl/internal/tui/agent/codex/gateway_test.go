@@ -527,13 +527,14 @@ func serveMCPHelper(t *testing.T) {
 		}
 		method, _ := request["method"].(string)
 		result := map[string]any{}
-		if method == "initialize" {
+		switch method {
+		case "initialize":
 			result = map[string]any{
 				"protocolVersion": "2024-11-05",
 				"serverInfo":      map[string]string{"name": controlledMCPServerName, "version": "1"},
 				"capabilities":    map[string]any{"tools": map[string]any{}},
 			}
-		} else if method == "tools/list" {
+		case "tools/list":
 			var tools []map[string]any
 			for _, toolName := range controlledToolNames {
 				tools = append(tools, map[string]any{"name": toolName, "inputSchema": map[string]any{"type": "object"}})

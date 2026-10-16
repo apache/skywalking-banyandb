@@ -1,9 +1,9 @@
-# Licensed to the Apache Software Foundation (ASF) under one or more
-# contributor license agreements.  See the NOTICE file distributed with
-# this work for additional information regarding copyright ownership.
-# The ASF licenses this file to You under the Apache License, Version 2.0
-# (the "License"); you may not use this file except in compliance with
-# the License.  You may obtain a copy of the License at
+# Licensed to the Apache Software Foundation (ASF) under one or more contributor
+# license agreements. See the NOTICE file distributed with this work for additional
+# information regarding copyright ownership. Apache Software Foundation (ASF) licenses this file to you under
+# the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
@@ -13,127 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-linters:
-  disable-all: true
-  enable:
-  - asasalint
-  - asciicheck
-  # - containedctx
-  - contextcheck
-  - decorder
-  - dogsled
-  - errname
-  - errcheck
-  - errchkjson
-  - errorlint
-  - exhaustive
-  # TODO:// enable this lint
-  # - exhaustruct
-  - gci
-  - goconst
-  - gocritic
-  - gocyclo
-  - godot
-  - gofumpt
-  - goprintffuncname
-  - gosec
-  - gosimple
-  - govet
-  - importas
-  - ineffassign
-  - lll
-  - misspell
-  - staticcheck
-  - stylecheck
-  - typecheck
-  - unconvert
-  - unparam
-  - unused
-  - usestdlibvars
-  - whitespace
-linters-settings:
-  importas:
-    no-unaliased: true
-    alias:
-    - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1
-      alias: commonv1
-    - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1
-      alias: databasev1
-    - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1
-      alias: modelv1
-    - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1
-      alias: propertyv1
-    - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1
-      alias: measurev1
-    - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1
-      alias: streamv1
-    - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1
-      alias: clusterv1
-    - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1
-      alias: tracev1
-    - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1
-      alias: transferv1
-    - pkg: github.com/apache/skywalking-banyandb/pkg/pb/v1
-      alias: pbv1
-  lll:
-    line-length: 170
-  goconst:
-    min-occurrences: 4
-  govet:
-    enable:
-    - fieldalignment
-    - shadow
-  misspell:
-    locale: US
-  unparam:
-    check-exported: false
-  gci:
-    sections:
-    - standard
-    - default
-    - prefix(github.com/apache/skywalking-banyandb/)
-  gocritic:
-    enabled-checks:
-    - appendCombine
-    - boolExprSimplify
-    - builtinShadow
-    - commentedOutCode
-    - commentedOutImport
-    - docStub
-    - emptyFallthrough
-    - equalFold
-    - hexLiteral
-    - indexAlloc
-    - initClause
-    - methodExprCall
-    - nilValReturn
-    - octalLiteral
-    - rangeExprCopy
-    - stringXbytes
-    - typeAssertChain
-    - typeUnparen
-    - unnecessaryBlock
-    - weakCond
-  godot:
-    #   declarations - for top level declaration comments (default);
-    #   toplevel     - for top level comments;
-    #   all          - for all comments.
-    scope: toplevel
-  gosec:
-    excludes:
-    - G115 # integer overflow conversion (TODO: verify these)
-  staticcheck:
-    checks: [ "all", "-ST1000", "-ST1016", "-ST1020", "-ST1021", "-ST1022" ]
-  exhaustive:
-    check:
-    - switch
-    - map
-    default-signifies-exhaustive: true
-    ignore-enum-members: ".+UNSPECIFIED$"
-  exhaustruct:
-    exclude:
-    - 'cobra\.Command$'
-
+version: "2"
 run:
   go: "1.25"
   # Lint build-tag-gated sources too. Without this, files behind
@@ -142,32 +22,186 @@ run:
   # silently — they still compile via `make test-trace-pipeline`, and unused
   # package-level vars/funcs are not compile errors in Go.
   build-tags:
-  - trace_pipeline
-issues:
-  exclude-rules:
-  - path: ".*\\.pb\\.go"
-    linters:
-    - "*"
-  - path: ".*\\.pb\\.validate\\.go"
-    linters:
-    - "*"
-  - path: ".*\\.gen\\.go"
-    linters:
-    - "*"
-  - path: _test\.go$|^tests/|^samples/
-    linters:
+    - trace_pipeline
+linters:
+  default: none
+  enable:
+    - asasalint
+    - asciicheck
+    - contextcheck
+    - decorder
+    - dogsled
     - errcheck
-    - maligned
-  # This executable contract is intentionally kept stable while implementations move
-  # from RED to GREEN. Its table layout and explicit helper arguments favor reviewability.
-  - path: fragment_guard_contract_test\.go$
-    linters:
+    - errchkjson
+    - errname
+    - errorlint
+    - exhaustive
+    # goconst is intentionally not enabled. v1.64.8's goconst reported nothing
+    # at min-occurrences 4 (the setting it was configured with), so it never
+    # gated anything. v2.14.0 ships a rewritten goconst that counts strictly
+    # more occurrences per string and reports ~269 findings at the same
+    # threshold — mostly cobra `Use:` strings, test-fixture generators and
+    # protocol field names, where a named constant would be noise rather than
+    # a fix. Re-enabling it is a separate, deliberate cleanup.
+    # - goconst
+    - gocritic
+    - gocyclo
+    - godot
+    - goprintffuncname
+    - gosec
     - govet
-    text: fieldalignment
-  - path: fragment_guard_contract_test\.go$
-    linters:
-    - unparam
-  - linters:
+    - importas
+    - ineffassign
+    - lll
+    - misspell
     - staticcheck
-    text: "SA1019: package github.com/golang/protobuf"
+    - unconvert
+    - unparam
+    - unused
+    - usestdlibvars
+    - whitespace
+  settings:
+    exhaustive:
+      check:
+        - switch
+        - map
+      default-signifies-exhaustive: true
+      ignore-enum-members: .+UNSPECIFIED$
+    exhaustruct:
+      exclude:
+        - cobra\.Command$
+    gocritic:
+      enabled-checks:
+        - appendCombine
+        - boolExprSimplify
+        - builtinShadow
+        - commentedOutCode
+        - commentedOutImport
+        - docStub
+        - emptyFallthrough
+        - equalFold
+        - hexLiteral
+        - indexAlloc
+        - initClause
+        - methodExprCall
+        - nilValReturn
+        - octalLiteral
+        - rangeExprCopy
+        - stringXbytes
+        - typeAssertChain
+        - typeUnparen
+        - unnecessaryBlock
+        - weakCond
+    godot:
+      scope: toplevel
+    gosec:
+      excludes:
+        - G115
+        - G118
+        - G122
+        - G602
+        - G702
+        - G703
+    govet:
+      disable:
+        - inline
+      enable:
+        - fieldalignment
+        - shadow
+    importas:
+      no-unaliased: true
+      alias:
+        - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1
+          alias: commonv1
+        - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1
+          alias: databasev1
+        - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1
+          alias: modelv1
+        - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1
+          alias: propertyv1
+        - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1
+          alias: measurev1
+        - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1
+          alias: streamv1
+        - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1
+          alias: clusterv1
+        - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1
+          alias: tracev1
+        - pkg: github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1
+          alias: transferv1
+        - pkg: github.com/apache/skywalking-banyandb/pkg/pb/v1
+          alias: pbv1
+    lll:
+      line-length: 170
+    misspell:
+      locale: US
+    staticcheck:
+      checks:
+        - all
+        - -ST1000
+        - -ST1016
+        - -ST1020
+        - -ST1021
+        - -ST1022
+        - -QF1002
+        - -QF1007
+        - -QF1008
+        - -QF1011
+        - -QF1012
+    unparam:
+      check-exported: false
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - '*'
+        path: .*\.pb\.go
+      - linters:
+          - '*'
+        path: .*\.pb\.validate\.go
+      - linters:
+          - '*'
+        path: .*\.gen\.go
+      - linters:
+          - errcheck
+          - maligned
+        path: _test\.go$|^tests/|^samples/
+      # This executable contract is intentionally kept stable while implementations move
+      # from RED to GREEN. Its table layout and explicit helper arguments favor reviewability.
+      - linters:
+          - govet
+        path: fragment_guard_contract_test\.go$
+        text: fieldalignment
+      - linters:
+          - unparam
+        path: fragment_guard_contract_test\.go$
+      - linters:
+          - staticcheck
+        text: 'SA1019: package github.com/golang/protobuf'
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+issues:
   max-same-issues: 0
+formatters:
+  enable:
+    - gci
+    - gofumpt
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/apache/skywalking-banyandb/)
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

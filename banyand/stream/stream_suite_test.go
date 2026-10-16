@@ -106,13 +106,14 @@ func setUp() (*services, func()) {
 		streamService,
 		querySvc,
 	)
-	return &services{
-			stream:          streamService,
-			metadataService: metadataService,
-			pipeline:        pipeline,
-		}, func() {
-			moduleDeferFunc()
-			metaDeferFunc()
-			deferFunc()
-		}
+	svcs := &services{
+		stream:          streamService,
+		metadataService: metadataService,
+		pipeline:        pipeline,
+	}
+	return svcs, func() {
+		moduleDeferFunc()
+		metaDeferFunc()
+		deferFunc()
+	}
 }

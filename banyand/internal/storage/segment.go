@@ -935,7 +935,7 @@ func (sc *segmentController[T, O]) parse(value string) (time.Time, error) {
 	return parseSegmentTime(value, sc.getOptions().SegmentInterval.Unit)
 }
 
-func (sc *segmentController[T, O]) open() error {
+func (sc *segmentController[T, O]) open(ctx context.Context) error {
 	sc.Lock()
 	defer sc.Unlock()
 	invalidSegments := make([]string, 0)
@@ -973,7 +973,7 @@ func (sc *segmentController[T, O]) open() error {
 			}
 			segmentEnd = parsedEnd
 		}
-		_, loadErr := sc.load(context.Background(), start, segmentEnd, sc.location)
+		_, loadErr := sc.load(ctx, start, segmentEnd, sc.location)
 		return loadErr
 	})
 	if len(invalidSegments) > 0 {
@@ -1082,8 +1082,8 @@ func (sc *segmentController[T, O]) load(ctx context.Context, start, end time.Tim
 	return seg, nil
 }
 
-func (sc *segmentController[T, O]) remove(deadline time.Time) (hasSegment bool, err error) {
-	ss, _ := sc.segments(context.Background(), false)
+func (sc *segmentController[T, O]) remove(ctx context.Context, deadline time.Time) (hasSegment bool, err error) {
+	ss, _ := sc.segments(ctx, false)
 	for _, s := range ss {
 		if s.Before(deadline) {
 			hasSegment = true

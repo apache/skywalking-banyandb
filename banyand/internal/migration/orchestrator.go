@@ -207,20 +207,20 @@ func (p *CopyPlan) RunCopy(ctx context.Context, stagingDir string, cls *Classifi
 			// not series-index metadata to broadcast. Leaving groupUnionSidx[group]
 			// empty makes Phase B pass UnionSidxPath=="" through to the executor.
 			if skipUnionSidx(exec, group) {
-				logStep(prefix, "group %s: index-mode — skipping union sidx build + broadcast", group)
+				logStepf(prefix, "group %s: index-mode — skipping union sidx build + broadcast", group)
 				continue
 			}
 			srcRoots := p.CollectAllSrcGroupRoots(exec.Catalog(), group)
 			if len(srcRoots) == 0 {
-				logStep(prefix, "group %s: no source dirs across any entry — skipping union sidx build", group)
+				logStepf(prefix, "group %s: no source dirs across any entry — skipping union sidx build", group)
 				continue
 			}
-			logStep(prefix, "group %s: building union sidx from %d source dir(s) merged across all entries",
+			logStepf(prefix, "group %s: building union sidx from %d source dir(s) merged across all entries",
 				group, len(srcRoots))
 			unionSidxPath, buildErr := BuildGroupUnionSidx(ctx, srcRoots,
 				filepath.Join(stagingDir, "groups", group, sidxDirName),
 				func(format string, args ...any) {
-					logStep(prefix, "group "+group+": "+format, args...)
+					logStepf(prefix, "group "+group+": "+format, args...)
 				})
 			if buildErr != nil {
 				return res, fmt.Errorf("group %s: build union sidx: %w", group, buildErr)
@@ -238,7 +238,7 @@ func (p *CopyPlan) RunCopy(ctx context.Context, stagingDir string, cls *Classifi
 				return res, ctx.Err()
 			}
 			entryTag := fmt.Sprintf("entry [%d/%d]", entryIdx+1, len(entries))
-			logStep(prefix, "%s stage=%s nodes=%v target=%s",
+			logStepf(prefix, "%s stage=%s nodes=%v target=%s",
 				entryTag, entry.Stage, entry.Nodes, entry.Target)
 			for _, group := range groups {
 				if ctx.Err() != nil {
@@ -247,10 +247,10 @@ func (p *CopyPlan) RunCopy(ctx context.Context, stagingDir string, cls *Classifi
 				srcRoots := p.ResolveEntrySrcRoots(exec.Catalog(), entry, group)
 				if len(srcRoots) == 0 {
 					if len(entry.Source) > 0 {
-						logStep(prefix, "%s stage=%s group %s: skipped (none of source paths %v contain this group)",
+						logStepf(prefix, "%s stage=%s group %s: skipped (none of source paths %v contain this group)",
 							entryTag, entry.Stage, group, entry.Source)
 					} else {
-						logStep(prefix, "%s stage=%s group %s: skipped (none of nodes %v carry this group)",
+						logStepf(prefix, "%s stage=%s group %s: skipped (none of nodes %v carry this group)",
 							entryTag, entry.Stage, group, entry.Nodes)
 					}
 					continue
@@ -272,7 +272,7 @@ func (p *CopyPlan) RunCopy(ctx context.Context, stagingDir string, cls *Classifi
 				if err != nil {
 					return res, fmt.Errorf("%s stage=%s group %s: %w", entryTag, entry.Stage, group, err)
 				}
-				logStep(prefix, "%s stage=%s group %s: done rows=%d segs=%d srcParts=%d targetParts=%d",
+				logStepf(prefix, "%s stage=%s group %s: done rows=%d segs=%d srcParts=%d targetParts=%d",
 					entryTag, entry.Stage, group,
 					groupRes.Rows, groupRes.Segments, groupRes.SourceParts, groupRes.TargetParts)
 				// Return idle heap to the OS so compressed-memory pressure
@@ -332,6 +332,6 @@ func (p *CopyPlan) RunVerify(ctx context.Context, cls *Classified, executors []C
 	return nil
 }
 
-func logStep(prefix, format string, args ...any) {
+func logStepf(prefix, format string, args ...any) {
 	fmt.Fprintf(os.Stdout, time.Now().Format("2006/01/02 15:04:05")+" "+prefix+" "+format+"\n", args...)
 }

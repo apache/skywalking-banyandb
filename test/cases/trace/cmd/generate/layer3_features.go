@@ -127,14 +127,16 @@ func layer3Criteria(filter string) *modelv1.Criteria {
 }
 
 func applyLimitOffset(req *tracev1.QueryRequest, tv TestVector) {
-	if tv["limit"] == "2" {
+	switch tv["limit"] {
+	case "2":
 		req.Limit = 2
-	} else if tv["limit"] == "5" {
+	case "5":
 		req.Limit = 5
 	}
-	if tv["offset"] == "1" {
+	switch tv["offset"] {
+	case "1":
 		req.Offset = 1
-	} else if tv["offset"] == "3" {
+	case "3":
 		req.Offset = 3
 	}
 }

@@ -65,6 +65,7 @@ users:
 func TestSchemaR3_AllowsAnyReportsHoldingAPermissionSomewhere(t *testing.T) {
 	snapshot := compile(t, 1, visibilityPolicyYAML)
 
+	//nolint:gosec // G101: fixed test fixture credentials, not real secrets.
 	for _, tc := range []struct {
 		username string
 		password string
