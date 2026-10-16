@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"math/rand"
 	"slices"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -89,9 +90,14 @@ func hiddenTags() map[common.SeriesID]map[string]*modelv1.TagValue {
 
 func TestTimeMergeMatchesLegacyAcrossGeneratedQueries(t *testing.T) {
 	verifyNoScanLeaks(t)
+	oapSeries, staggeredSeries := 100, 24
+	if raceEnabled {
+		oapSeries, staggeredSeries = 20, 12
+	}
+	fxNames := []string{"mixed", "oap", "staggered"}
 	fixtures := map[string]*fxFixture{
-		"oap":       oapFixture(t, 100),
-		"staggered": staggeredFixture(t, 24),
+		"oap":       oapFixture(t, oapSeries),
+		"staggered": staggeredFixture(t, staggeredSeries),
 		"mixed":     mixedFixture(t),
 	}
 	projections := []struct {
@@ -119,12 +125,50 @@ func TestTimeMergeMatchesLegacyAcrossGeneratedQueries(t *testing.T) {
 		{"series order", false, true},
 		{"series order desc flag", false, false},
 	}
-	for name, fx := range fixtures {
-		for iter := range 36 {
+	iters := 36
+	// Under the race detector the random picks are replaced by a pairwise cover of the
+	// order, projection, range and limit values (every value, and every pair of order,
+	// projection and limit), spread over the fixtures.
+	var cover [][]int
+	if raceEnabled {
+		var combos [][]int
+		for o := range orders {
+			for p := range projections {
+				for r := range ranges {
+					for l := range limits {
+						combos = append(combos, []int{o, p, r, l})
+					}
+				}
+			}
+		}
+		span := func(c []int) int { return int(min(ranges[c[2]][1]-ranges[c[2]][0], 700)) }
+		rows := func(c []int) int {
+			if lim := limits[c[3]]; lim[1] < 1000 {
+				return int(lim[1]) + 1
+			}
+			return 2000
+		}
+		cost := func(c []int) int { return span(c) * rows(c) / 100 }
+		cover = coverPairs(combos, [][2]int{{0, 1}, {0, 3}, {1, 3}}, cost)
+		// The mixed fixture is the slowest per row: it takes the cheapest queries and the
+		// small fixtures take the heaviest, so every fixture still sees every shape of query.
+		sort.SliceStable(cover, func(i, j int) bool { return cost(cover[i]) < cost(cover[j]) })
+		iters = (len(cover) + len(fxNames) - 1) / len(fxNames)
+	}
+	for fxIdx, name := range fxNames {
+		fx := fixtures[name]
+		for iter := range iters {
 			ord := orders[rng.Intn(len(orders))]
 			proj := projections[rng.Intn(len(projections))]
 			tr := ranges[rng.Intn(len(ranges))]
 			lim := limits[rng.Intn(len(limits))]
+			if raceEnabled {
+				idx := fxIdx*iters + iter
+				if idx >= len(cover) {
+					break
+				}
+				ord, proj, tr, lim = orders[cover[idx][0]], projections[cover[idx][1]], ranges[cover[idx][2]], limits[cover[idx][3]]
+			}
 			q := &fxQuery{
 				tags: proj.tags, fields: proj.fields, minTS: tr[0], maxTS: tr[1],
 				offset: lim[0], limit: lim[1], orderByTS: ord.orderByTS, ascTS: ord.ascTS, passthrough: rng.Intn(4) == 0,
@@ -153,7 +197,12 @@ func TestTimeMergeMatchesLegacyAcrossGeneratedQueries(t *testing.T) {
 
 func TestTimeMergeMatchesLegacyThroughGroupByAggregationAndTimeBuckets(t *testing.T) {
 	verifyNoScanLeaks(t)
-	fixtures := map[string]*fxFixture{"oap": oapFixture(t, 60), "staggered": staggeredFixture(t, 16)}
+	oapSeries, staggeredSeries := 60, 16
+	if raceEnabled {
+		oapSeries, staggeredSeries = 12, 8
+	}
+	fxNames := []string{"oap", "staggered"}
+	fixtures := map[string]*fxFixture{"oap": oapFixture(t, oapSeries), "staggered": staggeredFixture(t, staggeredSeries)}
 	groupBy := &model.MeasureGroupBy{TagFamily: fxFamily, TagNames: []string{fxTagSvc}}
 	bucketOnly := &model.MeasureGroupBy{TimeBucket: &model.MeasureTimeBucket{Width: "100ns", WidthNanos: 100}}
 	bucketAndTag := &model.MeasureGroupBy{
@@ -164,28 +213,40 @@ func TestTimeMergeMatchesLegacyThroughGroupByAggregationAndTimeBuckets(t *testin
 		{FieldName: fxFldFlt, Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN},
 		{FieldName: fxFldInt, Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX},
 	}
-	for name, fx := range fixtures {
-		for _, gb := range []*model.MeasureGroupBy{nil, groupBy, bucketOnly, bucketAndTag} {
-			for _, agg := range aggs {
+	groupBys := []*model.MeasureGroupBy{nil, groupBy, bucketOnly, bucketAndTag}
+	ranges := [][2]int64{{0, 1 << 20}, {120, 480}}
+	// combos are [fixture, grouping, aggregation, range] indexes of the valid cross product.
+	var combos [][]int
+	for f := range fxNames {
+		for g, gb := range groupBys {
+			for a, agg := range aggs {
 				if gb == nil && agg.Func != modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM {
 					continue
 				}
-				for _, tr := range [][2]int64{{0, 1 << 20}, {120, 480}} {
-					q := &fxQuery{
-						tags: []string{fxTagSvc}, fields: []string{fxFldInt, fxFldFlt}, minTS: tr[0], maxTS: tr[1],
-						groupBy: gb, agg: agg, orderByTS: true, ascTS: true,
-					}
-					what := fmt.Sprintf("%s agg=%v groupBy=%v bucket=%v range=%v", name, agg.Func, gb != nil, gb != nil && gb.TimeBucket != nil, tr)
-					t.Run(what, func(t *testing.T) {
-						want := fx.run(t, q, true)
-						got := fx.run(t, q, false)
-						require.NotEmpty(t, want.points)
-						requireSameResult(t, want, got, what)
-						require.Positive(t, got.scan.mergeRows)
-					})
+				for r := range ranges {
+					combos = append(combos, []int{f, g, a, r})
 				}
 			}
 		}
+	}
+	if raceEnabled {
+		combos = coverPairs(combos, nil, nil)
+	}
+	for _, c := range combos {
+		name, gb, agg, tr := fxNames[c[0]], groupBys[c[1]], aggs[c[2]], ranges[c[3]]
+		fx := fixtures[name]
+		q := &fxQuery{
+			tags: []string{fxTagSvc}, fields: []string{fxFldInt, fxFldFlt}, minTS: tr[0], maxTS: tr[1],
+			groupBy: gb, agg: agg, orderByTS: true, ascTS: true,
+		}
+		what := fmt.Sprintf("%s agg=%v groupBy=%v bucket=%v range=%v", name, agg.Func, gb != nil, gb != nil && gb.TimeBucket != nil, tr)
+		t.Run(what, func(t *testing.T) {
+			want := fx.run(t, q, true)
+			got := fx.run(t, q, false)
+			require.NotEmpty(t, want.points)
+			requireSameResult(t, want, got, what)
+			require.Positive(t, got.scan.mergeRows)
+		})
 	}
 }
 
@@ -322,7 +383,7 @@ func TestTimeMergeSetsSeriesBoundariesForInterleavedRuns(t *testing.T) {
 func TestTimeMergeDecodesCursorsAtTheFrontier(t *testing.T) {
 	verifyNoScanLeaks(t)
 	const (
-		series = 40
+		series = frontierSeries
 		blocks = 12
 		span   = 200
 	)

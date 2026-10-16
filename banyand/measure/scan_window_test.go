@@ -194,8 +194,8 @@ var (
 //	s7, s8: small single-part series
 func mixedFixture(t testing.TB) *fxFixture {
 	return newFixture(t,
-		fxPart{{1, 1, 300, 1}, {2, 1, 300, 1}, {3, 1, 3, 1}, {4, 1, 20000, 1}, {5, 10, 20, 1}},
-		fxPart{{1, 301, 600, 2}, {2, 150, 450, 2}, {3, 2, 6, 2}, {4, 19990, 20010, 5}, {6, 1, 700, 2}, {5, 20, 30, 2}},
+		fxPart{{1, 1, 300, 1}, {2, 1, 300, 1}, {3, 1, 3, 1}, {4, 1, mixedTailEnd, 1}, {5, 10, 20, 1}},
+		fxPart{{1, 301, 600, 2}, {2, 150, 450, 2}, {3, 2, 6, 2}, {4, mixedTailEnd - 10, mixedTailEnd + 10, 5}, {6, 1, 700, 2}, {5, 20, 30, 2}},
 		fxPart{{1, 601, 900, 3}, {2, 400, 700, 1}, {7, 1, 50, 3}, {8, 100, 110, 3}},
 	)
 }
@@ -237,15 +237,34 @@ func TestScanWindowMatchesLegacyAcrossGeneratedQueries(t *testing.T) {
 		{"fields only", nil, []string{fxFldInt}},
 		{"tags only", []string{fxTagURL}, nil},
 	}
-	ranges := [][2]int64{{0, 30000}, {100, 650}, {299, 301}, {19000, 20005}, {700, 700}, {5000, 6000}}
+	ranges := [][2]int64{{0, 30000}, {100, 650}, {299, 301}, {mixedTailEnd - 1000, mixedTailEnd + 5}, {700, 700}, {5000, 6000}}
 	limits := [][2]uint32{{0, 0}, {0, 7}, {5, 50}, {300, 2000}, {0, 100000}}
-	for iter := range 60 {
+	iters := 60
+	// Under the race detector the random picks of projection, range and limit are
+	// replaced by a pairwise cover of their values.
+	var cover [][]int
+	if raceEnabled {
+		var combos [][]int
+		for p := range projections {
+			for r := range ranges {
+				for l := range limits {
+					combos = append(combos, []int{p, r, l})
+				}
+			}
+		}
+		cover = coverPairs(combos, nil, nil)
+		iters = len(cover)
+	}
+	for iter := range iters {
 		order := slices.Clone(fx.sids)
 		rng.Shuffle(len(order), func(i, j int) { order[i], order[j] = order[j], order[i] })
 		order = order[:3+rng.Intn(len(order)-2)]
 		proj := projections[rng.Intn(len(projections))]
 		tr := ranges[rng.Intn(len(ranges))]
 		lim := limits[rng.Intn(len(limits))]
+		if raceEnabled {
+			proj, tr, lim = projections[cover[iter][0]], ranges[cover[iter][1]], limits[cover[iter][2]]
+		}
 		q := &fxQuery{
 			order: order, tags: proj.tags, fields: proj.fields, minTS: tr[0], maxTS: tr[1],
 			offset: lim[0], limit: lim[1], passthrough: rng.Intn(4) == 0,
@@ -272,27 +291,44 @@ func TestScanWindowMatchesLegacyForTimeOrders(t *testing.T) {
 	)
 	// Series sharing timestamps: the legacy output interleaves them.
 	interleaved := mixedFixture(t)
-	for name, fx := range map[string]*fxFixture{"disjoint": disjoint, "interleaved": interleaved} {
-		for _, asc := range []bool{true, false} {
-			for _, single := range []bool{false, true} {
-				for _, lim := range [][2]uint32{{0, 0}, {3, 40}, {0, 5}} {
-					q := &fxQuery{tags: allTags, fields: allFields, minTS: 0, maxTS: 30000, orderByTS: true, ascTS: asc, offset: lim[0], limit: lim[1]}
-					if single {
-						q.order = []common.SeriesID{fx.sids[len(fx.sids)/2]}
-					}
-					what := fmt.Sprintf("%s asc=%v single=%v limit=%v", name, asc, single, lim)
-					t.Run(what, func(t *testing.T) {
-						want := fx.run(t, q, true)
-						got := fx.run(t, q, false)
-						requireSameResult(t, want, got, what)
-						require.NotNil(t, got.scan, "%s: every time order is served by the window scan", what)
-						if name == "interleaved" && !single {
-							require.Positive(t, got.scan.mergeRows, "interleaving series are merged")
-						}
-					})
+	fxNames := []string{"disjoint", "interleaved"}
+	fixtures := map[string]*fxFixture{"disjoint": disjoint, "interleaved": interleaved}
+	lims := [][2]uint32{{0, 0}, {3, 40}, {0, 5}}
+	// combos are [fixture, asc (0 = true), single (0 = false), limit] indexes.
+	var combos [][]int
+	for f := range fxNames {
+		for a := range 2 {
+			for s := range 2 {
+				for l := range lims {
+					combos = append(combos, []int{f, a, s, l})
 				}
 			}
 		}
+	}
+	if raceEnabled {
+		// The interleaved fixture returned unbounded is the costly shape: pair the
+		// fixtures with the limits only as far as the other dimensions require.
+		combos = coverPairs(combos, [][2]int{{1, 2}, {1, 3}, {2, 3}, {0, 1}, {0, 2}}, func(c []int) int {
+			return 1 + 20*c[0]*(1-min(c[3], 1))
+		})
+	}
+	for _, c := range combos {
+		name, asc, single, lim := fxNames[c[0]], c[1] == 0, c[2] == 1, lims[c[3]]
+		fx := fixtures[name]
+		q := &fxQuery{tags: allTags, fields: allFields, minTS: 0, maxTS: 30000, orderByTS: true, ascTS: asc, offset: lim[0], limit: lim[1]}
+		if single {
+			q.order = []common.SeriesID{fx.sids[len(fx.sids)/2]}
+		}
+		what := fmt.Sprintf("%s asc=%v single=%v limit=%v", name, asc, single, lim)
+		t.Run(what, func(t *testing.T) {
+			want := fx.run(t, q, true)
+			got := fx.run(t, q, false)
+			requireSameResult(t, want, got, what)
+			require.NotNil(t, got.scan, "%s: every time order is served by the window scan", what)
+			if name == "interleaved" && !single {
+				require.Positive(t, got.scan.mergeRows, "interleaving series are merged")
+			}
+		})
 	}
 }
 
@@ -529,7 +565,7 @@ func TestScanWindowMatchesAnIndependentModel(t *testing.T) {
 	}{
 		{q: fxQuery{minTS: 0, maxTS: 30000}},
 		{q: fxQuery{minTS: 120, maxTS: 700, order: []common.SeriesID{6, 2, 1, 5}}},
-		{q: fxQuery{minTS: 19980, maxTS: 20005, order: []common.SeriesID{4}}},
+		{q: fxQuery{minTS: mixedTailEnd - 20, maxTS: mixedTailEnd + 5, order: []common.SeriesID{4}}},
 		{q: fxQuery{minTS: 0, maxTS: 30000, order: []common.SeriesID{4}, orderByTS: true}, desc: true},
 		{q: fxQuery{minTS: 0, maxTS: 30000, order: []common.SeriesID{2}, orderByTS: true}, desc: true},
 		{q: fxQuery{minTS: 0, maxTS: 30000, order: []common.SeriesID{5}, orderByTS: true, ascTS: true}},

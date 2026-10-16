@@ -150,8 +150,12 @@ func maxBlockBytes(qr *queryResult) int64 {
 func TestPrefetchMatchesSynchronousDecodeUnderRandomCompletionOrder(t *testing.T) {
 	verifyNoScanLeaks(t)
 	mixed := mixedFixture(t)
-	oap := oapFixture(t, 24)
-	stag := staggeredFixture(t, 12)
+	oapSeries, stagSeries := 24, 12
+	if raceEnabled {
+		oapSeries, stagSeries = 12, 8
+	}
+	oap := oapFixture(t, oapSeries)
+	stag := staggeredFixture(t, stagSeries)
 	tests := []struct {
 		fx *fxFixture
 		q  *fxQuery
@@ -908,7 +912,11 @@ func TestScanSequenceMatchesTheOrderCursorsAreDecoded(t *testing.T) {
 func TestConcurrentQueriesShareTheNodePool(t *testing.T) {
 	verifyNoScanLeaks(t)
 	mixed := mixedFixture(t)
-	oap := oapFixture(t, 20)
+	oapSeries, rounds := 20, 6
+	if raceEnabled {
+		oapSeries, rounds = 12, 3
+	}
+	oap := oapFixture(t, oapSeries)
 	queries := []struct {
 		fx *fxFixture
 		q  *fxQuery
@@ -939,7 +947,7 @@ func TestConcurrentQueriesShareTheNodePool(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			rng := rand.New(rand.NewSource(int64(w))) //nolint:gosec // deterministic test workload
-			for round := range 6 {
+			for round := range rounds {
 				i := (w + round) % len(queries)
 				tt := queries[i]
 				qr := tt.fx.newResult(t, tt.q, tt.q.schema(t))
@@ -1062,7 +1070,7 @@ func TestWholeResultAdmissionStillGuardsThePathsThatLoadEverything(t *testing.T)
 func TestPrefetchAddsAtMostAQuarterOfTheFrontierToTheMergePeak(t *testing.T) {
 	verifyNoScanLeaks(t)
 	const (
-		series = 40
+		series = frontierSeries
 		blocks = 12
 		span   = 200
 	)

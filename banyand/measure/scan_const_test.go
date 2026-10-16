@@ -183,7 +183,14 @@ func TestScanWindowDescendingBatchesAreHintedDescending(t *testing.T) {
 // agree row for row and byte for byte.
 func TestScanWindowConstAndRunsMatchPerRowAndLegacy(t *testing.T) {
 	verifyNoScanLeaks(t)
-	fixtures := map[string]*fxFixture{"oap": oapFixture(t, 40), "staggered": staggeredFixture(t, 12), "mixed": mixedFixture(t)}
+	oapSeries, staggeredSeries := 40, 12
+	if raceEnabled {
+		// Still more than ten series (the fifth part's reach) and spanning every parity
+		// and multiple-of-five rewrite the oap parts are built from.
+		oapSeries, staggeredSeries = 12, 8
+	}
+	fxNames := []string{"oap", "staggered", "mixed"}
+	fixtures := map[string]*fxFixture{"oap": oapFixture(t, oapSeries), "staggered": staggeredFixture(t, staggeredSeries), "mixed": mixedFixture(t)}
 	hidden := map[common.SeriesID]map[string]*modelv1.TagValue{}
 	for sid := common.SeriesID(1); sid <= 40; sid++ {
 		hidden[sid] = map[string]*modelv1.TagValue{fxTagHid: strTagValue(fmt.Sprintf("hid-%d", sid%3))}
@@ -205,6 +212,9 @@ func TestScanWindowConstAndRunsMatchPerRowAndLegacy(t *testing.T) {
 		{FieldName: fxFldInt, Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN},
 		{FieldName: fxFldNul, Func: modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT},
 	}
+	groupNames := []string{
+		"scalar", "entity tag", "hidden entity tag", "both entity tags", "bucket", "bucket + entity tag", "wide bucket + entity tags",
+	}
 	groupings := map[string]*model.MeasureGroupBy{
 		"scalar":                    nil,
 		"entity tag":                byTag(fxTagSvc),
@@ -214,15 +224,19 @@ func TestScanWindowConstAndRunsMatchPerRowAndLegacy(t *testing.T) {
 		"bucket + entity tag":       bucket(64, fxTagSvc),
 		"wide bucket + entity tags": bucket(1000, fxTagSvc, fxTagHid),
 	}
+	orderNames := []string{"no time order", "time asc", "time desc"}
 	orders := map[string]func(q *fxQuery){
 		"no time order": func(_ *fxQuery) {},
 		"time asc":      func(q *fxQuery) { q.orderByTS, q.ascTS = true, true },
 		"time desc":     func(q *fxQuery) { q.orderByTS, q.ascTS = true, false },
 	}
-	for fxName, fx := range fixtures {
-		for gName, gb := range groupings {
-			for oName, order := range orders {
-				for _, agg := range aggs {
+	// combos are [fixture, grouping, order, aggregation] indexes of the valid cross product.
+	var combos [][]int
+	for f := range fxNames {
+		for g, gName := range groupNames {
+			gb := groupings[gName]
+			for o, oName := range orderNames {
+				for a, agg := range aggs {
 					if gb == nil && agg.FieldName == fxFldNul {
 						continue
 					}
@@ -231,26 +245,33 @@ func TestScanWindowConstAndRunsMatchPerRowAndLegacy(t *testing.T) {
 						// does not stream any other).
 						continue
 					}
-					q := &fxQuery{
-						tags: []string{fxTagSvc, fxTagHid}, fields: []string{fxFldInt, fxFldFlt, fxFldNul}, minTS: 0, maxTS: 1 << 20,
-						groupBy: gb, agg: agg, stored: hidden,
-					}
-					order(q)
-					if gb == nil {
-						q.groupBy = nil
-					}
-					what := fmt.Sprintf("%s/%s/%s/%s(%s)", fxName, gName, oName, agg.Func, agg.FieldName)
-					t.Run(what, func(t *testing.T) {
-						legacy := fx.run(t, q, true)
-						var plain, fast fxResult
-						withFastPaths(false, func() { plain = fx.run(t, q, false) })
-						withFastPaths(true, func() { fast = fx.run(t, q, false) })
-						requireSameResult(t, legacy, plain, what+" per-row vs legacy")
-						requireSameResult(t, plain, fast, what+" fast vs per-row")
-					})
+					combos = append(combos, []int{f, g, o, a})
 				}
 			}
 		}
+	}
+	if raceEnabled {
+		// Every fixture, grouping, order and aggregation still runs, and so does every
+		// (grouping, aggregation) and (grouping, order) pair; the costly mixed fixture is picked last.
+		combos = coverPairs(combos, [][2]int{{1, 3}, {1, 2}}, func(c []int) int { return []int{3, 2, 12}[c[0]] })
+	}
+	for _, c := range combos {
+		fxName, gName, oName, agg := fxNames[c[0]], groupNames[c[1]], orderNames[c[2]], aggs[c[3]]
+		fx, gb, order := fixtures[fxName], groupings[gName], orders[oName]
+		q := &fxQuery{
+			tags: []string{fxTagSvc, fxTagHid}, fields: []string{fxFldInt, fxFldFlt, fxFldNul}, minTS: 0, maxTS: 1 << 20,
+			groupBy: gb, agg: agg, stored: hidden,
+		}
+		order(q)
+		what := fmt.Sprintf("%s/%s/%s/%s(%s)", fxName, gName, oName, agg.Func, agg.FieldName)
+		t.Run(what, func(t *testing.T) {
+			legacy := fx.run(t, q, true)
+			var plain, fast fxResult
+			withFastPaths(false, func() { plain = fx.run(t, q, false) })
+			withFastPaths(true, func() { fast = fx.run(t, q, false) })
+			requireSameResult(t, legacy, plain, what+" per-row vs legacy")
+			requireSameResult(t, plain, fast, what+" fast vs per-row")
+		})
 	}
 }
 
@@ -260,22 +281,33 @@ func TestScanWindowRawQueriesMatchWithConstColumns(t *testing.T) {
 	verifyNoScanLeaks(t)
 	fx := mixedFixture(t)
 	hidden := map[common.SeriesID]map[string]*modelv1.TagValue{1: {fxTagHid: strTagValue("hidden-1")}, 6: {fxTagHid: strTagValue("hidden-6")}}
-	for _, ordered := range []bool{false, true} {
-		for _, asc := range []bool{true, false} {
-			for _, lim := range [][2]uint32{{0, 0}, {5, 70}} {
-				q := &fxQuery{
-					tags: []string{fxTagSvc, fxTagHid, fxTagURL, fxTagN}, fields: []string{fxFldInt, fxFldStr}, minTS: 0, maxTS: 30000,
-					stored: hidden, orderByTS: ordered, ascTS: asc, offset: lim[0], limit: lim[1],
-				}
-				what := fmt.Sprintf("ordered=%v asc=%v limit=%v", ordered, asc, lim)
-				t.Run(what, func(t *testing.T) {
-					legacy := fx.run(t, q, true)
-					var fast fxResult
-					withFastPaths(true, func() { fast = fx.run(t, q, false) })
-					requireSameResult(t, legacy, fast, what)
-				})
+	lims := [][2]uint32{{5, 70}, {0, 0}}
+	var combos [][]int
+	for ordered := range 2 {
+		for asc := range 2 {
+			for l := range lims {
+				combos = append(combos, []int{ordered, asc, l})
 			}
 		}
+	}
+	if raceEnabled {
+		// The unbounded limit returns every row of the mixed fixture: it is costly, so
+		// the cover takes it as rarely as the pairs allow.
+		combos = coverPairs(combos, [][2]int{{0, 1}}, func(c []int) int { return 1 + 10*c[2] })
+	}
+	for _, c := range combos {
+		ordered, asc, lim := c[0] == 1, c[1] == 0, lims[c[2]]
+		q := &fxQuery{
+			tags: []string{fxTagSvc, fxTagHid, fxTagURL, fxTagN}, fields: []string{fxFldInt, fxFldStr}, minTS: 0, maxTS: 30000,
+			stored: hidden, orderByTS: ordered, ascTS: asc, offset: lim[0], limit: lim[1],
+		}
+		what := fmt.Sprintf("ordered=%v asc=%v limit=%v", ordered, asc, lim)
+		t.Run(what, func(t *testing.T) {
+			legacy := fx.run(t, q, true)
+			var fast fxResult
+			withFastPaths(true, func() { fast = fx.run(t, q, false) })
+			requireSameResult(t, legacy, fast, what)
+		})
 	}
 }
 
