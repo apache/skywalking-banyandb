@@ -31,7 +31,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-s -w" \
     -o /out/soak-driver \
-    ./cmd/soak-driver
+    ./test/soak/cmd
 
 FROM busybox:stable-glibc AS final
 
@@ -39,6 +39,6 @@ COPY --from=builder /out/soak-driver /soak-driver
 
 # Catalog files are embedded at image build time so docker compose run
 # invocations can refer to /catalog/* without a separate mount.
-COPY cmd/soak-driver/catalog /catalog
+COPY test/soak/cmd/catalog /catalog
 
 ENTRYPOINT ["/soak-driver"]

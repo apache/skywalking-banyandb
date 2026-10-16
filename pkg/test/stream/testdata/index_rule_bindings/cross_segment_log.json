@@ -1,0 +1,16 @@
+{
+  "metadata": {
+    "name": "cross-segment-log-index-rule-binding",
+    "group": "sw_cross_segment_stream"
+  },
+  "rules": [
+    "business_id"
+  ],
+  "subject": {
+    "catalog": "CATALOG_STREAM",
+    "name": "cross_segment_log"
+  },
+  "begin_at": "2026-05-27T00:00:00.00Z",
+  "expire_at": "2121-05-27T00:00:00.00Z",
+  "updated_at": "2026-05-27T00:00:00.00Z"
+}

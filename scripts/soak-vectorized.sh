@@ -97,8 +97,8 @@ PARITY_INTERVAL_SEC=$(( PARITY_INTERVAL_MIN * 60 ))
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="${REPO_ROOT}/test/soak/docker-compose.soak.yaml"
 # MEASURE path uses the default catalog; TRACE path uses its own catalog.
-CATALOG_MEASURE="${REPO_ROOT}/cmd/soak-driver/catalog/default.json"
-CATALOG_TRACE="${REPO_ROOT}/cmd/soak-driver/catalog/trace.json"
+CATALOG_MEASURE="${REPO_ROOT}/test/soak/cmd/catalog/default.json"
+CATALOG_TRACE="${REPO_ROOT}/test/soak/cmd/catalog/trace.json"
 BANYANDB_GRPC="localhost:17912"
 BANYANDB_PPROF="localhost:6060"
 # Inside the compose network the DB service is reachable by service name.
@@ -700,7 +700,7 @@ fi
 # ── build soak-driver ────────────────────────────────────────────────────────
 log "Building soak-driver..."
 mkdir -p "${REPO_ROOT}/bin"
-(cd "${REPO_ROOT}" && go build -o bin/soak-driver ./cmd/soak-driver)
+(cd "${REPO_ROOT}" && go build -o bin/soak-driver ./test/soak/cmd)
 log "soak-driver built at bin/soak-driver"
 
 log "Config: WARMUP_MIN=${WARMUP_MIN} SOAK_HOURS=${SOAK_HOURS} PPROF_INTERVAL_MIN=${PPROF_INTERVAL_MIN} PARITY_INTERVAL_MIN=${PARITY_INTERVAL_MIN}"

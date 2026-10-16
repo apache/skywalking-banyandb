@@ -33,8 +33,21 @@ const streamCatalogTestPath = "catalog/stream.json"
 func TestLoadStreamCatalogParsesAllShapes(t *testing.T) {
 	entries, loadErr := loadStreamCatalog(streamCatalogTestPath)
 	require.NoError(t, loadErr)
-	require.Len(t, entries, 4)
-	wantIDs := []string{"stream_by_time_svc0", "stream_newest_svc0", "stream_by_duration_svc0", "stream_filter_state_svc0"}
+	// wantIDs is the single source of truth for "which entries exist". Do NOT
+	// also assert a literal length: a separate count and a separate ID list are
+	// two sources of truth that drift apart, and ElementsMatch already checks
+	// both membership and length. An earlier revision asserted 4 here against a
+	// 6-entry catalog — silently covering only two thirds of the catalog.
+	// Adding an entry now requires adding it here too, which is the intent:
+	// every catalog entry gets reviewed.
+	wantIDs := []string{
+		"stream_by_time_svc0",
+		"stream_newest_svc0",
+		"stream_by_duration_svc0",
+		"stream_filter_state_svc0",
+		"stream_all_unfiltered",
+		"stream_all_by_duration",
+	}
 	gotIDs := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		gotIDs = append(gotIDs, entry.ID)
