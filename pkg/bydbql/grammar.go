@@ -91,10 +91,13 @@ type GrammarTopNProjection struct {
 
 // GrammarColumn represents a column in projection.
 type GrammarColumn struct {
-	Aggregate  *GrammarAggregateFunction `parser:"( @@"`
-	Identifier *GrammarIdentifierPath    `parser:"| @@ )"`
-	TypeSpec   *string                   `parser:"( '::' @('TAG'|'FIELD') )?"`
-	Alias      *GrammarIdentifierPath    `parser:"( 'AS' @@ )?"`
+	Pos          lexer.Position
+	SingleQuoted bool
+	Expression   *GrammarExpression
+	Aggregate    *GrammarAggregateFunction `parser:"( @@"`
+	Identifier   *GrammarIdentifierPath    `parser:"| @@ )"`
+	TypeSpec     *string                   `parser:"( '::' @('TAG'|'FIELD') )?"`
+	Alias        *GrammarIdentifierPath    `parser:"( 'AS' @@ )?"`
 }
 
 // GrammarAggregateFunction represents aggregate functions. DISTINCT is

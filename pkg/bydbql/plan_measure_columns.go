@@ -58,6 +58,9 @@ func (m *MeasureTemplate) compileRaw(schemas map[string]*databasev1.Measure) err
 	if err != nil {
 		return err
 	}
+	if containsQuotedMeasureLiteral(stmt.Projection, columns) {
+		return m.compileExpressions(schemas)
+	}
 	var slots []ql.Slot
 	if stmt.Projection.All {
 		for _, column := range columns.ordered {
@@ -97,13 +100,8 @@ func (m *MeasureTemplate) compileRaw(schemas map[string]*databasev1.Measure) err
 			slots = append(slots, ql.Slot{ID: ql.SlotID(len(slots)), Source: source, Output: output, Nullable: true})
 		}
 	}
-	outputs := make(map[measureColumnKey]bool, len(slots))
-	for _, slot := range slots {
-		key := measureColumnKey{family: slot.Output.TagFamily, name: slot.Output.Name, role: slot.Output.Role}
-		if outputs[key] {
-			return fmt.Errorf("duplicate output name %q in container %q", key.name, key.family)
-		}
-		outputs[key] = true
+	if err = validateRawOutputSlots(slots); err != nil {
+		return err
 	}
 	m.slots = slots
 	m.request = baseMeasureRequest(stmt)
@@ -322,4 +320,25 @@ func measureFieldType(fieldType databasev1.FieldType) (vectorized.ColumnType, er
 	default:
 		return 0, fmt.Errorf("unsupported field type %s", fieldType)
 	}
+}
+
+func validateRawOutputSlots(slots []ql.Slot) error {
+	outputs := make(map[measureColumnKey]bool, len(slots))
+	for _, slot := range slots {
+		key := measureColumnKey{family: slot.Output.TagFamily, name: slot.Output.Name, role: slot.Output.Role}
+		if outputs[key] {
+			return fmt.Errorf("duplicate output name %q in container %q", key.name, key.family)
+		}
+		outputs[key] = true
+	}
+	return nil
+}
+
+func containsQuotedMeasureLiteral(projection *GrammarProjection, columns *measureColumns) bool {
+	for _, column := range projection.Columns {
+		if isQuotedMeasureLiteral(column, columns) {
+			return true
+		}
+	}
+	return false
 }

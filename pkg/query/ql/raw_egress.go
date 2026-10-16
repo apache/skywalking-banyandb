@@ -134,8 +134,12 @@ func (e *timestampEgress) NextBatch(ctx context.Context) (*vectorized.RecordBatc
 	e.view.Lent = true
 	e.view.Columns = append(e.view.Columns[:0], batch.Columns...)
 	for _, index := range e.indices {
-		source, ok := batch.Columns[index].(*vectorized.TypedColumn[int64])
-		if !ok {
+		source := batch.Columns[index]
+		constant, isConstant := vectorized.AsConst(source)
+		var values []int64
+		if typed, ok := source.(*vectorized.TypedColumn[int64]); ok {
+			values = typed.Data()
+		} else if !isConstant || constant.Type() != vectorized.ColumnTypeInt64 {
 			return nil, fmt.Errorf("timestamp alias source is not int64")
 		}
 		column := vectorized.NewColumnForType(vectorized.ColumnTypeTagValue, batch.Len).(*vectorized.TypedColumn[*modelv1.TagValue])
@@ -145,10 +149,15 @@ func (e *timestampEgress) NextBatch(ctx context.Context) (*vectorized.RecordBatc
 					return nil, err
 				}
 			}
-			nanos := source.Data()[row]
 			if source.IsNull(row) {
 				column.AppendNull()
 				continue
+			}
+			var nanos int64
+			if isConstant {
+				nanos = constant.Int64()
+			} else {
+				nanos = values[row]
 			}
 			column.Append(&modelv1.TagValue{Value: &modelv1.TagValue_Timestamp{Timestamp: timestamppb.New(time.Unix(0, nanos))}})
 		}

@@ -53,9 +53,11 @@ func runGenerateQL(arguments []string) error {
 			pending++
 		}
 	}
-	fmt.Printf("Generated %d QL-only cases, %d reuse scenarios, %d aggregate scenarios, %d aggregate rejections and %d native aggregate scenarios; "+
+	fmt.Printf("Generated %d QL-only cases, %d reuse scenarios, %d aggregate scenarios, %d aggregate rejections, %d native aggregate scenarios, "+
+		"%d expression scenarios and %d expression rejections; "+
 		"feasible pairs %d/%d; %d explicit pending features; output=%s\n",
 		len(suite.Cases), len(suite.ReuseScenarios), len(suite.AggregateScenarios), len(suite.AggregateRejections), len(suite.NativeAggregateScenarios),
+		len(suite.ExpressionScenarios), len(suite.ExpressionRejections),
 		suite.Pairs.Covered, suite.Pairs.Required, pending, directory)
 	return nil
 }

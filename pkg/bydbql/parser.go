@@ -93,8 +93,12 @@ func ParseQuery(query string) (*Grammar, error) {
 	// Parse using Participle
 	grammar, err := particpleParser.ParseString("", query)
 	if err != nil {
+		grammar, err = parseExpressionProjection(query)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("syntax error: %w", err)
 	}
+	markExpressionLiterals(grammar, query)
 	if grammar.Select != nil && grammar.Select.From.Shorthand != nil {
 		from := grammar.Select.From
 		from.ResourceType = "MEASURE"
@@ -103,6 +107,9 @@ func ParseQuery(query string) (*Grammar, error) {
 	}
 	if grammar.TopN != nil && grammar.TopN.From.Shorthand != nil {
 		return nil, fmt.Errorf("syntax error: source shorthand is valid only for measure SELECT")
+	}
+	if err := checkExpressionSource(grammar); err != nil {
+		return nil, err
 	}
 	if err := checkAggregateAndGroupByShape(grammar); err != nil {
 		return nil, err

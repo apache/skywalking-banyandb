@@ -278,6 +278,53 @@ Run these sequentially. The existing 293 cases, 18 T05 scenarios, 41 T07
 scenarios and seven T07 rejections keep their query texts, expected values and
 pair-coverage report unchanged.
 
+## T10 typed expression projections
+
+The artifact adds `expression_scenarios`, `expression_readiness` and
+`expression_rejections`. The 25 scenarios bind the identical statement three
+times, then repeat with the compiled cache bypassed. There are 21 additional
+rejection statements. Every value is calculated by `t10_oracle.go` from the six
+F rows; checked integer arithmetic uses `math/big`, independently of production
+kernels. No parser, planner, execution operator or native Query RPC supplies
+expected values. The original cases, pair report and T05/T07/T08 scenarios retain
+their query texts and expectations.
+
+The separate `ql_t10` measure keeps array tags unindexed and adds accepted legacy
+field names `metric-value` and `rate_total`. QL-only readiness checks every field,
+array and null before expression calls run. The independent expression model
+generates arithmetic, decimal/exponent floats, unary signs, explicit casts,
+comparisons, SQL boolean/null truth tables, empty and nonempty membership,
+simple/searched/nested CASE and COALESCE. Conditional cases contain invalid casts
+and division by zero in unreachable values and conditions. Further scenarios
+cover typed nulls, mixed numeric result types, unchanged legacy identifiers,
+computed default names, disjoint time selections, LIMIT/OFFSET, LIMIT 0, and
+changing string parameters including recovery after a runtime conversion error.
+The native registry rejects `*` inside stored field names; parser and Compile
+unit tests retain that lexer compatibility using a synthetic schema. The RPC
+fixture exercises the valid hyphen name and the multiplication operator.
+
+Computed numeric and string outputs use existing fields. Computed arrays and
+timestamps use existing TagValue variants in the `__ql` family. Boolean values
+are explicitly cast to integer or string. Timestamp casts use UTC and Unix
+nanoseconds; expected epoch values are rendered from symbolic fixture offsets,
+without rounding through floating point.
+
+The RPC adapter checks one typed projection per nonempty call, no intermediate
+DataPoints or native Query RPCs, released allocation reservations and native
+owners, and zero scans for LIMIT 0 and type rejections. A first-branch-match
+scenario requires zero later-arm rows. Cached and bypassed execution must both
+match the independently generated expectations. Run the topologies sequentially:
+
+```sh
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/standalone/query \
+  -ginkgo.label-filter=QLB-T10 -ginkgo.fail-on-empty
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/query \
+  -ginkgo.label-filter=QLB-T10 -ginkgo.fail-on-empty
+```
+
+Expression WHERE, HAVING and computed grouping remain in T12, T14 and T16.
+These generated cases activate expression SELECT projection only.
+
 ## Engine regressions exposed by this suite
 
 The initial standalone and distributed runs each execute all 151 cases, with
@@ -307,8 +354,7 @@ The authoritative inventory is `coverageContract` in `coverage_contract.go`.
 | Catalog B4 | Post-aggregate `HAVING` and new membership syntax require T14. |
 | Catalog B5 | Multiple sort keys and null placement require T17. |
 | Catalog B6 | `SELECT DISTINCT` requires T15. |
-| Catalog B7 | Arithmetic, `CASE`, casts, and `COALESCE` require T10. |
-| Catalog B8 | Field predicates and float literals require T12/T10. |
+| Catalog B8 | Field predicates require T12. |
 | Catalog B9 | Computed and ordinal grouping require T16. |
 | Low-valued float means | Legacy native mean clamps values below one; the oracle keeps arithmetic mean semantics. |
 | Stage selection | Needs a generated staged-group fixture. |

@@ -29,7 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
-func (m *MeasureTemplate) compileNativeAggregate(schemas map[string]*databasev1.Measure, columns *measureColumns) {
+func (m *MeasureTemplate) compileNativeEntities(schemas map[string]*databasev1.Measure, columns *measureColumns) {
 	if len(m.request.Groups) != 1 {
 		return
 	}

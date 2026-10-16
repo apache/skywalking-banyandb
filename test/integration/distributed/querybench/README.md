@@ -465,3 +465,53 @@ without assuming that repeated native scans outperform one raw scan. This adds
 no cache, concurrency, earlier-ticket or spill benchmark matrix. Separate native
 requests have no common snapshot guarantee while writes continue; timed fixtures
 are fixed after visibility checks complete.
+
+### T10 typed expression projection
+
+`qlb_t10` measures five SELECT projections over the T07 fixture's nullable integer
+field. Each query returns all logical input rows; no LIMIT hides expression work.
+The raw control retains the same response column name and row shape.
+
+| Variant | Projection |
+| --- | --- |
+| `raw_control` | `v::FIELD AS result` |
+| `constant` | `CAST(? AS DOUBLE) AS result`, binding the string `"1.25"` |
+| `arithmetic` | `v + 2 AS result` |
+| `parameter_cast` | `v + CAST(? AS DOUBLE) AS result`, binding `"1.25"` |
+| `masked_case_coalesce` | `COALESCE(CASE WHEN v = 0 THEN 0 ELSE 8 / v END, -1) AS result` |
+
+The frozen protocol has 1,024 and 32,768 input/output rows, one query worker and
+a 256 MiB query tracker. The smaller input uses 100 timed calls and five warmups;
+the larger uses 20 timed calls and three warmups. Every cardinality starts a fresh
+process and cluster. QL raw visibility checks run before timing. Each warmup and
+six retained timed responses are checked against the independent row formula,
+including exact types, nulls and unique millisecond timestamps. A commutative
+row-keyed checksum is derived independently from fixture arithmetic. Hashing and
+full value checks run outside latency and allocation snapshots; timed calls
+only check row counts. Profiles cover the RPC phase.
+
+```sh
+for repetition in 1 2 3 4 5; do
+  DQB_ENGINE=measure DQB_SCENARIOS=qlb_t10 \
+    DQB_CARDINALITIES=1024,32768 DQB_QUERY_WORKERS=1 \
+    DQB_QUERY_MEMORY_MIB=256 DQB_PROFILE=1 \
+    DQB_REPORT_DIR="/work/.omx/bench-reports/t10-r${repetition}" \
+    test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g
+done
+```
+
+Reports preserve every latency sample, process CPU/GC/allocation counters and
+CPU/heap profile paths. They require one QL raw execution and two distributed
+leaf calls per RPC, no aggregate/merge execution, no intermediate DataPoints,
+and complete expression input/output rows. Constant kernels must allocate zero
+full-length value columns. Expression batches, vector/scalar evaluations, arm
+rows, buffer bytes, allocations and reservation/release counters are recorded.
+Results, query memory, owner pins and native flatten pool references must return
+to their starting counts after completion. Physical storage reads, retained
+native frame bytes and total parent lease charges remain explicitly unavailable.
+
+The report rejects incomplete variants/cardinalities, changed iteration or memory
+settings, missing counters, inconsistent fixture checksums and leaked owners or
+reservations. RPC comparisons describe the added cost of projection; independent
+scalar-versus-kernel speed and masked branch savings belong to K(T10). This scope
+adds no cache, concurrency, aggregation or previous-ticket benchmark matrix.

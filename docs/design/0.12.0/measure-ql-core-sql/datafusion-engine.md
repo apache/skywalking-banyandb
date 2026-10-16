@@ -109,6 +109,26 @@ Use independently owned column views/descriptors and retain their backing owners
 or copy when a safe view is unavailable. Batch release returns descriptors and
 buffers exactly once. This is required for aliases and repeated column projections.
 
+T10 implements this contract in `pkg/query/ql/expression*.go`. Immutable,
+schema-resolved recipes retain symbolic parameters in the compiled template;
+binding creates fresh typed expressions, and operator construction chooses
+typed kernels and source offsets. Boolean values stay local to the evaluator,
+without a native ColumnType or encoding change. A batch-local protobuf boundary
+decoder handles only selected rows; borrowed source slices and owned scratch
+buffers remain separate. CASE, COALESCE and boolean short-circuiting pass physical
+row masks to children, including constant expressions that may fail if evaluated.
+
+Native sources already emit at most 65,536 physical rows. The public expression
+operator rejects an oversized external batch before constructing uint16 row
+indices, rather than silently losing rows. Scalar numeric/string/bytes results
+reach final egress as ConstColumn. Constant array payloads remain scalar through
+evaluation; final projection allocates tracked row headers for the existing
+serializer, whose native ConstColumn does not support arrays. This is an egress
+compatibility cost, recorded separately from the scalar-constant kernel gate.
+Computed timestamps use UTC Unix nanoseconds and become timestamp TagValues
+only in the final QL adapter. See the [language guide](../../../interacting/bydbql.md#57-typed-select-expressions)
+for the checked arithmetic, cast, null and result-mapping rules.
+
 ## 4. Plan stages and the small optimizer
 
 Keep the public QL entrypoint small: prepare an immutable template, compile/bind

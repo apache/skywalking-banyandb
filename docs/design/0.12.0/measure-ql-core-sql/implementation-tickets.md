@@ -524,12 +524,14 @@ limits and monotonic admission charges remain enforced without spilling.
 interpreter cost, and does masked evaluation save work when branches are unused?
 
 **Boundary/activation:** SELECT expressions activate the shared typed evaluator:
-arithmetic, decimal/exponent floats, unary signs, CAST/::type, comparisons,
+arithmetic (+, -, *, /, %), decimal/exponent floats, unary signs, CAST/::type, comparisons,
 AND/OR/NOT, IS NULL, IN, CASE and COALESCE. Preserve ::TAG/::FIELD and accepted
 legacy identifiers containing '-'/'*'. WHERE/HAVING use these kernels in T12/T14.
 Constants remain scalars; selections use one physical index space (nil=all,
 empty=none); split before uint16 capacity, skip zero-active batches and evaluate
-conditional arms only for eligible rows. No new parameter wire types.
+conditional arms only for eligible rows. Native batches already obey the 65,536
+physical-row bound; reject oversized external input before uint16 indexing.
+No new parameter wire types.
 
 **Numeric decisions:** INT/BIGINT=int64, FLOAT/DOUBLE=float64. Checked integer
 arithmetic; int/int division truncates toward zero, mixed numeric operations
@@ -537,6 +539,11 @@ promote to double. Division by zero, overflow and invalid/out-of-range casts fai
 with InvalidArgument. Double-to-int truncates after finite/range checks. No implicit
 string conversion; CAST(? AS DOUBLE) accepts bound strings. Null propagates.
 Pin timestamp units/timezone and accepted cast pairs in binder tests.
+
+Implemented timestamp units are UTC Unix nanoseconds in the signed int64 range.
+String casts use RFC3339Nano; timestamp-to-STRING normalizes to UTC. Boolean and
+untyped-null outputs require an explicit supported cast. Integer remainder of
+the minimum int64 by -1 is zero; division of that pair is an overflow error.
 
 **E2E cases:** `arithmetic-F`: v+2={2,4,6,NULL,8,NULL}; `cast-parameter` changes bound
 string doubles; `integer-division` gives -5 / 2 = -2; `numeric-errors` covers invalid
@@ -547,7 +554,9 @@ output needs a supported cast; timestamps/arrays use existing response mapping.
 `unreachable-invalid-arm` never raises errors from masked rows. Cover typed null,
 empty/non-empty IN and changed parameters under repeated execution.
 
-**Benchmark:** P(T10) measures expression projection through RPC; K(T10) compares
+**Benchmark:** P(T10) measures five expression/control projections through RPC
+at 1,024 and 32,768 input/output rows over the existing nullable fixture, with
+a 256-MiB query budget. Every row is evaluated and returned. K(T10) compares
 independent scalar evaluation at batches 1/1,024/65,536 with dense/selected/null
 inputs. Vary constant/column/parameter expressions, null density, branch depth
 and first-arm hit rates 0/50/100%; measure ns/active-row, allocations and RPC cost.
@@ -559,6 +568,13 @@ within this capability; successful expression execution supplies its benchmark.
 **Checks/readiness:** E(T10), P(T10), K(T10); focused `./pkg/bydbql`,
 `./pkg/query/ql`. Blocked by T03. Numeric policy, masking, casts and predicate
 kernels form one usable expression layer with a real projection caller.
+
+**Implementation:** see [T10 verification](t10-verification.md) and the
+[language guide](../../../interacting/bydbql.md#57-typed-select-expressions).
+The evaluator uses existing native batches and scalar ConstColumn outputs.
+At the final projection boundary, constant arrays require tracked row headers
+for the unchanged serializer; their payload remains shared. The scalar-constant
+benchmark gate does not hide this array-output expansion.
 
 ### T12 — Filter raw fields before grouping, projection and final limits
 

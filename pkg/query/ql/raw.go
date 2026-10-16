@@ -31,10 +31,11 @@ type SlotID uint32
 
 // Slot describes the source and visible response identity of a typed projection.
 type Slot struct {
-	Source   vectorized.ColumnDef
-	Output   vectorized.ColumnDef
-	ID       SlotID
-	Nullable bool
+	Source    vectorized.ColumnDef
+	Output    vectorized.ColumnDef
+	ID        SlotID
+	Nullable  bool
+	Timestamp bool // Timestamp marks an int64 nanosecond value for final timestamp-tag encoding.
 }
 
 // MillisRange is a half-open timestamp interval in Unix milliseconds.
@@ -44,6 +45,7 @@ type MillisRange struct{ Begin, End int64 }
 type RawPlan struct {
 	NativeAggregate *NativeAggregatePlan
 	Aggregate       *AggregatePlan
+	Expressions     *ExpressionPlan
 	Limit           *uint32
 	Slots           []Slot
 	Ranges          []MillisRange
@@ -75,6 +77,9 @@ type rawOperator struct {
 // WrapRaw takes ownership of source, including on failure, and resolves projection indices once.
 // Its output lends immutable source columns until the next pull or Close.
 func WrapRaw(ctx context.Context, source vectorized.PullOperator, plan *RawPlan) (_ vectorized.PullOperator, err error) {
+	if plan != nil && plan.Expressions != nil {
+		return wrapExpressionQuery(ctx, source, plan)
+	}
 	if plan != nil && plan.Aggregate != nil {
 		return wrapAggregateQuery(ctx, source, plan)
 	}
@@ -129,7 +134,7 @@ func WrapRaw(ctx context.Context, source vectorized.PullOperator, plan *RawPlan)
 		}
 		def := slot.Output
 		def.Type = schema.Columns[index].Type
-		if slot.Source.Role == vectorized.RoleTimestamp && slot.Output.Role == vectorized.RoleTag {
+		if slot.Timestamp || slot.Source.Role == vectorized.RoleTimestamp && slot.Output.Role == vectorized.RoleTag {
 			op.timestampAliases = append(op.timestampAliases, len(defs))
 		}
 		op.indices = append(op.indices, index)

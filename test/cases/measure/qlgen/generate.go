@@ -57,6 +57,10 @@ func Generate() (Suite, error) {
 		return Suite{}, nativeErr
 	}
 	nativeRejections := generateT08Rejections(b)
+	expressionReadiness, expressionScenarios, expressionRejections, expressionErr := generateT10(b)
+	if expressionErr != nil {
+		return Suite{}, expressionErr
+	}
 	if b.err != nil {
 		return Suite{}, b.err
 	}
@@ -78,6 +82,7 @@ func Generate() (Suite, error) {
 		return Suite{}, reuseReadinessErr
 	}
 	suite := Suite{
+		ExpressionReadiness: expressionReadiness, ExpressionScenarios: expressionScenarios, ExpressionRejections: expressionRejections,
 		NativeAggregateReadiness: nativeReadiness, NativeAggregateScenarios: nativeScenarios,
 		NativeAggregateRejections: nativeRejections,
 		AggregateReadiness:        aggregateReadiness, AggregateScenarios: aggregateScenarios,

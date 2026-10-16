@@ -50,6 +50,7 @@ type MeasureTemplate struct {
 	aggregate      *ql.AggregatePlan
 	nativeEntities []vectorized.ColumnDef
 	slots          []ql.Slot
+	expressions    []measureExpressionOutput
 	extended       bool
 }
 
@@ -138,9 +139,12 @@ func (t *Transformer) compileMeasure(
 	template := &MeasureTemplate{statement: statement, extended: extended}
 	if template.extended {
 		var compileErr error
-		if measureAggregateCount(selectStmt) > 0 {
+		switch {
+		case hasMeasureExpressions(selectStmt.Projection):
+			compileErr = template.compileExpressions(snapshots)
+		case measureAggregateCount(selectStmt) > 0:
 			compileErr = template.compileAggregate(snapshots)
-		} else {
+		default:
 			compileErr = template.compileRaw(snapshots)
 		}
 		if compileErr != nil {
@@ -239,6 +243,10 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 		return &MeasureExecution{Request: request}, nil
 	}
 	plan := &ql.RawPlan{Slots: slices.Clone(m.slots)}
+	plan.Expressions, err = m.bindExpressions(bound)
+	if err != nil {
+		return nil, invalidMeasure(err)
+	}
 	if m.aggregate != nil {
 		plan.Aggregate = &ql.AggregatePlan{
 			GroupBy: slices.Clone(m.aggregate.GroupBy), Calls: slices.Clone(m.aggregate.Calls), Outputs: slices.Clone(m.aggregate.Outputs),
@@ -287,7 +295,7 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 }
 
 func requiresMeasurePlan(stmt *GrammarSelectStatement) bool {
-	if stmt.From.Shorthand != nil || measureAggregateCount(stmt) > 1 {
+	if stmt.From.Shorthand != nil || measureAggregateCount(stmt) > 1 || hasMeasureExpressions(stmt.Projection) {
 		return true
 	}
 	if stmt.Projection != nil {

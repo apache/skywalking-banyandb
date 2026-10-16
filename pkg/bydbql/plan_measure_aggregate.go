@@ -138,7 +138,7 @@ func (m *MeasureTemplate) compileAggregate(schemas map[string]*databasev1.Measur
 	if stmt.Where != nil {
 		m.predicate, err = compileMeasureOr(stmt.Where.Expr, columns)
 	}
-	m.compileNativeAggregate(schemas, columns)
+	m.compileNativeEntities(schemas, columns)
 	return err
 }
 

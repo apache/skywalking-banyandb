@@ -118,6 +118,8 @@ const (
 	ScenarioQLBT07 Scenario = "qlb_t07"
 	// ScenarioQLBT08 compares native aggregate branches with local SQL aggregation.
 	ScenarioQLBT08 Scenario = "qlb_t08"
+	// ScenarioQLBT10 benchmarks typed expression projection over native batches.
+	ScenarioQLBT10 Scenario = "qlb_t10"
 	// ScenarioTraceByID benchmarks distributed trace-id lookup.
 	ScenarioTraceByID Scenario = "trace_by_id"
 	// ScenarioTraceTagFilter benchmarks distributed ordered trace tag filters.
@@ -250,7 +252,7 @@ func (c Config) Validate() error {
 	switch c.Engine {
 	case engineMeasure:
 		switch c.Scenario {
-		case ScenarioScanAll, ScenarioTopWithFilter, ScenarioQLBT01, ScenarioQLBT02, ScenarioQLBT03, ScenarioQLBT05, ScenarioQLBT07, ScenarioQLBT08:
+		case ScenarioScanAll, ScenarioTopWithFilter, ScenarioQLBT01, ScenarioQLBT02, ScenarioQLBT03, ScenarioQLBT05, ScenarioQLBT07, ScenarioQLBT08, ScenarioQLBT10:
 		default:
 			return fmt.Errorf("%s unsupported for %s=%s: %q", envScenario, envEngine, c.Engine, c.Scenario)
 		}
@@ -472,10 +474,16 @@ func queryTimeout(cardinality int) time.Duration {
 }
 
 func (c Config) validateCatalogB() error {
-	if c.Scenario == ScenarioQLBT07 || c.Scenario == ScenarioQLBT08 {
+	if c.Scenario == ScenarioQLBT07 || c.Scenario == ScenarioQLBT08 || c.Scenario == ScenarioQLBT10 {
 		iterations, warmup, err := qlbT07Schedule(c.Cardinality)
 		if c.Scenario == ScenarioQLBT08 {
 			iterations, warmup, err = qlbT08Schedule(c.Cardinality)
+		}
+		if c.Scenario == ScenarioQLBT10 {
+			iterations, warmup, err = qlbT10Schedule(c.Cardinality)
+			if c.QueryMemoryMiB != 256 {
+				return fmt.Errorf("qlb_t10 requires DQB_QUERY_MEMORY_MIB=256")
+			}
 		}
 		if err != nil {
 			return err
@@ -531,5 +539,16 @@ func qlbT08Schedule(cardinality int) (iterations, warmup int, err error) {
 		return 20, 3, nil
 	default:
 		return 0, 0, fmt.Errorf("qlb_t08 requires input cardinality 1024 or 32768")
+	}
+}
+
+func qlbT10Schedule(cardinality int) (iterations, warmup int, err error) {
+	switch cardinality {
+	case 1024:
+		return 100, 5, nil
+	case 32768:
+		return 20, 3, nil
+	default:
+		return 0, 0, fmt.Errorf("qlb_t10 requires input cardinality 1024 or 32768")
 	}
 }

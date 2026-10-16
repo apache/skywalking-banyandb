@@ -39,6 +39,9 @@ type Feature struct {
 
 // Suite is the reproducible QL-only integration artifact.
 type Suite struct {
+	ExpressionReadiness       []Case                    `json:"expression_readiness"`
+	ExpressionRejections      []Case                    `json:"expression_rejections"`
+	ExpressionScenarios       []ExpressionScenario      `json:"expression_scenarios"`
 	NativeAggregateReadiness  []AggregateFixture        `json:"native_aggregate_readiness"`
 	NativeAggregateRejections []Case                    `json:"native_aggregate_rejections"`
 	NativeAggregateScenarios  []NativeAggregateScenario `json:"native_aggregate_scenarios"`
@@ -139,11 +142,19 @@ func (s Suite) validateScenarios() error {
 	if err := validateAggregateScenarios(s.AggregateReadiness, s.AggregateScenarios); err != nil {
 		return err
 	}
+	if err := validateExpressionScenarios(s.ExpressionReadiness, s.ExpressionScenarios); err != nil {
+		return err
+	}
 	return validateNativeAggregateScenarios(s.NativeAggregateReadiness, s.NativeAggregateScenarios)
 }
 
 func (s Suite) witnessCases() []Case {
 	cases := append([]Case(nil), s.Cases...)
+	cases = append(cases, s.ExpressionReadiness...)
+	cases = append(cases, s.ExpressionRejections...)
+	for _, scenario := range s.ExpressionScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
 	for _, fixture := range s.AggregateReadiness {
 		cases = append(cases, fixture.Cases...)
 	}

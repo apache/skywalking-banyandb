@@ -23,6 +23,7 @@ import (
 	"reflect"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/ql"
 )
 
 // placeholderKind classifies a `?` placeholder by the position it occupies,
@@ -39,6 +40,8 @@ const (
 	phTime
 	// phCount is a LIMIT/OFFSET/TOP N count: an int within maxCount.
 	phCount
+	// phExpression accepts existing wire values for a typed SELECT expression.
+	phExpression
 )
 
 // placeholderSpec describes one placeholder, recorded once by Prepare and read
@@ -96,9 +99,10 @@ func (ps *PreparedStatement) EstimatedSize() int {
 // position fills values (one node, or several for an expanded array), a TIME
 // position fills timeStr, and a count position fills count.
 type resolvedParam struct {
-	timeStr string
-	values  []*GrammarValue
-	count   int
+	expression *ql.Expression
+	timeStr    string
+	values     []*GrammarValue
+	count      int
 }
 
 // BoundQuery pairs an immutable prepared statement with the values bound for one
@@ -138,6 +142,8 @@ func (ps *PreparedStatement) Bind(params []*modelv1.TagValue) (*BoundQuery, erro
 			values[i].timeStr, err = resolveTimeParam(p)
 		case phCount:
 			values[i].count, err = resolveCountParam(p, spec.maxCount)
+		case phExpression:
+			values[i].expression, err = resolveExpressionParam(p)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("failed to bind parameter #%d: %w", i+1, err)
@@ -162,6 +168,11 @@ func (p *preparer) add(kind placeholderKind, maxCount int64) int {
 
 func (p *preparer) walkGrammar(g *Grammar) {
 	if g.Select != nil {
+		if g.Select.Projection != nil {
+			for _, column := range g.Select.Projection.Columns {
+				walkGrammarExpression(column.Expression, func(expr *GrammarExpression) { expr.ParamIndex = p.add(phExpression, 0) })
+			}
+		}
 		if g.Select.Projection != nil && g.Select.Projection.TopN != nil {
 			if topN := g.Select.Projection.TopN; topN.NParam {
 				topN.NParamIndex = p.add(phCount, math.MaxInt32)

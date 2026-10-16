@@ -160,7 +160,10 @@ func FixtureDigest() string {
 		T08GroupsRows   []t08Row
 		T08Indexes      []*databasev1.IndexRule
 		T08Bindings     []*databasev1.IndexRuleBinding
+		T10Schema       *databasev1.Measure
+		T10Rows         []fixtureRow
 	}{
+		T10Schema: T10FixtureSchema(), T10Rows: t10Rows(),
 		T08Indexes:  []*databasev1.IndexRule{T08FixtureIndexRule(T08FixtureName), T08FixtureIndexRule(T08GroupsFixtureName)},
 		T08Bindings: []*databasev1.IndexRuleBinding{T08FixtureIndexBinding(T08FixtureName), T08FixtureIndexBinding(T08GroupsFixtureName)},
 		T08Schema:   T08FixtureSchema(T08FixtureName), T08Rows: t08Rows(T08FixtureName),

@@ -209,6 +209,7 @@ Placeholders are accepted in *value* positions only. The complete list, with the
 | `TIME` comparison value | `TIME > ?` | `str` (RFC3339, relative like `-30m`, or `now`), `timestamp` |
 | `TIME BETWEEN` boundaries | `TIME BETWEEN ? AND ?` | same as above; each boundary binds independently |
 | Measure `WHERE time` comparison | `WHERE time >= ? AND time < ?` | `str` (RFC3339/RFC3339Nano or `now`), `timestamp`; relative strings such as `-30m` are not accepted here |
+| Measure SELECT expression | `SELECT value + ?`, `SELECT CAST(? AS DOUBLE)` | `int`, `str`, `null`, `binary_data`, `timestamp`, `int_array`, `str_array`; see section 5.7 |
 | Scalar comparison value (`=`, `!=`, `>`, `>=`, `<`, `<=`) | `WHERE service_id = ?` | `str`, `int`, `null` |
 | `IN` / `NOT IN` value list | `IN (?, ?)`, `IN (?)`, `IN ('a', ?)` | `str`, `int`, `null`, `str_array`, `int_array` |
 | `MATCH` value list | `MATCH(?)`, `MATCH(?, 'analyzer')` | `str`, `int`, `null`, `str_array`, `int_array` |
@@ -231,19 +232,21 @@ Placeholders in any position that determines the query *structure* rather than a
 | Category | Positions | Example (all syntax errors) |
 |---|---|---|
 | Resource identifiers | resource name, group name, stage name | `FROM STREAM ?`, `IN ?`, `ON ? STAGES` |
-| Column identifiers | projection columns, condition left-hand side, `ORDER BY` / `GROUP BY` columns, aggregate function arguments | `SELECT ?`, `WHERE ? = 'a'`, `ORDER BY ?`, `SUM(?)` |
+| Column identifiers | column names, condition left-hand side, `ORDER BY` / `GROUP BY` columns, aggregate function arguments | `WHERE ? = 'a'`, `ORDER BY ?`, `SUM(?)` |
 | Function options | `MATCH` analyzer and operator options | `MATCH('x', ?)` |
 | Structure | operators, `ASC`/`DESC`, keywords, doubled placeholders | `= ??` |
 
 Note that unlike some SQL implementations where `ORDER BY ?` silently degrades to a no-op constant sort, BydbQL rejects it outright.
 
+In a measure SELECT expression, `?` denotes a value, including when it is the entire projection. It cannot select a column by name. SELECT expression parameters precede TIME, WHERE, LIMIT and OFFSET parameters in textual order.
+
 ### 2.6.3. Type Rules Summary
 
-- `binary_data` parameters are rejected in every position (BydbQL has no binary literal).
-- `timestamp` parameters are accepted in `TIME` positions and measure `WHERE time` comparisons. Their protobuf timestamp values are validated; a missing or invalid timestamp is rejected at bind time, and measure planning also checks the stored timestamp domain.
+- `binary_data` parameters are accepted only in measure SELECT expressions; BydbQL has no binary literal.
+- `timestamp` parameters are accepted in `TIME` positions, measure `WHERE time` comparisons and measure SELECT expressions. Their protobuf timestamp values are validated; a missing or invalid timestamp is rejected at bind time. Time predicates check the stored timestamp domain; expressions use the signed int64 nanosecond domain described in section 5.7.
 - `int` and `null` parameters are rejected in time positions: use `str` or `timestamp` instead.
 - `int` parameters in count positions must fit the wire type of the position — `[0, 4294967295]` for `LIMIT`/`OFFSET` and `[0, 2147483647]` for the `TOP N` counts; out-of-range values are rejected at bind time instead of silently wrapping, and literal counts are held to the same bounds.
-- Empty arrays, parameters without a value, and `nil` entries are rejected everywhere.
+- Empty arrays are accepted in measure SELECT expressions, including expansion inside expression IN lists. Legacy WHERE value lists still reject empty array parameters. Parameters without a value and `nil` entries are rejected everywhere.
 - A `?` inside a quoted string literal is part of the string, not a placeholder: `WHERE msg = 'why?'` consumes no parameter.
 - After binding passes, values are checked against the tag schema by the same rules as literals: a `str` that cannot parse as an integer fails against an `INT` tag, while an `int` bound to a `STRING` tag is converted, exactly as if written literally.
 
@@ -538,7 +541,8 @@ from_measure_clause ::= ("FROM MEASURE" identifier "IN" ["("] group_list_id [")"
 projection        ::= "*" | column_list | top_clause
 top_clause        ::= "TOP" count identifier ["ASC" | "DESC"] ["," column_list]
 column_list       ::= column ("," column)*
-column            ::= ("time" | identifier_path | agg_function "(" ["DISTINCT"] identifier_path ")") ["::TAG" | "::FIELD"] ["AS" identifier_path]
+column            ::= (("time" | identifier_path | agg_function "(" ["DISTINCT"] identifier_path ")") ["::TAG" | "::FIELD"] | expression) ["AS" identifier_path]
+	/* expression syntax and current composition limits are in section 5.7 */
 stage_list        ::= identifier ("," identifier)*
 agg_function      ::= "SUM" | "MEAN" | "AVG" | "COUNT" | "MAX" | "MIN"
 	/* "DISTINCT" is only valid with COUNT: COUNT(DISTINCT identifier) */
@@ -804,14 +808,14 @@ LIMIT 2 OFFSET 1
 
 #### Pagination and current limits
 
-A raw query uses the extended behavior when it uses source shorthand, an `AS` alias, the built-in time projection, or a time predicate in `WHERE`:
+A raw query uses the extended behavior when it uses source shorthand, an `AS` alias, the built-in time projection, a SELECT expression, or a time predicate in `WHERE`:
 
 - Omitted `LIMIT` has no implicit 100-row cap; query memory limits still apply.
 - Explicit `LIMIT 0` returns no rows and performs no native scan. Contradictory time bounds also return no rows without scanning.
 - `OFFSET` and `LIMIT` apply after the complete time filter, including disjoint ranges. Legacy queries without these raw extensions keep their existing pagination defaults.
 - Timestamp ordering, including an unambiguous timestamp alias such as `ORDER BY observed_at DESC`, is supported. Native index-rule ordering remains available. General sorting by tag/field output columns, multiple sort keys, and explicit NULL ordering are not implemented yet.
 
-The current raw extensions cannot be combined with `SELECT TOP`. Aggregate projections and named scalar grouping use the extended aggregation behavior in section 5.8. Legacy native aggregation and grouping retain their existing syntax and behavior. Post-aggregation HAVING, field-value WHERE filters, arithmetic/casts, CASE/COALESCE, SELECT DISTINCT, and computed grouping are planned capabilities. An `OR` that mixes time and tag/field predicates is also rejected; combining a pure-time subtree with a tag predicate using `AND`, as above, is supported.
+The current raw extensions cannot be combined with `SELECT TOP`. Aggregate projections and named scalar grouping use the extended aggregation behavior in section 5.6. Legacy native aggregation and grouping retain their existing syntax and behavior. SELECT expressions are described in section 5.7. Post-aggregation HAVING, field-value WHERE filters, SELECT DISTINCT, and computed grouping remain planned capabilities. An `OR` that mixes time and tag/field predicates is also rejected; combining a pure-time subtree with a tag predicate using `AND`, as above, is supported.
 
 Aliases, built-in time projections, `now()`, timestamp `INTERVAL` arithmetic, and source shorthand in this section apply to measure SELECT. They do not extend stream, trace, property, or SHOW TOP syntax.
 
@@ -896,6 +900,44 @@ This optimization currently requires one measure group in normal storage mode, o
 Other supported queries use one complete raw scan and local SQL aggregation. These include nullable or non-entity keys, disjoint time ranges, multiple measure groups or stages, tag aggregates, floating-point MIN/MAX, and integer SUM/AVG spanning more than one possible timestamp. The fallback preserves checked integer overflow and SQL null/average semantics. Predicate conjunctions over entity IN lists are normalized before either execution path; expansion is limited to 512 entity tuples.
 
 Native branches run sequentially under the parent query's deadline and memory allowance. Final LIMIT/OFFSET applies after all branches merge. A branch failure or exhausted allowance fails the query without partial results. Separate native requests do not provide a shared snapshot during concurrent writes. Memory limits remain enforced; disk spilling is not implemented.
+
+### 5.7. Typed SELECT expressions
+
+Measure SELECT supports arithmetic, casts and conditional expressions over raw columns and bound values:
+
+```sql
+SELECT value + 2 AS adjusted,
+       value + CAST(? AS DOUBLE) AS scaled,
+       COALESCE(CASE WHEN value = 0 THEN 0 ELSE 8 / value END, -1) AS safe_ratio,
+       CAST(value IS NULL AS INT) AS missing
+FROM metrics.service_cpm
+WHERE time >= ? AND time < ?
+```
+
+Supply the numeric string for the first parameter, followed by the two time bounds. Repeated calls can reuse the compiled template while changing those values. Expressions run after the complete time filter and before final OFFSET/LIMIT.
+
+| Construct | Supported forms |
+|---|---|
+| Values | Columns, `?`, signed integers, decimal/exponent doubles, single-quoted strings, `TRUE`, `FALSE`, `NULL` |
+| Arithmetic | `+`, `-`, `*`, `/`, `%`, unary `+` and `-`, parentheses |
+| Comparison | `=`, `!=`, `<>`, `<`, `<=`, `>`, `>=`, `IS NULL`, `IS NOT NULL`, `IN (...)`, `NOT IN (...)` |
+| Logic | `NOT`, `AND`, `OR` with SQL three-valued null semantics |
+| Casts | `CAST(expression AS type)` and `expression::type` |
+| Conditionals | `CASE WHEN condition THEN value ... [ELSE value] END`, `CASE expression WHEN value THEN result ... [ELSE result] END`, `COALESCE(value, ...)` |
+
+Multiplication, division and remainder bind more tightly than addition/subtraction; comparisons bind more tightly than AND, which binds more tightly than OR. Parentheses make grouping explicit. Legacy identifiers can contain `-` and `*`: `metric-value` and `a*b` remain column names. Write whitespace around these arithmetic operators, as in `value - 2` and `value * 2`. `::TAG` and `::FIELD` still select a column kind. Double quotes select identifiers; within an expression, single quotes produce strings. A standalone legacy quoted column continues to resolve as a column when present; use `CAST('text' AS STRING)` to make a string literal unambiguous.
+
+`INT`/`BIGINT` means signed int64; `FLOAT`/`DOUBLE` means float64. Integer arithmetic checks overflow. Integer division truncates toward zero (`-5 / 2 = -2`); mixed integer/double arithmetic produces double. Integer remainder follows the dividend's sign. Division or remainder by zero, including floating signed zero, fails with `InvalidArgument`. Integer minimum divided by `-1` overflows; its remainder is zero. No implicit string-to-number conversion occurs. Float arithmetic follows IEEE behavior; comparisons treat NaN as equal to NaN and above positive infinity, and signed zeros as equal, matching extended QL aggregation.
+
+Cast targets are `INT`, `BIGINT`, `FLOAT`, `DOUBLE`, `BOOL`, `BOOLEAN`, `STRING` and `TIMESTAMP`. Numeric, boolean and string values convert explicitly between these scalar types; string booleans accept case-insensitive `true`/`false`. Numeric zero is false and other numeric values are true. Boolean-to-int yields 0/1. Double-to-int truncates toward zero after finite/range checks; invalid text and out-of-range values fail with `InvalidArgument`. The parameter wire format has no double or boolean value, so use `CAST(? AS DOUBLE)` or `CAST(? AS BOOLEAN)` with a string parameter.
+
+Timestamp casts accept RFC3339Nano strings or signed int64 **Unix nanoseconds**, within the int64 nanosecond range. Timestamp-to-INT returns that unit; timestamp-to-STRING returns UTC RFC3339Nano. Timestamp-to-double/boolean casts are unsupported. `CAST(NULL AS type)` supplies a typed null. An untyped NULL or direct boolean projection is rejected; cast a boolean to INT or STRING for output.
+
+Ordinary arithmetic and comparisons propagate null. A nonempty IN list with no match and a null operand/member produces null; empty `IN ()` is false and empty `NOT IN ()` is true, including for a null left operand. Array parameters expand inside expression IN lists. CASE treats a null condition as false, omitting ELSE produces a typed null, and COALESCE returns the first non-null value. Only needed CASE/COALESCE branches and AND/OR operands evaluate. For example, the zero branch in `CASE WHEN value = 0 THEN 0 ELSE 8 / value END` avoids division by zero. Types are checked even for unreachable branches; their value conversions and arithmetic are skipped.
+
+Computed int/double/string/bytes outputs become named fields. Computed timestamps and integer/string arrays use existing TagValue variants in the `__ql` family. An unnamed computed expression is `expr_1`, `expr_2`, etc., by its SELECT position; aliases are recommended. Direct columns retain their existing containers. All DataPoints retain their raw timestamp/SID/version, and hidden expression inputs are omitted. Duplicate names within a container are rejected.
+
+These expressions currently apply to raw measure SELECT. Combining them with aggregates, GROUP BY or SELECT TOP is rejected. Field-value WHERE expressions, post-aggregation HAVING, computed grouping and general ordering by computed aliases remain later capabilities. Existing time/tag predicates and timestamp ordering remain available. Query memory limits still apply; disk spilling is not implemented.
 
 ## 6. BydbQL for Top-N
 
@@ -1311,7 +1353,7 @@ LIMIT 100;
 | **Primary Command** | `SELECT ... FROM STREAM ... IN ...`             | `SELECT ... FROM MEASURE ... IN ...` or `FROM group.measure` | `SHOW TOP ... FROM MEASURE ... IN ...`          | `SELECT ... FROM PROPERTY ... IN ...`           | `SELECT ... FROM TRACE ... IN ...`              |
 | **Groups Clause**   | **Required** `IN groups` (parentheses optional) | `IN groups` or single group in shorthand | **Required** `IN groups` (parentheses optional) | **Required** `IN groups` (parentheses optional) | **Required** `IN groups` (parentheses optional) |
 | **Time Clause**     | **Required** `TIME ...`                         | Optional `TIME` and/or raw `WHERE time` | **Required** `TIME ...`                         | Not applicable                                  | **Required** `TIME ...`                         |
-| **Projection**      | Tags by family                                  | Tags, fields, raw aliases, and timestamp projection | Implicit (entity, value)                        | Flat list of tags                               | Tags by specification                           |
+| **Projection**      | Tags by family                                  | Tags, fields, aliases, timestamps and typed raw expressions | Implicit (entity, value)                        | Flat list of tags                               | Tags by specification                           |
 | **Aggregation**     | No                                              | Yes (`SUM`, `MEAN`, etc.)                       | Yes (optional)                                  | No                                              | No                                              |
 | **Grouping**        | No                                              | Yes (`GROUP BY`)                                | No                                              | No                                              | No                                              |
 | **Filtering**       | Full `WHERE` clause                             | Full `WHERE` clause                             | Simple equality `WHERE`                         | `WHERE` by ID or tags                           | Full `WHERE` clause                             |

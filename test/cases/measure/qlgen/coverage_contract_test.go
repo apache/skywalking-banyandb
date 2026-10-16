@@ -66,13 +66,37 @@ func TestCoverageContractRequiresIndependentInventory(t *testing.T) {
 // production parser. A grammar change must update both the capability inventory
 // and this fingerprint after checking which generated witnesses/gaps it affects.
 func TestMeasureGrammarCoverageAudit(t *testing.T) {
-	const audited = "704889cf19e901cef4d8d89253e6f6f08a7278197615e585489cee39a5e23d91"
+	const audited = "59a5d52913b8814c6b267e6bf7cde0aee0e838d18c0bdb12efcda2f1ea44a3b7"
 	var contract bytes.Buffer
 	writeGrammarShape(&contract, reflect.TypeFor[bydbql.Grammar](), make(map[reflect.Type]bool))
 	writeLexerAndSyntaxGuards(t, &contract)
+	writeExpressionGrammar(t, &contract)
 	actual := fmt.Sprintf("%x", sha256.Sum256(contract.Bytes()))
 	require.Equal(t, audited, actual,
 		"BydbQL grammar changed: audit supported/rejection/pending QL coverage before updating this fingerprint")
+}
+
+func writeExpressionGrammar(t *testing.T, output *bytes.Buffer) {
+	t.Helper()
+	_, source, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	// Expression syntax has a custom lexer and Pratt parser, so parser tags in
+	// Grammar do not expose its operators, precedence or conditional productions.
+	for _, name := range []string{"grammar_expression.go", "grammar_expression_lexer.go", "grammar_expression_conditional.go"} {
+		file := filepath.Join(filepath.Dir(source), "../../../../pkg/bydbql", name)
+		files := token.NewFileSet()
+		parsed, err := parser.ParseFile(files, file, nil, 0)
+		require.NoError(t, err)
+		for _, declaration := range parsed.Decls {
+			var formatted bytes.Buffer
+			require.NoError(t, format.Node(&formatted, files, declaration))
+			for _, line := range strings.Split(formatted.String(), "\n") {
+				if strings.TrimSpace(line) != "" {
+					fmt.Fprintln(output, line)
+				}
+			}
+		}
+	}
 }
 
 func writeGrammarShape(output *bytes.Buffer, kind reflect.Type, seen map[reflect.Type]bool) {

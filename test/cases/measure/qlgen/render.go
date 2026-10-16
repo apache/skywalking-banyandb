@@ -26,7 +26,7 @@ import (
 	"time"
 )
 
-var timeToken = regexp.MustCompile(`\{\{(time|nanos):([^{}]+)\}\}`)
+var timeToken = regexp.MustCompile(`\{\{(time|nanos|unix_nanos):([^{}]+)\}\}`)
 
 // Render replaces time offsets in queries, bound parameters, or expected JSON.
 func Render(template string, base time.Time) (string, error) {
@@ -61,7 +61,11 @@ func Render(template string, base time.Time) (string, error) {
 			renderErr = fmt.Errorf("time offset overflows duration: %d", millis)
 			return token
 		}
-		return base.Add(time.Duration(millis) * unit).UTC().Format(time.RFC3339Nano)
+		timestamp := base.Add(time.Duration(millis) * unit).UTC()
+		if kind == "unix_nanos" {
+			return strconv.FormatInt(timestamp.UnixNano(), 10)
+		}
+		return timestamp.Format(time.RFC3339Nano)
 	})
 	if renderErr != nil {
 		return "", renderErr
