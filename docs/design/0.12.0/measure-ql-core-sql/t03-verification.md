@@ -9,6 +9,10 @@ does not claim complete Catalog B performance acceptance.
 
 ## Execution contract
 
+The supported grammar, runnable query examples, response naming and current
+limits are documented in the
+[BydbQL user reference](../../../interacting/bydbql.md#55-raw-measure-query-extensions).
+
 `Transformer.CompileMeasure` resolves a prepared measure statement against cloned
 schema snapshots and produces an immutable `MeasureTemplate`. `Bind` creates a
 fresh native request and typed raw plan for each set of parameters and execution

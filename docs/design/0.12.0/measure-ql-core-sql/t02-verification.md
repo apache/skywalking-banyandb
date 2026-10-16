@@ -23,8 +23,9 @@ return to baseline, actual cgroup limits are verified, and no memory-limit/OOM
 events occur. See the [complete v10 result](#v10-complete-matrix-outcome) and
 `.omx/bench-reports/qlb-t02-resolution-v10/` for the final proof. Earlier failures
 and inconclusive outcomes below are retained as historical checkpoints.
-The prerequisite review fixes are committed as `b0a4dc14`; T02 remains the
-uncommitted working-tree change above that revision.
+The prerequisite review fixes are committed as `b0a4dc14`; the T02 shared batch
+implementation is committed as `c10d3ac2`. This does not change the performance
+acceptance outcome recorded above.
 
 ## Execution boundary
 
@@ -44,6 +45,13 @@ before asking for the next one.
 No protobuf source, generated API contract, persisted format or frame encoding
 format changes. Native fanout still receives complete frames eagerly; the new
 result handle does not make that path streaming.
+
+T02 supplies execution infrastructure; the new raw measure grammar is delivered
+by [T03](t03-verification.md). Its source shorthand, aliases, timestamp projection,
+`WHERE time`, `now()` and fixed `INTERVAL` syntax, pagination behavior and current
+execution limits are documented in the
+[BydbQL user reference](../../../interacting/bydbql.md#55-raw-measure-query-extensions).
+T05 adds transparent compiled-plan reuse without adding query syntax.
 
 ## Resource contract and limits
 
