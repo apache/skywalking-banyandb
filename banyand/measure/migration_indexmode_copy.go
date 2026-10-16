@@ -430,7 +430,7 @@ func copyIndexModeGroup(ctx context.Context, in migration.EntryGroupInput,
 		return res, err
 	}
 	if len(srcSidxDirs) == 0 {
-		logStep("%s stage=%s group %s: skipped (no sidx in selected nodes)",
+		logStepf("%s stage=%s group %s: skipped (no sidx in selected nodes)",
 			in.EntryTag, in.Entry.Stage, in.Group)
 		return res, nil
 	}
@@ -515,7 +515,7 @@ func copyIndexModeGroup(ctx context.Context, in migration.EntryGroupInput,
 					}
 					res.Bytes += n + metaBytes
 					res.Rows += int64(len(docs))
-					logStep("%s stage=%s group %s: sidx %s -> byte-copy into seg %s (%d docs)",
+					logStepf("%s stage=%s group %s: sidx %s -> byte-copy into seg %s (%d docs)",
 						in.EntryTag, in.Entry.Stage, in.Group, srcSidx, seg, len(docs))
 					continue
 				}
@@ -524,7 +524,7 @@ func copyIndexModeGroup(ctx context.Context, in migration.EntryGroupInput,
 		// Per-source visibility: log that this source segment takes the rebuild
 		// (read-docs-then-write) path and which target segment(s) its docs route
 		// into, the counterpart of the byte-copy line above.
-		logStep("%s stage=%s group %s: sidx %s -> rebuild into seg(s) %s (%d docs)",
+		logStepf("%s stage=%s group %s: sidx %s -> rebuild into seg(s) %s (%d docs)",
 			in.EntryTag, in.Entry.Stage, in.Group, srcSidx,
 			sortedSegList(targetSegsBySrc[srcSidx]), len(docs))
 		slowDirs = append(slowDirs, srcSidx)
@@ -536,7 +536,7 @@ func copyIndexModeGroup(ctx context.Context, in migration.EntryGroupInput,
 			return res, slowErr
 		}
 		res.Rows += rows
-		logStep("%s stage=%s group %s: %d sidx -> rebuild total (%d rows after max-version merge)",
+		logStepf("%s stage=%s group %s: %d sidx -> rebuild total (%d rows after max-version merge)",
 			in.EntryTag, in.Entry.Stage, in.Group, len(slowDirs), rows)
 	}
 

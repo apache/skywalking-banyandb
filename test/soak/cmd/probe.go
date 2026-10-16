@@ -293,11 +293,10 @@ func streamIdxLatencyProbe(
 	// reallocating each round silently discarded every round that finished
 	// before the window closed, errors included.
 	accums := newAccums()
-	// Collect one sample per interval across all workers.
-	for {
-		if time.Now().After(deadline) {
-			break
-		}
+	// Collect one sample per interval across all workers. The deadline test is
+	// the loop condition: the final flush below runs after the loop regardless,
+	// so the last partial window is still emitted.
+	for !time.Now().After(deadline) {
 		var wg sync.WaitGroup
 		// A single round's worth of concurrent load, so the percentiles describe
 		// concurrent execution rather than a serialized approximation of it.

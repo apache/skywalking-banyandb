@@ -282,7 +282,7 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache 
 		db.segmentController.optsMutex.Unlock()
 		db.rootLease = rootLease
 	}
-	if err := db.segmentController.open(); err != nil {
+	if err := db.segmentController.open(ctx); err != nil {
 		return nil, err
 	}
 	obsservice.MetricsCollector.Register(location, db.collect)
@@ -291,7 +291,7 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache 
 	// the partially-initialized db is still returned so the caller can Close
 	// it and unregister the metrics collector.
 	released = true
-	return db, db.startRotationTask()
+	return db, db.startRotationTask(ctx)
 }
 
 func (d *database[T, O]) CreateSegmentIfNotExist(ts time.Time) (Segment[T, O], error) {

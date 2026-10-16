@@ -1135,9 +1135,10 @@ func (r *transformRun) convertMatchPredicate(identifierName string, match *Gramm
 		}
 
 		if match.Operator != nil {
-			if *match.Operator == "AND" {
+			switch *match.Operator {
+			case "AND":
 				pbMatchOpt.Operator = modelv1.Condition_MatchOption_OPERATOR_AND
-			} else if *match.Operator == "OR" {
+			case "OR":
 				pbMatchOpt.Operator = modelv1.Condition_MatchOption_OPERATOR_OR
 			}
 		}

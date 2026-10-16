@@ -62,22 +62,22 @@ func TestReaderAcceptsDictionaryBetweenGenericReadLimitAndSelectionLimit(t *test
 	requireNativeNoError(t, readerErr)
 	dictionaryOffset, found, offsetErr := storedReader.dictionaryOffset("large")
 	requireNativeNoError(t, offsetErr)
-	requireNative(t, found, "large dictionary field was not found")
+	requireNativef(t, found, "large dictionary field was not found")
 	cursor := dictionaryOffset
 	dictionaryLength, lengthErr := storedReader.readUvarint(&cursor, storedReader.footer.docValueOffset)
 	requireNativeNoError(t, lengthErr)
-	requireNative(t, dictionaryLength > uint64(maxStoredChunkTableSize), "dictionary length %d is not above generic read limit", dictionaryLength)
-	requireNative(t, dictionaryLength <= uint64(maxSelectionDictionarySize), "dictionary length %d exceeds selection limit", dictionaryLength)
+	requireNativef(t, dictionaryLength > uint64(maxStoredChunkTableSize), "dictionary length %d is not above generic read limit", dictionaryLength)
+	requireNativef(t, dictionaryLength <= uint64(maxSelectionDictionarySize), "dictionary length %d exceeds selection limit", dictionaryLength)
 
 	terms, termsErr := reader.Terms("large")
 	requireNativeNoError(t, termsErr)
-	requireNative(t, len(terms) == regressionDictionaryTermCount, "term count = %d, want %d", len(terms), regressionDictionaryTermCount)
+	requireNativef(t, len(terms) == regressionDictionaryTermCount, "term count = %d, want %d", len(terms), regressionDictionaryTermCount)
 	documents, documentsErr := reader.TermDocuments("large", selectedTerm)
 	requireNativeNoError(t, documentsErr)
-	requireNative(t, len(documents) == 1 && reflect.DeepEqual([]uint64{0}, documents[0].DocumentNumber), "documents = %#v", documents)
+	requireNativef(t, len(documents) == 1 && reflect.DeepEqual([]uint64{0}, documents[0].DocumentNumber), "documents = %#v", documents)
 	missing, missingErr := reader.TermDocuments("large", []byte("missing"))
 	requireNativeNoError(t, missingErr)
-	requireNative(t, len(missing) == 0, "missing term matched %#v", missing)
+	requireNativef(t, len(missing) == 0, "missing term matched %#v", missing)
 }
 
 func TestReaderRejectsOversizedOrTruncatedDictionary(t *testing.T) {
@@ -89,7 +89,7 @@ func TestReaderRejectsOversizedOrTruncatedDictionary(t *testing.T) {
 	requireNativeNoError(t, readerErr)
 	dictionaryOffset, found, offsetErr := storedReader.dictionaryOffset("large")
 	requireNativeNoError(t, offsetErr)
-	requireNative(t, found, "large dictionary field was not found")
+	requireNativef(t, found, "large dictionary field was not found")
 	cursor := dictionaryOffset
 	_, lengthErr := storedReader.readUvarint(&cursor, storedReader.footer.docValueOffset)
 	requireNativeNoError(t, lengthErr)
@@ -133,7 +133,7 @@ func TestReaderDictionaryCachePreservesConcurrentLookupSemantics(t *testing.T) {
 	for lookup := 0; lookup < 3; lookup++ {
 		documents, documentsErr := reader.TermDocuments("large", selectedTerm)
 		requireNativeNoError(t, documentsErr)
-		requireNative(t, len(documents) == 1 && reflect.DeepEqual([]uint64{0}, documents[0].DocumentNumber), "documents = %#v", documents)
+		requireNativef(t, len(documents) == 1 && reflect.DeepEqual([]uint64{0}, documents[0].DocumentNumber), "documents = %#v", documents)
 	}
 	var wait sync.WaitGroup
 	lookupErrors := make(chan error, 16)
@@ -181,10 +181,10 @@ func TestDictionaryIteratorOwnsRangeBounds(t *testing.T) {
 	copy(end, "alpha")
 	term, count, nextErr := iterator.NextString()
 	requireNativeNoError(t, nextErr)
-	requireNative(t, term == "beta" && count == 1, "first term = %q/%d, want beta/1", term, count)
+	requireNativef(t, term == "beta" && count == 1, "first term = %q/%d, want beta/1", term, count)
 	term, count, nextErr = iterator.NextString()
 	requireNativeNoError(t, nextErr)
-	requireNative(t, term == "" && count == 0, "second term = %q/%d, want exhaustion", term, count)
+	requireNativef(t, term == "" && count == 0, "second term = %q/%d, want exhaustion", term, count)
 	requireNativeNoError(t, iterator.Close())
 }
 
@@ -205,7 +205,7 @@ func TestBorrowedDictionaryIteratorReportsReaderClose(t *testing.T) {
 	runtime.GC()
 
 	_, _, nextErr := iterator.NextString()
-	requireNative(t, errors.Is(nextErr, ErrReaderClosed), "next after close = %v, want ErrReaderClosed", nextErr)
+	requireNativef(t, errors.Is(nextErr, ErrReaderClosed), "next after close = %v, want ErrReaderClosed", nextErr)
 	requireNativeNoError(t, iterator.Close())
 }
 
@@ -224,9 +224,9 @@ func TestTermDocumentsRejectsMalformedPostingOffset(t *testing.T) {
 	requireNativeNoError(t, dictionaryErr)
 	postingOffset, found, lookupErr := lookupTermPosting(dictionary, term)
 	requireNativeNoError(t, lookupErr)
-	requireNative(t, found, "shared term was not found")
-	requireNative(t, postingOffset&fstValueEncodingMask == 0, "posting offset has encoded flags: %x", postingOffset)
-	requireNative(t, postingOffset+binary.MaxVarintLen64 < uint64(len(payload)), "posting offset %d is outside payload", postingOffset)
+	requireNativef(t, found, "shared term was not found")
+	requireNativef(t, postingOffset&fstValueEncodingMask == 0, "posting offset has encoded flags: %x", postingOffset)
+	requireNativef(t, postingOffset+binary.MaxVarintLen64 < uint64(len(payload)), "posting offset %d is outside payload", postingOffset)
 	_ = reader.Close()
 
 	corruptPayload := append([]byte(nil), payload...)
@@ -255,7 +255,7 @@ func requireNativeNoError(t testing.TB, err error) {
 	}
 }
 
-func requireNative(t testing.TB, condition bool, format string, args ...any) {
+func requireNativef(t testing.TB, condition bool, format string, args ...any) {
 	t.Helper()
 	if !condition {
 		t.Fatalf(format, args...)
@@ -286,13 +286,13 @@ func TestDictionaryIteratorNextTermDistinguishesEmptyKeyFromExhaustion(t *testin
 	requireNativeNoError(t, iteratorErr)
 	term, nextErr := iterator.NextTerm()
 	requireNativeNoError(t, nextErr)
-	requireNative(t, term != nil && len(term) == 0, "first term = %#v, want a non-nil empty key", term)
+	requireNativef(t, term != nil && len(term) == 0, "first term = %#v, want a non-nil empty key", term)
 	term, nextErr = iterator.NextTerm()
 	requireNativeNoError(t, nextErr)
-	requireNative(t, string(term) == "alpha", "second term = %q, want alpha", term)
+	requireNativef(t, string(term) == "alpha", "second term = %q, want alpha", term)
 	term, nextErr = iterator.NextTerm()
 	requireNativeNoError(t, nextErr)
-	requireNative(t, term == nil, "third term = %#v, want exhaustion", term)
+	requireNativef(t, term == nil, "third term = %#v, want exhaustion", term)
 	requireNativeNoError(t, iterator.Close())
 }
 

@@ -110,12 +110,18 @@ func TestDecideTraceSuccessfulReasonsAndPrecedence(t *testing.T) {
 		block  sdk.TraceBlock
 		want   traceDecision
 	}{
-		{name: "duration wins over error and tag", config: `{"durationThresholdMs":500,"keepErrors":true,"keepTagRules":[{"tagKey":"db.type","exists":true}]}`,
-			block: allMatchBlock, want: traceDecision{keep: true, reason: decisionReasonDuration}},
-		{name: "error wins over tag", config: `{"keepErrors":true,"keepTagRules":[{"tagKey":"db.type","exists":true}]}`,
-			block: errorAndTagBlock, want: traceDecision{keep: true, reason: decisionReasonError}},
-		{name: "tag decode failure", config: `{"keepTagRules":[{"tagKey":"db.type","exists":true}]}`,
-			block: malformedMetricTagBlock(), want: traceDecision{keep: true, reason: decisionReasonDecodeTags}},
+		{
+			name: "duration wins over error and tag", config: `{"durationThresholdMs":500,"keepErrors":true,"keepTagRules":[{"tagKey":"db.type","exists":true}]}`,
+			block: allMatchBlock, want: traceDecision{keep: true, reason: decisionReasonDuration},
+		},
+		{
+			name: "error wins over tag", config: `{"keepErrors":true,"keepTagRules":[{"tagKey":"db.type","exists":true}]}`,
+			block: errorAndTagBlock, want: traceDecision{keep: true, reason: decisionReasonError},
+		},
+		{
+			name: "tag decode failure", config: `{"keepTagRules":[{"tagKey":"db.type","exists":true}]}`,
+			block: malformedMetricTagBlock(), want: traceDecision{keep: true, reason: decisionReasonDecodeTags},
+		},
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
