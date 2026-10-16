@@ -868,7 +868,7 @@ WHERE time >= ? AND time < ?
 GROUP BY host
 ```
 
-All aggregate calls see the same complete, deduplicated native scan after the time and tag filters. Repeated calls share state while retaining their separate output aliases. Aggregates appear as named fields in the existing response; without an alias, their names are `COUNT(value)`, `SUM(value)`, and so on. Output field names must be unique. Synthesized aggregate rows omit raw-row timestamps, SIDs, and versions.
+All aggregate calls use the complete, deduplicated input after the time and tag filters. Repeated calls share work while retaining their separate output aliases. Aggregates appear as named fields in the existing response; without an alias, their names are `COUNT(value)`, `SUM(value)`, and so on. Output field names must be unique. Synthesized aggregate rows omit raw-row timestamps, SIDs, and versions.
 
 The extended aggregate rules are:
 
@@ -886,6 +886,16 @@ WHERE time >= ? AND time < ?
 ```
 
 Extended aggregate queries currently reject COUNT(DISTINCT), TOP, TIME_BUCKET, array grouping, and ORDER BY. The existing legacy native forms of these supported operations remain available. Group-only queries without an aggregate, expressions as aggregate arguments or grouping keys, and HAVING are not implemented yet.
+
+#### Native aggregate execution
+
+The planner can execute eligible calls through the existing native aggregate operators and combine their batch results by the complete grouping tuple. For example, `SUM(f)`, `COUNT(f)`, and repeated `AVG(f)` outputs over a floating-point field share two native requests: SUM and COUNT. QL computes AVG from their sum and non-null count; it does not use the legacy native MEAN result. Integer MIN, MAX, and COUNT use their matching native requests, sharing the auxiliary COUNT needed to distinguish all-null groups.
+
+This optimization currently requires one measure group in normal storage mode, one exact time interval, and a single provable lifecycle stage. Grouping keys must be entity tags from one tag family, constrained to non-null values by equality or IN predicates. Each remaining entity tag must be bound to one value, so every SQL group identifies one full entity. A scalar aggregate requires one bound full entity too. This also bounds COUNT by the number of possible stored millisecond timestamps, preserving its exact int64 result even when a native floating-point COUNT is returned.
+
+Other supported queries use one complete raw scan and local SQL aggregation. These include nullable or non-entity keys, disjoint time ranges, multiple measure groups or stages, tag aggregates, floating-point MIN/MAX, and integer SUM/AVG spanning more than one possible timestamp. The fallback preserves checked integer overflow and SQL null/average semantics. Predicate conjunctions over entity IN lists are normalized before either execution path; expansion is limited to 512 entity tuples.
+
+Native branches run sequentially under the parent query's deadline and memory allowance. Final LIMIT/OFFSET applies after all branches merge. A branch failure or exhausted allowance fails the query without partial results. Separate native requests do not provide a shared snapshot during concurrent writes. Memory limits remain enforced; disk spilling is not implemented.
 
 ## 6. BydbQL for Top-N
 

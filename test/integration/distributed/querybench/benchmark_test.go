@@ -87,7 +87,7 @@ func runSingleShotScenario(t *testing.T, cfg Config) {
 	if cfg.Scenario == ScenarioQLBT03 {
 		timeout += 60 * time.Minute
 	}
-	if cfg.Scenario == ScenarioQLBT07 {
+	if cfg.Scenario == ScenarioQLBT07 || cfg.Scenario == ScenarioQLBT08 {
 		timeout += 30 * time.Minute
 	}
 	if cfg.Scenario == ScenarioQLBT02 {
@@ -130,11 +130,19 @@ func runMergeShards(t *testing.T, cfg Config) {
 	if matrixErr := validateQLBT07Matrix(results); matrixErr != nil {
 		t.Fatal(matrixErr)
 	}
+	if matrixErr := validateQLBT08Matrix(results); matrixErr != nil {
+		t.Fatal(matrixErr)
+	}
 	var flattened []Result
 	for _, result := range results {
 		switch result.Scenario {
 		case ScenarioQLBT05:
 			if validationErr := validateQLBT05Result(result); validationErr != nil {
+				t.Fatal(validationErr)
+			}
+			flattened = append(flattened, result.Variants...)
+		case ScenarioQLBT08:
+			if validationErr := validateQLBT08Result(result); validationErr != nil {
 				t.Fatal(validationErr)
 			}
 			flattened = append(flattened, result.Variants...)
@@ -188,6 +196,9 @@ func runMergeShards(t *testing.T, cfg Config) {
 // against an already-prepared cluster, capturing CPU and heap profiles for
 // the timed phase.
 func runScenarioBenchmark(ctx context.Context, conn *grpc.ClientConn, cfg Config, scenario Scenario, cardinality int, mode string, base time.Time) (Result, error) {
+	if scenario == ScenarioQLBT08 {
+		return runQLBT08Benchmark(ctx, conn, cfg, base)
+	}
 	if scenario == ScenarioQLBT07 {
 		return runQLBT07Benchmark(ctx, conn, cfg, base)
 	}
@@ -276,7 +287,7 @@ func startBenchCluster(t *testing.T, cfg Config, additionalLiaisonFlags ...strin
 		if cfg.Scenario == ScenarioQLBT02 {
 			preload = preloadQLBT02Schema
 		}
-		if cfg.Scenario == ScenarioQLBT07 {
+		if cfg.Scenario == ScenarioQLBT07 || cfg.Scenario == ScenarioQLBT08 {
 			preload = preloadQLBT07Schema
 		}
 		setup.PreloadSchemaViaProperty(config, preload)
@@ -333,7 +344,8 @@ func clusterFlags(cfg Config) []string {
 	if cfg.Engine == engineTrace {
 		return []string{fmt.Sprintf("--trace-vectorized-query-memory-mib=%d", cfg.QueryMemoryMiB)}
 	}
-	if cfg.Scenario == ScenarioQLBT02 || cfg.Scenario == ScenarioQLBT03 || cfg.Scenario == ScenarioQLBT05 || cfg.Scenario == ScenarioQLBT07 {
+	if cfg.Scenario == ScenarioQLBT02 || cfg.Scenario == ScenarioQLBT03 || cfg.Scenario == ScenarioQLBT05 ||
+		cfg.Scenario == ScenarioQLBT07 || cfg.Scenario == ScenarioQLBT08 {
 		return []string{fmt.Sprintf("--measure-vectorized-query-memory-mib=%d", cfg.QueryMemoryMiB)}
 	}
 	if cfg.Soak {

@@ -39,17 +39,20 @@ type Feature struct {
 
 // Suite is the reproducible QL-only integration artifact.
 type Suite struct {
-	AggregateReadiness  []AggregateFixture  `json:"aggregate_readiness"`
-	AggregateRejections []Case              `json:"aggregate_rejections"`
-	AggregateScenarios  []AggregateScenario `json:"aggregate_scenarios"`
-	FixtureDigest       string              `json:"fixture_digest"`
-	ReuseScenarios      []ReuseScenario     `json:"reuse_scenarios"`
-	ReuseReadiness      Case                `json:"reuse_readiness"`
-	Features            []Feature           `json:"features"`
-	Cases               []Case              `json:"cases"`
-	Pairs               PairCoverage        `json:"pairs"`
-	Version             int                 `json:"version"`
-	Seed                int64               `json:"seed"`
+	NativeAggregateReadiness  []AggregateFixture        `json:"native_aggregate_readiness"`
+	NativeAggregateRejections []Case                    `json:"native_aggregate_rejections"`
+	NativeAggregateScenarios  []NativeAggregateScenario `json:"native_aggregate_scenarios"`
+	AggregateReadiness        []AggregateFixture        `json:"aggregate_readiness"`
+	AggregateRejections       []Case                    `json:"aggregate_rejections"`
+	AggregateScenarios        []AggregateScenario       `json:"aggregate_scenarios"`
+	FixtureDigest             string                    `json:"fixture_digest"`
+	ReuseScenarios            []ReuseScenario           `json:"reuse_scenarios"`
+	ReuseReadiness            Case                      `json:"reuse_readiness"`
+	Features                  []Feature                 `json:"features"`
+	Cases                     []Case                    `json:"cases"`
+	Pairs                     PairCoverage              `json:"pairs"`
+	Version                   int                       `json:"version"`
+	Seed                      int64                     `json:"seed"`
 }
 
 // Load checks the generated contract before integration tests consume it.
@@ -120,6 +123,13 @@ func (s Suite) Validate() error {
 			return fmt.Errorf("QL feature %s has no generated witness", feature.ID)
 		}
 	}
+	if err := s.validateScenarios(); err != nil {
+		return err
+	}
+	return validatePairWitnesses(s.Pairs, s.Cases)
+}
+
+func (s Suite) validateScenarios() error {
 	if err := validateReuseReadiness(s.ReuseReadiness); err != nil {
 		return err
 	}
@@ -129,7 +139,7 @@ func (s Suite) Validate() error {
 	if err := validateAggregateScenarios(s.AggregateReadiness, s.AggregateScenarios); err != nil {
 		return err
 	}
-	return validatePairWitnesses(s.Pairs, s.Cases)
+	return validateNativeAggregateScenarios(s.NativeAggregateReadiness, s.NativeAggregateScenarios)
 }
 
 func (s Suite) witnessCases() []Case {
@@ -139,6 +149,13 @@ func (s Suite) witnessCases() []Case {
 	}
 	cases = append(cases, s.AggregateRejections...)
 	for _, scenario := range s.AggregateScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
+	for _, fixture := range s.NativeAggregateReadiness {
+		cases = append(cases, fixture.Cases...)
+	}
+	cases = append(cases, s.NativeAggregateRejections...)
+	for _, scenario := range s.NativeAggregateScenarios {
 		cases = append(cases, scenario.Cases...)
 	}
 	return cases

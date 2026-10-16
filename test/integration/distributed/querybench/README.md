@@ -394,3 +394,74 @@ at those larger sizes are reported as rejections, with no SQL throughput claim.
 The original failed run and the bounded one-query diagnostic artifacts remain
 available. This is a concrete limitation of the current one-scan native boundary,
 not an acceptance pass for the originally specified large successful workloads.
+
+### T08 native aggregate branches and keyed merge
+
+`qlb_t08` compares the automatic native aggregate path against forced local T07
+execution of **identical QL**, using the T07 nullable fixture and its versioned
+writes. It runs only these four owning shapes, grouped by the 16 entity hosts
+and explicitly restricted to those non-null hosts with `host IN (...)`:
+
+| Shape | Selected fields | Native branches |
+| --- | --- | --- |
+| `float_avg` | `AVG(f)` | SUM(f), COUNT(f) |
+| `float_shared` | `SUM(f), COUNT(f), AVG(f), AVG(f)` with distinct aliases | The same two branches |
+| `int_extrema` | `MIN(v), MAX(v), COUNT(v)` | MIN(v), MAX(v), COUNT(v) |
+| `int_avg_fallback` | `AVG(v)` | One local raw scan; integer overflow semantics prevent native lowering |
+
+Each shape has `pushdown` (native enabled) and `local` (forced local) variants.
+The fallback control intentionally uses T07 in both modes. The three eligible
+shapes also have an `individual` control: the same native SUM/COUNT or
+MIN/MAX/COUNT requests executed serially through the existing measure Query
+RPC. Its latency and allocations describe the **whole sequence of two or three
+RPCs**, not a single SQL request. The control reports 32/48 response rows per
+iteration; QL reports 16. It checks each native result against fixture arithmetic,
+including native COUNT(f)'s float64 result type, then verifies host-keyed AVG
+finalization outside timing. Native queries are benchmark controls, never the
+expected-result oracle for QL.
+
+The frozen protocol uses 1,024 and 32,768 logical input rows, one query worker,
+100 timed queries/5 warmups at 1,024 rows and 20 timed queries/3 warmups at 32,768
+rows. Every cardinality starts a fresh process and cluster. Before timing,
+host-pruned QL raw queries verify the complete visible fixture and every warmup
+checks values and types against independent scalar arithmetic. Timed calls check
+row counts, retain roughly ten samples, and validate their full contents after
+timing. Run five independent 4 CPU/8 GiB repetitions with CPU and heap profiles:
+
+```sh
+for repetition in 1 2 3 4 5; do
+  DQB_ENGINE=measure DQB_SCENARIOS=qlb_t08 \
+    DQB_CARDINALITIES=1024,32768 DQB_QUERY_WORKERS=1 \
+    DQB_QUERY_MEMORY_MIB=256 DQB_PROFILE=1 \
+    DQB_REPORT_DIR="/work/.omx/bench-reports/t08-r${repetition}" \
+    test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g
+done
+```
+
+Each cardinality produces 11 variants. Reports retain per-query latency samples,
+process CPU/GC/allocation counters, profiles and the following work/ownership
+evidence:
+
+- Eligible AVG uses two unique native branches; selecting SUM, COUNT and a repeated
+  AVG adds none. The integer AVG control uses one complete local raw scan.
+- A native branch makes one logical distributed execution (two leaf calls in this
+  fixture). `ql_batch_executions` counts native branch executions; one logical QL
+  request is evidenced by one `merge_executions` or `aggregate_executions`.
+- Native merge input is 16 finalized group rows per branch. Merge visits are
+  bounded by input group rows plus one visit per output group. State lanes,
+  used/capacity bytes, reservations and releases are reported separately for the
+  local aggregate and keyed merge. Merge state bytes include branch-presence flags.
+- Intermediate DataPoints are zero. Final DataPoints match the selected mode's
+  16 SQL rows or 32/48 individual-native rows. Results, tracker reservations, owner
+  pins and native flatten pool references return to their starting counts.
+- Physical storage rows, retained native frame bytes and total parent lease
+  charges are explicitly unavailable; process memory peaks and lease tracker
+  counters are not relabeled as those quantities.
+
+The report rejects missing shapes/modes/cardinalities, incomplete timed samples,
+extra AVG branches, unexpected fallback, nonzero intermediate rows and leaks.
+Pushdown is an execution optimization, so latency comparisons are recorded
+without assuming that repeated native scans outperform one raw scan. This adds
+no cache, concurrency, earlier-ticket or spill benchmark matrix. Separate native
+requests have no common snapshot guarantee while writes continue; timed fixtures
+are fixed after visibility checks complete.

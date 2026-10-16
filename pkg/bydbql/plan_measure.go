@@ -34,6 +34,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/ql"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
 // ErrInvalidMeasureQuery identifies invalid typed measure syntax or bound values.
@@ -42,13 +43,14 @@ var ErrInvalidMeasureQuery = errors.New("invalid measure query")
 // MeasureTemplate contains immutable, schema-resolved measure planning metadata.
 // Each Bind creates independent requests and operators; no parameter or clock value is retained.
 type MeasureTemplate struct {
-	statement  *PreparedStatement
-	request    *measurev1.QueryRequest
-	predicate  *measurePredicate
-	legacyTags map[string]*tagSpecWithFamily
-	aggregate  *ql.AggregatePlan
-	slots      []ql.Slot
-	extended   bool
+	statement      *PreparedStatement
+	request        *measurev1.QueryRequest
+	predicate      *measurePredicate
+	legacyTags     map[string]*tagSpecWithFamily
+	aggregate      *ql.AggregatePlan
+	nativeEntities []vectorized.ColumnDef
+	slots          []ql.Slot
+	extended       bool
 }
 
 // MeasureExecution is one fresh binding of a measure template.
@@ -277,6 +279,10 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 	// Final SQL pagination belongs after the complete native scan and residual.
 	request.Offset = 0
 	request.Limit = math.MaxUint32
+	plan.NativeAggregate = m.bindNativeAggregate(request, plan)
+	if err = m.bindMeasureEntities(request, plan); err != nil {
+		return nil, invalidMeasure(err)
+	}
 	return &MeasureExecution{Request: request, Plan: plan}, nil
 }
 

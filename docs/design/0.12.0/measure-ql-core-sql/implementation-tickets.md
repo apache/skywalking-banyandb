@@ -469,15 +469,18 @@ and reuse matching visible/auxiliary calls. Unsafe count precision, nullable key
 or lost aggregate information select T07. AVG's state/finalization is part of the
 aggregate operation, not an independent division helper ticket.
 
-**E2E cases:** `sum-max-repeated-call` selects SUM(v) twice and MAX(v) by host,
-with an exact host IN ('a','b','c') predicate, producing (a,2,2), (b,4,4), (c,6,6)
-for sum/max. Expect three leaves: SUM(v), MAX(v) and auxiliary exact COUNT(v),
-with no fourth leaf for the repeated SUM. In a separate case, add an all-null host
-and include it in the IN predicate to prove count-based normalization to null.
-Native eligibility must be established from actual provider contracts.
-`bucket-and-multiple-keys` checks distinct buckets/keys with deliberately permuted
-branch arrival. `missing-null-empty-groups` validates union/normalization or the
-documented local fallback. `branch-failure-cap-and-denial` covers >100 groups,
+**E2E cases:** shared float SUM/COUNT/AVG/MEAN outputs, including repeated AVG,
+use two branches over exact non-null entity selections. Integer MIN/MAX/COUNT
+use three branches. All-null and missing groups prove count-based normalization
+to null, and two entity keys prove full-tuple merging. The original
+`sum-max-repeated-call` three-leaf example needs refinement: native integer SUM
+wraps and native float MAX has different nonfinite semantics. Such combinations
+remain valid SQL through T07; no small fixture proves native equivalence.
+`bucket-and-multiple-keys` additionally names bucket timestamps and deliberately
+permuted branch arrival. T08 tests the merge's timestamp key at the operator seam;
+extended bucket grammar and its real-RPC coverage remain T16 work and are not
+claimed as passed by T08. `missing-null-empty-groups` validates union/normalization
+or the documented local fallback. `branch-failure-cap-and-denial` covers >100 groups,
 finite complete-scan-cap exhaustion via a test seam, failed child gates and
 cancellation before any unauthorized leaf dispatch.
 
@@ -486,19 +489,36 @@ partition goldens with identical SQL semantics. `sum-count-average-reuse` proves
 native branch reuse, including auxiliary counts for null normalization.
 
 **Benchmark:** P(T08) compares native split/merge, forced-local same-semantics
-reference and equivalent individual native queries on a fixed dataset. Include
-AVG alone and SUM+COUNT+AVG for integer/float targets, reporting raw fallback cost.
+reference and equivalent individual native queries on a fixed dataset. The
+focused protocol measures float AVG, shared float SUM+COUNT+AVG, integer
+MIN/MAX/COUNT and an integer AVG fallback control. Integer SUM overflow is
+covered by E2E tests; no earlier ticket benchmark dimensions are added.
 G3: eligible AVG needs at most two distinct leaves, exposing its matching SUM/COUNT
 adds no leaves, and unsafe AVG makes one local raw scan. For other combinations,
-leaf count equals unique eligible visible/auxiliary calls (three above).
+leaf count equals unique eligible visible/auxiliary calls (three for integer extrema above).
 Intermediate DataPoints are zero; merge work <= sum of input group rows plus one
 output visit per group; no branch receives a fresh full budget. K(T08) covers
 different branch order and high key cardinality;
 G1/G2 apply. Record split-versus-raw latency/cost without assuming pushdown wins.
 
 **Checks/readiness:** E(T08), P(T08), K(T08); focused `./pkg/query/ql`,
-`./pkg/bydbql`, `./banyand/liaison/grpc`. Blocked by T07. Fixed-data oracles must
+`./pkg/bydbql`, `./banyand/liaison/grpc`. Builds on T07. Fixed-data oracles must
 not imply a common snapshot across separate native queries during concurrent writes.
+
+**Implementation:** native lowering, full-tuple batch merging, SQL AVG/null
+finalization, safe whole-query fallback and shared branch ownership are implemented.
+The exact eligible subset and provider proofs are recorded in
+[T08 verification](t08-verification.md). Both real topologies pass 246 selected
+specs, including 31 generated T08 specs with independent expected values. The
+focused K/P protocol compares eligible paths and the integer AVG fallback;
+it does not broaden earlier ticket benchmark matrices or change their outcomes.
+Five resource-limited repetitions at both input sizes pass correctness and work
+checks. At 32,768 rows, float pushdown is about 2.4x faster with about 79% fewer
+allocated bytes; at 1,024 rows, three-branch integer extrema is about 1.5x slower.
+The verification record retains this regression and the remaining bucket E2E
+boundary rather than treating safe native eligibility as a universal speedup.
+Native branches remain sequential, at most 32 distinct calls; query memory
+limits and monotonic admission charges remain enforced without spilling.
 
 ### T10 — Evaluate typed vector expressions and masked conditionals
 

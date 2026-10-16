@@ -485,7 +485,6 @@ func (ms *measureService) executeQueryWithRawPlan(ctx context.Context, req *meas
 	now := time.Now()
 	var tracer *query.Tracer
 	var span *query.Span
-	var responseDataPointCount int
 	if req.Trace {
 		tracer, _ = query.NewTracer(ctx, now.Format(time.RFC3339Nano))
 		span, _ = tracer.StartSpan(ctx, "measure-grpc")
@@ -495,7 +494,7 @@ func (ms *measureService) executeQueryWithRawPlan(ctx context.Context, req *meas
 				span.Error(err)
 				span.Stop()
 			} else {
-				span.Tagf("response_data_point_count", "%d", responseDataPointCount)
+				span.Tagf("response_data_point_count", "%d", len(resp.GetDataPoints()))
 				span.AddSubTrace(resp.Trace)
 				span.Stop()
 				resp.Trace = tracer.ToProto()
@@ -543,6 +542,9 @@ func (ms *measureService) executeQueryWithRawPlan(ctx context.Context, req *meas
 	if isEmptyRawQuery(rawPlan) {
 		return emptyPlannedMeasure(ctx, gatedStatuses, rawPlan)
 	}
+	if ms.canUseNativeAggregate(req, rawPlan) {
+		return ms.executeNativeAggregate(ctx, req, gatedStatuses, rawPlan)
+	}
 	var payload any = req
 	if batches {
 		payload = &vmeasure.BatchQueryRequest{Request: req}
@@ -562,9 +564,6 @@ func (ms *measureService) executeQueryWithRawPlan(ctx context.Context, req *meas
 		return nil, err
 	}
 	resp, err = measureQueryResponseWithPlan(ctx, msg.Data(), gatedStatuses, rawPlan)
-	if resp != nil {
-		responseDataPointCount = len(resp.DataPoints)
-	}
 	return resp, err
 }
 

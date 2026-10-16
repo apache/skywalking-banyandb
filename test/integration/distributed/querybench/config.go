@@ -116,6 +116,8 @@ const (
 	ScenarioQLBT05 Scenario = "qlb_t05"
 	// ScenarioQLBT07 benchmarks complete local SQL aggregation over raw batches.
 	ScenarioQLBT07 Scenario = "qlb_t07"
+	// ScenarioQLBT08 compares native aggregate branches with local SQL aggregation.
+	ScenarioQLBT08 Scenario = "qlb_t08"
 	// ScenarioTraceByID benchmarks distributed trace-id lookup.
 	ScenarioTraceByID Scenario = "trace_by_id"
 	// ScenarioTraceTagFilter benchmarks distributed ordered trace tag filters.
@@ -248,7 +250,7 @@ func (c Config) Validate() error {
 	switch c.Engine {
 	case engineMeasure:
 		switch c.Scenario {
-		case ScenarioScanAll, ScenarioTopWithFilter, ScenarioQLBT01, ScenarioQLBT02, ScenarioQLBT03, ScenarioQLBT05, ScenarioQLBT07:
+		case ScenarioScanAll, ScenarioTopWithFilter, ScenarioQLBT01, ScenarioQLBT02, ScenarioQLBT03, ScenarioQLBT05, ScenarioQLBT07, ScenarioQLBT08:
 		default:
 			return fmt.Errorf("%s unsupported for %s=%s: %q", envScenario, envEngine, c.Engine, c.Scenario)
 		}
@@ -470,14 +472,17 @@ func queryTimeout(cardinality int) time.Duration {
 }
 
 func (c Config) validateCatalogB() error {
-	if c.Scenario == ScenarioQLBT07 {
+	if c.Scenario == ScenarioQLBT07 || c.Scenario == ScenarioQLBT08 {
 		iterations, warmup, err := qlbT07Schedule(c.Cardinality)
+		if c.Scenario == ScenarioQLBT08 {
+			iterations, warmup, err = qlbT08Schedule(c.Cardinality)
+		}
 		if err != nil {
 			return err
 		}
 		if c.QueryWorkers != 1 || c.QueryIterations != iterations || c.WarmupIterations != warmup {
-			return fmt.Errorf("qlb_t07 at %d rows requires DQB_QUERY_WORKERS=1, DQB_QUERY_ITERATIONS=%d and DQB_WARMUP_ITERATIONS=%d",
-				c.Cardinality, iterations, warmup)
+			return fmt.Errorf("%s at %d rows requires DQB_QUERY_WORKERS=1, DQB_QUERY_ITERATIONS=%d and DQB_WARMUP_ITERATIONS=%d",
+				c.Scenario, c.Cardinality, iterations, warmup)
 		}
 		return nil
 	}
@@ -515,5 +520,16 @@ func qlbT07Schedule(cardinality int) (iterations, warmup int, err error) {
 		return 20, 3, nil
 	default:
 		return 0, 0, fmt.Errorf("qlb_t07 successful queries require cardinality 1024 or 32768; larger inputs belong to the resource probe")
+	}
+}
+
+func qlbT08Schedule(cardinality int) (iterations, warmup int, err error) {
+	switch cardinality {
+	case 1024:
+		return 100, 5, nil
+	case 32768:
+		return 20, 3, nil
+	default:
+		return 0, 0, fmt.Errorf("qlb_t08 requires input cardinality 1024 or 32768")
 	}
 }

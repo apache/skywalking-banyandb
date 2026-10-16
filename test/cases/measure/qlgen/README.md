@@ -76,7 +76,7 @@ generation branch cannot silently remove its coverage obligation.
 | State | Required evidence |
 | --- | --- |
 | `supported` | Generated QL cases with independently calculated success expectations. |
-| `rejection` | Generated invalid QL cases with an expected error status. |
+| `rejection` | Generated QL cases with an expected error status. |
 | `pending` | An explicit reason naming the missing implementation or fixture. |
 
 These are generation obligations. Actual engine support requires passing the
@@ -232,6 +232,51 @@ go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/
 Run the topologies sequentially. T07 does not alter the existing legacy MEAN or
 COUNT(DISTINCT) fixtures. Native aggregate pushdown and keyed merging are T08;
 T07's new SQL semantics execute over one complete native raw scan.
+
+## T08 native aggregate pushdown and keyed merge
+
+The artifact adds `native_aggregate_scenarios`, `native_aggregate_readiness`,
+and `native_aggregate_rejections`. The 30 scenarios retain three identical query
+texts with independently evaluated changed bindings. Eligible native cohorts
+run cold, warm, with the compiled cache bypassed, and with native aggregation
+disabled so the identical SQL also exercises T07. Unsafe cohorts must use T07
+automatically. A checked integer-SUM overflow retains its existing RPC error and
+must open no native aggregate branch. Every expected result is generated from
+fixture rows; neither readiness nor verification issues a native Query RPC.
+
+`ql_t08` uses the complete entity tuple `(host, region)`, unequal per-entity
+populations, nullable fields and keys, an all-null entity, sub-one floating means,
+and integer extrema above 2^53. `ql_t08_groups` contains 129 distinct entity tuples
+and 258 logical rows. Stale and final versions share each logical row's identity.
+Bounded raw QL visibility windows verify every final value before aggregation.
+The indexed non-entity `key` is constant within each full entity, as required by
+the series index. Different entities retain NULL, empty and ordinary string keys.
+The setup installs the key index and binding, then retries writes until a separate
+indexed QL visibility witness succeeds; raw windows still verify every row.
+The oracle uses typed integer extrema and exact rational sums and averages,
+independently of native aggregate state and the production grouping codec.
+
+The runner proves SUM/COUNT/AVG leaf reuse, complete tuple-key merging beyond the
+default 100 rows, null-only and empty semantics, cold/warm binding isolation, and
+fallback for incomplete or unproven entity keys, nullable non-entity grouping,
+integer arithmetic, floating extrema, tag counts, and residual time predicates.
+It also injects a group cap, first and later branch errors and cancellation, and
+authorization denial after a cached plan succeeds, and child revision-gate failure.
+Failed RPCs return no partial
+rows, release all tracked state and native results, and allow a subsequent query
+to succeed. Bucket grouping remains in its later grammar ticket; T08 does not
+claim a new bucket syntax through these RPC cases.
+
+```sh
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/standalone/query \
+  -ginkgo.label-filter=QLB-T08 -ginkgo.fail-on-empty
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/query \
+  -ginkgo.label-filter=QLB-T08 -ginkgo.fail-on-empty
+```
+
+Run these sequentially. The existing 293 cases, 18 T05 scenarios, 41 T07
+scenarios and seven T07 rejections keep their query texts, expected values and
+pair-coverage report unchanged.
 
 ## Engine regressions exposed by this suite
 

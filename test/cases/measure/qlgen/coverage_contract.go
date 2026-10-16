@@ -23,6 +23,22 @@ import "fmt"
 // generator branch must leave a missing witness, not erase its coverage claim.
 // A pending entry records a gap; it never counts as successful QL coverage.
 var coverageContract = []Feature{
+	{ID: "t08.fixture", Status: "supported"},
+	{ID: "t08.native_float", Status: "supported"},
+	{ID: "t08.null_empty", Status: "supported"},
+	{ID: "t08.tuple_keys", Status: "supported"},
+	{ID: "t08.rebind", Status: "supported"},
+	{ID: "t08.shared_leaves", Status: "supported"},
+	{ID: "t08.exact_integer", Status: "supported"},
+	{ID: "t08.scalar_entity", Status: "supported"},
+	{ID: "t08.complete_groups", Status: "supported"},
+	{ID: "t08.dedup", Status: "supported"},
+	{ID: "t08.fallback", Status: "supported"},
+	{ID: "t08.weighted_average", Status: "supported"},
+	{ID: "t08.no_scan", Status: "supported"},
+	{ID: "t08.lifecycle", Status: "supported"},
+	{ID: "t08.integer_overflow", Status: "rejection"},
+	{ID: "t08.child_revision", Status: "supported"},
 	{ID: "t07.fixture", Status: "supported"},
 	{ID: "t07.aggregate.COUNT", Status: "supported"},
 	{ID: "t07.aggregate.SUM", Status: "supported"},

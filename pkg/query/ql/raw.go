@@ -42,13 +42,14 @@ type MillisRange struct{ Begin, End int64 }
 
 // RawPlan is the immutable bound recipe for a complete native measure scan and QL operators.
 type RawPlan struct {
-	Aggregate *AggregatePlan
-	Limit     *uint32
-	Slots     []Slot
-	Ranges    []MillisRange
-	Offset    uint32
-	Residual  bool
-	Empty     bool
+	NativeAggregate *NativeAggregatePlan
+	Aggregate       *AggregatePlan
+	Limit           *uint32
+	Slots           []Slot
+	Ranges          []MillisRange
+	Offset          uint32
+	Residual        bool
+	Empty           bool
 }
 
 type rawOperator struct {
