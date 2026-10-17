@@ -132,6 +132,12 @@ run_variant() {
           16384) query_iterations=20; warmup_iterations=3 ;;
           *) echo "T12 successful queries require cardinality 1024,16384" >&2; exit 2 ;;
         esac
+      elif [[ "${scenario}" == "qlb_t15" ]]; then
+        case "${card}" in
+          1024) query_iterations=100; warmup_iterations=5 ;;
+          8192) query_iterations=20; warmup_iterations=3 ;;
+          *) echo "T15 successful queries require 1024 or 8192 rows" >&2; exit 2 ;;
+        esac
       elif [[ "${scenario}" == "qlb_t07" || "${scenario}" == "qlb_t08" || "${scenario}" == "qlb_t10" || "${scenario}" == "qlb_t14" ]]; then
         case "${card}" in
           1024) query_iterations=100; warmup_iterations=5 ;;

@@ -67,16 +67,13 @@ func (m *MeasureTemplate) compileRaw(columns *measureColumns) error {
 	} else {
 		for _, column := range stmt.Projection.Columns {
 			if column.TypeSpec == nil && isBuiltinTime(column.Identifier) {
-				if column.Alias == nil {
-					continue
-				} // DataPoint.timestamp is always preserved.
-				alias, aliasErr := column.Alias.ToString(true)
-				if aliasErr != nil {
-					return aliasErr
+				slot, visible, slotErr := timestampOutputSlot(column, stmt.Distinct, ql.SlotID(len(slots)))
+				if slotErr != nil {
+					return slotErr
 				}
-				source := vectorized.ColumnDef{Name: "time", Role: vectorized.RoleTimestamp, Type: vectorized.ColumnTypeInt64}
-				output := vectorized.ColumnDef{Name: alias, TagFamily: "__ql", Role: vectorized.RoleTag, Type: vectorized.ColumnTypeInt64}
-				slots = append(slots, ql.Slot{ID: ql.SlotID(len(slots)), Source: source, Output: output})
+				if visible {
+					slots = append(slots, slot)
+				}
 				continue
 			}
 			name, nameErr := column.Identifier.ToString(column.TypeSpec != nil)
@@ -356,4 +353,21 @@ func containsQuotedMeasureLiteral(projection *GrammarProjection, columns *measur
 		}
 	}
 	return false
+}
+
+func timestampOutputSlot(column *GrammarColumn, distinct bool, id ql.SlotID) (ql.Slot, bool, error) {
+	if column.Alias == nil && !distinct {
+		return ql.Slot{}, false, nil
+	}
+	alias := "time"
+	if column.Alias != nil {
+		var err error
+		alias, err = column.Alias.ToString(true)
+		if err != nil {
+			return ql.Slot{}, false, err
+		}
+	}
+	source := vectorized.ColumnDef{Name: "time", Role: vectorized.RoleTimestamp, Type: vectorized.ColumnTypeInt64}
+	output := vectorized.ColumnDef{Name: alias, TagFamily: "__ql", Role: vectorized.RoleTag, Type: vectorized.ColumnTypeInt64}
+	return ql.Slot{ID: id, Source: source, Output: output, Timestamp: true}, true, nil
 }

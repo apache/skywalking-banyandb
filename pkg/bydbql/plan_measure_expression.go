@@ -76,7 +76,7 @@ func (m *MeasureTemplate) compileExpressions(columns *measureColumns) error {
 			if column.Identifier == nil {
 				return fmt.Errorf("invalid SELECT expression")
 			}
-			if column.TypeSpec == nil && isBuiltinTime(column.Identifier) && column.Alias == nil {
+			if column.TypeSpec == nil && isBuiltinTime(column.Identifier) && column.Alias == nil && !stmt.Distinct {
 				continue
 			}
 			expr = &GrammarExpression{Op: "column", Identifier: column.Identifier, TypeSpec: column.TypeSpec}

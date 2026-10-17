@@ -639,3 +639,67 @@ The hidden variant returns only the grouping tag, whereas its baseline also
 returns two AVG fields; their latency difference includes this output-width change.
 The existing indexed-array native projection limitation is documented in
 [T14 verification](../../../../docs/design/0.12.0/measure-ql-core-sql/t14-verification.md).
+
+
+### T15 visible-tuple DISTINCT
+
+`qlb_t15` is a real distributed QL RPC benchmark. It compares `SELECT DISTINCT a, b`
+with an explicit `SELECT a, b ... GROUP BY a, b` reference over the same written
+rows. Both use the T07 group table with zero aggregate state lanes; this measures
+DISTINCT overhead/equivalence, not a claimed independent hash-table algorithm.
+Correctness comes from independently enumerated fixture tuples rather than either
+query result. Entity and raw row identity are hidden and cannot affect equality.
+
+The frozen ordinary matrix is 1,024 and 8,192 input rows per dataset, one query
+worker, 256 MiB per tracker, and profiles enabled. It has exactly fourteen variants:
+`distinct_p001_narrow`, `group_by_p001_narrow`, `distinct_p001_wide`,
+`group_by_p001_wide`, the corresponding `p050` and `p100` names, plus
+`distinct_empty` and `group_by_empty`. Unique counts are
+`max(1, floor(input_rows * percent / 100))`; 1% therefore means ten or 81 unique
+tuples. Narrow tuples contain twelve UTF-8 bytes; wide tuples add 256 ASCII
+bytes to the second component. Adjacent tuples deliberately collide under plain
+string concatenation. Empty variants select an absent entity from the same schema.
+There is no cache mode matrix. A LIMIT above input cardinality prevents an implicit
+response cap from silently truncating high-cardinality output.
+
+Every original row in all six datasets is verified through QL in entity-pruned
+windows of at most 1,024 rows before any workload query. Warmups and full fixture
+checks are outside timing. Six sampled timed responses are checked afterward, and
+their complete BydbQL protobuf envelope sizes are measured afterward as well.
+Reports retain raw latency samples, p50/p95/p99, throughput, process-wide inclusive
+CPU/heap profiles (heap profiles support alloc_space/alloc_objects), allocation
+deltas, group/key capacities and bytes, zero state lanes, native leaf calls, lease
+charges and verified post-close cleanup. Unobservable metrics are explicitly
+unavailable. Neither prerequisite errors nor failed queries count as throughput.
+
+Run five isolated repetitions with separate report directories:
+
+```sh
+DQB_ENGINE=measure DQB_MODES=vec DQB_SCENARIOS=qlb_t15 \
+DQB_CARDINALITIES=1024,8192 DQB_QUERY_WORKERS=1 DQB_QUERY_MEMORY_MIB=256 \
+DQB_PROFILE=1 DQB_REPORT_DIR=/work/.omx/bench-reports/qlb-t15-r1 \
+test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g
+```
+
+The orchestrator freezes 100 timed calls/5 warmups for 1,024 rows and 20/3 for
+8,192 rows. Larger inputs are separate bounded probes: build with
+`-tags=querymetrics`, then invoke `TestQLBT15Resources` in a fresh container/process
+for each `DQB_T15_RESOURCE_ROWS=100000|1000000` and
+`DQB_T15_RESOURCE_BUDGET_MIB=16|256`. Also set `RUN_DISTRIBUTED_QUERY_BENCH=1`,
+`DQB_IN_CONTAINER=1`, `DQB_ENGINE=measure`, and `DQB_REPORT_DIR` to an artifact
+directory. The resource probe writes only the 100% unique narrow dataset, verifies
+all input through bounded QL reads, then attempts DISTINCT and GROUP BY five times
+each and checks recovery/cleanup. It records readiness blockers distinctly from
+owning-query outcomes. Shared tracker errors do not establish whether a native
+decoder or the group table rejected the allocation; that attribution is explicitly
+unavailable alongside the measured native/group counters and original error.
+
+The initially attempted 16,384-row matrix failed its first wide DISTINCT warmup
+with the native `query memory pool exhausted` error. An untimed fresh single-dataset
+replay reproduced that error after full bounded input verification and cleanup,
+before any DISTINCT execution or retained key state. The same replay at 8,192 rows
+returned the independently expected wide tuples. The ordinary matrix therefore uses
+8,192 uniformly across all fourteen variants; 16,384 is not reported as successful
+throughput. The configured 256 MiB tracker does not override the separate finite
+protector admission policy, and aggregate process counters do not identify the
+specific allowance that rejected a charge.

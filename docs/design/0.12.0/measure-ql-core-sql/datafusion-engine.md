@@ -318,6 +318,22 @@ states. Group-only B9 uses the same path. This shares memory accounting and key
 semantics without copying the legacy first-row-per-group behavior. The legacy
 key codec cannot implement this correctly as-is; keep the SQL codec liaison-local.
 
+T15 implements this path after visible projection, including removal of hidden
+HAVING inputs, and before final pagination. The same tracker accounts for input,
+key-table growth and output. Unordered finite LIMIT stops the table at
+OFFSET + LIMIT unique keys; explicit ordering and absent LIMIT consume complete
+input. Upstream grouping and native result materialization retain their own
+input requirements. Full keys use chunk arenas and compact references;
+64-KiB chunks use the native tracked pool with an 8-MiB global idle bound.
+Checked-out capacity and growth overlap are charged before allocation. Separate DISTINCT
+counters avoid attributing its zero-state table to an upstream aggregate. Selected
+timestamps carry a logical key marker, while incidental source timestamps and
+series identities are excluded. Scalar and binary keys are admitted; array keys
+reject during binding. See [T15 verification](t15-verification.md) for the generated
+RPC cases and equivalent GROUP BY benchmark, and
+[T15 memory verification](t15-memory-verification.md) for the arena, early stopping
+and native buffering follow-up.
+
 Do not silently inherit native numeric or empty-input quirks. The extended QL
 contract is COUNT -> int64, AVG -> float64, empty scalar count -> 0 and other
 empty scalar aggregates -> null; grouped empty input emits no groups. AVG uses

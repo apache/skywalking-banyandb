@@ -43,7 +43,7 @@ func (o *aggregateOperator) emit(ctx context.Context) (*vectorized.RecordBatch, 
 	// lend immutable key substrings and therefore require no payload allocation.
 	var valueBytes int64
 	for group := o.position; group < end; group++ {
-		decodeGroupValues(o.groups.keys[group], o.groupValues)
+		decodeGroupValues(o.groups.key(group), o.groupValues)
 		for _, output := range o.outputs {
 			if output.IsGroup && output.Column.Type == vectorized.ColumnTypeBytes {
 				bytes, allocationErr := groupAllocationBytes(int64(len(o.groupValues[output.Index].text)))
@@ -64,7 +64,7 @@ func (o *aggregateOperator) emit(ctx context.Context) (*vectorized.RecordBatch, 
 				return nil, err
 			}
 		}
-		decodeGroupValues(o.groups.keys[group], o.groupValues)
+		decodeGroupValues(o.groups.key(group), o.groupValues)
 		for index, output := range o.outputs {
 			var value aggregateValue
 			if output.IsGroup {

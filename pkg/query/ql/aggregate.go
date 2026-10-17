@@ -75,6 +75,7 @@ type aggregateCallRef struct {
 }
 
 type aggregateOperator struct {
+	metrics          *groupMetrics
 	source           vectorized.PullOperator
 	tracker          *vectorized.MemoryTracker
 	schema           *vectorized.BatchSchema
@@ -87,6 +88,7 @@ type aggregateOperator struct {
 	stateReaders     []aggregateReader
 	groups           aggregateGroups
 	stats            AggregateStats
+	distinctLimit    uint64
 	metadataBytes    int64
 	outputBytes      int64
 	outputValueBytes int64
@@ -94,12 +96,21 @@ type aggregateOperator struct {
 	complete         bool
 	closed           bool
 	sourceClosed     bool
+	distinct         bool
 }
 
 // WrapAggregate takes source ownership, including on construction failure.
 // It consumes every active input row before emitting synthesized groups, without native identity metadata.
 func WrapAggregate(ctx context.Context, source vectorized.PullOperator, plan *AggregatePlan) (_ vectorized.PullOperator, err error) {
-	op := &aggregateOperator{source: source}
+	return wrapAggregate(ctx, source, plan, false)
+}
+
+func wrapAggregate(ctx context.Context, source vectorized.PullOperator, plan *AggregatePlan, distinct bool) (_ vectorized.PullOperator, err error) {
+	metrics := &aggregateGroupMetrics
+	if distinct {
+		metrics = &distinctGroupMetrics
+	}
+	op := &aggregateOperator{source: source, distinct: distinct, metrics: metrics}
 	defer func() {
 		if err != nil {
 			_ = op.Close()
@@ -120,7 +131,7 @@ func WrapAggregate(ctx context.Context, source vectorized.PullOperator, plan *Ag
 		return nil, err
 	}
 	op.metadataBytes = bytes
-	op.groups = aggregateGroups{tracker: op.tracker}
+	op.groups = aggregateGroups{tracker: op.tracker, metrics: metrics}
 	op.groupValues = make([]aggregateValue, len(plan.GroupBy))
 	op.groupReaders = make([]aggregateReader, len(plan.GroupBy))
 	for index, def := range plan.GroupBy {
@@ -207,7 +218,7 @@ func aggregateOutputType(call AggregateCall) vectorized.ColumnType {
 // AggregateStatistics returns the structural state of a local aggregate, including after Close.
 func AggregateStatistics(source vectorized.PullOperator) (AggregateStats, bool) {
 	for current := source; current != nil; current = operatorSource(current) {
-		if op, ok := current.(*aggregateOperator); ok {
+		if op, ok := current.(*aggregateOperator); ok && !op.distinct {
 			return op.statistics(), true
 		}
 	}
@@ -278,14 +289,14 @@ func (o *aggregateOperator) reserve(bytes int64) error {
 	if err := o.tracker.Reserve(bytes); err != nil {
 		return err
 	}
-	recordAggregateReserve(bytes)
+	o.metrics.reserve(bytes)
 	return nil
 }
 
 func (o *aggregateOperator) release(bytes int64) {
 	if bytes != 0 && o.tracker != nil {
 		o.tracker.Release(bytes)
-		recordAggregateRelease(bytes)
+		o.metrics.release(bytes)
 	}
 }
 
@@ -335,6 +346,9 @@ func (o *aggregateOperator) consumeAll(ctx context.Context) error {
 		if err = o.consumeBatch(ctx, batch); err != nil {
 			return err
 		}
+		if o.distinctLimit != 0 && uint64(len(o.groups.keys)) >= o.distinctLimit {
+			break
+		}
 	}
 	// Source columns can borrow native decode buffers. Only encoded group keys
 	// and fixed-width state survive the scan; discard the readers before egress.
@@ -349,7 +363,7 @@ func (o *aggregateOperator) consumeAll(ctx context.Context) error {
 		return err
 	}
 	o.complete = true
-	recordAggregateExecution(o.statistics())
+	o.metrics.execution(o.statistics())
 	return nil
 }
 
@@ -382,6 +396,7 @@ func (o *aggregateOperator) consumeBatch(ctx context.Context, batch *vectorized.
 			if err != nil {
 				return err
 			}
+			value.timestamp = o.groupReaders[index].timestamp
 			o.groupValues[index] = value
 		}
 		group, err := o.groupID(o.groupValues)
@@ -398,6 +413,9 @@ func (o *aggregateOperator) consumeBatch(ctx context.Context, batch *vectorized.
 			}
 		}
 		o.stats.InputRows++
+		if o.distinctLimit != 0 && uint64(len(o.groups.keys)) >= o.distinctLimit {
+			break
+		}
 	}
 	return nil
 }
