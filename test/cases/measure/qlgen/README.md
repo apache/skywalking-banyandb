@@ -323,7 +323,7 @@ go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/
 ```
 
 Expression WHERE is covered by T12 below, grouped HAVING by T14, and computed
-grouping remains in T16.
+grouping by T16.
 
 ## T12 typed field filters
 
@@ -551,7 +551,7 @@ The authoritative inventory is `coverageContract` in `coverage_contract.go`.
 | --- | --- |
 | Catalog B5 | Multiple sort keys and null placement require T17. |
 | Catalog B6 | T15 covers scalar visible-tuple `SELECT DISTINCT`; projected arrays reject during binding. |
-| Catalog B9 | Computed and ordinal grouping require T16. |
+| Catalog B9 | T16 covers multiple computed keys, SELECT ordinals after star expansion and selectable TIME_BUCKET values. |
 | Low-valued float means | Legacy native mean clamps values below one; the oracle keeps arithmetic mean semantics. |
 | Stage selection | Needs a generated staged-group fixture. |
 | Index ordering | Needs generated index rules and bindings. |
@@ -644,3 +644,58 @@ go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/
 
 Run the two topologies sequentially. Existing generated cases and scenarios retain
 their query texts and expected values.
+
+## T16 computed grouping, ordinals and buckets
+
+`t16_generate.go` enumerates 42 scenarios with three bindings each and 23
+no-scan rejection cases, producing 65 T16 specs. The finite model and independent
+oracle are in `t16_model.go` and `t16_oracle.go`; generation never asks the query
+planner or running engine for expected results. `t16_fixture.go` defines the
+six-row F fixture, a six-row two-column star fixture, and a 1,153-row fixture
+spanning native batches. Twelve QL-only readiness queries establish complete
+fixture visibility.
+
+Scenarios cover multiple arithmetic/CASE/cast keys, repeated keys, structural
+matching, ordinal equivalence, star expansion, group-only execution, nullable
+keys, hidden keys, changed expression parameters, WHERE/HAVING/DISTINCT, and
+explicit/default/aligned time buckets. The F CASE witness returns high=10 and
+low=2; two-second bucket sums are 2,4,6. A native bucket cohort checks five actual
+reduction leaves, then forces local execution against the same independent
+expected results. Parameterized ordinal cases change values while retaining the
+same six input rows, so rebinding cannot be hidden by changing only scan bounds.
+
+The runner executes 252 successful cold/warm and bypassed calls, three extra
+forced-local parity calls, 23 rejected calls and 23 successful recovery calls:
+301 verification RPCs per topology, besides readiness. Actual key-root entries
+must equal independently identified unique roots times observed active batches.
+Logical key row applications must equal unique roots times active WHERE rows;
+constant scalar computation is counted separately. Repeated projections and
+ordinal references must not add work. The bulk case checks 2,302 key cells
+over 1,151 selected rows. Local cases require one complete QL raw scan, while
+native cases require their declared branch count. Every call verifies restored
+tracked memory and native ownership, with no intermediate DataPoints or native
+Query RPCs. `-tags=querymetrics` is mandatory for these work assertions.
+
+Mixed raw-time/bucket grouping separately verifies all six original timestamp
+values, the three bucket values and local execution; bucket reduction must not
+erase the original time key. T16 aligns its fixture base to six seconds so
+independent two- and three-second bucket expectations remain epoch aligned.
+Review regressions cover canonical duration widths, scoped HAVING over visible
+and hidden raw-time keys, timestamp/field alias collisions, and DISTINCT with
+visible versus hidden bucket keys. Structural work identity ignores rendering
+parentheses and equivalent source qualification, while retaining each parameter
+position even when two bindings have equal values.
+
+The old T07 rejection `t07_invalid_shape_6` now uses a zero-width bucket instead
+of a supported two-second bucket. Other prior queries and expected results are
+preserved. The grammar fingerprint covers the new grouping parser, and
+`make check-ql-test-cases` verifies deterministic generation.
+
+```sh
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/standalone/query \
+  -ginkgo.label-filter=QLB-T16 -ginkgo.fail-on-empty
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/query \
+  -ginkgo.label-filter=QLB-T16 -ginkgo.fail-on-empty
+```
+
+Run the topologies sequentially. General ORDER BY/full-sort/top-k remains T17.

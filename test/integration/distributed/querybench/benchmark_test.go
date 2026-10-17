@@ -99,6 +99,8 @@ func runSingleShotScenario(t *testing.T, cfg Config) {
 	var written writeSummary
 	var writeErr error
 	switch cfg.Scenario {
+	case ScenarioQLBT16:
+		written, writeErr = writeQLBT16Data(ctx, cluster.conn, cfg, base)
 	case ScenarioQLBT15:
 		written, writeErr = writeQLBT15Data(ctx, cluster.conn, cfg, base)
 	case ScenarioQLBT14:
@@ -143,6 +145,8 @@ func runMergeShards(t *testing.T, cfg Config) {
 	var flattened []Result
 	for _, result := range results {
 		switch result.Scenario {
+		case ScenarioQLBT16:
+			flattened = append(flattened, result.Variants...)
 		case ScenarioQLBT15:
 			if validationErr := validateQLBT15Result(result); validationErr != nil {
 				t.Fatal(validationErr)
@@ -223,6 +227,9 @@ func runMergeShards(t *testing.T, cfg Config) {
 // against an already-prepared cluster, capturing CPU and heap profiles for
 // the timed phase.
 func runScenarioBenchmark(ctx context.Context, conn *grpc.ClientConn, cfg Config, scenario Scenario, cardinality int, mode string, base time.Time) (Result, error) {
+	if scenario == ScenarioQLBT16 {
+		return runQLBT16Benchmark(ctx, conn, cfg, base)
+	}
 	if scenario == ScenarioQLBT15 {
 		return runQLBT15Benchmark(ctx, conn, cfg, base)
 	}
@@ -332,6 +339,9 @@ func startBenchCluster(t *testing.T, cfg Config, additionalLiaisonFlags ...strin
 		if cfg.Scenario == ScenarioQLBT12 {
 			preload = preloadQLBT12Schema
 		}
+		if cfg.Scenario == ScenarioQLBT16 {
+			preload = preloadQLBT16Schema
+		}
 		if cfg.Scenario == ScenarioQLBT15 {
 			preload = preloadQLBT15Schema
 		}
@@ -394,7 +404,7 @@ func clusterFlags(cfg Config) []string {
 	}
 	if cfg.Scenario == ScenarioQLBT02 || cfg.Scenario == ScenarioQLBT03 || cfg.Scenario == ScenarioQLBT05 ||
 		cfg.Scenario == ScenarioQLBT07 || cfg.Scenario == ScenarioQLBT08 || cfg.Scenario == ScenarioQLBT10 ||
-		cfg.Scenario == ScenarioQLBT12 || cfg.Scenario == ScenarioQLBT14 || cfg.Scenario == ScenarioQLBT15 {
+		cfg.Scenario == ScenarioQLBT12 || cfg.Scenario == ScenarioQLBT14 || cfg.Scenario == ScenarioQLBT15 || cfg.Scenario == ScenarioQLBT16 {
 		return []string{fmt.Sprintf("--measure-vectorized-query-memory-mib=%d", cfg.QueryMemoryMiB)}
 	}
 	if cfg.Soak {
@@ -408,7 +418,7 @@ func clusterFlags(cfg Config) []string {
 func validateCatalogBMatrices(results []Result) error {
 	for _, validate := range []func([]Result) error{
 		validateQLBT03Matrix, validateQLBT07Matrix, validateQLBT08Matrix,
-		validateQLBT10Matrix, validateQLBT12Matrix, validateQLBT14Matrix, validateQLBT15Matrix,
+		validateQLBT10Matrix, validateQLBT12Matrix, validateQLBT14Matrix, validateQLBT15Matrix, validateQLBT16Matrix,
 	} {
 		if err := validate(results); err != nil {
 			return err

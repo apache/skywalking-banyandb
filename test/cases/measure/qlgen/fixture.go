@@ -143,6 +143,8 @@ func FixtureWrites(base time.Time) []*measurev1.WriteRequest {
 // FixtureDigest identifies the exact schema and values used by generated expectations.
 func FixtureDigest() string {
 	data, err := json.Marshal(struct {
+		T16Schemas        []*databasev1.Measure
+		T16Rows           [][]fixtureRow
 		T15Schema         *databasev1.Measure
 		T15Rows           []fixtureRow
 		T14Binding        *databasev1.IndexRuleBinding
@@ -174,7 +176,9 @@ func FixtureDigest() string {
 		T14Indexes        []*databasev1.IndexRule
 		T14ReviewBindings []*databasev1.IndexRuleBinding
 	}{
-		T15Schema: T15FixtureSchema(), T15Rows: t15Rows(),
+		T16Schemas: []*databasev1.Measure{T16FixtureSchema(T16FixtureName), T16FixtureSchema(T16StarFixtureName), T16FixtureSchema(T16BulkFixtureName)},
+		T16Rows:    [][]fixtureRow{t16Rows(T16FixtureName), t16Rows(T16StarFixtureName), t16Rows(T16BulkFixtureName)},
+		T15Schema:  T15FixtureSchema(), T15Rows: t15Rows(),
 		T14Schemas: []*databasev1.Measure{
 			T14FixtureSchema(T14FixtureName), T14FixtureSchema(T14GroupsFixtureName), T14FixtureSchema(T14LegacyFixtureName),
 			T14FixtureSchema(T14ContainsFixtureName), T14FixtureSchema(T14IndexedFixtureName),

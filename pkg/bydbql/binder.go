@@ -65,6 +65,11 @@ func BindParams(g *Grammar, params []*modelv1.TagValue) error {
 	if g.Select != nil && g.Select.Having != nil {
 		expandExpressionLists(g.Select.Having.Expression)
 	}
+	if g.Select != nil && g.Select.GroupBy != nil {
+		for _, group := range g.Select.GroupBy.Columns {
+			expandExpressionLists(group.Expression)
+		}
+	}
 	g.paramsBound = true
 	return nil
 }
@@ -111,6 +116,11 @@ func (b *binder) collect(g *Grammar) {
 				walkGrammarExpression(g.Select.Where.Expression, b.collectExpression)
 			} else {
 				b.collectOrExpr(g.Select.Where.Expr)
+			}
+		}
+		if g.Select.GroupBy != nil {
+			for _, group := range g.Select.GroupBy.Columns {
+				walkGrammarExpression(group.Expression, b.collectExpression)
 			}
 		}
 		if g.Select.Having != nil {

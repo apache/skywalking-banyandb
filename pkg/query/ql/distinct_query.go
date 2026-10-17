@@ -57,9 +57,40 @@ func distinctSlot(plan *RawPlan, i int) Slot {
 	}
 	if plan.Aggregate != nil {
 		output := plan.Aggregate.Outputs[i]
-		return Slot{Source: output.Column, Output: output.Column}
+		return Slot{Source: output.Column, Output: output.Column, Timestamp: output.Timestamp}
 	}
 	return plan.Slots[i]
+}
+
+// distinctBucketOutput keeps bucket metadata only when an existing visible key
+// owns that value. Hidden grouping keys never affect DISTINCT equality.
+func distinctBucketOutput(source vectorized.PullOperator, plan *RawPlan) (width string, visible int) {
+	for current := source; current != nil; current = operatorSource(current) {
+		var outputs []AggregateOutput
+		var bucket int
+		switch aggregate := current.(type) {
+		case *aggregateOperator:
+			outputs, width, bucket = aggregate.outputs, aggregate.bucketWidth, aggregate.bucketIndex
+		case *nativeAggregateOperator:
+			outputs, width, bucket = aggregate.outputs, aggregate.bucketWidth, aggregate.bucketIndex
+		default:
+			continue
+		}
+		if width == "" || bucket < 0 {
+			return "", 0
+		}
+		for index := 0; index < distinctSlotCount(plan); index++ {
+			column := distinctSlot(plan, index).Source
+			for _, output := range outputs {
+				if output.IsGroup && output.Index == bucket && output.Column.Role == column.Role && output.Column.Name == column.Name &&
+					output.Column.TagFamily == column.TagFamily {
+					return width, index
+				}
+			}
+		}
+		return "", 0
+	}
+	return "", 0
 }
 
 // ValidateDistinct rejects unsupported visible key types before execution.
@@ -98,7 +129,10 @@ func wrapDistinctQuery(ctx context.Context, source vectorized.PullOperator, plan
 		return nil, err
 	}
 	defer tracker.Release(bytes)
-	grouping := &AggregatePlan{GroupBy: make([]vectorized.ColumnDef, width), Outputs: make([]AggregateOutput, width)}
+	bucketWidth, bucketIndex := distinctBucketOutput(projected, plan)
+	grouping := &AggregatePlan{
+		GroupBy: make([]vectorized.ColumnDef, width), Outputs: make([]AggregateOutput, width), TimeBucketWidth: bucketWidth, TimeBucketIndex: bucketIndex,
+	}
 	outputs := make([]Slot, width)
 	for i := 0; i < width; i++ {
 		slot := distinctSlot(plan, i)

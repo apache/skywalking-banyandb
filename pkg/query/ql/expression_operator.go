@@ -110,6 +110,12 @@ type expressionOperator struct {
 
 // WrapExpressions owns source on every return path and lends projected batches until the next pull.
 func WrapExpressions(ctx context.Context, source vectorized.PullOperator, plan *ExpressionPlan) (_ vectorized.PullOperator, err error) {
+	return wrapExpressions(ctx, source, plan, &projectionMetrics, 0)
+}
+
+func wrapExpressions(ctx context.Context, source vectorized.PullOperator, plan *ExpressionPlan,
+	metrics *operatorMetrics, keyOutputs int,
+) (_ vectorized.PullOperator, err error) {
 	defer func() {
 		if err != nil && source != nil {
 			_ = source.Close()
@@ -121,7 +127,7 @@ func WrapExpressions(ctx context.Context, source vectorized.PullOperator, plan *
 	if source == nil || source.OutputSchema() == nil || plan == nil {
 		return nil, expressionError("source schema and plan are required")
 	}
-	op := &expressionOperator{source: source, tracker: vectorized.QueryMemoryTracker(ctx, 256<<20), metrics: &projectionMetrics}
+	op := &expressionOperator{source: source, tracker: vectorized.QueryMemoryTracker(ctx, 256<<20), metrics: metrics}
 	defer func() {
 		if err != nil {
 			op.release()
@@ -131,7 +137,7 @@ func WrapExpressions(ctx context.Context, source vectorized.PullOperator, plan *
 		return nil, err
 	}
 	defs := make([]vectorized.ColumnDef, 0, len(plan.Outputs)+len(source.OutputSchema().Columns))
-	for _, output := range plan.Outputs {
+	for index, output := range plan.Outputs {
 		bytes, boundErr := expressionCloneBound(output.Expr, 0)
 		if boundErr != nil {
 			return nil, boundErr
@@ -150,6 +156,9 @@ func WrapExpressions(ctx context.Context, source vectorized.PullOperator, plan *
 		if nodeErr != nil {
 			return nil, nodeErr
 		}
+		if index < keyOutputs {
+			node.eval = op.groupKeyEvaluator(node.eval)
+		}
 		op.outputs = append(op.outputs, node)
 		def := output.Column
 		def.Type = expressionStorageType(resolved.Type)
@@ -164,6 +173,20 @@ func WrapExpressions(ctx context.Context, source vectorized.PullOperator, plan *
 	op.schema = vectorized.NewBatchSchema(defs)
 	op.view = vectorized.RecordBatch{Schema: op.schema, Columns: make([]vectorized.Column, len(defs)), Lent: true}
 	return op, nil
+}
+
+func (o *expressionOperator) groupKeyEvaluator(
+	evaluate func(context.Context, *vectorized.RecordBatch, []uint16) (*expressionVector, error),
+) func(context.Context, *vectorized.RecordBatch, []uint16) (*expressionVector, error) {
+	return func(ctx context.Context, batch *vectorized.RecordBatch, mask []uint16) (*expressionVector, error) {
+		// Observe actual root calls outside scalar memoization. A duplicate root
+		// invocation increments both counters; an uncalled later key adds nothing.
+		rows := uint64(expressionRows(batch, mask))
+		o.stats.KeyRootCalls++
+		o.stats.KeyEvaluations += rows
+		o.recordWork(ExpressionStats{KeyRootCalls: 1, KeyEvaluations: rows})
+		return evaluate(ctx, batch, mask)
+	}
 }
 
 func expressionCloneBound(expr *Expression, depth int) (int64, error) {
@@ -291,6 +314,8 @@ func (o *expressionOperator) compile(expr *Expression) (*expressionNode, error) 
 		node.eval = node.arithmetic(expr.Op)
 	case "cast":
 		node.eval = node.cast(expr.Args[0].Type, expr.Type)
+	case "time_bucket":
+		node.eval = node.timeBucket(expr.Literal.Int64)
 	case "negate", "positive":
 		node.eval = node.unary(expr.Op)
 	case "=", "!=", "<", "<=", ">", ">=":

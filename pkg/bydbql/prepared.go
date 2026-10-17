@@ -186,6 +186,11 @@ func (p *preparer) walkGrammar(g *Grammar) {
 				p.walkOrExpr(g.Select.Where.Expr)
 			}
 		}
+		if g.Select.GroupBy != nil {
+			for _, group := range g.Select.GroupBy.Columns {
+				walkGrammarExpression(group.Expression, p.walkExpressionParameter)
+			}
+		}
 		if g.Select.Having != nil {
 			walkGrammarExpression(g.Select.Having.Expression, p.walkExpressionParameter)
 		}

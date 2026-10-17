@@ -100,6 +100,7 @@ type GrammarTopNProjection struct {
 type GrammarColumn struct {
 	Pos          lexer.Position
 	SingleQuoted bool
+	All          bool
 	Expression   *GrammarExpression
 	Aggregate    *GrammarAggregateFunction `parser:"( @@"`
 	Identifier   *GrammarIdentifierPath    `parser:"| @@ )"`
@@ -342,13 +343,15 @@ type GrammarGroupByClause struct {
 // GrammarGroupByColumn represents a column in GROUP BY: a plain tag/field
 // identifier, or the TIME_BUCKET(...) pseudo-column.
 type GrammarGroupByColumn struct {
-	TimeBucket *GrammarTimeBucket     `parser:"(  @@"`
+	Expression *GrammarExpression
+	Ordinal    *int                   `parser:"( @Int"`
+	TimeBucket *GrammarTimeBucket     `parser:"| @@"`
 	Identifier *GrammarIdentifierPath `parser:" | @@ )"`
 	TypeSpec   *string                `parser:"( '::' @('TAG'|'FIELD') )?"`
 }
 
-// GrammarTimeBucket represents TIME_BUCKET(<duration>), valid only inside
-// GROUP BY. Width is optional; an empty width defers to the measure's own
+// GrammarTimeBucket represents TIME_BUCKET(<duration>). Width is optional;
+// an empty width defers to the measure's own
 // interval (design §5.3).
 type GrammarTimeBucket struct {
 	TimeBucket string  `parser:"@'TIME_BUCKET'"`

@@ -126,6 +126,8 @@ const (
 	ScenarioQLBT14 Scenario = "qlb_t14"
 	// ScenarioQLBT15 benchmarks complete visible-tuple DISTINCT.
 	ScenarioQLBT15 Scenario = "qlb_t15"
+	// ScenarioQLBT16 benchmarks computed and ordinal group keys.
+	ScenarioQLBT16 Scenario = "qlb_t16"
 	// ScenarioTraceByID benchmarks distributed trace-id lookup.
 	ScenarioTraceByID Scenario = "trace_by_id"
 	// ScenarioTraceTagFilter benchmarks distributed ordered trace tag filters.
@@ -259,7 +261,7 @@ func (c Config) Validate() error {
 	case engineMeasure:
 		switch c.Scenario {
 		case ScenarioScanAll, ScenarioTopWithFilter, ScenarioQLBT01, ScenarioQLBT02, ScenarioQLBT03, ScenarioQLBT05,
-			ScenarioQLBT07, ScenarioQLBT08, ScenarioQLBT10, ScenarioQLBT12, ScenarioQLBT14, ScenarioQLBT15:
+			ScenarioQLBT07, ScenarioQLBT08, ScenarioQLBT10, ScenarioQLBT12, ScenarioQLBT14, ScenarioQLBT15, ScenarioQLBT16:
 		default:
 			return fmt.Errorf("%s unsupported for %s=%s: %q", envScenario, envEngine, c.Engine, c.Scenario)
 		}
@@ -481,6 +483,9 @@ func queryTimeout(cardinality int) time.Duration {
 }
 
 func (c Config) validateCatalogB() error {
+	if c.Scenario == ScenarioQLBT16 {
+		return c.validateQLBT16()
+	}
 	if c.Scenario == ScenarioQLBT15 {
 		return c.validateQLBT15()
 	}
@@ -631,6 +636,28 @@ func (c Config) validateQLBT15() error {
 	}
 	if c.QueryWorkers != 1 || c.QueryIterations != iterations || c.WarmupIterations != warmup || c.QueryMemoryMiB != 256 || !c.Profile {
 		return fmt.Errorf("qlb_t15 requires one worker, %d calls, %d warmups, 256 MiB and profiles", iterations, warmup)
+	}
+	return nil
+}
+
+func qlbT16Schedule(cardinality int) (iterations, warmup int, err error) {
+	switch cardinality {
+	case 1024:
+		return 100, 5, nil
+	case 32768:
+		return 20, 3, nil
+	default:
+		return 0, 0, fmt.Errorf("qlb_t16 successful queries require cardinality 1024 or 32768; larger inputs belong to bounded resource probes")
+	}
+}
+
+func (c Config) validateQLBT16() error {
+	iterations, warmup, err := qlbT16Schedule(c.Cardinality)
+	if err != nil {
+		return err
+	}
+	if c.QueryWorkers != 1 || c.QueryIterations != iterations || c.WarmupIterations != warmup || c.QueryMemoryMiB != 256 || !c.Profile {
+		return fmt.Errorf("qlb_t16 requires one worker, %d calls, %d warmups, 256 MiB and profiles", iterations, warmup)
 	}
 	return nil
 }

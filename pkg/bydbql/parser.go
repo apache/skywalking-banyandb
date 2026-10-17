@@ -128,6 +128,17 @@ func ParseQuery(query string) (*Grammar, error) {
 }
 
 func parseSelectSyntax(query string) (*Grammar, error) {
+	grammar, err := parseSelectWithoutComputedGroups(query)
+	if err != nil {
+		groupGrammar, groupErr := parseExpressionGroupBy(query)
+		if !errors.Is(groupErr, errNoExpressionGroupBy) {
+			return groupGrammar, groupErr
+		}
+	}
+	return grammar, err
+}
+
+func parseSelectWithoutComputedGroups(query string) (*Grammar, error) {
 	grammar, err := particpleParser.ParseString("", query)
 	if err != nil {
 		grammar, err = parseExpressionProjection(query)
@@ -154,6 +165,9 @@ func checkAggregateAndGroupByShape(g *Grammar) error {
 	if g.Select == nil {
 		return nil
 	}
+	if g.Select.Where != nil && grammarExpressionHasBucket(g.Select.Where.Expression) {
+		return fmt.Errorf("syntax error: TIME_BUCKET is supported only in grouped SELECT and HAVING expressions")
+	}
 	if proj := g.Select.Projection; proj != nil {
 		var columns []*GrammarColumn
 		columns = append(columns, proj.Columns...)
@@ -161,6 +175,9 @@ func checkAggregateAndGroupByShape(g *Grammar) error {
 			columns = append(columns, proj.TopN.OtherColumns...)
 		}
 		for _, col := range columns {
+			if g.Select.GroupBy == nil && grammarExpressionHasBucket(col.Expression) {
+				return fmt.Errorf("syntax error: TIME_BUCKET projection requires GROUP BY")
+			}
 			if col.Aggregate == nil {
 				continue
 			}
@@ -185,7 +202,7 @@ func checkAggregateAndGroupByShape(g *Grammar) error {
 	if gb := g.Select.GroupBy; gb != nil {
 		bucketCount := 0
 		for _, col := range gb.Columns {
-			if col.TimeBucket != nil {
+			if col.TimeBucket != nil || grammarExpressionHasBucket(col.Expression) {
 				bucketCount++
 			}
 		}
@@ -194,6 +211,21 @@ func checkAggregateAndGroupByShape(g *Grammar) error {
 		}
 	}
 	return nil
+}
+
+func grammarExpressionHasBucket(expression *GrammarExpression) bool {
+	if expression == nil {
+		return false
+	}
+	if expression.Op == "time_bucket" {
+		return true
+	}
+	for _, child := range expression.Args {
+		if grammarExpressionHasBucket(child) {
+			return true
+		}
+	}
+	return false
 }
 
 func checkAggregateShape(aggregate *GrammarAggregateFunction) error {

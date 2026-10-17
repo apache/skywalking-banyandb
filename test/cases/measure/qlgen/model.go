@@ -64,25 +64,26 @@ type Predicate struct {
 
 // Case contains a generated QL statement and independently evaluated result.
 type Case struct {
-	DistinctInputs   *uint64            `json:"distinct_inputs,omitempty"`
-	Having           *HavingExpectation `json:"having,omitempty"`
-	Filter           *FilterExpectation `json:"filter,omitempty"`
-	Dimensions       map[string]string  `json:"dimensions,omitempty"`
-	Ticket           string             `json:"ticket,omitempty"`
-	ClockMillis      *int64             `json:"clock_millis,omitempty"`
-	Name             string             `json:"name"`
-	Query            string             `json:"query"`
-	WantMessage      string             `json:"want_message,omitempty"`
-	WantJSON         json.RawMessage    `json:"want,omitempty"`
-	Features         []string           `json:"features"`
-	AggregateInputs  uint64             `json:"aggregate_inputs,omitempty"`
-	DistinctGroups   uint64             `json:"distinct_groups,omitempty"`
-	AggregateGroups  uint64             `json:"aggregate_groups,omitempty"`
-	WantCode         codes.Code         `json:"want_code,omitempty"`
-	Ordered          bool               `json:"ordered,omitempty"`
-	Trace            bool               `json:"trace,omitempty"`
-	PreparedRejected bool               `json:"prepared_rejected,omitempty"`
-	NoScan           bool               `json:"no_scan,omitempty"`
+	Grouping         *GroupingExpectation `json:"grouping,omitempty"`
+	DistinctInputs   *uint64              `json:"distinct_inputs,omitempty"`
+	Having           *HavingExpectation   `json:"having,omitempty"`
+	Filter           *FilterExpectation   `json:"filter,omitempty"`
+	Dimensions       map[string]string    `json:"dimensions,omitempty"`
+	Ticket           string               `json:"ticket,omitempty"`
+	ClockMillis      *int64               `json:"clock_millis,omitempty"`
+	Name             string               `json:"name"`
+	Query            string               `json:"query"`
+	WantMessage      string               `json:"want_message,omitempty"`
+	WantJSON         json.RawMessage      `json:"want,omitempty"`
+	Features         []string             `json:"features"`
+	AggregateInputs  uint64               `json:"aggregate_inputs,omitempty"`
+	DistinctGroups   uint64               `json:"distinct_groups,omitempty"`
+	AggregateGroups  uint64               `json:"aggregate_groups,omitempty"`
+	WantCode         codes.Code           `json:"want_code,omitempty"`
+	Ordered          bool                 `json:"ordered,omitempty"`
+	Trace            bool                 `json:"trace,omitempty"`
+	PreparedRejected bool                 `json:"prepared_rejected,omitempty"`
+	NoScan           bool                 `json:"no_scan,omitempty"`
 }
 
 func matchesPredicate(p *Predicate, row fixtureRow) (bool, error) {

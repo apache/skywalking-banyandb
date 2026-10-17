@@ -86,8 +86,17 @@ mkdir -p "${SHARD_DIR}"
 rm -f "${SHARD_DIR}"/*.json
 rm -rf "${PROFILE_DIR}"
 
-echo "[orchestrate] building test binary..."
-go test -tags=querymetrics -c -o "${BINARY}" ./test/integration/distributed/querybench
+if [[ -n "${DQB_TEST_BINARY:-}" ]]; then
+  BINARY="${DQB_TEST_BINARY}"
+  if [[ ! -f "${BINARY}" || ! -x "${BINARY}" ]]; then
+    echo "DQB_TEST_BINARY must name an executable test binary" >&2
+    exit 2
+  fi
+  echo "[orchestrate] reusing test binary ${BINARY}"
+else
+  echo "[orchestrate] building test binary..."
+  go test -tags=querymetrics -c -o "${BINARY}" ./test/integration/distributed/querybench
+fi
 
 # DQB_SOAK=1: run the in-process sustained soak (Instrument 2) instead of the
 # matrix benchmark. The soak test hard-fails unless DQB_IN_CONTAINER=1 (already
@@ -142,6 +151,12 @@ run_variant() {
           1024) query_iterations=100; warmup_iterations=5 ;;
           16384) query_iterations=20; warmup_iterations=3 ;;
           *) echo "T12 successful queries require cardinality 1024,16384" >&2; exit 2 ;;
+        esac
+      elif [[ "${scenario}" == "qlb_t16" ]]; then
+        case "${card}" in
+          1024) query_iterations=100; warmup_iterations=5 ;;
+          32768) query_iterations=20; warmup_iterations=3 ;;
+          *) echo "T16 successful queries require 1024 or 32768 rows" >&2; exit 2 ;;
         esac
       elif [[ "${scenario}" == "qlb_t15" ]]; then
         case "${card}" in

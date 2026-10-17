@@ -77,7 +77,6 @@ func TestMeasureSQLAggregateRejectsUnsupportedShapesBeforeScan(t *testing.T) {
 		"SELECT COUNT(clash) FROM g.m",
 		"SELECT COUNT(missing) FROM g.m",
 		"SELECT host AS node, SUM(v) AS s FROM g.m GROUP BY node",
-		"SELECT SUM(v) FROM g.m GROUP BY TIME_BUCKET('2s')",
 		"SELECT SUM(v) FROM g.m ORDER BY time",
 	}
 	for _, query := range queries {

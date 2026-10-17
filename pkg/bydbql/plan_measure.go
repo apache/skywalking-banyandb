@@ -55,6 +55,7 @@ type MeasureTemplate struct {
 	nativeEntities []vectorized.ColumnDef
 	slots          []ql.Slot
 	expressions    []measureExpressionOutput
+	groups         []measureExpressionOutput
 	extended       bool
 }
 
@@ -165,6 +166,9 @@ func (m *MeasureTemplate) compileTyped(schemas map[string]*databasev1.Measure) e
 	columns, err := resolveMeasureColumns(stmt.From.In.Groups, schemas)
 	if err != nil {
 		return err
+	}
+	for _, group := range stmt.From.In.Groups {
+		columns.intervals = append(columns.intervals, schemas[group].GetInterval())
 	}
 	switch {
 	case stmt.Having != nil || stmt.GroupBy != nil:
@@ -315,6 +319,9 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 }
 
 func requiresMeasurePlan(stmt *GrammarSelectStatement) bool {
+	if hasComputedMeasureGroups(stmt.GroupBy) {
+		return true
+	}
 	if stmt.Distinct || stmt.Having != nil || stmt.From.Shorthand != nil || measureAggregateCount(stmt) > 1 || hasMeasureExpressions(stmt.Projection) ||
 		stmt.Where != nil && stmt.Where.Expression != nil {
 		return true
@@ -335,6 +342,18 @@ func requiresMeasurePlan(stmt *GrammarSelectStatement) bool {
 		}
 	}
 	return whereHasTime(stmt.Where)
+}
+
+func hasComputedMeasureGroups(groupBy *GrammarGroupByClause) bool {
+	if groupBy == nil {
+		return false
+	}
+	for _, group := range groupBy.Columns {
+		if group.Expression != nil || group.Ordinal != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func measureAggregateCount(stmt *GrammarSelectStatement) int {
@@ -434,8 +453,9 @@ func (m *MeasureTemplate) bindLocalOperators(bound *BoundQuery) (*ql.RawPlan, er
 		return nil, err
 	}
 	if m.aggregate != nil {
-		plan.Aggregate = &ql.AggregatePlan{
-			GroupBy: slices.Clone(m.aggregate.GroupBy), Calls: slices.Clone(m.aggregate.Calls), Outputs: slices.Clone(m.aggregate.Outputs),
+		plan.Aggregate, err = m.bindAggregate(bound)
+		if err != nil {
+			return nil, err
 		}
 	}
 	if plan.Distinct {
@@ -443,7 +463,7 @@ func (m *MeasureTemplate) bindLocalOperators(bound *BoundQuery) (*ql.RawPlan, er
 			return nil, err
 		}
 	}
-	plan.Having, err = m.bindHaving(bound)
+	plan.Having, err = m.bindHaving(bound, plan.Aggregate)
 	if err != nil {
 		return nil, err
 	}

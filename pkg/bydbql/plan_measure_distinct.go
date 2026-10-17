@@ -51,7 +51,7 @@ func (m *MeasureTemplate) validateDistinct() error {
 		}
 	}
 	// Parameter expression types are resolved at Bind.
-	if len(m.expressions) != 0 {
+	if len(m.expressions) != 0 || len(m.groups) != 0 {
 		return nil
 	}
 	return ql.ValidateDistinct(&ql.RawPlan{Slots: m.slots, Aggregate: m.aggregate})

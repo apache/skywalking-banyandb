@@ -703,3 +703,79 @@ returned the independently expected wide tuples. The ordinary matrix therefore u
 throughput. The configured 256 MiB tracker does not override the separate finite
 protector admission policy, and aggregate process counters do not identify the
 specific allowance that rejected a charge.
+
+### T16 computed and ordinal grouping
+
+`qlb_t16` has six real distributed QL RPC controls: `simple_low`,
+`computed_explicit_low`, `computed_ordinal_low`, and the corresponding `_high`
+variants. Low cardinality has eight groups; high cardinality has half as many
+groups as input rows. The fixed inputs are 1,024 and 32,768 rows per dataset,
+one worker, 256 MiB per query tracker, and profiles enabled. The schedule is
+100 timed calls/5 warmups and 20/3 respectively. Each low/high dataset is written
+once, including repeated series/timestamps for version deduplication, and reused
+by its three query forms.
+
+The performance comparison covers current T16 simple/computed paths. Historical
+G1/T02 conclusions are outside this benchmark's claims. Full public QL/native
+E2E suites provide current correctness compatibility evidence.
+
+The simple control groups a stored INT field. Computed controls use
+`CASE WHEN raw::FIELD >= 0 THEN raw::FIELD + 1 ELSE 0 END`; the ordinal control
+spells the same grouping as `GROUP BY 1`. Each query reads two INT fields and
+returns the same `key`, `key_again`, and nullable `SUM(v)` fields. Duplicate key
+projections check that SELECT and GROUP BY share one evaluation. Results come
+from independent fixture arithmetic, with the same complete response schema and
+hash across equivalent forms. All input rows are verified through bounded,
+entity-pruned QL requests before warmup; sampled timed responses are checked
+fully after the measurement window.
+
+Reports require one distributed raw scan, one local aggregate, and one actual
+computed-key root invocation per active batch. Eligible row applications are
+counted at those real invocations; cached scalar kernel evaluations are separate.
+The fixed CASE fixture independently predicts exactly `3 * rows - zero_keys`
+vector-kernel rows, zero scalar evaluations, `rows` selected arm values and
+`zero_keys` ELSE values. Simple controls have zero expression work. Explicit and
+ordinal forms must have identical physical work counts.
+Key bytes, aggregate state lanes/bytes, native source/frame rows, reservations,
+lease charges, raw latencies, allocation deltas and post-close cleanup are
+retained. Native source/frame counters include both data-node replicas; logical
+aggregate input rows count the deduplicated rows. Storage physical scans, native
+retained frame bytes and per-tracker peaks remain explicitly unavailable.
+
+Freeze the source after E2E verification and build the querymetrics test binary
+once with the same Go version used by the container. Set `DQB_TEST_BINARY` to its
+mounted path to reuse it across five isolated repetitions:
+
+```sh
+go test -tags=querymetrics -c -o .omx/t16-bench-final.test \
+  ./test/integration/distributed/querybench
+
+DQB_ENGINE=measure DQB_MODES=vec DQB_SCENARIOS=qlb_t16 \
+DQB_CARDINALITIES=1024,32768 DQB_QUERY_WORKERS=1 DQB_QUERY_MEMORY_MIB=256 \
+DQB_PROFILE=1 DQB_TEST_BINARY=/work/.omx/t16-bench-final.test \
+DQB_REPORT_DIR=/work/.omx/bench-reports/qlb-t16-r1 \
+test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g
+```
+
+Use separate `r1` through `r5` directories. The Docker memory-swap limit defaults
+to its memory limit, providing no extra swap. `TestQLBT16Admission`, with
+`DQB_T16_ADMISSION_ROWS=1024|32768`, checks the full control matrix without timing
+before freezing the successful schedule. The 32,768-row admission check passed
+all six controls at 256 MiB.
+
+Larger inputs use `TestQLBT16Resources` in a fresh container/process for each
+`DQB_T16_RESOURCE_ROWS=100000|1000000` and
+`DQB_T16_RESOURCE_BUDGET_MIB=16|256`, with the usual container/run/engine/report
+settings. It writes the high-cardinality dataset, verifies bounded raw input,
+then attempts the owning computed-key request five times and verifies cleanup
+and recovery. A correct full result or ResourceExhausted without a partial result
+is accepted as a resource observation. Readiness blockers are recorded separately;
+a prerequisite rejection supplies no throughput evidence. If the unchanged native
+prerequisite blocks 100,000 rows at 16 MiB, retain that blocker rather than repeat
+the same impossible prerequisite at one million rows.
+
+`BenchmarkGroupExpressions` in `pkg/query/ql` measures key evaluation plus grouping
+for the same low/high shapes and a small 2-second TIME_BUCKET control. It uses the
+public aggregate/expression plans, checks independent values before and after
+timing, and reports allocations and observed key/state work. Use a querymetrics
+build to observe unique key evaluation counts.
