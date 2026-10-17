@@ -49,6 +49,8 @@ type MeasureTemplate struct {
 	legacyTags     map[string]*tagSpecWithFamily
 	aggregate      *ql.AggregatePlan
 	filter         *measureExpression
+	having         *measureExpression
+	havingOutputs  []ql.Slot
 	filterTags     map[measureColumnKey]bool
 	nativeEntities []vectorized.ColumnDef
 	slots          []ql.Slot
@@ -165,6 +167,8 @@ func (m *MeasureTemplate) compileTyped(schemas map[string]*databasev1.Measure) e
 		return err
 	}
 	switch {
+	case stmt.Having != nil:
+		err = m.compileAggregate(columns)
 	case hasMeasureExpressions(stmt.Projection):
 		err = m.compileExpressions(columns)
 	case measureAggregateCount(stmt) > 0:
@@ -273,6 +277,10 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 			GroupBy: slices.Clone(m.aggregate.GroupBy), Calls: slices.Clone(m.aggregate.Calls), Outputs: slices.Clone(m.aggregate.Outputs),
 		}
 	}
+	plan.Having, err = m.bindHaving(bound)
+	if err != nil {
+		return nil, invalidMeasure(err)
+	}
 	if stmt.Limit != nil {
 		limit := uint32(run.resolveCount(stmt.Limit.Value, stmt.Limit.Param, stmt.Limit.ParamIndex))
 		plan.Limit = &limit
@@ -330,7 +338,7 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 }
 
 func requiresMeasurePlan(stmt *GrammarSelectStatement) bool {
-	if stmt.From.Shorthand != nil || measureAggregateCount(stmt) > 1 || hasMeasureExpressions(stmt.Projection) ||
+	if stmt.Having != nil || stmt.From.Shorthand != nil || measureAggregateCount(stmt) > 1 || hasMeasureExpressions(stmt.Projection) ||
 		stmt.Where != nil && stmt.Where.Expression != nil {
 		return true
 	}

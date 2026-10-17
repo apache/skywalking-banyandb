@@ -24,3 +24,9 @@ func FilterExecutionStats() FilterStats { return FilterStats{} }
 func recordFilterWork(FilterStats)      {}
 func recordFilterReserve(int64)         {}
 func recordFilterRelease(int64)         {}
+
+// HavingExecutionStats returns zero counters in production builds.
+func HavingExecutionStats() FilterStats { return FilterStats{} }
+func recordHavingWork(FilterStats)      {}
+func recordHavingReserve(int64)         {}
+func recordHavingRelease(int64)         {}

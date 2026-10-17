@@ -28,21 +28,25 @@ import (
 
 // GrammarExpression is a typed scalar expression before schema and parameter resolution.
 type GrammarExpression struct {
-	Op         string
-	Args       []*GrammarExpression
-	Identifier *GrammarIdentifierPath
-	TypeSpec   *string
-	Temporal   *GrammarCompareTail
-	Literal    ql.ExpressionScalar
-	Type       ql.ExpressionType
-	Param      bool
-	ParamIndex int
+	Op             string
+	Args           []*GrammarExpression
+	Identifier     *GrammarIdentifierPath
+	TypeSpec       *string
+	Temporal       *GrammarCompareTail
+	Aggregate      *GrammarAggregateFunction
+	Literal        ql.ExpressionScalar
+	Type           ql.ExpressionType
+	Param          bool
+	ListParam      bool
+	MembershipList bool
+	ParamIndex     int
 }
 
 type expressionParser struct {
 	tokens     []expressionToken
 	pos, depth int
 	where      bool
+	having     bool
 }
 
 // parseExpressionProjection retains the existing grammar for every ordinary
@@ -165,8 +169,14 @@ func (p *expressionParser) parse(minPrecedence int) (*GrammarExpression, error) 
 		if precedence < minPrecedence {
 			break
 		}
-		if op == "NOT" && (p.pos+1 >= len(p.tokens) || !strings.EqualFold(p.tokens[p.pos+1].text, "IN")) {
-			break
+		if op == "NOT" {
+			if p.pos+1 >= len(p.tokens) {
+				break
+			}
+			next := strings.ToUpper(p.tokens[p.pos+1].text)
+			if next != "IN" && next != "CONTAINS" && next != "HAVING" {
+				break
+			}
 		}
 		p.pos++
 		switch op {
@@ -180,12 +190,16 @@ func (p *expressionParser) parse(minPrecedence int) (*GrammarExpression, error) 
 				op = "is_not_null"
 			}
 			left = &GrammarExpression{Op: op, Args: []*GrammarExpression{left}}
-		case "IN", "NOT":
-			if op == "NOT" {
-				err = p.need("IN")
+		case "IN", "NOT", "CONTAINS", "HAVING":
+			not := op == "NOT"
+			if not {
+				op = strings.ToUpper(p.tokens[p.pos].text)
+				p.pos++
 			}
-			if err == nil {
-				left, err = p.in(left, op == "NOT")
+			if op == "IN" {
+				left, err = p.in(left, not)
+			} else {
+				left, err = p.membership(left, not)
 			}
 		default:
 			if p.where && (op == "+" || op == "-") && p.take("INTERVAL") {
@@ -222,7 +236,7 @@ func expressionPrecedence(op string) int {
 		return 1
 	case "AND":
 		return 2
-	case "=", "!=", "<>", "<", "<=", ">", ">=", "IS", "IN", "NOT":
+	case "=", "!=", "<>", "<", "<=", ">", ">=", "IS", "IN", "NOT", "CONTAINS", "HAVING":
 		return 3
 	case "+", "-":
 		return 4
@@ -273,7 +287,7 @@ func (p *expressionParser) prefix() (*GrammarExpression, error) {
 		}
 		return value, err
 	}
-	if value, handled, err := p.clockPrefix(); handled {
+	if value, handled, err := p.functionPrefix(); handled {
 		return value, err
 	}
 
@@ -310,6 +324,55 @@ func (p *expressionParser) prefix() (*GrammarExpression, error) {
 	default:
 		return nil, fmt.Errorf("unexpected SELECT expression token %q", token.text)
 	}
+}
+
+func (p *expressionParser) functionPrefix() (*GrammarExpression, bool, error) {
+	if value, handled, err := p.clockPrefix(); handled {
+		return value, true, err
+	}
+	return p.aggregatePrefix()
+}
+
+func (p *expressionParser) aggregatePrefix() (*GrammarExpression, bool, error) {
+	if !p.having || p.pos+1 >= len(p.tokens) || p.tokens[p.pos+1].text != "(" {
+		return nil, false, nil
+	}
+	if _, err := sqlAggregateFunction(p.tokens[p.pos].text); err != nil {
+		return nil, false, nil
+	}
+	expression, err := p.aggregate()
+	return expression, true, err
+}
+
+func (p *expressionParser) aggregate() (*GrammarExpression, error) {
+	function := strings.ToUpper(p.tokens[p.pos].text)
+	p.pos += 2
+	distinct := p.take("DISTINCT")
+	argument, err := p.parse(0)
+	if err != nil {
+		return nil, err
+	}
+	if err = p.need(")"); err != nil {
+		return nil, err
+	}
+	if argument.Op != "column" {
+		return nil, fmt.Errorf("%s in HAVING requires a source column; nested aggregates and computed arguments are not supported", function)
+	}
+	expression := &GrammarExpression{
+		Op: "aggregate", Aggregate: &GrammarAggregateFunction{Function: function, Column: argument.Identifier, Distinct: distinct},
+		TypeSpec: argument.TypeSpec,
+	}
+	if p.pos+1 < len(p.tokens) && p.tokens[p.pos].text == "::" {
+		typeSpec := strings.ToUpper(p.tokens[p.pos+1].text)
+		if typeSpec == "TAG" || typeSpec == "FIELD" {
+			if expression.TypeSpec != nil {
+				return nil, fmt.Errorf("invalid aggregate column type")
+			}
+			p.pos += 2
+			expression.TypeSpec = &typeSpec
+		}
+	}
+	return expression, nil
 }
 
 func (p *expressionParser) clockPrefix() (*GrammarExpression, bool, error) {

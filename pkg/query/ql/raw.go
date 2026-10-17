@@ -47,12 +47,21 @@ type RawPlan struct {
 	Aggregate       *AggregatePlan
 	Expressions     *ExpressionPlan
 	Filter          *Expression
+	Having          *HavingPlan
 	Limit           *uint32
 	Slots           []Slot
 	Ranges          []MillisRange
 	Offset          uint32
 	Residual        bool
 	Empty           bool
+}
+
+// HavingPlan filters completed aggregate groups and then projects visible slots.
+// Outputs must explicitly select the visible result; nil is rejected, while an
+// empty non-nil slice selects no visible values.
+type HavingPlan struct {
+	Predicate *Expression
+	Outputs   []Slot
 }
 
 type rawOperator struct {
@@ -86,6 +95,9 @@ func WrapRaw(ctx context.Context, source vectorized.PullOperator, plan *RawPlan)
 	}
 	if plan != nil && plan.Aggregate != nil {
 		return wrapAggregateQuery(ctx, source, plan)
+	}
+	if plan != nil && plan.Having != nil {
+		return wrapHavingQuery(ctx, source, plan)
 	}
 	return wrapRawProjection(ctx, source, plan)
 }

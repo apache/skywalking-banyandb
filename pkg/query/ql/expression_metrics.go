@@ -19,6 +19,40 @@ package ql
 
 import "github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 
+type expressionStage uint8
+
+const (
+	projectionStage expressionStage = iota
+	whereStage
+	havingStage
+)
+
+// operatorMetrics selects process-wide attribution once when constructing an
+// expression kernel. Predicate kernels retain local expression statistics but
+// report only their filter stage's process-wide work and reservations.
+type operatorMetrics struct {
+	expressionWork func(ExpressionStats)
+	filterWork     func(FilterStats)
+	reserve        func(int64)
+	release        func(int64)
+	stage          expressionStage
+}
+
+var (
+	projectionMetrics = operatorMetrics{
+		stage: projectionStage, expressionWork: recordExpressionWork,
+		reserve: recordExpressionReserve, release: recordExpressionRelease,
+	}
+	whereMetrics = operatorMetrics{
+		stage: whereStage, filterWork: recordFilterWork,
+		reserve: recordFilterReserve, release: recordFilterRelease,
+	}
+	havingMetrics = operatorMetrics{
+		stage: havingStage, filterWork: recordHavingWork,
+		reserve: recordHavingReserve, release: recordHavingRelease,
+	}
+)
+
 // ExpressionStats counts typed expression work and allocations. InputRows and
 // OutputRows count active physical rows; VectorRows counts eligible rows per
 // nonconstant kernel. ArmRows counts selected CASE values and eligible COALESCE

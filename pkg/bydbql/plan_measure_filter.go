@@ -122,7 +122,27 @@ func legacyFilterPredicate(predicate *GrammarPredicate) (*GrammarExpression, err
 		}
 		return expression, nil
 	}
-	return nil, fmt.Errorf("collection HAVING mixed with residual WHERE expressions is not supported")
+	if predicate.Having != nil {
+		membership := predicate.Having
+		op := "contains"
+		if membership.Not != nil {
+			op = "not_contains"
+		}
+		tagType := columnTypeTag
+		expression := &GrammarExpression{
+			Op: op, Args: []*GrammarExpression{{Op: "column", Identifier: membership.Identifier, TypeSpec: &tagType}},
+			MembershipList: membership.Values.Single == nil,
+		}
+		values := membership.Values.Array
+		if membership.Values.Single != nil {
+			values = []*GrammarValue{membership.Values.Single}
+		}
+		for _, value := range values {
+			expression.Args = append(expression.Args, grammarValueExpression(value))
+		}
+		return expression, nil
+	}
+	return nil, fmt.Errorf("invalid residual WHERE predicate")
 }
 
 func grammarValueExpression(value *GrammarValue) *GrammarExpression {
@@ -278,7 +298,8 @@ func (m *measureExpression) bindFilter(bound *BoundQuery, now time.Time) (*ql.Ex
 		}
 		appendBoundExpressionArgument(&expression, index, next)
 	}
-	return &expression, ranges, nil
+	resolved, err := m.bindMembership(&expression)
+	return resolved, ranges, err
 }
 
 func filterRangeExpression(ranges []ql.MillisRange) *ql.Expression {

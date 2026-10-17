@@ -174,6 +174,12 @@ func TestVerifyQLOnlyFixture(t *testing.T) {
 	if err = VerifyQLError(context.Background(), conn, "invalid", codes.NotFound); err == nil {
 		t.Fatal("wrong status accepted")
 	}
+	if err = VerifyQLError(context.Background(), conn, "invalid", codes.InvalidArgument, "bad query"); err != nil {
+		t.Fatal(err)
+	}
+	if err = VerifyQLError(context.Background(), conn, "invalid", codes.InvalidArgument, "indexed array"); err == nil {
+		t.Fatal("wrong error message accepted")
+	}
 	conn.err = nil
 	conn.response = &bydbqlv1.QueryResponse{}
 	if err = VerifyQLError(context.Background(), conn, "invalid", codes.InvalidArgument); err == nil {

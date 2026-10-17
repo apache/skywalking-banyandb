@@ -322,8 +322,8 @@ go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/
   -ginkgo.label-filter=QLB-T10 -ginkgo.fail-on-empty
 ```
 
-Expression WHERE is covered by T12 below. HAVING and computed grouping remain
-in T14 and T16.
+Expression WHERE is covered by T12 below, grouped HAVING by T14, and computed
+grouping remains in T16.
 
 ## T12 typed field filters
 
@@ -402,6 +402,127 @@ go test -tags=querymetrics ./test/integration/distributed/query -run '^TestPrope
 
 These generated cases activate expression SELECT projection only.
 
+## T14 grouped HAVING and collection membership
+
+The artifact adds `having_scenarios`, `having_rejections`,
+`having_legacy_scenarios`, `having_review_scenarios` and QL-only readiness for
+five independent fixtures.
+There are 118 typed scenarios, 16 legacy scalar membership scenarios and eight
+reference/type rejection statements, plus 21 review regression scenarios (163
+T14 integration specs). Each successful scenario binds the exact
+same SQL three times, then repeats with compiled-cache bypass. Empty array
+bindings rejected by public preparation do not acquire the compiled cache; the
+artifact records that boundary separately from later binding failures. Eligible native
+aggregation scenarios also run with native aggregation disabled. The original
+cases, expectations and pair report remain unchanged.
+
+`ql_t14` contains eight rows: host a has SUM(v)=2, b=4, c=6, and n has only
+null values. Floating field f has those same exact totals. Labels are constant
+within each entity: a has ['red','blue'], b has ['blue'], c has an empty array,
+and n has a null array. Integer arrays have the corresponding [1,2], [2], empty
+and null values. Arrays remain unindexed so a typed residual reads their complete
+stored values. Storage's empty-array/null normalization is explicit in raw
+visibility expectations. `ql_t14_groups` separately contains 129 host groups and
+258 rows, proving complete grouping and HAVING before final LIMIT/OFFSET.
+Native cohorts bind all relevant host entities explicitly, retaining the source
+bound proof required by T08 eligibility; public tests assert native plans exist.
+
+`t14_model.go`, `t14_generate.go` and `t14_oracle.go` render clause and infix
+positions and evaluate expected results independently of production planning or
+kernels. The scalar oracle first filters fixture rows, groups them using JSON
+tuples, evaluates aggregate expressions, then applies three-valued HAVING and
+final pagination. Generated witnesses cover visible/hidden/repeated aggregates,
+hidden grouping keys, group-only and scalar queries, empty/null groups, CASE,
+COALESCE, masked errors, source references, aggregate annotations and casts.
+SELECT aliases, nested aggregates and nongrouped sources reject before dispatch.
+SUM(v)>3 returns b/c with totals 4/6; selecting only host exposes no hidden SUM.
+
+Collection membership uses the current measure index's all-terms, by-value
+contract. Scalar or array RHS terms must all occur in the source; duplicate terms
+do not change the match. A scalar source matches an equal scalar term. NULL
+sources and NULL requirements do not match; NOT complements that boolean result.
+This membership contract differs from SQL's three-valued IN. Parenthesized and
+single placeholder forms preserve expansion/coercion, and empty bound arrays and
+NULL members inside lists retain their existing binding rejection. Both HAVING /
+NOT HAVING and CONTAINS / NOT CONTAINS execute string/int arrays and scalar tags,
+literal/single/list/array/null bindings, conversion failure and recovery, mixed
+field predicates and grouped HAVING. With v>0, red selects only row 2; its negation
+selects rows 3 and 5. Explicit `::TAG` references activate the typed residual path.
+
+`ql_t14_legacy` separately indexes STRING host and INT zone, both included in its
+entity. These generated statements use `FROM MEASURE`, TIME and unannotated
+infix membership so public compilation and RPC counters require the established
+native operator path with its existing QL batch boundary and no typed WHERE,
+HAVING or aggregation. They pin scalar value equality, distinct and duplicate requested
+terms, NULL, both spellings, changed bindings and cache bypass through actual QL
+RPCs. Neither these cases nor any other generator case issues a protobuf native
+query as its oracle.
+
+The review matrix independently writes a measure named `contains-svc` in a group
+named `contains-svc`, with a scalar tag named `contains`. Five cohorts use bare
+projection and equality, mixed-case CONTAINS, NOT CONTAINS, and the typed aliases
+with a field residual. Their changing parameters pin ordinary identifiers and
+contextual operators through real QL RPCs. A separate `ql_t14_indexed` fixture
+writes STRING_ARRAY labels ['red','blue'] and INT_ARRAY nums [1,2] and activates
+both index rules. Its readiness reads only control tags and fields; it does not
+ask the broken native decoder to project arrays. Sixteen cohorts cross both
+array types, four operator spellings, and typed versus unannotated membership
+with a field residual. Every binding requires `InvalidArgument` containing
+`indexed array`, unchanged native leaf/batch dispatch counts, balanced resources,
+and subsequent successful recovery. Cold, warm, and cache-bypassed executions
+all enforce the same rejection. The compiler-only tests accept these otherwise
+valid recipes because schemas do not expose the current index bindings; the
+real RPC boundary must perform the metadata check on each execution.
+
+Instrumented calls require HAVING input counts to equal completed groups, while
+WHERE counts remain raw rows. Native leaf count and retained sum/count lanes stay
+constant for repeated SELECT/HAVING calls. Independent responses exclude hidden
+aggregate slots and source row identity. Every call checks balanced filter/HAVING
+reservations and released native results, aggregate/expression state and trackers.
+
+```sh
+go test -tags=querymetrics ./test/integration/standalone/query -run '^TestPropertyIntegrationQuery$' \
+  -ginkgo.label-filter=QLB-T14 -ginkgo.fail-on-empty
+go test -tags=querymetrics ./test/integration/distributed/query -run '^TestPropertyQuery$' \
+  -ginkgo.label-filter=QLB-T14 -ginkgo.fail-on-empty
+```
+
+Run the topologies sequentially. The independently audited `t14.*` obligations
+and catalog B4 require generated witnesses. The grammar fingerprint includes the
+custom post-aggregate HAVING parser as well as the existing expression parsers.
+
+### Existing native indexed-array limitation
+
+A real T14 standalone smoke attempted a pure legacy indexed STRING_ARRAY query:
+
+```sql
+SELECT rid FROM MEASURE ql_t14_legacy IN replicated_group
+TIME BETWEEN ? AND ? WHERE labels HAVING ? ORDER BY TIME ASC
+```
+
+With fixture labels ['red','blue'] and a scalar 'red' binding, its RPC failed with
+`Unknown: STATUS_INTERNAL_ERROR, panic: unmarshalVarArray failed: invalid variable array`.
+The failure and original indexed-array fixture are recorded in
+`.omx/t14-standalone-smoke-v1.log` and `.omx/t14-standalone-smoke-v1.json`.
+`banyand/internal/storage/index.go:appendSearchHit` keeps an individual stored
+index term; `banyand/measure/query.go:buildStoredIndexValue` decodes it as a complete
+array via `mustDecodeTagValue`, whose STRING_ARRAY decoder requires packed array
+delimiters. The same source inspection shows that INT_ARRAY projection can lose
+all but one element. A later one-row real QL RPC review probe confirmed [1,2]
+projects as [2], so new typed membership for 1 would silently drop a valid row.
+That probe is recorded in `.omx/t14-claude-review-indexed-probe.log`; no baseline
+RPC rerun is claimed.
+
+T14 does not change that native storage/decoder path or turn its observed output
+into an expected result. QL-evaluated indexed-array membership now rejects before
+native dispatch, including compiled-cache hits. The generated typed array cases
+retain full independent array expectations using unindexed data and `::TAG`
+residuals; pure legacy
+compatibility witnesses use indexed scalar tags. Earlier indexed-array regression
+queries and expectations are retained unchanged. Fixing native indexed arrays is
+separate work; this limitation prevents claiming repaired legacy indexed-array
+execution from the T14 success cases.
+
 ## Engine regressions exposed by this suite
 
 The initial standalone and distributed runs each execute all 151 cases, with
@@ -428,10 +549,8 @@ The authoritative inventory is `coverageContract` in `coverage_contract.go`.
 
 | Capability | Missing implementation or fixture |
 | --- | --- |
-| Catalog B4 | Post-aggregate `HAVING` and new membership syntax require T14. |
 | Catalog B5 | Multiple sort keys and null placement require T17. |
 | Catalog B6 | `SELECT DISTINCT` requires T15. |
-| Catalog B8 | Field predicates require T12. |
 | Catalog B9 | Computed and ordinal grouping require T16. |
 | Low-valued float means | Legacy native mean clamps values below one; the oracle keeps arithmetic mean semantics. |
 | Stage selection | Needs a generated staged-group fixture. |

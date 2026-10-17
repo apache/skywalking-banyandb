@@ -148,12 +148,35 @@ matched by another branch. Hidden predicate inputs survive time filtering but
 never reach final output. A residual disables T08 native aggregation and input
 LIMIT/OFFSET pushdown. Cached recipes retain symbolic values; each execution binds
 fresh parameters and one clock. Legacy tag-only MATCH and collection HAVING keep
-their original routing; their composition with a new residual awaits T14 kernels.
+their original routing. T14 adds typed collection membership composition with
+new residuals; MATCH composition remains rejected.
 Names-only routing preserves ordinary legacy queries across groups whose unused
 column types differ. Typed schema validation runs when typed execution is needed.
 One input collector extends the native scan with hidden columns without changing
 visible slots; SELECT and WHERE share array binding and tag ambiguity metadata.
 See the [WHERE contract](../../../interacting/bydbql.md#58-field-and-expression-filters).
+
+T14 adds immutable `HavingPlan` metadata to the same execution recipe. Binding
+resolves source grouping keys and aggregate calls, deduplicates repeated calls,
+and retains hidden keys/calls until the predicate has run. SELECT aliases do not
+change HAVING name resolution. Local aggregation and the completed native merge
+both feed the shared filter kernel before visible projection and final pagination.
+Group-only HAVING uses local grouping; scalar empty aggregation still produces its
+SQL empty row before the predicate. No child pagination can remove input groups.
+
+The runtime exposes separate raw WHERE and HAVING statistics even though both
+stages share evaluation, borrowing and memory accounting. Each bound execution
+owns fresh scratch and reservations; cached recipes retain no bound values or
+operator state. CONTAINS/NOT CONTAINS reuse legacy all-terms membership rules,
+including scalar, duplicate, null and empty-list behavior. Typed unindexed arrays
+work through the existing batch decoder. The QL dispatcher checks current binding
+and rule metadata before native dispatch, including cache hits, and rejects typed
+membership on indexed arrays. It does not filter binding validity windows because
+native schema caches also apply those bindings. Scalar/no-membership plans skip
+the metadata check. This preserves the native storage boundary while preventing
+new predicates from silently filtering truncated arrays. The new operator spelling
+is contextual and measure-only. The
+[T14 verification record](t14-verification.md) preserves the reproducer and boundary.
 
 ## 4. Plan stages and the small optimizer
 

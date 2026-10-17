@@ -55,7 +55,8 @@ func (m *MeasureTemplate) compileNativeEntities(schemas map[string]*databasev1.M
 }
 
 func (m *MeasureTemplate) bindNativeAggregate(request *measurev1.QueryRequest, plan *ql.RawPlan) *ql.NativeAggregatePlan {
-	if plan.Aggregate == nil || plan.Empty || plan.Residual || plan.Filter != nil || len(plan.Ranges) != 1 || len(m.nativeEntities) == 0 {
+	if plan.Aggregate == nil || len(plan.Aggregate.Calls) == 0 || plan.Empty || plan.Residual || plan.Filter != nil ||
+		len(plan.Ranges) != 1 || len(m.nativeEntities) == 0 {
 		return nil
 	}
 	// Normal writes are millisecond-aligned and native scans deduplicate

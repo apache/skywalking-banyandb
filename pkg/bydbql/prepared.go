@@ -170,7 +170,7 @@ func (p *preparer) walkGrammar(g *Grammar) {
 	if g.Select != nil {
 		if g.Select.Projection != nil {
 			for _, column := range g.Select.Projection.Columns {
-				walkGrammarExpression(column.Expression, func(expr *GrammarExpression) { expr.ParamIndex = p.add(phExpression, 0) })
+				walkGrammarExpression(column.Expression, p.walkExpressionParameter)
 			}
 		}
 		if g.Select.Projection != nil && g.Select.Projection.TopN != nil {
@@ -181,10 +181,13 @@ func (p *preparer) walkGrammar(g *Grammar) {
 		p.walkTime(g.Select.Time)
 		if g.Select.Where != nil {
 			if g.Select.Where.Expression != nil {
-				walkGrammarExpression(g.Select.Where.Expression, func(expr *GrammarExpression) { expr.ParamIndex = p.add(phExpression, 0) })
+				walkGrammarExpression(g.Select.Where.Expression, p.walkExpressionParameter)
 			} else {
 				p.walkOrExpr(g.Select.Where.Expr)
 			}
+		}
+		if g.Select.Having != nil {
+			walkGrammarExpression(g.Select.Having.Expression, p.walkExpressionParameter)
 		}
 		if g.Select.Limit != nil && g.Select.Limit.Param {
 			g.Select.Limit.ParamIndex = p.add(phCount, math.MaxUint32)
@@ -202,6 +205,14 @@ func (p *preparer) walkGrammar(g *Grammar) {
 			p.walkAndExpr(g.TopN.Where.Expr)
 		}
 	}
+}
+
+func (p *preparer) walkExpressionParameter(expression *GrammarExpression) {
+	kind := phExpression
+	if expression.ListParam {
+		kind = phList
+	}
+	expression.ParamIndex = p.add(kind, 0)
 }
 
 func (p *preparer) walkTime(clause *GrammarTimeClause) {

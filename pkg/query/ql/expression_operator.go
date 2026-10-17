@@ -95,6 +95,7 @@ type expressionNode struct {
 type expressionOperator struct {
 	source       vectorized.PullOperator
 	tracker      *vectorized.MemoryTracker
+	metrics      *operatorMetrics
 	schema       *vectorized.BatchSchema
 	nodes        []*expressionNode
 	outputs      []*expressionNode
@@ -103,7 +104,6 @@ type expressionOperator struct {
 	reserved     int64
 	payloadBytes int64
 	stats        ExpressionStats
-	filter       bool
 	started      bool
 	closed       bool
 }
@@ -121,7 +121,7 @@ func WrapExpressions(ctx context.Context, source vectorized.PullOperator, plan *
 	if source == nil || source.OutputSchema() == nil || plan == nil {
 		return nil, expressionError("source schema and plan are required")
 	}
-	op := &expressionOperator{source: source, tracker: vectorized.QueryMemoryTracker(ctx, 256<<20)}
+	op := &expressionOperator{source: source, tracker: vectorized.QueryMemoryTracker(ctx, 256<<20), metrics: &projectionMetrics}
 	defer func() {
 		if err != nil {
 			op.release()
@@ -236,8 +236,8 @@ func expressionStorageType(typ ExpressionType) vectorized.ColumnType {
 }
 
 func (o *expressionOperator) recordWork(stats ExpressionStats) {
-	if !o.filter {
-		recordExpressionWork(stats)
+	if record := o.metrics.expressionWork; record != nil {
+		record(stats)
 	}
 }
 
@@ -248,11 +248,7 @@ func (o *expressionOperator) reserve(bytes int64) error {
 	o.reserved += bytes
 	o.stats.ReservedBytes += uint64(bytes)
 	o.stats.LiveBytes += bytes
-	if o.filter {
-		recordFilterReserve(bytes)
-	} else {
-		recordExpressionReserve(bytes)
-	}
+	o.metrics.reserve(bytes)
 	return nil
 }
 
@@ -261,11 +257,7 @@ func (o *expressionOperator) unreserve(bytes int64) {
 	o.reserved -= bytes
 	o.stats.ReleasedBytes += uint64(bytes)
 	o.stats.LiveBytes -= bytes
-	if o.filter {
-		recordFilterRelease(bytes)
-	} else {
-		recordExpressionRelease(bytes)
-	}
+	o.metrics.release(bytes)
 }
 
 func (o *expressionOperator) compile(expr *Expression) (*expressionNode, error) {
@@ -305,6 +297,8 @@ func (o *expressionOperator) compile(expr *Expression) (*expressionNode, error) 
 		node.eval = node.comparison(expr.Op, expr.Args[0].Type)
 	case "in", "not_in":
 		node.eval = node.membership(expr.Op == "not_in", expr.Args[0].Type)
+	case "contains", "not_contains":
+		node.eval = node.contains(expr.Op == "not_contains", expr.Args[0].Type, expr.Args[1].Type)
 	case "and", "or":
 		node.eval = node.boolean(expr.Op == "and")
 	case "not", "is_null", "is_not_null":

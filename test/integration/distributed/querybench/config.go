@@ -122,6 +122,8 @@ const (
 	ScenarioQLBT10 Scenario = "qlb_t10"
 	// ScenarioQLBT12 benchmarks field filtering before projection and aggregation.
 	ScenarioQLBT12 Scenario = "qlb_t12"
+	// ScenarioQLBT14 benchmarks completed-group HAVING and collection membership.
+	ScenarioQLBT14 Scenario = "qlb_t14"
 	// ScenarioTraceByID benchmarks distributed trace-id lookup.
 	ScenarioTraceByID Scenario = "trace_by_id"
 	// ScenarioTraceTagFilter benchmarks distributed ordered trace tag filters.
@@ -255,7 +257,7 @@ func (c Config) Validate() error {
 	case engineMeasure:
 		switch c.Scenario {
 		case ScenarioScanAll, ScenarioTopWithFilter, ScenarioQLBT01, ScenarioQLBT02, ScenarioQLBT03, ScenarioQLBT05,
-			ScenarioQLBT07, ScenarioQLBT08, ScenarioQLBT10, ScenarioQLBT12:
+			ScenarioQLBT07, ScenarioQLBT08, ScenarioQLBT10, ScenarioQLBT12, ScenarioQLBT14:
 		default:
 			return fmt.Errorf("%s unsupported for %s=%s: %q", envScenario, envEngine, c.Engine, c.Scenario)
 		}
@@ -477,6 +479,9 @@ func queryTimeout(cardinality int) time.Duration {
 }
 
 func (c Config) validateCatalogB() error {
+	if c.Scenario == ScenarioQLBT14 {
+		return c.validateQLBT14()
+	}
 	if c.Scenario == ScenarioQLBT12 {
 		return c.validateQLBT12()
 	}
@@ -548,6 +553,17 @@ func qlbT12Schedule(cardinality int) (iterations, warmup int, err error) {
 	}
 }
 
+func qlbT14Schedule(cardinality int) (iterations, warmup int, err error) {
+	switch cardinality {
+	case 1024:
+		return 100, 5, nil
+	case 32768:
+		return 20, 3, nil
+	default:
+		return 0, 0, fmt.Errorf("qlb_t14 requires input cardinality 1024 or 32768; large inputs belong to the owning resource probe")
+	}
+}
+
 func qlbT07Schedule(cardinality int) (iterations, warmup int, err error) {
 	switch cardinality {
 	case 1024:
@@ -579,4 +595,15 @@ func qlbT10Schedule(cardinality int) (iterations, warmup int, err error) {
 	default:
 		return 0, 0, fmt.Errorf("qlb_t10 requires input cardinality 1024 or 32768")
 	}
+}
+
+func (c Config) validateQLBT14() error {
+	iterations, warmup, err := qlbT14Schedule(c.Cardinality)
+	if err != nil {
+		return err
+	}
+	if c.QueryWorkers != 1 || c.QueryIterations != iterations || c.WarmupIterations != warmup || c.QueryMemoryMiB != 256 {
+		return fmt.Errorf("qlb_t14 at %d rows requires one worker, %d timed calls, %d warmups and 256 MiB", c.Cardinality, iterations, warmup)
+	}
+	return nil
 }

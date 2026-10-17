@@ -102,20 +102,11 @@ func resolveExpressionType(expression *Expression) error {
 			return expressionError("unsupported cast")
 		}
 	case "negate", "positive":
-		if len(expression.Args) != 1 {
-			return expressionError("unary sign requires one argument")
-		}
-		typ := expression.Args[0].Type
-		if typ == ExpressionNull {
-			typ = ExpressionInt
-			coerceExpressionArgs(expression.Args, typ)
-		}
-		if typ != ExpressionInt && typ != ExpressionFloat {
-			return expressionError("unary sign requires a numeric argument")
-		}
-		expression.Type = typ
+		return resolveExpressionSign(expression)
 	case "=", "!=", "<", "<=", ">", ">=", "in", "not_in":
 		return resolveExpressionComparison(expression)
+	case "contains", "not_contains":
+		return resolveExpressionContains(expression)
 	case "and", "or", "not":
 		count := 2
 		if expression.Op == "not" {
@@ -138,6 +129,22 @@ func resolveExpressionType(expression *Expression) error {
 	default:
 		return expressionError("unknown operator %q", expression.Op)
 	}
+	return nil
+}
+
+func resolveExpressionSign(expression *Expression) error {
+	if len(expression.Args) != 1 {
+		return expressionError("unary sign requires one argument")
+	}
+	typ := expression.Args[0].Type
+	if typ == ExpressionNull {
+		typ = ExpressionInt
+		coerceExpressionArgs(expression.Args, typ)
+	}
+	if typ != ExpressionInt && typ != ExpressionFloat {
+		return expressionError("unary sign requires a numeric argument")
+	}
+	expression.Type = typ
 	return nil
 }
 

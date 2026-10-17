@@ -50,7 +50,7 @@ type ExpressionScalar struct {
 // Expression is an immutable, schema-resolved expression recipe.
 // Op is literal, column, cast, case, simple_case, coalesce, +, -, *, /, %,
 // negate, positive, =, !=, <, <=, >, >=, and, or, not, is_null, is_not_null,
-// in or not_in. Cast Type names the target. CASE arguments are condition/value
+// in, not_in, contains or not_contains. Cast Type names the target. CASE arguments are condition/value
 // pairs followed by ELSE; simple_case prepends the comparison value.
 type Expression struct {
 	Op      string

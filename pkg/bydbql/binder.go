@@ -62,6 +62,9 @@ func BindParams(g *Grammar, params []*modelv1.TagValue) error {
 	if g.Select != nil && g.Select.Where != nil {
 		expandExpressionLists(g.Select.Where.Expression)
 	}
+	if g.Select != nil && g.Select.Having != nil {
+		expandExpressionLists(g.Select.Having.Expression)
+	}
 	g.paramsBound = true
 	return nil
 }
@@ -109,6 +112,9 @@ func (b *binder) collect(g *Grammar) {
 			} else {
 				b.collectOrExpr(g.Select.Where.Expr)
 			}
+		}
+		if g.Select.Having != nil {
+			walkGrammarExpression(g.Select.Having.Expression, b.collectExpression)
 		}
 		if g.Select.Limit != nil {
 			b.collectIntSlot(&g.Select.Limit.Value, &g.Select.Limit.Param, math.MaxUint32)
@@ -478,6 +484,15 @@ func (b *binder) collectExpression(expression *GrammarExpression) {
 		return
 	}
 	b.slots = append(b.slots, func(parameter *modelv1.TagValue) error {
+		if expression.ListParam {
+			values, listErr := resolveListParam(parameter)
+			if listErr != nil {
+				return listErr
+			}
+			literal := boundExpressionLiteral(resolvedParam{values: values})
+			expression.Type, expression.Literal, expression.Param = literal.Type, literal.Literal, false
+			return nil
+		}
 		literal, err := resolveExpressionParam(parameter)
 		if err != nil {
 			return err

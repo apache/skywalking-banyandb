@@ -105,24 +105,11 @@ func expressionClauseToken(tokens []expressionToken, index int) bool {
 }
 
 func expressionWhereBounds(tokens []expressionToken) (int, int) {
-	where, end, depth, cases := -1, len(tokens), 0, 0
+	where, end := -1, len(tokens)
+	var nesting expressionNesting
 	from := false
 	for index, token := range tokens {
-		switch strings.ToUpper(token.text) {
-		case "(":
-			depth++
-		case ")":
-			depth--
-		case "CASE":
-			if token.kind == "ident" && !expressionQualifiedToken(tokens, index) {
-				cases++
-			}
-		case "END":
-			if cases > 0 && token.kind == "ident" && !expressionQualifiedToken(tokens, index) {
-				cases--
-			}
-		}
-		if depth != 0 || cases != 0 || token.kind != "ident" || index > 0 && tokens[index-1].text == "." {
+		if !nesting.topLevelToken(tokens, index) {
 			continue
 		}
 		if expressionFromToken(tokens, index) {
@@ -146,4 +133,31 @@ func expressionWhereBounds(tokens []expressionToken) (int, int) {
 		}
 	}
 	return where, end
+}
+
+// expressionNesting tracks clause boundaries outside parentheses and CASE.
+// Qualified names such as default.end do not open or close CASE expressions.
+type expressionNesting struct {
+	parentheses int
+	cases       int
+}
+
+func (n *expressionNesting) topLevelToken(tokens []expressionToken, index int) bool {
+	token := tokens[index]
+	qualified := expressionQualifiedToken(tokens, index)
+	switch strings.ToUpper(token.text) {
+	case "(":
+		n.parentheses++
+	case ")":
+		n.parentheses--
+	case "CASE":
+		if token.kind == "ident" && !qualified {
+			n.cases++
+		}
+	case "END":
+		if n.cases > 0 && token.kind == "ident" && !qualified {
+			n.cases--
+		}
+	}
+	return n.parentheses == 0 && n.cases == 0 && token.kind == "ident" && !qualified
 }

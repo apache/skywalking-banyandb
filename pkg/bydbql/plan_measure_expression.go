@@ -31,11 +31,13 @@ import (
 )
 
 type measureExpression struct {
-	temporal   *GrammarCompareTail
-	args       []*measureExpression
-	value      ql.Expression
-	paramIndex int
-	parameter  bool
+	temporal       *GrammarCompareTail
+	membershipTag  *tagSpecWithFamily
+	args           []*measureExpression
+	value          ql.Expression
+	paramIndex     int
+	parameter      bool
+	membershipList bool
 }
 
 type measureExpressionOutput struct {
@@ -169,40 +171,71 @@ func (i *measureExpressionInputs) add(column vectorized.ColumnDef) {
 }
 
 func compileMeasureExpression(expr *GrammarExpression, columns *measureColumns, inputs *measureExpressionInputs) (*measureExpression, error) {
-	recipe := &measureExpression{
-		temporal: expr.Temporal, value: ql.Expression{Op: expr.Op, Type: expr.Type, Literal: expr.Literal}, parameter: expr.Param, paramIndex: expr.ParamIndex,
-	}
-	if expr.Op == "time_compare" {
-		return recipe, nil
-	}
-	if expr.Op == "column" {
+	return compileMeasureExpressionRecipe(expr, columns, func(leaf *GrammarExpression) (ql.Expression, error) {
 		var source vectorized.ColumnDef
 		var err error
-		if expr.TypeSpec == nil && isBuiltinTime(expr.Identifier) {
+		if leaf.TypeSpec == nil && isBuiltinTime(leaf.Identifier) {
 			source = vectorized.ColumnDef{Name: "time", Role: vectorized.RoleTimestamp, Type: vectorized.ColumnTypeInt64}
 		} else {
 			var name string
-			name, err = expr.Identifier.ToString(expr.TypeSpec != nil)
+			name, err = leaf.Identifier.ToString(leaf.TypeSpec != nil)
 			if err == nil {
-				source, err = columns.resolve(name, expr.TypeSpec)
+				source, err = columns.resolve(name, leaf.TypeSpec)
 			}
 		}
 		if err != nil {
-			return nil, err
+			return ql.Expression{}, err
 		}
-		recipe.value.Source = source
+		value := ql.Expression{Op: "column", Source: source}
 		if tag := columns.tagSpecs[source.TagFamily+"."+source.Name]; tag != nil && tag.tag.Type == databasev1.TagType_TAG_TYPE_TIMESTAMP {
-			recipe.value.Type = ql.ExpressionTimestamp
-			recipe.value.Source.Type = vectorized.ColumnTypeInt64
+			value.Type = ql.ExpressionTimestamp
+			value.Source.Type = vectorized.ColumnTypeInt64
 		}
 		inputs.add(source)
+		return value, nil
+	})
+}
+
+// compileMeasureExpressionRecipe shares recursive expression construction across
+// raw rows and completed groups. Each scope resolves its own column leaves.
+func compileMeasureExpressionRecipe(
+	expression *GrammarExpression, columns *measureColumns, resolveLeaf func(*GrammarExpression) (ql.Expression, error),
+) (*measureExpression, error) {
+	recipe := &measureExpression{
+		temporal:  expression.Temporal,
+		value:     ql.Expression{Op: expression.Op, Type: expression.Type, Literal: expression.Literal},
+		parameter: expression.Param, paramIndex: expression.ParamIndex,
 	}
-	for _, child := range expr.Args {
-		compiled, err := compileMeasureExpression(child, columns, inputs)
+	if expression.Op == "time_compare" {
+		return recipe, nil
+	}
+	if expression.Op == "column" || expression.Aggregate != nil {
+		var err error
+		recipe.value, err = resolveLeaf(expression)
+		return recipe, err
+	}
+	for _, child := range expression.Args {
+		next, err := compileMeasureExpressionRecipe(child, columns, resolveLeaf)
 		if err != nil {
 			return nil, err
 		}
-		recipe.args = append(recipe.args, compiled)
+		recipe.args = append(recipe.args, next)
+	}
+	if expression.Op == "contains" || expression.Op == "not_contains" {
+		if len(recipe.args) < 2 || recipe.args[0].value.Op != "column" || recipe.args[0].value.Source.Role != vectorized.RoleTag {
+			return nil, fmt.Errorf("membership requires a source tag")
+		}
+		leaf := expression.Args[0]
+		name, err := leaf.Identifier.ToString(leaf.TypeSpec != nil)
+		if err != nil {
+			return nil, err
+		}
+		source, err := columns.resolve(name, leaf.TypeSpec)
+		if err != nil {
+			return nil, err
+		}
+		recipe.membershipTag = columns.tagSpecs[source.TagFamily+"."+source.Name]
+		recipe.membershipList = expression.MembershipList
 	}
 	return recipe, nil
 }
@@ -214,7 +247,10 @@ func (m *MeasureTemplate) bindExpressions(bound *BoundQuery) (*ql.ExpressionPlan
 	plan := &ql.ExpressionPlan{Outputs: make([]ql.ExpressionOutput, 0, len(m.expressions))}
 	seen := make(map[measureColumnKey]bool, len(m.expressions))
 	for _, output := range m.expressions {
-		expression := output.expression.bind(bound)
+		expression, err := output.expression.bind(bound)
+		if err != nil {
+			return nil, err
+		}
 		resolved, err := ql.ResolveExpression(expression)
 		if err != nil {
 			return nil, err
@@ -242,17 +278,20 @@ func (m *MeasureTemplate) bindExpressions(bound *BoundQuery) (*ql.ExpressionPlan
 	return plan, nil
 }
 
-func (m *measureExpression) bind(bound *BoundQuery) *ql.Expression {
+func (m *measureExpression) bind(bound *BoundQuery) (*ql.Expression, error) {
 	if m.parameter {
-		return boundExpressionLiteral(bound.values[m.paramIndex])
+		return boundExpressionLiteral(bound.values[m.paramIndex]), nil
 	}
 	value := m.value
 	value.Args = make([]*ql.Expression, 0, len(m.args))
 	for i, child := range m.args {
-		arg := child.bind(bound)
+		arg, err := child.bind(bound)
+		if err != nil {
+			return nil, err
+		}
 		appendBoundExpressionArgument(&value, i, arg)
 	}
-	return &value
+	return m.bindMembership(&value)
 }
 
 // appendBoundExpressionArgument shares positional IN expansion for SELECT and
@@ -354,14 +393,54 @@ func walkGrammarExpression(expression *GrammarExpression, visit func(*GrammarExp
 
 func grammarHasExpressions(grammar *Grammar) bool {
 	return grammar.Select != nil && (hasMeasureExpressions(grammar.Select.Projection) ||
-		grammar.Select.Where != nil && grammar.Select.Where.Expression != nil)
+		grammar.Select.Where != nil && grammar.Select.Where.Expression != nil || grammar.Select.Having != nil)
 }
 
 func checkExpressionSource(grammar *Grammar) error {
-	if grammarHasExpressions(grammar) && !strings.EqualFold(grammar.Select.From.ResourceType, "MEASURE") {
+	if topN := grammar.TopN; topN != nil && !strings.EqualFold(topN.From.ResourceType, "MEASURE") &&
+		topN.Where != nil && andHasContainsAlias(topN.Where.Expr) {
+		return fmt.Errorf("syntax error: CONTAINS is supported only for measures")
+	}
+	if grammar.Select == nil || strings.EqualFold(grammar.Select.From.ResourceType, "MEASURE") {
+		return nil
+	}
+	if grammarHasExpressions(grammar) {
 		return fmt.Errorf("syntax error: scalar expressions are supported only for measures")
 	}
+	if where := grammar.Select.Where; where != nil && hasContainsAlias(where.Expr) {
+		return fmt.Errorf("syntax error: CONTAINS is supported only for measures")
+	}
 	return nil
+}
+
+func hasContainsAlias(expression *GrammarOrExpr) bool {
+	if expression == nil {
+		return false
+	}
+	if andHasContainsAlias(expression.Left) {
+		return true
+	}
+	for _, right := range expression.Right {
+		if andHasContainsAlias(right.Right) {
+			return true
+		}
+	}
+	return false
+}
+
+func andHasContainsAlias(expression *GrammarAndExpr) bool {
+	contains := func(predicate *GrammarPredicate) bool {
+		return predicate.Having != nil && strings.EqualFold(predicate.Having.Having, "CONTAINS") || hasContainsAlias(predicate.Paren)
+	}
+	if contains(expression.Left) {
+		return true
+	}
+	for _, right := range expression.Right {
+		if contains(right.Right) {
+			return true
+		}
+	}
+	return false
 }
 
 func isQuotedMeasureLiteral(column *GrammarColumn, columns *measureColumns) bool {

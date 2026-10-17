@@ -21,7 +21,7 @@ package ql
 
 import "sync/atomic"
 
-var filterCounters struct {
+type filterMetricCounters struct {
 	Executions     atomic.Uint64
 	Batches        atomic.Uint64
 	InputRows      atomic.Uint64
@@ -36,42 +36,56 @@ var filterCounters struct {
 	LiveBytes      atomic.Int64
 }
 
-// FilterExecutionStats returns process-wide filter work counters.
-func FilterExecutionStats() FilterStats {
+var filterCounters, havingCounters filterMetricCounters
+
+// FilterExecutionStats returns process-wide raw WHERE filter work counters.
+func FilterExecutionStats() FilterStats { return filterCounters.snapshot() }
+
+// HavingExecutionStats returns process-wide completed-group HAVING counters.
+func HavingExecutionStats() FilterStats { return havingCounters.snapshot() }
+
+func (c *filterMetricCounters) snapshot() FilterStats {
 	return FilterStats{
-		Executions:     filterCounters.Executions.Load(),
-		Batches:        filterCounters.Batches.Load(),
-		InputRows:      filterCounters.InputRows.Load(),
-		OutputRows:     filterCounters.OutputRows.Load(),
-		TrueRows:       filterCounters.TrueRows.Load(),
-		FalseRows:      filterCounters.FalseRows.Load(),
-		UnknownRows:    filterCounters.UnknownRows.Load(),
-		CopiedBytes:    filterCounters.CopiedBytes.Load(),
-		SelectionBytes: filterCounters.SelectionBytes.Load(),
-		ReservedBytes:  filterCounters.ReservedBytes.Load(),
-		ReleasedBytes:  filterCounters.ReleasedBytes.Load(),
-		LiveBytes:      filterCounters.LiveBytes.Load(),
+		Executions:     c.Executions.Load(),
+		Batches:        c.Batches.Load(),
+		InputRows:      c.InputRows.Load(),
+		OutputRows:     c.OutputRows.Load(),
+		TrueRows:       c.TrueRows.Load(),
+		FalseRows:      c.FalseRows.Load(),
+		UnknownRows:    c.UnknownRows.Load(),
+		CopiedBytes:    c.CopiedBytes.Load(),
+		SelectionBytes: c.SelectionBytes.Load(),
+		ReservedBytes:  c.ReservedBytes.Load(),
+		ReleasedBytes:  c.ReleasedBytes.Load(),
+		LiveBytes:      c.LiveBytes.Load(),
 	}
 }
 
-func recordFilterWork(stats FilterStats) {
-	filterCounters.Executions.Add(stats.Executions)
-	filterCounters.Batches.Add(stats.Batches)
-	filterCounters.InputRows.Add(stats.InputRows)
-	filterCounters.OutputRows.Add(stats.OutputRows)
-	filterCounters.TrueRows.Add(stats.TrueRows)
-	filterCounters.FalseRows.Add(stats.FalseRows)
-	filterCounters.UnknownRows.Add(stats.UnknownRows)
-	filterCounters.CopiedBytes.Add(stats.CopiedBytes)
-	filterCounters.SelectionBytes.Add(stats.SelectionBytes)
+func recordFilterWork(stats FilterStats) { filterCounters.record(stats) }
+func recordHavingWork(stats FilterStats) { havingCounters.record(stats) }
+func recordFilterReserve(bytes int64)    { filterCounters.reserve(bytes) }
+func recordHavingReserve(bytes int64)    { havingCounters.reserve(bytes) }
+func recordFilterRelease(bytes int64)    { filterCounters.release(bytes) }
+func recordHavingRelease(bytes int64)    { havingCounters.release(bytes) }
+
+func (c *filterMetricCounters) record(stats FilterStats) {
+	c.Executions.Add(stats.Executions)
+	c.Batches.Add(stats.Batches)
+	c.InputRows.Add(stats.InputRows)
+	c.OutputRows.Add(stats.OutputRows)
+	c.TrueRows.Add(stats.TrueRows)
+	c.FalseRows.Add(stats.FalseRows)
+	c.UnknownRows.Add(stats.UnknownRows)
+	c.CopiedBytes.Add(stats.CopiedBytes)
+	c.SelectionBytes.Add(stats.SelectionBytes)
 }
 
-func recordFilterReserve(bytes int64) {
-	filterCounters.ReservedBytes.Add(uint64(bytes))
-	filterCounters.LiveBytes.Add(bytes)
+func (c *filterMetricCounters) reserve(bytes int64) {
+	c.ReservedBytes.Add(uint64(bytes))
+	c.LiveBytes.Add(bytes)
 }
 
-func recordFilterRelease(bytes int64) {
-	filterCounters.ReleasedBytes.Add(uint64(bytes))
-	filterCounters.LiveBytes.Add(-bytes)
+func (c *filterMetricCounters) release(bytes int64) {
+	c.ReleasedBytes.Add(uint64(bytes))
+	c.LiveBytes.Add(-bytes)
 }

@@ -537,7 +537,7 @@ BydbQL for measures supports aggregation and grouping, raw SELECT expressions, a
 ### 5.1. Grammar
 
 ```
-measure_query     ::= SELECT projection from_measure_clause [TIME time_condition] [WHERE measure_predicate] [GROUP BY group_list] [ORDER BY order_expression] [WITH QUERY_TRACE] [LIMIT count] [OFFSET count]
+measure_query     ::= SELECT projection from_measure_clause [TIME time_condition] [WHERE measure_predicate] [GROUP BY group_list] [HAVING expression] [ORDER BY order_expression] [WITH QUERY_TRACE] [LIMIT count] [OFFSET count]
 measure_predicate ::= criteria | expression /* boolean expression; section 5.8 */
 from_measure_clause ::= ("FROM MEASURE" identifier "IN" ["("] group_list_id [")"] | "FROM" identifier "." identifier) [ON ["("] stage_list [")"] STAGES]
 projection        ::= "*" | column_list | top_clause
@@ -561,7 +561,7 @@ comparison_op     ::= "=" | "!=" | ">" | ">=" | "<" | "<="
 time_value        ::= string_literal | "?" | "now" "(" ")"
 interval_adjustment ::= ("+" | "-") "INTERVAL" string_literal
 time_condition    ::= "=" timestamp | ">" timestamp | "<" timestamp | ">=" timestamp | "<=" timestamp | "BETWEEN" timestamp "AND" timestamp
-binary_op         ::= "=" | "!=" | ">" | "<" | ">=" | "<=" | "IN" | "NOT IN" | "HAVING" | "NOT HAVING" | "MATCH"
+binary_op         ::= "=" | "!=" | ">" | "<" | ">=" | "<=" | "IN" | "NOT IN" | "HAVING" | "NOT HAVING" | "CONTAINS" | "NOT CONTAINS" | "MATCH"
 order_expression  ::= ("time" | identifier_path) ["ASC" | "DESC"] | "ASC" | "DESC"
 value             ::= string_literal | integer_literal | "NULL" | "?"
 value_list        ::= "(" value ("," value)* ")"
@@ -817,7 +817,7 @@ A raw query uses the extended behavior when it uses source shorthand, an `AS` al
 - `OFFSET` and `LIMIT` apply after time and field filters, including disjoint ranges. Legacy queries without these raw extensions keep their existing pagination defaults.
 - Timestamp ordering, including an unambiguous timestamp alias such as `ORDER BY observed_at DESC`, is supported. Native index-rule ordering remains available. General sorting by tag/field output columns, multiple sort keys, and explicit NULL ordering are not implemented yet.
 
-The current raw extensions cannot be combined with `SELECT TOP`. Aggregate projections and named scalar grouping use the extended aggregation behavior in section 5.6. Legacy native aggregation and grouping retain their existing syntax and behavior. SELECT expressions are described in section 5.7; field filters and mixed time/tag/field `OR` are described in section 5.8. Post-aggregation HAVING, SELECT DISTINCT, and computed grouping remain planned capabilities.
+The current raw extensions cannot be combined with `SELECT TOP`. Aggregate projections and named scalar grouping use the extended aggregation behavior in section 5.6. Legacy native aggregation and grouping retain their existing syntax and behavior. SELECT expressions are described in section 5.7; field filters and mixed time/tag/field `OR` are described in section 5.8; HAVING and collection membership are described in section 5.9. SELECT DISTINCT and computed grouping remain planned capabilities.
 
 Aliases, built-in time projections, `now()`, timestamp `INTERVAL` arithmetic, and source shorthand in this section apply to measure SELECT. They do not extend stream, trace, property, or SHOW TOP syntax.
 
@@ -891,7 +891,7 @@ FROM MEASURE service_cpm IN metrics
 WHERE time >= ? AND time < ?
 ```
 
-Extended aggregate queries currently reject COUNT(DISTINCT), TOP, TIME_BUCKET, array grouping, and ORDER BY. The existing legacy native forms of these supported operations remain available. Group-only queries without an aggregate, expressions as aggregate arguments or grouping keys, and HAVING are not implemented yet.
+Extended aggregate queries currently reject COUNT(DISTINCT), TOP, TIME_BUCKET, array grouping, and ORDER BY. The existing legacy native forms of these supported operations remain available. HAVING supports grouped keys and named aggregate calls, including calls absent from SELECT. Expressions as aggregate arguments or grouping keys remain unsupported.
 
 #### Native aggregate execution
 
@@ -939,7 +939,7 @@ Ordinary arithmetic and comparisons propagate null. A nonempty IN list with no m
 
 Computed int/double/string/bytes outputs become named fields. Computed timestamps and integer/string arrays use existing TagValue variants in the `__ql` family. An unnamed computed expression is `expr_1`, `expr_2`, etc., by its SELECT position; aliases are recommended. Direct columns retain their existing containers. All DataPoints retain their raw timestamp/SID/version, and hidden expression inputs are omitted. Duplicate names within a container are rejected.
 
-SELECT expressions currently apply to raw measure queries. Combining computed SELECT outputs with aggregates, GROUP BY or SELECT TOP is rejected. The same expression evaluator supports raw-input WHERE, including before aggregation, as described below. Post-aggregation HAVING, computed grouping and general ordering by computed aliases remain later capabilities. Query memory limits still apply; disk spilling is not implemented.
+SELECT expressions currently apply to raw measure queries. Combining computed SELECT outputs with aggregates, GROUP BY or SELECT TOP is rejected. The same expression evaluator supports raw-input WHERE and post-aggregation HAVING, as described below. Computed grouping and general ordering by computed aliases remain later capabilities. Query memory limits still apply; disk spilling is not implemented.
 
 ### 5.8. Field and expression filters
 
@@ -969,7 +969,38 @@ Predicate-only columns remain hidden from the response. Filtering precedes SELEC
 
 CASE, COALESCE and AND/OR keep their masked evaluation rules. A division or invalid cast fails only when its branch is evaluated; all branches still require valid types. Typed WHERE IN lists accept empty lists and empty array parameters, for example `value::FIELD IN (?)`; these produce FALSE, while NOT IN produces TRUE. Legacy untyped WHERE value lists retain their existing empty-array rejection.
 
-Legacy tag-only MATCH and infix collection HAVING/NOT HAVING retain their behavior. Ordinary legacy tag predicates keep their native routing even when unused column types differ across source groups. Queries requiring typed execution still validate source types. Combining MATCH or collection HAVING with a new residual expression is currently rejected; post-aggregation HAVING and the new membership spellings belong to a later capability. Field and float predicates execute on the liaison using the native raw batches. Memory admission and cleanup remain enforced; no temporary-file spilling is added.
+Legacy tag-only MATCH and infix collection HAVING/NOT HAVING retain their behavior. Ordinary legacy tag predicates keep their native routing even when unused column types differ across source groups. Queries requiring typed execution still validate source types. Collection membership can combine with typed residual expressions and grouped HAVING; combining MATCH with a typed residual remains unsupported. Field and float predicates execute on the liaison using the native raw batches. Memory admission and cleanup remain enforced; no temporary-file spilling is added.
+
+### 5.9. Group filtering and collection membership
+
+HAVING filters completed grouped or scalar aggregate results, before final OFFSET/LIMIT. Only TRUE keeps a group; FALSE and UNKNOWN remove it. All input rows and native aggregate branches finish before HAVING runs.
+
+```sql
+SELECT host AS node, SUM(value)::FIELD AS total
+FROM metrics.service_cpm
+WHERE time >= ? AND time < ?
+GROUP BY host
+HAVING SUM(value::FIELD) > ?
+LIMIT 10
+```
+
+HAVING supports arithmetic, casts, comparisons, boolean expressions, IN, CASE and COALESCE over grouped source columns and named COUNT/SUM/MIN/MAX/AVG/MEAN calls. A query can select only `host` while filtering `HAVING SUM(value::FIELD) > ?`: the hidden aggregate is not returned. Repeated calls share aggregation state and native branches. SELECT aliases are outside HAVING scope: refer to `host` and `SUM(value::FIELD)`, not `node` and `total`. Nested aggregate calls, computed aggregate arguments and nongrouped source references are rejected before dispatch. Scalar aggregation retains its SQL empty-input row; HAVING can then remove it. Group-only queries with HAVING are supported too.
+
+Within a measure predicate, `CONTAINS` and `NOT CONTAINS` are aliases of the existing infix `HAVING` and `NOT HAVING` operators. CONTAINS is contextual, so existing tags named `contains` and resources named `contains-svc` remain valid. The new aliases are limited to measure queries; other resource types keep their existing syntax.
+
+```sql
+SELECT host, COUNT(value)::FIELD AS samples
+FROM metrics.service_cpm
+WHERE time >= ? AND time < ?
+  AND labels::TAG CONTAINS ('red', 'blue')
+  AND value::FIELD > 0
+GROUP BY host
+HAVING COUNT(value::FIELD) > 1
+```
+
+Membership requires all requested integer or string terms; scalar sources can match one value or repeated copies of that value. NULL sources, scalar NULL requests and empty literal lists do not match; NOT CONTAINS complements the result, including for NULL sources. Empty array parameters retain the legacy binding error. Scalar, list and array parameters keep the existing type conversion and expansion rules. Legacy infix HAVING remains available inside WHERE; the grouped HAVING clause follows GROUP BY or the scalar aggregate's WHERE clause.
+
+QL-evaluated membership on indexed STRING_ARRAY or INT_ARRAY tags returns `InvalidArgument` before data execution. Native projection cannot guarantee all array elements: STRING_ARRAY decoding can panic and INT_ARRAY can retain only its last element. The check uses current index bindings even when the query plan is reused. Type qualification does not repair this native limitation. Unindexed array membership and indexed scalar membership remain supported; ordinary legacy native membership retains its routing.
 
 ## 6. BydbQL for Top-N
 

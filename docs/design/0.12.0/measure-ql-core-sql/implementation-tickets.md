@@ -632,10 +632,16 @@ The generated QL-only suite adds 48 specs with independent expected values and
 passes all 340 selected specs on both topologies, including unchanged legacy
 routing across groups with incompatible unused column types. Required T12 work counters,
 hidden columns, resource cleanup, bind reuse and bypass are checked. Safe native
-tag/time pruning never replaces a residual. MATCH/collection-HAVING composition
-with new residual expressions remains explicitly rejected until its owning ticket.
+tag/time pruning never replaces a residual. T14 subsequently adds collection
+membership composition with new residual expressions; MATCH composition remains
+explicitly rejected.
 
 ### T14 — Execute grouped queries with HAVING and membership predicates
+
+**Status: implemented.** The generated suite adds 163 T14 specs and 35 coverage
+obligations; the full suite contains 503 selected specs per real Query RPC topology. The
+owning K(T14) and P(T14) protocols, results, resource probes and unchanged native
+indexed-array limitation are recorded in [T14 verification](t14-verification.md).
 
 **Performance question:** what does filtering completed groups cost, and do hidden
 or repeated aggregates trigger unnecessary native work or result materialization?
@@ -664,10 +670,18 @@ and separately account for fewer output rows. K(T14) measures filtering group
 batches. G3: repeated SELECT/HAVING calls add zero branches; filter input equals
 completed groups, not raw rows; hidden slots are never serialized. Both membership
 spellings produce the same work; their alias alone is not the performance claim.
-G1/G2 apply; report group-filter CPU, retained state, output bytes and RPC latency.
+G1/G2 apply. K(T14) isolates group-filter execution cost. P(T14) reports inclusive
+process CPU, allocated/reserved state, output rows/bytes and RPC latency; shared-kernel
+profiles cannot isolate HAVING CPU. Per-operator peak retained bytes and physical
+storage reads remain explicitly unavailable. Hidden-call variants omit the two
+visible AVG fields, so their latency comparison also includes narrower output.
+Actual full BydbQL response bytes are measured over the six independently checked
+timed samples after profiling stops. Contextual identifiers and indexed-array
+rejections have generated coverage. A live index-binding check precedes native
+dispatch even on compiled-plan cache hits; native indexed storage is unchanged.
 
 **Checks/readiness:** E(T14), P(T14), K(T14); focused `./pkg/bydbql`,
-`./pkg/query/ql`. Blocked by T08/T10/T12. Grammar compatibility, reference errors
+`./pkg/query/ql`. Prerequisites T08/T10/T12 are implemented. Grammar compatibility, reference errors
 and membership cases are acceptance details of executable grouped queries.
 
 ### T15 — Implement DISTINCT on the complete visible tuple

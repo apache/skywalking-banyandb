@@ -39,11 +39,10 @@ type NativeAggregateStats struct {
 
 // NativeAggregateStatistics reports keyed merge work, including after Close.
 func NativeAggregateStatistics(source vectorized.PullOperator) (NativeAggregateStats, bool) {
-	if op, ok := source.(*nativeAggregateOperator); ok {
-		return op.statistics(), true
-	}
-	if raw, ok := source.(*rawOperator); ok {
-		return NativeAggregateStatistics(raw.source)
+	for current := source; current != nil; current = operatorSource(current) {
+		if op, ok := current.(*nativeAggregateOperator); ok {
+			return op.statistics(), true
+		}
 	}
 	return NativeAggregateStats{}, false
 }

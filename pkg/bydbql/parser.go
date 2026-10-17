@@ -91,15 +91,11 @@ func ParseQuery(query string) (*Grammar, error) {
 	if err := checkParenDepth(query); err != nil {
 		return nil, err
 	}
-	// Parse using Participle
-	grammar, err := particpleParser.ParseString("", query)
+	grammar, err := parseSelectSyntax(query)
 	if err != nil {
-		grammar, err = parseExpressionProjection(query)
-		if err != nil {
-			whereGrammar, whereErr := parseExpressionWhere(query)
-			if !errors.Is(whereErr, errNoExpressionWhere) {
-				grammar, err = whereGrammar, whereErr
-			}
+		havingGrammar, havingErr := parseExpressionHaving(query)
+		if !errors.Is(havingErr, errNoExpressionHaving) {
+			grammar, err = havingGrammar, havingErr
 		}
 	}
 	if err != nil {
@@ -128,6 +124,20 @@ func ParseQuery(query string) (*Grammar, error) {
 	return grammar, nil
 }
 
+func parseSelectSyntax(query string) (*Grammar, error) {
+	grammar, err := particpleParser.ParseString("", query)
+	if err != nil {
+		grammar, err = parseExpressionProjection(query)
+		if err != nil {
+			whereGrammar, whereErr := parseExpressionWhere(query)
+			if !errors.Is(whereErr, errNoExpressionWhere) {
+				grammar, err = whereGrammar, whereErr
+			}
+		}
+	}
+	return grammar, err
+}
+
 // checkAggregateAndGroupByShape enforces two constraints participle's
 // struct-tag grammar cannot express as per-alternative predicates:
 //   - DISTINCT is only valid inside COUNT — SUM(DISTINCT x) etc. is rejected.
@@ -151,9 +161,14 @@ func checkAggregateAndGroupByShape(g *Grammar) error {
 			if col.Aggregate == nil {
 				continue
 			}
-			if col.Aggregate.Distinct && !strings.EqualFold(col.Aggregate.Function, "COUNT") {
-				return fmt.Errorf("syntax error: DISTINCT is only valid inside COUNT, got %s(DISTINCT ...)", col.Aggregate.Function)
+			if err := checkAggregateShape(col.Aggregate); err != nil {
+				return err
 			}
+		}
+	}
+	if having := g.Select.Having; having != nil {
+		if err := checkHavingAggregateShape(having.Expression); err != nil {
+			return err
 		}
 	}
 	if gb := g.Select.GroupBy; gb != nil {
@@ -165,6 +180,25 @@ func checkAggregateAndGroupByShape(g *Grammar) error {
 		}
 		if bucketCount > 1 {
 			return fmt.Errorf("syntax error: at most one TIME_BUCKET(...) is allowed in GROUP BY, got %d", bucketCount)
+		}
+	}
+	return nil
+}
+
+func checkAggregateShape(aggregate *GrammarAggregateFunction) error {
+	if aggregate != nil && aggregate.Distinct && !strings.EqualFold(aggregate.Function, "COUNT") {
+		return fmt.Errorf("syntax error: DISTINCT is only valid inside COUNT, got %s(DISTINCT ...)", aggregate.Function)
+	}
+	return nil
+}
+
+func checkHavingAggregateShape(expression *GrammarExpression) error {
+	if err := checkAggregateShape(expression.Aggregate); err != nil {
+		return err
+	}
+	for _, child := range expression.Args {
+		if err := checkHavingAggregateShape(child); err != nil {
+			return err
 		}
 	}
 	return nil

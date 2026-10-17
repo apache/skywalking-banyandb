@@ -39,6 +39,11 @@ type Feature struct {
 
 // Suite is the reproducible QL-only integration artifact.
 type Suite struct {
+	HavingReviewScenarios        []HavingScenario              `json:"having_review_scenarios"`
+	HavingLegacyScenarios        []HavingScenario              `json:"having_legacy_scenarios"`
+	HavingReadiness              []AggregateFixture            `json:"having_readiness"`
+	HavingScenarios              []HavingScenario              `json:"having_scenarios"`
+	HavingRejections             []Case                        `json:"having_rejections"`
 	LegacyCompatibilityReadiness []Case                        `json:"legacy_compatibility_readiness"`
 	LegacyCompatibilityScenarios []LegacyCompatibilityScenario `json:"legacy_compatibility_scenarios"`
 	FilterReadiness              []Case                        `json:"filter_readiness"`
@@ -138,6 +143,20 @@ func (s Suite) Validate() error {
 }
 
 func (s Suite) validateScenarios() error {
+	if err := validateT14ReviewScenarios(s.HavingReviewScenarios); err != nil {
+		return err
+	}
+	if err := validateHavingScenarios(s.HavingReadiness, s.HavingScenarios); err != nil {
+		return err
+	}
+	if len(s.HavingLegacyScenarios) == 0 {
+		return fmt.Errorf("T14 legacy membership witnesses missing")
+	}
+	for _, scenario := range s.HavingLegacyScenarios {
+		if len(scenario.Cases) != 3 {
+			return fmt.Errorf("T14 legacy membership binding missing")
+		}
+	}
 	if err := validateT12Legacy(s.LegacyCompatibilityReadiness, s.LegacyCompatibilityScenarios); err != nil {
 		return err
 	}
@@ -161,6 +180,19 @@ func (s Suite) validateScenarios() error {
 
 func (s Suite) witnessCases() []Case {
 	cases := append([]Case(nil), s.Cases...)
+	for _, scenario := range s.HavingReviewScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
+	for _, scenario := range s.HavingLegacyScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
+	for _, fixture := range s.HavingReadiness {
+		cases = append(cases, fixture.Cases...)
+	}
+	cases = append(cases, s.HavingRejections...)
+	for _, scenario := range s.HavingScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
 	cases = append(cases, s.LegacyCompatibilityReadiness...)
 	for _, scenario := range s.LegacyCompatibilityScenarios {
 		cases = append(cases, scenario.Cases...)

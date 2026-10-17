@@ -63,5 +63,6 @@ func (o *filterOperator) record(delta FilterStats) {
 	o.stats.TrueRows += delta.TrueRows
 	o.stats.FalseRows += delta.FalseRows
 	o.stats.UnknownRows += delta.UnknownRows
-	recordFilterWork(delta)
+	o.stats.SelectionBytes += delta.SelectionBytes
+	o.kernel.metrics.filterWork(delta)
 }

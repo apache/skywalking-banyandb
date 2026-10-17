@@ -43,16 +43,22 @@ type Grammar struct {
 // GrammarSelectStatement represents a SELECT statement in Participle grammar.
 type GrammarSelectStatement struct {
 	Pos            lexer.Position
-	Select         string                      `parser:"@'SELECT'"`
-	Projection     *GrammarProjection          `parser:"@@"`
-	From           *GrammarFromClause          `parser:"@@"`
-	Time           *GrammarTimeClause          `parser:"@@?"`
-	Where          *GrammarSelectWhereClause   `parser:"@@?"`
-	GroupBy        *GrammarGroupByClause       `parser:"@@?"`
+	Select         string                    `parser:"@'SELECT'"`
+	Projection     *GrammarProjection        `parser:"@@"`
+	From           *GrammarFromClause        `parser:"@@"`
+	Time           *GrammarTimeClause        `parser:"@@?"`
+	Where          *GrammarSelectWhereClause `parser:"@@?"`
+	GroupBy        *GrammarGroupByClause     `parser:"@@?"`
+	Having         *GrammarHavingClause
 	OrderBy        *GrammarSelectOrderByClause `parser:"@@?"`
 	WithQueryTrace *GrammarWithTraceClause     `parser:"@@?"`
 	Limit          *GrammarLimitClause         `parser:"@@?"`
 	Offset         *GrammarOffsetClause        `parser:"@@?"`
+}
+
+// GrammarHavingClause filters completed measure groups.
+type GrammarHavingClause struct {
+	Expression *GrammarExpression
 }
 
 // GrammarTopNStatement represents a SHOW TOP N statement.
@@ -257,11 +263,11 @@ type GrammarInPredicate struct {
 	Values     []*GrammarValue        `parser:"'(' @@? ( ',' @@ )* ')'"`
 }
 
-// GrammarHavingPredicate represents HAVING/NOT HAVING predicate.
+// GrammarHavingPredicate represents infix HAVING/CONTAINS membership and their negations.
 type GrammarHavingPredicate struct {
 	Identifier *GrammarIdentifierPath `parser:"@@"`
 	Not        *string                `parser:"@'NOT'?"`
-	Having     string                 `parser:"@'HAVING'"`
+	Having     string                 `parser:"@('HAVING'|'CONTAINS')"`
 	Values     *GrammarHavingValues   `parser:"@@"`
 }
 

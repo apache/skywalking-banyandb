@@ -41,6 +41,12 @@ type filterOperator struct {
 // WrapFilter owns source on every return path and lends its columns with a
 // narrowed physical selection. Only TRUE passes; FALSE and NULL do not pass.
 func WrapFilter(ctx context.Context, source vectorized.PullOperator, predicate *Expression) (_ vectorized.PullOperator, err error) {
+	return wrapPredicateFilter(ctx, source, predicate, &whereMetrics)
+}
+
+func wrapPredicateFilter(
+	ctx context.Context, source vectorized.PullOperator, predicate *Expression, metrics *operatorMetrics,
+) (_ vectorized.PullOperator, err error) {
 	defer func() {
 		if err != nil && source != nil {
 			_ = source.Close()
@@ -52,7 +58,7 @@ func WrapFilter(ctx context.Context, source vectorized.PullOperator, predicate *
 	if source == nil || source.OutputSchema() == nil {
 		return nil, expressionError("filter requires a source schema")
 	}
-	kernel := &expressionOperator{source: source, tracker: vectorized.QueryMemoryTracker(ctx, 256<<20), filter: true}
+	kernel := &expressionOperator{source: source, tracker: vectorized.QueryMemoryTracker(ctx, 256<<20), metrics: metrics}
 	defer func() {
 		if err != nil {
 			kernel.release()
@@ -220,8 +226,7 @@ func (o *filterOperator) selectRows(ctx context.Context, batch *vectorized.Recor
 		previous := o.selectionBytes
 		o.selection = make([]uint16, 0, passed)
 		o.selectionBytes = bytes
-		o.stats.SelectionBytes += uint64(bytes)
-		recordFilterWork(FilterStats{SelectionBytes: uint64(bytes)})
+		o.record(FilterStats{SelectionBytes: uint64(bytes)})
 		if previous != 0 {
 			o.kernel.unreserve(previous)
 		}
