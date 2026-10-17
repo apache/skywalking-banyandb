@@ -64,6 +64,7 @@ type Predicate struct {
 
 // Case contains a generated QL statement and independently evaluated result.
 type Case struct {
+	DistinctInputs   *uint64            `json:"distinct_inputs,omitempty"`
 	Having           *HavingExpectation `json:"having,omitempty"`
 	Filter           *FilterExpectation `json:"filter,omitempty"`
 	Dimensions       map[string]string  `json:"dimensions,omitempty"`
@@ -75,6 +76,7 @@ type Case struct {
 	WantJSON         json.RawMessage    `json:"want,omitempty"`
 	Features         []string           `json:"features"`
 	AggregateInputs  uint64             `json:"aggregate_inputs,omitempty"`
+	DistinctGroups   uint64             `json:"distinct_groups,omitempty"`
 	AggregateGroups  uint64             `json:"aggregate_groups,omitempty"`
 	WantCode         codes.Code         `json:"want_code,omitempty"`
 	Ordered          bool               `json:"ordered,omitempty"`

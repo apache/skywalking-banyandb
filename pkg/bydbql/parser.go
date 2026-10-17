@@ -101,6 +101,9 @@ func ParseQuery(query string) (*Grammar, error) {
 	if err != nil {
 		return nil, fmt.Errorf("syntax error: %w", err)
 	}
+	if grammar.Select != nil && grammar.Select.Distinct && grammar.Select.From.Shorthand == nil && !strings.EqualFold(grammar.Select.From.ResourceType, "MEASURE") {
+		return nil, fmt.Errorf("SELECT DISTINCT is supported only for measures")
+	}
 	markExpressionLiterals(grammar, query)
 	if grammar.Select != nil && grammar.Select.From.Shorthand != nil {
 		from := grammar.Select.From
@@ -160,6 +163,14 @@ func checkAggregateAndGroupByShape(g *Grammar) error {
 		for _, col := range columns {
 			if col.Aggregate == nil {
 				continue
+			}
+			if col.Aggregate.TypeSpec != nil {
+				if col.TypeSpec != nil {
+					return fmt.Errorf("syntax error: aggregate qualifier appears inside and outside the argument")
+				}
+				if !strings.EqualFold(g.Select.From.ResourceType, "MEASURE") {
+					return fmt.Errorf("syntax error: qualified aggregate arguments are supported only for measures")
+				}
 			}
 			if err := checkAggregateShape(col.Aggregate); err != nil {
 				return err

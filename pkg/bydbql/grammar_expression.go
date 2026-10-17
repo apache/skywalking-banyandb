@@ -78,6 +78,10 @@ func parseExpressionProjection(query string) (*Grammar, error) {
 	}
 	var segments [][]expressionToken
 	begin := 1
+	distinct := len(tokens) > 1 && strings.EqualFold(tokens[1].text, "DISTINCT")
+	if distinct {
+		begin++
+	}
 	depth = 0
 	for i := begin; i < from; i++ {
 		switch tokens[i].text {
@@ -134,6 +138,7 @@ func parseExpressionProjection(query string) (*Grammar, error) {
 	if err != nil {
 		return nil, err
 	}
+	grammar.Select.Distinct = distinct
 	grammar.Select.Projection.Columns = columns
 	return grammar, nil
 }

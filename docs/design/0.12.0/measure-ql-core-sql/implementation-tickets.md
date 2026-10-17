@@ -687,6 +687,20 @@ and membership cases are acceptance details of executable grouped queries.
 
 ### T15 — Implement DISTINCT on the complete visible tuple
 
+**Status: implemented.** The generated suite adds 21 QL-only specs with changed
+bindings, plan reuse and cache bypass, including scalar/timestamp equality,
+cross-batch tuples, projection, aggregate/HAVING composition and pagination.
+The existing SQL group table runs with zero aggregate states under the shared
+query tracker. Named typed GROUP BY without aggregates supplies an equivalent
+reference; legacy native group-only routing is preserved. Arrays reject during
+binding, and general sorting remains T17. See [T15 verification](t15-verification.md)
+for real-RPC coverage, focused five-run benchmarks and the native materialization
+limits encountered by large resource probes.
+The [memory follow-up](t15-memory-verification.md) adds compact pooled keys,
+unordered finite-LIMIT stopping and reduced native frame buffering, with focused
+before/after measurements. Explicit ordering and absent LIMIT retain complete
+deduplication; upstream aggregation and native materialization have separate bounds.
+
 **Performance question:** how do distinct-tuple throughput and retained key bytes
 scale with duplicate ratio, cardinality and variable-width values?
 
@@ -709,7 +723,7 @@ count is zero, and retained key storage scales with unique tuple bytes rather
 than duplicate count. K(T15) measures hashing/equality throughput; G1/G2 apply.
 
 **Checks/readiness:** E(T15), P(T15), K(T15); focused `./pkg/query/ql`,
-`./pkg/bydbql`. Blocked by T07/T10. The legacy first-row-per-group operator is not
+`./pkg/bydbql`. Prerequisites T07/T10 are implemented. The legacy first-row-per-group operator is not
 an acceptable replacement for tuple DISTINCT.
 
 ### T16 — Evaluate computed group keys and resolve GROUP BY ordinals

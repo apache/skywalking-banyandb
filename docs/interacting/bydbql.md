@@ -547,7 +547,7 @@ column            ::= (("time" | identifier_path | agg_function "(" ["DISTINCT"]
 	/* expression syntax and current composition limits are in section 5.9 */
 stage_list        ::= identifier ("," identifier)*
 agg_function      ::= "SUM" | "MEAN" | "AVG" | "COUNT" | "MAX" | "MIN"
-	/* "DISTINCT" is only valid with COUNT: COUNT(DISTINCT identifier) */
+	/* inside an aggregate call, "DISTINCT" is only valid with COUNT */
 group_list        ::= group_column ("," group_column)*
 group_column      ::= identifier | time_bucket_function
 time_bucket_function ::= "TIME_BUCKET" "(" [string_literal] ")"
@@ -1001,6 +1001,26 @@ HAVING COUNT(value::FIELD) > 1
 Membership requires all requested integer or string terms; scalar sources can match one value or repeated copies of that value. NULL sources, scalar NULL requests and empty literal lists do not match; NOT CONTAINS complements the result, including for NULL sources. Empty array parameters retain the legacy binding error. Scalar, list and array parameters keep the existing type conversion and expansion rules. Legacy infix HAVING remains available inside WHERE; the grouped HAVING clause follows GROUP BY or the scalar aggregate's WHERE clause.
 
 QL-evaluated membership on indexed STRING_ARRAY or INT_ARRAY tags returns `InvalidArgument` before data execution. This conservative restriction remains after the native indexed-array projection repair; this release does not enable typed membership on indexed arrays. The check uses current index bindings even when the query plan is reused. Type qualification does not bypass it. Unindexed array membership and indexed scalar membership remain supported; ordinary legacy native membership retains its routing.
+
+### 5.10. DISTINCT output tuples
+
+`SELECT DISTINCT` returns each unique combination of projected values once. Equality uses the entire visible tuple, across tag families and fields. Aliases change output names without changing equality. Source timestamps, series identities and hidden predicate or aggregate inputs do not enter the key unless explicitly selected.
+
+```sql
+SELECT DISTINCT host, zone
+FROM metrics.service_cpm
+WHERE time >= ? AND time < ?
+```
+
+DISTINCT runs after raw filtering, aggregation, HAVING and visible projection, and before final OFFSET/LIMIT. Projected arithmetic, casts and CASE expressions use their evaluated values as keys. Hidden calls used only by HAVING are removed before deduplication. Omitting LIMIT does not impose the native default of 100 rows; LIMIT 0 skips data execution.
+
+Integer, double, string, binary and timestamp values can be keys. NULL values compare equal for deduplication, but remain distinct from zero, an empty string or empty bytes. Positive and negative floating zero share a key, and all NaN representations share a key. Array keys are rejected during binding, including arrays selected by `*`. SELECT DISTINCT cannot be combined with SELECT TOP. It does not change the existing restrictions on COUNT(DISTINCT).
+
+Without ORDER BY, result order is unspecified. DISTINCT does not add new ordering forms: an existing supported ORDER BY must resolve to a visible direct output. Ordering by hidden inputs is rejected; general ordering of computed or aggregate outputs remains planned.
+
+For timestamp ordering, write `ORDER BY TIME ASC` or `DESC`, or use a visible timestamp alias. Direction-only `ORDER BY ASC` or `ORDER BY DESC` is rejected with DISTINCT.
+
+The liaison reuses the SQL grouping table without aggregate states. It stores unique keys in compact chunks under the shared query memory budget. With no ORDER BY and a finite LIMIT, deduplication stops after finding OFFSET + LIMIT unique tuples, including partway through a batch. If fewer unique tuples exist, it reads the complete input. An explicit ORDER BY or an omitted LIMIT also requires complete input. Upstream aggregation and native result materialization may still consume their complete input before DISTINCT sees a batch, so a small LIMIT does not bound total query memory or storage work. Budget exhaustion returns `ResourceExhausted`; temporary-file spilling is not implemented. The response keeps the existing measure-result format and does not retain an arbitrary source row's identity for each tuple.
 
 ## 6. BydbQL for Top-N
 

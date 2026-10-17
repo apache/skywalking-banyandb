@@ -111,6 +111,12 @@ func resolveMeasureAggregate(aggregate *GrammarAggregateFunction, typeSpec *stri
 ) {
 	var call ql.AggregateCall
 	var output vectorized.ColumnDef
+	if aggregate.TypeSpec != nil {
+		if typeSpec != nil {
+			return call, output, fmt.Errorf("invalid aggregate column type: qualifier appears inside and outside the argument")
+		}
+		typeSpec = aggregate.TypeSpec
+	}
 	if aggregate.Distinct {
 		return call, output, fmt.Errorf("extended COUNT(DISTINCT) is not supported; existing native routing and stage restrictions still apply")
 	}

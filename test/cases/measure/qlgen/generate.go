@@ -83,6 +83,10 @@ func Generate() (Suite, error) {
 	if havingReviewErr != nil {
 		return Suite{}, havingReviewErr
 	}
+	distinctReadiness, distinctScenarios, distinctRejections, distinctErr := generateT15(b)
+	if distinctErr != nil {
+		return Suite{}, distinctErr
+	}
 	if b.err != nil {
 		return Suite{}, b.err
 	}
@@ -104,6 +108,7 @@ func Generate() (Suite, error) {
 		return Suite{}, reuseReadinessErr
 	}
 	suite := Suite{
+		DistinctReadiness: distinctReadiness, DistinctScenarios: distinctScenarios, DistinctRejections: distinctRejections,
 		HavingReviewScenarios: havingReview,
 		HavingLegacyScenarios: havingLegacy, HavingReadiness: havingReadiness, HavingScenarios: havingScenarios, HavingRejections: havingRejections,
 		LegacyCompatibilityReadiness: legacyReadiness, LegacyCompatibilityScenarios: legacyScenarios,

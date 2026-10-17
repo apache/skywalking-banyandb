@@ -44,6 +44,7 @@ type Grammar struct {
 type GrammarSelectStatement struct {
 	Pos            lexer.Position
 	Select         string                    `parser:"@'SELECT'"`
+	Distinct       bool                      `parser:"@'DISTINCT'?"`
 	Projection     *GrammarProjection        `parser:"@@"`
 	From           *GrammarFromClause        `parser:"@@"`
 	Time           *GrammarTimeClause        `parser:"@@?"`
@@ -113,7 +114,8 @@ type GrammarColumn struct {
 type GrammarAggregateFunction struct {
 	Function string                 `parser:"@('SUM'|'MEAN'|'AVG'|'COUNT'|'MAX'|'MIN')"`
 	Distinct bool                   `parser:"'(' @'DISTINCT'?"`
-	Column   *GrammarIdentifierPath `parser:"@@ ')'"`
+	Column   *GrammarIdentifierPath `parser:"@@"`
+	TypeSpec *string                `parser:"( '::' @('TAG'|'FIELD') )? ')'"`
 }
 
 // GrammarTopNAggregateFunction represents aggregate functions without column (for TOP N).

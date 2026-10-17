@@ -167,7 +167,7 @@ func (m *MeasureTemplate) compileTyped(schemas map[string]*databasev1.Measure) e
 		return err
 	}
 	switch {
-	case stmt.Having != nil:
+	case stmt.Having != nil || stmt.GroupBy != nil:
 		err = m.compileAggregate(columns)
 	case hasMeasureExpressions(stmt.Projection):
 		err = m.compileExpressions(columns)
@@ -178,6 +178,11 @@ func (m *MeasureTemplate) compileTyped(schemas map[string]*databasev1.Measure) e
 	}
 	if err != nil {
 		return err
+	}
+	if stmt.Distinct {
+		if err = m.validateDistinct(); err != nil {
+			return err
+		}
 	}
 	if m.aggregate != nil || m.expressions != nil || m.filter != nil {
 		m.compileNativeEntities(schemas, columns)
@@ -266,18 +271,7 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 		}
 		return &MeasureExecution{Request: request}, nil
 	}
-	plan := &ql.RawPlan{Slots: slices.Clone(m.slots)}
-
-	plan.Expressions, err = m.bindExpressions(bound)
-	if err != nil {
-		return nil, invalidMeasure(err)
-	}
-	if m.aggregate != nil {
-		plan.Aggregate = &ql.AggregatePlan{
-			GroupBy: slices.Clone(m.aggregate.GroupBy), Calls: slices.Clone(m.aggregate.Calls), Outputs: slices.Clone(m.aggregate.Outputs),
-		}
-	}
-	plan.Having, err = m.bindHaving(bound)
+	plan, err := m.bindLocalOperators(bound)
 	if err != nil {
 		return nil, invalidMeasure(err)
 	}
@@ -321,13 +315,14 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 }
 
 func requiresMeasurePlan(stmt *GrammarSelectStatement) bool {
-	if stmt.Having != nil || stmt.From.Shorthand != nil || measureAggregateCount(stmt) > 1 || hasMeasureExpressions(stmt.Projection) ||
+	if stmt.Distinct || stmt.Having != nil || stmt.From.Shorthand != nil || measureAggregateCount(stmt) > 1 || hasMeasureExpressions(stmt.Projection) ||
 		stmt.Where != nil && stmt.Where.Expression != nil {
 		return true
 	}
 	if stmt.Projection != nil {
 		for _, column := range stmt.Projection.Columns {
-			if column.Alias != nil || (column.TypeSpec == nil && isBuiltinTime(column.Identifier)) {
+			if column.Alias != nil || column.Aggregate != nil && column.Aggregate.TypeSpec != nil ||
+				(column.TypeSpec == nil && isBuiltinTime(column.Identifier)) {
 				return true
 			}
 		}
@@ -426,4 +421,31 @@ func bindLegacyScalarCountPage(stmt *GrammarSelectStatement, request *measurev1.
 	// consume them all, including when QL omits LIMIT and native defaults apply.
 	request.Limit = math.MaxUint32
 	return false
+}
+
+func (m *MeasureTemplate) bindLocalOperators(bound *BoundQuery) (*ql.RawPlan, error) {
+	var err error
+	plan := &ql.RawPlan{
+		Slots: slices.Clone(m.slots), Distinct: m.statement.template.Select.Distinct, Ordered: m.statement.template.Select.OrderBy != nil,
+	}
+
+	plan.Expressions, err = m.bindExpressions(bound)
+	if err != nil {
+		return nil, err
+	}
+	if m.aggregate != nil {
+		plan.Aggregate = &ql.AggregatePlan{
+			GroupBy: slices.Clone(m.aggregate.GroupBy), Calls: slices.Clone(m.aggregate.Calls), Outputs: slices.Clone(m.aggregate.Outputs),
+		}
+	}
+	if plan.Distinct {
+		if err = ql.ValidateDistinct(plan); err != nil {
+			return nil, err
+		}
+	}
+	plan.Having, err = m.bindHaving(bound)
+	if err != nil {
+		return nil, err
+	}
+	return plan, nil
 }

@@ -550,7 +550,7 @@ The authoritative inventory is `coverageContract` in `coverage_contract.go`.
 | Capability | Missing implementation or fixture |
 | --- | --- |
 | Catalog B5 | Multiple sort keys and null placement require T17. |
-| Catalog B6 | `SELECT DISTINCT` requires T15. |
+| Catalog B6 | T15 covers scalar visible-tuple `SELECT DISTINCT`; projected arrays reject during binding. |
 | Catalog B9 | Computed and ordinal grouping require T16. |
 | Low-valued float means | Legacy native mean clamps values below one; the oracle keeps arithmetic mean semantics. |
 | Stage selection | Needs a generated staged-group fixture. |
@@ -588,3 +588,59 @@ engine's behavior into expected results.
 5. Regenerate, run the deterministic check and unit tests, then run the generated
    QL label in both integration topologies. Implementing a new QL capability does
    not require a native query counterpart or a protobuf change.
+
+## T15 complete visible tuple DISTINCT
+
+The typed `t15Query` model generates 18 scenarios with three changed bindings
+and three bind rejections, producing 21 T15 specs. `t15_oracle.go` evaluates the existing independent
+scalar/aggregate model, applies WHERE and HAVING, encodes complete visible tuples
+with JSON structure and explicit numeric equality normalization, and then applies
+final pagination. It does not parse or execute production QL. The audited
+`t15.*` inventory and required scenario names prevent silently dropping a bounded
+capability witness. Timestamp ordering compares typed values, not JSON text.
+
+The isolated `ql_t15` fixture writes 2,201 rows through the normal writer and
+checks every row through 35 QL-only visibility windows. There are 135 unique
+host/zone tuples; seventeen occurrences of each large-fixture tuple cross
+series identities and native batches. The deliberately colliding tuples
+`("ab", "c")` and `("a", "bc")` must remain separate. Additional witnesses cover
+NULL versus empty string, NULL versus zero, independently specified positive and
+negative zero writes, and two independently specified NaN payload bit patterns.
+The fixture model retains NaN bits as a serializable marker; only writer/oracle
+conversion materializes a floating NaN. Expected protobuf JSON uses `"NaN"`.
+The public result comparator equates NaN payloads while keeping NaN distinct
+from ordinary numbers. Successful storage/transport behavior is established by
+the real endpoint tests, not by generator success.
+
+Scenarios cover scalar int/float/string/timestamp outputs, aliases, casts, CASE,
+field WHERE with changed parameters, hidden COUNT in HAVING, hidden GROUP BY
+inputs excluded from equality, empty input, LIMIT
+0, and cached/bypassed equivalence. Arrays and hidden ORDER BY inputs reject
+before scans. T17 column ordering is outside this domain: tuple pagination uses
+LIMIT 200 and expects all 135 tuples from 2,201 inputs; a separate visible TIME
+ordering scenario checks LIMIT/OFFSET with deterministic rows.
+
+Three scenarios additionally verify unordered finite-LIMIT stopping with constant
+and field-filtered values, and complete consumption when OFFSET exceeds the
+number of unique tuples. Their expected examined-row counts come from the
+independent fixture model. These witnesses have at most one unique value, so
+their expected rows do not depend on unspecified input order. Ordered pagination
+and the public operator tests cover complete consumption and multiple keys.
+
+Every successful RPC checks actual retained distinct cardinality before pagination,
+zero DISTINCT aggregate states, no intermediate DataPoints/native Query RPCs,
+and restored tracked memory/native result ownership. Instrumentation is required;
+uninstrumented zero counters are never interpreted as observed work.
+For unordered finite LIMIT, retained cardinality is capped at OFFSET + LIMIT;
+it is not the cardinality of unseen input. The three stopping scenarios also
+check exact examined-row counts across changed bindings and cache bypass.
+
+```sh
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/standalone/query \
+  -ginkgo.label-filter=QLB-T15 -ginkgo.fail-on-empty
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/query \
+  -ginkgo.label-filter=QLB-T15 -ginkgo.fail-on-empty
+```
+
+Run the two topologies sequentially. Existing generated cases and scenarios retain
+their query texts and expected values.

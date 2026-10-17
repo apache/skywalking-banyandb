@@ -39,6 +39,9 @@ type Feature struct {
 
 // Suite is the reproducible QL-only integration artifact.
 type Suite struct {
+	DistinctScenarios            []DistinctScenario            `json:"distinct_scenarios"`
+	DistinctReadiness            []Case                        `json:"distinct_readiness"`
+	DistinctRejections           []Case                        `json:"distinct_rejections"`
 	HavingReviewScenarios        []HavingScenario              `json:"having_review_scenarios"`
 	HavingLegacyScenarios        []HavingScenario              `json:"having_legacy_scenarios"`
 	HavingReadiness              []AggregateFixture            `json:"having_readiness"`
@@ -85,6 +88,9 @@ func Load(content []byte) (Suite, error) {
 
 // Validate rejects stale fixtures, duplicate cases and incomplete declared coverage.
 func (s Suite) Validate() error {
+	if err := validateDistinctScenarios(s); err != nil {
+		return err
+	}
 	if err := ValidateCoverageContract(s.Features); err != nil {
 		return err
 	}
@@ -180,6 +186,11 @@ func (s Suite) validateScenarios() error {
 
 func (s Suite) witnessCases() []Case {
 	cases := append([]Case(nil), s.Cases...)
+	cases = append(cases, s.DistinctReadiness...)
+	cases = append(cases, s.DistinctRejections...)
+	for _, scenario := range s.DistinctScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
 	for _, scenario := range s.HavingReviewScenarios {
 		cases = append(cases, scenario.Cases...)
 	}
