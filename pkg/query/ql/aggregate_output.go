@@ -27,7 +27,7 @@ func (o *aggregateOperator) emit(ctx context.Context) (*vectorized.RecordBatch, 
 	if o.output == nil {
 		capacity := min(vectorized.DefaultBatchSize, len(o.groups.keys))
 		// Every column is at most a 24-byte slice cell plus its null bitmap.
-		bytes := int64(capacity)*int64(len(o.outputs))*25 + int64(len(o.outputs))*128
+		bytes := int64(capacity)*int64(len(o.schema.Columns))*25 + int64(len(o.schema.Columns))*128
 		if err := o.reserve(bytes); err != nil {
 			return nil, err
 		}
@@ -74,6 +74,9 @@ func (o *aggregateOperator) emit(ctx context.Context) (*vectorized.RecordBatch, 
 				value = o.states[call.state].result(group, call.function)
 			}
 			appendAggregateValue(o.output.Columns[index], value)
+		}
+		if o.bucketIndex >= 0 {
+			appendAggregateValue(o.output.Columns[len(o.outputs)], o.groupValues[o.bucketIndex])
 		}
 	}
 	o.output.Len = end - o.position

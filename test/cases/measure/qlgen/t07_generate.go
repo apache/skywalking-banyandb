@@ -154,7 +154,7 @@ func generateT07Rejections(b *suiteBuilder) []Case {
 		{"SUM(v) AS same, AVG(f) AS same", ""},
 		{"SUM(zone) AS s", ""},
 		{"COUNT(absent) AS c", ""},
-		{"SUM(v) AS s", " GROUP BY TIME_BUCKET('2s')"},
+		{"SUM(v) AS s", " GROUP BY TIME_BUCKET('0s')"},
 	} {
 		b.reject(fmt.Sprintf("t07_invalid_shape_%d", index), prefix+shape.projection+source+shape.suffix, "t07.invalid_shape", codes.InvalidArgument)
 		b.cases[len(b.cases)-1].Ticket = "T07"

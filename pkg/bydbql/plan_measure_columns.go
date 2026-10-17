@@ -35,6 +35,7 @@ type measureColumns struct {
 	fields          map[string]vectorized.ColumnDef
 	tagSpecs        map[string]*tagSpecWithFamily
 	ordered         []vectorized.ColumnDef
+	intervals       []string
 }
 
 type measureColumnKey struct {

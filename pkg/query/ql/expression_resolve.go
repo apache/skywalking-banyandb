@@ -101,6 +101,8 @@ func resolveExpressionType(expression *Expression) error {
 		if len(expression.Args) != 1 || !expressionCastAllowed(expression.Args[0].Type, expression.Type) {
 			return expressionError("unsupported cast")
 		}
+	case "time_bucket":
+		return resolveExpressionTimeBucket(expression)
 	case "negate", "positive":
 		return resolveExpressionSign(expression)
 	case "=", "!=", "<", "<=", ">", ">=", "in", "not_in":

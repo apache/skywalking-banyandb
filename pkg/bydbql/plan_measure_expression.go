@@ -28,16 +28,18 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/ql"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 type measureExpression struct {
-	temporal       *GrammarCompareTail
-	membershipTag  *tagSpecWithFamily
-	args           []*measureExpression
-	value          ql.Expression
-	paramIndex     int
-	parameter      bool
-	membershipList bool
+	temporal        *GrammarCompareTail
+	membershipTag   *tagSpecWithFamily
+	completedOutput *int
+	args            []*measureExpression
+	value           ql.Expression
+	paramIndex      int
+	parameter       bool
+	membershipList  bool
 }
 
 type measureExpressionOutput struct {
@@ -51,7 +53,7 @@ func hasMeasureExpressions(projection *GrammarProjection) bool {
 		return false
 	}
 	for _, column := range projection.Columns {
-		if column.Expression != nil {
+		if column.Expression != nil || column.All {
 			return true
 		}
 	}
@@ -200,11 +202,34 @@ func compileMeasureExpression(expr *GrammarExpression, columns *measureColumns, 
 // raw rows and completed groups. Each scope resolves its own column leaves.
 func compileMeasureExpressionRecipe(
 	expression *GrammarExpression, columns *measureColumns, resolveLeaf func(*GrammarExpression) (ql.Expression, error),
+	resolveSubtree ...func(*GrammarExpression) (*measureExpression, bool, error),
 ) (*measureExpression, error) {
+	if len(resolveSubtree) > 0 {
+		if recipe, matched, err := resolveSubtree[0](expression); matched || err != nil {
+			return recipe, err
+		}
+	}
 	recipe := &measureExpression{
 		temporal:  expression.Temporal,
 		value:     ql.Expression{Op: expression.Op, Type: expression.Type, Literal: expression.Literal},
 		parameter: expression.Param, paramIndex: expression.ParamIndex,
+	}
+	if expression.Op == "time_bucket" {
+		width, err := measureBucketWidth(expression.Literal.String, columns.intervals)
+		if err != nil {
+			return nil, err
+		}
+		recipe.value.Literal.Int64 = int64(width)
+		recipe.value.Literal.String = ""
+		name := "time"
+		argument, err := compileMeasureExpressionRecipe(&GrammarExpression{Op: "column", Identifier: &GrammarIdentifierPath{
+			First: &GrammarIdentifierPart{Ident: &name},
+		}}, columns, resolveLeaf, resolveSubtree...)
+		if err != nil {
+			return nil, fmt.Errorf("TIME_BUCKET: %w", err)
+		}
+		recipe.args = []*measureExpression{argument}
+		return recipe, nil
 	}
 	if expression.Op == "time_compare" {
 		return recipe, nil
@@ -215,7 +240,7 @@ func compileMeasureExpressionRecipe(
 		return recipe, err
 	}
 	for _, child := range expression.Args {
-		next, err := compileMeasureExpressionRecipe(child, columns, resolveLeaf)
+		next, err := compileMeasureExpressionRecipe(child, columns, resolveLeaf, resolveSubtree...)
 		if err != nil {
 			return nil, err
 		}
@@ -238,6 +263,37 @@ func compileMeasureExpressionRecipe(
 		recipe.membershipList = expression.MembershipList
 	}
 	return recipe, nil
+}
+
+func measureBucketWidth(raw string, intervals []string) (time.Duration, error) {
+	if raw != "" {
+		width, err := timestamp.ParseDuration(raw)
+		if err != nil {
+			return 0, fmt.Errorf("TIME_BUCKET width %q is invalid: %w", raw, err)
+		}
+		if width <= 0 {
+			return 0, fmt.Errorf("TIME_BUCKET width must be positive")
+		}
+		return width, nil
+	}
+	var width time.Duration
+	for _, interval := range intervals {
+		if interval == "" {
+			return 0, fmt.Errorf("TIME_BUCKET() requires a measure interval or an explicit width")
+		}
+		candidate, err := timestamp.ParseDuration(interval)
+		if err != nil || candidate <= 0 {
+			return 0, fmt.Errorf("TIME_BUCKET() has invalid measure interval %q", interval)
+		}
+		if width != 0 && width != candidate {
+			return 0, fmt.Errorf("TIME_BUCKET() source intervals differ; use an explicit width")
+		}
+		width = candidate
+	}
+	if width == 0 {
+		return 0, fmt.Errorf("TIME_BUCKET() requires a measure interval or an explicit width")
+	}
+	return width, nil
 }
 
 func (m *MeasureTemplate) bindExpressions(bound *BoundQuery) (*ql.ExpressionPlan, error) {
@@ -279,13 +335,29 @@ func (m *MeasureTemplate) bindExpressions(bound *BoundQuery) (*ql.ExpressionPlan
 }
 
 func (m *measureExpression) bind(bound *BoundQuery) (*ql.Expression, error) {
+	return m.bindCompleted(bound, nil)
+}
+
+func (m *measureExpression) bindCompleted(bound *BoundQuery, aggregate *ql.AggregatePlan) (*ql.Expression, error) {
+	if m.completedOutput != nil {
+		index := *m.completedOutput
+		if aggregate == nil || index < 0 || index >= len(aggregate.Outputs) {
+			return nil, fmt.Errorf("completed aggregate output %d is unavailable", index)
+		}
+		output := aggregate.Outputs[index]
+		expression := &ql.Expression{Op: "column", Source: output.Column}
+		if output.Timestamp {
+			expression.Type = ql.ExpressionTimestamp
+		}
+		return expression, nil
+	}
 	if m.parameter {
 		return boundExpressionLiteral(bound.values[m.paramIndex]), nil
 	}
 	value := m.value
 	value.Args = make([]*ql.Expression, 0, len(m.args))
 	for i, child := range m.args {
-		arg, err := child.bind(bound)
+		arg, err := child.bindCompleted(bound, aggregate)
 		if err != nil {
 			return nil, err
 		}
@@ -393,7 +465,7 @@ func walkGrammarExpression(expression *GrammarExpression, visit func(*GrammarExp
 
 func grammarHasExpressions(grammar *Grammar) bool {
 	return grammar.Select != nil && (hasMeasureExpressions(grammar.Select.Projection) ||
-		grammar.Select.Where != nil && grammar.Select.Where.Expression != nil || grammar.Select.Having != nil)
+		grammar.Select.Where != nil && grammar.Select.Where.Expression != nil || grammar.Select.Having != nil || hasComputedMeasureGroups(grammar.Select.GroupBy))
 }
 
 func checkExpressionSource(grammar *Grammar) error {

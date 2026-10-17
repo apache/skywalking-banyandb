@@ -45,16 +45,20 @@ type AggregateCall struct {
 
 // AggregateOutput names one selected grouping key or aggregate call.
 type AggregateOutput struct {
-	Column  vectorized.ColumnDef
-	Index   int
-	IsGroup bool
+	Column    vectorized.ColumnDef
+	Index     int
+	IsGroup   bool
+	Timestamp bool // Timestamp requests timestamp-tag encoding at final egress.
 }
 
 // AggregatePlan is an immutable recipe for complete local aggregation.
 type AggregatePlan struct {
-	GroupBy []vectorized.ColumnDef
-	Calls   []AggregateCall
-	Outputs []AggregateOutput
+	GroupExpressions *ExpressionPlan
+	TimeBucketWidth  string // Resolved existing native width; empty means no bucket.
+	GroupBy          []vectorized.ColumnDef
+	Calls            []AggregateCall
+	Outputs          []AggregateOutput
+	TimeBucketIndex  int // GroupBy index of the bucket key when TimeBucketWidth is nonempty.
 }
 
 // AggregateStats separates retained group keys and fixed-width state from native input residency.
@@ -80,6 +84,7 @@ type aggregateOperator struct {
 	tracker          *vectorized.MemoryTracker
 	schema           *vectorized.BatchSchema
 	output           *vectorized.RecordBatch
+	bucketWidth      string
 	states           []aggregateState
 	calls            []aggregateCallRef
 	outputs          []AggregateOutput
@@ -97,11 +102,18 @@ type aggregateOperator struct {
 	closed           bool
 	sourceClosed     bool
 	distinct         bool
+	bucketIndex      int
 }
 
 // WrapAggregate takes source ownership, including on construction failure.
 // It consumes every active input row before emitting synthesized groups, without native identity metadata.
 func WrapAggregate(ctx context.Context, source vectorized.PullOperator, plan *AggregatePlan) (_ vectorized.PullOperator, err error) {
+	if plan != nil && plan.GroupExpressions != nil {
+		source, err = wrapGroupExpressions(ctx, source, plan)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return wrapAggregate(ctx, source, plan, false)
 }
 
@@ -110,7 +122,7 @@ func wrapAggregate(ctx context.Context, source vectorized.PullOperator, plan *Ag
 	if distinct {
 		metrics = &distinctGroupMetrics
 	}
-	op := &aggregateOperator{source: source, distinct: distinct, metrics: metrics}
+	op := &aggregateOperator{source: source, distinct: distinct, metrics: metrics, bucketIndex: -1}
 	defer func() {
 		if err != nil {
 			_ = op.Close()
@@ -143,6 +155,9 @@ func wrapAggregate(ctx context.Context, source vectorized.PullOperator, plan *Ag
 			return nil, readerErr
 		}
 		op.groupReaders[index] = reader
+		if index == plan.TimeBucketIndex && plan.TimeBucketWidth != "" {
+			op.bucketIndex, op.bucketWidth = index, plan.TimeBucketWidth
+		}
 	}
 	if err = op.compileCalls(source.OutputSchema(), plan.Calls); err != nil {
 		return nil, err
@@ -170,6 +185,9 @@ func wrapAggregate(ctx context.Context, source vectorized.PullOperator, plan *Ag
 		}
 		defs[index] = output.Column
 		defs[index].Entity = false
+	}
+	if op.bucketIndex >= 0 {
+		defs = append(defs, vectorized.ColumnDef{Name: "time", Role: vectorized.RoleTimestamp, Type: vectorized.ColumnTypeInt64})
 	}
 	op.schema = vectorized.NewBatchSchema(defs)
 	return op, nil

@@ -728,6 +728,19 @@ an acceptable replacement for tuple DISTINCT.
 
 ### T16 — Evaluate computed group keys and resolve GROUP BY ordinals
 
+**Status: implemented.** Multiple computed keys use typed batch evaluation before
+the shared SQL group table. Structural matching preserves parameter identity;
+ordinals resolve after star expansion. Bucket aliases use existing timestamp
+encoding, while local/native output and native merge identity retain the bucket.
+Mixed original-time/bucket keys remain independent and use local aggregation.
+The 65 generated QL-only specs pass cold/warm/bypass execution and native/local
+parity in both topologies, with 589 selected QL and 120 native compatibility specs
+per topology. Focused kernel and six-control RPC benchmarks compare equivalent
+stored/computed and explicit/ordinal grouping. See
+[T16 verification](t16-verification.md) for measurements, resource limits and
+remaining unavailable observations. Protobuf/native operators are unchanged;
+general sorting and spilling are outside this ticket.
+
 **Performance question:** what is the cost of evaluating computed keys and feeding
 them to grouping, compared with equivalent precomputed/simple keys?
 
@@ -750,7 +763,7 @@ active row, one raw scan for computed grouping, and no per-row AST/name lookup.
 K(T16) measures key evaluation plus grouping; G1/G2 apply.
 
 **Checks/readiness:** E(T16), P(T16), K(T16); focused `./pkg/bydbql`,
-`./pkg/query/ql`. Blocked by T05/T08/T10. Calendar functions/windows/gapfill are excluded.
+`./pkg/query/ql`. Prerequisites T05/T08/T10 are implemented. Calendar functions/windows/gapfill are excluded.
 
 ### T17 — Order and paginate results with full sort and compact top-k
 
@@ -789,8 +802,8 @@ For N>=100,000 and k<=100 on the same random data, top-k median ns/op <=0.80x fu
 sort+slice. G1/G2 apply; report complete RPC and retained-memory costs as well.
 
 **Checks/readiness:** E(T17), P(T17), K(T17); focused `./pkg/query/ql`,
-`./pkg/bydbql`, `./banyand/liaison/grpc`. Blocked by T05/T12/T14/T15/T16 so composed
-cache/time/filter queries have all prerequisites. Full sort can be an internal
+`./pkg/bydbql`, `./banyand/liaison/grpc`. Prerequisites T05/T12/T14/T15/T16 are implemented,
+including composed cache/time/filter queries. Full sort can be an internal
 implementation step/reference, but the ordering ticket closes with both modes.
 
 ## Parent completion and composed workloads

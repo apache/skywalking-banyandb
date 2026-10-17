@@ -305,6 +305,17 @@ DataFusion's grouped-accumulator approach is the reference; its full partial-sta
 wire/distributed machinery is not needed here. See the pinned sources in the
 [research note](datafusion-research.md).
 
+T16 adds a typed key-expression stage between WHERE and local aggregation.
+Compiled structural identities resolve repeated keys once; SELECT ordinals bind
+after star expansion and share their selected expression's parameter identity.
+Synthetic fields preserve source-column identities, including distinct original
+timestamps and bucket timestamps. TIME_BUCKET uses native fixed-duration epoch
+flooring. Local and native output preserve the bucket as metadata and any selected
+timestamp alias; native merge identity includes the bucket. Eligible native
+reductions remain unchanged, while other computed keys use the raw path.
+Expression buffers and immutable cached recipes use the existing bounded memory
+and plan-cache accounting. See [T16 verification](t16-verification.md).
+
 Use one QL key codec for aggregate merging, DISTINCT and computed grouping. Encode
 logical types, explicit null markers and variable-length boundaries; define array
 structure if admitted. Null, zero and empty string must differ. Normalize signed
