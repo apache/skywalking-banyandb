@@ -310,6 +310,12 @@ func TestTypedMeasureTimeAliasOrdering(t *testing.T) {
 	for _, query := range []string{
 		"SELECT host AS node FROM g.m ORDER BY node",
 		"SELECT host AS node FROM g.m ORDER BY host",
+	} {
+		sorted := typedExecution(t, query)
+		require.NotNil(t, sorted.Plan.Sort)
+		require.Nil(t, sorted.Request.OrderBy)
+	}
+	for _, query := range []string{
 		"SELECT host AS node, v::FIELD AS node FROM g.m ORDER BY node",
 	} {
 		statement, err := bydbql.Prepare(query)

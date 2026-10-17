@@ -767,6 +767,15 @@ K(T16) measures key evaluation plus grouping; G1/G2 apply.
 
 ### T17 — Order and paginate results with full sort and compact top-k
 
+**Implementation status:** implemented, with 48 new generated QL-only specs
+passing in both topologies. The complete measure selection runs all legacy
+regressions and retains nine known failures per topology. The planned 32-caller
+composition reaches the existing native receive-buffer pool limit in both sort
+modes; its benchmark result remains explicitly blocked. Focused measurements,
+source provenance and the exact acceptance limits are recorded in
+[T17 verification](t17-verification.md). These results do not close the parent
+or the historical T02 performance acceptance.
+
 **Performance question:** when does finite-limit top-k reduce CPU and retained
 bytes versus full sort, and do wide rows/large offsets keep state bounded?
 

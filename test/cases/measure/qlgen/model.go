@@ -64,6 +64,7 @@ type Predicate struct {
 
 // Case contains a generated QL statement and independently evaluated result.
 type Case struct {
+	Sorting          *SortingExpectation  `json:"sorting,omitempty"`
 	Grouping         *GroupingExpectation `json:"grouping,omitempty"`
 	DistinctInputs   *uint64              `json:"distinct_inputs,omitempty"`
 	Having           *HavingExpectation   `json:"having,omitempty"`

@@ -56,6 +56,8 @@ type MeasureTemplate struct {
 	slots          []ql.Slot
 	expressions    []measureExpressionOutput
 	groups         []measureExpressionOutput
+	ordering       []measureSortKey
+	sortVisible    int
 	extended       bool
 }
 
@@ -144,6 +146,9 @@ func (t *Transformer) compileMeasure(
 	if !extended && selectStmt.Where != nil {
 		extended = legacyWhereNeedsSchemaFilter(selectStmt.Where.Expr, snapshots)
 	}
+	if !extended {
+		extended = measureOrderNeedsTyped(selectStmt, snapshots)
+	}
 
 	template := &MeasureTemplate{statement: statement, extended: extended}
 	if template.extended {
@@ -183,12 +188,15 @@ func (m *MeasureTemplate) compileTyped(schemas map[string]*databasev1.Measure) e
 	if err != nil {
 		return err
 	}
+	if err = m.compileSort(columns); err != nil {
+		return err
+	}
 	if stmt.Distinct {
 		if err = m.validateDistinct(); err != nil {
 			return err
 		}
 	}
-	if m.aggregate != nil || m.expressions != nil || m.filter != nil {
+	if m.aggregate != nil || m.expressions != nil || m.filter != nil || len(m.ordering) > 0 {
 		m.compileNativeEntities(schemas, columns)
 	}
 	return nil
@@ -319,7 +327,7 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 }
 
 func requiresMeasurePlan(stmt *GrammarSelectStatement) bool {
-	if hasComputedMeasureGroups(stmt.GroupBy) {
+	if hasComputedMeasureGroups(stmt.GroupBy) || stmt.OrderBy != nil && len(stmt.OrderBy.Keys) > 0 {
 		return true
 	}
 	if stmt.Distinct || stmt.Having != nil || stmt.From.Shorthand != nil || measureAggregateCount(stmt) > 1 || hasMeasureExpressions(stmt.Projection) ||
@@ -464,6 +472,10 @@ func (m *MeasureTemplate) bindLocalOperators(bound *BoundQuery) (*ql.RawPlan, er
 		}
 	}
 	plan.Having, err = m.bindHaving(bound, plan.Aggregate)
+	if err != nil {
+		return nil, err
+	}
+	plan.Sort, err = m.bindSort(bound, plan)
 	if err != nil {
 		return nil, err
 	}

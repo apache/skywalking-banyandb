@@ -67,6 +67,7 @@ type Environment struct {
 // Result records one mode/scenario/cardinality benchmark outcome.
 type Result struct {
 	BatchMetrics        map[string]uint64 `json:"batch_metrics,omitempty"`
+	EvidenceArtifacts   map[string]string `json:"evidence_artifacts,omitempty"`
 	RawLatenciesNS      []time.Duration   `json:"raw_latencies_ns,omitempty"`
 	Variants            []Result          `json:"variants,omitempty"`
 	Variant             string            `json:"variant,omitempty"`
@@ -333,12 +334,24 @@ func renderMarkdown(report Report) string {
 	b.WriteString("# Distributed Query Benchmark\n\n")
 	b.WriteString(fmt.Sprintf("Generated: %s\n\n", report.GeneratedAt.Format(time.RFC3339)))
 	b.WriteString("## Results\n\n")
+	for _, result := range report.Results {
+		if result.Correctness == "blocked" {
+			b.WriteString("Acceptance remains incomplete: a required variant has retained resource-failure evidence and no timing samples.\n\n")
+			break
+		}
+	}
 	renderPerModeTable(&b, report)
 	for _, result := range report.Results {
 		if result.Variant != "" {
 			fmt.Fprintf(&b, "\n%s/%d/%s: samples=%d, expected rows=%d, checksum=%x; unavailable: %s.\n",
 				result.Scenario, result.Cardinality, result.Variant, result.TimedSamples,
 				result.ExpectedRows, result.ExpectedHash, strings.Join(result.UnavailableMetrics, ", "))
+			if result.Error != "" {
+				fmt.Fprintf(&b, "Status: %s; %s.\n", result.Correctness, result.Error)
+			}
+			if len(result.EvidenceArtifacts) != 0 {
+				fmt.Fprintf(&b, "Evidence: `%v`.\n", result.EvidenceArtifacts)
+			}
 			if len(result.BatchMetrics) > 0 {
 				fmt.Fprintf(&b, "Batch metrics: `%v`.\n", result.BatchMetrics)
 			}
@@ -377,6 +390,10 @@ func renderPerModeTable(b *strings.Builder, report Report) {
 	b.WriteString("| Scenario | Cardinality | Mode | p50 ms | p95 ms | p99 ms | QPS | Rows | Mallocs/query | Bytes/query |\n")
 	b.WriteString("| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
 	for _, result := range report.Results {
+		if result.Correctness == "blocked" {
+			fmt.Fprintf(b, "| %s (blocked) | %d | %s | N/A | N/A | N/A | N/A | N/A | N/A | N/A |\n", result.scenarioLabel(), result.Cardinality, result.Mode)
+			continue
+		}
 		b.WriteString(fmt.Sprintf("| %s | %d | %s | %.2f | %.2f | %.2f | %.2f | %d | %.2f | %.2f |\n",
 			result.scenarioLabel(), result.Cardinality, result.Mode, result.Latency.P50Ms, result.Latency.P95Ms,
 			result.Latency.P99Ms, result.QPS, result.ResponseRows, result.Allocations.MallocsPerQuery, result.Allocations.AllocBytesPerQuery))

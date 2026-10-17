@@ -35,6 +35,8 @@ func operatorSource(operator vectorized.PullOperator) vectorized.PullOperator {
 		return current.source
 	case *expressionOperator:
 		return current.source
+	case *sortOperator:
+		return current.source
 	default:
 		return nil
 	}

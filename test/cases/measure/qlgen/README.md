@@ -549,9 +549,6 @@ The authoritative inventory is `coverageContract` in `coverage_contract.go`.
 
 | Capability | Missing implementation or fixture |
 | --- | --- |
-| Catalog B5 | Multiple sort keys and null placement require T17. |
-| Catalog B6 | T15 covers scalar visible-tuple `SELECT DISTINCT`; projected arrays reject during binding. |
-| Catalog B9 | T16 covers multiple computed keys, SELECT ordinals after star expansion and selectable TIME_BUCKET values. |
 | Low-valued float means | Legacy native mean clamps values below one; the oracle keeps arithmetic mean semantics. |
 | Stage selection | Needs a generated staged-group fixture. |
 | Index ordering | Needs generated index rules and bindings. |
@@ -616,7 +613,7 @@ Scenarios cover scalar int/float/string/timestamp outputs, aliases, casts, CASE,
 field WHERE with changed parameters, hidden COUNT in HAVING, hidden GROUP BY
 inputs excluded from equality, empty input, LIMIT
 0, and cached/bypassed equivalence. Arrays and hidden ORDER BY inputs reject
-before scans. T17 column ordering is outside this domain: tuple pagination uses
+before scans. The original T15 tuple pagination uses
 LIMIT 200 and expects all 135 tuples from 2,201 inputs; a separate visible TIME
 ordering scenario checks LIMIT/OFFSET with deterministic rows.
 
@@ -698,4 +695,89 @@ go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/
   -ginkgo.label-filter=QLB-T16 -ginkgo.fail-on-empty
 ```
 
-Run the topologies sequentially. General ORDER BY/full-sort/top-k remains T17.
+Run the topologies sequentially. General ORDER BY/full-sort/top-k is covered by T17 below.
+
+
+## T17 typed ordering and bounded pagination
+
+`t17_generate.go` declares 32 scenarios with three bindings each, 12 no-scan
+rejections, and four resource cases: 48 T17 specs. Twelve readiness pages reuse
+the existing six-row F and 1,153-row T16 fixtures and add eight wide rows. The
+wide fixture has exact int64 values above 2^53 and at both int64 limits, bytewise
+strings including empty/NUL/non-ASCII values, nulls, infinities, two NaNs, signed
+zero and string payloads over 16 KiB. Special floats are real protobuf doubles in
+write requests and valid protobuf JSON strings (`"NaN"`, `"Infinity"`,
+`"-Infinity"`) in expected responses. Generation never removes them to make JSON
+encoding succeed. `FixtureDigest` hashes their encoded typed values as well as
+the schema and the reused fixtures.
+
+`t17_model.go` renders a finite typed ORDER BY model; `t17_oracle.go` evaluates
+keys once, inserts complete tuples into an independently ordered list, and
+slices only after WHERE, grouping, HAVING and visible-tuple DISTINCT. It imports
+no production comparator, planner or execution operator. Exact integer order
+never converts through float64. Null placement is resolved separately from
+numeric direction, and ascending NaNs follow other non-null numbers. Every
+multirow golden has a unique complete ordering key; equal complete-key order is
+not asserted. The public `Generate` tests pin worked row orders and the composed
+parent query independently of the finite oracle.
+
+Families cover default and explicit null placement, both directions, one and
+multiple keys, ties with a unique tie key, alias precedence, hidden raw and
+aggregate sort keys, bare/qualified sources, bound expressions, grouped aliases,
+HAVING, visible DISTINCT ordering, TIME_BUCKET metadata, empty intersections and
+LIMIT 0. F ordered by `v DESC NULLS LAST, rid ASC` has rids 5,3,2,1,4,6; LIMIT 2
+OFFSET 1 has 3,2. Four hidden-WHERE regressions keep the f predicate input outside the visible,
+sort and grouping keys across raw, computed SELECT, grouped and DISTINCT stages.
+Raw threshold bindings select rids 3,5,6, then 6, then none. The computed timestamp
+alias uses `observed::TAG DESC NULLS LAST, rid ASC` and reverses the first order
+to 6,5,3 while retaining each source timestamp. Grouped and DISTINCT
+cases additionally verify top-k/full-sort parity. The full parent composition returns node b and total 4 at a
+threshold of 0, then an empty page at threshold 4. Further compositions combine
+CASE/COALESCE, ordinal grouping and AVG, and visible DISTINCT with multikey top-k.
+The valid maximum LIMIT/OFFSET pair computes k=8,589,934,590 in uint64 and yields
+an empty page; out-of-range individual values reject before scanning.
+
+The runner uses the real BydbQL RPC for cold, warm/changed-binding and bypassed
+execution. Each finite LIMIT family also forces full sort through the instrumented
+context hook and compares the same independent ordered response. Sort statistics
+assert exact input/output/key applications and independently modeled expression
+kernel rows. Actual key-root calls must equal the finite model's root count times
+observed active batches. Large full sorts obey the numerical comparison bound.
+Candidates stay within k, source pins stay zero after copying, and payload
+capacity stays within twice live payload plus separately reported descriptors.
+Every call checks balanced sort reservations, total live reservations and native
+result ownership. Readiness and verification issue no native Query RPCs.
+
+Resource cases project a bound 15,360-byte string over the existing 1,153 narrow
+rows. A 16 MiB shared budget exhausts full-sort candidates and a larger top-k;
+the same 16 MiB budget admits a compact k=5 control before each pressure call. Cancellation is injected after a real input batch
+has been copied, through the public instrumented hook, for both algorithms.
+Resource errors require positive actual candidate acceptance, restored ownership
+and successful subsequent RPC recovery. The low-level operator tests separately
+verify allocation admission before allocation; the RPC hook controls cancellation
+without replacing scanning or sorting. Initial 512 KiB and 2 MiB controls exposed
+native preflights of 1,311,232 bytes and a further 2,988,800 bytes before candidate
+ownership. The 16 MiB limit admits the narrow source; wider projected candidates
+still exceed it for full sort and large k. This changes only the generated stress
+fixture's limit and payload, not production admission limits.
+
+The only earlier generated query changes are the two obsolete T03 ORDER BY
+rejections: `t03_invalid_order_0` now names `absent_sort_key::FIELD` and
+`t03_invalid_order_1` names `absent_sort_key::TAG`. Their former alias/source
+orders are supported T17 cases. The ambiguous-alias rejection remains unchanged;
+the existing T15 hidden DISTINCT sort key remains a valid rejection. All older
+expected responses remain byte-identical. The longstanding legacy regressions
+and pending coverage gaps above retain their original expectations and status.
+
+```sh
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/standalone/query \
+  -ginkgo.label-filter='measure-ql && QLB-T17' -ginkgo.fail-on-empty
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/query \
+  -ginkgo.label-filter='measure-ql && QLB-T17' -ginkgo.fail-on-empty
+```
+
+Run the topologies sequentially. The runner reports completed/registered spec
+counts, verification RPC counts (259 per complete topology), readiness page counts, actual retry-inclusive
+readiness RPCs, and the fixture digest. `make check-ql-test-cases` verifies the
+exact generated artifact; the grammar fingerprint is updated only after the
+ORDER BY grammar source freezes and its coverage inventory is audited.

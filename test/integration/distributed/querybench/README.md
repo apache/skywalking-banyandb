@@ -779,3 +779,88 @@ for the same low/high shapes and a small 2-second TIME_BUCKET control. It uses t
 public aggregate/expression plans, checks independent values before and after
 timing, and reports allocations and observed key/state work. Use a querymetrics
 build to observe unique key evaluation counts.
+
+## QLB-T17 ordering and finite-page controls
+
+`qlb_t17` asks whether compact top-k reduces sort CPU and retained state for the
+same complete query and returned page. Its five RPC variants are `fullsort_slice`,
+`topk`, and one aggregate/filter/HAVING/order query with workers 1, 8, and 32.
+The pair sends byte-identical SQL and parameters through `BydbQLService.Query`;
+a scoped, instrumented server context hook forces full sort for the reference.
+Both return `LIMIT 10 OFFSET 5`, with three keys and hidden sort inputs. The
+composed query changes string-to-double thresholds and the time range on the same
+cached SQL text, then sorts completed groups before `LIMIT 1 OFFSET 1`.
+
+The requested schedule is 1,024 and 32,768 raw rows, 256 MiB query trackers,
+100/20 sort-pair samples and 5/3 warmups respectively. Every composed variant has
+96 samples, evenly covering three bindings. Sort-pair workers stay at one.
+`TestQLBT17Admission`, selected with `DQB_T17_ADMISSION_ROWS=1024` or `32768`, checks
+this complete protocol without collecting performance evidence. Readiness first
+checks every fixture tuple using entity/time windows of at most 1,024 rows. A
+large native-frame admission failure remains a blocker, not a successful sort
+sample; the successful algorithm controls at 100,000 rows belong to K(T17).
+
+Build the querymetrics test binary before freezing the source. Reuse that exact
+binary in five fresh 4-CPU/8-GiB Docker containers with `--memory-swap 8g`, retaining
+each report directory. The existing orchestrator accepts `DQB_TEST_BINARY` and
+performs no compilation when it is set. For example, with a prebuilt binary:
+
+```sh
+DQB_ENGINE=measure DQB_MODES=vec DQB_SCENARIOS=qlb_t17 \
+DQB_CARDINALITIES=1024,32768 DQB_QUERY_WORKERS=1 DQB_QUERY_MEMORY_MIB=256 \
+DQB_PROFILE=1 DQB_TEST_BINARY=/work/.omx/t17-final-querybench.test \
+DQB_REPORT_DIR=/work/.omx/bench-reports/qlb-t17-r1 \
+test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g --memory-swap 8g
+```
+
+The orchestrator fixes the per-cardinality sample schedule. Use unique `r1` through
+`r5` directories and stop other builds/tests during measured phases. Each variant
+retains raw latencies, p50/p95/p99, throughput, process CPU/heap profiles,
+allocations, full response-envelope bytes, ordered expected checksums, actual
+operator row/root/kernel/comparator counters, candidate capacities and reservation
+release. Sampled complete responses are checked after profiling; every timed
+response checks its row count. Process-wide peak reservations sum the liaison and
+two data-node trackers. Sort peak/capacity fields sum per-query completion
+snapshots; divide by sort executions. Native frame residency, physical storage
+reads, total parent charges, separate aggregate peaks and compile-time savings
+remain explicitly unavailable. Warm measured requests must hit the compiled
+plan with zero additional compiles; changed-bind exact results check fresh binding.
+
+`BenchmarkSortT17` in `pkg/query/ql` compares a standard-library tuple baseline,
+full sort plus identical slicing, and top-k through the public operator lifecycle.
+The nine orthogonal shapes cover 1/3/8 keys, ordered/reverse/tied/random input,
+16/1,024-byte payloads, k=10/100/1,000 and an offset of 90,000. The 100,000-row
+random k=10 and k=100 controls own the median top-k/full-sort ratio gate of 0.80.
+Run five independent samples from one prebuilt kernel binary under the same
+container limits. Correctness and measured work checks run outside its timer;
+per-operation timing includes construction, key binding, sorting, output and Close.
+An additional fixture poisons 32 one-MiB source batches after copying exactly one
+16-byte surviving candidate per batch, checking payload capacity, released source
+owners, tracker reservations and native flatten-pool baseline. This is separate
+from native frame residency.
+
+The 32-worker admission gate can be retained explicitly with
+`DQB_T17_BLOCKED_32_REPORT=/work/path/to/the/retained/report.json`. This opt-in
+requires a readable, untimed 1,024-row/256-MiB artifact with the exact native
+broadcast `ResourceExhausted` error and successful cleanup. The harness records
+its SHA-256, retains `composed_workers_32` as blocked with zero samples and no
+latency/profile/allocation values, and labels the enclosing scenario
+`partial_known_32_blocked`. The default still requires all five successful
+variants. A partial report cannot satisfy the T17 or parent acceptance gate.
+The independent forced-full-sort 32-worker control is another untimed ownership
+diagnostic, selected by `DQB_T17_CONCURRENCY_CONTROL=1`.
+
+`run-t17-frozen.sh` supplies separate `rpc` and `kernel` modes. Each runs five
+fresh Docker containers at the fixed limits, reuses one prebuilt executable,
+refuses to replace report directories, and checks source/binary/evidence hashes
+before and after each repetition. It does not compile or pull/build an image.
+Capture its source fingerprint immediately before building each binary, verify
+that fingerprint again after compilation, and save it as
+`<binary>.source.sha256`. `DQB_T17_BINARY` selects that binary and
+`DQB_T17_REPORT_ROOT` selects a new report root. The `fingerprint` mode prints the
+source hash without starting measurements. Do not start either measured mode
+until the coordinated source freeze. Kernel CPU/heap profiles cover the complete
+benchmark invocation, including untimed fixture setup and validation; the Go
+benchmark ns/op and allocation counters exclude that setup. Its summarizer
+requires all 27 controls in all five repetitions and preserves failed ratio
+gates in `kernel-summary.json` before returning failure.

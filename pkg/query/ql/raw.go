@@ -48,6 +48,7 @@ type RawPlan struct {
 	Expressions     *ExpressionPlan
 	Filter          *Expression
 	Having          *HavingPlan
+	Sort            *SortPlan
 	Limit           *uint32
 	Slots           []Slot
 	Ranges          []MillisRange
@@ -89,6 +90,9 @@ type rawOperator struct {
 // WrapRaw takes ownership of source, including on failure, and resolves projection indices once.
 // Its output lends immutable source columns until the next pull or Close.
 func WrapRaw(ctx context.Context, source vectorized.PullOperator, plan *RawPlan) (vectorized.PullOperator, error) {
+	if plan != nil && plan.Sort != nil {
+		return wrapSortQuery(ctx, source, plan)
+	}
 	if plan != nil && plan.Distinct {
 		return wrapDistinctQuery(ctx, source, plan)
 	}
