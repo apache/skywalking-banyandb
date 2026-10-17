@@ -35,6 +35,8 @@ type measureExpression struct {
 	temporal        *GrammarCompareTail
 	membershipTag   *tagSpecWithFamily
 	completedOutput *int
+	sortOutput      *int
+	sortAlias       *measureSortAlias
 	args            []*measureExpression
 	value           ql.Expression
 	paramIndex      int
@@ -116,23 +118,7 @@ func (m *MeasureTemplate) compileExpressions(columns *measureColumns) error {
 	m.slots = inputs.slots
 	m.request = baseMeasureRequest(stmt)
 	m.request.TagProjection, m.request.FieldProjection = rawScanProjection(m.slots)
-	var orderSlots []ql.Slot
-	for _, output := range m.expressions {
-		if output.computed && stmt.OrderBy != nil && stmt.OrderBy.Tail.WithIdent != nil {
-			name, nameErr := stmt.OrderBy.Tail.WithIdent.Identifier.ToString(true)
-			if nameErr != nil {
-				return nameErr
-			}
-			if name == output.column.Name {
-				return fmt.Errorf("ORDER BY expression %q requires column sorting", name)
-			}
-		}
-		if !output.computed {
-			orderSlots = append(orderSlots, ql.Slot{Source: output.expression.value.Source, Output: output.column})
-		}
-	}
-	m.request.OrderBy, err = rawOrderBy(stmt.OrderBy, orderSlots, columns)
-	if err != nil {
+	if err = m.compileExpressionOrder(stmt, columns); err != nil {
 		return err
 	}
 	if stmt.Where != nil {
@@ -339,6 +325,25 @@ func (m *measureExpression) bind(bound *BoundQuery) (*ql.Expression, error) {
 }
 
 func (m *measureExpression) bindCompleted(bound *BoundQuery, aggregate *ql.AggregatePlan) (*ql.Expression, error) {
+	return m.bindOutputExpression(bound, aggregate, nil)
+}
+
+func (m *measureExpression) bindOutputExpression(bound *BoundQuery, aggregate *ql.AggregatePlan, outputs []ql.Slot) (*ql.Expression, error) {
+	if m.sortAlias != nil {
+		return m.sortAlias.bind(outputs)
+	}
+	if m.sortOutput != nil {
+		index := *m.sortOutput
+		if index < 0 || index >= len(outputs) {
+			return nil, fmt.Errorf("sort input output %d is unavailable", index)
+		}
+		output := outputs[index]
+		expression := &ql.Expression{Op: "column", Source: output.Output}
+		if output.Timestamp {
+			expression.Type = ql.ExpressionTimestamp
+		}
+		return expression, nil
+	}
 	if m.completedOutput != nil {
 		index := *m.completedOutput
 		if aggregate == nil || index < 0 || index >= len(aggregate.Outputs) {
@@ -357,7 +362,7 @@ func (m *measureExpression) bindCompleted(bound *BoundQuery, aggregate *ql.Aggre
 	value := m.value
 	value.Args = make([]*ql.Expression, 0, len(m.args))
 	for i, child := range m.args {
-		arg, err := child.bindCompleted(bound, aggregate)
+		arg, err := child.bindOutputExpression(bound, aggregate, outputs)
 		if err != nil {
 			return nil, err
 		}
@@ -521,4 +526,29 @@ func isQuotedMeasureLiteral(column *GrammarColumn, columns *measureColumns) bool
 	}
 	_, err := columns.resolve(*column.Identifier.QuotedIdent, nil)
 	return err != nil && len(columns.tags[*column.Identifier.QuotedIdent]) == 0
+}
+
+func (m *MeasureTemplate) compileExpressionOrder(stmt *GrammarSelectStatement, columns *measureColumns) error {
+	var orderSlots []ql.Slot
+	localOrder := stmt.OrderBy != nil && len(stmt.OrderBy.Keys) > 0
+	for _, output := range m.expressions {
+		if output.computed && stmt.OrderBy != nil && stmt.OrderBy.Tail.WithIdent != nil {
+			name, nameErr := stmt.OrderBy.Tail.WithIdent.Identifier.ToString(true)
+			if nameErr != nil {
+				return nameErr
+			}
+			localOrder = localOrder || name == output.column.Name
+		}
+		if !output.computed {
+			orderSlots = append(orderSlots, ql.Slot{Source: output.expression.value.Source, Output: output.column})
+		}
+	}
+	if !localOrder {
+		order, err := rawOrderBy(stmt.OrderBy, orderSlots, columns)
+		if err != nil {
+			return err
+		}
+		m.request.OrderBy = order
+	}
+	return nil
 }

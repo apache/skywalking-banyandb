@@ -70,6 +70,11 @@ func BindParams(g *Grammar, params []*modelv1.TagValue) error {
 			expandExpressionLists(group.Expression)
 		}
 	}
+	if g.Select != nil && g.Select.OrderBy != nil {
+		for _, key := range g.Select.OrderBy.Keys {
+			expandExpressionLists(key.Expression)
+		}
+	}
 	g.paramsBound = true
 	return nil
 }
@@ -125,6 +130,11 @@ func (b *binder) collect(g *Grammar) {
 		}
 		if g.Select.Having != nil {
 			walkGrammarExpression(g.Select.Having.Expression, b.collectExpression)
+		}
+		if g.Select.OrderBy != nil {
+			for _, key := range g.Select.OrderBy.Keys {
+				walkGrammarExpression(key.Expression, b.collectExpression)
+			}
 		}
 		if g.Select.Limit != nil {
 			b.collectIntSlot(&g.Select.Limit.Value, &g.Select.Limit.Param, math.MaxUint32)

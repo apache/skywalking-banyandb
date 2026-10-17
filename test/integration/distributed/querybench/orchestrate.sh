@@ -28,6 +28,8 @@ set -euo pipefail
 cd /work
 
 REPORT_DIR="${DQB_REPORT_DIR:-/work/.omx/bench-reports/distributed-query}"
+mkdir -p "${REPORT_DIR}"
+exec > >(tee -a "${REPORT_DIR}/run.log") 2>&1
 SHARD_DIR="${REPORT_DIR}/shards"
 PROFILE_DIR="${REPORT_DIR}/profiles"
 # Keep compilation and cluster storage on the mounted workspace as well.
@@ -140,6 +142,12 @@ run_variant() {
           1024) query_iterations=100; warmup_iterations=5 ;;
           16384) query_iterations=20; warmup_iterations=3 ;;
           *) echo "T12 successful queries require cardinality 1024,16384" >&2; exit 2 ;;
+        esac
+      elif [[ "${scenario}" == "qlb_t17" ]]; then
+        case "${card}" in
+          1024) query_iterations=100; warmup_iterations=5 ;;
+          32768) query_iterations=20; warmup_iterations=3 ;;
+          *) echo "T17 successful queries require 1024 or 32768 rows" >&2; exit 2 ;;
         esac
       elif [[ "${scenario}" == "qlb_t16" ]]; then
         case "${card}" in

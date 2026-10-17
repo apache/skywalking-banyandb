@@ -194,6 +194,11 @@ func (p *preparer) walkGrammar(g *Grammar) {
 		if g.Select.Having != nil {
 			walkGrammarExpression(g.Select.Having.Expression, p.walkExpressionParameter)
 		}
+		if g.Select.OrderBy != nil {
+			for _, key := range g.Select.OrderBy.Keys {
+				walkGrammarExpression(key.Expression, p.walkExpressionParameter)
+			}
+		}
 		if g.Select.Limit != nil && g.Select.Limit.Param {
 			g.Select.Limit.ParamIndex = p.add(phCount, math.MaxUint32)
 		}

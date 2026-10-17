@@ -39,6 +39,10 @@ type Feature struct {
 
 // Suite is the reproducible QL-only integration artifact.
 type Suite struct {
+	SortingResources             []SortingResource             `json:"sorting_resources"`
+	SortingReadiness             []AggregateFixture            `json:"sorting_readiness"`
+	SortingScenarios             []SortingScenario             `json:"sorting_scenarios"`
+	SortingRejections            []Case                        `json:"sorting_rejections"`
 	GroupingReadiness            []AggregateFixture            `json:"grouping_readiness"`
 	GroupingScenarios            []GroupingScenario            `json:"grouping_scenarios"`
 	GroupingRejections           []Case                        `json:"grouping_rejections"`
@@ -155,6 +159,9 @@ func (s Suite) Validate() error {
 }
 
 func (s Suite) validateScenarios() error {
+	if err := validateSortingScenarios(s); err != nil {
+		return err
+	}
 	if err := validateT14ReviewScenarios(s.HavingReviewScenarios); err != nil {
 		return err
 	}
@@ -192,6 +199,19 @@ func (s Suite) validateScenarios() error {
 
 func (s Suite) witnessCases() []Case {
 	cases := append([]Case(nil), s.Cases...)
+	for _, fixture := range s.SortingReadiness {
+		cases = append(cases, fixture.Cases...)
+	}
+	cases = append(cases, s.SortingRejections...)
+	for _, resource := range s.SortingResources {
+		cases = append(cases, resource.Case)
+		if resource.Control != nil {
+			cases = append(cases, *resource.Control)
+		}
+	}
+	for _, scenario := range s.SortingScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
 	for _, fixture := range s.GroupingReadiness {
 		cases = append(cases, fixture.Cases...)
 	}

@@ -33,9 +33,6 @@ func (m *MeasureTemplate) compileAggregate(columns *measureColumns) error {
 	if stmt.Projection.TopN != nil {
 		return fmt.Errorf("extended aggregation does not support TOP")
 	}
-	if stmt.OrderBy != nil {
-		return fmt.Errorf("extended aggregation requires post-aggregate column sorting, which is not supported yet")
-	}
 	projection := aggregateProjection(stmt.Projection, columns)
 	inputs := newMeasureExpressionInputs(nil)
 	plan := &ql.AggregatePlan{}

@@ -133,6 +133,9 @@ func (m *MeasureTemplate) compileRaw(columns *measureColumns) error {
 // rawOrderBy resolves visible aliases before the legacy index-rule fallback.
 // General column sorting is owned by the complete ORDER BY capability.
 func rawOrderBy(orderBy *GrammarSelectOrderByClause, slots []ql.Slot, columns *measureColumns) (*modelv1.QueryOrder, error) {
+	if orderBy != nil && len(orderBy.Keys) > 0 {
+		return nil, nil
+	}
 	native := (&transformRun{}).convertSelectOrderBy(orderBy)
 	if orderBy == nil || orderBy.Tail.WithIdent == nil {
 		return native, nil
@@ -154,7 +157,7 @@ func rawOrderBy(orderBy *GrammarSelectOrderByClause, slots []ql.Slot, columns *m
 	}
 	if resolved != nil {
 		if resolved.Source.Role != vectorized.RoleTimestamp {
-			return nil, fmt.Errorf("ORDER BY output %q requires column sorting", name)
+			return nil, nil
 		}
 		native.IndexRuleName = ""
 		return native, nil
@@ -164,10 +167,10 @@ func rawOrderBy(orderBy *GrammarSelectOrderByClause, slots []ql.Slot, columns *m
 		return native, nil
 	}
 	if len(columns.tags[name]) > 0 {
-		return nil, fmt.Errorf("ORDER BY source %q requires column sorting", name)
+		return nil, nil
 	}
 	if _, exists := columns.fields[name]; exists {
-		return nil, fmt.Errorf("ORDER BY source %q requires column sorting", name)
+		return nil, nil
 	}
 	return native, nil
 }

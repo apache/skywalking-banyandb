@@ -91,6 +91,10 @@ func Generate() (Suite, error) {
 	if groupingErr != nil {
 		return Suite{}, groupingErr
 	}
+	sortingReadiness, sortingScenarios, sortingRejections, sortingResources, sortingErr := generateT17(b)
+	if sortingErr != nil {
+		return Suite{}, sortingErr
+	}
 	if b.err != nil {
 		return Suite{}, b.err
 	}
@@ -112,6 +116,7 @@ func Generate() (Suite, error) {
 		return Suite{}, reuseReadinessErr
 	}
 	suite := Suite{
+		SortingReadiness: sortingReadiness, SortingScenarios: sortingScenarios, SortingRejections: sortingRejections, SortingResources: sortingResources,
 		GroupingReadiness: groupingReadiness, GroupingScenarios: groupingScenarios, GroupingRejections: groupingRejections,
 		DistinctReadiness: distinctReadiness, DistinctScenarios: distinctScenarios, DistinctRejections: distinctRejections,
 		HavingReviewScenarios: havingReview,

@@ -17,44 +17,12 @@
 
 package bydbql
 
-import (
-	"fmt"
-
-	"github.com/apache/skywalking-banyandb/pkg/query/ql"
-	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
-)
+import "github.com/apache/skywalking-banyandb/pkg/query/ql"
 
 func (m *MeasureTemplate) validateDistinct() error {
-	stmt := m.statement.template.Select
-	if stmt.OrderBy != nil {
-		if stmt.OrderBy.Tail.WithIdent == nil {
-			return fmt.Errorf("DISTINCT ORDER BY requires a visible output")
-		}
-		identifier := stmt.OrderBy.Tail.WithIdent.Identifier
-		name, err := identifier.ToString(true)
-		if err != nil {
-			return err
-		}
-		visible := false
-		for _, slot := range m.slots {
-			if len(m.expressions) == 0 && m.aggregate == nil && (slot.Output.Name == name || isBuiltinTime(identifier) && isBuiltinTimeSource(slot.Source)) {
-				visible = true
-			}
-		}
-		for _, output := range m.expressions {
-			if !output.computed && (output.column.Name == name || isBuiltinTime(identifier) && isBuiltinTimeSource(output.expression.value.Source)) {
-				visible = true
-			}
-		}
-		if !visible {
-			return fmt.Errorf("DISTINCT ORDER BY expression %q must be derivable from visible output", name)
-		}
-	}
 	// Parameter expression types are resolved at Bind.
 	if len(m.expressions) != 0 || len(m.groups) != 0 {
 		return nil
 	}
 	return ql.ValidateDistinct(&ql.RawPlan{Slots: m.slots, Aggregate: m.aggregate})
 }
-
-func isBuiltinTimeSource(def vectorized.ColumnDef) bool { return def.Role == vectorized.RoleTimestamp }

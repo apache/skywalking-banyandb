@@ -91,11 +91,11 @@ func ParseQuery(query string) (*Grammar, error) {
 	if err := checkParenDepth(query); err != nil {
 		return nil, err
 	}
-	grammar, err := parseSelectSyntax(query)
+	grammar, err := parseQuerySyntax(query)
 	if err != nil {
-		havingGrammar, havingErr := parseExpressionHaving(query)
-		if !errors.Is(havingErr, errNoExpressionHaving) {
-			grammar, err = havingGrammar, havingErr
+		ordered, orderErr := parseExpressionOrder(query)
+		if !errors.Is(orderErr, errNoExpressionOrder) {
+			grammar, err = ordered, orderErr
 		}
 	}
 	if err != nil {
@@ -114,6 +114,10 @@ func ParseQuery(query string) (*Grammar, error) {
 	if grammar.TopN != nil && grammar.TopN.From.Shorthand != nil {
 		return nil, fmt.Errorf("syntax error: source shorthand is valid only for measure SELECT")
 	}
+	if grammar.Select != nil && grammar.Select.OrderBy != nil && len(grammar.Select.OrderBy.Keys) > 0 &&
+		!strings.EqualFold(grammar.Select.From.ResourceType, "MEASURE") {
+		return nil, fmt.Errorf("syntax error: typed ORDER BY is supported only for measures")
+	}
 	if err := checkExpressionSource(grammar); err != nil {
 		return nil, err
 	}
@@ -125,6 +129,17 @@ func ParseQuery(query string) (*Grammar, error) {
 	}
 
 	return grammar, nil
+}
+
+func parseQuerySyntax(query string) (*Grammar, error) {
+	grammar, err := parseSelectSyntax(query)
+	if err != nil {
+		havingGrammar, havingErr := parseExpressionHaving(query)
+		if !errors.Is(havingErr, errNoExpressionHaving) {
+			return havingGrammar, havingErr
+		}
+	}
+	return grammar, err
 }
 
 func parseSelectSyntax(query string) (*Grammar, error) {

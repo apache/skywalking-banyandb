@@ -42,7 +42,7 @@ Abstract Syntax Tree (AST)
 - **Lexer**: Breaks the query string into a sequence of tokens.
 - **Parser**: Builds an Abstract Syntax Tree (AST) from the tokens, validating the query's syntax.
 - **Parameter Binding**: Binds `?` placeholders to the request's `params` (see section 2.6) without changing the query text; a query holding unbound placeholders is rejected.
-- **Transformer**: Resolves columns against the schema and produces the appropriate native request. Extended measure queries also use a QL plan for projection, time filtering, local aggregation, and pagination before encoding the existing measure response.
+- **Transformer**: Resolves columns against the schema and produces the appropriate native request. Extended measure queries also use a QL plan for projection, filtering, aggregation, DISTINCT, ordering and pagination before encoding the existing measure response.
 
 ### 2.2. Distinguishing Query Types
 
@@ -233,13 +233,13 @@ Placeholders in any position that determines the query *structure* rather than a
 | Category | Positions | Example (all syntax errors) |
 |---|---|---|
 | Resource identifiers | resource name, group name, stage name | `FROM STREAM ?`, `IN ?`, `ON ? STAGES` |
-| Column identifiers | column names, legacy condition left-hand side, `ORDER BY` / `GROUP BY` columns, aggregate function arguments | `ORDER BY ?`, `SUM(?)` |
+| Column identifiers | column names, legacy condition left-hand side, `GROUP BY` columns, aggregate function arguments; non-measure `ORDER BY` columns | `GROUP BY ?`, `SUM(?)`, stream `ORDER BY ?` |
 | Function options | `MATCH` analyzer and operator options | `MATCH('x', ?)` |
 | Structure | operators, `ASC`/`DESC`, keywords, doubled placeholders | `= ??` |
 
-Note that unlike some SQL implementations where `ORDER BY ?` silently degrades to a no-op constant sort, BydbQL rejects it outright.
+In measure ORDER BY expressions, a bound parameter is a value. `ORDER BY ?` is a constant key; a string parameter cannot select a column, and an integer parameter cannot select an ordinal. Other resource types retain their existing ORDER BY syntax.
 
-In a measure SELECT or WHERE expression, `?` denotes a value, including on the left of a comparison. It cannot select a column by name. SELECT expression parameters precede TIME, WHERE, LIMIT and OFFSET parameters in textual order.
+In a measure SELECT, WHERE or ORDER BY expression, `?` denotes a value, including on the left of a comparison. It cannot select a column by name. Parameters bind in textual order: SELECT, TIME, WHERE, grouping, HAVING, ORDER BY, LIMIT and OFFSET.
 
 ### 2.6.3. Type Rules Summary
 
@@ -247,7 +247,7 @@ In a measure SELECT or WHERE expression, `?` denotes a value, including on the l
 - `timestamp` parameters are accepted in `TIME` positions, measure `WHERE time` comparisons and measure SELECT/WHERE expressions. Their protobuf timestamp values are validated; a missing or invalid timestamp is rejected at bind time. Time predicates check the stored timestamp domain; expressions use the signed int64 nanosecond domain described in section 5.9.
 - `int` and `null` parameters are rejected in time positions: use `str` or `timestamp` instead.
 - `int` parameters in count positions must fit the wire type of the position — `[0, 4294967295]` for `LIMIT`/`OFFSET` and `[0, 2147483647]` for the `TOP N` counts; out-of-range values are rejected at bind time instead of silently wrapping, and literal counts are held to the same bounds.
-- Empty arrays are accepted in measure SELECT and typed WHERE expressions, including expansion inside expression IN lists such as `value::FIELD IN (?)`. Legacy WHERE value lists still reject empty array parameters. Parameters without a value and `nil` entries are rejected everywhere.
+- Empty arrays are accepted in typed measure expressions, including expansion inside expression IN lists such as `value::FIELD IN (?)`. Legacy WHERE value lists still reject empty array parameters. Parameters without a value and `nil` entries are rejected everywhere.
 - A `?` inside a quoted string literal is part of the string, not a placeholder: `WHERE msg = 'why?'` consumes no parameter.
 - Legacy tag predicates check bound values against the tag schema by the same rules as literals: a `str` that cannot parse as an integer fails against an `INT` tag, while an `int` bound to a `STRING` tag is converted, exactly as if written literally. Typed SELECT/WHERE expressions follow section 5.9's type rules and require explicit string/number casts.
 
@@ -562,7 +562,8 @@ time_value        ::= string_literal | "?" | "now" "(" ")"
 interval_adjustment ::= ("+" | "-") "INTERVAL" string_literal
 time_condition    ::= "=" timestamp | ">" timestamp | "<" timestamp | ">=" timestamp | "<=" timestamp | "BETWEEN" timestamp "AND" timestamp
 binary_op         ::= "=" | "!=" | ">" | "<" | ">=" | "<=" | "IN" | "NOT IN" | "HAVING" | "NOT HAVING" | "CONTAINS" | "NOT CONTAINS" | "MATCH"
-order_expression  ::= ("time" | identifier_path) ["ASC" | "DESC"] | "ASC" | "DESC"
+order_expression  ::= sort_key ("," sort_key)* | "ASC" | "DESC"
+sort_key          ::= (expression | positive_select_ordinal) ["ASC" | "DESC"] ["NULLS" ("FIRST" | "LAST")]
 value             ::= string_literal | integer_literal | "NULL" | "?"
 value_list        ::= "(" value ("," value)* ")"
 timestamp         ::= string_literal | integer_literal | "?"
@@ -815,7 +816,7 @@ A raw query uses the extended behavior when it uses source shorthand, an `AS` al
 - Omitted `LIMIT` has no implicit 100-row cap; query memory limits still apply.
 - Explicit `LIMIT 0` returns no rows and performs no native scan. Contradictory time bounds also return no rows without scanning.
 - `OFFSET` and `LIMIT` apply after time and field filters, including disjoint ranges. Legacy queries without these raw extensions keep their existing pagination defaults.
-- Timestamp ordering, including an unambiguous timestamp alias such as `ORDER BY observed_at DESC`, is supported. Native index-rule ordering remains available. General sorting by tag/field output columns, multiple sort keys, and explicit NULL ordering are not implemented yet.
+- ORDER BY supports scalar columns, aliases, expressions, multiple keys and explicit NULL placement. Simple timestamp and native index-rule ordering remain available. Section 5.12 describes sorting and its memory limits.
 
 The current raw extensions cannot be combined with `SELECT TOP`. Aggregate projections and named scalar grouping use the extended aggregation behavior in section 5.8. Legacy native aggregation and grouping retain their existing syntax and behavior. SELECT expressions are described in section 5.9; field filters and mixed time/tag/field `OR` are described in section 5.10; HAVING and collection membership are described in section 5.11. SELECT DISTINCT and computed grouping remain planned capabilities.
 
@@ -891,7 +892,7 @@ FROM MEASURE service_cpm IN metrics
 WHERE time >= ? AND time < ?
 ```
 
-Extended aggregate queries currently reject COUNT(DISTINCT), TOP, array grouping, and ORDER BY. The existing legacy native forms of these supported operations remain available. HAVING supports grouped keys and named aggregate calls, including calls absent from SELECT. Computed grouping, ordinal references and selectable TIME_BUCKET values are described in section 5.11. Aggregate arguments must still be named columns.
+Extended aggregate queries currently reject COUNT(DISTINCT), TOP and array grouping. The existing legacy native forms of these supported operations remain available. HAVING and ORDER BY support grouped keys and named aggregate calls, including calls absent from SELECT. Computed grouping, ordinal references and selectable TIME_BUCKET values are described in section 5.11. Aggregate arguments must still be named columns.
 
 #### Native aggregate execution
 
@@ -1016,7 +1017,7 @@ DISTINCT runs after raw filtering, aggregation, HAVING and visible projection, a
 
 Integer, double, string, binary and timestamp values can be keys. NULL values compare equal for deduplication, but remain distinct from zero, an empty string or empty bytes. Positive and negative floating zero share a key, and all NaN representations share a key. Array keys are rejected during binding, including arrays selected by `*`. SELECT DISTINCT cannot be combined with SELECT TOP. It does not change the existing restrictions on COUNT(DISTINCT).
 
-Without ORDER BY, result order is unspecified. DISTINCT does not add new ordering forms: an existing supported ORDER BY must resolve to a visible direct output. Ordering by hidden inputs is rejected; general ordering of computed or aggregate outputs remains planned.
+Without ORDER BY, result order is unspecified. With DISTINCT, each ORDER BY expression must be derivable from visible output values. Visible aliases, selected computed expressions and selected aggregate calls are supported; hidden source columns, grouped keys or aggregate calls are rejected. See section 5.12.
 
 For timestamp ordering, write `ORDER BY TIME ASC` or `DESC`, or use a visible timestamp alias. Direction-only `ORDER BY ASC` or `ORDER BY DESC` is rejected with DISTINCT.
 
@@ -1052,7 +1053,31 @@ Bucket expressions match by their resolved duration: for a two-second measure in
 
 DISTINCT compares the visible output tuple. When that tuple selects the direct bucket key, DISTINCT preserves its timestamp alias and DataPoint timestamp. An unselected bucket does not become a hidden DISTINCT key or supply an arbitrary timestamp to the result. Timestamp aliases in `__ql` and field aliases may share a name; duplicate names within the same output container are rejected.
 
-Computed keys run after WHERE and before local aggregation. HAVING follows completed aggregation, then visible projection, DISTINCT and final pagination. Eligible bucket aggregates can reuse the existing native reductions; bucket time remains part of the merge key. Other expressions use a complete raw scan and typed local grouping. Extended grouping adds no ordering guarantee. All key buffers, grouping state and output share the existing query memory limit; exhaustion fails the query, and temporary-file spilling remains deferred. General ordering remains planned.
+Computed keys run after WHERE and before local aggregation. HAVING follows completed aggregation, then visible projection, DISTINCT, ORDER BY and final pagination. Eligible bucket aggregates can reuse the existing native reductions; bucket time remains part of the merge key. Other expressions use a complete raw scan and typed local grouping. Extended grouping adds no ordering guarantee. All key buffers, grouping state and output share the existing query memory limit; exhaustion fails the query, and temporary-file spilling remains deferred.
+
+### 5.12. Ordering and final pagination
+
+Measure ORDER BY accepts multiple scalar keys, each with its own direction and NULL placement. Output aliases take precedence over source names; ambiguous output names require qualification. Keys can use SELECT expressions, grouped expressions and named aggregate calls. Integer, double, string, binary and timestamp keys are supported; boolean and array keys are rejected.
+
+```sql
+SELECT host AS node, SUM(value::FIELD) AS total, MAX(value::FIELD) AS peak
+FROM metrics.service_cpm
+WHERE time >= ? AND value::FIELD > CAST(? AS DOUBLE)
+GROUP BY host
+HAVING SUM(value::FIELD) > 3
+ORDER BY total DESC NULLS LAST, node ASC
+LIMIT 1 OFFSET 1
+```
+
+ASC defaults to NULLS LAST; DESC defaults to NULLS FIRST. Strings and binary values compare byte by byte. Integer comparisons preserve all int64 bits. Floating NaNs follow other non-null numbers in ascending order; descending reverses that numeric order. NULL placement is independent of direction. Equal complete keys have unspecified order, so add a unique final key when stable pagination matters.
+
+A positive integer literal refers to a SELECT position after expanding `*`, including an implicit `time` projection. Zero, negative and out-of-range positions are rejected. Bound values remain constant expressions and never select an ordinal. Bare direction-only ordering retains its timestamp meaning; DISTINCT requires an explicit key derivable from visible output.
+
+Raw queries may order by unselected columns or expressions. Grouped queries may order by hidden grouped keys or aggregate calls. Such inputs do not appear in the response. DISTINCT requires every key to be derivable from its visible tuple, preventing hidden inputs from deciding the order of deduplicated rows.
+
+Ordering runs after filtering, aggregation, HAVING and visible-tuple DISTINCT. OFFSET and LIMIT apply last. With no LIMIT, the liaison sorts all completed rows. A finite LIMIT retains at most OFFSET + LIMIT candidate rows in a heap, then sorts those candidates and applies the requested page. The sum uses uint64 arithmetic; large offsets can still require substantial memory. LIMIT 0 performs no data scan.
+
+Accepted candidates own copies of their values and do not retain source batches. Key buffers, candidate storage and output share the query memory budget. A full sort or a large top-k fails with `ResourceExhausted` when that budget is exhausted; temporary-file spilling remains deferred. Native input materialization has its own residency costs, so a small LIMIT does not bound total scan work or query memory. Simple timestamp and explicit index-rule ordering retain their existing native execution paths.
 
 ## 6. BydbQL for Top-N
 

@@ -365,6 +365,14 @@ type GrammarSelectOrderByClause struct {
 	Order string             `parser:"@'ORDER'"`
 	By    string             `parser:"@'BY'"`
 	Tail  GrammarOrderByTail `parser:"@@"`
+	Keys  []*GrammarOrderKey
+}
+
+// GrammarOrderKey describes one typed measure ordering expression.
+type GrammarOrderKey struct {
+	Expression *GrammarExpression
+	Descending bool
+	NullsFirst bool
 }
 
 // GrammarTopNOrderByClause represents ORDER BY clause in TOP N statement.
