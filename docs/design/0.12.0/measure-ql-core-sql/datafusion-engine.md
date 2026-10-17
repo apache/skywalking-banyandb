@@ -129,6 +129,32 @@ Computed timestamps use UTC Unix nanoseconds and become timestamp TagValues
 only in the final QL adapter. See the [language guide](../../../interacting/bydbql.md#57-typed-select-expressions)
 for the checked arithmetic, cast, null and result-mapping rules.
 
+T12 reuses those compiled kernels in `WrapFilter`. A BOOL result narrows selection
+without copying output value columns; only TRUE passes. The operator borrows the
+input schema, columns and metadata until the next pull, skips empty selections,
+and charges typed decoding scratch, row masks and selection storage before
+allocation. The output-copy field is structurally zero, verified by column-identity
+checks in unit tests and the kernel benchmark; it is not measured copy telemetry.
+Charged decoding scratch is outside that invariant.
+EOF, evaluation errors, cancellation and repeated Close release state and close
+the source exactly once. Oversized external batches reject before uint16 conversion.
+The filter owns the source explicitly; its shared expression kernel owns scratch.
+Planner and runtime share BOOLEAN/NULL predicate validation.
+
+The planner keeps safe necessary tag predicates and a conservative time envelope
+in the native request, then evaluates the full residual before visible projection,
+T07 aggregation and final pagination. A time branch under OR cannot exclude rows
+matched by another branch. Hidden predicate inputs survive time filtering but
+never reach final output. A residual disables T08 native aggregation and input
+LIMIT/OFFSET pushdown. Cached recipes retain symbolic values; each execution binds
+fresh parameters and one clock. Legacy tag-only MATCH and collection HAVING keep
+their original routing; their composition with a new residual awaits T14 kernels.
+Names-only routing preserves ordinary legacy queries across groups whose unused
+column types differ. Typed schema validation runs when typed execution is needed.
+One input collector extends the native scan with hidden columns without changing
+visible slots; SELECT and WHERE share array binding and tag ambiguity metadata.
+See the [WHERE contract](../../../interacting/bydbql.md#58-field-and-expression-filters).
+
 ## 4. Plan stages and the small optimizer
 
 Keep the public QL entrypoint small: prepare an immutable template, compile/bind

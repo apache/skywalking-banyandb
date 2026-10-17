@@ -178,6 +178,8 @@ type GrammarTimeValue struct {
 type GrammarSelectWhereClause struct {
 	Where string         `parser:"@'WHERE'"`
 	Expr  *GrammarOrExpr `parser:"@@"`
+	// Expression is populated only by the typed measure WHERE parser.
+	Expression *GrammarExpression
 }
 
 // GrammarTopNWhereClause represents WHERE clause in TOP N.

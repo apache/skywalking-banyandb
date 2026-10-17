@@ -170,6 +170,8 @@ func evalT10(e *t10Expr, row fixtureRow, params []any) (any, error) {
 		return params[e.Value.(int)], nil
 	case "CASE", "SIMPLE CASE", "COALESCE":
 		return conditionalT10(e, row, params)
+	case "AND", "OR":
+		return logicalExpressionT10(e, row, params)
 	}
 	values := make([]any, 0, len(e.Args))
 	for _, arg := range e.Args {
@@ -213,6 +215,21 @@ func evalT10(e *t10Expr, row fixtureRow, params []any) (any, error) {
 		return compareResult(e.Op, compareT10(values[0], values[1])), nil
 	}
 	return nil, fmt.Errorf("unmodeled T10 evaluation %s", e.Op)
+}
+
+func logicalExpressionT10(e *t10Expr, row fixtureRow, params []any) (any, error) {
+	left, err := evalT10(e.Args[0], row, params)
+	if err != nil {
+		return nil, err
+	}
+	if (e.Op == "AND" && left == false) || (e.Op == "OR" && left == true) {
+		return left, nil
+	}
+	right, rightErr := evalT10(e.Args[1], row, params)
+	if rightErr != nil {
+		return nil, rightErr
+	}
+	return logicalT10(e.Op, left, right), nil
 }
 
 func conditionalT10(e *t10Expr, row fixtureRow, params []any) (any, error) {
@@ -416,6 +433,22 @@ func logicalT10(op string, left, right any) any {
 }
 
 func inT10(values []any) any {
+	expanded := []any{values[0]}
+	for _, candidate := range values[1:] {
+		switch list := candidate.(type) {
+		case []int64:
+			for _, value := range list {
+				expanded = append(expanded, value)
+			}
+		case []string:
+			for _, value := range list {
+				expanded = append(expanded, value)
+			}
+		default:
+			expanded = append(expanded, candidate)
+		}
+	}
+	values = expanded
 	if len(values) == 1 {
 		return false
 	}
@@ -434,6 +467,10 @@ func inT10(values []any) any {
 }
 
 func compareT10(left, right any) int {
+	if value, ok := left.(t10Timestamp); ok {
+		other := right.(t10Timestamp)
+		return big.NewInt(value.Millis).Cmp(big.NewInt(other.Millis))
+	}
 	if value, ok := left.(int64); ok {
 		if other, valid := right.(int64); valid {
 			return big.NewInt(value).Cmp(big.NewInt(other))
@@ -452,6 +489,15 @@ func compareT10(left, right any) int {
 		return -1
 	}
 	a, b := floatT10(left), floatT10(right)
+	if math.IsNaN(a) {
+		if math.IsNaN(b) {
+			return 0
+		}
+		return 1
+	}
+	if math.IsNaN(b) {
+		return -1
+	}
 	if a < b {
 		return -1
 	}

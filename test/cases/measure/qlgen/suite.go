@@ -39,23 +39,28 @@ type Feature struct {
 
 // Suite is the reproducible QL-only integration artifact.
 type Suite struct {
-	ExpressionReadiness       []Case                    `json:"expression_readiness"`
-	ExpressionRejections      []Case                    `json:"expression_rejections"`
-	ExpressionScenarios       []ExpressionScenario      `json:"expression_scenarios"`
-	NativeAggregateReadiness  []AggregateFixture        `json:"native_aggregate_readiness"`
-	NativeAggregateRejections []Case                    `json:"native_aggregate_rejections"`
-	NativeAggregateScenarios  []NativeAggregateScenario `json:"native_aggregate_scenarios"`
-	AggregateReadiness        []AggregateFixture        `json:"aggregate_readiness"`
-	AggregateRejections       []Case                    `json:"aggregate_rejections"`
-	AggregateScenarios        []AggregateScenario       `json:"aggregate_scenarios"`
-	FixtureDigest             string                    `json:"fixture_digest"`
-	ReuseScenarios            []ReuseScenario           `json:"reuse_scenarios"`
-	ReuseReadiness            Case                      `json:"reuse_readiness"`
-	Features                  []Feature                 `json:"features"`
-	Cases                     []Case                    `json:"cases"`
-	Pairs                     PairCoverage              `json:"pairs"`
-	Version                   int                       `json:"version"`
-	Seed                      int64                     `json:"seed"`
+	LegacyCompatibilityReadiness []Case                        `json:"legacy_compatibility_readiness"`
+	LegacyCompatibilityScenarios []LegacyCompatibilityScenario `json:"legacy_compatibility_scenarios"`
+	FilterReadiness              []Case                        `json:"filter_readiness"`
+	FilterScenarios              []FilterScenario              `json:"filter_scenarios"`
+	FilterRejections             []Case                        `json:"filter_rejections"`
+	ExpressionReadiness          []Case                        `json:"expression_readiness"`
+	ExpressionRejections         []Case                        `json:"expression_rejections"`
+	ExpressionScenarios          []ExpressionScenario          `json:"expression_scenarios"`
+	NativeAggregateReadiness     []AggregateFixture            `json:"native_aggregate_readiness"`
+	NativeAggregateRejections    []Case                        `json:"native_aggregate_rejections"`
+	NativeAggregateScenarios     []NativeAggregateScenario     `json:"native_aggregate_scenarios"`
+	AggregateReadiness           []AggregateFixture            `json:"aggregate_readiness"`
+	AggregateRejections          []Case                        `json:"aggregate_rejections"`
+	AggregateScenarios           []AggregateScenario           `json:"aggregate_scenarios"`
+	FixtureDigest                string                        `json:"fixture_digest"`
+	ReuseScenarios               []ReuseScenario               `json:"reuse_scenarios"`
+	ReuseReadiness               Case                          `json:"reuse_readiness"`
+	Features                     []Feature                     `json:"features"`
+	Cases                        []Case                        `json:"cases"`
+	Pairs                        PairCoverage                  `json:"pairs"`
+	Version                      int                           `json:"version"`
+	Seed                         int64                         `json:"seed"`
 }
 
 // Load checks the generated contract before integration tests consume it.
@@ -133,6 +138,12 @@ func (s Suite) Validate() error {
 }
 
 func (s Suite) validateScenarios() error {
+	if err := validateT12Legacy(s.LegacyCompatibilityReadiness, s.LegacyCompatibilityScenarios); err != nil {
+		return err
+	}
+	if err := validateFilterScenarios(s.FilterReadiness, s.FilterScenarios); err != nil {
+		return err
+	}
 	if err := validateReuseReadiness(s.ReuseReadiness); err != nil {
 		return err
 	}
@@ -150,6 +161,15 @@ func (s Suite) validateScenarios() error {
 
 func (s Suite) witnessCases() []Case {
 	cases := append([]Case(nil), s.Cases...)
+	cases = append(cases, s.LegacyCompatibilityReadiness...)
+	for _, scenario := range s.LegacyCompatibilityScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
+	cases = append(cases, s.FilterReadiness...)
+	cases = append(cases, s.FilterRejections...)
+	for _, scenario := range s.FilterScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
 	cases = append(cases, s.ExpressionReadiness...)
 	cases = append(cases, s.ExpressionRejections...)
 	for _, scenario := range s.ExpressionScenarios {

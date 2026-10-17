@@ -31,10 +31,11 @@ import (
 )
 
 type measureExpression struct {
+	temporal   *GrammarCompareTail
 	args       []*measureExpression
 	value      ql.Expression
-	parameter  bool
 	paramIndex int
+	parameter  bool
 }
 
 type measureExpressionOutput struct {
@@ -55,16 +56,13 @@ func hasMeasureExpressions(projection *GrammarProjection) bool {
 	return false
 }
 
-func (m *MeasureTemplate) compileExpressions(schemas map[string]*databasev1.Measure) error {
+func (m *MeasureTemplate) compileExpressions(columns *measureColumns) error {
 	stmt := m.statement.template.Select
 	if stmt.GroupBy != nil || stmt.Projection.TopN != nil || measureAggregateCount(stmt) != 0 {
 		return fmt.Errorf("SELECT expressions with aggregation, grouping or TOP are not supported")
 	}
-	columns, err := resolveMeasureColumns(stmt.From.In.Groups, schemas)
-	if err != nil {
-		return err
-	}
-	inputs := make(map[measureColumnKey]bool)
+	var err error
+	inputs := newMeasureExpressionInputs(nil)
 	for i, column := range stmt.Projection.Columns {
 		expr := column.Expression
 		computed := expr != nil
@@ -81,7 +79,7 @@ func (m *MeasureTemplate) compileExpressions(schemas map[string]*databasev1.Meas
 			}
 			expr = &GrammarExpression{Op: "column", Identifier: column.Identifier, TypeSpec: column.TypeSpec}
 		}
-		recipe, compileErr := m.compileExpression(expr, columns, inputs)
+		recipe, compileErr := compileMeasureExpression(expr, columns, inputs)
 		if compileErr != nil {
 			return compileErr
 		}
@@ -98,7 +96,7 @@ func (m *MeasureTemplate) compileExpressions(schemas map[string]*databasev1.Meas
 		}
 		m.expressions = append(m.expressions, measureExpressionOutput{expression: recipe, column: output, computed: computed})
 	}
-	if !hasNativeExpressionInput(m.slots) {
+	if !hasNativeExpressionInput(inputs.slots) {
 		if len(columns.ordered) == 0 {
 			return fmt.Errorf("expression projection requires a native source column")
 		}
@@ -109,11 +107,11 @@ func (m *MeasureTemplate) compileExpressions(schemas map[string]*databasev1.Meas
 				break
 			}
 		}
-		m.addExpressionInput(anchor, inputs)
+		inputs.add(anchor)
 	}
+	m.slots = inputs.slots
 	m.request = baseMeasureRequest(stmt)
 	m.request.TagProjection, m.request.FieldProjection = rawScanProjection(m.slots)
-	m.compileNativeEntities(schemas, columns)
 	var orderSlots []ql.Slot
 	for _, output := range m.expressions {
 		if output.computed && stmt.OrderBy != nil && stmt.OrderBy.Tail.WithIdent != nil {
@@ -134,7 +132,7 @@ func (m *MeasureTemplate) compileExpressions(schemas map[string]*databasev1.Meas
 		return err
 	}
 	if stmt.Where != nil {
-		m.predicate, err = compileMeasureOr(stmt.Where.Expr, columns)
+		err = m.compileWhere(columns)
 	}
 	return err
 }
@@ -148,17 +146,35 @@ func hasNativeExpressionInput(slots []ql.Slot) bool {
 	return false
 }
 
-func (m *MeasureTemplate) addExpressionInput(column vectorized.ColumnDef, seen map[measureColumnKey]bool) {
-	key := measureColumnKey{family: column.TagFamily, name: column.Name, role: column.Role}
-	if seen[key] {
-		return
-	}
-	seen[key] = true
-	m.slots = append(m.slots, ql.Slot{ID: ql.SlotID(len(m.slots)), Source: column, Output: column, Nullable: true})
+type measureExpressionInputs struct {
+	seen  map[measureColumnKey]bool
+	slots []ql.Slot
 }
 
-func (m *MeasureTemplate) compileExpression(expr *GrammarExpression, columns *measureColumns, inputs map[measureColumnKey]bool) (*measureExpression, error) {
-	recipe := &measureExpression{value: ql.Expression{Op: expr.Op, Type: expr.Type, Literal: expr.Literal}, parameter: expr.Param, paramIndex: expr.ParamIndex}
+func newMeasureExpressionInputs(slots []ql.Slot) *measureExpressionInputs {
+	inputs := &measureExpressionInputs{seen: make(map[measureColumnKey]bool, len(slots))}
+	for _, slot := range slots {
+		inputs.add(slot.Source)
+	}
+	return inputs
+}
+
+func (i *measureExpressionInputs) add(column vectorized.ColumnDef) {
+	key := columnIdentity(column)
+	if i.seen[key] {
+		return
+	}
+	i.seen[key] = true
+	i.slots = append(i.slots, ql.Slot{ID: ql.SlotID(len(i.slots)), Source: column, Output: column, Nullable: true})
+}
+
+func compileMeasureExpression(expr *GrammarExpression, columns *measureColumns, inputs *measureExpressionInputs) (*measureExpression, error) {
+	recipe := &measureExpression{
+		temporal: expr.Temporal, value: ql.Expression{Op: expr.Op, Type: expr.Type, Literal: expr.Literal}, parameter: expr.Param, paramIndex: expr.ParamIndex,
+	}
+	if expr.Op == "time_compare" {
+		return recipe, nil
+	}
 	if expr.Op == "column" {
 		var source vectorized.ColumnDef
 		var err error
@@ -179,10 +195,10 @@ func (m *MeasureTemplate) compileExpression(expr *GrammarExpression, columns *me
 			recipe.value.Type = ql.ExpressionTimestamp
 			recipe.value.Source.Type = vectorized.ColumnTypeInt64
 		}
-		m.addExpressionInput(source, inputs)
+		inputs.add(source)
 	}
 	for _, child := range expr.Args {
-		compiled, err := m.compileExpression(child, columns, inputs)
+		compiled, err := compileMeasureExpression(child, columns, inputs)
 		if err != nil {
 			return nil, err
 		}
@@ -228,30 +244,36 @@ func (m *MeasureTemplate) bindExpressions(bound *BoundQuery) (*ql.ExpressionPlan
 
 func (m *measureExpression) bind(bound *BoundQuery) *ql.Expression {
 	if m.parameter {
-		return cloneExpressionLiteral(bound.values[m.paramIndex].expression)
+		return boundExpressionLiteral(bound.values[m.paramIndex])
 	}
 	value := m.value
 	value.Args = make([]*ql.Expression, 0, len(m.args))
 	for i, child := range m.args {
 		arg := child.bind(bound)
-		if i > 0 && (value.Op == "in" || value.Op == "not_in") && arg.Op == "literal" {
-			switch arg.Type {
-			case ql.ExpressionIntArray:
-				for _, element := range arg.Literal.Ints {
-					value.Args = append(value.Args, &ql.Expression{Op: "literal", Type: ql.ExpressionInt, Literal: ql.ExpressionScalar{Int64: element}})
-				}
-				continue
-			case ql.ExpressionStringArray:
-				for _, element := range arg.Literal.Strings {
-					value.Args = append(value.Args, &ql.Expression{Op: "literal", Type: ql.ExpressionString, Literal: ql.ExpressionScalar{String: element}})
-				}
-				continue
-			default:
-			}
-		}
-		value.Args = append(value.Args, arg)
+		appendBoundExpressionArgument(&value, i, arg)
 	}
 	return &value
+}
+
+// appendBoundExpressionArgument shares positional IN expansion for SELECT and
+// WHERE bindings. Only RHS literal arrays expand; the left operand stays scalar.
+func appendBoundExpressionArgument(expression *ql.Expression, index int, argument *ql.Expression) {
+	if index > 0 && (expression.Op == "in" || expression.Op == "not_in") && argument.Op == "literal" {
+		switch argument.Type {
+		case ql.ExpressionIntArray:
+			for _, value := range argument.Literal.Ints {
+				expression.Args = append(expression.Args, &ql.Expression{Op: "literal", Type: ql.ExpressionInt, Literal: ql.ExpressionScalar{Int64: value}})
+			}
+			return
+		case ql.ExpressionStringArray:
+			for _, value := range argument.Literal.Strings {
+				expression.Args = append(expression.Args, &ql.Expression{Op: "literal", Type: ql.ExpressionString, Literal: ql.ExpressionScalar{String: value}})
+			}
+			return
+		default:
+		}
+	}
+	expression.Args = append(expression.Args, argument)
 }
 
 func cloneExpressionLiteral(expression *ql.Expression) *ql.Expression {
@@ -331,12 +353,13 @@ func walkGrammarExpression(expression *GrammarExpression, visit func(*GrammarExp
 }
 
 func grammarHasExpressions(grammar *Grammar) bool {
-	return grammar.Select != nil && hasMeasureExpressions(grammar.Select.Projection)
+	return grammar.Select != nil && (hasMeasureExpressions(grammar.Select.Projection) ||
+		grammar.Select.Where != nil && grammar.Select.Where.Expression != nil)
 }
 
 func checkExpressionSource(grammar *Grammar) error {
 	if grammarHasExpressions(grammar) && !strings.EqualFold(grammar.Select.From.ResourceType, "MEASURE") {
-		return fmt.Errorf("syntax error: SELECT expressions are supported only for measures")
+		return fmt.Errorf("syntax error: scalar expressions are supported only for measures")
 	}
 	return nil
 }

@@ -180,7 +180,11 @@ func (p *preparer) walkGrammar(g *Grammar) {
 		}
 		p.walkTime(g.Select.Time)
 		if g.Select.Where != nil {
-			p.walkOrExpr(g.Select.Where.Expr)
+			if g.Select.Where.Expression != nil {
+				walkGrammarExpression(g.Select.Where.Expression, func(expr *GrammarExpression) { expr.ParamIndex = p.add(phExpression, 0) })
+			} else {
+				p.walkOrExpr(g.Select.Where.Expr)
+			}
 		}
 		if g.Select.Limit != nil && g.Select.Limit.Param {
 			g.Select.Limit.ParamIndex = p.add(phCount, math.MaxUint32)

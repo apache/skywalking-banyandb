@@ -515,3 +515,58 @@ settings, missing counters, inconsistent fixture checksums and leaked owners or
 reservations. RPC comparisons describe the added cost of projection; independent
 scalar-versus-kernel speed and masked branch savings belong to K(T10). This scope
 adds no cache, concurrency, aggregation or previous-ticket benchmark matrix.
+
+### T12 field filtering before projection and aggregation
+
+`qlb_t12` measures only field filtering and its downstream work. Its 16 variants
+combine nominal selectivity 0/1/50/100%, raw projection/scalar SUM+COUNT, and
+one/two hidden predicate fields. The dedicated versioned fixture adds non-null
+`score = row % 100` to the existing nullable integer/float rules. Narrow queries
+filter `score < ?`; wider queries also test `COALESCE(f, 0) > -1000`, which is
+true for every fixture value. Predicates stay absent from visible results.
+Actual passing counts are independently computed, including partial 100-row
+cycles. The one-percent cohort has only null `v` values, exercising SQL
+SUM=NULL/COUNT=0 even when rows passed the filter.
+
+Successful measurements use 1,024/16,384 input rows, one worker, 256 MiB, and
+100 timed/5 warmup or 20 timed/3 warmup calls, respectively. There is no LIMIT:
+every required input row must reach the filter, and local aggregates must see
+exactly its TRUE rows. One logical raw scan makes two distributed leaf calls;
+native aggregation, merge and intermediate DataPoints are forbidden. Reports
+reject missing variants/metrics, changed protocol, incorrect checksums, a nonzero
+structural copy invariant, incomplete scans and leaked reservations/owners/pool refs.
+
+The initial 32,768-row smoke fails at full raw output: final response-encoding
+reservation crosses the existing 192-MiB cumulative parent admission allowance.
+A fresh-query diagnostic confirms complete filtering, no retained memory after
+failure, and successful lower-output recovery. The 16,384-row successful size
+is chosen before protocol freeze; the larger failure remains resource evidence.
+
+Each cardinality starts a fresh cluster process. All warmups and six retained
+timed responses are fully checked outside timing using fixture arithmetic and
+timestamp keys. Timed calls check result count. CPU/heap profiles, allocation
+snapshots and every latency sample are retained. Reported filter copied bytes are
+structurally zero because the filter borrows the input column objects. Unit tests
+and K's pre-timing identity checks verify this property; the RPC counter alone
+does not measure copies. Boundary decoding scratch is separately charged to query
+memory. Physical storage reads, native retained frame bytes
+and total parent lease charges remain explicitly unavailable.
+
+```sh
+for repetition in 1 2 3 4 5; do
+  DQB_ENGINE=measure DQB_SCENARIOS=qlb_t12 \
+    DQB_CARDINALITIES=1024,16384 DQB_QUERY_WORKERS=1 \
+    DQB_QUERY_MEMORY_MIB=256 DQB_PROFILE=1 \
+    DQB_REPORT_DIR="/work/.omx/bench-reports/t12-r${repetition}" \
+    test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g
+done
+```
+
+K(T12), `BenchmarkFilterT12`, separately measures the complete public filter
+lifecycle over 1/1,024/65,536 physical rows, the four thresholds, and dense or
+selected nullable inputs (24 cases). It reports examined-row throughput,
+passed-row throughput, copied bytes, selections and reservations. A zero-percent
+filter still examines input and reaches EOF; no sentinel row substitutes for it.
+There is no invented old-version baseline for new field-filter syntax.
+The owning resource probes cover larger inputs without changing native memory
+protection or expanding previous-ticket benchmark matrices.

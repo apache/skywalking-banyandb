@@ -184,7 +184,6 @@ func TestMeasureExpressionsRejectUnsupportedCompositions(t *testing.T) {
 		"SELECT v + 1 FROM g.m GROUP BY host",
 		"SELECT SUM(v), v + 1 FROM g.m",
 		"SELECT v + 1 AS shifted FROM g.m ORDER BY shifted",
-		"SELECT v + 1 FROM g.m WHERE v = 1",
 		"SELECT \"unknown\", v + 1 FROM g.m",
 		"SELECT v + 1 AS hidden FROM g.m WHERE hidden = 1",
 	}

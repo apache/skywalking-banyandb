@@ -59,6 +59,9 @@ func BindParams(g *Grammar, params []*modelv1.TagValue) error {
 			expandExpressionLists(column.Expression)
 		}
 	}
+	if g.Select != nil && g.Select.Where != nil {
+		expandExpressionLists(g.Select.Where.Expression)
+	}
 	g.paramsBound = true
 	return nil
 }
@@ -101,7 +104,11 @@ func (b *binder) collect(g *Grammar) {
 		}
 		b.collectTime(g.Select.Time)
 		if g.Select.Where != nil {
-			b.collectOrExpr(g.Select.Where.Expr)
+			if g.Select.Where.Expression != nil {
+				walkGrammarExpression(g.Select.Where.Expression, b.collectExpression)
+			} else {
+				b.collectOrExpr(g.Select.Where.Expr)
+			}
 		}
 		if g.Select.Limit != nil {
 			b.collectIntSlot(&g.Select.Limit.Value, &g.Select.Limit.Param, math.MaxUint32)

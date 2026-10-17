@@ -143,30 +143,37 @@ func FixtureWrites(base time.Time) []*measurev1.WriteRequest {
 // FixtureDigest identifies the exact schema and values used by generated expectations.
 func FixtureDigest() string {
 	data, err := json.Marshal(struct {
-		Schema          *databasev1.Measure
-		Binding         *databasev1.IndexRuleBinding
-		Rules           []*databasev1.IndexRule
-		Rows            []fixtureRow
-		T03Schema       *databasev1.Measure
-		T05Schema       *databasev1.Measure
-		T03Rows         []fixtureRow
-		T07Schema       *databasev1.Measure
-		T07Rows         []fixtureRow
-		T07GroupsSchema *databasev1.Measure
-		T07GroupsRows   []fixtureRow
-		T08Schema       *databasev1.Measure
-		T08Rows         []t08Row
-		T08GroupsSchema *databasev1.Measure
-		T08GroupsRows   []t08Row
-		T08Indexes      []*databasev1.IndexRule
-		T08Bindings     []*databasev1.IndexRuleBinding
-		T10Schema       *databasev1.Measure
-		T10Rows         []fixtureRow
+		Schema           *databasev1.Measure
+		Binding          *databasev1.IndexRuleBinding
+		Rules            []*databasev1.IndexRule
+		Rows             []fixtureRow
+		T03Schema        *databasev1.Measure
+		T05Schema        *databasev1.Measure
+		T03Rows          []fixtureRow
+		T07Schema        *databasev1.Measure
+		T07Rows          []fixtureRow
+		T07GroupsSchema  *databasev1.Measure
+		T07GroupsRows    []fixtureRow
+		T08Schema        *databasev1.Measure
+		T08Rows          []t08Row
+		T08GroupsSchema  *databasev1.Measure
+		T08GroupsRows    []t08Row
+		T08Indexes       []*databasev1.IndexRule
+		T08Bindings      []*databasev1.IndexRuleBinding
+		T10Schema        *databasev1.Measure
+		T10Rows          []fixtureRow
+		T12Schema        *databasev1.Measure
+		T12Rows          []fixtureRow
+		T12LegacySchemas []*databasev1.Measure
+		T12LegacyRows    []t12LegacyRow
 	}{
 		T10Schema: T10FixtureSchema(), T10Rows: t10Rows(),
-		T08Indexes:  []*databasev1.IndexRule{T08FixtureIndexRule(T08FixtureName), T08FixtureIndexRule(T08GroupsFixtureName)},
-		T08Bindings: []*databasev1.IndexRuleBinding{T08FixtureIndexBinding(T08FixtureName), T08FixtureIndexBinding(T08GroupsFixtureName)},
-		T08Schema:   T08FixtureSchema(T08FixtureName), T08Rows: t08Rows(T08FixtureName),
+		T12Schema: T12FixtureSchema(), T12Rows: t12Rows(),
+		T12LegacySchemas: []*databasev1.Measure{T12LegacyFixtureSchema(T12LegacyFixtureGroups()[0]), T12LegacyFixtureSchema(T12LegacyFixtureGroups()[1])},
+		T12LegacyRows:    t12LegacyRows(),
+		T08Indexes:       []*databasev1.IndexRule{T08FixtureIndexRule(T08FixtureName), T08FixtureIndexRule(T08GroupsFixtureName)},
+		T08Bindings:      []*databasev1.IndexRuleBinding{T08FixtureIndexBinding(T08FixtureName), T08FixtureIndexBinding(T08GroupsFixtureName)},
+		T08Schema:        T08FixtureSchema(T08FixtureName), T08Rows: t08Rows(T08FixtureName),
 		T08GroupsSchema: T08FixtureSchema(T08GroupsFixtureName), T08GroupsRows: t08Rows(T08GroupsFixtureName),
 		T07Schema: T07FixtureSchema(T07FixtureName), T07Rows: t07Rows(T07FixtureName),
 		T07GroupsSchema: T07FixtureSchema(T07GroupsFixtureName), T07GroupsRows: t07Rows(T07GroupsFixtureName),

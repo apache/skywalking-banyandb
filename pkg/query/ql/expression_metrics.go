@@ -59,7 +59,7 @@ func (n *expressionNode) recordArm(rows int, later bool) {
 		delta.LaterArmRows = count
 		n.op.stats.LaterArmRows += count
 	}
-	recordExpressionWork(delta)
+	n.op.recordWork(delta)
 }
 
 func boolInt(value bool) int {

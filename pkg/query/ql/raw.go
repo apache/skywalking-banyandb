@@ -46,6 +46,7 @@ type RawPlan struct {
 	NativeAggregate *NativeAggregatePlan
 	Aggregate       *AggregatePlan
 	Expressions     *ExpressionPlan
+	Filter          *Expression
 	Limit           *uint32
 	Slots           []Slot
 	Ranges          []MillisRange
@@ -76,13 +77,20 @@ type rawOperator struct {
 
 // WrapRaw takes ownership of source, including on failure, and resolves projection indices once.
 // Its output lends immutable source columns until the next pull or Close.
-func WrapRaw(ctx context.Context, source vectorized.PullOperator, plan *RawPlan) (_ vectorized.PullOperator, err error) {
+func WrapRaw(ctx context.Context, source vectorized.PullOperator, plan *RawPlan) (vectorized.PullOperator, error) {
+	if plan != nil && plan.Filter != nil {
+		return wrapFilterQuery(ctx, source, plan)
+	}
 	if plan != nil && plan.Expressions != nil {
 		return wrapExpressionQuery(ctx, source, plan)
 	}
 	if plan != nil && plan.Aggregate != nil {
 		return wrapAggregateQuery(ctx, source, plan)
 	}
+	return wrapRawProjection(ctx, source, plan)
+}
+
+func wrapRawProjection(ctx context.Context, source vectorized.PullOperator, plan *RawPlan) (_ vectorized.PullOperator, err error) {
 	defer func() {
 		if err != nil && source != nil {
 			_ = source.Close()

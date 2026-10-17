@@ -26,12 +26,13 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/ql"
 )
 
-// GrammarExpression is a SELECT expression before schema and parameter resolution.
+// GrammarExpression is a typed scalar expression before schema and parameter resolution.
 type GrammarExpression struct {
 	Op         string
 	Args       []*GrammarExpression
 	Identifier *GrammarIdentifierPath
 	TypeSpec   *string
+	Temporal   *GrammarCompareTail
 	Literal    ql.ExpressionScalar
 	Type       ql.ExpressionType
 	Param      bool
@@ -41,6 +42,7 @@ type GrammarExpression struct {
 type expressionParser struct {
 	tokens     []expressionToken
 	pos, depth int
+	where      bool
 }
 
 // parseExpressionProjection retains the existing grammar for every ordinary
@@ -186,6 +188,20 @@ func (p *expressionParser) parse(minPrecedence int) (*GrammarExpression, error) 
 				left, err = p.in(left, op == "NOT")
 			}
 		default:
+			if p.where && (op == "+" || op == "-") && p.take("INTERVAL") {
+				if p.pos >= len(p.tokens) || p.tokens[p.pos].kind != "string" {
+					return nil, fmt.Errorf("INTERVAL requires a quoted fixed duration")
+				}
+				duration, durationErr := expressionUnquote(p.tokens[p.pos].text)
+				if durationErr != nil {
+					return nil, durationErr
+				}
+				p.pos++
+				left = &GrammarExpression{Op: "time_adjust", Args: []*GrammarExpression{left}, Temporal: &GrammarCompareTail{
+					Adjustment: &GrammarIntervalAdjustment{Sign: op, Duration: duration},
+				}}
+				continue
+			}
 			var right *GrammarExpression
 			right, err = p.parse(precedence + 1)
 			if op == "<>" {
@@ -257,6 +273,10 @@ func (p *expressionParser) prefix() (*GrammarExpression, error) {
 		}
 		return value, err
 	}
+	if value, handled, err := p.clockPrefix(); handled {
+		return value, err
+	}
+
 	if p.take("CAST") {
 		return p.cast()
 	}
@@ -290,6 +310,19 @@ func (p *expressionParser) prefix() (*GrammarExpression, error) {
 	default:
 		return nil, fmt.Errorf("unexpected SELECT expression token %q", token.text)
 	}
+}
+
+func (p *expressionParser) clockPrefix() (*GrammarExpression, bool, error) {
+	if !p.where || !p.take("NOW") {
+		return nil, false, nil
+	}
+	if err := p.need("("); err != nil {
+		return nil, true, err
+	}
+	if err := p.need(")"); err != nil {
+		return nil, true, err
+	}
+	return &GrammarExpression{Op: "clock"}, true, nil
 }
 
 func parseExpressionNumber(text string) (*GrammarExpression, error) {

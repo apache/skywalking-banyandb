@@ -21,12 +21,11 @@ import (
 	"fmt"
 	"strings"
 
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/ql"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
-func (m *MeasureTemplate) compileAggregate(schemas map[string]*databasev1.Measure) error {
+func (m *MeasureTemplate) compileAggregate(columns *measureColumns) error {
 	stmt := m.statement.template.Select
 	if stmt.Projection.TopN != nil {
 		return fmt.Errorf("extended aggregation does not support TOP")
@@ -34,10 +33,7 @@ func (m *MeasureTemplate) compileAggregate(schemas map[string]*databasev1.Measur
 	if stmt.OrderBy != nil {
 		return fmt.Errorf("extended aggregation requires post-aggregate column sorting, which is not supported yet")
 	}
-	columns, err := resolveMeasureColumns(stmt.From.In.Groups, schemas)
-	if err != nil {
-		return err
-	}
+	var err error
 	plan := &ql.AggregatePlan{}
 	var keys map[measureColumnKey]int
 	inputs := make(map[measureColumnKey]bool)
@@ -136,9 +132,8 @@ func (m *MeasureTemplate) compileAggregate(schemas map[string]*databasev1.Measur
 	m.request = baseMeasureRequest(stmt)
 	m.request.TagProjection, m.request.FieldProjection = rawScanProjection(m.slots)
 	if stmt.Where != nil {
-		m.predicate, err = compileMeasureOr(stmt.Where.Expr, columns)
+		err = m.compileWhere(columns)
 	}
-	m.compileNativeEntities(schemas, columns)
 	return err
 }
 

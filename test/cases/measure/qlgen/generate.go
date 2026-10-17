@@ -61,6 +61,15 @@ func Generate() (Suite, error) {
 	if expressionErr != nil {
 		return Suite{}, expressionErr
 	}
+	filterReadiness, filterScenarios, filterRejections, filterErr := generateT12(b)
+	if filterErr != nil {
+		return Suite{}, filterErr
+	}
+	legacyReadiness, legacyScenarios, legacyErr := generateT12Legacy()
+	if legacyErr != nil {
+		return Suite{}, legacyErr
+	}
+	b.features["t12.legacy_schema_fixture"], b.features["t12.legacy_schema_compatibility"] = true, true
 	if b.err != nil {
 		return Suite{}, b.err
 	}
@@ -82,6 +91,8 @@ func Generate() (Suite, error) {
 		return Suite{}, reuseReadinessErr
 	}
 	suite := Suite{
+		LegacyCompatibilityReadiness: legacyReadiness, LegacyCompatibilityScenarios: legacyScenarios,
+		FilterReadiness: filterReadiness, FilterScenarios: filterScenarios, FilterRejections: filterRejections,
 		ExpressionReadiness: expressionReadiness, ExpressionScenarios: expressionScenarios, ExpressionRejections: expressionRejections,
 		NativeAggregateReadiness: nativeReadiness, NativeAggregateScenarios: nativeScenarios,
 		NativeAggregateRejections: nativeRejections,

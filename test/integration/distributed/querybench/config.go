@@ -120,6 +120,8 @@ const (
 	ScenarioQLBT08 Scenario = "qlb_t08"
 	// ScenarioQLBT10 benchmarks typed expression projection over native batches.
 	ScenarioQLBT10 Scenario = "qlb_t10"
+	// ScenarioQLBT12 benchmarks field filtering before projection and aggregation.
+	ScenarioQLBT12 Scenario = "qlb_t12"
 	// ScenarioTraceByID benchmarks distributed trace-id lookup.
 	ScenarioTraceByID Scenario = "trace_by_id"
 	// ScenarioTraceTagFilter benchmarks distributed ordered trace tag filters.
@@ -252,7 +254,8 @@ func (c Config) Validate() error {
 	switch c.Engine {
 	case engineMeasure:
 		switch c.Scenario {
-		case ScenarioScanAll, ScenarioTopWithFilter, ScenarioQLBT01, ScenarioQLBT02, ScenarioQLBT03, ScenarioQLBT05, ScenarioQLBT07, ScenarioQLBT08, ScenarioQLBT10:
+		case ScenarioScanAll, ScenarioTopWithFilter, ScenarioQLBT01, ScenarioQLBT02, ScenarioQLBT03, ScenarioQLBT05,
+			ScenarioQLBT07, ScenarioQLBT08, ScenarioQLBT10, ScenarioQLBT12:
 		default:
 			return fmt.Errorf("%s unsupported for %s=%s: %q", envScenario, envEngine, c.Engine, c.Scenario)
 		}
@@ -474,6 +477,9 @@ func queryTimeout(cardinality int) time.Duration {
 }
 
 func (c Config) validateCatalogB() error {
+	if c.Scenario == ScenarioQLBT12 {
+		return c.validateQLBT12()
+	}
 	if c.Scenario == ScenarioQLBT07 || c.Scenario == ScenarioQLBT08 || c.Scenario == ScenarioQLBT10 {
 		iterations, warmup, err := qlbT07Schedule(c.Cardinality)
 		if c.Scenario == ScenarioQLBT08 {
@@ -518,6 +524,28 @@ func (c Config) validateCatalogB() error {
 		return fmt.Errorf("qlb_t03 requires cardinality 1024 or 100000")
 	}
 	return nil
+}
+
+func (c Config) validateQLBT12() error {
+	iterations, warmup, err := qlbT12Schedule(c.Cardinality)
+	if err != nil {
+		return err
+	}
+	if c.QueryWorkers != 1 || c.QueryIterations != iterations || c.WarmupIterations != warmup || c.QueryMemoryMiB != 256 {
+		return fmt.Errorf("qlb_t12 at %d rows requires one worker, %d timed calls, %d warmups and 256 MiB", c.Cardinality, iterations, warmup)
+	}
+	return nil
+}
+
+func qlbT12Schedule(cardinality int) (iterations, warmup int, err error) {
+	switch cardinality {
+	case 1024:
+		return 100, 5, nil
+	case 16384:
+		return 20, 3, nil
+	default:
+		return 0, 0, fmt.Errorf("qlb_t12 requires input cardinality 1024 or 16384; larger inputs belong to the resource probe")
+	}
 }
 
 func qlbT07Schedule(cardinality int) (iterations, warmup int, err error) {

@@ -103,6 +103,7 @@ type expressionOperator struct {
 	reserved     int64
 	payloadBytes int64
 	stats        ExpressionStats
+	filter       bool
 	started      bool
 	closed       bool
 }
@@ -234,6 +235,12 @@ func expressionStorageType(typ ExpressionType) vectorized.ColumnType {
 	}
 }
 
+func (o *expressionOperator) recordWork(stats ExpressionStats) {
+	if !o.filter {
+		recordExpressionWork(stats)
+	}
+}
+
 func (o *expressionOperator) reserve(bytes int64) error {
 	if err := o.tracker.Reserve(bytes); err != nil {
 		return err
@@ -241,7 +248,11 @@ func (o *expressionOperator) reserve(bytes int64) error {
 	o.reserved += bytes
 	o.stats.ReservedBytes += uint64(bytes)
 	o.stats.LiveBytes += bytes
-	recordExpressionReserve(bytes)
+	if o.filter {
+		recordFilterReserve(bytes)
+	} else {
+		recordExpressionReserve(bytes)
+	}
 	return nil
 }
 
@@ -250,7 +261,11 @@ func (o *expressionOperator) unreserve(bytes int64) {
 	o.reserved -= bytes
 	o.stats.ReleasedBytes += uint64(bytes)
 	o.stats.LiveBytes -= bytes
-	recordExpressionRelease(bytes)
+	if o.filter {
+		recordFilterRelease(bytes)
+	} else {
+		recordExpressionRelease(bytes)
+	}
 }
 
 func (o *expressionOperator) compile(expr *Expression) (*expressionNode, error) {
@@ -315,7 +330,7 @@ func (o *expressionOperator) compile(expr *Expression) (*expressionNode, error) 
 				node.scalarReady = true
 				o.payloadBytes = payloadBefore
 				o.stats.ScalarEvaluations++
-				recordExpressionWork(ExpressionStats{ScalarEvaluations: 1})
+				o.recordWork(ExpressionStats{ScalarEvaluations: 1})
 				return &node.scalarValue, nil
 			}
 		} else {
@@ -325,7 +340,7 @@ func (o *expressionOperator) compile(expr *Expression) (*expressionNode, error) 
 				}
 				rows := uint64(expressionRows(batch, mask))
 				o.stats.VectorRows += rows
-				recordExpressionWork(ExpressionStats{VectorRows: rows})
+				o.recordWork(ExpressionStats{VectorRows: rows})
 				return evaluate(ctx, batch, mask)
 			}
 		}
@@ -439,7 +454,7 @@ func (n *expressionNode) buffer(size int) error {
 	if size > 1 {
 		n.op.stats.FullColumnAllocations++
 	}
-	recordExpressionWork(ExpressionStats{BufferBytes: uint64(bytes), FullColumnAllocations: uint64(boolInt(size > 1))})
+	n.op.recordWork(ExpressionStats{BufferBytes: uint64(bytes), FullColumnAllocations: uint64(boolInt(size > 1))})
 	n.value.nulls = make([]bool, size)
 	switch n.value.typ {
 	case ExpressionFloat:
@@ -553,14 +568,7 @@ func (o *expressionOperator) Close() error {
 	return o.source.Close()
 }
 
-func (o *expressionOperator) NextBatch(ctx context.Context) (*vectorized.RecordBatch, error) {
-	if err := ctx.Err(); err != nil {
-		_ = o.Close()
-		return nil, err
-	}
-	if o.closed {
-		return nil, nil
-	}
+func (o *expressionOperator) clearBatch() {
 	clear(o.view.Columns)
 	for _, node := range o.nodes {
 		if node.capacity > 0 {
@@ -574,6 +582,17 @@ func (o *expressionOperator) NextBatch(ctx context.Context) (*vectorized.RecordB
 		o.unreserve(o.payloadBytes)
 		o.payloadBytes = 0
 	}
+}
+
+func (o *expressionOperator) NextBatch(ctx context.Context) (*vectorized.RecordBatch, error) {
+	if err := ctx.Err(); err != nil {
+		_ = o.Close()
+		return nil, err
+	}
+	if o.closed {
+		return nil, nil
+	}
+	o.clearBatch()
 	for {
 		batch, err := o.source.NextBatch(ctx)
 		if err != nil {
@@ -603,12 +622,12 @@ func (o *expressionOperator) NextBatch(ctx context.Context) (*vectorized.RecordB
 		if !o.started {
 			o.started = true
 			o.stats.Executions++
-			recordExpressionWork(ExpressionStats{Executions: 1})
+			o.recordWork(ExpressionStats{Executions: 1})
 		}
 		rows := uint64(batch.ActiveLen())
 		o.stats.Batches++
 		o.stats.InputRows += rows
-		recordExpressionWork(ExpressionStats{Batches: 1, InputRows: rows})
+		o.recordWork(ExpressionStats{Batches: 1, InputRows: rows})
 		for index, node := range o.outputs {
 			value, evalErr := node.eval(ctx, batch, batch.Selection)
 			if evalErr != nil {
@@ -629,7 +648,7 @@ func (o *expressionOperator) NextBatch(ctx context.Context) (*vectorized.RecordB
 		o.view.Selection = batch.Selection
 		o.view.Hints = batch.Hints
 		o.stats.OutputRows += rows
-		recordExpressionWork(ExpressionStats{OutputRows: rows})
+		o.recordWork(ExpressionStats{OutputRows: rows})
 		return &o.view, nil
 	}
 }

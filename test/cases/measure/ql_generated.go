@@ -186,6 +186,8 @@ func RegisterGeneratedQLTable(description string) bool {
 		registerGeneratedQLAggregateScenarios(suite, &base)
 		registerGeneratedQLNativeAggregateScenarios(suite, &base)
 		registerGeneratedQLExpressionScenarios(suite, &base)
+		registerGeneratedQLFilterScenarios(suite, &base)
+		registerGeneratedQLLegacyCompatibility(suite, &base)
 	})
 }
 

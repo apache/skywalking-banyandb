@@ -54,6 +54,23 @@ func ResolveExpression(expression *Expression) (*Expression, error) {
 	return &resolved, nil
 }
 
+// ResolvePredicate validates and deep-copies a boolean expression.
+// Untyped NULL becomes BOOLEAN NULL without evaluating its value.
+func ResolvePredicate(expression *Expression) (*Expression, error) {
+	resolved, err := ResolveExpression(expression)
+	if err != nil {
+		return nil, err
+	}
+	switch resolved.Type {
+	case ExpressionBool:
+		return resolved, nil
+	case ExpressionNull:
+		return &Expression{Op: "cast", Type: ExpressionBool, Args: []*Expression{resolved}}, nil
+	default:
+		return nil, expressionError("filter predicate must be BOOLEAN")
+	}
+}
+
 func resolveExpressionType(expression *Expression) error {
 	switch expression.Op {
 	case "literal":

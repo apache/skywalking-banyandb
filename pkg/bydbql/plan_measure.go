@@ -48,6 +48,8 @@ type MeasureTemplate struct {
 	predicate      *measurePredicate
 	legacyTags     map[string]*tagSpecWithFamily
 	aggregate      *ql.AggregatePlan
+	filter         *measureExpression
+	filterTags     map[measureColumnKey]bool
 	nativeEntities []vectorized.ColumnDef
 	slots          []ql.Slot
 	expressions    []measureExpressionOutput
@@ -136,18 +138,13 @@ func (t *Transformer) compileMeasure(
 		}
 		snapshots[group] = proto.Clone(schema).(*databasev1.Measure)
 	}
+	if !extended && selectStmt.Where != nil {
+		extended = legacyWhereNeedsSchemaFilter(selectStmt.Where.Expr, snapshots)
+	}
+
 	template := &MeasureTemplate{statement: statement, extended: extended}
 	if template.extended {
-		var compileErr error
-		switch {
-		case hasMeasureExpressions(selectStmt.Projection):
-			compileErr = template.compileExpressions(snapshots)
-		case measureAggregateCount(selectStmt) > 0:
-			compileErr = template.compileAggregate(snapshots)
-		default:
-			compileErr = template.compileRaw(snapshots)
-		}
-		if compileErr != nil {
+		if compileErr := template.compileTyped(snapshots); compileErr != nil {
 			return nil, invalidMeasure(compileErr)
 		}
 	} else {
@@ -159,6 +156,29 @@ func (t *Transformer) compileMeasure(
 		return nil, err
 	}
 	return template, nil
+}
+
+func (m *MeasureTemplate) compileTyped(schemas map[string]*databasev1.Measure) error {
+	stmt := m.statement.template.Select
+	columns, err := resolveMeasureColumns(stmt.From.In.Groups, schemas)
+	if err != nil {
+		return err
+	}
+	switch {
+	case hasMeasureExpressions(stmt.Projection):
+		err = m.compileExpressions(columns)
+	case measureAggregateCount(stmt) > 0:
+		err = m.compileAggregate(columns)
+	default:
+		err = m.compileRaw(columns)
+	}
+	if err != nil {
+		return err
+	}
+	if m.aggregate != nil || m.expressions != nil || m.filter != nil {
+		m.compileNativeEntities(schemas, columns)
+	}
+	return nil
 }
 
 func (m *MeasureTemplate) compileLegacy(run *transformRun, schemas map[string]*databasev1.Measure) error {
@@ -243,6 +263,7 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 		return &MeasureExecution{Request: request}, nil
 	}
 	plan := &ql.RawPlan{Slots: slices.Clone(m.slots)}
+
 	plan.Expressions, err = m.bindExpressions(bound)
 	if err != nil {
 		return nil, invalidMeasure(err)
@@ -266,6 +287,20 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 		if err != nil {
 			return nil, invalidMeasure(err)
 		}
+	}
+	if m.filter != nil {
+		var filterRanges []ql.MillisRange
+		plan.Filter, filterRanges, err = m.filter.bindFilter(bound, now)
+		if err != nil {
+			return nil, invalidMeasure(err)
+		}
+		plan.Filter, err = ql.ResolvePredicate(plan.Filter)
+		if err != nil {
+			return nil, invalidMeasure(err)
+		}
+
+		ranges = intersectTimeRanges(ranges, filterRanges)
+		request.Criteria = combineMeasureCriteria(request.Criteria, necessaryFilterCriteria(plan.Filter, m.filterTags), false)
 	}
 	if legacyRange != nil {
 		legacyIntervals, rangeErr := nativeTimeIntervals(legacyRange)
@@ -295,7 +330,8 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 }
 
 func requiresMeasurePlan(stmt *GrammarSelectStatement) bool {
-	if stmt.From.Shorthand != nil || measureAggregateCount(stmt) > 1 || hasMeasureExpressions(stmt.Projection) {
+	if stmt.From.Shorthand != nil || measureAggregateCount(stmt) > 1 || hasMeasureExpressions(stmt.Projection) ||
+		stmt.Where != nil && stmt.Where.Expression != nil {
 		return true
 	}
 	if stmt.Projection != nil {
@@ -329,7 +365,7 @@ func measureAggregateCount(stmt *GrammarSelectStatement) int {
 }
 
 func whereHasTime(where *GrammarSelectWhereClause) bool {
-	if where == nil {
+	if where == nil || where.Expr == nil {
 		return false
 	}
 	var orTime func(*GrammarOrExpr) bool

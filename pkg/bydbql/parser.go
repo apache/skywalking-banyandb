@@ -18,6 +18,7 @@
 package bydbql
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -94,6 +95,12 @@ func ParseQuery(query string) (*Grammar, error) {
 	grammar, err := particpleParser.ParseString("", query)
 	if err != nil {
 		grammar, err = parseExpressionProjection(query)
+		if err != nil {
+			whereGrammar, whereErr := parseExpressionWhere(query)
+			if !errors.Is(whereErr, errNoExpressionWhere) {
+				grammar, err = whereGrammar, whereErr
+			}
+		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("syntax error: %w", err)

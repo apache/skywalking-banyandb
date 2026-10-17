@@ -322,7 +322,84 @@ go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/
   -ginkgo.label-filter=QLB-T10 -ginkgo.fail-on-empty
 ```
 
-Expression WHERE, HAVING and computed grouping remain in T12, T14 and T16.
+Expression WHERE is covered by T12 below. HAVING and computed grouping remain
+in T14 and T16.
+
+## T12 typed field filters
+
+The artifact adds 40 scenarios with three bindings each and seven separate
+rejections. The generator adds one independent `ql_t12` fixture: six published F rows plus
+256 later rows with unique timestamps and entity IDs. The latter rows prove
+that a filter can match after the native default row 100, omit its input field
+from SELECT, and apply final LIMIT/OFFSET correctly. An omitted final limit
+returns all 256 matching rows. No native Query RPC is used as an oracle or as
+readiness: visibility is checked through QL only.
+
+The T12 model renders WHERE expressions from the same finite test AST used by
+T10. Its independent scalar interpreter evaluates arithmetic with `math/big`,
+SQL three-valued logic, masked CASE/COALESCE/AND/OR, membership including empty
+bound arrays, timestamp comparisons and NaN total ordering. It determines
+TRUE/FALSE/UNKNOWN row counts before any server is started, then projects source
+rows or aggregates selected rows. It never imports production expression kernels
+or request planning code. The grammar tests separately compile and rebind the
+generated statements through public Prepare/Compile/Bind interfaces.
+
+Generated witnesses cover:
+
+- `v > CAST(? AS DOUBLE)` selects F entity IDs 2, 3, 5; SUM(v)=12 and COUNT(v)=3.
+- Bare NULL, typed NULL, TRUE and FALSE under legacy TIME bounds, followed by
+  float field comparisons, nullable boolean predicates, explicit boolean casts,
+  arithmetic, scalar and bound-array IN/NOT IN, and NaN/Inf ordering.
+- Searched/simple CASE and COALESCE in WHERE; protected division and unreachable
+  invalid branches remain unevaluated.
+- Mixed time/field OR, tag/field OR, legacy TIME intersection, and safe entity-tag
+  conjunctions with a remaining field residual.
+- Hidden filter inputs, filtering before computed projection and grouping,
+  empty/all-null aggregate inputs, omitted and zero final limits, and matches
+  beyond row 100 with final pagination.
+- Changed bindings on one cached template, cache bypass, invalid values/types,
+  and successful recovery after each rejection.
+- Existing public fault hooks apply a one-byte memory budget and cancellation
+  after acquiring a compiled template. These requests verify RPC status and
+  resource release, followed by normal recovery. Operator tests separately cover
+  cancellation while filtering and selection-allocation rejection.
+
+With `-tags=querymetrics`, successful complete-input calls assert one raw logical
+scan, the topology's raw data-node fanout, zero native aggregate merges, zero
+intermediate protobuf datapoints and the structural zero-copy counter invariant.
+Unit and kernel-benchmark column-identity checks establish borrowing; the RPC
+counter alone is not copy telemetry. Every examined candidate belongs to TRUE,
+FALSE or UNKNOWN, and a local aggregate receives
+exactly the TRUE rows. Final raw pagination may stop future batch pulls, so its
+correct tail result is checked without requiring a full filter-row counter.
+Every call checks live native owners, trackers, filter/expression/aggregate
+reservations and release after success or failure.
+
+A separate generated compatibility section adds two groups containing the same
+legacy measure. Both expose `host STRING` and `kept INT`; their unused field
+varies between INT and FLOAT, and their unused tag between STRING and INT. Each
+group has its own entity host, so the result does not depend on cross-group SID
+deduplication. The legacy statement explicitly projects `host, kept::FIELD`, uses
+`FROM MEASURE ... IN (...)` and TIME bounds, and binds a nonempty host IN array.
+Three bindings return both groups, one group, then no rows; cache bypass repeats
+the same independent expectations. Public compilation tests require a nil QL
+execution plan, and the RPC helper checks that no typed filter, expression or
+aggregate executes. QL-only readiness reads each source group separately. This
+adds one compatibility spec to the 47 field-filter specs without relaxing their
+complete-input or native-aggregation assertions.
+
+The independently audited `t12.*` coverage obligations and catalog B8 require
+witnesses; deleting a scenario cannot silently remove its coverage claim.
+The grammar fingerprint includes the custom WHERE parser as well as T10's
+expression parser and lexer.
+
+```bash
+go test -tags=querymetrics ./test/integration/standalone/query -run '^TestPropertyIntegrationQuery$' \
+  -ginkgo.label-filter=QLB-T12 -ginkgo.fail-on-empty
+go test -tags=querymetrics ./test/integration/distributed/query -run '^TestPropertyQuery$' \
+  -ginkgo.label-filter=QLB-T12 -ginkgo.fail-on-empty
+```
+
 These generated cases activate expression SELECT projection only.
 
 ## Engine regressions exposed by this suite

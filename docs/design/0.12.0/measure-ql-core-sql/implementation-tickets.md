@@ -314,7 +314,7 @@ explicitly rejected until T07/T08 admits them.
 Time binding supports fixed INTERVAL, one execution clock, WHERE/TIME intersection,
 contradiction-to-Empty and exact millisecond boundary arithmetic. Pure-time OR can
 prune by an envelope only while retaining its full residual. A residual prevents
-native aggregate/final-limit pushdown. Mixed field/time OR follows in T12.
+native aggregate/final-limit pushdown. T12 adds mixed field/time OR.
 
 **E2E cases:** `raw-aliases` projects host AS node and v AS value with F's types/nulls;
 `repeated-source` preserves independent descriptors for repeated projections;
@@ -526,7 +526,8 @@ interpreter cost, and does masked evaluation save work when branches are unused?
 **Boundary/activation:** SELECT expressions activate the shared typed evaluator:
 arithmetic (+, -, *, /, %), decimal/exponent floats, unary signs, CAST/::type, comparisons,
 AND/OR/NOT, IS NULL, IN, CASE and COALESCE. Preserve ::TAG/::FIELD and accepted
-legacy identifiers containing '-'/'*'. WHERE/HAVING use these kernels in T12/T14.
+legacy identifiers containing '-'/'*'. T12 reuses these kernels in WHERE; HAVING
+follows in T14.
 Constants remain scalars; selections use one physical index space (nil=all,
 empty=none); split before uint16 capacity, skip zero-active batches and evaluate
 conditional arms only for eligible rows. Native batches already obey the 65,536
@@ -594,14 +595,45 @@ omits the filtered field from SELECT and still returns the correct final limit.
 FALSE and UNKNOWN both drop rows. Test a low-budget cancellation/error path.
 
 **Benchmark:** P(T12) varies selectivity 0/1/50/100%, raw projection versus local
-aggregation and hidden-column widths. G3: exactly one raw leaf, all required input
+aggregation and hidden-column widths. G3: exactly one logical raw scan (two
+physical data-node leaf RPCs in the distributed fixture), all required input
 rows examined (no intermediate 100/final-limit cap), zero native aggregate leaves
 when a residual remains, and aggregate input count equals filter TRUE count.
 K(T12) reports filtered rows/s and copied bytes; G1/G2 apply.
 
+**Implemented protocol:** P(T12) has 16 variants at 1,024/16,384 input rows:
+0/1/50/100% predicate thresholds × raw/scalar aggregate × one/two hidden predicate
+fields. Every query scans complete input, without LIMIT. The fixed schedule is
+100 timed/5 warmups and 20 timed/3 warmups, one worker, 256-MiB query budget,
+five fresh 4-CPU/8-GiB Docker repetitions and CPU/heap profiles. Actual TRUE counts
+are recorded because partial 100-row cycles round the nominal percentages.
+K(T12), `BenchmarkFilterT12`, measures the complete public one-batch lifecycle at
+1/1,024/65,536 rows, four thresholds and dense/selected-null inputs: 24 variants,
+five one-second samples. It reports examined and passing throughput, ns/examined
+row, output-copy bytes and charged selection/state bytes. It makes no speedup
+claim against unsupported old SQL. Output-copy bytes are structurally zero because
+the filter borrows columns; unit tests and K's pre-timing identity checks prove
+that property. The RPC counter is a consistency invariant, not measured copy
+telemetry, and excludes charged boundary decoding scratch. Large-input 100k/1m
+resource probes use the same owning scalar aggregate query; native admission
+failures remain explicit blockers for successful large-input measurements.
+The 16-MiB readiness failure is recorded separately.
+The initial 32,768-row full-output smoke exceeds cumulative parent admission
+during final response encoding. This failure is retained; successful sizes are
+fixed before timing without changing native policy.
+
 **Checks/readiness:** E(T12), P(T12), K(T12); focused `./pkg/query/ql`,
 `./pkg/bydbql`, `./banyand/liaison/grpc`. Blocked by T07/T10. Float criteria never
 become unsupported tag-only protobuf criteria.
+
+**Implementation:** see [T12 verification](t12-verification.md) and the
+[language guide](../../../interacting/bydbql.md#58-field-and-expression-filters).
+The generated QL-only suite adds 48 specs with independent expected values and
+passes all 340 selected specs on both topologies, including unchanged legacy
+routing across groups with incompatible unused column types. Required T12 work counters,
+hidden columns, resource cleanup, bind reuse and bypass are checked. Safe native
+tag/time pruning never replaces a residual. MATCH/collection-HAVING composition
+with new residual expressions remains explicitly rejected until its owning ticket.
 
 ### T14 — Execute grouped queries with HAVING and membership predicates
 
