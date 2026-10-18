@@ -202,8 +202,11 @@ test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g
 
 For P(Tnn), substitute its scenario and a unique report directory. Run five
 isolated repetitions, changing `r1` to `r2` etc.; retain all reports. Every scenario
-must emit its named variants, expected row count/checksum, timings and allocation
-records; zero samples, skipped scenarios or missing variants fail verification.
+must emit its named variants. Timed variants require expected row count/checksum,
+timings and allocation records; zero samples, skipped scenarios or missing
+variants fail performance verification. Explicitly designated overload variants
+report admission outcomes and resource ownership without latency/throughput
+samples; their expected rejection does not fail the resource gate.
 Use 1,024 and 100,000 input rows unless a ticket specifies otherwise. Also run
 1,000,000 rows for T07, T08, T12, T14, T15, T16 and T17. Bounded low-budget
 resource-stress variants may fail
@@ -236,6 +239,10 @@ These are proposed acceptance budgets, not measured claims:
   over-budget allocation. Live execution reservations and owner pins return to
   baseline after Close/cancellation. The current lease is monotonic: report its
   cumulative charges separately; do not assert that spent charges are refunded.
+  Concurrent overload must reject explicitly with `ResourceExhausted`, preserve
+  correct results for completed requests, and allow a subsequent query to succeed
+  after all transports close. Unexpected errors, leaked ownership, process failure
+  or failed recovery fail G2. Keep configured limits unchanged.
   T01 only captures existing resource observations; shared accounting and its
   enforcement start in T02 and remain mandatory for subsequent production changes.
 - **G3, per-ticket work:** each leaf below adds a numerical work/retention or
@@ -843,8 +850,10 @@ Run the complete `measure-ql` label in both suites using the E commands without
 the ticket filter. Run existing measure/stream/trace/property/TopN compatibility
 cases affected by dispatch changes, and focused race/owner tests. Benchmark the
 composition as an additional `qlb_t17` variant with changing OAP parameters,
-workers 1/8/32 and G1/G2. Report planned-versus-observed cache savings, native
-pushdown coverage, residual scan cost, and peak/live/cumulative memory separately.
+workers 1/8 for admitted-query timing under G1/G2; use 32 workers for the
+separate overload check described below. Report planned-versus-observed cache
+savings, native pushdown coverage, residual scan cost, and peak/live/cumulative
+memory separately.
 
 Finally compare implementation changes against the PR #1412 base: protobuf and
 generated API files, native transport/frame encoders, persisted formats and
@@ -852,3 +861,49 @@ data-node execution behavior must be unchanged. Go-only extraction of distribute
 batch results must retain existing native RPC golden results. Every feature has
 real endpoint proof and performance evidence; a green parser test or an empty
 benchmark selection cannot close a ticket.
+
+### Concurrent admission acceptance (revised 2026-10-18)
+
+This user-approved revision separates performance from capacity protection for
+T17 and parent composition. It replaces the requirement that the 32-caller cohort
+must complete every query successfully under fixed limits. It does not change
+production admission policy or the earlier reports' recorded verdicts.
+
+| Check | Workload | Passing requirement |
+|---|---|---|
+| Admitted-query performance | Fixed 1/8-caller composed cohorts and existing raw full-sort/top-k controls | Every warmup and measured query succeeds with exact results; required G1/G3 comparisons and G2 cleanup pass |
+| Concurrent overload | Fixed 32-caller composed cohort, exercised with top-k and full sort | Successful responses are exact; capacity rejections are explicit `ResourceExhausted`; no unexpected error, panic or process failure; all resources return to baseline after transport completion |
+| Recovery | Correct query after overload and cleanup, in the same cluster | Query succeeds with exact results, and its resources also return to baseline; no restart or budget increase |
+
+Retain the four-CPU, 8-GiB container, no additional swap, existing protector
+policy and 256-MiB vectorized tracker setting. Keep native receive limits and
+fixture/query/binding sets fixed. Do not reduce concurrency, raise limits, retry
+failed calls into successes or discard failed runs to obtain a passing verdict.
+
+For performance, any rejection invalidates the entire timed cohort. Do not
+compute a passing latency/throughput result from its successful subset. Preserve
+all repetitions and uncertainty. A resource-pass verdict cannot substitute for
+missing successful-query measurements at 100k/1m rows or compatibility evidence.
+
+For overload, report attempted/successful/rejected counts, peak in-flight calls,
+error status and rejection boundary, correctness of every successful response,
+post-close live reservations/owners/pool references, and the recovery result.
+Do not assert that monotonic parent lease charges are refunded before the last
+transport owner closes. A rejection without verified cleanup and recovery fails
+the resource contract; unrelated `ResourceExhausted` errors must not be silently
+classified as the known native admission boundary.
+
+A 32-client run can fully succeed through staggered completion. That is a valid
+concurrent correctness result, but does not prove overload rejection. Include a
+deterministic admission probe that holds receive reservations until capacity is
+exceeded, checks rejection without an allocation beyond the allowance, and checks
+cleanup/recovery. Do not require exactly 31 admissions in the lasting contract;
+that count describes the diagnosed configuration, not an API guarantee.
+
+Report `performance`, `overload` and `recovery` verdicts separately. Rejected
+requests are never successful timing samples. Existing `partial_known_32_blocked`
+artifacts remain historical evidence from the former contract. The existing
+benchmark harness still emits that legacy status; this criteria revision alone
+does not change its implementation or establish a new combined gate pass. Future
+verification must explicitly identify this revised contract and supply its
+required evidence, including recovery through the query RPC in the same cluster.
