@@ -783,8 +783,10 @@ build to observe unique key evaluation counts.
 ## QLB-T17 ordering and finite-page controls
 
 `qlb_t17` asks whether compact top-k reduces sort CPU and retained state for the
-same complete query and returned page. Its five RPC variants are `fullsort_slice`,
-`topk`, and one aggregate/filter/HAVING/order query with workers 1, 8, and 32.
+same complete query and returned page. Under acceptance contract `2026-10-18-v1`,
+its four timed RPC variants are `fullsort_slice`, `topk`, and one
+aggregate/filter/HAVING/order query with workers 1 and 8. A separate untimed
+32-worker test verifies overload and same-cluster recovery for both sort modes.
 The pair sends byte-identical SQL and parameters through `BydbQLService.Query`;
 a scoped, instrumented server context hook forces full sort for the reference.
 Both return `LIMIT 10 OFFSET 5`, with three keys and hidden sort inputs. The
@@ -794,8 +796,13 @@ cached SQL text, then sorts completed groups before `LIMIT 1 OFFSET 1`.
 The requested schedule is 1,024 and 32,768 raw rows, 256 MiB query trackers,
 100/20 sort-pair samples and 5/3 warmups respectively. Every composed variant has
 96 samples, evenly covering three bindings. Sort-pair workers stay at one.
-`TestQLBT17Admission`, selected with `DQB_T17_ADMISSION_ROWS=1024` or `32768`, checks
-this complete protocol without collecting performance evidence. Readiness first
+`TestQLBT17Overload`, selected with `DQB_T17_OVERLOAD=1`, records the separate
+1,024-row overload/recovery artifact. Each sort mode runs 96 calls in three waves
+of 32, validates every result or exact native admission rejection, drains all
+resources, and checks all three bindings through the same cluster RPC. A real
+admission/transport probe holds reservations until capacity rejects a request,
+then verifies release and recovery. Actual cgroup limits must be four CPUs,
+8 GiB memory and zero additional swap. Readiness first
 checks every fixture tuple using entity/time windows of at most 1,024 rows. A
 large native-frame admission failure remains a blocker, not a successful sort
 sample; the successful algorithm controls at 100,000 rows belong to K(T17).
@@ -809,6 +816,7 @@ performs no compilation when it is set. For example, with a prebuilt binary:
 DQB_ENGINE=measure DQB_MODES=vec DQB_SCENARIOS=qlb_t17 \
 DQB_CARDINALITIES=1024,32768 DQB_QUERY_WORKERS=1 DQB_QUERY_MEMORY_MIB=256 \
 DQB_PROFILE=1 DQB_TEST_BINARY=/work/.omx/t17-final-querybench.test \
+DQB_T17_OVERLOAD_REPORT=/work/.omx/t17-overload/t17-overload-1024.json \
 DQB_REPORT_DIR=/work/.omx/bench-reports/qlb-t17-r1 \
 test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g --memory-swap 8g
 ```
@@ -839,16 +847,32 @@ An additional fixture poisons 32 one-MiB source batches after copying exactly on
 owners, tracker reservations and native flatten-pool baseline. This is separate
 from native frame residency.
 
-The 32-worker admission gate can be retained explicitly with
-`DQB_T17_BLOCKED_32_REPORT=/work/path/to/the/retained/report.json`. This opt-in
-requires a readable, untimed 1,024-row/256-MiB artifact with the exact native
-broadcast `ResourceExhausted` error and successful cleanup. The harness records
-its SHA-256, retains `composed_workers_32` as blocked with zero samples and no
-latency/profile/allocation values, and labels the enclosing scenario
-`partial_known_32_blocked`. The default still requires all five successful
-variants. A partial report cannot satisfy the T17 or parent acceptance gate.
-The independent forced-full-sort 32-worker control is another untimed ownership
-diagnostic, selected by `DQB_T17_CONCURRENCY_CONTROL=1`.
+Create the overload artifact with the prebuilt querymetrics binary before timing:
+
+```sh
+docker run --rm --user "$(id -u):$(id -g)" --cpus 4 --memory 8g --memory-swap 8g \
+  --pids-limit 4096 -v "$PWD:/work" -w /work -e GOMAXPROCS=4 \
+  -e RUN_DISTRIBUTED_QUERY_BENCH=1 -e DQB_IN_CONTAINER=1 -e DQB_ENGINE=measure \
+  -e DQB_T17_OVERLOAD=1 -e DQB_REPORT_DIR=/work/.omx/t17-overload \
+  banyandb-distributed-querybench:go1.26 /work/.omx/t17-final-querybench.test \
+  -test.run '^TestQLBT17Overload$' -test.timeout=25m
+```
+
+`DQB_T17_OVERLOAD_REPORT` is mandatory for revised timed runs. The report stores
+its path and SHA-256, revalidates all required evidence, and reports separate
+`performance`, `overload` and `recovery` verdicts with the contract revision.
+The 1,024-row overload artifact is an explicit admission reference for both timed
+cardinalities; it is not a claim of a 32,768-row overload run. No overloaded calls
+supply latency, throughput or allocation samples. Any failed timed call rejects
+the entire timed cohort; every retained response is checked after timing and
+profiling stop. This retains more client responses than the old six-sample check,
+so do not treat old/new protocol allocation or latency as an unchanged baseline.
+
+Historical five-variant and `partial_known_32_blocked` reports keep their original
+validation rules. `DQB_T17_BLOCKED_32_REPORT` cannot replace revised overload and
+RPC recovery evidence and is rejected by the new runner. The old
+`TestQLBT17Admission` and `TestQLBT17ConcurrencyControl` remain diagnostics of the
+original protocol; they do not emit revised acceptance verdicts.
 
 `run-t17-frozen.sh` supplies separate `rpc` and `kernel` modes. Each runs five
 fresh Docker containers at the fixed limits, reuses one prebuilt executable,

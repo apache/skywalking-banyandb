@@ -64,15 +64,16 @@ exec > >(tee -a "${REPORT_ROOT}/driver.log") 2>&1
 printf '%s\n' "${SOURCE_SHA}" > "${REPORT_ROOT}/source.sha256"
 printf '%s\n' "${BINARY_SHA}" > "${REPORT_ROOT}/binary.sha256"
 
-BLOCKED_REPORT=""
-BLOCKED_SHA=""
-if [[ "${MODE}" == "rpc" && -n "${DQB_T17_BLOCKED_32_REPORT:-}" ]]; then
-  BLOCKED_REPORT=$(realpath "${DQB_T17_BLOCKED_32_REPORT}")
-  if [[ ! -r "${BLOCKED_REPORT}" || "${BLOCKED_REPORT}" != "${REPO_ROOT}/"* ]]; then
-    echo "retained workers32 evidence must be readable under this workspace" >&2
+OVERLOAD_REPORT=""
+OVERLOAD_SHA=""
+if [[ "${MODE}" == "rpc" ]]; then
+  : "${DQB_T17_OVERLOAD_REPORT:?set a verified revised overload/recovery report}"
+  OVERLOAD_REPORT=$(realpath "${DQB_T17_OVERLOAD_REPORT}")
+  if [[ ! -r "${OVERLOAD_REPORT}" || "${OVERLOAD_REPORT}" != "${REPO_ROOT}/"* ]]; then
+    echo "overload/recovery evidence must be readable under this workspace" >&2
     exit 2
   fi
-  BLOCKED_SHA=$(sha256sum "${BLOCKED_REPORT}" | cut -d ' ' -f 1)
+  OVERLOAD_SHA=$(sha256sum "${OVERLOAD_REPORT}" | cut -d ' ' -f 1)
 fi
 BASE_NANOS=${DQB_BASE_NANOS:-$(date -u +%s%N)}
 
@@ -81,8 +82,8 @@ check_frozen() {
     echo "frozen source or binary changed during measurement" >&2
     exit 1
   fi
-  if [[ -n "${BLOCKED_REPORT}" && "$(sha256sum "${BLOCKED_REPORT}" | cut -d ' ' -f 1)" != "${BLOCKED_SHA}" ]]; then
-    echo "retained workers32 evidence changed during measurement" >&2
+  if [[ -n "${OVERLOAD_REPORT}" && "$(sha256sum "${OVERLOAD_REPORT}" | cut -d ' ' -f 1)" != "${OVERLOAD_SHA}" ]]; then
+    echo "overload/recovery evidence changed during measurement" >&2
     exit 1
   fi
 }
@@ -100,8 +101,8 @@ for repetition in 1 2 3 4 5; do
   DOCKER_ARGS=(--rm --user "$(id -u):$(id -g)" --cpus 4 --memory 8g --memory-swap 8g --pids-limit 4096
     -v "${REPO_ROOT}:/work" -w /work -e GOMAXPROCS=4)
   if [[ "${MODE}" == "rpc" ]]; then
-    CONTAINER_BLOCKED=""
-    if [[ -n "${BLOCKED_REPORT}" ]]; then CONTAINER_BLOCKED="/work/${BLOCKED_REPORT#"${REPO_ROOT}/"}"; fi
+    CONTAINER_OVERLOAD=""
+    if [[ -n "${OVERLOAD_REPORT}" ]]; then CONTAINER_OVERLOAD="/work/${OVERLOAD_REPORT#"${REPO_ROOT}/"}"; fi
     docker run "${DOCKER_ARGS[@]}" \
       -e RUN_DISTRIBUTED_QUERY_BENCH=1 -e DQB_IN_CONTAINER=1 -e DQB_ENGINE=measure \
       -e DQB_CPU_LIMIT=4 -e DQB_MEMORY_LIMIT=8g -e DQB_DOCKER_IMAGE="${IMAGE}" \
@@ -109,7 +110,7 @@ for repetition in 1 2 3 4 5; do
       -e DQB_QUERY_WORKERS=1 -e DQB_QUERY_MEMORY_MIB=256 -e DQB_QUERY_ITERATIONS=100 -e DQB_WARMUP_ITERATIONS=5 \
       -e DQB_WRITERS=4 -e DQB_PROFILE=1 -e DQB_BASE_NANOS="${BASE_NANOS}" \
       -e DQB_TEST_BINARY="${CONTAINER_BINARY}" -e DQB_REPORT_DIR="${CONTAINER_REPORT}" \
-      -e DQB_T17_BLOCKED_32_REPORT="${CONTAINER_BLOCKED}" \
+      -e DQB_T17_OVERLOAD_REPORT="${CONTAINER_OVERLOAD}" \
       "${IMAGE}" bash /work/test/integration/distributed/querybench/orchestrate.sh > "${RUN_DIR}/container.log" 2>&1
   else
     docker run "${DOCKER_ARGS[@]}" "${IMAGE}" "${CONTAINER_BINARY}" \

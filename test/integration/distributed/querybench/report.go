@@ -64,52 +64,73 @@ type Environment struct {
 	NumCPU       int    `json:"num_cpu"`
 }
 
+// AcceptanceVerdicts separates successful-query performance from overload and recovery checks.
+type AcceptanceVerdicts struct {
+	Contract    string `json:"contract"`
+	Performance string `json:"performance"`
+	Overload    string `json:"overload"`
+	Recovery    string `json:"recovery"`
+}
+
 // Result records one mode/scenario/cardinality benchmark outcome.
 type Result struct {
-	BatchMetrics        map[string]uint64 `json:"batch_metrics,omitempty"`
-	EvidenceArtifacts   map[string]string `json:"evidence_artifacts,omitempty"`
-	RawLatenciesNS      []time.Duration   `json:"raw_latencies_ns,omitempty"`
-	Variants            []Result          `json:"variants,omitempty"`
-	Variant             string            `json:"variant,omitempty"`
-	UnavailableMetrics  []string          `json:"unavailable_metrics,omitempty"`
-	Profiles            map[string]string `json:"profiles,omitempty"`
-	Scenario            Scenario          `json:"scenario"`
-	SampleDataPointText string            `json:"sample_data_point_text,omitempty"`
-	SampleTraceText     string            `json:"sample_trace_text,omitempty"`
-	Error               string            `json:"error,omitempty"`
-	Engine              string            `json:"engine"`
-	SpanDist            string            `json:"span_dist,omitempty"`
-	Mode                string            `json:"mode"`
-	Correctness         string            `json:"correctness"`
-	Allocations         AllocationStats   `json:"allocations"`
-	Resources           ResourceStats     `json:"resources"`
-	Latency             LatencyStats      `json:"latency"`
-	TimedSamples        int               `json:"timed_samples,omitempty"`
-	ExpectedRows        int               `json:"expected_rows,omitempty"`
-	ExpectedHash        uint64            `json:"expected_hash,omitempty"`
-	PointsEach          int               `json:"points_each"`
-	QPS                 float64           `json:"qps"`
-	FilterSelectivity   float64           `json:"filter_selectivity,omitempty"`
-	MeanSpansPerTrace   float64           `json:"mean_spans_per_trace,omitempty"`
-	QueryWorkers        int               `json:"query_workers"`
-	QueryIterations     int               `json:"query_iterations"`
-	ResponseRows        int               `json:"response_rows"`
-	ResponseTraces      int               `json:"response_traces,omitempty"`
-	ResponseSpans       int               `json:"response_spans,omitempty"`
-	Entities            int               `json:"entities"`
-	TracesTotal         int               `json:"traces_total,omitempty"`
-	SpansPerTrace       int               `json:"spans_per_trace,omitempty"`
-	ServiceCardinality  int               `json:"service_cardinality,omitempty"`
-	EndpointCardinality int               `json:"endpoint_cardinality,omitempty"`
-	TraceIDBatch        int               `json:"trace_id_batch,omitempty"`
-	ShardNum            int               `json:"shard_num,omitempty"`
-	DataNodes           int               `json:"data_nodes,omitempty"`
-	SpanBytes           int               `json:"span_bytes,omitempty"`
-	QueryMemoryMiB      int               `json:"query_memory_mib,omitempty"`
-	SegmentCount        int               `json:"segment_count,omitempty"`
-	VecQueryCountDelta  int64             `json:"vec_query_count_delta,omitempty"`
-	ApproxResultHash    uint64            `json:"approx_result_hash,omitempty"`
-	Cardinality         int               `json:"cardinality"`
+	Acceptance          *AcceptanceVerdicts `json:"acceptance,omitempty"`
+	BatchMetrics        map[string]uint64   `json:"batch_metrics,omitempty"`
+	EvidenceArtifacts   map[string]string   `json:"evidence_artifacts,omitempty"`
+	RawLatenciesNS      []time.Duration     `json:"raw_latencies_ns,omitempty"`
+	Variants            []Result            `json:"variants,omitempty"`
+	Variant             string              `json:"variant,omitempty"`
+	UnavailableMetrics  []string            `json:"unavailable_metrics,omitempty"`
+	Profiles            map[string]string   `json:"profiles,omitempty"`
+	Scenario            Scenario            `json:"scenario"`
+	SampleDataPointText string              `json:"sample_data_point_text,omitempty"`
+	SampleTraceText     string              `json:"sample_trace_text,omitempty"`
+	Error               string              `json:"error,omitempty"`
+	Engine              string              `json:"engine"`
+	SpanDist            string              `json:"span_dist,omitempty"`
+	Mode                string              `json:"mode"`
+	Correctness         string              `json:"correctness"`
+	Allocations         AllocationStats     `json:"allocations"`
+	Resources           ResourceStats       `json:"resources"`
+	Latency             LatencyStats        `json:"latency"`
+	TimedSamples        int                 `json:"timed_samples,omitempty"`
+	ExpectedRows        int                 `json:"expected_rows,omitempty"`
+	ExpectedHash        uint64              `json:"expected_hash,omitempty"`
+	PointsEach          int                 `json:"points_each"`
+	QPS                 float64             `json:"qps"`
+	FilterSelectivity   float64             `json:"filter_selectivity,omitempty"`
+	MeanSpansPerTrace   float64             `json:"mean_spans_per_trace,omitempty"`
+	QueryWorkers        int                 `json:"query_workers"`
+	QueryIterations     int                 `json:"query_iterations"`
+	ResponseRows        int                 `json:"response_rows"`
+	ResponseTraces      int                 `json:"response_traces,omitempty"`
+	ResponseSpans       int                 `json:"response_spans,omitempty"`
+	Entities            int                 `json:"entities"`
+	TracesTotal         int                 `json:"traces_total,omitempty"`
+	SpansPerTrace       int                 `json:"spans_per_trace,omitempty"`
+	ServiceCardinality  int                 `json:"service_cardinality,omitempty"`
+	EndpointCardinality int                 `json:"endpoint_cardinality,omitempty"`
+	TraceIDBatch        int                 `json:"trace_id_batch,omitempty"`
+	ShardNum            int                 `json:"shard_num,omitempty"`
+	DataNodes           int                 `json:"data_nodes,omitempty"`
+	SpanBytes           int                 `json:"span_bytes,omitempty"`
+	QueryMemoryMiB      int                 `json:"query_memory_mib,omitempty"`
+	SegmentCount        int                 `json:"segment_count,omitempty"`
+	VecQueryCountDelta  int64               `json:"vec_query_count_delta,omitempty"`
+	ApproxResultHash    uint64              `json:"approx_result_hash,omitempty"`
+	Cardinality         int                 `json:"cardinality"`
+}
+
+// reportVariants carries scenario acceptance evidence into flattened output rows.
+func (r Result) reportVariants() []Result {
+	variants := append([]Result(nil), r.Variants...)
+	if r.Acceptance != nil {
+		for index := range variants {
+			variants[index].Acceptance = r.Acceptance
+			variants[index].EvidenceArtifacts = r.EvidenceArtifacts
+		}
+	}
+	return variants
 }
 
 // LatencyStats contains latency percentiles in milliseconds.
@@ -346,6 +367,10 @@ func renderMarkdown(report Report) string {
 			fmt.Fprintf(&b, "\n%s/%d/%s: samples=%d, expected rows=%d, checksum=%x; unavailable: %s.\n",
 				result.Scenario, result.Cardinality, result.Variant, result.TimedSamples,
 				result.ExpectedRows, result.ExpectedHash, strings.Join(result.UnavailableMetrics, ", "))
+			if verdicts := result.Acceptance; verdicts != nil {
+				fmt.Fprintf(&b, "Acceptance contract %s: performance=%s, overload=%s, recovery=%s.\n",
+					verdicts.Contract, verdicts.Performance, verdicts.Overload, verdicts.Recovery)
+			}
 			if result.Error != "" {
 				fmt.Fprintf(&b, "Status: %s; %s.\n", result.Correctness, result.Error)
 			}

@@ -902,8 +902,9 @@ that count describes the diagnosed configuration, not an API guarantee.
 
 Report `performance`, `overload` and `recovery` verdicts separately. Rejected
 requests are never successful timing samples. Existing `partial_known_32_blocked`
-artifacts remain historical evidence from the former contract. The existing
-benchmark harness still emits that legacy status; this criteria revision alone
-does not change its implementation or establish a new combined gate pass. Future
-verification must explicitly identify this revised contract and supply its
-required evidence, including recovery through the query RPC in the same cluster.
+artifacts remain historical evidence from the former contract. The harness now
+implements revision `2026-10-18-v1`, with four strictly successful timed variants
+and a separate validated overload/recovery artifact. It preserves historical
+report validation and rejects old blocked-only evidence for revised runs.
+[Harness verification](t17-acceptance-verification.md) records the focused checks;
+this does not fill the separate large-input or full G1 performance evidence gaps.

@@ -168,8 +168,15 @@ func validateQLBT17Result(result Result) error {
 		(result.Correctness != "pass" && result.Correctness != "partial_known_32_blocked") {
 		return fmt.Errorf("invalid T17 report header")
 	}
+	specs := qlbT17Specs()
+	if result.Acceptance != nil {
+		if err = validateQLBT17Acceptance(result); err != nil {
+			return err
+		}
+		specs = qlbT17PerformanceSpecs()
+	}
 	expected := map[string]qlbT17Spec{}
-	for _, spec := range qlbT17Specs() {
+	for _, spec := range specs {
 		expected[spec.name] = spec
 	}
 	var pid, base uint64
@@ -187,7 +194,7 @@ func validateQLBT17Result(result Result) error {
 			variants[spec.name] = variant
 			continue
 		}
-		if err = validateQLBT17Variant(variant, result.Cardinality, warmup, pid, base, spec); err != nil {
+		if err = validateQLBT17Variant(variant, result.Cardinality, warmup, pid, base, spec, result.Acceptance != nil); err != nil {
 			return err
 		}
 		pid, base = variant.BatchMetrics["benchmark_process_id"], variant.BatchMetrics["fixture_base_unix_nanos"]
@@ -210,7 +217,7 @@ func validateQLBT17Result(result Result) error {
 	return nil
 }
 
-func validateQLBT17Variant(v Result, rows, warmup int, pid, base uint64, spec qlbT17Spec) error {
+func validateQLBT17Variant(v Result, rows, warmup int, pid, base uint64, spec qlbT17Spec, allResponses bool) error {
 	calls := spec.calls(rows)
 	if v.Scenario != ScenarioQLBT17 || v.Engine != engineMeasure || v.Mode != modeVec || v.Correctness != "pass" || v.Cardinality != rows ||
 		v.QueryWorkers != spec.workers || v.QueryMemoryMiB != 256 || v.QueryIterations != calls || v.TimedSamples != calls || len(v.RawLatenciesNS) != calls ||
@@ -223,12 +230,16 @@ func validateQLBT17Variant(v Result, rows, warmup int, pid, base uint64, spec ql
 			return fmt.Errorf("T17 %s missing raw latency", spec.name)
 		}
 	}
-	return validateQLBT17Evidence(v, rows, warmup, pid, base, spec)
+	return validateQLBT17Evidence(v, rows, warmup, pid, base, spec, allResponses)
 }
 
-func validateQLBT17Evidence(v Result, rows, warmup int, pid, base uint64, spec qlbT17Spec) error {
+func validateQLBT17Evidence(v Result, rows, warmup int, pid, base uint64, spec qlbT17Spec, allResponses bool) error {
 	calls := spec.calls(rows)
 	m := v.BatchMetrics
+	checked := uint64(6)
+	if allResponses {
+		checked = uint64(calls)
+	}
 	for _, key := range qlbT17MetricKeys() {
 		if _, ok := m[key]; !ok {
 			return fmt.Errorf("T17 %s missing metric %s", spec.name, key)
@@ -236,7 +247,7 @@ func validateQLBT17Evidence(v Result, rows, warmup int, pid, base uint64, spec q
 	}
 	if m["benchmark_process_id"] == 0 || pid != 0 && pid != m["benchmark_process_id"] || m["fixture_base_unix_nanos"] == 0 ||
 		base != 0 && base != m["fixture_base_unix_nanos"] || m["fixture_input_rows"] != uint64(rows) ||
-		m["warmup_queries"] != uint64(warmup) || m["checked_timed_samples"] != 6 || m["warmup_plan_compiles"] > 1 {
+		m["warmup_queries"] != uint64(warmup) || m["checked_timed_samples"] != checked || m["warmup_plan_compiles"] > 1 {
 		return fmt.Errorf("T17 %s missing process/fixture/warmup evidence", spec.name)
 	}
 	fixtureBase := time.Unix(0, int64(m["fixture_base_unix_nanos"]))
@@ -268,10 +279,16 @@ func validateQLBT17Evidence(v Result, rows, warmup int, pid, base uint64, spec q
 
 func validateQLBT17Matrix(results []Result) error {
 	cards, processes := map[int]bool{}, map[uint64]bool{}
+	var revised *bool
 	for _, result := range results {
 		if result.Scenario != ScenarioQLBT17 {
 			continue
 		}
+		currentRevised := result.Acceptance != nil
+		if revised != nil && *revised != currentRevised {
+			return fmt.Errorf("T17 cannot mix historical and revised acceptance protocols")
+		}
+		revised = &currentRevised
 		if cards[result.Cardinality] {
 			return fmt.Errorf("T17 repeated input cardinality")
 		}

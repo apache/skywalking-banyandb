@@ -32,31 +32,30 @@ import (
 )
 
 func runQLBT17Benchmark(ctx context.Context, conn *grpc.ClientConn, cfg Config, base time.Time) (Result, error) {
-	result := Result{Engine: engineMeasure, Mode: cfg.Mode, Scenario: ScenarioQLBT17, Cardinality: cfg.Cardinality, Correctness: "pass"}
-	var blocked32 *Result
-	if path := os.Getenv("DQB_T17_BLOCKED_32_REPORT"); path != "" {
-		blocked, blockedErr := newQLBT17Blocked32(cfg, path)
-		if blockedErr != nil {
-			return result, blockedErr
-		}
-		blocked32 = &blocked
+	result := Result{Engine: engineMeasure, Mode: cfg.Mode, Scenario: ScenarioQLBT17, Cardinality: cfg.Cardinality, Correctness: "incomplete"}
+	if os.Getenv("DQB_T17_BLOCKED_32_REPORT") != "" {
+		return result, fmt.Errorf("legacy blocked32 evidence cannot satisfy revised acceptance; use DQB_T17_OVERLOAD_REPORT")
 	}
+	path := os.Getenv("DQB_T17_OVERLOAD_REPORT")
+	_, digest, evidenceErr := readQLBT17Overload(path)
+	if evidenceErr != nil {
+		return result, evidenceErr
+	}
+	result.Acceptance = &AcceptanceVerdicts{Contract: qlbT17OverloadRevision, Performance: "incomplete", Overload: "pass", Recovery: "pass"}
+	result.EvidenceArtifacts = map[string]string{"overload_report": path, "overload_sha256": digest}
+
 	client := bydbqlv1.NewBydbQLServiceClient(conn)
 	if err := waitForQLBT17Visibility(ctx, client, cfg.Cardinality, base); err != nil {
 		return result, err
 	}
-	for _, spec := range qlbT17Specs() {
-		if spec.composed && spec.workers == 32 && blocked32 != nil {
-			result.Correctness = "partial_known_32_blocked"
-			result.Variants = append(result.Variants, *blocked32)
-			continue
-		}
+	for _, spec := range qlbT17PerformanceSpecs() {
 		variant, err := runQLBT17Variant(ctx, client, cfg, base, spec)
 		if err != nil {
 			return result, err
 		}
 		result.Variants = append(result.Variants, variant)
 	}
+	result.Correctness, result.Acceptance.Performance = "pass", "pass"
 	return result, validateQLBT17Result(result)
 }
 
@@ -129,7 +128,7 @@ func runQLBT17Variant(ctx context.Context, client bydbqlv1.BydbQLServiceClient, 
 	var checked, minBytes, maxBytes, checkedBytes uint64
 	for index, response := range retained {
 		if response == nil {
-			continue
+			return Result{}, fmt.Errorf("T17 %s missing response %d", spec.name, index)
 		}
 		if checkErr := oracles[index%len(oracles)].check(response.GetMeasureResult()); checkErr != nil {
 			return Result{}, checkErr
@@ -190,9 +189,8 @@ func runQLBT17Queries(query func(int) (*bydbqlv1.QueryResponse, error), spec qlb
 					failures <- fmt.Errorf("T17 %s changed response count", spec.name)
 					return
 				}
-				if index%max(1, len(latencies)/5) == 0 || index == len(latencies)-1 {
-					retained[index] = response
-				}
+				// Validate every complete response after stopping the timer/profile.
+				retained[index] = response
 			}
 		})
 	}
