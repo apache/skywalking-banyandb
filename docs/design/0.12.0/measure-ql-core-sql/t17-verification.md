@@ -2,9 +2,15 @@
 
 Implemented on `8ee2a074` (T16), on PR #1412. T17 adds multi-key measure ORDER BY,
 budgeted full sorting and a finite-LIMIT heap using the same typed comparator.
-The implementation is present; full ticket and parent acceptance must retain the
-native concurrency and legacy-suite blockers recorded below. No commit was
-requested for this work.
+Committed as `b13cdc6d`. The measurements below describe the T17 verification
+revision. The subsequent [legacy integration repair](legacy-integration-verification.md)
+resolves its nine legacy-suite failures and passes 934/934 measure cases in each
+topology. The revised [concurrent admission contract](implementation-tickets.md#concurrent-admission-acceptance-revised-2026-10-18)
+separates expected overload rejection from timed-query acceptance. Successful 100k/1m throughput is now explicitly deferred by the
+[2026-10-19 acceptance revision](implementation-tickets.md#large-input-acceptance-revised-2026-10-19);
+the [revised harness verification](t17-acceptance-verification.md)
+records the passing overload/recovery and timing-protocol checks;
+the historical measurements below are not rerun or reclassified by that repair.
 
 ## Execution contract
 
@@ -100,13 +106,14 @@ ticket filter, plus existing native measure and Top-N compatibility cases:
 | Standalone | 637/637 | 142/151 | 120/120 | 20/20 | 919/928 |
 | Distributed | 637/637 | 142/151 | 120/120 | 20/20 | 919/928 |
 
-Both full suites remain red on the same nine documented legacy regressions.
+At the T17 verification revision, both full suites were red on the same nine
+documented legacy regressions (resolved by the follow-up linked above).
 Eight indexed-array cases fail in the native variable-array decoder:
 `generated_projection_0`, `generated_having_labels`,
 `generated_not_having_labels` and `generated_pair_002/004/008/013/017`.
 `generated_in_int_list_0` reports that a series is required for empty entity IN.
-Their expectations and active status are unchanged; they are not sorting
-regressions or passed tests. Full reports are
+Their expectations and active status were unchanged; that run did not count them
+as passed tests or sorting regressions. Historical full reports are
 `.omx/t17-generated-full-{standalone,distributed}-v2.json`, with category analyses
 and `.omx/t17-generated-full-v2-summary.json`.
 
@@ -284,6 +291,10 @@ The ledger is `.omx/t17-final-provenance.json`; the complete driver log is
 
 ## Native concurrency limitation
 
+The subsequent [admission diagnosis](t17-admission-diagnosis.md) reproduces this
+blocker at `b4be414f` and proves that 32 held fanout reservations exceed the
+configured shared pool. It preserves the original blocked performance verdict.
+
 Untimed admission succeeds for the raw full-sort/top-k pair and composed
 1/8-caller variants at both sizes, without changing the 256-MiB tracker setting.
 The 1,024-row 32-caller composed probe fails at native broadcast admission with
@@ -299,8 +310,12 @@ input residency, not top-k retention. Protector policy, receive buffering and
 memory limits are unchanged. The same 32-caller failure is not repeated at the
 larger size.
 
-The default benchmark still requires all five variants. An explicit retained
-failure report enables partial measurements of the four admitted variants while
+The historical benchmark protocol required all five variants. The revised
+[harness](t17-acceptance-verification.md) separates overload and recovery evidence
+from its four timed variants.
+The later criteria revision separates the 32-caller overload check; the following
+status describes the original protocol, not a new resource-gate verdict. An explicit
+retained failure report enables partial measurements of the four admitted variants while
 keeping the 32-caller variant marked `blocked`, with zero latency/allocation
 samples and the evidence digest. Overall status remains
 `partial_known_32_blocked`; it cannot be reported as a passed acceptance gate.
