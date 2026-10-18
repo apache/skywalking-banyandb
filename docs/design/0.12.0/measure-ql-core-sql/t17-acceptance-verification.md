@@ -98,3 +98,10 @@ The revised overload/recovery contract has direct evidence. The separate
 100k/1m successful RPC throughput, full compatibility performance comparisons and
 historical T02 acceptance gaps remain open. Spilling and retained-result sessions
 remain deferred. The implementation does not broaden the benchmark workload.
+
+## Subsequent benchmark campaign
+
+The [five-repetition campaign](t17-benchmark-campaign.md) after commit `1179c97a`
+passed all 3,120 timed RPCs. The separate 100k probe demonstrated bounded native
+input rejection and recovery; the 1m probe failed fixture readiness with a content
+mismatch and provides no throughput evidence. Both outcomes remain explicit.
