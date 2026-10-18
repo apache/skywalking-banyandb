@@ -105,10 +105,10 @@ capacity-independent gate under the fixed reservation policy.
 The user approved the [revised acceptance criteria](implementation-tickets.md#concurrent-admission-acceptance-revised-2026-10-18)
 on 2026-10-18: compare full sort/top-k on fixed, fully admitted timing cohorts;
 check 32-caller overload separately for explicit `ResourceExhausted`, complete
-cleanup and subsequent recovery. The criteria revision does not alter the
-legacy harness or retrospectively pass its reports. A fresh combined resource
-verdict needs the specified same-cluster RPC recovery evidence; the minimal
-probe above proves admission recovery, not that RPC recovery step. A requirement for 32 simultaneously resident queries would
+cleanup and subsequent recovery. The subsequent [harness implementation](t17-acceptance-verification.md) adds
+separate overload/recovery verification and same-cluster RPC recovery. Historical
+reports retain their original verdicts; the minimal probe above remains evidence
+of admission recovery rather than an RPC recovery test. A requirement for 32 simultaneously resident queries would
 instead require a separately justified transport/reservation optimization.
 The existing 1/8-caller measurements remain evidence for their recorded revisions.
 Large-input RPC/full compatibility performance evidence and historical T02

@@ -39,13 +39,17 @@ type qlbT17Spec struct {
 	full, composed bool
 }
 
+// qlbT17Specs preserves the original five-variant protocol for historical reports.
 func qlbT17Specs() []qlbT17Spec {
+	return append(qlbT17PerformanceSpecs(), qlbT17Spec{name: "composed_workers_32", workers: 32, composed: true})
+}
+
+func qlbT17PerformanceSpecs() []qlbT17Spec {
 	return []qlbT17Spec{
 		{name: "fullsort_slice", workers: 1, full: true},
 		{name: "topk", workers: 1},
 		{name: "composed_workers_1", workers: 1, composed: true},
 		{name: "composed_workers_8", workers: 8, composed: true},
-		{name: "composed_workers_32", workers: 32, composed: true},
 	}
 }
 

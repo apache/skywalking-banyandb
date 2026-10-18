@@ -148,7 +148,7 @@ func runMergeShards(t *testing.T, cfg Config) {
 	for _, result := range results {
 		switch result.Scenario {
 		case ScenarioQLBT16, ScenarioQLBT17:
-			flattened = append(flattened, result.Variants...)
+			flattened = append(flattened, result.reportVariants()...)
 		case ScenarioQLBT15:
 			if validationErr := validateQLBT15Result(result); validationErr != nil {
 				t.Fatal(validationErr)
