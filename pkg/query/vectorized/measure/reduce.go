@@ -20,6 +20,7 @@ package measure
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
@@ -111,9 +112,10 @@ func ReduceRawFrames(
 
 // ReducePartialBatches is the in-memory counterpart of ReduceRawFrames —
 // useful for tests and for callers that have already decoded their
-// partials. Empty batches (nil or Len==0) are skipped; the first non-empty
-// batch defines the schema and structural compatibility is checked against
-// subsequent ones.
+// partials. Empty batches (nil or Len==0) are skipped. Partials from
+// schema-evolved groups are first aligned onto one layout (see
+// alignPartialSchemas); structural compatibility is then checked against
+// the first non-empty batch.
 //
 // Returns the reduced batches and the AggValuePath that describes how the
 // value column was resolved (typed, fieldvalue-fallback, or unresolved).
@@ -126,6 +128,10 @@ func ReducePartialBatches(
 	batchSize int,
 	tracker *vectorized.MemoryTracker,
 ) ([]*vectorized.RecordBatch, AggValuePath, error) {
+	partials, alignErr := alignPartialSchemas(partials, keyTagFamily, keyTagNames)
+	if alignErr != nil {
+		return nil, AggValuePathUnresolved, fmt.Errorf("ReducePartialBatches: %w", alignErr)
+	}
 	var refSchema *vectorized.BatchSchema
 	for _, b := range partials {
 		if b == nil || b.Len == 0 {
@@ -323,6 +329,121 @@ func schemaCompatible(want, got *vectorized.BatchSchema) error {
 		}
 	}
 	return nil
+}
+
+// alignPartialSchemas reshapes partials from groups with different schemas
+// onto one layout. The liaison drops projected tags a group doesn't define
+// from that group's request, so the group's partials lack those columns.
+// A missing tag that is not a GroupBy key is null-filled; any other
+// difference (a key tag, a field or aggregate-state column, a metadata
+// column, or a type change) is still a mismatch. Partials that already
+// share one layout are returned unchanged.
+func alignPartialSchemas(partials []*vectorized.RecordBatch, keyTagFamily string, keyTagNames []string) ([]*vectorized.RecordBatch, error) {
+	var ref *vectorized.BatchSchema
+	aligned := true
+	for _, b := range partials {
+		if b == nil || b.Len == 0 {
+			continue
+		}
+		if ref == nil {
+			ref = b.Schema
+			continue
+		}
+		if schemaCompatible(ref, b.Schema) != nil {
+			aligned = false
+			break
+		}
+	}
+	if aligned {
+		return partials, nil
+	}
+	isKey := func(def vectorized.ColumnDef) bool {
+		return def.Role == vectorized.RoleTag && def.TagFamily == keyTagFamily && slices.Contains(keyTagNames, def.Name)
+	}
+	union, unionErr := unionPartialSchema(partials)
+	if unionErr != nil {
+		return nil, unionErr
+	}
+	out := make([]*vectorized.RecordBatch, len(partials))
+	for i, b := range partials {
+		if b == nil || b.Len == 0 {
+			out[i] = b
+			continue
+		}
+		reshaped, reshapeErr := reshapePartial(b, union, isKey)
+		if reshapeErr != nil {
+			return nil, fmt.Errorf("partial %d: %w", i, reshapeErr)
+		}
+		out[i] = reshaped
+	}
+	return out, nil
+}
+
+// unionPartialSchema merges the non-empty partials' layouts. A column one
+// partial adds goes right after the previous column it shares with the
+// union, so tags stay in projection order whichever partial arrives first.
+func unionPartialSchema(partials []*vectorized.RecordBatch) (*vectorized.BatchSchema, error) {
+	var cols []vectorized.ColumnDef
+	for i, b := range partials {
+		if b == nil || b.Len == 0 {
+			continue
+		}
+		if cols == nil {
+			cols = slices.Clone(b.Schema.Columns)
+			continue
+		}
+		prev := -1
+		for _, def := range b.Schema.Columns {
+			pos := columnPosition(cols, def)
+			if pos < 0 {
+				prev++
+				cols = slices.Insert(cols, prev, def)
+				continue
+			}
+			if cols[pos].Type != def.Type {
+				return nil, fmt.Errorf("partial %d column %s is %v, another partial has %v", i, columnLabel(def), def.Type, cols[pos].Type)
+			}
+			prev = pos
+		}
+	}
+	return vectorized.NewBatchSchema(cols), nil
+}
+
+// reshapePartial copies b into the union layout, null-filling the non-key
+// tags b doesn't carry.
+func reshapePartial(b *vectorized.RecordBatch, union *vectorized.BatchSchema, isKey func(vectorized.ColumnDef) bool) (*vectorized.RecordBatch, error) {
+	out := vectorized.NewRecordBatch(union, b.Len)
+	for i, def := range union.Columns {
+		src := columnPosition(b.Schema.Columns, def)
+		if src < 0 {
+			if def.Role != vectorized.RoleTag || isKey(def) {
+				return nil, fmt.Errorf("missing column %s", columnLabel(def))
+			}
+			for range b.Len {
+				out.Columns[i].AppendNull()
+			}
+			continue
+		}
+		if copyErr := AppendColumnRange(out.Columns[i], b.Columns[src], 0, b.Len); copyErr != nil {
+			return nil, fmt.Errorf("copy column %s: %w", columnLabel(def), copyErr)
+		}
+	}
+	out.Len = b.Len
+	out.Selection = b.Selection
+	return out, nil
+}
+
+func columnPosition(cols []vectorized.ColumnDef, def vectorized.ColumnDef) int {
+	return slices.IndexFunc(cols, func(c vectorized.ColumnDef) bool {
+		return c.Role == def.Role && c.TagFamily == def.TagFamily && c.Name == def.Name
+	})
+}
+
+func columnLabel(def vectorized.ColumnDef) string {
+	if def.Role == vectorized.RoleTag {
+		return def.TagFamily + "." + def.Name
+	}
+	return def.Name
 }
 
 // ApplyTopToReduce composes the Reduce output through a BatchTop operator,
