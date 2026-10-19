@@ -38,14 +38,17 @@ const (
 // readers expect.
 const SegmentMetadataFilename = metadataFilename
 
+// PartMetadataFilename is the per-part metadata document stream, measure and trace write
+// under <shard>/<part>/. Exported for the same reason as SegmentMetadataFilename.
+const PartMetadataFilename = partDiskMetadataFilename
+
 // CurrentSegmentVersion is the version string a freshly-written segment
 // must carry. Exported for the same reason as SegmentMetadataFilename.
 const CurrentSegmentVersion = currentVersion
 
-// SegmentMetadata is the on-disk shape of <segment>/metadata. Kept in
-// sync with the (unexported) segmentMeta runtime reads. Exported so
-// out-of-package writers can produce identical bytes via the same JSON
-// tags (lowercase `version` / `endTime,omitempty`).
+// SegmentMetadata is the on-disk shape of <segment>/metadata, shared by the runtime
+// reader and out-of-package writers so both use the same JSON tags (lowercase
+// `version` / `endTime,omitempty`).
 type SegmentMetadata struct {
 	Version string `json:"version"`
 	EndTime string `json:"endTime,omitempty"`
@@ -65,25 +68,43 @@ func checkVersion(version string) error {
 		"incompatible version %s, supported versions: %s", version, strings.Join(compatibleVersions, ", ")))
 }
 
-type segmentMeta struct {
-	Version string `json:"version"`
-	EndTime string `json:"endTime,omitempty"`
+// ErrEmptySegmentMetadata is returned (wrapped) by DecodeSegmentMetadata for a metadata
+// file without content, e.g. one created but not yet written by a rollover.
+var ErrEmptySegmentMetadata = errors.New("segment metadata is empty")
+
+// DecodeSegmentMetadata parses the raw content of a <segment>/metadata file into
+// SegmentMetadata. It accepts both the JSON document written by current releases and
+// the legacy bare version string, and performs no compatibility check: callers that
+// need to reject unsupported versions go through readSegmentMeta.
+func DecodeSegmentMetadata(data []byte) (SegmentMetadata, error) {
+	var meta SegmentMetadata
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" {
+		return SegmentMetadata{}, errors.WithStack(ErrEmptySegmentMetadata)
+	}
+	if trimmed[0] == '{' {
+		if err := json.Unmarshal(data, &meta); err != nil {
+			return SegmentMetadata{}, err
+		}
+		return meta, nil
+	}
+	meta.Version = trimmed
+	return meta, nil
 }
 
-func readSegmentMeta(data []byte) (segmentMeta, error) {
-	var meta segmentMeta
-	trimmed := strings.TrimSpace(string(data))
-	if len(trimmed) > 0 && trimmed[0] == '{' {
-		if unmarshalErr := json.Unmarshal(data, &meta); unmarshalErr != nil {
-			return segmentMeta{}, unmarshalErr
+func readSegmentMeta(data []byte) (SegmentMetadata, error) {
+	decoded, err := DecodeSegmentMetadata(data)
+	if err != nil {
+		if errors.Is(err, ErrEmptySegmentMetadata) {
+			// Empty metadata carries no version: as incompatible as an unknown one, so retrying cannot help.
+			return SegmentMetadata{}, initerror.AsPermanent(err)
 		}
-	} else {
-		meta.Version = trimmed
+		return SegmentMetadata{}, err
 	}
-	if checkErr := checkVersion(meta.Version); checkErr != nil {
-		return segmentMeta{}, checkErr
+	if checkErr := checkVersion(decoded.Version); checkErr != nil {
+		return SegmentMetadata{}, checkErr
 	}
-	return meta, nil
+	return decoded, nil
 }
 
 // GetCurrentVersion returns the current storage version.

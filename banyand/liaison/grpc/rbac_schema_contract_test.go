@@ -523,7 +523,7 @@ func TestSchemaR2_ScopeFamilyClassification(t *testing.T) {
 	// with no scope family at all, so a permission-bearing method can no longer be
 	// unclassified and the loop below has nothing left to forgive.
 	for family, want := range map[liaisongrpc.ScopeFamily]int{
-		liaisongrpc.ScopeGlobal:                13,
+		liaisongrpc.ScopeGlobal:                15,
 		liaisongrpc.ScopeDirectGroup:           11,
 		liaisongrpc.ScopeGroupBodyName:         2,
 		liaisongrpc.ScopeMetadataGroup:         21,

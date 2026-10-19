@@ -20,6 +20,7 @@ package trace
 import (
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,6 +28,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
+	snapshotpkg "github.com/apache/skywalking-banyandb/banyand/internal/snapshot"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
@@ -709,6 +712,100 @@ func TestTakeFileSnapshotNoDiskPartsWithSidx(t *testing.T) {
 		}
 	}
 	assert.True(t, hasSidx, "expected sidx directory in snapshot")
+}
+
+type blockingSnapshotSIDX struct {
+	*fakeSIDX
+	entered chan struct{}
+	proceed chan struct{}
+}
+
+func (f *blockingSnapshotSIDX) TakeFileSnapshot(_ string) error {
+	close(f.entered)
+	<-f.proceed
+	return nil
+}
+
+func TestTakeFileSnapshotPinsPublicationView(t *testing.T) {
+	fileSystem := fs.NewLocalFileSystem()
+
+	tmpPath, deferFn := test.Space(require.New(t))
+	defer deferFn()
+
+	tabDir := filepath.Join(tmpPath, "tab")
+	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+
+	tst, err := newTSTable(
+		fileSystem,
+		tabDir,
+		common.Position{},
+		logger.GetLogger("test"),
+		timestamp.TimeRange{},
+		option{
+			flushTimeout: 0,
+			mergePolicy:  newDefaultMergePolicy(),
+			protector:    protector.Nop{},
+		},
+		nil,
+	)
+	require.NoError(t, err)
+	defer tst.Close()
+
+	blockingSIDX := &blockingSnapshotSIDX{
+		fakeSIDX: &fakeSIDX{},
+		entered:  make(chan struct{}),
+		proceed:  make(chan struct{}),
+	}
+	releaseSIDX := sync.OnceFunc(func() { close(blockingSIDX.proceed) })
+	defer releaseSIDX()
+	tst.Lock()
+	tst.snapshot = &snapshot{ref: 1}
+	tst.sidxMap = map[string]sidx.SIDX{"blocking_sidx": blockingSIDX}
+	tst.Unlock()
+
+	snapshotPath := filepath.Join(tmpPath, "snapshot")
+	fileSystem.MkdirIfNotExist(snapshotPath, 0o755)
+
+	type snapshotResult struct {
+		err     error
+		created bool
+	}
+	resultCh := make(chan snapshotResult, 1)
+	go func() {
+		created, snapshotErr := tst.TakeFileSnapshot(snapshotPath)
+		resultCh <- snapshotResult{created: created, err: snapshotErr}
+	}()
+	<-blockingSIDX.entered
+
+	publicationStarted := make(chan struct{})
+	publicationDone := make(chan struct{})
+	go func() {
+		txn := snapshotpkg.NewTransaction()
+		close(publicationStarted)
+		tst.commitSnapshotTransaction(txn)
+		txn.Release()
+		close(publicationDone)
+	}()
+	<-publicationStarted
+	select {
+	case <-publicationDone:
+		t.Fatal("snapshot publication crossed the file snapshot between core and secondary-index capture")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	releaseSIDX()
+	select {
+	case result := <-resultCh:
+		require.NoError(t, result.err)
+		assert.True(t, result.created)
+	case <-time.After(time.Second):
+		t.Fatal("file snapshot did not complete after the secondary index was released")
+	}
+	select {
+	case <-publicationDone:
+	case <-time.After(time.Second):
+		t.Fatal("snapshot publication remained blocked after the file snapshot completed")
+	}
 }
 
 func TestTakeFileSnapshotNoDiskPartsWithoutSidx(t *testing.T) {

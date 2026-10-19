@@ -90,3 +90,50 @@ func TestReadSegmentMeta_NewFormatNoEndTime(t *testing.T) {
 	assert.Equal(t, "1.4.0", meta.Version)
 	assert.Equal(t, "", meta.EndTime)
 }
+
+func TestDecodeSegmentMetadata(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want SegmentMetadata
+	}{
+		{
+			name: "json",
+			raw:  `{"version":"1.5.0","endTime":"2026-09-28T00:00:00Z"}`,
+			want: SegmentMetadata{Version: "1.5.0", EndTime: "2026-09-28T00:00:00Z"},
+		},
+		{name: "legacy raw string", raw: "1.3.0\n", want: SegmentMetadata{Version: "1.3.0"}},
+		{
+			name: "unknown version is reported not rejected",
+			raw:  `{"version":"99.0.0"}`,
+			want: SegmentMetadata{Version: "99.0.0"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := DecodeSegmentMetadata([]byte(tt.raw))
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestDecodeSegmentMetadata_MalformedJSON(t *testing.T) {
+	_, err := DecodeSegmentMetadata([]byte(`{"version":`))
+	require.Error(t, err)
+}
+
+func TestDecodeSegmentMetadata_EmptyIsAnError(t *testing.T) {
+	for _, raw := range []string{"", "  \n"} {
+		_, err := DecodeSegmentMetadata([]byte(raw))
+		require.ErrorIs(t, err, ErrEmptySegmentMetadata, "raw %q", raw)
+	}
+}
+
+func TestReadSegmentMeta_WhitespaceOnlyIsPermanent(t *testing.T) {
+	for _, raw := range []string{"", " \n\t"} {
+		_, err := readSegmentMeta([]byte(raw))
+		require.Error(t, err)
+		assert.True(t, initerror.IsPermanent(err), "empty metadata %q must surface as permanent", raw)
+	}
+}
