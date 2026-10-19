@@ -908,3 +908,15 @@ and a separate validated overload/recovery artifact. It preserves historical
 report validation and rejects old blocked-only evidence for revised runs.
 [Harness verification](t17-acceptance-verification.md) records the focused checks;
 this does not fill the separate large-input or full G1 performance evidence gaps.
+
+### PR #1412 compatibility measurement (2026-10-18)
+
+The [frozen compatibility comparison](compatibility-performance.md) completed
+80,000 timed RPCs over five paired repetitions of the T01 matrix. All median
+p50/p95/allocation estimates meet G1 budgets; six cases pass with uncertainty
+included and two 1,024-row QL p50 cases were inconclusive. A separate 20-pair
+confirmation passes both cases under the predefined one-sided uncertainty method,
+closing the compatibility follow-up for this matrix. The original verdict remains
+recorded. This is measurement evidence, not a change to thresholds or a restart of
+the historical T02 investigation. The retained baseline, current binaries and
+identical test-only harness are documented with full provenance.
