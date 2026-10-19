@@ -143,6 +143,8 @@ func TestTraceCatalogTagComplexShape(t *testing.T) {
 		case modelv1.Condition_BINARY_OP_LE:
 			hi = cond.GetValue().GetInt().GetValue()
 			sawLE = true
+		default:
+			t.Fatalf("unexpected duration bound operator: %s", cond.GetOp())
 		}
 	}
 	assert.True(t, sawGE && sawLE, "both duration bounds present")

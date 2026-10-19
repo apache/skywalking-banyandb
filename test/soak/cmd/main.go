@@ -23,6 +23,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -52,6 +53,7 @@ const (
 	soakMeasure     = "soak_metric"
 	soakTagFamily   = "default"
 	soakTagService  = "service"
+	soakServiceZero = "svc-0"
 	soakTagInstance = "instance_id"
 	soakFieldVal    = "value"
 	soakFieldCount  = "count"
@@ -64,6 +66,10 @@ const (
 	engineMeasure = "measure"
 	engineTrace   = "trace"
 	engineStream  = "stream"
+	// engineStreamIndex is the log-shaped stream fixture built for the native
+	// inverted-index soak. It shares the stream query/baseline machinery and
+	// differs only in the fixture (stream_index.go) and catalog.
+	engineStreamIndex = "stream-index"
 
 	// parityWindow is the lookback applied to time-bounded trace/stream queries;
 	// the fixture spans one second per version, so a wide window covers them all.
@@ -72,10 +78,17 @@ const (
 
 // validateEngine returns an error for an unknown --engine value.
 func validateEngine(engine string) error {
-	if engine != engineMeasure && engine != engineTrace && engine != engineStream {
-		return fmt.Errorf("unknown engine %q: want %q, %q or %q", engine, engineMeasure, engineTrace, engineStream)
+	switch engine {
+	case engineMeasure, engineTrace, engineStream, engineStreamIndex:
+		return nil
+	default:
+		return fmt.Errorf("unknown engine %q: want %q, %q, %q or %q", engine, engineMeasure, engineTrace, engineStream, engineStreamIndex)
 	}
-	return nil
+}
+
+// isStreamEngine reports whether engine uses the stream catalog/fixture path.
+func isStreamEngine(engine string) bool {
+	return engine == engineStream || engine == engineStreamIndex
 }
 
 // catalogEntry holds one query template from the JSON catalog. ID is a
@@ -91,10 +104,15 @@ type catalogEntry struct {
 }
 
 // rawCatalogEntry is the on-disk shape: an "id" label plus a proto-JSON
-// "request" object decoded separately via protojson.
+// "request" object decoded separately via protojson. WindowHours optionally
+// overrides the harness-wide parity lookback for this entry, so a catalog can
+// mix wide queries (which classify every segment as time-contained) with narrow
+// ones (which are the only way to exercise the disjoint and overlap_trie
+// branches of the native time pruner).
 type rawCatalogEntry struct {
-	ID      string          `json:"id"`
-	Request json.RawMessage `json:"request"`
+	ID          string          `json:"id"`
+	Request     json.RawMessage `json:"request"`
+	WindowHours float64         `json:"windowHours,omitempty"`
 }
 
 // baselineRecord is persisted to disk after record-baseline runs.
@@ -131,7 +149,7 @@ func main() {
 		Use:   "soak-driver",
 		Short: "G5d soak harness driver — baseline, diff, and pprof capture",
 	}
-	root.AddCommand(newSeedFixtureCmd(), newRecordBaselineCmd(), newReplayAndDiffCmd(), newPprofGrabCmd(), newWriteLoadCmd())
+	root.AddCommand(newSeedFixtureCmd(), newRecordBaselineCmd(), newReplayAndDiffCmd(), newPprofGrabCmd(), newWriteLoadCmd(), newLatencyProbeCmd())
 	if execErr := root.Execute(); execErr != nil {
 		_, _ = fmt.Fprintln(os.Stderr, execErr)
 		os.Exit(1)
@@ -213,7 +231,7 @@ func newRecordBaselineCmd() *cobra.Command {
 				defer conn.Close()
 				return traceRecordBaseline(context.Background(), conn, catalogPath, outPath, untilMs, parityWindow)
 			}
-			if engine == engineStream {
+			if isStreamEngine(engine) {
 				conn, dialErr := dialInsecure(addr)
 				if dialErr != nil {
 					return dialErr
@@ -312,7 +330,7 @@ func newReplayAndDiffCmd() *cobra.Command {
 				defer conn.Close()
 				return traceReplayAndDiff(context.Background(), conn, catalogPath, baselinePath, reportPath, parityWindow)
 			}
-			if engine == engineStream {
+			if isStreamEngine(engine) {
 				conn, dialErr := dialInsecure(addr)
 				if dialErr != nil {
 					return dialErr
@@ -475,7 +493,16 @@ func newPprofGrabCmd() *cobra.Command {
 				return fmt.Errorf("write goroutine file: %w", writeErr)
 			}
 
-			count := countGoroutines(goroutineBody)
+			// The profile itself was captured and written, so a count-parse failure
+			// is not a capture failure. Report it distinctly rather than as "0":
+			// a zero here would be indistinguishable from a server that genuinely
+			// has no goroutines, and the gate would pass on unreadable evidence.
+			count, countErr := countGoroutines(goroutineBody)
+			if countErr != nil {
+				fmt.Fprintf(os.Stderr, "[pprof-grab] could not parse goroutine count: %v\n", countErr)
+				fmt.Println("unknown")
+				return nil
+			}
 			fmt.Printf("%d\n", count)
 			return nil
 		},
@@ -504,7 +531,7 @@ func newPprofGrabCmd() *cobra.Command {
 // fixture.
 func newSeedFixtureCmd() *cobra.Command {
 	var addr, engine string
-	var rows, traces, spans, series, elementsPerSeries int
+	var rows, traces, spans, series, elementsPerSeries, chunks int
 
 	cmd := &cobra.Command{
 		Use:   "seed-fixture",
@@ -523,14 +550,17 @@ func newSeedFixtureCmd() *cobra.Command {
 				defer cancel()
 				return traceSeedFixture(ctx, conn, traces, spans)
 			}
-			if engine == engineStream {
+			if isStreamEngine(engine) {
 				conn, dialErr := dialInsecure(addr)
 				if dialErr != nil {
 					return dialErr
 				}
 				defer conn.Close()
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 				defer cancel()
+				if engine == engineStreamIndex {
+					return streamIdxSeedFixture(ctx, conn, series, elementsPerSeries, chunks)
+				}
 				return streamSeedFixture(ctx, conn, series, elementsPerSeries)
 			}
 
@@ -640,7 +670,7 @@ func newSeedFixtureCmd() *cobra.Command {
 			var firstBadStatus string
 			for {
 				resp, recvErr := writeStream.Recv()
-				if recvErr == io.EOF {
+				if errors.Is(recvErr, io.EOF) {
 					break
 				}
 				if recvErr != nil {
@@ -708,6 +738,9 @@ func newSeedFixtureCmd() *cobra.Command {
 	cmd.Flags().IntVar(&spans, "spans", traceFixtureSpans, "number of spans per trace (trace engine)")
 	cmd.Flags().IntVar(&series, "series", streamFixtureSeries, "number of series to write (stream engine)")
 	cmd.Flags().IntVar(&elementsPerSeries, "elements", streamFixtureElementsPerSeri, "elements per series (stream engine)")
+	cmd.Flags().IntVar(&chunks, "chunks", streamIdxDefaultChunks,
+		"seed write batches (stream-index engine); one batch per chunk becomes its own segment, "+
+			"so more chunks means more time-disjoint segments for the native time pruner to skip")
 	return cmd
 }
 
@@ -716,7 +749,7 @@ func newSeedFixtureCmd() *cobra.Command {
 // parity window, rate-capped at --rps for --duration.
 func newWriteLoadCmd() *cobra.Command {
 	var addr, engine string
-	var traces, spans, rps int
+	var traces, spans, rps, chunks int
 	var duration time.Duration
 
 	cmd := &cobra.Command{
@@ -726,8 +759,8 @@ func newWriteLoadCmd() *cobra.Command {
 			if engineErr := validateEngine(engine); engineErr != nil {
 				return engineErr
 			}
-			if engine != engineTrace && engine != engineStream {
-				return fmt.Errorf("write-load is only supported for engine %q or %q", engineTrace, engineStream)
+			if !isStreamEngine(engine) && engine != engineTrace {
+				return fmt.Errorf("write-load is only supported for engine %q, %q or %q", engineTrace, engineStream, engineStreamIndex)
 			}
 			conn, dialErr := dialInsecure(addr)
 			if dialErr != nil {
@@ -737,6 +770,11 @@ func newWriteLoadCmd() *cobra.Command {
 
 			ctx, cancel := context.WithTimeout(context.Background(), duration+time.Minute)
 			defer cancel()
+			if engine == engineStreamIndex {
+				written, loadErr := streamIdxWriteLoad(ctx, conn, traces, spans, chunks, rps, duration)
+				fmt.Printf("[write-load] wrote %d elements over %s\n", written, duration)
+				return loadErr
+			}
 			if engine == engineStream {
 				written, loadErr := streamWriteLoad(ctx, conn, traces, spans, rps, duration)
 				fmt.Printf("[write-load] wrote %d elements over %s\n", written, duration)
@@ -803,14 +841,47 @@ func fetchBytes(url string) ([]byte, error) {
 
 // countGoroutines parses the text output of /debug/pprof/goroutine?debug=1
 // and returns the total goroutine count from the first "goroutine N [" lines.
-func countGoroutines(body []byte) int {
-	count := 0
+// errUnrecognizedGoroutineProfile means the body was neither the summary format
+// nor the legacy per-goroutine format. It is returned rather than folded into a
+// zero count: a caller that cannot tell "0 goroutines" from "I could not read
+// the profile" will treat a parsing failure as a healthy server.
+var errUnrecognizedGoroutineProfile = errors.New("unrecognized goroutine profile format")
+
+// countGoroutines parses the text output of /debug/pprof/goroutine?debug=1.
+//
+// Go emits a SUMMARY header for debug=1 — "goroutine profile: total N" — followed
+// by one "N @ 0x... 0x..." line per bucket, with no per-goroutine stacks.
+// (Per-goroutine stacks are debug=2, and have been since well before Go 1.21.)
+// This function originally counted only the legacy "goroutine N [state]:" shape,
+// so it returned 0 against every current Go runtime — which silently disabled
+// every goroutine-leak gate rather than failing loudly.
+//
+// Returns an error when the body matches NEITHER shape, or when the scan stops
+// early: an HTML error page served with HTTP 200, or a truncated transfer,
+// must not be reported as a server with zero goroutines.
+func countGoroutines(body []byte) (int, error) {
 	scanner := bufio.NewScanner(strings.NewReader(string(body)))
+	legacy := 0
 	for scanner.Scan() {
 		line := scanner.Text()
+		if rest, ok := strings.CutPrefix(line, "goroutine profile: total "); ok {
+			// Tolerate trailing decoration by parsing the leading integer.
+			field, _, _ := strings.Cut(strings.TrimSpace(rest), " ")
+			n, err := strconv.Atoi(field)
+			if err != nil {
+				return 0, fmt.Errorf("%w: bad total in %q", errUnrecognizedGoroutineProfile, line)
+			}
+			return n, nil
+		}
 		if strings.HasPrefix(line, "goroutine ") && strings.Contains(line, " [") {
-			count++
+			legacy++
 		}
 	}
-	return count
+	if scanErr := scanner.Err(); scanErr != nil {
+		return 0, fmt.Errorf("scan goroutine profile: %w", scanErr)
+	}
+	if legacy > 0 {
+		return legacy, nil
+	}
+	return 0, fmt.Errorf("%w: no summary header and no per-goroutine lines", errUnrecognizedGoroutineProfile)
 }
