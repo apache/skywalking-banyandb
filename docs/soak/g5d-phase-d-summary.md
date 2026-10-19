@@ -5,7 +5,7 @@
 **Phase 0 (vec-off baseline):** 2026-05-11 00:59 Z → 02:03 Z (~1 h 4 min)
 **Phase 1 (vec-on soak):** 2026-05-11 02:03 Z → 2026-05-13 02:03 Z (48 h 0 min)
 **Host:** 32-core Linux, 31 GB RAM, no swap; Docker daemon 29.3.1
-**Harness:** `scripts/soak-vectorized.sh` + `scripts/soak-monitor.sh` + `cmd/soak-driver`
+**Harness:** `scripts/soak-vectorized.sh` + `scripts/soak-monitor.sh` + `test/soak/cmd`
 
 > **Historical record — superseded by 0.12.0.** This document describes the vectorized-query
 > rollout gate as it ran while the row-based query path still existed. The
@@ -22,7 +22,7 @@ Phase 1 ran 48 hours wall-clock with the flag enabled in `banyand/measure/docker
 
 ### 2. Parity vs flag-off baseline = no regressions — **PASS**
 
-Phase 0 captured a deterministic baseline of **986 data points** (98.6 % of the 1000-row `soak/soak_metric` fixture seeded by `cmd/soak-driver seed-fixture`; the 14-row trim is the by-design `[T0, T1] ± 1 s` window edge). Phase 1 replayed the same query catalog every 5 minutes for 48 hours against the restored snapshot, with each response compared byte-identically to the baseline via `proto.Equal` on `[]*measurev1.DataPoint`.
+Phase 0 captured a deterministic baseline of **986 data points** (98.6 % of the 1000-row `soak/soak_metric` fixture seeded by `test/soak/cmd seed-fixture`; the 14-row trim is the by-design `[T0, T1] ± 1 s` window edge). Phase 1 replayed the same query catalog every 5 minutes for 48 hours against the restored snapshot, with each response compared byte-identically to the baseline via `proto.Equal` on `[]*measurev1.DataPoint`.
 
 - **576 replay-and-diff runs**
 - **0 divergences** (every `diff-*.json` has `"pass": true`)

@@ -262,7 +262,7 @@ errors.
    ```bash
    bin/soak-driver replay-and-diff \
      --addr localhost:17912 \
-     --catalog cmd/soak-driver/catalog/default.json \
+     --catalog test/soak/cmd/catalog/default.json \
      --baseline dist/soak/<ts>/baseline.json \
      --report /tmp/debug-diff.json
    ```

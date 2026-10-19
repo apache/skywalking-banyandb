@@ -280,7 +280,7 @@ test/integration/distributed/querybench/run-docker.sh
 
 ## Trace Catalog
 
-The catalog is `cmd/soak-driver/catalog/trace.json`. All 5 shapes target
+The catalog is `test/soak/cmd/catalog/trace.json`. All 5 shapes target
 `bench-trace-fixture` / Trace `sw` and carry a pinned `limit`.
 
 | ID | Shape | Filter | Order | Limit |

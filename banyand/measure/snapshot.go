@@ -25,7 +25,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -239,6 +238,17 @@ func (s *standalone) takeGroupSnapshot(dstDir string, groupName string) (bool, e
 	return created, nil
 }
 
+// TakeExportSnapshot implements export.Backend: one hard-link snapshot of the selected groups under
+// <exportSnapshotDir>/<name>. It shares the TopicSnapshot listener's mutex so an export session
+// and a periodic backup never snapshot the same groups concurrently, but unlike the listener
+// it neither reclaims old snapshots nor invents a name: the export session owns the
+// directory's lifetime.
+func (s *standalone) TakeExportSnapshot(ctx context.Context, name string, groups []string) error {
+	s.snapshotMux.Lock()
+	defer s.snapshotMux.Unlock()
+	return schema.SnapshotGroups(ctx, s.schemaRepo, s.l, filepath.Join(s.exportSnapshotDir, name), groups, s.takeGroupSnapshot)
+}
+
 // collectSegDirs walks a directory tree and collects all seg-* directory paths.
 // It only collects directories matching the "seg-*" pattern and ignores all files.
 // Returns a map of relative paths to seg-* directories.
@@ -354,7 +364,6 @@ type snapshotListener struct {
 	*bus.UnImplementedHealthyListener
 	s           *standalone
 	snapshotSeq uint64
-	snapshotMux sync.Mutex
 }
 
 // Rev takes a snapshot of the database.
@@ -378,8 +387,8 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 	if len(gg) == 0 {
 		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
 	}
-	s.snapshotMux.Lock()
-	defer s.snapshotMux.Unlock()
+	s.s.snapshotMux.Lock()
+	defer s.s.snapshotMux.Unlock()
 	storage.DeleteStaleSnapshots(s.s.snapshotDir, s.s.maxFileSnapshotNum, s.s.minFileSnapshotAge, s.s.lfs)
 	sn := s.snapshotName()
 	var err error

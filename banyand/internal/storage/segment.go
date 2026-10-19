@@ -1056,7 +1056,7 @@ func (sc *segmentController[T, O]) create(ctx context.Context, start time.Time) 
 		delete(sc.deleting, segPath)
 	}
 	sc.lfs.MkdirPanicIfExist(segPath, DirPerm)
-	meta := segmentMeta{
+	meta := SegmentMetadata{
 		Version: currentVersion,
 		EndTime: end.Format(time.RFC3339Nano),
 	}
