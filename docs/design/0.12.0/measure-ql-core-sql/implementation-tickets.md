@@ -920,3 +920,45 @@ closing the compatibility follow-up for this matrix. The original verdict remain
 recorded. This is measurement evidence, not a change to thresholds or a restart of
 the historical T02 investigation. The retained baseline, current binaries and
 identical test-only harness are documented with full provenance.
+
+
+### Large-input acceptance (revised 2026-10-19)
+
+Following the user-approved scope decision, successful throughput for T17's
+100k/1m owning queries is deferred until native input materialization can execute
+the complete workload within the fixed memory budget. This revises the T17 and
+parent completion requirements above: missing successful timing at those sizes
+is a documented deferral, not an outstanding Catalog B implementation task.
+No other child evidence requirement or performance threshold is waived. In
+particular, historical T02 inconclusive/stopped results remain unchanged; this
+revision does not establish that every historical performance gate passed.
+
+| Requirement | Current disposition | Evidence |
+|---|---|---|
+| T17 correctness and admitted-query performance | Verified for the recorded workloads and sizes | [T17 verification](t17-verification.md), [five-pair campaign](t17-benchmark-campaign.md) |
+| Overload rejection, cleanup and same-cluster recovery | Verified separately from successful timing | [Admission verification](t17-acceptance-verification.md) |
+| 100k/1m fixture correctness and resource feasibility | Verified by the fixed probes; accepted resource rejection is not throughput | [Fixed large-input probes](t17-1m-readiness-fix.md) |
+| Successful 100k/1m owning-query throughput | Deferred; no performance verdict | Future bounded-input execution or spilling work |
+| PR #1412 compatibility matrix | Follow-up complete with separate small-query confirmation | [Compatibility comparison](compatibility-performance.md) |
+| Historical T02 performance acceptance | Preserved inconclusive/stopped | T02 record above |
+
+The fixed 1m probe verifies the entire fixture, rejects all five owning queries
+with `ResourceExhausted`, and successfully executes all five recovery queries
+with zero recorded cleanup counters. At 100k, four owning queries reject and
+one composed binding succeeds exactly. That isolated success is feasibility
+evidence, not a successful timing cohort. Physical block layout can affect input
+admission, so rejection itself is not mandatory when an exact result fits.
+
+Resume the deferred performance work only after a change makes the complete
+owning-query cohort admissible under the existing four-CPU, 8-GiB container and
+256-MiB query tracker. Possible enabling work includes reducing native eager
+input residency or temporary-file spilling; selecting or implementing either is
+outside this revision. Then rerun fixture readiness, exact results, cleanup and
+recovery before measuring all required queries with fixed repetitions. A rejected
+call must never become a timing sample, and a successful subset cannot pass the
+cohort. Raising limits, shrinking the workload or rerunning an unchanged rejected
+cohort does not fulfill the deferred requirement.
+
+No benchmark code, memory protection, SQL behavior, protobuf or persisted format
+changes accompany this acceptance revision. Spilling and retained-result session
+pagination remain explicitly deferred. There is no new Catalog B feature ticket.
