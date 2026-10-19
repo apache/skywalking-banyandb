@@ -1,0 +1,13 @@
+{
+  "metadata": {
+    "id": 21,
+    "name": "business_id",
+    "group": "sw_cross_segment_stream"
+  },
+  "tags": [
+    "business_id"
+  ],
+  "type": "TYPE_INVERTED",
+  "no_sort": true,
+  "updated_at": "2026-05-27T00:00:00.00Z"
+}

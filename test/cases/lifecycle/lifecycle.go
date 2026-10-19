@@ -47,6 +47,8 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/backup/lifecycle"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
@@ -187,6 +189,51 @@ var _ = ginkgo.Describe("Lifecycle", func() {
 		})
 	})
 })
+
+// crossSegmentIndexRuleID is the pinned IndexRule ID of the
+// business_id INVERTED rule bound to sw_cross_segment_stream/cross_segment_log
+// (pkg/test/stream/testdata/index_rules/cross_segment_business_id.json).
+//
+// It must be pinned rather than auto-assigned: FieldKey.Marshal() encodes the
+// native field name as the rule ID, and the migration rebuild reads the ID from
+// the source catalog while the node serving the migrated data looks it up in
+// the target's. A skew yields an index that counts documents and matches
+// nothing — and, because an unindexed tag falls back to a scan with predicate
+// post-filtering, one that still returns correct query results.
+//
+// idxTermDocCount reports how many live documents in the element index at
+// idxPath carry term under that rule. It reads the on-disk segment directly via
+// the public native read-only API, so it asserts on what the migration
+// actually produced rather than on how the query planner chose to serve the
+// request.
+func idxTermDocCount(ctx context.Context, idxPath string, ruleID uint32, term string) (int, error) {
+	generation, err := native.OpenReadOnlyGeneration(idxPath)
+	if err != nil {
+		return 0, fmt.Errorf("open element index %s: %w", idxPath, err)
+	}
+	fieldName := index.FieldKey{IndexRuleID: ruleID}.Marshal()
+	selection := native.TermSelection{Field: fieldName, Terms: [][]byte{[]byte(term)}}
+	count := 0
+	if visitErr := generation.VisitSelectedDocuments(ctx, selection, func(native.StoredDocument) error {
+		count++
+		return nil
+	}); visitErr != nil {
+		return 0, fmt.Errorf("visit element index %s term %q: %w", idxPath, term, visitErr)
+	}
+	return count, nil
+}
+
+// idxPathsUnder lists every element-index directory beneath root.
+func idxPathsUnder(root string) []string {
+	var out []string
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && d.IsDir() && filepath.Base(path) == "idx" {
+			out = append(out, path)
+		}
+		return nil
+	})
+	return out
+}
 
 func verifyLifecycleStages(sc helpers.SharedContext, verifyFn func(gomega.Gomega, helpers.SharedContext, helpers.Args), args helpers.Args) {
 	// Initial verification expecting error before migration
@@ -1274,6 +1321,52 @@ var _ = ginkgo.Describe("Stream cross-segment migration", ginkgo.Ordered, func()
 			}, flags.EventuallyTimeout).Should(gomega.Succeed())
 			return resp.Elements
 		}
+		// runStreamFilterQuery is runStreamQuery plus an inverted-index filter on
+		// business_id, so it can only return rows by going through the element
+		// index (idx/) of the warm tier. Q1-Q4 above pass no Criteria, which means
+		// block_scanner.search returns before tw.Index().Search — the unfiltered
+		// assertions never read a migrated index segment.
+		runStreamFilterQuery := func(start, end time.Time, bizID string, wantCount int) []*streamv1.Element {
+			req := &streamv1.QueryRequest{
+				Groups: []string{streamGroup},
+				Name:   streamResource,
+				TimeRange: &modelv1.TimeRange{
+					Begin: timestamppb.New(start),
+					End:   timestamppb.New(end),
+				},
+				Projection: &modelv1.TagProjection{
+					TagFamilies: []*modelv1.TagProjection_TagFamily{
+						{Name: "searchable", Tags: []string{"business_id", "entity_id"}},
+					},
+				},
+				Criteria: &modelv1.Criteria{
+					Exp: &modelv1.Criteria_Condition{
+						Condition: &modelv1.Condition{
+							Name:  "business_id",
+							Op:    modelv1.Condition_BINARY_OP_EQ,
+							Value: &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: bizID}}},
+						},
+					},
+				},
+				OrderBy: &modelv1.QueryOrder{Sort: modelv1.Sort_SORT_UNSPECIFIED},
+				Stages:  []string{"warm"},
+			}
+			var resp *streamv1.QueryResponse
+			test.EventuallyConsistently(func() error {
+				qCtx, qCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer qCancel()
+				var qErr error
+				resp, qErr = queryClient.Query(qCtx, req)
+				if qErr != nil {
+					return qErr
+				}
+				if len(resp.Elements) != wantCount {
+					return fmt.Errorf("filter %q: want %d elements, got %d", bizID, wantCount, len(resp.Elements))
+				}
+				return nil
+			}, flags.EventuallyTimeout).Should(gomega.Succeed())
+			return resp.Elements
+		}
 		// Stream stores element_id as a derived (hashed) identifier, so we assert
 		// the tag values plus element_id distinctness/consistency rather than the
 		// raw client-supplied string.
@@ -1323,6 +1416,69 @@ var _ = ginkgo.Describe("Stream cross-segment migration", ginkgo.Ordered, func()
 			"Q4 cross-entity same-eID dedup keeps the T_SINGLE (chunk-sync) row")
 		gomega.Expect(q4[0].GetTimestamp().AsTime().UnixMilli()).To(gomega.Equal(singleTargetTS.UnixMilli()),
 			"Q4 survivor carries the T_SINGLE timestamp")
+
+		// ── inverted-index filter over the migrated element index ──────────────
+		// The queries above deliberately pass no Criteria, so they never read a
+		// migrated index segment (block_scanner.search short-circuits when
+		// InvertedFilter is nil). These do, so they are the first assertions in
+		// this suite that can fail because the element index did not migrate.
+		fullRange := func() (time.Time, time.Time) {
+			return singleTargetTS, crossRightTS.Add(time.Millisecond)
+		}
+		// Q5: business_id="biz-shared" was written twice (T_SINGLE chunk-sync +
+		// T_A row-replay) as the SAME logical element. Q1/Q3/Q4 establish it
+		// dedups to one element unfiltered, so a filter must also yield exactly
+		// one. A count of 2 would mean the migrated index holds duplicate
+		// postings that the filter path does not dedup — invisible to every
+		// assertion above, because they never consult the index.
+		qStart, qEnd := fullRange()
+		q5 := runStreamFilterQuery(qStart, qEnd, "biz-shared", 1)
+		gomega.Expect(tagsOf(q5[0])).To(gomega.Equal([2]string{"biz-shared", "ent-1"}),
+			"Q5 inverted filter on the migrated index returns the deduplicated shared-id element")
+		gomega.Expect(q5[0].GetElementId()).To(gomega.Equal(sharedID),
+			"Q5 filter resolves to the same logical element as the unfiltered scan")
+
+		// Q6: the other side of the boundary, written only by row-replay. If the
+		// row-replay route failed to populate the index, this returns 0.
+		q6 := runStreamFilterQuery(qStart, qEnd, "biz-other", 1)
+		gomega.Expect(tagsOf(q6[0])).To(gomega.Equal([2]string{"biz-other", "ent-1"}),
+			"Q6 inverted filter finds the row-replay element in the rebuilt index")
+		gomega.Expect(q6[0].GetElementId()).To(gomega.Equal(otherID),
+			"Q6 filter resolves to the other-id element")
+
+		// Q7: a term with no members must return nothing. Without this, a filter
+		// that silently matched everything (or fell back to an unfiltered scan)
+		// could still satisfy Q5/Q6 on a small fixture.
+		q7 := runStreamFilterQuery(qStart, qEnd, "no-such-business-id", 0)
+		gomega.Expect(q7).To(gomega.BeEmpty(),
+			"Q7 an absent index term must match no element after migration")
+
+		// ── the migrated index itself, read off disk ───────────────────────────
+		// Q5-Q7 assert query RESULTS, which a scan-and-post-filter fallback
+		// reproduces even with no index at all (verified: deleting the index
+		// rule leaves them all passing). So assert the artifact directly — that
+		// the rebuilt/chunk-synced segments actually contain the terms.
+		//
+		// This reads the public native read-only API rather than any query
+		// trace span, so it does not couple the test to internal span naming.
+		idxPaths := idxPathsUnder(destGroupRoot)
+		gomega.Expect(idxPaths).NotTo(gomega.BeEmpty(),
+			"migration must leave at least one element index directory under the warm stage")
+		perTerm := map[string]int{}
+		for _, idxPath := range idxPaths {
+			for _, term := range []string{"biz-shared", "biz-other", "no-such-business-id"} {
+				n, countErr := idxTermDocCount(context.Background(), idxPath, 21, term)
+				gomega.Expect(countErr).NotTo(gomega.HaveOccurred(),
+					"reading term %q from %s", term, idxPath)
+				perTerm[term] += n
+			}
+		}
+		gomega.Expect(perTerm["biz-shared"]).To(gomega.BeNumerically(">", 0),
+			"the migrated index must contain the chunk-sync + row-replay term (biz-shared)")
+		gomega.Expect(perTerm["biz-other"]).To(gomega.BeNumerically(">", 0),
+			"the migrated index must contain the row-replay term (biz-other)")
+		gomega.Expect(perTerm["no-such-business-id"]).To(gomega.Equal(0),
+			"the migrated index must not match a term it never indexed")
 	})
 })
 

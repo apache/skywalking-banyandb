@@ -160,7 +160,7 @@ func traceIDForIndex(traceIdx int) string {
 func traceServiceIDForIndex(traceIdx, traceCount int) string {
 	svcZeroCount := int(float64(traceCount) * traceSvcZeroFraction)
 	if traceIdx < svcZeroCount {
-		return "svc-0"
+		return soakServiceZero
 	}
 	return fmt.Sprintf("svc-%d", 1+(traceIdx-svcZeroCount)%(traceServiceCount-1))
 }
@@ -336,7 +336,9 @@ func traceCreateSchema(
 		BeginAt:  timestamppb.New(time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)),
 		ExpireAt: timestamppb.New(time.Date(2121, 1, 1, 0, 0, 0, 0, time.UTC)),
 	}
-	if _, createErr := bindingClient.Create(ctx, &databasev1.IndexRuleBindingRegistryServiceCreateRequest{IndexRuleBinding: binding}); createErr != nil && !traceAlreadyExists(createErr) {
+	if _, createErr := bindingClient.Create(ctx, &databasev1.IndexRuleBindingRegistryServiceCreateRequest{
+		IndexRuleBinding: binding,
+	}); createErr != nil && !traceAlreadyExists(createErr) {
 		return fmt.Errorf("create trace index rule binding in %s: %w", group, createErr)
 	}
 	return nil

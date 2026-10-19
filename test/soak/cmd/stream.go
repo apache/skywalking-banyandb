@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"sort"
 	"strings"
@@ -79,9 +80,49 @@ const (
 )
 
 // streamCatalogEntry holds one query template from the stream JSON catalog.
+// WindowHours optionally narrows this entry's time range relative to the
+// harness-wide parity lookback.
 type streamCatalogEntry struct {
 	Request *streamv1.QueryRequest
 	ID      string
+	// WindowHours, when > 0, overrides the caller-supplied lookback. The native
+	// time pruner classifies a segment as disjoint/contained/overlap against
+	// the query window, so a catalog whose entries all span the whole fixture
+	// only ever produces "contained" — the disjoint and overlap_trie branches
+	// stay unexercised until at least one entry uses a narrow window.
+	WindowHours float64
+	// window is WindowHours pre-converted and validated at load time; zero means
+	// "inherit the caller's window".
+	window time.Duration
+}
+
+// streamIdxMaxWindowHours bounds a catalog entry's lookback. A year is far more
+// than any soak window and keeps the conversion comfortably inside time.Duration
+// without overflow.
+const streamIdxMaxWindowHours = 24 * 365
+
+// streamIdxWindowDuration validates and converts a catalog entry's windowHours.
+//
+// The float conversion is not safe on its own: a value like 1e-20 truncates to
+// a zero Duration, and anything at or beyond 2^31 hours overflows int64 to
+// MinInt64 — after which `until.Add(-window)` WRAPS and produces a ~292-year
+// lookback instead of the intended one. Both silently query the wrong range, so
+// reject them at load time rather than at query time.
+func streamIdxWindowDuration(hours float64) (time.Duration, error) {
+	if hours == 0 {
+		return 0, nil
+	}
+	if math.IsNaN(hours) || hours < 0 {
+		return 0, fmt.Errorf("windowHours must be non-negative and not NaN (got %v)", hours)
+	}
+	if hours > streamIdxMaxWindowHours {
+		return 0, fmt.Errorf("windowHours %v exceeds the %dh maximum", hours, streamIdxMaxWindowHours)
+	}
+	window := time.Duration(hours * float64(time.Hour))
+	if window <= 0 {
+		return 0, fmt.Errorf("windowHours %v is below the resolution of time.Duration", hours)
+	}
+	return window, nil
 }
 
 // streamBaselineRecord is persisted after stream record-baseline runs. Elements
@@ -114,7 +155,11 @@ func loadStreamCatalog(path string) ([]streamCatalogEntry, error) {
 		if protoErr := protojson.Unmarshal(rawEntry.Request, req); protoErr != nil {
 			return nil, fmt.Errorf("unmarshal stream catalog entry %q: %w", rawEntry.ID, protoErr)
 		}
-		entries = append(entries, streamCatalogEntry{ID: rawEntry.ID, Request: req})
+		window, windowErr := streamIdxWindowDuration(rawEntry.WindowHours)
+		if windowErr != nil {
+			return nil, fmt.Errorf("stream catalog entry %q: %w", rawEntry.ID, windowErr)
+		}
+		entries = append(entries, streamCatalogEntry{ID: rawEntry.ID, Request: req, WindowHours: rawEntry.WindowHours, window: window})
 	}
 	return entries, nil
 }
@@ -122,6 +167,9 @@ func loadStreamCatalog(path string) ([]streamCatalogEntry, error) {
 // buildStreamQueryRequest injects a [until-window, until] TimeRange into a cloned
 // catalog request. The pinned Limit and OrderBy are preserved verbatim.
 func buildStreamQueryRequest(entry streamCatalogEntry, untilMs int64, window time.Duration) *streamv1.QueryRequest {
+	if entry.window > 0 {
+		window = entry.window
+	}
 	untilTime := time.UnixMilli(untilMs)
 	beginTime := untilTime.Add(-window)
 	req, _ := proto.Clone(entry.Request).(*streamv1.QueryRequest)
@@ -153,7 +201,7 @@ func streamIntTagValue(value int64) *modelv1.TagValue {
 func streamServiceIDForIndex(seriesIdx, seriesCount int) string {
 	svcZeroCount := int(float64(seriesCount) * streamSvcZeroFraction)
 	if seriesIdx < svcZeroCount {
-		return "svc-0"
+		return soakServiceZero
 	}
 	return fmt.Sprintf("svc-%d", seriesIdx)
 }
@@ -237,7 +285,9 @@ func streamCreateSchema(
 		BeginAt:  timestamppb.New(time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)),
 		ExpireAt: timestamppb.New(time.Date(2121, 1, 1, 0, 0, 0, 0, time.UTC)),
 	}
-	if _, createErr := bindingClient.Create(ctx, &databasev1.IndexRuleBindingRegistryServiceCreateRequest{IndexRuleBinding: binding}); createErr != nil && !streamAlreadyExists(createErr) {
+	if _, createErr := bindingClient.Create(ctx, &databasev1.IndexRuleBindingRegistryServiceCreateRequest{
+		IndexRuleBinding: binding,
+	}); createErr != nil && !streamAlreadyExists(createErr) {
 		return fmt.Errorf("create stream index rule binding in %s: %w", group, createErr)
 	}
 	return nil
