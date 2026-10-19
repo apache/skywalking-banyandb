@@ -115,8 +115,8 @@ func resolveMeasureAggregate(aggregate *GrammarAggregateFunction, typeSpec *stri
 		}
 		typeSpec = aggregate.TypeSpec
 	}
-	if aggregate.Distinct {
-		return call, output, fmt.Errorf("extended COUNT(DISTINCT) is not supported; existing native routing and stage restrictions still apply")
+	if aggregate.Distinct && !strings.EqualFold(aggregate.Function, "COUNT") {
+		return call, output, fmt.Errorf("DISTINCT is only supported with COUNT")
 	}
 	name, err := aggregate.Column.ToString(true)
 	if err != nil {
@@ -130,20 +130,27 @@ func resolveMeasureAggregate(aggregate *GrammarAggregateFunction, typeSpec *stri
 	if err != nil {
 		return call, output, err
 	}
-	if !scalarAggregateType(source.Type) || function != ql.AggregateCount &&
+	if aggregate.Distinct {
+		function = ql.AggregateCountDistinct
+	}
+	if !scalarAggregateType(source.Type) || function != ql.AggregateCount && function != ql.AggregateCountDistinct &&
 		source.Type != vectorized.ColumnTypeInt64 && source.Type != vectorized.ColumnTypeFloat64 {
 		return call, output, fmt.Errorf("%s does not support column %q of type %s", aggregate.Function, name, source.Type)
 	}
 	valueType := source.Type
 	switch function {
-	case ql.AggregateCount:
+	case ql.AggregateCount, ql.AggregateCountDistinct:
 		valueType = vectorized.ColumnTypeInt64
 	case ql.AggregateAvg:
 		valueType = vectorized.ColumnTypeFloat64
 	default:
 	}
 	call = ql.AggregateCall{Source: source, Function: function}
-	output = vectorized.ColumnDef{Name: strings.ToUpper(aggregate.Function) + "(" + name + ")", Role: vectorized.RoleField, Type: valueType}
+	argument := name
+	if aggregate.Distinct {
+		argument = "DISTINCT " + argument
+	}
+	output = vectorized.ColumnDef{Name: strings.ToUpper(aggregate.Function) + "(" + argument + ")", Role: vectorized.RoleField, Type: valueType}
 	return call, output, nil
 }
 

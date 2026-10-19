@@ -781,3 +781,70 @@ counts, verification RPC counts (259 per complete topology), readiness page coun
 readiness RPCs, and the fixture digest. `make check-ql-test-cases` verifies the
 exact generated artifact; the grammar fingerprint is updated only after the
 ORDER BY grammar source freezes and its coverage inventory is audited.
+
+### Composable count-distinct coverage
+
+The aggregate model also generates `COUNT(DISTINCT column)` alongside ordinary
+aggregates. Its independent oracle excludes null values, counts an empty string
+as a value, and deduplicates typed fixture values before counting. Scalar and
+grouped cases cover multiple distinct aggregates, aliases, changed time bindings,
+and empty input. Ordered cases compose distinct counts with `SUM`, `HAVING`,
+multiple grouping keys, and deterministic tie-breaking. A 1,153-group fixture
+checks a seven-row page at offset 1,100 after complete aggregation and ordering,
+projecting `rid`, `COUNT(DISTINCT rid)`, and `SUM(v)`. Multiple grouping keys are
+covered separately in the six-row fixture. This keeps the large-page correctness
+case within the native input budget: on a host without a cgroup memory limit,
+the default query allowance is 8 MiB. The wider three-tag version exceeds that
+allowance even with ordinary `COUNT`, independently of count-distinct state.
+Every scenario runs through the QL endpoint with cold, warm, and bypassed plan
+caches in both integration topologies.
+
+### Parent and child query shapes
+
+`parent_child_fixture.go` and `parent_child_generate.go` add nine neutral generated
+scenarios to the same artifact. One measure has parent-qualified child entities
+and two time buckets: parent a has three distinct children and sum 42, b has two
+and sum 17, and c has one and sum 4. Repeated a/child1 contributes to the sum in
+both buckets while contributing once to its distinct count. The independent
+oracle groups and sums all input before applying pagination. Literal unit checks
+pin those results, active-parent count 3, idle scalar zero, and exact boundaries.
+
+The cohort preserves the legacy scalar and TOP 500 statement shapes and adds
+extended count-plus-sum ordering and scalar parent counting. Legacy TIME BETWEEN
+explicitly includes a row exactly at its upper millisecond; extended >=/< windows
+exclude that boundary. Legacy TOP verifies order when ranks are unique. Extended
+ordering uses service_id as a deterministic tie break. A separate 137-parent
+fixture reuses the local /child suffix under distinct qualified entity IDs. Its
+global distinct child count is 137; tied middle and last pages contain parents
+100–106 and 133–136. Fixture projections remain narrow under the native budget.
+Every scenario changes bindings on the same statement and repeats with the plan
+cache bypassed. Setup writes through the measure API and establishes visibility
+through QL alone. No native query provides readiness or expected results.
+
+```sh
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/standalone/query \
+  -ginkgo.label-filter='measure-ql && QL-parent-child' -ginkgo.fail-on-empty
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/query \
+  -ginkgo.label-filter='measure-ql && QL-parent-child' -ginkgo.fail-on-empty
+```
+
+`parent_child_legacy_scalar` and `parent_child_global_children` require one
+integer-zero row for idle scalar input. The QL response boundary supplies that
+row after successful empty native execution; grouped empty results remain empty.
+The extended scalar alias in `parent_child_parent_total` independently exercises
+the local aggregate's zero result. `parent_child_scalar_pages` verifies that
+LIMIT 1 retains the zero row, LIMIT 0 suppresses even a nonempty scalar count,
+and OFFSET 1 suppresses the idle scalar row. The native protobuf query API is unchanged.
+
+The 137-parent fixture uses indexed QL readiness pages of at most 32 identities.
+On a host without a cgroup memory limit, its full grouped count-plus-sum query
+exceeds the default 8 MiB native query allowance. Verification also runs in the
+standard four-CPU, 8 GiB container with no additional swap. Its unchanged default
+protector recognizes the cgroup limit and uses 75% of it; no protector flags or
+tracker budgets are overridden. The full 137-parent query succeeds there. The
+idle scalar cases retain their integer-zero expectations.
+
+After the empty-scalar correction, both container selections pass all nine specs,
+including cached and bypassed executions with changed bindings. The final reports
+are `/mnt/d/qlb-empty-scalar-standalone-report.json` and
+`/mnt/d/qlb-empty-scalar-distributed-report.json`.

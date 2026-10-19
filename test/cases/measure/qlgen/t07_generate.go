@@ -105,6 +105,15 @@ func generateT07(b *suiteBuilder) ([]AggregateFixture, []AggregateScenario, erro
 	}, "t07.typed_keys")
 	add("hidden_group_key", t07Query{Columns: []t07Column{{Function: "COUNT", Target: "v", Alias: "c"}}, GroupBy: []string{"zone"}},
 		"t07.typed_keys", "t07.hidden_slots")
+	distinctColumns := []t07Column{
+		{Function: "COUNT", Target: "zone", Alias: "unique_zones", Distinct: true},
+		{Function: "COUNT", Target: "host", Alias: "unique_hosts", Distinct: true},
+		{Function: "SUM", Target: "v", Alias: "total"},
+	}
+	add("count_distinct_scalar", t07Query{Columns: distinctColumns}, "count_distinct.scalar", "count_distinct.null_empty", "count_distinct.multiple")
+	add("count_distinct_grouped", t07Query{
+		Columns: append([]t07Column{{Target: "host", Alias: "node"}, {Target: "zone"}}, distinctColumns...), GroupBy: []string{"host", "zone"},
+	}, "count_distinct.grouped", "count_distinct.multiple", "count_distinct.multikey")
 	add("count_tags", t07Query{Columns: []t07Column{
 		{Function: "COUNT", Target: "host", Alias: "hosts"},
 		{Function: "COUNT", Target: "zone", Alias: "zones"},
@@ -148,7 +157,7 @@ func generateT07Rejections(b *suiteBuilder) []Case {
 	prefix := "SELECT "
 	source := " FROM " + FixtureGroup + "." + T07FixtureName
 	for index, shape := range []struct{ projection, suffix string }{
-		{"COUNT(DISTINCT v) AS c", ""},
+		{"SUM(DISTINCT v) AS c", ""},
 		{"host, SUM(v) AS s", ""},
 		{"zone, SUM(v) AS s", " GROUP BY host"},
 		{"SUM(v) AS same, AVG(f) AS same", ""},

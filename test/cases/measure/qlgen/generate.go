@@ -115,7 +115,12 @@ func Generate() (Suite, error) {
 	if reuseReadinessErr != nil {
 		return Suite{}, reuseReadinessErr
 	}
+	parentChildReadiness, parentChildScenarios, parentChildErr := generateParentChild()
+	if parentChildErr != nil {
+		return Suite{}, parentChildErr
+	}
 	suite := Suite{
+		ParentChildReadiness: parentChildReadiness, ParentChildScenarios: parentChildScenarios,
 		SortingReadiness: sortingReadiness, SortingScenarios: sortingScenarios, SortingRejections: sortingRejections, SortingResources: sortingResources,
 		GroupingReadiness: groupingReadiness, GroupingScenarios: groupingScenarios, GroupingRejections: groupingRejections,
 		DistinctReadiness: distinctReadiness, DistinctScenarios: distinctScenarios, DistinctRejections: distinctRejections,

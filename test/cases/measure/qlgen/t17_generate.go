@@ -221,6 +221,29 @@ func generateT17(b *suiteBuilder) ([]AggregateFixture, []SortingScenario, []Case
 	distinctWhere.Keys = hiddenWhere.Keys[:1]
 	distinctWhere.Distinct, distinctWhere.Limit = true, t17Limit(1)
 	add("hidden_where_distinct", distinctWhere, thresholds, sameWindows, "t17.hidden_where.distinct", "t17.distinct")
+	distinctCount := countDistinctExpression("zone")
+	countQuery := t17Query{t16Query: t16Query{
+		Columns: []t10Column{{Expr: t10Source("host"), Alias: "node"}, t10Field("unique_zones", distinctCount), t10Field("total", t14Aggregate("SUM", "v"))},
+		GroupBy: []*t10Expr{t10Source("host")},
+	}, Keys: []t17Key{
+		{Expr: t17Spelling(distinctCount, "unique_zones"), Direction: "DESC"},
+		{Expr: t17Spelling(t10Source("host"), "node"), Direction: "ASC"},
+	}, Limit: t17Limit(2)}
+	plain("count_distinct_ordered", countQuery, "count_distinct.order", "count_distinct.multiple")
+	countQuery.Having = t10Binary(">=", distinctCount, t10Parameter(0))
+	add("count_distinct_having", countQuery, [][]any{{int64(1)}, {int64(2)}, {int64(3)}}, sameWindows, "count_distinct.having")
+	bulkDistinct := countDistinctExpression("rid")
+	page := t17Query{t16Query: t16Query{
+		Fixture: T16BulkFixtureName,
+		Columns: []t10Column{
+			{Expr: t10Source("rid")},
+			t10Field("unique_ids", bulkDistinct), t10Field("total", t14Aggregate("SUM", "v")),
+		},
+		GroupBy: []*t10Expr{t10Source("rid")},
+	}, Keys: []t17Key{
+		{Expr: t17Spelling(bulkDistinct, "unique_ids"), Direction: "DESC"}, {Expr: t10Source("rid"), Direction: "ASC"},
+	}, Limit: t17Limit(7), Offset: 1100}
+	add("count_distinct_complete_page", page, nil, [][2]int64{{0, 200000}, {1000, 200000}, {200000, 201000}}, "count_distinct.complete_page")
 	rejections := generateT17Rejections(b)
 	resources, resourceErr := generateT17Resources(b, bulk, payload)
 	if resourceErr != nil {
@@ -270,7 +293,8 @@ func requiredT17Scenarios() []string {
         alias_precedence hidden_sort expression_params qualified_refs bare_refs group_sort hidden_group_sort
         parent_filter_having_page case_avg_ordinal distinct_multikey_topk bucket_sort hidden_bucket_sort distinct_bucket_sort
         empty limit_zero wide_exact_integer wide_string wide_float wide_payload_topk large_offset bulk_topk_complete
-        hidden_where_raw hidden_where_computed hidden_where_grouped hidden_where_distinct`)
+        hidden_where_raw hidden_where_computed hidden_where_grouped hidden_where_distinct
+        count_distinct_ordered count_distinct_having count_distinct_complete_page`)
 }
 
 func generateT17Resources(b *suiteBuilder, q t17Query, payload string) ([]SortingResource, error) {

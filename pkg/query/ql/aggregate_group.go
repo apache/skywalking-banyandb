@@ -151,6 +151,33 @@ func (o *aggregateOperator) groupID(values []aggregateValue) (int, error) {
 	return id, nil
 }
 
+// insert retains a complete key only when it is new. Count-distinct prefixes
+// the scalar with its group ID, so identical values in different groups remain independent.
+func (g *aggregateGroups) insert(values []aggregateValue) (bool, error) {
+	if err := g.encode(values); err != nil {
+		return false, err
+	}
+	hash := xxhash.Sum64(g.scratch)
+	_, slot, found := g.lookup(g.scratch, hash)
+	if found {
+		return false, nil
+	}
+	if len(g.keys) == g.capacity {
+		if err := g.grow(nil); err != nil {
+			return false, err
+		}
+		_, slot, _ = g.lookup(g.scratch, hash)
+	}
+	key, err := g.storeKey(g.scratch)
+	if err != nil {
+		return false, err
+	}
+	g.keys = append(g.keys, key)
+	g.index[slot] = uint32(len(g.keys))
+	g.keyBytes += int64(len(g.scratch))
+	return true, nil
+}
+
 func (g *aggregateGroups) lookup(key []byte, hash uint64) (id, slot int, found bool) {
 	if len(g.index) == 0 {
 		return 0, 0, false
@@ -187,14 +214,17 @@ func groupAllocationBytes(bytes int64) (int64, error) {
 }
 
 func (o *aggregateOperator) growGroups() error {
-	g := &o.groups
+	return o.groups.grow(o.states)
+}
+
+func (g *aggregateGroups) grow(states []aggregateState) error {
 	if g.capacity > math.MaxUint32/2 || g.capacity > math.MaxInt/4 {
 		return fmt.Errorf("%w: aggregate group count exceeds supported index size", vectorized.ErrMemoryBudgetExceeded)
 	}
 	capacity := max(1, g.capacity*2)
 	var lanes int64
-	for index := range o.states {
-		lanes += int64(o.states[index].lanes())
+	for index := range states {
+		lanes += int64(states[index].lanes())
 	}
 	// A 12-byte arena reference and two 4-byte index slots per possible group keep
 	// the open-addressed index at most half full. The old table and states stay
@@ -206,9 +236,10 @@ func (o *aggregateOperator) growGroups() error {
 	}
 	newTableBytes := int64(capacity)*tableSlotBytes + 8
 	newStateBytes := int64(capacity) * lanes * 8
-	if err := o.reserve(newTableBytes + newStateBytes); err != nil {
+	if err := g.tracker.Reserve(newTableBytes + newStateBytes); err != nil {
 		return err
 	}
+	g.metrics.reserve(newTableBytes + newStateBytes)
 	keys := make([]groupKey, len(g.keys), capacity)
 	copy(keys, g.keys)
 	index := make([]uint32, capacity*2)
@@ -220,10 +251,12 @@ func (o *aggregateOperator) growGroups() error {
 		}
 		index[position] = uint32(id) + 1
 	}
-	for index := range o.states {
-		o.states[index].grow(capacity)
+	for index := range states {
+		states[index].grow(capacity)
 	}
-	o.release(g.tableBytes + int64(g.capacity)*lanes*8)
+	oldBytes := g.tableBytes + int64(g.capacity)*lanes*8
+	g.tracker.Release(oldBytes)
+	g.metrics.release(oldBytes)
 	g.index, g.keys, g.capacity, g.tableBytes = index, keys, capacity, newTableBytes
 	return nil
 }
