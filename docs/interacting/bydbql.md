@@ -363,7 +363,6 @@ LIMIT 100;
 -- Complex query with MATCH and time range
 SELECT trace_id, operation_name, http_status
 FROM TRACE sw_trace in group1
-TIME > '-30m'
 TIME BETWEEN '-1h' AND 'now'
 WHERE service_id IN ('api-gateway', 'auth-service')
   AND http_status > 400
@@ -395,7 +394,7 @@ BydbQL for streams is designed for querying and retrieving raw time-series eleme
 ### 4.1. Grammar
 
 ```
-query           ::= SELECT projection from_stream_clause TIME time_condition [WHERE criteria] [ORDER BY order_expression] [LIMIT integer] [OFFSET integer] [WITH QUERY_TRACE]
+query           ::= SELECT projection from_stream_clause TIME time_condition [WHERE criteria] [ORDER BY order_expression] [WITH QUERY_TRACE] [LIMIT integer] [OFFSET integer]
 from_stream_clause ::= "FROM STREAM" identifier "IN" ["("] group_list [")"] [ON ["("] stage_list [")"] STAGES]
 projection      ::= "*" | column_list
 column_list     ::= identifier ("," identifier)*
@@ -467,7 +466,6 @@ WHERE service_id IN ('webapp', 'api-gateway') OR http.method = 'POST';
 -- Query with time range using TIME clause
 SELECT trace_id, service_id, start_time
 FROM STREAM sw IN group1, group2
-TIME > '-30m'
 TIME BETWEEN '2023-01-01T00:00:00Z' AND '2023-01-02T00:00:00Z'
 WHERE service_id = 'webapp'
 ORDER BY start_time DESC;
@@ -531,7 +529,7 @@ BydbQL for measures is tailored for analytical queries on aggregated numerical d
 ### 5.1. Grammar
 
 ```
-measure_query     ::= SELECT projection from_measure_clause TIME time_condition [WHERE criteria] [GROUP BY group_list] [ORDER BY order_expression] [LIMIT integer] [OFFSET integer] [WITH QUERY_TRACE]
+measure_query     ::= SELECT projection from_measure_clause TIME time_condition [WHERE criteria] [GROUP BY group_list] [ORDER BY order_expression] [WITH QUERY_TRACE] [LIMIT integer] [OFFSET integer]
 from_measure_clause ::= "FROM MEASURE" identifier "IN" ["("] group_list_id [")"] [ON ["("] stage_list [")"] STAGES]
 projection        ::= "*" | (column_list | agg_function "(" ["DISTINCT"] identifier ")" | top_clause)
 top_clause        ::= "TOP" integer identifier ["ASC" | "DESC"] ["," column_list]
@@ -654,8 +652,7 @@ SELECT
 FROM MEASURE system_metrics IN us-west
 TIME > '2023-01-01T08:00:00Z'
 WHERE datacenter = 'dc-1'
-GROUP BY instance
-ORDER BY MAX(cpu_usage) DESC;
+GROUP BY instance;
 
 -- Query measures at exact timestamp
 SELECT
@@ -682,8 +679,7 @@ SELECT
 FROM MEASURE system_metrics IN us-west
 TIME BETWEEN '-2h' AND 'now'
 WHERE datacenter = 'dc-1'
-GROUP BY instance
-ORDER BY MAX(cpu_usage) DESC;
+GROUP BY instance;
 
 -- Query data older than 1 day ago
 SELECT
@@ -737,7 +733,7 @@ Top-N queries use a specialized, command-like syntax for clarity and to reflect 
 ### 6.1. Grammar
 
 ```
-topn_query         ::= SHOW TOP integer from_measure_clause TIME time_condition [WHERE topn_criteria] [AGGREGATE BY agg_function] [ORDER BY value ["ASC"|"DESC"]] [WITH QUERY_TRACE]
+topn_query         ::= SHOW TOP integer from_measure_clause TIME time_condition [WHERE topn_criteria] [AGGREGATE BY agg_function] [ORDER BY ["ASC"|"DESC"]] [WITH QUERY_TRACE]
 from_measure_clause ::= "FROM MEASURE" identifier "IN" ["("] group_list [")"] [ON ["("] stage_list [")"] STAGES]
 topn_criteria      ::= condition (("AND" | "OR") condition)*
 condition          ::= identifier binary_op (value | value_list)
@@ -774,7 +770,7 @@ integer_literal    ::= [0-9]+
   - **`TIME BETWEEN '-1h' AND 'now'`**: Sets `begin` to 1 hour ago and `end` to current time.
 - **`WHERE tag = 'value'`**: Maps to `conditions`. Only simple equality is supported.
 - **`AGGREGATE BY FUNC`**: Maps to `agg`.
-- **`ORDER BY value DESC`**: Maps to `field_value_sort`.
+- **`ORDER BY DESC`**: Maps to `field_value_sort`.
 - **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
 
 ### 6.3. Examples
@@ -785,13 +781,13 @@ SHOW TOP 10
 FROM MEASURE service_latency IN production
 TIME > '-30m'
 WHERE http_method = 'GET' AND version = 'v1.2.0'
-ORDER BY value DESC;
+ORDER BY DESC;
 
 -- Get the Bottom 5 services with the fewest errors
 SHOW TOP 5
 FROM MEASURE service_errors_total IN production
 TIME > '-30m'
-ORDER BY value ASC;
+ORDER BY ASC;
 
 -- Get the Top 3 pods with the most restarts in total over the time range
 SHOW TOP 3
@@ -804,53 +800,53 @@ AGGREGATE BY SUM;
 SHOW TOP 5
 FROM MEASURE service_errors IN production, staging
 TIME > '-30m'
-ORDER BY value DESC;
+ORDER BY DESC;
 
 -- Get the Top 10 services with highest latency in the last hour
 SHOW TOP 10
 FROM MEASURE service_latency IN production
 TIME > '2023-01-01T13:00:00Z'
-ORDER BY value DESC;
+ORDER BY DESC;
 
 -- Get the Top 5 endpoints with most errors in a specific time range
 SHOW TOP 5
 FROM MEASURE endpoint_errors IN production
 TIME BETWEEN '2023-01-01T00:00:00Z' AND '2023-01-02T00:00:00Z'
 WHERE status_code = '500'
-ORDER BY value DESC;
+ORDER BY DESC;
 
 -- Get the Top 10 services with highest latency in the last hour
 SHOW TOP 10
 FROM MEASURE service_latency IN production
 TIME > '-1h'
-ORDER BY value DESC;
+ORDER BY DESC;
 
 -- Get the Top 5 endpoints with most errors in the last 24 hours
 SHOW TOP 5
 FROM MEASURE endpoint_errors IN production
 TIME BETWEEN '-24h' AND 'now'
 WHERE status_code = '500'
-ORDER BY value DESC;
+ORDER BY DESC;
 
 -- Get the Top 3 services with lowest response time in the last 30 minutes
 SHOW TOP 3
 FROM MEASURE service_response_time IN production
 TIME > '-30m'
-ORDER BY value ASC;
+ORDER BY ASC;
 
 -- Top-N query with distributed tracing enabled
 SHOW TOP 10
 FROM MEASURE service_latency IN production
 TIME > '-1h'
 WHERE http_method = 'GET'
-ORDER BY value DESC
+ORDER BY DESC
 WITH QUERY_TRACE;
 
 -- Top-N query with lifecycle stages
 SHOW TOP 10
 FROM MEASURE service_latency IN production ON warn, cold STAGES
 TIME > '-30m'
-ORDER BY value DESC;
+ORDER BY DESC;
 ```
 
 ## 7. BydbQL for Properties
@@ -862,7 +858,7 @@ BydbQL for properties is designed for simple key-value lookups and metadata filt
 ### 7.1. Grammar
 
 ```
-property_query      ::= SELECT projection from_property_clause [WHERE criteria] [LIMIT integer] [ORDER BY value ["ASC"|"DESC"]] [WITH QUERY_TRACE]
+property_query      ::= SELECT projection from_property_clause [WHERE criteria] [ORDER BY identifier ["ASC"|"DESC"]] [WITH QUERY_TRACE] [LIMIT integer]
 from_property_clause ::= "FROM PROPERTY" identifier "IN" ["("] group_list [")"]
 projection          ::= "*" | column_list
 column_list         ::= identifier ("," identifier)*
@@ -885,6 +881,7 @@ integer_literal     ::= [0-9]+
 - **`SELECT tags`**: Maps to `tag_projection`.
 - **`WHERE ID IN (...)`**: Maps to `ids`.
 - **`WHERE tag = 'value'`**: Maps to `criteria`.
+- **`ORDER BY tag [ASC|DESC]`**: Maps to `order_by`.
 - **`LIMIT n`**: Maps to `limit`.
 - **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
 
@@ -901,8 +898,8 @@ LIMIT 50;
 SELECT ip, owner
 FROM PROPERTY server_metadata IN datacenter-1
 WHERE datacenter = 'dc-101' AND in_service = 'true'
-LIMIT 50
-ORDER BY ip;
+ORDER BY ip
+LIMIT 50;
 
 -- Find properties and sort by an integer tag
 SELECT ip, owner, priority
@@ -931,8 +928,8 @@ LIMIT 100;
 SELECT ip, region, owner
 FROM PROPERTY server_metadata IN datacenter-1
 WHERE datacenter = 'dc-101' AND in_service = 'true'
-LIMIT 50
-WITH QUERY_TRACE;
+WITH QUERY_TRACE
+LIMIT 50;
 ```
 
 ## 8. BydbQL for Traces
@@ -942,7 +939,7 @@ BydbQL for traces is designed for querying and retrieving trace data with spans.
 ### 8.1. Grammar
 
 ```
-trace_query           ::= SELECT projection from_trace_clause TIME time_condition [WHERE criteria] [ORDER BY order_expression] [LIMIT integer] [OFFSET integer] [WITH QUERY_TRACE]
+trace_query           ::= SELECT projection from_trace_clause TIME time_condition [WHERE criteria] [ORDER BY order_expression] [WITH QUERY_TRACE] [LIMIT integer] [OFFSET integer]
 from_trace_clause     ::= "FROM TRACE" identifier "IN" ["("] group_list [")"] [ON ["("] stage_list [")"] STAGES]
 projection            ::= "*" | column_list | "()"
 column_list           ::= identifier ("," identifier)*
@@ -1147,5 +1144,5 @@ LIMIT 100;
 | **Aggregation**     | No                                              | Yes (`SUM`, `MEAN`, etc.)                       | Yes (optional)                                  | No                                              | No                                              |
 | **Grouping**        | No                                              | Yes (`GROUP BY`)                                | No                                              | No                                              | No                                              |
 | **Filtering**       | Full `WHERE` clause                             | Full `WHERE` clause                             | Simple equality `WHERE`                         | `WHERE` by ID or tags                           | Full `WHERE` clause                             |
-| **Ordering**        | Yes (`ORDER BY`)                                | Yes (`ORDER BY`)                                | Yes (`ORDER BY value`)                          | No                                              | Yes (`ORDER BY`)                                |
+| **Ordering**        | Yes (`ORDER BY`)                                | Yes (`ORDER BY`)                                | Yes (`ORDER BY ASC/DESC`)                       | Yes (`ORDER BY tag`)                            | Yes (`ORDER BY`)                                |
 | **Pagination**      | Yes (`LIMIT`/`OFFSET`)                          | Yes (`LIMIT`/`OFFSET`)                          | No                                              | `LIMIT` only                                    | Yes (`LIMIT`/`OFFSET`)                          |
