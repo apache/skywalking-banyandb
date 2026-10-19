@@ -865,7 +865,7 @@ show lower planning time and allocations but no established RPC latency gain.
 
 ### 5.8. Extended measure aggregation
 
-Measure queries support multiple `COUNT`, `SUM`, `MIN`, `MAX`, `AVG`, and `MEAN` outputs over named columns. Aggregation uses this extended behavior when the query has multiple aggregate calls, source shorthand, an alias, or a time/field expression in `WHERE`. Existing single-aggregate queries using `FROM MEASURE ... IN ...` without these extensions keep their native behavior, including legacy `MEAN`/`AVG` results and count-distinct restrictions.
+Measure queries support multiple `COUNT`, `COUNT(DISTINCT ...)`, `SUM`, `MIN`, `MAX`, `AVG`, and `MEAN` outputs over named columns. Aggregation uses this extended behavior when the query has multiple aggregate calls, source shorthand, an alias, or a time/field expression in `WHERE`. Existing single-aggregate queries using `FROM MEASURE ... IN ...` without these extensions keep their native behavior, including legacy `MEAN`/`AVG` results and count-distinct restrictions.
 
 ```sql
 SELECT host AS node, COUNT(value) AS samples, SUM(value) AS total,
@@ -880,6 +880,8 @@ All aggregate calls use the complete, deduplicated input after the time, tag and
 The extended aggregate rules are:
 
 - `COUNT(column)` counts non-null values and returns an exact int64, including for floating-point inputs. It accepts scalar tags and fields.
+- `COUNT(DISTINCT column)` counts exact distinct non-null scalar values within each group or the complete scalar input. It returns int64, including zero for empty scalar input. Repeated values across input batches are counted once; empty strings remain values. It composes with other aggregates, aliases, HAVING, multiple grouping keys, ORDER BY and final pagination.
+- Legacy scalar `COUNT(DISTINCT column)` also returns one zero row for an empty time window or no matching input. Grouped empty input returns no rows; final `LIMIT 0` or an offset past the scalar row returns no rows.
 - `SUM`, `MIN`, and `MAX` accept numeric columns and preserve int64 or float64 values. Integer SUM overflow fails the query.
 - `AVG` and `MEAN` return float64 sum divided by non-null count. Fractional and sub-one averages are preserved; shard populations contribute their values and counts before finalization.
 - Scalar empty input returns one row: COUNT is zero, and the other aggregates are null. Grouped empty input returns no rows. All-null groups also have COUNT zero and null SUM/MIN/MAX/AVG.
@@ -892,7 +894,21 @@ FROM MEASURE service_cpm IN metrics
 WHERE time >= ? AND time < ?
 ```
 
-Extended aggregate queries currently reject COUNT(DISTINCT), TOP and array grouping. The existing legacy native forms of these supported operations remain available. HAVING and ORDER BY support grouped keys and named aggregate calls, including calls absent from SELECT. Computed grouping, ordinal references and selectable TIME_BUCKET values are described in section 5.11. Aggregate arguments must still be named columns.
+Extended aggregate queries reject TOP and array grouping. Existing legacy native forms remain available. HAVING and ORDER BY support grouped keys and named aggregate calls, including calls absent from SELECT. Computed grouping, ordinal references and selectable TIME_BUCKET values are described in section 5.11. Aggregate arguments must still be named columns.
+
+Extended count-distinct queries consume the complete deduplicated raw input; they do not sum potentially overlapping native distinct counts. Distinct state uses the shared query memory tracker and the existing compact grouping-key storage. NULLs are excluded, signed floating zeros compare equal, and NaN representations share a distinct key. Exhausting the budget fails the entire query with `ResourceExhausted`; disk spilling is not implemented. A small final LIMIT does not bound the input scan or the distinct state. Existing single-aggregate native queries retain their routing/stage restrictions and legacy pagination defaults.
+
+```sql
+SELECT service_id, COUNT(DISTINCT entity_id) AS unique_users,
+       SUM(value::FIELD) AS requests
+FROM MEASURE request_user_cpm IN metrics
+TIME BETWEEN ? AND ?
+GROUP BY service_id
+ORDER BY unique_users DESC, service_id ASC
+LIMIT ? OFFSET ?
+```
+
+The secondary key gives deterministic ordering for a fixed input. Separate page requests do not share a snapshot; retained-result sessions remain deferred. Aggregate arguments remain named columns: computed arguments such as `COUNT(DISTINCT CASE ... END)` are not supported.
 
 #### Native aggregate execution
 
@@ -940,7 +956,7 @@ Ordinary arithmetic and comparisons propagate null. A nonempty IN list with no m
 
 Computed int/double/string/bytes outputs become named fields. Computed timestamps and integer/string arrays use existing TagValue variants in the `__ql` family. An unnamed computed expression is `expr_1`, `expr_2`, etc., by its SELECT position; aliases are recommended. Direct columns retain their existing containers. All DataPoints retain their raw timestamp/SID/version, and hidden expression inputs are omitted. Duplicate names within a container are rejected.
 
-SELECT expressions apply to raw measure queries and to computed grouping keys described in section 5.11. A grouped SELECT expression must match a grouping key; arbitrary expressions over aggregate results and expressions as aggregate arguments are unsupported. Combining computed SELECT outputs with SELECT TOP is rejected. The same expression evaluator supports raw-input WHERE and post-aggregation HAVING, as described below. General ordering by computed aliases remains planned. Query memory limits still apply; disk spilling is not implemented.
+SELECT expressions apply to raw measure queries and to computed grouping keys described in section 5.11. A grouped SELECT expression must match a grouping key; arbitrary expressions over aggregate results and expressions as aggregate arguments are unsupported. Combining computed SELECT outputs with SELECT TOP is rejected. The same expression evaluator supports raw-input WHERE and post-aggregation HAVING, as described below. General ordering by computed aliases is described in section 5.12. Query memory limits still apply; disk spilling is not implemented.
 
 ### 5.10. Field and expression filters
 
@@ -1015,7 +1031,7 @@ WHERE time >= ? AND time < ?
 
 DISTINCT runs after raw filtering, aggregation, HAVING and visible projection, and before final OFFSET/LIMIT. Projected arithmetic, casts and CASE expressions use their evaluated values as keys. Hidden calls used only by HAVING are removed before deduplication. Omitting LIMIT does not impose the native default of 100 rows; LIMIT 0 skips data execution.
 
-Integer, double, string, binary and timestamp values can be keys. NULL values compare equal for deduplication, but remain distinct from zero, an empty string or empty bytes. Positive and negative floating zero share a key, and all NaN representations share a key. Array keys are rejected during binding, including arrays selected by `*`. SELECT DISTINCT cannot be combined with SELECT TOP. It does not change the existing restrictions on COUNT(DISTINCT).
+Integer, double, string, binary and timestamp values can be keys. NULL values compare equal for deduplication, but remain distinct from zero, an empty string or empty bytes. Positive and negative floating zero share a key, and all NaN representations share a key. Array keys are rejected during binding, including arrays selected by `*`. SELECT DISTINCT cannot be combined with SELECT TOP. It is separate from COUNT(DISTINCT), whose extended behavior is described in section 5.6.
 
 Without ORDER BY, result order is unspecified. With DISTINCT, each ORDER BY expression must be derivable from visible output values. Visible aliases, selected computed expressions and selected aggregate calls are supported; hidden source columns, grouped keys or aggregate calls are rejected. See section 5.12.
 

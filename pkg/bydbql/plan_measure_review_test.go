@@ -97,5 +97,5 @@ func TestMeasureHavingDistinctUsesTheSelectAggregateRules(t *testing.T) {
 	statement, err := bydbql.Prepare("SELECT host FROM g.m GROUP BY host HAVING COUNT(DISTINCT v)>0")
 	require.NoError(t, err)
 	_, err = typedTransformer().CompileMeasure(context.Background(), statement)
-	require.ErrorContains(t, err, "extended COUNT(DISTINCT) is not supported")
+	require.NoError(t, err)
 }

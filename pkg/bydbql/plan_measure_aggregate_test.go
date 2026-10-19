@@ -70,8 +70,6 @@ func TestMeasureSQLAggregateRejectsUnsupportedShapesBeforeScan(t *testing.T) {
 		"SELECT host, SUM(v) AS s FROM g.m GROUP BY rid",
 		"SELECT SUM(host) FROM g.m",
 		"SELECT MIN(host) FROM g.m",
-		"SELECT COUNT(DISTINCT host) FROM g.m",
-		"SELECT COUNT(DISTINCT v) AS c FROM MEASURE m IN g ON (warm,cold) STAGES",
 		"SELECT SUM(v) AS x, COUNT(v) AS x FROM g.m",
 		"SELECT SUM(v), SUM(v) FROM g.m",
 		"SELECT COUNT(clash) FROM g.m",

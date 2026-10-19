@@ -191,6 +191,7 @@ func RegisterGeneratedQLTable(description string) bool {
 		registerGeneratedQLDistinctScenarios(suite, &base)
 		registerGeneratedQLGroupingScenarios(suite, &base)
 		registerGeneratedQLSortingScenarios(suite, &base)
+		registerGeneratedQLParentChildScenarios(suite, &base)
 		registerGeneratedQLLegacyCompatibility(suite, &base)
 	})
 }

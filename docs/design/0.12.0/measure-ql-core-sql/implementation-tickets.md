@@ -415,8 +415,9 @@ COUNT finalization, sharing state with matching output calls; never native MEAN.
 Introduce the shared typed/null-aware group codec and dense group-ID state arrays
 through this real caller. Scalar empty COUNT is int64 zero, other aggregates null;
 grouped empty input has no groups. Native scan deduplication happens before local
-aggregation. Preserve existing count-distinct/stage restrictions; do not silently
-admit additional COUNT(DISTINCT) shapes.
+aggregation. The original T07 scope preserved count-distinct/stage restrictions.
+The [DPO #81 follow-up](#dpo-81-count-distinct-composition-follow-up) explicitly
+adds local count-distinct composition while preserving native pushdown restrictions.
 
 **E2E cases:** `aggregate-F` produces count(v)=4, sum(v)=12, min(v)=0, max(v)=6;
 `nullable-keys` keeps zone NULL and empty string separate; `null-only-and-empty`
@@ -962,3 +963,99 @@ cohort does not fulfill the deferred requirement.
 No benchmark code, memory protection, SQL behavior, protobuf or persisted format
 changes accompany this acceptance revision. Spilling and retained-result session
 pagination remain explicitly deferred. There is no new Catalog B feature ticket.
+
+
+### DPO #81 count-distinct composition follow-up
+
+The existing native count-distinct operation now composes through the extended
+QL path with multiple aggregates, aliases, multi-key grouping, HAVING, general
+ORDER BY and final LIMIT/OFFSET. This closes the four query composition gaps in
+[DPO #81](https://github.com/tetrateio/DPO/issues/81) for queries expressed using
+the extended path: multiple aggregates, deterministic tie-breaking, complete
+aggregation without an implicit 100-group cap, and pagination after ordering.
+Use an alias or the extended source form to select extended scalar/grouped
+semantics; use `ORDER BY count_alias DESC, unique_group_key ASC` for ranked pages.
+Legacy TOP/native query behavior and defaults are preserved.
+
+Distinct counts use complete raw input and retain exact (group, value) keys in
+the shared bounded QL grouping storage. Repeated distinct calls share state;
+ordinary COUNT/SUM state remains separate. The extended plan deliberately does
+not sum native distinct partial counts, which would be invalid when shard value
+sets overlap. Exhausted memory fails the query without partial results. Protobuf,
+native wire behavior and persisted formats are unchanged.
+
+The broader PostgreSQL SQL in linked issue #79 remains outside this follow-up:
+joins/CTEs, computed aggregate arguments, aggregate FILTER, additional string
+functions and exact decimal arithmetic are not added. Missing telemetry dimensions
+or identities lost during rollup require ingestion changes. Separate page calls
+still do not share a snapshot; spilling and session pagination remain deferred.
+
+Verification uses generated QL-only endpoint cases for scalar/grouped count
+composition, NULL and empty input, changed bindings, HAVING, tied ordering and
+pagination past 1,100 groups in both topologies. Operator tests exercise scalar
+types, duplicate values across batches, borrowed-buffer ownership, cancellation,
+memory rejection and zero retained reservations. A narrow operator benchmark
+compares ordinary COUNT and exact COUNT(DISTINCT) on identical inputs at two
+cardinalities; it measures added state/cost, not equivalent-result speedup.
+
+
+Follow-up verification (2026-10-19): the full planner and QL operator suites pass,
+including querymetrics builds; focused distinct ownership/race tests pass. The
+full generator suite and the final affected artifact/oracle checks pass. Both
+standalone and distributed QL-generated selections pass 6/6 specs (five new
+composition scenarios plus the existing count-distinct scenario). Scoped lint
+reports zero issues. The deep-page fixture has 1,153 groups, offset 1,100 and
+seven returned rows. It projects `rid`, `COUNT(DISTINCT rid)` and `SUM(v)`;
+multi-key grouping is tested separately with the smaller fixture. A wider
+three-tag control hit the host's native 8-MiB query allowance even with ordinary
+COUNT; the final test preserves group count/page depth without raising budgets.
+
+Empty scalar follow-up: legacy QL `COUNT(DISTINCT)` now completes a successful
+empty native result with one integer-zero row, before trace assembly and response
+memory accounting. Grouped results and pages beyond the scalar remain empty;
+explicit `LIMIT 0` is retained in QL plan metadata. Native protobuf query behavior
+and nonempty native execution remain unchanged. Failure/cancellation responses
+cannot become zero counts, and the shared empty response is not mutated.
+The neutral generated `QL-parent-child` cohort covers nine scenarios, including
+idle filtered/global counts, grouped empty input, and scalar limit/offset bindings.
+Both topologies pass all nine scenarios in four-CPU, 8-GiB containers with no extra
+swap or query-budget overrides. Full liaison/planner unit suites, focused final
+regressions, generator artifact checks and scoped lint pass.
+Reports: `/mnt/d/qlb-empty-scalar-standalone-report.json` and
+`/mnt/d/qlb-empty-scalar-distributed-report.json`.
+
+Reproduction commands, using Go 1.26.9:
+
+```sh
+make generate-ql-test-cases
+go test ./pkg/bydbql ./pkg/query/ql ./test/cases/measure/qlgen -count=1
+go test -tags=querymetrics ./pkg/bydbql ./pkg/query/ql -count=1
+go test -race ./pkg/query/ql -run CountDistinct -count=1
+go test -tags=querymetrics -count=1 -timeout=15m ./test/integration/standalone/query -ginkgo.label-filter=QL-generated -ginkgo.focus=count_distinct
+go test -tags=querymetrics -count=1 -timeout=15m ./test/integration/distributed/query -ginkgo.label-filter=QL-generated -ginkgo.focus=count_distinct
+```
+
+Final endpoint reports are `/mnt/d/qlb-count-distinct-final-standalone-report.json`
+and `/mnt/d/qlb-count-distinct-final-distributed-report.json`; corresponding logs
+and the ordinary-count capacity control are retained alongside them. No protobuf
+changes or external issue updates were made.
+
+
+The narrow operator benchmark completed five repetitions per case in a four-CPU,
+8-GiB Docker container with no additional swap, GOMAXPROCS=4 and Go 1.26.9. Each
+operation consumes 65,536 integer rows. Median results:
+
+| Unique input values | Operation | ms/op | Allocated bytes/op | Allocations/op | Retained distinct capacity (bytes) |
+|---:|---|---:|---:|---:|---:|
+| 64 | COUNT | 2.743 | 1,920 | 22 | 0 |
+| 64 | COUNT(DISTINCT) | 8.761 | 6,609 | 47 | 3,248 |
+| 65,536 | COUNT | 2.643 | 1,920 | 22 | 0 |
+| 65,536 | COUNT(DISTINCT) | 18.058 | 2,689,549 | 80 | 2,687,720 |
+
+This measures exact-set overhead, not a speedup comparison between equivalent
+queries or an RPC latency gate. Distinct state grows with unique values; repeated
+input values do not retain additional keys. Each operation checks its independent
+expected count and verifies zero tracked memory after Close. Retained capacity
+is the final set reservation, not peak process RSS. The benchmark excludes native
+input scanning and transport. Runner, raw five-run samples, binary digest,
+observed cgroup limits and summary are under `.omx/dpo81-count-distinct/`.

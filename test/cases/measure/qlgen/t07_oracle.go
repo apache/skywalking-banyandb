@@ -130,6 +130,7 @@ func t07AggregatePoint(rows []fixtureRow, columns []t07Column) (map[string]any, 
 }
 
 func t07Aggregate(rows []fixtureRow, column t07Column) (any, error) {
+	seen := make(map[string]bool)
 	var count, integerSum int64
 	var sum, minimum, maximum float64
 	integer := t07Source(column.Target) != "f"
@@ -138,6 +139,17 @@ func t07Aggregate(rows []fixtureRow, column t07Column) (any, error) {
 		value := rowValue(row, t07Source(column.Target))
 		if value == nil {
 			continue
+		}
+		if column.Distinct {
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return nil, err
+			}
+			key := string(encoded)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
 		}
 		count++
 		if function == "COUNT" {
