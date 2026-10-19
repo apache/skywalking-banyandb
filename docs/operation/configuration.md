@@ -161,6 +161,7 @@ The following flags are used to configure the measure storage engine:
 - `--measure-flush-timeout duration`: The memory data timeout of measure (default: 5s).
 - `--measure-root-path string`: The root path of the measure database (default: "/tmp").
 - `--measure-data-path string`: The data directory path of measure. If not set, `<measure-root-path>/measure/data` is used.
+- `--measure-export-snapshot-path string`: The directory holding export session snapshots of measure. If not set, `<measure-root-path>/measure/export-snapshots` is used: the default follows the root path, not `--measure-data-path`. It must be on the same filesystem as the data path because session snapshots are hard links, so set it explicitly when `--measure-data-path` is on another filesystem than the root path. It must not equal or be nested inside any catalog's backup snapshot directory (`<root-path>/<catalog>/snapshots`), equal, contain or be nested inside any catalog's data path, or overlap another catalog's export snapshot path; the server refuses to start otherwise.
 - `--measure-max-fan-out-size bytes`: the upper bound of a single file size after merge of measure (default 8.00EiB)
 - `--measure-lifecycle-receive-mem-wait-timeout duration`: Max time a lifecycle-migration receiver waits for memory to recover before introducing an external segment (default: 5m).
 
@@ -169,6 +170,7 @@ The following flags are used to configure the stream storage engine:
 - `--stream-flush-timeout duration`: The memory data timeout of stream (default: 1s).
 - `--stream-root-path string`: The root path of the stream database (default: "/tmp").
 - `--stream-data-path string`: The data directory path of stream. If not set, `<stream-root-path>/stream/data` is used.
+- `--stream-export-snapshot-path string`: The directory holding export session snapshots of stream. If not set, `<stream-root-path>/stream/export-snapshots` is used: the default follows the root path, not `--stream-data-path`. It must be on the same filesystem as the data path because session snapshots are hard links, so set it explicitly when `--stream-data-path` is on another filesystem than the root path. It must not equal or be nested inside any catalog's backup snapshot directory (`<root-path>/<catalog>/snapshots`), equal, contain or be nested inside any catalog's data path, or overlap another catalog's export snapshot path; the server refuses to start otherwise.
 - `--stream-max-fan-out-size bytes`: the upper bound of a single file size after merge of stream (default 8.00EiB)
 - `--element-index-flush-timeout duration`: The element index timeout of stream (default: 1s).
 - `--stream-lifecycle-receive-mem-wait-timeout duration`: Max time a lifecycle-migration receiver waits for memory to recover before introducing an external segment (default: 5m).
@@ -177,12 +179,14 @@ The following flags are used to configure the trace storage engine:
 
 - `--trace-flush-timeout duration`: The memory data timeout of trace (default: 1s).
 - `--trace-root-path string`: The root path of the database (default: "/tmp").
+- `--trace-export-snapshot-path string`: The directory holding export session snapshots of trace. If not set, `<trace-root-path>/trace/export-snapshots` is used. It must be on the same filesystem as the data path because session snapshots are hard links, so set it explicitly when the data path is on another volume than the root path. It must not equal or be nested inside any catalog's backup snapshot directory (`<root-path>/<catalog>/snapshots`), equal, contain or be nested inside any catalog's data path, or overlap another catalog's export snapshot path; the server refuses to start otherwise.
 - `--trace-max-fan-out-size bytes`: the upper bound of a single file size after merge of trace (default 8.00EiB)
 - `--trace-lifecycle-receive-mem-wait-timeout duration`: Max time a lifecycle-migration receiver waits for memory to recover before introducing an external segment (default: 5m).
 
 The following flags configure the remaining per-catalog storage roots:
 
 - `--property-root-path string`: The root path of the property database (default: "/tmp").
+- `--property-export-snapshot-path string`: The directory holding export session snapshots of property. If not set, `<property-root-path>/property/export-snapshots` is used. Property session snapshots are full copies of the property index, so the directory needs as much free space as the property data. It must not equal or be nested inside any catalog's backup snapshot directory (`<root-path>/<catalog>/snapshots`), equal, contain or be nested inside any catalog's data path, or overlap another catalog's export snapshot path; the server refuses to start otherwise.
 - `--trace-root-path string`: The root path of the trace database (default: "/tmp").
 
 The following flags are used to configure the memory protector:

@@ -46,6 +46,7 @@ import (
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
@@ -111,6 +112,7 @@ type server struct {
 	streamSVC     *streamService
 	barrierSVC    *barrierService
 	nodeStatusSVC *property.NodeSchemaStatusServer
+	exportSVC     *exportService
 	*streamRegistryServer
 	measureSVC *measureService
 	bydbQLSVC  *bydbQLService
@@ -276,19 +278,21 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 	// initCurrentNode leaves curNode nil; an empty selfName makes the
 	// barrier exclude self from the watched set, which is the correct
 	// behavior for headless test fixtures.
+	selfName := func() string {
+		if s.curNode == nil {
+			return ""
+		}
+		return s.curNode.GetMetadata().GetName()
+	}
 	if cacheProvider != nil {
 		s.barrierSVC = newBarrierServiceCluster(
 			cacheProvider,
 			func() queue.Client { return tir1Client },
 			func() queue.Client { return tir2Client },
-			func() string {
-				if s.curNode == nil {
-					return ""
-				}
-				return s.curNode.GetMetadata().GetName()
-			},
+			selfName,
 		)
 	}
+	s.exportSVC = newExportService(tir2Client, routeProviders["tire2"], selfName, logger.GetLogger("liaison-export"))
 	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
 	s.queryAccessLogRecorders = []queryAccessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer, bydbQLSVC}
 
@@ -661,6 +665,7 @@ func (s *server) registerServices(grpcServer *grpclib.Server) {
 	databasev1.RegisterTraceRegistryServiceServer(grpcServer, s.traceRegistryServer)
 	databasev1.RegisterClusterStateServiceServer(grpcServer, s)
 	databasev1.RegisterNodeQueryServiceServer(grpcServer, s)
+	transferv1.RegisterExportServiceServer(grpcServer, s.exportSVC)
 	if s.barrierSVC != nil {
 		schemav1.RegisterSchemaBarrierServiceServer(grpcServer, s.barrierSVC)
 	}

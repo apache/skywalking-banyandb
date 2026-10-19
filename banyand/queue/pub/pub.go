@@ -39,6 +39,7 @@ import (
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
@@ -779,4 +780,13 @@ func (p *pub) NewNodeSchemaStatusClient(node string) (clusterv1.NodeSchemaStatus
 		return nil, fmt.Errorf("no active client for node %s", node)
 	}
 	return clusterv1.NewNodeSchemaStatusServiceClient(c.conn), nil
+}
+
+// NewExportClient implements queue.Client on top of the shared connection pool.
+func (p *pub) NewExportClient(node string) (transferv1.ExportServiceClient, error) {
+	c, ok := p.connMgr.GetClient(node)
+	if !ok {
+		return nil, fmt.Errorf("no active client for node %s", node)
+	}
+	return transferv1.NewExportServiceClient(c.conn), nil
 }
