@@ -73,39 +73,34 @@ var entityTags = []string{tagNodeID, tagLevel}
 // dropped and recreated by hand.
 var errSchemaIncompatible = errors.New("the existing native log stream is not compatible with this version")
 
-// schemaState is what one successful schema pass established. The shard count
-// is the group's, not the flag's: the flag only proposes a value when the group
-// is created, and every node after the first finds it already there.
+// shardNum is the shard count of the group, and shardID the shard every node
+// writes its own logs to. They follow native metrics, which write to shard 0 of
+// a single-shard group: each node keeps its own logs on its own local pipeline,
+// and no event is routed to another node.
+const (
+	shardNum = 1
+	shardID  = 0
+)
+
+// schemaState is what one successful schema pass established.
 type schemaState struct {
-	// shardMismatch and ttlMismatch record that the running configuration
-	// disagrees with what is persisted, so the caller can say so once rather
-	// than leaving an inert flag looking effective.
-	shardMismatch string
-	ttlMismatch   string
-	shardNum      uint32
+	// ttlMismatch records that the running configuration disagrees with what is
+	// persisted, so the caller can say so once rather than leaving an inert
+	// flag looking effective.
+	ttlMismatch string
 }
 
 // createSchema creates the group and the stream and reports what is actually in
 // force. Both creations are idempotent: a process that finds them already there
 // carries on, which is the normal case for every node after the first.
 //
-// "Already there" is not taken as "already correct", for either object.
-//
-// A write request carries its tags positionally -- modelv1.TagFamilyForWrite
-// has no name, and neither do the values inside it -- so a stream whose
-// families or tags are in a different order would accept every event and file
-// each value under the wrong tag.
-//
-// The group matters for the same reason one step further out: the shard a write
-// is routed to is computed modulo a shard count, and the storage layer does not
-// range-check it. Routing on the flag while the group holds a different count
-// produces shard directories above the group's own count, which segment
-// loadShards skips on the next open -- so the events are written, acked,
-// counted and queryable, and then silently invisible after an idle close or a
-// restart. Both failures are counted as successes, which is worse than not
-// writing at all.
-func createSchema(ctx context.Context, repo metadata.Repo, shardNum, ttlDays uint32) (schemaState, error) {
-	state := schemaState{shardNum: shardNum}
+// "Already there" is not taken as "already correct" for the stream. A write
+// request carries its tags positionally -- modelv1.TagFamilyForWrite has no
+// name, and neither do the values inside it -- so a stream whose families or
+// tags are in a different order would accept every event and file each value
+// under the wrong tag.
+func createSchema(ctx context.Context, repo metadata.Repo, ttlDays uint32) (schemaState, error) {
+	var state schemaState
 	group := &commonv1.Group{
 		Metadata: &commonv1.Metadata{Name: GroupName},
 		Catalog:  commonv1.Catalog_CATALOG_STREAM,
@@ -122,7 +117,7 @@ func createSchema(ctx context.Context, repo metadata.Repo, shardNum, ttlDays uin
 	existing, getErr := repo.GroupRegistry().GetGroup(ctx, GroupName)
 	switch {
 	case getErr == nil:
-		state = groupState(existing.GetResourceOpts(), shardNum, ttlDays)
+		state = groupState(existing.GetResourceOpts(), ttlDays)
 	case errors.Is(getErr, schema.ErrGRPCResourceNotFound):
 		if _, err := repo.GroupRegistry().CreateGroup(ctx, group); err != nil &&
 			!errors.Is(err, schema.ErrGRPCAlreadyExists) {
@@ -131,15 +126,12 @@ func createSchema(ctx context.Context, repo metadata.Repo, shardNum, ttlDays uin
 		// The create says nothing reliable about what is now in force. It
 		// reports AlreadyExists only when every schema server rejects it, so a
 		// create that one server accepted returns nil although the group
-		// already existed elsewhere with another shard count. Routing divides
-		// by that count, and a count taken from this node's flag would send
-		// events to shards the group does not have: written, acked, counted,
-		// and invisible after the next open.
+		// already existed elsewhere with another retention.
 		stored, storedErr := repo.GroupRegistry().GetGroup(ctx, GroupName)
 		if storedErr != nil {
 			return state, storedErr
 		}
-		state = groupState(stored.GetResourceOpts(), shardNum, ttlDays)
+		state = groupState(stored.GetResourceOpts(), ttlDays)
 	default:
 		return state, getErr
 	}
@@ -164,20 +156,12 @@ func createSchema(ctx context.Context, repo metadata.Repo, shardNum, ttlDays uin
 }
 
 // groupState reads what the persisted group actually says and notes where the
-// running configuration disagrees with it. Neither value is updated in place:
-// raising a group's shard count is a data operation, not something a node
-// should do to a shared group on its way up.
-func groupState(opts *commonv1.ResourceOpts, shardNum, ttlDays uint32) schemaState {
-	state := schemaState{shardNum: opts.GetShardNum()}
-	if state.shardNum == 0 {
-		// Nothing persisted, so the flag is the only value left to divide by.
-		state.shardNum = shardNum
-	}
-	if state.shardNum != shardNum {
-		state.shardMismatch = fmt.Sprintf(
-			"--logging-native-shard-num=%d is ignored; %q already exists with %d shards, and routing follows the group",
-			shardNum, GroupName, state.shardNum)
-	}
+// running configuration disagrees with it. The retention is not updated in
+// place: a node should not change a shared group on its way up. The shard
+// count needs no check, because every node writes to shard 0, which every
+// group has.
+func groupState(opts *commonv1.ResourceOpts, ttlDays uint32) schemaState {
+	var state schemaState
 	if ttl := opts.GetTtl(); ttl != nil &&
 		(ttl.GetUnit() != commonv1.IntervalRule_UNIT_DAY || ttl.GetNum() != ttlDays) {
 		state.ttlMismatch = fmt.Sprintf(
@@ -220,8 +204,8 @@ func compatible(want, got *databasev1.Stream) error {
 			}
 		}
 	}
-	// The entity decides the shard, so a difference here would send events to a
-	// shard no reader looks in for them.
+	// The entity is the series key, so a difference here would file events
+	// under series no reader looks for.
 	wantEntity, gotEntity := want.GetEntity().GetTagNames(), got.GetEntity().GetTagNames()
 	if !slices.Equal(wantEntity, gotEntity) {
 		return fmt.Errorf("%w: its entity is %v, want %v",

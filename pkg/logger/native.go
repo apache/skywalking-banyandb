@@ -61,7 +61,6 @@ type NativeLogging struct {
 	MaxBytes       int64
 	MaxEventBytes  int64
 	FlushSize      int
-	ShardNum       uint32
 	TTLDays        uint32
 	Enabled        bool
 }
@@ -160,8 +159,6 @@ func RegisterNativeFlags(fs *pflag.FlagSet, cfg *NativeLogging) {
 		"configured cap on the buffer, in bytes")
 	fs.Int64Var(&cfg.MaxEventBytes, "logging-native-max-event-bytes", 64<<10,
 		"events larger than this are dropped whole rather than truncated")
-	fs.Uint32Var(&cfg.ShardNum, "logging-native-shard-num", 2,
-		"shards of the _monitoring_log group, used when the group is created; routing follows the group's own count")
 	fs.Uint32Var(&cfg.TTLDays, "logging-native-ttl-days", 7,
 		"retention of the _monitoring_log group in days, used when the group is created")
 }
@@ -191,9 +188,6 @@ func applyNative(cfg NativeLogging) error {
 	}
 	if cfg.MaxEventBytes <= 0 {
 		return fmt.Errorf("logging-native-max-event-bytes must be positive, got %d", cfg.MaxEventBytes)
-	}
-	if cfg.ShardNum == 0 {
-		return fmt.Errorf("logging-native-shard-num must be positive")
 	}
 	if cfg.TTLDays == 0 {
 		return fmt.Errorf("logging-native-ttl-days must be positive")

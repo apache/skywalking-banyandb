@@ -33,7 +33,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -71,18 +70,12 @@ type Service struct {
 	pending []entry
 	// unreadyAttempts counts the consecutive attempts that found no subscriber.
 	unreadyAttempts int
-	// shardNum is the group's shard count, not the flag's. Routing must divide
-	// by what the group was created with: the storage layer does not range-check
-	// an incoming shard id, and a shard above the group's count is skipped on the
-	// next open, taking its events out of every query without an error.
-	shardNum uint32
-	ready    bool
+	ready           bool
 	// incompatible records that the stream exists with the wrong shape. The
 	// retry stays in place -- an operator can drop and recreate it without
 	// restarting the node -- but until then the drops are counted under their
 	// own reason, because waiting will not fix this one.
 	incompatible bool
-	warnedShard  bool
 	warnedTTL    bool
 }
 
@@ -139,7 +132,7 @@ func (s *Service) Serve() run.StopNotify {
 	s.metrics = newMetrics(s.omr)
 
 	ctx, cancel := context.WithTimeout(context.Background(), schemaTimeout)
-	s.applySchema(createSchema(ctx, s.metadata, s.cfg.ShardNum, s.cfg.TTLDays))
+	s.applySchema(createSchema(ctx, s.metadata, s.cfg.TTLDays))
 	cancel()
 
 	// run.Go rather than a raw goroutine, so a panic in the consumer is
@@ -269,11 +262,11 @@ func (s *Service) report() {
 func (s *Service) retrySchema(ctx context.Context) {
 	retryCtx, cancel := context.WithTimeout(ctx, schemaTimeout)
 	defer cancel()
-	s.applySchema(createSchema(retryCtx, s.metadata, s.cfg.ShardNum, s.cfg.TTLDays))
+	s.applySchema(createSchema(retryCtx, s.metadata, s.cfg.TTLDays))
 }
 
 // applySchema records the outcome of one schema attempt. It is the only writer
-// of ready, incompatible and shardNum, so they can never disagree: a later
+// of ready and incompatible, so they can never disagree: a later
 // success clears the incompatible flag an earlier attempt set, which is what
 // lets an operator fix the stream without restarting the node.
 //
@@ -286,8 +279,6 @@ func (s *Service) applySchema(state schemaState, err error) {
 	case err == nil:
 		s.ready = true
 		s.incompatible = false
-		s.shardNum = state.shardNum
-		s.warnOnce(&s.warnedShard, state.shardMismatch)
 		s.warnOnce(&s.warnedTTL, state.ttlMismatch)
 	case errors.Is(err, errSchemaIncompatible):
 		// Logged when the stream becomes incompatible, not on every pass: the
@@ -423,7 +414,7 @@ func (s *Service) flush(ctx context.Context, batch []entry, retainable bool) (ke
 	for _, e := range batch {
 		// The identity is known now even when it was not at admission.
 		s.sink.stamp(e)
-		iwr, err := s.internalRequest(e.req)
+		iwr, err := internalRequest(e.req)
 		if err != nil {
 			encodeFailed++
 			s.sink.drop(reasonEncodeFailed)
@@ -492,22 +483,17 @@ func rejection(nodeErrs map[string]*common.Error) error {
 	return nil
 }
 
-// internalRequest adds the routing the internal write path needs. The shard is
-// computed from the entity the way the normal write path computes it, rather
-// than the fixed shard zero the metric collector writes with.
-func (s *Service) internalRequest(req *streamv1.WriteRequest) (*streamv1.InternalWriteRequest, error) {
+// internalRequest adds what the internal write path needs. The shard is always
+// shard 0, as for native metrics: the request goes to this node's own local
+// pipeline, so the logs stay on the node that produced them.
+func internalRequest(req *streamv1.WriteRequest) (*streamv1.InternalWriteRequest, error) {
 	entity := entityOf(req)
-	key, err := entity.ToEntity()
-	if err != nil {
-		return nil, err
-	}
-	shardID, err := partition.ShardID(key.Marshal(), s.shardNum)
-	if err != nil {
+	if _, err := entity.ToEntity(); err != nil {
 		return nil, err
 	}
 	return &streamv1.InternalWriteRequest{
 		Request:      req,
-		ShardId:      uint32(shardID),
+		ShardId:      shardID,
 		EntityValues: entity.Encode(),
 	}, nil
 }

@@ -78,9 +78,6 @@ func withNative(t *testing.T, cfg Logging, native NativeLogging) *recordingSink 
 		if native.MaxEventBytes == 0 {
 			native.MaxEventBytes = 64 << 10
 		}
-		if native.ShardNum == 0 {
-			native.ShardNum = 2
-		}
 		if native.TTLDays == 0 {
 			native.TTLDays = 7
 		}
@@ -371,7 +368,7 @@ func TestNativeOverrideCannotLiftAnExclusion(t *testing.T) {
 func TestApplyNativeRejectsBadValues(t *testing.T) {
 	base := NativeLogging{
 		Enabled: true, Level: "info", FlushInterval: time.Second, FlushSize: 100,
-		MaxBytes: 1 << 20, MaxEventBytes: 64 << 10, ShardNum: 2, TTLDays: 7,
+		MaxBytes: 1 << 20, MaxEventBytes: 64 << 10, TTLDays: 7,
 		WriteTimeout: 5 * time.Second, DrainTimeout: 5 * time.Second,
 		MemoryFraction: 0.02, MemoryReserve: 64 << 20,
 	}

@@ -46,7 +46,6 @@ func testSink(t *testing.T) *Sink {
 		MaxBytes:      1 << 20,
 		MaxEventBytes: 64 << 10,
 		FlushSize:     100,
-		ShardNum:      2,
 	})
 	// Every field is distinct and non-empty, so a test can assert on all eight
 	// positions. An identity with blanks in it would let a tag written into the
@@ -348,7 +347,7 @@ func TestTimestampComesFromAdmissionNotTheEncodedLine(t *testing.T) {
 // and an input to the shard.
 func TestIdentityIsStampedAtFlushNotAdmission(t *testing.T) {
 	s := NewSink(&logger.NativeLogging{
-		Enabled: true, MaxBytes: 1 << 20, MaxEventBytes: 64 << 10, FlushSize: 100, ShardNum: 2,
+		Enabled: true, MaxBytes: 1 << 20, MaxEventBytes: 64 << 10, FlushSize: 100,
 	})
 	// No SetNode yet: this is the window between logger initialisation and the
 	// node's services starting.

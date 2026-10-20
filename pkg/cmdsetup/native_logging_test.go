@@ -55,7 +55,7 @@ func TestUnsupportedRoleKeepsItsLevel(t *testing.T) {
 				logger.NativeLogging{
 					Enabled: true, Level: "debug", MaxBytes: 1 << 20, MaxEventBytes: 64 << 10,
 					FlushSize: 10, FlushInterval: time.Second, WriteTimeout: time.Second,
-					DrainTimeout: time.Second, MemoryFraction: 0.1, ShardNum: 1, TTLDays: 1,
+					DrainTimeout: time.Second, MemoryFraction: 0.1, TTLDays: 1,
 				}); err != nil {
 				t.Fatalf("initNativeLogging: %v", err)
 			}

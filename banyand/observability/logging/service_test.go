@@ -35,6 +35,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -109,6 +110,9 @@ func (f *fakeClient) NewChunkedSyncClient(string, uint32) (queue.ChunkedSyncClie
 func (f *fakeClient) NewNodeSchemaStatusClient(string) (clusterv1.NodeSchemaStatusServiceClient, error) {
 	return nil, nil
 }
+func (f *fakeClient) NewExportClient(string) (transferv1.ExportServiceClient, error) {
+	return nil, errors.New("not supported")
+}
 func (f *fakeClient) SetSelfNode(_, _, _ string)              {}
 func (f *fakeClient) Register(bus.Topic, schema.EventHandler) {}
 func (f *fakeClient) OnAddOrUpdate(schema.Metadata)           {}
@@ -166,7 +170,7 @@ func testService(t *testing.T, client queue.Client, opts ...func(*logger.NativeL
 	t.Helper()
 	cfg := &logger.NativeLogging{
 		Enabled: true, Level: "debug", FlushInterval: 20 * time.Millisecond,
-		FlushSize: 5, MaxBytes: 1 << 20, MaxEventBytes: 64 << 10, ShardNum: 2, TTLDays: 7,
+		FlushSize: 5, MaxBytes: 1 << 20, MaxEventBytes: 64 << 10, TTLDays: 7,
 		WriteTimeout: 5 * time.Second, DrainTimeout: 5 * time.Second,
 		MemoryFraction: 0.02, MemoryReserve: 64 << 20,
 	}
@@ -179,9 +183,8 @@ func testService(t *testing.T, client queue.Client, opts ...func(*logger.NativeL
 	svc.l = logger.GetLogger("native-log-test")
 	// The schema is created in Serve against a metadata repo; these tests drive
 	// the consumer directly, so stand in for what one successful pass would
-	// have established -- including the shard count, which routing divides by.
+	// have established.
 	svc.ready = true
-	svc.shardNum = cfg.ShardNum
 	go svc.consume(context.Background()) //panicdiag:allow-rawgo test consumer, no recovery wrapper needed
 	t.Cleanup(func() { svc.closer.CloseThenWait() })
 	return svc, sink
@@ -359,9 +362,9 @@ func TestAcceptedBatchIsStillCountedAsWritten(t *testing.T) {
 func TestSchemaStateSurvivesATransientMetadataFailure(t *testing.T) {
 	svc := &Service{l: logger.GetLogger("native-log-test")}
 
-	svc.applySchema(schemaState{shardNum: 4}, nil)
-	if !svc.ready || svc.shardNum != 4 {
-		t.Fatalf("after a successful pass: ready=%v shardNum=%d, want true/4", svc.ready, svc.shardNum)
+	svc.applySchema(schemaState{}, nil)
+	if !svc.ready {
+		t.Fatal("a successful pass did not set ready")
 	}
 
 	svc.applySchema(schemaState{}, errors.New("etcd: context deadline exceeded"))
@@ -369,19 +372,15 @@ func TestSchemaStateSurvivesATransientMetadataFailure(t *testing.T) {
 		t.Fatal("a transient metadata error cleared ready; batches that would " +
 			"have been written are now dropped as schema_unavailable")
 	}
-	if svc.shardNum != 4 {
-		t.Fatalf("shardNum moved to %d on a failed pass; routing must not follow a reading that failed", svc.shardNum)
-	}
 
 	svc.applySchema(schemaState{}, fmt.Errorf("%w: tag 2 is wrong", errSchemaIncompatible))
 	if svc.ready || !svc.incompatible {
 		t.Fatalf("an incompatible schema left ready=%v incompatible=%v", svc.ready, svc.incompatible)
 	}
 
-	svc.applySchema(schemaState{shardNum: 2}, nil)
-	if !svc.ready || svc.incompatible || svc.shardNum != 2 {
-		t.Fatalf("recovery left ready=%v incompatible=%v shardNum=%d",
-			svc.ready, svc.incompatible, svc.shardNum)
+	svc.applySchema(schemaState{}, nil)
+	if !svc.ready || svc.incompatible {
+		t.Fatalf("recovery left ready=%v incompatible=%v", svc.ready, svc.incompatible)
 	}
 }
 
@@ -488,7 +487,7 @@ func TestIncompatibleSchemaIsLoggedOnce(t *testing.T) {
 		t.Fatalf("three passes on the same incompatible stream logged %d errors, want 1", n)
 	}
 
-	svc.applySchema(schemaState{shardNum: 2}, nil)
+	svc.applySchema(schemaState{}, nil)
 	svc.applySchema(schemaState{}, incompatible)
 	if n := strings.Count(buf.String(), "cannot store"); n != 2 {
 		t.Fatalf("an incompatibility after a recovery logged %d errors in total, want 2", n)
@@ -650,4 +649,30 @@ func TestCollectionResumesInTheSameProcess(t *testing.T) {
 		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
 	}
 	waitFor(t, "collection to resume without a restart", func() bool { return sink.Written() >= 5 })
+}
+
+// TestEveryEventIsWrittenToShardZero keeps each node's logs on the node that
+// produced them, as native metrics do. A shard taken from the entity hash would
+// spread a node's events over several shards, and in a cluster over several
+// nodes.
+func TestEveryEventIsWrittenToShardZero(t *testing.T) {
+	sink := NewSink(&logger.NativeLogging{Enabled: true, MaxBytes: 1 << 20, MaxEventBytes: 64 << 10})
+	for i := 0; i < 64; i++ {
+		sink.SetNode(NodeInfo{NodeID: fmt.Sprintf("data-%d:17912", i), NodeType: "data"})
+		for _, level := range []zerolog.Level{zerolog.DebugLevel, zerolog.InfoLevel, zerolog.WarnLevel, zerolog.ErrorLevel} {
+			req, err := sink.build(level, "MEASURE", []byte(`{"message":"m"}`))
+			if err != nil {
+				t.Fatalf("build: %v", err)
+			}
+			sink.stamp(entry{req: req, seq: uint64(i)})
+			iwr, err := internalRequest(req)
+			if err != nil {
+				t.Fatalf("internalRequest: %v", err)
+			}
+			if iwr.GetShardId() != 0 {
+				t.Fatalf("node %s level %s was written to shard %d, want 0",
+					sink.node.Load().NodeID, level, iwr.GetShardId())
+			}
+		}
+	}
 }

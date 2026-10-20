@@ -121,63 +121,28 @@ func TestCompatibleAcceptsItsOwnSpec(t *testing.T) {
 	}
 }
 
-// TestGroupStateFollowsTheGroupNotTheFlag is the falsifying assertion for
-// routing. The shard count divides the entity hash, and the storage layer does
-// not range-check the result: a shard id above the group's own count is
-// accepted, written, acked and queryable, and then skipped by loadShards on the
-// next open -- so the events leave every query with no error and no metric.
-// Routing must therefore follow what the group was created with, never the
-// local flag.
-func TestGroupStateFollowsTheGroupNotTheFlag(t *testing.T) {
+// TestGroupStateReportsARetentionMismatch keeps an inert flag from looking
+// effective: a node that finds the group already there does not change its
+// retention, so it says so once.
+func TestGroupStateReportsARetentionMismatch(t *testing.T) {
 	dayTTL := func(n uint32) *commonv1.IntervalRule {
 		return &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: n}
 	}
 	tests := []struct {
-		opts         *commonv1.ResourceOpts
-		name         string
-		wantShard    uint32
-		flagShard    uint32
-		flagTTL      uint32
-		wantShardMsg bool
-		wantTTLMsg   bool
+		opts       *commonv1.ResourceOpts
+		name       string
+		flagTTL    uint32
+		wantTTLMsg bool
 	}{
-		{
-			name:      "flag agrees with the group",
-			opts:      &commonv1.ResourceOpts{ShardNum: 2, Ttl: dayTTL(7)},
-			flagShard: 2, flagTTL: 7, wantShard: 2,
-		},
-		{
-			name:      "flag raised above the group",
-			opts:      &commonv1.ResourceOpts{ShardNum: 2, Ttl: dayTTL(7)},
-			flagShard: 8, flagTTL: 7, wantShard: 2, wantShardMsg: true,
-		},
-		{
-			name:      "flag lowered below the group",
-			opts:      &commonv1.ResourceOpts{ShardNum: 8, Ttl: dayTTL(7)},
-			flagShard: 2, flagTTL: 7, wantShard: 8, wantShardMsg: true,
-		},
-		{
-			name:      "ttl differs",
-			opts:      &commonv1.ResourceOpts{ShardNum: 2, Ttl: dayTTL(30)},
-			flagShard: 2, flagTTL: 7, wantShard: 2, wantTTLMsg: true,
-		},
-		{
-			name:      "group reports no shard count",
-			opts:      &commonv1.ResourceOpts{Ttl: dayTTL(7)},
-			flagShard: 3, flagTTL: 7, wantShard: 3,
-		},
+		{name: "flag agrees with the group", opts: &commonv1.ResourceOpts{ShardNum: 1, Ttl: dayTTL(7)}, flagTTL: 7},
+		{name: "ttl differs", opts: &commonv1.ResourceOpts{ShardNum: 1, Ttl: dayTTL(30)}, flagTTL: 7, wantTTLMsg: true},
+		// A group created by an earlier version with more shards is still
+		// usable: every node writes to shard 0, which every group has.
+		{name: "group has more shards", opts: &commonv1.ResourceOpts{ShardNum: 2, Ttl: dayTTL(7)}, flagTTL: 7},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := groupState(tt.opts, tt.flagShard, tt.flagTTL)
-			if got.shardNum != tt.wantShard {
-				t.Fatalf("routing would divide by %d, want %d -- every event whose "+
-					"hash exceeds the group's count lands in a shard no reader opens",
-					got.shardNum, tt.wantShard)
-			}
-			if (got.shardMismatch != "") != tt.wantShardMsg {
-				t.Fatalf("shardMismatch = %q, want a message: %v", got.shardMismatch, tt.wantShardMsg)
-			}
+			got := groupState(tt.opts, tt.flagTTL)
 			if (got.ttlMismatch != "") != tt.wantTTLMsg {
 				t.Fatalf("ttlMismatch = %q, want a message: %v", got.ttlMismatch, tt.wantTTLMsg)
 			}
@@ -193,40 +158,42 @@ func repoWith(ctrl *gomock.Controller, groups *schema.MockGroup, streams *schema
 	return repo
 }
 
-// TestCreateTakesTheShardCountFromStorage is the falsifying assertion for shard
-// routing. A create is broadcast to every schema server and reports
-// AlreadyExists only when all of them reject it, so a create that one server
-// accepted returns nil although the group already exists elsewhere with another
-// shard count. Routing divides by that count: taking it from this node's flag
-// sends events to shards the group does not have, and they are written, acked,
-// counted and then invisible after the next open.
-func TestCreateTakesTheShardCountFromStorage(t *testing.T) {
+// TestCreateMakesASingleShardGroup holds the group to the shape native metrics
+// use: one shard, which every node writes its own logs to. A create is
+// broadcast to every schema server and says nothing reliable about what is in
+// force, so the retention is read back from storage after it.
+func TestCreateMakesASingleShardGroup(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	groups := schema.NewMockGroup(ctrl)
 	streams := schema.NewMockStream(ctrl)
 	stored := &commonv1.Group{
 		Metadata: &commonv1.Metadata{Name: GroupName},
 		ResourceOpts: &commonv1.ResourceOpts{
-			ShardNum: 8,
-			Ttl:      &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: 7},
+			ShardNum: 1,
+			Ttl:      &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: 30},
 		},
 	}
+	var created *commonv1.Group
 	gomock.InOrder(
 		groups.EXPECT().GetGroup(gomock.Any(), GroupName).Return(nil, schema.ErrGRPCResourceNotFound),
-		groups.EXPECT().CreateGroup(gomock.Any(), gomock.Any()).Return(int64(1), nil),
+		groups.EXPECT().CreateGroup(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, g *commonv1.Group) (int64, error) {
+				created = g
+				return 1, nil
+			}),
 		groups.EXPECT().GetGroup(gomock.Any(), GroupName).Return(stored, nil),
 	)
 	streams.EXPECT().GetStream(gomock.Any(), gomock.Any()).Return(streamSpec(), nil)
 
-	state, err := createSchema(context.Background(), repoWith(ctrl, groups, streams), 2, 7)
+	state, err := createSchema(context.Background(), repoWith(ctrl, groups, streams), 7)
 	if err != nil {
 		t.Fatalf("createSchema: %v", err)
 	}
-	if state.shardNum != 8 {
-		t.Errorf("routing uses %d shards, but the stored group has 8", state.shardNum)
+	if got := created.GetResourceOpts().GetShardNum(); got != 1 {
+		t.Errorf("the group was created with %d shards, want 1", got)
 	}
-	if state.shardMismatch == "" {
-		t.Error("the disagreement between the flag and the group was not reported")
+	if state.ttlMismatch == "" {
+		t.Error("the disagreement between the flag and the stored retention was not reported")
 	}
 }
 
@@ -246,7 +213,7 @@ func TestSettledSchemaIsNotRewritten(t *testing.T) {
 	// No CreateGroup and no CreateStream are expected: the mock fails the test
 	// if either is called.
 
-	if _, err := createSchema(context.Background(), repoWith(ctrl, groups, streams), 2, 7); err != nil {
+	if _, err := createSchema(context.Background(), repoWith(ctrl, groups, streams), 7); err != nil {
 		t.Fatalf("createSchema: %v", err)
 	}
 }
