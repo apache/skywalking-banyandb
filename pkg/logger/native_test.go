@@ -18,9 +18,11 @@
 package logger
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -80,11 +82,35 @@ func withNative(t *testing.T, cfg Logging, native NativeLogging) *recordingSink 
 	return sink
 }
 
-// swapConsoleTarget redirects normal logging for one test.
-func swapConsoleTarget(w io.Writer) func() {
-	prev := testConsoleTarget
-	testConsoleTarget = w
-	return func() { testConsoleTarget = prev }
+// captureStderr replaces os.Stderr with a pipe for one test, so logging
+// initialized after it prints there. The returned function puts stderr back
+// and returns everything printed; nothing printed after it is collected.
+// pkg/test offers the same for other packages, but it imports this one.
+func captureStderr(t *testing.T) func() string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	prev := os.Stderr
+	os.Stderr = w
+	var buf bytes.Buffer
+	drained := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&buf, r)
+		close(drained)
+	}()
+	var once sync.Once
+	read := func() string {
+		once.Do(func() {
+			os.Stderr = prev
+			_ = w.Close()
+			<-drained
+		})
+		return buf.String()
+	}
+	t.Cleanup(func() { read() })
+	return read
 }
 
 // TestNativeDisabledAdmitsNothing is the guarantee that matters most to every
@@ -198,15 +224,14 @@ func TestReservedProtectionsSurviveAnOperatorList(t *testing.T) {
 // line is printed and not stored, and under any other write it is stored as
 // usual. Nothing is switched off for the whole process.
 func TestNativeWriteMarkReachesOnlyTheConsole(t *testing.T) {
-	var console strings.Builder
-	defer swapConsoleTarget(&console)()
+	console := captureStderr(t)
 	sink := withNative(t, Logging{Env: "prod", Level: "error"}, NativeLogging{Enabled: true, Level: "info"})
 	fallback := GetLogger("stream")
 
 	FetchOrDefault(WithNativeWrite(context.Background()), "stream", fallback).Error().Msg("native-write-failed")
 	FetchOrDefault(context.Background(), "stream", fallback).Error().Msg("user-write-failed")
 
-	if !strings.Contains(console.String(), "native-write-failed") {
+	if !strings.Contains(console(), "native-write-failed") {
 		t.Fatal("the line about a native write did not reach the console")
 	}
 	sink.mu.Lock()
@@ -335,9 +360,7 @@ func TestNativeLevelIsRejectedWhenUnusable(t *testing.T) {
 // reused it would print everything the native sink admitted and the quiet
 // console the operator asked for would be silently undone.
 func TestConsoleGateIsNotTheAdmissionFloor(t *testing.T) {
-	var console strings.Builder
-	restore := swapConsoleTarget(&console)
-	t.Cleanup(restore)
+	console := captureStderr(t)
 
 	withNative(t, Logging{Env: "prod", Level: "error"},
 		NativeLogging{Enabled: true, Level: "info"})
@@ -347,7 +370,7 @@ func TestConsoleGateIsNotTheAdmissionFloor(t *testing.T) {
 	l.Warn().Msg("warn-line")
 	l.Error().Msg("error-line")
 
-	out := console.String()
+	out := console()
 	for _, quiet := range []string{"info-line", "warn-line"} {
 		if strings.Contains(out, quiet) {
 			t.Fatalf("console printed %q at --logging-level=error; output was %q", quiet, out)
@@ -375,7 +398,7 @@ func (s *recordingSink) admittedFrom(module string, level zerolog.Level) bool {
 // warn, so a debug line reaches storage only through the override -- and only
 // for the module the override names, including its dotted children.
 func TestNativeModuleOverrideAppliesToOneModule(t *testing.T) {
-	defer swapConsoleTarget(io.Discard)()
+	captureStderr(t)
 	sink := withNative(t, Logging{Env: "prod", Level: "error"}, NativeLogging{
 		Enabled: true, Level: "warn",
 		Modules: []string{"measure"}, Levels: []string{"debug"},
@@ -395,7 +418,7 @@ func TestNativeModuleOverrideAppliesToOneModule(t *testing.T) {
 // TestNativeOverrideCannotLiftAnExclusion pins the safety rule: an override
 // cannot re-admit an excluded module, reserved or configured.
 func TestNativeOverrideCannotLiftAnExclusion(t *testing.T) {
-	defer swapConsoleTarget(io.Discard)()
+	captureStderr(t)
 	sink := withNative(t, Logging{Env: "prod", Level: "error"}, NativeLogging{
 		Enabled: true, Level: "debug", ExcludeModules: []string{"stream"},
 		Modules: []string{"stream", NativeWriteModule}, Levels: []string{"debug", "debug"},
@@ -477,7 +500,7 @@ func TestOnlyTheKeptFlagsAreRegistered(t *testing.T) {
 // exists before Init runs, and must still reach the sink after it, without
 // any change at the call site.
 func TestLoggerBuiltBeforeInitGetsNative(t *testing.T) {
-	defer swapConsoleTarget(io.Discard)()
+	captureStderr(t)
 	early := GetLogger("early")
 
 	sink := withNative(t, Logging{Env: "prod", Level: "error"}, NativeLogging{Enabled: true, Level: "info"})
@@ -500,8 +523,7 @@ func TestLoggerBuiltBeforeInitGetsNative(t *testing.T) {
 // MEASURE shortens the module a MEASURE.BLOCK logger prints; native policy
 // that followed the shortened name would lose the child's own override.
 func TestNativePolicyIgnoresConsoleOverrides(t *testing.T) {
-	var console strings.Builder
-	defer swapConsoleTarget(&console)()
+	console := captureStderr(t)
 	sink := withNative(t, Logging{Env: "prod", Level: "info", Modules: []string{"measure"}, Levels: []string{"error"}},
 		NativeLogging{Enabled: true, Level: "info", Modules: []string{"measure.block"}, Levels: []string{"debug"}})
 
@@ -510,7 +532,7 @@ func TestNativePolicyIgnoresConsoleOverrides(t *testing.T) {
 	if !sink.admittedFrom("MEASURE.BLOCK", zerolog.DebugLevel) {
 		t.Fatal("the native override for MEASURE.BLOCK did not apply under a console override for MEASURE")
 	}
-	if strings.Contains(console.String(), "debug-from-block") {
+	if strings.Contains(console(), "debug-from-block") {
 		t.Fatal("the console printed a debug line although MEASURE is at error there")
 	}
 }
@@ -519,7 +541,7 @@ func TestNativePolicyIgnoresConsoleOverrides(t *testing.T) {
 // of the same rule: excluding MEASURE.BLOCK must not depend on the console's
 // configuration of MEASURE.
 func TestChildExclusionHoldsUnderAParentConsoleOverride(t *testing.T) {
-	defer swapConsoleTarget(io.Discard)()
+	captureStderr(t)
 	sink := withNative(t, Logging{Env: "prod", Level: "info", Modules: []string{"measure"}, Levels: []string{"error"}},
 		NativeLogging{Enabled: true, Level: "info", ExcludeModules: []string{"measure.block"}})
 
@@ -537,7 +559,7 @@ func TestChildExclusionHoldsUnderAParentConsoleOverride(t *testing.T) {
 // TestConsoleConfigurationDoesNotChangeNativeCollection compares what native
 // stores with and without console overrides: the set must be the same.
 func TestConsoleConfigurationDoesNotChangeNativeCollection(t *testing.T) {
-	defer swapConsoleTarget(io.Discard)()
+	captureStderr(t)
 	native := NativeLogging{
 		Enabled: true, Level: "info",
 		Modules: []string{"measure.block"}, Levels: []string{"debug"}, ExcludeModules: []string{"measure.part"},
@@ -587,18 +609,17 @@ func TestToZapConfigFollowsTheConsole(t *testing.T) {
 // native storage: it sets what the console prints for a module with no
 // override, and leaves native policy alone.
 func TestDefaultLevelSetsTheConsoleLevel(t *testing.T) {
-	var console strings.Builder
-	defer swapConsoleTarget(&console)()
+	console := captureStderr(t)
 	sink := withNative(t, Logging{Env: "prod", Level: "info"}, NativeLogging{Enabled: true, Level: "info"})
 
 	l := GetLogger("etcd").DefaultLevel(zerolog.ErrorLevel)
 	l.Info().Msg("info-line")
 	l.Error().Msg("error-line")
 
-	if strings.Contains(console.String(), "info-line") {
+	if strings.Contains(console(), "info-line") {
 		t.Fatal("DefaultLevel(error) did not quiet the console")
 	}
-	if !strings.Contains(console.String(), "error-line") {
+	if !strings.Contains(console(), "error-line") {
 		t.Fatal("DefaultLevel(error) silenced the console entirely")
 	}
 	if !sink.admittedFrom("ETCD", zerolog.InfoLevel) {
@@ -672,7 +693,7 @@ func TestLevelLessEventObeysTheThreshold(t *testing.T) {
 // TestMostSpecificNativeOverrideWins keeps a child override effective when its
 // parent has one too.
 func TestMostSpecificNativeOverrideWins(t *testing.T) {
-	defer swapConsoleTarget(io.Discard)()
+	captureStderr(t)
 	sink := withNative(t, Logging{Env: "prod", Level: "error"}, NativeLogging{
 		Enabled: true, Level: "warn",
 		Modules: []string{"measure", "measure.block"}, Levels: []string{"info", "debug"},

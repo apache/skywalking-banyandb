@@ -18,9 +18,7 @@
 package nativelog_test
 
 import (
-	"bytes"
 	"fmt"
-	"sync"
 	"testing"
 	"time"
 
@@ -44,13 +42,13 @@ func TestNativeLogStandalone(t *testing.T) {
 }
 
 // console collects what the nodes print. The cases run servers in this
-// process, so the console of a node is the console of the test binary.
-var console = &safeBuffer{}
-
-var restoreConsole func()
+// process, so the console of a node is the stderr of the test binary.
+var console *test.CapturedStderr
 
 var _ = BeforeSuite(func() {
-	restoreConsole = logger.UseConsoleTarget(console)
+	var err error
+	console, err = test.CaptureStderr()
+	Expect(err).NotTo(HaveOccurred())
 	Expect(logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel})).To(Succeed())
 
 	// The recovery case stops a node and starts the next one on its data, so
@@ -71,8 +69,8 @@ var _ = BeforeSuite(func() {
 })
 
 var _ = AfterSuite(func() {
-	if restoreConsole != nil {
-		restoreConsole()
+	if console != nil {
+		console.Restore()
 	}
 })
 
@@ -97,24 +95,6 @@ func start(dataDir string, ports []int, flags ...string) (cases.Node, func()) {
 		_ = conn.Close()
 		closeFn()
 	}
-}
-
-// safeBuffer is written by the server's logging goroutines and read by a case.
-type safeBuffer struct {
-	buf bytes.Buffer
-	mux sync.Mutex
-}
-
-func (b *safeBuffer) Write(p []byte) (int, error) {
-	b.mux.Lock()
-	defer b.mux.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *safeBuffer) String() string {
-	b.mux.Lock()
-	defer b.mux.Unlock()
-	return b.buf.String()
 }
 
 func mustPorts(n int) []int {

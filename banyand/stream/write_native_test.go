@@ -22,11 +22,14 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
+	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
 type nativeLines struct {
@@ -46,33 +49,24 @@ func (n *nativeLines) count() int {
 	return len(n.lines)
 }
 
-type consoleLines struct {
-	strings.Builder
-	mu sync.Mutex
-}
-
-func (c *consoleLines) Write(p []byte) (int, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.Builder.Write(p)
-}
-
 // TestWriteCallbackKeepsNativeWritesOffNativeStorage is the falsifying
 // assertion for the feedback protection on the write path. The callback logs
 // a refused write: for a native log write that line must reach the console
 // and not native storage, where storing it would refuse and log again. The
 // same refusal for any other write is stored as usual.
 func TestWriteCallbackKeepsNativeWritesOffNativeStorage(t *testing.T) {
-	console := &consoleLines{}
-	restoreConsole := logger.UseConsoleTarget(console)
-	defer restoreConsole()
-	if err := logger.Init(logger.Logging{
+	console, err := test.CaptureStderr()
+	require.NoError(t, err)
+	// Logging is initialized again once stderr is back, so later tests do not
+	// write to the pipe.
+	defer func() {
+		console.Restore()
+		_ = logger.Init(logger.Logging{Env: "prod", Level: "info"})
+	}()
+	require.NoError(t, logger.Init(logger.Logging{
 		Env: "prod", Level: "warn",
 		Native: logger.NativeLogging{Enabled: true, Level: "warn", TTLDays: 1},
-	}); err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-	defer func() { _ = logger.Init(logger.Logging{Env: "prod", Level: "info"}) }()
+	}))
 	sink := &nativeLines{}
 	defer logger.AttachNativeSink(sink)()
 
@@ -80,9 +74,8 @@ func TestWriteCallbackKeepsNativeWritesOffNativeStorage(t *testing.T) {
 	malformed := bus.NewMessage(1, "not a batch")
 
 	w.Rev(logger.WithNativeWrite(context.Background()), malformed)
-	if !strings.Contains(console.String(), "invalid event data type") {
-		t.Fatal("the refused native write was not reported on the console")
-	}
+	require.Eventually(t, func() bool { return strings.Contains(console.String(), "invalid event data type") },
+		5*time.Second, 10*time.Millisecond, "the refused native write was not reported on the console")
 	if n := sink.count(); n != 0 {
 		t.Fatalf("the refused native write was stored natively %d times", n)
 	}

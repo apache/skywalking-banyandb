@@ -18,8 +18,6 @@
 package nativelog_test
 
 import (
-	"bytes"
-	"sync"
 	"testing"
 	"time"
 
@@ -43,8 +41,8 @@ func TestNativeLogDistributed(t *testing.T) {
 }
 
 // console collects what the nodes print. The nodes run in this process, so
-// their console is the console of the test binary.
-var console = &safeBuffer{}
+// their console is the stderr of the test binary.
+var console *test.CapturedStderr
 
 // fastSchemaSync shortens schema convergence. The producing data node creates
 // the log group after the other nodes have started, and a node that does not
@@ -53,13 +51,12 @@ var console = &safeBuffer{}
 // full reconcile that repairs it is 150s away.
 const fastSchemaSync = "--schema-property-client-sync-interval=1s"
 
-var (
-	restoreConsole func()
-	stops          []func()
-)
+var stops []func()
 
 var _ = BeforeSuite(func() {
-	restoreConsole = logger.UseConsoleTarget(console)
+	var err error
+	console, err = test.CaptureStderr()
+	Expect(err).NotTo(HaveOccurred())
 	Expect(logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel})).To(Succeed())
 
 	// One data node produces the log events, and the liaison answers the
@@ -115,8 +112,8 @@ var _ = AfterSuite(func() {
 	for i := len(stops) - 1; i >= 0; i-- {
 		stops[i]()
 	}
-	if restoreConsole != nil {
-		restoreConsole()
+	if console != nil {
+		console.Restore()
 	}
 })
 
@@ -128,24 +125,6 @@ func port(addr string) string {
 		}
 	}
 	return addr
-}
-
-// safeBuffer is written by the server's logging goroutines and read by a case.
-type safeBuffer struct {
-	buf bytes.Buffer
-	mux sync.Mutex
-}
-
-func (b *safeBuffer) Write(p []byte) (int, error) {
-	b.mux.Lock()
-	defer b.mux.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *safeBuffer) String() string {
-	b.mux.Lock()
-	defer b.mux.Unlock()
-	return b.buf.String()
 }
 
 func newSpace() string {

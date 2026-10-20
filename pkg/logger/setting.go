@@ -36,22 +36,6 @@ const (
 	rootName = "ROOT"
 )
 
-// testConsoleTarget redirects normal logging in tests. It is nil in production.
-var testConsoleTarget io.Writer
-
-// UseConsoleTarget sends normal logging to w instead of stderr, and returns a
-// function that restores the previous target. Init reads the target, so this
-// MUST be called before the logging of the code under test starts.
-//
-// It exists for tests that assert on what the console printed. A test process
-// that runs a server in-process cannot otherwise separate the server's console
-// output from its own.
-func UseConsoleTarget(w io.Writer) func() {
-	previous := testConsoleTarget
-	testConsoleTarget = w
-	return func() { testConsoleTarget = previous }
-}
-
 const (
 	// Environment variables bound to the --logging-env and --logging-level flags by
 	// pkg/config. They are read directly here because the root logger has to produce
@@ -289,9 +273,6 @@ func getLogger(cfg Logging) (*Logger, error) {
 		w = io.Writer(cw)
 	} else {
 		w = os.Stderr
-	}
-	if testConsoleTarget != nil {
-		w = testConsoleTarget
 	}
 	// The console target is kept so that Named can build a gate per module
 	// without reaching back through the root logger's writer.
