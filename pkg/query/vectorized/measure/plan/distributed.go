@@ -1083,7 +1083,7 @@ func (p *DistributedPlan) iteratorFromBatches(ctx context.Context, batches []*ve
 		}
 	}
 	if schema == nil {
-		vecPlan, analyzeErr := Analyze(req, p.measureSchemas[0], vmeasure.AggModeAll)
+		vecPlan, analyzeErr := Analyze(req, p.measureSchemas[0], vmeasure.AggModeAll, nil)
 		if analyzeErr != nil {
 			releaseBatches(batches)
 			return nil, fmt.Errorf("vec distributed plan: analyze empty output: %w", analyzeErr)
