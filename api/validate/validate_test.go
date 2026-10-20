@@ -180,10 +180,7 @@ func TestMeasurePassesWithNonPrefixShardingKey(t *testing.T) {
 	assert.NoError(t, err, "Measure() must not reject a non-prefix sharding key")
 }
 
-func TestValidateTracePipelineConfig_StagePluginsRejected(t *testing.T) {
-	// A config with sampler plugins declared only under stages[] must be rejected
-	// with a clear error — not silently accepted (which would load zero samplers
-	// and retain all traces).
+func TestValidateTracePipelineConfig_StagePluginsAccepted(t *testing.T) {
 	stagePlugin := &commonv1.Plugin{
 		Name: "lss",
 		Kind: &commonv1.Plugin_Sampler{
@@ -201,8 +198,7 @@ func TestValidateTracePipelineConfig_StagePluginsRejected(t *testing.T) {
 		},
 	}
 	err := validateTracePipelineConfig(cfg)
-	assert.Error(t, err, "stages[].plugins with a sampler must be rejected")
-	assert.Contains(t, err.Error(), "stages[].plugins are not supported in v1")
+	assert.NoError(t, err, "stage sampler chains run during source-stage migration")
 }
 
 func TestCheckShardingKeySubset(t *testing.T) {
@@ -368,4 +364,94 @@ func TestMeasureAndStreamStillLoadDuplicateTagNames(t *testing.T) {
 	}
 	assert.NoError(t, Stream(stream))
 	assert.Error(t, UniqueTagNames(duplicated))
+}
+
+func TestValidateTracePipelineConfigStageSamplerValidation(t *testing.T) {
+	for _, test := range []struct {
+		name, path, message, stageContext string
+		abi                               uint32
+	}{
+		{name: "absolute", path: "/sampler.so", abi: 1, message: "invalid SamplerPlugin.Path", stageContext: "StageRule.Plugins[0]"},
+		{name: "escape", path: "../sampler.so", abi: 1, message: "invalid SamplerPlugin.Path", stageContext: "StageRule.Plugins[0]"},
+		{name: "ABI", path: "sampler.so", abi: 2, message: "abi_version must be 1", stageContext: "stages[0].plugins[0]"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config := &commonv1.TracePipelineConfig{
+				Enabled: true,
+				Stages: []*commonv1.StageRule{{
+					Stage: "hot",
+					Plugins: []*commonv1.Plugin{{
+						Name: "sampler",
+						Kind: &commonv1.Plugin_Sampler{Sampler: &commonv1.SamplerPlugin{
+							Path:       test.path,
+							AbiVersion: test.abi,
+						}},
+					}},
+				}},
+			}
+			err := validateTracePipelineConfig(config)
+			assert.ErrorContains(t, err, test.message)
+			assert.ErrorContains(t, err, test.stageContext)
+		})
+	}
+}
+
+func TestGroupAcceptsImplicitHotAndNonterminalStageSampling(t *testing.T) {
+	plugin := &commonv1.Plugin{Name: "sampler", Kind: &commonv1.Plugin_Sampler{Sampler: &commonv1.SamplerPlugin{Path: "sampler.so", AbiVersion: 1}}}
+	group := &commonv1.Group{
+		Metadata: &commonv1.Metadata{Name: "trace-group"}, Catalog: commonv1.Catalog_CATALOG_TRACE,
+		ResourceOpts: &commonv1.ResourceOpts{
+			ShardNum: 1,
+			SegmentInterval: &commonv1.IntervalRule{
+				Unit: commonv1.IntervalRule_UNIT_DAY,
+				Num:  1,
+			},
+			Ttl: &commonv1.IntervalRule{
+				Unit: commonv1.IntervalRule_UNIT_DAY,
+				Num:  1,
+			},
+			Stages: []*commonv1.LifecycleStage{
+				{
+					Name:     "warm",
+					ShardNum: 1,
+					SegmentInterval: &commonv1.IntervalRule{
+						Unit: commonv1.IntervalRule_UNIT_DAY,
+						Num:  1,
+					},
+					Ttl: &commonv1.IntervalRule{
+						Unit: commonv1.IntervalRule_UNIT_DAY,
+						Num:  1,
+					},
+				},
+				{
+					Name:     "cold",
+					ShardNum: 1,
+					SegmentInterval: &commonv1.IntervalRule{
+						Unit: commonv1.IntervalRule_UNIT_DAY,
+						Num:  1,
+					},
+					Ttl: &commonv1.IntervalRule{
+						Unit: commonv1.IntervalRule_UNIT_DAY,
+						Num:  1,
+					},
+				},
+			},
+		},
+
+		Pipeline: &commonv1.TracePipelineConfig{
+			Enabled: true,
+			Stages: []*commonv1.StageRule{
+				{
+					Stage:   "hot",
+					Plugins: []*commonv1.Plugin{plugin},
+				},
+				{
+					Stage:   "warm",
+					Plugins: []*commonv1.Plugin{plugin},
+				},
+			},
+		},
+	}
+	assert.NoError(t, Group(group))
+	assert.NoError(t, group.Validate())
 }

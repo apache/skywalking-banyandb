@@ -88,20 +88,42 @@ func (d *Dictionary) Encode(dst []byte) []byte {
 
 // Decode decodes the dictionary.
 func (d *Dictionary) Decode(dst [][]byte, src []byte, itemsCount uint64) ([][]byte, error) {
+	return d.DecodeWithLimit(dst, src, itemsCount, 0)
+}
+
+// DecodeWithLimit bounds dictionary payload bytes; zero preserves unlimited decoding.
+func (d *Dictionary) DecodeWithLimit(dst [][]byte, src []byte, itemsCount uint64, limit int) ([][]byte, error) {
 	src, count := BytesToVarUint64(src)
 	if count == 0 {
 		return dst, nil
 	}
+	if count > maxUniqueValues {
+		return nil, fmt.Errorf("dictionary has too many unique values: %d", count)
+	}
 
-	values, src, err := d.decodeBytesBlockWithTail(src, count)
+	values, src, err := d.decodeBytesBlockWithTail(src, count, limit)
 	if err != nil {
 		return nil, err
 	}
 	d.values = values
 
-	d.tmp, err = decodeBitPacking(d.tmp, src)
+	if limit > 0 {
+		d.tmp, err = decodeBitPackingLimit(d.tmp, src, itemsCount*2)
+	} else {
+		d.tmp, err = decodeBitPacking(d.tmp, src)
+	}
 	if err != nil {
 		return nil, err
+	}
+	if len(d.tmp)%2 != 0 {
+		return nil, fmt.Errorf("dictionary run lengths have an incomplete pair")
+	}
+	var total uint64
+	for index := 0; index < len(d.tmp); index += 2 {
+		total += uint64(d.tmp[index+1])
+		if total > itemsCount || uint64(d.tmp[index]) >= count {
+			return nil, fmt.Errorf("dictionary run exceeds declared rows or values")
+		}
 	}
 	d.indices = decodeRLE(d.indices, d.tmp)
 	if uint64(len(d.indices)) != itemsCount {
@@ -113,13 +135,13 @@ func (d *Dictionary) Decode(dst [][]byte, src []byte, itemsCount uint64) ([][]by
 	return dst, nil
 }
 
-func (d *Dictionary) decodeBytesBlockWithTail(src []byte, itemsCount uint64) ([][]byte, []byte, error) {
+func (d *Dictionary) decodeBytesBlockWithTail(src []byte, itemsCount uint64, limit int) ([][]byte, []byte, error) {
 	u64List := GenerateUint64List(0)
 	defer ReleaseUint64List(u64List)
 
 	var tail []byte
 	var err error
-	u64List.L, tail, err = DecodeUint64Block(u64List.L[:0], src, itemsCount)
+	u64List.L, tail, err = decodeUint64BlockLimit(u64List.L[:0], src, itemsCount, limit)
 	if err != nil {
 		return nil, nil, fmt.Errorf("cannot decode string lengths: %w", err)
 	}
@@ -127,7 +149,7 @@ func (d *Dictionary) decodeBytesBlockWithTail(src []byte, itemsCount uint64) ([]
 	src = tail
 
 	var decompressedData []byte
-	decompressedData, tail, err = decompressBlock(nil, src)
+	decompressedData, tail, err = decompressBlockLimit(nil, src, limit)
 	if err != nil {
 		return nil, nil, fmt.Errorf("cannot decode bytes block with strings: %w", err)
 	}
@@ -225,7 +247,8 @@ func (bpe *bitPackingEncoder) encode(src []uint32) {
 }
 
 type bitPackingDecoder struct {
-	br *Reader
+	br       *Reader
+	maxItems uint64
 }
 
 func newBitPackingDecoder(br *Reader) *bitPackingDecoder {
@@ -241,6 +264,9 @@ func (bpd *bitPackingDecoder) decode(dst []uint32) ([]uint32, error) {
 	}
 	if length == 0 {
 		return []uint32{}, nil
+	}
+	if bpd.maxItems > 0 && length > bpd.maxItems {
+		return nil, fmt.Errorf("dictionary index count exceeds row budget")
 	}
 
 	bitsWidth, err := bpd.br.ReadBits(8)
@@ -268,9 +294,14 @@ func encodeBitPacking(src []uint32) []byte {
 }
 
 func decodeBitPacking(dst []uint32, src []byte) ([]uint32, error) {
+	return decodeBitPackingLimit(dst, src, 0)
+}
+
+func decodeBitPackingLimit(dst []uint32, src []byte, maxItems uint64) ([]uint32, error) {
 	reader := bytes.NewReader(src)
 	br := NewReader(reader)
 	decoder := newBitPackingDecoder(br)
+	decoder.maxItems = maxItems
 	return decoder.decode(dst)
 }
 

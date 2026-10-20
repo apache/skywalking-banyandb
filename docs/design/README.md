@@ -7,6 +7,7 @@ must be added there when it is introduced. When a milestone ships, its directory
 
 ## Current milestone — 0.12.0
 
+- [Trace sampling before lifecycle migration](0.12.0/lifecycle-trace-sampling.md)
 - [Tag aggregation and time bucketing in the measure query engine](0.12.0/tag-aggregation/README.md)
 - [Data export and import](0.12.0/data-export-import/README.md)
 - [Docker-canonical build and license generation](0.12.0/docker-canonical-build/README.md)

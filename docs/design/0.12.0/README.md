@@ -1,5 +1,6 @@
 # 0.12.0 Design Documents
 
+- [Trace sampling before lifecycle migration](lifecycle-trace-sampling.md)
 - [Tag aggregation and time bucketing in the measure query engine](tag-aggregation/README.md)
 - [Self-stored logs](self-stored-logs/README.md)
 - [Time-range pruning in the native inverted index](native-index-time-pruning/README.md)

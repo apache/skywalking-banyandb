@@ -115,8 +115,10 @@ func recordReplayNodeErrors(progress *Progress, group, sourceStage, targetStage,
 // confirmations are observed in send order. It is driven by a single goroutine
 // (the part's replay loop) and needs no internal locking.
 type confirmPipeline struct {
-	inflight []chan error
-	depth    int
+	inflight         []chan error
+	onConfirmed      []func() error
+	checkpointFailed bool
+	depth            int
 	// waited accumulates, over the pipeline's lifetime, the wall time the driving
 	// goroutine spent blocked on confirmations (the in-flight bound in add plus
 	// drain). Since that goroutine is either building or blocked here, it measures
@@ -133,14 +135,34 @@ func newConfirmPipeline() *confirmPipeline {
 // so no more than depth batches are ever outstanding, returning that awaited
 // error (a non-nil error means an earlier batch must abort the part).
 func (p *confirmPipeline) add(ch chan error) error {
+	return p.addConfirmed(ch, nil)
+}
+
+func (p *confirmPipeline) observe(index int, result error) error {
+	if result != nil {
+		p.checkpointFailed = true
+		return result
+	}
+	if !p.checkpointFailed && p.onConfirmed[index] != nil {
+		if err := p.onConfirmed[index](); err != nil {
+			p.checkpointFailed = true
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *confirmPipeline) addConfirmed(ch chan error, confirmed func() error) error {
 	var awaited error
 	if len(p.inflight) >= p.depth {
 		start := time.Now()
-		awaited = <-p.inflight[0]
+		awaited = p.observe(0, <-p.inflight[0])
 		p.waited += time.Since(start)
 		p.inflight = p.inflight[1:]
+		p.onConfirmed = p.onConfirmed[1:]
 	}
 	p.inflight = append(p.inflight, ch)
+	p.onConfirmed = append(p.onConfirmed, confirmed)
 	return awaited
 }
 
@@ -149,15 +171,16 @@ func (p *confirmPipeline) add(ch chan error) error {
 // a drained pipeline is empty.
 func (p *confirmPipeline) drain() error {
 	var first error
-	for _, ch := range p.inflight {
+	for index, ch := range p.inflight {
 		start := time.Now()
-		out := <-ch
+		out := p.observe(index, <-ch)
 		p.waited += time.Since(start)
 		if first == nil && out != nil {
 			first = out
 		}
 	}
 	p.inflight = nil
+	p.onConfirmed = nil
 	return first
 }
 
@@ -172,6 +195,9 @@ func (p *confirmPipeline) drain() error {
 // it touches the buffer, and each background confirmation touches just its own
 // captured publisher and channel, so no buffer locking is needed.
 type batchSender struct {
+	// beforeFlush captures the ending source cursor before automatic flushing.
+	beforeFlush func() (func() error, error)
+
 	client    queue.Client
 	publisher queue.BatchPublisher
 	pipeline  *confirmPipeline
@@ -191,6 +217,7 @@ type batchSender struct {
 	maxRows       int
 	maxBytes      int
 	inflightBytes int
+	queuedBytes   uint64
 	// Flush-reason tallies: which cap forced each batch out. A flush triggered by
 	// both caps at once is attributed to bytes (the memory-protecting cap that
 	// fires early in the big-body cluster). tailFlushes counts the trailing
@@ -321,6 +348,7 @@ func (s *batchSender) routeAndEnqueue(ctx context.Context, l *logger.Logger, sel
 func (s *batchSender) enqueue(ctx context.Context, size int, msg bus.Message) error {
 	s.batch = append(s.batch, msg)
 	s.inflightBytes += size
+	s.queuedBytes += uint64(size)
 	byteCap := s.inflightBytes >= s.maxBytes
 	rowCap := len(s.batch) >= s.maxRows
 	if rowCap || byteCap {
@@ -341,6 +369,14 @@ func (s *batchSender) enqueue(ctx context.Context, size int, msg bus.Message) er
 // the in-flight bound made it wait — an earlier batch's surfaced result (which
 // takes priority, preserving send order). It is a no-op when the buffer is empty.
 func (s *batchSender) flush(ctx context.Context) error {
+	var confirmed func() error
+	if len(s.batch) > 0 && s.beforeFlush != nil {
+		var prepareErr error
+		confirmed, prepareErr = s.beforeFlush()
+		if prepareErr != nil {
+			return prepareErr
+		}
+	}
 	pending := s.take()
 	if len(pending) == 0 {
 		return nil
@@ -378,7 +414,7 @@ func (s *batchSender) flush(ctx context.Context) error {
 	}()
 	// Abort promptly: an earlier in-flight batch's failure (via the bound) wins,
 	// otherwise this batch's own synchronous send error.
-	if awaited := s.pipeline.add(ch); awaited != nil {
+	if awaited := s.pipeline.addConfirmed(ch, confirmed); awaited != nil {
 		return awaited
 	}
 	if pubErr != nil {
@@ -545,4 +581,22 @@ func (s *batchSender) discard() {
 	s.take()
 	s.lent = s.lent[:0]
 	s.inflightBytes = 0
+}
+
+// poll observes completed batches without waiting, always in send order.
+func (p *confirmPipeline) poll() error {
+	for len(p.inflight) > 0 {
+		select {
+		case result := <-p.inflight[0]:
+			err := p.observe(0, result)
+			p.inflight = p.inflight[1:]
+			p.onConfirmed = p.onConfirmed[1:]
+			if err != nil {
+				return err
+			}
+		default:
+			return nil
+		}
+	}
+	return nil
 }
