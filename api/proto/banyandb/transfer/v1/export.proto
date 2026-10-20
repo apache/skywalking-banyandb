@@ -351,8 +351,14 @@ message ExportRequest {
     string session_id = 1 [(validate.rules).string.pattern = "^[0-9a-f]{32}$"];
     // Data node the liaison forwards the stream to: a node_id from the Plan frames.
     string target_node = 2 [(validate.rules).string.min_len = 1];
-    Format format = 3 [(validate.rules).enum = {defined_only: true, not_in: [0]}];
-    Compress compress = 4 [(validate.rules).enum = {defined_only: true, not_in: [0]}];
+    Format format = 3 [(validate.rules).enum = {
+      defined_only: true
+      not_in: [0]
+    }];
+    Compress compress = 4 [(validate.rules).enum = {
+      defined_only: true
+      not_in: [0]
+    }];
     // Soft upper bound of one produced file in on-disk bytes; 0 means no split.
     uint64 max_file_size = 5;
     RateLimit rate_limit = 6;
