@@ -56,7 +56,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	metricSvc := services.NewMetricService(metaSvc, dataPipeline, "standalone", nil)
 	metaSvc.SetMetricsRegistry(metricSvc)
 	pm := protector.NewMemory(metricSvc)
-	logSvc := logging.NewService(NativeLogSink, NativeLoggingConfig, metaSvc, dataPipeline, pm, metricSvc)
+	logSvc := logging.NewService(nativeLogSink, nativeLoggingConfig, metaSvc, dataPipeline, pm, metricSvc)
 	logSvc.SetNodeType("standalone")
 	propertySvc, err := property.NewService(metaSvc, dataPipeline, nil, metricSvc, pm)
 	if err != nil {

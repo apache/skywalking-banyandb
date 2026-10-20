@@ -42,6 +42,9 @@ type Logging struct {
 	Level   string
 	Modules []string
 	Levels  []string
+	// Native configures the native destination, which stores this process's
+	// own logs in BanyanDB. It is off unless Native.Enabled is set.
+	Native NativeLogging
 }
 
 // Logger is wrapper for rs/zerolog logger with module, it is singleton.
@@ -50,8 +53,12 @@ type Logger struct {
 	modules map[string]zerolog.Level
 	// consoleTarget is where normal logging writes. Named needs it to build a
 	// gate per module rather than sharing the root's writer.
-	consoleTarget  io.Writer
-	module         string
+	consoleTarget io.Writer
+	module        string
+	// identity is every component the logger was named with. module stops at
+	// the component a console override matched; native policy is resolved
+	// against identity, so the console overrides cannot change it.
+	identity       string
 	consoleLevel   zerolog.Level
 	development    bool
 	isDefaultLevel bool
@@ -73,8 +80,8 @@ func (l *Logger) Named(name ...string) *Logger {
 	var moduleBuilder strings.Builder
 	var module string
 	// The console threshold, not the logger's own level: with native enabled
-	// that level is the admission floor -- the more verbose of the two sinks --
-	// and reusing it here would print everything the native sink admitted.
+	// that level is the admission floor -- the more verbose of the two
+	// destinations -- and reusing it here would print what only native wants.
 	level := l.consoleLevel
 	isDefaultLevel := true
 	for i, m := range mm {
@@ -89,38 +96,47 @@ func (l *Logger) Named(name ...string) *Logger {
 			break
 		}
 	}
-	// Both thresholds are resolved here, once per module, and baked into this
-	// logger's writers. Nothing downstream has to recover the module from the
-	// encoded event to decide where it belongs.
-	stamped := moduleBuilder.String()
+	identity := strings.ToUpper(strings.Join(name, "."))
+	if l.identity != "" {
+		identity = l.identity + "." + identity
+	}
 	parent := root.get()
-	base := *parent.Logger
-	nativeLvl, excluded := resolveNative(stamped)
-	nativeOn := NativeEnabled()
-	if nativeOn && parent.consoleTarget != nil {
-		base = base.Output(zerolog.MultiLevelWriter(
-			&consoleWriter{out: parent.consoleTarget, level: level},
-			&nativeWriter{module: stamped, level: nativeLvl, excluded: excluded},
-		))
+	child := &Logger{
+		module: module, identity: identity, modules: l.modules, development: l.development,
+		isDefaultLevel: isDefaultLevel, consoleTarget: parent.consoleTarget, consoleLevel: level,
 	}
-	subLogger := base.With().Str("module", stamped).Logger().
-		Level(admissionFloor(level, nativeLvl, nativeOn))
-	return &Logger{
-		module: module, modules: l.modules, development: l.development,
-		Logger: &subLogger, isDefaultLevel: isDefaultLevel,
-		consoleTarget: parent.consoleTarget, consoleLevel: level,
+	subLogger := parent.Logger.Output(child.writer()).With().Str("module", moduleBuilder.String()).Logger().
+		Level(admissionFloor(level, child.nativeModule()))
+	child.Logger = &subLogger
+	return child
+}
+
+// nativeModule is the module native storage knows this logger by.
+func (l *Logger) nativeModule() string {
+	if l.identity == "" {
+		return rootName
 	}
+	return l.identity
+}
+
+// writer builds the output of l. It has no state but its gates, so a logger
+// built before Init writes under the native configuration Init installs.
+func (l *Logger) writer() *moduleWriter {
+	return &moduleWriter{console: l.consoleTarget, module: l.nativeModule(), consoleLevel: l.consoleLevel}
 }
 
 // ToZapConfig outputs the zap config is derived from l.
+//
+// The console threshold is what it follows, as before native storage existed:
+// the logger's own level is the admission floor, which native may lower.
 func (l *Logger) ToZapConfig() zap.Config {
-	level, err := zap.ParseAtomicLevel(l.GetLevel().String())
+	level, err := zap.ParseAtomicLevel(l.consoleLevel.String())
 	if err != nil {
 		panic(err)
 	}
 	if !l.development {
 		config := zap.NewProductionConfig()
-		switch l.GetLevel() {
+		switch l.consoleLevel {
 		case zerolog.DebugLevel:
 			config.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
 		case zerolog.InfoLevel:
@@ -162,10 +178,12 @@ func (l *Logger) ToZapConfig() zap.Config {
 	}
 }
 
-// DefaultLevel sets the default level for the logger.
+// DefaultLevel sets the default level for the logger. It is the console
+// threshold it sets; the native threshold of the module is left as configured.
 func (l *Logger) DefaultLevel(level zerolog.Level) *Logger {
 	if l.isDefaultLevel {
-		nl := l.Logger.Level(level)
+		l.consoleLevel = level
+		nl := l.Logger.Output(l.writer()).Level(admissionFloor(level, l.nativeModule()))
 		l.Logger = &nl
 	}
 	return l

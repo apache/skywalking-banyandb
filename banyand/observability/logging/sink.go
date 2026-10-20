@@ -101,14 +101,15 @@ type entry struct {
 
 // Sink buffers admitted log events and hands them to a consumer for writing.
 //
-// It is constructed before logger.Init, so the buffer exists for the lines a
-// process emits while it is still starting, and activated once the services it
-// publishes through are running.
+// It is constructed before logger.Init and attached right after it, so the
+// buffer exists for the lines a process emits while it is still starting. The
+// consumer starts draining it once the services it publishes through run.
 type Sink struct {
 	queue    chan entry
 	dropped  map[string]*atomic.Uint64
 	budget   atomic.Pointer[func() int64]
 	node     atomic.Pointer[NodeInfo]
+	detach   atomic.Pointer[func()]
 	pool     sync.Pool
 	cfg      *logger.NativeLogging
 	queued   atomic.Int64
@@ -137,6 +138,20 @@ func NewSink(cfg *logger.NativeLogging) *Sink {
 	initial := func() int64 { return cfg.MaxBytes }
 	s.budget.Store(&initial)
 	return s
+}
+
+// Attach makes the sink the destination of native logging. Every line
+// admitted from here on is buffered for the consumer.
+func (s *Sink) Attach() {
+	detach := logger.AttachNativeSink(s)
+	s.detach.Store(&detach)
+}
+
+// Detach stops admission. It returns once no later line can be admitted.
+func (s *Sink) Detach() {
+	if detach := s.detach.Swap(nil); detach != nil {
+		(*detach)()
+	}
 }
 
 // SetNode publishes the identity stamped onto every event from here on.

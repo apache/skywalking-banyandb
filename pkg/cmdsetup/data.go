@@ -59,7 +59,7 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 	metaSvc.SetSnapshotPipeline(pipeline)
 	propertyStreamPipeline := queue.Local()
 	metaSvc.SetPropertyPipelineClient(propertyStreamPipeline)
-	logSvc := logging.NewService(NativeLogSink, NativeLoggingConfig, metaSvc, propertyStreamPipeline, pm, metricSvc)
+	logSvc := logging.NewService(nativeLogSink, nativeLoggingConfig, metaSvc, propertyStreamPipeline, pm, metricSvc)
 	logSvc.SetNodeType("data")
 	propertySvc, err := property.NewService(metaSvc, pipeline, propertyStreamPipeline, metricSvc, pm)
 	if err != nil {

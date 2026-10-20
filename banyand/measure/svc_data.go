@@ -544,7 +544,7 @@ func (d *dataSnapshotListener) Rev(ctx context.Context, message bus.Message) bus
 			n += g.GetSchema().Metadata.Name
 		}
 
-		log.Get().Info().Msgf("loaded all snapshots: %s", n)
+		log.Info().Msgf("loaded all snapshots: %s", n)
 	} else {
 		for _, g := range groups {
 			if g.Catalog != commonv1.Catalog_CATALOG_MEASURE {
@@ -556,7 +556,7 @@ func (d *dataSnapshotListener) Rev(ctx context.Context, message bus.Message) bus
 			}
 			gg = append(gg, group)
 		}
-		log.Get().Info().Msgf("loaded groups: %s", gg)
+		log.Info().Msgf("loaded groups: %s", gg)
 	}
 	if len(gg) == 0 {
 		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
@@ -594,7 +594,7 @@ func (d *dataSnapshotListener) Rev(ctx context.Context, message bus.Message) bus
 		Name:    sn,
 		Catalog: commonv1.Catalog_CATALOG_MEASURE,
 	}
-	log.Get().Info().Msgf("snapshot %s created", sn)
+	log.Info().Msgf("snapshot %s created", sn)
 	if err != nil {
 		snp.Error = err.Error()
 	}

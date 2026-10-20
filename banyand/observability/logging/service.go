@@ -80,7 +80,7 @@ type Service struct {
 }
 
 // NewService returns the service that drains sink. The sink is constructed
-// separately and installed on the logger before Init, so that the buffer
+// separately and attached to the logger right after Init, so that the buffer
 // exists for the lines emitted while the process is still starting.
 func NewService(sink *Sink, cfg *logger.NativeLogging, md metadata.Repo,
 	pipeline queue.Client, pm protector.Memory, omr observability.MetricsRegistry,
@@ -517,7 +517,7 @@ func entityOf(req *streamv1.WriteRequest) pbv1.EntityValues {
 // window the length of one publish in which lines are admitted and then
 // stranded in a buffer nobody will read again.
 func (s *Service) GracefulStop() {
-	logger.StopNative()
+	s.sink.Detach()
 	s.closer.CloseThenWait()
 }
 

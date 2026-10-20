@@ -62,7 +62,7 @@ func (s *recordingSink) levels() []zerolog.Level {
 func withNative(t *testing.T, cfg Logging, native NativeLogging) *recordingSink {
 	t.Helper()
 	sink := &recordingSink{}
-	SetNativeSink(sink)
+	detach := AttachNativeSink(sink)
 	if native.Enabled {
 		// Fill in the timing and sizing the validator requires, so a test only
 		// has to state the part it is about.
@@ -91,12 +91,13 @@ func withNative(t *testing.T, cfg Logging, native NativeLogging) *recordingSink 
 			native.MemoryFraction = 0.02
 		}
 	}
-	if err := InitWithNative(cfg, native); err != nil {
-		t.Fatalf("InitWithNative: %v", err)
+	cfg.Native = native
+	if err := Init(cfg); err != nil {
+		t.Fatalf("Init: %v", err)
 	}
 	t.Cleanup(func() {
-		StopNative()
-		if err := InitWithNative(Logging{Env: "prod", Level: "info"}, NativeLogging{}); err != nil {
+		detach()
+		if err := Init(Logging{Env: "prod", Level: "info"}); err != nil {
 			t.Fatalf("restoring the logger: %v", err)
 		}
 	})
@@ -123,8 +124,8 @@ func TestNativeDisabledAdmitsNothing(t *testing.T) {
 	if got := len(sink.levels()); got != 0 {
 		t.Fatalf("sink received %d entries with native disabled, want 0", got)
 	}
-	if NativeEnabled() {
-		t.Fatal("NativeEnabled reports true with native disabled")
+	if nativeEnabled() {
+		t.Fatal("nativeEnabled reports true with native disabled")
 	}
 }
 
@@ -152,24 +153,25 @@ func TestTwoGatesSplitByLevel(t *testing.T) {
 	}
 }
 
-// TestAdmissionFloorIsTheMoreVerboseSink pins the reason the root level cannot
-// simply be the console level: zerolog filters once, upstream of both writers.
+// TestAdmissionFloorIsTheMoreVerboseSink pins the reason a logger's level
+// cannot simply be the console level: zerolog filters once, upstream of the
+// writer.
 func TestAdmissionFloorIsTheMoreVerboseSink(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		console  zerolog.Level
-		native   zerolog.Level
-		nativeOn bool
-		want     zerolog.Level
+		name    string
+		console string
+		native  NativeLogging
+		want    zerolog.Level
 	}{
-		{"native quieter", zerolog.InfoLevel, zerolog.WarnLevel, true, zerolog.InfoLevel},
-		{"native louder", zerolog.ErrorLevel, zerolog.InfoLevel, true, zerolog.InfoLevel},
-		{"native off", zerolog.ErrorLevel, zerolog.DebugLevel, false, zerolog.ErrorLevel},
-		{"equal", zerolog.WarnLevel, zerolog.WarnLevel, true, zerolog.WarnLevel},
+		{"native quieter", "info", NativeLogging{Enabled: true, Level: "warn"}, zerolog.InfoLevel},
+		{"native louder", "error", NativeLogging{Enabled: true, Level: "info"}, zerolog.InfoLevel},
+		{"native off", "error", NativeLogging{Level: "debug"}, zerolog.ErrorLevel},
+		{"equal", "warn", NativeLogging{Enabled: true, Level: "warn"}, zerolog.WarnLevel},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := admissionFloor(tc.console, tc.native, tc.nativeOn); got != tc.want {
-				t.Fatalf("admissionFloor = %v, want %v", got, tc.want)
+			withNative(t, Logging{Env: "prod", Level: tc.console}, tc.native)
+			if got := GetLogger("measure").GetLevel(); got != tc.want {
+				t.Fatalf("admission floor = %v, want %v", got, tc.want)
 			}
 		})
 	}
@@ -195,67 +197,71 @@ func TestExcludedModulesNeverReachTheSink(t *testing.T) {
 	}
 }
 
-// TestExclusionMatchesByPrefix pins why the list cannot be exact-match: a
-// --logging-modules override truncates the module name that is stamped, so an
-// exact list would be bypassed by an unrelated console-side override.
-func TestExclusionMatchesByPrefix(t *testing.T) {
+// TestExclusionCoversAModuleAndItsChildren pins how an exclusion matches: a
+// module and every module named under it, never a module that only shares the
+// leading characters.
+func TestExclusionCoversAModuleAndItsChildren(t *testing.T) {
 	sink := withNative(t, Logging{Env: "prod", Level: "error"},
-		NativeLogging{Enabled: true, Level: "debug"})
+		NativeLogging{Enabled: true, Level: "debug", ExcludeModules: []string{"measure"}})
 
-	GetLogger("server-queue-pub-data").Info().Msg("suffixed module")
+	GetLogger("measure", "block").Info().Msg("a child of an excluded module")
+	GetLogger("measurement").Info().Msg("a module that only shares the leading characters")
 
-	if got := len(sink.levels()); got != 0 {
-		t.Fatalf("sink received %d entries for a prefixed module, want 0", got)
+	if sink.admittedFrom("MEASURE.BLOCK", zerolog.InfoLevel) {
+		t.Fatal("MEASURE.BLOCK was admitted although MEASURE is excluded")
+	}
+	if !sink.admittedFrom("MEASUREMENT", zerolog.InfoLevel) {
+		t.Fatal("MEASUREMENT was not admitted; the exclusion of MEASURE matched it by its first characters")
 	}
 }
 
 // TestSuppressionReportsAFullWrite pins zerolog's contract: a short count is
-// mapped to io.ErrShortWrite by the multi-writer, so a gate that suppresses
-// must still report the whole line as written.
+// mapped to io.ErrShortWrite, so a gate that suppresses must still report the
+// whole line as written.
 func TestSuppressionReportsAFullWrite(t *testing.T) {
+	withNative(t, Logging{Env: "prod", Level: "error"},
+		NativeLogging{Enabled: true, Level: "warn", ExcludeModules: []string{"stream"}})
 	line := []byte(`{"level":"debug"}`)
 
-	native := &nativeWriter{module: "MEASURE", level: zerolog.WarnLevel}
-	n, err := native.WriteLevel(zerolog.DebugLevel, line)
-	if n != len(line) || err != nil {
-		t.Fatalf("suppressed native write = (%d, %v), want (%d, nil)", n, err, len(line))
-	}
-
-	excluded := &nativeWriter{module: "STREAM", level: zerolog.DebugLevel, excluded: true}
-	if n, err = excluded.WriteLevel(zerolog.ErrorLevel, line); n != len(line) || err != nil {
-		t.Fatalf("excluded native write = (%d, %v), want (%d, nil)", n, err, len(line))
-	}
-
 	var out strings.Builder
-	console := &consoleWriter{out: &out, level: zerolog.ErrorLevel}
-	if n, err = console.WriteLevel(zerolog.InfoLevel, line); n != len(line) || err != nil {
-		t.Fatalf("suppressed console write = (%d, %v), want (%d, nil)", n, err, len(line))
+	quiet := &moduleWriter{console: &out, module: "MEASURE", consoleLevel: zerolog.ErrorLevel}
+	n, err := quiet.WriteLevel(zerolog.DebugLevel, line)
+	if n != len(line) || err != nil {
+		t.Fatalf("suppressed write = (%d, %v), want (%d, nil)", n, err, len(line))
 	}
 	if out.Len() != 0 {
 		t.Fatalf("suppressed console write emitted %q", out.String())
 	}
+
+	excluded := &moduleWriter{console: &out, module: "STREAM", consoleLevel: zerolog.ErrorLevel}
+	if n, err = excluded.WriteLevel(zerolog.InfoLevel, line); n != len(line) || err != nil {
+		t.Fatalf("excluded write = (%d, %v), want (%d, nil)", n, err, len(line))
+	}
 }
 
 // TestNativeWriteSurvivesAMissingSink covers the window between Init and the
-// sink being installed, and the one after shutdown detaches it.
+// sink being attached, and the one after shutdown detaches it.
 func TestNativeWriteSurvivesAMissingSink(t *testing.T) {
-	StopNative()
-	w := &nativeWriter{module: "MEASURE", level: zerolog.DebugLevel}
+	withNative(t, Logging{Env: "prod", Level: "error"}, NativeLogging{Enabled: true, Level: "debug"})
+	nativeSink.Store(nil)
+	w := &moduleWriter{console: io.Discard, module: "MEASURE", consoleLevel: zerolog.ErrorLevel}
 	line := []byte(`{"level":"info"}`)
 	if n, err := w.WriteLevel(zerolog.InfoLevel, line); n != len(line) || err != nil {
 		t.Fatalf("write with no sink = (%d, %v), want (%d, nil)", n, err, len(line))
 	}
 }
 
-// TestStopNativeHaltsAdmission pins the shutdown order: admission stops at a
-// known instant, so a final drain publishes exactly what was admitted before it.
-func TestStopNativeHaltsAdmission(t *testing.T) {
-	sink := withNative(t, Logging{Env: "prod", Level: "error"},
+// TestDetachHaltsAdmission pins the shutdown order: admission stops at a known
+// instant, so a final drain publishes exactly what was admitted before it.
+func TestDetachHaltsAdmission(t *testing.T) {
+	withNative(t, Logging{Env: "prod", Level: "error"},
 		NativeLogging{Enabled: true, Level: "debug"})
+	sink := &recordingSink{}
+	detach := AttachNativeSink(sink)
 
 	l := GetLogger("measure")
 	l.Info().Msg("before")
-	StopNative()
+	detach()
 	l.Info().Msg("after")
 
 	entries := sink.entries
@@ -263,7 +269,23 @@ func TestStopNativeHaltsAdmission(t *testing.T) {
 		t.Fatalf("sink received %d entries, want 1", len(entries))
 	}
 	if !strings.Contains(entries[0].line, "before") {
-		t.Fatalf("sink received %q, want the line admitted before StopNative", entries[0].line)
+		t.Fatalf("sink received %q, want the line admitted before detach", entries[0].line)
+	}
+}
+
+// TestDetachLeavesALaterSinkAttached keeps a stale detach from cutting off the
+// sink that replaced it.
+func TestDetachLeavesALaterSinkAttached(t *testing.T) {
+	first := withNative(t, Logging{Env: "prod", Level: "error"}, NativeLogging{Enabled: true, Level: "info"})
+	_ = first
+	stale := AttachNativeSink(&recordingSink{})
+	later := &recordingSink{}
+	defer AttachNativeSink(later)()
+	stale()
+
+	GetLogger("measure").Info().Msg("after a stale detach")
+	if !later.admittedFrom("MEASURE", zerolog.InfoLevel) {
+		t.Fatal("a stale detach removed the sink attached after it")
 	}
 }
 
@@ -271,15 +293,13 @@ func TestStopNativeHaltsAdmission(t *testing.T) {
 // error rather than a silent fallback, matching the console level's treatment.
 func TestNativeLevelIsRejectedWhenUnusable(t *testing.T) {
 	t.Cleanup(func() {
-		StopNative()
-		if err := InitWithNative(Logging{Env: "prod", Level: "info"}, NativeLogging{}); err != nil {
+		if err := Init(Logging{Env: "prod", Level: "info"}); err != nil {
 			t.Fatalf("restoring the logger: %v", err)
 		}
 	})
-	err := InitWithNative(Logging{Env: "prod", Level: "info"},
-		NativeLogging{Enabled: true, Level: "not-a-level"})
+	err := Init(Logging{Env: "prod", Level: "info", Native: NativeLogging{Enabled: true, Level: "not-a-level"}})
 	if err == nil {
-		t.Fatal("InitWithNative accepted an unusable native level")
+		t.Fatal("Init accepted an unusable native level")
 	}
 }
 
@@ -427,33 +447,137 @@ func TestApplyNativeRejectsBadValues(t *testing.T) {
 	}
 }
 
-// TestLazyLoggerGetsNativeAfterInit is the falsifying assertion for the early
-// loggers. Both loggers are created before InitWithNative, as a package-level
-// var is. The one from GetLogger keeps the writers it was built with and never
-// reaches the sink; the Lazy one, although used once before initialization,
-// rebuilds after it and does.
-func TestLazyLoggerGetsNativeAfterInit(t *testing.T) {
+// TestLoggerBuiltBeforeInitGetsNative is the falsifying assertion for the
+// package-level loggers. A var built with GetLogger while its package loads
+// exists before Init runs, and must still reach the sink after it, without
+// any change at the call site.
+func TestLoggerBuiltBeforeInitGetsNative(t *testing.T) {
 	defer swapConsoleTarget(io.Discard)()
 	early := GetLogger("early")
-	lazy := NewLazy("early")
-	_ = lazy.Get()
 
 	sink := withNative(t, Logging{Env: "prod", Level: "error"}, NativeLogging{Enabled: true, Level: "info"})
-	early.Info().Msg("from the eager logger")
-	lazy.Get().Info().Msg("from the lazy logger")
+	early.Info().Msg("from the early logger")
+	if !sink.admittedFrom("EARLY", zerolog.InfoLevel) {
+		t.Fatal("a logger built before Init did not reach the sink after it")
+	}
 
-	var eager, lazyLine bool
-	sink.mu.Lock()
-	for _, e := range sink.entries {
-		eager = eager || strings.Contains(e.line, "from the eager logger")
-		lazyLine = lazyLine || strings.Contains(e.line, "from the lazy logger")
+	// A second Init changes the policy the writer has already resolved once.
+	sink = withNative(t, Logging{Env: "prod", Level: "error"},
+		NativeLogging{Enabled: true, Level: "info", ExcludeModules: []string{"early"}})
+	early.Info().Msg("after the module is excluded")
+	if sink.admittedFrom("EARLY", zerolog.InfoLevel) {
+		t.Fatal("the logger kept the policy of an earlier Init; EARLY is excluded now")
 	}
-	sink.mu.Unlock()
-	if !lazyLine {
-		t.Fatal("the Lazy logger used before InitWithNative did not reach the sink after it")
+}
+
+// TestNativePolicyIgnoresConsoleOverrides is the falsifying assertion for
+// resolving native policy on the complete module. A console override for
+// MEASURE shortens the module a MEASURE.BLOCK logger prints; native policy
+// that followed the shortened name would lose the child's own override.
+func TestNativePolicyIgnoresConsoleOverrides(t *testing.T) {
+	var console strings.Builder
+	defer swapConsoleTarget(&console)()
+	sink := withNative(t, Logging{Env: "prod", Level: "info", Modules: []string{"measure"}, Levels: []string{"error"}},
+		NativeLogging{Enabled: true, Level: "info", Modules: []string{"measure.block"}, Levels: []string{"debug"}})
+
+	GetLogger("measure", "block").Debug().Msg("debug-from-block")
+
+	if !sink.admittedFrom("MEASURE.BLOCK", zerolog.DebugLevel) {
+		t.Fatal("the native override for MEASURE.BLOCK did not apply under a console override for MEASURE")
 	}
-	if eager {
-		t.Fatal("a logger built before InitWithNative reached the sink; the test no longer shows the problem it guards")
+	if strings.Contains(console.String(), "debug-from-block") {
+		t.Fatal("the console printed a debug line although MEASURE is at error there")
+	}
+}
+
+// TestChildExclusionHoldsUnderAParentConsoleOverride covers the exclusion side
+// of the same rule: excluding MEASURE.BLOCK must not depend on the console's
+// configuration of MEASURE.
+func TestChildExclusionHoldsUnderAParentConsoleOverride(t *testing.T) {
+	defer swapConsoleTarget(io.Discard)()
+	sink := withNative(t, Logging{Env: "prod", Level: "info", Modules: []string{"measure"}, Levels: []string{"error"}},
+		NativeLogging{Enabled: true, Level: "info", ExcludeModules: []string{"measure.block"}})
+
+	GetLogger("measure", "block").Info().Msg("from the excluded child")
+	GetLogger("measure", "part").Info().Msg("from its sibling")
+
+	if sink.admittedFrom("MEASURE.BLOCK", zerolog.InfoLevel) {
+		t.Fatal("MEASURE.BLOCK was admitted although it is excluded; the console override for MEASURE hid the exclusion")
+	}
+	if !sink.admittedFrom("MEASURE.PART", zerolog.InfoLevel) {
+		t.Fatal("MEASURE.PART was not admitted; the exclusion of MEASURE.BLOCK spread to its parent")
+	}
+}
+
+// TestConsoleConfigurationDoesNotChangeNativeCollection compares what native
+// stores with and without console overrides: the set must be the same.
+func TestConsoleConfigurationDoesNotChangeNativeCollection(t *testing.T) {
+	defer swapConsoleTarget(io.Discard)()
+	native := NativeLogging{
+		Enabled: true, Level: "info",
+		Modules: []string{"measure.block"}, Levels: []string{"debug"}, ExcludeModules: []string{"measure.part"},
+	}
+	emit := func() {
+		for _, scope := range [][]string{{"measure", "block"}, {"measure", "part"}, {"measure", "merger"}, {"trace"}} {
+			l := GetLogger(scope...)
+			l.Debug().Msg("d")
+			l.Info().Msg("i")
+		}
+	}
+	collected := func(console Logging) []string {
+		sink := withNative(t, console, native)
+		emit()
+		sink.mu.Lock()
+		defer sink.mu.Unlock()
+		out := make([]string, 0, len(sink.entries))
+		for _, e := range sink.entries {
+			out = append(out, e.module+"/"+e.level.String())
+		}
+		return out
+	}
+	plain := collected(Logging{Env: "prod", Level: "info"})
+	overridden := collected(Logging{
+		Env: "prod", Level: "warn",
+		Modules: []string{"measure", "trace"}, Levels: []string{"error", "debug"},
+	})
+	if strings.Join(plain, ",") != strings.Join(overridden, ",") {
+		t.Fatalf("console overrides changed what native stores:\nwithout: %v\nwith:    %v", plain, overridden)
+	}
+	want := "MEASURE.BLOCK/debug,MEASURE.BLOCK/info,MEASURE.MERGER/info,TRACE/info"
+	if got := strings.Join(plain, ","); got != want {
+		t.Fatalf("native stored %s, want %s", got, want)
+	}
+}
+
+// TestToZapConfigFollowsTheConsole keeps ToZapConfig as it was before native
+// storage: the logger's own level is the admission floor, which native lowers.
+func TestToZapConfigFollowsTheConsole(t *testing.T) {
+	withNative(t, Logging{Env: "prod", Level: "error"}, NativeLogging{Enabled: true, Level: "debug"})
+	if got := GetLogger("measure").ToZapConfig().Level.Level().String(); got != "error" {
+		t.Fatalf("zap level = %s, want error", got)
+	}
+}
+
+// TestDefaultLevelSetsTheConsoleLevel keeps DefaultLevel as it was before
+// native storage: it sets what the console prints for a module with no
+// override, and leaves native policy alone.
+func TestDefaultLevelSetsTheConsoleLevel(t *testing.T) {
+	var console strings.Builder
+	defer swapConsoleTarget(&console)()
+	sink := withNative(t, Logging{Env: "prod", Level: "info"}, NativeLogging{Enabled: true, Level: "info"})
+
+	l := GetLogger("etcd").DefaultLevel(zerolog.ErrorLevel)
+	l.Info().Msg("info-line")
+	l.Error().Msg("error-line")
+
+	if strings.Contains(console.String(), "info-line") {
+		t.Fatal("DefaultLevel(error) did not quiet the console")
+	}
+	if !strings.Contains(console.String(), "error-line") {
+		t.Fatal("DefaultLevel(error) silenced the console entirely")
+	}
+	if !sink.admittedFrom("ETCD", zerolog.InfoLevel) {
+		t.Fatal("DefaultLevel changed native collection; the info line was not stored")
 	}
 }
 
@@ -520,4 +644,22 @@ func TestLevelLessEventObeysTheThreshold(t *testing.T) {
 			t.Fatal("a level-less event was not stored although the native level is info")
 		}
 	})
+}
+
+// TestMostSpecificNativeOverrideWins keeps a child override effective when its
+// parent has one too.
+func TestMostSpecificNativeOverrideWins(t *testing.T) {
+	defer swapConsoleTarget(io.Discard)()
+	sink := withNative(t, Logging{Env: "prod", Level: "error"}, NativeLogging{
+		Enabled: true, Level: "warn",
+		Modules: []string{"measure", "measure.block"}, Levels: []string{"info", "debug"},
+	})
+	GetLogger("measure", "block").Debug().Msg("child")
+	GetLogger("measure", "part").Debug().Msg("sibling")
+	if !sink.admittedFrom("MEASURE.BLOCK", zerolog.DebugLevel) {
+		t.Fatal("the override for MEASURE.BLOCK lost to the one for MEASURE")
+	}
+	if sink.admittedFrom("MEASURE.PART", zerolog.DebugLevel) {
+		t.Fatal("MEASURE.PART was admitted at debug; only MEASURE.BLOCK has that override")
+	}
 }

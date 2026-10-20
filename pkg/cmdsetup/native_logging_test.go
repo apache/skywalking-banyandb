@@ -21,46 +21,48 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 
+	nativelog "github.com/apache/skywalking-banyandb/banyand/observability/logging"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 // TestUnsupportedRoleKeepsItsLevel is the falsifying assertion for the flag's
-// blast radius. InitWithNative lowers every logger's threshold to the native
-// level, so a role that stores nothing must not enable it: the process would
-// encode lines that the console gate and the empty sink both discard.
+// blast radius. Native lowers a logger's admission floor to the native level,
+// so a role that stores nothing must not enable it: the process would encode
+// lines that the console gate and the absent sink both discard.
 func TestUnsupportedRoleKeepsItsLevel(t *testing.T) {
+	native := logger.NativeLogging{
+		Enabled: true, Level: "debug", MaxBytes: 1 << 20, MaxEventBytes: 64 << 10,
+		FlushSize: 10, FlushInterval: time.Second, WriteTimeout: time.Second,
+		DrainTimeout: time.Second, MemoryFraction: 0.1, TTLDays: 1,
+	}
+	nativeLogSink = nativelog.NewSink(&native)
 	t.Cleanup(func() {
-		logger.StopNative()
-		if err := logger.InitWithNative(logger.Logging{Env: "prod", Level: "info"}, logger.NativeLogging{}); err != nil {
+		nativeLogSink.Detach()
+		if err := logger.Init(logger.Logging{Env: "prod", Level: "info"}); err != nil {
 			t.Fatalf("restoring the logger: %v", err)
 		}
 	})
 	for _, tt := range []struct {
 		annotation string
 		name       string
-		want       bool
+		want       zerolog.Level
 	}{
-		{name: "liaison", annotation: "", want: false},
-		{name: "data", annotation: "supported", want: true},
+		{name: "liaison", annotation: "", want: zerolog.ErrorLevel},
+		{name: "data", annotation: "supported", want: zerolog.DebugLevel},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := &cobra.Command{Use: tt.name, Annotations: map[string]string{}}
 			if tt.annotation != "" {
 				cmd.Annotations[nativeLoggingAnnotation] = tt.annotation
 			}
-			if err := initNativeLogging(cmd,
-				logger.Logging{Env: "prod", Level: "error"},
-				logger.NativeLogging{
-					Enabled: true, Level: "debug", MaxBytes: 1 << 20, MaxEventBytes: 64 << 10,
-					FlushSize: 10, FlushInterval: time.Second, WriteTimeout: time.Second,
-					DrainTimeout: time.Second, MemoryFraction: 0.1, TTLDays: 1,
-				}); err != nil {
-				t.Fatalf("initNativeLogging: %v", err)
+			if err := initLogging(cmd, logger.Logging{Env: "prod", Level: "error", Native: native}); err != nil {
+				t.Fatalf("initLogging: %v", err)
 			}
-			if got := logger.NativeEnabled(); got != tt.want {
-				t.Errorf("native logging enabled = %v on the %s role, want %v", got, tt.name, tt.want)
+			if got := logger.GetLogger("measure").GetLevel(); got != tt.want {
+				t.Errorf("a logger on the %s role admits from %v, want %v", tt.name, got, tt.want)
 			}
 		})
 	}

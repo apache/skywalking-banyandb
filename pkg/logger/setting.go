@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -55,8 +56,10 @@ const (
 	// Environment variables bound to the --logging-env and --logging-level flags by
 	// pkg/config. They are read directly here because the root logger has to produce
 	// output before the command tree that owns those flags exists.
-	envLoggingEnv   = "BYDB_LOGGING_ENV"
-	envLoggingLevel = "BYDB_LOGGING_LEVEL"
+	envLoggingEnv    = "BYDB_LOGGING_ENV"
+	envLoggingLevel  = "BYDB_LOGGING_LEVEL"
+	envNativeEnabled = "BYDB_LOGGING_NATIVE_ENABLED"
+	envNativeLevel   = "BYDB_LOGGING_NATIVE_LEVEL"
 )
 
 var root = rootLogger{}
@@ -78,8 +81,15 @@ func (rl *rootLogger) setDefault() {
 	defer rl.m.Unlock()
 	if rl.done == 0 {
 		defer atomic.StoreUint32(&rl.done, 1)
+		cfg := defaultLogging()
+		// The native configuration is published early too, so that a logger
+		// built while the command tree is still forming gets the admission
+		// floor the operator asked for. Init replaces it with the full one.
+		if st, stErr := newNativeState(cfg.Native); stErr == nil {
+			nativeConfig.CompareAndSwap(nil, st)
+		}
 		var err error
-		rl.l, err = getLogger(defaultLogging())
+		rl.l, err = getLogger(cfg)
 		if err != nil {
 			panic(err)
 		}
@@ -115,7 +125,32 @@ func earlyLogging(args []string, getenv func(string) string) Logging {
 	if flags.levelSet {
 		cfg.Level = acceptLevel(cfg.Level, flags.level)
 	}
+	cfg.Native = earlyNative(flags, getenv)
 	return cfg
+}
+
+// earlyNative resolves the native settings that decide admission, from the same
+// sources and in the same order as earlyLogging. Native stays off unless it is
+// asked for, and an unusable value leaves it off: Init reports it properly.
+func earlyNative(flags earlyFlags, getenv func(string) string) NativeLogging {
+	native := NativeLogging{Level: "info"}
+	if v := getenv(envNativeEnabled); v != "" {
+		native.Enabled, _ = strconv.ParseBool(v)
+	}
+	if v := getenv(envNativeLevel); v != "" {
+		native.Level = acceptLevel(native.Level, v)
+	}
+	if flags.nativeEnabledSet {
+		native.Enabled = flags.nativeEnabled
+	}
+	if flags.nativeLevelSet {
+		native.Level = acceptLevel(native.Level, flags.nativeLevel)
+	}
+	if !native.Enabled {
+		return NativeLogging{}
+	}
+	native.Modules, native.Levels = flags.nativeModules, flags.nativeLevels
+	return native
 }
 
 // acceptLevel returns candidate when zerolog can parse it, and current otherwise. An empty
@@ -131,10 +166,16 @@ func acceptLevel(current, candidate string) string {
 // comes with whether the flag was given at all, because an explicit empty value is a value:
 // pflag reports it as changed and config.Load then keeps the environment out of the way.
 type earlyFlags struct {
-	env      string
-	level    string
-	envSet   bool
-	levelSet bool
+	env              string
+	level            string
+	nativeLevel      string
+	nativeModules    []string
+	nativeLevels     []string
+	envSet           bool
+	levelSet         bool
+	nativeEnabled    bool
+	nativeEnabledSet bool
+	nativeLevelSet   bool
 }
 
 // loggingFlagsFromArgs reads the two logging flags out of a raw argument list. It reuses
@@ -150,9 +191,15 @@ func loggingFlagsFromArgs(args []string) earlyFlags {
 	fs.Usage = func() {}
 	fs.StringVar(&flags.env, "logging-env", "", "")
 	fs.StringVar(&flags.level, "logging-level", "", "")
+	fs.BoolVar(&flags.nativeEnabled, "logging-native-enabled", false, "")
+	fs.StringVar(&flags.nativeLevel, "logging-native-level", "", "")
+	fs.StringSliceVar(&flags.nativeModules, "logging-native-modules", nil, "")
+	fs.StringSliceVar(&flags.nativeLevels, "logging-native-levels", nil, "")
 	_ = fs.Parse(args)
 	flags.envSet = fs.Changed("logging-env")
 	flags.levelSet = fs.Changed("logging-level")
+	flags.nativeEnabledSet = fs.Changed("logging-native-enabled")
+	flags.nativeLevelSet = fs.Changed("logging-native-level")
 	return flags
 }
 
@@ -195,15 +242,10 @@ func RegisterFlags(fs *pflag.FlagSet, logging *Logging) {
 	fs.StringSliceVar(&logging.Levels, "logging-levels", nil, "the logging level of each module, one per module")
 }
 
-// Init initializes a rs/zerolog logger from user config.
+// Init initializes a rs/zerolog logger from user config. The native
+// configuration is resolved first: if it is unusable the root logger is left
+// untouched, so a bad native flag cannot cost the process its logging.
 func Init(cfg Logging) (err error) {
-	return InitWithNative(cfg, NativeLogging{})
-}
-
-// InitWithNative initializes the logger with both destinations configured. The
-// native configuration is resolved first: if it is unusable the root logger is
-// left untouched, so a bad native flag cannot cost the process its logging.
-func InitWithNative(cfg Logging, native NativeLogging) (err error) {
 	switch cfg.Env {
 	case "prob", "":
 		os.Setenv("GRPC_GO_LOG_SEVERITY_LEVEL", "ERROR")
@@ -211,16 +253,10 @@ func InitWithNative(cfg Logging, native NativeLogging) (err error) {
 	case "dev":
 		os.Setenv("GRPC_GO_LOG_SEVERITY_LEVEL", "INFO")
 	}
-	if err = applyNative(native); err != nil {
+	if err = applyNative(cfg.Native); err != nil {
 		return err
 	}
-	if err = root.set(cfg); err != nil {
-		return err
-	}
-	// After the root is replaced, so a Lazy that sees the new generation
-	// builds from the new root.
-	initGeneration.Add(1)
-	return nil
+	return root.set(cfg)
 }
 
 // getLogger initializes a root logger.
@@ -259,22 +295,15 @@ func getLogger(cfg Logging) (*Logger, error) {
 	}
 	// The console target is kept so that Named can build a gate per module
 	// without reaching back through the root logger's writer.
-	consoleTarget := w
-	nativeLvl, excluded := resolveNative(rootName)
-	nativeOn := NativeEnabled()
-	if nativeOn {
-		w = zerolog.MultiLevelWriter(
-			&consoleWriter{out: consoleTarget, level: lvl},
-			&nativeWriter{module: rootName, level: nativeLvl, excluded: excluded},
-		)
+	rl := &Logger{
+		module: rootName, modules: modules, development: development,
+		consoleTarget: w, consoleLevel: lvl,
 	}
-	ctx := zerolog.New(w).Level(admissionFloor(lvl, nativeLvl, nativeOn)).With().Timestamp()
+	ctx := zerolog.New(rl.writer()).Level(admissionFloor(lvl, rootName)).With().Timestamp()
 	if development {
 		ctx = ctx.Stack().Caller()
 	}
 	l := ctx.Logger()
-	return &Logger{
-		module: rootName, Logger: &l, modules: modules, development: development,
-		consoleTarget: consoleTarget, consoleLevel: lvl,
-	}, nil
+	rl.Logger = &l
+	return rl, nil
 }
