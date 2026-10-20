@@ -273,13 +273,16 @@ var _ = g.Describe("Native self-stored logs", func() {
 			Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: logGroup, Force: true})
 		cancel()
 		gm.Expect(err).NotTo(gm.HaveOccurred())
-		// Its rows went with it: the marker stored before is gone, whether the
-		// query fails on the missing group or finds the group recreated empty.
+		// Its rows went with it: once the group is back, a query that succeeds
+		// no longer finds the marker stored before. A failed query proves
+		// nothing about the rows, so it is retried and never passes: while the
+		// stream is missing, the engine fails the query with code Unknown, not
+		// NotFound, so the missing group cannot be told from any other failure.
 		gm.Eventually(func(inner gm.Gomega) {
 			rows, queryErr := query(node.Conn, nodeEq(node.NodeID), byModule(before))
-			inner.Expect(queryErr == nil && len(rows) > 0).To(gm.BeFalse(),
-				"%s is still stored after the log group was removed", before)
-		}, flags.EventuallyTimeout, time.Second).Should(gm.Succeed())
+			inner.Expect(queryErr).NotTo(gm.HaveOccurred())
+			inner.Expect(rows).To(gm.BeEmpty(), "%s is still stored after the log group was removed", before)
+		}, max(flags.EventuallyTimeout, 3*schemaRetry), time.Second).Should(gm.Succeed())
 
 		// The same running collector restores its destination: its schema
 		// pass, which repeats every 10 seconds, recreates the group and the
