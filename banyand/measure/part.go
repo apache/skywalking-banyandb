@@ -64,11 +64,9 @@ type part struct {
 	tagFamilies          map[string]fs.Reader
 	tagType              tagType
 	seriesMetadata       fs.Reader // Optional: series metadata reader
-	cache                storage.Cache
 	path                 string
 	primaryBlockMetadata []primaryBlockMetadata
 	partMetadata         partMetadata
-	shardID              common.ShardID
 }
 
 func (p *part) close() {

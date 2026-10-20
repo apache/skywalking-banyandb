@@ -31,6 +31,7 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
@@ -68,15 +69,24 @@ type snapshot struct {
 	ref int32
 }
 
-func (s *snapshot) getParts(dst []*part, cache storage.Cache, minTimestamp, maxTimestamp int64) ([]*part, int) {
+// partRef is a snapshot-owned part together with the per-query context it is read under.
+// The cache and shard ID are carried here rather than stored on the shared part, because
+// concurrent queries read the same part and must not write to it.
+type partRef struct {
+	p       *part
+	cache   storage.Cache
+	shardID common.ShardID
+}
+
+// getParts appends the parts overlapping the time range, each paired with the cache and shard ID of the table it belongs to.
+func (s *snapshot) getParts(dst []partRef, cache storage.Cache, shardID common.ShardID, minTimestamp, maxTimestamp int64) ([]partRef, int) {
 	var count int
 	for _, p := range s.parts {
 		pm := p.p.partMetadata
 		if maxTimestamp < pm.MinTimestamp || minTimestamp > pm.MaxTimestamp {
 			continue
 		}
-		p.p.cache = cache
-		dst = append(dst, p.p)
+		dst = append(dst, partRef{p: p.p, cache: cache, shardID: shardID})
 		count++
 	}
 	return dst, count

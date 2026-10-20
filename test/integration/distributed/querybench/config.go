@@ -57,6 +57,10 @@ const (
 	envQueryMemoryMiB    = "DQB_QUERY_MEMORY_MIB"
 	envSoak              = "DQB_SOAK"
 	envSoakHeapGrowthPct = "SOAK_HEAP_GROWTH_MAX_PCT"
+	// Measure soak bounds (TestMeasureVecSoak): the soak stops at whichever of the
+	// two is reached first.
+	envSoakMeasureIterations = "DQB_MEASURE_SOAK_ITERATIONS"
+	envSoakMeasureDuration   = "DQB_MEASURE_SOAK_DURATION"
 
 	defaultReportDir    = ".omx/bench-reports/distributed-query"
 	defaultQueryWorkers = 4
@@ -77,6 +81,9 @@ const (
 	defaultSpanBytes         = 1024
 	defaultQueryMemoryMiB    = 256
 	defaultSoakHeapGrowthPct = 10
+	// The short preset of the measure soak: about two minutes of mixed queries.
+	defaultSoakMeasureIterations = 6000
+	defaultSoakMeasureDuration   = 3 * time.Minute
 
 	engineMeasure = "measure"
 	engineTrace   = "trace"
@@ -145,39 +152,44 @@ type Config struct {
 	Merge                bool
 	Soak                 bool
 	SoakHeapGrowthMaxPct int
+	// SoakMeasureIterations and SoakMeasureDuration bound the measure soak.
+	SoakMeasureIterations int
+	SoakMeasureDuration   time.Duration
 }
 
 // LoadConfig reads benchmark settings from environment variables.
 func LoadConfig() Config {
 	return Config{
-		RunBench:             getBool(envRunBench),
-		InContainer:          getBool(envInContainer),
-		Profile:              getBool(envProfile),
-		Merge:                getBool(envMerge),
-		Soak:                 getBool(envSoak),
-		SoakHeapGrowthMaxPct: getInt(envSoakHeapGrowthPct, defaultSoakHeapGrowthPct),
-		ReportDir:            getString(envReportDir, defaultReportDir),
-		DockerImage:          getString(envDockerImage, ""),
-		CPULimit:             getString(envCPULimit, ""),
-		MemoryLimit:          getString(envMemoryLimit, ""),
-		Engine:               getString(envEngine, engineMeasure),
-		Matrix:               getString(envMatrix, matrixA),
-		Mode:                 getString(envMode, ""),
-		Scenario:             Scenario(getString(envScenario, "")),
-		Cardinality:          getInt(envCardinality, 0),
-		SpansPerTrace:        getInt(envSpansPerTrace, defaultSpansPerTrace),
-		SpanDist:             getString(envSpanDist, defaultSpanDist),
-		FilterSelectivity:    getFloat(envSelectivity, defaultSelectivity),
-		TraceIDBatch:         getInt(envTraceIDBatch, defaultTraceIDBatch),
-		ShardNum:             getInt(envShardNum, defaultShardNum),
-		DataNodes:            getInt(envDataNodes, defaultDataNodes),
-		SpanBytes:            getInt(envSpanBytes, defaultSpanBytes),
-		QueryMemoryMiB:       getInt(envQueryMemoryMiB, defaultQueryMemoryMiB),
-		QueryWorkers:         getInt(envQueryWorkers, defaultQueryWorkers),
-		QueryIterations:      getInt(envQueryIters, defaultQueryIters),
-		ByIDIterations:       getInt(envByIDIters, defaultByIDIters),
-		WarmupIterations:     getInt(envWarmupIters, defaultWarmupIters),
-		Writers:              getInt(envWriters, defaultWriters),
+		RunBench:              getBool(envRunBench),
+		InContainer:           getBool(envInContainer),
+		Profile:               getBool(envProfile),
+		Merge:                 getBool(envMerge),
+		Soak:                  getBool(envSoak),
+		SoakHeapGrowthMaxPct:  getInt(envSoakHeapGrowthPct, defaultSoakHeapGrowthPct),
+		SoakMeasureIterations: getInt(envSoakMeasureIterations, defaultSoakMeasureIterations),
+		SoakMeasureDuration:   getDuration(envSoakMeasureDuration, defaultSoakMeasureDuration),
+		ReportDir:             getString(envReportDir, defaultReportDir),
+		DockerImage:           getString(envDockerImage, ""),
+		CPULimit:              getString(envCPULimit, ""),
+		MemoryLimit:           getString(envMemoryLimit, ""),
+		Engine:                getString(envEngine, engineMeasure),
+		Matrix:                getString(envMatrix, matrixA),
+		Mode:                  getString(envMode, ""),
+		Scenario:              Scenario(getString(envScenario, "")),
+		Cardinality:           getInt(envCardinality, 0),
+		SpansPerTrace:         getInt(envSpansPerTrace, defaultSpansPerTrace),
+		SpanDist:              getString(envSpanDist, defaultSpanDist),
+		FilterSelectivity:     getFloat(envSelectivity, defaultSelectivity),
+		TraceIDBatch:          getInt(envTraceIDBatch, defaultTraceIDBatch),
+		ShardNum:              getInt(envShardNum, defaultShardNum),
+		DataNodes:             getInt(envDataNodes, defaultDataNodes),
+		SpanBytes:             getInt(envSpanBytes, defaultSpanBytes),
+		QueryMemoryMiB:        getInt(envQueryMemoryMiB, defaultQueryMemoryMiB),
+		QueryWorkers:          getInt(envQueryWorkers, defaultQueryWorkers),
+		QueryIterations:       getInt(envQueryIters, defaultQueryIters),
+		ByIDIterations:        getInt(envByIDIters, defaultByIDIters),
+		WarmupIterations:      getInt(envWarmupIters, defaultWarmupIters),
+		Writers:               getInt(envWriters, defaultWriters),
 	}
 }
 
@@ -263,14 +275,22 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// ValidateSoak enforces the DQB_SOAK contract: must run inside the container
-// (DQB_IN_CONTAINER=1) and must target the trace engine.
+// ValidateSoak enforces the DQB_SOAK contract. The trace soak must run inside the
+// container (DQB_IN_CONTAINER=1), whose cgroup limit makes its budget gate
+// reproducible. The measure soak (DQB_ENGINE=measure, the default) gates on process
+// heap and on counters, so it also runs directly under go test.
 func (c Config) ValidateSoak() error {
 	if !c.Soak {
 		return nil
 	}
-	if !c.InContainer {
+	if !c.InContainer && c.Engine != engineMeasure {
 		return fmt.Errorf("%s=1 requires %s=1; invoke via test/integration/distributed/querybench/run-docker.sh", envSoak, envInContainer)
+	}
+	if c.Engine == engineMeasure {
+		if c.SoakMeasureIterations <= 0 || c.SoakMeasureDuration <= 0 {
+			return fmt.Errorf("%s and %s must be > 0, got %d and %s", envSoakMeasureIterations, envSoakMeasureDuration,
+				c.SoakMeasureIterations, c.SoakMeasureDuration)
+		}
 	}
 	if c.SoakHeapGrowthMaxPct <= 0 {
 		return fmt.Errorf("%s must be > 0, got %d", envSoakHeapGrowthPct, c.SoakHeapGrowthMaxPct)
@@ -340,6 +360,15 @@ func getInt(key string, def int) int {
 		parsed, parseErr := strconv.Atoi(strings.TrimSpace(value))
 		if parseErr == nil {
 			return parsed
+		}
+	}
+	return def
+}
+
+func getDuration(key string, def time.Duration) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
 		}
 	}
 	return def

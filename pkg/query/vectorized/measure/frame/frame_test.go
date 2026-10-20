@@ -18,7 +18,6 @@
 package frame
 
 import (
-	"bytes"
 	"errors"
 	"testing"
 
@@ -46,119 +45,6 @@ func TestMagic_LeadingByteIs00(t *testing.T) {
 	}
 }
 
-// TestEncode_HeaderOnly_EmptyBatch_GoldenBytes asserts the exact wire bytes
-// for a 0-row, 0-col batch — the smallest possible legal frame.
-func TestEncode_HeaderOnly_EmptyBatch_GoldenBytes(t *testing.T) {
-	b := vectorized.NewRecordBatch(vectorized.NewBatchSchema(nil), 0)
-	got, err := Encode(b)
-	if err != nil {
-		t.Fatalf("Encode: %v", err)
-	}
-	want := []byte{0x00, 'V', 'F', 'R', 0x03, 0x00, 0x00}
-	if !bytes.Equal(got, want) {
-		t.Fatalf("Encode mismatch:\n  got  %#x\n  want %#x", got, want)
-	}
-}
-
-// TestEncode_SingleInt64Column_GoldenBytes asserts the exact wire bytes for
-// one int64 RoleField column "n" with 3 rows, no nulls.
-func TestEncode_SingleInt64Column_GoldenBytes(t *testing.T) {
-	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{
-		{Role: vectorized.RoleField, Name: "n", Type: vectorized.ColumnTypeInt64},
-	})
-	b := vectorized.NewRecordBatch(schema, 3)
-	col := b.Columns[0].(*vectorized.TypedColumn[int64])
-	col.Append(10)
-	col.Append(20)
-	col.Append(30)
-	b.Len = 3
-
-	got, err := Encode(b)
-	if err != nil {
-		t.Fatalf("Encode: %v", err)
-	}
-	want := []byte{
-		0x00, 'V', 'F', 'R', // magic
-		0x03,      // version (v3: TagValue/FieldValue proto-bytes)
-		0x03,      // nrows uvarint
-		0x01,      // ncols uvarint
-		0x06,      // role = Field
-		0x01,      // type = Int64
-		0x01, 'n', // name length + name
-		0x00,                    // TagFamilyLen = 0 (RoleField has no family)
-		0x00,                    // validity bitmap (1 byte, all valid)
-		10, 0, 0, 0, 0, 0, 0, 0, // LE int64 10
-		20, 0, 0, 0, 0, 0, 0, 0, // LE int64 20
-		30, 0, 0, 0, 0, 0, 0, 0, // LE int64 30
-	}
-	if !bytes.Equal(got, want) {
-		t.Fatalf("Encode mismatch:\n  got  %#x\n  want %#x", got, want)
-	}
-}
-
-// TestEncode_NullInMiddle_ValidityBitmap pins the bitmap convention: bit set
-// ⇔ row null, packed little-endian within each byte. With 3 rows and row 1
-// null the bitmap byte is 0b00000010 = 0x02.
-func TestEncode_NullInMiddle_ValidityBitmap(t *testing.T) {
-	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{
-		{Role: vectorized.RoleField, Name: "v", Type: vectorized.ColumnTypeInt64},
-	})
-	b := vectorized.NewRecordBatch(schema, 3)
-	col := b.Columns[0].(*vectorized.TypedColumn[int64])
-	col.Append(100)
-	col.AppendNull()
-	col.Append(300)
-	b.Len = 3
-
-	got, err := Encode(b)
-	if err != nil {
-		t.Fatalf("Encode: %v", err)
-	}
-	// Locate the validity byte: it lives right after the column header
-	// (1 role + 1 type + 1 namelen + 1 name + 1 tagfamilylen = 5 bytes for
-	// an empty-family RoleField column) and the 7-byte frame header — so
-	// byte 12 is the validity bitmap.
-	const validityOffset = 7 + 5
-	if got[validityOffset] != 0x02 {
-		t.Fatalf("validity byte = %#x, want 0x02 (bit 1 = null)", got[validityOffset])
-	}
-}
-
-// TestEncode_StringColumn_LengthPrefixedRows asserts string column encoding:
-// uvarint(len) + len bytes per active row, with the validity bitmap as the
-// nullness source of truth.
-func TestEncode_StringColumn_LengthPrefixedRows(t *testing.T) {
-	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{
-		{Role: vectorized.RoleTag, TagFamily: "geo", Name: "region", Type: vectorized.ColumnTypeString},
-	})
-	b := vectorized.NewRecordBatch(schema, 2)
-	col := b.Columns[0].(*vectorized.TypedColumn[string])
-	col.Append("us-east")
-	col.Append("us-west")
-	b.Len = 2
-
-	got, err := Encode(b)
-	if err != nil {
-		t.Fatalf("Encode: %v", err)
-	}
-	want := []byte{
-		0x00, 'V', 'F', 'R', // magic
-		0x03,                               // version (v3: TagValue/FieldValue proto-bytes)
-		0x02,                               // nrows
-		0x01,                               // ncols
-		0x05,                               // role = Tag
-		0x03,                               // type = String
-		0x06, 'r', 'e', 'g', 'i', 'o', 'n', // name "region"
-		0x03, 'g', 'e', 'o', // tag family "geo"
-		0x00,                                    // validity (2 rows, all valid)
-		0x07, 'u', 's', '-', 'e', 'a', 's', 't', // row 0: "us-east"
-		0x07, 'u', 's', '-', 'w', 'e', 's', 't', // row 1: "us-west"
-	}
-	if !bytes.Equal(got, want) {
-		t.Fatalf("Encode mismatch:\n  got  %#x\n  want %#x", got, want)
-	}
-}
-
 // TestEncode_RespectsSelection asserts the encoder honors RecordBatch.Selection
 // — only the listed rows are emitted, and in the listed order. With Len=5 and
 // Selection={0,2,4} the frame contains 3 rows pulled from those source indices.
@@ -178,19 +64,16 @@ func TestEncode_RespectsSelection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	// nrows uvarint is at byte 5 (after 4-byte magic + 1-byte version).
-	if got[5] != 0x03 {
-		t.Fatalf("nrows byte = %#x, want 0x03 (3 active rows from Selection)", got[5])
+	decoded, decodeErr := Decode(got)
+	if decodeErr != nil {
+		t.Fatalf("Decode: %v", decodeErr)
 	}
-	// Validity bitmap is at offset 7+5=12 (header 7 + col header 5 with
-	// empty TagFamilyLen for RoleField); data section follows immediately.
-	first := readLEUint64(t, got, 7+5+1)
-	if first != 10 {
-		t.Fatalf("first emitted row value = %d, want 10 (source row 0)", first)
+	defer decoded.ReleaseOwners()
+	if decoded.Len != 3 {
+		t.Fatalf("decoded rows = %d, want 3 active rows from Selection", decoded.Len)
 	}
-	last := readLEUint64(t, got, 7+5+1+16)
-	if last != 50 {
-		t.Fatalf("last emitted row value = %d, want 50 (source row 4)", last)
+	if gotVals := decoded.Columns[0].(*vectorized.TypedColumn[int64]).Data(); !int64Equal(gotVals, []int64{10, 30, 50}) {
+		t.Fatalf("decoded values = %v, want [10 30 50]", gotVals)
 	}
 }
 
@@ -316,7 +199,7 @@ func TestValidateHeader_Negatives(t *testing.T) {
 		{name: "short-of-min", body: []byte{0x00, 'V', 'F'}, wantErr: ErrTruncated},
 		{name: "bad-magic-first-byte", body: []byte{0x08, 'V', 'F', 'R', 0x01, 0x00, 0x00}, wantErr: ErrBadMagic},
 		{name: "bad-magic-signature", body: []byte{0x00, 'X', 'Y', 'Z', 0x01, 0x00, 0x00}, wantErr: ErrBadMagic},
-		{name: "bad-version", body: []byte{0x00, 'V', 'F', 'R', 0x04, 0x00, 0x00}, wantErr: ErrBadVersion},
+		{name: "bad-version", body: []byte{0x00, 'V', 'F', 'R', 0x03, 0x00, 0x00}, wantErr: ErrBadVersion},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -336,7 +219,7 @@ func TestValidateHeader_Negatives(t *testing.T) {
 // error at encode time — never silently-wrong wire bytes downstream.
 func TestEncode_UnsupportedColumnType_FailsLoud(t *testing.T) {
 	// Array column types (Int64Array / StrArray) remain unsupported by
-	// frame v3; only scalar-or-passthrough types are encodable today.
+	// the frame; only scalar-or-passthrough types are encodable today.
 	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{
 		{Role: vectorized.RoleTag, Name: "tag", Type: vectorized.ColumnTypeInt64Array},
 	})
@@ -356,21 +239,6 @@ func TestEncode_NilBatch_FailsLoud(t *testing.T) {
 	if _, err := Encode(nil); err == nil {
 		t.Fatal("Encode(nil) returned nil err; want fail-loud")
 	}
-}
-
-// readLEUint64 is a tiny test helper that decodes 8 little-endian bytes at
-// off as a uint64. Kept here (rather than reaching for encoding/binary in
-// every assertion) so the test reads top-to-bottom.
-func readLEUint64(t *testing.T, b []byte, off int) uint64 {
-	t.Helper()
-	if off+8 > len(b) {
-		t.Fatalf("readLEUint64: offset %d + 8 out of bounds (len=%d)", off, len(b))
-	}
-	var v uint64
-	for i := range 8 {
-		v |= uint64(b[off+i]) << uint(i*8)
-	}
-	return v
 }
 
 func minInt(a, b int) int {

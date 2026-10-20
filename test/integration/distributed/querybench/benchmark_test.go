@@ -260,5 +260,10 @@ func clusterFlags(cfg Config) []string {
 	if cfg.Engine == engineTrace {
 		return []string{fmt.Sprintf("--trace-vectorized-query-memory-mib=%d", cfg.QueryMemoryMiB)}
 	}
+	if cfg.Soak {
+		// The measure soak writes while it queries; a short flush timeout makes the
+		// parts a scan reads change every second instead of every few seconds.
+		return []string{"--measure-flush-timeout=500ms"}
+	}
 	return nil
 }

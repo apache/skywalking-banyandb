@@ -126,7 +126,16 @@ func TestSnapshotGetParts(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, count := tt.snapshot.getParts(tt.dst, nil, tt.opts.minTimestamp, tt.opts.maxTimestamp)
+			var dst []partRef
+			for _, p := range tt.dst {
+				dst = append(dst, partRef{p: p})
+			}
+			refs, count := tt.snapshot.getParts(dst, nil, 7, tt.opts.minTimestamp, tt.opts.maxTimestamp)
+			result := make([]*part, 0, len(refs))
+			for _, r := range refs {
+				assert.Equal(t, common.ShardID(7), r.shardID)
+				result = append(result, r.p)
+			}
 			assert.Equal(t, tt.expected, result)
 			assert.Equal(t, tt.count, count)
 		})

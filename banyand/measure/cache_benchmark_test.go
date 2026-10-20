@@ -356,7 +356,7 @@ func (m *measure) QueryWithCache(ctx context.Context, mqo model.MeasureQueryOpti
 		}
 	}()
 	mqo.TagProjection = newTagProjection
-	var parts []*part
+	var parts []partRef
 	qo := queryOptions{
 		MeasureQueryOptions: mqo,
 		minTimestamp:        mqo.TimeRange.Start.UnixNano(),
@@ -368,7 +368,7 @@ func (m *measure) QueryWithCache(ctx context.Context, mqo model.MeasureQueryOpti
 		if s == nil {
 			continue
 		}
-		parts, n = s.getParts(parts, cache, qo.minTimestamp, qo.maxTimestamp)
+		parts, n = s.getParts(parts, cache, 0, qo.minTimestamp, qo.maxTimestamp)
 		if n < 1 {
 			s.decRef()
 			continue
