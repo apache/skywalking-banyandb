@@ -124,3 +124,31 @@ rows() {
 	    | reduce $tags[] as $t ({}; .[$t.key] = ($t.value.str.value // null))
 	  end'
 }
+
+# span_counts prints {node: rows} for every data node span in a traced response.
+span_counts() {
+	jq -c '[.. | objects
+	  | select((.message? // "") | type == "string" and startswith("data-"))
+	  | {(.message | ltrimstr("data-")): ([.tags[]? | select(.key == "resp_count") | .value | tonumber] | add // 0)}]
+	  | add // {}'
+}
+
+# placement prints "local" when the rows a node stored since a time include
+# the marker module, and only that node returned any of them; it prints what
+# was seen otherwise. The query is traced: the liaison asks every data node,
+# and the trace has one span per node, data-<node_id>, with the number of rows
+# that node returned. The group has no replicas, so a row on a node is a row
+# that node stored.
+#
+#   placement <node_id> <marker module> <since>
+placement() {
+	local node=$1 module=$2 since=$3 response marker counts
+	response=$(query_log "$(node_eq "$node")" true "$since")
+	marker=$(echo "$response" | rows | jq -s --arg m "$module" 'any(.[]; .module == $m)')
+	counts=$(echo "$response" | span_counts)
+	echo "$counts" | jq -r --arg n "$node" --argjson marker "$marker" '
+	  (to_entries | map(select(.key != $n and .value > 0))) as $elsewhere
+	  | if (.[$n] // 0) > 0 and ($elsewhere | length) == 0 and $marker then "local"
+	    else "own=\(.[$n] // 0) marker=\($marker) elsewhere=\($elsewhere | map("\(.key):\(.value)") | join(";")) spans=\(keys | join(";"))"
+	    end'
+}

@@ -39,31 +39,9 @@ wait_liaison
 since=$(now_utc -5)
 module=$(create_marker_group)
 
-# span_counts prints {node: rows} for every data node span in a traced response.
-span_counts() {
-	jq -c '[.. | objects
-	  | select((.message? // "") | type == "string" and startswith("data-"))
-	  | {(.message | ltrimstr("data-")): ([.tags[]? | select(.key == "resp_count") | .value | tonumber] | add // 0)}]
-	  | add // {}'
-}
-
-# placement prints "local" when the producer's marker is among its rows and
-# only the producer returned any of them, and what was seen otherwise.
-placement() {
-	local node=$1 response marker counts
-	response=$(query_log "$(node_eq "$node")" true "$since")
-	marker=$(echo "$response" | rows | jq -s --arg m "$module" 'any(.[]; .module == $m)')
-	counts=$(echo "$response" | span_counts)
-	echo "$counts" | jq -r --arg n "$node" --argjson marker "$marker" '
-	  (to_entries | map(select(.key != $n and .value > 0))) as $elsewhere
-	  | if (.[$n] // 0) > 0 and ($elsewhere | length) == 0 and $marker then "local"
-	    else "own=\(.[$n] // 0) marker=\($marker) elsewhere=\($elsewhere | map("\(.key):\(.value)") | join(";")) spans=\(keys | join(";"))"
-	    end'
-}
-
 for node in "${producers[@]}"; do
 	while :; do
-		verdict=$(placement "$node")
+		verdict=$(placement "$node" "$module" "$since")
 		[[ "$verdict" == "local" ]] && break
 		echo "${node}: ${verdict}" >&2
 		[[ $SECONDS -ge $deadline ]] && break

@@ -18,8 +18,9 @@
 # A data node resumes after it is restarted (TC5 on a data node).
 #
 # data1 is stopped and started again on its own data. Once the cluster serves
-# again, a new marker must be stored under data1's own identity, and on data1:
-# the restart must not cost the node its collection, nor move its logs.
+# again, a new marker must be stored under data1's own identity, and on data1
+# alone, as check-placement.sh reads it from the query trace: the restart must
+# not cost the node its collection, nor move its logs.
 #
 #   check-restart.sh <liaison-http-host:port>
 
@@ -44,20 +45,19 @@ done
 
 since=$(now_utc -5)
 module=""
-stored=false
+verdict="no marker group yet"
 while [[ $SECONDS -lt $deadline ]]; do
 	# The group is created once the cluster takes it: right after the restart
 	# the liaison may still count data1 as gone.
 	[[ -z "$module" ]] && module=$(create_marker_group)
-	found=$(query_log "$(node_eq "$node")" false "$since" | rows |
-		jq -s --arg m "$module" 'if any(.[]; .error) then "error" else (any(.[]; .module == $m) | tostring) end')
-	if [[ "$found" == '"true"' ]]; then
-		stored=true
-		break
-	fi
-	echo "data1's marker after the restart: ${found}" >&2
+	verdict=$(placement "$node" "$module" "$since")
+	[[ "$verdict" == "local" ]] && break
+	echo "data1's marker after the restart: ${verdict}" >&2
 	sleep 5
 done
+if [[ "$verdict" != "local" ]]; then
+	verdict="\"${verdict}\""
+fi
 
 echo "restarted: ${node}"
-echo "markerStoredAfterRestart: ${stored}"
+echo "markerAfterRestart: ${verdict}"
