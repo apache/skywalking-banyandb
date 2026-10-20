@@ -24,6 +24,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/http"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
@@ -36,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/banyand/trace"
+	"github.com/apache/skywalking-banyandb/banyand/transfer/export"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/version"
@@ -72,6 +74,12 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate measure service")
 	}
+	exportSvc := export.NewService(metaSvc, dataPipeline, export.Backends{
+		commonv1.Catalog_CATALOG_STREAM:   export.MustBackend(streamSvc, "stream"),
+		commonv1.Catalog_CATALOG_MEASURE:  export.MustBackend(measureSvc, "measure"),
+		commonv1.Catalog_CATALOG_TRACE:    export.MustBackend(traceSvc, "trace"),
+		commonv1.Catalog_CATALOG_PROPERTY: export.MustBackend(propertySvc, "property"),
+	})
 	q, err := query.NewService(ctx, streamSvc, measureSvc, traceSvc, metaSvc, dataPipeline, metricSvc, false, pm)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate query processor")
@@ -97,6 +105,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 		measureSvc,
 		streamSvc,
 		traceSvc,
+		exportSvc,
 		q,
 		grpcServer,
 		httpServer,

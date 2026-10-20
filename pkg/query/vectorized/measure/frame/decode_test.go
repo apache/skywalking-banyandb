@@ -31,11 +31,12 @@ import (
 // TestDecode_EmptyFrame_GoldenBytes covers the smallest legal frame: 0 rows,
 // 0 cols. The decoded batch has a nil/empty schema and Len=0.
 func TestDecode_EmptyFrame_GoldenBytes(t *testing.T) {
-	raw := []byte{0x00, 'V', 'F', 'R', 0x03, 0x00, 0x00}
+	raw := []byte{0x00, 'V', 'F', 'R', 0x04, 0x00, 0x00}
 	b, err := Decode(raw)
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
+	defer b.ReleaseOwners()
 	if b == nil {
 		t.Fatal("Decode returned nil batch")
 	}
@@ -70,6 +71,7 @@ func TestDecode_RoundTrip_Int64(t *testing.T) {
 	if decodeErr != nil {
 		t.Fatalf("Decode: %v", decodeErr)
 	}
+	defer out.ReleaseOwners()
 	if out.Len != 3 {
 		t.Fatalf("Len = %d, want 3", out.Len)
 	}
@@ -106,6 +108,7 @@ func TestDecode_RoundTrip_NullInMiddle(t *testing.T) {
 	if decodeErr != nil {
 		t.Fatalf("Decode: %v", decodeErr)
 	}
+	defer out.ReleaseOwners()
 	outCol := out.Columns[0].(*vectorized.TypedColumn[int64])
 	if outCol.IsNull(0) {
 		t.Fatal("row 0 should be non-null")
@@ -145,6 +148,7 @@ func TestDecode_RoundTrip_Float64(t *testing.T) {
 	if decodeErr != nil {
 		t.Fatalf("Decode: %v", decodeErr)
 	}
+	defer out.ReleaseOwners()
 	got := out.Columns[0].(*vectorized.TypedColumn[float64]).Data()
 	if got[0] != 3.14 {
 		t.Fatalf("row 0 = %g, want 3.14", got[0])
@@ -180,6 +184,7 @@ func TestDecode_RoundTrip_StringWithEmptyAndNull(t *testing.T) {
 	if decodeErr != nil {
 		t.Fatalf("Decode: %v", decodeErr)
 	}
+	defer out.ReleaseOwners()
 	outCol := out.Columns[0].(*vectorized.TypedColumn[string])
 	if outCol.IsNull(0) {
 		t.Fatal("row 0 should be non-null")
@@ -219,6 +224,7 @@ func TestDecode_RoundTrip_BytesColumn(t *testing.T) {
 	if decodeErr != nil {
 		t.Fatalf("Decode: %v", decodeErr)
 	}
+	defer out.ReleaseOwners()
 	outCol := out.Columns[0].(*vectorized.TypedColumn[[]byte])
 	if !bytes.Equal(outCol.Data()[0], []byte{0xDE, 0xAD, 0xBE, 0xEF}) {
 		t.Fatalf("row 0 = %v, want [DE AD BE EF]", outCol.Data()[0])
@@ -257,6 +263,7 @@ func TestDecode_RoundTrip_MixedColumns(t *testing.T) {
 	if decodeErr != nil {
 		t.Fatalf("Decode: %v", decodeErr)
 	}
+	defer out.ReleaseOwners()
 	if out.Len != 2 {
 		t.Fatalf("Len = %d, want 2", out.Len)
 	}
@@ -323,42 +330,16 @@ func TestDecode_BadMagic_FailsLoud(t *testing.T) {
 
 // TestDecode_BadVersion_FailsLoud covers Principle 3: any wire-version
 // byte other than the current WireVersion is rejected with ErrBadVersion.
-// The hard-cutover model forbids dual-wire so version skew is a botched
-// rollout, not coexistence.
+// Only version 4 exists; any other version byte, including the removed
+// row-oriented version 3, is a mixed-version cluster or corruption and must not be decoded.
 func TestDecode_BadVersion_FailsLoud(t *testing.T) {
-	body := []byte{0x00, 'V', 'F', 'R', 0x04, 0x00, 0x00}
+	body := []byte{0x00, 'V', 'F', 'R', 0x05, 0x00, 0x00}
 	_, err := Decode(body)
 	if err == nil {
 		t.Fatal("Decode returned nil error; want ErrBadVersion")
 	}
 	if !errors.Is(err, ErrBadVersion) {
 		t.Fatalf("Decode error = %v; want ErrBadVersion", err)
-	}
-}
-
-// TestDecode_TruncatedColumnData_FailsLoud verifies that a body whose
-// column data section is shorter than NumRows×8 fails with ErrTruncated.
-func TestDecode_TruncatedColumnData_FailsLoud(t *testing.T) {
-	// 3 rows declared but only 2 int64 worth of data.
-	body := []byte{
-		0x00, 'V', 'F', 'R',
-		0x03,      // version (v3: TagValue/FieldValue proto-bytes)
-		0x03,      // nrows = 3
-		0x01,      // ncols = 1
-		0x06,      // role = Field
-		0x01,      // type = Int64
-		0x01, 'n', // name "n"
-		0x00,                   // TagFamilyLen = 0 (RoleField has no family)
-		0x00,                   // validity (1 byte, all valid)
-		1, 0, 0, 0, 0, 0, 0, 0, // row 0
-		2, 0, 0, 0, 0, 0, 0, 0, // row 1 — row 2 missing
-	}
-	_, err := Decode(body)
-	if err == nil {
-		t.Fatal("Decode returned nil error; want ErrTruncated")
-	}
-	if !errors.Is(err, ErrTruncated) {
-		t.Fatalf("Decode error = %v; want ErrTruncated", err)
 	}
 }
 
@@ -393,7 +374,7 @@ func TestDecode_TrailingBytes_FailsLoud(t *testing.T) {
 func TestDecode_UnknownRoleByte_FailsLoud(t *testing.T) {
 	body := []byte{
 		0x00, 'V', 'F', 'R',
-		0x03,      // version (v3)
+		0x04,      // version
 		0x00,      // nrows = 0
 		0x01,      // ncols = 1
 		0xFE,      // role byte 254 — unassigned (rejected before TagFamily read)
@@ -411,7 +392,7 @@ func TestDecode_UnknownRoleByte_FailsLoud(t *testing.T) {
 
 // TestDecode_RoundTrip_TagValueMixedVariants pins the cross-group
 // type-divergence case: the same tag column carries Str cells from one
-// group and Int cells from another. Frame v3 carries the column as
+// group and Int cells from another. The frame carries the column as
 // proto-bytes per cell (ColumnTypeTagValue passthrough), preserving the
 // TagValue oneof per cell across the wire.
 func TestDecode_RoundTrip_TagValueMixedVariants(t *testing.T) {
@@ -433,6 +414,7 @@ func TestDecode_RoundTrip_TagValueMixedVariants(t *testing.T) {
 	if decodeErr != nil {
 		t.Fatalf("Decode: %v", decodeErr)
 	}
+	defer out.ReleaseOwners()
 	if out.Len != 3 {
 		t.Fatalf("Len = %d, want 3", out.Len)
 	}

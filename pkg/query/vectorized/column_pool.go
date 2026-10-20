@@ -157,5 +157,10 @@ func ReleaseColumn(c Column) {
 	case *TypedColumn[*modelv1.FieldValue]:
 		col.Reset()
 		fieldValueColumnPool.Put(col)
+	case *ConstColumn:
+		col.Reset()
+		if !col.embedded {
+			constColumnPool.Put(col)
+		}
 	}
 }

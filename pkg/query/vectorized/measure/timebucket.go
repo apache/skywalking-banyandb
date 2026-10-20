@@ -123,18 +123,33 @@ type BatchTimeBucket struct {
 	outputBuilder *vectorized.RecordBatch
 	pending       []*vectorized.RecordBatch
 	aggKeyIndices []int
+	keyEntity     []bool
+	runScratch    []int
 	aggs          []AggSpec
 	widthNanos    int64
 	currentBucket int64
 	timestampIdx  int
 	batchSize     int
 	entrySize     int64
+	runBatches    int64
 	mode          AggMode
 	hasBucket     bool
 	streaming     bool
 	upstreamDone  bool
 	mapDrainReady bool
 	closed        bool
+	// allKeysIndexResolved is true when every tag GroupBy key (keyIndices
+	// passed to NewBatchTimeBucket, excluding the bucket itself) is
+	// index-resolved — set by SetAllKeysIndexResolved. openBucket only
+	// forwards it to a per-bucket BatchAggregation while streaming: map
+	// mode's single aggregator can see more than one bucket within one
+	// Consume call, so it must never take the run-folding fast path
+	// regardless of this flag (design §7.7, stage 8a).
+	allKeysIndexResolved bool
+	// spanFolds accumulates spanFolds from every per-bucket BatchAggregation
+	// this operator has opened and closed, test-observable the same way as
+	// BatchAggregation's own counter.
+	spanFolds int64
 }
 
 // NewBatchTimeBucket constructs a BatchTimeBucket wrapping upstream, the
@@ -169,6 +184,7 @@ func NewBatchTimeBucket(
 		tracker:       tracker,
 		outputPool:    vectorized.NewBatchPool(outputSchema, batchSize),
 		aggKeyIndices: aggKeyIndices,
+		keyEntity:     keyEntityFlags(input, aggKeyIndices),
 		aggs:          slices.Clone(aggs),
 		widthNanos:    widthNanos,
 		timestampIdx:  timestampIdx,
@@ -177,6 +193,17 @@ func NewBatchTimeBucket(
 		mode:          mode,
 		streaming:     streaming,
 	}
+}
+
+// SetAllKeysIndexResolved marks every tag GroupBy key this operator groups
+// by as resolved from the series index, enabling the run-folding fast path
+// (design §7.7, stage 8a) for its streaming per-bucket aggregators. See
+// BatchAggregation.SetAllKeysIndexResolved for the underlying guarantees;
+// map mode ignores this flag (openBucket forces it off there) since its
+// single aggregator is not restricted to one bucket per Consume call.
+// Defaults to false (today's per-row behavior) until called.
+func (bt *BatchTimeBucket) SetAllKeysIndexResolved(allResolved bool) {
+	bt.allKeysIndexResolved = allResolved
 }
 
 // Init initializes upstream. The first bucket opens lazily on the first
@@ -241,7 +268,11 @@ func (bt *BatchTimeBucket) NextBatch(ctx context.Context) (*vectorized.RecordBat
 			// branch above drains it incrementally instead.
 			continue
 		}
-		if consumeErr := bt.consumeBatch(ctx, b); consumeErr != nil {
+		consumeErr := bt.consumeBatch(ctx, b)
+		// consumeBatch hands rows to a BatchAggregation, which clones what it
+		// retains, so the memory b borrows is no longer needed.
+		b.ReleaseOwners()
+		if consumeErr != nil {
 			return nil, consumeErr
 		}
 		// Commit whatever the buckets that closed while processing this one
@@ -272,6 +303,7 @@ func (bt *BatchTimeBucket) drainMapModeAggregator(ctx context.Context) (drained 
 		return false, nextErr
 	}
 	if nb == nil {
+		bt.spanFolds += bt.currentAgg.spanFolds
 		closeErr := bt.currentAgg.Close()
 		bt.currentAgg = nil
 		return true, closeErr
@@ -310,6 +342,9 @@ func (bt *BatchTimeBucket) Close() error {
 // whose bucket regresses in streaming mode is a monotonicity violation and
 // fails loudly rather than reopening an already-flushed bucket.
 func (bt *BatchTimeBucket) consumeBatch(ctx context.Context, b *vectorized.RecordBatch) error {
+	if handled, runsErr := bt.consumeRuns(ctx, b); handled {
+		return runsErr
+	}
 	active, activeErr := activeIndices(b)
 	if activeErr != nil {
 		return activeErr
@@ -370,6 +405,13 @@ func (bt *BatchTimeBucket) consumeBatch(ctx context.Context, b *vectorized.Recor
 // the currently open bucket's aggregator.
 func (bt *BatchTimeBucket) openBucket(ctx context.Context) error {
 	agg := NewBatchAggregation(bt.inputSchema, bt.aggKeyIndices, bt.aggs, bt.mode, min(bt.batchSize, bucketAggPoolCapacity), bt.tracker, bt.entrySize)
+	// Run-folding is only safe for a streaming per-bucket aggregator:
+	// consumeBatch guarantees every Consume call it feeds here already sees
+	// rows from exactly one series and one bucket, so a uniform tag key is
+	// enough to guarantee the whole call is one group. Map mode's single
+	// aggregator spans the whole scan across many buckets within one
+	// Consume call, so it must never take this path (design §7.7).
+	agg.SetAllKeysIndexResolved(bt.streaming && bt.allKeysIndexResolved)
 	if initErr := agg.Init(ctx); initErr != nil {
 		return initErr
 	}
@@ -423,6 +465,7 @@ func (bt *BatchTimeBucket) flushCurrentBucket(ctx context.Context) error {
 		}
 		bt.appendOutput(nb)
 	}
+	bt.spanFolds += bt.currentAgg.spanFolds
 	closeErr := bt.currentAgg.Close()
 	bt.currentAgg = nil
 	return closeErr

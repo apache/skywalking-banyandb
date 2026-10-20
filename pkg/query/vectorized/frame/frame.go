@@ -92,4 +92,10 @@ type Codec struct {
 	WireToType  func(uint8) (vectorized.ColumnType, error)
 	Magic       [4]byte
 	WireVersion uint8
+	// ColumnarWireVersion is the wire version of the Arrow-compatible columnar layout
+	// (see columnar.go), or zero when the engine does not emit or accept it. An engine
+	// that speaks both layouts must use different versions, since they share the magic and
+	// the header prefix and are told apart by the version byte alone; an engine that speaks
+	// only the columnar layout sets it equal to WireVersion.
+	ColumnarWireVersion uint8
 }

@@ -28,6 +28,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/data"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vecplan "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/plan"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
@@ -72,8 +73,10 @@ var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ord
 		savedMeasureCtx   helpers.SharedContext
 		savedTopNCtx      helpers.SharedContext
 		savedWireModeRaw  bool
+		startPins         int64
 	)
 	ginkgo.BeforeAll(func() {
+		startPins = vectorized.OutstandingOwnerPins()
 		savedMeasureCtx = casesmeasure.SharedContext
 		savedTopNCtx = casestopn.SharedContext
 		// data.MeasureWireModeRaw is a per-process atomic — the vec
@@ -148,6 +151,9 @@ var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ord
 		gomega.Expect(frameDecDelta).To(gomega.BeNumerically(">", int64(0)),
 			"no native columnar frame was decoded on the distributed cluster; "+
 				"the liaison never saw a frame body")
+		// Every query is done: the liaison and the data nodes must have released every pin they took.
+		gomega.Eventually(vectorized.OutstandingOwnerPins, 30*time.Second, 100*time.Millisecond).Should(gomega.Equal(startPins),
+			"owner pins outlived the queries")
 		if vectorizedConn != nil {
 			gomega.Expect(vectorizedConn.Close()).To(gomega.Succeed())
 		}

@@ -1,0 +1,107 @@
+# Licensed to Apache Software Foundation (ASF) under one or more contributor
+# license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright
+# ownership.  Apache Software Foundation (ASF) licenses this file to you
+# under the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# Soak-test overlay for the native inverted-index stream soak.
+#
+# Usage (via scripts/soak-stream-index.sh — do not invoke directly):
+#   docker compose -f test/soak/docker-compose.soak-index.yaml up -d banyandb
+#
+# Deliberately narrower than docker-compose.soak.yaml: only banyandb and the
+# soak-driver. The stream-index fixture is self-seeded and deterministic (see
+# test/CLAUDE.md, "do not piggyback on OAP"), so the OAP / agent / provider /
+# consumer / traffic_loader stack that the G5d overlay needs is ~5 GB of
+# container memory this soak has no use for. Dropping it is what makes a pilot
+# affordable to iterate on.
+#
+# BanyanDB is built from the local source tree, so a run always exercises the
+# working tree rather than a stale image.
+#
+# Resource limits: banyandb is raised from the G5d overlay's 2 CPU / 2 G because
+# the log-shaped fixture holds orders of magnitude more elements (default 200
+# series x 200 elements) and the probe keeps 8 workers busy. Override with
+# SOAK_INDEX_MEM / SOAK_INDEX_CPUS. test/CLAUDE.md warns the host has no swap:
+# leave >= 8 GB headroom.
+
+services:
+  banyandb:
+    build:
+      context: ../..
+      dockerfile: test/soak/Dockerfile.banyand
+    container_name: ${BANYANDB_CONTAINER_NAME:-banyandb-soakindex}
+    # Run as the host UID/GID so the bind-mounted /data dir stays readable by the
+    # host shell — needed to snapshot and restore between Phase 0 and Phase 1.
+    user: "${SOAK_UID:-1000}:${SOAK_GID:-1000}"
+    command:
+      - standalone
+      - --measure-root-path=/data
+      - --stream-root-path=/data
+      - --property-root-path=/data
+      - --trace-root-path=/data
+      - --schema-server-root-path=/data
+    # Host ports are parameterized (SOAK_HOST_*=0 binds random free ports) so a
+    # pilot coexists with another banyand already holding the standard ports.
+    # The driver is containerized and reaches banyandb over the compose network,
+    # so readiness is checked via the container healthcheck, not the host port.
+    ports:
+      - "${SOAK_HOST_GRPC:-17912}:17912"     # gRPC
+      - "${SOAK_HOST_HTTP:-17913}:17913"     # HTTP/healthz
+      - "${SOAK_HOST_PPROF:-6060}:6060"      # pprof
+      - "${SOAK_HOST_METRICS:-2121}:2121"    # observability/metrics
+    volumes:
+      - type: bind
+        source: ${SOAK_DATA_DIR:-./data}
+        target: /data
+    networks:
+      - soakidx
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -qO- http://127.0.0.1:17913/api/healthz >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 120s
+      retries: 120
+    deploy:
+      resources:
+        limits:
+          memory: ${SOAK_INDEX_MEM:-4G}
+          cpus: "${SOAK_INDEX_CPUS:-4}"
+
+  soak-driver:
+    build:
+      context: ../..
+      dockerfile: test/soak/Dockerfile.soak-driver
+    # No default command: every invocation is `docker compose run --rm
+    # soak-driver <subcommand> ...`, so the entrypoint receives the subcommand
+    # as argv. Defining the service puts it on the soakidx network with the
+    # right limits.
+    # Run as the host UID/GID so artifacts under /artifacts (latency reports,
+    # baselines, pprof) stay readable by the host-side gate evaluation.
+    user: "${SOAK_UID:-1000}:${SOAK_GID:-1000}"
+    networks:
+      - soakidx
+    volumes:
+      - type: bind
+        source: ${SOAK_DIST_DIR:-/tmp/soak-dist}
+        target: /artifacts
+    deploy:
+      resources:
+        limits:
+          # The driver only issues queries, but 8 concurrent workers plus gRPC
+          # decode buffers are enough to make 512M tight at 40k elements.
+          memory: ${SOAK_INDEX_DRIVER_MEM:-1G}
+          cpus: "${SOAK_INDEX_DRIVER_CPUS:-2}"
+
+networks:
+  soakidx:

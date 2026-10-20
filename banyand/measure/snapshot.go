@@ -25,13 +25,13 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
 	"go.uber.org/multierr"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
@@ -69,15 +69,24 @@ type snapshot struct {
 	ref int32
 }
 
-func (s *snapshot) getParts(dst []*part, cache storage.Cache, minTimestamp, maxTimestamp int64) ([]*part, int) {
+// partRef is a snapshot-owned part together with the per-query context it is read under.
+// The cache and shard ID are carried here rather than stored on the shared part, because
+// concurrent queries read the same part and must not write to it.
+type partRef struct {
+	p       *part
+	cache   storage.Cache
+	shardID common.ShardID
+}
+
+// getParts appends the parts overlapping the time range, each paired with the cache and shard ID of the table it belongs to.
+func (s *snapshot) getParts(dst []partRef, cache storage.Cache, shardID common.ShardID, minTimestamp, maxTimestamp int64) ([]partRef, int) {
 	var count int
 	for _, p := range s.parts {
 		pm := p.p.partMetadata
 		if maxTimestamp < pm.MinTimestamp || minTimestamp > pm.MaxTimestamp {
 			continue
 		}
-		p.p.cache = cache
-		dst = append(dst, p.p)
+		dst = append(dst, partRef{p: p.p, cache: cache, shardID: shardID})
 		count++
 	}
 	return dst, count
@@ -229,6 +238,17 @@ func (s *standalone) takeGroupSnapshot(dstDir string, groupName string) (bool, e
 	return created, nil
 }
 
+// TakeExportSnapshot implements export.Backend: one hard-link snapshot of the selected groups under
+// <exportSnapshotDir>/<name>. It shares the TopicSnapshot listener's mutex so an export session
+// and a periodic backup never snapshot the same groups concurrently, but unlike the listener
+// it neither reclaims old snapshots nor invents a name: the export session owns the
+// directory's lifetime.
+func (s *standalone) TakeExportSnapshot(ctx context.Context, name string, groups []string) error {
+	s.snapshotMux.Lock()
+	defer s.snapshotMux.Unlock()
+	return schema.SnapshotGroups(ctx, s.schemaRepo, s.l, filepath.Join(s.exportSnapshotDir, name), groups, s.takeGroupSnapshot)
+}
+
 // collectSegDirs walks a directory tree and collects all seg-* directory paths.
 // It only collects directories matching the "seg-*" pattern and ignores all files.
 // Returns a map of relative paths to seg-* directories.
@@ -344,7 +364,6 @@ type snapshotListener struct {
 	*bus.UnImplementedHealthyListener
 	s           *standalone
 	snapshotSeq uint64
-	snapshotMux sync.Mutex
 }
 
 // Rev takes a snapshot of the database.
@@ -368,8 +387,8 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 	if len(gg) == 0 {
 		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
 	}
-	s.snapshotMux.Lock()
-	defer s.snapshotMux.Unlock()
+	s.s.snapshotMux.Lock()
+	defer s.s.snapshotMux.Unlock()
 	storage.DeleteStaleSnapshots(s.s.snapshotDir, s.s.maxFileSnapshotNum, s.s.minFileSnapshotAge, s.s.lfs)
 	sn := s.snapshotName()
 	var err error

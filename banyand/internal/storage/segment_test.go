@@ -781,7 +781,7 @@ func TestOpenReadsPersistedEndTime(t *testing.T) {
 	customEnd := day1.Add(12 * time.Hour)
 	segPath1 := filepath.Join(tempDir, "seg-"+day1.Format(dayFormat))
 	require.NoError(t, os.MkdirAll(segPath1, DirPerm))
-	meta1 := segmentMeta{Version: currentVersion, EndTime: customEnd.Format(time.RFC3339Nano)}
+	meta1 := SegmentMetadata{Version: currentVersion, EndTime: customEnd.Format(time.RFC3339Nano)}
 	meta1Data, marshalErr := json.Marshal(meta1)
 	require.NoError(t, marshalErr)
 	require.NoError(t, os.WriteFile(filepath.Join(segPath1, metadataFilename), meta1Data, FilePerm))
@@ -789,7 +789,7 @@ func TestOpenReadsPersistedEndTime(t *testing.T) {
 	// day2 with standard endTime.
 	segPath2 := filepath.Join(tempDir, "seg-"+day2.Format(dayFormat))
 	require.NoError(t, os.MkdirAll(segPath2, DirPerm))
-	meta2 := segmentMeta{Version: currentVersion, EndTime: day2.Add(24 * time.Hour).Format(time.RFC3339Nano)}
+	meta2 := SegmentMetadata{Version: currentVersion, EndTime: day2.Add(24 * time.Hour).Format(time.RFC3339Nano)}
 	meta2Data, marshalErr := json.Marshal(meta2)
 	require.NoError(t, marshalErr)
 	require.NoError(t, os.WriteFile(filepath.Join(segPath2, metadataFilename), meta2Data, FilePerm))
@@ -1687,4 +1687,38 @@ func TestFormatSegmentTime_RoundTrip(t *testing.T) {
 	gotHour, err := ParseSegmentTime(FormatSegmentTime(hourT, hour), hour)
 	require.NoError(t, err)
 	require.True(t, gotHour.Equal(hourT), "hour round-trip: got %s want %s", gotHour, hourT)
+}
+
+// TestCreateSegment_WhileRemovedSegmentStillHeld pins the retention-versus-write race:
+// a writer holds a reference on a segment that retention then removes. The segment
+// leaves the list at once but its directory stays until the last reference is released,
+// so a write for the same time range must not panic on the existing directory. It must
+// get ErrSegmentDeleting, and succeed once the directory is gone.
+func TestCreateSegment_WhileRemovedSegmentStillHeld(t *testing.T) {
+	sc, _, cleanup := newAlignmentTestController(t, IntervalRule{Unit: DAY, Num: 1})
+	defer cleanup()
+
+	ts := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	seg, err := sc.createSegment(ts) // returned with a reference, like a writer holds
+	require.NoError(t, err)
+	segLocation := seg.Location()
+	require.DirExists(t, segLocation)
+
+	hasSegment, err := sc.remove(t.Context(), time.Date(2026, 10, 13, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	require.True(t, hasSegment)
+	require.DirExists(t, segLocation, "the held segment's directory must outlive the removal")
+
+	require.NotPanics(t, func() {
+		_, createErr := sc.createSegment(ts)
+		require.ErrorIs(t, createErr, ErrSegmentDeleting)
+	})
+
+	seg.DecRef() // the last reference runs the deferred delete
+	require.NoDirExists(t, segLocation)
+
+	recreated, err := sc.createSegment(ts)
+	require.NoError(t, err)
+	require.DirExists(t, recreated.Location())
+	recreated.DecRef()
 }

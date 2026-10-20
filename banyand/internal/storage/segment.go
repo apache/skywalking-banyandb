@@ -48,6 +48,10 @@ var (
 	// ErrInvalidSegmentTimestamp is returned when a segment timestamp is zero or near-epoch,
 	// indicating a corrupted timestamp (e.g., unset MinTimestamp flowing through sync paths).
 	ErrInvalidSegmentTimestamp = errors.New("invalid segment timestamp: epoch or near-epoch time is not valid for APM data")
+	// ErrSegmentDeleting is returned when a segment is requested while a previous segment
+	// with the same directory is still being deleted: it left the controller's list but its
+	// directory is removed only once the last reference is released. The caller may retry.
+	ErrSegmentDeleting = errors.New("segment is being deleted")
 )
 
 var _ Cache = (*segmentCache)(nil)
@@ -84,7 +88,9 @@ type segment[T TSTable, O any] struct {
 	mu            sync.RWMutex
 	refCount      int32
 	mustBeDeleted uint32
-	id            segmentID
+	// deleted is set once performDelete has removed the directory.
+	deleted atomic.Bool
+	id      segmentID
 	// closeFailed records that the most recent closeResourcesLocked call
 	// could not cleanly close the series index (the owner's final
 	// persistence flush reported an error). The segment itself stays usable
@@ -383,6 +389,7 @@ func (s *segment[T, O]) performDelete() {
 	}
 	s.closeResourcesLocked()
 	s.lfs.MustRMAll(s.location)
+	s.deleted.Store(true)
 }
 
 // delete flags the segment for deletion. If it is dormant (no active reference)
@@ -667,6 +674,9 @@ type segmentController[T TSTable, O any] struct {
 	opts         *TSDBOpts[T, O]
 	l            *logger.Logger
 	indexMetrics *idxmetrics.Metrics
+	// deleting holds segments that left lst but whose directory is not removed yet,
+	// keyed by directory. It is guarded by the embedded lock.
+	deleting map[string]*segment[T, O]
 	*groupCache
 	lfs         banyanfs.FileSystem
 	position    common.Position
@@ -1037,8 +1047,16 @@ func (sc *segmentController[T, O]) create(ctx context.Context, start time.Time) 
 		end = stdEnd
 	}
 	segPath := path.Join(sc.location, fmt.Sprintf(segTemplate, sc.format(start)))
+	// A removed segment keeps its directory until its last reference is released.
+	// Creating over it would hit an existing directory, so ask the caller to retry.
+	if old, ok := sc.deleting[segPath]; ok {
+		if !old.deleted.Load() {
+			return nil, fmt.Errorf("%w: %s", ErrSegmentDeleting, segPath)
+		}
+		delete(sc.deleting, segPath)
+	}
 	sc.lfs.MkdirPanicIfExist(segPath, DirPerm)
-	meta := segmentMeta{
+	meta := SegmentMetadata{
 		Version: currentVersion,
 		EndTime: end.Format(time.RFC3339Nano),
 	}
@@ -1166,8 +1184,19 @@ func (sc *segmentController[T, O]) deleteExpiredSegments(segmentSuffixes []strin
 }
 
 func (sc *segmentController[T, O]) removeSeg(segID segmentID) {
+	for loc, old := range sc.deleting {
+		if old.deleted.Load() {
+			delete(sc.deleting, loc)
+		}
+	}
 	for i, b := range sc.lst {
 		if b.id == segID {
+			if atomic.LoadUint32(&b.mustBeDeleted) != 0 && !b.deleted.Load() {
+				if sc.deleting == nil {
+					sc.deleting = make(map[string]*segment[T, O])
+				}
+				sc.deleting[b.location] = b
+			}
 			sc.lst = append(sc.lst[:i], sc.lst[i+1:]...)
 			break
 		}

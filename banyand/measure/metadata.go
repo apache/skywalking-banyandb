@@ -24,7 +24,6 @@ import (
 	"path"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
@@ -700,17 +699,35 @@ func (sr *schemaRepo) stopAllProcessorsWithGroupPrefix(groupName string) {
 var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 
 type supplier struct {
-	metadata            metadata.Repo
-	omr                 observability.MetricsRegistry
-	c                   storage.Cache
-	pm                  protector.Memory
-	l                   *logger.Logger
-	schemaRepo          *schemaRepo
-	nodeLabels          map[string]string
-	queryMetrics        atomic.Pointer[queryMetrics]
-	queryMetricsFactory atomic.Value
-	path                string
-	option              option
+	metadata   metadata.Repo
+	omr        observability.MetricsRegistry
+	c          storage.Cache
+	pm         protector.Memory
+	decodePool *decodePool
+	l          *logger.Logger
+	schemaRepo *schemaRepo
+	nodeLabels map[string]string
+	// queryMetrics holds one set of query metrics per group, keyed by group name. A
+	// group's metrics carry its name as a label, so a node with several groups must
+	// keep every group's collectors registered, not only the last one opened.
+	queryMetrics sync.Map
+	path         string
+	option       option
+}
+
+// groupQueryMetrics is the query metrics of one group and the factory that owns
+// their collectors.
+type groupQueryMetrics struct {
+	metrics *queryMetrics
+	factory observability.Factory
+}
+
+// queryMetricsOf returns the query metrics of group, or nil before the group opens.
+func (s *supplier) queryMetricsOf(group string) *queryMetrics {
+	if v, ok := s.queryMetrics.Load(group); ok {
+		return v.(*groupQueryMetrics).metrics
+	}
+	return nil
 }
 
 func newSupplier(path string, svc *standalone, sr *schemaRepo, nodeLabels map[string]string) *supplier {
@@ -732,6 +749,7 @@ func newSupplier(path string, svc *standalone, sr *schemaRepo, nodeLabels map[st
 		option:     opt,
 		omr:        svc.omr,
 		pm:         svc.pm,
+		decodePool: svc.decodePool,
 		schemaRepo: sr,
 		nodeLabels: nodeLabels,
 	}
@@ -740,8 +758,9 @@ func newSupplier(path string, svc *standalone, sr *schemaRepo, nodeLabels map[st
 func (s *supplier) OpenResource(spec resourceSchema.Resource) (resourceSchema.IndexListener, error) {
 	measureSchema := spec.Schema().(*databasev1.Measure)
 	return openMeasure(measureSpec{
-		schema: measureSchema,
-	}, s.l, s.c, s.pm, s.schemaRepo, s.queryMetrics.Load(), s.option.vectorized)
+		schema:     measureSchema,
+		decodePool: s.decodePool,
+	}, s.l, s.c, s.pm, s.schemaRepo, s.queryMetricsOf(measureSchema.GetMetadata().GetGroup()), s.option.vectorized)
 }
 
 func (s *supplier) ResourceSchema(md *commonv1.Metadata) (resourceSchema.ResourceSchema, error) {

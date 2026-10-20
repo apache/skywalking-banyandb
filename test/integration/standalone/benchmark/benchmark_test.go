@@ -28,9 +28,10 @@ import (
 	"github.com/onsi/ginkgo/v2"
 )
 
-// G5a macro suite — currently a structural placeholder. The microbench
-// gate at pkg/query/vectorized/measure/bench_gates_test.go is the
-// authoritative G5a check; this suite captures end-to-end query latency
+// G5a macro suite — currently a structural placeholder. The storage-backed
+// microbench gate TestVectorizedStorageGates in
+// banyand/measure/vectorized_gates_benchmark_test.go is the authoritative
+// check; this suite captures end-to-end query latency
 // against a live standalone for the rollout decision and is deferred until
 // the vectorized adapter has wired operators (BatchLimit / BatchGroupBy /
 // BatchAggregation / BatchTop) into the live Pipeline. Without that

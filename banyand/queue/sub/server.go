@@ -43,6 +43,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/grpc/route"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/property"
@@ -84,6 +85,7 @@ type server struct {
 	creds                 credentials.TransportCredentials
 	metadataRepo          metadata.Repo
 	nodeSchemaStatusRepo  metadata.Service
+	exportServer          transferv1.ExportServiceServer
 	clientCloser          context.CancelFunc
 	ser                   *grpclib.Server
 	listeners             map[bus.Topic][]bus.MessageListener
@@ -126,6 +128,7 @@ func NewServerWithPorts(omr observability.MetricsRegistry, flagNamePrefix string
 		chunkedSyncHandlers: make(map[bus.Topic]queue.ChunkedSyncHandler),
 		omr:                 omr,
 		maxRecvMsgSize:      defaultRecvSize,
+		exportServer:        transferv1.UnimplementedExportServiceServer{},
 		flagNamePrefix:      flagNamePrefix,
 		port:                port,
 		httpPort:            httpPort,
@@ -285,6 +288,7 @@ func (s *server) Serve() run.StopNotify {
 	databasev1.RegisterSnapshotServiceServer(s.ser, s)
 	databasev1.RegisterNodeQueryServiceServer(s.ser, s)
 	databasev1.RegisterClusterStateServiceServer(s.ser, s)
+	transferv1.RegisterExportServiceServer(s.ser, s.exportServer)
 	streamv1.RegisterStreamServiceServer(s.ser, &streamService{ser: s})
 	measurev1.RegisterMeasureServiceServer(s.ser, &measureService{ser: s})
 	tracev1.RegisterTraceServiceServer(s.ser, &traceService{ser: s})
@@ -426,6 +430,11 @@ func (s *server) SetRouteProviders(providers map[string]route.TableProvider) {
 // SetMetadataRepo sets the metadata repository for the internal gRPC server.
 func (s *server) SetMetadataRepo(repo metadata.Repo) {
 	s.metadataRepo = repo
+}
+
+// SetExportServer implements queue.Server.
+func (s *server) SetExportServer(srv transferv1.ExportServiceServer) {
+	s.exportServer = srv
 }
 
 // SetNodeSchemaStatusRepo wires the metadata.Service whose SchemaRegistry +

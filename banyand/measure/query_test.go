@@ -46,6 +46,7 @@ import (
 )
 
 func TestQueryResult(t *testing.T) {
+	verifyNoScanLeaks(t)
 	tests := []struct {
 		wantErr       error
 		name          string
@@ -1247,7 +1248,7 @@ func TestQueryResult(t *testing.T) {
 				require.NotNil(t, s)
 				defer s.decRef()
 				shardCache := storage.NewShardCache("test-group", 0, 0)
-				pp, _ := s.getParts(nil, shardCache, queryOpts.minTimestamp, queryOpts.maxTimestamp)
+				pp, _ := s.getParts(nil, shardCache, 0, queryOpts.minTimestamp, queryOpts.maxTimestamp)
 				sids := make([]common.SeriesID, len(tt.sids))
 				copy(sids, tt.sids)
 				sort.Slice(sids, func(i, j int) bool {
@@ -1379,6 +1380,7 @@ func allPartsFlushed(tst *tsTable) func() bool {
 }
 
 func TestQueryResult_QuotaExceeded(t *testing.T) {
+	verifyNoScanLeaks(t)
 	tests := []struct {
 		wantErr             error
 		name                string
@@ -1480,13 +1482,16 @@ func TestQueryResult_QuotaExceeded(t *testing.T) {
 			require.NotNil(t, s)
 			defer s.decRef()
 			shardCache := storage.NewShardCache("test-group", 0, 0)
-			pp, _ := s.getParts(nil, shardCache, queryOpts.minTimestamp, queryOpts.maxTimestamp)
+			pp, _ := s.getParts(nil, shardCache, 0, queryOpts.minTimestamp, queryOpts.maxTimestamp)
 			var result queryResult
 			result.ctx = context.TODO()
 			// Query all tags
 			result.tagProjection = allTagProjections
 			err = m.searchBlocks(context.TODO(), &result, tt.sids, pp, queryOpts)
 			if tt.expectQuotaExceeded {
+				// Query releases the result on a searchBlocks error; this test calls
+				// searchBlocks directly, so it releases the cursors already collected.
+				defer result.Release()
 				require.Error(t, err)
 				require.Contains(t, err.Error(), "quota exceeded", "expected quota to be exceeded but got: %v", err)
 				return
@@ -1523,6 +1528,7 @@ func TestQueryResult_QuotaExceeded(t *testing.T) {
 }
 
 func TestSegResultHeap_Sorting(t *testing.T) {
+	verifyNoScanLeaks(t)
 	tests := []struct {
 		name        string
 		segResults  []*segResult
@@ -1731,6 +1737,7 @@ func TestSegResultHeap_Sorting(t *testing.T) {
 }
 
 func TestSegResultHeap_NPE_Prevention(t *testing.T) {
+	verifyNoScanLeaks(t)
 	tests := []struct {
 		name       string
 		segResults []*segResult
@@ -1796,6 +1803,7 @@ func TestSegResultHeap_NPE_Prevention(t *testing.T) {
 }
 
 func TestIndexSortResult_OrderBySortDesc(t *testing.T) {
+	verifyNoScanLeaks(t)
 	tests := []struct {
 		name       string
 		sortOrder  modelv1.Sort

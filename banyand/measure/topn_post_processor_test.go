@@ -33,6 +33,7 @@ import (
 )
 
 func TestBlockCursor_MergeTopNResult(t *testing.T) {
+	verifyNoScanLeaks(t)
 	tests := []struct {
 		srcTopNVal  *TopNValue[int64]
 		destTopNVal *TopNValue[int64]
@@ -157,6 +158,7 @@ func TestBlockCursor_MergeTopNResult(t *testing.T) {
 }
 
 func TestBlockCursor_MergeTopNResult_Float64(t *testing.T) {
+	verifyNoScanLeaks(t)
 	tests := []struct {
 		srcTopNVal  *TopNValue[float64]
 		destTopNVal *TopNValue[float64]
@@ -343,6 +345,7 @@ func TestBlockCursor_MergeTopNResult_Float64(t *testing.T) {
 // (Flush propagates the error rather than swallowing it) — this test locks
 // that behavior in against regression, without changing any code.
 func TestTopNPostProcessor_RejectsCountDistinct(t *testing.T) {
+	verifyNoScanLeaks(t)
 	pp := CreateTopNPostProcessorInt(5, modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT, modelv1.Sort_SORT_DESC)
 	pp.Put(pbv1.EntityValues{&modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "svc"}}}}, int64(1), 1000, 0)
 	if _, err := pp.Val(nil); err == nil {
