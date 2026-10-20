@@ -97,12 +97,12 @@ func NewService(sink *Sink, cfg *logger.NativeLogging, md metadata.Repo,
 }
 
 // Name implements run.Unit.
-func (s *Service) Name() string { return "native-log" }
+func (s *Service) Name() string { return logger.NativeWriteModule }
 
 // PreRun implements run.PreRunner. It takes the node identity out of the
 // context and touches nothing else: no metadata call, no publish.
 func (s *Service) PreRun(ctx context.Context) error {
-	s.l = logger.GetLogger(s.Name())
+	s.l = logger.GetLogger(logger.NativeWriteModule)
 	if val := ctx.Value(common.ContextNodeKey); val != nil {
 		if node, ok := val.(common.Node); ok {
 			// Only the runtime identity: the role was set at construction
@@ -177,6 +177,9 @@ func (s *Service) bindBudget() {
 // size trigger can fire; a scheduled callback could only serve the first.
 func (s *Service) consume(ctx context.Context) {
 	defer s.closer.Done()
+	// Every publish carries the mark, so the write path logs what it does with
+	// these events where native storage never collects it.
+	ctx = logger.WithNativeWrite(ctx)
 
 	ticker := time.NewTicker(s.cfg.FlushInterval)
 	defer ticker.Stop()

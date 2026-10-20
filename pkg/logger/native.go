@@ -18,6 +18,7 @@
 package logger
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -65,33 +66,30 @@ type NativeLogging struct {
 	Enabled        bool
 }
 
-// defaultExcludedModules are never sent to the native sink. Every one of them
-// sits on the write path the sink itself publishes through, so admitting them
-// would let one stored line produce the next.
-//
-// Matching is by prefix, because a --logging-modules override truncates the
-// module name it stamps: an exact-match list would be bypassed by an unrelated
-// override on the console side.
-var defaultExcludedModules = []string{
-	"STREAM",
-	"STORAGE",
-	"QUEUE-CLIENT",
-	"SERVER-QUEUE-SUB",
-	"SERVER-QUEUE-PUB",
-	"CLUSTER-NODE-REGISTRY",
-	"LIAISON-GRPC",
-	"WQUEUE",
-	"MEMORY-PROTECTOR",
-	"GRPC-HELPER",
-	"NATIVE-LOG",
-}
+// NativeWriteModule names the logger of the native log service, and every
+// logger taken from a context marked by WithNativeWrite.
+const NativeWriteModule = "native-log"
 
-// mandatoryExcludedModules can never be admitted, whatever an operator
-// configures. A tsdb logger is named after its group, so the storage of the
-// log group itself logs under _MONITORING_LOG: admitting those lines would let
-// one stored line produce the next. An operator list replaces the defaults, so
-// this one is checked separately rather than living among them.
-var mandatoryExcludedModules = []string{"_MONITORING_LOG"}
+// reservedExcludedModules are never sent to native storage, whatever an
+// operator configures; --logging-native-exclude-modules adds to them. Each
+// covers logging caused by storing native logs, so admitting it would let one
+// stored line produce the next:
+//
+//   - NATIVE-LOG is the native log service, and the write path while it
+//     handles a native write, through the context WithNativeWrite marks.
+//   - _MONITORING_LOG is the storage of the log group itself: a tsdb logger
+//     is named after its group, and its segments, shards, flushes and merges
+//     log under it.
+var reservedExcludedModules = []string{strings.ToUpper(NativeWriteModule), "_MONITORING_LOG"}
+
+// WithNativeWrite marks ctx as carrying a native log write. Work done under
+// it that takes its logger from the context with Fetch or FetchOrDefault logs
+// as a child of NATIVE-LOG: the line reaches the console, and never native
+// storage. Other writes in the process, and the lines they log, are not
+// affected.
+func WithNativeWrite(ctx context.Context) context.Context {
+	return context.WithValue(ctx, ContextKey, GetLogger(NativeWriteModule))
+}
 
 var (
 	nativeSink   atomic.Pointer[NativeSink]
@@ -142,7 +140,7 @@ func RegisterNativeFlags(fs *pflag.FlagSet, cfg *NativeLogging) {
 	fs.StringVar(&cfg.Level, "logging-native-level", "info",
 		"the minimum level reaching native storage, independent of --logging-level")
 	fs.StringSliceVar(&cfg.ExcludeModules, "logging-native-exclude-modules", nil,
-		"module prefixes never sent to native storage; replaces the built-in set rather than adding to it")
+		"modules never sent to native storage, with the modules named under them; adds to the built-in protections")
 	fs.StringSliceVar(&cfg.Modules, "logging-native-modules", nil,
 		"the modules whose native level overrides --logging-native-level; an excluded module stays excluded")
 	fs.StringSliceVar(&cfg.Levels, "logging-native-levels", nil,
@@ -198,20 +196,10 @@ func newNativeState(cfg NativeLogging) (*nativeState, error) {
 	if err != nil {
 		return nil, err
 	}
-	excluded := defaultExcludedModules
-	if len(cfg.ExcludeModules) > 0 {
-		configured := make([]string, 0, len(cfg.ExcludeModules))
-		for _, m := range cfg.ExcludeModules {
-			name := strings.ToUpper(strings.TrimSpace(m))
-			// A blank entry would match no module, and keeping it would replace
-			// the defaults with nothing at all.
-			if name == "" {
-				continue
-			}
-			configured = append(configured, name)
-		}
-		if len(configured) > 0 {
-			excluded = configured
+	var excluded []string
+	for _, m := range cfg.ExcludeModules {
+		if name := strings.ToUpper(strings.TrimSpace(m)); name != "" {
+			excluded = append(excluded, name)
 		}
 	}
 	return &nativeState{enabled: true, level: lvl, excluded: excluded, modules: modules}, nil
@@ -279,13 +267,12 @@ func parseModuleLevels(modules, levels []string) (map[string]zerolog.Level, erro
 // of the logger, every component Named was given, so a console override that
 // shortens the module it prints cannot change the native decision.
 //
-// Exclusion is checked first and an override cannot lift it: the excluded
-// modules are the ones on the write path the sink publishes through.
+// Exclusion is checked first and an override cannot lift it.
 func (st *nativeState) resolve(module string) *nativePolicy {
 	if st == nil || !st.enabled {
 		return &nativePolicy{state: st, level: zerolog.Disabled, excluded: true}
 	}
-	for _, m := range mandatoryExcludedModules {
+	for _, m := range reservedExcludedModules {
 		if withinModule(module, m) {
 			return &nativePolicy{state: st, level: zerolog.Disabled, excluded: true}
 		}

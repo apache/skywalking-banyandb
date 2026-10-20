@@ -18,6 +18,7 @@
 package logger
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -177,23 +178,74 @@ func TestAdmissionFloorIsTheMoreVerboseSink(t *testing.T) {
 	}
 }
 
-// TestExcludedModulesNeverReachTheSink covers the feedback loop: the modules on
-// the write path the sink publishes through must not be admitted, or one stored
-// line produces the next.
-func TestExcludedModulesNeverReachTheSink(t *testing.T) {
+// TestOrdinaryStorageLogsAreCollected keeps the protection precise: the
+// stream and storage modules serve every group, so excluding them by name
+// would discard what they log about ordinary writes.
+func TestOrdinaryStorageLogsAreCollected(t *testing.T) {
 	sink := withNative(t, Logging{Env: "prod", Level: "error"},
 		NativeLogging{Enabled: true, Level: "debug"})
 
-	GetLogger("stream").Info().Msg("on the write path")
-	GetLogger("queue-client").Info().Msg("also on the write path")
-	GetLogger("measure").Info().Msg("not on the write path")
+	GetLogger("stream").Info().Msg("an ordinary write")
+	GetLogger("storage").Info().Msg("an ordinary flush")
 
-	entries := sink.entries
-	if len(entries) != 1 {
-		t.Fatalf("sink received %d entries, want 1", len(entries))
+	for _, module := range []string{"STREAM", "STORAGE"} {
+		if !sink.admittedFrom(module, zerolog.InfoLevel) {
+			t.Errorf("%s was not admitted; only logging caused by native writes is excluded", module)
+		}
 	}
-	if entries[0].module != "MEASURE" {
-		t.Fatalf("sink received module %q, want MEASURE", entries[0].module)
+}
+
+// TestReservedProtectionsSurviveAnOperatorList is the falsifying assertion for
+// the recursion protections: an operator's list adds to them and can never
+// remove one.
+func TestReservedProtectionsSurviveAnOperatorList(t *testing.T) {
+	sink := withNative(t, Logging{Env: "prod", Level: "error"},
+		NativeLogging{Enabled: true, Level: "debug", ExcludeModules: []string{"trace"}})
+
+	GetLogger(NativeWriteModule).Info().Msg("the native log service")
+	GetLogger(NativeWriteModule, "stream").Info().Msg("a native write on the write path")
+	GetLogger("_monitoring_log", "shard0").Info().Msg("the log group's own storage")
+	GetLogger("trace").Info().Msg("excluded by the operator")
+	GetLogger("measure").Info().Msg("an ordinary module")
+
+	for _, module := range []string{"NATIVE-LOG", "NATIVE-LOG.STREAM", "_MONITORING_LOG.SHARD0", "TRACE"} {
+		if sink.admittedFrom(module, zerolog.InfoLevel) {
+			t.Errorf("%s was admitted", module)
+		}
+	}
+	if !sink.admittedFrom("MEASURE", zerolog.InfoLevel) {
+		t.Fatal("MEASURE was not admitted, so the operator list excluded more than it named")
+	}
+}
+
+// TestNativeWriteMarkReachesOnlyTheConsole is the falsifying assertion for the
+// marker. The same call site logs through a context: under a native write the
+// line is printed and not stored, and under any other write it is stored as
+// usual. Nothing is switched off for the whole process.
+func TestNativeWriteMarkReachesOnlyTheConsole(t *testing.T) {
+	var console strings.Builder
+	defer swapConsoleTarget(&console)()
+	sink := withNative(t, Logging{Env: "prod", Level: "error"}, NativeLogging{Enabled: true, Level: "info"})
+	fallback := GetLogger("stream")
+
+	FetchOrDefault(WithNativeWrite(context.Background()), "stream", fallback).Error().Msg("native-write-failed")
+	FetchOrDefault(context.Background(), "stream", fallback).Error().Msg("user-write-failed")
+
+	if !strings.Contains(console.String(), "native-write-failed") {
+		t.Fatal("the line about a native write did not reach the console")
+	}
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	var native, user bool
+	for _, e := range sink.entries {
+		native = native || strings.Contains(e.line, "native-write-failed")
+		user = user || strings.Contains(e.line, "user-write-failed")
+	}
+	if native {
+		t.Fatal("the line about a native write was stored natively, so storing it would log it again")
+	}
+	if !user {
+		t.Fatal("the line about an ordinary write was not stored; the mark leaked past its context")
 	}
 }
 
@@ -365,20 +417,23 @@ func TestNativeModuleOverrideAppliesToOneModule(t *testing.T) {
 	}
 }
 
-// TestNativeOverrideCannotLiftAnExclusion pins the safety rule: the excluded
-// modules sit on the write path the sink publishes through, so an override
-// that re-admitted one would let a stored line produce the next.
+// TestNativeOverrideCannotLiftAnExclusion pins the safety rule: an override
+// cannot re-admit an excluded module, reserved or configured.
 func TestNativeOverrideCannotLiftAnExclusion(t *testing.T) {
 	defer swapConsoleTarget(io.Discard)()
 	sink := withNative(t, Logging{Env: "prod", Level: "error"}, NativeLogging{
-		Enabled: true, Level: "debug",
-		Modules: []string{"stream"}, Levels: []string{"debug"},
+		Enabled: true, Level: "debug", ExcludeModules: []string{"stream"},
+		Modules: []string{"stream", NativeWriteModule}, Levels: []string{"debug", "debug"},
 	})
 
 	GetLogger("stream").Error().Msg("from an excluded module")
+	GetLogger(NativeWriteModule).Error().Msg("from a reserved module")
 
 	if sink.admittedFrom("STREAM", zerolog.ErrorLevel) {
-		t.Fatal("an override re-admitted STREAM, which is excluded to break the write-path feedback loop")
+		t.Fatal("an override re-admitted STREAM, which the operator excluded")
+	}
+	if sink.admittedFrom("NATIVE-LOG", zerolog.ErrorLevel) {
+		t.Fatal("an override re-admitted NATIVE-LOG, which is reserved to break the feedback loop")
 	}
 }
 
@@ -582,8 +637,7 @@ func TestDefaultLevelSetsTheConsoleLevel(t *testing.T) {
 }
 
 // TestBlankExcludeEntryIsIgnored pins the shape of the exclusion list: a blank
-// entry is a prefix of every module name, so keeping one would exclude every
-// module while the feature reports itself as enabled and stores nothing.
+// entry names no module and excludes nothing.
 func TestBlankExcludeEntryIsIgnored(t *testing.T) {
 	sink := withNative(t, Logging{Env: "prod", Level: "error"},
 		NativeLogging{Enabled: true, Level: "info", ExcludeModules: []string{"stream", "  "}})
@@ -602,8 +656,7 @@ func TestBlankExcludeEntryIsIgnored(t *testing.T) {
 // TestSinkOwnGroupStaysExcluded is the falsifying assertion for the feedback
 // loop. A tsdb logger is named after its group, so the storage of the log group
 // logs under _MONITORING_LOG; admitting those lines lets one stored line
-// produce the next. An operator list replaces the defaults, which is why this
-// exclusion cannot live among them.
+// produce the next.
 func TestSinkOwnGroupStaysExcluded(t *testing.T) {
 	sink := withNative(t, Logging{Env: "prod", Level: "error"},
 		NativeLogging{Enabled: true, Level: "info", ExcludeModules: []string{"something-else"}})

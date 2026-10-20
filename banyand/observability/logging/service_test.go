@@ -68,6 +68,8 @@ type fakeClient struct {
 	// rejectOnClose makes Close answer the way localBatchPublisher answers a
 	// refused batch: a populated per-node map alongside a NIL error.
 	rejectOnClose atomic.Bool
+	// markedModules is the module the write path logs under for the last batch.
+	markedModules atomic.Value
 }
 
 func (f *fakeClient) seenBatchSizes() []int {
@@ -124,7 +126,12 @@ func (f *fakeClient) GetRouteTable() *databasev1.RouteTable   { return nil }
 
 type fakePublisher struct{ client *fakeClient }
 
-func (p *fakePublisher) Publish(_ context.Context, _ bus.Topic, messages ...bus.Message) (bus.Future, error) {
+func (p *fakePublisher) Publish(ctx context.Context, _ bus.Topic, messages ...bus.Message) (bus.Future, error) {
+	// What the write path would log about this batch, under the logger it
+	// would take from ctx.
+	if l := logger.FetchOrDefault(ctx, "stream", nil); l != nil {
+		p.client.markedModules.Store(l.Module())
+	}
 	if p.client.panicOnPublish.Load() {
 		panic("induced publish panic")
 	}
@@ -674,5 +681,19 @@ func TestEveryEventIsWrittenToShardZero(t *testing.T) {
 					sink.node.Load().NodeID, level, iwr.GetShardId())
 			}
 		}
+	}
+}
+
+// TestEveryPublishCarriesTheNativeWriteMark ties the consumer to the write
+// path's protection: the write path logs about a batch under the logger it
+// finds in the publish context, and only a marked context keeps those lines
+// out of native storage.
+func TestEveryPublishCarriesTheNativeWriteMark(t *testing.T) {
+	client := &fakeClient{}
+	_, sink := testService(t, client)
+	sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(`{"message":"m"}`))
+	waitFor(t, "the batch to be published", func() bool { return client.published.Load() == 1 })
+	if got, _ := client.markedModules.Load().(string); got != "NATIVE-LOG.STREAM" {
+		t.Fatalf("the write path would log this batch under %q, want NATIVE-LOG.STREAM", got)
 	}
 }
