@@ -222,7 +222,7 @@ func Dispatch(
 
 	// Build the structural plan tree from analyzeReq so the Scan's
 	// BatchSchema + opts.TagProjection carry the hidden criteria tags.
-	p, analyzeErr := Analyze(analyzeReq, measureSchema, mode)
+	p, analyzeErr := Analyze(analyzeReq, measureSchema, mode, logicalSchema)
 	if analyzeErr != nil {
 		return nil, "", fmt.Errorf("vec dispatch: analyze: %w", analyzeErr)
 	}
