@@ -21,11 +21,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"slices"
 	"sort"
-	"strings"
 
-	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	itersort "github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	measure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
@@ -495,7 +492,7 @@ func (e *distributedRowEmitter) appendRowToCurrent(row *distributedRowItem) erro
 	// received frame: the output batch pins the same owners.
 	e.current.Owners.PinAll(&row.batch.Owners)
 	for colIdx, srcCol := range row.batch.Columns {
-		if err := appendColumnRangeCoerced(e.current.Columns[colIdx], srcCol, row.rowIdx, 1); err != nil {
+		if err := measure.AppendColumnRangeCoerced(e.current.Columns[colIdx], srcCol, row.rowIdx, 1); err != nil {
 			return fmt.Errorf("merge column %d: %w", colIdx, err)
 		}
 	}
@@ -650,96 +647,6 @@ func unionDistributedRowFrameSchemas(sources []decodedBatchSource) (*vectorized.
 	return vectorized.NewBatchSchema(cols), nil
 }
 
-// appendColumnRangeCoerced copies n rows starting at srcPos from src into dst.
-// When dst and src share the same underlying type it delegates to
-// measure.AppendColumnRange for the fast path. When dst is
-// ColumnTypeTagValue and src is a native column type, each source cell is
-// promoted to a *modelv1.TagValue wrapper so the merged schema remains
-// type-consistent even across groups whose schemas diverged on this column.
-// The symmetric ColumnTypeFieldValue coercion is handled similarly. Any other
-// type mismatch delegates to measure.AppendColumnRange so the existing error
-// path is preserved.
-//
-// Directional invariant: BuildMultiGroupBatchSchema only ever promotes
-// (native → TagValue/FieldValue) on type divergence; it never demotes the
-// other direction. So this helper handles "src is native, dst is passthrough"
-// — never the inverse. If a future phase introduces a passthrough-to-native
-// reshape it will surface here via the delegate's "dst <type> vs src
-// tagvalue" error, which is the correct loud-failure outcome.
-func appendColumnRangeCoerced(dst, src vectorized.Column, srcPos, n int) error {
-	// The coercions below read the source cell by cell; a constant column is
-	// expanded once, which only a batch that did not come off the wire can carry.
-	src = vectorized.Materialize(src)
-	dTagCol, dIsTag := dst.(*vectorized.TypedColumn[*modelv1.TagValue])
-	if dIsTag {
-		if _, sameType := src.(*vectorized.TypedColumn[*modelv1.TagValue]); sameType {
-			return measure.AppendColumnRange(dst, src, srcPos, n)
-		}
-		for k := range n {
-			rowIdx := srcPos + k
-			if src.IsNull(rowIdx) {
-				dTagCol.Append(nil)
-				dTagCol.MarkNullAt(dTagCol.Len() - 1)
-				continue
-			}
-			var tv *modelv1.TagValue
-			switch sc := src.(type) {
-			case *vectorized.TypedColumn[int64]:
-				tv = &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: sc.Data()[rowIdx]}}}
-			case *vectorized.TypedColumn[string]:
-				// The cell may borrow a received frame, and the passthrough value travels on to the response.
-				tv = &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: strings.Clone(sc.Data()[rowIdx])}}}
-			case *vectorized.TypedColumn[[]byte]:
-				raw := sc.Data()[rowIdx]
-				buf := make([]byte, len(raw))
-				copy(buf, raw)
-				tv = &modelv1.TagValue{Value: &modelv1.TagValue_BinaryData{BinaryData: buf}}
-			case *vectorized.TypedColumn[[]int64]:
-				tv = &modelv1.TagValue{Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: slices.Clone(sc.Data()[rowIdx])}}}
-			case *vectorized.TypedColumn[[]string]:
-				tv = &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: slices.Clone(sc.Data()[rowIdx])}}}
-			default:
-				return fmt.Errorf("appendColumnRangeCoerced: cannot coerce %s to tagvalue", src.Type())
-			}
-			dTagCol.Append(tv)
-		}
-		return nil
-	}
-	dFieldCol, dIsField := dst.(*vectorized.TypedColumn[*modelv1.FieldValue])
-	if dIsField {
-		if _, sameType := src.(*vectorized.TypedColumn[*modelv1.FieldValue]); sameType {
-			return measure.AppendColumnRange(dst, src, srcPos, n)
-		}
-		for k := range n {
-			rowIdx := srcPos + k
-			if src.IsNull(rowIdx) {
-				dFieldCol.Append(nil)
-				dFieldCol.MarkNullAt(dFieldCol.Len() - 1)
-				continue
-			}
-			var fv *modelv1.FieldValue
-			switch sc := src.(type) {
-			case *vectorized.TypedColumn[int64]:
-				fv = &modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: sc.Data()[rowIdx]}}}
-			case *vectorized.TypedColumn[float64]:
-				fv = &modelv1.FieldValue{Value: &modelv1.FieldValue_Float{Float: &modelv1.Float{Value: sc.Data()[rowIdx]}}}
-			case *vectorized.TypedColumn[string]:
-				fv = &modelv1.FieldValue{Value: &modelv1.FieldValue_Str{Str: &modelv1.Str{Value: strings.Clone(sc.Data()[rowIdx])}}}
-			case *vectorized.TypedColumn[[]byte]:
-				raw := sc.Data()[rowIdx]
-				buf := make([]byte, len(raw))
-				copy(buf, raw)
-				fv = &modelv1.FieldValue{Value: &modelv1.FieldValue_BinaryData{BinaryData: buf}}
-			default:
-				return fmt.Errorf("appendColumnRangeCoerced: cannot coerce %s to fieldvalue", src.Type())
-			}
-			dFieldCol.Append(fv)
-		}
-		return nil
-	}
-	return measure.AppendColumnRange(dst, src, srcPos, n)
-}
-
 // decodeMultiGroupSources decodes each groupFrame body and reshapes the
 // resulting batch into the merged schema by null-filling columns that exist
 // in the merged schema but are absent from the source group's frame schema.
@@ -781,7 +688,7 @@ func decodeMultiGroupSources(groupFrames []groupFrame, mergedSchema *vectorized.
 			destKey := schemaColKey(destDef)
 			srcColIdx, hasSrc := srcColMap[destKey]
 			if hasSrc {
-				if copyErr := appendColumnRangeCoerced(
+				if copyErr := measure.AppendColumnRangeCoerced(
 					reshapedBatch.Columns[destColIdx],
 					rawBatch.Columns[srcColIdx],
 					0, rawBatch.Len,

@@ -21,6 +21,8 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,13 +39,24 @@ import (
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 )
 
-const tagZone = "zone"
+const (
+	tagZone   = "zone"
+	tagRegion = "region"
+)
 
-// evolvedNodeRow is one stored data point. zone is only stored by groups whose schema defines it.
+// evolvedNodeRow is one stored data point. tags only holds the tags the
+// producing group's schema defines.
 type evolvedNodeRow struct {
-	svc   string
-	zone  string
+	tags  map[string]string
 	value int64
+}
+
+func nodeRow(value int64, tags ...string) evolvedNodeRow {
+	r := evolvedNodeRow{tags: map[string]string{}, value: value}
+	for i := 0; i+1 < len(tags); i += 2 {
+		r.tags[tags[i]] = tags[i+1]
+	}
+	return r
 }
 
 // schemaEvolvedNodes plays the data nodes of a multi-group query. Each
@@ -74,7 +87,7 @@ func (n *schemaEvolvedNodes) Broadcast(_ time.Duration, _ bus.Topic, message bus
 // encodePartial runs the data node's own AggModeMap plan for req over the
 // group's rows, with the storage scan swapped for an in-memory source.
 func (n *schemaEvolvedNodes) encodePartial(req *measurev1.QueryRequest, group string) ([]byte, error) {
-	nodePlan, analyzeErr := Analyze(req, n.schemas[group], vmeasure.AggModeMap)
+	nodePlan, analyzeErr := Analyze(req, n.schemas[group], vmeasure.AggModeMap, nil)
 	if analyzeErr != nil {
 		return nil, analyzeErr
 	}
@@ -120,22 +133,26 @@ func findScan(p VecPlan) *Scan {
 	return nil
 }
 
-// scanBatch lays rows out the way storage fills the scan schema. Every row
-// sits on shard 0, so both groups report the same shard id.
+// scanBatch lays rows out the way storage fills the scan schema: a tag the
+// row doesn't carry is null. Every row sits on shard 0, so all groups
+// report the same shard id.
 func scanBatch(schema *vectorized.BatchSchema, rows []evolvedNodeRow) (*vectorized.RecordBatch, error) {
 	raw := vectorized.NewRecordBatch(schema, len(rows))
 	for i, def := range schema.Columns {
 		for r, row := range rows {
 			var cell any = int64(0)
-			switch {
-			case def.Role == vectorized.RoleTag && def.Name == tagSvc:
-				cell = row.svc
-			case def.Role == vectorized.RoleTag && def.Name == tagZone:
-				cell = row.zone
-			case def.Role == vectorized.RoleField:
+			switch def.Role {
+			case vectorized.RoleTag:
+				cell = nil
+				if v, ok := row.tags[def.Name]; ok {
+					cell = v
+				}
+			case vectorized.RoleField:
 				cell = row.value
-			case def.Role == vectorized.RoleSeriesID:
+			case vectorized.RoleSeriesID:
 				cell = int64(r + 1)
+			default:
+				// Timestamp, version and shard id stay 0.
 			}
 			if appendErr := appendCell(raw.Columns[i], cell); appendErr != nil {
 				return nil, fmt.Errorf("column %s: %w", def.Name, appendErr)
@@ -147,6 +164,10 @@ func scanBatch(schema *vectorized.BatchSchema, rows []evolvedNodeRow) (*vectoriz
 }
 
 func appendCell(col vectorized.Column, cell any) error {
+	if cell == nil {
+		col.AppendNull()
+		return nil
+	}
 	switch c := col.(type) {
 	case *vectorized.TypedColumn[int64]:
 		c.Append(cell.(int64))
@@ -168,10 +189,10 @@ func (n *schemaEvolvedNodes) TimeRange() *modelv1.TimeRange {
 
 func (n *schemaEvolvedNodes) NodeSelectors() map[string][]string { return nil }
 
-func evolvedGroupSchema(group string, withZone bool) *databasev1.Measure {
-	tags := []*databasev1.TagSpec{{Name: tagSvc, Type: databasev1.TagType_TAG_TYPE_STRING}}
-	if withZone {
-		tags = append(tags, &databasev1.TagSpec{Name: tagZone, Type: databasev1.TagType_TAG_TYPE_STRING})
+func evolvedGroupSchema(group string, tagNames []string) *databasev1.Measure {
+	tags := make([]*databasev1.TagSpec, 0, len(tagNames))
+	for _, name := range tagNames {
+		tags = append(tags, &databasev1.TagSpec{Name: name, Type: databasev1.TagType_TAG_TYPE_STRING})
 	}
 	return &databasev1.Measure{
 		Metadata:    &commonv1.Metadata{Name: "demo", Group: group},
@@ -180,81 +201,153 @@ func evolvedGroupSchema(group string, withZone bool) *databasev1.Measure {
 	}
 }
 
-// TestDistributedPlan_SchemaEvolvedMultiGroupAgg runs the apache/skywalking#14069
-// oracle through DistributedPlan.Execute: old schema (svc,value), new schema
-// (svc,zone,value), GROUP BY svc, SUM(value), projecting svc and zone.
+// TestDistributedPlan_SchemaEvolvedMultiGroupAgg runs GROUP BY svc,
+// SUM(value) through DistributedPlan.Execute over groups with different
+// schemas, in every group order. Each row renders as its projected tags (NULL
+// when absent) followed by the sum.
 func TestDistributedPlan_SchemaEvolvedMultiGroupAgg(t *testing.T) {
 	prevRaw := data.MeasureWireModeRaw()
 	data.SetMeasureWireModeRaw(true)
 	t.Cleanup(func() { data.SetMeasureWireModeRaw(prevRaw) })
 
-	for _, groups := range [][]string{{"old", "new"}, {"new", "old"}} {
-		t.Run(fmt.Sprintf("%s-first", groups[0]), func(t *testing.T) {
-			byGroup := map[string]*databasev1.Measure{
-				"old": evolvedGroupSchema("old", false),
-				"new": evolvedGroupSchema("new", true),
-			}
-			nodes := &schemaEvolvedNodes{
-				schemas: byGroup,
-				rows: map[string][]evolvedNodeRow{
-					"old": {{svc: "old", value: 2}, {svc: "old", value: 3}},
-					"new": {{svc: "new", zone: "west", value: 7}, {svc: "new", zone: "west", value: 11}},
-				},
-				projections: map[string][]string{},
-			}
-			req := &measurev1.QueryRequest{
-				Name:            "demo",
-				Groups:          groups,
-				TagProjection:   &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{{Name: defaultName, Tags: []string{tagSvc, tagZone}}}},
-				FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
-				GroupBy: &measurev1.QueryRequest_GroupBy{
-					TagProjection: &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{{Name: defaultName, Tags: []string{tagSvc}}}},
-					FieldName:     fieldValue,
-				},
-				Agg: &measurev1.QueryRequest_Aggregation{Function: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, FieldName: fieldValue},
-			}
-			schemas := []*databasev1.Measure{byGroup[groups[0]], byGroup[groups[1]]}
-			p, analyzeErr := AnalyzeDistributed(req, schemas, nil, vmeasure.VectorizedConfig{BatchSize: 1024, QueryMemoryMiB: 16})
-			if analyzeErr != nil {
-				t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
-			}
-			iter, execErr := p.Execute(executor.WithDistributedExecutionContext(context.Background(), nodes))
-			if execErr != nil {
-				t.Fatalf("Execute: %v", execErr)
-			}
-			defer iter.Close()
+	cases := []struct {
+		groupTags  map[string][]string
+		rows       map[string][]evolvedNodeRow
+		want       map[string]string
+		name       string
+		projection []string
+	}{
+		{
+			// The apache/skywalking#14069 oracle.
+			name:       "old group lacks the projected tag",
+			groupTags:  map[string][]string{"old": {tagSvc}, "new": {tagSvc, tagZone}},
+			projection: []string{tagSvc, tagZone},
+			rows: map[string][]evolvedNodeRow{
+				"old": {nodeRow(2, tagSvc, "old"), nodeRow(3, tagSvc, "old")},
+				"new": {nodeRow(7, tagSvc, "new", tagZone, "west"), nodeRow(11, tagSvc, "new", tagZone, "west")},
+			},
+			want: map[string]string{"old": "old,NULL,5", "new": "new,west,18"},
+		},
+		{
+			name:       "groups add disjoint tags",
+			groupTags:  map[string][]string{"a": {tagSvc, tagZone}, "b": {tagSvc, tagRegion}},
+			projection: []string{tagSvc, tagZone, tagRegion},
+			rows: map[string][]evolvedNodeRow{
+				"a": {nodeRow(1, tagSvc, "a", tagZone, "west")},
+				"b": {nodeRow(2, tagSvc, "b", tagRegion, "eu")},
+			},
+			want: map[string]string{"a": "a,west,NULL,1", "b": "b,NULL,eu,2"},
+		},
+		{
+			name:       "only group defining the tag has no rows",
+			groupTags:  map[string][]string{"old": {tagSvc}, "new": {tagSvc, tagZone}},
+			projection: []string{tagSvc, tagZone},
+			rows: map[string][]evolvedNodeRow{
+				"old": {nodeRow(2, tagSvc, "old"), nodeRow(3, tagSvc, "old")},
+			},
+			want: map[string]string{"old": "old,NULL,5"},
+		},
+		{
+			// a's node sends zone as string, b's as TagValue (all null).
+			name:       "the tag is null in one group's rows",
+			groupTags:  map[string][]string{"a": {tagSvc, tagZone}, "b": {tagSvc, tagZone}},
+			projection: []string{tagSvc, tagZone},
+			rows: map[string][]evolvedNodeRow{
+				"a": {nodeRow(1, tagSvc, "a", tagZone, "west")},
+				"b": {nodeRow(2, tagSvc, "b")},
+			},
+			want: map[string]string{"a": "a,west,1", "b": "b,NULL,2"},
+		},
+	}
+	for _, tc := range cases {
+		groups := make([]string, 0, len(tc.groupTags))
+		for g := range tc.groupTags {
+			groups = append(groups, g)
+		}
+		sort.Strings(groups)
+		for _, order := range [][]string{groups, {groups[1], groups[0]}} {
+			t.Run(fmt.Sprintf("%s/%s-first", tc.name, order[0]), func(t *testing.T) {
+				runSchemaEvolvedCase(t, order, tc.groupTags, tc.rows, tc.projection, tc.want)
+			})
+		}
+	}
+}
 
-			if !slices.Equal(nodes.projections["old"], []string{tagSvc}) {
-				t.Fatalf("old group was asked for %v, want only svc", nodes.projections["old"])
+func runSchemaEvolvedCase(t *testing.T, groups []string, groupTags map[string][]string,
+	rows map[string][]evolvedNodeRow, projection []string, want map[string]string,
+) {
+	t.Helper()
+	byGroup := map[string]*databasev1.Measure{}
+	schemas := make([]*databasev1.Measure, 0, len(groups))
+	for _, g := range groups {
+		byGroup[g] = evolvedGroupSchema(g, groupTags[g])
+		schemas = append(schemas, byGroup[g])
+	}
+	nodes := &schemaEvolvedNodes{schemas: byGroup, rows: rows, projections: map[string][]string{}}
+	req := &measurev1.QueryRequest{
+		Name:            "demo",
+		Groups:          groups,
+		TagProjection:   &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{{Name: defaultName, Tags: projection}}},
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		GroupBy: &measurev1.QueryRequest_GroupBy{
+			TagProjection: &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{{Name: defaultName, Tags: []string{tagSvc}}}},
+			FieldName:     fieldValue,
+		},
+		Agg: &measurev1.QueryRequest_Aggregation{Function: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, FieldName: fieldValue},
+	}
+	p, analyzeErr := AnalyzeDistributed(req, schemas, nil, vmeasure.VectorizedConfig{BatchSize: 1024, QueryMemoryMiB: 16})
+	if analyzeErr != nil {
+		t.Fatalf("AnalyzeDistributed: %v", analyzeErr)
+	}
+	iter, execErr := p.Execute(executor.WithDistributedExecutionContext(context.Background(), nodes))
+	if execErr != nil {
+		t.Fatalf("Execute: %v", execErr)
+	}
+	defer iter.Close()
+
+	// Each group is only asked for the projected tags its own schema defines.
+	for _, g := range groups {
+		var wantAsked []string
+		for _, tag := range projection {
+			if slices.Contains(groupTags[g], tag) {
+				wantAsked = append(wantAsked, tag)
 			}
-			got := map[string]string{}
-			for iter.Next() {
-				for _, idp := range iter.Current() {
-					dp := idp.GetDataPoint()
-					tags := map[string]string{}
-					var tagOrder []string
-					for _, family := range dp.GetTagFamilies() {
-						for _, tag := range family.GetTags() {
-							tagOrder = append(tagOrder, tag.GetKey())
-							tags[tag.GetKey()] = "NULL"
-							if s := tag.GetValue().GetStr(); s != nil {
-								tags[tag.GetKey()] = s.GetValue()
-							}
-						}
+		}
+		if !slices.Equal(nodes.projections[g], wantAsked) {
+			t.Fatalf("group %s was asked for %v, want %v", g, nodes.projections[g], wantAsked)
+		}
+	}
+	got := map[string]string{}
+	for iter.Next() {
+		for _, idp := range iter.Current() {
+			dp := idp.GetDataPoint()
+			var tagOrder, cells []string
+			for _, family := range dp.GetTagFamilies() {
+				for _, tag := range family.GetTags() {
+					tagOrder = append(tagOrder, tag.GetKey())
+					cell := "NULL"
+					if s := tag.GetValue().GetStr(); s != nil {
+						cell = s.GetValue()
 					}
-					if !slices.Equal(tagOrder, []string{tagSvc, tagZone}) {
-						t.Fatalf("tags = %v, want projection order [svc zone]", tagOrder)
-					}
-					if len(dp.GetFields()) != 1 {
-						t.Fatalf("fields = %v, want one value field", dp.GetFields())
-					}
-					got[tags[tagSvc]] = fmt.Sprintf("%s,%s,%d", tags[tagSvc], tags[tagZone], dp.GetFields()[0].GetValue().GetInt().GetValue())
+					cells = append(cells, cell)
 				}
 			}
-			want := map[string]string{"old": "old,NULL,5", "new": "new,west,18"}
-			if len(got) != len(want) || got["old"] != want["old"] || got["new"] != want["new"] {
-				t.Fatalf("rows = %v, want %v", got, want)
+			if !slices.Equal(tagOrder, projection) {
+				t.Fatalf("tags = %v, want projection order %v", tagOrder, projection)
 			}
-		})
+			if len(dp.GetFields()) != 1 {
+				t.Fatalf("fields = %v, want one value field", dp.GetFields())
+			}
+			cells = append(cells, fmt.Sprint(dp.GetFields()[0].GetValue().GetInt().GetValue()))
+			got[cells[0]] = strings.Join(cells, ",")
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("rows = %v, want %v", got, want)
+	}
+	for svc, w := range want {
+		if got[svc] != w {
+			t.Fatalf("rows = %v, want %v", got, want)
+		}
 	}
 }

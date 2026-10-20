@@ -541,13 +541,14 @@ func (p *DistributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 		if queryRequest.GetAgg() == nil {
 			return p.executeRows(ctx, frames, queryRequest)
 		}
-		return p.executeAgg(ctx, frames, queryRequest)
+		return p.executeAgg(ctx, frames, queryRequest, nil)
 	}
 
 	// Multi-group path: one broadcast per group so each data node returns a
 	// frame whose schema reflects only its local group's column layout.
 	var perGroupErr error
 	allGroupFrames := make([]groupFrame, 0, len(groups)*4)
+	var partialSchemas []*vectorized.BatchSchema
 	for groupIdx, groupName := range groups {
 		nodeRequest := proto.Clone(p.nodeTemplate).(*measurev1.QueryRequest)
 		nodeRequest.TimeRange = dctx.TimeRange()
@@ -563,6 +564,15 @@ func (p *DistributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 		if groupSchema != nil {
 			nodeRequest.TagProjection = intersectTagProjection(nodeRequest.GetTagProjection(), groupSchema)
 			nodeRequest.FieldProjection = intersectFieldProjection(nodeRequest.GetFieldProjection(), groupSchema)
+		}
+		if queryRequest.GetAgg() != nil && groupSchema != nil {
+			// The partial layout this group's data nodes emit for nodeRequest.
+			// The index checker only picks the folding strategy, not the layout.
+			nodePlan, nodePlanErr := Analyze(nodeRequest, groupSchema, vmeasure.AggModeMap, nil)
+			if nodePlanErr != nil {
+				return nil, fmt.Errorf("vec distributed plan: plan group %s partials: %w", groupName, nodePlanErr)
+			}
+			partialSchemas = append(partialSchemas, nodePlan.Schema())
 		}
 		broadcastSpan, broadcastSpanCtx := startTraceSpan(ctx, fmt.Sprintf("broadcast-per-group-%s", groupName))
 		addTraceTag(broadcastSpan, tracelabels.TagGroupName, groupName)
@@ -601,12 +611,22 @@ func (p *DistributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 	if queryRequest.GetAgg() == nil {
 		return p.executeRowsMultiGroup(ctx, allGroupFrames, queryRequest)
 	}
-	// Multi-group agg: collect all frames as flat []byte and reduce.
+	// Multi-group agg: collect all frames as flat []byte and reduce them
+	// into one layout derived from the groups' schemas, not from whichever
+	// groups returned rows.
 	flatFrames := make([][]byte, 0, len(allGroupFrames))
 	for _, gf := range allGroupFrames {
 		flatFrames = append(flatFrames, gf.body)
 	}
-	return p.executeAgg(ctx, flatFrames, queryRequest)
+	var target *vectorized.BatchSchema
+	if len(partialSchemas) == len(groups) {
+		var targetErr error
+		target, targetErr = multiGroupPartialSchema(partialSchemas, queryRequest.GetTagProjection())
+		if targetErr != nil {
+			return nil, fmt.Errorf("vec distributed plan: %w", targetErr)
+		}
+	}
+	return p.executeAgg(ctx, flatFrames, queryRequest, target)
 }
 
 func collectRawFrameResponses(ff []bus.Future) ([][]byte, []*commonv1.Trace, error) {
@@ -677,7 +697,9 @@ func collectRawFrameResponsesWithNodes(ff []bus.Future) ([][]byte, []*commonv1.T
 	return frames, traces, nodes, err
 }
 
-func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *measurev1.QueryRequest) (executor.MIterator, error) {
+// executeAgg reduces the agg partials in frames. A non-nil target is the
+// layout every partial is reshaped onto first (multi-group queries).
+func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *measurev1.QueryRequest, target *vectorized.BatchSchema) (executor.MIterator, error) {
 	keyTagFamily, keyTagNames := distributedGroupByTagKey(req.GetGroupBy())
 	bucketed := req.GetGroupBy().GetTimeBucket() != nil
 	aggFunc, aggErr := distributedAggFunc(req.GetAgg().GetFunction())
@@ -694,7 +716,7 @@ func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *
 	addTraceTagf(reduceSpan, tracelabels.TagFramesIn, "%d", len(frames))
 	frameDecodeDurations := collectFrameDecodeDurations(ctx, frames)
 	// nolint:contextcheck // pure in-memory reducer; no cancelable I/O downstream
-	batches, aggValuePath, reduceErr := vmeasure.ReduceRawFrames(frames, keyTagFamily, keyTagNames, bucketed, aggSpecs, p.cfg.BatchSize, tracker)
+	batches, aggValuePath, reduceErr := vmeasure.ReduceRawFramesToSchema(frames, target, keyTagFamily, keyTagNames, bucketed, aggSpecs, p.cfg.BatchSize, tracker)
 	if reduceErr != nil {
 		if reduceSpan != nil {
 			reduceSpan.Error(reduceErr)

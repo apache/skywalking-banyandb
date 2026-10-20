@@ -37,24 +37,25 @@ type evolvedRow struct {
 
 // evolvedRawSchema is the raw layout a data node scans for a group projected
 // as (svc[, zone]) + value, grouped by svc. Like BuildBatchSchema, the key
-// tag is native and the non-key zone tag is a TagValue passthrough. The old
-// schema has no zone tag, so the liaison drops zone from that group's
-// projection.
-func evolvedRawSchema(withZone bool, svcType vectorized.ColumnType) *vectorized.BatchSchema {
+// tag is native and the non-key zone tag is a TagValue passthrough; a zero
+// zoneType leaves zone out, as for the old schema, whose projection the
+// liaison trims to svc.
+func evolvedRawSchema(svcType, zoneType vectorized.ColumnType) *vectorized.BatchSchema {
 	cols := []vectorized.ColumnDef{
 		{Role: vectorized.RoleShardID, Name: shardIDOutputName, Type: vectorized.ColumnTypeInt64},
 		{Role: vectorized.RoleTag, TagFamily: "default", Name: "svc", Type: svcType},
 	}
-	if withZone {
-		cols = append(cols, vectorized.ColumnDef{Role: vectorized.RoleTag, TagFamily: "default", Name: "zone", Type: vectorized.ColumnTypeTagValue})
+	if zoneType != 0 {
+		cols = append(cols, vectorized.ColumnDef{Role: vectorized.RoleTag, TagFamily: "default", Name: "zone", Type: zoneType})
 	}
 	cols = append(cols, vectorized.ColumnDef{Role: vectorized.RoleField, Name: "value", Type: vectorized.ColumnTypeInt64})
 	return vectorized.NewBatchSchema(cols)
 }
 
 // encodeEvolvedPartial runs the data-node AggModeMap over rows laid out by
-// schema, grouped by svc, and encodes the emitted partial.
-func encodeEvolvedPartial(t *testing.T, schema *vectorized.BatchSchema, shardID int64, rows []evolvedRow, fn AggFunc) []byte {
+// schema, grouped by svc, and encodes the emitted partial. Every partial
+// reports shard 0, as each group numbers its own shards.
+func encodeEvolvedPartial(t *testing.T, schema *vectorized.BatchSchema, rows []evolvedRow, fn AggFunc) []byte {
 	t.Helper()
 	valueIdx := len(schema.Columns) - 1
 	op := NewBatchAggregation(schema, []int{1},
@@ -66,7 +67,7 @@ func encodeEvolvedPartial(t *testing.T, schema *vectorized.BatchSchema, shardID 
 	}
 	b := vectorized.NewRecordBatch(schema, len(rows))
 	for _, r := range rows {
-		b.Columns[0].(*vectorized.TypedColumn[int64]).Append(shardID)
+		b.Columns[0].(*vectorized.TypedColumn[int64]).Append(0)
 		switch svcCol := b.Columns[1].(type) {
 		case *vectorized.TypedColumn[string]:
 			svcCol.Append(r.svc)
@@ -76,8 +77,14 @@ func encodeEvolvedPartial(t *testing.T, schema *vectorized.BatchSchema, shardID 
 			t.Fatalf("unexpected svc column %T", svcCol)
 		}
 		if len(schema.Columns) == 4 {
-			b.Columns[2].(*vectorized.TypedColumn[*modelv1.TagValue]).Append(
-				&modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: r.zone}}})
+			switch zoneCol := b.Columns[2].(type) {
+			case *vectorized.TypedColumn[*modelv1.TagValue]:
+				zoneCol.Append(&modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: r.zone}}})
+			case *vectorized.TypedColumn[string]:
+				zoneCol.Append(r.zone)
+			default:
+				t.Fatalf("unexpected zone column %T", zoneCol)
+			}
 		}
 		b.Columns[valueIdx].(*vectorized.TypedColumn[int64]).Append(r.value)
 	}
@@ -103,9 +110,9 @@ func encodeEvolvedPartial(t *testing.T, schema *vectorized.BatchSchema, shardID 
 // (svc,value) and a new group (svc,zone,value), both on shard 0.
 func evolvedFixture(t *testing.T, fn AggFunc) (oldFrame, newFrame []byte) {
 	t.Helper()
-	oldFrame = encodeEvolvedPartial(t, evolvedRawSchema(false, vectorized.ColumnTypeString), 0,
+	oldFrame = encodeEvolvedPartial(t, evolvedRawSchema(vectorized.ColumnTypeString, 0),
 		[]evolvedRow{{svc: "old", value: 2}, {svc: "old", value: 3}}, fn)
-	newFrame = encodeEvolvedPartial(t, evolvedRawSchema(true, vectorized.ColumnTypeString), 0,
+	newFrame = encodeEvolvedPartial(t, evolvedRawSchema(vectorized.ColumnTypeString, vectorized.ColumnTypeTagValue),
 		[]evolvedRow{{svc: "new", zone: "west", value: 7}, {svc: "new", zone: "west", value: 11}}, fn)
 	return oldFrame, newFrame
 }
@@ -135,7 +142,12 @@ func reducedRows(t *testing.T, batches []*vectorized.RecordBatch) (rows map[stri
 		for r := 0; r < b.Len; r++ {
 			zone := "NULL"
 			if !b.Columns[zoneIdx].IsNull(r) {
-				zone = b.Columns[zoneIdx].(*vectorized.TypedColumn[*modelv1.TagValue]).Data()[r].GetStr().GetValue()
+				switch zoneCol := b.Columns[zoneIdx].(type) {
+				case *vectorized.TypedColumn[*modelv1.TagValue]:
+					zone = zoneCol.Data()[r].GetStr().GetValue()
+				case *vectorized.TypedColumn[string]:
+					zone = zoneCol.Data()[r]
+				}
 			}
 			rows[svcVals[r]] = strings.Join([]string{svcVals[r], zone, columnStringAt(b.Columns[valueIdx], r)}, ",")
 		}
@@ -143,7 +155,24 @@ func reducedRows(t *testing.T, batches []*vectorized.RecordBatch) (rows map[stri
 	return rows, cols
 }
 
-func TestReduceRawFrames_SchemaEvolvedGroups_NullFillsMissingTag(t *testing.T) {
+// partialSchema is the layout of an encoded partial, used as the reduce target.
+func partialSchema(t *testing.T, body []byte) *vectorized.BatchSchema {
+	t.Helper()
+	b, decodeErr := frame.Decode(body)
+	if decodeErr != nil {
+		t.Fatalf("frame.Decode: %v", decodeErr)
+	}
+	defer b.ReleaseOwners()
+	return b.Schema
+}
+
+func reduceToSchema(frames [][]byte, target *vectorized.BatchSchema, keyTags []string, fn AggFunc) ([]*vectorized.RecordBatch, error) {
+	got, _, reduceErr := ReduceRawFramesToSchema(frames, target, "default", keyTags, false,
+		[]AggReduceSpec{{OutputName: "value", Func: fn}}, 1024, vectorized.NewMemoryTracker(1<<30))
+	return got, reduceErr
+}
+
+func TestReduceRawFramesToSchema_NullFillsMissingTag(t *testing.T) {
 	cases := []struct {
 		want map[string]string
 		name string
@@ -156,23 +185,22 @@ func TestReduceRawFrames_SchemaEvolvedGroups_NullFillsMissingTag(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			oldFrame, newFrame := evolvedFixture(t, tc.fn)
-			// The first non-empty partial used to define the schema, so check both arrival orders.
+			target := partialSchema(t, newFrame)
 			for orderName, frames := range map[string][][]byte{
 				"old-first": {oldFrame, newFrame},
 				"new-first": {newFrame, oldFrame},
 			} {
 				t.Run(orderName, func(t *testing.T) {
-					got, _, reduceErr := ReduceRawFrames(frames, "default", []string{"svc"}, false,
-						[]AggReduceSpec{{OutputName: "value", Func: tc.fn}}, 1024, vectorized.NewMemoryTracker(1<<30))
+					got, reduceErr := reduceToSchema(frames, target, []string{"svc"}, tc.fn)
 					if reduceErr != nil {
-						t.Fatalf("ReduceRawFrames: %v", reduceErr)
+						t.Fatalf("ReduceRawFramesToSchema: %v", reduceErr)
 					}
 					rows, cols := reducedRows(t, got)
 					if !mapsEqualExact(rows, tc.want) {
 						t.Fatalf("rows = %v, want %v", rows, tc.want)
 					}
 					if strings.Join(cols, ",") != "svc,zone,value" {
-						t.Fatalf("columns = %v, want projection order svc,zone,value", cols)
+						t.Fatalf("columns = %v, want svc,zone,value", cols)
 					}
 				})
 			}
@@ -180,48 +208,75 @@ func TestReduceRawFrames_SchemaEvolvedGroups_NullFillsMissingTag(t *testing.T) {
 	}
 }
 
-func TestReduceRawFrames_SchemaEvolvedGroups_ReplicasDoNotDoubleCount(t *testing.T) {
+func TestReduceRawFramesToSchema_KeepsTagNoPartialCarries(t *testing.T) {
 	oldFrame, newFrame := evolvedFixture(t, AggSum)
-	got, _, reduceErr := ReduceRawFrames([][]byte{oldFrame, newFrame, oldFrame, newFrame}, "default", []string{"svc"}, false,
-		[]AggReduceSpec{{OutputName: "value", Func: AggSum}}, 1024, vectorized.NewMemoryTracker(1<<30))
+	got, reduceErr := reduceToSchema([][]byte{oldFrame}, partialSchema(t, newFrame), []string{"svc"}, AggSum)
 	if reduceErr != nil {
-		t.Fatalf("ReduceRawFrames: %v", reduceErr)
+		t.Fatalf("ReduceRawFramesToSchema: %v", reduceErr)
+	}
+	rows, cols := reducedRows(t, got)
+	if want := map[string]string{"old": "old,NULL,5"}; !mapsEqualExact(rows, want) {
+		t.Fatalf("rows = %v, want %v", rows, want)
+	}
+	if strings.Join(cols, ",") != "svc,zone,value" {
+		t.Fatalf("columns = %v, want svc,zone,value", cols)
+	}
+}
+
+func TestReduceRawFramesToSchema_WrapsMixedWireTypes(t *testing.T) {
+	// A data node sends a uniform passthrough column as its native type, so
+	// zone can arrive as string from one partial and TagValue from another.
+	_, newFrame := evolvedFixture(t, AggSum)
+	narrowFrame := encodeEvolvedPartial(t, evolvedRawSchema(vectorized.ColumnTypeString, vectorized.ColumnTypeString),
+		[]evolvedRow{{svc: "narrow", zone: "east", value: 4}}, AggSum)
+	for orderName, frames := range map[string][][]byte{
+		"tagvalue-first": {newFrame, narrowFrame},
+		"string-first":   {narrowFrame, newFrame},
+	} {
+		t.Run(orderName, func(t *testing.T) {
+			got, reduceErr := reduceToSchema(frames, partialSchema(t, newFrame), []string{"svc"}, AggSum)
+			if reduceErr != nil {
+				t.Fatalf("ReduceRawFramesToSchema: %v", reduceErr)
+			}
+			rows, _ := reducedRows(t, got)
+			if want := map[string]string{"new": "new,west,18", "narrow": "narrow,east,4"}; !mapsEqualExact(rows, want) {
+				t.Fatalf("rows = %v, want %v", rows, want)
+			}
+		})
+	}
+}
+
+func TestReduceRawFramesToSchema_ReplicasDoNotDoubleCount(t *testing.T) {
+	oldFrame, newFrame := evolvedFixture(t, AggSum)
+	got, reduceErr := reduceToSchema([][]byte{oldFrame, newFrame, oldFrame, newFrame}, partialSchema(t, newFrame), []string{"svc"}, AggSum)
+	if reduceErr != nil {
+		t.Fatalf("ReduceRawFramesToSchema: %v", reduceErr)
 	}
 	rows, _ := reducedRows(t, got)
-	want := map[string]string{"old": "old,NULL,5", "new": "new,west,18"}
-	if !mapsEqualExact(rows, want) {
+	if want := map[string]string{"old": "old,NULL,5", "new": "new,west,18"}; !mapsEqualExact(rows, want) {
 		t.Fatalf("rows = %v, want %v", rows, want)
 	}
 }
 
-func TestReduceRawFrames_SchemaEvolvedGroups_StillRejectsIncompatibleLayouts(t *testing.T) {
-	sumSpec := []AggReduceSpec{{OutputName: "value", Func: AggSum}}
+func TestReduceRawFramesToSchema_RejectsIncompatibleLayouts(t *testing.T) {
 	oldFrame, newFrame := evolvedFixture(t, AggSum)
 	// A third group declares svc as an int, so its native key column changes type.
-	intSvcFrame := encodeEvolvedPartial(t, evolvedRawSchema(false, vectorized.ColumnTypeInt64), 0,
+	intSvcFrame := encodeEvolvedPartial(t, evolvedRawSchema(vectorized.ColumnTypeInt64, 0),
 		[]evolvedRow{{svc: "other", value: 1}}, AggSum)
 	cases := []struct {
+		target   *vectorized.BatchSchema
 		name     string
 		wantText string
 		keyTags  []string
 		frames   [][]byte
 	}{
-		{
-			name:     "a group-by key changes type",
-			keyTags:  []string{"svc"},
-			frames:   [][]byte{newFrame, intSvcFrame},
-			wantText: "default.svc",
-		},
-		{
-			name:     "a group-by key is missing",
-			keyTags:  []string{"svc", "zone"},
-			frames:   [][]byte{newFrame, oldFrame},
-			wantText: "default.zone",
-		},
+		{name: "a group-by key changes type", target: partialSchema(t, newFrame), keyTags: []string{"svc"}, frames: [][]byte{intSvcFrame}, wantText: "default.svc"},
+		{name: "a group-by key is missing", target: partialSchema(t, newFrame), keyTags: []string{"svc", "zone"}, frames: [][]byte{oldFrame}, wantText: "default.zone"},
+		{name: "a partial has a column the target lacks", target: partialSchema(t, oldFrame), keyTags: []string{"svc"}, frames: [][]byte{newFrame}, wantText: "default.zone"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, reduceErr := ReduceRawFrames(tc.frames, "default", tc.keyTags, false, sumSpec, 1024, vectorized.NewMemoryTracker(1<<30))
+			_, reduceErr := reduceToSchema(tc.frames, tc.target, tc.keyTags, AggSum)
 			if reduceErr == nil {
 				t.Fatal("expected an error")
 			}
@@ -229,6 +284,15 @@ func TestReduceRawFrames_SchemaEvolvedGroups_StillRejectsIncompatibleLayouts(t *
 				t.Fatalf("error %q does not name %s", reduceErr, tc.wantText)
 			}
 		})
+	}
+}
+
+func TestReduceRawFrames_WithoutTargetStillRequiresOneLayout(t *testing.T) {
+	oldFrame, newFrame := evolvedFixture(t, AggSum)
+	_, _, reduceErr := ReduceRawFrames([][]byte{oldFrame, newFrame}, "default", []string{"svc"}, false,
+		[]AggReduceSpec{{OutputName: "value", Func: AggSum}}, 1024, vectorized.NewMemoryTracker(1<<30))
+	if reduceErr == nil || !strings.Contains(reduceErr.Error(), "schema mismatch") {
+		t.Fatalf("error = %v, want a schema mismatch", reduceErr)
 	}
 }
 
