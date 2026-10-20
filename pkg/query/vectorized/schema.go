@@ -38,6 +38,12 @@ type ColumnDef struct {
 	TagFamily string
 	Role      ColumnRole
 	Type      ColumnType
+	// Entity marks a RoleTag column that is one of the measure's entity tags: its
+	// value is a function of the series, so it is the same for every row of one
+	// series. A scan that knows its rows' series uses that to carry the column as a
+	// ConstColumn and to group by it once per series run. It is a property of
+	// storage-produced batches only and is not carried on the wire.
+	Entity bool
 }
 
 // tagKey is the composite key used to index tag columns by (family, name).

@@ -85,7 +85,7 @@ ENTRYPOINT ["/banyand"]
 # use only classic Dockerfile features and build under any engine.
 # ---------------------------------------------------------------------------
 
-FROM golang:1.25-bookworm AS build-plugins-base
+FROM golang:1.26-bookworm AS build-plugins-base
 
 ENV GOTOOLCHAIN=auto
 ENV CGO_ENABLED=1
@@ -139,7 +139,7 @@ RUN set -e; \
 # final-plugins is the plugin-capable HOST image ("-plugins" variant):
 # gcr.io/distroless/base-debian12 (NOT busybox) because the CGO-dynamic
 # banyand-server links against glibc; distroless base-debian12 is a Debian
-# "bookworm" image (glibc 2.36), matching the glibc the golang:1.25-bookworm
+# "bookworm" image (glibc 2.36), matching the glibc the golang:1.26-bookworm
 # builder links against — so host<->.so parity holds (see plugins/README.md's
 # ABI/toolchain-lock section). Distroless is chosen over debian:bookworm-slim
 # to shrink the CVE surface: it carries no shell, no apt, and no package

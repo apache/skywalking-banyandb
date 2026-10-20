@@ -20,6 +20,7 @@ package frame
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 )
 
 // ValidateHeader is the fail-loud preflight a decoder calls before parsing any
@@ -33,6 +34,14 @@ import (
 // b[bytesRead:] to reach the first column block), and a non-nil error wrapping
 // one of ErrTruncated, ErrBadMagic, ErrBadVersion on any failure.
 func (c Codec) ValidateHeader(b []byte) (Header, int, error) {
+	return c.validateHeader(b, c.WireVersion, true)
+}
+
+// validateHeader is ValidateHeader for a frame expected to carry wantVersion.
+// boundRows applies the row-count sanity bound of the row-oriented layout, where
+// every row costs at least one byte; the columnar layout can describe many rows in
+// few bytes (a constant column), so it bounds rows by its own limits instead.
+func (c Codec) validateHeader(b []byte, wantVersion uint8, boundRows bool) (Header, int, error) {
 	if len(b) < MinHeaderLen {
 		return Header{}, 0, fmt.Errorf("%w: have %d bytes, need at least %d", ErrTruncated, len(b), MinHeaderLen)
 	}
@@ -42,8 +51,8 @@ func (c Codec) ValidateHeader(b []byte) (Header, int, error) {
 		return Header{}, 0, fmt.Errorf("%w: got %#x, want %#x", ErrBadMagic, h.Magic[:], c.Magic[:])
 	}
 	h.WireVersion = b[MagicLen]
-	if h.WireVersion != c.WireVersion {
-		return Header{}, 0, fmt.Errorf("%w: got %d, want %d", ErrBadVersion, h.WireVersion, c.WireVersion)
+	if h.WireVersion != wantVersion {
+		return Header{}, 0, fmt.Errorf("%w: got %d, want %d", ErrBadVersion, h.WireVersion, wantVersion)
 	}
 	offset := MagicLen + 1
 	nrows, nrowsLen := binary.Uvarint(b[offset:])
@@ -64,8 +73,11 @@ func (c Codec) ValidateHeader(b []byte) (Header, int, error) {
 	// at least a role+type byte). Without this an adversarial/corrupt header with
 	// a near-2^64 NumRows would (a) overflow the (NumRows+7)/8 validity-byte math
 	// and (b) drive make([]bool, NumRows) into an OOM panic in readValidityBitmap.
-	if h.NumRows > uint64(len(b)) {
+	if boundRows && h.NumRows > uint64(len(b)) {
 		return Header{}, 0, fmt.Errorf("%w: NumRows=%d exceeds frame length %d", ErrTruncated, h.NumRows, len(b))
+	}
+	if h.NumRows > math.MaxInt32 {
+		return Header{}, 0, fmt.Errorf("%w: NumRows=%d exceeds the %d row limit", ErrTruncated, h.NumRows, math.MaxInt32)
 	}
 	if h.NumCols > uint64(len(b)-offset) {
 		return Header{}, 0, fmt.Errorf("%w: NumCols=%d exceeds remaining %d bytes", ErrTruncated, h.NumCols, len(b)-offset)

@@ -209,7 +209,7 @@ func TestRoundtrip_MeasureSend(t *testing.T) {
 	partDirs := findRoundtripPartDirs(groupRoot)
 	req.NotEmpty(partDirs, "expected at least one part dir under %s", groupRoot)
 
-	// Stop the services so the bluge sidx writer releases its lock before the
+	// Stop the services so the native sidx writer releases its lock before the
 	// resolver opens it read-only inside replayPart.
 	stopServices()
 
@@ -641,7 +641,7 @@ func registerOrphanStream(t *testing.T, metaSvc metadataservice.Service, name st
 // builds a replayer over a metadata repo whose GetStream returns
 // schema.ErrGRPCResourceNotFound for the deleted stream (the normal stream is
 // pre-warmed into the replayer's cache while metadata is live). Modules are
-// stopped before returning so the bluge sidx dir is unlocked for the read-only
+// stopped before returning so the sidx dir is unlocked for the read-only
 // IndexResolver during replay. It returns the archive root, the flushed part
 // dirs, the ready replayer, and a stop func.
 func setupStreamOrphanScenario(t *testing.T, cfg orphanConfig, deletedErr error) (string, []string, *streamRowReplayer, func()) {
@@ -748,7 +748,7 @@ func setupStreamOrphanScenario(t *testing.T, cfg orphanConfig, deletedErr error)
 	_, err = replayer.loadSchema(context.TODO(), orphanStreamNormalName)
 	req.NoError(err)
 
-	// Stop the modules so the bluge sidx writer commits and releases its exclusive
+	// Stop the modules so the native sidx writer commits and releases its exclusive
 	// lock before the read-only IndexResolver opens the segment during replay.
 	stopModules()
 

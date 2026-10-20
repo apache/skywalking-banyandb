@@ -31,6 +31,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
@@ -167,6 +168,9 @@ func TestFinalizeScan_SelectsCooledSegmentAndFinalizes(t *testing.T) {
 		TSTableCreator:  newTSTable,
 		SegmentInterval: hourly,
 		TTL:             storage.IntervalRule{Unit: storage.DAY, Num: 30},
+		RootLeaseFactory: func(lock fs.File, root string) (storage.RootLease, error) {
+			return native.NewFileRootLease(lock, root)
+		},
 		Option: option{
 			flushTimeout:      0,
 			protector:         protector.Nop{},

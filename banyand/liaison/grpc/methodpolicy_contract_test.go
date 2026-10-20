@@ -84,6 +84,8 @@ const (
 	mGroupInspect     = "/banyandb.database.v1.GroupRegistryService/Inspect"
 	mGroupTaskQuery   = "/banyandb.database.v1.GroupRegistryService/Query"
 	mSnapshot         = "/banyandb.database.v1.SnapshotService/Snapshot"
+	mExportPlan       = "/banyandb.transfer.v1.ExportService/Plan"
+	mExportSessions   = "/banyandb.transfer.v1.ExportService/Sessions"
 	mGetMaxRevision   = "/banyandb.cluster.v1.NodeSchemaStatusService/GetMaxRevision"
 	mGetKeyRevisions  = "/banyandb.cluster.v1.NodeSchemaStatusService/GetKeyRevisions"
 	mGetAbsentKeys    = "/banyandb.cluster.v1.NodeSchemaStatusService/GetAbsentKeys"
@@ -109,6 +111,8 @@ var globalMethods = map[string]auth.Permission{
 	mGroupInspect:     auth.PermissionClusterRead,
 	mGroupTaskQuery:   auth.PermissionClusterRead,
 	mSnapshot:         auth.PermissionClusterAdmin,
+	mExportPlan:       auth.PermissionClusterAdmin,
+	mExportSessions:   auth.PermissionClusterAdmin,
 	mGetMaxRevision:   auth.PermissionClusterAdmin,
 	mGetKeyRevisions:  auth.PermissionClusterAdmin,
 	mGetAbsentKeys:    auth.PermissionClusterAdmin,
@@ -165,8 +169,8 @@ func policyTable(t *testing.T) liaisongrpc.MethodPolicyTable {
 // from the registered set alone.
 func TestR1_MethodPolicyCoversExactlyTheRegisteredMethods(t *testing.T) {
 	table := policyTable(t)
-	if len(table) != 78 {
-		t.Fatalf("GlobalMethodPolicies() returned %d rows, want the fixed 78-method oracle", len(table))
+	if len(table) != 80 {
+		t.Fatalf("GlobalMethodPolicies() returned %d rows, want the fixed 80-method oracle", len(table))
 	}
 	registered := liaisongrpc.RegisteredMethods(fullActivation)
 	if len(registered) == 0 {
@@ -199,6 +203,7 @@ func TestR1_RegisteredMethodsTracksTheServiceDescriptors(t *testing.T) {
 		mGetMaxRevision, mGetKeyRevisions, mGetAbsentKeys, mAwaitRevision,
 		mStreamDeleteSeg, mMeasureDeleteSeg, mTraceDeleteSeg, mMeasureInternalQ,
 		mMeasureQuery, mStreamWrite, mGroupCreate, mGroupList, mPropertyApply, mBydbQLQuery,
+		mExportPlan, mExportSessions,
 	} {
 		if !present[m] {
 			t.Errorf("RegisteredMethods(full activation) is missing %q, which the liaison serves", m)
@@ -333,7 +338,7 @@ func TestR6_GlobalMethodsAreActivatedAndTheRestFailClosed(t *testing.T) {
 		}
 	}
 	for permission, want := range map[auth.Permission]int{
-		auth.PermissionClusterRead: 4, auth.PermissionClusterAdmin: 8,
+		auth.PermissionClusterRead: 4, auth.PermissionClusterAdmin: 10,
 		auth.PermissionSchemaRead: 27, auth.PermissionSchemaWrite: 24,
 		auth.PermissionDataRead: 6, auth.PermissionDataWrite: 5,
 	} {
@@ -379,6 +384,8 @@ func TestR3_GlobalDecisionMatrix(t *testing.T) {
 		{mHealthCheck, allow, allow, allow, allow, allow},
 		// cluster:admin — admin only.
 		{mSnapshot, allow, deny, deny, deny, deny},
+		{mExportPlan, allow, deny, deny, deny, deny},
+		{mExportSessions, allow, deny, deny, deny, deny},
 		{mGetMaxRevision, allow, deny, deny, deny, deny},
 		{mGetKeyRevisions, allow, deny, deny, deny, deny},
 		{mGetAbsentKeys, allow, deny, deny, deny, deny},

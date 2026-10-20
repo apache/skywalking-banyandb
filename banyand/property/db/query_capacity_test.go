@@ -23,21 +23,14 @@ import (
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
 // Property queries with an oversized Limit previously sized shard/db result slices from
 // that value. The capacity hint must stay bounded even if such a limit reaches allocation.
 func TestQueryCapacityCapsOversizedLimit(t *testing.T) {
-	if got := queryCapacity(math.MaxInt32); got != queryCapacityHint {
-		t.Fatalf("queryCapacity(MaxInt32)=%d, want %d", got, queryCapacityHint)
-	}
 	if got := queryCapacityUint(math.MaxUint32); got != queryCapacityHint {
 		t.Fatalf("queryCapacityUint(MaxUint32)=%d, want %d", got, queryCapacityHint)
-	}
-	if got := queryCapacity(16); got != 16 {
-		t.Fatalf("queryCapacity(16)=%d, want 16", got)
 	}
 	if got := queryCapacityUint(16); got != 16 {
 		t.Fatalf("queryCapacityUint(16)=%d, want 16", got)
@@ -47,10 +40,6 @@ func TestQueryCapacityCapsOversizedLimit(t *testing.T) {
 func TestQueryCapacityAllocationStaysBounded(t *testing.T) {
 	// Use a modest oversized limit so a guard regression fails the assertion without OOM.
 	const oversized = 4096
-	data := make([]*queryProperty, 0, queryCapacity(oversized))
-	if cap(data) != queryCapacityHint {
-		t.Fatalf("shard slice capacity %d, want %d", cap(data), queryCapacityHint)
-	}
 	result := make([]QueriedProperty, 0, queryCapacityUint(oversized))
 	if cap(result) != queryCapacityHint {
 		t.Fatalf("db slice capacity %d, want %d", cap(result), queryCapacityHint)
@@ -101,22 +90,22 @@ func TestOrderedPropertyQueryCapacityBounded(t *testing.T) {
 		t.Fatalf("database.Query ordered merge capacity %d, want %d", cap(result), queryCapacityHint)
 	}
 
+	// The native shard-level query (nativePropertyStore.query) sizes its result
+	// slice from the matched hit count (len(hits)), which is always bounded by
+	// real data, rather than from the raw caller-supplied Limit; it has no
+	// queryCapacity(int)-style oversized-Limit allocation to guard, unlike the
+	// retired shard.search this test used to also exercise here. The database
+	// layer assertion above is the one that still matters to callers and
+	// remains covered.
 	sd, loadErr := db.(*database).loadShard(ctx, testPropertyGroup, 0)
 	if loadErr != nil {
 		t.Fatal(loadErr)
 	}
-	iq, buildErr := inverted.BuildPropertyQuery(req, groupField, entityID)
-	if buildErr != nil {
-		t.Fatal(buildErr)
-	}
-	shardResults, searchErr := sd.search(ctx, iq, req.OrderBy, int(req.Limit))
+	shardResults, searchErr := sd.searchNative(ctx, req, req.OrderBy, int(req.Limit))
 	if searchErr != nil {
 		t.Fatal(searchErr)
 	}
 	if len(shardResults) == 0 {
-		t.Fatal("expected ordered shard.search to return the inserted property")
-	}
-	if cap(shardResults) != queryCapacityHint {
-		t.Fatalf("shard.search ordered capacity %d, want %d", cap(shardResults), queryCapacityHint)
+		t.Fatal("expected ordered searchNative to return the inserted property")
 	}
 }

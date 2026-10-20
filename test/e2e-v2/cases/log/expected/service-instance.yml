@@ -23,7 +23,7 @@
   - name: OS Name
     value: Linux
   - name: hostname
-    value: {{ notEmpty .value }}
+    value: '{{ notEmpty .value }}'
   - name: Process No.
     value: "1"
   - name: Start Time

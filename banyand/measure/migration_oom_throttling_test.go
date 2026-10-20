@@ -145,7 +145,7 @@ var _ = Describe("measure lifecycle tier-migration RECEIVE path under memory pre
 		}).WithTimeout(60*time.Second).WithPolling(time.Second).Should(BeTrue(),
 			"every <seg>/sidx/ under %s should carry a committed .snp before migration runs", sourceGroupRoot)
 
-		// Stop the source so every per-segment bluge series-index writer commits.
+		// Stop the source so every per-segment native series-index writer commits.
 		sourceDown()
 
 		// Collect the committed sidx .seg files (with their owning segment dir) so
@@ -359,14 +359,15 @@ func setUpThrottleTarget(measureRootPath string) (*services, *controllablePM, fu
 		"--measure-root-path=" + measureRootPath,
 	}
 	moduleDeferFunc := test.SetupModules(flags, pipeline, metadataService, preloadSvc, measureService, querySvc)
-	return &services{
-			measure:         measureService,
-			metadataService: metadataService,
-			pipeline:        pipeline,
-		}, pm, func() {
-			moduleDeferFunc()
-			metaDeferFunc()
-		}
+	svcs := &services{
+		measure:         measureService,
+		metadataService: metadataService,
+		pipeline:        pipeline,
+	}
+	return svcs, pm, func() {
+		moduleDeferFunc()
+		metaDeferFunc()
+	}
 }
 
 // startThrottleSyncServer starts a REAL chunked-sync gRPC server and returns it

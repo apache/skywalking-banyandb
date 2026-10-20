@@ -23,7 +23,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/blugelabs/bluge"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/encoding/protojson"
 
@@ -33,7 +32,16 @@ import (
 	backupsnapshot "github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
+
+// classifyTestLease is a minimal native.PathRootLease stub for writing a
+// throwaway schema-property shard directly: this test has no surrounding
+// database lock to validate against.
+type classifyTestLease struct{}
+
+func (classifyTestLease) Validate() error           { return nil }
+func (classifyTestLease) ValidatePath(string) error { return nil }
 
 const classifyTestDate = "2026-06-10"
 
@@ -130,15 +138,22 @@ func seedSchemaGroupDoc(t *testing.T, root, group string, catalog commonv1.Catal
 	}
 	propJSON, err := protojson.Marshal(prop)
 	require.NoError(t, err)
-	w, err := bluge.OpenWriter(bluge.DefaultConfig(shardPath))
+	owner, err := native.NewOwner(native.OwnerOptions{Lease: classifyTestLease{}, Path: shardPath})
 	require.NoError(t, err)
-	batch := bluge.NewBatch()
-	batch.Insert(bluge.NewDocument(prop.Id).
-		AddField(bluge.NewStoredOnlyField("_source", propJSON)).
-		AddField(bluge.NewKeywordFieldBytes(index.IndexModeName, []byte(schema.KindGroup.String()))).
-		AddField(bluge.NewKeywordFieldBytes("_group", []byte(schema.SchemaGroup))))
-	require.NoError(t, w.Batch(batch))
-	require.NoError(t, w.Close())
+	done := make(chan error, 1)
+	require.NoError(t, owner.Batch(context.Background(), native.Batch{
+		Documents: []native.Document{{
+			Identifier: []byte(prop.Id),
+			Fields: []native.Field{
+				{Name: "_source", Value: propJSON, Store: true},
+				{Name: index.IndexModeName, Value: []byte(schema.KindGroup.String()), Index: true},
+				{Name: "_group", Value: []byte(schema.SchemaGroup), Index: true},
+			},
+		}},
+		PersistentCallback: func(batchErr error) { done <- batchErr },
+	}))
+	require.NoError(t, <-done)
+	require.NoError(t, owner.Close())
 }
 
 // TestClassifyGroups_SchemaAuthoritative covers the primary path: catalogs

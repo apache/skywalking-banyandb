@@ -32,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	vtrace "github.com/apache/skywalking-banyandb/pkg/query/vectorized/trace"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 func TestSidxResponseToVectorizedBatch(t *testing.T) {
@@ -410,8 +411,10 @@ func TestVectorizedOrderQueryPinsSIDXAndCorePublicationView(t *testing.T) {
 	}
 	resultCh := make(chan scanResult, 1)
 	go func() {
-		batch, queryErr := newParityTrace().buildConsistentVectorizedScanBatch(
-			ctx, []*tsTable{tst}, qo, []sidx.SIDX{blockingSIDX}, req, true, 0,
+		// tsdb=nil: this test pins the SIDX/core-publication ordering, not trace-
+		// completion widening, so Phase 2 scans exactly the tables it was given.
+		batch, _, queryErr := newParityTrace().buildConsistentVectorizedScanBatch(
+			ctx, []*tsTable{tst}, qo, []sidx.SIDX{blockingSIDX}, req, true, 0, nil, nil, timestamp.TimeRange{},
 		)
 		resultCh <- scanResult{batch: batch, err: queryErr}
 	}()

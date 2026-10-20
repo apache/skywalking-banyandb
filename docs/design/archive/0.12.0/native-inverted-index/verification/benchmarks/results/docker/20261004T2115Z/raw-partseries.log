@@ -1,0 +1,33 @@
+# Licensed to the Apache Software Foundation under one or more contributor
+# license agreements. See the NOTICE file distributed with
+# this work for additional information regarding copyright
+# ownership. The Apache Software Foundation licenses this file to you under
+# the Apache License, Version 2.0 (the "License"); you may
+# not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+{"level":"info","time":"2026-10-04T21:36:38Z","message":"honoring GOMAXPROCS=\"4\" as set in environment"}
+goos: linux
+goarch: amd64
+pkg: github.com/apache/skywalking-banyandb/pkg/index/native
+cpu: AMD EPYC 7B13
+BenchmarkNativePartSeriesMap/native-4         	    5979	     17542 ns/op	    5152 B/op	     162 allocs/op
+BenchmarkNativePartSeriesMap/native-4         	    6265	     18088 ns/op	    5152 B/op	     162 allocs/op
+BenchmarkNativePartSeriesMap/native-4         	    5978	     17620 ns/op	    5152 B/op	     162 allocs/op
+BenchmarkNativePartSeriesMap/native-4         	    7052	     17085 ns/op	    5152 B/op	     162 allocs/op
+BenchmarkNativePartSeriesMap/native-4         	    5800	     17351 ns/op	    5152 B/op	     162 allocs/op
+BenchmarkNativePartSeriesMap/oracle-4         	    2362	     44984 ns/op	    9667 B/op	     307 allocs/op
+BenchmarkNativePartSeriesMap/oracle-4         	    2454	     45596 ns/op	    9667 B/op	     307 allocs/op
+BenchmarkNativePartSeriesMap/oracle-4         	    2706	     45381 ns/op	    9666 B/op	     307 allocs/op
+BenchmarkNativePartSeriesMap/oracle-4         	    2464	     46059 ns/op	    9667 B/op	     307 allocs/op
+BenchmarkNativePartSeriesMap/oracle-4         	    2408	     46252 ns/op	    9666 B/op	     307 allocs/op
+PASS
+ok  	github.com/apache/skywalking-banyandb/pkg/index/native	1.297s

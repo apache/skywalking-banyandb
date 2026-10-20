@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -41,8 +42,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -372,38 +372,43 @@ func discoverPartIDs(segmentPath string) ([]uint64, error) {
 }
 
 func discoverSeriesIDs(segmentPath string) ([]common.SeriesID, error) {
-	// Open the series index (sidx directory under segment)
+	// Open the series index (sidx directory under segment) read-only: a
+	// native read-only generation, never a writable owner, so no lock is
+	// acquired on a directory a live node may still have open.
 	seriesIndexPath := filepath.Join(segmentPath, "sidx")
 
-	l := logger.GetLogger("dump-sidx")
-
-	// Create inverted index store
-	store, err := inverted.NewStore(inverted.StoreOpts{
-		Path:   seriesIndexPath,
-		Logger: l,
-	})
+	generation, err := native.OpenReadOnlyGeneration(seriesIndexPath)
 	if err != nil {
+		if errors.Is(err, native.ErrNoSnapshot) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("failed to open series index: %w", err)
 	}
-	defer store.Close()
+	defer func() { _ = generation.Close() }()
 
-	// Get series iterator
-	ctx := context.Background()
-	iter, err := store.SeriesIterator(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create series iterator: %w", err)
-	}
-	defer iter.Close()
-
-	// Collect all series IDs
+	// Collect all series IDs. VisitIdentifiers walks term dictionaries
+	// per physical segment within the generation and deliberately includes
+	// terms from deleted documents (its own doc comment), so the same
+	// identifier -- and so the same computed SeriesID -- can surface more
+	// than once (e.g. an upsert that moved a series to a newer physical
+	// segment still leaves its term in the older one). Dedupe here so a
+	// series present in several physical segments is reported, and queried,
+	// exactly once.
+	seen := make(map[common.SeriesID]struct{})
 	var seriesIDs []common.SeriesID
-	for iter.Next() {
-		series := iter.Val()
+	visitErr := generation.VisitIdentifiers(context.Background(), func(entityValues []byte) bool {
 		// Compute series ID from EntityValues using hash
-		if len(series.EntityValues) > 0 {
-			seriesID := common.SeriesID(convert.Hash(series.EntityValues))
-			seriesIDs = append(seriesIDs, seriesID)
+		if len(entityValues) > 0 {
+			sid := common.SeriesID(convert.Hash(entityValues))
+			if _, dup := seen[sid]; !dup {
+				seen[sid] = struct{}{}
+				seriesIDs = append(seriesIDs, sid)
+			}
 		}
+		return true
+	})
+	if visitErr != nil {
+		return nil, fmt.Errorf("failed to visit series identifiers: %w", visitErr)
 	}
 
 	return seriesIDs, nil
@@ -916,36 +921,27 @@ func parseProjectionTags(projectionStr string) []string {
 func loadSeriesMap(segmentPath string) (map[common.SeriesID]string, error) {
 	seriesIndexPath := filepath.Join(segmentPath, "sidx")
 
-	l := logger.GetLogger("dump-sidx")
-
-	// Create inverted index store
-	store, err := inverted.NewStore(inverted.StoreOpts{
-		Path:   seriesIndexPath,
-		Logger: l,
-	})
+	generation, err := native.OpenReadOnlyGeneration(seriesIndexPath)
 	if err != nil {
+		if errors.Is(err, native.ErrNoSnapshot) {
+			return map[common.SeriesID]string{}, nil
+		}
 		return nil, fmt.Errorf("failed to open series index: %w", err)
 	}
-	defer store.Close()
-
-	// Get series iterator
-	ctx := context.Background()
-	iter, err := store.SeriesIterator(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create series iterator: %w", err)
-	}
-	defer iter.Close()
+	defer func() { _ = generation.Close() }()
 
 	// Build map of SeriesID -> text representation
 	seriesMap := make(map[common.SeriesID]string)
-	for iter.Next() {
-		series := iter.Val()
-		if len(series.EntityValues) > 0 {
-			seriesID := common.SeriesID(convert.Hash(series.EntityValues))
+	visitErr := generation.VisitIdentifiers(context.Background(), func(entityValues []byte) bool {
+		if len(entityValues) > 0 {
+			seriesID := common.SeriesID(convert.Hash(entityValues))
 			// Convert EntityValues bytes to readable string
-			seriesText := string(series.EntityValues)
-			seriesMap[seriesID] = seriesText
+			seriesMap[seriesID] = string(entityValues)
 		}
+		return true
+	})
+	if visitErr != nil {
+		return nil, fmt.Errorf("failed to visit series identifiers: %w", visitErr)
 	}
 
 	return seriesMap, nil

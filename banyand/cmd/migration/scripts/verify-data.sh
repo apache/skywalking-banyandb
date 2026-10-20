@@ -111,7 +111,7 @@ EOF
 }
 
 # Probe an index-mode measure. Index-mode measures store every data point as a
-# bluge document in the segment-level sidx and carry NO fields, so the query
+# index document in the segment-level sidx and carry NO fields, so the query
 # omits fieldProjection and projects the entity tag (storage-only/id) that every
 # metadata measure has. Any non-zero data-point count means "present".
 probe_measure_indexmode() {

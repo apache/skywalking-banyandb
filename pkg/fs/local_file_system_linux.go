@@ -34,13 +34,14 @@ func (*localFileSystem) CreateLockFile(name string, permission Mode) (File, erro
 	switch {
 	case err == nil:
 		if err = unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+			_ = file.Close()
 			return nil, &FileSystemError{
 				Code:    lockError,
 				Message: fmt.Sprintf("Cannot lock file, file name: %s, error message: %s", name, err),
 			}
 		}
 		return &LocalFile{
-			file: file,
+			file: file, locked: true,
 		}, nil
 	case os.IsExist(err):
 		return nil, &FileSystemError{
@@ -134,6 +135,19 @@ func applyFadviseToFD(fd uintptr, offset int64, length int64) error {
 	return unix.Fadvise(int(fd), offset, length, unix.FADV_DONTNEED)
 }
 
+func adviseFile(fd uintptr, advice PageCacheAdvice) error {
+	switch advice {
+	case PageCacheWillNeed:
+		return unix.Fadvise(int(fd), 0, 0, unix.FADV_WILLNEED)
+	case PageCacheRandom:
+		return unix.Fadvise(int(fd), 0, 0, unix.FADV_RANDOM)
+	case PageCacheDontNeed:
+		return unix.Fadvise(int(fd), 0, 0, unix.FADV_DONTNEED)
+	default:
+		return fmt.Errorf("unknown page cache advice %d", advice)
+	}
+}
+
 // SyncAndDropCache syncs the file data to disk and then drops it from the page cache.
 func SyncAndDropCache(fd uintptr, offset int64, length int64) error {
 	if err := unix.Fdatasync(int(fd)); err != nil {
@@ -142,3 +156,8 @@ func SyncAndDropCache(fd uintptr, offset int64, length int64) error {
 
 	return unix.Fadvise(int(fd), offset, length, unix.FADV_DONTNEED)
 }
+
+// OpenFileNamesMutable reports whether a file that is still open can be
+// renamed or unlinked. POSIX file systems allow it: the open descriptor keeps
+// referring to the same file.
+const OpenFileNamesMutable = true

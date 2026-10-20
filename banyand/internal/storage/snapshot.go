@@ -19,14 +19,17 @@ package storage
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 )
 
 // ReadSnapshotPartNames reads the part directory names recorded in a ".snp"
@@ -58,6 +61,66 @@ func ParseSnapshotTimestamp(name string) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("failed to parse timestamp from snapshot name %s: %w", name, parseErr)
 	}
 	return parsedTime, nil
+}
+
+// ResolveExportSnapshotDir returns the export snapshot directory of a catalog: flagValue
+// resolved to an absolute path when set, otherwise <catalogRoot>/export-snapshots.
+func ResolveExportSnapshotDir(flagValue, catalogRoot string) (string, error) {
+	if flagValue == "" {
+		return filepath.Join(catalogRoot, ExportSnapshotsDir), nil
+	}
+	return banyandbpath.Get(flagValue)
+}
+
+// ExportSnapshotPathUsage is the help text of the --<catalog>-export-snapshot-path flag.
+func ExportSnapshotPathUsage(catalog string) string {
+	usage := fmt.Sprintf("the directory holding export session snapshots of %[1]s. "+
+		"If not set, <%[1]s-root-path>/%[1]s/%[2]s will be used. ", catalog, ExportSnapshotsDir)
+	if catalog == "property" {
+		return usage + "Property snapshots are full copies of the property index, so it needs as much free space as the property data"
+	}
+	return usage + "It must be on the same filesystem as the data path because snapshots are hard links"
+}
+
+// PathWithin reports whether child is parent or lies inside it. A relative and an
+// absolute path never nest.
+func PathWithin(child, parent string) bool {
+	rel, err := filepath.Rel(filepath.Clean(parent), filepath.Clean(child))
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
+// ResolvePath returns p as an absolute path with every symlink resolved. A path that does
+// not exist yet resolves through its longest existing ancestor, so two configured paths
+// that alias one directory resolve to the same name even before either is created.
+func ResolvePath(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	existing, tail := abs, ""
+	for {
+		_, err = os.Lstat(existing)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			return abs, nil
+		}
+		tail = filepath.Join(filepath.Base(existing), tail)
+		existing = parent
+	}
+	resolved, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(resolved, tail), nil
 }
 
 // DeleteStaleSnapshots deletes the stale snapshots in the root directory.

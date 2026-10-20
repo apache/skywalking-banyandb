@@ -18,17 +18,25 @@
 package measure
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/blugelabs/bluge"
-
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
+
+// measureIndexTestLease is a minimal native.PathRootLease stub shared by this
+// package's tests: they write directly into a throwaway directory with no
+// surrounding database lock to validate against.
+type measureIndexTestLease struct{}
+
+func (measureIndexTestLease) Validate() error           { return nil }
+func (measureIndexTestLease) ValidatePath(string) error { return nil }
 
 // TestEnumerateGroupTarget_AlignmentAndSidx exercises the verify
 // helper's two main signals: (a) seg name → start time → grid alignment
@@ -65,19 +73,24 @@ func TestEnumerateGroupTarget_AlignmentAndSidx(t *testing.T) {
 	if err := os.MkdirAll(sidxDir, storage.DirPerm); err != nil {
 		t.Fatalf("mkdir sidx: %v", err)
 	}
-	w, err := bluge.OpenWriter(bluge.DefaultConfig(sidxDir))
+	owner, err := native.NewOwner(native.OwnerOptions{Lease: measureIndexTestLease{}, Path: sidxDir, IdentifierDocValues: true})
 	if err != nil {
-		t.Fatalf("open writer: %v", err)
+		t.Fatalf("open native owner: %v", err)
 	}
-	batch := bluge.NewBatch()
-	batch.Insert(bluge.NewDocument("id-a").AddField(
-		bluge.NewKeywordFieldBytes("k", []byte("v")).StoreValue()))
-	batch.Insert(bluge.NewDocument("id-b").AddField(
-		bluge.NewKeywordFieldBytes("k", []byte("v2")).StoreValue()))
-	if batchErr := w.Batch(batch); batchErr != nil {
+	done := make(chan error, 1)
+	if batchErr := owner.Batch(context.Background(), native.Batch{
+		Documents: []native.Document{
+			{Identifier: []byte("id-a"), Fields: []native.Field{{Name: "k", Value: []byte("v"), Store: true}}},
+			{Identifier: []byte("id-b"), Fields: []native.Field{{Name: "k", Value: []byte("v2"), Store: true}}},
+		},
+		PersistentCallback: func(batchErr error) { done <- batchErr },
+	}); batchErr != nil {
 		t.Fatalf("batch: %v", batchErr)
 	}
-	if closeErr := w.Close(); closeErr != nil {
+	if batchErr := <-done; batchErr != nil {
+		t.Fatalf("persist: %v", batchErr)
+	}
+	if closeErr := owner.Close(); closeErr != nil {
 		t.Fatalf("close: %v", closeErr)
 	}
 

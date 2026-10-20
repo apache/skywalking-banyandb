@@ -460,7 +460,7 @@ func TestSnapshotFunctionality(t *testing.T) {
 	tabDir := filepath.Join(tmpPath, "tab")
 	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
 
-	tst, err := newTSTable(
+	tst, err := newTSTableWithLease(
 		fileSystem,
 		tabDir,
 		common.Position{},
@@ -472,6 +472,7 @@ func TestSnapshotFunctionality(t *testing.T) {
 			protector:    protector.Nop{},
 		},
 		nil,
+		newTestRootLease(t, tabDir),
 	)
 	if err != nil {
 		t.Fatalf("failed to create newTSTable: %v", err)
@@ -583,7 +584,7 @@ func TestTakeFileSnapshotNoDiskParts(t *testing.T) {
 	tabDir := filepath.Join(tmpPath, "tab")
 	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
 
-	tst, err := newTSTable(
+	tst, err := newTSTableWithLease(
 		fileSystem,
 		tabDir,
 		common.Position{},
@@ -595,6 +596,7 @@ func TestTakeFileSnapshotNoDiskParts(t *testing.T) {
 			protector:    protector.Nop{},
 		},
 		nil,
+		newTestRootLease(t, tabDir),
 	)
 	require.NoError(t, err)
 	defer tst.Close()
@@ -631,7 +633,7 @@ func TestTakeFileSnapshotEmptySegment(t *testing.T) {
 	tabDir := filepath.Join(tmpPath, "tab")
 	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
 
-	tst, err := newTSTable(
+	tst, err := newTSTableWithLease(
 		fileSystem,
 		tabDir,
 		common.Position{},
@@ -643,6 +645,7 @@ func TestTakeFileSnapshotEmptySegment(t *testing.T) {
 			protector:    protector.Nop{},
 		},
 		nil,
+		newTestRootLease(t, tabDir),
 	)
 	require.NoError(t, err)
 	defer tst.Close()

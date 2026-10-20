@@ -80,7 +80,7 @@ func buildAggInputCountIdx(input *vectorized.BatchSchema, aggs []AggSpec, mode A
 // to the group key alone. This is the safest behavior: we cannot
 // distinguish replicas without a shard id, so we treat every (group_key)
 // pair as the single contribution.
-func (a *BatchAggregation) markDedupSeen(b *vectorized.RecordBatch, rowIdx int, groupKey string) bool {
+func (a *BatchAggregation) markDedupSeen(b *vectorized.RecordBatch, rowIdx int, groupKey []byte) bool {
 	var shardID int64
 	if a.shardIDIdx >= 0 {
 		if shardCol, ok := b.Columns[a.shardIDIdx].(*vectorized.TypedColumn[int64]); ok {
@@ -90,14 +90,14 @@ func (a *BatchAggregation) markDedupSeen(b *vectorized.RecordBatch, rowIdx int, 
 			}
 		}
 	}
-	var sb [8 + 64]byte
-	dedupKey := binary.LittleEndian.AppendUint64(sb[:0], uint64(shardID))
+	dedupKey := binary.LittleEndian.AppendUint64(a.dedupScratch[:0], uint64(shardID))
 	dedupKey = append(dedupKey, groupKey...)
-	keyStr := string(dedupKey)
-	if _, seen := a.dedupSeen[keyStr]; seen {
+	a.dedupScratch = dedupKey
+	// The map-index conversion does not allocate; own the key only on insert.
+	if _, seen := a.dedupSeen[string(dedupKey)]; seen {
 		return true
 	}
-	a.dedupSeen[keyStr] = struct{}{}
+	a.dedupSeen[string(dedupKey)] = struct{}{}
 	return false
 }
 

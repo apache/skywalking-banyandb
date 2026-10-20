@@ -36,7 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
@@ -49,9 +49,13 @@ const (
 	indexModeSourceReadFile = "migration_indexmode_copy.go"
 
 	// nativeVisitorPackage and nativeVisitorFunc name the BanyanDB-owned
-	// read-only document visitor issue #14010 introduces.
-	nativeVisitorPackage = "github.com/apache/skywalking-banyandb/pkg/index/inverted"
-	nativeVisitorFunc    = "ReadOnlyWalkDocuments"
+	// read-only document visitor the series index cutover (NIDX-03) moved
+	// this file's source read onto: a native.ReadOnlyGeneration opened
+	// directly, instead of the pkg/index/inverted wrapper issue #14010
+	// introduced (itself already nativeice-backed, but still a
+	// pkg/index/inverted dependency the series-index cutover retires).
+	nativeVisitorPackage = "github.com/apache/skywalking-banyandb/pkg/index/native"
+	nativeVisitorFunc    = "OpenReadOnlyGeneration"
 
 	// retiredReaderEntryPoint is the call that opens a retired third-party
 	// index reader directly on a source directory. The whole point of the
@@ -63,10 +67,15 @@ const (
 	iceFooterLength = 60
 
 	// nativeSourceTagName is the stored, non-indexed tag the seeded sources
-	// carry, and publishedSeriesLimit bounds a destination lookup so a stray
-	// duplicate is reported rather than silently truncated away.
-	nativeSourceTagName  = "properties"
-	publishedSeriesLimit = 100
+	// carry.
+	nativeSourceTagName = "properties"
+
+	// nativeSourceIdentifierField, nativeSourceTimestampField and
+	// nativeSourceVersionField are the reserved stored fields a series document
+	// records its identity, timestamp and version under.
+	nativeSourceIdentifierField = "_id"
+	nativeSourceTimestampField  = "_timestamp"
+	nativeSourceVersionField    = "_version"
 )
 
 // TestIndexModeCopySourceReadReachesNativeVisitor is the structural half of the
@@ -167,17 +176,18 @@ func indexModeNativeSourceSeries(t *testing.T) []nativeSourceSeries {
 }
 
 // seedNativeSourceSidx writes the declared series into "<root>/<segName>/sidx"
-// with the compatibility writer, then deletes the ones declared deleted, so the
-// source is a directory a released BanyanDB produced rather than one this test
-// hand-assembled.
+// through storage.EncodeSeriesDocument + a native owner -- the same series
+// document mapping the production write path and migration rebuild both use
+// -- then deletes the ones declared deleted, so the source is a directory a
+// released BanyanDB produced rather than one this test hand-assembled.
 func seedNativeSourceSidx(t *testing.T, root, segName string, seriesSet []nativeSourceSeries) string {
 	t.Helper()
 	sidxDir := filepath.Join(root, segName, directCopySidxDirName)
 	require.NoError(t, os.MkdirAll(sidxDir, storage.DirPerm))
 
-	store, err := inverted.NewStore(inverted.StoreOpts{Path: sidxDir, BatchWaitSec: 0})
+	owner, err := native.NewOwner(native.OwnerOptions{Lease: measureIndexTestLease{}, Path: sidxDir, IdentifierDocValues: true})
 	require.NoError(t, err)
-	documents := make(index.Documents, 0, len(seriesSet))
+	documents := make([]native.Document, 0, len(seriesSet))
 	var deletedIdentities [][]byte
 	for _, declared := range seriesSet {
 		identity := nativeSourceIdentity(t, declared)
@@ -191,22 +201,35 @@ func seedNativeSourceSidx(t *testing.T, root, segName string, seriesSet []native
 			convert.StringToBytes(declared.entityValue))
 		entityTag.Index = true
 		entityTag.NoSort = true
-		documents = append(documents, index.Document{
+		doc := index.Document{
 			Fields:       []index.Field{tag, subject, entityTag},
 			EntityValues: identity,
 			Timestamp:    declared.timestamp,
 			DocID:        convert.Hash(identity),
 			Version:      declared.version,
-		})
+		}
+		nd, encErr := storage.EncodeSeriesDocument(doc)
+		require.NoError(t, encErr)
+		documents = append(documents, nd)
 		if declared.deleted {
 			deletedIdentities = append(deletedIdentities, identity)
 		}
 	}
-	require.NoError(t, store.UpdateSeriesBatch(index.Batch{Documents: documents}))
+	done := make(chan error, 1)
+	require.NoError(t, owner.Batch(context.Background(), native.Batch{
+		Documents:          documents,
+		PersistentCallback: func(batchErr error) { done <- batchErr },
+	}))
+	require.NoError(t, <-done)
 	if len(deletedIdentities) > 0 {
-		require.NoError(t, store.Delete(deletedIdentities))
+		deleteDone := make(chan error, 1)
+		require.NoError(t, owner.Batch(context.Background(), native.Batch{
+			Deletes:            deletedIdentities,
+			PersistentCallback: func(batchErr error) { deleteDone <- batchErr },
+		}))
+		require.NoError(t, <-deleteDone)
 	}
-	require.NoError(t, store.Close())
+	require.NoError(t, owner.Close())
 	return sidxDir
 }
 
@@ -219,53 +242,52 @@ func nativeSourceIdentity(t *testing.T, declared nativeSourceSeries) []byte {
 	return append([]byte(nil), series.Buffer...)
 }
 
-// observedSeries is what the independent destination oracle reports for one
-// published series: its timestamp, its version and its stored tag values. It is
-// read back through the retained series-store query path, which this milestone
-// does not touch, so it cannot agree with a faulty source read by construction.
+// observedSeries is what the destination oracle reports for one published
+// series: its timestamp, its version and its stored tag values. It is read
+// back through an exact identifier selection on the destination's term
+// dictionary, a different read path from the live-document walk the copy reads
+// its sources with.
 type observedSeries struct {
 	tagValues []string
 	timestamp int64
 	version   int64
 }
 
-// openPublishedDestination opens a published destination sidx through the
-// retained series-store surface, which this milestone does not touch, so what
-// it reports cannot agree with a faulty source read by construction.
-func openPublishedDestination(t *testing.T, sidxDir string) index.SeriesStore {
-	t.Helper()
-	store, err := inverted.NewStore(inverted.StoreOpts{Path: sidxDir, BatchWaitSec: 0})
-	require.NoError(t, err)
-	return store
-}
-
 // publishedSeriesFor looks one identity up in a published destination and
 // reports what it holds, or reports that the destination holds no live document
 // under that identity. The lookup is an exact one so that the answer for one
 // series can never be contaminated by another's.
-func publishedSeriesFor(t *testing.T, store index.SeriesStore, identity []byte) (observedSeries, bool) {
+func publishedSeriesFor(t *testing.T, sidxDir string, identity []byte) (observedSeries, bool) {
 	t.Helper()
-	query, err := store.BuildQuery([]index.SeriesMatcher{
-		{Type: index.SeriesMatcherTypeExact, Match: identity},
-	}, nil, nil)
-	require.NoError(t, err)
-	documents, err := store.Search(context.Background(),
-		[]index.FieldKey{{TagName: nativeSourceTagName}}, query, publishedSeriesLimit)
-	require.NoError(t, err)
-	if len(documents) == 0 {
+	var observed observedSeries
+	matches := 0
+	selection := native.TermSelection{Field: nativeSourceIdentifierField, Terms: [][]byte{identity}}
+	require.NoError(t, native.ReadOnlySelectDocuments(context.Background(), sidxDir, selection, func(document native.StoredDocument) error {
+		matches++
+		var fieldErr error
+		visitErr := document.VisitStoredFields(func(name string, value []byte) bool {
+			switch name {
+			case nativeSourceTimestampField:
+				observed.timestamp, fieldErr = native.DecodeTimestamp(value)
+				return fieldErr == nil
+			case nativeSourceVersionField:
+				observed.version = convert.BytesToInt64(value)
+			case nativeSourceTagName:
+				observed.tagValues = append(observed.tagValues, string(value))
+			}
+			return true
+		})
+		if visitErr != nil {
+			return visitErr
+		}
+		return fieldErr
+	}))
+	if matches == 0 {
 		return observedSeries{}, false
 	}
-	require.Len(t, documents, 1, "identity %q must resolve to at most one live destination document", identity)
-	var values []string
-	if value, stored := documents[0].Fields[nativeSourceTagName]; stored && value != nil {
-		values = append(values, string(value))
-	}
-	sort.Strings(values)
-	return observedSeries{
-		timestamp: documents[0].Timestamp,
-		version:   documents[0].Version,
-		tagValues: values,
-	}, true
+	require.Equal(t, 1, matches, "identity %q must resolve to at most one live destination document", identity)
+	sort.Strings(observed.tagValues)
+	return observed, true
 }
 
 // truncateSourceSegment cuts a source segment file short of the footer its
@@ -288,8 +310,7 @@ func truncateSourceSegment(t *testing.T, sidxDir string) {
 // milestone exists for: an operator migrates an index-mode measure group whose
 // segment indexes were written by a released BanyanDB. Index-mode copy reads
 // those sources through the native document visitor and publishes the rebuilt
-// documents through its retained destination writer, which this milestone does
-// not change.
+// documents through a native destination owner.
 //
 // Two source roots feed the same target segment, which is what a group
 // migrated from replicated nodes looks like and what forces the copy down its
@@ -300,15 +321,15 @@ func truncateSourceSegment(t *testing.T, sidxDir string) {
 //
 //	R2 -- index-mode copy rebuilds the two live series through the native source
 //	      visitor, preserving each one's declared timestamp, version, stored tag
-//	      value and identity, while its destination stays written by the
-//	      retained writer. The deleted series never reaches the destination.
+//	      value and identity. The deleted series never reaches the destination.
 //
 //	R4 -- a source whose committed segment is damaged fails the copy with the
 //	      native typed corruption error and publishes no destination, so a
 //	      migration aborts on unreadable input instead of silently writing a
 //	      partial target group. The byte-level stored-chunk failures R4 also
 //	      names are proved against the visitor itself in
-//	      pkg/index/inverted, where no retired reader stands in the way.
+//	      pkg/index/native/repair_test.go, where no retired reader stands in
+//	      the way.
 func TestE2EIndexModeCopyNativeSource(t *testing.T) {
 	tester := require.New(t)
 	declared := indexModeNativeSourceSeries(t)
@@ -333,17 +354,13 @@ func TestE2EIndexModeCopyNativeSource(t *testing.T) {
 		"the two live series survive; the repeat of the first collapses onto it and the deleted one is never read")
 
 	targetSidx := filepath.Join(targetRoot, sourceSegName, directCopySidxDirName)
-	publishedCount, countErr := inverted.ReadOnlyDocCount(targetSidx)
+	publishedCount, countErr := native.ReadOnlyDocCount(targetSidx)
 	tester.NoError(countErr)
 	tester.Equal(int64(2), publishedCount, "the destination must hold exactly the two live series")
 
-	destination := openPublishedDestination(t, targetSidx)
-	defer func() {
-		tester.NoError(destination.Close())
-	}()
 	for _, declaredSeries := range declared {
 		identity := nativeSourceIdentity(t, declaredSeries)
-		observed, found := publishedSeriesFor(t, destination, identity)
+		observed, found := publishedSeriesFor(t, targetSidx, identity)
 		if declaredSeries.deleted {
 			tester.False(found, "the deleted series labeled %s must not reach the destination", declaredSeries.label)
 			continue
@@ -368,7 +385,7 @@ func TestE2EIndexModeCopyNativeSource(t *testing.T) {
 		SrcRoots:        []string{corruptRoot},
 		Interval:        interval,
 	}, map[uint32]indexRuleInfo{}, svcSchemas())
-	tester.ErrorIs(corruptErr, inverted.ErrCorruptIndex,
+	tester.ErrorIs(corruptErr, native.ErrCorrupt,
 		"a damaged source must be reported as a corrupt index, not as an opaque read failure")
 	tester.NoDirExists(filepath.Join(corruptTarget, sourceSegName, directCopySidxDirName),
 		"a copy that failed on a damaged source must publish no destination sidx")

@@ -24,6 +24,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
@@ -348,6 +349,62 @@ var _ = ginkgo.Describe("Local File System", func() {
 			gomega.Expect(ok).To(gomega.BeTrue())
 			gomega.Expect(localReadFile.writable).To(gomega.BeFalse())
 			gomega.Expect(readFile.Close()).To(gomega.Succeed())
+		})
+
+		ginkgo.It("SetCached keeps a sequential write out of the drop-cache path", func() {
+			SetCached(file, true)
+			gomega.Expect(file.(*LocalFile).cached).To(gomega.BeTrue())
+			writer := file.SequentialWrite()
+			gomega.Expect(writer.(*seqWriter).skipFadvise).To(gomega.BeTrue())
+			_, err := writer.Write([]byte(data))
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(writer.Close()).To(gomega.Succeed())
+			SetCached(file, false)
+			gomega.Expect(file.(*LocalFile).cached).To(gomega.BeFalse())
+		})
+
+		ginkgo.It("AdvisePageCache accepts every advice on a readable file", func() {
+			_, err := file.Write([]byte(data))
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			for _, advice := range []PageCacheAdvice{PageCacheWillNeed, PageCacheRandom, PageCacheDontNeed} {
+				gomega.Expect(AdvisePageCache(file, advice)).To(gomega.Succeed())
+			}
+			buffer := make([]byte, len(data))
+			_, err = file.Read(0, buffer)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(string(buffer)).To(gomega.Equal(data))
+		})
+
+		ginkgo.It("SyncDir syncs an existing directory and reports a missing one", func() {
+			gomega.Expect(SyncDir(dirName)).To(gomega.Succeed())
+			if runtime.GOOS != "windows" {
+				gomega.Expect(SyncDir(filepath.Join(dirName, "missing"))).ToNot(gomega.Succeed())
+			}
+		})
+
+		ginkgo.It("MkdirAll, ReadDirLimit, and Lstat return errors instead of panicking", func() {
+			nested := filepath.Join(dirName, "a", "b")
+			gomega.Expect(fs.MkdirAll(nested, 0o755)).To(gomega.Succeed())
+			gomega.Expect(os.WriteFile(filepath.Join(nested, "f"), []byte(data), 0o600)).To(gomega.Succeed())
+			gomega.Expect(os.WriteFile(filepath.Join(nested, "g"), []byte(data), 0o600)).To(gomega.Succeed())
+
+			entries, err := fs.ReadDirLimit(nested, 0)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(entries).To(gomega.HaveLen(2))
+			gomega.Expect(entries[0].Type().IsRegular()).To(gomega.BeTrue())
+			entries, err = fs.ReadDirLimit(nested, 1)
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(entries).To(gomega.HaveLen(1))
+			_, err = fs.ReadDirLimit(filepath.Join(dirName, "missing"), 0)
+			gomega.Expect(errors.Is(err, os.ErrNotExist)).To(gomega.BeTrue())
+
+			info, err := fs.Lstat(filepath.Join(nested, "f"))
+			gomega.Expect(err).ToNot(gomega.HaveOccurred())
+			gomega.Expect(info.Size()).To(gomega.Equal(int64(len(data))))
+			_, err = fs.Lstat(filepath.Join(nested, "missing"))
+			gomega.Expect(errors.Is(err, os.ErrNotExist)).To(gomega.BeTrue())
+
+			gomega.Expect(fs.MkdirAll(filepath.Join(nested, "f", "child"), 0o755)).ToNot(gomega.Succeed())
 		})
 
 		ginkgo.It("WriteAtomic leaves no .tmp on success", func() {

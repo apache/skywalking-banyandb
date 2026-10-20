@@ -80,8 +80,9 @@ func TestBlockScanner_QuotaExceeded(t *testing.T) {
 			tmpPath, defFn := test.Space(require.New(t))
 			fileSystem := fs.NewLocalFileSystem()
 			defer defFn()
-			tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
-				logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting(), protector: protector.Nop{}}, nil)
+			lease := newTestRootLease(t, tmpPath)
+			tst, err := newTSTableWithLease(fileSystem, tmpPath, common.Position{},
+				logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting(), protector: protector.Nop{}}, nil, lease)
 			require.NoError(t, err)
 			for _, es := range tt.esList {
 				tst.mustAddElements(es)
@@ -97,11 +98,11 @@ func TestBlockScanner_QuotaExceeded(t *testing.T) {
 			}
 
 			// reopen the table
-			tst, err = newTSTable(fileSystem, tmpPath, common.Position{},
+			tst, err = newTSTableWithLease(fileSystem, tmpPath, common.Position{},
 				logger.GetLogger("test"), timestamp.TimeRange{}, option{
 					flushTimeout: defaultFlushTimeout, mergePolicy: newDefaultMergePolicyForTesting(),
 					protector: protector.Nop{},
-				}, nil)
+				}, nil, lease)
 			require.NoError(t, err)
 
 			defer tst.Close()

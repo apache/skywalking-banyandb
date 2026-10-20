@@ -105,11 +105,10 @@ func NewBackupCommand() *cobra.Command {
 			clockInstance := clock.New()
 			sch := timestamp.NewScheduler(schedLogger, clockInstance)
 			// A full backup may legitimately run longer than the schedule interval.
-			// The scheduler abandons (but does not cancel) an action that exceeds its
-			// internal timeout, so without this guard a slow run would overlap with the
-			// next scheduled run, stacking concurrent uploads until the process is
-			// OOM-killed. backupInFlight ensures only one backup runs at a time: a tick
-			// that fires while the previous run is still in progress is skipped.
+			// The scheduler already waits for one invocation to finish before
+			// starting the next, but backupInFlight is kept as defense-in-depth
+			// against overlap: a tick that fires while the previous run is still
+			// in progress is skipped instead of stacking concurrent uploads.
 			var backupInFlight atomic.Bool
 			err := sch.Register(cmd.Context(), "backup", cron.Descriptor, backupOpts.schedule, func(ctx context.Context, _ time.Time, l *logger.Logger) bool {
 				if !backupInFlight.CompareAndSwap(false, true) {
@@ -209,6 +208,7 @@ func backupAction(ctx context.Context, options backupOptions) error {
 
 	timeDir := getTimeDir(options.timeStyle)
 
+	var errs error
 	for _, snp := range snapshots {
 		var snapshotDir string
 		snapshotDir, err = snapshot.Dir(snp, options.streamRoot, options.measureRoot, options.propertyRoot, options.traceRoot, options.schemaRoot)
@@ -220,9 +220,9 @@ func backupAction(ctx context.Context, options backupOptions) error {
 		if strings.HasPrefix(snp.Name, snapshot.SchemaPropertyCatalogName+"/") {
 			catalogName = snapshot.SchemaPropertyCatalogName
 		}
-		multierr.AppendInto(&err, backupSnapshot(ctx, fs, snapshotDir, catalogName, timeDir, options.uploadConcurrency))
+		multierr.AppendInto(&errs, backupSnapshot(ctx, fs, snapshotDir, catalogName, timeDir, options.uploadConcurrency))
 	}
-	return err
+	return errs
 }
 
 func newFS(dest string, config *remoteconfig.FsConfig) (remote.FS, error) {

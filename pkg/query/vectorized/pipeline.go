@@ -206,7 +206,12 @@ func (s *breakerStage) NextBatch(ctx context.Context) (*RecordBatch, error) {
 			if b == nil {
 				break
 			}
-			if consumeErr := s.breaker.Consume(ctx, b); consumeErr != nil {
+			consumeErr := s.breaker.Consume(ctx, b)
+			// Consume must not retain anything borrowed from b past its return
+			// (cells it keeps are cloned), so the memory b borrows can be
+			// recycled now instead of when the garbage collector gets to b.
+			b.ReleaseOwners()
+			if consumeErr != nil {
 				s.err = consumeErr
 				return nil, consumeErr
 			}

@@ -948,3 +948,32 @@ func TestTopNValue_AddFloatValue(t *testing.T) {
 	require.Equal(t, []float64{3.14, 2.71}, values)
 	require.Len(t, entities, 2)
 }
+
+func TestTopNValueReuseDoesNotWriteIntoTheCallersEntityTagNames(t *testing.T) {
+	decoder := GenerateTopNValuesDecoder()
+	defer ReleaseTopNValuesDecoder(decoder)
+	str := func(value string) *modelv1.TagValue {
+		return &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: value}}}
+	}
+
+	other := &TopNValue[int64]{}
+	other.setMetadata("other", []string{"region", "zone"})
+	other.addValue(7, []*modelv1.TagValue{str("r1"), str("z1")})
+	encoded, err := other.marshal(nil)
+	require.NoError(t, err)
+
+	// A streaming processor hands its long-lived tag names to setMetadata, then
+	// returns the value to the pool. Reusing that value for a query's Unmarshal
+	// must not write into the processor's slice.
+	callerNames := []string{"service", "instance"}
+	reused := &TopNValue[int64]{}
+	reused.setMetadata("reused", callerNames)
+	reused.addValue(1, []*modelv1.TagValue{str("svc"), str("inst")})
+	_, err = reused.marshal(nil)
+	require.NoError(t, err)
+	reused.Reset()
+	require.NoError(t, reused.Unmarshal(encoded, decoder))
+
+	require.Equal(t, []string{"service", "instance"}, callerNames)
+	require.Equal(t, []string{"region", "zone"}, reused.entityTagNames)
+}

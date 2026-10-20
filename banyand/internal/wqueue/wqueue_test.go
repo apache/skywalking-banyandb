@@ -19,6 +19,7 @@ package wqueue
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -155,4 +156,42 @@ func createMockSubQueue(_ fs.FileSystem, _ string, _ common.Position, _ *logger.
 	_ mockSubQueueOption, _ any, _ string, _ common.ShardID, _ func() []string,
 ) (*mockSubQueue, error) {
 	return &mockSubQueue{}, nil
+}
+
+func TestQueue_GetOrCreateShardConcurrent(t *testing.T) {
+	const (
+		shardCount = 8
+		callers    = 64
+	)
+	ctx := context.WithValue(context.Background(), logger.ContextKey, logger.GetLogger("test"))
+	queue, openErr := Open(ctx, Opts[*mockSubQueue, mockSubQueueOption]{
+		SubQueueCreator: createMockSubQueue,
+		Location:        t.TempDir(),
+		ShardNum:        shardCount,
+	}, "test-group")
+	require.NoError(t, openErr)
+	t.Cleanup(func() { require.NoError(t, queue.Close()) })
+
+	start := make(chan struct{})
+	var workers sync.WaitGroup
+	results := make([]*Shard[*mockSubQueue], callers)
+	failures := make([]error, callers)
+	for caller := 0; caller < callers; caller++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			results[caller], failures[caller] = queue.GetOrCreateShard(common.ShardID(caller % shardCount))
+		}()
+	}
+	close(start)
+	workers.Wait()
+
+	require.Len(t, queue.SubQueues(), shardCount)
+	for caller, shard := range results {
+		require.NoError(t, failures[caller])
+		require.NotNil(t, shard)
+		assert.Equal(t, common.ShardID(caller%shardCount), shard.id)
+		assert.Same(t, results[caller%shardCount], shard)
+	}
 }

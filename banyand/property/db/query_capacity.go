@@ -15,13 +15,6 @@ package db
 
 const queryCapacityHint = 1024
 
-func queryCapacity(limit int) int {
-	if limit > queryCapacityHint {
-		return queryCapacityHint
-	}
-	return limit
-}
-
 func queryCapacityUint(limit uint32) int {
 	if limit > queryCapacityHint {
 		return queryCapacityHint

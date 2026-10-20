@@ -19,6 +19,7 @@ package storage
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"testing"
@@ -249,4 +250,63 @@ func TestReadSnapshotPartNames(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "cannot parse")
 	})
+}
+
+func TestPathWithin(t *testing.T) {
+	snapshots := filepath.Join("/data", "stream", SnapshotsDir)
+	for _, tc := range []struct {
+		child string
+		want  bool
+	}{
+		{filepath.Join("/data", "stream", ExportSnapshotsDir), false},
+		{"/data/stream", false},
+		{"/data/stream/snapshots-export", false},
+		{"/elsewhere/export", false},
+		{"relative/export", false},
+		{snapshots, true},
+		{snapshots + "/", true},
+		{filepath.Join(snapshots, "export"), true},
+		{filepath.Join(snapshots, "a", "..", "b"), true},
+	} {
+		assert.Equal(t, tc.want, PathWithin(tc.child, snapshots), tc.child)
+	}
+}
+
+func TestResolveExportSnapshotDir(t *testing.T) {
+	dir, err := ResolveExportSnapshotDir("", "/data/stream")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join("/data/stream", ExportSnapshotsDir), dir)
+
+	dir, err = ResolveExportSnapshotDir("/custom/export/", "/data/stream")
+	require.NoError(t, err)
+	assert.Equal(t, "/custom/export", dir)
+
+	dir, err = ResolveExportSnapshotDir("rel", "/data/stream")
+	require.NoError(t, err)
+	assert.True(t, filepath.IsAbs(dir), dir)
+}
+
+func TestResolvePath(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	data := filepath.Join(root, "data")
+	require.NoError(t, os.MkdirAll(data, 0o755))
+	alias := filepath.Join(root, "alias")
+	require.NoError(t, os.Symlink(data, alias))
+
+	resolved, err := ResolvePath(data)
+	require.NoError(t, err)
+	assert.Equal(t, data, resolved, "a plain path resolves to itself")
+
+	resolved, err = ResolvePath(alias)
+	require.NoError(t, err)
+	assert.Equal(t, data, resolved, "a symlink resolves to its target")
+
+	resolved, err = ResolvePath(filepath.Join(alias, "missing", "export"))
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(data, "missing", "export"), resolved, "a missing tail is kept under the resolved ancestor")
+
+	resolved, err = ResolvePath(filepath.Join(root, "absent"))
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(root, "absent"), resolved)
 }

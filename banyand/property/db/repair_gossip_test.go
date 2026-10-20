@@ -44,7 +44,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/property/gossip"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -411,6 +410,7 @@ func startEachNode(ctrl *gomock.Controller, node node, groups []group, port int)
 		MetricsScopeName:       fmt.Sprintf("property_gossip_test_%s", addr),
 		FlushInterval:          time.Minute * 10,
 		ExpireToDeleteDuration: time.Minute * 10,
+		Index:                  IndexConfig{WaitForPersistence: true},
 		Repair: RepairConfig{
 			Enabled:            true,
 			Location:           repairLocation,
@@ -435,8 +435,8 @@ func startEachNode(ctrl *gomock.Controller, node node, groups []group, port int)
 					for _, s := range *sLst {
 						snpDir := path.Join(snapshotDir, s.group, filepath.Base(s.location))
 						lfs.MkdirPanicIfExist(snpDir, storage.DirPerm)
-						if e := s.store.TakeFileSnapshot(snpDir); e != nil {
-							snpError = multierr.Append(snpError, e)
+						if snapshotErr := s.nativeStore.takeFileSnapshot(snpDir); snapshotErr != nil {
+							snpError = multierr.Append(snpError, snapshotErr)
 						}
 					}
 					return true
@@ -521,7 +521,7 @@ func applyPropertyUpdate(db *database, p property) {
 	if p.deleted {
 		err = s.delete(context.Background(), [][]byte{GetPropertyID(update)})
 	} else {
-		err = s.update(GetPropertyID(update), update)
+		err = s.update(context.Background(), GetPropertyID(update), update)
 	}
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 }
@@ -530,15 +530,14 @@ func queryPropertyWithVerify(db *database, p property) {
 	s, err := db.loadShard(context.Background(), p.group, common.ShardID(p.shard))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 
-	query, err := inverted.BuildPropertyQuery(&propertyv1.QueryRequest{
+	request := &propertyv1.QueryRequest{
 		Groups: []string{p.group},
 		Name:   "test-name",
 		Ids:    []string{p.id},
-	}, groupField, entityID)
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	}
 
 	test.EventuallyConsistently(func() *property {
-		dataList, err := s.search(context.Background(), query, nil, 10)
+		dataList, err := s.searchNative(context.Background(), request, nil, 10)
 		if err != nil {
 			return nil
 		}

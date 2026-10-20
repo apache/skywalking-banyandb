@@ -29,24 +29,22 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
-	"github.com/apache/skywalking-banyandb/pkg/index/inverted"
 )
 
-// TestCopyDir_SkipsLockFile asserts the byte-copy never carries the bluge
-// exclusive-lock file into the target: a stale lock would block the target
-// server from opening the copied index.
-func TestCopyDir_SkipsLockFile(t *testing.T) {
+// TestCopyDir_CopiesNestedFiles asserts the byte-copy carries every regular
+// file, including nested ones, through unmodified: writer exclusion is
+// owned by BanyanDB's database lock, so CopyDir has no reason to special-case
+// any index-local artifact name.
+func TestCopyDir_CopiesNestedFiles(t *testing.T) {
 	src := t.TempDir()
 	dst := filepath.Join(t.TempDir(), "copy")
 	require.NoError(t, os.WriteFile(filepath.Join(src, "seg.dat"), []byte("data"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(src, inverted.LockFilename), []byte("12345"), 0o600))
 	require.NoError(t, os.MkdirAll(filepath.Join(src, "nested"), 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(src, "nested", inverted.LockFilename), []byte("12345"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(src, "nested", "other.dat"), []byte("more"), 0o600))
 
 	n, err := CopyDir(src, dst)
 	require.NoError(t, err)
-	require.EqualValues(t, 8, n, "total bytes must cover only the two data files")
+	require.EqualValues(t, 8, n, "total bytes must cover both data files")
 
 	gotSeg, err := os.ReadFile(filepath.Join(dst, "seg.dat"))
 	require.NoError(t, err)
@@ -54,8 +52,6 @@ func TestCopyDir_SkipsLockFile(t *testing.T) {
 	gotOther, err := os.ReadFile(filepath.Join(dst, "nested", "other.dat"))
 	require.NoError(t, err)
 	require.Equal(t, []byte("more"), gotOther)
-	require.NoFileExists(t, filepath.Join(dst, inverted.LockFilename))
-	require.NoFileExists(t, filepath.Join(dst, "nested", inverted.LockFilename))
 }
 
 // TestCopyDir_EmptySource asserts copying an empty directory creates the

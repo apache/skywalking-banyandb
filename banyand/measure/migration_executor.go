@@ -52,9 +52,9 @@ func (e *MigrationExecutor) LogPrefix() string { return measureMigrationLogPrefi
 // union-sidx broadcast, while a group mixing index-mode measures with real
 // normal measures is unsupported and rejected up front.
 func (e *MigrationExecutor) Prepare(_ context.Context, schemaRoot string, groups []string) error {
-	logStep("loading measure schemas")
-	//nolint:contextcheck // bluge reader.Search inside reader.WalkShard already uses its own context.
-	schemas, err := loadMeasureSchemas(schemaRoot, groups) //nolint:contextcheck // offline bluge schema read, no cancellation
+	logStepf("loading measure schemas")
+	//nolint:contextcheck // reader.WalkShard's native document visitor already uses its own context.
+	schemas, err := loadMeasureSchemas(schemaRoot, groups) //nolint:contextcheck // offline schema read, no cancellation
 	if err != nil {
 		return fmt.Errorf("load measure schemas: %w", err)
 	}
@@ -76,7 +76,7 @@ func (e *MigrationExecutor) Prepare(_ context.Context, schemaRoot string, groups
 		}
 		indexModeGroups[g] = isIndexMode
 	}
-	ruleByID, err := loadIndexRuleInfoByID(schemaRoot, groups) //nolint:contextcheck // offline bluge schema read, no cancellation
+	ruleByID, err := loadIndexRuleInfoByID(schemaRoot, groups) //nolint:contextcheck // offline schema read, no cancellation
 	if err != nil {
 		return fmt.Errorf("load index rules: %w", err)
 	}
@@ -109,11 +109,11 @@ func (e *MigrationExecutor) CopyEntryGroup(ctx context.Context, in migration.Ent
 		return zero, fmt.Errorf("discover parts: %w", err)
 	}
 	if len(tasks) == 0 {
-		logStep("%s stage=%s group %s: skipped (no parts in selected nodes)",
+		logStepf("%s stage=%s group %s: skipped (no parts in selected nodes)",
 			in.EntryTag, in.Entry.Stage, in.Group)
 		return zero, nil
 	}
-	logStep("%s stage=%s group %s: %d source dir(s), %d parts, interval=%v×%d — writing target (target=%q, union sidx=%q)",
+	logStepf("%s stage=%s group %s: %d source dir(s), %d parts, interval=%v×%d — writing target (target=%q, union sidx=%q)",
 		in.EntryTag, in.Entry.Stage, in.Group, len(in.SrcRoots), len(tasks), in.Interval.Unit, in.Interval.Num,
 		in.TargetGroupRoot, in.UnionSidxPath)
 	return directCopyGroup(ctx,

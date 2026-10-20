@@ -49,6 +49,7 @@ var _ = ginkgo.Describe("Backup All", func() {
 				"--measure-root-path", SharedContext.RootDir,
 				"--property-root-path", SharedContext.RootDir,
 				"--trace-root-path", SharedContext.RootDir,
+				"--schema-root-path", SharedContext.RootDir,
 				"--dest", destURL,
 				"--time-style", "daily",
 			}, SharedContext.S3Args...))

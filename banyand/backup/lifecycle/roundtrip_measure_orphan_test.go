@@ -86,7 +86,7 @@ func TestMeasureOrphanAndSidxGapInSamePart(t *testing.T) {
 	assert.Equal(t, orphanPass.orphanSkipped, archivedRows, "every orphan-skipped row must be archived")
 
 	// Pass 2: remove the sidx so no series resolves. Close the resident resolver
-	// first so it reopens against the now-empty index (the open bluge store still
+	// first so it reopens against the now-empty index (the open native index owner still
 	// holds file handles to the deleted dir otherwise). Every block then falls
 	// through to the (impossible) column rebuild and is counted as a sidx gap, which
 	// is the retain-source signal.

@@ -21,8 +21,6 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/blugelabs/bluge/numeric"
-
 	pkgbytes "github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
@@ -236,7 +234,7 @@ func (tfs *tagFamilyFilters) Range(tagName string, rangeOpts index.RangeOpts) (b
 				if !ok {
 					return false, fmt.Errorf("lower is not a float value: %v", rangeOpts.Lower)
 				}
-				value := convert.Int64ToBytes(numeric.Float64ToInt64(lower.Value))
+				value := convert.Int64ToBytes(encoding.Float64ToSortableInt64(lower.Value))
 				if bytes.Compare(tf.max, value) == -1 || !rangeOpts.IncludesLower && bytes.Equal(tf.max, value) {
 					return true, nil
 				}
@@ -246,7 +244,7 @@ func (tfs *tagFamilyFilters) Range(tagName string, rangeOpts index.RangeOpts) (b
 				if !ok {
 					return false, fmt.Errorf("upper is not a float value: %v", rangeOpts.Upper)
 				}
-				value := convert.Int64ToBytes(numeric.Float64ToInt64(upper.Value))
+				value := convert.Int64ToBytes(encoding.Float64ToSortableInt64(upper.Value))
 				if bytes.Compare(tf.min, value) == 1 || !rangeOpts.IncludesUpper && bytes.Equal(tf.min, value) {
 					return true, nil
 				}

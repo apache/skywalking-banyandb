@@ -32,6 +32,36 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
+// ProjectionFromBatchSchema reconstructs the tag projection (family → names, in
+// column order) from a batch's tag columns.
+//
+// It is the projection a caller MUST pass to BuildElementsFromBatch after the egress
+// has dropped hidden-tag columns. Passing the scan's own ProjectionTags() there would
+// re-introduce every dropped tag as a NullTagValue, because the egress substitutes a
+// null for a projected tag with no column. Deriving the projection from the batch
+// instead makes the in-process Element shape identical to the one the liaison builds
+// from a decoded frame. apache/skywalking#14067 R3.
+func ProjectionFromBatchSchema(batch *vectorized.RecordBatch) []model.TagProjection {
+	if batch == nil || batch.Schema == nil {
+		return nil
+	}
+	var projections []model.TagProjection
+	familyIdx := make(map[string]int)
+	for _, def := range batch.Schema.Columns {
+		if def.Role != vectorized.RoleTag {
+			continue
+		}
+		idx, ok := familyIdx[def.TagFamily]
+		if !ok {
+			idx = len(projections)
+			familyIdx[def.TagFamily] = idx
+			projections = append(projections, model.TagProjection{Family: def.TagFamily})
+		}
+		projections[idx].Names = append(projections[idx].Names, def.Name)
+	}
+	return projections
+}
+
 // BuildElementsFromBatch materializes []*streamv1.Element from a single columnar
 // batch, honoring the batch Selection (post-pipeline batches carry one). The
 // Element shape is byte-identical to the row path's BuildElementsFromStreamResult:

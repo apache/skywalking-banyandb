@@ -918,7 +918,6 @@ func (s *Sampler) hasSlowTrace(b *sdk.TraceBlock) (bool, error) {
 	haveStart, haveEnd := false, false
 	var startValue, durationValue sdk.Value
 	for row := 0; row < rows; row++ {
-
 		if fastScalars {
 			start, startOK, startErr := scalarInt64(startCol, row, "timestamp")
 			if startErr != nil {

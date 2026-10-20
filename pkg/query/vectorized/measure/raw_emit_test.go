@@ -71,6 +71,7 @@ func TestDrainPipelineToFrame_AggModeMap(t *testing.T) {
 	if decodeErr != nil {
 		t.Fatalf("frame.Decode: %v", decodeErr)
 	}
+	defer decoded.ReleaseOwners()
 	if decoded.Len != 2 {
 		t.Fatalf("decoded.Len = %d, want 2 (groups a,b)", decoded.Len)
 	}
@@ -256,6 +257,7 @@ func TestDrainPipelineToFrame_PassthroughColumnsConverted(t *testing.T) {
 	if decodeErr != nil {
 		t.Fatalf("frame.Decode: %v", decodeErr)
 	}
+	defer decoded.ReleaseOwners()
 	if decoded.Len != 2 {
 		t.Fatalf("decoded.Len = %d, want 2", decoded.Len)
 	}

@@ -25,6 +25,7 @@ import (
 	"hash/fnv"
 	"math"
 	"slices"
+	"strings"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
@@ -141,22 +142,32 @@ func (g *BatchGroupBy) Consume(_ context.Context, b *vectorized.RecordBatch) err
 	if activeErr != nil {
 		return activeErr
 	}
-	n := int64(len(active))
 	if g.span != nil {
-		g.rowsIn += n
+		g.rowsIn += int64(len(active))
 	}
-	estBytes := n*g.entrySize + n*g.rowSize
-	if estBytes > 0 {
-		if reserveErr := g.tracker.Reserve(estBytes); reserveErr != nil {
-			return fmt.Errorf("group-by memory budget exceeded: %w", reserveErr)
+	// A scan batch may be a whole storage block (up to 8,192 rows), larger than
+	// the pipeline's batchSize. Reserve per batchSize rows, as for a batch of that
+	// size, so the transient worst-case reservation does not grow with the block.
+	chunk := g.batchSize
+	if chunk <= 0 {
+		chunk = vectorized.DefaultBatchSize
+	}
+	for start := 0; start < len(active); start += chunk {
+		rows := active[start:min(start+chunk, len(active))]
+		n := int64(len(rows))
+		estBytes := n*g.entrySize + n*g.rowSize
+		if estBytes > 0 {
+			if reserveErr := g.tracker.Reserve(estBytes); reserveErr != nil {
+				return fmt.Errorf("group-by memory budget exceeded: %w", reserveErr)
+			}
+			g.reserved += estBytes
 		}
-		g.reserved += estBytes
-	}
-	actualBytes := g.consumeRows(b, active)
-	if actualBytes < estBytes {
-		refund := estBytes - actualBytes
-		g.tracker.Release(refund)
-		g.reserved -= refund
+		actualBytes := g.consumeRows(b, rows)
+		if actualBytes < estBytes {
+			refund := estBytes - actualBytes
+			g.tracker.Release(refund)
+			g.reserved -= refund
+		}
 	}
 	return nil
 }
@@ -164,8 +175,20 @@ func (g *BatchGroupBy) Consume(_ context.Context, b *vectorized.RecordBatch) err
 func (g *BatchGroupBy) consumeRows(b *vectorized.RecordBatch, active []uint16) int64 {
 	var newGroups int64
 	var copiedRows int64
-	for _, rowIdx := range active {
-		bucket, isNew := g.findOrCreate(b, int(rowIdx))
+	// When every key column is a constant all rows share one group: find it once.
+	var shared *groupBucket
+	var sharedNew bool
+	if len(active) > 0 && !runsDisabled.Load() && g.allKeysConst(b) {
+		shared, sharedNew = g.findOrCreate(b, int(active[0]))
+	}
+	for i, rowIdx := range active {
+		var bucket *groupBucket
+		var isNew bool
+		if shared != nil {
+			bucket, isNew = shared, sharedNew && i == 0
+		} else {
+			bucket, isNew = g.findOrCreate(b, int(rowIdx))
+		}
 		if isNew {
 			newGroups++
 		}
@@ -175,11 +198,26 @@ func (g *BatchGroupBy) consumeRows(b *vectorized.RecordBatch, active []uint16) i
 			continue
 		}
 		for colIdx, srcCol := range b.Columns {
-			copyOneValue(bucket.cols[colIdx], srcCol, int(rowIdx))
+			// The bucket outlives b, whose string cells may borrow storage memory.
+			cloneOneValue(bucket.cols[colIdx], srcCol, int(rowIdx))
 		}
 		copiedRows++
 	}
 	return newGroups*g.entrySize + copiedRows*g.rowSize
+}
+
+// allKeysConst reports whether the operator has keys and every one of them is a
+// ConstColumn in b.
+func (g *BatchGroupBy) allKeysConst(b *vectorized.RecordBatch) bool {
+	if len(g.keyIndices) == 0 {
+		return false
+	}
+	for _, kIdx := range g.keyIndices {
+		if _, isConst := vectorized.AsConst(b.Columns[kIdx]); !isConst {
+			return false
+		}
+	}
+	return true
 }
 
 // findOrCreate locates the bucket for the row's key, creating it if absent.
@@ -301,8 +339,28 @@ func appendKeyComponent(dst []byte, col vectorized.Column, rowIdx int) []byte {
 		return appendTagValueKey(dst, c.Data()[rowIdx])
 	case *vectorized.TypedColumn[*modelv1.FieldValue]:
 		return appendFieldValueKey(dst, c.Data()[rowIdx])
+	case *vectorized.ConstColumn:
+		return appendConstKey(dst, c)
 	}
 	return dst
+}
+
+// appendConstKey encodes a ConstColumn's value exactly as appendKeyComponent would
+// encode the same value in any row of an expanded column, including a null, whose
+// typed placeholder is the zero value of the type.
+func appendConstKey(dst []byte, c *vectorized.ConstColumn) []byte {
+	switch c.Type() { //nolint:exhaustive // a ConstColumn only stands for these four types
+	case vectorized.ColumnTypeInt64:
+		return appendIntKey(dst, c.Int64())
+	case vectorized.ColumnTypeFloat64:
+		return appendFloatKey(dst, c.Float64())
+	case vectorized.ColumnTypeString:
+		return appendStringKey(dst, c.Str())
+	case vectorized.ColumnTypeBytes:
+		return appendBytesKey(dst, c.Bytes())
+	default:
+		return dst
+	}
 }
 
 // KeyComponentSupported reports whether appendKeyComponent has a real
@@ -400,17 +458,67 @@ func newGroupBucket(schema *vectorized.BatchSchema) *groupBucket {
 	return &groupBucket{cols: cols}
 }
 
-// copyOneValue appends src[rowIdx] to dst, preserving null status. The
-// passthrough TagValue / FieldValue cases let BatchAggregation carry
-// non-key projected tag columns forward unchanged (the pointer is
-// owned by the upstream MeasureBatch, which the pipeline keeps live for
-// the duration of aggregation).
+// cloneOneValue is copyOneValue for a destination that outlives src's batch:
+// string, bytes and string-array cells may borrow storage memory that is recycled
+// once the batch is released, so their payloads are copied. Passthrough
+// TagValue / FieldValue pointers and int64 arrays are never borrowed and are
+// carried as is.
+func cloneOneValue(dst, src vectorized.Column, rowIdx int) {
+	if src.IsNull(rowIdx) {
+		dst.AppendNull()
+		return
+	}
+	switch s := src.(type) {
+	case *vectorized.ConstColumn:
+		cloneConstValue(dst, s)
+	case *vectorized.TypedColumn[string]:
+		dst.(*vectorized.TypedColumn[string]).Append(strings.Clone(s.Data()[rowIdx]))
+	case *vectorized.TypedColumn[[]byte]:
+		dst.(*vectorized.TypedColumn[[]byte]).Append(bytes.Clone(s.Data()[rowIdx]))
+	case *vectorized.TypedColumn[[]string]:
+		dst.(*vectorized.TypedColumn[[]string]).Append(cloneStrings(s.Data()[rowIdx]))
+	default:
+		copyOneValue(dst, src, rowIdx)
+	}
+}
+
+// cloneConstValue appends c's value to dst, copying a string or bytes payload that
+// may borrow storage memory.
+func cloneConstValue(dst vectorized.Column, c *vectorized.ConstColumn) {
+	switch c.Type() { //nolint:exhaustive // a ConstColumn only stands for these four types
+	case vectorized.ColumnTypeString:
+		dst.(*vectorized.TypedColumn[string]).Append(strings.Clone(c.Str()))
+	case vectorized.ColumnTypeBytes:
+		dst.(*vectorized.TypedColumn[[]byte]).Append(bytes.Clone(c.Bytes()))
+	default:
+		// Scalars are copied by value, so copying shares nothing.
+		_ = c.AppendTo(dst, 1)
+	}
+}
+
+// cloneStrings returns a copy of v whose elements own their bytes. A nil v stays nil.
+func cloneStrings(v []string) []string {
+	if v == nil {
+		return nil
+	}
+	out := make([]string, len(v))
+	for i, e := range v {
+		out[i] = strings.Clone(e)
+	}
+	return out
+}
+
+// copyOneValue appends src[rowIdx] to dst, preserving null status. Slice and
+// string payloads are shared with src, so use it only when dst is consumed
+// before src's batch is released; otherwise use cloneOneValue.
 func copyOneValue(dst, src vectorized.Column, rowIdx int) {
 	if src.IsNull(rowIdx) {
 		dst.AppendNull()
 		return
 	}
 	switch s := src.(type) {
+	case *vectorized.ConstColumn:
+		_ = s.AppendTo(dst, 1)
 	case *vectorized.TypedColumn[int64]:
 		dst.(*vectorized.TypedColumn[int64]).Append(s.Data()[rowIdx])
 	case *vectorized.TypedColumn[float64]:

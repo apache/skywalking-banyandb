@@ -16,13 +16,21 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# G5a runner — drives the paired W1..W5 microbenchmarks, runs the in-Go gate
-# enforcement test, and emits a markdown report at
+# G9e runner — drives the storage-backed W1..W8 benchmarks (real flushed measure
+# parts decoded through the production queryResult -> vectorized pipeline ->
+# egress path), runs the in-Go gate enforcement test, and emits a markdown
+# report at
 # dist/bench/vectorized-YYYYMMDD-HHMMSS.md. Exit non-zero if any gate fails.
 #
 # Usage:
 #   ./scripts/bench-vectorized.sh
 #   COUNT=3 BENCHTIME=1s ./scripts/bench-vectorized.sh   # quicker sanity run
+#   BYDB_BENCH_LEGACY_SCHEMA=1 ./scripts/bench-vectorized.sh  # the passthrough baseline
+#
+# The gates compare the native column selection against the previous passthrough
+# selection over the same stored part, plus checked-in absolute allocs/op budgets;
+# see banyand/measure/vectorized_gates_benchmark_test.go. The old prebuilt-proto
+# harness in pkg/query/vectorized/measure was retired (it hid storage decode).
 #
 # Macro benchmarks live at test/integration/standalone/benchmark/ and run
 # separately via `make test-ci PKG=./test/integration/standalone/benchmark/...`
@@ -36,7 +44,7 @@ cd "${ROOT_DIR}"
 
 COUNT="${COUNT:-5}"
 BENCHTIME="${BENCHTIME:-2s}"
-PKG="./pkg/query/vectorized/measure"
+PKG="./banyand/measure"
 TIMESTAMP="$(date -u +%Y%m%d-%H%M%S)"
 OUT_DIR="${ROOT_DIR}/dist/bench"
 REPORT="${OUT_DIR}/vectorized-${TIMESTAMP}.md"
@@ -45,17 +53,17 @@ GATES_LOG="${OUT_DIR}/vectorized-gates-${TIMESTAMP}.log"
 
 mkdir -p "${OUT_DIR}"
 
-echo "G5a bench runner"
+echo "G9e bench runner"
 echo "  pkg:        ${PKG}"
 echo "  count:      ${COUNT}"
 echo "  benchtime:  ${BENCHTIME}"
 echo "  output:     ${REPORT}"
 echo
 
-echo "==> Running paired microbenchmarks..."
+echo "==> Running storage-backed W1..W8 benchmarks..."
 go test "${PKG}" \
   -run='^$' \
-  -bench='^Benchmark(RowPath|VectorizedPath)_W[1-5]$' \
+  -bench='^BenchmarkVectorizedStorage$' \
   -benchmem \
   -count="${COUNT}" \
   -benchtime="${BENCHTIME}" \
@@ -66,7 +74,7 @@ echo
 echo "==> Running gate enforcement test (RUN_BENCH_GATES=1)..."
 gate_status=0
 RUN_BENCH_GATES=1 go test "${PKG}" \
-  -run='^TestBenchGates_PerWorkload$' \
+  -run='^TestVectorizedStorageGates$' \
   -count=1 \
   -timeout=30m \
   -v \
@@ -80,7 +88,7 @@ host="$(uname -mnsr 2>/dev/null || echo unknown)"
 go_version="$(go version 2>/dev/null || echo unknown)"
 
 {
-  echo "# Vectorized Query Path — Microbench Report"
+  echo "# Vectorized Query Path — Storage-backed Bench Report"
   echo
   echo "- Generated: \`${TIMESTAMP}\` UTC"
   echo "- Commit:    \`${commit}\`"
@@ -89,7 +97,7 @@ go_version="$(go version 2>/dev/null || echo unknown)"
   echo "- Count:     ${COUNT}"
   echo "- Benchtime: ${BENCHTIME}"
   echo
-  echo "## Paired benchmark output"
+  echo "## Benchmark output"
   echo
   echo '```'
   cat "${RAW}"

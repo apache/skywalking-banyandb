@@ -40,7 +40,22 @@ RUN npm run build
 
 # ── prod-deps: runtime-only node_modules (workspace symlink to shared kept) ──
 FROM deps AS prod-deps
-RUN npm ci --omit=dev
+# --omit=optional as well as --omit=dev, and the reason is specific.
+#
+# optionalDependencies are NOT dev-scoped: npm installs them in a production
+# install. The rolldown native bindings live in web's optionalDependencies
+# because that is the only place npm will resolve a host-appropriate binary
+# without failing the install on a platform mismatch (see skywalking#14094) --
+# but they are BUILD-ONLY. Installing one per platform into the runtime
+# distribution would enlarge the shipped artifact and the native attack surface
+# for a tool the server never loads.
+#
+# Nothing at runtime needs an optional dependency: canopy/server and
+# canopy/shared declare none, and neither pulls a native binding. So omitting
+# optional is safe today. `npm run check:prod-deps` (run in canopy.yml) fails if
+# a runtime workspace ever gains an optional dependency, so this cannot silently
+# become a landmine.
+RUN npm ci --omit=dev --omit=optional
 
 # ── runtime: distroless node24. The compiled server has NO runtime imports of
 #    canopy-shared (verified: `grep -r canopy-shared server/dist/src` is empty

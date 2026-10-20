@@ -16,7 +16,15 @@
 # under the License.
 
 # Set the default behavior, in case people don't have core.autocrlf set.
-* text eof=lf
+#
+# `eol=lf` — not `eof=lf`, which is not a Git attribute at all and silently
+# disabled this rule. With `eol=lf` the working tree is normalized to LF on
+# checkout on every platform, so generated artifacts (LICENSE texts copied out
+# of node_modules and the Go module cache) are LF regardless of the host's
+# core.autocrlf. Without it, a Windows clone with core.autocrlf=true hands CRLF
+# bytes to `make license-dep`, and the difference lands in committed output.
+# `git check-attr eol -- <file>` should report `eol: lf`.
+* text=auto eol=lf
 
 # Denote all files that are truly binary and should not be modified.
 *.png binary

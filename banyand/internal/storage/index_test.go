@@ -34,10 +34,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
+// testSubjectSvc is the fixed series Subject several series-index tests
+// across this package use for synthetic fixtures.
+const testSubjectSvc = "svc"
+
 func TestSeriesIndex_Primary(t *testing.T) {
 	ctx := context.Background()
 	path, fn := setUp(require.New(t))
-	si, err := newSeriesIndex(ctx, path, 0, 0, nil)
+	si, err := newSeriesIndex(ctx, path, 0, 0, nil, &testRootLease{})
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, si.Close())
@@ -67,7 +71,7 @@ func TestSeriesIndex_Primary(t *testing.T) {
 	require.NoError(t, si.Insert(docs))
 	// Restart the index
 	require.NoError(t, si.Close())
-	si, err = newSeriesIndex(ctx, path, 0, 0, nil)
+	si, err = newSeriesIndex(ctx, path, 0, 0, nil, &testRootLease{})
 	require.NoError(t, err)
 	tests := []struct {
 		name         string
@@ -158,7 +162,7 @@ func TestSeriesIndex_Primary(t *testing.T) {
 				seriesQuery.EntityValues = tt.entityValues[i]
 				seriesQueries = append(seriesQueries, &seriesQuery)
 			}
-			sd, err := si.filter(ctx, seriesQueries, nil, nil, nil)
+			sd, err := si.filter(ctx, seriesQueries)
 			sl := sd.SeriesList
 			require.NoError(t, err)
 			require.Equal(t, len(tt.entityValues), len(sl))

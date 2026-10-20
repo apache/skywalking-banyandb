@@ -60,3 +60,57 @@ func TestEventuallyConsistentlyHoldsWindowAfterRetriedConvergence(t *testing.T) 
 		t.Fatalf("retried convergence must hold the full stability window %v, took %v", flags.StabilityTimeout, elapsed)
 	}
 }
+
+func TestEventuallyErrSucceedsWithoutRetrying(t *testing.T) {
+	var calls int32
+	err := test.EventuallyErr(func(_ gomega.Gomega) {
+		atomic.AddInt32(&calls, 1)
+	}, time.Second, 10*time.Millisecond)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("expected exactly one evaluation on first-try success, got %d", got)
+	}
+}
+
+func TestEventuallyErrRetriesUntilConverged(t *testing.T) {
+	var calls int32
+	err := test.EventuallyErr(func(g gomega.Gomega) {
+		g.Expect(atomic.AddInt32(&calls, 1)).To(gomega.BeNumerically(">=", int32(3)))
+	}, time.Second, 10*time.Millisecond)
+	if err != nil {
+		t.Fatalf("expected no error after convergence, got %v", err)
+	}
+	if got := atomic.LoadInt32(&calls); got < 3 {
+		t.Fatalf("expected at least 3 evaluations before convergence, got %d", got)
+	}
+}
+
+func TestEventuallyErrReturnsErrorWithoutFailingTheTestOnTimeout(t *testing.T) {
+	err := test.EventuallyErr(func(g gomega.Gomega) {
+		g.Expect(false).To(gomega.BeTrue(), "deliberately never converges")
+	}, 100*time.Millisecond, 10*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected an error once the timeout elapses")
+	}
+}
+
+func TestEventuallyErrStopsTryingImmediately(t *testing.T) {
+	var calls int32
+	start := time.Now()
+	err := test.EventuallyErr(func(_ gomega.Gomega) {
+		atomic.AddInt32(&calls, 1)
+		gomega.StopTrying("partial success cannot be safely retried").Now()
+	}, time.Second, 10*time.Millisecond)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected StopTrying to surface as an error")
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("StopTrying must stop after the first evaluation, got %d", got)
+	}
+	if elapsed >= time.Second {
+		t.Fatalf("StopTrying must not wait out the full timeout, took %v", elapsed)
+	}
+}
