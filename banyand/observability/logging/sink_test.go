@@ -375,7 +375,7 @@ func TestIdentityIsStampedAtFlushNotAdmission(t *testing.T) {
 
 // TestQueuedEntryFitsItsCharge holds entryOverheadBytes to what an entry
 // really costs. Charging the line alone under-counted the heap by more than
-// ten times, so a 32MiB budget could hold far more than 32MiB.
+// ten times, so the 8MiB maxBufferBytes bound could hold far more than 8MiB.
 func TestQueuedEntryFitsItsCharge(t *testing.T) {
 	s := testSink(t)
 	line := []byte(`{"level":"info","module":"MEASURE","time":"2026-09-23T10:00:00Z","message":"a typical log line with a few fields","shard":3,"path":"/tmp/measure/data"}`)
