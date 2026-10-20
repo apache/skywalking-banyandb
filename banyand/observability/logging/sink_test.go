@@ -29,7 +29,6 @@ import (
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 // sampleLine is a real zerolog line: its time is RFC3339 with whole seconds,
@@ -41,12 +40,7 @@ const sampleLine = `{"level":"warn","module":"MEASURE","group":"sw_metric",` +
 
 func testSink(t *testing.T) *Sink {
 	t.Helper()
-	s := NewSink(&logger.NativeLogging{
-		Enabled:       true,
-		MaxBytes:      1 << 20,
-		MaxEventBytes: 64 << 10,
-		FlushSize:     100,
-	})
+	s := NewSink()
 	// Every field is distinct and non-empty, so a test can assert on all eight
 	// positions. An identity with blanks in it would let a tag written into the
 	// wrong position pass unnoticed, because both sides would read empty.
@@ -133,7 +127,7 @@ func TestBuildOmitsAnEmptyFieldsTag(t *testing.T) {
 // than truncated: half a JSON body is unparseable, so it is worth nothing.
 func TestOversizeEventIsDroppedWhole(t *testing.T) {
 	s := testSink(t)
-	s.cfg.MaxEventBytes = 64
+	s.maxEventBytes = 64
 
 	s.Admit(zerolog.ErrorLevel, "MEASURE", []byte(sampleLine))
 
@@ -145,9 +139,9 @@ func TestOversizeEventIsDroppedWhole(t *testing.T) {
 	}
 }
 
-// TestOverBudgetDropsTheNewest pins the overflow policy: what is already queued
-// survives, so a burst keeps the head that explains it.
-func TestOverBudgetDropsTheNewest(t *testing.T) {
+// TestFullBufferDropsTheNewest pins the overflow policy: what is already
+// queued survives, so a burst keeps the head that explains it.
+func TestFullBufferDropsTheNewest(t *testing.T) {
 	s := testSink(t)
 	s.Admit(zerolog.ErrorLevel, "MEASURE", []byte(sampleLine))
 	queued := s.QueuedBytes()
@@ -155,19 +149,19 @@ func TestOverBudgetDropsTheNewest(t *testing.T) {
 		t.Fatal("the first event was not accounted")
 	}
 
-	// A budget below what is already held refuses everything new.
-	s.SetBudget(func() int64 { return 1 })
+	// A bound below what is already held refuses everything new.
+	s.maxBytes = 1
 	s.Admit(zerolog.ErrorLevel, "MEASURE", []byte(sampleLine))
 
-	if got := s.Dropped(reasonMemoryPressure); got != 1 {
-		t.Fatalf("memory_pressure drops = %d, want 1", got)
+	if got := s.Dropped(reasonBufferFull); got != 1 {
+		t.Fatalf("buffer_full drops = %d, want 1", got)
 	}
 	if s.QueuedBytes() != queued {
 		t.Fatalf("queued bytes moved from %d to %d; a queued event was evicted",
 			queued, s.QueuedBytes())
 	}
 	if len(s.queue) != 1 {
-		t.Fatalf("buffer holds %d events, want the 1 admitted before the budget fell", len(s.queue))
+		t.Fatalf("buffer holds %d events, want the 1 admitted before the bound fell", len(s.queue))
 	}
 }
 
@@ -346,9 +340,7 @@ func TestTimestampComesFromAdmissionNotTheEncodedLine(t *testing.T) {
 // NOT be stored with an empty node_id, because node_id is half the series key
 // and an input to the shard.
 func TestIdentityIsStampedAtFlushNotAdmission(t *testing.T) {
-	s := NewSink(&logger.NativeLogging{
-		Enabled: true, MaxBytes: 1 << 20, MaxEventBytes: 64 << 10, FlushSize: 100,
-	})
+	s := NewSink()
 	// No SetNode yet: this is the window between logger initialisation and the
 	// node's services starting.
 	s.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
@@ -409,21 +401,30 @@ func TestQueuedEntryFitsItsCharge(t *testing.T) {
 	}
 }
 
-// TestBudgetAndRingReportDifferentReasons keeps the two bounds distinguishable.
-// A budget refusal is memory_pressure and a full ring is buffer_full; reporting
-// both as buffer_full hid which knob was binding.
-func TestBudgetAndRingReportDifferentReasons(t *testing.T) {
-	s := testSink(t)
+// TestPressureAndFullBufferReportDifferentReasons keeps the two causes
+// distinguishable: the memory protector's refusal is memory_pressure, and the
+// buffer's own bound is buffer_full.
+func TestPressureAndFullBufferReportDifferentReasons(t *testing.T) {
 	line := []byte(`{"level":"info","module":"MEASURE","message":"x"}`)
-	// A budget below one entry's charge refuses every event.
-	tiny := int64(1)
-	s.SetBudget(func() int64 { return tiny })
-	s.Admit(zerolog.InfoLevel, "MEASURE", line)
-	if got := s.dropped[reasonMemoryPressure].Load(); got != 1 {
-		t.Errorf("memory_pressure counted %d drops, want 1", got)
+
+	pressured := testSink(t)
+	pressured.SetPressure(func() bool { return true })
+	pressured.Admit(zerolog.InfoLevel, "MEASURE", line)
+	if got := pressured.Dropped(reasonMemoryPressure); got != 1 {
+		t.Errorf("memory_pressure counted %d drops under pressure, want 1", got)
 	}
-	if got := s.dropped[reasonBufferFull].Load(); got != 0 {
-		t.Errorf("buffer_full counted %d drops for a budget refusal, want 0", got)
+	if got := pressured.Dropped(reasonBufferFull); got != 0 {
+		t.Errorf("buffer_full counted %d drops under pressure, want 0", got)
+	}
+
+	full := testSink(t)
+	full.maxBytes = 1
+	full.Admit(zerolog.InfoLevel, "MEASURE", line)
+	if got := full.Dropped(reasonBufferFull); got != 1 {
+		t.Errorf("buffer_full counted %d drops at the bound, want 1", got)
+	}
+	if got := full.Dropped(reasonMemoryPressure); got != 0 {
+		t.Errorf("memory_pressure counted %d drops at the bound, want 0", got)
 	}
 }
 

@@ -38,17 +38,47 @@ import (
 )
 
 const (
+	// flushInterval is the longest a buffered event waits before it is written.
+	flushInterval = time.Second
+	// flushSize is the number of buffered events that triggers a write ahead of
+	// the interval.
+	flushSize = 100
+	// writeTimeout is handed to every publish. The local pipeline does not
+	// honor it, so stopTimeout is what bounds shutdown.
+	writeTimeout = 5 * time.Second
+	// drainTimeout bounds the final drain at shutdown.
+	drainTimeout = 5 * time.Second
+	// stopTimeout bounds GracefulStop. A local write runs synchronously on the
+	// consumer and does not honor its context, so a stuck one would otherwise
+	// hold shutdown for ever: the drain, one publish that started just before
+	// its deadline, and a margin.
+	stopTimeout = drainTimeout + writeTimeout + time.Second
 	// schemaTimeout bounds one schema pass against metadata. It is separate
-	// from --logging-native-write-timeout, which bounds a batch publish: a slow
-	// destination is not a reason to wait longer on the metadata service.
+	// from writeTimeout: a slow destination is not a reason to wait longer on
+	// the metadata service.
 	schemaTimeout = 5 * time.Second
 	// schemaRetryInterval is how often a failed schema creation is retried.
 	schemaRetryInterval = 10 * time.Second
 	// destinationRetries bounds how many ticks a batch is held while the local
-	// write topic has no subscriber. At the default one-second interval that
-	// covers ten seconds of startup; past it the batch is dropped and counted.
+	// write topic has no subscriber. At the one-second interval that covers ten
+	// seconds of startup; past it the batch is dropped and counted.
 	destinationRetries = 10
 )
+
+// timing holds the internal intervals and limits. They are constants in
+// production; a field lets a test shorten them.
+type timing struct {
+	flushInterval time.Duration
+	writeTimeout  time.Duration
+	drainTimeout  time.Duration
+	stopTimeout   time.Duration
+	flushSize     int
+}
+
+var defaultTiming = timing{
+	flushInterval: flushInterval, writeTimeout: writeTimeout,
+	drainTimeout: drainTimeout, stopTimeout: stopTimeout, flushSize: flushSize,
+}
 
 // Service owns the consumer that drains the sink and writes what it finds.
 //
@@ -65,6 +95,7 @@ type Service struct {
 	pm       protector.Memory
 	cfg      *logger.NativeLogging
 	node     NodeInfo
+	timing   timing
 	// pending is a batch held back because the local write topic had no
 	// subscriber yet. It is retried with the next tick's batch.
 	pending []entry
@@ -93,6 +124,7 @@ func NewService(sink *Sink, cfg *logger.NativeLogging, md metadata.Repo,
 		pipeline: pipeline,
 		pm:       pm,
 		closer:   run.NewCloser(1),
+		timing:   defaultTiming,
 	}
 }
 
@@ -119,7 +151,7 @@ func (s *Service) PreRun(ctx context.Context) error {
 // SetNodeType records which role these logs belong to.
 func (s *Service) SetNodeType(t string) { s.node.NodeType = t }
 
-// Serve creates the schema, binds the budget to the memory protector and
+// Serve creates the schema, connects the sink to the memory protector and
 // starts the consumer. It returns immediately: the consumer runs until the
 // closer is notified.
 func (s *Service) Serve() run.StopNotify {
@@ -128,7 +160,7 @@ func (s *Service) Serve() run.StopNotify {
 		return s.closer.CloseNotify()
 	}
 	s.sink.SetNode(s.node)
-	s.bindBudget()
+	s.bindPressure()
 	s.metrics = newMetrics(s.omr)
 
 	ctx, cancel := context.WithTimeout(context.Background(), schemaTimeout)
@@ -143,33 +175,16 @@ func (s *Service) Serve() run.StopNotify {
 	return s.closer.CloseNotify()
 }
 
-// bindBudget replaces the configured cap with the adaptive budget wherever a
-// memory protector is actually running. Where availability is unknown the cap
-// is the only term, which is the steady state on any role whose protector is
-// not registered.
-func (s *Service) bindBudget() {
+// bindPressure makes the sink drop while the memory protector reports high
+// pressure. State is the protector's nonblocking check: it reads counters and
+// never waits, so it is safe on every goroutine that logs. Where no protector
+// is registered it reports low pressure, and the buffer's own bounds hold.
+func (s *Service) bindPressure() {
 	if s.pm == nil {
 		return
 	}
-	fraction := s.cfg.MemoryFraction
-	reserve := s.cfg.MemoryReserve
-	configured := s.cfg.MaxBytes
-	s.sink.SetBudget(func() int64 {
-		available := s.pm.AvailableBytes()
-		if available < 0 {
-			// Unknown is not unlimited.
-			return configured
-		}
-		headroom := available - reserve
-		if headroom < 0 {
-			headroom = 0
-		}
-		adaptive := int64(float64(headroom) * fraction)
-		if adaptive < configured {
-			return adaptive
-		}
-		return configured
-	})
+	pm := s.pm
+	s.sink.SetPressure(func() bool { return pm.State() == protector.StateHigh })
 }
 
 // consume is the single goroutine that drains the buffer. It selects over the
@@ -181,12 +196,12 @@ func (s *Service) consume(ctx context.Context) {
 	// these events where native storage never collects it.
 	ctx = logger.WithNativeWrite(ctx)
 
-	ticker := time.NewTicker(s.cfg.FlushInterval)
+	ticker := time.NewTicker(s.timing.flushInterval)
 	defer ticker.Stop()
 	retry := time.NewTicker(schemaRetryInterval)
 	defer retry.Stop()
 
-	batch := make([]entry, 0, s.cfg.FlushSize)
+	batch := make([]entry, 0, s.timing.flushSize)
 	var batchBytes int64
 	stop := s.closer.CloseNotify()
 	for {
@@ -218,15 +233,14 @@ func (s *Service) consume(ctx context.Context) {
 }
 
 // batchFull reports whether a batch has reached a flush trigger: the event
-// count, or a quarter of the byte budget. The byte limit keeps one slow
-// publish from holding most of the budget in flight, which would stall
+// count, or a quarter of the buffer's byte bound. The byte limit keeps one
+// slow publish from holding most of the buffer in flight, which would stall
 // admission while it runs.
 func (s *Service) batchFull(n int, bytes int64) bool {
-	if n >= s.cfg.FlushSize {
+	if n >= s.timing.flushSize {
 		return true
 	}
-	limit := s.sink.budgetBytes() / 4
-	return limit > 0 && bytes >= limit
+	return bytes >= s.sink.maxBytes/4
 }
 
 // flushPending publishes what an earlier attempt held back together with
@@ -323,13 +337,13 @@ func (s *Service) warnOnce(done *bool, msg string) {
 // is never blocked. Admission has already stopped by this point, so the set it
 // publishes is exactly the set admitted before the cutoff.
 func (s *Service) drain(ctx context.Context, batch []entry) {
-	deadline := time.Now().Add(s.cfg.DrainTimeout)
-	// Successive chunks, not one: a shutdown with more than FlushSize queued
+	deadline := time.Now().Add(s.timing.drainTimeout)
+	// Successive chunks, not one: a shutdown with more than flushSize queued
 	// would otherwise publish the first chunk and count the rest as lost while
 	// the deadline still had room.
 	for time.Now().Before(deadline) {
 		drained := false
-		for len(batch) < s.cfg.FlushSize {
+		for len(batch) < s.timing.flushSize {
 			select {
 			case e := <-s.sink.queue:
 				batch = append(batch, e)
@@ -430,8 +444,8 @@ func (s *Service) flush(ctx context.Context, batch []entry, retainable bool) (ke
 		return nil
 	}
 
-	publisher := s.pipeline.NewBatchPublisher(s.cfg.WriteTimeout)
-	pubCtx, cancel := context.WithTimeout(ctx, s.cfg.WriteTimeout)
+	publisher := s.pipeline.NewBatchPublisher(s.timing.writeTimeout)
+	pubCtx, cancel := context.WithTimeout(ctx, s.timing.writeTimeout)
 	defer cancel()
 	_, err := publisher.Publish(pubCtx, data.TopicStreamWrite, messages...)
 	nodeErrs, closeErr := publisher.Close()
@@ -519,9 +533,25 @@ func entityOf(req *streamv1.WriteRequest) pbv1.EntityValues {
 // GracefulStop stops admission before draining. Draining first would leave a
 // window the length of one publish in which lines are admitted and then
 // stranded in a buffer nobody will read again.
+//
+// It returns within stopTimeout even when a write is stuck: a local write
+// does not honor its context, so the consumer cannot be interrupted, only
+// left behind. What it still holds is lost with the process.
 func (s *Service) GracefulStop() {
 	s.sink.Detach()
-	s.closer.CloseThenWait()
+	stopped := make(chan struct{})
+	run.Go(context.Background(), s.Name()+"-stop", s.l, func(context.Context) {
+		defer close(stopped)
+		s.closer.CloseThenWait()
+	})
+	timer := time.NewTimer(s.timing.stopTimeout)
+	defer timer.Stop()
+	select {
+	case <-stopped:
+	case <-timer.C:
+		reportf("native log consumer did not stop within %s; a write is stuck, and the %d bytes it holds are lost",
+			s.timing.stopTimeout, s.sink.QueuedBytes())
+	}
 }
 
 // reportf writes the sink's own failures straight to stderr. Routing them

@@ -41,10 +41,9 @@ var allReasons = []string{
 // than counters because the sink already holds the running totals; the meter
 // only needs to publish them.
 type metrics struct {
-	dropped      meter.Gauge
-	written      meter.Gauge
-	bufferBytes  meter.Gauge
-	bufferBudget meter.Gauge
+	dropped     meter.Gauge
+	written     meter.Gauge
+	bufferBytes meter.Gauge
 }
 
 func newMetrics(omr observability.MetricsRegistry) *metrics {
@@ -53,10 +52,9 @@ func newMetrics(omr observability.MetricsRegistry) *metrics {
 	}
 	factory := omr.With(logScope)
 	return &metrics{
-		dropped:      factory.NewGauge("native_log_dropped_total", "reason"),
-		written:      factory.NewGauge("native_log_written_total"),
-		bufferBytes:  factory.NewGauge("native_log_buffer_bytes", "state"),
-		bufferBudget: factory.NewGauge("native_log_buffer_budget_bytes"),
+		dropped:     factory.NewGauge("native_log_dropped_total", "reason"),
+		written:     factory.NewGauge("native_log_written_total"),
+		bufferBytes: factory.NewGauge("native_log_buffer_bytes", "state"),
 	}
 }
 
@@ -78,5 +76,4 @@ func (m *metrics) observe(s *Sink) {
 	}
 	m.bufferBytes.Set(float64(waiting), "queued")
 	m.bufferBytes.Set(float64(inFlight), "in_flight")
-	m.bufferBudget.Set(float64(s.budgetBytes()))
 }

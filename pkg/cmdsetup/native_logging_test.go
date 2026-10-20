@@ -19,7 +19,6 @@ package cmdsetup
 
 import (
 	"testing"
-	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
@@ -33,12 +32,8 @@ import (
 // so a role that stores nothing must not enable it: the process would encode
 // lines that the console gate and the absent sink both discard.
 func TestUnsupportedRoleKeepsItsLevel(t *testing.T) {
-	native := logger.NativeLogging{
-		Enabled: true, Level: "debug", MaxBytes: 1 << 20, MaxEventBytes: 64 << 10,
-		FlushSize: 10, FlushInterval: time.Second, WriteTimeout: time.Second,
-		DrainTimeout: time.Second, MemoryFraction: 0.1, TTLDays: 1,
-	}
-	nativeLogSink = nativelog.NewSink(&native)
+	native := logger.NativeLogging{Enabled: true, Level: "debug", TTLDays: 1}
+	nativeLogSink = nativelog.NewSink()
 	t.Cleanup(func() {
 		nativeLogSink.Detach()
 		if err := logger.Init(logger.Logging{Env: "prod", Level: "info"}); err != nil {

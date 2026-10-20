@@ -70,6 +70,8 @@ type fakeClient struct {
 	rejectOnClose atomic.Bool
 	// markedModules is the module the write path logs under for the last batch.
 	markedModules atomic.Value
+	// started counts the publishes that have begun, delayed or not.
+	started atomic.Int64
 }
 
 func (f *fakeClient) seenBatchSizes() []int {
@@ -132,6 +134,7 @@ func (p *fakePublisher) Publish(ctx context.Context, _ bus.Topic, messages ...bu
 	if l := logger.FetchOrDefault(ctx, "stream", nil); l != nil {
 		p.client.markedModules.Store(l.Module())
 	}
+	p.client.started.Add(1)
 	if p.client.panicOnPublish.Load() {
 		panic("induced publish panic")
 	}
@@ -170,24 +173,20 @@ func (p *fakePublisher) Close() (map[string]*common.Error, error) {
 	return nil, nil
 }
 
-// testService starts a consumer against client. Each opt adjusts the
-// configuration before anything reads it, so a test states only the part it
-// is about.
-func testService(t *testing.T, client queue.Client, opts ...func(*logger.NativeLogging)) (*Service, *Sink) {
+// testService starts a consumer against client. Each opt adjusts the service
+// before the consumer starts, so a test states only the part it is about.
+func testService(t *testing.T, client queue.Client, opts ...func(*Service)) (*Service, *Sink) {
 	t.Helper()
-	cfg := &logger.NativeLogging{
-		Enabled: true, Level: "debug", FlushInterval: 20 * time.Millisecond,
-		FlushSize: 5, MaxBytes: 1 << 20, MaxEventBytes: 64 << 10, TTLDays: 7,
-		WriteTimeout: 5 * time.Second, DrainTimeout: 5 * time.Second,
-		MemoryFraction: 0.02, MemoryReserve: 64 << 20,
-	}
-	for _, opt := range opts {
-		opt(cfg)
-	}
-	sink := NewSink(cfg)
+	cfg := &logger.NativeLogging{Enabled: true, Level: "debug", TTLDays: 7}
+	sink := NewSink()
 	sink.SetNode(NodeInfo{NodeID: "data-hot-0", NodeType: "data"})
 	svc := NewService(sink, cfg, nil, client, nil, nil)
 	svc.l = logger.GetLogger("native-log-test")
+	svc.timing.flushInterval = 20 * time.Millisecond
+	svc.timing.flushSize = 5
+	for _, opt := range opts {
+		opt(svc)
+	}
 	// The schema is created in Serve against a metadata repo; these tests drive
 	// the consumer directly, so stand in for what one successful pass would
 	// have established.
@@ -401,12 +400,11 @@ func TestNeverReadyStaysNotReady(t *testing.T) {
 	}
 }
 
-// TestWriteTimeoutFlagReachesThePublisher is the falsifying assertion for
-// --logging-native-write-timeout: the configured value, not a constant, bounds
-// each batch publish.
-func TestWriteTimeoutFlagReachesThePublisher(t *testing.T) {
+// TestWriteTimeoutReachesThePublisher checks that the service's write timeout,
+// not some other value, is handed to every batch publisher.
+func TestWriteTimeoutReachesThePublisher(t *testing.T) {
 	client := &fakeClient{}
-	_, sink := testService(t, client, func(c *logger.NativeLogging) { c.WriteTimeout = 750 * time.Millisecond })
+	_, sink := testService(t, client, func(s *Service) { s.timing.writeTimeout = 750 * time.Millisecond })
 
 	for i := 0; i < 5; i++ {
 		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
@@ -419,18 +417,18 @@ func TestWriteTimeoutFlagReachesThePublisher(t *testing.T) {
 	}
 	for _, got := range seen {
 		if got != 750*time.Millisecond {
-			t.Fatalf("publisher created with timeout %s, want the configured 750ms", got)
+			t.Fatalf("publisher created with timeout %s, want 750ms", got)
 		}
 	}
 }
 
-// TestDrainTimeoutFlagBoundsShutdown is the falsifying assertion for
-// --logging-native-drain-timeout. Each publish takes 50ms and the drain limit
-// is 10ms, so the drain can publish at most one batch before its deadline and
-// must count the rest as lost. With the old fixed 5s limit, everything drains.
-func TestDrainTimeoutFlagBoundsShutdown(t *testing.T) {
+// TestDrainTimeoutBoundsShutdown is the falsifying assertion for the drain
+// limit. Each publish takes 50ms and the limit is 10ms, so the drain can
+// publish at most one batch before its deadline and must count the rest as
+// lost. Without the limit, everything drains.
+func TestDrainTimeoutBoundsShutdown(t *testing.T) {
 	client := &fakeClient{}
-	svc, sink := testService(t, client, func(c *logger.NativeLogging) { c.DrainTimeout = 10 * time.Millisecond })
+	svc, sink := testService(t, client, func(s *Service) { s.timing.drainTimeout = 10 * time.Millisecond })
 	client.publishDelay.Store(int64(50 * time.Millisecond))
 
 	const admitted = 100
@@ -441,7 +439,7 @@ func TestDrainTimeoutFlagBoundsShutdown(t *testing.T) {
 
 	lost := sink.Dropped(reasonShutdown)
 	if lost == 0 {
-		t.Fatal("the drain published everything; the configured 10ms drain limit was not applied")
+		t.Fatal("the drain published everything; the 10ms drain limit was not applied")
 	}
 	var dropped uint64
 	for _, r := range allReasons {
@@ -452,28 +450,72 @@ func TestDrainTimeoutFlagBoundsShutdown(t *testing.T) {
 	}
 }
 
-// fakeMemory reports a fixed amount of available memory. Only AvailableBytes
-// is implemented: bindBudget calls nothing else.
+// fakeMemory reports a memory pressure state. Only State is implemented:
+// bindPressure calls nothing else, and in particular nothing that blocks.
 type fakeMemory struct {
 	protector.Memory
-	available int64
+	high *atomic.Bool
 }
 
-func (m fakeMemory) AvailableBytes() int64 { return m.available }
+func (m fakeMemory) State() protector.State {
+	if m.high.Load() {
+		return protector.StateHigh
+	}
+	return protector.StateLow
+}
 
-// TestMemoryFlagsShapeTheAdaptiveBudget is the falsifying assertion for
-// --logging-native-memory-fraction and --logging-native-memory-reserve.
-// 1100 bytes available, a 100-byte reserve and a fraction of 0.5 give a budget
-// of 500. The old constants (0.02 and 64 MiB) give 0.
-func TestMemoryFlagsShapeTheAdaptiveBudget(t *testing.T) {
-	cfg := &logger.NativeLogging{MaxBytes: 1 << 30, MemoryFraction: 0.5, MemoryReserve: 100}
-	sink := NewSink(cfg)
-	svc := NewService(sink, cfg, nil, nil, fakeMemory{available: 1100}, nil)
+// TestHighMemoryPressureDropsAndCounts is the falsifying assertion for reusing
+// the memory protector: while it reports high pressure the sink drops and
+// counts instead of buffering, and it buffers again once pressure falls.
+func TestHighMemoryPressureDropsAndCounts(t *testing.T) {
+	high := &atomic.Bool{}
+	sink := NewSink()
+	svc := NewService(sink, &logger.NativeLogging{}, nil, nil, fakeMemory{high: high}, nil)
+	svc.bindPressure()
 
-	svc.bindBudget()
+	high.Store(true)
+	sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+	if got := sink.Dropped(reasonMemoryPressure); got != 1 {
+		t.Fatalf("memory_pressure drops = %d under high pressure, want 1", got)
+	}
+	if len(sink.queue) != 0 {
+		t.Fatal("an event was buffered under high memory pressure")
+	}
 
-	if got := sink.budgetBytes(); got != 500 {
-		t.Fatalf("budget = %d, want 500 from the configured fraction and reserve", got)
+	high.Store(false)
+	sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+	if len(sink.queue) != 1 {
+		t.Fatal("the sink did not buffer again after pressure fell")
+	}
+}
+
+// TestGracefulStopReturnsWhileAWriteIsStuck is the falsifying assertion for
+// the shutdown bound. A local write runs on the consumer and does not honor
+// its context, so a stuck one cannot be interrupted; shutdown must not wait
+// for it.
+func TestGracefulStopReturnsWhileAWriteIsStuck(t *testing.T) {
+	client := &fakeClient{}
+	client.publishDelay.Store(int64(time.Hour))
+	sink := NewSink()
+	svc := NewService(sink, &logger.NativeLogging{Enabled: true, TTLDays: 7}, nil, client, nil, nil)
+	svc.l = logger.GetLogger("native-log-test")
+	svc.timing.flushInterval = 10 * time.Millisecond
+	svc.timing.stopTimeout = 50 * time.Millisecond
+	svc.ready = true
+	// The only consumer. It is left stuck on purpose; nothing waits for it.
+	go svc.consume(context.Background()) //panicdiag:allow-rawgo test consumer, left stuck on purpose
+	sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+	waitFor(t, "the write to start and get stuck", func() bool { return client.started.Load() == 1 })
+
+	returned := make(chan struct{})
+	go func() { //panicdiag:allow-rawgo test watchdog
+		svc.GracefulStop()
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("GracefulStop is still waiting for a stuck write")
 	}
 }
 
@@ -510,10 +552,10 @@ func TestBatchIsCappedAtAQuarterOfTheBudget(t *testing.T) {
 	// budget is expressed in whole events rather than in line lengths.
 	event := entryCost(int64(len(sampleLine)))
 	client := &fakeClient{}
-	_, sink := testService(t, client, func(c *logger.NativeLogging) {
-		c.FlushSize = 1000
-		c.FlushInterval = time.Hour
-		c.MaxBytes = 12 * event
+	_, sink := testService(t, client, func(s *Service) {
+		s.timing.flushSize = 1000
+		s.timing.flushInterval = time.Hour
+		s.sink.maxBytes = 12 * event
 	})
 
 	const admitted = 9
@@ -556,7 +598,7 @@ func TestBufferGaugeSplitsQueuedFromInFlight(t *testing.T) {
 	sink.queued.Store(300)
 	sink.inFlight.Store(100)
 	buffer := &fakeGauge{}
-	m := &metrics{dropped: &fakeGauge{}, written: &fakeGauge{}, bufferBytes: buffer, bufferBudget: &fakeGauge{}}
+	m := &metrics{dropped: &fakeGauge{}, written: &fakeGauge{}, bufferBytes: buffer}
 
 	m.observe(sink)
 
@@ -617,9 +659,9 @@ func TestUnreadyDestinationIsDroppedAfterBoundedRetries(t *testing.T) {
 func TestDrainDoesNotHoldBackForAnUnreadyDestination(t *testing.T) {
 	client := &fakeClient{}
 	client.unreadyFor.Store(1 << 30)
-	svc, sink := testService(t, client, func(c *logger.NativeLogging) {
-		c.FlushSize = 1000
-		c.FlushInterval = time.Hour
+	svc, sink := testService(t, client, func(s *Service) {
+		s.timing.flushSize = 1000
+		s.timing.flushInterval = time.Hour
 	})
 
 	const admitted = 5
@@ -663,7 +705,7 @@ func TestCollectionResumesInTheSameProcess(t *testing.T) {
 // spread a node's events over several shards, and in a cluster over several
 // nodes.
 func TestEveryEventIsWrittenToShardZero(t *testing.T) {
-	sink := NewSink(&logger.NativeLogging{Enabled: true, MaxBytes: 1 << 20, MaxEventBytes: 64 << 10})
+	sink := NewSink()
 	for i := 0; i < 64; i++ {
 		sink.SetNode(NodeInfo{NodeID: fmt.Sprintf("data-%d:17912", i), NodeType: "data"})
 		for _, level := range []zerolog.Level{zerolog.DebugLevel, zerolog.InfoLevel, zerolog.WarnLevel, zerolog.ErrorLevel} {

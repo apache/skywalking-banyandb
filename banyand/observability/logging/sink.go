@@ -39,12 +39,11 @@ import (
 // Drop reasons. The set is closed: every path that loses an event names one of
 // these, so a count is always attributable to a stage.
 const (
-	// reasonBufferFull counts an event dropped because the ring was full. The
-	// byte budget is the bound that normally binds first, so this one means
-	// the consumer fell behind on small events.
+	// reasonBufferFull counts an event dropped because the buffer was at its
+	// byte or event bound: the consumer fell behind what the node logs.
 	reasonBufferFull = "buffer_full"
-	// reasonMemoryPressure counts an event the byte budget refused, whether
-	// the budget was exhausted or nothing was available at all.
+	// reasonMemoryPressure counts an event dropped because the memory
+	// protector reported high pressure.
 	reasonMemoryPressure = "memory_pressure"
 	reasonOversizeEvent  = "oversize_event"
 	reasonEncodeFailed   = "encode_failed"
@@ -62,22 +61,29 @@ const (
 	reasonShutdown           = "shutdown_deadline"
 )
 
-// queueDepth bounds the ring by count as well as by bytes. The byte budget is
-// the limit that matters, so the count has to sit above what the budget
-// admits: at the default 32MiB budget and entryOverheadBytes per event, the
-// budget binds at about 17k events. A lower count would make the byte knob
-// inert, which is what an 8192 ring did.
-const queueDepth = 32768
+// maxBufferBytes bounds what the buffer holds, queued and in flight. It is a
+// safety bound, not a tuning knob: the memory protector decides when memory
+// is short, and the buffer only has to absorb a burst or a slow write.
+const maxBufferBytes = 8 << 20
+
+// maxEventBytes is the largest event kept. A larger one is dropped whole:
+// truncating it would leave a JSON body that cannot be parsed.
+const maxEventBytes = 64 << 10
+
+// queueDepth bounds the buffer by count as well as by bytes. The byte bound is
+// the one that matters, so the count sits above what it admits: at
+// entryOverheadBytes per event, 8MiB holds about 4600 events.
+const queueDepth = 8192
 
 // entryOverheadBytes is what a queued event holds beyond its own line: the
 // built WriteRequest, its tag values and the element. Measured at 1889 bytes
 // held per entry for a 151-byte line, so the line alone under-counts the heap
-// by more than ten times, and a budget charged on the line alone would let the
+// by more than ten times, and a bound charged on the line alone would let the
 // buffer grow far past it. TestQueuedEntryFitsItsCharge holds the constant to
 // what an entry really costs.
 const entryOverheadBytes = 1792
 
-// entryCost is what one event charges against the byte budget.
+// entryCost is what one event charges against the byte bound.
 func entryCost(size int64) int64 { return size + entryOverheadBytes }
 
 // NodeInfo identifies the process whose logs these are. It is late-bound:
@@ -107,36 +113,36 @@ type entry struct {
 type Sink struct {
 	queue    chan entry
 	dropped  map[string]*atomic.Uint64
-	budget   atomic.Pointer[func() int64]
+	pressure atomic.Pointer[func() bool]
 	node     atomic.Pointer[NodeInfo]
 	detach   atomic.Pointer[func()]
 	pool     sync.Pool
-	cfg      *logger.NativeLogging
-	queued   atomic.Int64
-	inFlight atomic.Int64
-	seq      atomic.Uint64
-	epoch    int64
-	written  atomic.Uint64
+	// maxBytes and maxEventBytes are maxBufferBytes and maxEventBytes. They
+	// are fields so a test can reach the bounds with a few events.
+	maxBytes      int64
+	maxEventBytes int64
+	queued        atomic.Int64
+	inFlight      atomic.Int64
+	seq           atomic.Uint64
+	epoch         int64
+	written       atomic.Uint64
 }
 
 // NewSink allocates the buffer. It performs no I/O and reaches no service, so
-// it is safe to call while the command tree is still being built -- which is
-// where it is called, before the flags are parsed. It keeps the configuration
-// by reference for that reason: the values arrive later, and nothing reads
-// them until Init has admitted the first event.
-func NewSink(cfg *logger.NativeLogging) *Sink {
+// it is safe to call while the command tree is still being built, which is
+// where it is called.
+func NewSink() *Sink {
 	s := &Sink{
-		cfg:     cfg,
-		queue:   make(chan entry, queueDepth),
-		epoch:   time.Now().UnixNano(),
-		dropped: make(map[string]*atomic.Uint64),
+		queue:         make(chan entry, queueDepth),
+		epoch:         time.Now().UnixNano(),
+		dropped:       make(map[string]*atomic.Uint64),
+		maxBytes:      maxBufferBytes,
+		maxEventBytes: maxEventBytes,
 	}
 	for _, r := range allReasons {
 		s.dropped[r] = &atomic.Uint64{}
 	}
 	s.pool.New = func() any { return &streamv1.WriteRequest{} }
-	initial := func() int64 { return cfg.MaxBytes }
-	s.budget.Store(&initial)
 	return s
 }
 
@@ -159,23 +165,21 @@ func (s *Sink) SetNode(n NodeInfo) {
 	s.node.Store(&n)
 }
 
-// SetBudget replaces the byte budget with one that tracks memory availability.
-// Until it is called the configured cap is the only bound, which is also the
-// steady state wherever no memory protector is registered.
-func (s *Sink) SetBudget(f func() int64) {
+// SetPressure installs the check that reports high memory pressure. It must
+// not block: it runs on every goroutine that logs. Until it is set, and
+// wherever no memory protector runs, the buffer's own bounds are the only
+// limit.
+func (s *Sink) SetPressure(f func() bool) {
 	if f != nil {
-		// Published atomically: Admit reads this from every goroutine that
-		// logs, and Serve installs it while those are already running.
-		s.budget.Store(&f)
+		s.pressure.Store(&f)
 	}
 }
 
-// budgetBytes is the byte budget in force right now.
-func (s *Sink) budgetBytes() int64 {
-	if f := s.budget.Load(); f != nil {
+func (s *Sink) underPressure() bool {
+	if f := s.pressure.Load(); f != nil {
 		return (*f)()
 	}
-	return 0
+	return false
 }
 
 // Dropped reports how many events were lost for one reason.
@@ -209,30 +213,25 @@ func (s *Sink) dropN(reason string, n int) {
 }
 
 // Admit implements logger.NativeSink. It runs on the goroutine that emitted the
-// line, so it never blocks and never waits for capacity: over budget it drops
-// the newest event and counts it, leaving what is already queued intact so a
-// burst keeps the head that explains it.
+// line, so it never blocks and never waits for memory: under pressure or at
+// the buffer's bound it drops the newest event and counts it, leaving what is
+// already queued intact so a burst keeps the head that explains it.
 func (s *Sink) Admit(level zerolog.Level, module string, line []byte) {
 	size := int64(len(line))
-	if s.cfg.MaxEventBytes > 0 && size > s.cfg.MaxEventBytes {
-		// Truncating a JSON body would leave an unparseable record, so an
-		// oversized event is dropped whole.
+	if size > s.maxEventBytes {
 		s.drop(reasonOversizeEvent)
 		return
 	}
-	budget := s.budgetBytes()
-	if budget <= 0 {
-		// Zero is what the adaptive term reports when nothing is available. It
-		// means no budget, not an absent limit.
+	if s.underPressure() {
 		s.drop(reasonMemoryPressure)
 		return
 	}
 	cost := entryCost(size)
 	// Reserve before building, so two goroutines cannot both read the same
 	// total and both enqueue. Every failure path below returns the reservation.
-	if s.queued.Add(cost)+s.inFlight.Load() > budget {
+	if s.queued.Add(cost)+s.inFlight.Load() > s.maxBytes {
 		s.queued.Add(-cost)
-		s.drop(reasonMemoryPressure)
+		s.drop(reasonBufferFull)
 		return
 	}
 	req, err := s.build(level, module, line)

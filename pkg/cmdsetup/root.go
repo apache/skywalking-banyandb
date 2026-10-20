@@ -91,7 +91,7 @@ BanyanDB, as an observability database, aims to ingest, analyze and store Metric
 	// created per role would be attached several times over and the logger
 	// would admit into whichever was constructed last -- not the one whose
 	// consumer actually runs.
-	nativeLogSink = nativelog.NewSink(nativeLoggingConfig)
+	nativeLogSink = nativelog.NewSink()
 	crashOutputConfig.RegisterFlags(cmd.PersistentFlags())
 	cmd.AddCommand(newStandaloneCmd(runners...))
 	cmd.AddCommand(newDataCmd(runners...))

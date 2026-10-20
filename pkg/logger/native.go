@@ -23,7 +23,6 @@ import (
 	"io"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/spf13/pflag"
@@ -42,28 +41,17 @@ type NativeSink interface {
 
 // NativeLogging is the configuration of the native sink. It lives in the
 // --logging-native-* namespace, which inherits nothing from --logging-*.
+// Buffering, batching, write handling and memory bounds are not configured:
+// the native log service keeps them internal.
 type NativeLogging struct {
 	Level          string
 	ExcludeModules []string
 	// Modules and Levels override the native level per module, pairwise, the
 	// way --logging-modules and --logging-levels do for the console.
-	Modules       []string
-	Levels        []string
-	FlushInterval time.Duration
-	// WriteTimeout bounds one batch publish; DrainTimeout bounds the final
-	// drain at shutdown. The last publish of a drain may start just before the
-	// drain deadline, so shutdown can take up to their sum.
-	WriteTimeout time.Duration
-	DrainTimeout time.Duration
-	// MemoryFraction and MemoryReserve shape the adaptive budget where a memory
-	// protector runs: min(MaxBytes, MemoryFraction * (available - MemoryReserve)).
-	MemoryFraction float64
-	MemoryReserve  int64
-	MaxBytes       int64
-	MaxEventBytes  int64
-	FlushSize      int
-	TTLDays        uint32
-	Enabled        bool
+	Modules []string
+	Levels  []string
+	TTLDays uint32
+	Enabled bool
 }
 
 // NativeWriteModule names the logger of the native log service, and every
@@ -145,22 +133,6 @@ func RegisterNativeFlags(fs *pflag.FlagSet, cfg *NativeLogging) {
 		"the modules whose native level overrides --logging-native-level; an excluded module stays excluded")
 	fs.StringSliceVar(&cfg.Levels, "logging-native-levels", nil,
 		"the native level of each module in --logging-native-modules, one per module")
-	fs.DurationVar(&cfg.FlushInterval, "logging-native-flush-interval", time.Second,
-		"longest a buffered event waits before it is written")
-	fs.DurationVar(&cfg.WriteTimeout, "logging-native-write-timeout", 5*time.Second,
-		"time limit for one batch publish; a batch that exceeds it is dropped and counted")
-	fs.DurationVar(&cfg.DrainTimeout, "logging-native-drain-timeout", 5*time.Second,
-		"time limit for writing what is still buffered at shutdown; the last publish can add up to --logging-native-write-timeout")
-	fs.Float64Var(&cfg.MemoryFraction, "logging-native-memory-fraction", 0.02,
-		"fraction of available memory, after the reserve, that the buffer may use where a memory protector runs")
-	fs.Int64Var(&cfg.MemoryReserve, "logging-native-memory-reserve", 64<<20,
-		"bytes of available memory kept out of the buffer budget where a memory protector runs")
-	fs.IntVar(&cfg.FlushSize, "logging-native-flush-size", 100,
-		"buffered events that trigger a write ahead of the interval")
-	fs.Int64Var(&cfg.MaxBytes, "logging-native-max-bytes", 32<<20,
-		"configured cap on the buffer, in bytes")
-	fs.Int64Var(&cfg.MaxEventBytes, "logging-native-max-event-bytes", 64<<10,
-		"events larger than this are dropped whole rather than truncated")
 	fs.Uint32Var(&cfg.TTLDays, "logging-native-ttl-days", 7,
 		"retention of the _monitoring_log group in days, used when the group is created")
 }
@@ -207,37 +179,8 @@ func newNativeState(cfg NativeLogging) (*nativeState, error) {
 
 // validateNative checks the values that do not decide admission.
 func validateNative(cfg NativeLogging) error {
-	// Rejected here rather than at first use: a non-positive interval makes
-	// time.NewTicker panic inside the consumer, which would leave the feature
-	// enabled and the buffer permanently undrained.
-	if cfg.FlushInterval <= 0 {
-		return fmt.Errorf("logging-native-flush-interval must be positive, got %s", cfg.FlushInterval)
-	}
-	if cfg.FlushSize <= 0 {
-		return fmt.Errorf("logging-native-flush-size must be positive, got %d", cfg.FlushSize)
-	}
-	if cfg.MaxBytes <= 0 {
-		return fmt.Errorf("logging-native-max-bytes must be positive, got %d", cfg.MaxBytes)
-	}
-	if cfg.MaxEventBytes <= 0 {
-		return fmt.Errorf("logging-native-max-event-bytes must be positive, got %d", cfg.MaxEventBytes)
-	}
 	if cfg.TTLDays == 0 {
 		return fmt.Errorf("logging-native-ttl-days must be positive")
-	}
-	if cfg.WriteTimeout <= 0 {
-		return fmt.Errorf("logging-native-write-timeout must be positive, got %s", cfg.WriteTimeout)
-	}
-	if cfg.DrainTimeout <= 0 {
-		return fmt.Errorf("logging-native-drain-timeout must be positive, got %s", cfg.DrainTimeout)
-	}
-	// Zero would give the buffer no budget at all wherever a memory protector
-	// runs, which reads as a working feature that drops every event.
-	if cfg.MemoryFraction <= 0 || cfg.MemoryFraction > 1 {
-		return fmt.Errorf("logging-native-memory-fraction must be in (0, 1], got %g", cfg.MemoryFraction)
-	}
-	if cfg.MemoryReserve < 0 {
-		return fmt.Errorf("logging-native-memory-reserve must not be negative, got %d", cfg.MemoryReserve)
 	}
 	return nil
 }

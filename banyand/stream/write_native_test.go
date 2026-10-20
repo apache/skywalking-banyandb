@@ -68,10 +68,7 @@ func TestWriteCallbackKeepsNativeWritesOffNativeStorage(t *testing.T) {
 	defer restoreConsole()
 	if err := logger.Init(logger.Logging{
 		Env: "prod", Level: "warn",
-		Native: logger.NativeLogging{
-			Enabled: true, Level: "warn", FlushInterval: 1, FlushSize: 1, MaxBytes: 1 << 20, MaxEventBytes: 1 << 16,
-			TTLDays: 1, WriteTimeout: 1, DrainTimeout: 1, MemoryFraction: 0.1,
-		},
+		Native: logger.NativeLogging{Enabled: true, Level: "warn", TTLDays: 1},
 	}); err != nil {
 		t.Fatalf("Init: %v", err)
 	}

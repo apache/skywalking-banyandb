@@ -24,9 +24,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/rs/zerolog"
+	"github.com/spf13/pflag"
 )
 
 // recordingSink stands in for the real buffer. It records what was admitted so
@@ -64,33 +64,8 @@ func withNative(t *testing.T, cfg Logging, native NativeLogging) *recordingSink 
 	t.Helper()
 	sink := &recordingSink{}
 	detach := AttachNativeSink(sink)
-	if native.Enabled {
-		// Fill in the timing and sizing the validator requires, so a test only
-		// has to state the part it is about.
-		if native.FlushInterval == 0 {
-			native.FlushInterval = time.Second
-		}
-		if native.FlushSize == 0 {
-			native.FlushSize = 100
-		}
-		if native.MaxBytes == 0 {
-			native.MaxBytes = 1 << 20
-		}
-		if native.MaxEventBytes == 0 {
-			native.MaxEventBytes = 64 << 10
-		}
-		if native.TTLDays == 0 {
-			native.TTLDays = 7
-		}
-		if native.WriteTimeout == 0 {
-			native.WriteTimeout = 5 * time.Second
-		}
-		if native.DrainTimeout == 0 {
-			native.DrainTimeout = 5 * time.Second
-		}
-		if native.MemoryFraction == 0 {
-			native.MemoryFraction = 0.02
-		}
+	if native.Enabled && native.TTLDays == 0 {
+		native.TTLDays = 7
 	}
 	cfg.Native = native
 	if err := Init(cfg); err != nil {
@@ -437,16 +412,11 @@ func TestNativeOverrideCannotLiftAnExclusion(t *testing.T) {
 	}
 }
 
-// TestApplyNativeRejectsBadValues checks each new flag's validation. The base
-// configuration is valid, and each error must name the flag it is about, so a
-// case cannot pass by failing for some other reason.
+// TestApplyNativeRejectsBadValues checks the validation of each flag that is
+// left. The base configuration is valid, and each error must name the flag it
+// is about, so a case cannot pass by failing for some other reason.
 func TestApplyNativeRejectsBadValues(t *testing.T) {
-	base := NativeLogging{
-		Enabled: true, Level: "info", FlushInterval: time.Second, FlushSize: 100,
-		MaxBytes: 1 << 20, MaxEventBytes: 64 << 10, TTLDays: 7,
-		WriteTimeout: 5 * time.Second, DrainTimeout: 5 * time.Second,
-		MemoryFraction: 0.02, MemoryReserve: 64 << 20,
-	}
+	base := NativeLogging{Enabled: true, Level: "info", TTLDays: 7}
 	prev := nativeConfig.Load()
 	t.Cleanup(func() { nativeConfig.Store(prev) })
 	if err := applyNative(base); err != nil {
@@ -467,24 +437,8 @@ func TestApplyNativeRejectsBadValues(t *testing.T) {
 			mutate: func(c *NativeLogging) { c.Modules = []string{"measure"}; c.Levels = []string{"loud"} },
 		},
 		{
-			name: "zero fraction", flag: "logging-native-memory-fraction",
-			mutate: func(c *NativeLogging) { c.MemoryFraction = 0 },
-		},
-		{
-			name: "fraction above one", flag: "logging-native-memory-fraction",
-			mutate: func(c *NativeLogging) { c.MemoryFraction = 1.5 },
-		},
-		{
-			name: "negative reserve", flag: "logging-native-memory-reserve",
-			mutate: func(c *NativeLogging) { c.MemoryReserve = -1 },
-		},
-		{
-			name: "zero write timeout", flag: "logging-native-write-timeout",
-			mutate: func(c *NativeLogging) { c.WriteTimeout = 0 },
-		},
-		{
-			name: "zero drain timeout", flag: "logging-native-drain-timeout",
-			mutate: func(c *NativeLogging) { c.DrainTimeout = 0 },
+			name: "zero ttl", flag: "logging-native-ttl-days",
+			mutate: func(c *NativeLogging) { c.TTLDays = 0 },
 		},
 	}
 	for _, tt := range tests {
@@ -499,6 +453,22 @@ func TestApplyNativeRejectsBadValues(t *testing.T) {
 				t.Fatalf("rejected for the wrong reason: %v", err)
 			}
 		})
+	}
+}
+
+// TestOnlyTheKeptFlagsAreRegistered pins the public surface: buffering,
+// writing and memory are internal, so their flags must not come back.
+func TestOnlyTheKeptFlagsAreRegistered(t *testing.T) {
+	fs := pflag.NewFlagSet("native", pflag.ContinueOnError)
+	RegisterNativeFlags(fs, &NativeLogging{})
+	var got []string
+	fs.VisitAll(func(f *pflag.Flag) { got = append(got, f.Name) })
+	want := []string{
+		"logging-native-enabled", "logging-native-exclude-modules", "logging-native-level",
+		"logging-native-levels", "logging-native-modules", "logging-native-ttl-days",
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("native flags = %v, want %v", got, want)
 	}
 }
 
