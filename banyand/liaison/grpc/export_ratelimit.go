@@ -57,27 +57,32 @@ func (r *relayLimiter) open(bytesPerSecond uint64) (release func()) {
 	if bytesPerSecond > 0 {
 		limit, burst = rate.Limit(float64(bytesPerSecond)), int(min(bytesPerSecond, relayBurst))
 	}
-	r.limiter.SetLimit(limit)
-	r.limiter.SetBurst(burst)
+	r.setLocked(limit, burst)
 	return func() {
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		r.active--
 		if r.active == 0 {
-			r.limiter.SetLimit(rate.Inf)
-			r.limiter.SetBurst(relayBurst)
+			r.setLocked(rate.Inf, relayBurst)
 		}
 	}
 }
 
-// pieceSize is the largest piece of a chunk relayed at once: the current burst, shared by
-// the active relays, so that each of them still delivers a frame about every second.
-func (r *relayLimiter) pieceSize() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.pieceSizeLocked()
+// setLocked applies a rate and burst. The bucket keeps the bytes it holds, up to the new burst,
+// but drops a debt: the pieces that ran into it were paced by the old rate, and paying it back
+// at a lower one would hold every relay for the old piece size at the new rate.
+func (r *relayLimiter) setLocked(limit rate.Limit, burst int) {
+	now := time.Now()
+	keep := burst
+	if r.limiter.Limit() != rate.Inf {
+		keep = int(min(max(r.limiter.TokensAt(now), 0), float64(burst)))
+	}
+	r.limiter = rate.NewLimiter(limit, burst)
+	r.limiter.ReserveN(now, burst-keep)
 }
 
+// pieceSizeLocked is the largest piece of a chunk relayed at once: the current burst, shared
+// by the active relays, so that each of them still delivers a frame about every second.
 func (r *relayLimiter) pieceSizeLocked() int {
 	if r.limiter.Limit() == rate.Inf {
 		// Nothing waits: a chunk goes out whole, however many relays are active.
@@ -86,32 +91,30 @@ func (r *relayLimiter) pieceSizeLocked() int {
 	return max(1, r.limiter.Burst()/max(1, r.active))
 }
 
-// wait blocks until n bytes may pass, in steps no larger than one relay's share of the burst.
-// Every step is reserved under the lock open takes to change the rate, so a relay opening with
-// a lower rate never leaves a step larger than the burst. It returns the gRPC status of ctx
-// once ctx ends, giving the reserved bytes back.
-func (r *relayLimiter) wait(ctx context.Context, n int) error {
-	for n > 0 {
-		r.mu.Lock()
-		step := min(n, r.pieceSizeLocked())
-		reservation := r.limiter.ReserveN(time.Now(), step)
-		r.mu.Unlock()
-		if !reservation.OK() {
-			return status.Errorf(codes.Internal, "the relay rate refused %d bytes within its burst", step)
-		}
-		if delay := reservation.Delay(); delay > 0 {
-			timer := time.NewTimer(delay)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				reservation.Cancel()
-				return status.FromContextError(ctx.Err()).Err()
-			case <-timer.C:
-			}
-		} else if err := ctx.Err(); err != nil {
-			return status.FromContextError(err).Err()
-		}
-		n -= step
+// take blocks until the next step of n bytes may pass and returns its size: at most one relay's
+// share of the burst, sized and reserved under the lock open takes to change the rate, so a
+// relay opening with a lower rate never leaves a step larger than the burst and the caller sends
+// every step as soon as it passes. It returns the gRPC status of ctx once ctx ends, giving the
+// reserved bytes back.
+func (r *relayLimiter) take(ctx context.Context, n int) (int, error) {
+	r.mu.Lock()
+	step := min(n, r.pieceSizeLocked())
+	reservation := r.limiter.ReserveN(time.Now(), step)
+	r.mu.Unlock()
+	if !reservation.OK() {
+		return 0, status.Errorf(codes.Internal, "the relay rate refused %d bytes within its burst", step)
 	}
-	return nil
+	if delay := reservation.Delay(); delay > 0 {
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			reservation.Cancel()
+			return 0, status.FromContextError(ctx.Err()).Err()
+		case <-timer.C:
+		}
+	} else if err := ctx.Err(); err != nil {
+		return 0, status.FromContextError(err).Err()
+	}
+	return step, nil
 }

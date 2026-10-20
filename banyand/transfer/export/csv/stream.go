@@ -160,7 +160,7 @@ func produceStreamCSV(run *unitRun, unit *transferv1.SegmentUnit, segDir string)
 func writeStreamShard(run *unitRun, fw *fileWriter, shardDir string, resolver *dump.IndexResolver, layout *csvfmt.Layout,
 	fixed map[csvfmt.ColumnKind]int, resources map[string]*streamResource,
 ) error {
-	partIDs, err := LivePartIDs(shardDir)
+	partIDs, err := SessionPartIDs(shardDir)
 	if err != nil {
 		return readError("list parts of "+shardDir, err)
 	}

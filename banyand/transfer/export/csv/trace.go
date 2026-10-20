@@ -190,7 +190,7 @@ func produceTraceCSV(run *unitRun, unit *transferv1.SegmentUnit, segDir string) 
 func writeTraceShard(run *unitRun, fw *fileWriter, shardDir string, layout *csvfmt.Layout, fixed map[csvfmt.ColumnKind]int,
 	resolver *traceResolver,
 ) error {
-	partIDs, err := LivePartIDs(shardDir)
+	partIDs, err := SessionPartIDs(shardDir)
 	if err != nil {
 		return readError("list parts of "+shardDir, err)
 	}

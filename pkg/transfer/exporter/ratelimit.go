@@ -32,8 +32,10 @@ func rateLimitProto(bytesPerSecond, rowsPerSecond float64) *transferv1.RateLimit
 	}
 }
 
-// perSecond rounds a normalized per-second rate to the wire value; 0 is no limit.
-func perSecond(rate float64) uint64 { return uint64(math.Round(rate)) }
+// perSecond rounds a normalized per-second rate down to the wire value, so the limit sent never
+// exceeds the one configured; 0 is no limit, and the configuration rejects a non-zero rate below
+// 1 per second.
+func perSecond(rate float64) uint64 { return uint64(math.Floor(rate)) }
 
 // idleTimer fires when no frame was received for its duration (--node-idle-timeout). The
 // caller pauses it only while it backs off before reopening a refused stream. A zero duration

@@ -180,9 +180,9 @@ func TestMeasureCSV_EmptyUnit(t *testing.T) {
 	require.NoError(t, os.Mkdir(filepath.Join(segDir, shardDirPrefix+"0"), 0o700))
 	run, sent = recordingRun(repo)
 	unit.ShardIds = []uint32{0}
-	require.NoError(t, produceMeasureCSV(run, unit, segDir, nil))
+	err := produceMeasureCSV(run, unit, segDir, nil)
+	require.Equal(t, codes.FailedPrecondition, status.Code(err), "a requested shard without a snapshot lost data: %v", err)
 	require.Empty(t, *sent)
-	require.Equal(t, []string{"unit has no rows"}, run.finish(true))
 }
 
 func TestMeasureCSV_IndexModeNeedsTheReader(t *testing.T) {

@@ -208,7 +208,7 @@ Flags of `data export`:
 Rates take `<quantity>[/<period>]` with the period `s` (the default), `min` or `h`; `m` is refused as ambiguous. A byte rate takes bare
 bytes or a size unit (`50MiB/s`, `3GiB/min`), a row rate a plain integer (`50000/s`, `3000000/min`). A negative rate, a byte unit on a
 row rate, or a non-zero rate below one per second (or below one byte) is a usage error. Nodes enforce rates in whole units per second,
-so a `/min` or `/h` row rate is rounded to the nearest whole number of rows per second. When any rate is set, the client prints them
+so a `/min` or `/h` row rate is rounded down to a whole number of rows per second and never runs above the configured one (`90/min` runs at 1 row per second). When any rate is set, the client prints them
 once before the streams start.
 
 The node streams of a real export have no overall deadline: their progress is bounded by `--node-idle-timeout`, the longest a node

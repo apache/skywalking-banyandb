@@ -777,33 +777,34 @@ func (s *exportService) Export(stream transferv1.ExportService_ExportServer) err
 	}
 }
 
-// relayChunk forwards a chunk once the relay bucket lets its bytes through; ctx ends the
-// wait with the relay. A chunk larger
-// than the bucket's burst goes out in pieces of the burst, each carrying the chunk's rows,
-// so the client keeps receiving frames at a low rate; the bytes and their order are kept.
+// relayChunk forwards a chunk as the relay bucket lets its bytes through; ctx ends the wait
+// with the relay. A chunk the bucket passes in one step goes out as it is; a larger one goes out
+// in pieces, each sent as soon as its step passes and carrying the chunk's rows, so the client
+// keeps receiving frames at a low rate, even one lowered while the chunk is relayed; the bytes
+// and their order are kept.
 func (s *exportService) relayChunk(ctx context.Context, stream transferv1.ExportService_ExportServer,
 	frame *transferv1.ExportResponse, chunk *transferv1.DataChunk,
 ) error {
 	content := chunk.GetContent()
-	piece := s.relayRate.pieceSize()
-	if len(content) <= piece {
-		if err := s.relayRate.wait(ctx, len(content)); err != nil {
-			return err
-		}
+	n, err := s.relayRate.take(ctx, len(content))
+	if err != nil {
+		return err
+	}
+	if n == len(content) {
 		return stream.Send(frame)
 	}
-	for len(content) > 0 {
-		n := min(piece, len(content))
-		if err := s.relayRate.wait(ctx, n); err != nil {
-			return err
-		}
+	for {
 		part := &transferv1.ExportResponse{Frame: &transferv1.ExportResponse_Chunk{Chunk: &transferv1.DataChunk{Content: content[:n], Rows: chunk.GetRows()}}}
-		if err := stream.Send(part); err != nil {
+		if err = stream.Send(part); err != nil {
 			return err
 		}
-		content = content[n:]
+		if content = content[n:]; len(content) == 0 {
+			return nil
+		}
+		if n, err = s.relayRate.take(ctx, len(content)); err != nil {
+			return err
+		}
 	}
-	return nil
 }
 
 // relayToNode forwards every client frame after init to the node and the client's half-close

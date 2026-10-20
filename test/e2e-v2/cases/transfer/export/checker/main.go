@@ -362,7 +362,7 @@ func checkCatalog(dir string, m *manifest.Manifest, catalog commonv1.Catalog, li
 	mismatches := storedCountMismatches(catalog, sets, results)
 	counted := liaison != "" && catalog == commonv1.Catalog_CATALOG_MEASURE
 	if counted {
-		mismatches = append(mismatches, queryCountMismatches(liaison, dir, results)...)
+		mismatches = append(mismatches, queryCountMismatches(liaison, dir, m, results)...)
 	}
 	if len(mismatches) > 0 {
 		failed = true

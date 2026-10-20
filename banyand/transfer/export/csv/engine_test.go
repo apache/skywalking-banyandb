@@ -405,7 +405,12 @@ func produceAll(t *testing.T, meta metadata.Repo, groups []engineGroup, name str
 				if id, ok := strings.CutPrefix(sh.Name(), shardDirPrefix); ok && sh.IsDir() {
 					n, parseErr := strconv.ParseUint(id, 10, 32)
 					require.NoError(t, parseErr)
-					unit.ShardIds = append(unit.ShardIds, uint32(n))
+					// The Plan names only the shards holding parts.
+					partIDs, partsErr := LivePartIDs(filepath.Join(segDir, sh.Name()))
+					require.NoError(t, partsErr)
+					if len(partIDs) > 0 {
+						unit.ShardIds = append(unit.ShardIds, uint32(n))
+					}
 				}
 			}
 			var sent []*transferv1.ExportResponse

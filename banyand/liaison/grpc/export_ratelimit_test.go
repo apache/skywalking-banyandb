@@ -31,6 +31,25 @@ import (
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 )
 
+// pieceSize is the size of the next piece a relay would take.
+func (r *relayLimiter) pieceSize() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.pieceSizeLocked()
+}
+
+// wait takes n bytes step by step, as a relayed chunk does.
+func (r *relayLimiter) wait(ctx context.Context, n int) error {
+	for n > 0 {
+		step, err := r.take(ctx, n)
+		if err != nil {
+			return err
+		}
+		n -= step
+	}
+	return nil
+}
+
 // gatedChunkNode answers init with ready and, once gate is closed, one chunk per size whose
 // byte i is byte(i).
 type gatedChunkNode struct {
@@ -266,4 +285,67 @@ func TestRelayLimiter_CanceledWaitGivesItsReservationBack(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 2500*time.Millisecond {
 		t.Fatalf("the wait after canceled ones took %v, want about 1s", elapsed)
 	}
+}
+
+// A relay opening with a lower rate while another relay is in the middle of a chunk shrinks
+// that relay's next pieces right away: it keeps receiving a frame about every second instead
+// of waiting until the piece sized for the old rate has passed at the new one.
+func TestExportRelay_LowerRateMidChunkKeepsDeliveringPieces(t *testing.T) {
+	const fast, slow = 64 << 10, 1 << 10
+	gate := make(chan struct{})
+	close(gate)
+	nodeA := &gatedChunkNode{gate: gate, exited: make(chan struct{}), sizes: []int{1 << 20}, rows: 1}
+	nodeB := &gatedChunkNode{gate: make(chan struct{}), exited: make(chan struct{}), sizes: []int{16}, rows: 1}
+	svc, client := newExportRelayService(t, map[string]transferv1.ExportServiceServer{testNodeA: nodeA, testNodeB: nodeB}, fanOutExtras{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	open := func(node string, bytesPerSecond uint64) transferv1.ExportService_ExportClient {
+		stream, err := client.Export(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = stream.Send(rateInit(node, bytesPerSecond)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = stream.Recv(); err != nil {
+			t.Fatal(err)
+		}
+		return stream
+	}
+	streamA := open(testNodeA, fast)
+	// The full bucket passes the first fast piece at once.
+	frame, err := streamA.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(frame.GetChunk().GetContent()); got != fast {
+		t.Fatalf("the first piece holds %d bytes, want %d", got, fast)
+	}
+	open(testNodeB, slow)
+	waitRelayRate(t, svc.relayRate, slow)
+	// At the slow rate a fast piece would take a minute. The piece already reserved at the fast
+	// rate passes; every piece after it is a share of the slow burst and arrives within about
+	// a second.
+	small := 0
+	for i := 0; small < 2; i++ {
+		if i == 4 {
+			t.Fatalf("got no two pieces of the slow burst within %d pieces", i)
+		}
+		start := time.Now()
+		if frame, err = streamA.Recv(); err != nil {
+			t.Fatal(err)
+		}
+		if elapsed := time.Since(start); elapsed > 5*time.Second {
+			t.Fatalf("piece %d after the rate dropped took %v, want about a second", i, elapsed)
+		}
+		switch got := len(frame.GetChunk().GetContent()); {
+		case got <= slow/2:
+			small++
+		case small > 0 || got > fast:
+			t.Fatalf("piece %d after the rate dropped holds %d bytes, want at most the shared slow burst %d", i, got, slow/2)
+		}
+	}
+	cancel()
+	waitClosed(t, nodeA.exited, "node a's handler must end")
+	waitClosed(t, nodeB.exited, "node b's handler must end")
 }

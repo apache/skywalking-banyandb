@@ -2119,7 +2119,10 @@ func rateInit(target string, bytesPerSecond uint64) *transferv1.ExportRequest {
 
 func assertRelayRate(t *testing.T, r *relayLimiter, wantLimit rate.Limit) {
 	t.Helper()
-	if limit := r.limiter.Limit(); limit != wantLimit {
+	r.mu.Lock()
+	limit := r.limiter.Limit()
+	r.mu.Unlock()
+	if limit != wantLimit {
 		t.Fatalf("got limit %v, want limit %v", limit, wantLimit)
 	}
 }
@@ -2363,7 +2366,9 @@ func waitRelayRate(t *testing.T, r *relayLimiter, wantLimit rate.Limit) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
+		r.mu.Lock()
 		limit := r.limiter.Limit()
+		r.mu.Unlock()
 		if limit == wantLimit {
 			return
 		}

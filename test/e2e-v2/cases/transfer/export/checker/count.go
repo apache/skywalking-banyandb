@@ -41,10 +41,10 @@ import (
 // countQueryTimeout bounds one count query.
 const countQueryTimeout = time.Minute
 
-// unitRows are the rows a unit exported for one resource and the span of their timestamps.
+// unitRows are the rows a unit exported for one resource and the latest of their timestamps.
 type unitRows struct {
-	n            uint64
-	minTS, maxTS int64
+	n     uint64
+	maxTS int64
 }
 
 // track counts an exported row of a resource in its unit; a row without a valid time was
@@ -61,21 +61,23 @@ func (g *groupResult) track(u *manifest.Unit, resource, tsCell string) {
 	}
 	r := byResource[resource]
 	if r == nil {
-		r = &unitRows{minTS: math.MaxInt64, maxTS: math.MinInt64}
+		r = &unitRows{maxTS: math.MinInt64}
 		byResource[resource] = r
 	}
 	r.n++
-	r.minTS, r.maxTS = min(r.minTS, ts), max(r.maxTS, ts)
+	r.maxTS = max(r.maxTS, ts)
 }
 
 // queryCountMismatches asks the cluster, through the liaison at addr, how many points every
 // measure of every exported unit holds, with a COUNT over the measure's first entity tag (set
 // on every point) in the unit's stage and time range, and compares it with the rows exported.
 // A query answers the latest version of a point, as the export writes it, so the two are
-// equal. An index-mode unit records no time range and is counted over its rows' span. The
-// manifest's time range is that of the data the snapshot held, so points written later at the
-// current time stay out of it.
-func queryCountMismatches(addr, dir string, results map[string]*groupResult) []string {
+// equal. The manifest's time range is that of the data the snapshot held, so points written
+// later at the current time stay out of it. An index-mode unit records no time range: it is
+// counted from the start of its segment, so a point missing before the first exported one is
+// found, to its last exported point, so points written after the snapshot stay out; a missing
+// point after the last exported one is not found.
+func queryCountMismatches(addr, dir string, m *manifest.Manifest, results map[string]*groupResult) []string {
 	measures, err := readSchema(dir, schemasync.KindMeasure, func() *databasev1.Measure { return &databasev1.Measure{} })
 	if err != nil {
 		return []string{"read the measure schema: " + err.Error()}
@@ -102,7 +104,12 @@ func queryCountMismatches(addr, dir string, results map[string]*groupResult) []s
 				label := fmt.Sprintf("measure %s/%s segment %s stage %s", group, resource, u.Segment, u.Stage)
 				begin, end := u.MinTimestamp, u.MaxTimestamp
 				if end == 0 {
-					begin, end = rows.minTS, rows.maxTS
+					start, startErr := segmentStart(m, u)
+					if startErr != nil {
+						out = append(out, fmt.Sprintf("%s: %v", label, startErr))
+						continue
+					}
+					begin, end = start, rows.maxTS
 				}
 				count, countErr := countPoints(client, specs[group+"/"+resource], group, resource, u.Stage, begin, end)
 				if countErr != nil {
@@ -162,4 +169,31 @@ func countPoints(client measurev1.MeasureServiceClient, spec *databasev1.Measure
 		}
 	}
 	return 0, nil
+}
+
+// segmentStart is the start of a unit's segment in nanoseconds: its directory suffix is the
+// day (yyyyMMdd) or hour (yyyyMMddHH) it starts at in the time zone of its source node.
+func segmentStart(m *manifest.Manifest, u *manifest.Unit) (int64, error) {
+	if len(u.Sources) == 0 {
+		return 0, fmt.Errorf("segment %s has no source node", u.Segment)
+	}
+	var zone string
+	for _, n := range m.Source.Nodes {
+		if n.ID == u.Sources[0].Node {
+			zone = n.Timezone
+		}
+	}
+	loc, err := time.LoadLocation(zone)
+	if err != nil {
+		return 0, fmt.Errorf("time zone %q of %s: %w", zone, u.Sources[0].Node, err)
+	}
+	layout := "20060102"
+	if len(u.Segment) == len("2006010215") {
+		layout = "2006010215"
+	}
+	start, err := time.ParseInLocation(layout, u.Segment, loc)
+	if err != nil {
+		return 0, fmt.Errorf("segment %s: %w", u.Segment, err)
+	}
+	return start.UnixNano(), nil
 }

@@ -20,6 +20,7 @@ package csv
 import (
 	"errors"
 	"fmt"
+	iofs "io/fs"
 	"path/filepath"
 
 	"google.golang.org/grpc/codes"
@@ -89,7 +90,9 @@ func writePropertyShard(run *unitRun, fw *fileWriter, shardDir string, layout *c
 	generation, err := native.OpenReadOnlyGeneration(shardDir)
 	if err != nil {
 		if errors.Is(err, native.ErrNoSnapshot) {
-			return nil // a shard that never committed holds no property
+			// The session's snapshot publishes a manifest for every shard, an empty one
+			// included, so a missing manifest is a lost snapshot, not an empty shard.
+			err = fmt.Errorf("%w: %w", iofs.ErrNotExist, err)
 		}
 		return readError("open the property index of "+shardDir, err)
 	}

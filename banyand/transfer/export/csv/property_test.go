@@ -56,7 +56,7 @@ func newPropertyShardWriter(t *testing.T) (*propertyShardWriter, *fileWriter) {
 	idx, ok := layout.TagIndex("ui", "", "k")
 	require.True(t, ok)
 	return &propertyShardWriter{
-		run: run, fw: fw, shardDir: "/data/property/g/shard-0", fixed: fixedColumns(layout),
+		run: run, fw: fw, layout: layout, shardDir: "/data/property/g/shard-0", fixed: fixedColumns(layout),
 		resources: map[string]map[string]int{"ui": {"k": idx}}, cells: layout.NewRow(),
 	}, fw
 }
@@ -87,4 +87,13 @@ func TestPropertyCSV_DeleteTimeCells(t *testing.T) {
 	require.Equal(t, csvfmt.EncodeTimestamp(42), pw.cells[pw.fixed[csvfmt.KindDeleteTime]])
 	require.NoError(t, fw.close())
 	require.Equal(t, uint64(2), fw.w.Rows())
+}
+
+// Every shard of a session's snapshot has a manifest, an empty shard included, so a shard
+// without one lost its snapshot: the unit fails instead of exporting no property.
+func TestPropertyCSV_MissingShardManifestFailsTheUnit(t *testing.T) {
+	pw, fw := newPropertyShardWriter(t)
+	err := writePropertyShard(pw.run, fw, t.TempDir(), pw.layout, pw.fixed, pw.resources)
+	require.Equal(t, codes.FailedPrecondition, status.Code(err), err)
+	require.Equal(t, uint64(0), fw.w.Rows())
 }

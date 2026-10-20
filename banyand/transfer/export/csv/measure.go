@@ -270,7 +270,7 @@ func produceMeasureCSV(run *unitRun, unit *transferv1.SegmentUnit, segDir string
 // is open at once, with its block metadata and its rows of the current series, so memory grows
 // with the number of parts and the length of a series.
 func writeMeasureShard(run *unitRun, fw *fileWriter, shardDir string, resolver *dump.IndexResolver, g *measureGroup) error {
-	partIDs, err := LivePartIDs(shardDir)
+	partIDs, err := SessionPartIDs(shardDir)
 	if err != nil {
 		return readError("list parts of "+shardDir, err)
 	}

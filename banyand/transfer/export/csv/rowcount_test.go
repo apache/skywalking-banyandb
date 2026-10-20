@@ -196,10 +196,13 @@ func produceCounted(t *testing.T, meta metadata.Repo, g engineGroup, name string
 			}
 			n, parseErr := strconv.ParseUint(id, 10, 32)
 			require.NoError(t, parseErr)
-			unit.ShardIds = append(unit.ShardIds, uint32(n))
 			shardDir := filepath.Join(segDir, sh.Name())
 			partIDs, partsErr := LivePartIDs(shardDir)
 			require.NoError(t, partsErr)
+			// The Plan names only the shards holding parts.
+			if len(partIDs) > 0 {
+				unit.ShardIds = append(unit.ShardIds, uint32(n))
+			}
 			for _, partID := range partIDs {
 				pm, metaErr := reader.ReadPartMetadata(filepath.Join(shardDir, fmt.Sprintf("%016x", partID)))
 				require.NoError(t, metaErr)

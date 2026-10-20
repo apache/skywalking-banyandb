@@ -53,13 +53,51 @@ func LivePartIDs(shardDir string) ([]uint64, error) {
 	return ids, err
 }
 
-// CountLiveParts adds up the live parts of the given shards of the segment at segDir. A
-// shard that vanished means the session was preempted or released (FailedPrecondition).
+// SessionPartIDs returns the sorted ids of the parts an export session's snapshot holds in
+// shardDir: the parts its newest snapshot file names that are on disk. The snapshot file also
+// names the in-memory parts of the table, which the snapshot does not hold, so a named part
+// missing on disk is skipped. The session's snapshot does not change while the session holds
+// it, and a unit names only shards holding parts, so a missing or unreadable snapshot file or a
+// snapshot holding no part means the snapshot lost data: the error wraps fs.ErrNotExist for a
+// missing snapshot file or part.
+func SessionPartIDs(shardDir string) ([]uint64, error) {
+	snapshots, err := snapshotFiles(shardDir)
+	if err != nil {
+		return nil, err
+	}
+	if len(snapshots) == 0 {
+		return nil, fmt.Errorf("no snapshot file in %s: %w", shardDir, iofs.ErrNotExist)
+	}
+	newest := filepath.Join(shardDir, snapshots[len(snapshots)-1])
+	names, err := storage.ReadSnapshotPartNames(fs.NewLocalFileSystem(), newest)
+	if err != nil {
+		return nil, fmt.Errorf("read snapshot %s: %w", newest, err)
+	}
+	onDisk, err := dump.DiscoverPartIDs(shardDir)
+	if err != nil {
+		return nil, err
+	}
+	var ids []uint64
+	for _, name := range names {
+		if id, parseErr := strconv.ParseUint(name, 16, 64); parseErr == nil && slices.Contains(onDisk, id) {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("snapshot %s holds no part: %w", newest, iofs.ErrNotExist)
+	}
+	slices.Sort(ids)
+	return ids, nil
+}
+
+// CountLiveParts adds up the parts of the given shards of the segment at segDir in an export
+// session's snapshot. A shard that lost its snapshot or a part means the session was preempted
+// or released (FailedPrecondition).
 func CountLiveParts(segDir string, shards []uint32) (uint32, error) {
 	var parts uint32
 	for _, shard := range shards {
 		shardDir := filepath.Join(segDir, fmt.Sprintf("%s%d", shardDirPrefix, shard))
-		ids, err := LivePartIDs(shardDir)
+		ids, err := SessionPartIDs(shardDir)
 		if err != nil {
 			return 0, readError("list parts of "+shardDir, err)
 		}
@@ -75,20 +113,10 @@ func livePartIDs(shardDir string) (ids []uint64, replaced bool, err error) {
 	if err != nil || len(ids) == 0 {
 		return nil, false, err
 	}
-	entries, err := os.ReadDir(shardDir)
+	snapshots, err := snapshotFiles(shardDir)
 	if err != nil {
 		return nil, false, err
 	}
-	var snapshots []string
-	for _, e := range entries {
-		if name := e.Name(); !e.IsDir() && strings.HasSuffix(name, snapshotSuffix) {
-			if _, parseErr := strconv.ParseUint(strings.TrimSuffix(name, snapshotSuffix), 16, 64); parseErr == nil {
-				snapshots = append(snapshots, name)
-			}
-		}
-	}
-	// Snapshot names are fixed-width hex epochs, so the newest sorts last.
-	slices.Sort(snapshots)
 	lfs := fs.NewLocalFileSystem()
 	var unreadable error
 	for i := len(snapshots) - 1; i >= 0; i-- {
@@ -119,4 +147,23 @@ func livePartIDs(shardDir string) (ids []uint64, replaced bool, err error) {
 		return nil, false, fmt.Errorf("no readable snapshot in %s: %w", shardDir, unreadable)
 	}
 	return nil, replaced, nil
+}
+
+// snapshotFiles returns the names of the snapshot files in shardDir, oldest first: their names
+// are fixed-width hex epochs, so the newest sorts last.
+func snapshotFiles(shardDir string) ([]string, error) {
+	entries, err := os.ReadDir(shardDir)
+	if err != nil {
+		return nil, err
+	}
+	var snapshots []string
+	for _, e := range entries {
+		if name := e.Name(); !e.IsDir() && strings.HasSuffix(name, snapshotSuffix) {
+			if _, parseErr := strconv.ParseUint(strings.TrimSuffix(name, snapshotSuffix), 16, 64); parseErr == nil {
+				snapshots = append(snapshots, name)
+			}
+		}
+	}
+	slices.Sort(snapshots)
+	return snapshots, nil
 }

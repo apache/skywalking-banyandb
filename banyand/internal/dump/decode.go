@@ -51,9 +51,6 @@ func ReadTagValues(decoder *encoding.BytesBlockDecoder, offset, size uint64, cou
 	return values, nil
 }
 
-// DecodeTagValue converts a byte-encoded tag value back to a typed
-// modelv1.TagValue. valueType selects the decoding; the returned value is
-// self-contained (string / binary contents are copied), so it may be retained
 // FitsValueType reports whether stored bytes decode as valueType: an int64 or a timestamp,
 // and every element of an int64 array, takes eight bytes. A value written with another type,
 // before a schema change, would otherwise decode to garbage or not at all.
@@ -74,6 +71,9 @@ func FitsValueType(valueType pbv1.ValueType, value []byte, valueArr [][]byte) bo
 	}
 }
 
+// DecodeTagValue converts a byte-encoded tag value back to a typed
+// modelv1.TagValue. valueType selects the decoding; the returned value is
+// self-contained (string / binary contents are copied), so it may be retained
 // past the next Iterator.Next()/Close().
 func DecodeTagValue(valueType pbv1.ValueType, value []byte, valueArr [][]byte) *modelv1.TagValue {
 	if value == nil && valueArr == nil {
