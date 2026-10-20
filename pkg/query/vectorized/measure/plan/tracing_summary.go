@@ -270,16 +270,24 @@ func percentileIdx(n, p int) int {
 // probe decode: the real decode happens inside ReduceRawFrames /
 // mergeDistributedRows; here we only measure the decode cost for tracing
 // purposes and discard the decoded batches immediately.
-// Empty bodies are skipped (consistent with ReduceRawFrames behavior).
-func collectFrameDecodeDurations(frames [][]byte) []time.Duration {
+// Empty bodies are skipped (consistent with ReduceRawFrames behavior). Only a
+// traced query reports the durations, so an untraced one skips the probe and
+// decodes each frame once.
+func collectFrameDecodeDurations(ctx context.Context, frames [][]byte) []time.Duration {
+	if query.GetTracer(ctx) == nil {
+		return nil
+	}
 	durations := make([]time.Duration, 0, len(frames))
 	for _, body := range frames {
 		if len(body) == 0 {
 			continue
 		}
 		start := time.Now()
-		_, _ = frame.Decode(body)
+		probe, _ := frame.Decode(body)
 		durations = append(durations, time.Since(start))
+		if probe != nil {
+			probe.ReleaseOwners()
+		}
 	}
 	return durations
 }

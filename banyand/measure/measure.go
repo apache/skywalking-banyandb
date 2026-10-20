@@ -21,9 +21,6 @@
 package measure
 
 import (
-	"errors"
-	"fmt"
-	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -86,6 +83,7 @@ type measure struct {
 	tsdb         atomic.Value
 	c            storage.Cache
 	pm           protector.Memory
+	decodePool   *decodePool
 	l            *logger.Logger
 	schema       *databasev1.Measure
 	schemaRepo   *schemaRepo
@@ -128,6 +126,8 @@ func (m *measure) parseSpec() (err error) {
 
 type measureSpec struct {
 	schema *databasev1.Measure
+	// decodePool is the node's decode pool; nil decodes scans inline.
+	decodePool *decodePool
 }
 
 type queryMetrics struct {
@@ -136,6 +136,29 @@ type queryMetrics struct {
 	resultPoints             meter.Histogram
 	totalQueryResultStarted  meter.Counter
 	totalQueryResultFinished meter.Counter
+	// Series-window scan (scan path v2): how many series windows a query scanned
+	// and how many of them, by block metadata, had blocks that overlap in time.
+	// The segment counters split the scan's segments into the zero-copy fast path
+	// (one block) and the row merge (two or more overlapping blocks), which is
+	// the number that says whether overlap is rare on a real cluster.
+	scanWindows           meter.Counter
+	scanWindowsOverlapped meter.Counter
+	scanSegmentsFast      meter.Counter
+	scanSegmentsOverlap   meter.Counter
+	// Time-ordered merge (scan path v2 step 4c): the rows and cursors the merge
+	// handled and, per merge, the most cursors it held decoded at once, which is
+	// what bounds the scan's memory.
+	scanMergeRows     meter.Counter
+	scanMergeCursors  meter.Counter
+	scanMergePeakLive meter.Histogram
+	// Decode pool and reservations (scan path v2 step 4b): the most decodes a scan had
+	// requested ahead of the one it was consuming, how long a decode waited in the
+	// node's queue, and how often prefetch waited for room in the query's memory
+	// budget or the cursor the scan needed could not be reserved.
+	scanPrefetchDepth       meter.Histogram
+	scanDecodeQueueWait     meter.Histogram
+	scanReservationsWaiting meter.Counter
+	scanReservationsFailed  meter.Counter
 }
 
 func newQueryMetrics(factory observability.Factory) *queryMetrics {
@@ -148,6 +171,18 @@ func newQueryMetrics(factory observability.Factory) *queryMetrics {
 		resultPoints:             factory.NewHistogram("result_points", meter.DefBuckets),
 		totalQueryResultStarted:  factory.NewCounter("total_query_result_started"),
 		totalQueryResultFinished: factory.NewCounter("total_query_result_finished"),
+		scanWindows:              factory.NewCounter("total_scan_windows"),
+		scanWindowsOverlapped:    factory.NewCounter("total_scan_windows_overlapped"),
+		scanSegmentsFast:         factory.NewCounter("total_scan_segments_fast"),
+		scanSegmentsOverlap:      factory.NewCounter("total_scan_segments_overlap"),
+		scanMergeRows:            factory.NewCounter("total_scan_merge_rows"),
+		scanMergeCursors:         factory.NewCounter("total_scan_merge_cursors"),
+		scanMergePeakLive:        factory.NewHistogram("scan_merge_peak_live_cursors", meter.DefBuckets),
+		scanPrefetchDepth:        factory.NewHistogram("scan_prefetch_depth", meter.Buckets{1, 2, 3, 4, 6, 8, 12, 16, 24, 32}),
+		scanDecodeQueueWait: factory.NewHistogram("scan_decode_queue_wait_seconds",
+			meter.Buckets{.0001, .0005, .001, .005, .01, .025, .05, .1, .25, .5, 1}),
+		scanReservationsWaiting: factory.NewCounter("total_scan_reservations_waiting"),
+		scanReservationsFailed:  factory.NewCounter("total_scan_reservations_failed"),
 	}
 }
 
@@ -160,6 +195,7 @@ func openMeasure(spec measureSpec,
 		l:            l,
 		c:            c,
 		pm:           pm,
+		decodePool:   spec.decodePool,
 		schemaRepo:   schemaRepo,
 		queryMetrics: qm,
 		vectorized:   vectorized,
@@ -177,35 +213,10 @@ func (m *measure) VectorizedConfig() vmeasure.VectorizedConfig {
 	return m.vectorized
 }
 
-// removedRowQueryFlag accepts --<engine>-vectorized-enabled=true as a no-op and
-// rejects =false, so an operator whose rollback command line survived the
-// upgrade gets a message naming the issue instead of "unknown flag". The flag
-// is removed entirely in 0.13.0.
-type removedRowQueryFlag string
-
-func (f *removedRowQueryFlag) Set(value string) error {
-	parsed, parseErr := strconv.ParseBool(value)
-	if parseErr != nil {
-		return fmt.Errorf("invalid boolean value %q: %w", value, parseErr)
-	}
-	if !parsed {
-		return errors.New("row-based query was removed in 0.12.0, see apache/skywalking#13998")
-	}
-	*f = removedRowQueryFlag(value)
-	return nil
-}
-
-func (f *removedRowQueryFlag) String() string { return string(*f) }
-
-func (*removedRowQueryFlag) Type() string { return "bool" }
-
 // bindVectorizedFlags wires VectorizedConfig fields to a run.FlagSet. The
 // defaults match vmeasure.DefaultConfig.
 func bindVectorizedFlags(flagS *run.FlagSet, cfg *vmeasure.VectorizedConfig) {
 	defaults := vmeasure.DefaultConfig()
-	removed := removedRowQueryFlag("true")
-	flagS.Var(&removed, "measure-vectorized-enabled", "deprecated no-op; removed in 0.13.0")
-	flagS.Lookup("measure-vectorized-enabled").NoOptDefVal = "true"
 	flagS.IntVar(&cfg.BatchSize, "measure-vectorized-batch-size", defaults.BatchSize,
 		"row count per vectorized batch")
 	flagS.IntVar(&cfg.QueryMemoryMiB, "measure-vectorized-query-memory-mib", defaults.QueryMemoryMiB,

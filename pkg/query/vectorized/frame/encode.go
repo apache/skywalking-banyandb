@@ -69,6 +69,11 @@ func (c Codec) Encode(b *vectorized.RecordBatch) ([]byte, error) {
 		buf = append(buf, def.TagFamily...)
 
 		col := b.Columns[colIdx]
+		if constCol, isConst := col.(*vectorized.ConstColumn); isConst {
+			// The row-oriented layout has no constant column (the columnar one, see
+			// EncodeColumnar, does); expand it to the typed column it stands for.
+			col = constCol.Expand()
+		}
 		buf = appendValidityBitmap(buf, col, active)
 		var dataErr error
 		buf, dataErr = appendColumnData(buf, col, def.Type, active)

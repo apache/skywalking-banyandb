@@ -60,4 +60,9 @@
 //   - Bytes:      Same shape as String, opaque bytes.
 //   - TagValue:   For each row: uvarint(len) + proto.Marshal(*TagValue) bytes.
 //   - FieldValue: For each row: uvarint(len) + proto.Marshal(*FieldValue) bytes.
+//
+// A codec may also carry the columnar layout (Codec.ColumnarWireVersion), which shares the
+// magic and the header prefix but lays each column out as Arrow-compatible buffers a receiver
+// slices instead of copying; its byte layout is described in columnar.go. The two layouts are
+// told apart by the version byte.
 package frame

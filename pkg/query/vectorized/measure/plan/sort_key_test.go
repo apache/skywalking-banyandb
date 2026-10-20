@@ -22,6 +22,8 @@ import (
 	"math"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
@@ -152,5 +154,29 @@ func TestEncodeSortKey_UnsupportedType(t *testing.T) {
 	col.Append([]int64{1, 2, 3})
 	if _, err := encodeSortKey(col, 0); err == nil {
 		t.Fatal("encodeSortKey on []int64 column must error")
+	}
+}
+
+func TestEncodeSortKeyConstColumn(t *testing.T) {
+	cases := map[string]struct {
+		constCol *vectorized.ConstColumn
+		typed    vectorized.Column
+	}{
+		"int":    {vectorized.NewConstInt64(-5, 3), func() vectorized.Column { c := vectorized.NewInt64Column(3); c.Append(-5); return c }()},
+		"float":  {vectorized.NewConstFloat64(2.5, 3), func() vectorized.Column { c := vectorized.NewFloat64Column(3); c.Append(2.5); return c }()},
+		"string": {vectorized.NewConstString("svc", 3), func() vectorized.Column { c := vectorized.NewStringColumn(3); c.Append("svc"); return c }()},
+		"bytes":  {vectorized.NewConstBytes([]byte{1, 2}, 3), func() vectorized.Column { c := vectorized.NewBytesColumn(3); c.Append([]byte{1, 2}); return c }()},
+		"null":   {vectorized.NewConstNull(vectorized.ColumnTypeString, 3), func() vectorized.Column { c := vectorized.NewStringColumn(3); c.AppendNull(); return c }()},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			want, wantErr := encodeSortKey(tc.typed, 0)
+			require.NoError(t, wantErr)
+			for row := range 3 {
+				got, gotErr := encodeSortKey(tc.constCol, row)
+				require.NoError(t, gotErr)
+				require.Equal(t, want, got)
+			}
+		})
 	}
 }

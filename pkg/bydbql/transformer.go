@@ -90,6 +90,7 @@ type TransformResult struct {
 // Transformer transforms a Grammar into a native query request.
 type Transformer struct {
 	schemaRegistry metadata.Repo
+	schemaSource   SchemaSource
 }
 
 // NewTransformer creates a new Transformer with the given schema registry.
@@ -248,7 +249,7 @@ func (r *transformRun) transformStreamQuery(ctx context.Context, grammar *Gramma
 	projection, _, allTags, _, err := r.convertTagAndField(
 		groups, resourceName,
 		func(group, name string) ([]*databasev1.TagFamilySpec, []*databasev1.FieldSpec, error) {
-			stream, getErr := r.schemaRegistry.StreamRegistry().GetStream(ctx, &commonv1.Metadata{
+			stream, getErr := r.getStream(ctx, &commonv1.Metadata{
 				Name:  name,
 				Group: group,
 			})
@@ -327,7 +328,7 @@ func (r *transformRun) transformMeasureQuery(ctx context.Context, grammar *Gramm
 	projection, fields, allTags, allFields, err := r.convertTagAndField(
 		groups, resourceName,
 		func(group, name string) ([]*databasev1.TagFamilySpec, []*databasev1.FieldSpec, error) {
-			measure, getErr := r.schemaRegistry.MeasureRegistry().GetMeasure(ctx, &commonv1.Metadata{
+			measure, getErr := r.getMeasure(ctx, &commonv1.Metadata{
 				Name:  name,
 				Group: group,
 			})
@@ -442,7 +443,7 @@ func (r *transformRun) transformTraceQuery(ctx context.Context, grammar *Grammar
 	// query the trace schema for getting tags
 	allTags := make(map[string]*tagSpecWithFamily)
 	for _, g := range groups {
-		trace, getErr := r.schemaRegistry.TraceRegistry().GetTrace(ctx, &commonv1.Metadata{
+		trace, getErr := r.getTrace(ctx, &commonv1.Metadata{
 			Name:  resourceName,
 			Group: g,
 		})
@@ -718,7 +719,7 @@ func (r *transformRun) convertTopNAndConditions(ctx context.Context, where *Gram
 			return nil, fmt.Errorf("failed to get topn aggregation %s/%s: %w", g, resourceName, getErr)
 		}
 		sourceMeasure := aggregation.SourceMeasure
-		measure, getErr := r.schemaRegistry.MeasureRegistry().GetMeasure(ctx, sourceMeasure)
+		measure, getErr := r.getMeasure(ctx, sourceMeasure)
 		if getErr != nil {
 			return nil, fmt.Errorf("failed to get measure %s/%s: %w", sourceMeasure.Group, sourceMeasure.Name, getErr)
 		}

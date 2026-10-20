@@ -13,11 +13,9 @@
 // License for the specific language governing permissions and limitations
 // under the License.
 
-// §11.8 Rolling-upgrade negative test: during a rolling upgrade some data
-// nodes are on the old build that hard-errors on Trace=true under raw wire
-// mode ("vec wire mode (flag-on) does not support trace=true …"). The
-// liaison must surface the upgraded nodes' raw frames and traces alongside
-// those partial errors — no panic, no silent drop.
+// Partial-failure test: when some data nodes answer a traced raw-frame query with an error, the
+// liaison must still surface the other nodes' raw frames and traces alongside those partial
+// errors — no panic, no silent drop.
 
 package plan
 
@@ -32,63 +30,60 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
 
-// preStory2TraceError is the exact hard-error message emitted by old data
-// nodes (pre-Story-2 build) when a Trace=true request arrives under raw wire
-// mode. The rolling-upgrade test uses this string to simulate laggard nodes.
-const preStory2TraceError = "vec wire mode (flag-on) does not support trace=true on TopicInternalMeasureQuery;" +
-	" disable --measure-vectorized-enabled or omit trace from the query"
+// failingNodeError is the error text a failing data node returns for a traced raw-frame query.
+const failingNodeError = "simulated data node failure on TopicInternalMeasureQuery"
 
-// TestRawFrameTraceRequiresAllNodesUpgraded verifies §11.8 partial-failure
-// semantics: a broadcast that mixes upgraded nodes (returning RawFrameBody +
-// Trace) with laggard nodes (returning *common.Error with the pre-Story-2
-// hard-error text) must not crash or silently drop the upgraded results.
+// TestRawFrameTraceCollectsPartialNodeFailures verifies partial-failure
+// semantics: a broadcast that mixes healthy nodes (returning RawFrameBody +
+// Trace) with failing nodes (returning *common.Error) must not crash or
+// silently drop the healthy results.
 //
 // Expected invariants:
 //   - The returned raw-frame slice contains exactly the 3 frames from the
-//     upgraded nodes.
+//     healthy nodes.
 //   - The returned trace slice contains exactly the 3 traces from the
-//     upgraded nodes.
-//   - A non-nil error is returned that encodes both laggard failures; the
-//     error text mentions "data node error" for each laggard.
-func TestRawFrameTraceRequiresAllNodesUpgraded(t *testing.T) {
+//     healthy nodes.
+//   - A non-nil error is returned that encodes both failing failures; the
+//     error text mentions "data node error" for each failing.
+func TestRawFrameTraceCollectsPartialNodeFailures(t *testing.T) {
 	// validRawFrameWithMagic: minimal frame starting with the raw-frame magic
 	// leading byte (0x00) so the collector treats it as a real raw frame body.
 	validRawFrame := []byte{0x00, 0x01, 0x02}
-	upgradeTrace := &commonv1.Trace{TraceId: "upgraded"}
+	healthyTrace := &commonv1.Trace{TraceId: "healthy"}
 
-	// 3 upgraded nodes: RawFrameBody + Trace.
-	upgradedFutures := []bus.Future{
+	// 3 healthy nodes: RawFrameBody + Trace.
+	healthyFutures := []bus.Future{
 		rawFrameFuture{message: bus.NewMessage(1, &measurev1.InternalQueryResponse{
 			RawFrameBody: validRawFrame,
-			Trace:        upgradeTrace,
+			Trace:        healthyTrace,
 		})},
 		rawFrameFuture{message: bus.NewMessage(2, &measurev1.InternalQueryResponse{
 			RawFrameBody: validRawFrame,
-			Trace:        upgradeTrace,
+			Trace:        healthyTrace,
 		})},
 		rawFrameFuture{message: bus.NewMessage(3, &measurev1.InternalQueryResponse{
 			RawFrameBody: validRawFrame,
-			Trace:        upgradeTrace,
+			Trace:        healthyTrace,
 		})},
 	}
 
-	// 2 laggard nodes: *common.Error with the pre-Story-2 hard-error text.
-	laggardFutures := []bus.Future{
-		rawFrameFuture{message: bus.NewMessage(4, common.NewError(preStory2TraceError))},
-		rawFrameFuture{message: bus.NewMessage(5, common.NewError(preStory2TraceError))},
+	// 2 failing nodes: *common.Error.
+	failingFutures := []bus.Future{
+		rawFrameFuture{message: bus.NewMessage(4, common.NewError(failingNodeError))},
+		rawFrameFuture{message: bus.NewMessage(5, common.NewError(failingNodeError))},
 	}
 
-	allFutures := make([]bus.Future, 0, len(upgradedFutures)+len(laggardFutures))
-	allFutures = append(allFutures, upgradedFutures...)
-	allFutures = append(allFutures, laggardFutures...)
+	allFutures := make([]bus.Future, 0, len(healthyFutures)+len(failingFutures))
+	allFutures = append(allFutures, healthyFutures...)
+	allFutures = append(allFutures, failingFutures...)
 
 	frames, traces, collectErr := collectRawFrameResponses(allFutures)
 
 	// The call must not panic (enforced by reaching this line).
 
-	// Upgraded frames must all be present.
+	// Healthy frames must all be present.
 	if len(frames) != 3 {
-		t.Fatalf("frames len = %d, want 3 (one per upgraded node)", len(frames))
+		t.Fatalf("frames len = %d, want 3 (one per healthy node)", len(frames))
 	}
 	for idx, frame := range frames {
 		if !bytes.Equal(frame, validRawFrame) {
@@ -96,19 +91,19 @@ func TestRawFrameTraceRequiresAllNodesUpgraded(t *testing.T) {
 		}
 	}
 
-	// Upgraded traces must all be present.
+	// Healthy traces must all be present.
 	if len(traces) != 3 {
-		t.Fatalf("traces len = %d, want 3 (one per upgraded node)", len(traces))
+		t.Fatalf("traces len = %d, want 3 (one per healthy node)", len(traces))
 	}
 	for idx, trace := range traces {
-		if trace.GetTraceId() != "upgraded" {
-			t.Errorf("traces[%d].TraceId = %q, want %q", idx, trace.GetTraceId(), "upgraded")
+		if trace.GetTraceId() != "healthy" {
+			t.Errorf("traces[%d].TraceId = %q, want %q", idx, trace.GetTraceId(), "healthy")
 		}
 	}
 
 	// Laggard errors must be surfaced in the returned error.
 	if collectErr == nil {
-		t.Fatal("collectRawFrameResponses returned nil error; expected partial-failure error for 2 laggard nodes")
+		t.Fatal("collectRawFrameResponses returned nil error; expected partial-failure error for 2 failing nodes")
 	}
 	errMsg := collectErr.Error()
 	const wantSubstring = "data node error"

@@ -18,17 +18,11 @@
 package stream
 
 import (
-	"errors"
 	"fmt"
 	"math"
 
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
-
-// errRowPathRemoved rejects --stream-vectorized-enabled=false. The flag survives as
-// a no-op so an operator's existing command line still starts, but a rollback attempt
-// must fail loudly instead of quietly running the vectorized path anyway.
-var errRowPathRemoved = errors.New("stream-vectorized-enabled=false: row-based query was removed in 0.12.0, see apache/skywalking#13998")
 
 // VectorizedConfig controls the v1 vectorized Stream query path.
 type VectorizedConfig struct {
@@ -39,10 +33,6 @@ type VectorizedConfig struct {
 	// always loads regardless of the budget (first-block exception), so a single
 	// oversized block may exceed this value.
 	QueryMemoryMiB int
-	// Enabled is a removed-flag shim. The row query path was deleted in 0.12.0, so
-	// the only accepted value is true; Validate rejects false rather than silently
-	// ignoring an operator's attempt to roll back. The flag goes away in 0.13.0.
-	Enabled bool
 }
 
 // DefaultConfig returns the default stream vectorized configuration — enabled,
@@ -64,11 +54,11 @@ type VectorizedConfig struct {
 //
 // A distributed data node emits the native columnar frame instead of protobuf. A
 // liaison decodes both (it dispatches on the frame magic byte per message), but an
-// older liaison has no frame decoder at all, so a cluster must upgrade liaison nodes
-// BEFORE data nodes. See docs/operation/upgrade.md.
+// older liaison has no frame decoder at all, so the whole cluster must be upgraded
+// together: 0.12 does not support rolling or mixed-version upgrades. See
+// docs/operation/upgrade.md.
 func DefaultConfig() VectorizedConfig {
 	return VectorizedConfig{
-		Enabled:        true,
 		BatchSize:      vectorized.DefaultBatchSize,
 		QueryMemoryMiB: 256,
 	}
@@ -86,9 +76,6 @@ func (c VectorizedConfig) Validate() error {
 	}
 	if c.QueryMemoryMiB <= 0 {
 		return fmt.Errorf("vectorized.stream: QueryMemoryMiB must be > 0, got %d", c.QueryMemoryMiB)
-	}
-	if !c.Enabled {
-		return errRowPathRemoved
 	}
 	return nil
 }

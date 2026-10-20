@@ -165,8 +165,6 @@ func (s *stream) QueryVectorized(ctx context.Context, opts model.StreamQueryOpti
 // bindVectorizedFlags wires VectorizedConfig fields to a run.FlagSet.
 func bindVectorizedFlags(flagS *run.FlagSet, cfg *vstream.VectorizedConfig) {
 	defaults := vstream.DefaultConfig()
-	flagS.BoolVar(&cfg.Enabled, "stream-vectorized-enabled", defaults.Enabled,
-		"deprecated no-op, removed in 0.13.0; the row query path was removed in 0.12.0 so =false is rejected at startup")
 	flagS.IntVar(&cfg.BatchSize, "stream-vectorized-batch-size", defaults.BatchSize,
 		"row count per vectorized stream batch")
 	flagS.IntVar(&cfg.QueryMemoryMiB, "stream-vectorized-query-memory-mib", defaults.QueryMemoryMiB,

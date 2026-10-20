@@ -10,7 +10,7 @@ You can use "banyand liaison/data/standalone -v" to check the server version. Th
 
 The server will check the file version when it starts. If the file version is not compatible with the supported version list in the server, the server will refuse to start. Please check the [CHANGELOG.md](https://github.com/apache/skywalking-banyandb/tree/master/CHANGES.md) to ensure that the new version is compatible with the existing data files.
 
-BanyanDB upgrade procedure is a rolling upgrade. You can upgrade the BanyanDB cluster without downtime. But you need to follow the instructions carefully to avoid any data loss:
+BanyanDB upgrade procedure is a rolling upgrade, except where a release says otherwise: **0.12 does not support rolling upgrades** (see [Upgrading to 0.12](#upgrading-to-012)). You can upgrade the BanyanDB cluster without downtime. But you need to follow the instructions carefully to avoid any data loss:
 
 - Perform the upgrades consecutively. You cannot skip versions.
 - You must keep the all nodes with the same version. Do not mix versions in the same cluster.
@@ -33,11 +33,14 @@ Before upgrading the cluster, you should check CHANGELOG.md](https://github.com/
 - Upgrade "data" nodes first, then "liaison" nodes.
 - After upgrading all nodes, the cluster will be running the new version.
 
-> **Exception — upgrading to 0.11 or later.** The vectorized query paths change the
+> **Exception — upgrading to 0.11.** The vectorized query paths change the
 > liaison<->data wire format, and a data node must never emit a frame that the liaison it
-> answers cannot decode. For 0.11 and later the order is **reversed**: upgrade "liaison"
-> nodes first, then "data" nodes. See [Vectorized query paths enabled by default](#vectorized-query-paths-enabled-by-default-breaking-for-rolling-upgrades)
-> for 0.11 and [Row-based query path removed](#row-based-query-path-removed-breaking) for 0.12.
+> answers cannot decode. For 0.11 the order is **reversed**: upgrade "liaison"
+> nodes first, then "data" nodes. See [Vectorized query paths enabled by default](#vectorized-query-paths-enabled-by-default-breaking-for-rolling-upgrades).
+>
+> **Exception — upgrading to 0.12.** Rolling and mixed-version upgrades are **not supported**.
+> Use the [Minimum Downtime Strategy](#minimum-downtime-strategy-to-upgrade-a-cluster) and see
+> [Rolling and mixed-version upgrades are not supported](#rolling-and-mixed-version-upgrades-are-not-supported-breaking).
 
 To ensure this strategy works, you should have a minimum of one node for each role of node in the cluster. For example, if you have a 2-node cluster, you should have at least one "liaison" and one "data" node.
 
@@ -60,20 +63,27 @@ If you don't have enough resource to perform a rolling upgrade or you have a lar
 
 This section describes breaking changes and important behavioral changes when upgrading to BanyanDB 0.12.0.
 
+### Rolling and mixed-version upgrades are not supported (breaking)
+
+BanyanDB 0.12.0 does **not** support rolling upgrades. Upgrade the whole cluster at once:
+
+1. Stop all clients and every BanyanDB node, liaison and data.
+2. Replace the binaries with 0.12.
+3. Start the 0.12 data nodes, then the 0.12 liaison nodes.
+4. Verify schema initialization and ingestion before restoring normal traffic.
+
+A cluster that mixes 0.12 nodes with nodes of an earlier release is not supported, whatever the node order. Two changes make the two sides unable to talk to each other:
+
+- The liaison and the data nodes exchange native columnar frames, and a 0.12 data node always sends them: measure frames are version 4 only, and a 0.12 liaison rejects a measure frame of any other version with an error. A liaison of an earlier release has no frame decoder for it. There is no negotiation and no fallback to protobuf or to the earlier row-oriented measure frame.
+- The series index cutover described in [CHANGES.md](https://github.com/apache/skywalking-banyandb/tree/master/CHANGES.md) changes data that all nodes read and write.
+
+**Rollback.** Rollback is a binary downgrade of the whole cluster, not a flag flip: stop every node and follow the [Rollback](#rollback) procedure below. Do not run a mixed cluster during rollback either. The on-disk format of the vectorized query paths is unchanged by this release.
+
 ### Row-based query path removed (breaking)
 
 The row-based query execution path is gone. Stream, measure and trace queries all execute through the vectorized columnar pipeline, and a distributed data node always answers with a native columnar frame. There is no runtime switch back to row execution or to the protobuf wire format.
 
-`--stream-vectorized-enabled`, `--trace-vectorized-enabled` and `--measure-vectorized-enabled` are still registered so an existing command line keeps parsing, but they are no longer switches:
-
-- `=true`, or the flag omitted, is the only supported setting and changes nothing.
-- `=false` makes the node **exit at startup** with an error naming [apache/skywalking#13998](https://github.com/apache/skywalking/issues/13998), rather than silently discarding an explicit rollback request.
-
-All three flags are removed outright in 0.13.0. Drop them from systemd units, Helm values, container arguments and compose files as part of this upgrade.
-
-**Upgrade "liaison" nodes BEFORE "data" nodes**, as in 0.11. A 0.12 data node emits columnar frames unconditionally, and a liaison on an older binary has no frame decoder. The 0.11 workaround — starting the new data nodes with the vectorized paths disabled and enabling them once every liaison is upgraded — is no longer available, because the paths can no longer be disabled. If you cannot control node ordering, use the [Minimum Downtime Strategy](#minimum-downtime-strategy-to-upgrade-a-cluster).
-
-**Rollback.** Rollback is a binary downgrade, not a flag flip: follow the [Rollback](#rollback) procedure below. The on-disk format is unchanged by this release, so no data migration is involved.
+`--stream-vectorized-enabled`, `--trace-vectorized-enabled` and `--measure-vectorized-enabled` are removed. A node started with any of them fails at startup with an unknown-flag error. Drop them from systemd units, Helm values, container arguments and compose files as part of this upgrade. `--stream-vectorized-batch-size`, `--trace-vectorized-batch-size` and the `*-vectorized-query-memory-mib` flags are unchanged.
 
 ### Stream timestamp-order queries with criteria spanning multiple segments
 
@@ -128,6 +138,8 @@ BanyanDB cluster during rollback.
 
 ### Vectorized query paths enabled by default (breaking for rolling upgrades)
 
+> This section describes upgrading to 0.11 only. The flags below were removed in 0.12, and 0.12 does not support rolling or mixed-version upgrades; see [Rolling and mixed-version upgrades are not supported](#rolling-and-mixed-version-upgrades-are-not-supported-breaking).
+
 The vectorized **stream** and **trace** query paths are now enabled by default, joining **measure** (default-on since 0.10). `--stream-vectorized-enabled`, `--trace-vectorized-enabled` and `--measure-vectorized-enabled` all default to `true`.
 
 **This changes the required rolling-upgrade order. Upgrade "liaison" nodes BEFORE "data" nodes.**
@@ -156,7 +168,7 @@ Standalone deployments are unaffected: the frame is only emitted on a distribute
 
 **Rollback.** Pass `--stream-vectorized-enabled=false` / `--trace-vectorized-enabled=false` / `--measure-vectorized-enabled=false` on the standalone or data-node command line and restart. The row path and the protobuf wire format resume immediately; no data migration is involved, because the flags affect only the query and wire paths, never the on-disk format.
 
-> This rollback applies to 0.11 only. The row path was removed in 0.12.0 and `=false` is no longer accepted — see [Row-based query path removed](#row-based-query-path-removed-breaking).
+> This rollback applies to 0.11 only. The row path and these flags were removed in 0.12.0 — see [Row-based query path removed](#row-based-query-path-removed-breaking).
 
 ## Upgrading to 0.10
 

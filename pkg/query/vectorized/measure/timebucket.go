@@ -123,12 +123,15 @@ type BatchTimeBucket struct {
 	outputBuilder *vectorized.RecordBatch
 	pending       []*vectorized.RecordBatch
 	aggKeyIndices []int
+	keyEntity     []bool
+	runScratch    []int
 	aggs          []AggSpec
 	widthNanos    int64
 	currentBucket int64
 	timestampIdx  int
 	batchSize     int
 	entrySize     int64
+	runBatches    int64
 	mode          AggMode
 	hasBucket     bool
 	streaming     bool
@@ -169,6 +172,7 @@ func NewBatchTimeBucket(
 		tracker:       tracker,
 		outputPool:    vectorized.NewBatchPool(outputSchema, batchSize),
 		aggKeyIndices: aggKeyIndices,
+		keyEntity:     keyEntityFlags(input, aggKeyIndices),
 		aggs:          slices.Clone(aggs),
 		widthNanos:    widthNanos,
 		timestampIdx:  timestampIdx,
@@ -241,7 +245,11 @@ func (bt *BatchTimeBucket) NextBatch(ctx context.Context) (*vectorized.RecordBat
 			// branch above drains it incrementally instead.
 			continue
 		}
-		if consumeErr := bt.consumeBatch(ctx, b); consumeErr != nil {
+		consumeErr := bt.consumeBatch(ctx, b)
+		// consumeBatch hands rows to a BatchAggregation, which clones what it
+		// retains, so the memory b borrows is no longer needed.
+		b.ReleaseOwners()
+		if consumeErr != nil {
 			return nil, consumeErr
 		}
 		// Commit whatever the buckets that closed while processing this one
@@ -310,6 +318,9 @@ func (bt *BatchTimeBucket) Close() error {
 // whose bucket regresses in streaming mode is a monotonicity violation and
 // fails loudly rather than reopening an already-flushed bucket.
 func (bt *BatchTimeBucket) consumeBatch(ctx context.Context, b *vectorized.RecordBatch) error {
+	if handled, runsErr := bt.consumeRuns(ctx, b); handled {
+		return runsErr
+	}
 	active, activeErr := activeIndices(b)
 	if activeErr != nil {
 		return activeErr
