@@ -87,7 +87,7 @@ EOF
 
 `node_id` and `level` are the entity, so filtering on them selects series directly. Entity tags accept only `=` and `IN`, which is why several levels are selected with `IN` rather than by negating one.
 
-Every other tag is filterable but **unindexed** in this version: there are no index rules on the stream, so a condition on `module` or `message` is evaluated after the scan rather than through a posting list. Narrow the time range and the entity first.
+Every other tag is filterable but **unindexed** in this version: there are no index rules on the stream, so a condition on `module` or `message` is evaluated after the scan rather than through a posting list. The scan stops at the query's `limit` before that condition runs, so such a query can return fewer rows than the limit while more matching rows exist. Narrow the time range and the entity first.
 
 `MATCH` on `message` does **not** do what it does elsewhere. An analyzer comes from an index rule, and this stream has none, so the value is compared whole instead of being tokenized: searching for `timeout` will not find `write timeout exceeded`. The condition does not error — it just fails to match — so an empty result may be this rather than an absence of logs. Use `=` on the full message, or project `message` and filter outside the database.
 

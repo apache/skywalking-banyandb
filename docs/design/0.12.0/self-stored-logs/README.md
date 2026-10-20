@@ -132,7 +132,9 @@ The receiver is deliberately thin.
 
 `level` is an entity tag; entity tags accept only equality and set membership, so selecting several levels uses `IN` rather than a negation. `module` stays an ordinary tag — module strings splice in group, measure and task names, so entity membership would give unbounded series cardinality. Nothing stores the original line verbatim: known keys become tags, and only the remainder lands in `fields`.
 
-Having no index rules costs more than scan speed. An analyzer is configured on an index rule, so with none defined `MATCH` has no analyzer to tokenize with and falls back to comparing the value whole — `MATCH "timeout"` does not find `write timeout exceeded`, and it reports no match rather than an error. Full-text search over `message` is therefore an index rule away, not available now; `=` and the time range are what narrow a query in v1.
+Having no index rules costs more than scan speed. An analyzer is configured on an index rule, so with none defined `MATCH` has no analyzer to tokenize with and falls back to comparing the value whole — `MATCH "timeout"` does not find `write timeout exceeded`, and it reports no match rather than an error. Full-text search over `message` is therefore an index rule away, not available now.
+
+What narrows a query in v1 is the time range and equality or `IN` on the entity tags, `node_id` and `level`: they choose the series before the scan. A filter on any other tag, such as `module` or `message`, does not narrow it. It runs on the rows the scan returns, and a timestamp-ordered scan stops at the query's limit before the filter sees them. So a filter on `module` can return fewer rows than the limit while more matching rows exist. A reader looking for a module narrows by time and node first.
 
 ## 4. Parameters and configuration
 
