@@ -116,6 +116,17 @@ type Reader struct {
 	// segmentReaders holds each segment's stored reader once built, read
 	// without a lock on the per-lookup path.
 	segmentReaders atomic.Pointer[[]atomic.Pointer[storedSegmentReader]]
+	// visitDocumentCalls counts every VisitDocument call, successful or not.
+	// It costs one uncontended atomic add per call and exists so a test can
+	// prove a code path decoded zero documents -- for example, that a segment
+	// a time range disjoints from is never asked to visit one.
+	visitDocumentCalls atomic.Int64
+}
+
+// VisitDocumentCalls returns how many times VisitDocument has been called on
+// this Reader. It is test instrumentation: production code never reads it.
+func (r *Reader) VisitDocumentCalls() int64 {
+	return r.visitDocumentCalls.Load()
 }
 
 // SnapshotSegment is the immutable metadata a snapshot manifest records for
@@ -976,6 +987,7 @@ func (r *Reader) storedReader(segmentIndex int) (*storedSegmentReader, error) {
 // not hold the files open, so if a Close releases them while it reads it
 // reports ErrReaderClosed. Its callback may close the Reader.
 func (r *Reader) VisitDocument(number uint64, visit func(StoredDocument) error) error {
+	r.visitDocumentCalls.Add(1)
 	if useErr := r.check(); useErr != nil {
 		return useErr
 	}
@@ -2281,6 +2293,10 @@ func readManifest(path string) ([]byte, error) {
 	return payload, nil
 }
 
+func isHexDigit(character rune) bool {
+	return character >= '0' && character <= '9' || character >= 'a' && character <= 'f'
+}
+
 func parseFinalName(name, extension string) (uint64, bool) {
 	if filepath.Ext(name) != extension {
 		return 0, false
@@ -2290,7 +2306,7 @@ func parseFinalName(name, extension string) (uint64, bool) {
 		return 0, false
 	}
 	for _, character := range identifier {
-		if !(character >= '0' && character <= '9' || character >= 'a' && character <= 'f') {
+		if !isHexDigit(character) {
 			return 0, false
 		}
 	}

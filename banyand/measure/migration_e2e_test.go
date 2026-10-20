@@ -460,7 +460,7 @@ func isAlreadyExistsErr(err error) bool {
 		return false
 	}
 	msg := err.Error()
-	return msg != "" && (containsAny(msg, "already exists", "AlreadyExists"))
+	return msg != "" && containsAny(msg, "already exists", "AlreadyExists")
 }
 
 func containsAny(s string, needles ...string) bool {
@@ -615,12 +615,13 @@ func setUpMigrationTarget(measureRootPath string) (*services, func()) {
 		"--measure-root-path=" + measureRootPath,
 	}
 	moduleDeferFunc := test.SetupModules(flags, pipeline, metadataService, preloadSvc, measureService, querySvc)
-	return &services{
-			measure:         measureService,
-			metadataService: metadataService,
-			pipeline:        pipeline,
-		}, func() {
-			moduleDeferFunc()
-			metaDeferFunc()
-		}
+	svcs := &services{
+		measure:         measureService,
+		metadataService: metadataService,
+		pipeline:        pipeline,
+	}
+	return svcs, func() {
+		moduleDeferFunc()
+		metaDeferFunc()
+	}
 }

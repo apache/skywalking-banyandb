@@ -150,7 +150,7 @@ func Test_tstIter(t *testing.T) {
 		}
 		defer s.decRef()
 		shardCache := storage.NewShardCache("test-group", 0, 0)
-		pp, n := s.getParts(nil, shardCache, tt.minTimestamp, tt.maxTimestamp)
+		pp, n := s.getParts(nil, shardCache, 0, tt.minTimestamp, tt.maxTimestamp)
 		require.Equal(t, len(s.parts), n)
 		ti := &tstIter{}
 		ti.init(pp, tt.sids, tt.minTimestamp, tt.maxTimestamp)

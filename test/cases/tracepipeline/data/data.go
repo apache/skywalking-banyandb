@@ -25,6 +25,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"regexp"
 	"slices"
@@ -272,12 +273,38 @@ func WriteBatchEntries(conn *grpclib.ClientConn, group string, baseTime time.Tim
 	gm.Expect(schemaErr).NotTo(gm.HaveOccurred())
 	md = resp.GetTrace().GetMetadata()
 
+	// The liaison's write cache can lag the schema registry under eventual
+	// consistency, and it refuses a write by status (not by stream error) until it
+	// catches up. Retry while every row is refused: a refused row stores nothing.
+	// A partial success cannot be retried without duplicating the accepted rows,
+	// so it fails at once.
+	gm.Eventually(func(innerGm gm.Gomega) {
+		statuses := sendTraceRows(innerGm, conn, md, baseTime, interval, rows)
+		innerGm.Expect(statuses).To(gm.HaveLen(len(rows)), "one write response per row")
+		succeeded := 0
+		for _, writeStatus := range statuses {
+			if writeStatus == modelv1.Status_STATUS_SUCCEED.String() {
+				succeeded++
+			}
+		}
+		if succeeded > 0 && succeeded < len(rows) {
+			gm.StopTrying(fmt.Sprintf("trace write to %s/%s partially rejected; statuses=%v", group, md.GetName(), statuses)).Now()
+		}
+		innerGm.Expect(succeeded).To(gm.Equal(len(rows)),
+			"trace write to %s/%s rejected; statuses=%v", group, md.GetName(), statuses)
+	}, flags.EventuallyTimeout).Should(gm.Succeed())
+}
+
+// sendTraceRows writes rows on one write stream and returns the status of every response.
+func sendTraceRows(innerGm gm.Gomega, conn *grpclib.ClientConn, md *commonv1.Metadata,
+	baseTime time.Time, interval time.Duration, rows []TraceRow,
+) []string {
 	c := tracev1.NewTraceServiceClient(conn)
 	// The deadline bounds the response drain below, which blocks in Recv.
 	writeCtx, writeCancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
 	defer writeCancel()
 	writeClient, writeErr := c.Write(writeCtx)
-	gm.Expect(writeErr).NotTo(gm.HaveOccurred())
+	innerGm.Expect(writeErr).NotTo(gm.HaveOccurred())
 
 	for version, row := range rows {
 		// Compute the timestamp for this row and build the full tag slice with
@@ -299,27 +326,20 @@ func WriteBatchEntries(conn *grpclib.ClientConn, group string, baseTime time.Tim
 			Span:     []byte(row.Span),
 			Version:  uint64(version + 1),
 		})
-		gm.Expect(sendErr).ShouldNot(gm.HaveOccurred())
+		innerGm.Expect(sendErr).ShouldNot(gm.HaveOccurred())
 	}
 
-	gm.Expect(writeClient.CloseSend()).To(gm.Succeed())
-	// The liaison rejects a write by status, not by stream error, so a row
-	// it refused (schema not found or not applied, invalid timestamp, ...)
-	// would otherwise vanish and surface only as an empty query much later.
+	innerGm.Expect(writeClient.CloseSend()).To(gm.Succeed())
 	var statuses []string
 	for {
 		resp, recvErr := writeClient.Recv()
 		if errors.Is(recvErr, io.EOF) {
 			break
 		}
-		gm.Expect(recvErr).NotTo(gm.HaveOccurred())
+		innerGm.Expect(recvErr).NotTo(gm.HaveOccurred())
 		statuses = append(statuses, resp.GetStatus())
 	}
-	gm.Expect(statuses).To(gm.HaveLen(len(rows)), "one write response per row")
-	for _, writeStatus := range statuses {
-		gm.Expect(writeStatus).To(gm.Equal(modelv1.Status_STATUS_SUCCEED.String()),
-			"trace write to %s/%s rejected; statuses=%v", group, md.GetName(), statuses)
-	}
+	return statuses
 }
 
 // unmarshalYAMLWithSpanEncoding decodes YAML with special handling for span data.

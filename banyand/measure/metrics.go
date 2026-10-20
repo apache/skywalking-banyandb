@@ -327,12 +327,13 @@ func (m *metrics) DeleteAll() {
 
 func (s *supplier) newMetrics(p common.Position) (storage.Metrics, observability.Factory) {
 	factory := s.omr.With(measureScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues())))
-	if prev, ok := s.queryMetricsFactory.Load().(observability.Factory); ok && prev != nil {
-		prev.Close()
+	// Reopening a group (for example after it was deleted and created again) replaces
+	// that group's collectors; other groups keep theirs.
+	if prev, ok := s.queryMetrics.Load(p.Database); ok {
+		prev.(*groupQueryMetrics).factory.Close()
 	}
 	queryFactory := s.omr.With(measureScope.SubScope("query").ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues())))
-	s.queryMetricsFactory.Store(queryFactory)
-	s.queryMetrics.Store(newQueryMetrics(queryFactory))
+	s.queryMetrics.Store(p.Database, &groupQueryMetrics{factory: queryFactory, metrics: newQueryMetrics(queryFactory)})
 	return &metrics{
 		totalWritten:               factory.NewCounter("total_written"),
 		totalBatch:                 factory.NewCounter("total_batch"),

@@ -21,7 +21,6 @@ import (
 	"context"
 	"fmt"
 	"runtime/debug"
-	"sync"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -229,7 +228,6 @@ type snapshotListener struct {
 	*bus.UnImplementedHealthyListener
 	s           *service
 	snapshotSeq uint64
-	snapshotMux sync.Mutex
 }
 
 // Rev takes a snapshot of the database.
@@ -249,8 +247,8 @@ func (s *snapshotListener) Rev(ctx context.Context, message bus.Message) bus.Mes
 	if !toTake {
 		return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), nil)
 	}
-	s.snapshotMux.Lock()
-	defer s.snapshotMux.Unlock()
+	s.s.snapshotMux.Lock()
+	defer s.s.snapshotMux.Unlock()
 	storage.DeleteStaleSnapshots(s.s.snapshotDir, s.s.maxFileSnapshotNum, s.s.minFileSnapshotAge, s.s.lfs)
 	sn := s.snapshotName()
 	return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), s.s.db.TakeSnapShot(ctx, sn))

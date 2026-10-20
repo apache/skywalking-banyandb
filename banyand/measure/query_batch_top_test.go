@@ -37,6 +37,7 @@ import (
 // Widening this gate to fire on a client Top clause would silently put ordinary
 // multi-block Top queries back on the row merge, which is what this asserts against.
 func TestApplyTopNOptionsOnlyForTopNSchema(t *testing.T) {
+	verifyNoScanLeaks(t)
 	tests := []struct {
 		name        string
 		measureName string
@@ -69,6 +70,7 @@ func TestApplyTopNOptionsOnlyForTopNSchema(t *testing.T) {
 // spanning more than one block cursor and asserts it merges natively, returning
 // every row in timestamp order without the row-path detour.
 func TestPullBatchMultiBlockStaysBatchNative(t *testing.T) {
+	verifyNoScanLeaks(t)
 	h := setupBenchStorageHarness(t)
 
 	var qr queryResult
@@ -107,8 +109,9 @@ func TestPullBatchMultiBlockStaysBatchNative(t *testing.T) {
 			break
 		}
 		if !checkedMultiBlock {
-			require.Greater(t, len(qr.data), 1,
-				"the merge must run over more than one loaded cursor, not the single-block fast path")
+			require.NotNil(t, qr.scan, "a time-ordered query is served by the window scan")
+			require.Greater(t, qr.scan.stats.mergeCursors, int64(1),
+				"the merge must run over more than one decoded cursor, not the single-block fast path")
 			checkedMultiBlock = true
 		}
 		require.NotEmpty(t, batch.Timestamps, "a non-nil batch must carry rows")

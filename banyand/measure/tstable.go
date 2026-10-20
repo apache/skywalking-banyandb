@@ -396,7 +396,7 @@ func (tst *tsTable) mustAddMemPart(mp *memPart) {
 
 type tstIter struct {
 	err           error
-	parts         []*part
+	parts         []partRef
 	piPool        []partIter
 	piHeap        partIterHeap
 	nextBlockNoop bool
@@ -404,7 +404,7 @@ type tstIter struct {
 
 func (ti *tstIter) reset() {
 	for i := range ti.parts {
-		ti.parts[i] = nil
+		ti.parts[i] = partRef{}
 	}
 	ti.parts = ti.parts[:0]
 
@@ -422,7 +422,7 @@ func (ti *tstIter) reset() {
 	ti.nextBlockNoop = false
 }
 
-func (ti *tstIter) init(parts []*part, sids []common.SeriesID, minTimestamp, maxTimestamp int64) {
+func (ti *tstIter) init(parts []partRef, sids []common.SeriesID, minTimestamp, maxTimestamp int64) {
 	ti.reset()
 	ti.parts = parts
 

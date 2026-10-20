@@ -1,0 +1,643 @@
+[
+  {
+    "id": "series_exact_svc",
+    "request": {
+      "groups": [
+        "soak-idx-fixture"
+      ],
+      "name": "sw",
+      "limit": 50,
+      "projection": {
+        "tagFamilies": [
+          {
+            "name": "searchable",
+            "tags": [
+              "service_id",
+              "pod",
+              "level",
+              "trace_id",
+              "message"
+            ]
+          },
+          {
+            "name": "metrics",
+            "tags": [
+              "duration",
+              "status_code",
+              "byte_size"
+            ]
+          }
+        ]
+      },
+      "criteria": {
+        "condition": {
+          "name": "service_id",
+          "op": "BINARY_OP_EQ",
+          "value": {
+            "str": {
+              "value": "svc-0000"
+            }
+          }
+        }
+      }
+    },
+    "note": "series index _id exact match; resolves to one series"
+  },
+  {
+    "id": "series_exact_two",
+    "request": {
+      "groups": [
+        "soak-idx-fixture"
+      ],
+      "name": "sw",
+      "limit": 50,
+      "projection": {
+        "tagFamilies": [
+          {
+            "name": "searchable",
+            "tags": [
+              "service_id",
+              "pod",
+              "level",
+              "trace_id",
+              "message"
+            ]
+          },
+          {
+            "name": "metrics",
+            "tags": [
+              "duration",
+              "status_code",
+              "byte_size"
+            ]
+          }
+        ]
+      },
+      "criteria": {
+        "le": {
+          "op": "LOGICAL_OP_OR",
+          "left": {
+            "condition": {
+              "name": "service_id",
+              "op": "BINARY_OP_EQ",
+              "value": {
+                "str": {
+                  "value": "svc-0002"
+                }
+              }
+            }
+          },
+          "right": {
+            "condition": {
+              "name": "service_id",
+              "op": "BINARY_OP_EQ",
+              "value": {
+                "str": {
+                  "value": "api-0003"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "note": "series index broad universe: OR of two series"
+  },
+  {
+    "id": "series_fanout_window",
+    "request": {
+      "groups": [
+        "soak-idx-fixture"
+      ],
+      "name": "sw",
+      "limit": 50,
+      "projection": {
+        "tagFamilies": [
+          {
+            "name": "searchable",
+            "tags": [
+              "service_id",
+              "pod",
+              "level",
+              "trace_id",
+              "message"
+            ]
+          },
+          {
+            "name": "metrics",
+            "tags": [
+              "duration",
+              "status_code",
+              "byte_size"
+            ]
+          }
+        ]
+      },
+      "criteria": {
+        "condition": {
+          "name": "service_id",
+          "op": "BINARY_OP_EQ",
+          "value": {
+            "str": {
+              "value": "svc-0004"
+            }
+          }
+        }
+      }
+    },
+    "note": "one series over the full fixture window; widest time range a series query sees"
+  },
+  {
+    "id": "filter_level_error",
+    "request": {
+      "groups": [
+        "soak-idx-fixture"
+      ],
+      "name": "sw",
+      "limit": 50,
+      "projection": {
+        "tagFamilies": [
+          {
+            "name": "searchable",
+            "tags": [
+              "service_id",
+              "pod",
+              "level",
+              "trace_id",
+              "message"
+            ]
+          },
+          {
+            "name": "metrics",
+            "tags": [
+              "duration",
+              "status_code",
+              "byte_size"
+            ]
+          }
+        ]
+      },
+      "criteria": {
+        "condition": {
+          "name": "level",
+          "op": "BINARY_OP_EQ",
+          "value": {
+            "str": {
+              "value": "ERROR"
+            }
+          }
+        }
+      }
+    },
+    "note": "small posting (5% skew); element-index filter"
+  },
+  {
+    "id": "filter_level_info",
+    "request": {
+      "groups": [
+        "soak-idx-fixture"
+      ],
+      "name": "sw",
+      "limit": 50,
+      "projection": {
+        "tagFamilies": [
+          {
+            "name": "searchable",
+            "tags": [
+              "service_id",
+              "pod",
+              "level",
+              "trace_id",
+              "message"
+            ]
+          },
+          {
+            "name": "metrics",
+            "tags": [
+              "duration",
+              "status_code",
+              "byte_size"
+            ]
+          }
+        ]
+      },
+      "criteria": {
+        "condition": {
+          "name": "level",
+          "op": "BINARY_OP_EQ",
+          "value": {
+            "str": {
+              "value": "INFO"
+            }
+          }
+        }
+      }
+    },
+    "note": "large posting (80% skew); exercises the posting-size crossover"
+  },
+  {
+    "id": "filter_duration_gt",
+    "request": {
+      "groups": [
+        "soak-idx-fixture"
+      ],
+      "name": "sw",
+      "limit": 50,
+      "projection": {
+        "tagFamilies": [
+          {
+            "name": "searchable",
+            "tags": [
+              "service_id",
+              "pod",
+              "level",
+              "trace_id",
+              "message"
+            ]
+          },
+          {
+            "name": "metrics",
+            "tags": [
+              "duration",
+              "status_code",
+              "byte_size"
+            ]
+          }
+        ]
+      },
+      "criteria": {
+        "condition": {
+          "name": "duration",
+          "op": "BINARY_OP_GT",
+          "value": {
+            "int": {
+              "value": "1500"
+            }
+          }
+        }
+      }
+    },
+    "note": "numeric range over a log-normal tail; hits the prefix-coded numeric trie"
+  },
+  {
+    "id": "filter_status_5xx",
+    "request": {
+      "groups": [
+        "soak-idx-fixture"
+      ],
+      "name": "sw",
+      "limit": 50,
+      "projection": {
+        "tagFamilies": [
+          {
+            "name": "searchable",
+            "tags": [
+              "service_id",
+              "pod",
+              "level",
+              "trace_id",
+              "message"
+            ]
+          },
+          {
+            "name": "metrics",
+            "tags": [
+              "duration",
+              "status_code",
+              "byte_size"
+            ]
+          }
+        ]
+      },
+      "criteria": {
+        "condition": {
+          "name": "status_code",
+          "op": "BINARY_OP_GE",
+          "value": {
+            "int": {
+              "value": "500"
+            }
+          }
+        }
+      }
+    },
+    "note": "numeric range on a second int field"
+  },
+  {
+    "id": "filter_pod",
+    "request": {
+      "groups": [
+        "soak-idx-fixture"
+      ],
+      "name": "sw",
+      "limit": 50,
+      "projection": {
+        "tagFamilies": [
+          {
+            "name": "searchable",
+            "tags": [
+              "service_id",
+              "pod",
+              "level",
+              "trace_id",
+              "message"
+            ]
+          },
+          {
+            "name": "metrics",
+            "tags": [
+              "duration",
+              "status_code",
+              "byte_size"
+            ]
+          }
+        ]
+      },
+      "criteria": {
+        "condition": {
+          "name": "pod",
+          "op": "BINARY_OP_EQ",
+          "value": {
+            "str": {
+              "value": "pod-003"
+            }
+          }
+        }
+      }
+    },
+    "note": "medium-cardinality string term: pod-003 spans ~10% of series"
+  },
+  {
+    "id": "filter_message_term",
+    "request": {
+      "groups": [
+        "soak-idx-fixture"
+      ],
+      "name": "sw",
+      "limit": 50,
+      "projection": {
+        "tagFamilies": [
+          {
+            "name": "searchable",
+            "tags": [
+              "service_id",
+              "pod",
+              "level",
+              "trace_id",
+              "message"
+            ]
+          },
+          {
+            "name": "metrics",
+            "tags": [
+              "duration",
+              "status_code",
+              "byte_size"
+            ]
+          }
+        ]
+      },
+      "criteria": {
+        "condition": {
+          "name": "message",
+          "op": "BINARY_OP_EQ",
+          "value": {
+            "str": {
+              "value": "connection to reset"
+            }
+          }
+        }
+      }
+    },
+    "note": "shared-vocabulary message term: ~1/256 of the fixture, a genuinely shared posting"
+  },
+  {
+    "id": "sort_duration_desc",
+    "request": {
+      "groups": [
+        "soak-idx-fixture"
+      ],
+      "name": "sw",
+      "limit": 20,
+      "projection": {
+        "tagFamilies": [
+          {
+            "name": "searchable",
+            "tags": [
+              "service_id",
+              "pod",
+              "level",
+              "trace_id",
+              "message"
+            ]
+          },
+          {
+            "name": "metrics",
+            "tags": [
+              "duration",
+              "status_code",
+              "byte_size"
+            ]
+          }
+        ]
+      },
+      "orderBy": {
+        "indexRuleName": "ir_duration",
+        "sort": "SORT_DESC"
+      }
+    },
+    "note": "index-ordered top-20 by the only sort rule (ir_duration)"
+  },
+  {
+    "id": "sort_duration_filtered",
+    "request": {
+      "groups": [
+        "soak-idx-fixture"
+      ],
+      "name": "sw",
+      "limit": 20,
+      "projection": {
+        "tagFamilies": [
+          {
+            "name": "searchable",
+            "tags": [
+              "service_id",
+              "pod",
+              "level",
+              "trace_id",
+              "message"
+            ]
+          },
+          {
+            "name": "metrics",
+            "tags": [
+              "duration",
+              "status_code",
+              "byte_size"
+            ]
+          }
+        ]
+      },
+      "criteria": {
+        "le": {
+          "op": "LOGICAL_OP_AND",
+          "left": {
+            "condition": {
+              "name": "level",
+              "op": "BINARY_OP_EQ",
+              "value": {
+                "str": {
+                  "value": "ERROR"
+                }
+              }
+            }
+          },
+          "right": {
+            "condition": {
+              "name": "duration",
+              "op": "BINARY_OP_GE",
+              "value": {
+                "int": {
+                  "value": "1000"
+                }
+              }
+            }
+          }
+        }
+      },
+      "orderBy": {
+        "indexRuleName": "ir_duration",
+        "sort": "SORT_DESC"
+      }
+    },
+    "note": "sort survives a tag-filter pushdown; the merge cap is limit+offset"
+  },
+  {
+    "id": "narrow_level_error",
+    "request": {
+      "groups": [
+        "soak-idx-fixture"
+      ],
+      "name": "sw",
+      "limit": 50,
+      "projection": {
+        "tagFamilies": [
+          {
+            "name": "searchable",
+            "tags": [
+              "service_id",
+              "pod",
+              "level",
+              "trace_id",
+              "message"
+            ]
+          },
+          {
+            "name": "metrics",
+            "tags": [
+              "duration",
+              "status_code",
+              "byte_size"
+            ]
+          }
+        ]
+      },
+      "criteria": {
+        "condition": {
+          "name": "level",
+          "op": "BINARY_OP_EQ",
+          "value": {
+            "str": {
+              "value": "ERROR"
+            }
+          }
+        }
+      }
+    },
+    "note": "15-minute window: older segments must classify as disjoint",
+    "windowHours": 0.25
+  },
+  {
+    "id": "narrow_duration_gt",
+    "request": {
+      "groups": [
+        "soak-idx-fixture"
+      ],
+      "name": "sw",
+      "limit": 50,
+      "projection": {
+        "tagFamilies": [
+          {
+            "name": "searchable",
+            "tags": [
+              "service_id",
+              "pod",
+              "level",
+              "trace_id",
+              "message"
+            ]
+          },
+          {
+            "name": "metrics",
+            "tags": [
+              "duration",
+              "status_code",
+              "byte_size"
+            ]
+          }
+        ]
+      },
+      "criteria": {
+        "condition": {
+          "name": "duration",
+          "op": "BINARY_OP_GT",
+          "value": {
+            "int": {
+              "value": "1500"
+            }
+          }
+        }
+      }
+    },
+    "note": "15-minute window + numeric range: overlap_trie path",
+    "windowHours": 0.25
+  },
+  {
+    "id": "narrow_sort_duration",
+    "request": {
+      "groups": [
+        "soak-idx-fixture"
+      ],
+      "name": "sw",
+      "limit": 20,
+      "projection": {
+        "tagFamilies": [
+          {
+            "name": "searchable",
+            "tags": [
+              "service_id",
+              "pod",
+              "level",
+              "trace_id",
+              "message"
+            ]
+          },
+          {
+            "name": "metrics",
+            "tags": [
+              "duration",
+              "status_code",
+              "byte_size"
+            ]
+          }
+        ]
+      },
+      "orderBy": {
+        "indexRuleName": "ir_duration",
+        "sort": "SORT_DESC"
+      }
+    },
+    "note": "15-minute window + index order: SortCursor time narrowing",
+    "windowHours": 0.25
+  }
+]

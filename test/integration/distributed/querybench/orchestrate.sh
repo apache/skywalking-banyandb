@@ -70,13 +70,17 @@ go test -c -o "${BINARY}" ./test/integration/distributed/querybench
 # set by run-docker.sh). It emits its own JSON artifact; CI gates on the exit
 # status of this run independently from the benchmark summary.json.
 if [[ "${SOAK}" == "1" ]]; then
-  echo "[orchestrate] === soak mode: running TestTraceVecSoak ==="
+  SOAK_TEST=TestTraceVecSoak
+  if [[ "${ENGINE}" == "measure" ]]; then
+    SOAK_TEST=TestMeasureVecSoak
+  fi
+  echo "[orchestrate] === soak mode: running ${SOAK_TEST} ==="
   DQB_ENGINE="${ENGINE}" \
     DQB_SOAK=1 \
     SOAK_HEAP_GROWTH_MAX_PCT="${SOAK_HEAP_GROWTH_MAX_PCT:-10}" \
     DQB_QUERY_MEMORY_MIB="${DQB_QUERY_MEMORY_MIB:-256}" \
     DQB_REPORT_DIR="${REPORT_DIR}" \
-    "${BINARY}" -test.run TestTraceVecSoak -test.v -test.timeout 60m
+    "${BINARY}" -test.run "${SOAK_TEST}" -test.v -test.timeout "${DQB_SOAK_TEST_TIMEOUT:-60m}"
   echo "[orchestrate] soak done"
   exit 0
 fi

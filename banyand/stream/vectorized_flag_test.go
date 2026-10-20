@@ -19,7 +19,6 @@ package stream
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -36,22 +35,19 @@ func parseVectorizedFlags(t *testing.T, args ...string) vstream.VectorizedConfig
 	return cfg
 }
 
-func TestVectorizedEnabledFalseAbortsStartup(t *testing.T) {
-	cfg := parseVectorizedFlags(t, "--stream-vectorized-enabled=false")
-	err := cfg.Validate()
-	require.Error(t, err, "--stream-vectorized-enabled=false must abort startup, not silently run the vec path")
-	require.Contains(t, err.Error(), "apache/skywalking#13998")
-
-	// Both node roles must surface it from their own Validate, which is what run.Group
-	// calls before PreRun — otherwise the flag would be accepted and quietly ignored.
-	standaloneSvc := &standalone{root: t.TempDir(), option: option{vectorized: cfg}}
-	standaloneSvc.retentionConfig.Cooldown = time.Second
-	require.ErrorContains(t, standaloneSvc.Validate(), "apache/skywalking#13998")
-	liaisonSvc := &liaison{root: t.TempDir(), option: option{vectorized: cfg}}
-	require.ErrorContains(t, liaisonSvc.Validate(), "apache/skywalking#13998")
+func TestVectorizedFlagsAreAccepted(t *testing.T) {
+	cfg := parseVectorizedFlags(t, "--stream-vectorized-batch-size=128", "--stream-vectorized-query-memory-mib=64")
+	require.Equal(t, 128, cfg.BatchSize)
+	require.Equal(t, 64, cfg.QueryMemoryMiB)
+	require.NoError(t, cfg.Validate())
+	require.NoError(t, parseVectorizedFlags(t).Validate())
 }
 
-func TestVectorizedEnabledTrueAndDefaultAreAccepted(t *testing.T) {
-	require.NoError(t, parseVectorizedFlags(t, "--stream-vectorized-enabled=true").Validate())
-	require.NoError(t, parseVectorizedFlags(t).Validate())
+// TestRemovedVectorizedEnabledFlagIsUnknown pins that the row-path switch is gone: a command
+// line that still passes it fails to parse instead of being accepted as a no-op.
+func TestRemovedVectorizedEnabledFlagIsUnknown(t *testing.T) {
+	cfg := vstream.VectorizedConfig{}
+	flagS := run.NewFlagSet("stream-vec-test")
+	bindVectorizedFlags(flagS, &cfg)
+	require.Error(t, flagS.Parse([]string{"--stream-vectorized-enabled=true"}))
 }

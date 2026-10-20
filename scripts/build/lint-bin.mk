@@ -18,7 +18,7 @@
 
 LINTER := $(tool_bin)/golangci-lint
 $(LINTER):
-	@GOBIN=$(tool_bin) go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	@GOBIN=$(tool_bin) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
 REVIVE := $(tool_bin)/revive
 $(REVIVE):
