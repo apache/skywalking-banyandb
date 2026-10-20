@@ -33,8 +33,6 @@ import (
 	testmeasure "github.com/apache/skywalking-banyandb/pkg/test/measure"
 )
 
-const qlbT02WideMeasure = "qlb_t02_wide"
-
 // Read every service partition before timing. A readiness check must not require
 // one 100,000-row protobuf response that exceeds the execution memory allowance.
 func waitForQLBT02Visibility(ctx context.Context, conn *grpc.ClientConn, cardinality int, base time.Time, wide bool) error {
@@ -60,22 +58,6 @@ func waitForQLBT02Visibility(ctx context.Context, conn *grpc.ClientConn, cardina
 		}
 	}
 	return nil
-}
-
-func qlbT02WideFields() []string {
-	fields := make([]string, 16)
-	for idx := range fields {
-		fields[idx] = fmt.Sprintf("wide_%02d", idx)
-	}
-	return fields
-}
-
-func qlbT02WideValues(entity, point int) []*modelv1.FieldValue {
-	fields := make([]*modelv1.FieldValue, 16)
-	for idx := range fields {
-		fields[idx] = intFieldValue(int64(entity*100000 + point*16 + idx))
-	}
-	return fields
 }
 
 func preloadQLBT02Schema(ctx context.Context, registry schema.Registry) error {

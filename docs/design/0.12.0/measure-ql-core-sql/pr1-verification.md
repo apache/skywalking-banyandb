@@ -148,3 +148,28 @@ Final local reports are `/mnt/d/qlb-pr1-standalone-report.json` and
 `/mnt/d/qlb-pr1-distributed-report.json`; check, unit and race logs use the same
 `/mnt/d/qlb-pr1-` prefix. These results validate PR 1 independently of later Catalog
 B features. Historical statistical performance acceptance is not reclassified.
+
+## CI follow-up (2026-10-20)
+
+The first CI run at `66040731a` passed all standalone/distributed integration
+jobs but exposed two checks missing from the local verification above:
+
+- The vulnerability scan loads packages without test files. The benchmark writer
+  called three wide-fixture helpers defined only in `_test.go`, so ordinary
+  package compilation failed even though its unit tests compiled. The helpers
+  now live beside their caller in `workload.go`, with identical values and logic.
+  `go build ./test/integration/distributed/querybench`, that package's unit suite
+  and the complete `make vuln-check` pass; the scan reports zero affected
+  vulnerabilities.
+- `TestMixedScanRejectsRetainedResponseAt64MiB` failed three of three race/coverage
+  reproductions, while the non-race test passed. The race build shortened the
+  shared fixture's long series from 20,000 to 8,400 points; all 10,798 output rows
+  fit with 61,233,480 bytes reserved, below the 67,108,864-byte cap. The resource
+  test now explicitly uses the 20,000-point series in both builds, while other
+  scan tests retain their smaller race fixture. It also checks that retained
+  responses remain charged, rejected reservations do not exceed the cap and
+  closing releases all reservations. The corrected test passes three of three
+  runs with `-race -cover`; lint passes for both affected packages.
+
+These changes affect benchmark/test support only. Query execution, budget limits
+and the measured production sources remain unchanged.

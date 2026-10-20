@@ -40,14 +40,15 @@ import (
 )
 
 const (
-	benchGroupName   = "sw_metric"
-	benchMeasureName = "service_cpm_minute"
-	benchTagFamily   = "default"
-	benchTagID       = "id"
-	benchTagEntityID = "entity_id"
-	benchFieldTotal  = "total"
-	benchFieldValue  = "value"
-	benchServiceMod  = 16
+	benchGroupName    = "sw_metric"
+	benchMeasureName  = "service_cpm_minute"
+	benchTagFamily    = "default"
+	benchTagID        = "id"
+	benchTagEntityID  = "entity_id"
+	benchFieldTotal   = "total"
+	benchFieldValue   = "value"
+	benchServiceMod   = 16
+	qlbT02WideMeasure = "qlb_t02_wide"
 )
 
 type writeSummary struct {
@@ -170,6 +171,22 @@ func writeEntityRangeShape(ctx context.Context, client measurev1.MeasureServiceC
 		return fmt.Errorf("close measure write stream: %w", closeErr)
 	}
 	return <-recvErrCh
+}
+
+func qlbT02WideFields() []string {
+	fields := make([]string, 16)
+	for idx := range fields {
+		fields[idx] = fmt.Sprintf("wide_%02d", idx)
+	}
+	return fields
+}
+
+func qlbT02WideValues(entity, point int) []*modelv1.FieldValue {
+	fields := make([]*modelv1.FieldValue, 16)
+	for idx := range fields {
+		fields[idx] = intFieldValue(int64(entity*100000 + point*16 + idx))
+	}
+	return fields
 }
 
 func benchmarkDataPointSpec() *measurev1.DataPointSpec {
