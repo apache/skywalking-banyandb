@@ -125,9 +125,12 @@ manifests, exact invocation scripts, latency samples and container memory events
 The raw kernel remains unchanged from that initial measurement. Planning and RPC
 were refreshed after the scalar pagination correction under
 `/mnt/d/qlb-pr1-bench/refresh-scalar-pagination/`; its
-`verify-source.py --production` confirms the final production sources match the
-refresh's manifest (866 files, zero changes). The initial manifest correctly
-records that the planner changed between those two measurements.
+At pre-rebase head `aa84b059d`, `verify-source.py --production` confirmed 866
+production files matched the refresh's manifest with zero changes. The subsequent
+rebase onto #1413 changes native aggregation sources, so that manifest describes
+the measured pre-rebase sources rather than the current head. The initial
+manifest separately records the planner change between the two measurements.
+No post-#1413 benchmark refresh or new performance verdict is claimed.
 
 ## Isolated branch verification
 

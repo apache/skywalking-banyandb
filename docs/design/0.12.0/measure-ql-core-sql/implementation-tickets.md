@@ -9,7 +9,8 @@ record](t01-verification.md) retains the supporting baseline and is not a separa
 engine capability.
 
 The original design-review base was `012115c5`. PR #1412 merged as `15635181b`;
-PR 1 targets main with the documentation-example fixes from `02441f968` included.
+PR 1 targets main at `f9424047d`, including documentation-example fixes from
+#1415 and the native aggregation optimization from #1413.
 This document defines the [language contract](README.md),
 [batch engine design](datafusion-engine.md) and [compiled-plan reuse design](plan-reuse.md).
 T02/T03/T05 commands are implemented. Commands for later capabilities describe

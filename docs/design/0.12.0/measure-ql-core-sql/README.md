@@ -62,9 +62,10 @@ specifications are:
   infrastructure, which QL reuses rather than replaces.
 
 `012115c5` is the historical design-review baseline. PR #1412 merged as
-`15635181b`; PR 1 is rebased onto main including the later documentation-example
-fix `02441f968`. The historical benchmark bases are recorded in their individual
-verification documents.
+`15635181b`; PR 1 is rebased onto main at `f9424047d`, including the documentation
+fixes from #1415 and native aggregation optimization from #1413. The benchmark
+refresh predates #1413; its measured source and later rebase checks are recorded
+separately in the PR 1 verification record.
 
 The gaps document proposes results as columns and rows but does not specify their
 wire encoding. For this scope, that is an **Arrow-style columnar representation**
