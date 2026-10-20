@@ -47,6 +47,17 @@ type Map[N Number] interface {
 	Reset()
 }
 
+// RangeFolder is implemented by the Maps NewMap returns. It folds a run of values
+// in one call. The result is exactly that of calling In once per value in the same
+// order, so a float accumulator is bit-identical: the values are added left to
+// right, never regrouped. Callers use it for a run that holds no nulls.
+type RangeFolder[N Number] interface {
+	// InSlice folds vals in order.
+	InSlice(vals []N)
+	// InSelected folds vals[sel[0]], vals[sel[1]], ... in that order.
+	InSelected(vals []N, sel []uint16)
+}
+
 // Reduce combines intermediate results from Map phases into a final value.
 type Reduce[N Number] interface {
 	Combine(Partial[N])

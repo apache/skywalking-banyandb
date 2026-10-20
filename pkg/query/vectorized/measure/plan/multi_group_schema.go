@@ -36,7 +36,7 @@ import (
 //	order when no projection is given).
 //
 // Tag type-divergence (same name, different type across groups) falls back to
-// ColumnTypeTagValue so the frame v3 proto-bytes passthrough carries each
+// ColumnTypeTagValue so the frame proto-bytes passthrough carries each
 // cell without forced type conversion. Field type-divergence falls back to
 // ColumnTypeFieldValue, mirroring the row path's FIELD_TYPE_UNSPECIFIED
 // fallback (schema.go:165-176).

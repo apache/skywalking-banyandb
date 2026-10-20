@@ -71,8 +71,9 @@ var benchStorageSchemaTagTypes = map[string]pbv1.ValueType{
 	"env_id": pbv1.ValueTypeInt64,
 }
 
-// benchPassthroughSchema mirrors what BuildBatchSchema currently produces
-// in production: tag/field cells stay as *modelv1.TagValue / FieldValue.
+// benchPassthroughSchema is the pre-native column selection: tag/field cells
+// stay as *modelv1.TagValue / FieldValue. BuildBatchSchema now emits native
+// columns by default; this is the baseline the native benchmarks compare to.
 func benchPassthroughSchema() *vectorized.BatchSchema {
 	return vectorized.NewBatchSchema([]vectorized.ColumnDef{
 		{Role: vectorized.RoleTimestamp, Type: vectorized.ColumnTypeInt64},
@@ -138,7 +139,7 @@ func buildBenchStorageDataPoints(seriesCount, rowsPerSeries int) *dataPoints {
 type benchStorageHarness struct {
 	tst       *tsTable
 	snap      *snapshot
-	parts     []*part
+	parts     []partRef
 	sids      []common.SeriesID
 	queryOpts queryOptions
 }
@@ -163,7 +164,7 @@ func setupBenchStorageHarness(b testing.TB) *benchStorageHarness {
 	require.NotNil(b, snap)
 
 	shardCache := storage.NewShardCache("bench-group", 0, 0)
-	parts, _ := snap.getParts(nil, shardCache, 0, int64(benchStorageRowsPer)+1)
+	parts, _ := snap.getParts(nil, shardCache, 0, 0, int64(benchStorageRowsPer)+1)
 	require.NotEmpty(b, parts)
 
 	sids := make([]common.SeriesID, benchStorageSeries)
@@ -190,7 +191,7 @@ func setupBenchStorageHarness(b testing.TB) *benchStorageHarness {
 // drainCursors walks every block in the harness's parts and invokes f
 // against each loaded cursor. Mirrors loadCursorsForBatch's per-block
 // step but inline so the bench stays single-goroutine and deterministic.
-func (h *benchStorageHarness) drainCursors(f func(bc *blockCursor)) {
+func (h *benchStorageHarness) drainCursors(typedNumeric bool, f func(bc *blockCursor)) {
 	ti := &tstIter{}
 	ti.init(h.parts, h.sids, h.queryOpts.minTimestamp, h.queryOpts.maxTimestamp)
 	for ti.nextBlock() {
@@ -201,7 +202,7 @@ func (h *benchStorageHarness) drainCursors(f func(bc *blockCursor)) {
 		opts.FieldProjection = benchStorageFieldProj
 		bc.init(p.p, p.curBlock, opts)
 		tmpBlock := generateBlock()
-		if bc.loadData(tmpBlock) {
+		if bc.loadData(tmpBlock, typedNumeric) {
 			f(bc)
 		}
 		releaseBlock(tmpBlock)
@@ -214,7 +215,7 @@ func BenchmarkStorageDecode_Row(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		h.drainCursors(func(bc *blockCursor) {
+		h.drainCursors(false, func(bc *blockCursor) {
 			r := &model.MeasureResult{}
 			bc.copyAllTo(r, nil, benchStorageProj, false)
 		})
@@ -227,9 +228,10 @@ func BenchmarkStorageDecode_Passthrough(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		h.drainCursors(func(bc *blockCursor) {
+		h.drainCursors(true, func(bc *blockCursor) {
 			mb := newMeasureBatchForSchema(schema, len(bc.timestamps))
 			bc.copyAllToBatch(mb, schema, nil, false)
+			mb.Release()
 		})
 	}
 }
@@ -240,9 +242,10 @@ func BenchmarkStorageDecode_Native(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		h.drainCursors(func(bc *blockCursor) {
+		h.drainCursors(true, func(bc *blockCursor) {
 			mb := newMeasureBatchForSchema(schema, len(bc.timestamps))
 			bc.copyAllToBatch(mb, schema, nil, false)
+			mb.Release()
 		})
 	}
 }

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -64,6 +65,7 @@ type dataSVC struct {
 	omr                observability.MetricsRegistry
 	metadata           metadata.Repo
 	pm                 protector.Memory
+	decodePool         *decodePool
 	metricPipeline     queue.Server
 	l                  *logger.Logger
 	schemaRepo         *schemaRepo
@@ -295,6 +297,7 @@ func (s *dataSVC) PreRun(ctx context.Context) error {
 		s.c = storage.NewServiceCacheWithConfig(ctx, s.cc)
 	}
 	node := val.(common.Node)
+	s.decodePool = newDecodePool(runtime.GOMAXPROCS(0), s.pm)
 	s.schemaRepo = newDataSchemaRepo(s.dataPath, s, node.Labels, node.NodeID)
 	// Register the snapshot collector so this data node serves its local schema
 	// to the co-located FODC agent via NodeSchemaStateService.
@@ -372,6 +375,8 @@ func (s *dataSVC) GracefulStop() {
 	}
 
 	obsservice.MetricsCollector.Unregister("measure_cache")
+	// Stop the decode workers before the storage they read is closed.
+	s.decodePool.close()
 	s.schemaRepo.Close()
 	s.c.Close()
 }
@@ -503,6 +508,7 @@ func newDataSupplier(path string, svc *dataSVC, sr *schemaRepo, nodeLabels map[s
 		option:     opt,
 		omr:        svc.omr,
 		pm:         svc.pm,
+		decodePool: svc.decodePool,
 		schemaRepo: sr,
 		nodeLabels: nodeLabels,
 	}

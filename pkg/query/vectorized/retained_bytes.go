@@ -33,6 +33,11 @@ func EstimatedRetainedBytes(batch *RecordBatch) uint64 {
 	total = saturatingAdd(total, saturatingMultiply(uint64(cap(batch.Columns)), 16))
 	total = saturatingAdd(total, saturatingMultiply(uint64(cap(batch.Selection)), 2))
 	for _, column := range batch.Columns {
+		if constCol, isConst := column.(*ConstColumn); isConst {
+			// One value for every row, however many there are.
+			total = saturatingAdd(total, saturatingAdd(uint64(unsafe.Sizeof(*constCol)), saturatingAdd(uint64(len(constCol.str)), uint64(cap(constCol.bytes)))))
+			continue
+		}
 		switch column.Type() {
 		case ColumnTypeInt64:
 			total = saturatingAdd(total, retainedColumnBytes(column.(*TypedColumn[int64])))

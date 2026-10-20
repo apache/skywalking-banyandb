@@ -61,7 +61,7 @@ var (
 // "interrupt: blank/total=%d/%d" form. PullBatch propagates these as
 // errors instead of as *MeasureResult{Error: …} — its return type is
 // (*MeasureBatch, error).
-func (qr *queryResult) PullBatch(_ context.Context) (*model.MeasureBatch, error) {
+func (qr *queryResult) PullBatch(ctx context.Context) (*model.MeasureBatch, error) {
 	if qr.batchSchema == nil {
 		return nil, fmt.Errorf("queryResult.PullBatch: batchSchema not initialized; " +
 			"the underlying query did not record a vectorized BatchSchema (likely a schema-build error at Query time)")
@@ -70,6 +70,9 @@ func (qr *queryResult) PullBatch(_ context.Context) (*model.MeasureBatch, error)
 	case <-qr.ctx.Done():
 		return nil, errors.WithMessagef(qr.ctx.Err(), "interrupt: hit %d", qr.hit)
 	default:
+	}
+	if qr.useWindowScan() {
+		return qr.scan.next(ctx)
 	}
 	if loadErr := qr.loadCursorsForBatch(); loadErr != nil {
 		return nil, loadErr
@@ -100,6 +103,25 @@ func (qr *queryResult) PullBatch(_ context.Context) (*model.MeasureBatch, error)
 		return vmeasure.BuildMeasureBatchFromResult(r, qr.batchSchema)
 	}
 	return qr.mergeBatch(qr.storedIndexValue, qr.batchSchema)
+}
+
+// useWindowScan reports whether PullBatch streams series windows, planning the
+// scan on first use. TopN queries (their merge rewrites field payloads) keep the
+// legacy load-then-merge path below, as does everything while the test switch is
+// on; mergeBatch and loadCursorsForBatch are reachable only through those two.
+func (qr *queryResult) useWindowScan() bool {
+	if qr.scan != nil {
+		return true
+	}
+	if qr.scanPlanned {
+		return false
+	}
+	qr.scanPlanned = true
+	if qr.loaded || qr.topNQueryOptions != nil || legacyBatchScan.Load() || len(qr.data) == 0 {
+		return false
+	}
+	qr.scan = newWindowScan(qr)
+	return true
 }
 
 // mergeBatch is the batch-aware counterpart of queryResult.merge (query.go).
@@ -192,6 +214,13 @@ func (qr *queryResult) loadCursorsForBatch() error {
 	if len(qr.data) == 0 {
 		return nil
 	}
+	if err := qr.admitWhole(qr.ctx); err != nil {
+		return err
+	}
+	// Typed numeric columns are understood by the batch readers only. TopN
+	// queries fall back to the row readers (merge / mergeTopNResult), which
+	// need the bytes form.
+	typedNumeric := qr.topNQueryOptions == nil
 	cursorChan := make(chan int, len(qr.data))
 	for i := 0; i < len(qr.data); i++ {
 		go func(i int) {
@@ -203,7 +232,7 @@ func (qr *queryResult) loadCursorsForBatch() error {
 			}
 			tmpBlock := generateBlock()
 			defer releaseBlock(tmpBlock)
-			if !qr.data[i].loadData(tmpBlock) {
+			if !qr.data[i].loadData(tmpBlock, typedNumeric) {
 				cursorChan <- i
 				return
 			}

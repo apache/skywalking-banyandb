@@ -22,36 +22,32 @@
 // carried as the SendResponse.body for TopicInternalMeasureQuery under the
 // G9f throughout-vec design.
 //
-// Wire layout (version 3):
+// Wire layout (version 4, the only version measure speaks):
 //
 //	off  len       field            description
 //	---  --------  ---------------  ---------------------------------------------
 //	  0  4         Magic            fixed [0x00,'V','F','R'] — first byte 0x00
-//	                                forces a flag-off proto.Unmarshal into
+//	                                forces a proto.Unmarshal of a frame body into
 //	                                *measurev1.InternalQueryResponse{} to return
-//	                                a non-nil error deterministically (G9f spec
-//	                                Principle 3, verified against
-//	                                google.golang.org/protobuf@v1.36.11).
-//	  4  1         WireVersion      currently 3.
+//	                                a non-nil error deterministically.
+//	  4  1         WireVersion      4.
 //	  5  uvarint   NumRows          number of (active) rows.
 //	  ?  uvarint   NumCols          number of column blocks.
 //	  ?  ...       Columns          NumCols column blocks, in schema order.
 //
 // Each column block carries role+type discriminators, the column name, a tag
 // family name (empty for non-RoleTag columns), a validity bitmap and a
-// type-specific data section; the exact byte shapes live in the shared base's
-// encode.go/decode.go.
+// type-specific data section: each column sends its validity, offsets and value
+// buffers as they sit in memory, padded to 8 bytes, so the receiver builds columns
+// by slicing the message (see the shared base's columnar.go for the byte layout).
 //
-// v1 → v2: each column block carries a uvarint(TagFamilyLen) + TagFamily byte
-// run after the Name so the row path's TagFamilyGroups grouping does not
-// collapse every projected tag family into the empty-name family.
-//
-// v2 → v3: adds two column types — TagValue (5) and FieldValue (6) — that
-// carry proto-marshaled TagValue / FieldValue bytes per cell, so cross-group
-// queries with type-divergent tag/field declarations cross the wire intact.
+// Data nodes always emit version 4 and a liaison accepts only version 4. BanyanDB 0.12
+// does not support rolling or mixed-version upgrades, so there is no negotiation and
+// no row-oriented fallback: a frame of any other version fails with ErrBadVersion.
 package frame
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -59,12 +55,9 @@ import (
 	baseframe "github.com/apache/skywalking-banyandb/pkg/query/vectorized/frame"
 )
 
-// WireVersion is the on-wire frame format version emitted by Encode. The
-// flag-on decoder MUST reject frames carrying any other version with a loud
-// typed error: the G9f hard-cutover model forbids dual-wire, so a version skew
-// on the wire is by definition a botched operator rollout, not a coexistence
-// to negotiate.
-const WireVersion uint8 = 3
+// WireVersion is the columnar frame format version, the only one measure emits and accepts.
+// A decoder rejects a frame of any other version with ErrBadVersion rather than misreading it.
+const WireVersion uint8 = 4
 
 // Magic is the 4-byte prefix every raw measure frame body MUST begin with. The
 // first byte is data.RawFrameMagicLeadingByte (0x00), which decodes as a varint
@@ -98,7 +91,7 @@ var (
 	ErrBadMagic = baseframe.ErrBadMagic
 
 	// ErrBadVersion signals a frame whose WireVersion byte does not match the
-	// current WireVersion.
+	// WireVersion.
 	ErrBadVersion = baseframe.ErrBadVersion
 
 	// ErrUnsupportedColumnType signals that a column whose ColumnType has no
@@ -122,7 +115,7 @@ const (
 )
 
 // Measure wire-type values. Explicit and stable. TagValue/FieldValue carry
-// proto-marshaled bytes per cell (v3).
+// proto-marshaled bytes per cell.
 const (
 	wireTypeInt64      uint8 = 1
 	wireTypeFloat64    uint8 = 2
@@ -138,10 +131,12 @@ const (
 var codec = baseframe.Codec{
 	Magic:       Magic,
 	WireVersion: WireVersion,
-	RoleToWire:  roleToWire,
-	WireToRole:  wireToRole,
-	TypeToWire:  typeToWire,
-	WireToType:  wireToType,
+	// ColumnarWireVersion selects the columnar layout for Encode and Decode.
+	ColumnarWireVersion: WireVersion,
+	RoleToWire:          roleToWire,
+	WireToRole:          wireToRole,
+	TypeToWire:          typeToWire,
+	WireToType:          wireToType,
 }
 
 func roleToWire(r vectorized.ColumnRole) (uint8, error) {
@@ -220,14 +215,22 @@ func wireToType(b uint8) (vectorized.ColumnType, error) {
 	}
 }
 
-// Encode serializes a measure vec columnar RecordBatch into a raw frame body.
+// Encode serializes a measure vec columnar RecordBatch into a raw columnar frame body.
 func Encode(b *vectorized.RecordBatch) ([]byte, error) {
-	return codec.Encode(b)
+	return codec.EncodeColumnar(b)
 }
 
-// Decode parses a measure raw frame body back into a RecordBatch.
+// Decode parses a measure raw frame body back into a RecordBatch. A frame of any version
+// other than WireVersion is rejected with ErrBadVersion. The batch borrows the body and pins
+// it through Owners: the caller releases the batch (RecordBatch.ReleaseOwners) when it is
+// done with it, and copies any cell it keeps beyond that.
 func Decode(b []byte) (*vectorized.RecordBatch, error) {
-	return codec.Decode(b)
+	batch, err := codec.DecodeColumnar(b)
+	if errors.Is(err, ErrBadVersion) {
+		return nil, fmt.Errorf("measure frame requires wire version %d (0.12 does not support rolling or mixed-version clusters; upgrade every node): %w",
+			WireVersion, err)
+	}
+	return batch, err
 }
 
 // ValidateHeader is the fail-loud preflight a decoder calls before parsing any
