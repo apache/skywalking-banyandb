@@ -18,5 +18,13 @@ nodes:
     grpc_address: data0:17912
   - name: data1
     grpc_address: data1:17912
+  - name: data2
+    grpc_address: data2:17912
+  - name: data3
+    grpc_address: data3:17912
+  - name: data4
+    grpc_address: data4:17912
+  - name: data5
+    grpc_address: data5:17912
   - name: liaison
     grpc_address: liaison:17912

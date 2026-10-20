@@ -23,15 +23,24 @@ setup:
       command: export PATH=/tmp/skywalking-infra-e2e/bin:$PATH
 
 verify:
-  # The script polls until the lines arrive, so one run is enough. A retry
-  # would create another group and check that one instead.
+  # Each script polls until its rows arrive, so one run is enough. A retry
+  # would create another marker group and check that one instead.
   retry:
     count: 0
   cases:
     - query: >-
-        bash test/e2e-v2/cases/nativelog/check-native-log.sh
+        bash test/e2e-v2/cases/nativelog/check-identities.sh
         ${liaison_host}:${liaison_17913}
-      expected: expected/success.yaml
+      expected: expected/identities.yaml
+    - query: >-
+        bash test/e2e-v2/cases/nativelog/check-placement.sh
+        ${liaison_host}:${liaison_17913}
+      expected: expected/placement.yaml
+    # Last: it restarts a data node.
+    - query: >-
+        bash test/e2e-v2/cases/nativelog/check-restart.sh
+        ${liaison_host}:${liaison_17913}
+      expected: expected/restart.yaml
 
 cleanup:
   on: always
@@ -43,5 +52,17 @@ cleanup:
         paths:
           - /tmp/stream/
       - service: data1
+        paths:
+          - /tmp/stream/
+      - service: data2
+        paths:
+          - /tmp/stream/
+      - service: data3
+        paths:
+          - /tmp/stream/
+      - service: data4
+        paths:
+          - /tmp/stream/
+      - service: data5
         paths:
           - /tmp/stream/

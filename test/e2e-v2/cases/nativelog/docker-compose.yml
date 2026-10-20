@@ -12,20 +12,26 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 version: '2.1'
 
+# Five data nodes store their own logs, and one more, data5, runs with native
+# logging off, its default. The log group has one shard, so the five producers
+# outnumber the shards: each must still keep its own logs on itself, in shard
+# 0, and never send them to another node. One Go process holds one native
+# sink and therefore one identity, which is why these cases are here and not
+# in test/integration.
+#
+# Every node polls the schema every second. A data node that has not seen the
+# log stream yet answers a liaison query with "stream doesn't exist", and the
+# liaison then fails the whole query (apache/skywalking#14104).
 services:
-  # Two data nodes with native logging on, so a case can check that each one
-  # stores its own events under its own identity. One process cannot hold two
-  # identities, which is why this case is here and not in test/integration.
   data0:
     extends:
       file: ../../script/docker-compose/base-compose.yml
       service: data
     hostname: data0
-    mem_limit: 1536m
-    command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --logging-native-enabled --logging-native-level=info
+    mem_limit: 1g
+    command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --schema-property-client-sync-interval=1s --logging-native-enabled --logging-native-level=info
     volumes:
       - ./nodes.yaml:/etc/banyandb/nodes.yaml
     networks:
@@ -36,8 +42,56 @@ services:
       file: ../../script/docker-compose/base-compose.yml
       service: data
     hostname: data1
-    mem_limit: 1536m
-    command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --logging-native-enabled --logging-native-level=info
+    mem_limit: 1g
+    command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --schema-property-client-sync-interval=1s --logging-native-enabled --logging-native-level=info
+    volumes:
+      - ./nodes.yaml:/etc/banyandb/nodes.yaml
+    networks:
+      - e2e
+
+  data2:
+    extends:
+      file: ../../script/docker-compose/base-compose.yml
+      service: data
+    hostname: data2
+    mem_limit: 1g
+    command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --schema-property-client-sync-interval=1s --logging-native-enabled --logging-native-level=info
+    volumes:
+      - ./nodes.yaml:/etc/banyandb/nodes.yaml
+    networks:
+      - e2e
+
+  data3:
+    extends:
+      file: ../../script/docker-compose/base-compose.yml
+      service: data
+    hostname: data3
+    mem_limit: 1g
+    command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --schema-property-client-sync-interval=1s --logging-native-enabled --logging-native-level=info
+    volumes:
+      - ./nodes.yaml:/etc/banyandb/nodes.yaml
+    networks:
+      - e2e
+
+  data4:
+    extends:
+      file: ../../script/docker-compose/base-compose.yml
+      service: data
+    hostname: data4
+    mem_limit: 1g
+    command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --schema-property-client-sync-interval=1s --logging-native-enabled --logging-native-level=info
+    volumes:
+      - ./nodes.yaml:/etc/banyandb/nodes.yaml
+    networks:
+      - e2e
+
+  data5:
+    extends:
+      file: ../../script/docker-compose/base-compose.yml
+      service: data
+    hostname: data5
+    mem_limit: 1g
+    command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --schema-property-client-sync-interval=1s
     volumes:
       - ./nodes.yaml:/etc/banyandb/nodes.yaml
     networks:
@@ -48,7 +102,7 @@ services:
       file: ../../script/docker-compose/base-compose.yml
       service: liaison
     mem_limit: 512m
-    command: liaison --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml
+    command: liaison --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --schema-property-client-sync-interval=1s
     # Declared here, and not only inherited: the e2e runner exports
     # ${liaison_host} and ${liaison_17913} from the ports a case names itself.
     # Without this the case receives an empty address.
@@ -62,6 +116,14 @@ services:
       data0:
         condition: service_healthy
       data1:
+        condition: service_healthy
+      data2:
+        condition: service_healthy
+      data3:
+        condition: service_healthy
+      data4:
+        condition: service_healthy
+      data5:
         condition: service_healthy
 
 networks:
