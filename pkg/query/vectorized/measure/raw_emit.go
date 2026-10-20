@@ -59,28 +59,21 @@ type FrameEmitter interface {
 	EmitFrame(ctx context.Context) ([]byte, error)
 }
 
-// DrainPipelineToFrame consumes a vec Pipeline end-to-end, concatenates
-// every emitted batch into a single RecordBatch, and frame.Encode-s the
-// result. It is the data-node side of the G9f throughout-vec wire: under
-// flag-on, TopicInternalMeasureQuery responses are exactly this single
-// raw frame body (one row per group for AggModeMap, one row per source
-// row for non-agg queries).
+// DrainPipelineToFrame consumes a vec pipeline and emits one columnar frame.
+// Native scalar batches are encoded as they arrive, releasing borrowed scan
+// storage before the next pull. Their wire buffers are joined into one response
+// without materializing coalescing columns. A single native batch needs no join.
+// Schemas requiring passthrough or array conversion use the coalescing fallback.
 //
 // schema is the propagated terminal-operator output schema (typically
 // the same as the egress pool's). It MUST match each emitted batch — a
 // mismatch is a planner bug, not a data error, so this function will
 // fail loud on a per-batch shape check instead of silently coercing.
 //
-// Multi-batch coalesce: pipeline.Next is called until it returns nil;
-// every non-nil batch's active rows are appended to a single output
-// batch via copyOneValue. This is intentionally NOT a streaming-write
-// of multiple frames — the codec contract carries one body per response
-// (api/data/codec.go), and frame.Encode expects one batch. For typical
-// distributed agg responses (one row per group, group count ≤ batchSize)
-// the pipeline emits a single batch and coalesce is a no-op fast path.
+// The unary codec contract carries one body per response (api/data/codec.go), so
+// encoded chunks and the final frame still require memory proportional to input.
 //
-// Returns the encoded frame body and the close error from pipeline.Close
-// joined into a single error (mirrors vectorizedMIterator.Close).
+// The caller retains responsibility for closing the pipeline.
 func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *vectorized.BatchSchema) ([]byte, error) {
 	return drainPipelineToFrame(ctx, p, schema, func(release func()) { release() })
 }
@@ -97,6 +90,9 @@ func drainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 	}
 	if schema == nil {
 		return nil, fmt.Errorf("DrainPipelineToFrame: nil schema")
+	}
+	if !needsFrameConversion(schema) {
+		return drainNativePipelineToFrame(ctx, p, schema, retain)
 	}
 	var reserved int64
 	defer func() {
@@ -123,26 +119,9 @@ func drainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 		}
 		reserved = base
 	}
-	// A columnar frame carries a batch's constant columns as one value and copies each cell
-	// once, into the frame, so a single batch of native columns is encoded as it is instead of
-	// being copied into a coalescing batch first. The held descriptor independently pins its
-	// owners because a source can release its lent descriptor on the next pull. Batches that need passthrough
-	// conversion take the coalescing path.
-	direct := !needsFrameConversion(schema)
-	var out, single *vectorized.RecordBatch
-	if !direct {
-		out = vectorized.NewRecordBatch(schema, 0)
-	}
-	// Both batches' cells may borrow storage memory pinned by their owners; they are held until
-	// the frame, which copies every cell into its own buffer, has been encoded.
-	defer func() {
-		if out != nil {
-			out.ReleaseOwners()
-		}
-		if single != nil {
-			single.ReleaseOwners()
-		}
-	}()
+	out := vectorized.NewRecordBatch(schema, 0)
+	// Coalesced cells borrow source storage until conversion and final encoding.
+	defer out.ReleaseOwners()
 	for {
 		b, pullErr := p.Next(ctx)
 		if pullErr != nil {
@@ -161,40 +140,11 @@ func drainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 			return nil, budgetErr
 		}
 		reserved += amount
-		if direct && out == nil && single == nil {
-			held := *b
-			held.Columns = append([]vectorized.Column(nil), b.Columns...)
-			held.Selection = append([]uint16(nil), b.Selection...)
-			if b.Selection != nil && len(b.Selection) == 0 {
-				held.Selection = []uint16{}
-			}
-			held.Owners = vectorized.Owners{}
-			held.Owners.PinAll(&b.Owners)
-			b.ReleaseOwners()
-			single = &held
-			continue
-		}
-		if out == nil {
-			out = vectorized.NewRecordBatch(schema, 0)
-			appendErr := appendActive(out, single)
-			single.Owners.TransferTo(&out.Owners)
-			single = nil
-			if appendErr != nil {
-				b.ReleaseOwners()
-				return nil, fmt.Errorf("DrainPipelineToFrame: %w", appendErr)
-			}
-		}
 		appendErr := appendActive(out, b)
 		b.Owners.TransferTo(&out.Owners)
 		if appendErr != nil {
 			return nil, fmt.Errorf("DrainPipelineToFrame: %w", appendErr)
 		}
-	}
-	if single != nil {
-		return encodeDrainedFrame(ctx, single)
-	}
-	if out == nil {
-		out = vectorized.NewRecordBatch(schema, 0)
 	}
 	// Decode any TagValue / FieldValue passthrough columns into their
 	// typed equivalents before frame.Encode. Storage's vec adapter emits
@@ -218,6 +168,125 @@ func drainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 		return nil, fmt.Errorf("DrainPipelineToFrame: %w", convErr)
 	}
 	return encodeDrainedFrame(ctx, converted)
+}
+
+// drainNativePipelineToFrame copies each lent batch directly into its wire buffers,
+// releasing storage before the next pull. Concatenation copies these buffers into
+// the single unary response without rebuilding growable coalescing columns.
+func drainNativePipelineToFrame(
+	ctx context.Context, p *vectorized.Pipeline, schema *vectorized.BatchSchema, retain func(func()),
+) (body []byte, retErr error) {
+	tracker := p.Tracker()
+	var reserved int64
+	var encodeSpan *query.Span
+	rows := 0
+	defer func() {
+		if encodeSpan == nil {
+			return
+		}
+		if retErr != nil {
+			encodeSpan.Error(retErr)
+		} else {
+			encodeSpan.Tagf(tracelabels.TagRowsOut, "%d", rows)
+			encodeSpan.Tagf(tracelabels.TagBatchesOut, "%d", 1)
+			encodeSpan.Tagf(tracelabels.TagBytesOut, "%d", len(body))
+			encodeSpan.Tagf(tracelabels.TagSchemaCols, "%d", len(schema.Columns))
+		}
+		encodeSpan.Stop()
+	}()
+	startEncoding := func() {
+		if encodeSpan == nil {
+			if tracer := query.GetTracer(ctx); tracer != nil {
+				encodeSpan, _ = tracer.StartSpan(ctx, "frame-encode")
+			}
+		}
+	}
+	reserve := func(amount int64) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if tracker == nil {
+			return nil
+		}
+		if err := tracker.Reserve(amount); err != nil {
+			return err
+		}
+		reserved += amount
+		return nil
+	}
+	defer func() {
+		if reserved == 0 {
+			return
+		}
+		release := func() { tracker.Release(reserved) }
+		if retErr != nil {
+			release()
+		} else {
+			retain(query.RegisterTransportRelease(ctx, release))
+		}
+	}()
+	if len(schema.Columns) > (math.MaxInt64-1024)/512 {
+		return nil, vectorized.ErrMemoryBudgetExceeded
+	}
+	metadata := int64(1024 + len(schema.Columns)*512)
+	for _, def := range schema.Columns {
+		names := uint64(len(def.Name)) + uint64(len(def.TagFamily))
+		if names > uint64(math.MaxInt64-metadata)/2 {
+			return nil, vectorized.ErrMemoryBudgetExceeded
+		}
+		metadata += int64(names * 2)
+	}
+	var frames [][]byte
+	for {
+		batch, err := p.Next(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("DrainPipelineToFrame: pipeline next: %w", err)
+		}
+		if batch == nil {
+			break
+		}
+		if !schemasEqual(schema, batch.Schema) {
+			batch.ReleaseOwners()
+			return nil, fmt.Errorf("DrainPipelineToFrame: batch schema mismatch (planner bug)")
+		}
+		// Per-frame metadata covers encoder plans, concatenation buffer views,
+		// copied schema text and slice growth before any of them are allocated.
+		inputBytes := vectorized.EstimatedRetainedBytes(batch)
+		if inputBytes > math.MaxInt64-uint64(metadata) {
+			batch.ReleaseOwners()
+			return nil, vectorized.ErrMemoryBudgetExceeded
+		}
+		if err = reserve(metadata + int64(inputBytes)); err != nil {
+			batch.ReleaseOwners()
+			return nil, err
+		}
+		rows += batch.ActiveLen()
+		startEncoding()
+		encoded, encodeErr := frame.EncodeWithReservation(batch, func(size int) error { return reserve(int64(size)) })
+		batch.ReleaseOwners()
+		if tracker != nil {
+			tracker.Release(int64(inputBytes))
+			reserved -= int64(inputBytes)
+		}
+		if encodeErr != nil {
+			return nil, encodeErr
+		}
+		frames = append(frames, encoded)
+	}
+	if len(frames) == 0 {
+		if err := reserve(metadata); err != nil {
+			return nil, err
+		}
+		startEncoding()
+		return frame.EncodeWithReservation(vectorized.NewRecordBatch(schema, 0), func(size int) error { return reserve(2 * int64(size)) })
+	}
+	if len(frames) == 1 {
+		if err := reserve(int64(cap(frames[0]))); err != nil {
+			return nil, err
+		}
+		return frames[0], nil
+	}
+	return frame.Concat(frames, func(size int) error { return reserve(2 * int64(size)) })
 }
 
 func reserveFrameEgressBatch(ctx context.Context, tracker *vectorized.MemoryTracker, batch *vectorized.RecordBatch) (int64, error) {

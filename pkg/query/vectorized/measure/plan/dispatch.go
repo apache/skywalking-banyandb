@@ -126,6 +126,13 @@ func DispatchBatches(ctx context.Context, req *measurev1.QueryRequest, metadata 
 		return nil, "", prepareErr
 	}
 	p, scan, opts, hidden := prepared.plan, prepared.scan, prepared.options, prepared.hidden
+	// An empty entity set is an impossible selector, not a storage request
+	// without its required series. Index-mode queries do not use entity sets.
+	if !measureSchema.GetIndexMode() && len(opts.Entities) == 0 {
+		empty := &batchSliceSource{schema: p.Schema()}
+		resultBatch, err = NewBatchResult(ctx, empty, p.Schema(), cfg.BatchSize)
+		return resultBatch, p.String(), err
+	}
 	allocationTracker := vectorized.QueryMemoryTracker(ctx, int64(cfg.QueryMemoryMiB)*1024*1024)
 	ctx, allocationScope := query.WithAllocationScope(ctx, allocationTracker.Reserve, allocationTracker.Release)
 	measure.RecordNativeLeafCall()

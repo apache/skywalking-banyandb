@@ -35,3 +35,6 @@
 *.bz2 binary
 
 go.sum merge=union
+
+# Deterministic QL expectations are reviewed through their generator and oracle.
+test/cases/measure/qlgen/generated/suite.json linguist-generated=true

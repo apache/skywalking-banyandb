@@ -223,6 +223,10 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 			top := stmt.Projection.TopN
 			request.Top.Number = int32(run.resolveCount(top.N, top.NParam, top.NParamIndex))
 		}
+		// Scalar pagination applies to the completed count, never to shard input.
+		if bindLegacyScalarCountPage(stmt, request) {
+			return &MeasureExecution{Request: request, Plan: &ql.RawPlan{Empty: true}}, nil
+		}
 		return &MeasureExecution{Request: request}, nil
 	}
 	plan := &ql.RawPlan{Slots: slices.Clone(m.slots)}
@@ -342,4 +346,18 @@ func whereHasTime(where *GrammarSelectWhereClause) bool {
 
 func isBuiltinTime(identifier *GrammarIdentifierPath) bool {
 	return identifier != nil && identifier.QuotedIdent == nil && identifier.First != nil && len(identifier.Rest) == 0 && strings.EqualFold(identifier.First.Value(), "TIME")
+}
+
+func bindLegacyScalarCountPage(stmt *GrammarSelectStatement, request *measurev1.QueryRequest) bool {
+	if request.GroupBy != nil || request.Top != nil ||
+		request.GetAgg().GetFunction() != modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT {
+		return false
+	}
+	if stmt.Limit != nil && request.Limit == 0 || request.Offset > 0 {
+		return true
+	}
+	// Native distributed limits prune node-local partials. A scalar count must
+	// consume them all, including when QL omits LIMIT and native defaults apply.
+	request.Limit = math.MaxUint32
+	return false
 }

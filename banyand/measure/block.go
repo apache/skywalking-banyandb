@@ -1063,6 +1063,41 @@ func (bi *blockPointer) copyFrom(src *blockPointer) {
 	bi.appendAll(src)
 }
 
+// detachValues gives a retained merge tail ownership of its byte-backed cells.
+// A single compact allocation preserves nil versus empty values without keeping
+// the decoder's complete input blocks alive across subsequent splits.
+func (bi *blockPointer) detachValues() {
+	size := 0
+	count := func(columns []column) {
+		for _, c := range columns {
+			for _, value := range c.values {
+				size += len(value)
+			}
+		}
+	}
+	count(bi.field.columns)
+	for _, family := range bi.tagFamilies {
+		count(family.columns)
+	}
+	payload := make([]byte, size)
+	detach := func(columns []column) {
+		for i := range columns {
+			for j, value := range columns[i].values {
+				if value == nil {
+					continue
+				}
+				n := copy(payload, value)
+				columns[i].values[j] = payload[:n:n]
+				payload = payload[n:]
+			}
+		}
+	}
+	detach(bi.field.columns)
+	for _, family := range bi.tagFamilies {
+		detach(family.columns)
+	}
+}
+
 func (bi *blockPointer) appendAll(b *blockPointer) {
 	if len(b.timestamps) == 0 {
 		return

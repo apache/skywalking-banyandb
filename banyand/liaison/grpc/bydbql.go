@@ -187,7 +187,7 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 		}
 		resp.Result = &bydbqlv1.QueryResponse_StreamResult{StreamResult: streamResponse}
 	case bydbql.QueryTypeMeasure:
-		measureResponse, err := b.measureSvc.queryWithRawPlan(ctx, result.QueryRequest.(*measurev1.QueryRequest), true, rawPlan)
+		measureResponse, err := b.measureSvc.queryWithRawPlan(ctx, result.QueryRequest.(*measurev1.QueryRequest), true, rawPlan, true)
 		if err != nil {
 			return nil, err
 		}

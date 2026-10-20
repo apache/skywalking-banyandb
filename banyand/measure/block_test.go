@@ -1158,3 +1158,28 @@ func Test_blockPointer_copyFrom(t *testing.T) {
 		})
 	}
 }
+
+func Test_blockPointer_detachValues(t *testing.T) {
+	backing := []byte("fieldtag")
+	bp := &blockPointer{block: block{
+		field:       columnFamily{columns: []column{{values: [][]byte{nil, {}, backing[:5]}}}},
+		tagFamilies: []columnFamily{{columns: []column{{values: [][]byte{backing[5:], {}, nil}}}}},
+	}}
+	bp.detachValues()
+	for i := range backing {
+		backing[i] = 'x'
+	}
+	require.Equal(t, [][]byte{nil, {}, []byte("field")}, bp.field.columns[0].values)
+	require.Equal(t, [][]byte{[]byte("tag"), {}, nil}, bp.tagFamilies[0].columns[0].values)
+	// Appending to one detached cell must not overwrite its neighbor.
+	appended := bp.field.columns[0].values[2]
+	appended = append(appended, 'x')
+	require.Equal(t, []byte("fieldx"), appended)
+	require.Equal(t, []byte("tag"), bp.tagFamilies[0].columns[0].values[0])
+
+	empty := &blockPointer{block: block{field: columnFamily{columns: []column{{values: [][]byte{nil, {}}}}}}}
+	empty.detachValues()
+	require.Nil(t, empty.field.columns[0].values[0])
+	require.NotNil(t, empty.field.columns[0].values[1])
+	require.Empty(t, empty.field.columns[0].values[1])
+}

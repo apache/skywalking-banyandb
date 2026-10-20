@@ -21598,6 +21598,176 @@
       ]
     },
     {
+      "name": "generated_empty_entity_and_left",
+      "query": "SELECT rid, host, zone, v::FIELD, f::FIELD FROM MEASURE ql_generated IN replicated_group TIME BETWEEN '{{time:-1}}' AND '{{time:8000}}' WHERE (rid IN () AND rid = 1)",
+      "want": {},
+      "features": [
+        "filter.in",
+        "filter.and",
+        "values.int_list"
+      ]
+    },
+    {
+      "name": "generated_empty_entity_and_right",
+      "query": "SELECT rid, host, zone, v::FIELD, f::FIELD FROM MEASURE ql_generated IN replicated_group TIME BETWEEN '{{time:-1}}' AND '{{time:8000}}' WHERE (rid = 1 AND rid IN ())",
+      "want": {},
+      "features": [
+        "filter.in",
+        "filter.and",
+        "values.int_list"
+      ]
+    },
+    {
+      "name": "generated_empty_entity_and_both",
+      "query": "SELECT rid, host, zone, v::FIELD, f::FIELD FROM MEASURE ql_generated IN replicated_group TIME BETWEEN '{{time:-1}}' AND '{{time:8000}}' WHERE (rid IN () AND rid IN ())",
+      "want": {},
+      "features": [
+        "filter.in",
+        "filter.and",
+        "values.int_list"
+      ]
+    },
+    {
+      "name": "generated_empty_entity_or_left",
+      "query": "SELECT rid, host, zone, v::FIELD, f::FIELD FROM MEASURE ql_generated IN replicated_group TIME BETWEEN '{{time:-1}}' AND '{{time:8000}}' WHERE (rid IN () OR rid = 1)",
+      "want": {
+        "dataPoints": [
+          {
+            "fields": [
+              {
+                "name": "v",
+                "value": {
+                  "int": {
+                    "value": "0"
+                  }
+                }
+              },
+              {
+                "name": "f",
+                "value": {
+                  "float": {
+                    "value": 0.25
+                  }
+                }
+              }
+            ],
+            "tagFamilies": [
+              {
+                "name": "default",
+                "tags": [
+                  {
+                    "key": "rid",
+                    "value": {
+                      "int": {
+                        "value": "1"
+                      }
+                    }
+                  },
+                  {
+                    "key": "host",
+                    "value": {
+                      "str": {
+                        "value": "a"
+                      }
+                    }
+                  },
+                  {
+                    "key": "zone",
+                    "value": {
+                      "str": {
+                        "value": "x"
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "timestamp": "{{time:0}}"
+          }
+        ]
+      },
+      "features": [
+        "filter.in",
+        "filter.or",
+        "values.int_list"
+      ]
+    },
+    {
+      "name": "generated_empty_entity_or_right",
+      "query": "SELECT rid, host, zone, v::FIELD, f::FIELD FROM MEASURE ql_generated IN replicated_group TIME BETWEEN '{{time:-1}}' AND '{{time:8000}}' WHERE (rid = 1 OR rid IN ())",
+      "want": {
+        "dataPoints": [
+          {
+            "fields": [
+              {
+                "name": "v",
+                "value": {
+                  "int": {
+                    "value": "0"
+                  }
+                }
+              },
+              {
+                "name": "f",
+                "value": {
+                  "float": {
+                    "value": 0.25
+                  }
+                }
+              }
+            ],
+            "tagFamilies": [
+              {
+                "name": "default",
+                "tags": [
+                  {
+                    "key": "rid",
+                    "value": {
+                      "int": {
+                        "value": "1"
+                      }
+                    }
+                  },
+                  {
+                    "key": "host",
+                    "value": {
+                      "str": {
+                        "value": "a"
+                      }
+                    }
+                  },
+                  {
+                    "key": "zone",
+                    "value": {
+                      "str": {
+                        "value": "x"
+                      }
+                    }
+                  }
+                ]
+              }
+            ],
+            "timestamp": "{{time:0}}"
+          }
+        ]
+      },
+      "features": [
+        "filter.in",
+        "filter.or",
+        "values.int_list"
+      ]
+    },
+    {
+      "name": "generated_empty_entity_or_both",
+      "query": "SELECT rid, host, zone, v::FIELD, f::FIELD FROM MEASURE ql_generated IN replicated_group TIME BETWEEN '{{time:-1}}' AND '{{time:8000}}' WHERE (rid IN () OR rid IN ())",
+      "want": {},
+      "features": [
+        "filter.in",
+        "filter.or",
+        "values.int_list"
+      ]
+    },
+    {
       "name": "generated_time_0_bound_false",
       "query": "SELECT rid, host, zone, v::FIELD, f::FIELD FROM MEASURE ql_generated IN replicated_group TIME BETWEEN '{{time:-1}}' AND '{{time:8000}}'",
       "want": {
@@ -32346,6 +32516,114 @@
       ]
     },
     {
+      "ticket": "LegacyScalar",
+      "name": "generated_legacy_scalar_count_nonempty",
+      "query": "SELECT COUNT(DISTINCT rid) FROM MEASURE ql_generated IN replicated_group TIME BETWEEN ? AND ? WHERE rid \u003e= ? LIMIT ? OFFSET ?\n#!params: [{\"str\":{\"value\":\"{{time:0}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}},{\"int\":{\"value\":\"0\"}},{\"int\":{\"value\":\"1\"}},{\"int\":{\"value\":\"0\"}}]",
+      "want": {
+        "dataPoints": [
+          {
+            "fields": [
+              {
+                "name": "rid",
+                "value": {
+                  "int": {
+                    "value": "8"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "features": [
+        "aggregate.COUNT_DISTINCT"
+      ]
+    },
+    {
+      "ticket": "LegacyScalar",
+      "name": "generated_legacy_scalar_count_idle",
+      "query": "SELECT COUNT(DISTINCT rid) FROM MEASURE ql_generated IN replicated_group TIME BETWEEN ? AND ? WHERE rid \u003e= ? LIMIT ? OFFSET ?\n#!params: [{\"str\":{\"value\":\"{{time:9000}}\"}},{\"str\":{\"value\":\"{{time:10000}}\"}},{\"int\":{\"value\":\"0\"}},{\"int\":{\"value\":\"1\"}},{\"int\":{\"value\":\"0\"}}]",
+      "want": {
+        "dataPoints": [
+          {
+            "fields": [
+              {
+                "name": "rid",
+                "value": {
+                  "int": {
+                    "value": "0"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "features": [
+        "aggregate.COUNT_DISTINCT"
+      ]
+    },
+    {
+      "ticket": "LegacyScalar",
+      "name": "generated_legacy_scalar_count_no_match",
+      "query": "SELECT COUNT(DISTINCT rid) FROM MEASURE ql_generated IN replicated_group TIME BETWEEN ? AND ? WHERE rid \u003e= ? LIMIT ? OFFSET ?\n#!params: [{\"str\":{\"value\":\"{{time:0}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}},{\"int\":{\"value\":\"99\"}},{\"int\":{\"value\":\"1\"}},{\"int\":{\"value\":\"0\"}}]",
+      "want": {
+        "dataPoints": [
+          {
+            "fields": [
+              {
+                "name": "rid",
+                "value": {
+                  "int": {
+                    "value": "0"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "features": [
+        "aggregate.COUNT_DISTINCT"
+      ]
+    },
+    {
+      "ticket": "LegacyScalar",
+      "name": "generated_legacy_scalar_count_idle_limit_zero",
+      "query": "SELECT COUNT(DISTINCT rid) FROM MEASURE ql_generated IN replicated_group TIME BETWEEN ? AND ? WHERE rid \u003e= ? LIMIT ? OFFSET ?\n#!params: [{\"str\":{\"value\":\"{{time:9000}}\"}},{\"str\":{\"value\":\"{{time:10000}}\"}},{\"int\":{\"value\":\"0\"}},{\"int\":{\"value\":\"0\"}},{\"int\":{\"value\":\"0\"}}]",
+      "want": {},
+      "features": [
+        "aggregate.COUNT_DISTINCT"
+      ]
+    },
+    {
+      "ticket": "LegacyScalar",
+      "name": "generated_legacy_scalar_count_nonempty_limit_zero",
+      "query": "SELECT COUNT(DISTINCT rid) FROM MEASURE ql_generated IN replicated_group TIME BETWEEN ? AND ? WHERE rid \u003e= ? LIMIT ? OFFSET ?\n#!params: [{\"str\":{\"value\":\"{{time:0}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}},{\"int\":{\"value\":\"0\"}},{\"int\":{\"value\":\"0\"}},{\"int\":{\"value\":\"0\"}}]",
+      "want": {},
+      "features": [
+        "aggregate.COUNT_DISTINCT"
+      ]
+    },
+    {
+      "ticket": "LegacyScalar",
+      "name": "generated_legacy_scalar_count_idle_offset",
+      "query": "SELECT COUNT(DISTINCT rid) FROM MEASURE ql_generated IN replicated_group TIME BETWEEN ? AND ? WHERE rid \u003e= ? LIMIT ? OFFSET ?\n#!params: [{\"str\":{\"value\":\"{{time:9000}}\"}},{\"str\":{\"value\":\"{{time:10000}}\"}},{\"int\":{\"value\":\"0\"}},{\"int\":{\"value\":\"1\"}},{\"int\":{\"value\":\"1\"}}]",
+      "want": {},
+      "features": [
+        "aggregate.COUNT_DISTINCT"
+      ]
+    },
+    {
+      "ticket": "LegacyScalar",
+      "name": "generated_legacy_scalar_count_nonempty_offset",
+      "query": "SELECT COUNT(DISTINCT rid) FROM MEASURE ql_generated IN replicated_group TIME BETWEEN ? AND ? WHERE rid \u003e= ? LIMIT ? OFFSET ?\n#!params: [{\"str\":{\"value\":\"{{time:0}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}},{\"int\":{\"value\":\"0\"}},{\"int\":{\"value\":\"1\"}},{\"int\":{\"value\":\"1\"}}]",
+      "want": {},
+      "features": [
+        "aggregate.COUNT_DISTINCT"
+      ]
+    },
+    {
       "dimensions": {
         "binding": "literal",
         "direction": "ASC",
@@ -34013,7 +34291,7 @@
       "want_code": 3
     },
     {
-      "name": "generated_invalid_range_142",
+      "name": "generated_invalid_range_155",
       "query": "SELECT rid, host, zone, v::FIELD, f::FIELD FROM MEASURE ql_generated IN replicated_group TIME BETWEEN '{{time:-1}}' AND '{{time:8000}}' LIMIT -1",
       "features": [
         "invalid.range"
@@ -34021,7 +34299,7 @@
       "want_code": 13
     },
     {
-      "name": "generated_invalid_range_143",
+      "name": "generated_invalid_range_156",
       "query": "SELECT rid, host, zone, v::FIELD, f::FIELD FROM MEASURE ql_generated IN replicated_group TIME BETWEEN '{{time:-1}}' AND '{{time:8000}}' LIMIT 4294967296",
       "features": [
         "invalid.range"
@@ -34029,7 +34307,7 @@
       "want_code": 13
     },
     {
-      "name": "generated_invalid_range_144",
+      "name": "generated_invalid_range_157",
       "query": "SELECT rid, host, zone, v::FIELD, f::FIELD FROM MEASURE ql_generated IN replicated_group TIME BETWEEN '{{time:-1}}' AND '{{time:8000}}' OFFSET -1",
       "features": [
         "invalid.range"
@@ -34037,7 +34315,7 @@
       "want_code": 13
     },
     {
-      "name": "generated_invalid_range_145",
+      "name": "generated_invalid_range_158",
       "query": "SELECT rid, host, zone, v::FIELD, f::FIELD FROM MEASURE ql_generated IN replicated_group TIME BETWEEN '{{time:-1}}' AND '{{time:8000}}' OFFSET 4294967296",
       "features": [
         "invalid.range"

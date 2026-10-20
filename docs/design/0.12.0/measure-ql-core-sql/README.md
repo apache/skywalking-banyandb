@@ -1,5 +1,10 @@
 # Measure QL Catalog B: Core SQL Implementation Plan
 
+This branch delivers **PR 1 of 4**: the shared execution foundation, typed raw
+measure QL and compiled-plan reuse. See the [PR 1 verification record](pr1-verification.md)
+for its isolated scope and current evidence. Subsequent PRs deliver aggregation,
+expressions/filtering, and complete grouping/output composition.
+
 Status: **T02 shared batch execution, T03 typed raw queries and T05 compiled-plan
 reuse implemented; eight capability tickets remain.** T05 passes generated E2E,
 ownership checks and its planning benchmark. Its process-isolated RPC comparison
@@ -11,6 +16,11 @@ stopped with partial results and no gate verdict. See [T03 verification](t03-ver
 T02's previously inconclusive performance acceptance remains recorded separately.
 The former T01 work and its [verification record](t01-verification.md) now support
 the first execution ticket, T02. Its real RPC tests and benchmark baseline remain valid.
+
+The delivered foundation includes Go-only native buffering, ownership and indexed
+array/empty-selector compatibility repairs, listed in the PR 1 verification
+record. Native requests, frame versions, protobuf definitions and persisted
+formats remain compatible. SQL operators continue to run on the liaison.
 
 The [DataFusion-inspired engine design](datafusion-engine.md) defines the batch
 execution architecture and revised delivery order. Its [source research](datafusion-research.md)

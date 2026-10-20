@@ -815,6 +815,13 @@ The current raw extensions cannot be combined with aggregate projections, `GROUP
 
 Aliases, built-in time projections, `now()`, timestamp `INTERVAL` arithmetic, and source shorthand in this section apply to measure SELECT. They do not extend stream, trace, property, or SHOW TOP syntax.
 
+### 5.6. Legacy scalar distinct-count pagination
+
+An ungrouped QL `COUNT(DISTINCT column)` consumes the complete native input before
+returning its single count row. A positive `LIMIT` cannot reduce that input;
+`LIMIT 0` or a positive `OFFSET` suppresses the row. With no matching input, the
+count is zero. Grouped queries keep their existing native behavior and restrictions.
+
 ## 6. BydbQL for Top-N
 
 Top-N queries use a specialized, command-like syntax for clarity and to reflect the optimized nature of the underlying `banyandb.measure.v1.TopNRequest`. The `FROM` clause is mandatory.

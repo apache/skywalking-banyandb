@@ -579,6 +579,12 @@ func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series, subject
 	sd.VersionSet = make([]bool, 0, len(hits))
 	if hasProjection {
 		sd.Fields = make(FieldResultList, 0, len(hits))
+		if len(opts.MultiValueProjection) > 0 {
+			if reserveErr := query.ReserveAllocation(ctx, uint64(len(hits))*8); reserveErr != nil {
+				return SeriesData{}, nil, reserveErr
+			}
+			sd.MultiValueFields = make([]map[string][][]byte, 0, len(hits))
+		}
 	}
 
 	for _, hit := range hits {
@@ -639,6 +645,13 @@ func appendSearchHit(ctx context.Context, view *native.ReadView, hit native.Quer
 
 	if hasProjection {
 		row := make(map[string][]byte, len(opts.Projection))
+		var multiRow map[string][][]byte
+		if len(opts.MultiValueProjection) > 0 {
+			if reserveErr := query.ReserveAllocation(ctx, 512+uint64(len(opts.MultiValueProjection))*96); reserveErr != nil {
+				return reserveErr
+			}
+			multiRow = make(map[string][][]byte, len(opts.MultiValueProjection))
+		}
 		for i := range opts.Projection {
 			name := opts.Projection[i].Marshal()
 			values := projected.Fields[name]
@@ -646,6 +659,23 @@ func appendSearchHit(ctx context.Context, view *native.ReadView, hit native.Quer
 				continue
 			}
 			value := values[len(values)-1]
+			if _, keepValues := opts.MultiValueProjection[name]; keepValues {
+				// ProjectHit already owns the bytes. Charge the retained descriptors and
+				// the schema-aware array decode before exposing the complete sequence.
+				size := uint64(len(values)) * 96
+				for _, item := range values {
+					size += uint64(len(item)) * 2
+				}
+				if reserveErr := query.ReserveAllocation(ctx, size); reserveErr != nil {
+					return reserveErr
+				}
+				if !sorted && !allocationScoped {
+					if chargeErr := query.Charge(ctx, size); chargeErr != nil {
+						return chargeErr
+					}
+				}
+				multiRow[name] = values
+			}
 			if !sorted && !allocationScoped {
 				if chargeErr := query.Charge(ctx, uint64(len(value))); chargeErr != nil {
 					return chargeErr
@@ -654,6 +684,9 @@ func appendSearchHit(ctx context.Context, view *native.ReadView, hit native.Quer
 			row[name] = value
 		}
 		sd.Fields = append(sd.Fields, row)
+		if multiRow != nil {
+			sd.MultiValueFields = append(sd.MultiValueFields, multiRow)
+		}
 	}
 
 	if sorted {

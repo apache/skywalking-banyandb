@@ -403,11 +403,11 @@ func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest
 
 // query shares admission, lifecycle gates and response accounting across both callers.
 func (ms *measureService) query(ctx context.Context, req *measurev1.QueryRequest, batches bool) (resp *measurev1.QueryResponse, err error) {
-	return ms.queryWithRawPlan(ctx, req, batches, nil)
+	return ms.queryWithRawPlan(ctx, req, batches, nil, false)
 }
 
 func (ms *measureService) queryWithRawPlan(ctx context.Context, req *measurev1.QueryRequest,
-	batches bool, rawPlan *ql.RawPlan,
+	batches bool, rawPlan *ql.RawPlan, fromQL bool,
 ) (resp *measurev1.QueryResponse, err error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "query request is nil")
@@ -424,7 +424,7 @@ func (ms *measureService) queryWithRawPlan(ctx context.Context, req *measurev1.Q
 	defer release()
 	ctx = vectorized.WithQueryMemoryScope(ctx)
 	defer func() { err = queryStatus(err) }()
-	return ms.executeQueryWithRawPlan(ctx, req, batches, rawPlan)
+	return ms.executeQueryWithRawPlan(ctx, req, batches, rawPlan, fromQL)
 }
 
 // finalizeMeasureResponse runs after trace assembly and before query metrics.
@@ -441,7 +441,7 @@ func finalizeMeasureResponse(ctx context.Context, resp **measurev1.QueryResponse
 }
 
 func (ms *measureService) executeQueryWithRawPlan(ctx context.Context, req *measurev1.QueryRequest,
-	batches bool, rawPlan *ql.RawPlan,
+	batches bool, rawPlan *ql.RawPlan, fromQL bool,
 ) (resp *measurev1.QueryResponse, err error) {
 	acquired := make([]string, 0, len(req.Groups))
 	defer func() {
@@ -502,6 +502,7 @@ func (ms *measureService) executeQueryWithRawPlan(ctx context.Context, req *meas
 			}
 		}()
 	}
+	defer finalizeEmptyQLCountDistinct(ctx, req, &resp, &err, fromQL, rawPlan)
 	measureReg := schemaRevisionRegistry(ms.metadataRepo)
 	gatedStatuses, shortCircuit := checkQueryGate(req.Groups, req.Name, req.GroupModRevisions,
 		func(name, group string) (int64, bool) {

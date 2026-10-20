@@ -519,7 +519,7 @@ func (p *DistributedPlan) ExecuteBatches(ctx context.Context) (result *BatchResu
 		}
 	}()
 
-	if err := ctx.Err(); err != nil {
+	if err = ctx.Err(); err != nil {
 		return nil, err
 	}
 	if !data.MeasureWireModeRaw() {
@@ -567,11 +567,12 @@ func (p *DistributedPlan) ExecuteBatches(ctx context.Context) (result *BatchResu
 		if responseErr != nil {
 			return nil, responseErr
 		}
-		if reserveErr := reserveNativeFrames(tracker, &reserved, frames, p.cfg.BatchSize, receiveScope.IngressReserved()); reserveErr != nil {
+		borrowRows, reserveErr := p.reserveSingleGroupFrames(tracker, &reserved, frames, queryRequest, receiveScope.IngressReserved())
+		if reserveErr != nil {
 			return nil, reserveErr
 		}
 		if queryRequest.GetAgg() == nil {
-			return p.executeRows(ctx, frames, queryRequest)
+			return p.executeRows(ctx, frames, queryRequest, borrowRows)
 		}
 		return p.executeAgg(ctx, frames, queryRequest)
 	}
@@ -831,7 +832,7 @@ func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *
 	return p.batchResult(ctx, batches, req, nil)
 }
 
-func (p *DistributedPlan) executeRows(ctx context.Context, frames [][]byte, req *measurev1.QueryRequest) (*BatchResult, error) {
+func (p *DistributedPlan) executeRows(ctx context.Context, frames [][]byte, req *measurev1.QueryRequest, borrowRows bool) (*BatchResult, error) {
 	tracker := vectorized.QueryMemoryTracker(ctx, int64(p.cfg.QueryMemoryMiB)*1024*1024)
 	spec := distributedRowsSpec{
 		Desc:          req.GetOrderBy().GetSort() == modelv1.Sort_SORT_DESC,
@@ -839,6 +840,7 @@ func (p *DistributedPlan) executeRows(ctx context.Context, frames [][]byte, req 
 		BatchSize:     p.cfg.BatchSize,
 		Tracker:       tracker,
 		OrderByColIdx: -1,
+		BorrowOutput:  borrowRows,
 	}
 	if p.orderByTag != nil {
 		spec.OrderByFamily = p.orderByTag.family

@@ -29,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
@@ -406,7 +407,11 @@ func (iqr *indexSortResult) fillSegTagCell(col vectorized.Column, def vectorized
 			return
 		}
 		if tnt, ok := tfl.fieldToValueType[def.Name]; ok {
-			fillTagCell(col, def, tnt.typ, fr[tnt.fieldName])
+			if tnt.typ == pbv1.ValueTypeStrArr || tnt.typ == pbv1.ValueTypeInt64Arr {
+				appendTagValueAt(col, def, mustDecodeIndexedTagValue(tnt.typ, fr[tnt.fieldName], src.multiValues(rowIdx, tnt.fieldName)))
+			} else {
+				fillTagCell(col, def, tnt.typ, fr[tnt.fieldName])
+			}
 			return
 		}
 		appendNullTagN(col, def, 1)
