@@ -47,6 +47,8 @@ import (
 // fakeClient is a queue.Client that records what was published, and can be told
 // to panic so that the consumer's recovery can be exercised.
 type fakeClient struct {
+	// markedModules is the module the write path logs under for the last batch.
+	markedModules atomic.Value
 	// nodeIDs records the node_id tag of every published element, so a test can
 	// assert on what actually reached the write path rather than on what the
 	// sink held.
@@ -68,8 +70,6 @@ type fakeClient struct {
 	// rejectOnClose makes Close answer the way localBatchPublisher answers a
 	// refused batch: a populated per-node map alongside a NIL error.
 	rejectOnClose atomic.Bool
-	// markedModules is the module the write path logs under for the last batch.
-	markedModules atomic.Value
 	// started counts the publishes that have begun, delayed or not.
 	started atomic.Int64
 }
@@ -114,6 +114,7 @@ func (f *fakeClient) NewChunkedSyncClient(string, uint32) (queue.ChunkedSyncClie
 func (f *fakeClient) NewNodeSchemaStatusClient(string) (clusterv1.NodeSchemaStatusServiceClient, error) {
 	return nil, nil
 }
+
 func (f *fakeClient) NewExportClient(string) (transferv1.ExportServiceClient, error) {
 	return nil, errors.New("not supported")
 }

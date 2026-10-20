@@ -95,10 +95,10 @@ type Service struct {
 	pm       protector.Memory
 	cfg      *logger.NativeLogging
 	node     NodeInfo
-	timing   timing
 	// pending is a batch held back because the local write topic had no
 	// subscriber yet. It is retried with the next tick's batch.
 	pending []entry
+	timing  timing
 	// unreadyAttempts counts the consecutive attempts that found no subscriber.
 	unreadyAttempts int
 	ready           bool
