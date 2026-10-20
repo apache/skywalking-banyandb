@@ -70,6 +70,10 @@ const (
 	// thousand rows the query is refused by the memory budget.
 	queryLimit = 900
 
+	// schemaRetry is how often the collector repeats its schema pass, which
+	// is what recreates a removed log group.
+	schemaRetry = 10 * time.Second
+
 	droppedPublishFailed = `banyandb_logging_native_log_dropped_total{reason="publish_failed"}`
 	writtenTotal         = "banyandb_logging_native_log_written_total"
 )
@@ -251,6 +255,48 @@ var _ = g.Describe("Native self-stored logs", func() {
 		_, moduleB := createNonceGroup(node.Conn)
 		gm.Eventually(func(inner gm.Gomega) {
 			findInitialized(inner, node, moduleB)
+		}, flags.EventuallyTimeout, time.Second).Should(gm.Succeed())
+	})
+
+	g.It("TC7 resumes in the same process after its destination was removed", func() {
+		node, stop := SharedContext.Start()
+		defer stop()
+		_, before := createNonceGroup(node.Conn)
+		gm.Eventually(func(inner gm.Gomega) {
+			findInitialized(inner, node, before)
+		}, flags.EventuallyTimeout, time.Second).Should(gm.Succeed())
+
+		// The failure is injected at the destination, on the real write path:
+		// the log group and every row in it are removed while the node runs.
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_, err := databasev1.NewGroupRegistryServiceClient(node.Conn).
+			Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: logGroup, Force: true})
+		cancel()
+		gm.Expect(err).NotTo(gm.HaveOccurred())
+		// Its rows went with it: the marker stored before is gone, whether the
+		// query fails on the missing group or finds the group recreated empty.
+		gm.Eventually(func(inner gm.Gomega) {
+			rows, queryErr := query(node.Conn, nodeEq(node.NodeID), byModule(before))
+			inner.Expect(queryErr == nil && len(rows) > 0).To(gm.BeFalse(),
+				"%s is still stored after the log group was removed", before)
+		}, flags.EventuallyTimeout, time.Second).Should(gm.Succeed())
+
+		// The same running collector restores its destination: its schema
+		// pass, which repeats every 10 seconds, recreates the group and the
+		// stream. Nothing is restarted.
+		gm.Eventually(func(inner gm.Gomega) {
+			getCtx, getCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer getCancel()
+			_, getErr := databasev1.NewStreamRegistryServiceClient(node.Conn).Get(getCtx,
+				&databasev1.StreamRegistryServiceGetRequest{Metadata: &commonv1.Metadata{Group: logGroup, Name: logStream}})
+			inner.Expect(getErr).NotTo(gm.HaveOccurred())
+		}, 3*schemaRetry, time.Second).Should(gm.Succeed())
+
+		// A collector stuck after the failure would look healthy after a
+		// restart, and fails here.
+		_, after := createNonceGroup(node.Conn)
+		gm.Eventually(func(inner gm.Gomega) {
+			findInitialized(inner, node, after)
 		}, flags.EventuallyTimeout, time.Second).Should(gm.Succeed())
 	})
 
