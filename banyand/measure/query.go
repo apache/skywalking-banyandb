@@ -175,8 +175,10 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		segments:         segments,
 		tagProjection:    mqo.TagProjection,
 		storedIndexValue: storedIndexValue,
+		dp:               m.decodePool,
 	}
 	queryResultTracker.Acquire(&result)
+	queriesStarted.Add(1)
 	if m.queryMetrics != nil {
 		m.queryMetrics.totalQueryResultStarted.Inc(1)
 	}
@@ -198,7 +200,7 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		}
 	}
 
-	var parts []*part
+	var parts []partRef
 	qo := queryOptions{
 		MeasureQueryOptions: mqo,
 		schemaTagTypes:      schemaTagTypes,
@@ -212,15 +214,10 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		if s == nil {
 			continue
 		}
-		oldLen := len(parts)
-		parts, n = s.getParts(parts, caches[i], qo.minTimestamp, qo.maxTimestamp)
+		parts, n = s.getParts(parts, caches[i], tableShardIDs[i], qo.minTimestamp, qo.maxTimestamp)
 		if n < 1 {
 			s.decRef()
 			continue
-		}
-		// Set shard ID for newly added parts
-		for j := oldLen; j < len(parts); j++ {
-			parts[j].shardID = tableShardIDs[i]
 		}
 		result.snapshots = append(result.snapshots, s)
 	}
@@ -251,11 +248,10 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 	// checks for nil and returns a clean error rather than degrading
 	// the row-path Pull().
 	// Thread GroupBy + Agg through so BuildBatchSchema emits native
-	// column types for the agg-relevant columns. Plain queries get
-	// passthrough; GroupBy+Agg queries get native int64/float64/string
-	// columns the BatchAggregation operator reads directly (computeKey +
-	// fold). Storage decoders (banyand/measure/batch_decode.go) handle
-	// both column shapes.
+	// column types for the agg-relevant columns. Every projected tag and
+	// field whose schema type maps cleanly is a native typed column the
+	// storage decoders (banyand/measure/batch_decode.go) fill without
+	// building protobuf wrappers; only unmapped projections stay passthrough.
 	result.batchSchema, _ = vmeasure.BuildBatchSchema(m.schema, model.MeasureQueryOptions{
 		TagProjection:   result.tagProjection,
 		FieldProjection: mqo.FieldProjection,
@@ -594,7 +590,7 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 	return r, nil
 }
 
-func (m *measure) searchBlocks(ctx context.Context, result *queryResult, sids []common.SeriesID, parts []*part, qo queryOptions) error {
+func (m *measure) searchBlocks(ctx context.Context, result *queryResult, sids []common.SeriesID, parts []partRef, qo queryOptions) error {
 	defFn := startBlockScanSpan(ctx, len(sids), parts, result)
 	defer defFn()
 	tstIter := generateTstIter()
@@ -609,6 +605,11 @@ func (m *measure) searchBlocks(ctx context.Context, result *queryResult, sids []
 	var hit int
 	var totalBlockBytes uint64
 	quota := m.pm.AvailableBytes()
+	// A scan that streams through the window scan reserves memory block by block
+	// (scan_decode_pool.go), so what it must fit is a block, not its whole result. TopN
+	// and the legacy test switch load every block before they merge, so they keep the
+	// check of the sum.
+	streaming := qo.Name != TopNSchemaName && !legacyBatchScan.Load()
 	for tstIter.nextBlock() {
 		if hit%checkDoneEvery == 0 {
 			select {
@@ -621,18 +622,35 @@ func (m *measure) searchBlocks(ctx context.Context, result *queryResult, sids []
 		bc := generateBlockCursor()
 		p := tstIter.piHeap[0]
 		bc.init(p.p, p.curBlock, qo)
-		bc.shardID = p.p.shardID
+		bc.shardID = p.shardID
 		result.data = append(result.data, bc)
 		totalBlockBytes += bc.bm.uncompressedSizeBytes
-		if quota >= 0 && totalBlockBytes > uint64(quota) {
-			return fmt.Errorf("block scan quota exceeded: used %d bytes, quota is %d bytes", totalBlockBytes, quota)
+		if quota >= 0 {
+			// A block larger than the whole quota can never be reserved, streaming or not:
+			// fail before any of it is read. The scans that load everything first also
+			// bound the sum.
+			if used := totalBlockBytes; !streaming && used > uint64(quota) {
+				return fmt.Errorf("block scan quota exceeded: used %d bytes, quota is %d bytes", used, quota)
+			}
+			if size := bc.bm.uncompressedSizeBytes; size > uint64(quota) {
+				return fmt.Errorf("block scan quota exceeded: used %d bytes, quota is %d bytes", size, quota)
+			}
 		}
 	}
 	if tstIter.Error() != nil {
 		return fmt.Errorf("cannot iterate tstIter: %w", tstIter.Error())
 	}
-	if err := m.pm.AcquireResource(ctx, totalBlockBytes); err != nil {
-		return err
+	result.budget = newScanBudget(quota, m.decodePool)
+	result.admit = func(ctx context.Context) error {
+		if quota >= 0 && totalBlockBytes > uint64(quota) {
+			return fmt.Errorf("block scan quota exceeded: used %d bytes, quota is %d bytes", totalBlockBytes, quota)
+		}
+		return m.pm.AcquireResource(ctx, totalBlockBytes)
+	}
+	if !streaming {
+		if err := result.admitWhole(ctx); err != nil {
+			return err
+		}
 	}
 	result.sidToIndex = make(map[common.SeriesID]int)
 	for i, si := range originalSids {
@@ -800,14 +818,34 @@ type queryResult struct {
 	sidToIndex       map[common.SeriesID]int
 	storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue
 	batchSchema      *vectorized.BatchSchema
+	scan             *windowScan
+	dp               *decodePool
+	budget           *scanBudget
+	admit            func(ctx context.Context) error
 	tagProjection    []model.TagProjection
 	data             []*blockCursor
 	snapshots        []*snapshot
 	segments         []storage.Segment[*tsTable, option]
 	hit              int
 	loaded           bool
+	scanPlanned      bool
+	admitted         bool
 	orderByTS        bool
 	ascTS            bool
+}
+
+// admitWhole runs the one-shot admission of the whole result, which the paths that
+// load every block before merging them need; the window scan reserves per cursor
+// instead. It runs once.
+func (qr *queryResult) admitWhole(ctx context.Context) error {
+	if qr.admitted || qr.admit == nil {
+		return nil
+	}
+	if err := qr.admit(ctx); err != nil {
+		return err
+	}
+	qr.admitted = true
+	return nil
 }
 
 func (qr *queryResult) Pull() *model.MeasureResult {
@@ -821,6 +859,9 @@ func (qr *queryResult) Pull() *model.MeasureResult {
 	if !qr.loaded {
 		if len(qr.data) == 0 {
 			return nil
+		}
+		if err := qr.admitWhole(qr.ctx); err != nil {
+			return &model.MeasureResult{Error: err}
 		}
 
 		cursorChan := make(chan int, len(qr.data))
@@ -842,7 +883,7 @@ func (qr *queryResult) Pull() *model.MeasureResult {
 				}
 				tmpBlock := generateBlock()
 				defer releaseBlock(tmpBlock)
-				if !qr.data[idx].loadData(tmpBlock) {
+				if !qr.data[idx].loadData(tmpBlock, false) {
 					cursorChan <- idx
 					return
 				}
@@ -900,6 +941,9 @@ func (qr *queryResult) Release() {
 		qr.data[i] = nil
 	}
 	qr.data = qr.data[:0]
+	if qr.scan != nil {
+		qr.scan.close()
+	}
 	for i := range qr.snapshots {
 		qr.snapshots[i].decRef()
 	}

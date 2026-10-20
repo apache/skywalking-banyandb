@@ -18,14 +18,43 @@
 package measure
 
 import (
+	"fmt"
+	"sync/atomic"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
+
+// disableConstColumns switches the production of ConstColumns off, so a test can
+// compare a scan that carries entity tags as constants with one that does not.
+var disableConstColumns atomic.Bool
+
+// verifyEntityConstants makes every ConstColumn the scan builds be checked against
+// all the rows it stands for. Tests turn it on; production never does.
+var verifyEntityConstants atomic.Bool
+
+func constColumnsEnabled() bool { return !disableConstColumns.Load() }
+
+// assertColumnIsConst panics unless every row of col holds the value of constCol.
+func assertColumnIsConst(col vectorized.Column, constCol *vectorized.ConstColumn, what string) {
+	for i := range col.Len() {
+		rowConst, ok := vectorized.AcquireConstFrom(col, i, 1)
+		if !ok {
+			panic(fmt.Sprintf("measure: %s: cannot read row %d as a constant", what, i))
+		}
+		same := rowConst.Equal(constCol)
+		vectorized.ReleaseColumn(rowConst)
+		if !same {
+			panic(fmt.Sprintf("measure: %s: row %d differs from the constant the batch carries for it", what, i))
+		}
+	}
+}
 
 // G5b/G5c — typed-column emit path on blockCursor.
 //
@@ -120,17 +149,119 @@ func (bc *blockCursor) copyAllToBatch(b *model.MeasureBatch, schema *vectorized.
 		case vectorized.RoleTag:
 			col := b.Tags[tagIdx]
 			tagIdx++
-			bc.fillTagColumnAllRows(col, def, idx, offset, indexValue, desc)
+			bc.fillTagColumnAllRows(b, col, def, idx, offset, indexValue, desc, false)
 		case vectorized.RoleField:
 			col := b.Fields[fieldIdx]
 			fieldIdx++
-			bc.fillFieldColumnAllRows(col, def, idx, offset, desc)
+			bc.fillFieldColumnAllRows(b, col, def, idx, offset, desc, false)
 		case vectorized.RoleTimestamp, vectorized.RoleVersion,
 			vectorized.RoleSeriesID, vectorized.RoleShardID,
 			vectorized.RoleElementID, vectorized.RoleOrderKey:
 			// Metadata handled above.
 		}
 	}
+}
+
+// lendBatch builds a batch that lends the whole decoded block instead of copying
+// it: Timestamps, Versions and typed numeric columns are views of the cursor's
+// slices, string, bytes and string-array cells borrow its decoded bytes, and the
+// batch pins the cursor until it is released. Rows stay in storage order; a
+// descending scan sets Selection to [n-1, ..., 0] rather than reversing columns.
+// Hidden (index-substituted) tags, missing columns and columns with nulls are
+// filled into owned columns row by row, as copyAllToBatch does.
+//
+// The caller keeps its own reference to bc and must not hand it a block of more
+// than 65,536 rows when desc is set (a uint16 selection cannot address them).
+func (bc *blockCursor) lendBatch(schema *vectorized.BatchSchema,
+	storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue, desc bool,
+) *model.MeasureBatch {
+	size := len(bc.timestamps)
+	var b *model.MeasureBatch
+	if constColumnsEnabled() {
+		b = model.AcquireConstEntityMeasureBatch(schema, size)
+	} else {
+		b = model.AcquireBorrowingMeasureBatch(schema, size)
+	}
+	b.BorrowMetadata(bc.timestamps, bc.versions)
+	b.Owners.Pin(bc)
+	sid := bc.bm.seriesID
+	for range size {
+		b.ShardIDs = append(b.ShardIDs, bc.shardID)
+		b.SeriesIDs = append(b.SeriesIDs, sid)
+	}
+	var indexValue map[string]*modelv1.TagValue
+	if storedIndexValue != nil {
+		indexValue = storedIndexValue[sid]
+	}
+	tagIdx, fieldIdx := 0, 0
+	for _, def := range schema.Columns {
+		switch def.Role {
+		case vectorized.RoleTag:
+			col := b.Tags[tagIdx]
+			if def.Entity && size > 0 && constColumnsEnabled() && bc.constEntityTag(b, tagIdx, def, indexValue, size) {
+				tagIdx++
+				continue
+			}
+			tagIdx++
+			bc.fillTagColumnAllRows(b, col, def, 0, size, indexValue, false, true)
+		case vectorized.RoleField:
+			col := b.Fields[fieldIdx]
+			fieldIdx++
+			bc.fillFieldColumnAllRows(b, col, def, 0, size, false, true)
+		case vectorized.RoleTimestamp, vectorized.RoleVersion,
+			vectorized.RoleSeriesID, vectorized.RoleShardID,
+			vectorized.RoleElementID, vectorized.RoleOrderKey:
+			// Metadata handled above.
+		}
+	}
+	if desc {
+		b.Selection = make([]uint16, size)
+		for i := range b.Selection {
+			b.Selection[i] = uint16(size - 1 - i)
+		}
+	}
+	return b
+}
+
+// constEntityTag replaces tag column tagIdx of b, which holds one series' rows, with
+// a ConstColumn of size rows holding the entity tag's value. An entity tag is the same
+// in every row of a block, because a block is one series and the series is the entity
+// values; the value is decoded from the first row only, through the same path that
+// fills a whole column, so a missing family or column, a stored type that differs from
+// the schema's, and an index-substituted value all come out as they would row by row
+// (a null becomes a null constant). A string or bytes value borrows the cursor's
+// memory, which b pins. It returns false, having left the column as it was, when the
+// column is not of a type a ConstColumn can stand for.
+func (bc *blockCursor) constEntityTag(b *model.MeasureBatch, tagIdx int, def vectorized.ColumnDef,
+	indexValue map[string]*modelv1.TagValue, size int,
+) bool {
+	col := b.Tags[tagIdx]
+	if !vectorized.ConstSupported(def.Type) || col.Len() != 0 {
+		return false
+	}
+	bc.fillTagColumnAllRows(b, col, def, 0, 1, indexValue, false, false)
+	constCol, ok := b.ConstFrom(col, 0, size)
+	if !ok {
+		col.Reset()
+		return false
+	}
+	if verifyEntityConstants.Load() {
+		bc.verifyConstEntityTag(b, def, constCol, indexValue, size)
+	}
+	vectorized.ReleaseColumn(col)
+	b.Tags[tagIdx] = constCol
+	return true
+}
+
+// verifyConstEntityTag panics unless every row of the block holds the value of
+// constCol. It is the test-mode check of the invariant constEntityTag relies on.
+func (bc *blockCursor) verifyConstEntityTag(b *model.MeasureBatch, def vectorized.ColumnDef, constCol *vectorized.ConstColumn,
+	indexValue map[string]*modelv1.TagValue, size int,
+) {
+	full := vectorized.AcquireColumn(def.Type, size)
+	defer vectorized.ReleaseColumn(full)
+	bc.fillTagColumnAllRows(b, full, def, 0, size, indexValue, false, false)
+	assertColumnIsConst(full, constCol, "block of series "+fmt.Sprint(bc.bm.seriesID)+" tag "+def.Name)
 }
 
 // fillTagColumnAllRows appends rows [idx, offset) of the tag described by
@@ -147,9 +278,13 @@ func (bc *blockCursor) copyAllToBatch(b *model.MeasureBatch, schema *vectorized.
 //  4. Validate the column's stored valueType matches the projection's
 //     schemaType. On mismatch, null-fill (same defensive behavior as
 //     copyAllTo's hasSchemaType check).
-//  5. Decode each stored byte slice into the typed column.
-func (bc *blockCursor) fillTagColumnAllRows(col vectorized.Column, def vectorized.ColumnDef,
-	idx, offset int, indexValue map[string]*modelv1.TagValue, desc bool,
+//  5. Decode each stored byte slice into the typed column. String, bytes and
+//     string-array columns borrow the cursor's decoded bytes instead of copying
+//     them (borrowTagRows); b then pins the cursor. When lend is set, a typed
+//     numeric column is lent as a zero-copy view of the cursor's slice too
+//     (lendNumericRows).
+func (bc *blockCursor) fillTagColumnAllRows(b *model.MeasureBatch, col vectorized.Column, def vectorized.ColumnDef,
+	idx, offset int, indexValue map[string]*modelv1.TagValue, desc, lend bool,
 ) {
 	size := offset - idx
 	// Hidden tag substitution.
@@ -175,22 +310,20 @@ func (bc *blockCursor) fillTagColumnAllRows(col vectorized.Column, def vectorize
 		appendNullTagN(col, def, size)
 		return
 	}
-	if desc {
-		for i := offset - 1; i >= idx; i-- {
-			fillTagCell(col, def, column.valueType, column.values[i])
-		}
-	} else {
-		for i := idx; i < offset; i++ {
-			fillTagCell(col, def, column.valueType, column.values[i])
-		}
+	if bc.borrowTagRows(b, col, def, column, idx, offset, desc) {
+		return
 	}
+	if lend && !desc && bc.lendNumericRows(b, col, def, column, idx, offset) {
+		return
+	}
+	fillTagRows(col, def, column, idx, offset, desc)
 }
 
 // fillFieldColumnAllRows mirrors fillTagColumnAllRows but on the field side.
 // There is no indexValue path for fields and no schemaType check (fields
 // don't have hidden-tag substitutions).
-func (bc *blockCursor) fillFieldColumnAllRows(col vectorized.Column, def vectorized.ColumnDef,
-	idx, offset int, desc bool,
+func (bc *blockCursor) fillFieldColumnAllRows(b *model.MeasureBatch, col vectorized.Column, def vectorized.ColumnDef,
+	idx, offset int, desc, lend bool,
 ) {
 	size := offset - idx
 	column := bc.findFieldColumn(def.Name)
@@ -198,15 +331,257 @@ func (bc *blockCursor) fillFieldColumnAllRows(col vectorized.Column, def vectori
 		appendNullFieldN(col, def, size)
 		return
 	}
+	if lend && !desc && bc.lendNumericRows(b, col, def, column, idx, offset) {
+		return
+	}
+	fillFieldRows(col, def, column, idx, offset, desc)
+}
+
+// lendNumericRows makes col a zero-copy view of rows [idx, offset) of a typed
+// int64 or float64 column and pins bc on b so the slice stays valid until b is
+// released. It returns false, having changed nothing, when it does not apply:
+// the column is passthrough, not in typed form (it has nulls or was decoded to
+// bytes) or of another value type, so the caller takes the copying path.
+//
+// The view is capacity-limited and col is marked borrowed (TypedColumn.Borrow),
+// so neither an append nor a Reset can write into the cursor's slice.
+func (bc *blockCursor) lendNumericRows(b *model.MeasureBatch, col vectorized.Column, def vectorized.ColumnDef,
+	column *column, idx, offset int,
+) bool {
+	switch column.form {
+	case numericFormInt64:
+		if def.Type != vectorized.ColumnTypeInt64 {
+			return false
+		}
+		c, ok := col.(*vectorized.TypedColumn[int64])
+		if !ok || c.Len() != 0 {
+			return false
+		}
+		c.Borrow(column.int64s[idx:offset])
+	case numericFormFloat64:
+		if def.Type != vectorized.ColumnTypeFloat64 {
+			return false
+		}
+		c, ok := col.(*vectorized.TypedColumn[float64])
+		if !ok || c.Len() != 0 {
+			return false
+		}
+		c.Borrow(column.float64s[idx:offset])
+	case numericFormBytes:
+		return false
+	}
+	b.Owners.Pin(bc)
+	return true
+}
+
+// fillTagRows appends rows [idx, offset) of column onto col, reversed when desc.
+// A typed int64 column is appended in bulk; anything else goes cell by cell.
+func fillTagRows(col vectorized.Column, def vectorized.ColumnDef, column *column, idx, offset int, desc bool) {
+	if column.form == numericFormInt64 &&
+		appendNumericRows(col, def, vectorized.ColumnTypeTagValue, column.int64s[idx:offset], desc, int64TagValue) {
+		return
+	}
 	if desc {
 		for i := offset - 1; i >= idx; i-- {
-			fillFieldCell(col, def, column.valueType, column.values[i])
+			fillTagCell(col, def, column.valueType, column.rowBytes(i))
 		}
 	} else {
 		for i := idx; i < offset; i++ {
-			fillFieldCell(col, def, column.valueType, column.values[i])
+			fillTagCell(col, def, column.valueType, column.rowBytes(i))
 		}
 	}
+}
+
+// fillFieldRows is the field-side counterpart of fillTagRows.
+func fillFieldRows(col vectorized.Column, def vectorized.ColumnDef, column *column, idx, offset int, desc bool) {
+	switch column.form {
+	case numericFormInt64:
+		if appendNumericRows(col, def, vectorized.ColumnTypeFieldValue, column.int64s[idx:offset], desc, int64FieldValue) {
+			return
+		}
+	case numericFormFloat64:
+		if appendNumericRows(col, def, vectorized.ColumnTypeFieldValue, column.float64s[idx:offset], desc, float64FieldValue) {
+			return
+		}
+	case numericFormBytes:
+	}
+	if desc {
+		for i := offset - 1; i >= idx; i-- {
+			fillFieldCell(col, def, column.valueType, column.rowBytes(i))
+		}
+	} else {
+		for i := idx; i < offset; i++ {
+			fillFieldCell(col, def, column.valueType, column.rowBytes(i))
+		}
+	}
+}
+
+// appendNumericRows copies src onto col, reversed when desc. A passthrough
+// column of def.Type == passthroughType receives wrap(v) per row, matching
+// mustDecodeTagValue/mustDecodeFieldValue; a native TypedColumn[T] receives the
+// values themselves. It returns false, having appended nothing, when col is
+// neither, so the caller can take the generic path that reports the mismatch.
+func appendNumericRows[T int64 | float64, P any](col vectorized.Column, def vectorized.ColumnDef,
+	passthroughType vectorized.ColumnType, src []T, desc bool, wrap func(T) P,
+) bool {
+	if def.Type == passthroughType {
+		c, ok := col.(*vectorized.TypedColumn[P])
+		if !ok {
+			return false
+		}
+		if desc {
+			for i := len(src) - 1; i >= 0; i-- {
+				c.Append(wrap(src[i]))
+			}
+		} else {
+			for _, v := range src {
+				c.Append(wrap(v))
+			}
+		}
+		return true
+	}
+	c, ok := col.(*vectorized.TypedColumn[T])
+	if !ok {
+		return false
+	}
+	if desc {
+		for i := len(src) - 1; i >= 0; i-- {
+			c.Append(src[i])
+		}
+	} else {
+		c.AppendSlice(src)
+	}
+	return true
+}
+
+// borrowTagRows appends rows [idx, offset) of a string, bytes or string-array tag
+// as zero-copy views over the cursor's decoded bytes, reversed when desc, and pins
+// bc on b so the bytes stay valid until b is released. It returns false, having
+// appended nothing, when it does not apply: the column is passthrough, typed
+// numeric, or of another value type, so the caller takes the copying path.
+//
+// The views are valid because every value of a bytes-form column points into
+// memory only this cursor writes and only its last release recycles: the decoder
+// buffer for plain encoding, or a block-sized allocation the dictionary decoder
+// makes for dictionary encoding (the pooled Dictionary holds just the headers).
+// Bytes cells are capacity-limited so an append cannot write into a neighbor.
+func (bc *blockCursor) borrowTagRows(b *model.MeasureBatch, col vectorized.Column, def vectorized.ColumnDef,
+	column *column, idx, offset int, desc bool,
+) bool {
+	if def.Type == vectorized.ColumnTypeTagValue || column.form != numericFormBytes {
+		return false
+	}
+	var borrowed bool
+	switch column.valueType {
+	case pbv1.ValueTypeStr:
+		c, ok := col.(*vectorized.TypedColumn[string])
+		if !ok {
+			return false
+		}
+		forEachRow(idx, offset, desc, func(i int) {
+			raw := column.values[i]
+			if raw == nil {
+				c.AppendNull()
+				return
+			}
+			borrowed = borrowed || len(raw) > 0
+			c.Append(convert.BytesToString(raw))
+		})
+	case pbv1.ValueTypeBinaryData:
+		c, ok := col.(*vectorized.TypedColumn[[]byte])
+		if !ok {
+			return false
+		}
+		forEachRow(idx, offset, desc, func(i int) {
+			raw := column.values[i]
+			if raw == nil {
+				c.AppendNull()
+				return
+			}
+			borrowed = borrowed || len(raw) > 0
+			c.Append(raw[:len(raw):len(raw)])
+		})
+	case pbv1.ValueTypeStrArr:
+		c, ok := col.(*vectorized.TypedColumn[[]string])
+		if !ok {
+			return false
+		}
+		borrowed = borrowStrArrRows(c, column, idx, offset, desc)
+	default:
+		return false
+	}
+	if borrowed {
+		b.Owners.Pin(bc)
+	}
+	return true
+}
+
+// forEachRow calls fn for each row in [idx, offset), last to first when desc.
+func forEachRow(idx, offset int, desc bool, fn func(i int)) {
+	if desc {
+		for i := offset - 1; i >= idx; i-- {
+			fn(i)
+		}
+		return
+	}
+	for i := idx; i < offset; i++ {
+		fn(i)
+	}
+}
+
+// borrowStrArrRows appends the string-array cells of rows [idx, offset) to c. An
+// element without escape sequences is a view over the stored bytes; one with
+// escapes is unescaped into a fresh string, since its decoded form is not stored.
+// All cells slice one growing slab instead of allocating a slice per row. It
+// reports whether any element borrows.
+func borrowStrArrRows(c *vectorized.TypedColumn[[]string], column *column, idx, offset int, desc bool) bool {
+	bb := bigValuePool.Generate()
+	defer bigValuePool.Release(bb)
+	var slab []string
+	var borrowed bool
+	forEachRow(idx, offset, desc, func(i int) {
+		if appendBorrowedStrArr(c, column.values[i], &slab, bb) {
+			borrowed = true
+		}
+	})
+	return borrowed
+}
+
+// appendBorrowedStrArr appends one stored string-array cell to c: null for a nil
+// raw, nil for a cell with no elements, else a capacity-limited window over slab.
+// Elements borrow raw as borrowStrArrRows describes. It reports whether any element
+// borrows. bb is scratch for unescaping.
+func appendBorrowedStrArr(c *vectorized.TypedColumn[[]string], raw []byte, slab *[]string, bb *bytes.Buffer) bool {
+	if raw == nil {
+		c.AppendNull()
+		return false
+	}
+	borrowed := false
+	start := len(*slab)
+	for buf := raw; len(buf) > 0; {
+		var rest []byte
+		var err error
+		bb.Buf, rest, err = unmarshalVarArray(bb.Buf[:0], buf)
+		if err != nil {
+			logger.Panicf("unmarshalVarArray failed: %v", err)
+		}
+		// consumed includes the trailing delimiter; unescaping only ever shrinks
+		// the element, so equal lengths mean the stored bytes are the element.
+		consumed := len(buf) - len(rest)
+		if len(bb.Buf) == consumed-1 {
+			*slab = append(*slab, convert.BytesToString(buf[:len(bb.Buf)]))
+			borrowed = borrowed || len(bb.Buf) > 0
+		} else {
+			*slab = append(*slab, string(bb.Buf))
+		}
+		buf = rest
+	}
+	if len(*slab) == start {
+		c.Append(nil)
+		return borrowed
+	}
+	c.Append((*slab)[start:len(*slab):len(*slab)])
+	return borrowed
 }
 
 // fillTagCell decodes one stored cell of valueType into col, dispatching on
@@ -258,7 +633,7 @@ func (bc *blockCursor) copyToBatch(b *model.MeasureBatch, schema *vectorized.Bat
 		case vectorized.RoleTag:
 			col := b.Tags[tagIdx]
 			tagIdx++
-			bc.fillTagCell(col, def, bc.idx, indexValue)
+			bc.fillTagCell(b, col, def, bc.idx, indexValue)
 		case vectorized.RoleField:
 			col := b.Fields[fieldIdx]
 			fieldIdx++
@@ -272,7 +647,7 @@ func (bc *blockCursor) copyToBatch(b *model.MeasureBatch, schema *vectorized.Bat
 }
 
 // fillTagCell appends a single tag cell at row rowIdx from bc into col.
-func (bc *blockCursor) fillTagCell(col vectorized.Column, def vectorized.ColumnDef,
+func (bc *blockCursor) fillTagCell(b *model.MeasureBatch, col vectorized.Column, def vectorized.ColumnDef,
 	rowIdx int, indexValue map[string]*modelv1.TagValue,
 ) {
 	if indexValue != nil && indexValue[def.Name] != nil {
@@ -294,7 +669,10 @@ func (bc *blockCursor) fillTagCell(col vectorized.Column, def vectorized.ColumnD
 		appendNullTagN(col, def, 1)
 		return
 	}
-	fillTagCell(col, def, column.valueType, column.values[rowIdx])
+	if bc.borrowTagRows(b, col, def, column, rowIdx, rowIdx+1, false) {
+		return
+	}
+	fillTagRows(col, def, column, rowIdx, rowIdx+1, false)
 }
 
 // fillFieldCell appends a single field cell at row rowIdx from bc into col.
@@ -304,7 +682,7 @@ func (bc *blockCursor) fillFieldCell(col vectorized.Column, def vectorized.Colum
 		appendNullFieldN(col, def, 1)
 		return
 	}
-	fillFieldCell(col, def, column.valueType, column.values[rowIdx])
+	fillFieldRows(col, def, column, rowIdx, rowIdx+1, false)
 }
 
 // replaceInBatch overwrites the LAST row of b (at index lastRow) with the
@@ -369,7 +747,7 @@ func (bc *blockCursor) setTagCellAt(col vectorized.Column, def vectorized.Column
 		setNullTagAt(col, def, destRow)
 		return
 	}
-	setTagCellAt(col, def, column.valueType, column.values[srcRow], destRow)
+	setTagCellAt(col, def, column.valueType, column.rowBytes(srcRow), destRow)
 }
 
 // setFieldCellAt overwrites column position destRow with the field value
@@ -380,7 +758,7 @@ func (bc *blockCursor) setFieldCellAt(col vectorized.Column, def vectorized.Colu
 		setNullFieldAt(col, def, destRow)
 		return
 	}
-	setFieldCellAt(col, def, column.valueType, column.values[srcRow], destRow)
+	setFieldCellAt(col, def, column.valueType, column.rowBytes(srcRow), destRow)
 }
 
 // setTagCellAt overwrites one cell in col at destRow. Mirrors fillTagCell but
@@ -627,4 +1005,35 @@ func (bc *blockCursor) findFieldColumn(name string) *column {
 		}
 	}
 	return nil
+}
+
+// constifyEntityTags replaces the entity tag columns of b, a batch of one series' rows
+// gathered from several pieces, with ConstColumns holding the first row's value. The
+// caller has established that b holds a single series. A string or bytes value keeps
+// borrowing the memory b pins.
+func constifyEntityTags(b *model.MeasureBatch, schema *vectorized.BatchSchema) {
+	n := b.RowCount()
+	if n == 0 || !constColumnsEnabled() {
+		return
+	}
+	tagIdx := 0
+	for _, def := range schema.Columns {
+		if def.Role != vectorized.RoleTag {
+			continue
+		}
+		idx := tagIdx
+		tagIdx++
+		if !def.Entity || !vectorized.ConstSupported(def.Type) {
+			continue
+		}
+		constCol, ok := b.ConstFrom(b.Tags[idx], 0, n)
+		if !ok {
+			continue
+		}
+		if verifyEntityConstants.Load() {
+			assertColumnIsConst(b.Tags[idx], constCol, "coalesced batch tag "+def.Name)
+		}
+		vectorized.ReleaseColumn(b.Tags[idx])
+		b.Tags[idx] = constCol
+	}
 }

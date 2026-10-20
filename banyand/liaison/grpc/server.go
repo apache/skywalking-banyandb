@@ -189,9 +189,14 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		discoveryService: newDiscoveryService(schema.KindProperty, schemaRegistry, nr.PropertyNodeRegistry, gr),
 		queryBudget:      protector.QueryBudgetFor(protectorService),
 	}
+	bydbQLSchemaSource := &entityRepoSchemaSource{
+		measures: measureSVC.entityRepo,
+		streams:  streamSVC.entityRepo,
+		traces:   traceSVC.entityRepo,
+	}
 	bydbQLSVC := &bydbQLService{
 		repo:           schemaRegistry,
-		transformer:    bydbql.NewTransformer(schemaRegistry),
+		transformer:    bydbql.NewTransformerWithSource(schemaRegistry, bydbQLSchemaSource),
 		streamSvc:      streamSVC,
 		measureSvc:     measureSVC,
 		traceSvc:       traceSVC,

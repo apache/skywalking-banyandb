@@ -19,6 +19,7 @@ package measure
 
 import (
 	"slices"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -84,32 +85,92 @@ func buildDataPoint(b *vectorized.RecordBatch, schema *vectorized.BatchSchema, r
 		dp.Sid = uint64(b.Columns[i].(*vectorized.TypedColumn[int64]).Data()[rowIdx])
 	}
 	if len(schema.TagFamilyGroups) > 0 {
-		dp.TagFamilies = make([]*modelv1.TagFamily, 0, len(schema.TagFamilyGroups))
+		// One slab per row for the families and tags keeps the per-cell
+		// allocation count down: the Tag / TagFamily structs and their pointer
+		// slices are carved from three shared backing arrays.
+		var totalTags int
 		for _, group := range schema.TagFamilyGroups {
-			tf := &modelv1.TagFamily{
-				Name: group.Family,
-				Tags: make([]*modelv1.Tag, 0, len(group.Columns)),
-			}
+			totalTags += len(group.Columns)
+		}
+		famSlab := make([]modelv1.TagFamily, len(schema.TagFamilyGroups))
+		tagSlab := make([]modelv1.Tag, totalTags)
+		tagPtrs := make([]*modelv1.Tag, totalTags)
+		dp.TagFamilies = make([]*modelv1.TagFamily, len(schema.TagFamilyGroups))
+		tagPos := 0
+		for g, group := range schema.TagFamilyGroups {
+			tf := &famSlab[g]
+			tf.Name = group.Family
+			tf.Tags = tagPtrs[tagPos : tagPos : tagPos+len(group.Columns)]
 			for _, colIdx := range group.Columns {
-				tf.Tags = append(tf.Tags, &modelv1.Tag{
-					Key:   schema.Columns[colIdx].Name,
-					Value: columnValueToTagValue(b.Columns[colIdx], rowIdx),
-				})
+				tag := &tagSlab[tagPos]
+				tag.Key = schema.Columns[colIdx].Name
+				tag.Value = columnValueToTagValue(b.Columns[colIdx], rowIdx)
+				tf.Tags = append(tf.Tags, tag)
+				tagPos++
 			}
-			dp.TagFamilies = append(dp.TagFamilies, tf)
+			dp.TagFamilies[g] = tf
 		}
 	}
 	if len(schema.FieldColumns) > 0 {
-		dp.Fields = make([]*measurev1.DataPoint_Field, 0, len(schema.FieldColumns))
-		for _, colIdx := range schema.FieldColumns {
-			dp.Fields = append(dp.Fields, &measurev1.DataPoint_Field{
-				Name:  schema.Columns[colIdx].Name,
-				Value: columnValueToFieldValue(b.Columns[colIdx], rowIdx),
-			})
+		fieldSlab := make([]measurev1.DataPoint_Field, len(schema.FieldColumns))
+		dp.Fields = make([]*measurev1.DataPoint_Field, len(schema.FieldColumns))
+		for i, colIdx := range schema.FieldColumns {
+			f := &fieldSlab[i]
+			f.Name = schema.Columns[colIdx].Name
+			f.Value = columnValueToFieldValue(b.Columns[colIdx], rowIdx)
+			dp.Fields[i] = f
 		}
 	}
 	return dp
 }
+
+// Native cells are built as one struct per cell so the TagValue / FieldValue,
+// its oneof wrapper and the inner scalar message share a single allocation.
+type (
+	intTagCell struct {
+		tv modelv1.TagValue
+		w  modelv1.TagValue_Int
+		v  modelv1.Int
+	}
+	strTagCell struct {
+		tv modelv1.TagValue
+		w  modelv1.TagValue_Str
+		v  modelv1.Str
+	}
+	binTagCell struct {
+		w  modelv1.TagValue_BinaryData
+		tv modelv1.TagValue
+	}
+	intArrTagCell struct {
+		tv modelv1.TagValue
+		w  modelv1.TagValue_IntArray
+		v  modelv1.IntArray
+	}
+	strArrTagCell struct {
+		tv modelv1.TagValue
+		w  modelv1.TagValue_StrArray
+		v  modelv1.StrArray
+	}
+	intFieldCell struct {
+		fv modelv1.FieldValue
+		w  modelv1.FieldValue_Int
+		v  modelv1.Int
+	}
+	floatFieldCell struct {
+		fv modelv1.FieldValue
+		w  modelv1.FieldValue_Float
+		v  modelv1.Float
+	}
+	strFieldCell struct {
+		fv modelv1.FieldValue
+		w  modelv1.FieldValue_Str
+		v  modelv1.Str
+	}
+	binFieldCell struct {
+		w  modelv1.FieldValue_BinaryData
+		fv modelv1.FieldValue
+	}
+)
 
 // columnValueToTagValue materializes a *modelv1.TagValue from one row of col.
 //
@@ -119,7 +180,10 @@ func buildDataPoint(b *vectorized.RecordBatch, schema *vectorized.BatchSchema, r
 //
 // Typed columns reconstruct the protobuf wrapper. Slice-typed values
 // (BinaryData, IntArray, StrArray) are defensively copied so the produced
-// TagValue does not alias the column's backing slice across pool reuse.
+// TagValue does not alias the column's backing slice across pool reuse, and
+// string payloads are cloned because a string cell may borrow storage memory
+// that is recycled when the batch's owners are released, while the TagValue is
+// marshaled only later.
 func columnValueToTagValue(col vectorized.Column, rowIdx int) *modelv1.TagValue {
 	if pc, ok := col.(*vectorized.TypedColumn[*modelv1.TagValue]); ok {
 		v := pc.Data()[rowIdx]
@@ -132,19 +196,40 @@ func columnValueToTagValue(col vectorized.Column, rowIdx int) *modelv1.TagValue 
 		return pbv1NullTagValueRef
 	}
 	switch c := col.(type) {
+	case *vectorized.ConstColumn:
+		return constToTagValue(c)
 	case *vectorized.TypedColumn[int64]:
-		return &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: c.Data()[rowIdx]}}}
+		cell := &intTagCell{}
+		cell.v.Value = c.Data()[rowIdx]
+		cell.w.Int = &cell.v
+		cell.tv.Value = &cell.w
+		return &cell.tv
 	case *vectorized.TypedColumn[string]:
-		return &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: c.Data()[rowIdx]}}}
+		cell := &strTagCell{}
+		cell.v.Value = strings.Clone(c.Data()[rowIdx])
+		cell.w.Str = &cell.v
+		cell.tv.Value = &cell.w
+		return &cell.tv
 	case *vectorized.TypedColumn[[]byte]:
 		src := c.Data()[rowIdx]
 		buf := make([]byte, len(src))
 		copy(buf, src)
-		return &modelv1.TagValue{Value: &modelv1.TagValue_BinaryData{BinaryData: buf}}
+		cell := &binTagCell{}
+		cell.w.BinaryData = buf
+		cell.tv.Value = &cell.w
+		return &cell.tv
 	case *vectorized.TypedColumn[[]int64]:
-		return &modelv1.TagValue{Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: slices.Clone(c.Data()[rowIdx])}}}
+		cell := &intArrTagCell{}
+		cell.v.Value = slices.Clone(c.Data()[rowIdx])
+		cell.w.IntArray = &cell.v
+		cell.tv.Value = &cell.w
+		return &cell.tv
 	case *vectorized.TypedColumn[[]string]:
-		return &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: slices.Clone(c.Data()[rowIdx])}}}
+		cell := &strArrTagCell{}
+		cell.v.Value = cloneStrings(c.Data()[rowIdx])
+		cell.w.StrArray = &cell.v
+		cell.tv.Value = &cell.w
+		return &cell.tv
 	}
 	return pbv1NullTagValueRef
 }
@@ -165,17 +250,98 @@ func columnValueToFieldValue(col vectorized.Column, rowIdx int) *modelv1.FieldVa
 		return pbv1NullFieldValueRef
 	}
 	switch c := col.(type) {
+	case *vectorized.ConstColumn:
+		return constToFieldValue(c)
 	case *vectorized.TypedColumn[int64]:
-		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: c.Data()[rowIdx]}}}
+		cell := &intFieldCell{}
+		cell.v.Value = c.Data()[rowIdx]
+		cell.w.Int = &cell.v
+		cell.fv.Value = &cell.w
+		return &cell.fv
 	case *vectorized.TypedColumn[float64]:
-		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Float{Float: &modelv1.Float{Value: c.Data()[rowIdx]}}}
+		cell := &floatFieldCell{}
+		cell.v.Value = c.Data()[rowIdx]
+		cell.w.Float = &cell.v
+		cell.fv.Value = &cell.w
+		return &cell.fv
 	case *vectorized.TypedColumn[string]:
-		return &modelv1.FieldValue{Value: &modelv1.FieldValue_Str{Str: &modelv1.Str{Value: c.Data()[rowIdx]}}}
+		cell := &strFieldCell{}
+		cell.v.Value = strings.Clone(c.Data()[rowIdx])
+		cell.w.Str = &cell.v
+		cell.fv.Value = &cell.w
+		return &cell.fv
 	case *vectorized.TypedColumn[[]byte]:
 		src := c.Data()[rowIdx]
 		buf := make([]byte, len(src))
 		copy(buf, src)
-		return &modelv1.FieldValue{Value: &modelv1.FieldValue_BinaryData{BinaryData: buf}}
+		cell := &binFieldCell{}
+		cell.w.BinaryData = buf
+		cell.fv.Value = &cell.w
+		return &cell.fv
 	}
 	return pbv1NullFieldValueRef
+}
+
+// constToTagValue builds the TagValue of a non-null ConstColumn row, with the same
+// ownership rules as the typed cases of columnValueToTagValue.
+func constToTagValue(c *vectorized.ConstColumn) *modelv1.TagValue {
+	switch c.Type() { //nolint:exhaustive // a ConstColumn only stands for these four types
+	case vectorized.ColumnTypeInt64:
+		cell := &intTagCell{}
+		cell.v.Value = c.Int64()
+		cell.w.Int = &cell.v
+		cell.tv.Value = &cell.w
+		return &cell.tv
+	case vectorized.ColumnTypeString:
+		cell := &strTagCell{}
+		cell.v.Value = strings.Clone(c.Str())
+		cell.w.Str = &cell.v
+		cell.tv.Value = &cell.w
+		return &cell.tv
+	case vectorized.ColumnTypeBytes:
+		cell := &binTagCell{}
+		cell.w.BinaryData = copyBytes(c.Bytes())
+		cell.tv.Value = &cell.w
+		return &cell.tv
+	default:
+		return pbv1NullTagValueRef
+	}
+}
+
+// constToFieldValue is constToTagValue for a field.
+func constToFieldValue(c *vectorized.ConstColumn) *modelv1.FieldValue {
+	switch c.Type() { //nolint:exhaustive // a ConstColumn only stands for these four types
+	case vectorized.ColumnTypeInt64:
+		cell := &intFieldCell{}
+		cell.v.Value = c.Int64()
+		cell.w.Int = &cell.v
+		cell.fv.Value = &cell.w
+		return &cell.fv
+	case vectorized.ColumnTypeFloat64:
+		cell := &floatFieldCell{}
+		cell.v.Value = c.Float64()
+		cell.w.Float = &cell.v
+		cell.fv.Value = &cell.w
+		return &cell.fv
+	case vectorized.ColumnTypeString:
+		cell := &strFieldCell{}
+		cell.v.Value = strings.Clone(c.Str())
+		cell.w.Str = &cell.v
+		cell.fv.Value = &cell.w
+		return &cell.fv
+	case vectorized.ColumnTypeBytes:
+		cell := &binFieldCell{}
+		cell.w.BinaryData = copyBytes(c.Bytes())
+		cell.fv.Value = &cell.w
+		return &cell.fv
+	default:
+		return pbv1NullFieldValueRef
+	}
+}
+
+// copyBytes returns a non-nil copy of src, as the typed bytes cases build it.
+func copyBytes(src []byte) []byte {
+	buf := make([]byte, len(src))
+	copy(buf, src)
+	return buf
 }

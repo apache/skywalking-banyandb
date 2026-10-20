@@ -37,11 +37,13 @@ import (
 // fails the byte-equality assertion below — stronger than a constant-only check.
 var measureCodec = sharedframe.Codec{
 	Magic:       [4]byte{data.RawFrameMagicLeadingByte, 'V', 'F', 'R'},
-	WireVersion: 3,
-	RoleToWire:  goldenRoleToWire,
-	WireToRole:  goldenWireToRole,
-	TypeToWire:  goldenTypeToWire,
-	WireToType:  goldenWireToType,
+	WireVersion: 4,
+	// Measure speaks only the columnar layout.
+	ColumnarWireVersion: 4,
+	RoleToWire:          goldenRoleToWire,
+	WireToRole:          goldenWireToRole,
+	TypeToWire:          goldenTypeToWire,
+	WireToType:          goldenWireToType,
 }
 
 func goldenRoleToWire(r vectorized.ColumnRole) (uint8, error) {
@@ -167,7 +169,7 @@ func buildGoldenBatch() *vectorized.RecordBatch {
 func TestGoldenBytes_SharedEqualsMeasure(t *testing.T) {
 	b := buildGoldenBatch()
 
-	sharedBytes, sharedErr := measureCodec.Encode(b)
+	sharedBytes, sharedErr := measureCodec.EncodeColumnar(b)
 	if sharedErr != nil {
 		t.Fatalf("shared Encode: %v", sharedErr)
 	}
@@ -185,12 +187,14 @@ func TestGoldenBytes_SharedEqualsMeasure(t *testing.T) {
 		t.Fatalf("measure.Decode(sharedBytes): %v", decMErr)
 	}
 	// Cross-decode: shared decodes measure bytes.
-	fromShared, decSErr := measureCodec.Decode(measureBytes)
+	fromShared, decSErr := measureCodec.DecodeColumnar(measureBytes)
 	if decSErr != nil {
 		t.Fatalf("shared.Decode(measureBytes): %v", decSErr)
 	}
 	assertGoldenBatchEqual(t, buildGoldenBatch(), fromMeasure)
 	assertGoldenBatchEqual(t, buildGoldenBatch(), fromShared)
+	fromMeasure.ReleaseOwners()
+	fromShared.ReleaseOwners()
 }
 
 // nolint:gocyclo // exhaustive per-type comparison for the assertion is intentionally flat
