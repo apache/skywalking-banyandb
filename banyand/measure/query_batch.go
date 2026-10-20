@@ -392,7 +392,7 @@ func (iqr *indexSortResult) fillSegTagCell(col vectorized.Column, def vectorized
 			return
 		}
 		if tnt, ok := tfl.fieldToValueType[def.Name]; ok {
-			fillTagCell(col, def, tnt.typ, fr[tnt.fieldName])
+			fillTagCell(col, def, tnt.typ, indexFieldValue(tnt.typ, fr[tnt.fieldName]))
 			return
 		}
 		appendNullTagN(col, def, 1)
@@ -413,7 +413,7 @@ func (iqr *indexSortResult) fillSegFieldCell(col vectorized.Column, def vectoriz
 	// Walk all tfl entries to find the field's valueType.
 	for tfIdx := range iqr.tfl {
 		if tnt, ok := iqr.tfl[tfIdx].fieldToValueType[def.Name]; ok {
-			fillFieldCell(col, def, tnt.typ, fr[tnt.fieldName])
+			fillFieldCell(col, def, tnt.typ, indexFieldValue(tnt.typ, fr[tnt.fieldName]))
 			return
 		}
 	}

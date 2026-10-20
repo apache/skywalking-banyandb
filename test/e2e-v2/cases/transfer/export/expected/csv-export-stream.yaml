@@ -1,0 +1,140 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Output of scripts/csv-export.sh <liaison> stream: a CSV export of the stream catalog validated by the
+# export checker, then the export snapshots left on either data node (none: a finished export
+# releases its session). Every file's header equals the layout built from the exported schema and
+# every row has one decodable cell per column and a _name the group declares; header, cells and
+# rowCounts print ok or a reason, and a normal export carries no manifest warning. Every shard
+# exports the rows the session's snapshot stored, as the Plan recorded them in the manifest:
+# exactly for stream, trace and property (storedRows equals rows), at most for measure, which
+# keeps only the latest version of a point; countMismatches lists any shard off. The checker
+# prints the rows of known sources under data with their non-null columns: the values those
+# sources fix are pinned, times and ids only have to be set. sw_records stays on the hot node and
+# holds the three events report-events.sh reported; OAP flushes in batches, so files and rows are
+# only gt 0. Under schema the checker prints the exported entries per kind (only this catalog's
+# kinds are set), the groups with their resource options and the schema of the known sources;
+# schemaRefs checks that every resource, index rule, binding and TopN aggregation refers to
+# exported entries.
+# Other groups may appear and are not pinned.
+exitCode: 0
+catalog: stream
+format: csv
+compress: gzip
+groups:
+{{- contains .groups }}
+- name: sw_records
+  nodes:
+  {{- contains .nodes }}
+  - data-hot1:17912
+  {{- end }}
+  fixedColumns: _name,_element_id,_timestamp
+  files: {{ gt .files 0 }}
+  rows: {{ gt .rows 0 }}
+  storedRows: {{ .rows }}
+  header: ok
+  cells: ok
+  rowCounts: ok
+  data:
+    event:
+    {{- contains .data.event }}
+    - _name: event
+      _element_id: {{ notEmpty ._element_id }}
+      _timestamp: {{ gt ._timestamp 0 }}
+      uuid: export-e2e-1
+      timestamp: {{ gt .timestamp 0 }}
+      start_time: {{ gt .start_time 0 }}
+      message: "Upgrade to {version}"
+      parameters: '{"version":"v1"}'
+      service: export-e2e
+      service_instance: export-e2e-instance
+      endpoint: /export
+      event_name: Upgrade
+      type: Normal
+      end_time: {{ gt .end_time 0 }}
+      layer: 2
+    - _name: event
+      _element_id: {{ notEmpty ._element_id }}
+      _timestamp: {{ gt ._timestamp 0 }}
+      uuid: export-e2e-2
+      timestamp: {{ gt .timestamp 0 }}
+      start_time: {{ gt .start_time 0 }}
+      message: "Upgrade to {version}"
+      parameters: '{"version":"v2"}'
+      service: export-e2e
+      service_instance: export-e2e-instance
+      endpoint: /export
+      event_name: Upgrade
+      type: Normal
+      end_time: {{ gt .end_time 0 }}
+      layer: 2
+    - _name: event
+      _element_id: {{ notEmpty ._element_id }}
+      _timestamp: {{ gt ._timestamp 0 }}
+      uuid: export-e2e-3
+      timestamp: {{ gt .timestamp 0 }}
+      start_time: {{ gt .start_time 0 }}
+      message: "Upgrade to {version}"
+      parameters: '{"version":"v3"}'
+      service: export-e2e
+      service_instance: export-e2e-instance
+      endpoint: /export
+      event_name: Upgrade
+      type: Normal
+      end_time: {{ gt .end_time 0 }}
+      layer: 2
+    {{- end }}
+{{- end }}
+countMismatches: []
+schema:
+  counts:
+    group: {{ gt .schema.counts.group 0 }}
+    stream: {{ gt .schema.counts.stream 0 }}
+    measure: 0
+    trace: 0
+    property: 0
+    indexRule: {{ gt .schema.counts.indexRule 0 }}
+    indexRuleBinding: {{ gt .schema.counts.indexRuleBinding 0 }}
+    topNAggregation: 0
+  groups:
+    {{- contains .schema.groups }}
+    - name: sw_records
+      catalog: stream
+      shardNum: 2
+      replicas: 0
+      segmentInterval: 1d
+      ttl: 3d
+      defaultStages: ["hot"]
+      stages: []
+    {{- end }}
+  resources:
+    {{- contains .schema.resources }}
+    - kind: stream
+      group: sw_records
+      name: event
+      entity: ["uuid"]
+      tags: ["storage-only.uuid:STRING", "storage-only.message:STRING", "storage-only.parameters:STRING", "storage-only.timestamp:INT", "searchable.service:STRING", "searchable.service_instance:STRING", "searchable.endpoint:STRING", "searchable.event_name:STRING", "searchable.type:STRING", "searchable.start_time:INT", "searchable.end_time:INT", "searchable.layer:INT"]
+      indexRules: ["end_time", "endpoint", "event_name", "layer", "service", "service_instance", "start_time", "type"]
+    {{- end }}
+checks:
+  artifactVersion: ok
+  onlyThisCatalog: ok
+  schemaFiles: ok
+  filesMatchManifest: ok
+  noWarnings: ok
+  schemaLayouts: ok
+  schemaRefs: ok
+leftoverSnapshots: []
+checkerExitCode: 0

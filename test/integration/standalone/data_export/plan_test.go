@@ -55,9 +55,17 @@ const (
 
 var (
 	dataDir  string
+	grpcAddr string
 	conn     *grpc.ClientConn
 	stopFunc func()
+	// The base times the suite wrote its data with (test/cases/<catalog>/data), every write
+	// spaced by writeInterval.
+	streamBase  time.Time
+	measureBase time.Time
+	traceBase   time.Time
 )
+
+const writeInterval = 500 * time.Millisecond
 
 var _ = ginkgo.BeforeSuite(func() {
 	gomega.Expect(logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel})).To(gomega.Succeed())
@@ -69,7 +77,8 @@ var _ = ginkgo.BeforeSuite(func() {
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	ports, err := test.AllocateFreePorts(5)
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	grpcAddr, _, closeFn := setup.ClosableStandalone(nil, dataDir, ports, "--stream-flush-timeout=500ms", "--measure-flush-timeout=500ms",
+	var closeFn func()
+	grpcAddr, _, closeFn = setup.ClosableStandalone(nil, dataDir, ports, "--stream-flush-timeout=500ms", "--measure-flush-timeout=500ms",
 		"--trace-flush-timeout=500ms")
 	stopFunc = func() {
 		closeFn()
@@ -77,12 +86,16 @@ var _ = ginkgo.BeforeSuite(func() {
 	}
 	conn, err = grpchelper.Conn(grpcAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	casesstreamdata.Write(conn, "sw", timestamp.NowMilli(), 500*time.Millisecond)
+	streamBase = timestamp.NowMilli()
+	casesstreamdata.Write(conn, "sw", streamBase, writeInterval)
 	ns := timestamp.NowMilli().UnixNano()
-	casesmeasuredata.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json",
-		time.Unix(0, ns-ns%int64(time.Minute)), 500*time.Millisecond)
-	casestracedata.Write(conn, "sw", timestamp.NowMilli(), 500*time.Millisecond)
+	measureBase = time.Unix(0, ns-ns%int64(time.Minute))
+	casesmeasuredata.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", measureBase, writeInterval)
+	casesmeasuredata.Write(conn, "service_traffic", "index_mode", "service_traffic_data.json", measureBase, writeInterval)
+	traceBase = timestamp.NowMilli()
+	casestracedata.Write(conn, "sw", traceBase, writeInterval)
 	casespropertydata.Write(conn, "sw1")
+	transfertest.WriteTombstone(conn)
 })
 
 var _ = ginkgo.AfterSuite(func() {

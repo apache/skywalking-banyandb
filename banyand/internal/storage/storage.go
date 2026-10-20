@@ -104,8 +104,10 @@ type IndexSearchOpts struct {
 	PreloadSize      int
 }
 
-// FieldResult is the result of a field.
-type FieldResult map[string][]byte
+// FieldResult holds the stored values of each projected field, in stored order. A
+// multi-valued field, such as an array tag stored as one value per element, keeps
+// every value.
+type FieldResult map[string][][]byte
 
 // FieldResultList is a list of FieldResult.
 type FieldResultList []FieldResult

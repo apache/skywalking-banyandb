@@ -414,7 +414,7 @@ func (m *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 			sl = append(sl, series.ID)
 
 			// Build storedIndexValue for this series
-			var fieldResult map[string][]byte
+			var fieldResult storage.FieldResult
 			if top.Fields != nil && top.i < len(top.Fields) {
 				fieldResult = top.Fields[top.i]
 			}
@@ -443,7 +443,7 @@ func (m *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 				seriesFilter.Insert(uint64(sr.SeriesList[j].ID))
 				sl = append(sl, sr.SeriesList[j].ID)
 
-				var fieldResult map[string][]byte
+				var fieldResult storage.FieldResult
 				if sr.Fields != nil && j < len(sr.Fields) {
 					fieldResult = sr.Fields[j]
 				}
@@ -465,7 +465,7 @@ func (m *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 func (m *measure) buildStoredIndexValue(
 	seriesID common.SeriesID,
 	entityValues []*modelv1.TagValue,
-	fieldResult map[string][]byte,
+	fieldResult storage.FieldResult,
 	projectedEntityOffsets map[string]int,
 	fieldToValueType map[string]tagNameWithType,
 	storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
@@ -491,7 +491,7 @@ func (m *measure) buildStoredIndexValue(
 
 	for f, v := range fieldResult {
 		if tnt, ok := fieldToValueType[f]; ok {
-			tagValues[tnt.fieldName] = mustDecodeTagValue(tnt.typ, v)
+			tagValues[tnt.fieldName] = mustDecodeTagValue(tnt.typ, indexFieldValue(tnt.typ, v))
 		} else {
 			logger.Panicf("unknown field %s not found in fieldToValueType", f)
 		}
@@ -657,6 +657,28 @@ func (m *measure) searchBlocks(ctx context.Context, result *queryResult, sids []
 		result.sidToIndex[si] = i
 	}
 	return nil
+}
+
+// indexFieldValue folds the values an index document stores for one tag into the
+// encoding mustDecodeTagValue reads. An array tag is stored as one value per element,
+// so its elements are packed the way a data part stores the array; any other tag keeps
+// its last stored value.
+func indexFieldValue(valueType pbv1.ValueType, values [][]byte) []byte {
+	if len(values) == 0 {
+		return nil
+	}
+	switch valueType {
+	case pbv1.ValueTypeInt64Arr:
+		return bytes.Join(values, nil)
+	case pbv1.ValueTypeStrArr:
+		var dst []byte
+		for _, value := range values {
+			dst = marshalVarArray(dst, value)
+		}
+		return dst
+	default:
+		return values[len(values)-1]
+	}
 }
 
 func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValue {
@@ -1135,7 +1157,7 @@ func (iqr *indexSortResult) copyTo(src *segResult) (dest *model.MeasureResult) {
 			if tnt, ok := iqr.tfl[i].fieldToValueType[n]; ok {
 				tagFamily.Tags = append(tagFamily.Tags, model.Tag{
 					Name:   n,
-					Values: []*modelv1.TagValue{mustDecodeTagValue(tnt.typ, fr[tnt.fieldName])},
+					Values: []*modelv1.TagValue{mustDecodeTagValue(tnt.typ, indexFieldValue(tnt.typ, fr[tnt.fieldName]))},
 				})
 			} else {
 				logger.Panicf("unknown field %s not found in fieldToValueType", n)

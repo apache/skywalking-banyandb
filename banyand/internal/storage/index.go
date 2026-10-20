@@ -627,20 +627,23 @@ func appendSearchHit(ctx context.Context, view *native.ReadView, hit native.Quer
 	sd.VersionSet = append(sd.VersionSet, hasVersion)
 
 	if hasProjection {
-		row := make(map[string][]byte, len(opts.Projection))
+		row := make(FieldResult, len(opts.Projection))
 		for i := range opts.Projection {
 			name := opts.Projection[i].Marshal()
 			values := projected.Fields[name]
 			if len(values) == 0 {
 				continue
 			}
-			value := values[len(values)-1]
 			if !sorted {
-				if chargeErr := query.Charge(ctx, uint64(len(value))); chargeErr != nil {
+				var size uint64
+				for _, value := range values {
+					size += uint64(len(value))
+				}
+				if chargeErr := query.Charge(ctx, size); chargeErr != nil {
 					return chargeErr
 				}
 			}
-			row[name] = value
+			row[name] = values
 		}
 		sd.Fields = append(sd.Fields, row)
 	}

@@ -266,14 +266,14 @@ func verifyRefModel(ctx context.Context, t *testing.T, si *seriesIndex, seriesBy
 		for _, name := range refModelFieldNames {
 			key := index.FieldKey{TagName: name}.Marshal()
 			if v, ok := sd.Fields[i][key]; ok {
-				fields[key] = v
+				fields[key] = v[0]
 			}
 		}
 		scoreKey := index.FieldKey{IndexRuleID: refModelScoreRuleID}.Marshal()
 		var score string
 		if v, ok := sd.Fields[i][scoreKey]; ok {
-			fields[scoreKey] = v
-			score = string(v)
+			fields[scoreKey] = v[0]
+			score = string(v[0])
 		}
 		var version int64
 		if sd.VersionSet[i] {
@@ -321,7 +321,7 @@ func verifyRefModel(ctx context.Context, t *testing.T, si *seriesIndex, seriesBy
 		}
 		rowScore, ok := sorted.Fields[i][scoreKey]
 		require.True(t, ok, "sorted row %d missing its score field", i)
-		require.Equal(t, string(rowScore), string(sortedValues[i]), "SortedValue must agree with the row's own score field")
+		require.Equal(t, string(rowScore[0]), string(sortedValues[i]), "SortedValue must agree with the row's own score field")
 	}
 }
 
@@ -508,7 +508,7 @@ func TestSeriesIndex_Insert_FieldCoverageContract(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, sd.SeriesList, 1)
 	require.Equal(t, int64(1), sd.Timestamps[0], "a covered-field Insert must be skipped, keeping the original document")
-	require.Equal(t, []byte("us"), sd.Fields[0][index.FieldKey{TagName: "region"}.Marshal()])
+	require.Equal(t, [][]byte{[]byte("us")}, sd.Fields[0][index.FieldKey{TagName: "region"}.Marshal()])
 
 	// A third Insert carrying a NEW field name ("zone", not yet covered)
 	// must replace the document.
@@ -522,5 +522,5 @@ func TestSeriesIndex_Insert_FieldCoverageContract(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, sd.SeriesList, 1)
 	require.Equal(t, int64(3), sd.Timestamps[0], "an uncovered-field Insert must replace the document")
-	require.Equal(t, []byte("z1"), sd.Fields[0][index.FieldKey{TagName: "zone"}.Marshal()])
+	require.Equal(t, [][]byte{[]byte("z1")}, sd.Fields[0][index.FieldKey{TagName: "zone"}.Marshal()])
 }
