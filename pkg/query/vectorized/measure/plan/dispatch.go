@@ -96,6 +96,38 @@ func Dispatch(
 	emitPartial bool,
 	skipProjectionValidation bool,
 ) (iter executor.MIterator, planStr string, err error) {
+	defer func() {
+		if err == nil {
+			handledCount.Add(1)
+		}
+	}()
+	iter, planStr, hidden, err := dispatchPlan(ctx, req, metadata, measureSchema, logicalSchema, ec, cfg, emitPartial, skipProjectionValidation)
+	if err != nil {
+		return nil, "", err
+	}
+	if !hidden.IsEmpty() {
+		// Strip the projected-for-filtering hidden tags before
+		// serialization so the wire bytes match a query without them.
+		iter = &hiddenTagsMIterator{inner: iter, hiddenTags: hidden}
+	}
+	return iter, planStr, nil
+}
+
+// dispatchPlan runs the per-group plan shared by Dispatch and DispatchBatches:
+// it returns the executed plan as an iterator that is not yet wrapped by the
+// hidden-tag strip, together with the hidden criteria tags the caller must
+// strip. The hidden set is empty when the result is the canonical empty one.
+func dispatchPlan(
+	ctx context.Context,
+	req *measurev1.QueryRequest,
+	metadata *commonv1.Metadata,
+	measureSchema *databasev1.Measure,
+	logicalSchema logical.Schema,
+	ec executor.MeasureExecutionContext,
+	cfg measure.VectorizedConfig,
+	emitPartial bool,
+	skipProjectionValidation bool,
+) (iter executor.MIterator, planStr string, hiddenTags logical.HiddenTagSet, err error) {
 	// emitPartial selects the BatchAggregation strategy when GroupBy/Agg is
 	// in the plan: false → AggModeAll (single-node final reduce); true →
 	// AggModeMap (G9f.2 distributed Map phase emitting typed-column
@@ -105,13 +137,8 @@ func Dispatch(
 	if emitPartial {
 		mode = measure.AggModeMap
 	}
-	defer func() {
-		if err == nil {
-			handledCount.Add(1)
-		}
-	}()
 	if req == nil {
-		return nil, "", fmt.Errorf("vec dispatch: nil request")
+		return nil, "", nil, fmt.Errorf("vec dispatch: nil request")
 	}
 	// Top is handled by the vec subsystem: plan.Analyze emits
 	// Scan → Top → Limit (or Scan → GroupByAgg → Top → Limit) and
@@ -135,7 +162,7 @@ func Dispatch(
 	// (banyand/query/processor.go::buildMeasureContext) must populate all
 	// four. Surface it loudly.
 	if measureSchema == nil || logicalSchema == nil || ec == nil || metadata == nil {
-		return nil, "", fmt.Errorf("vec dispatch: missing runtime context (measureSchema/logicalSchema/ec/metadata)")
+		return nil, "", nil, fmt.Errorf("vec dispatch: missing runtime context (measureSchema/logicalSchema/ec/metadata)")
 	}
 
 	// G9c #11: projection validation. Unknown projection names surface a
@@ -151,7 +178,7 @@ func Dispatch(
 	// (the `multi_group_new_tag_field` integration fixture pins this).
 	if !skipProjectionValidation {
 		if projErr := validateProjectionParity(req, logicalSchema, measureSchema); projErr != nil {
-			return nil, "", projErr
+			return nil, "", nil, projErr
 		}
 	}
 
@@ -184,7 +211,7 @@ func Dispatch(
 
 	indexOrder, orderErr := resolveOrderBy(req.GetOrderBy(), logicalSchema)
 	if orderErr != nil {
-		return nil, "", orderErr
+		return nil, "", nil, orderErr
 	}
 
 	// Resolve the remaining criteria + entities the same way the row path's
@@ -209,14 +236,14 @@ func Dispatch(
 		// universe"), so without this the same conditions would silently
 		// under- or un-filter instead of erroring.
 		if validateErr := validateIndexModeCriteria(req.GetCriteria(), logicalSchema, entityMap); validateErr != nil {
-			return nil, "", fmt.Errorf("vec dispatch: build query: %w", validateErr)
+			return nil, "", nil, fmt.Errorf("vec dispatch: build query: %w", validateErr)
 		}
 		criteria = req.GetCriteria()
 	} else {
 		criteria, entities, _, extractErr = extractSeriesMatchers(req.GetCriteria(), logicalSchema, entityMap, entity)
 	}
 	if extractErr != nil {
-		return nil, "", fmt.Errorf("vec dispatch: build query: %w", extractErr)
+		return nil, "", nil, fmt.Errorf("vec dispatch: build query: %w", extractErr)
 	}
 	resolver := measureFieldResolver{schema: logicalSchema}
 
@@ -224,11 +251,11 @@ func Dispatch(
 	// BatchSchema + opts.TagProjection carry the hidden criteria tags.
 	p, analyzeErr := Analyze(analyzeReq, measureSchema, mode)
 	if analyzeErr != nil {
-		return nil, "", fmt.Errorf("vec dispatch: analyze: %w", analyzeErr)
+		return nil, "", nil, fmt.Errorf("vec dispatch: analyze: %w", analyzeErr)
 	}
 	scan := locateScan(p)
 	if scan == nil {
-		return nil, "", fmt.Errorf("vec dispatch: plan missing Scan node")
+		return nil, "", nil, fmt.Errorf("vec dispatch: plan missing Scan node")
 	}
 	tr := timestamp.NewInclusiveTimeRange(
 		req.GetTimeRange().GetBegin().AsTime(),
@@ -262,7 +289,7 @@ func Dispatch(
 	}
 	result, queryErr := ec.Query(ctx, opts)
 	if queryErr != nil {
-		return nil, "", fmt.Errorf("vec dispatch: query measure: %w", queryErr)
+		return nil, "", nil, fmt.Errorf("vec dispatch: query measure: %w", queryErr)
 	}
 	if result == nil {
 		// G9c #13: a typed-nil result is the row path's canonical empty
@@ -272,7 +299,7 @@ func Dispatch(
 		// empty MIterator directly. Hidden-tag egress strip (below) is
 		// intentionally skipped here: an empty result has no DataPoints,
 		// so there is nothing to strip.
-		return emptyMIterator{}, p.String(), nil
+		return emptyMIterator{}, p.String(), nil, nil
 	}
 
 	pool := vectorized.NewBatchPool(scan.BatchSchema, cfg.BatchSize)
@@ -289,14 +316,102 @@ func Dispatch(
 		// Execute closes the pipeline on Build/Init failure, which
 		// closes the source, which releases result. No extra Release
 		// here.
-		return nil, "", fmt.Errorf("vec dispatch: execute: %w", execErr)
+		return nil, "", nil, fmt.Errorf("vec dispatch: execute: %w", execErr)
 	}
-	if !hidden.IsEmpty() {
-		// Strip the projected-for-filtering hidden tags before
-		// serialization so the wire bytes match a query without them.
-		iter = &hiddenTagsMIterator{inner: iter, hiddenTags: hidden}
+	return iter, p.String(), hidden, nil
+}
+
+// GroupBatches is one group's executed vec plan drained into in-memory batches.
+// It keeps the plan's pipeline open until Release so the storage memory the
+// batches borrow stays valid while they are merged across groups.
+type GroupBatches struct {
+	tracker    *vectorized.MemoryTracker
+	closer     executor.MIterator
+	Schema     *vectorized.BatchSchema
+	Hidden     logical.HiddenTagSet
+	PlanString string
+	Batches    []*vectorized.RecordBatch
+	reserved   int64
+}
+
+// Release drops the references the batches hold and closes the plan's pipeline.
+// It is idempotent and safe on a nil receiver.
+func (g *GroupBatches) Release() {
+	if g == nil {
+		return
 	}
-	return iter, p.String(), nil
+	releaseBatches(g.Batches)
+	g.Batches = nil
+	if g.tracker != nil {
+		g.tracker.Release(g.reserved)
+		g.reserved = 0
+	}
+	if g.closer != nil {
+		_ = g.closer.Close()
+		g.closer = nil
+	}
+}
+
+// DispatchBatches runs the same per-group plan as Dispatch but hands back the
+// plan's RecordBatch output and schema instead of an MIterator, so a caller can
+// merge several groups' results columnar. The hidden criteria tags are returned
+// in GroupBatches.Hidden for the caller to strip once, after the merge. When the
+// call fails every batch already read is released and the plan is closed. Each batch
+// read is charged to tracker (when non-nil) until the group is released, so the eager
+// collection stays inside the caller's memory budget.
+func DispatchBatches(
+	ctx context.Context,
+	req *measurev1.QueryRequest,
+	metadata *commonv1.Metadata,
+	measureSchema *databasev1.Measure,
+	logicalSchema logical.Schema,
+	ec executor.MeasureExecutionContext,
+	cfg measure.VectorizedConfig,
+	emitPartial bool,
+	skipProjectionValidation bool,
+	tracker *vectorized.MemoryTracker,
+) (batches *GroupBatches, err error) {
+	defer func() {
+		if err == nil {
+			handledCount.Add(1)
+		}
+	}()
+	iter, planStr, hidden, dispatchErr := dispatchPlan(ctx, req, metadata, measureSchema, logicalSchema, ec, cfg, emitPartial, skipProjectionValidation)
+	if dispatchErr != nil {
+		return nil, dispatchErr
+	}
+	source, ok := iter.(measure.RawFrameSource)
+	if !ok || source.Pipeline() == nil {
+		// The canonical empty result carries no pipeline.
+		_ = iter.Close()
+		return &GroupBatches{PlanString: planStr}, nil
+	}
+	group := &GroupBatches{closer: iter, tracker: tracker, Schema: source.Schema(), Hidden: hidden, PlanString: planStr}
+	pipeline := source.Pipeline()
+	for {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			group.Release()
+			return nil, fmt.Errorf("vec dispatch: read batches: %w", ctxErr)
+		}
+		batch, pullErr := pipeline.Next(ctx)
+		if pullErr != nil {
+			group.Release()
+			return nil, fmt.Errorf("vec dispatch: read batches: %w", pullErr)
+		}
+		if batch == nil {
+			return group, nil
+		}
+		if tracker != nil {
+			bytes := batchBytes(batch)
+			if reserveErr := tracker.Reserve(bytes); reserveErr != nil {
+				batch.ReleaseOwners()
+				group.Release()
+				return nil, fmt.Errorf("vec dispatch: read batches: %w", reserveErr)
+			}
+			group.reserved += bytes
+		}
+		group.Batches = append(group.Batches, batch)
+	}
 }
 
 // resolveOrderBy mirrors the row path's PushDownOrder optimizer rule.

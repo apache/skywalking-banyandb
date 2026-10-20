@@ -593,12 +593,10 @@ func executeMeasurePlan(
 
 // dispatchMeasure is the thin adapter from measureExecutionContext into
 // the vec dispatch inputs. Multi-measure queries (len(ecc) > 1) are
-// handled per-group: each group is dispatched individually and the
-// per-group iterators are merged through the shared cross-group ordering
-// stack in logical_measure.MergeGroupMIterators (G9f.1, reusing
-// sortableDataPoints + sortedMIterator so the cross-group order and
-// version dedup are reproduced by construction, not by parallel
-// reimplementation).
+// handled per-group: each group's plan is run through vecplan.DispatchBatches
+// and the per-group batches are merged columnar by vecplan.MultiGroupMerge
+// (schema alignment with null-fill, k-way sort-key merge and version dedup),
+// then converted to an MIterator once.
 //
 // Distributed Map-mode GroupBy+Agg (emitPartial=true) routes to vec via
 // AggModeMap (G9f.2): vecplan.Dispatch receives emitPartial and the
@@ -641,30 +639,30 @@ func dispatchMeasure(
 	if projErr := vecplan.ValidateMultiGroupProjection(queryCriteria, mctx.schemas, measureSchemas); projErr != nil {
 		return nil, "", projErr
 	}
-	iters := make([]executor.MIterator, 0, len(mctx.ecc))
-	planStrs := make([]string, 0, len(mctx.ecc))
-	closeOpened := func() {
-		for _, opened := range iters {
-			_ = opened.Close()
-		}
+	merge, mergeErr := vecplan.NewMultiGroupMerge(queryCriteria, mctx.schemas, measureSchemas, vecs[0].VectorizedConfig())
+	if mergeErr != nil {
+		return nil, "", mergeErr
 	}
+	groupReq := merge.GroupRequest()
+	groups := make([]*vecplan.GroupBatches, 0, len(mctx.ecc))
+	planStrs := make([]string, 0, len(mctx.ecc))
 	for groupIdx, vec := range vecs {
-		mit, planStr, dispatchErr := vecplan.Dispatch(ctx, queryCriteria,
-			mctx.metadata[groupIdx], vec.GetSchema(), mctx.schemas[groupIdx], vec, vec.VectorizedConfig(), emitPartial, true)
+		group, dispatchErr := vecplan.DispatchBatches(ctx, groupReq,
+			mctx.metadata[groupIdx], vec.GetSchema(), mctx.schemas[groupIdx], vec, vec.VectorizedConfig(), emitPartial, true, merge.Tracker())
 		if dispatchErr != nil {
-			closeOpened()
+			for _, obtained := range groups {
+				obtained.Release()
+			}
 			return nil, "", dispatchErr
 		}
-		iters = append(iters, mit)
-		planStrs = append(planStrs, planStr)
+		groups = append(groups, group)
+		planStrs = append(planStrs, group.PlanString)
 	}
-	order, orderErr := logical_measure.ResolveCrossGroupMergeOrder(queryCriteria, mctx.schemas)
-	if orderErr != nil {
-		closeOpened()
-		return nil, "", orderErr
+	merged, mergeErr := merge.Merge(ctx, groups)
+	if mergeErr != nil {
+		return nil, "", mergeErr
 	}
-	merged := logical_measure.MergeGroupMIterators(iters, order)
-	return merged, fmt.Sprintf("vec-multi-measure%v", planStrs), nil
+	return merged, fmt.Sprintf("vec-multi-measure-batch%v", planStrs), nil
 }
 
 // collectInternalDataPoints collects InternalDataPoints from the iterator.
