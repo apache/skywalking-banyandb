@@ -1,10 +1,17 @@
 # DataFusion-inspired measure QL engine
 
-Status: **proposed architecture**, based on BanyanDB PR #1412 (`012115c5`).
-This refines the [Catalog B implementation plan](README.md). The companion
-[research note](datafusion-research.md) records primary sources and the examined
-DataFusion revision. All proposed code is Go on the liaison; protobuf, native
-requests, data-node behavior and frame v4 remain unchanged.
+Status: **partially implemented in PR 1 (T02/T03/T05).** Shared batches, typed raw
+queries and compiled-plan reuse are implemented. The expression, aggregation,
+HAVING, DISTINCT, computed-grouping and general-sort sections describe the target
+architecture for later PRs, not features available in this branch. The current
+scope and evidence are in the [PR 1 verification record](pr1-verification.md).
+
+This refines the [Catalog B implementation plan](README.md), originally reviewed
+against PR #1412 at `012115c5`. The companion [research note](datafusion-research.md)
+records primary sources and the examined DataFusion revision. SQL extensions run
+in Go on the liaison; the foundation also repairs shared native Go buffering,
+ownership and read/dispatch behavior. Protobuf definitions, native request
+contracts, persisted formats and frame v4 wire encoding remain compatible.
 
 ## 1. Decision
 
@@ -353,5 +360,6 @@ zero), bytes copied, peak retained memory and latency. Compare against PR #1412
 single-query performance and the prior response-materializing QL design.
 
 Acceptance: B1–B9 compose through typed batches; the semantic/pushdown equivalence
-tests pass; existing Query responses remain compatible; and protobuf/frame files
-are unchanged. No production code is changed by this design-only work.
+tests pass; existing Query responses remain compatible; and protobuf definitions
+and native frame wire formats are unchanged. This is the full Catalog B target;
+only the PR 1 subset identified above is implemented on this branch.

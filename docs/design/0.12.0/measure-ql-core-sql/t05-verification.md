@@ -1,5 +1,9 @@
 # T05 compiled measure QL plan reuse
 
+Historical ticket-stage record. Results, source revisions and acceptance outcomes
+below retain their original context. See the [PR 1 verification record](pr1-verification.md)
+for the latest isolated branch checks and refreshed benchmark observations.
+
 Implementation base: `0bc1ab2b` (T03), on PR #1412. Verification uses Go 1.26.9.
 This ticket adds liaison-local compiled-template reuse for parameterized legacy
 and typed measure queries. No protobuf, native operator or frame format changes.

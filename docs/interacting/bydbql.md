@@ -822,6 +822,40 @@ returning its single count row. A positive `LIMIT` cannot reduce that input;
 `LIMIT 0` or a positive `OFFSET` suppresses the row. With no matching input, the
 count is zero. Grouped queries keep their existing native behavior and restrictions.
 
+### 5.7. Compiled-plan cache controls
+
+The liaison caches immutable compiled templates for parameterized measure QL,
+separately from its prepared-statement/parse cache. Identical query text can reuse
+a template with different parameters. Every execution rebinds values and one fresh
+clock, checks schema dependencies and current authorization, and creates private
+requests/operators. Literal queries bypass compiled reuse. Results and permission
+decisions are not cached.
+
+| Liaison flag | Default | Meaning of zero |
+|---|---:|---|
+| `--bydbql-plan-cache-size` | 4,000 retained templates | Disable compiled-plan reuse |
+| `--bydbql-plan-cache-max-bytes` | 67,108,864 bytes (64 MiB) | Use the default byte limit |
+| `--bydbql-plan-max-compiles` | 4 concurrent compilations | Use the default concurrency limit |
+| `--bydbql-plan-max-in-flight` | 64 distinct shared compilations | Use the default in-flight limit |
+
+Negative values are rejected. Count and byte limits include evicted templates
+still held by active executions. Byte accounting estimates retained plan memory;
+it is not an exact allocator heap measurement. Oversized plans or unstable local
+schema views execute uncached under existing compilation/query resource limits.
+Disabling compiled reuse preserves QL functionality and the separate prepared
+cache. In particular, setting compiled-plan maximum bytes to zero does not remove
+its byte bound.
+
+Cache activity is visible through `bydbql_plan_cache_total{result}`,
+`bydbql_plan_compiles_total`, `bydbql_plan_cache_count`,
+`bydbql_plan_cache_bytes{kind}`, `bydbql_plan_work{kind}` and
+`bydbql_plan_duration_seconds{stage}`. Cache outcomes also appear in existing QL
+logs. These metrics distinguish plan reuse from prepared-cache activity.
+
+Plan reuse reduces repeated planning work; end-to-end latency/CPU effects depend
+on execution costs. The [current PR 1 measurements](../design/0.12.0/measure-ql-core-sql/pr1-verification.md)
+show lower planning time and allocations but no established RPC latency gain.
+
 ## 6. BydbQL for Top-N
 
 Top-N queries use a specialized, command-like syntax for clarity and to reflect the optimized nature of the underlying `banyandb.measure.v1.TopNRequest`. The `FROM` clause is mandatory.

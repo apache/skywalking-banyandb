@@ -1,15 +1,32 @@
 # Catalog B implementation tickets and verification contracts
 
-Status: **11 capability tickets planned; the former T01 verification work is complete.**
-The [T01 verification record](t01-verification.md) preserves its implemented tests
-and measured baseline. That work now supports T02; it is not counted as a completed
-engine capability. No implementation work or benchmark evidence is discarded.
-Base: PR #1412, reviewed at `012115c5`.
+Status: **T02, T03 and T05 are implemented in PR 1; eight capability tickets remain
+planned for later PRs.** Implementation and correctness do not imply that every
+historical performance gate passed: T02's original statistical acceptance remains
+inconclusive/stopped. Current isolated scope, checks and benchmark limits are in
+the [PR 1 verification record](pr1-verification.md). The [T01 verification
+record](t01-verification.md) retains the supporting baseline and is not a separate
+engine capability.
 
-This document implements the [language contract](README.md),
+The original design-review base was `012115c5`. PR #1412 merged as `15635181b`;
+PR 1 targets main with the documentation-example fixes from `02441f968` included.
+This document defines the [language contract](README.md),
 [batch engine design](datafusion-engine.md) and [compiled-plan reuse design](plan-reuse.md).
-The existing `QLB-T01` labels and `qlb_t01` benchmark remain valid. All other ticket
-commands/scenarios below are proposed until their owning capability is implemented.
+T02/T03/T05 commands are implemented. Commands for later capabilities describe
+planned contracts until those capabilities ship. Existing `QLB-T01` labels and
+`qlb_t01` measurements retain their historical meaning.
+
+## Four-PR delivery
+
+| PR | Scope | State in this branch |
+|---|---|---|
+| [1 — execution foundation](https://github.com/apache/skywalking-banyandb/pull/1417) | T02 shared batches, T03 typed raw QL, T05 compiled-plan reuse and required compatibility repairs | Implemented and independently verified |
+| 2 — SQL aggregation | T07 local aggregation and T08 native split/merge | Planned |
+| 3 — expressions and filtering | T10 expressions, T12 field WHERE and T14 HAVING/membership | Planned |
+| 4 — complete grouping/output composition | T15 DISTINCT, T16 computed/ordinal grouping, T17 ordering/pagination and count-distinct composition | Planned |
+
+Each PR carries its own generated cases, focused benchmark evidence and language
+documentation. This split does not broaden individual benchmark workloads.
 
 ## Parent QLB: deliver Catalog B through the existing Query RPC
 
@@ -32,16 +49,18 @@ the capability closes only after its full e2e and benchmark gates pass.
 of existing native batch execution. Protobuf measure requests and QL share native
 scan/reduction operators; QL adds typed liaison operators above that seam. Reuse
 PR #1412's RecordBatch, owners, schema source and admission machinery. No changes
-to protobuf/generated API contracts, RPCs, HTTP, data-node operators, persisted
-formats or frame formats; no Rust runtime or Arrow IPC dependency.
+to protobuf/generated API contracts, RPCs, HTTP, persisted formats or native wire
+formats; no Rust runtime or Arrow IPC dependency. SQL operators stay on the liaison.
+Shared native Go buffering/ownership and read/dispatch compatibility repairs are
+included with their regression tests, as described in the PR 1 verification record.
 
-**Readiness:** capability tickets remain planned blocked leaves until their listed
-prerequisites and actual interfaces are available on the target branch. This
-worktree contains the PR #1412 base; this document does not certify its merge into
-main. Revalidate the seam, independent expected results and focused RED evidence
-before queueing work. A compatible cutover can use a missing new-seam contract as
-RED evidence, but must also prove activation by the real caller. Preserve the
-completed T01 support work when implementing T02.
+**Readiness:** PR #1412 is merged and the shared batch seam, raw-query interfaces
+and compiled-template cache are available in PR 1. Its selected measure/QL cases
+pass 451/451 in both topologies. Later tickets require their listed prerequisites
+and their own independent expected results, activation proof and benchmarks.
+The historical T02/T03/T05 measurements below retain their original bases and
+verdicts; consult the PR 1 record for the latest isolated checks. Preserve the
+completed T01 support work rather than treating it as a new capability.
 
 ### Dependency and benchmark map
 

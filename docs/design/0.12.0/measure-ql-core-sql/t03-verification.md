@@ -1,5 +1,9 @@
 # T03 typed raw measure queries
 
+Historical ticket-stage record. Results, source revisions and acceptance outcomes
+below retain their original context. See the [PR 1 verification record](pr1-verification.md)
+for the latest isolated branch checks and refreshed benchmark observations.
+
 Implementation base: `c10d3ac2` (T02), itself based on PR #1412. The T03
 measurements were collected from the T03 working tree before committing it.
 Verification uses Go 1.26.9. Functional,

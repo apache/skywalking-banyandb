@@ -105,7 +105,8 @@ were higher for both shapes while allocated bytes were lower. An earlier run
 before the scalar pagination correction showed lower cache-on medians and mixed
 tail latency; its artifacts are retained separately. The source change and run
 variation do not establish a causal explanation for the RPC differences. No
-end-to-end latency improvement is claimed. Historical T02 uncertainty/stopped measurements remain recorded in
+end-to-end latency improvement is claimed. Historical T02 uncertainty/stopped
+measurements remain recorded in
 [t02-verification.md](t02-verification.md); this PR does not reopen that campaign
 or turn old inconclusive outcomes into passes. Earlier T03/T05 evidence remains
 separate from this refresh.

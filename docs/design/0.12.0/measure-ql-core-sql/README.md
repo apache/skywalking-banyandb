@@ -6,16 +6,19 @@ for its isolated scope and current evidence. Subsequent PRs deliver aggregation,
 expressions/filtering, and complete grouping/output composition.
 
 Status: **T02 shared batch execution, T03 typed raw queries and T05 compiled-plan
-reuse implemented; eight capability tickets remain.** T05 passes generated E2E,
-ownership checks and its planning benchmark. Its process-isolated RPC comparison
-records modest median latency/CPU savings and mixed simple-query tail latency.
-See [T05 verification](t05-verification.md) for results and the corrected benchmark
-isolation. T03's generated E2E cases, resource probes and
-five-run capability benchmark pass. An additional legacy/native comparison was
-stopped with partial results and no gate verdict. See [T03 verification](t03-verification.md).
-T02's previously inconclusive performance acceptance remains recorded separately.
-The former T01 work and its [verification record](t01-verification.md) now support
-the first execution ticket, T02. Its real RPC tests and benchmark baseline remain valid.
+reuse are implemented in [PR #1417](https://github.com/apache/skywalking-banyandb/pull/1417);
+eight later capability tickets are outside this PR.** The isolated branch passes
+451 independent measure/QL cases in each topology, unit/race checks and the focused
+planning benchmark. The latest single RPC comparison has higher cache-on latency
+and CPU despite lower allocated bytes; no end-to-end latency gain is established.
+See the [PR 1 verification record](pr1-verification.md) for the current results.
+
+The T01/T02/T03/T05 verification documents retain historical ticket-stage evidence.
+T05's earlier five-run comparison recorded modest median savings and mixed tails;
+T03's additional compatibility comparison was stopped without a verdict. T02's
+inconclusive/stopped statistical acceptance is preserved. These historical records
+are not measurements of the latest PR head, and the PR 1 refresh does not turn
+those outcomes into passes.
 
 The delivered foundation includes Go-only native buffering, ownership and indexed
 array/empty-selector compatibility repairs, listed in the PR 1 verification
@@ -39,8 +42,11 @@ are implementation details within those tickets.
 
 Implement B1–B9 **on top of PR #1412**, using QL parsing/planning and operators on
 the liaison. Do not change protobuf definitions, generated protobuf files, RPCs,
-HTTP routes, native measure request contracts, data-node operators or frame formats.
-Continue using `BydbQLService.Query` and its existing `measure_result` response.
+HTTP routes, native measure request contracts, persisted formats or native frame
+versions. SQL extensions run on the liaison. The delivered foundation also contains
+shared Go buffering/ownership and native read/dispatch compatibility repairs;
+these preserve existing wire and persisted contracts and are listed in the PR 1
+verification record. Continue using `BydbQLService.Query` and its existing `measure_result` response.
 
 The baseline reviewed for this plan is PR #1412's commit `012115c5`. Its source
 specifications are:
@@ -55,8 +61,10 @@ specifications are:
   `docs/design/0.12.0/measure-scan-path-v2/README.md`: existing measure execution
   infrastructure, which QL reuses rather than replaces.
 
-This branch is now based on `012115c5`, so those documents and prerequisite code
-are present. All implementation slices build on that baseline.
+`012115c5` is the historical design-review baseline. PR #1412 merged as
+`15635181b`; PR 1 is rebased onto main including the later documentation-example
+fix `02441f968`. The historical benchmark bases are recorded in their individual
+verification documents.
 
 The gaps document proposes results as columns and rows but does not specify their
 wire encoding. For this scope, that is an **Arrow-style columnar representation**

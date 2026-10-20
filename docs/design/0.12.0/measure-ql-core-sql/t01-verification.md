@@ -1,5 +1,9 @@
 # T01 verification and baseline
 
+Historical ticket-stage record. Results, source revisions and acceptance outcomes
+below retain their original context. See the [PR 1 verification record](pr1-verification.md)
+for the latest isolated branch checks and refreshed benchmark observations.
+
 Revision: `012115c56652691d4163f69d0460dfa9b064191f` plus the local T01 test changes,
 verified on 2026-10-15 using Go 1.26.9. Production execution, protobuf source,
 generated API contracts, native transport and persisted formats are unchanged.
@@ -147,16 +151,12 @@ run. These observations freeze a baseline; they do not establish stable relative
 performance between native and QL or against a prior revision. Future G1 comparisons
 must use matching machine/container, dataset, schema, concurrency and Go build.
 
-Host-readable local merged JSON reports:
-[r1](../../../../.omx/bench-reports/qlb-t01-r1/distributed-querybench.json),
-[r2](../../../../.omx/bench-reports/qlb-t01-r2/distributed-querybench.json),
-[r3](../../../../.omx/bench-reports/qlb-t01-r3/distributed-querybench.json),
-[r4](../../../../.omx/bench-reports/qlb-t01-r4/distributed-querybench.json),
-[r5](../../../../.omx/bench-reports/qlb-t01-r5/distributed-querybench.json).
-The [local summary](../../../../.omx/bench-reports/qlb-t01-logs/summary.md) and
-per-run Markdown reports provide the same table and detailed percentiles, QPS,
-allocation records and profile paths. Raw artifacts are local ignored files;
-this document records the reproducible commands and measured summary in the repo.
+Local ignored evidence paths, relative to the repository root (not shipped as
+repository links): `.omx/bench-reports/qlb-t01-r1/distributed-querybench.json`
+through `.omx/bench-reports/qlb-t01-r5/distributed-querybench.json`, plus
+`.omx/bench-reports/qlb-t01-logs/summary.md`. Per-run Markdown reports contain
+percentiles, QPS, allocations and profile paths. This document preserves the
+reproducible commands and measured summary in the repository.
 
 Environment: Linux amd64, Go 1.26.9, Docker image
 `banyandb-distributed-querybench:go1.26`, cgroup v2, 4-CPU quota and 8-GiB memory

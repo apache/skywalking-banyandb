@@ -41,6 +41,9 @@ Release Notes.
 
 ### Bug Fixes
 
+- Return zero for empty scalar QL `COUNT(DISTINCT)` and apply its pagination after the complete count instead of pruning native shard partials.
+- Preserve indexed-array measure values, empty-entity selector semantics and retained merge-tail buffers in shared batch execution.
+
 - Fix the liaison's distributed measure row merge wrapping borrowed frame strings into protobuf tag and field values without copying them.
 - Fix a data node panicking with "directory is exist" when a write landed in a segment that retention had just removed but whose directory was still held by a reader; creating a segment over a directory pending deletion now returns `ErrSegmentDeleting`.
 - Fix data races in measure queries, which wrote the block cache and shard ID into parts shared with concurrent queries; both are now carried alongside each part.

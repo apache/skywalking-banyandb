@@ -1,5 +1,9 @@
 # T02 shared batch execution verification
 
+Historical ticket-stage record. Results, source revisions and acceptance outcomes
+below retain their original context. See the [PR 1 verification record](pr1-verification.md)
+for the latest isolated branch checks and refreshed benchmark observations.
+
 Status: the necessary review fixes are implemented and functionally verified.
 Performance acceptance is incomplete: v12 passes 16 of 18 small-query checks,
 while the QL raw and aggregate p50 intervals cross the original limit. The large

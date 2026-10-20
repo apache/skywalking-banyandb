@@ -1,7 +1,10 @@
 # Reusable measure QL plans for parameterized OAP traffic
 
 Status: **implemented by T05**, with verification recorded in
-[T05 verification](t05-verification.md).
+[T05 verification](t05-verification.md) as historical ticket evidence and the
+[PR 1 verification record](pr1-verification.md) for the current isolated branch.
+PR 1 reuses legacy and typed raw measure templates. Later aggregate/expression/
+sort recipes discussed below are extensions for subsequent Catalog B PRs.
 This extends the [engine design](datafusion-engine.md) on PR #1412. It changes no
 protobuf, RPC, native request or frame format.
 
@@ -21,8 +24,9 @@ cache, because only the latter needs schema invalidation.
 The [earlier plan-cache design](../bydbql-plan-cache/README.md) deferred compiled
 plans after measuring 3–6 microseconds for Bind + transformation with local schema
 reads. Preserve that historical result. This decision revisits the deferral for
-Catalog B: type analysis, logical rewrites, aggregate decomposition and physical
-expression planning now add work, while OAP repeatedly varies bound values.
+Catalog B: typed raw source/output resolution and time-range planning add work,
+while OAP repeatedly varies bound values. Later tickets add expression planning
+and aggregate decomposition.
 Benchmark both simple legacy templates and new plans; do not assume the earlier
 measurement proves either a large benefit or no benefit for this engine.
 
@@ -33,68 +37,59 @@ snapshot is introduced, and end-to-end speedup must be measured separately.
 
 ## 2. Reusable template versus execution instance
 
-| Cached immutable template | Fresh for every execution |
+| Cached immutable template in PR 1 | Fresh for every execution |
 |---|---|
-| Parsed syntax and placeholder constraints | Parameter values, list expansion and explicit conversions |
-| Resolved slots, source identities, types/nullability and output labels | Bound time ranges and one captured now |
-| Analyzed logical plan and value-independent rewrites | Safe value-dependent simplifications and guarded plan choices |
-| Aggregate decomposition, hidden projections and dependency set | Newly lowered native requests and authorization decisions |
-| Typed physical expression recipes and batch-operator topology | Operator instances, scratch buffers, hashes/heaps and aggregate state |
-| Native scan lowering recipes and exactness conditions | Current topology/stages/gates, scan readers, trace and cancellation |
-| Output mapping and known output schema | Budgets, borrowed owners, batches and result encoding |
+| Parsed syntax and placeholder constraints | Parameter values, native list values and validation |
+| Resolved raw slots, source identities, types and output names | Bound time ranges and one captured now |
+| Legacy native lowering metadata and typed raw projection/time recipes | Newly lowered native requests and optional RawPlan |
+| Schema dependency revisions and local watch generations | Dependency checks, current authorization and native gates |
+| Output mapping and source schema metadata | Operator instances, query budgets, borrowed owners and result encoding |
 
-Do not cache a running Pipeline, PullOperator, native request mutated by binding,
-result batch, cursor, memory lease or permission outcome. A physical plan template
-is a recipe for these objects, not the objects themselves. Immutable expression
-code may be shared; mutable evaluator scratch is execution-owned.
+Do not cache a running Pipeline, PullOperator, mutable bound request, result batch,
+cursor, memory lease or permission outcome. A template is a recipe; every request
+owns its bound values and execution state. Aggregate decomposition, general typed
+expression kernels, hash aggregation and sorting are future template extensions,
+not implemented cache payloads in PR 1.
 
-The pipeline becomes:
+The implemented request flow is:
 
 ```text
-exact query text + compilation context
-    -> compiled-plan lookup + dependency validation
-    -> hit: immutable typed plan template
-       miss: prepared-cache lookup -> analyze -> structural optimize -> physical recipe
-    -> bind parameters / capture now
-    -> instantiate guarded choices, fresh requests and fresh batch operators
-    -> authorize all lowered native requests -> execute -> release execution handle
+exact QL text -> prepared syntax lookup -> validate parameter overlay
+    -> compiled-plan lookup + schema dependency validation
+    -> hit: immutable MeasureTemplate
+       miss: capture schemas -> compile -> revalidate -> publish if reusable
+    -> MeasureTemplate.Bind with fresh parameters and one execution clock
+    -> native QueryRequest + optional raw QL recipe
+    -> current authorization -> admission/gates -> batches -> release handle
 ```
 
-Make the template parameter-independent. Do not constant-fold a placeholder using
-its first value or bake in a relative timestamp. Compile column-to-parameter
-comparison kernels once; keep threshold values in the binding overlay. Rebuild
-IN-list lookup sets per execution without changing the cached expression tree.
-Varying array length, LIMIT/OFFSET or time range does not create a new cache entry.
+Parameters do not enter the compiled key. Time ranges, native criteria/list values,
+LIMIT/OFFSET and the execution clock are rebuilt for each binding. An explicit
+LIMIT 0 can choose an empty recipe; contradictory typed time bounds also avoid a
+scan. Native eligibility and schema gates use current metadata rather than cached
+topology or authorization decisions.
 
-When a physical choice depends on a bound value, cache a validated guard and its
-alternative recipes, or retain a conservative generic plan. Apply only that small
-choice at instantiation. For example, LIMIT 0 can select Empty, and an absent versus
-finite limit selects full sort versus top-k. A proof of exact pushdown that depends
-on parameter nullness must be checked again. Never reuse a first-request pruning
-or aggregate decision when later values invalidate its proof.
+Later Catalog B features must preserve this division when adding parameterized
+expression kernels, aggregate eligibility guards or full-sort/top-k choices.
+Those future choices do not describe operators present in PR 1.
 
 ## 3. Cache key and parameter types
 
-Key by exact QL text plus the compilation-context fingerprint: dialect/semantic
-mode, any session/default namespace used in resolution, and planning settings or
-function-registry generation that actually change the plan. Current fully specified
-sources need no implicit namespace. Do not put bound values, time ranges, auth
-principals, trace IDs or current node addresses in the key. Current permissions
-are checked for every execution; compiled resource resolution is not user-specific.
-If a future policy changes query shape, its policy identity must become part of
-the key before that policy can use the shared cache.
+The current cache key is **exact parameterized QL text**. The dialect and source
+resolution context are fixed by the current API; there is no separate session,
+function-registry or inferred parameter-type signature in the implemented key.
+Prepared-statement constraints and schema resolution validate values, and each
+execution binds its own TagValue overlay. Bound values, time ranges, principals,
+trace IDs and native node addresses are excluded. Current authorization runs on
+every request. Literal queries bypass compiled reuse; no literal-to-parameter SQL
+normalizer is introduced.
 
-Infer placeholder types from source columns and explicit casts first. If a new
-expression remains underconstrained, infer only its logical type from the bound
-TagValue variant and include that type signature in the key; a null-only ambiguous
-expression requires an explicit cast. Values and array lengths remain excluded.
-Typed NULL uses its contextual type rather than creating a null-specific plan.
-Do not introduce parameter-value-dependent selectivity plans for B.
-
-Preserve the prepared cache's policy of caching parameterized templates rather
-than rewriting literal SQL into new normalized templates. Literal queries bypass
-this cache initially. This directly serves OAP's same-text/different-parameters
-workload without adding a SQL normalizer or changing parameter semantics.
+If future features introduce a session namespace, planning setting, function
+registry generation or underconstrained expression type that changes compilation,
+its compilation-context/type identity must become part of the key before that
+feature can share templates safely. The same applies if a future policy changes
+query shape. This is an extension requirement, not an implemented context/type
+signature or a new parameter wire variant in PR 1.
 
 ## 4. Dependency validation and schema changes
 
@@ -135,8 +130,10 @@ Deletion, recreation and index removal must be tested explicitly.
 
 Use a dedicated liaison-local LRU bounded by both entry count and estimated bytes.
 Keep parse-cache and plan-cache metrics separate; schema invalidation is not parse
-thrashing. Proposed starting limits are 4,000 templates and 64 MiB for compiled
-plans, to be confirmed with the benchmark working set and measured plan sizes.
+thrashing. Implemented defaults are 4,000 templates and 64 MiB of estimated retained plan
+bytes. They are bounded starting settings, not values tuned by a large working-set
+benchmark. The [user guide](../../../interacting/bydbql.md#57-compiled-plan-cache-controls)
+lists the cache flags, default/zero behavior and metrics.
 Existing prepared-cache limits remain separate. Include key strings, owned plan
 nodes, expression recipes and dependency metadata in byte estimates; do not retain
 entire mutable repositories through a closure.
