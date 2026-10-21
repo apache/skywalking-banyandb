@@ -58,7 +58,7 @@ func init() {
 		{Name: "String", Pattern: `'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"`},
 		{Name: "QuotedIdent", Pattern: `"[a-zA-Z_][a-zA-Z0-9_.]*"|'[a-zA-Z_][a-zA-Z0-9_.]*'`},
 		{Name: "Param", Pattern: `\?`},
-		{Name: "Operators", Pattern: `!=|>=|<=|::|[=><,.()*]`},
+		{Name: "Operators", Pattern: `!=|>=|<=|::|[=><,.()*+\-]`},
 		{Name: "whitespace", Pattern: `\s+`},
 	})
 
@@ -68,7 +68,7 @@ func init() {
 		participle.Lexer(bydbqlLexer),
 		participle.Unquote("String"),
 		participle.Unquote("QuotedIdent"),
-		participle.CaseInsensitive("Keyword"),
+		participle.CaseInsensitive("Keyword", "Ident"),
 		participle.UseLookahead(2),
 	)
 	if err != nil {
@@ -95,7 +95,19 @@ func ParseQuery(query string) (*Grammar, error) {
 	if err != nil {
 		return nil, fmt.Errorf("syntax error: %w", err)
 	}
+	if grammar.Select != nil && grammar.Select.From.Shorthand != nil {
+		from := grammar.Select.From
+		from.ResourceType = "MEASURE"
+		from.ResourceName = from.Shorthand.Name
+		from.In = &GrammarInClause{Groups: []string{from.Shorthand.Group}}
+	}
+	if grammar.TopN != nil && grammar.TopN.From.Shorthand != nil {
+		return nil, fmt.Errorf("syntax error: source shorthand is valid only for measure SELECT")
+	}
 	if err := checkAggregateAndGroupByShape(grammar); err != nil {
+		return nil, err
+	}
+	if err := checkTimeValuePositions(grammar); err != nil {
 		return nil, err
 	}
 

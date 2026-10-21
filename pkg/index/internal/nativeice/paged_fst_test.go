@@ -88,6 +88,12 @@ const pagedFSTFixtureBounds = 10
 // differing term, without materializing either result.
 func requireSameIteration(t *testing.T, want termIterator, wantErr error, got termIterator, gotErr error, bound [2][]byte, shape fstWindowShape) {
 	t.Helper()
+	if want != nil {
+		defer want.Close()
+	}
+	if got != nil {
+		defer got.Close()
+	}
 	wantDone, gotDone := iterationDone(t, wantErr), iterationDone(t, gotErr)
 	for position := 0; ; position++ {
 		if wantDone || gotDone {

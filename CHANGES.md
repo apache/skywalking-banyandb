@@ -6,6 +6,7 @@ Release Notes.
 
 ### Features
 
+- Add typed raw measure QL with WHERE time, aliases and bounded compiled-plan reuse, executed over shared columnar native batches.
 - Add a native ICE v3 encoder that writes committed index generations compatible with existing readers.
 - Cut the Property database's index writer over to the native segment plugin, selected by both the `property` and `schema-server` roles. `banyand/property/db.OpenDB` now acquires its exclusive `<Location>/lock` before scanning shard directories or opening any writer, and releases it if a later startup step fails. A rollback (flipping the selection back and restarting) reopens the same on-disk shards with the retained legacy writer unchanged.
 - Complete the Property native role cutover for writes, immutable/NRT publication, repair, filtering, ordering, projection, and persistence. Native is the default for the `property` and `schema-server` roles; the legacy writer remains an explicit rollback path. Native ICE segments reserve `_id` as field ID zero and sort all other field names lexically for mixed-version merge compatibility. See the [Property native cutover verification](docs/design/archive/0.12.0/native-inverted-index/verification/property-native-cutover/README.md) report.
@@ -41,6 +42,10 @@ Release Notes.
 - Add a Canopy Monitor page for cluster routing and storage observations, with admin-only access by default, configurable readonly access, bounded refresh, and independent upstream failure states.
 
 ### Bug Fixes
+
+- Upgrade the Go toolchain to 1.26.10 for the crypto/x509 security fix (GO-2026-6809).
+- Return zero for empty scalar QL `COUNT(DISTINCT)` and apply its pagination after the complete count instead of pruning native shard partials.
+- Preserve indexed-array measure values, empty-entity selector semantics and retained merge-tail buffers in shared batch execution.
 
 - Fix the liaison's distributed measure row merge wrapping borrowed frame strings into protobuf tag and field values without copying them.
 - Fix a data node panicking with "directory is exist" when a write landed in a segment that retention had just removed but whose directory was still held by a reader; creating a segment over a directory pending deletion now returns `ErrSegmentDeleting`.

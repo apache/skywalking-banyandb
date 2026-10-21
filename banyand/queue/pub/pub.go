@@ -30,7 +30,10 @@ import (
 	pkgerrors "github.com/pkg/errors"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/encoding"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -49,6 +52,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	pkgtls "github.com/apache/skywalking-banyandb/pkg/tls"
 )
@@ -90,6 +94,7 @@ type pub struct {
 	closer              *run.Closer
 	writableProbe       map[string]map[string]struct{}
 	nodeCache           map[string]nodeInfo
+	nativeQueries       map[*client]*nativeQueryConnection
 	caCertPath          string
 	caCertReloader      *pkgtls.Reloader
 	prefix              string
@@ -101,7 +106,9 @@ type pub struct {
 	healthCheckInterval time.Duration
 	writableProbeMu     sync.Mutex
 	nodeCacheMu         sync.RWMutex
+	nativeQueryMu       sync.Mutex
 	tlsEnabled          bool
+	nativeQueriesClosed bool
 }
 
 // nodeInfo caches the resolved role and tier for a remote node.
@@ -182,6 +189,9 @@ func (p *pub) OnActive(name string, c *client) {
 
 // OnInactive implements grpchelper.ConnectionHandler.
 func (p *pub) OnInactive(name string, c *client) {
+	if err := p.closeNativeQueryClient(c); err != nil {
+		p.log.Warn().Err(err).Msg("failed to close native measure connection")
+	}
 	for _, h := range p.handlers {
 		h.OnDelete(c.md)
 	}
@@ -266,6 +276,9 @@ func (p *pub) GracefulStop() {
 	}
 	p.closer.Done()
 	p.closer.CloseThenWait()
+	if err := p.closeNativeQueryClients(); err != nil {
+		p.log.Warn().Err(err).Msg("failed to close native measure connections")
+	}
 	p.connMgr.GracefulStop()
 }
 
@@ -308,6 +321,17 @@ var bypassMatches = []MatchFunc{bypassMatch}
 func bypassMatch(_ map[string]string) bool { return true }
 
 func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Message) ([]bus.Future, error) {
+	return p.broadcast(context.Background(), timeout, topic, messages)
+}
+
+// BroadcastContext applies the Go-only native measure receive guard when installed.
+func (p *pub) BroadcastContext(ctx context.Context, timeout time.Duration, topic bus.Topic, messages bus.Message) ([]bus.Future, error) {
+	return p.broadcast(ctx, timeout, topic, messages)
+}
+
+type nativeReceiveLimitKey struct{}
+
+func (p *pub) broadcast(ctx context.Context, timeout time.Duration, topic bus.Topic, messages bus.Message) ([]bus.Future, error) {
 	nodes := p.connMgr.ActiveRegisteredNodes()
 	if len(nodes) == 0 {
 		return nil, errors.New("no active nodes")
@@ -349,13 +373,22 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 	if len(names) == 0 {
 		return nil, fmt.Errorf("no nodes match the selector %v", messages.NodeSelectors())
 	}
+	if scope, guarded := vectorized.NativeReceiveScopeFromContext(ctx); guarded && topic == apidata.TopicInternalMeasureQuery {
+		// Native measure streams use a dedicated64KiB static window. Reserve
+		// every pending stream before opening any of them.
+		capBytes, reserveErr := scope.ReserveFanout(len(names), nativeQueryReceiveWindow, maxReceiveMessageSize)
+		if reserveErr != nil {
+			return nil, reserveErr
+		}
+		ctx = context.WithValue(ctx, nativeReceiveLimitKey{}, capBytes)
+	}
 	futureCh := make(chan publishResult, len(names))
 	var wg sync.WaitGroup
 	for n := range names {
 		wg.Add(1)
 		go func(n string) {
 			defer wg.Done()
-			f, err := p.publish(timeout, topic, bus.NewMessageWithNodeAndGroup(messages.ID(), n, messages.Group(), messages.Data()))
+			f, err := p.publishContext(ctx, timeout, topic, bus.NewMessageWithNodeAndGroup(messages.ID(), n, messages.Group(), messages.Data()))
 			futureCh <- publishResult{n: n, f: f, e: err}
 		}(n)
 	}
@@ -370,6 +403,7 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 			errs = multierr.Append(errs, pkgerrors.Wrapf(f.e, "failed to publish message to %s", f.n))
 			if grpchelper.IsFailoverError(f.e) {
 				if p.closer.AddRunning() {
+					//nolint:contextcheck // Failover outlives the query and must not inherit query admission or authentication state.
 					run.Go(context.Background(), "pub-failover", p.log, func(ctx context.Context) {
 						defer p.closer.Done()
 						p.failover(ctx, f.n, common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, f.e.Error()), topic)
@@ -382,6 +416,13 @@ func (p *pub) Broadcast(timeout time.Duration, topic bus.Topic, messages bus.Mes
 	}
 
 	if errs != nil {
+		if _, guarded := vectorized.NativeReceiveScopeFromContext(ctx); guarded {
+			for _, pending := range futures {
+				if closer, ok := pending.(interface{ Close() error }); ok {
+					errs = multierr.Append(errs, closer.Close())
+				}
+			}
+		}
 		return futures, fmt.Errorf("broadcast errors: %w", errs)
 	}
 	return futures, nil
@@ -394,10 +435,23 @@ type publishResult struct {
 }
 
 func (p *pub) publish(timeout time.Duration, topic bus.Topic, messages ...bus.Message) (bus.Future, error) {
+	return p.publishContext(context.Background(), timeout, topic, messages...)
+}
+
+func nativeReceiveCallOptions(ctx context.Context) []grpc.CallOption {
+	if capBytes, guarded := ctx.Value(nativeReceiveLimitKey{}).(int); guarded {
+		return []grpc.CallOption{grpc.MaxCallRecvMsgSize(capBytes), grpc.ForceCodecV2(nativeReceiveCodec{CodecV2: encoding.GetCodecV2("proto"), limit: capBytes})}
+	}
+	return nil
+}
+
+func (p *pub) publishContext(parent context.Context, timeout time.Duration, topic bus.Topic, messages ...bus.Message) (bus.Future, error) {
 	var err error
+	_, receiveGuarded := parent.Value(nativeReceiveLimitKey{}).(int)
 	f := &future{
-		log:     p.log,
-		metrics: p.metrics,
+		receiveGuarded: receiveGuarded,
+		log:            p.log,
+		metrics:        p.metrics,
 	}
 	handleMessage := func(m bus.Message, err error) error {
 		r, errSend := messageToRequest(topic, m)
@@ -414,9 +468,17 @@ func (p *pub) publish(timeout time.Duration, topic bus.Topic, messages ...bus.Me
 		group := m.Group()
 		info := p.getNodeInfo(node)
 		execErr := p.connMgr.Execute(node, func(c *client) error {
-			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			ctx, cancel := context.WithTimeout(parent, timeout)
 			f.cancelFn = append(f.cancelFn, cancel)
-			stream, errCreateStream := c.client.Send(ctx)
+			streamClient := c.client
+			if receiveGuarded {
+				var queryClientErr error
+				streamClient, queryClientErr = p.nativeQueryClient(c)
+				if queryClientErr != nil {
+					return queryClientErr
+				}
+			}
+			stream, errCreateStream := streamClient.Send(ctx, nativeReceiveCallOptions(parent)...)
 			if errCreateStream != nil {
 				// Record failure for circuit breaker (only for transient/internal errors)
 				if p.metrics != nil {
@@ -451,6 +513,11 @@ func (p *pub) publish(timeout time.Duration, topic bus.Topic, messages ...bus.Me
 	}
 	for _, m := range messages {
 		err = handleMessage(m, err)
+	}
+	if err != nil {
+		if _, guarded := parent.Value(nativeReceiveLimitKey{}).(int); guarded {
+			err = multierr.Append(err, f.Close())
+		}
 	}
 	return f, err
 }
@@ -599,16 +666,17 @@ func messageToRequest(topic bus.Topic, m bus.Message) (*clusterv1.SendRequest, e
 }
 
 type future struct {
-	log      *logger.Logger
-	metrics  *pubMetrics
-	clients  []clusterv1.Service_SendClient
-	cancelFn []func()
-	topics   []bus.Topic
-	nodes    []string
-	groups   []string
-	roles    []string
-	tiers    []string
-	starts   []time.Time
+	log            *logger.Logger
+	metrics        *pubMetrics
+	clients        []clusterv1.Service_SendClient
+	cancelFn       []func()
+	topics         []bus.Topic
+	nodes          []string
+	groups         []string
+	roles          []string
+	tiers          []string
+	starts         []time.Time
+	receiveGuarded bool
 }
 
 func (l *future) Get() (msg bus.Message, err error) {
@@ -658,7 +726,11 @@ func (l *future) Get() (msg bus.Message, err error) {
 	}
 	if resp.Error != "" {
 		errReason = sendErrReasonServerRejected
-		return bus.Message{}, errors.New(resp.Error)
+		remoteErr := errors.New(resp.Error)
+		if l.receiveGuarded {
+			remoteErr = guardedNativeReceiveError(remoteErr)
+		}
+		return bus.Message{}, remoteErr
 	}
 	if resp.Body == nil {
 		return bus.NewMessageWithNode(bus.MessageID(resp.MessageId), n, nil), nil
@@ -679,7 +751,41 @@ func (l *future) Get() (msg bus.Message, err error) {
 	return bus.Message{}, fmt.Errorf("invalid topic %s", t)
 }
 
+// guardedNativeReceiveError recovers the canonical memory sentinel across the
+// legacy SendResponse.Error string envelope without changing the wire contract.
+func guardedNativeReceiveError(err error) error {
+	if err == nil || status.Code(err) != codes.Unknown {
+		return err
+	}
+	sentinel := vectorized.ErrMemoryBudgetExceeded.Error()
+	message := err.Error()
+	canonical := message == sentinel || strings.HasPrefix(message, sentinel+":") ||
+		strings.Contains(message, ": "+sentinel+":") || strings.HasSuffix(message, ": "+sentinel)
+	if errors.Is(err, vectorized.ErrMemoryBudgetExceeded) || canonical {
+		return status.Error(codes.ResourceExhausted, message)
+	}
+	return err
+}
+
+// Close cancels every remaining stream, including unpublished and unread responses.
+func (l *future) Close() error {
+	var err error
+	for _, cancel := range l.cancelFn {
+		cancel()
+	}
+	for _, client := range l.clients {
+		err = multierr.Append(err, client.CloseSend())
+	}
+	l.clients = nil
+	l.cancelFn = nil
+	return err
+}
+
 func (l *future) GetAll() ([]bus.Message, error) {
+	if l.receiveGuarded {
+		// Retry attempts can leave canceled-stream contexts without a response slot.
+		defer func() { _ = l.Close() }()
+	}
 	var globalErr error
 	ret := make([]bus.Message, 0, len(l.clients))
 	for {

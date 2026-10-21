@@ -31,6 +31,7 @@ import (
 	vellumregexp "github.com/blevesearch/vellum/regexp"
 
 	"github.com/apache/skywalking-banyandb/pkg/index/internal/nativeice"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
 // ErrQueryLimit reports a caller-supplied term or candidate budget that was
@@ -190,7 +191,10 @@ func (v *ReadView) MatchTermsSet(ctx context.Context, request TermSetRequest) ([
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, hits...)
+		result, err = appendQueryHits(ctx, result, hits)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return result, nil
 }
@@ -257,6 +261,9 @@ func (v *ReadView) MatchAllTermSets(ctx context.Context, requests []TermSetReque
 			if candidates == nil {
 				candidates = matched
 			} else {
+				if err := reserveBitmapMerge(ctx, candidates, matched); err != nil {
+					return nil, err
+				}
 				candidates.And(matched)
 			}
 			if candidates.IsEmpty() {
@@ -274,7 +281,10 @@ func (v *ReadView) MatchAllTermSets(ctx context.Context, requests []TermSetReque
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, hits...)
+		result, err = appendQueryHits(ctx, result, hits)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return result, nil
 }
@@ -324,6 +334,9 @@ func (v *ReadView) filterHits(
 	}
 	bySegment := make(map[uint64]*roaringpkg.Bitmap)
 	var totalCandidates uint64
+	if err := query.ReserveAllocation(ctx, uint64(len(hits))*96); err != nil {
+		return nil, err
+	}
 	result := make([]QueryHit, 0, len(hits))
 	for _, hit := range hits {
 		candidates, cached := bySegment[hit.Segment]
@@ -397,7 +410,10 @@ func (v *ReadView) MatchField(ctx context.Context, request FieldRequest) ([]Quer
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, hits...)
+		result, err = appendQueryHits(ctx, result, hits)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return result, nil
 }
@@ -441,7 +457,10 @@ func (v *ReadView) MatchRange(ctx context.Context, request RangeRequest) ([]Quer
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, hits...)
+		result, err = appendQueryHits(ctx, result, hits)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return result, nil
 }
@@ -466,6 +485,17 @@ func (v *ReadView) SortHits(ctx context.Context, hits []QueryHit, request SortRe
 	if request.Limit > 0 {
 		keep = request.Offset + request.Limit
 	}
+
+	sortCapacity := len(hits)
+	if request.Limit > 0 {
+		sortCapacity = keep
+	}
+	if uint64(sortCapacity) > math.MaxInt64/256 {
+		return nil, ErrQueryLimit
+	}
+	if err := query.ReserveAllocation(ctx, uint64(sortCapacity)*256); err != nil {
+		return nil, err
+	}
 	ordered := make([]sortableHit, 0, func() int {
 		if request.Limit == 0 {
 			return len(hits)
@@ -484,8 +514,11 @@ func (v *ReadView) SortHits(ctx context.Context, hits []QueryHit, request SortRe
 		if err != nil {
 			return nil, err
 		}
-		values, err := segment.handle.reader.DocumentValues(request.Field, hit.DocumentNumber)
+		values, err := segment.handle.reader.DocumentValuesContext(ctx, request.Field, hit.DocumentNumber)
 		if err != nil {
+			return nil, err
+		}
+		if err := reserveSortValueCopies(ctx, values); err != nil {
 			return nil, err
 		}
 		value, missing := smallestDocValue(values)
@@ -511,6 +544,9 @@ func (v *ReadView) SortHits(ctx context.Context, hits []QueryHit, request SortRe
 	end := len(ordered)
 	if request.Limit > 0 {
 		end = minInt(start+request.Limit, len(ordered))
+	}
+	if err := query.ReserveAllocation(ctx, uint64(end-start)*96); err != nil {
+		return nil, err
 	}
 	result := make([]QueryHit, end-start)
 	for i := range result {
@@ -544,6 +580,9 @@ func (v *ReadView) ProjectHit(ctx context.Context, hit QueryHit, fields ...strin
 	if _, deleted := segment.deleted[hit.DocumentNumber]; deleted {
 		return ProjectedHit{}, fmt.Errorf("document %d is deleted: %w", hit.DocumentNumber, ErrCorrupt)
 	}
+	if err := query.ReserveAllocation(ctx, 256+uint64(len(fields))*128+uint64(len(hit.Identifier)+len(hit.SeriesID))); err != nil {
+		return ProjectedHit{}, err
+	}
 	wanted := make(map[string]struct{}, len(fields))
 	for _, field := range fields {
 		wanted[field] = struct{}{}
@@ -553,13 +592,16 @@ func (v *ReadView) ProjectHit(ctx context.Context, hit QueryHit, fields ...strin
 		Segment: hit.Segment, DocumentNumber: hit.DocumentNumber,
 	}, Fields: make(map[string][][]byte, len(fields))}
 	var timestampErr error
-	visitErr := segment.handle.reader.VisitDocument(hit.DocumentNumber, func(document nativeice.StoredDocument) error {
+	visitErr := segment.handle.reader.VisitDocumentContext(ctx, hit.DocumentNumber, func(document nativeice.StoredDocument) error {
 		return document.VisitStoredFields(func(name string, value []byte) bool {
 			if err := ctx.Err(); err != nil {
 				timestampErr = err
 				return false
 			}
 			if name == identifierField {
+				if timestampErr = query.ReserveAllocation(ctx, uint64(len(value))); timestampErr != nil {
+					return false
+				}
 				result.Identifier = bytes.Clone(value)
 				return true
 			}
@@ -568,7 +610,9 @@ func (v *ReadView) ProjectHit(ctx context.Context, hit QueryHit, fields ...strin
 				return timestampErr == nil
 			}
 			if _, ok := wanted[name]; ok {
-				result.Fields[name] = append(result.Fields[name], bytes.Clone(value))
+				if timestampErr = appendProjectedValue(ctx, result.Fields, name, value); timestampErr != nil {
+					return false
+				}
 			}
 			return true
 		})
@@ -600,8 +644,11 @@ func (v *ReadView) ProjectSortValue(ctx context.Context, hit QueryHit, field str
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, false, ctxErr
 	}
-	values, err := segment.handle.reader.DocumentValues(field, hit.DocumentNumber)
+	values, err := segment.handle.reader.DocumentValuesContext(ctx, field, hit.DocumentNumber)
 	if err != nil {
+		return nil, false, err
+	}
+	if err := reserveSortValueCopies(ctx, values); err != nil {
 		return nil, false, err
 	}
 	value, missing := smallestDocValue(values)
@@ -666,7 +713,12 @@ func exactCandidates(
 		return nil, fmt.Errorf("term mode %d: %w", request.Mode, ErrInvalidQuery)
 	}
 	var result *roaringpkg.Bitmap
-	combine := func(candidate *roaringpkg.Bitmap) {
+	combine := func(candidate *roaringpkg.Bitmap) error {
+		if result != nil {
+			if err := reserveBitmapMerge(ctx, result, candidate); err != nil {
+				return err
+			}
+		}
 		switch {
 		case result == nil:
 			result = candidate
@@ -675,6 +727,7 @@ func exactCandidates(
 		default:
 			result.Or(candidate)
 		}
+		return nil
 	}
 	// Once an All-mode intersection is already empty, it can never become
 	// non-empty again: skip remaining operands, including dictionary
@@ -689,14 +742,16 @@ func exactCandidates(
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		candidate, found, err := segment.handle.reader.TermPostingBitmap(request.Field, term)
+		candidate, found, err := segment.handle.reader.TermPostingBitmapContext(ctx, request.Field, term)
 		if err != nil {
 			return nil, err
 		}
 		if !found {
 			candidate = roaringpkg.New()
 		}
-		combine(candidate)
+		if err := combine(candidate); err != nil {
+			return nil, err
+		}
 		if exceedsCandidates(result, request.MaxCandidates) {
 			return nil, ErrQueryLimit
 		}
@@ -710,7 +765,9 @@ func exactCandidates(
 		if err != nil {
 			return nil, err
 		}
-		combine(candidate)
+		if err := combine(candidate); err != nil {
+			return nil, err
+		}
 		if exceedsCandidates(result, request.MaxCandidates) {
 			return nil, ErrQueryLimit
 		}
@@ -727,7 +784,9 @@ func exactCandidates(
 		if err != nil {
 			return nil, err
 		}
-		combine(candidate)
+		if err := combine(candidate); err != nil {
+			return nil, err
+		}
 		if exceedsCandidates(result, request.MaxCandidates) {
 			return nil, ErrQueryLimit
 		}
@@ -769,11 +828,14 @@ func dictionaryMatchCandidates(
 		if maxTerms != 0 && *expanded > maxTerms {
 			return nil, ErrQueryLimit
 		}
-		posting, found, postingErr := segment.handle.reader.TermPostingBitmap(field, term)
+		posting, found, postingErr := segment.handle.reader.TermPostingBitmapContext(ctx, field, term)
 		if postingErr != nil {
 			return nil, postingErr
 		}
 		if found {
+			if err := reserveBitmapMerge(ctx, result, posting); err != nil {
+				return nil, err
+			}
 			result.Or(posting)
 		}
 	}
@@ -877,11 +939,14 @@ func rangeCandidates(ctx context.Context, segment *memorySegment, request RangeR
 		if termCount > request.MaxTerms {
 			return nil, ErrQueryLimit
 		}
-		posting, found, postingErr := segment.handle.reader.TermPostingBitmap(request.Field, term)
+		posting, found, postingErr := segment.handle.reader.TermPostingBitmapContext(ctx, request.Field, term)
 		if postingErr != nil {
 			return nil, postingErr
 		}
 		if found {
+			if err := reserveBitmapMerge(ctx, result, posting); err != nil {
+				return nil, err
+			}
 			result.Or(posting)
 			if exceedsCandidates(result, request.MaxCandidates) {
 				return nil, ErrQueryLimit
@@ -902,13 +967,19 @@ func applySeries(ctx context.Context, segment *memorySegment, result *roaringpkg
 	}
 	seriesCandidates := roaringpkg.New()
 	for _, seriesID := range series {
-		posting, found, err := segment.handle.reader.TermPostingBitmap(scope.SeriesField, seriesID)
+		posting, found, err := segment.handle.reader.TermPostingBitmapContext(ctx, scope.SeriesField, seriesID)
 		if err != nil {
 			return nil, err
 		}
 		if found {
+			if err := reserveBitmapMerge(ctx, seriesCandidates, posting); err != nil {
+				return nil, err
+			}
 			seriesCandidates.Or(posting)
 		}
+	}
+	if err := reserveBitmapMerge(ctx, result, seriesCandidates); err != nil {
+		return nil, err
 	}
 	result.And(seriesCandidates)
 	if err := ctx.Err(); err != nil {
@@ -938,11 +1009,14 @@ func seriesCandidates(ctx context.Context, segment *memorySegment, scope QuerySc
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		posting, found, err := segment.handle.reader.TermPostingBitmap(scope.SeriesField, seriesID)
+		posting, found, err := segment.handle.reader.TermPostingBitmapContext(ctx, scope.SeriesField, seriesID)
 		if err != nil {
 			return nil, err
 		}
 		if found {
+			if err := reserveBitmapMerge(ctx, result, posting); err != nil {
+				return nil, err
+			}
 			result.Or(posting)
 		}
 	}
@@ -1010,6 +1084,9 @@ func projectCandidates(
 	if candidates == nil || candidates.IsEmpty() {
 		return nil, nil
 	}
+	if err := query.ReserveAllocation(ctx, candidates.GetCardinality()*96); err != nil {
+		return nil, err
+	}
 	result := make([]QueryHit, 0, candidates.GetCardinality())
 	iterator := candidates.Iterator()
 	for iterator.HasNext() {
@@ -1025,7 +1102,7 @@ func projectCandidates(
 		var timestamp int64
 		var hasTimestamp bool
 		var timestampErr error
-		visitErr := segment.handle.reader.VisitDocument(documentNumber, func(document nativeice.StoredDocument) error {
+		visitErr := segment.handle.reader.VisitDocumentContext(ctx, documentNumber, func(document nativeice.StoredDocument) error {
 			return document.VisitStoredFields(func(name string, value []byte) bool {
 				switch name {
 				case identifierField:
@@ -1101,4 +1178,49 @@ func smallestDocValue(values [][]byte) ([]byte, bool) {
 		}
 	}
 	return value, false
+}
+
+func appendQueryHits(ctx context.Context, result, hits []QueryHit) ([]QueryHit, error) {
+	if cap(result)-len(result) < len(hits) {
+		capacity := max(len(result)+len(hits), cap(result)*2)
+		if err := query.ReserveAllocation(ctx, uint64(capacity)*96); err != nil {
+			return nil, err
+		}
+		grown := make([]QueryHit, len(result), capacity)
+		copy(grown, result)
+		result = grown
+	}
+	return append(result, hits...), nil
+}
+
+func reserveSortValueCopies(ctx context.Context, values [][]byte) error {
+	var bytes uint64
+	for _, value := range values {
+		bytes += uint64(len(value)) * 2
+	}
+	return query.ReserveAllocation(ctx, bytes)
+}
+
+func appendProjectedValue(ctx context.Context, fields map[string][][]byte, name string, value []byte) error {
+	values := fields[name]
+	capacity := cap(values)
+	allocationBytes := uint64(len(value))
+	if len(values) == capacity {
+		capacity = max(1, capacity*2)
+		allocationBytes += uint64(capacity) * 24
+	}
+	if err := query.ReserveAllocation(ctx, allocationBytes); err != nil {
+		return err
+	}
+	if cap(values) < capacity {
+		grown := make([][]byte, len(values), capacity)
+		copy(grown, values)
+		values = grown
+	}
+	fields[name] = append(values, bytes.Clone(value))
+	return nil
+}
+
+func reserveBitmapMerge(ctx context.Context, selected, incoming *roaringpkg.Bitmap) error {
+	return query.ReserveAllocationOnce(ctx, selected, 1024+4*(selected.GetSizeInBytes()+incoming.GetSizeInBytes()))
 }

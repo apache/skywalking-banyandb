@@ -1,0 +1,166 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package qlgen
+
+import "fmt"
+
+// coverageContract is audited independently of generated cases. Removing a
+// generator branch must leave a missing witness, not erase its coverage claim.
+// A pending entry records a gap; it never counts as successful QL coverage.
+var coverageContract = []Feature{
+	{ID: "t03.order.timestamp_alias", Status: "supported"},
+	{ID: "t03.invalid.order", Status: "rejection"},
+	{ID: "t03.time.domain", Status: "supported"},
+	{ID: "t03.projection.typed", Status: "supported"},
+	{ID: "t03.projection.repeated", Status: "supported"},
+	{ID: "t03.projection.families", Status: "supported"},
+	{ID: "t03.projection.timestamp", Status: "supported"},
+	{ID: "t03.time.fractional", Status: "supported"},
+	{ID: "t03.time.boundaries", Status: "supported"},
+	{ID: "t03.time.or", Status: "supported"},
+	{ID: "t03.time.intersection", Status: "supported"},
+	{ID: "t03.empty", Status: "supported"},
+	{ID: "t03.time.fresh_now", Status: "supported"},
+	{ID: "t03.time.interval", Status: "supported"},
+	{ID: "t03.time.rebind", Status: "supported"},
+	{ID: "t03.limit.extended", Status: "supported"},
+	{ID: "t03.limit.complete_input", Status: "supported"},
+	{ID: "t03.invalid.names", Status: "rejection"},
+	{ID: "t03.invalid.time", Status: "rejection"},
+	{ID: "aggregate.AVG", Status: "supported"},
+	{ID: "aggregate.COUNT", Status: "supported"},
+	{ID: "aggregate.COUNT_DISTINCT", Status: "supported"},
+	{ID: "aggregate.MAX", Status: "supported"},
+	{ID: "aggregate.MEAN", Status: "supported"},
+	{ID: "aggregate.MIN", Status: "supported"},
+	{ID: "aggregate.SUM", Status: "supported"},
+	{ID: "binding.params", Status: "supported"},
+	{ID: "binding.rebind", Status: "supported"},
+	{ID: "combinations.pairwise", Status: "supported"},
+	{ID: "filter.and", Status: "supported"},
+	{ID: "filter.eq", Status: "supported"},
+	{ID: "filter.ge", Status: "supported"},
+	{ID: "filter.gt", Status: "supported"},
+	{ID: "filter.having", Status: "supported"},
+	{ID: "filter.in", Status: "supported"},
+	{ID: "filter.le", Status: "supported"},
+	{ID: "filter.lt", Status: "supported"},
+	{ID: "filter.match", Status: "supported"},
+	{ID: "filter.ne", Status: "supported"},
+	{ID: "filter.nested", Status: "supported"},
+	{ID: "filter.not_having", Status: "supported"},
+	{ID: "filter.not_in", Status: "supported"},
+	{ID: "filter.or", Status: "supported"},
+	{ID: "group.tags", Status: "supported"},
+	{ID: "group.time_bucket", Status: "supported"},
+	{ID: "order.ASC", Status: "supported"},
+	{ID: "order.DESC", Status: "supported"},
+	{ID: "pagination.limit", Status: "supported"},
+	{ID: "pagination.offset", Status: "supported"},
+	{ID: "projection.all", Status: "supported"},
+	{ID: "projection.fields", Status: "supported"},
+	{ID: "projection.mixed", Status: "supported"},
+	{ID: "projection.tags", Status: "supported"},
+	{ID: "projection.top", Status: "supported"},
+	{ID: "projection.typed", Status: "supported"},
+	{ID: "source.explicit", Status: "supported"},
+	{ID: "source.parenthesized", Status: "supported"},
+	{ID: "time.<", Status: "supported"},
+	{ID: "time.<=", Status: "supported"},
+	{ID: "time.=", Status: "supported"},
+	{ID: "time.>", Status: "supported"},
+	{ID: "time.>=", Status: "supported"},
+	{ID: "time.BETWEEN", Status: "supported"},
+	{ID: "trace.enabled", Status: "supported"},
+	{ID: "values.arrays", Status: "supported"},
+	{ID: "values.int", Status: "supported"},
+	{ID: "values.int_list", Status: "supported"},
+	{ID: "values.nulls", Status: "supported"},
+	{ID: "values.string", Status: "supported"},
+	{ID: "values.string_list", Status: "supported"},
+	{ID: "invalid.aggregate", Status: "rejection"},
+	{ID: "invalid.parameters", Status: "rejection"},
+	{ID: "invalid.projection", Status: "rejection"},
+	{ID: "invalid.range", Status: "rejection"},
+	{ID: "invalid.syntax", Status: "rejection"},
+	{ID: "catalog.B1", Status: "supported"},
+	{ID: "catalog.B2", Status: "supported"},
+	{ID: "catalog.B3", Status: "pending", Reason: "Multiple SQL aggregates and SQL-correct finalization require T07/T08"},
+	{ID: "catalog.B4", Status: "pending", Reason: "Post-aggregate HAVING and new membership syntax require T14"},
+	{ID: "catalog.B5", Status: "pending", Reason: "Multiple sort keys and NULL placement require T17"},
+	{ID: "catalog.B6", Status: "pending", Reason: "SELECT DISTINCT requires T15"},
+	{ID: "catalog.B7", Status: "pending", Reason: "Arithmetic, CASE, casts and COALESCE require T10"},
+	{ID: "catalog.B8", Status: "pending", Reason: "Field predicates and float literals require T12/T10"},
+	{ID: "catalog.B9", Status: "pending", Reason: "Computed/ordinal grouping requires T16"},
+	{ID: "legacy.low_float_mean", Status: "pending", Reason: "Native legacy MEAN clamps values below one; the oracle retains arithmetic mean semantics"},
+	{ID: "legacy.stages", Status: "pending", Reason: "Successful stage selection needs a generated staged-group fixture"},
+	{ID: "legacy.index_order", Status: "pending", Reason: "Successful index-rule ordering needs a generated rule and binding fixture"},
+	{ID: "legacy.show_topn", Status: "pending", Reason: "SHOW TOP uses a separate persisted TopN rule, outside the SELECT capability fixture"},
+	{ID: "legacy.match_analyzer", Status: "pending", Reason: "Custom MATCH analyzers need generated analyzer/index fixtures"},
+	{ID: "legacy.null_predicates", Status: "pending", Reason: "NULL equality is not SQL null equality; successful predicates need an explicit null-semantics contract"},
+	{ID: "legacy.empty_arrays", Status: "pending", Reason: "Storage encoding collapses empty and null arrays; distinct results need a storage and QL semantics contract"},
+	{ID: "legacy.time_values", Status: "pending", Reason: "Relative/now and integer time forms need clock-controlled semantics and rejection witnesses"},
+	{ID: "legacy.strict_time_bounds", Status: "pending", Reason: "Legacy TIME comparisons are inclusive; strict operators at an existing row need a boundary contract"},
+	{ID: "legacy.identifiers", Status: "pending", Reason: "Quoted/dotted/keyword identifiers need a generated schema and escaping witnesses"},
+	{ID: "legacy.multigroup", Status: "pending", Reason: "Multiple groups need generated schema compatibility, deduplication and authorization fixtures"},
+	{ID: "legacy.group_shapes", Status: "pending", Reason: "Field-only, bucket-only and default-width grouping need independent legacy result contracts"},
+	{ID: "legacy.predicate_bindings", Status: "pending", Reason: "Empty/scalar/array and NULL/bytes/timestamp bindings need positional type and expansion witnesses"},
+	{ID: "legacy.aggregate_shapes", Status: "pending", Reason: "Ungrouped, empty and nullable/tag-target aggregation need independent legacy result contracts"},
+	{ID: "legacy.syntax_boundaries", Status: "pending", Reason: "Depth64/65, clause order and malformed/empty projection need generated boundary witnesses"},
+	{ID: "legacy.default_limit", Status: "supported"},
+}
+
+// PendingCoverage returns explicit grammar and semantic gaps in the finite model.
+func PendingCoverage() []Feature {
+	var pending []Feature
+	for _, feature := range coverageContract {
+		if feature.Status == "pending" {
+			pending = append(pending, feature)
+		}
+	}
+	return pending
+}
+
+// ValidateCoverageContract prevents silently deleting or relabeling a capability.
+// New grammar support requires auditing this inventory as well as adding cases.
+func ValidateCoverageContract(features []Feature) error {
+	actual := make(map[string]Feature, len(features))
+	for _, feature := range features {
+		if _, exists := actual[feature.ID]; exists {
+			return fmt.Errorf("duplicate QL capability %s", feature.ID)
+		}
+		actual[feature.ID] = feature
+	}
+	for _, required := range coverageContract {
+		feature, exists := actual[required.ID]
+		if !exists {
+			return fmt.Errorf("required QL capability %s is missing", required.ID)
+		}
+		if feature.Status != required.Status {
+			return fmt.Errorf("QL capability %s has status %s, audited contract requires %s", required.ID, feature.Status, required.Status)
+		}
+		if required.Status == "pending" && feature.Reason != required.Reason {
+			return fmt.Errorf("pending QL capability %s differs from its audited coverage gap", required.ID)
+		}
+		delete(actual, required.ID)
+	}
+	for id := range actual {
+		return fmt.Errorf("QL capability %s has not been audited in the coverage contract", id)
+	}
+	return nil
+}

@@ -19,12 +19,15 @@ package measure
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/frame"
 )
@@ -180,5 +183,154 @@ func TestDrainPipelineToFrame_MatchesCoalescedRows(t *testing.T) {
 			}
 			requireSameFrameRows(t, serializeBatchToProto(want, nil), decodedProtos(t, body))
 		})
+	}
+}
+
+// recyclingDrainSource lends storage that must become reusable before the next pull.
+type recyclingDrainSource struct {
+	schema *vectorized.BatchSchema
+	owner  pinOwner
+	next   int
+}
+
+func (s *recyclingDrainSource) Init(context.Context) error            { return nil }
+func (s *recyclingDrainSource) OutputSchema() *vectorized.BatchSchema { return s.schema }
+func (s *recyclingDrainSource) Close() error                          { return nil }
+func (s *recyclingDrainSource) NextBatch(context.Context) (*vectorized.RecordBatch, error) {
+	if s.owner.refs != 0 {
+		return nil, fmt.Errorf("previous scan storage still pinned during next pull: %d", s.owner.refs)
+	}
+	if s.next == 3 {
+		return nil, nil
+	}
+	b := drainBatch(s.schema, int64(s.next*10), 10, &s.owner)
+	s.next++
+	return b, nil
+}
+
+func TestDrainPipelineToFrameReleasesStorageBeforeNextPull(t *testing.T) {
+	schema := drainSchema()
+	source := &recyclingDrainSource{schema: schema}
+	pipeline, err := vectorized.NewPipelineBuilder().From(source).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if closeErr := pipeline.Close(); closeErr != nil {
+			t.Error(closeErr)
+		}
+	}()
+	ctx := context.Background()
+	if err = pipeline.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	body, err := DrainPipelineToFrame(ctx, pipeline, schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows := len(decodedProtos(t, body)); rows != 30 {
+		t.Fatalf("rows = %d, want 30", rows)
+	}
+	if source.owner.refs != 0 {
+		t.Fatalf("owner refs = %d", source.owner.refs)
+	}
+}
+
+func TestDrainPipelineToFrameWideBudgetAndCleanup(t *testing.T) {
+	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{{Role: vectorized.RoleTag, TagFamily: "default", Name: "payload", Type: vectorized.ColumnTypeString}})
+	for _, budget := range []int64{8 << 20, 512} {
+		t.Run(fmt.Sprint(budget), func(t *testing.T) {
+			owner := &pinOwner{}
+			var batches []*vectorized.RecordBatch
+			for part := range 3 {
+				batch := vectorized.NewRecordBatch(schema, 256)
+				for row := range 256 {
+					batch.Columns[0].(*vectorized.TypedColumn[string]).Append(fmt.Sprintf("%d-%d-%s", part, row, strings.Repeat("w", 2048)))
+				}
+				batch.Len = 256
+				batch.Owners.Pin(owner)
+				batches = append(batches, batch)
+			}
+			tracker := vectorized.NewMemoryTracker(budget)
+			pipeline, err := vectorized.NewPipelineBuilder().From(&batchesSource{schema: schema, batches: batches}).WithMemoryTracker(tracker).Build()
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, scope := query.NewTransportScope(context.Background())
+			defer scope.Close()
+			if err = pipeline.Init(ctx); err != nil {
+				t.Fatal(err)
+			}
+			body, err := DrainPipelineToFrame(ctx, pipeline, schema)
+			if closeErr := pipeline.Close(); closeErr != nil {
+				t.Fatal(closeErr)
+			}
+			// This simple source does not own batches that were never pulled.
+			for _, batch := range batches {
+				batch.ReleaseOwners()
+			}
+			if budget == 512 {
+				if !errors.Is(err, vectorized.ErrMemoryBudgetExceeded) || body != nil {
+					t.Fatalf("body %v, error %v", body, err)
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				decoded, decodeErr := frame.Decode(body)
+				if decodeErr != nil {
+					t.Fatal(decodeErr)
+				}
+				if decoded.Len != 768 {
+					t.Fatalf("rows %d, want 768", decoded.Len)
+				}
+				decoded.ReleaseOwners()
+			}
+			if err == nil && tracker.Used() < 2*int64(cap(body)) {
+				t.Fatalf("transport reservation %d does not cover frame + transport copy %d", tracker.Used(), 2*cap(body))
+			}
+			scope.Close()
+			if tracker.Used() != 0 || owner.refs != 0 {
+				t.Fatalf("tracker %d, owner refs %d", tracker.Used(), owner.refs)
+			}
+		})
+	}
+}
+
+type cancelDrainSource struct {
+	cancel context.CancelFunc
+	recyclingDrainSource
+}
+
+func (s *cancelDrainSource) NextBatch(ctx context.Context) (*vectorized.RecordBatch, error) {
+	if s.next == 1 {
+		s.cancel()
+		return nil, ctx.Err()
+	}
+	return s.recyclingDrainSource.NextBatch(ctx)
+}
+
+func TestDrainPipelineToFrameCancellationReleasesBufferedFrames(t *testing.T) {
+	schema := drainSchema()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	source := &cancelDrainSource{recyclingDrainSource: recyclingDrainSource{schema: schema}, cancel: cancel}
+	tracker := vectorized.NewMemoryTracker(1 << 20)
+	pipeline, err := vectorized.NewPipelineBuilder().From(source).WithMemoryTracker(tracker).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = pipeline.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	body, err := DrainPipelineToFrame(ctx, pipeline, schema)
+	if closeErr := pipeline.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if !errors.Is(err, context.Canceled) || body != nil {
+		t.Fatalf("body %v, error %v", body, err)
+	}
+	if tracker.Used() != 0 || source.owner.refs != 0 {
+		t.Fatalf("tracker %d, owner refs %d", tracker.Used(), source.owner.refs)
 	}
 }

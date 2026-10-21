@@ -1,0 +1,210 @@
+[
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "int": {
+              "value": "1"
+            }
+          },
+          {
+            "str": {
+              "value": "a"
+            }
+          },
+          {
+            "str": {
+              "value": "x"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": "0"
+        }
+      },
+      {
+        "float": {
+          "value": 0.25
+        }
+      }
+    ],
+    "version": "2"
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "int": {
+              "value": "2"
+            }
+          },
+          {
+            "str": {
+              "value": "a"
+            }
+          },
+          {
+            "str": {
+              "value": "x"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": "2"
+        }
+      },
+      {
+        "float": {
+          "value": 0.75
+        }
+      }
+    ],
+    "version": "2"
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "int": {
+              "value": "3"
+            }
+          },
+          {
+            "str": {
+              "value": "b"
+            }
+          },
+          {
+            "str": {
+              "value": "y"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": "4"
+        }
+      },
+      {
+        "float": {
+          "value": 1.5
+        }
+      }
+    ],
+    "version": "2"
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "int": {
+              "value": "4"
+            }
+          },
+          {
+            "str": {
+              "value": "b"
+            }
+          },
+          {
+            "str": {
+              "value": "y"
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "null": 0
+      },
+      {
+        "null": 0
+      }
+    ],
+    "version": "2"
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "int": {
+              "value": "5"
+            }
+          },
+          {
+            "str": {
+              "value": "c"
+            }
+          },
+          {
+            "null": 0
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "int": {
+          "value": "6"
+        }
+      },
+      {
+        "float": {
+          "value": 2.5
+        }
+      }
+    ],
+    "version": "2"
+  },
+  {
+    "tag_families": [
+      {
+        "tags": [
+          {
+            "int": {
+              "value": "6"
+            }
+          },
+          {
+            "str": {
+              "value": "c"
+            }
+          },
+          {
+            "str": {
+              "value": ""
+            }
+          }
+        ]
+      }
+    ],
+    "fields": [
+      {
+        "null": 0
+      },
+      {
+        "float": {
+          "value": 4.0
+        }
+      }
+    ],
+    "version": "2"
+  }
+]

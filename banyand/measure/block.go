@@ -413,7 +413,7 @@ func mustWriteTimestampsTo(tm *timestampsMetadata, timestamps, versions []int64,
 }
 
 func mustReadTimestampsFrom(timestamps, versions []int64, tm *timestampsMetadata, count int, reader fs.Reader) ([]int64, []int64) {
-	bb := bigValuePool.Generate()
+	bb := bigValuePool.GenerateBounded(2 * max(int(tm.size), 64*1024))
 	defer bigValuePool.Release(bb)
 	bb.Buf = bytes.ResizeExact(bb.Buf, int(tm.size))
 	fs.MustReadData(reader, int64(tm.offset), bb.Buf)
@@ -850,6 +850,9 @@ func (bc *blockCursor) replace(r *model.MeasureResult, storedIndexValue map[comm
 // their typed form; pass true only when every reader of bc is a batch reader
 // that understands column.form (copyAllToBatch, copyToBatch, replaceInBatch).
 func (bc *blockCursor) loadData(tmpBlock *block, typedNumeric bool) bool {
+	if bc.res != nil && bc.res.budget.shared != nil {
+		bc.boundDecodeBacking(tmpBlock)
+	}
 	tmpBlock.reset()
 	cfm := make([]columnMetadata, 0, len(bc.fieldProjection))
 NEXT_FIELD:
@@ -1058,6 +1061,41 @@ func (bi *blockPointer) copyFrom(src *blockPointer) {
 	bi.reset()
 	bi.bm.copyFrom(&src.bm)
 	bi.appendAll(src)
+}
+
+// detachValues gives a retained merge tail ownership of its byte-backed cells.
+// A single compact allocation preserves nil versus empty values without keeping
+// the decoder's complete input blocks alive across subsequent splits.
+func (bi *blockPointer) detachValues() {
+	size := 0
+	count := func(columns []column) {
+		for _, c := range columns {
+			for _, value := range c.values {
+				size += len(value)
+			}
+		}
+	}
+	count(bi.field.columns)
+	for _, family := range bi.tagFamilies {
+		count(family.columns)
+	}
+	payload := make([]byte, size)
+	detach := func(columns []column) {
+		for i := range columns {
+			for j, value := range columns[i].values {
+				if value == nil {
+					continue
+				}
+				n := copy(payload, value)
+				columns[i].values[j] = payload[:n:n]
+				payload = payload[n:]
+			}
+		}
+	}
+	detach(bi.field.columns)
+	for _, family := range bi.tagFamilies {
+		detach(family.columns)
+	}
 }
 
 func (bi *blockPointer) appendAll(b *blockPointer) {
@@ -1373,3 +1411,61 @@ func releaseBlockPointer(bi *blockPointer) {
 }
 
 var blockPointerPool = pool.Register[*blockPointer]("measure-blockPointer")
+
+// boundDecodeBacking drops oversized pooled buffers before a budgeted decode.
+// The shared scan envelope includes twice a normal batch per projected column.
+func (bc *blockCursor) boundDecodeBacking(tmpBlock *block) {
+	rows := 2 * max(int(bc.bm.count), 16)
+	if cap(bc.timestamps) > rows {
+		bc.timestamps = nil
+	}
+	if cap(bc.versions) > rows {
+		bc.versions = nil
+	}
+	bc.columnValuesDecoder.ResetBounded(2 * max(int(bc.bm.uncompressedSizeBytes), 1024))
+	// Cursor columns are copied afresh from the temporary block below. Clear stale
+	// pooled descriptors so an unused prior projection cannot keep its buffers live.
+	clear(bc.fields.columns[:cap(bc.fields.columns)])
+	for idx := range bc.tagFamilies[:cap(bc.tagFamilies)] {
+		bc.tagFamilies[:cap(bc.tagFamilies)][idx] = columnFamily{}
+	}
+	if cap(tmpBlock.timestamps) > rows {
+		tmpBlock.timestamps = nil
+	}
+	if cap(tmpBlock.versions) > rows {
+		tmpBlock.versions = nil
+	}
+	boundFamilyBacking(&tmpBlock.field, len(bc.fieldProjection), rows)
+	if cap(tmpBlock.tagFamilies) > 2*max(len(bc.tagProjection), 1) {
+		tmpBlock.tagFamilies = nil
+		return
+	}
+	families := tmpBlock.tagFamilies[:cap(tmpBlock.tagFamilies)]
+	for idx := range families {
+		if idx >= len(bc.tagProjection) {
+			families[idx] = columnFamily{}
+			continue
+		}
+		boundFamilyBacking(&families[idx], len(bc.tagProjection[idx].Names), rows)
+	}
+}
+
+func boundFamilyBacking(family *columnFamily, columns, rows int) {
+	if cap(family.columns) > 2*max(columns, 1) {
+		family.columns = nil
+		return
+	}
+	cached := family.columns[:cap(family.columns)]
+	for idx := range cached {
+		column := &cached[idx]
+		if cap(column.values) > rows {
+			column.values = nil
+		}
+		if cap(column.int64s) > rows {
+			column.int64s = nil
+		}
+		if cap(column.float64s) > rows {
+			column.float64s = nil
+		}
+	}
+}
