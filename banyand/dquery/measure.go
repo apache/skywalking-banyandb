@@ -62,9 +62,14 @@ type measureDistributedExecutable interface {
 
 func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	queryCriteria, ok := message.Data().(*measurev1.QueryRequest)
+	batchRequest, batchMode := message.Data().(*vmeasure.BatchQueryRequest)
+	if batchMode {
+		queryCriteria = batchRequest.Request
+		ok = queryCriteria != nil
+	}
 	n := time.Now()
 	now := n.UnixNano()
-	if !ok {
+	if !ok || len(queryCriteria.GetGroups()) == 0 {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("invalid event data type"))
 		return
 	}
@@ -110,19 +115,11 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 	// cannot check this itself (AnalyzeDistributed never resolves node
 	// selectors), so it is checked here, once stage resolution has
 	// actually run.
-	if plan.RequiresSingleStage() {
-		resolvedStages := 0
-		for _, selectors := range nodeSelectors {
-			resolvedStages += len(selectors)
-		}
-		if resolvedStages > 1 {
-			ml.Error().RawJSON("req", logger.Proto(queryCriteria)).Int("resolved_stages", resolvedStages).
-				Msg("COUNT_DISTINCT resolved to more than one lifecycle stage")
-			resp = bus.NewMessage(bus.MessageID(now),
-				common.NewError("COUNT_DISTINCT cannot be evaluated across more than one lifecycle stage; restrict the query to a single stage"))
-			return
-		}
+	if stageErr := validateMeasureStages(plan, nodeSelectors); stageErr != nil {
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%s", stageErr.Error()))
+		return
 	}
+
 	var tracer *query.Tracer
 	var span *query.Span
 	if queryCriteria.Trace {
@@ -133,6 +130,11 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 		defer func() {
 			data := resp.Data()
 			switch d := data.(type) {
+			case *vecplan.BatchResult:
+				d.TraceIterator(ctx)
+				d.SetTraceFinalizer(func() *commonv1.Trace {
+					return finishMeasureBatchTrace(ctx, tracer, span)
+				})
 			case *measurev1.QueryResponse:
 				span.Stop()
 				d.Trace = tracer.ToProto()
@@ -140,20 +142,42 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 				span.Error(errors.New(d.Error()))
 				span.Stop()
 				resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{Trace: tracer.ToProto()})
+			case error:
+				span.Error(d)
+				span.Stop()
 			default:
 				panic("unexpected data type")
 			}
 		}()
 	}
 
-	mIterator, err := plan.(executor.MeasureExecutable).Execute(executor.WithDistributedExecutionContext(ctx, &distributedContext{
-		Broadcaster:   p.broadcaster,
-		timeRange:     queryCriteria.TimeRange,
-		nodeSelectors: nodeSelectors,
-	}))
+	executionCtx := executor.WithDistributedExecutionContext(ctx, &distributedContext{
+		Broadcaster: p.broadcaster, timeRange: queryCriteria.TimeRange, nodeSelectors: nodeSelectors,
+	})
+	var mIterator executor.MIterator
+	batchPlan, supportsBatches := plan.(interface {
+		ExecuteBatches(context.Context) (*vecplan.BatchResult, error)
+	})
+	switch {
+	case supportsBatches:
+		var result *vecplan.BatchResult
+		result, err = batchPlan.ExecuteBatches(executionCtx)
+		if err == nil {
+			if batchMode {
+				vmeasure.RecordBatchExecution(true)
+				return bus.NewMessage(bus.MessageID(now), result)
+			}
+			vmeasure.RecordBatchExecution(false)
+			mIterator, err = result.NativeIterator(executionCtx)
+		}
+	case batchMode:
+		err = fmt.Errorf("measure plan does not support batch execution")
+	default:
+		mIterator, err = plan.Execute(executionCtx)
+	}
 	if err != nil {
 		ml.Error().Err(err).Dur("latency", time.Since(n)).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to query")
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to execute the query plan for measure %s: %v", queryCriteria.Name, err))
+		resp = bus.NewMessage(bus.MessageID(now), fmt.Errorf("fail to execute the query plan for measure %s: %w", queryCriteria.Name, err))
 		return
 	}
 	defer func() {
@@ -164,25 +188,11 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 			}
 		}
 	}()
-	result := make([]*measurev1.DataPoint, 0)
-	func() {
-		var r int
-		if tracer != nil {
-			iterSpan, _ := tracer.StartSpan(ctx, "iterator")
-			defer func() {
-				iterSpan.Tag(tracelabels.TagRounds, fmt.Sprintf("%d", r))
-				iterSpan.Tag(tracelabels.TagSize, fmt.Sprintf("%d", len(result)))
-				iterSpan.Stop()
-			}()
-		}
-		for mIterator.Next() {
-			r++
-			current := mIterator.Current()
-			if len(current) > 0 {
-				result = append(result, current[0].GetDataPoint())
-			}
-		}
-	}()
+	result, collectErr := collectNativeMeasureResult(ctx, tracer, mIterator)
+	if collectErr != nil {
+		return bus.NewMessage(bus.MessageID(now), collectErr)
+	}
+
 	qr := &measurev1.QueryResponse{DataPoints: result}
 	if e := ml.Debug(); e.Enabled() {
 		e.RawJSON("ret", logger.Proto(qr)).Msg("got a measure")
@@ -195,6 +205,14 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 		}
 	}
 	return
+}
+
+func finishMeasureBatchTrace(ctx context.Context, tracer *query.Tracer, span *query.Span) *commonv1.Trace {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		span.Error(ctxErr)
+	}
+	span.Stop()
+	return tracer.ToProto()
 }
 
 func (p *measureQueryProcessor) loadMeasureSchemas(queryCriteria *measurev1.QueryRequest) (
@@ -253,4 +271,49 @@ func (p *measureQueryProcessor) buildNodeSelectors(queryCriteria *measurev1.Quer
 		}
 	}
 	return nodeSelectors, nil
+}
+
+func collectNativeMeasureResult(ctx context.Context, tracer *query.Tracer, mIterator executor.MIterator) ([]*measurev1.DataPoint, error) {
+	result := make([]*measurev1.DataPoint, 0)
+	func() {
+		var r int
+		if tracer != nil {
+			iterSpan, _ := tracer.StartSpan(ctx, "iterator")
+			defer func() {
+				iterSpan.Tag(tracelabels.TagRounds, fmt.Sprintf("%d", r))
+				iterSpan.Tag(tracelabels.TagSize, fmt.Sprintf("%d", len(result)))
+				iterSpan.Stop()
+			}()
+		}
+		for mIterator.Next() {
+			r++
+			current := mIterator.Current()
+			if len(current) > 0 {
+				result = append(result, current[0].GetDataPoint())
+			}
+		}
+	}()
+	if source, hasErr := mIterator.(interface{ Err() error }); hasErr {
+		if iterErr := source.Err(); iterErr != nil {
+			return nil, fmt.Errorf("fail to execute query: %w", iterErr)
+		}
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, fmt.Errorf("query canceled: %w", ctxErr)
+	}
+	return result, nil
+}
+
+func validateMeasureStages(plan measureDistributedExecutable, nodeSelectors map[string][]string) error {
+	if !plan.RequiresSingleStage() {
+		return nil
+	}
+	resolvedStages := 0
+	for _, selectors := range nodeSelectors {
+		resolvedStages += len(selectors)
+	}
+	if resolvedStages > 1 {
+		return fmt.Errorf("COUNT_DISTINCT cannot be evaluated across more than one lifecycle stage; restrict the query to a single stage")
+	}
+	return nil
 }

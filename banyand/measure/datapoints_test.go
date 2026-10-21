@@ -21,11 +21,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/apache/skywalking-banyandb/api/common"
-	"github.com/apache/skywalking-banyandb/pkg/convert"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
 func TestSorting(t *testing.T) {
@@ -72,16 +68,4 @@ func TestSorting(t *testing.T) {
 			t.Errorf("Expected version at index %d to be %d, got %d", i, expectedVersions[i], dp.versions[i])
 		}
 	}
-}
-
-// indexFieldValue folds the values an index document stores for a tag into what
-// mustDecodeTagValue reads: every element of an array, the last value of a scalar.
-func TestIndexFieldValue(t *testing.T) {
-	require.Nil(t, indexFieldValue(pbv1.ValueTypeStr, nil))
-	require.Equal(t, "b", mustDecodeTagValue(pbv1.ValueTypeStr, indexFieldValue(pbv1.ValueTypeStr, [][]byte{[]byte("a"), []byte("b")})).GetStr().GetValue())
-	ints := [][]byte{convert.Int64ToBytes(1), convert.Int64ToBytes(-2), convert.Int64ToBytes(3)}
-	require.Equal(t, []int64{1, -2, 3}, mustDecodeTagValue(pbv1.ValueTypeInt64Arr, indexFieldValue(pbv1.ValueTypeInt64Arr, ints)).GetIntArray().GetValue())
-	strs := [][]byte{[]byte("a"), []byte("b|c"), []byte(`d\e`), []byte("")}
-	require.Equal(t, []string{"a", "b|c", `d\e`, ""},
-		mustDecodeTagValue(pbv1.ValueTypeStrArr, indexFieldValue(pbv1.ValueTypeStrArr, strs)).GetStrArray().GetValue())
 }

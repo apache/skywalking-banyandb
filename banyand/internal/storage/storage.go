@@ -101,13 +101,15 @@ type IndexSearchOpts struct {
 	Order            *index.OrderBy
 	TimeRange        *timestamp.TimeRange
 	Projection       []index.FieldKey
-	PreloadSize      int
+	// MultiValueProjection identifies projected fields whose complete stored
+	// value sequence is also returned in SeriesData.MultiValueFields.
+	// Other projections retain their last-value-wins behavior.
+	MultiValueProjection map[string]struct{}
+	PreloadSize          int
 }
 
-// FieldResult holds the stored values of each projected field, in stored order. A
-// multi-valued field, such as an array tag stored as one value per element, keeps
-// every value.
-type FieldResult map[string][][]byte
+// FieldResult is the result of a field.
+type FieldResult map[string][]byte
 
 // FieldResultList is a list of FieldResult.
 type FieldResultList []FieldResult
@@ -121,12 +123,15 @@ type FieldResultList []FieldResult
 // which silently shifted every later row's values out of alignment with
 // SeriesList whenever an earlier row lacked a timestamp or version.
 type SeriesData struct {
-	SeriesList   pbv1.SeriesList
-	Fields       FieldResultList
-	Timestamps   []int64
-	Versions     []int64
-	TimestampSet []bool
-	VersionSet   []bool
+	SeriesList pbv1.SeriesList
+	Fields     FieldResultList
+	// MultiValueFields aligns with SeriesList when MultiValueProjection is set.
+	// Element order and duplicate values match the original stored fields.
+	MultiValueFields []map[string][][]byte
+	Timestamps       []int64
+	Versions         []int64
+	TimestampSet     []bool
+	VersionSet       []bool
 }
 
 // IndexDB is the interface of index database.

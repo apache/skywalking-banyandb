@@ -286,7 +286,7 @@ func TestSeriesIndex_OpensPreviousReleaseFixture_IndexMode(t *testing.T) {
 	require.NoError(t, err)
 	labels := make(map[string]string, len(sd.SeriesList))
 	for i, s := range sd.SeriesList {
-		labels[s.EntityValues[0].GetStr().GetValue()] = string(sd.Fields[i][index.FieldKey{TagName: "region"}.Marshal()][0])
+		labels[s.EntityValues[0].GetStr().GetValue()] = string(sd.Fields[i][index.FieldKey{TagName: "region"}.Marshal()])
 	}
 	require.Equal(t, map[string]string{"svcA": "us", "svcB": "eu"}, labels, "only idx_measure's own series must be returned, with their region values")
 

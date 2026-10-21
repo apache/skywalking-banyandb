@@ -6,6 +6,7 @@ Release Notes.
 
 ### Features
 
+- Add typed raw measure QL with WHERE time, aliases and bounded compiled-plan reuse, executed over shared columnar native batches.
 - Add a native ICE v3 encoder that writes committed index generations compatible with existing readers.
 - Cut the Property database's index writer over to the native segment plugin, selected by both the `property` and `schema-server` roles. `banyand/property/db.OpenDB` now acquires its exclusive `<Location>/lock` before scanning shard directories or opening any writer, and releases it if a later startup step fails. A rollback (flipping the selection back and restarting) reopens the same on-disk shards with the retained legacy writer unchanged.
 - Complete the Property native role cutover for writes, immutable/NRT publication, repair, filtering, ordering, projection, and persistence. Native is the default for the `property` and `schema-server` roles; the legacy writer remains an explicit rollback path. Native ICE segments reserve `_id` as field ID zero and sort all other field names lexically for mixed-version merge compatibility. See the [Property native cutover verification](docs/design/archive/0.12.0/native-inverted-index/verification/property-native-cutover/README.md) report.
@@ -39,6 +40,10 @@ Release Notes.
 - Add the data export protocol (`transfer.v1.ExportService`) and `bydbctl data export` with dry-run and CSV export, showing the progress and time of every file, unit and node.
 
 ### Bug Fixes
+
+- Upgrade the Go toolchain to 1.26.10 for the crypto/x509 security fix (GO-2026-6809).
+- Return zero for empty scalar QL `COUNT(DISTINCT)` and apply its pagination after the complete count instead of pruning native shard partials.
+- Preserve indexed-array measure values, empty-entity selector semantics and retained merge-tail buffers in shared batch execution.
 
 - Fix the liaison's distributed measure row merge wrapping borrowed frame strings into protobuf tag and field values without copying them.
 - Fix a data node panicking with "directory is exist" when a write landed in a segment that retention had just removed but whose directory was still held by a reader; creating a segment over a directory pending deletion now returns `ErrSegmentDeleting`.
@@ -79,7 +84,6 @@ Release Notes.
 - Stop the scheduled backup/lifecycle/retention scheduler from logging a false `action timed out` error for an action that runs longer than 5 minutes but ultimately succeeds. Crossing the internal 5-minute soft deadline now logs a lower-severity "still running" message and keeps waiting for the action's real outcome instead of abandoning it mid-flight; the eventual result is logged and the scheduler only starts the next scheduled run once the current one truly finishes.
 - Fix backup reporting success when an earlier catalog upload fails.
 - Return a trace's complete span set when its spans straddle a storage segment boundary (segments are per-day in local time, and each span lands in the segment matching its own timestamp) and the query's time range covers only one side of that boundary. After resolving the qualifying trace IDs from the segments the query range overlaps, fetching those traces' spans now also reopens any segment within one hour of the query range (`traceCompletionWindow`), so the neighboring day's spans are no longer silently dropped. Applies to both ORDER BY and trace-ID trace queries; trace selection, ordering, and limit/offset are unaffected.
-- Fix the query of an index-mode measure's array tags: an INT_ARRAY tag returned only its last element and a STRING_ARRAY tag made the query fail with an internal error. The index stores one value per element, and the query now returns all of them.
 
 ### Document
 

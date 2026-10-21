@@ -147,6 +147,10 @@ type server struct {
 	bydbqlTopKReparseTTL     time.Duration
 	bydbqlCacheSize          int
 	bydbqlCacheMaxBytes      int
+	bydbqlPlanCacheSize      int
+	bydbqlPlanCacheMaxBytes  int64
+	bydbqlPlanMaxCompiles    int
+	bydbqlPlanMaxInFlight    int
 	port                     uint32
 	tls                      bool
 	enableIngestionAccessLog bool
@@ -175,6 +179,7 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		discoveryService: newDiscoveryServiceWithEntityRepo(schema.KindMeasure, schemaRegistry, nr.MeasureLiaisonNodeRegistry, gr, er),
 		pipeline:         tir1Client,
 		broadcaster:      broadcaster,
+		queryBudget:      protector.QueryBudgetFor(protectorService),
 	}
 	traceSVC := &traceService{
 		discoveryService: newDiscoveryService(schema.KindTrace, schemaRegistry, nr.TraceLiaisonNodeRegistry, gr),
@@ -190,11 +195,13 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		queryBudget:      protector.QueryBudgetFor(protectorService),
 	}
 	bydbQLSchemaSource := &entityRepoSchemaSource{
-		measures: measureSVC.entityRepo,
-		streams:  streamSVC.entityRepo,
-		traces:   traceSVC.entityRepo,
+		revisions: schemaRevisionRegistry(schemaRegistry),
+		measures:  measureSVC.entityRepo,
+		streams:   streamSVC.entityRepo,
+		traces:    traceSVC.entityRepo,
 	}
 	bydbQLSVC := &bydbQLService{
+		planSource:     bydbQLSchemaSource,
 		repo:           schemaRegistry,
 		transformer:    bydbql.NewTransformerWithSource(schemaRegistry, bydbQLSchemaSource),
 		streamSvc:      streamSVC,
@@ -388,6 +395,11 @@ func (s *server) PreRun(ctx context.Context) error {
 	s.traceSVC.metrics = metrics
 	s.bydbQLSVC.metrics = metrics
 	s.bydbQLSVC.cache = newPreparedCache(s.bydbqlCacheSize, s.bydbqlCacheMaxBytes, metrics)
+	s.bydbQLSVC.planCache = newCompiledPlanCache(planCacheConfig{
+		MaxEntries: s.bydbqlPlanCacheSize, MaxBytes: s.bydbqlPlanCacheMaxBytes,
+		MaxCompiles: s.bydbqlPlanMaxCompiles, MaxInFlight: s.bydbqlPlanMaxInFlight,
+		Budget: s.measureSVC.queryBudget,
+	}, s.bydbQLSVC.planSource, s.bydbQLSVC.transformer, metrics)
 	s.bydbQLSVC.slowThreshold = s.bydbqlSlowThreshold
 	s.bydbQLSVC.paramMode = s.bydbqlParamMode
 	// The dump goroutine lives for the server's lifetime and is stopped by Close(),
@@ -482,6 +494,12 @@ func (s *server) FlagSet() *run.FlagSet {
 		"max number of prepared BydbQL statements cached on the query path; 0 disables the cache")
 	fs.IntVar(&s.bydbqlCacheMaxBytes, "bydbql-prepared-cache-max-bytes", 10*1024*1024,
 		"max total estimated size (bytes) of the cached BydbQL prepared statements; 0 removes the byte bound")
+	fs.IntVar(&s.bydbqlPlanCacheSize, "bydbql-plan-cache-size", 4000,
+		"max retained compiled measure QL plans, including evicted plans still in use; 0 disables reuse")
+	fs.Int64Var(&s.bydbqlPlanCacheMaxBytes, "bydbql-plan-cache-max-bytes", 64*1024*1024,
+		"max estimated bytes retained by compiled measure QL plans, including plans still in use")
+	fs.IntVar(&s.bydbqlPlanMaxCompiles, "bydbql-plan-max-compiles", 4, "max concurrent measure QL compilations")
+	fs.IntVar(&s.bydbqlPlanMaxInFlight, "bydbql-plan-max-in-flight", 64, "max distinct shared measure QL compilations")
 	fs.DurationVar(&s.bydbqlSlowThreshold, "bydbql-slow-query-threshold", time.Second,
 		"end-to-end latency above which a BydbQL query is counted as slow; 0 disables slow-query tracking")
 	fs.DurationVar(&s.bydbqlTopKLogInterval, "bydbql-topk-log-interval", 5*time.Minute,
@@ -546,6 +564,9 @@ func (s *server) Validate() error {
 	}
 	if err := s.validateParamMode(); err != nil {
 		return err
+	}
+	if s.bydbqlPlanCacheSize < 0 || s.bydbqlPlanCacheMaxBytes < 0 || s.bydbqlPlanMaxCompiles < 0 || s.bydbqlPlanMaxInFlight < 0 {
+		return errors.New("BydbQL plan-cache bounds must not be negative")
 	}
 	if !s.tls {
 		return nil
@@ -798,6 +819,9 @@ func (s *server) GetClusterState(_ context.Context, _ *databasev1.GetClusterStat
 
 func (s *server) GracefulStop() {
 	s.log.Info().Msg("stopping")
+	if s.bydbQLSVC != nil {
+		s.bydbQLSVC.planCache.Close()
+	}
 	if s.tls && s.tlsReloader != nil {
 		s.tlsReloader.Stop()
 	}

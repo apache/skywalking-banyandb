@@ -261,6 +261,15 @@ func GenerateInt64List(size int) *Int64List {
 	return is
 }
 
+// Budgeted decoders cannot retain a previous borrower's uncharged scratch backing.
+func generateBoundedInt64List(size int) *Int64List {
+	is := GenerateInt64List(size)
+	if cap(is.L) > 2*max(size, 1024) {
+		is.L = make([]int64, size)
+	}
+	return is
+}
+
 // ReleaseInt64List releases the given list of int64.
 // The list may be put into a pool for reuse.
 func ReleaseInt64List(is *Int64List) {
@@ -288,6 +297,14 @@ func GenerateUint64List(size int) *Uint64List {
 		is.L = append(is.L[:cap(is.L)], make([]uint64, n)...)
 	}
 	is.L = is.L[:size]
+	return is
+}
+
+func generateBoundedUint64List() *Uint64List {
+	is := GenerateUint64List(0)
+	if cap(is.L) > 2*1024 {
+		is.L = nil
+	}
 	return is
 }
 

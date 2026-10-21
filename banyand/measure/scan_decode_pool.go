@@ -20,6 +20,7 @@ package measure
 import (
 	"context"
 	"fmt"
+	"math"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
@@ -296,9 +297,11 @@ func (p *decodePool) reserve(n int64, ahead bool) bool {
 // node's total. It lives in the prefetcher's item for the cursor and is released
 // when the cursor's last reference goes.
 type scanReservation struct {
-	budget   *scanBudget
-	bytes    int64
-	released atomic.Bool
+	budget      *scanBudget
+	failure     error
+	bytes       int64
+	sharedBytes int64
+	released    atomic.Bool
 }
 
 // release returns the bytes. It is idempotent and safe after the scan is closed.
@@ -307,6 +310,9 @@ func (r *scanReservation) release() {
 		return
 	}
 	r.budget.give(r.bytes)
+	if r.budget.shared != nil {
+		r.budget.shared.Release(r.sharedBytes)
+	}
 }
 
 type reserveOutcome uint8
@@ -315,6 +321,8 @@ const (
 	reserveOK reserveOutcome = iota
 	// reserveOverQuery means the query's own budget is exhausted.
 	reserveOverQuery
+	// reserveOverShared means the shared execution allowance is exhausted.
+	reserveOverShared
 	// reserveOverNode means the node's reservations leave no room.
 	reserveOverNode
 )
@@ -323,10 +331,16 @@ const (
 // the node-wide total additionally keeps concurrent queries within the
 // protector's headroom.
 type scanBudget struct {
-	tracker *vectorized.MemoryTracker
-	node    *decodePool
-	held    atomic.Int64
-	quota   int64
+	tracker       *vectorized.MemoryTracker
+	shared        *vectorized.MemoryTracker
+	node          *decodePool
+	held          atomic.Int64
+	columns       uint64
+	workspace     int64
+	quota         int64
+	active        atomic.Int64
+	closing       atomic.Bool
+	workspaceOnce sync.Once
 }
 
 // newScanBudget returns a budget of quota bytes (negative: no per-query limit)
@@ -341,6 +355,9 @@ func newScanBudget(quota int64, node *decodePool) *scanBudget {
 
 // tryReserve reserves size bytes into r, reporting why it could not.
 func (b *scanBudget) tryReserve(size uint64, ahead bool, r *scanReservation) reserveOutcome {
+	if size > math.MaxInt64 {
+		return reserveOverQuery
+	}
 	n := int64(size)
 	if b.tracker != nil && b.tracker.Reserve(n) != nil {
 		return reserveOverQuery
@@ -351,7 +368,26 @@ func (b *scanBudget) tryReserve(size uint64, ahead bool, r *scanReservation) res
 		}
 		return reserveOverNode
 	}
+	if b.shared != nil {
+		amount := r.sharedBytes
+		if amount == 0 {
+			amount = n
+		}
+		if err := b.shared.Reserve(amount); err != nil {
+			r.failure = err
+			if b.tracker != nil {
+				b.tracker.Release(n)
+			}
+			if b.node != nil {
+				b.node.reserved.Add(-n)
+			}
+			return reserveOverShared
+		}
+		r.sharedBytes = amount
+	}
 	b.held.Add(n)
+	b.active.Add(1)
+	r.failure = nil
 	liveReservedBytes.Add(n)
 	r.budget, r.bytes = b, n
 	r.released.Store(false)
@@ -360,6 +396,8 @@ func (b *scanBudget) tryReserve(size uint64, ahead bool, r *scanReservation) res
 
 func (b *scanBudget) give(n int64) {
 	b.held.Add(-n)
+	b.active.Add(-1)
+	b.finishWorkspace()
 	liveReservedBytes.Add(-n)
 	if b.tracker != nil {
 		b.tracker.Release(n)
@@ -383,7 +421,11 @@ func (b *scanBudget) give(n int64) {
 // only the prefetch (decodePool.reserve).
 func (b *scanBudget) reserveCurrent(ctx context.Context, size uint64, r *scanReservation) error {
 	admit := b.held.Load() == 0
-	if b.tryReserve(size, false, r) == reserveOverQuery {
+	outcome := b.tryReserve(size, false, r)
+	if outcome == reserveOverShared {
+		return r.failure
+	}
+	if outcome == reserveOverQuery {
 		return fmt.Errorf("block scan quota exceeded: used %d bytes, quota is %d bytes", uint64(b.held.Load())+size, b.quota)
 	}
 	if admit && b.node != nil && b.node.pm != nil {
@@ -393,4 +435,78 @@ func (b *scanBudget) reserveCurrent(ctx context.Context, size uint64, r *scanRes
 		}
 	}
 	return nil
+}
+
+// attachShared reserves bounded batch workspace before scan allocation and connects
+// decoded cursor lifetimes to the same allowance used by operators and final egress.
+func (b *scanBudget) attachShared(ctx context.Context, columns, batchRows, cursors int) error {
+	tracker, ok := vectorized.QueryMemoryTrackerFromContext(ctx)
+	if !ok {
+		return nil
+	}
+	// Two storage slabs retain at most 2048 cells each; a copied source slab
+	// needs 1024 cells. At 24 bytes per slice cell that is 122880 bytes per
+	// column, below 2048*64. Lent source conversions instead retain 2048
+	// 8-byte cells (114688 bytes total). The extra 128 bytes per row covers
+	// metadata, validity and descriptors independently of projected columns.
+	cellBytes := uint64(64)
+	if batchRows > vectorized.DefaultBatchSize {
+		// Larger configured source slabs need the general twofold-capacity bound.
+		cellBytes = 128
+	}
+	perRow := uint64(columns)*cellBytes + 128
+	rows := uint64(coalesceTargetRows + max(batchRows, vectorized.DefaultBatchSize))
+	if rows > (math.MaxInt64-uint64(cursors)*512)/perRow {
+		return vectorized.ErrMemoryBudgetExceeded
+	}
+	// A query cannot decode more cursors concurrently than it actually owns.
+	workers := 1
+	if b.node != nil {
+		workers = min(max(b.node.workers, 1), max(cursors, 1), prefetchMaxAheadMerge)
+	}
+	scratch := uint64(workers) * 256 * 1024
+	if rows*perRow > math.MaxInt64-scratch-uint64(cursors)*512 {
+		return vectorized.ErrMemoryBudgetExceeded
+	}
+	workspace := int64(rows*perRow + uint64(cursors)*512 + scratch)
+	if err := tracker.Reserve(workspace); err != nil {
+		return err
+	}
+	b.shared = tracker
+	b.columns = uint64(columns)
+	b.workspace = workspace
+	return nil
+}
+
+func (b *scanBudget) releaseWorkspace() {
+	if b == nil {
+		return
+	}
+	b.closing.Store(true)
+	b.finishWorkspace()
+}
+
+func (b *scanBudget) finishWorkspace() {
+	if b.shared == nil || !b.closing.Load() || b.active.Load() != 0 {
+		return
+	}
+	b.workspaceOnce.Do(func() { b.shared.Release(b.workspace); b.workspace = 0 })
+}
+
+// sharedBlockBytes bounds decode expansion and native batch copies before decoding.
+// Borrowed batches keep the cursor reservation alive through their owner pins.
+func (b *scanBudget) sharedBlockBytes(bc *blockCursor) int64 {
+	if b.shared == nil {
+		return 0
+	}
+	perRow := b.columns*256 + 256
+	rows := max(bc.bm.count, uint64(16))
+	if rows > math.MaxInt64/perRow {
+		return math.MaxInt64
+	}
+	fixed := rows * perRow
+	if bc.bm.uncompressedSizeBytes > (math.MaxInt64-fixed)/16 {
+		return math.MaxInt64
+	}
+	return int64(fixed + bc.bm.uncompressedSizeBytes*16)
 }

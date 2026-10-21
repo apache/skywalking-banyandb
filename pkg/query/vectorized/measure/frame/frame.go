@@ -220,6 +220,17 @@ func Encode(b *vectorized.RecordBatch) ([]byte, error) {
 	return codec.EncodeColumnar(b)
 }
 
+// EncodeWithReservation reserves the exact output capacity before encoding a frame.
+func EncodeWithReservation(b *vectorized.RecordBatch, reserve func(int) error) ([]byte, error) {
+	return codec.EncodeColumnarWithReservation(b, reserve)
+}
+
+// Concat joins columnar frame rows into one frame without materializing their columns.
+// reserve is called with the exact output capacity before allocation.
+func Concat(frames [][]byte, reserve func(int) error) ([]byte, error) {
+	return codec.ConcatColumnar(frames, reserve)
+}
+
 // Decode parses a measure raw frame body back into a RecordBatch. A frame of any version
 // other than WireVersion is rejected with ErrBadVersion. The batch borrows the body and pins
 // it through Owners: the caller releases the batch (RecordBatch.ReleaseOwners) when it is
@@ -238,4 +249,14 @@ func Decode(b []byte) (*vectorized.RecordBatch, error) {
 // this codec, and returns the parsed Header plus the bytes consumed.
 func ValidateHeader(b []byte) (Header, int, error) {
 	return codec.ValidateHeader(b)
+}
+
+// Inspect validates frame buffers without allocating decoded columns.
+func Inspect(body []byte) (baseframe.ColumnarLayout, error) {
+	return codec.InspectColumnar(body)
+}
+
+// SameSchema compares complete wire column layouts without decoding columns.
+func SameSchema(left, right []byte) (bool, error) {
+	return codec.SameColumnarSchema(left, right)
 }

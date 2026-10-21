@@ -144,7 +144,7 @@ func TestSeriesIndex_ExternalReceive_AcceptsLegacyAndNativeSegments(t *testing.T
 	require.Len(t, sd.SeriesList, 2)
 	got := map[string]string{}
 	for i, s := range sd.SeriesList {
-		got[s.EntityValues[0].GetStr().GetValue()] = string(sd.Fields[i]["marker"][0])
+		got[s.EntityValues[0].GetStr().GetValue()] = string(sd.Fields[i]["marker"])
 	}
 	require.Equal(t, "from-native", got["native-written"])
 	require.Equal(t, "from-legacy", got["legacy-written"])
@@ -174,7 +174,7 @@ func TestSeriesIndex_ExternalReceive_DuplicateIdentifierKeepsExisting(t *testing
 	sd, _, err := si.Search(ctx, []*pbv1.Series{&series}, IndexSearchOpts{Projection: []index.FieldKey{{TagName: "marker"}}})
 	require.NoError(t, err)
 	require.Len(t, sd.SeriesList, 1, "a duplicate identifier must not create a second live document")
-	require.Equal(t, "first", string(sd.Fields[0]["marker"][0]), "the existing document must win over the incoming duplicate")
+	require.Equal(t, "first", string(sd.Fields[0]["marker"]), "the existing document must win over the incoming duplicate")
 }
 
 // TestSeriesIndex_ExternalReceive_LegacyDuplicateKeepsExisting pins the F4
@@ -210,7 +210,7 @@ func TestSeriesIndex_ExternalReceive_LegacyDuplicateKeepsExisting(t *testing.T) 
 	sd, _, err := si.Search(ctx, []*pbv1.Series{&series}, IndexSearchOpts{Projection: []index.FieldKey{{TagName: "marker"}}})
 	require.NoError(t, err)
 	require.Len(t, sd.SeriesList, 1, "a duplicate identifier must not create a second live document")
-	require.Equal(t, "legacy-first", string(sd.Fields[0]["marker"][0]), "a legacy-written existing document must also win over an incoming native duplicate")
+	require.Equal(t, "legacy-first", string(sd.Fields[0]["marker"]), "a legacy-written existing document must also win over an incoming native duplicate")
 }
 
 // TestSeriesIndex_ExternalReceive_TruncatedSegmentRejectedNothingVisible pins

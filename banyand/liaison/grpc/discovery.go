@@ -250,12 +250,14 @@ var _ schema.EventHandler = (*entityRepo)(nil)
 
 type entityRepo struct {
 	schema.UnimplementedOnInitHandler
-	log             *logger.Logger
-	entitiesMap     map[identity]partition.Locator
-	measureMap      map[identity]*databasev1.Measure
-	streamMap       map[identity]*databasev1.Stream
-	traceMap        map[identity]*databasev1.Trace
-	traceIDIndexMap map[identity]int // Cache trace ID tag index
+	log                   *logger.Logger
+	entitiesMap           map[identity]partition.Locator
+	measureMap            map[identity]*databasev1.Measure // Immutable watch values; updates replace the whole pointer.
+	measureGenerations    map[identity]uint64
+	streamMap             map[identity]*databasev1.Stream
+	traceMap              map[identity]*databasev1.Trace
+	traceIDIndexMap       map[identity]int // Cache trace ID tag index
+	nextMeasureGeneration uint64
 	sync.RWMutex
 }
 
@@ -321,6 +323,7 @@ func (e *entityRepo) OnAddOrUpdate(schemaMetadata schema.Metadata) {
 	case schema.KindMeasure:
 		measure := schemaMetadata.Spec.(*databasev1.Measure)
 		e.measureMap[id] = measure
+		e.advanceMeasureGenerationLocked(id)
 	case schema.KindStream:
 		stream := schemaMetadata.Spec.(*databasev1.Stream)
 		e.streamMap[id] = stream
@@ -364,11 +367,26 @@ func (e *entityRepo) OnDelete(schemaMetadata schema.Metadata) {
 	}
 	e.RWMutex.Lock()
 	defer e.RWMutex.Unlock()
+	if schemaMetadata.Kind == schema.KindMeasure {
+		e.advanceMeasureGenerationLocked(id)
+		delete(e.measureGenerations, id)
+	}
 	delete(e.entitiesMap, id)
 	delete(e.measureMap, id)      // Clean up measure
 	delete(e.streamMap, id)       // Clean up stream
 	delete(e.traceMap, id)        // Clean up trace
 	delete(e.traceIDIndexMap, id) // Clean up trace ID index
+}
+
+// advanceMeasureGenerationLocked assigns a new local version to every watch event,
+// even when a replacement repeats or decreases the metadata revision. Deleted
+// entries leave no tombstone; the monotonic counter distinguishes later recreation.
+func (e *entityRepo) advanceMeasureGenerationLocked(id identity) {
+	e.nextMeasureGeneration++
+	if e.measureGenerations == nil {
+		e.measureGenerations = make(map[identity]uint64)
+	}
+	e.measureGenerations[id] = e.nextMeasureGeneration
 }
 
 func (e *entityRepo) getLocator(id identity) (partition.Locator, bool) {

@@ -544,6 +544,9 @@ func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series, subject
 		if err != nil {
 			return SeriesData{}, nil, err
 		}
+		if reserveErr := query.ReserveAllocation(ctx, uint64(len(hits))*24); reserveErr != nil {
+			return SeriesData{}, nil, reserveErr
+		}
 		sortedValues = make([][]byte, 0, len(hits))
 	}
 
@@ -552,12 +555,16 @@ func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series, subject
 	// SeriesSort/sortIterator never charged). This one-time charge accounts
 	// for parseResult's fixed per-call overhead plus the requested
 	// projection; per-document and per-field-value charges follow below.
-	if !sorted {
+	_, allocationScoped := query.AllocationScopeFromContext(ctx)
+	if !sorted && !allocationScoped {
 		if chargeErr := query.Charge(ctx, 1024+uint64(len(opts.Projection))*64); chargeErr != nil {
 			return SeriesData{}, nil, chargeErr
 		}
 	}
 
+	if reserveErr := query.ReserveAllocation(ctx, 1024+uint64(len(opts.Projection)+1)*64+uint64(len(hits))*64); reserveErr != nil {
+		return SeriesData{}, nil, reserveErr
+	}
 	fields := make([]string, 0, len(opts.Projection)+1)
 	for i := range opts.Projection {
 		fields = append(fields, opts.Projection[i].Marshal())
@@ -572,6 +579,12 @@ func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series, subject
 	sd.VersionSet = make([]bool, 0, len(hits))
 	if hasProjection {
 		sd.Fields = make(FieldResultList, 0, len(hits))
+		if len(opts.MultiValueProjection) > 0 {
+			if reserveErr := query.ReserveAllocation(ctx, uint64(len(hits))*8); reserveErr != nil {
+				return SeriesData{}, nil, reserveErr
+			}
+			sd.MultiValueFields = make([]map[string][][]byte, 0, len(hits))
+		}
 	}
 
 	for _, hit := range hits {
@@ -597,13 +610,17 @@ func appendSearchHit(ctx context.Context, view *native.ReadView, hit native.Quer
 	if projectErr != nil {
 		return projectErr
 	}
-	if !sorted {
+	_, allocationScoped := query.AllocationScopeFromContext(ctx)
+	if !sorted && !allocationScoped {
 		if chargeErr := query.ChargeResult(ctx, 256+uint64(len(opts.Projection))*64); chargeErr != nil {
 			return chargeErr
 		}
 		if chargeErr := query.Charge(ctx, uint64(len(projected.Identifier))); chargeErr != nil {
 			return chargeErr
 		}
+	}
+	if reserveErr := reserveSeriesDataHit(ctx, projected.Identifier, len(opts.Projection)); reserveErr != nil {
+		return reserveErr
 	}
 	var ser pbv1.Series
 	if unmarshalErr := ser.Unmarshal(projected.Identifier); unmarshalErr != nil {
@@ -627,25 +644,49 @@ func appendSearchHit(ctx context.Context, view *native.ReadView, hit native.Quer
 	sd.VersionSet = append(sd.VersionSet, hasVersion)
 
 	if hasProjection {
-		row := make(FieldResult, len(opts.Projection))
+		row := make(map[string][]byte, len(opts.Projection))
+		var multiRow map[string][][]byte
+		if len(opts.MultiValueProjection) > 0 {
+			if reserveErr := query.ReserveAllocation(ctx, 512+uint64(len(opts.MultiValueProjection))*96); reserveErr != nil {
+				return reserveErr
+			}
+			multiRow = make(map[string][][]byte, len(opts.MultiValueProjection))
+		}
 		for i := range opts.Projection {
 			name := opts.Projection[i].Marshal()
 			values := projected.Fields[name]
 			if len(values) == 0 {
 				continue
 			}
-			if !sorted {
-				var size uint64
-				for _, value := range values {
-					size += uint64(len(value))
+			value := values[len(values)-1]
+			if _, keepValues := opts.MultiValueProjection[name]; keepValues {
+				// ProjectHit already owns the bytes. Charge the retained descriptors and
+				// the schema-aware array decode before exposing the complete sequence.
+				size := uint64(len(values)) * 96
+				for _, item := range values {
+					size += uint64(len(item)) * 2
 				}
-				if chargeErr := query.Charge(ctx, size); chargeErr != nil {
+				if reserveErr := query.ReserveAllocation(ctx, size); reserveErr != nil {
+					return reserveErr
+				}
+				if !sorted && !allocationScoped {
+					if chargeErr := query.Charge(ctx, size); chargeErr != nil {
+						return chargeErr
+					}
+				}
+				multiRow[name] = values
+			}
+			if !sorted && !allocationScoped {
+				if chargeErr := query.Charge(ctx, uint64(len(value))); chargeErr != nil {
 					return chargeErr
 				}
 			}
-			row[name] = values
+			row[name] = value
 		}
 		sd.Fields = append(sd.Fields, row)
+		if multiRow != nil {
+			sd.MultiValueFields = append(sd.MultiValueFields, multiRow)
+		}
 	}
 
 	if sorted {
@@ -689,4 +730,21 @@ func (s *seriesIndex) Close() error {
 	}
 	s.metrics.DeleteAll(s.p.SegLabelValues()...)
 	return s.owner.Close()
+}
+
+// reserveSeriesDataHit bounds only the selected identifier being decoded. Escaped
+// delimiters are payload; each unescaped delimiter ends one subject/tag value.
+func reserveSeriesDataHit(ctx context.Context, identifier []byte, projection int) error {
+	var values uint64
+	for i := 0; i < len(identifier); i++ {
+		switch identifier[i] {
+		case '\\':
+			i++
+		case '|':
+			values++
+		}
+	}
+	// Buffer growth, copied strings and binary values use at most a conservative
+	// multiple of the encoded payload; protobuf objects scale with value count.
+	return query.ReserveAllocation(ctx, 512+uint64(len(identifier))*8+values*256+uint64(projection)*96)
 }

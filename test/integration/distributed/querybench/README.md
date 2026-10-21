@@ -21,7 +21,7 @@ Default trace cardinalities: `1000,10000,100000,1000000,2000000`.
 
 `run-docker.sh` starts one resource-limited container and invokes `orchestrate.sh` inside it. The inner orchestrator:
 
-1. Builds the test binary once into `/tmp/dqb.test`.
+1. Builds the test binary once into `${DQB_REPORT_DIR}/tmp/dqb.test`.
 2. Clears `${DQB_REPORT_DIR}/shards/` and `${DQB_REPORT_DIR}/profiles/` so the merged report reflects only this run.
 3. Iterates the selected matrix and invokes the binary once per combo with `DQB_ENGINE`, `DQB_MODE`, `DQB_SCENARIO`, `DQB_CARDINALITY`, and any trace variant dimensions set. Each invocation:
    - Boots a fresh cluster.
@@ -118,7 +118,7 @@ Reports default to `.omx/bench-reports/distributed-query/`:
 - `distributed-querybench.json` — full per-result detail plus the environment and config view.
 - `distributed-querybench.md` — the results summary table.
 - `shards/*.json` — one per single-shot invocation, the raw evidence the merge pass aggregates.
-- `profiles/<scenario>/<cardinality>/.../<mode>/{cpu,heap}.pprof` — when `DQB_PROFILE=1`. Trace profiles include the variant key in the path. Each pprof file was captured inside a fresh process so the heap snapshot is not polluted by other scenarios or modes.
+- `profiles/<scenario>/<cardinality>/.../<mode>/{cpu,heap}.pprof` — when `DQB_PROFILE=1`. Trace profiles include the variant key in the path. Each scenario/cardinality/mode runs in a fresh process. QLB T01 runs four RPC variants sequentially in that process, so later variant profiles and heap snapshots include earlier cache and heap residency.
 
 ## Direct invocation contract
 
@@ -132,3 +132,153 @@ Anything else is a hard configuration error so the orchestrator contract stays t
 ## In-process cluster note
 
 `startBenchCluster` runs the two data nodes and the liaison inside the same Go process. CPU, RSS, and allocation metrics in each shard are process-level deltas covering all three nodes plus the client. The report's `environment.resource_note` records this so consumers know the metrics are not per-node.
+
+### QLB T01 baseline
+
+`DQB_SCENARIOS=qlb_t01` runs `native`, `native_rebound`, `legacy_ql`, and
+`legacy_ql_rebound` through the real measure/BydbQL RPC clients. Set
+`DQB_ENGINE=measure DQB_QUERY_WORKERS=1 DQB_QUERY_ITERATIONS=1000`.
+The four variants share one cluster and process and execute sequentially; prior
+variants can affect cache and heap residency in later measurements. This is an
+explicit exception to process isolation per variant. The QL variants share query text and change the bound service ID from svc0 to
+svc1. Warmup and sampled timed responses are checked against independently specified fixture values,
+including timestamps, projection names and types; only storage SID/version are
+ignored. Setup, visibility and warmups precede measurement. Each variant receives
+its own CPU/heap profiles and process allocation record. The report lists counters
+not yet exposed by production as unavailable. Timed responses receive a cheap row-count check; sampled responses are retained
+and checked exactly after profiles and allocation snapshots stop. Exact checksum
+validation is excluded from latency, throughput, CPU and allocation intervals.
+Process heap observations include retained sample responses.
+
+Run five isolated repetitions with cardinalities `1024,100000`, 20 warmups,
+profiling enabled, and unique report directories `qlb-t01-r1` through `r5`.
+The merge rejects missing variants or anything other than 1,000 samples per
+variant. Existing `scan_all` and `top_with_filter` controls remain available.
+
+### T03 typed raw QL and time pruning
+
+`qlb_t03` sends every query through `BydbQLService.Query`, including fixture
+readiness. It uses the standard deterministic measure fixture and checks results
+against the write formula, without capturing results or issuing native queries.
+The service-0 partition contains 64 rows at cardinality 1,024 and 6,300 rows at
+cardinality 100,000.
+
+Each isolated cardinality process runs these 13 required variants:
+
+| Variants | Purpose |
+|---|---|
+| `ql_plain_legacy`, `ql_alias`, `ql_shorthand` | Compare equal-width ID/value projections, aliases, and the shorthand source. |
+| `ql_repeated_projection` | Project one value column under 16 independent names. |
+| `ql_time_exact_10pct`, `ql_time_exact_10pct_rebound`, `ql_time_legacy_10pct` | Compare exact WHERE time pruning with legacy TIME; rebind the same WHERE text to the middle of the fixture. |
+| `ql_time_exact_50pct`, `ql_time_legacy_50pct` | Repeat the time comparison at a wider selectivity. |
+| `ql_time_or`, `ql_time_or_fullscan_reference` | Compare an OR envelope with the same result over a complete source scan. |
+| `ql_empty`, `ql_limit_zero` | Verify that contradictory bounds and LIMIT 0 dispatch no native query. |
+
+Time windows are half-open. Legacy TIME uses an inclusive end one millisecond
+before the corresponding SQL end. The OR selects the first point and the middle
+point of each series. Its complete-scan reference adds two timestamp-equality
+arms outside the fixture, widening only the native envelope. The independent
+oracle proves that these arms contribute no rows.
+
+A run requires exactly 20 checked warmups and 1,000 timed queries per variant,
+with one worker. Row counts are checked for every query; full value, type,
+projection-name and timestamp hashes are checked for every warmup and sampled
+responses after timing. Reports retain all 1,000 latency samples, percentiles,
+process CPU/allocation measurements, profiles when enabled, and operator/native
+counters. Missing variants, hashes, samples or required counters fail validation.
+
+Run five independent container invocations, each with both cardinalities:
+
+```sh
+for repetition in 1 2 3 4 5; do
+  DQB_SCENARIOS=qlb_t03 DQB_CARDINALITIES=1024,100000 \
+    DQB_QUERY_WORKERS=1 DQB_QUERY_ITERATIONS=1000 DQB_WARMUP_ITERATIONS=20 \
+    DQB_REPORT_DIR="/work/.omx/bench-reports/t03-r${repetition}" \
+    test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g
+done
+```
+
+Each nonempty query must activate one liaison QL batch execution and two storage
+leaf calls, one per data node. Empty/LIMIT 0 must activate neither. Every request
+captures the execution clock once. Typed projections copy zero value bytes;
+OR residuals must process the complete envelope before final pagination. Exact
+WHERE and equivalent legacy TIME must observe equal native source/frame counts;
+the 10% and 50% cases must reduce source rows, and OR pruning must reduce work
+relative to its full-scan reference. Owners, native flatten-pool references,
+result handles and live reservations must return to their initial values.
+
+`native_source_rows` counts batches emitted by the storage source before native
+operators. It is not a count of physical storage rows examined; that metric is
+explicitly unavailable. These structural checks and correctness checks do not
+turn noisy latency comparisons into pass/fail claims. Compare the five reports
+and profiles for performance conclusions. The separate `TestQLBT03ResourceBounds`
+probe uses 2,048 repeated aliases and accepts either a complete, independently
+verified response or `ResourceExhausted`. Run its instrumented test binary inside
+the same limited container at `DQB_QUERY_MEMORY_MIB=16` and `256`. It writes
+`qlb_t03_resources_<limit>mib.json`, checks cleanup after each request, and bounds
+the process-global reservation peak by the sum of the three node budgets. It
+reports per-tracker peaks and parent lease charges as unavailable. A resource
+error in the successful-query benchmark remains an error and cannot produce a
+passing benchmark shard.
+
+
+### T05 compiled-plan cache comparison
+
+The T05 benchmark has four variants: legacy_simple_cache_off,
+legacy_simple_cache_on, typed_wide_cache_off and typed_wide_cache_on.
+Each cache setting starts a fresh process and distributed cluster, writing the same 1,024
+rows. The simple query projects ID and value. The typed query projects 16 value
+aliases and contains eight parameterized time comparisons. Both alternate two
+binding sets while retaining their query text; each binding returns 32 independently
+specified rows. Cache size is the only configuration change: zero versus 4,000
+entries, with the default 64 MiB byte cap.
+
+This deliberately narrows the original T05 performance matrix to the requested
+cache-on/cache-off comparison. It does not add larger cardinalities, working sets,
+invalidation/churn workloads or comparisons with previous tickets. Cold-miss,
+invalidation and capacity correctness belong to focused tests.
+
+Exactly 20 checked warmups precede 1,000 timed RPCs with eight workers per variant.
+The warm phase must compile once with caching, then record 1,000 hits and zero
+compiles during timing. Disabling caching must compile every request and retain
+zero plans. Timed responses receive row-count checks, with full fixture hashes
+verified outside timing for retained samples of both binding sets. Latencies,
+process CPU/allocations, profiles and cache/resource counters are recorded. The
+client, liaison and two data nodes share one process, so process totals are not
+planning-only measurements. The two query shapes share their child process and
+cluster. The parent starts no cluster and validates distinct child process IDs
+for cache-off and cache-on. Child reports and logs are retained under the
+report directory's children/cache_off and children/cache_on directories.
+
+The initial T05 runs used sequential clusters in one process. Their cache-on
+phase retained the closed first cluster's schema registry graphs through an
+existing process-global test roster, so their RPC latency/CPU comparison was
+confounded. Those artifacts remain available as the initial runs. Isolating the
+two settings fixes the harness without changing production schema lifecycle or
+adding benchmark workloads. The planning benchmark remains unchanged.
+
+Run five repetitions in independent 4-CPU, 8-GiB containers with unique report
+directories:
+
+```sh
+for repetition in 1 2 3 4 5; do
+  DQB_ENGINE=measure DQB_SCENARIOS=qlb_t05 DQB_CARDINALITIES=1024 \
+    DQB_QUERY_WORKERS=8 DQB_QUERY_ITERATIONS=1000 DQB_WARMUP_ITERATIONS=20 \
+    DQB_PROFILE=1 DQB_REPORT_DIR="/work/.omx/bench-reports/t05-isolated-r${repetition}" \
+    test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g
+done
+```
+
+The focused planning benchmark compares the same two shapes and cache settings,
+including fresh binding and native-request construction while excluding parse and
+execution. Run with the same Go version and resource limits:
+
+```sh
+go test ./banyand/liaison/grpc -run '^$' \
+  -bench '^BenchmarkQLBPlanReuse$/^T05$' -benchmem -benchtime=2s -count=5
+```
+
+Report the median planning ns/op and B/op ratios for typed-wide cache-on versus
+cache-off; the T05 design target is at most 0.80 for each. Report simple-query
+planning and RPC results separately. A planning improvement alone does not prove
+an RPC latency improvement.
