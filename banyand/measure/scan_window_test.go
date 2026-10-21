@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
@@ -193,9 +194,13 @@ var (
 //	s6: one part, one block
 //	s7, s8: small single-part series
 func mixedFixture(t testing.TB) *fxFixture {
+	return mixedFixtureWithTail(t, mixedTailEnd)
+}
+
+func mixedFixtureWithTail(t testing.TB, tailEnd int64) *fxFixture {
 	return newFixture(t,
-		fxPart{{1, 1, 300, 1}, {2, 1, 300, 1}, {3, 1, 3, 1}, {4, 1, mixedTailEnd, 1}, {5, 10, 20, 1}},
-		fxPart{{1, 301, 600, 2}, {2, 150, 450, 2}, {3, 2, 6, 2}, {4, mixedTailEnd - 10, mixedTailEnd + 10, 5}, {6, 1, 700, 2}, {5, 20, 30, 2}},
+		fxPart{{1, 1, 300, 1}, {2, 1, 300, 1}, {3, 1, 3, 1}, {4, 1, tailEnd, 1}, {5, 10, 20, 1}},
+		fxPart{{1, 301, 600, 2}, {2, 150, 450, 2}, {3, 2, 6, 2}, {4, tailEnd - 10, tailEnd + 10, 5}, {6, 1, 700, 2}, {5, 20, 30, 2}},
 		fxPart{{1, 601, 900, 3}, {2, 400, 700, 1}, {7, 1, 50, 3}, {8, 100, 110, 3}},
 	)
 }
@@ -766,4 +771,31 @@ func vectorizedBatchPool(schema *vectorized.BatchSchema) *vectorized.BatchPool {
 
 func newTestBatchSource(qr *queryResult, schema *vectorized.BatchSchema, pool *vectorized.BatchPool) *vmeasure.BatchSourceFromBatchResult {
 	return vmeasure.NewBatchSourceFromBatchResult(qr, schema, pool, 1024)
+}
+
+func TestMixedScanRejectsRetainedResponseAt64MiB(t *testing.T) {
+	verifyNoScanLeaks(t)
+	// Keep the response large enough to exceed 64 MiB even when the race build
+	// shortens mixedFixture for the scan correctness tests.
+	fx := mixedFixtureWithTail(t, 20000)
+	q := &fxQuery{tags: allTags, fields: allFields, minTS: 0, maxTS: 30000}
+	schema := q.schema(t)
+	qr := fx.newResult(t, q, schema)
+	tracker := vectorized.NewMemoryTracker(64 << 20)
+	pool := vectorized.NewBatchPool(schema, 1024)
+	pipeline, err := vectorized.NewPipelineBuilder().WithMemoryTracker(tracker).
+		From(vmeasure.NewBatchSourceFromBatchResult(qr, schema, pool, 1024)).Build()
+	require.NoError(t, err)
+	require.NoError(t, pipeline.Init(context.Background()))
+	iterator := vmeasure.NewIteratorFromPipeline(context.Background(), pipeline, schema, pool)
+	var retained []*measurev1.InternalDataPoint
+	for iterator.Next() {
+		retained = append(retained, iterator.Current()...)
+	}
+	require.NotEmpty(t, retained)
+	require.Positive(t, tracker.Used(), "retained responses stay charged until close")
+	require.LessOrEqual(t, tracker.Used(), int64(64<<20), "a rejected reservation must not exceed the budget")
+	require.ErrorIs(t, iterator.Err(), vectorized.ErrMemoryBudgetExceeded)
+	require.ErrorIs(t, iterator.Close(), vectorized.ErrMemoryBudgetExceeded)
+	require.Zero(t, tracker.Used(), "failed collection must release reservations")
 }

@@ -25,6 +25,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	measure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
@@ -64,7 +65,7 @@ const defaultLimit uint32 = 100
 // AggModeAll for single-node final reduce, AggModeMap for the distributed
 // Map phase (G9f.2) that emits typed-column partials. AggModeReduce is
 // rejected (the reduce plan is built liaison-side in G9f.3).
-func Analyze(req *measurev1.QueryRequest, measureSchema *databasev1.Measure, mode measure.AggMode) (VecPlan, error) {
+func Analyze(req *measurev1.QueryRequest, measureSchema *databasev1.Measure, mode measure.AggMode, indexChecker logical.IndexChecker) (VecPlan, error) {
 	if req == nil {
 		return nil, fmt.Errorf("plan.Analyze: nil request")
 	}
@@ -91,14 +92,14 @@ func Analyze(req *measurev1.QueryRequest, measureSchema *databasev1.Measure, mod
 	var aggModel *model.MeasureAgg
 	if hasGroupBy {
 		var gbErr error
-		gbModel, gbErr = translateGroupBy(req, measureSchema)
+		gbModel, gbErr = translateGroupBy(req, measureSchema, indexChecker)
 		if gbErr != nil {
 			return nil, gbErr
 		}
 	}
 	if hasAgg {
 		var aggErr error
-		aggModel, aggErr = translateAgg(req, measureSchema)
+		aggModel, aggErr = translateAgg(req, measureSchema, indexChecker)
 		if aggErr != nil {
 			return nil, aggErr
 		}
@@ -194,7 +195,7 @@ func buildTagProjection(req *measurev1.QueryRequest) []model.TagProjection {
 // Measure schema. When time_bucket is present, its width is resolved per
 // §5.3 and the request is checked against the bucketed streaming
 // precondition (time-ascending input).
-func translateGroupBy(req *measurev1.QueryRequest, measureSchema *databasev1.Measure) (*model.MeasureGroupBy, error) {
+func translateGroupBy(req *measurev1.QueryRequest, measureSchema *databasev1.Measure, indexChecker logical.IndexChecker) (*model.MeasureGroupBy, error) {
 	groupByProto := req.GetGroupBy()
 	families := groupByProto.GetTagProjection().GetTagFamilies()
 	tbProto := groupByProto.GetTimeBucket()
@@ -216,6 +217,7 @@ func translateGroupBy(req *measurev1.QueryRequest, measureSchema *databasev1.Mea
 		if validateErr := validateGroupByTags(measureSchema, gb); validateErr != nil {
 			return nil, validateErr
 		}
+		gb.AllTagsIndexResolved = allTagsIndexResolved(measureSchema, indexChecker, gb.TagFamily, gb.TagNames)
 	}
 
 	if tbProto != nil {
@@ -304,7 +306,7 @@ func validateBucketableOrdering(req *measurev1.QueryRequest) error {
 // registered before that check still loads and can reach here with a
 // duplicate: the family qualifier is load-bearing, not decoration. The target
 // is then checked against the §6 semantics matrix.
-func translateAgg(req *measurev1.QueryRequest, measureSchema *databasev1.Measure) (*model.MeasureAgg, error) {
+func translateAgg(req *measurev1.QueryRequest, measureSchema *databasev1.Measure, indexChecker logical.IndexChecker) (*model.MeasureAgg, error) {
 	aggProto := req.GetAgg()
 	fieldName := aggProto.GetFieldName()
 	tagName := aggProto.GetTagName()
@@ -326,7 +328,12 @@ func translateAgg(req *measurev1.QueryRequest, measureSchema *databasev1.Measure
 		if validateErr := validateAggTag(measureSchema, tagFamily, tagName, aggProto.GetFunction()); validateErr != nil {
 			return nil, validateErr
 		}
-		return &model.MeasureAgg{TagName: tagName, TagFamily: tagFamily, Func: aggProto.GetFunction()}, nil
+		return &model.MeasureAgg{
+			TagName:             tagName,
+			TagFamily:           tagFamily,
+			Func:                aggProto.GetFunction(),
+			TargetIndexResolved: isTagIndexResolved(measureSchema, indexChecker, tagFamily, tagName),
+		}, nil
 	}
 }
 
@@ -539,6 +546,98 @@ func validateCountDistinctPushdown(req *measurev1.QueryRequest, measureSchema *d
 		}
 	}
 	return nil
+}
+
+// isTagIndexResolved reports whether (tagFamily, tagName) resolves from the
+// series index rather than the part's tag columns: either it is an entity
+// tag (series-scoped by construction) or it carries an IndexRule (series-
+// scoped via the series index at query time) — mirroring
+// banyand/measure/query.go's searchSeriesList three-way split (design
+// §7.7). Computed from static schema facts only, never inferred from
+// runtime column sampling, so the plan-time flag this feeds cannot drift
+// per batch.
+//
+// The entity check resolves tagName's owning family via pbv1.FindTagByName
+// and requires it match tagFamily, exactly like validateCountDistinctPushdown
+// (above) already does for routing tags: Entity.TagNames carries no family
+// qualifier at the schema level, so a bare-name-only match would wrongly
+// treat an unrelated, non-series-constant tag as index-resolved whenever a
+// schema happens to repeat that name in another family — a shape
+// api/validate.UniqueTagNames rejects only on the registry's create/update
+// paths, so an already-loaded schema can still carry it (see translateAgg's
+// doc comment).
+//
+// indexChecker may be nil (callers that don't resolve indexing, e.g. the
+// schema-only distributed-plan probe); a nil checker still recognizes entity
+// tags, and otherwise reports false, so the optimization simply does not
+// engage rather than guessing.
+//
+// The index-rule branch does not stop at IndexChecker.IndexDefined: that
+// check only confirms tagName appears in a configured IndexRule's tag list,
+// not that storage still honors the rule. pkg/partition/index.go's
+// ParseIndexRuleLocators silently drops an entire (possibly composite)
+// IndexRule at query-planning time when ANY of its member tags no longer
+// exists in the schema's tag families — leaving every surviving member tag
+// part-resident (read from the part's tag columns, not the series index)
+// even though the schema's IndexRules list still names it. isIndexRuleIntact
+// mirrors that same drop condition from measureSchema's own tag families, so
+// the analyzer's eligibility call agrees with what storage actually does.
+func isTagIndexResolved(measureSchema *databasev1.Measure, indexChecker logical.IndexChecker, tagFamily, tagName string) bool {
+	if slices.Contains(measureSchema.GetEntity().GetTagNames(), tagName) {
+		families := measureSchema.GetTagFamilies()
+		fi, _, tagSpec := pbv1.FindTagByName(families, tagName)
+		if tagSpec != nil && families[fi].GetName() == tagFamily {
+			return true
+		}
+	}
+	if indexChecker == nil {
+		return false
+	}
+	defined, idxRule := indexChecker.IndexDefined(tagName)
+	if !defined {
+		return false
+	}
+	return isIndexRuleIntact(measureSchema, idxRule)
+}
+
+// isIndexRuleIntact reports whether every tag idxRule references is still
+// declared among measureSchema's tag families — i.e. storage's
+// ParseIndexRuleLocators would not drop this rule for referencing a removed
+// tag. A nil idxRule (an IndexChecker that does not supply one) is treated
+// as not intact: without the rule's own tag list there is nothing to verify
+// against, and reporting constancy on unverifiable input would reintroduce
+// exactly the trust-without-proof gap this check exists to close.
+func isIndexRuleIntact(measureSchema *databasev1.Measure, idxRule *databasev1.IndexRule) bool {
+	if idxRule == nil {
+		return false
+	}
+	declared := make(map[string]struct{})
+	for _, tf := range measureSchema.GetTagFamilies() {
+		for _, ts := range tf.GetTags() {
+			declared[ts.GetName()] = struct{}{}
+		}
+	}
+	for _, tagName := range idxRule.GetTags() {
+		if _, ok := declared[tagName]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// allTagsIndexResolved reports whether every name in tagNames, all within
+// tagFamily, is index-resolved (isTagIndexResolved). Used for a GroupBy's tag
+// keys: the run-folding fast path (design §7.7, stage 8a) is only safe when
+// ALL of them are, since a single non-index-resolved (part-resident) key tag
+// can vary row to row within one series and would otherwise be folded as if
+// it were constant.
+func allTagsIndexResolved(measureSchema *databasev1.Measure, indexChecker logical.IndexChecker, tagFamily string, tagNames []string) bool {
+	for _, name := range tagNames {
+		if !isTagIndexResolved(measureSchema, indexChecker, tagFamily, name) {
+			return false
+		}
+	}
+	return true
 }
 
 // findTagSpec returns the TagSpec named (tagFamily, tagName) in

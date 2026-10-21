@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/accesslog"
 	"github.com/apache/skywalking-banyandb/pkg/bydbql"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/query/ql"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -47,6 +48,8 @@ type bydbQLService struct {
 	repo           metadata.Repo
 	transformer    *bydbql.Transformer
 	cache          *preparedCache
+	planCache      *compiledPlanCache
+	planSource     *entityRepoSchemaSource
 	streamSvc      *streamService
 	measureSvc     *measureService
 	traceSvc       *traceService
@@ -76,6 +79,9 @@ func (b *bydbQLService) activeQueryAccessLog(root string, sampled bool) (err err
 }
 
 func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (resp *bydbqlv1.QueryResponse, err error) {
+	if hook := bydbQLPlanCacheHooks().Context; hook != nil {
+		ctx = hook(ctx)
+	}
 	start := time.Now()
 	b.metrics.totalStarted.Inc(1, "", "bydbql", "query")
 	snapshot, _ := SnapshotFromContext(ctx)
@@ -94,6 +100,7 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 	// A "reparse" is folded into "miss" here — it is a miss to anyone searching the
 	// access log; only the top-K tracker cares about the distinction.
 	var cacheResult string
+	var planCacheResult string
 	defer func() {
 		duration := time.Since(start)
 		b.metrics.totalFinished.Inc(1, "", "bydbql", "query")
@@ -115,6 +122,9 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 					tag = "miss"
 				}
 				service = "bydbql-" + tag
+			}
+			if planCacheResult != "" {
+				service += "-plan-" + planCacheResult
 			}
 			if errAccessLog := b.queryAccessLog.WriteQuery(service, start, duration, req, err); errAccessLog != nil {
 				b.l.Error().Err(errAccessLog).Msg("bydbql access log error")
@@ -139,9 +149,10 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "failed to bind parameters: %v", err)
 	}
-	result, err := b.transformer.TransformBound(ctx, bound)
+	result, rawPlan, planHandle, planCacheResult, err := b.planQueryWithCache(ctx, stmt, bound)
+	defer planHandle.Release()
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to transform to native request: %v", err)
+		return nil, planQueryStatus(err)
 	}
 	principal, _ := PrincipalFromContext(ctx)
 	decision, reason := AuthorizeTransformedRequest(snapshot, principal, result.QueryRequest)
@@ -161,7 +172,7 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 		if err != nil {
 			dl.Err(err).Msg("failed to marshal the request to json")
 		} else {
-			dl.Str("ql", req.Query).Stringer("type", result.Type).
+			dl.Str("ql", req.Query).Str("plan_cache", planCacheResult).Stringer("type", result.Type).
 				Str("to_request", string(requestJSON)).Stringer("duration", parseDuration).Msg("bydbql query")
 		}
 	}
@@ -176,7 +187,7 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 		}
 		resp.Result = &bydbqlv1.QueryResponse_StreamResult{StreamResult: streamResponse}
 	case bydbql.QueryTypeMeasure:
-		measureResponse, err := b.measureSvc.Query(ctx, result.QueryRequest.(*measurev1.QueryRequest))
+		measureResponse, err := b.measureSvc.queryWithRawPlan(ctx, result.QueryRequest.(*measurev1.QueryRequest), true, rawPlan, true)
 		if err != nil {
 			return nil, err
 		}
@@ -203,6 +214,24 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 		return nil, fmt.Errorf("unknown query type: %v", result.Type)
 	}
 	return resp, nil
+}
+
+func (b *bydbQLService) planQuery(ctx context.Context, statement *bydbql.PreparedStatement,
+	bound *bydbql.BoundQuery,
+) (*bydbql.TransformResult, *ql.RawPlan, error) {
+	template, err := b.transformer.CompileMeasure(ctx, statement)
+	if err != nil {
+		return nil, nil, err
+	}
+	if template == nil {
+		result, transformErr := b.transformer.TransformBound(ctx, bound)
+		return result, nil, transformErr
+	}
+	execution, err := template.Bind(bound, ql.ExecutionNow())
+	if err != nil {
+		return nil, nil, err
+	}
+	return &bydbql.TransformResult{Type: bydbql.QueryTypeMeasure, QueryRequest: execution.Request}, execution.Plan, nil
 }
 
 func (b *bydbQLService) observeTransformedDecision(snapshot auth.Snapshot, decision Decision, reason DecisionReason) {

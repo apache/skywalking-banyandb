@@ -19,6 +19,7 @@ import (
 	"sync"
 	"testing"
 
+	querypkg "github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -103,5 +104,205 @@ func TestQueryBudgetAdmitRejectsWindowUnderPressure(t *testing.T) {
 	b := NewQueryBudget(&budgetProtector{limit: 64 << 20, avail: 64 << 20})
 	if _, err := b.Admit(context.Background(), 100000, 0, 20); !errors.Is(err, ErrQueryWindowPressure) {
 		t.Fatalf("want dynamic window rejection, got %v", err)
+	}
+}
+
+func TestMeasureAdmissionDoesNotPreassignEightHardSlots(t *testing.T) {
+	budget := NewQueryBudget(nil)
+	var releases []func()
+	defer func() {
+		for _, release := range releases {
+			release()
+		}
+	}()
+	for i := 0; i < 32; i++ {
+		_, release, err := budget.AdmitMeasureContext(t.Context())
+		if err != nil {
+			t.Fatalf("small measure admission %d: %v", i+1, err)
+		}
+		releases = append(releases, release)
+	}
+}
+
+func TestMeasureAdmissionIncrementalChargesRemainBoundedAndMonotonic(t *testing.T) {
+	budget := NewQueryBudget(nil)
+	ctx, release, err := budget.AdmitMeasureContext(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	lease, ok := querypkg.BudgetLeaseFromContext(ctx)
+	if !ok {
+		t.Fatal("missing lease")
+	}
+	if budget.Reserved() != queryFixedOverhead || lease.Limit() != budget.MaxQuery() {
+		t.Fatalf("initial commitment=%d hard limit=%d", budget.Reserved(), lease.Limit())
+	}
+	growth := lease.Limit() - lease.Used()
+	if err = lease.Charge(growth); err != nil {
+		t.Fatal(err)
+	}
+	if budget.Reserved() != lease.Limit() {
+		t.Fatal("growth must commit shared pool bytes")
+	}
+	if err = lease.Charge(1); !errors.Is(err, ErrQueryResourceExhausted) {
+		t.Fatalf("hard limit: %v", err)
+	}
+	if lease.Used() != lease.Limit() || budget.Reserved() != lease.Limit() {
+		t.Fatal("failed growth changed accounting")
+	}
+	nested, nestedRelease, err := budget.AdmitMeasureContext(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nestedLease, _ := querypkg.BudgetLeaseFromContext(nested); nestedLease != lease {
+		t.Fatal("nested query replaced lease")
+	}
+	release()
+	if budget.Reserved() != lease.Limit() {
+		t.Fatal("nested owner must retain all spent charges")
+	}
+	nestedRelease()
+	if budget.Reserved() != 0 {
+		t.Fatal("last owner must release pool commitment")
+	}
+	if err = lease.Charge(1); !errors.Is(err, ErrQueryResourceExhausted) {
+		t.Fatalf("released lease: %v", err)
+	}
+}
+
+func TestMeasureAdmissionIncrementalPoolPressureRollsBackCharge(t *testing.T) {
+	budget := NewQueryBudget(nil)
+	var releases []func()
+	defer func() {
+		for _, release := range releases {
+			release()
+		}
+	}()
+	var last querypkg.BudgetLease
+	for i := 0; i < 64; i++ {
+		ctx, release, err := budget.AdmitMeasureContext(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		releases = append(releases, release)
+		last, _ = querypkg.BudgetLeaseFromContext(ctx)
+	}
+	if err := last.Charge(1); !errors.Is(err, ErrQueryResourceExhausted) {
+		t.Fatalf("pool must reject growth: %v", err)
+	}
+	if last.Used() != queryFixedOverhead || budget.Reserved() != budget.Limit() {
+		t.Fatal("failed pool growth spent bytes")
+	}
+	if _, _, err := budget.AdmitMeasureContext(t.Context()); !errors.Is(err, ErrQueryResourceExhausted) {
+		t.Fatalf("pool must reject admission: %v", err)
+	}
+}
+
+func TestMeasureAdmissionTransportAndCancellationOwnCommitments(t *testing.T) {
+	budget := NewQueryBudget(nil)
+	ctx, transport := querypkg.NewTransportScope(t.Context())
+	defer transport.Close()
+	admitted, release, err := budget.AdmitMeasureContext(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, _ := querypkg.BudgetLeaseFromContext(admitted)
+	if err = lease.Charge(1024); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if budget.Reserved() != queryFixedOverhead+1024 {
+		t.Fatal("transport lost its charged commitment")
+	}
+	transport.Close()
+	if budget.Reserved() != 0 {
+		t.Fatal("transport commitment leaked")
+	}
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, _, err = budget.AdmitMeasureContext(canceled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled admission: %v", err)
+	}
+	if budget.Reserved() != 0 {
+		t.Fatal("canceled admission committed bytes")
+	}
+}
+
+func TestMeasureAdmissionConcurrentGrowthAndRelease(t *testing.T) {
+	budget := NewQueryBudget(nil)
+	var workers sync.WaitGroup
+	for i := 0; i < 128; i++ {
+		workers.Go(func() {
+			ctx, release, err := budget.AdmitMeasureContext(t.Context())
+			if errors.Is(err, ErrQueryResourceExhausted) {
+				return
+			}
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			lease, _ := querypkg.BudgetLeaseFromContext(ctx)
+			var owners sync.WaitGroup
+			owners.Go(func() {
+				chargeErr := lease.Charge(1024)
+				if chargeErr != nil && !errors.Is(chargeErr, ErrQueryResourceExhausted) {
+					t.Error(chargeErr)
+				}
+			})
+			owners.Go(release)
+			owners.Wait()
+			release()
+		})
+	}
+	workers.Wait()
+	if budget.Reserved() != 0 {
+		t.Fatalf("concurrent commitment leaked: %d", budget.Reserved())
+	}
+}
+
+type measureRefreshingProtector struct {
+	budgetProtector
+	refreshes int
+}
+
+func (p *measureRefreshingProtector) RefreshUsage() { p.refreshes++ }
+
+func TestMeasureAdmissionSamplesOnceAndGrowthChecksReportedPressure(t *testing.T) {
+	memory := &measureRefreshingProtector{budgetProtector: budgetProtector{limit: 256 << 20, avail: 256 << 20}}
+	budget := NewQueryBudget(memory)
+	ctx, release, err := budget.AdmitMeasureContext(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	lease, _ := querypkg.BudgetLeaseFromContext(ctx)
+	for i := 0; i < 10; i++ {
+		if err = lease.Charge(1024); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if memory.refreshes != 1 {
+		t.Fatalf("growth sampled runtime usage: refreshes=%d", memory.refreshes)
+	}
+	before := lease.Used()
+	memory.avail = 0
+	if err = lease.Charge(0); err != nil {
+		t.Fatalf("zero charge under pressure: %v", err)
+	}
+	if err = lease.Charge(1); !errors.Is(err, ErrQueryResourceExhausted) {
+		t.Fatalf("reported pressure must reject growth: %v", err)
+	}
+	if lease.Used() != before || budget.Reserved() != before || memory.refreshes != 1 {
+		t.Fatal("rejected growth spent bytes or sampled runtime usage")
+	}
+	memory.avail = 256 << 20
+	_, legacyRelease, err := budget.AdmitScanContext(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer legacyRelease()
+	if memory.refreshes != 2 {
+		t.Fatal("legacy admission must retain fresh sampling")
 	}
 }

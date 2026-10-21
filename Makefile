@@ -49,6 +49,13 @@ generate: default  ## Generate API codes
 
 generate-test-cases:  ## Regenerate measure query test cases (input/*.ql, input/*.yaml)
 	go run ./test/cases/measure/cmd/generate generate test/cases/measure/data
+	$(MAKE) generate-ql-test-cases
+
+generate-ql-test-cases: ## Regenerate QL-only queries and independent expected results
+	go run ./test/cases/measure/cmd/generate generate-ql test/cases/measure/qlgen/generated
+
+check-ql-test-cases: ## Check deterministic QL-only fixtures without capturing server output
+	go run ./test/cases/measure/cmd/generate generate-ql --check test/cases/measure/qlgen/generated
 
 capture-test-cases:  ## Capture measure query want fixtures (data/want/*.yaml) by running queries against a standalone server
 	CAPTURE_WANT_FIXTURES=1 go test -count=1 -timeout 5m -run TestCapture ./test/cases/measure/cmd/capture/
@@ -433,6 +440,7 @@ release-push-candidate: ## Push release candidate
 	
 .PHONY: all $(PROJECTS) clean build check-format default nuke
 .PHONY: lint check tidy format pre-push check-license-outputs check-node-version license-manifest generate-test-cases capture-test-cases generate-trace-test-cases capture-trace-test-cases generate-stream-test-cases capture-stream-test-cases check-import-boundaries
+.PHONY: generate-ql-test-cases check-ql-test-cases
 .PHONY: test test-race test-coverage test-ci test-docker
 .PHONY: build-trace-pipeline-plugin build-trace-pipeline-telemetry-plugins build-trace-pipeline-server test-trace-pipeline
 .PHONY: license-check license-fix license-dep

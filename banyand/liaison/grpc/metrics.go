@@ -75,6 +75,12 @@ type metrics struct {
 	bydbqlPreparedCacheCount    meter.Gauge
 	bydbqlPreparedCacheBytes    meter.Gauge
 	bydbqlSlowQueryTotal        meter.Counter
+	bydbqlPlanCacheTotal        meter.Counter
+	bydbqlPlanCompiles          meter.Counter
+	bydbqlPlanCacheCount        meter.Gauge
+	bydbqlPlanCacheBytes        meter.Gauge
+	bydbqlPlanWork              meter.Gauge
+	bydbqlPlanDuration          meter.Histogram
 	rbacDecisions               meter.Counter
 	rbacPolicyReload            meter.Counter
 	rbacPolicyRevision          meter.Gauge
@@ -117,6 +123,12 @@ func newMetrics(factory observability.Factory, rbacFactories ...observability.Fa
 		bydbqlPreparedCacheCount:           factory.NewGauge("bydbql_prepared_cache_count"),
 		bydbqlPreparedCacheBytes:           factory.NewGauge("bydbql_prepared_cache_bytes"),
 		bydbqlSlowQueryTotal:               factory.NewCounter("bydbql_slow_query_total"),
+		bydbqlPlanCacheTotal:               factory.NewCounter("bydbql_plan_cache_total", "result"),
+		bydbqlPlanCompiles:                 factory.NewCounter("bydbql_plan_compiles_total"),
+		bydbqlPlanCacheCount:               factory.NewGauge("bydbql_plan_cache_count"),
+		bydbqlPlanCacheBytes:               factory.NewGauge("bydbql_plan_cache_bytes", "kind"),
+		bydbqlPlanWork:                     factory.NewGauge("bydbql_plan_work", "kind"),
+		bydbqlPlanDuration:                 factory.NewHistogram("bydbql_plan_duration_seconds", meter.DefBuckets, "stage"),
 	}
 	result.rbacDecisions = rbacFactory.NewCounter("rbac_decisions_total", "decision", "permission", "method", "reason")
 	result.rbacPolicyReload = rbacFactory.NewCounter("rbac_policy_reload_total", "result")

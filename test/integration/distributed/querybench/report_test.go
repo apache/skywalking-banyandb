@@ -18,8 +18,10 @@
 package querybench
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -158,5 +160,56 @@ func TestTraceShardFilenameIncludesVariantKey(t *testing.T) {
 	expectedName := "trace_vec_trace_tag_filter_1000000_s20_heavytail_sel0p01_k10_sh6_dn4_b2048.json"
 	if filepath.Base(shardPath) != expectedName {
 		t.Fatalf("unexpected trace shard filename: got %s, want %s", filepath.Base(shardPath), expectedName)
+	}
+}
+
+func TestScenarioLabelPreservesControls(t *testing.T) {
+	if got := (Result{Scenario: ScenarioScanAll}).scenarioLabel(); got != "scan_all" {
+		t.Fatalf("control label = %q", got)
+	}
+	if got := (Result{Scenario: ScenarioQLBT01, Variant: "native"}).scenarioLabel(); got != "qlb_t01/native" {
+		t.Fatalf("QLB label = %q", got)
+	}
+}
+
+func TestSummarizeLatenciesNanosecondPrecision(t *testing.T) {
+	latencies := []time.Duration{999, 101, 505}
+	stats, _ := summarizeLatencies(latencies, time.Second)
+	expected := LatencyStats{P50Ms: 0.000505, P90Ms: 0.000999, P95Ms: 0.000999, P99Ms: 0.000999, MaxMs: 0.000999, MeanMs: 0.000535}
+	if stats != expected {
+		t.Fatalf("expected %+v, got %+v", expected, stats)
+	}
+	if !reflect.DeepEqual(latencies, []time.Duration{999, 101, 505}) {
+		t.Fatal("summary reordered raw samples")
+	}
+}
+
+func TestResultRawLatenciesRoundTrip(t *testing.T) {
+	result := Result{Variants: []Result{{Variant: "native_raw", RawLatenciesNS: []time.Duration{999, 101, 505}}}}
+	path, err := writeShard(result, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw struct {
+		Variants []struct {
+			Samples []int64 `json:"raw_latencies_ns"`
+		} `json:"variants"`
+	}
+	if err = json.Unmarshal(body, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if len(raw.Variants) != 1 || !reflect.DeepEqual(raw.Variants[0].Samples, []int64{999, 101, 505}) {
+		t.Fatalf("raw nanosecond samples were not preserved: %s", body)
+	}
+	var decoded Result
+	if err = json.Unmarshal(body, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(decoded, result) {
+		t.Fatalf("result changed on round trip: %+v", decoded)
 	}
 }

@@ -220,7 +220,11 @@ func (b *binder) collectPredicate(pred *GrammarPredicate) {
 		b.collectOrExpr(pred.Paren)
 	case pred.Binary != nil && pred.Binary.Tail != nil:
 		if compare := pred.Binary.Tail.Compare; compare != nil {
-			b.collectScalarValue(compare.Value)
+			if isBuiltinTime(pred.Binary.Identifier) {
+				b.collectWhereTimeValue(compare.Value)
+			} else {
+				b.collectScalarValue(compare.Value)
+			}
 		}
 		if match := pred.Binary.Tail.Match; match != nil && match.Values != nil {
 			b.collectSingleOrArray(&match.Values.Single, &match.Values.Array)
@@ -250,6 +254,26 @@ func (b *binder) collectSingleOrArray(single **GrammarValue, array *[]*GrammarVa
 			return
 		}
 		*single, *array = nil, vs
+	})
+}
+
+// collectWhereTimeValue uses the same wire types as legacy TIME placeholders.
+func (b *binder) collectWhereTimeValue(v *GrammarValue) {
+	if v == nil || !v.Param {
+		return
+	}
+	if b.countOnly {
+		b.count++
+		return
+	}
+	b.slots = append(b.slots, func(p *modelv1.TagValue) error {
+		value, err := resolveTimeParam(p)
+		if err != nil {
+			return err
+		}
+		v.String = &value
+		v.Param = false
+		return nil
 	})
 }
 

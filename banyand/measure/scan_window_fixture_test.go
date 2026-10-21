@@ -107,9 +107,10 @@ type fxRange struct {
 type fxPart []fxRange
 
 type fxFixture struct {
-	written []fxPart
-	parts   []partRef
-	sids    []common.SeriesID // sorted
+	written         []fxPart
+	parts           []partRef
+	sids            []common.SeriesID // sorted
+	memoryAllowance int64
 }
 
 func fxValue(name string, valueType pbv1.ValueType, value []byte) *nameValue {
@@ -305,7 +306,12 @@ func (fx *fxFixture) run(t testing.TB, q *fxQuery, legacy bool) fxResult {
 	build := func() (*vectorized.Pipeline, *queryResult) {
 		qr := fx.newResult(t, q, schema)
 		pool := vectorized.NewBatchPool(schema, 1024)
-		tracker := vectorized.NewMemoryTracker(64 * 1024 * 1024)
+		// The retained final protobuf response shares the execution allowance.
+		allowance := fx.memoryAllowance
+		if allowance == 0 {
+			allowance = 256 << 20
+		}
+		tracker := vectorized.NewMemoryTracker(allowance)
 		builder := vectorized.NewPipelineBuilder().WithMemoryTracker(tracker).From(vmeasure.NewBatchSourceFromBatchResult(qr, schema, pool, 1024))
 		terminal = schema
 		if q.groupBy != nil && q.groupBy.TimeBucket != nil {
