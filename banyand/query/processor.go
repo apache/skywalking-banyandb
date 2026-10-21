@@ -591,12 +591,9 @@ func executeMeasurePlan(
 	return mit, planStr, nil
 }
 
-// dispatchMeasure is the thin adapter from measureExecutionContext into
-// the vec dispatch inputs. Multi-measure queries (len(ecc) > 1) are
-// handled per-group: each group's plan is run through vecplan.DispatchBatches
-// and the per-group batches are merged columnar by vecplan.MultiGroupMerge
-// (schema alignment with null-fill, k-way sort-key merge and version dedup),
-// then converted to an MIterator once.
+// dispatchMeasure adapts the native BatchResult boundary to final row serialization.
+// Multi-group queries use DispatchBatches and MultiGroupMerge to align schemas,
+// merge sort keys, deduplicate versions and apply pagination before serialization.
 //
 // Distributed Map-mode GroupBy+Agg (emitPartial=true) routes to vec via
 // AggModeMap (G9f.2): vecplan.Dispatch receives emitPartial and the
@@ -605,12 +602,23 @@ func executeMeasurePlan(
 // Scan → GroupByAgg(Map) → Top → Limit per node, BatchTop sorts on the
 // partial value column, and the liaison's distributed plan dedupes and
 // applies the global Top across the per-node partial top-Ns.
-func dispatchMeasure(
+func dispatchMeasure(ctx context.Context, queryCriteria *measurev1.QueryRequest, mctx *measureExecutionContext,
+	emitPartial bool,
+) (executor.MIterator, string, error) {
+	result, planStr, err := dispatchMeasureBatches(ctx, queryCriteria, mctx, emitPartial)
+	if err != nil {
+		return nil, planStr, err
+	}
+	iterator, err := result.NativeIterator(ctx)
+	return iterator, planStr, err
+}
+
+func dispatchMeasureBatches(
 	ctx context.Context,
 	queryCriteria *measurev1.QueryRequest,
 	mctx *measureExecutionContext,
 	emitPartial bool,
-) (executor.MIterator, string, error) {
+) (*vecplan.BatchResult, string, error) {
 	vecs := make([]vecExecutionContext, len(mctx.ecc))
 	for groupIdx, ec := range mctx.ecc {
 		vec, ok := ec.(vecExecutionContext)
@@ -621,8 +629,11 @@ func dispatchMeasure(
 		}
 		vecs[groupIdx] = vec
 	}
+	if len(vecs) > 0 {
+		ctx = vectorized.WithQueryMemoryTracker(ctx, int64(vecs[0].VectorizedConfig().QueryMemoryMiB)*1024*1024)
+	}
 	if len(mctx.ecc) == 1 {
-		return vecplan.Dispatch(ctx, queryCriteria, mctx.metadata[0], vecs[0].GetSchema(),
+		return vecplan.DispatchBatches(ctx, queryCriteria, mctx.metadata[0], vecs[0].GetSchema(),
 			mctx.schemas[0], vecs[0], vecs[0].VectorizedConfig(), emitPartial, false)
 	}
 	// Multi-measure projection validation: a tag/field is valid if it
@@ -639,26 +650,31 @@ func dispatchMeasure(
 	if projErr := vecplan.ValidateMultiGroupProjection(queryCriteria, mctx.schemas, measureSchemas); projErr != nil {
 		return nil, "", projErr
 	}
-	merge, mergeErr := vecplan.NewMultiGroupMerge(queryCriteria, mctx.schemas, measureSchemas, vecs[0].VectorizedConfig())
+	merge, mergeErr := vecplan.NewMultiGroupMerge(ctx, queryCriteria, mctx.schemas, measureSchemas, vecs[0].VectorizedConfig())
 	if mergeErr != nil {
 		return nil, "", mergeErr
 	}
-	groupReq := merge.GroupRequest()
 	groups := make([]*vecplan.GroupBatches, 0, len(mctx.ecc))
 	planStrs := make([]string, 0, len(mctx.ecc))
 	for groupIdx, vec := range vecs {
-		group, dispatchErr := vecplan.DispatchBatches(ctx, groupReq,
-			mctx.metadata[groupIdx], vec.GetSchema(), mctx.schemas[groupIdx], vec, vec.VectorizedConfig(), emitPartial, true, merge.Tracker())
+		result, planStr, dispatchErr := vecplan.DispatchBatches(ctx, merge.GroupRequest(),
+			mctx.metadata[groupIdx], vec.GetSchema(), mctx.schemas[groupIdx], vec, vec.VectorizedConfig(), emitPartial, true)
+		if dispatchErr == nil {
+			var group *vecplan.GroupBatches
+			group, dispatchErr = merge.Collect(ctx, result, planStr)
+			if dispatchErr == nil {
+				groups = append(groups, group)
+				planStrs = append(planStrs, planStr)
+			}
+		}
 		if dispatchErr != nil {
 			for _, obtained := range groups {
 				obtained.Release()
 			}
 			return nil, "", dispatchErr
 		}
-		groups = append(groups, group)
-		planStrs = append(planStrs, group.PlanString)
 	}
-	merged, mergeErr := merge.Merge(ctx, groups)
+	merged, mergeErr := merge.MergeBatches(ctx, groups)
 	if mergeErr != nil {
 		return nil, "", mergeErr
 	}
@@ -678,6 +694,9 @@ func collectInternalDataPoints(mIterator executor.MIterator) []*measurev1.Intern
 }
 
 func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
+	if batchRequest, batchOK := message.Data().(*vmeasure.BatchQueryRequest); batchOK {
+		return p.executeBatchQuery(ctx, batchRequest.Request)
+	}
 	queryCriteria, ok := message.Data().(*measurev1.QueryRequest)
 	n := time.Now()
 	now := n.UnixNano()
@@ -687,6 +706,42 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 	}
 	resp = p.executeQuery(ctx, queryCriteria)
 	return
+}
+
+func (p *measureQueryProcessor) executeBatchQuery(ctx context.Context, req *measurev1.QueryRequest) (resp bus.Message) {
+	now := bus.MessageID(time.Now().UnixNano())
+	if req == nil || len(req.Groups) == 0 {
+		return bus.NewMessage(now, common.NewError("measure query requires a group"))
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			resp = bus.NewMessage(now, common.NewError("panic: %v", recovered))
+		}
+	}()
+	mctx, err := buildMeasureContext(p.measureService, p.log, req, "measure")
+	if err != nil {
+		return bus.NewMessage(now, err)
+	}
+	var tracer *query.Tracer
+	var span *query.Span
+	if req.Trace {
+		tracer, ctx = query.NewTracer(ctx, time.Now().Format(time.RFC3339Nano))
+		span, ctx = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
+	}
+	result, planStr, err := dispatchMeasureBatches(ctx, req, mctx, false)
+	if err != nil {
+		if span != nil {
+			span.Error(err)
+			span.Stop()
+		}
+		return bus.NewMessage(now, err)
+	}
+	if span != nil {
+		span.Tag(tracelabels.TagPlan, planStr)
+		result.SetTraceFinalizer(func() *commonv1.Trace { span.Stop(); return tracer.ToProto() })
+	}
+	vmeasure.RecordBatchExecution(true)
+	return bus.NewMessage(now, result)
 }
 
 func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria *measurev1.QueryRequest) (resp bus.Message) {
@@ -716,7 +771,11 @@ func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria 
 	}
 	mIterator, planStr, execErr := executeMeasurePlan(ctx, queryCriteria, mctx, false)
 	if execErr != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", execErr))
+		if span != nil {
+			span.Error(execErr)
+			span.Stop()
+		}
+		resp = bus.NewMessage(bus.MessageID(now), measureExecutionError(execErr))
 		return
 	}
 	iteratorClosed := false
@@ -741,11 +800,10 @@ func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria 
 				span.Tag(tracelabels.TagRespCount, fmt.Sprintf("%d", len(d.DataPoints)))
 				span.Stop()
 				d.Trace = tracer.ToProto()
-			case *common.Error:
+			case error:
 				closeIterator()
-				span.Error(errors.New(d.Error()))
+				span.Error(d)
 				span.Stop()
-				resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{Trace: tracer.ToProto()})
 			default:
 				panic("unexpected data type")
 			}
@@ -772,6 +830,11 @@ func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria 
 		}
 	}()
 
+	if failed, ok := mIterator.(interface{ Err() error }); ok && failed.Err() != nil {
+		resp = bus.NewMessage(bus.MessageID(now), failed.Err())
+		return
+	}
+	vmeasure.RecordBatchExecution(false)
 	qr := &measurev1.QueryResponse{DataPoints: result}
 	if e := mctx.ml.Debug(); e.Enabled() {
 		e.RawJSON("ret", logger.Proto(qr)).Msg("got a measure")
@@ -784,6 +847,17 @@ func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria 
 		}
 	}
 	return
+}
+
+// measureExecutionError preserves resource/cancellation identity across the local
+// bus while retaining the native validation-error body expected by direct callers.
+func measureExecutionError(err error) error {
+	if errors.Is(err, vectorized.ErrMemoryBudgetExceeded) || errors.Is(err, protector.ErrQueryResourceExhausted) ||
+		errors.Is(err, protector.ErrQueryWindowPressure) || errors.Is(err, protector.ErrQueryTooLarge) ||
+		errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return common.NewError("%v", err)
 }
 
 type measureInternalQueryProcessor struct {

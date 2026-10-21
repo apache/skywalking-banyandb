@@ -139,6 +139,12 @@ type colPlan struct {
 // borrows from another process's or pool's memory is copied into the frame, so the frame
 // references nothing outside itself.
 func (c Codec) EncodeColumnar(b *vectorized.RecordBatch) ([]byte, error) {
+	return c.EncodeColumnarWithReservation(b, nil)
+}
+
+// EncodeColumnarWithReservation calls reserve with the exact frame capacity before
+// allocating its output. The caller accounts for planning metadata separately.
+func (c Codec) EncodeColumnarWithReservation(b *vectorized.RecordBatch, reserve func(int) error) ([]byte, error) {
 	if c.ColumnarWireVersion == 0 {
 		return nil, errors.New("vectorized.frame: codec has no columnar wire version")
 	}
@@ -190,6 +196,11 @@ func (c Codec) EncodeColumnar(b *vectorized.RecordBatch) ([]byte, error) {
 		}
 	}
 
+	if reserve != nil {
+		if err := reserve(total); err != nil {
+			return nil, err
+		}
+	}
 	out := make([]byte, 0, total)
 	out = append(out, c.Magic[:]...)
 	out = append(out, c.ColumnarWireVersion)

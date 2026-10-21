@@ -73,6 +73,7 @@ type distributedRowsSpec struct {
 	OrderByColIdx  int
 	Desc           bool
 	IndexMode      bool
+	BorrowOutput   bool
 }
 
 // distributedRowKey keys the per-window dedup map. Two rows with the same
@@ -314,15 +315,16 @@ func runDistributedRowMerge(
 	rowWidth := estimateRowWidth(schema)
 
 	emitter := &distributedRowEmitter{
-		pool:      pool,
-		schema:    schema,
-		batchSize: batchSize,
-		tracker:   spec.Tracker,
-		rowWidth:  rowWidth,
-		seenSID:   make(map[seenSIDKey]struct{}),
-		indexMode: spec.IndexMode,
-		window:    make(map[distributedRowKey]*distributedRowItem),
-		noDedup:   schema.SeriesIDIndex() < 0 || schema.VersionIndex() < 0,
+		pool:         pool,
+		schema:       schema,
+		batchSize:    batchSize,
+		tracker:      spec.Tracker,
+		rowWidth:     rowWidth,
+		seenSID:      make(map[seenSIDKey]struct{}),
+		indexMode:    spec.IndexMode,
+		borrowOutput: spec.BorrowOutput,
+		window:       make(map[distributedRowKey]*distributedRowItem),
+		noDedup:      schema.SeriesIDIndex() < 0 || schema.VersionIndex() < 0,
 	}
 	defer func() {
 		if retErr != nil {
@@ -514,19 +516,22 @@ func resolveDistributedSortColumn(schema *vectorized.BatchSchema, spec distribut
 // dedup map, the current in-progress output batch, the cross-window seenSID
 // guard for index-mode queries, and the returned batch list.
 type distributedRowEmitter struct {
-	pool       *vectorized.BatchPool
-	schema     *vectorized.BatchSchema
-	tracker    *vectorized.MemoryTracker
-	seenSID    map[seenSIDKey]struct{}
-	window     map[distributedRowKey]*distributedRowItem
-	current    *vectorized.RecordBatch
-	windowKey  []byte
-	output     []*vectorized.RecordBatch
-	batchSize  int
-	rowWidth   int64
-	indexMode  bool
-	windowOpen bool
-	noDedup    bool
+	pool                      *vectorized.BatchPool
+	schema                    *vectorized.BatchSchema
+	tracker                   *vectorized.MemoryTracker
+	seenSID                   map[seenSIDKey]struct{}
+	window                    map[distributedRowKey]*distributedRowItem
+	current                   *vectorized.RecordBatch
+	pending                   *vectorized.RecordBatch
+	windowKey                 []byte
+	output                    []*vectorized.RecordBatch
+	batchSize                 int
+	rowWidth                  int64
+	pendingStart, pendingRows int
+	indexMode                 bool
+	borrowOutput              bool
+	windowOpen                bool
+	noDedup                   bool
 }
 
 // accept adds an incoming row to the current sort-group dedup map. The window
@@ -595,6 +600,12 @@ func (e *distributedRowEmitter) flushWindow() error {
 // reservation so the tracker bounds in-transit batches without
 // double-counting once they reach the caller).
 func (e *distributedRowEmitter) appendRowToCurrent(row *distributedRowItem) error {
+	if e.borrowOutput && e.current == nil {
+		handled, err := e.appendBorrowedRow(row)
+		if handled || err != nil {
+			return err
+		}
+	}
 	if e.current == nil {
 		e.current = e.pool.Get()
 	}
@@ -622,6 +633,9 @@ func (e *distributedRowEmitter) appendRowToCurrent(row *distributedRowItem) erro
 // to the output, and releases the reservation. Net effect: while the merger
 // holds an in-progress batch we have one batch worth of bytes reserved.
 func (e *distributedRowEmitter) finalizeBatch() error {
+	if e.pendingRows > 0 {
+		return e.finalizeBorrowedRun()
+	}
 	if e.current == nil || e.current.Len == 0 {
 		if e.current != nil {
 			e.pool.Put(e.current)

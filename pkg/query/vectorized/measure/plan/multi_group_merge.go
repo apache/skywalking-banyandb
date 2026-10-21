@@ -36,7 +36,7 @@ import (
 // MultiGroupMerge merges the per-group batch results of a local multi-group
 // measure query. It derives the per-group request, so every group returns enough
 // rows and the order-by column, runs the shared k-way row merger over the groups'
-// batches, and converts the merged batches to an MIterator exactly once.
+// batches, and exposes the merged batches before final row serialization.
 //
 // A result that keeps the series-id, timestamp and version columns (plain rows,
 // Top and raw GroupBy) is merged by sort key with version dedup. A time-bucketed
@@ -63,6 +63,7 @@ type MultiGroupMerge struct {
 // NewMultiGroupMerge resolves how the groups of req are merged. schemas and
 // measureSchemas are the per-group logical and measure schemas in request order.
 func NewMultiGroupMerge(
+	ctx context.Context,
 	req *measurev1.QueryRequest,
 	schemas []logical.Schema,
 	measureSchemas []*databasev1.Measure,
@@ -72,7 +73,7 @@ func NewMultiGroupMerge(
 		groupReq:  req,
 		cfg:       cfg,
 		hidden:    logical.NewHiddenTagSet(),
-		tracker:   vectorized.NewMemoryTracker(int64(cfg.QueryMemoryMiB) * 1024 * 1024),
+		tracker:   vectorized.QueryMemoryTracker(ctx, int64(cfg.QueryMemoryMiB)*1024*1024),
 		plainRows: req.GetGroupBy() == nil && req.GetAgg() == nil && req.GetTop() == nil,
 		offset:    req.GetOffset(),
 		limit:     req.GetLimit(),
@@ -134,15 +135,23 @@ func resolveMultiGroupOrderBy(schemas []logical.Schema, measureSchemas []*databa
 // GroupRequest returns the request every group is dispatched with.
 func (m *MultiGroupMerge) GroupRequest() *measurev1.QueryRequest { return m.groupReq }
 
-// Tracker returns the memory tracker to hand to DispatchBatches for every group.
+// Tracker returns the shared query memory tracker used by collection and merging.
 func (m *MultiGroupMerge) Tracker() *vectorized.MemoryTracker { return m.tracker }
 
-// Merge merges the groups' batches and returns the result as one MIterator. It
-// takes ownership of groups: they are released when Merge fails and when the
-// returned iterator is closed. The context is checked while reshaping and merging.
+// Merge returns a native iterator over merged batches, transferring Close ownership.
 func (m *MultiGroupMerge) Merge(ctx context.Context, groups []*GroupBatches) (executor.MIterator, error) {
+	result, err := m.MergeBatches(ctx, groups)
+	if err != nil {
+		return nil, err
+	}
+	return result.NativeIterator(ctx)
+}
+
+// MergeBatches takes ownership of groups and returns their merged native batches.
+// Groups and reservations are released on failure or when the result is closed.
+func (m *MultiGroupMerge) MergeBatches(ctx context.Context, groups []*GroupBatches) (*BatchResult, error) {
 	var reserved int64
-	fail := func(err error) (executor.MIterator, error) {
+	fail := func(err error) (*BatchResult, error) {
 		m.tracker.Release(reserved)
 		for _, group := range groups {
 			group.Release()
@@ -155,7 +164,7 @@ func (m *MultiGroupMerge) Merge(ctx context.Context, groups []*GroupBatches) (ex
 		hidden.Add(tag)
 	}
 	for _, group := range groups {
-		if group.Schema != nil && len(group.Batches) > 0 {
+		if group.Schema != nil {
 			schemas = append(schemas, group.Schema)
 		}
 		for tag := range group.Hidden {
@@ -166,7 +175,7 @@ func (m *MultiGroupMerge) Merge(ctx context.Context, groups []*GroupBatches) (ex
 		for _, group := range groups {
 			group.Release()
 		}
-		return emptyMIterator{}, nil
+		return NewBatchResult(ctx, &batchSliceSource{schema: vectorized.NewBatchSchema(nil)}, vectorized.NewBatchSchema(nil), m.cfg.BatchSize)
 	}
 	merged, unionErr := unionGroupSchemas(schemas)
 	if unionErr != nil {
@@ -188,6 +197,7 @@ func (m *MultiGroupMerge) Merge(ctx context.Context, groups []*GroupBatches) (ex
 			BatchSize:     m.cfg.BatchSize,
 			OrderByColIdx: -1,
 			Interrupt:     ctx.Err,
+			Tracker:       m.tracker,
 		}
 		if m.orderBy != nil {
 			spec.OrderByFamily = m.orderBy.family
@@ -208,6 +218,7 @@ func (m *MultiGroupMerge) Merge(ctx context.Context, groups []*GroupBatches) (ex
 			return fail(fmt.Errorf("vec multi-group merge: %w", reserveErr))
 		}
 		reserved += keyBytes
+		// Keep the shared merger's transient batch guard in addition to retained output.
 		var mergeErr error
 		output, mergeErr = mergeBatchSources(sources, merged, spec)
 		if mergeErr != nil {
@@ -230,13 +241,13 @@ func (m *MultiGroupMerge) Merge(ctx context.Context, groups []*GroupBatches) (ex
 		releaseBatches(output)
 		return fail(fmt.Errorf("vec multi-group merge: %w", ctxErr))
 	}
-	iter, iterErr := m.iteratorFromBatches(ctx, output, merged, offset, limit)
-	if iterErr != nil {
-		return fail(iterErr)
+	result, resultErr := m.resultFromBatches(ctx, output, merged, offset, limit, groups, reserved)
+	if resultErr != nil {
+		return nil, resultErr
 	}
-	var result executor.MIterator = &groupReleasingIterator{inner: iter, groups: groups, tracker: m.tracker, reserved: reserved}
 	if !hidden.IsEmpty() {
-		result = &hiddenTagsMIterator{inner: result, hiddenTags: hidden}
+		projected := newHiddenBatchProjection(result, hidden)
+		return NewBatchResult(ctx, projected, projected.OutputSchema(), m.cfg.BatchSize)
 	}
 	return result, nil
 }
@@ -259,28 +270,25 @@ func (m *MultiGroupMerge) sortKeyBytes(sources []decodedBatchSource, merged *vec
 	return total
 }
 
-// iteratorFromBatches turns the merged batches into an MIterator, applying the
-// offset and limit once. It owns batches: a failed build releases them.
-func (m *MultiGroupMerge) iteratorFromBatches(
-	ctx context.Context,
-	batches []*vectorized.RecordBatch,
-	schema *vectorized.BatchSchema,
-	offset, limit uint32,
-) (*vmeasure.VectorizedMIterator, error) {
-	builder := vectorized.NewPipelineBuilder().WithMemoryTracker(vectorized.NewMemoryTracker(int64(m.cfg.QueryMemoryMiB) * 1024 * 1024))
-	builder.From(&batchSliceSource{batches: batches, schema: schema})
+// resultFromBatches applies pagination while keeping the result in batches.
+func (m *MultiGroupMerge) resultFromBatches(ctx context.Context, batches []*vectorized.RecordBatch,
+	schema *vectorized.BatchSchema, offset, limit uint32, groups []*GroupBatches, reserved int64,
+) (*BatchResult, error) {
+	source := &groupReleasingSource{
+		PullOperator: &batchSliceSource{batches: batches, schema: schema}, groups: groups, tracker: m.tracker, reserved: reserved,
+	}
+	builder := vectorized.NewPipelineBuilder().WithMemoryTracker(m.tracker).From(source)
 	builder.Apply(vmeasure.NewBatchLimit(schema, offset, limit))
-	pipeline, buildErr := builder.Build()
-	if buildErr != nil {
-		releaseBatches(batches)
-		return nil, fmt.Errorf("vec multi-group merge: build output pipeline: %w", buildErr)
+	pipeline, err := builder.Build()
+	if err != nil {
+		_ = source.Close()
+		return nil, fmt.Errorf("vec multi-group merge: build output pipeline: %w", err)
 	}
-	if initErr := pipeline.Init(ctx); initErr != nil {
+	if err = pipeline.Init(ctx); err != nil {
 		_ = pipeline.Close()
-		return nil, fmt.Errorf("vec multi-group merge: init output pipeline: %w", initErr)
+		return nil, fmt.Errorf("vec multi-group merge: init output pipeline: %w", err)
 	}
-	pool := vectorized.NewBatchPool(schema, m.cfg.BatchSize)
-	return vmeasure.NewIteratorFromPipeline(ctx, pipeline, schema, pool), nil
+	return NewBatchResult(ctx, &pipelineBatchSource{pipeline: pipeline, schema: schema}, schema, m.cfg.BatchSize)
 }
 
 // reshapeGroupBatches aligns every group's batches to the merged schema, null-filling
@@ -354,35 +362,83 @@ func unionGroupSchemas(schemas []*vectorized.BatchSchema) (*vectorized.BatchSche
 	return vectorized.NewBatchSchema(cols), nil
 }
 
-// groupReleasingIterator closes the groups' plans once the merged result is closed.
-type groupReleasingIterator struct {
+// groupReleasingSource keeps storage owners alive through final batch consumption.
+type groupReleasingSource struct {
+	vectorized.PullOperator
 	tracker  *vectorized.MemoryTracker
-	inner    *vmeasure.VectorizedMIterator
 	groups   []*GroupBatches
 	reserved int64
 }
 
-func (g *groupReleasingIterator) Next() bool { return g.inner.Next() }
-
-func (g *groupReleasingIterator) Current() []*measurev1.InternalDataPoint { return g.inner.Current() }
-
-// Pipeline implements vmeasure.RawFrameSource: the merged batches' output pipeline.
-func (g *groupReleasingIterator) Pipeline() *vectorized.Pipeline { return g.inner.Pipeline() }
-
-// Schema implements vmeasure.RawFrameSource: the merged schema every emitted batch carries.
-func (g *groupReleasingIterator) Schema() *vectorized.BatchSchema { return g.inner.Schema() }
-
-// EmitFrame implements vmeasure.FrameEmitter by draining the merged pipeline.
-func (g *groupReleasingIterator) EmitFrame(ctx context.Context) ([]byte, error) {
-	return g.inner.EmitFrame(ctx)
-}
-
-func (g *groupReleasingIterator) Close() error {
-	closeErr := g.inner.Close()
+func (g *groupReleasingSource) Close() error {
+	err := g.PullOperator.Close()
 	for _, group := range g.groups {
 		group.Release()
 	}
+	g.groups = nil
 	g.tracker.Release(g.reserved)
 	g.reserved = 0
-	return closeErr
+	return err
+}
+
+// GroupBatches owns copies of one group's borrowed batch descriptors and columns.
+// The native result stays open until Release to retain any borrowed cell payloads.
+type GroupBatches struct {
+	tracker    *vectorized.MemoryTracker
+	closer     *BatchResult
+	Schema     *vectorized.BatchSchema
+	Hidden     logical.HiddenTagSet
+	PlanString string
+	Batches    []*vectorized.RecordBatch
+	reserved   int64
+}
+
+// Release closes the native group and releases copied output and reservations.
+func (g *GroupBatches) Release() {
+	if g == nil {
+		return
+	}
+	releaseBatches(g.Batches)
+	g.Batches = nil
+	if g.closer != nil {
+		_ = g.closer.Close()
+		g.closer = nil
+	}
+	if g.tracker != nil {
+		g.tracker.Release(g.reserved)
+		g.reserved = 0
+	}
+}
+
+// Collect takes ownership of a native group result without materializing rows.
+func (m *MultiGroupMerge) Collect(ctx context.Context, result *BatchResult, planStr string) (*GroupBatches, error) {
+	group := &GroupBatches{closer: result, tracker: m.tracker, Schema: result.OutputSchema(), PlanString: planStr}
+	for {
+		raw, err := result.NextBatch(ctx)
+		if err != nil {
+			group.Release()
+			return nil, fmt.Errorf("vec dispatch: read batches: %w", err)
+		}
+		if raw == nil {
+			return group, nil
+		}
+		bytes := batchBytes(raw)
+		if err = m.tracker.Reserve(bytes); err != nil {
+			group.Release()
+			return nil, fmt.Errorf("vec dispatch: read batches: %w", err)
+		}
+		group.reserved += bytes
+		// NextBatch lends descriptors and columns only until the next pull. Copy both
+		// before advancing and transfer the owners that pin borrowed cell payloads.
+		copyBatch, err := reshapeToMergedSchema(raw, raw.Schema)
+		if err != nil {
+			group.Release()
+			return nil, err
+		}
+		copyBatch.Selection = append([]uint16(nil), raw.Selection...)
+		if raw.Selection != nil && len(raw.Selection) == 0 {
+			copyBatch.Selection = []uint16{}
+		}
+		group.Batches = append(group.Batches, copyBatch)
+	}
 }

@@ -80,9 +80,18 @@ func (bbd *BytesBlockDecoder) Reset() {
 	bbd.data = bbd.data[:0]
 }
 
+// ResetBounded resets the decoder and discards cached backing larger than limit.
+// It lets a query reserve a bound before reusing buffers from a larger decode.
+func (bbd *BytesBlockDecoder) ResetBounded(limit int) {
+	bbd.Reset()
+	if cap(bbd.data) > limit {
+		bbd.data = nil
+	}
+}
+
 // Decode decodes a block of strings from src.
 func (bbd *BytesBlockDecoder) Decode(dst [][]byte, src []byte, itemsCount uint64) ([][]byte, error) {
-	u64List := GenerateUint64List(0)
+	u64List := generateBoundedUint64List()
 	defer ReleaseUint64List(u64List)
 
 	var tail []byte
@@ -128,7 +137,7 @@ func (bbd *BytesBlockDecoder) Decode(dst [][]byte, src []byte, itemsCount uint64
 
 // DecodeWithTail decodes a block of strings from src and returns the remaining tail.
 func (bbd *BytesBlockDecoder) DecodeWithTail(dst [][]byte, src []byte, itemsCount uint64) ([][]byte, []byte, error) {
-	u64List := GenerateUint64List(0)
+	u64List := generateBoundedUint64List()
 	defer ReleaseUint64List(u64List)
 
 	var tail []byte

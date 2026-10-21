@@ -19,6 +19,7 @@ package plan
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -138,15 +139,19 @@ func TestMultiGroupMerge_MaterializesRowsOnce(t *testing.T) {
 		TimeRange:       &modelv1.TimeRange{Begin: timestamppb.New(time.Unix(0, 0)), End: timestamppb.New(time.Unix(1, 0))},
 		Limit:           10,
 	}
-	merge, mergeErr := NewMultiGroupMerge(req, schemas, measureSchemas, cfg)
+	merge, mergeErr := NewMultiGroupMerge(context.Background(), req, schemas, measureSchemas, cfg)
 	if mergeErr != nil {
 		t.Fatalf("NewMultiGroupMerge: %v", mergeErr)
 	}
 	serializedBefore := measure.SerializedRowCount()
 	var batches []*GroupBatches
 	for i, g := range groups {
-		group, dispatchErr := DispatchBatches(context.Background(), merge.GroupRequest(),
-			&commonv1.Metadata{Name: "demo", Group: g.schema.GetMetadata().GetGroup()}, g.schema, schemas[i], g, cfg, false, true, merge.Tracker())
+		result, planStr, dispatchErr := DispatchBatches(context.Background(), merge.GroupRequest(),
+			&commonv1.Metadata{Name: "demo", Group: g.schema.GetMetadata().GetGroup()}, g.schema, schemas[i], g, cfg, false, true)
+		var group *GroupBatches
+		if dispatchErr == nil {
+			group, dispatchErr = merge.Collect(context.Background(), result, planStr)
+		}
 		if dispatchErr != nil {
 			t.Fatalf("DispatchBatches: %v", dispatchErr)
 		}
@@ -199,8 +204,12 @@ func mgDispatchAll(t *testing.T, merge *MultiGroupMerge, groups []*mgBatchEC, sc
 	t.Helper()
 	var batches []*GroupBatches
 	for i, g := range groups {
-		group, dispatchErr := DispatchBatches(context.Background(), merge.GroupRequest(),
-			&commonv1.Metadata{Name: "demo", Group: g.schema.GetMetadata().GetGroup()}, g.schema, schemas[i], g, cfg, false, true, merge.Tracker())
+		result, planStr, dispatchErr := DispatchBatches(context.Background(), merge.GroupRequest(),
+			&commonv1.Metadata{Name: "demo", Group: g.schema.GetMetadata().GetGroup()}, g.schema, schemas[i], g, cfg, false, true)
+		var group *GroupBatches
+		if dispatchErr == nil {
+			group, dispatchErr = merge.Collect(context.Background(), result, planStr)
+		}
 		if dispatchErr != nil {
 			for _, obtained := range batches {
 				obtained.Release()
@@ -229,7 +238,7 @@ func TestMultiGroupMerge_RetainedMemoryIsBounded(t *testing.T) {
 		{schema: testMeasureSchemaForGroup("b"), batches: rows(100000)},
 	}
 	schemas, measureSchemas := mgTestSetup(t, groups)
-	merge, mergeErr := NewMultiGroupMerge(mgTestRequest(20000), schemas, measureSchemas, cfg)
+	merge, mergeErr := NewMultiGroupMerge(context.Background(), mgTestRequest(20000), schemas, measureSchemas, cfg)
 	if mergeErr != nil {
 		t.Fatalf("NewMultiGroupMerge: %v", mergeErr)
 	}
@@ -261,7 +270,7 @@ func TestMultiGroupMerge_EmitFrameDecodesAndReleases(t *testing.T) {
 		{schema: testMeasureSchemaForGroup("b"), batches: [][]mgRowSpec{{{ts: 10, sid: 7, version: 3, value: 300}}}},
 	}
 	schemas, measureSchemas := mgTestSetup(t, groups)
-	merge, mergeErr := NewMultiGroupMerge(mgTestRequest(10), schemas, measureSchemas, cfg)
+	merge, mergeErr := NewMultiGroupMerge(context.Background(), mgTestRequest(10), schemas, measureSchemas, cfg)
 	if mergeErr != nil {
 		t.Fatalf("NewMultiGroupMerge: %v", mergeErr)
 	}
@@ -319,7 +328,7 @@ func TestMultiGroupMerge_VariableSizePayloadIsCharged(t *testing.T) {
 		{schema: testMeasureSchemaForGroup("b"), batches: [][]mgRowSpec{batch}},
 	}
 	schemas, measureSchemas := mgTestSetup(t, groups)
-	merge, mergeErr := NewMultiGroupMerge(mgTestRequest(1000), schemas, measureSchemas, cfg)
+	merge, mergeErr := NewMultiGroupMerge(context.Background(), mgTestRequest(1000), schemas, measureSchemas, cfg)
 	if mergeErr != nil {
 		t.Fatalf("NewMultiGroupMerge: %v", mergeErr)
 	}
@@ -332,4 +341,120 @@ func TestMultiGroupMerge_VariableSizePayloadIsCharged(t *testing.T) {
 	if groups[0].result.released == 0 {
 		t.Fatal("the group that failed its reservation must be released")
 	}
+}
+
+func TestMultiGroupMerge_PreservesEmptyGroupSchemas(t *testing.T) {
+	for _, withRows := range []bool{false, true} {
+		t.Run(fmt.Sprintf("rows=%t", withRows), func(t *testing.T) {
+			ctx := vectorized.WithQueryMemoryTracker(context.Background(), 16<<20)
+			cfg := measure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 16}
+			schema := distributedRowsTestSchema()
+			defs := append([]vectorized.ColumnDef(nil), schema.Columns...)
+			defs = append(defs, vectorized.ColumnDef{Name: "zone", TagFamily: "extra", Role: vectorized.RoleTag, Type: vectorized.ColumnTypeString})
+			groups := []*GroupBatches{{Schema: schema}, {Schema: vectorized.NewBatchSchema(defs)}}
+			if withRows {
+				groups[0].Batches = []*vectorized.RecordBatch{buildDistributedRowsBatchDirect(schema,
+					[]rowMergeOutput{{ts: 10, sid: 1, ver: 1, value: 42}})}
+			}
+			merge, err := NewMultiGroupMerge(ctx, &measurev1.QueryRequest{Limit: 10}, nil, nil, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := merge.MergeBatches(ctx, groups)
+			if err != nil {
+				t.Fatal(err)
+			}
+			idx, ok := result.OutputSchema().TagIndex("extra", "zone")
+			if !ok {
+				t.Fatal("column defined by empty group was dropped")
+			}
+			batch, err := result.NextBatch(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if withRows && (batch == nil || !batch.Columns[idx].IsNull(0)) {
+				t.Fatal("missing tag was not null-filled")
+			}
+			if !withRows && batch != nil {
+				t.Fatal("empty groups produced rows")
+			}
+			if err = result.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if used := merge.Tracker().Used(); used != 0 {
+				t.Fatalf("retained %d bytes after close", used)
+			}
+		})
+	}
+}
+
+func TestMultiGroupMerge_CollectCopiesBorrowedBatches(t *testing.T) {
+	ctx := vectorized.WithQueryMemoryTracker(context.Background(), 16<<20)
+	cfg := measure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 16}
+	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{{Name: "value", Role: vectorized.RoleField, Type: vectorized.ColumnTypeInt64}})
+	owner := &standaloneTestOwner{}
+	source := &recycledGroupSource{schema: schema, batch: vectorized.NewRecordBatch(schema, 2), owner: owner}
+	result, err := NewBatchResult(ctx, source, schema, cfg.BatchSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	merge, err := NewMultiGroupMerge(ctx, &measurev1.QueryRequest{}, nil, nil, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	group, err := merge.Collect(ctx, result, "recycled")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(group.Batches) != 2 {
+		t.Fatalf("got %d batches", len(group.Batches))
+	}
+	for idx, batch := range group.Batches {
+		value := batch.Columns[0].(*vectorized.TypedColumn[int64]).Data()[0]
+		if value != int64(idx+1) || batch.Selection[0] != uint16(idx) {
+			t.Fatalf("borrowed batch changed after next pull: value=%d selection=%v", value, batch.Selection)
+		}
+	}
+	if owner.refs != 2 {
+		t.Fatalf("collected batches retained %d owner pins", owner.refs)
+	}
+	group.Release()
+	group.Release()
+	if owner.refs != 0 || merge.Tracker().Used() != 0 || !source.closed {
+		t.Fatal("collected group leaked resources")
+	}
+}
+
+type recycledGroupSource struct {
+	schema *vectorized.BatchSchema
+	batch  *vectorized.RecordBatch
+	owner  *standaloneTestOwner
+	next   int
+	closed bool
+}
+
+func (s *recycledGroupSource) Init(ctx context.Context) error        { return ctx.Err() }
+func (s *recycledGroupSource) OutputSchema() *vectorized.BatchSchema { return s.schema }
+func (s *recycledGroupSource) NextBatch(context.Context) (*vectorized.RecordBatch, error) {
+	if s.next >= 2 {
+		return nil, nil
+	}
+	col := s.batch.Columns[0].(*vectorized.TypedColumn[int64])
+	col.Reset()
+	col.Append(int64(s.next + 1))
+	col.Append(int64(s.next + 11))
+	s.batch.Len = 2
+	if s.batch.Selection == nil {
+		s.batch.Selection = []uint16{0}
+	}
+	s.batch.Selection[0] = uint16(s.next)
+	s.batch.Owners.Pin(s.owner)
+	s.next++
+	return s.batch, nil
+}
+
+func (s *recycledGroupSource) Close() error {
+	s.batch.ReleaseOwners()
+	s.closed = true
+	return nil
 }

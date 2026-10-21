@@ -40,14 +40,15 @@ import (
 )
 
 const (
-	benchGroupName   = "sw_metric"
-	benchMeasureName = "service_cpm_minute"
-	benchTagFamily   = "default"
-	benchTagID       = "id"
-	benchTagEntityID = "entity_id"
-	benchFieldTotal  = "total"
-	benchFieldValue  = "value"
-	benchServiceMod  = 16
+	benchGroupName    = "sw_metric"
+	benchMeasureName  = "service_cpm_minute"
+	benchTagFamily    = "default"
+	benchTagID        = "id"
+	benchTagEntityID  = "entity_id"
+	benchFieldTotal   = "total"
+	benchFieldValue   = "value"
+	benchServiceMod   = 16
+	qlbT02WideMeasure = "qlb_t02_wide"
 )
 
 type writeSummary struct {
@@ -68,7 +69,12 @@ func writeBenchmarkData(ctx context.Context, conn *grpc.ClientConn, cfg Config, 
 	if cfg.Engine == engineTrace {
 		return writeTraceData(ctx, conn, cfg, cardinality, base)
 	}
-	return writeMeasureData(ctx, conn, cfg, cardinality, base)
+	summary, err := writeMeasureData(ctx, conn, cfg, cardinality, base)
+	if err == nil && cfg.Scenario == ScenarioQLBT02 {
+		entities, points := splitCardinality(cardinality)
+		err = writeEntityRangeShape(ctx, measurev1.NewMeasureServiceClient(conn), 0, entities, points, base, true)
+	}
+	return summary, err
 }
 
 func writeMeasureData(ctx context.Context, conn *grpc.ClientConn, cfg Config, cardinality int, base time.Time) (writeSummary, error) {
@@ -108,6 +114,10 @@ func writeMeasureData(ctx context.Context, conn *grpc.ClientConn, cfg Config, ca
 }
 
 func writeEntityRange(ctx context.Context, client measurev1.MeasureServiceClient, startEntity, endEntity, pointsEach int, base time.Time) error {
+	return writeEntityRangeShape(ctx, client, startEntity, endEntity, pointsEach, base, false)
+}
+
+func writeEntityRangeShape(ctx context.Context, client measurev1.MeasureServiceClient, startEntity, endEntity, pointsEach int, base time.Time, wide bool) error {
 	stream, streamErr := client.Write(ctx)
 	if streamErr != nil {
 		return fmt.Errorf("open measure write stream: %w", streamErr)
@@ -132,6 +142,10 @@ func writeEntityRange(ctx context.Context, client measurev1.MeasureServiceClient
 	}()
 	metadata := &commonv1.Metadata{Name: benchMeasureName, Group: benchGroupName}
 	spec := benchmarkDataPointSpec()
+	if wide {
+		metadata.Name = qlbT02WideMeasure
+		spec.FieldNames = qlbT02WideFields()
+	}
 	for entityIdx := startEntity; entityIdx < endEntity; entityIdx++ {
 		serviceID := fmt.Sprintf("svc%d", entityIdx%benchServiceMod)
 		entityID := fmt.Sprintf("entity_%d", entityIdx)
@@ -142,6 +156,9 @@ func writeEntityRange(ctx context.Context, client measurev1.MeasureServiceClient
 				DataPointSpec: spec,
 				DataPoint:     benchmarkDataPoint(base, serviceID, entityID, entityIdx, pointIdx),
 				MessageId:     messageID,
+			}
+			if wide {
+				req.DataPoint.Fields = qlbT02WideValues(entityIdx, pointIdx)
 			}
 			if sendErr := stream.Send(req); sendErr != nil {
 				return fmt.Errorf("send measure write request: %w", sendErr)
@@ -154,6 +171,22 @@ func writeEntityRange(ctx context.Context, client measurev1.MeasureServiceClient
 		return fmt.Errorf("close measure write stream: %w", closeErr)
 	}
 	return <-recvErrCh
+}
+
+func qlbT02WideFields() []string {
+	fields := make([]string, 16)
+	for idx := range fields {
+		fields[idx] = fmt.Sprintf("wide_%02d", idx)
+	}
+	return fields
+}
+
+func qlbT02WideValues(entity, point int) []*modelv1.FieldValue {
+	fields := make([]*modelv1.FieldValue, 16)
+	for idx := range fields {
+		fields[idx] = intFieldValue(int64(entity*100000 + point*16 + idx))
+	}
+	return fields
 }
 
 func benchmarkDataPointSpec() *measurev1.DataPointSpec {

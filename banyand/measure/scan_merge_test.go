@@ -58,7 +58,13 @@ func oapFixture(t testing.TB, series int) *fxFixture {
 			p5 = append(p5, fxRange{sid, 1, 50, 1})
 		}
 	}
-	return newFixture(t, p1, p2, p3, p4, p5)
+	fixture := newFixture(t, p1, p2, p3, p4, p5)
+	if series == 100 {
+		// Semantic comparisons retain up to 65000 wide protobuf rows. Their
+		// conservative serialization reservation exceeds the production cap.
+		fixture.memoryAllowance = 1 << 30
+	}
+	return fixture
 }
 
 // staggeredFixture has series whose ranges start at different times and overlap

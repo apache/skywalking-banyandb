@@ -18,17 +18,25 @@
 package vectorized
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
+
+	"github.com/apache/skywalking-banyandb/pkg/query"
 )
+
+// ErrMemoryBudgetExceeded indicates exhaustion of the shared query memory allowance.
+var ErrMemoryBudgetExceeded = errors.New("memory budget exceeded")
 
 // MemoryTracker is a lock-free per-query memory budget.
 //
 // Reserve grows used iff used+bytes <= limit; otherwise it returns an error and
 // leaves used unchanged. Release shrinks used. Used reads the current value.
 type MemoryTracker struct {
-	used  atomic.Int64
-	limit int64
+	charge func(uint64) error
+	used   atomic.Int64
+	limit  int64
 }
 
 // NewMemoryTracker returns a tracker with the given byte limit.
@@ -51,11 +59,18 @@ func (m *MemoryTracker) Reserve(bytes int64) error {
 	for {
 		current := m.used.Load()
 		next := current + bytes
-		if next > m.limit {
-			return fmt.Errorf("memory budget exceeded: used %d + requested %d > limit %d",
-				current, bytes, m.limit)
+		if bytes > m.limit-current {
+			return fmt.Errorf("%w: used %d + requested %d > limit %d",
+				ErrMemoryBudgetExceeded, current, bytes, m.limit)
 		}
 		if m.used.CompareAndSwap(current, next) {
+			if m.charge != nil {
+				if err := m.charge(uint64(bytes)); err != nil {
+					m.used.Add(-bytes)
+					return err
+				}
+			}
+			recordMemoryReservation(bytes)
 			return nil
 		}
 	}
@@ -71,9 +86,60 @@ func (m *MemoryTracker) Release(bytes int64) {
 		return
 	}
 	m.used.Add(-bytes)
+	recordMemoryRelease(bytes)
 }
 
 // Used returns the current outstanding reservation.
 func (m *MemoryTracker) Used() int64 {
 	return m.used.Load()
+}
+
+type memoryTrackerContextKey struct{}
+
+// WithQueryMemoryTracker installs one shared tracker unless the query already owns one.
+// Admission lease charging is conservative and monotonic; live tracker reservations are refundable.
+func WithQueryMemoryTracker(ctx context.Context, limit int64) context.Context {
+	if _, ok := ctx.Value(memoryTrackerContextKey{}).(*MemoryTracker); ok {
+		return ctx
+	}
+
+	if scope, ok := ctx.Value(queryMemoryScopeKey{}).(*queryMemoryScope); ok {
+		return context.WithValue(ctx, memoryTrackerContextKey{}, scope.initialize(ctx, limit))
+	}
+	return context.WithValue(ctx, memoryTrackerContextKey{}, newQueryMemoryTracker(ctx, limit))
+}
+
+func newQueryMemoryTracker(ctx context.Context, limit int64) *MemoryTracker {
+	tracker := NewMemoryTracker(limit)
+	lease, admitted := query.BudgetLeaseFromContext(ctx)
+	if admitted {
+		tracker.charge = func(bytes uint64) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := lease.Charge(bytes); err != nil {
+				return err
+			}
+			recordLeaseCharge(bytes)
+			return nil
+		}
+	}
+	return tracker
+}
+
+// QueryMemoryTracker returns the shared query tracker, or a standalone tracker for legacy callers.
+func QueryMemoryTracker(ctx context.Context, limit int64) *MemoryTracker {
+	if tracker, ok := ctx.Value(memoryTrackerContextKey{}).(*MemoryTracker); ok {
+		return tracker
+	}
+	if scope, ok := ctx.Value(queryMemoryScopeKey{}).(*queryMemoryScope); ok {
+		return scope.initialize(ctx, limit)
+	}
+	return NewMemoryTracker(limit)
+}
+
+// QueryMemoryTrackerFromContext returns an installed query tracker without creating one.
+func QueryMemoryTrackerFromContext(ctx context.Context) (*MemoryTracker, bool) {
+	tracker, ok := ctx.Value(memoryTrackerContextKey{}).(*MemoryTracker)
+	return tracker, ok
 }

@@ -302,6 +302,17 @@ func applyTopNOptions(mqo model.MeasureQueryOptions, result *queryResult) {
 	}
 }
 
+func addArrayProjection(projection map[string]struct{}, key index.FieldKey, typ pbv1.ValueType) map[string]struct{} {
+	if typ != pbv1.ValueTypeStrArr && typ != pbv1.ValueTypeInt64Arr {
+		return projection
+	}
+	if projection == nil {
+		projection = make(map[string]struct{})
+	}
+	projection[key.Marshal()] = struct{}{}
+	return projection
+}
+
 type tagNameWithType struct {
 	fieldName string
 	typ       pbv1.ValueType
@@ -313,6 +324,7 @@ func (m *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 	newTagProjection []model.TagProjection, err error,
 ) {
 	var indexProjection []index.FieldKey
+	var multiValueProjection map[string]struct{}
 	fieldToValueType := make(map[string]tagNameWithType)
 	var projectedEntityOffsets map[string]int
 	newTagProjection = make([]model.TagProjection, 0)
@@ -334,6 +346,7 @@ func (m *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 				if fields, ok := is.fieldIndexLocation[tp.Family]; ok {
 					if field, ok := fields[n]; ok {
 						indexProjection = append(indexProjection, field.Key)
+						multiValueProjection = addArrayProjection(multiValueProjection, field.Key, field.Type)
 						fieldToValueType[field.Key.Marshal()] = tagNameWithType{
 							fieldName: n,
 							typ:       field.Type,
@@ -357,11 +370,12 @@ func (m *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 
 	for i := range segments {
 		sd, sortedValues, err := segments[i].IndexDB().Search(ctx, series, storage.IndexSearchOpts{
-			Criteria:    mqo.Criteria,
-			Fields:      mqo.Fields,
-			Order:       mqo.Order,
-			PreloadSize: preloadSize,
-			Projection:  indexProjection,
+			Criteria:             mqo.Criteria,
+			Fields:               mqo.Fields,
+			Order:                mqo.Order,
+			PreloadSize:          preloadSize,
+			Projection:           indexProjection,
+			MultiValueProjection: multiValueProjection,
 		})
 		if err != nil {
 			return nil, nil, nil, nil, nil, nil, err
@@ -422,6 +436,7 @@ func (m *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 				series.ID,
 				series.EntityValues,
 				fieldResult,
+				top.multiValueRow(top.i),
 				projectedEntityOffsets,
 				fieldToValueType,
 				storedIndexValue,
@@ -451,6 +466,7 @@ func (m *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 					sr.SeriesList[j].ID,
 					sr.SeriesList[j].EntityValues,
 					fieldResult,
+					sr.multiValueRow(j),
 					projectedEntityOffsets,
 					fieldToValueType,
 					storedIndexValue,
@@ -466,6 +482,7 @@ func (m *measure) buildStoredIndexValue(
 	seriesID common.SeriesID,
 	entityValues []*modelv1.TagValue,
 	fieldResult map[string][]byte,
+	multiValues map[string][][]byte,
 	projectedEntityOffsets map[string]int,
 	fieldToValueType map[string]tagNameWithType,
 	storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
@@ -491,7 +508,7 @@ func (m *measure) buildStoredIndexValue(
 
 	for f, v := range fieldResult {
 		if tnt, ok := fieldToValueType[f]; ok {
-			tagValues[tnt.fieldName] = mustDecodeTagValue(tnt.typ, v)
+			tagValues[tnt.fieldName] = mustDecodeIndexedTagValue(tnt.typ, v, multiValues[f])
 		} else {
 			logger.Panicf("unknown field %s not found in fieldToValueType", f)
 		}
@@ -511,6 +528,7 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 	is := m.indexSchema.Load().(indexSchema)
 	r := &indexSortResult{}
 	var indexProjection []index.FieldKey
+	var multiValueProjection map[string]struct{}
 	for _, tp := range mqo.TagProjection {
 		tagFamilyLocation := tagFamilyLocation{
 			name:                   tp.Family,
@@ -530,6 +548,7 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 				if fields, ok := is.fieldIndexLocation[tp.Family]; ok {
 					if field, ok := fields[n]; ok {
 						indexProjection = append(indexProjection, field.Key)
+						multiValueProjection = addArrayProjection(multiValueProjection, field.Key, field.Type)
 						tagFamilyLocation.fieldToValueType[n] = tagNameWithType{
 							fieldName: field.Key.Marshal(),
 							typ:       field.Type,
@@ -544,13 +563,14 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 	}
 	var err error
 	opts := storage.IndexSearchOpts{
-		Criteria:         mqo.Criteria,
-		Fields:           mqo.Fields,
-		IndexModeSubject: mqo.Name,
-		Order:            mqo.Order,
-		PreloadSize:      preloadSize,
-		Projection:       indexProjection,
-		TimeRange:        mqo.TimeRange,
+		Criteria:             mqo.Criteria,
+		Fields:               mqo.Fields,
+		IndexModeSubject:     mqo.Name,
+		Order:                mqo.Order,
+		PreloadSize:          preloadSize,
+		Projection:           indexProjection,
+		MultiValueProjection: multiValueProjection,
+		TimeRange:            mqo.TimeRange,
 	}
 	seriesFilter := roaring.NewPostingList()
 	for i := range segments {
@@ -641,6 +661,13 @@ func (m *measure) searchBlocks(ctx context.Context, result *queryResult, sids []
 		return fmt.Errorf("cannot iterate tstIter: %w", tstIter.Error())
 	}
 	result.budget = newScanBudget(quota, m.decodePool)
+	columns := 4 + len(qo.FieldProjection)
+	for _, family := range result.tagProjection {
+		columns += len(family.Names)
+	}
+	if err := result.budget.attachShared(ctx, columns, qo.vectorized.BatchSize, len(result.data)); err != nil {
+		return err
+	}
 	result.admit = func(ctx context.Context) error {
 		if quota >= 0 && totalBlockBytes > uint64(quota) {
 			return fmt.Errorf("block scan quota exceeded: used %d bytes, quota is %d bytes", totalBlockBytes, quota)
@@ -657,6 +684,33 @@ func (m *measure) searchBlocks(ctx context.Context, result *queryResult, sids []
 		result.sidToIndex[si] = i
 	}
 	return nil
+}
+
+// Indexed arrays store each element separately, unlike the delimited data-block
+// encoding. Scalar projections keep the existing last-value-wins behavior.
+func mustDecodeIndexedTagValue(valueType pbv1.ValueType, value []byte, values [][]byte) *modelv1.TagValue {
+	switch valueType {
+	case pbv1.ValueTypeStrArr:
+		if len(values) == 0 {
+			return pbv1.NullTagValue
+		}
+		result := make([]string, len(values))
+		for i, item := range values {
+			result[i] = string(item)
+		}
+		return strArrTagValue(result)
+	case pbv1.ValueTypeInt64Arr:
+		if len(values) == 0 {
+			return pbv1.NullTagValue
+		}
+		result := make([]int64, len(values))
+		for i, item := range values {
+			result[i] = convert.BytesToInt64(item)
+		}
+		return int64ArrTagValue(result)
+	default:
+		return mustDecodeTagValue(valueType, value)
+	}
 }
 
 func mustDecodeTagValue(valueType pbv1.ValueType, value []byte) *modelv1.TagValue {
@@ -844,6 +898,19 @@ func (qr *queryResult) admitWhole(ctx context.Context) error {
 	if err := qr.admit(ctx); err != nil {
 		return err
 	}
+	if qr.budget != nil && qr.budget.shared != nil {
+		for _, bc := range qr.data {
+			if bc.res != nil {
+				continue
+			}
+			amount := qr.budget.sharedBlockBytes(bc)
+			if err := qr.budget.shared.Reserve(amount); err != nil {
+				return err
+			}
+			qr.budget.active.Add(1)
+			bc.res = &scanReservation{budget: qr.budget, sharedBytes: amount}
+		}
+	}
 	qr.admitted = true
 	return nil
 }
@@ -933,6 +1000,7 @@ func (qr *queryResult) Pull() *model.MeasureResult {
 
 func (qr *queryResult) Release() {
 	queryResultTracker.Release(qr)
+	defer qr.budget.releaseWorkspace()
 	if qr.qm != nil {
 		qr.qm.totalQueryResultFinished.Inc(1)
 	}
@@ -1135,7 +1203,7 @@ func (iqr *indexSortResult) copyTo(src *segResult) (dest *model.MeasureResult) {
 			if tnt, ok := iqr.tfl[i].fieldToValueType[n]; ok {
 				tagFamily.Tags = append(tagFamily.Tags, model.Tag{
 					Name:   n,
-					Values: []*modelv1.TagValue{mustDecodeTagValue(tnt.typ, fr[tnt.fieldName])},
+					Values: []*modelv1.TagValue{mustDecodeIndexedTagValue(tnt.typ, fr[tnt.fieldName], src.multiValues(index, tnt.fieldName))},
 				})
 			} else {
 				logger.Panicf("unknown field %s not found in fieldToValueType", n)
@@ -1159,7 +1227,21 @@ type segResult struct {
 	i            int
 }
 
+func (sr *segResult) multiValueRow(row int) map[string][][]byte {
+	if sr.MultiValueFields == nil {
+		return nil
+	}
+	return sr.MultiValueFields[row]
+}
+
+func (sr *segResult) multiValues(row int, field string) [][]byte {
+	return sr.multiValueRow(row)[field]
+}
+
 func (sr *segResult) remove(i int) {
+	if sr.MultiValueFields != nil {
+		sr.MultiValueFields = append(sr.MultiValueFields[:i], sr.MultiValueFields[i+1:]...)
+	}
 	sr.SeriesList = append(sr.SeriesList[:i], sr.SeriesList[i+1:]...)
 	if sr.Fields != nil {
 		sr.Fields = append(sr.Fields[:i], sr.Fields[i+1:]...)

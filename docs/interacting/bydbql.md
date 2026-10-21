@@ -23,7 +23,7 @@ It also provides a specialized syntax for optimized **Top-N** queries against me
 
 ### 2.1. Parser Architecture
 
-BydbQL queries will be processed by a classic three-stage compiler front-end architecture, which ensures modularity and maintainability.
+BydbQL queries pass through lexical analysis, parsing, parameter binding, and schema-aware planning.
 
 ```
 BydbQL Query String
@@ -41,15 +41,15 @@ Abstract Syntax Tree (AST)
 
 - **Lexer**: Breaks the query string into a sequence of tokens.
 - **Parser**: Builds an Abstract Syntax Tree (AST) from the tokens, validating the query's syntax.
-- **Parameter Binding**: Fills the `?` placeholders in the AST from the request's `params` (see section 2.6); it always runs, so a query holding unbound placeholders is rejected.
-- **Transformer**: Traverses the AST, performs semantic analysis using a schema, and transforms the AST into the appropriate target protobuf `Stream/Measure/Property/Traces/TopN Request` message.
+- **Parameter Binding**: Binds `?` placeholders to the request's `params` (see section 2.6) without changing the query text; a query holding unbound placeholders is rejected.
+- **Transformer**: Resolves columns against the schema and produces the appropriate native request. Extended raw measure queries also use a QL plan for projection, time filtering, and pagination before encoding the existing measure response.
 
 ### 2.2. Distinguishing Query Types
 
-BydbQL distinguishes the target data model explicitly through keywords in the `FROM` clause. This allows the parser to apply the correct grammar and transformation rules for the query.
+BydbQL names the target data model in the `FROM` clause. Measure SELECT queries also support the `group.measure` shorthand.
 
 - **Streams**: `FROM STREAM <name> IN <groups>` or `FROM STREAM <name> IN (<groups>)`
-- **Measures**: `FROM MEASURE <name> IN <groups>` or `FROM MEASURE <name> IN (<groups>)`
+- **Measures**: `FROM MEASURE <name> IN <groups>`, `FROM MEASURE <name> IN (<groups>)`, or `FROM <group>.<name>`
 - **Properties**: `FROM PROPERTY <name> IN <groups>` or `FROM PROPERTY <name> IN (<groups>)`
 - **Traces**: `FROM TRACE <name> IN <groups>` or `FROM TRACE <name> IN (<groups>)`
 
@@ -59,11 +59,12 @@ Specialized queries, like Top-N, use a distinct top-level command:
 
 ### 2.3. Required Clauses
 
-In BydbQL, the following clauses are **required** for all queries:
+Every query identifies a source and its groups:
 
 - **`FROM` clause**: Specifies the data model type, resource name, and group list
-- **`IN groups` clause**: Specifies one or more groups to query from. Parentheses around the group list are optional.
-- **`TIME` clause**: Specifies the time range for the query (required for Streams, Measures, Traces, and Top-N queries; not applicable to Property queries)
+- **`IN groups` clause**: Specifies one or more groups for an explicit resource source. Parentheses around the group list are optional. Measure shorthand embeds its single group in `FROM group.measure`.
+
+Measure SELECT queries can specify time bounds in `TIME`, in `WHERE time ...`, or in both clauses. The clauses intersect when combined. See [raw measure query extensions](#55-raw-measure-query-extensions). The other resource forms retain their existing `TIME` syntax; properties have no `TIME` clause.
 
 ### 2.4. Case Sensitivity
 
@@ -207,6 +208,7 @@ Placeholders are accepted in *value* positions only. The complete list, with the
 |---|---|---|
 | `TIME` comparison value | `TIME > ?` | `str` (RFC3339, relative like `-30m`, or `now`), `timestamp` |
 | `TIME BETWEEN` boundaries | `TIME BETWEEN ? AND ?` | same as above; each boundary binds independently |
+| Measure `WHERE time` comparison | `WHERE time >= ? AND time < ?` | `str` (RFC3339/RFC3339Nano or `now`), `timestamp`; relative strings such as `-30m` are not accepted here |
 | Scalar comparison value (`=`, `!=`, `>`, `>=`, `<`, `<=`) | `WHERE service_id = ?` | `str`, `int`, `null` |
 | `IN` / `NOT IN` value list | `IN (?, ?)`, `IN (?)`, `IN ('a', ?)` | `str`, `int`, `null`, `str_array`, `int_array` |
 | `MATCH` value list | `MATCH(?)`, `MATCH(?, 'analyzer')` | `str`, `int`, `null`, `str_array`, `int_array` |
@@ -219,6 +221,8 @@ Placeholders are accepted in *value* positions only. The complete list, with the
 Bound values are kept out of the query text, so the server can group requests by template. One consequence worth knowing: if a query is slow enough to be logged, the server may record a sample of its bound values. By default it records only a digest of each string, never the string itself, and the operator can turn that off entirely or turn it up to verbatim — see [BydbQL Slow Queries](../operation/observability/logging.md#bydbql-slow-queries).
 
 Array expansion: an array parameter bound inside a value list expands in place — `WHERE service_id IN (?)` with a three-entry `str_array` behaves exactly like listing the three strings literally, and literals can be mixed around it (`IN ('a', ?, 'b')`). The container keeps the form a literal query would have: a single-value `HAVING ?` stays a single value unless the array holds multiple entries, while a parenthesized `HAVING (?)` stays a list regardless of the entry count.
+
+Repeated parameterized measure queries can reuse a compiled plan when their query text and schema dependencies remain valid. Each request still binds its own values, evaluates a fresh execution clock, and checks authorization. Reusing a plan does not reuse query results or freeze `now()`.
 
 ### 2.6.2. Unsupported Positions
 
@@ -236,8 +240,8 @@ Note that unlike some SQL implementations where `ORDER BY ?` silently degrades t
 ### 2.6.3. Type Rules Summary
 
 - `binary_data` parameters are rejected in every position (BydbQL has no binary literal).
-- `timestamp` parameters are accepted only in `TIME` positions and are validated: a missing or out-of-range timestamp is rejected at bind time.
-- `int` parameters are rejected in `TIME` positions at bind time: the transformer cannot parse a bare integer as a timestamp, so use `str` or `timestamp` instead.
+- `timestamp` parameters are accepted in `TIME` positions and measure `WHERE time` comparisons. Their protobuf timestamp values are validated; a missing or invalid timestamp is rejected at bind time, and measure planning also checks the stored timestamp domain.
+- `int` and `null` parameters are rejected in time positions: use `str` or `timestamp` instead.
 - `int` parameters in count positions must fit the wire type of the position — `[0, 4294967295]` for `LIMIT`/`OFFSET` and `[0, 2147483647]` for the `TOP N` counts; out-of-range values are rejected at bind time instead of silently wrapping, and literal counts are held to the same bounds.
 - Empty arrays, parameters without a value, and `nil` entries are rejected everywhere.
 - A `?` inside a quoted string literal is part of the string, not a placeholder: `WHERE msg = 'why?'` consumes no parameter.
@@ -363,7 +367,6 @@ LIMIT 100;
 -- Complex query with MATCH and time range
 SELECT trace_id, operation_name, http_status
 FROM TRACE sw_trace in group1
-TIME > '-30m'
 TIME BETWEEN '-1h' AND 'now'
 WHERE service_id IN ('api-gateway', 'auth-service')
   AND http_status > 400
@@ -395,7 +398,7 @@ BydbQL for streams is designed for querying and retrieving raw time-series eleme
 ### 4.1. Grammar
 
 ```
-query           ::= SELECT projection from_stream_clause TIME time_condition [WHERE criteria] [ORDER BY order_expression] [LIMIT integer] [OFFSET integer] [WITH QUERY_TRACE]
+query           ::= SELECT projection from_stream_clause TIME time_condition [WHERE criteria] [ORDER BY order_expression] [WITH QUERY_TRACE] [LIMIT integer] [OFFSET integer]
 from_stream_clause ::= "FROM STREAM" identifier "IN" ["("] group_list [")"] [ON ["("] stage_list [")"] STAGES]
 projection      ::= "*" | column_list
 column_list     ::= identifier ("," identifier)*
@@ -467,7 +470,6 @@ WHERE service_id IN ('webapp', 'api-gateway') OR http.method = 'POST';
 -- Query with time range using TIME clause
 SELECT trace_id, service_id, start_time
 FROM STREAM sw IN group1, group2
-TIME > '-30m'
 TIME BETWEEN '2023-01-01T00:00:00Z' AND '2023-01-02T00:00:00Z'
 WHERE service_id = 'webapp'
 ORDER BY start_time DESC;
@@ -526,42 +528,50 @@ LIMIT 100;
 
 ## 5. BydbQL for Measures
 
-BydbQL for measures is tailored for analytical queries on aggregated numerical data. It supports aggregation, grouping, and mixed selection of tags and fields, mapping to the `banyandb.measure.v1.QueryRequest` message.
+BydbQL for measures supports native aggregation and grouping, plus raw queries with column aliases and time predicates in `WHERE`. It uses the existing measure query and response messages. The raw extensions and their current limits are described in [section 5.5](#55-raw-measure-query-extensions).
 
 ### 5.1. Grammar
 
 ```
-measure_query     ::= SELECT projection from_measure_clause TIME time_condition [WHERE criteria] [GROUP BY group_list] [ORDER BY order_expression] [LIMIT integer] [OFFSET integer] [WITH QUERY_TRACE]
-from_measure_clause ::= "FROM MEASURE" identifier "IN" ["("] group_list_id [")"] [ON ["("] stage_list [")"] STAGES]
-projection        ::= "*" | (column_list | agg_function "(" ["DISTINCT"] identifier ")" | top_clause)
-top_clause        ::= "TOP" integer identifier ["ASC" | "DESC"] ["," column_list]
-column_list       ::= identifier ("," identifier)* ["::tag" | "::field"]
-stage_list        ::= identifier ("," identifier)+
-agg_function      ::= "SUM" | "MEAN" | "COUNT" | "MAX" | "MIN"
+measure_query     ::= SELECT projection from_measure_clause [TIME time_condition] [WHERE criteria] [GROUP BY group_list] [ORDER BY order_expression] [WITH QUERY_TRACE] [LIMIT count] [OFFSET count]
+from_measure_clause ::= ("FROM MEASURE" identifier "IN" ["("] group_list_id [")"] | "FROM" identifier "." identifier) [ON ["("] stage_list [")"] STAGES]
+projection        ::= "*" | column_list | top_clause
+top_clause        ::= "TOP" count identifier ["ASC" | "DESC"] ["," column_list]
+column_list       ::= column ("," column)*
+column            ::= ("time" | identifier_path | agg_function "(" ["DISTINCT"] identifier_path ")") ["::TAG" | "::FIELD"] ["AS" identifier_path]
+stage_list        ::= identifier ("," identifier)*
+agg_function      ::= "SUM" | "MEAN" | "AVG" | "COUNT" | "MAX" | "MIN"
 	/* "DISTINCT" is only valid with COUNT: COUNT(DISTINCT identifier) */
-group_list        ::= group_column ("," group_column)+
+group_list        ::= group_column ("," group_column)*
 group_column      ::= identifier | time_bucket_function
 time_bucket_function ::= "TIME_BUCKET" "(" [string_literal] ")"
 	/* at most one TIME_BUCKET(...) per GROUP BY clause; empty width defers
 	   to the measure's own interval */
-group_list_id     ::= identifier ("," identifier)+
+group_list_id     ::= identifier ("," identifier)*
 criteria          ::= condition (("AND" | "OR") condition)*
-condition         ::= identifier binary_op (value | value_list)
+condition         ::= identifier_path binary_op (value | value_list) | time_predicate | "(" criteria ")"
+time_predicate    ::= "time" comparison_op time_value [interval_adjustment]
+comparison_op     ::= "=" | "!=" | ">" | ">=" | "<" | "<="
+time_value        ::= string_literal | "?" | "now" "(" ")"
+interval_adjustment ::= ("+" | "-") "INTERVAL" string_literal
 time_condition    ::= "=" timestamp | ">" timestamp | "<" timestamp | ">=" timestamp | "<=" timestamp | "BETWEEN" timestamp "AND" timestamp
 binary_op         ::= "=" | "!=" | ">" | "<" | ">=" | "<=" | "IN" | "NOT IN" | "HAVING" | "NOT HAVING" | "MATCH"
-order_expression  ::= identifier ["ASC" | "DESC"]
-value             ::= string_literal | integer_literal | "NULL"
+order_expression  ::= ("time" | identifier_path) ["ASC" | "DESC"] | "ASC" | "DESC"
+value             ::= string_literal | integer_literal | "NULL" | "?"
 value_list        ::= "(" value ("," value)* ")"
-timestamp         ::= string_literal | integer_literal
+timestamp         ::= string_literal | integer_literal | "?"
 	/* timestamp supports both absolute and relative time formats:
 	   - Absolute: RFC3339 format like "2006-01-02T15:04:05Z07:00"
 	   - Relative: duration strings like "-30m", "2h", "1d" (relative to current time) */
 identifier        ::= [a-zA-Z_][a-zA-Z0-9_*-]*
+identifier_path   ::= identifier ("." identifier)* | quoted_identifier
+quoted_identifier ::= string_literal /* used as a column name */
 string_literal    ::= "'" [^']* "'" | "\"" [^\"]* "\""
 integer_literal   ::= [0-9]+
+count             ::= integer_literal | "?"
 ```
 
-**Note**: The `TIME` clause and `IN groups` clause are **required** for all measure queries. At least one group must be specified. Parentheses around the group list are optional.
+**Source and time bounds**: The explicit source form requires at least one `IN` group; parentheses around the list are optional. The shorthand names one group and one measure. `TIME` is optional for measure SELECT; raw queries may use `WHERE time` instead. Syntax accepted by the parser is subject to the execution limits in section 5.5, including the restrictions on combining raw extensions with aggregation.
 
 ### 5.2. BydbQL Extensions for `SELECT`
 
@@ -569,16 +579,19 @@ The `SELECT` clause for measures is highly flexible, allowing for the selection 
 
 - `SELECT <field_key>, <tag_key>`: Returns specific fields and tags. The parser will infer the type of each identifier from the measure's schema.
 - `SELECT <identifier>::field, <identifier>::tag`: If a field and a tag share the same name, the `::field` or `::tag` syntax **must** be used to disambiguate the identifier's type.
-- The clause also supports aggregation functions (`SUM`, `MEAN`, `COUNT`, `MAX`, `MIN`) and a `TOP N` clause for ranked results.
+- `SELECT <column> AS <name>`: Renames a raw output column. Family-qualified tags such as `default.host` select a particular tag family; aliases retain the original tag family or field container.
+- `SELECT time, time AS observed_at`: Selects the built-in timestamp. Its response mapping is described in section 5.5.
+- The clause also supports one native aggregation function (`SUM`, `MEAN`/`AVG`, `COUNT`, `MAX`, `MIN`) per query and a `TOP N` clause for ranked results. Raw aliases and the other new raw extensions cannot currently be combined with aggregation or grouping.
 - An aggregate function's column resolves against both tags and fields, not just fields — `SUM(latency)` aggregates a field, `COUNT(DISTINCT user_id)` aggregates a tag. `DISTINCT` is only accepted inside `COUNT`; `SUM(DISTINCT x)` and similar are rejected as a parse error.
 
 ### 5.3. Mapping to `measure.v1.QueryRequest`
 
 - **`FROM MEASURE name IN groups`** or **`FROM MEASURE name IN (groups)`**: Maps to the `name` and `groups` fields. Both are required.
+- **`FROM group.name`**: Uses the same measure name and a single group, with the raw-query behavior described in section 5.5.
 - **`SELECT <tag1>, <field1>, <field2>`**: The transformer inspects each identifier. Those identified as tags (either by schema lookup or `::tag`) are added to `tag_projection`. Those identified as fields (by schema lookup or `::field`) are added to `field_projection`.
 - **`SELECT SUM(field)`**: Maps to `agg`, setting `agg.field_name`.
 - **`SELECT COUNT(DISTINCT tag)`**: Maps to `agg` with `function = AGGREGATION_FUNCTION_COUNT_DISTINCT`, setting `agg.tag_name` and `agg.tag_family` instead of `agg.field_name`. The output column is named after the tag (`tag`), not after the function. A `COUNT(DISTINCT field)` over an INT or FLOAT field is also accepted, and sets `agg.field_name` as any other field aggregation does.
-- **`TIME` clause (required)**: Maps to `time_range`:
+- **`TIME` clause (optional for measure SELECT)**: Maps to `time_range`; bounds from `WHERE time` intersect this range:
   - **`TIME = '2023-01-01T00:00:00Z'`**: Sets `begin` and `end` to the same timestamp.
   - **`TIME > '2023-01-01T00:00:00Z'`**: Sets `begin` to the timestamp.
   - **`TIME < '2023-01-01T00:00:00Z'`**: Sets `end` to the timestamp.
@@ -592,7 +605,7 @@ The `SELECT` clause for measures is highly flexible, allowing for the selection 
 - **`SELECT TOP N ...`**: Maps to the `top` message. `TOP` can rank by a tag-targeted aggregation's own output column (e.g. `TOP 10 user_id DESC` when `COUNT(DISTINCT user_id)` is projected), not only by a field.
 - **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
 
-**Note on `LIMIT` and `TIME_BUCKET`**: `LIMIT` defaults to 100 when omitted. A bucketed `GROUP BY` returns one row per (bucket, tag-group), so a wide time window with a narrow bucket width can produce far more than 100 rows; without an explicit `LIMIT` sized to the expected row count, the response is silently truncated to the first 100 rows in bucket-ascending order rather than returning an error. Always set `LIMIT` explicitly for a bucketed query.
+**Note on `LIMIT` and `TIME_BUCKET`**: Legacy measure queries default to 100 when `LIMIT` is omitted. A bucketed `GROUP BY` returns one row per (bucket, tag-group), so a wide time window with a narrow bucket width can produce far more than 100 rows; without an explicit `LIMIT` sized to the expected row count, the response is silently truncated to the first 100 rows in bucket-ascending order rather than returning an error. Always set `LIMIT` explicitly for a bucketed query. Extended raw queries have different omission and zero-limit behavior, described in section 5.5.
 
 ### 5.4. Examples
 
@@ -654,8 +667,7 @@ SELECT
 FROM MEASURE system_metrics IN us-west
 TIME > '2023-01-01T08:00:00Z'
 WHERE datacenter = 'dc-1'
-GROUP BY instance
-ORDER BY MAX(cpu_usage) DESC;
+GROUP BY instance;
 
 -- Query measures at exact timestamp
 SELECT
@@ -682,8 +694,7 @@ SELECT
 FROM MEASURE system_metrics IN us-west
 TIME BETWEEN '-2h' AND 'now'
 WHERE datacenter = 'dc-1'
-GROUP BY instance
-ORDER BY MAX(cpu_usage) DESC;
+GROUP BY instance;
 
 -- Query data older than 1 day ago
 SELECT
@@ -730,6 +741,121 @@ GROUP BY TIME_BUCKET('5m'), region
 LIMIT 500;
 ```
 
+### 5.5. Raw measure query extensions
+
+The following measure SELECT extensions are implemented for 0.12.0. They return the existing `measure_result` response through the same Query API.
+
+#### Sources, projections, and aliases
+
+`FROM metrics.service_cpm` names the measure `service_cpm` in the group `metrics`. The explicit spelling `FROM MEASURE service_cpm IN metrics` remains available, including its multi-group form.
+
+```sql
+SELECT default.host AS node, value::FIELD AS reading, time AS observed_at
+FROM metrics.service_cpm
+WHERE time >= '2026-01-01T00:00:00Z'
+  AND time < '2026-01-01T00:05:00Z'
+ORDER BY observed_at DESC
+LIMIT 100
+```
+
+Column resolution uses the measure schema:
+
+- Use `family.tag` to distinguish tags with the same name in different families.
+- Use `::TAG` or `::FIELD` when a tag and a field share a name. These select the column kind; they do not cast its value.
+- A raw column can appear more than once with different aliases. Aliases rename output without changing its value type or nullness.
+- A tag alias stays in its original tag family; a field alias stays in the field list. Duplicate output names in the same container are rejected. Different tag families, or tag and field containers, may use the same output name.
+
+Unquoted `time` is the stored data-point timestamp. Every returned DataPoint retains its `timestamp`; selecting `time` alone adds no separate tag. `time AS observed_at` also returns a timestamp TagValue named `observed_at` in the `__ql` tag family. Selecting a user column with the same `__ql` output name is rejected. Use family qualification or an explicit column kind to select a user column named `time`.
+
+#### Time predicates and binding
+
+`WHERE time` supports `=`, `!=`, `>`, `>=`, `<`, and `<=`. Its right-hand side accepts an RFC3339/RFC3339Nano string, a string or timestamp parameter, or `now()`, optionally followed by `+ INTERVAL 'duration'` or `- INTERVAL 'duration'`.
+
+```sql
+SELECT host AS node, value::FIELD AS reading
+FROM MEASURE service_cpm IN metrics
+TIME BETWEEN '2026-01-01T00:00:00Z' AND '2026-01-01T00:10:00Z'
+WHERE time >= ? AND time < ? AND host = ?
+LIMIT ? OFFSET ?
+```
+
+For this query, supply five parameters in order: begin timestamp, end timestamp, host string, integer limit, and integer offset. For example, begin at `2026-01-01T00:05:00Z` and end at `2026-01-01T00:06:00Z` select that minute within the explicit `TIME` range. `TIME` and `WHERE time` bounds always intersect; neither overrides the other.
+
+```sql
+SELECT host AS node, value::FIELD AS reading
+FROM metrics.service_cpm
+WHERE time >= now() - INTERVAL '30m' AND time < now()
+LIMIT 100
+```
+
+All `now()` references in one execution use one captured clock. A later request captures a fresh clock even when it reuses the same compiled plan. Quoted `'now'` is also accepted as a time comparison value. Relative strings such as `'-30m'` remain valid in the legacy `TIME` clause; in `WHERE time`, write `now() - INTERVAL '30m'` instead.
+
+`INTERVAL` accepts fixed-duration units `ns`, `us`, `µs`, `ms`, `s`, `m`, `h`, `d`, and `w`, including fractional or compound durations such as `'1.5s'` and `'1h30m'`. A day means 24 hours and a week means seven days. Calendar months and years are not supported. Bounds outside the stored timestamp domain are rejected. Stored timestamps have millisecond resolution; comparisons preserve their strict or inclusive meaning at fractional-millisecond boundaries, and equality to a non-millisecond-aligned timestamp returns no rows.
+
+Parenthesized time predicates support `AND` and `OR`. A disjoint time predicate keeps its full filter before pagination:
+
+```sql
+SELECT host AS node, time AS observed_at
+FROM metrics.service_cpm
+WHERE (time = '2026-01-01T00:00:00Z' OR time = '2026-01-01T00:10:00Z')
+  AND host = 'frontend'
+LIMIT 2 OFFSET 1
+```
+
+#### Pagination and current limits
+
+A raw query uses the extended behavior when it uses source shorthand, an `AS` alias, the built-in time projection, or a time predicate in `WHERE`:
+
+- Omitted `LIMIT` has no implicit 100-row cap; query memory limits still apply.
+- Explicit `LIMIT 0` returns no rows and performs no native scan. Contradictory time bounds also return no rows without scanning.
+- `OFFSET` and `LIMIT` apply after the complete time filter, including disjoint ranges. Legacy queries without these raw extensions keep their existing pagination defaults.
+- Timestamp ordering, including an unambiguous timestamp alias such as `ORDER BY observed_at DESC`, is supported. Native index-rule ordering remains available. General sorting by tag/field output columns, multiple sort keys, and explicit NULL ordering are not implemented yet.
+
+The current raw extensions cannot be combined with aggregate projections, `GROUP BY`, or `SELECT TOP`. Legacy native aggregation and grouping retain their existing syntax and behavior. Multiple aggregate outputs, post-aggregation HAVING, field-value WHERE filters, arithmetic/casts, CASE/COALESCE, SELECT DISTINCT, and computed grouping are planned capabilities. An `OR` that mixes time and tag/field predicates is also rejected; combining a pure-time subtree with a tag predicate using `AND`, as above, is supported.
+
+Aliases, built-in time projections, `now()`, timestamp `INTERVAL` arithmetic, and source shorthand in this section apply to measure SELECT. They do not extend stream, trace, property, or SHOW TOP syntax.
+
+### 5.6. Legacy scalar distinct-count pagination
+
+An ungrouped QL `COUNT(DISTINCT column)` consumes the complete native input before
+returning its single count row. A positive `LIMIT` cannot reduce that input;
+`LIMIT 0` or a positive `OFFSET` suppresses the row. With no matching input, the
+count is zero. Grouped queries keep their existing native behavior and restrictions.
+
+### 5.7. Compiled-plan cache controls
+
+The liaison caches immutable compiled templates for parameterized measure QL,
+separately from its prepared-statement/parse cache. Identical query text can reuse
+a template with different parameters. Every execution rebinds values and one fresh
+clock, checks schema dependencies and current authorization, and creates private
+requests/operators. Literal queries bypass compiled reuse. Results and permission
+decisions are not cached.
+
+| Liaison flag | Default | Meaning of zero |
+|---|---:|---|
+| `--bydbql-plan-cache-size` | 4,000 retained templates | Disable compiled-plan reuse |
+| `--bydbql-plan-cache-max-bytes` | 67,108,864 bytes (64 MiB) | Use the default byte limit |
+| `--bydbql-plan-max-compiles` | 4 concurrent compilations | Use the default concurrency limit |
+| `--bydbql-plan-max-in-flight` | 64 distinct shared compilations | Use the default in-flight limit |
+
+Negative values are rejected. Count and byte limits include evicted templates
+still held by active executions. Byte accounting estimates retained plan memory;
+it is not an exact allocator heap measurement. Oversized plans or unstable local
+schema views execute uncached under existing compilation/query resource limits.
+Disabling compiled reuse preserves QL functionality and the separate prepared
+cache. In particular, setting compiled-plan maximum bytes to zero does not remove
+its byte bound.
+
+Cache activity is visible through `bydbql_plan_cache_total{result}`,
+`bydbql_plan_compiles_total`, `bydbql_plan_cache_count`,
+`bydbql_plan_cache_bytes{kind}`, `bydbql_plan_work{kind}` and
+`bydbql_plan_duration_seconds{stage}`. Cache outcomes also appear in existing QL
+logs. These metrics distinguish plan reuse from prepared-cache activity.
+
+Plan reuse reduces repeated planning work; end-to-end latency/CPU effects depend
+on execution costs. The [current PR 1 measurements](../design/0.12.0/measure-ql-core-sql/pr1-verification.md)
+show lower planning time and allocations but no established RPC latency gain.
+
 ## 6. BydbQL for Top-N
 
 Top-N queries use a specialized, command-like syntax for clarity and to reflect the optimized nature of the underlying `banyandb.measure.v1.TopNRequest`. The `FROM` clause is mandatory.
@@ -737,7 +863,7 @@ Top-N queries use a specialized, command-like syntax for clarity and to reflect 
 ### 6.1. Grammar
 
 ```
-topn_query         ::= SHOW TOP integer from_measure_clause TIME time_condition [WHERE topn_criteria] [AGGREGATE BY agg_function] [ORDER BY value ["ASC"|"DESC"]] [WITH QUERY_TRACE]
+topn_query         ::= SHOW TOP integer from_measure_clause TIME time_condition [WHERE topn_criteria] [AGGREGATE BY agg_function] [ORDER BY ["ASC"|"DESC"]] [WITH QUERY_TRACE]
 from_measure_clause ::= "FROM MEASURE" identifier "IN" ["("] group_list [")"] [ON ["("] stage_list [")"] STAGES]
 topn_criteria      ::= condition (("AND" | "OR") condition)*
 condition          ::= identifier binary_op (value | value_list)
@@ -774,7 +900,7 @@ integer_literal    ::= [0-9]+
   - **`TIME BETWEEN '-1h' AND 'now'`**: Sets `begin` to 1 hour ago and `end` to current time.
 - **`WHERE tag = 'value'`**: Maps to `conditions`. Only simple equality is supported.
 - **`AGGREGATE BY FUNC`**: Maps to `agg`.
-- **`ORDER BY value DESC`**: Maps to `field_value_sort`.
+- **`ORDER BY DESC`**: Maps to `field_value_sort`.
 - **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
 
 ### 6.3. Examples
@@ -785,13 +911,13 @@ SHOW TOP 10
 FROM MEASURE service_latency IN production
 TIME > '-30m'
 WHERE http_method = 'GET' AND version = 'v1.2.0'
-ORDER BY value DESC;
+ORDER BY DESC;
 
 -- Get the Bottom 5 services with the fewest errors
 SHOW TOP 5
 FROM MEASURE service_errors_total IN production
 TIME > '-30m'
-ORDER BY value ASC;
+ORDER BY ASC;
 
 -- Get the Top 3 pods with the most restarts in total over the time range
 SHOW TOP 3
@@ -804,53 +930,53 @@ AGGREGATE BY SUM;
 SHOW TOP 5
 FROM MEASURE service_errors IN production, staging
 TIME > '-30m'
-ORDER BY value DESC;
+ORDER BY DESC;
 
 -- Get the Top 10 services with highest latency in the last hour
 SHOW TOP 10
 FROM MEASURE service_latency IN production
 TIME > '2023-01-01T13:00:00Z'
-ORDER BY value DESC;
+ORDER BY DESC;
 
 -- Get the Top 5 endpoints with most errors in a specific time range
 SHOW TOP 5
 FROM MEASURE endpoint_errors IN production
 TIME BETWEEN '2023-01-01T00:00:00Z' AND '2023-01-02T00:00:00Z'
 WHERE status_code = '500'
-ORDER BY value DESC;
+ORDER BY DESC;
 
 -- Get the Top 10 services with highest latency in the last hour
 SHOW TOP 10
 FROM MEASURE service_latency IN production
 TIME > '-1h'
-ORDER BY value DESC;
+ORDER BY DESC;
 
 -- Get the Top 5 endpoints with most errors in the last 24 hours
 SHOW TOP 5
 FROM MEASURE endpoint_errors IN production
 TIME BETWEEN '-24h' AND 'now'
 WHERE status_code = '500'
-ORDER BY value DESC;
+ORDER BY DESC;
 
 -- Get the Top 3 services with lowest response time in the last 30 minutes
 SHOW TOP 3
 FROM MEASURE service_response_time IN production
 TIME > '-30m'
-ORDER BY value ASC;
+ORDER BY ASC;
 
 -- Top-N query with distributed tracing enabled
 SHOW TOP 10
 FROM MEASURE service_latency IN production
 TIME > '-1h'
 WHERE http_method = 'GET'
-ORDER BY value DESC
+ORDER BY DESC
 WITH QUERY_TRACE;
 
 -- Top-N query with lifecycle stages
 SHOW TOP 10
 FROM MEASURE service_latency IN production ON warn, cold STAGES
 TIME > '-30m'
-ORDER BY value DESC;
+ORDER BY DESC;
 ```
 
 ## 7. BydbQL for Properties
@@ -862,7 +988,7 @@ BydbQL for properties is designed for simple key-value lookups and metadata filt
 ### 7.1. Grammar
 
 ```
-property_query      ::= SELECT projection from_property_clause [WHERE criteria] [LIMIT integer] [ORDER BY value ["ASC"|"DESC"]] [WITH QUERY_TRACE]
+property_query      ::= SELECT projection from_property_clause [WHERE criteria] [ORDER BY identifier ["ASC"|"DESC"]] [WITH QUERY_TRACE] [LIMIT integer]
 from_property_clause ::= "FROM PROPERTY" identifier "IN" ["("] group_list [")"]
 projection          ::= "*" | column_list
 column_list         ::= identifier ("," identifier)*
@@ -885,6 +1011,7 @@ integer_literal     ::= [0-9]+
 - **`SELECT tags`**: Maps to `tag_projection`.
 - **`WHERE ID IN (...)`**: Maps to `ids`.
 - **`WHERE tag = 'value'`**: Maps to `criteria`.
+- **`ORDER BY tag [ASC|DESC]`**: Maps to `order_by`.
 - **`LIMIT n`**: Maps to `limit`.
 - **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
 
@@ -901,8 +1028,8 @@ LIMIT 50;
 SELECT ip, owner
 FROM PROPERTY server_metadata IN datacenter-1
 WHERE datacenter = 'dc-101' AND in_service = 'true'
-LIMIT 50
-ORDER BY ip;
+ORDER BY ip
+LIMIT 50;
 
 -- Find properties and sort by an integer tag
 SELECT ip, owner, priority
@@ -931,8 +1058,8 @@ LIMIT 100;
 SELECT ip, region, owner
 FROM PROPERTY server_metadata IN datacenter-1
 WHERE datacenter = 'dc-101' AND in_service = 'true'
-LIMIT 50
-WITH QUERY_TRACE;
+WITH QUERY_TRACE
+LIMIT 50;
 ```
 
 ## 8. BydbQL for Traces
@@ -942,7 +1069,7 @@ BydbQL for traces is designed for querying and retrieving trace data with spans.
 ### 8.1. Grammar
 
 ```
-trace_query           ::= SELECT projection from_trace_clause TIME time_condition [WHERE criteria] [ORDER BY order_expression] [LIMIT integer] [OFFSET integer] [WITH QUERY_TRACE]
+trace_query           ::= SELECT projection from_trace_clause TIME time_condition [WHERE criteria] [ORDER BY order_expression] [WITH QUERY_TRACE] [LIMIT integer] [OFFSET integer]
 from_trace_clause     ::= "FROM TRACE" identifier "IN" ["("] group_list [")"] [ON ["("] stage_list [")"] STAGES]
 projection            ::= "*" | column_list | "()"
 column_list           ::= identifier ("," identifier)*
@@ -1140,12 +1267,12 @@ LIMIT 100;
 
 | Feature             | Streams                                         | Measures                                        | Top-N                                           | Properties                                      | Traces                                          |
 | :------------------ | :---------------------------------------------- | :---------------------------------------------- | :---------------------------------------------- | :---------------------------------------------- | :---------------------------------------------- |
-| **Primary Command** | `SELECT ... FROM STREAM ... IN ...`             | `SELECT ... FROM MEASURE ... IN ...`            | `SHOW TOP ... FROM MEASURE ... IN ...`          | `SELECT ... FROM PROPERTY ... IN ...`           | `SELECT ... FROM TRACE ... IN ...`              |
-| **Groups Clause**   | **Required** `IN groups` (parentheses optional) | **Required** `IN groups` (parentheses optional) | **Required** `IN groups` (parentheses optional) | **Required** `IN groups` (parentheses optional) | **Required** `IN groups` (parentheses optional) |
-| **Time Clause**     | **Required** `TIME ...`                         | **Required** `TIME ...`                         | **Required** `TIME ...`                         | Not applicable                                  | **Required** `TIME ...`                         |
-| **Projection**      | Tags by family                                  | Tags & Fields                                   | Implicit (entity, value)                        | Flat list of tags                               | Tags by specification                           |
+| **Primary Command** | `SELECT ... FROM STREAM ... IN ...`             | `SELECT ... FROM MEASURE ... IN ...` or `FROM group.measure` | `SHOW TOP ... FROM MEASURE ... IN ...`          | `SELECT ... FROM PROPERTY ... IN ...`           | `SELECT ... FROM TRACE ... IN ...`              |
+| **Groups Clause**   | **Required** `IN groups` (parentheses optional) | `IN groups` or single group in shorthand | **Required** `IN groups` (parentheses optional) | **Required** `IN groups` (parentheses optional) | **Required** `IN groups` (parentheses optional) |
+| **Time Clause**     | **Required** `TIME ...`                         | Optional `TIME` and/or raw `WHERE time` | **Required** `TIME ...`                         | Not applicable                                  | **Required** `TIME ...`                         |
+| **Projection**      | Tags by family                                  | Tags, fields, raw aliases, and timestamp projection | Implicit (entity, value)                        | Flat list of tags                               | Tags by specification                           |
 | **Aggregation**     | No                                              | Yes (`SUM`, `MEAN`, etc.)                       | Yes (optional)                                  | No                                              | No                                              |
 | **Grouping**        | No                                              | Yes (`GROUP BY`)                                | No                                              | No                                              | No                                              |
 | **Filtering**       | Full `WHERE` clause                             | Full `WHERE` clause                             | Simple equality `WHERE`                         | `WHERE` by ID or tags                           | Full `WHERE` clause                             |
-| **Ordering**        | Yes (`ORDER BY`)                                | Yes (`ORDER BY`)                                | Yes (`ORDER BY value`)                          | No                                              | Yes (`ORDER BY`)                                |
+| **Ordering**        | Yes (`ORDER BY`)                                | Yes (`ORDER BY`)                                | Yes (`ORDER BY ASC/DESC`)                       | Yes (`ORDER BY tag`)                            | Yes (`ORDER BY`)                                |
 | **Pagination**      | Yes (`LIMIT`/`OFFSET`)                          | Yes (`LIMIT`/`OFFSET`)                          | No                                              | `LIMIT` only                                    | Yes (`LIMIT`/`OFFSET`)                          |

@@ -80,7 +80,7 @@ func appendDecodedTagBytesAsTyped(col vectorized.Column, valueType pbv1.ValueTyp
 		if !ok {
 			logger.Panicf("appendDecodedTagBytesAsTyped: column type %s mismatched with valueType string[]", col.Type())
 		}
-		bb := bigValuePool.Generate()
+		bb := bigValuePool.GenerateBounded(2 * max(len(raw), 64*1024))
 		defer bigValuePool.Release(bb)
 		var values []string
 		buf := raw

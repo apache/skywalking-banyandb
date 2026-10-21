@@ -18,8 +18,14 @@
 package vectorized
 
 import (
+	"context"
+	"errors"
 	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
 func TestMemoryTracker_Reserve_SucceedsWithinLimit(t *testing.T) {
@@ -116,4 +122,56 @@ func TestMemoryTracker_Concurrent_TotalExact(t *testing.T) {
 	if m.Used() != want {
 		t.Fatalf("concurrent Used: want %d, got %d", want, m.Used())
 	}
+}
+
+type trackerTestLease struct {
+	used  uint64
+	limit uint64
+}
+
+func (l *trackerTestLease) Charge(bytes uint64) error {
+	if bytes > l.limit-l.used {
+		return errTrackerTestLeaseBudget
+	}
+	l.used += bytes
+	return nil
+}
+
+func (l *trackerTestLease) Limit() uint64 { return l.limit }
+func (l *trackerTestLease) Used() uint64  { return l.used }
+func (l *trackerTestLease) Owner() any    { return l }
+
+var errTrackerTestLeaseBudget = errors.New("test lease budget exhausted")
+
+func TestQueryMemoryTrackerCachedLeaseRollbackAndCounters(t *testing.T) {
+	before := QueryMemoryStats()
+	expectedLeaseCharges := before.LeaseChargedBytes
+	if QueryMetricsEnabled {
+		expectedLeaseCharges += 6
+	}
+	lease := &trackerTestLease{limit: 10}
+	ctx, cancel := context.WithCancel(query.WithBudgetLease(t.Context(), lease))
+	defer cancel()
+	tracker := newQueryMemoryTracker(ctx, 100)
+	require.NoError(t, tracker.Reserve(6))
+	require.Equal(t, uint64(6), lease.Used())
+	require.Equal(t, expectedLeaseCharges, QueryMemoryStats().LeaseChargedBytes)
+	require.ErrorIs(t, tracker.Reserve(5), errTrackerTestLeaseBudget)
+	require.Equal(t, int64(6), tracker.Used())
+	cancel()
+	require.ErrorIs(t, tracker.Reserve(1), context.Canceled)
+	require.Equal(t, int64(6), tracker.Used())
+	require.Equal(t, uint64(6), lease.Used())
+	require.Equal(t, expectedLeaseCharges, QueryMemoryStats().LeaseChargedBytes)
+	tracker.Release(6)
+	require.Equal(t, before.LiveReservedBytes, QueryMemoryStats().LiveReservedBytes)
+}
+
+func TestQueryMemoryTrackerWithoutLeaseHasNoChargeHook(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	tracker := newQueryMemoryTracker(ctx, 100)
+	require.Nil(t, tracker.charge)
+	require.NoError(t, tracker.Reserve(1), "unadmitted charging remains a no-op after cancellation")
+	tracker.Release(1)
 }

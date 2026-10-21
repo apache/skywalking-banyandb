@@ -28,6 +28,7 @@ import (
 	roaringpkg "github.com/RoaringBitmap/roaring"
 
 	"github.com/apache/skywalking-banyandb/pkg/index/internal/nativeice"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
 // SortKey is a complete keyset cursor position. Segment and document
@@ -232,6 +233,8 @@ func (v *ReadView) NewSortCursor(ctx context.Context, request SortCursorRequest)
 
 // NextPage returns the next ordered page and advances its keyset position.
 // Cancellation is checked between candidates and leaves the cursor closeable.
+//
+//nolint:contextcheck // The cursor owns the allocation scope from creation; the page context adds cancellation.
 func (c *SortCursor) NextPage(ctx context.Context) ([]SortedHit, error) {
 	if c == nil || c.closed {
 		return nil, errors.New("native: sort cursor closed")
@@ -240,6 +243,9 @@ func (c *SortCursor) NextPage(ctx context.Context) ([]SortedHit, error) {
 		return nil, err
 	}
 	if err := c.ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := query.ReserveAllocation(c.ctx, uint64(c.pageSize)*128); err != nil {
 		return nil, err
 	}
 	frontier := &sortedFrontier{items: make([]sortableHit, 0, c.pageSize)}
@@ -289,6 +295,13 @@ func (c *SortCursor) NextPage(ctx context.Context) ([]SortedHit, error) {
 	}
 	ordered := frontier.items
 	sortSortableHits(ordered)
+	bytes := uint64(len(ordered)) * 128
+	for _, item := range ordered {
+		bytes += uint64(len(item.value))*2 + uint64(len(item.hit.Identifier))
+	}
+	if err := query.ReserveAllocation(c.ctx, bytes); err != nil {
+		return nil, err
+	}
 	result := make([]SortedHit, len(ordered))
 	for index, item := range ordered {
 		result[index] = SortedHit{QueryHit: item.hit, SortValue: append([]byte(nil), item.value...), Missing: item.missing}
@@ -325,8 +338,14 @@ func (c *SortCursor) project(segmentID uint64, segment *memorySegment, documentN
 	var timestamp int64
 	var timestampErr error
 	var hasTimestamp bool
-	visitErr := segment.handle.reader.VisitDocument(documentNumber, func(document nativeice.StoredDocument) error {
+	visitErr := segment.handle.reader.VisitDocumentContext(c.ctx, documentNumber, func(document nativeice.StoredDocument) error {
 		return document.VisitStoredFields(func(name string, value []byte) bool {
+			if name == identifierField || name == seriesIDField {
+				timestampErr = query.ReserveAllocation(c.ctx, uint64(len(value)))
+				if timestampErr != nil {
+					return false
+				}
+			}
 			switch name {
 			case identifierField:
 				identifier = append([]byte(nil), value...)
@@ -361,9 +380,12 @@ func (c *SortCursor) project(segmentID uint64, segment *memorySegment, documentN
 			return QueryHit{}, nil, true, errSkipSortCandidate
 		}
 	}
-	values, valuesErr := segment.handle.reader.DocumentValues(c.sortField, documentNumber)
+	values, valuesErr := segment.handle.reader.DocumentValuesContext(c.ctx, c.sortField, documentNumber)
 	if valuesErr != nil {
 		return QueryHit{}, nil, false, valuesErr
+	}
+	if err := reserveSortValueCopies(c.ctx, values); err != nil {
+		return QueryHit{}, nil, false, err
 	}
 	value, missing := smallestDocValue(values)
 	return QueryHit{Identifier: identifier, SeriesID: seriesID, Timestamp: timestamp, Segment: segmentID, DocumentNumber: documentNumber}, value, missing, nil
