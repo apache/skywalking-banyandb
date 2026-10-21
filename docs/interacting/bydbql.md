@@ -581,7 +581,7 @@ The `SELECT` clause for measures is highly flexible, allowing for the selection 
 - `SELECT <identifier>::field, <identifier>::tag`: If a field and a tag share the same name, the `::field` or `::tag` syntax **must** be used to disambiguate the identifier's type.
 - `SELECT <column> AS <name>`: Renames a raw output column. Family-qualified tags such as `default.host` select a particular tag family; aliases retain the original tag family or field container.
 - `SELECT time, time AS observed_at`: Selects the built-in timestamp. Its response mapping is described in section 5.5.
-- Legacy queries support one native aggregation function (`SUM`, `MEAN`/`AVG`, `COUNT`, `MAX`, `MIN`) per query and a `TOP N` clause for ranked results. Extended measure queries support multiple aggregate outputs and aliases, as described in section 5.6.
+- Legacy queries support one native aggregation function (`SUM`, `MEAN`/`AVG`, `COUNT`, `MAX`, `MIN`) per query and a `TOP N` clause for ranked results. Extended measure queries support multiple aggregate outputs and aliases, as described in section 5.8.
 - An aggregate function's column resolves against both tags and fields, not just fields — `SUM(latency)` aggregates a field, `COUNT(DISTINCT user_id)` aggregates a tag. `DISTINCT` is only accepted inside `COUNT`; `SUM(DISTINCT x)` and similar are rejected as a parse error.
 
 ### 5.3. Mapping to `measure.v1.QueryRequest`
@@ -811,7 +811,7 @@ A raw query uses the extended behavior when it uses source shorthand, an `AS` al
 - `OFFSET` and `LIMIT` apply after the complete time filter, including disjoint ranges. Legacy queries without these raw extensions keep their existing pagination defaults.
 - Timestamp ordering, including an unambiguous timestamp alias such as `ORDER BY observed_at DESC`, is supported. Native index-rule ordering remains available. General sorting by tag/field output columns, multiple sort keys, and explicit NULL ordering are not implemented yet.
 
-The current raw extensions cannot be combined with `SELECT TOP`. Aggregate projections and named scalar grouping use the extended aggregation behavior in section 5.6. Legacy native aggregation and grouping retain their existing syntax and behavior. Post-aggregation HAVING, field-value WHERE filters, arithmetic/casts, CASE/COALESCE, SELECT DISTINCT, and computed grouping are planned capabilities. An `OR` that mixes time and tag/field predicates is also rejected; combining a pure-time subtree with a tag predicate using `AND`, as above, is supported.
+The current raw extensions cannot be combined with `SELECT TOP`. Aggregate projections and named scalar grouping use the extended aggregation behavior in section 5.8. Legacy native aggregation and grouping retain their existing syntax and behavior. Post-aggregation HAVING, field-value WHERE filters, arithmetic/casts, CASE/COALESCE, SELECT DISTINCT, and computed grouping are planned capabilities. An `OR` that mixes time and tag/field predicates is also rejected; combining a pure-time subtree with a tag predicate using `AND`, as above, is supported.
 
 Aliases, built-in time projections, `now()`, timestamp `INTERVAL` arithmetic, and source shorthand in this section apply to measure SELECT. They do not extend stream, trace, property, or SHOW TOP syntax.
 

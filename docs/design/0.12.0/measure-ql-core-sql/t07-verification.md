@@ -1,5 +1,9 @@
 # T07 complete SQL aggregation over native batches
 
+Historical ticket-stage record. Source revisions, measurements and limitations
+below retain their original context. See the [PR 2 verification record](pr2-verification.md)
+for the current isolated aggregation branch and refreshed measurements.
+
 Implementation base: `e193815a` (T05 plus measure QL documentation), on PR #1412.
 Verification uses Go 1.26.9. No protobuf, frame format, native operator, or stored
 format changes. Final production source and generated-contract content hashes are

@@ -1,28 +1,27 @@
 # Catalog B implementation tickets and verification contracts
 
-Status: **T02, T03 and T05 are implemented in PR 1; eight capability tickets remain
-planned for later PRs.** Implementation and correctness do not imply that every
-historical performance gate passed: T02's original statistical acceptance remains
-inconclusive/stopped. Current isolated scope, checks and benchmark limits are in
-the [PR 1 verification record](pr1-verification.md). The [T01 verification
-record](t01-verification.md) retains the supporting baseline and is not a separate
-engine capability.
+Status: **T02/T03/T05 are merged in PR #1417; T07/T08 are implemented in PR 2;
+six capability tickets remain planned for PRs 3 and 4.** Implementation and
+correctness do not imply that every historical performance gate passed: T02's
+original acceptance remains inconclusive/stopped. Current aggregation scope,
+checks and benchmark limits are in the [PR 2 verification record](pr2-verification.md).
+The [PR 1 verification record](pr1-verification.md) and [T01 support record](t01-verification.md)
+retain their original bases and evidence.
 
 The original design-review base was `012115c5`. PR #1412 merged as `15635181b`;
-PR 1 targets main at `f9424047d`, including documentation-example fixes from
-#1415 and the native aggregation optimization from #1413.
-This document defines the [language contract](README.md),
+PR 2 is based on merged PR #1417 at `e05ed7f22`, including #1413's native aggregation
+optimization. This document defines the [language contract](README.md),
 [batch engine design](datafusion-engine.md) and [compiled-plan reuse design](plan-reuse.md).
-T02/T03/T05 commands are implemented. Commands for later capabilities describe
-planned contracts until those capabilities ship. Existing `QLB-T01` labels and
-`qlb_t01` measurements retain their historical meaning.
+T02/T03/T05/T07/T08 commands are implemented. Commands for later capabilities
+remain planned contracts. Existing `QLB-T01` labels and measurements retain their
+historical meaning.
 
 ## Four-PR delivery
 
 | PR | Scope | State in this branch |
 |---|---|---|
-| [1 — execution foundation](https://github.com/apache/skywalking-banyandb/pull/1417) | T02 shared batches, T03 typed raw QL, T05 compiled-plan reuse and required compatibility repairs | Implemented and independently verified |
-| 2 — SQL aggregation | T07 local aggregation and T08 native split/merge | Planned |
+| [1 — execution foundation](https://github.com/apache/skywalking-banyandb/pull/1417) | T02 shared batches, T03 typed raw QL, T05 compiled-plan reuse and required compatibility repairs | Merged as PR #1417 |
+| 2 — SQL aggregation | T07 local aggregation and T08 native split/merge | Prepared on merged PR #1417; see the PR 2 record |
 | 3 — expressions and filtering | T10 expressions, T12 field WHERE and T14 HAVING/membership | Planned |
 | 4 — complete grouping/output composition | T15 DISTINCT, T16 computed/ordinal grouping, T17 ordering/pagination and count-distinct composition | Planned |
 
@@ -55,13 +54,12 @@ formats; no Rust runtime or Arrow IPC dependency. SQL operators stay on the liai
 Shared native Go buffering/ownership and read/dispatch compatibility repairs are
 included with their regression tests, as described in the PR 1 verification record.
 
-**Readiness:** PR #1412 is merged and the shared batch seam, raw-query interfaces
-and compiled-template cache are available in PR 1. Its selected measure/QL cases
-pass 451/451 in both topologies. Later tickets require their listed prerequisites
-and their own independent expected results, activation proof and benchmarks.
-The historical T02/T03/T05 measurements below retain their original bases and
-verdicts; consult the PR 1 record for the latest isolated checks. Preserve the
-completed T01 support work rather than treating it as a new capability.
+**Readiness:** PR #1412 and PR #1417 are merged. The shared batch seam, typed
+raw-query interfaces and compiled-template cache are available on main; local
+aggregation and native merging are available in this branch. Later tickets still
+require their listed prerequisites, independent expected results, activation
+proof and focused benchmarks. Historical measurements retain their original
+bases and verdicts; the PR 2 record covers this isolated aggregation branch.
 
 ### Dependency and benchmark map
 

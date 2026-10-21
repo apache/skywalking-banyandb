@@ -1,5 +1,9 @@
 # T08 native aggregate branches and keyed merge
 
+Historical ticket-stage record. Source revisions, measurements and limitations
+below retain their original context. See the [PR 2 verification record](pr2-verification.md)
+for the current isolated aggregation branch and refreshed measurements.
+
 Implementation base: `89952fae` (T07), on PR #1412. Verification uses Go 1.26.9.
 The change is confined to QL planning, the QL execution adapter and verification.
 It changes no protobuf, RPC, persisted format, native operator, frame codec or

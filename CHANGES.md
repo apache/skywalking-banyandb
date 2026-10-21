@@ -6,6 +6,7 @@ Release Notes.
 
 ### Features
 
+- Add SQL-correct measure QL grouping and multiple aggregates, with shared calls, weighted AVG, bounded local state and eligible native aggregate split/merge.
 - Add typed raw measure QL with WHERE time, aliases and bounded compiled-plan reuse, executed over shared columnar native batches.
 - Add a native ICE v3 encoder that writes committed index generations compatible with existing readers.
 - Cut the Property database's index writer over to the native segment plugin, selected by both the `property` and `schema-server` roles. `banyand/property/db.OpenDB` now acquires its exclusive `<Location>/lock` before scanning shard directories or opening any writer, and releases it if a later startup step fails. A rollback (flipping the selection back and restarting) reopens the same on-disk shards with the retained legacy writer unchanged.

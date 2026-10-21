@@ -96,7 +96,13 @@ func runSingleShotScenario(t *testing.T, cfg Config) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	written, writeErr := writeBenchmarkData(ctx, cluster.conn, cfg, cfg.Cardinality, base)
+	var written writeSummary
+	var writeErr error
+	if cfg.Scenario == ScenarioQLBT07 || cfg.Scenario == ScenarioQLBT08 {
+		written, writeErr = writeQLBT07Data(ctx, cluster.conn, cfg, base)
+	} else {
+		written, writeErr = writeBenchmarkData(ctx, cluster.conn, cfg, cfg.Cardinality, base)
+	}
 	if writeErr != nil {
 		t.Fatalf("write benchmark data: %v", writeErr)
 	}

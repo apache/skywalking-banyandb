@@ -66,9 +66,6 @@ type queryRunSummary struct {
 }
 
 func writeBenchmarkData(ctx context.Context, conn *grpc.ClientConn, cfg Config, cardinality int, base time.Time) (writeSummary, error) {
-	if cfg.Scenario == ScenarioQLBT07 || cfg.Scenario == ScenarioQLBT08 {
-		return writeQLBT07Data(ctx, conn, cfg, base)
-	}
 	if cfg.Engine == engineTrace {
 		return writeTraceData(ctx, conn, cfg, cardinality, base)
 	}
