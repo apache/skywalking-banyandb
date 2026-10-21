@@ -205,6 +205,9 @@ func (r *transformRun) transform(ctx context.Context, grammar *Grammar) (*Transf
 		return nil, err
 	}
 	if grammar.Select != nil {
+		if requiresMeasurePlan(grammar.Select) {
+			return nil, fmt.Errorf("extended SELECT constructs require typed measure planning")
+		}
 		// Extract resource type from SELECT statement
 		resourceType := grammar.Select.From.ResourceType
 		switch strings.ToUpper(resourceType) {
@@ -1452,6 +1455,7 @@ func (r *transformRun) convertTagAndField(
 	}
 	allTags = make(map[string]*tagSpecWithFamily)
 	allFields = make(map[string]*databasev1.FieldSpec)
+	var tagOrder, fieldOrder []string
 	targetTagFamilies := make([]*modelv1.TagProjection_TagFamily, 0)
 	targetFields := make([]string, 0)
 	columnExists := make(map[string]map[string]bool) // map[columnName]map[columnType]bool
@@ -1464,6 +1468,9 @@ func (r *transformRun) convertTagAndField(
 		}
 		for _, spec := range tagSpecs {
 			for _, tag := range spec.Tags {
+				if _, exists := allTags[tag.Name]; includeAll && !exists {
+					tagOrder = append(tagOrder, tag.Name)
+				}
 				allTags[tag.Name] = &tagSpecWithFamily{
 					family: spec.Name,
 					tag:    tag,
@@ -1471,18 +1478,23 @@ func (r *transformRun) convertTagAndField(
 			}
 		}
 		for _, spec := range fieldSpecs {
+			if _, exists := allFields[spec.Name]; includeAll && !exists {
+				fieldOrder = append(fieldOrder, spec.Name)
+			}
 			allFields[spec.Name] = spec
 		}
 	}
 
 	if includeAll {
-		for _, spec := range allTags {
-			if addErr := r.checkOrAddGrammarTagOrField(allTags, allFields, &targetTagFamilies, &targetFields, columnExists, spec.tag.Name, columnTypeTag, nil); addErr != nil {
+		// Wildcards follow schema encounter order; lookup map iteration must not
+		// change output columns between separately compiled instances of a query.
+		for _, tagName := range tagOrder {
+			if addErr := r.checkOrAddGrammarTagOrField(allTags, allFields, &targetTagFamilies, &targetFields, columnExists, tagName, columnTypeTag, nil); addErr != nil {
 				return nil, nil, nil, nil, addErr
 			}
 		}
-		for _, f := range allFields {
-			if addErr := r.checkOrAddGrammarTagOrField(allTags, allFields, &targetTagFamilies, &targetFields, columnExists, f.Name, columnTypeField, nil); addErr != nil {
+		for _, fieldName := range fieldOrder {
+			if addErr := r.checkOrAddGrammarTagOrField(allTags, allFields, &targetTagFamilies, &targetFields, columnExists, fieldName, columnTypeField, nil); addErr != nil {
 				return nil, nil, nil, nil, addErr
 			}
 		}

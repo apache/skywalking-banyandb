@@ -23,6 +23,7 @@ run:
   # package-level vars/funcs are not compile errors in Go.
   build-tags:
     - trace_pipeline
+    - querymetrics
 linters:
   default: none
   enable:

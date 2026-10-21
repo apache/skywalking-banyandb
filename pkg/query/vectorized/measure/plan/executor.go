@@ -43,6 +43,15 @@ import (
 // returns the error and closes any partially-constructed pipeline so source
 // resources (BatchPool, underlying MeasureBatchResult) are released.
 func Execute(ctx context.Context, plan VecPlan, cfg measure.VectorizedConfig) (executor.MIterator, error) {
+	result, err := ExecuteBatches(ctx, plan, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return result.NativeIterator(ctx)
+}
+
+// ExecuteBatches initializes a native plan and transfers its batch ownership to the caller.
+func ExecuteBatches(ctx context.Context, plan VecPlan, cfg measure.VectorizedConfig) (*BatchResult, error) {
 	if plan == nil {
 		return nil, fmt.Errorf("plan.Execute: nil plan")
 	}
@@ -50,7 +59,8 @@ func Execute(ctx context.Context, plan VecPlan, cfg measure.VectorizedConfig) (e
 		return nil, fmt.Errorf("plan.Execute: %w", cfgErr)
 	}
 
-	tracker := vectorized.NewMemoryTracker(int64(cfg.QueryMemoryMiB) * 1024 * 1024)
+	ctx = vectorized.WithQueryMemoryTracker(ctx, int64(cfg.QueryMemoryMiB)*1024*1024)
+	tracker := vectorized.QueryMemoryTracker(ctx, int64(cfg.QueryMemoryMiB)*1024*1024)
 	bc := &BuildContext{
 		Builder: vectorized.NewPipelineBuilder().WithMemoryTracker(tracker),
 		Tracker: tracker,
@@ -76,6 +86,32 @@ func Execute(ctx context.Context, plan VecPlan, cfg measure.VectorizedConfig) (e
 	// (keys + agg field); for schema-preserving plans, it is the scan
 	// schema. plan.Schema() walks to the root node.
 	terminalSchema := plan.Schema()
-	egressPool := vectorized.NewBatchPool(terminalSchema, cfg.BatchSize)
-	return measure.NewIteratorFromPipeline(ctx, pipeline, terminalSchema, egressPool), nil
+	return NewBatchResult(ctx, &pipelineBatchSource{pipeline: pipeline, schema: terminalSchema}, terminalSchema, cfg.BatchSize)
+}
+
+type pipelineBatchSource struct {
+	pipeline *vectorized.Pipeline
+	schema   *vectorized.BatchSchema
+	current  *vectorized.RecordBatch
+}
+
+func (s *pipelineBatchSource) Init(ctx context.Context) error        { return ctx.Err() }
+func (s *pipelineBatchSource) OutputSchema() *vectorized.BatchSchema { return s.schema }
+func (s *pipelineBatchSource) NextBatch(ctx context.Context) (*vectorized.RecordBatch, error) {
+	s.releaseCurrent()
+	batch, err := s.pipeline.Next(ctx)
+	s.current = batch
+	return batch, err
+}
+
+func (s *pipelineBatchSource) Close() error {
+	s.releaseCurrent()
+	return s.pipeline.Close()
+}
+
+func (s *pipelineBatchSource) releaseCurrent() {
+	if s.current != nil {
+		s.current.ReleaseOwners()
+		s.current = nil
+	}
 }

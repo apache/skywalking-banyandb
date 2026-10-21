@@ -366,6 +366,9 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 		tmpBlock2.reset()
 		tmpBlock2.append(tmpBlock, l)
 		bw.mustWriteBlock(tmpBlock.bm.seriesID, &tmpBlock2.block)
+		// The retained tail still borrows decoded cells. Own just those cells
+		// before returning the decoder, whose next loan can overwrite them.
+		pendingBlock.detachValues()
 		releaseDecoder()
 	}
 	if err := br.error(); err != nil {

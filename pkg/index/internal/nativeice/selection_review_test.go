@@ -77,7 +77,9 @@ func TestUnionPostingBitmapHonorsCancellationBetweenBatches(t *testing.T) {
 	postings := roaringpkg.New()
 	postings.AddRange(0, selectionPostingBatchSize*2)
 	selected := roaringpkg.New()
-	ctx := &cancelAfterChecksContext{Context: context.Background(), cancelAt: 2}
+	cancelContext, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &cancelAfterSelectionContext{Context: cancelContext, selected: selected, cancel: cancel}
 
 	unionErr := unionPostingBitmap(ctx, selected, postings, selectionPostingBatchSize*2, "cancellation test")
 	if !errors.Is(unionErr, context.Canceled) {
@@ -86,6 +88,19 @@ func TestUnionPostingBitmapHonorsCancellationBetweenBatches(t *testing.T) {
 	if selected.GetCardinality() != selectionPostingBatchSize {
 		t.Fatalf("selected %d documents before cancellation, want %d", selected.GetCardinality(), selectionPostingBatchSize)
 	}
+}
+
+type cancelAfterSelectionContext struct {
+	context.Context
+	selected *roaringpkg.Bitmap
+	cancel   context.CancelFunc
+}
+
+func (c *cancelAfterSelectionContext) Err() error {
+	if c.selected.GetCardinality() >= selectionPostingBatchSize {
+		c.cancel()
+	}
+	return c.Context.Err()
 }
 
 type cancelAfterChecksContext struct {

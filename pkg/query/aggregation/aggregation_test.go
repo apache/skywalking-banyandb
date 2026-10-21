@@ -42,3 +42,31 @@ func TestNewReduce_RejectsCountDistinct(t *testing.T) {
 		t.Fatal("NewReduce must reject AGGREGATION_FUNCTION_COUNT_DISTINCT")
 	}
 }
+
+// TestCountFunc_AddN_MatchesRepeatedIn pins the bulk-increment fast path
+// (design §7.7, stage 8a run-folding) added for COUNT: AddN(n) must agree
+// exactly with calling In n times, since the vectorized measure engine
+// uses it to fold a whole span in one operation instead of one call per
+// row.
+func TestCountFunc_AddN_MatchesRepeatedIn(t *testing.T) {
+	bulk, err := NewMap[int64](modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT)
+	if err != nil {
+		t.Fatalf("NewMap: %v", err)
+	}
+	adder, ok := bulk.(interface{ AddN(int64) })
+	if !ok {
+		t.Fatal("countFunc must implement AddN(int64)")
+	}
+	adder.AddN(5)
+
+	reference, err := NewMap[int64](modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT)
+	if err != nil {
+		t.Fatalf("NewMap: %v", err)
+	}
+	for range 5 {
+		reference.In(0)
+	}
+	if bulk.Val() != reference.Val() {
+		t.Fatalf("AddN(5).Val() = %d, want %d (5x In(0))", bulk.Val(), reference.Val())
+	}
+}

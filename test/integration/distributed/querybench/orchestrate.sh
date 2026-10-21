@@ -30,7 +30,10 @@ cd /work
 REPORT_DIR="${DQB_REPORT_DIR:-/work/.omx/bench-reports/distributed-query}"
 SHARD_DIR="${REPORT_DIR}/shards"
 PROFILE_DIR="${REPORT_DIR}/profiles"
-BINARY="/tmp/dqb.test"
+# Keep compilation and cluster storage on the mounted workspace as well.
+export TMPDIR="${REPORT_DIR}/tmp"
+mkdir -p "${TMPDIR}"
+BINARY="${TMPDIR}/dqb.test"
 
 ENGINE="${DQB_ENGINE:-measure}"
 MATRIX="${DQB_MATRIX:-A}"
@@ -43,6 +46,19 @@ else
   SCENARIOS="${DQB_SCENARIOS:-scan_all,top_with_filter}"
 fi
 MODES="${DQB_MODES:-vec}"
+# Catalog B scenarios run their named RPC variants within each isolated combo.
+if [[ ",${SCENARIOS}," == *",qlb_t01,"* || ",${SCENARIOS}," == *",qlb_t02,"* || ",${SCENARIOS}," == *",qlb_t03,"* ]]; then
+  if [[ "${ENGINE}" != "measure" || "${DQB_QUERY_WORKERS:-4}" != "1" || "${DQB_QUERY_ITERATIONS:-50}" != "1000" ]]; then
+    echo "Catalog B scenarios require measure, DQB_QUERY_WORKERS=1 and DQB_QUERY_ITERATIONS=1000" >&2
+    exit 2
+  fi
+fi
+if [[ ",${SCENARIOS}," == *",qlb_t05,"* ]]; then
+  if [[ "${ENGINE}" != "measure" || "${CARDINALITIES}" != "1024" || "${DQB_QUERY_WORKERS:-4}" != "8" || "${DQB_QUERY_ITERATIONS:-50}" != "1000" || "${DQB_WARMUP_ITERATIONS:-3}" != "20" ]]; then
+    echo "T05 requires measure, cardinality 1024, DQB_QUERY_WORKERS=8, DQB_QUERY_ITERATIONS=1000 and DQB_WARMUP_ITERATIONS=20" >&2
+    exit 2
+  fi
+fi
 
 echo "[orchestrate] report_dir=${REPORT_DIR}"
 echo "[orchestrate] engine=${ENGINE}"
@@ -54,7 +70,7 @@ echo "[orchestrate] scenarios=${SCENARIOS}"
 # row and vec see byte-identical DataPoint timestamps. Without this, each
 # process picks its own time.Now() and the correctness gate hashes diverge
 # even when the logical query results match.
-export DQB_BASE_NANOS=$(date -u +%s%N)
+export DQB_BASE_NANOS=${DQB_BASE_NANOS:-$(date -u +%s%N)}
 echo "[orchestrate] base_nanos=${DQB_BASE_NANOS}"
 
 mkdir -p "${SHARD_DIR}"
@@ -63,7 +79,7 @@ rm -f "${SHARD_DIR}"/*.json
 rm -rf "${PROFILE_DIR}"
 
 echo "[orchestrate] building test binary..."
-go test -c -o "${BINARY}" ./test/integration/distributed/querybench
+go test -tags=querymetrics -c -o "${BINARY}" ./test/integration/distributed/querybench
 
 # DQB_SOAK=1: run the in-process sustained soak (Instrument 2) instead of the
 # matrix benchmark. The soak test hard-fails unless DQB_IN_CONTAINER=1 (already
