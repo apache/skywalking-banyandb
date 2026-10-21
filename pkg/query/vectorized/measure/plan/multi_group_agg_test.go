@@ -258,6 +258,17 @@ func TestDistributedPlan_SchemaEvolvedMultiGroupAgg(t *testing.T) {
 			},
 			want: map[string]string{"a": "a,west,1", "b": "b,NULL,2"},
 		},
+		{
+			// Both groups report shard 0 for api, which is not a replica.
+			name:       "groups share a shard id and a key",
+			groupTags:  map[string][]string{"a": {tagSvc}, "b": {tagSvc}},
+			projection: []string{tagSvc},
+			rows: map[string][]evolvedNodeRow{
+				"a": {nodeRow(5, tagSvc, "api")},
+				"b": {nodeRow(18, tagSvc, "api")},
+			},
+			want: map[string]string{"api": "api,23"},
+		},
 	}
 	for _, tc := range cases {
 		groups := make([]string, 0, len(tc.groupTags))
