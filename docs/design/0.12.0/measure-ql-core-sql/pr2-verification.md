@@ -60,18 +60,30 @@ Reports are `/mnt/d/qlb-pr2-standalone-report.json` and
 `/mnt/d/qlb-pr2-distributed-report.json`. Unit, race, generator and lint logs use
 the `/mnt/d/qlb-pr2-` prefix. Other integration blocks were not selected.
 
-## Inherited toolchain blocker
+## Independent toolchain prerequisite
 
-On 2026-10-21, `make vuln-check` fails for the inherited Go 1.26.9 standard
-library: [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809), affecting `crypto/x509`,
-is fixed in Go 1.26.10. The pre-aggregation PR 1 tree reports the same reachable
-vulnerability with the same toolchain. This branch changes neither `go.mod` nor
-dependencies, and no aggregation compilation error remains.
+The Go 1.26.10 upgrade is isolated in [PR #1425](https://github.com/apache/skywalking-banyandb/pull/1425),
+based directly on main. This aggregation branch changes neither `go.mod` nor
+dependency versions. Merge the toolchain PR and rebase this branch to pick up the
+security fix; it is no longer part of the aggregation diff.
 
-Logs are `/mnt/d/qlb-pr2-vuln.log` and
-`/mnt/d/qlb-pr2-main-vuln-control.log`. The scan is not counted as passed. A separate
-toolchain patch is needed before CI can become green; aggregation benchmarks
-retain the existing Go 1.26.9 protocol and do not claim patched-toolchain results.
+On 2026-10-21, `make vuln-check` with inherited Go 1.26.9 reports reachable
+[GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809) in `crypto/x509`. The
+pre-aggregation PR 1 tree reports the same failure. Logs are
+`/mnt/d/qlb-pr2-vuln.log` and `/mnt/d/qlb-pr2-main-vuln-control.log`.
+This inherited-toolchain scan is not counted as passed.
+
+Before extraction, the same aggregation implementation was separately verified
+with Go 1.26.10: unit/race suites, 530 selected measure/QL cases per topology,
+full lint, `make check` and `make vuln-check` passed. Those results remain
+separate evidence under `/mnt/d/qlb-pr2-go12610-`; they do not imply that the
+current Go 1.26.9 default passes the vulnerability scan. The standalone toolchain
+PR also passes its own vulnerability scan, focused version/TLS/gRPC/pipeline
+tests and `make check` on its main-based tree.
+
+Aggregation benchmarks retain the frozen Go 1.26.9 protocol and are not
+relabeled as patched-toolchain results. After extraction, all 2,405 source and
+contract files match the measured source manifest again.
 
 ## Evidence boundaries
 
