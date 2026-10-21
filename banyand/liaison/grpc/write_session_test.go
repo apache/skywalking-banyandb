@@ -25,6 +25,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -43,6 +44,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -241,8 +243,11 @@ func TestWriteSessionEpochSwitchSealsOpenBatch(t *testing.T) {
 func TestWriteSessionInflightLimitBlocksAppendUntilAck(t *testing.T) {
 	f, c := &fakePublishers{}, &replyCollector{}
 	release := make(chan struct{})
-	f.onClose = func(*fakeBatch) (map[string]*common.Error, error) {
-		<-release
+	f.onClose = func(b *fakeBatch) (map[string]*common.Error, error) {
+		// Only n1's batches are held, so a single release frees exactly one n1 slot.
+		if b.node == "n1" {
+			<-release
+		}
 		return nil, nil
 	}
 	s := newTestSession(writeSessionConfig{sealRows: 1, maxInflight: 2, sealInterval: time.Hour}, f, c)
@@ -257,7 +262,9 @@ func TestWriteSessionInflightLimitBlocksAppendUntilAck(t *testing.T) {
 		t.Fatalf("append returned %v while the node had its maximum of unacknowledged batches", err)
 	case <-time.After(150 * time.Millisecond):
 	}
-	assert.Empty(t, c.snapshot(), "nothing is acknowledged while the node holds the batches")
+	for _, r := range c.snapshot() {
+		assert.GreaterOrEqual(t, r.version, uint64(100), "n1 acknowledges nothing while it holds the batches")
+	}
 	release <- struct{}{}
 	select {
 	case err := <-third:
@@ -619,4 +626,91 @@ func TestTraceWritePressureTimeoutEndsStreamWithResourceExhausted(t *testing.T) 
 	for _, resp := range got {
 		assert.Equal(t, modelv1.Status_STATUS_SERVER_BUSY, resp.GetStatusCode())
 	}
+}
+
+// togglePressureProtector reports high memory pressure while high is set.
+type togglePressureProtector struct {
+	protector.Nop
+	high atomic.Bool
+}
+
+func (p *togglePressureProtector) State() protector.State {
+	if p.high.Load() {
+		return protector.StateHigh
+	}
+	return protector.StateLow
+}
+
+func TestTraceWriteLiaisonMemoryPressureSetsRetryAfterWhileStreamStaysOpen(t *testing.T) {
+	h := newTraceWriteHarness(t, writeSessionConfig{sealRows: 2, sealInterval: time.Hour})
+	pm := &togglePressureProtector{}
+	h.service.protector = pm
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	stream, err := h.client.Write(ctx)
+	require.NoError(t, err)
+	spec := &tracev1.TagSpec{TagNames: []string{"trace_id", "ts"}}
+	// Every row has the same trace ID so that both rows of a pair land in one batch on one node.
+	// The first row of a pair carries the metadata and spec; metadata is sticky, so the second continues the batch.
+	sendRow := func(version uint64, first bool) {
+		var rowSpec *tracev1.TagSpec
+		if first {
+			rowSpec = spec
+		}
+		row := traceRow(version, first, rowSpec)
+		row.Tags[0] = &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "same-trace"}}}
+		require.NoError(t, stream.Send(row))
+	}
+	// A row for an unknown trace is rejected on its own, so it exercises the per-row reply path.
+	sendMissing := func(version uint64) {
+		row := traceRow(version, false, nil)
+		row.Metadata = &commonv1.Metadata{Group: "g", Name: "missing"}
+		require.NoError(t, stream.Send(row))
+	}
+	recv := func() *tracev1.WriteResponse {
+		resp, recvErr := stream.Recv()
+		require.NoError(t, recvErr)
+		return resp
+	}
+	recvByVersion := func(versions ...uint64) map[uint64]*tracev1.WriteResponse {
+		got := make(map[uint64]*tracev1.WriteResponse, len(versions))
+		for range versions {
+			resp := recv()
+			got[resp.GetVersion()] = resp
+		}
+		for _, v := range versions {
+			require.Contains(t, got, v)
+		}
+		return got
+	}
+	wantRetryAfter := uint32(writeMemoryHighRetryAfter.Milliseconds())
+
+	pm.high.Store(true)
+	sendMissing(1)
+	row := recv()
+	assert.Equal(t, modelv1.Status_STATUS_NOT_FOUND, row.GetStatusCode())
+	assert.Equal(t, wantRetryAfter, row.GetRetryAfterMs(), "a per-row reply asks the client to slow down under pressure")
+	sendRow(2, true)
+	sendRow(3, false)
+	for _, resp := range recvByVersion(2, 3) {
+		assert.Equal(t, modelv1.Status_STATUS_SUCCEED, resp.GetStatusCode(), "pressure does not change the status of an acknowledgement")
+		assert.Equal(t, wantRetryAfter, resp.GetRetryAfterMs(), "a batch acknowledgement asks the client to slow down under pressure")
+	}
+
+	pm.high.Store(false)
+	sendMissing(4)
+	row = recv()
+	assert.Equal(t, modelv1.Status_STATUS_NOT_FOUND, row.GetStatusCode())
+	assert.Zero(t, row.GetRetryAfterMs(), "a per-row reply stops asking once pressure clears")
+	sendRow(5, true)
+	sendRow(6, false)
+	for _, resp := range recvByVersion(5, 6) {
+		assert.Equal(t, modelv1.Status_STATUS_SUCCEED, resp.GetStatusCode())
+		assert.Zero(t, resp.GetRetryAfterMs(), "a batch acknowledgement stops asking once pressure clears")
+	}
+
+	// The stream was never ended by the pressure: it still ends cleanly on half-close.
+	require.NoError(t, stream.CloseSend())
+	_, recvErr := stream.Recv()
+	require.ErrorIs(t, recvErr, io.EOF)
 }
