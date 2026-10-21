@@ -98,7 +98,7 @@ func exportFake() *fakeLiaison {
 	f.schema.measures = []*databasev1.Measure{
 		{Metadata: md("sw_metric", "service_cpm", 7)},
 		{Metadata: md("sw_metric", "service_idx", 8), IndexMode: true},
-		// A node encodes no column of the internal Top-N measure, so it reports no revision of it.
+		// A node encodes the internal Top-N measure like any other, so it reports its revision.
 		{Metadata: md("sw_metric", csvfmt.TopNResultMeasure, 9)},
 	}
 	f.schema.streams = []*databasev1.Stream{{Metadata: md("sw_record", "log", 3)}}
@@ -114,7 +114,7 @@ func exportFake() *fakeLiaison {
 	streamSeg := segmentOf(stream)
 	streamSeg.Unit.Catalog = commonv1.Catalog_CATALOG_STREAM
 	streamSeg.Unit.ShardIds = []uint32{0, 1}
-	streamSeg.Shards = append(streamSeg.Shards, &transferv1.ShardStat{ShardId: 1, MinTimestamp: 60, MaxTimestamp: 300, TotalCount: 3})
+	streamSeg.Shards = append(streamSeg.Shards, &transferv1.ShardStat{ShardId: 1, MinTimestamp: 60, MaxTimestamp: 300, TotalCount: 3, PartsCount: 1})
 	stream.GetUnits().Units = append(stream.GetUnits().Units, &transferv1.UnitInventory{Kind: &transferv1.UnitInventory_Property{
 		Property: &transferv1.PropertyInventory{Group: "ui", Shards: []*transferv1.PropertyShardStat{
 			{ShardId: 0, DocCount: 2, EstimatedBytes: 10}, {ShardId: 1, DocCount: 2, EstimatedBytes: 10},
@@ -236,7 +236,7 @@ func TestRunExport_WritesFilesAndAConsistentManifest(t *testing.T) {
 	for _, want := range []string{
 		"export session feedfeed created",
 		"rate limits: node 1048576 bytes/s, 50000 rows/s; liaison 0 bytes/s per liaison (0 = unlimited)",
-		"  " + nodeA + "  [3/3] property/ui started: 2 shard(s), 4 part(s)\n",
+		"  " + nodeA + "  [3/3] property/ui started: 2 shard(s)\n",
 		"✓ " + nodeA + "  done: 3 unit(s), 5 file(s), 10 rows, ",
 		"✓ " + nodeB + "  done: 1 unit(s), 1 file(s), 2 rows, ",
 		"export written to",
@@ -431,13 +431,13 @@ func TestRunExport_LayoutResourceSetMismatchFails(t *testing.T) {
 	}{
 		{
 			"node lacks a resource",
-			map[string]int64{"service_cpm": 7},
+			map[string]int64{csvfmt.TopNResultMeasure: 9, "service_cpm": 7},
 			"sw_metric/service_idx changed during export: the node encoded measure/sw_metric/seg-20260930/shard-0-00001.csv " +
 				"with mod revision missing, the exported schema has 8",
 		},
 		{
 			"node has an extra resource",
-			map[string]int64{"service_cpm": 7, "service_idx": 8, "a_new": 1},
+			map[string]int64{csvfmt.TopNResultMeasure: 9, "service_cpm": 7, "service_idx": 8, "a_new": 1},
 			"sw_metric/a_new changed during export: the node encoded measure/sw_metric/seg-20260930/shard-0-00001.csv " +
 				"with mod revision 1, the exported schema has missing",
 		},
@@ -456,7 +456,7 @@ func TestRunExport_LayoutResourceSetMismatchFails(t *testing.T) {
 func TestRunExport_SchemaChangeDuringExportFails(t *testing.T) {
 	f := exportFake()
 	onlyNodeA(f)
-	f.exportScript = tamper(func(ff *fakeFile) { ff.revs = map[string]int64{"service_cpm": 99} })
+	f.exportScript = tamper(func(ff *fakeFile) { ff.revs = map[string]int64{csvfmt.TopNResultMeasure: 9, "service_cpm": 99} })
 	opts, log := exportOptions(t, f)
 	requireExit(t, runExport(t, f, opts), ExitRuntime, "schema of measure sw_metric/service_cpm changed during export")
 	requireKept(t, f, log)
@@ -831,7 +831,7 @@ func TestRunExport_StreamErrorMidFileLeavesOnlyTheTmp(t *testing.T) {
 	f.exportScript = scripted(func(f *fakeLiaison, _ *transferv1.ExportRequest_Init, req *transferv1.ExportRequest, stream transferv1.ExportService_ExportServer) error {
 		file := f.filesFor(req)[0]
 		for _, r := range []*transferv1.ExportResponse{
-			{Frame: &transferv1.ExportResponse_UnitStarted{UnitStarted: &transferv1.UnitStarted{}}},
+			{Frame: &transferv1.ExportResponse_UnitStarted{UnitStarted: &transferv1.UnitStarted{TotalParts: 1}}},
 			{Frame: &transferv1.ExportResponse_FileStarted{FileStarted: &transferv1.FileStarted{RelativePath: file.path}}},
 			{Frame: &transferv1.ExportResponse_Chunk{Chunk: &transferv1.DataChunk{Content: file.content[:4]}}},
 			{Frame: &transferv1.ExportResponse_Chunk{Chunk: &transferv1.DataChunk{Content: file.content[4:8]}}},
@@ -886,7 +886,7 @@ func TestRunExport_WithoutSchema(t *testing.T) {
 	f := exportFake()
 	onlyNodeA(f)
 	// Revisions that disagree with the registry would fail an export with the schema.
-	f.exportScript = tamper(func(ff *fakeFile) { ff.revs = map[string]int64{"service_cpm": 99} })
+	f.exportScript = tamper(func(ff *fakeFile) { ff.revs = map[string]int64{csvfmt.TopNResultMeasure: 9, "service_cpm": 99} })
 	opts, log := exportOptions(t, f)
 	opts.IncludeSchema = false
 	if err := runExport(t, f, opts); err != nil {
@@ -1096,11 +1096,16 @@ func TestUnitSource_CountsRowsWhereTheFilesBelong(t *testing.T) {
 	}
 }
 
-// Two node ids that derive one directory name are refused rather than written into one subtree.
-func TestBuildJobs_RefusesNodesSharingADirectory(t *testing.T) {
+// Node ids that differ only in case get one subtree each, told apart by the hash suffix.
+func TestBuildJobs_KeepsSimilarNodeIDsApart(t *testing.T) {
 	plan := &PlanResult{Frames: []*transferv1.UnitFrame{{NodeId: "data-1:17912"}, {NodeId: "Data-1:17912"}}}
-	_, err := buildJobs(plan)
-	requireExit(t, err, ExitRuntime, "map to the same directory data-1-17912")
+	jobs, err := buildJobs(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 2 || jobs[0].dir == jobs[1].dir {
+		t.Fatalf("want two distinct directories, got %+v", jobs)
+	}
 }
 
 // A file of a shard the unit did not ask for is a node fault, not an extra manifest shard.

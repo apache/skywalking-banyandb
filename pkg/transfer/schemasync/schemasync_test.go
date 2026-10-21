@@ -321,3 +321,21 @@ func TestWriteKind_ErrorRemovesThePartialFile(t *testing.T) {
 		t.Fatalf("recorded %d bytes crc32 %08x, on disk %d bytes crc32 %08x", f.Bytes, f.CRC32, len(body), crc32.ChecksumIEEE(body))
 	}
 }
+
+func TestCompareByMetadataOrdersByGroupThenName(t *testing.T) {
+	msgs := []proto.Message{
+		&commonv1.Group{Metadata: &commonv1.Metadata{Name: "b"}},
+		&databasev1.Stream{Metadata: &commonv1.Metadata{Group: "g2", Name: "a"}},
+		&commonv1.Group{Metadata: &commonv1.Metadata{Name: "a"}},
+		&databasev1.Stream{Metadata: &commonv1.Metadata{Group: "g1", Name: "z"}},
+	}
+	sort.SliceStable(msgs, func(i, j int) bool { return compareByMetadata(msgs[i], msgs[j]) < 0 })
+	var got []string
+	for _, m := range msgs {
+		md := m.(interface{ GetMetadata() *commonv1.Metadata }).GetMetadata()
+		got = append(got, md.GetGroup()+"/"+md.GetName())
+	}
+	if want := []string{"/a", "/b", "g1/z", "g2/a"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("order = %v, want %v", got, want)
+	}
+}

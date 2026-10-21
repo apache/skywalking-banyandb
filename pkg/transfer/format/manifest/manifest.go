@@ -18,6 +18,8 @@
 package manifest
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -129,9 +131,13 @@ type File struct {
 	EntryCount uint32 `json:"entryCount,omitempty"`
 }
 
-// NodeDir derives the artifact directory name of a node id: lower-case it, collapse runs
-// of bytes outside [a-z0-9] into '-', trim '-', and fall back to "node" when empty. The
-// mapping is lossy, so the exporter refuses two node ids that derive the same name.
+// nodeDirPrefixLen bounds the readable prefix of a node directory name.
+const nodeDirPrefixLen = 32
+
+// NodeDir derives the artifact directory name of a node id: a readable prefix (lower-cased,
+// runs of bytes outside [a-z0-9] collapsed into '-', trimmed of '-', "node" when empty, cut
+// to 32 bytes), then '-' and the first 8 hex digits of the SHA-256 of the raw id, which keeps
+// ids that differ only in case or punctuation apart.
 func NodeDir(nodeID string) string {
 	lower := strings.ToLower(nodeID)
 	b := make([]byte, 0, len(lower))
@@ -145,11 +151,15 @@ func NodeDir(nodeID string) string {
 			b = append(b, '-')
 		}
 	}
-	dir := strings.Trim(string(b), "-")
-	if dir == "" {
-		return "node"
+	if len(b) > nodeDirPrefixLen {
+		b = b[:nodeDirPrefixLen]
 	}
-	return dir
+	prefix := strings.Trim(string(b), "-")
+	if prefix == "" {
+		prefix = "node"
+	}
+	sum := sha256.Sum256([]byte(nodeID))
+	return prefix + "-" + hex.EncodeToString(sum[:4])
 }
 
 // FormatCRC32 renders a CRC-32 as in the manifest, e.g. "0x1f4a03bb".

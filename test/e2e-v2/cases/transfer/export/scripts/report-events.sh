@@ -24,11 +24,21 @@ set -euo pipefail
 
 oap="${1:?usage: report-events.sh <oap host:grpc-port>}"
 
+# OAP may report healthy before its event receiver accepts reports, so each report is retried.
 for i in 1 2 3; do
-  now="$(date +%s)"
-  swctl --grpc-addr="$oap" event report --uuid="export-e2e-$i" --name=Upgrade \
-    --service-name=export-e2e --instance-name=export-e2e-instance --endpoint-name=/export \
-    --message='Upgrade to {version}' --layer=GENERAL \
-    --start-time="${now}000" --end-time="${now}999" version="v$i" >/dev/null
+  for attempt in $(seq 1 20); do
+    now="$(date +%s)"
+    if out="$(swctl --grpc-addr="$oap" event report --uuid="export-e2e-$i" --name=Upgrade \
+      --service-name=export-e2e --instance-name=export-e2e-instance --endpoint-name=/export \
+      --message='Upgrade to {version}' --layer=GENERAL \
+      --start-time="${now}000" --end-time="${now}999" version="v$i" 2>&1)"; then
+      break
+    fi
+    if [ "$attempt" -eq 20 ]; then
+      echo "reporting event export-e2e-$i failed: $out" >&2
+      exit 1
+    fi
+    sleep 3
+  done
 done
 echo "reported 3 events"

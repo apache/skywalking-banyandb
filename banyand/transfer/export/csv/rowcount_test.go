@@ -676,7 +676,8 @@ func checkMeasureRows(t *testing.T, e *countEngine) {
 			"_version":      strconv.FormatInt(p.version, 10),
 			"default.svc":   "svc" + strconv.Itoa(p.svc),
 			"default.plain": fmt.Sprintf("v%d", p.version),
-			"_field.value":  strconv.FormatInt(p.value(), 10),
+			// The group's internal Top-N result measure declares a binary "value" field, which splits the column.
+			"cpm::_field.value": strconv.FormatInt(p.value(), 10),
 		}}
 	}
 	matchRows(t, rows, want, func(r map[string]string) string {

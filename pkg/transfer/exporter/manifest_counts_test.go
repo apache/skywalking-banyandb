@@ -310,15 +310,15 @@ func TestBuildJobs_FoldsFramesPerNodeInNodeOrder(t *testing.T) {
 		}
 	}
 	want := []string{
-		nodeA + " data-a-17912 warm " + unitProperty,
-		nodeA + " data-a-17912 hot " + unitStream,
-		nodeA + " data-a-17912 hot " + unitMeasure,
-		nodeA + " data-a-17912 hot " + unitIndex,
-		nodeA + " data-a-17912 hot " + unitReplica,
-		nodeB + " data-b-17912 hot " + unitStream,
-		nodeB + " data-b-17912 hot " + unitMeasure,
-		nodeB + " data-b-17912 hot " + unitReplica,
-		nodeB + " data-b-17912 hot " + unitProperty,
+		nodeA + " data-a-17912-d20a13e5 warm " + unitProperty,
+		nodeA + " data-a-17912-d20a13e5 hot " + unitStream,
+		nodeA + " data-a-17912-d20a13e5 hot " + unitMeasure,
+		nodeA + " data-a-17912-d20a13e5 hot " + unitIndex,
+		nodeA + " data-a-17912-d20a13e5 hot " + unitReplica,
+		nodeB + " data-b-17912-9378f780 hot " + unitStream,
+		nodeB + " data-b-17912-9378f780 hot " + unitMeasure,
+		nodeB + " data-b-17912-9378f780 hot " + unitReplica,
+		nodeB + " data-b-17912-9378f780 hot " + unitProperty,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("jobs:\ngot  %q\nwant %q", got, want)
@@ -348,7 +348,7 @@ func TestFillManifest_RolledFilesOfManyShardsAndNodes(t *testing.T) {
 		t.Fatalf("rows per source %d, %d and per unit %d; want 220, 85 and 305", a, b, unitRows(u))
 	}
 	// The files keep their order of arrival within a shard.
-	if p := u.Sources[0].Shards[0].Files[1].Path; p != "nodes/data-a-17912/stream/sw_stream/seg-20261004/shard-0-00002.csv.gz" {
+	if p := u.Sources[0].Shards[0].Files[1].Path; p != "nodes/data-a-17912-d20a13e5/stream/sw_stream/seg-20261004/shard-0-00002.csv.gz" {
 		t.Fatalf("second file of shard 0: %s", p)
 	}
 
@@ -364,8 +364,8 @@ func TestFillManifest_RolledFilesOfManyShardsAndNodes(t *testing.T) {
 	}
 
 	wantNodes := []manifest.Node{
-		{ID: nodeA, Dir: "data-a-17912", Timezone: "Asia/Shanghai"},
-		{ID: nodeB, Dir: "data-b-17912", Timezone: "UTC"},
+		{ID: nodeA, Dir: "data-a-17912-d20a13e5", Timezone: "Asia/Shanghai"},
+		{ID: nodeB, Dir: "data-b-17912-9378f780", Timezone: "UTC"},
 	}
 	if !reflect.DeepEqual(m.Source.Nodes, wantNodes) {
 		t.Fatalf("source nodes %+v", m.Source.Nodes)
@@ -393,8 +393,8 @@ func TestFillManifest_IndexModeSegmentFilesCountOnTheSource(t *testing.T) {
 	if !maps.Equal(src.RowCounts, map[string]uint64{"endpoint_traffic": 80, "service_traffic": 10}) || sourceRows(src) != 90 {
 		t.Fatalf("source rows %v total %d, sum %d; want 90", src.RowCounts, src.TotalCount, sourceRows(src))
 	}
-	if got := []string{src.SegmentFiles[0].Path, src.SegmentFiles[1].Path}; got[0] != "nodes/data-a-17912/measure/sw_idx/seg-20261005/segment-00001.csv.gz" ||
-		got[1] != "nodes/data-a-17912/measure/sw_idx/seg-20261005/segment-00002.csv.gz" {
+	if got := []string{src.SegmentFiles[0].Path, src.SegmentFiles[1].Path}; got[0] != "nodes/data-a-17912-d20a13e5/measure/sw_idx/seg-20261005/segment-00001.csv.gz" ||
+		got[1] != "nodes/data-a-17912-d20a13e5/measure/sw_idx/seg-20261005/segment-00002.csv.gz" {
 		t.Fatalf("segment files %v", got)
 	}
 }

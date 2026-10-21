@@ -109,7 +109,9 @@ type colKey struct {
 type Layout struct {
 	tagIdx   map[string]map[colKey]int
 	fieldIdx map[string]map[string]int
-	Columns  []Column
+	// owned maps a resource to whether it owns each column, indexed by column.
+	owned   map[string][]bool
+	Columns []Column
 }
 
 type tagDecl struct {
@@ -124,9 +126,8 @@ type resourceDecl struct {
 	fields []tagDecl
 }
 
-// TopNResultMeasure is the internal measure that stores pre-aggregated Top-N results. Its
-// only field is an engine-internal encoding, so CSV skips it and a target recomputes it from
-// the source measures.
+// TopNResultMeasure is the internal measure that stores pre-aggregated Top-N results. It is
+// exported like any other measure; its binary field carries an engine-internal encoding.
 const TopNResultMeasure = "_top_n_result"
 
 var (
@@ -160,17 +161,13 @@ func StreamLayout(streams []*databasev1.Stream) (*Layout, error) {
 // MeasureLayout builds the layout of a measure group:
 // _name, _timestamp, _version, then the union of family.tag columns and the union of
 // _field.* columns. Index-mode measures have no fields and so contribute no field columns.
-// Columns follow resources in name order, whatever the order of measures. The internal
-// TopNResultMeasure has no rows in CSV and is left out.
+// Columns follow resources in name order, whatever the order of measures.
 func MeasureLayout(measures []*databasev1.Measure) (*Layout, error) {
 	decls := make([]resourceDecl, 0, len(measures))
 	for i, m := range measures {
 		name := m.GetMetadata().GetName()
 		if name == "" {
 			return nil, fmt.Errorf("measure #%d has no name", i)
-		}
-		if name == TopNResultMeasure {
-			continue
 		}
 		tags, err := familyTags(name, m.GetTagFamilies())
 		if err != nil {
@@ -343,6 +340,17 @@ func buildLayout(fixed []Column, decls []resourceDecl) (*Layout, error) {
 			return nil, fmt.Errorf("two columns share the header %q", c.Header)
 		}
 		headers[c.Header] = struct{}{}
+	}
+	l.owned = make(map[string][]bool, len(decls))
+	for _, d := range decls {
+		owned := make([]bool, len(l.Columns))
+		for _, idx := range l.tagIdx[d.name] {
+			owned[idx] = true
+		}
+		for _, idx := range l.fieldIdx[d.name] {
+			owned[idx] = true
+		}
+		l.owned[d.name] = owned
 	}
 	return l, nil
 }

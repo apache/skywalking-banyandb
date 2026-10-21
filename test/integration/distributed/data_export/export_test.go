@@ -33,6 +33,7 @@ import (
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	transfertest "github.com/apache/skywalking-banyandb/pkg/test/transfer"
+	"github.com/apache/skywalking-banyandb/pkg/test/transfer/topncheck"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exporter"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
@@ -125,7 +126,9 @@ func csvExportSpecs() {
 			g.Expect(err).NotTo(gomega.HaveOccurred())
 			for _, n := range nodeNames {
 				g.Expect(rowsByNode(frames, commonv1.Catalog_CATALOG_STREAM, transfertest.StreamGroup)).To(gomega.HaveKeyWithValue(n, uint64(5)), "stream on %s", n)
-				g.Expect(rowsByNode(frames, commonv1.Catalog_CATALOG_MEASURE, transfertest.MeasureGroup)).To(gomega.HaveKeyWithValue(n, uint64(6)), "measure on %s", n)
+				// The written points and at least one _top_n_result row on every replica.
+				g.Expect(rowsByNode(frames, commonv1.Catalog_CATALOG_MEASURE, transfertest.MeasureGroup)).
+					To(gomega.HaveKeyWithValue(n, gomega.BeNumerically(">", measureRows+topNSourcePoints)), "measure and Top-N results on %s", n)
 			}
 			var spans uint64
 			for _, n := range rowsByNode(frames, commonv1.Catalog_CATALOG_TRACE, transfertest.TraceGroup) {
@@ -162,7 +165,7 @@ func csvExportSpecs() {
 				gomega.Expect(u.Sources).To(gomega.HaveLen(len(nodeNames)), "a replicated stream unit lists both sources")
 			}
 		}
-		transfertest.ExpectTopNSkippedSilently(a)
+		gomega.Expect(topncheck.ExpectTopNExported(a)).To(gomega.BeNumerically(">", 0), "the Top-N results are exported")
 	})
 
 	ginkgo.It("writes plain CSV and rolls small files with the header repeated", func() {

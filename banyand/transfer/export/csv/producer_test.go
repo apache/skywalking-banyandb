@@ -167,7 +167,7 @@ func simpleMeasure(name string, indexMode bool) *databasev1.Measure {
 
 // TestMeasureCSV_EmptyUnit covers units without rows: one without shards (a segment created
 // ahead of time) is silent, one whose shards yield no row warns. TestProducer_RealEngineData
-// covers the skipped Top-N results with real parts.
+// covers the exported Top-N results with real parts.
 func TestMeasureCSV_EmptyUnit(t *testing.T) {
 	repo := measureRepo(t, simpleMeasure(csvfmt.TopNResultMeasure, false), simpleMeasure("cpm", false))
 	run, sent := recordingRun(repo)

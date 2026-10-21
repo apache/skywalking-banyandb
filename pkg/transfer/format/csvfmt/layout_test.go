@@ -131,10 +131,6 @@ func TestMeasureLayoutFieldsAndConflictSplit(t *testing.T) {
 			field("value", databasev1.FieldType_FIELD_TYPE_FLOAT), field("percentile", databasev1.FieldType_FIELD_TYPE_DATA_BINARY),
 			field("total", databasev1.FieldType_FIELD_TYPE_INT),
 		}},
-		// The internal Top-N measure has no rows in CSV, so it takes no column.
-		{Metadata: md(TopNResultMeasure), TagFamilies: []*databasev1.TagFamilySpec{
-			family("_topN", tag("name", databasev1.TagType_TAG_TYPE_STRING), tag("foo", databasev1.TagType_TAG_TYPE_DATA_BINARY)),
-		}, Fields: []*databasev1.FieldSpec{field("value", databasev1.FieldType_FIELD_TYPE_DATA_BINARY)}},
 	}
 	l, err := MeasureLayout(measures)
 	require.NoError(t, err)
@@ -166,6 +162,34 @@ func TestMeasureLayoutFieldsAndConflictSplit(t *testing.T) {
 	// A tag and a field with the same name live in separate key spaces.
 	_, ok = l.TagIndex("service_cpm_minute", "", "total")
 	assert.False(t, ok)
+}
+
+func TestMeasureLayoutIncludesTopNResult(t *testing.T) {
+	measures := []*databasev1.Measure{
+		{Metadata: md("service_cpm"), TagFamilies: []*databasev1.TagFamilySpec{
+			family("default", tag("entity_id", databasev1.TagType_TAG_TYPE_STRING)),
+		}, Fields: []*databasev1.FieldSpec{field("value", databasev1.FieldType_FIELD_TYPE_INT)}},
+		// The schema a group's internal Top-N result measure is created with.
+		{Metadata: md(TopNResultMeasure), TagFamilies: []*databasev1.TagFamilySpec{
+			family("_topN",
+				tag("name", databasev1.TagType_TAG_TYPE_STRING), tag("direction", databasev1.TagType_TAG_TYPE_INT),
+				tag("group", databasev1.TagType_TAG_TYPE_STRING), tag("parameters", databasev1.TagType_TAG_TYPE_STRING)),
+		}, Fields: []*databasev1.FieldSpec{field("value", databasev1.FieldType_FIELD_TYPE_DATA_BINARY)}},
+	}
+	l, err := MeasureLayout(measures)
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"_name", "_timestamp", "_version",
+		"_topN.name", "_topN.direction", "_topN.group", "_topN.parameters", "default.entity_id",
+		"_top_n_result::_field.value", "service_cpm::_field.value",
+	}, l.Header())
+
+	idx, ok := l.FieldIndex(TopNResultMeasure, "value")
+	require.True(t, ok)
+	assert.Equal(t, ValueBinary, l.Columns[idx].Type)
+	idx, ok = l.TagIndex(TopNResultMeasure, "_topN", "direction")
+	require.True(t, ok)
+	assert.Equal(t, ValueInt, l.Columns[idx].Type)
 }
 
 func TestTraceLayoutExcludesIDTags(t *testing.T) {

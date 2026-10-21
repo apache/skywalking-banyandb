@@ -224,7 +224,7 @@ All three verdict columns take closed value sets:
 
 Once the session exists, a failure keeps it and prints `bydbctl data release-session --id <id>`; the run exits `3`. Files already renamed stay in the output directory, a file in flight stays as `.tmp`, and no `manifest.json` is written, so a partial directory never passes for an artifact. Ctrl-C or `SIGTERM` is handled the same way: the export stops, the session is kept and the same `bydbctl data release-session --id <id>` line is printed. After a successful export, a failed release (as a whole or on some node) is a `WARN` with exit `0`, followed by the same `bydbctl data release-session --id <id>` line.
 
-The export side performs **no source selection**. Every source node's copy of a unit is carried away verbatim into its own `nodes/<node-dir>/` subtree, and all multi-source judgement happens on the import side ([Multiple shard sources](#6-multiple-shard-sources)). This is deliberate: a wrong judgement on the export side loses bytes permanently, while a wrong judgement on the import side costs a re-run.
+The export side performs **no source selection**. Every source node's copy of a unit is carried away into its own `nodes/<node-dir>/` subtree, and all multi-source judgement happens on the import side ([Multiple shard sources](#6-multiple-shard-sources)). This is deliberate: a wrong judgement on the export side loses bytes permanently, while a wrong judgement on the import side costs a re-run. Every source node is included, but a CSV copy is a reconstruction, not a byte copy: rows or values the format cannot represent under the current schema are left out with a warning ([CSV export](#43-csv-export)), and the export still succeeds. An export that exits `0` is therefore complete for migration only when `manifest.warnings` is empty, or when every warning in it is acceptable.
 
 #### 4.1.1 Node IDs are not path-safe
 
@@ -235,26 +235,29 @@ Two values are kept, and they have different jobs:
 | | Value | Where it lives |
 |---|---|---|
 | **Raw ID** | `10.0.0.5:17912` | `manifest.source.nodes[].id`, and every `node_id` field on the wire. This is the identity |
-| **Directory component** | `10-0-0-5-17912` | `manifest.source.nodes[].dir`, and the `nodes/<node-dir>/` path. This is only a filename |
+| **Directory component** | `10-0-0-5-17912-8a05db98` | `manifest.source.nodes[].dir`, and the `nodes/<node-dir>/` path. This is only a filename |
 
 The directory component is derived from the raw ID by:
 
 1. lowercase the raw ID;
 2. replace every run of characters outside `[a-z0-9]` with a single `-`;
-3. trim leading and trailing `-`; if nothing is left, use `node`.
+3. truncate to 32 characters;
+4. trim leading and trailing `-`; if nothing is left, use `node`;
+5. append `-` followed by the first 8 hex characters of `SHA-256` over the **raw** UTF-8 bytes.
 
-**Reversal is by lookup in the manifest, not by decoding.** Step 1 and step 2 are lossy on purpose — the name exists so an operator can tell subtrees apart, and the manifest carries the exact ID for anything that needs it. Import resolves a subtree by matching `dir`, and uses the paired `id` wherever identity matters.
+**Reversal is by lookup in the manifest, not by decoding.** Steps 1 to 3 are lossy on purpose — the bounded readable prefix exists so an operator can tell subtrees apart, and the manifest carries the exact ID for anything that needs it. Import resolves a subtree by matching `dir`, and uses the paired `id` wherever identity matters.
 
-The name is never truncated, so IDs that differ only near the end, such as two ports on one long host name, stay apart. Distinct IDs still collide when they differ only in case or punctuation:
+The hash suffix keeps IDs apart that the readable prefix alone would merge:
 
 | Raw IDs | Directory component |
 |---|---|
-| `10.0.0.5:17912` | `10-0-0-5-17912` |
-| `[::1]:17912` | `1-17912`, usable where the raw ID is not |
-| `Data-1:17912`, `data-1:17912` | both `data-1-17912` |
-| `a.b:17912`, `a-b:17912` | both `a-b-17912` |
+| `10.0.0.5:17912` | `10-0-0-5-17912-8a05db98` |
+| `[::1]:17912` | `1-17912-…`, usable where the raw ID is not |
+| `Data-1:17912`, `data-1:17912` | `data-1-17912-03d2b6d6`, `data-1-17912-98a53f33` — macOS and Windows fold case, the suffix does not |
+| `a.b:17912`, `a-b:17912` | `a-b-17912-613e0e89`, `a-b-17912-b5233c34` |
+| two ports on one host name longer than 32 characters | one prefix, distinct suffixes |
 
-Neither collision occurs in a normal deployment: host names are case-insensitive, so two nodes never share a host and port that differ only in case, and one cluster rarely names two hosts `a.b` and `a-b`. The client refuses the export if two nodes in one `Plan` produce the same directory component, naming both IDs, so a collision fails the export instead of mixing two nodes' files in one subtree.
+The client still refuses the export if two nodes in one `Plan` produce the same directory component, naming both IDs, so a 32-bit hash collision fails the export instead of mixing two nodes' files in one subtree.
 
 ### 4.2 Native export
 
@@ -307,7 +310,7 @@ file_finished{ bytes, crc32, entry_count, row_counts, schema_mod_revisions }
 
 Each data node produces CSV straight from the session snapshot, read-only (`banyand/transfer/export`): parts are opened through the dump readers `banyand/internal/dump/{stream,measure,trace}` over a read-only file system, and the segment series index and the property store through `pkg/index/native`'s `OpenReadOnlyGeneration`, which takes no lock and writes nothing into the snapshot. Directories are listed with `os.ReadDir`. Per unit:
 
-1. **Locate** the unit in the snapshot: `<root>/<group>/seg-<suffix>/shard-<N>` (property: `<root>/<group>/shard-<N>`). A missing segment or requested shard directory is `INTERNAL`: the snapshot is frozen, so that is a node-side fault. A file that disappears while it is read means the session was preempted or released, and the stream fails with `FAILED_PRECONDITION`. A shard's live parts are the ones its newest readable `<epoch>.snp` names, as when the engine opens the table: a closed segment is linked into the snapshot as a whole, so it can still hold the source parts of a merge the engine had not yet removed, and those are skipped. The Plan inventory counts parts the same way.
+1. **Locate** the unit in the snapshot: `<root>/<group>/seg-<suffix>/shard-<N>` (property: `<root>/<group>/shard-<N>`). A missing segment or requested shard directory is `INTERNAL`: the snapshot is frozen, so that is a node-side fault. A file that is missing when it is read is taken to mean the session was preempted or released, and the stream fails with `FAILED_PRECONDITION`; the session is checked once more before `unit_finished`, so a release or takeover during the unit is caught even when no read failed. This covers detected read failures and session loss only, not snapshot damage in general: a snapshot-listed part directory that vanished before the unit was listed is skipped like a merge source, and a shard whose snapshot file vanished lists no parts. As a lightweight consistency check, `unit_started.total_parts` is counted the same way as the session `Plan`, which inventoried the same snapshot, and the client fails the export (exit `3`) when the two differ. A shard's live parts are the ones its newest readable `<epoch>.snp` names, as when the engine opens the table: a closed segment is linked into the snapshot as a whole, so it can still hold the source parts of a merge the engine had not yet removed, and those are skipped. The Plan inventory counts parts the same way.
 2. **Build the column layout** of the group from the node's current schema ([Columns](#433-columns)). A group the layout cannot describe — a `TIMESTAMP` tag in a stream or measure, or two traces of one group with the same tag set — is refused with `FAILED_PRECONDITION`.
 3. **Encode rows** — one CSV stream per shard (index-mode measure: one per segment), gzipped on the fly unless `compress` is `NONE`, sent as chunks of at most 1 MiB of on-disk bytes. A stream rolls to the next file after a complete row once the file's on-disk bytes reach `max_file_size` (`0` never rolls), and every file repeats the header. A row whose encoded size reaches the limit gets a file of its own, and the unit reports the number of such rows in one warning.
 4. **Finish the unit** — `unit_finished` carries the unit's warnings. A unit without any row produces no file, and an empty file is never written. The warning `unit has no rows` is given only when the unit listed shards, whose parts then yielded no row; a unit without shards (a segment the engine created ahead of time) is silent.
@@ -322,9 +325,9 @@ How each model is read:
 | trace | the parts of every requested shard | matched by the row's tag-name set, without the trace-id and span-id tags and without tags no trace of the group declares, against the group's traces. A group with one trace takes it directly; a row whose set equals one trace's takes it; otherwise a row (from a part written before a tag was removed) goes to the only trace whose tags include all of its tags, and a row that no trace or several traces include is dropped and counted; two traces with the same tag set make the group fail (use native, once it exists). Matching by tag set cannot tell an old row from a row of another trace with the same tags |
 | property | the live documents of every shard's store, decoded from `_source` and streamed one at a time; tombstones included | `Property.metadata.name` |
 
-`_top_n_result` is skipped without a warning: it holds engine-internal pre-aggregated results that a target recomputes from its source measures. The warnings report dropped rows and why, stored tag and field values the current schema no longer declares or declares with another type, and property timestamps outside the int64 nanosecond range (counted per resource and tag), tags only a multi-tag index rule stores, a single row larger than the file size limit, and a unit whose shards yielded no row. A column that is null on every row is not reported: the source schemas commonly declare tags they never fill. None of them fails the export; all of them land in `manifest.warnings`.
+`_top_n_result` is exported like any other measure: its binary `value` field carries the engine-internal Top-N encoding, base64-encoded. A point stored in several versions is exported as **one row per point**, the versions merged the way a query or a part merge combines them (`MergeTopNResults` in `banyand/measure/export_topn.go`), with the highest version, so an importer can write the rows verbatim instead of recomputing them. The warnings report dropped rows and why, stored tag and field values the current schema no longer declares or declares with another type, and property timestamps outside the int64 nanosecond range (counted per resource and tag), tags only a multi-tag index rule stores, a single row larger than the file size limit, and a unit whose shards yielded no row. A column that is null on every row is not reported: the source schemas commonly declare tags they never fill. None of them fails the export; all of them land in `manifest.warnings`, and each of them is data the artifact does not carry.
 
-**The schema the rows were encoded with is checked.** Columns are bound by position and a group's layout is built from all of its resources, so every `file_finished` carries the `ModRevision` of every resource the node built the layout from, whether or not it wrote rows. The client compares that set with the revisions it saved in `schema/` (without `_top_n_result`, which takes no column); a missing or extra resource or any different revision fails the export (exit `3`, "schema … changed during export; export again"). With `--include-schema=false` there is nothing to compare against and the check is skipped.
+**The schema the rows were encoded with is checked.** Columns are bound by position and a group's layout is built from all of its resources, so every `file_finished` carries the `ModRevision` of every resource the node built the layout from, whether or not it wrote rows. The client compares that set with the revisions it saved in `schema/` (including `_top_n_result`); a missing or extra resource or any different revision fails the export (exit `3`, "schema … changed during export; export again"). With `--include-schema=false` there is nothing to compare against and the check is skipped.
 
 **Rate limiting has three knobs; two are enforced by the data node, one by the liaison.** All three are set by the client and travel in `init`; neither server has a configuration of its own for them. They throttle different resources, so none subsumes another and whichever binds first wins:
 
@@ -406,7 +409,7 @@ Round-trip cases that must be in the test suite, each asserted byte-for-byte:
 | trace | `_name`, `trace_id`, `span_id`, `_span` | all tags, without the family level |
 | property | `_name`, `_id`, `_mod_revision`, `_create_revision`, `_updated_at`, `_delete_time` | all tags |
 
-A group has **one** layout, shared by every file of every unit and by all of its resources: the fixed columns, then the union of the resources' tag columns (`family.tag` for stream and measure, the bare tag name for trace and property), then, for measures, the union of the `_field.<name>` columns. Resources are taken in name order (`_top_n_result` excluded) and tags in declaration order; the first occurrence fixes a column's position, and a row leaves the columns of other resources null (`\N`). When two resources declare the same tag or field with different types, or its header would repeat another column's (a fixed column, a `_field.<name>` column, or family `a` tag `b.c` against family `a.b` tag `c`), each resource declaring it gets its own column headed `<resource>::<family.tag>` (or `<resource>::_field.<name>`), so every header is unique. The layout is a pure function of the schema (`pkg/transfer/format/csvfmt`), so an importer rebuilds it from `schema/`.
+A group has **one** layout, shared by every file of every unit and by all of its resources: the fixed columns, then the union of the resources' tag columns (`family.tag` for stream and measure, the bare tag name for trace and property), then, for measures, the union of the `_field.<name>` columns. Resources are taken in name order (`_top_n_result` included) and tags in declaration order; the first occurrence fixes a column's position, and a row leaves the columns of other resources null (`\N`). When two resources declare the same tag or field with different types, or its header would repeat another column's (a fixed column, a `_field.<name>` column, or family `a` tag `b.c` against family `a.b` tag `c`), each resource declaring it gets its own column headed `<resource>::<family.tag>` (or `<resource>::_field.<name>`), so every header is unique. Every measure group holds the auto-created `_top_n_result`, whose binary field is named `value`, so a group whose measures declare a numeric `value` field gets split headers such as `cpm::_field.value` and `_top_n_result::_field.value`. The layout is a pure function of the schema (`pkg/transfer/format/csvfmt`), so an importer rebuilds it from `schema/`.
 
 With `--csv-annotations` (`init.csv_annotations`) every file starts with one extra line before the header: `#datatype`, then one token per column — `string`, `long`, `double`, `base64Binary`, `stringArray`, `longArray` or `timestamp`. That line has one field more than the header, so a reader must accept a variable number of fields per record.
 
@@ -482,7 +485,7 @@ In CSV, `--compress none` drops the `.gz` suffix (`shard-0-00001.csv`). The `<ca
   "compress": "gzip",
   "exportedAt": "2026-09-07T12:00:00Z",
   "source": {
-    "nodes": [{"id": "10.0.0.5:17912", "dir": "10-0-0-5-17912",
+    "nodes": [{"id": "10.0.0.5:17912", "dir": "10-0-0-5-17912-8a05db98",
                "timezone": "Asia/Shanghai"}]
   },
   "groups": [{
@@ -509,9 +512,9 @@ In CSV, `--compress none` drops the `.gz` suffix (`shard-0-00001.csv`). The `<ca
         "estimatedCompressedBytes": 10737418,
         "estimatedUncompressedBytes": 41943040,
         "files": [
-          {"path": "nodes/10-0-0-5-17912/measure/sw_metric/seg-20260907/shard-0-00001.csv.gz",
+          {"path": "nodes/10-0-0-5-17912-8a05db98/measure/sw_metric/seg-20260907/shard-0-00001.csv.gz",
            "bytes": 536871012, "crc32": "0x9f2a1b34"},
-          {"path": "nodes/10-0-0-5-17912/measure/sw_metric/seg-20260907/shard-0-00002.csv.gz",
+          {"path": "nodes/10-0-0-5-17912-8a05db98/measure/sw_metric/seg-20260907/shard-0-00002.csv.gz",
            "bytes": 11834400, "crc32": "0x77e0aa15"}
         ]
       }]

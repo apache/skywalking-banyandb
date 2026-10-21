@@ -41,7 +41,6 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
 )
 
@@ -334,12 +333,11 @@ func StreamsOf(dir, group string) []*databasev1.Stream {
 	return out
 }
 
-// MeasuresOf returns the measures of a group from the artifact's schema, sorted by name,
-// without the internal _top_n_result measure.
+// MeasuresOf returns the measures of a group from the artifact's schema, sorted by name.
 func MeasuresOf(dir, group string) []*databasev1.Measure {
 	var out []*databasev1.Measure
 	for _, s := range Schemas(dir, "measure", func() *databasev1.Measure { return &databasev1.Measure{} }) {
-		if s.GetMetadata().GetGroup() == group && s.GetMetadata().GetName() != csvfmt.TopNResultMeasure {
+		if s.GetMetadata().GetGroup() == group {
 			out = append(out, s)
 		}
 	}

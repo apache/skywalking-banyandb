@@ -53,6 +53,18 @@ type IndexModeReader interface {
 		visit func(subject string, timestamp, version int64, tags map[string]*modelv1.TagValue, unknownFields int) error) error
 }
 
+// TopNMerger is implemented by the measure backend. A query and a part merge combine the
+// versions of one data point of the internal Top-N result measure instead of keeping the
+// latest one; MergeTopNResults combines two stored field values of such a data point, whose
+// entity values are entity. Like IndexModeReader, it lives behind an interface; the backend
+// asserts both in banyand/measure/export_part_reader_test.go.
+type TopNMerger interface {
+	MergeTopNResults(entity []*modelv1.TagValue, timestamp, leftVersion, rightVersion int64, left, right []byte) ([]byte, error)
+}
+
+// topNFieldName is the only field of the internal Top-N result measure.
+const topNFieldName = "value"
+
 type measureResource struct {
 	tags    map[string]int
 	fields  map[string]int
@@ -63,12 +75,16 @@ type measureResource struct {
 // measureGroup is everything the measure producer needs about the schemas of a group.
 type measureGroup struct {
 	layout    *csvfmt.Layout
+	topN      TopNMerger
 	resources map[string]*measureResource
 	revisions map[string]int64
 	// lost holds, per measure, the warnings about tags only a multi-tag rule stores.
 	lost      map[string][]string
 	indexMode []*databasev1.Measure
 	rules     []*databasev1.IndexRule
+	// unmergedTopN counts the Top-N result data points exported with their highest version
+	// only, because an older version could not be merged into it.
+	unmergedTopN uint64
 }
 
 func loadMeasureGroup(run *unitRun, group string) (*measureGroup, error) {
@@ -84,26 +100,19 @@ func loadMeasureGroup(run *unitRun, group string) (*measureGroup, error) {
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list index rule bindings of group %s: %v", group, err)
 	}
-	kept := make([]*databasev1.Measure, 0, len(measures))
-	for _, m := range measures {
-		if m.GetMetadata().GetName() == csvfmt.TopNResultMeasure {
-			continue
-		}
-		kept = append(kept, m)
-	}
-	layout, err := csvfmt.MeasureLayout(kept)
+	layout, err := csvfmt.MeasureLayout(measures)
 	if err != nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "measure group %s cannot be exported as CSV: %v", group, err)
 	}
 	g := &measureGroup{
 		layout:    layout,
-		resources: make(map[string]*measureResource, len(kept)),
-		revisions: make(map[string]int64, len(kept)),
+		resources: make(map[string]*measureResource, len(measures)),
+		revisions: make(map[string]int64, len(measures)),
 		rules:     rules,
-		lost:      multiTagRuleWarnings(kept, rules, bindings),
+		lost:      multiTagRuleWarnings(measures, rules, bindings),
 	}
-	indexed := ruleToTagByMeasure(kept, rules, bindings)
-	for _, m := range kept {
+	indexed := ruleToTagByMeasure(measures, rules, bindings)
+	for _, m := range measures {
 		name := m.GetMetadata().GetName()
 		g.revisions[name] = m.GetMetadata().GetModRevision()
 		if m.GetIndexMode() {
@@ -234,6 +243,7 @@ func produceMeasureCSV(run *unitRun, unit *transferv1.SegmentUnit, segDir string
 	if err != nil {
 		return err
 	}
+	g.topN, _ = indexMode.(TopNMerger)
 	if len(unit.GetShardIds()) > 0 {
 		resolver, openErr := dump.NewIndexResolver(segDir, dump.DefaultIndexCacheSize, nil)
 		if openErr != nil {
@@ -249,6 +259,11 @@ func produceMeasureCSV(run *unitRun, unit *transferv1.SegmentUnit, segDir string
 			if err = fw.close(); err != nil {
 				return readError("finish "+shardDir, err)
 			}
+		}
+		if g.unmergedTopN > 0 {
+			run.warnings = append(run.warnings, fmt.Sprintf(
+				"measure %s: %d data points kept their highest version because their versions could not be merged",
+				csvfmt.TopNResultMeasure, g.unmergedTopN))
 		}
 	}
 	if len(g.indexMode) > 0 {
@@ -304,11 +319,13 @@ func writeMeasureShard(run *unitRun, fw *fileWriter, shardDir string, resolver *
 	var series seriesDecoder
 	for cursors.Len() > 0 {
 		// Parts are sorted by series and timestamp, so every version of a data point comes off
-		// the heap in a row; like a query, the export keeps the highest version only.
+		// the heap in a row, the highest first; like a query, the export keeps that version
+		// only, except for Top-N results, whose versions it merges.
 		first := cursors.heads[0].row()
 		sid, ts := first.SeriesID, first.Timestamp
 		var subject string
-		var latest int64
+		var entity []*modelv1.TagValue
+		var topN *topNMerge
 		have := false
 		for cursors.Len() > 0 {
 			c := cursors.heads[0]
@@ -316,8 +333,17 @@ func writeMeasureShard(run *unitRun, fw *fileWriter, shardDir string, resolver *
 			if row.SeriesID != sid || row.Timestamp != ts {
 				break
 			}
-			if !have || row.Version > latest {
-				subject, have, latest = fillMeasureRow(run, &series, g, cells, fixed, *row), true, row.Version
+			switch {
+			case !have:
+				subject, entity = fillMeasureRow(run, &series, g, cells, fixed, *row)
+				have = true
+				if subject == csvfmt.TopNResultMeasure {
+					topN = &topNMerge{value: row.Fields[topNFieldName], version: row.Version}
+				}
+			case topN != nil:
+				if err = topN.add(g.topN, entity, ts, row); err != nil {
+					return readError(fmt.Sprintf("merge the versions of a %s row in %s", csvfmt.TopNResultMeasure, shardDir), err)
+				}
 			}
 			ok, nextErr := c.next(shardDir)
 			if !ok {
@@ -332,6 +358,14 @@ func writeMeasureShard(run *unitRun, fw *fileWriter, shardDir string, resolver *
 		if subject == "" {
 			continue
 		}
+		if topN != nil && topN.unmerged {
+			g.unmergedTopN++
+		}
+		if topN != nil && topN.merged {
+			if idx, ok := g.resources[subject].fields[topNFieldName]; ok {
+				cells[idx] = csvfmt.EncodeBinary(topN.value)
+			}
+		}
 		if err = fw.writeRow(subject, cells); err != nil {
 			return readError("write "+subject+" row", err)
 		}
@@ -339,21 +373,44 @@ func writeMeasureShard(run *unitRun, fw *fileWriter, shardDir string, resolver *
 	return nil
 }
 
-// fillMeasureRow lays one data point of a measure part out in cells and returns its measure,
-// or "" for a row that is not exported.
+// topNMerge accumulates the versions of one Top-N result data point, the highest first.
+type topNMerge struct {
+	value   []byte
+	version int64
+	merged  bool
+	// unmerged reports a version that could not be merged; like a query or a part merge,
+	// the export then keeps the value accumulated so far.
+	unmerged bool
+}
+
+// add merges an older version of the data point into the accumulated value. It fails only
+// when the backend cannot merge at all; a version that does not merge is skipped.
+func (m *topNMerge) add(merger TopNMerger, entity []*modelv1.TagValue, timestamp int64, row *dumpmeasure.Row) error {
+	if merger == nil {
+		return fmt.Errorf("the measure backend cannot merge %s versions", csvfmt.TopNResultMeasure)
+	}
+	value, err := merger.MergeTopNResults(entity, timestamp, m.version, row.Version, m.value, row.Fields[topNFieldName])
+	if err != nil {
+		m.unmerged = true
+		return nil
+	}
+	m.value, m.merged = value, true
+	return nil
+}
+
+// fillMeasureRow lays one data point of a measure part out in cells and returns its measure
+// and entity values, or "" for a row that is not exported.
 func fillMeasureRow(run *unitRun, series *seriesDecoder, g *measureGroup, cells []string,
 	fixed map[csvfmt.ColumnKind]int, row dumpmeasure.Row,
-) string {
+) (string, []*modelv1.TagValue) {
 	subject, entityValues, ok := subjectOf(run, series, "measure", row.EntityValues)
 	if !ok {
-		return ""
+		return "", nil
 	}
 	res, known := g.resources[subject]
 	if !known {
-		if subject != csvfmt.TopNResultMeasure {
-			run.dropRow("measure " + subject + " is not in the schema registry")
-		}
-		return ""
+		run.dropRow("measure " + subject + " is not in the schema registry")
+		return "", nil
 	}
 	resetRow(cells)
 	cells[fixed[csvfmt.KindTimestamp]] = csvfmt.EncodeTimestamp(row.Timestamp)
@@ -362,7 +419,7 @@ func fillMeasureRow(run *unitRun, series *seriesDecoder, g *measureGroup, cells 
 	setFields(cells, g.layout, row.Fields, row.FieldTypes, res.fields, run, subject)
 	fillEntity(cells, res.entity, entityValues)
 	fillIndexed(cells, res, row.IndexedTags, run, subject)
-	return subject
+	return subject, entityValues
 }
 
 // measureCursor is one part of a shard positioned on its current row. A part orders its blocks

@@ -70,6 +70,15 @@ type receivedFile struct {
 	segmentLevel bool
 }
 
+// plannedParts is the number of parts the session Plan counted in the unit's shards.
+func (u *plannedUnit) plannedParts() uint32 {
+	var parts uint32
+	for _, s := range u.segment.GetShards() {
+		parts += s.GetPartsCount()
+	}
+	return parts
+}
+
 func (u *plannedUnit) catalog() commonv1.Catalog {
 	if u.property != nil {
 		return commonv1.Catalog_CATALOG_PROPERTY
@@ -293,6 +302,12 @@ func (n *nodeExport) receiveUnit(stream transferv1.ExportService_ExportClient, u
 				return orderErr(f)
 			}
 			started, start = true, time.Now()
+			// The session Plan inventoried the same snapshot, so a different part count means a
+			// part vanished from it (or appeared) in between: a consistency check, not a guarantee.
+			if got, want := f.UnitStarted.GetTotalParts(), u.plannedParts(); u.segment != nil && got != want {
+				return Exit(ExitRuntime, "node %s unit %s: the snapshot holds %d parts, the session plan counted %d; export again",
+					n.job.nodeID, u.label(), got, want)
+			}
 			n.progress.unitStarted(u, f.UnitStarted.GetTotalShards(), f.UnitStarted.GetTotalParts())
 		case *transferv1.ExportResponse_FileStarted:
 			if !started || cur != nil {
@@ -450,7 +465,6 @@ func (n *nodeExport) checkSchemaRevisions(u *plannedUnit, p *partialFile, ff *tr
 		return nil
 	}
 	want := n.schema.GroupRevisions(u.catalog(), u.group())
-	delete(want, csvfmt.TopNResultMeasure)
 	got := ff.GetSchemaModRevisions()
 	names := slices.Sorted(maps.Keys(want))
 	for name := range got {

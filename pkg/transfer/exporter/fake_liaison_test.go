@@ -302,6 +302,8 @@ type fakeFile struct {
 	content  []byte
 	shard    uint32
 	segLevel bool
+	// property marks a file of a property unit, which has no parts.
+	property bool
 	// badCRC announces a wrong CRC-32.
 	badCRC bool
 }
@@ -326,7 +328,7 @@ func (f *fakeLiaison) filesFor(req *transferv1.ExportRequest) []fakeFile {
 			p = fmt.Sprintf("%s/%s/seg-%s/shard-%d-00001.csv", catalog, csvfmt.EscapePathComponent(group), seg, sh)
 		}
 		out = append(out, fakeFile{
-			path: p, shard: sh, content: []byte(fmt.Sprintf("_name,v\n%s,%d\n%s,%d\n", name, sh, name, sh+1)),
+			path: p, shard: sh, property: catalog == "property", content: []byte(fmt.Sprintf("_name,v\n%s,%d\n%s,%d\n", name, sh, name, sh+1)),
 			rows: map[string]uint64{name: 2}, revs: maps.Clone(revs),
 		})
 	}
@@ -356,11 +358,18 @@ func sendReady(_ *transferv1.ExportRequest_Init, stream transferv1.ExportService
 	return stream.Send(&transferv1.ExportResponse{Frame: &transferv1.ExportResponse_Ready{Ready: &transferv1.Ready{}}})
 }
 
-// sendUnit streams unit_started (two parts per file), the files (each content split into two
-// chunks, the first reporting one row written) and unit_finished with warnings.
+// sendUnit streams unit_started (one part per shard of a segment unit, as the plan fixtures
+// count; a property unit has none), the files (each content split into two chunks, the first
+// reporting one row written) and unit_finished with warnings.
 func sendUnit(stream transferv1.ExportService_ExportServer, files []fakeFile, warnings []string) error {
 	send := func(r *transferv1.ExportResponse) error { return stream.Send(r) }
-	started := &transferv1.UnitStarted{TotalShards: uint32(len(files)), TotalParts: uint32(2 * len(files))}
+	shards := map[uint32]struct{}{}
+	for _, ff := range files {
+		if !ff.segLevel && !ff.property {
+			shards[ff.shard] = struct{}{}
+		}
+	}
+	started := &transferv1.UnitStarted{TotalShards: uint32(len(files)), TotalParts: uint32(len(shards))}
 	if err := send(&transferv1.ExportResponse{Frame: &transferv1.ExportResponse_UnitStarted{UnitStarted: started}}); err != nil {
 		return err
 	}
@@ -459,7 +468,7 @@ func (s *fakeSchema) first(group string) (string, map[string]int64) {
 	}
 	name, revs := "unknown", map[string]int64{}
 	for _, md := range mds {
-		if md.GetGroup() != group || md.GetName() == csvfmt.TopNResultMeasure {
+		if md.GetGroup() != group {
 			continue
 		}
 		if len(revs) == 0 {

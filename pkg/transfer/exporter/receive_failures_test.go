@@ -30,6 +30,7 @@ import (
 	"time"
 
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
 )
 
@@ -40,8 +41,9 @@ const (
 	measureFilePath = "measure/sw_metric/seg-20260930/shard-0-00001.csv"
 )
 
+// wireUnitStarted opens the measure unit of exportFake, whose plan counts one part.
 func wireUnitStarted() *transferv1.ExportResponse {
-	return &transferv1.ExportResponse{Frame: &transferv1.ExportResponse_UnitStarted{UnitStarted: &transferv1.UnitStarted{}}}
+	return &transferv1.ExportResponse{Frame: &transferv1.ExportResponse_UnitStarted{UnitStarted: &transferv1.UnitStarted{TotalParts: 1}}}
 }
 
 func wireFileStarted(rel string, shard uint32, segmentLevel bool) *transferv1.ExportResponse {
@@ -199,8 +201,8 @@ func TestRunExport_FileVerificationFailuresLeaveOnlyTheTmp(t *testing.T) {
 			name:   "no revisions at all",
 			change: func(ff *transferv1.FileFinished) { ff.SchemaModRevisions = nil },
 			expect: func(fakeFile) string {
-				return "schema of measure sw_metric/service_cpm changed during export: the node encoded " + measureFilePath +
-					" with mod revision missing, the exported schema has 7"
+				return "schema of measure sw_metric/_top_n_result changed during export: the node encoded " + measureFilePath +
+					" with mod revision missing, the exported schema has 9"
 			},
 		},
 		{
@@ -336,7 +338,7 @@ func TestRunExport_SegmentLevelFile(t *testing.T) {
 	segFile := fakeFile{
 		path: "measure/sw_metric/seg-20260930/sidx-00001.csv", shard: 9, segLevel: true,
 		content: []byte("_name,v\nservice_idx,1\n"), rows: map[string]uint64{"service_idx": 1},
-		revs: map[string]int64{"service_cpm": 7, "service_idx": 8},
+		revs: map[string]int64{csvfmt.TopNResultMeasure: 9, "service_cpm": 7, "service_idx": 8},
 	}
 	f.exportScript = scripted(func(f *fakeLiaison, _ *transferv1.ExportRequest_Init, req *transferv1.ExportRequest, stream transferv1.ExportService_ExportServer) error {
 		return sendUnit(stream, append(f.filesFor(req), segFile), []string{"one sidx part skipped (injected)"})
@@ -510,6 +512,17 @@ func TestRunExport_FrameOrderViolations(t *testing.T) {
 
 // The stream ending after a finished file but before unit_finished fails the unit; the
 // finished file was verified and stays.
+func TestRunExport_PartCountDifferentFromThePlanFails(t *testing.T) {
+	f := exportFake()
+	onlyNodeA(f)
+	f.exportScript = rawFrames(false, func(fakeFile) []*transferv1.ExportResponse {
+		return []*transferv1.ExportResponse{{Frame: &transferv1.ExportResponse_UnitStarted{UnitStarted: &transferv1.UnitStarted{TotalShards: 1}}}}
+	})
+	opts, _ := exportOptions(t, f)
+	err := runExport(t, f, opts)
+	requireExit(t, err, ExitRuntime, fmt.Sprintf("node %s unit %s: the snapshot holds 0 parts, the session plan counted 1", nodeA, measureUnitLabel))
+}
+
 func TestRunExport_StreamEndsAfterAFinishedFile(t *testing.T) {
 	f := exportFake()
 	onlyNodeA(f)

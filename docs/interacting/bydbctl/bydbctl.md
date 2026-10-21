@@ -46,8 +46,9 @@ are rejected when given explicitly; a group set through the environment is ignor
 ### Export
 
 `bydbctl data export` exports the selected groups into a local directory, encoded in the artifact format `--format` selects (see
-[Formats](#formats)): their schema, one file set per data node and a `manifest.json` written last. It pins a snapshot on every data node for the duration of the run (an export [session](#sessions)), so the
-exported data is the point in time the session was created, while writes go on.
+[Formats](#formats)): their schema, one file set per data node and a `manifest.json` written last. It pins a snapshot on every data node for the duration of the run (an export [session](#sessions)), while writes go on.
+Export reads stable snapshots captured on each data node during session creation. These do not represent a single globally atomic
+instant; part-based snapshots (stream, measure and trace) contain flushed data only.
 
 ```shell
 bydbctl data export --nodes liaison-1:17912 --output ./backup-20261010 --selector 'catalog=measure,groups=sw_metricsMinute'
@@ -104,7 +105,8 @@ Warnings (dropped rows, stored tag or field values the schema no longer declares
 outside the int64 nanosecond range, tags a multi-tag index rule may hold, rows larger than
 `--max-file-size`, a unit whose shards held parts but yielded no row, stages the nodes report but the schema does not declare, and the skipped schema of
 `--include-schema=false`) are printed as `WARN` lines and kept in `manifest.warnings`; they do not fail the export. A normal export of a
-healthy cluster has none. Once the session exists, any failure keeps it and prints
+healthy cluster has none. Most of them mean the artifact lacks rows or values the source holds, so exit `0` alone does not prove a
+complete copy: inspect `manifest.warnings` before relying on the artifact for a migration. Once the session exists, any failure keeps it and prints
 `bydbctl data release-session --id <id>`; the partial directory has no `manifest.json`, and must be emptied (or another
 `--output` given) before the next run. A run refused before its session exists removes the `schema/` it wrote, so the same
 command can be run again. Ctrl-C or `SIGTERM` stops the export the same
@@ -123,8 +125,9 @@ The artifact:
   nodes/<node-dir>/property/<group>/<data files>
 ```
 
-`<node-dir>` is derived from the node id (lowercase, runs of characters outside `[a-z0-9]` folded to `-`, leading and trailing `-`
-trimmed); `manifest.source.nodes` maps it back, and an export whose nodes derive the same name is refused. Group names are escaped as path components (bytes outside `[A-Za-z0-9._-]`
+`<node-dir>` is derived from the node id: a readable prefix (lowercase, runs of characters outside `[a-z0-9]` folded to `-`, at most 32
+characters, leading and trailing `-` trimmed), then `-` and the first 8 hex digits of the SHA-256 of the id, for example
+`10-0-0-5-17912-8a05db98` for `10.0.0.5:17912`; `manifest.source.nodes` maps it back. Group names are escaped as path components (bytes outside `[A-Za-z0-9._-]`
 become `%XX`). Every source node's copy of a replicated shard is exported into its own subtree. `manifest.json` lists every file with
 its size and CRC32; the names and contents of the data files depend on the format.
 
@@ -145,7 +148,7 @@ nodes/<node-dir>/trace/<group>/seg-<suffix>/shard-<N>-00001.csv.gz
 nodes/<node-dir>/property/<group>/shard-<N>-00001.csv.gz
 ```
 
-The rows of the internal `_top_n_result` measure are not exported: a target recomputes them from its source measures. A measure
+The internal `_top_n_result` measure is exported like any other measure, its binary `value` field base64-encoded. A measure
 data point is exported once, in its latest version, as a query returns it. With `--compress none` the files end in `.csv`. A file rolls to `-00002`, `-00003`, ... once its on-disk size reaches `--max-file-size`,
 and every file repeats the header. A row whose encoded size reaches `--max-file-size` gets a file of its own, and the unit warns once
 with the number of such rows.
@@ -252,7 +255,7 @@ Exit codes of `data export` and `data release-session`:
 
 | Code | Meaning |
 |------|---------|
-| `0` | success; release warnings do not change it |
+| `0` | success; release warnings do not change it. It can include data-loss warnings: check `manifest.warnings` before treating the export as complete |
 | `1` | usage error: a bad flag or `plan.yaml`, an unknown selector group, a non-empty `--output`, `--format native` |
 | `2` | preflight rejection, nothing was exported: no liaison reachable or one refused the credentials, a server without data export, another export session holds the cluster (without `--preempt`), or, in a dry run with `--strict-coverage`, a coverage gap (the report is still printed) |
 | `3` | failure at run time: a node stream failed or stalled, a file failed its size/CRC32 check, the schema changed during the export, the session was lost (its heartbeat answered `FAILED_PRECONDITION`), or a release failed on some node (`release-session`) |

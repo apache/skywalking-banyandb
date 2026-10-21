@@ -18,6 +18,8 @@
 package manifest
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -30,32 +32,45 @@ import (
 
 func TestNodeDir(t *testing.T) {
 	cases := []struct {
-		id  string
-		dir string
+		id     string
+		prefix string
 	}{
-		{id: "10.0.0.5:17912", dir: "10-0-0-5-17912"},
-		{id: "data-warm1:17912", dir: "data-warm1-17912"},
-		{id: "[::1]:17912", dir: "1-17912"},
-		{id: "Data-A:17912", dir: "data-a-17912"},
-		{id: "", dir: "node"},
-		{id: "::", dir: "node"},
-		{id: "--Host__Name--", dir: "host-name"},
-		{id: "héllo", dir: "h-llo"},
+		{id: "10.0.0.5:17912", prefix: "10-0-0-5-17912"},
+		{id: "data-warm1:17912", prefix: "data-warm1-17912"},
+		{id: "[::1]:17912", prefix: "1-17912"},
+		{id: "Data-A:17912", prefix: "data-a-17912"},
+		{id: "", prefix: "node"},
+		{id: "::", prefix: "node"},
+		{id: "--Host__Name--", prefix: "host-name"},
+		{id: "héllo", prefix: "h-llo"},
 	}
-	valid := regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+	valid := regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*-[0-9a-f]{8}$`)
 	for _, c := range cases {
 		got := NodeDir(c.id)
-		assert.Equal(t, c.dir, got, "id %q", c.id)
+		sum := sha256.Sum256([]byte(c.id))
+		assert.Equal(t, c.prefix+"-"+hex.EncodeToString(sum[:4]), got, "id %q", c.id)
 		assert.Regexp(t, valid, got)
 	}
+	assert.Equal(t, "10-0-0-5-17912-8a05db98", NodeDir("10.0.0.5:17912"))
 }
 
-// A long id keeps every character, so ids differing only at the end stay apart.
+// Ids that differ only in case or punctuation share the readable prefix, not the directory.
+func TestNodeDirKeepsSimilarIDsApart(t *testing.T) {
+	assert.Equal(t, "a-b-17912-613e0e89", NodeDir("a.b:17912"))
+	assert.Equal(t, "a-b-17912-b5233c34", NodeDir("a-b:17912"))
+	assert.Equal(t, "data-1-17912-03d2b6d6", NodeDir("Data-1:17912"))
+	assert.Equal(t, "data-1-17912-98a53f33", NodeDir("data-1:17912"))
+}
+
+// A long id keeps a bounded readable prefix, and the hash keeps ids differing only at the end apart.
 func TestNodeDirLongIDs(t *testing.T) {
 	base := strings.Repeat("very-long-hostname.", 4) + "example.com"
 	a := NodeDir(base + ":17912")
-	assert.Equal(t, strings.ReplaceAll(base, ".", "-")+"-17912", a)
+	assert.Len(t, a, 32+1+8)
+	assert.True(t, strings.HasPrefix(a, "very-long-hostname-very-long-hos-"), a)
 	assert.NotEqual(t, a, NodeDir(base+":17913"))
+	// A cut that ends on a separator does not leave a doubled '-'.
+	assert.NotContains(t, NodeDir(strings.Repeat("a", 31)+".b"), "--")
 }
 
 func TestFormatCRC32(t *testing.T) {

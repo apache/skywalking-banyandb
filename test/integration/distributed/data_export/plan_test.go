@@ -76,6 +76,14 @@ var (
 
 const writeInterval = 500 * time.Millisecond
 
+// The suite writes measureRows points into service_cpm_minute and topNSourcePoints into
+// topNSourceMeasure, the source measure of a Top-N aggregation of sw_metric.
+const (
+	measureRows       = 6
+	topNSourceMeasure = "service_instance_cpm_minute"
+	topNSourcePoints  = 6
+)
+
 var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	gomega.Expect(logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel})).To(gomega.Succeed())
 	// The specs expire leases on purpose; the periodic sweep must not reclaim them mid-spec.
@@ -118,6 +126,9 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	measureBase = time.Unix(0, ns-ns%int64(time.Minute))
 	casesmeasuredata.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", measureBase, writeInterval)
 	casesmeasuredata.Write(conn, "service_traffic", "index_mode", "service_traffic_data.json", measureBase, writeInterval)
+	// A minute apart, the points of a Top-N aggregation's source measure span several windows,
+	// so the liaison's Top-N processor closes all but the last and writes their _top_n_result rows.
+	casesmeasuredata.Write(conn, topNSourceMeasure, "sw_metric", topNSourceMeasure+"_data.json", measureBase, time.Minute)
 	traceBase = timestamp.NowMilli()
 	casestracedata.Write(conn, "sw", traceBase, writeInterval)
 	casespropertydata.Write(conn, "sw1")

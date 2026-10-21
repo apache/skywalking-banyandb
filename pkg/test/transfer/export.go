@@ -28,7 +28,6 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/spf13/pflag"
 
-	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/config"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exporter"
 )
@@ -104,18 +103,28 @@ func DefaultExportOptions(output string) config.Export {
 	return opts
 }
 
+// preflightTimeout bounds connecting to the liaisons; a target still merging an import can
+// answer slowly.
+const preflightTimeout = 30 * time.Second
+
 // RunExport connects to the liaisons at addrs the way bydbctl does (Preflight, FetchGroups)
 // and runs exporter.RunExport with opts. hook, when not nil, sees every line of the log and
 // of the output as it is printed, on the printing goroutine.
 func RunExport(ctx context.Context, addr string, opts config.Export, hook func(line string), moreAddrs ...string) ExportRun {
 	logW := &lineWriter{hook: hook}
-	preflightCtx, cancel := context.WithTimeout(ctx, flags.EventuallyTimeout)
+	preflightCtx, cancel := context.WithTimeout(ctx, preflightTimeout)
 	defer cancel()
+	// A preflight failure is returned, not asserted, so a caller retrying inside Eventually
+	// (a busy target right after an import) can try again.
 	liaisons, cluster, err := exporter.Preflight(preflightCtx, append([]string{addr}, moreAddrs...), exporter.ConnectOptions{Timeout: 10 * time.Second, Log: logW})
-	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
+	if err != nil {
+		return ExportRun{Err: err, Log: logW.String()}
+	}
 	defer func() { _ = liaisons.Close() }()
 	groups, err := exporter.FetchGroups(preflightCtx, liaisons.Primary())
-	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
+	if err != nil {
+		return ExportRun{Err: err, Log: logW.String()}
+	}
 	outW := &lineWriter{hook: hook}
 	err = exporter.RunExport(ctx, exporter.Env{Log: logW, Out: outW, Cluster: cluster, Liaisons: liaisons, Groups: groups}, opts)
 	run := ExportRun{Err: err, Log: logW.String(), Out: outW.String()}

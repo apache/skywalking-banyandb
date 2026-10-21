@@ -20,13 +20,11 @@ package transfer
 import (
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/onsi/gomega"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 )
 
@@ -45,7 +43,6 @@ const (
 	PropertyGroup   = "sw"
 	PropertyName    = "ui_menu"
 	PropertyFile    = "sw1.json"
-	topNResult      = "_top_n_result"
 	propertyLiveID  = "1"
 	deleteTimeLabel = "_delete_time"
 )
@@ -59,7 +56,7 @@ type SuiteData struct {
 }
 
 // Layouts computes the CSV layout of every group the artifact's schema holds, keyed
-// "<catalog>/<group>", the way a data node does: resources sorted by name, _top_n_result left out.
+// "<catalog>/<group>", the way a data node does: resources sorted by name.
 func Layouts(dir string) map[string]*csvfmt.Layout {
 	out := map[string]*csvfmt.Layout{}
 	add := func(key string, l *csvfmt.Layout, err error) {
@@ -175,12 +172,6 @@ func (a *Artifact) VerifySuiteData(d SuiteData, perNode func(group string) bool)
 	for _, f := range a.FilesOf("measure", MeasureGroup) {
 		gomega.ExpectWithOffset(1, f.SegmentLevel).To(gomega.BeFalse(), "a group without index-mode measures has no segment-level file: %s", f.Path)
 	}
-	for _, f := range a.Files {
-		for _, r := range f.Rows {
-			gomega.ExpectWithOffset(1, r[0]).NotTo(gomega.Equal(topNResult), "%s never holds Top-N results", f.Path)
-		}
-	}
-
 	tr := findByName(TracesOf(a.Dir, TraceGroup), TraceName)
 	check("trace", TraceGroup, TraceName, ExpectedTrace(layouts["trace/"+TraceGroup], tr, d.TraceBase, d.Interval))
 
@@ -220,28 +211,6 @@ func RowsCount(a *Artifact, catalog, group string) int {
 		n += len(f.Rows)
 	}
 	return n
-}
-
-// ExpectTopNSkippedSilently asserts that an exported measure group with a Top-N aggregation
-// leaves its _top_n_result measure out without a warning: a target recomputes it.
-func ExpectTopNSkippedSilently(a *Artifact) {
-	aggs := Schemas(a.Dir, "topNAggregation", func() *databasev1.TopNAggregation { return &databasev1.TopNAggregation{} })
-	withTopN := map[string]bool{}
-	for _, agg := range aggs {
-		withTopN[agg.GetMetadata().GetGroup()] = true
-	}
-	var checked int
-	for _, key := range a.ExportedGroups() {
-		group, isMeasure := strings.CutPrefix(key, "measure/")
-		if !isMeasure || !withTopN[group] {
-			continue
-		}
-		checked++
-		gomega.ExpectWithOffset(1, a.Manifest.Warnings).NotTo(gomega.ContainElement(gomega.SatisfyAll(
-			gomega.ContainSubstring("measure/"+group+"/"), gomega.ContainSubstring(topNResult))),
-			"group %s has a Top-N aggregation", group)
-	}
-	gomega.ExpectWithOffset(1, checked).To(gomega.BeNumerically(">", 0), "an exported measure group has a Top-N aggregation")
 }
 
 // ExpectRolledFiles asserts the shape of an export written with --compress none and a

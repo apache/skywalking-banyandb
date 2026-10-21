@@ -20,6 +20,7 @@ package csv
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -71,6 +72,21 @@ func (indexModeWalker) ExportIndexModeRows(ctx context.Context, sidxDir string, 
 	return measure.WalkIndexModeRows(ctx, sidxDir, measures, rules, func(r *measure.IndexModeRow) error {
 		return visit(r.Subject, r.Timestamp, r.Version, r.Tags, r.UnknownFields)
 	})
+}
+
+// unmergeableTopN is a Top-N result value the fake merger refuses, like a corrupt one.
+const unmergeableTopN = "unmergeable"
+
+// MergeTopNResults stands in for the measure backend's merge of Top-N result versions: the
+// test values are not engine encodings, so it joins them, the latest first.
+func (indexModeWalker) MergeTopNResults(entity []*modelv1.TagValue, _, _, _ int64, left, right []byte) ([]byte, error) {
+	if len(entity) != 4 {
+		return nil, fmt.Errorf("unexpected Top-N entity %v", entity)
+	}
+	if string(left) == unmergeableTopN || string(right) == unmergeableTopN {
+		return nil, errors.New("cannot merge a corrupt Top-N result")
+	}
+	return []byte(string(left) + "+" + string(right)), nil
 }
 
 // snapshotter is the part of a storage service that takes export snapshots.
@@ -235,24 +251,32 @@ func unitWarnings(units []*producedUnit) []string {
 	return out
 }
 
-// writeSecondBatch writes an older version of every cpm data point writeEngineData wrote and a
-// point of the group's internal _top_n_result measure. Sent once the first points are
-// flushed, they land in a part of their own.
-func writeSecondBatch(t *testing.T, pipeline queue.Queue, base time.Time) {
-	bp := pipeline.NewBatchPublisher(5 * time.Second)
-	topNTags := []*modelv1.TagValue{strTV("cpm_top"), intTV(1), strTV(engMeasureGroup), strTV("{}")}
-	_, err := bp.Publish(context.Background(), data.TopicMeasureWrite, bus.NewMessage(bus.MessageID(999), &measurev1.InternalWriteRequest{
+// topNPoint is a version of the data point of the Top-N aggregation name in the group's
+// internal _top_n_result measure.
+func topNPoint(base time.Time, name string, version int64, value string) *measurev1.InternalWriteRequest {
+	topNTags := []*modelv1.TagValue{strTV(name), intTV(1), strTV(engMeasureGroup), strTV("{}")}
+	return &measurev1.InternalWriteRequest{
 		EntityValues: topNTags,
 		Request: &measurev1.WriteRequest{
 			Metadata: &commonv1.Metadata{Name: csvfmt.TopNResultMeasure, Group: engMeasureGroup},
 			DataPoint: &measurev1.DataPointValue{
 				Timestamp:   timestamppb.New(base),
 				TagFamilies: []*modelv1.TagFamilyForWrite{{Tags: topNTags}},
-				Fields:      []*modelv1.FieldValue{{Value: &modelv1.FieldValue_BinaryData{BinaryData: []byte("internal")}}},
-				Version:     1,
+				Fields:      []*modelv1.FieldValue{{Value: &modelv1.FieldValue_BinaryData{BinaryData: []byte(value)}}},
+				Version:     version,
 			},
 		},
-	}))
+	}
+}
+
+// writeSecondBatch writes an older version of every cpm data point writeEngineData wrote and an
+// older version of its Top-N result. Sent once the first points are flushed, they land in a
+// part of their own.
+func writeSecondBatch(t *testing.T, pipeline queue.Queue, base time.Time) {
+	bp := pipeline.NewBatchPublisher(5 * time.Second)
+	_, err := bp.Publish(context.Background(), data.TopicMeasureWrite, bus.NewMessage(bus.MessageID(999), topNPoint(base, "cpm_top", 1, "older")))
+	require.NoError(t, err)
+	_, err = bp.Publish(context.Background(), data.TopicMeasureWrite, bus.NewMessage(bus.MessageID(998), topNPoint(base, "cpm_bad", 1, unmergeableTopN)))
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
 		svc := "svc" + strconv.Itoa(i)
@@ -333,6 +357,8 @@ func writeEngineData(t *testing.T, pipeline queue.Queue, base time.Time) {
 			},
 		})
 	}
+	publish(data.TopicMeasureWrite, topNPoint(base, "cpm_top", 2, "latest"))
+	publish(data.TopicMeasureWrite, topNPoint(base, "cpm_bad", 2, "bad-latest"))
 	publish(data.TopicStreamWrite, &streamv1.InternalWriteRequest{
 		EntityValues: []*modelv1.TagValue{strTV("svc9")},
 		Request: &streamv1.WriteRequest{
@@ -535,16 +561,16 @@ func TestProducer_RealEngineData(t *testing.T) {
 		streamRows := len(allRows(t, units[commonv1.Catalog_CATALOG_STREAM]))
 		measureRows := len(allRows(t, units[commonv1.Catalog_CATALOG_MEASURE]))
 		traceRows := len(allRows(t, units[commonv1.Catalog_CATALOG_TRACE]))
-		if streamRows == 4 && measureRows == 5 && traceRows == 2 {
+		if streamRows == 4 && measureRows == 7 && traceRows == 2 {
 			break
 		}
 		req.True(time.Now().Before(deadline), "not every written row was exported: stream %d, measure %d, trace %d",
 			streamRows, measureRows, traceRows)
 		time.Sleep(500 * time.Millisecond)
 	}
-	// Older versions of the cpm points and a Top-N result in a part of their own: a query
-	// returns the latest version of a data point, and so must the export, which leaves the
-	// internal Top-N results out. Produce until a snapshot holds the second part.
+	// Older versions of the cpm points and of the Top-N result in a part of their own: a query
+	// returns the latest version of a data point, and so must the export, except for Top-N
+	// results, whose versions a query merges. Produce until a snapshot holds the second part.
 	writeSecondBatch(t, pipeline, base)
 	for attempt := 1; ; attempt++ {
 		name := fmt.Sprintf("stale%04x", attempt)
@@ -609,21 +635,42 @@ func TestProducer_RealEngineData(t *testing.T) {
 			require.Equal(t, "GENERAL", row["default.layer"], "indexed tag from the series index")
 			n := row["default.svc"][3] - '0'
 			require.Equal(t, "plain"+string(n+'0'), row["default.plain"])
-			require.Equal(t, strconv.Itoa(100+int(n)), row["_field.value"])
+			// The Top-N result declares a binary "value" field, which splits the column.
+			require.Equal(t, strconv.Itoa(100+int(n)), row["cpm::_field.value"])
+			require.Equal(t, `\N`, row["_top_n_result::_field.value"])
 			require.Equal(t, csvfmt.EncodeFloat(float64(n)+0.25), row["_field.ratio"])
 			require.Equal(t, strconv.Itoa(7+int(n)), row["_version"])
 			require.Equal(t, `\N`, row["default.zone"], "only the multi-tag rule stores zone")
 			require.Equal(t, `\N`, row["default.rack"], "only the multi-tag rule stores rack")
 		}
 		require.Equal(t, []string{
+			"measure _top_n_result: 1 data points kept their highest version because their versions could not be merged",
 			"measure cpm: tags [zone rack] are indexed by multi-tag rule zone_rack, which may hold their values; such values cannot be exported and their cells are null",
-		}, unitWarnings(units[commonv1.Catalog_CATALOG_MEASURE]), "the Top-N result is skipped without a warning")
-		require.Empty(t, byName[csvfmt.TopNResultMeasure])
+		}, unitWarnings(units[commonv1.Catalog_CATALOG_MEASURE]), "only the Top-N result that does not merge warns")
+		topNByName := map[string]map[string]string{}
+		for _, row := range byName[csvfmt.TopNResultMeasure] {
+			topNByName[row["_topN.name"]] = row
+		}
+		require.Len(t, byName[csvfmt.TopNResultMeasure], 2)
+		require.Len(t, topNByName, 2, "one row per Top-N data point")
+		bad := topNByName["cpm_bad"]
+		require.Equal(t, csvfmt.EncodeBinary([]byte("bad-latest")), bad["_top_n_result::_field.value"], "a version that does not merge keeps the latest")
+		require.Equal(t, "2", bad["_version"])
+		topN := topNByName["cpm_top"]
+		require.Equal(t, "cpm_top", topN["_topN.name"])
+		require.Equal(t, "1", topN["_topN.direction"])
+		require.Equal(t, engMeasureGroup, topN["_topN.group"])
+		require.Equal(t, "{}", topN["_topN.parameters"])
+		require.Equal(t, csvfmt.EncodeBinary([]byte("latest+older")), topN["_top_n_result::_field.value"], "the versions are merged")
+		require.Equal(t, `\N`, topN["cpm::_field.value"])
+		require.Equal(t, "2", topN["_version"])
+		require.Equal(t, csvfmt.EncodeTimestamp(base.UnixNano()), topN["_timestamp"])
 		require.Len(t, byName["traffic"], 2)
 		for _, row := range byName["traffic"] {
 			require.Regexp(t, `^id[01]$`, row["default.id"])
 			require.Equal(t, "name"+row["default.id"][2:], row["default.svc_name"])
-			require.Equal(t, `\N`, row["_field.value"], "index-mode measures have no fields")
+			require.Equal(t, `\N`, row["cpm::_field.value"], "index-mode measures have no fields")
+			require.Equal(t, `\N`, row["_top_n_result::_field.value"], "index-mode measures have no fields")
 		}
 	})
 

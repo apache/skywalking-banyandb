@@ -45,7 +45,10 @@ func countsManifest() *Manifest {
 	}
 	return &Manifest{
 		ArtifactVersion: ArtifactVersion, Format: "csv", Compress: "gzip", ExportedAt: "2026-10-19T08:00:00Z",
-		Source: Source{Nodes: []Node{{ID: "data-a:17912", Dir: "data-a-17912", Timezone: "Asia/Shanghai"}, {ID: "data-b:17912", Dir: "data-b-17912", Timezone: "UTC"}}},
+		Source: Source{Nodes: []Node{
+			{ID: "data-a:17912", Dir: "data-a-17912-d20a13e5", Timezone: "Asia/Shanghai"},
+			{ID: "data-b:17912", Dir: "data-b-17912-9378f780", Timezone: "UTC"},
+		}},
 		Groups: []Group{
 			{Name: "sw_stream", Catalog: "STREAM", Stages: []Stage{{Name: "hot", ShardNum: 3, SegmentInterval: "1d", TTL: "7d", Replicas: 1}}},
 			{Name: "sw_idx", Catalog: "MEASURE", IndexMode: true, Stages: []Stage{{Name: "hot", ShardNum: 2, SegmentInterval: "1d", TTL: "7d"}}},
@@ -58,8 +61,8 @@ func countsManifest() *Manifest {
 					RowCounts:  map[string]uint64{"endpoint_traffic": 80, "service_traffic": 10},
 					TotalCount: 90,
 					SegmentFiles: []File{
-						file("nodes/data-a-17912/measure/sw_idx/seg-20261005/segment-00001.csv.gz", 900, 2),
-						file("nodes/data-a-17912/measure/sw_idx/seg-20261005/segment-00002.csv.gz", 400, 1),
+						file("nodes/data-a-17912-d20a13e5/measure/sw_idx/seg-20261005/segment-00001.csv.gz", 900, 2),
+						file("nodes/data-a-17912-d20a13e5/measure/sw_idx/seg-20261005/segment-00002.csv.gz", 400, 1),
 					},
 					Shards: []Shard{
 						{Shard: 0, MinTimestamp: 3000, MaxTimestamp: 3500, RowCounts: map[string]uint64{}, Parts: []Part{}, Files: []File{}},
@@ -72,7 +75,7 @@ func countsManifest() *Manifest {
 				Sources: []UnitSource{{Node: "data-b:17912", Shards: []Shard{{
 					Shard: 2, DocCount: 7, TotalCount: 7, EstimatedCompressedBytes: 300, EstimatedUncompressedBytes: 300,
 					RowCounts: map[string]uint64{"ui_template": 7}, Parts: []Part{},
-					Files: []File{file("nodes/data-b-17912/property/ui_template/shard-2-00001.csv.gz", 120, 1)},
+					Files: []File{file("nodes/data-b-17912-9378f780/property/ui_template/shard-2-00001.csv.gz", 120, 1)},
 				}}}},
 			},
 			{
@@ -90,8 +93,8 @@ func countsManifest() *Manifest {
 						{ID: 12, MinTimestamp: 1400, MaxTimestamp: math.MaxInt64, TotalCount: 50},
 					},
 					Files: []File{
-						file("nodes/data-a-17912/stream/sw_stream/seg-20261004/shard-0-00001.csv.gz", 700, 1),
-						file("nodes/data-a-17912/stream/sw_stream/seg-20261004/shard-0-00002.csv.gz", 300, math.MaxUint32),
+						file("nodes/data-a-17912-d20a13e5/stream/sw_stream/seg-20261004/shard-0-00001.csv.gz", 700, 1),
+						file("nodes/data-a-17912-d20a13e5/stream/sw_stream/seg-20261004/shard-0-00002.csv.gz", 300, math.MaxUint32),
 					},
 				}}}},
 			},

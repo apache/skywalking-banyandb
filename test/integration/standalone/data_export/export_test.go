@@ -33,6 +33,7 @@ import (
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	transfertest "github.com/apache/skywalking-banyandb/pkg/test/transfer"
+	"github.com/apache/skywalking-banyandb/pkg/test/transfer/topncheck"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exporter"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
@@ -44,10 +45,19 @@ func streamRows() uint64 {
 	frames := transfertest.MustPlan(conn, &transferv1.PlanRequest{Selectors: []*transferv1.Selector{
 		{Catalog: commonv1.Catalog_CATALOG_STREAM, Groups: []string{transfertest.StreamGroup}},
 	}})
+	return groupRows(frames, commonv1.Catalog_CATALOG_STREAM, transfertest.StreamGroup)
+}
+
+// groupRows sums the total_count of the shards of one catalog and group in a plan.
+func groupRows(frames []*transferv1.PlanResponse, catalog commonv1.Catalog, group string) uint64 {
 	var n uint64
 	for _, f := range transfertest.UnitFrames(frames) {
 		for _, u := range f.GetUnits() {
-			for _, sh := range u.GetSegment().GetShards() {
+			seg := u.GetSegment()
+			if seg.GetUnit().GetCatalog() != catalog || seg.GetUnit().GetGroup() != group {
+				continue
+			}
+			for _, sh := range seg.GetShards() {
 				n += sh.GetTotalCount()
 			}
 		}
@@ -80,6 +90,9 @@ var _ = ginkgo.Describe("CSV export on a standalone process", ginkgo.Ordered, fu
 			g.Expect(planErr).NotTo(gomega.HaveOccurred())
 			g.Expect(shardsWithParts(frames, commonv1.Catalog_CATALOG_STREAM, transfertest.StreamGroup)).To(gomega.BeNumerically(">", 0))
 			g.Expect(shardsWithParts(frames, commonv1.Catalog_CATALOG_MEASURE, transfertest.MeasureGroup)).To(gomega.BeNumerically(">", 0))
+			// The written points and at least one _top_n_result row the Top-N processor wrote.
+			g.Expect(groupRows(frames, commonv1.Catalog_CATALOG_MEASURE, transfertest.MeasureGroup)).
+				To(gomega.BeNumerically(">", measureRows+topNSourcePoints), "Top-N results")
 			g.Expect(shardsWithParts(frames, commonv1.Catalog_CATALOG_TRACE, transfertest.TraceGroup)).To(gomega.BeNumerically(">", 0))
 			g.Expect(transfertest.IndexModeDocs(frames, transfertest.IndexModeGroup)).To(gomega.BeNumerically(">=", 3), "index-mode rows")
 			prop := propertyUnit(frames, transfertest.PropertyGroup)
@@ -112,7 +125,7 @@ var _ = ginkgo.Describe("CSV export on a standalone process", ginkgo.Ordered, fu
 			gomega.Expect(f.Path).To(gomega.HaveSuffix(".csv.gz"))
 		}
 		a.VerifySuiteData(suiteData(), allOnOneNode)
-		transfertest.ExpectTopNSkippedSilently(a)
+		gomega.Expect(topncheck.ExpectTopNExported(a)).To(gomega.BeNumerically(">", 0), "the Top-N results are exported")
 	})
 
 	ginkgo.It("writes plain CSV and rolls small files with the header repeated", func() {

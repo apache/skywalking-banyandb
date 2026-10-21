@@ -21,12 +21,14 @@ package schemasync
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"fmt"
 	"hash/crc32"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -95,7 +97,19 @@ func Export(ctx context.Context, conn *grpc.ClientConn, groups []*commonv1.Group
 	lines := map[string][]proto.Message{KindGroup: nil}
 	for _, g := range groups {
 		lines[KindGroup] = append(lines[KindGroup], g)
-		if err := listGroup(ctx, conn, g, res, lines); err != nil {
+		catalog := g.GetCatalog()
+		if err := ListGroup(ctx, conn, g, func(kind string, m proto.Message) error {
+			lines[kind] = append(lines[kind], m)
+			switch kind {
+			case KindStream, KindMeasure, KindTrace, KindProperty:
+				md := m.(interface{ GetMetadata() *commonv1.Metadata }).GetMetadata()
+				res.revisions[resourceKey{catalog: catalog, group: md.GetGroup(), name: md.GetName()}] = md.GetModRevision()
+			}
+			if v, ok := m.(*databasev1.Measure); ok {
+				res.Measures = append(res.Measures, v)
+			}
+			return nil
+		}); err != nil {
 			return nil, err
 		}
 	}
@@ -104,6 +118,8 @@ func Export(ctx context.Context, conn *grpc.ClientConn, groups []*commonv1.Group
 		return nil, fmt.Errorf("create schema directory: %w", err)
 	}
 	for _, kind := range Kinds {
+		// Registries list in no fixed order; sorting keeps the files byte-identical for the same schema.
+		slices.SortFunc(lines[kind], compareByMetadata)
 		f, err := writeKind(schemaDir, kind, lines[kind])
 		if err != nil {
 			return nil, err
@@ -114,6 +130,13 @@ func Export(ctx context.Context, conn *grpc.ClientConn, groups []*commonv1.Group
 		return nil, err
 	}
 	return res, nil
+}
+
+// compareByMetadata orders schema messages by group, then name.
+func compareByMetadata(a, b proto.Message) int {
+	ma := a.(interface{ GetMetadata() *commonv1.Metadata }).GetMetadata()
+	mb := b.(interface{ GetMetadata() *commonv1.Metadata }).GetMetadata()
+	return cmp.Or(cmp.Compare(ma.GetGroup(), mb.GetGroup()), cmp.Compare(ma.GetName(), mb.GetName()))
 }
 
 // syncDir makes the directory's new entries durable.
@@ -132,77 +155,74 @@ func syncDir(dir string) error {
 	return nil
 }
 
-func listGroup(ctx context.Context, conn *grpc.ClientConn, g *commonv1.Group, res *Result, lines map[string][]proto.Message) error {
+// ListGroup lists every resource of a group through conn, only the kinds its catalog can hold,
+// and calls visit with the kind and the resource; the group itself is not visited. A listing or
+// visit failure stops it.
+func ListGroup(ctx context.Context, conn *grpc.ClientConn, g *commonv1.Group, visit func(kind string, m proto.Message) error) error {
 	name := g.GetMetadata().GetName()
-	catalog := g.GetCatalog()
-	record := func(md *commonv1.Metadata) {
-		res.revisions[resourceKey{catalog: catalog, group: md.GetGroup(), name: md.GetName()}] = md.GetModRevision()
-	}
 	wrap := func(kind string, err error) error {
 		return fmt.Errorf("list %s of group %s: %w", kind, name, err)
 	}
-	switch catalog {
+	switch g.GetCatalog() {
 	case commonv1.Catalog_CATALOG_STREAM:
 		resp, err := databasev1.NewStreamRegistryServiceClient(conn).List(ctx, &databasev1.StreamRegistryServiceListRequest{Group: name})
 		if err != nil {
 			return wrap(KindStream, err)
 		}
-		for _, s := range resp.GetStream() {
-			record(s.GetMetadata())
-			lines[KindStream] = append(lines[KindStream], s)
+		if err = visitAll(KindStream, resp.GetStream(), visit); err != nil {
+			return err
 		}
 	case commonv1.Catalog_CATALOG_MEASURE:
 		resp, err := databasev1.NewMeasureRegistryServiceClient(conn).List(ctx, &databasev1.MeasureRegistryServiceListRequest{Group: name})
 		if err != nil {
 			return wrap(KindMeasure, err)
 		}
-		for _, m := range resp.GetMeasure() {
-			record(m.GetMetadata())
-			res.Measures = append(res.Measures, m)
-			lines[KindMeasure] = append(lines[KindMeasure], m)
+		if err = visitAll(KindMeasure, resp.GetMeasure(), visit); err != nil {
+			return err
 		}
 		topN, err := databasev1.NewTopNAggregationRegistryServiceClient(conn).List(ctx, &databasev1.TopNAggregationRegistryServiceListRequest{Group: name})
 		if err != nil {
 			return wrap(KindTopNAggregation, err)
 		}
-		for _, t := range topN.GetTopNAggregation() {
-			lines[KindTopNAggregation] = append(lines[KindTopNAggregation], t)
+		if err = visitAll(KindTopNAggregation, topN.GetTopNAggregation(), visit); err != nil {
+			return err
 		}
 	case commonv1.Catalog_CATALOG_TRACE:
 		resp, err := databasev1.NewTraceRegistryServiceClient(conn).List(ctx, &databasev1.TraceRegistryServiceListRequest{Group: name})
 		if err != nil {
 			return wrap(KindTrace, err)
 		}
-		for _, t := range resp.GetTrace() {
-			record(t.GetMetadata())
-			lines[KindTrace] = append(lines[KindTrace], t)
+		if err = visitAll(KindTrace, resp.GetTrace(), visit); err != nil {
+			return err
 		}
 	case commonv1.Catalog_CATALOG_PROPERTY:
 		resp, err := databasev1.NewPropertyRegistryServiceClient(conn).List(ctx, &databasev1.PropertyRegistryServiceListRequest{Group: name})
 		if err != nil {
 			return wrap(KindProperty, err)
 		}
-		for _, p := range resp.GetProperties() {
-			record(p.GetMetadata())
-			lines[KindProperty] = append(lines[KindProperty], p)
-		}
-		return nil // property groups carry no index rules
+		return visitAll(KindProperty, resp.GetProperties(), visit) // property groups carry no index rules
 	default:
-		return fmt.Errorf("group %s has unsupported catalog %s", name, catalog)
+		return fmt.Errorf("group %s has unsupported catalog %s", name, g.GetCatalog())
 	}
 	rules, err := databasev1.NewIndexRuleRegistryServiceClient(conn).List(ctx, &databasev1.IndexRuleRegistryServiceListRequest{Group: name})
 	if err != nil {
 		return wrap(KindIndexRule, err)
 	}
-	for _, r := range rules.GetIndexRule() {
-		lines[KindIndexRule] = append(lines[KindIndexRule], r)
+	if err = visitAll(KindIndexRule, rules.GetIndexRule(), visit); err != nil {
+		return err
 	}
 	bindings, err := databasev1.NewIndexRuleBindingRegistryServiceClient(conn).List(ctx, &databasev1.IndexRuleBindingRegistryServiceListRequest{Group: name})
 	if err != nil {
 		return wrap(KindIndexRuleBinding, err)
 	}
-	for _, b := range bindings.GetIndexRuleBinding() {
-		lines[KindIndexRuleBinding] = append(lines[KindIndexRuleBinding], b)
+	return visitAll(KindIndexRuleBinding, bindings.GetIndexRuleBinding(), visit)
+}
+
+func visitAll[T proto.Message](kind string, msgs []T, visit func(kind string, m proto.Message) error) error {
+	for _, m := range msgs {
+		if err := visit(kind, m); err != nil {
+			return err
+		}
 	}
 	return nil
 }
