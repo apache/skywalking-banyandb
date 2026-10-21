@@ -1,0 +1,46 @@
+{
+  "metadata": {
+    "name": "qlb_fixture",
+    "group": "sw_metric"
+  },
+  "tag_families": [
+    {
+      "name": "default",
+      "tags": [
+        {
+          "name": "rid",
+          "type": "TAG_TYPE_INT"
+        },
+        {
+          "name": "host",
+          "type": "TAG_TYPE_STRING"
+        },
+        {
+          "name": "zone",
+          "type": "TAG_TYPE_STRING"
+        }
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "name": "v",
+      "field_type": "FIELD_TYPE_INT",
+      "encoding_method": "ENCODING_METHOD_GORILLA",
+      "compression_method": "COMPRESSION_METHOD_ZSTD"
+    },
+    {
+      "name": "f",
+      "field_type": "FIELD_TYPE_FLOAT",
+      "encoding_method": "ENCODING_METHOD_GORILLA",
+      "compression_method": "COMPRESSION_METHOD_ZSTD"
+    }
+  ],
+  "entity": {
+    "tag_names": [
+      "host"
+    ]
+  },
+  "interval": "1s",
+  "updated_at": "2021-04-15T01:30:15.01Z"
+}

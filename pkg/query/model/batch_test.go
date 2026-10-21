@@ -184,3 +184,46 @@ func TestMeasureBatchResult_ReleaseIdempotent(t *testing.T) {
 		t.Fatalf("Release calls counted: want 2, got %d", r.releaseCnt)
 	}
 }
+
+func TestAcquireMeasureBatchDropsOversizedPooledCapacity(t *testing.T) {
+	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{{Role: vectorized.RoleField, Name: "value", Type: vectorized.ColumnTypeInt64}})
+	large := AcquireMeasureBatch(schema, 16384)
+	large.SeriesBoundaries = make([]int, 0, 16384)
+	large.Release()
+	small := AcquireMeasureBatch(schema, 16)
+	defer small.Release()
+	if cap(small.Timestamps) > 2*vectorized.DefaultBatchSize || cap(small.Versions) > 2*vectorized.DefaultBatchSize ||
+		cap(small.SeriesIDs) > 2*vectorized.DefaultBatchSize || cap(small.ShardIDs) > 2*vectorized.DefaultBatchSize ||
+		cap(small.SeriesBoundaries) > 2*vectorized.DefaultBatchSize {
+		t.Fatal("batch inherited oversized metadata capacity")
+	}
+	column := small.Fields[0].(*vectorized.TypedColumn[int64])
+	if cap(column.Data()) > 2*vectorized.DefaultBatchSize {
+		t.Fatal("batch inherited oversized field capacity")
+	}
+	column.Append(42)
+	if column.Data()[0] != 42 {
+		t.Fatal("field data changed")
+	}
+}
+
+func TestMeasureBatchAlternatingCapacitiesReuseBoundedSlabs(t *testing.T) {
+	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleTimestamp, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleField, Name: "value", Type: vectorized.ColumnTypeInt64},
+	})
+	allocations := testing.AllocsPerRun(100, func() {
+		large := AcquireMeasureBatch(schema, 16384)
+		large.Release()
+		small := AcquireMeasureBatch(schema, 16)
+		if cap(small.Timestamps) > 2*vectorized.DefaultBatchSize || cap(small.Fields[0].(*vectorized.TypedColumn[int64]).Data()) > 2*vectorized.DefaultBatchSize {
+			t.Fatal("small acquisition retained a native block slab")
+		}
+		small.Release()
+	})
+	// The race detector randomly drops sync.Pool entries; keep the capacity
+	// checks above active while asserting allocation reuse only in normal builds.
+	if !raceEnabled && allocations > 0 {
+		t.Fatalf("alternating native and small batches allocate %.2f objects per pair", allocations)
+	}
+}

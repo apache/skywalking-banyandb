@@ -85,6 +85,14 @@ func generateInt64Slice(length int) *[]int64 {
 	return v
 }
 
+func generateBoundedInt64Slice(length int) *[]int64 {
+	v := generateInt64Slice(length)
+	if cap(*v) > 2*max(length, 1024) {
+		*v = make([]int64, length)
+	}
+	return v
+}
+
 func releaseInt64Slice(int64Slice *[]int64) {
 	*int64Slice = (*int64Slice)[:0]
 	int64SlicePool.Put(int64Slice)
@@ -100,6 +108,14 @@ func generateFloat64Slice(length int) *[]float64 {
 		*v = make([]float64, length)
 	} else {
 		*v = (*v)[:length]
+	}
+	return v
+}
+
+func generateBoundedFloat64Slice(length int) *[]float64 {
+	v := generateFloat64Slice(length)
+	if cap(*v) > 2*max(length, 1024) {
+		*v = make([]float64, length)
 	}
 	return v
 }
@@ -377,7 +393,7 @@ func (c *column) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.R
 		return
 	}
 
-	bb := bigValuePool.Generate()
+	bb := bigValuePool.GenerateBounded(2 * max(int(cm.size), 64*1024))
 	defer bigValuePool.Release(bb)
 	valuesSize := cm.size
 	if valuesSize > maxValuesBlockSize {
@@ -447,7 +463,7 @@ func (c *column) decodeInt64Column(decoder *encoding.BytesBlockDecoder, path str
 		c.form = numericFormInt64
 		return
 	}
-	intValuesPtr := generateInt64Slice(int(count))
+	intValuesPtr := generateBoundedInt64Slice(int(count))
 	intValues := *intValuesPtr
 	defer releaseInt64Slice(intValuesPtr)
 	intValues, err = encoding.BytesToInt64List(intValues[:0], bb.Buf, encodeType, firstValue, int(count))
@@ -463,7 +479,7 @@ func (c *column) decodeInt64Column(decoder *encoding.BytesBlockDecoder, path str
 
 func (c *column) decodeFloat64Column(decoder *encoding.BytesBlockDecoder, path string, count uint64, bb *bytes.Buffer, typedNumeric bool) {
 	// decode float type
-	intValuesPtr := generateInt64Slice(int(count))
+	intValuesPtr := generateBoundedInt64Slice(int(count))
 	intValues := *intValuesPtr
 	defer releaseInt64Slice(intValuesPtr)
 
@@ -494,7 +510,7 @@ func (c *column) decodeFloat64Column(decoder *encoding.BytesBlockDecoder, path s
 		// Convert straight into the column-owned slice, which survives reset().
 		floatValues = c.float64s[:0]
 	} else {
-		floatValuesPtr := generateFloat64Slice(int(count))
+		floatValuesPtr := generateBoundedFloat64Slice(int(count))
 		defer releaseFloat64Slice(floatValuesPtr)
 		floatValues = (*floatValuesPtr)[:0]
 	}
@@ -523,6 +539,7 @@ func (c *column) decodeDefault(decoder *encoding.BytesBlockDecoder, bb *bytes.Bu
 	var err error
 	if encodeType == encoding.EncodeTypeDictionary {
 		dict := generateDictionary()
+		dict.ResetBounded(int(count))
 		defer releaseDictionary(dict)
 		c.values, err = dict.Decode(c.values[:0], bb.Buf[1:], count)
 	} else {

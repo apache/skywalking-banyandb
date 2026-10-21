@@ -18,19 +18,24 @@
 package query
 
 import (
+	"context"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/data"
+	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vecplan "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/plan"
 	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	test_measure "github.com/apache/skywalking-banyandb/pkg/test/measure"
 	test_property "github.com/apache/skywalking-banyandb/pkg/test/property"
@@ -40,6 +45,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	test_cases "github.com/apache/skywalking-banyandb/test/cases"
 	casesmeasure "github.com/apache/skywalking-banyandb/test/cases/measure"
+	measuredata "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 	casestopn "github.com/apache/skywalking-banyandb/test/cases/topn"
 )
 
@@ -63,9 +69,10 @@ import (
 // hidden-criteria-tag / trace queries that don't implement RawFrameSource
 // today) surfaces here as a hard error rather than a silent retry on
 // row — that is the loud-failure signal the runbook depends on.
-var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ordered, func() {
+var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ordered, ginkgo.ContinueOnFailure, func() {
 	var (
 		vectorizedConn    *grpc.ClientConn
+		dataNodeAddrs     []string
 		stopFn            func()
 		startHandledCount int64
 		startFrameEnc     int64
@@ -94,8 +101,9 @@ var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ord
 		gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
 		dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
 		config := setup.PropertyClusterConfig(dfWriter)
-		closeDataNode0 := setup.DataNode(config)
-		closeDataNode1 := setup.DataNode(config)
+		dataAddr0, _, _, closeDataNode0 := setup.DataNodeWithAddrAndDir(config)
+		dataAddr1, _, _, closeDataNode1 := setup.DataNodeWithAddrAndDir(config)
+		dataNodeAddrs = []string{dataAddr0, dataAddr1}
 		setup.PreloadSchemaViaProperty(config, test_stream.PreloadSchema, test_measure.PreloadSchema, test_trace.PreloadSchema, test_property.PreloadSchema)
 		config.AddLoadedKinds(schema.KindStream, schema.KindMeasure, schema.KindTrace)
 		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config)
@@ -163,5 +171,40 @@ var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ord
 	})
 
 	casesmeasure.RegisterTable("Vec (distributed): scanning measures")
+	observeQLFixture := func(request *measurev1.QueryRequest, want *measurev1.QueryResponse) {
+		body, marshalErr := proto.Marshal(request)
+		gomega.Expect(marshalErr).NotTo(gomega.HaveOccurred())
+		for nodeIndex, addr := range dataNodeAddrs {
+			conn, connErr := grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			gomega.Expect(connErr).NotTo(gomega.HaveOccurred())
+			func() {
+				defer func() { gomega.Expect(conn.Close()).To(gomega.Succeed()) }()
+				gomega.Eventually(func(inner gomega.Gomega) {
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+					stream, streamErr := clusterv1.NewServiceClient(conn).Send(ctx)
+					inner.Expect(streamErr).NotTo(gomega.HaveOccurred())
+					// This RPC targets exactly one data node; no liaison or replica selection participates.
+					inner.Expect(stream.Send(&clusterv1.SendRequest{
+						Topic: data.TopicMeasureQuery.String(), MessageId: 1, Body: body, Group: "replicated_group",
+					})).To(gomega.Succeed())
+					inner.Expect(stream.CloseSend()).To(gomega.Succeed())
+					response, recvErr := stream.Recv()
+					inner.Expect(recvErr).NotTo(gomega.HaveOccurred())
+					inner.Expect(response.GetError()).To(gomega.BeEmpty())
+					got := &measurev1.QueryResponse{}
+					inner.Expect(proto.Unmarshal(response.GetBody(), got)).To(gomega.Succeed())
+					inner.Expect(measuredata.CompareQLResult(got, want, false)).To(gomega.Succeed())
+					for _, point := range got.GetDataPoints() {
+						inner.Expect(point.GetVersion()).To(gomega.Equal(int64(2)), "obsolete fixture version on data node %d", nodeIndex)
+					}
+				}, flags.EventuallyTimeout).Should(gomega.Succeed(), "fixture F on data node %d (%s)", nodeIndex, addr)
+			}()
+			ginkgo.GinkgoWriter.Printf("QL fixture F: data_node=%d address=%s rows=6 version=2 (direct node RPC)\n", nodeIndex, addr)
+		}
+	}
+	casesmeasure.RegisterQLTable("QL measure RPC verification", observeQLFixture)
+	casesmeasure.RegisterQLBatchTable("QL shared batch execution", observeQLFixture)
+	casesmeasure.RegisterGeneratedQLTable("Generated QL-only measure RPC verification")
 	casestopn.RegisterTable("Vec (distributed): TopN")
 })

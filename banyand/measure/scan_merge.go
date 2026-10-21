@@ -804,7 +804,7 @@ func (m *timeMerge) gatherStrArrays(b *model.MeasureBatch, c *vectorized.TypedCo
 			continue
 		}
 		if bb == nil {
-			bb = bigValuePool.Generate()
+			bb = bigValuePool.GenerateBounded(128 * 1024)
 		}
 		if appendBorrowedStrArr(c, s.col.values[w.row], &slab, bb) {
 			m.pin(b, w.slot)

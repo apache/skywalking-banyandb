@@ -48,6 +48,7 @@ import (
 	"github.com/klauspost/compress/s2"
 
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
 const (
@@ -986,7 +987,14 @@ func (r *Reader) storedReader(segmentIndex int) (*storedSegmentReader, error) {
 // Like a point lookup it is not an admitted operation (see check): it does
 // not hold the files open, so if a Close releases them while it reads it
 // reports ErrReaderClosed. Its callback may close the Reader.
+//
+//nolint:contextcheck // Legacy context-free entry point; query callers use the context-aware variant.
 func (r *Reader) VisitDocument(number uint64, visit func(StoredDocument) error) error {
+	return r.VisitDocumentContext(context.Background(), number, visit)
+}
+
+// VisitDocumentContext reserves the selected stored chunk before decoding or borrowing it.
+func (r *Reader) VisitDocumentContext(ctx context.Context, number uint64, visit func(StoredDocument) error) error {
 	r.visitDocumentCalls.Add(1)
 	if useErr := r.check(); useErr != nil {
 		return useErr
@@ -998,12 +1006,19 @@ func (r *Reader) VisitDocument(number uint64, visit func(StoredDocument) error) 
 	if readerErr != nil {
 		return readerErr
 	}
-	return storedReader.visitDocument(number, visit)
+	return storedReader.visitDocument(ctx, number, visit)
 }
 
 // DocumentValues returns one document's values for field. Returned bytes are
 // owned by the caller.
+//
+//nolint:contextcheck // Legacy context-free entry point; query callers use the context-aware variant.
 func (r *Reader) DocumentValues(field string, number uint64) ([][]byte, error) {
+	return r.DocumentValuesContext(context.Background(), field, number)
+}
+
+// DocumentValuesContext reserves the selected doc-value chunk and owned copies.
+func (r *Reader) DocumentValuesContext(ctx context.Context, field string, number uint64) ([][]byte, error) {
 	if useErr := r.use(); useErr != nil {
 		return nil, useErr
 	}
@@ -1029,9 +1044,16 @@ func (r *Reader) DocumentValues(field string, number uint64) ([][]byte, error) {
 	if docValueReader == nil {
 		return nil, nil
 	}
-	values, valueErr := docValueReader.values(number)
+	values, valueErr := docValueReader.valuesContext(ctx, number)
 	if valueErr != nil {
 		return nil, valueErr
+	}
+	bytes := uint64(len(values)) * 24
+	for _, value := range values {
+		bytes += uint64(len(value))
+	}
+	if err := query.ReserveAllocation(ctx, bytes); err != nil {
+		return nil, err
 	}
 	result := make([][]byte, len(values))
 	for valueIndex, value := range values {
@@ -1044,6 +1066,8 @@ func (r *Reader) DocumentValues(field string, number uint64) ([][]byte, error) {
 // order. Values are borrowed until visit returns; callers retaining them must
 // copy each value. A document with no values is still visited with an empty
 // slice.
+//
+//nolint:contextcheck // Legacy context-free entry point; query callers use the context-aware variant.
 func (r *Reader) VisitFieldDocumentValues(field string, visit func(uint64, [][]byte) error) error {
 	if useErr := r.use(); useErr != nil {
 		return useErr
@@ -1183,7 +1207,14 @@ func (r *Reader) TermPosting(field string, term []byte) (TermPosting, bool, erro
 // TermPostingBitmap resolves one exact term to a caller-owned document bitmap.
 // Unlike TermPosting it neither decodes the posting's frequency stream nor
 // materializes a document slice, which is all a membership test needs.
+//
+//nolint:contextcheck // Legacy context-free entry point; query callers use the context-aware variant.
 func (r *Reader) TermPostingBitmap(field string, term []byte) (*roaringpkg.Bitmap, bool, error) {
+	return r.TermPostingBitmapContext(context.Background(), field, term)
+}
+
+// TermPostingBitmapContext reserves only the selected posting before reading and decoding it.
+func (r *Reader) TermPostingBitmapContext(ctx context.Context, field string, term []byte) (*roaringpkg.Bitmap, bool, error) {
 	if useErr := r.check(); useErr != nil {
 		return nil, false, useErr
 	}
@@ -1194,7 +1225,7 @@ func (r *Reader) TermPostingBitmap(field string, term []byte) (*roaringpkg.Bitma
 	if readerErr != nil {
 		return nil, false, readerErr
 	}
-	return storedReader.termPostingBitmap(field, term)
+	return storedReader.termPostingBitmapContext(ctx, field, term)
 }
 
 // Fields returns every field represented in the segment, including stored-only,
@@ -1787,7 +1818,7 @@ func (s *storedSegmentReader) visit(ctx context.Context, deleted *roaringpkg.Bit
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
-		chunk, chunkErr := s.loadChunk(chunkIndex)
+		chunk, chunkErr := s.loadChunkContext(ctx, chunkIndex)
 		if chunkErr != nil {
 			return chunkErr
 		}
@@ -1803,7 +1834,8 @@ func (s *storedSegmentReader) visit(ctx context.Context, deleted *roaringpkg.Bit
 			if documentNumber <= math.MaxUint32 && deleted.Contains(uint32(documentNumber)) {
 				continue
 			}
-			document, documentErr := s.decodeDocument(documentNumber, chunk)
+			fields, documentErr := s.decodeDocumentIntoContext(ctx, documentNumber, chunk, nil)
+			document := storedDocument{fields: fields}
 			if documentErr != nil {
 				return documentErr
 			}
@@ -1826,7 +1858,7 @@ func (s *storedSegmentReader) visitPhysical(ctx context.Context, deleted *roarin
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
-		chunk, chunkErr := s.loadChunk(chunkIndex)
+		chunk, chunkErr := s.loadChunkContext(ctx, chunkIndex)
 		if chunkErr != nil {
 			return chunkErr
 		}
@@ -1840,7 +1872,8 @@ func (s *storedSegmentReader) visitPhysical(ctx context.Context, deleted *roarin
 				return ctxErr
 			}
 			isDeleted := documentNumber <= math.MaxUint32 && deleted.Contains(uint32(documentNumber))
-			document, documentErr := s.decodeDocument(documentNumber, chunk)
+			fields, documentErr := s.decodeDocumentIntoContext(ctx, documentNumber, chunk, nil)
+			document := storedDocument{fields: fields}
 			if documentErr != nil {
 				return documentErr
 			}
@@ -1852,15 +1885,16 @@ func (s *storedSegmentReader) visitPhysical(ctx context.Context, deleted *roarin
 	return nil
 }
 
-func (s *storedSegmentReader) visitDocument(documentNumber uint64, visit func(StoredDocument) error) error {
+func (s *storedSegmentReader) visitDocument(ctx context.Context, documentNumber uint64, visit func(StoredDocument) error) error {
 	s.walkMu.Lock()
 	defer s.walkMu.Unlock()
 	chunkIndex := documentNumber / storedDocumentsPerChunk
-	chunk, chunkErr := s.loadChunk(chunkIndex)
+	chunk, chunkErr := s.loadChunkContext(ctx, chunkIndex)
 	if chunkErr != nil {
 		return chunkErr
 	}
-	document, documentErr := s.decodeDocument(documentNumber, chunk)
+	fields, documentErr := s.decodeDocumentIntoContext(ctx, documentNumber, chunk, nil)
+	document := storedDocument{fields: fields}
 	if documentErr != nil {
 		return documentErr
 	}
@@ -2009,8 +2043,16 @@ func (s *storedSegmentReader) readUvarint(offset *uint64, end uint64) (uint64, e
 	return value, nil
 }
 
+//nolint:contextcheck // Legacy context-free entry point; query callers use the context-aware variant.
 func (s *storedSegmentReader) loadChunk(chunkIndex uint64) ([]byte, error) {
+	return s.loadChunkContext(context.Background(), chunkIndex)
+}
+
+func (s *storedSegmentReader) loadChunkContext(ctx context.Context, chunkIndex uint64) ([]byte, error) {
 	if s.loadedChunk == chunkIndex {
+		if err := s.reserveChunkBuffers(ctx, 0, 0, 0); err != nil {
+			return nil, err
+		}
 		return s.decodedBuffer, nil
 	}
 	// The buffers are overwritten below, so no chunk is loaded until this
@@ -2029,6 +2071,9 @@ func (s *storedSegmentReader) loadChunk(chunkIndex uint64) ([]byte, error) {
 	if compressedLength > maxStoredCompressedChunkSize {
 		return nil, corruptError("segment %q has an oversized stored chunk", s.path)
 	}
+	if err := s.reserveChunkBuffers(ctx, int(compressedLength), 0, 0); err != nil {
+		return nil, err
+	}
 	if cap(s.compressedBuffer) < int(compressedLength) {
 		s.compressedBuffer = make([]byte, int(compressedLength))
 	} else {
@@ -2044,6 +2089,13 @@ func (s *storedSegmentReader) loadChunk(chunkIndex uint64) ([]byte, error) {
 	if decodedLength < 0 || decodedLength > maxStoredDecodedChunkSize {
 		return nil, corruptError("segment %q has an oversized decoded stored chunk", s.path)
 	}
+
+	firstDocument := chunkIndex * storedDocumentsPerChunk
+	documents := min(storedDocumentsPerChunk, s.footer.documentCount-firstDocument)
+	offsetsLength := int(documents * storedDocumentOffsetByteWidth)
+	if err := s.reserveChunkBuffers(ctx, int(compressedLength), decodedLength, offsetsLength); err != nil {
+		return nil, err
+	}
 	if cap(s.decodedBuffer) < decodedLength {
 		s.decodedBuffer = make([]byte, decodedLength)
 	} else {
@@ -2056,9 +2108,6 @@ func (s *storedSegmentReader) loadChunk(chunkIndex uint64) ([]byte, error) {
 	if len(decoded) != decodedLength {
 		return nil, corruptError("segment %q decoded a stored chunk to an unexpected length", s.path)
 	}
-	firstDocument := chunkIndex * storedDocumentsPerChunk
-	documents := min(storedDocumentsPerChunk, s.footer.documentCount-firstDocument)
-	offsetsLength := int(documents * storedDocumentOffsetByteWidth)
 	if cap(s.chunkDocumentOffsets) < offsetsLength {
 		s.chunkDocumentOffsets = make([]byte, offsetsLength)
 	}
@@ -2069,6 +2118,13 @@ func (s *storedSegmentReader) loadChunk(chunkIndex uint64) ([]byte, error) {
 	s.decodedBuffer = decoded
 	s.loadedChunk = chunkIndex
 	return decoded, nil
+}
+
+// The reader reuses these three buffers across selected chunks. Charge their
+// actual retained capacities once per source, including already cached buffers.
+func (s *storedSegmentReader) reserveChunkBuffers(ctx context.Context, compressed, decoded, offsets int) error {
+	bytes := uint64(max(cap(s.compressedBuffer), compressed)) + uint64(max(cap(s.decodedBuffer), decoded)) + uint64(max(cap(s.chunkDocumentOffsets), offsets))
+	return query.ReserveAllocationOnce(ctx, s, bytes)
 }
 
 func storedChunkDecodedLength(compressed []byte) (decodedLength int, err error) {
@@ -2097,7 +2153,13 @@ func (s *storedSegmentReader) decodeDocument(documentNumber uint64, chunk []byte
 // decodeDocumentInto decodes one stored document's fields, appending them to
 // fields[:0] so a sequential walk can reuse one field buffer. The returned
 // names and values reference chunk and the reader's field-name table.
+//
+//nolint:contextcheck // Legacy context-free entry point; query callers use the context-aware variant.
 func (s *storedSegmentReader) decodeDocumentInto(documentNumber uint64, chunk []byte, fields []storedField) ([]storedField, error) {
+	return s.decodeDocumentIntoContext(context.Background(), documentNumber, chunk, fields)
+}
+
+func (s *storedSegmentReader) decodeDocumentIntoContext(ctx context.Context, documentNumber uint64, chunk []byte, fields []storedField) ([]storedField, error) {
 	fields = fields[:0]
 	documentOffset, offsetErr := s.documentOffset(documentNumber)
 	if offsetErr != nil {
@@ -2142,6 +2204,16 @@ func (s *storedSegmentReader) decodeDocumentInto(documentNumber uint64, chunk []
 		}
 		if fieldID >= uint64(len(s.fieldNames)) || valueOffset > uint64(len(data)) || valueLength > uint64(len(data))-valueOffset {
 			return nil, corruptError("segment %q has invalid stored field metadata", s.path)
+		}
+
+		if len(fields) == cap(fields) {
+			capacity := max(1, cap(fields)*2)
+			if err := query.ReserveAllocation(ctx, uint64(capacity)*40); err != nil {
+				return nil, err
+			}
+			grown := make([]storedField, len(fields), capacity)
+			copy(grown, fields)
+			fields = grown
 		}
 		fields = append(fields, storedField{
 			name:  s.fieldNames[fieldID],

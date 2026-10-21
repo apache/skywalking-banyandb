@@ -38,7 +38,7 @@ jobs:
     uses: ./.github/workflows/test.yml
     with:
       test-name: Integration Distributed - ${{ matrix.lane.name }}
-      options: --vv --fail-fast --label-filter \\!slow ${{ matrix.lane.extra-options }}
+      options: --vv --fail-fast --tags querymetrics --label-filter \\!slow ${{ matrix.lane.extra-options }}
       timeout-minutes: 60
       pkg: ${{ matrix.lane.pkg }}
       coverage-flag: integration-distributed
