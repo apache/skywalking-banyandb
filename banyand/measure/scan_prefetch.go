@@ -122,6 +122,7 @@ func newPrefetcher(ctx context.Context, pool *decodePool, budget *scanBudget, qm
 	for i, bc := range cursors {
 		pf.items[i].bc = bc
 		pf.items[i].size = bc.bm.uncompressedSizeBytes
+		pf.items[i].res.sharedBytes = budget.sharedBlockBytes(bc)
 	}
 	return pf
 }
@@ -303,6 +304,7 @@ func (pf *prefetcher) advance() {
 // never asks for; it keeps the accounting right if that ever changes.
 func (pf *prefetcher) loadDirect(ctx context.Context, bc *blockCursor) (bool, error) {
 	res := new(scanReservation)
+	res.sharedBytes = pf.budget.sharedBlockBytes(bc)
 	if err := pf.budget.reserveCurrent(ctx, bc.bm.uncompressedSizeBytes, res); err != nil {
 		return false, err
 	}

@@ -45,8 +45,8 @@ BPF2GO_VERSION := v0.21.0
 ## written down. The Dockerfile contains no version literals, the make wrapper
 ## contains none, and nothing is duplicated: a bump is one line here.
 ##
-## Neither the Go nor the Node version is here, and that is deliberate. `go 1.26.9`
-## in go.mod, and `"node": "24.6.0"` in BOTH mcp/package.json and canopy/package.json,
+## Neither the Go nor the Node version is here, and that is deliberate. The `go`
+## directive in go.mod, and `"node": "24.6.0"` in BOTH mcp/package.json and canopy/package.json,
 ## are the declarations the toolchains themselves read and enforce. A second copy here would create two
 ## sources of truth that can silently disagree, and the failure mode is subtle: a
 ## contributor resolving a different license set from CI. Both are derived and

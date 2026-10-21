@@ -23,6 +23,7 @@ import (
 	roaringpkg "github.com/RoaringBitmap/roaring"
 
 	"github.com/apache/skywalking-banyandb/pkg/index/internal/nativeice"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
 // trieMinCandidates is the smallest candidate set worth narrowing with the
@@ -350,12 +351,16 @@ func trieCandidates(ctx context.Context, segment *memorySegment, timeRange *Time
 			if term == nil {
 				break
 			}
-			posting, found, postingErr := handle.reader.TermPostingBitmap(timestampField, term)
+			posting, found, postingErr := handle.reader.TermPostingBitmapContext(ctx, timestampField, term)
 			if postingErr != nil {
 				_ = iterator.Close()
 				return nil, fmt.Errorf("read _timestamp posting: %w", postingErr)
 			}
 			if found {
+				if reserveErr := reserveBitmapMerge(ctx, result, posting); reserveErr != nil {
+					_ = iterator.Close()
+					return nil, reserveErr
+				}
 				result.Or(posting)
 			}
 		}
@@ -419,6 +424,9 @@ func narrowCandidatesToRange(
 		trie, trieErr := trieCandidates(ctx, segment, timeRange)
 		if trieErr != nil {
 			return nil, false, trieErr
+		}
+		if err := query.ReserveAllocation(ctx, 1024+4*(candidates.GetSizeInBytes()+trie.GetSizeInBytes())); err != nil {
+			return nil, false, err
 		}
 		return roaringpkg.And(candidates, trie), true, nil
 	}

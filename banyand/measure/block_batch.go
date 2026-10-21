@@ -535,7 +535,7 @@ func forEachRow(idx, offset int, desc bool, fn func(i int)) {
 // All cells slice one growing slab instead of allocating a slice per row. It
 // reports whether any element borrows.
 func borrowStrArrRows(c *vectorized.TypedColumn[[]string], column *column, idx, offset int, desc bool) bool {
-	bb := bigValuePool.Generate()
+	bb := bigValuePool.GenerateBounded(128 * 1024)
 	defer bigValuePool.Release(bb)
 	var slab []string
 	var borrowed bool
@@ -836,7 +836,7 @@ func setDecodedTagBytesAt(col vectorized.Column, valueType pbv1.ValueType, raw [
 		}
 		col.(*vectorized.TypedColumn[[]int64]).SetAt(destRow, values)
 	case pbv1.ValueTypeStrArr:
-		bb := bigValuePool.Generate()
+		bb := bigValuePool.GenerateBounded(2 * max(len(raw), 64*1024))
 		defer bigValuePool.Release(bb)
 		var values []string
 		buf := raw

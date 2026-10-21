@@ -74,12 +74,24 @@ func runSingleShotScenario(t *testing.T, cfg Config) {
 		t.Fatalf("initialize logger: %v", initErr)
 	}
 	gomega.RegisterTestingT(t)
+	if cfg.Scenario == ScenarioQLBT05 {
+		runQLBT05SingleShot(t, cfg)
+		return
+	}
 	cluster, base, clusterErr := startBenchCluster(t, cfg)
 	if clusterErr != nil {
 		t.Fatalf("start cluster: %v", clusterErr)
 	}
 	defer cluster.close()
-	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout(cfg.Cardinality)+10*time.Minute)
+	timeout := queryTimeout(cfg.Cardinality) + 10*time.Minute
+	if cfg.Scenario == ScenarioQLBT03 {
+		timeout += 60 * time.Minute
+	}
+	if cfg.Scenario == ScenarioQLBT02 {
+		// Six serial 1,000-query variants include wide protobuf responses.
+		timeout += 30 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	writeSummary, writeErr := writeBenchmarkData(ctx, cluster.conn, cfg, cfg.Cardinality, base)
 	if writeErr != nil {
@@ -109,6 +121,37 @@ func runMergeShards(t *testing.T, cfg Config) {
 	if len(results) == 0 {
 		t.Fatalf("no shards found in %s/shards/", cfg.ReportDir)
 	}
+	if matrixErr := validateQLBT03Matrix(results); matrixErr != nil {
+		t.Fatal(matrixErr)
+	}
+	var flattened []Result
+	for _, result := range results {
+		switch result.Scenario {
+		case ScenarioQLBT05:
+			if validationErr := validateQLBT05Result(result); validationErr != nil {
+				t.Fatal(validationErr)
+			}
+			flattened = append(flattened, result.Variants...)
+		case ScenarioQLBT03:
+			if validationErr := validateQLBT03Result(result); validationErr != nil {
+				t.Fatal(validationErr)
+			}
+			flattened = append(flattened, result.Variants...)
+		case ScenarioQLBT02:
+			if validationErr := validateQLBT02Result(result); validationErr != nil {
+				t.Fatal(validationErr)
+			}
+			flattened = append(flattened, result.Variants...)
+		case ScenarioQLBT01:
+			if validationErr := validateQLBT01Result(result); validationErr != nil {
+				t.Fatal(validationErr)
+			}
+			flattened = append(flattened, result.Variants...)
+		default:
+			flattened = append(flattened, result)
+		}
+	}
+	results = flattened
 	sort.Slice(results, func(i, j int) bool {
 		a, b := results[i], results[j]
 		if a.Cardinality != b.Cardinality {
@@ -134,6 +177,15 @@ func runMergeShards(t *testing.T, cfg Config) {
 // against an already-prepared cluster, capturing CPU and heap profiles for
 // the timed phase.
 func runScenarioBenchmark(ctx context.Context, conn *grpc.ClientConn, cfg Config, scenario Scenario, cardinality int, mode string, base time.Time) (Result, error) {
+	if scenario == ScenarioQLBT03 {
+		return runQLBT03Benchmark(ctx, conn, cfg, cardinality, mode, base)
+	}
+	if scenario == ScenarioQLBT02 {
+		return runQLBT02Benchmark(ctx, conn, cfg, cardinality, mode, base)
+	}
+	if scenario == ScenarioQLBT01 {
+		return runQLBT01Benchmark(ctx, conn, cfg, cardinality, mode, base)
+	}
 	if cfg.Engine == engineTrace {
 		return runTraceScenarioBenchmark(ctx, conn, cfg, scenario, cardinality, mode, base)
 	}
@@ -184,7 +236,7 @@ func runScenarioBenchmark(ctx context.Context, conn *grpc.ClientConn, cfg Config
 
 // startBenchCluster brings up a local distributed cluster in-process. Measure
 // runs use two data nodes; trace runs use DQB_DATA_NODES.
-func startBenchCluster(t *testing.T, cfg Config) (benchCluster, time.Time, error) {
+func startBenchCluster(t *testing.T, cfg Config, additionalLiaisonFlags ...string) (benchCluster, time.Time, error) {
 	t.Helper()
 	savedWireModeRaw := data.MeasureWireModeRaw()
 	tmpDir, cleanup, spaceErr := test.NewSpace()
@@ -206,10 +258,14 @@ func startBenchCluster(t *testing.T, cfg Config) (benchCluster, time.Time, error
 		setup.PreloadSchemaViaProperty(config, preloadTraceBenchSchema(cfg.ShardNum))
 		config.AddLoadedKinds(schema.KindTrace)
 	} else {
-		setup.PreloadSchemaViaProperty(config, testmeasure.PreloadSchema)
+		preload := testmeasure.PreloadSchema
+		if cfg.Scenario == ScenarioQLBT02 {
+			preload = preloadQLBT02Schema
+		}
+		setup.PreloadSchemaViaProperty(config, preload)
 		config.AddLoadedKinds(schema.KindMeasure)
 	}
-	liaisonAddr, closeLiaison := setup.LiaisonNode(config, flags...)
+	liaisonAddr, closeLiaison := setup.LiaisonNode(config, append(flags, additionalLiaisonFlags...)...)
 	// Bump the gRPC client's max receive size so visibility checks at
 	// high cardinality (100K+ rows of proto-encoded DataPoints exceed the
 	// default 4 MiB) don't fail with ResourceExhausted before the timed
@@ -259,6 +315,9 @@ func startBenchCluster(t *testing.T, cfg Config) (benchCluster, time.Time, error
 func clusterFlags(cfg Config) []string {
 	if cfg.Engine == engineTrace {
 		return []string{fmt.Sprintf("--trace-vectorized-query-memory-mib=%d", cfg.QueryMemoryMiB)}
+	}
+	if cfg.Scenario == ScenarioQLBT02 || cfg.Scenario == ScenarioQLBT03 || cfg.Scenario == ScenarioQLBT05 {
+		return []string{fmt.Sprintf("--measure-vectorized-query-memory-mib=%d", cfg.QueryMemoryMiB)}
 	}
 	if cfg.Soak {
 		// The measure soak writes while it queries; a short flush timeout makes the

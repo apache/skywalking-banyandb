@@ -1,8 +1,16 @@
 # Proto-Free BydbQL Measure Planning with a Reusable Plan Cache
 
-Status: **partially implemented.** Step 3 (the local schema source, §5) ships in 0.12.0 as
-`pkg/bydbql/schema_source.go` and `banyand/liaison/grpc/bydbql_schema_source.go`; the plan IR, the
-plan cache and the remaining steps are not implemented.
+Status: **historical proposal, superseded for compiled caching by Catalog B T05.**
+The local-schema-source step ships in `pkg/bydbql/schema_source.go` and
+`banyand/liaison/grpc/bydbql_schema_source.go`. The separate compiled measure-template
+cache is now implemented in [PR #1417](https://github.com/apache/skywalking-banyandb/pull/1417);
+its current architecture is documented in the [reusable QL plan design](../measure-ql-core-sql/plan-reuse.md)
+and its latest measurements in the [PR 1 verification record](../measure-ql-core-sql/pr1-verification.md).
+
+The proposal, source line references and measurements below retain their original
+context, including the decision in §11.4 to defer caching for the older transformer.
+They do not assert that today's cache is unimplemented or that the entire
+proto-free restructuring proposed here was adopted literally.
 
 This document specifies a restructuring of how the liaison turns a BydbQL measure query into an
 executable request:

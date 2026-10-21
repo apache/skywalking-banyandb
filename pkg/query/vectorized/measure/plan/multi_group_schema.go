@@ -256,6 +256,29 @@ func fieldTypeToColumnTypeMG(t databasev1.FieldType) (vectorized.ColumnType, err
 	return 0, fmt.Errorf("unsupported field type %v", t)
 }
 
+// planGroupPartialSchema plans the partial layout a group's data nodes emit
+// for nodeRequest. The index checker only picks the folding strategy, not the
+// layout.
+func planGroupPartialSchema(nodeRequest *measurev1.QueryRequest, groupSchema *databasev1.Measure) (*vectorized.BatchSchema, error) {
+	nodePlan, err := Analyze(nodeRequest, groupSchema, vmeasure.AggModeMap, nil)
+	if err != nil {
+		return nil, err
+	}
+	return nodePlan.Schema(), nil
+}
+
+// multiGroupAggTarget derives the layout every group's partials are reduced
+// into. It returns nil when the per-group partial layouts are incomplete, in
+// which case the reducer falls back to the layout the partials carry.
+func multiGroupAggTarget(partialSchemas []*vectorized.BatchSchema, groupCount int,
+	proj *modelv1.TagProjection,
+) (*vectorized.BatchSchema, error) {
+	if len(partialSchemas) != groupCount {
+		return nil, nil
+	}
+	return multiGroupPartialSchema(partialSchemas, proj)
+}
+
 // multiGroupPartialSchema is the layout the liaison reduces multi-group
 // aggregation partials into. groupSchemas are the per-group node partial
 // layouts, in request-group order. The result keeps their shared non-tag
