@@ -21,6 +21,7 @@
 package logging
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -72,16 +73,17 @@ const maxEventBytes = 64 << 10
 
 // queueDepth bounds the buffer by count as well as by bytes. The byte bound is
 // the one that matters, so the count sits above what it admits: at
-// entryOverheadBytes per event, 8MiB holds about 4600 events.
+// entryOverheadBytes per event, 8MiB holds about 3900 events.
 const queueDepth = 8192
 
 // entryOverheadBytes is what a queued event holds beyond its own line: the
-// built WriteRequest, its tag values and the element. Measured at 1889 bytes
-// held per entry for a 151-byte line, so the line alone under-counts the heap
-// by more than ten times, and a bound charged on the line alone would let the
-// buffer grow far past it. TestQueuedEntryFitsItsCharge holds the constant to
-// what an entry really costs.
-const entryOverheadBytes = 1792
+// pooled request with its element, tag values and fields buffer. Measured at
+// 2064 bytes held per entry for a 151-byte line, so the line alone
+// under-counts the heap by more than ten times, and a bound charged on the
+// line alone would let the buffer grow far past it.
+// TestQueuedEntryFitsItsCharge holds the constant to what an entry really
+// costs.
+const entryOverheadBytes = 1984
 
 // entryCost is what one event charges against the byte bound.
 func entryCost(size int64) int64 { return size + entryOverheadBytes }
@@ -95,10 +97,57 @@ type NodeInfo struct {
 	HTTPAddress string
 }
 
+// searchableTagCount is the number of tags in the searchable family, len(searchableTags).
+const searchableTagCount = 8
+
+// maxRetainedFieldsBytes bounds the fields buffer a pooled request keeps. A
+// request that encoded a larger event gives its buffer up on release, so one
+// large event cannot pin that much memory in the pool.
+const maxRetainedFieldsBytes = 4 << 10
+
+// request is a write request pooled with every message nested in it: the
+// metadata, the element and its timestamp, the tag families, the tag values
+// and their wrappers, and the buffer the leftover fields are encoded into.
+// release clears only what one event owns.
+type request struct {
+	*streamv1.WriteRequest
+	data   *modelv1.TagValue
+	binary *modelv1.TagValue_BinaryData
+	null   *modelv1.TagValue_Null
+	str    [searchableTagCount]*modelv1.Str
+	fields bytes.Buffer
+}
+
+func newRequest() *request {
+	r := &request{
+		binary: &modelv1.TagValue_BinaryData{},
+		null:   &modelv1.TagValue_Null{},
+	}
+	// The data tag is null until an event with fields sets it, and release
+	// puts it back to null.
+	r.data = &modelv1.TagValue{Value: r.null}
+	searchable := make([]*modelv1.TagValue, searchableTagCount)
+	for i := range searchable {
+		r.str[i] = &modelv1.Str{}
+		searchable[i] = &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: r.str[i]}}
+	}
+	r.WriteRequest = &streamv1.WriteRequest{
+		Metadata: &commonv1.Metadata{},
+		Element: &streamv1.ElementValue{
+			Timestamp: &timestamppb.Timestamp{},
+			TagFamilies: []*modelv1.TagFamilyForWrite{
+				{Tags: searchable},
+				{Tags: []*modelv1.TagValue{r.data}},
+			},
+		},
+	}
+	return r
+}
+
 // entry pairs a request with the bytes reserved for it, so the accounting
 // settled at flush is exactly the accounting taken at admission.
 type entry struct {
-	req *streamv1.WriteRequest
+	req *request
 	// seq is assigned at admission, so the identity stamped later at flush
 	// still reflects the order events arrived in.
 	seq  uint64
@@ -142,7 +191,7 @@ func NewSink() *Sink {
 	for _, r := range allReasons {
 		s.dropped[r] = &atomic.Uint64{}
 	}
-	s.pool.New = func() any { return &streamv1.WriteRequest{} }
+	s.pool.New = func() any { return newRequest() }
 	return s
 }
 
@@ -249,22 +298,33 @@ func (s *Sink) Admit(level zerolog.Level, module string, line []byte) {
 	}
 }
 
-func (s *Sink) release(req *streamv1.WriteRequest) {
-	if req == nil {
+// release returns a request to the pool once nothing uses it any more: after
+// its write finished, or when it is dropped. It clears what the event owns, so
+// a pooled request cannot keep an event's strings or bytes alive, and keeps
+// the structure for the next event.
+func (s *Sink) release(r *request) {
+	if r == nil {
 		return
 	}
-	// Clear what the request retains before it goes back, so a pooled entry
-	// cannot keep an event's bytes alive after it has been written.
-	req.Element = nil
-	req.Metadata = nil
-	req.MessageId = 0
-	s.pool.Put(req)
+	for _, str := range r.str {
+		str.Value = ""
+	}
+	r.binary.BinaryData = nil
+	r.data.Value = r.null
+	r.fields.Reset()
+	if r.fields.Cap() > maxRetainedFieldsBytes {
+		r.fields = bytes.Buffer{}
+	}
+	r.Element.ElementId = ""
+	r.Element.Timestamp.Seconds, r.Element.Timestamp.Nanos = 0, 0
+	r.MessageId = 0
+	s.pool.Put(r)
 }
 
 // build turns one encoded event into a write request. The known keys become
 // tags and only what is left goes into the data family, so nothing is stored
 // twice and the original line is not retained.
-func (s *Sink) build(level zerolog.Level, module string, line []byte) (*streamv1.WriteRequest, error) {
+func (s *Sink) build(level zerolog.Level, module string, line []byte) (*request, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(line, &raw); err != nil {
 		return nil, err
@@ -294,43 +354,36 @@ func (s *Sink) build(level zerolog.Level, module string, line []byte) (*streamv1
 	} {
 		delete(raw, known)
 	}
-	var fields []byte
+	r, _ := s.pool.Get().(*request)
+	if r == nil {
+		r = newRequest()
+	}
 	if len(raw) > 0 {
-		encoded, err := json.Marshal(raw)
-		if err != nil {
+		// Encoded into the request's own buffer. The write path copies binary
+		// tag values, so the buffer is free again once the write returns.
+		if err := json.NewEncoder(&r.fields).Encode(raw); err != nil {
+			s.release(r)
 			return nil, err
 		}
-		fields = encoded
+		// Encode ends the value with a newline that Marshal does not add.
+		r.binary.BinaryData = bytes.TrimSuffix(r.fields.Bytes(), []byte{'\n'})
+		r.data.Value = r.binary
 	}
 
-	req, _ := s.pool.Get().(*streamv1.WriteRequest)
-	if req == nil {
-		req = &streamv1.WriteRequest{}
-	}
-	req.Metadata = &commonv1.Metadata{Group: GroupName, Name: StreamName}
-	req.MessageId = uint64(time.Now().UnixNano())
-	// The identity tags are left blank here and filled by stamp at flush. The
-	// node's own id is not known until its services start, while admission
-	// begins as soon as logging is initialized, so stamping them now would
-	// store the whole startup window under an empty node id -- half the series
-	// key, and an input to the shard.
-	req.Element = &streamv1.ElementValue{
-		Timestamp: timestamppb.New(eventTime),
-		TagFamilies: []*modelv1.TagFamilyForWrite{
-			{Tags: []*modelv1.TagValue{
-				strTag(""), // node_id, filled by stamp
-				strTag(""), // node_type, filled by stamp
-				strTag(module),
-				strTag(levelName(level)),
-				strTag(""), // grpc_address, filled by stamp
-				strTag(""), // http_address, filled by stamp
-				strTag(message),
-				strTag(""), // log_id, filled by stamp
-			}},
-			{Tags: []*modelv1.TagValue{binaryTag(fields)}},
-		},
-	}
-	return req, nil
+	r.Metadata.Group, r.Metadata.Name = GroupName, StreamName
+	r.MessageId = uint64(time.Now().UnixNano())
+	r.Element.Timestamp.Seconds = eventTime.Unix()
+	r.Element.Timestamp.Nanos = int32(eventTime.Nanosecond())
+	// The identity tags, node_id, node_type, grpc_address, http_address and
+	// log_id, are left blank here and filled by stamp at flush. The node's own
+	// id is not known until its services start, while admission begins as soon
+	// as logging is initialized, so stamping them now would store the whole
+	// startup window under an empty node id -- half the series key, and an
+	// input to the shard.
+	r.str[2].Value = module
+	r.str[3].Value = levelName(level)
+	r.str[6].Value = message
+	return r, nil
 }
 
 // stamp fills the identity a request could not carry at admission. It runs on
@@ -367,17 +420,6 @@ func levelName(l zerolog.Level) string {
 		return name
 	}
 	return "none"
-}
-
-func strTag(v string) *modelv1.TagValue {
-	return &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: v}}}
-}
-
-func binaryTag(v []byte) *modelv1.TagValue {
-	if len(v) == 0 {
-		return &modelv1.TagValue{Value: &modelv1.TagValue_Null{}}
-	}
-	return &modelv1.TagValue{Value: &modelv1.TagValue_BinaryData{BinaryData: v}}
 }
 
 // moduleFieldName is the key zerolog stamps the module under. It has a tag of

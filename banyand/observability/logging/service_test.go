@@ -715,7 +715,7 @@ func TestEveryEventIsWrittenToShardZero(t *testing.T) {
 				t.Fatalf("build: %v", err)
 			}
 			sink.stamp(entry{req: req, seq: uint64(i)})
-			iwr, err := internalRequest(req)
+			iwr, err := internalRequest(req.WriteRequest)
 			if err != nil {
 				t.Fatalf("internalRequest: %v", err)
 			}

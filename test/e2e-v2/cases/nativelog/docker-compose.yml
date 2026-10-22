@@ -97,6 +97,20 @@ services:
     networks:
       - e2e
 
+  # Native logging on, and its stream storage read-only: watermark 0 is the
+  # storage's explicit read-only mode, so every native write is refused.
+  data6:
+    extends:
+      file: ../../script/docker-compose/base-compose.yml
+      service: data
+    hostname: data6
+    mem_limit: 1g
+    command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --schema-property-client-sync-interval=1s --logging-native-enabled --logging-native-level=info --stream-retention-high-watermark=0 --stream-retention-low-watermark=0
+    volumes:
+      - ./nodes.yaml:/etc/banyandb/nodes.yaml
+    networks:
+      - e2e
+
   liaison:
     extends:
       file: ../../script/docker-compose/base-compose.yml
@@ -124,6 +138,8 @@ services:
       data4:
         condition: service_healthy
       data5:
+        condition: service_healthy
+      data6:
         condition: service_healthy
 
 networks:

@@ -431,7 +431,7 @@ func (s *Service) flush(ctx context.Context, batch []entry, retainable bool) (ke
 	for _, e := range batch {
 		// The identity is known now even when it was not at admission.
 		s.sink.stamp(e)
-		iwr, err := internalRequest(e.req)
+		iwr, err := internalRequest(e.req.WriteRequest)
 		if err != nil {
 			encodeFailed++
 			s.sink.drop(reasonEncodeFailed)

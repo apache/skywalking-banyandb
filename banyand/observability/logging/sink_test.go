@@ -28,7 +28,6 @@ import (
 	"github.com/rs/zerolog"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 )
 
 // sampleLine is a real zerolog line: its time is RFC3339 with whole seconds,
@@ -211,7 +210,7 @@ func TestEntityOfFollowsTheSchemaOrder(t *testing.T) {
 	// Identity is stamped by the consumer, so the entity is only complete once
 	// the request has been through it -- exactly as the write path sees it.
 	s.stamp(entry{req: req, seq: 1})
-	entity := entityOf(req)
+	entity := entityOf(req.WriteRequest)
 	if len(entity) != len(entityTags) {
 		t.Fatalf("entity has %d values, schema declares %d", len(entity), len(entityTags))
 	}
@@ -380,7 +379,7 @@ func TestQueuedEntryFitsItsCharge(t *testing.T) {
 	s := testSink(t)
 	line := []byte(`{"level":"info","module":"MEASURE","time":"2026-09-23T10:00:00Z","message":"a typical log line with a few fields","shard":3,"path":"/tmp/measure/data"}`)
 	const n = 20000
-	held := make([]*streamv1.WriteRequest, 0, n)
+	held := make([]*request, 0, n)
 	runtime.GC()
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
@@ -444,5 +443,109 @@ func TestLevelLessEventKeepsItsEntity(t *testing.T) {
 		t.Error("a level-less event is stored with an empty level, which is half the entity")
 	} else if got != "none" {
 		t.Errorf("a level-less event is stored as %q, want \"none\"", got)
+	}
+}
+
+// BenchmarkBuildStampRelease measures one event's trip through the pool:
+// built at admission, stamped at flush and released after the write.
+func BenchmarkBuildStampRelease(b *testing.B) {
+	s := NewSink()
+	s.SetNode(NodeInfo{NodeID: "data-hot-0", NodeType: "data", GRPCAddress: "10.0.0.7:17912", HTTPAddress: "10.0.0.7:17913"})
+	line := []byte(sampleLine)
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		req, err := s.build(zerolog.WarnLevel, "MEASURE", line)
+		if err != nil {
+			b.Fatal(err)
+		}
+		s.stamp(entry{req: req, seq: uint64(i)})
+		s.release(req)
+	}
+}
+
+// TestReleaseClearsTheEventAndKeepsTheStructure holds release to the pooling
+// contract: nothing the event owns stays reachable from the pool, and the
+// nested messages stay for the next event.
+func TestReleaseClearsTheEventAndKeepsTheStructure(t *testing.T) {
+	s := testSink(t)
+	r, err := s.build(zerolog.WarnLevel, "MEASURE", []byte(sampleLine))
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	s.stamp(entry{req: r, seq: 1})
+	element, data := r.Element, r.data
+	s.release(r)
+
+	for i, str := range r.str {
+		if str.Value != "" {
+			t.Errorf("searchable tag %d keeps %q after release", i, str.Value)
+		}
+	}
+	if r.binary.BinaryData != nil || r.data.Value != r.null {
+		t.Error("the data tag keeps the event's fields after release")
+	}
+	if r.Element.ElementId != "" || r.MessageId != 0 || r.Element.Timestamp.Seconds != 0 {
+		t.Error("the element keeps the event's id, message id or time after release")
+	}
+	if r.Element != element || r.data != data || r.Element.Timestamp == nil || r.Metadata == nil {
+		t.Error("release dropped the nested messages the pool is meant to reuse")
+	}
+}
+
+// TestReusedRequestCarriesNothingFromTheLastEvent builds an event with fields,
+// releases it, and builds one without: whether or not the pool hands back the
+// same request, the second must not carry the first one's fields or message.
+func TestReusedRequestCarriesNothingFromTheLastEvent(t *testing.T) {
+	s := testSink(t)
+	first, err := s.build(zerolog.WarnLevel, "MEASURE", []byte(sampleLine))
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if first.data.GetBinaryData() == nil {
+		t.Fatal("the first event has no fields, so this test would prove nothing")
+	}
+	s.release(first)
+
+	second, err := s.build(zerolog.InfoLevel, "TRACE", []byte(`{"module":"TRACE","message":"plain"}`))
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if _, isNull := second.data.GetValue().(*modelv1.TagValue_Null); !isNull {
+		t.Errorf("an event without fields stores %v in the data tag", second.data.GetValue())
+	}
+	if got := second.str[6].Value; got != "plain" {
+		t.Errorf("message = %q, want %q", got, "plain")
+	}
+}
+
+// TestReleaseDiscardsAnOversizedFieldsBuffer keeps one large event from
+// pinning its buffer in the pool.
+func TestReleaseDiscardsAnOversizedFieldsBuffer(t *testing.T) {
+	s := testSink(t)
+	big := `{"module":"MEASURE","message":"big","payload":"` + strings.Repeat("x", 2*maxRetainedFieldsBytes) + `"}`
+	r, err := s.build(zerolog.InfoLevel, "MEASURE", []byte(big))
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if r.fields.Cap() <= maxRetainedFieldsBytes {
+		t.Fatalf("the fields buffer holds %d bytes, so this test would prove nothing", r.fields.Cap())
+	}
+	s.release(r)
+	if got := r.fields.Cap(); got > maxRetainedFieldsBytes {
+		t.Errorf("release kept a %d-byte fields buffer, over the %d-byte limit", got, maxRetainedFieldsBytes)
+	}
+}
+
+// TestEventWithoutFieldsStoresNull covers a request fresh from the pool: an
+// event with nothing beyond the known keys stores a null data tag, not a tag
+// with no value.
+func TestEventWithoutFieldsStoresNull(t *testing.T) {
+	s := testSink(t)
+	r, err := s.build(zerolog.InfoLevel, "TRACE", []byte(`{"module":"TRACE","message":"plain"}`))
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if _, isNull := r.data.GetValue().(*modelv1.TagValue_Null); !isNull {
+		t.Errorf("an event without fields stores %v in the data tag", r.data.GetValue())
 	}
 }

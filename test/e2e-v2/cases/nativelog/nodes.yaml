@@ -26,5 +26,7 @@ nodes:
     grpc_address: data4:17912
   - name: data5
     grpc_address: data5:17912
+  - name: data6
+    grpc_address: data6:17912
   - name: liaison
     grpc_address: liaison:17912

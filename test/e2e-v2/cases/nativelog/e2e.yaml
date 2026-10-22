@@ -36,6 +36,10 @@ verify:
         bash test/e2e-v2/cases/nativelog/check-placement.sh
         ${liaison_host}:${liaison_17913}
       expected: expected/placement.yaml
+    - query: >-
+        bash test/e2e-v2/cases/nativelog/check-refusal.sh
+        ${liaison_host}:${liaison_17913}
+      expected: expected/refusal.yaml
     # Last: it restarts a data node.
     - query: >-
         bash test/e2e-v2/cases/nativelog/check-restart.sh
@@ -64,5 +68,8 @@ cleanup:
         paths:
           - /tmp/stream/
       - service: data5
+        paths:
+          - /tmp/stream/
+      - service: data6
         paths:
           - /tmp/stream/
