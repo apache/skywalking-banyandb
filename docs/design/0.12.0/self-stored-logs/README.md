@@ -1,6 +1,6 @@
 # Self-Stored Logs
 
-Status: phase 1 (standalone and data nodes) **implemented**; phase 2 (liaison and remote routing) is **design**.
+Status: phase 1 (standalone and data nodes) **implemented**; moving its buffering into the queue module (section 3.5) is **proposed**; phase 2 (liaison and remote routing) is **design**.
 
 BanyanDB self-stores its metrics into the `_monitoring` group but has no equivalent for its own
 logs: `pkg/logger` writes to a single `io.Writer` fixed at `logger.Init` time, so logs leave the
@@ -136,6 +136,91 @@ Having no index rules costs more than scan speed. An analyzer is configured on a
 
 What narrows a query in v1 is the time range and equality or `IN` on the entity tags, `node_id` and `level`: they choose the series before the scan. A filter on any other tag, such as `module` or `message`, does not narrow it. It runs on the rows the scan returns, and a timestamp-ordered scan stops at the query's limit before the filter sees them. So a filter on `module` can return fewer rows than the limit while more matching rows exist. A reader looking for a module narrows by time and node first.
 
+### 3.5 Buffered publishing in the queue module
+
+Status: **proposed**, in answer to the review of #1419. Sections 3.2 and 5 describe the code as it is; this section describes where the buffering moves.
+
+Phase 1 keeps the whole buffering lifecycle in the logging module: a bounded channel, byte accounting, a consumer goroutine, batching, retries and the shutdown drain, which then publish through `queue.Client`. That lifecycle moves into the queue module, so that the distributed native logging of phase 2 reuses the same admission and lifecycle contract instead of a second copy.
+
+| Logging module | Queue module |
+|---|---|
+| console and native levels, module filtering | nonblocking admission and capacity checks |
+| recursion protection | queued and in-flight byte accounting |
+| encoding events into pooled stream requests | batch formation and bounded retries |
+| schema initialization and producer identity | local or remote delivery |
+| log-specific outcomes and counters | completion, resource release and shutdown |
+
+```text
+Logger -> filter/encode -> BufferedPublisher.Offer      (logging)
+                               |
+                        bounded admission               (queue)
+                               |
+                         batch consumer                 (queue)
+                               |
+                    Delivery: local now, remote in phase 2
+```
+
+#### Contract
+
+`BufferedPublisher` is a new interface. `BatchPublisher` and its callers do not change: the local batch publisher still delivers synchronously when `Close` runs, and the distributed one still sends during `Publish`.
+
+```go
+// Package queue.
+type BufferedPublisher interface {
+	// Offer accepts or refuses req without waiting for storage, the network
+	// or free capacity. On false the caller keeps req. On true the queue owns
+	// req until it calls req.Done.
+	Offer(req *BufferedRequest) bool
+	// Start begins delivery. It is called once, when the producer is ready.
+	Start(d Delivery)
+	// Close stops admission, drains within an internal deadline and returns
+	// even when a delivery is stuck.
+	Close()
+}
+
+type BufferedRequest struct {
+	Data  any           // the message body
+	Bytes int64         // what it holds, charged against the publisher's allowance
+	Done  func(Outcome) // called exactly once for an accepted request
+}
+
+type Outcome struct {
+	Reason    string // why it was not delivered: rejected, retries_exhausted, shutdown_deadline
+	Delivered bool   // only a completed delivery; acceptance never counts as written
+}
+
+type Delivery interface {
+	// Deliver writes one batch and reports whether the destination took it.
+	Deliver(ctx context.Context, batch []any) error
+}
+
+func NewBufferedPublisher(ctx context.Context, cfg BufferedConfig) BufferedPublisher
+```
+
+Phase 1 implements one `Delivery`, the local adapter: it publishes a batch to `TopicStreamWrite` through the local pipeline's batch publisher, as the consumer does today, and turns the error map of `Close` into the batch's error. A remote adapter is phase 2.
+
+#### Guarantees
+
+| Concern | Rule |
+|---|---|
+| Ownership | `Offer` false: the caller keeps the request, counts the refusal and releases it. `Offer` true: the queue owns it until `Done`. `Done` runs exactly once, after the queue stops using the request, so the logging module returns pooled requests to the pool only there. |
+| Capacity | Each publisher has its own byte allowance (the 8MiB of section 3.2), so native logging cannot exhaust what ordinary writes use. Queued and in-flight bytes both count. `Offer` refuses while `protector.State()` is high and at the allowance, and never evicts what is queued: drop newest. |
+| Batches | A batch closes at the event count, at a quarter of the allowance in bytes, or at the flush interval. Retained requests go back at the head of the queue and are sent in batches under the same limits, never in one combined batch. A request is retried once per interval, at most 10 times, then completed with `retries_exhausted`. |
+| Readiness | The logging module creates the publisher with the sink, before logging initialization, so startup events are accepted. Before `Start` nothing is delivered and the same allowance bounds what is held; past it, drop newest. The logging module calls `Start` once the node identity, the schema and the local destination are ready. If `Close` comes first, every held request completes with `shutdown_deadline`. |
+| Shutdown cut-off | `Offer` registers itself as active, then checks a closed flag. `Close` sets the flag, then waits for the active count to reach zero. Admission never waits, so that wait is short. After it, no `Offer` can still enqueue, and every accepted request either completes or receives `shutdown_deadline` within the drain deadline. |
+| Stuck delivery | `Close` returns after the drain deadline even when a `Deliver` call has not returned. The requests in that call still belong to the queue, and their `Done` runs only when `Deliver` returns, so no memory a delivery still reads is reused. |
+| Recursion marker | `NewBufferedPublisher` takes the context every `Deliver` runs under. The native log publisher passes `logger.WithNativeWrite(ctx)`, so downstream logging on the consumer goroutine is still marked as a native write (section 4.1). |
+
+Flush interval, batch limits, retry count and deadlines remain internal, as in section 4.
+
+#### What stays in the logging module
+
+Filtering, the reserved exclusions, encoding into pooled requests, identity stamping, the schema retry, and the `native_log_*` counters. The counters take their reasons from `Offer` refusals and `Outcome` values, so the closed `reason` set of section 5 does not change.
+
+#### Tests
+
+The queue package tests the guarantees through the `BufferedPublisher` interface: concurrent `Offer` and `Close`, refusal at the allowance, queued and in-flight accounting, holding before `Start`, the size of every retried batch, and `Close` returning while a `Deliver` is stuck without `Done` running early. The logging tests keep to filtering, encoding, identity, recursion protection, and real storage and query behavior.
+
 ## 4. Parameters and configuration
 
 Two independent namespaces; neither inherits from the other.
@@ -195,7 +280,7 @@ The metric names carry the `native_log_` prefix. The native meter provider names
 | local publish | listener unhealthy | the bus skips it and drops the payload while returning an error, so any error means full batch loss | `publish_failed` |
 | remote publish | error, breaker open, admission timeout, auth rejection | batch dropped, never re-queued; classified from the per-node error map from `Close` | `publish_failed` — *phase 2* |
 | destination | local topic not yet subscribed | retain the batch, still charged, and retry it once per tick up to 10 times, then drop. Nothing is retained at shutdown, where there is no next tick | `destination_unready` |
-| destination | the `log` stream is dropped at runtime | **known gap**: the stream write callback logs `cannot handle write event` and reports success, so the batch is counted as written. The schema check recreates the stream within 10s. The fix is in the shared write callback, where a wrong status makes the liaison fail over the data node, so it lands in its own PR | – |
+| destination | the `log` stream is dropped at runtime | **known gap**: the stream write callback logs `cannot handle write event` and reports success, so the batch is counted as written. The schema check recreates the stream within 10s. The fix is in the shared write callback, where a wrong status makes the liaison fail over the data node, so it lands in its own PR, tracked in [apache/skywalking#14158](https://github.com/apache/skywalking/issues/14158) | – |
 | read path | a data node has not yet caught up on the schema | its query processor returns stream-not-exist and the distributed planner discards the whole response, blanking the query. **Pre-existing** for any group created while the cluster is running, user groups included — not introduced here. Mitigation is a one-site change in the planner, out of scope for this feature | – |
 | shutdown | buffer still full at the drain deadline | remainder dropped once the 5s drain limit expires | `shutdown_deadline` |
 | shutdown | a local write is stuck | a local write runs on the consumer and does not honor its context, so it cannot be interrupted. Shutdown stops waiting after about 11s — the drain, one publish and a margin — and leaves the consumer behind; what it holds is lost with the process | – |
