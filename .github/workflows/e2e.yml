@@ -109,6 +109,8 @@ jobs:
         with:
           name: banyandb-docker-image
           path: /tmp
+      - name: Configure Docker image store
+        run: bash test/e2e-v2/script/setup-docker-image-store.sh
       - name: Load docker image
         run: |
           docker load --input /tmp/banyandb-testing-image.tar.gz
@@ -194,6 +196,8 @@ jobs:
         with:
           name: banyandb-docker-image
           path: /tmp
+      - name: Configure Docker image store
+        run: bash test/e2e-v2/script/setup-docker-image-store.sh
       - name: Load docker image
         run: docker load --input /tmp/banyandb-testing-image.tar.gz
       - name: Run nightly RBAC cluster stress
