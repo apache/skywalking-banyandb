@@ -209,8 +209,8 @@ Placeholders are accepted in *value* positions only. The complete list, with the
 | `TIME` comparison value | `TIME > ?` | `str` (RFC3339, relative like `-30m`, or `now`), `timestamp` |
 | `TIME BETWEEN` boundaries | `TIME BETWEEN ? AND ?` | same as above; each boundary binds independently |
 | Measure `WHERE time` comparison | `WHERE time >= ? AND time < ?` | `str` (RFC3339/RFC3339Nano or `now`), `timestamp`; relative strings such as `-30m` are not accepted here |
-| Measure SELECT expression | `SELECT value + ?`, `SELECT CAST(? AS DOUBLE)` | `int`, `str`, `null`, `binary_data`, `timestamp`, `int_array`, `str_array`; see section 5.7 |
-| Measure WHERE expression | `WHERE value::FIELD > CAST(? AS DOUBLE)` | Same value types as SELECT expressions; see section 5.8 |
+| Measure SELECT expression | `SELECT value + ?`, `SELECT CAST(? AS DOUBLE)` | `int`, `str`, `null`, `binary_data`, `timestamp`, `int_array`, `str_array`; see section 5.9 |
+| Measure WHERE expression | `WHERE value::FIELD > CAST(? AS DOUBLE)` | Same value types as SELECT expressions; see section 5.10 |
 | Scalar comparison value (`=`, `!=`, `>`, `>=`, `<`, `<=`) | `WHERE service_id = ?` | `str`, `int`, `null` |
 | `IN` / `NOT IN` value list | `IN (?, ?)`, `IN (?)`, `IN ('a', ?)` | `str`, `int`, `null`, `str_array`, `int_array` |
 | `MATCH` value list | `MATCH(?)`, `MATCH(?, 'analyzer')` | `str`, `int`, `null`, `str_array`, `int_array` |
@@ -244,12 +244,12 @@ In a measure SELECT or WHERE expression, `?` denotes a value, including on the l
 ### 2.6.3. Type Rules Summary
 
 - `binary_data` parameters are accepted in measure SELECT and WHERE expressions; BydbQL has no binary literal.
-- `timestamp` parameters are accepted in `TIME` positions, measure `WHERE time` comparisons and measure SELECT/WHERE expressions. Their protobuf timestamp values are validated; a missing or invalid timestamp is rejected at bind time. Time predicates check the stored timestamp domain; expressions use the signed int64 nanosecond domain described in section 5.7.
+- `timestamp` parameters are accepted in `TIME` positions, measure `WHERE time` comparisons and measure SELECT/WHERE expressions. Their protobuf timestamp values are validated; a missing or invalid timestamp is rejected at bind time. Time predicates check the stored timestamp domain; expressions use the signed int64 nanosecond domain described in section 5.9.
 - `int` and `null` parameters are rejected in time positions: use `str` or `timestamp` instead.
 - `int` parameters in count positions must fit the wire type of the position — `[0, 4294967295]` for `LIMIT`/`OFFSET` and `[0, 2147483647]` for the `TOP N` counts; out-of-range values are rejected at bind time instead of silently wrapping, and literal counts are held to the same bounds.
 - Empty arrays are accepted in measure SELECT and typed WHERE expressions, including expansion inside expression IN lists such as `value::FIELD IN (?)`. Legacy WHERE value lists still reject empty array parameters. Parameters without a value and `nil` entries are rejected everywhere.
 - A `?` inside a quoted string literal is part of the string, not a placeholder: `WHERE msg = 'why?'` consumes no parameter.
-- Legacy tag predicates check bound values against the tag schema by the same rules as literals: a `str` that cannot parse as an integer fails against an `INT` tag, while an `int` bound to a `STRING` tag is converted, exactly as if written literally. Typed SELECT/WHERE expressions follow section 5.7's type rules and require explicit string/number casts.
+- Legacy tag predicates check bound values against the tag schema by the same rules as literals: a `str` that cannot parse as an integer fails against an `INT` tag, while an `int` bound to a `STRING` tag is converted, exactly as if written literally. Typed SELECT/WHERE expressions follow section 5.9's type rules and require explicit string/number casts.
 
 ### 2.6.4. Errors
 
@@ -532,19 +532,19 @@ LIMIT 100;
 
 ## 5. BydbQL for Measures
 
-BydbQL for measures supports aggregation and grouping, raw SELECT expressions, aliases, and time and field expressions in `WHERE`. It uses the existing measure query and response messages. The extensions and their current limits are described in sections 5.5–5.8.
+BydbQL for measures supports aggregation and grouping, raw SELECT expressions, aliases, time and field expressions in `WHERE`, and post-aggregation `HAVING`. It uses the existing measure query and response messages. The extensions and their current limits are described in sections 5.5–5.11.
 
 ### 5.1. Grammar
 
 ```
 measure_query     ::= SELECT projection from_measure_clause [TIME time_condition] [WHERE measure_predicate] [GROUP BY group_list] [HAVING expression] [ORDER BY order_expression] [WITH QUERY_TRACE] [LIMIT count] [OFFSET count]
-measure_predicate ::= criteria | expression /* boolean expression; section 5.8 */
+measure_predicate ::= criteria | expression /* boolean expression; section 5.10 */
 from_measure_clause ::= ("FROM MEASURE" identifier "IN" ["("] group_list_id [")"] | "FROM" identifier "." identifier) [ON ["("] stage_list [")"] STAGES]
 projection        ::= "*" | column_list | top_clause
 top_clause        ::= "TOP" count identifier ["ASC" | "DESC"] ["," column_list]
 column_list       ::= column ("," column)*
 column            ::= (("time" | identifier_path | agg_function "(" ["DISTINCT"] identifier_path ")") ["::TAG" | "::FIELD"] | expression) ["AS" identifier_path]
-	/* expression syntax and current composition limits are in section 5.7 */
+	/* expression syntax and current composition limits are in section 5.9 */
 stage_list        ::= identifier ("," identifier)*
 agg_function      ::= "SUM" | "MEAN" | "AVG" | "COUNT" | "MAX" | "MIN"
 	/* "DISTINCT" is only valid with COUNT: COUNT(DISTINCT identifier) */
@@ -577,7 +577,7 @@ integer_literal   ::= [0-9]+
 count             ::= integer_literal | "?"
 ```
 
-**Source and time bounds**: The explicit source form requires at least one `IN` group; parentheses around the list are optional. The shorthand names one group and one measure. `TIME` is optional for measure SELECT; raw queries may use `WHERE time` instead. Syntax accepted by the parser is subject to the execution limits in section 5.5, including the restrictions on combining raw extensions with aggregation.
+**Source and time bounds**: The explicit source form requires at least one `IN` group; parentheses around the list are optional. The shorthand names one group and one measure. `TIME` is optional for measure SELECT; raw queries may use `WHERE time` instead. Syntax accepted by the parser is subject to the execution limits in section 5.5, and the aggregation and expression composition rules in sections 5.8–5.11.
 
 ### 5.2. BydbQL Extensions for `SELECT`
 
@@ -817,7 +817,7 @@ A raw query uses the extended behavior when it uses source shorthand, an `AS` al
 - `OFFSET` and `LIMIT` apply after time and field filters, including disjoint ranges. Legacy queries without these raw extensions keep their existing pagination defaults.
 - Timestamp ordering, including an unambiguous timestamp alias such as `ORDER BY observed_at DESC`, is supported. Native index-rule ordering remains available. General sorting by tag/field output columns, multiple sort keys, and explicit NULL ordering are not implemented yet.
 
-The current raw extensions cannot be combined with `SELECT TOP`. Aggregate projections and named scalar grouping use the extended aggregation behavior in section 5.6. Legacy native aggregation and grouping retain their existing syntax and behavior. SELECT expressions are described in section 5.7; field filters and mixed time/tag/field `OR` are described in section 5.8; HAVING and collection membership are described in section 5.9. SELECT DISTINCT and computed grouping remain planned capabilities.
+The current raw extensions cannot be combined with `SELECT TOP`. Aggregate projections and named scalar grouping use the extended aggregation behavior in section 5.8. Legacy native aggregation and grouping retain their existing syntax and behavior. SELECT expressions are described in section 5.9; field filters and mixed time/tag/field `OR` are described in section 5.10; HAVING and collection membership are described in section 5.11. SELECT DISTINCT and computed grouping remain planned capabilities.
 
 Aliases, built-in time projections, `now()`, timestamp `INTERVAL` arithmetic, and source shorthand in this section apply to measure SELECT. They do not extend stream, trace, property, or SHOW TOP syntax.
 
@@ -903,7 +903,7 @@ Other supported queries use one complete raw scan and local SQL aggregation. The
 
 Native branches run sequentially under the parent query's deadline and memory allowance. Final LIMIT/OFFSET applies after all branches merge. A branch failure or exhausted allowance fails the query without partial results. Separate native requests do not provide a shared snapshot during concurrent writes. Memory limits remain enforced; disk spilling is not implemented.
 
-### 5.7. Typed SELECT expressions
+### 5.9. Typed SELECT expressions
 
 Measure SELECT supports arithmetic, casts and conditional expressions over raw columns and bound values:
 
@@ -941,9 +941,9 @@ Computed int/double/string/bytes outputs become named fields. Computed timestamp
 
 SELECT expressions currently apply to raw measure queries. Combining computed SELECT outputs with aggregates, GROUP BY or SELECT TOP is rejected. The same expression evaluator supports raw-input WHERE and post-aggregation HAVING, as described below. Computed grouping and general ordering by computed aliases remain later capabilities. Query memory limits still apply; disk spilling is not implemented.
 
-### 5.8. Field and expression filters
+### 5.10. Field and expression filters
 
-Measure WHERE accepts the arithmetic, casts, comparisons, null tests, IN lists, CASE, COALESCE and boolean operations from section 5.7. The result must be boolean: only TRUE passes; FALSE and NULL (SQL UNKNOWN) drop the row. A bare `WHERE NULL` drops every row. Numbers and strings do not become booleans implicitly; use an explicit cast where needed.
+Measure WHERE accepts the arithmetic, casts, comparisons, null tests, IN lists, CASE, COALESCE and boolean operations from section 5.9. The result must be boolean: only TRUE passes; FALSE and NULL (SQL UNKNOWN) drop the row. A bare `WHERE NULL` drops every row. Numbers and strings do not become booleans implicitly; use an explicit cast where needed.
 
 ```sql
 SELECT host AS node, SUM(value)::FIELD AS total, COUNT(value)::FIELD AS samples
@@ -971,7 +971,7 @@ CASE, COALESCE and AND/OR keep their masked evaluation rules. A division or inva
 
 Legacy tag-only MATCH and infix collection HAVING/NOT HAVING retain their behavior. Ordinary legacy tag predicates keep their native routing even when unused column types differ across source groups. Queries requiring typed execution still validate source types. Collection membership can combine with typed residual expressions and grouped HAVING; combining MATCH with a typed residual remains unsupported. Field and float predicates execute on the liaison using the native raw batches. Memory admission and cleanup remain enforced; no temporary-file spilling is added.
 
-### 5.9. Group filtering and collection membership
+### 5.11. Group filtering and collection membership
 
 HAVING filters completed grouped or scalar aggregate results, before final OFFSET/LIMIT. Only TRUE keeps a group; FALSE and UNKNOWN remove it. All input rows and native aggregate branches finish before HAVING runs.
 
@@ -1000,7 +1000,7 @@ HAVING COUNT(value::FIELD) > 1
 
 Membership requires all requested integer or string terms; scalar sources can match one value or repeated copies of that value. NULL sources, scalar NULL requests and empty literal lists do not match; NOT CONTAINS complements the result, including for NULL sources. Empty array parameters retain the legacy binding error. Scalar, list and array parameters keep the existing type conversion and expansion rules. Legacy infix HAVING remains available inside WHERE; the grouped HAVING clause follows GROUP BY or the scalar aggregate's WHERE clause.
 
-QL-evaluated membership on indexed STRING_ARRAY or INT_ARRAY tags returns `InvalidArgument` before data execution. Native projection cannot guarantee all array elements: STRING_ARRAY decoding can panic and INT_ARRAY can retain only its last element. The check uses current index bindings even when the query plan is reused. Type qualification does not repair this native limitation. Unindexed array membership and indexed scalar membership remain supported; ordinary legacy native membership retains its routing.
+QL-evaluated membership on indexed STRING_ARRAY or INT_ARRAY tags returns `InvalidArgument` before data execution. This conservative restriction remains after the native indexed-array projection repair; this release does not enable typed membership on indexed arrays. The check uses current index bindings even when the query plan is reused. Type qualification does not bypass it. Unindexed array membership and indexed scalar membership remain supported; ordinary legacy native membership retains its routing.
 
 ## 6. BydbQL for Top-N
 

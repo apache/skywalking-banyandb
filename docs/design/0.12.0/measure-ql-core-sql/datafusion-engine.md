@@ -1,10 +1,11 @@
 # DataFusion-inspired measure QL engine
 
-Status: **implemented through T08 in PR 2.** Shared batches, typed raw queries
-and compiled-plan reuse are merged through PR #1417. This branch adds local SQL
-aggregation and eligible native aggregate split/merge. Expressions, HAVING,
-DISTINCT, computed grouping and general sorting remain later PRs. Current scope
-and evidence are in the [PR 2 verification record](pr2-verification.md).
+Status: **implemented through T14 in PR 3.** Shared batches, typed raw queries,
+compiled-plan reuse and SQL aggregation are merged through PRs #1417 and #1424.
+This branch adds typed expressions, field WHERE and HAVING/membership. DISTINCT,
+computed grouping, selectable time buckets, general sorting and extended exact
+count-distinct composition remain in PR 4. Current scope and validation status
+are in the [PR 3 verification record](pr3-verification.md).
 
 This refines the [Catalog B implementation plan](README.md), originally reviewed
 against PR #1412 at `012115c5`. The companion [research note](datafusion-research.md)
@@ -126,7 +127,7 @@ evaluation; final projection allocates tracked row headers for the existing
 serializer, whose native ConstColumn does not support arrays. This is an egress
 compatibility cost, recorded separately from the scalar-constant kernel gate.
 Computed timestamps use UTC Unix nanoseconds and become timestamp TagValues
-only in the final QL adapter. See the [language guide](../../../interacting/bydbql.md#57-typed-select-expressions)
+only in the final QL adapter. See the [language guide](../../../interacting/bydbql.md#59-typed-select-expressions)
 for the checked arithmetic, cast, null and result-mapping rules.
 
 T12 reuses those compiled kernels in `WrapFilter`. A BOOL result narrows selection
@@ -154,7 +155,7 @@ Names-only routing preserves ordinary legacy queries across groups whose unused
 column types differ. Typed schema validation runs when typed execution is needed.
 One input collector extends the native scan with hidden columns without changing
 visible slots; SELECT and WHERE share array binding and tag ambiguity metadata.
-See the [WHERE contract](../../../interacting/bydbql.md#58-field-and-expression-filters).
+See the [WHERE contract](../../../interacting/bydbql.md#510-field-and-expression-filters).
 
 T14 adds immutable `HavingPlan` metadata to the same execution recipe. Binding
 resolves source grouping keys and aggregate calls, deduplicates repeated calls,
@@ -173,8 +174,10 @@ work through the existing batch decoder. The QL dispatcher checks current bindin
 and rule metadata before native dispatch, including cache hits, and rejects typed
 membership on indexed arrays. It does not filter binding validity windows because
 native schema caches also apply those bindings. Scalar/no-membership plans skip
-the metadata check. This preserves the native storage boundary while preventing
-new predicates from silently filtering truncated arrays. The new operator spelling
+the metadata check. The guard is retained from the T14 rollout. The inherited
+native projection repair fixes truncated array decoding; enabling typed membership
+on indexed arrays
+requires a separate change with its own validation. The new operator spelling
 is contextual and measure-only. The
 [T14 verification record](t14-verification.md) preserves the reproducer and boundary.
 

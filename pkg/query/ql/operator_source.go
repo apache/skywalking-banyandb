@@ -25,6 +25,10 @@ func operatorSource(operator vectorized.PullOperator) vectorized.PullOperator {
 	switch current := operator.(type) {
 	case *rawOperator:
 		return current.source
+	case *aggregateOperator:
+		return current.source
+	case *expressionOperator:
+		return current.source
 	case *filterOperator:
 		return current.source
 	default:

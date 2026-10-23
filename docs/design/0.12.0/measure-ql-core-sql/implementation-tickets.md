@@ -1,28 +1,28 @@
 # Catalog B implementation tickets and verification contracts
 
-Status: **T02/T03/T05 are merged in PR #1417; T07/T08 are implemented in PR 2;
-six capability tickets remain planned for PRs 3 and 4.** Implementation and
-correctness do not imply that every historical performance gate passed: T02's
-original acceptance remains inconclusive/stopped. Current aggregation scope,
-checks and benchmark limits are in the [PR 2 verification record](pr2-verification.md).
-The [PR 1 verification record](pr1-verification.md) and [T01 support record](t01-verification.md)
-retain their original bases and evidence.
+Status: **T02/T03/T05 are merged in PR #1417; T07/T08 are merged in PR #1424;
+T10/T12/T14 are implemented in PR 3.** T15/T16/T17 and extended exact count-distinct
+composition remain planned for PR 4. Implementation and correctness do not imply
+that every historical performance gate passed: T02's original acceptance remains
+inconclusive/stopped. Current scope and validation status are in the
+[PR 3 verification record](pr3-verification.md). The [PR 1 record](pr1-verification.md),
+[PR 2 record](pr2-verification.md) and ticket records retain their original bases
+and evidence.
 
 The original design-review base was `012115c5`. PR #1412 merged as `15635181b`;
-PR 2 is based on merged PR #1417 at `e05ed7f22`, including #1413's native aggregation
-optimization. This document defines the [language contract](README.md),
-[batch engine design](datafusion-engine.md) and [compiled-plan reuse design](plan-reuse.md).
-T02/T03/T05/T07/T08 commands are implemented. Commands for later capabilities
-remain planned contracts. Existing `QLB-T01` labels and measurements retain their
-historical meaning.
+PR 3 is based on merged PR #1424 at `e409a6c6`. This document defines the
+[language contract](README.md), [batch engine design](datafusion-engine.md) and
+[compiled-plan reuse design](plan-reuse.md). T02/T03/T05/T07/T08/T10/T12/T14 commands
+are implemented. Commands for later capabilities remain planned contracts.
+Existing `QLB-T01` labels and measurements retain their historical meaning.
 
 ## Four-PR delivery
 
 | PR | Scope | State in this branch |
 |---|---|---|
 | [1 — execution foundation](https://github.com/apache/skywalking-banyandb/pull/1417) | T02 shared batches, T03 typed raw QL, T05 compiled-plan reuse and required compatibility repairs | Merged as PR #1417 |
-| 2 — SQL aggregation | T07 local aggregation and T08 native split/merge | Prepared on merged PR #1417; see the PR 2 record |
-| 3 — expressions and filtering | T10 expressions, T12 field WHERE and T14 HAVING/membership | Planned |
+| [2 — SQL aggregation](https://github.com/apache/skywalking-banyandb/pull/1424) | T07 local aggregation and T08 native split/merge | Merged as PR #1424 |
+| 3 — expressions and filtering | T10 expressions, T12 field WHERE and T14 HAVING/membership | Implemented in this branch; see the PR 3 record |
 | 4 — complete grouping/output composition | T15 DISTINCT, T16 computed/ordinal grouping, T17 ordering/pagination and count-distinct composition | Planned |
 
 Each PR carries its own generated cases, focused benchmark evidence and language
@@ -54,12 +54,13 @@ formats; no Rust runtime or Arrow IPC dependency. SQL operators stay on the liai
 Shared native Go buffering/ownership and read/dispatch compatibility repairs are
 included with their regression tests, as described in the PR 1 verification record.
 
-**Readiness:** PR #1412 and PR #1417 are merged. The shared batch seam, typed
-raw-query interfaces and compiled-template cache are available on main; local
-aggregation and native merging are available in this branch. Later tickets still
-require their listed prerequisites, independent expected results, activation
-proof and focused benchmarks. Historical measurements retain their original
-bases and verdicts; the PR 2 record covers this isolated aggregation branch.
+**Readiness:** PRs #1412, #1417 and #1424 are merged. The shared batch seam, typed
+raw-query interfaces, compiled-template cache, local aggregation and native merging
+are available on main. Typed expressions, raw field filtering and HAVING are
+available in this branch. Later tickets still require their listed prerequisites,
+independent expected results, activation proof and focused benchmarks. Historical
+measurements retain their original bases and verdicts; the PR 3 record covers
+this isolated expression/filter branch.
 
 ### Dependency and benchmark map
 
@@ -571,7 +572,7 @@ within this capability; successful expression execution supplies its benchmark.
 kernels form one usable expression layer with a real projection caller.
 
 **Implementation:** see [T10 verification](t10-verification.md) and the
-[language guide](../../../interacting/bydbql.md#57-typed-select-expressions).
+[language guide](../../../interacting/bydbql.md#59-typed-select-expressions).
 The evaluator uses existing native batches and scalar ConstColumn outputs.
 At the final projection boundary, constant arrays require tracked row headers
 for the unchanged serializer; their payload remains shared. The scalar-constant
@@ -627,7 +628,7 @@ fixed before timing without changing native policy.
 become unsupported tag-only protobuf criteria.
 
 **Implementation:** see [T12 verification](t12-verification.md) and the
-[language guide](../../../interacting/bydbql.md#58-field-and-expression-filters).
+[language guide](../../../interacting/bydbql.md#510-field-and-expression-filters).
 The generated QL-only suite adds 48 specs with independent expected values and
 passes all 340 selected specs on both topologies, including unchanged legacy
 routing across groups with incompatible unused column types. Required T12 work counters,
@@ -640,8 +641,8 @@ explicitly rejected.
 
 **Status: implemented.** The generated suite adds 163 T14 specs and 35 coverage
 obligations; the full suite contains 503 selected specs per real Query RPC topology. The
-owning K(T14) and P(T14) protocols, results, resource probes and unchanged native
-indexed-array limitation are recorded in [T14 verification](t14-verification.md).
+owning K(T14) and P(T14) protocols, results, resource probes and retained typed
+indexed-array membership restriction are recorded in [T14 verification](t14-verification.md).
 
 **Performance question:** what does filtering completed groups cost, and do hidden
 or repeated aggregates trigger unnecessary native work or result materialization?

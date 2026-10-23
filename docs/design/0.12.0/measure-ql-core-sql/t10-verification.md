@@ -1,5 +1,8 @@
 # T10 typed SELECT expressions and masked conditionals
 
+This is a historical ticket-stage verification record. Current isolated PR 3
+checks are recorded separately in the [PR 3 verification record](pr3-verification.md).
+
 Implementation base: `6ed1591c` (T08), on PR #1412. Verification uses Go 1.26.9.
 The implementation is confined to QL parsing, binding, liaison execution and
 verification. It changes no protobuf, native request/operator, data-node code,
@@ -11,7 +14,7 @@ The frozen protocol is `.omx/t10-frozen-protocol.json`; source hashes are in
 
 Raw measure SELECT now accepts arithmetic, remainder, unary signs, float literals,
 explicit casts, comparisons, SQL boolean/null operations, IN, searched/simple CASE
-and COALESCE. The [language guide](../../../interacting/bydbql.md#57-typed-select-expressions)
+and COALESCE. The [language guide](../../../interacting/bydbql.md#59-typed-select-expressions)
 records the syntax, numeric rules, timestamp nanosecond unit, cast pairs,
 parameter ordering and existing response mapping. New expression syntax applies
 only to measure SELECT. Field WHERE/HAVING, aggregation expressions, computed

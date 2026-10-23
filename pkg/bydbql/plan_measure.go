@@ -289,26 +289,9 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 	if stmt.Offset != nil {
 		plan.Offset = uint32(run.resolveCount(stmt.Offset.Value, stmt.Offset.Param, stmt.Offset.ParamIndex))
 	}
-	ranges := allMeasureTime()
-	if m.predicate != nil {
-		ranges, request.Criteria, err = m.predicate.bind(run, now)
-		if err != nil {
-			return nil, invalidMeasure(err)
-		}
-	}
-	if m.filter != nil {
-		var filterRanges []ql.MillisRange
-		plan.Filter, filterRanges, err = m.filter.bindFilter(bound, now)
-		if err != nil {
-			return nil, invalidMeasure(err)
-		}
-		plan.Filter, err = ql.ResolvePredicate(plan.Filter)
-		if err != nil {
-			return nil, invalidMeasure(err)
-		}
-
-		ranges = intersectTimeRanges(ranges, filterRanges)
-		request.Criteria = combineMeasureCriteria(request.Criteria, necessaryFilterCriteria(plan.Filter, m.filterTags), false)
+	ranges, err := m.bindWhere(bound, now, request, plan)
+	if err != nil {
+		return nil, invalidMeasure(err)
 	}
 	if legacyRange != nil {
 		legacyIntervals, rangeErr := nativeTimeIntervals(legacyRange)

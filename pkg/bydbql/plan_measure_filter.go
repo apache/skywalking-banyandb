@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"time"
 
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/ql"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
@@ -391,4 +392,30 @@ func necessaryFilterCriteria(expression *ql.Expression, tags map[measureColumnKe
 		}
 	}
 	return &modelv1.Criteria{Exp: &modelv1.Criteria_Condition{Condition: condition}}
+}
+
+func (m *MeasureTemplate) bindWhere(bound *BoundQuery, now time.Time, request *measurev1.QueryRequest, plan *ql.RawPlan) ([]ql.MillisRange, error) {
+	ranges := allMeasureTime()
+	var err error
+	if m.predicate != nil {
+		ranges, request.Criteria, err = m.predicate.bind(&transformRun{bound: bound.values}, now)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if m.filter != nil {
+		var filterRanges []ql.MillisRange
+		plan.Filter, filterRanges, err = m.filter.bindFilter(bound, now)
+		if err != nil {
+			return nil, err
+		}
+		plan.Filter, err = ql.ResolvePredicate(plan.Filter)
+		if err != nil {
+			return nil, err
+		}
+
+		ranges = intersectTimeRanges(ranges, filterRanges)
+		request.Criteria = combineMeasureCriteria(request.Criteria, necessaryFilterCriteria(plan.Filter, m.filterTags), false)
+	}
+	return ranges, nil
 }

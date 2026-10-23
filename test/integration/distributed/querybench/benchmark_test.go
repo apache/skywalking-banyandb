@@ -98,13 +98,14 @@ func runSingleShotScenario(t *testing.T, cfg Config) {
 	defer cancel()
 	var written writeSummary
 	var writeErr error
-	if cfg.Scenario == ScenarioQLBT14 {
+	switch cfg.Scenario {
+	case ScenarioQLBT14:
 		written, writeErr = writeQLBT14Data(ctx, cluster.conn, cfg, base)
-	} else if cfg.Scenario == ScenarioQLBT12 {
+	case ScenarioQLBT12:
 		written, writeErr = writeQLBT12Data(ctx, cluster.conn, cfg, base)
-	} else if cfg.Scenario == ScenarioQLBT07 || cfg.Scenario == ScenarioQLBT08 || cfg.Scenario == ScenarioQLBT10 {
+	case ScenarioQLBT07, ScenarioQLBT08, ScenarioQLBT10:
 		written, writeErr = writeQLBT07Data(ctx, cluster.conn, cfg, base)
-	} else {
+	default:
 		written, writeErr = writeBenchmarkData(ctx, cluster.conn, cfg, cfg.Cardinality, base)
 	}
 	if writeErr != nil {

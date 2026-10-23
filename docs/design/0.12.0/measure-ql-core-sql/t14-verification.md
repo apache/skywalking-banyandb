@@ -1,5 +1,8 @@
 # T14 HAVING and compatible collection membership
 
+This is a historical ticket-stage verification record. Current isolated PR 3
+checks are recorded separately in the [PR 3 verification record](pr3-verification.md).
+
 Implementation base: `8c69d7d1` (T12), on PR #1412. Verification uses Go 1.26.9.
 Changes are limited to QL grammar/planning, liaison batch execution, generated
 QL-only integration cases and this ticket's benchmark. Protobuf, native/data-node
@@ -43,7 +46,7 @@ Typed membership composes with field/time residuals and post-aggregate HAVING.
 Ordinary legacy queries retain native routing; MATCH composition stays rejected.
 CONTAINS is a contextual, measure-only operator, preserving existing `contains`
 tags and `contains-svc` resource/group names across legacy query kinds.
-See the [language guide](../../../interacting/bydbql.md#59-group-filtering-and-collection-membership).
+See the [language guide](../../../interacting/bydbql.md#511-group-filtering-and-collection-membership).
 
 Filtering borrows input value columns and changes selection. Partial matches
 retain uint16 row indices; all/no-match cases avoid a retained selection. Scratch,
@@ -342,6 +345,11 @@ provide resource-bound evidence, not HAVING throughput. Spilling local aggregate
 state alone would not bypass earlier native input decoding/materialization limits.
 
 ## Existing indexed-array projection limitation
+
+Historical T14 evidence follows. The native indexed-array projection repair is
+already included in merged PR #1417. PR 3 inherits that repair while preserving
+T14's typed indexed-array membership rejection. The reproducer and diagnosis below
+describe the ticket-stage behavior before that native repair.
 
 The initial real standalone smoke fails on the old membership spelling:
 

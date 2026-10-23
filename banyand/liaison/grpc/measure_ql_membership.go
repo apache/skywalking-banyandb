@@ -39,7 +39,7 @@ func (b *bydbQLService) queryQLMeasure(ctx context.Context, request *measurev1.Q
 
 // validateArrayMembership checks current bindings on every execution, including
 // cache hits: index bindings are not dependencies of the compiled measure plan.
-// Indexed array projection can lose elements before the liaison receives a batch.
+// Typed QL membership retains its indexed-array restriction across binding changes.
 func (b *bydbQLService) validateArrayMembership(ctx context.Context, request *measurev1.QueryRequest, plan *ql.RawPlan) error {
 	if plan == nil {
 		return nil
@@ -81,7 +81,7 @@ func (b *bydbQLService) validateArrayMembership(ctx context.Context, request *me
 				}
 				for tag := range tags {
 					if slices.Contains(rule.GetTags(), tag) {
-						return fmt.Errorf("%w: QL membership on indexed array %q is unsupported until native projection preserves all elements",
+						return fmt.Errorf("%w: QL membership on indexed array %q is unsupported",
 							bydbql.ErrInvalidMeasureQuery, tag)
 					}
 				}

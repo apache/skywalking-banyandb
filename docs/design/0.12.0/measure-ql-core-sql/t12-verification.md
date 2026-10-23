@@ -1,5 +1,8 @@
 # T12 raw field WHERE filtering
 
+This is a historical ticket-stage verification record. Current isolated PR 3
+checks are recorded separately in the [PR 3 verification record](pr3-verification.md).
+
 Implementation base: `8f7014ad` (T10), on PR #1412. Verification uses Go 1.26.9.
 Changes are limited to QL parsing/planning, liaison batch operators, generated
 QL-only cases and the owning benchmark. Protobuf, native/data-node operators,
@@ -16,7 +19,7 @@ Measure WHERE now accepts T10's typed arithmetic, casts, comparisons, null tests
 IN, CASE, COALESCE and SQL boolean expressions over raw columns and bound values.
 Only TRUE passes; FALSE and UNKNOWN drop the row. Bare NULL is a boolean UNKNOWN
 in this context; a numeric or string predicate requires an explicit boolean cast.
-The [language guide](../../../interacting/bydbql.md#58-field-and-expression-filters)
+The [language guide](../../../interacting/bydbql.md#510-field-and-expression-filters)
 documents syntax, parameters, masks and compatibility limits.
 
 The legacy grammar remains the first parser. Ordinary tag-only criteria retain

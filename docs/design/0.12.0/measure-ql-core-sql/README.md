@@ -1,28 +1,30 @@
 # Measure QL Catalog B: Core SQL Implementation Plan
 
-This branch prepares **PR 2 of 4**: local SQL aggregation and eligible native
-aggregate split/merge (T07/T08), on merged [PR #1417](https://github.com/apache/skywalking-banyandb/pull/1417)
-at `e05ed7f22`. See the [PR 2 verification record](pr2-verification.md) for its
-isolated scope, current checks and focused measurements. Expressions/filtering
-and complete grouping/output composition remain in PRs 3 and 4.
+This branch prepares **PR 3 of 4**: typed expressions, masked conditionals,
+field WHERE, HAVING and compatible collection membership (T10/T12/T14), on merged
+[PR #1424](https://github.com/apache/skywalking-banyandb/pull/1424) at `e409a6c6`.
+See the [PR 3 verification record](pr3-verification.md) for its isolated scope
+and current validation status.
 
-Status: **T02/T03/T05 are merged; T07/T08 are implemented in this branch; six later
-capability tickets remain outside this PR.** Aggregation includes SQL null/empty
-semantics, checked integer sums, weighted AVG, shared calls and final pagination.
-Safe native alternatives reuse existing operators; unsupported provider semantics
-retain the complete local path. Eligibility proves correctness rather than cost:
-small queries can be slower with multiple native branches.
+Status: **T02/T03/T05 and T07/T08 are merged; T10/T12/T14 are implemented in this
+branch.** SELECT DISTINCT, computed/ordinal grouping, selectable time buckets,
+multi-key sorting and extended exact count-distinct composition remain in PR 4.
+Expressions run on typed batches. WHERE filters raw input before aggregation;
+HAVING filters completed local or native aggregate groups before final pagination.
+Each execution binds fresh values to reusable immutable expression recipes.
 
-The T01/T02/T03/T05/T07/T08 verification documents retain historical ticket-stage
-evidence. The [PR 1 record](pr1-verification.md) preserves its isolated checks and
-mixed cache latency observations. Historical T02 inconclusive/stopped acceptance
-is unchanged. These records do not measure the current PR 2 head; current evidence
-is kept separately rather than converting earlier uncertainty into a pass.
+Ticket verification documents retain their historical bases and evidence. The
+[PR 1 record](pr1-verification.md) preserves its isolated checks and mixed cache
+latency observations; the [PR 2 record](pr2-verification.md) preserves aggregation
+checks and focused measurements. Historical T02 inconclusive/stopped acceptance
+is unchanged. These records do not measure the current PR 3 head; fresh checks
+belong in the PR 3 record.
 
-The inherited foundation includes Go-only native buffering, ownership and indexed
-array/empty-selector compatibility repairs. This PR adds liaison aggregation
-operators without changing native requests, frame versions, protobuf definitions
-or persisted formats. Memory protection remains enabled; disk spilling is deferred.
+The inherited foundation includes shared native batches and indexed-array
+projection repairs. This PR adds liaison expression/filter operators without
+changing native requests, frame versions, protobuf definitions or persisted
+formats. Typed indexed-array membership remains rejected before dispatch.
+Memory protection remains enabled; disk spilling is deferred.
 
 The [DataFusion-inspired engine design](datafusion-engine.md) defines the batch
 execution architecture and revised delivery order. Its [source research](datafusion-research.md)
@@ -61,9 +63,9 @@ specifications are:
   infrastructure, which QL reuses rather than replaces.
 
 `012115c5` is the historical design-review baseline. PR #1412 merged as
-`15635181b`; PR 2 is based on merged PR #1417 at `e05ed7f22`, including the native
-aggregation optimization from #1413. Historical benchmark bases remain in their
-verification documents, separate from the current PR 2 measurements.
+`15635181b`; PR 3 is based on merged PR #1424 at `e409a6c6`, inheriting PR #1417's
+foundation and PR #1424's aggregation. Historical benchmark bases remain in their
+verification documents, separate from current PR 3 validation.
 
 The gaps document proposes results as columns and rows but does not specify their
 wire encoding. For this scope, that is an **Arrow-style columnar representation**
