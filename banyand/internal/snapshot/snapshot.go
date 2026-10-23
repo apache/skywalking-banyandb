@@ -64,11 +64,17 @@ func getTransitionPool[S Snapshot]() *pool.Synced[any] {
 		return p.(*pool.Synced[any])
 	}
 
-	// Create new pool for this type
-	poolName := "snapshot.Transition[" + typ.String() + "]"
-	p := pool.Register[any](poolName)
-	actual, _ := transitionPools.LoadOrStore(typ, p)
-	return actual.(*pool.Synced[any])
+	// pool.Register panics on a name it has seen, so two goroutines creating the
+	// first transition of a type at once must not both register: create the pool
+	// under a lock and check again inside it.
+	transitionPoolsMu.Lock()
+	defer transitionPoolsMu.Unlock()
+	if p, ok := transitionPools.Load(typ); ok {
+		return p.(*pool.Synced[any])
+	}
+	p := pool.Register[any]("snapshot.Transition[" + typ.String() + "]")
+	transitionPools.Store(typ, p)
+	return p
 }
 
 // NewTransition creates a transition by preparing the next snapshot from the pool.
@@ -145,6 +151,8 @@ func (t *Transition[S]) reset() {
 var (
 	transactionPool = pool.Register[*Transaction]("snapshot.Transaction")
 	transitionPools sync.Map // map[reflect.Type]*pool.Synced[any]
+	// transitionPoolsMu serializes the creation of a type's pool.
+	transitionPoolsMu sync.Mutex
 )
 
 // Transaction coordinates atomic commits across multiple heterogeneous transitions.
