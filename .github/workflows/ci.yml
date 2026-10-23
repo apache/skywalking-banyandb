@@ -260,7 +260,7 @@ jobs:
 
   result:
     name: Continuous Integration
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     if: |
       always() &&
       needs.check.result == 'success' &&

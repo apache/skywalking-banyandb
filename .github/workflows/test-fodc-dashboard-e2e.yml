@@ -57,7 +57,7 @@ jobs:
   fodc-dashboard-kind:
     needs: fodc-dashboard-sync-check
     if: ${{ github.event_name != 'workflow_call' || inputs.should_run }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - name: Checkout code
@@ -102,6 +102,6 @@ jobs:
         run: docker image ls | grep -E 'skywalking-banyandb' || true
 
       - name: Run FODC dashboard-metrics e2e
-        uses: apache/skywalking-infra-e2e@edce98643e8966ef234947459f768e15e5908bb8
+        uses: apache/skywalking-infra-e2e@c45db2743ea32d911ad1f0801b305f1c9fe15bfe
         with:
           e2e-file: $GITHUB_WORKSPACE/test/e2e-v2/cases/fodc/e2e.yaml

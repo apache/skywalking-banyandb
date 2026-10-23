@@ -81,7 +81,7 @@ jobs:
             config: test/e2e-v2/cases/rbac-cluster/e2e.yaml
           - name: Rover eBPF - Istio mesh, Kind
             config: test/e2e-v2/cases/rover/process/istio/banyandb/e2e-banyandb.yaml
-            runs-on: ubuntu-24.04
+            runs-on: ubuntu-latest
           - name: Lifecycle File Discovery
             config: test/e2e-v2/cases/lifecycle/file-discovery/e2e.yaml
           - name: Lifecycle DNS Discovery
@@ -136,7 +136,7 @@ jobs:
         run: |
           bash test/e2e-v2/cases/lifecycle/data-generator/gen.sh
       - name: ${{ matrix.test.name }}
-        uses: apache/skywalking-infra-e2e@edce98643e8966ef234947459f768e15e5908bb8
+        uses: apache/skywalking-infra-e2e@c45db2743ea32d911ad1f0801b305f1c9fe15bfe
         with:
           e2e-file: $GITHUB_WORKSPACE/${{ matrix.test.config }}
       - name: Fix directory permissions
@@ -197,7 +197,7 @@ jobs:
       - name: Load docker image
         run: docker load --input /tmp/banyandb-testing-image.tar.gz
       - name: Run nightly RBAC cluster stress
-        uses: apache/skywalking-infra-e2e@edce98643e8966ef234947459f768e15e5908bb8
+        uses: apache/skywalking-infra-e2e@c45db2743ea32d911ad1f0801b305f1c9fe15bfe
         with:
           e2e-file: $GITHUB_WORKSPACE/test/e2e-v2/cases/rbac-cluster/e2e-stress.yaml
       - if: ${{ failure() }}
