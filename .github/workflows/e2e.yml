@@ -109,8 +109,6 @@ jobs:
         with:
           name: banyandb-docker-image
           path: /tmp
-      - name: Configure Docker image store
-        run: bash test/e2e-v2/script/setup-docker-image-store.sh
       - name: Load docker image
         run: |
           docker load --input /tmp/banyandb-testing-image.tar.gz
@@ -138,7 +136,7 @@ jobs:
         run: |
           bash test/e2e-v2/cases/lifecycle/data-generator/gen.sh
       - name: ${{ matrix.test.name }}
-        uses: apache/skywalking-infra-e2e@ef073adb8b9e148e4eaf3f905fa4e238ee5cc7d6
+        uses: apache/skywalking-infra-e2e@edce98643e8966ef234947459f768e15e5908bb8
         with:
           e2e-file: $GITHUB_WORKSPACE/${{ matrix.test.config }}
       - name: Fix directory permissions
@@ -196,12 +194,10 @@ jobs:
         with:
           name: banyandb-docker-image
           path: /tmp
-      - name: Configure Docker image store
-        run: bash test/e2e-v2/script/setup-docker-image-store.sh
       - name: Load docker image
         run: docker load --input /tmp/banyandb-testing-image.tar.gz
       - name: Run nightly RBAC cluster stress
-        uses: apache/skywalking-infra-e2e@ef073adb8b9e148e4eaf3f905fa4e238ee5cc7d6
+        uses: apache/skywalking-infra-e2e@edce98643e8966ef234947459f768e15e5908bb8
         with:
           e2e-file: $GITHUB_WORKSPACE/test/e2e-v2/cases/rbac-cluster/e2e-stress.yaml
       - if: ${{ failure() }}

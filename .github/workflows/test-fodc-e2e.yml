@@ -192,6 +192,6 @@ jobs:
         run: docker image ls | grep -E 'skywalking-banyandb' || true
 
       - name: Run FODC memory-pressure pprof e2e
-        uses: apache/skywalking-infra-e2e@ef073adb8b9e148e4eaf3f905fa4e238ee5cc7d6
+        uses: apache/skywalking-infra-e2e@edce98643e8966ef234947459f768e15e5908bb8
         with:
           e2e-file: $GITHUB_WORKSPACE/test/e2e-v2/cases/fodc-pressure/e2e.yaml
