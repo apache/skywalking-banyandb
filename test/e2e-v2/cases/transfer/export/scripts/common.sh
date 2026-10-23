@@ -19,12 +19,12 @@
 
 # container_of prints the id of the compose container (running or not) for a service name
 # and fails loudly when none or several exist. Containers are matched by compose service
-# label within the e2e runner's compose project (E2E_COMPOSE_PROJECT, skywalking_e2e by
-# default), so another stack started from the same compose file on a developer machine does
-# not get in the way; on CI the runner hosts a single project anyway.
+# label within the e2e runner's compose project (E2E_COMPOSE_PROJECT, otherwise the name the
+# runner itself picks: GITHUB_RUN_ID on CI, skywalking_e2e locally), so another stack started
+# from the same compose file on a developer machine does not get in the way.
 container_of() {
   local ids
-  ids="$(docker ps -a --filter "label=com.docker.compose.project=${E2E_COMPOSE_PROJECT:-skywalking_e2e}" \
+  ids="$(docker ps -a --filter "label=com.docker.compose.project=${E2E_COMPOSE_PROJECT:-${GITHUB_RUN_ID:-skywalking_e2e}}" \
     --filter "label=com.docker.compose.service=$1" --format '{{.ID}}')"
   case "$(echo "$ids" | grep -c .)" in
     1) echo "$ids" ;;
