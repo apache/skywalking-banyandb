@@ -37,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vstream "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream"
@@ -226,4 +227,63 @@ func TestQueryVectorized_MemoryBudget(t *testing.T) {
 	_, err = BuildElementsFromVecBatches(ctx, budgetSrc, sqo.TagProjection)
 	require.Error(t, err, "an over-budget block must fail loud, not silently truncate")
 	require.ErrorIs(t, err, ErrQueryMemoryBudgetExceeded)
+}
+
+type recordingLease struct{ used uint64 }
+
+func (l *recordingLease) Charge(bytes uint64) error { l.used += bytes; return nil }
+func (*recordingLease) Limit() uint64               { return math.MaxUint64 }
+func (l *recordingLease) Used() uint64              { return l.used }
+func (l *recordingLease) Owner() any                { return l }
+
+// TestQueryVectorized_LeaseChargesHeldBlocks verifies a scan charges its budget
+// lease for the blocks it holds at once, not for every block it reads. The
+// soft byte budget still counts every block, which gives the total scanned.
+// The series index lookup charges the lease too, so the scan's own peak is
+// checked rather than the lease total.
+func TestQueryVectorized_LeaseChargesHeldBlocks(t *testing.T) {
+	p := parameter{
+		batchCount:     4,
+		timestampCount: 20,
+		seriesCount:    5,
+		tagCardinality: 4,
+		startTimestamp: 1,
+		endTimestamp:   1000,
+		scenario:       "vec-lease",
+	}
+	s, tr := buildVecTestStream(t, p)
+	entities := make([][]*modelv1.TagValue, 0, p.seriesCount)
+	for i := 1; i <= p.seriesCount; i++ {
+		entities = append(entities, []*modelv1.TagValue{
+			{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: entityTagValuePrefix + strconv.Itoa(i)}}},
+		})
+	}
+	sqo := model.StreamQueryOptions{
+		Name:           "benchmark",
+		TimeRange:      &tr,
+		Entities:       entities,
+		TagProjection:  []model.TagProjection{{Family: "benchmark-family", Names: []string{"entity-tag"}}},
+		MaxElementSize: math.MaxInt32,
+	}
+	lease := &recordingLease{}
+	ctx := query.WithBudgetLease(context.Background(), lease)
+	src, err := s.queryVectorized(ctx, sqo)
+	require.NoError(t, err)
+	vs, ok := src.(*streamVecScan)
+	require.True(t, ok, "expected *streamVecScan")
+	// Pull the scan directly so its block charges are the only ones on the lease.
+	rows := 0
+	for {
+		batch, nextErr := src.NextBatch(ctx)
+		require.NoError(t, nextErr)
+		if batch == nil {
+			break
+		}
+		rows += batch.ActiveLen()
+	}
+	src.Release()
+	require.Equal(t, p.batchCount*p.timestampCount*p.seriesCount, rows)
+	scanned := vs.mem.Used()
+	require.Positive(t, scanned)
+	require.Less(t, vs.charge.Peak(), uint64(scanned), "the lease should be charged for held blocks, not every block read")
 }

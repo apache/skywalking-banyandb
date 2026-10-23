@@ -381,3 +381,33 @@ func bytesCompare(a, b []byte) int {
 		return 0
 	}
 }
+
+func TestSortedMergeChargesHeldBatchesNotEveryBatch(t *testing.T) {
+	schema := tsSchema()
+	const rowsPerBatch, batches, limit = 10, 200, 20
+	all := make([]*vectorized.RecordBatch, batches)
+	for b := range all {
+		rows := make([]testRow, rowsPerBatch)
+		for r := range rows {
+			id := b*rowsPerBatch + r + 1
+			rows[r] = testRow{ts: int64(id), elemID: uint64(id)}
+		}
+		all[b] = buildBatch(schema, rows)
+	}
+	// Pruning keeps the merge to about 2*limit rows plus one batch, around five
+	// batches here, so a lease for eight is plenty for a limit-20 scan.
+	perBatch := vectorized.EstimatedRetainedBytes(all[0])
+	ctx := query.WithBudgetLease(context.Background(), &tinyMergeLease{remaining: 8 * perBatch})
+	merge := NewSortedMergeWithCap(schema, false, 64, limit)
+	require.NoError(t, merge.Init(ctx))
+	for i, b := range all {
+		require.NoError(t, merge.Consume(ctx, b), "batch %d", i)
+	}
+	require.NoError(t, merge.Finalize(ctx))
+	out, err := merge.NextBatch(ctx)
+	require.NoError(t, err)
+	require.Equal(t, limit, out.Len)
+	ts := out.Columns[out.Schema.TimestampIndex()].(*vectorized.TypedColumn[int64]).Data()
+	require.Equal(t, int64(1), ts[0])
+	require.Equal(t, int64(limit), ts[limit-1])
+}

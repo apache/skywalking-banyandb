@@ -51,6 +51,37 @@ func ChargeResult(ctx context.Context, bytes uint64) error {
 	return lease.Charge(bytes)
 }
 
+// PeakCharge charges a query's budget lease for the most an operator holds at
+// once, not for everything that passes through it. The lease never refunds, so
+// Add charges only the bytes held above the previous peak, and Release lowers
+// the held bytes once the operator drops them. Not safe for concurrent use.
+type PeakCharge struct {
+	held uint64
+	peak uint64
+}
+
+// Add accounts bytes the operator is about to hold, charging any new peak.
+// On error nothing is held.
+func (p *PeakCharge) Add(ctx context.Context, bytes uint64) error {
+	held := p.held + bytes
+	if held > p.peak {
+		if err := Charge(ctx, held-p.peak); err != nil {
+			return err
+		}
+		p.peak = held
+	}
+	p.held = held
+	return nil
+}
+
+// Release accounts bytes the operator no longer holds.
+func (p *PeakCharge) Release(bytes uint64) {
+	p.held -= min(bytes, p.held)
+}
+
+// Peak returns the most bytes held at once, which is what the lease was charged.
+func (p *PeakCharge) Peak() uint64 { return p.peak }
+
 // BudgetLease is a query-owned byte reservation that can charge subsequent
 // allocations before they occur.
 type BudgetLease interface {

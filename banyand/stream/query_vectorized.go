@@ -66,10 +66,12 @@ type streamVecScan struct {
 	segments       []storage.Segment[*tsTable, option]
 	series         []*pbv1.Series
 	pending        []*blockCursor
+	charged        map[*blockCursor]uint64
 	orderTagFamily string
 	orderTagName   string
 	budgetErr      error
 	qo             queryOptions
+	charge         query.PeakCharge
 	batchSize      int
 	curOff         int
 	asc            bool
@@ -106,13 +108,13 @@ func (v *streamVecScan) NextBatch(ctx context.Context) (*vectorized.RecordBatch,
 		}
 		batch, err := v.cursorToBatch(v.cur, v.curOff)
 		if err != nil {
-			releaseBlockCursor(v.cur)
+			v.releaseCursor(v.cur)
 			v.cur = nil
 			return nil, err
 		}
 		v.curOff += batch.Len
 		if v.curOff >= len(v.cur.timestamps) {
-			releaseBlockCursor(v.cur)
+			v.releaseCursor(v.cur)
 			v.cur = nil
 		}
 		if batch.Len == 0 {
@@ -202,7 +204,8 @@ func (v *streamVecScan) fillFromScanner(ctx context.Context) error {
 		}
 		for i := range batch.bss {
 			bs := &batch.bss[i]
-			if chargeErr := query.Charge(ctx, bs.bm.uncompressedSizeBytes); chargeErr != nil {
+			blockCharge := bs.bm.uncompressedSizeBytes
+			if chargeErr := v.charge.Add(ctx, blockCharge); chargeErr != nil {
 				if v.budgetErr == nil {
 					v.budgetErr = chargeErr
 				}
@@ -221,6 +224,7 @@ func (v *streamVecScan) fillFromScanner(ctx context.Context) error {
 						if v.budgetErr == nil {
 							v.budgetErr = fmt.Errorf("%w: %w", ErrQueryMemoryBudgetExceeded, reserveErr)
 						}
+						v.charge.Release(blockCharge)
 						continue
 					}
 				} else {
@@ -237,6 +241,12 @@ func (v *streamVecScan) fillFromScanner(ctx context.Context) error {
 					bc.idx = 0
 				}
 				v.pending = append(v.pending, bc)
+				if v.charged == nil {
+					v.charged = make(map[*blockCursor]uint64)
+				}
+				v.charged[bc] = blockCharge
+			} else {
+				v.charge.Release(blockCharge)
 			}
 		}
 		releaseBlockScanResultBatch(batch)
@@ -332,6 +342,16 @@ func (v *streamVecScan) cursorToBatch(bc *blockCursor, off int) (*vectorized.Rec
 	return batch, nil
 }
 
+// releaseCursor returns a cursor to its pool and refunds the block it held
+// from the scan's peak charge.
+func (v *streamVecScan) releaseCursor(bc *blockCursor) {
+	if bytes, ok := v.charged[bc]; ok {
+		v.charge.Release(bytes)
+		delete(v.charged, bc)
+	}
+	releaseBlockCursor(bc)
+}
+
 // Release frees the scan source's resources: the block scanner, the temp block,
 // any pending cursors, and the retained segment references.
 func (v *streamVecScan) Release() {
@@ -340,11 +360,11 @@ func (v *streamVecScan) Release() {
 	}
 	v.closed = true
 	if v.cur != nil {
-		releaseBlockCursor(v.cur)
+		v.releaseCursor(v.cur)
 		v.cur = nil
 	}
 	for _, bc := range v.pending {
-		releaseBlockCursor(bc)
+		v.releaseCursor(bc)
 	}
 	v.pending = nil
 	if v.ts != nil {

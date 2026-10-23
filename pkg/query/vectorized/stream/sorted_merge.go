@@ -50,7 +50,9 @@ type mergeRowRef struct {
 type SortedMerge struct {
 	schema    *vectorized.BatchSchema
 	pool      *vectorized.BatchPool
+	charged   map[*vectorized.RecordBatch]uint64
 	rows      []mergeRowRef
+	charge    query.PeakCharge
 	batchSize int
 	maxRows   int
 	pruneAt   int
@@ -139,9 +141,13 @@ func (s *SortedMerge) Consume(ctx context.Context, batch *vectorized.RecordBatch
 		return fmt.Errorf("SortedMerge: foreign batch schema")
 	}
 	chargeBytes := vectorized.EstimatedRetainedBytes(batch)
-	if chargeErr := query.Charge(ctx, chargeBytes); chargeErr != nil {
+	if chargeErr := s.charge.Add(ctx, chargeBytes); chargeErr != nil {
 		return chargeErr
 	}
+	if s.charged == nil {
+		s.charged = make(map[*vectorized.RecordBatch]uint64)
+	}
+	s.charged[batch] += chargeBytes
 	if batch.Selection == nil {
 		for row := 0; row < batch.Len; row++ {
 			s.rows = append(s.rows, mergeRowRef{batch: batch, row: row, arrive: s.arriveSeq})
@@ -161,8 +167,24 @@ func (s *SortedMerge) Consume(ctx context.Context, batch *vectorized.RecordBatch
 	if s.pruneAt > 0 && len(s.rows) >= s.pruneAt {
 		s.sortRows()
 		s.capByDistinctElementID()
+		s.releaseDroppedBatches()
 	}
 	return nil
+}
+
+// releaseDroppedBatches refunds the batches no buffered row points into any
+// more. Nothing else holds a consumed batch, so a prune frees them.
+func (s *SortedMerge) releaseDroppedBatches() {
+	kept := make(map[*vectorized.RecordBatch]struct{}, len(s.charged))
+	for _, ref := range s.rows {
+		kept[ref.batch] = struct{}{}
+	}
+	for batch, bytes := range s.charged {
+		if _, ok := kept[batch]; !ok {
+			s.charge.Release(bytes)
+			delete(s.charged, batch)
+		}
+	}
 }
 
 // Finalize stably sorts the buffered rows by the schema order key, then applies
