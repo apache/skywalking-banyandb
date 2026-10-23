@@ -19,12 +19,14 @@ package grpc
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"time"
 
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -41,6 +43,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -66,6 +69,8 @@ type streamService struct {
 	l               *logger.Logger
 	metrics         *metrics
 	queryBudget     *protector.QueryBudget
+	protector       protector.Memory
+	writeConfig     *writeSessionConfig
 	writeTimeout    time.Duration
 	maxWaitDuration time.Duration
 }
@@ -91,7 +96,7 @@ func (s *streamService) activeQueryAccessLog(root string, sampled bool) (err err
 }
 
 func (s *streamService) validateWriteRequest(writeEntity *streamv1.WriteRequest,
-	metadata *commonv1.Metadata, stream streamv1.StreamService_WriteServer,
+	metadata *commonv1.Metadata, stream streamResponseSender,
 ) modelv1.Status {
 	if errTime := timestamp.CheckPb(writeEntity.GetElement().Timestamp); errTime != nil {
 		s.l.Error().Err(errTime).Stringer("written", writeEntity).Msg("the element time is invalid")
@@ -183,107 +188,135 @@ func (s *streamService) navigateWithRetry(writeEntity *streamv1.WriteRequest, me
 	return s.navigate(metadata, writeEntity, specLocator)
 }
 
-func (s *streamService) publishMessages(
-	ctx context.Context,
-	publisher queue.BatchPublisher,
-	writeEntity *streamv1.WriteRequest,
-	metadata *commonv1.Metadata,
-	spec []*streamv1.TagFamilySpec,
-	shardID common.ShardID,
-	tagValues pbv1.EntityValues,
-	nodeMetadataSent map[string]bool,
-	nodeSpecSent map[string]bool,
-) ([]string, error) {
-	iwr := &streamv1.InternalWriteRequest{
-		Request:      writeEntity,
-		ShardId:      uint32(shardID),
-		EntityValues: tagValues[1:].Encode(),
-	}
-	nodeID, err := s.nodeRegistry.Locate(metadata.GetGroup(), metadata.GetName(), uint32(shardID), 0)
-	if err != nil {
-		return nil, err
-	}
-
-	if !nodeMetadataSent[nodeID] {
-		iwr.Request.Metadata = metadata
-		nodeMetadataSent[nodeID] = true
-	}
-	if spec != nil && !nodeSpecSent[nodeID] {
-		iwr.Request.TagFamilySpec = spec
-		nodeSpecSent[nodeID] = true
-	}
-
-	message := bus.NewBatchMessageWithNodeAndGroup(bus.MessageID(time.Now().UnixNano()), nodeID, metadata.GetGroup(), iwr)
-	if _, err := publisher.Publish(ctx, data.TopicStreamWrite, message); err != nil {
-		return nil, err
-	}
-	return []string{nodeID}, nil
+// streamResponseSender receives the responses of a stream Write stream.
+type streamResponseSender interface {
+	Send(*streamv1.WriteResponse) error
 }
 
-func (s *streamService) sendReply(metadata *commonv1.Metadata, status modelv1.Status, messageID uint64, stream streamv1.StreamService_WriteServer) {
+// streamSessionSender queues responses on a write session instead of writing them to the stream.
+type streamSessionSender struct {
+	session *writeSession
+}
+
+func (t streamSessionSender) Send(resp *streamv1.WriteResponse) error {
+	t.session.Reply(writeReply{metadata: resp.GetMetadata(), id: resp.GetMessageId(), status: resp.GetStatusCode()})
+	return nil
+}
+
+func (s *streamService) sendReply(metadata *commonv1.Metadata, status modelv1.Status, messageID uint64, sender streamResponseSender) {
 	if metadata == nil {
 		s.l.Error().Stringer("status", status).Msg("metadata is nil, cannot send reply")
 		return
 	}
-	if status != modelv1.Status_STATUS_SUCCEED {
-		s.metrics.totalStreamMsgReceivedErr.Inc(1, metadata.Group, "stream", "write")
+	if errResp := sender.Send(&streamv1.WriteResponse{Metadata: metadata, Status: status.String(), StatusCode: status, MessageId: messageID}); errResp != nil {
+		if dl := s.l.Debug(); dl.Enabled() {
+			dl.Err(errResp).Msg("failed to queue stream write response")
+		}
 	}
-	s.metrics.totalStreamMsgSent.Inc(1, metadata.Group, "stream", "write")
-	if errResp := stream.Send(&streamv1.WriteResponse{Metadata: metadata, Status: status.String(), MessageId: messageID}); errResp != nil {
+}
+
+// sendResponse writes one queued response to the client. It runs on the write session's sender goroutine only.
+func (s *streamService) sendResponse(stream streamv1.StreamService_WriteServer, reply writeReply) error {
+	group := reply.metadata.GetGroup()
+	if reply.status != modelv1.Status_STATUS_SUCCEED {
+		s.metrics.totalStreamMsgReceivedErr.Inc(1, group, "stream", "write")
+	}
+	s.metrics.totalStreamMsgSent.Inc(1, group, "stream", "write")
+	errResp := stream.Send(&streamv1.WriteResponse{
+		Metadata:     reply.metadata,
+		MessageId:    reply.id,
+		Status:       reply.status.String(),
+		StatusCode:   reply.status,
+		RetryAfterMs: reply.retryAfterMs,
+	})
+	if errResp != nil {
 		if dl := s.l.Debug(); dl.Enabled() {
 			dl.Err(errResp).Msg("failed to send stream write response")
 		}
-		s.metrics.totalStreamMsgSentErr.Inc(1, metadata.Group, "stream", "write")
+		s.metrics.totalStreamMsgSentErr.Inc(1, group, "stream", "write")
 	}
+	return errResp
+}
+
+func (s *streamService) memoryHigh() bool {
+	return s.protector != nil && s.protector.State() == protector.StateHigh
+}
+
+type streamRecv struct {
+	req *streamv1.WriteRequest
+	err error
 }
 
 func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 	s.metrics.totalStreamStarted.Inc(1, "stream", "write")
-	publisher := s.pipeline.NewBatchPublisher(s.writeTimeout)
 	start := time.Now()
-	var succeedSent []succeedSentMessage
+	var cfg writeSessionConfig
+	if s.writeConfig != nil {
+		cfg = *s.writeConfig
+	}
+	session := newWriteSession(stream.Context(), cfg, writeSessionDeps{
+		newPublisher: func() queue.BatchPublisher { return s.pipeline.NewBatchPublisher(s.writeTimeout) },
+		send:         func(reply writeReply) error { return s.sendResponse(stream, reply) },
+		memoryHigh:   s.memoryHigh,
+		release:      s.groupRepo.releaseRequest,
+		log:          s.l,
+		metrics:      s.metrics,
+		service:      "stream",
+		topic:        data.TopicStreamWrite,
+	})
 	requestCount := 0
-	defer func() {
-		cee, err := publisher.Close()
-		for _, ssm := range succeedSent {
-			code := modelv1.Status_STATUS_SUCCEED
-			if cee != nil {
-				for _, node := range ssm.nodes {
-					if ce, ok := cee[node]; ok {
-						code = ce.Status()
-						break
-					}
-				}
-			}
-			s.sendReply(ssm.metadata, code, ssm.messageID, stream)
-		}
-		if err != nil {
-			s.l.Error().Err(err).Msg("failed to close the publisher")
-		}
-		if dl := s.l.Debug(); dl.Enabled() {
-			dl.Int("total_requests", requestCount).Msg("completed stream write batch")
-		}
-		s.metrics.totalStreamFinished.Inc(1, "stream", "write")
-		s.metrics.totalStreamLatency.Inc(time.Since(start).Seconds(), "stream", "write")
-	}()
+	err := s.receiveWrites(stream, session, &requestCount)
+	finishErr := session.Finish()
+	if err == nil {
+		err = finishErr
+	}
+	if dl := s.l.Debug(); dl.Enabled() {
+		dl.Int("total_requests", requestCount).Msg("completed stream write stream")
+	}
+	s.metrics.totalStreamFinished.Inc(1, "stream", "write")
+	s.metrics.totalStreamLatency.Inc(time.Since(start).Seconds(), "stream", "write")
+	return err
+}
 
+// receiveWrites reads the client's rows into the session until the client half-closes (nil), the stream breaks,
+// or the session fails. Rows are validated and routed here; their acknowledgement is the session's business.
+func (s *streamService) receiveWrites(stream streamv1.StreamService_WriteServer, session *writeSession, requestCount *int) error {
 	ctx := stream.Context()
+	recvCh := make(chan streamRecv)
+	stop := make(chan struct{})
+	defer close(stop)
+	// Recv runs on its own goroutine so that a session failure ends the stream even when the client is idle.
+	run.Go(ctx, "stream-write-recv", s.l, func(context.Context) {
+		for {
+			req, err := stream.Recv()
+			select {
+			case recvCh <- streamRecv{req: req, err: err}:
+			case <-stop:
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	})
+	sender := streamSessionSender{session: session}
 
 	var metadata *commonv1.Metadata
 	var spec []*streamv1.TagFamilySpec
 	var specLocator *specLocator
+	var epoch uint64
 	isFirstRequest := true
-	nodeMetadataSent := make(map[string]bool)
-	nodeSpecSent := make(map[string]bool)
 
 	for {
+		var in streamRecv
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		default:
+		case <-session.Fatal():
+			return session.Err()
+		case in = <-recvCh:
 		}
-
-		writeEntity, err := stream.Recv()
+		writeEntity, err := in.req, in.err
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
@@ -295,29 +328,34 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		}
 
 		if writeEntity.GetMetadata() != nil {
+			// Clients may repeat the metadata on every message; only a different target starts a new batch.
+			if metadata == nil || !proto.Equal(metadata, writeEntity.GetMetadata()) {
+				epoch++
+			}
 			metadata = writeEntity.GetMetadata()
-			nodeMetadataSent = make(map[string]bool)
 		} else if isFirstRequest {
 			s.l.Error().Msg("metadata is required for the first request of gRPC stream")
-			s.sendReply(nil, modelv1.Status_STATUS_METADATA_REQUIRED, writeEntity.GetMessageId(), stream)
+			s.sendReply(nil, modelv1.Status_STATUS_METADATA_REQUIRED, writeEntity.GetMessageId(), sender)
 			return errors.New("metadata is required for the first request of gRPC stream")
 		}
 		isFirstRequest = false
 		if writeEntity.GetTagFamilySpec() != nil {
+			if !sameStreamSpec(spec, writeEntity.GetTagFamilySpec()) {
+				epoch++
+			}
 			spec = writeEntity.GetTagFamilySpec()
-			nodeSpecSent = make(map[string]bool)
 			specLocator = s.buildSpecLocator(metadata, spec)
 		}
 
-		requestCount++
+		*requestCount++
 		s.metrics.totalStreamMsgReceived.Inc(1, metadata.Group, "stream", "write")
 
 		if acquireErr := s.groupRepo.acquireRequest(metadata.Group); acquireErr != nil {
-			s.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream)
+			s.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), sender)
 			continue
 		}
 
-		if s.validateWriteRequest(writeEntity, metadata, stream) != modelv1.Status_STATUS_SUCCEED {
+		if s.validateWriteRequest(writeEntity, metadata, sender) != modelv1.Status_STATUS_SUCCEED {
 			s.groupRepo.releaseRequest(metadata.Group)
 			continue
 		}
@@ -325,7 +363,7 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 		tagValues, shardID, err := s.navigateWithRetry(writeEntity, metadata, specLocator)
 		if err != nil {
 			s.l.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("navigation failed")
-			s.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream)
+			s.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), sender)
 			s.groupRepo.releaseRequest(metadata.Group)
 			continue
 		}
@@ -336,21 +374,47 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 			}
 		}
 
-		nodes, err := s.publishMessages(ctx, publisher, writeEntity, metadata, spec, shardID, tagValues, nodeMetadataSent, nodeSpecSent)
-		if err != nil {
-			s.l.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("publishing failed")
-			s.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), stream)
+		if err = s.appendRow(session, writeEntity, metadata, spec, shardID, tagValues, epoch); err != nil {
 			s.groupRepo.releaseRequest(metadata.Group)
-			continue
+			if !errors.Is(err, errWriteRowRejected) {
+				return err
+			}
+			s.l.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("publishing failed")
+			s.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), sender)
 		}
-		s.groupRepo.releaseRequest(metadata.Group)
-
-		succeedSent = append(succeedSent, succeedSentMessage{
-			metadata:  metadata,
-			messageID: writeEntity.GetMessageId(),
-			nodes:     nodes,
-		})
 	}
+}
+
+// appendRow locates the row's node and appends it to that node's open batch. A nil error means the session owns
+// the row and will release its group request when the batch is acknowledged. A rejection that concerns only this
+// row wraps errWriteRowRejected; any other error means the session has failed or the stream is gone.
+func (s *streamService) appendRow(session *writeSession, writeEntity *streamv1.WriteRequest, metadata *commonv1.Metadata,
+	spec []*streamv1.TagFamilySpec, shardID common.ShardID, tagValues pbv1.EntityValues, epoch uint64,
+) error {
+	nodeID, err := s.nodeRegistry.Locate(metadata.GetGroup(), metadata.GetName(), uint32(shardID), 0)
+	if err != nil {
+		return fmt.Errorf("%w: %w", errWriteRowRejected, err)
+	}
+	err = session.Append(nodeID, metadata.GetGroup(), epoch, writeAck{metadata: metadata, id: writeEntity.GetMessageId()},
+		func(first bool) ([]byte, error) {
+			request := &streamv1.WriteRequest{
+				MessageId: writeEntity.GetMessageId(),
+				Element:   writeEntity.GetElement(),
+			}
+			if first {
+				request.Metadata = metadata
+				request.TagFamilySpec = spec
+			}
+			return proto.Marshal(&streamv1.InternalWriteRequest{
+				Request:      request,
+				ShardId:      uint32(shardID),
+				EntityValues: tagValues[1:].Encode(),
+			})
+		})
+	if errors.Is(err, errWriteRowSerialize) {
+		return fmt.Errorf("%w: %w", errWriteRowRejected, err)
+	}
+	return err
 }
 
 var emptyStreamQueryResponse = &streamv1.QueryResponse{Elements: make([]*streamv1.Element, 0)}
@@ -501,4 +565,18 @@ func (s *streamService) Close() error {
 		return s.ingestionAccessLog.Close()
 	}
 	return nil
+}
+
+// sameStreamSpec reports whether two tag family specs are identical, so a client
+// repeating its spec on every message does not start a new batch each time.
+func sameStreamSpec(a, b []*streamv1.TagFamilySpec) bool {
+	if a == nil || len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !proto.Equal(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
 }

@@ -126,13 +126,14 @@ func (c *writeSessionConfig) registerFlags(fs *run.FlagSet) {
 // writeAck identifies one client message awaiting acknowledgement.
 type writeAck struct {
 	metadata *commonv1.Metadata
-	version  uint64
+	// id is the key the client correlates the acknowledgement with: the version of a trace row, the message_id of a stream element.
+	id uint64
 }
 
 // writeReply is the model-independent form of a WriteResponse.
 type writeReply struct {
 	metadata     *commonv1.Metadata
-	version      uint64
+	id           uint64
 	status       modelv1.Status
 	retryAfterMs uint32
 }
@@ -455,7 +456,7 @@ func (s *writeSession) finishBatch(b *writeBatch, st modelv1.Status) {
 	rows := b.rows
 	b.rows = nil
 	for i := range rows {
-		s.replies.push(writeReply{metadata: rows[i].ack.metadata, version: rows[i].ack.version, status: st, retryAfterMs: retryAfter})
+		s.replies.push(writeReply{metadata: rows[i].ack.metadata, id: rows[i].ack.id, status: st, retryAfterMs: retryAfter})
 		if s.deps.release != nil {
 			s.deps.release(rows[i].ack.metadata.GetGroup())
 		}

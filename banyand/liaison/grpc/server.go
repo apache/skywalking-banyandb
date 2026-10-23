@@ -174,6 +174,7 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		pipeline:         tir1Client,
 		broadcaster:      broadcaster,
 		queryBudget:      protector.QueryBudgetFor(protectorService),
+		protector:        protectorService,
 	}
 	measureSVC := &measureService{
 		discoveryService: newDiscoveryServiceWithEntityRepo(schema.KindMeasure, schemaRegistry, nr.MeasureLiaisonNodeRegistry, gr, er),
@@ -495,6 +496,8 @@ func (s *server) FlagSet() *run.FlagSet {
 		s.traceSVC.writeConfig = &writeSessionConfig{}
 	}
 	s.traceSVC.writeConfig.registerFlags(fs)
+	// The stream and trace write streams share one set of write session flags.
+	s.streamSVC.writeConfig = s.traceSVC.writeConfig
 	fs.IntVar(&s.propertyServer.repairQueueCount, "property-repair-queue-count", 128, "the number of queues for property repair")
 	fs.IntVar(&s.bydbqlCacheSize, "bydbql-prepared-cache-size", 4000,
 		"max number of prepared BydbQL statements cached on the query path; 0 disables the cache")

@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package write_backpressure_test verifies the trace Write backpressure contract of a liaison in an in-process cluster.
+// Package write_backpressure_test verifies the trace and stream Write backpressure contract of a liaison in an in-process cluster.
 package write_backpressure_test
 
 import (
