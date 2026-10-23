@@ -282,3 +282,186 @@ Report the median planning ns/op and B/op ratios for typed-wide cache-on versus
 cache-off; the T05 design target is at most 0.80 for each. Report simple-query
 planning and RPC results separately. A planning improvement alone does not prove
 an RPC latency improvement.
+
+### T07 local SQL aggregation
+
+`qlb_t07` measures four owning query shapes over the same nullable INT64/DOUBLE
+fixture: scalar SUM, COUNT/SUM/MIN/MAX with 1,024 nullable string groups, AVG with
+one group, and SUM/COUNT/AVG with N integer groups. NULL and empty string keys
+remain different groups. Duplicate series/timestamps are written every 10,000
+rows; the local aggregate must receive exactly N deduplicated input rows. The
+floating fixture uses binary fractions so the scalar oracle has exact sums.
+
+The N-group query has a final LIMIT 1 to measure complete grouping without a
+million-row protobuf response. Every returned RID is checked against its own
+independently calculated SUM/COUNT/AVG, including null-only groups. The selected
+group is unordered and may differ between requests; its checked sample checksum
+is retained in the report. Instrumented input/group counts must still equal N,
+so LIMIT cannot hide an incomplete scan or aggregation. Generated E2E tests cover
+complete multi-group output separately.
+
+The frozen successful-query schedule uses one worker and four variants only:
+
+| Input rows | Checked warmups per variant | Timed RPCs per variant |
+| --- | ---: | ---: |
+| 1,024 | 5 | 100 |
+| 32,768 | 3 | 20 |
+
+This capability-specific schedule replaces the old shared 1,000-call boilerplate
+for T07. It keeps the benchmark focused on rows/groups, null handling and shared
+state. It does not repeat cache settings or the previous tickets' comparison
+matrices. Five independent repetitions retain all latency samples. Small sample
+counts limit tail estimates: p95/p99 at twenty requests mostly describe the
+slowest observations and are not evidence of a stable latency distribution. New SQL has
+no old-version latency baseline.
+
+The existing orchestrator runs each cardinality in a fresh process with one
+cluster. T07 validates separate process identities across cardinalities, avoiding
+retention of a previous closed cluster. It selects the schedule above regardless
+of the generic iteration defaults. Schema creation, ingestion, visibility checks,
+scalar reference construction and warmup remain outside timing. Timed queries
+check row counts; warmups and retained timed samples check complete values,
+types, aliases and nulls. Profiles and CPU/allocation totals include the client,
+liaison and two data nodes.
+
+Run five independent 4-CPU, 8-GiB containers. The successful N-group experiment
+may use a 1-GiB per-query budget; this is an experiment setting, not a production
+default change. The protector's admission limit also applies and can be lower
+than this vectorized tracker setting. Separate probes below target the
+16/256-MiB resource contract; a failure during readiness is a blocked probe,
+not a passing aggregate resource result.
+
+```sh
+for repetition in 1 2 3 4 5; do
+  DQB_ENGINE=measure DQB_SCENARIOS=qlb_t07 \
+    DQB_CARDINALITIES=1024,32768 DQB_QUERY_WORKERS=1 \
+    DQB_QUERY_MEMORY_MIB=1024 DQB_PROFILE=1 \
+    DQB_REPORT_DIR="/work/.omx/bench-reports/t07-bounded-r${repetition}" \
+    test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g
+done
+```
+
+The querymetrics report separates cumulative aggregate key bytes/capacity and
+fixed-width state bytes/capacity from process-global query reservation peaks.
+Divide cumulative capacities by `aggregate_executions` for per-query averages.
+It requires one logical QL raw scan, two storage leaf calls (one per data node),
+exactly N local input rows, and the actual group cardinality. Fixed-width state
+bytes per group must remain constant as input rows increase. Float SUM, COUNT
+and AVG share two state lanes. The report checks that live owners, native flatten
+buffers, result handles and reservations return to baseline after every variant.
+Native retained-frame bytes and total parent lease charges remain explicitly
+unavailable; process-global peak reservations are not native residency alone.
+
+`TestQLBT07ResourceBounds` uses the same N-group query over 100,000 or
+1,000,000 rows and five requests. Build the querymetrics test binary and run this
+test in separate limited containers with `RUN_DISTRIBUTED_QUERY_BENCH=1`, `DQB_IN_CONTAINER=1`,
+`DQB_ENGINE=measure`, each `DQB_CARDINALITY=100000` and `1000000`, and
+each `DQB_QUERY_MEMORY_MIB=16` and `256`, with a unique `DQB_REPORT_DIR` for all
+four combinations. It verifies fixture visibility with bounded raw QL chunks
+that prune one host per query. Each time window spans sixteen times the per-host
+row limit, keeping setup query counts close to input rows divided by chunk size.
+The independent RID oracle checks every fixture row exactly once. This avoids
+retaining decoder buffers for all hosts in a low-budget readiness request;
+the measured aggregate still receives the complete fixture. After the probes,
+one host-pruned chunk verifies that a bounded query still succeeds. The probe
+then accepts only complete correct responses or `ResourceExhausted`, with no
+partial results or leaked resources. It writes
+`qlb_t07_resources_<rows>rows_<limit>mib.json`.
+The process-global reservation peak is bounded by three independent node budgets.
+A resource rejection in the successful-query benchmark remains a failure.
+The 100,000-row, 16-MiB run cannot currently complete native readiness: even
+one host, one field and 1,024 returned rows exceed the native working allowance.
+It therefore produces no aggregate resource/recovery verdict. The verification
+report records this separately from measured aggregate outcomes.
+
+
+The original successful-query matrix also required 100,000 and 1,000,000 input
+rows. That requirement is **not fulfilled** by the two-cardinality matrix above.
+The initial 100,000-row run deterministically failed before local aggregation:
+after all raw QL chunks had verified fixture visibility, the inherited native
+frame reservation requested 157,505,864 bytes with 51,609,596 bytes already charged
+against a 201,326,592-byte protector lease. The first native replica frame alone
+crossed that allowance, and the second frame needed another reservation.
+`AggregateExecutionStats` remained zero: this was not a local HashAggregate cost
+or throughput measurement.
+
+The native reservation includes 128 bytes per cell and per row, thirteen copies
+of encoded frame bytes, and merge workspace. A larger vectorized tracker setting
+does not enlarge the protector lease. T07 preserves this inherited accounting and
+admission policy. The successful RPC matrix therefore reports 1,024/32,768 rows,
+while 100,000/1,000,000 rows remain strict resource-outcome experiments. Rejections
+at those larger sizes are reported as rejections, with no SQL throughput claim.
+The original failed run and the bounded one-query diagnostic artifacts remain
+available. This is a concrete limitation of the current one-scan native boundary,
+not an acceptance pass for the originally specified large successful workloads.
+
+### T08 native aggregate branches and keyed merge
+
+`qlb_t08` compares the automatic native aggregate path against forced local T07
+execution of **identical QL**, using the T07 nullable fixture and its versioned
+writes. It runs only these four owning shapes, grouped by the 16 entity hosts
+and explicitly restricted to those non-null hosts with `host IN (...)`:
+
+| Shape | Selected fields | Native branches |
+| --- | --- | --- |
+| `float_avg` | `AVG(f)` | SUM(f), COUNT(f) |
+| `float_shared` | `SUM(f), COUNT(f), AVG(f), AVG(f)` with distinct aliases | The same two branches |
+| `int_extrema` | `MIN(v), MAX(v), COUNT(v)` | MIN(v), MAX(v), COUNT(v) |
+| `int_avg_fallback` | `AVG(v)` | One local raw scan; integer overflow semantics prevent native lowering |
+
+Each shape has `pushdown` (native enabled) and `local` (forced local) variants.
+The fallback control intentionally uses T07 in both modes. The three eligible
+shapes also have an `individual` control: the same native SUM/COUNT or
+MIN/MAX/COUNT requests executed serially through the existing measure Query
+RPC. Its latency and allocations describe the **whole sequence of two or three
+RPCs**, not a single SQL request. The control reports 32/48 response rows per
+iteration; QL reports 16. It checks each native result against fixture arithmetic,
+including native COUNT(f)'s float64 result type, then verifies host-keyed AVG
+finalization outside timing. Native queries are benchmark controls, never the
+expected-result oracle for QL.
+
+The frozen protocol uses 1,024 and 32,768 logical input rows, one query worker,
+100 timed queries/5 warmups at 1,024 rows and 20 timed queries/3 warmups at 32,768
+rows. Every cardinality starts a fresh process and cluster. Before timing,
+host-pruned QL raw queries verify the complete visible fixture and every warmup
+checks values and types against independent scalar arithmetic. Timed calls check
+row counts, retain roughly ten samples, and validate their full contents after
+timing. Run five independent 4 CPU/8 GiB repetitions with CPU and heap profiles:
+
+```sh
+for repetition in 1 2 3 4 5; do
+  DQB_ENGINE=measure DQB_SCENARIOS=qlb_t08 \
+    DQB_CARDINALITIES=1024,32768 DQB_QUERY_WORKERS=1 \
+    DQB_QUERY_MEMORY_MIB=256 DQB_PROFILE=1 \
+    DQB_REPORT_DIR="/work/.omx/bench-reports/t08-r${repetition}" \
+    test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g
+done
+```
+
+Each cardinality produces 11 variants. Reports retain per-query latency samples,
+process CPU/GC/allocation counters, profiles and the following work/ownership
+evidence:
+
+- Eligible AVG uses two unique native branches; selecting SUM, COUNT and a repeated
+  AVG adds none. The integer AVG control uses one complete local raw scan.
+- A native branch makes one logical distributed execution (two leaf calls in this
+  fixture). `ql_batch_executions` counts native branch executions; one logical QL
+  request is evidenced by one `merge_executions` or `aggregate_executions`.
+- Native merge input is 16 finalized group rows per branch. Merge visits are
+  bounded by input group rows plus one visit per output group. State lanes,
+  used/capacity bytes, reservations and releases are reported separately for the
+  local aggregate and keyed merge. Merge state bytes include branch-presence flags.
+- Intermediate DataPoints are zero. Final DataPoints match the selected mode's
+  16 SQL rows or 32/48 individual-native rows. Results, tracker reservations, owner
+  pins and native flatten pool references return to their starting counts.
+- Physical storage rows, retained native frame bytes and total parent lease
+  charges are explicitly unavailable; process memory peaks and lease tracker
+  counters are not relabeled as those quantities.
+
+The report rejects missing shapes/modes/cardinalities, incomplete timed samples,
+extra AVG branches, unexpected fallback, nonzero intermediate rows and leaks.
+Pushdown is an execution optimization, so latency comparisons are recorded
+without assuming that repeated native scans outperform one raw scan. This adds
+no cache, concurrency, earlier-ticket or spill benchmark matrix. Separate native
+requests have no common snapshot guarantee while writes continue; timed fixtures
+are fixed after visibility checks complete.

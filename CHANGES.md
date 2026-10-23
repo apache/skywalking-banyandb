@@ -6,6 +6,7 @@ Release Notes.
 
 ### Features
 
+- Add SQL-correct measure QL grouping and multiple aggregates, with shared calls, weighted AVG, bounded local state and eligible native aggregate split/merge.
 - Sample traces with source-stage native plugins before lifecycle migration, with durable decisions, checkpointed replay, and crash recovery.
 - Add typed raw measure QL with WHERE time, aliases and bounded compiled-plan reuse, executed over shared columnar native batches.
 - Add a native ICE v3 encoder that writes committed index generations compatible with existing readers.
