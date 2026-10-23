@@ -23,6 +23,10 @@
 # ${oap_host}/${oap_12800} instead, so file-discovery/e2e.yaml aliases them to
 # these names in a setup step.
 
+# Native source-stage sampling is exercised by the distributed lifecycle suite
+# (test/cases/lifecycle/sampling.go), which runs real hot/warm nodes, the Group API,
+# and the lifecycle command. These OAP cases query pre-generated cold fixtures.
+
 cases:
   - query: swctl --display yaml --base-url=http://${service_skywalking_oap_host}:${service_skywalking_oap_12800}/graphql metrics exec --expression="top_n(service_resp_time,3,des,attr0='GENERAL',attr1!='Not_exist')/100"
     expected: ../storage/expected/topN-OP-service.yml
