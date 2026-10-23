@@ -130,7 +130,7 @@ var testWriteMetadata = &commonv1.Metadata{Group: "g", Name: "t"}
 
 // appendRow appends a padded row identified by version.
 func appendRow(s *writeSession, node string, version uint64, size int) error {
-	return s.Append(node, "g", 1, writeAck{metadata: testWriteMetadata, version: version}, func(bool) ([]byte, error) {
+	return s.Append(node, "g", 1, writeAck{metadata: testWriteMetadata, id: version}, func(bool) ([]byte, error) {
 		payload := make([]byte, size)
 		copy(payload, fmt.Sprintf("v%d", version))
 		return payload, nil
@@ -142,7 +142,7 @@ func requireExactlyOnce(t *testing.T, replies []writeReply, total int, want mode
 	require.Len(t, replies, total)
 	seen := make(map[uint64]int, total)
 	for _, r := range replies {
-		seen[r.version]++
+		seen[r.id]++
 		assert.Equal(t, want, r.status)
 	}
 	for v := 1; v <= total; v++ {
@@ -208,7 +208,7 @@ func TestWriteSessionAcknowledgementOrderAndExactlyOnce(t *testing.T) {
 	// The rows of a batch are published and acknowledged in the order they were appended.
 	position := make(map[uint64]int, total)
 	for i, r := range replies {
-		position[r.version] = i
+		position[r.id] = i
 	}
 	for _, b := range f.attempts() {
 		prevVersion, prevPos := uint64(0), -1
@@ -228,7 +228,7 @@ func TestWriteSessionEpochSwitchSealsOpenBatch(t *testing.T) {
 	s := newTestSession(writeSessionConfig{sealRows: 100, sealInterval: time.Hour}, f, c)
 	var firstFlags []bool
 	for v, epoch := range []uint64{1, 1, 2, 2} {
-		err := s.Append("n1", "g", epoch, writeAck{metadata: testWriteMetadata, version: uint64(v + 1)}, func(first bool) ([]byte, error) {
+		err := s.Append("n1", "g", epoch, writeAck{metadata: testWriteMetadata, id: uint64(v + 1)}, func(first bool) ([]byte, error) {
 			firstFlags = append(firstFlags, first)
 			return []byte("row"), nil
 		})
@@ -263,7 +263,7 @@ func TestWriteSessionInflightLimitBlocksAppendUntilAck(t *testing.T) {
 	case <-time.After(150 * time.Millisecond):
 	}
 	for _, r := range c.snapshot() {
-		assert.GreaterOrEqual(t, r.version, uint64(100), "n1 acknowledges nothing while it holds the batches")
+		assert.GreaterOrEqual(t, r.id, uint64(100), "n1 acknowledges nothing while it holds the batches")
 	}
 	release <- struct{}{}
 	select {
@@ -297,9 +297,9 @@ func TestWriteSessionBusyRetryThenSuccess(t *testing.T) {
 	require.NoError(t, appendRow(s, "n1", 2, 10))
 	// While the batch backs off, an acknowledgement sent meanwhile asks the client to slow down.
 	require.Eventually(t, func() bool {
-		s.Reply(writeReply{metadata: testWriteMetadata, version: 1000, status: modelv1.Status_STATUS_NOT_FOUND})
+		s.Reply(writeReply{metadata: testWriteMetadata, id: 1000, status: modelv1.Status_STATUS_NOT_FOUND})
 		for _, r := range c.snapshot() {
-			if r.version == 1000 && r.retryAfterMs > 0 {
+			if r.id == 1000 && r.retryAfterMs > 0 {
 				return true
 			}
 		}
@@ -313,7 +313,7 @@ func TestWriteSessionBusyRetryThenSuccess(t *testing.T) {
 	}
 	var batch []writeReply
 	for _, r := range c.snapshot() {
-		if r.version == 1 || r.version == 2 {
+		if r.id == 1 || r.id == 2 {
 			batch = append(batch, r)
 		}
 	}
@@ -379,7 +379,7 @@ func TestReplyQueueNeverBlocksPush(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		for i := 0; i < 100000; i++ {
-			q.push(writeReply{version: uint64(i)})
+			q.push(writeReply{id: uint64(i)})
 		}
 		close(done)
 	}()
