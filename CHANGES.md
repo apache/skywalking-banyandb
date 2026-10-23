@@ -64,6 +64,7 @@ Release Notes.
 
 - Fix the liaison's distributed measure row merge wrapping borrowed frame strings into protobuf tag and field values without copying them.
 - Fix a data node panicking with "directory is exist" when a write landed in a segment that retention had just removed but whose directory was still held by a reader; creating a segment over a directory pending deletion now returns `ErrSegmentDeleting`.
+- Fix the stream block scanner counting each scanned block against the scan quota once per later block in its batch (and carrying the total across batches), which made a scan report `block scan quota exceeded` and wait for far more memory than its blocks need; the quota and the reservation now use the bytes of the current batch only.
 - Fix data races in measure queries, which wrote the block cache and shard ID into parts shared with concurrent queries; both are now carried alongside each part.
 - Fix a data node with several measure groups exporting query metrics only for the most recently opened group: opening a group closed every other group's query metrics. Each group now keeps its own.
 - Fix the vectorized measure batch merge emitting a duplicate row when a same-series, same-timestamp duplicate straddled its 4,096-row page boundary; the row path already returned the deduplicated result.
