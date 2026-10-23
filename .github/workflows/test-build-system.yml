@@ -63,7 +63,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             container: true
           - os: macos-latest
             container: false

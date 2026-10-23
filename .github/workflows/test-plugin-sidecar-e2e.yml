@@ -42,7 +42,7 @@ jobs:
   # has no artifact dependency on the publish job — its own failure domain,
   # like the plugins publish job.
   plugin-sidecar-kind:
-    # amd64 runs natively on ubuntu-latest; arm64 on GitHub's native arm64
+    # amd64 runs natively on ubuntu-24.04; arm64 on GitHub's native arm64
     # runner (ubuntu-24.04-arm). arm64 cannot be validated locally, so CI is the
     # only place the arm64 CGO host + arm64 .so plugin.Open parity is exercised.
     # fail-fast:false so one arch's result never cancels the other.
@@ -52,7 +52,7 @@ jobs:
       matrix:
         include:
           - arch: amd64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
           - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
