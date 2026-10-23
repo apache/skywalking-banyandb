@@ -19,6 +19,10 @@ package measure
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -28,25 +32,27 @@ import (
 )
 
 // evolvedRow is one raw data point of the schema-evolution fixtures. zone is
-// only written when the producing group's schema defines it.
+// only written when the producing group's schema defines it; intZone writes
+// it as an int instead (its length), as a group declaring zone INT would.
 type evolvedRow struct {
-	svc   string
-	zone  string
-	value int64
+	svc     string
+	zone    string
+	value   int64
+	intZone bool
 }
 
 // evolvedRawSchema is the raw layout a data node scans for a group projected
 // as (svc[, zone]) + value, grouped by svc. Like BuildBatchSchema, the key
-// tag is native and the non-key zone tag is a TagValue passthrough; a zero
-// zoneType leaves zone out, as for the old schema, whose projection the
+// tag is native and the non-key zone tag is a TagValue passthrough. Without
+// a zoneType zone is left out, as for the old schema, whose projection the
 // liaison trims to svc.
-func evolvedRawSchema(svcType, zoneType vectorized.ColumnType) *vectorized.BatchSchema {
+func evolvedRawSchema(svcType vectorized.ColumnType, zoneType ...vectorized.ColumnType) *vectorized.BatchSchema {
 	cols := []vectorized.ColumnDef{
 		{Role: vectorized.RoleShardID, Name: shardIDOutputName, Type: vectorized.ColumnTypeInt64},
 		{Role: vectorized.RoleTag, TagFamily: "default", Name: "svc", Type: svcType},
 	}
-	if zoneType != 0 {
-		cols = append(cols, vectorized.ColumnDef{Role: vectorized.RoleTag, TagFamily: "default", Name: "zone", Type: zoneType})
+	for _, zt := range zoneType {
+		cols = append(cols, vectorized.ColumnDef{Role: vectorized.RoleTag, TagFamily: "default", Name: "zone", Type: zt})
 	}
 	cols = append(cols, vectorized.ColumnDef{Role: vectorized.RoleField, Name: "value", Type: vectorized.ColumnTypeInt64})
 	return vectorized.NewBatchSchema(cols)
@@ -79,9 +85,15 @@ func encodeEvolvedPartial(t *testing.T, schema *vectorized.BatchSchema, rows []e
 		if len(schema.Columns) == 4 {
 			switch zoneCol := b.Columns[2].(type) {
 			case *vectorized.TypedColumn[*modelv1.TagValue]:
-				zoneCol.Append(&modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: r.zone}}})
+				if r.intZone {
+					zoneCol.Append(&modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: int64(len(r.zone))}}})
+				} else {
+					zoneCol.Append(&modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: r.zone}}})
+				}
 			case *vectorized.TypedColumn[string]:
 				zoneCol.Append(r.zone)
+			case *vectorized.TypedColumn[int64]:
+				zoneCol.Append(int64(len(r.zone)))
 			default:
 				t.Fatalf("unexpected zone column %T", zoneCol)
 			}
@@ -110,7 +122,7 @@ func encodeEvolvedPartial(t *testing.T, schema *vectorized.BatchSchema, rows []e
 // (svc,value) and a new group (svc,zone,value), both on shard 0.
 func evolvedFixture(t *testing.T, fn AggFunc) (oldFrame, newFrame []byte) {
 	t.Helper()
-	oldFrame = encodeEvolvedPartial(t, evolvedRawSchema(vectorized.ColumnTypeString, 0),
+	oldFrame = encodeEvolvedPartial(t, evolvedRawSchema(vectorized.ColumnTypeString),
 		[]evolvedRow{{svc: "old", value: 2}, {svc: "old", value: 3}}, fn)
 	newFrame = encodeEvolvedPartial(t, evolvedRawSchema(vectorized.ColumnTypeString, vectorized.ColumnTypeTagValue),
 		[]evolvedRow{{svc: "new", zone: "west", value: 7}, {svc: "new", zone: "west", value: 11}}, fn)
@@ -261,8 +273,16 @@ func TestReduceRawFramesToSchema_ReplicasDoNotDoubleCount(t *testing.T) {
 func TestReduceRawFramesToSchema_RejectsIncompatibleLayouts(t *testing.T) {
 	oldFrame, newFrame := evolvedFixture(t, AggSum)
 	// A third group declares svc as an int, so its native key column changes type.
-	intSvcFrame := encodeEvolvedPartial(t, evolvedRawSchema(vectorized.ColumnTypeInt64, 0),
+	intSvcFrame := encodeEvolvedPartial(t, evolvedRawSchema(vectorized.ColumnTypeInt64),
 		[]evolvedRow{{svc: "other", value: 1}}, AggSum)
+	// The plan declares zone a string; these partials carry it as an int,
+	// natively or as TagValue cells.
+	stringZone := partialSchema(t, encodeEvolvedPartial(t, evolvedRawSchema(vectorized.ColumnTypeString, vectorized.ColumnTypeString),
+		[]evolvedRow{{svc: "plan", zone: "west", value: 1}}, AggSum))
+	intZoneFrame := encodeEvolvedPartial(t, evolvedRawSchema(vectorized.ColumnTypeString, vectorized.ColumnTypeInt64),
+		[]evolvedRow{{svc: "other", zone: "east", value: 1}}, AggSum)
+	intCellsFrame := encodeEvolvedPartial(t, evolvedRawSchema(vectorized.ColumnTypeString, vectorized.ColumnTypeTagValue),
+		[]evolvedRow{{svc: "other", zone: "east", value: 1, intZone: true}}, AggSum)
 	cases := []struct {
 		target   *vectorized.BatchSchema
 		name     string
@@ -273,6 +293,8 @@ func TestReduceRawFramesToSchema_RejectsIncompatibleLayouts(t *testing.T) {
 		{name: "a group-by key changes type", target: partialSchema(t, newFrame), keyTags: []string{"svc"}, frames: [][]byte{intSvcFrame}, wantText: "default.svc"},
 		{name: "a group-by key is missing", target: partialSchema(t, newFrame), keyTags: []string{"svc", "zone"}, frames: [][]byte{oldFrame}, wantText: "default.zone"},
 		{name: "a partial has a column the target lacks", target: partialSchema(t, oldFrame), keyTags: []string{"svc"}, frames: [][]byte{newFrame}, wantText: "default.zone"},
+		{name: "a non-key tag arrives as another type", target: stringZone, keyTags: []string{"svc"}, frames: [][]byte{intZoneFrame}, wantText: "default.zone"},
+		{name: "a non-key tag carries cells of another type", target: stringZone, keyTags: []string{"svc"}, frames: [][]byte{intCellsFrame}, wantText: "default.zone"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -284,6 +306,66 @@ func TestReduceRawFramesToSchema_RejectsIncompatibleLayouts(t *testing.T) {
 				t.Fatalf("error %q does not name %s", reduceErr, tc.wantText)
 			}
 		})
+	}
+}
+
+func TestReduceRawFramesToSchema_ReadsTagValueAsPlannedType(t *testing.T) {
+	// A node sends zone as TagValue when its cells are mixed or all null; with
+	// zone planned as a string, those cells are read back as strings.
+	_, newFrame := evolvedFixture(t, AggSum)
+	stringFrame := encodeEvolvedPartial(t, evolvedRawSchema(vectorized.ColumnTypeString, vectorized.ColumnTypeString),
+		[]evolvedRow{{svc: "narrow", zone: "east", value: 4}}, AggSum)
+	got, reduceErr := reduceToSchema([][]byte{newFrame, stringFrame}, partialSchema(t, stringFrame), []string{"svc"}, AggSum)
+	if reduceErr != nil {
+		t.Fatalf("ReduceRawFramesToSchema: %v", reduceErr)
+	}
+	rows, _ := reducedRows(t, got)
+	if want := map[string]string{"new": "new,west,18", "narrow": "narrow,east,4"}; !mapsEqualExact(rows, want) {
+		t.Fatalf("rows = %v, want %v", rows, want)
+	}
+	zoneIdx, _ := got[0].Schema.TagIndex("default", "zone")
+	if zoneType := got[0].Schema.Columns[zoneIdx].Type; zoneType != vectorized.ColumnTypeString {
+		t.Fatalf("zone is %v, want the planned string", zoneType)
+	}
+}
+
+func TestReduceRawFramesToSchema_ReservesWidenedPartials(t *testing.T) {
+	// A populated narrow group plus a wide group with no rows: the target adds
+	// 1,000 projected tags the narrow partial lacks.
+	rows := make([]evolvedRow, 4096)
+	for i := range rows {
+		rows[i] = evolvedRow{svc: fmt.Sprintf("svc-%d", i), value: 1}
+	}
+	narrowFrame := encodeEvolvedPartial(t, evolvedRawSchema(vectorized.ColumnTypeString), rows, AggSum)
+	narrow := partialSchema(t, narrowFrame)
+	cols := slices.Clone(narrow.Columns[:2])
+	for i := range 1000 {
+		cols = append(cols, vectorized.ColumnDef{Role: vectorized.RoleTag, TagFamily: "default", Name: fmt.Sprintf("tag-%d", i), Type: vectorized.ColumnTypeTagValue})
+	}
+	wide := vectorized.NewBatchSchema(append(cols, narrow.Columns[2:]...))
+	const budget = 64 << 20
+	reduce := func(target *vectorized.BatchSchema, tracker *vectorized.MemoryTracker) error {
+		_, _, reduceErr := ReduceRawFramesToSchema([][]byte{narrowFrame}, target, "default", []string{"svc"}, false,
+			[]AggReduceSpec{{OutputName: "value", Func: AggSum}}, 1024, tracker)
+		return reduceErr
+	}
+	if reduceErr := reduce(narrow, vectorized.NewMemoryTracker(budget)); reduceErr != nil {
+		t.Fatalf("the narrow layout should fit the budget: %v", reduceErr)
+	}
+	tracker := vectorized.NewMemoryTracker(budget)
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	reduceErr := reduce(wide, tracker)
+	runtime.ReadMemStats(&after)
+	if !errors.Is(reduceErr, vectorized.ErrMemoryBudgetExceeded) {
+		t.Fatalf("error = %v, want ErrMemoryBudgetExceeded", reduceErr)
+	}
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 16<<20 {
+		t.Fatalf("allocated %d bytes before failing the budget", allocated)
+	}
+	if used := tracker.Used(); used != 0 {
+		t.Fatalf("tracker still holds %d bytes", used)
 	}
 }
 

@@ -115,3 +115,57 @@ func AppendColumnRangeCoerced(dst, src vectorized.Column, srcPos, n int) error {
 	}
 	return AppendColumnRange(dst, src, srcPos, n)
 }
+
+// appendTagValuesAsNative copies n TagValue cells starting at srcPos into a
+// native tag column, keeping nulls. A cell whose variant doesn't match dst's
+// type is an error, so a partial can't change a tag's planned type.
+func appendTagValuesAsNative(dst, src vectorized.Column, srcPos, n int) error {
+	tc, ok := vectorized.Materialize(src).(*vectorized.TypedColumn[*modelv1.TagValue])
+	if !ok {
+		return fmt.Errorf("appendTagValuesAsNative: source is %s, not tagvalue", src.Type())
+	}
+	for k := range n {
+		rowIdx := srcPos + k
+		v := tc.Data()[rowIdx]
+		if tc.IsNull(rowIdx) || v == nil {
+			dst.AppendNull()
+			continue
+		}
+		matched := false
+		switch payload := v.GetValue().(type) {
+		case nil, *modelv1.TagValue_Null:
+			dst.AppendNull()
+			matched = true
+		case *modelv1.TagValue_Str:
+			if d, isStr := dst.(*vectorized.TypedColumn[string]); isStr {
+				// The cell may borrow a received frame.
+				d.Append(strings.Clone(payload.Str.GetValue()))
+				matched = true
+			}
+		case *modelv1.TagValue_Int:
+			if d, isInt := dst.(*vectorized.TypedColumn[int64]); isInt {
+				d.Append(payload.Int.GetValue())
+				matched = true
+			}
+		case *modelv1.TagValue_BinaryData:
+			if d, isBytes := dst.(*vectorized.TypedColumn[[]byte]); isBytes {
+				d.Append(slices.Clone(payload.BinaryData))
+				matched = true
+			}
+		case *modelv1.TagValue_IntArray:
+			if d, isInts := dst.(*vectorized.TypedColumn[[]int64]); isInts {
+				d.Append(slices.Clone(payload.IntArray.GetValue()))
+				matched = true
+			}
+		case *modelv1.TagValue_StrArray:
+			if d, isStrs := dst.(*vectorized.TypedColumn[[]string]); isStrs {
+				d.Append(slices.Clone(payload.StrArray.GetValue()))
+				matched = true
+			}
+		}
+		if !matched {
+			return fmt.Errorf("cell %d is %T, want %s", rowIdx, v.GetValue(), dst.Type())
+		}
+	}
+	return nil
+}

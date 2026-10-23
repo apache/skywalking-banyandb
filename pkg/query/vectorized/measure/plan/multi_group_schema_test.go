@@ -19,6 +19,7 @@ package plan
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -372,5 +373,53 @@ func TestMultiGroupPartialSchema_RejectsDivergentGroups(t *testing.T) {
 				t.Fatal("expected an error")
 			}
 		})
+	}
+}
+
+func typedTagMeasure(group string, zoneType databasev1.TagType) *databasev1.Measure {
+	return &databasev1.Measure{
+		Metadata: &commonv1.Metadata{Name: "demo", Group: group},
+		TagFamilies: []*databasev1.TagFamilySpec{{Name: defaultName, Tags: []*databasev1.TagSpec{
+			{Name: tagSvc, Type: databasev1.TagType_TAG_TYPE_STRING},
+			{Name: "zone", Type: zoneType},
+		}}},
+		Fields: []*databasev1.FieldSpec{{Name: fieldValue, FieldType: databasev1.FieldType_FIELD_TYPE_INT}},
+	}
+}
+
+func sumBySvcRequest(group string) *measurev1.QueryRequest {
+	return &measurev1.QueryRequest{
+		Name:            "demo",
+		Groups:          []string{group},
+		TagProjection:   &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{{Name: defaultName, Tags: []string{tagSvc, "zone"}}}},
+		FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+		GroupBy: &measurev1.QueryRequest_GroupBy{
+			TagProjection: &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{{Name: defaultName, Tags: []string{tagSvc}}}},
+			FieldName:     fieldValue,
+		},
+		Agg: &measurev1.QueryRequest_Aggregation{Function: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM, FieldName: fieldValue},
+	}
+}
+
+func TestPlanGroupPartialSchema_TypesNonKeyTags(t *testing.T) {
+	got, err := planGroupPartialSchema(sumBySvcRequest("a"), typedTagMeasure("a", databasev1.TagType_TAG_TYPE_STRING))
+	if err != nil {
+		t.Fatalf("planGroupPartialSchema: %v", err)
+	}
+	zoneIdx, _ := got.TagIndex(defaultName, "zone")
+	if zoneType := got.Columns[zoneIdx].Type; zoneType != vectorized.ColumnTypeString {
+		t.Fatalf("zone is %v, want its declared string", zoneType)
+	}
+}
+
+func TestMultiGroupPartialSchema_RejectsNonKeyTagDeclaredAsAnotherType(t *testing.T) {
+	a, aErr := planGroupPartialSchema(sumBySvcRequest("a"), typedTagMeasure("a", databasev1.TagType_TAG_TYPE_STRING))
+	b, bErr := planGroupPartialSchema(sumBySvcRequest("b"), typedTagMeasure("b", databasev1.TagType_TAG_TYPE_INT))
+	if aErr != nil || bErr != nil {
+		t.Fatalf("planGroupPartialSchema: %v, %v", aErr, bErr)
+	}
+	_, err := multiGroupPartialSchema([]*vectorized.BatchSchema{a, b}, sumBySvcRequest("a").GetTagProjection())
+	if err == nil || !strings.Contains(err.Error(), "zone") {
+		t.Fatalf("error = %v, want one naming zone", err)
 	}
 }

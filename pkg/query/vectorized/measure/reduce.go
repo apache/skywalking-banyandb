@@ -20,6 +20,7 @@ package measure
 import (
 	"context"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 
@@ -101,7 +102,7 @@ func ReduceRawFrames(
 
 // ReduceRawFramesToSchema is ReduceRawFrames for partials that may come
 // from groups with different schemas. Every partial is reshaped onto
-// target before reducing (see alignPartials), so target, not whichever
+// target before reducing (see checkPartialLayouts), so target, not whichever
 // partials happen to arrive, decides the reduced layout. A nil target
 // requires every partial to share one layout, like ReduceRawFrames.
 func ReduceRawFramesToSchema(
@@ -156,7 +157,7 @@ func ReducePartialBatches(
 }
 
 // ReducePartialBatchesToSchema is ReducePartialBatches with every
-// non-empty partial first reshaped onto target (see alignPartials). A nil
+// non-empty partial first reshaped onto target (see checkPartialLayouts). A nil
 // target keeps ReducePartialBatches' behavior.
 func ReducePartialBatchesToSchema(
 	partials []*vectorized.RecordBatch,
@@ -168,9 +169,8 @@ func ReducePartialBatchesToSchema(
 	batchSize int,
 	tracker *vectorized.MemoryTracker,
 ) ([]*vectorized.RecordBatch, AggValuePath, error) {
-	partials, alignErr := alignPartials(partials, target, keyTagFamily, keyTagNames)
-	if alignErr != nil {
-		return nil, AggValuePathUnresolved, fmt.Errorf("ReducePartialBatches: %w", alignErr)
+	if layoutErr := checkPartialLayouts(partials, target, keyTagFamily, keyTagNames); layoutErr != nil {
+		return nil, AggValuePathUnresolved, fmt.Errorf("ReducePartialBatches: %w", layoutErr)
 	}
 	var refSchema *vectorized.BatchSchema
 	for _, b := range partials {
@@ -182,6 +182,9 @@ func ReducePartialBatchesToSchema(
 	}
 	if refSchema == nil {
 		return nil, AggValuePathTyped, nil
+	}
+	if target != nil {
+		refSchema = target
 	}
 	keyIndices, indicesErr := resolveKeyIndices(refSchema, keyTagFamily, keyTagNames, bucketed)
 	if indicesErr != nil {
@@ -200,9 +203,25 @@ func ReducePartialBatchesToSchema(
 	// needs chunking pays for it -- and then reused for every later chunk
 	// and every later partial, so the overwhelming common case (every
 	// partial fits in one chunk) never allocates it at all.
-	var scratch *vectorized.RecordBatch
+	var scratch, wideScratch *vectorized.RecordBatch
 	for i, b := range partials {
 		if b == nil || b.Len == 0 {
+			continue
+		}
+		if target != nil && !slices.Equal(b.Schema.Columns, target.Columns) {
+			if wideScratch == nil {
+				// Reserve the target-width chunk before allocating it; the
+				// received frames were only charged at their own width.
+				reserved, reserveErr := reserveReshapeChunk(tracker, target, batchSize)
+				if reserveErr != nil {
+					return nil, path, fmt.Errorf("ReducePartialBatches: reshape partial %d: %w", i, reserveErr)
+				}
+				defer tracker.Release(reserved)
+				wideScratch = vectorized.NewRecordBatch(target, batchSize)
+			}
+			if consumeErr := consumeReshaped(op, wideScratch, b, batchSize); consumeErr != nil {
+				return nil, path, fmt.Errorf("ReducePartialBatches: consume partial %d: %w", i, consumeErr)
+			}
 			continue
 		}
 		if compatErr := schemaCompatible(refSchema, b.Schema); compatErr != nil {
@@ -371,110 +390,115 @@ func schemaCompatible(want, got *vectorized.BatchSchema) error {
 	return nil
 }
 
-// alignPartials reshapes every non-empty partial onto target. The liaison
-// drops projected tags a group doesn't define from that group's request,
-// so the group's partials lack those columns; a missing tag that is not a
-// GroupBy key is null-filled. Any other difference (a key tag, a field or
-// aggregate-state column, a metadata column, an extra column, or a type
-// change) is a mismatch. A nil target leaves the partials as they are.
-func alignPartials(partials []*vectorized.RecordBatch, target *vectorized.BatchSchema, keyTagFamily string, keyTagNames []string) ([]*vectorized.RecordBatch, error) {
+// checkPartialLayouts checks every non-empty partial against target before
+// anything is allocated. The liaison drops projected tags a group doesn't
+// define from that group's request, so a partial may lack non-key tags,
+// which the reduce null-fills. A non-key tag may also travel as TagValue
+// rather than its planned native type, since a data node only narrows a
+// passthrough column whose cells share one type. Any other difference (a
+// key tag, a field or aggregate-state column, a metadata column, an extra
+// column, or another type) is a mismatch. A nil target checks nothing.
+func checkPartialLayouts(partials []*vectorized.RecordBatch, target *vectorized.BatchSchema, keyTagFamily string, keyTagNames []string) error {
 	if target == nil {
-		return partials, nil
+		return nil
 	}
-	isKey := func(def vectorized.ColumnDef) bool {
-		return def.Role == vectorized.RoleTag && def.TagFamily == keyTagFamily && slices.Contains(keyTagNames, def.Name)
+	nonKeyTag := func(def vectorized.ColumnDef) bool {
+		return def.Role == vectorized.RoleTag && (def.TagFamily != keyTagFamily || !slices.Contains(keyTagNames, def.Name))
 	}
-	target = resolveNonKeyTagTypes(partials, target, isKey)
-	out := make([]*vectorized.RecordBatch, len(partials))
 	for i, b := range partials {
 		if b == nil || b.Len == 0 {
-			out[i] = b
 			continue
 		}
-		reshaped, reshapeErr := reshapePartial(b, target, isKey)
-		if reshapeErr != nil {
-			return nil, fmt.Errorf("partial %d: %w", i, reshapeErr)
-		}
-		out[i] = reshaped
-	}
-	return out, nil
-}
-
-// resolveNonKeyTagTypes settles the type of each non-key tag in target. A
-// data node sends a passthrough tag column as the native type its cells
-// share, or as TagValue when they are mixed or all null, so one tag can
-// arrive as string in one partial and TagValue in another. Partials that
-// agree keep their type; otherwise the column is TagValue and native cells
-// are wrapped on copy. A tag no partial carries keeps target's type.
-func resolveNonKeyTagTypes(partials []*vectorized.RecordBatch, target *vectorized.BatchSchema, isKey func(vectorized.ColumnDef) bool) *vectorized.BatchSchema {
-	cols := slices.Clone(target.Columns)
-	changed := false
-	for i, def := range cols {
-		if def.Role != vectorized.RoleTag || isKey(def) {
-			continue
-		}
-		want, seen := def.Type, false
-		for _, b := range partials {
-			if b == nil || b.Len == 0 {
-				continue
+		for _, def := range b.Schema.Columns {
+			if columnPosition(target.Columns, def) < 0 {
+				return fmt.Errorf("partial %d: unexpected column %s", i, columnLabel(def))
 			}
+		}
+		for _, def := range target.Columns {
 			src := columnPosition(b.Schema.Columns, def)
-			if src < 0 {
-				continue
-			}
-			got := b.Schema.Columns[src].Type
 			switch {
-			case !seen:
-				want, seen = got, true
-			case got != want:
-				want = vectorized.ColumnTypeTagValue
+			case src < 0 && !nonKeyTag(def):
+				return fmt.Errorf("partial %d: missing column %s", i, columnLabel(def))
+			case src < 0:
+			case b.Schema.Columns[src].Type == def.Type:
+			case nonKeyTag(def) && (b.Schema.Columns[src].Type == vectorized.ColumnTypeTagValue || def.Type == vectorized.ColumnTypeTagValue):
+			default:
+				return fmt.Errorf("partial %d: column %s is %v, want %v", i, columnLabel(def), b.Schema.Columns[src].Type, def.Type)
 			}
 		}
-		if want != def.Type {
-			cols[i].Type = want
-			changed = true
-		}
 	}
-	if !changed {
-		return target
-	}
-	return vectorized.NewBatchSchema(cols)
+	return nil
 }
 
-// reshapePartial lays b out as target, null-filling the non-key tags b
-// doesn't carry. A partial already laid out as target only swaps its schema.
-func reshapePartial(b *vectorized.RecordBatch, target *vectorized.BatchSchema, isKey func(vectorized.ColumnDef) bool) (*vectorized.RecordBatch, error) {
-	for _, def := range b.Schema.Columns {
-		if columnPosition(target.Columns, def) < 0 {
-			return nil, fmt.Errorf("unexpected column %s", columnLabel(def))
-		}
+// reshapeCellBytes and reshapeRowBytes match the per-cell and per-row
+// charge the liaison reserves for received native frames.
+const (
+	reshapeCellBytes = 128
+	reshapeRowBytes  = 128
+)
+
+// reserveReshapeChunk reserves one batchSize-row chunk at target's width.
+func reserveReshapeChunk(tracker *vectorized.MemoryTracker, target *vectorized.BatchSchema, batchSize int) (int64, error) {
+	cols := int64(len(target.Columns))
+	if cols > (math.MaxInt64/int64(batchSize)-reshapeRowBytes)/reshapeCellBytes {
+		return 0, fmt.Errorf("reshape chunk estimate overflows")
 	}
-	if slices.Equal(b.Schema.Columns, target.Columns) {
-		return &vectorized.RecordBatch{Schema: target, Columns: b.Columns, Selection: b.Selection, Len: b.Len}, nil
+	amount := int64(batchSize) * (cols*reshapeCellBytes + reshapeRowBytes)
+	if reserveErr := tracker.Reserve(amount); reserveErr != nil {
+		return 0, reserveErr
 	}
-	out := vectorized.NewRecordBatch(target, b.Len)
-	for i, def := range target.Columns {
-		src := columnPosition(b.Schema.Columns, def)
-		if src < 0 {
-			if def.Role != vectorized.RoleTag || isKey(def) {
-				return nil, fmt.Errorf("missing column %s", columnLabel(def))
+	return amount, nil
+}
+
+// consumeReshaped feeds b to op in chunks of up to batchSize rows laid out
+// as scratch's schema. Tags b lacks are null-filled, TagValue cells of a
+// non-key tag are read as its planned type, and native cells are wrapped
+// when the plan keeps the tag as TagValue.
+func consumeReshaped(op *BatchAggregation, scratch, b *vectorized.RecordBatch, batchSize int) error {
+	cols := scratch.Schema.Columns
+	src := make([]int, len(cols))
+	for i, def := range cols {
+		src[i] = columnPosition(b.Schema.Columns, def)
+	}
+	n := b.ActiveLen()
+	for start := 0; start < n; start += batchSize {
+		end := min(start+batchSize, n)
+		scratch.Reset()
+		for i, def := range cols {
+			if src[i] < 0 {
+				for range end - start {
+					scratch.Columns[i].AppendNull()
+				}
+				continue
 			}
-			for range b.Len {
-				out.Columns[i].AppendNull()
+			if copyErr := appendActiveRows(scratch.Columns[i], b.Columns[src[i]], b.Selection, start, end); copyErr != nil {
+				return fmt.Errorf("column %s: %w", columnLabel(def), copyErr)
 			}
-			continue
 		}
-		srcType := b.Schema.Columns[src].Type
-		if srcType != def.Type && (def.Type != vectorized.ColumnTypeTagValue || def.Role != vectorized.RoleTag || isKey(def)) {
-			return nil, fmt.Errorf("column %s is %v, want %v", columnLabel(def), srcType, def.Type)
-		}
-		if copyErr := AppendColumnRangeCoerced(out.Columns[i], b.Columns[src], 0, b.Len); copyErr != nil {
-			return nil, fmt.Errorf("copy column %s: %w", columnLabel(def), copyErr)
+		scratch.Len = end - start
+		if consumeErr := op.Consume(context.Background(), scratch); consumeErr != nil {
+			return consumeErr
 		}
 	}
-	out.Len = b.Len
-	out.Selection = b.Selection
-	return out, nil
+	return nil
+}
+
+// appendActiveRows copies active rows [start, end) of src into dst,
+// converting between a native column and TagValue cells as needed.
+func appendActiveRows(dst, src vectorized.Column, selection []uint16, start, end int) error {
+	appendRange := AppendColumnRangeCoerced
+	if src.Type() == vectorized.ColumnTypeTagValue && dst.Type() != vectorized.ColumnTypeTagValue {
+		appendRange = appendTagValuesAsNative
+	}
+	if selection == nil {
+		return appendRange(dst, src, start, end-start)
+	}
+	for _, rowIdx := range selection[start:end] {
+		if appendErr := appendRange(dst, src, int(rowIdx), 1); appendErr != nil {
+			return appendErr
+		}
+	}
+	return nil
 }
 
 func columnPosition(cols []vectorized.ColumnDef, def vectorized.ColumnDef) int {

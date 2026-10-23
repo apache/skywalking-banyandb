@@ -258,13 +258,50 @@ func fieldTypeToColumnTypeMG(t databasev1.FieldType) (vectorized.ColumnType, err
 
 // planGroupPartialSchema plans the partial layout a group's data nodes emit
 // for nodeRequest. The index checker only picks the folding strategy, not the
-// layout.
+// layout. Non-key tags are planned as TagValue passthroughs, which carry no
+// type, so they take the type the group declares instead: the reduce then
+// rejects a partial whose tag arrives as anything else.
 func planGroupPartialSchema(nodeRequest *measurev1.QueryRequest, groupSchema *databasev1.Measure) (*vectorized.BatchSchema, error) {
 	nodePlan, err := Analyze(nodeRequest, groupSchema, vmeasure.AggModeMap, nil)
 	if err != nil {
 		return nil, err
 	}
-	return nodePlan.Schema(), nil
+	schema := nodePlan.Schema()
+	cols := slices.Clone(schema.Columns)
+	typed := false
+	for i, def := range cols {
+		if def.Role != vectorized.RoleTag || def.Type != vectorized.ColumnTypeTagValue {
+			continue
+		}
+		declared, ok := declaredTagType(groupSchema, def.TagFamily, def.Name)
+		if !ok {
+			continue
+		}
+		cols[i].Type = declared
+		typed = true
+	}
+	if !typed {
+		return schema, nil
+	}
+	return vectorized.NewBatchSchema(cols), nil
+}
+
+// declaredTagType is the native column type of a tag the measure declares,
+// if it has one. A tag without one stays TagValue.
+func declaredTagType(ms *databasev1.Measure, family, name string) (vectorized.ColumnType, bool) {
+	for _, tf := range ms.GetTagFamilies() {
+		if tf.GetName() != family {
+			continue
+		}
+		for _, ts := range tf.GetTags() {
+			if ts.GetName() != name {
+				continue
+			}
+			colType, mapErr := tagTypeToColumnTypeMG(ts.GetType())
+			return colType, mapErr == nil
+		}
+	}
+	return 0, false
 }
 
 // multiGroupAggTarget derives the layout every group's partials are reduced
