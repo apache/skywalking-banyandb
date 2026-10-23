@@ -1,8 +1,8 @@
 # Trace-Pipeline Sampler Plugins
 
-BanyanDB's trace pipeline can retain/drop traces in-merge (and at segment
-finalization) using operator-installed native Go plugins ("samplers"). This
-document covers packaging and deploying plugins on a running cluster. See
+BanyanDB's trace pipeline can retain/drop traces in-merge, at segment
+finalization, and during lifecycle migration using operator-installed native Go
+plugins ("samplers"). This document covers packaging and deploying plugins on a running cluster. See
 [`docs/design/archive/0.11.0/post-trace-pipeline.md`](../design/archive/0.11.0/post-trace-pipeline.md) for
 the plugin ABI/contract, and
 [`plugins/README.md`](../../plugins/README.md) for authoring a first-party
@@ -10,13 +10,14 @@ plugin. For diagnosing "nothing is being sampled" / "unexpected data is being
 sampled" symptoms offline, see
 [`docs/operation/plugins-debugging.md`](plugins-debugging.md).
 
-## Overview
+## Data-node hosting
 
 - Plugins are loaded **on demand at group-schema reconcile**, on the **data
-  node role only** (the standalone service also satisfies this role; the
-  liaison never hosts plugins).
+  node role** (the standalone service also satisfies this role; the
+  liaison never hosts plugins). Lifecycle agents load their own sampler chains
+  before migration; see [Lifecycle-agent hosting](#lifecycle-agent-hosting).
 - The feature is gated by two flags, both off by default:
-  - `-trace-pipeline-native-plugin-enabled` (bool) — the whole feature switch.
+  - `-trace-pipeline-native-plugin-enabled` (bool) — the data-node feature switch.
   - `-trace-pipeline-trusted-plugin-dir` (string) — the **single** directory
     `.so` paths are resolved within. There is no second flag and no
     multi-directory support.
@@ -36,7 +37,7 @@ lockstep note below):
 |---|---|---|---|
 | default (`apache/skywalking-banyandb:<tag>`) | `busybox:stable-glibc` | `CGO_ENABLED=0` static `banyand-server` | Normal image; hosts **no** plugins, ever |
 | slim (`...:<tag>-slim`) | `busybox:stable-glibc` | `CGO_ENABLED=0` static `banyand-server` | Slim default; hosts no plugins |
-| **plugins host** (`...:<tag>-plugins`) | `gcr.io/distroless/base-debian12` | `CGO_ENABLED=1` dynamic `banyand-server` + an **empty** `/plugins` | The plugin-capable host; `.so` are mounted in, not baked |
+| **plugins host** (`...:<tag>-plugins`) | `gcr.io/distroless/base-debian12` | `CGO_ENABLED=1` dynamic `banyand-server` and `/lifecycle` + an **empty** `/plugins` | The plugin-capable host; `.so` are mounted in, not baked |
 | **plugins carrier** (`...:<tag>-plugins-carrier`) | `busybox:stable-glibc` | the built first-party `.so` at `/plugins` | Mounted into the host at `/plugins` to deliver plugins |
 
 All four are tags on the **same** `apache/skywalking-banyandb` repository.
@@ -61,9 +62,9 @@ at `/plugins`.
 > (the carrier tag equals the host tag). Always deploy the carrier at the same
 > tag as the host image. A separate image is fully supported; independently
 > *versioning* the carrier is not — any drift makes `plugin.Open` reject the
-> `.so` (fail-open, loud; see below).
+> `.so` (data-node fail-open or lifecycle preflight failure; see below).
 
-## Enabling plugins
+## Enabling data-node plugins
 
 Use the `-plugins` **host** image for the **data-node** pod (liaison pods
 never host plugins) and set the two flags:
@@ -108,11 +109,44 @@ After activation, import the optional
 execution latency, sampling outcomes, fail-open retention, drop-set capacity, and
 finalization through the FODC proxy.
 
+## Lifecycle-agent hosting
+
+The lifecycle agent can run the same sampler plugins before sending trace data
+from one storage stage to the next. Use the `-plugins` host image with its
+`/lifecycle` executable, mount the carrier at `/plugins`, and configure the agent:
+
+```text
+--trace-sampling-enabled=true
+--trace-sampling-trusted-dir=/plugins
+```
+
+These flags are independent of the data-node `trace-pipeline-*` flags. The
+lifecycle executable and its `.so` files must satisfy the same build compatibility
+requirements described above. Plugin execution defaults to a one-second timeout
+per batch (`--trace-sampling-timeout=1s`); three consecutive timeouts open the
+circuit (`--trace-sampling-circuit-break=3`) and retain subsequent batches.
+
+Configure the group's `pipeline.stages[].plugins` chain for the **source** stage:
+`stage: hot` controls sampling during hot-to-warm migration. The lifecycle agent
+does not use top-level `pipeline.plugins` or `enabledEvents` to choose its chain.
+`pipeline.enabled` and the schema selectors still apply. See
+[Trace retention sampling](lifecycle.md#trace-retention-sampling) for a complete
+schema example, API configuration, and recovery requirements.
+
+Unlike data-node reconciliation, a lifecycle preflight failure (including a
+missing or incompatible plugin, or a disabled lifecycle plugin host) stops the
+affected migration before sending data. During sampling, a plugin error bypasses that link while other successful links
+still apply; a timeout retains the affected batch. Completed sampling decisions are persisted
+before replay; recovery can reuse those decisions without loading the plugin
+again. Keep the agent's snapshot and progress storage across restarts. Delivery
+remains at least once, so a crash can replay rows acknowledged before their checkpoint was persisted.
+
 ## Delivering the carrier (first-party) and third-party plugins
 
-The loader supports exactly **one** trusted dir
-(`-trace-pipeline-trusted-plugin-dir`, a single flag; every
-`SamplerPlugin.path` resolves within it). First-party plugins mount at
+Each host uses exactly **one** trusted dir
+(`-trace-pipeline-trusted-plugin-dir` for data nodes or
+`--trace-sampling-trusted-dir` for lifecycle agents; every `SamplerPlugin.path`
+resolves within its host's directory). First-party plugins mount at
 `/plugins` (`SamplerPlugin.path=<name>.so`); third-party plugins mount at the
 reserved subdirectory `/plugins/thirdparty`
 (`SamplerPlugin.path=thirdparty/<name>.so`). Because the host image ships
@@ -137,11 +171,12 @@ Two delivery mechanisms — both work for first- and third-party:
 First-party parity is guaranteed by lockstep (deploy the carrier at the host's
 tag). Third-party `.so` parity is the **operator's** responsibility — they
 build against the pinned SDK + toolchain published for that release (this
-repo's `go.mod` at that tag; `pkg/pipeline/sdk`). Mismatch is always safe and
-loud: the loader rejects a skewed `.so` (`plugin.Open` "different version of
-package …", or an `ABIVersion` mismatch), fails open (ERROR log +
-`sampler_load_failed` metric), and the affected group simply keeps its
-previous sampler set. Other groups, and the node itself, are unaffected.
+repo's `go.mod` at that tag; `pkg/pipeline/sdk`). The loader rejects a skewed `.so`
+(`plugin.Open` "different version of package …", or an `ABIVersion` mismatch).
+On a data node, this fails open (ERROR log +
+`sampler_load_failed` metric), and the affected group keeps its previous sampler
+set. Other groups, and the node itself, are unaffected. On a lifecycle agent,
+this fails migration preflight.
 
 ## Building and verifying plugins before deploying
 
@@ -191,4 +226,6 @@ meantime:
   mechanism.
 - Optional third-party hooks mount an operator image onto the subdirectory
   `/plugins/thirdparty`.
-- Target the **data-node** pod only (liaison never hosts).
+- These chart settings target the **data-node** pod (liaison never hosts).
+  Lifecycle-agent deployments need their own plugin image, mount, and
+  `trace-sampling-*` flags as described above.

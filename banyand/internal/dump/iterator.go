@@ -20,6 +20,8 @@
 // specifics: the per-format block layout lives in the sub-packages.
 package dump
 
+import "fmt"
+
 // Position is the (block, row) position of an iterator, or where Err() was
 // raised when the iterator is in terminal state. BlockIdx is 0-based, numbered
 // globally across all primary blocks. RowIdx is 0-based within the current
@@ -108,5 +110,31 @@ func (it *Iterator[Row]) Position() Position {
 func (it *Iterator[Row]) Close() error {
 	it.closed = true
 	it.rowBuf = nil
+	return nil
+}
+
+// SeekAfter resumes directly after position, decoding only its containing block.
+// The caller must bind the position to the same immutable source part.
+func (it *Iterator[Row]) SeekAfter(position Position) error {
+	if it.closed {
+		return fmt.Errorf("iterator is closed")
+	}
+	if it.err != nil {
+		return it.err
+	}
+	if position.BlockIdx < 0 || position.BlockIdx >= it.numBlocks || position.RowIdx < 0 {
+		return fmt.Errorf("invalid iterator position: %+v", position)
+	}
+	rows, err := it.decode(position.BlockIdx)
+	if err != nil {
+		it.err = err
+		return err
+	}
+	if position.RowIdx >= len(rows) {
+		return fmt.Errorf("row %d outside block %d", position.RowIdx, position.BlockIdx)
+	}
+	it.blockCursor = position.BlockIdx
+	it.rowIdx = position.RowIdx
+	it.rowBuf = rows
 	return nil
 }

@@ -7,6 +7,7 @@ Release Notes.
 ### Features
 
 - Add SQL-correct measure QL grouping and multiple aggregates, with shared calls, weighted AVG, bounded local state and eligible native aggregate split/merge.
+- Sample traces with source-stage native plugins before lifecycle migration, with durable decisions, checkpointed replay, and crash recovery.
 - Add typed raw measure QL with WHERE time, aliases and bounded compiled-plan reuse, executed over shared columnar native batches.
 - Add a native ICE v3 encoder that writes committed index generations compatible with existing readers.
 - Cut the Property database's index writer over to the native segment plugin, selected by both the `property` and `schema-server` roles. `banyand/property/db.OpenDB` now acquires its exclusive `<Location>/lock` before scanning shard directories or opening any writer, and releases it if a later startup step fails. A rollback (flipping the selection back and restarting) reopens the same on-disk shards with the retained legacy writer unchanged.
@@ -42,6 +43,7 @@ Release Notes.
 
 ### Bug Fixes
 
+- Keep native index compaction progressing when persistence replaces unchanged in-memory segments with file-backed readers.
 - Upgrade the Go toolchain to 1.26.10 for the crypto/x509 security fix (GO-2026-6809).
 - Return zero for empty scalar QL `COUNT(DISTINCT)` and apply its pagination after the complete count instead of pruning native shard partials.
 - Preserve indexed-array measure values, empty-entity selector semantics and retained merge-tail buffers in shared batch execution.
@@ -106,6 +108,7 @@ Release Notes.
 - Bump mcp/canopy npm deps (hono, js-yaml, vitest 5) to clear Dependabot CVEs.
 - Bump the pending mcp npm dependencies (`fast-uri` 4.2.1, `ip-address` 10.7.3, `proxy-addr` 2.0.8, and the `brace-expansion` 5.0.12 dev dependency) and regenerate the committed `mcp/LICENSE`, so `make check-req` passes on the Dependabot PRs that only edit `package-lock.json`.
 - Stop `test-build-system.yml` reporting a version drift when the image carries the pinned version: `grep -q` inside a pipeline exited on its first match, SIGPIPEd the writer, and GitHub's default `bash -eo pipefail` turned that into a pipeline failure. The same pipeline shape hid a real regression in the "no version literal" check, where a false 141 skipped the check. Both now read from a here-string, and the platform probe no longer ends in `head -1`.
+- Merge the per-group results of a local multi-group Measure query as columnar batches (`vecplan.DispatchBatches` and `MultiGroupMerge`, built on the liaison row merger) instead of through the row merger, and remove `MergeGroupMIterators`, `sortableDataPoints` and `sortedMIterator`. Hidden criteria tags are stripped once, after the merge, and the trace plan string now reads `vec-multi-measure-batch[...]`. The query `offset` is applied once to the merged rows instead of to each group before the merge. Index-order merging now also handles null and array tag values, and the retained batches are charged to the query memory budget. Aggregation and the wire formats are unchanged.
 
 ## 0.11.1
 

@@ -1,5 +1,6 @@
 # 0.12.0 Design Documents
 
+- [Trace sampling before lifecycle migration](lifecycle-trace-sampling.md)
 - [Measure QL Catalog B: core SQL implementation plan](measure-ql-core-sql/README.md)
   - [PR 1 scope and isolated verification](measure-ql-core-sql/pr1-verification.md)
   - [PR 2 aggregation scope and isolated verification](measure-ql-core-sql/pr2-verification.md)

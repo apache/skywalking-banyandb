@@ -35,12 +35,14 @@ import (
 	"github.com/onsi/gomega"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/backup/lifecycle"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
@@ -178,6 +180,20 @@ func readOrphanArchive(groupArchiveDir string) (recs []orphanRec, manifestRows i
 	return recs, manifestRows
 }
 
+// awaitOrphanSchemasApplied ensures index writes cannot overtake schema loading
+// on the data nodes. A liaison write acknowledgement alone does not ensure this.
+func awaitOrphanSchemasApplied(ctx context.Context, conn *grpc.ClientConn, group, kind string, names ...string) {
+	keys := []*schemav1.SchemaKey{{Kind: "group", Name: group}}
+	for _, name := range names {
+		keys = append(keys, &schemav1.SchemaKey{Kind: kind, Group: group, Name: name})
+	}
+	response, err := schemav1.NewSchemaBarrierServiceClient(conn).AwaitSchemaApplied(ctx, &schemav1.AwaitSchemaAppliedRequest{
+		Keys: keys, MinRevisions: make([]int64, len(keys)), Timeout: durationpb.New(flags.EventuallyTimeout),
+	})
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	gomega.Expect(response.GetApplied()).To(gomega.BeTrue(), "orphan fixture schemas not applied; laggards=%v", response.GetLaggards())
+}
+
 var _ = ginkgo.Describe("Lifecycle orphan-schema archive", ginkgo.Ordered, func() {
 	ginkgo.It("measure: deleted-schema rows are archived + source removed; sibling measure migrates", func() {
 		const (
@@ -222,6 +238,7 @@ var _ = ginkgo.Describe("Lifecycle orphan-schema archive", ginkgo.Ordered, func(
 		}
 		createMeasure(toDelete)
 		createMeasure(keep)
+		awaitOrphanSchemasApplied(ctx, conn, group, "measure", toDelete, keep)
 
 		ginkgo.By("writing rows on the straddling (row-replay) segment to both measures")
 		// The write goes through the liaison, which routes by schema. A freshly
@@ -372,6 +389,7 @@ var _ = ginkgo.Describe("Lifecycle orphan-schema archive", ginkgo.Ordered, func(
 		}
 		createStream(toDelete)
 		createStream(keep)
+		awaitOrphanSchemasApplied(ctx, conn, group, "stream", toDelete, keep)
 
 		ginkgo.By("writing elements on the straddling (row-replay) segment to both streams")
 		// Retry each element alone until the liaison has synced the freshly

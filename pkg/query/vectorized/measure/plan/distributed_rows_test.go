@@ -24,6 +24,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unsafe"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -1077,5 +1078,27 @@ func TestApplyBatchGroupByFirstToRows_OverUint16Boundary_KeepsEveryGroup(t *test
 	}
 	if r, ok := seen["commonB"]; !ok || r.value != 1 {
 		t.Fatalf("GroupByFirst: commonB first-seen should be row 1 (value=1): %+v", r)
+	}
+}
+
+// TestAppendColumnRangeCoerced_StringArrayDoesNotBorrowElements pins that promoting a native
+// string-array cell to a passthrough TagValue copies every element's bytes: the source cell may
+// borrow storage memory that is released before the response is serialized.
+func TestAppendColumnRangeCoerced_StringArrayDoesNotBorrowElements(t *testing.T) {
+	src := vectorized.NewStrArrayColumn(1)
+	borrowed := []string{strings.Clone("alpha"), strings.Clone("beta")}
+	src.Append(borrowed)
+	dst := vectorized.NewTagValueColumn(1)
+	if err := appendColumnRangeCoerced(dst, src, 0, 1); err != nil {
+		t.Fatalf("appendColumnRangeCoerced: %v", err)
+	}
+	got := dst.Data()[0].GetStrArray().GetValue()
+	if len(got) != 2 || got[0] != "alpha" || got[1] != "beta" {
+		t.Fatalf("coerced array = %v, want [alpha beta]", got)
+	}
+	for i := range got {
+		if unsafe.StringData(got[i]) == unsafe.StringData(borrowed[i]) {
+			t.Fatalf("element %d still shares its bytes with the source cell", i)
+		}
 	}
 }
