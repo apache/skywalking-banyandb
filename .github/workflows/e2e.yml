@@ -35,7 +35,7 @@ concurrency:
 jobs:
   DockerImage:
     name: Build Docker image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Checkout code
@@ -56,7 +56,7 @@ jobs:
 
   StoragePlugins:
     name: ${{ matrix.test.name }}
-    runs-on: ${{ matrix.test.runs-on || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.test.runs-on || 'ubuntu-24.04' }}
     timeout-minutes: 90
     needs: [DockerImage]
     strategy:
@@ -81,7 +81,7 @@ jobs:
             config: test/e2e-v2/cases/rbac-cluster/e2e.yaml
           - name: Rover eBPF - Istio mesh, Kind
             config: test/e2e-v2/cases/rover/process/istio/banyandb/e2e-banyandb.yaml
-            runs-on: ubuntu-latest
+            runs-on: ubuntu-24.04
           - name: Lifecycle File Discovery
             config: test/e2e-v2/cases/lifecycle/file-discovery/e2e.yaml
           - name: Lifecycle DNS Discovery
@@ -162,7 +162,7 @@ jobs:
           path: "test/e2e-v2/cases/lifecycle/data-generator/tmp"
 
   Storage:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     needs: [StoragePlugins]
     steps:
@@ -172,7 +172,7 @@ jobs:
   RBACStress:
     name: RBAC Cluster Stress
     if: ${{ inputs.run-rbac-stress }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     continue-on-error: true
     needs: [DockerImage]

@@ -38,14 +38,14 @@ on:
 jobs:
   skip:
     if: ${{ !inputs.should_run }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Skip FODC E2E
         run: echo "Skipping FODC E2E because this change does not affect FODC-related paths."
 
   fodc-kind:
     if: ${{ inputs.should_run }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     continue-on-error: true
     steps:
@@ -154,7 +154,7 @@ jobs:
   # the skywalking-infra-e2e harness (test/e2e-v2/cases/fodc-pressure/e2e.yaml).
   fodc-pressure-kind:
     if: ${{ inputs.should_run }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - name: Checkout code

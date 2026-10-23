@@ -105,7 +105,7 @@ jobs:
   # tests) that a single CI pass would miss. Fails on the first failing run.
   canopy:
     if: github.repository == 'apache/skywalking-banyandb'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
       run:
