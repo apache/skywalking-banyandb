@@ -212,31 +212,37 @@ func validateTracePipelineConfig(cfg *commonv1.TracePipelineConfig) error {
 		return fmt.Errorf("proto validation failed: %w", validateErr)
 	}
 	for idx, plugin := range cfg.GetPlugins() {
-		sp := plugin.GetSampler()
-		if sp == nil {
-			continue
-		}
-		if sp.GetPath() == "" {
-			return fmt.Errorf("plugins[%d].sampler.path is empty", idx)
-		}
-		// Reject absolute paths and path segments that escape via "..".
-		cleaned := filepath.Clean(sp.GetPath())
-		if filepath.IsAbs(cleaned) {
-			return fmt.Errorf("plugins[%d].sampler.path must be a relative path, got %q", idx, sp.GetPath())
-		}
-		if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("plugins[%d].sampler.path %q escapes the trusted directory", idx, sp.GetPath())
-		}
-		if sp.GetAbiVersion() != sdk.ABIVersion {
-			return fmt.Errorf("plugins[%d].sampler.abi_version must be %d, got %d", idx, sdk.ABIVersion, sp.GetAbiVersion())
+		if err := validatePipelineSampler(plugin, fmt.Sprintf("plugins[%d]", idx)); err != nil {
+			return err
 		}
 	}
 	for idx, stage := range cfg.GetStages() {
 		for jdx, plugin := range stage.GetPlugins() {
-			if plugin.GetSampler() != nil {
-				return fmt.Errorf("stages[%d].plugins[%d]: stages[].plugins are not supported in v1; declare plugins at the top level", idx, jdx)
+			if err := validatePipelineSampler(plugin, fmt.Sprintf("stages[%d].plugins[%d]", idx, jdx)); err != nil {
+				return err
 			}
 		}
+	}
+	return nil
+}
+
+func validatePipelineSampler(plugin *commonv1.Plugin, location string) error {
+	sampler := plugin.GetSampler()
+	if sampler == nil {
+		return nil
+	}
+	if sampler.GetPath() == "" {
+		return fmt.Errorf("%s.sampler.path is empty", location)
+	}
+	cleaned := filepath.Clean(sampler.GetPath())
+	if filepath.IsAbs(cleaned) {
+		return fmt.Errorf("%s.sampler.path must be a relative path, got %q", location, sampler.GetPath())
+	}
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("%s.sampler.path %q escapes the trusted directory", location, sampler.GetPath())
+	}
+	if sampler.GetAbiVersion() != sdk.ABIVersion {
+		return fmt.Errorf("%s.sampler.abi_version must be %d, got %d", location, sdk.ABIVersion, sampler.GetAbiVersion())
 	}
 	return nil
 }

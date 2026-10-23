@@ -8,6 +8,7 @@ A dedicated lifecycle agent (an independent Go process) is responsible for:
 
 - Identifying data eligible for migration based on lifecycle stages.
 - Extracting data from the source node.
+- Applying configured source-stage trace sampling before sending retained spans.
 - Migrating data to designated target nodes.
 - Removing the original data after a successful migration.
 
@@ -36,6 +37,8 @@ The lifecycle agent performs the following steps:
    - Identify target nodes for the next lifecycle stage.
    - For each stream, measure or trace:
      - Query data from the current stage.
+     - For traces with a matching source-stage sampling chain, persist whole-trace
+       decisions across snapshot parts and replay only retained spans.
      - Transform data into write requests.
      - Send write requests to target nodes.
    - Delete the source data after a successful migration.
@@ -297,3 +300,170 @@ EOF
    - Query both hot and warm nodes to ensure data availability.
 
 This process automatically migrates data according to the defined lifecycle stages, optimizing your storage usage while maintaining data availability.
+
+## Trace retention sampling
+
+### Selecting a policy through the group API
+
+The lifecycle agent applies the source stage's `pipeline.stages` plugin
+chain before migrating trace rows. Migration sampling is independent of
+`enabled_events`; the destination stage and top-level plugin chain are not run.
+An applicable stage policy requires an explicitly enabled native plugin host.
+A missing plugin or incompatible ABI fails migration before sending data.
+
+For `hot -> warm`, configure `pipeline.stages[].stage` as `hot`; a `warm`
+rule applies when leaving warm for the next stage. For an implicit hot stage,
+the source identity comes from the agent's `type` node label. Stage names must
+match that resolved identity exactly. Sampling currently requires exactly one
+trace schema in the group. `schemaNames` and `schemaNameRegex`, when present,
+select that schema; either selector may match.
+
+The following example updates an existing `sw_trace` group through the liaison
+HTTP API. It assumes the group already has hot-to-warm lifecycle stages and a
+SkyWalking `segment` trace schema. It preserves the group's other settings but
+replaces its pipeline, so include any existing top-level plugins or additional
+stage rules you want to retain.
+
+```bash
+curl --fail --silent --show-error \
+  http://localhost:17913/api/v1/group/schema/sw_trace > group-current.json
+
+jq '{group: .group} | .group.pipeline = {
+  enabled: true,
+  schemaNames: ["segment"],
+  stages: [{
+    stage: "hot",
+    plugins: [{
+      name: "sw-trace-sampler",
+      sampler: {
+        path: "sw-trace-sampler.so",
+        abiVersion: 1,
+        config: {
+          keepErrors: true,
+          durationThresholdMs: 500,
+          healthySampleRate: 0.01
+        }
+      }
+    }]
+  }]
+}' group-current.json > group-sampling.json
+
+curl --fail --silent --show-error -X PUT \
+  -H 'Content-Type: application/json' \
+  --data-binary @group-sampling.json \
+  http://localhost:17913/api/v1/group/schema/sw_trace
+```
+
+The same `pipeline` can be submitted as part of a complete group document with
+`bydbctl group update -f group.yaml`, or through
+`GroupRegistryService.Update` with `GroupRegistryServiceUpdateRequest.group`.
+The example keeps errors and traces meeting the duration threshold, plus a 1%
+sample of healthy traces; completeness safeguards can retain additional traces.
+See the [sampler configuration reference](../../plugins/README.md) for supported
+schemas and rule semantics.
+
+A disabled or absent pipeline, an unmatched schema selector, or no nonempty
+source-stage chain preserves ordinary unsampled migration. `enabledEvents`
+controls data-node merge/finalization only. This example has no top-level
+`plugins`, so it configures lifecycle sampling without a data-node sampling chain.
+Deploy a capable lifecycle agent before enabling stage rules: older agents may
+ignore them. Existing unsampled migration attempts finish without retroactive
+sampling.
+
+### Enabling the lifecycle plugin host
+
+| Agent flag | Default | Purpose |
+| --- | --- | --- |
+| `--trace-sampling-enabled` | `false` | Enable native sampler hosting |
+| `--trace-sampling-trusted-dir` | empty | Directory containing trusted `.so` files |
+| `--trace-sampling-timeout` | `1s` | Batch decision deadline |
+| `--trace-sampling-circuit-break` | `3` | Consecutive timeouts before retaining all batches |
+
+Use the `-plugins` host image for the lifecycle agent and mount the matching
+plugin carrier binaries read-only at the trusted directory. That image builds
+`/lifecycle`, `/banyand`, and the plugin carrier from the same Go toolchain,
+CGO setting, SDK module graph, libc and build flags. The ordinary static image
+cannot load native Go plugins. See [plugin deployment](plugins.md) for carrier
+image volumes and init-container delivery.
+
+For example, a Compose lifecycle service can use the existing cluster networking
+and discovery options with these additional settings:
+
+```yaml
+image: apache/skywalking-banyandb:<TAG>-plugins
+entrypoint: ["/lifecycle"]
+command:
+  - --trace-sampling-enabled
+  - --trace-sampling-trusted-dir=/plugins
+  - --trace-sampling-timeout=1s
+  - --trace-sampling-circuit-break=3
+  - --progress-file=/state/lifecycle-progress.json
+volumes:
+  - ./plugins:/plugins:ro
+  - lifecycle-state:/state
+```
+
+Persist `<progress-file>.sampling` together with the progress file and immutable
+snapshots. For `/state/lifecycle-progress.json`, the artifact directory is
+`/state/lifecycle-progress.json.sampling`. Prepared decisions and delivery checkpoints remain
+required until source removal succeeds. Restart reuses those decisions even if
+schema or plugin configuration changes; do not downgrade an agent while sampled
+attempts remain pending. Sampler timeouts retain affected traces. Native calls
+that outlive their deadline retain their input buffers and worker slots until
+returning; plugins are closed only afterward.
+
+
+### Delivery, small parts, and recovery
+
+The agent assembles each trace across all core parts in a snapshot's source
+segment/shard before deciding whether to keep it. It retains traces whose
+completeness is uncertain, including source-segment boundary fragments, and
+traces that exceed decision budgets. This is a local snapshot decision, not a
+guarantee that a trace is complete across nodes, segments, or future arrivals.
+
+Sampling writes durable decision tables, indexes, manifests, and delivery
+checkpoints to disk; bounded scans can also use temporary metadata merge files.
+It does **not** write a reduced native data part for every input part. Retained
+spans flow through continuous bounded batches across source-part boundaries.
+The destination rebuilds indexes through its normal write path and merges small
+parts through normal compaction. A small final part is valid; migration does not
+wait for compaction or retain extra traces to fill it. An all-drop shard sends
+no data and counts as completed only after its decision state is durable.
+
+| Interruption point | Behavior on restart |
+| --- | --- |
+| Before a shard's decision manifest is committed | Preparation may resample that source segment/shard; completed shards are reused. |
+| After preparation or during delivery | Reuse the committed decisions and pinned schema/routing; resume after the last durably acknowledged source cursor without calling the sampler for that prepared shard. |
+| After acknowledgement but before checkpoint persistence | Some retained rows may be resent: delivery remains at-least-once. |
+| Required snapshot or committed artifact missing/corrupt | Stop the affected migration and preserve available source state; do not silently resample. |
+
+Restart with the same progress-file path and snapshot volumes. Do not delete
+`.sampling` state to retry a failed migration or change policy for an already
+prepared shard. The agent discovers pending sampling artifacts even if the
+legacy progress file is missing. Only successful delivery of all required work
+allows source removal; artifacts are cleaned up after source removal succeeds.
+
+A missing plugin, incompatible ABI, or disabled host with an applicable chain
+fails preflight before sending. Runtime plugin errors, panics, or invalid verdicts
+bypass that link; other successful links still apply. A batch timeout or open
+circuit retains the affected batch. Source read errors and artifact durability
+failures stop migration rather than treating unreadable data as a sampling drop.
+
+### Verifying sampling
+
+Use `--report-dir` to retain migration reports. The top-level `trace_sampling`
+map records each artifact's `manifest`, `manifest_bytes`, `replayed_bytes`, and
+`resume_count`. Manifest fields include `source_stage`, `target_stage`, `traces`,
+`kept_traces`, `spans`, `kept_spans`, `fail_open`, and `preparation_nanos`.
+Calculate dropped counts by subtracting kept counts from input counts. Logical
+sampling counts describe the prepared snapshot; replay counters can include
+retried deliveries.
+
+Query the destination both by trace ID and by indexed tags/time range to verify
+that retained spans are available and sampled-out traces are absent. After
+successful migration, confirm source removal and sampling artifact cleanup.
+The regular [lifecycle integration suite](../../test/integration/distributed/lifecycle)
+includes native sampling and a process-kill recovery case that restarts with the
+sampler binary unavailable, verifies reuse of committed decisions, and checks
+public destination queries. See the
+[design](../design/0.12.0/lifecycle-trace-sampling.md) for the durable protocol.

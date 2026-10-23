@@ -574,13 +574,50 @@ func (p *DistributedPlan) ExecuteBatches(ctx context.Context) (result *BatchResu
 		if queryRequest.GetAgg() == nil {
 			return p.executeRows(ctx, frames, queryRequest, borrowRows)
 		}
-		return p.executeAgg(ctx, frames, queryRequest)
+		return p.executeAgg(ctx, frames, queryRequest, nil)
 	}
 
 	// Multi-group path: one broadcast per group so each data node returns a
 	// frame whose schema reflects only its local group's column layout.
+	allGroupFrames, partialSchemas, multiGroupErr := p.broadcastMultiGroup(
+		ctx, dctx, queryRequest, groups, tracker, &reserved, receiveScope,
+	)
+	if multiGroupErr != nil {
+		return nil, multiGroupErr
+	}
+	if queryRequest.GetAgg() == nil {
+		return p.executeRowsMultiGroup(ctx, allGroupFrames, queryRequest)
+	}
+	// Multi-group agg: collect all frames as flat []byte and reduce them
+	// into one layout derived from the groups' schemas, not from whichever
+	// groups returned rows.
+	flatFrames := make([][]byte, 0, len(allGroupFrames))
+	for _, gf := range allGroupFrames {
+		flatFrames = append(flatFrames, gf.body)
+	}
+	target, targetErr := multiGroupAggTarget(partialSchemas, len(groups), queryRequest.GetTagProjection())
+	if targetErr != nil {
+		return nil, fmt.Errorf("vec distributed plan: %w", targetErr)
+	}
+	return p.executeAgg(ctx, flatFrames, queryRequest, target)
+}
+
+// broadcastMultiGroup broadcasts one request per group so each data node
+// returns a frame whose schema reflects only its local group's column layout.
+// It returns the collected frames and, for aggregation queries, the partial
+// layout each group emits.
+func (p *DistributedPlan) broadcastMultiGroup(
+	ctx context.Context,
+	dctx executor.DistributedExecutionContext,
+	queryRequest *measurev1.QueryRequest,
+	groups []string,
+	tracker *vectorized.MemoryTracker,
+	reserved *int64,
+	receiveScope *vectorized.NativeReceiveScope,
+) ([]groupFrame, []*vectorized.BatchSchema, error) {
 	var perGroupErr error
 	allGroupFrames := make([]groupFrame, 0, len(groups)*4)
+	var partialSchemas []*vectorized.BatchSchema
 	for groupIdx, groupName := range groups {
 		nodeRequest := proto.Clone(p.nodeTemplate).(*measurev1.QueryRequest)
 		nodeRequest.TimeRange = dctx.TimeRange()
@@ -596,6 +633,14 @@ func (p *DistributedPlan) ExecuteBatches(ctx context.Context) (result *BatchResu
 		if groupSchema != nil {
 			nodeRequest.TagProjection = intersectTagProjection(nodeRequest.GetTagProjection(), groupSchema)
 			nodeRequest.FieldProjection = intersectFieldProjection(nodeRequest.GetFieldProjection(), groupSchema)
+		}
+		if queryRequest.GetAgg() != nil && groupSchema != nil {
+			// The partial layout this group's data nodes emit for nodeRequest.
+			partialSchema, partialErr := planGroupPartialSchema(nodeRequest, groupSchema)
+			if partialErr != nil {
+				return nil, nil, fmt.Errorf("vec distributed plan: plan group %s partials: %w", groupName, partialErr)
+			}
+			partialSchemas = append(partialSchemas, partialSchema)
 		}
 		broadcastSpan, broadcastSpanCtx := startTraceSpan(ctx, fmt.Sprintf("broadcast-per-group-%s", groupName))
 		addTraceTag(broadcastSpan, tracelabels.TagGroupName, groupName)
@@ -624,25 +669,17 @@ func (p *DistributedPlan) ExecuteBatches(ctx context.Context) (result *BatchResu
 			continue
 		}
 		stopTraceSpan(broadcastSpan)
-		if reserveErr := reserveNativeFrames(tracker, &reserved, rawFrames, p.cfg.BatchSize, receiveScope.IngressReserved()); reserveErr != nil {
-			return nil, reserveErr
+		if reserveErr := reserveNativeFrames(tracker, reserved, rawFrames, p.cfg.BatchSize, receiveScope.IngressReserved()); reserveErr != nil {
+			return nil, nil, reserveErr
 		}
 		for _, body := range rawFrames {
 			allGroupFrames = append(allGroupFrames, groupFrame{body: body, group: groupIdx})
 		}
 	}
 	if perGroupErr != nil {
-		return nil, perGroupErr
+		return nil, nil, perGroupErr
 	}
-	if queryRequest.GetAgg() == nil {
-		return p.executeRowsMultiGroup(ctx, allGroupFrames, queryRequest)
-	}
-	// Multi-group agg: collect all frames as flat []byte and reduce.
-	flatFrames := make([][]byte, 0, len(allGroupFrames))
-	for _, gf := range allGroupFrames {
-		flatFrames = append(flatFrames, gf.body)
-	}
-	return p.executeAgg(ctx, flatFrames, queryRequest)
+	return allGroupFrames, partialSchemas, nil
 }
 
 func broadcastNativeMeasure(
@@ -776,7 +813,9 @@ func collectRawFrameResponsesWithNodes(ff []bus.Future) ([][]byte, []*commonv1.T
 	return frames, traces, nodes, err
 }
 
-func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *measurev1.QueryRequest) (*BatchResult, error) {
+// executeAgg reduces the agg partials in frames. A non-nil target is the
+// layout every partial is reshaped onto first (multi-group queries).
+func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *measurev1.QueryRequest, target *vectorized.BatchSchema) (*BatchResult, error) {
 	keyTagFamily, keyTagNames := distributedGroupByTagKey(req.GetGroupBy())
 	bucketed := req.GetGroupBy().GetTimeBucket() != nil
 	aggFunc, aggErr := distributedAggFunc(req.GetAgg().GetFunction())
@@ -793,7 +832,7 @@ func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *
 	addTraceTagf(reduceSpan, tracelabels.TagFramesIn, "%d", len(frames))
 	frameDecodeDurations := collectFrameDecodeDurations(ctx, frames)
 	// nolint:contextcheck // pure in-memory reducer; no cancelable I/O downstream
-	batches, aggValuePath, reduceErr := vmeasure.ReduceRawFrames(frames, keyTagFamily, keyTagNames, bucketed, aggSpecs, p.cfg.BatchSize, tracker)
+	batches, aggValuePath, reduceErr := vmeasure.ReduceRawFramesToSchema(frames, target, keyTagFamily, keyTagNames, bucketed, aggSpecs, p.cfg.BatchSize, tracker)
 	if reduceErr != nil {
 		if reduceSpan != nil {
 			reduceSpan.Error(reduceErr)

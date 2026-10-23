@@ -717,7 +717,7 @@ func crossSegmentTimestamps() (single, left, right time.Time) {
 // is set by the K8s downward API to the lifecycle pod's actual pod
 // name (e.g. demo-banyandb-data-hot-0); the integration test uses
 // "localhost" because the data node's bind address is the loopback.
-func runLifecycleMigration(progressFile, reportDir string) observability.MetricsRegistry {
+func runLifecycleMigration(progressFile, reportDir string, additionalArgs ...string) observability.MetricsRegistry {
 	lifecycleCmd, reg := lifecycle.NewCommandWithRegistry()
 	priorPodName, priorHad := os.LookupEnv("POD_NAME")
 	if err := os.Setenv("POD_NAME", "localhost"); err != nil {
@@ -739,6 +739,7 @@ func runLifecycleMigration(progressFile, reportDir string) observability.Metrics
 		"--report-dir", reportDir,
 	}
 	args = append(args, SharedContext.MetadataFlags...)
+	args = append(args, additionalArgs...)
 	lifecycleCmd.SetArgs(args)
 	gomega.Expect(lifecycleCmd.Execute()).To(gomega.Succeed())
 	return reg

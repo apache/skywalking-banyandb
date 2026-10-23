@@ -88,8 +88,8 @@ jobs:
             config: test/e2e-v2/cases/lifecycle/file-discovery/e2e.yaml
           - name: Lifecycle DNS Discovery
             config: test/e2e-v2/cases/lifecycle/dns-discovery/e2e.yaml
-          - name: Transfer Dry Run
-            config: test/e2e-v2/cases/transfer/dry-run/e2e.yaml
+          - name: Transfer Export
+            config: test/e2e-v2/cases/transfer/export/e2e.yaml
             # Its setup builds bydbctl on the host, which needs the generated protobuf code
             # (gitignored) from the prepare job's build artifacts.
             download-artifacts: 'true'

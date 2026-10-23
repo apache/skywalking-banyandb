@@ -72,8 +72,12 @@ func EncodeBytesBlock(dst []byte, a [][]byte) []byte {
 // BytesBlockDecoder decodes a block of strings from src.
 // It reuses the underlying buffer for storing the decoded strings.
 type BytesBlockDecoder struct {
-	data []byte
+	data     []byte
+	maxBytes int
 }
+
+// SetMaxBytes bounds decoded payload bytes held by this decoder; zero disables the bound.
+func (bbd *BytesBlockDecoder) SetMaxBytes(limit int) { bbd.maxBytes = limit }
 
 // Reset resets the decoder.
 func (bbd *BytesBlockDecoder) Reset() {
@@ -96,7 +100,7 @@ func (bbd *BytesBlockDecoder) Decode(dst [][]byte, src []byte, itemsCount uint64
 
 	var tail []byte
 	var err error
-	u64List.L, tail, err = DecodeUint64Block(u64List.L[:0], src, itemsCount)
+	u64List.L, tail, err = decodeUint64BlockLimit(u64List.L[:0], src, itemsCount, bbd.maxBytes)
 	if err != nil {
 		return dst, fmt.Errorf("cannot decode string lengths: %w", err)
 	}
@@ -104,7 +108,7 @@ func (bbd *BytesBlockDecoder) Decode(dst [][]byte, src []byte, itemsCount uint64
 	src = tail
 
 	dataLen := len(bbd.data)
-	bbd.data, tail, err = decompressBlock(bbd.data, src)
+	bbd.data, tail, err = decompressBlockLimit(bbd.data, src, bbd.maxBytes)
 	if err != nil {
 		return dst, fmt.Errorf("cannot decode bytes block with strings: %w", err)
 	}
@@ -142,7 +146,7 @@ func (bbd *BytesBlockDecoder) DecodeWithTail(dst [][]byte, src []byte, itemsCoun
 
 	var tail []byte
 	var err error
-	u64List.L, tail, err = DecodeUint64Block(u64List.L[:0], src, itemsCount)
+	u64List.L, tail, err = decodeUint64BlockLimit(u64List.L[:0], src, itemsCount, bbd.maxBytes)
 	if err != nil {
 		return dst, nil, fmt.Errorf("cannot decode string lengths: %w", err)
 	}
@@ -150,7 +154,7 @@ func (bbd *BytesBlockDecoder) DecodeWithTail(dst [][]byte, src []byte, itemsCoun
 	src = tail
 
 	dataLen := len(bbd.data)
-	bbd.data, tail, err = decompressBlock(bbd.data, src)
+	bbd.data, tail, err = decompressBlockLimit(bbd.data, src, bbd.maxBytes)
 	if err != nil {
 		return dst, tail, fmt.Errorf("cannot decode bytes block with strings: %w", err)
 	}
@@ -189,11 +193,15 @@ func EncodeUint64Block(dst []byte, a []uint64) []byte {
 
 // DecodeUint64Block decodes a block of uint64 values from src.
 func DecodeUint64Block(dst []uint64, src []byte, itemsCount uint64) ([]uint64, []byte, error) {
+	return decodeUint64BlockLimit(dst, src, itemsCount, 0)
+}
+
+func decodeUint64BlockLimit(dst []uint64, src []byte, itemsCount uint64, limit int) ([]uint64, []byte, error) {
 	bb := bbPool.Generate()
 	defer bbPool.Release(bb)
 
 	var err error
-	bb.Buf, src, err = decompressBlock(bb.Buf[:0], src)
+	bb.Buf, src, err = decompressBlockLimit(bb.Buf[:0], src, limit)
 	if err != nil {
 		return dst, src, fmt.Errorf("cannot decode bytes block: %w", err)
 	}
@@ -313,6 +321,10 @@ func compressBlock(dst, src []byte) []byte {
 }
 
 func decompressBlock(dst, src []byte) ([]byte, []byte, error) {
+	return decompressBlockLimit(dst, src, 0)
+}
+
+func decompressBlockLimit(dst, src []byte, limit int) ([]byte, []byte, error) {
 	if len(src) < 1 {
 		return dst, src, fmt.Errorf("cannot decode block type from empty src")
 	}
@@ -329,6 +341,9 @@ func decompressBlock(dst, src []byte) ([]byte, []byte, error) {
 			return dst, src, fmt.Errorf("cannot read plain block with the size %d bytes from %b bytes", blockLen, len(src))
 		}
 
+		if limit > 0 && len(dst)+blockLen > limit {
+			return dst, src, zstd.ErrDecompressionLimit
+		}
 		dst = append(dst, src[:blockLen]...)
 		src = src[blockLen:]
 		return dst, src, nil
@@ -344,8 +359,13 @@ func decompressBlock(dst, src []byte) ([]byte, []byte, error) {
 		// Decompress the block
 		var err error
 		bb := bbPool.Generate()
-		bb.Buf, err = zstd.Decompress(bb.Buf[:0], compressedBlock)
+		if limit > 0 {
+			bb.Buf, err = zstd.DecompressBounded(compressedBlock, limit-len(dst))
+		} else {
+			bb.Buf, err = zstd.Decompress(bb.Buf[:0], compressedBlock)
+		}
 		if err != nil {
+			bbPool.Release(bb)
 			return dst, src, fmt.Errorf("cannot decompress block: %w", err)
 		}
 

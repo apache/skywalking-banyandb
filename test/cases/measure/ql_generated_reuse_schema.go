@@ -38,8 +38,9 @@ func prepareGeneratedReuseFixture(base time.Time) {
 	ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
 	defer cancel()
 	registry := databasev1.NewMeasureRegistryServiceClient(SharedContext.Connection)
-	_, createErr := registry.Create(ctx, &databasev1.MeasureRegistryServiceCreateRequest{Measure: qlgen.T05FixtureSchema()})
+	created, createErr := registry.Create(ctx, &databasev1.MeasureRegistryServiceCreateRequest{Measure: qlgen.T05FixtureSchema()})
 	gm.Expect(createErr).NotTo(gm.HaveOccurred())
+	awaitGeneratedReuseSchema(qlgen.FixtureGroup, qlgen.T05FixtureName, created.GetModRevision())
 	writeGeneratedReuseFixture(base)
 }
 
@@ -67,13 +68,21 @@ func writeGeneratedReuseFixture(base time.Time) {
 	}, flags.EventuallyTimeout, 100*time.Millisecond).Should(gm.Succeed())
 }
 
-func awaitGeneratedReuseRevision(revision int64) {
+func awaitGeneratedReuseSchema(group, name string, revision int64) {
 	ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
 	defer cancel()
-	response, awaitErr := schemav1.NewSchemaBarrierServiceClient(SharedContext.Connection).AwaitRevisionApplied(ctx,
-		&schemav1.AwaitRevisionAppliedRequest{MinRevision: revision, Timeout: durationpb.New(10 * time.Second)})
+	// A notification watermark can advance before the executor loads this group.
+	// Wait for the exact schema revision in the caches used by query execution.
+	response, awaitErr := schemav1.NewSchemaBarrierServiceClient(SharedContext.Connection).AwaitSchemaApplied(ctx,
+		&schemav1.AwaitSchemaAppliedRequest{
+			Keys: []*schemav1.SchemaKey{
+				{Kind: "group", Name: group},
+				{Kind: "measure", Group: group, Name: name},
+			},
+			MinRevisions: []int64{0, revision}, Timeout: durationpb.New(flags.EventuallyTimeout),
+		})
 	gm.Expect(awaitErr).NotTo(gm.HaveOccurred())
-	gm.Expect(response.GetApplied()).To(gm.BeTrue())
+	gm.Expect(response.GetApplied()).To(gm.BeTrue(), "fixture schema not applied; laggards=%v", response.GetLaggards())
 }
 
 func replaceGeneratedReuseSchema(group string) {
@@ -89,7 +98,7 @@ func replaceGeneratedReuseSchema(group string) {
 		&databasev1.TagSpec{Name: "cache_dependency_probe", Type: databasev1.TagType_TAG_TYPE_STRING})
 	updated, updateErr := registry.Update(ctx, &databasev1.MeasureRegistryServiceUpdateRequest{Measure: schema})
 	gm.Expect(updateErr).NotTo(gm.HaveOccurred())
-	awaitGeneratedReuseRevision(updated.GetModRevision())
+	awaitGeneratedReuseSchema(group, qlgen.T05FixtureName, updated.GetModRevision())
 }
 
 func verifyReuseDependencies(base time.Time, scenario qlgen.ReuseScenario) {
@@ -133,7 +142,7 @@ func verifyReuseSchemaLifecycle(base time.Time, scenario qlgen.ReuseScenario) {
 	}, flags.EventuallyTimeout, 100*time.Millisecond).Should(gm.Succeed())
 	created, recreateErr := registry.Create(ctx, &databasev1.MeasureRegistryServiceCreateRequest{Measure: qlgen.T05FixtureSchema()})
 	gm.Expect(recreateErr).NotTo(gm.HaveOccurred())
-	awaitGeneratedReuseRevision(created.GetModRevision())
+	awaitGeneratedReuseSchema(qlgen.FixtureGroup, qlgen.T05FixtureName, created.GetModRevision())
 	writeGeneratedReuseFixture(base)
 	gm.Expect(executeGeneratedReuseCall(context.Background(), base, scenario.Cases[3])).To(gm.Succeed())
 	gm.Expect(liaisongrpc.BydbQLPlanCacheStats().Compiles).To(gm.BeNumerically(">", afterReplace.Compiles))
@@ -158,7 +167,7 @@ func verifyReuseMultiGroup(base time.Time, scenario qlgen.ReuseScenario) {
 	created, schemaErr := databasev1.NewMeasureRegistryServiceClient(SharedContext.Connection).
 		Create(ctx, &databasev1.MeasureRegistryServiceCreateRequest{Measure: schema})
 	gm.Expect(schemaErr).NotTo(gm.HaveOccurred())
-	awaitGeneratedReuseRevision(created.GetModRevision())
+	awaitGeneratedReuseSchema(other, qlgen.T05FixtureName, created.GetModRevision())
 	cases := scenario.Cases
 	gm.Expect(executeGeneratedReuseCall(context.Background(), base, cases[0])).To(gm.Succeed())
 	before := liaisongrpc.BydbQLPlanCacheStats()
@@ -168,7 +177,7 @@ func verifyReuseMultiGroup(base time.Time, scenario qlgen.ReuseScenario) {
 	unrelatedCreated, unrelatedErr := databasev1.NewMeasureRegistryServiceClient(SharedContext.Connection).
 		Create(ctx, &databasev1.MeasureRegistryServiceCreateRequest{Measure: unrelated})
 	gm.Expect(unrelatedErr).NotTo(gm.HaveOccurred())
-	awaitGeneratedReuseRevision(unrelatedCreated.GetModRevision())
+	awaitGeneratedReuseSchema(qlgen.FixtureGroup, unrelated.GetMetadata().GetName(), unrelatedCreated.GetModRevision())
 	gm.Expect(executeGeneratedReuseCall(context.Background(), base, cases[1])).To(gm.Succeed())
 	gm.Expect(liaisongrpc.BydbQLPlanCacheStats().Compiles).To(gm.Equal(before.Compiles))
 	replaceGeneratedReuseSchema(other)
@@ -205,7 +214,7 @@ func restoreGeneratedReuseFixture(base time.Time) {
 		Create(ctx, &databasev1.MeasureRegistryServiceCreateRequest{Measure: qlgen.T05FixtureSchema()})
 	if status.Code(createErr) != codes.AlreadyExists {
 		gm.Expect(createErr).NotTo(gm.HaveOccurred())
-		awaitGeneratedReuseRevision(created.GetModRevision())
+		awaitGeneratedReuseSchema(qlgen.FixtureGroup, qlgen.T05FixtureName, created.GetModRevision())
 	}
 	writeGeneratedReuseFixture(base)
 }

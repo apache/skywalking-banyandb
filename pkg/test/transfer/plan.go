@@ -26,6 +26,7 @@ import (
 	"github.com/onsi/gomega"
 	"google.golang.org/grpc"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exporter"
@@ -86,6 +87,22 @@ func UnitFrames(frames []*transferv1.PlanResponse) []*transferv1.UnitFrame {
 		}
 	}
 	return out
+}
+
+// IndexModeDocs adds up the series index documents the inventory reports for a measure group,
+// on every node: in a group of index-mode measures only, the rows written once they are
+// flushed.
+func IndexModeDocs(frames []*transferv1.PlanResponse, group string) uint64 {
+	var docs uint64
+	for _, f := range UnitFrames(frames) {
+		for _, u := range f.GetUnits() {
+			seg := u.GetSegment()
+			if seg.GetUnit().GetCatalog() == commonv1.Catalog_CATALOG_MEASURE && seg.GetUnit().GetGroup() == group {
+				docs += seg.GetSegmentLevel().GetDocCount()
+			}
+		}
+	}
+	return docs
 }
 
 // Sessions runs one ExportService.Sessions call and drains every frame it streams: one per
