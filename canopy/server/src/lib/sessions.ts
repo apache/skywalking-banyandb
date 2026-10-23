@@ -19,9 +19,16 @@
 
 import { randomBytes } from 'node:crypto';
 
+/**
+ * How a session was established when it is not a local-user login. SSO sessions keep the email
+ * their role is re-resolved from; break-glass sessions resolve against the break-glass users.
+ */
+export type SessionOrigin = { readonly kind: 'sso'; readonly email?: string } | { readonly kind: 'breakglass' };
+
 export interface SessionRecord {
   readonly username: string;
   readonly banyanVersion: string | null;
+  readonly origin?: SessionOrigin;
   expiresAt: number;
 }
 
@@ -51,7 +58,7 @@ export class SessionStore {
   }
 
   /** Creates a session and returns its id (256 random bits). */
-  create(username: string, banyanVersion: string | null): string {
+  create(username: string, banyanVersion: string | null, origin?: SessionOrigin): string {
     this.sweep();
     while (this.sessions.size >= this.maxSessions) {
       const oldest = this.sessions.keys().next();
@@ -59,7 +66,7 @@ export class SessionStore {
       this.sessions.delete(oldest.value);
     }
     const id = randomBytes(32).toString('base64url');
-    this.sessions.set(id, { username, banyanVersion, expiresAt: this.now() + this.ttlMs });
+    this.sessions.set(id, { username, banyanVersion, origin, expiresAt: this.now() + this.ttlMs });
     return id;
   }
 
