@@ -356,7 +356,34 @@ func VecOffsetLimit(plan logical.Plan) (offsetNum, limitNum uint32, ok bool) {
 	return l.offsetNum, l.limitNum, true
 }
 
-// ExecuteVectorized runs the localIndexScan through the native columnar path. It
+// ExecuteVectorized runs the localIndexScan through the native columnar path and
+// collects every output batch; OpenVectorized is the incremental form it drains.
+func (i *localIndexScan) ExecuteVectorized(ctx context.Context) ([]*vectorized.RecordBatch, *vectorized.BatchSchema, error) {
+	it, schema, err := i.OpenVectorized(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() {
+		_ = it.Close()
+	}()
+	var batches []*vectorized.RecordBatch
+	for {
+		batch, nextErr := it.NextBatch(ctx)
+		if nextErr != nil {
+			return nil, nil, nextErr
+		}
+		if batch == nil {
+			break
+		}
+		batches = append(batches, batch)
+	}
+	if schema == nil {
+		return nil, nil, nil
+	}
+	return batches, schema, nil
+}
+
+// OpenVectorized runs the localIndexScan through the native columnar path. It
 // builds the SAME model.StreamQueryOptions the row-path Execute passes to
 // ec.Query, calls ec.QueryVectorized instead, then drives the M4
 // merge → distinct → limit pipeline and drains it into columnar batches.
@@ -371,13 +398,13 @@ func VecOffsetLimit(plan logical.Plan) (offsetNum, limitNum uint32, ok bool) {
 // filter runs as a pre-merge fusible: the cap therefore bounds the top-N of the
 // FILTERED set. The egress re-applies the same filter (it is also the hidden-tag
 // strip) before the outer offset:offset+limit slice.
-func (i *localIndexScan) ExecuteVectorized(ctx context.Context) ([]*vectorized.RecordBatch, *vectorized.BatchSchema, error) {
+func (i *localIndexScan) OpenVectorized(ctx context.Context) (executor.BatchIterator, *vectorized.BatchSchema, error) {
 	select {
 	case <-ctx.Done():
 		return nil, nil, ctx.Err()
 	default:
 	}
-	// Reaching ExecuteVectorized means the dispatch chose the vec path for this
+	// Reaching OpenVectorized means the dispatch chose the vec path for this
 	// query (VecExecutable returned non-nil). Count it so integration tests can
 	// assert the vec path actually fired rather than silently falling back to row.
 	vstream.IncrQueryCount()
@@ -404,7 +431,7 @@ func (i *localIndexScan) ExecuteVectorized(ctx context.Context) ([]*vectorized.R
 		return nil, nil, err
 	}
 	if source == nil {
-		return nil, nil, nil
+		return emptyBatchIterator{}, nil, nil
 	}
 
 	// The M4 SortedMerge validates batch.Schema by pointer identity, so the merge
@@ -449,29 +476,52 @@ func (i *localIndexScan) ExecuteVectorized(ctx context.Context) ([]*vectorized.R
 		source.Release()
 		return nil, nil, buildErr
 	}
-	defer func() {
-		_ = pipeline.Close()
-	}()
-
 	if initErr := pipeline.Init(ctx); initErr != nil {
+		_ = pipeline.Close()
 		return nil, nil, initErr
 	}
+	return &pipelineBatchIterator{pipeline: pipeline}, schema, nil
+}
 
-	var batches []*vectorized.RecordBatch
-	for {
-		batch, nextErr := pipeline.Next(ctx)
-		if nextErr != nil {
-			return nil, nil, nextErr
-		}
-		if batch == nil {
-			break
-		}
-		if batch.ActiveLen() == 0 {
-			continue
-		}
-		batches = append(batches, batch)
+// emptyBatchIterator is the iterator of a scan that found no source.
+type emptyBatchIterator struct{}
+
+func (emptyBatchIterator) NextBatch(context.Context) (*vectorized.RecordBatch, error) {
+	return nil, nil
+}
+
+func (emptyBatchIterator) Close() error { return nil }
+
+// pipelineBatchIterator drains the merge pipeline one batch at a time.
+type pipelineBatchIterator struct {
+	pipeline interface {
+		Next(ctx context.Context) (*vectorized.RecordBatch, error)
+		Close() error
 	}
-	return batches, schema, nil
+	closed bool
+}
+
+func (it *pipelineBatchIterator) NextBatch(ctx context.Context) (*vectorized.RecordBatch, error) {
+	if it.closed {
+		return nil, nil
+	}
+	for {
+		batch, err := it.pipeline.Next(ctx)
+		if err != nil || batch == nil {
+			return nil, err
+		}
+		if batch.ActiveLen() > 0 {
+			return batch, nil
+		}
+	}
+}
+
+func (it *pipelineBatchIterator) Close() error {
+	if it.closed {
+		return nil
+	}
+	it.closed = true
+	return it.pipeline.Close()
 }
 
 // ProjectionTags returns the projected tag families/names for the egress.

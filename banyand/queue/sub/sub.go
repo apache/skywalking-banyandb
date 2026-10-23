@@ -317,22 +317,26 @@ func (s *server) marshalResponse(
 		}
 		return body, nil
 	case []byte:
-		rawAllowed := (topic == data.TopicInternalMeasureQuery && data.MeasureWireModeRaw()) ||
-			(topic == data.TopicTraceQuery && data.TraceWireModeRaw()) ||
-			(topic == data.TopicStreamQuery && data.StreamWireModeRaw())
-		if !rawAllowed {
+		if !rawBodyAllowed(topic) {
 			s.replyWithErrType(stream, writeEntity, nil, fmt.Sprintf("invalid response: unexpected raw body on topic %s", topic), identity, "marshal_error")
 			return nil, fmt.Errorf("invalid raw body")
 		}
 		data.IncrFrameEncoded(topic)
 		return d, nil
 	case *common.Error:
-		s.replyWithErrType(stream, writeEntity, nil, d.Error(), identity, "handler_error")
+		s.replyWithErrStatus(stream, writeEntity, nil, d.Error(), identity, "handler_error", d.Status())
 		return nil, fmt.Errorf("handler error")
 	default:
 		s.replyWithErrType(stream, writeEntity, nil, fmt.Sprintf("invalid response: %T", d), identity, "handler_error")
 		return nil, fmt.Errorf("invalid response type")
 	}
+}
+
+// rawBodyAllowed reports whether a response on the topic may be a raw []byte frame.
+func rawBodyAllowed(topic bus.Topic) bool {
+	return (topic == data.TopicInternalMeasureQuery && data.MeasureWireModeRaw()) ||
+		(topic == data.TopicTraceQuery && data.TraceWireModeRaw()) ||
+		(topic == data.TopicStreamQuery && data.StreamWireModeRaw())
 }
 
 func (s *server) Subscribe(topic bus.Topic, listener bus.MessageListener) error {
@@ -365,6 +369,20 @@ func (s *server) replyWithErrType(
 	identity *streamIdentity,
 	errType string,
 ) {
+	s.replyWithErrStatus(stream, writeEntity, err, message, identity, errType, modelv1.Status_STATUS_UNSPECIFIED)
+}
+
+// replyWithErrStatus replies with an error that carries the status of the handler's
+// *common.Error, so the caller can tell a resource-exhausted query from a failure.
+func (s *server) replyWithErrStatus(
+	stream clusterv1.Service_SendServer,
+	writeEntity *clusterv1.SendRequest,
+	err error,
+	message string,
+	identity *streamIdentity,
+	errType string,
+	status modelv1.Status,
+) {
 	s.log.Error().Stringer("request", writeEntity).Err(err).Msg(message)
 	if s.metrics != nil {
 		s.metrics.totalErr.Inc(1, identity.operation, identity.group, identity.senderNode, identity.senderRole, identity.senderTier, errType)
@@ -376,6 +394,7 @@ func (s *server) replyWithErrType(
 	if errResp := stream.Send(&clusterv1.SendResponse{
 		MessageId: msgID,
 		Error:     message,
+		Status:    status,
 	}); errResp != nil {
 		s.log.Error().Err(errResp).AnErr("original", err).Stringer("request", writeEntity).Msg("failed to send error response")
 	}

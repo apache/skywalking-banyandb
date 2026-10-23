@@ -47,6 +47,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
@@ -66,6 +67,10 @@ var batchOpenDurationBuckets = meter.Buckets{1, 5, 10, 30, 60, 120, 300, 600, 18
 // validated on admission and then by a request failing on it, so a dead node keeps absorbing
 // queries — each paying the full broadcast timeout — until one of them evicts it.
 const defaultHealthCheckInterval = 10 * time.Second
+
+// defaultScanIdleTimeout is how long a Scan stream may stay silent, neither a chunk nor a
+// heartbeat, before the publisher fails it.
+const defaultScanIdleTimeout = 15 * time.Second
 
 // ChunkedSyncClientConfig configures chunked sync client behavior.
 type ChunkedSyncClientConfig struct {
@@ -104,6 +109,7 @@ type pub struct {
 	selfTier            string
 	allowedRoles        []databasev1.Role
 	healthCheckInterval time.Duration
+	scanIdleTimeout     time.Duration
 	writableProbeMu     sync.Mutex
 	nodeCacheMu         sync.RWMutex
 	nativeQueryMu       sync.Mutex
@@ -255,10 +261,21 @@ func (p *pub) FlagSet() *run.FlagSet {
 	fs.StringVar(&p.caCertPath, prefixFlag("client-ca-cert"), "", fmt.Sprintf("CA certificate file to verify the %s server", p.prefix))
 	fs.DurationVar(&p.healthCheckInterval, prefixFlag("client-health-check-interval"), defaultHealthCheckInterval,
 		fmt.Sprintf("how often to re-check active %s nodes and evict the unreachable ones; 0 disables the periodic check", p.prefix))
+	// The data-node publisher owns the unprefixed flag; other publishers in the same
+	// process keep a prefixed one so the names never collide.
+	scanIdleFlag := "scan-idle-timeout"
+	if p.prefix != "data" {
+		scanIdleFlag = prefixFlag(scanIdleFlag)
+	}
+	fs.DurationVar(&p.scanIdleTimeout, scanIdleFlag, defaultScanIdleTimeout,
+		"fail a scan stream to a node that sends neither a chunk nor a heartbeat for this long")
 	return fs
 }
 
 func (p *pub) Validate() error {
+	if p.scanIdleTimeout < 0 {
+		return fmt.Errorf("the scan idle timeout must not be negative, got %s", p.scanIdleTimeout)
+	}
 	// simple sanity‑check: if TLS is on, a CA bundle must be provided
 	if p.tlsEnabled && p.caCertPath == "" {
 		return fmt.Errorf("TLS is enabled (--data-client-tls), but no CA certificate file was provided (--data-client-ca-cert is required)")
@@ -331,7 +348,9 @@ func (p *pub) BroadcastContext(ctx context.Context, timeout time.Duration, topic
 
 type nativeReceiveLimitKey struct{}
 
-func (p *pub) broadcast(ctx context.Context, timeout time.Duration, topic bus.Topic, messages bus.Message) ([]bus.Future, error) {
+// selectNodes resolves the active nodes a message targets: every active node when
+// the message carries no node selectors, otherwise the nodes matching any selector.
+func (p *pub) selectNodes(messages bus.Message) (map[string]struct{}, error) {
 	nodes := p.connMgr.ActiveRegisteredNodes()
 	if len(nodes) == 0 {
 		return nil, errors.New("no active nodes")
@@ -367,11 +386,19 @@ func (p *pub) broadcast(ctx context.Context, timeout time.Duration, topic bus.To
 	}
 
 	if l := p.log.Debug(); l.Enabled() {
-		l.Msgf("broadcasting message to %s nodes", names)
+		l.Msgf("selected nodes %s", names)
 	}
 
 	if len(names) == 0 {
 		return nil, fmt.Errorf("no nodes match the selector %v", messages.NodeSelectors())
+	}
+	return names, nil
+}
+
+func (p *pub) broadcast(ctx context.Context, timeout time.Duration, topic bus.Topic, messages bus.Message) ([]bus.Future, error) {
+	names, err := p.selectNodes(messages)
+	if err != nil {
+		return nil, err
 	}
 	if scope, guarded := vectorized.NativeReceiveScopeFromContext(ctx); guarded && topic == apidata.TopicInternalMeasureQuery {
 		// Native measure streams use a dedicated64KiB static window. Reserve
@@ -559,6 +586,8 @@ func New(metadata metadata.Repo, roles ...databasev1.Role) queue.Client {
 		writableProbe: make(map[string]map[string]struct{}),
 		nodeCache:     make(map[string]nodeInfo),
 		retryPolicy:   retryPolicy,
+
+		scanIdleTimeout: defaultScanIdleTimeout,
 	}
 	return p
 }
@@ -726,7 +755,7 @@ func (l *future) Get() (msg bus.Message, err error) {
 	}
 	if resp.Error != "" {
 		errReason = sendErrReasonServerRejected
-		remoteErr := errors.New(resp.Error)
+		remoteErr := remoteError(resp.Status, resp.Error)
 		if l.receiveGuarded {
 			remoteErr = guardedNativeReceiveError(remoteErr)
 		}
@@ -749,6 +778,26 @@ func (l *future) Get() (msg bus.Message, err error) {
 	}
 	errReason = sendErrReasonInvalidTopic
 	return bus.Message{}, fmt.Errorf("invalid topic %s", t)
+}
+
+// remoteResourceExhaustedError is a data node's report that a query exhausted its
+// memory allowance. It matches protector.ErrQueryResourceExhausted so callers can
+// map it to RESOURCE_EXHAUSTED even though only a string crossed the wire.
+type remoteResourceExhaustedError struct{ msg string }
+
+func (e *remoteResourceExhaustedError) Error() string { return e.msg }
+
+func (*remoteResourceExhaustedError) Is(target error) bool {
+	return target == protector.ErrQueryResourceExhausted
+}
+
+// remoteError rebuilds the error a data node reported, keeping the identity its
+// status carries.
+func remoteError(st modelv1.Status, msg string) error {
+	if st == modelv1.Status_STATUS_RESOURCE_EXHAUSTED {
+		return &remoteResourceExhaustedError{msg: msg}
+	}
+	return errors.New(msg)
 }
 
 // guardedNativeReceiveError recovers the canonical memory sentinel across the

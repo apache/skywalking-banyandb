@@ -16,10 +16,14 @@ package grpc
 import (
 	"context"
 	"errors"
+	"fmt"
 
+	pkgerrors "github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/query"
@@ -61,6 +65,16 @@ func admitQuery(ctx context.Context, budget *protector.QueryBudget, limit, offse
 		return ctx, nil, status.Error(codes.ResourceExhausted, reserveErr.Error())
 	}
 	return admittedCtx, release, nil
+}
+
+// dataNodeQueryError turns a data node's error response into an error. A
+// resource-exhausted status keeps the protector sentinel, so queryStatus can still
+// report RESOURCE_EXHAUSTED to the client instead of a generic failure.
+func dataNodeQueryError(dataErr *common.Error) error {
+	if dataErr.Status() == modelv1.Status_STATUS_RESOURCE_EXHAUSTED {
+		return fmt.Errorf("%w: %s", protector.ErrQueryResourceExhausted, dataErr.Error())
+	}
+	return pkgerrors.WithMessage(errQueryMsg, dataErr.Error())
 }
 
 // queryStatus preserves typed local resource failures at the public boundary.
