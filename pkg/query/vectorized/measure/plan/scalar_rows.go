@@ -21,7 +21,6 @@ import (
 	"fmt"
 
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
-	measure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 )
 
 // appendBorrowedRow delays output allocation while winners form one contiguous
@@ -37,7 +36,7 @@ func (e *distributedRowEmitter) appendBorrowedRow(row *distributedRowItem) (bool
 		e.current = e.pool.Get()
 		e.current.Owners.PinAll(&e.pending.Owners)
 		for col, source := range e.pending.Columns {
-			if err := measure.AppendColumnRangeCoerced(e.current.Columns[col], source, e.pendingStart, e.pendingRows); err != nil {
+			if err := appendColumnRangeCoerced(e.current.Columns[col], source, e.pendingStart, e.pendingRows); err != nil {
 				return false, err
 			}
 		}

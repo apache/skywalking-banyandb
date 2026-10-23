@@ -91,7 +91,7 @@ func MergeStandaloneBatches(ctx context.Context, groups []*BatchResult, schema *
 					}
 					continue
 				}
-				if err = vmeasure.AppendColumnRangeCoerced(mapped.Columns[idx], raw.Columns[src], 0, raw.Len); err != nil {
+				if err = appendColumnRangeCoerced(mapped.Columns[idx], raw.Columns[src], 0, raw.Len); err != nil {
 					return nil, err
 				}
 			}
