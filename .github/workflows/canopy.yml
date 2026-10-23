@@ -192,7 +192,7 @@ jobs:
   build-test:
     name: Build & Test
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: canopy
@@ -274,7 +274,7 @@ jobs:
   # and handed to the integration test; the dual-arch push happens on main.
   image-build:
     name: Image build (canopy)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A canopy PR that cannot be built natively on macOS should not produce an
     # image either: skywalking#14094 is exactly that case, and the image is the
     # artifact people install.
@@ -339,7 +339,7 @@ jobs:
   integration-test:
     name: Integration test (${{ matrix.mode }})
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: image-build
     permissions:
       contents: read
@@ -419,13 +419,13 @@ jobs:
   continuous-integration:
     name: Continuous Integration
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - run: echo "Canopy-only change — Go CI (ci.yml) skipped via paths-ignore; required check satisfied."
 
   push-banyandb-image:
     name: push-banyandb-image
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - run: echo "Canopy-only change — docker image build (publish-docker.yml) skipped via paths-ignore; required check satisfied."

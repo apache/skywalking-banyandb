@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -1621,11 +1622,11 @@ func (o *Owner) compact(ctx context.Context, plan func([]mergeCandidate) []merge
 	task := tasks[0]
 
 	inputs := make([]nativeice.MergeInput, 0, len(task.candidates))
-	taskSegments := make(map[rootSegment]struct{}, len(task.candidates))
+	taskSegments := make(map[uint64]*memorySegment, len(task.candidates))
 	mergeDroppedAny := false
 	for _, candidate := range task.candidates {
 		segment := candidate.segment.(*memorySegment)
-		taskSegments[candidate.segment] = struct{}{}
+		taskSegments[segment.handle.id] = segment
 		drop, prepareErr := o.prepareMergeDrop(ctx, segment)
 		if prepareErr != nil {
 			base.release()
@@ -1705,14 +1706,11 @@ func (o *Owner) compact(ctx context.Context, plan func([]mergeCandidate) []merge
 	// preload), some newer root almost always exists by the time this merge
 	// finishes; discarding the merge outright on every such write would
 	// starve compaction indefinitely. remainder/found below check only the
-	// segments this task actually merged, by identity: any of them replaced
-	// by a concurrent Delete (which clones and replaces its segment rather
-	// than mutating it in place) is detected and the whole task is discarded
-	// as stale, but any other concurrent admission -- which only adds
-	// segments or replaces segments outside this task -- cannot invalidate
-	// it. That lets the compacted result replace exactly the segments it
-	// merged while every other segment, old or newly admitted, carries
-	// forward untouched.
+	// segments this task actually merged, by stable ID and deletion mask.
+	// Persistence replaces their wrappers and readers when promoting them to
+	// files, but preserves both the ID and live documents. That must not make
+	// a merge stale. A concurrent Delete changes the mask and still invalidates
+	// the task; admissions outside the task carry forward untouched.
 	// A concurrent compaction may already have merged away some of this
 	// task's segments, leaving current with fewer segments than the task;
 	// the capacity must not go negative (a panic here, under o.mu, would
@@ -1721,9 +1719,11 @@ func (o *Owner) compact(ctx context.Context, plan func([]mergeCandidate) []merge
 	remaining := make([]rootSegment, 0, max(len(current.segments)-len(taskSegments)+1, 1))
 	found := 0
 	for _, segment := range current.segments {
-		if _, ok := taskSegments[segment]; ok {
-			found++
-			continue
+		if live, ok := segment.(*memorySegment); ok {
+			if input, merged := taskSegments[live.handle.id]; merged && (live == input || maps.Equal(live.deleted, input.deleted)) {
+				found++
+				continue
+			}
 		}
 		remaining = append(remaining, segment)
 	}
@@ -1753,9 +1753,8 @@ func (o *Owner) compact(ctx context.Context, plan func([]mergeCandidate) []merge
 	o.nextSegmentID++
 	old.release()
 	o.pruneRootsLocked()
-	for segment := range taskSegments {
-		handle := segment.(*memorySegment).handle
-		o.unindexSegmentLocked(handle.id)
+	for mergedID := range taskSegments {
+		o.unindexSegmentLocked(mergedID)
 	}
 	if mergeDroppedAny {
 		// A merge-dropped identifier is not individually known here (the
