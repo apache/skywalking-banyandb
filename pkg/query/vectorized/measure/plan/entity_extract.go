@@ -64,58 +64,83 @@ func extractSeriesMatchers(criteria *modelv1.Criteria, schema logical.Schema, en
 		}
 		return criteria, [][]*modelv1.TagValue{entity}, false, nil
 	case *modelv1.Criteria_Le:
-		le := expression.Le
-		if le.GetLeft() == nil && le.GetRight() == nil {
-			return nil, nil, false, errors.WithMessagef(logical.ErrInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
-		}
-		if le.GetLeft() == nil {
-			return extractSeriesMatchers(le.Right, schema, entityDict, entity)
-		}
-		if le.GetRight() == nil {
-			return extractSeriesMatchers(le.Left, schema, entityDict, entity)
-		}
-		left, leftEntities, leftAll, leftErr := extractSeriesMatchers(le.Left, schema, entityDict, entity)
-		if leftErr != nil {
-			return nil, nil, false, leftErr
-		}
-		right, rightEntities, rightAll, rightErr := extractSeriesMatchers(le.Right, schema, entityDict, entity)
-		if rightErr != nil {
-			return nil, nil, false, rightErr
-		}
-		mergedEntities := logical.ParseEntities(le.Op, entity, leftEntities, rightEntities)
-		if mergedEntities == nil {
-			return nil, nil, false, nil
-		}
-		if left == nil && right == nil {
-			// Both sides reduced to a pure entity condition (no remaining
-			// filter): the subtree is still a tautology whenever either side
-			// already was one, matching BuildQuery's matchAll propagation.
-			// Hardcoding false here (as this branch previously did) loses
-			// that propagation up through nested AND/OR, producing a
-			// non-nil "remaining" criteria the legacy evaluator would have
-			// treated as always-true.
-			return nil, mergedEntities, leftAll || rightAll, nil
-		}
-		if leftAll && rightAll {
-			return nil, mergedEntities, true, nil
-		}
+		return extractLogicalSeriesMatchers(criteria, schema, entityDict, entity)
+	}
+	return nil, nil, false, logical.ErrInvalidCriteriaType
+}
+
+func extractLogicalSeriesMatchers(criteria *modelv1.Criteria, schema logical.Schema,
+	entityDict map[string]int, entity []*modelv1.TagValue,
+) (remaining *modelv1.Criteria, entities [][]*modelv1.TagValue, isMatchAll bool, err error) {
+	le := criteria.GetLe()
+	if le.GetLeft() == nil && le.GetRight() == nil {
+		return nil, nil, false, errors.WithMessagef(logical.ErrInvalidLogicalExpression, "both sides(left and right) of [%v] are empty", criteria)
+	}
+	if le.GetLeft() == nil {
+		return extractSeriesMatchers(le.Right, schema, entityDict, entity)
+	}
+	if le.GetRight() == nil {
+		return extractSeriesMatchers(le.Left, schema, entityDict, entity)
+	}
+	left, leftEntities, leftAll, leftErr := extractSeriesMatchers(le.Left, schema, entityDict, entity)
+	if leftErr != nil {
+		return nil, nil, false, leftErr
+	}
+	right, rightEntities, rightAll, rightErr := extractSeriesMatchers(le.Right, schema, entityDict, entity)
+	if rightErr != nil {
+		return nil, nil, false, rightErr
+	}
+	// ParseEntities assumes nonempty alternatives. Preserve the Boolean
+	// meaning of an impossible selector before merging wildcard tuples.
+	if len(leftEntities) == 0 || len(rightEntities) == 0 {
 		switch le.Op {
 		case modelv1.LogicalExpression_LOGICAL_OP_AND:
-			return combineCriteriaAnd(left, right), mergedEntities, false, nil
+			return nil, nil, false, nil
 		case modelv1.LogicalExpression_LOGICAL_OP_OR:
-			if leftAll || rightAll {
-				return nil, mergedEntities, true, nil
+			if len(leftEntities) == 0 {
+				return right, rightEntities, rightAll, nil
 			}
-			// When one OR branch is entity-only (nil remaining), entity-level
-			// series lookup already constrains the scope. If all entities are
-			// specific (no AnyTagValue wildcards), the remaining filter is
-			// unneeded -- matches BuildQuery's allEntitiesSpecific special case.
-			if (left == nil || right == nil) && allEntitiesSpecific(mergedEntities) {
-				return nil, mergedEntities, true, nil
-			}
-			return combineCriteriaOr(left, right), mergedEntities, false, nil
+			return left, leftEntities, leftAll, nil
 		}
-		return nil, nil, false, logical.ErrInvalidCriteriaType
+	}
+	mergedEntities := logical.ParseEntities(le.Op, entity, leftEntities, rightEntities)
+	if mergedEntities == nil {
+		// The native merger cannot intersect multiple alternatives. Its nil
+		// result does not prove disjoint sets (they may share a tuple), so
+		// preserve the existing rejection instead of returning false matches.
+		if len(leftEntities) > 1 || len(rightEntities) > 1 {
+			return nil, nil, false, errors.WithMessage(logical.ErrUnsupportedConditionOp, "cannot intersect alternative entity selectors")
+		}
+		return nil, nil, false, nil
+	}
+	if left == nil && right == nil {
+		// Both sides reduced to a pure entity condition (no remaining
+		// filter): the subtree is still a tautology whenever either side
+		// already was one, matching BuildQuery's matchAll propagation.
+		// Hardcoding false here (as this branch previously did) loses
+		// that propagation up through nested AND/OR, producing a
+		// non-nil "remaining" criteria the legacy evaluator would have
+		// treated as always-true.
+		return nil, mergedEntities, leftAll || rightAll, nil
+	}
+	if leftAll && rightAll {
+		return nil, mergedEntities, true, nil
+	}
+	switch le.Op {
+	case modelv1.LogicalExpression_LOGICAL_OP_AND:
+		return combineCriteriaAnd(left, right), mergedEntities, false, nil
+	case modelv1.LogicalExpression_LOGICAL_OP_OR:
+		if leftAll || rightAll {
+			return nil, mergedEntities, true, nil
+		}
+		// When one OR branch is entity-only (nil remaining), entity-level
+		// series lookup already constrains the scope. If all entities are
+		// specific (no AnyTagValue wildcards), the remaining filter is
+		// unneeded -- matches BuildQuery's allEntitiesSpecific special case.
+		if (left == nil || right == nil) && allEntitiesSpecific(mergedEntities) {
+			return nil, mergedEntities, true, nil
+		}
+		return combineCriteriaOr(left, right), mergedEntities, false, nil
 	}
 	return nil, nil, false, logical.ErrInvalidCriteriaType
 }

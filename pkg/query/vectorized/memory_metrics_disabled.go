@@ -1,3 +1,5 @@
+//go:build !querymetrics
+
 // Licensed to Apache Software Foundation (ASF) under one or more contributor
 // license agreements. See the NOTICE file distributed with
 // this work for additional information regarding copyright
@@ -15,35 +17,17 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package measure
+package vectorized
 
-import (
-	"github.com/apache/skywalking-banyandb/pkg/query/executor"
-	"github.com/apache/skywalking-banyandb/pkg/query/logical"
-)
+// QueryMetricsEnabled reports whether test query counters are compiled in.
+const QueryMetricsEnabled = false
 
-type sortableDataPoints struct {
-	iter        executor.MIterator
-	current     *comparableDataPoint
-	sortTagSpec logical.TagSpec
-	sortByTime  bool
-}
+func recordMemoryReservation(int64) {}
+func recordMemoryRelease(int64)     {}
+func recordLeaseCharge(uint64)      {}
 
-func (s *sortableDataPoints) Next() bool {
-	if !s.iter.Next() {
-		return false
-	}
+// QueryMemoryStats returns zero counters outside querymetrics builds.
+func QueryMemoryStats() MemoryCounters { return MemoryCounters{} }
 
-	dp := s.iter.Current()[0]
-	var err error
-	s.current, err = newComparableElement(dp, s.sortByTime, s.sortTagSpec)
-	return err == nil
-}
-
-func (s *sortableDataPoints) Val() *comparableDataPoint {
-	return s.current
-}
-
-func (s *sortableDataPoints) Close() error {
-	return s.iter.Close()
-}
+// ResetQueryMemoryPeak succeeds without changing counters outside querymetrics builds.
+func ResetQueryMemoryPeak() bool { return true }

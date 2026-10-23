@@ -19,9 +19,13 @@ package measure
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/frame"
 )
@@ -484,4 +488,163 @@ func buildAggMapFrame(t *testing.T, schema *vectorized.BatchSchema, _ int64, row
 	}
 	_ = pipeline.Close()
 	return body
+}
+
+type framePoisonOwner struct {
+	batch *vectorized.RecordBatch
+	refs  int
+}
+
+func (o *framePoisonOwner) Retain() { o.refs++ }
+func (o *framePoisonOwner) Release() {
+	o.refs--
+	if o.refs == 0 {
+		o.batch.Columns[2].(*vectorized.TypedColumn[int64]).Data()[0] = -99
+	}
+}
+
+type frameBorrowedSource struct {
+	schema  *vectorized.BatchSchema
+	current *vectorized.RecordBatch
+	batches []*vectorized.RecordBatch
+	next    int
+}
+
+func (s *frameBorrowedSource) Init(context.Context) error            { return nil }
+func (s *frameBorrowedSource) OutputSchema() *vectorized.BatchSchema { return s.schema }
+func (s *frameBorrowedSource) NextBatch(context.Context) (*vectorized.RecordBatch, error) {
+	if s.current != nil {
+		s.current.ReleaseOwners()
+		s.current = nil
+	}
+	if s.next == len(s.batches) {
+		return nil, nil
+	}
+	s.current = s.batches[s.next]
+	s.next++
+	return s.current, nil
+}
+
+func (s *frameBorrowedSource) Close() error {
+	if s.current != nil {
+		s.current.ReleaseOwners()
+		s.current = nil
+	}
+	return nil
+}
+
+func TestDrainPipelineToFramePinsFirstLentBatchAcrossNextPull(t *testing.T) {
+	baseline := vectorized.OutstandingOwnerPins()
+	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleTimestamp, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleVersion, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleSeriesID, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleShardID, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleField, Name: "value", Type: vectorized.ColumnTypeInt64},
+	})
+	source := &frameBorrowedSource{schema: schema}
+	for idx := range 2 {
+		batch := vectorized.NewRecordBatch(schema, 1)
+		for col, value := range []int64{10, int64(idx + 1), int64(idx + 7), 1, int64(idx + 11)} {
+			batch.Columns[col].(*vectorized.TypedColumn[int64]).Append(value)
+		}
+		batch.Len = 1
+		batch.Lent = true
+		batch.Owners.Pin(&framePoisonOwner{batch: batch})
+		source.batches = append(source.batches, batch)
+	}
+	pipeline, err := vectorized.NewPipelineBuilder().From(source).Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = pipeline.Init(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	body, err := DrainPipelineToFrame(context.Background(), pipeline, schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = pipeline.Close(); err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := frame.Decode(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sids := decoded.Columns[2].(*vectorized.TypedColumn[int64]).Data()
+	if len(sids) != 2 || sids[0] != 7 || sids[1] != 8 {
+		t.Fatalf("borrowed batch identity corrupted: %v", sids)
+	}
+	decoded.ReleaseOwners()
+	if vectorized.OutstandingOwnerPins() != baseline {
+		t.Fatal("frame drain leaked owner pins")
+	}
+}
+
+func TestFrameEgressReservationSurvivesSourceClose(t *testing.T) {
+	for _, transport := range []bool{false, true} {
+		t.Run(fmt.Sprint(transport), func(t *testing.T) {
+			ctx := t.Context()
+			var scope *query.TransportScope
+			if transport {
+				ctx, scope = query.NewTransportScope(ctx)
+				defer scope.Close()
+			}
+			schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{
+				{Role: vectorized.RoleField, Name: "value", Type: vectorized.ColumnTypeInt64},
+			})
+			batch := vectorized.NewRecordBatch(schema, 1)
+			batch.Columns[0].(*vectorized.TypedColumn[int64]).Append(42)
+			batch.Len = 1
+			tracker := vectorized.NewMemoryTracker(1 << 20)
+			source := &frameBorrowedSource{schema: schema, batches: []*vectorized.RecordBatch{batch}}
+			pipeline, err := vectorized.NewPipelineBuilder().WithMemoryTracker(tracker).From(source).Build()
+			require.NoError(t, err)
+			require.NoError(t, pipeline.Init(ctx))
+			iterator := newVectorizedMIterator(ctx, pipeline, schema, nil)
+			body, err := iterator.EmitFrame(ctx)
+			require.NoError(t, err)
+			require.NotEmpty(t, body)
+			require.Positive(t, tracker.Used())
+			require.NoError(t, iterator.Close())
+			if transport {
+				require.Positive(t, tracker.Used(), "source close precedes transport serialization")
+				scope.Close()
+			}
+			require.Zero(t, tracker.Used())
+		})
+	}
+}
+
+func TestFrameEgressRejectsBeforeEncodingAndReleasesOnCancel(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{
+			{Role: vectorized.RoleField, Name: "value", Type: vectorized.ColumnTypeInt64},
+		})
+		batch := vectorized.NewRecordBatch(schema, 1)
+		batch.Columns[0].(*vectorized.TypedColumn[int64]).Append(42)
+		batch.Len = 1
+		tracker := vectorized.NewMemoryTracker(1)
+		if canceled {
+			tracker = vectorized.NewMemoryTracker(1 << 20)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		if canceled {
+			cancel()
+		}
+		pipeline, err := vectorized.NewPipelineBuilder().WithMemoryTracker(tracker).
+			From(&frameBorrowedSource{schema: schema, batches: []*vectorized.RecordBatch{batch}}).Build()
+		require.NoError(t, err)
+		require.NoError(t, pipeline.Init(ctx))
+		body, err := DrainPipelineToFrame(ctx, pipeline, schema)
+		if canceled {
+			require.ErrorIs(t, err, context.Canceled)
+		} else {
+			require.ErrorIs(t, err, vectorized.ErrMemoryBudgetExceeded)
+		}
+		cancel()
+		require.Nil(t, body)
+		require.NoError(t, pipeline.Close())
+		require.Zero(t, tracker.Used())
+	}
 }

@@ -19,6 +19,7 @@ package pub
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc"
@@ -111,9 +112,10 @@ var retryPolicy = `{
 	]}`
 
 type client struct {
-	client clusterv1.ServiceClient
-	conn   *grpc.ClientConn
-	md     schema.Metadata
+	client         clusterv1.ServiceClient
+	conn           *grpc.ClientConn
+	md             schema.Metadata
+	nativeInactive atomic.Bool
 }
 
 // Close implements grpchelper.Client.

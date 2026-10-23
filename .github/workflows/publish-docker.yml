@@ -39,7 +39,7 @@ env:
 jobs:
   push-banyandb-image:
     if: github.repository == 'apache/skywalking-banyandb'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
@@ -185,7 +185,7 @@ jobs:
   # first real arm64 run.
   push-banyandb-plugins-image:
     if: github.repository == 'apache/skywalking-banyandb' && (github.event_name == 'pull_request' || github.event_name == 'push')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write

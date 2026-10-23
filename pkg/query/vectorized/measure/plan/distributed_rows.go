@@ -25,6 +25,8 @@ import (
 	"sort"
 	"strings"
 
+	"google.golang.org/protobuf/proto"
+
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	itersort "github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
@@ -62,6 +64,8 @@ type seenSIDKey struct {
 // column without going through TagIndex lookup. The merger prefers the
 // explicit index when >= 0; otherwise it resolves from the names.
 type distributedRowsSpec struct {
+	// Interrupt, when set, is polled while merging; a non-nil result aborts the merge with it.
+	Interrupt      func() error
 	Tracker        *vectorized.MemoryTracker
 	OrderByFamily  string
 	OrderByTagName string
@@ -69,6 +73,7 @@ type distributedRowsSpec struct {
 	OrderByColIdx  int
 	Desc           bool
 	IndexMode      bool
+	BorrowOutput   bool
 }
 
 // distributedRowKey keys the per-window dedup map. Two rows with the same
@@ -155,7 +160,7 @@ func newDistributedRowSourceIter(
 			if encodeErr != nil {
 				return nil, encodeErr
 			}
-			sortKeys[rowIdx] = key
+			sortKeys[rowIdx] = markSortKey(key, isNullSortCell(batch.Columns[sortColIdx], rowIdx))
 		}
 		iter.sortKeys = sortKeys
 		// Per-source local sort by the OrderBy column's encoded key so the
@@ -206,9 +211,16 @@ func (s *distributedRowSourceIter) Next() bool {
 	}
 	rowIdx := s.indices[s.pos]
 	s.pos++
-	sidCol := s.batch.Columns[s.sidIdx].(*vectorized.TypedColumn[int64])
 	tsCol := s.batch.Columns[s.tsIdx].(*vectorized.TypedColumn[int64])
-	verCol := s.batch.Columns[s.verIdx].(*vectorized.TypedColumn[int64])
+	// A schema without series-id or version columns (a time-bucketed aggregate) has nothing to
+	// dedup on; the emitter keeps every such row.
+	var sid, ver int64
+	if s.sidIdx >= 0 {
+		sid = s.batch.Columns[s.sidIdx].(*vectorized.TypedColumn[int64]).Data()[rowIdx]
+	}
+	if s.verIdx >= 0 {
+		ver = s.batch.Columns[s.verIdx].(*vectorized.TypedColumn[int64]).Data()[rowIdx]
+	}
 	var sortField []byte
 	if s.sortColIdx >= 0 {
 		// Phase 2: reuse the cached OrderBy sort key. encodeSortKey was
@@ -226,9 +238,9 @@ func (s *distributedRowSourceIter) Next() bool {
 		source:    s.source,
 		group:     s.group,
 		seq:       s.seq,
-		sid:       sidCol.Data()[rowIdx],
+		sid:       sid,
 		ts:        tsCol.Data()[rowIdx],
-		ver:       verCol.Data()[rowIdx],
+		ver:       ver,
 		sortField: sortField,
 	}
 	s.seq++
@@ -303,14 +315,16 @@ func runDistributedRowMerge(
 	rowWidth := estimateRowWidth(schema)
 
 	emitter := &distributedRowEmitter{
-		pool:      pool,
-		schema:    schema,
-		batchSize: batchSize,
-		tracker:   spec.Tracker,
-		rowWidth:  rowWidth,
-		seenSID:   make(map[seenSIDKey]struct{}),
-		indexMode: spec.IndexMode,
-		window:    make(map[distributedRowKey]*distributedRowItem),
+		pool:         pool,
+		schema:       schema,
+		batchSize:    batchSize,
+		tracker:      spec.Tracker,
+		rowWidth:     rowWidth,
+		seenSID:      make(map[seenSIDKey]struct{}),
+		indexMode:    spec.IndexMode,
+		borrowOutput: spec.BorrowOutput,
+		window:       make(map[distributedRowKey]*distributedRowItem),
+		noDedup:      schema.SeriesIDIndex() < 0 || schema.VersionIndex() < 0,
 	}
 	defer func() {
 		if retErr != nil {
@@ -322,15 +336,23 @@ func runDistributedRowMerge(
 		}
 	}()
 
-	for merger.Next() {
+	for rows := 0; merger.Next(); rows++ {
+		if spec.Interrupt != nil && rows%interruptCheckRows == 0 {
+			if interruptErr := spec.Interrupt(); interruptErr != nil {
+				return nil, interruptErr
+			}
+		}
 		item := merger.Val()
-		if emitter.windowKey != nil && !bytes.Equal(item.sortField, emitter.windowKey) {
+		// A null sort cell encodes as a nil key, so "no window open" is tracked explicitly: a
+		// nil windowKey alone would merge a null row's window into the next non-null row's.
+		if emitter.windowOpen && !bytes.Equal(item.sortField, emitter.windowKey) {
 			if err := emitter.flushWindow(); err != nil {
 				return nil, err
 			}
 		}
-		if emitter.windowKey == nil {
+		if !emitter.windowOpen {
 			emitter.windowKey = item.sortField
+			emitter.windowOpen = true
 		}
 		emitter.accept(item)
 	}
@@ -341,6 +363,91 @@ func runDistributedRowMerge(
 		return nil, err
 	}
 	return emitter.output, nil
+}
+
+// interruptCheckRows is how many merged rows pass between checks of distributedRowsSpec.Interrupt.
+const interruptCheckRows = 1024
+
+// markSortKey prefixes an encoded index sort key with a null marker so a null cell and an empty
+// value stay distinct under the heap's byte comparison: null sorts first. Nullness is passed in
+// rather than inferred from the key, because some encoders (pbv1.MarshalTagValue) return a nil
+// key for a non-null empty string or empty array too.
+func markSortKey(key []byte, isNull bool) []byte {
+	if isNull {
+		return []byte{0}
+	}
+	out := make([]byte, 1+len(key))
+	out[0] = 1
+	copy(out[1:], key)
+	return out
+}
+
+// isNullSortCell reports whether the sort cell holds no value: a null in the column's validity,
+// or a passthrough TagValue that is absent or the null value.
+func isNullSortCell(col vectorized.Column, rowIdx int) bool {
+	if col.IsNull(rowIdx) {
+		return true
+	}
+	if tvCol, ok := col.(*vectorized.TypedColumn[*modelv1.TagValue]); ok {
+		tv := tvCol.Data()[rowIdx]
+		if tv == nil {
+			return true
+		}
+		_, isNullValue := tv.GetValue().(*modelv1.TagValue_Null)
+		return isNullValue
+	}
+	return false
+}
+
+// columnBytes estimates the memory a column's cells hold, counting the variable-size payloads
+// that a fixed per-row width misses (strings, bytes, arrays, passthrough protobuf values).
+func columnBytes(col vectorized.Column) int64 {
+	var total int64
+	switch c := col.(type) {
+	case *vectorized.TypedColumn[int64]:
+		total = int64(len(c.Data())) * 8
+	case *vectorized.TypedColumn[float64]:
+		total = int64(len(c.Data())) * 8
+	case *vectorized.TypedColumn[string]:
+		for _, v := range c.Data() {
+			total += 16 + int64(len(v))
+		}
+	case *vectorized.TypedColumn[[]byte]:
+		for _, v := range c.Data() {
+			total += 24 + int64(len(v))
+		}
+	case *vectorized.TypedColumn[[]int64]:
+		for _, v := range c.Data() {
+			total += 24 + int64(len(v))*8
+		}
+	case *vectorized.TypedColumn[[]string]:
+		for _, v := range c.Data() {
+			total += 24
+			for _, e := range v {
+				total += 16 + int64(len(e))
+			}
+		}
+	case *vectorized.TypedColumn[*modelv1.TagValue]:
+		for _, v := range c.Data() {
+			total += 16 + int64(proto.Size(v))
+		}
+	case *vectorized.TypedColumn[*modelv1.FieldValue]:
+		for _, v := range c.Data() {
+			total += 16 + int64(proto.Size(v))
+		}
+	default:
+		total = int64(col.Len()) * 16
+	}
+	return total
+}
+
+// batchBytes estimates the memory a batch's columns hold.
+func batchBytes(batch *vectorized.RecordBatch) int64 {
+	var total int64
+	for _, col := range batch.Columns {
+		total += columnBytes(col)
+	}
+	return total
 }
 
 // releaseSources drops the references the decoded source batches hold on their frames.
@@ -409,17 +516,22 @@ func resolveDistributedSortColumn(schema *vectorized.BatchSchema, spec distribut
 // dedup map, the current in-progress output batch, the cross-window seenSID
 // guard for index-mode queries, and the returned batch list.
 type distributedRowEmitter struct {
-	pool      *vectorized.BatchPool
-	schema    *vectorized.BatchSchema
-	tracker   *vectorized.MemoryTracker
-	seenSID   map[seenSIDKey]struct{}
-	window    map[distributedRowKey]*distributedRowItem
-	current   *vectorized.RecordBatch
-	windowKey []byte
-	output    []*vectorized.RecordBatch
-	batchSize int
-	rowWidth  int64
-	indexMode bool
+	pool                      *vectorized.BatchPool
+	schema                    *vectorized.BatchSchema
+	tracker                   *vectorized.MemoryTracker
+	seenSID                   map[seenSIDKey]struct{}
+	window                    map[distributedRowKey]*distributedRowItem
+	current                   *vectorized.RecordBatch
+	pending                   *vectorized.RecordBatch
+	windowKey                 []byte
+	output                    []*vectorized.RecordBatch
+	batchSize                 int
+	rowWidth                  int64
+	pendingStart, pendingRows int
+	indexMode                 bool
+	borrowOutput              bool
+	windowOpen                bool
+	noDedup                   bool
 }
 
 // accept adds an incoming row to the current sort-group dedup map. The window
@@ -428,6 +540,10 @@ type distributedRowEmitter struct {
 // row-path baseline.
 func (e *distributedRowEmitter) accept(item *distributedRowItem) {
 	key := distributedRowKey{sid: item.sid, ts: item.ts}
+	if e.noDedup {
+		// Unique per row: without series-id and version there is no (sid, ts) identity.
+		key = distributedRowKey{sid: int64(item.source), ts: int64(item.seq)}
+	}
 	existing, ok := e.window[key]
 	if !ok || item.ver > existing.ver {
 		e.window[key] = item
@@ -461,7 +577,7 @@ func (e *distributedRowEmitter) flushWindow() error {
 		return emit[i].source < emit[j].source
 	})
 	for _, row := range emit {
-		if e.indexMode {
+		if e.indexMode && !e.noDedup {
 			sidKey := seenSIDKey{group: row.group, sid: row.sid}
 			if _, dup := e.seenSID[sidKey]; dup {
 				continue
@@ -474,6 +590,7 @@ func (e *distributedRowEmitter) flushWindow() error {
 	}
 	clear(e.window)
 	e.windowKey = nil
+	e.windowOpen = false
 	return nil
 }
 
@@ -483,6 +600,12 @@ func (e *distributedRowEmitter) flushWindow() error {
 // reservation so the tracker bounds in-transit batches without
 // double-counting once they reach the caller).
 func (e *distributedRowEmitter) appendRowToCurrent(row *distributedRowItem) error {
+	if e.borrowOutput && e.current == nil {
+		handled, err := e.appendBorrowedRow(row)
+		if handled || err != nil {
+			return err
+		}
+	}
 	if e.current == nil {
 		e.current = e.pool.Get()
 	}
@@ -510,6 +633,9 @@ func (e *distributedRowEmitter) appendRowToCurrent(row *distributedRowItem) erro
 // to the output, and releases the reservation. Net effect: while the merger
 // holds an in-progress batch we have one batch worth of bytes reserved.
 func (e *distributedRowEmitter) finalizeBatch() error {
+	if e.pendingRows > 0 {
+		return e.finalizeBorrowedRun()
+	}
 	if e.current == nil || e.current.Len == 0 {
 		if e.current != nil {
 			e.pool.Put(e.current)
@@ -697,7 +823,7 @@ func appendColumnRangeCoerced(dst, src vectorized.Column, srcPos, n int) error {
 			case *vectorized.TypedColumn[[]int64]:
 				tv = &modelv1.TagValue{Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: slices.Clone(sc.Data()[rowIdx])}}}
 			case *vectorized.TypedColumn[[]string]:
-				tv = &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: slices.Clone(sc.Data()[rowIdx])}}}
+				tv = &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: cloneStrings(sc.Data()[rowIdx])}}}
 			default:
 				return fmt.Errorf("appendColumnRangeCoerced: cannot coerce %s to tagvalue", src.Type())
 			}
@@ -740,6 +866,16 @@ func appendColumnRangeCoerced(dst, src vectorized.Column, srcPos, n int) error {
 	return measure.AppendColumnRange(dst, src, srcPos, n)
 }
 
+// cloneStrings copies the slice and every element's bytes: a cell may borrow a received frame
+// or a storage block, and the passthrough value travels on to the response.
+func cloneStrings(values []string) []string {
+	out := make([]string, len(values))
+	for i, v := range values {
+		out[i] = strings.Clone(v)
+	}
+	return out
+}
+
 // decodeMultiGroupSources decodes each groupFrame body and reshapes the
 // resulting batch into the merged schema by null-filling columns that exist
 // in the merged schema but are absent from the source group's frame schema.
@@ -765,40 +901,12 @@ func decodeMultiGroupSources(groupFrames []groupFrame, mergedSchema *vectorized.
 			}
 			continue
 		}
-		// Build a column-index map from the source schema so we can look up
-		// which source column corresponds to each merged-schema destination
-		// column by (role, family, name) key.
-		srcColMap := make(map[string]int, len(rawBatch.Schema.Columns))
-		for ci, cd := range rawBatch.Schema.Columns {
-			srcColMap[schemaColKey(cd)] = ci
+		reshapedBatch, reshapeErr := reshapeToMergedSchema(rawBatch, mergedSchema)
+		if reshapeErr != nil {
+			rawBatch.ReleaseOwners()
+			releaseSources(sources)
+			return nil, fmt.Errorf("reshape group %d frame %d: %w", gf.group, frameIdx, reshapeErr)
 		}
-		// Reshape the source batch into the merged schema. Columns present in
-		// the source are copied; columns absent from the source are null-filled.
-		reshapedBatch := vectorized.NewRecordBatch(mergedSchema, rawBatch.Len)
-		reshapedBatch.Len = rawBatch.Len
-		reshapedBatch.Selection = rawBatch.Selection
-		for destColIdx, destDef := range mergedSchema.Columns {
-			destKey := schemaColKey(destDef)
-			srcColIdx, hasSrc := srcColMap[destKey]
-			if hasSrc {
-				if copyErr := appendColumnRangeCoerced(
-					reshapedBatch.Columns[destColIdx],
-					rawBatch.Columns[srcColIdx],
-					0, rawBatch.Len,
-				); copyErr != nil {
-					rawBatch.ReleaseOwners()
-					releaseSources(sources)
-					return nil, fmt.Errorf("reshape group %d frame %d col %d: %w", gf.group, frameIdx, destColIdx, copyErr)
-				}
-			} else {
-				for range rawBatch.Len {
-					reshapedBatch.Columns[destColIdx].AppendNull()
-				}
-			}
-		}
-		// The reshaped batch shares the raw batch's cells, so it takes over the raw batch's
-		// references on the frame.
-		rawBatch.Owners.TransferTo(&reshapedBatch.Owners)
 		sources = append(sources, decodedBatchSource{
 			batch:  reshapedBatch,
 			source: frameIdx,
@@ -806,6 +914,42 @@ func decodeMultiGroupSources(groupFrames []groupFrame, mergedSchema *vectorized.
 		})
 	}
 	return sources, nil
+}
+
+// reshapeToMergedSchema reshapes rawBatch into mergedSchema: columns present in
+// the source (matched by role, family and name) are copied, coerced to the merged
+// column type, and columns absent from the source are null-filled. The reshaped
+// batch shares rawBatch's cells, so it takes over rawBatch's references on the
+// memory they borrow. On error rawBatch is left untouched for the caller to release.
+func reshapeToMergedSchema(rawBatch *vectorized.RecordBatch, mergedSchema *vectorized.BatchSchema) (*vectorized.RecordBatch, error) {
+	// Build a column-index map from the source schema so we can look up
+	// which source column corresponds to each merged-schema destination
+	// column by (role, family, name) key.
+	srcColMap := make(map[string]int, len(rawBatch.Schema.Columns))
+	for ci, cd := range rawBatch.Schema.Columns {
+		srcColMap[schemaColKey(cd)] = ci
+	}
+	reshapedBatch := vectorized.NewRecordBatch(mergedSchema, rawBatch.Len)
+	reshapedBatch.Len = rawBatch.Len
+	reshapedBatch.Selection = rawBatch.Selection
+	for destColIdx, destDef := range mergedSchema.Columns {
+		srcColIdx, hasSrc := srcColMap[schemaColKey(destDef)]
+		if !hasSrc {
+			for range rawBatch.Len {
+				reshapedBatch.Columns[destColIdx].AppendNull()
+			}
+			continue
+		}
+		if copyErr := appendColumnRangeCoerced(
+			reshapedBatch.Columns[destColIdx],
+			rawBatch.Columns[srcColIdx],
+			0, rawBatch.Len,
+		); copyErr != nil {
+			return nil, fmt.Errorf("col %d: %w", destColIdx, copyErr)
+		}
+	}
+	rawBatch.Owners.TransferTo(&reshapedBatch.Owners)
+	return reshapedBatch, nil
 }
 
 // schemaColKey returns a string key that uniquely identifies a column within a
@@ -828,18 +972,26 @@ func mergeDistributedRowsMulti(groupFrames []groupFrame, mergedSchema *vectorize
 	if mergedSchema.SeriesIDIndex() < 0 || mergedSchema.TimestampIndex() < 0 || mergedSchema.VersionIndex() < 0 {
 		return nil, fmt.Errorf("row merge requires series-id, timestamp, and version columns")
 	}
-	batchSize := spec.BatchSize
-	if batchSize <= 0 {
-		batchSize = vectorized.DefaultBatchSize
-	}
 	sources, decodeErr := decodeMultiGroupSources(groupFrames, mergedSchema)
 	if decodeErr != nil {
 		return nil, decodeErr
 	}
-	// The output batches pin whatever the sources borrow (see appendRowToCurrent).
+	return mergeBatchSources(sources, mergedSchema, spec)
+}
+
+// mergeBatchSources runs the k-way heap merger over sources whose batches are
+// already shaped as mergedSchema, whether they were decoded from frames or come
+// straight from a local plan. It takes ownership of sources: the output batches
+// pin whatever the sources borrow (see appendRowToCurrent), so the sources' own
+// references are released when the merge returns.
+func mergeBatchSources(sources []decodedBatchSource, mergedSchema *vectorized.BatchSchema, spec distributedRowsSpec) ([]*vectorized.RecordBatch, error) {
 	defer releaseSources(sources)
 	if len(sources) == 0 {
 		return nil, nil
+	}
+	batchSize := spec.BatchSize
+	if batchSize <= 0 {
+		batchSize = vectorized.DefaultBatchSize
 	}
 	sortColIdx, sortErr := resolveDistributedSortColumn(mergedSchema, spec)
 	if sortErr != nil {

@@ -19,6 +19,7 @@ package model
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
@@ -37,7 +38,13 @@ const SmallBatchRows = 256
 // Tag and Field columns come from the per-type column pool exposed by the
 // vectorized package; AcquireMeasureBatch wires them in on Get and Release
 // returns them on Put.
-var measureBatchPool = pool.Register[*MeasureBatch]("vectorized.measure-batch")
+var measureBatchPools = func() [7]*pool.Synced[*MeasureBatch] {
+	var pools [7]*pool.Synced[*MeasureBatch]
+	for i := range pools {
+		pools[i] = pool.Register[*MeasureBatch]("vectorized.measure-batch." + strconv.Itoa(i))
+	}
+	return pools
+}()
 
 // MeasureBatchResult is the columnar counterpart to MeasureQueryResult.
 // Implementations return a *MeasureBatch carrying parallel typed slices
@@ -122,7 +129,8 @@ type MeasureBatch struct {
 	// in use.
 	consts [maxEmbeddedConsts]vectorized.ConstColumn
 
-	nConsts int
+	nConsts   int
+	poolClass int
 
 	// SeriesKnown is set by a producer that knows exactly which series each row
 	// belongs to: SeriesBoundaries is then exact, and empty means the batch is a
@@ -200,8 +208,8 @@ func (b *MeasureBatch) MetadataBorrowed() bool { return b.metaBorrowed }
 // AcquireMeasureBatch returns a recycled *MeasureBatch wired to schema with
 // Tag / Field column slots pre-acquired from the per-type column pool. The
 // parallel metadata slices are truncated to length 0 and grown to capacity
-// if needed; columns inherit whatever capacity their pooled instance last
-// held (at least capacity). Callers must call Release exactly once when
+// if needed; oversized cached column and metadata buffers are dropped before
+// attachment; normal batch-size reuse is preserved. Callers must call Release exactly once when
 // done with the batch.
 func AcquireMeasureBatch(schema *vectorized.BatchSchema, capacity int) *MeasureBatch {
 	return acquireMeasureBatch(schema, capacity, true, false)
@@ -223,9 +231,39 @@ func AcquireConstEntityMeasureBatch(schema *vectorized.BatchSchema, capacity int
 }
 
 func acquireMeasureBatch(schema *vectorized.BatchSchema, capacity int, sizeMetadata, emptyEntityTags bool) *MeasureBatch {
-	b := measureBatchPool.Get()
+	class := vectorized.ColumnCapacityClass(capacity)
+	b := measureBatchPools[class].Get()
 	if b == nil {
 		b = &MeasureBatch{}
+	}
+	b.poolClass = class
+	// A pooled batch must not retain an unrelated prior query's large buffers.
+	rowLimit := 2 * max(capacity, vectorized.DefaultBatchSize)
+	if cap(b.Timestamps) > rowLimit {
+		b.Timestamps = nil
+	}
+	if cap(b.Versions) > rowLimit {
+		b.Versions = nil
+	}
+	if cap(b.ShardIDs) > rowLimit {
+		b.ShardIDs = nil
+	}
+	if cap(b.SeriesIDs) > rowLimit {
+		b.SeriesIDs = nil
+	}
+	if cap(b.SeriesBoundaries) > rowLimit {
+		b.SeriesBoundaries = nil
+	}
+	columns := 0
+	if schema != nil {
+		columns = len(schema.Columns)
+	}
+	columnLimit := 2 * max(columns, 128)
+	if cap(b.Tags) > columnLimit {
+		b.Tags = nil
+	}
+	if cap(b.Fields) > columnLimit {
+		b.Fields = nil
 	}
 	b.Schema = schema
 	b.Selection = nil
@@ -261,9 +299,9 @@ func acquireMeasureBatch(schema *vectorized.BatchSchema, capacity int, sizeMetad
 				if emptyEntityTags && def.Entity {
 					tagCapacity = 0
 				}
-				b.Tags = append(b.Tags, vectorized.AcquireColumn(def.Type, tagCapacity))
+				b.Tags = append(b.Tags, vectorized.AcquireBoundedColumn(def.Type, tagCapacity))
 			case vectorized.RoleField:
-				b.Fields = append(b.Fields, vectorized.AcquireColumn(def.Type, capacity))
+				b.Fields = append(b.Fields, vectorized.AcquireBoundedColumn(def.Type, capacity))
 			case vectorized.RoleTimestamp, vectorized.RoleVersion,
 				vectorized.RoleSeriesID, vectorized.RoleShardID,
 				vectorized.RoleElementID, vectorized.RoleOrderKey:
@@ -311,5 +349,5 @@ func (b *MeasureBatch) Release() {
 	b.Fields = b.Fields[:0]
 	b.SeriesBoundaries = b.SeriesBoundaries[:0]
 	b.Owners.Release()
-	measureBatchPool.Put(b)
+	measureBatchPools[b.poolClass].Put(b)
 }

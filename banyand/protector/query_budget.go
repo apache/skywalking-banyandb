@@ -59,13 +59,14 @@ type QueryBudget struct {
 
 // QueryReservation tracks charged allocations and shared ownership of an admitted query.
 type QueryReservation struct {
-	owner    *QueryBudget
-	assigned uint64
-	results  uint64
-	used     atomic.Uint64
-	released atomic.Bool
-	mu       sync.Mutex
-	refs     int32
+	owner       *QueryBudget
+	assigned    uint64
+	results     uint64
+	used        atomic.Uint64
+	released    atomic.Bool
+	mu          sync.Mutex
+	refs        int32
+	incremental bool
 }
 
 // Charge accounts bytes before allocation, rejecting charges beyond the assignment.
@@ -98,6 +99,13 @@ func (r *QueryReservation) chargeLocked(bytes uint64) error {
 	if bytes > r.assigned-used {
 		return ErrQueryResourceExhausted
 	}
+	if r.incremental && bytes > 0 {
+		// Refresh at admission; growth uses the protector's sampled availability
+		// and the atomic finite pool rather than sampling runtime on every charge.
+		if err := r.owner.reserveBytes(bytes, used == 0); err != nil {
+			return err
+		}
+	}
 	r.used.Store(used + bytes)
 	return nil
 }
@@ -119,7 +127,13 @@ func (r *QueryReservation) release() {
 	}
 	r.refs--
 	if r.refs == 0 && r.released.CompareAndSwap(false, true) {
-		r.owner.reserved.Add(^(r.assigned - 1))
+		reserved := r.assigned
+		if r.incremental {
+			reserved = r.used.Load()
+		}
+		if reserved > 0 {
+			r.owner.reserved.Add(^(reserved - 1))
+		}
 	}
 }
 
@@ -197,25 +211,56 @@ func (b *QueryBudget) Reserve(ctx context.Context, bytes uint64) (func(), error)
 	if bytes > maxQuery {
 		return nil, fmt.Errorf("requested %d bytes, maximum %d: %w", bytes, maxQuery, ErrQueryTooLarge)
 	}
+	if err := b.reserveBytes(bytes, true); err != nil {
+		return nil, err
+	}
+	var released atomic.Bool
+	return func() {
+		if bytes > 0 && released.CompareAndSwap(false, true) {
+			b.reserved.Add(^(bytes - 1))
+		}
+	}, nil
+}
+
+func (b *QueryBudget) reserveBytes(bytes uint64, refresh bool) error {
 	for {
 		pool := b.poolLimit()
 		current := b.reserved.Load()
 		if current > pool || bytes > pool-current {
-			return nil, ErrQueryResourceExhausted
+			return ErrQueryResourceExhausted
 		}
-		available := b.available()
+		available := b.availableSnapshot(refresh)
 		if available < current || bytes > available-current {
-			return nil, ErrQueryResourceExhausted
+			return ErrQueryResourceExhausted
 		}
 		if b.reserved.CompareAndSwap(current, current+bytes) {
-			var released atomic.Bool
-			return func() {
-				if bytes > 0 && released.CompareAndSwap(false, true) {
-					b.reserved.Add(^(bytes - 1))
-				}
-			}, nil
+			return nil
 		}
 	}
+}
+
+// AdmitMeasureContext admits a measure scan with incremental shared-pool assignment.
+// The hard per-query limit is unchanged; successful charges grow the pool commitment
+// monotonically until the last query or transport owner releases it.
+func (b *QueryBudget) AdmitMeasureContext(ctx context.Context) (context.Context, func(), error) {
+	if ctx == nil {
+		return nil, nil, errors.New("query admission requires a context")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, fmt.Errorf("query admission canceled: %w", err)
+	}
+	if existing, ok := querypkg.BudgetLeaseFromContext(ctx); ok && existing.Owner() == b {
+		reservation, reservationOK := existing.(*QueryReservation)
+		if !reservationOK || !reservation.retain() {
+			return nil, nil, ErrQueryResourceExhausted
+		}
+		return querypkg.WithBudgetLease(ctx, reservation), reservationReleaseForTransport(ctx, reservation), nil
+	}
+	reservation := &QueryReservation{owner: b, assigned: b.MaxQuery(), refs: 1, incremental: true}
+	if chargeErr := reservation.Charge(queryFixedOverhead); chargeErr != nil {
+		return nil, nil, chargeErr
+	}
+	return querypkg.WithBudgetLease(ctx, reservation), reservationReleaseForTransport(ctx, reservation), nil
 }
 
 // Admit reserves the complete dynamic assignment for a query after deriving a
@@ -326,10 +371,12 @@ func reservationReleaseForTransport(ctx context.Context, reservation *QueryReser
 	return localRelease
 }
 
-func (b *QueryBudget) available() uint64 {
+func (b *QueryBudget) available() uint64 { return b.availableSnapshot(true) }
+
+func (b *QueryBudget) availableSnapshot(refresh bool) uint64 {
 	limit := uint64(0)
 	if b.protector != nil {
-		if refresher, ok := b.protector.(usageRefresher); ok {
+		if refresher, ok := b.protector.(usageRefresher); refresh && ok {
 			refresher.RefreshUsage()
 		}
 		limit = b.protector.GetLimit()

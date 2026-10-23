@@ -40,7 +40,7 @@ jobs:
     uses: ./.github/workflows/prepare.yml
   check:
     name: Check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [prepare]
     steps:
       - name: Checkout code
@@ -115,7 +115,7 @@ jobs:
         run: make check-format
   vuln-check:
     name: Vulnerability Scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [prepare]
     steps:
       - name: Checkout code
@@ -135,7 +135,7 @@ jobs:
         run: make vuln-check
   detect_fodc_e2e_changes:
     name: Detect FODC E2E Changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [prepare]
     outputs:
       should_run: ${{ steps.filter.outputs.should_run }}
@@ -172,7 +172,7 @@ jobs:
           echo "should_run=${should_run}" >> "${GITHUB_OUTPUT}"
   detect_trace_pipeline_e2e_changes:
     name: Detect Trace Pipeline E2E Changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [prepare]
     outputs:
       should_run: ${{ steps.filter.outputs.should_run }}
@@ -210,7 +210,7 @@ jobs:
   test-gate:
     name: Enable Tests
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - run: echo 'Tests enabled'
   test-banyand:

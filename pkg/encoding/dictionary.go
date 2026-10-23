@@ -48,6 +48,19 @@ func (d *Dictionary) Reset() {
 	d.tmp = d.tmp[:0]
 }
 
+// ResetBounded clears borrowed values and drops oversized cached row buffers.
+func (d *Dictionary) ResetBounded(rows int) {
+	clear(d.values[:cap(d.values)])
+	d.Reset()
+	limit := 2 * max(rows, 1024)
+	if cap(d.indices) > limit {
+		d.indices = nil
+	}
+	if cap(d.tmp) > limit {
+		d.tmp = nil
+	}
+}
+
 // Add adds a value to the dictionary.
 func (d *Dictionary) Add(value []byte) bool {
 	for i, v := range d.values {
@@ -136,7 +149,7 @@ func (d *Dictionary) DecodeWithLimit(dst [][]byte, src []byte, itemsCount uint64
 }
 
 func (d *Dictionary) decodeBytesBlockWithTail(src []byte, itemsCount uint64, limit int) ([][]byte, []byte, error) {
-	u64List := GenerateUint64List(0)
+	u64List := generateBoundedUint64List()
 	defer ReleaseUint64List(u64List)
 
 	var tail []byte
@@ -317,7 +330,7 @@ func DecodeDictionaryValues(src []byte) ([][]byte, error) {
 	}
 
 	// Decode only the values part, skip the indices
-	u64List := GenerateUint64List(0)
+	u64List := generateBoundedUint64List()
 	defer ReleaseUint64List(u64List)
 
 	var tail []byte

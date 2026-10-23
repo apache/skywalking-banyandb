@@ -35,9 +35,10 @@ type TypedColumn[T any] struct {
 	data []T
 	// borrow is nil until the column first borrows; it keeps the column's own
 	// array while data is a view of someone else's.
-	borrow   *borrowState[T]
-	validity validityBitmap
-	typ      ColumnType
+	borrow    *borrowState[T]
+	validity  validityBitmap
+	typ       ColumnType
+	poolClass int
 }
 
 // borrowState is the part of a TypedColumn that exists only if it ever borrows,

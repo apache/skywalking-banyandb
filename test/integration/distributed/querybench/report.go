@@ -66,6 +66,11 @@ type Environment struct {
 
 // Result records one mode/scenario/cardinality benchmark outcome.
 type Result struct {
+	BatchMetrics        map[string]uint64 `json:"batch_metrics,omitempty"`
+	RawLatenciesNS      []time.Duration   `json:"raw_latencies_ns,omitempty"`
+	Variants            []Result          `json:"variants,omitempty"`
+	Variant             string            `json:"variant,omitempty"`
+	UnavailableMetrics  []string          `json:"unavailable_metrics,omitempty"`
 	Profiles            map[string]string `json:"profiles,omitempty"`
 	Scenario            Scenario          `json:"scenario"`
 	SampleDataPointText string            `json:"sample_data_point_text,omitempty"`
@@ -78,6 +83,9 @@ type Result struct {
 	Allocations         AllocationStats   `json:"allocations"`
 	Resources           ResourceStats     `json:"resources"`
 	Latency             LatencyStats      `json:"latency"`
+	TimedSamples        int               `json:"timed_samples,omitempty"`
+	ExpectedRows        int               `json:"expected_rows,omitempty"`
+	ExpectedHash        uint64            `json:"expected_hash,omitempty"`
 	PointsEach          int               `json:"points_each"`
 	QPS                 float64           `json:"qps"`
 	FilterSelectivity   float64           `json:"filter_selectivity,omitempty"`
@@ -277,8 +285,8 @@ func summarizeLatencies(latencies []time.Duration, elapsed time.Duration) (Laten
 		P90Ms:  percentile(sorted, 0.90),
 		P95Ms:  percentile(sorted, 0.95),
 		P99Ms:  percentile(sorted, 0.99),
-		MaxMs:  float64(sorted[len(sorted)-1].Microseconds()) / 1000,
-		MeanMs: float64(total.Microseconds()) / 1000 / float64(len(sorted)),
+		MaxMs:  float64(sorted[len(sorted)-1]) / float64(time.Millisecond),
+		MeanMs: float64(total) / float64(time.Millisecond) / float64(len(sorted)),
 	}
 	qps := 0.0
 	if elapsed > 0 {
@@ -298,7 +306,7 @@ func percentile(sorted []time.Duration, q float64) float64 {
 	if idx >= len(sorted) {
 		idx = len(sorted) - 1
 	}
-	return float64(sorted[idx].Microseconds()) / 1000
+	return float64(sorted[idx]) / float64(time.Millisecond)
 }
 
 func writeReport(report Report, dir string) (string, string, error) {
@@ -326,6 +334,16 @@ func renderMarkdown(report Report) string {
 	b.WriteString(fmt.Sprintf("Generated: %s\n\n", report.GeneratedAt.Format(time.RFC3339)))
 	b.WriteString("## Results\n\n")
 	renderPerModeTable(&b, report)
+	for _, result := range report.Results {
+		if result.Variant != "" {
+			fmt.Fprintf(&b, "\n%s/%d/%s: samples=%d, expected rows=%d, checksum=%x; unavailable: %s.\n",
+				result.Scenario, result.Cardinality, result.Variant, result.TimedSamples,
+				result.ExpectedRows, result.ExpectedHash, strings.Join(result.UnavailableMetrics, ", "))
+			if len(result.BatchMetrics) > 0 {
+				fmt.Fprintf(&b, "Batch metrics: `%v`.\n", result.BatchMetrics)
+			}
+		}
+	}
 	b.WriteString("\n## Profile artifacts\n\n")
 	for _, result := range report.Results {
 		if len(result.Profiles) == 0 {
@@ -350,7 +368,7 @@ func renderPerModeTable(b *strings.Builder, report Report) {
 		b.WriteString("| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
 		for _, result := range report.Results {
 			b.WriteString(fmt.Sprintf("| %s | %d | %s | %.2f | %.2f | %.2f | %.2f | %d | %d | %.2f | %.2f |\n",
-				result.Scenario, result.Cardinality, result.Mode, result.Latency.P50Ms, result.Latency.P95Ms,
+				result.scenarioLabel(), result.Cardinality, result.Mode, result.Latency.P50Ms, result.Latency.P95Ms,
 				result.Latency.P99Ms, result.QPS, result.ResponseTraces, result.ResponseSpans,
 				result.Allocations.MallocsPerQuery, result.Allocations.AllocBytesPerQuery))
 		}
@@ -360,14 +378,14 @@ func renderPerModeTable(b *strings.Builder, report Report) {
 	b.WriteString("| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
 	for _, result := range report.Results {
 		b.WriteString(fmt.Sprintf("| %s | %d | %s | %.2f | %.2f | %.2f | %.2f | %d | %.2f | %.2f |\n",
-			result.Scenario, result.Cardinality, result.Mode, result.Latency.P50Ms, result.Latency.P95Ms,
+			result.scenarioLabel(), result.Cardinality, result.Mode, result.Latency.P50Ms, result.Latency.P95Ms,
 			result.Latency.P99Ms, result.QPS, result.ResponseRows, result.Allocations.MallocsPerQuery, result.Allocations.AllocBytesPerQuery))
 	}
 }
 
 func (r Result) variantKey() string {
 	if r.Engine != engineTrace {
-		return ""
+		return r.Variant
 	}
 	return fmt.Sprintf("s=%d,dist=%s,sel=%s,k=%d,shard=%d,nodes=%d,bytes=%d",
 		r.SpansPerTrace, r.SpanDist, sanitizeFloat(r.FilterSelectivity), r.TraceIDBatch, r.ShardNum, r.DataNodes, r.SpanBytes)
@@ -405,4 +423,11 @@ func detectContainerID() string {
 		}
 	}
 	return ""
+}
+
+func (r Result) scenarioLabel() string {
+	if r.Variant == "" {
+		return string(r.Scenario)
+	}
+	return string(r.Scenario) + "/" + r.Variant
 }
