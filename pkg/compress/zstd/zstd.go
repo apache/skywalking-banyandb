@@ -19,6 +19,9 @@
 package zstd
 
 import (
+	"bytes"
+	"errors"
+	"io"
 	"sync"
 	"sync/atomic"
 
@@ -89,4 +92,43 @@ func newEncoder(compressionLevel int) *zstd.Encoder {
 		logger.Panicf("failed to create ZSTD writer: %v", err)
 	}
 	return e
+}
+
+// ErrDecompressionLimit identifies data whose decoded size exceeds a caller's budget.
+var ErrDecompressionLimit = errors.New("decoded zstd block exceeds budget")
+
+// DecompressBounded decompresses src while limiting the decoded bytes to limit.
+// The returned buffer is independently owned. A nonpositive limit is invalid.
+func DecompressBounded(src []byte, limit int) ([]byte, error) {
+	if limit <= 0 {
+		return nil, ErrDecompressionLimit
+	}
+	var header zstd.Header
+	if err := header.Decode(src); err != nil {
+		return nil, err
+	}
+	if header.HasFCS && header.FrameContentSize > uint64(limit) {
+		return nil, ErrDecompressionLimit
+	}
+	bounded, err := zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.WithDecodeAllCapLimit(true),
+		zstd.WithDecoderMaxMemory(uint64(max(limit, 1024))))
+	if err != nil {
+		return nil, err
+	}
+	defer bounded.Close()
+	if !header.HasFCS {
+		if err = bounded.Reset(bytes.NewReader(src)); err != nil {
+			return nil, err
+		}
+		decoded, readErr := io.ReadAll(io.LimitReader(bounded, int64(limit)+1))
+		if len(decoded) > limit {
+			return nil, ErrDecompressionLimit
+		}
+		return decoded, readErr
+	}
+	decoded, err := bounded.DecodeAll(src, make([]byte, 0, int(header.FrameContentSize)))
+	if errors.Is(err, zstd.ErrDecoderSizeExceeded) {
+		return nil, ErrDecompressionLimit
+	}
+	return decoded, err
 }
