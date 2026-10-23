@@ -4,48 +4,103 @@ Findings from building and smoke-running the log-shaped native-index soak
 (`scripts/soak-stream-index.sh`, fixture in `test/soak/cmd/stream_index.go`).
 
 These are **defects in the native index query path**, found while building the
-harness, not harness problems. Both are reproducible against a seeded
-`soak-idx-fixture` group. Both constrain what the soak can currently assert, so
-they are recorded here rather than left in a chat log.
+harness, not harness problems. They are reproducible against a seeded
+`soak-idx-fixture` group, and they constrain what the soak can assert, so they
+are recorded here rather than left in a chat log.
+
+F1 is **fixed**; F2 through F7 are open.
 
 ---
 
-## F1 — `BINARY_OP_MATCH` returns zero rows for every field
+## F1 — `BINARY_OP_MATCH` and `BINARY_OP_HAVING` returned zero rows for every scalar tag (FIXED)
 
 **Severity:** high (full-text search over a stream tag is a documented feature)
+**Status:** fixed in `pkg/query/logical/expr_literal.go` — see "Root cause" below.
 
-`pkg/query/logical/stream/index_filter.go:130` routes `BINARY_OP_MATCH` to
-`newMatch`, which calls `Searcher.Match`
-(`pkg/index/nativeadapter/searcher.go:102`). On a live fixture:
+Symptom on a live fixture, before the fix:
 
 | query | field | analyzer | rows |
 |---|---|---|---|
-| `level EQ "ERROR"` | `level` | keyword | 5 |
+| `level EQ "ERROR"` | `level` | keyword | 20 |
 | `level MATCH "ERROR"` | `level` | keyword | **0** |
-| `trace_id EQ "trace-00000001-000000"` | `trace_id` | keyword | 1 |
-| `trace_id MATCH "trace-00000001-000000"` | `trace_id` | keyword | **0** |
+| `pod MATCH "pod-003"` | `pod` | keyword | **0** |
+| `level MATCH "no-such-value"` | `level` | keyword | 0 |
 
-EQ works on exactly the fields where MATCH returns nothing, so this is specific
-to the MATCH path, not to the field or the analyzer.
+EQ worked on exactly the fields where MATCH returned nothing, so the failure was
+specific to the MATCH path rather than to the field, the analyzer, or the index.
 
-Two candidate mechanisms, not yet separated:
+### Root cause
 
-1. The early-out at `searcher.go:106` — `fieldKey.Analyzer == AnalyzerUnspecified`
-   returns a `DummyPostingList`. If the query-side `index.FieldKey` loses the
-   analyzer that `banyand/stream/write_standalone.go:254` wrote with
-   (`Analyzer: r.Analyzer`), the early-out fires and MATCH is silently empty.
-2. The vectorized stream query path (enabled by default for stream since
-   #1241) may not implement MATCH over the element index and falls through to an
-   empty posting rather than to the protobuf path.
+`pkg/query/logical/expr_literal.go` compared scalar literals by **pointer**
+where they needed **value** comparison:
 
-The existing coverage does not catch this: `test/cases/stream/data/input/search.ql`
-uses `MATCH('mysql')` via BYDBQL and is registered in
-`test/integration/standalone/query/vectorized_stream_test.go`, but the
-`db.instance` tag it targets is not covered by the same field-key path.
+```go
+func (s *strLiteral) Contains(other LiteralExpr) bool {
+	if o, ok := other.(*strLiteral); ok {
+		return s == o        // *strLiteral pointer comparison
+	}
+```
 
-**Suggested next step:** a case-table entry that issues `BINARY_OP_MATCH`
-directly in a `.yaml` criteria (not via `.ql`), so it runs on the same
-`streamv1.QueryRequest` path as `soak-driver`.
+A literal carries no identity, so this only succeeds when both sides are the
+*same allocation* — which never happens for a value read out of a batch. The
+array branches of the same file already used `slices.Contains` (a value
+comparison); only the scalar branches compared pointers.
+
+That silently broke two operators, both of which route through the affected
+comparisons:
+
+- `BINARY_OP_MATCH` → `matchTag.Match` → `expr.Contains(...)` → always false
+- `BINARY_OP_HAVING` → `havingTag.Match` → `expr.BelongTo(...)` → always false
+
+`BINARY_OP_EQ` was unaffected because `eqTag.Match` uses `Equal()`, which
+already compared values. That asymmetry is why the defect hid behind an
+operator that demonstrably worked.
+
+Fixed by comparing values in all four scalar comparisons:
+`strLiteral.Contains`, `strLiteral.BelongTo`, `int64Literal.Contains`,
+`int64Literal.BelongTo`.
+
+### How the two wrong hypotheses were eliminated
+
+Both of the initial hypotheses for this defect were wrong, and instrumentation
+is what killed them:
+
+1. *"The early-out at `searcher.go:106` fires because the query-side
+   `index.FieldKey` loses the analyzer."* — Instrumenting `Searcher.Match` showed
+   it was called with `analyzer="keyword"`, `ruleID=10`, and it did **not**
+   early-out. It even returned hits (`hits=4` for the series owning the term).
+2. *"The vectorized stream path does not implement MATCH over the element
+   index."* — Also wrong: the index path was fine. The loss happened
+   **downstream**, in the egress filter, where the scan-time predicate
+   re-evaluated the same criterion and rejected every row.
+
+A unit test at the filter layer (`pkg/query/logical/stream`) passed throughout,
+which is itself the evidence that pointed at the scan-time path rather than the
+index path.
+
+### Coverage added
+
+- `pkg/query/logical/expr_literal_scalar_test.go` — pins value comparison for
+  the four scalar comparisons, and pins the array and cross-type behaviour that
+  must not change. Each of the four fails against the unfixed code.
+- `pkg/query/logical/stream/native_match_integration_test.go` — MATCH against a
+  real native store for the keyword and simple analyzers, plus
+  `OPERATOR_OR` / `OPERATOR_AND` semantics. There was previously **no** MATCH
+  coverage for the stream filter at all, which is how a total operator failure
+  went unnoticed.
+
+### Verification
+
+Same fixture, before → after:
+
+| query | before | after |
+|---|---|---|
+| `level MATCH "ERROR"` | 0 rows | **20 rows** |
+| `pod MATCH "pod-003"` | 0 rows | **20 rows** |
+| `level MATCH "no-such-value"` | 0 rows | 0 rows |
+
+MATCH now agrees with EQ, and a term that was never indexed still matches
+nothing.
 
 ---
 
@@ -371,6 +426,39 @@ Reevaluating the original pilot artifacts with both gate implementations leaves
 every PASS/FAIL verdict unchanged: all 18 gates pass. All 14 eligible,
 call-weighted last/first p99 ratios remain below 1.0 (0.665–0.949;
 `series_exact_svc`: 0.767).
+
+## F7 — exact-value queries on an int tag return no rows (OPEN)
+
+**Severity:** medium (numeric equality is a common filter; range queries are unaffected)
+
+Found while validating the F1 fix, and **not** the same defect: it affects
+`BINARY_OP_EQ` and `BINARY_OP_MATCH` equally, so it is not the scalar
+comparison bug and is not covered by the F1 fix.
+
+On the soak fixture (`ir_duration`, rule id 14, `TAG_TYPE_INT`):
+
+| query | rows |
+|---|---|
+| `duration EQ 406` (a value harvested from a projection) | **0** |
+| `duration MATCH 406` | **0** |
+
+The value is correct — it was read back from a projection of the same rows, so
+the stored value and the queried value agree.
+
+The likely mechanism is in how the write path encodes an int term
+(`pkg/index/nativeadapter/adapter.go`, the `FloatTermValue` branch): the stored
+value is the sortable-encoded form (`numericPrefix(sortable, 0)`) and the indexed
+terms are the raw string plus the shift-prefixed sortables. A query for the
+plain decimal string therefore addresses a term the index does not hold, and
+the range path (which compares encoded bounds) keeps working — which is why
+range queries on the same field behave.
+
+Not fixed here. The first step is the same as for F2: a unit test at the
+`nativeadapter` boundary that writes an int field and reads it back with an
+exact-value term, so the encoding asymmetry is pinned before anything is
+changed in the encoder.
+
+---
 
 ## Open question: `overlap_trie` is never used
 

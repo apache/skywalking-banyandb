@@ -6,6 +6,7 @@ Release Notes.
 
 ### Features
 
+- Add SQL-correct measure QL grouping and multiple aggregates, with shared calls, weighted AVG, bounded local state and eligible native aggregate split/merge.
 - Sample traces with source-stage native plugins before lifecycle migration, with durable decisions, checkpointed replay, and crash recovery.
 - Add typed raw measure QL with WHERE time, aliases and bounded compiled-plan reuse, executed over shared columnar native batches.
 - Add a native ICE v3 encoder that writes committed index generations compatible with existing readers.
@@ -86,6 +87,7 @@ Release Notes.
 - Stop the scheduled backup/lifecycle/retention scheduler from logging a false `action timed out` error for an action that runs longer than 5 minutes but ultimately succeeds. Crossing the internal 5-minute soft deadline now logs a lower-severity "still running" message and keeps waiting for the action's real outcome instead of abandoning it mid-flight; the eventual result is logged and the scheduler only starts the next scheduled run once the current one truly finishes.
 - Fix backup reporting success when an earlier catalog upload fails.
 - Return a trace's complete span set when its spans straddle a storage segment boundary (segments are per-day in local time, and each span lands in the segment matching its own timestamp) and the query's time range covers only one side of that boundary. After resolving the qualifying trace IDs from the segments the query range overlaps, fetching those traces' spans now also reopens any segment within one hour of the query range (`traceCompletionWindow`), so the neighboring day's spans are no longer silently dropped. Applies to both ORDER BY and trace-ID trace queries; trace selection, ordering, and limit/offset are unaffected.
+- Fix multi-group Measure aggregations failing with `partial N schema mismatch` when the groups' schemas differ. A projected non-key tag that a group doesn't define is now null-filled before the liaison reduces the partials.
 
 ### Document
 

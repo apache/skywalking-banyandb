@@ -176,7 +176,7 @@ func TestTypedMeasureNamesFailBeforeExecution(t *testing.T) {
 		"SELECT missing FROM g.m",
 		"SELECT host AS node FROM g.m WHERE node = 'a'",
 		"SELECT host FROM g.m WHERE time >= now() OR host = 'a'",
-		"SELECT SUM(v) AS total FROM MEASURE m IN g",
+		"SELECT host, SUM(v) AS total FROM MEASURE m IN g",
 		"SELECT host FROM g.m LIMIT -1",
 		"SELECT host FROM g.m WHERE time = 1",
 		"SELECT host FROM g.m WHERE time = '2500-01-01T00:00:00Z'",

@@ -1,28 +1,27 @@
 # Catalog B implementation tickets and verification contracts
 
-Status: **T02, T03 and T05 are implemented in PR 1; eight capability tickets remain
-planned for later PRs.** Implementation and correctness do not imply that every
-historical performance gate passed: T02's original statistical acceptance remains
-inconclusive/stopped. Current isolated scope, checks and benchmark limits are in
-the [PR 1 verification record](pr1-verification.md). The [T01 verification
-record](t01-verification.md) retains the supporting baseline and is not a separate
-engine capability.
+Status: **T02/T03/T05 are merged in PR #1417; T07/T08 are implemented in PR 2;
+six capability tickets remain planned for PRs 3 and 4.** Implementation and
+correctness do not imply that every historical performance gate passed: T02's
+original acceptance remains inconclusive/stopped. Current aggregation scope,
+checks and benchmark limits are in the [PR 2 verification record](pr2-verification.md).
+The [PR 1 verification record](pr1-verification.md) and [T01 support record](t01-verification.md)
+retain their original bases and evidence.
 
 The original design-review base was `012115c5`. PR #1412 merged as `15635181b`;
-PR 1 targets main at `f9424047d`, including documentation-example fixes from
-#1415 and the native aggregation optimization from #1413.
-This document defines the [language contract](README.md),
+PR 2 is based on merged PR #1417 at `e05ed7f22`, including #1413's native aggregation
+optimization. This document defines the [language contract](README.md),
 [batch engine design](datafusion-engine.md) and [compiled-plan reuse design](plan-reuse.md).
-T02/T03/T05 commands are implemented. Commands for later capabilities describe
-planned contracts until those capabilities ship. Existing `QLB-T01` labels and
-`qlb_t01` measurements retain their historical meaning.
+T02/T03/T05/T07/T08 commands are implemented. Commands for later capabilities
+remain planned contracts. Existing `QLB-T01` labels and measurements retain their
+historical meaning.
 
 ## Four-PR delivery
 
 | PR | Scope | State in this branch |
 |---|---|---|
-| [1 — execution foundation](https://github.com/apache/skywalking-banyandb/pull/1417) | T02 shared batches, T03 typed raw QL, T05 compiled-plan reuse and required compatibility repairs | Implemented and independently verified |
-| 2 — SQL aggregation | T07 local aggregation and T08 native split/merge | Planned |
+| [1 — execution foundation](https://github.com/apache/skywalking-banyandb/pull/1417) | T02 shared batches, T03 typed raw QL, T05 compiled-plan reuse and required compatibility repairs | Merged as PR #1417 |
+| 2 — SQL aggregation | T07 local aggregation and T08 native split/merge | Prepared on merged PR #1417; see the PR 2 record |
 | 3 — expressions and filtering | T10 expressions, T12 field WHERE and T14 HAVING/membership | Planned |
 | 4 — complete grouping/output composition | T15 DISTINCT, T16 computed/ordinal grouping, T17 ordering/pagination and count-distinct composition | Planned |
 
@@ -55,13 +54,12 @@ formats; no Rust runtime or Arrow IPC dependency. SQL operators stay on the liai
 Shared native Go buffering/ownership and read/dispatch compatibility repairs are
 included with their regression tests, as described in the PR 1 verification record.
 
-**Readiness:** PR #1412 is merged and the shared batch seam, raw-query interfaces
-and compiled-template cache are available in PR 1. Its selected measure/QL cases
-pass 451/451 in both topologies. Later tickets require their listed prerequisites
-and their own independent expected results, activation proof and benchmarks.
-The historical T02/T03/T05 measurements below retain their original bases and
-verdicts; consult the PR 1 record for the latest isolated checks. Preserve the
-completed T01 support work rather than treating it as a new capability.
+**Readiness:** PR #1412 and PR #1417 are merged. The shared batch seam, typed
+raw-query interfaces and compiled-template cache are available on main; local
+aggregation and native merging are available in this branch. Later tickets still
+require their listed prerequisites, independent expected results, activation
+proof and focused benchmarks. Historical measurements retain their original
+bases and verdicts; the PR 2 record covers this isolated aggregation branch.
 
 ### Dependency and benchmark map
 
@@ -431,8 +429,24 @@ groups, and fixed-width aggregate state grows with groups rather than rows.
 Report key/state capacity bytes separately from native residency; G1/G2 apply.
 
 **Checks/readiness:** E(T07), P(T07), K(T07); focused `./pkg/query/ql`,
-`./pkg/bydbql`, `./banyand/liaison/grpc`. Blocked by T03. Bind/query tests expose
+`./pkg/bydbql`, `./banyand/liaison/grpc`. Builds on T03. Bind/query tests expose
 new multi-output semantics; null-collapsing legacy helpers are not the oracle.
+
+**Implementation status:** local aggregation and generated correctness coverage
+are implemented. Both resource-limited topologies pass all 215 selected specs,
+including 48 T07 specs. Five focused RPC repetitions pass at 1,024/32,768 rows;
+the local kernel also executes one million groups. The original successful
+100,000/1,000,000-row RPC performance gate remains unmet: inherited native frame
+reservations reject these queries before the QL aggregate starts. These smaller
+measurements do not replace that requirement. The 16-MiB real-RPC resource probe
+also remains blocked during native readiness. See
+[T07 verification](t07-verification.md) for results, resource limits and retained
+evidence.
+
+**Scope decision:** disk spilling is deferred to a later ticket, with its own
+generated E2E coverage and focused benchmarks. T07 retains current memory limits
+and ResourceExhausted behavior. The blocked measurements above remain recorded
+with their original outcomes.
 
 ### T08 — Execute native multi-aggregate queries with keyed merge
 
@@ -453,15 +467,18 @@ and reuse matching visible/auxiliary calls. Unsafe count precision, nullable key
 or lost aggregate information select T07. AVG's state/finalization is part of the
 aggregate operation, not an independent division helper ticket.
 
-**E2E cases:** `sum-max-repeated-call` selects SUM(v) twice and MAX(v) by host,
-with an exact host IN ('a','b','c') predicate, producing (a,2,2), (b,4,4), (c,6,6)
-for sum/max. Expect three leaves: SUM(v), MAX(v) and auxiliary exact COUNT(v),
-with no fourth leaf for the repeated SUM. In a separate case, add an all-null host
-and include it in the IN predicate to prove count-based normalization to null.
-Native eligibility must be established from actual provider contracts.
-`bucket-and-multiple-keys` checks distinct buckets/keys with deliberately permuted
-branch arrival. `missing-null-empty-groups` validates union/normalization or the
-documented local fallback. `branch-failure-cap-and-denial` covers >100 groups,
+**E2E cases:** shared float SUM/COUNT/AVG/MEAN outputs, including repeated AVG,
+use two branches over exact non-null entity selections. Integer MIN/MAX/COUNT
+use three branches. All-null and missing groups prove count-based normalization
+to null, and two entity keys prove full-tuple merging. The original
+`sum-max-repeated-call` three-leaf example needs refinement: native integer SUM
+wraps and native float MAX has different nonfinite semantics. Such combinations
+remain valid SQL through T07; no small fixture proves native equivalence.
+`bucket-and-multiple-keys` additionally names bucket timestamps and deliberately
+permuted branch arrival. T08 tests the merge's timestamp key at the operator seam;
+extended bucket grammar and its real-RPC coverage remain T16 work and are not
+claimed as passed by T08. `missing-null-empty-groups` validates union/normalization
+or the documented local fallback. `branch-failure-cap-and-denial` covers >100 groups,
 finite complete-scan-cap exhaustion via a test seam, failed child gates and
 cancellation before any unauthorized leaf dispatch.
 
@@ -470,19 +487,36 @@ partition goldens with identical SQL semantics. `sum-count-average-reuse` proves
 native branch reuse, including auxiliary counts for null normalization.
 
 **Benchmark:** P(T08) compares native split/merge, forced-local same-semantics
-reference and equivalent individual native queries on a fixed dataset. Include
-AVG alone and SUM+COUNT+AVG for integer/float targets, reporting raw fallback cost.
+reference and equivalent individual native queries on a fixed dataset. The
+focused protocol measures float AVG, shared float SUM+COUNT+AVG, integer
+MIN/MAX/COUNT and an integer AVG fallback control. Integer SUM overflow is
+covered by E2E tests; no earlier ticket benchmark dimensions are added.
 G3: eligible AVG needs at most two distinct leaves, exposing its matching SUM/COUNT
 adds no leaves, and unsafe AVG makes one local raw scan. For other combinations,
-leaf count equals unique eligible visible/auxiliary calls (three above).
+leaf count equals unique eligible visible/auxiliary calls (three for integer extrema above).
 Intermediate DataPoints are zero; merge work <= sum of input group rows plus one
 output visit per group; no branch receives a fresh full budget. K(T08) covers
 different branch order and high key cardinality;
 G1/G2 apply. Record split-versus-raw latency/cost without assuming pushdown wins.
 
 **Checks/readiness:** E(T08), P(T08), K(T08); focused `./pkg/query/ql`,
-`./pkg/bydbql`, `./banyand/liaison/grpc`. Blocked by T07. Fixed-data oracles must
+`./pkg/bydbql`, `./banyand/liaison/grpc`. Builds on T07. Fixed-data oracles must
 not imply a common snapshot across separate native queries during concurrent writes.
+
+**Implementation:** native lowering, full-tuple batch merging, SQL AVG/null
+finalization, safe whole-query fallback and shared branch ownership are implemented.
+The exact eligible subset and provider proofs are recorded in
+[T08 verification](t08-verification.md). Both real topologies pass 246 selected
+specs, including 31 generated T08 specs with independent expected values. The
+focused K/P protocol compares eligible paths and the integer AVG fallback;
+it does not broaden earlier ticket benchmark matrices or change their outcomes.
+Five resource-limited repetitions at both input sizes pass correctness and work
+checks. At 32,768 rows, float pushdown is about 2.4x faster with about 79% fewer
+allocated bytes; at 1,024 rows, three-branch integer extrema is about 1.5x slower.
+The verification record retains this regression and the remaining bucket E2E
+boundary rather than treating safe native eligibility as a universal speedup.
+Native branches remain sequential, at most 32 distinct calls; query memory
+limits and monotonic admission charges remain enforced without spilling.
 
 ### T10 — Evaluate typed vector expressions and masked conditionals
 
