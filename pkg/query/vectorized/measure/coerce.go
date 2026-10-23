@@ -73,7 +73,7 @@ func AppendColumnRangeCoerced(dst, src vectorized.Column, srcPos, n int) error {
 			case *vectorized.TypedColumn[[]int64]:
 				tv = &modelv1.TagValue{Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: slices.Clone(sc.Data()[rowIdx])}}}
 			case *vectorized.TypedColumn[[]string]:
-				tv = &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: slices.Clone(sc.Data()[rowIdx])}}}
+				tv = &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: cloneStrings(sc.Data()[rowIdx])}}}
 			default:
 				return fmt.Errorf("AppendColumnRangeCoerced: cannot coerce %s to tagvalue", src.Type())
 			}
@@ -159,7 +159,7 @@ func appendTagValuesAsNative(dst, src vectorized.Column, srcPos, n int) error {
 			}
 		case *modelv1.TagValue_StrArray:
 			if d, isStrs := dst.(*vectorized.TypedColumn[[]string]); isStrs {
-				d.Append(slices.Clone(payload.StrArray.GetValue()))
+				d.Append(cloneStrings(payload.StrArray.GetValue()))
 				matched = true
 			}
 		}
