@@ -33,7 +33,7 @@ install_e2e() {
     exit 1
   fi
 
-  E2E_REVISION=${SW_INFRA_E2E_COMMIT:-ef073adb8b9e148e4eaf3f905fa4e238ee5cc7d6}
+  E2E_REVISION=${SW_INFRA_E2E_COMMIT:-c45db2743ea32d911ad1f0801b305f1c9fe15bfe}
 
   GO111MODULE=on go install "github.com/apache/skywalking-infra-e2e/cmd/e2e@${E2E_REVISION}"
 
