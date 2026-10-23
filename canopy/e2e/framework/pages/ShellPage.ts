@@ -27,7 +27,7 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 import { BasePage } from './BasePage.js';
 
-export type NavItem = 'Home' | 'Metadata' | 'Properties' | 'Pipelines' | 'Query';
+export type NavItem = 'Home' | 'Metadata' | 'Properties' | 'Pipelines' | 'Monitor' | 'Query';
 
 export class ShellPage extends BasePage {
   constructor(page: Page) {

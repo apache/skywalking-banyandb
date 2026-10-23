@@ -25,6 +25,7 @@ import { AuthProvider, useAuth } from './auth/AuthContext.js';
 import { LoginPage } from './pages/LoginPage.js';
 import { Shell } from './components/Shell.js';
 import { HomePage } from './pages/HomePage.js';
+import { MonitorPage } from './pages/MonitorPage.js';
 import { TypeOverviewPage } from './pages/TypeOverviewPage.js';
 import { GroupPage } from './pages/GroupPage.js';
 import { ResourceDetailPage } from './pages/ResourceDetailPage.js';
@@ -544,6 +545,7 @@ function AppContent() {
     <Shell>
       <Routes>
         <Route path="/" element={<HomePage />} />
+        <Route path="/monitor" element={<MonitorPage />} />
         <Route path="/metadata/:type/:group/Index" element={<MetadataIndexRoute />} />
         <Route path="/metadata/:type/:group/:name" element={<MetadataResourceRoute />} />
         <Route path="/metadata/:type/:group" element={<MetadataGroupRoute />} />

@@ -40,6 +40,8 @@ Release Notes.
 - [Breaking Change] Add measure frame version 4, a columnar data-node-to-liaison wire format that replaces the row-oriented measure frame (version 3): each column's validity, offsets and values are sent as contiguous 8-byte-padded buffers, and the liaison builds columns by slicing the received message instead of allocating per cell. Data nodes always send version 4 and a liaison accepts only version 4 for measure frames, rejecting any other version with an error; there is no version negotiation and no fallback. BanyanDB 0.12 does not support rolling or mixed-version upgrades, so upgrade the whole cluster at once (stop every node, start the new binary); see [Upgrading to 0.12](docs/operation/upgrade.md#upgrading-to-012). Decoding a 4-column 8,192-row batch drops from 16,416 allocations and 0.85 ms to 38 and 0.14 ms for 6% larger frames; a distributed full scan is 38% faster.
 - Add the data export dry-run protocol (`transfer.v1.ExportService`) and `bydbctl data export --dry-run`.
 
+- Add a Canopy Monitor page for cluster routing and storage observations, with admin-only access by default, configurable readonly access, bounded refresh, and independent upstream failure states.
+
 ### Bug Fixes
 
 - Keep native index compaction progressing when persistence replaces unchanged in-memory segments with file-backed readers.
