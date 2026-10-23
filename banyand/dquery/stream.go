@@ -38,6 +38,7 @@ import (
 type streamQueryProcessor struct {
 	streamService stream.Service
 	broadcaster   bus.Broadcaster
+	scatterer     bus.Scatterer
 	*queryService
 	*bus.UnImplementedHealthyListener
 }
@@ -129,6 +130,7 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 	defer se.Close()
 	entities, err := se.Execute(executor.WithDistributedExecutionContext(ctx, &distributedContext{
 		Broadcaster:   p.broadcaster,
+		Scatterer:     chunkCapScatterer{Scatterer: p.scatterer, maxBytes: uint64(p.maxChunkBytes), maxRows: p.maxChunkRowsStream},
 		timeRange:     queryCriteria.TimeRange,
 		nodeSelectors: nodeSelectors,
 	}))

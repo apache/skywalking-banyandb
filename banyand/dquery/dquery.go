@@ -46,8 +46,9 @@ const (
 	moduleName   = "distributed-query"
 	hotStageName = "hot"
 
-	defaultMaxChunkRowsTrace = 256
-	defaultMaxChunkBytes     = 4 << 20
+	defaultMaxChunkRowsTrace  = 256
+	defaultMaxChunkRowsStream = 4096
+	defaultMaxChunkBytes      = 4 << 20
 )
 
 var _ run.Service = (*queryService)(nil)
@@ -84,6 +85,8 @@ type queryService struct {
 	maxChunkBytes run.Bytes
 	// maxChunkRowsTrace caps the traces in one trace scan chunk.
 	maxChunkRowsTrace uint32
+	// maxChunkRowsStream caps the elements in one stream scan chunk.
+	maxChunkRowsStream uint32
 }
 
 // NewService return a new query service.
@@ -100,6 +103,7 @@ func NewService(metaService metadata.Repo, pipeline queue.Server, broadcaster qu
 		queryService:  svc,
 		streamService: streamSchemaSVC,
 		broadcaster:   broadcaster,
+		scatterer:     broadcaster,
 	}
 	svc.mqp = &measureQueryProcessor{
 		queryService:   svc,
@@ -131,6 +135,8 @@ func (q *queryService) FlagSet() *run.FlagSet {
 	q.maxChunkBytes = defaultMaxChunkBytes
 	fs.Uint32Var(&q.maxChunkRowsTrace, "stream-query-max-chunk-rows-trace", defaultMaxChunkRowsTrace,
 		"the maximum number of traces in one chunk a data node sends for a trace query")
+	fs.Uint32Var(&q.maxChunkRowsStream, "stream-query-max-chunk-rows-stream", defaultMaxChunkRowsStream,
+		"the maximum number of elements in one chunk a data node sends for a stream query")
 	fs.Var(&q.maxChunkBytes, "stream-query-max-chunk-bytes",
 		"the approximate maximum encoded size of one chunk a data node sends for a query")
 	return fs
@@ -139,6 +145,9 @@ func (q *queryService) FlagSet() *run.FlagSet {
 func (q *queryService) Validate() error {
 	if q.maxChunkRowsTrace == 0 {
 		return errors.New("stream-query-max-chunk-rows-trace must be positive")
+	}
+	if q.maxChunkRowsStream == 0 {
+		return errors.New("stream-query-max-chunk-rows-stream must be positive")
 	}
 	if q.maxChunkBytes == 0 {
 		return errors.New("stream-query-max-chunk-bytes must be positive")

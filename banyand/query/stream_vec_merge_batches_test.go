@@ -31,6 +31,7 @@ import (
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	logical_stream "github.com/apache/skywalking-banyandb/pkg/query/logical/stream"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
@@ -66,6 +67,11 @@ func (s *mergeScan) ExecuteVectorized(context.Context) ([]*vectorized.RecordBatc
 		return nil, nil, s.err
 	}
 	return s.batches, s.schema, nil
+}
+
+// OpenVectorized is not used by the local multi-group merge, which executes each group scan whole.
+func (s *mergeScan) OpenVectorized(context.Context) (executor.BatchIterator, *vectorized.BatchSchema, error) {
+	return nil, nil, errors.New("mergeScan does not support OpenVectorized")
 }
 
 func (s *mergeScan) ProjectionTags() []model.TagProjection { return s.proj }
