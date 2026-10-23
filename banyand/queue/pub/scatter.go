@@ -231,7 +231,7 @@ func (n *nodeStream) receive() {
 		}
 		idle.Reset(n.idleTimeout)
 		if resp.Error != "" {
-			n.termErr = fmt.Errorf("scan on node %s failed: %s", n.node, resp.Error)
+			n.termErr = fmt.Errorf("scan on node %s failed: %w", n.node, remoteError(resp.Status, resp.Error))
 			errReason = sendErrReasonServerRejected
 			close(n.ch)
 			return

@@ -47,6 +47,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
@@ -755,7 +756,7 @@ func (l *future) Get() (msg bus.Message, err error) {
 	}
 	if resp.Error != "" {
 		errReason = sendErrReasonServerRejected
-		remoteErr := errors.New(resp.Error)
+		remoteErr := remoteError(resp.Status, resp.Error)
 		if l.receiveGuarded {
 			remoteErr = guardedNativeReceiveError(remoteErr)
 		}
@@ -778,6 +779,26 @@ func (l *future) Get() (msg bus.Message, err error) {
 	}
 	errReason = sendErrReasonInvalidTopic
 	return bus.Message{}, fmt.Errorf("invalid topic %s", t)
+}
+
+// remoteResourceExhaustedError is a data node's report that a query exhausted its
+// memory allowance. It matches protector.ErrQueryResourceExhausted so callers can
+// map it to RESOURCE_EXHAUSTED even though only a string crossed the wire.
+type remoteResourceExhaustedError struct{ msg string }
+
+func (e *remoteResourceExhaustedError) Error() string { return e.msg }
+
+func (*remoteResourceExhaustedError) Is(target error) bool {
+	return target == protector.ErrQueryResourceExhausted
+}
+
+// remoteError rebuilds the error a data node reported, keeping the identity its
+// status carries.
+func remoteError(st modelv1.Status, msg string) error {
+	if st == modelv1.Status_STATUS_RESOURCE_EXHAUSTED {
+		return &remoteResourceExhaustedError{msg: msg}
+	}
+	return errors.New(msg)
 }
 
 // guardedNativeReceiveError recovers the canonical memory sentinel across the

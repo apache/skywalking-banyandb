@@ -325,6 +325,7 @@ func (l *failOnChargeLease) Charge(uint64) error {
 	}
 	return nil
 }
+func (*failOnChargeLease) Refund(uint64) {}
 func (*failOnChargeLease) Limit() uint64 { return 1 << 20 }
 func (*failOnChargeLease) Used() uint64  { return 0 }
 func (*failOnChargeLease) Owner() any    { return "merge-test" }

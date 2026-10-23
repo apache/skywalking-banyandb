@@ -263,6 +263,10 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 			}
 		}
 		if len(batch.bss) >= cap(batch.bss) {
+			if ctx.Err() != nil {
+				releaseBlockScanResultBatch(batch)
+				return
+			}
 			if err := bsn.pm.AcquireResource(ctx, totalBlockBytes); err != nil {
 				batch.err = fmt.Errorf("cannot acquire resource: %w", err)
 				select {
