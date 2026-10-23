@@ -30,10 +30,11 @@ import (
 )
 
 type measureColumns struct {
-	tags     map[string][]vectorized.ColumnDef
-	fields   map[string]vectorized.ColumnDef
-	tagSpecs map[string]*tagSpecWithFamily
-	ordered  []vectorized.ColumnDef
+	unambiguousTags map[measureColumnKey]bool
+	tags            map[string][]vectorized.ColumnDef
+	fields          map[string]vectorized.ColumnDef
+	tagSpecs        map[string]*tagSpecWithFamily
+	ordered         []vectorized.ColumnDef
 }
 
 type measureColumnKey struct {
@@ -41,7 +42,7 @@ type measureColumnKey struct {
 	role         vectorized.ColumnRole
 }
 
-func (m *MeasureTemplate) compileRaw(schemas map[string]*databasev1.Measure) error {
+func (m *MeasureTemplate) compileRaw(columns *measureColumns) error {
 	stmt := m.statement.template.Select
 	if stmt.Projection == nil || stmt.Projection.Empty {
 		return fmt.Errorf("projection must not be empty")
@@ -54,9 +55,9 @@ func (m *MeasureTemplate) compileRaw(schemas map[string]*databasev1.Measure) err
 			return fmt.Errorf("extended aggregate queries are not supported by typed raw execution")
 		}
 	}
-	columns, err := resolveMeasureColumns(stmt.From.In.Groups, schemas)
-	if err != nil {
-		return err
+	var err error
+	if containsQuotedMeasureLiteral(stmt.Projection, columns) {
+		return m.compileExpressions(columns)
 	}
 	var slots []ql.Slot
 	if stmt.Projection.All {
@@ -97,13 +98,8 @@ func (m *MeasureTemplate) compileRaw(schemas map[string]*databasev1.Measure) err
 			slots = append(slots, ql.Slot{ID: ql.SlotID(len(slots)), Source: source, Output: output, Nullable: true})
 		}
 	}
-	outputs := make(map[measureColumnKey]bool, len(slots))
-	for _, slot := range slots {
-		key := measureColumnKey{family: slot.Output.TagFamily, name: slot.Output.Name, role: slot.Output.Role}
-		if outputs[key] {
-			return fmt.Errorf("duplicate output name %q in container %q", key.name, key.family)
-		}
-		outputs[key] = true
+	if err = validateRawOutputSlots(slots); err != nil {
+		return err
 	}
 	m.slots = slots
 	m.request = baseMeasureRequest(stmt)
@@ -128,7 +124,7 @@ func (m *MeasureTemplate) compileRaw(schemas map[string]*databasev1.Measure) err
 		m.request.TagProjection, m.request.FieldProjection = rawScanProjection([]ql.Slot{{Source: anchor}})
 	}
 	if stmt.Where != nil {
-		m.predicate, err = compileMeasureOr(stmt.Where.Expr, columns)
+		err = m.compileWhere(columns)
 		if err != nil {
 			return err
 		}
@@ -226,7 +222,24 @@ func resolveMeasureColumns(groups []string, schemas map[string]*databasev1.Measu
 			columns.ordered = append(columns.ordered, column)
 		}
 	}
+	columns.unambiguousTags = unambiguousMeasureTags(columns.ordered)
 	return columns, nil
+}
+
+func unambiguousMeasureTags(columns []vectorized.ColumnDef) map[measureColumnKey]bool {
+	names := make(map[string]int)
+	for _, source := range columns {
+		if source.Role == vectorized.RoleTag {
+			names[source.Name]++
+		}
+	}
+	tags := make(map[measureColumnKey]bool)
+	for _, source := range columns {
+		if source.Role == vectorized.RoleTag && names[source.Name] == 1 {
+			tags[columnIdentity(source)] = true
+		}
+	}
+	return tags
 }
 
 func (c *measureColumns) resolve(name string, typeSpec *string) (vectorized.ColumnDef, error) {
@@ -322,4 +335,25 @@ func measureFieldType(fieldType databasev1.FieldType) (vectorized.ColumnType, er
 	default:
 		return 0, fmt.Errorf("unsupported field type %s", fieldType)
 	}
+}
+
+func validateRawOutputSlots(slots []ql.Slot) error {
+	outputs := make(map[measureColumnKey]bool, len(slots))
+	for _, slot := range slots {
+		key := measureColumnKey{family: slot.Output.TagFamily, name: slot.Output.Name, role: slot.Output.Role}
+		if outputs[key] {
+			return fmt.Errorf("duplicate output name %q in container %q", key.name, key.family)
+		}
+		outputs[key] = true
+	}
+	return nil
+}
+
+func containsQuotedMeasureLiteral(projection *GrammarProjection, columns *measureColumns) bool {
+	for _, column := range projection.Columns {
+		if isQuotedMeasureLiteral(column, columns) {
+			return true
+		}
+	}
+	return false
 }

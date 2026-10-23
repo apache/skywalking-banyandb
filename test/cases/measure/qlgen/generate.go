@@ -57,6 +57,32 @@ func Generate() (Suite, error) {
 		return Suite{}, nativeErr
 	}
 	nativeRejections := generateT08Rejections(b)
+	expressionReadiness, expressionScenarios, expressionRejections, expressionErr := generateT10(b)
+	if expressionErr != nil {
+		return Suite{}, expressionErr
+	}
+	filterReadiness, filterScenarios, filterRejections, filterErr := generateT12(b)
+	if filterErr != nil {
+		return Suite{}, filterErr
+	}
+	legacyReadiness, legacyScenarios, legacyErr := generateT12Legacy()
+	if legacyErr != nil {
+		return Suite{}, legacyErr
+	}
+	b.features["t12.legacy_schema_fixture"], b.features["t12.legacy_schema_compatibility"] = true, true
+	havingLegacy, havingLegacyErr := generateT14Legacy()
+	if havingLegacyErr != nil {
+		return Suite{}, havingLegacyErr
+	}
+	b.features["t14.legacy_membership"], b.features["t14.membership_duplicates"] = true, true
+	havingReadiness, havingScenarios, havingRejections, havingErr := generateT14(b)
+	if havingErr != nil {
+		return Suite{}, havingErr
+	}
+	havingReview, havingReviewErr := generateT14Review(b)
+	if havingReviewErr != nil {
+		return Suite{}, havingReviewErr
+	}
 	if b.err != nil {
 		return Suite{}, b.err
 	}
@@ -78,6 +104,11 @@ func Generate() (Suite, error) {
 		return Suite{}, reuseReadinessErr
 	}
 	suite := Suite{
+		HavingReviewScenarios: havingReview,
+		HavingLegacyScenarios: havingLegacy, HavingReadiness: havingReadiness, HavingScenarios: havingScenarios, HavingRejections: havingRejections,
+		LegacyCompatibilityReadiness: legacyReadiness, LegacyCompatibilityScenarios: legacyScenarios,
+		FilterReadiness: filterReadiness, FilterScenarios: filterScenarios, FilterRejections: filterRejections,
+		ExpressionReadiness: expressionReadiness, ExpressionScenarios: expressionScenarios, ExpressionRejections: expressionRejections,
 		NativeAggregateReadiness: nativeReadiness, NativeAggregateScenarios: nativeScenarios,
 		NativeAggregateRejections: nativeRejections,
 		AggregateReadiness:        aggregateReadiness, AggregateScenarios: aggregateScenarios,

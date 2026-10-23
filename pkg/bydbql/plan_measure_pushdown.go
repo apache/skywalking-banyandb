@@ -29,7 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
-func (m *MeasureTemplate) compileNativeAggregate(schemas map[string]*databasev1.Measure, columns *measureColumns) {
+func (m *MeasureTemplate) compileNativeEntities(schemas map[string]*databasev1.Measure, columns *measureColumns) {
 	if len(m.request.Groups) != 1 {
 		return
 	}
@@ -37,18 +37,13 @@ func (m *MeasureTemplate) compileNativeAggregate(schemas map[string]*databasev1.
 	if schema == nil || schema.GetIndexMode() || len(schema.GetEntity().GetTagNames()) == 0 {
 		return
 	}
-	names := make(map[string]int)
-	for _, source := range columns.ordered {
-		if source.Role == vectorized.RoleTag {
-			names[source.Name]++
-		}
-	}
+
 	var entities []vectorized.ColumnDef
 	for _, source := range columns.ordered {
 		if source.Entity {
 			// Native entity predicates have unqualified names. Ambiguous names
 			// cannot establish a unique non-null entity assignment.
-			if names[source.Name] != 1 {
+			if !columns.unambiguousTags[columnIdentity(source)] {
 				return
 			}
 			entities = append(entities, source)
@@ -60,7 +55,8 @@ func (m *MeasureTemplate) compileNativeAggregate(schemas map[string]*databasev1.
 }
 
 func (m *MeasureTemplate) bindNativeAggregate(request *measurev1.QueryRequest, plan *ql.RawPlan) *ql.NativeAggregatePlan {
-	if plan.Aggregate == nil || plan.Empty || plan.Residual || len(plan.Ranges) != 1 || len(m.nativeEntities) == 0 {
+	if plan.Aggregate == nil || len(plan.Aggregate.Calls) == 0 || plan.Empty || plan.Residual || plan.Filter != nil ||
+		len(plan.Ranges) != 1 || len(m.nativeEntities) == 0 {
 		return nil
 	}
 	// Normal writes are millisecond-aligned and native scans deduplicate

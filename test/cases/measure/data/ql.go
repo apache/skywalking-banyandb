@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"strings"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -67,8 +68,8 @@ func VerifyQL(ctx context.Context, conn grpc.ClientConnInterface, content string
 	return result.MeasureResult, nil
 }
 
-// VerifyQLError asserts an independently specified gRPC status for a QL-only fixture.
-func VerifyQLError(ctx context.Context, conn grpc.ClientConnInterface, content string, wantCode codes.Code) error {
+// VerifyQLError asserts a gRPC status and optional message fragments for a QL-only fixture.
+func VerifyQLError(ctx context.Context, conn grpc.ClientConnInterface, content string, wantCode codes.Code, wantMessages ...string) error {
 	if wantCode == codes.OK {
 		return fmt.Errorf("expected error status must not be OK")
 	}
@@ -82,6 +83,11 @@ func VerifyQLError(ctx context.Context, conn grpc.ClientConnInterface, content s
 	}
 	if status.Code(err) != wantCode {
 		return fmt.Errorf("QL status: got %s, want %s %w", status.Code(err), wantCode, err)
+	}
+	for _, message := range wantMessages {
+		if !strings.Contains(status.Convert(err).Message(), message) {
+			return fmt.Errorf("QL error is missing %q: %w", message, err)
+		}
 	}
 	return nil
 }

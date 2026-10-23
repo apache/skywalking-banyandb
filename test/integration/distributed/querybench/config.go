@@ -118,6 +118,12 @@ const (
 	ScenarioQLBT07 Scenario = "qlb_t07"
 	// ScenarioQLBT08 compares native aggregate branches with local SQL aggregation.
 	ScenarioQLBT08 Scenario = "qlb_t08"
+	// ScenarioQLBT10 benchmarks typed expression projection over native batches.
+	ScenarioQLBT10 Scenario = "qlb_t10"
+	// ScenarioQLBT12 benchmarks field filtering before projection and aggregation.
+	ScenarioQLBT12 Scenario = "qlb_t12"
+	// ScenarioQLBT14 benchmarks completed-group HAVING and collection membership.
+	ScenarioQLBT14 Scenario = "qlb_t14"
 	// ScenarioTraceByID benchmarks distributed trace-id lookup.
 	ScenarioTraceByID Scenario = "trace_by_id"
 	// ScenarioTraceTagFilter benchmarks distributed ordered trace tag filters.
@@ -250,7 +256,8 @@ func (c Config) Validate() error {
 	switch c.Engine {
 	case engineMeasure:
 		switch c.Scenario {
-		case ScenarioScanAll, ScenarioTopWithFilter, ScenarioQLBT01, ScenarioQLBT02, ScenarioQLBT03, ScenarioQLBT05, ScenarioQLBT07, ScenarioQLBT08:
+		case ScenarioScanAll, ScenarioTopWithFilter, ScenarioQLBT01, ScenarioQLBT02, ScenarioQLBT03, ScenarioQLBT05,
+			ScenarioQLBT07, ScenarioQLBT08, ScenarioQLBT10, ScenarioQLBT12, ScenarioQLBT14:
 		default:
 			return fmt.Errorf("%s unsupported for %s=%s: %q", envScenario, envEngine, c.Engine, c.Scenario)
 		}
@@ -472,10 +479,22 @@ func queryTimeout(cardinality int) time.Duration {
 }
 
 func (c Config) validateCatalogB() error {
-	if c.Scenario == ScenarioQLBT07 || c.Scenario == ScenarioQLBT08 {
+	if c.Scenario == ScenarioQLBT14 {
+		return c.validateQLBT14()
+	}
+	if c.Scenario == ScenarioQLBT12 {
+		return c.validateQLBT12()
+	}
+	if c.Scenario == ScenarioQLBT07 || c.Scenario == ScenarioQLBT08 || c.Scenario == ScenarioQLBT10 {
 		iterations, warmup, err := qlbT07Schedule(c.Cardinality)
 		if c.Scenario == ScenarioQLBT08 {
 			iterations, warmup, err = qlbT08Schedule(c.Cardinality)
+		}
+		if c.Scenario == ScenarioQLBT10 {
+			iterations, warmup, err = qlbT10Schedule(c.Cardinality)
+			if c.QueryMemoryMiB != 256 {
+				return fmt.Errorf("qlb_t10 requires DQB_QUERY_MEMORY_MIB=256")
+			}
 		}
 		if err != nil {
 			return err
@@ -512,6 +531,39 @@ func (c Config) validateCatalogB() error {
 	return nil
 }
 
+func (c Config) validateQLBT12() error {
+	iterations, warmup, err := qlbT12Schedule(c.Cardinality)
+	if err != nil {
+		return err
+	}
+	if c.QueryWorkers != 1 || c.QueryIterations != iterations || c.WarmupIterations != warmup || c.QueryMemoryMiB != 256 {
+		return fmt.Errorf("qlb_t12 at %d rows requires one worker, %d timed calls, %d warmups and 256 MiB", c.Cardinality, iterations, warmup)
+	}
+	return nil
+}
+
+func qlbT12Schedule(cardinality int) (iterations, warmup int, err error) {
+	switch cardinality {
+	case 1024:
+		return 100, 5, nil
+	case 16384:
+		return 20, 3, nil
+	default:
+		return 0, 0, fmt.Errorf("qlb_t12 requires input cardinality 1024 or 16384; larger inputs belong to the resource probe")
+	}
+}
+
+func qlbT14Schedule(cardinality int) (iterations, warmup int, err error) {
+	switch cardinality {
+	case 1024:
+		return 100, 5, nil
+	case 32768:
+		return 20, 3, nil
+	default:
+		return 0, 0, fmt.Errorf("qlb_t14 requires input cardinality 1024 or 32768; large inputs belong to the owning resource probe")
+	}
+}
+
 func qlbT07Schedule(cardinality int) (iterations, warmup int, err error) {
 	switch cardinality {
 	case 1024:
@@ -532,4 +584,26 @@ func qlbT08Schedule(cardinality int) (iterations, warmup int, err error) {
 	default:
 		return 0, 0, fmt.Errorf("qlb_t08 requires input cardinality 1024 or 32768")
 	}
+}
+
+func qlbT10Schedule(cardinality int) (iterations, warmup int, err error) {
+	switch cardinality {
+	case 1024:
+		return 100, 5, nil
+	case 32768:
+		return 20, 3, nil
+	default:
+		return 0, 0, fmt.Errorf("qlb_t10 requires input cardinality 1024 or 32768")
+	}
+}
+
+func (c Config) validateQLBT14() error {
+	iterations, warmup, err := qlbT14Schedule(c.Cardinality)
+	if err != nil {
+		return err
+	}
+	if c.QueryWorkers != 1 || c.QueryIterations != iterations || c.WarmupIterations != warmup || c.QueryMemoryMiB != 256 {
+		return fmt.Errorf("qlb_t14 at %d rows requires one worker, %d timed calls, %d warmups and 256 MiB", c.Cardinality, iterations, warmup)
+	}
+	return nil
 }

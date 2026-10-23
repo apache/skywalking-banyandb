@@ -87,7 +87,7 @@ func runSingleShotScenario(t *testing.T, cfg Config) {
 	if cfg.Scenario == ScenarioQLBT03 {
 		timeout += 60 * time.Minute
 	}
-	if cfg.Scenario == ScenarioQLBT07 || cfg.Scenario == ScenarioQLBT08 {
+	if cfg.Scenario == ScenarioQLBT07 || cfg.Scenario == ScenarioQLBT08 || cfg.Scenario == ScenarioQLBT10 {
 		timeout += 30 * time.Minute
 	}
 	if cfg.Scenario == ScenarioQLBT02 {
@@ -98,9 +98,14 @@ func runSingleShotScenario(t *testing.T, cfg Config) {
 	defer cancel()
 	var written writeSummary
 	var writeErr error
-	if cfg.Scenario == ScenarioQLBT07 || cfg.Scenario == ScenarioQLBT08 {
+	switch cfg.Scenario {
+	case ScenarioQLBT14:
+		written, writeErr = writeQLBT14Data(ctx, cluster.conn, cfg, base)
+	case ScenarioQLBT12:
+		written, writeErr = writeQLBT12Data(ctx, cluster.conn, cfg, base)
+	case ScenarioQLBT07, ScenarioQLBT08, ScenarioQLBT10:
 		written, writeErr = writeQLBT07Data(ctx, cluster.conn, cfg, base)
-	} else {
+	default:
 		written, writeErr = writeBenchmarkData(ctx, cluster.conn, cfg, cfg.Cardinality, base)
 	}
 	if writeErr != nil {
@@ -130,18 +135,27 @@ func runMergeShards(t *testing.T, cfg Config) {
 	if len(results) == 0 {
 		t.Fatalf("no shards found in %s/shards/", cfg.ReportDir)
 	}
-	if matrixErr := validateQLBT03Matrix(results); matrixErr != nil {
-		t.Fatal(matrixErr)
-	}
-	if matrixErr := validateQLBT07Matrix(results); matrixErr != nil {
-		t.Fatal(matrixErr)
-	}
-	if matrixErr := validateQLBT08Matrix(results); matrixErr != nil {
+	if matrixErr := validateCatalogBMatrices(results); matrixErr != nil {
 		t.Fatal(matrixErr)
 	}
 	var flattened []Result
 	for _, result := range results {
 		switch result.Scenario {
+		case ScenarioQLBT14:
+			if validationErr := validateQLBT14Result(result); validationErr != nil {
+				t.Fatal(validationErr)
+			}
+			flattened = append(flattened, result.Variants...)
+		case ScenarioQLBT12:
+			if validationErr := validateQLBT12Result(result); validationErr != nil {
+				t.Fatal(validationErr)
+			}
+			flattened = append(flattened, result.Variants...)
+		case ScenarioQLBT10:
+			if validationErr := validateQLBT10Result(result); validationErr != nil {
+				t.Fatal(validationErr)
+			}
+			flattened = append(flattened, result.Variants...)
 		case ScenarioQLBT05:
 			if validationErr := validateQLBT05Result(result); validationErr != nil {
 				t.Fatal(validationErr)
@@ -202,6 +216,15 @@ func runMergeShards(t *testing.T, cfg Config) {
 // against an already-prepared cluster, capturing CPU and heap profiles for
 // the timed phase.
 func runScenarioBenchmark(ctx context.Context, conn *grpc.ClientConn, cfg Config, scenario Scenario, cardinality int, mode string, base time.Time) (Result, error) {
+	if scenario == ScenarioQLBT14 {
+		return runQLBT14Benchmark(ctx, conn, cfg, base)
+	}
+	if scenario == ScenarioQLBT12 {
+		return runQLBT12Benchmark(ctx, conn, cfg, base)
+	}
+	if scenario == ScenarioQLBT10 {
+		return runQLBT10Benchmark(ctx, conn, cfg, base)
+	}
 	if scenario == ScenarioQLBT08 {
 		return runQLBT08Benchmark(ctx, conn, cfg, base)
 	}
@@ -293,8 +316,14 @@ func startBenchCluster(t *testing.T, cfg Config, additionalLiaisonFlags ...strin
 		if cfg.Scenario == ScenarioQLBT02 {
 			preload = preloadQLBT02Schema
 		}
-		if cfg.Scenario == ScenarioQLBT07 || cfg.Scenario == ScenarioQLBT08 {
+		if cfg.Scenario == ScenarioQLBT07 || cfg.Scenario == ScenarioQLBT08 || cfg.Scenario == ScenarioQLBT10 {
 			preload = preloadQLBT07Schema
+		}
+		if cfg.Scenario == ScenarioQLBT12 {
+			preload = preloadQLBT12Schema
+		}
+		if cfg.Scenario == ScenarioQLBT14 {
+			preload = preloadQLBT14Schema
 		}
 		setup.PreloadSchemaViaProperty(config, preload)
 		config.AddLoadedKinds(schema.KindMeasure)
@@ -351,13 +380,26 @@ func clusterFlags(cfg Config) []string {
 		return []string{fmt.Sprintf("--trace-vectorized-query-memory-mib=%d", cfg.QueryMemoryMiB)}
 	}
 	if cfg.Scenario == ScenarioQLBT02 || cfg.Scenario == ScenarioQLBT03 || cfg.Scenario == ScenarioQLBT05 ||
-		cfg.Scenario == ScenarioQLBT07 || cfg.Scenario == ScenarioQLBT08 {
+		cfg.Scenario == ScenarioQLBT07 || cfg.Scenario == ScenarioQLBT08 || cfg.Scenario == ScenarioQLBT10 ||
+		cfg.Scenario == ScenarioQLBT12 || cfg.Scenario == ScenarioQLBT14 {
 		return []string{fmt.Sprintf("--measure-vectorized-query-memory-mib=%d", cfg.QueryMemoryMiB)}
 	}
 	if cfg.Soak {
 		// The measure soak writes while it queries; a short flush timeout makes the
 		// parts a scan reads change every second instead of every few seconds.
 		return []string{"--measure-flush-timeout=500ms"}
+	}
+	return nil
+}
+
+func validateCatalogBMatrices(results []Result) error {
+	for _, validate := range []func([]Result) error{
+		validateQLBT03Matrix, validateQLBT07Matrix, validateQLBT08Matrix,
+		validateQLBT10Matrix, validateQLBT12Matrix, validateQLBT14Matrix,
+	} {
+		if err := validate(results); err != nil {
+			return err
+		}
 	}
 	return nil
 }

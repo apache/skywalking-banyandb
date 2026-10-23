@@ -21,23 +21,22 @@ import (
 	"fmt"
 	"strings"
 
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/ql"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
-func (m *MeasureTemplate) compileAggregate(schemas map[string]*databasev1.Measure) error {
+func (m *MeasureTemplate) compileAggregate(columns *measureColumns) error {
 	stmt := m.statement.template.Select
+	if hasMeasureExpressions(stmt.Projection) || stmt.Projection.All || stmt.Projection.Empty {
+		return fmt.Errorf("extended aggregation requires named group columns and aggregate calls")
+	}
 	if stmt.Projection.TopN != nil {
 		return fmt.Errorf("extended aggregation does not support TOP")
 	}
 	if stmt.OrderBy != nil {
 		return fmt.Errorf("extended aggregation requires post-aggregate column sorting, which is not supported yet")
 	}
-	columns, err := resolveMeasureColumns(stmt.From.In.Groups, schemas)
-	if err != nil {
-		return err
-	}
+	var err error
 	plan := &ql.AggregatePlan{}
 	var keys map[measureColumnKey]int
 	inputs := make(map[measureColumnKey]bool)
@@ -73,51 +72,12 @@ func (m *MeasureTemplate) compileAggregate(schemas map[string]*databasev1.Measur
 			}
 			output = ql.AggregateOutput{Column: source, Index: index, IsGroup: true}
 		} else {
-			aggregate := column.Aggregate
-			if aggregate.Distinct {
-				return fmt.Errorf("extended COUNT(DISTINCT) is not supported; existing native routing and stage restrictions still apply")
+			call, definition, callErr := resolveMeasureAggregate(column.Aggregate, column.TypeSpec, columns)
+			if callErr != nil {
+				return callErr
 			}
-			name, nameErr := aggregate.Column.ToString(true)
-			if nameErr != nil {
-				return nameErr
-			}
-			source, sourceErr := columns.resolve(name, column.TypeSpec)
-			if sourceErr != nil {
-				return sourceErr
-			}
-			function, functionErr := sqlAggregateFunction(aggregate.Function)
-			if functionErr != nil {
-				return functionErr
-			}
-			if !scalarAggregateType(source.Type) || function != ql.AggregateCount &&
-				source.Type != vectorized.ColumnTypeInt64 && source.Type != vectorized.ColumnTypeFloat64 {
-				return fmt.Errorf("%s does not support column %q of type %s", aggregate.Function, name, source.Type)
-			}
-			call := ql.AggregateCall{Source: source, Function: function}
-			index := -1
-			for candidate, existing := range plan.Calls {
-				if existing == call {
-					index = candidate
-					break
-				}
-			}
-			if index < 0 {
-				index = len(plan.Calls)
-				plan.Calls = append(plan.Calls, call)
-			}
-			valueType := source.Type
-			switch function {
-			case ql.AggregateCount:
-				valueType = vectorized.ColumnTypeInt64
-			case ql.AggregateAvg:
-				valueType = vectorized.ColumnTypeFloat64
-			default:
-			}
-
-			output = ql.AggregateOutput{Index: index, Column: vectorized.ColumnDef{
-				Name: strings.ToUpper(aggregate.Function) + "(" + name + ")", Role: vectorized.RoleField, Type: valueType,
-			}}
-			addInput(source)
+			output = ql.AggregateOutput{Index: addMeasureAggregateCall(plan, call), Column: definition}
+			addInput(call.Source)
 		}
 		if column.Alias != nil {
 			output.Column.Name, err = column.Alias.ToString(true)
@@ -132,14 +92,66 @@ func (m *MeasureTemplate) compileAggregate(schemas map[string]*databasev1.Measur
 		outputs[key] = true
 		plan.Outputs = append(plan.Outputs, output)
 	}
+	if stmt.Having != nil {
+		if err = m.compileHaving(columns, plan, keys, addInput); err != nil {
+			return err
+		}
+	}
 	m.aggregate = plan
 	m.request = baseMeasureRequest(stmt)
 	m.request.TagProjection, m.request.FieldProjection = rawScanProjection(m.slots)
 	if stmt.Where != nil {
-		m.predicate, err = compileMeasureOr(stmt.Where.Expr, columns)
+		err = m.compileWhere(columns)
 	}
-	m.compileNativeAggregate(schemas, columns)
 	return err
+}
+
+func resolveMeasureAggregate(aggregate *GrammarAggregateFunction, typeSpec *string, columns *measureColumns) (
+	ql.AggregateCall, vectorized.ColumnDef, error,
+) {
+	var call ql.AggregateCall
+	var output vectorized.ColumnDef
+	if aggregate.Distinct {
+		return call, output, fmt.Errorf("extended COUNT(DISTINCT) is not supported; existing native routing and stage restrictions still apply")
+	}
+	name, err := aggregate.Column.ToString(true)
+	if err != nil {
+		return call, output, err
+	}
+	source, err := columns.resolve(name, typeSpec)
+	if err != nil {
+		return call, output, err
+	}
+	function, err := sqlAggregateFunction(aggregate.Function)
+	if err != nil {
+		return call, output, err
+	}
+	if !scalarAggregateType(source.Type) || function != ql.AggregateCount &&
+		source.Type != vectorized.ColumnTypeInt64 && source.Type != vectorized.ColumnTypeFloat64 {
+		return call, output, fmt.Errorf("%s does not support column %q of type %s", aggregate.Function, name, source.Type)
+	}
+	valueType := source.Type
+	switch function {
+	case ql.AggregateCount:
+		valueType = vectorized.ColumnTypeInt64
+	case ql.AggregateAvg:
+		valueType = vectorized.ColumnTypeFloat64
+	default:
+	}
+	call = ql.AggregateCall{Source: source, Function: function}
+	output = vectorized.ColumnDef{Name: strings.ToUpper(aggregate.Function) + "(" + name + ")", Role: vectorized.RoleField, Type: valueType}
+	return call, output, nil
+}
+
+func addMeasureAggregateCall(plan *ql.AggregatePlan, call ql.AggregateCall) int {
+	for index, existing := range plan.Calls {
+		if existing == call {
+			return index
+		}
+	}
+	index := len(plan.Calls)
+	plan.Calls = append(plan.Calls, call)
+	return index
 }
 
 func compileAggregateGroups(groupBy *GrammarGroupByClause, columns *measureColumns) ([]vectorized.ColumnDef, map[measureColumnKey]int, error) {

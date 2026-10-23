@@ -1,10 +1,11 @@
 # DataFusion-inspired measure QL engine
 
-Status: **implemented through T08 in PR 2.** Shared batches, typed raw queries
-and compiled-plan reuse are merged through PR #1417. This branch adds local SQL
-aggregation and eligible native aggregate split/merge. Expressions, HAVING,
-DISTINCT, computed grouping and general sorting remain later PRs. Current scope
-and evidence are in the [PR 2 verification record](pr2-verification.md).
+Status: **implemented through T14 in PR 3.** Shared batches, typed raw queries,
+compiled-plan reuse and SQL aggregation are merged through PRs #1417 and #1424.
+This branch adds typed expressions, field WHERE and HAVING/membership. DISTINCT,
+computed grouping, selectable time buckets, general sorting and extended exact
+count-distinct composition remain in PR 4. Current scope and validation status
+are in the [PR 3 verification record](pr3-verification.md).
 
 This refines the [Catalog B implementation plan](README.md), originally reviewed
 against PR #1412 at `012115c5`. The companion [research note](datafusion-research.md)
@@ -108,6 +109,77 @@ shared pooled Column object safe: resetting that object can destroy the view.
 Use independently owned column views/descriptors and retain their backing owners,
 or copy when a safe view is unavailable. Batch release returns descriptors and
 buffers exactly once. This is required for aliases and repeated column projections.
+
+T10 implements this contract in `pkg/query/ql/expression*.go`. Immutable,
+schema-resolved recipes retain symbolic parameters in the compiled template;
+binding creates fresh typed expressions, and operator construction chooses
+typed kernels and source offsets. Boolean values stay local to the evaluator,
+without a native ColumnType or encoding change. A batch-local protobuf boundary
+decoder handles only selected rows; borrowed source slices and owned scratch
+buffers remain separate. CASE, COALESCE and boolean short-circuiting pass physical
+row masks to children, including constant expressions that may fail if evaluated.
+
+Native sources already emit at most 65,536 physical rows. The public expression
+operator rejects an oversized external batch before constructing uint16 row
+indices, rather than silently losing rows. Scalar numeric/string/bytes results
+reach final egress as ConstColumn. Constant array payloads remain scalar through
+evaluation; final projection allocates tracked row headers for the existing
+serializer, whose native ConstColumn does not support arrays. This is an egress
+compatibility cost, recorded separately from the scalar-constant kernel gate.
+Computed timestamps use UTC Unix nanoseconds and become timestamp TagValues
+only in the final QL adapter. See the [language guide](../../../interacting/bydbql.md#59-typed-select-expressions)
+for the checked arithmetic, cast, null and result-mapping rules.
+
+T12 reuses those compiled kernels in `WrapFilter`. A BOOL result narrows selection
+without copying output value columns; only TRUE passes. The operator borrows the
+input schema, columns and metadata until the next pull, skips empty selections,
+and charges typed decoding scratch, row masks and selection storage before
+allocation. The output-copy field is structurally zero, verified by column-identity
+checks in unit tests and the kernel benchmark; it is not measured copy telemetry.
+Charged decoding scratch is outside that invariant.
+EOF, evaluation errors, cancellation and repeated Close release state and close
+the source exactly once. Oversized external batches reject before uint16 conversion.
+The filter owns the source explicitly; its shared expression kernel owns scratch.
+Planner and runtime share BOOLEAN/NULL predicate validation.
+
+The planner keeps safe necessary tag predicates and a conservative time envelope
+in the native request, then evaluates the full residual before visible projection,
+T07 aggregation and final pagination. A time branch under OR cannot exclude rows
+matched by another branch. Hidden predicate inputs survive time filtering but
+never reach final output. A residual disables T08 native aggregation and input
+LIMIT/OFFSET pushdown. Cached recipes retain symbolic values; each execution binds
+fresh parameters and one clock. Legacy tag-only MATCH and collection HAVING keep
+their original routing. T14 adds typed collection membership composition with
+new residuals; MATCH composition remains rejected.
+Names-only routing preserves ordinary legacy queries across groups whose unused
+column types differ. Typed schema validation runs when typed execution is needed.
+One input collector extends the native scan with hidden columns without changing
+visible slots; SELECT and WHERE share array binding and tag ambiguity metadata.
+See the [WHERE contract](../../../interacting/bydbql.md#510-field-and-expression-filters).
+
+T14 adds immutable `HavingPlan` metadata to the same execution recipe. Binding
+resolves source grouping keys and aggregate calls, deduplicates repeated calls,
+and retains hidden keys/calls until the predicate has run. SELECT aliases do not
+change HAVING name resolution. Local aggregation and the completed native merge
+both feed the shared filter kernel before visible projection and final pagination.
+Group-only HAVING uses local grouping; scalar empty aggregation still produces its
+SQL empty row before the predicate. No child pagination can remove input groups.
+
+The runtime exposes separate raw WHERE and HAVING statistics even though both
+stages share evaluation, borrowing and memory accounting. Each bound execution
+owns fresh scratch and reservations; cached recipes retain no bound values or
+operator state. CONTAINS/NOT CONTAINS reuse legacy all-terms membership rules,
+including scalar, duplicate, null and empty-list behavior. Typed unindexed arrays
+work through the existing batch decoder. The QL dispatcher checks current binding
+and rule metadata before native dispatch, including cache hits, and rejects typed
+membership on indexed arrays. It does not filter binding validity windows because
+native schema caches also apply those bindings. Scalar/no-membership plans skip
+the metadata check. The guard is retained from the T14 rollout. The inherited
+native projection repair fixes truncated array decoding; enabling typed membership
+on indexed arrays
+requires a separate change with its own validation. The new operator spelling
+is contextual and measure-only. The
+[T14 verification record](t14-verification.md) preserves the reproducer and boundary.
 
 ## 4. Plan stages and the small optimizer
 

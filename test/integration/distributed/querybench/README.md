@@ -465,3 +465,177 @@ without assuming that repeated native scans outperform one raw scan. This adds
 no cache, concurrency, earlier-ticket or spill benchmark matrix. Separate native
 requests have no common snapshot guarantee while writes continue; timed fixtures
 are fixed after visibility checks complete.
+
+### T10 typed expression projection
+
+`qlb_t10` measures five SELECT projections over the T07 fixture's nullable integer
+field. Each query returns all logical input rows; no LIMIT hides expression work.
+The raw control retains the same response column name and row shape.
+
+| Variant | Projection |
+| --- | --- |
+| `raw_control` | `v::FIELD AS result` |
+| `constant` | `CAST(? AS DOUBLE) AS result`, binding the string `"1.25"` |
+| `arithmetic` | `v + 2 AS result` |
+| `parameter_cast` | `v + CAST(? AS DOUBLE) AS result`, binding `"1.25"` |
+| `masked_case_coalesce` | `COALESCE(CASE WHEN v = 0 THEN 0 ELSE 8 / v END, -1) AS result` |
+
+The frozen protocol has 1,024 and 32,768 input/output rows, one query worker and
+a 256 MiB query tracker. The smaller input uses 100 timed calls and five warmups;
+the larger uses 20 timed calls and three warmups. Every cardinality starts a fresh
+process and cluster. QL raw visibility checks run before timing. Each warmup and
+six retained timed responses are checked against the independent row formula,
+including exact types, nulls and unique millisecond timestamps. A commutative
+row-keyed checksum is derived independently from fixture arithmetic. Hashing and
+full value checks run outside latency and allocation snapshots; timed calls
+only check row counts. Profiles cover the RPC phase.
+
+```sh
+for repetition in 1 2 3 4 5; do
+  DQB_ENGINE=measure DQB_SCENARIOS=qlb_t10 \
+    DQB_CARDINALITIES=1024,32768 DQB_QUERY_WORKERS=1 \
+    DQB_QUERY_MEMORY_MIB=256 DQB_PROFILE=1 \
+    DQB_REPORT_DIR="/work/.omx/bench-reports/t10-r${repetition}" \
+    test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g
+done
+```
+
+Reports preserve every latency sample, process CPU/GC/allocation counters and
+CPU/heap profile paths. They require one QL raw execution and two distributed
+leaf calls per RPC, no aggregate/merge execution, no intermediate DataPoints,
+and complete expression input/output rows. Constant kernels must allocate zero
+full-length value columns. Expression batches, vector/scalar evaluations, arm
+rows, buffer bytes, allocations and reservation/release counters are recorded.
+Results, query memory, owner pins and native flatten pool references must return
+to their starting counts after completion. Physical storage reads, retained
+native frame bytes and total parent lease charges remain explicitly unavailable.
+
+The report rejects incomplete variants/cardinalities, changed iteration or memory
+settings, missing counters, inconsistent fixture checksums and leaked owners or
+reservations. RPC comparisons describe the added cost of projection; independent
+scalar-versus-kernel speed and masked branch savings belong to K(T10). This scope
+adds no cache, concurrency, aggregation or previous-ticket benchmark matrix.
+
+### T12 field filtering before projection and aggregation
+
+`qlb_t12` measures only field filtering and its downstream work. Its 16 variants
+combine nominal selectivity 0/1/50/100%, raw projection/scalar SUM+COUNT, and
+one/two hidden predicate fields. The dedicated versioned fixture adds non-null
+`score = row % 100` to the existing nullable integer/float rules. Narrow queries
+filter `score < ?`; wider queries also test `COALESCE(f, 0) > -1000`, which is
+true for every fixture value. Predicates stay absent from visible results.
+Actual passing counts are independently computed, including partial 100-row
+cycles. The one-percent cohort has only null `v` values, exercising SQL
+SUM=NULL/COUNT=0 even when rows passed the filter.
+
+Successful measurements use 1,024/16,384 input rows, one worker, 256 MiB, and
+100 timed/5 warmup or 20 timed/3 warmup calls, respectively. There is no LIMIT:
+every required input row must reach the filter, and local aggregates must see
+exactly its TRUE rows. One logical raw scan makes two distributed leaf calls;
+native aggregation, merge and intermediate DataPoints are forbidden. Reports
+reject missing variants/metrics, changed protocol, incorrect checksums, a nonzero
+structural copy invariant, incomplete scans and leaked reservations/owners/pool refs.
+
+The initial 32,768-row smoke fails at full raw output: final response-encoding
+reservation crosses the existing 192-MiB cumulative parent admission allowance.
+A fresh-query diagnostic confirms complete filtering, no retained memory after
+failure, and successful lower-output recovery. The 16,384-row successful size
+is chosen before protocol freeze; the larger failure remains resource evidence.
+
+Each cardinality starts a fresh cluster process. All warmups and six retained
+timed responses are fully checked outside timing using fixture arithmetic and
+timestamp keys. Timed calls check result count. CPU/heap profiles, allocation
+snapshots and every latency sample are retained. Reported filter copied bytes are
+structurally zero because the filter borrows the input column objects. Unit tests
+and K's pre-timing identity checks verify this property; the RPC counter alone
+does not measure copies. Boundary decoding scratch is separately charged to query
+memory. Physical storage reads, native retained frame bytes
+and total parent lease charges remain explicitly unavailable.
+
+```sh
+for repetition in 1 2 3 4 5; do
+  DQB_ENGINE=measure DQB_SCENARIOS=qlb_t12 \
+    DQB_CARDINALITIES=1024,16384 DQB_QUERY_WORKERS=1 \
+    DQB_QUERY_MEMORY_MIB=256 DQB_PROFILE=1 \
+    DQB_REPORT_DIR="/work/.omx/bench-reports/t12-r${repetition}" \
+    test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g
+done
+```
+
+K(T12), `BenchmarkFilterT12`, separately measures the complete public filter
+lifecycle over 1/1,024/65,536 physical rows, the four thresholds, and dense or
+selected nullable inputs (24 cases). It reports examined-row throughput,
+passed-row throughput, copied bytes, selections and reservations. A zero-percent
+filter still examines input and reaches EOF; no sentinel row substitutes for it.
+There is no invented old-version baseline for new field-filter syntax.
+The owning resource probes cover larger inputs without changing native memory
+protection or expanding previous-ticket benchmark matrices.
+
+### T14 filtering completed groups and collection membership
+
+`qlb_t14` measures HAVING after complete native merge or local aggregation. Both
+routes produce 16 groups from the versioned nullable T07 float fixture. Each route
+has six variants: aggregation without HAVING, nominal 0/1/50/100% passing groups,
+and a hidden-AVG 50% predicate. Repeated SELECT/HAVING AVG calls share two state
+lanes and, on the native route, exactly two SUM/COUNT branches. All queries consume
+the complete input. Reports check that HAVING sees completed groups and that raw
+WHERE counters stay separate. With only 16 groups, the nominal 1% case keeps at
+least one group; threshold ties can keep more. Actual selected counts are recorded.
+
+At 1,024 input rows, eight additional variants compare CONTAINS and legacy infix
+HAVING over unindexed arrays of length 0/1/16/256. A separate fixed 1,024-row
+fixture has 256 candidate rows per width. Empty arrays match no rows; half the
+other candidates match, producing eight groups. An existing entity-tag predicate
+selects the width; typed membership and a field residual run before aggregation,
+followed by post-aggregate HAVING. This is 20 variants at 1,024 and 12 at 32,768
+rows, or 32 per repetition. No other ticket's timing matrix is rerun.
+
+Use five fresh 4-CPU, 8-GiB containers with no additional swap, one worker and a
+256-MiB query budget. The schedules are 100 timed/5 warmup and 20 timed/3 warmup
+calls. Each cardinality starts a fresh cluster process. All warmups and six retained
+timed responses are fully compared with independent fixture arithmetic outside
+timing; every timed call checks its result count. Every timed call must hit the
+compiled-plan cache. CPU/heap profiles, raw latencies, reservations and owner/pool
+cleanup accompany each variant.
+
+Typed array membership also validates current index bindings/rules before native
+dispatch on every call, including cache hits. Indexed arrays reject because native
+projection cannot guarantee their complete values. Scalar/no-membership variants
+skip these metadata reads; membership RPC CPU/latency includes them. CONTAINS is
+contextual and measure-only, preserving existing identifier names.
+
+For the same six independently checked timed responses, `checked_response_bytes`
+sums `proto.Size` of each actual full BydbQL response envelope, with
+`min_response_bytes` and `max_response_bytes` recording its range. Divide the total
+by `checked_timed_samples` for average output bytes. Sizing runs after latency,
+process snapshots and profiling stop, so it does not add serialization work to the
+timed loop. Reports reject missing byte evidence, envelopes smaller than two bytes,
+inconsistent extrema/totals and overflow. No additional query variants are added.
+
+```sh
+for repetition in 1 2 3 4 5; do
+  DQB_ENGINE=measure DQB_SCENARIOS=qlb_t14 \
+    DQB_CARDINALITIES=1024,32768 DQB_QUERY_WORKERS=1 \
+    DQB_QUERY_MEMORY_MIB=256 DQB_PROFILE=1 \
+    DQB_REPORT_DIR="/work/.omx/bench-reports/t14-r${repetition}" \
+    test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g
+done
+```
+
+K(T14), `BenchmarkHavingT14`, measures the public completed-group batch lifecycle
+with and without HAVING at 1/1,024/65,536 groups and the same four thresholds;
+four additional 1,024-row kernels vary membership array length. Run five one-second
+samples of each of its 19 variants. Row identities and borrowed column identity
+are checked before timing. All/zero-match cases avoid a retained selection; partial
+matches retain uint16 row indices. The copy counter is a structural invariant,
+not measured copy telemetry. Array-element count describes input width, not the
+number of comparisons actually executed.
+
+RPC CPU/allocation metrics cover the client, liaison and data nodes in one process;
+shared-kernel profiles cannot attribute CPU solely to HAVING. Process reservation
+peaks include earlier variants. Per-operator peak retained bytes, physical storage
+reads, native retained frame bytes and total parent lease charges are unavailable.
+The hidden variant returns only the grouping tag, whereas its baseline also
+returns two AVG fields; their latency difference includes this output-width change.
+The existing indexed-array native projection limitation is documented in
+[T14 verification](../../../../docs/design/0.12.0/measure-ql-core-sql/t14-verification.md).
