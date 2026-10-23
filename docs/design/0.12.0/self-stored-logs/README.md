@@ -291,7 +291,7 @@ The metric names carry the `native_log_` prefix. The native meter provider names
 
 The sink follows the memory protector's own policy rather than a second one. On each admission it calls `State()`, the protector's nonblocking pressure check: it reads counters and never waits, so it is safe on every goroutine that logs. While `State()` is high, the newest event is dropped and counted as `memory_pressure`. The blocking `AcquireResource` is never called from the logging path. Where no protector is registered, `State()` reports low pressure and the buffer's own bounds hold.
 
-The buffer still needs its own bound: protecting storage writes does not bound what waits in the buffer. It holds at most 8MiB, queued and in flight, and an event is charged its line plus the memory its pooled write request holds, about 2KiB, so the bound admits about 3900 events. At the bound the newest event is dropped as `buffer_full`.
+The buffer still needs its own bound: protecting storage writes does not bound what waits in the buffer. It holds at most 8MiB, queued and in flight, and an event is charged its line, the memory its pooled write request holds, about 2KiB, and the capacity of that request's fields buffer, which a request reused from a larger event keeps up to 4KiB. A typical event is charged about 2.1KiB, so the bound admits about 3800 events. At the bound the newest event is dropped as `buffer_full`.
 
 > Normal logging is never degraded by the sink. Native is the more verbose sink, so at normal `error` and native `info` a dropped native `info` event has no normal copy anywhere — the drop counters are the only record it existed.
 

@@ -395,8 +395,58 @@ func TestQueuedEntryFitsItsCharge(t *testing.T) {
 	runtime.ReadMemStats(&after)
 	perEntry := int64(after.HeapAlloc-before.HeapAlloc) / n
 	runtime.KeepAlive(held)
-	if charged := entryCost(int64(len(line))); perEntry > charged {
+	if charged := entryCost(int64(len(line)), held[0]); perEntry > charged {
 		t.Errorf("an entry holds %d bytes and charges %d; raise entryOverheadBytes", perEntry, charged)
+	}
+}
+
+// TestReusedEntryFitsItsCharge is TestQueuedEntryFitsItsCharge for a warmed
+// pool: each request first carries a large event, which grows its fields
+// buffer, and is then reused for a small event without fields. The buffer stays
+// with the request, so the small event's charge must cover it.
+func TestReusedEntryFitsItsCharge(t *testing.T) {
+	s := testSink(t)
+	large := []byte(`{"level":"info","module":"MEASURE","message":"large","payload":"` + strings.Repeat("x", 3000) + `"}`)
+	small := []byte(`{"level":"info","module":"MEASURE","message":"small"}`)
+	const n = 2000
+	held := make([]*request, 0, n)
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	for i := 0; i < n; i++ {
+		r := newRequest()
+		if err := s.fill(r, zerolog.InfoLevel, "MEASURE", large); err != nil {
+			t.Fatalf("fill: %v", err)
+		}
+		reset(r)
+		if err := s.fill(r, zerolog.InfoLevel, "MEASURE", small); err != nil {
+			t.Fatalf("fill: %v", err)
+		}
+		s.stamp(entry{req: r, seq: uint64(i)})
+		held = append(held, r)
+	}
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+	perEntry := int64(after.HeapAlloc-before.HeapAlloc) / n
+	runtime.KeepAlive(held)
+	if held[0].fields.Cap() < 3000 {
+		t.Fatalf("the reused request kept a %d-byte fields buffer, so this test would prove nothing", held[0].fields.Cap())
+	}
+	if charged := entryCost(int64(len(small)), held[0]); perEntry > charged {
+		t.Errorf("a reused entry holds %d bytes and charges %d", perEntry, charged)
+	}
+}
+
+// TestAdmitChargesTheBufferItsEventGrew admits an event whose fields outgrow
+// the buffer of a fresh request: the queued entry is charged what it holds
+// once built, not what the request held before.
+func TestAdmitChargesTheBufferItsEventGrew(t *testing.T) {
+	s := testSink(t)
+	line := []byte(`{"level":"info","module":"MEASURE","message":"large","payload":"` + strings.Repeat("x", 3000) + `"}`)
+	s.Admit(zerolog.InfoLevel, "MEASURE", line)
+	e := <-s.queue
+	if want := entryCost(int64(len(line)), e.req); e.size != want || s.QueuedBytes() != want {
+		t.Errorf("entry charged %d, queued %d; it holds %d", e.size, s.QueuedBytes(), want)
 	}
 }
 

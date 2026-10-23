@@ -551,7 +551,11 @@ func TestIncompatibleSchemaIsLoggedOnce(t *testing.T) {
 func TestBatchIsCappedAtAQuarterOfTheBudget(t *testing.T) {
 	// An event charges its line plus what its built request holds, so the
 	// budget is expressed in whole events rather than in line lengths.
-	event := entryCost(int64(len(sampleLine)))
+	built, err := testSink(t).build(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	event := entryCost(int64(len(sampleLine)), built)
 	client := &fakeClient{}
 	_, sink := testService(t, client, func(s *Service) {
 		s.timing.flushSize = 1000

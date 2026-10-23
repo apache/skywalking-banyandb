@@ -73,20 +73,26 @@ const maxEventBytes = 64 << 10
 
 // queueDepth bounds the buffer by count as well as by bytes. The byte bound is
 // the one that matters, so the count sits above what it admits: at
-// entryOverheadBytes per event, 8MiB holds about 3900 events.
+// entryCost per typical event, 8MiB holds about 3800 events.
 const queueDepth = 8192
 
-// entryOverheadBytes is what a queued event holds beyond its own line: the
-// pooled request with its element, tag values and fields buffer. Measured at
-// 2064 bytes held per entry for a 151-byte line, so the line alone
-// under-counts the heap by more than ten times, and a bound charged on the
-// line alone would let the buffer grow far past it.
-// TestQueuedEntryFitsItsCharge holds the constant to what an entry really
-// costs.
+// entryOverheadBytes is what a queued event holds beyond its own line and its
+// fields buffer: the pooled request with its element and tag values. Measured
+// at 2064 bytes held per entry for a 151-byte line with a 64-byte fields
+// buffer, and 5044 for a 52-byte line in a request that kept a 3072-byte
+// buffer, so the line alone under-counts the heap by more than ten times, and
+// a bound charged on the line alone would let the buffer grow far past it.
+// TestQueuedEntryFitsItsCharge and TestReusedEntryFitsItsCharge hold the
+// constant to what an entry really costs.
 const entryOverheadBytes = 1984
 
-// entryCost is what one event charges against the byte bound.
-func entryCost(size int64) int64 { return size + entryOverheadBytes }
+// entryCost is what one event charges against the byte bound: its line, the
+// fixed structure of its request, and the capacity of the request's fields
+// buffer. A request recycled from a larger event keeps that buffer, up to
+// maxRetainedFieldsBytes, even when the event it now carries has no fields.
+func entryCost(size int64, r *request) int64 {
+	return size + entryOverheadBytes + int64(r.fields.Cap())
+}
 
 // NodeInfo identifies the process whose logs these are. It is late-bound:
 // the node's identity is not known when the sink is constructed.
@@ -275,19 +281,31 @@ func (s *Sink) Admit(level zerolog.Level, module string, line []byte) {
 		s.drop(reasonMemoryPressure)
 		return
 	}
-	cost := entryCost(size)
+	req := s.get()
+	cost := entryCost(size, req)
 	// Reserve before building, so two goroutines cannot both read the same
 	// total and both enqueue. Every failure path below returns the reservation.
-	if s.queued.Add(cost)+s.inFlight.Load() > s.maxBytes {
-		s.queued.Add(-cost)
+	if !s.reserve(cost) {
+		s.release(req)
 		s.drop(reasonBufferFull)
 		return
 	}
-	req, err := s.build(level, module, line)
-	if err != nil {
+	if err := s.fill(req, level, module, line); err != nil {
 		s.queued.Add(-cost)
+		s.release(req)
 		s.drop(reasonEncodeFailed)
 		return
+	}
+	// Encoding fields larger than the buffer held grows it, and the entry is
+	// charged what it holds once built.
+	if grown := entryCost(size, req) - cost; grown > 0 {
+		if !s.reserve(grown) {
+			s.queued.Add(-cost)
+			s.release(req)
+			s.drop(reasonBufferFull)
+			return
+		}
+		cost += grown
 	}
 	select {
 	case s.queue <- entry{req: req, size: cost, seq: s.seq.Add(1)}:
@@ -298,14 +316,37 @@ func (s *Sink) Admit(level zerolog.Level, module string, line []byte) {
 	}
 }
 
+// reserve charges n bytes against the bound, or charges nothing and reports
+// false when the bound would be passed.
+func (s *Sink) reserve(n int64) bool {
+	if s.queued.Add(n)+s.inFlight.Load() > s.maxBytes {
+		s.queued.Add(-n)
+		return false
+	}
+	return true
+}
+
+// get takes a request from the pool.
+func (s *Sink) get() *request {
+	if r, ok := s.pool.Get().(*request); ok {
+		return r
+	}
+	return newRequest()
+}
+
 // release returns a request to the pool once nothing uses it any more: after
-// its write finished, or when it is dropped. It clears what the event owns, so
-// a pooled request cannot keep an event's strings or bytes alive, and keeps
-// the structure for the next event.
+// its write finished, or when it is dropped.
 func (s *Sink) release(r *request) {
 	if r == nil {
 		return
 	}
+	reset(r)
+	s.pool.Put(r)
+}
+
+// reset clears what the event owns, so a pooled request cannot keep an event's
+// strings or bytes alive, and keeps the structure for the next event.
+func reset(r *request) {
 	for _, str := range r.str {
 		str.Value = ""
 	}
@@ -318,16 +359,25 @@ func (s *Sink) release(r *request) {
 	r.Element.ElementId = ""
 	r.Element.Timestamp.Seconds, r.Element.Timestamp.Nanos = 0, 0
 	r.MessageId = 0
-	s.pool.Put(r)
 }
 
-// build turns one encoded event into a write request. The known keys become
-// tags and only what is left goes into the data family, so nothing is stored
-// twice and the original line is not retained.
+// build turns one encoded event into a write request taken from the pool.
 func (s *Sink) build(level zerolog.Level, module string, line []byte) (*request, error) {
+	r := s.get()
+	if err := s.fill(r, level, module, line); err != nil {
+		s.release(r)
+		return nil, err
+	}
+	return r, nil
+}
+
+// fill writes one encoded event into r. The known keys become tags and only
+// what is left goes into the data family, so nothing is stored twice and the
+// original line is not retained.
+func (s *Sink) fill(r *request, level zerolog.Level, module string, line []byte) error {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(line, &raw); err != nil {
-		return nil, err
+		return err
 	}
 
 	// Taken here rather than parsed back out of the line. zerolog's default
@@ -354,16 +404,11 @@ func (s *Sink) build(level zerolog.Level, module string, line []byte) (*request,
 	} {
 		delete(raw, known)
 	}
-	r, _ := s.pool.Get().(*request)
-	if r == nil {
-		r = newRequest()
-	}
 	if len(raw) > 0 {
 		// Encoded into the request's own buffer. The write path copies binary
 		// tag values, so the buffer is free again once the write returns.
 		if err := json.NewEncoder(&r.fields).Encode(raw); err != nil {
-			s.release(r)
-			return nil, err
+			return err
 		}
 		// Encode ends the value with a newline that Marshal does not add.
 		r.binary.BinaryData = bytes.TrimSuffix(r.fields.Bytes(), []byte{'\n'})
@@ -383,7 +428,7 @@ func (s *Sink) build(level zerolog.Level, module string, line []byte) (*request,
 	r.str[2].Value = module
 	r.str[3].Value = levelName(level)
 	r.str[6].Value = message
-	return r, nil
+	return nil
 }
 
 // stamp fills the identity a request could not carry at admission. It runs on
