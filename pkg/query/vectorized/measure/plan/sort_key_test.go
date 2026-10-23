@@ -150,10 +150,10 @@ func TestEncodeSortKey_TagValue_PassthroughMatchesMarshalTagValue(t *testing.T) 
 }
 
 func TestEncodeSortKey_UnsupportedType(t *testing.T) {
-	col := vectorized.NewInt64ArrayColumn(1)
-	col.Append([]int64{1, 2, 3})
+	col := vectorized.NewFieldValueColumn(1)
+	col.Append(&modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: 1}}})
 	if _, err := encodeSortKey(col, 0); err == nil {
-		t.Fatal("encodeSortKey on []int64 column must error")
+		t.Fatal("encodeSortKey on a FieldValue column must error")
 	}
 }
 
@@ -179,4 +179,21 @@ func TestEncodeSortKeyConstColumn(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEncodeSortKey_ArraysMatchRowPathTagValueEncoding(t *testing.T) {
+	strCol := vectorized.NewStrArrayColumn(1)
+	strCol.Append([]string{"a", "b"})
+	intCol := vectorized.NewInt64ArrayColumn(1)
+	intCol.Append([]int64{1, 2})
+	wantStr, err := pbv1.MarshalTagValue(&modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: []string{"a", "b"}}}})
+	require.NoError(t, err)
+	wantInt, err := pbv1.MarshalTagValue(&modelv1.TagValue{Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: []int64{1, 2}}}})
+	require.NoError(t, err)
+	gotStr, err := encodeSortKey(strCol, 0)
+	require.NoError(t, err)
+	gotInt, err := encodeSortKey(intCol, 0)
+	require.NoError(t, err)
+	require.Equal(t, wantStr, gotStr)
+	require.Equal(t, wantInt, gotInt)
 }
