@@ -657,7 +657,7 @@ func (s *traceService) Query(ctx context.Context, req *tracev1.QueryRequest) (re
 		}
 		return queryResp, nil
 	case *common.Error:
-		return nil, errors.WithMessage(errQueryMsg, d.Error())
+		return nil, dataNodeQueryError(d)
 	}
 	return nil, nil
 }

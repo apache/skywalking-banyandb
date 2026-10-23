@@ -113,6 +113,7 @@ func NewMemory(omr observability.MetricsRegistry) Memory {
 		l:           logger.GetLogger("memory-protector"),
 	}
 	registerMemory(m)
+	applyNextQueryPool(m)
 	return m
 }
 

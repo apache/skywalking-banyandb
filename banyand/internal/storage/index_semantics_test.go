@@ -133,9 +133,10 @@ func (l *budgetCapLease) Charge(n uint64) error {
 	return nil
 }
 
-func (l *budgetCapLease) Limit() uint64 { return l.cap }
-func (l *budgetCapLease) Used() uint64  { return l.used }
-func (l *budgetCapLease) Owner() any    { return nil }
+func (l *budgetCapLease) Refund(n uint64) { l.used -= min(n, l.used) }
+func (l *budgetCapLease) Limit() uint64   { return l.cap }
+func (l *budgetCapLease) Used() uint64    { return l.used }
+func (l *budgetCapLease) Owner() any      { return nil }
 
 // TestSeriesIndex_Search_UnsortedPathChargesQueryBudget is the S2
 // regression: the previous release's parseResult/readSeriesDocument charged

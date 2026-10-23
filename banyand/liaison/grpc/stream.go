@@ -491,7 +491,7 @@ func (s *streamService) query(ctx context.Context, req *streamv1.QueryRequest) (
 		}
 		return d, nil
 	case *common.Error:
-		return nil, errors.WithMessage(errQueryMsg, d.Error())
+		return nil, dataNodeQueryError(d)
 	}
 	return nil, nil
 }

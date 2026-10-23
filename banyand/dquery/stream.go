@@ -25,6 +25,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -61,12 +62,12 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 		}
 		ec, err := p.streamService.Stream(meta)
 		if err != nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for stream %s: %v", meta.GetName(), err))
+			resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(err, "fail to get execution context for stream %s: %v", meta.GetName(), err))
 			return
 		}
 		s, err := logical_stream.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
 		if err != nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for stream %s: %v", meta.GetName(), err))
+			resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(err, "fail to build schema for stream %s: %v", meta.GetName(), err))
 			return
 		}
 		schemas = append(schemas, s)
@@ -74,7 +75,7 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 
 	plan, err := logical_stream.DistributedAnalyze(queryCriteria, schemas)
 	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for stream %s: %v", queryCriteria.Name, err))
+		resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(err, "fail to analyze the query request for stream %s: %v", queryCriteria.Name, err))
 		return
 	}
 
@@ -133,7 +134,7 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 	}))
 	if err != nil {
 		p.log.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to execute the query plan")
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("execute the query plan for stream %s: %v", queryCriteria.Name, err))
+		resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(err, "execute the query plan for stream %s: %v", queryCriteria.Name, err))
 		return
 	}
 
