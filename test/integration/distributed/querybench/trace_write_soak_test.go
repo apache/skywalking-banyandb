@@ -64,6 +64,7 @@ const (
 	envWriteSoakDuration = "DQB_WRITE_SOAK_DURATION"
 	envWriteSoakRate     = "DQB_WRITE_SOAK_RATE"
 	envWriteSoakLabel    = "DQB_WRITE_SOAK_LABEL"
+	envWriteSoakEngine   = "DQB_WRITE_SOAK_ENGINE"
 	envWriteSoakFullMax  = "DQB_WRITE_SOAK_FULLCHECK_MAX"
 
 	defaultWriteSoakWriters  = 4
@@ -141,13 +142,13 @@ type writeSoakFinalCheck struct {
 
 // writeSoakReport is the machine-readable artifact of the write soak.
 type writeSoakReport struct {
+	Final                 any                         `json:"final_check"`
 	StatusCounts          map[string]int64            `json:"ack_status_counts"`
+	Label                 string                      `json:"label"`
+	GoVersion             string                      `json:"go_version"`
 	Errors                []string                    `json:"errors,omitempty"`
 	Heap                  []writeSoakHeapSample       `json:"heap_series"`
 	Visibility            []writeSoakVisibilitySample `json:"visibility_samples"`
-	Label                 string                      `json:"label"`
-	GoVersion             string                      `json:"go_version"`
-	Final                 writeSoakFinalCheck         `json:"final_check"`
 	AckAll                latencySummary              `json:"ack_latency_all"`
 	AckBeforeClose        latencySummary              `json:"ack_latency_before_close"`
 	AckAfterClose         latencySummary              `json:"ack_latency_after_close"`
@@ -229,6 +230,9 @@ func loadWriteSoakConfig() writeSoakConfig {
 func TestTraceWriteSoak(t *testing.T) {
 	if !getBool(envWriteSoak) {
 		t.Skipf("set %s=1 to run the trace write soak", envWriteSoak)
+	}
+	if engine := getString(envWriteSoakEngine, engineTrace); engine != engineTrace {
+		t.Skipf("%s=%s selects another write soak", envWriteSoakEngine, engine)
 	}
 	soakCfg := loadWriteSoakConfig()
 	if soakCfg.Writers <= 0 || soakCfg.Rate <= 0 || soakCfg.Duration <= 0 || soakCfg.SpansPerTrace <= 0 {
@@ -392,8 +396,9 @@ func TestTraceWriteSoak(t *testing.T) {
 
 	checkCtx, checkCancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer checkCancel()
-	report.Final = finalWriteSoakCheck(checkCtx, client, writers, soakCfg, addError)
-	t.Logf("[write-soak] final check: %+v", report.Final)
+	final := finalWriteSoakCheck(checkCtx, client, writers, soakCfg, addError)
+	report.Final = final
+	t.Logf("[write-soak] final check: %+v", final)
 
 	finishWriteSoakReport(report)
 	errMu.Lock()
@@ -404,8 +409,8 @@ func TestTraceWriteSoak(t *testing.T) {
 	for _, msg := range report.Errors {
 		t.Errorf("[write-soak] %s", msg)
 	}
-	if report.Final.SpansLost > 0 || report.Final.SpansDuplicated > 0 || report.Final.TracesMissing > 0 || report.Final.TracesDuplicated > 0 {
-		t.Errorf("[write-soak] rows lost or duplicated after drain: %+v", report.Final)
+	if final.SpansLost > 0 || final.SpansDuplicated > 0 || final.TracesMissing > 0 || final.TracesDuplicated > 0 {
+		t.Errorf("[write-soak] rows lost or duplicated after drain: %+v", final)
 	}
 }
 
