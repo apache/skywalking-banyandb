@@ -105,13 +105,21 @@ if [[ "${SOAK}" == "1" ]]; then
   exit 0
 fi
 
-# DQB_WRITE_SOAK=1: run the long-lived trace write soak instead of the matrix
-# benchmark. It writes write-soak-<label>.json under the report dir.
+# DQB_WRITE_SOAK=1: run the long-lived write soak instead of the matrix
+# benchmark. DQB_WRITE_SOAK_ENGINE selects the trace (default) or stream soak.
+# It writes write-soak-<label>.json under the report dir.
 if [[ "${DQB_WRITE_SOAK:-0}" == "1" ]]; then
-  echo "[orchestrate] === write soak mode: running TestTraceWriteSoak ==="
+  WRITE_SOAK_ENGINE="${DQB_WRITE_SOAK_ENGINE:-trace}"
+  case "${WRITE_SOAK_ENGINE}" in
+    trace) WRITE_SOAK_TEST=TestTraceWriteSoak ;;
+    stream) WRITE_SOAK_TEST=TestStreamWriteSoak ;;
+    *) echo "[orchestrate] unsupported DQB_WRITE_SOAK_ENGINE=${WRITE_SOAK_ENGINE}" >&2; exit 1 ;;
+  esac
+  echo "[orchestrate] === write soak mode: running ${WRITE_SOAK_TEST} ==="
   DQB_ENGINE=trace \
+    DQB_WRITE_SOAK_ENGINE="${WRITE_SOAK_ENGINE}" \
     DQB_REPORT_DIR="${REPORT_DIR}" \
-    "${BINARY}" -test.run TestTraceWriteSoak -test.v -test.timeout "${DQB_SOAK_TEST_TIMEOUT:-60m}"
+    "${BINARY}" -test.run "${WRITE_SOAK_TEST}" -test.v -test.timeout "${DQB_SOAK_TEST_TIMEOUT:-60m}"
   echo "[orchestrate] write soak done"
   exit 0
 fi
