@@ -115,32 +115,9 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 			resp = bus.NewMessage(bus.MessageID(time.Now().UnixNano()), common.NewError("panic"))
 		}
 	}()
-	var metadata []*commonv1.Metadata
-	var schemas []logical.Schema
-	var ecc []executor.StreamExecutionContext
-	for i := range queryCriteria.Groups {
-		meta := &commonv1.Metadata{
-			Name:  queryCriteria.Name,
-			Group: queryCriteria.Groups[i],
-		}
-		ec, err := p.streamService.Stream(meta)
-		if err != nil {
-			resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(err, "fail to get execution context for stream %s: %v", meta.GetName(), err))
-			return
-		}
-		ecc = append(ecc, ec)
-		s, err := logical_stream.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
-		if err != nil {
-			resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(err, "fail to build schema for stream %s: %v", meta.GetName(), err))
-			return
-		}
-		schemas = append(schemas, s)
-		metadata = append(metadata, meta)
-	}
-
-	plan, err := logical_stream.Analyze(queryCriteria, metadata, schemas, ecc)
+	plan, err := p.buildStreamPlan(queryCriteria)
 	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(err, "fail to analyze the query request for stream %s: %v", queryCriteria.GetName(), err))
+		resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(err, "%v", err))
 		return
 	}
 
@@ -194,6 +171,37 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 	}
 	resp = vecResp
 	return
+}
+
+// buildStreamPlan resolves the stream in every requested group and analyzes the request.
+// Its errors carry the message the client sees and wrap the cause, so a typed resource
+// failure keeps its identity.
+func (p *streamQueryProcessor) buildStreamPlan(queryCriteria *streamv1.QueryRequest) (logical.Plan, error) {
+	var metadata []*commonv1.Metadata
+	var schemas []logical.Schema
+	var ecc []executor.StreamExecutionContext
+	for i := range queryCriteria.Groups {
+		meta := &commonv1.Metadata{
+			Name:  queryCriteria.Name,
+			Group: queryCriteria.Groups[i],
+		}
+		ec, err := p.streamService.Stream(meta)
+		if err != nil {
+			return nil, fmt.Errorf("fail to get execution context for stream %s: %w", meta.GetName(), err)
+		}
+		ecc = append(ecc, ec)
+		s, err := logical_stream.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
+		if err != nil {
+			return nil, fmt.Errorf("fail to build schema for stream %s: %w", meta.GetName(), err)
+		}
+		schemas = append(schemas, s)
+		metadata = append(metadata, meta)
+	}
+	plan, err := logical_stream.Analyze(queryCriteria, metadata, schemas, ecc)
+	if err != nil {
+		return nil, fmt.Errorf("fail to analyze the query request for stream %s: %w", queryCriteria.GetName(), err)
+	}
+	return plan, nil
 }
 
 // tryStreamVecDispatch runs the native columnar (vec) path for a stream query.
