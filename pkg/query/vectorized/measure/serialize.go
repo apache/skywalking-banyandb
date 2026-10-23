@@ -20,6 +20,7 @@ package measure
 import (
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -37,6 +38,7 @@ import (
 // Row order matches batch row order (respecting Selection); the row-based path
 // produces messages in the same order from MeasureResult iteration.
 func serializeBatchToProto(b *vectorized.RecordBatch, dst []*measurev1.InternalDataPoint) []*measurev1.InternalDataPoint {
+	serializedRows.Add(int64(b.ActiveLen()))
 	if dst == nil {
 		dst = make([]*measurev1.InternalDataPoint, 0, b.ActiveLen())
 	}
@@ -345,3 +347,10 @@ func copyBytes(src []byte) []byte {
 	copy(buf, src)
 	return buf
 }
+
+// serializedRows counts the rows serialized into row-form InternalDataPoints by this process.
+var serializedRows atomic.Int64
+
+// SerializedRowCount returns how many rows this process has materialized as InternalDataPoints.
+// Tests use its delta to check that a result is converted to rows only once, at egress.
+func SerializedRowCount() int64 { return serializedRows.Load() }
