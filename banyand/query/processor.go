@@ -1296,19 +1296,7 @@ func (p *traceQueryProcessor) buildTraceTags(result *model.TraceResult, queryCri
 func (p *traceQueryProcessor) buildFrameTraceResults(resultIterator iter.Iterator[model.TraceResult],
 	queryCriteria *tracev1.QueryRequest, execPlan *traceExecutionPlan,
 ) ([]model.TraceResult, error) {
-	traceIDInclusionMap := make(map[int]bool)
-	spanIDInclusionMap := make(map[int]bool)
-	for i, tagName := range execPlan.traceIDTagNames {
-		if slices.Contains(queryCriteria.TagProjection, tagName) {
-			traceIDInclusionMap[i] = true
-		}
-	}
-	for i, tagName := range execPlan.spanIDTagNames {
-		if slices.Contains(queryCriteria.TagProjection, tagName) {
-			spanIDInclusionMap[i] = true
-		}
-	}
-
+	builder := newTraceFrameBuilder(queryCriteria, execPlan)
 	var results []model.TraceResult
 	for {
 		result, hasNext := resultIterator.Next()
@@ -1321,45 +1309,77 @@ func (p *traceQueryProcessor) buildFrameTraceResults(resultIterator iter.Iterato
 		if result.TID == "" {
 			continue
 		}
-
-		spanCount := len(result.Spans)
-		frameResult := model.TraceResult{
-			TID:     result.TID,
-			Key:     result.Key,
-			Spans:   result.Spans,
-			SpanIDs: result.SpanIDs,
-		}
-		if result.Tags != nil && len(queryCriteria.TagProjection) > 0 {
-			for _, tag := range result.Tags {
-				if !slices.Contains(queryCriteria.TagProjection, tag.Name) {
-					continue
-				}
-				frameResult.Tags = append(frameResult.Tags, tag)
-			}
-		}
-		if traceIDInclusionMap[result.GroupIndex] {
-			values := make([]*modelv1.TagValue, spanCount)
-			tidValue := &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: result.TID}}}
-			for spanIdx := range values {
-				values[spanIdx] = tidValue
-			}
-			frameResult.Tags = append(frameResult.Tags, model.Tag{Name: execPlan.traceIDTagNames[result.GroupIndex], Values: values})
-		}
-		if spanIDInclusionMap[result.GroupIndex] {
-			values := make([]*modelv1.TagValue, spanCount)
-			for spanIdx := 0; spanIdx < spanCount; spanIdx++ {
-				if spanIdx < len(result.SpanIDs) {
-					values[spanIdx] = &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: result.SpanIDs[spanIdx]}}}
-				} else {
-					values[spanIdx] = pbv1.NullTagValue
-				}
-			}
-			frameResult.Tags = append(frameResult.Tags, model.Tag{Name: execPlan.spanIDTagNames[result.GroupIndex], Values: values})
-		}
-		results = append(results, frameResult)
+		results = append(results, builder.build(&result))
 	}
 
 	return results, nil
+}
+
+// traceFrameBuilder converts one iterator result into the frame-shaped result.
+type traceFrameBuilder struct {
+	queryCriteria       *tracev1.QueryRequest
+	execPlan            *traceExecutionPlan
+	traceIDInclusionMap map[int]bool
+	spanIDInclusionMap  map[int]bool
+}
+
+func newTraceFrameBuilder(queryCriteria *tracev1.QueryRequest, execPlan *traceExecutionPlan) *traceFrameBuilder {
+	b := &traceFrameBuilder{
+		queryCriteria:       queryCriteria,
+		execPlan:            execPlan,
+		traceIDInclusionMap: make(map[int]bool),
+		spanIDInclusionMap:  make(map[int]bool),
+	}
+	for i, tagName := range execPlan.traceIDTagNames {
+		if slices.Contains(queryCriteria.TagProjection, tagName) {
+			b.traceIDInclusionMap[i] = true
+		}
+	}
+	for i, tagName := range execPlan.spanIDTagNames {
+		if slices.Contains(queryCriteria.TagProjection, tagName) {
+			b.spanIDInclusionMap[i] = true
+		}
+	}
+	return b
+}
+
+func (b *traceFrameBuilder) build(result *model.TraceResult) model.TraceResult {
+	queryCriteria, execPlan := b.queryCriteria, b.execPlan
+	spanCount := len(result.Spans)
+	frameResult := model.TraceResult{
+		TID:     result.TID,
+		Key:     result.Key,
+		Spans:   result.Spans,
+		SpanIDs: result.SpanIDs,
+	}
+	if result.Tags != nil && len(queryCriteria.TagProjection) > 0 {
+		for _, tag := range result.Tags {
+			if !slices.Contains(queryCriteria.TagProjection, tag.Name) {
+				continue
+			}
+			frameResult.Tags = append(frameResult.Tags, tag)
+		}
+	}
+	if b.traceIDInclusionMap[result.GroupIndex] {
+		values := make([]*modelv1.TagValue, spanCount)
+		tidValue := &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: result.TID}}}
+		for spanIdx := range values {
+			values[spanIdx] = tidValue
+		}
+		frameResult.Tags = append(frameResult.Tags, model.Tag{Name: execPlan.traceIDTagNames[result.GroupIndex], Values: values})
+	}
+	if b.spanIDInclusionMap[result.GroupIndex] {
+		values := make([]*modelv1.TagValue, spanCount)
+		for spanIdx := 0; spanIdx < spanCount; spanIdx++ {
+			if spanIdx < len(result.SpanIDs) {
+				values[spanIdx] = &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: result.SpanIDs[spanIdx]}}}
+			} else {
+				values[spanIdx] = pbv1.NullTagValue
+			}
+		}
+		frameResult.Tags = append(frameResult.Tags, model.Tag{Name: execPlan.spanIDTagNames[result.GroupIndex], Values: values})
+	}
+	return frameResult
 }
 
 func (p *traceQueryProcessor) logSlowQuery(queryCriteria *tracev1.QueryRequest, traces []*tracev1.InternalTrace, startTime time.Time) {
