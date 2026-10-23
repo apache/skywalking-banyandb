@@ -168,9 +168,10 @@ Logger -> filter/encode -> BufferedPublisher.Offer      (logging)
 // Package queue.
 type BufferedPublisher interface {
 	// Offer accepts or refuses req without waiting for storage, the network
-	// or free capacity. On false the caller keeps req. On true the queue owns
-	// req until it calls req.Done.
-	Offer(req *BufferedRequest) bool
+	// or free capacity, and reports the decision it made. On Accepted the
+	// queue owns req until it calls req.Release. On any refusal the caller
+	// keeps req.
+	Offer(req *BufferedRequest) Admission
 	// Start begins delivery. It is called once, when the producer is ready.
 	Start(d Delivery)
 	// Close stops admission, drains within an internal deadline and returns
@@ -178,14 +179,25 @@ type BufferedPublisher interface {
 	Close()
 }
 
+// Admission is the decision Offer made, taken at the moment it made it.
+type Admission uint8
+
+const (
+	Accepted        Admission = iota // the queue owns the request
+	RefusedPressure                  // protector.State() reported high pressure
+	RefusedFull                      // the allowance had no room for the request
+	RefusedClosed                    // Close had already started
+)
+
 type BufferedRequest struct {
-	Data  any           // the message body
-	Bytes int64         // what it holds, charged against the publisher's allowance
-	Done  func(Outcome) // called exactly once for an accepted request
+	Data    any           // the message body
+	Bytes   int64         // what it holds, charged against the publisher's allowance
+	Done    func(Outcome) // terminal accounting: exactly once, by the drain deadline at the latest
+	Release func()        // resource release: exactly once, when no Deliver can still read the request
 }
 
 type Outcome struct {
-	Reason    string // why it was not delivered: rejected, retries_exhausted, shutdown_deadline
+	Reason    string // why it was not delivered: retries_exhausted, shutdown_deadline
 	Delivered bool   // only a completed delivery; acceptance never counts as written
 }
 
@@ -203,23 +215,31 @@ Phase 1 implements one `Delivery`, the local adapter: it publishes a batch to `T
 
 | Concern | Rule |
 |---|---|
-| Ownership | `Offer` false: the caller keeps the request, counts the refusal and releases it. `Offer` true: the queue owns it until `Done`. `Done` runs exactly once, after the queue stops using the request, so the logging module returns pooled requests to the pool only there. |
-| Capacity | Each publisher has its own byte allowance (the 8MiB of section 3.2), so native logging cannot exhaust what ordinary writes use. Queued and in-flight bytes both count. `Offer` refuses while `protector.State()` is high and at the allowance, and never evicts what is queued: drop newest. |
+| Ownership | A refusal: the caller keeps the request, counts the refusal under the reason `Offer` returned and releases it. `Accepted`: the queue owns it until `Release`. `Done` and `Release` each run exactly once. `Done` settles the accounting; `Release` runs after `Done`, once no `Deliver` can still read the request, and the logging module returns pooled requests to the pool only there. |
+| Capacity | Each publisher has its own byte allowance (the 8MiB of section 3.2), so native logging cannot exhaust what ordinary writes use. Queued and in-flight bytes both count, until `Release`. `Offer` returns `RefusedPressure` while `protector.State()` is high and `RefusedFull` at the allowance, and never evicts what is queued: drop newest. The caller reads the reason from the decision itself, so it never re-reads the pressure state after the fact. |
 | Batches | A batch closes at the event count, at a quarter of the allowance in bytes, or at the flush interval. Retained requests go back at the head of the queue and are sent in batches under the same limits, never in one combined batch. A request is retried once per interval, at most 10 times, then completed with `retries_exhausted`. |
 | Readiness | The logging module creates the publisher with the sink, before logging initialization, so startup events are accepted. Before `Start` nothing is delivered and the same allowance bounds what is held; past it, drop newest. The logging module calls `Start` once the node identity, the schema and the local destination are ready. If `Close` comes first, every held request completes with `shutdown_deadline`. |
-| Shutdown cut-off | `Offer` registers itself as active, then checks a closed flag. `Close` sets the flag, then waits for the active count to reach zero. Admission never waits, so that wait is short. After it, no `Offer` can still enqueue, and every accepted request either completes or receives `shutdown_deadline` within the drain deadline. |
-| Stuck delivery | `Close` returns after the drain deadline even when a `Deliver` call has not returned. The requests in that call still belong to the queue, and their `Done` runs only when `Deliver` returns, so no memory a delivery still reads is reused. |
+| Shutdown cut-off | `Offer` registers itself as active, then checks a closed flag. `Close` sets the flag, then waits for the active count to reach zero. Admission never waits, so that wait is short. After it, no `Offer` can still enqueue, an `Offer` that finds the flag set returns `RefusedClosed`, and every accepted request receives `Done` within the drain deadline: delivered, or `shutdown_deadline`. |
+| Stuck delivery | `Close` returns after the drain deadline even when a `Deliver` call has not returned. The requests in that call receive `Done` with `shutdown_deadline` at the deadline, like any other request still held, so loss is accounted for on time. Their `Release` waits until `Deliver` returns, which may be never, so no memory a delivery still reads is reused; until then they stay charged against the allowance, at most one batch. If the stuck `Deliver` later succeeds, the events stay counted as lost: loss can be over-counted, never under-counted. |
 | Recursion marker | `NewBufferedPublisher` takes the context every `Deliver` runs under. The native log publisher passes `logger.WithNativeWrite(ctx)`, so downstream logging on the consumer goroutine is still marked as a native write (section 4.1). |
 
 Flush interval, batch limits, retry count and deadlines remain internal, as in section 4.
 
 #### What stays in the logging module
 
-Filtering, the reserved exclusions, encoding into pooled requests, identity stamping, the schema retry, and the `native_log_*` counters. The counters take their reasons from `Offer` refusals and `Outcome` values, so the closed `reason` set of section 5 does not change.
+Filtering, the reserved exclusions, encoding into pooled requests, identity stamping, the schema retry, and the `native_log_*` counters. The counters take their reasons from the `Admission` that `Offer` returns and from `Outcome` values, so the closed `reason` set of section 5 does not change:
+
+| From the queue | Counted as |
+|---|---|
+| `RefusedPressure` | `memory_pressure` |
+| `RefusedFull` | `buffer_full` |
+| `RefusedClosed` | `shutdown_deadline` |
+| `Outcome` `retries_exhausted` | `destination_unready` |
+| `Outcome` `shutdown_deadline` | `shutdown_deadline` |
 
 #### Tests
 
-The queue package tests the guarantees through the `BufferedPublisher` interface: concurrent `Offer` and `Close`, refusal at the allowance, queued and in-flight accounting, holding before `Start`, the size of every retried batch, and `Close` returning while a `Deliver` is stuck without `Done` running early. The logging tests keep to filtering, encoding, identity, recursion protection, and real storage and query behavior.
+The queue package tests the guarantees through the `BufferedPublisher` interface: concurrent `Offer` and `Close`, each refusal returning its own `Admission`, queued and in-flight accounting, holding before `Start`, the size of every retried batch, and a stuck `Deliver`: `Close` returns at the deadline, the stuck requests receive `Done` with `shutdown_deadline` by then, and their `Release` runs only after `Deliver` returns. The logging tests keep to filtering, encoding, identity, recursion protection, and real storage and query behavior.
 
 ## 4. Parameters and configuration
 
