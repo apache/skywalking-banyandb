@@ -485,7 +485,6 @@ func (ms *measureService) executeQueryWithRawPlan(ctx context.Context, req *meas
 	now := time.Now()
 	var tracer *query.Tracer
 	var span *query.Span
-	var responseDataPointCount int
 	if req.Trace {
 		tracer, _ = query.NewTracer(ctx, now.Format(time.RFC3339Nano))
 		span, _ = tracer.StartSpan(ctx, "measure-grpc")
@@ -495,7 +494,7 @@ func (ms *measureService) executeQueryWithRawPlan(ctx context.Context, req *meas
 				span.Error(err)
 				span.Stop()
 			} else {
-				span.Tagf("response_data_point_count", "%d", responseDataPointCount)
+				span.Tagf("response_data_point_count", "%d", len(resp.GetDataPoints()))
 				span.AddSubTrace(resp.Trace)
 				span.Stop()
 				resp.Trace = tracer.ToProto()
@@ -534,17 +533,17 @@ func (ms *measureService) executeQueryWithRawPlan(ctx context.Context, req *meas
 		originalBegin := req.TimeRange.GetBegin().AsTime()
 		newBegin, rangeEmpty := clampTimeRangeBegin(originalBegin, endTime, createdAts)
 		if rangeEmpty {
-			if len(gatedStatuses) > 0 {
-				return &measurev1.QueryResponse{GroupStatuses: gatedStatuses}, nil
-			}
-			return emptyMeasureQueryResponse, nil
+			return emptyPlannedMeasure(ctx, gatedStatuses, rawPlan)
 		}
 		if newBegin != originalBegin {
 			req.TimeRange.Begin = timestamppb.New(newBegin)
 		}
 	}
 	if isEmptyRawQuery(rawPlan) {
-		return &measurev1.QueryResponse{GroupStatuses: gatedStatuses}, nil
+		return emptyPlannedMeasure(ctx, gatedStatuses, rawPlan)
+	}
+	if ms.canUseNativeAggregate(req, rawPlan) {
+		return ms.executeNativeAggregate(ctx, req, gatedStatuses, rawPlan)
 	}
 	var payload any = req
 	if batches {
@@ -557,14 +556,14 @@ func (ms *measureService) executeQueryWithRawPlan(ctx context.Context, req *meas
 	msg, err := feat.Get()
 	if err != nil {
 		if errors.Is(err, io.EOF) {
+			if rawPlan != nil && rawPlan.Aggregate != nil {
+				return emptyPlannedMeasure(ctx, gatedStatuses, rawPlan)
+			}
 			return emptyMeasureQueryResponse, nil
 		}
 		return nil, err
 	}
 	resp, err = measureQueryResponseWithPlan(ctx, msg.Data(), gatedStatuses, rawPlan)
-	if resp != nil {
-		responseDataPointCount = len(resp.DataPoints)
-	}
 	return resp, err
 }
 

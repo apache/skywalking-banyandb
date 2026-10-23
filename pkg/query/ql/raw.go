@@ -40,14 +40,16 @@ type Slot struct {
 // MillisRange is a half-open timestamp interval in Unix milliseconds.
 type MillisRange struct{ Begin, End int64 }
 
-// RawPlan is the immutable bound recipe for raw measure batch execution.
+// RawPlan is the immutable bound recipe for a complete native measure scan and QL operators.
 type RawPlan struct {
-	Limit    *uint32
-	Slots    []Slot
-	Ranges   []MillisRange
-	Offset   uint32
-	Residual bool
-	Empty    bool
+	NativeAggregate *NativeAggregatePlan
+	Aggregate       *AggregatePlan
+	Limit           *uint32
+	Slots           []Slot
+	Ranges          []MillisRange
+	Offset          uint32
+	Residual        bool
+	Empty           bool
 }
 
 type rawOperator struct {
@@ -73,6 +75,9 @@ type rawOperator struct {
 // WrapRaw takes ownership of source, including on failure, and resolves projection indices once.
 // Its output lends immutable source columns until the next pull or Close.
 func WrapRaw(ctx context.Context, source vectorized.PullOperator, plan *RawPlan) (_ vectorized.PullOperator, err error) {
+	if plan != nil && plan.Aggregate != nil {
+		return wrapAggregateQuery(ctx, source, plan)
+	}
 	defer func() {
 		if err != nil && source != nil {
 			_ = source.Close()
