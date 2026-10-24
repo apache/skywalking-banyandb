@@ -101,7 +101,7 @@ then the range across controls. KB and MB here are decimal units.
 | --- | ---: | ---: | ---: | ---: |
 | DISTINCT / equivalent GROUP BY, seven controls | 1,024 | 0.977–1.046 | 0.930–1.067 | 0.993–1.016 |
 | DISTINCT / equivalent GROUP BY, seven controls | 8,192 | 1.011–1.087 | 0.959–1.071 | 0.987–1.010 |
-| Computed explicit/ordinal / stored-key grouping, four controls | 1,024 | 1.009–1.039 | 1.106–1.248 | 1.021–1.035 |
+| Computed explicit/ordinal / stored-key grouping, four controls | 1,024 | 1.009–1.039 | 1.106–1.248 | 1.021–1.036 |
 | Computed explicit/ordinal / stored-key grouping, four controls | 32,768 | 0.991–1.028 | 0.966–1.056 | 0.993–1.000 |
 | Top-k / full-sort-then-slice | 1,024 | 0.7028 | 0.6548 | 0.6385 |
 | Top-k / full-sort-then-slice | 32,768 | 0.3255 | 0.3258 | 0.5549 |
@@ -117,7 +117,8 @@ These concurrency latencies include contention; they are not speedup ratios.
 Raw reports, profiles and reproduction scripts are retained under
 `/mnt/d/qlb-pr4-bench/`. `summary.txt`, `rpc-summary.json`, `kernel-summary.json`
 and `comparisons-qlb_t15-qlb_t16-qlb_t17.json` hold the aggregate measurements.
-The tracked-source manifest SHA-256 is
+The non-documentation source manifest (5,007 tracked and nonignored untracked
+files) SHA-256 is
 `41394d48bcd3eef361b289df16b76b0568ced32266b660a6e8f0b0229027c0c4`;
 source and binary provenance are unchanged across all runs. The scenarios and
 controls are documented in the [querybench guide](../../../../test/integration/distributed/querybench/README.md).
