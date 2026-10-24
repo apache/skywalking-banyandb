@@ -33,17 +33,49 @@ var (
 	timeEventSnapDuration = (10 * time.Minute).Nanoseconds()
 )
 
+func (d *database[T, O]) now() time.Time {
+	if d.clock != nil {
+		return d.clock.Now()
+	}
+
+	return time.Now()
+}
+
+// isFutureSkewed returns true if ts is unreasonably far beyond the current segment horizon,
+// preventing rogue future writes from deadlocking rotation.
+func isFutureSkewed(ts int64, now time.Time, interval time.Duration) bool {
+	maxAllowed := now.Add(interval + 24*time.Hour).UnixNano()
+	return ts > maxAllowed
+}
+
+func (d *database[T, O]) isFutureSkewed(ts int64) bool {
+	if d.segmentController == nil {
+		return false
+	}
+	interval := d.segmentController.getSegmentInterval().estimatedDuration()
+	return isFutureSkewed(ts, d.now(), interval)
+}
+
 func (d *database[T, O]) Tick(ts int64) {
-	if ts <= 0 {
+	if ts <= 0 || d.isFutureSkewed(ts) {
 		return
 	}
 	if (ts - timeEventSnapDuration) < d.latestTickTime.Load() {
 		return
 	}
-	d.latestTickTime.Store(ts)
 	select {
 	case d.tsEventCh <- ts:
+		d.latestTickTime.Store(ts)
 	default:
+		select {
+		case <-d.tsEventCh:
+		default:
+		}
+		select {
+		case d.tsEventCh <- ts:
+			d.latestTickTime.Store(ts)
+		default:
+		}
 	}
 }
 
