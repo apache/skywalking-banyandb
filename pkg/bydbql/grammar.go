@@ -43,16 +43,23 @@ type Grammar struct {
 // GrammarSelectStatement represents a SELECT statement in Participle grammar.
 type GrammarSelectStatement struct {
 	Pos            lexer.Position
-	Select         string                      `parser:"@'SELECT'"`
-	Projection     *GrammarProjection          `parser:"@@"`
-	From           *GrammarFromClause          `parser:"@@"`
-	Time           *GrammarTimeClause          `parser:"@@?"`
-	Where          *GrammarSelectWhereClause   `parser:"@@?"`
-	GroupBy        *GrammarGroupByClause       `parser:"@@?"`
+	Select         string                    `parser:"@'SELECT'"`
+	Distinct       bool                      `parser:"@'DISTINCT'?"`
+	Projection     *GrammarProjection        `parser:"@@"`
+	From           *GrammarFromClause        `parser:"@@"`
+	Time           *GrammarTimeClause        `parser:"@@?"`
+	Where          *GrammarSelectWhereClause `parser:"@@?"`
+	GroupBy        *GrammarGroupByClause     `parser:"@@?"`
+	Having         *GrammarHavingClause
 	OrderBy        *GrammarSelectOrderByClause `parser:"@@?"`
 	WithQueryTrace *GrammarWithTraceClause     `parser:"@@?"`
 	Limit          *GrammarLimitClause         `parser:"@@?"`
 	Offset         *GrammarOffsetClause        `parser:"@@?"`
+}
+
+// GrammarHavingClause filters completed measure groups.
+type GrammarHavingClause struct {
+	Expression *GrammarExpression
 }
 
 // GrammarTopNStatement represents a SHOW TOP N statement.
@@ -91,10 +98,14 @@ type GrammarTopNProjection struct {
 
 // GrammarColumn represents a column in projection.
 type GrammarColumn struct {
-	Aggregate  *GrammarAggregateFunction `parser:"( @@"`
-	Identifier *GrammarIdentifierPath    `parser:"| @@ )"`
-	TypeSpec   *string                   `parser:"( '::' @('TAG'|'FIELD') )?"`
-	Alias      *GrammarIdentifierPath    `parser:"( 'AS' @@ )?"`
+	Pos          lexer.Position
+	SingleQuoted bool
+	All          bool
+	Expression   *GrammarExpression
+	Aggregate    *GrammarAggregateFunction `parser:"( @@"`
+	Identifier   *GrammarIdentifierPath    `parser:"| @@ )"`
+	TypeSpec     *string                   `parser:"( '::' @('TAG'|'FIELD') )?"`
+	Alias        *GrammarIdentifierPath    `parser:"( 'AS' @@ )?"`
 }
 
 // GrammarAggregateFunction represents aggregate functions. DISTINCT is
@@ -104,7 +115,8 @@ type GrammarColumn struct {
 type GrammarAggregateFunction struct {
 	Function string                 `parser:"@('SUM'|'MEAN'|'AVG'|'COUNT'|'MAX'|'MIN')"`
 	Distinct bool                   `parser:"'(' @'DISTINCT'?"`
-	Column   *GrammarIdentifierPath `parser:"@@ ')'"`
+	Column   *GrammarIdentifierPath `parser:"@@"`
+	TypeSpec *string                `parser:"( '::' @('TAG'|'FIELD') )? ')'"`
 }
 
 // GrammarTopNAggregateFunction represents aggregate functions without column (for TOP N).
@@ -175,6 +187,8 @@ type GrammarTimeValue struct {
 type GrammarSelectWhereClause struct {
 	Where string         `parser:"@'WHERE'"`
 	Expr  *GrammarOrExpr `parser:"@@"`
+	// Expression is populated only by the typed measure WHERE parser.
+	Expression *GrammarExpression
 }
 
 // GrammarTopNWhereClause represents WHERE clause in TOP N.
@@ -252,11 +266,11 @@ type GrammarInPredicate struct {
 	Values     []*GrammarValue        `parser:"'(' @@? ( ',' @@ )* ')'"`
 }
 
-// GrammarHavingPredicate represents HAVING/NOT HAVING predicate.
+// GrammarHavingPredicate represents infix HAVING/CONTAINS membership and their negations.
 type GrammarHavingPredicate struct {
 	Identifier *GrammarIdentifierPath `parser:"@@"`
 	Not        *string                `parser:"@'NOT'?"`
-	Having     string                 `parser:"@'HAVING'"`
+	Having     string                 `parser:"@('HAVING'|'CONTAINS')"`
 	Values     *GrammarHavingValues   `parser:"@@"`
 }
 
@@ -329,13 +343,15 @@ type GrammarGroupByClause struct {
 // GrammarGroupByColumn represents a column in GROUP BY: a plain tag/field
 // identifier, or the TIME_BUCKET(...) pseudo-column.
 type GrammarGroupByColumn struct {
-	TimeBucket *GrammarTimeBucket     `parser:"(  @@"`
+	Expression *GrammarExpression
+	Ordinal    *int                   `parser:"( @Int"`
+	TimeBucket *GrammarTimeBucket     `parser:"| @@"`
 	Identifier *GrammarIdentifierPath `parser:" | @@ )"`
 	TypeSpec   *string                `parser:"( '::' @('TAG'|'FIELD') )?"`
 }
 
-// GrammarTimeBucket represents TIME_BUCKET(<duration>), valid only inside
-// GROUP BY. Width is optional; an empty width defers to the measure's own
+// GrammarTimeBucket represents TIME_BUCKET(<duration>). Width is optional;
+// an empty width defers to the measure's own
 // interval (design §5.3).
 type GrammarTimeBucket struct {
 	TimeBucket string  `parser:"@'TIME_BUCKET'"`
@@ -349,6 +365,14 @@ type GrammarSelectOrderByClause struct {
 	Order string             `parser:"@'ORDER'"`
 	By    string             `parser:"@'BY'"`
 	Tail  GrammarOrderByTail `parser:"@@"`
+	Keys  []*GrammarOrderKey
+}
+
+// GrammarOrderKey describes one typed measure ordering expression.
+type GrammarOrderKey struct {
+	Expression *GrammarExpression
+	Descending bool
+	NullsFirst bool
 }
 
 // GrammarTopNOrderByClause represents ORDER BY clause in TOP N statement.

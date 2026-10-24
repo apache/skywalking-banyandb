@@ -42,11 +42,15 @@ func RawIterator(ctx context.Context, source vectorized.PullOperator) (executor.
 		return nil, err
 	}
 	tracker := vectorized.QueryMemoryTracker(ctx, 256<<20)
-	if raw, ok := source.(*rawOperator); ok {
-		tracker = raw.tracker
+	var timestampAliases []int
+	switch operator := source.(type) {
+	case *rawOperator:
+		tracker, timestampAliases = operator.tracker, operator.timestampAliases
+	case *sortOperator:
+		tracker, timestampAliases = operator.tracker, operator.timestampAliases
 	}
-	if raw, ok := source.(*rawOperator); ok && len(raw.timestampAliases) > 0 {
-		bytes, boundErr := rawDescriptorBound(len(source.OutputSchema().Columns), 0, len(raw.timestampAliases))
+	if len(timestampAliases) > 0 {
+		bytes, boundErr := rawDescriptorBound(len(source.OutputSchema().Columns), 0, len(timestampAliases))
 		if boundErr != nil {
 			_ = source.Close()
 			return nil, boundErr
@@ -56,11 +60,11 @@ func RawIterator(ctx context.Context, source vectorized.PullOperator) (executor.
 			return nil, reserveErr
 		}
 		defs := slices.Clone(source.OutputSchema().Columns)
-		for _, index := range raw.timestampAliases {
+		for _, index := range timestampAliases {
 			defs[index].Type = vectorized.ColumnTypeTagValue
 		}
 		source = &timestampEgress{
-			source: source, schema: vectorized.NewBatchSchema(defs), indices: slices.Clone(raw.timestampAliases), tracker: tracker,
+			source: source, schema: vectorized.NewBatchSchema(defs), indices: slices.Clone(timestampAliases), tracker: tracker,
 			metadataBytes: bytes, view: vectorized.RecordBatch{Columns: make([]vectorized.Column, 0, len(defs)), Lent: true},
 		}
 	}
@@ -134,8 +138,12 @@ func (e *timestampEgress) NextBatch(ctx context.Context) (*vectorized.RecordBatc
 	e.view.Lent = true
 	e.view.Columns = append(e.view.Columns[:0], batch.Columns...)
 	for _, index := range e.indices {
-		source, ok := batch.Columns[index].(*vectorized.TypedColumn[int64])
-		if !ok {
+		source := batch.Columns[index]
+		constant, isConstant := vectorized.AsConst(source)
+		var values []int64
+		if typed, ok := source.(*vectorized.TypedColumn[int64]); ok {
+			values = typed.Data()
+		} else if !isConstant || constant.Type() != vectorized.ColumnTypeInt64 {
 			return nil, fmt.Errorf("timestamp alias source is not int64")
 		}
 		column := vectorized.NewColumnForType(vectorized.ColumnTypeTagValue, batch.Len).(*vectorized.TypedColumn[*modelv1.TagValue])
@@ -145,10 +153,15 @@ func (e *timestampEgress) NextBatch(ctx context.Context) (*vectorized.RecordBatc
 					return nil, err
 				}
 			}
-			nanos := source.Data()[row]
 			if source.IsNull(row) {
 				column.AppendNull()
 				continue
+			}
+			var nanos int64
+			if isConstant {
+				nanos = constant.Int64()
+			} else {
+				nanos = values[row]
 			}
 			column.Append(&modelv1.TagValue{Value: &modelv1.TagValue_Timestamp{Timestamp: timestamppb.New(time.Unix(0, nanos))}})
 		}

@@ -19,6 +19,7 @@ package bydbql
 
 import (
 	"math"
+	"slices"
 
 	"google.golang.org/protobuf/proto"
 
@@ -29,7 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
-func (m *MeasureTemplate) compileNativeAggregate(schemas map[string]*databasev1.Measure, columns *measureColumns) {
+func (m *MeasureTemplate) compileNativeEntities(schemas map[string]*databasev1.Measure, columns *measureColumns) {
 	if len(m.request.Groups) != 1 {
 		return
 	}
@@ -37,18 +38,13 @@ func (m *MeasureTemplate) compileNativeAggregate(schemas map[string]*databasev1.
 	if schema == nil || schema.GetIndexMode() || len(schema.GetEntity().GetTagNames()) == 0 {
 		return
 	}
-	names := make(map[string]int)
-	for _, source := range columns.ordered {
-		if source.Role == vectorized.RoleTag {
-			names[source.Name]++
-		}
-	}
+
 	var entities []vectorized.ColumnDef
 	for _, source := range columns.ordered {
 		if source.Entity {
 			// Native entity predicates have unqualified names. Ambiguous names
 			// cannot establish a unique non-null entity assignment.
-			if names[source.Name] != 1 {
+			if !columns.unambiguousTags[columnIdentity(source)] {
 				return
 			}
 			entities = append(entities, source)
@@ -60,8 +56,16 @@ func (m *MeasureTemplate) compileNativeAggregate(schemas map[string]*databasev1.
 }
 
 func (m *MeasureTemplate) bindNativeAggregate(request *measurev1.QueryRequest, plan *ql.RawPlan) *ql.NativeAggregatePlan {
-	if plan.Aggregate == nil || plan.Empty || plan.Residual || len(plan.Ranges) != 1 || len(m.nativeEntities) == 0 {
+	if plan.Aggregate == nil || len(plan.Aggregate.Calls) == 0 || plan.Empty || plan.Residual || plan.Filter != nil ||
+		len(plan.Ranges) != 1 || len(m.nativeEntities) == 0 {
 		return nil
+	}
+	if plan.Aggregate.GroupExpressions != nil {
+		for _, key := range plan.Aggregate.GroupExpressions.Outputs {
+			if key.Expr.Op != "time_bucket" {
+				return nil
+			}
+		}
 	}
 	// Normal writes are millisecond-aligned and native scans deduplicate
 	// (complete entity, timestamp). Each group below identifies at most one
@@ -74,28 +78,15 @@ func (m *MeasureTemplate) bindNativeAggregate(request *measurev1.QueryRequest, p
 	if countBound > 1<<53 {
 		return nil
 	}
-	grouped := make(map[measureColumnKey]bool)
-	var family string
-	for index, key := range plan.Aggregate.GroupBy {
-		if key.Role != vectorized.RoleTag || !key.Entity || (index > 0 && family != key.TagFamily) {
-			return nil
-		}
-		family = key.TagFamily
-		proved, _ := exactEntityConstraint(request.Criteria, key.Name)
-		if !proved {
-			return nil
-		}
-		grouped[columnIdentity(key)] = true
+	if !m.nativeAggregateGroupsSupported(request, plan.Aggregate) {
+		return nil
 	}
-	for _, entity := range m.nativeEntities {
-		if !grouped[columnIdentity(entity)] {
-			proved, single := exactEntityConstraint(request.Criteria, entity.Name)
-			if !proved || !single {
-				return nil
-			}
-		}
+	mergePlan := *plan.Aggregate
+	if mergePlan.TimeBucketWidth != "" {
+		mergePlan.GroupBy = slices.Clone(mergePlan.GroupBy)
+		mergePlan.GroupBy[mergePlan.TimeBucketIndex] = vectorized.ColumnDef{Name: "time", Role: vectorized.RoleTimestamp, Type: vectorized.ColumnTypeInt64}
 	}
-	native := &ql.NativeAggregatePlan{Aggregate: plan.Aggregate, MaxCount: int64(countBound)}
+	native := &ql.NativeAggregatePlan{Aggregate: &mergePlan, MaxCount: int64(countBound)}
 	seen := make(map[ql.AggregateCall]bool)
 	add := func(source vectorized.ColumnDef, function ql.AggregateFunction) {
 		call := ql.AggregateCall{Source: source, Function: function}
@@ -104,7 +95,7 @@ func (m *MeasureTemplate) bindNativeAggregate(request *measurev1.QueryRequest, p
 		}
 		seen[call] = true
 		native.Leaves = append(native.Leaves, ql.NativeAggregateLeaf{
-			Source: source, Function: function, Request: nativeAggregateRequest(request, plan.Aggregate.GroupBy, call),
+			Source: source, Function: function, Request: nativeAggregateRequest(request, mergePlan.GroupBy, call, mergePlan.TimeBucketWidth),
 		})
 	}
 	for _, call := range plan.Aggregate.Calls {
@@ -137,6 +128,34 @@ func (m *MeasureTemplate) bindNativeAggregate(request *measurev1.QueryRequest, p
 		return nil
 	}
 	return native
+}
+
+func (m *MeasureTemplate) nativeAggregateGroupsSupported(request *measurev1.QueryRequest, aggregate *ql.AggregatePlan) bool {
+	grouped := make(map[measureColumnKey]bool)
+	var family string
+	for index, key := range aggregate.GroupBy {
+		if index == aggregate.TimeBucketIndex && aggregate.TimeBucketWidth != "" {
+			continue
+		}
+		if key.Role != vectorized.RoleTag || !key.Entity || (family != "" && family != key.TagFamily) {
+			return false
+		}
+		family = key.TagFamily
+		proved, _ := exactEntityConstraint(request.Criteria, key.Name)
+		if !proved {
+			return false
+		}
+		grouped[columnIdentity(key)] = true
+	}
+	for _, entity := range m.nativeEntities {
+		if !grouped[columnIdentity(entity)] {
+			proved, single := exactEntityConstraint(request.Criteria, entity.Name)
+			if !proved || !single {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // exactEntityConstraint proves a non-null entity value set, and optionally a
@@ -185,7 +204,7 @@ func exactEntityConstraint(criteria *modelv1.Criteria, name string) (proved, sin
 	return false, false
 }
 
-func nativeAggregateRequest(request *measurev1.QueryRequest, keys []vectorized.ColumnDef, call ql.AggregateCall) *measurev1.QueryRequest {
+func nativeAggregateRequest(request *measurev1.QueryRequest, keys []vectorized.ColumnDef, call ql.AggregateCall, bucketWidth string) *measurev1.QueryRequest {
 	leaf := proto.Clone(request).(*measurev1.QueryRequest)
 	leaf.Offset, leaf.Limit = 0, math.MaxUint32
 	leaf.OrderBy, leaf.Top = nil, nil
@@ -196,6 +215,9 @@ func nativeAggregateRequest(request *measurev1.QueryRequest, keys []vectorized.C
 	if len(slots) > 0 {
 		projection, _ := rawScanProjection(slots)
 		leaf.GroupBy = &measurev1.QueryRequest_GroupBy{TagProjection: projection}
+		if bucketWidth != "" {
+			leaf.GroupBy.TimeBucket = &measurev1.QueryRequest_GroupBy_TimeBucket{Width: bucketWidth}
+		}
 	}
 	slots = append(slots, ql.Slot{Source: call.Source})
 	leaf.TagProjection, leaf.FieldProjection = rawScanProjection(slots)

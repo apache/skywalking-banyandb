@@ -1,29 +1,29 @@
 # Catalog B implementation tickets and verification contracts
 
-Status: **T02/T03/T05 are merged in PR #1417; T07/T08 are implemented in PR 2;
-six capability tickets remain planned for PRs 3 and 4.** Implementation and
-correctness do not imply that every historical performance gate passed: T02's
-original acceptance remains inconclusive/stopped. Current aggregation scope,
-checks and benchmark limits are in the [PR 2 verification record](pr2-verification.md).
-The [PR 1 verification record](pr1-verification.md) and [T01 support record](t01-verification.md)
-retain their original bases and evidence.
+Status: **T02/T03/T05 are merged in PR #1417; T07/T08 are merged in PR #1424;
+T10/T12/T14 are supplied by open PR #1432; T15/T16/T17 and exact count-distinct
+composition are implemented in this PR 4 branch.** Implementation does not imply
+that every historical performance gate passed: T02 remains inconclusive/stopped,
+and successful 100k/1m owning-query throughput is deferred. Current scope and
+validation are in the [PR 4 verification record](pr4-verification.md). The
+[PR 1](pr1-verification.md), [PR 2](pr2-verification.md), [PR 3](pr3-verification.md)
+and ticket records retain their original source bases and evidence.
 
-The original design-review base was `012115c5`. PR #1412 merged as `15635181b`;
-PR 2 is based on merged PR #1417 at `e05ed7f22`, including #1413's native aggregation
-optimization. This document defines the [language contract](README.md),
-[batch engine design](datafusion-engine.md) and [compiled-plan reuse design](plan-reuse.md).
-T02/T03/T05/T07/T08 commands are implemented. Commands for later capabilities
-remain planned contracts. Existing `QLB-T01` labels and measurements retain their
-historical meaning.
+The design-review base was `012115c5`; PR #1412 merged as `15635181b`. PR 4
+integrates main at `86659118` with PR #1432. This document defines the
+[language contract](README.md), [batch engine design](datafusion-engine.md) and
+[compiled-plan reuse design](plan-reuse.md). All listed capability commands are
+implemented; a recorded resource rejection is not successful throughput.
+Existing `QLB-T01` labels and measurements retain their historical meaning.
 
 ## Four-PR delivery
 
 | PR | Scope | State in this branch |
 |---|---|---|
 | [1 — execution foundation](https://github.com/apache/skywalking-banyandb/pull/1417) | T02 shared batches, T03 typed raw QL, T05 compiled-plan reuse and required compatibility repairs | Merged as PR #1417 |
-| 2 — SQL aggregation | T07 local aggregation and T08 native split/merge | Prepared on merged PR #1417; see the PR 2 record |
-| 3 — expressions and filtering | T10 expressions, T12 field WHERE and T14 HAVING/membership | Planned |
-| 4 — complete grouping/output composition | T15 DISTINCT, T16 computed/ordinal grouping, T17 ordering/pagination and count-distinct composition | Planned |
+| [2 — SQL aggregation](https://github.com/apache/skywalking-banyandb/pull/1424) | T07 local aggregation and T08 native split/merge | Merged as PR #1424 |
+| [3 — expressions and filtering](https://github.com/apache/skywalking-banyandb/pull/1432) | T10 expressions, T12 field WHERE and T14 HAVING/membership | Open dependency; see the PR 3 record |
+| 4 — complete grouping/output composition | T15 DISTINCT, T16 computed/ordinal grouping, T17 ordering/pagination and count-distinct composition | Implemented in this branch; see the PR 4 record |
 
 Each PR carries its own generated cases, focused benchmark evidence and language
 documentation. This split does not broaden individual benchmark workloads.
@@ -54,12 +54,12 @@ formats; no Rust runtime or Arrow IPC dependency. SQL operators stay on the liai
 Shared native Go buffering/ownership and read/dispatch compatibility repairs are
 included with their regression tests, as described in the PR 1 verification record.
 
-**Readiness:** PR #1412 and PR #1417 are merged. The shared batch seam, typed
-raw-query interfaces and compiled-template cache are available on main; local
-aggregation and native merging are available in this branch. Later tickets still
-require their listed prerequisites, independent expected results, activation
-proof and focused benchmarks. Historical measurements retain their original
-bases and verdicts; the PR 2 record covers this isolated aggregation branch.
+**Readiness:** PRs #1412, #1417 and #1424 are merged. PR #1432 supplies the
+expression/filter dependency. This branch implements the final original Catalog B
+capabilities with their generated cases and scoped benchmarks. Fresh validation
+belongs to the PR 4 record; historical ticket evidence retains its original
+source revision and verdict. Completing this language subset does not provide
+relational joins, CTEs or full DPO application parity.
 
 ### Dependency and benchmark map
 
@@ -201,8 +201,11 @@ test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g
 
 For P(Tnn), substitute its scenario and a unique report directory. Run five
 isolated repetitions, changing `r1` to `r2` etc.; retain all reports. Every scenario
-must emit its named variants, expected row count/checksum, timings and allocation
-records; zero samples, skipped scenarios or missing variants fail verification.
+must emit its named variants. Timed variants require expected row count/checksum,
+timings and allocation records; zero samples, skipped scenarios or missing
+variants fail performance verification. Explicitly designated overload variants
+report admission outcomes and resource ownership without latency/throughput
+samples; their expected rejection does not fail the resource gate.
 Use 1,024 and 100,000 input rows unless a ticket specifies otherwise. Also run
 1,000,000 rows for T07, T08, T12, T14, T15, T16 and T17. Bounded low-budget
 resource-stress variants may fail
@@ -235,6 +238,10 @@ These are proposed acceptance budgets, not measured claims:
   over-budget allocation. Live execution reservations and owner pins return to
   baseline after Close/cancellation. The current lease is monotonic: report its
   cumulative charges separately; do not assert that spent charges are refunded.
+  Concurrent overload must reject explicitly with `ResourceExhausted`, preserve
+  correct results for completed requests, and allow a subsequent query to succeed
+  after all transports close. Unexpected errors, leaked ownership, process failure
+  or failed recovery fail G2. Keep configured limits unchanged.
   T01 only captures existing resource observations; shared accounting and its
   enforcement start in T02 and remain mandatory for subsequent production changes.
 - **G3, per-ticket work:** each leaf below adds a numerical work/retention or
@@ -314,7 +321,7 @@ explicitly rejected until T07/T08 admits them.
 Time binding supports fixed INTERVAL, one execution clock, WHERE/TIME intersection,
 contradiction-to-Empty and exact millisecond boundary arithmetic. Pure-time OR can
 prune by an envelope only while retaining its full residual. A residual prevents
-native aggregate/final-limit pushdown. Mixed field/time OR follows in T12.
+native aggregate/final-limit pushdown. T12 adds mixed field/time OR.
 
 **E2E cases:** `raw-aliases` projects host AS node and v AS value with F's types/nulls;
 `repeated-source` preserves independent descriptors for repeated projections;
@@ -407,8 +414,9 @@ COUNT finalization, sharing state with matching output calls; never native MEAN.
 Introduce the shared typed/null-aware group codec and dense group-ID state arrays
 through this real caller. Scalar empty COUNT is int64 zero, other aggregates null;
 grouped empty input has no groups. Native scan deduplication happens before local
-aggregation. Preserve existing count-distinct/stage restrictions; do not silently
-admit additional COUNT(DISTINCT) shapes.
+aggregation. The original T07 scope preserved count-distinct/stage restrictions.
+The [DPO #81 follow-up](#dpo-81-count-distinct-composition-follow-up) explicitly
+adds local count-distinct composition while preserving native pushdown restrictions.
 
 **E2E cases:** `aggregate-F` produces count(v)=4, sum(v)=12, min(v)=0, max(v)=6;
 `nullable-keys` keeps zone NULL and empty string separate; `null-only-and-empty`
@@ -524,12 +532,15 @@ limits and monotonic admission charges remain enforced without spilling.
 interpreter cost, and does masked evaluation save work when branches are unused?
 
 **Boundary/activation:** SELECT expressions activate the shared typed evaluator:
-arithmetic, decimal/exponent floats, unary signs, CAST/::type, comparisons,
+arithmetic (+, -, *, /, %), decimal/exponent floats, unary signs, CAST/::type, comparisons,
 AND/OR/NOT, IS NULL, IN, CASE and COALESCE. Preserve ::TAG/::FIELD and accepted
-legacy identifiers containing '-'/'*'. WHERE/HAVING use these kernels in T12/T14.
+legacy identifiers containing '-'/'*'. T12 reuses these kernels in WHERE; HAVING
+follows in T14.
 Constants remain scalars; selections use one physical index space (nil=all,
 empty=none); split before uint16 capacity, skip zero-active batches and evaluate
-conditional arms only for eligible rows. No new parameter wire types.
+conditional arms only for eligible rows. Native batches already obey the 65,536
+physical-row bound; reject oversized external input before uint16 indexing.
+No new parameter wire types.
 
 **Numeric decisions:** INT/BIGINT=int64, FLOAT/DOUBLE=float64. Checked integer
 arithmetic; int/int division truncates toward zero, mixed numeric operations
@@ -537,6 +548,11 @@ promote to double. Division by zero, overflow and invalid/out-of-range casts fai
 with InvalidArgument. Double-to-int truncates after finite/range checks. No implicit
 string conversion; CAST(? AS DOUBLE) accepts bound strings. Null propagates.
 Pin timestamp units/timezone and accepted cast pairs in binder tests.
+
+Implemented timestamp units are UTC Unix nanoseconds in the signed int64 range.
+String casts use RFC3339Nano; timestamp-to-STRING normalizes to UTC. Boolean and
+untyped-null outputs require an explicit supported cast. Integer remainder of
+the minimum int64 by -1 is zero; division of that pair is an overflow error.
 
 **E2E cases:** `arithmetic-F`: v+2={2,4,6,NULL,8,NULL}; `cast-parameter` changes bound
 string doubles; `integer-division` gives -5 / 2 = -2; `numeric-errors` covers invalid
@@ -547,7 +563,9 @@ output needs a supported cast; timestamps/arrays use existing response mapping.
 `unreachable-invalid-arm` never raises errors from masked rows. Cover typed null,
 empty/non-empty IN and changed parameters under repeated execution.
 
-**Benchmark:** P(T10) measures expression projection through RPC; K(T10) compares
+**Benchmark:** P(T10) measures five expression/control projections through RPC
+at 1,024 and 32,768 input/output rows over the existing nullable fixture, with
+a 256-MiB query budget. Every row is evaluated and returned. K(T10) compares
 independent scalar evaluation at batches 1/1,024/65,536 with dense/selected/null
 inputs. Vary constant/column/parameter expressions, null density, branch depth
 and first-arm hit rates 0/50/100%; measure ns/active-row, allocations and RPC cost.
@@ -559,6 +577,13 @@ within this capability; successful expression execution supplies its benchmark.
 **Checks/readiness:** E(T10), P(T10), K(T10); focused `./pkg/bydbql`,
 `./pkg/query/ql`. Blocked by T03. Numeric policy, masking, casts and predicate
 kernels form one usable expression layer with a real projection caller.
+
+**Implementation:** see [T10 verification](t10-verification.md) and the
+[language guide](../../../interacting/bydbql.md#59-typed-select-expressions).
+The evaluator uses existing native batches and scalar ConstColumn outputs.
+At the final projection boundary, constant arrays require tracked row headers
+for the unchanged serializer; their payload remains shared. The scalar-constant
+benchmark gate does not hide this array-output expansion.
 
 ### T12 — Filter raw fields before grouping, projection and final limits
 
@@ -578,16 +603,53 @@ omits the filtered field from SELECT and still returns the correct final limit.
 FALSE and UNKNOWN both drop rows. Test a low-budget cancellation/error path.
 
 **Benchmark:** P(T12) varies selectivity 0/1/50/100%, raw projection versus local
-aggregation and hidden-column widths. G3: exactly one raw leaf, all required input
+aggregation and hidden-column widths. G3: exactly one logical raw scan (two
+physical data-node leaf RPCs in the distributed fixture), all required input
 rows examined (no intermediate 100/final-limit cap), zero native aggregate leaves
 when a residual remains, and aggregate input count equals filter TRUE count.
 K(T12) reports filtered rows/s and copied bytes; G1/G2 apply.
+
+**Implemented protocol:** P(T12) has 16 variants at 1,024/16,384 input rows:
+0/1/50/100% predicate thresholds × raw/scalar aggregate × one/two hidden predicate
+fields. Every query scans complete input, without LIMIT. The fixed schedule is
+100 timed/5 warmups and 20 timed/3 warmups, one worker, 256-MiB query budget,
+five fresh 4-CPU/8-GiB Docker repetitions and CPU/heap profiles. Actual TRUE counts
+are recorded because partial 100-row cycles round the nominal percentages.
+K(T12), `BenchmarkFilterT12`, measures the complete public one-batch lifecycle at
+1/1,024/65,536 rows, four thresholds and dense/selected-null inputs: 24 variants,
+five one-second samples. It reports examined and passing throughput, ns/examined
+row, output-copy bytes and charged selection/state bytes. It makes no speedup
+claim against unsupported old SQL. Output-copy bytes are structurally zero because
+the filter borrows columns; unit tests and K's pre-timing identity checks prove
+that property. The RPC counter is a consistency invariant, not measured copy
+telemetry, and excludes charged boundary decoding scratch. Large-input 100k/1m
+resource probes use the same owning scalar aggregate query; native admission
+failures remain explicit blockers for successful large-input measurements.
+The 16-MiB readiness failure is recorded separately.
+The initial 32,768-row full-output smoke exceeds cumulative parent admission
+during final response encoding. This failure is retained; successful sizes are
+fixed before timing without changing native policy.
 
 **Checks/readiness:** E(T12), P(T12), K(T12); focused `./pkg/query/ql`,
 `./pkg/bydbql`, `./banyand/liaison/grpc`. Blocked by T07/T10. Float criteria never
 become unsupported tag-only protobuf criteria.
 
+**Implementation:** see [T12 verification](t12-verification.md) and the
+[language guide](../../../interacting/bydbql.md#510-field-and-expression-filters).
+The generated QL-only suite adds 48 specs with independent expected values and
+passes all 340 selected specs on both topologies, including unchanged legacy
+routing across groups with incompatible unused column types. Required T12 work counters,
+hidden columns, resource cleanup, bind reuse and bypass are checked. Safe native
+tag/time pruning never replaces a residual. T14 subsequently adds collection
+membership composition with new residual expressions; MATCH composition remains
+explicitly rejected.
+
 ### T14 — Execute grouped queries with HAVING and membership predicates
+
+**Status: implemented.** The generated suite adds 163 T14 specs and 35 coverage
+obligations; the full suite contains 503 selected specs per real Query RPC topology. The
+owning K(T14) and P(T14) protocols, results, resource probes and retained typed
+indexed-array membership restriction are recorded in [T14 verification](t14-verification.md).
 
 **Performance question:** what does filtering completed groups cost, and do hidden
 or repeated aggregates trigger unnecessary native work or result materialization?
@@ -616,13 +678,35 @@ and separately account for fewer output rows. K(T14) measures filtering group
 batches. G3: repeated SELECT/HAVING calls add zero branches; filter input equals
 completed groups, not raw rows; hidden slots are never serialized. Both membership
 spellings produce the same work; their alias alone is not the performance claim.
-G1/G2 apply; report group-filter CPU, retained state, output bytes and RPC latency.
+G1/G2 apply. K(T14) isolates group-filter execution cost. P(T14) reports inclusive
+process CPU, allocated/reserved state, output rows/bytes and RPC latency; shared-kernel
+profiles cannot isolate HAVING CPU. Per-operator peak retained bytes and physical
+storage reads remain explicitly unavailable. Hidden-call variants omit the two
+visible AVG fields, so their latency comparison also includes narrower output.
+Actual full BydbQL response bytes are measured over the six independently checked
+timed samples after profiling stops. Contextual identifiers and indexed-array
+rejections have generated coverage. A live index-binding check precedes native
+dispatch even on compiled-plan cache hits; native indexed storage is unchanged.
 
 **Checks/readiness:** E(T14), P(T14), K(T14); focused `./pkg/bydbql`,
-`./pkg/query/ql`. Blocked by T08/T10/T12. Grammar compatibility, reference errors
+`./pkg/query/ql`. Prerequisites T08/T10/T12 are implemented. Grammar compatibility, reference errors
 and membership cases are acceptance details of executable grouped queries.
 
 ### T15 — Implement DISTINCT on the complete visible tuple
+
+**Status: implemented.** The generated suite adds 21 QL-only specs with changed
+bindings, plan reuse and cache bypass, including scalar/timestamp equality,
+cross-batch tuples, projection, aggregate/HAVING composition and pagination.
+The existing SQL group table runs with zero aggregate states under the shared
+query tracker. Named typed GROUP BY without aggregates supplies an equivalent
+reference; legacy native group-only routing is preserved. Arrays reject during
+binding, and general sorting remains T17. See [T15 verification](t15-verification.md)
+for real-RPC coverage, focused five-run benchmarks and the native materialization
+limits encountered by large resource probes.
+The [memory follow-up](t15-memory-verification.md) adds compact pooled keys,
+unordered finite-LIMIT stopping and reduced native frame buffering, with focused
+before/after measurements. Explicit ordering and absent LIMIT retain complete
+deduplication; upstream aggregation and native materialization have separate bounds.
 
 **Performance question:** how do distinct-tuple throughput and retained key bytes
 scale with duplicate ratio, cardinality and variable-width values?
@@ -646,10 +730,23 @@ count is zero, and retained key storage scales with unique tuple bytes rather
 than duplicate count. K(T15) measures hashing/equality throughput; G1/G2 apply.
 
 **Checks/readiness:** E(T15), P(T15), K(T15); focused `./pkg/query/ql`,
-`./pkg/bydbql`. Blocked by T07/T10. The legacy first-row-per-group operator is not
+`./pkg/bydbql`. Prerequisites T07/T10 are implemented. The legacy first-row-per-group operator is not
 an acceptable replacement for tuple DISTINCT.
 
 ### T16 — Evaluate computed group keys and resolve GROUP BY ordinals
+
+**Status: implemented.** Multiple computed keys use typed batch evaluation before
+the shared SQL group table. Structural matching preserves parameter identity;
+ordinals resolve after star expansion. Bucket aliases use existing timestamp
+encoding, while local/native output and native merge identity retain the bucket.
+Mixed original-time/bucket keys remain independent and use local aggregation.
+The 65 generated QL-only specs pass cold/warm/bypass execution and native/local
+parity in both topologies, with 589 selected QL and 120 native compatibility specs
+per topology. Focused kernel and six-control RPC benchmarks compare equivalent
+stored/computed and explicit/ordinal grouping. See
+[T16 verification](t16-verification.md) for measurements, resource limits and
+remaining unavailable observations. Protobuf/native operators are unchanged;
+general sorting and spilling are outside this ticket.
 
 **Performance question:** what is the cost of evaluating computed keys and feeding
 them to grouping, compared with equivalent precomputed/simple keys?
@@ -673,9 +770,18 @@ active row, one raw scan for computed grouping, and no per-row AST/name lookup.
 K(T16) measures key evaluation plus grouping; G1/G2 apply.
 
 **Checks/readiness:** E(T16), P(T16), K(T16); focused `./pkg/bydbql`,
-`./pkg/query/ql`. Blocked by T05/T08/T10. Calendar functions/windows/gapfill are excluded.
+`./pkg/query/ql`. Prerequisites T05/T08/T10 are implemented. Calendar functions/windows/gapfill are excluded.
 
 ### T17 — Order and paginate results with full sort and compact top-k
+
+**Implementation status:** implemented, with 48 new generated QL-only specs
+passing in both topologies. The complete measure selection runs all legacy
+regressions and retains nine known failures per topology. The planned 32-caller
+composition reaches the existing native receive-buffer pool limit in both sort
+modes; its benchmark result remains explicitly blocked. Focused measurements,
+source provenance and the exact acceptance limits are recorded in
+[T17 verification](t17-verification.md). These results do not close the parent
+or the historical T02 performance acceptance.
 
 **Performance question:** when does finite-limit top-k reduce CPU and retained
 bytes versus full sort, and do wide rows/large offsets keep state bounded?
@@ -712,8 +818,8 @@ For N>=100,000 and k<=100 on the same random data, top-k median ns/op <=0.80x fu
 sort+slice. G1/G2 apply; report complete RPC and retained-memory costs as well.
 
 **Checks/readiness:** E(T17), P(T17), K(T17); focused `./pkg/query/ql`,
-`./pkg/bydbql`, `./banyand/liaison/grpc`. Blocked by T05/T12/T14/T15/T16 so composed
-cache/time/filter queries have all prerequisites. Full sort can be an internal
+`./pkg/bydbql`, `./banyand/liaison/grpc`. Prerequisites T05/T12/T14/T15/T16 are implemented,
+including composed cache/time/filter queries. Full sort can be an internal
 implementation step/reference, but the ordering ticket closes with both modes.
 
 ## Parent completion and composed workloads
@@ -744,8 +850,10 @@ Run the complete `measure-ql` label in both suites using the E commands without
 the ticket filter. Run existing measure/stream/trace/property/TopN compatibility
 cases affected by dispatch changes, and focused race/owner tests. Benchmark the
 composition as an additional `qlb_t17` variant with changing OAP parameters,
-workers 1/8/32 and G1/G2. Report planned-versus-observed cache savings, native
-pushdown coverage, residual scan cost, and peak/live/cumulative memory separately.
+workers 1/8 for admitted-query timing under G1/G2; use 32 workers for the
+separate overload check described below. Report planned-versus-observed cache
+savings, native pushdown coverage, residual scan cost, and peak/live/cumulative
+memory separately.
 
 Finally compare implementation changes against the PR #1412 base: protobuf and
 generated API files, native transport/frame encoders, persisted formats and
@@ -753,3 +861,203 @@ data-node execution behavior must be unchanged. Go-only extraction of distribute
 batch results must retain existing native RPC golden results. Every feature has
 real endpoint proof and performance evidence; a green parser test or an empty
 benchmark selection cannot close a ticket.
+
+### Concurrent admission acceptance (revised 2026-10-18)
+
+This user-approved revision separates performance from capacity protection for
+T17 and parent composition. It replaces the requirement that the 32-caller cohort
+must complete every query successfully under fixed limits. It does not change
+production admission policy or the earlier reports' recorded verdicts.
+
+| Check | Workload | Passing requirement |
+|---|---|---|
+| Admitted-query performance | Fixed 1/8-caller composed cohorts and existing raw full-sort/top-k controls | Every warmup and measured query succeeds with exact results; required G1/G3 comparisons and G2 cleanup pass |
+| Concurrent overload | Fixed 32-caller composed cohort, exercised with top-k and full sort | Successful responses are exact; capacity rejections are explicit `ResourceExhausted`; no unexpected error, panic or process failure; all resources return to baseline after transport completion |
+| Recovery | Correct query after overload and cleanup, in the same cluster | Query succeeds with exact results, and its resources also return to baseline; no restart or budget increase |
+
+Retain the four-CPU, 8-GiB container, no additional swap, existing protector
+policy and 256-MiB vectorized tracker setting. Keep native receive limits and
+fixture/query/binding sets fixed. Do not reduce concurrency, raise limits, retry
+failed calls into successes or discard failed runs to obtain a passing verdict.
+
+For performance, any rejection invalidates the entire timed cohort. Do not
+compute a passing latency/throughput result from its successful subset. Preserve
+all repetitions and uncertainty. A resource-pass verdict cannot substitute for
+missing successful-query measurements at 100k/1m rows or compatibility evidence.
+
+For overload, report attempted/successful/rejected counts, peak in-flight calls,
+error status and rejection boundary, correctness of every successful response,
+post-close live reservations/owners/pool references, and the recovery result.
+Do not assert that monotonic parent lease charges are refunded before the last
+transport owner closes. A rejection without verified cleanup and recovery fails
+the resource contract; unrelated `ResourceExhausted` errors must not be silently
+classified as the known native admission boundary.
+
+A 32-client run can fully succeed through staggered completion. That is a valid
+concurrent correctness result, but does not prove overload rejection. Include a
+deterministic admission probe that holds receive reservations until capacity is
+exceeded, checks rejection without an allocation beyond the allowance, and checks
+cleanup/recovery. Do not require exactly 31 admissions in the lasting contract;
+that count describes the diagnosed configuration, not an API guarantee.
+
+Report `performance`, `overload` and `recovery` verdicts separately. Rejected
+requests are never successful timing samples. Existing `partial_known_32_blocked`
+artifacts remain historical evidence from the former contract. The harness now
+implements revision `2026-10-18-v1`, with four strictly successful timed variants
+and a separate validated overload/recovery artifact. It preserves historical
+report validation and rejects old blocked-only evidence for revised runs.
+[Harness verification](t17-acceptance-verification.md) records the focused checks;
+this does not fill the separate large-input or full G1 performance evidence gaps.
+
+### PR #1412 compatibility measurement (2026-10-18)
+
+The [frozen compatibility comparison](compatibility-performance.md) completed
+80,000 timed RPCs over five paired repetitions of the T01 matrix. All median
+p50/p95/allocation estimates meet G1 budgets; six cases pass with uncertainty
+included and two 1,024-row QL p50 cases were inconclusive. A separate 20-pair
+confirmation passes both cases under the predefined one-sided uncertainty method,
+closing the compatibility follow-up for this matrix. The original verdict remains
+recorded. This is measurement evidence, not a change to thresholds or a restart of
+the historical T02 investigation. The retained baseline, current binaries and
+identical test-only harness are documented with full provenance.
+
+
+### Large-input acceptance (revised 2026-10-19)
+
+Following the user-approved scope decision, successful throughput for T17's
+100k/1m owning queries is deferred until native input materialization can execute
+the complete workload within the fixed memory budget. This revises the T17 and
+parent completion requirements above: missing successful timing at those sizes
+is a documented deferral, not an outstanding Catalog B implementation task.
+No other child evidence requirement or performance threshold is waived. In
+particular, historical T02 inconclusive/stopped results remain unchanged; this
+revision does not establish that every historical performance gate passed.
+
+| Requirement | Current disposition | Evidence |
+|---|---|---|
+| T17 correctness and admitted-query performance | Verified for the recorded workloads and sizes | [T17 verification](t17-verification.md), [five-pair campaign](t17-benchmark-campaign.md) |
+| Overload rejection, cleanup and same-cluster recovery | Verified separately from successful timing | [Admission verification](t17-acceptance-verification.md) |
+| 100k/1m fixture correctness and resource feasibility | Verified by the fixed probes; accepted resource rejection is not throughput | [Fixed large-input probes](t17-1m-readiness-fix.md) |
+| Successful 100k/1m owning-query throughput | Deferred; no performance verdict | Future bounded-input execution or spilling work |
+| PR #1412 compatibility matrix | Follow-up complete with separate small-query confirmation | [Compatibility comparison](compatibility-performance.md) |
+| Historical T02 performance acceptance | Preserved inconclusive/stopped | T02 record above |
+
+The fixed 1m probe verifies the entire fixture, rejects all five owning queries
+with `ResourceExhausted`, and successfully executes all five recovery queries
+with zero recorded cleanup counters. At 100k, four owning queries reject and
+one composed binding succeeds exactly. That isolated success is feasibility
+evidence, not a successful timing cohort. Physical block layout can affect input
+admission, so rejection itself is not mandatory when an exact result fits.
+
+Resume the deferred performance work only after a change makes the complete
+owning-query cohort admissible under the existing four-CPU, 8-GiB container and
+256-MiB query tracker. Possible enabling work includes reducing native eager
+input residency or temporary-file spilling; selecting or implementing either is
+outside this revision. Then rerun fixture readiness, exact results, cleanup and
+recovery before measuring all required queries with fixed repetitions. A rejected
+call must never become a timing sample, and a successful subset cannot pass the
+cohort. Raising limits, shrinking the workload or rerunning an unchanged rejected
+cohort does not fulfill the deferred requirement.
+
+No benchmark code, memory protection, SQL behavior, protobuf or persisted format
+changes accompany this acceptance revision. Spilling and retained-result session
+pagination remain explicitly deferred. There is no new Catalog B feature ticket.
+
+
+### DPO #81 count-distinct composition follow-up
+
+The existing native count-distinct operation now composes through the extended
+QL path with multiple aggregates, aliases, multi-key grouping, HAVING, general
+ORDER BY and final LIMIT/OFFSET. This addresses the four single-measure composition gaps identified in
+[DPO #81](https://github.com/tetrateio/DPO/issues/81) for queries expressed using
+the extended path: multiple aggregates, deterministic tie-breaking, complete
+aggregation without an implicit 100-group cap, and pagination after ordering.
+Use an alias or the extended source form to select extended scalar/grouped
+semantics; use `ORDER BY count_alias DESC, unique_group_key ASC` for ranked pages.
+Legacy TOP/native query behavior and defaults are preserved.
+
+Distinct counts use complete raw input and retain exact (group, value) keys in
+the shared bounded QL grouping storage. Repeated distinct calls share state;
+ordinary COUNT/SUM state remains separate. The extended plan deliberately does
+not sum native distinct partial counts, which would be invalid when shard value
+sets overlap. Exhausted memory fails the query without partial results. Protobuf,
+native wire behavior and persisted formats are unchanged.
+
+This is not full DPO #81 coverage. Its linked PostgreSQL SQL in issue #79 remains outside this follow-up:
+joins/CTEs, computed aggregate arguments, aggregate FILTER, additional string
+functions and exact decimal arithmetic are not added. Missing telemetry dimensions
+or identities lost during rollup require ingestion changes. Separate page calls
+still do not share a snapshot; spilling and session pagination remain deferred.
+
+The scalar empty-result lifecycle correction was already delivered in PR #1417;
+this PR preserves it while extending local distinct composition.
+
+Verification uses generated QL-only endpoint cases for scalar/grouped count
+composition, NULL and empty input, changed bindings, HAVING, tied ordering and
+pagination past 1,100 groups in both topologies. Operator tests exercise scalar
+types, duplicate values across batches, borrowed-buffer ownership, cancellation,
+memory rejection and zero retained reservations. A narrow operator benchmark
+compares ordinary COUNT and exact COUNT(DISTINCT) on identical inputs at two
+cardinalities; it measures added state/cost, not equivalent-result speedup.
+
+
+Follow-up verification (2026-10-19): the full planner and QL operator suites pass,
+including querymetrics builds; focused distinct ownership/race tests pass. The
+full generator suite and the final affected artifact/oracle checks pass. Both
+standalone and distributed QL-generated selections pass 6/6 specs (five new
+composition scenarios plus the existing count-distinct scenario). Scoped lint
+reports zero issues. The deep-page fixture has 1,153 groups, offset 1,100 and
+seven returned rows. It projects `rid`, `COUNT(DISTINCT rid)` and `SUM(v)`;
+multi-key grouping is tested separately with the smaller fixture. A wider
+three-tag control hit the host's native 8-MiB query allowance even with ordinary
+COUNT; the final test preserves group count/page depth without raising budgets.
+
+Empty scalar follow-up: legacy QL `COUNT(DISTINCT)` now completes a successful
+empty native result with one integer-zero row, before trace assembly and response
+memory accounting. Grouped results and pages beyond the scalar remain empty;
+explicit `LIMIT 0` is retained in QL plan metadata. Native protobuf query behavior
+and nonempty native execution remain unchanged. Failure/cancellation responses
+cannot become zero counts, and the shared empty response is not mutated.
+The neutral generated `QL-parent-child` cohort covers nine scenarios, including
+idle filtered/global counts, grouped empty input, and scalar limit/offset bindings.
+Both topologies pass all nine scenarios in four-CPU, 8-GiB containers with no extra
+swap or query-budget overrides. Full liaison/planner unit suites, focused final
+regressions, generator artifact checks and scoped lint pass.
+Reports: `/mnt/d/qlb-empty-scalar-standalone-report.json` and
+`/mnt/d/qlb-empty-scalar-distributed-report.json`.
+
+Reproduction commands, using Go 1.26.9:
+
+```sh
+make generate-ql-test-cases
+go test ./pkg/bydbql ./pkg/query/ql ./test/cases/measure/qlgen -count=1
+go test -tags=querymetrics ./pkg/bydbql ./pkg/query/ql -count=1
+go test -race ./pkg/query/ql -run CountDistinct -count=1
+go test -tags=querymetrics -count=1 -timeout=15m ./test/integration/standalone/query -ginkgo.label-filter=QL-generated -ginkgo.focus=count_distinct
+go test -tags=querymetrics -count=1 -timeout=15m ./test/integration/distributed/query -ginkgo.label-filter=QL-generated -ginkgo.focus=count_distinct
+```
+
+Final endpoint reports are `/mnt/d/qlb-count-distinct-final-standalone-report.json`
+and `/mnt/d/qlb-count-distinct-final-distributed-report.json`; corresponding logs
+and the ordinary-count capacity control are retained alongside them. No protobuf
+changes or external issue updates were made.
+
+
+The narrow operator benchmark completed five repetitions per case in a four-CPU,
+8-GiB Docker container with no additional swap, GOMAXPROCS=4 and Go 1.26.9. Each
+operation consumes 65,536 integer rows. Median results:
+
+| Unique input values | Operation | ms/op | Allocated bytes/op | Allocations/op | Retained distinct capacity (bytes) |
+|---:|---|---:|---:|---:|---:|
+| 64 | COUNT | 2.743 | 1,920 | 22 | 0 |
+| 64 | COUNT(DISTINCT) | 8.761 | 6,609 | 47 | 3,248 |
+| 65,536 | COUNT | 2.643 | 1,920 | 22 | 0 |
+| 65,536 | COUNT(DISTINCT) | 18.058 | 2,689,549 | 80 | 2,687,720 |
+
+This measures exact-set overhead, not a speedup comparison between equivalent
+queries or an RPC latency gate. Distinct state grows with unique values; repeated
+input values do not retain additional keys. Each operation checks its independent
+expected count and verifies zero tracked memory after Close. Retained capacity
+is the final set reservation, not peak process RSS. The benchmark excludes native
+input scanning and transport. Runner, raw five-run samples, binary digest,
+observed cgroup limits and summary are under `.omx/dpo81-count-distinct/`.

@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"strings"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -29,6 +30,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/testing/protocmp"
 	"sigs.k8s.io/yaml"
 
@@ -67,8 +69,8 @@ func VerifyQL(ctx context.Context, conn grpc.ClientConnInterface, content string
 	return result.MeasureResult, nil
 }
 
-// VerifyQLError asserts an independently specified gRPC status for a QL-only fixture.
-func VerifyQLError(ctx context.Context, conn grpc.ClientConnInterface, content string, wantCode codes.Code) error {
+// VerifyQLError asserts a gRPC status and optional message fragments for a QL-only fixture.
+func VerifyQLError(ctx context.Context, conn grpc.ClientConnInterface, content string, wantCode codes.Code, wantMessages ...string) error {
 	if wantCode == codes.OK {
 		return fmt.Errorf("expected error status must not be OK")
 	}
@@ -82,6 +84,11 @@ func VerifyQLError(ctx context.Context, conn grpc.ClientConnInterface, content s
 	}
 	if status.Code(err) != wantCode {
 		return fmt.Errorf("QL status: got %s, want %s %w", status.Code(err), wantCode, err)
+	}
+	for _, message := range wantMessages {
+		if !strings.Contains(status.Convert(err).Message(), message) {
+			return fmt.Errorf("QL error is missing %q: %w", message, err)
+		}
 	}
 	return nil
 }
@@ -123,6 +130,7 @@ func CompareQLResult(got, want *measurev1.QueryResponse, ordered bool) error {
 	if len(got.DataPoints) != len(want.DataPoints) {
 		return fmt.Errorf("QL row count: got %d, want %d", len(got.DataPoints), len(want.DataPoints))
 	}
+	buckets, exactCandidates := qlCandidateBuckets(got.DataPoints, want.DataPoints)
 	// Approximate equality is not transitive. Find a complete one-to-one matching,
 	// allowing an earlier pair to move when a later row has fewer candidates.
 	candidates := make([][]int, len(want.DataPoints))
@@ -134,8 +142,17 @@ func CompareQLResult(got, want *measurev1.QueryResponse, ordered bool) error {
 	match = func(index int, visited []bool) bool {
 		if candidates[index] == nil {
 			candidates[index] = make([]int, 0)
-			for candidate, actual := range got.DataPoints {
-				if cmp.Equal(want.DataPoints[index], actual, options...) {
+			var possible []int
+			if exactCandidates {
+				possible = buckets[index]
+			} else {
+				possible = make([]int, len(got.DataPoints))
+				for ordinal := range possible {
+					possible[ordinal] = ordinal
+				}
+			}
+			for _, candidate := range possible {
+				if cmp.Equal(want.DataPoints[index], got.DataPoints[candidate], options...) {
 					candidates[index] = append(candidates[index], candidate)
 				}
 			}
@@ -170,5 +187,80 @@ func qlFloatsEqual(left, right protocmp.Message) bool {
 	if _, present := right["value"]; !present {
 		right["value"] = float64(0)
 	}
-	return cmp.Equal(left, right, cmpopts.EquateApprox(0, 1e-12))
+	return cmp.Equal(left, right, cmpopts.EquateApprox(0, 1e-12), cmpopts.EquateNaNs())
+}
+
+// qlCandidateBuckets narrows exact rows by wire structure. Keys only select
+// candidates: the full comparison and one-to-one matching remain authoritative.
+// Float-bearing responses and unknown fields retain the original global matcher.
+func qlCandidateBuckets(got, want []*measurev1.DataPoint) ([][]int, bool) {
+	keys := make([][]string, 2)
+	for side, rows := range [][]*measurev1.DataPoint{got, want} {
+		for _, row := range rows {
+			if !qlExactKeyEligible(row.ProtoReflect()) {
+				return nil, false
+			}
+			normalized := proto.Clone(row).(*measurev1.DataPoint)
+			if normalized != nil {
+				normalized.Sid = 0
+				normalized.Version = 0
+			}
+			data, err := (proto.MarshalOptions{Deterministic: true}).Marshal(normalized)
+			if err != nil {
+				return nil, false
+			}
+			keys[side] = append(keys[side], string(data))
+		}
+	}
+	byKey := make(map[string][]int, len(got))
+	for ordinal, key := range keys[0] {
+		byKey[key] = append(byKey[key], ordinal)
+	}
+	candidates := make([][]int, len(want))
+	for ordinal, key := range keys[1] {
+		candidates[ordinal] = byKey[key]
+	}
+	return candidates, true
+}
+
+func qlExactKeyEligible(message protoreflect.Message) bool {
+	if !message.IsValid() {
+		return true
+	}
+	if len(message.GetUnknown()) > 0 {
+		return false
+	}
+	fields := message.Descriptor().Fields()
+	for ordinal := range fields.Len() {
+		field := fields.Get(ordinal)
+		if field.Kind() == protoreflect.FloatKind || field.Kind() == protoreflect.DoubleKind {
+			return false
+		}
+	}
+	eligible := true
+	message.Range(func(field protoreflect.FieldDescriptor, value protoreflect.Value) bool {
+		switch {
+		case field.IsMap():
+			value.Map().Range(func(_ protoreflect.MapKey, item protoreflect.Value) bool {
+				kind := field.MapValue().Kind()
+				switch kind {
+				case protoreflect.DoubleKind, protoreflect.FloatKind:
+					eligible = false
+				case protoreflect.MessageKind, protoreflect.GroupKind:
+					eligible = qlExactKeyEligible(item.Message())
+				default: // Exact scalar map values remain in the wire key.
+				}
+				return eligible
+			})
+		case field.Kind() == protoreflect.MessageKind && field.IsList():
+			list := value.List()
+			for ordinal := 0; ordinal < list.Len() && eligible; ordinal++ {
+				eligible = qlExactKeyEligible(list.Get(ordinal).Message())
+			}
+		case field.Kind() == protoreflect.MessageKind:
+			eligible = qlExactKeyEligible(value.Message())
+		}
+		return eligible
+	})
+	return eligible
 }

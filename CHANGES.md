@@ -6,6 +6,8 @@ Release Notes.
 
 ### Features
 
+- Add measure QL SELECT DISTINCT, computed and ordinal grouping, selectable time buckets, multi-key ordering with bounded top-k pagination, and exact count-distinct composition.
+- Add typed measure QL expressions, masked CASE/COALESCE, raw field WHERE, grouped HAVING and compatible CONTAINS membership over shared columnar batches.
 - Add SQL-correct measure QL grouping and multiple aggregates, with shared calls, weighted AVG, bounded local state and eligible native aggregate split/merge.
 - Sample traces with source-stage native plugins before lifecycle migration, with durable decisions, checkpointed replay, and crash recovery.
 - Add typed raw measure QL with WHERE time, aliases and bounded compiled-plan reuse, executed over shared columnar native batches.

@@ -39,20 +39,45 @@ type Feature struct {
 
 // Suite is the reproducible QL-only integration artifact.
 type Suite struct {
-	NativeAggregateReadiness  []AggregateFixture        `json:"native_aggregate_readiness"`
-	NativeAggregateRejections []Case                    `json:"native_aggregate_rejections"`
-	NativeAggregateScenarios  []NativeAggregateScenario `json:"native_aggregate_scenarios"`
-	AggregateReadiness        []AggregateFixture        `json:"aggregate_readiness"`
-	AggregateRejections       []Case                    `json:"aggregate_rejections"`
-	AggregateScenarios        []AggregateScenario       `json:"aggregate_scenarios"`
-	FixtureDigest             string                    `json:"fixture_digest"`
-	ReuseScenarios            []ReuseScenario           `json:"reuse_scenarios"`
-	ReuseReadiness            Case                      `json:"reuse_readiness"`
-	Features                  []Feature                 `json:"features"`
-	Cases                     []Case                    `json:"cases"`
-	Pairs                     PairCoverage              `json:"pairs"`
-	Version                   int                       `json:"version"`
-	Seed                      int64                     `json:"seed"`
+	ParentChildReadiness         []AggregateFixture            `json:"parent_child_readiness"`
+	ParentChildScenarios         []AggregateScenario           `json:"parent_child_scenarios"`
+	SortingResources             []SortingResource             `json:"sorting_resources"`
+	SortingReadiness             []AggregateFixture            `json:"sorting_readiness"`
+	SortingScenarios             []SortingScenario             `json:"sorting_scenarios"`
+	SortingRejections            []Case                        `json:"sorting_rejections"`
+	GroupingReadiness            []AggregateFixture            `json:"grouping_readiness"`
+	GroupingScenarios            []GroupingScenario            `json:"grouping_scenarios"`
+	GroupingRejections           []Case                        `json:"grouping_rejections"`
+	DistinctScenarios            []DistinctScenario            `json:"distinct_scenarios"`
+	DistinctReadiness            []Case                        `json:"distinct_readiness"`
+	DistinctRejections           []Case                        `json:"distinct_rejections"`
+	HavingReviewScenarios        []HavingScenario              `json:"having_review_scenarios"`
+	HavingLegacyScenarios        []HavingScenario              `json:"having_legacy_scenarios"`
+	HavingReadiness              []AggregateFixture            `json:"having_readiness"`
+	HavingScenarios              []HavingScenario              `json:"having_scenarios"`
+	HavingRejections             []Case                        `json:"having_rejections"`
+	LegacyCompatibilityReadiness []Case                        `json:"legacy_compatibility_readiness"`
+	LegacyCompatibilityScenarios []LegacyCompatibilityScenario `json:"legacy_compatibility_scenarios"`
+	FilterReadiness              []Case                        `json:"filter_readiness"`
+	FilterScenarios              []FilterScenario              `json:"filter_scenarios"`
+	FilterRejections             []Case                        `json:"filter_rejections"`
+	ExpressionReadiness          []Case                        `json:"expression_readiness"`
+	ExpressionRejections         []Case                        `json:"expression_rejections"`
+	ExpressionScenarios          []ExpressionScenario          `json:"expression_scenarios"`
+	NativeAggregateReadiness     []AggregateFixture            `json:"native_aggregate_readiness"`
+	NativeAggregateRejections    []Case                        `json:"native_aggregate_rejections"`
+	NativeAggregateScenarios     []NativeAggregateScenario     `json:"native_aggregate_scenarios"`
+	AggregateReadiness           []AggregateFixture            `json:"aggregate_readiness"`
+	AggregateRejections          []Case                        `json:"aggregate_rejections"`
+	AggregateScenarios           []AggregateScenario           `json:"aggregate_scenarios"`
+	FixtureDigest                string                        `json:"fixture_digest"`
+	ReuseScenarios               []ReuseScenario               `json:"reuse_scenarios"`
+	ReuseReadiness               Case                          `json:"reuse_readiness"`
+	Features                     []Feature                     `json:"features"`
+	Cases                        []Case                        `json:"cases"`
+	Pairs                        PairCoverage                  `json:"pairs"`
+	Version                      int                           `json:"version"`
+	Seed                         int64                         `json:"seed"`
 }
 
 // Load checks the generated contract before integration tests consume it.
@@ -72,6 +97,12 @@ func Load(content []byte) (Suite, error) {
 
 // Validate rejects stale fixtures, duplicate cases and incomplete declared coverage.
 func (s Suite) Validate() error {
+	if err := validateGroupingScenarios(s); err != nil {
+		return err
+	}
+	if err := validateDistinctScenarios(s); err != nil {
+		return err
+	}
 	if err := ValidateCoverageContract(s.Features); err != nil {
 		return err
 	}
@@ -130,6 +161,32 @@ func (s Suite) Validate() error {
 }
 
 func (s Suite) validateScenarios() error {
+	if err := validateParentChild(s); err != nil {
+		return err
+	}
+	if err := validateSortingScenarios(s); err != nil {
+		return err
+	}
+	if err := validateT14ReviewScenarios(s.HavingReviewScenarios); err != nil {
+		return err
+	}
+	if err := validateHavingScenarios(s.HavingReadiness, s.HavingScenarios); err != nil {
+		return err
+	}
+	if len(s.HavingLegacyScenarios) == 0 {
+		return fmt.Errorf("T14 legacy membership witnesses missing")
+	}
+	for _, scenario := range s.HavingLegacyScenarios {
+		if len(scenario.Cases) != 3 {
+			return fmt.Errorf("T14 legacy membership binding missing")
+		}
+	}
+	if err := validateT12Legacy(s.LegacyCompatibilityReadiness, s.LegacyCompatibilityScenarios); err != nil {
+		return err
+	}
+	if err := validateFilterScenarios(s.FilterReadiness, s.FilterScenarios); err != nil {
+		return err
+	}
 	if err := validateReuseReadiness(s.ReuseReadiness); err != nil {
 		return err
 	}
@@ -139,11 +196,72 @@ func (s Suite) validateScenarios() error {
 	if err := validateAggregateScenarios(s.AggregateReadiness, s.AggregateScenarios); err != nil {
 		return err
 	}
+	if err := validateExpressionScenarios(s.ExpressionReadiness, s.ExpressionScenarios); err != nil {
+		return err
+	}
 	return validateNativeAggregateScenarios(s.NativeAggregateReadiness, s.NativeAggregateScenarios)
 }
 
 func (s Suite) witnessCases() []Case {
 	cases := append([]Case(nil), s.Cases...)
+	for _, fixture := range s.ParentChildReadiness {
+		cases = append(cases, fixture.Cases...)
+	}
+	for _, scenario := range s.ParentChildScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
+	for _, fixture := range s.SortingReadiness {
+		cases = append(cases, fixture.Cases...)
+	}
+	cases = append(cases, s.SortingRejections...)
+	for _, resource := range s.SortingResources {
+		cases = append(cases, resource.Case)
+		if resource.Control != nil {
+			cases = append(cases, *resource.Control)
+		}
+	}
+	for _, scenario := range s.SortingScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
+	for _, fixture := range s.GroupingReadiness {
+		cases = append(cases, fixture.Cases...)
+	}
+	cases = append(cases, s.GroupingRejections...)
+	for _, scenario := range s.GroupingScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
+	cases = append(cases, s.DistinctReadiness...)
+	cases = append(cases, s.DistinctRejections...)
+	for _, scenario := range s.DistinctScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
+	for _, scenario := range s.HavingReviewScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
+	for _, scenario := range s.HavingLegacyScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
+	for _, fixture := range s.HavingReadiness {
+		cases = append(cases, fixture.Cases...)
+	}
+	cases = append(cases, s.HavingRejections...)
+	for _, scenario := range s.HavingScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
+	cases = append(cases, s.LegacyCompatibilityReadiness...)
+	for _, scenario := range s.LegacyCompatibilityScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
+	cases = append(cases, s.FilterReadiness...)
+	cases = append(cases, s.FilterRejections...)
+	for _, scenario := range s.FilterScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
+	cases = append(cases, s.ExpressionReadiness...)
+	cases = append(cases, s.ExpressionRejections...)
+	for _, scenario := range s.ExpressionScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
 	for _, fixture := range s.AggregateReadiness {
 		cases = append(cases, fixture.Cases...)
 	}
