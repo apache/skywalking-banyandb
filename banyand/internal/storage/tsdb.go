@@ -151,6 +151,7 @@ type database[T TSTable, O any] struct {
 	lock              fs.File
 	rootLease         RootLease
 	lfs               fs.FileSystem
+	clock             timestamp.Clock
 	tsEventCh         chan int64
 	scheduler         *timestamp.Scheduler
 	segmentController *segmentController[T, O]
@@ -234,8 +235,9 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache 
 	db := &database[T, O]{
 		location:  location,
 		scheduler: scheduler,
+		clock:     clock,
 		logger:    l,
-		tsEventCh: make(chan int64),
+		tsEventCh: make(chan int64, 1),
 		p:         p,
 		segmentController: newSegmentController(ctx, location,
 			l, opts, indexMetrics, opts.TableMetrics, opts.SegmentIdleTimeout, tsdbLfs, sc, group),

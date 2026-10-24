@@ -352,4 +352,23 @@ func TestTickRejectsZeroTimestamp(t *testing.T) {
 	// Tick with negative should also be rejected
 	tsdb.Tick(-1)
 	require.Equal(t, validTS, db.latestTickTime.Load(), "Tick(-1) should not update latestTickTime")
+
+	// Tick with rogue future timestamp should be rejected and not update latestTickTime
+	futureTS := ts.Add(365 * 24 * time.Hour).UnixNano()
+	tsdb.Tick(futureTS)
+	require.Equal(t, validTS, db.latestTickTime.Load(), "Tick with rogue future timestamp should not update latestTickTime")
+}
+
+func Test_isFutureSkewed(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	interval := 24 * time.Hour
+
+	// 1. Normal write within the day -> NOT skewed
+	require.False(t, isFutureSkewed(now.Add(12*time.Hour).UnixNano(), now, interval))
+
+	// 2. End-of-day forward rotation trigger -> NOT skewed
+	require.False(t, isFutureSkewed(now.Add(23*time.Hour).UnixNano(), now, interval))
+
+	// 3. Rogue write 1 year in the future -> SKEWED
+	require.True(t, isFutureSkewed(now.Add(365*24*time.Hour).UnixNano(), now, interval))
 }
