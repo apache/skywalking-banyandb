@@ -6,8 +6,9 @@ Status: **implemented by T05**, with verification recorded in
 PR 2 extends reusable metadata to aggregate calls, grouping columns and native
 entity identities; see its [verification record](pr2-verification.md). Native
 eligibility, requests and lifecycle selection remain fresh for each execution.
-PR 3 adds immutable typed expression, WHERE and HAVING recipes. General sorting
-remains a subsequent Catalog B extension.
+PR 3 adds immutable typed expression, WHERE and HAVING recipes. PR 4 adds
+computed grouping, visible-tuple DISTINCT, exact distinct-count state recipes and
+sort keys. See the [PR 4 record](pr4-verification.md) for current validation.
 This extends the [engine design](datafusion-engine.md) on PR #1412. It changes no
 protobuf, RPC, native request or frame format.
 
@@ -29,7 +30,7 @@ plans after measuring 3–6 microseconds for Bind + transformation with local sc
 reads. Preserve that historical result. This decision revisits the deferral for
 Catalog B: typed raw source/output resolution and time-range planning add work,
 while OAP repeatedly varies bound values. PR 2 adds aggregate metadata; PR 3 adds
-general expression planning.
+general expression planning. PR 4 extends the same boundary to grouping and ordering.
 Benchmark both simple legacy templates and new plans; do not assume the earlier
 measurement proves either a large benefit or no benefit for this engine.
 
@@ -40,13 +41,14 @@ snapshot is introduced, and end-to-end speedup must be measured separately.
 
 ## 2. Reusable template versus execution instance
 
-| Cached immutable template through PR 3 | Fresh for every execution |
+| Cached immutable template through PR 4 | Fresh for every execution |
 |---|---|
 | Parsed syntax and placeholder constraints | Parameter values, native list values and validation |
 | Resolved raw slots, source identities, types and output names | Bound time ranges and one captured now |
 | Legacy native lowering metadata and typed raw projection/time recipes | Newly lowered native requests and optional RawPlan |
 | Aggregate calls, grouping columns and native entity identities | Native eligibility proofs, branch requests and local/merge state |
 | Typed SELECT/WHERE/HAVING recipes and hidden input/output slots | Bound typed expressions, row masks, scratch and current membership index checks |
+| Computed group recipes, visible DISTINCT mapping and resolved sort keys | Bound group keys, exact distinct sets, full-sort buffers or top-k candidates |
 | Schema dependency revisions and local watch generations | Dependency checks, current authorization and native gates |
 | Output mapping and source schema metadata | Operator instances, query budgets, borrowed owners and result encoding |
 
@@ -55,7 +57,8 @@ cursor, memory lease or permission outcome. A template is a recipe; every reques
 owns its bound values and execution state. Local hash aggregation and native
 aggregate merging instantiate fresh state from the reusable aggregate metadata.
 Expression recipes are immutable; bound kernels own fresh execution scratch.
-Sorting remains a future template extension.
+Sort recipes resolve keys once; every execution owns its candidate storage,
+comparator values and final pagination parameters.
 
 The implemented request flow is:
 
@@ -65,11 +68,12 @@ exact QL text -> prepared syntax lookup -> validate parameter overlay
     -> hit: immutable MeasureTemplate
        miss: capture schemas -> compile -> revalidate -> publish if reusable
     -> MeasureTemplate.Bind with fresh parameters and one execution clock
-    -> native QueryRequest + optional expression/filter/aggregate recipes and native alternative
+    -> native QueryRequest + expression/filter/group/aggregate/sort recipes and native alternative
     -> current authorization -> admission/revision/lifecycle gates
     -> raw batches -> optional WHERE -> local aggregation if needed
        or eligible native aggregates -> complete keyed merge
-    -> HAVING if present -> visible projection -> final pagination -> release handle
+    -> HAVING if present -> visible-tuple DISTINCT if present
+    -> full sort or compact top-k if present -> final pagination/visible output -> release handle
 ```
 
 Parameters do not enter the compiled key. Time ranges, native criteria/list values,
@@ -82,8 +86,9 @@ PR 2 rechecks native aggregate eligibility after binding and current lifecycle
 selection before each branch. Integer overflow, nullable keys, count bounds and
 provider restrictions select the complete local fallback when proof is missing.
 PR 3 binds expression values afresh and checks current indexed-array membership
-metadata after authorization, including on cache hits. Full-sort/top-k features
-must preserve this division.
+metadata after authorization, including on cache hits. PR 4 binds group and sort
+expressions afresh; changed LIMIT/OFFSET values select new candidate bounds without
+retaining rows or group state between requests.
 
 ## 3. Cache key and parameter types
 

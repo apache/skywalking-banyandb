@@ -1,11 +1,12 @@
 # DataFusion-inspired measure QL engine
 
-Status: **implemented through T14 in PR 3.** Shared batches, typed raw queries,
-compiled-plan reuse and SQL aggregation are merged through PRs #1417 and #1424.
-This branch adds typed expressions, field WHERE and HAVING/membership. DISTINCT,
-computed grouping, selectable time buckets, general sorting and extended exact
-count-distinct composition remain in PR 4. Current scope and validation status
-are in the [PR 3 verification record](pr3-verification.md).
+Status: **implemented through T17 and exact count-distinct composition in PR 4.**
+The merged foundation and aggregation come from PRs #1417 and #1424. This branch
+adds DISTINCT, computed/ordinal grouping, selectable time buckets and general
+sorting above open [PR #1432](https://github.com/apache/skywalking-banyandb/pull/1432),
+with main at `86659118` as the integration baseline. Current scope and validation
+are recorded in the [PR 4 verification record](pr4-verification.md). Relational
+joins and CTEs are outside this delivery.
 
 This refines the [Catalog B implementation plan](README.md), originally reviewed
 against PR #1412 at `012115c5`. The companion [research note](datafusion-research.md)
@@ -382,12 +383,15 @@ compare identical semantics with pushdown enabled or disabled.
 | DISTINCT / GROUP BY | One null-aware group table; emit key columns only when no aggregates | Reuse batch allocation patterns, not the legacy key codec |
 | OFFSET / LIMIT | Selection slicing, uint64 counters, absent versus zero | Adapt helper locally; no native contract change |
 
-For sorting, evaluate keys once per batch. Use compact row references into retained
-column buffers and emit gathered batches; retained source bytes must be charged.
-For top-k, clone accepted candidates into a compact retained batch/arena so keeping
-one row does not pin an unbounded number of entire input blocks. Eviction releases
-or reuses that candidate's storage. Bound by retained bytes as well as k. No
-unbounded full sort fallback after exhausting memory.
+T17 evaluates sort keys once per batch and copies retained row values into owned
+candidate storage, including reachable variable-width values. Neither full sort
+nor top-k retains source-batch owners. Unlimited output uses cancellable heapsort;
+finite LIMIT keeps at most `uint64(OFFSET) + uint64(LIMIT)` candidates in a max-heap
+and then sorts that retained page prefix. Eviction reuses candidate cell storage.
+Key buffers, candidate capacity/payload and output charge the shared query tracker
+before allocation. Exhaustion fails the query; there is no unbounded fallback or
+disk spilling. See [T17 verification](t17-verification.md) for accounting and
+cleanup evidence.
 
 ORDER BY defaults, hidden keys, output aliases, field-filter-before-aggregation,
 HAVING membership compatibility, cast syntax and existing response limitations

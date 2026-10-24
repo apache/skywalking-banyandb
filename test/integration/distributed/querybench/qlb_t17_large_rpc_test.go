@@ -34,6 +34,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	bydbqlv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/bydbql/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -95,6 +96,14 @@ func TestQLBT17LargeRPC(t *testing.T) {
 		t.Fatal(err)
 	}
 	report["readiness"] = "pass"
+	// Time bounds alone can still require decoding large blocks for all hosts.
+	// Establish this single-host query before testing rejection and reuse it after
+	// every owning query without changing the cluster or its memory limits.
+	preflight, recoveryErr := qlbT17LargeRecovery(ctx, client, base)
+	report["recovery_preflight"] = preflight
+	if recoveryErr != nil {
+		t.Fatal(recoveryErr)
+	}
 	calls := make([]qlbT17LargeCall, 0, 5)
 	rejected := 0
 	for _, spec := range qlbT17PerformanceSpecs()[:3] {
@@ -128,14 +137,11 @@ func qlbT17LargeCohort(ctx context.Context, client bydbqlv1.BydbQLServiceClient,
 	for _, oracle := range oracles {
 		call, err := qlbT17LargeRPC(ctx, client, oracle, base)
 		if err == nil {
-			// A small bounded time range on the same fixture verifies recovery without
-			// recreating the cluster or changing the sort hook, pool or tracker budget.
-			recovery, recoveryErr := qlbT17LargeRPC(ctx, client, newQLBT17Oracle(spec, 1024, oracle.binding, base), base)
+			// Repeat the previously admitted host/time query on the same cluster.
+			recovery, recoveryErr := qlbT17LargeRecovery(ctx, client, base)
 			call.Recovery = &recovery
 			if recoveryErr != nil {
 				err = recoveryErr
-			} else if recovery.Status != codes.OK.String() {
-				err = fmt.Errorf("T17 large RPC recovery rejected: %s", recovery.Error)
 			}
 		}
 		calls = append(calls, call)
@@ -144,6 +150,37 @@ func qlbT17LargeCohort(ctx context.Context, client bydbqlv1.BydbQLServiceClient,
 		}
 	}
 	return calls, nil
+}
+
+func qlbT17LargeRecovery(ctx context.Context, client bydbqlv1.BydbQLServiceClient, base time.Time) (qlbT17LargeCall, error) {
+	request, expected := qlbT17RawChunk(0, 1024, 0, base)
+	queryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	response, queryErr := client.Query(queryCtx, request)
+	call, err := qlbT17LargeRecoveryOutcome(expected, response, queryErr)
+	var cleanupErr error
+	call.Cleanup, cleanupErr = qlbT17OverloadCleanup()
+	if cleanupErr != nil {
+		return call, cleanupErr
+	}
+	return call, err
+}
+
+func qlbT17LargeRecoveryOutcome(expected *measurev1.QueryResponse, response *bydbqlv1.QueryResponse,
+	queryErr error,
+) (qlbT17LargeCall, error) {
+	call := qlbT17LargeCall{Variant: "host_00_first_1024_recovery", Status: status.Code(queryErr).String()}
+	if queryErr != nil {
+		call.Error = queryErr.Error()
+		return call, fmt.Errorf("T17 host-pruned recovery failed: %w", queryErr)
+	}
+	actual := response.GetMeasureResult()
+	if actual == nil || len(actual.DataPoints) != len(expected.DataPoints) || qlbT01Hash(actual) != qlbT01Hash(expected) {
+		call.Error = "T17 host-pruned recovery differs from independent fixture: " + qlbReadinessDifference(expected, actual)
+		return call, fmt.Errorf("%s", call.Error)
+	}
+	call.Exact, call.Rows, call.Hash = true, len(actual.DataPoints), qlbT17OrderedHash(actual)
+	return call, nil
 }
 
 func qlbT17LargeRPC(ctx context.Context, client bydbqlv1.BydbQLServiceClient,
@@ -220,6 +257,37 @@ func TestQLBT17LargeOutcome(t *testing.T) {
 			}
 			if !tc.wantErr && call.Exact != (tc.queryErr == nil) {
 				t.Fatalf("incorrect success classification: %+v", call)
+			}
+		})
+	}
+}
+
+func TestQLBT17LargeRecoveryOutcome(t *testing.T) {
+	_, expected := qlbT17RawChunk(0, 1024, 0, time.Unix(0, 0))
+	exact := &bydbqlv1.QueryResponse{Result: &bydbqlv1.QueryResponse_MeasureResult{MeasureResult: expected}}
+	_, corrupted := qlbT17RawChunk(0, 1024, 0, time.Unix(0, 0))
+	corrupted.DataPoints[1].Fields[1].Value = intFieldValue(1776)
+	wrong := &bydbqlv1.QueryResponse{Result: &bydbqlv1.QueryResponse_MeasureResult{MeasureResult: corrupted}}
+	for _, tc := range []struct {
+		queryErr error
+		response *bydbqlv1.QueryResponse
+		name     string
+		wantErr  bool
+	}{
+		{name: "exact", response: exact},
+		{name: "corrupted", response: wrong, wantErr: true},
+		{name: "missing", wantErr: true},
+		{name: "empty", response: &bydbqlv1.QueryResponse{Result: &bydbqlv1.QueryResponse_MeasureResult{MeasureResult: &measurev1.QueryResponse{}}}, wantErr: true},
+		{name: "rejected", queryErr: status.Error(codes.ResourceExhausted, "memory limit"), wantErr: true},
+		{name: "partial", response: exact, queryErr: status.Error(codes.ResourceExhausted, "memory limit"), wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			call, err := qlbT17LargeRecoveryOutcome(expected, tc.response, tc.queryErr)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("error=%v want error=%v", err, tc.wantErr)
+			}
+			if call.Exact == tc.wantErr {
+				t.Fatalf("incorrect recovery classification: %+v", call)
 			}
 		})
 	}

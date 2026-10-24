@@ -1,19 +1,19 @@
 # Catalog B implementation tickets and verification contracts
 
 Status: **T02/T03/T05 are merged in PR #1417; T07/T08 are merged in PR #1424;
-T10/T12/T14 are implemented in PR 3.** T15/T16/T17 and extended exact count-distinct
-composition remain planned for PR 4. Implementation and correctness do not imply
-that every historical performance gate passed: T02's original acceptance remains
-inconclusive/stopped. Current scope and validation status are in the
-[PR 3 verification record](pr3-verification.md). The [PR 1 record](pr1-verification.md),
-[PR 2 record](pr2-verification.md) and ticket records retain their original bases
-and evidence.
+T10/T12/T14 are supplied by open PR #1432; T15/T16/T17 and exact count-distinct
+composition are implemented in this PR 4 branch.** Implementation does not imply
+that every historical performance gate passed: T02 remains inconclusive/stopped,
+and successful 100k/1m owning-query throughput is deferred. Current scope and
+validation are in the [PR 4 verification record](pr4-verification.md). The
+[PR 1](pr1-verification.md), [PR 2](pr2-verification.md), [PR 3](pr3-verification.md)
+and ticket records retain their original source bases and evidence.
 
-The original design-review base was `012115c5`. PR #1412 merged as `15635181b`;
-PR 3 is based on merged PR #1424 at `e409a6c6`. This document defines the
+The design-review base was `012115c5`; PR #1412 merged as `15635181b`. PR 4
+integrates main at `86659118` with PR #1432. This document defines the
 [language contract](README.md), [batch engine design](datafusion-engine.md) and
-[compiled-plan reuse design](plan-reuse.md). T02/T03/T05/T07/T08/T10/T12/T14 commands
-are implemented. Commands for later capabilities remain planned contracts.
+[compiled-plan reuse design](plan-reuse.md). All listed capability commands are
+implemented; a recorded resource rejection is not successful throughput.
 Existing `QLB-T01` labels and measurements retain their historical meaning.
 
 ## Four-PR delivery
@@ -22,8 +22,8 @@ Existing `QLB-T01` labels and measurements retain their historical meaning.
 |---|---|---|
 | [1 — execution foundation](https://github.com/apache/skywalking-banyandb/pull/1417) | T02 shared batches, T03 typed raw QL, T05 compiled-plan reuse and required compatibility repairs | Merged as PR #1417 |
 | [2 — SQL aggregation](https://github.com/apache/skywalking-banyandb/pull/1424) | T07 local aggregation and T08 native split/merge | Merged as PR #1424 |
-| 3 — expressions and filtering | T10 expressions, T12 field WHERE and T14 HAVING/membership | Implemented in this branch; see the PR 3 record |
-| 4 — complete grouping/output composition | T15 DISTINCT, T16 computed/ordinal grouping, T17 ordering/pagination and count-distinct composition | Planned |
+| [3 — expressions and filtering](https://github.com/apache/skywalking-banyandb/pull/1432) | T10 expressions, T12 field WHERE and T14 HAVING/membership | Open dependency; see the PR 3 record |
+| 4 — complete grouping/output composition | T15 DISTINCT, T16 computed/ordinal grouping, T17 ordering/pagination and count-distinct composition | Implemented in this branch; see the PR 4 record |
 
 Each PR carries its own generated cases, focused benchmark evidence and language
 documentation. This split does not broaden individual benchmark workloads.
@@ -54,13 +54,12 @@ formats; no Rust runtime or Arrow IPC dependency. SQL operators stay on the liai
 Shared native Go buffering/ownership and read/dispatch compatibility repairs are
 included with their regression tests, as described in the PR 1 verification record.
 
-**Readiness:** PRs #1412, #1417 and #1424 are merged. The shared batch seam, typed
-raw-query interfaces, compiled-template cache, local aggregation and native merging
-are available on main. Typed expressions, raw field filtering and HAVING are
-available in this branch. Later tickets still require their listed prerequisites,
-independent expected results, activation proof and focused benchmarks. Historical
-measurements retain their original bases and verdicts; the PR 3 record covers
-this isolated expression/filter branch.
+**Readiness:** PRs #1412, #1417 and #1424 are merged. PR #1432 supplies the
+expression/filter dependency. This branch implements the final original Catalog B
+capabilities with their generated cases and scoped benchmarks. Fresh validation
+belongs to the PR 4 record; historical ticket evidence retains its original
+source revision and verdict. Completing this language subset does not provide
+relational joins, CTEs or full DPO application parity.
 
 ### Dependency and benchmark map
 
@@ -969,7 +968,7 @@ pagination remain explicitly deferred. There is no new Catalog B feature ticket.
 
 The existing native count-distinct operation now composes through the extended
 QL path with multiple aggregates, aliases, multi-key grouping, HAVING, general
-ORDER BY and final LIMIT/OFFSET. This closes the four query composition gaps in
+ORDER BY and final LIMIT/OFFSET. This addresses the four single-measure composition gaps identified in
 [DPO #81](https://github.com/tetrateio/DPO/issues/81) for queries expressed using
 the extended path: multiple aggregates, deterministic tie-breaking, complete
 aggregation without an implicit 100-group cap, and pagination after ordering.
@@ -984,11 +983,14 @@ not sum native distinct partial counts, which would be invalid when shard value
 sets overlap. Exhausted memory fails the query without partial results. Protobuf,
 native wire behavior and persisted formats are unchanged.
 
-The broader PostgreSQL SQL in linked issue #79 remains outside this follow-up:
+This is not full DPO #81 coverage. Its linked PostgreSQL SQL in issue #79 remains outside this follow-up:
 joins/CTEs, computed aggregate arguments, aggregate FILTER, additional string
 functions and exact decimal arithmetic are not added. Missing telemetry dimensions
 or identities lost during rollup require ingestion changes. Separate page calls
 still do not share a snapshot; spilling and session pagination remain deferred.
+
+The scalar empty-result lifecycle correction was already delivered in PR #1417;
+this PR preserves it while extending local distinct composition.
 
 Verification uses generated QL-only endpoint cases for scalar/grouped count
 composition, NULL and empty input, changed bindings, HAVING, tied ordering and

@@ -39,7 +39,7 @@ func waitForQLBT17Visibility(ctx context.Context, client bydbqlv1.BydbQLServiceC
 				continue
 			}
 			if err := waitForQLBT07RawChunk(ctx, client, request, expected); err != nil {
-				return fmt.Errorf("T17 raw input readiness: %w", err)
+				return fmt.Errorf("T17 raw input readiness host=host_%02d window=[%d,%d): %w", host, first, min(first+16384, rows), err)
 			}
 		}
 	}

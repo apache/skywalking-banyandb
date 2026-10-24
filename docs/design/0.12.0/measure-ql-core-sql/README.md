@@ -1,30 +1,37 @@
 # Measure QL Catalog B: Core SQL Implementation Plan
 
-This branch prepares **PR 3 of 4**: typed expressions, masked conditionals,
-field WHERE, HAVING and compatible collection membership (T10/T12/T14), on merged
-[PR #1424](https://github.com/apache/skywalking-banyandb/pull/1424) at `e409a6c6`.
-See the [PR 3 verification record](pr3-verification.md) for its isolated scope
-and current validation status.
+This branch prepares **PR 4 of 4**: visible-tuple DISTINCT, computed/ordinal
+grouping, selectable time buckets, multi-key ordering, compact top-k pagination
+and exact count-distinct composition (T15/T16/T17 and the composition follow-up).
+It depends on open [PR #1432](https://github.com/apache/skywalking-banyandb/pull/1432)
+for expressions and filtering, with main at `86659118` as the integration baseline.
+See the [PR 4 verification record](pr4-verification.md) for isolated scope and
+current validation status.
 
-Status: **T02/T03/T05 and T07/T08 are merged; T10/T12/T14 are implemented in this
-branch.** SELECT DISTINCT, computed/ordinal grouping, selectable time buckets,
-multi-key sorting and extended exact count-distinct composition remain in PR 4.
-Expressions run on typed batches. WHERE filters raw input before aggregation;
-HAVING filters completed local or native aggregate groups before final pagination.
-Each execution binds fresh values to reusable immutable expression recipes.
+Status: **all original Catalog B capabilities are implemented in this branch.**
+PRs #1417 and #1424 provide the merged foundation and aggregation; PR #1432
+provides expressions, raw WHERE and HAVING. PR 4 completes grouping and output
+composition. This does not fulfill all SQL requirements in DPO #81/#79: relational
+joins, CTEs, computed aggregate arguments, aggregate FILTER, additional string
+functions and exact decimal arithmetic remain outside this PR.
 
-Ticket verification documents retain their historical bases and evidence. The
-[PR 1 record](pr1-verification.md) preserves its isolated checks and mixed cache
-latency observations; the [PR 2 record](pr2-verification.md) preserves aggregation
-checks and focused measurements. Historical T02 inconclusive/stopped acceptance
-is unchanged. These records do not measure the current PR 3 head; fresh checks
-belong in the PR 3 record.
+DISTINCT keys the visible tuple, computed grouping evaluates keys before
+aggregation, and sorting runs after HAVING and deduplication. Finite LIMIT uses
+at most OFFSET + LIMIT owned candidates; unlimited sorting and exact distinct
+sets remain bounded by the query budget. Hidden sort inputs are removed at egress.
+All stages use immutable cached recipes and fresh execution state.
 
-The inherited foundation includes shared native batches and indexed-array
-projection repairs. This PR adds liaison expression/filter operators without
-changing native requests, frame versions, protobuf definitions or persisted
-formats. Typed indexed-array membership remains rejected before dispatch.
-Memory protection remains enabled; disk spilling is deferred.
+Historical measurements retain their original source revisions and limitations.
+The [PR 1](pr1-verification.md), [PR 2](pr2-verification.md) and
+[PR 3](pr3-verification.md) records do not certify this PR's head. T02's original
+performance acceptance remains inconclusive/stopped. Successful 100k/1m owning-query
+throughput remains explicitly deferred; bounded rejection and recovery are resource
+evidence, not throughput passes. See the [revised acceptance contract](implementation-tickets.md#large-input-acceptance-revised-2026-10-19).
+
+This PR changes QL planning and liaison operators without changing protobufs,
+native requests, frame versions or persisted formats. The shared native buffering
+and compatibility repairs were already delivered in PR 1. Memory protection stays
+enabled; disk spilling and retained-result pagination sessions remain deferred.
 
 The [DataFusion-inspired engine design](datafusion-engine.md) defines the batch
 execution architecture and revised delivery order. Its [source research](datafusion-research.md)
@@ -63,9 +70,9 @@ specifications are:
   infrastructure, which QL reuses rather than replaces.
 
 `012115c5` is the historical design-review baseline. PR #1412 merged as
-`15635181b`; PR 3 is based on merged PR #1424 at `e409a6c6`, inheriting PR #1417's
+`15635181b`; PR 4 integrates main at `86659118` and PR #1432, inheriting PR #1417's
 foundation and PR #1424's aggregation. Historical benchmark bases remain in their
-verification documents, separate from current PR 3 validation.
+verification documents, separate from current PR 4 validation.
 
 The gaps document proposes results as columns and rows but does not specify their
 wire encoding. For this scope, that is an **Arrow-style columnar representation**
