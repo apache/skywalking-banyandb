@@ -122,9 +122,37 @@ func (df *DictionaryFilter) extractElements(serializedArray []byte, values [][]b
 	}
 
 	if df.valueType == pbv1.ValueTypeStrArr {
-		// For each query value, check if it exists in the array
-		// UnmarshalVarArray modifies the source in-place for decoding
-		// This approach has zero allocations and early-exits on match
+		if bytes.IndexByte(serializedArray, encoding.Escape) >= 0 {
+			// Escaped path: clone once and unpack elements upfront so an N-value query
+			// only clones once instead of per query value.
+			buf := bytes.Clone(serializedArray)
+			var elements [][]byte
+			for idx := 0; idx < len(buf); {
+				end, next, err := encoding.UnmarshalVarArray(buf, idx)
+				if err != nil {
+					return false
+				}
+				elements = append(elements, buf[idx:end])
+				idx = next
+			}
+
+			for _, v := range values {
+				found := false
+				for _, elem := range elements {
+					if bytes.Equal(v, elem) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					return false
+				}
+			}
+			return true
+		}
+
+		// Clean path: scan in place with 0 allocations.
+		// UnmarshalVarArray never writes to src when there are no escape characters.
 		for _, v := range values {
 			found := false
 			for idx := 0; idx < len(serializedArray); {
