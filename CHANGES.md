@@ -59,6 +59,7 @@ Release Notes.
 - Fix the vectorized measure batch merge emitting a duplicate row when a same-series, same-timestamp duplicate straddled its 4,096-row page boundary; the row path already returned the deduplicated result.
 - Fix stream queries silently dropping the later blocks of a series: the block filter's verdict is per-block, but `findBlock` advanced a whole series on skip.
 - Fix a data race in Measure TopN where a pooled TopN value reused for a query wrote its tag names into the streaming processor's entity tag name slice.
+- Fix `Measure` TopN dropping a timeline entry that can never come back: `DedupPriorityQueue.ReplaceLowest` overwrote the lowest item without releasing the replaced one from the dedup caches, so pushing it again was silently skipped, and never registered the replacing one, so a duplicate of it was accepted.
 - Stop `pkg/index/native`'s compaction-persistence test from flaking on `Test Pkg`: it asserted that garbage collection succeeds the instant a read view closes, without accounting for a background persist still holding an older root.
 - Stamp `RELEASE_VERSION` into official release binaries so `--version` reports the release instead of `-`.
 - Pack the source release from `git archive` and reject archives that contain ELF/Mach-O binaries.
