@@ -554,3 +554,29 @@ func Test_mergePartsWithConflictingTagTypes(t *testing.T) {
 		})
 	}
 }
+
+func Test_removeStreamPartOnFailure(t *testing.T) {
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	fileSystem := fs.NewLocalFileSystem()
+	partID := uint64(99)
+	mp := generateMemPart()
+	mp.mustInitFromElements(esTS1)
+	mp.mustFlush(fileSystem, partPath(tmpPath, partID))
+	p := mustOpenFilePart(partID, tmpPath, fileSystem)
+	p.partMetadata.ID = partID
+	pw := newPartWrapper(nil, p)
+	releaseMemPart(mp)
+
+	partDir := partPath(tmpPath, partID)
+	require.True(t, fileSystem.IsExist(partDir))
+
+	tst := &tsTable{
+		fileSystem: fileSystem,
+		root:       tmpPath,
+	}
+	tst.removeStreamPartOnFailure(pw)
+
+	require.False(t, fileSystem.IsExist(partDir), "part directory should be removed on failure")
+}
