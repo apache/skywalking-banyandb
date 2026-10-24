@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
 
 func TestNativeLoggerHonorsConfiguredLevel(t *testing.T) {
@@ -30,4 +31,29 @@ func TestNativeLoggerHonorsConfiguredLevel(t *testing.T) {
 	})
 	require.NoError(t, logger.Init(logger.Logging{Env: "prod", Level: "info"}))
 	require.Equal(t, zerolog.InfoLevel, nativeLogger().GetLevel())
+}
+
+// TestScopeLabelTagsAlignWithValues pins a tag value to the position of its own tag
+// name: buildTags and buildTagValues both range over the same label map.
+func TestScopeLabelTagsAlignWithValues(t *testing.T) {
+	scope := meter.NewHierarchicalScope(ObservabilityGroupName, ".").
+		ConstLabels(meter.LabelPairs{"zone": "eu-west", "team": "core", "region": "west", "env": "prod"})
+	nodeInfo := NodeInfo{
+		Type:        "streaming",
+		NodeID:      "node-1",
+		GrpcAddress: "127.0.0.1:17876",
+		HTTPAddress: "127.0.0.1:17877",
+	}
+	// node_type, node_id, grpc_address and http_address precede the scope labels.
+	const scopeTagsBegin = 4
+	for range 100 {
+		tags, _ := buildTags(scope, nil)
+		tagValues := buildTagValues(nodeInfo, scope)
+		require.Len(t, tagValues, len(tags))
+		actual := make(meter.LabelPairs, len(tags)-scopeTagsBegin)
+		for i := scopeTagsBegin; i < len(tags); i++ {
+			actual[tags[i].Name] = tagValues[i].GetStr().GetValue()
+		}
+		require.Equal(t, scope.GetLabels(), actual)
+	}
 }

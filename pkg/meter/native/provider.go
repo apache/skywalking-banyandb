@@ -21,6 +21,8 @@ package native
 import (
 	"context"
 	"errors"
+	"maps"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -197,6 +199,13 @@ func (p *provider) createMeasure(ctx context.Context, metric string, labels ...s
 	return metric, err
 }
 
+// sortedScopeLabelNames keeps the scope labels in one order: buildTags and
+// buildTagValues zip positionally, so ranging over the label map directly
+// writes a value under another label's name.
+func sortedScopeLabelNames(scope meter.Scope) []string {
+	return slices.Sorted(maps.Keys(scope.GetLabels()))
+}
+
 func buildTags(scope meter.Scope, labels []string) ([]*databasev1.TagSpec, []string) {
 	var tags []*databasev1.TagSpec
 	var entityTags []string
@@ -214,7 +223,7 @@ func buildTags(scope meter.Scope, labels []string) ([]*databasev1.TagSpec, []str
 	addTags(tagNodeID)
 	addTags(tagGRPCAddress)
 	addTags(tagHTTPAddress)
-	for label := range scope.GetLabels() {
+	for _, label := range sortedScopeLabelNames(scope) {
 		addTags(label)
 	}
 	addTags(labels...)
@@ -239,8 +248,8 @@ func buildTagValues(nodeInfo NodeInfo, scope meter.Scope, labelValues ...string)
 	addTagValues(nodeInfo.NodeID)
 	addTagValues(nodeInfo.GrpcAddress)
 	addTagValues(nodeInfo.HTTPAddress)
-	for _, labelValue := range scope.GetLabels() {
-		addTagValues(labelValue)
+	for _, label := range sortedScopeLabelNames(scope) {
+		addTagValues(scope.GetLabels()[label])
 	}
 	addTagValues(labelValues...)
 	return tagValues
