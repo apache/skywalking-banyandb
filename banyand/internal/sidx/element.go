@@ -21,6 +21,8 @@
 package sidx
 
 import (
+	"bytes"
+
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -64,12 +66,13 @@ func unmarshalTag(dest [][]byte, src []byte, valueType pbv1.ValueType) ([][]byte
 			next int
 			err  error
 		)
-		for idx := 0; idx < len(src); idx = next {
-			end, next, err = encoding.UnmarshalVarArray(src, idx)
+		buf := bytes.Clone(src)
+		for idx := 0; idx < len(buf); idx = next {
+			end, next, err = encoding.UnmarshalVarArray(buf, idx)
 			if err != nil {
 				return nil, err
 			}
-			dest = append(dest, src[idx:end])
+			dest = append(dest, bytes.Clone(buf[idx:end]))
 		}
 		return dest, nil
 	}
