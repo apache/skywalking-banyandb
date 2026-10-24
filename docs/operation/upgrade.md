@@ -112,9 +112,10 @@ One shape reaches this: an `orderBy` naming a tag that no longer resolves agains
   trace it holds hard links, so it must stay on the data path's filesystem; the default follows the root path, not the data path, so set
   the flag explicitly when the data path is on another filesystem. A property session snapshot is a full copy of the property index and needs as much free space as the property data.
   The server refuses to start when it equals or sits inside any catalog's backup snapshot directory (`<root-path>/<catalog>/snapshots`), equals, contains or sits inside any catalog's data path, or overlaps another catalog's export snapshot path; the defaults are unchanged.
-- With RBAC enabled, `ExportService` `Plan` and `Sessions` require `cluster:admin`.
+- With RBAC enabled, `ExportService` `Plan`, `Sessions` and `Export` require `cluster:admin`.
 - During a rolling upgrade a data node that still runs an older version has no `ExportService`; an export
-  dry run reports it as unreachable (a coverage gap, exit `2` with `--strict-coverage`) instead of failing.
+  dry run reports it as unreachable (a coverage gap, exit `2` with `--strict-coverage`) instead of failing, while a real export
+  cannot create its session on it and fails, so finish the upgrade before exporting.
 
 ## Upgrading to 0.11
 

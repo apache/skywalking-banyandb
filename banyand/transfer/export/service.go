@@ -51,8 +51,8 @@ var (
 	_ transferv1.ExportServiceServer = (*Service)(nil)
 )
 
-// NewService creates the export unit. pipeline is the data-node gRPC server the
-// ExportService registers on; the local queue ignores the registration.
+// NewService creates the export unit. pipeline is where the ExportService registers: the
+// data-node gRPC server in a cluster, the in-process local queue in a standalone server.
 func NewService(meta metadata.Repo, pipeline queue.Server, backends Backends) *Service {
 	return &Service{meta: meta, pipeline: pipeline, backends: backends, closer: run.NewCloser(1)}
 }

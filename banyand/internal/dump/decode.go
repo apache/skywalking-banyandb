@@ -34,7 +34,8 @@ import (
 
 // ReadTagValues reads size bytes at offset from valueReader (into the scratch
 // value buffer when scratch is non-nil) and decodes them into count raw tag
-// values of valueType. Shared by the measure and stream part iterators.
+// values of valueType with the shared tag decoder (stream parts; measure columns
+// use their own engine layout, see dump/measure readColumnValues).
 func ReadTagValues(decoder *encoding.BytesBlockDecoder, offset, size uint64, count int,
 	valueReader fs.Reader, valueType pbv1.ValueType, scratch *ReadScratch,
 ) ([][]byte, error) {
@@ -48,6 +49,26 @@ func ReadTagValues(decoder *encoding.BytesBlockDecoder, offset, size uint64, cou
 		return nil, fmt.Errorf("cannot decode tag values: %w", err)
 	}
 	return values, nil
+}
+
+// FitsValueType reports whether stored bytes decode as valueType: an int64 or a timestamp,
+// and every element of an int64 array, takes eight bytes. A value written with another type,
+// before a schema change, would otherwise decode to garbage or not at all.
+func FitsValueType(valueType pbv1.ValueType, value []byte, valueArr [][]byte) bool {
+	switch valueType {
+	case pbv1.ValueTypeInt64, pbv1.ValueTypeTimestamp:
+		return value == nil || len(value) == 8
+	case pbv1.ValueTypeInt64Arr:
+		for _, v := range valueArr {
+			if len(v) != 8 {
+				return false
+			}
+		}
+		return true
+	default:
+		// Strings and binaries take any bytes; a float or an unknown type has no tag value.
+		return true
+	}
 }
 
 // DecodeTagValue converts a byte-encoded tag value back to a typed
