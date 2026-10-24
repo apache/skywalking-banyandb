@@ -192,7 +192,7 @@ func search(ctx context.Context, qo queryOptions, seriesList []common.SeriesID, 
 		return nil, nil, err
 	}
 	if pl == nil {
-		return roaring.DummyPostingList, roaring.DummyPostingList, nil
+		return roaring.NewPostingList(), roaring.NewPostingList(), nil
 	}
 	return pl, plTS, nil
 }
