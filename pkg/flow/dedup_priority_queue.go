@@ -154,8 +154,11 @@ func (pq *DedupPriorityQueue) Peek() Element {
 
 // ReplaceLowest replaces the lowest item with the newLowest.
 func (pq *DedupPriorityQueue) ReplaceLowest(newLowest Element) {
-	pq.Items[0] = newLowest
-	heap.Fix(pq, 0)
+	// Pop and Push own the dedup bookkeeping: assigning over Items[0] would leave the
+	// replaced element tracked, so it could never be pushed again, and would leave the
+	// replacing element untracked, so a duplicate of it would be accepted.
+	heap.Pop(pq)
+	heap.Push(pq, newLowest)
 }
 
 // Values returns all items.
