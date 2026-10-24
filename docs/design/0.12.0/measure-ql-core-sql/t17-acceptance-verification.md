@@ -105,3 +105,20 @@ The [five-repetition campaign](t17-benchmark-campaign.md) after commit `1179c97a
 passed all 3,120 timed RPCs. The separate 100k probe demonstrated bounded native
 input rejection and recovery; the 1m probe failed fixture readiness with a content
 mismatch and provides no throughput evidence. Both outcomes remain explicit.
+
+The subsequent [storage merge fix](t17-1m-readiness-fix.md) resolves the 1m
+readiness mismatch. The fixed probe verifies every row, then records bounded
+native input rejection and successful host-pruned recovery under unchanged limits.
+
+
+## Current acceptance disposition (2026-10-19)
+
+The [compatibility comparison](compatibility-performance.md) and its separate
+20-pair small-query confirmation complete the PR #1412 matrix follow-up. The
+[large-input acceptance revision](implementation-tickets.md#large-input-acceptance-revised-2026-10-19)
+explicitly defers successful 100k/1m T17 owning-query throughput until the full
+cohort fits within the fixed memory limits. The earlier open-item descriptions
+above record the status at their measurement revisions. Their data and verdicts
+are preserved; rejected calls are not reclassified as successful performance.
+Historical T02 acceptance remains inconclusive/stopped. Spilling and session
+pagination remain deferred, and this documentation change adds no feature work.

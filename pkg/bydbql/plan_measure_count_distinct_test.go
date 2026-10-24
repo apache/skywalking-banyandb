@@ -102,7 +102,8 @@ func TestLegacyScalarCountDistinctZeroLimit(t *testing.T) {
 			require.True(t, execution.Plan.Empty)
 		} else {
 			require.Nil(t, execution.Plan)
-			require.Equal(t, uint32(limit), execution.Request.Limit)
+			// Final scalar pagination must not truncate native partial input.
+			require.Equal(t, uint32(math.MaxUint32), execution.Request.Limit)
 		}
 	}
 	execution := typedExecution(t, "SELECT COUNT(DISTINCT host) FROM MEASURE m IN g")

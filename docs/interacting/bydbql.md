@@ -540,7 +540,7 @@ BydbQL for measures supports aggregation and grouping, raw SELECT expressions, a
 measure_query     ::= SELECT projection from_measure_clause [TIME time_condition] [WHERE measure_predicate] [GROUP BY group_list] [HAVING expression] [ORDER BY order_expression] [WITH QUERY_TRACE] [LIMIT count] [OFFSET count]
 measure_predicate ::= criteria | expression /* boolean expression; section 5.10 */
 from_measure_clause ::= ("FROM MEASURE" identifier "IN" ["("] group_list_id [")"] | "FROM" identifier "." identifier) [ON ["("] stage_list [")"] STAGES]
-projection        ::= column_list | top_clause
+projection        ::= ["DISTINCT"] column_list | top_clause
 top_clause        ::= "TOP" count identifier ["ASC" | "DESC"] ["," column_list]
 column_list       ::= column ("," column)*
 column            ::= (("time" | identifier_path | agg_function "(" ["DISTINCT"] identifier_path ")") ["::TAG" | "::FIELD"] | expression) ["AS" identifier_path]
@@ -578,7 +578,7 @@ integer_literal   ::= [0-9]+
 count             ::= integer_literal | "?"
 ```
 
-**Source and time bounds**: The explicit source form requires at least one `IN` group; parentheses around the list are optional. The shorthand names one group and one measure. `TIME` is optional for measure SELECT; raw queries may use `WHERE time` instead. Syntax accepted by the parser is subject to the execution limits in section 5.5, and the aggregation and expression composition rules in sections 5.8–5.11.
+**Source and time bounds**: The explicit source form requires at least one `IN` group; parentheses around the list are optional. The shorthand names one group and one measure. `TIME` is optional for measure SELECT; raw queries may use `WHERE time` instead. Syntax accepted by the parser is subject to the execution limits in section 5.5, and the aggregation and expression composition rules in sections 5.8–5.14.
 
 ### 5.2. BydbQL Extensions for `SELECT`
 
@@ -607,12 +607,12 @@ The `SELECT` clause for measures is highly flexible, allowing for the selection 
   - **`TIME BETWEEN '2023-01-01T00:00:00Z' AND '2023-01-02T00:00:00Z'`**: Sets `begin` and `end` to the respective timestamps.
   - **`TIME > '-30m'`**: Sets `begin` to 30 minutes ago.
   - **`TIME BETWEEN '-1h' AND 'now'`**: Sets `begin` to 1 hour ago and `end` to current time.
-- **`GROUP BY <tag1>, <tag2>`**: Legacy native queries take a list of projected tags and map it to `group_by.tag_projection`. Extended grouping also accepts hidden columns, computed keys and ordinals, as described in sections 5.6 and 5.11.
-- **`GROUP BY TIME_BUCKET(width), <tag>`**: Maps to `group_by.time_bucket`, setting `group_by.time_bucket.width`. An empty `width` (`TIME_BUCKET()`) defers to the measure's own `interval`; a duration string (e.g. `'5m'`) uses the same units as `Measure.interval` (`ns`, `us`/`µs`, `ms`, `s`, `m`, `h`, plus the custom `d` suffix — see `pkg/timestamp.ParseDuration`). At most one `TIME_BUCKET(...)` is allowed per `GROUP BY` clause. Legacy native results are pre-ordered by bucket ascending, so they need no `ORDER BY` for that purpose; a non-time `ORDER BY DESC` is rejected on a legacy bucketed query. Section 5.11 describes extended bucket projection and execution.
+- **`GROUP BY <tag1>, <tag2>`**: Legacy native queries take a list of projected tags and map it to `group_by.tag_projection`. Extended grouping also accepts hidden columns, computed keys and ordinals, as described in sections 5.8 and 5.13.
+- **`GROUP BY TIME_BUCKET(width), <tag>`**: Maps to `group_by.time_bucket`, setting `group_by.time_bucket.width`. An empty `width` (`TIME_BUCKET()`) defers to the measure's own `interval`; a duration string (e.g. `'5m'`) uses the same units as `Measure.interval` (`ns`, `us`/`µs`, `ms`, `s`, `m`, `h`, plus the custom `d` suffix — see `pkg/timestamp.ParseDuration`). At most one `TIME_BUCKET(...)` is allowed per `GROUP BY` clause. Legacy native results are pre-ordered by bucket ascending, so they need no `ORDER BY` for that purpose; a non-time `ORDER BY DESC` is rejected on a legacy bucketed query. Section 5.13 describes extended bucket projection and execution.
 - **`SELECT TOP N ...`**: Maps to the `top` message. `TOP` can rank by a tag-targeted aggregation's own output column (e.g. `TOP 10 user_id DESC` when `COUNT(DISTINCT user_id)` is projected), not only by a field.
 - **`WITH QUERY_TRACE`**: Maps to the `trace` field to enable distributed tracing of query execution.
 
-**Note on `LIMIT` and `TIME_BUCKET`**: Legacy measure queries default to 100 when `LIMIT` is omitted. A bucketed `GROUP BY` returns one row per (bucket, tag-group), so a wide time window with a narrow bucket width can produce far more than 100 rows; without an explicit `LIMIT` sized to the expected row count, the legacy response is silently truncated to the first 100 rows in bucket-ascending order rather than returning an error. Set `LIMIT` explicitly for a legacy bucketed query. Extended raw and grouped queries have different omission and zero-limit behavior, described in sections 5.5 and 5.6.
+**Note on `LIMIT` and `TIME_BUCKET`**: Legacy measure queries default to 100 when `LIMIT` is omitted. A bucketed `GROUP BY` returns one row per (bucket, tag-group), so a wide time window with a narrow bucket width can produce far more than 100 rows; without an explicit `LIMIT` sized to the expected row count, the legacy response is silently truncated to the first 100 rows in bucket-ascending order rather than returning an error. Set `LIMIT` explicitly for a legacy bucketed query. Extended raw and grouped queries have different omission and zero-limit behavior, described in sections 5.5 and 5.8.
 
 ### 5.4. Examples
 
@@ -816,9 +816,9 @@ A raw query uses the extended behavior when it uses source shorthand, an `AS` al
 - Omitted `LIMIT` has no implicit 100-row cap; query memory limits still apply.
 - Explicit `LIMIT 0` returns no rows and performs no native scan. Contradictory time bounds also return no rows without scanning.
 - `OFFSET` and `LIMIT` apply after time and field filters, including disjoint ranges. Legacy queries without these raw extensions keep their existing pagination defaults.
-- ORDER BY supports scalar columns, aliases, expressions, multiple keys and explicit NULL placement. Simple timestamp and native index-rule ordering remain available. Section 5.12 describes sorting and its memory limits.
+- ORDER BY supports scalar columns, aliases, expressions, multiple keys and explicit NULL placement. Simple timestamp and native index-rule ordering remain available. Section 5.14 describes sorting and its memory limits.
 
-The current raw extensions cannot be combined with `SELECT TOP`. Aggregate projections and named scalar grouping use the extended aggregation behavior in section 5.8. Legacy native aggregation and grouping retain their existing syntax and behavior. SELECT expressions are described in section 5.9; field filters and mixed time/tag/field `OR` are described in section 5.10; HAVING and collection membership are described in section 5.11. SELECT DISTINCT and computed grouping remain planned capabilities.
+The current raw extensions cannot be combined with `SELECT TOP`. Aggregate projections and named scalar grouping use the extended aggregation behavior in section 5.8. Legacy native aggregation and grouping retain their existing syntax and behavior. SELECT expressions are described in section 5.9; field filters and mixed time/tag/field `OR` are described in section 5.10; HAVING and collection membership are described in section 5.11. SELECT DISTINCT, computed grouping and ordering are described in sections 5.12–5.14.
 
 Aliases, built-in time projections, `now()`, timestamp `INTERVAL` arithmetic, and source shorthand in this section apply to measure SELECT. They do not extend stream, trace, property, or SHOW TOP syntax.
 
@@ -894,7 +894,7 @@ FROM MEASURE service_cpm IN metrics
 WHERE time >= ? AND time < ?
 ```
 
-Extended aggregate queries reject TOP and array grouping. Existing legacy native forms remain available. HAVING and ORDER BY support grouped keys and named aggregate calls, including calls absent from SELECT. Computed grouping, ordinal references and selectable TIME_BUCKET values are described in section 5.11. Aggregate arguments must still be named columns.
+Extended aggregate queries reject TOP and array grouping. Existing legacy native forms remain available. HAVING and ORDER BY support grouped keys and named aggregate calls, including calls absent from SELECT. Computed grouping, ordinal references and selectable TIME_BUCKET values are described in section 5.13. Aggregate arguments must still be named columns.
 
 Extended count-distinct queries consume the complete deduplicated raw input; they do not sum potentially overlapping native distinct counts. Distinct state uses the shared query memory tracker and the existing compact grouping-key storage. NULLs are excluded, signed floating zeros compare equal, and NaN representations share a distinct key. Exhausting the budget fails the entire query with `ResourceExhausted`; disk spilling is not implemented. A small final LIMIT does not bound the input scan or the distinct state. Existing single-aggregate native queries retain their routing/stage restrictions and legacy pagination defaults.
 
@@ -956,7 +956,7 @@ Ordinary arithmetic and comparisons propagate null. A nonempty IN list with no m
 
 Computed int/double/string/bytes outputs become named fields. Computed timestamps and integer/string arrays use existing TagValue variants in the `__ql` family. An unnamed computed expression is `expr_1`, `expr_2`, etc., by its SELECT position; aliases are recommended. Direct columns retain their existing containers. All DataPoints retain their raw timestamp/SID/version, and hidden expression inputs are omitted. Duplicate names within a container are rejected.
 
-SELECT expressions apply to raw measure queries and to computed grouping keys described in section 5.11. A grouped SELECT expression must match a grouping key; arbitrary expressions over aggregate results and expressions as aggregate arguments are unsupported. Combining computed SELECT outputs with SELECT TOP is rejected. The same expression evaluator supports raw-input WHERE and post-aggregation HAVING, as described below. General ordering by computed aliases is described in section 5.12. Query memory limits still apply; disk spilling is not implemented.
+SELECT expressions apply to raw measure queries and to computed grouping keys described in section 5.13. A grouped SELECT expression must match a grouping key; arbitrary expressions over aggregate results and expressions as aggregate arguments are unsupported. Combining computed SELECT outputs with SELECT TOP is rejected. The same expression evaluator supports raw-input WHERE and post-aggregation HAVING, as described below. General ordering by computed aliases is described in section 5.14. Query memory limits still apply; disk spilling is not implemented.
 
 ### 5.10. Field and expression filters
 
@@ -1019,7 +1019,7 @@ Membership requires all requested integer or string terms; scalar sources can ma
 
 QL-evaluated membership on indexed STRING_ARRAY or INT_ARRAY tags returns `InvalidArgument` before data execution. This conservative restriction remains after the native indexed-array projection repair; this release does not enable typed membership on indexed arrays. The check uses current index bindings even when the query plan is reused. Type qualification does not bypass it. Unindexed array membership and indexed scalar membership remain supported; ordinary legacy native membership retains its routing.
 
-### 5.10. DISTINCT output tuples
+### 5.12. DISTINCT output tuples
 
 `SELECT DISTINCT` returns each unique combination of projected values once. Equality uses the entire visible tuple, across tag families and fields. Aliases change output names without changing equality. Source timestamps, series identities and hidden predicate or aggregate inputs do not enter the key unless explicitly selected.
 
@@ -1031,15 +1031,15 @@ WHERE time >= ? AND time < ?
 
 DISTINCT runs after raw filtering, aggregation, HAVING and visible projection, and before final OFFSET/LIMIT. Projected arithmetic, casts and CASE expressions use their evaluated values as keys. Hidden calls used only by HAVING are removed before deduplication. Omitting LIMIT does not impose the native default of 100 rows; LIMIT 0 skips data execution.
 
-Integer, double, string, binary and timestamp values can be keys. NULL values compare equal for deduplication, but remain distinct from zero, an empty string or empty bytes. Positive and negative floating zero share a key, and all NaN representations share a key. Array keys are rejected during binding, including arrays selected by `*`. SELECT DISTINCT cannot be combined with SELECT TOP. It is separate from COUNT(DISTINCT), whose extended behavior is described in section 5.6.
+Integer, double, string, binary and timestamp values can be keys. NULL values compare equal for deduplication, but remain distinct from zero, an empty string or empty bytes. Positive and negative floating zero share a key, and all NaN representations share a key. Array keys are rejected during binding, including arrays selected by `*`. SELECT DISTINCT cannot be combined with SELECT TOP. It is separate from COUNT(DISTINCT), whose extended behavior is described in section 5.8.
 
-Without ORDER BY, result order is unspecified. With DISTINCT, each ORDER BY expression must be derivable from visible output values. Visible aliases, selected computed expressions and selected aggregate calls are supported; hidden source columns, grouped keys or aggregate calls are rejected. See section 5.12.
+Without ORDER BY, result order is unspecified. With DISTINCT, each ORDER BY expression must be derivable from visible output values. Visible aliases, selected computed expressions and selected aggregate calls are supported; hidden source columns, grouped keys or aggregate calls are rejected. See section 5.14.
 
 For timestamp ordering, write `ORDER BY TIME ASC` or `DESC`, or use a visible timestamp alias. Direction-only `ORDER BY ASC` or `ORDER BY DESC` is rejected with DISTINCT.
 
 The liaison reuses the SQL grouping table without aggregate states. It stores unique keys in compact chunks under the shared query memory budget. With no ORDER BY and a finite LIMIT, deduplication stops after finding OFFSET + LIMIT unique tuples, including partway through a batch. If fewer unique tuples exist, it reads the complete input. An explicit ORDER BY or an omitted LIMIT also requires complete input. Upstream aggregation and native result materialization may still consume their complete input before DISTINCT sees a batch, so a small LIMIT does not bound total query memory or storage work. Budget exhaustion returns `ResourceExhausted`; temporary-file spilling is not implemented. The response keeps the existing measure-result format and does not retain an arbitrary source row's identity for each tuple.
 
-### 5.11. Computed grouping, ordinal references and time buckets
+### 5.13. Computed grouping, ordinal references and time buckets
 
 GROUP BY accepts multiple scalar keys, including arithmetic, casts, CASE and COALESCE. Each non-aggregate SELECT expression must match a grouping expression after column and type resolution. Keys may be omitted from SELECT. Aliases name output values; they do not replace source names in GROUP BY.
 
@@ -1071,7 +1071,7 @@ DISTINCT compares the visible output tuple. When that tuple selects the direct b
 
 Computed keys run after WHERE and before local aggregation. HAVING follows completed aggregation, then visible projection, DISTINCT, ORDER BY and final pagination. Eligible bucket aggregates can reuse the existing native reductions; bucket time remains part of the merge key. Other expressions use a complete raw scan and typed local grouping. Extended grouping adds no ordering guarantee. All key buffers, grouping state and output share the existing query memory limit; exhaustion fails the query, and temporary-file spilling remains deferred.
 
-### 5.12. Ordering and final pagination
+### 5.14. Ordering and final pagination
 
 Measure ORDER BY accepts multiple scalar keys, each with its own direction and NULL placement. Output aliases take precedence over source names; ambiguous output names require qualification. Keys can use SELECT expressions, grouped expressions and named aggregate calls. Integer, double, string, binary and timestamp keys are supported; boolean and array keys are rejected.
 

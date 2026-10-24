@@ -481,4 +481,3 @@ func (m *MeasureTemplate) bindLocalOperators(bound *BoundQuery) (*ql.RawPlan, er
 	}
 	return plan, nil
 }
-

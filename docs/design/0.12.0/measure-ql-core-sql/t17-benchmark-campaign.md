@@ -88,3 +88,12 @@ Source fingerprint:
 `8aafe6301a8e09bf4b7d13f72f7ea335561ba94749762f848bed4de4758c7d87`.
 Binary SHA-256:
 `f24e6e790d4e5717680950334c1a0cae804b7819ac185c9aa87a160094b0f3de`.
+
+## Subsequent readiness fix
+
+The [million-row investigation](t17-1m-readiness-fix.md) resolved the content
+mismatch as a storage merge buffer-ownership bug. With that fix, all one million
+fixture rows verify correctly. The large queries then reach the unchanged memory
+limit, with exact preflight/post-rejection bounded-query recovery and zero cleanup
+counters. The original failed artifact above remains unchanged. This follow-up
+was untimed and does not replace the five-repetition sort measurements.
