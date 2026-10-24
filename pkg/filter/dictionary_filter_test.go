@@ -393,6 +393,172 @@ func TestDictionaryFilterContainsAll_UnsortedItems(t *testing.T) {
 	}), "unsorted string items should be sorted internally and work correctly")
 }
 
+func TestDictionaryFilterContainsAll_StrArr_Idempotency(t *testing.T) {
+	assert := assert.New(t)
+
+	// Encoded array: ["a|b", "c"] -> "a\|b|c|"
+	raw := []byte("a\\|b|c|")
+
+	df := &DictionaryFilter{}
+	df.Set([][]byte{raw}, pbv1.ValueTypeStrArr)
+
+	// 1st lookup
+	assert.True(df.ContainsAll([][]byte{[]byte("a|b")}), "1st lookup must match")
+
+	// 2nd lookup on the exact same filter must yield identical result (idempotency)
+	assert.True(df.ContainsAll([][]byte{[]byte("a|b")}), "2nd lookup must be idempotent")
+
+	// Multi-item query in a single call must also succeed
+	assert.True(df.ContainsAll([][]byte{[]byte("c"), []byte("a|b")}), "multi-item lookup must match")
+}
+
+func TestDictionaryFilterContainsAll_StrArr_Immutability(t *testing.T) {
+	assert := assert.New(t)
+
+	// Encoded array: ["a|b", "c"] -> "a\|b|c|"
+	raw := []byte("a\\|b|c|")
+	snapshot := stdbytes.Clone(raw)
+
+	df := &DictionaryFilter{}
+	df.Set([][]byte{raw}, pbv1.ValueTypeStrArr)
+
+	// Run lookups
+	_ = df.ContainsAll([][]byte{[]byte("a|b")})
+	_ = df.ContainsAll([][]byte{[]byte("c"), []byte("a|b")})
+
+	// Input buffer must remain byte-identical (immutability)
+	assert.True(stdbytes.Equal(raw, snapshot), "input buffer in filter must remain byte-identical after lookups")
+}
+
+// TestDictionaryFilterContainsAll_StrArr_WindowRegression is a table-driven window regression
+// test created for easy-to-extendibility. It verifies read idempotency and source buffer
+// immutability across delimiter ('|') and escape ('\') boundary combinations.
+// Anyone can easily extend this test suite by adding new edge-case combinations to the table.
+func TestDictionaryFilterContainsAll_StrArr_WindowRegression(t *testing.T) {
+	type strArrTestCase struct {
+		name         string
+		elements     []string
+		queryAll     []string
+		queryMissing []string
+	}
+
+	tests := []strArrTestCase{
+		{
+			name:         "plain-no-escapes",
+			elements:     []string{"hello", "world"},
+			queryAll:     []string{"hello", "world"},
+			queryMissing: []string{"nonexistent"},
+		},
+		{
+			name:         "canonical-pipe-in-middle", // Gao's repro: a\|b|c|
+			elements:     []string{"a|b", "c"},
+			queryAll:     []string{"a|b"},
+			queryMissing: []string{"a", "b"},
+		},
+		{
+			name:         "pipe-at-start-boundary",
+			elements:     []string{"|start", "clean"},
+			queryAll:     []string{"|start"},
+			queryMissing: []string{"start"},
+		},
+		{
+			name:         "pipe-at-end-boundary",
+			elements:     []string{"end|", "clean"},
+			queryAll:     []string{"end|"},
+			queryMissing: []string{"end"},
+		},
+		{
+			name:         "backslash-in-middle",
+			elements:     []string{"a\\b", "c"},
+			queryAll:     []string{"a\\b"},
+			queryMissing: []string{"ab"},
+		},
+		{
+			name:         "backslash-at-start-boundary",
+			elements:     []string{"\\start", "c"},
+			queryAll:     []string{"\\start"},
+			queryMissing: []string{"start"},
+		},
+		{
+			name:         "backslash-at-end-boundary",
+			elements:     []string{"end\\", "c"},
+			queryAll:     []string{"end\\"},
+			queryMissing: []string{"end"},
+		},
+		{
+			name:         "backslash-and-pipe-combined",
+			elements:     []string{"a\\|b", "c"},
+			queryAll:     []string{"a\\|b"},
+			queryMissing: []string{"a|b"},
+		},
+		{
+			name:         "double-backslash-and-pipe",
+			elements:     []string{"a\\\\|b", "c"},
+			queryAll:     []string{"a\\\\|b"},
+			queryMissing: []string{"a\\b"},
+		},
+		{
+			name:         "consecutive-escapes-in-all-elements",
+			elements:     []string{"x|y", "u\\v", "|z|"},
+			queryAll:     []string{"x|y", "|z|"},
+			queryMissing: []string{"x", "z"},
+		},
+		{
+			name:         "empty-and-escaped-mix",
+			elements:     []string{"", "a|b", ""},
+			queryAll:     []string{"", "a|b"},
+			queryMissing: []string{"missing"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+
+			var serialized []byte
+			for _, elem := range tc.elements {
+				serialized = marshalVarArray(serialized, []byte(elem))
+			}
+
+			// Snapshot the raw buffer before any decode operation
+			snapshot := stdbytes.Clone(serialized)
+
+			df := &DictionaryFilter{}
+			df.Set([][]byte{serialized}, pbv1.ValueTypeStrArr)
+
+			var queryItems [][]byte
+			for _, q := range tc.queryAll {
+				queryItems = append(queryItems, []byte(q))
+			}
+
+			// Pass 1: Initial query
+			assert.True(df.ContainsAll(queryItems), "Pass 1 must match queryAll")
+
+			// Pass 2: Idempotency regression assertion (must not fail due to Pass 1 in-place mutation)
+			assert.True(df.ContainsAll(queryItems), "Pass 2 must be idempotent and match queryAll")
+
+			// Pass 3: Multi-item subset query in a single call (contains all stored elements)
+			var allItems [][]byte
+			for _, elem := range tc.elements {
+				allItems = append(allItems, []byte(elem))
+			}
+			assert.True(df.ContainsAll(allItems), "Pass 3 must match all stored elements")
+
+			// Negative check: Non-existing query items must return false
+			if len(tc.queryMissing) > 0 {
+				var missingItems [][]byte
+				for _, m := range tc.queryMissing {
+					missingItems = append(missingItems, []byte(m))
+				}
+				assert.False(df.ContainsAll(missingItems), "Non-existing items must return false")
+			}
+
+			// Memory Immutability Pin: Serialized buffer in RAM must remain 100% byte-identical
+			assert.True(stdbytes.Equal(serialized, snapshot), "stored buffer must remain byte-identical after lookups")
+		})
+	}
+}
+
 // generateDictionaryValues creates test data with n unique string values.
 func generateDictionaryValues(n int) [][]byte {
 	values := make([][]byte, n)
