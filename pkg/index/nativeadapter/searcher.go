@@ -104,7 +104,7 @@ func (s *Searcher) Match(fieldKey index.FieldKey, matches []string, options *mod
 		return nil, nil, native.ErrViewClosed
 	}
 	if len(matches) == 0 || fieldKey.Analyzer == index.AnalyzerUnspecified {
-		return postingroaring.DummyPostingList, postingroaring.DummyPostingList, nil
+		return postingroaring.NewPostingList(), postingroaring.NewPostingList(), nil
 	}
 	analyzerName := fieldKey.Analyzer
 	mode := native.MatchAnyTerm
@@ -127,7 +127,7 @@ func (s *Searcher) Match(fieldKey index.FieldKey, matches []string, options *mod
 			terms = append(terms, term.Value)
 		}
 		if len(terms) == 0 {
-			return postingroaring.DummyPostingList, postingroaring.DummyPostingList, nil
+			return postingroaring.NewPostingList(), postingroaring.NewPostingList(), nil
 		}
 		hits, matchErr := s.view.MatchTermsSet(s.ctx, native.TermSetRequest{
 			Field: fieldKey.Marshal(), Terms: terms, Mode: mode, Scope: s.scope(fieldKey), MaxCandidates: s.maxCandidates,
@@ -153,7 +153,7 @@ func (s *Searcher) Match(fieldKey index.FieldKey, matches []string, options *mod
 		}
 	}
 	if len(intersection) == 0 {
-		return postingroaring.DummyPostingList, postingroaring.DummyPostingList, nil
+		return postingroaring.NewPostingList(), postingroaring.NewPostingList(), nil
 	}
 	hits := make([]native.QueryHit, 0, len(intersection))
 	for _, hit := range intersection {
@@ -211,7 +211,7 @@ func (s *Searcher) MatchTerms(field index.Field) (posting.List, posting.List, er
 		return nil, nil, err
 	}
 	if term == nil {
-		return postingroaring.DummyPostingList, postingroaring.DummyPostingList, nil
+		return postingroaring.NewPostingList(), postingroaring.NewPostingList(), nil
 	}
 	hits, err := s.view.MatchTermsSet(s.ctx, native.TermSetRequest{
 		Field: field.Key.Marshal(), Terms: [][]byte{term}, Mode: native.MatchAnyTerm,
@@ -237,7 +237,7 @@ func (s *Searcher) Range(fieldKey index.FieldKey, options index.RangeOpts) (post
 		return s.MatchField(fieldKey)
 	}
 	if !validRange(options) {
-		return postingroaring.DummyPostingList, postingroaring.DummyPostingList, nil
+		return postingroaring.NewPostingList(), postingroaring.NewPostingList(), nil
 	}
 	rangeRequest, err := nativeRange(fieldKey.Marshal(), options, s.scope(fieldKey), s.maxTerms, s.maxCandidates)
 	if err != nil {
