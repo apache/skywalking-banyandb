@@ -1,0 +1,124 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Output of scripts/csv-export.sh <liaison> property (see csv-export-stream.yaml for the checks). OAP
+# keeps its UI templates in sw_property on the hot node, the General ones among them.
+exitCode: 0
+catalog: property
+format: csv
+compress: gzip
+groups:
+{{- contains .groups }}
+- name: sw_property
+  nodes:
+  {{- contains .nodes }}
+  - data-hot1:17912
+  {{- end }}
+  fixedColumns: _name,_id,_mod_revision,_create_revision,_updated_at,_delete_time
+  files: {{ gt .files 0 }}
+  rows: {{ gt .rows 0 }}
+  storedRows: {{ .rows }}
+  header: ok
+  cells: ok
+  rowCounts: ok
+  data:
+    ui_template:
+    {{- contains .data.ui_template }}
+    - _name: ui_template
+      _id: General-Root
+      _mod_revision: {{ gt ._mod_revision 0 }}
+      _create_revision: {{ gt ._create_revision 0 }}
+      _updated_at: {{ gt ._updated_at 0 }}
+      _delete_time: 0
+      configuration: '{{ notEmpty .configuration }}'
+      update_time: {{ gt .update_time 0 }}
+      disabled: 0
+    - _name: ui_template
+      _id: General-Service
+      _mod_revision: {{ gt ._mod_revision 0 }}
+      _create_revision: {{ gt ._create_revision 0 }}
+      _updated_at: {{ gt ._updated_at 0 }}
+      _delete_time: 0
+      configuration: '{{ notEmpty .configuration }}'
+      update_time: {{ gt .update_time 0 }}
+      disabled: 0
+    - _name: ui_template
+      _id: General-Instance
+      _mod_revision: {{ gt ._mod_revision 0 }}
+      _create_revision: {{ gt ._create_revision 0 }}
+      _updated_at: {{ gt ._updated_at 0 }}
+      _delete_time: 0
+      configuration: '{{ notEmpty .configuration }}'
+      update_time: {{ gt .update_time 0 }}
+      disabled: 0
+    - _name: ui_template
+      _id: General-Endpoint
+      _mod_revision: {{ gt ._mod_revision 0 }}
+      _create_revision: {{ gt ._create_revision 0 }}
+      _updated_at: {{ gt ._updated_at 0 }}
+      _delete_time: 0
+      configuration: '{{ notEmpty .configuration }}'
+      update_time: {{ gt .update_time 0 }}
+      disabled: 0
+    {{- end }}
+{{- end }}
+countMismatches: []
+schema:
+  counts:
+    group: {{ gt .schema.counts.group 0 }}
+    stream: 0
+    measure: 0
+    trace: 0
+    property: {{ gt .schema.counts.property 0 }}
+    indexRule: 0
+    indexRuleBinding: 0
+    topNAggregation: 0
+  groups:
+    {{- contains .schema.groups }}
+    - name: _deletion_task
+      catalog: property
+      shardNum: 1
+      replicas: 0
+      segmentInterval: none
+      ttl: none
+      defaultStages: []
+      stages: []
+    - name: sw_property
+      catalog: property
+      shardNum: 1
+      replicas: 0
+      segmentInterval: none
+      ttl: none
+      defaultStages: ["hot"]
+      stages: []
+    {{- end }}
+  resources:
+    {{- contains .schema.resources }}
+    - kind: property
+      group: sw_property
+      name: ui_template
+      tags: ["template_id:STRING", "configuration:STRING", "update_time:INT", "disabled:INT"]
+      indexRules: []
+    {{- end }}
+checks:
+  artifactVersion: ok
+  onlyThisCatalog: ok
+  schemaFiles: ok
+  filesMatchManifest: ok
+  noWarnings: ok
+  schemaLayouts: ok
+  schemaRefs: ok
+leftoverSnapshots: []
+checkerExitCode: 0

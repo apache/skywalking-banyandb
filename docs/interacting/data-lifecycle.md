@@ -52,6 +52,22 @@ You can also manage the Group by other clients such as the [Canopy](canopy.md) w
 
 For more details about how they works, please refer to the [data rotation](../concept/rotation.md).
 
+## Trace sampling between lifecycle stages
+
+For trace groups with multiple storage stages, the lifecycle agent can sample
+traces before migrating retained spans to the next stage. Configure the group's
+`pipeline.stages` with a plugin chain for the **source** stage: a `hot` rule runs
+on hot-to-warm migration, and a `warm` rule runs when leaving warm. This is
+separate from data-node merge/finalization sampling through top-level
+`pipeline.plugins`.
+
+The agent commits whole-trace decisions across the source snapshot's parts and
+replays retained spans to the destination, where indexes are rebuilt. Prepared
+decisions and delivery checkpoints survive restarts; uncertain trace fragments
+are retained conservatively. See [trace retention sampling](../operation/lifecycle.md#trace-retention-sampling)
+for the group API example, required plugin-host flags, persistent state, and
+crash recovery behavior.
+
 ## [Property](../concept/data-model.md#properties)
 
 `Property` data provides both [CRUD](./bydbctl/property.md) operations and TTL mechanism.

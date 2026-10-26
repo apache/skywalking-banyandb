@@ -45,6 +45,9 @@ import (
 const (
 	moduleName   = "distributed-query"
 	hotStageName = "hot"
+
+	defaultMaxChunkRowsTrace = 256
+	defaultMaxChunkBytes     = 4 << 20
 )
 
 var _ run.Service = (*queryService)(nil)
@@ -77,10 +80,14 @@ type queryService struct {
 	// lets the slow query complete instead of returning DeadlineExceeded
 	// mid-merge.
 	broadcastTimeout time.Duration
+	// maxChunkBytes caps the size of one scan chunk a data node sends.
+	maxChunkBytes run.Bytes
+	// maxChunkRowsTrace caps the traces in one trace scan chunk.
+	maxChunkRowsTrace uint32
 }
 
 // NewService return a new query service.
-func NewService(metaService metadata.Repo, pipeline queue.Server, broadcaster bus.Broadcaster, omr observability.MetricsRegistry,
+func NewService(metaService metadata.Repo, pipeline queue.Server, broadcaster queue.Client, omr observability.MetricsRegistry,
 	streamSchemaSVC stream.Service, measureSchemaSVC measure.Service, traceSchemaSVC trace.Service,
 ) (Service, error) {
 	svc := &queryService{
@@ -107,6 +114,7 @@ func NewService(metaService metadata.Repo, pipeline queue.Server, broadcaster bu
 		queryService: svc,
 		traceService: traceSchemaSVC,
 		broadcaster:  broadcaster,
+		scatterer:    broadcaster,
 	}
 	return svc, nil
 }
@@ -120,10 +128,21 @@ func (q *queryService) FlagSet() *run.FlagSet {
 	fs.DurationVar(&q.slowQuery, "dst-slow-query", 5*time.Second, "distributed slow query threshold, 0 means no slow query log")
 	fs.DurationVar(&q.broadcastTimeout, "dst-broadcast-timeout", 15*time.Second,
 		"per-broadcast wait when fanning a measure query out to data nodes; raise it for clusters that legitimately scan large non-paginated result sets")
+	q.maxChunkBytes = defaultMaxChunkBytes
+	fs.Uint32Var(&q.maxChunkRowsTrace, "stream-query-max-chunk-rows-trace", defaultMaxChunkRowsTrace,
+		"the maximum number of traces in one chunk a data node sends for a trace query")
+	fs.Var(&q.maxChunkBytes, "stream-query-max-chunk-bytes",
+		"the approximate maximum encoded size of one chunk a data node sends for a query")
 	return fs
 }
 
 func (q *queryService) Validate() error {
+	if q.maxChunkRowsTrace == 0 {
+		return errors.New("stream-query-max-chunk-rows-trace must be positive")
+	}
+	if q.maxChunkBytes == 0 {
+		return errors.New("stream-query-max-chunk-bytes must be positive")
+	}
 	return nil
 }
 
@@ -193,6 +212,7 @@ var _ executor.DistributedExecutionContext = (*distributedContext)(nil)
 
 type distributedContext struct {
 	bus.Broadcaster
+	bus.Scatterer
 	timeRange     *modelv1.TimeRange
 	nodeSelectors map[string][]string
 }
@@ -213,4 +233,21 @@ func (dc *distributedContext) BroadcastContext(ctx context.Context, timeout time
 		return broadcaster.BroadcastContext(ctx, timeout, topic, message)
 	}
 	return dc.Broadcast(timeout, topic, message)
+}
+
+// chunkCapScatterer fills the chunk caps of a scatter that does not set them.
+type chunkCapScatterer struct {
+	bus.Scatterer
+	maxBytes uint64
+	maxRows  uint32
+}
+
+func (s chunkCapScatterer) Scatter(ctx context.Context, topic bus.Topic, message bus.Message, opts bus.ScatterOptions) ([]bus.NodeStream, error) {
+	if opts.MaxChunkBytes == 0 {
+		opts.MaxChunkBytes = s.maxBytes
+	}
+	if opts.MaxChunkRows == 0 {
+		opts.MaxChunkRows = s.maxRows
+	}
+	return s.Scatterer.Scatter(ctx, topic, message, opts)
 }

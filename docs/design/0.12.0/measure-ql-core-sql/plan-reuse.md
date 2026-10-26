@@ -2,9 +2,11 @@
 
 Status: **implemented by T05**, with verification recorded in
 [T05 verification](t05-verification.md) as historical ticket evidence and the
-[PR 1 verification record](pr1-verification.md) for the current isolated branch.
-PR 1 reuses legacy and typed raw measure templates. Later aggregate/expression/
-sort recipes discussed below are extensions for subsequent Catalog B PRs.
+[PR 1 verification record](pr1-verification.md) for the merged cache foundation.
+PR 2 extends reusable metadata to aggregate calls, grouping columns and native
+entity identities; see its [verification record](pr2-verification.md). Native
+eligibility, requests and lifecycle selection remain fresh for each execution.
+Expression and sort recipes remain extensions for subsequent Catalog B PRs.
 This extends the [engine design](datafusion-engine.md) on PR #1412. It changes no
 protobuf, RPC, native request or frame format.
 
@@ -25,8 +27,8 @@ The [earlier plan-cache design](../bydbql-plan-cache/README.md) deferred compile
 plans after measuring 3–6 microseconds for Bind + transformation with local schema
 reads. Preserve that historical result. This decision revisits the deferral for
 Catalog B: typed raw source/output resolution and time-range planning add work,
-while OAP repeatedly varies bound values. Later tickets add expression planning
-and aggregate decomposition.
+while OAP repeatedly varies bound values. PR 2 adds aggregate metadata; later
+tickets add general expression planning.
 Benchmark both simple legacy templates and new plans; do not assume the earlier
 measurement proves either a large benefit or no benefit for this engine.
 
@@ -37,19 +39,20 @@ snapshot is introduced, and end-to-end speedup must be measured separately.
 
 ## 2. Reusable template versus execution instance
 
-| Cached immutable template in PR 1 | Fresh for every execution |
+| Cached immutable template through PR 2 | Fresh for every execution |
 |---|---|
 | Parsed syntax and placeholder constraints | Parameter values, native list values and validation |
 | Resolved raw slots, source identities, types and output names | Bound time ranges and one captured now |
 | Legacy native lowering metadata and typed raw projection/time recipes | Newly lowered native requests and optional RawPlan |
+| Aggregate calls, grouping columns and native entity identities | Native eligibility proofs, branch requests and local/merge state |
 | Schema dependency revisions and local watch generations | Dependency checks, current authorization and native gates |
 | Output mapping and source schema metadata | Operator instances, query budgets, borrowed owners and result encoding |
 
 Do not cache a running Pipeline, PullOperator, mutable bound request, result batch,
 cursor, memory lease or permission outcome. A template is a recipe; every request
-owns its bound values and execution state. Aggregate decomposition, general typed
-expression kernels, hash aggregation and sorting are future template extensions,
-not implemented cache payloads in PR 1.
+owns its bound values and execution state. Local hash aggregation and native
+aggregate merging instantiate fresh state from the reusable aggregate metadata.
+General expression kernels and sorting remain future template extensions.
 
 The implemented request flow is:
 
@@ -59,8 +62,9 @@ exact QL text -> prepared syntax lookup -> validate parameter overlay
     -> hit: immutable MeasureTemplate
        miss: capture schemas -> compile -> revalidate -> publish if reusable
     -> MeasureTemplate.Bind with fresh parameters and one execution clock
-    -> native QueryRequest + optional raw QL recipe
-    -> current authorization -> admission/gates -> batches -> release handle
+    -> native QueryRequest + optional raw/aggregate recipe and native alternative
+    -> current authorization -> admission/revision/lifecycle gates
+    -> native batches -> optional local aggregation or keyed merge -> release handle
 ```
 
 Parameters do not enter the compiled key. Time ranges, native criteria/list values,
@@ -69,9 +73,10 @@ LIMIT 0 can choose an empty recipe; contradictory typed time bounds also avoid a
 scan. Native eligibility and schema gates use current metadata rather than cached
 topology or authorization decisions.
 
-Later Catalog B features must preserve this division when adding parameterized
-expression kernels, aggregate eligibility guards or full-sort/top-k choices.
-Those future choices do not describe operators present in PR 1.
+PR 2 rechecks native aggregate eligibility after binding and current lifecycle
+selection before each branch. Integer overflow, nullable keys, count bounds and
+provider restrictions select the complete local fallback when proof is missing.
+Later expression and full-sort/top-k features must preserve this division.
 
 ## 3. Cache key and parameter types
 

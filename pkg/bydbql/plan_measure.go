@@ -34,6 +34,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/ql"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
 // ErrInvalidMeasureQuery identifies invalid typed measure syntax or bound values.
@@ -42,12 +43,14 @@ var ErrInvalidMeasureQuery = errors.New("invalid measure query")
 // MeasureTemplate contains immutable, schema-resolved measure planning metadata.
 // Each Bind creates independent requests and operators; no parameter or clock value is retained.
 type MeasureTemplate struct {
-	statement  *PreparedStatement
-	request    *measurev1.QueryRequest
-	predicate  *measurePredicate
-	legacyTags map[string]*tagSpecWithFamily
-	slots      []ql.Slot
-	extended   bool
+	statement      *PreparedStatement
+	request        *measurev1.QueryRequest
+	predicate      *measurePredicate
+	legacyTags     map[string]*tagSpecWithFamily
+	aggregate      *ql.AggregatePlan
+	nativeEntities []vectorized.ColumnDef
+	slots          []ql.Slot
+	extended       bool
 }
 
 // MeasureExecution is one fresh binding of a measure template.
@@ -134,8 +137,14 @@ func (t *Transformer) compileMeasure(
 	}
 	template := &MeasureTemplate{statement: statement, extended: extended}
 	if template.extended {
-		if err := template.compileRaw(snapshots); err != nil {
-			return nil, invalidMeasure(err)
+		var compileErr error
+		if measureAggregateCount(selectStmt) > 0 {
+			compileErr = template.compileAggregate(snapshots)
+		} else {
+			compileErr = template.compileRaw(snapshots)
+		}
+		if compileErr != nil {
+			return nil, invalidMeasure(compileErr)
 		}
 	} else {
 		if err := template.compileLegacy(run, snapshots); err != nil {
@@ -230,6 +239,11 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 		return &MeasureExecution{Request: request}, nil
 	}
 	plan := &ql.RawPlan{Slots: slices.Clone(m.slots)}
+	if m.aggregate != nil {
+		plan.Aggregate = &ql.AggregatePlan{
+			GroupBy: slices.Clone(m.aggregate.GroupBy), Calls: slices.Clone(m.aggregate.Calls), Outputs: slices.Clone(m.aggregate.Outputs),
+		}
+	}
 	if stmt.Limit != nil {
 		limit := uint32(run.resolveCount(stmt.Limit.Value, stmt.Limit.Param, stmt.Limit.ParamIndex))
 		plan.Limit = &limit
@@ -265,11 +279,15 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 	// Final SQL pagination belongs after the complete native scan and residual.
 	request.Offset = 0
 	request.Limit = math.MaxUint32
+	plan.NativeAggregate = m.bindNativeAggregate(request, plan)
+	if err = m.bindMeasureEntities(request, plan); err != nil {
+		return nil, invalidMeasure(err)
+	}
 	return &MeasureExecution{Request: request, Plan: plan}, nil
 }
 
 func requiresMeasurePlan(stmt *GrammarSelectStatement) bool {
-	if stmt.From.Shorthand != nil {
+	if stmt.From.Shorthand != nil || measureAggregateCount(stmt) > 1 {
 		return true
 	}
 	if stmt.Projection != nil {
@@ -287,6 +305,19 @@ func requiresMeasurePlan(stmt *GrammarSelectStatement) bool {
 		}
 	}
 	return whereHasTime(stmt.Where)
+}
+
+func measureAggregateCount(stmt *GrammarSelectStatement) int {
+	if stmt.Projection == nil {
+		return 0
+	}
+	count := 0
+	for _, column := range stmt.Projection.Columns {
+		if column.Aggregate != nil {
+			count++
+		}
+	}
+	return count
 }
 
 func whereHasTime(where *GrammarSelectWhereClause) bool {

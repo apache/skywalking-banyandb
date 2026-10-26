@@ -52,9 +52,14 @@ type traceMigrationVisitor struct {
 	logger                  *logger.Logger
 	progress                *Progress
 	replayer                *traceRowReplayer
+	samplingPolicy          *pinnedSamplingPolicy
+	samplingGroup           *GroupConfig
+	snapshot                string
+	samplingRoot            string
 	group                   string
 	sourceStage             string
 	targetStage             string
+	sampledSeries           []sampledSeriesWork
 	targetStageInterval     storage.IntervalRule
 	sourceSegmentInterval   storage.IntervalRule
 	chunkSize               int
@@ -126,6 +131,10 @@ func (mv *traceMigrationVisitor) ensureReplayer(ctx context.Context) (*traceRowR
 
 // VisitSeries implements trace.Visitor.
 func (mv *traceMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, seriesIndexPath string, shardIDs []common.ShardID) error {
+	if mv.samplingPolicy != nil || mv.samplingRoot != "" {
+		mv.sampledSeries = append(mv.sampledSeries, sampledSeriesWork{path: seriesIndexPath, shards: shardIDs})
+		return nil
+	}
 	mv.logger.Info().
 		Str("path", seriesIndexPath).
 		Int64("min_timestamp", segmentTR.Start.UnixNano()).
@@ -293,6 +302,10 @@ func (mv *traceMigrationVisitor) VisitSeries(segmentTR *timestamp.TimeRange, ser
 // VisitShard implements trace.Visitor - core and sidx migration logic.
 func (mv *traceMigrationVisitor) VisitShard(timestampTR *timestamp.TimeRange, sourceShardID common.ShardID, shardPath string) error {
 	segmentIDStr := timestampTR.String()
+	if mv.samplingRoot != "" {
+		directory := samplingArtifactPath(mv.samplingRoot, mv.group, timestampTR, uint32(sourceShardID))
+		return mv.visitSampledShard(timestampTR, sourceShardID, shardPath, directory)
+	}
 	// Match the key used by Mark below; using shardPath here would always
 	// miss on resume and re-run the migration even though the shard had
 	// completed, wasting bandwidth and writing duplicates to the target.
@@ -720,6 +733,10 @@ func (mv *traceMigrationVisitor) streamPartToNode(nodeID string, targetShardID u
 
 // Close cleans up all chunked sync clients and the trace row-replayer.
 func (mv *traceMigrationVisitor) Close() error {
+	if mv.samplingPolicy != nil {
+		mv.samplingPolicy.close()
+		mv.samplingPolicy = nil
+	}
 	if mv.replayer != nil {
 		cee, replayCloseErr := mv.replayer.Close()
 		recordNodeErrors(mv.progress, mv.group, mv.sourceStage, mv.targetStage, catalogTrace, cee)

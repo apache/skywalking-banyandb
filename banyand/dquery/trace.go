@@ -41,6 +41,7 @@ import (
 type traceQueryProcessor struct {
 	traceService trace.Service
 	broadcaster  bus.Broadcaster
+	scatterer    bus.Scatterer
 	*queryService
 	*bus.UnImplementedHealthyListener
 }
@@ -132,6 +133,7 @@ func (p *traceQueryProcessor) Rev(ctx context.Context, message bus.Message) (res
 	defer te.Close()
 	resultIterator, err := te.Execute(executor.WithDistributedExecutionContext(ctx, &distributedContext{
 		Broadcaster:   p.broadcaster,
+		Scatterer:     chunkCapScatterer{Scatterer: p.scatterer, maxBytes: uint64(p.maxChunkBytes), maxRows: p.maxChunkRowsTrace},
 		timeRange:     queryCriteria.TimeRange,
 		nodeSelectors: nodeSelectors,
 	}))

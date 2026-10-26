@@ -112,6 +112,7 @@ type MeasureExecutable interface {
 // DistributedExecutionContext allows retrieving data through the distributed module.
 type DistributedExecutionContext interface {
 	bus.Broadcaster
+	bus.Scatterer
 	TimeRange() *modelv1.TimeRange
 	NodeSelectors() map[string][]string
 }

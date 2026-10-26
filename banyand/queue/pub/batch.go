@@ -54,6 +54,8 @@ const (
 	sendErrReasonSendError    = "send_error"    // Opening the stream or writing the first frame failed.
 	sendErrReasonDecodeError  = "decode_error"  // The response body could not be decoded.
 	sendErrReasonInvalidTopic = "invalid_topic" // No response codec is registered for the topic.
+	// Failure specific to Scatter.
+	sendErrReasonIdleTimeout = "idle_timeout" // A scan stream delivered neither a chunk nor a heartbeat in time.
 )
 
 type writeStream struct {
