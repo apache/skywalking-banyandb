@@ -47,6 +47,16 @@ func Generate() (Suite, error) {
 	pairs := generateInteractions(b)
 	generateRejections(b)
 	generateT03(b)
+	aggregateReadiness, aggregateScenarios, aggregateErr := generateT07(b)
+	if aggregateErr != nil {
+		return Suite{}, aggregateErr
+	}
+	aggregateRejections := generateT07Rejections(b)
+	nativeReadiness, nativeScenarios, nativeErr := generateT08(b)
+	if nativeErr != nil {
+		return Suite{}, nativeErr
+	}
+	nativeRejections := generateT08Rejections(b)
 	if b.err != nil {
 		return Suite{}, b.err
 	}
@@ -68,7 +78,11 @@ func Generate() (Suite, error) {
 		return Suite{}, reuseReadinessErr
 	}
 	suite := Suite{
-		ReuseScenarios: reuseScenarios, ReuseReadiness: reuseReadiness, Version: 1, Seed: 1412,
+		NativeAggregateReadiness: nativeReadiness, NativeAggregateScenarios: nativeScenarios,
+		NativeAggregateRejections: nativeRejections,
+		AggregateReadiness:        aggregateReadiness, AggregateScenarios: aggregateScenarios,
+		AggregateRejections: aggregateRejections,
+		ReuseScenarios:      reuseScenarios, ReuseReadiness: reuseReadiness, Version: 1, Seed: 1412,
 		FixtureDigest: FixtureDigest(), Features: features, Cases: b.cases, Pairs: pairs,
 	}
 	return suite, suite.Validate()

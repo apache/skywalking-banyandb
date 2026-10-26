@@ -272,7 +272,7 @@ func (l *liaison) PreRun(ctx context.Context) error {
 	}
 
 	l.schemaRepo = newLiaisonSchemaRepo(l.dataPath, l, traceDataNodeRegistry, val.(common.Node).NodeID)
-	l.writeListener = setUpWriteQueueCallback(l.l, &l.schemaRepo, l.maxDiskUsagePercent, l.option.tire2Client)
+	l.writeListener = setUpWriteQueueCallback(l.l, &l.schemaRepo, l.maxDiskUsagePercent, l.option.tire2Client, l.pm)
 
 	// Register chunked sync handler for trace and sidx data
 	l.pipeline.RegisterChunkedSyncHandler(data.TopicTracePartSync, setUpChunkedSyncCallback(l.l, &l.schemaRepo))

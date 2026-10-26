@@ -612,14 +612,9 @@ func executeMeasurePlan(
 	return mit, planStr, nil
 }
 
-// dispatchMeasure is the thin adapter from measureExecutionContext into
-// the vec dispatch inputs. Multi-measure queries (len(ecc) > 1) are
-// handled per-group: each group is dispatched individually and the
-// per-group iterators are merged through the shared cross-group ordering
-// stack in logical_measure.MergeGroupMIterators (G9f.1, reusing
-// sortableDataPoints + sortedMIterator so the cross-group order and
-// version dedup are reproduced by construction, not by parallel
-// reimplementation).
+// dispatchMeasure adapts the native BatchResult boundary to final row serialization.
+// Multi-group queries use DispatchBatches and MultiGroupMerge to align schemas,
+// merge sort keys, deduplicate versions and apply pagination before serialization.
 //
 // Distributed Map-mode GroupBy+Agg (emitPartial=true) routes to vec via
 // AggModeMap (G9f.2): vecplan.Dispatch receives emitPartial and the
@@ -676,39 +671,35 @@ func dispatchMeasureBatches(
 	if projErr := vecplan.ValidateMultiGroupProjection(queryCriteria, mctx.schemas, measureSchemas); projErr != nil {
 		return nil, "", projErr
 	}
-	iters := make([]*vecplan.BatchResult, 0, len(mctx.ecc))
-	planStrs := make([]string, 0, len(mctx.ecc))
-	closeOpened := func() {
-		for _, opened := range iters {
-			_ = opened.Close()
-		}
-	}
-	for groupIdx, vec := range vecs {
-		mit, planStr, dispatchErr := vecplan.DispatchBatches(ctx, queryCriteria,
-			mctx.metadata[groupIdx], vec.GetSchema(), mctx.schemas[groupIdx], vec, vec.VectorizedConfig(), emitPartial, true)
-		if dispatchErr != nil {
-			closeOpened()
-			return nil, "", dispatchErr
-		}
-		iters = append(iters, mit)
-		planStrs = append(planStrs, planStr)
-	}
-	order, orderErr := logical_measure.ResolveCrossGroupMergeOrder(queryCriteria, mctx.schemas)
-	if orderErr != nil {
-		closeOpened()
-		return nil, "", orderErr
-	}
-	_ = order
-	schema, schemaErr := vecplan.BuildMultiGroupBatchSchema(measureSchemas, queryCriteria)
-	if schemaErr != nil {
-		closeOpened()
-		return nil, "", schemaErr
-	}
-	merged, mergeErr := vecplan.MergeStandaloneBatches(ctx, iters, schema, queryCriteria, mctx.schemas, vecs[0].VectorizedConfig())
+	merge, mergeErr := vecplan.NewMultiGroupMerge(ctx, queryCriteria, mctx.schemas, measureSchemas, vecs[0].VectorizedConfig())
 	if mergeErr != nil {
 		return nil, "", mergeErr
 	}
-	return merged, fmt.Sprintf("vec-multi-measure%v", planStrs), nil
+	groups := make([]*vecplan.GroupBatches, 0, len(mctx.ecc))
+	planStrs := make([]string, 0, len(mctx.ecc))
+	for groupIdx, vec := range vecs {
+		result, planStr, dispatchErr := vecplan.DispatchBatches(ctx, merge.GroupRequest(),
+			mctx.metadata[groupIdx], vec.GetSchema(), mctx.schemas[groupIdx], vec, vec.VectorizedConfig(), emitPartial, true)
+		if dispatchErr == nil {
+			var group *vecplan.GroupBatches
+			group, dispatchErr = merge.Collect(ctx, result, planStr)
+			if dispatchErr == nil {
+				groups = append(groups, group)
+				planStrs = append(planStrs, planStr)
+			}
+		}
+		if dispatchErr != nil {
+			for _, obtained := range groups {
+				obtained.Release()
+			}
+			return nil, "", dispatchErr
+		}
+	}
+	merged, mergeErr := merge.MergeBatches(ctx, groups)
+	if mergeErr != nil {
+		return nil, "", mergeErr
+	}
+	return merged, fmt.Sprintf("vec-multi-measure-batch%v", planStrs), nil
 }
 
 // collectInternalDataPoints collects InternalDataPoints from the iterator.
@@ -1326,19 +1317,7 @@ func (p *traceQueryProcessor) buildTraceTags(result *model.TraceResult, queryCri
 func (p *traceQueryProcessor) buildFrameTraceResults(resultIterator iter.Iterator[model.TraceResult],
 	queryCriteria *tracev1.QueryRequest, execPlan *traceExecutionPlan,
 ) ([]model.TraceResult, error) {
-	traceIDInclusionMap := make(map[int]bool)
-	spanIDInclusionMap := make(map[int]bool)
-	for i, tagName := range execPlan.traceIDTagNames {
-		if slices.Contains(queryCriteria.TagProjection, tagName) {
-			traceIDInclusionMap[i] = true
-		}
-	}
-	for i, tagName := range execPlan.spanIDTagNames {
-		if slices.Contains(queryCriteria.TagProjection, tagName) {
-			spanIDInclusionMap[i] = true
-		}
-	}
-
+	builder := newTraceFrameBuilder(queryCriteria, execPlan)
 	var results []model.TraceResult
 	for {
 		result, hasNext := resultIterator.Next()
@@ -1351,45 +1330,77 @@ func (p *traceQueryProcessor) buildFrameTraceResults(resultIterator iter.Iterato
 		if result.TID == "" {
 			continue
 		}
-
-		spanCount := len(result.Spans)
-		frameResult := model.TraceResult{
-			TID:     result.TID,
-			Key:     result.Key,
-			Spans:   result.Spans,
-			SpanIDs: result.SpanIDs,
-		}
-		if result.Tags != nil && len(queryCriteria.TagProjection) > 0 {
-			for _, tag := range result.Tags {
-				if !slices.Contains(queryCriteria.TagProjection, tag.Name) {
-					continue
-				}
-				frameResult.Tags = append(frameResult.Tags, tag)
-			}
-		}
-		if traceIDInclusionMap[result.GroupIndex] {
-			values := make([]*modelv1.TagValue, spanCount)
-			tidValue := &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: result.TID}}}
-			for spanIdx := range values {
-				values[spanIdx] = tidValue
-			}
-			frameResult.Tags = append(frameResult.Tags, model.Tag{Name: execPlan.traceIDTagNames[result.GroupIndex], Values: values})
-		}
-		if spanIDInclusionMap[result.GroupIndex] {
-			values := make([]*modelv1.TagValue, spanCount)
-			for spanIdx := 0; spanIdx < spanCount; spanIdx++ {
-				if spanIdx < len(result.SpanIDs) {
-					values[spanIdx] = &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: result.SpanIDs[spanIdx]}}}
-				} else {
-					values[spanIdx] = pbv1.NullTagValue
-				}
-			}
-			frameResult.Tags = append(frameResult.Tags, model.Tag{Name: execPlan.spanIDTagNames[result.GroupIndex], Values: values})
-		}
-		results = append(results, frameResult)
+		results = append(results, builder.build(&result))
 	}
 
 	return results, nil
+}
+
+// traceFrameBuilder converts one iterator result into the frame-shaped result.
+type traceFrameBuilder struct {
+	queryCriteria       *tracev1.QueryRequest
+	execPlan            *traceExecutionPlan
+	traceIDInclusionMap map[int]bool
+	spanIDInclusionMap  map[int]bool
+}
+
+func newTraceFrameBuilder(queryCriteria *tracev1.QueryRequest, execPlan *traceExecutionPlan) *traceFrameBuilder {
+	b := &traceFrameBuilder{
+		queryCriteria:       queryCriteria,
+		execPlan:            execPlan,
+		traceIDInclusionMap: make(map[int]bool),
+		spanIDInclusionMap:  make(map[int]bool),
+	}
+	for i, tagName := range execPlan.traceIDTagNames {
+		if slices.Contains(queryCriteria.TagProjection, tagName) {
+			b.traceIDInclusionMap[i] = true
+		}
+	}
+	for i, tagName := range execPlan.spanIDTagNames {
+		if slices.Contains(queryCriteria.TagProjection, tagName) {
+			b.spanIDInclusionMap[i] = true
+		}
+	}
+	return b
+}
+
+func (b *traceFrameBuilder) build(result *model.TraceResult) model.TraceResult {
+	queryCriteria, execPlan := b.queryCriteria, b.execPlan
+	spanCount := len(result.Spans)
+	frameResult := model.TraceResult{
+		TID:     result.TID,
+		Key:     result.Key,
+		Spans:   result.Spans,
+		SpanIDs: result.SpanIDs,
+	}
+	if result.Tags != nil && len(queryCriteria.TagProjection) > 0 {
+		for _, tag := range result.Tags {
+			if !slices.Contains(queryCriteria.TagProjection, tag.Name) {
+				continue
+			}
+			frameResult.Tags = append(frameResult.Tags, tag)
+		}
+	}
+	if b.traceIDInclusionMap[result.GroupIndex] {
+		values := make([]*modelv1.TagValue, spanCount)
+		tidValue := &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: result.TID}}}
+		for spanIdx := range values {
+			values[spanIdx] = tidValue
+		}
+		frameResult.Tags = append(frameResult.Tags, model.Tag{Name: execPlan.traceIDTagNames[result.GroupIndex], Values: values})
+	}
+	if b.spanIDInclusionMap[result.GroupIndex] {
+		values := make([]*modelv1.TagValue, spanCount)
+		for spanIdx := 0; spanIdx < spanCount; spanIdx++ {
+			if spanIdx < len(result.SpanIDs) {
+				values[spanIdx] = &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: result.SpanIDs[spanIdx]}}}
+			} else {
+				values[spanIdx] = pbv1.NullTagValue
+			}
+		}
+		frameResult.Tags = append(frameResult.Tags, model.Tag{Name: execPlan.spanIDTagNames[result.GroupIndex], Values: values})
+	}
+	return frameResult
 }
 
 func (p *traceQueryProcessor) logSlowQuery(queryCriteria *tracev1.QueryRequest, traces []*tracev1.InternalTrace, startTime time.Time) {

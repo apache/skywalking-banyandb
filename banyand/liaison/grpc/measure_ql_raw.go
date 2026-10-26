@@ -24,6 +24,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/ql"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 )
 
@@ -42,7 +43,7 @@ func measureQueryResponseWithPlan(ctx context.Context, data any, statuses map[st
 
 func measureRawQueryResponse(ctx context.Context, data any, statuses map[string]modelv1.Status,
 	plan *ql.RawPlan,
-) (_ *measurev1.QueryResponse, err error) {
+) (*measurev1.QueryResponse, error) {
 	result, ok := data.(vmeasure.BatchQueryResult)
 	if !ok {
 		if failure, failed := data.(error); failed {
@@ -50,7 +51,17 @@ func measureRawQueryResponse(ctx context.Context, data any, statuses map[string]
 		}
 		return nil, fmt.Errorf("typed measure query requires a native batch result, got %T", data)
 	}
-	scan := ql.NewNativeScan(result)
+	response, collectErr := collectPlannedMeasure(ctx, ql.NewNativeScan(result), statuses, plan)
+	if collectErr != nil {
+		return nil, collectErr
+	}
+	response.Trace = result.QueryTrace()
+	return response, nil
+}
+
+func collectPlannedMeasure(ctx context.Context, scan vectorized.PullOperator, statuses map[string]modelv1.Status,
+	plan *ql.RawPlan,
+) (_ *measurev1.QueryResponse, err error) {
 	defer func() {
 		if closeErr := scan.Close(); err == nil {
 			err = queryStatus(closeErr)
@@ -90,6 +101,45 @@ func measureRawQueryResponse(ctx context.Context, data any, statuses map[string]
 	if err = iterator.Close(); err != nil {
 		return nil, queryStatus(err)
 	}
-	response.Trace = result.QueryTrace()
 	return response, nil
+}
+
+func emptyPlannedMeasure(ctx context.Context, statuses map[string]modelv1.Status, plan *ql.RawPlan) (*measurev1.QueryResponse, error) {
+	if plan == nil || plan.Aggregate == nil || plan.Limit != nil && *plan.Limit == 0 {
+		return &measurev1.QueryResponse{GroupStatuses: statuses}, nil
+	}
+	tracker := vectorized.QueryMemoryTracker(ctx, 256<<20)
+	bytes := int64(2048 + len(plan.Slots)*1024)
+	if err := tracker.Reserve(bytes); err != nil {
+		return nil, queryStatus(err)
+	}
+	columns := make([]vectorized.ColumnDef, len(plan.Slots))
+	for index, slot := range plan.Slots {
+		columns[index] = slot.Source
+	}
+	empty := *plan
+	empty.Empty, empty.Residual, empty.Ranges = true, false, nil
+	source := &emptyMeasureScan{schema: vectorized.NewBatchSchema(columns), tracker: tracker, reserved: bytes}
+	return collectPlannedMeasure(ctx, source, statuses, &empty)
+}
+
+type emptyMeasureScan struct {
+	schema   *vectorized.BatchSchema
+	tracker  *vectorized.MemoryTracker
+	reserved int64
+}
+
+func (*emptyMeasureScan) Init(ctx context.Context) error          { return ctx.Err() }
+func (s *emptyMeasureScan) OutputSchema() *vectorized.BatchSchema { return s.schema }
+func (*emptyMeasureScan) NextBatch(ctx context.Context) (*vectorized.RecordBatch, error) {
+	return nil, ctx.Err()
+}
+
+func (s *emptyMeasureScan) Close() error {
+	if s.reserved != 0 {
+		s.tracker.Release(s.reserved)
+		s.reserved = 0
+	}
+	s.schema = nil
+	return nil
 }
