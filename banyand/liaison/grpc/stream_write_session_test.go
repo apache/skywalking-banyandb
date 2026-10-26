@@ -222,7 +222,7 @@ func TestStreamWriteSpecSwitchLandsOnNextBatch(t *testing.T) {
 
 func TestStreamWritePressureTimeoutEndsStreamWithResourceExhausted(t *testing.T) {
 	h := newStreamWriteHarness(t, writeSessionConfig{
-		sealRows: 2, pressureTimeout: 200 * time.Millisecond, retryBackoff: 20 * time.Millisecond, retryBackoffMax: 20 * time.Millisecond,
+		pressureTimeout: 200 * time.Millisecond, retryBackoff: 20 * time.Millisecond, retryBackoffMax: 20 * time.Millisecond,
 	})
 	h.fake.onClose = func(b *fakeBatch) (map[string]*common.Error, error) {
 		return map[string]*common.Error{b.node: common.NewErrorWithStatus(modelv1.Status_STATUS_SERVER_BUSY, "busy")}, nil
@@ -255,7 +255,7 @@ func TestStreamWritePressureTimeoutEndsStreamWithResourceExhausted(t *testing.T)
 }
 
 func TestStreamWriteLiaisonMemoryPressureSetsRetryAfterWhileStreamStaysOpen(t *testing.T) {
-	h := newStreamWriteHarness(t, writeSessionConfig{sealRows: 2, sealInterval: time.Hour})
+	h := newStreamWriteHarness(t, writeSessionConfig{sealInterval: 20 * time.Millisecond})
 	pm := &togglePressureProtector{}
 	h.service.protector = pm
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

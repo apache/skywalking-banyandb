@@ -20,11 +20,13 @@ package write_backpressure_test
 
 import (
 	"testing"
+	"time"
 
 	g "github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 
+	liaisongrpc "github.com/apache/skywalking-banyandb/banyand/liaison/grpc"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
@@ -35,9 +37,9 @@ import (
 	integration_distributed "github.com/apache/skywalking-banyandb/test/integration/distributed"
 )
 
-// pressureTimeout is the liaison's --write-pressure-timeout in this suite. It is long enough for a short pressure
-// window to clear and short enough to keep the timeout spec quick.
-const pressureTimeout = "5s"
+// pressureTimeout is how long the liaison retries a refused write batch in this suite. It is long enough for a short
+// pressure window to clear and short enough to keep the timeout spec quick.
+const pressureTimeout = 5 * time.Second
 
 func TestDistributedWriteBackpressure(t *testing.T) {
 	gomega.RegisterFailHandler(g.Fail)
@@ -66,8 +68,10 @@ var _ = g.BeforeSuite(func() {
 	_, _, _, closeData := setup.DataNodeWithAddrAndDir(clusterConfig)
 	cleanupFuncs = append(cleanupFuncs, closeData)
 
+	// The liaison runs in this process, so a hook shortens its busy-retry bound for every write stream.
+	liaisongrpc.SetWritePressureTimeout(pressureTimeout)
 	var closeLiaison func()
-	liaisonAddr, _, closeLiaison = setup.LiaisonNodeWithHTTP(clusterConfig, "--write-pressure-timeout="+pressureTimeout)
+	liaisonAddr, _, closeLiaison = setup.LiaisonNodeWithHTTP(clusterConfig)
 	cleanupFuncs = append(cleanupFuncs, closeLiaison)
 
 	setup.PreloadSchemaViaProperty(clusterConfig,
@@ -78,6 +82,7 @@ var _ = g.BeforeSuite(func() {
 })
 
 var _ = g.AfterSuite(func() {
+	liaisongrpc.SetWritePressureTimeout(0)
 	for i := len(cleanupFuncs) - 1; i >= 0; i-- {
 		cleanupFuncs[i]()
 	}

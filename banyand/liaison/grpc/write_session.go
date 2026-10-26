@@ -46,20 +46,29 @@ var (
 )
 
 const (
-	defaultWriteSealRows        = 4096
-	defaultWriteSealBytes       = 8 << 20
-	defaultWriteSealInterval    = 200 * time.Millisecond
-	defaultWriteMaxInflight     = 4
-	defaultWritePressureTimeout = 30 * time.Second
+	// writeSealBytes caps the marshaled rows of a node's open batch. It bounds the liaison memory and the latency of
+	// one batch; rows are published one message each, so it is not a gRPC receive limit.
+	writeSealBytes = 8 << 20
+	// writeSealInterval seals a node's open batch this long after its first row, so a slow stream is acknowledged
+	// promptly while a fast one fills batches.
+	writeSealInterval = 200 * time.Millisecond
+	// writeRowOverhead is the bookkeeping cost charged to a batch for every row on top of its payload, so a batch of
+	// tiny rows still reaches the byte cap before its row slice dominates the memory.
+	writeRowOverhead = 64
+	// writeWindowInit, writeWindowMin and writeWindowMax bound the AIMD window of sealed, unacknowledged batches per node.
+	writeWindowInit = 4
+	writeWindowMin  = 1
+	writeWindowMax  = 16
+	// writePressureTimeout bounds the busy retries of a batch when the client stream carries no deadline.
+	writePressureTimeout        = 30 * time.Second
 	defaultWriteRetryBackoff    = 100 * time.Millisecond
 	defaultWriteRetryBackoffMax = 2 * time.Second
 	// writeMemoryHighRetryAfter is the pause requested from clients while the
 	// liaison's own memory protector reports high pressure.
 	writeMemoryHighRetryAfter = 500 * time.Millisecond
 
-	sealReasonRows     = "rows"
-	sealReasonBytes    = "bytes"
 	sealReasonInterval = "interval"
+	sealReasonBytes    = "bytes"
 	sealReasonSwitch   = "switch"
 	sealReasonClose    = "close"
 
@@ -67,16 +76,23 @@ const (
 	backpressureReasonMemory   = "memory"
 )
 
-// writeSessionConfig holds the knobs of a write session. Zero values select the defaults.
+// pressureTimeoutOverride replaces the default busy-retry bound of every write session when positive. It is a test hook.
+var pressureTimeoutOverride atomic.Int64
+
+// SetWritePressureTimeout makes every write session of this process bound its busy retries by d, even when the client
+// stream carries a deadline. A zero or negative d restores the default. It is intended for tests.
+func SetWritePressureTimeout(d time.Duration) { pressureTimeoutOverride.Store(int64(d)) }
+
+// writeSessionConfig holds the internal knobs of a write session; tests set them. Zero values select the defaults.
 type writeSessionConfig struct {
-	// sealRows seals a node batch once it holds this many rows.
-	sealRows int
-	// sealBytes seals a node batch once its marshaled rows reach this many bytes.
-	sealBytes run.Bytes
+	// sealBytes seals a node batch once its rows reach this many bytes.
+	sealBytes int64
 	// sealInterval seals a node batch this long after its first row.
 	sealInterval time.Duration
-	// maxInflight bounds the sealed, unacknowledged batches per node.
-	maxInflight int
+	// initialWindow, minWindow and maxWindow shape the per-node AIMD window.
+	initialWindow int
+	minWindow     int
+	maxWindow     int
 	// pressureTimeout bounds how long a batch is retried while its node reports DISK_FULL or STATUS_SERVER_BUSY.
 	pressureTimeout time.Duration
 	// retryBackoff and retryBackoffMax shape the busy retry backoff.
@@ -85,20 +101,24 @@ type writeSessionConfig struct {
 }
 
 func (c writeSessionConfig) withDefaults() writeSessionConfig {
-	if c.sealRows <= 0 {
-		c.sealRows = defaultWriteSealRows
-	}
 	if c.sealBytes <= 0 {
-		c.sealBytes = defaultWriteSealBytes
+		c.sealBytes = writeSealBytes
 	}
 	if c.sealInterval <= 0 {
-		c.sealInterval = defaultWriteSealInterval
+		c.sealInterval = writeSealInterval
 	}
-	if c.maxInflight <= 0 {
-		c.maxInflight = defaultWriteMaxInflight
+	if c.minWindow <= 0 {
+		c.minWindow = writeWindowMin
 	}
+	if c.maxWindow <= 0 {
+		c.maxWindow = writeWindowMax
+	}
+	if c.initialWindow <= 0 {
+		c.initialWindow = writeWindowInit
+	}
+	c.initialWindow = min(max(c.initialWindow, c.minWindow), c.maxWindow)
 	if c.pressureTimeout <= 0 {
-		c.pressureTimeout = defaultWritePressureTimeout
+		c.pressureTimeout = time.Duration(pressureTimeoutOverride.Load())
 	}
 	if c.retryBackoff <= 0 {
 		c.retryBackoff = defaultWriteRetryBackoff
@@ -107,20 +127,6 @@ func (c writeSessionConfig) withDefaults() writeSessionConfig {
 		c.retryBackoffMax = defaultWriteRetryBackoffMax
 	}
 	return c
-}
-
-// registerFlags binds the write session flags to c and sets their defaults.
-func (c *writeSessionConfig) registerFlags(fs *run.FlagSet) {
-	c.sealBytes = defaultWriteSealBytes
-	fs.IntVar(&c.sealRows, "write-batch-seal-rows", defaultWriteSealRows,
-		"seal a write stream's batch for a data node once it holds this many rows")
-	fs.VarP(&c.sealBytes, "write-batch-seal-bytes", "", "seal a write stream's batch for a data node once its rows reach this size")
-	fs.DurationVar(&c.sealInterval, "write-batch-seal-interval", defaultWriteSealInterval,
-		"seal a write stream's batch for a data node this long after its first row")
-	fs.IntVar(&c.maxInflight, "write-max-inflight-batches", defaultWriteMaxInflight,
-		"the maximum sealed batches a write stream keeps unacknowledged per data node before it stops reading from the client")
-	fs.DurationVar(&c.pressureTimeout, "write-pressure-timeout", defaultWritePressureTimeout,
-		"how long a write batch is retried while its data node is full or under memory pressure before the stream fails with RESOURCE_EXHAUSTED")
 }
 
 // writeAck identifies one client message awaiting acknowledgement.
@@ -145,7 +151,6 @@ type writeRow struct {
 }
 
 type writeBatch struct {
-	openedAt time.Time
 	sealedAt time.Time
 	timer    *time.Timer
 	node     string
@@ -153,6 +158,15 @@ type writeBatch struct {
 	rows     []writeRow
 	bytes    int64
 	epoch    uint64
+	// busy is set once the node refused the batch, so its eventual success is not a clean acknowledgement.
+	busy bool
+}
+
+// nodeWindow is the AIMD state of one node: how many sealed batches may be unacknowledged at once.
+type nodeWindow struct {
+	size int
+	// clean counts the clean acknowledgements since the window last changed.
+	clean int
 }
 
 // writeSessionDeps is the per-model adapter of a write session.
@@ -177,6 +191,7 @@ type writeSession struct {
 	ctx       context.Context
 	open      map[string]*writeBatch
 	inflight  map[string]int
+	windows   map[string]*nodeWindow
 	notify    chan struct{}
 	fatalCh   chan struct{}
 	fatalErr  error
@@ -195,6 +210,7 @@ func newWriteSession(ctx context.Context, cfg writeSessionConfig, deps writeSess
 		deps:     deps,
 		open:     make(map[string]*writeBatch),
 		inflight: make(map[string]int),
+		windows:  make(map[string]*nodeWindow),
 		notify:   make(chan struct{}),
 		fatalCh:  make(chan struct{}),
 	}
@@ -238,8 +254,11 @@ func (s *writeSession) retryAfterMs() uint32 {
 }
 
 // Append adds one row to the open batch of node. The build callback serializes the row and is told whether the row
-// opens a batch, in which case it must carry the metadata and tag spec. Append blocks while the node already has the
-// maximum of sealed, unacknowledged batches, and returns the session's terminal error once it has failed.
+// opens a batch, in which case it must carry the metadata and tag spec.
+//
+// A node's open batch is sealed when it reaches the byte cap, writeSealInterval after its first row, when a row of
+// another epoch arrives, or when the session finishes. Append blocks while the node already has as many sealed,
+// unacknowledged batches as its window allows, and returns the session's terminal error once it has failed.
 func (s *writeSession) Append(node, group string, epoch uint64, ack writeAck, build func(first bool) ([]byte, error)) error {
 	s.mu.Lock()
 	waited := false
@@ -256,7 +275,7 @@ func (s *writeSession) Append(node, group string, epoch uint64, ack writeAck, bu
 		if b := s.open[node]; b != nil && b.epoch != epoch {
 			s.sealLocked(b, sealReasonSwitch)
 		}
-		if s.inflight[node] < s.cfg.maxInflight {
+		if s.inflight[node] < s.windowLocked(node).size {
 			break
 		}
 		if !waited {
@@ -279,16 +298,13 @@ func (s *writeSession) Append(node, group string, epoch uint64, ack writeAck, bu
 		return fmt.Errorf("%w: %w", errWriteRowSerialize, err)
 	}
 	if b == nil {
-		b = &writeBatch{node: node, group: group, epoch: epoch, openedAt: time.Now()}
+		b = &writeBatch{node: node, group: group, epoch: epoch}
 		s.open[node] = b
 		b.timer = time.AfterFunc(s.cfg.sealInterval, func() { s.sealIfOpen(b, sealReasonInterval) })
 	}
 	b.rows = append(b.rows, writeRow{ack: ack, payload: payload})
-	b.bytes += int64(len(payload))
-	switch {
-	case len(b.rows) >= s.cfg.sealRows:
-		s.sealLocked(b, sealReasonRows)
-	case b.bytes >= int64(s.cfg.sealBytes):
+	b.bytes += int64(len(payload)) + writeRowOverhead
+	if b.bytes >= s.cfg.sealBytes {
 		s.sealLocked(b, sealReasonBytes)
 	}
 	return nil
@@ -300,6 +316,36 @@ func (s *writeSession) sealIfOpen(b *writeBatch, reason string) {
 	if s.open[b.node] == b {
 		s.sealLocked(b, reason)
 	}
+}
+
+func (s *writeSession) windowLocked(node string) *nodeWindow {
+	w := s.windows[node]
+	if w == nil {
+		w = &nodeWindow{size: s.cfg.initialWindow}
+		s.windows[node] = w
+	}
+	return w
+}
+
+// onCleanAckLocked grows the node's window by one per window's worth of clean acknowledgements, unless the liaison
+// is itself under memory pressure.
+func (s *writeSession) onCleanAckLocked(node string) {
+	w := s.windowLocked(node)
+	w.clean++
+	if w.clean < w.size {
+		return
+	}
+	w.clean = 0
+	if w.size < s.cfg.maxWindow && (s.deps.memoryHigh == nil || !s.deps.memoryHigh()) {
+		w.size++
+	}
+}
+
+// onBusyLocked halves the node's window after the node refused a batch.
+func (s *writeSession) onBusyLocked(node string) {
+	w := s.windowLocked(node)
+	w.clean = 0
+	w.size = max(w.size/2, s.cfg.minWindow)
 }
 
 func (s *writeSession) sealLocked(b *writeBatch, reason string) {
@@ -369,6 +415,7 @@ type batchOutcome struct {
 func (s *writeSession) runBatch(b *writeBatch) {
 	defer s.wg.Done()
 	var firstBusy time.Time
+	var limit time.Duration
 	for attempt := 0; ; attempt++ {
 		out := s.publishOnce(b)
 		if !out.notApplied {
@@ -381,9 +428,14 @@ func (s *writeSession) runBatch(b *writeBatch) {
 		now := time.Now()
 		if firstBusy.IsZero() {
 			firstBusy = now
+			limit = s.pressureLimit(now)
+			s.mu.Lock()
+			b.busy = true
+			s.onBusyLocked(b.node)
+			s.mu.Unlock()
 		}
 		elapsed := now.Sub(firstBusy)
-		if elapsed >= s.cfg.pressureTimeout {
+		if elapsed >= limit {
 			s.deps.log.Warn().Str("node", b.node).Stringer("status", out.status).Dur("elapsed", elapsed).
 				Msg("the data node stayed unable to accept writes; failing the write stream")
 			s.fail(status.Errorf(codes.ResourceExhausted, "data node %s is unable to accept writes (%s) for %s", b.node, out.status, elapsed))
@@ -391,7 +443,7 @@ func (s *writeSession) runBatch(b *writeBatch) {
 			return
 		}
 		wait := grpchelper.JitteredBackoff(s.cfg.retryBackoff, s.cfg.retryBackoffMax, attempt, grpchelper.DefaultJitterFactor)
-		if remaining := s.cfg.pressureTimeout - elapsed; wait > remaining {
+		if remaining := limit - elapsed; wait > remaining {
 			wait = remaining
 		}
 		s.busyUntil.Store(now.Add(wait).UnixNano())
@@ -445,6 +497,18 @@ func (s *writeSession) publishOnce(b *writeBatch) batchOutcome {
 	return batchOutcome{status: modelv1.Status_STATUS_SUCCEED}
 }
 
+// pressureLimit returns how long a batch that has just met a busy node may keep retrying: the configured or
+// overridden timeout, else the time left until the client stream's deadline, else the default.
+func (s *writeSession) pressureLimit(now time.Time) time.Duration {
+	if s.cfg.pressureTimeout > 0 {
+		return s.cfg.pressureTimeout
+	}
+	if deadline, ok := s.ctx.Deadline(); ok {
+		return max(deadline.Sub(now), 0)
+	}
+	return writePressureTimeout
+}
+
 func isNotAppliedStatus(st modelv1.Status) bool {
 	return st == modelv1.Status_STATUS_DISK_FULL || st == modelv1.Status_STATUS_SERVER_BUSY
 }
@@ -473,6 +537,9 @@ func (s *writeSession) finishBatch(b *writeBatch, st modelv1.Status) {
 	}
 	s.mu.Lock()
 	s.inflight[b.node]--
+	if st == modelv1.Status_STATUS_SUCCEED && !b.busy {
+		s.onCleanAckLocked(b.node)
+	}
 	s.broadcastLocked()
 	s.mu.Unlock()
 }

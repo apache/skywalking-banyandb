@@ -2693,6 +2693,7 @@ ScanRequest opens a server-streaming scan on a data node.
 | sender_tier | [string](#string) |  |  |
 | max_chunk_bytes | [uint64](#uint64) |  | max_chunk_bytes is the liaison&#39;s cap for one chunk body. |
 | max_chunk_rows | [uint32](#uint32) |  | max_chunk_rows is the liaison&#39;s cap for one chunk&#39;s rows. |
+| idle_timeout_ms | [uint32](#uint32) |  | idle_timeout_ms is how long the liaison lets the scan stay silent, neither a chunk nor a heartbeat, before it fails the stream. The data node heartbeats well within it. Zero selects the data node&#39;s default. |
 
 
 

@@ -244,7 +244,7 @@ var _ = g.Describe("Stream Write backpressure from the liaison write listener un
 		}
 	})
 
-	g.It("ends the stream with RESOURCE_EXHAUSTED when the pressure outlasts --write-pressure-timeout", func() {
+	g.It("ends the stream with RESOURCE_EXHAUSTED when the pressure outlasts the write pressure timeout", func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		stream, acks := openAdmittedElementStream(ctx, client)

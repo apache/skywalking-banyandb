@@ -70,7 +70,7 @@ var batchOpenDurationBuckets = meter.Buckets{1, 5, 10, 30, 60, 120, 300, 600, 18
 const defaultHealthCheckInterval = 10 * time.Second
 
 // defaultScanIdleTimeout is how long a Scan stream may stay silent, neither a chunk nor a
-// heartbeat, before the publisher fails it.
+// heartbeat, before the publisher fails it. The publisher sends it to the data node, which heartbeats well within it.
 const defaultScanIdleTimeout = 15 * time.Second
 
 // ChunkedSyncClientConfig configures chunked sync client behavior.
@@ -110,7 +110,6 @@ type pub struct {
 	selfTier            string
 	allowedRoles        []databasev1.Role
 	healthCheckInterval time.Duration
-	scanIdleTimeout     time.Duration
 	writableProbeMu     sync.Mutex
 	nodeCacheMu         sync.RWMutex
 	nativeQueryMu       sync.Mutex
@@ -262,21 +261,10 @@ func (p *pub) FlagSet() *run.FlagSet {
 	fs.StringVar(&p.caCertPath, prefixFlag("client-ca-cert"), "", fmt.Sprintf("CA certificate file to verify the %s server", p.prefix))
 	fs.DurationVar(&p.healthCheckInterval, prefixFlag("client-health-check-interval"), defaultHealthCheckInterval,
 		fmt.Sprintf("how often to re-check active %s nodes and evict the unreachable ones; 0 disables the periodic check", p.prefix))
-	// The data-node publisher owns the unprefixed flag; other publishers in the same
-	// process keep a prefixed one so the names never collide.
-	scanIdleFlag := "scan-idle-timeout"
-	if p.prefix != "data" {
-		scanIdleFlag = prefixFlag(scanIdleFlag)
-	}
-	fs.DurationVar(&p.scanIdleTimeout, scanIdleFlag, defaultScanIdleTimeout,
-		"fail a scan stream to a node that sends neither a chunk nor a heartbeat for this long")
 	return fs
 }
 
 func (p *pub) Validate() error {
-	if p.scanIdleTimeout < 0 {
-		return fmt.Errorf("the scan idle timeout must not be negative, got %s", p.scanIdleTimeout)
-	}
 	// simple sanity‑check: if TLS is on, a CA bundle must be provided
 	if p.tlsEnabled && p.caCertPath == "" {
 		return fmt.Errorf("TLS is enabled (--data-client-tls), but no CA certificate file was provided (--data-client-ca-cert is required)")
@@ -587,8 +575,6 @@ func New(metadata metadata.Repo, roles ...databasev1.Role) queue.Client {
 		writableProbe: make(map[string]map[string]struct{}),
 		nodeCache:     make(map[string]nodeInfo),
 		retryPolicy:   retryPolicy,
-
-		scanIdleTimeout: defaultScanIdleTimeout,
 	}
 	return p
 }

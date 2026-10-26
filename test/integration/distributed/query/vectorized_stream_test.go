@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/apache/skywalking-banyandb/api/data"
+	"github.com/apache/skywalking-banyandb/banyand/dquery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	vstream "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream"
@@ -58,15 +59,15 @@ import (
 // This is the distributed twin of test/integration/standalone/query/
 // vectorized_stream_test.go and mirrors the trace vec distributed verification.
 func init() {
-	registerDistributedStreamSuite("vec stream independent verification (distributed)", "Vec (distributed): Scanning Streams", nil)
+	registerDistributedStreamSuite("vec stream independent verification (distributed)", "Vec (distributed): Scanning Streams", false)
 	// The same table on a cluster whose liaison asks the data nodes for chunks of one
 	// element or about 1 KiB, so every fixture is carried by many chunks per node.
 	registerDistributedStreamSuite("vec stream independent verification (distributed, tiny scan chunks)",
 		"Vec (distributed, tiny chunks): Scanning Streams",
-		[]string{"--stream-query-max-chunk-rows-stream=1", "--stream-query-max-chunk-bytes=1KiB"})
+		true)
 }
 
-func registerDistributedStreamSuite(describe, table string, liaisonFlags []string) {
+func registerDistributedStreamSuite(describe, table string, tinyChunks bool) {
 	ginkgo.Describe(describe, ginkgo.Ordered, func() {
 		var (
 			vectorizedConn  *grpc.ClientConn
@@ -94,7 +95,11 @@ func registerDistributedStreamSuite(describe, table string, liaisonFlags []strin
 			closeDataNode1 := setup.DataNode(config)
 			setup.PreloadSchemaViaProperty(config, test_stream.PreloadSchema, test_measure.PreloadSchema, test_trace.PreloadSchema, test_property.PreloadSchema)
 			config.AddLoadedKinds(schema.KindStream, schema.KindMeasure, schema.KindTrace)
-			liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config, liaisonFlags...)
+			if tinyChunks {
+				// The liaison created next asks the data nodes for chunks of one row or about 1 KiB.
+				dquery.SetNextChunkLimits(1, 1, 1<<10)
+			}
+			liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config)
 			stopFn = func() {
 				closerLiaisonNode()
 				closeDataNode0()
@@ -150,7 +155,7 @@ func registerDistributedStreamSuite(describe, table string, liaisonFlags []strin
 				"no Scan stream reached a data node; the distributed stream query did not use the streaming transport")
 			gomega.Expect(chunkDelta).To(gomega.BeNumerically(">", int64(0)),
 				"the data nodes sent no chunk on their Scan streams")
-			if len(liaisonFlags) > 0 {
+			if tinyChunks {
 				// With one-element chunks the fixtures that return several elements must be split.
 				gomega.Expect(chunkDelta).To(gomega.BeNumerically(">", scanDelta),
 					"tiny chunk caps did not split any node result into several chunks")

@@ -150,28 +150,13 @@ func requireExactlyOnce(t *testing.T, replies []writeReply, total int, want mode
 	}
 }
 
-func TestWriteSessionSealByRows(t *testing.T) {
-	f, c := &fakePublishers{}, &replyCollector{}
-	s := newTestSession(writeSessionConfig{sealRows: 3, sealInterval: time.Hour}, f, c)
-	for v := 1; v <= 7; v++ {
-		require.NoError(t, appendRow(s, "n1", uint64(v), 10))
-	}
-	require.NoError(t, s.Finish())
-	var sizes []int
-	for _, b := range f.attempts() {
-		sizes = append(sizes, len(b.payloads))
-	}
-	assert.ElementsMatch(t, []int{3, 3, 1}, sizes)
-	requireExactlyOnce(t, c.snapshot(), 7, modelv1.Status_STATUS_SUCCEED)
-}
-
 func TestWriteSessionSealByBytes(t *testing.T) {
 	f, c := &fakePublishers{}, &replyCollector{}
-	s := newTestSession(writeSessionConfig{sealRows: 1000, sealBytes: 250, sealInterval: time.Hour}, f, c)
+	s := newTestSession(writeSessionConfig{sealBytes: 3 * (100 + writeRowOverhead), sealInterval: time.Hour}, f, c)
 	for v := 1; v <= 7; v++ {
 		require.NoError(t, appendRow(s, "n1", uint64(v), 100))
 	}
-	// Rows are 100 bytes: the third row crosses 250 bytes, so batches hold 3, 3 and 1 rows.
+	// A row costs 100 bytes plus the row overhead: the third row reaches the cap, so batches hold 3, 3 and 1 rows.
 	require.Eventually(t, func() bool { return len(f.attempts()) == 2 }, 2*time.Second, 5*time.Millisecond)
 	require.NoError(t, s.Finish())
 	var sizes []int
@@ -184,7 +169,7 @@ func TestWriteSessionSealByBytes(t *testing.T) {
 
 func TestWriteSessionSealByInterval(t *testing.T) {
 	f, c := &fakePublishers{}, &replyCollector{}
-	s := newTestSession(writeSessionConfig{sealRows: 1000, sealInterval: 30 * time.Millisecond}, f, c)
+	s := newTestSession(writeSessionConfig{sealInterval: 30 * time.Millisecond}, f, c)
 	require.NoError(t, appendRow(s, "n1", 1, 10))
 	require.NoError(t, appendRow(s, "n1", 2, 10))
 	// No further rows and no half-close: the interval alone must seal the batch and acknowledge it.
@@ -195,9 +180,118 @@ func TestWriteSessionSealByInterval(t *testing.T) {
 	requireExactlyOnce(t, c.snapshot(), 2, modelv1.Status_STATUS_SUCCEED)
 }
 
+// gatedPublishers holds every batch of node n1 in Close until the gate is opened.
+func gatedPublishers(gate <-chan struct{}) *fakePublishers {
+	f := &fakePublishers{}
+	f.onClose = func(b *fakeBatch) (map[string]*common.Error, error) {
+		if b.node == "n1" {
+			<-gate
+		}
+		return nil, nil
+	}
+	return f
+}
+
+func TestWriteSessionFinishFlushesRowsHeldInTheOpenBatch(t *testing.T) {
+	gate := make(chan struct{})
+	f, c := gatedPublishers(gate), &replyCollector{}
+	s := newTestSession(writeSessionConfig{sealInterval: time.Hour}, f, c)
+	for v := 1; v <= 10; v++ {
+		require.NoError(t, appendRow(s, "n1", uint64(v), 10))
+	}
+	done := make(chan error, 1)
+	go func() { done <- s.Finish() }()
+	time.Sleep(50 * time.Millisecond)
+	close(gate)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Finish did not complete")
+	}
+	requireExactlyOnce(t, c.snapshot(), 10, modelv1.Status_STATUS_SUCCEED)
+}
+
+func TestWriteSessionWindowGrowsOnCleanAcksAndHalvesOnBusy(t *testing.T) {
+	f, c := &fakePublishers{}, &replyCollector{}
+	var busyOnce atomic.Bool
+	f.onClose = func(*fakeBatch) (map[string]*common.Error, error) {
+		if busyOnce.CompareAndSwap(true, false) {
+			return map[string]*common.Error{"n1": common.NewErrorWithStatus(modelv1.Status_STATUS_SERVER_BUSY, "busy")}, nil
+		}
+		return nil, nil
+	}
+	s := newTestSession(writeSessionConfig{
+		sealInterval: time.Millisecond, initialWindow: 4, maxWindow: 8, retryBackoff: time.Millisecond, retryBackoffMax: time.Millisecond,
+	}, f, c)
+	size := func() int {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.windowLocked("n1").size
+	}
+	v := uint64(0)
+	next := func() {
+		v++
+		require.NoError(t, appendRow(s, "n1", v, 10))
+		require.Eventually(t, func() bool { return len(c.snapshot()) == int(v) }, 2*time.Second, time.Millisecond)
+	}
+	// A window's worth of clean acknowledgements adds one slot.
+	for i := 0; i < 4; i++ {
+		next()
+	}
+	assert.Equal(t, 5, size())
+	// A refused batch halves the window even though its retry succeeds.
+	busyOnce.Store(true)
+	next()
+	assert.Equal(t, 2, size())
+	// The retried batch was not a clean acknowledgement; the next two are.
+	next()
+	assert.Equal(t, 2, size())
+	next()
+	assert.Equal(t, 3, size())
+	require.NoError(t, s.Finish())
+}
+
+func TestWriteSessionWindowDoesNotGrowUnderMemoryPressure(t *testing.T) {
+	f, c := &fakePublishers{}, &replyCollector{}
+	var high atomic.Bool
+	high.Store(true)
+	s := newWriteSession(context.Background(), writeSessionConfig{sealInterval: time.Millisecond, initialWindow: 2}, writeSessionDeps{
+		newPublisher: f.newPublisher, send: c.send, log: logger.GetLogger("test"), metrics: newBypassMetrics(),
+		service: "trace", topic: data.TopicTraceWrite, memoryHigh: high.Load,
+	})
+	for v := 1; v <= 8; v++ {
+		require.NoError(t, appendRow(s, "n1", uint64(v), 10))
+		require.Eventually(t, func() bool { return len(c.snapshot()) == v }, 2*time.Second, time.Millisecond)
+	}
+	s.mu.Lock()
+	assert.Equal(t, 2, s.windowLocked("n1").size)
+	s.mu.Unlock()
+	require.NoError(t, s.Finish())
+}
+
+func TestWriteSessionPressureLimitFollowsTheStreamDeadline(t *testing.T) {
+	newSession := func(ctx context.Context) *writeSession {
+		return newWriteSession(ctx, writeSessionConfig{}, writeSessionDeps{
+			newPublisher: (&fakePublishers{}).newPublisher,
+			send:         func(writeReply) error { return nil },
+			log:          logger.GetLogger("test"),
+		})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	limit := newSession(ctx).pressureLimit(time.Now())
+	assert.Greater(t, limit, 50*time.Second)
+	assert.LessOrEqual(t, limit, time.Minute)
+	assert.Equal(t, writePressureTimeout, newSession(context.Background()).pressureLimit(time.Now()))
+	SetWritePressureTimeout(time.Second)
+	defer SetWritePressureTimeout(0)
+	assert.Equal(t, time.Second, newSession(ctx).pressureLimit(time.Now()))
+}
+
 func TestWriteSessionAcknowledgementOrderAndExactlyOnce(t *testing.T) {
 	f, c := &fakePublishers{}, &replyCollector{}
-	s := newTestSession(writeSessionConfig{sealRows: 5, sealInterval: time.Hour}, f, c)
+	s := newTestSession(writeSessionConfig{sealBytes: 5 * (10 + writeRowOverhead), sealInterval: time.Hour}, f, c)
 	const total = 200
 	for v := 1; v <= total; v++ {
 		require.NoError(t, appendRow(s, fmt.Sprintf("n%d", v%3), uint64(v), 10))
@@ -225,7 +319,7 @@ func TestWriteSessionAcknowledgementOrderAndExactlyOnce(t *testing.T) {
 
 func TestWriteSessionEpochSwitchSealsOpenBatch(t *testing.T) {
 	f, c := &fakePublishers{}, &replyCollector{}
-	s := newTestSession(writeSessionConfig{sealRows: 100, sealInterval: time.Hour}, f, c)
+	s := newTestSession(writeSessionConfig{sealInterval: time.Hour}, f, c)
 	var firstFlags []bool
 	for v, epoch := range []uint64{1, 1, 2, 2} {
 		err := s.Append("n1", "g", epoch, writeAck{metadata: testWriteMetadata, id: uint64(v + 1)}, func(first bool) ([]byte, error) {
@@ -250,7 +344,7 @@ func TestWriteSessionInflightLimitBlocksAppendUntilAck(t *testing.T) {
 		}
 		return nil, nil
 	}
-	s := newTestSession(writeSessionConfig{sealRows: 1, maxInflight: 2, sealInterval: time.Hour}, f, c)
+	s := newTestSession(writeSessionConfig{sealBytes: 1, initialWindow: 2, maxWindow: 2, sealInterval: time.Hour}, f, c)
 	require.NoError(t, appendRow(s, "n1", 1, 10))
 	require.NoError(t, appendRow(s, "n1", 2, 10))
 	// Another node is unaffected by n1's limit.
@@ -290,7 +384,7 @@ func TestWriteSessionBusyRetryThenSuccess(t *testing.T) {
 		return nil, nil
 	}
 	s := newTestSession(writeSessionConfig{
-		sealRows: 2, sealInterval: time.Hour, pressureTimeout: 10 * time.Second,
+		sealBytes: 2 * (10 + writeRowOverhead), sealInterval: time.Hour, pressureTimeout: 10 * time.Second,
 		retryBackoff: 200 * time.Millisecond, retryBackoffMax: 200 * time.Millisecond,
 	}, f, c)
 	require.NoError(t, appendRow(s, "n1", 1, 10))
@@ -329,7 +423,7 @@ func TestWriteSessionPressureTimeoutEndsStream(t *testing.T) {
 		return map[string]*common.Error{"n1": common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "full")}, nil
 	}
 	s := newTestSession(writeSessionConfig{
-		sealRows: 2, sealInterval: time.Hour, pressureTimeout: 150 * time.Millisecond,
+		sealBytes: 2 * (10 + writeRowOverhead), sealInterval: time.Hour, pressureTimeout: 150 * time.Millisecond,
 		retryBackoff: 20 * time.Millisecond, retryBackoffMax: 20 * time.Millisecond,
 	}, f, c)
 	// Two rows seal and keep failing; the third sits in the open batch.
@@ -363,7 +457,7 @@ func TestWriteSessionUnknownOutcomeIsNotReplayed(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			f, c := &fakePublishers{onClose: hook}, &replyCollector{}
-			s := newTestSession(writeSessionConfig{sealRows: 2, sealInterval: time.Hour, retryBackoff: time.Millisecond}, f, c)
+			s := newTestSession(writeSessionConfig{sealBytes: 2 * (10 + writeRowOverhead), sealInterval: time.Hour, retryBackoff: time.Millisecond}, f, c)
 			require.NoError(t, appendRow(s, "n1", 1, 10))
 			require.NoError(t, appendRow(s, "n1", 2, 10))
 			require.NoError(t, s.Finish())
@@ -594,7 +688,7 @@ func TestTraceWriteRepeatedMetadataAndSpecShareOneBatch(t *testing.T) {
 
 func TestTraceWritePressureTimeoutEndsStreamWithResourceExhausted(t *testing.T) {
 	h := newTraceWriteHarness(t, writeSessionConfig{
-		sealRows: 2, pressureTimeout: 200 * time.Millisecond, retryBackoff: 20 * time.Millisecond, retryBackoffMax: 20 * time.Millisecond,
+		pressureTimeout: 200 * time.Millisecond, retryBackoff: 20 * time.Millisecond, retryBackoffMax: 20 * time.Millisecond,
 	})
 	h.fake.onClose = func(b *fakeBatch) (map[string]*common.Error, error) {
 		return map[string]*common.Error{b.node: common.NewErrorWithStatus(modelv1.Status_STATUS_SERVER_BUSY, "busy")}, nil
@@ -642,7 +736,7 @@ func (p *togglePressureProtector) State() protector.State {
 }
 
 func TestTraceWriteLiaisonMemoryPressureSetsRetryAfterWhileStreamStaysOpen(t *testing.T) {
-	h := newTraceWriteHarness(t, writeSessionConfig{sealRows: 2, sealInterval: time.Hour})
+	h := newTraceWriteHarness(t, writeSessionConfig{sealInterval: 20 * time.Millisecond})
 	pm := &togglePressureProtector{}
 	h.service.protector = pm
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
