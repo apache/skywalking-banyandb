@@ -109,6 +109,10 @@ func (f *fakeClient) Broadcast(time.Duration, bus.Topic, bus.Message) ([]bus.Fut
 	return nil, nil
 }
 
+func (f *fakeClient) Scatter(context.Context, bus.Topic, bus.Message, queue.ScatterOptions) ([]queue.NodeStream, error) {
+	return nil, nil
+}
+
 func (f *fakeClient) NewChunkedSyncClient(string, uint32) (queue.ChunkedSyncClient, error) {
 	return nil, nil
 }
