@@ -44,12 +44,14 @@ If the BanyanDB server enforces Basic-Auth on its HTTP API, configure the upstre
 
 ## Generating a password hash
 
-`passwordHash` is a bcrypt hash of the user's password (not the password itself). Generate one with the Canopy image — the trailing `-e` is Node's eval flag, since the image entrypoint is `node`:
+`passwordHash` is an argon2id hash (a standard `$argon2id$v=19$m=…,t=…,p=…$salt$hash` string, portable with SkyWalking Horizon UI) of the user's password, not the password itself. Existing bcrypt hashes (`$2a$`/`$2b$`/`$2y$`) still verify, with a startup warning asking you to rehash. Generate an argon2id hash with the Canopy image — the trailing `-e` is Node's eval flag, since the image entrypoint is `node`:
 
 ```shell
 docker run --rm apache/skywalking-banyandb:<version>-canopy \
-  -e "console.log(require('bcryptjs').hashSync('your-password', 10))"
+  -e "require('hash-wasm').argon2id({password:'your-password',salt:require('crypto').randomBytes(16),parallelism:1,iterations:3,memorySize:19456,hashLength:32,outputType:'encoded'}).then(console.log)"
 ```
+
+`role` is `admin` or `readonly`; Horizon's `viewer` is accepted as `readonly`, and `maintainer`/`operator` as `admin`. Users can also be configured with `CANOPY_AUTH_CONFIG` (a YAML/JSON file with an `auth:` section: `backend: local`, `local.users`, and `session.cookieName`/`ttlMinutes`/`cookieSecure`), with `CANOPY_AUTH_BACKEND` and `CANOPY_AUTH_SESSION_*` overrides. `CANOPY_USERS` is an alias for `auth.local.users`. With `backend: local` and no users, Canopy starts and every login is refused; there is no default admin. Single sign-on (OIDC/OAuth2), API tokens and break-glass accounts are described in the [Canopy authentication design](https://github.com/apache/skywalking-banyandb/blob/main/canopy/docs/auth-design.md) and the Canopy README. Sessions are kept in server memory (a restart signs everyone out), expire after `ttlMinutes` (default 60) of inactivity, and a role change or user removal takes effect on the next request.
 
 ## Run from source
 
