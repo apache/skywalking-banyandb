@@ -201,3 +201,47 @@ func TestUpdateGroup_MissingGroupReturnsNotFound(t *testing.T) {
 	require.NotEqual(t, codes.FailedPrecondition, status.Code(updateErr))
 	require.Contains(t, updateErr.Error(), "not exist")
 }
+
+func stageSamplerGroup() *commonv1.Group {
+	config := samplerPipeline(true)
+	config.Stages = []*commonv1.StageRule{{Stage: "hot", Plugins: config.Plugins}}
+	config.Plugins = nil
+	config.EnabledEvents = nil
+	group := traceGroup(config)
+	group.ResourceOpts.Stages = []*commonv1.LifecycleStage{{
+		Name:     "warm",
+		ShardNum: 1,
+		SegmentInterval: &commonv1.IntervalRule{
+			Unit: commonv1.IntervalRule_UNIT_DAY,
+			Num:  1,
+		},
+		Ttl: &commonv1.IntervalRule{
+			Unit: commonv1.IntervalRule_UNIT_DAY,
+			Num:  7,
+		},
+		NodeSelector: "type=warm",
+	}}
+	return group
+}
+
+func TestCreateTraceStageSamplerRejectsSecondTrace(t *testing.T) {
+	registry, ctx := newTraceRegistry(t)
+	_, err := registry.CreateGroup(ctx, stageSamplerGroup())
+	require.NoError(t, err)
+	_, err = registry.CreateTrace(ctx, traceNamed("trace-a"))
+	require.NoError(t, err)
+	_, err = registry.CreateTrace(ctx, traceNamed("trace-b"))
+	requireFailedPrecondition(t, err)
+}
+
+func TestUpdateGroupStageSamplerRejectsMultipleExistingTraces(t *testing.T) {
+	registry, ctx := newTraceRegistry(t)
+	_, err := registry.CreateGroup(ctx, traceGroup(nil))
+	require.NoError(t, err)
+	_, err = registry.CreateTrace(ctx, traceNamed("trace-a"))
+	require.NoError(t, err)
+	_, err = registry.CreateTrace(ctx, traceNamed("trace-b"))
+	require.NoError(t, err)
+	_, err = registry.UpdateGroup(ctx, stageSamplerGroup())
+	requireFailedPrecondition(t, err)
+}

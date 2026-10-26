@@ -1,0 +1,280 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Output of scripts/csv-export.sh <liaison> measure (see csv-export-stream.yaml for the checks). The
+# index-mode sw_metadata group stays on the hot node and is exported as segment-level files only
+# (files equals segmentFiles, and no shard to compare with a stored count) holding the traffic of trace-mocker's three services; sw_metricsMinute
+# moved to the warm node in the lifecycle run and holds their call rate and response time, whose
+# average is the latency the mocker reports. Hour and day metrics may sit on either node and are
+# not pinned. A measure exports the latest version of each point: at most the rows the snapshot
+# stored (storedRows), and exactly the points a COUNT query over each unit answers (queriedRows).
+exitCode: 0
+catalog: measure
+format: csv
+compress: gzip
+groups:
+{{- contains .groups }}
+- name: sw_metadata
+  nodes:
+  {{- contains .nodes }}
+  - data-hot1:17912
+  {{- end }}
+  fixedColumns: _name,_timestamp,_version
+  files: {{ .segmentFiles }}
+  segmentFiles: {{ gt .segmentFiles 0 }}
+  rows: {{ gt .rows 0 }}
+  storedRows: 0
+  queriedRows: {{ .rows }}
+  header: ok
+  cells: ok
+  rowCounts: ok
+  data:
+    service_traffic_minute:
+    {{- contains .data.service_traffic_minute }}
+    - _name: service_traffic_minute
+      _timestamp: {{ gt ._timestamp 0 }}
+      _version: {{ gt ._version 0 }}
+      id: bW9ja19hX3NlcnZpY2U=.2
+      service_id: bW9ja19hX3NlcnZpY2U=.1
+      service_traffic_name: mock_a_service
+      short_name: mock_a_service
+      layer: 2
+    - _name: service_traffic_minute
+      _timestamp: {{ gt ._timestamp 0 }}
+      _version: {{ gt ._version 0 }}
+      id: bW9ja19iX3NlcnZpY2U=.2
+      service_id: bW9ja19iX3NlcnZpY2U=.1
+      service_traffic_name: mock_b_service
+      short_name: mock_b_service
+      layer: 2
+    - _name: service_traffic_minute
+      _timestamp: {{ gt ._timestamp 0 }}
+      _version: {{ gt ._version 0 }}
+      id: bW9ja19jX3NlcnZpY2U=.2
+      service_id: bW9ja19jX3NlcnZpY2U=.1
+      service_traffic_name: mock_c_service
+      short_name: mock_c_service
+      layer: 2
+    {{- end }}
+- name: sw_metricsMinute
+  nodes:
+  {{- contains .nodes }}
+  - data-warm1:17912
+  {{- end }}
+  fixedColumns: _name,_timestamp,_version
+  files: {{ gt .files 0 }}
+  segmentFiles: 0
+  rows: {{ gt .rows 0 }}
+  storedRows: {{ ge .storedRows .rows }}
+  queriedRows: {{ .rows }}
+  header: ok
+  cells: ok
+  rowCounts: ok
+  data:
+    service_cpm_minute:
+    {{- contains .data.service_cpm_minute }}
+    - _name: service_cpm_minute
+      _timestamp: {{ gt ._timestamp 0 }}
+      _version: {{ gt ._version 0 }}
+      entity_id: bW9ja19hX3NlcnZpY2U=.1
+      attr0: GENERAL
+      value: {{ gt .value 0 }}
+      total: {{ gt .total 0 }}
+    - _name: service_cpm_minute
+      _timestamp: {{ gt ._timestamp 0 }}
+      _version: {{ gt ._version 0 }}
+      entity_id: bW9ja19iX3NlcnZpY2U=.1
+      attr0: GENERAL
+      value: {{ gt .value 0 }}
+      total: {{ gt .total 0 }}
+    - _name: service_cpm_minute
+      _timestamp: {{ gt ._timestamp 0 }}
+      _version: {{ gt ._version 0 }}
+      entity_id: bW9ja19jX3NlcnZpY2U=.1
+      attr0: GENERAL
+      value: {{ gt .value 0 }}
+      total: {{ gt .total 0 }}
+    {{- end }}
+    service_resp_time_minute:
+    {{- contains .data.service_resp_time_minute }}
+    - _name: service_resp_time_minute
+      _timestamp: {{ gt ._timestamp 0 }}
+      _version: {{ gt ._version 0 }}
+      entity_id: bW9ja19hX3NlcnZpY2U=.1
+      attr0: GENERAL
+      summation: {{ gt .summation 0 }}
+      count: {{ gt .count 0 }}
+      value: 6000
+    - _name: service_resp_time_minute
+      _timestamp: {{ gt ._timestamp 0 }}
+      _version: {{ gt ._version 0 }}
+      entity_id: bW9ja19iX3NlcnZpY2U=.1
+      attr0: GENERAL
+      summation: {{ gt .summation 0 }}
+      count: {{ gt .count 0 }}
+      value: 4500
+    - _name: service_resp_time_minute
+      _timestamp: {{ gt ._timestamp 0 }}
+      _version: {{ gt ._version 0 }}
+      entity_id: bW9ja19jX3NlcnZpY2U=.1
+      attr0: GENERAL
+      summation: {{ gt .summation 0 }}
+      count: {{ gt .count 0 }}
+      value: 2000
+    {{- end }}
+{{- end }}
+countMismatches: []
+schema:
+  counts:
+    group: {{ gt .schema.counts.group 0 }}
+    stream: 0
+    measure: {{ gt .schema.counts.measure 0 }}
+    trace: 0
+    property: 0
+    indexRule: {{ gt .schema.counts.indexRule 0 }}
+    indexRuleBinding: {{ gt .schema.counts.indexRuleBinding 0 }}
+    topNAggregation: {{ gt .schema.counts.topNAggregation 0 }}
+  groups:
+    {{- contains .schema.groups }}
+    - name: sw_metadata
+      catalog: measure
+      shardNum: 2
+      replicas: 0
+      segmentInterval: 15d
+      ttl: 15d
+      defaultStages: ["hot"]
+      stages: []
+    - name: sw_metricsDay
+      catalog: measure
+      shardNum: 1
+      replicas: 0
+      segmentInterval: 15d
+      ttl: 1d
+      defaultStages: ["hot", "warm"]
+      stages:
+        - name: warm
+          shardNum: 1
+          replicas: 0
+          segmentInterval: 15d
+          ttl: 30d
+          nodeSelector: "type=warm"
+          close: false
+    - name: sw_metricsHour
+      catalog: measure
+      shardNum: 1
+      replicas: 0
+      segmentInterval: 5d
+      ttl: 1d
+      defaultStages: ["hot", "warm"]
+      stages:
+        - name: warm
+          shardNum: 1
+          replicas: 0
+          segmentInterval: 7d
+          ttl: 30d
+          nodeSelector: "type=warm"
+          close: false
+    - name: sw_metricsMinute
+      catalog: measure
+      shardNum: 2
+      replicas: 0
+      segmentInterval: 1d
+      ttl: 1d
+      defaultStages: ["hot", "warm"]
+      stages:
+        - name: warm
+          shardNum: 2
+          replicas: 0
+          segmentInterval: 3d
+          ttl: 15d
+          nodeSelector: "type=warm"
+          close: false
+    {{- end }}
+  resources:
+    {{- contains .schema.resources }}
+    - kind: measure
+      group: sw_metadata
+      name: service_traffic_minute
+      entity: ["id"]
+      interval: 1m
+      indexMode: true
+      tags: ["storage-only.id:STRING", "searchable.service_traffic_name:STRING", "searchable.short_name:STRING", "searchable.service_id:STRING", "searchable.service_group:STRING", "searchable.layer:INT"]
+      fields: []
+      indexRules: ["layer", "service_group", "service_id", "service_traffic_name", "short_name"]
+    - kind: measure
+      group: sw_metricsDay
+      name: service_cpm_day
+      entity: ["entity_id"]
+      interval: 1d
+      indexMode: false
+      tags: ["storage-only.entity_id:STRING", "searchable.attr0:STRING", "searchable.attr1:STRING", "searchable.attr2:STRING", "searchable.attr3:STRING", "searchable.attr4:STRING", "searchable.attr5:STRING"]
+      fields: ["value:INT", "total:INT"]
+      indexRules: ["attr0", "attr1", "attr2", "attr3", "attr4", "attr5"]
+    - kind: measure
+      group: sw_metricsDay
+      name: service_resp_time_day
+      entity: ["entity_id"]
+      interval: 1d
+      indexMode: false
+      tags: ["storage-only.entity_id:STRING", "searchable.attr0:STRING", "searchable.attr1:STRING", "searchable.attr2:STRING", "searchable.attr3:STRING", "searchable.attr4:STRING", "searchable.attr5:STRING"]
+      fields: ["summation:INT", "count:INT", "value:INT"]
+      indexRules: ["attr0", "attr1", "attr2", "attr3", "attr4", "attr5"]
+    - kind: measure
+      group: sw_metricsHour
+      name: service_cpm_hour
+      entity: ["entity_id"]
+      interval: 1h
+      indexMode: false
+      tags: ["storage-only.entity_id:STRING", "searchable.attr0:STRING", "searchable.attr1:STRING", "searchable.attr2:STRING", "searchable.attr3:STRING", "searchable.attr4:STRING", "searchable.attr5:STRING"]
+      fields: ["value:INT", "total:INT"]
+      indexRules: ["attr0", "attr1", "attr2", "attr3", "attr4", "attr5"]
+    - kind: measure
+      group: sw_metricsHour
+      name: service_resp_time_hour
+      entity: ["entity_id"]
+      interval: 1h
+      indexMode: false
+      tags: ["storage-only.entity_id:STRING", "searchable.attr0:STRING", "searchable.attr1:STRING", "searchable.attr2:STRING", "searchable.attr3:STRING", "searchable.attr4:STRING", "searchable.attr5:STRING"]
+      fields: ["summation:INT", "count:INT", "value:INT"]
+      indexRules: ["attr0", "attr1", "attr2", "attr3", "attr4", "attr5"]
+    - kind: measure
+      group: sw_metricsMinute
+      name: service_cpm_minute
+      entity: ["entity_id"]
+      interval: 1m
+      indexMode: false
+      tags: ["storage-only.entity_id:STRING", "searchable.attr0:STRING", "searchable.attr1:STRING", "searchable.attr2:STRING", "searchable.attr3:STRING", "searchable.attr4:STRING", "searchable.attr5:STRING"]
+      fields: ["value:INT", "total:INT"]
+      indexRules: ["attr0", "attr1", "attr2", "attr3", "attr4", "attr5"]
+    - kind: measure
+      group: sw_metricsMinute
+      name: service_resp_time_minute
+      entity: ["entity_id"]
+      interval: 1m
+      indexMode: false
+      tags: ["storage-only.entity_id:STRING", "searchable.attr0:STRING", "searchable.attr1:STRING", "searchable.attr2:STRING", "searchable.attr3:STRING", "searchable.attr4:STRING", "searchable.attr5:STRING"]
+      fields: ["summation:INT", "count:INT", "value:INT"]
+      indexRules: ["attr0", "attr1", "attr2", "attr3", "attr4", "attr5"]
+    {{- end }}
+checks:
+  artifactVersion: ok
+  onlyThisCatalog: ok
+  schemaFiles: ok
+  filesMatchManifest: ok
+  noWarnings: ok
+  schemaLayouts: ok
+  schemaRefs: ok
+leftoverSnapshots: []
+checkerExitCode: 0

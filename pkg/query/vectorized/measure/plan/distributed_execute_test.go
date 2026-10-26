@@ -18,6 +18,8 @@
 package plan
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -77,6 +79,10 @@ func (c *fakeCluster) TimeRange() *modelv1.TimeRange {
 }
 
 func (c *fakeCluster) NodeSelectors() map[string][]string { return nil }
+
+func (c *fakeCluster) Scatter(context.Context, bus.Topic, bus.Message, bus.ScatterOptions) ([]bus.NodeStream, error) {
+	return nil, errors.New("scatter is not used by the measure plan")
+}
 
 var _ executor.DistributedExecutionContext = (*fakeCluster)(nil)
 

@@ -915,3 +915,58 @@ func TestTransition_NoDoubleDecrement(t *testing.T) {
 		t.Error("double-decrement bug detected: refcount went below expected value")
 	}
 }
+
+// raceSnapshot is a family of snapshot types used only by
+// TestGetTransitionPool_ConcurrentFirstUseRegistersOnce: each instantiation is a
+// distinct type whose pool is created for the first time inside that test.
+type raceSnapshot[N any] struct{ mockSnapshot }
+
+// raceFirstUse makes many goroutines create the first transition pool of one
+// fresh type at the same moment, and fails if any of them panics or gets a
+// pool different from the others.
+func raceFirstUse[S Snapshot](t *testing.T) {
+	const goroutines = 64
+	start := make(chan struct{})
+	pools := make([]any, goroutines)
+	panics := make([]any, goroutines)
+	var wg sync.WaitGroup
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			defer func() { panics[i] = recover() }()
+			<-start
+			pools[i] = getTransitionPool[S]()
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	for i := 0; i < goroutines; i++ {
+		if panics[i] != nil {
+			t.Fatalf("goroutine %d panicked creating the pool: %v", i, panics[i])
+		}
+		if pools[i] != pools[0] {
+			t.Fatalf("goroutine %d got a different pool", i)
+		}
+	}
+}
+
+func TestGetTransitionPool_ConcurrentFirstUseRegistersOnce(t *testing.T) {
+	// Every instantiation is a fresh type, so each call races on a first registration.
+	raceFirstUse[*raceSnapshot[[1]int]](t)
+	raceFirstUse[*raceSnapshot[[2]int]](t)
+	raceFirstUse[*raceSnapshot[[3]int]](t)
+	raceFirstUse[*raceSnapshot[[4]int]](t)
+	raceFirstUse[*raceSnapshot[[5]int]](t)
+	raceFirstUse[*raceSnapshot[[6]int]](t)
+	raceFirstUse[*raceSnapshot[[7]int]](t)
+	raceFirstUse[*raceSnapshot[[8]int]](t)
+	raceFirstUse[*raceSnapshot[[9]int]](t)
+	raceFirstUse[*raceSnapshot[[10]int]](t)
+	raceFirstUse[*raceSnapshot[[11]int]](t)
+	raceFirstUse[*raceSnapshot[[12]int]](t)
+	raceFirstUse[*raceSnapshot[[13]int]](t)
+	raceFirstUse[*raceSnapshot[[14]int]](t)
+	raceFirstUse[*raceSnapshot[[15]int]](t)
+	raceFirstUse[*raceSnapshot[[16]int]](t)
+}

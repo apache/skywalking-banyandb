@@ -261,7 +261,7 @@ func TestMergeBenchmarkObserverMaturesProductionSelectedHotOutputs(t *testing.T)
 	segmentRange := timestamp.NewInclusiveTimeRange(base.Add(-24*time.Hour), base.Add(24*time.Hour))
 	table, tableErr := newTSTable(fileSystem, root, common.Position{Database: group}, logger.GetLogger(group), segmentRange, option{
 		flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting(), protector: protector.Nop{}, nativePipelineEnabled: true,
-		mergeGraceDefault: 2 * time.Hour,
+		mergeGraceDefault: 2 * time.Hour, decideTimeout: time.Second,
 	}, nil)
 	require.NoError(t, tableErr)
 	t.Cleanup(func() { require.NoError(t, table.Close()) })
@@ -363,6 +363,7 @@ func runObservedBenchmarkMerge(t *testing.T, mature bool) (mergeBenchmarkEvent, 
 		mergePolicy:           newDefaultMergePolicyForTesting(),
 		protector:             protector.Nop{},
 		nativePipelineEnabled: true,
+		decideTimeout:         time.Second,
 		mergeGraceDefault:     2 * time.Hour,
 	}, nil)
 	require.NoError(t, tableErr)
