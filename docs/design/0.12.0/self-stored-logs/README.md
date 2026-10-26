@@ -1,6 +1,6 @@
 # Self-Stored Logs
 
-Status: phase 1 (standalone and data nodes) **implemented**; moving its buffering into the queue module (section 3.5) is **proposed**; phase 2 (liaison and remote routing) is **design**.
+Status: phase 1 (standalone and data nodes) **implemented**, with its buffering in the queue module (section 3.5); phase 2 (liaison and remote routing) is **design**.
 
 BanyanDB self-stores its metrics into the `_monitoring` group but has no equivalent for its own
 logs: `pkg/logger` writes to a single `io.Writer` fixed at `logger.Init` time, so logs leave the
@@ -69,8 +69,8 @@ flowchart LR
   F -->|below| X["dropped"]
   F -->|at or above| M["MultiLevelWriter"]
   M --> C["gate: --logging-level"] --> S["stderr or file"]
-  M --> N["gate: --logging-native-level"] --> R["in-memory ring"]
-  R --> K["consumer"] --> P["shard and node selection"] --> D["stream log"]
+  M --> N["gate: --logging-native-level"] --> R["buffered publisher (queue)"]
+  R --> K["delivery"] --> P["shard and node selection"] --> D["stream log"]
 ```
 
 Worked example, normal logging at `error` and native at `info`, so the floor is `info`.
@@ -95,7 +95,7 @@ Native policy is resolved on the logger's **complete** module, every component i
 | triggers | every `1s`, or at `100` events or a quarter of the byte bound. Internal |
 | durability | none — no queue files, no WAL, no disk fallback |
 
-The consumer is a dedicated goroutine selecting over the closer, the flush ticker and the ring, so both triggers fire.
+The buffered publisher of the queue module owns the buffer (section 3.5). Its delivery goroutine selects over the stop signal, the flush ticker and the queue, so both triggers fire.
 
 > When native is enabled the ring is live from logger initialisation; service start only begins draining it, so no startup line is stranded in a buffer nobody drains.
 
@@ -138,9 +138,9 @@ What narrows a query in v1 is the time range and equality or `IN` on the entity 
 
 ### 3.5 Buffered publishing in the queue module
 
-Status: **proposed**, in answer to the review of #1419. Sections 3.2 and 5 describe the code as it is; this section describes where the buffering moves.
+Status: **implemented**, in answer to the review of #1419. Sections 3.2 and 5 describe the behaviour; this section describes who owns it.
 
-Phase 1 keeps the whole buffering lifecycle in the logging module: a bounded channel, byte accounting, a consumer goroutine, batching, retries and the shutdown drain, which then publish through `queue.Client`. That lifecycle moves into the queue module, so that the distributed native logging of phase 2 reuses the same admission and lifecycle contract instead of a second copy.
+Phase 1 first kept the whole buffering lifecycle in the logging module: a bounded channel, byte accounting, a consumer goroutine, batching, retries and the shutdown drain, which then published through `queue.Client`. That lifecycle now lives in the queue module, so that the distributed native logging of phase 2 reuses the same admission and lifecycle contract instead of a second copy.
 
 | Logging module | Queue module |
 |---|---|
@@ -162,54 +162,61 @@ Logger -> filter/encode -> BufferedPublisher.Offer      (logging)
 
 #### Contract
 
-`BufferedPublisher` is a new interface. `BatchPublisher` and its callers do not change: the local batch publisher still delivers synchronously when `Close` runs, and the distributed one still sends during `Publish`.
+`BufferedPublisher` is a new interface in `banyand/queue`. `BatchPublisher` and its callers do not change: the local batch publisher still delivers synchronously when `Close` runs, and the distributed one still sends during `Publish`.
 
 ```go
 // Package queue.
 type BufferedPublisher interface {
 	// Offer accepts or refuses req without waiting for storage, the network
 	// or free capacity, and reports the decision it made. On Accepted the
-	// queue owns req until it calls req.Release. On any refusal the caller
+	// publisher owns req until it calls req.Release. On any refusal the caller
 	// keeps req.
 	Offer(req *BufferedRequest) Admission
-	// Start begins delivery. It is called once, when the producer is ready.
+	// Start begins delivery. Requests accepted before it are held.
 	Start(d Delivery)
-	// Close stops admission, drains within an internal deadline and returns
-	// even when a delivery is stuck.
+	// Close stops admission, drains within the drain timeout and returns even
+	// when a delivery is stuck.
 	Close()
+	// Bytes reports the bytes charged against the allowance, and the part of
+	// them in a delivery.
+	Bytes() (charged, inFlight int64)
 }
 
 // Admission is the decision Offer made, taken at the moment it made it.
 type Admission uint8
 
 const (
-	Accepted        Admission = iota // the queue owns the request
-	RefusedPressure                  // protector.State() reported high pressure
+	Accepted        Admission = iota // the publisher owns the request
+	RefusedPressure                  // the memory pressure check reported high pressure
 	RefusedFull                      // the allowance had no room for the request
 	RefusedClosed                    // Close had already started
 )
 
 type BufferedRequest struct {
 	Data    any           // the message body
-	Bytes   int64         // what it holds, charged against the publisher's allowance
 	Done    func(Outcome) // terminal accounting: exactly once, by the drain deadline at the latest
-	Release func()        // resource release: exactly once, when no Deliver can still read the request
+	Release func()        // resource release: exactly once, after Done, when no Deliver can still read the request
+	Bytes   int64         // what it holds, charged against the allowance until Release
 }
 
 type Outcome struct {
-	Reason    string // why it was not delivered: retries_exhausted, shutdown_deadline
+	Err       error  // the last delivery error, when there was one
+	Reason    string // why it was not delivered: delivery_failed, retries_exhausted, shutdown_deadline
 	Delivered bool   // only a completed delivery; acceptance never counts as written
 }
 
 type Delivery interface {
-	// Deliver writes one batch and reports whether the destination took it.
+	// Deliver writes one batch. A failure wrapped with Retryable is retried;
+	// any other ends the batch.
 	Deliver(ctx context.Context, batch []any) error
 }
 
+func Retryable(err error) error // errors.Is finds both ErrRetryable and err
 func NewBufferedPublisher(ctx context.Context, cfg BufferedConfig) BufferedPublisher
+func NewLocalDelivery(client Client, topic bus.Topic, timeout time.Duration) Delivery
 ```
 
-Phase 1 implements one `Delivery`, the local adapter: it publishes a batch to `TopicStreamWrite` through the local pipeline's batch publisher, as the consumer does today, and turns the error map of `Close` into the batch's error. A remote adapter is phase 2.
+Phase 1 implements one `Delivery`, the local adapter: it publishes a batch to its topic through the local pipeline's batch publisher, turns the error map of `Close` into the batch's error, and marks a topic with no subscriber yet as retryable. The logging module wraps it to check the schema and stamp the node identity on each batch. A remote adapter is phase 2.
 
 #### Guarantees
 
@@ -218,10 +225,10 @@ Phase 1 implements one `Delivery`, the local adapter: it publishes a batch to `T
 | Ownership | A refusal: the caller keeps the request, counts the refusal under the reason `Offer` returned and releases it. `Accepted`: the queue owns it until `Release`. `Done` and `Release` each run exactly once. `Done` settles the accounting; `Release` runs after `Done`, once no `Deliver` can still read the request, and the logging module returns pooled requests to the pool only there. |
 | Capacity | Each publisher has its own byte allowance (the 8MiB of section 3.2), so native logging cannot exhaust what ordinary writes use. Queued and in-flight bytes both count, until `Release`. `Offer` returns `RefusedPressure` while `protector.State()` is high and `RefusedFull` at the allowance, and never evicts what is queued: drop newest. The caller reads the reason from the decision itself, so it never re-reads the pressure state after the fact. |
 | Batches | A batch closes at the event count, at a quarter of the allowance in bytes, or at the flush interval. Retained requests go back at the head of the queue and are sent in batches under the same limits, never in one combined batch. A request is retried once per interval, at most 10 times, then completed with `retries_exhausted`. |
-| Readiness | The logging module creates the publisher with the sink, before logging initialization, so startup events are accepted. Before `Start` nothing is delivered and the same allowance bounds what is held; past it, drop newest. The logging module calls `Start` once the node identity, the schema and the local destination are ready. If `Close` comes first, every held request completes with `shutdown_deadline`. |
-| Shutdown cut-off | `Offer` registers itself as active, then checks a closed flag. `Close` sets the flag, then waits for the active count to reach zero. Admission never waits, so that wait is short. After it, no `Offer` can still enqueue, an `Offer` that finds the flag set returns `RefusedClosed`, and every accepted request receives `Done` within the drain deadline: delivered, or `shutdown_deadline`. |
+| Readiness | The logging module creates the publisher with the sink, before logging initialization, so startup events are accepted. Before `Start` nothing is delivered and the same allowance bounds what is held; past it, drop newest. The logging module calls `Start` in `Serve`, once the node identity is known and after the first schema pass. A batch delivered before the schema is established ends as `schema_unavailable`; a local destination with no subscriber yet is retried. If `Close` comes first, every held request completes with `shutdown_deadline`. |
+| Shutdown cut-off | `Offer` registers itself as active, then checks a closed flag. `Close` sets the flag, then waits for the active count to reach zero. Admission never waits, so that wait is short. After it, no `Offer` can still enqueue, an `Offer` that finds the flag set returns `RefusedClosed`, and every accepted request receives `Done` within the drain deadline: delivered, or `shutdown_deadline`. The wait is bounded by the drain deadline too. Past it, `Close` seals the queue and settles what is queued; an `Offer` that was still running enqueues after the seal, sees it, and settles what it added itself, so nothing is left queued with no delivery to take it. |
 | Stuck delivery | `Close` returns after the drain deadline even when a `Deliver` call has not returned. The requests in that call receive `Done` with `shutdown_deadline` at the deadline, like any other request still held, so loss is accounted for on time. Their `Release` waits until `Deliver` returns, which may be never, so no memory a delivery still reads is reused; until then they stay charged against the allowance, at most one batch. If the stuck `Deliver` later succeeds, the events stay counted as lost: loss can be over-counted, never under-counted. |
-| Recursion marker | `NewBufferedPublisher` takes the context every `Deliver` runs under. The native log publisher passes `logger.WithNativeWrite(ctx)`, so downstream logging on the consumer goroutine is still marked as a native write (section 4.1). |
+| Recursion marker | `NewBufferedPublisher` takes the context every `Deliver` runs under. The native log publisher is built with the sink, before logging is initialized, and the mark is a logger, so the native log delivery adds `logger.WithNativeWrite` to that context for each batch. Downstream logging on the delivery goroutine is still marked as a native write (section 4.1). |
 
 Flush interval, batch limits, retry count and deadlines remain internal, as in section 4.
 
@@ -234,12 +241,18 @@ Filtering, the reserved exclusions, encoding into pooled requests, identity stam
 | `RefusedPressure` | `memory_pressure` |
 | `RefusedFull` | `buffer_full` |
 | `RefusedClosed` | `shutdown_deadline` |
-| `Outcome` `retries_exhausted` | `destination_unready` |
 | `Outcome` `shutdown_deadline` | `shutdown_deadline` |
+| `Outcome` with `Err`: the schema was never established | `schema_unavailable` |
+| `Outcome` with `Err`: the stream is incompatible | `schema_incompatible` |
+| `Outcome` with `Err`: no subscriber on the topic, after the retries or at shutdown | `destination_unready` |
+| `Outcome` with any other `Err`, a delivery panic included | `publish_failed` |
+| a request the delivery could not encode | `encode_failed` |
+
+`Done` can run while a stuck `Deliver` still holds the request, so what the delivery writes on the request and `Done` reads is atomic.
 
 #### Tests
 
-The queue package tests the guarantees through the `BufferedPublisher` interface: concurrent `Offer` and `Close`, each refusal returning its own `Admission`, queued and in-flight accounting, holding before `Start`, the size of every retried batch, and a stuck `Deliver`: `Close` returns at the deadline, the stuck requests receive `Done` with `shutdown_deadline` by then, and their `Release` runs only after `Deliver` returns. The logging tests keep to filtering, encoding, identity, recursion protection, and real storage and query behavior.
+The queue package tests the guarantees through the `BufferedPublisher` interface: concurrent `Offer` and `Close`; a writer paused after it obtained the publisher and resumed after `Close` returned, which gets `RefusedClosed`; a writer paused inside `Offer`, which `Close` waits for, and one that outlasts the deadline, whose request is still settled; each refusal returning its own `Admission`; queued and in-flight accounting until `Release`; holding before `Start`; the size of every retried batch and retries paced once per interval; and a stuck `Deliver`: `Close` returns at the deadline, the stuck requests receive `Done` with `shutdown_deadline` by then, and their `Release` runs only after `Deliver` returns. The logging tests keep to filtering, encoding, identity, recursion protection, and real storage and query behavior.
 
 ## 4. Parameters and configuration
 
@@ -267,18 +280,18 @@ Level semantics are in section 3.1; the four existing `--logging-*` flags keep t
 
 Logging caused by storing native logs must never be stored, or one stored line produces the next; it still reaches the console. Whole modules are not excluded for it, because the stream and storage modules serve every group and their logs about ordinary writes are worth keeping:
 
-- The consumer publishes under a context marked by `logger.WithNativeWrite`, which carries a `NATIVE-LOG` logger. The stream write callback takes its logger from the context with `FetchOrDefault`, the existing way a logger is passed downstream, so what it logs about a native write is a child of `NATIVE-LOG`. Other writes log as before. Nothing is switched off process-wide.
+- The delivery publishes under a context marked by `logger.WithNativeWrite`, which carries a `NATIVE-LOG` logger. The stream write callback takes its logger from the context with `FetchOrDefault`, the existing way a logger is passed downstream, so what it logs about a native write is a child of `NATIVE-LOG`. Other writes log as before. Nothing is switched off process-wide.
 - The storage of the log group logs under `_MONITORING_LOG`, including its asynchronous flushes and merges: a storage logger is named after its group.
 - `NATIVE-LOG` and `_MONITORING_LOG` are reserved. An operator's exclusion list adds to them.
 
 Measured on an in-process standalone node at native level `debug`, idle after startup: about 0.5 stored events per second with the reserved set, and the same without it. The reserved set removes the node's logging about its own log storage — about 700 lines of a 2200-line startup — and guards the paths that log on failure.
 
-> With `--logging-native-enabled=false` — the default — no schema and no counters are created, nothing is admitted, and the cost is one atomic pointer load per event. The ring itself is allocated either way: the sink is built while the command tree is, before the flags are parsed, so the buffer exists for the lines emitted during startup. It is one channel of `8192` entry headers and holds nothing.
+> With `--logging-native-enabled=false` — the default — no schema and no counters are created, nothing is admitted, and the cost is one atomic pointer load per event. The ring itself is allocated either way: the sink is built while the command tree is, before the flags are parsed, so the buffer exists for the lines emitted during startup. It is one channel of `8192` request pointers and holds nothing.
 
 ## 5. Failure modes
 
 ```
-event -> producer -> buffer(ring) -> consumer -> schema -> selection -> publish -> destination
+event -> producer -> buffer (queue) -> delivery -> schema -> selection -> publish -> destination
                                                                                        |
                       GracefulStop: stop admission, then bounded drain ----------------+
 ```
@@ -293,17 +306,18 @@ The metric names carry the `native_log_` prefix. The native meter provider names
 | producer | the encoded line is not the JSON the sink expects | dropped and counted; the caller is never made to care | `encode_failed` |
 | buffer | the memory protector reports high pressure | drop the newest event, the writer still returning `(len(p), nil)` | `memory_pressure` |
 | buffer | ring at its byte or event bound | drop the newest event; admission never waits for capacity and queued events are never evicted, so a burst keeps its head | `buffer_full` |
-| consumer | stalled in a slow publish | the ring absorbs it; batches capped at 25% of the byte bound, one in flight, so a stall cannot pin admission | – gauge `native_log_buffer_bytes{state="in_flight"}` |
+| delivery | stalled in a slow publish | the buffer absorbs it; batches capped at 25% of the byte bound, one in flight, so a stall cannot pin admission | – gauge `native_log_buffer_bytes{state="in_flight"}` |
 | schema | the group or stream cannot be read or created at startup | retry every 10s, batch in hand dropped | `schema_unavailable` |
 | schema | a `log` stream exists whose families, tag order or entity differ from this version's | refuse and count, with one error through normal logging. The schema check keeps running every 10s instead of the sink staying disabled, so an operator can drop and recreate the stream without a restart; waiting alone never clears it | `schema_incompatible` |
 | selection | `Locate` errors or returns an empty node ID | count and return; never publish to an empty node | `locate_failed` — *phase 2* |
 | local publish | listener unhealthy | the bus skips it and drops the payload while returning an error, so any error means full batch loss | `publish_failed` |
 | remote publish | error, breaker open, admission timeout, auth rejection | batch dropped, never re-queued; classified from the per-node error map from `Close` | `publish_failed` — *phase 2* |
-| destination | local topic not yet subscribed | retain the batch, still charged, and retry it once per tick up to 10 times, then drop. Nothing is retained at shutdown, where there is no next tick | `destination_unready` |
+| destination | local topic not yet subscribed | keep its events, still charged, at the head of the buffer, and retry them once per tick in batches under the same limits, up to 10 retries each, then drop. Nothing is retained at shutdown, where there is no next tick | `destination_unready` |
 | destination | the `log` stream is dropped at runtime | **known gap**: the stream write callback logs `cannot handle write event` and reports success, so the batch is counted as written. The schema check recreates the stream within 10s. The fix is in the shared write callback, where a wrong status makes the liaison fail over the data node, so it lands in its own PR, tracked in [apache/skywalking#14158](https://github.com/apache/skywalking/issues/14158) | – |
 | read path | a data node has not yet caught up on the schema | its query processor returns stream-not-exist and the distributed planner discards the whole response, blanking the query. **Pre-existing** for any group created while the cluster is running, user groups included — not introduced here. Mitigation is a one-site change in the planner, out of scope for this feature | – |
 | shutdown | buffer still full at the drain deadline | remainder dropped once the 5s drain limit expires | `shutdown_deadline` |
-| shutdown | a local write is stuck | a local write runs on the consumer and does not honor its context, so it cannot be interrupted. Shutdown stops waiting after about 11s — the drain, one publish and a margin — and leaves the consumer behind; what it holds is lost with the process | – |
+| shutdown | an event is admitted after the drain began, by a writer that obtained the sink before it | refused as closed and counted, never left in a buffer nothing delivers | `shutdown_deadline` |
+| shutdown | a local write is stuck | a local write runs on the delivery goroutine and does not honor its context, so it cannot be interrupted. Shutdown stops waiting at the 5s drain deadline; the events in that write are counted then, and their memory is freed only if the write returns | `shutdown_deadline` |
 
 > No row blocks, retries forever, or falls back to disk. Loss is bounded, and counted everywhere except the known gap above.
 

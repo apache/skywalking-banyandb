@@ -103,7 +103,7 @@ The flags live in their own namespace, `--logging-native-*` with `BYDB_LOGGING_N
 
 Native policy is resolved on a logger's complete module, every component it was named with. A `--logging-modules` override can shorten the module the console prints — `--logging-modules=measure` makes a `MEASURE.BLOCK` logger print `MEASURE` — but it does not change what native storage collects: `--logging-native-modules=measure.block` and `--logging-native-exclude-modules=measure.block` still apply. Exclusions match a module and its children, so `measure` covers `MEASURE.BLOCK` and not `MEASUREMENT`.
 
-Buffering, batching and memory are not configured. Each node writes its own events through its local write path to shard 0 of `_monitoring_log`, a single-shard group, as native metrics do: no event is sent to another node. The buffer holds at most 8MiB, an event over 64KiB is dropped whole, a batch is written every second or at 100 events, and a stuck write cannot hold shutdown for more than about 11 seconds. While the memory protector reports high pressure, new events are dropped and counted rather than buffered.
+Buffering, batching and memory are not configured. Each node writes its own events through its local write path to shard 0 of `_monitoring_log`, a single-shard group, as native metrics do: no event is sent to another node. The buffer holds at most 8MiB, an event over 64KiB is dropped whole, a batch is written every second or at 100 events, and a stuck write cannot hold shutdown for more than about 5 seconds. While the memory protector reports high pressure, new events are dropped and counted rather than buffered.
 
 Because the two destinations have independent thresholds, native can be the more verbose of the two. Running normal logging at `error` and native at `info` keeps stderr quiet while the database retains the `info` and `warn` events that describe what a node was doing beforehand:
 
@@ -127,7 +127,7 @@ The `reason` label takes one of nine values, so a loss is always attributable to
 | `schema_unavailable` | the group or stream could not be created yet | usually transient at startup; retried every 10s |
 | `schema_incompatible` | a `log` stream exists with a shape this version cannot write | drop and recreate the `_monitoring_log` group; retrying will not fix it. The error is logged once |
 | `destination_unready` | the local write path still had no subscriber after 10 retries, one per flush interval | expected only at startup; if it persists, the stream service did not start |
-| `shutdown_deadline` | still buffered when the drain deadline passed | expected on a busy node during shutdown |
+| `shutdown_deadline` | still buffered, or in a stuck write, when the drain deadline passed, or logged after shutdown began | expected on a busy node during shutdown |
 
 Logging caused by storing native logs is never stored, or one stored line could produce the next. That logging still reaches the console. Two modules are reserved for it, and `--logging-native-exclude-modules` cannot remove them:
 

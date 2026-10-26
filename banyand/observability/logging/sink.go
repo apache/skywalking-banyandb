@@ -22,7 +22,9 @@ package logging
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -34,6 +36,8 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
@@ -113,15 +117,24 @@ const maxRetainedFieldsBytes = 4 << 10
 
 // request is a write request pooled with every message nested in it: the
 // metadata, the element and its timestamp, the tag families, the tag values
-// and their wrappers, and the buffer the leftover fields are encoded into.
-// release clears only what one event owns.
+// and their wrappers, the buffer the leftover fields are encoded into, and
+// the request it is offered to the publisher as. release clears only what one
+// event owns.
 type request struct {
 	*streamv1.WriteRequest
-	data   *modelv1.TagValue
-	binary *modelv1.TagValue_BinaryData
-	null   *modelv1.TagValue_Null
-	str    [searchableTagCount]*modelv1.Str
-	fields bytes.Buffer
+	data     *modelv1.TagValue
+	binary   *modelv1.TagValue_BinaryData
+	null     *modelv1.TagValue_Null
+	str      [searchableTagCount]*modelv1.Str
+	buffered queue.BufferedRequest
+	fields   bytes.Buffer
+	// seq is assigned at admission, so the identity stamped later at delivery
+	// still reflects the order events arrived in.
+	seq uint64
+	// encodeFailed is set at delivery when the request could not be turned
+	// into a write, so its outcome is counted as encode_failed. It is atomic
+	// because Done can run while a stuck delivery still holds the request.
+	encodeFailed atomic.Bool
 }
 
 func newRequest() *request {
@@ -150,54 +163,71 @@ func newRequest() *request {
 	return r
 }
 
-// entry pairs a request with the bytes reserved for it, so the accounting
-// settled at flush is exactly the accounting taken at admission.
-type entry struct {
-	req *request
-	// seq is assigned at admission, so the identity stamped later at flush
-	// still reflects the order events arrived in.
-	seq  uint64
-	size int64
-}
-
-// Sink buffers admitted log events and hands them to a consumer for writing.
+// Sink encodes admitted log events and offers them to a buffered publisher,
+// which owns the buffer, the batching and the delivery.
 //
 // It is constructed before logger.Init and attached right after it, so the
 // buffer exists for the lines a process emits while it is still starting. The
-// consumer starts draining it once the services it publishes through run.
+// publisher starts delivering once the services it publishes through run.
 type Sink struct {
-	queue    chan entry
+	pub      queue.BufferedPublisher
 	dropped  map[string]*atomic.Uint64
+	reported map[string]*atomic.Int64
 	pressure atomic.Pointer[func() bool]
 	node     atomic.Pointer[NodeInfo]
 	detach   atomic.Pointer[func()]
 	pool     sync.Pool
-	// maxBytes and maxEventBytes are maxBufferBytes and maxEventBytes. They
-	// are fields so a test can reach the bounds with a few events.
-	maxBytes      int64
+	// maxEventBytes is maxEventBytes, a field so a test can reach it.
 	maxEventBytes int64
-	queued        atomic.Int64
-	inFlight      atomic.Int64
 	seq           atomic.Uint64
 	epoch         int64
 	written       atomic.Uint64
 }
 
-// NewSink allocates the buffer. It performs no I/O and reaches no service, so
-// it is safe to call while the command tree is still being built, which is
-// where it is called.
+// NewSink allocates the buffer. It performs no I/O, reaches no service and
+// touches no logger, so it is safe to call while the command tree is still
+// being built, which is where it is called.
 func NewSink() *Sink {
+	return newSink(nil)
+}
+
+// newSink is NewSink with the buffer's bounds adjusted, for a test.
+func newSink(adjust func(*queue.BufferedConfig)) *Sink {
 	s := &Sink{
-		queue:         make(chan entry, queueDepth),
 		epoch:         time.Now().UnixNano(),
 		dropped:       make(map[string]*atomic.Uint64),
-		maxBytes:      maxBufferBytes,
+		reported:      make(map[string]*atomic.Int64),
 		maxEventBytes: maxEventBytes,
 	}
 	for _, r := range allReasons {
 		s.dropped[r] = &atomic.Uint64{}
+		s.reported[r] = &atomic.Int64{}
 	}
-	s.pool.New = func() any { return newRequest() }
+	s.pool.New = func() any {
+		r := newRequest()
+		r.buffered = queue.BufferedRequest{
+			Data:    r,
+			Done:    func(o queue.Outcome) { s.settle(r, o) },
+			Release: func() { s.release(r) },
+		}
+		return r
+	}
+	cfg := queue.BufferedConfig{
+		Pressure:      s.underPressure,
+		Name:          logger.NativeWriteModule,
+		MaxBytes:      maxBufferBytes,
+		MaxCount:      queueDepth,
+		BatchCount:    flushSize,
+		FlushInterval: flushInterval,
+		MaxRetries:    destinationRetries,
+		DrainTimeout:  drainTimeout,
+	}
+	if adjust != nil {
+		adjust(&cfg)
+	}
+	// No logger yet: logging is not initialized when the sink is built. The
+	// delivery marks each batch as a native write instead.
+	s.pub = queue.NewBufferedPublisher(context.Background(), cfg)
 	return s
 }
 
@@ -250,10 +280,16 @@ func (s *Sink) Written() uint64 { return s.written.Load() }
 
 // QueuedBytes reports the bytes currently held in the buffer, including the
 // batch being published.
-func (s *Sink) QueuedBytes() int64 { return s.queued.Load() }
+func (s *Sink) QueuedBytes() int64 {
+	charged, _ := s.pub.Bytes()
+	return charged
+}
 
 // InFlightBytes reports the bytes of the batch being published.
-func (s *Sink) InFlightBytes() int64 { return s.inFlight.Load() }
+func (s *Sink) InFlightBytes() int64 {
+	_, inFlight := s.pub.Bytes()
+	return inFlight
+}
 
 func (s *Sink) drop(reason string) {
 	if c, ok := s.dropped[reason]; ok {
@@ -261,77 +297,89 @@ func (s *Sink) drop(reason string) {
 	}
 }
 
-func (s *Sink) dropN(reason string, n int) {
-	if c, ok := s.dropped[reason]; ok {
-		c.Add(uint64(n))
-	}
-}
-
 // Admit implements logger.NativeSink. It runs on the goroutine that emitted the
-// line, so it never blocks and never waits for memory: under pressure or at
-// the buffer's bound it drops the newest event and counts it, leaving what is
-// already queued intact so a burst keeps the head that explains it.
+// line, so it never blocks and never waits for memory: the publisher refuses
+// under pressure or at its bound, and the newest event is dropped and counted,
+// leaving what is already queued intact so a burst keeps the head that
+// explains it.
 func (s *Sink) Admit(level zerolog.Level, module string, line []byte) {
 	size := int64(len(line))
 	if size > s.maxEventBytes {
 		s.drop(reasonOversizeEvent)
 		return
 	}
-	if s.underPressure() {
-		s.drop(reasonMemoryPressure)
-		return
-	}
 	req := s.get()
-	cost := entryCost(size, req)
-	// Reserve before building, so two goroutines cannot both read the same
-	// total and both enqueue. Every failure path below returns the reservation.
-	if !s.reserve(cost) {
-		s.release(req)
-		s.drop(reasonBufferFull)
-		return
-	}
 	if err := s.fill(req, level, module, line); err != nil {
-		s.queued.Add(-cost)
 		s.release(req)
 		s.drop(reasonEncodeFailed)
 		return
 	}
-	// Encoding fields larger than the buffer held grows it, and the entry is
-	// charged what it holds once built.
-	if grown := entryCost(size, req) - cost; grown > 0 {
-		if !s.reserve(grown) {
-			s.queued.Add(-cost)
-			s.release(req)
-			s.drop(reasonBufferFull)
-			return
-		}
-		cost += grown
-	}
-	select {
-	case s.queue <- entry{req: req, size: cost, seq: s.seq.Add(1)}:
+	req.seq = s.seq.Add(1)
+	// Charged once built, so a fields buffer the encoding grew is counted.
+	req.buffered.Bytes = entryCost(size, req)
+	switch s.pub.Offer(&req.buffered) {
+	case queue.Accepted:
+		return
+	case queue.RefusedPressure:
+		s.drop(reasonMemoryPressure)
+	case queue.RefusedClosed:
+		s.drop(reasonShutdown)
 	default:
-		s.queued.Add(-cost)
-		s.release(req)
 		s.drop(reasonBufferFull)
+	}
+	s.release(req)
+}
+
+// settle counts how an accepted event ended. It is the request's Done.
+func (s *Sink) settle(r *request, o queue.Outcome) {
+	switch {
+	case r.encodeFailed.Load():
+		s.drop(reasonEncodeFailed)
+	case o.Delivered:
+		s.written.Add(1)
+	case o.Reason == queue.OutcomeShutdownDeadline:
+		s.drop(reasonShutdown)
+	default:
+		reason := lossReason(o.Err)
+		s.drop(reason)
+		s.reportLoss(reason, o.Err)
 	}
 }
 
-// reserve charges n bytes against the bound, or charges nothing and reports
-// false when the bound would be passed.
-func (s *Sink) reserve(n int64) bool {
-	if s.queued.Add(n)+s.inFlight.Load() > s.maxBytes {
-		s.queued.Add(-n)
-		return false
+// lossReason names the stage a failed delivery stopped at.
+func lossReason(err error) string {
+	switch {
+	case errors.Is(err, errSchemaUnavailable):
+		return reasonSchemaMissing
+	case errors.Is(err, errSchemaIncompatible):
+		return reasonSchemaIncompatible
+	case errors.Is(err, bus.ErrTopicNotExist):
+		return reasonDestinationUnready
+	default:
+		return reasonPublishFailed
 	}
-	return true
+}
+
+// reportLoss writes a lost delivery to stderr, at most once a second for each
+// reason: an outcome arrives per event, and a batch of them shares one cause.
+// The sink never logs through the logging path it publishes on, so a failure
+// goes straight to stderr rather than back into itself.
+func (s *Sink) reportLoss(reason string, err error) {
+	last, ok := s.reported[reason]
+	if !ok {
+		return
+	}
+	now := time.Now().UnixNano()
+	prev := last.Load()
+	if now-prev < int64(time.Second) || !last.CompareAndSwap(prev, now) {
+		return
+	}
+	reportf("native log events dropped as %s: %v", reason, err)
 }
 
 // get takes a request from the pool.
 func (s *Sink) get() *request {
-	if r, ok := s.pool.Get().(*request); ok {
-		return r
-	}
-	return newRequest()
+	return s.pool.Get().(*request)
 }
 
 // release returns a request to the pool once nothing uses it any more: after
@@ -359,6 +407,8 @@ func reset(r *request) {
 	r.Element.ElementId = ""
 	r.Element.Timestamp.Seconds, r.Element.Timestamp.Nanos = 0, 0
 	r.MessageId = 0
+	r.seq = 0
+	r.encodeFailed.Store(false)
 }
 
 // build turns one encoded event into a write request taken from the pool.
@@ -431,23 +481,23 @@ func (s *Sink) fill(r *request, level zerolog.Level, module string, line []byte)
 	return nil
 }
 
-// stamp fills the identity a request could not carry at admission. It runs on
-// the consumer, by which point the node has started and published its own
+// stamp fills the identity a request could not carry at admission. It runs at
+// delivery, by which point the node has started and published its own
 // identity, so a line buffered during startup is stored under the same node as
 // one emitted an hour later.
-func (s *Sink) stamp(e entry) {
+func (s *Sink) stamp(r *request) {
 	node := s.node.Load()
 	if node == nil {
 		node = &NodeInfo{}
 	}
-	elementID := fmt.Sprintf("%s-%d-%d", node.NodeID, s.epoch, e.seq)
-	tags := e.req.GetElement().GetTagFamilies()[0].GetTags()
+	elementID := fmt.Sprintf("%s-%d-%d", node.NodeID, s.epoch, r.seq)
+	tags := r.GetElement().GetTagFamilies()[0].GetTags()
 	setStr(tags[0], node.NodeID)
 	setStr(tags[1], node.NodeType)
 	setStr(tags[4], node.GRPCAddress)
 	setStr(tags[5], node.HTTPAddress)
 	setStr(tags[7], elementID)
-	e.req.Element.ElementId = elementID
+	r.Element.ElementId = elementID
 }
 
 func setStr(t *modelv1.TagValue, v string) {

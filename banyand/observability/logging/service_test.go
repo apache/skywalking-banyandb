@@ -29,9 +29,11 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	"go.uber.org/mock/gomock"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
@@ -174,26 +176,31 @@ func (p *fakePublisher) Close() (map[string]*common.Error, error) {
 	return nil, nil
 }
 
-// testService starts a consumer against client. Each opt adjusts the service
-// before the consumer starts, so a test states only the part it is about.
-func testService(t *testing.T, client queue.Client, opts ...func(*Service)) (*Service, *Sink) {
+// testService starts delivery against client. adjust sets the buffer's bounds
+// over the test defaults, and each opt adjusts the service before delivery
+// starts, so a test states only the part it is about.
+func testService(t *testing.T, client queue.Client, adjust func(*queue.BufferedConfig), opts ...func(*Service)) (*Service, *Sink) {
 	t.Helper()
 	cfg := &logger.NativeLogging{Enabled: true, Level: "debug", TTLDays: 7}
-	sink := NewSink()
+	sink := newSink(func(c *queue.BufferedConfig) {
+		c.FlushInterval = 20 * time.Millisecond
+		c.BatchCount = 5
+		if adjust != nil {
+			adjust(c)
+		}
+	})
 	sink.SetNode(NodeInfo{NodeID: "data-hot-0", NodeType: "data"})
 	svc := NewService(sink, cfg, nil, client, nil, nil)
 	svc.l = logger.GetLogger("native-log-test")
-	svc.timing.flushInterval = 20 * time.Millisecond
-	svc.timing.flushSize = 5
+	// The schema is created in Serve against a metadata repo; these tests drive
+	// delivery directly, so stand in for what one successful pass would have
+	// established.
+	svc.schema.Store(schemaReady)
 	for _, opt := range opts {
 		opt(svc)
 	}
-	// The schema is created in Serve against a metadata repo; these tests drive
-	// the consumer directly, so stand in for what one successful pass would
-	// have established.
-	svc.ready = true
-	go svc.consume(context.Background()) //panicdiag:allow-rawgo test consumer, no recovery wrapper needed
-	t.Cleanup(func() { svc.closer.CloseThenWait() })
+	sink.pub.Start(svc.delivery())
+	t.Cleanup(sink.pub.Close)
 	return svc, sink
 }
 
@@ -224,7 +231,7 @@ func waitSettled(t *testing.T, sink *Sink) {
 // healthy path nothing is admitted and then silently lost.
 func TestEveryAdmittedEventIsWrittenOrCounted(t *testing.T) {
 	client := &fakeClient{}
-	_, sink := testService(t, client)
+	_, sink := testService(t, client, nil)
 
 	const admitted = 40
 	for i := 0; i < admitted; i++ {
@@ -245,13 +252,14 @@ func TestEveryAdmittedEventIsWrittenOrCounted(t *testing.T) {
 	waitSettled(t, sink)
 }
 
-// TestConsumerSurvivesAPanicInFlush is the falsifying assertion for the
-// recovery boundary: run.Go recovers a panic but does not restart the consumer,
-// so recovering at the goroutine would end native logging for the process. The
-// assertion is that events admitted AFTER a panic are still written.
-func TestConsumerSurvivesAPanicInFlush(t *testing.T) {
+// TestDeliverySurvivesAPanicInPublish is the falsifying assertion for the
+// recovery boundary: run.Go recovers a panic but does not restart the
+// delivery goroutine, so recovering only there would end native logging for
+// the process. The assertion is that events admitted AFTER a panic are still
+// written, and that the panicking batch is counted as publish_failed.
+func TestDeliverySurvivesAPanicInPublish(t *testing.T) {
 	client := &fakeClient{}
-	_, sink := testService(t, client)
+	_, sink := testService(t, client, nil)
 
 	client.panicOnPublish.Store(true)
 	for i := 0; i < 5; i++ {
@@ -277,13 +285,13 @@ func TestConsumerSurvivesAPanicInFlush(t *testing.T) {
 // counted as lost.
 func TestShutdownDrainsWhatWasAdmitted(t *testing.T) {
 	client := &fakeClient{}
-	svc, sink := testService(t, client)
+	_, sink := testService(t, client, nil)
 
 	const admitted = 12
 	for i := 0; i < admitted; i++ {
 		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
 	}
-	svc.closer.CloseThenWait()
+	sink.pub.Close()
 
 	if got := client.published.Load(); got != admitted {
 		t.Fatalf("published %d of %d admitted events at shutdown; the rest were stranded",
@@ -300,7 +308,7 @@ func TestShutdownDrainsWhatWasAdmitted(t *testing.T) {
 // series key, and an input to the shard.
 func TestFlushStampsIdentityOnWhatItPublishes(t *testing.T) {
 	client := &fakeClient{}
-	_, sink := testService(t, client)
+	_, sink := testService(t, client, nil)
 
 	for i := 0; i < 6; i++ {
 		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
@@ -325,7 +333,7 @@ func TestFlushStampsIdentityOnWhatItPublishes(t *testing.T) {
 // feature is healthy while every line is being thrown away.
 func TestRejectedBatchIsCountedAsLostNotWritten(t *testing.T) {
 	client := &fakeClient{}
-	_, sink := testService(t, client)
+	_, sink := testService(t, client, nil)
 	client.rejectOnClose.Store(true)
 
 	const admitted = 10
@@ -347,7 +355,7 @@ func TestRejectedBatchIsCountedAsLostNotWritten(t *testing.T) {
 // Close's map must not turn an empty map into a failure.
 func TestAcceptedBatchIsStillCountedAsWritten(t *testing.T) {
 	client := &fakeClient{}
-	_, sink := testService(t, client)
+	_, sink := testService(t, client, nil)
 
 	const admitted = 10
 	for i := 0; i < admitted; i++ {
@@ -370,24 +378,24 @@ func TestSchemaStateSurvivesATransientMetadataFailure(t *testing.T) {
 	svc := &Service{l: logger.GetLogger("native-log-test")}
 
 	svc.applySchema(schemaState{}, nil)
-	if !svc.ready {
+	if svc.schema.Load() != schemaReady {
 		t.Fatal("a successful pass did not set ready")
 	}
 
 	svc.applySchema(schemaState{}, errors.New("etcd: context deadline exceeded"))
-	if !svc.ready {
+	if svc.schema.Load() != schemaReady {
 		t.Fatal("a transient metadata error cleared ready; batches that would " +
 			"have been written are now dropped as schema_unavailable")
 	}
 
 	svc.applySchema(schemaState{}, fmt.Errorf("%w: tag 2 is wrong", errSchemaIncompatible))
-	if svc.ready || !svc.incompatible {
-		t.Fatalf("an incompatible schema left ready=%v incompatible=%v", svc.ready, svc.incompatible)
+	if got := svc.schema.Load(); got != schemaIncompatible {
+		t.Fatalf("an incompatible schema left state %d", got)
 	}
 
 	svc.applySchema(schemaState{}, nil)
-	if !svc.ready || svc.incompatible {
-		t.Fatalf("recovery left ready=%v incompatible=%v", svc.ready, svc.incompatible)
+	if got := svc.schema.Load(); got != schemaReady {
+		t.Fatalf("recovery left state %d", got)
 	}
 }
 
@@ -396,16 +404,48 @@ func TestSchemaStateSurvivesATransientMetadataFailure(t *testing.T) {
 func TestNeverReadyStaysNotReady(t *testing.T) {
 	svc := &Service{l: logger.GetLogger("native-log-test")}
 	svc.applySchema(schemaState{}, errors.New("metadata not up yet"))
-	if svc.ready {
+	if svc.schema.Load() == schemaReady {
 		t.Fatal("ready was set by a failed schema pass")
 	}
+}
+
+// TestUnestablishedSchemaDropsAsUnavailable covers delivery before the schema
+// exists: the batch is counted under its own reason, not as written and not
+// as a publish failure.
+func TestUnestablishedSchemaDropsAsUnavailable(t *testing.T) {
+	client := &fakeClient{}
+	_, sink := testService(t, client, nil, func(s *Service) { s.schema.Store(schemaUnready) })
+	for i := 0; i < 5; i++ {
+		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+	}
+	waitFor(t, "the batch to be counted", func() bool { return sink.Dropped(reasonSchemaMissing) == 5 })
+	if got := client.published.Load(); got != 0 {
+		t.Fatalf("%d events published without a schema", got)
+	}
+	waitSettled(t, sink)
+}
+
+// TestIncompatibleSchemaDropsAsIncompatible keeps the two schema reasons
+// apart at delivery: an incompatible stream needs an operator, so its loss is
+// not counted as a wait for the schema.
+func TestIncompatibleSchemaDropsAsIncompatible(t *testing.T) {
+	client := &fakeClient{}
+	_, sink := testService(t, client, nil, func(s *Service) { s.schema.Store(schemaIncompatible) })
+	for i := 0; i < 5; i++ {
+		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+	}
+	waitFor(t, "the batch to be counted", func() bool { return sink.Dropped(reasonSchemaIncompatible) == 5 })
+	if got := sink.Dropped(reasonSchemaMissing) + uint64(client.published.Load()); got != 0 {
+		t.Fatalf("%d events counted as schema_unavailable or published to an incompatible stream", got)
+	}
+	waitSettled(t, sink)
 }
 
 // TestWriteTimeoutReachesThePublisher checks that the service's write timeout,
 // not some other value, is handed to every batch publisher.
 func TestWriteTimeoutReachesThePublisher(t *testing.T) {
 	client := &fakeClient{}
-	_, sink := testService(t, client, func(s *Service) { s.timing.writeTimeout = 750 * time.Millisecond })
+	_, sink := testService(t, client, nil, func(s *Service) { s.timing.writeTimeout = 750 * time.Millisecond })
 
 	for i := 0; i < 5; i++ {
 		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
@@ -429,14 +469,14 @@ func TestWriteTimeoutReachesThePublisher(t *testing.T) {
 // lost. Without the limit, everything drains.
 func TestDrainTimeoutBoundsShutdown(t *testing.T) {
 	client := &fakeClient{}
-	svc, sink := testService(t, client, func(s *Service) { s.timing.drainTimeout = 10 * time.Millisecond })
+	_, sink := testService(t, client, func(c *queue.BufferedConfig) { c.DrainTimeout = 10 * time.Millisecond })
 	client.publishDelay.Store(int64(50 * time.Millisecond))
 
 	const admitted = 100
 	for i := 0; i < admitted; i++ {
 		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
 	}
-	svc.closer.CloseThenWait()
+	sink.pub.Close()
 
 	lost := sink.Dropped(reasonShutdown)
 	if lost == 0 {
@@ -479,13 +519,13 @@ func TestHighMemoryPressureDropsAndCounts(t *testing.T) {
 	if got := sink.Dropped(reasonMemoryPressure); got != 1 {
 		t.Fatalf("memory_pressure drops = %d under high pressure, want 1", got)
 	}
-	if len(sink.queue) != 0 {
+	if sink.QueuedBytes() != 0 {
 		t.Fatal("an event was buffered under high memory pressure")
 	}
 
 	high.Store(false)
 	sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
-	if len(sink.queue) != 1 {
+	if sink.QueuedBytes() == 0 {
 		t.Fatal("the sink did not buffer again after pressure fell")
 	}
 }
@@ -497,19 +537,18 @@ func TestHighMemoryPressureDropsAndCounts(t *testing.T) {
 func TestGracefulStopReturnsWhileAWriteIsStuck(t *testing.T) {
 	client := &fakeClient{}
 	client.publishDelay.Store(int64(time.Hour))
-	sink := NewSink()
-	svc := NewService(sink, &logger.NativeLogging{Enabled: true, TTLDays: 7}, nil, client, nil, nil)
-	svc.l = logger.GetLogger("native-log-test")
-	svc.timing.flushInterval = 10 * time.Millisecond
-	svc.timing.stopTimeout = 50 * time.Millisecond
-	svc.ready = true
-	// The only consumer. It is left stuck on purpose; nothing waits for it.
-	go svc.consume(context.Background()) //panicdiag:allow-rawgo test consumer, left stuck on purpose
+	svc, sink := testService(t, client, func(c *queue.BufferedConfig) {
+		c.BatchCount = 1
+		c.DrainTimeout = 50 * time.Millisecond
+	})
+	//panicdiag:allow-rawgo test stand-in for Serve's loop
+	go svc.maintain(context.Background())
 	sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
 	waitFor(t, "the write to start and get stuck", func() bool { return client.started.Load() == 1 })
 
 	returned := make(chan struct{})
-	go func() { //panicdiag:allow-rawgo test watchdog
+	//panicdiag:allow-rawgo test watchdog
+	go func() {
 		svc.GracefulStop()
 		close(returned)
 	}()
@@ -517,6 +556,60 @@ func TestGracefulStopReturnsWhileAWriteIsStuck(t *testing.T) {
 	case <-returned:
 	case <-time.After(5 * time.Second):
 		t.Fatal("GracefulStop is still waiting for a stuck write")
+	}
+	if got := sink.Dropped(reasonShutdown); got != 1 {
+		t.Fatalf("the stuck event was counted %d times as shutdown_deadline, want 1", got)
+	}
+}
+
+// TestGracefulStopDoesNotWaitForASchemaPass blocks the schema pass on its
+// metadata call: GracefulStop cancels it instead of waiting out its timeout.
+func TestGracefulStopDoesNotWaitForASchemaPass(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	groups := schema.NewMockGroup(ctrl)
+	entered := make(chan struct{}, 1)
+	groups.EXPECT().GetGroup(gomock.Any(), GroupName).DoAndReturn(func(ctx context.Context, _ string) (*commonv1.Group, error) {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}).AnyTimes()
+	svc, _ := testService(t, &fakeClient{}, nil, func(s *Service) {
+		s.metadata = repoWith(ctrl, groups, schema.NewMockStream(ctrl))
+		s.timing.schemaRetry = 10 * time.Millisecond
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	svc.stopMaintain = cancel
+	//panicdiag:allow-rawgo test stand-in for Serve's loop
+	go svc.maintain(ctx)
+	<-entered
+
+	start := time.Now()
+	svc.GracefulStop()
+	if waited := time.Since(start); waited > time.Second {
+		t.Fatalf("GracefulStop waited %s for a schema pass", waited)
+	}
+}
+
+// TestWriterThatLoadedTheSinkBeforeStopIsCounted is the review's shutdown
+// race at the sink: a writer that took the sink before GracefulStop and
+// admits after it has drained. The event is counted as lost, not left in a
+// buffer nothing delivers.
+func TestWriterThatLoadedTheSinkBeforeStopIsCounted(t *testing.T) {
+	client := &fakeClient{}
+	svc, sink := testService(t, client, nil)
+	//panicdiag:allow-rawgo test stand-in for Serve's loop
+	go svc.maintain(context.Background())
+	svc.GracefulStop()
+
+	sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+	if got := sink.Dropped(reasonShutdown); got != 1 {
+		t.Fatalf("an event admitted after shutdown was counted %d times as shutdown_deadline, want 1", got)
+	}
+	if got := sink.QueuedBytes(); got != 0 {
+		t.Fatalf("%d bytes left charged after shutdown", got)
 	}
 }
 
@@ -557,10 +650,10 @@ func TestBatchIsCappedAtAQuarterOfTheBudget(t *testing.T) {
 	}
 	event := entryCost(int64(len(sampleLine)), built)
 	client := &fakeClient{}
-	_, sink := testService(t, client, func(s *Service) {
-		s.timing.flushSize = 1000
-		s.timing.flushInterval = time.Hour
-		s.sink.maxBytes = 12 * event
+	_, sink := testService(t, client, func(c *queue.BufferedConfig) {
+		c.BatchCount = 1000
+		c.FlushInterval = time.Hour
+		c.MaxBytes = 12 * event
 	})
 
 	const admitted = 9
@@ -600,8 +693,8 @@ func (g *fakeGauge) Delete(...string) bool  { return false }
 // publish.
 func TestBufferGaugeSplitsQueuedFromInFlight(t *testing.T) {
 	sink := testSink(t)
-	sink.queued.Store(300)
-	sink.inFlight.Store(100)
+	p := stubbed(sink, queue.Accepted)
+	p.charged, p.inFlight = 300, 100
 	buffer := &fakeGauge{}
 	m := &metrics{dropped: &fakeGauge{}, written: &fakeGauge{}, bufferBytes: buffer}
 
@@ -622,7 +715,7 @@ func TestBufferGaugeSplitsQueuedFromInFlight(t *testing.T) {
 func TestUnreadyDestinationIsRetriedThenWritten(t *testing.T) {
 	client := &fakeClient{}
 	client.unreadyFor.Store(3)
-	_, sink := testService(t, client)
+	_, sink := testService(t, client, nil)
 
 	const admitted = 5
 	for i := 0; i < admitted; i++ {
@@ -642,7 +735,7 @@ func TestUnreadyDestinationIsRetriedThenWritten(t *testing.T) {
 func TestUnreadyDestinationIsDroppedAfterBoundedRetries(t *testing.T) {
 	client := &fakeClient{}
 	client.unreadyFor.Store(1 << 30)
-	_, sink := testService(t, client)
+	_, sink := testService(t, client, nil)
 
 	const admitted = 5
 	for i := 0; i < admitted; i++ {
@@ -664,16 +757,16 @@ func TestUnreadyDestinationIsDroppedAfterBoundedRetries(t *testing.T) {
 func TestDrainDoesNotHoldBackForAnUnreadyDestination(t *testing.T) {
 	client := &fakeClient{}
 	client.unreadyFor.Store(1 << 30)
-	svc, sink := testService(t, client, func(s *Service) {
-		s.timing.flushSize = 1000
-		s.timing.flushInterval = time.Hour
+	_, sink := testService(t, client, func(c *queue.BufferedConfig) {
+		c.BatchCount = 1000
+		c.FlushInterval = time.Hour
 	})
 
 	const admitted = 5
 	for i := 0; i < admitted; i++ {
 		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
 	}
-	svc.closer.CloseThenWait()
+	sink.pub.Close()
 
 	if got := sink.Dropped(reasonDestinationUnready); got != admitted {
 		t.Fatalf("drain dropped %d as destination_unready, want %d", got, admitted)
@@ -689,7 +782,7 @@ func TestDrainDoesNotHoldBackForAnUnreadyDestination(t *testing.T) {
 func TestCollectionResumesInTheSameProcess(t *testing.T) {
 	client := &fakeClient{}
 	client.rejectOnClose.Store(true)
-	_, sink := testService(t, client)
+	_, sink := testService(t, client, nil)
 
 	for i := 0; i < 5; i++ {
 		sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
@@ -718,7 +811,8 @@ func TestEveryEventIsWrittenToShardZero(t *testing.T) {
 			if err != nil {
 				t.Fatalf("build: %v", err)
 			}
-			sink.stamp(entry{req: req, seq: uint64(i)})
+			req.seq = uint64(i)
+			sink.stamp(req)
 			iwr, err := internalRequest(req.WriteRequest)
 			if err != nil {
 				t.Fatalf("internalRequest: %v", err)
@@ -737,7 +831,7 @@ func TestEveryEventIsWrittenToShardZero(t *testing.T) {
 // out of native storage.
 func TestEveryPublishCarriesTheNativeWriteMark(t *testing.T) {
 	client := &fakeClient{}
-	_, sink := testService(t, client)
+	_, sink := testService(t, client, nil)
 	sink.Admit(zerolog.InfoLevel, "MEASURE", []byte(`{"message":"m"}`))
 	waitFor(t, "the batch to be published", func() bool { return client.published.Load() == 1 })
 	if got, _ := client.markedModules.Load().(string); got != "NATIVE-LOG.STREAM" {

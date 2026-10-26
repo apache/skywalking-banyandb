@@ -19,6 +19,8 @@ package logging
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"runtime"
 	"slices"
 	"strings"
@@ -28,6 +30,8 @@ import (
 	"github.com/rs/zerolog"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
 
 // sampleLine is a real zerolog line: its time is RFC3339 with whole seconds,
@@ -50,6 +54,32 @@ func testSink(t *testing.T) *Sink {
 	return s
 }
 
+// stubPublisher answers every Offer with answer and keeps what it accepts,
+// so a test can read what the sink offered without a delivery running.
+type stubPublisher struct {
+	offered  []*queue.BufferedRequest
+	charged  int64
+	inFlight int64
+	answer   queue.Admission
+}
+
+func (p *stubPublisher) Offer(r *queue.BufferedRequest) queue.Admission {
+	if p.answer == queue.Accepted {
+		p.offered = append(p.offered, r)
+	}
+	return p.answer
+}
+func (p *stubPublisher) Start(queue.Delivery)             {}
+func (p *stubPublisher) Close()                           {}
+func (p *stubPublisher) Bytes() (charged, inFlight int64) { return p.charged, p.inFlight }
+
+// stubbed swaps the sink's publisher for one answering answer.
+func stubbed(s *Sink, answer queue.Admission) *stubPublisher {
+	p := &stubPublisher{answer: answer}
+	s.pub = p
+	return p
+}
+
 func tagStr(t *testing.T, v *modelv1.TagValue) string {
 	t.Helper()
 	return v.GetStr().GetValue()
@@ -66,7 +96,8 @@ func TestBuildSplitsKnownKeysFromTheRest(t *testing.T) {
 	}
 
 	// Identity arrives from the consumer, so stamp before asserting on it.
-	s.stamp(entry{req: req, seq: 1})
+	req.seq = 1
+	s.stamp(req)
 	searchable := req.Element.TagFamilies[0].Tags
 	if len(searchable) != len(searchableTags) {
 		t.Fatalf("searchable family has %d tags, schema declares %d",
@@ -133,7 +164,7 @@ func TestOversizeEventIsDroppedWhole(t *testing.T) {
 	if got := s.Dropped(reasonOversizeEvent); got != 1 {
 		t.Fatalf("oversize drops = %d, want 1", got)
 	}
-	if len(s.queue) != 0 {
+	if s.QueuedBytes() != 0 {
 		t.Fatal("an oversized event reached the buffer")
 	}
 }
@@ -141,15 +172,18 @@ func TestOversizeEventIsDroppedWhole(t *testing.T) {
 // TestFullBufferDropsTheNewest pins the overflow policy: what is already
 // queued survives, so a burst keeps the head that explains it.
 func TestFullBufferDropsTheNewest(t *testing.T) {
-	s := testSink(t)
+	built, err := testSink(t).build(zerolog.ErrorLevel, "MEASURE", []byte(sampleLine))
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	// Room for exactly one event.
+	s := newSink(func(c *queue.BufferedConfig) { c.MaxBytes = entryCost(int64(len(sampleLine)), built) })
 	s.Admit(zerolog.ErrorLevel, "MEASURE", []byte(sampleLine))
 	queued := s.QueuedBytes()
 	if queued == 0 {
 		t.Fatal("the first event was not accounted")
 	}
 
-	// A bound below what is already held refuses everything new.
-	s.maxBytes = 1
 	s.Admit(zerolog.ErrorLevel, "MEASURE", []byte(sampleLine))
 
 	if got := s.Dropped(reasonBufferFull); got != 1 {
@@ -159,18 +193,14 @@ func TestFullBufferDropsTheNewest(t *testing.T) {
 		t.Fatalf("queued bytes moved from %d to %d; a queued event was evicted",
 			queued, s.QueuedBytes())
 	}
-	if len(s.queue) != 1 {
-		t.Fatalf("buffer holds %d events, want the 1 admitted before the bound fell", len(s.queue))
-	}
 }
 
 // TestAdmitNeverBlocks is the property the whole design rests on: the sink sits
 // on every code path, including the write path it publishes through, so a full
 // buffer must refuse rather than wait.
 func TestAdmitNeverBlocks(t *testing.T) {
-	s := testSink(t)
-	// A buffer with no room at all, and no consumer to make room.
-	s.queue = make(chan entry)
+	// A buffer with no room at all, and no delivery to make room.
+	s := newSink(func(c *queue.BufferedConfig) { c.MaxCount = 0 })
 
 	done := make(chan struct{})
 	//panicdiag:allow-rawgo test goroutine asserting that Admit returns rather than blocking
@@ -186,6 +216,85 @@ func TestAdmitNeverBlocks(t *testing.T) {
 	}
 	if got := s.Dropped(reasonBufferFull); got != 1 {
 		t.Fatalf("buffer_full drops = %d, want 1", got)
+	}
+}
+
+// TestRefusalsAreCountedByTheirReason maps each refusal the publisher reports
+// to its own counter. The reason comes from the decision itself, so the sink
+// never re-reads the pressure state after the fact.
+func TestRefusalsAreCountedByTheirReason(t *testing.T) {
+	for _, tc := range []struct {
+		reason string
+		answer queue.Admission
+	}{
+		{reason: reasonMemoryPressure, answer: queue.RefusedPressure},
+		{reason: reasonBufferFull, answer: queue.RefusedFull},
+		{reason: reasonShutdown, answer: queue.RefusedClosed},
+	} {
+		answer, reason := tc.answer, tc.reason
+		s := testSink(t)
+		p := stubbed(s, answer)
+		s.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
+		var total uint64
+		for _, r := range allReasons {
+			total += s.Dropped(r)
+		}
+		if s.Dropped(reason) != 1 || total != 1 {
+			t.Errorf("%s: %s counted %d of %d drops, want the only one", answer, reason, s.Dropped(reason), total)
+		}
+		if len(p.offered) != 0 {
+			t.Errorf("%s: the publisher kept a refused request", answer)
+		}
+	}
+}
+
+// TestOutcomesAreCountedByTheirReason maps how an accepted event ended to
+// written_total or to the stage that lost it.
+func TestOutcomesAreCountedByTheirReason(t *testing.T) {
+	for name, tc := range map[string]struct {
+		encodeErr error
+		reason    string
+		outcome   queue.Outcome
+	}{
+		"delivered":         {outcome: queue.Outcome{Delivered: true}},
+		"shutdown deadline": {outcome: queue.Outcome{Reason: queue.OutcomeShutdownDeadline}, reason: reasonShutdown},
+		"schema unavailable": {
+			outcome: queue.Outcome{Reason: queue.OutcomeDeliveryFailed, Err: errSchemaUnavailable}, reason: reasonSchemaMissing,
+		},
+		"schema incompatible": {
+			outcome: queue.Outcome{Reason: queue.OutcomeDeliveryFailed, Err: fmt.Errorf("%w: tag 2", errSchemaIncompatible)},
+			reason:  reasonSchemaIncompatible,
+		},
+		"retries exhausted": {
+			outcome: queue.Outcome{Reason: queue.OutcomeRetriesExhausted, Err: queue.Retryable(bus.ErrTopicNotExist)},
+			reason:  reasonDestinationUnready,
+		},
+		"refused": {
+			outcome: queue.Outcome{Reason: queue.OutcomeDeliveryFailed, Err: errors.New("disk full")}, reason: reasonPublishFailed,
+		},
+		"encode failed": {
+			outcome: queue.Outcome{Delivered: true}, encodeErr: errors.New("bad entity"), reason: reasonEncodeFailed,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := testSink(t)
+			r := newRequest()
+			r.encodeFailed.Store(tc.encodeErr != nil)
+			s.settle(r, tc.outcome)
+			var dropped uint64
+			for _, reason := range allReasons {
+				dropped += s.Dropped(reason)
+			}
+			if tc.reason == "" {
+				if s.Written() != 1 || dropped != 0 {
+					t.Fatalf("written %d, dropped %d; want written 1", s.Written(), dropped)
+				}
+				return
+			}
+			if s.Written() != 0 || s.Dropped(tc.reason) != 1 || dropped != 1 {
+				t.Fatalf("written %d, %s %d of %d dropped; want only %s", s.Written(), tc.reason, s.Dropped(tc.reason), dropped, tc.reason)
+			}
+		})
 	}
 }
 
@@ -209,7 +318,8 @@ func TestEntityOfFollowsTheSchemaOrder(t *testing.T) {
 	}
 	// Identity is stamped by the consumer, so the entity is only complete once
 	// the request has been through it -- exactly as the write path sees it.
-	s.stamp(entry{req: req, seq: 1})
+	req.seq = 1
+	s.stamp(req)
 	entity := entityOf(req.WriteRequest)
 	if len(entity) != len(entityTags) {
 		t.Fatalf("entity has %d values, schema declares %d", len(entity), len(entityTags))
@@ -238,7 +348,8 @@ func TestEachTagHoldsTheValueItsNamePromises(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
-	s.stamp(entry{req: req, seq: 7})
+	req.seq = 7
+	s.stamp(req)
 
 	want := map[string]string{
 		"node_id":      "data-hot-0",
@@ -340,23 +451,24 @@ func TestTimestampComesFromAdmissionNotTheEncodedLine(t *testing.T) {
 // and an input to the shard.
 func TestIdentityIsStampedAtFlushNotAdmission(t *testing.T) {
 	s := NewSink()
+	p := stubbed(s, queue.Accepted)
 	// No SetNode yet: this is the window between logger initialisation and the
 	// node's services starting.
 	s.Admit(zerolog.InfoLevel, "MEASURE", []byte(sampleLine))
 
-	e := <-s.queue
-	if got := e.req.Element.TagFamilies[0].Tags[0].GetStr().GetValue(); got != "" {
+	req := p.offered[0].Data.(*request)
+	if got := req.Element.TagFamilies[0].Tags[0].GetStr().GetValue(); got != "" {
 		t.Fatalf("node_id was %q at admission; it cannot be known yet", got)
 	}
 
-	// The node starts and publishes its identity; the consumer stamps it.
+	// The node starts and publishes its identity; the delivery stamps it.
 	s.SetNode(NodeInfo{
 		NodeID: "data-hot-0", NodeType: "data",
 		GRPCAddress: "10.1.2.3:17912", HTTPAddress: "10.1.2.3:17913",
 	})
-	s.stamp(e)
+	s.stamp(req)
 
-	tags := e.req.Element.TagFamilies[0].Tags
+	tags := req.Element.TagFamilies[0].Tags
 	for i, want := range map[int]string{
 		0: "data-hot-0", 1: "data", 4: "10.1.2.3:17912", 5: "10.1.2.3:17913",
 	} {
@@ -364,11 +476,11 @@ func TestIdentityIsStampedAtFlushNotAdmission(t *testing.T) {
 			t.Fatalf("after stamping, tag %s = %q, want %q", searchableTags[i], got, want)
 		}
 	}
-	if e.req.Element.ElementId == "" || !strings.HasPrefix(e.req.Element.ElementId, "data-hot-0-") {
-		t.Fatalf("element id %q does not carry the node identity", e.req.Element.ElementId)
+	if req.Element.ElementId == "" || !strings.HasPrefix(req.Element.ElementId, "data-hot-0-") {
+		t.Fatalf("element id %q does not carry the node identity", req.Element.ElementId)
 	}
-	if got := tags[7].GetStr().GetValue(); got != e.req.Element.ElementId {
-		t.Fatalf("log_id %q does not mirror the element id %q", got, e.req.Element.ElementId)
+	if got := tags[7].GetStr().GetValue(); got != req.Element.ElementId {
+		t.Fatalf("log_id %q does not mirror the element id %q", got, req.Element.ElementId)
 	}
 }
 
@@ -388,7 +500,8 @@ func TestQueuedEntryFitsItsCharge(t *testing.T) {
 		if err != nil {
 			t.Fatalf("build: %v", err)
 		}
-		s.stamp(entry{req: req, seq: uint64(i)})
+		req.seq = uint64(i)
+		s.stamp(req)
 		held = append(held, req)
 	}
 	runtime.GC()
@@ -422,7 +535,8 @@ func TestReusedEntryFitsItsCharge(t *testing.T) {
 		if err := s.fill(r, zerolog.InfoLevel, "MEASURE", small); err != nil {
 			t.Fatalf("fill: %v", err)
 		}
-		s.stamp(entry{req: r, seq: uint64(i)})
+		r.seq = uint64(i)
+		s.stamp(r)
 		held = append(held, r)
 	}
 	runtime.GC()
@@ -442,11 +556,12 @@ func TestReusedEntryFitsItsCharge(t *testing.T) {
 // once built, not what the request held before.
 func TestAdmitChargesTheBufferItsEventGrew(t *testing.T) {
 	s := testSink(t)
+	p := stubbed(s, queue.Accepted)
 	line := []byte(`{"level":"info","module":"MEASURE","message":"large","payload":"` + strings.Repeat("x", 3000) + `"}`)
 	s.Admit(zerolog.InfoLevel, "MEASURE", line)
-	e := <-s.queue
-	if want := entryCost(int64(len(line)), e.req); e.size != want || s.QueuedBytes() != want {
-		t.Errorf("entry charged %d, queued %d; it holds %d", e.size, s.QueuedBytes(), want)
+	offered := p.offered[0]
+	if want := entryCost(int64(len(line)), offered.Data.(*request)); offered.Bytes != want {
+		t.Errorf("entry charged %d; it holds %d", offered.Bytes, want)
 	}
 }
 
@@ -466,8 +581,7 @@ func TestPressureAndFullBufferReportDifferentReasons(t *testing.T) {
 		t.Errorf("buffer_full counted %d drops under pressure, want 0", got)
 	}
 
-	full := testSink(t)
-	full.maxBytes = 1
+	full := newSink(func(c *queue.BufferedConfig) { c.MaxBytes = 1 })
 	full.Admit(zerolog.InfoLevel, "MEASURE", line)
 	if got := full.Dropped(reasonBufferFull); got != 1 {
 		t.Errorf("buffer_full counted %d drops at the bound, want 1", got)
@@ -487,7 +601,8 @@ func TestLevelLessEventKeepsItsEntity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
-	s.stamp(entry{req: req, seq: 1})
+	req.seq = 1
+	s.stamp(req)
 	tags := req.GetElement().GetTagFamilies()[0].GetTags()
 	if got := tags[3].GetStr().GetValue(); got == "" {
 		t.Error("a level-less event is stored with an empty level, which is half the entity")
@@ -508,7 +623,8 @@ func BenchmarkBuildStampRelease(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		s.stamp(entry{req: req, seq: uint64(i)})
+		req.seq = uint64(i)
+		s.stamp(req)
 		s.release(req)
 	}
 }
@@ -522,7 +638,8 @@ func TestReleaseClearsTheEventAndKeepsTheStructure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
-	s.stamp(entry{req: r, seq: 1})
+	r.seq = 1
+	s.stamp(r)
 	element, data := r.Element, r.data
 	s.release(r)
 

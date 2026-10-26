@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -31,7 +32,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -44,15 +44,13 @@ const (
 	// the interval.
 	flushSize = 100
 	// writeTimeout is handed to every publish. The local pipeline does not
-	// honor it, so stopTimeout is what bounds shutdown.
+	// honor it, so the publisher's drain deadline is what bounds shutdown.
 	writeTimeout = 5 * time.Second
-	// drainTimeout bounds the final drain at shutdown.
+	// drainTimeout bounds the final drain at shutdown, and with it
+	// GracefulStop: a local write runs synchronously on the delivery goroutine
+	// and does not honor its context, so the publisher stops waiting for a
+	// stuck one at this deadline.
 	drainTimeout = 5 * time.Second
-	// stopTimeout bounds GracefulStop. A local write runs synchronously on the
-	// consumer and does not honor its context, so a stuck one would otherwise
-	// hold shutdown for ever: the drain, one publish that started just before
-	// its deadline, and a margin.
-	stopTimeout = drainTimeout + writeTimeout + time.Second
 	// schemaTimeout bounds one schema pass against metadata. It is separate
 	// from writeTimeout: a slow destination is not a reason to wait longer on
 	// the metadata service.
@@ -65,22 +63,29 @@ const (
 	destinationRetries = 10
 )
 
-// timing holds the internal intervals and limits. They are constants in
-// production; a field lets a test shorten them.
+// errSchemaUnavailable is the delivery failure while the schema has never
+// been established.
+var errSchemaUnavailable = errors.New("the native log schema is not established yet")
+
+// timing holds the internal intervals. They are constants in production; a
+// field lets a test shorten them.
 type timing struct {
-	flushInterval time.Duration
-	writeTimeout  time.Duration
-	drainTimeout  time.Duration
-	stopTimeout   time.Duration
-	flushSize     int
+	reportInterval time.Duration
+	schemaRetry    time.Duration
+	writeTimeout   time.Duration
 }
 
-var defaultTiming = timing{
-	flushInterval: flushInterval, writeTimeout: writeTimeout,
-	drainTimeout: drainTimeout, stopTimeout: stopTimeout, flushSize: flushSize,
-}
+var defaultTiming = timing{reportInterval: flushInterval, schemaRetry: schemaRetryInterval, writeTimeout: writeTimeout}
 
-// Service owns the consumer that drains the sink and writes what it finds.
+// The states of the schema, as the last schema pass left it.
+const (
+	schemaUnready int32 = iota
+	schemaReady
+	schemaIncompatible
+)
+
+// Service establishes the schema, starts the sink's publisher with a delivery
+// to the local write path, and reports the sink's counters.
 //
 // It is a run.Unit: everything that can fail against metadata happens in Serve
 // and never in PreRun, because PreRun runs before the services it depends on.
@@ -91,23 +96,21 @@ type Service struct {
 	pipeline queue.Client
 	sink     *Sink
 	closer   *run.Closer
-	l        *logger.Logger
-	pm       protector.Memory
-	cfg      *logger.NativeLogging
-	node     NodeInfo
-	// pending is a batch held back because the local write topic had no
-	// subscriber yet. It is retried with the next tick's batch.
-	pending []entry
-	timing  timing
-	// unreadyAttempts counts the consecutive attempts that found no subscriber.
-	unreadyAttempts int
-	ready           bool
-	// incompatible records that the stream exists with the wrong shape. The
-	// retry stays in place -- an operator can drop and recreate it without
-	// restarting the node -- but until then the drops are counted under their
-	// own reason, because waiting will not fix this one.
-	incompatible bool
-	warnedTTL    bool
+	// stopMaintain cancels the loop's context, so a schema pass in progress
+	// does not hold GracefulStop for its whole timeout.
+	stopMaintain context.CancelFunc
+	l            *logger.Logger
+	pm           protector.Memory
+	cfg          *logger.NativeLogging
+	node         NodeInfo
+	timing       timing
+	// schema is schemaReady, schemaUnready or schemaIncompatible. It is
+	// written by the schema pass and read at every delivery. An incompatible
+	// stream keeps the retry in place -- an operator can drop and recreate it
+	// without restarting the node -- but until then the drops are counted
+	// under their own reason, because waiting will not fix this one.
+	schema    atomic.Int32
+	warnedTTL bool
 }
 
 // NewService returns the service that drains sink. The sink is constructed
@@ -152,8 +155,7 @@ func (s *Service) PreRun(ctx context.Context) error {
 func (s *Service) SetNodeType(t string) { s.node.NodeType = t }
 
 // Serve creates the schema, connects the sink to the memory protector and
-// starts the consumer. It returns immediately: the consumer runs until the
-// closer is notified.
+// starts delivery. It returns immediately: delivery runs until GracefulStop.
 func (s *Service) Serve() run.StopNotify {
 	if !s.cfg.Enabled {
 		s.closer.Done()
@@ -167,12 +169,22 @@ func (s *Service) Serve() run.StopNotify {
 	s.applySchema(createSchema(ctx, s.metadata, s.cfg.TTLDays))
 	cancel()
 
-	// run.Go rather than a raw goroutine, so a panic in the consumer is
-	// recovered and counted instead of taking the process down.
-	run.Go(context.Background(), s.Name(), s.l, func(runCtx context.Context) {
-		s.consume(runCtx)
+	s.sink.pub.Start(s.delivery())
+	// run.Go rather than a raw goroutine, so a panic in the loop is recovered
+	// instead of taking the process down.
+	ctx, s.stopMaintain = context.WithCancel(context.Background())
+	run.Go(ctx, s.Name(), s.l, func(runCtx context.Context) {
+		s.maintain(runCtx)
 	})
 	return s.closer.CloseNotify()
+}
+
+// delivery is what the publisher delivers each batch through.
+func (s *Service) delivery() queue.Delivery {
+	return &delivery{
+		svc:   s,
+		local: queue.NewLocalDelivery(s.pipeline, data.TopicStreamWrite, s.timing.writeTimeout),
+	}
 }
 
 // bindPressure makes the sink drop while the memory protector reports high
@@ -187,77 +199,26 @@ func (s *Service) bindPressure() {
 	s.sink.SetPressure(func() bool { return pm.State() == protector.StateHigh })
 }
 
-// consume is the single goroutine that drains the buffer. It selects over the
-// closer, the flush ticker and the buffer itself, so both the interval and the
-// size trigger can fire; a scheduled callback could only serve the first.
-func (s *Service) consume(ctx context.Context) {
+// maintain reports the sink's counters and re-runs the schema pass, until the
+// closer is notified.
+func (s *Service) maintain(ctx context.Context) {
 	defer s.closer.Done()
-	// Every publish carries the mark, so the write path logs what it does with
-	// these events where native storage never collects it.
-	ctx = logger.WithNativeWrite(ctx)
-
-	ticker := time.NewTicker(s.timing.flushInterval)
+	ticker := time.NewTicker(s.timing.reportInterval)
 	defer ticker.Stop()
-	retry := time.NewTicker(schemaRetryInterval)
+	retry := time.NewTicker(s.timing.schemaRetry)
 	defer retry.Stop()
-
-	batch := make([]entry, 0, s.timing.flushSize)
-	var batchBytes int64
 	stop := s.closer.CloseNotify()
 	for {
 		select {
 		case <-stop:
-			// A batch held back for a retry is drained with the rest.
-			s.drain(ctx, append(s.pending, batch...))
-			s.pending = nil
+			s.report()
 			return
 		case <-retry.C:
 			s.retrySchema(ctx)
 		case <-ticker.C:
 			s.report()
-			if len(batch) > 0 || len(s.pending) > 0 {
-				batch = s.flushPending(ctx, batch)
-				batchBytes = 0
-			}
-		case e := <-s.sink.queue:
-			batch = append(batch, e)
-			batchBytes += e.size
-			// While a batch is held back, new entries wait for the next tick, so
-			// the retries run once per interval and not once per incoming event.
-			if len(s.pending) == 0 && s.batchFull(len(batch), batchBytes) {
-				batch = s.flushPending(ctx, batch)
-				batchBytes = 0
-			}
 		}
 	}
-}
-
-// batchFull reports whether a batch has reached a flush trigger: the event
-// count, or a quarter of the buffer's byte bound. The byte limit keeps one
-// slow publish from holding most of the buffer in flight, which would stall
-// admission while it runs.
-func (s *Service) batchFull(n int, bytes int64) bool {
-	if n >= s.timing.flushSize {
-		return true
-	}
-	return bytes >= s.sink.maxBytes/4
-}
-
-// flushPending publishes what an earlier attempt held back together with
-// batch, and returns batch emptied for reuse.
-func (s *Service) flushPending(ctx context.Context, batch []entry) []entry {
-	work := batch
-	if len(s.pending) > 0 {
-		work = make([]entry, 0, len(s.pending)+len(batch))
-		work = append(work, s.pending...)
-		work = append(work, batch...)
-	}
-	s.pending = nil
-	if kept := s.flush(ctx, work, true); kept != nil {
-		// Copied, because batch's backing array is reused by the caller.
-		s.pending = append([]entry(nil), kept...)
-	}
-	return batch[:0]
 }
 
 // report publishes the sink's own counters. They travel the same transport as
@@ -294,26 +255,22 @@ func (s *Service) retrySchema(ctx context.Context) {
 func (s *Service) applySchema(state schemaState, err error) {
 	switch {
 	case err == nil:
-		s.ready = true
-		s.incompatible = false
+		s.schema.Store(schemaReady)
 		s.warnOnce(&s.warnedTTL, state.ttlMismatch)
 	case errors.Is(err, errSchemaIncompatible):
 		// Logged when the stream becomes incompatible, not on every pass: the
 		// pass repeats every schemaRetryInterval, and an error line every ten
 		// seconds for as long as the stream is wrong would bury everything
-		// else. A later success clears the flag, so a recurrence is logged too.
-		first := !s.incompatible
-		s.ready = false
-		s.incompatible = true
-		if first {
+		// else. A later success clears the state, so a recurrence is logged too.
+		if s.schema.Swap(schemaIncompatible) != schemaIncompatible {
 			s.l.Error().Err(err).Msgf(
 				"the %q stream in %q cannot store this version's log events; "+
 					"drop and recreate it to enable native logging",
 				StreamName, GroupName)
 		}
-	case !s.ready:
+	case s.schema.Load() != schemaReady:
 		// Never established. Not fatal: the buffer keeps accepting and the
-		// consumer retries, so a late metadata service costs nothing permanent.
+		// pass retries, so a late metadata service costs nothing permanent.
 		s.l.Error().Err(err).Msg("failed to create the native log schema; will retry")
 	default:
 		// Established before and metadata is momentarily unreachable. Keep
@@ -333,171 +290,47 @@ func (s *Service) warnOnce(done *bool, msg string) {
 	s.l.Warn().Msg(msg)
 }
 
-// drain publishes whatever is still held at shutdown, bounded so that teardown
-// is never blocked. Admission has already stopped by this point, so the set it
-// publishes is exactly the set admitted before the cutoff.
-func (s *Service) drain(ctx context.Context, batch []entry) {
-	deadline := time.Now().Add(s.timing.drainTimeout)
-	// Successive chunks, not one: a shutdown with more than flushSize queued
-	// would otherwise publish the first chunk and count the rest as lost while
-	// the deadline still had room.
-	for time.Now().Before(deadline) {
-		drained := false
-		for len(batch) < s.timing.flushSize {
-			select {
-			case e := <-s.sink.queue:
-				batch = append(batch, e)
-				drained = true
-			default:
-			}
-			if !drained || len(batch) == 0 {
-				break
-			}
-			if len(s.sink.queue) == 0 {
-				break
-			}
-		}
-		if len(batch) == 0 {
-			break
-		}
-		// Not retainable: at shutdown there is no next tick to retry on.
-		s.flush(ctx, batch, false)
-		batch = batch[:0]
-		if len(s.sink.queue) == 0 {
-			break
-		}
-	}
-	// Anything still queued past the deadline is lost, and counted rather than
-	// discarded silently.
-	for {
-		select {
-		case e := <-s.sink.queue:
-			s.sink.queued.Add(-e.size)
-			s.sink.release(e.req)
-			s.sink.drop(reasonShutdown)
-		default:
-			return
-		}
-	}
+// delivery prepares each batch for the local write path: it checks the
+// schema, stamps the identity known by now, and marks the context so the
+// write path's own logging about these events is never collected.
+type delivery struct {
+	svc   *Service
+	local queue.Delivery
+	batch []any
 }
 
-// flush turns one batch into write requests and publishes it. Every path
-// that does not keep the batch releases the requests back to the pool and
-// settles the byte accounting, so a failure costs the batch and nothing more.
-//
-// It keeps the batch -- still charged, still alive -- only when retainable is
-// set and the local write topic has no subscriber yet. The stream service
-// registers that topic and can start after the first flush, and the lines that
-// lose that race are the startup lines, which are the ones worth keeping. The
-// caller retries a kept batch on the next tick, up to destinationRetries times.
-func (s *Service) flush(ctx context.Context, batch []entry, retainable bool) (kept []entry) {
-	var size int64
-	for _, e := range batch {
-		size += e.size
+func (d *delivery) Deliver(ctx context.Context, batch []any) error {
+	switch d.svc.schema.Load() {
+	case schemaIncompatible:
+		return errSchemaIncompatible
+	case schemaUnready:
+		return errSchemaUnavailable
 	}
-	encodeFailed := 0
-	defer func() {
-		// Recovered here rather than at the goroutine: run.Go recovers a panic
-		// but does not restart the consumer, and consume settles the closer on
-		// its way out, so one bad batch would end native logging for the life of
-		// the process and leave the buffer charged and undrained.
-		if r := recover(); r != nil {
-			kept = nil
-			s.sink.dropN(reasonPublishFailed, len(batch)-encodeFailed)
-			reportf("native log flush panicked, batch dropped: %v", r)
+	d.batch = d.batch[:0]
+	for _, item := range batch {
+		r, ok := item.(*request)
+		if !ok {
+			continue
 		}
-		s.sink.inFlight.Add(-size)
-		if kept != nil {
-			// Still charged as queued: the bytes are held until the retry.
-			return
-		}
-		s.sink.queued.Add(-size)
-		for _, e := range batch {
-			s.sink.release(e.req)
-		}
-	}()
-	s.sink.inFlight.Add(size)
-
-	if !s.ready {
-		reason := reasonSchemaMissing
-		if s.incompatible {
-			reason = reasonSchemaIncompatible
-		}
-		s.sink.dropN(reason, len(batch))
-		return nil
-	}
-
-	messages := make([]bus.Message, 0, len(batch))
-	for _, e := range batch {
+		r.encodeFailed.Store(false)
 		// The identity is known now even when it was not at admission.
-		s.sink.stamp(e)
-		iwr, err := internalRequest(e.req.WriteRequest)
+		d.svc.sink.stamp(r)
+		iwr, err := internalRequest(r.WriteRequest)
 		if err != nil {
-			encodeFailed++
-			s.sink.drop(reasonEncodeFailed)
+			// Counted by the request's outcome, which reads this flag.
+			r.encodeFailed.Store(true)
 			continue
 		}
-		messages = append(messages, bus.NewBatchMessageWithNode(
-			bus.MessageID(time.Now().UnixNano()), "", iwr))
+		d.batch = append(d.batch, iwr)
 	}
-	if len(messages) == 0 {
+	if len(d.batch) == 0 {
 		return nil
 	}
-
-	publisher := s.pipeline.NewBatchPublisher(s.timing.writeTimeout)
-	pubCtx, cancel := context.WithTimeout(ctx, s.timing.writeTimeout)
-	defer cancel()
-	_, err := publisher.Publish(pubCtx, data.TopicStreamWrite, messages...)
-	nodeErrs, closeErr := publisher.Close()
-	if err == nil {
-		err = closeErr
-	}
-	if err == nil {
-		// Close reports a destination's refusal in its map and returns a nil
-		// error alongside it. On the local pipeline that map is the only report
-		// there is -- Publish buffers and cannot fail, and the bus drops the
-		// payload of an unhealthy listener while returning the reason here. So
-		// discarding it means a refused batch is counted as written.
-		err = rejection(nodeErrs)
-	}
-	unready := errors.Is(err, bus.ErrTopicNotExist)
-	// A batch with an encode failure is not kept: that entry is already
-	// counted, and a retry would count it again on every attempt.
-	if unready && retainable && encodeFailed == 0 && s.unreadyAttempts < destinationRetries {
-		s.unreadyAttempts++
-		return batch
-	}
-	// The sink never logs through the logging path it publishes on, so a
-	// failure here goes straight to stderr rather than back into itself.
-	switch {
-	case unready:
-		s.unreadyAttempts = 0
-		s.sink.dropN(reasonDestinationUnready, len(messages))
-		reportf("native log destination still has no subscriber, batch dropped: %v", err)
-	case err != nil:
-		s.sink.dropN(reasonPublishFailed, len(messages))
-		reportf("native log publish failed: %v", err)
-	default:
-		s.unreadyAttempts = 0
-		s.sink.written.Add(uint64(len(messages)))
-	}
-	return nil
-}
-
-// rejection turns a publisher's per-destination error map into one error. Any
-// entry means the batch did not land: this sink publishes a batch to a single
-// destination, so there is no partial success to preserve.
-func rejection(nodeErrs map[string]*common.Error) error {
-	for node, ce := range nodeErrs {
-		if ce == nil {
-			continue
-		}
-		if node == "" {
-			node = "the destination"
-		}
-		return fmt.Errorf("%s refused the batch: %w", node, ce)
-	}
-	return nil
+	// Marked here and not on the publisher's context: the publisher is built
+	// before logging is initialized, and the mark is a logger.
+	err := d.local.Deliver(logger.WithNativeWrite(ctx), d.batch)
+	clear(d.batch)
+	return err
 }
 
 // internalRequest adds what the internal write path needs. The shard is always
@@ -532,26 +365,23 @@ func entityOf(req *streamv1.WriteRequest) pbv1.EntityValues {
 
 // GracefulStop stops admission before draining. Draining first would leave a
 // window the length of one publish in which lines are admitted and then
-// stranded in a buffer nobody will read again.
+// stranded in a buffer nobody will read again. The publisher's Close also
+// refuses a line from a writer that loaded the sink before Detach.
 //
-// It returns within stopTimeout even when a write is stuck: a local write
-// does not honor its context, so the consumer cannot be interrupted, only
-// left behind. What it still holds is lost with the process.
+// It returns within drainTimeout even when a write is stuck: a local write
+// does not honor its context, so it cannot be interrupted, only left behind.
+// Its events are counted as shutdown_deadline.
 func (s *Service) GracefulStop() {
 	s.sink.Detach()
-	stopped := make(chan struct{})
-	run.Go(context.Background(), s.Name()+"-stop", s.l, func(context.Context) {
-		defer close(stopped)
-		s.closer.CloseThenWait()
-	})
-	timer := time.NewTimer(s.timing.stopTimeout)
-	defer timer.Stop()
-	select {
-	case <-stopped:
-	case <-timer.C:
-		reportf("native log consumer did not stop within %s; a write is stuck, and the %d bytes it holds are lost",
-			s.timing.stopTimeout, s.sink.QueuedBytes())
+	s.sink.pub.Close()
+	if charged, _ := s.sink.pub.Bytes(); charged > 0 {
+		reportf("native log delivery did not finish within %s; a write is stuck, and the %d bytes it holds are counted as lost",
+			drainTimeout, charged)
 	}
+	if s.stopMaintain != nil {
+		s.stopMaintain()
+	}
+	s.closer.CloseThenWait()
 }
 
 // reportf writes the sink's own failures straight to stderr. Routing them
