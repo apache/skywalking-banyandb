@@ -303,6 +303,8 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 	groups := make(map[string]*elementsInGroup)
 	var metadata *commonv1.Metadata
 	var spec []*streamv1.TagFamilySpec
+	var stored int
+	var firstErr error
 	for i := range events {
 		var writeEvent *streamv1.InternalWriteRequest
 		switch e := events[i].(type) {
@@ -312,10 +314,16 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 			writeEvent = &streamv1.InternalWriteRequest{}
 			if err := proto.Unmarshal(e, writeEvent); err != nil {
 				w.l.Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
+				if firstErr == nil {
+					firstErr = fmt.Errorf("cannot unmarshal event: %w", err)
+				}
 				continue
 			}
 		default:
 			w.l.Warn().Msg("invalid event data type")
+			if firstErr == nil {
+				firstErr = fmt.Errorf("invalid event data type %T", e)
+			}
 			continue
 		}
 		req := writeEvent.Request
@@ -328,9 +336,13 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		newGroups, handleErr := w.handle(groups, writeEvent, metadata, spec)
 		if handleErr != nil {
 			w.l.Error().Err(handleErr).Msg("cannot handle write event")
+			if firstErr == nil {
+				firstErr = handleErr
+			}
 			continue
 		}
 		groups = newGroups
+		stored++
 	}
 	for groupName := range groups {
 		g := groups[groupName]
@@ -358,6 +370,12 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 			}
 		}
 		g.tsdb.Tick(g.latestTS)
+	}
+	// Reply with an error only when nothing in the batch was stored. The liaison applies
+	// one status to every message it sent to this node, so reporting a partial failure
+	// would mark the stored elements as failed and a retry would store them twice.
+	if stored == 0 && firstErr != nil {
+		return bus.NewMessage(message.ID(), common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, firstErr.Error()))
 	}
 	return
 }
