@@ -317,10 +317,7 @@ func (s *server) marshalResponse(
 		}
 		return body, nil
 	case []byte:
-		rawAllowed := (topic == data.TopicInternalMeasureQuery && data.MeasureWireModeRaw()) ||
-			(topic == data.TopicTraceQuery && data.TraceWireModeRaw()) ||
-			(topic == data.TopicStreamQuery && data.StreamWireModeRaw())
-		if !rawAllowed {
+		if !rawBodyAllowed(topic) {
 			s.replyWithErrType(stream, writeEntity, nil, fmt.Sprintf("invalid response: unexpected raw body on topic %s", topic), identity, "marshal_error")
 			return nil, fmt.Errorf("invalid raw body")
 		}
@@ -333,6 +330,13 @@ func (s *server) marshalResponse(
 		s.replyWithErrType(stream, writeEntity, nil, fmt.Sprintf("invalid response: %T", d), identity, "handler_error")
 		return nil, fmt.Errorf("invalid response type")
 	}
+}
+
+// rawBodyAllowed reports whether a response on the topic may be a raw []byte frame.
+func rawBodyAllowed(topic bus.Topic) bool {
+	return (topic == data.TopicInternalMeasureQuery && data.MeasureWireModeRaw()) ||
+		(topic == data.TopicTraceQuery && data.TraceWireModeRaw()) ||
+		(topic == data.TopicStreamQuery && data.StreamWireModeRaw())
 }
 
 func (s *server) Subscribe(topic bus.Topic, listener bus.MessageListener) error {

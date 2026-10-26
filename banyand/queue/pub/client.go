@@ -211,6 +211,8 @@ func (p *pub) checkWritable(ctx context.Context, n string, topic bus.Topic) (boo
 	}
 	if _, exists := p.writableProbe[n][topicStr]; exists {
 		p.writableProbeMu.Unlock()
+		// The running count taken above belongs to a probe that is not started, so release it or shutdown never completes.
+		p.closer.Done()
 		return false, err
 	}
 	p.writableProbe[n][topicStr] = struct{}{}

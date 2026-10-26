@@ -85,23 +85,28 @@ func EncodeTraceResultFrame(results []model.TraceResult) []byte {
 func traceFrameSize(results []model.TraceResult) int {
 	size := 2 + uvarintLen(uint64(len(results)))
 	for resultIdx := range results {
-		result := &results[resultIdx]
-		size += lenStringSize(result.TID) + 8 + uvarintLen(uint64(len(result.Spans)))
-		for spanIdx, spanBytes := range result.Spans {
-			size += uvarintLen(uint64(len(spanBytes))) + len(spanBytes)
-			spanIDLen := 0
-			if spanIdx < len(result.SpanIDs) {
-				spanIDLen = len(result.SpanIDs[spanIdx])
-			}
-			size += uvarintLen(uint64(spanIDLen)) + spanIDLen
+		size += ResultFrameSize(&results[resultIdx])
+	}
+	return size
+}
+
+// ResultFrameSize returns the encoded byte length one trace adds to a frame.
+func ResultFrameSize(result *model.TraceResult) int {
+	size := lenStringSize(result.TID) + 8 + uvarintLen(uint64(len(result.Spans)))
+	for spanIdx, spanBytes := range result.Spans {
+		size += uvarintLen(uint64(len(spanBytes))) + len(spanBytes)
+		spanIDLen := 0
+		if spanIdx < len(result.SpanIDs) {
+			spanIDLen = len(result.SpanIDs[spanIdx])
 		}
-		size += uvarintLen(uint64(len(result.Tags)))
-		for tagIdx := range result.Tags {
-			tag := &result.Tags[tagIdx]
-			size += lenStringSize(tag.Name) + uvarintLen(uint64(len(tag.Values)))
-			for _, tagValue := range tag.Values {
-				size += 1 + traceTagValueSize(tagValue)
-			}
+		size += uvarintLen(uint64(spanIDLen)) + spanIDLen
+	}
+	size += uvarintLen(uint64(len(result.Tags)))
+	for tagIdx := range result.Tags {
+		tag := &result.Tags[tagIdx]
+		size += lenStringSize(tag.Name) + uvarintLen(uint64(len(tag.Values)))
+		for _, tagValue := range tag.Values {
+			size += 1 + traceTagValueSize(tagValue)
 		}
 	}
 	return size
