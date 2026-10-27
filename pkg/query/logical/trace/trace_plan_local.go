@@ -58,6 +58,7 @@ type localScan struct {
 	minVal            int64
 	maxVal            int64
 	groupIndex        int
+	hasPostFilter     bool
 }
 
 func (i *localScan) Close() {
@@ -67,7 +68,9 @@ func (i *localScan) Close() {
 }
 
 func (i *localScan) Limit(maxVal int) {
-	i.maxTraceSize = maxVal
+	if !i.hasPostFilter {
+		i.maxTraceSize = maxVal
+	}
 }
 
 func (i *localScan) Sort(order *logical.OrderBy) {

@@ -46,6 +46,8 @@ Release Notes.
 
 ### Bug Fixes
 
+- Apply trace query limits after span-ID and other residual filters so older matching traces remain queryable.
+
 - Keep native index compaction progressing when persistence replaces unchanged in-memory segments with file-backed readers.
 - Upgrade the Go toolchain to 1.26.10 for the crypto/x509 security fix (GO-2026-6809).
 - Return zero for empty scalar QL `COUNT(DISTINCT)` and apply its pagination after the complete count instead of pruning native shard partials.
