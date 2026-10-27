@@ -220,8 +220,7 @@ func nodeTagFilter(plan logical.Plan) (VecCriteriaFilter, bool) {
 // VecMergeGroup is one group's resolved vec scan plus its optional criteria stage,
 // for the multi-group dispatch. The processor runs Scan.ExecuteVectorized, then the
 // shared batch stage (criteria filter behind the cap, then the hidden-tag column
-// drop), then BuildElementsFromBatch on the result, yielding that group's ordered
-// []Element; the caller then cross-group merges via MergeGroupElements.
+// drop); the caller then merges the groups' staged batches in one pipeline.
 type VecMergeGroup struct {
 	Scan      executor.StreamVecExecutable
 	Criteria  VecCriteriaFilter
@@ -229,24 +228,22 @@ type VecMergeGroup struct {
 }
 
 // VecMerge is the vec-eligible form of a multi-group query (*limit → *mergePlan).
-// It carries each group's resolved vec node plus the EXACT merge params the row
-// mergePlan.Execute uses (SortByTime, SortTagSpec, Desc), so the dispatch merges
-// across groups via the shared MergeGroupElements and slices with Offset/Limit.
+// It carries each group's resolved vec node plus the merge params (SortByTime, Desc),
+// so the dispatch merges the groups' batches and slices with Offset/Limit.
 type VecMerge struct {
-	SortTagSpec logical.TagSpec
-	Groups      []VecMergeGroup
-	Offset      uint32
-	Limit       uint32
-	SortByTime  bool
-	Desc        bool
+	Groups     []VecMergeGroup
+	Offset     uint32
+	Limit      uint32
+	SortByTime bool
+	Desc       bool
 }
 
 // VecMergeExecutable returns the vec-eligible multi-group form when the plan is
 // *limit → *mergePlan and EVERY subPlan resolves to a vec-eligible *localIndexScan
 // (via scanFromInput, incl. orderTagProjected). If ANY subPlan is not vec-eligible,
 // it returns ok=false so the whole query runs the row path — vec and row are never
-// mixed across groups. The merge params (sortByTime/sortTagSpec/desc) are taken
-// verbatim from the mergePlan so the cross-group order matches the row path exactly.
+// mixed across groups. The merge params (sortByTime/desc) are taken
+// verbatim from the mergePlan so the cross-group order matches the group scans.
 func VecMergeExecutable(plan logical.Plan) (*VecMerge, bool) {
 	l, isLimit := plan.(*limit)
 	if !isLimit {
@@ -269,12 +266,11 @@ func VecMergeExecutable(plan logical.Plan) (*VecMerge, bool) {
 		groups = append(groups, VecMergeGroup{Scan: scan, Criteria: criteria, HasFilter: hasFilter})
 	}
 	return &VecMerge{
-		Groups:      groups,
-		SortByTime:  mp.sortByTime,
-		SortTagSpec: mp.sortTagSpec,
-		Desc:        mp.desc,
-		Offset:      l.offsetNum,
-		Limit:       l.limitNum,
+		Groups:     groups,
+		SortByTime: mp.sortByTime,
+		Desc:       mp.desc,
+		Offset:     l.offsetNum,
+		Limit:      l.limitNum,
 	}, true
 }
 
